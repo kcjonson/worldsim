@@ -1,6 +1,7 @@
 #include "RunPlanner.h"
 
 #include <algorithm>
+#include <bit>
 
 namespace worldview {
 
@@ -14,7 +15,8 @@ namespace worldview {
 			drawOfLayer[order].clear();
 		}
 		meshOfOrder.clear();
-		meshBound = std::max(meshCount, 1U);
+		meshBound = std::bit_ceil(std::max(meshCount, 1U));
+		meshShift = static_cast<uint32_t>(std::countr_zero(meshBound));
 		if (orderOfMesh.size() < meshBound) {
 			orderOfMesh.resize(meshBound, kNone);
 		}
@@ -42,8 +44,8 @@ namespace worldview {
 		uint32_t	   layer = floorLayer;
 		const uint32_t latest = (small ? large : all).latest(cells);
 		if (latest >= keyOf(floorLayer, 0)) {
-			const uint32_t latestLayer = (latest - 1) / meshBound;
-			const uint32_t latestOrder = (latest - 1) % meshBound;
+			const uint32_t latestLayer = (latest - 1) >> meshShift;
+			const uint32_t latestOrder = (latest - 1) & (meshBound - 1);
 			layer = latestOrder <= order ? latestLayer : latestLayer + 1;
 		}
 

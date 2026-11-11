@@ -87,11 +87,11 @@ namespace worldview {
 
 		uint32_t vertexIndex = 0;
 		for (const auto& item : m_sorted) {
-			const auto* templateMesh = m_templateCache.get(item.entity->templateId);
+			const auto* templateMesh = m_templateCache.get(item.upright->templateId);
 			if (templateMesh == nullptr) {
 				continue;
 			}
-			appendEntityTriangles(*item.entity, templateMesh, camX, camY, scale, halfViewW, halfViewH, vertexIndex);
+			appendEntityTriangles(*item.upright->entity, templateMesh, camX, camY, scale, halfViewW, halfViewH, vertexIndex);
 			stats.entities++;
 		}
 

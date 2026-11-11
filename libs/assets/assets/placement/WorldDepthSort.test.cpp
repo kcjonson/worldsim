@@ -119,11 +119,15 @@ namespace assets {
 		d.defName = "D";
 
 		// Two entries share anchorY == 1.0 (b then d) to check stability.
+		const Upright			   ua = uprightOf(a);
+		const Upright			   ub = uprightOf(b);
+		const Upright			   uc = uprightOf(c);
+		const Upright			   ud = uprightOf(d);
 		std::vector<DepthSortItem> items = {
-			{3.0F, &a, false},
-			{1.0F, &b, false},
-			{2.0F, &c, false},
-			{1.0F, &d, false},
+			{3.0F, &ua},
+			{1.0F, &ub},
+			{2.0F, &uc},
+			{1.0F, &ud},
 		};
 
 		std::vector<DepthSortItem> once = items;
@@ -134,17 +138,17 @@ namespace assets {
 			EXPECT_LE(once[i - 1].anchorY, once[i].anchorY);
 		}
 		// Stable: equal keys keep insertion order (b before d).
-		EXPECT_EQ(once[0].entity, &b);
-		EXPECT_EQ(once[1].entity, &d);
-		EXPECT_EQ(once[2].entity, &c);
-		EXPECT_EQ(once[3].entity, &a);
+		EXPECT_EQ(once[0].upright->entity, &b);
+		EXPECT_EQ(once[1].upright->entity, &d);
+		EXPECT_EQ(once[2].upright->entity, &c);
+		EXPECT_EQ(once[3].upright->entity, &a);
 
 		// Deterministic: sorting the same input again yields the same order.
 		std::vector<DepthSortItem> twice = items;
 		sortByAnchorY(twice);
 		ASSERT_EQ(once.size(), twice.size());
 		for (size_t i = 0; i < once.size(); ++i) {
-			EXPECT_EQ(once[i].entity, twice[i].entity);
+			EXPECT_EQ(once[i].upright, twice[i].upright);
 			EXPECT_FLOAT_EQ(once[i].anchorY, twice[i].anchorY);
 		}
 	}
@@ -165,9 +169,10 @@ namespace assets {
 	}
 
 
-	// The gather keeps each chunk's statics sorted between frames and merges them; its stream must
-	// be the one a stable sort of every chunk's query, in (y, x) chunk order, then the dynamic
-	// entities, gives, ties between chunks and with actors included, and must follow an edit.
+	// The gather keeps each chunk's statics sorted between frames, culls the stretch the view's rows
+	// reach, and merges them; its stream must be the one a stable sort of every chunk's query, in
+	// (y, x) chunk order, then the dynamic entities, gives, ties between chunks and with actors
+	// included, and must follow an edit, a chunk unloading and reloading, and the camera moving.
 	TEST(WorldDepthSort, GatherMatchesOneStableSortAcrossChunksAndEdits) {
 		PlacementExecutor executor(AssetRegistry::Get());
 		std::unordered_set<world::ChunkCoordinate> processed;
@@ -191,8 +196,9 @@ namespace assets {
 			executor.storeChunkResult(std::move(result));
 			processed.insert(coord);
 		};
-		// Both sides of the origin, so the view spans four chunks; anchorY 3 and 5 tie across chunks.
-		addChunk({0, 0}, {{{4.0F, 3.0F}, 3.0F}, {{9.0F, 1.0F}, 5.0F}, {{1.0F, 8.0F}, 8.0F}, {{2.0F, 2.0F}, 1.0F}});
+		// Both sides of the origin, so the view spans four chunks; anchorY 3 and 5 tie across chunks. The
+		// static at (5, 8) has its anchorY far below the view's rows, which the cull must still reach.
+		addChunk({0, 0}, {{{4.0F, 3.0F}, 3.0F}, {{9.0F, 1.0F}, 5.0F}, {{1.0F, 8.0F}, 8.0F}, {{2.0F, 2.0F}, 1.0F}, {{5.0F, 8.0F}, 45.0F}});
 		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 3.0F}, {{-2.0F, 6.0F}, 6.0F}, {{-900.0F, 3.0F}, 2.0F}});
 		addChunk({0, -1}, {{{3.0F, -5.0F}, -4.0F}, {{6.0F, -1.0F}, 5.0F}});
 		addChunk({-1, -1}, {{{-3.0F, -3.0F}, 3.0F}});
@@ -211,24 +217,35 @@ namespace assets {
 			const VisibleBounds vis = computeVisibleBounds(camera, 800, 600, 16.0F, entityCullMarginMeters(AssetRegistry::Get().maxReachMeters()));
 			std::vector<world::ChunkCoordinate> order(processed.begin(), processed.end());
 			std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.y != b.y ? a.y < b.y : a.x < b.x; });
-			std::vector<DepthSortItem> items;
+			std::vector<std::pair<float, const PlacedEntity*>> entities;
 			for (const auto& coord : order) {
 				for (const PlacedEntity* entity : executor.getChunkIndex(coord)->queryRect(vis.minX, vis.minY, vis.maxX, vis.maxY)) {
 					if (entity->isTallOccluder) {
-						items.push_back({entity->anchorY, entity, false});
+						entities.emplace_back(entity->anchorY, entity);
 					}
 				}
 			}
 			for (const PlacedEntity& actor : actors) {
-				items.push_back({actor.anchorY, &actor, false});
+				if (actor.position.x >= vis.minX && actor.position.x <= vis.maxX && actor.position.y >= vis.minY && actor.position.y <= vis.maxY) {
+					entities.emplace_back(actor.anchorY, &actor);
+				}
 			}
-			sortByAnchorY(items);
-			return items;
+			std::stable_sort(entities.begin(), entities.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+			std::vector<const PlacedEntity*> sorted;
+			for (const auto& entry : entities) {
+				sorted.push_back(entry.second);
+			}
+			return sorted;
 		};
+		// Each item's upright carries its entity's draw fields.
 		const auto entitiesOf = [](const std::vector<DepthSortItem>& items) {
 			std::vector<const PlacedEntity*> entities;
 			for (const DepthSortItem& item : items) {
-				entities.push_back(item.entity);
+				const Upright& upright = *item.upright;
+				EXPECT_EQ(item.anchorY, upright.entity->anchorY);
+				EXPECT_EQ(upright.position, upright.entity->position);
+				EXPECT_EQ(upright.templateId, upright.entity->templateId);
+				entities.push_back(upright.entity);
 			}
 			return entities;
 		};
@@ -236,13 +253,37 @@ namespace assets {
 		WorldDepthGather gather;
 		std::vector<DepthSortItem> out;
 		gather.gather(ctx, out, true);
-		EXPECT_EQ(out.size(), 11U); // the far static at x -900 is culled
-		EXPECT_EQ(entitiesOf(out), entitiesOf(expected()));
+		EXPECT_EQ(out.size(), 12U); // the far static at x -900 is culled
+		EXPECT_EQ(entitiesOf(out), expected());
 
 		ASSERT_TRUE(executor.removeEntity({0, 0}, {9.0F, 1.0F}, "Tree"));
 		gather.gather(ctx, out, true);
+		EXPECT_EQ(out.size(), 11U);
+		EXPECT_EQ(entitiesOf(out), expected());
+
+		// A chunk that unloads leaves the stream, and comes back with the index it reloads with.
+		processed.erase({-1, 0});
+		gather.gather(ctx, out, true);
+		EXPECT_EQ(out.size(), 9U);
+		EXPECT_EQ(entitiesOf(out), expected());
+		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 7.0F}});
+		gather.gather(ctx, out, true);
 		EXPECT_EQ(out.size(), 10U);
-		EXPECT_EQ(entitiesOf(out), entitiesOf(expected()));
+		EXPECT_EQ(entitiesOf(out), expected());
+
+		// Moving the camera culls the same statics differently, then changes which chunks reach the view.
+		camera.setPosition({10.0F, 0.0F});
+		gather.gather(ctx, out, true);
+		EXPECT_EQ(entitiesOf(out), expected());
+		camera.setPosition({-890.0F, 0.0F});
+		processed.erase({-1, 0});
+		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 7.0F}, {{-900.0F, 3.0F}, 2.0F}});
+		gather.gather(ctx, out, true);
+		EXPECT_EQ(out.size(), 1U);
+		EXPECT_EQ(entitiesOf(out), expected());
+		camera.setPosition({0.0F, 0.0F});
+		gather.gather(ctx, out, true);
+		EXPECT_EQ(entitiesOf(out), expected());
 	}
 
 } // namespace assets

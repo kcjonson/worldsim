@@ -18,6 +18,7 @@ namespace worldview {
 		if (!levels.resolved) {
 			levels.densities = assets::AssetRegistry::Get().detailLevels(templateId);
 			levels.reference = assets::referenceDetailLevel(levels.densities);
+			levels.mesh = assets::AssetRegistry::Get().getTemplate(templateId);
 			levels.resolved = true;
 		}
 		return levels;
@@ -30,7 +31,7 @@ namespace worldview {
 		return meshSlots[index];
 	}
 
-	void InstancedEntityRenderer::want(uint32_t templateId, uint8_t level, const renderer::TessellatedMesh& referenceMesh) {
+	void InstancedEntityRenderer::want(uint32_t templateId, uint8_t level) {
 		const uint32_t index = slotIndex(templateId, level);
 		MeshSlot&	   slot = slotAt(index);
 		if (slot.wantedFrame == frameIndex) {
@@ -38,8 +39,9 @@ namespace worldview {
 		}
 		slot.wantedFrame = frameIndex;
 		if (slot.state == SlotState::Absent) {
-			if (level == levelsOf(templateId).reference) {
-				slot.registryMesh = &referenceMesh;
+			const TemplateLevels& levels = levelsOf(templateId);
+			if (level == levels.reference) {
+				slot.registryMesh = levels.mesh;
 				slot.state = SlotState::Waiting;
 				uploadQueue.push_back(index);
 				return;
@@ -164,6 +166,35 @@ namespace worldview {
 		animVertexBase += static_cast<uint32_t>(animVerts.size());
 	}
 
+	void InstancedEntityRenderer::settleLevel(uint32_t templateId, TemplateLevels& levels, LevelStats& levelStats) {
+		levels.frame = frameIndex;
+		const uint8_t wanted = assets::detailLevelFor(levels.densities, levelStats.screenPixelsPerMeter);
+		want(templateId, levels.reference); // the fallback of last resort
+		want(templateId, wanted);
+
+		const std::optional<uint8_t> level = assets::nearestReadyLevel(levels.readyMask, wanted);
+		levels.drawSlot = level.has_value() ? slotIndex(templateId, *level) : kNoSlot;
+		levels.use = kNoUse;
+		if (!level.has_value()) {
+			return;
+		}
+		MeshSlot& slot = meshSlots[levels.drawSlot];
+		slot.lastDrawnFrame = frameIndex;
+		levels.boundsMin = slot.boundsMin;
+		levels.boundsMax = slot.boundsMax;
+		levels.radius = slot.radius;
+		if (!levels.densities.empty()) {
+			const float density = levels.densities[*level];
+			auto		use = std::find_if(levelStats.uses.begin(), levelStats.uses.end(), [&](const LevelStats::Use& u) {
+				   return u.pixelsPerMeter == density;
+			   });
+			if (use == levelStats.uses.end()) {
+				use = levelStats.uses.insert(levelStats.uses.end(), LevelStats::Use{.pixelsPerMeter = density});
+			}
+			levels.use = static_cast<uint32_t>(use - levelStats.uses.begin());
+		}
+	}
+
 	void InstancedEntityRenderer::emitSorted(const std::vector<assets::DepthSortItem>& items, const assets::RenderContext& ctx, RenderStats& stats) {
 		// GL state note: Primitives::drawInstanced() sets up its own GL state internally,
 		// so we don't need to carry state from the baked path here.
@@ -185,103 +216,16 @@ namespace worldview {
 		animIndices.clear();
 		uint32_t animVertexBase = 0;
 
-		// Classify every entity and ask for the level the camera's density picks for each
-		// instanced template, then take what the level builder finished and upload within budget.
-		itemBounds.resize(items.size());
-		for (size_t i = 0; i < items.size(); ++i) {
-			const assets::DepthSortItem& item = items[i];
-			ItemBounds&					 bounds = itemBounds[i];
-			bounds.kind = ItemKind::Skip;
-			const assets::PlacedEntity& entity = *item.entity;
-			const auto*					templateMesh = templateCache.get(entity.templateId);
-			if (templateMesh == nullptr) {
-				continue;
-			}
-			if (item.isAnimated && entity.partTransforms != nullptr && !entity.partTransforms->empty() && !templateMesh->parts.empty()) {
-				bounds.kind = ItemKind::Animated;
-				continue;
-			}
-			TemplateLevels& levels = levelsOf(entity.templateId);
-			if (levels.wantedFrame != frameIndex) {
-				levels.wantedFrame = frameIndex;
-				levels.wanted = assets::detailLevelFor(levels.densities, scale);
-				want(entity.templateId, levels.reference, *templateMesh); // the fallback of last resort
-				want(entity.templateId, levels.wanted, *templateMesh);
-			}
-			bounds.kind = ItemKind::Instanced;
-		}
-		levelBuilder.endFrame();
+		// Take what the level builder finished and the reference meshes asked for last frame and
+		// upload them within budget first, so the walk below draws every level that is ready: a
+		// level first wanted in this frame's walk draws from the next frame, and its template draws
+		// the nearest ready level until then.
 		collectAndUpload();
 
-		// Bound every instanced entity on the screen by the level it draws: the wanted one when
-		// it is on the GPU, else the nearest that is.
-		LevelStats levelStats{.screenPixelsPerMeter = scale};
+		// Every slot a template draws is Ready, so it exists now; a slot the walk makes isn't drawn this frame.
+		LevelStats			   levelStats{.screenPixelsPerMeter = scale};
 		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
 		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, static_cast<uint32_t>(meshSlots.size()));
-		for (size_t i = 0; i < items.size(); ++i) {
-			ItemBounds& bounds = itemBounds[i];
-			if (bounds.kind != ItemKind::Instanced) {
-				continue;
-			}
-			const assets::PlacedEntity& entity = *items[i].entity;
-			TemplateLevels&				levels = templateLevels[entity.templateId];
-			if (levels.drawFrame != frameIndex) {
-				levels.drawFrame = frameIndex;
-				const std::optional<uint8_t> level = assets::nearestReadyLevel(levels.readyMask, levels.wanted);
-				levels.drawSlot = level.has_value() ? std::optional<uint32_t>(slotIndex(entity.templateId, *level)) : std::nullopt;
-				levels.use = kNoUse;
-				if (level.has_value()) {
-					meshSlots[*levels.drawSlot].lastDrawnFrame = frameIndex;
-				}
-				if (level.has_value() && !levels.densities.empty()) {
-					const float density = levels.densities[*level];
-					auto		use = std::find_if(levelStats.uses.begin(), levelStats.uses.end(), [&](const LevelStats::Use& u) {
-						   return u.pixelsPerMeter == density;
-					   });
-					if (use == levelStats.uses.end()) {
-						use = levelStats.uses.insert(levelStats.uses.end(), LevelStats::Use{.pixelsPerMeter = density});
-					}
-					levels.use = static_cast<uint32_t>(use - levelStats.uses.begin());
-				}
-			}
-			if (!levels.drawSlot.has_value()) {
-				bounds.kind = ItemKind::Skip;
-				continue;
-			}
-			bounds.slot = *levels.drawSlot;
-			const MeshSlot& slot = meshSlots[bounds.slot];
-			if (levels.use != kNoUse) {
-				++levelStats.uses[levels.use].instances;
-			}
-
-			// The shader places a vertex at position + rotate(vertex * scale), and the camera
-			// maps world to screen by scale and offset alone.
-			const Foundation::Vec2 position{entity.position.x, entity.position.y};
-			bounds.instance = Renderer::InstanceData(position, entity.rotation, entity.scale, entity.colorTint);
-			Foundation::Vec2	   worldMin;
-			Foundation::Vec2	   worldMax;
-			if (entity.rotation == 0.0F) {
-				const Foundation::Vec2 a = slot.boundsMin * entity.scale;
-				const Foundation::Vec2 b = slot.boundsMax * entity.scale;
-				worldMin = position + Foundation::Vec2{std::min(a.x, b.x), std::min(a.y, b.y)};
-				worldMax = position + Foundation::Vec2{std::max(a.x, b.x), std::max(a.y, b.y)};
-			} else {
-				const float r = slot.radius * std::abs(entity.scale);
-				worldMin = position - Foundation::Vec2{r, r};
-				worldMax = position + Foundation::Vec2{r, r};
-			}
-			const Foundation::Vec2 pixelMin = (worldMin * scale) + screenOffset;
-			const Foundation::Vec2 pixelMax = (worldMax * scale) + screenOffset;
-			bounds.cells = planner.cellsOf(pixelMin, pixelMax);
-			bounds.small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
-		}
-		std::sort(levelStats.uses.begin(), levelStats.uses.end(), [](const LevelStats::Use& a, const LevelStats::Use& b) {
-			return a.pixelsPerMeter < b.pixelsPerMeter;
-		});
-		levelStats.pendingRequests = static_cast<uint32_t>(levelBuilder.pending() + uploadQueue.size());
-		lastLevelStats = std::move(levelStats);
-		evictStale();
-
 		runCount = 0;
 
 		// drawInstanced draws immediately; the CPU triangle batch only draws when the
@@ -311,16 +255,6 @@ namespace worldview {
 			}
 		};
 
-		auto addInstanced = [&](const ItemBounds& bounds) {
-			const uint32_t r = planner.place(bounds.slot, bounds.cells, bounds.small);
-			if (r == runCount) {
-				if (runCount == runs.size()) {
-					runs.emplace_back();
-				}
-				runs[runCount++].slot = bounds.slot;
-			}
-			runs[r].instances.push_back(bounds.instance);
-		};
 		auto flushAnim = [&]() {
 			if (animIndices.empty()) {
 				return;
@@ -374,9 +308,10 @@ namespace worldview {
 			Renderer::Primitives::flush(); // draw at this sorted position
 		};
 
+		// One walk of the stream: each upright is classified, bounded on the screen by the level its
+		// template draws this frame, and placed in a run as it comes.
 		bool outlineInjected = false;
-		for (size_t i = 0; i < items.size(); ++i) {
-			const assets::DepthSortItem& item = items[i];
+		for (const assets::DepthSortItem& item : items) {
 			// Inject the outline right before the first entity strictly nearer than it,
 			// so everything at-or-behind its depth draws first (and it occludes them),
 			// and everything nearer draws after (occluding it).
@@ -387,24 +322,67 @@ namespace worldview {
 				outlineInjected = true;
 			}
 
-			const ItemBounds&			bounds = itemBounds[i];
-			const assets::PlacedEntity& entity = *item.entity;
-			if (bounds.kind == ItemKind::Instanced) {
-				flushAnim(); // draw any pending anim behind this entity
-				addInstanced(bounds);
-				stats.entities++;
-			} else if (bounds.kind == ItemKind::Animated) {
+			const assets::Upright& upright = *item.upright;
+			const uint32_t		   templateId = upright.templateId;
+			TemplateLevels&		   levels =
+				  templateId < templateLevels.size() && templateLevels[templateId].resolved ? templateLevels[templateId] : levelsOf(templateId);
+			const renderer::TessellatedMesh* templateMesh = levels.mesh;
+			if (templateMesh == nullptr) {
+				continue;
+			}
+			if (upright.isAnimated && !templateMesh->parts.empty()) {
 				// Animated entities carry per-part transforms; they can't be GPU-instanced
 				// (each has unique deformed geometry), so emit them on the CPU triangle path.
 				flushRuns(); // draw the open runs behind this actor
-				const auto* templateMesh = templateCache.get(entity.templateId);
 				// Keep the CPU batch inside the 16-bit index space.
 				if (animVertexBase + static_cast<uint32_t>(templateMesh->vertices.size()) > 65535U) {
 					flushAnim();
 				}
-				emitAnimated(entity, templateMesh, camX, camY, scale, halfViewW, halfViewH, animVertexBase);
+				emitAnimated(*upright.entity, templateMesh, camX, camY, scale, halfViewW, halfViewH, animVertexBase);
 				stats.entities++;
+				continue;
 			}
+
+			if (levels.frame != frameIndex) {
+				settleLevel(templateId, levels, levelStats);
+			}
+			if (levels.drawSlot == kNoSlot) {
+				continue;
+			}
+			if (levels.use != kNoUse) {
+				++levelStats.uses[levels.use].instances;
+			}
+
+			// The shader places a vertex at position + rotate(vertex * scale), and the camera
+			// maps world to screen by scale and offset alone.
+			const Foundation::Vec2 position{upright.position.x, upright.position.y};
+			Foundation::Vec2	   worldMin;
+			Foundation::Vec2	   worldMax;
+			if (upright.rotation == 0.0F) {
+				const Foundation::Vec2 a = levels.boundsMin * upright.scale;
+				const Foundation::Vec2 b = levels.boundsMax * upright.scale;
+				worldMin = position + Foundation::Vec2{std::min(a.x, b.x), std::min(a.y, b.y)};
+				worldMax = position + Foundation::Vec2{std::max(a.x, b.x), std::max(a.y, b.y)};
+			} else {
+				const float r = levels.radius * std::abs(upright.scale);
+				worldMin = position - Foundation::Vec2{r, r};
+				worldMax = position + Foundation::Vec2{r, r};
+			}
+			const Foundation::Vec2 pixelMin = (worldMin * scale) + screenOffset;
+			const Foundation::Vec2 pixelMax = (worldMax * scale) + screenOffset;
+			const bool			   small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
+
+			flushAnim(); // draw any pending anim behind this entity
+			const uint32_t slot = levels.drawSlot;
+			const uint32_t r = planner.place(slot, planner.cellsOf(pixelMin, pixelMax), small);
+			if (r == runCount) {
+				if (runCount == runs.size()) {
+					runs.emplace_back();
+				}
+				runs[runCount++].slot = slot;
+			}
+			runs[r].instances.emplace_back(position, upright.rotation, upright.scale, upright.colorTint);
+			stats.entities++;
 		}
 
 		flushRuns();
@@ -413,6 +391,14 @@ namespace worldview {
 		if (!outlineInjected) {
 			drawOutline(); // frontmost selection: draw last, on top of everything
 		}
+
+		levelBuilder.endFrame();
+		std::sort(levelStats.uses.begin(), levelStats.uses.end(), [](const LevelStats::Use& a, const LevelStats::Use& b) {
+			return a.pixelsPerMeter < b.pixelsPerMeter;
+		});
+		levelStats.pendingRequests = static_cast<uint32_t>(levelBuilder.pending() + uploadQueue.size());
+		lastLevelStats = std::move(levelStats);
+		evictStale();
 	}
 
 } // namespace worldview

@@ -8,6 +8,7 @@
 #include <glm/common.hpp>
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 namespace assets {
@@ -48,6 +49,19 @@ namespace assets {
 		return meshMaxLocalY;
 	}
 
+	Upright uprightOf(const PlacedEntity& entity) {
+		return {
+			.anchorY = entity.anchorY,
+			.position = entity.position,
+			.rotation = entity.rotation,
+			.scale = entity.scale,
+			.colorTint = entity.colorTint,
+			.templateId = entity.templateId,
+			.isAnimated = entity.partTransforms != nullptr && !entity.partTransforms->empty(),
+			.entity = &entity,
+		};
+	}
+
 	void sortByAnchorY(std::vector<DepthSortItem>& items) {
 		std::stable_sort(items.begin(), items.end(), [](const DepthSortItem& a, const DepthSortItem& b) {
 			return a.anchorY < b.anchorY;
@@ -68,16 +82,18 @@ namespace assets {
 		constexpr float kEverywhere = std::numeric_limits<float>::max();
 		for (const PlacedEntity* entity : index.queryRect(-kEverywhere, -kEverywhere, kEverywhere, kEverywhere)) {
 			if (!tallOnly || entity->isTallOccluder) {
-				chunk.statics.push_back({entity->anchorY, entity->position, entity});
+				chunk.statics.push_back(uprightOf(*entity));
 			}
 		}
-		std::stable_sort(chunk.statics.begin(), chunk.statics.end(), [](const Static& a, const Static& b) {
+		std::stable_sort(chunk.statics.begin(), chunk.statics.end(), [](const Upright& a, const Upright& b) {
 			return a.anchorY < b.anchorY;
 		});
 		chunk.min = chunk.max = chunk.statics.empty() ? glm::vec2{0.0F, 0.0F} : chunk.statics.front().position;
-		for (const Static& s : chunk.statics) {
+		chunk.anchorReach = 0.0F;
+		for (const Upright& s : chunk.statics) {
 			chunk.min = glm::min(chunk.min, s.position);
 			chunk.max = glm::max(chunk.max, s.position);
+			chunk.anchorReach = std::max(chunk.anchorReach, std::abs(s.anchorY - s.position.y));
 		}
 		return chunk;
 	}
@@ -116,9 +132,19 @@ namespace assets {
 				chunk.min.y > vis.maxY) {
 				continue;
 			}
-			for (const Static& s : chunk.statics) {
-				if (s.position.x >= vis.minX && s.position.x <= vis.maxX && s.position.y >= vis.minY && s.position.y <= vis.maxY) {
-					out.push_back({s.anchorY, s.entity, false});
+			// A static in view has its anchorY within anchorReach of the view's rows, and the list
+			// is sorted by anchorY, so only that stretch of it is culled. The meter of slack covers
+			// rounding in anchorReach.
+			const float reach = chunk.anchorReach + 1.0F;
+			const auto	first = std::lower_bound(chunk.statics.begin(), chunk.statics.end(), vis.minY - reach, [](const Upright& s, float y) {
+				 return s.anchorY < y;
+			 });
+			const auto	last = std::upper_bound(first, chunk.statics.end(), vis.maxY + reach, [](float y, const Upright& s) {
+				 return y < s.anchorY;
+			 });
+			for (auto s = first; s != last; ++s) {
+				if (s->position.x >= vis.minX && s->position.x <= vis.maxX && s->position.y >= vis.minY && s->position.y <= vis.maxY) {
+					out.push_back({s->anchorY, &*s});
 				}
 			}
 			segmentEnds.push_back(out.size());
@@ -129,15 +155,18 @@ namespace assets {
 		// on their own and merged after every chunk, so they keep their place behind statics
 		// of equal anchorY.
 		const size_t staticCount = out.size();
+		dynamics.clear();
 		if (ctx.dynamicEntities != nullptr) {
 			for (const auto& entity : *ctx.dynamicEntities) {
 				if (entity.position.x < vis.minX || entity.position.x > vis.maxX || entity.position.y < vis.minY ||
 					entity.position.y > vis.maxY) {
 					continue;
 				}
-				const bool animated = entity.partTransforms != nullptr && !entity.partTransforms->empty();
-				out.push_back({entity.anchorY, &entity, animated});
+				dynamics.push_back(uprightOf(entity));
 			}
+		}
+		for (const Upright& dynamic : dynamics) {
+			out.push_back({dynamic.anchorY, &dynamic});
 		}
 		const auto dynamicBegin = out.begin() + static_cast<std::ptrdiff_t>(staticCount);
 		const auto byAnchor = [](const DepthSortItem& a, const DepthSortItem& b) { return a.anchorY < b.anchorY; };
