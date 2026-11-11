@@ -217,8 +217,7 @@ namespace worldview {
 		// it is on the GPU, else the nearest that is.
 		LevelStats levelStats{.screenPixelsPerMeter = scale};
 		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
-		overlapAll.beginFrame(ctx.viewportWidth, ctx.viewportHeight);
-		overlapLarge.beginFrame(ctx.viewportWidth, ctx.viewportHeight);
+		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, static_cast<uint32_t>(meshSlots.size()));
 		for (size_t i = 0; i < items.size(); ++i) {
 			ItemBounds& bounds = itemBounds[i];
 			if (bounds.kind != ItemKind::Instanced) {
@@ -273,7 +272,7 @@ namespace worldview {
 			}
 			const Foundation::Vec2 pixelMin = (worldMin * scale) + screenOffset;
 			const Foundation::Vec2 pixelMax = (worldMax * scale) + screenOffset;
-			bounds.cells = overlapAll.cellsOf(pixelMin, pixelMax);
+			bounds.cells = planner.cellsOf(pixelMin, pixelMax);
 			bounds.small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
 		}
 		std::sort(levelStats.uses.begin(), levelStats.uses.end(), [](const LevelStats::Use& a, const LevelStats::Use& b) {
@@ -283,9 +282,7 @@ namespace worldview {
 		lastLevelStats = std::move(levelStats);
 		evictStale();
 
-		latestRunOfSlot.assign(meshSlots.size(), 0);
 		runCount = 0;
-		firstOpenRun = 0;
 
 		// drawInstanced draws immediately; the CPU triangle batch only draws when the
 		// BatchRenderer is flushed. To keep depth order we draw every open run before an
@@ -293,7 +290,7 @@ namespace worldview {
 		// out (drawTriangles + flush) before the next instanced entity opens or joins a run
 		// (so the anim sits behind it). Only one of the two kinds is ever pending at a time.
 		auto flushRuns = [&]() {
-			for (uint32_t r = firstOpenRun; r < runCount; ++r) {
+			for (const uint32_t r : planner.close()) {
 				Run&	   run = runs[r];
 				MeshSlot&  slot = meshSlots[run.slot];
 				const auto count = static_cast<uint32_t>(run.instances.size());
@@ -312,34 +309,17 @@ namespace worldview {
 				}
 				run.instances.clear();
 			}
-			firstOpenRun = runCount;
 		};
 
-		// An entity joins its mesh's latest open run only if no entity in a run after
-		// that one shares a grid cell with it: those are drawn after the run but sit behind
-		// this entity in depth, so the two must not overlap. Otherwise it opens a new run.
-		// A small entity checks only the large entities' grid, so small pairs may swap.
 		auto addInstanced = [&](const ItemBounds& bounds) {
-			const uint32_t latestCovering = (bounds.small ? overlapLarge : overlapAll).latest(bounds.cells);
-			uint32_t	   runKey = latestRunOfSlot[bounds.slot]; // 1 + run index
-			const bool joinable = runKey > firstOpenRun && latestCovering <= runKey;
-			if (!joinable) {
-				// Its mesh has an open run, and something drawn after that run lies under it.
-				stats.uprightOverlapSplits += runKey > firstOpenRun ? 1 : 0;
+			const uint32_t r = planner.place(bounds.slot, bounds.cells, bounds.small);
+			if (r == runCount) {
 				if (runCount == runs.size()) {
 					runs.emplace_back();
 				}
-				runs[runCount].slot = bounds.slot;
-				runKey = ++runCount;
-				latestRunOfSlot[bounds.slot] = runKey;
+				runs[runCount++].slot = bounds.slot;
 			}
-			runs[runKey - 1].instances.push_back(bounds.instance);
-			// A small entity is only tested against large ones, so a later run of a small one may
-			// already be in its cells; mark keeps the later run.
-			overlapAll.mark(bounds.cells, runKey);
-			if (!bounds.small) {
-				overlapLarge.mark(bounds.cells, runKey);
-			}
+			runs[r].instances.push_back(bounds.instance);
 		};
 		auto flushAnim = [&]() {
 			if (animIndices.empty()) {
@@ -429,6 +409,7 @@ namespace worldview {
 
 		flushRuns();
 		flushAnim();
+		stats.uprightOverlapSplits += planner.splits();
 		if (!outlineInjected) {
 			drawOutline(); // frontmost selection: draw last, on top of everything
 		}

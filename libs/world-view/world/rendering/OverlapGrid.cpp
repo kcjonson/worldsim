@@ -22,10 +22,10 @@ namespace worldview {
 	}
 
 	OverlapGrid::Cells OverlapGrid::cellsOf(Foundation::Vec2 minPixels, Foundation::Vec2 maxPixels) const {
-		const float x0 = std::floor((minPixels.x - kPadPixels) / kCellPixels);
-		const float y0 = std::floor((minPixels.y - kPadPixels) / kCellPixels);
-		const float x1 = std::floor((maxPixels.x + kPadPixels) / kCellPixels);
-		const float y1 = std::floor((maxPixels.y + kPadPixels) / kCellPixels);
+		const float x0 = std::floor((minPixels.x + kTolerancePixels) / kCellPixels);
+		const float y0 = std::floor((minPixels.y + kTolerancePixels) / kCellPixels);
+		const float x1 = std::floor((maxPixels.x - kTolerancePixels) / kCellPixels);
+		const float y1 = std::floor((maxPixels.y - kTolerancePixels) / kCellPixels);
 		const auto	lastX = static_cast<float>(width - 1);
 		const auto	lastY = static_cast<float>(height - 1);
 		if (x1 < 0.0F || y1 < 0.0F || x0 > lastX || y0 > lastY || !(x0 <= x1) || !(y0 <= y1)) {

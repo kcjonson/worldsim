@@ -10,8 +10,8 @@
 #include "assets/placement/RenderContext.h"
 #include "assets/placement/WorldDepthSort.h"
 #include "primitives/InstanceData.h"
-#include "world/rendering/OverlapGrid.h"
 #include "world/rendering/RenderStats.h"
+#include "world/rendering/RunPlanner.h"
 #include "world/rendering/SelectionOutline.h"
 #include "world/rendering/TemplateLevelBuilder.h"
 #include "world/rendering/TemplateMeshCache.h"
@@ -35,11 +35,10 @@ namespace worldview {
 /// entities) so that every pair of entities whose drawn areas can overlap is
 /// submitted in depth order, except two that are both a few pixels across.
 /// Non-animated entities are gathered into runs of one template mesh, each one
-/// GPU-instanced draw: an entity joins its mesh's latest
-/// open run unless something in a later run may overlap it, so entities that
-/// cannot touch reorder freely and variants interleaved by depth still share a
-/// draw. Animated colonists (per-part deformed) and the selection outline draw on
-/// the CPU path at their sorted position, after every run opened before them.
+/// GPU-instanced draw, which a RunPlanner picks: entities that cannot touch reorder
+/// freely, so variants interleaved by depth still share a draw. Animated colonists
+/// (per-part deformed) and the selection outline draw on the CPU path at their
+/// sorted position, after every run opened before them.
 ///
 /// A template whose def declares <detailLevels> draws at the level the camera's density
 /// picks (assets::detailLevelFor). The registry holds the reference level's mesh; the
@@ -158,24 +157,14 @@ class InstancedEntityRenderer {
 	};
 	std::vector<ItemBounds> itemBounds;
 
-	// This frame's runs, drawn in index order. Runs from firstOpenRun on are open:
-	// not yet drawn, so a later entity can still join one.
+	// This frame's runs, by the index the planner gave them; the planner says the order they draw in.
 	struct Run {
 		uint32_t							slot = 0;
 		std::vector<Renderer::InstanceData> instances;
 	};
 	std::vector<Run> runs;
 	uint32_t		 runCount = 0;
-	uint32_t		 firstOpenRun = 0;
-
-	// Per mesh slot, 1 + the index of its latest run this frame (0: none yet).
-	std::vector<uint32_t> latestRunOfSlot;
-
-	// Screen grids: per cell, the latest run holding an entity whose bounds touch the cell; every
-	// entity marks overlapAll and only those over kUnorderedFootprintPixels mark overlapLarge.
-	// A large entity is tested against overlapAll, a small one against overlapLarge.
-	OverlapGrid overlapAll;
-	OverlapGrid overlapLarge;
+	RunPlanner		 planner;
 
 	// Memoized reference template meshes (by template id)
 	TemplateMeshCache templateCache;
