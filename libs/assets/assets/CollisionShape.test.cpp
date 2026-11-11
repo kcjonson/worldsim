@@ -249,7 +249,7 @@ TEST(CollisionShapeTest, OakTreeRectFollowsTrunkByAgeClass) {
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeOak");
 	ASSERT_NE(def, nullptr);
 	ASSERT_EQ(def->ageClasses.size(), 3U);
-	const float halves[] = {0.04F, 0.1F, 0.16F}; // sapling, mature, veteran
+	const float halves[] = {0.125F, 0.225F, 0.36F}; // sapling, mature, veteran
 	for (uint8_t a = 0; a < 3; ++a) {
 		EXPECT_EQ(def->collisionFor(a).type, CollisionShapeType::Rect);
 		EXPECT_NEAR(def->collisionFor(a).halfExtentsMeters.x, halves[a], 1e-5F);
@@ -309,7 +309,7 @@ TEST(CollisionShapeTest, MapleTreeRectFollowsTrunkByAgeClass) {
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeMaple");
 	ASSERT_NE(def, nullptr);
 	ASSERT_EQ(def->ageClasses.size(), 3U);
-	const float halves[] = {0.03F, 0.075F, 0.11F}; // sapling, mature, veteran
+	const float halves[] = {0.095F, 0.17F, 0.25F}; // sapling, mature, veteran
 	for (uint8_t a = 0; a < 3; ++a) {
 		EXPECT_EQ(def->collisionFor(a).type, CollisionShapeType::Rect);
 		EXPECT_NEAR(def->collisionFor(a).halfExtentsMeters.x, halves[a], 1e-5F);

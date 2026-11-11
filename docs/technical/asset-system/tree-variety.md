@@ -220,7 +220,7 @@ The growth numbers are starting values. Published parameter sets exist for oak, 
 
 ### R9 Scale and density
 
-Crown width in metres, drawn by the generator at this size (D3). Not applied yet: oak and maple keep today's 1.6 m and 1.2 m mature crowns, and their `crownWidth` curves run through this table's ratios at that scale, so the rescale is a change of numbers.
+Crown width in metres, drawn by the generator at this size (D3). Applied for oak and maple in WOR-664 (2026-11-10): 2.25x the first trees, with the sapling raised to 0.62x of mature (oak 2.25, maple 1.7) and trunks 2.25x (oak 0.25, 0.45, 0.72; maple 0.19, 0.34, 0.5), after Kevin picked the 2.25x mockup. The drawn crown reads about 0.7 of `crownWidth` across, as before.
 
 | | Sapling | Mature | Veteran | Mature trunk width |
 |---|---|---|---|---|
@@ -233,12 +233,12 @@ Crown width in metres, drawn by the generator at this size (D3). Not applied yet
 - At the default zoom (24 px per metre) a mature oak crown is 86 px, a veteran 118 px, a colonist 24 px tall.
 - Birch is narrow but tall: its trunk is drawn longer than maple's, so on screen it stands about as high.
 - Pine and palm get the new sizes by changing their def params and spacing. Their generators are not touched.
-- TemperateDeciduousForest targets 35% canopy cover, within 5 points, at about 55 trees per 1,000 m2, measured in the grove field's normal band with R11's view. Starting spacing: oak 4.5 m, maple 3.5 m, birch 2.2 m, then spawn chances tuned to the target.
+- Superseded 2026-11-10 by Kevin's pick from the density mockups: inside a stand about 80 trees per 1,000 m2, about 25% crown cover on screen, glades open, denser cores, a looser edge, and a few small gaps. As built: `<samplePitch>2</samplePitch>` (a try every 2 m), `<crownSpacing>0.7</crownSpacing>` (any two crown-spaced trees stand at least 0.7 x (r1 + r2) x (0.5 + 0.5 x rSmall / rLarge) apart, r from each template's drawn width, so equals keep to 0.7 of touching and a small tree may stand under a big one's edge; a thicket core tightens it to 0.55 of that), a same-def `minDistance` of 1 m, spawn chance 0.28 each, and age weights 0.15, 0.6, 0.25. The grove field's glade ramp runs 0.25 to 0.65, so density climbs from edge to core, and a gap field (the same noise at 22 m) opens gaps over about 8% of a stand. Measured on the quickstart landing: 78 trees per 1,000 m2 over the 100 m square, 95 in an all-forest 60 m square; R11's cover (ground silhouettes) 18% and 19%.
 - The grove field stays. Glades thin as they do today. Thickets may reach 55% cover, above D10's ceiling, on the grounds that they are rare, read as young growth (R1), and crowns go see-through (R10). Lower the thicket tightening if 55% is exceeded.
-- Spacing between species is new: a `spaced` def also rejects a spot within 1.5 m of any member of its group (`trees`), so trunks of different species never sit on top of each other. This is a rejection only, with no extra random draws. Making `<avoids>` and `<affinity>` strengths work as documented would change every biome's placement and is filed separately.
+- Spacing between species is the crown rule above, across defs: a rejection only, with no extra random draws. Oak and maple dropped their `<avoids group="trees">`, which had no effect. Making `<avoids>` and `<affinity>` strengths work as documented would change every biome's placement and is filed separately.
 - Spacing across chunk seams is an existing open bug and stays out of scope.
 - Other forest biomes are tuned to the same target, with the 40% ceiling of D10. Grassland keeps its count of lone trees.
-- Base yield and durability per tree rise so wood per 1,000 m2 of forest, and wood per unit of chopping work, stay within 10% of today's. With about half the trees that is roughly 1.8x per tree. Today's is 800 wood per 1,000 m2 at the landing (R11's view, the 100 m square above).
+- Base yield and durability per tree rise so wood per 1,000 m2 of forest, and wood per unit of chopping work, stay within 10% of today's. Not done yet: yield per tree is unchanged, so the landing square went from 818 to 1,616 wood per 1,000 m2 (1,971 in the all-forest square), about 2x; rebalance in its own task.
 - Collision stays the trunk foot, so colonists walk under crowns.
 
 Left for later: open-grown form (a lone tree's crown is about twice as wide as the same tree in a wood), and splitting trunk from crown in the depth sort so a colonist standing in front of a trunk does not draw over a crown that should be above them.

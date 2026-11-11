@@ -66,4 +66,9 @@ namespace assets::grove {
 		return smooth01(kGladeBandLo, kGladeBandHi, grove);
 	}
 
+	float gapWeight(float worldX, float worldY, uint64_t seed) {
+		constexpr uint64_t kGapSalt = 0x6A9F1E1DULL;
+		return smooth01(kGapBandLo, kGapBandHi, warpedNoise(worldX, worldY, kGapFeatureMeters, seed ^ kGapSalt));
+	}
+
 } // namespace assets::grove

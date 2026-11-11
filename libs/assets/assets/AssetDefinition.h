@@ -381,6 +381,14 @@ namespace assets {
 	struct PlacementParams {
 		std::vector<BiomePlacement> biomes; // Per-biome spawn configuration
 		PlacementScale				scale;
+		// Meters between the spots placement tries (<samplePitch>, 1, 2 or 4): one jittered try per
+		// pitch-sized block, so a def tops out at 1000 / pitch^2 per 1,000 m2 before spawn chance.
+		uint16_t					samplePitch = 4;
+		// Spaced placement also keeps crowns apart (<crownSpacing>, 0 = off): two crown-spaced
+		// instances of any defs stand at least crownSpacing * (r1 + r2) * (0.5 + 0.5 * rSmall / rLarge)
+		// apart, r each one's crown radius, so equals keep to crownSpacing of touching and a small
+		// one may stand under a big one's edge.
+		float						crownSpacing = 0.0F;
 
 		// Entity placement system fields (self-declared groups and relationships)
 		std::vector<std::string>		   groups;		  // Groups this asset belongs to (e.g., "trees", "flowers")

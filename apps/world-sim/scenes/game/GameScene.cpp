@@ -1465,9 +1465,9 @@ namespace {
 		}
 
 		/// Radius (world meters) of the open clearing carved around each colonist's landing spot.
-		/// Generous next to the 0.3 m agent radius so the spawn point and its immediate
-		/// neighbourhood are obstacle-free and the navmesh triangulates open walkable ground there.
-		static constexpr float kLandingClearRadius = 2.5F;
+		/// The party ring plus the widest crown's reach (a veteran oak, 4.9 m across at scale 1.2),
+		/// so no tree left standing hides a colonist under its crown at landing.
+		static constexpr float kLandingClearRadius = 4.5F;
 		/// A party stands on a ring this far from the clearing center.
 		static constexpr float kPartyRingRadius = 1.5F;
 		/// Members never land closer than this, center to center (agent radius 0.3 m).

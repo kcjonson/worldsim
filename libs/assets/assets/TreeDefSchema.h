@@ -34,6 +34,14 @@ namespace assets {
 	/// The def's <placement><scale>, or nullopt when it has none or it is refused (with an issue).
 	std::optional<PlacementScale> readPlacementScale(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues);
 
+	/// The def's <placement><samplePitch> (1, 2 or 4, so it divides a chunk), or nullopt when it has
+	/// none or it is refused (with an issue).
+	std::optional<uint16_t> readSamplePitch(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues);
+
+	/// The def's <placement><crownSpacing> (above 0, at most 2), or nullopt when it has none or it is
+	/// refused (with an issue).
+	std::optional<float> readCrownSpacing(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues);
+
 	/// The def's <detailLevels> (DetailLevels.h), a comma-separated list of the screen densities in pixels
 	/// a meter its generator cuts a mesh for: positive, strictly ascending, at most kMaxDetailLevels, on a
 	/// procedural def. Empty when it has none or the list is refused (with an issue), so the def has one mesh.

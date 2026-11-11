@@ -135,6 +135,34 @@ namespace assets {
 		return PlacementScale{static_cast<float>(*min), static_cast<float>(*max)};
 	}
 
+	std::optional<uint16_t> readSamplePitch(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues) {
+		const pugi::xml_node node = defNode.child("placement").child("samplePitch");
+		if (!node) {
+			return std::nullopt;
+		}
+		const std::string text = node.text().as_string();
+		if (text != "1" && text != "2" && text != "4") {
+			issues.push_back({"samplePitch", "<samplePitch> must be 1, 2 or 4 meters", text});
+			return std::nullopt;
+		}
+		return static_cast<uint16_t>(text[0] - '0');
+	}
+
+	std::optional<float> readCrownSpacing(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues) {
+		const pugi::xml_node node = defNode.child("placement").child("crownSpacing");
+		if (!node) {
+			return std::nullopt;
+		}
+		const std::string text = node.text().as_string();
+		char*			  end = nullptr;
+		const double	  value = std::strtod(text.c_str(), &end);
+		if (end == text.c_str() || *end != '\0' || !std::isfinite(value) || value <= 0.0 || value > 2.0) {
+			issues.push_back({"crownSpacing", "<crownSpacing> must be a number above 0 and at most 2", text});
+			return std::nullopt;
+		}
+		return static_cast<float>(value);
+	}
+
 	std::vector<float> readDetailLevels(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues) {
 		const pugi::xml_node node = defNode.child("detailLevels");
 		if (!node) {

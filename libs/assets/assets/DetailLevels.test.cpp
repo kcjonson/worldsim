@@ -19,7 +19,7 @@ using namespace assets;
 
 namespace {
 
-	constexpr std::array<float, 5> kOakLevels = {2.0F, 4.0F, 8.0F, 24.0F, 80.0F};
+	constexpr std::array<float, 6> kOakLevels = {2.0F, 4.0F, 8.0F, 24.0F, 40.0F, 80.0F};
 	constexpr float				   kGamePixelsPerMeter = 8.0F; // GameScene's
 
 	std::vector<float> parse(const char* xml, std::vector<TreeDefIssue>& issues) {
@@ -47,7 +47,7 @@ namespace {
 
 // Every camera zoom step, at the game's 8 px/m: the highest level at or below the density, else the lowest.
 TEST(DetailLevelsTest, EveryZoomStepPicksItsLevel) {
-	constexpr std::array<float, 13> kExpected = {2, 4, 4, 8, 8, 8, 24, 24, 24, 24, 80, 80, 80};
+	constexpr std::array<float, 13> kExpected = {2, 4, 4, 8, 8, 8, 24, 24, 40, 40, 80, 80, 80};
 	static_assert(world::kZoomLevels.size() == kExpected.size());
 	for (size_t i = 0; i < world::kZoomLevels.size(); ++i) {
 		const float density = kGamePixelsPerMeter * world::kZoomLevels[i];
@@ -70,7 +70,7 @@ TEST(DetailLevelsTest, NearestReadyLevelPrefersTheFinerOfATie) {
 TEST(DetailLevelsTest, SchemaReadsAscendingDensitiesOnAProceduralDef) {
 	std::vector<TreeDefIssue> issues;
 	EXPECT_EQ(
-		parse("<AssetDef><assetType>procedural</assetType><detailLevels>2, 4,8 , 24,80</detailLevels></AssetDef>", issues),
+		parse("<AssetDef><assetType>procedural</assetType><detailLevels>2, 4,8 , 24,40, 80</detailLevels></AssetDef>", issues),
 		std::vector<float>(kOakLevels.begin(), kOakLevels.end())
 	);
 	EXPECT_TRUE(issues.empty());

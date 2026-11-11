@@ -304,7 +304,7 @@ asset:addChild(myLeaf)
 
 ```lua
 local age = lib.num.clamp(getFloat("age", ({ sapling = 0.15, mature = 0.55, veteran = 0.9 })[ageClass] or 0.55), 0, 1)
-local trunkWidth = lib.num.curve(lib.num.curveParam("trunkWidth", "0.15:0.08, 0.55:0.2, 0.9:0.32"), age)
+local trunkWidth = lib.num.curve(lib.num.curveParam("trunkWidth", "0.15:0.18, 0.55:0.45, 0.9:0.72"), age)
 asset:setCollisionRect(trunkWidth / 2, trunkWidth / 2, 0, 0) -- from the age only, never the variant
 
 lib.random.stream(3)          -- each stage draws from its own stream

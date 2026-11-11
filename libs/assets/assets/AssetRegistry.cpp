@@ -977,6 +977,12 @@ namespace assets {
 			if (const std::optional<PlacementScale> scale = readPlacementScale(defNode, treeIssues); scale.has_value()) {
 				def.placement.scale = *scale;
 			}
+			if (const std::optional<uint16_t> pitch = readSamplePitch(defNode, treeIssues); pitch.has_value()) {
+				def.placement.samplePitch = *pitch;
+			}
+			if (const std::optional<float> crown = readCrownSpacing(defNode, treeIssues); crown.has_value()) {
+				def.placement.crownSpacing = *crown;
+			}
 			def.detailLevels = readDetailLevels(defNode, treeIssues);
 			for (const TreeDefIssue& issue : treeIssues) {
 				LOG_WARNING(

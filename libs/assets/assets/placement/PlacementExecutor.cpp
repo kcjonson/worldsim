@@ -17,6 +17,24 @@
 
 namespace assets {
 
+	namespace {
+
+		// Half the mesh's width across the view: for a tree, its crown's radius.
+		float crownRadius(const renderer::TessellatedMesh* mesh) {
+			if (mesh == nullptr || mesh->vertices.empty()) {
+				return 0.0F;
+			}
+			float minX = mesh->vertices.front().x;
+			float maxX = minX;
+			for (const auto& v : mesh->vertices) {
+				minX = std::min(minX, v.x);
+				maxX = std::max(maxX, v.x);
+			}
+			return 0.5F * (maxX - minX);
+		}
+
+	} // namespace
+
 	PlacementExecutor::PlacementExecutor(const AssetRegistry& registry)
 		: m_registry(registry) {}
 
@@ -104,8 +122,9 @@ namespace assets {
 		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
 
 		// Process entity types in dependency order
+		CrownRadii crowns;
 		for (const auto& defName : m_spawnOrder) {
-			placeEntityType(defName, context, chunkIndex, adjacentProvider, rng, result.entities);
+			placeEntityType(defName, context, chunkIndex, adjacentProvider, rng, crowns, result.entities);
 		}
 
 		// Initialize resource counts for harvestable entities with resource pools
@@ -138,6 +157,7 @@ namespace assets {
 		SpatialIndex&				  chunkIndex,
 		const IAdjacentChunkProvider* adjacentProvider,
 		std::mt19937&				  rng,
+		CrownRadii&					  crowns,
 		std::vector<PlacedEntity>&	  outEntities
 	) const {
 		const auto* def = m_registry.getDefinition(defName);
@@ -166,18 +186,55 @@ namespace assets {
 		}
 		std::vector<ResolvedTemplate> templates(slotCount);
 
-		// Stamp a placed instance's traits, template, and depth attributes, then file it in
-		// the chunk index and the result list. anchorY + isTallOccluder then ride along on
-		// the frozen index copies for the gather to read directly. Traits draw nothing from rng.
-		auto placeAndRecord = [&](PlacedEntity& entity) {
+		// Stamp a candidate's traits and template from its position (drawing nothing from rng),
+		// so spacing can read its crown before anything is drawn for it.
+		auto resolve = [&](PlacedEntity& entity) -> const ResolvedTemplate& {
 			entity.traits = computeTreeTraits(*def, entity.position, context.worldSeed);
 			ResolvedTemplate& tmpl = templates[classFirstSlot[entity.traits.ageClass] + entity.traits.variant];
 			if (!tmpl.resolved) {
 				tmpl.id = registry.templateId(defName, entity.traits);
-				tmpl.extent = assets::meshYExtent(registry.getTemplate(tmpl.id));
+				const renderer::TessellatedMesh* mesh = registry.getTemplate(tmpl.id);
+				tmpl.extent = assets::meshYExtent(mesh);
 				tmpl.resolved = true;
+				if (def->placement.crownSpacing > 0.0F && tmpl.id != 0) {
+					const float radius = crownRadius(mesh);
+					crowns.byTemplate[tmpl.id] = radius;
+					crowns.largest = std::max(crowns.largest, radius);
+				}
 			}
 			entity.templateId = tmpl.id;
+			return tmpl;
+		};
+
+		// Whether a crown-spaced candidate stands too close to a crown-spaced instance already
+		// in the chunk (PlacementParams::crownSpacing), with the spacing scaled by `tighten`.
+		auto crowded = [&](const PlacedEntity& candidate, float tighten) {
+			const auto found = crowns.byTemplate.find(candidate.templateId);
+			if (found == crowns.byTemplate.end() || found->second <= 0.0F) {
+				return false;
+			}
+			const float r = found->second;
+			const float k = def->placement.crownSpacing * tighten;
+			for (const PlacedEntity* other : chunkIndex.queryRadius(candidate.position, k * (r + crowns.largest))) {
+				const auto otherCrown = crowns.byTemplate.find(other->templateId);
+				if (otherCrown == crowns.byTemplate.end() || otherCrown->second <= 0.0F) {
+					continue;
+				}
+				const float		small = std::min(r, otherCrown->second);
+				const float		large = std::max(r, otherCrown->second);
+				const float		need = k * (r + otherCrown->second) * (0.5F + 0.5F * small / large);
+				const glm::vec2 d = other->position - candidate.position;
+				if (d.x * d.x + d.y * d.y < need * need) {
+					return true;
+				}
+			}
+			return false;
+		};
+
+		// Stamp a placed instance's traits, template, and depth attributes, then file it in
+		// the chunk index and the result list. anchorY + isTallOccluder then ride along on
+		// the frozen index copies for the gather to read directly. Traits draw nothing from rng.
+		auto record = [&](PlacedEntity& entity, const ResolvedTemplate& tmpl) {
 			entity.anchorY = assets::computeAnchorY(
 				entity.position.y, assets::anchorLocalY(def, entity.traits.ageClass, tmpl.extent.maxY), entity.scale
 			);
@@ -207,10 +264,9 @@ namespace assets {
 		std::uniform_real_distribution<float> scaleDist(def->placement.scale.min, def->placement.scale.max);
 		std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
 
-		// Spawn-point stride: sample one tile every N in each dimension. At stride 4
-		// over a 512x512 chunk that's (512/4)^2 = 16,384 candidate tiles (each
-		// jittered within its 4x4 block), down from 262K, while keeping coverage.
-		constexpr uint16_t kTileStride = 4;
+		// Spawn-point stride: one jittered tile per samplePitch-sized block. At the default 4 a
+		// 512x512 chunk tries (512/4)^2 = 16,384 tiles, down from 262K, while keeping coverage.
+		const uint16_t kTileStride = def->placement.samplePitch;
 
 		// Jitter distribution to break up grid pattern (random offset 0 to stride-1)
 		std::uniform_int_distribution<uint16_t> jitterDist(0, kTileStride - 1);
@@ -276,14 +332,15 @@ namespace assets {
 				}
 
 				// Roll for spawn. Spaced flora (trees) sample the grove field: its low tail
-				// thins out into open glades here (via spawn chance); its high tail tightens
-				// spacing into denser thickets below (via minDistance). The middle is normal
-				// dense forest.
+				// thins out into open glades here (via spawn chance), rising to stand cores, and
+				// the gap field opens small gaps inside stands; its high tail tightens spacing
+				// into denser thickets below (via minDistance).
 				float groveG = 0.0F;
 				float effectiveChance = bp->spawnChance;
 				if (bp->distribution == Distribution::Spaced) {
 					groveG = grove::groveValue(tileWorldX, tileWorldY, context.worldSeed);
-					effectiveChance *= grove::kGladeSpawnMin + (1.0F - grove::kGladeSpawnMin) * grove::gladeWeight(groveG);
+					const float open = grove::gladeWeight(groveG) * grove::gapWeight(tileWorldX, tileWorldY, context.worldSeed);
+					effectiveChance *= grove::kGladeSpawnMin + (1.0F - grove::kGladeSpawnMin) * open;
 				}
 				if (chanceDist(rng) >= effectiveChance) {
 					continue; // Spawn chance failed
@@ -328,7 +385,7 @@ namespace assets {
 							entity.scale = scaleDist(rng);
 							entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
-							placeAndRecord(entity);
+							record(entity, resolve(entity));
 						}
 						break;
 					}
@@ -344,15 +401,20 @@ namespace assets {
 						}
 
 						// Enforce minimum spacing against already-placed instances of this
-						// type in the chunk (makes a "spaced" stand pack to a natural canopy
+						// type in the chunk, and crown spacing against every crown-spaced
+						// instance of any type (makes a "spaced" stand pack to a natural canopy
 						// instead of random clumps). In thicket cores (grove field high tail)
-						// the spacing tightens so small patches read denser than the forest.
-						float effMinDist = bp->spacing.minDistance;
-						if (effMinDist > 0.0F) {
-							effMinDist *= 1.0F - grove::kThicketTighten * grove::thicketWeight(groveG);
-							if (chunkIndex.hasNearby(position, effMinDist, defName)) {
-								break;
-							}
+						// both tighten so small patches read denser than the forest.
+						const float tighten = 1.0F - grove::kThicketTighten * grove::thicketWeight(groveG);
+						const float effMinDist = bp->spacing.minDistance * tighten;
+						if (effMinDist > 0.0F && chunkIndex.hasNearby(position, effMinDist, defName)) {
+							break;
+						}
+						PlacedEntity entity;
+						entity.position = position;
+						const ResolvedTemplate& tmpl = resolve(entity);
+						if (crowded(entity, tighten)) {
+							break;
 						}
 
 						// Relationship modifiers (cross-species avoidance/affinity).
@@ -364,14 +426,12 @@ namespace assets {
 						float brightnessVar = colorDist(rng);
 						float brightness = 0.9F + brightnessVar;
 
-						PlacedEntity entity;
 						entity.defName = defName;
-						entity.position = position;
 						entity.rotation = rotationDist(rng);
 						entity.scale = scaleDist(rng);
 						entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
-						placeAndRecord(entity);
+						record(entity, tmpl);
 						break;
 					}
 
@@ -400,7 +460,7 @@ namespace assets {
 						entity.scale = scaleDist(rng);
 						entity.colorTint = glm::vec4(brightness, brightness, brightness, 1.0F);
 
-						placeAndRecord(entity);
+						record(entity, resolve(entity));
 						break;
 					}
 				}
@@ -611,8 +671,9 @@ namespace assets {
 		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
 
 		// Process entity types in dependency order
+		CrownRadii crowns;
 		for (const auto& defName : m_spawnOrder) {
-			placeEntityType(defName, context, result.spatialIndex, adjacentProvider, rng, result.entities);
+			placeEntityType(defName, context, result.spatialIndex, adjacentProvider, rng, crowns, result.entities);
 		}
 
 		result.entitiesPlaced = result.entities.size();

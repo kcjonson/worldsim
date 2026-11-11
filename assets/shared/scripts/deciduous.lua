@@ -15,8 +15,8 @@ local rand = math.random
 local age = clamp(getFloat("age", ({ sapling = 0.15, mature = 0.55, veteran = 0.9 })[ageClass] or 0.55), 0, 1)
 
 -- Sizes in meters, smooth in age. The collision rect follows the trunk foot and nothing random.
-local crownWidth = curve(curveParam("crownWidth", "0.15:0.71, 0.55:1.6, 0.9:2.18"), age)
-local trunkWidth = curve(curveParam("trunkWidth", "0.15:0.08, 0.55:0.2, 0.9:0.32"), age)
+local crownWidth = curve(curveParam("crownWidth", "0.15:1.6, 0.55:3.6, 0.9:4.9"), age)
+local trunkWidth = curve(curveParam("trunkWidth", "0.15:0.18, 0.55:0.45, 0.9:0.72"), age)
 asset:setCollisionRect(trunkWidth / 2, trunkWidth / 2, 0, 0)
 
 -- Growth numbers (R6), and how age moves them: every young tree keeps one leader; an old one loses
@@ -490,11 +490,15 @@ if detailPxPerMeter == nil then
 	error("deciduous.lua cuts its mesh for a screen density: give the def <detailLevels>")
 end
 local ppm = max(0.5, detailPxPerMeter)
-local kMarkPx, kWoodPx = 2.7, 0.6
-local kFinestLeaf, kCoarsestLeaf = 0.053, 0.1125
+-- kMarkPx is the 2.7 px the crown was cut at before trees grew 2.25x, grown with them, so below the
+-- finest leaf a tree is that tree at its new size. kFinestLeaf grew less (from 0.053 m): it is as fine
+-- as the oldest oak's finest mesh can be and stay under about 50,000 vertices (uint16 indices).
+local kMarkPx, kWoodPx = 6, 0.6
+local kFinestLeaf, kCoarsestLeaf = 0.09, 0.25
 local mark = max(kFinestLeaf, kMarkPx / ppm)
--- Leaves stop growing at kCoarsestLeaf, past which they would overrun their sprays; coarser marks are
--- that layout's leaves merged, so every coarse level shows one layout and keeps its outline and tone.
+-- Leaves stop growing at kCoarsestLeaf (the mark at 24 px/m), past which they would overrun their
+-- sprays; coarser marks are that layout's leaves merged, so every coarse level shows one layout and
+-- keeps its outline and tone.
 local leafLen = min(mark, kCoarsestLeaf)
 local mergeReach = max(0, mark - leafLen) * 0.5
 
@@ -508,10 +512,10 @@ local mergeReach = max(0, mark - leafLen) * 0.5
 -- grows it stays where it was and new shoots bring their own in; a spray past the foliage depth fades
 -- out, smallest first.
 
-local sprayDensity = getFloat("sprayDensity", 22) * (getFloat("leafSize", 0.15) / leafLen) ^ 2
+local sprayDensity = getFloat("sprayDensity", 9.8) * (getFloat("leafSize", 0.34) / leafLen) ^ 2
 local leavesLo, leavesHi = getFloatRange("sprayLeaves", 4, 7)
 local kMaxLeaves = 9
-local foliageDepth = getFloat("foliageDepth", 0.26) * crownWidth + 0.06
+local foliageDepth = getFloat("foliageDepth", 0.26) * crownWidth + 0.135
 local sprayReach = getFloat("sprayReach", 0.5) * rc
 -- a young tree carries its leaves in a few sprays you can count; a thinning one has lost some
 local thin = max(condition == "thinning" and 0.45 or 0, 0.4 * young)

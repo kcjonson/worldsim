@@ -81,8 +81,9 @@ class InstancedEntityRenderer {
 	// which of two specks of foliage is on top is not something a player can pick out. Order
 	// against anything larger is kept. Measured on the river view at zoom 0.25 (trees about
 	// 2 px across): 154 of 5.3M pixels changed against exact ordering, and upright draws fell
-	// from 6,505 to 550.
-	static constexpr float kUnorderedFootprintPixels = 4.0F;
+	// from 6,505 to 550. Trees grew 2.25x since, so the same trees at that zoom are about 5 to
+	// 8 px across now; the bound grew with them.
+	static constexpr float kUnorderedFootprintPixels = 8.0F;
 
 	// Mesh vertices uploaded a frame; the first waiting mesh always goes, however large.
 	// A level 80 tree is about 20,000, the reference level about 5,000.
