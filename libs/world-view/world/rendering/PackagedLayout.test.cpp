@@ -1,9 +1,14 @@
 #include "world/rendering/PackagedLayout.h"
 
+#include "assets/AssetRegistry.h"
+#include "assets/placement/PlacementExecutor.h"
+#include "assets/placement/RenderContext.h"
 #include "assets/placement/WorldDepthSort.h"
+#include "world/camera/WorldCamera.h"
 
 #include <gtest/gtest.h>
 
+#include <unordered_set>
 #include <vector>
 
 using namespace worldview;
@@ -68,16 +73,17 @@ TEST(PackagedLayout, LayersStayOrderedThroughDepthSort) {
 	const auto			 pl = packagedLayout({2.0F, 5.0F}, "BasicBox", 1.0F, {1, 1, 1, 1}, Foundation::Rect{0.0F, 0.0F, 0.857F, 0.6F});
 	assets::PlacedEntity other;
 	other.defName = "Rock";
+	other.position = {2.0F, 4.0F};
 	other.anchorY = pl.item.anchorY;
 
-	const std::vector<assets::Upright> uprights = {
-		assets::uprightOf(other), assets::uprightOf(pl.crateBack), assets::uprightOf(pl.item), assets::uprightOf(pl.crateFront)
-	};
-	std::vector<assets::DepthSortItem> items;
-	for (const assets::Upright& upright : uprights) {
-		items.push_back({upright.anchorY, &upright});
-	}
-	assets::sortByAnchorY(items);
+	const std::vector<assets::PlacedEntity>			dynamics = {other, pl.crateBack, pl.item, pl.crateFront};
+	const assets::PlacementExecutor					executor(assets::AssetRegistry::Get());
+	const std::unordered_set<world::ChunkCoordinate> noChunks;
+	const world::WorldCamera						camera;
+	const assets::RenderContext						ctx{executor, noChunks, &dynamics, camera, 800, 600, 16.0F, 1};
+	assets::WorldDepthGather						gather;
+	std::vector<assets::DepthSortItem>				items;
+	gather.gather(ctx, items);
 
 	ASSERT_EQ(items.size(), 4U);
 	auto indexOf = [&](const assets::PlacedEntity* e) {
@@ -88,6 +94,6 @@ TEST(PackagedLayout, LayersStayOrderedThroughDepthSort) {
 		}
 		return -1;
 	};
-	EXPECT_LT(indexOf(&pl.crateBack), indexOf(&pl.item));
-	EXPECT_LT(indexOf(&pl.item), indexOf(&pl.crateFront));
+	EXPECT_LT(indexOf(&dynamics[1]), indexOf(&dynamics[2]));
+	EXPECT_LT(indexOf(&dynamics[2]), indexOf(&dynamics[3]));
 }

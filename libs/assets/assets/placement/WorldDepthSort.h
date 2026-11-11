@@ -77,21 +77,14 @@ namespace assets {
 		const Upright* upright = nullptr;
 	};
 
-	// Stable ascending sort by anchorY. Submission order == depth order; stable so
-	// equal keys keep insertion order (e.g. a packaged crate stays behind its item).
-	void sortByAnchorY(std::vector<DepthSortItem>& items);
-
-	// Gathers one frame's frustum-culled, Y-sorted upright stream: visible static
+	// Gathers one frame's frustum-culled, Y-sorted upright stream: visible tall static
 	// occluders from the placement index merged with the dynamic ECS entities,
-	// stable-sorted by anchorY. Both anchorY and the tall/short classification are
-	// precomputed (statics at placement time in PlacementExecutor, dynamics in
-	// DynamicEntityRenderSystem), so this does no per-entity string/mesh lookups.
-	//
-	// backgroundOnFastPath == true (instanced path): short flora and groundcover
-	// are drawn on their own fast paths (baked mesh + GroundcoverRenderer) and so
-	// are excluded from the sorted stream, leaving only tall occluders + actors.
-	// backgroundOnFastPath == false (batched fallback, which has no separate
-	// background): every static is included so nothing is dropped.
+	// stable-sorted by anchorY, so equal keys keep insertion order (a packaged crate
+	// stays behind its item). Short flora and groundcover draw on their own paths (baked
+	// mesh, GroundcoverRenderer) and stay out of the stream. Both anchorY and the
+	// tall/short classification are precomputed (statics at placement time in
+	// PlacementExecutor, dynamics in DynamicEntityRenderSystem), so this does no
+	// per-entity string/mesh lookups.
 	//
 	// Each chunk's statics are kept as Uprights sorted between frames, rebuilt when its index
 	// changes, so a frame culls the stretch of each list the view's rows can reach and merges
@@ -100,7 +93,7 @@ namespace assets {
 	// would give. Its items point into the gather, valid until the next gather.
 	class WorldDepthGather {
 	  public:
-		void gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath);
+		void gather(const RenderContext& ctx, std::vector<DepthSortItem>& out);
 
 	  private:
 		// A chunk's statics as of an index version, stable-sorted by anchorY from the index's
@@ -109,7 +102,6 @@ namespace assets {
 		struct ChunkStatics {
 			const SpatialIndex* index = nullptr;
 			uint64_t			version = 0;
-			bool				tallOnly = false;
 			float				anchorReach = 0.0F;
 			uint64_t			usedFrame = 0;
 			glm::vec2			min{0.0F, 0.0F};
@@ -123,7 +115,7 @@ namespace assets {
 		uint64_t												 frame = 0;
 
 		/// The chunk's sorted statics, rebuilt when its index is new or has changed.
-		const ChunkStatics& staticsOf(world::ChunkCoordinate coord, const SpatialIndex& index, bool tallOnly);
+		const ChunkStatics& staticsOf(world::ChunkCoordinate coord, const SpatialIndex& index);
 	};
 
 } // namespace assets

@@ -1,212 +1,91 @@
-// Per-frame CPU cost of the world 2.5D depth stream. Two things are measured:
-//
-//  1. BM_WorldDepthSort_GatherAndSort - the merge + stable_sort baseline (mirrors
-//     ZSort.bench.cpp): derive an anchorY, push a light {anchorY, ptr}
-//     item, stable_sort ascending. This is the part that scales with visible count.
-//
-//  2. The gather itself, old vs new, to quantify the perf-hardening change that
-//     moved per-entity classification out of the frame. The OLD gather walked every
-//     visible static doing string-keyed lookups (groundcover set -> template map ->
-//     extent map) before it could even decide to skip short flora; the NEW gather
-//     reads a precomputed anchorY + isTallOccluder off each PlacedEntity. Both feed
-//     the same stable_sort, so the delta is purely the per-entity lookup work the
-//     baked/placement path now eliminates. Contrasted at 1k / 10k / 34k statics.
+// Per-frame CPU cost of the world 2.5D depth stream: WorldDepthGather::gather on a view whose chunks
+// don't change between frames, so each frame culls every chunk's cached sorted statics, sorts the
+// dynamic entities, and merges the stretches. Half the statics are tall occluders, the stream's
+// share; the rest are short flora the gather skips. Run at 1k, 10k, and 34k statics (the observed
+// dense zoom-out), over a 4 x 4 block of chunks, with 64 actors.
 
 #include "assets/placement/WorldDepthSort.h"
 
-#include "assets/placement/FloraRouting.h"
-#include "assets/placement/SpatialIndex.h"
-
-#include <vector/Types.h>
+#include "assets/AssetRegistry.h"
+#include "assets/placement/PlacementExecutor.h"
+#include "assets/placement/RenderContext.h"
+#include "world/camera/WorldCamera.h"
 
 #include <benchmark/benchmark.h>
 
 #include <cstdint>
 #include <random>
-#include <string>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
 namespace {
 
 	using assets::PlacedEntity;
-	using assets::computeAnchorY;
-	using assets::DepthSortItem;
-	using assets::kShortFloraMaxHeight;
-	using assets::MeshYExtent;
-	using assets::meshYExtent;
-	using assets::routesTall;
-	using assets::sortByAnchorY;
-	using assets::Upright;
-	using assets::uprightOf;
 
-	// Representative visible-entity counts: a normal scene, a busy one, and the
-	// observed dense zoom-out (~34k).
 	constexpr int kMinEntities = 1000;
 	constexpr int kMidEntities = 10000;
 	constexpr int kMaxEntities = 34000;
 
-	std::vector<PlacedEntity> makeEntities(int n) {
-		std::vector<PlacedEntity>			  entities(static_cast<size_t>(n));
-		std::mt19937						  rng(1234567U);
-		std::uniform_real_distribution<float> posDist(0.0F, 2000.0F);
-		std::uniform_real_distribution<float> heightDist(0.5F, 4.0F);
-		for (auto& e : entities) {
-			e.position = {posDist(rng), posDist(rng)};
-			e.scale = 1.0F;
-			// Store the mesh max-local-Y in rotation just to carry a per-entity
-			// value into the timed loop without a mesh; anchorY math is identical.
-			e.rotation = heightDist(rng);
-		}
-		return entities;
-	}
+	constexpr int	kChunksPerSide = 4;
+	constexpr float kChunkWidth = 25.0F; // a 100 x 60 m block, inside an 1920 x 1080 view at 16 px/m
+	constexpr float kChunkHeight = 15.0F;
+	constexpr int	kActors = 64;
 
-	// A handful of template "defs" with distinct Y extents: two tall occluders, one
-	// short flora, one groundcover, the mix a dense zoomed-out scene actually holds.
-	struct TemplateDef {
-		std::string				  name;
-		renderer::TessellatedMesh mesh;
-		bool					  groundcover = false;
-	};
-
-	renderer::TessellatedMesh makeTri(float minY, float maxY) {
-		renderer::TessellatedMesh m;
-		m.vertices.emplace_back(-0.5F, minY);
-		m.vertices.emplace_back(0.5F, minY);
-		m.vertices.emplace_back(0.0F, maxY);
-		return m;
-	}
-
-	// A scene wiring the entities to the old gather's per-entity lookup tables:
-	// name -> template mesh, mesh -> Y extent, and the groundcover name set. The new
-	// gather needs none of these; it reads the precomputed fields on each entity.
 	struct Scene {
-		std::vector<TemplateDef>														 templates;
-		std::vector<PlacedEntity>														 entities;
-		std::unordered_map<std::string, const renderer::TessellatedMesh*>				 templateByName;
-		std::unordered_map<const renderer::TessellatedMesh*, MeshYExtent>				 extentByMesh;
-		std::unordered_set<std::string>													 groundcoverNames;
+		assets::PlacementExecutor				   executor{assets::AssetRegistry::Get()};
+		std::unordered_set<world::ChunkCoordinate> processed;
+		std::vector<PlacedEntity>				   actors;
+		world::WorldCamera						   camera;
 	};
 
-	Scene makeScene(int n) {
-		Scene s;
-		s.templates.push_back({"Tree", makeTri(-3.0F, 0.5F), false});			  // tall
-		s.templates.push_back({"Bush", makeTri(-1.4F, 0.2F), false});			  // tall
-		s.templates.push_back({"Grass", makeTri(-0.3F, 0.1F), false});			  // short flora
-		s.templates.push_back({"Groundcover_Grass", makeTri(-0.2F, 0.05F), true}); // groundcover
-		for (auto& t : s.templates) {
-			s.templateByName[t.name] = &t.mesh;
-			s.extentByMesh[&t.mesh] = meshYExtent(&t.mesh);
-			if (t.groundcover) {
-				s.groundcoverNames.insert(t.name);
+	void fill(Scene& scene, int statics) {
+		std::mt19937						  rng(1234567U);
+		std::uniform_real_distribution<float> unit(0.0F, 1.0F);
+		std::uniform_real_distribution<float> foot(0.0F, 0.6F);
+		const int							  perChunk = statics / (kChunksPerSide * kChunksPerSide);
+		for (int cy = 0; cy < kChunksPerSide; ++cy) {
+			for (int cx = 0; cx < kChunksPerSide; ++cx) {
+				const float			  x0 = (static_cast<float>(cx - (kChunksPerSide / 2))) * kChunkWidth;
+				const float			  y0 = (static_cast<float>(cy - (kChunksPerSide / 2))) * kChunkHeight;
+				assets::SpatialIndex index;
+				for (int i = 0; i < perChunk; ++i) {
+					PlacedEntity entity;
+					entity.defName = "Tree";
+					entity.position = {x0 + (unit(rng) * kChunkWidth), y0 + (unit(rng) * kChunkHeight)};
+					entity.anchorY = entity.position.y + foot(rng);
+					entity.isTallOccluder = (i % 2) == 0;
+					index.insert(entity);
+				}
+				assets::AsyncChunkPlacementResult result;
+				result.coord = {cx - (kChunksPerSide / 2), cy - (kChunksPerSide / 2)};
+				result.spatialIndex = std::move(index);
+				scene.executor.storeChunkResult(std::move(result));
+				scene.processed.insert({cx - (kChunksPerSide / 2), cy - (kChunksPerSide / 2)});
 			}
 		}
-
-		s.entities.resize(static_cast<size_t>(n));
-		std::mt19937						  rng(1234567U);
-		std::uniform_real_distribution<float> posDist(0.0F, 2000.0F);
-		std::uniform_int_distribution<int>	  tmplDist(0, static_cast<int>(s.templates.size()) - 1);
-		for (auto& e : s.entities) {
-			const auto& t = s.templates[static_cast<size_t>(tmplDist(rng))];
-			e.defName = t.name;
-			e.position = {posDist(rng), posDist(rng)};
-			e.scale = 1.0F;
-			// Precompute exactly what PlacementExecutor now stamps at placement time.
-			const MeshYExtent ext = s.extentByMesh.at(&t.mesh);
-			e.anchorY = computeAnchorY(e.position.y, ext.maxY, e.scale);
-			e.isTallOccluder = routesTall(ext.maxY - ext.minY, t.groundcover);
+		scene.actors.resize(kActors);
+		for (PlacedEntity& actor : scene.actors) {
+			actor.position = {(unit(rng) - 0.5F) * 100.0F, (unit(rng) - 0.5F) * 60.0F};
+			actor.anchorY = actor.position.y + 0.9F;
 		}
-		return s;
+		scene.camera.setPosition({0.0F, 0.0F});
 	}
 
 } // namespace
 
-static void BM_WorldDepthSort_GatherAndSort(benchmark::State& state) {
-	const int				   n = static_cast<int>(state.range(0));
-	std::vector<PlacedEntity>  entities = makeEntities(n);
-	std::vector<Upright>	   uprights;
-	for (const auto& e : entities) {
-		uprights.push_back(uprightOf(e));
-	}
-	std::vector<DepthSortItem> items;
-	items.reserve(static_cast<size_t>(n));
+static void BM_WorldDepthGather_SteadyView(benchmark::State& state) {
+	Scene scene;
+	fill(scene, static_cast<int>(state.range(0)));
+	const assets::RenderContext		   ctx{scene.executor, scene.processed, &scene.actors, scene.camera, 1920, 1080, 16.0F, 1};
+	assets::WorldDepthGather		   gather;
+	std::vector<assets::DepthSortItem> items;
+	gather.gather(ctx, items); // builds each chunk's sorted statics once, as the first frame over a view does
 
 	for (auto _ : state) {
-		items.clear();
-		for (size_t i = 0; i < entities.size(); ++i) {
-			const PlacedEntity& e = entities[i];
-			items.push_back({computeAnchorY(e.position.y, e.rotation, e.scale), &uprights[i]});
-		}
-		sortByAnchorY(items);
+		gather.gather(ctx, items);
 		benchmark::DoNotOptimize(items.data());
 		benchmark::ClobberMemory();
 	}
-	state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(n));
+	state.SetItemsProcessed(state.iterations() * state.range(0));
 }
-BENCHMARK(BM_WorldDepthSort_GatherAndSort)->Arg(kMinEntities)->Arg(kMidEntities)->Arg(kMaxEntities);
-
-// NEW gather: read the precomputed anchorY + isTallOccluder, skip non-tall, push, sort.
-static void BM_WorldDepthGather_PrecomputedRead(benchmark::State& state) {
-	Scene					   scene = makeScene(static_cast<int>(state.range(0)));
-	std::vector<Upright>	   uprights;
-	for (const auto& e : scene.entities) {
-		uprights.push_back(uprightOf(e));
-	}
-	std::vector<DepthSortItem> items;
-	items.reserve(scene.entities.size());
-
-	for (auto _ : state) {
-		items.clear();
-		for (size_t i = 0; i < scene.entities.size(); ++i) {
-			const PlacedEntity& e = scene.entities[i];
-			if (!e.isTallOccluder) {
-				continue;
-			}
-			items.push_back({e.anchorY, &uprights[i]});
-		}
-		sortByAnchorY(items);
-		benchmark::DoNotOptimize(items.data());
-		benchmark::ClobberMemory();
-	}
-	state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(scene.entities.size()));
-}
-BENCHMARK(BM_WorldDepthGather_PrecomputedRead)->Arg(kMinEntities)->Arg(kMidEntities)->Arg(kMaxEntities);
-
-// OLD gather: per-entity string-keyed lookups (groundcover set -> template map ->
-// extent map) + height calc before it can skip short flora, then anchorY + push + sort.
-static void BM_WorldDepthGather_PerEntityLookup(benchmark::State& state) {
-	Scene					   scene = makeScene(static_cast<int>(state.range(0)));
-	std::vector<Upright>	   uprights;
-	for (const auto& e : scene.entities) {
-		uprights.push_back(uprightOf(e));
-	}
-	std::vector<DepthSortItem> items;
-	items.reserve(scene.entities.size());
-
-	for (auto _ : state) {
-		items.clear();
-		for (size_t i = 0; i < scene.entities.size(); ++i) {
-			const PlacedEntity& e = scene.entities[i];
-			if (scene.groundcoverNames.count(e.defName) != 0) {
-				continue;
-			}
-			auto it = scene.templateByName.find(e.defName);
-			if (it == scene.templateByName.end() || it->second == nullptr) {
-				continue;
-			}
-			const renderer::TessellatedMesh* mesh = it->second;
-			const MeshYExtent				 ext = scene.extentByMesh.at(mesh);
-			const float						 worldHeight = (ext.maxY - ext.minY) * e.scale;
-			if (worldHeight < kShortFloraMaxHeight) {
-				continue;
-			}
-			items.push_back({computeAnchorY(e.position.y, ext.maxY, e.scale), &uprights[i]});
-		}
-		sortByAnchorY(items);
-		benchmark::DoNotOptimize(items.data());
-		benchmark::ClobberMemory();
-	}
-	state.SetItemsProcessed(state.iterations() * static_cast<int64_t>(scene.entities.size()));
-}
-BENCHMARK(BM_WorldDepthGather_PerEntityLookup)->Arg(kMinEntities)->Arg(kMidEntities)->Arg(kMaxEntities);
+BENCHMARK(BM_WorldDepthGather_SteadyView)->Arg(kMinEntities)->Arg(kMidEntities)->Arg(kMaxEntities);

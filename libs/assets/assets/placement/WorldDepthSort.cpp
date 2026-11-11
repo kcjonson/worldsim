@@ -62,26 +62,18 @@ namespace assets {
 		};
 	}
 
-	void sortByAnchorY(std::vector<DepthSortItem>& items) {
-		std::stable_sort(items.begin(), items.end(), [](const DepthSortItem& a, const DepthSortItem& b) {
-			return a.anchorY < b.anchorY;
-		});
-	}
-
-	const WorldDepthGather::ChunkStatics&
-	WorldDepthGather::staticsOf(world::ChunkCoordinate coord, const SpatialIndex& index, bool tallOnly) {
+	const WorldDepthGather::ChunkStatics& WorldDepthGather::staticsOf(world::ChunkCoordinate coord, const SpatialIndex& index) {
 		ChunkStatics& chunk = chunks[coord];
 		chunk.usedFrame = frame;
-		if (chunk.index == &index && chunk.version == index.version() && chunk.tallOnly == tallOnly) {
+		if (chunk.index == &index && chunk.version == index.version()) {
 			return chunk;
 		}
 		chunk.index = &index;
 		chunk.version = index.version();
-		chunk.tallOnly = tallOnly;
 		chunk.statics.clear();
 		constexpr float kEverywhere = std::numeric_limits<float>::max();
 		for (const PlacedEntity* entity : index.queryRect(-kEverywhere, -kEverywhere, kEverywhere, kEverywhere)) {
-			if (!tallOnly || entity->isTallOccluder) {
+			if (entity->isTallOccluder) {
 				chunk.statics.push_back(uprightOf(*entity));
 			}
 		}
@@ -98,11 +90,11 @@ namespace assets {
 		return chunk;
 	}
 
-	void WorldDepthGather::gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath) {
+	void WorldDepthGather::gather(const RenderContext& ctx, std::vector<DepthSortItem>& out) {
 		out.clear();
 		++frame;
-		// Padded by the farthest any template draws from its origin: statics, dynamic entities, and
-		// the batched fallback's short flora are all culled by origin against this rect.
+		// Padded by the farthest any template draws from its origin: statics and dynamic entities
+		// are culled by origin against this rect.
 		const VisibleBounds vis = computeVisibleBounds(
 			ctx.camera,
 			ctx.viewportWidth,
@@ -112,9 +104,8 @@ namespace assets {
 		);
 
 		// Visible statics: each chunk's sorted list, culled by origin, so each chunk's stretch
-		// of out is already in order. On the instanced fast path only tall occluders join the
-		// sorted stream (short flora is baked, groundcover renders instanced); the batched
-		// fallback has no separate background, so it keeps every static. Chunks go in (y, x)
+		// of out is already in order. Only tall occluders join the sorted stream (short flora is
+		// baked, groundcover renders instanced). Chunks go in (y, x)
 		// order: processedChunks is an unordered_set whose order can shift on rehash, and a
 		// fixed order keeps ties between chunks drawn the same way frame to frame.
 		orderedChunks.assign(ctx.processedChunks.begin(), ctx.processedChunks.end());
@@ -127,7 +118,7 @@ namespace assets {
 			if (index == nullptr) {
 				continue;
 			}
-			const ChunkStatics& chunk = staticsOf(coord, *index, backgroundOnFastPath);
+			const ChunkStatics& chunk = staticsOf(coord, *index);
 			if (chunk.statics.empty() || chunk.max.x < vis.minX || chunk.min.x > vis.maxX || chunk.max.y < vis.minY ||
 				chunk.min.y > vis.maxY) {
 				continue;

@@ -1,12 +1,7 @@
 #pragma once
 
 // EntityRenderer - Renders placed entities on top of chunk tiles.
-// Batches all visible entities into a single draw call per frame.
 // Uses view frustum culling for efficiency.
-//
-// Supports two rendering paths:
-// 1. GPU Instancing (default): One draw call per mesh type, transforms on GPU
-// 2. CPU Batching (fallback): All entities in one draw call, transforms on CPU
 //
 // This class is a thin orchestrator: it owns shared state (pixelsPerMeter, the
 // frame counter, and the per-frame metrics) and delegates each render path to a
@@ -19,7 +14,6 @@
 #include "world/camera/WorldCamera.h"
 #include "world/chunk/ChunkCoordinate.h"
 #include "world/rendering/BakedChunkRenderer.h"
-#include "world/rendering/BatchedEntityRenderer.h"
 #include "world/rendering/GroundcoverRenderer.h"
 #include "world/rendering/InstancedEntityRenderer.h"
 #include "world/rendering/RenderStats.h"
@@ -106,10 +100,6 @@ class EntityRenderer {
 	/// several chunk bakes complete at once while scrolling.
 	void queueBakedChunk(const world::ChunkCoordinate& coord, assets::BakedChunkCPUData&& cpuData);
 
-	/// Enable/disable GPU instancing (for A/B testing and fallback)
-	void setInstancingEnabled(bool enabled) { m_useInstancing = enabled; }
-	[[nodiscard]] bool isInstancingEnabled() const { return m_useInstancing; }
-
 	/// Set (or clear) the selected entity's outline for the next render, injected
 	/// into the depth-sorted entity stream so nearer entities occlude it.
 	void setSelectionOutline(SelectionOutline o) { instancedDynamic.setSelectionOutline(std::move(o)); }
@@ -124,22 +114,18 @@ class EntityRenderer {
 	uint32_t m_lastUprightOverlapSplits = 0;
 	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
-	// --- Instancing Mode ---
-	bool m_useInstancing = true;
-
 	// --- Path sub-renderers (owned by value) ---
 	BakedChunkRenderer		 baked;
 	GroundcoverRenderer		 groundcover;
 	InstancedEntityRenderer	 instancedDynamic;
-	BatchedEntityRenderer	 batched;
 
 	// Gathers + sorts the visible upright stream (tall statics + dynamic ECS) each
 	// frame; m_sortedUprights is reused to keep its capacity across frames.
 	assets::WorldDepthGather		   uprightGather;
 	std::vector<assets::DepthSortItem> m_sortedUprights;
 
-	/// Render using GPU instancing path
-	void renderInstanced(
+	/// One frame: baked chunks, groundcover, then the depth-sorted upright stream
+	void renderFrame(
 		const assets::PlacementExecutor& executor,
 		const std::unordered_set<world::ChunkCoordinate>& processedChunks,
 		const std::vector<assets::PlacedEntity>* dynamicEntities,

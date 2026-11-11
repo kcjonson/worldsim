@@ -1,7 +1,7 @@
 // Unit tests for the GL-free core of world-space 2.5D depth sorting: the
 // canonical anchorY derivation (bottom-most ground-contact world-Y) and the
-// stable ascending merge/sort. These are the pure pieces the render paths share;
-// the gather + emit steps need a GL context and are exercised in-game.
+// gather's stable ascending merge; the emit step needs a GL context and is
+// exercised in-game.
 
 #include "assets/placement/WorldDepthSort.h"
 
@@ -108,51 +108,6 @@ namespace assets {
 		EXPECT_FALSE(routesTall(3.5F, /*isGroundcover=*/true));
 	}
 
-	TEST(WorldDepthSort, SortIsAscendingStableAndDeterministic) {
-		assets::PlacedEntity a;
-		a.defName = "A";
-		assets::PlacedEntity b;
-		b.defName = "B";
-		assets::PlacedEntity c;
-		c.defName = "C";
-		assets::PlacedEntity d;
-		d.defName = "D";
-
-		// Two entries share anchorY == 1.0 (b then d) to check stability.
-		const Upright			   ua = uprightOf(a);
-		const Upright			   ub = uprightOf(b);
-		const Upright			   uc = uprightOf(c);
-		const Upright			   ud = uprightOf(d);
-		std::vector<DepthSortItem> items = {
-			{3.0F, &ua},
-			{1.0F, &ub},
-			{2.0F, &uc},
-			{1.0F, &ud},
-		};
-
-		std::vector<DepthSortItem> once = items;
-		sortByAnchorY(once);
-
-		// Ascending by anchorY.
-		for (size_t i = 1; i < once.size(); ++i) {
-			EXPECT_LE(once[i - 1].anchorY, once[i].anchorY);
-		}
-		// Stable: equal keys keep insertion order (b before d).
-		EXPECT_EQ(once[0].upright->entity, &b);
-		EXPECT_EQ(once[1].upright->entity, &d);
-		EXPECT_EQ(once[2].upright->entity, &c);
-		EXPECT_EQ(once[3].upright->entity, &a);
-
-		// Deterministic: sorting the same input again yields the same order.
-		std::vector<DepthSortItem> twice = items;
-		sortByAnchorY(twice);
-		ASSERT_EQ(once.size(), twice.size());
-		for (size_t i = 0; i < once.size(); ++i) {
-			EXPECT_EQ(once[i].upright, twice[i].upright);
-			EXPECT_FLOAT_EQ(once[i].anchorY, twice[i].anchorY);
-		}
-	}
-
 	// The gather's padding: the largest template reach, never under the 2 m every path had before
 	// reach-based margins, so a wide short template still gathers with no tall one loaded.
 	TEST(WorldDepthSort, VisibleBoundsPadByAtLeastTwoMetersAndByAWiderReach) {
@@ -252,37 +207,37 @@ namespace assets {
 
 		WorldDepthGather gather;
 		std::vector<DepthSortItem> out;
-		gather.gather(ctx, out, true);
+		gather.gather(ctx, out);
 		EXPECT_EQ(out.size(), 12U); // the far static at x -900 is culled
 		EXPECT_EQ(entitiesOf(out), expected());
 
 		ASSERT_TRUE(executor.removeEntity({0, 0}, {9.0F, 1.0F}, "Tree"));
-		gather.gather(ctx, out, true);
+		gather.gather(ctx, out);
 		EXPECT_EQ(out.size(), 11U);
 		EXPECT_EQ(entitiesOf(out), expected());
 
 		// A chunk that unloads leaves the stream, and comes back with the index it reloads with.
 		processed.erase({-1, 0});
-		gather.gather(ctx, out, true);
+		gather.gather(ctx, out);
 		EXPECT_EQ(out.size(), 9U);
 		EXPECT_EQ(entitiesOf(out), expected());
 		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 7.0F}});
-		gather.gather(ctx, out, true);
+		gather.gather(ctx, out);
 		EXPECT_EQ(out.size(), 10U);
 		EXPECT_EQ(entitiesOf(out), expected());
 
 		// Moving the camera culls the same statics differently, then changes which chunks reach the view.
 		camera.setPosition({10.0F, 0.0F});
-		gather.gather(ctx, out, true);
+		gather.gather(ctx, out);
 		EXPECT_EQ(entitiesOf(out), expected());
 		camera.setPosition({-890.0F, 0.0F});
 		processed.erase({-1, 0});
 		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 7.0F}, {{-900.0F, 3.0F}, 2.0F}});
-		gather.gather(ctx, out, true);
+		gather.gather(ctx, out);
 		EXPECT_EQ(out.size(), 1U);
 		EXPECT_EQ(entitiesOf(out), expected());
 		camera.setPosition({0.0F, 0.0F});
-		gather.gather(ctx, out, true);
+		gather.gather(ctx, out);
 		EXPECT_EQ(entitiesOf(out), expected());
 	}
 

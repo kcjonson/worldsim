@@ -14,21 +14,7 @@ namespace worldview {
 		int												  viewportWidth,
 		int												  viewportHeight
 	) {
-		if (m_useInstancing) {
-			renderInstanced(executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight);
-		} else {
-			RenderStats	  stats;
-			assets::RenderContext ctx{
-				executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter
-			};
-			batched.render(ctx, stats);
-			m_lastEntityCount = stats.entities;
-			m_lastDrawCallCount = stats.drawCalls;
-			m_lastTriangleCount = stats.triangles;
-			m_lastUprightDrawCallCount = 0;
-			m_lastUprightTriangleCount = 0;
-			m_lastUprightOverlapSplits = 0;
-		}
+		renderFrame(executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight);
 	}
 
 	void EntityRenderer::render(
@@ -39,26 +25,10 @@ namespace worldview {
 		int												  viewportWidth,
 		int												  viewportHeight
 	) {
-		if (m_useInstancing) {
-			renderInstanced(executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight);
-		} else {
-			RenderStats	  stats;
-			assets::RenderContext ctx{
-				executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter
-			};
-			batched.render(ctx, stats);
-			m_lastEntityCount = stats.entities;
-			m_lastDrawCallCount = stats.drawCalls;
-			m_lastTriangleCount = stats.triangles;
-			m_lastUprightDrawCallCount = 0;
-			m_lastUprightTriangleCount = 0;
-			m_lastUprightOverlapSplits = 0;
-		}
+		renderFrame(executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight);
 	}
 
-	// --- GPU Instancing Path ---
-
-	void EntityRenderer::renderInstanced(
+	void EntityRenderer::renderFrame(
 		const assets::PlacementExecutor&				  executor,
 		const std::unordered_set<world::ChunkCoordinate>& processedChunks,
 		const std::vector<assets::PlacedEntity>*		  dynamicEntities,
@@ -100,7 +70,7 @@ namespace worldview {
 		// dynamic ECS entities, stable-sorted ascending by ground-contact anchorY,
 		// then emitted in that order so submission order == depth order (larger
 		// anchorY drawn later / in front).
-		uprightGather.gather(ctx, m_sortedUprights, /*backgroundOnFastPath=*/true);
+		uprightGather.gather(ctx, m_sortedUprights);
 		instancedDynamic.emitSorted(m_sortedUprights, ctx, stats);
 
 		// LRU cache eviction.
