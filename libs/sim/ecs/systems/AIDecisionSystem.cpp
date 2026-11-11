@@ -3176,11 +3176,13 @@ namespace ecs {
 			return;
 		}
 		// An armful fills the carry, so every haul and cut would read no room: one that no root he knows
-		// wants is put down where he stands, a pile any colonist can haul once a root wants it.
+		// wants is put down where he stands, a pile any colonist can haul once a root wants it. A carry-in he
+		// believes he cannot reach is not offered, so it wants nothing of him.
 		const std::string name = inventory.leftHand->defName;
 		const uint32_t	  item = m_registry.getDefNameId(name);
 		const bool		  wanted = std::any_of(trace.options.begin(), trace.options.end(), [item](const EvaluatedOption& option) {
-			   return option.taskType == TaskType::Haul && option.haulFromInventory && option.haulItemDefNameId == item;
+			   return option.taskType == TaskType::Haul && option.haulFromInventory && option.haulItemDefNameId == item &&
+					  option.status == OptionStatus::Available;
 		   });
 		if (wanted) {
 			return;

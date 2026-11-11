@@ -3544,59 +3544,87 @@ namespace ecs::test {
 			return west;
 		}
 
+		size_t carried(EntityID colonist, const char* item) {
+			return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), item);
+		}
+
+		bool delivering(EntityID colonist, EntityID destination) {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Haul && task.haulDestinationId == static_cast<uint64_t>(destination);
+		}
+
+		// A hauler at (-7, 0) who knows a pile of `count` `item` at (-6, 0); runs until he has lifted all of
+		// it and is walking it to `destination`.
+		EntityID haulerWalking(EntityID destination, uint32_t item, uint32_t count) {
+			const glm::vec2 pilePos{-6.0F, 0.0F};
+			const EntityID	pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{pilePos});
+			const std::string name = assets::AssetRegistry::Get().getDefName(item);
+			makeLoosePile(*world, pile, item, pilePos, count);
+			const EntityID hauler = createColonist({-7.0F, 0.0F});
+			remember(hauler, pilePos, name, assets::CapabilityType::Carryable);
+			for (int tick = 0; tick < 200 && carried(hauler, name.c_str()) < count; ++tick) {
+				world->update(kTick);
+			}
+			EXPECT_EQ(carried(hauler, name.c_str()), count) << "he never lifted the pile";
+			EXPECT_TRUE(delivering(hauler, destination));
+			EXPECT_EQ(getTask(hauler)->chainStep, 1U);
+			EXPECT_EQ(getTask(hauler)->navState, NavState::Traveling);
+			return hauler;
+		}
+
+		// Runs until the walled-off hauler's route to `destination` fails and he decides again. While his
+		// failed task stands he holds Inbound and InFlight for his cargo and nothing else, and it stands for
+		// at most one update: his next decision lets the delivery go.
+		void runUntilHeLetsTheDeliveryGo(EntityID hauler, EntityID destination, uint32_t item) {
+			int failedUpdates = 0;
+			for (int tick = 0; tick < 100 && delivering(hauler, destination); ++tick) {
+				world->update(kTick);
+				if (!delivering(hauler, destination) || getTask(hauler)->navState != NavState::CantFindWayTo) {
+					continue;
+				}
+				++failedUpdates;
+				ai->claimIndex().forEachClaim([&](const Claim& claim, const ClaimHolder& holder) {
+					if (holder.colonist == hauler) {
+						EXPECT_TRUE(claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight);
+						EXPECT_EQ(claim.itemDefNameId(), item);
+					}
+				});
+			}
+			ASSERT_FALSE(delivering(hauler, destination)) << "the route through the known walls never failed";
+			EXPECT_LE(failedUpdates, 1) << "the failed delivery outlived his next decision";
+		}
+
 		static constexpr float		  kTick = 0.1F;
 		construction::ConstructionWorld construction;
 		NavigationSystem*				nav = nullptr;
 	};
 
-	// A hauler past his pickup is walled off from the station mid-walk. While his route fails he holds
-	// Inbound and InFlight for the stones he carries and nothing else, and every AI update's validator
-	// passes (it aborts on a violation); once a wall comes down he delivers them.
-	TEST_F(ClaimsOnRealRoutesTest, AHaulerWalledOffMidWalkKeepsOnlyHisCargoClaimedThenDelivers) {
+	// A hauler past his pickup is walled off from the station mid-walk by walls he knows. His next decision
+	// lets the delivery go: it is not offered while he believes he cannot reach the station, his claims
+	// toward the root are released, and the stones stay in his pack as uncommitted goods. Once a wall comes
+	// down the verdict is forgotten, he is offered the delivery again, and delivers exactly what the
+	// station wants. Every AI update's validator passes throughout (it aborts on a violation).
+	TEST_F(ClaimsOnRealRoutesTest, AWalledOffHaulerLetsTheDeliveryGoAndTakesItUpOnceTheWayOpens) {
 		const glm::vec2 stationPos{8.0F, 0.0F};
-		const glm::vec2 pilePos{-6.0F, 0.0F};
 		const EntityID	station = world->createEntity();
 		world->addComponent<Position>(station, Position{stationPos});
 		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
 		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
-		const EntityID pile = world->createEntity();
-		world->addComponent<Position>(pile, Position{pilePos});
-		makeLoosePile(*world, pile, stoneId, pilePos, 3);
-		const EntityID hauler = createColonist({-7.0F, 0.0F});
-		remember(hauler, pilePos, "Stone", assets::CapabilityType::Carryable);
-
-		const auto carried = [&] { return ecs::availableQuantity(*world->getComponent<Inventory>(hauler), "Stone"); };
-		for (int tick = 0; tick < 200 && carried() < 3; ++tick) {
-			world->update(kTick);
-		}
-		ASSERT_EQ(carried(), 3U) << "he never lifted the pile";
-		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
-		ASSERT_EQ(getTask(hauler)->chainStep, 1U);
-		ASSERT_EQ(getTask(hauler)->navState, NavState::Traveling);
+		const EntityID hauler = haulerWalking(station, stoneId, 3);
+		ASSERT_FALSE(HasFailure());
 
 		const auto west = wallIn({6000, -2000}, {10000, 2000}, hauler);
 		ASSERT_FALSE(west.empty());
-		const auto delivering = [&] { return getTask(hauler)->type == TaskType::Haul && getTask(hauler)->navState == NavState::Traveling; };
-		for (int tick = 0; tick < 100 && delivering(); ++tick) {
-			world->update(kTick);
-		}
-		ASSERT_FALSE(delivering()) << "the route through the known walls never failed";
+		runUntilHeLetsTheDeliveryGo(hauler, station, stoneId);
+		ASSERT_FALSE(HasFailure());
 
-		for (int tick = 0; tick < 20; ++tick) {
+		for (int tick = 0; tick < 50; ++tick) {
 			world->update(kTick);
-			ASSERT_EQ(carried(), 3U) << "tick " << tick;
-			size_t held = 0;
-			ai->claimIndex().forEachClaim([&](const Claim& claim, const ClaimHolder& holder) {
-				if (holder.colonist != hauler) {
-					return;
-				}
-				++held;
-				EXPECT_TRUE(claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight) << "tick " << tick;
-				EXPECT_EQ(claim.itemDefNameId(), stoneId) << "tick " << tick;
-			});
-			ASSERT_GT(held, 0U) << "tick " << tick;
-			ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "tick " << tick;
-			ASSERT_EQ(ai->claimIndex().inboundItems(station, stoneId, {}), 3U) << "tick " << tick;
+			ASSERT_FALSE(delivering(hauler, station)) << "tick " << tick;
+			ASSERT_EQ(carried(hauler, "Stone"), 3U) << "tick " << tick;
+			ASSERT_EQ(indexedClaimsOf(hauler), 0U) << "tick " << tick;
+			ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U) << "tick " << tick;
 		}
 
 		for (const auto id : west) {
@@ -3606,7 +3634,77 @@ namespace ecs::test {
 			world->update(kTick);
 		}
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 3U) << "he never delivered once the wall was down";
-		EXPECT_EQ(carried(), 0U);
+		EXPECT_EQ(carried(hauler, "Stone"), 0U);
+	}
+
+	// While the first hauler is walled off, a colonist on the station's side of the wall is offered the
+	// fetch and makes it. When the wall comes down the first hauler's stones are surplus there: the
+	// station is never over-supplied, and he keeps them.
+	TEST_F(ClaimsOnRealRoutesTest, AColonistInsideTheWallsFetchesAndTheFreedHaulerDoesNotOverDeliver) {
+		const glm::vec2 stationPos{8.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID hauler = haulerWalking(station, stoneId, 3);
+		ASSERT_FALSE(HasFailure());
+
+		const auto west = wallIn({6000, -2000}, {10000, 2000}, hauler);
+		runUntilHeLetsTheDeliveryGo(hauler, station, stoneId);
+		ASSERT_FALSE(HasFailure());
+		ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U);
+
+		const glm::vec2 innerPilePos{9.0F, 1.0F};
+		const EntityID	innerPile = world->createEntity();
+		world->addComponent<Position>(innerPile, Position{innerPilePos});
+		makeLoosePile(*world, innerPile, stoneId, innerPilePos, 3);
+		const EntityID inside = createColonist({7.0F, -1.0F});
+		remember(inside, innerPilePos, "Stone", assets::CapabilityType::Carryable);
+
+		const auto stationStone = [&] { return world->getComponent<Inventory>(station)->getQuantity("Stone"); };
+		bool	   insideFetched = false;
+		for (int tick = 0; tick < 300 && stationStone() < 3; ++tick) {
+			world->update(kTick);
+			insideFetched = insideFetched || delivering(inside, station);
+			ASSERT_EQ(carried(hauler, "Stone"), 3U) << "tick " << tick;
+		}
+		EXPECT_TRUE(insideFetched);
+		ASSERT_EQ(stationStone(), 3U) << "the colonist inside never fetched";
+
+		for (const auto id : west) {
+			ASSERT_TRUE(construction.removeSegment(id));
+		}
+		for (int tick = 0; tick < 300; ++tick) {
+			world->update(kTick);
+			ASSERT_LE(stationStone(), 3U) << "tick " << tick;
+			ASSERT_FALSE(delivering(hauler, station)) << "tick " << tick;
+		}
+		EXPECT_EQ(carried(hauler, "Stone"), 3U) << "his stones are surplus at the station";
+		EXPECT_EQ(indexedClaimsOf(hauler), 0U);
+	}
+
+	// A two-hand armful bound for a site he is walled off from is put down where he stands when he lets
+	// the delivery go, not carried around: a pile anyone can fetch.
+	TEST_F(ClaimsOnRealRoutesTest, AWalledOffHaulerPutsHisArmfulDown) {
+		std::vector<uint32_t> drops;
+		ai->setDropResourceCallback([&](const std::string& name, float, float, uint32_t quantity, glm::vec2) {
+			EXPECT_EQ(name, "Wood");
+			drops.push_back(quantity);
+		});
+		const glm::vec2 sitePos{8.0F, 0.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 4);
+		const EntityID	hauler = haulerWalking(site.blueprint, woodId, 4);
+		ASSERT_FALSE(HasFailure());
+
+		wallIn({6000, -2000}, {10000, 2000}, hauler);
+		runUntilHeLetsTheDeliveryGo(hauler, site.blueprint, woodId);
+		ASSERT_FALSE(HasFailure());
+
+		ASSERT_EQ(drops.size(), 1U) << "the armful he cannot deliver is carried around";
+		EXPECT_EQ(drops.front(), 4U);
+		EXPECT_EQ(carried(hauler, "Wood"), 0U);
+		EXPECT_EQ(indexedClaimsOf(hauler), 0U);
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, woodId, {}), 0U);
 	}
 
 } // namespace ecs::test
