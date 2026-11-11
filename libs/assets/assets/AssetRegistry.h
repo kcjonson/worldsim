@@ -396,16 +396,14 @@ namespace assets {
 		// Node addresses in `definitions` are stable, so these stay valid until a definition is erased.
 		std::vector<const AssetDefinition*> m_idToDefinition;
 
-		// Yield defName -> ascending ids of the harvestables that yield it. Keyed by name because a
-		// harvestable can be registered before its yield has an id; m_harvestablesByYieldId mirrors it
-		// by yield id once the yield has one, and is what harvestablesYielding() reads.
-		std::unordered_map<std::string, std::vector<uint32_t>> m_harvestablesByYield;
-		std::vector<std::vector<uint32_t>>					   m_harvestablesByYieldId;
+		// Yield id -> ascending ids of the harvestables that yield it. A yield not yet defined is given
+		// its id when the first harvestable naming it is filed, and keeps it once it is defined.
+		std::vector<std::vector<uint32_t>> m_harvestablesByYieldId;
 
 		/// File `id` under its harvest yield (if any), keeping the list ascending.
 		void indexHarvestYield(const AssetDefinition& def, uint32_t id);
-		/// Copy the harvestables filed under `yieldDefName` to its id's entry, when it has an id.
-		void mirrorYieldById(const std::string& yieldDefName);
+		/// The id interned for `defName`, interning it (no definition, no capabilities) when it has none.
+		uint32_t internName(const std::string& defName);
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;

@@ -147,7 +147,7 @@ struct SuspendedWork {
 /// <TaskTiers> + classifyTier promotions): see colonist-task-arbitration.md.
 enum class TaskType : uint8_t {
 	None = 0,
-	FulfillNeed,   // Need fulfillment: tier 2 (critical), 5 (actionable), or 7 (gather-food sentinel)
+	FulfillNeed,   // Need fulfillment: tier 2 (critical), 5 (actionable), or 7 (gathering food)
 	Harvest,	   // Harvesting resources: tier 4 if serving a work order, else 6 (opportunistic)
 	Craft,		   // Crafting at a station: tier 4 (active work order)
 	Haul,		   // Moving loose items to storage: tier 4 if serving a work order, else 6

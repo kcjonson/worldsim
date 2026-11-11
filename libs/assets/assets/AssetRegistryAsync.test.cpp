@@ -174,7 +174,7 @@ TEST(AssetRegistryYieldIndexTest, ReregisteredDefinitionMovesToItsNewYield) {
 	EXPECT_TRUE(reg.harvestablesYielding(yieldA).empty());
 	registerDef("Test_YieldB", "");
 	const uint32_t yieldB = reg.getDefNameId("Test_YieldB");
-	EXPECT_EQ(reg.harvestablesYielding(yieldB), std::vector<uint32_t>{id}) << "filed before the yield had an id";
+	EXPECT_EQ(reg.harvestablesYielding(yieldB), std::vector<uint32_t>{id}) << "filed before the yield was defined";
 	EXPECT_EQ(reg.getDefinitionById(id), reg.getDefinition("Test_YieldBush"));
 
 	reg.clearDefinitions();

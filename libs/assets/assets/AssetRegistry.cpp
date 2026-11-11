@@ -2010,7 +2010,6 @@ namespace assets {
 		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
-		m_harvestablesByYield.clear();
 		m_harvestablesByYieldId.clear();
 		m_validationReport.issues.clear();
 		m_loadProgress.started.store(false);
@@ -2076,7 +2075,6 @@ namespace assets {
 		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
-		m_harvestablesByYield.clear();
 		m_harvestablesByYieldId.clear();
 
 		// Reserve ID 0 as "invalid"
@@ -2094,12 +2092,12 @@ namespace assets {
 			if (def.isEdible()) {
 				m_edibleItemNames.push_back(defName);
 			}
-			indexHarvestYield(def, nextId);
 			nextId++;
 		}
 		std::sort(m_edibleItemNames.begin(), m_edibleItemNames.end());
-		for (const auto& [yieldDefName, ids] : m_harvestablesByYield) {
-			mirrorYieldById(yieldDefName);
+		// Filed once every definition has its id, so a yield's id is its definition's.
+		for (const auto& [defName, def] : definitions) {
+			indexHarvestYield(def, m_defNameToId[defName]);
 		}
 
 		LOG_DEBUG(Engine, "Built defName index: %zu entries", m_idToDefName.size() - 1);
@@ -2109,24 +2107,27 @@ namespace assets {
 		if (!def.capabilities.harvestable.has_value() || def.capabilities.harvestable->yieldDefName.empty()) {
 			return;
 		}
-		auto& ids = m_harvestablesByYield[def.capabilities.harvestable->yieldDefName];
-		ids.insert(std::upper_bound(ids.begin(), ids.end(), id), id);
-	}
-
-	void AssetRegistry::mirrorYieldById(const std::string& yieldDefName) {
-		const uint32_t yieldId = getDefNameId(yieldDefName);
-		if (yieldId == 0) {
-			return;
-		}
+		const uint32_t yieldId = internName(def.capabilities.harvestable->yieldDefName);
 		if (yieldId >= m_harvestablesByYieldId.size()) {
 			m_harvestablesByYieldId.resize(yieldId + 1);
 		}
-		const auto filed = m_harvestablesByYield.find(yieldDefName);
-		if (filed != m_harvestablesByYield.end()) {
-			m_harvestablesByYieldId[yieldId] = filed->second;
-		} else {
-			m_harvestablesByYieldId[yieldId].clear();
+		auto&	   ids = m_harvestablesByYieldId[yieldId];
+		const auto at = std::lower_bound(ids.begin(), ids.end(), id);
+		if (at == ids.end() || *at != id) {
+			ids.insert(at, id);
 		}
+	}
+
+	uint32_t AssetRegistry::internName(const std::string& defName) {
+		if (const auto it = m_defNameToId.find(defName); it != m_defNameToId.end()) {
+			return it->second;
+		}
+		const auto id = static_cast<uint32_t>(m_idToDefName.size());
+		m_defNameToId[defName] = id;
+		m_idToDefName.push_back(defName);
+		m_idToDefinition.push_back(nullptr);
+		m_capabilityMasks.push_back(0);
+		return id;
 	}
 
 	const std::vector<uint32_t>& AssetRegistry::harvestablesYielding(uint32_t yieldDefNameId) const {
@@ -2210,13 +2211,11 @@ namespace assets {
 		std::string defName = def.defName;
 		const uint16_t mask = computeCapabilityMask(def);
 		const bool edible = def.isEdible();
-		std::string previousYield;
 		if (const auto previous = definitions.find(defName);
 			previous != definitions.end() && previous->second.capabilities.harvestable.has_value()) {
-			previousYield = previous->second.capabilities.harvestable->yieldDefName;
-			if (auto filed = m_harvestablesByYield.find(previousYield);
-				filed != m_harvestablesByYield.end()) {
-				std::erase(filed->second, getDefNameId(defName));
+			const uint32_t previousYieldId = getDefNameId(previous->second.capabilities.harvestable->yieldDefName);
+			if (previousYieldId < m_harvestablesByYieldId.size()) {
+				std::erase(m_harvestablesByYieldId[previousYieldId], getDefNameId(defName));
 			}
 		}
 		definitions[defName] = std::move(def);
@@ -2254,14 +2253,6 @@ namespace assets {
 			m_capabilityMasks.push_back(mask);
 		}
 		indexHarvestYield(stored, m_defNameToId[defName]);
-		if (!previousYield.empty()) {
-			mirrorYieldById(previousYield);
-		}
-		if (stored.capabilities.harvestable.has_value()) {
-			mirrorYieldById(stored.capabilities.harvestable->yieldDefName);
-		}
-		// This definition may itself be a yield harvestables registered earlier were filed under.
-		mirrorYieldById(defName);
 
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}
@@ -2292,7 +2283,6 @@ namespace assets {
 		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
-		m_harvestablesByYield.clear();
 		m_harvestablesByYieldId.clear();
 		LOG_DEBUG(Engine, "Cleared all definitions");
 	}

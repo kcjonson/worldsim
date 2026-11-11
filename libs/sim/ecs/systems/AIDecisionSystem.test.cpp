@@ -1665,7 +1665,7 @@ namespace ecs::test {
 	// Within the idle tier (7), a reachable gather-food option must outrank wander. Wander never sets
 	// distanceToTarget, so before the fix its distance factor computed to the MAX (~300) and it beat
 	// gather-food; the fix pins wander's within-tier score to 0 (the idle floor). A gather-food
-	// sentinel (needValue>=100, threshold==0) with a nearby reachable source carries a positive
+	// option with a nearby reachable source carries a positive
 	// distance factor plus any Farming skill, so it wins the (tier, score) key.
 	TEST_F(AIDecisionSystemTest, GatherFoodRanksAboveWanderInIdleTier) {
 		// Wander after the fix: tier 7, score 0 (no distance/skill/age/hysteresis).
@@ -1675,12 +1675,11 @@ namespace ecs::test {
 		wander.tier = 7;
 		wander.score = 0.0F; // the idle floor
 
-		// Gather-food sentinel: tier 7, a nearby (5 m) reachable food source plus modest Farming skill.
+		// Gather food: tier 7, a nearby (5 m) reachable food source plus modest Farming skill.
 		EvaluatedOption gatherFood;
 		gatherFood.taskType = TaskType::FulfillNeed;
 		gatherFood.needType = NeedType::Hunger;
-		gatherFood.needValue = 100.0F; // sentinel marker (not a real hunger need)
-		gatherFood.threshold = 0.0F;   // sentinel marker
+		gatherFood.gathersFood = true;
 		gatherFood.status = OptionStatus::Available;
 		gatherFood.tier = 7;
 		gatherFood.distanceToTarget = 5.0F;
@@ -1746,7 +1745,7 @@ namespace ecs::test {
 	// These build a REAL DecisionTrace through world->update() (the only path that calls the
 	// .cpp-private classifyTier on every option) and assert the tier the system stamped onto the
 	// resulting option. They cover each runtime classification rule from the spec Model table:
-	// work-order Haul/Harvest -> 4, stocking Haul/Harvest -> 6, gather-food sentinel -> 7 (above
+	// work-order Haul/Harvest -> 4, stocking Haul/Harvest -> 6, gather food -> 7 (above
 	// wander), critical need -> 2, actionable need -> 5.
 	// =============================================================================
 
@@ -2451,8 +2450,8 @@ namespace ecs::test {
 			<< "a clearly-closer same-tier target overcomes hysteresis and wins the switch";
 	}
 
-	// The gather-food sentinel (needValue==100, threshold==0, emitted when the colonist has no food
-	// and knows an edible harvestable) classifies at tier 7 (idle) and, with my wander-floor fix,
+	// The gather-food option (emitted when the colonist has no food and knows an edible harvestable)
+	// classifies at tier 7 (idle) and, with my wander-floor fix,
 	// outranks the same-tier wander option because wander's within-tier score is pinned to 0.
 	TEST_F(AIDecisionSystemTest, GatherFoodClassifiesTier7AndBeatsWander) {
 		auto& registry = assets::AssetRegistry::Get();
@@ -2468,7 +2467,7 @@ namespace ecs::test {
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist)); // all needs met -> idle tier; no food in inventory
-		// A nearby edible harvestable: drives the gather-food sentinel (and a reachable food source).
+		// A nearby edible harvestable: drives the gather-food option (and a reachable food source).
 		addKnownEntity(colonist, {3.0F, 0.0F}, berryBushId, assets::CapabilityType::Harvestable);
 
 		world->update(0.016F);
@@ -2476,15 +2475,12 @@ namespace ecs::test {
 		auto* trace = getTrace(colonist);
 		ASSERT_NE(trace, nullptr);
 
-		// The gather-food sentinel reuses FulfillNeed with needValue==100 && threshold==0.
-		const auto* gatherFood = findOption(*trace, [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needValue >= 100.0F && o.threshold == 0.0F;
-		});
+		const auto* gatherFood = findOption(*trace, [](const EvaluatedOption& o) { return o.gathersFood; });
 		const auto* wander = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Wander; });
 		ASSERT_NE(gatherFood, nullptr) << "an empty-inventory colonist with a known edible source gathers food";
 		ASSERT_NE(wander, nullptr) << "wander is always offered as the idle floor";
 
-		EXPECT_EQ(gatherFood->tier, 7) << "the gather-food sentinel is tier 7 (idle)";
+		EXPECT_EQ(gatherFood->tier, 7) << "gathering food is tier 7 (idle)";
 		EXPECT_EQ(wander->tier, 7) << "wander is tier 7 (idle)";
 		EXPECT_FLOAT_EQ(wander->score, 0.0F) << "wander is the idle floor: within-tier score pinned to 0";
 		EXPECT_GT(gatherFood->score, wander->score) << "reachable gather-food outranks wander within the idle tier";
@@ -2553,9 +2549,9 @@ namespace ecs::test {
 			return registry.getDefNameId("Flora_BerryBush");
 		}
 
-		// The real Hunger option, not the gather-food sentinel that shares its need type.
+		// The real Hunger option, not the gather-food option that shares its need type.
 		[[nodiscard]] bool isHungerNeedOption(const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold > 0.0F;
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && !o.gathersFood;
 		}
 	} // namespace
 
@@ -2649,7 +2645,7 @@ namespace ecs::test {
 		ASSERT_NE(hunger, nullptr);
 		EXPECT_EQ(hunger->status, OptionStatus::NoSource);
 		const auto* gather = findOption(*trace, [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
+			return o.gathersFood;
 		});
 		ASSERT_NE(gather, nullptr);
 		EXPECT_EQ(gather->status, OptionStatus::NoSource);
@@ -4665,7 +4661,7 @@ namespace ecs::test {
 
 		[[nodiscard]] static const EvaluatedOption* gatherFoodOption(const DecisionTrace& trace) {
 			return findOption(trace, [](const EvaluatedOption& o) {
-				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
+				return o.gathersFood;
 			});
 		}
 

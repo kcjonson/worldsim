@@ -228,7 +228,7 @@ namespace ecs {
 		/// table directly rather than hiding magic numbers.
 		constexpr int	kTierCriticalNeed = 2; // a need past its critical threshold
 		constexpr int	kTierActiveWorkOrder = 4; // committed/queued work + its provisioning chain
-		constexpr int	kTierIdle = 7;			  // gather-food sentinel and Wander
+		constexpr int	kTierIdle = 7;			  // gathering food and Wander
 		constexpr float kCriticalNeedThreshold = 10.0F; // needValue below this is critical
 
 		/// Classify an option's arbitration tier: the config BASE tier for its task type, with a
@@ -236,7 +236,7 @@ namespace ecs {
 		/// table exactly). Lower tier = higher priority.
 		///
 		///   FulfillNeed: needValue < 10%        -> tier 2 (critical need)
-		///                gather-food sentinel    -> tier 7 (idle)   (needValue>=100 && threshold==0)
+		///                gather food             -> tier 7 (idle)
 		///                else (actionable)       -> config base (5)
 		///   Haul/Harvest: servesActiveWorkOrder  -> tier 4 (work order, incl. mid-chain provisioning)
 		///                 else                    -> config base (6, covers stocking + opportunistic)
@@ -249,10 +249,8 @@ namespace ecs {
 
 			switch (option.taskType) {
 				case TaskType::FulfillNeed: {
-					// Gather-food sentinel: needValue==100 && threshold==0 (a real hunger need always
-					// has needValue<100 and a positive threshold). Idle filler, ranks at tier 7.
-					const bool gatherFoodSentinel = option.needValue >= 100.0F && option.threshold == 0.0F;
-					if (gatherFoodSentinel) {
+					// Gathering food for the pack is idle filler, tier 7.
+					if (option.gathersFood) {
 						return kTierIdle;
 					}
 					// A satisfied need needs no action; sort it to the idle tier so it can't outrank
@@ -1201,16 +1199,12 @@ namespace ecs {
 				}
 
 				// Skip items being carried by a DIFFERENT colonist
-				if (packaged.beingCarried) {
-					bool thisColonistCarrying = inventory.carryingPackagedEntity.has_value() &&
-												inventory.carryingPackagedEntity.value() == static_cast<uint64_t>(packagedEntity);
-					if (!thisColonistCarrying) {
-						continue;
-					}
+				const bool isCarryingThis = inventory.carryingPackagedEntity == static_cast<uint64_t>(packagedEntity);
+				if (packaged.beingCarried && !isCarryingThis) {
+					continue;
 				}
 
 				const auto& targetPos = packaged.targetPosition.value();
-				bool		isCarryingThis = inventory.carryingPackagedEntity.has_value();
 
 				// Create place packaged option
 				EvaluatedOption placeOption;
@@ -2264,10 +2258,9 @@ namespace ecs {
 		// known when the search stopped at stored food a hungry colonist will eat first; it is not shown then.
 		if (!packHasFood && (gatherSource.has_value() || !seeksFood || searchExhausted)) {
 			EvaluatedOption gatherOption;
-			gatherOption.taskType = TaskType::FulfillNeed; // Reuse FulfillNeed for now
-			gatherOption.needType = NeedType::Hunger;	   // Will trigger Harvest action
-			gatherOption.needValue = 100.0F;			   // Not a real need, just work
-			gatherOption.threshold = 0.0F;				   // Always available when no food
+			gatherOption.taskType = TaskType::FulfillNeed; // a Hunger task: cut the bush into the pack
+			gatherOption.needType = NeedType::Hunger;
+			gatherOption.gathersFood = true;
 
 			// Harvesting uses Farming skill
 			auto [farmSkillLevel, farmSkillBonus] = calculateSkillBonus(skills, kSkillFarming);

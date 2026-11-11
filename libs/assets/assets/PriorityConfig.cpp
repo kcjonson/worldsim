@@ -25,7 +25,7 @@ namespace assets {
 		/// <TaskTiers> block overrides these so designers can retune without a code change; these
 		/// defaults are the same values, kept in sync as the validation/tuning source of truth.
 		void installDefaultTaskTiers(std::unordered_map<std::string, int>& tiers) {
-			tiers["FulfillNeed"] = 5; // base = actionable need; promoted to 2 (critical) or 7 (gather-food sentinel)
+			tiers["FulfillNeed"] = 5; // base = actionable need; promoted to 2 (critical) or 7 (gathering food)
 			tiers["Craft"] = 4;
 			tiers["Build"] = 4;
 			tiers["Deconstruct"] = 4;

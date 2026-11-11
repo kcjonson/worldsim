@@ -503,6 +503,38 @@ namespace ecs::test {
 		EXPECT_TRUE(task.claims.empty()) << "a carried item is possessed";
 	}
 
+	// A colonist carrying one packaged item sees another only as an item to go and pick up: held by
+	// whoever is on its way to it, never as one it is already delivering.
+	TEST_F(ChainClaimsTest, CarryingOnePackagedItemDoesNotMakeAnotherOneDelivering) {
+		const auto makePackaged = [&](glm::vec2 at, glm::vec2 target) {
+			const EntityID item = world->createEntity();
+			world->addComponent<Position>(item, Position{at});
+			world->addComponent<Appearance>(item, Appearance{"Crate", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			world->addComponent<Packaged>(item, Packaged{.targetPosition = target});
+			return item;
+		};
+		const EntityID carried = makePackaged({0.0F, 0.0F}, {20.0F, 0.0F});
+		const EntityID other = makePackaged({3.0F, 0.0F}, {8.0F, 0.0F});
+		const EntityID holder = createColonist({4.0F, 0.0F});
+		decide(holder);
+		ASSERT_EQ(getTask(holder)->placePackagedEntityId, static_cast<uint64_t>(other));
+
+		const EntityID carrier = createColonist({0.0F, 0.0F});
+		world->getComponent<Packaged>(carried)->beingCarried = true;
+		world->getComponent<Inventory>(carrier)->carryingPackagedEntity = static_cast<uint64_t>(carried);
+		decide(carrier);
+		bool sawOther = false;
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(carrier)->options) {
+			if (option.taskType == TaskType::PlacePackaged && option.placePackagedEntityId == static_cast<uint64_t>(other)) {
+				sawOther = true;
+				EXPECT_EQ(option.status, OptionStatus::Reserved);
+				EXPECT_EQ(option.reservedBy, holder);
+				EXPECT_EQ(option.targetPosition, glm::vec2(3.0F, 0.0F)) << "it would go to pick it up, not deliver it";
+			}
+		}
+		EXPECT_TRUE(sawOther);
+	}
+
 	// The switch path rewrites a live instance into a smaller record and accepts the need in one
 	// update; the record survives task.clear() and the validator holds through it.
 	TEST_F(ChainClaimsTest, NeedKeepsAStowedHaulAsItsSuspendedRecordAndCarryInAdoptsIt) {
@@ -1695,7 +1727,7 @@ namespace ecs::test {
 		decide(idle);
 		bool gathersFree = false;
 		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(idle)->options) {
-			gathersFree |= option.taskType == TaskType::FulfillNeed && option.needType == NeedType::Hunger && option.threshold == 0.0F &&
+			gathersFree |= option.gathersFood &&
 						   option.targetPosition == otherFree && option.status != OptionStatus::Reserved;
 		}
 		EXPECT_TRUE(gathersFree) << "the gather goes to the next free bush";

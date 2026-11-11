@@ -46,6 +46,10 @@ namespace ecs {
 		// Fulfillment status
 		OptionStatus status = OptionStatus::Satisfied;
 
+		// The idle gather-food option: a Hunger task that picks food for the pack while nobody is
+		// hungry. Tier 7, and described by its reason rather than as a need.
+		bool gathersFood = false;
+
 		// Target information (if Available or Selected)
 		std::optional<glm::vec2> targetPosition;
 		std::optional<uint32_t>	 targetDefNameId; // For display name lookup

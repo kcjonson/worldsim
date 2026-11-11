@@ -46,10 +46,6 @@ namespace ecs {
 			return colonist != nullptr && !colonist->name.empty() ? colonist->name : "another colonist";
 		}
 
-		bool isGatherFoodSentinel(const EvaluatedOption& option) {
-			return option.needValue >= 100.0F && option.threshold == 0.0F;
-		}
-
 		std::string describeNeed(const World& world, const EvaluatedOption& option) {
 			std::string text = std::format("{} at {}%", needName(option.needType), static_cast<int>(option.needValue));
 			if (option.status == OptionStatus::NoSource && !option.targetPosition.has_value()) {
@@ -57,7 +53,7 @@ namespace ecs {
 			} else if (option.status == OptionStatus::Regrowing) {
 				text += " (source regrowing)";
 			} else if (option.status == OptionStatus::Reserved) {
-				text += std::format(" (reserved by {})", holderName(world, option));
+				text += std::format("{} (reserved by {})", option.needValue < 10.0F ? " (critical)" : "", holderName(world, option));
 			} else if (option.needValue < 10.0F) {
 				text += " (critical)";
 			} else if (option.status == OptionStatus::Satisfied) {
@@ -78,7 +74,7 @@ namespace ecs {
 			const auto& registry = assets::AssetRegistry::Get();
 			switch (option.taskType) {
 				case TaskType::FulfillNeed:
-					return isGatherFoodSentinel(option) ? std::string(option.reason) : describeNeed(world, option);
+					return option.gathersFood ? std::string(option.reason) : describeNeed(world, option);
 				case TaskType::Haul:
 					return std::vformat(option.reason, std::make_format_args(registry.getDefName(option.haulItemDefNameId)));
 				case TaskType::Harvest: {
@@ -115,7 +111,7 @@ namespace ecs {
 	std::string describeOption(const World& world, const EvaluatedOption& option) {
 		std::string text = describeBase(world, option);
 		// A need names its holder in place of where its source is; everything else adds it.
-		const bool needNamesHolder = option.taskType == TaskType::FulfillNeed && !isGatherFoodSentinel(option);
+		const bool needNamesHolder = option.taskType == TaskType::FulfillNeed && !option.gathersFood;
 		if (option.status == OptionStatus::Reserved && !needNamesHolder) {
 			const std::string holder = holderName(world, option);
 			text += option.taskType == TaskType::Craft ? std::format(" (station in use by {})", holder) : std::format(" (reserved by {})", holder);
