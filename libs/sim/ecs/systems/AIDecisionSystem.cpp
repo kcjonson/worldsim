@@ -1321,7 +1321,7 @@ namespace ecs {
 						// pick: keeping it would leave the colonist stopped with a stale failure and no new
 						// route request.
 						const bool failedOnStaleNav =
-							task.navState == NavState::CantFindWayTo && task.blockedReachStamp != m_reachStamp;
+							task.navState == NavState::CantFindWayTo && task.blockedReachStamp != reachStamp;
 						isSameTask = sameType && sameTarget && samePlaceTarget && !failedOnStaleNav;
 					}
 				}
@@ -1541,10 +1541,10 @@ namespace ecs {
 		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
 		// again every decision. A source anywhere else is judged live (by which regions cover it, no
 		// mesh involved) and never remembered, since which region a point falls in moves on its own.
-		m_reachStamp = 0;
+		reachStamp = 0;
 		if (reach.has_value()) {
 			const SourceReachMemo::Key key = reachKey(*reach, memory);
-			m_reachStamp = key.stamp();
+			reachStamp = key.stamp();
 			sourceReach.keep(key, 2 * Memory::kMaxWorldEntities);
 			// The route to the need source this colonist was heading for just came back with no believed
 			// route, though the forest let it through (a known wall's room, a passage the funnel can't
@@ -1552,7 +1552,7 @@ namespace ecs {
 			// source, but only under the key it failed under, or the verdict would outlive what it was
 			// true for.
 			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
-				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == m_reachStamp &&
+				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == reachStamp &&
 				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
 				sourceReach.recordUnreachable(currentTask.needSourceKey);
 			}
@@ -1575,7 +1575,7 @@ namespace ecs {
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
 		// a river don't hide a reachable one farther off.
 		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
-			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, m_sourceScratch);
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, sourceScratch);
 		};
 
 		// With an empty pack, the one food source both the Hunger option and the gather-food option

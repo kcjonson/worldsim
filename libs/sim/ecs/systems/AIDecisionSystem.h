@@ -199,10 +199,10 @@ private:
 	std::optional<glm::vec2> m_colonyOrigin;
 
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
-	std::vector<SourceCandidate> m_sourceScratch;
+	std::vector<SourceCandidate> sourceScratch;
 
 	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
-	std::uint64_t m_reachStamp = 0;
+	std::uint64_t reachStamp = 0;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;
