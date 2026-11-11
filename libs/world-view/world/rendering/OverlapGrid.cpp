@@ -9,8 +9,9 @@ namespace worldview {
 	void OverlapGrid::beginFrame(int viewportWidth, int viewportHeight) {
 		const auto w = static_cast<uint32_t>(std::max(1.0F, std::ceil(static_cast<float>(viewportWidth) / kCellPixels)));
 		const auto h = static_cast<uint32_t>(std::max(1.0F, std::ceil(static_cast<float>(viewportHeight) / kCellPixels)));
-		// A frame's keys never reach the top quarter of the range, so stamping restarts well before it wraps.
+		// A frame's keys are at most kMaxRunKey, a quarter of the range, so stamping restarts before it wraps.
 		constexpr uint32_t kRestartAt = std::numeric_limits<uint32_t>::max() / 4 * 3;
+		static_assert(uint64_t{kRestartAt} + kMaxRunKey <= std::numeric_limits<uint32_t>::max());
 		frameBase += frameMaxKey;
 		frameMaxKey = 0;
 		if (w != width || h != height || frameBase >= kRestartAt) {

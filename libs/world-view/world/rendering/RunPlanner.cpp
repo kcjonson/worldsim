@@ -1,7 +1,10 @@
 #include "RunPlanner.h"
 
+#include <utils/Log.h>
+
 #include <algorithm>
 #include <bit>
+#include <cassert>
 
 namespace worldview {
 
@@ -17,6 +20,8 @@ namespace worldview {
 		meshOfOrder.clear();
 		meshBound = std::bit_ceil(std::max(meshCount, 1U));
 		meshShift = static_cast<uint32_t>(std::countr_zero(meshBound));
+		assert(meshBound <= OverlapGrid::kMaxRunKey / 2);
+		maxLayer = (OverlapGrid::kMaxRunKey - meshBound) >> meshShift;
 		if (orderOfMesh.size() < meshBound) {
 			orderOfMesh.resize(meshBound, kNone);
 		}
@@ -46,7 +51,7 @@ namespace worldview {
 		if (latest >= keyOf(floorLayer, 0)) {
 			const uint32_t latestLayer = (latest - 1) >> meshShift;
 			const uint32_t latestOrder = (latest - 1) & (meshBound - 1);
-			layer = latestOrder <= order ? latestLayer : latestLayer + 1;
+			layer = latestOrder <= order ? latestLayer : capLayer(latestLayer + 1);
 		}
 
 		std::vector<uint32_t>& byLayer = drawOfLayer[order];
@@ -70,6 +75,17 @@ namespace worldview {
 		return byLayer[layer];
 	}
 
+	uint32_t RunPlanner::capLayer(uint32_t layer) {
+		if (layer <= maxLayer) {
+			return layer;
+		}
+		if (!cappedLogged) {
+			LOG_ERROR(Engine, "Upright draw layers passed %u at %u meshes; the rest share the last layer", maxLayer, meshBound);
+			cappedLogged = true;
+		}
+		return maxLayer;
+	}
+
 	std::span<const uint32_t> RunPlanner::close() {
 		closing.clear();
 		for (auto draw = static_cast<uint32_t>(firstOpen); draw < draws.size(); ++draw) {
@@ -77,7 +93,7 @@ namespace worldview {
 		}
 		std::sort(closing.begin(), closing.end(), [this](uint32_t a, uint32_t b) { return draws[a].key < draws[b].key; });
 		if (!closing.empty()) {
-			floorLayer = topLayer + 1;
+			floorLayer = capLayer(topLayer + 1);
 			topLayer = floorLayer;
 		}
 		firstOpen = static_cast<uint32_t>(draws.size());

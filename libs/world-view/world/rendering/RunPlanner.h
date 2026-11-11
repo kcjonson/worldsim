@@ -40,8 +40,14 @@ class RunPlanner {
   private:
 	// A draw's place on the timeline as a grid key: 1 + layer * meshBound + the mesh's order, meshBound
 	// the power of two at or above the mesh count so a key splits by shift and mask. Keys grow with
-	// depth order, so a cell's largest key is the latest place drawn over it.
+	// depth order, so a cell's largest key is the latest place drawn over it. Layers stop at maxLayer,
+	// so a key is at most OverlapGrid::kMaxRunKey.
 	[[nodiscard]] uint32_t keyOf(uint32_t layer, uint32_t order) const { return 1 + (layer << meshShift) + order; }
+
+	// A layer past maxLayer is placed in it instead (logged once): entities there may draw out of
+	// depth order, where a wrapped key would scramble the whole frame. A frame reaches it only after
+	// kMaxRunKey / meshBound layers, 262,144 at 4,096 mesh slots.
+	[[nodiscard]] uint32_t capLayer(uint32_t layer);
 
 	// Every entity marks `all`; only those not small mark `large`. A large entity reads `all`, a small one `large`.
 	OverlapGrid all;
@@ -49,6 +55,8 @@ class RunPlanner {
 
 	uint32_t meshBound = 1;
 	uint32_t meshShift = 0;
+	uint32_t maxLayer = 0;
+	bool	 cappedLogged = false;
 
 	// Per mesh, its order this frame (kNone before it first appears); per order, the mesh, its draws
 	// by layer (kNone: none), and the close count when it last opened a draw.

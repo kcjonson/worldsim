@@ -89,6 +89,23 @@ namespace worldview {
 		EXPECT_EQ(planner.splits(), 0U);
 	}
 
+	// At 2^20 meshes a layer is 2^20 keys apart, so keys pass OverlapGrid::kMaxRunKey after about 1,023
+	// layers and would wrap at 4,096. Two meshes alternating over one spot open a layer every other
+	// entity; past the last layer the draws stay in the order they were opened in.
+	TEST(RunPlanner, KeysStopAtTheGridsLargestKey) {
+		RunPlanner planner;
+		planner.beginFrame(1000, 400, 1U << 20);
+		for (uint32_t i = 0; i < 10000; ++i) {
+			(void)planner.place(i % 2, at(planner, 0.0F), false);
+		}
+		const std::vector<uint32_t> order = closeAll(planner);
+		ASSERT_GE(order.size(), 2000U);
+		ASSERT_LT(order.size(), 4096U);
+		for (uint32_t i = 0; i < order.size(); ++i) {
+			ASSERT_EQ(order[i], i);
+		}
+	}
+
 	TEST(RunPlanner, ANewFrameStartsEmpty) {
 		RunPlanner planner;
 		planner.beginFrame(1000, 400, 2);

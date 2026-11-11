@@ -27,6 +27,10 @@ class OverlapGrid {
 	// zoom 0.25, 119 pixels; at zooms 1 and 3, none.
 	static constexpr float kTolerancePixels = 0.5F;
 
+	// The largest run key a frame may mark: keys stay out of the top quarter of the range, so a
+	// stamp (frameBase + key) cannot wrap before beginFrame restarts the stamping.
+	static constexpr uint32_t kMaxRunKey = (1U << 30) - 1;
+
 	// The cells a footprint covers (x0 > x1: none, for one wholly off the screen or narrower than
 	// twice the tolerance).
 	struct Cells {
