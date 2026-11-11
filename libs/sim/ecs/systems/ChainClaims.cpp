@@ -232,6 +232,9 @@ namespace ecs {
 			return std::nullopt; // the goods held are not this chain's yet
 		}
 		auto record = handOverCargo(task, root, item);
+		if (!record) {
+			return std::nullopt;
+		}
 		for (Claim& claim : record->claims) {
 			claim.setQuantity(cargo);
 		}

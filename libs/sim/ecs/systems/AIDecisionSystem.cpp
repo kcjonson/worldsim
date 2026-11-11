@@ -2665,18 +2665,22 @@ namespace ecs {
 				option.targetPosition  = snapped;
 				option.targetReachable = false; // a moved target is tested where it now is
 			}
-			// A cut's reach is remembered under its source like a need's, so the flagged cuts sorted ahead of
-			// the carry-in are not tested afresh at every decision while the colonist cuts and deposits.
-			const bool reachable = option.targetReachable || (option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetEntityId, option.targetPosition.value())
-															  : option.haulSourceKey != 0 ? canReachSource(option.haulSourceKey, option.targetPosition.value())
-																						  : canReach(option.targetPosition.value()));
-			if (needsTarget && !reachable) {
-				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
-				continue;
-			}
-			if (needsTarget && routeFailed(option.sourceKey, option.targetPosition.value())) {
-				option.status = OptionStatus::NoSource; // its route already failed under this key
-				continue;
+			if (needsTarget) {
+				// A cut's or a pile's reach is remembered under its source like a need's, so the flagged legs
+				// sorted ahead of the carry-in are not tested afresh at every decision while the colonist
+				// gathers and deposits.
+				const glm::vec2 target = *option.targetPosition;
+				const bool		reachable = option.targetReachable || (option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetEntityId, target)
+																	   : option.haulSourceKey != 0		 ? canReachSource(option.haulSourceKey, target)
+																										 : canReach(target));
+				if (!reachable) {
+					option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
+					continue;
+				}
+				if (routeFailed(option.sourceKey, target)) {
+					option.status = OptionStatus::NoSource; // its route already failed under this key
+					continue;
+				}
 			}
 			// Picking up furniture whose spot he can't reach would only carry it off and set it down again.
 			if (option.taskType == TaskType::PlacePackaged && option.placeTargetPosition.has_value() &&
