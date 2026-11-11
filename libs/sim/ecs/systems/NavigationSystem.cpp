@@ -2109,15 +2109,44 @@ namespace ecs {
 		reach.belief				= belief;
 		reach.startMm				= nav::toMm(startMeters);
 		reach.radiusMm				= radiusMm(agentRadiusMeters);
+		reach.square				= squareAround(reach.startMm);
 		reach.onGround				= structural.locate(reach.startMm) >= 0;
 		reach.startCell				= cellKey(geometry::floorDiv(reach.startMm.x, kReachCellMm), geometry::floorDiv(reach.startMm.y, kReachCellMm));
-		reach.startRegionGeneration = chunkStamp(squareAround(reach.startMm), StampGround::With);
-		reach.settled				= groundMeshedThrough(squareAround(reach.startMm));
+		reach.startRegionGeneration = chunkStamp(reach.square, StampGround::With);
+		reach.settled				= groundMeshedThrough(reach.square);
+		return reach;
+	}
+
+	NavigationSystem::Reach NavigationSystem::taskReachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief,
+															EntityID requester) const {
+		Reach		reach = reachFrom(startMeters, agentRadiusMeters, belief);
+		const Task* task  = world != nullptr ? world->getComponent<Task>(requester) : nullptr;
+		const auto	held  = routeScopes.find(requester);
+		if (task == nullptr || task->instanceId == 0 || held == routeScopes.end() || held->second.instance != task->instanceId ||
+			!held->second.within.has_value()) {
+			return reach;
+		}
+		const geometry::RectMm& r		= *held->second.within;
+		const geometry::RectMm	grown{{r.min.x - reach.radiusMm, r.min.y - reach.radiusMm}, {r.max.x + reach.radiusMm, r.max.y + reach.radiusMm}};
+		const auto				inside = [&](const geometry::RectMm& box) {
+			   return reach.startMm.x >= box.min.x && reach.startMm.x <= box.max.x && reach.startMm.y >= box.min.y && reach.startMm.y <= box.max.y;
+		};
+		if (!inside(grown)) {
+			return reach;
+		}
+		// The same rect requestPath confines this task's routes to (grown by the radius for a start
+		// pushed just outside it), so reach and route agree for the task's own goals.
+		reach.square				= inside(r) ? r : grown;
+		reach.taskScoped			= true;
+		reach.startRegionGeneration = chunkStamp(reach.square, StampGround::With);
+		reach.settled				= groundMeshedThrough(reach.square);
 		return reach;
 	}
 
 	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
-		return reach.onGround && inSquareOf(nav::toMeters(reach.startMm), goalMeters);
+		const geometry::Vec2i64 goal = nav::toMm(goalMeters);
+		return reach.onGround && goal.x >= reach.square.min.x && goal.x <= reach.square.max.x && goal.y >= reach.square.min.y &&
+			   goal.y <= reach.square.max.y;
 	}
 
 	std::uint64_t NavigationSystem::verdictStamp(glm::vec2 anchor) const {
@@ -2140,7 +2169,7 @@ namespace ecs {
 		if (!reach.onGround) {
 			return straight; // can't prove anything from off the ground
 		}
-		const geometry::RectMm square = squareAround(reach.startMm);
+		const geometry::RectMm& square = reach.square;
 		if (goal.x < square.min.x || goal.x > square.max.x || goal.y < square.min.y || goal.y > square.max.y) {
 			return std::nullopt;
 		}

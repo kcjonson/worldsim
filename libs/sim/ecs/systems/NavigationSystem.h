@@ -42,6 +42,7 @@
 #include "../EntityID.h"
 #include "../ISystem.h"
 
+#include <core/RectMm.h>
 #include <core/Vec2i64.h>
 
 #include <nav/NavMesh.h>
@@ -184,15 +185,25 @@ class NavigationSystem : public ISystem {
 		// Every chunk the square meets has its ground meshed. Until then a walk that fails may only be
 		// waiting on it: "not now", which is never remembered.
 		bool						settled = true;
+		// The rect walks are confined to: the square round the start, or for taskReachFrom the
+		// requester's task's square (taskScoped).
+		geometry::RectMm			square{{0, 0}, {0, 0}};
+		bool						taskScoped = false;
 		geometry::nav::BeliefFilter belief;
 	};
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
+	// The reach for questions about the requester's task in progress: walks confined to the square
+	// its routes are (requestPath's scope for its current task instance) while it stands inside that
+	// square, give or take its radius, so reach and route agree for the task's own goals; otherwise
+	// reachFrom. Never for choosing a new task, whose square is round where the colonist stands.
+	[[nodiscard]] Reach taskReachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief,
+									  EntityID requester) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
 	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or nullopt
 	// when it is unreachable or every walk there is longer than maxWalk.
 	[[nodiscard]] std::optional<float> walkDistance(const Reach& reach, glm::vec2 goalMeters,
 													float maxWalk = std::numeric_limits<float>::infinity()) const;
-	// The goal is inside the reach's square, from a start on meshed ground: a verdict on it is the
+	// The goal is inside the reach's rect, from a start on meshed ground: a verdict on it is the
 	// colonist's to keep (SourceReachMemo). Anything outside is unreachable on its own and only a
 	// player's order sends a colonist there.
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;

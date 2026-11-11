@@ -2198,6 +2198,24 @@ namespace ecs {
 		const auto canReach = [&](const glm::vec2& target) {
 			return !reach.has_value() || m_navSystem->reaches(*reach, target);
 		};
+		// The task in progress has its own goals judged in the square its routes are confined to (the
+		// square round where its first route started), so reach and route agree as it moves on: a
+		// deposit 200 m from the pickup it was chosen with stays reachable. Only an option continuing
+		// it (same type, same target) reads this, unremembered; any other is a new task, whose square is
+		// round where the colonist stands.
+		std::optional<NavigationSystem::Reach> taskReach;
+		if (haveMesh && currentTask.isActive() && currentTask.instanceId != 0) {
+			taskReach = m_navSystem->taskReachFrom(position.value, agentRadius, belief, entity);
+		}
+		const auto continuesTask = [&](const EvaluatedOption& option) {
+			if (!taskReach.has_value() || !taskReach->taskScoped || option.taskType != currentTask.type) {
+				return false;
+			}
+			if (option.taskType == TaskType::PlacePackaged) {
+				return option.placePackagedEntityId != 0U && option.placePackagedEntityId == currentTask.placePackagedEntityId;
+			}
+			return option.targetPosition.has_value() && glm::distance(*option.targetPosition, currentTask.targetPosition) < 0.5F;
+		};
 
 		// Verdicts for sources in the colonist's reach square are remembered (SourceReachMemo), so one
 		// surrounded by unreachable sources doesn't test them all again every decision. A source outside
@@ -2822,9 +2840,12 @@ namespace ecs {
 				// sorted ahead of the carry-in are not tested afresh at every decision while the colonist
 				// gathers and deposits.
 				const glm::vec2 target = *option.targetPosition;
-				const bool		reachable = option.targetReachable || (option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetKey, target)
-																	   : option.haulSourceKey != 0		 ? canReachSource(option.haulSourceKey, target)
-																										 : canReach(target));
+				const bool		reachable =
+					option.targetReachable ||
+					(continuesTask(option)						? m_navSystem->reaches(*taskReach, target)
+					 : option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetKey, target)
+					 : option.haulSourceKey != 0			? canReachSource(option.haulSourceKey, target)
+															: canReach(target));
 				if (!reachable) {
 					option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 					continue;
@@ -2833,11 +2854,19 @@ namespace ecs {
 					option.status = OptionStatus::NoSource; // its route already failed under this key
 					continue;
 				}
+				// A haul from a pile is chosen only when its deposit leg can route too, from here in this
+				// square, the square all its legs keep.
+				if (option.taskType == TaskType::Haul && option.haulSourceKey != 0 && option.haulTargetPosition.has_value() &&
+					!(continuesTask(option) ? m_navSystem->reaches(*taskReach, *option.haulTargetPosition) : canReach(*option.haulTargetPosition))) {
+					option.status = OptionStatus::NoSource;
+					continue;
+				}
 			}
 			// Picking up furniture whose spot he can't reach would only carry it off and set it down again.
 			if (option.taskType == TaskType::PlacePackaged && option.placeTargetPosition.has_value() &&
 				option.placeTargetPosition != option.targetPosition &&
-				(!canReach(*option.placeTargetPosition) || routeFailed(0, *option.placeTargetPosition))) {
+				(!(continuesTask(option) ? m_navSystem->reaches(*taskReach, *option.placeTargetPosition) : canReach(*option.placeTargetPosition)) ||
+				 routeFailed(0, *option.placeTargetPosition))) {
 				option.status = OptionStatus::NoSource;
 				continue;
 			}
