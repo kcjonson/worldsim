@@ -93,6 +93,8 @@ class EntityRenderer {
 	/// The depth-sorted upright stream's share of last frame's draws (RenderStats::upright*)
 	[[nodiscard]] uint32_t lastUprightDrawCallCount() const { return m_lastUprightDrawCallCount; }
 	[[nodiscard]] uint32_t lastUprightTriangleCount() const { return m_lastUprightTriangleCount; }
+	/// The detail levels last frame's upright stream drew, and the level requests still pending
+	[[nodiscard]] const InstancedEntityRenderer::LevelStats& lastUprightLevels() const { return instancedDynamic.levelStats(); }
 
 	/// Upload a CPU-baked chunk mesh (from a worker thread bake) to the GPU.
 	/// Call on the render thread; replaces any existing baked data for the chunk.

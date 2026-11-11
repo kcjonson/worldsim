@@ -61,6 +61,7 @@ The engine sets these globals before the prelude runs:
 | `variantIndex` | Which variant of its age class is being drawn, from 0. Set for every template the game draws (`AssetRegistry::templateId`). Generators drawn by seed alone (ground tiles, groundcover, `asset-cli render --seed`) see 0. |
 | `ageClass` | The age class name (`"sapling"`, `"mature"`, `"veteran"`) for a def with `<ageClasses>`, and nil for any other def. |
 | `period` | A ground def's `<period>` in metres; nil for other roles. |
+| `detailPxPerMeter` | The screen density, pixels a metre, of the `<detailLevels>` level being built ([asset-definitions.md](./asset-definitions.md#detail-levels)); nil for a def without levels. A seed-only build (`asset-cli render --seed`, the asset-manager previews) gets the reference level's. |
 
 A template's seed comes from `AssetRegistry::generationSeed`: 0 for a def with a single variant, otherwise the hash ground tiles use (`assets::variantSeed`, `VariantSeed.h`) of the def name and age class name (`Flora_TreeOak:mature`), at the variant index. A def without age classes hashes its name alone. The seed is a pure function of (def, age class, variant), so a variant draws the same mesh every load.
 

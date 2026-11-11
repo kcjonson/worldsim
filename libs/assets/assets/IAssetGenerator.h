@@ -25,6 +25,7 @@ struct GenerationContext {
 	uint32_t variantIndex = 0;	// Which variant of its age class is being generated
 	std::optional<std::string> ageClass;	// The age class's name; unset for a def without <ageClasses>
 	std::optional<float> periodMeters;		// A ground def's <period>, the tile a variant covers; unset for other roles
+	std::optional<float> detailPxPerMeter;	// The screen density of the <detailLevels> level being built; unset without levels
 };
 
 /// A single path (filled polygon) in a generated asset

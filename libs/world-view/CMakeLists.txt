@@ -12,6 +12,7 @@ add_library(world-view
     world/rendering/InstancedEntityRenderer.cpp
     world/rendering/ScreenStateGuard.cpp
     world/rendering/BatchedEntityRenderer.cpp
+    world/rendering/TemplateLevelBuilder.cpp
     world/rendering/TemplateMeshCache.cpp
     world/rendering/DynamicEntityRenderSystem.cpp
 )

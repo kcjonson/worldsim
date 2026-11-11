@@ -479,13 +479,17 @@ end
 reachOut(root)
 
 -- ---- level of detail -----------------------------------------------------------------------------
--- A mesh is cut for one screen density, detailPxPerMeter (the camera's 8 px/m times its zoom), and is
--- drawn from there up to the next level's. Everything it draws is sized to what that density shows:
+-- A mesh is cut for one screen density, detailPxPerMeter (the camera's 8 px/m times its zoom), which the
+-- engine sets to the def's <detailLevels> level being built; the game draws it from there up to the next
+-- level's. Everything it draws is sized to what that density shows:
 -- a mark (a leaf, or leaves merged into one) is about kMarkPx pixels long and never finer than
 -- kFinestLeaf, and wood under kWoodPx pixels wide is left out. The structure (skeleton, clumps, light)
 -- is the same at every density; only how finely it is cut changes.
 
-local ppm = max(0.5, getFloat("detailPxPerMeter", 24))
+if detailPxPerMeter == nil then
+	error("deciduous.lua cuts its mesh for a screen density: give the def <detailLevels>")
+end
+local ppm = max(0.5, detailPxPerMeter)
 local kMarkPx, kWoodPx = 2.7, 0.6
 local kFinestLeaf, kCoarsestLeaf = 0.053, 0.1125
 local mark = max(kFinestLeaf, kMarkPx / ppm)

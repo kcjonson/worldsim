@@ -29,11 +29,6 @@
         <stemRise>0.4</stemRise>
         <crownDepth>0.26</crownDepth>
         <clusterSize>0.13</clusterSize>
-        <!-- The screen density in pixels a meter the mesh is cut for (the camera's 8 px/m times its zoom):
-             leaves about 2.7 px long, never under 0.053 m, merged into coarser marks below about 24, and
-             wood under 0.6 px left out. 24 is the default zoom. A mid-age oak is about 25 triangles at 2,
-             230 at 8, 2,600 at 24 and 8,200 at 80. -->
-        <detailPxPerMeter>24</detailPxPerMeter>
         <lobes>rounded</lobes>
         <growingOld>stagHeaded</growingOld>
         <foliageShade>#4a6a2e</foliageShade>
@@ -43,6 +38,13 @@
         <bark>#5c4b3d</bark>
       </params>
     </generator>
+
+    <!-- The screen densities in pixels a meter a mesh is cut for (the camera's 8 px/m times its zoom, 2 to
+         160); the game draws the highest at or below the camera's, and the generator gets it as
+         detailPxPerMeter: leaves about 2.7 px long, never under 0.053 m, merged into coarser marks below
+         about 24, and wood under 0.6 px left out. 24 is the default zoom's. A mid-age oak is about 25
+         triangles at 2, 65 at 4, 230 at 8, 2,600 at 24 and 8,100 at 80. -->
+    <detailLevels>2, 4, 8, 24, 80</detailLevels>
 
     <rendering>
       <complexity>complex</complexity>

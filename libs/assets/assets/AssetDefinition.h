@@ -432,6 +432,9 @@ namespace assets {
 		uint32_t						  variantCount = 1; // Number of variants to pre-generate (8 for ground defs that omit it)
 		// Empty: one age class of variantCount variants. A def never has both (AssetValidator).
 		std::vector<AgeClass>			  ageClasses;
+		// <detailLevels>: the screen densities (px/m, ascending) its generator cuts a template's mesh
+		// for, one mesh a level (DetailLevels.h). Empty: one mesh, cut for no density.
+		std::vector<float>				  detailLevels;
 		GroundParams					  ground;			// Only meaningful when role == Ground
 
 		// Physical footprint for navmesh/collision, one per age class (one entry when the def has no

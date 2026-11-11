@@ -412,6 +412,7 @@ namespace assets {
 				std::vector<TreeDefIssue> treeIssues;
 				readAgeClasses(assetDef, treeIssues);
 				readPlacementScale(assetDef, treeIssues);
+				readDetailLevels(assetDef, treeIssues);
 				for (TreeDefIssue& issue : treeIssues) {
 					report.add(Severity::Error, defName, issue.field, std::move(issue.message), std::move(issue.value));
 				}

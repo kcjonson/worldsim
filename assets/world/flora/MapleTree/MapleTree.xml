@@ -38,6 +38,9 @@
       </params>
     </generator>
 
+    <!-- The screen densities in pixels a meter a mesh is cut for, as the oak's (OakTree.xml). -->
+    <detailLevels>2, 4, 8, 24, 80</detailLevels>
+
     <rendering>
       <!-- Trees are complex assets (individual tessellation) -->
       <complexity>complex</complexity>

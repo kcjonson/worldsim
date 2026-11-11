@@ -1,8 +1,9 @@
 #pragma once
 
 // The tree variety elements of an asset def (docs/technical/asset-system/tree-variety.md, R2):
-// <ageClasses> and the placement scale range <placement><scale min max/>. The loader and
-// AssetValidator read both through these functions, so they agree on what is valid.
+// <ageClasses>, the placement scale range <placement><scale min max/>, and the plant's mesh
+// <detailLevels>. The loader and AssetValidator read them through these functions, so they agree
+// on what is valid.
 
 #include "assets/AssetDefinition.h"
 
@@ -32,5 +33,10 @@ namespace assets {
 
 	/// The def's <placement><scale>, or nullopt when it has none or it is refused (with an issue).
 	std::optional<PlacementScale> readPlacementScale(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues);
+
+	/// The def's <detailLevels> (DetailLevels.h), a comma-separated list of the screen densities in pixels
+	/// a meter its generator cuts a mesh for: positive, strictly ascending, at most kMaxDetailLevels, on a
+	/// procedural def. Empty when it has none or the list is refused (with an issue), so the def has one mesh.
+	std::vector<float> readDetailLevels(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues);
 
 } // namespace assets

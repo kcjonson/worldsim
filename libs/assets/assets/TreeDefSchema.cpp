@@ -1,7 +1,10 @@
 #include "TreeDefSchema.h"
 
+#include "assets/DetailLevels.h"
+
 #include <pugixml.hpp>
 
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
@@ -130,6 +133,49 @@ namespace assets {
 			return std::nullopt;
 		}
 		return PlacementScale{static_cast<float>(*min), static_cast<float>(*max)};
+	}
+
+	std::vector<float> readDetailLevels(const pugi::xml_node& defNode, std::vector<TreeDefIssue>& issues) {
+		const pugi::xml_node node = defNode.child("detailLevels");
+		if (!node) {
+			return {};
+		}
+		const std::string text = node.text().as_string();
+		const std::string assetType = defNode.child("assetType").text().as_string();
+		if (assetType != "procedural") {
+			issues.push_back({"detailLevels", "only a procedural def's generator can cut a mesh for a density", text});
+			return {};
+		}
+
+		std::vector<float> levels;
+		bool			   valid = true;
+		size_t			   start = 0;
+		while (valid && start <= text.size()) {
+			const size_t	  comma = std::min(text.find(',', start), text.size());
+			const std::string item = text.substr(start, comma - start);
+			const char*		  first = item.c_str();
+			while (*first == ' ' || *first == '\t' || *first == '\n' || *first == '\r') {
+				++first;
+			}
+			char*		 end = nullptr;
+			const double value = std::strtod(first, &end);
+			while (end != nullptr && (*end == ' ' || *end == '\t' || *end == '\n' || *end == '\r')) {
+				++end;
+			}
+			valid = end != first && *end == '\0' && std::isfinite(value) && value > 0.0 && value <= std::numeric_limits<float>::max() &&
+					(levels.empty() || static_cast<float>(value) > levels.back());
+			levels.push_back(static_cast<float>(value));
+			start = comma + 1;
+		}
+		if (!valid || levels.size() > kMaxDetailLevels) {
+			issues.push_back(
+				{"detailLevels",
+				 "must list 1 to " + std::to_string(kMaxDetailLevels) + " pixels-a-meter densities above 0, strictly ascending, comma separated",
+				 text}
+			);
+			return {};
+		}
+		return levels;
 	}
 
 } // namespace assets

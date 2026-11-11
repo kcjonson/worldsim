@@ -26,6 +26,7 @@
 #include <application/App.h>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <graphics/Rect.h>
 #include <limits>
 #include <metrics/GPUTimer.h>
@@ -48,6 +49,7 @@
 #include <world/rendering/TemplateBounds.h>
 
 #include <assets/AssetRegistry.h>
+#include <assets/DetailLevels.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/PlacementExecutor.h>
@@ -119,6 +121,8 @@ namespace {
 	constexpr const char* kSceneName = "game";
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
+	// The registry prewarms, and reads non-drawing template data at, the default view's density.
+	static_assert(kPixelsPerMeter * world::kZoomLevels[world::kDefaultZoomIndex] == assets::kReferencePixelsPerMeter);
 
 	class GameScene : public app::Scene {
 	  public:
@@ -612,9 +616,25 @@ namespace {
 
 			// The depth-sorted upright stream's draws (trees and actors), which /api/metrics folds into
 			// its totals, split out for perf captures (/api/state?what=uprights)
+			// and the detail levels the trees drew at (/api/state?what=uprights)
 			m_devRegistrations.push_back(owner->devServer().stateProvider("uprights", [this]() {
+				const worldview::InstancedEntityRenderer::LevelStats& levels = m_entityRenderer->lastUprightLevels();
+				auto number = [](float value) {
+					char text[32];
+					std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
+					return std::string(text);
+				};
+				std::string uses;
+				for (const auto& use : levels.uses) {
+					uses += std::string(uses.empty() ? "" : ",") + "{\"pxPerMeter\":" + number(use.pixelsPerMeter) +
+							",\"instances\":" + std::to_string(use.instances) + "}";
+				}
 				return "{\"uprightDrawCalls\":" + std::to_string(m_entityRenderer->lastUprightDrawCallCount()) +
-					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) + "}";
+					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) +
+					   ",\"screenPxPerMeter\":" + number(levels.screenPixelsPerMeter) + ",\"levels\":[" + uses +
+					   "],\"levelRequestsPending\":" + std::to_string(levels.pendingRequests) +
+					   ",\"residentLevels\":" + std::to_string(levels.residentLevels) +
+					   ",\"residentLevelBytes\":" + std::to_string(levels.residentBytes) + "}";
 			}));
 
 			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels

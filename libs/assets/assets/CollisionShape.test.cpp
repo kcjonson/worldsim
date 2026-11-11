@@ -396,6 +396,7 @@ TEST(CollisionShapeTest, XmlCollisionWinsOverLuaEmit) {
 		"<scriptPath>@shared/deciduous.lua</scriptPath>"
 		"<params><trunkWidth>0.55:0.5</trunkWidth></params>"
 		"</generator>"
+		"<detailLevels>24</detailLevels>"
 		"<collision><rect minX=\"-0.1\" minY=\"-0.1\" maxX=\"0.1\" maxY=\"0.1\"/></collision>"
 		"</AssetDef></AssetDefinitions>"
 	);
@@ -652,7 +653,7 @@ namespace {
 
 	// A two-class tree (sapling, mature; two variants each) whose generator draws a triangle and
 	// sets its rect from `rectLua`, a Lua statement that may read ageClass and variantIndex.
-	void writeAgedTree(TempAssets& t, const std::string& defName, const std::string& rectLua) {
+	void writeAgedTree(TempAssets& t, const std::string& defName, const std::string& rectLua, const std::string& extraXml = "") {
 		const fs::path dir = t.root / defName;
 		fs::create_directories(dir);
 		std::ofstream(dir / "gen.lua") << "local p = Path()\n"
@@ -667,7 +668,8 @@ namespace {
 												  "<ageClasses>"
 												  "<ageClass name=\"sapling\" weight=\"0.4\" variants=\"2\"/>"
 												  "<ageClass name=\"mature\" weight=\"0.6\" variants=\"2\"/>"
-												  "</ageClasses></AssetDef></AssetDefinitions>";
+												  "</ageClasses>"
+												+ extraXml + "</AssetDef></AssetDefinitions>";
 	}
 
 	// The same, without <ageClasses>: one implicit class of two variants.
@@ -764,4 +766,24 @@ TEST(CollisionShapeTest, VariantDependentRectFailsSmokeCheck) {
 	EXPECT_NE(report.issues[0].message.find("'mature'"), std::string::npos);
 	EXPECT_EQ(report.issues[1].defName, "DriftingFlat");
 	EXPECT_NE(report.issues[1].message.find("age class 0 "), std::string::npos);
+}
+
+// The render smoke builds every detail level of an aged def: a rect that follows the density fails
+// it at each template, one that doesn't passes.
+TEST(CollisionShapeTest, LevelDependentRectFailsSmokeCheck) {
+	auto&	   reg = AssetRegistry::Get();
+	TempAssets t;
+	writeAgedTree(t, "Steady", "asset:setCollisionRect(0.1, 0.2, 0, 0)", "<detailLevels>4, 24</detailLevels>");
+	writeAgedTree(t, "Drifting", "asset:setCollisionRect(0.1 + detailPxPerMeter / 1000, 0.2, 0, 0)", "<detailLevels>4, 24</detailLevels>");
+
+	reg.clearDefinitions();
+	reg.loadDefinitionsFromFolder(t.root.string());
+	ValidationReport report;
+	reg.checkDetailLevels(report);
+
+	ASSERT_EQ(report.errorCount(), 4); // two classes of two variants, each off at level 4
+	for (const auto& issue : report.issues) {
+		EXPECT_EQ(issue.defName, "Drifting");
+		EXPECT_NE(issue.message.find("at 4 px/m"), std::string::npos) << issue.message;
+	}
 }

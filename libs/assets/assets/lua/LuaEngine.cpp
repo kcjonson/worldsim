@@ -423,6 +423,11 @@ namespace assets {
 			} else {
 				(*m_lua)["period"] = sol::lua_nil;
 			}
+			if (ctx.detailPxPerMeter.has_value()) {
+				(*m_lua)["detailPxPerMeter"] = *ctx.detailPxPerMeter;
+			} else {
+				(*m_lua)["detailPxPerMeter"] = sol::lua_nil;
+			}
 
 			// Seed from the seed alone: it is already distinct per variant (AssetRegistry::generationSeed).
 			// sol2's call, not a built string, so nothing is injected.
