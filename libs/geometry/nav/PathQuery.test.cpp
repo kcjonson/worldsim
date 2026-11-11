@@ -1560,3 +1560,48 @@ TEST(PathQuery, WithinAnswersAsTheMeshCutToTheBox) {
 	EXPECT_EQ(loose.peakOpenSet, plain.peakOpenSet);
 	EXPECT_DOUBLE_EQ(loose.cost, plain.cost);
 }
+
+// within bounds the walk, not the triangles it enters: a spike of wall up from the floor
+// of a big triangular field leaves one way round, over its tip, and the two big triangles
+// either side of it meet a box below the tip. The box must still shut that way: NoPath.
+// A box that takes in the tip changes nothing, every point inside.
+TEST(PathQuery, WithinShutsAWayOutsideTheBoxThroughTrianglesThatMeetIt) {
+	auto field = [](std::vector<Vec2i64> border) {
+		NavMeshInput in;
+		in.polygons.push_back({std::move(border), false, 1});
+		in.polygons.push_back({{{19900, 0}, {20100, 0}, {20000, 8000}}, true, -8});
+		return buildNavMesh(in);
+	};
+	const NavMesh m = field({{0, 0}, {40000, 0}, {20000, 20000}});
+	const Vec2i64 a{5000, 2000};
+	const Vec2i64 b{35000, 2000};
+	const RectMm  low{{0, 0}, {40000, 7000}};
+	const RectMm  high{{0, 0}, {40000, 9000}};
+	const NavMesh cut = field({{0, 0}, {40000, 0}, {31000, 9000}, {9000, 9000}});
+	auto		  inside = [](const PathResult& r, const RectMm& box) {
+		 for (const Vec2i64& p : r.points) {
+			 if (p.x < box.min.x || p.x > box.max.x || p.y < box.min.y || p.y > box.max.y) {
+				 return false;
+			 }
+		 }
+		 return true;
+	};
+	for (const std::int64_t radius : {0, 300}) {
+		const PathResult open = pathThrough(m, a, b, radius);
+		ASSERT_EQ(open.stop, PathStop::Found);
+		EXPECT_FALSE(inside(open, low)) << "the way round must leave the low box for the case to bind";
+		EXPECT_EQ(pathThrough(m, a, b, radius, {}, {.within = &low}).stop, PathStop::NoPath) << "radius " << radius;
+		// The tip rounded inside the high box: the walk without it. The cut mesh pulls the
+		// rounding in along other portals (the clearance caveat), so it matches exactly
+		// only for a point walker.
+		const PathResult boxed = pathThrough(m, a, b, radius, {}, {.within = &high});
+		const PathResult onCut = pathThrough(cut, a, b, radius);
+		ASSERT_EQ(boxed.stop, PathStop::Found);
+		ASSERT_EQ(onCut.stop, PathStop::Found);
+		EXPECT_EQ(boxed.points, open.points) << "radius " << radius;
+		if (radius == 0) {
+			EXPECT_EQ(boxed.points, onCut.points);
+		}
+		EXPECT_TRUE(inside(boxed, high));
+	}
+}

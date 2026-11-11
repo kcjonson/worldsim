@@ -538,6 +538,47 @@ namespace geometry::nav {
 			return span;
 		}
 
+		// A portal cut to the part of it inside the closed rectangle, the ends kept in its
+		// order along the edge; false when none of it is inside. A walk between points of
+		// the rectangle stays in it (it is convex), so a corridor of cut portals keeps the
+		// whole walk inside. Touching to within rounding counts as meeting.
+		bool clipToRect(PortalSpan& span, const RectMm& rect) {
+			const double minX = static_cast<double>(rect.min.x);
+			const double minY = static_cast<double>(rect.min.y);
+			const double maxX = static_cast<double>(rect.max.x);
+			const double maxY = static_cast<double>(rect.max.y);
+			auto		 inside = [&](const Vec2d& p) { return p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY; };
+			if (inside(span.left) && inside(span.right)) {
+				return true;
+			}
+			const Vec2d d  = span.right - span.left;
+			double		lo = 0.0;
+			double		hi = 1.0;
+			// Keep the parameters t where low <= p + dp * t <= high.
+			auto slab = [&](double p, double dp, double low, double high) {
+				if (dp == 0.0) {
+					return p >= low && p <= high;
+				}
+				double t0 = (low - p) / dp;
+				double t1 = (high - p) / dp;
+				if (dp < 0.0) {
+					std::swap(t0, t1);
+				}
+				lo = std::max(lo, t0);
+				hi = std::min(hi, t1);
+				return true;
+			};
+			if (!slab(span.left.x, d.x, minX, maxX) || !slab(span.left.y, d.y, minY, maxY) || lo > hi + 1e-12) {
+				return false;
+			}
+			hi			= std::max(lo, hi);
+			auto clamp	= [&](const Vec2d& p) { return Vec2d{std::clamp(p.x, minX, maxX), std::clamp(p.y, minY, maxY)}; };
+			const Vec2d left = span.left;
+			span.left		 = clamp(left + d * lo);
+			span.right		 = clamp(left + d * hi);
+			return true;
+		}
+
 		// A portal as the string-pull reads it, with the search label that enters
 		// through it (-1 where none does: the final string-pull).
 		struct Portal {
@@ -1290,6 +1331,9 @@ namespace geometry::nav {
 				if (e == entry) {
 					continue; // U-turn back through the entry edge: never on a taut path
 				}
+				// Within a rectangle, a triangle is entered only where its interior meets the
+				// rectangle's (a sliver along a side is ground the cut mesh would not have), and
+				// only through the part of the portal inside it (clipToRect, below).
 				const std::int32_t nb = tri.neighbor[e];
 				if (nb < 0 || (limits.within != nullptr && !interiorMeetsRect(mesh, nb, *limits.within))) {
 					continue;
@@ -1348,7 +1392,10 @@ namespace geometry::nav {
 					}
 				}
 				const std::int32_t label = static_cast<std::int32_t>(scratch.labels.size()); // the label a new one would take
-				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, corners);
+				PortalSpan		   span	 = portalSpan(mesh, ti, e, radius, belief, corners);
+				if (limits.within != nullptr && !clipToRect(span, *limits.within)) {
+					continue; // the edge lies wholly outside the rectangle: this step is shut
+				}
 				const Portal	   step{span.left, span.right, label};
 				Funnel			   next = funnel;
 				advance(li, next, step, toD(mesh.vertex(tri.v[e])), toD(mesh.vertex(tri.v[(e + 1) % 3])));

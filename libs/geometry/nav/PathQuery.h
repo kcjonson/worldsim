@@ -39,8 +39,11 @@ namespace geometry::nav {
 		// bounds on cost, so a path costing at most this is still found, and one costing
 		// more is never returned.
 		double maxCost = std::numeric_limits<double>::infinity();
-		// Confine the search to this rectangle: a triangle whose interior misses it is
-		// never entered, and a start or goal outside it is NoPath.
+		// Confine the walk to this closed rectangle, whatever the triangulation: a path is
+		// found exactly when one exists on the ground the rectangle's interior covers (as
+		// on the mesh cut to it), and every point of the walk lies in the rectangle. It
+		// bounds the disc's centre, not the disc: the rectangle's sides are no obstacle to
+		// keep the radius from. A start or goal outside it is NoPath.
 		const RectMm* within = nullptr;
 		// Give up after this many expansions (PathResult::expansions); 0 is no limit.
 		std::uint32_t maxExpansions = 0;
