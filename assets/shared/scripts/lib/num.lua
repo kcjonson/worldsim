@@ -53,5 +53,8 @@ function lib.num.curveParam(key, default)
 	for x, y in getString(key, default):gmatch("([%-%d%.]+)%s*:%s*([%-%d%.]+)") do
 		points[#points + 1] = { tonumber(x), tonumber(y) }
 	end
+	if #points == 0 then
+		error("param '" .. key .. "' is not a curve (want 'x:y, x:y, ...'): '" .. getString(key, default) .. "'")
+	end
 	return points
 end

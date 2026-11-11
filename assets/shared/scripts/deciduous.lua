@@ -92,7 +92,7 @@ if rand() < 0.125 then
 	condition = rand() < 0.5 and "thinning" or "yellowing"
 end
 local windAz = (rand() < 0.5 and 0 or pi) + uniform(-0.5, 0.5) -- across the view, so the lean shows
-local yellowAz = rand() * 2 * pi
+rand() -- a draw kept so later values in this stream stay put
 local raggedness = form == "ragged" and smooth(0.2, 0.6, age) or 0
 shedding = shedding + 0.35 * raggedness
 
@@ -456,8 +456,7 @@ if raggedness > 0 and #clusters > 5 then
 	end
 end
 
--- Distance in meters from each node out to its nearest live tip, that tip (the tuft its leaves light
--- with) and its clump.
+-- Distance in meters from each node out to its nearest live tip, and that tip's clump.
 local function reachOut(n)
 	if n.dead then
 		n.tipDist = 1e9
@@ -472,7 +471,7 @@ local function reachOut(n)
 		reachOut(k)
 		local seg = sqrt((k.x - n.x) ^ 2 + (k.y - n.y) ^ 2 + (k.z - n.z) ^ 2)
 		if k.tipDist + seg < n.tipDist then
-			n.tipDist, n.clump, n.tuft = k.tipDist + seg, k.clump, k.tuft
+			n.tipDist, n.clump = k.tipDist + seg, k.clump
 		end
 	end
 end
@@ -492,7 +491,7 @@ end
 local ppm = max(0.5, detailPxPerMeter)
 -- kMarkPx is the 2.7 px the crown was cut at before trees grew 2.25x, grown with them, so below the
 -- finest leaf a tree is that tree at its new size. kFinestLeaf grew less (from 0.053 m): it is as fine
--- as the oldest oak's finest mesh can be and stay under about 50,000 vertices (uint16 indices).
+-- as the oldest oak's finest mesh can be and stay under 65,535 vertices (uint16 indices).
 local kMarkPx, kWoodPx = 6, 0.6
 local kFinestLeaf, kCoarsestLeaf = 0.09, 0.25
 local mark = max(kFinestLeaf, kMarkPx / ppm)
@@ -515,6 +514,9 @@ local mergeReach = max(0, mark - leafLen) * 0.5
 local sprayDensity = getFloat("sprayDensity", 9.8) * (getFloat("leafSize", 0.34) / leafLen) ^ 2
 local leavesLo, leavesHi = getFloatRange("sprayLeaves", 4, 7)
 local kMaxLeaves = 9
+if floor(leavesHi + 0.999) > kMaxLeaves then
+	error("deciduous.lua: sprayLeaves tops out at " .. kMaxLeaves .. " leaves a spray, the def asks for " .. leavesHi)
+end
 local foliageDepth = getFloat("foliageDepth", 0.26) * crownWidth + 0.135
 local sprayReach = getFloat("sprayReach", 0.5) * rc
 -- a young tree carries its leaves in a few sprays you can count; a thinning one has lost some
@@ -592,7 +594,7 @@ for _, n in ipairs(nodes) do
 				local outAngle = math.atan(fy - sy, fx - sx) + sprayTurn
 				local depth = depthOf(ax, ay, az)
 				local back = depth < depthOf(bx, by, bz)
-				local spray = { back = back, x = sx, y = sy, key = depth + 0.12 * tone, shoot = n }
+				local spray = { x = sx, y = sy, shoot = n }
 				sprays[#sprays + 1] = spray
 				for j = 1, leafCount do
 					local d1, d2, d3, d4, d5 = draws[j * 5 - 4], draws[j * 5 - 3], draws[j * 5 - 2], draws[j * 5 - 1], draws[j * 5]
@@ -689,7 +691,7 @@ local function leafColor(t, jitter)
 			break
 		end
 	end
-	local j = floor((jitter + 1) * 2.5) -- five steps of spray jitter, so colors repeat and cache
+	local j = floor((jitter + 1) * 2.5) -- six steps of spray jitter, so colors repeat and cache
 	local key = band * 8 + j
 	if not toneCache[key] then
 		toneCache[key] = color.shade(tones[band], 0.93 + 0.035 * j)
@@ -943,16 +945,30 @@ do
 		end
 	end
 	for _, c in ipairs(bare) do
-		local tip = c.tips[1]
+		-- folding clumps together can leave tips from another subtree in c.tips; the limb only runs
+		-- through the clump's own
+		local function under(t)
+			while t and t ~= c.node do
+				t = t.parent
+			end
+			return t ~= nil
+		end
+		local tip
 		for _, t in ipairs(c.tips) do
-			if select(2, project(t)) < select(2, project(tip)) then
+			if under(t) and (not tip or select(2, project(t)) < select(2, project(tip))) then
 				tip = t
 			end
 		end
+		if not tip then
+			tip = c.node
+		end
 		local chain = { addNode(tip, tip.dx, tip.dy, max(tip.dz, 0.3), rc * 1.3 * c.dieback, 0, tip.order, tip.az) }
 		local m = tip
-		while m and m ~= c.node.parent do
+		while m do
 			table.insert(chain, 1, m)
+			if m == c.node then
+				break
+			end
 			m = m.parent
 		end
 		local px, py, pw = {}, {}, {}
