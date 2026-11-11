@@ -3,68 +3,65 @@
 #include "NavMesh.h"
 
 #include <cstdint>
-#include <limits>
 #include <queue>
 #include <vector>
 
 // Reverse Resumable A* (RRA*) heuristic for the width-filtered triangle A* in
-// PathQuery. The forward search wants h(t) = the exact remaining graph-distance
-// from triangle t to the goal; a straight-line centroid estimate badly
-// under-guides around big concave obstacles (lakes, C-walls), so A* explores a
-// large fan. RRA* instead runs ONE backward Dijkstra FROM the goal and reads off
-// exact distances, expanded lazily and resumed across queries.
+// PathQuery. A straight line to the goal under-guides the forward search around big
+// concave obstacles (lakes, C-walls), so RRA* runs ONE backward search FROM the goal
+// triangle and reads off a bound per triangle, expanded lazily and resumed across
+// queries.
 //
-// ADMISSIBILITY (why one reverse search serves EVERY forward query): the reverse
-// search runs on the TERRAIN graph (terrainTraversable() triangles -- floor or
-// ANY wall face open, only common-knowledge terrain blocks), WIDTH-UNFILTERED
-// (every terrain adjacency is an edge, edge widths ignored), with the SAME
-// centroid-to-centroid `distanceD` cost the forward search uses. Any agent's true
-// remaining cost is a shortest path on a SUBGRAPH of that terrain graph (belief-
-// and width-filtered) with identical edge costs, and a subgraph shortest path is
-// >= the supergraph shortest path, so h never overestimates -- admissible for
-// every belief and every radius. It is consistent too (an exact graph distance),
-// so A* stays optimal and never re-expands.
+// The bound is a bottleneck, not a sum: a triangle's value is the least, over the
+// routes from the goal triangle to it, of the farthest any portal on the route lies
+// from the goal triangle's centroid. Every walk from the centroid to a point in the
+// triangle crosses some route's portals, and is at least as long as its straight
+// distance to each of them, so the value never exceeds the walk. Around a lake it is
+// how far out the walk has to swing, which is what the straight line misses.
 //
-// BELIEF- AND RADIUS-AGNOSTIC: built width-unfiltered on the terrain graph, the
-// reverse distances depend only on the GOAL triangle, so a single cache keyed by
-// the goal triangle serves every agent regardless of belief or disc size. A node
-// genuinely terrain-disconnected from the goal gets h = +inf (the forward search
-// can never productively reach it, since forward-reachable is a subset of
-// terrain-reachable).
+// ADMISSIBILITY: a walk from a point in triangle t to the goal point is at least the
+// walk from t to the centroid less the goal point's distance from the centroid, so
+// the forward search uses g(t) less the goal triangle's centroid radius; that never
+// overestimates the funnelled score it is compared with. The search walks the
+// TERRAIN graph (terrainTraversable() triangles: floor or ANY wall face open, only
+// common-knowledge terrain blocks), WIDTH-UNFILTERED, so every agent's walk is one of
+// its routes and one cache keyed by the goal triangle serves every belief and disc
+// size. A node terrain-disconnected from the goal gets +inf.
 
 namespace geometry::nav {
 
-	// Resumable reverse-search state for ONE goal triangle. `g` holds the exact
-	// terrain-graph distance from each triangle to the goal, filled lazily as
-	// rraHeuristic() expands the backward Dijkstra; `settled` marks a triangle whose
-	// distance is final (popped from the reverse open-set). The open-set persists
-	// across queries so a second query to the same goal RESUMES rather than restarts.
-	// The cache is keyed (by the engine) on goalTri alone; rebuild the cache when the
-	// mesh changes (triangle indices go stale).
+	// Resumable backward-search state for ONE goal triangle. `g` holds each triangle's
+	// bound, final once `settled`. The open-set persists across queries so a second
+	// query to the same goal RESUMES rather than restarts. Rebuilt when the mesh epoch
+	// changes (triangle ids go stale).
 	//
 	// NOT thread-safe: rraHeuristic() mutates the cache. NavigationSystem drives all
 	// queries from the single-threaded main loop, so no locking is needed.
 	struct RraCache {
-		std::int32_t  goalTri = -1; // the goal triangle this reverse search targets
+		std::int32_t  goalTri = -1; // the goal triangle this backward search targets
 		std::uint64_t epoch	  = 0;	// the mesh epoch g and settled were built against
 
-		std::vector<double> g;		 // distance-to-goal per triangle (+inf until reached)
+		std::vector<double> g;		 // bound per triangle (+inf until reached)
 		std::vector<char>	settled; // 1 once a triangle's g is final (popped)
 
-		// Reverse open-set node: (tentative distance-to-goal, triangle id). Ordered by
-		// distance, then by triangle id, mirroring the forward search's deterministic
-		// (smaller-id-first) tie-break; std::priority_queue is a max-heap, so the
-		// comparisons are reversed.
+		// Open-set node: bound, then the triangle's and its entry edge's coordinates, so
+		// ties resolve on geometry and not on slot ids; std::priority_queue is a max-heap,
+		// so the comparisons are reversed.
 		struct Node {
 			double		 dist;
+			Vec2i64		 corners; // sum of the triangle's corners
+			Vec2i64		 entry;	  // sum of the entry edge's ends
 			std::int32_t tri;
 		};
 		struct NodeWorse {
 			bool operator()(const Node& a, const Node& b) const {
 				if (a.dist != b.dist) {
-					return a.dist > b.dist; // larger distance is "worse" -> lower priority
+					return a.dist > b.dist;
 				}
-				return a.tri > b.tri; // tie-break: larger id is "worse"
+				if (a.corners != b.corners) {
+					return b.corners < a.corners;
+				}
+				return b.entry < a.entry;
 			}
 		};
 		std::priority_queue<Node, std::vector<Node>, NodeWorse> open;
@@ -72,12 +69,11 @@ namespace geometry::nav {
 		bool initialized = false; // g/settled sized and goal seeded into the open-set
 	};
 
-	// Exact terrain-graph distance from triangle `tri` to cache.goalTri, expanding the
-	// resumable reverse search on demand. Returns +inf if `tri` is terrain-disconnected
-	// from the goal (or out of range). The cache must already target the located goal
-	// triangle (cache.goalTri == that goal); the caller (pathThrough / NavigationSystem)
-	// guarantees this. Cheap when `tri` is already settled (a table read); otherwise pops
-	// and expands reverse nodes until `tri` settles or the open-set empties.
+	// The bound from cache.goalTri to triangle `tri` (see above), expanding the
+	// resumable search on demand. +inf if `tri` is terrain-disconnected from the goal
+	// (or out of range). The cache must already target the located goal triangle
+	// (cache.goalTri == that goal); the caller (pathThrough / NavigationSystem)
+	// guarantees this. Cheap when `tri` is already settled (a table read).
 	double rraHeuristic(RraCache& cache, const NavView& mesh, std::int32_t tri);
 
 } // namespace geometry::nav

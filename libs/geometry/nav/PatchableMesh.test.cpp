@@ -685,27 +685,33 @@ TEST(PatchableMesh, StableIdsOutsideTheHole) {
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
-TEST(PatchableMesh, LocateTieBreaksToLowestId) {
+// A point on shared corners goes to the triangle whose sorted corners come first, so the
+// answer is the geometry's and not the slot order's (which follows patch history).
+TEST(PatchableMesh, LocateTieBreaksOnCorners) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	h.add(blocked(rect(400, 400, 600, 600)));
 	const std::vector<NavTriangle>& tris = h.mesh.triangles();
+	auto sortedCorners = [&](const NavTriangle& x) {
+		std::array<Vec2i64, 3> c{h.mesh.vertices()[x.v[0]], h.mesh.vertices()[x.v[1]], h.mesh.vertices()[x.v[2]]};
+		std::sort(c.begin(), c.end());
+		return c;
+	};
 	for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
 		if (!h.mesh.triangleLive(t)) {
 			continue;
 		}
 		for (std::uint32_t v : tris[static_cast<std::size_t>(t)].v) {
-			const Vec2i64 p = h.mesh.vertices()[v];
-			std::int32_t  lowest = -1;
+			const Vec2i64 p	   = h.mesh.vertices()[v];
+			std::int32_t  first = -1;
 			for (std::int32_t u = 0; u < static_cast<std::int32_t>(tris.size()); ++u) {
-				if (h.mesh.triangleLive(u) && lowest < 0) {
-					const NavTriangle& x = tris[static_cast<std::size_t>(u)];
-					if (x.v[0] == v || x.v[1] == v || x.v[2] == v) {
-						lowest = u;
-					}
+				const NavTriangle& x = tris[static_cast<std::size_t>(u)];
+				if (h.mesh.triangleLive(u) && (x.v[0] == v || x.v[1] == v || x.v[2] == v) &&
+					(first < 0 || sortedCorners(x) < sortedCorners(tris[static_cast<std::size_t>(first)]))) {
+					first = u;
 				}
 			}
-			EXPECT_EQ(h.mesh.locate(p), lowest);
+			EXPECT_EQ(h.mesh.locate(p), first);
 		}
 	}
 	EXPECT_EQ(h.mesh.locate({-1, 500}), -1);
@@ -1210,6 +1216,21 @@ namespace {
 		return forest.nodeCap[static_cast<std::size_t>(node)];
 	}
 
+	// How far apart two paths between the same points may be in length when only the
+	// triangulation differs (seams, split vertices, free diagonals): a fraction of the
+	// length, for corridors the search weighs as near-equal, plus some radii, for what a
+	// disc meets that a point does not: its clearance at a corner is set along whichever
+	// portal ends there, and the corridor widths that gate it are read per triangle, so
+	// a gap one triangulation lets a wide disc through can turn it one obstacle over in
+	// another.
+	constexpr double kPathLengthToleranceFraction = 0.01;
+	constexpr double kPathLengthToleranceRadii	  = 5.0;
+
+	bool lengthsAgree(std::int64_t a, std::int64_t b, std::int64_t radius) {
+		const double tolerance = kPathLengthToleranceFraction * static_cast<double>(std::max(a, b)) + kPathLengthToleranceRadii * static_cast<double>(radius);
+		return static_cast<double>(std::abs(a - b)) <= tolerance;
+	}
+
 	using Corners = std::array<Vec2i64, 3>;
 
 	Corners cornersOf(const PatchableMesh& mesh, std::int32_t t) {
@@ -1221,8 +1242,8 @@ namespace {
 
 	// Internal bounds edges must not change an answer: the same rings under one bounds
 	// square and under a grid of adjacent squares give the same path verdicts, reach
-	// verdicts, and bottlenecks, and the same corridor width at every apex of a triangle
-	// both meshes have.
+	// verdicts, and bottlenecks, path lengths that agree (lengthsAgree), and the same
+	// corridor width at every apex of a triangle both meshes have.
 	void expectBoundsSplitInvisible(std::int64_t k, std::uint32_t seed) {
 		const TiledGround g = tiledRealRings(k);
 		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000});
@@ -1239,6 +1260,7 @@ namespace {
 		const BeliefFilter					   optimistic{&noneKnown, &noneKnown};
 		int									   lengths		  = 0;
 		int									   lengthDiffers  = 0;
+		int									   lengthsApart	  = 0;
 		std::int64_t						   worstDeltaMm	  = 0;
 		int									   verdictDiffers = 0;
 		int									   reachDiffers	  = 0;
@@ -1261,6 +1283,11 @@ namespace {
 						++lengthDiffers;
 						worstDeltaMm = std::abs(delta) > std::abs(worstDeltaMm) ? delta : worstDeltaMm;
 					}
+					if (!lengthsAgree(pathLengthMm(s), pathLengthMm(w), radius)) {
+						++lengthsApart;
+						ADD_FAILURE() << "radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y
+									  << "): whole " << pathLengthMm(w) << " mm, split " << pathLengthMm(s) << " mm";
+					}
 				}
 				for (const BeliefFilter& belief : {BeliefFilter{}, optimistic}) {
 					if (reaches(wv, reachFrom(wv, a, radius, belief), b, belief) != reaches(sv, reachFrom(sv, a, radius, belief), b, belief)) {
@@ -1269,9 +1296,8 @@ namespace {
 				}
 			}
 		}
-		// Lengths are recorded, not compared: the triangle A* orders its search by centroid
-		// distance, which the seams' vertices change, so it can settle on another corridor.
 		EXPECT_GT(lengths, 100);
+		EXPECT_EQ(lengthsApart, 0);
 		::testing::Test::RecordProperty("pathLengthsDiffering", lengthDiffers);
 		::testing::Test::RecordProperty("worstSplitMinusWholeMm", std::to_string(worstDeltaMm));
 		EXPECT_EQ(verdictDiffers, 0);
@@ -1316,6 +1342,146 @@ namespace {
 
 TEST(PatchableMesh, BoundsSplitTwoByTwoChangesNoAnswer) {
 	expectBoundsSplitInvisible(2, 61);
+}
+
+namespace {
+
+	// Square posts 1 m across, `pitch` apart, nudged by up to `jitter` mm. Unnudged, each
+	// post's corners are cocircular with its neighbours', so the ground between them has
+	// diagonals a patch may choose freely; nudged, the triangulation is unique.
+	std::vector<NavInputPolygon> posts(std::int64_t pitch, std::int64_t jitter, std::uint32_t seed) {
+		std::mt19937				 rng(seed);
+		std::vector<NavInputPolygon> out;
+		for (std::int64_t j = 0; j < 6; ++j) {
+			for (std::int64_t i = 0; i < 6; ++i) {
+				const std::int64_t x = 2000 + i * pitch + (jitter > 0 ? between(rng, 0, jitter) : 0);
+				const std::int64_t y = 2000 + j * pitch + (jitter > 0 ? between(rng, 0, jitter) : 0);
+				out.push_back(blocked(rect(x, y, x + 1000, y + 1000)));
+			}
+		}
+		return out;
+	}
+
+	struct HistoryComparison {
+		int otherTriangles = 0; // triangles only one history has
+		int compared	   = 0;
+		int identical	   = 0;
+	};
+
+	// The same final rings reached two ways (all at once; in shuffled batches with
+	// removals and re-adds, around scaffolding that comes and goes so slots are reused
+	// differently), then the same pairs pathed in both. Verdicts must agree, and paths
+	// that differ must agree in length (lengthsAgree).
+	HistoryComparison compareHistories(const std::vector<NavInputPolygon>& rings, std::int64_t side, std::uint32_t seed) {
+		const NavInputPolygon border = bounds(rect(0, 0, side, side));
+		Harness				  direct;
+		{
+			PatchEdits edits;
+			edits.adds.push_back(border);
+			edits.adds.insert(edits.adds.end(), rings.begin(), rings.end());
+			direct.apply(edits);
+		}
+
+		Harness		 winding;
+		std::mt19937 rng(seed);
+		{
+			PatchEdits edits;
+			edits.adds.push_back(border);
+			winding.apply(edits);
+		}
+		std::vector<RingId> scaffold;
+		for (int i = 0; i < 12; ++i) {
+			const std::int64_t x = 1000 + between(rng, 0, side - 2000);
+			const std::int64_t y = 1000 + between(rng, 0, side - 2000);
+			scaffold.push_back(winding.add(blocked(rect(x, y, x + 300, y + 300))));
+		}
+		std::vector<NavInputPolygon> pending = rings;
+		std::shuffle(pending.begin(), pending.end(), rng);
+		std::vector<RingId> placed;
+		while (!pending.empty()) {
+			PatchEdits		  edits;
+			const std::size_t count = std::min<std::size_t>(pending.size(), 1 + pick(rng, 7));
+			edits.adds.assign(pending.end() - static_cast<std::ptrdiff_t>(count), pending.end());
+			pending.resize(pending.size() - count);
+			if (!scaffold.empty()) {
+				edits.removes.push_back(scaffold.back());
+				scaffold.pop_back();
+			}
+			if (placed.size() > 4 && pick(rng, 2) == 0) {
+				const std::size_t at = pick(rng, placed.size());
+				pending.insert(pending.begin(), winding.model[placed[at]]);
+				edits.removes.push_back(placed[at]);
+				placed.erase(placed.begin() + static_cast<std::ptrdiff_t>(at));
+			}
+			const PatchReport report = winding.apply(edits);
+			placed.insert(placed.end(), report.added.begin(), report.added.end());
+		}
+		while (!scaffold.empty()) {
+			PatchEdits edits;
+			edits.removes.push_back(scaffold.back());
+			winding.apply(edits);
+			scaffold.pop_back();
+		}
+		EXPECT_TRUE(matchesFresh(direct.mesh, direct.model));
+		EXPECT_TRUE(matchesFresh(winding.mesh, winding.model));
+
+		int								   sameSlots = 0;
+		std::set<Corners>				   directTriangles;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(direct.mesh.triangles().size()); ++t) {
+			if (!direct.mesh.triangleLive(t)) {
+				continue;
+			}
+			directTriangles.insert(cornersOf(direct.mesh, t));
+			sameSlots += static_cast<std::size_t>(t) < winding.mesh.triangles().size() && winding.mesh.triangleLive(t) &&
+								 cornersOf(direct.mesh, t) == cornersOf(winding.mesh, t)
+							 ? 1
+							 : 0;
+		}
+		EXPECT_LT(sameSlots, static_cast<int>(directTriangles.size())) << "the histories must leave triangles in different slots";
+		HistoryComparison out;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(winding.mesh.triangles().size()); ++t) {
+			if (winding.mesh.triangleLive(t) && directTriangles.count(cornersOf(winding.mesh, t)) == 0) {
+				++out.otherTriangles;
+			}
+		}
+
+		const std::vector<Vec2i64> points = samplePoints(border, 160, seed + 1);
+		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
+			for (const std::int64_t radius : kRadii) {
+				const PathResult d = pathThrough(direct.mesh.view(), points[i], points[i + 1], radius);
+				const PathResult w = pathThrough(winding.mesh.view(), points[i], points[i + 1], radius);
+				EXPECT_EQ(d.reachable, w.reachable) << "pair " << i << " radius " << radius;
+				if (!d.reachable || !w.reachable) {
+					continue;
+				}
+				++out.compared;
+				out.identical += d.points == w.points ? 1 : 0;
+				EXPECT_TRUE(lengthsAgree(pathLengthMm(d), pathLengthMm(w), radius))
+					<< "pair " << i << " radius " << radius << ": " << pathLengthMm(d) << " vs " << pathLengthMm(w) << " mm";
+			}
+		}
+		EXPECT_GT(out.compared, 200);
+		return out;
+	}
+
+} // namespace
+
+// Point location and search ties go by coordinates, and corridor scores by geometry, so
+// on one triangulation the edit history changes no path at all.
+TEST(PatchableMesh, PathsIgnoreEditHistory) {
+	const HistoryComparison r = compareHistories(posts(4000, 600, 5), 26000, 77);
+	EXPECT_EQ(r.otherTriangles, 0) << "nudged posts leave the triangulation no choice";
+	EXPECT_EQ(r.identical, r.compared);
+}
+
+// Where the history picks different free diagonals, paths may differ, within the
+// tolerance the bounds-split oracle uses.
+TEST(PatchableMesh, PathsAcrossFreeDiagonalsAgree) {
+	const HistoryComparison r = compareHistories(posts(5000, 0, 0), 31000, 79);
+	EXPECT_GT(r.otherTriangles, 0) << "the lattice must leave diagonals to choose";
+	::testing::Test::RecordProperty("trianglesOnlyInOneHistory", r.otherTriangles);
+	::testing::Test::RecordProperty("pathsCompared", r.compared);
+	::testing::Test::RecordProperty("pathsIdentical", r.identical);
 }
 
 TEST(PatchableMesh, BoundsSplitFourByFourChangesNoAnswer) {

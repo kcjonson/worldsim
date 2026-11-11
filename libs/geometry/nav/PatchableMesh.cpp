@@ -433,8 +433,10 @@ namespace geometry::nav {
 
 	std::int32_t PatchableMesh::locateScaled(const Vec2i64& p, std::int64_t scale) const {
 		// A point strictly inside a triangle is in no other, so that one answers at once;
-		// a point on an edge or vertex takes the lowest id of every triangle holding it.
-		std::int32_t best = -1;
+		// a point on an edge or vertex takes, of every triangle holding it, the one whose
+		// corners sort first: geometry, not slot ids, which follow the patch history.
+		std::int32_t			  best = -1;
+		std::array<Vec2i64, 3> bestCorners;
 		grid.forEachAtPoint(p, scale, [&](std::int32_t t) {
 			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 			const Vec2i64	   a   = verts[tri.v[0]] * scale;
@@ -450,8 +452,11 @@ namespace geometry::nav {
 				best = t;
 				return true;
 			}
-			if (best < 0 || t < best) {
-				best = t;
+			std::array<Vec2i64, 3> corners{a, b, c};
+			std::sort(corners.begin(), corners.end());
+			if (best < 0 || corners < bestCorners) {
+				best		= t;
+				bestCorners = corners;
 			}
 			return false;
 		});
