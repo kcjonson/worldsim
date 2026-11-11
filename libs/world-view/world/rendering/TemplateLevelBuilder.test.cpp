@@ -82,6 +82,38 @@ TEST(TemplateLevelBuilderTest, BuildsEachWantedLevelOnce) {
 	}
 }
 
+TEST(TemplateLevelBuilderTest, ALevelIsHandedBackWithoutWaitingForASlowerOne) {
+	if (std::thread::hardware_concurrency() < 3) {
+		GTEST_SKIP() << "needs a pool of two threads, so both levels build in one batch";
+	}
+	std::promise<void>		 releaseSlow;
+	std::shared_future<void> release = releaseSlow.get_future().share();
+	TemplateLevelBuilder	 builder([&](uint32_t templateId, uint8_t level) -> std::optional<renderer::TessellatedMesh> {
+		if (templateId == 1) {
+			release.wait();
+		}
+		return meshOf(templateId, level);
+	});
+
+	builder.want(1, 0);
+	builder.want(2, 0);
+	builder.endFrame();
+
+	std::vector<TemplateLevelBuilder::Finished> finished;
+	const auto									deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (finished.empty() && std::chrono::steady_clock::now() < deadline) {
+		for (auto& done : builder.takeFinished()) {
+			finished.push_back(std::move(done));
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+	releaseSlow.set_value();
+	ASSERT_EQ(finished.size(), 1U);
+	EXPECT_EQ(finished.front().templateId, 2U);
+	ASSERT_TRUE(drain(builder, finished));
+	EXPECT_EQ(finished.size(), 2U);
+}
+
 TEST(TemplateLevelBuilderTest, DropsARequestNoFrameWantsBeforeItStarts) {
 	std::promise<void>		 firstStarted;
 	std::promise<void>		 releaseFirst;

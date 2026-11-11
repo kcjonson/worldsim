@@ -87,23 +87,22 @@ namespace worldview {
 				}
 			}
 
-			try {
-				pool.parallelFor(0, batch.size(), 1, [&](size_t first, size_t last) {
-					for (size_t i = first; i < last; ++i) {
-						batch[i].mesh = build(batch[i].templateId, batch[i].level);
+			// Each level is handed over as it finishes, so a slow build holds back only itself.
+			pool.parallelFor(0, batch.size(), 1, [&](size_t first, size_t last) {
+				for (size_t i = first; i < last; ++i) {
+					Finished& done = batch[i];
+					try {
+						done.mesh = build(done.templateId, done.level);
+					} catch (const std::exception& e) {
+						LOG_ERROR(Engine, "Building template %u at detail level %u threw: %s", done.templateId, static_cast<unsigned>(done.level), e.what());
 					}
-				});
-			} catch (const std::exception& e) {
-				LOG_ERROR(Engine, "Building template detail levels threw: %s", e.what());
-			}
-
-			std::lock_guard<std::mutex> lock(mutex);
-			for (Finished& done : batch) {
-				const uint64_t k = key(done.templateId, done.level);
-				building.erase(k);
-				finishedKeys.insert(k);
-				finished.push_back(std::move(done));
-			}
+					const uint64_t				k = key(done.templateId, done.level);
+					std::lock_guard<std::mutex> lock(mutex);
+					building.erase(k);
+					finishedKeys.insert(k);
+					finished.push_back(std::move(done));
+				}
+			});
 		}
 	}
 
