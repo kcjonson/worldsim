@@ -87,18 +87,14 @@ namespace ecs {
 	/// Colony "availability" = the union of colonist memories (no god-view). A goal created from
 	/// this is still only fulfilled by a colonist that actually remembers the source.
 	[[nodiscard]] inline bool colonyKnowsHarvestableSource(World* world, const assets::AssetRegistry& reg, uint32_t yieldDefNameId) {
+		const auto harvestable = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Harvestable));
 		for (auto [colonist, memory] : world->view<Memory>()) {
 			(void)colonist;
-			for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Harvestable)) {
-				const KnownWorldEntity* known = memory.getWorldEntity(key);
-				if (known == nullptr) {
-					continue;
-				}
-				const auto& srcDefName = reg.getDefName(known->defNameId);
-				const auto* srcDef = reg.getDefinition(srcDefName);
-				if (srcDef != nullptr && srcDef->capabilities.harvestable.has_value() &&
-					reg.getDefNameId(srcDef->capabilities.harvestable->yieldDefName) == yieldDefNameId) {
-					return true;
+			for (uint32_t source : reg.harvestablesYielding(yieldDefNameId)) {
+				for (uint64_t key : memory.worldEntitiesOfDef(source)) {
+					if ((memory.getWorldEntity(key)->capabilityMask & harvestable) != 0) {
+						return true;
+					}
 				}
 			}
 		}

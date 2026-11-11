@@ -92,8 +92,7 @@ namespace ecs {
 			return resolved;
 		}
 		const auto&	   harvestable = def->capabilities.harvestable.value();
-		const auto&	   yieldName = harvestable.yieldDefName;
-		const uint32_t yieldId = m_registry->getDefNameId(yieldName);
+		const uint32_t yieldId = m_registry->harvestYieldId(defNameId);
 		resolved.def = def;
 		resolved.yieldDefNameId = yieldId;
 		resolved.yieldDef = m_registry->getDefinitionById(yieldId);
@@ -102,18 +101,19 @@ namespace ecs {
 		if (!m_carriedKg.has_value()) {
 			m_carriedKg = ecs::carriedCargoMassKg(*m_inventory, *m_registry);
 		}
-		resolved.yieldFits = ecs::pickupUnitsThatFit(*m_inventory, *m_registry, yieldName, *m_carriedKg) != 0;
+		resolved.yieldFits = ecs::pickupUnitsThatFit(*m_inventory, *m_registry, yieldId, *m_carriedKg) != 0;
 		return resolved;
 	}
 
-	void WorkSources::appendHarvestables(uint32_t defNameId, const HarvestDef& resolved) {
+	void WorkSources::appendHarvestables(uint32_t defNameId, const HarvestDef& resolved, const FootprintBounds* inside) {
 		const auto keys = m_memory->worldEntitiesOfDef(defNameId);
 #ifdef DEVELOPMENT_BUILD
 		visits += keys.size();
 #endif
 		for (uint64_t key : keys) {
 			const KnownWorldEntity* entity = m_memory->getWorldEntity(key);
-			if (rememberedAs(*entity, assets::CapabilityType::Harvestable)) {
+			if (rememberedAs(*entity, assets::CapabilityType::Harvestable) &&
+				(inside == nullptr || inside->blockedBy(*m_registry, entity->defNameId, entity->position))) {
 				m_harvest.push_back({resolved.yieldDefNameId, key, entity, resolved.def, resolved.yieldDef});
 			}
 		}
@@ -131,7 +131,7 @@ namespace ecs {
 		return m_harvest;
 	}
 
-	std::span<const HarvestSource> WorkSources::clearableHarvestables() {
+	std::span<const HarvestSource> WorkSources::clearableHarvestables(const FootprintBounds& footprint) {
 		m_harvest.clear();
 		for (const auto& [defNameId, keys] : m_memory->worldEntitiesByDef) {
 			if (keys.empty()) {
@@ -139,7 +139,7 @@ namespace ecs {
 			}
 			const HarvestDef& resolved = harvestDef(defNameId);
 			if (resolved.def != nullptr && resolved.holdsTool) {
-				appendHarvestables(defNameId, resolved);
+				appendHarvestables(defNameId, resolved, &footprint);
 			}
 		}
 		return m_harvest;

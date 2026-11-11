@@ -2013,6 +2013,7 @@ namespace assets {
 		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
+		m_edibleItemIds.clear();
 		m_harvestablesByYieldId.clear();
 		m_harvestYieldIds.clear();
 		m_validationReport.issues.clear();
@@ -2079,6 +2080,7 @@ namespace assets {
 		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
+		m_edibleItemIds.clear();
 		m_harvestablesByYieldId.clear();
 		m_harvestYieldIds.clear();
 
@@ -2096,10 +2098,12 @@ namespace assets {
 			m_capabilityMasks.push_back(computeCapabilityMask(def));
 			if (def.isEdible()) {
 				m_edibleItemNames.push_back(defName);
+				m_edibleItemIds.push_back(nextId);
 			}
 			nextId++;
 		}
 		std::sort(m_edibleItemNames.begin(), m_edibleItemNames.end());
+		std::sort(m_edibleItemIds.begin(), m_edibleItemIds.end());
 		// Filed once every definition has its id, so a yield's id is its definition's.
 		for (const auto& [defName, def] : definitions) {
 			indexHarvestYield(def, m_defNameToId[defName]);
@@ -2285,7 +2289,15 @@ namespace assets {
 			m_idToDefinition.push_back(&stored);
 			m_capabilityMasks.push_back(mask);
 		}
-		indexHarvestYield(stored, m_defNameToId[defName]);
+		const uint32_t id = m_defNameToId[defName];
+		indexHarvestYield(stored, id);
+		const auto edibleIdAt = std::lower_bound(m_edibleItemIds.begin(), m_edibleItemIds.end(), id);
+		const bool idListed = edibleIdAt != m_edibleItemIds.end() && *edibleIdAt == id;
+		if (edible && !idListed) {
+			m_edibleItemIds.insert(edibleIdAt, id);
+		} else if (!edible && idListed) {
+			m_edibleItemIds.erase(edibleIdAt);
+		}
 
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
 	}
@@ -2316,6 +2328,7 @@ namespace assets {
 		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
+		m_edibleItemIds.clear();
 		m_harvestablesByYieldId.clear();
 		m_harvestYieldIds.clear();
 		LOG_DEBUG(Engine, "Cleared all definitions");

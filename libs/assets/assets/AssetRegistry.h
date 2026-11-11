@@ -281,6 +281,9 @@ namespace assets {
 		/// item on every platform. Kept with the definitions: cleared and rebuilt with them.
 		[[nodiscard]] const std::vector<std::string>& edibleItemNames() const { return m_edibleItemNames; }
 
+		/// The ids of edibleItemNames(), ascending. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<uint32_t>& edibleItemIds() const { return m_edibleItemIds; }
+
 		/// Ids of the harvestable definitions whose harvest yields the item `yieldDefNameId`, ascending;
 		/// empty when none does. Kept with the definitions: cleared and rebuilt with them.
 		[[nodiscard]] const std::vector<uint32_t>& harvestablesYielding(uint32_t yieldDefNameId) const;
@@ -407,6 +410,7 @@ namespace assets {
 
 		// Sorted names of the inventory-edible definitions; see edibleItemNames().
 		std::vector<std::string> m_edibleItemNames;
+		std::vector<uint32_t>	 m_edibleItemIds;
 
 		// Definition by interned id, beside m_idToDefName; nullptr for id 0 and synthetic definitions.
 		// Node addresses in `definitions` are stable, so these stay valid until a definition is erased.

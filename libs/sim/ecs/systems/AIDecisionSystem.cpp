@@ -1083,7 +1083,6 @@ namespace ecs {
 		/// Goal-driven: a goal names the item it needs (yieldDefNameId), or for a construction clear the
 		/// footprint whose harvestables it removes (clearFootprint); Memory provides the sources. A goal
 		/// that names an item is offered while its root still wants that item (RootSupply::toAcquire).
-		/// @param registry Asset registry for capability and definition lookups
 		/// @param sources The colonist's remembered harvestables, by yield
 		/// @param supply What each root still wants, for this colonist
 		/// @param pickupRoom What a pickup of the yield would lift now
@@ -1091,7 +1090,6 @@ namespace ecs {
 		/// @param skills The colonist's skill bonuses
 		/// @param trace Output decision trace
 		void evaluateHarvestOptions(
-			const assets::AssetRegistry& registry,
 			WorkSources&				 sources,
 			const RootSupply&			 supply,
 			PickupRoom&					 pickupRoom,
@@ -1128,7 +1126,7 @@ namespace ecs {
 				// What it could cut, before asking what the root needs: most goals have no known source.
 				// With no room to carry the yield no source is listed (WorkSources gates on the fit), so the
 				// need is asked to show why the cut is not taken.
-				const auto candidates = clearing		? sources.clearableHarvestables()
+				const auto candidates = clearing		? sources.clearableHarvestables(*goal->clearFootprint)
 										: roomToCarry ? sources.harvestablesYielding(goal->yieldDefNameId)
 													  : std::span<const HarvestSource>{};
 				if (roomToCarry && candidates.empty()) {
@@ -1236,9 +1234,6 @@ namespace ecs {
 				bool						   tooLittleRoom = false;
 				bool						   tooLittleBoxRoom = false;
 				for (const HarvestSource& source : candidates) {
-					if (clearing && !goal->clearFootprint->blockedBy(registry, source.entity->defNameId, source.entity->position)) {
-						continue;
-					}
 					const uint32_t fullCut = std::min(source.def->capabilities.harvestable->amountMax, want);
 					if (gathering && room < fullCut) {
 						tooLittleRoom = true;
@@ -1919,11 +1914,7 @@ namespace ecs {
 		}
 		m_foodBoxesBuilt = true;
 		m_foodBoxes.clear();
-		m_edibleItems.clear();
-		for (const std::string& name : m_registry.edibleItemNames()) {
-			m_edibleItems.push_back(m_registry.getDefNameId(name));
-		}
-		std::sort(m_edibleItems.begin(), m_edibleItems.end());
+		const std::vector<uint32_t>& edibleItems = m_registry.edibleItemIds();
 		for (auto [box, config, store, boxPos] : world->view<StorageConfiguration, Inventory, Position>()) {
 			(void)config;
 			if (world->hasComponent<Packaged>(box) || store.items.empty()) {
@@ -1932,7 +1923,7 @@ namespace ecs {
 			const size_t first = m_foodBoxes.size();
 			for (const ItemStack& stack : store.items) {
 				const uint32_t item = m_registry.getDefNameId(stack.defName);
-				if (!std::binary_search(m_edibleItems.begin(), m_edibleItems.end(), item)) {
+				if (!std::binary_search(edibleItems.begin(), edibleItems.end(), item)) {
 					continue;
 				}
 				const auto same = std::find_if(m_foodBoxes.begin() + static_cast<std::ptrdiff_t>(first), m_foodBoxes.end(),
@@ -2209,24 +2200,31 @@ namespace ecs {
 			if (wait != nullptr) {
 				regrowingFood = wait->nearest;
 			} else {
-				for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Harvestable)) {
-					const KnownWorldEntity* known = memory.getWorldEntity(key);
-					if (known == nullptr || !m_registry.yieldsEdible(known->defNameId)) {
-						continue;
+				// Only the defs whose yield is edible: the candidates, and so the heap's pick, are every
+				// remembered harvestable that is food, as a walk of all of them would find.
+				const auto harvestable = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Harvestable));
+				for (uint32_t food : m_registry.edibleItemIds()) {
+					for (uint32_t bush : m_registry.harvestablesYielding(food)) {
+						for (uint64_t key : memory.worldEntitiesOfDef(bush)) {
+							const KnownWorldEntity* known = memory.getWorldEntity(key);
+							if ((known->capabilityMask & harvestable) == 0) {
+								continue;
+							}
+							if (!notKnownUnreachable(key, *known)) {
+								everyBushRegrowing = false; // never asked, so it may be ready
+								continue;
+							}
+							SourceCandidate candidate = sourceCandidate(position.value, key, known->position);
+							candidate.entity = known;
+							sourceScratch.push_back(candidate);
+						}
 					}
-					if (!notKnownUnreachable(key, *known)) {
-						everyBushRegrowing = false; // never asked, so it may be ready
-						continue;
-					}
-					SourceCandidate candidate = sourceCandidate(position.value, key, known->position);
-					candidate.entity = known;
-					sourceScratch.push_back(candidate);
 				}
 			}
 			if (seeksFood) {
 				const std::vector<FoodBox>& boxes = foodBoxes();
 				const auto					carryable = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Carryable));
-				for (uint32_t item : m_edibleItems) {
+				for (uint32_t item : m_registry.edibleItemIds()) {
 					for (uint64_t key : memory.worldEntitiesOfDef(item)) {
 						const KnownWorldEntity* known = memory.getWorldEntity(key);
 						if (known == nullptr || (known->capabilityMask & carryable) == 0 || !notKnownUnreachable(key, *known)) {
@@ -2613,7 +2611,7 @@ namespace ecs {
 			world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, pileReach, m_offeredPiles, trace
 		);
 		evaluateCarryInOptions(supply, m_carried, position.value, trace);
-		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, workSkills, m_offeredPiles, trace);
+		evaluateHarvestOptions(m_workSources, supply, pickupRoom, position.value, workSkills, m_offeredPiles, trace);
 
 		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(world, position.value, workSkills, trace);

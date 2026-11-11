@@ -329,9 +329,8 @@ private:
 		uint32_t  item = 0;
 		uint32_t  quantity = 0;
 	};
-	std::vector<FoodBox>  m_foodBoxes;
-	std::vector<uint32_t> m_edibleItems;
-	bool				  m_foodBoxesBuilt = false;
+	std::vector<FoodBox> m_foodBoxes;
+	bool				 m_foodBoxesBuilt = false;
 	[[nodiscard]] const std::vector<FoodBox>& foodBoxes();
 
 	/// ActionSystem's piles by world key, for a remembered pile's live count; read once per update,

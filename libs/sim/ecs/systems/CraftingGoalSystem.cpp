@@ -33,11 +33,11 @@ namespace ecs {
 		// A goal created from this is still only fulfilled by a colonist that actually remembers the
 		// source. Throttled and bounded by the (few) colonists and their capability-indexed memories.
 		bool colonyKnowsStock(World* world, uint32_t itemDefNameId) {
+			const auto carryable = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Carryable));
 			for (auto [colonist, memory] : world->view<Memory>()) {
 				(void)colonist;
-				for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Carryable)) {
-					const KnownWorldEntity* known = memory.getWorldEntity(key);
-					if (known != nullptr && known->defNameId == itemDefNameId) {
+				for (uint64_t key : memory.worldEntitiesOfDef(itemDefNameId)) {
+					if ((memory.getWorldEntity(key)->capabilityMask & carryable) != 0) {
 						return true;
 					}
 				}
