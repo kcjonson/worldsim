@@ -116,7 +116,7 @@ Sim and tools:
 - A variant over 65,535 vertices is a load error naming the def, age class, and variant, never a missing tree.
 - Instance capacity per mesh handle is sized to what a variant can plausibly show (start at 4,096 and grow), not 50,000.
 - Tall or short routing (`kShortFloraMaxHeight`) is decided per def from its mature variant 0 (D9), at both sites that decide it today.
-- The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort. Not built with R3: today's oak and maple draw their trunk foot up to 1.1 m south of the rect, so this waits for R5's generator.
+- The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort. Built with R5: `anchorLocalY` (`WorldDepthSort.h`) is the one rule, used at placement and by `DynamicEntityRenderSystem`, for any def with a footprint (the big rock too).
 - The silhouette skips triangles under 0.5 alpha, so shadows are not part of the outline or the hit area.
 - The gather margin and the selection broad phase use the registry's largest template extent, not 2 m and 8 m. Without this, R9's trees pop in at the screen edges. As built, both use the largest extent of any template but groundcover (`maxReachMeters`), since short selectables such as bushes must stay clickable, and short sprites drawn, where no tree is loaded. The gather states its floor once, `entityCullMarginMeters` in `RenderContext.h`: the reach, never under the 2 m it had before.
 - Asset-manager detail view shows one row per age class, using the same (age class, variant) keys the game uses and one scale across the rows, so a sapling looks small beside a veteran. Not built with R3; its own task.
@@ -162,6 +162,14 @@ A tree has at most 40 tips. The recursion is a few hundred operations per varian
 - The trunk foot sits at the origin and the trunk's collision rect depends on age class only (R4).
 - Budget: a mature variant tessellates to at most 1.5x the triangles of today's oak template, which `asset-cli inspect` reads as 102 triangles and 126 vertices (88 to 146 triangles across seeds 0 to 14).
 
+As built, where it differs from the above:
+
+- Age is one number, `age` from 0 (just established) to 1 (oldest), not three classes (the owner's call, 2026-11-10). Growth steps (1.5 + 6 x age, the last one part grown), apical control, shedding, droop, crown depth, cluster count, lit caps, flecks, root flare, crown width, and trunk width are all smooth in it. Until the engine passes a number, the script maps `ageClass` to 0.15, 0.55, and 0.9 in one line at its top; an `age` param overrides it.
+- Each shoot draws from its own stream, keyed by its place in the tree, so the same seed a little older is the same tree grown a little. Discrete choices (whether a lateral is shed, which tips share a cluster, a cluster crossing the cull) still flip at some ages.
+- The crown form is drawn from the seed with weights that move with age (lost bough and ragged likelier when old), not dealt per variant, so two variants of a class can share a form. A lost bough goes at growth step 3 or 4, so a younger tree has not lost it yet. Stag-headed dieback comes in over ages 0.75 to 1, cluster by cluster, the dead limbs lengthening as the cluster shrinks.
+- The dark rim and the backing are one polygon, the union of the cluster circles traced from the crown's middle and pushed out by the rim width, to fit the budget. Cluster bases and caps that a later cluster covers whole are not drawn. At most two main limbs are drawn, and only where a gap shows them. Flecks are single triangles.
+- A mature oak (age 0.55) tessellates to 111 to 147 triangles over its eight game variants, under the budget; the oldest (age 1) is about 210 to 270.
+
 Left out on purpose: light competition between neighbours and crowns leaning away from each other (real and visible, but it makes one tree's shape depend on others, which breaks D1), growth over time, and anything at leaf level.
 
 ### R6 Species
@@ -189,7 +197,7 @@ The growth numbers are starting values. Published parameter sets exist for oak, 
 | Maple | pointed | warm green, between oak and aspen in the style guide | bark brown |
 | Birch | fine small tufts | `#38491f #4f6a2a #6c8a36 #8fab4f` | white with dark flecks, darkening at the foot on veterans |
 
-- All three are params to the one generator: the growth numbers above, palette, lobe style, cluster size.
+- All three are params to the one generator: the growth numbers above, palette, lobe style, cluster size. As built: `apicalControl`, `buds`, `branchAngle`, `lengthRatio`, `mainLimbs`, `shedding`, `droop`, `stemRise`, `crownDepth`, `clusterSize`, `lobes`, `growingOld` (`stagHeaded` or `broadens`), and `foliageEdge` to `foliageHighlight`; sizes are `crownWidth` and `trunkWidth`, curves over age written `age:meters, ...`. Maple's palette is the midpoint of oak's and the style guide's aspen, `#344c22 #47662a #5e8335 #7fa64b`; maple is on starting values, not tuned.
 - Birch is a new def, `Flora_TreeBirch`, placed in TemperateDeciduousForest, harvestable for Wood with an Axe at about 35% of oak's yield.
 - Density and spawn chances are set by R9.
 
@@ -212,7 +220,7 @@ The growth numbers are starting values. Published parameter sets exist for oak, 
 
 ### R9 Scale and density
 
-Crown width in metres, drawn by the generator at this size (D3):
+Crown width in metres, drawn by the generator at this size (D3). Not applied yet: oak and maple keep today's 1.6 m and 1.2 m mature crowns, and their `crownWidth` curves run through this table's ratios at that scale, so the rescale is a change of numbers.
 
 | | Sapling | Mature | Veteran | Mature trunk width |
 |---|---|---|---|---|
@@ -296,7 +304,7 @@ Trees draw in the depth-sorted stream, and a run breaks whenever the mesh change
 
 - Unit, bounded: traits are deterministic for (def, position, seed) and hit the age weights within tolerance over 10,000 positions; placement of non-tree entities is byte-identical before and after for a fixed seed (a hash golden, checked only with MSVC's standard library, whose distributions the hashes were captured from); per-age collision rect is variant-independent; harvest amount and work scale by age class.
 - Asset-manager: every age class and variant of oak, maple, and birch renders with zero validation errors. Kevin approves the grids before rollout.
-- `asset-cli render` produces the greyscale silhouette grids for the two acceptance checks below, headless.
+- `asset-cli render` produces the greyscale silhouette grids for the two acceptance checks below, headless: `--grid` draws every template the game draws at one scale, `--age a,b,... --seed s,t,...` draws the generator at those ages for those seeds, and `--silhouette` flattens either.
 - Acceptance for variety: any two variants of one species and age class are tellable apart by silhouette alone at game zoom, in greyscale.
 - Acceptance for species: oak, maple, and birch are tellable apart in greyscale silhouette, and each matches its "from above" row in R6.
 - Acceptance for scale: on the quickstart landing, canopy cover and trees per 1,000 m2 hit R9, and a colonist can walk the forest without leaving the player's sight.

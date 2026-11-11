@@ -115,3 +115,75 @@ function shape.upFan(xs, ys, x, y, k, dir, spread, len, bend, hubHalf, fill, wit
 	xs[n], ys[n] = x + hubHalf * 1.5, y
 	return n
 end
+
+-- A lobed blob around (cx, cy): n points at even angles from rot, every other one pulled in to notch of
+-- the radius, so the outline is a ring of rounded lobes (notch near 1) or points (notch well under 1).
+-- Each radius is jittered by up to jitter of itself; squash scales y. Draws n random numbers.
+function shape.lobed(cx, cy, r, n, notch, jitter, rot, squash)
+	local xs, ys = {}, {}
+	for i = 1, n do
+		local a = rot + (i - 1) * 2 * math.pi / n
+		local rr = r * (i % 2 == 0 and notch or 1) * (1 + (math.random() * 2 - 1) * jitter)
+		xs[i], ys[i] = cx + cos(a) * rr, cy + sin(a) * rr * squash
+	end
+	local p = shape.polygon(xs, ys)
+	p.cx, p.cy = cx, cy
+	return p
+end
+
+-- poly scaled by k about its center (cx, cy) and moved by (dx, dy); the copy keeps the center, moved.
+function shape.scaled(poly, k, dx, dy)
+	local xs, ys = {}, {}
+	for i = 1, poly.n do
+		xs[i] = poly.cx + (poly.xs[i] - poly.cx) * k + dx
+		ys[i] = poly.cy + (poly.ys[i] - poly.cy) * k + dy
+	end
+	local p = shape.polygon(xs, ys)
+	p.cx, p.cy = poly.cx + dx, poly.cy + dy
+	return p
+end
+
+-- Adds poly to the asset in color c, a {r, g, b} table, at alpha (1 when nil).
+function shape.emit(poly, c, alpha)
+	local p = Path()
+	for i = 1, poly.n do
+		p:addVertex(poly.xs[i], poly.ys[i])
+	end
+	p:setColor(c[1], c[2], c[3], alpha or 1)
+	p:close()
+	asset:addPath(p)
+end
+
+-- The convex hull of the points (xs, ys), counter-clockwise on screen, as a polygon.
+function shape.hull(xs, ys)
+	local idx = {}
+	for i = 1, #xs do
+		idx[i] = i
+	end
+	table.sort(idx, function(a, b)
+		if xs[a] ~= xs[b] then
+			return xs[a] < xs[b]
+		end
+		return ys[a] < ys[b]
+	end)
+	local function cross(o, a, b)
+		return (xs[a] - xs[o]) * (ys[b] - ys[o]) - (ys[a] - ys[o]) * (xs[b] - xs[o])
+	end
+	local h = {}
+	for pass = 1, 2 do
+		local start = #h
+		for j = 1, #idx do
+			local i = pass == 1 and idx[j] or idx[#idx + 1 - j]
+			while #h >= start + 2 and cross(h[#h - 1], h[#h], i) <= 0 do
+				h[#h] = nil
+			end
+			h[#h + 1] = i
+		end
+		h[#h] = nil
+	end
+	local hx, hy = {}, {}
+	for k = 1, #h do
+		hx[k], hy[k] = xs[h[k]], ys[h[k]]
+	end
+	return shape.polygon(hx, hy)
+end

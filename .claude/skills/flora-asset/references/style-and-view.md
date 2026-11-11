@@ -4,7 +4,7 @@ Match the game's existing flora, not generic flat-vector art. The look: cel-shad
 
 ## Style statement (the target — keep this in spirit on every asset)
 
-Hand-painted 2D game-asset illustration of plants/foliage for a top-down colony sim (RimWorld-ish). Stylized, no photorealism. Soft cel-shading in two or three flat tonal steps PLUS gentle ambient occlusion in the recesses where forms meet. Soft, irregular, organic edges — never geometric or hard-cornered — with a strong readable silhouette. Foliage reads as a handful of DEFINED LEAF-CLUSTER shapes (lobes/clumps with their own light and shadow), NOT individual leaves and NOT a single smooth dome (a plain dome reads too simplistic). A THIN darker rim, a few px wide, around the form. Muted, earthy, slightly desaturated palette. Light consistently from the upper-left. Single centered object, no ground, no cast shadow. Trees: a couple of branches may show through gaps in the canopy.
+Hand-painted 2D game-asset illustration of plants/foliage for a top-down colony sim (RimWorld-ish). Stylized, no photorealism. Soft cel-shading in two or three flat tonal steps PLUS gentle ambient occlusion in the recesses where forms meet. Soft, irregular, organic edges — never geometric or hard-cornered — with a strong readable silhouette. Foliage reads as a handful of DEFINED LEAF-CLUSTER shapes (lobes/clumps with their own light and shadow), NOT individual leaves and NOT a single smooth dome (a plain dome reads too simplistic). A THIN darker rim, a few px wide, around the form. Muted, earthy, slightly desaturated palette. Light consistently from the upper-left. Single centered object, no ground, no cast shadow beyond a small contact shadow where it meets the ground. Trees: a couple of branches may show through gaps in the canopy.
 
 ## Compose masses FROM shapes — not a background with details painted on top
 
@@ -17,7 +17,7 @@ A canopy (and any foliage mass) IS its cluster shapes:
 - Draw clusters BACK-TO-FRONT (far/lower ones first, near/upper last). A nearer cluster's darker base overlapping the one behind it is what creates the ambient-occlusion seams between clumps — the depth comes from the overlaps, not from painted-on shadow spots.
 - One thin dark rim around the whole union only (draw expanded dark copies of the cluster blobs behind everything), never a rim per cluster.
 - The canopy must be SOLID: overlap the clusters enough that the background shows ONLY outside the silhouette, never as holes or gaps punched through the inside of the canopy. Some ragged edge is fine; internal sky-holes are not. (An airy species like birch can have a slightly looser edge, but still no holes through the middle.)
-- Backing fallback (belt-and-suspenders against holes): behind the cluster fills (drawn right after the rim, before the first cluster) lay ONE solid silhouette blob filling the canopy interior in the DARKEST foliage tone, inset just inside the dark rim so the rim still reads as the outer border. This is NOT the construction shape and you never draw detail on it, the clusters still form the canopy; it only shows through an accidental gap, so a stray hole reads as deep foliage shadow instead of sky. This matters most for the procedural Lua generator, where per-instance jitter can open gaps a static SVG wouldn't have.
+- Backing fallback (belt-and-suspenders against holes): behind the cluster fills (drawn right after the rim, before the first cluster) lay ONE solid silhouette blob filling the canopy interior in the DARKEST foliage tone, inset just inside the dark rim so the rim still reads as the outer border. This is NOT the construction shape and you never draw detail on it, the clusters still form the canopy; it only shows through an accidental gap, so a stray hole reads as deep foliage shadow instead of sky. This matters most for the procedural Lua generator, where per-instance jitter can open gaps a static SVG wouldn't have. `deciduous.lua` does both in one shape to save triangles: one polygon tracing the union of its cluster circles from the crown's middle, pushed out by the rim width, in the rim tone.
 - The dark outline is MANDATORY and must READ clearly: a clean dark border a few px wide tracing the whole canopy union (the expanded dark cluster copies behind everything). Keep it thick enough to see, never so thin it disappears. This dark border is a defining part of the look, every asset has it.
 - Connect the canopy to the trunk: draw the short trunk stub FIRST, then let the lowest center clusters overlap the top of the trunk so there is no gap. A canopy floating above a detached trunk is wrong.
 - Shade the whole canopy as a DOME seen from above: clusters toward the top-center-left (facing the light) get the brightest caps; clusters toward the lower and far edges stay darker, smaller-capped. This dome falloff is what makes it read as a 3/4 top-down view rather than a flat front-on bush.
@@ -41,7 +41,7 @@ The cap is NEVER a concentric ring centered on the base, that reads as a shiny e
 
 ## Layered cel-shade construction (every part)
 
-No ground shadow — the game doesn't use them. Build each mass from back to front in tonal steps:
+Contact shadow only: no drop shadow and no canopy shadow. Where a plant meets the ground, a small lobed patch at its foot (see Palette) and, for a tree, a root flare and a few grass tufts over the trunk foot (`lib.foot` in the prelude). Build each mass from back to front in tonal steps:
 1. **Outline** — a clean dark border around the whole mass. Put an SVG `stroke` (+`stroke-width`) on the shape; the renderer tessellates strokes now. A group `stroke` outlines each child path, not the union, so to get ONE outline around many overlapping shapes, draw an expanded dark copy of the silhouette behind them instead.
 2. **Dark rim** — the part's silhouette in the darkest tone (base x ~0.7).
 3. **Base** — the main mid tone, slightly inset from the rim.
@@ -52,7 +52,7 @@ Light comes from the upper-left, consistently. The view is 3/4 top-down (see bel
 
 ## Per-subject view rules
 
-The engine's canonical view is 3/4 top-down (see `deciduous.lua`: "canopy viewed from above, trunk visible extending downward"). Apply per growth form:
+The engine's canonical view is 3/4 top-down (see `deciduous.lua`: ground depth foreshortened, height rising up the screen, the crown seen from above with the trunk below it). Apply per growth form:
 
 - **Trees** — 3/4 top-down, leaning OVERHEAD: you look DOWN onto the canopy. The canopy is the dominant mass and reads as a rounded crown seen from above (a roughly round, full footprint, NOT a thin flat band on a stick and NOT a tall side-on bush), dome-shaded so the lit top surface faces up-and-left. The trunk is only a SMALL stub barely peeking below the canopy's front edge, the canopy overlaps and hides most of it. Light top-center-left, darker lower/far rim.
   - **Limbs are THICK.** Where a limb shows (at the trunk-canopy join or through a gap) draw it chunky and tapering, roughly half to two-thirds the trunk's width at its base, never a thin stick. A big tree has substantial limbs; sticks read as twigs against the canopy mass.
@@ -103,17 +103,11 @@ Variants (swap the foliage hue, keep structure):
 
 Fruit/berry accents: red `#c41e1e` / `0.77,0.12,0.12`, blue `#3a5a8a`, orange `#d4762a`.
 
-Ground shadow: `#1d2616` at ~0.22-0.30 alpha (slightly green-black, not pure grey).
+Contact shadow: `#1d2616` at 0.25-0.35 alpha (slightly green-black, not pure grey), at most 1.5 trunk widths across. Under 0.5 alpha it stays out of the selection silhouette.
 
 ## Life stages
 
-Scale the same construction across growth:
-- Seedling: ~20-30% size, sparse canopy (skip the mid/highlight layers), thin stem.
-- Sapling: ~50-70% size, fuller but still open.
-- Mature: full size and full layering.
-- Dead / stump: trunk only, or a bare branch silhouette in the Dead palette.
-
-Drive this from a `growthStage` param (scale radius/height, gate canopy-layer count and fruit). Pair with the seasonal palettes above for a full stage x season set.
+A young tree and an old one are different trees, not one tree scaled. `deciduous.lua` grows a branch skeleton for longer the older the tree (one `age` from 0 to 1), so a young tree is a thin stem under a small, upright crown with no lit caps, a grown one has full layering, and an old oak pulls in and goes stag-headed, bare limbs in the Dead palette standing past its crown. Size, trunk width, cluster count and the rest are smooth functions of that age. `conifer.lua` and `palm.lua` still scale one construction by a `growthStage` param. Pair with the seasonal palettes above for a full stage x season set.
 
 ## SVG template (simple assets)
 
@@ -135,7 +129,7 @@ For a tree as simple SVG, add a `#trunk` group (two brown tones) below a `#canop
 
 ## Recolor / variation
 
-Runtime variation lives in the **Lua** generator (jitter the palette base per variant, vary radii/counts), as `deciduous.lua` does. Static SVG fills are baked; for a static asset that needs a few distinct looks, author separate variant SVGs rather than expecting runtime recolor.
+Runtime variation lives in the **Lua** generator (jitter the palette base per variant, vary radii/counts), as `deciduous.lua` does (+/-3% per channel, so the species still reads). Static SVG fills are baked; for a static asset that needs a few distinct looks, author separate variant SVGs rather than expecting runtime recolor.
 
 (If a future renderer change adds CSS-variable color slots to SVG, the layered groups above map cleanly onto per-part slots: one slot per group, defaults = the base tone, engine drives the rim/mid/highlight as ratios. Not implemented yet; don't ship assets that depend on it.)
 

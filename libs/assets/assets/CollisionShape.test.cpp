@@ -229,9 +229,10 @@ TEST(CollisionShapeTest, EmptyCollisionBlockIsNone) {
 }
 
 // End-to-end: the tree defs carry no XML <collision>, so these exercise the
-// Lua-emit (asset:setCollisionRect) + eager-capture path. Half-extent each axis
-// is trunkWidth/2 (read pre-randomization), so the footprint is a stable square.
-TEST(CollisionShapeTest, OakTreeHasRectHalfExtent0_1) {
+// Lua-emit (asset:setCollisionRect) + capture path. Half-extent each axis is half
+// the trunk width, which deciduous.lua takes from the age alone (its trunkWidth
+// curve through each class's age), so the footprint is a stable square per class.
+TEST(CollisionShapeTest, OakTreeRectFollowsTrunkByAgeClass) {
 	namespace fs = std::filesystem;
 
 	auto&	   reg = AssetRegistry::Get();
@@ -247,12 +248,51 @@ TEST(CollisionShapeTest, OakTreeHasRectHalfExtent0_1) {
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeOak");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.1F);
-	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.1F);
+	ASSERT_EQ(def->ageClasses.size(), 3U);
+	const float halves[] = {0.04F, 0.1F, 0.16F}; // sapling, mature, veteran
+	for (uint8_t a = 0; a < 3; ++a) {
+		EXPECT_EQ(def->collisionFor(a).type, CollisionShapeType::Rect);
+		EXPECT_NEAR(def->collisionFor(a).halfExtentsMeters.x, halves[a], 1e-5F);
+		EXPECT_NEAR(def->collisionFor(a).halfExtentsMeters.y, halves[a], 1e-5F);
+	}
 }
 
-TEST(CollisionShapeTest, MapleTreeHasRectHalfExtent0_075) {
+// The oak's mesh is a pure function of (age class, variant): generated twice it is the same, and
+// two variants of a class differ.
+TEST(CollisionShapeTest, OakGeneratorIsDeterministicPerVariant) {
+	namespace fs = std::filesystem;
+
+	auto&	 reg = AssetRegistry::Get();
+	fs::path p = fs::path(__FILE__).parent_path().parent_path().parent_path().parent_path();
+	fs::path oak = p / "assets" / "world" / "flora" / "OakTree";
+	if (!fs::exists(oak)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+
+	reg.clearDefinitions();
+	reg.setSharedScriptsPath(p / "assets" / "shared" / "scripts");
+	reg.loadDefinitionsFromFolder(oak.string());
+	const AssetDefinition* def = reg.getDefinition("Flora_TreeOak");
+	ASSERT_NE(def, nullptr);
+
+	const auto generate = [&](TreeTraits traits) {
+		GeneratedAsset asset;
+		EXPECT_TRUE(reg.generateAsset(def->defName, AssetRegistry::generationSeed(*def, traits), asset, traits));
+		std::vector<Foundation::Vec2> points;
+		for (const auto& path : asset.paths) {
+			points.insert(points.end(), path.vertices.begin(), path.vertices.end());
+		}
+		return points;
+	};
+	for (uint8_t a = 0; a < 3; ++a) {
+		const auto first = generate({.ageClass = a, .variant = 0});
+		ASSERT_FALSE(first.empty());
+		EXPECT_EQ(first, generate({.ageClass = a, .variant = 0})) << "age class " << int(a);
+		EXPECT_NE(first, generate({.ageClass = a, .variant = 1})) << "age class " << int(a);
+	}
+}
+
+TEST(CollisionShapeTest, MapleTreeRectFollowsTrunkByAgeClass) {
 	namespace fs = std::filesystem;
 
 	auto&	   reg = AssetRegistry::Get();
@@ -268,9 +308,12 @@ TEST(CollisionShapeTest, MapleTreeHasRectHalfExtent0_075) {
 
 	const AssetDefinition* def = reg.getDefinition("Flora_TreeMaple");
 	ASSERT_NE(def, nullptr);
-	EXPECT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
-	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.x, 0.075F);
-	EXPECT_FLOAT_EQ(def->collisionFor(0).halfExtentsMeters.y, 0.075F);
+	ASSERT_EQ(def->ageClasses.size(), 3U);
+	const float halves[] = {0.03F, 0.075F, 0.11F}; // sapling, mature, veteran
+	for (uint8_t a = 0; a < 3; ++a) {
+		EXPECT_EQ(def->collisionFor(a).type, CollisionShapeType::Rect);
+		EXPECT_NEAR(def->collisionFor(a).halfExtentsMeters.x, halves[a], 1e-5F);
+	}
 }
 
 TEST(CollisionShapeTest, PalmTreeHasRectHalfExtent0_06) {
@@ -341,7 +384,7 @@ TEST(CollisionShapeTest, XmlCollisionWinsOverLuaEmit) {
 	}
 
 	TempAssets t;
-	// Same generator as OakTree (deciduous.lua with trunkWidth=0.5 -> would emit half-extents 0.25),
+	// Same generator as OakTree (deciduous.lua with a 0.5 m trunk -> would emit half-extents 0.25),
 	// but XML <collision> supplies half-extents 0.1. XML must win.
 	t.writeXml(
 		"XmlWins",
@@ -351,8 +394,7 @@ TEST(CollisionShapeTest, XmlCollisionWinsOverLuaEmit) {
 		"<assetType>procedural</assetType>"
 		"<generator>"
 		"<scriptPath>@shared/deciduous.lua</scriptPath>"
-		"<params><trunkWidth>0.5</trunkWidth><trunkHeight>1.5</trunkHeight>"
-		"<canopyRadius>0.8</canopyRadius><branchCount>4</branchCount></params>"
+		"<params><trunkWidth>0.55:0.5</trunkWidth></params>"
 		"</generator>"
 		"<collision><rect minX=\"-0.1\" minY=\"-0.1\" maxX=\"0.1\" maxY=\"0.1\"/></collision>"
 		"</AssetDef></AssetDefinitions>"

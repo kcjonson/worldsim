@@ -12,14 +12,29 @@
     <generator>
       <!-- Shared script using @shared/ prefix -->
       <scriptPath>@shared/deciduous.lua</scriptPath>
+      <!-- Growth numbers, palette and sizes (tree-variety.md R5, R6, R9). An oak's stem dissolves
+           into a few heavy boughs at a wide angle; old oaks go stag-headed. -->
       <params>
-        <!-- Trunk dimensions in meters (oak is larger than maple, scaled for top-down) -->
-        <trunkHeight>1.5</trunkHeight>
-        <trunkWidth>0.2</trunkWidth>
-        <!-- Canopy radius in meters -->
-        <canopyRadius>0.8</canopyRadius>
-        <!-- Number of visible branches -->
-        <branchCount>4</branchCount>
+        <!-- Crown across and trunk width in meters as curves over age (0 to 1), through R9's oak
+             column (1.6, 3.6, 4.9) at today's mature crown. The collision rect is half the trunk width. -->
+        <crownWidth>0.15:0.71, 0.55:1.6, 0.9:2.18, 1.0:2.22</crownWidth>
+        <trunkWidth>0.15:0.08, 0.55:0.2, 0.9:0.32</trunkWidth>
+        <apicalControl>0.40</apicalControl>
+        <buds>alternate</buds>
+        <branchAngle>55,75</branchAngle>
+        <lengthRatio>0.8</lengthRatio>
+        <mainLimbs>3,5</mainLimbs>
+        <shedding>0.35</shedding>
+        <droop>0.25</droop>
+        <stemRise>0.5</stemRise>
+        <crownDepth>0.26</crownDepth>
+        <clusterSize>0.13</clusterSize>
+        <lobes>rounded</lobes>
+        <growingOld>stagHeaded</growingOld>
+        <foliageEdge>#2f4a26</foliageEdge>
+        <foliageBase>#3e5e2c</foliageBase>
+        <foliageMid>#4f7536</foliageMid>
+        <foliageHighlight>#6f9a4a</foliageHighlight>
       </params>
     </generator>
 
@@ -28,8 +43,8 @@
       <tier>batched</tier>
     </rendering>
 
-    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
-         half-extent = trunkWidth/2 = 0.1m), captured eagerly at load. -->
+    <!-- Trunk-foot collision comes from the generator (asset:setCollisionRect, half the age
+         class's trunk width), captured per age class at load. -->
 
     <!-- Entity capabilities - felled for wood with an axe in one destructive action -->
     <!-- Whole-tree yield 20-30 wood (the old pool total); the colonist takes a weight-limited -->

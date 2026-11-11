@@ -12,14 +12,29 @@
     <generator>
       <!-- Shared script using @shared/ prefix -->
       <scriptPath>@shared/deciduous.lua</scriptPath>
+      <!-- Growth numbers, palette and sizes (tree-variety.md R5, R6, R9), the spec's starting values.
+           A maple forks into co-equal stems with paired limbs; old maples broaden and stay dense. -->
       <params>
-        <!-- Trunk dimensions in meters (scaled for top-down game view) -->
-        <trunkHeight>1.2</trunkHeight>
-        <trunkWidth>0.15</trunkWidth>
-        <!-- Canopy radius in meters -->
-        <canopyRadius>0.6</canopyRadius>
-        <!-- Number of visible branches -->
-        <branchCount>3</branchCount>
+        <!-- Crown across and trunk width in meters as curves over age (0 to 1), through R9's maple
+             column (1.2, 2.7, 3.6) at today's mature crown. The collision rect is half the trunk width. -->
+        <crownWidth>0.15:0.53, 0.55:1.2, 0.9:1.6, 1.0:1.68</crownWidth>
+        <trunkWidth>0.15:0.06, 0.55:0.15, 0.9:0.22</trunkWidth>
+        <apicalControl>0.45</apicalControl>
+        <buds>opposite</buds>
+        <branchAngle>40,50</branchAngle>
+        <lengthRatio>0.78</lengthRatio>
+        <mainLimbs>4,6</mainLimbs>
+        <shedding>0.12</shedding>
+        <droop>0.15</droop>
+        <stemRise>0.5</stemRise>
+        <crownDepth>0.4</crownDepth>
+        <clusterSize>0.2</clusterSize>
+        <lobes>pointed</lobes>
+        <growingOld>broadens</growingOld>
+        <foliageEdge>#344c22</foliageEdge>
+        <foliageBase>#47662a</foliageBase>
+        <foliageMid>#5e8335</foliageMid>
+        <foliageHighlight>#7fa64b</foliageHighlight>
       </params>
     </generator>
 
@@ -32,8 +47,8 @@
 
     <!-- No animation for now (trees sway is future work) -->
 
-    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
-         half-extent = trunkWidth/2 = 0.075m), captured eagerly at load. -->
+    <!-- Trunk-foot collision comes from the generator (asset:setCollisionRect, half the age
+         class's trunk width), captured per age class at load. -->
 
     <!-- Entity capabilities - felled for wood with an axe in one destructive action -->
     <!-- Whole-tree yield 14-22 wood (the old pool total, smaller than oak); the colonist takes a -->
