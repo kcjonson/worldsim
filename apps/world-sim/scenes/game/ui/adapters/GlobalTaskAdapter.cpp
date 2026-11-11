@@ -6,11 +6,15 @@
 #include <ecs/components/Colonist.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
+#include <ecs/systems/AIDecisionSystem.h>
 
 #include <algorithm>
 #include <cmath>
 #include <format>
+#include <map>
+#include <optional>
 #include <sstream>
+#include <unordered_map>
 
 namespace world_sim::adapters {
 
@@ -165,36 +169,56 @@ namespace world_sim::adapters {
 			return prefix;
 		}
 
-		/// Name of a colonist actively working this goal, or "" if none. Goals are global
-		/// (claimed implicitly when a colonist selects the matching task), so we recover the
-		/// assignment by scanning colonist tasks for the goal they're servicing.
-		std::string colonistWorkingGoal(ecs::World& world, const ecs::GoalTask& goal) {
-			for (auto [entity, colonist, task] : world.view<ecs::Colonist, ecs::Task>()) {
-				if (!task.isActive()) {
-					continue;
+		/// Who is bringing goods toward each root goal, from the claim index's in-flight claims: per
+		/// root, and per (root, item). Built once per refresh, so a goal's worker is one lookup.
+		struct Workers {
+			std::unordered_map<uint64_t, ecs::EntityID>				 byRoot;
+			std::map<std::pair<uint64_t, uint32_t>, ecs::EntityID> byRootItem;
+		};
+
+		Workers workersFromClaims(ecs::World& world) {
+			Workers workers;
+			const auto* ai = world.tryGetSystem<ecs::AIDecisionSystem>();
+			if (ai == nullptr) {
+				return workers;
+			}
+			ai->claimIndex().forEachClaim([&](const ecs::Claim& claim, const ecs::ClaimHolder& holder) {
+				if (claim.kind() == ecs::ClaimKind::InFlight) {
+					workers.byRoot.try_emplace(claim.target(), holder.colonist);
+					workers.byRootItem.try_emplace({claim.target(), claim.itemDefNameId()}, holder.colonist);
 				}
-				bool match = false;
-				switch (goal.type) {
-					case ecs::TaskType::Harvest:
-						match = (task.type == ecs::TaskType::Harvest && task.harvestGoalId == goal.id);
-						break;
-					case ecs::TaskType::Haul:
-						match = (task.type == ecs::TaskType::Haul && task.haulGoalId == goal.id);
-						break;
-					case ecs::TaskType::Build:
-						// The Build task carries the blueprint entity, which is the umbrella's
-						// destination.
-						match = (task.type == ecs::TaskType::Build &&
-								 task.buildBlueprintEntityId == static_cast<uint64_t>(goal.destinationEntity));
-						break;
-					default:
-						break;
+			});
+			return workers;
+		}
+
+		/// Name of a colonist holding in-flight claims toward this goal's root for an item the goal
+		/// names, or "" if none. A goal naming no item (the Build umbrella, a category box) takes any
+		/// item toward its root. A footprint clear brings nothing toward a need, so it has no worker.
+		std::string colonistWorkingGoal(ecs::World& world, const Workers& workers, const ecs::GoalTask& goal) {
+			if (goal.clearFootprint.has_value()) {
+				return "";
+			}
+			const uint64_t root = ecs::GoalTaskRegistry::Get().rootOf(goal.id);
+			std::optional<ecs::EntityID> worker;
+			if (goal.yieldDefNameId == 0 && goal.acceptedDefNameIds.empty()) {
+				if (const auto it = workers.byRoot.find(root); it != workers.byRoot.end()) {
+					worker = it->second;
 				}
-				if (match) {
-					return colonist.name;
+			} else {
+				const auto byItem = [&](uint32_t item) {
+					if (const auto it = workers.byRootItem.find({root, item}); it != workers.byRootItem.end()) {
+						worker = it->second;
+					}
+				};
+				if (goal.yieldDefNameId != 0) {
+					byItem(goal.yieldDefNameId);
+				}
+				for (auto item = goal.acceptedDefNameIds.begin(); !worker && item != goal.acceptedDefNameIds.end(); ++item) {
+					byItem(*item);
 				}
 			}
-			return "";
+			const auto* colonist = worker ? world.getComponent<ecs::Colonist>(*worker) : nullptr;
+			return colonist != nullptr ? colonist->name : std::string{};
 		}
 
 		/// Convert goal to display data
@@ -202,7 +226,8 @@ namespace world_sim::adapters {
 			const ecs::GoalTaskRegistry& goalRegistry,
 			const ecs::GoalTask&		  goal,
 			const glm::vec2&			  referencePosition,
-			ecs::World*					  world // optional: enables "who's working it" + build progress
+			ecs::World*					  world, // optional: enables "who's working it" + build progress
+			const Workers*				  workers
 		) {
 			GlobalTaskDisplayData data;
 			data.id = goal.id;
@@ -222,7 +247,7 @@ namespace world_sim::adapters {
 			data.distance = std::format("{}m", static_cast<int>(data.distanceValue));
 
 			// Who, if anyone, is actively working this goal right now.
-			const std::string worker = (world != nullptr) ? colonistWorkingGoal(*world, goal) : std::string{};
+			const std::string worker = (world != nullptr && workers != nullptr) ? colonistWorkingGoal(*world, *workers, goal) : std::string{};
 
 			// Build umbrella: its material counters are unused (targetAmount is just a marker);
 			// the real progress lives on the blueprint's workDone. Surface that plus the worker.
@@ -256,7 +281,7 @@ namespace world_sim::adapters {
 				data.status = "Waiting (no source found)";
 				data.isBlocked = true;
 			} else if (!worker.empty()) {
-				// A colonist is actively servicing this goal (claimed implicitly).
+				// A colonist holds claims toward this goal.
 				data.status = "Working";
 				data.statusDetail = worker;
 			} else if (data.distanceValue > 50.0F) {
@@ -281,6 +306,7 @@ namespace world_sim::adapters {
 		auto& registry = ecs::GoalTaskRegistry::Get();
 
 		std::vector<GlobalTaskDisplayData> result;
+		const Workers					   workers = workersFromClaims(world);
 
 		// Cut/Haul/Build read as a chain per site; Craft/PlacePackaged round it out. Build is the
 		// umbrella goal (the destination holder) so a site shows its build step, not just the
@@ -289,7 +315,7 @@ namespace world_sim::adapters {
 								   ecs::TaskType::PlacePackaged}) {
 			for (const auto* goal : registry.getGoalsOfType(type)) {
 				if (goal->availableCapacity() > 0) {
-					result.push_back(goalToDisplayData(registry, *goal, cameraCenter, &world));
+					result.push_back(goalToDisplayData(registry, *goal, cameraCenter, &world, &workers));
 				}
 			}
 		}
@@ -304,19 +330,19 @@ namespace world_sim::adapters {
 
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Harvest)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Haul)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::Craft)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
 		}
 		for (const auto* goal : registry.getGoalsOfType(ecs::TaskType::PlacePackaged)) {
 			if (goal->availableCapacity() == 0) continue;
-			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr));
+			result.push_back(goalToDisplayData(registry, *goal, colonistPosition, nullptr, nullptr));
 		}
 
 		return result;
