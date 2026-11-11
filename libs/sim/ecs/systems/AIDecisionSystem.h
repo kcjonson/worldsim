@@ -65,7 +65,12 @@ struct RootItem {
 /// table stamped with the update, so a warm cache allocates nothing.
 class BoxRoomCache {
   public:
-	void invalidate() { ++pass; }
+	/// A new update: every slot of the last one reads as empty and none counts toward the load, so the
+	/// table stays sized to one update's reads.
+	void invalidate() {
+		++pass;
+		used = 0;
+	}
 
 	struct Room {
 		InboundStackRoom stack;
@@ -78,6 +83,7 @@ class BoxRoomCache {
 	/// (box, item) pairs read from the world since construction; tests read it to show each is read once
 	/// per update, and an item no source offers not at all.
 	uint64_t readOut = 0;
+	[[nodiscard]] size_t capacity() const { return slots.size(); }
 #endif
 
   private:

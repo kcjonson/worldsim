@@ -1322,11 +1322,16 @@ namespace ecs {
 			std::vector<Slot> old;
 			old.swap(slots);
 			slots.assign(std::max<size_t>(64, old.size() * 2), Slot{});
-			used = 0;
+			const size_t oldMask = slots.size() - 1;
 			for (const Slot& slot : old) {
-				if (slot.pass == pass) {
-					get(world, registry, slot.box, slot.item);
+				if (slot.pass != pass) {
+					continue;
 				}
+				size_t at = std::hash<uint64_t>{}((static_cast<uint64_t>(slot.box) * 0x9E3779B97F4A7C15ULL) ^ slot.item) & oldMask;
+				while (slots[at].pass == pass) {
+					at = (at + 1) & oldMask;
+				}
+				slots[at] = slot;
 			}
 		}
 		const size_t mask = slots.size() - 1;
@@ -1346,17 +1351,9 @@ namespace ecs {
 		if (store == nullptr) {
 			return std::nullopt;
 		}
-		const auto*		   def = registry.getDefinitionById(item);
-		const uint32_t	   stackSize = def != nullptr && def->itemProperties.has_value() ? def->itemProperties->stackSize : UINT32_MAX;
 		const std::string& name = registry.getDefName(item);
-		uint64_t		   partial = 0;
-		for (const ItemStack& stack : store->items) {
-			if (stack.quantity < stackSize && stack.defName == name) {
-				partial += stackSize - stack.quantity;
-			}
-		}
 		slot.hasStore = true;
-		slot.room = {.stack = {.partialRoom = static_cast<uint32_t>(std::min<uint64_t>(partial, UINT32_MAX)), .stackSize = stackSize},
+		slot.room = {.stack = {.partialRoom = store->partialStackRoom(name), .stackSize = Inventory::itemStackSize(name)},
 					 .freeSlots = store->freeSlots()};
 		return slot.room;
 	}

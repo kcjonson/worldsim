@@ -5104,4 +5104,31 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over an unrelated swap";
 	}
 
+#ifdef DEVELOPMENT_BUILD
+	// Each update reads more boxes than the table starts with; over many updates the table stays the size
+	// one update's reads need instead of growing with every read since the session began.
+	TEST_F(AIDecisionSystemTest, BoxRoomCacheStaysSizedToOneUpdate) {
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t berry = registry.getDefNameId("Berry");
+		std::vector<EntityID> boxes;
+		for (int i = 0; i < 200; ++i) {
+			const EntityID box = world->createEntity();
+			world->addComponent<Inventory>(box, Inventory::createForStorage());
+			boxes.push_back(box);
+		}
+		BoxRoomCache cache;
+		size_t		 afterFirst = 0;
+		for (int update = 0; update < 100; ++update) {
+			cache.invalidate();
+			for (EntityID box : boxes) {
+				ASSERT_TRUE(cache.get(*world, registry, box, berry).has_value());
+			}
+			afterFirst = update == 0 ? cache.capacity() : afterFirst;
+		}
+		EXPECT_EQ(cache.capacity(), afterFirst);
+		EXPECT_LE(cache.capacity(), 4 * boxes.size());
+		EXPECT_EQ(cache.readOut, 100U * boxes.size());
+	}
+#endif
+
 } // namespace ecs::test
