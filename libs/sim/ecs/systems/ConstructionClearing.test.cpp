@@ -423,4 +423,42 @@ namespace ecs::test {
 		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
 	}
 
+	// What a clear can't carry drops just outside the footprint, not on the ground the site will stand on.
+	TEST_F(FootprintClearingTest, AClearsSurplusDropsOutsideTheFootprint) {
+		std::vector<glm::vec2> drops;
+		world->getSystem<ActionSystem>().setDropResourceCallback([&](const std::string&, float x, float y, uint32_t) { drops.emplace_back(x, y); });
+		const std::vector<glm::vec2> trees{{2.0F, 2.0F}};
+		plantTrees(trees);
+		createColonist({1.0F, 1.0F}, trees);
+
+		ASSERT_TRUE(runUntil([&] { return !treeStands(trees[0]); })) << "the tree is felled";
+		ASSERT_EQ(drops.size(), 1U) << "six of the twenty wood do not fit the arms";
+		const glm::vec2 at = drops.front();
+		EXPECT_TRUE(at.x < 0.0F || at.x > 8.0F || at.y < 0.0F || at.y > 8.0F) << "dropped at (" << at.x << ", " << at.y << ")";
+		EXPECT_LT(glm::distance(at, trees[0]), 3.0F) << "beside the footprint edge nearest the tree";
+	}
+
+	// A loose pile lying on the footprint neither holds the site back nor is built over: as the site
+	// enters construction it is dropped again just outside.
+	TEST_F(FootprintClearingTest, APileOnTheFootprintIsMovedOffWhenBuildingStarts) {
+		struct Drop {
+			glm::vec2 at;
+			uint32_t  quantity;
+		};
+		std::vector<Drop> drops;
+		construction->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity) { drops.push_back({{x, y}, quantity}); });
+		placeBareChunk({4.0F, 4.0F});
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{{5.0F, 4.0F}});
+		world->addComponent<Appearance>(pile, Appearance{"Berry", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		makeLoosePile(*world, pile, assets::AssetRegistry::Get().getDefNameId("Berry"), {5.0F, 4.0F}, 7);
+		world->getComponent<StructureBlueprint>(site)->delivered = {{"Wood", 10}};
+
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::UnderConstruction; }, 300)) << "the pile does not block the site";
+		EXPECT_FALSE(world->isAlive(pile));
+		ASSERT_EQ(drops.size(), 1U);
+		EXPECT_EQ(drops.front().quantity, 7U);
+		EXPECT_GT(drops.front().at.x, 8.0F) << "out past the nearest edge";
+	}
+
 } // namespace ecs::test

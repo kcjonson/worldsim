@@ -53,6 +53,9 @@
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS
+#include <construction/ConstructionWorld.h>
+#include <core/Vec2i64.h>
+#include <ecs/GoalTaskRegistry.h>
 #include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
 #include <ecs/WorldSource.h>
@@ -1754,12 +1757,29 @@ namespace {
 				return worldview::pileFootprintRadius(it->second.first, scale, it->second.second);
 			};
 
+			// Ground a site will be built on takes no new pile, and a pile already there is no top-up target.
+			std::vector<ecs::FootprintBounds> sites;
+			if (m_drawingSystem) {
+				const auto& topology = m_drawingSystem->world();
+				for (const auto& foundation : topology.foundations()) {
+					if (foundation.state != construction::FoundationState::Built) {
+						const auto aabb = topology.footprintAabb(foundation.id);
+						sites.push_back({geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)});
+					}
+				}
+			}
+			const auto onSite = [&sites](glm::vec2 p) {
+				return std::any_of(sites.begin(), sites.end(), [p](const ecs::FootprintBounds& site) { return site.contains(p); });
+			};
+
 			// Every pile and crate, not a radius around the drop: the spiral has no fixed reach, so
 			// any cutoff could leave out something a crowded drop ends up next to.
 			std::vector<ecs::GroundOccupant> nearby;
 			std::vector<ecs::ResourceStack*> nearbyStacks;
 			for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
-				nearby.push_back({pos.value, pileRadius(appearance.defName, appearance.scale), stack.quantity, appearance.defName == defName});
+				nearby.push_back(
+					{pos.value, pileRadius(appearance.defName, appearance.scale), stack.quantity, appearance.defName == defName && !onSite(pos.value)}
+				);
 				nearbyStacks.push_back(&stack);
 			}
 			for (auto [entity, pos, packaged] : ecsWorld->view<ecs::Position, ecs::Packaged>()) {
@@ -1774,7 +1794,7 @@ namespace {
 			if (nav.isValidPosition({x, y})) {
 				isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
 			}
-			const auto plan = ecs::resourcePileDrops(cap, quantity, {x, y}, pileRadius(defName, 1.0F), nearby, isGround);
+			const auto plan = ecs::resourcePileDrops(cap, quantity, {x, y}, pileRadius(defName, 1.0F), nearby, isGround, onSite);
 			for (const auto& [index, added] : plan.topUps) {
 				nearbyStacks[index]->quantity += added;
 			}

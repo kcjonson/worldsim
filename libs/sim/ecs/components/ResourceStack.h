@@ -62,6 +62,7 @@ struct PileDropPlan {
 /// past them clearance alone decides, so a drop on a tiny patch of ground still lands.
 /// Before ring N (N >= 1) opens a new pile, same-item piles out to that ring's radius are
 /// topped up, nearest first, so repeated drops fill the overflow piles earlier drops left.
+/// A spot where `kept` holds (ground a site will be built on) is never used, on any ring.
 ///
 /// A stackCap of 0 or UINT32_MAX means unbounded: everything lands in one pile.
 [[nodiscard]] inline PileDropPlan resourcePileDrops(
@@ -70,7 +71,8 @@ struct PileDropPlan {
 	glm::vec2							   origin,
 	float								   footprintRadius,
 	const std::vector<GroundOccupant>&	   nearby,
-	const std::function<bool(glm::vec2)>& isGround = {}
+	const std::function<bool(glm::vec2)>& isGround = {},
+	const std::function<bool(glm::vec2)>& kept = {}
 ) {
 	PileDropPlan plan;
 	if (totalQty == 0) {
@@ -145,7 +147,7 @@ struct PileDropPlan {
 					break;
 				}
 			}
-			if (!clear || (isGround && ring < kWalkableSearchRings && !isGround(pos))) {
+			if (!clear || (isGround && ring < kWalkableSearchRings && !isGround(pos)) || (kept && kept(pos))) {
 				continue;
 			}
 			const uint32_t qty = (unbounded || remaining < stackCap) ? remaining : stackCap;

@@ -21,6 +21,9 @@ namespace ecs {
 
 	namespace {
 
+		/// How far outside a footprint a clear's surplus drops: past the edge by about a pile's width.
+		constexpr float kClearDropMargin = 0.5F;
+
 		/// The loose pile found at a position: the matched entity plus the live ResourceStack
 		/// to mutate. `stack` is nullptr (and `entity` kInvalidEntity) when no pile is there.
 		struct LoosePile {
@@ -100,20 +103,15 @@ namespace ecs {
 			return state;
 		};
 
-		// Yield the colonist couldn't carry off drops beside the source as one loose, haulable pile.
+		// Yield the colonist couldn't carry off drops as one loose, haulable pile: beside the source, or
+		// for a footprint clear just outside the footprint.
 		const auto dropUncarried = [&](uint32_t quantity) {
 			if (quantity == 0 || !m_onDropResource) {
 				return;
 			}
-			m_onDropResource(collEff.itemDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, quantity);
-			LOG_INFO(
-				Engine,
-				"[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)",
-				quantity,
-				collEff.itemDefName.c_str(),
-				collEff.sourcePosition.x,
-				collEff.sourcePosition.y
-			);
+			const glm::vec2 at = collEff.dropAt.value_or(collEff.sourcePosition);
+			m_onDropResource(collEff.itemDefName, at.x, at.y, quantity);
+			LOG_INFO(Engine, "[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)", quantity, collEff.itemDefName.c_str(), at.x, at.y);
 		};
 
 		// Storage-to-storage pull (ActionType::Withdraw): take the item OUT of the source box's
@@ -420,7 +418,10 @@ namespace ecs {
 		);
 		// A footprint clear removes its source whatever kind it is: regrowing, pooled, or single-shot.
 		const auto* goal = GoalTaskRegistry::Get().getGoal(task.harvestGoalId);
-		action.collectionEffect().clearsSource = goal != nullptr && goal->clearFootprint.has_value();
+		if (goal != nullptr && goal->clearFootprint.has_value()) {
+			action.collectionEffect().clearsSource = true;
+			action.collectionEffect().dropAt = goal->clearFootprint->nearestOutside(entity.position, kClearDropMargin);
+		}
 		LOG_DEBUG(
 			Engine,
 			"[Action] Starting goal-driven Harvest action for %s from %s at (%.1f, %.1f) (durability %.0f, goal %llu)",

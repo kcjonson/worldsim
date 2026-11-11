@@ -420,7 +420,11 @@ Use(patient), Slot(medical bed). Pickup drops the Use; the bed slot stays until 
 ### Build-site clear
 
 A construction clear Harvest records Use(source) only: it removes what stands in the footprint and
-brings nothing toward a need, so it has no in-flight.
+brings nothing toward a need, so it has no in-flight. What the clearer can't carry drops just outside
+the footprint (`FootprintBounds::nearestOutside`), and the game's drop planner never lays a pile on the
+footprint of a foundation not yet built. A loose pile already on a footprint does not hold the site in
+Clearing (only harvestables do); as the foundation enters construction, `ConstructionSystem` drops it
+again just outside, so nothing is built over.
 
 ### Build and Deconstruct
 

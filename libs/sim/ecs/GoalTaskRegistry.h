@@ -16,6 +16,7 @@
 
 #include <assets/AssetDefinition.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -61,6 +62,27 @@ namespace ecs {
 
 		[[nodiscard]] bool contains(glm::vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
 		[[nodiscard]] glm::vec2 center() const { return (min + max) * 0.5F; }
+		/// `p` itself when it lies outside; else `p` moved straight out past the nearest edge by `margin`.
+		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 p, float margin) const {
+			if (!contains(p)) {
+				return p;
+			}
+			const float toLeft = p.x - min.x;
+			const float toRight = max.x - p.x;
+			const float toBottom = p.y - min.y;
+			const float toTop = max.y - p.y;
+			const float nearest = std::min({toLeft, toRight, toBottom, toTop});
+			if (nearest == toLeft) {
+				return {min.x - margin, p.y};
+			}
+			if (nearest == toRight) {
+				return {max.x + margin, p.y};
+			}
+			if (nearest == toBottom) {
+				return {p.x, min.y - margin};
+			}
+			return {p.x, max.y + margin};
+		}
 
 		/// A thing of `defNameId` at `p` blocks the site: a harvestable inside the footprint. The clear
 		/// goal is served by exactly the blockers a colonist knows, and the build gate holds while any
