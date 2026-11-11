@@ -160,10 +160,30 @@ namespace ecs {
 		return record;
 	}
 
+	void refreshSuspended(const assets::AssetRegistry& registry, const Inventory& inventory, Task& task) {
+		if (!task.suspended) {
+			return;
+		}
+		SuspendedWork& record = *task.suspended;
+		const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(record.itemDefNameId));
+		if (held == 0 || GoalTaskRegistry::Get().getGoal(record.rootGoalId) == nullptr) {
+			task.discardSuspended();
+			return;
+		}
+		for (Claim& claim : record.claims) {
+			claim.setQuantity(std::min(claim.quantity(), held));
+		}
+	}
+
 	bool adoptsSuspended(const assets::AssetRegistry& registry, const Task& task) {
-		return task.suspended.has_value() && task.type == TaskType::Haul && task.haulFromInventory &&
-			   GoalTaskRegistry::Get().rootOf(task.haulGoalId) == task.suspended->rootGoalId &&
-			   registry.getDefNameId(task.haulItemDefName) == task.suspended->itemDefNameId;
+		if (!task.suspended.has_value() || task.type != TaskType::Haul || !task.haulFromInventory ||
+			GoalTaskRegistry::Get().rootOf(task.haulGoalId) != task.suspended->rootGoalId ||
+			registry.getDefNameId(task.haulItemDefName) != task.suspended->itemDefNameId) {
+			return false;
+		}
+		return std::any_of(task.suspended->claims.begin(), task.suspended->claims.end(), [&](const Claim& claim) {
+			return claim.kind() == ClaimKind::Inbound && claim.target() == task.haulTargetStorageId;
+		});
 	}
 
 	void adoptSuspended(Task& task) {

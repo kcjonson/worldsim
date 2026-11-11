@@ -228,44 +228,40 @@ namespace ecs {
 
 #ifdef DEVELOPMENT_BUILD
 	namespace {
-		// One claim's identity for the subset comparison. Tier is left out: isSameTask may re-tier a
-		// live task between the rebuild and the check without changing what it claims.
-		struct ClaimIdentity {
-			uint64_t   instanceId;
-			uint64_t   target;
-			uint32_t   itemDefNameId;
-			uint16_t   slotIndex;
-			ClaimKind  kind;
-			TargetKind targetKind;
-			uint32_t   quantity;
+		auto order(const auto& claim) {
+			return std::tie(claim.instanceId, claim.kind, claim.targetKind, claim.target, claim.itemDefNameId, claim.slotIndex);
+		}
 
-			[[nodiscard]] auto order() const { return std::tie(instanceId, kind, targetKind, target, itemDefNameId, slotIndex); }
-		};
-
-		std::string describe(const ClaimIdentity& claim) {
+		std::string describe(const auto& claim) {
 			return "instance " + std::to_string(claim.instanceId) + " kind " + std::to_string(static_cast<int>(claim.kind)) +
 				   " target " + std::to_string(claim.target) + " item " + std::to_string(claim.itemDefNameId) + " slot " +
 				   std::to_string(claim.slotIndex);
 		}
-
-		// Sorted, with equal identities merged into one summed quantity.
-		std::vector<ClaimIdentity> identities(const std::vector<ClaimIdentity>& raw) {
-			std::vector<ClaimIdentity> sorted = raw;
-			std::sort(sorted.begin(), sorted.end(), [](const ClaimIdentity& a, const ClaimIdentity& b) { return a.order() < b.order(); });
-			std::vector<ClaimIdentity> merged;
-			for (const ClaimIdentity& claim : sorted) {
-				if (!merged.empty() && merged.back().order() == claim.order()) {
-					merged.back().quantity += claim.quantity;
-				} else {
-					merged.push_back(claim);
-				}
-			}
-			return merged;
-		}
 	} // namespace
 
+	void ClaimIndex::collectIdentities(std::vector<ClaimIdentity>& out) const {
+		out.clear();
+		for (const Entry& entry : entries) {
+			if (!entry.retired) {
+				out.push_back({entry.holder.instanceId, entry.claim.target(), entry.claim.itemDefNameId(), entry.claim.slotIndex(),
+							   entry.claim.kind(), entry.claim.targetKind(), entry.claim.quantity()});
+			}
+		}
+		std::sort(out.begin(), out.end(), [](const ClaimIdentity& a, const ClaimIdentity& b) { return order(a) < order(b); });
+		size_t merged = 0;
+		for (size_t i = 0; i < out.size(); ++i) {
+			if (merged > 0 && order(out[merged - 1]) == order(out[i])) {
+				out[merged - 1].quantity += out[i].quantity;
+			} else {
+				out[merged++] = out[i];
+			}
+		}
+		out.resize(merged);
+	}
+
 	std::optional<std::string> ClaimIndex::findViolation(World& world, ClaimIndex& scratch) const {
-		std::vector<uint64_t> live;
+		std::vector<uint64_t>& live = scratch.checkLive;
+		live.clear();
 		for (auto [colonist, task] : world.view<Task>()) {
 			if (!task.isActive() && !task.claims.empty()) {
 				return "inactive task on colonist " + std::to_string(colonist) + " holds claims";
@@ -293,29 +289,20 @@ namespace ecs {
 		std::sort(live.begin(), live.end());
 
 		scratch.rebuild(world);
-		const auto collect = [](const ClaimIndex& index) {
-			std::vector<ClaimIdentity> raw;
-			raw.reserve(index.entries.size());
-			for (const Entry& entry : index.entries) {
-				if (!entry.retired) {
-					raw.push_back({entry.holder.instanceId, entry.claim.target(), entry.claim.itemDefNameId(), entry.claim.slotIndex(),
-								   entry.claim.kind(), entry.claim.targetKind(), entry.claim.quantity()});
-				}
-			}
-			return identities(raw);
-		};
-		const std::vector<ClaimIdentity> fresh = collect(scratch);
-		const std::vector<ClaimIdentity> appended = collect(*this);
+		std::vector<ClaimIdentity>& fresh = scratch.checkFresh;
+		std::vector<ClaimIdentity>& appended = scratch.checkAppended;
+		scratch.collectIdentities(fresh);
+		collectIdentities(appended);
 
 		size_t a = 0;
 		for (const ClaimIdentity& claim : fresh) {
-			while (a < appended.size() && appended[a].order() < claim.order()) {
+			while (a < appended.size() && order(appended[a]) < order(claim)) {
 				if (std::binary_search(live.begin(), live.end(), appended[a].instanceId)) {
 					return "surplus claim of a live task: " + describe(appended[a]);
 				}
 				++a;
 			}
-			if (a == appended.size() || appended[a].order() != claim.order() || appended[a].quantity < claim.quantity) {
+			if (a == appended.size() || order(appended[a]) != order(claim) || appended[a].quantity < claim.quantity) {
 				return "claim missing from the index: " + describe(claim);
 			}
 			if (appended[a].quantity > claim.quantity && std::binary_search(live.begin(), live.end(), claim.instanceId)) {

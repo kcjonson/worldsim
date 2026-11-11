@@ -1030,6 +1030,14 @@ namespace ecs {
 		m_colonyStorage.invalidate();
 		m_claimsBuilt = false;
 
+		// A suspended record holds goods the colonist may since have eaten, used, or dropped, or toward a
+		// goal that is gone; true it up before this update's index is built from it. Only colonists
+		// interrupted by a need hold one.
+		for (auto [entity, task, inventory] : world->view<Task, Inventory>()) {
+			(void)entity;
+			refreshSuspended(m_registry, inventory, task);
+		}
+
 		// Process all entities with the required components
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
 			 world->view<Position, NeedsComponent, Memory, Task, MovementTarget, Inventory>()) {

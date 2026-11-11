@@ -194,6 +194,29 @@ namespace ecs {
 			return best;
 		}
 
+#ifdef DEVELOPMENT_BUILD
+		// One claim's identity for the validator's subset comparison. Tier is left out: isSameTask may
+		// re-tier a live task between the rebuild and the check without changing what it claims.
+		struct ClaimIdentity {
+			uint64_t   instanceId;
+			uint64_t   target;
+			uint32_t   itemDefNameId;
+			uint16_t   slotIndex;
+			ClaimKind  kind;
+			TargetKind targetKind;
+			uint32_t   quantity;
+		};
+		/// Every unretired entry's identity into `out`, sorted, equal identities merged into one summed
+		/// quantity.
+		void collectIdentities(std::vector<ClaimIdentity>& out) const;
+
+		// The validator's working storage, kept on the scratch index it is handed, so a warm check
+		// allocates nothing.
+		std::vector<uint64_t>	   checkLive;
+		std::vector<ClaimIdentity> checkFresh;
+		std::vector<ClaimIdentity> checkAppended;
+#endif
+
 		std::vector<Entry>		  entries;
 		std::vector<InboundGroup> groups;
 		std::vector<Bucket>		  table;

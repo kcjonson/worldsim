@@ -527,6 +527,52 @@ namespace ecs::test {
 		EXPECT_EQ(ai->claimIndex().inboundItems(site.blueprint, stoneId, {}), 2U);
 	}
 
+	// A record claims only what the colonist still holds, and goes when its root goal does.
+	TEST_F(ChainClaimsTest, ASuspendedRecordFollowsTheGoodsAndItsRoot) {
+		const glm::vec2 sitePos{0.0F, 6.0F};
+		const Site		site = constructionSite(sitePos, "Stone", 10);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		auto&			inventory = *world->getComponent<Inventory>(colonist);
+		inventory.addItem("Stone", 4);
+		inventory.addItem("Berry", 1);
+		decide(colonist);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_TRUE(task.suspended.has_value());
+		ASSERT_EQ(ai->claimIndex().inFlight(site.umbrella, stoneId, {}), 4U);
+
+		// Three of the stones are used while the colonist sees to its need.
+		inventory.removeItem("Stone", 3);
+		decide(colonist);
+		ASSERT_TRUE(task.suspended.has_value());
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, stoneId, {}), 1U) << "others see only the stone still held";
+		EXPECT_EQ(ai->claimIndex().inboundItems(site.blueprint, stoneId, {}), 1U);
+
+		GoalTaskRegistry::Get().removeGoal(site.umbrella);
+		decide(colonist);
+		EXPECT_FALSE(task.suspended.has_value()) << "a record toward a goal that is gone is dropped";
+		EXPECT_EQ(indexedClaimsOf(colonist), task.claims.size());
+	}
+
+	// A carry-in adopts a record only when it delivers where the record was delivering.
+	TEST_F(ChainClaimsTest, AdoptionMatchesTheRecordsDestination) {
+		const Site site = constructionSite({0.0F, 6.0F}, "Stone", 10);
+		Task	   task;
+		task.type = TaskType::Haul;
+		task.haulFromInventory = true;
+		task.haulItemDefName = "Stone";
+		task.haulGoalId = site.umbrella;
+		task.suspended = SuspendedWork{.instanceId = 3, .claimSeq = 3, .rootGoalId = site.umbrella, .itemDefNameId = stoneId};
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inbound(static_cast<uint64_t>(site.blueprint), stoneId, 2)));
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inFlight(site.umbrella, stoneId, 2)));
+
+		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint) + 1;
+		EXPECT_FALSE(adoptsSuspended(assets::AssetRegistry::Get(), task));
+		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint);
+		EXPECT_TRUE(adoptsSuspended(assets::AssetRegistry::Get(), task));
+	}
+
 	TEST_F(ChainClaimsTest, AnySelectionButANeedOrTheCarryInDiscardsTheRecord) {
 		const glm::vec2 sitePos{0.0F, 6.0F};
 		const Site		site = constructionSite(sitePos, "Stone", 10);

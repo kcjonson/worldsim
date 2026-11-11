@@ -51,7 +51,13 @@ namespace ecs {
 	/// haul has not reached its source yet, or nothing is held.
 	[[nodiscard]] std::optional<SuspendedWork> suspendableWork(const assets::AssetRegistry& registry, const Task& task, uint32_t held);
 
-	/// Does `task`, just accepted, carry in the goods of its suspended record (same root and item)?
+	/// Keep `task`'s suspended record true to what the colonist still holds: gone when its root goal is
+	/// gone or none of the goods are left (eaten, used, dropped), else its claims capped at what is held.
+	/// Called before the claim index is rebuilt, so the index never counts goods that are not there.
+	void refreshSuspended(const assets::AssetRegistry& registry, const Inventory& inventory, Task& task);
+
+	/// Does `task`, just accepted, carry in the goods of its suspended record (same root, item, and
+	/// destination)?
 	[[nodiscard]] bool adoptsSuspended(const assets::AssetRegistry& registry, const Task& task);
 
 	/// Take over the suspended record: its instance id, sequence, and claims, capped at what this
