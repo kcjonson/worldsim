@@ -588,8 +588,9 @@ namespace ecs {
 
 		/// Evaluate haul options that go and get goods: loose piles and lower-priority boxes for a
 		/// storage umbrella, and remembered loose stock for a craft's fetch child. Each is sized to
-		/// what the root still wants (RootSupply::toAcquire) and one trip's carry. Goods already
-		/// carried are offered by evaluateCarryInOptions.
+		/// what the root still wants (RootSupply::toAcquire) and what the colonist can lift now (the
+		/// rule the pickup and withdraw take by). Goods already carried are offered by
+		/// evaluateCarryInOptions.
 		void evaluateHaulOptions(
 			World*						 world,
 			const assets::AssetRegistry& registry,
@@ -656,7 +657,8 @@ namespace ecs {
 			};
 
 			// Every remembered pile of the item toward `rootId`, each sized to what it still has for this
-			// colonist, so a fetch never claims more than its source can give. A pile toward a root the
+			// colonist and what he can lift now, so a fetch never claims more than its source can give or
+			// than he takes off it. A pile toward a root the
 			// colonist gathers for is a leg of that trip, taken up before another plant is cut, when he has
 			// room for the smaller of what it has left for him and what the root still wants (the top-up
 			// cut's rule) and it is not known unreachable; selection tests its reach as it tests any leg. Only a
@@ -664,8 +666,8 @@ namespace ecs {
 			// so a remembered pile across water, or one never tested, leaves cutting where distance puts it.
 			const auto pushPileHauls = [&](const GoalTask& goal, uint64_t rootId, uint32_t itemDefNameId, uint32_t quantity, bool craftFetch) {
 				const bool	   gathering = supply.gathersFor(rootId, itemDefNameId);
-				const uint32_t room = gathering ? pickupRoom(registry.getDefName(itemDefNameId)) : 0U;
-				if (gathering && room == 0) {
+				const uint32_t room = pickupRoom(registry.getDefName(itemDefNameId));
+				if (room == 0) {
 					return;
 				}
 				const int8_t				 rank = gathering ? kRankLoosePile : int8_t{0};
@@ -685,7 +687,7 @@ namespace ecs {
 					}
 					reserved.offered(trip);
 					knownOffered = knownOffered || pileReach.knownReachable(source.key, at);
-					pushLooseHaul(goal, source, itemDefNameId, take, craftFetch, rank, kInvalidEntity);
+					pushLooseHaul(goal, source, itemDefNameId, std::min(take, room), craftFetch, rank, kInvalidEntity);
 				}
 				if (knownOffered) {
 					offeredPiles.push_back({.root = rootId, .item = itemDefNameId});
@@ -694,7 +696,7 @@ namespace ecs {
 					const auto holder =
 						supply.claims.sourceHolder({.kind = TargetKind::WorldKey, .key = reserved.source->key}, itemDefNameId, supply.self);
 					if (holder.has_value()) {
-						pushLooseHaul(goal, *reserved.source, itemDefNameId, quantity, craftFetch, rank, holder->colonist);
+						pushLooseHaul(goal, *reserved.source, itemDefNameId, std::min(quantity, room), craftFetch, rank, holder->colonist);
 					}
 				}
 			};
@@ -716,7 +718,7 @@ namespace ecs {
 				if (perTrip == 0) {
 					return; // colonist can't carry a single unit of this item
 				}
-				std::optional<bool> roomNow; // asked once a source box qualifies
+				std::optional<uint32_t> liftNow; // what a withdraw would lift now, asked once a source box qualifies
 
 				// The source is the box: walk to it, Withdraw, then the deposit leg stocks the dest.
 				const auto pushPull = [&](EntityID srcEntity, glm::vec2 srcPos, uint32_t qty, EntityID reservedBy) {
@@ -790,20 +792,18 @@ namespace ecs {
 					if (destRoom == 0) {
 						break; // every slot the box has left is promised to goods already on their way
 					}
-					const uint32_t qty = std::min({drainable - claimed, destRoom, perTrip});
-
-					if (!roomNow.has_value()) {
-						roomNow = pickupRoom(itemDefName) > 0;
+					if (!liftNow.has_value()) {
+						liftNow = pickupRoom(itemDefName);
 					}
-					if (!*roomNow) {
+					if (*liftNow == 0) {
 						pushNoRoom(goal, acceptedId, "Pulling from lower-priority storage ({}: no room to carry it)");
 						break; // one line says it for every source box
 					}
 
 					reserved.offered(trip);
-					pushPull(srcEntity, srcPos.value, qty, kInvalidEntity);
+					pushPull(srcEntity, srcPos.value, std::min({drainable - claimed, destRoom, *liftNow}), kInvalidEntity);
 				}
-				if (reserved.shown() && roomNow.value_or(true) && destWant() > 0) {
+				if (reserved.shown() && liftNow.value_or(1) > 0 && destWant() > 0) {
 					const auto holder = supply.claims.sourceHolder(
 						{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(reserved.source->box)}, acceptedId, supply.self
 					);
@@ -839,8 +839,7 @@ namespace ecs {
 							pushNoRoom(goal, *acceptedIt, "Fetching for crafting ({}: no room to carry it)");
 							continue;
 						}
-						const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-						pushPileHauls(goal, craft->id, *acceptedIt, quantity, /*craftFetch=*/true);
+						pushPileHauls(goal, craft->id, *acceptedIt, need, /*craftFetch=*/true);
 					}
 					return;
 				}
@@ -880,8 +879,7 @@ namespace ecs {
 						pushNoRoom(goal, itemDefNameId, "Hauling to storage ({}: no room to carry it)");
 						return;
 					}
-					const uint32_t quantity = std::min(want, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-					pushPileHauls(goal, goal.id, itemDefNameId, quantity, /*craftFetch=*/false);
+					pushPileHauls(goal, goal.id, itemDefNameId, want, /*craftFetch=*/false);
 				};
 
 				// The items it names: their loose piles and their pulls from lower-priority boxes.
@@ -937,8 +935,7 @@ namespace ecs {
 						pushNoRoom(site, *dueIt, "Fetching {} for a build site (no room to carry it)");
 						continue;
 					}
-					const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-					pushPileHauls(site, site.id, *dueIt, quantity, /*craftFetch=*/true);
+					pushPileHauls(site, site.id, *dueIt, need, /*craftFetch=*/true);
 				}
 			});
 		}

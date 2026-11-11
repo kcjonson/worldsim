@@ -862,6 +862,35 @@ namespace ecs::test {
 		EXPECT_EQ(world->getComponent<StructureBlueprint>(site.blueprint)->remaining("Wood"), 0U);
 	}
 
+	// A haul claims of a pile what he can lift now, not what an empty-handed colonist could: the rest stays
+	// free for others from the moment he accepts.
+	TEST_F(ChainClaimsTest, AHaulClaimsWhatHeCanLiftNow) {
+		registerItem("Rock", 1, 30.0F);
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		storageGoal(box, boxPos);
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 40);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		inventory.addItem("Rock", 1);
+		const auto&	   registry = assets::AssetRegistry::Get();
+		const uint32_t liftNow = ecs::pickupUnitsThatFit(inventory, registry, "Stone", ecs::carriedCargoMassKg(inventory, registry));
+		ASSERT_GT(liftNow, 0U);
+		ASSERT_LT(liftNow, ecs::cargoUnitsPerTrip(registry, "Stone", inventory.carryCapacityKg));
+
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(task.haulQuantity, liftNow);
+		const auto source = claimOf(task, ClaimKind::SourceQuantity);
+		ASSERT_TRUE(source.has_value());
+		EXPECT_EQ(source->quantity(), liftNow);
+	}
+
 	// Loose stone lies beside a Low box and far from a High one that also wants it: he carries it to the
 	// High box, so it is never stocked into the Low box only to be pulled out again.
 	TEST_F(ChainClaimsTest, LooseStockGoesToTheHigherPriorityBoxFirst) {

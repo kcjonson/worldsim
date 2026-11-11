@@ -367,13 +367,13 @@ site, and box to box (storage-to-storage pull, source is a box Entity).
 | Pickup or withdraw | The pickup asks for Q (its SourceQuantity; a pile pickup that took a gathering over delivers its cargo with it). SourceQuantity drops. Inbound and In-flight become the units lifted, capped at Q. A pickup that lifts nothing ends the haul at the source. Arriving at the source or the destination already carrying the item skips the pickup and rewrites the same way, to what is carried |
 | Deposit | all drop with the task |
 
-Q for a pile is the smallest of the root's available need less the colonist's cargo for it, one
-trip's carry of the item, and what the pile has left once others' source claims are taken out; a
-pile pickup that continues a gathering is also capped at what still fits. Q for a box-to-box pull is
-the smallest of the source box's drainable quantity (stock above its own minimum) less others' source
-claims, the destination's want and room, and one trip's carry; the pull is offered only while a pickup
-would lift at least one unit now, and the withdraw takes what actually fits, so Q is corrected there.
-Two pulls cannot drain a box below its minimum together.
+Q for a pile is the smallest of the root's available need less the colonist's cargo for it, what a
+pickup would lift now (`pickupUnitsThatFit`, the rule the pickup itself takes by), and what the pile
+has left once others' source claims are taken out, so a colonist already carrying something claims no
+more of a pile than he takes off it. Q for a box-to-box pull is the smallest of the source box's
+drainable quantity (stock above its own minimum) less others' source claims, the destination's want
+and room, and what a withdraw would lift now; the pull is offered only while that is at least one
+unit. Two pulls cannot drain a box below its minimum together.
 
 ### Carry-in from possession
 
