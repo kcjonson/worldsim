@@ -48,6 +48,7 @@
 #include <nav/PathQuery.h>
 
 #include <world/chunk/ChunkCoordinate.h>
+#include <world/chunk/ChunkManager.h>
 
 #include <cstdint>
 #include <functional>
@@ -103,18 +104,20 @@ class NavigationSystem : public ISystem {
 
 	void setChunkManager(world::ChunkManager* manager) { chunkManager = manager; }
 
-	// The viewport rect (world meters) for this tick, which asks for flora detail like a mover
-	// does. GameScene pushes it every frame with the camera's visible rect expanded by
-	// kViewportMargin. Without one, only movers ask.
+	// The viewport rect (world meters) for this tick, the one thing that asks for flora. GameScene
+	// pushes it every frame with the camera's visible rect expanded by kViewportMargin.
 	void setViewportRect(glm::vec2 centerMeters, glm::vec2 halfExtentMeters) {
 		viewportCenterM = centerMeters;
 		viewportHalfM	= halfExtentMeters;
 		haveViewport	= true;
 	}
 
-	// Append the positions of the movers (Position + Colonist) that ask for flora detail.
-	// The same set anchors chunk streaming: the scene hands it to ChunkManager::update.
-	void appendMoverPositions(std::vector<world::WorldPosition>& out) const;
+	// Append the anchors: every mover the AI drives (Position + Task), the rest of every live route (its
+	// remaining waypoints, with points added so no two are more than half the anchor load range
+	// apart), and the goal of every task waiting for a mesh. The scene hands them to
+	// ChunkManager::update, which keeps their chunks loaded, and their chunks' ground is meshed
+	// ahead of the camera's and never dropped.
+	void appendAnchors(std::vector<world::WorldPosition>& out) const;
 
 	// Flora comes from `executor`'s chunk indices, and only for chunks in `processed` (the
 	// chunks that have finished entity placement; null reads every indexed chunk as finished).
@@ -136,33 +139,53 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] std::optional<std::vector<glm::vec2>>
 	requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
 
-	// Sound reachability pre-filter on the structural mesh, split at the start so many goals from
-	// one start cost one start-side climb: reachFrom locates the start and finds its reach root in
-	// the forest (geometry::nav::reachFrom), reaches() tests a goal with a locate and an O(log n)
-	// subtree check.
-	//   false => DEFINITELY unreachable (disconnected component or bottleneck < disc).
-	//   true  => MAYBE reachable. Caller runs requestPath for certainty.
-	// A start off meshed ground answers true ("can't prove unreachable"). A goal off meshed ground
-	// answers true while its chunk is loaded (its ground is on the way) and false otherwise: ground
-	// that is neither meshed nor loaded comes back only if a mover or the view goes there, so a goal
-	// in it is skipped like any unreachable one. The reach key moves when ground lands, so the
-	// verdict is asked again then.
-	//
-	// startRegion is 0 when the start is on meshed ground, -1 otherwise; startRegionId is 0 then,
-	// and startRegionGeneration counts the joins that patched the structural mesh, so flora
-	// arriving or leaving never moves it. A Reach is used within one frame; the belief's sets must
+	// What a colonist can reach on its own, and how far it walks there: a walk on the structural
+	// mesh (no flora, so the camera changes nothing) under the colonist's belief, confined to the
+	// square of half-side kAutonomousReachMm around where it stands. That square is the ground the
+	// colonist's own anchor keeps loaded, whatever the camera does. reachFrom notes the start once;
+	// reaches() and walkDistance() walk to one goal each.
+	//   A start off meshed ground: every goal "maybe" (true; walkDistance answers the straight line).
+	//   A goal outside the square, or not walkable to within it: unreachable.
+	//   A goal off meshed ground inside the square: "maybe" while its chunk is loaded (its ground is
+	//   on the way), unreachable otherwise.
+	// startCell (the start, kReachCellMm to a step) and startRegionGeneration (a stamp that moves
+	// only when the structural mesh changes in a chunk the square touches) together say when a
+	// verdict from here still holds. A Reach is used within one frame; the belief's sets must
 	// outlive it.
 	struct Reach {
-		int							startRegion			  = -1;
-		std::int32_t				startRegionId		  = -1;
+		bool						onGround = false;
+		geometry::Vec2i64			startMm{0, 0};
+		std::int64_t				radiusMm			  = 0;
+		std::int64_t				startCell			  = 0;
 		std::uint64_t				startRegionGeneration = 0;
-		geometry::nav::ReachFrom	from;
 		geometry::nav::BeliefFilter belief;
 	};
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
-	// The start is on meshed ground and so is the goal: reaches() consults the mesh for it.
+	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or nullopt
+	// when it is unreachable or every walk there is longer than maxWalk.
+	[[nodiscard]] std::optional<float> walkDistance(const Reach& reach, glm::vec2 goalMeters,
+													float maxWalk = std::numeric_limits<float>::infinity()) const;
+	// The goal is inside the reach's square, from a start on meshed ground: a verdict on it is the
+	// colonist's to keep (SourceReachMemo). Anything outside is unreachable on its own and only a
+	// player's order sends a colonist there.
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
+	// The structural stamp behind an unreachable verdict found at `anchor`: it moves when the
+	// structural mesh changes in a chunk touching the anchor's square grown by kAutonomousReachMm,
+	// which holds every square a colonist still inside the anchor's square reaches over.
+	[[nodiscard]] std::uint64_t verdictStamp(glm::vec2 anchor) const;
+	// `here` is inside the square around `anchor`.
+	[[nodiscard]] static bool inSquareOf(glm::vec2 anchor, glm::vec2 here);
+	// Half the side of the square a colonist reaches and routes in on its own: the anchor load
+	// range, the ground its own anchor loads.
+	static constexpr std::int64_t kAutonomousReachMm =
+		static_cast<std::int64_t>(world::ChunkManager::kDefaultAnchorLoadRangeMeters) * geometry::kMillimetersPerMeter;
+	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
+	static constexpr std::int64_t kReachCellMm = 2000;
+	// The nav search behind a found structural walk may expand this many triangles plus this many
+	// for each the structural search expanded (see requestPath).
+	static constexpr std::uint32_t kNavExpansionFloor		   = 4000;
+	static constexpr std::uint32_t kNavExpansionsPerStructural = 16;
 
 	// True when `meters` is on meshed ground (inside a ready chunk that has been meshed), water
 	// and walls included.
@@ -174,8 +197,9 @@ class NavigationSystem : public ISystem {
 	// (recover by snapping back onto land) from one merely walled off.
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
 
-	// Canonical world-position validity for spawn/placement/teleport/drops: a walkable face of the
-	// nav mesh that is clear ground, so not water and not a tree; any wall face reads open. Validity
+	// Canonical world-position validity for spawn/placement/teleport/drops: ground a mover may stand
+	// on that is clear, so not water and not inside a tree's collider (read from the placement data,
+	// whether or not the tree is in the mesh); any wall face reads open. Validity
 	// is owned by the runtime nav mesh; the 3D world source is load-time data and is not consulted.
 	// This is the ONE predicate every world-positioning path goes through; do not reintroduce
 	// ad-hoc terrain/isWaterAt checks elsewhere.
@@ -235,6 +259,12 @@ class NavigationSystem : public ISystem {
 	// or nullopt when it is off meshed ground or no face is clear. Moves a work target off a trunk
 	// to the ground beside it, and places things.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
+
+	// Where a colonist at `from` stands to work a target at `target` (a tree, a bush): when a
+	// collider is placed there, the point just outside it, its disc clear, nearest `from` that is
+	// clear ground on the structural mesh; with none, the target itself when it is clear ground, else
+	// the nearest that is. The same on camera and off. nullopt off meshed ground.
+	[[nodiscard]] std::optional<glm::vec2> standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const;
 
 	// Like nearestPathablePoint (clear ground), but the returned point also clears the BUILT-wall
 	// collision bands for an agent of radius `agentRadiusMeters` (the halfThickness + radius
@@ -448,6 +478,11 @@ class NavigationSystem : public ISystem {
 		std::vector<DoorId>													 doorRemoves;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
 		std::vector<std::pair<glm::vec2, glm::vec2>>						 floraAddBoxes; // each added tree's box, metres
+		// Structural only: the chunks the job changes, the boxes where it closes ground (a wall, new
+		// water, ground leaving), and whether it touches a chunk an anchor holds.
+		std::vector<world::ChunkCoordinate>				  structuralChunks;
+		std::vector<std::pair<glm::vec2, glm::vec2>>		  blockingBoxes;
+		bool												  anchored = false;
 
 		std::vector<std::vector<RingId>> added;
 		std::vector<double>				 patchMs;
@@ -476,9 +511,23 @@ class NavigationSystem : public ISystem {
 	void settle();
 
 	[[nodiscard]] std::vector<Rect> wantedRects() const;
+	// The anchors as of this tick, and the chunks they hold (within the anchor load range).
+	void							collectAnchors();
+	[[nodiscard]] bool				anchorHolds(world::ChunkCoordinate coord) const;
+	// A structural change in the chunks meeting [lo, hi] (metres): counted against those chunks for
+	// the reach stamps, and against generation() when an anchor holds one. Closing ground also
+	// leaves the routes it crosses stale (restampRoutes).
+	void noteStructural(glm::vec2 lo, glm::vec2 hi, bool closes);
+	// As a join moves generation(), the routes current before it that no closing box crosses are
+	// stamped current.
+	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
+	[[nodiscard]] std::uint64_t					chunkStamp(const geometry::RectMm& box) const;
+	[[nodiscard]] static geometry::RectMm		squareAround(const geometry::Vec2i64& centerMm);
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	[[nodiscard]] Rect viewportRect() const;
 	void			   updateDetail();
+	// The ring of the tree collider placed nearest `meters` that holds it, if any.
+	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon> treeColliderAt(glm::vec2 meters, float reachMeters = 0.0F) const;
 	// The BeliefFilter a movement query runs with: `belief` with flora priced (the one place).
 	[[nodiscard]] static geometry::nav::BeliefFilter pricedFor(geometry::nav::BeliefFilter belief);
 	// Marks stale the routes whose rest comes within the mover's radius of a tree that landed in
@@ -490,7 +539,8 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
 	// Spec 4.7: a mover inside flora moves forward along its route to the first point walkable in
 	// truth, never past a wall or water on the way; with none, it stays and its route goes stale.
-	// Without a route it goes to the nearest walkable point.
+	// Without a route it steps out to the nearest spot within 4 m, ring by ring, where its disc is
+	// clear and the straight step there crosses no wall or water; with none, it stays.
 	void snapMovers();
 	// Over budget, queues the cells to trim, oldest out of a wanted rect first, then takes them
 	// out a few a tick: at most `removeBudget` rings' worth.
@@ -555,6 +605,10 @@ class NavigationSystem : public ISystem {
 	std::unique_ptr<Worker> structuralWorker;
 
 	mutable std::uint64_t structuralGeneration = 0;
+	// Structural changes per chunk, for the reach stamps, counted at the join.
+	mutable std::map<world::ChunkCoordinate, std::uint64_t, ChunkLess> chunkStructuralVersion;
+	std::vector<glm::vec2>												 anchors;
+	std::set<world::ChunkCoordinate, ChunkLess>							 anchorChunks;
 	// Routes requestPath gave that cross priced faces, by routeKey, each kept whole so a key that two
 	// routes share never answers for the wrong one. The latest answer for a route stands, and each
 	// update() keeps only the routes some mover holds, so it never outgrows the movers and one
@@ -570,8 +624,8 @@ class NavigationSystem : public ISystem {
 	std::uint64_t							tickCount = 0;
 	std::unordered_set<std::int64_t>		detailCells;
 	std::optional<Rect>						detailFor; // the viewport rect detailCells were made for
-	std::unordered_map<std::int64_t, std::uint64_t> cellLastWanted;
-	std::vector<std::int64_t>						 trimQueue; // cells to trim, the next at the back // tickCount when a scan last wanted the cell
+	std::unordered_map<std::int64_t, std::uint64_t> cellLastWanted; // tickCount when a scan last wanted the cell
+	std::vector<std::int64_t>						 trimQueue; // cells to trim, the next at the back
 };
 
 } // namespace ecs

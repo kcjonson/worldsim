@@ -856,13 +856,14 @@ namespace {
 
 			m_camera->update(dt);
 
-			// Every mover anchors the chunks around it, so panning away never unloads the colony
+			// Every mover, the rest of every live route and every goal waiting for its ground anchors
+			// the chunks around it, so panning away never unloads what a colonist is walking to.
 			anchorPositions.clear();
-			ecsWorld->getSystem<ecs::NavigationSystem>().appendMoverPositions(anchorPositions);
+			ecsWorld->getSystem<ecs::NavigationSystem>().appendAnchors(anchorPositions);
 			m_chunkManager->update(m_camera->position(), anchorPositions);
 
-			// Feed the viewport rect to NavigationSystem as plain data: it asks for flora
-			// detail there, as each colonist does around itself. The visible rect is expanded
+			// Feed the viewport rect to NavigationSystem as plain data: flora is brought into the
+			// mesh there and nowhere else, and detail follows it. The visible rect is expanded
 			// by kViewportMargin for scroll/zoom headroom; the system clamps the half-extents.
 			{
 				int vpW = 0;
@@ -1223,9 +1224,9 @@ namespace {
 
 			// Wire NavigationSystem resources (same data VisionSystem consumes). The
 			// ConstructionWorld pointer is wired after DrawingSystem is created, back in
-			// initialize(), exactly like ConstructionSystem. The simulation area itself
-			// is pushed per-frame in update() via setSimulationArea (GameScene owns the
-			// camera and viewport dimensions needed to compute it).
+			// initialize(), exactly like ConstructionSystem. The viewport rect is pushed
+			// per-frame in update() via setViewportRect (GameScene owns the camera); it only
+			// brings flora into the nav mesh. Ground follows the anchors.
 			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);

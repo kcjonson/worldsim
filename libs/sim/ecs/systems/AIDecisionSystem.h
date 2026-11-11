@@ -449,7 +449,7 @@ private:
 	BaseTiers m_baseTiers{};
 	uint64_t  m_baseTiersGeneration = 0;
 
-	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
+	/// SourceReachMemo::Anchor::stamp() of the colonist being decided this update (0 without a mesh)
 	std::uint64_t reachStamp = 0;
 
 	/// How often to re-evaluate tasks (seconds)

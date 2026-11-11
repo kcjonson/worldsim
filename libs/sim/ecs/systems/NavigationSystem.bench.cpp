@@ -32,6 +32,7 @@
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
+#include "../components/MemoryQueries.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
@@ -359,6 +360,7 @@ namespace {
 			const ecs::EntityID e = world.createEntity();
 			world.addComponent<ecs::Position>(e, ecs::Position{at});
 			world.addComponent<ecs::Colonist>(e, ecs::Colonist{"Bench"});
+			world.addComponent<ecs::Task>(e, ecs::Task{});
 			movers.push_back(e);
 		}
 
@@ -676,15 +678,14 @@ namespace {
 		}
 	}
 
-	// requestPath's work with no prices on flora: the structural pre-check, then the search over the
-	// nav mesh with flora walled.
+	// requestPath's work with no prices on flora: the structural walk, then the search over the nav
+	// mesh with flora walled.
 	std::optional<std::vector<glm::vec2>> unpricedPath(const ecs::NavigationSystem& nav, glm::vec2 a, glm::vec2 b) {
-		namespace gnav						   = geometry::nav;
-		const std::int64_t	radius		   = std::llround(kAgentRadius * 1000.0F);
-		const gnav::NavView structuralView = nav.structuralMesh().view();
+		namespace gnav			   = geometry::nav;
+		const std::int64_t radius = std::llround(kAgentRadius * 1000.0F);
 		const geometry::Vec2i64 from{std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)};
 		const geometry::Vec2i64 to{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)};
-		if (!gnav::reaches(structuralView, gnav::reachFrom(structuralView, from, radius), to)) {
+		if (gnav::pathThrough(nav.structuralMesh().view(), from, to, radius).stop != gnav::PathStop::Found) {
 			return std::nullopt;
 		}
 		const gnav::PathResult result = gnav::pathThrough(nav.navMesh().view(), from, to, radius);
@@ -775,6 +776,136 @@ namespace {
 			state.counters["warmRoundUs"]	  = warmUs / 10.0;
 			state.counters["lengthSumM"]	  = lengthSum;
 			state.counters["nodesFirstRound"] = static_cast<double>(firstNodes);
+		}
+	}
+
+	// Reach against route (nav-mesh-variable-resolution.md section 10): over random pairs in the
+	// colony's reach square, the structural walk's verdict (walkDistance) against the confined route's
+	// (requestPath), under the same belief. range(0): 0 no belief, 1 a belief knowing a doorless room's
+	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, and times the
+	// walk, the failing belief route into the room, and one decision's pick among 40 remembered
+	// sources with the reach memo cold and warm.
+	void BM_ReachAgainstRoute(benchmark::State& state) {
+		const bool						  room = state.range(0) != 0;
+		std::unordered_set<std::uint64_t> knownSegments;
+		std::unordered_set<std::uint64_t> knownOpenings;
+		const glm::vec2					  roomLo = kColony + glm::vec2{20.0F, -30.0F};
+		const glm::vec2					  roomHi = roomLo + glm::vec2{12.0F, 10.0F};
+		for (auto _ : state) {
+			Rig rig(0);
+			colony(rig);
+			if (room) {
+				const glm::vec2 corners[] = {roomLo, {roomHi.x, roomLo.y}, roomHi, {roomLo.x, roomHi.y}};
+				for (int k = 0; k < 4; ++k) {
+					const glm::vec2 a	   = corners[k];
+					const glm::vec2 b	   = corners[(k + 1) % 4];
+					const auto		commit = rig.construction.commitSegment({std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
+																			{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)}, "Wood",
+																			"Standard", construction::kInvalidFoundation);
+					for (const auto id : commit.createdSegments) {
+						rig.construction.setSegmentState(id, construction::FoundationState::Built);
+						knownSegments.insert(static_cast<std::uint64_t>(id));
+					}
+				}
+			}
+			rig.settle();
+			TickStats warmup;
+			rig.ticks(warmup, 4); // the view's flora in
+			rig.settle();
+			const geometry::nav::BeliefFilter belief = room ? geometry::nav::BeliefFilter{&knownSegments, &knownOpenings}
+															: geometry::nav::BeliefFilter{};
+
+			std::uint32_t seed = 11;
+			auto		  unit = [&seed] {
+				 seed = hashU32(seed + 0x9e3779b9U);
+				 return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
+			};
+			int	   pairs	  = 0;
+			int	   bothYes	  = 0;
+			int	   bothNo	  = 0;
+			int	   reachOnly  = 0; // reach says yes, the route fails
+			int	   routeOnly  = 0; // reach says no, a route exists
+			double walkUs	  = 0.0;
+			double walkFailUs = 0.0;
+			int	   walkFails  = 0;
+			for (int i = 0; i < 400; ++i) {
+				const glm::vec2 a = kColony + glm::vec2{(unit() - 0.5F) * 60.0F, (unit() - 0.5F) * 30.0F};
+				const glm::vec2 b = room && i % 4 == 0 ? roomLo + glm::vec2{1.0F + unit() * 10.0F, 1.0F + unit() * 8.0F}
+													   : a + glm::vec2{(unit() - 0.5F) * 240.0F, (unit() - 0.5F) * 240.0F};
+				if (!rig.nav.isValidPosition(a)) {
+					continue;
+				}
+				++pairs;
+				const Clock::time_point start = Clock::now();
+				const bool				walk  = rig.nav.walkDistance(rig.nav.reachFrom(a, kAgentRadius, belief), b).has_value();
+				const double			us	  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+				walkUs += us;
+				if (!walk) {
+					walkFailUs += us;
+					++walkFails;
+				}
+				const bool route = rig.nav.requestPath(a, b, kAgentRadius, belief).has_value();
+				bothYes += walk && route ? 1 : 0;
+				bothNo += !walk && !route ? 1 : 0;
+				reachOnly += walk && !route ? 1 : 0;
+				routeOnly += !walk && route ? 1 : 0;
+				if (walk != route) {
+					std::printf("disagree %s (%.2f, %.2f) -> (%.2f, %.2f) goal valid %d\n", walk ? "reachOnly" : "routeOnly", a.x, a.y, b.x, b.y,
+								rig.nav.isValidPosition(b) ? 1 : 0);
+				}
+			}
+			state.counters["pairs"]			 = pairs;
+			state.counters["bothYes"]		 = bothYes;
+			state.counters["bothNo"]		 = bothNo;
+			state.counters["reachOnly"]		 = reachOnly;
+			state.counters["routeOnly"]		 = routeOnly;
+			state.counters["walkMeanUs"]	 = walkUs / std::max(pairs, 1);
+			state.counters["walkFailMeanUs"] = walkFailUs / std::max(walkFails, 1);
+
+			if (room) {
+				const glm::vec2			inside = (roomLo + roomHi) * 0.5F;
+				const Clock::time_point start  = Clock::now();
+				const bool				routed = rig.nav.requestPath(kColony, inside, kAgentRadius, belief).has_value();
+				state.counters["roomRouteUs"]  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+				state.counters["roomRouted"]   = routed ? 1.0 : 0.0;
+			}
+
+			// One decision's pick: 40 remembered sources within 100 m of the colony, nearest by walk.
+			ecs::Memory memory;
+			for (int i = 0; i < 40; ++i) {
+				memory.rememberWorldEntity(kColony + glm::vec2{(unit() - 0.5F) * 200.0F, (unit() - 0.5F) * 200.0F}, 7, 1);
+			}
+			const auto						   capability = static_cast<assets::CapabilityType>(0);
+			std::vector<ecs::SourceCandidate>  scratch;
+			const ecs::NavigationSystem::Reach reach = rig.nav.reachFrom(kColony, kAgentRadius, belief);
+			const ecs::SourceReachMemo::Key	   key{.startCell = reach.startCell, .reachGeneration = reach.startRegionGeneration};
+			const ecs::SourceReachMemo::Anchor anchor{.at = kColony, .structural = rig.nav.verdictStamp(kColony)};
+			const auto						   decide = [&](ecs::SourceReachMemo& memo) {
+				  memo.keep(key, anchor, 2 * ecs::Memory::kMaxWorldEntities);
+				  return ecs::findNearestReachableWithCapability(
+					  memory, capability, kColony, [](uint64_t, const ecs::KnownWorldEntity&) { return true; },
+					  [&](uint64_t sourceKey, const glm::vec2& at, float maxWalk) {
+						  return memo.walk(sourceKey, at, maxWalk, [&](const glm::vec2& p, float bound) { return rig.nav.walkDistance(reach, p, bound); });
+					  },
+					  [&](uint64_t, const glm::vec2&) { return true; }, scratch
+				  );
+			};
+			constexpr int kDecisions = 50;
+			double		  coldUs	 = 0.0;
+			for (int i = 0; i < kDecisions; ++i) {
+				ecs::SourceReachMemo	fresh;
+				const Clock::time_point start = Clock::now();
+				benchmark::DoNotOptimize(decide(fresh));
+				coldUs += std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+			}
+			ecs::SourceReachMemo kept;
+			benchmark::DoNotOptimize(decide(kept));
+			const Clock::time_point warmStart = Clock::now();
+			for (int i = 0; i < kDecisions; ++i) {
+				benchmark::DoNotOptimize(decide(kept));
+			}
+			state.counters["decisionColdUs"] = coldUs / kDecisions;
+			state.counters["decisionWarmUs"] = std::chrono::duration<double, std::micro>(Clock::now() - warmStart).count() / kDecisions;
 		}
 	}
 
@@ -889,6 +1020,7 @@ BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMil
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanPan)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RealChunksGround)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
