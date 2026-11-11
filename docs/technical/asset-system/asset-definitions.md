@@ -314,7 +314,7 @@ Collision is per age class. A generator's `asset:setCollisionRect` is captured f
 A procedural plant can be cut for several screen densities, in pixels a meter (the camera's 8 px/m times its zoom, 2 to 160):
 
 ```xml
-<detailLevels>2, 4, 8, 24, 80</detailLevels>
+<detailLevels>2, 4, 8, 24, 40, 80</detailLevels>
 ```
 
 Up to 8 positive densities, strictly ascending; anything else is a validation error and the def keeps one mesh. Each template (def, age class, variant) has a mesh at every level, and the generator sees the level's density as the Lua global `detailPxPerMeter`. The game draws a template at the highest level at or below the camera's density, else the lowest (`assets::detailLevelFor`, `DetailLevels.h`). The template id has no level in it, so what entities store doesn't change with the zoom.

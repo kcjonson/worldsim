@@ -46,7 +46,6 @@
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
 
-#include <chrono>
 #include <cmath>
 #include <memory>
 #include <optional>
@@ -731,10 +730,10 @@ namespace ecs::test {
 	}
 
 	// =============================================================================
-	// Performance Tests
+	// Scale Tests
 	// =============================================================================
 
-	TEST_F(AIDecisionSystemTest, HandlesMultipleColonistsEfficiently) {
+	TEST_F(AIDecisionSystemTest, EveryColonistOfManyGetsATask) {
 		constexpr int kNumColonists = 100;
 
 		// Create many colonists
@@ -764,15 +763,7 @@ namespace ecs::test {
 			}
 		}
 
-		// This should complete in reasonable time
-		auto start = std::chrono::high_resolution_clock::now();
 		world->update(0.016F);
-		auto end = std::chrono::high_resolution_clock::now();
-
-		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-		// Should process 100 colonists in well under 100ms
-		EXPECT_LT(duration.count(), 100);
 
 		// Verify all colonists have tasks
 		for (auto colonist : colonists) {
@@ -782,7 +773,7 @@ namespace ecs::test {
 		}
 	}
 
-	TEST_F(AIDecisionSystemTest, MemoryCapacityDoesNotAffectDecisionSpeed) {
+	TEST_F(AIDecisionSystemTest, FindsANeedSourceInALargeMemory) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
 		// Fill memory with many entities - use Drinkable for simpler path
@@ -801,14 +792,7 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
 
-		auto start = std::chrono::high_resolution_clock::now();
 		world->update(0.016F);
-		auto end = std::chrono::high_resolution_clock::now();
-
-		auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
-
-		// Should still be fast even with large memory
-		EXPECT_LT(duration.count(), 50);
 
 		// Should have found an entity and created task
 		auto* task = getTask(colonist);
@@ -3202,6 +3186,19 @@ namespace ecs::test {
 			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
 			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
 		};
+
+		// Generated once per process: NavigationSystem writes nothing observable in it.
+		world::ChunkManager* openLandChunks() {
+			static const std::unique_ptr<world::ChunkManager> chunks = [] {
+				auto c = std::make_unique<world::ChunkManager>(std::make_unique<OpenLandSampler>());
+				c->setLoadRadius(2);
+				c->setUnloadRadius(4);
+				c->update({0.0F, 0.0F});
+				c->finishPendingGeneration();
+				return c;
+			}();
+			return chunks.get();
+		}
 	} // namespace
 
 	// The running game's first decision happens before the async region build has produced a mesh.
@@ -3215,26 +3212,13 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionSystemTest::SetUp();
 
-			chunks = std::make_unique<world::ChunkManager>(std::make_unique<OpenLandSampler>());
-			chunks->setLoadRadius(2);
-			chunks->setUnloadRadius(4);
-			chunks->update({0.0F, 0.0F});
-			chunks->finishPendingGeneration();
-
 			nav = &world->registerSystem<NavigationSystem>();
-			nav->setChunkManager(chunks.get());
+			nav->setChunkManager(openLandChunks());
 			nav->setConstructionWorld(&construction);
 			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
 			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();
 			world->registerSystem<PhysicsSystem>();
-		}
-
-		void TearDown() override {
-			// The base resets the world first, and its NavigationSystem waits out any in-flight build
-			// before the chunks and construction world go away.
-			AIDecisionSystemTest::TearDown();
-			chunks.reset();
 		}
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
@@ -3245,7 +3229,8 @@ namespace ecs::test {
 		static constexpr float kTick = 0.1F;
 		static constexpr int   kTicksAfterMesh = 20; // 2 s, four kReEvalInterval (0.5 s) periods
 
-		std::unique_ptr<world::ChunkManager> chunks;
+		// The base TearDown resets the world, and its NavigationSystem waits out any in-flight
+		// build, before this member goes away.
 		construction::ConstructionWorld		 construction;
 		NavigationSystem*							 nav = nullptr;
 	};

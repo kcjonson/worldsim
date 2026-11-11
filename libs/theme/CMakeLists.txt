@@ -41,5 +41,6 @@ if(BUILD_TESTING)
         # shader; the hooks don't matter there, so it gets salal's plain one.
         salal_base_shader(theme-tests)
         add_test(NAME theme-tests COMMAND theme-tests)
+        worldsim_test_data(theme-tests fonts)
     endif()
 endif()

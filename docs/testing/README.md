@@ -17,9 +17,9 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 
 | Layer | Where | When |
 |---|---|---|
-| Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI, every push |
+| Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI on non-draft PRs, pushes to `main`, nightly, and by hand, less what already passed with the same inputs ([CI test selection](#ci-test-selection)) |
 | Happy-path scenarios | [scenarios/](./scenarios/) and [regressions.md](./regressions.md) | before every commit that touches what they cover |
-| Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`), with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state, and the script warns if one wasn't P0, and the depth-sorted upright stream's draws (`uprightDrawCalls`, `uprightTriangles`, from `what=uprights`) so trees read apart from everything else ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | in a session for its own change, after a machine-load check; the full suite in the nightly batch on `main` ([Performance](#performance)) |
+| Gameplay perf | `node scripts/perf.mjs capture`, with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state and what the rest of the machine was doing, a capture taken under load is marked void, and it records the depth-sorted upright stream's draws (`uprightDrawCalls`, `uprightTriangles`, from `what=uprights`) so trees read apart from everything else ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | in a session for its own change, after a machine-load check; the full suite in the nightly batch on `main` ([Performance](#performance)) |
 
 - **Scenarios are the happy-path scripts.** Before committing, the relevant ones are run as a
   manual regression pass by the cheapest subagent fleet that can (Haiku-class), one agent per
@@ -36,6 +36,98 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 - **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
   (expect `"count":0` before screenshotting) and read element bounds from `/api/ui/tree` rather
   than judging coordinates by eye. On demand only; never in CI.
+
+---
+
+## CI test selection
+
+The Tests workflow (`.github/workflows/tests.yml`) builds everything on both jobs, then runs only
+the ctest entries that haven't already passed with exactly the same inputs: test-result caching,
+per test exe. `scripts/ci/test-select.mjs` does it, from what CMake reports after configure, so a
+new library or test needs no edit to the script or the workflow.
+
+A test's key is a hash of:
+
+- the git tree of the source dir of every in-repo target in its exe's dependency closure, from
+  CMake's file API, custom targets included (the base shader, shader staging, the font atlases'
+  `tools/generate_sdf_atlas`), and the tree of the dir of any source a target lists from outside
+  its own dir. A submodule counts by its commit;
+- every keyed top-level entry, claimed ones included, when the closure has a target defined in the
+  root `CMakeLists.txt` (`font-atlas`, so `theme-tests`), since such a target's inputs can be
+  anywhere;
+- any in-repo include dir those targets compile with that isn't inside one of their own dirs, whole:
+  planet-view exports `libs/`, so `planet-view-tests` reruns on any change under `libs/`. A
+  library whose include root is its own dir adds nothing;
+- every `CMakeLists.txt` in a dir above one of those targets' dirs (a target's own is in its tree);
+- its command line and the properties that change what runs (`ENVIRONMENT`, `WORKING_DIRECTORY`;
+  not `TIMEOUT`, `PROCESSORS` or `LABELS`);
+- the data dirs it declares;
+- a global part, in every key: every top-level file and dir except `docs/`, `.claude/`,
+  `perf-results/`, `*.md`, `.vscode/`, `.clang-format`, `.clang-tidy`, `.gitignore`, `LICENSE`,
+  `scripts/` and `.github/`, and except the dirs targets and any test's data dirs account for
+  (`libs/`, `apps/`, `tools/`, `assets/`, `fonts/`); `tests.yml`, `.github/actions/` and
+  `scripts/ci/` added back; every CMake file configure reads that isn't a `CMakeLists.txt`
+  (`cmake/test-data.cmake`, a helper anywhere, ignored dirs included); and every `CMakeLists.txt`
+  with no target at or below its dir. So the root `CMakeLists.txt` (salal's tag), `cmake/`,
+  `vcpkg.json` and any new top-level file rerun everything;
+- the OS, the compiler and its version, and the build type.
+
+A pass is a marker file named for the test and its key, kept in the Actions cache per job
+(`test-markers-linux-`, `test-markers-windows-`). A run restores the newest set on its branch,
+else main's, skips each test whose marker is there and was recorded in the last 48 hours, and
+saves a new set when it changed: one marker for each test that passed in this run or was skipped
+on a valid one, nothing else, so a failed, cancelled, or missing test never has one. A test
+planned to run with no result fails the job and saves nothing. A run where nothing passed saves an
+empty set too, so the passes it restored don't outlive it. A carried marker keeps the time it was
+recorded, so a branch whose own set shadows main's reruns each test at least every 48 hours and
+picks up a failure the nightly run found. On main the nightly run re-records every pass, which
+keeps main's set fresh. On a pull request the checkout is the merge commit, so keys describe the
+merged tree.
+
+**Declaring data dirs.** A test that reads repo files at run time names their dirs next to its
+`add_test`, in the same `CMakeLists.txt`, relative to the repo root:
+
+```cmake
+add_test(NAME sim-tests COMMAND sim-tests)
+worldsim_test_data(sim-tests assets/config)
+```
+
+- Not needed for files inside the dir of a target in the exe's closure: your own library's
+  fixtures found through `__FILE__`, or a dir passed in a compile definition such as
+  `WORLD_VIEW_SHADER_DIR`. That dir's tree is already in the key.
+- Needed for everything else, including files the test reaches through a copy staged next to an
+  exe or into the build dir: declare the source dir the copy comes from.
+- The dir has to be tracked source; an untracked or gitignored one fails the plan.
+- A new reader of a top-level dir that another test already declares (`assets`, `fonts`) has to
+  declare it too: once declared, that dir is out of the global part, so nothing else reruns the
+  test when it changes.
+- A script that a custom command runs is invisible to CMake's file API. Keep it in a target's dir
+  or in a top-level dir the global part keys, not under `scripts/` or `docs/`.
+
+`cmake/test-data.cmake` stores the dirs as the test's `REQUIRED_FILES`, which ctest's JSON reports
+and the script reads back; ctest also reports the test Not Run if one is missing. Today
+`assets-tests` declares `assets`, `sim-tests` `assets/config`, and `theme-tests` `fonts`.
+
+**Forcing a full run.** Run the workflow by hand (Actions, Tests, Run workflow) with "Ignore
+recorded passes and run every test" ticked. The nightly run at 09:00 UTC does the same and records
+the passes, which catches what a key can't see: a new runner image, Mesa, the system GL.
+
+**Reading it.** Each job's summary has a table: every test, run or skipped, its key, and why. A
+skipped test names the commit, run, and time where it passed with that key; a test that runs names
+the inputs that changed since its last recorded pass, or says the recorded pass expired. The
+`test-results` artifacts carry `test-select/plan.json` with every key's inputs. Locally, against a
+build dir that had `query` run before its configure, with every planned test built (exclude the
+rest):
+
+```bash
+node scripts/ci/test-select.mjs query --build-dir build   # then configure and build
+node scripts/ci/test-select.mjs plan --build-dir build --config Debug \
+  --exclude "(benchmarks|worldgen-tests-heavy)" --explain [--rev <rev>]
+```
+
+`--config` is needed on the Ninja Multi-Config `windows` preset. Keys hash the tree of `HEAD` (or
+`--rev`), never uncommitted edits. `--explain` prints each test's inputs and key; `--rev` keys
+another commit's tree with this build's graph.
 
 ---
 
@@ -58,6 +150,34 @@ Allowed when the change calls for it, with three conditions.
    answers `idle`, `mostly-idle`, or `busy`. On `busy` don't time anything.
 3. **Budgeted.** Every capture launches the game on Kevin's desktop and holds the machine while it
    runs. Decide the launches before the first one and stop when the question is answered.
+
+With world-sim in the game scene on your port, once on `main` and once on the branch:
+
+```
+node scripts/perf.mjs capture --port <PORT> --view river --zooms 3,1.5 --no-scroll --out <file>.json
+node scripts/perf.mjs compare --base <main>.json --tip <branch>.json
+```
+
+`--view` is `river`, `coast` or `desert` (or `--x` and `--y` in world meters); leave out `--zooms` and
+`--no-scroll` for every zoom and the two scroll scenarios. The capture also watches the machine
+while it runs: CPU and GPU use by everything that isn't the game, and other sessions' build, test
+and game processes. Past a threshold it marks itself void, and `compare` then answers
+`inconclusive` where a loaded capture can't settle it. Take the verdict from `compare`; don't read
+timings out of the files by eye. With one capture a side it has no noise to measure against and
+flags only a step the size of a major regression; two a side measures the noise.
+
+Chunk and planet generation have microbenchmarks (`*.bench.cpp`, built as `world-benchmarks`,
+`assets-benchmarks` and `worldgen-benchmarks`), which time them directly and launch no game. For a
+change to that code, build the target in RelWithDebInfo on `main` and on the branch and run it
+through the same watch:
+
+```
+node scripts/perf.mjs bench --exe build/libs/world/RelWithDebInfo/world-benchmarks.exe --out <file>.json
+node scripts/perf.mjs compare --base <main>.json --tip <branch>.json
+```
+
+The same rules apply, with thresholds as shares of the base time: past the noise and 5% is
+regressed, past 25% is major.
 
 Reading the result:
 
@@ -91,7 +211,7 @@ The backstop, and where an unconfirmed result gets settled. In the early morning
 measures as idle, an agent times `main`'s tip against the last SHA it tested, and on a major
 regression finds the PR behind it and opens a draft revert. Agents run it and decide what it
 covers; Kevin never asks for a perf run. [nightly-perf-batch.md](./nightly-perf-batch.md) is the
-spec. It is not built yet.
+spec, and the `/perf-nightly` skill runs it.
 
 ---
 

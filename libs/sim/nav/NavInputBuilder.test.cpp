@@ -858,6 +858,20 @@ namespace {
 		return mgr;
 	}
 
+	// Generating a ready region is most of an area test's cost and buildInput writes nothing
+	// a test can observe in it, so each region is generated once per process and shared.
+	ChunkManager* landChunks() {
+		static const std::unique_ptr<ChunkManager> mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+		return mgr.get();
+	}
+
+	// Chunks (0,0) and (1,0) are one lake; everything else is land.
+	ChunkManager* twoChunkLakeChunks() {
+		static const std::unique_ptr<ChunkManager> mgr =
+			readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{{0, 0}, {1, 0}}));
+		return mgr.get();
+	}
+
 	// Count the blocked flora rings (provenance tree) in an input.
 	int countFlora(const NavMeshInput& input) {
 		int n = 0;
@@ -883,7 +897,7 @@ namespace {
 
 // The border ring exactly matches the requested area AABB.
 TEST_F(NavFloraTest, Area_BorderEqualsAreaBounds) {
-	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	ChunkManager* mgr = landChunks();
 	PlacementExecutor placement(AssetRegistry::Get());
 	ConstructionWorld cw;
 
@@ -922,7 +936,7 @@ TEST_F(NavFloraTest, Area_ExcludesFloraWhenNotRequested) {
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
 	reg.registerTestDefinition(tree);
 
-	auto			  mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	ChunkManager*			  mgr = landChunks();
 	PlacementExecutor placement(reg);
 
 	AsyncChunkPlacementResult result;
@@ -956,7 +970,7 @@ TEST_F(NavFloraTest, Area_ScopesFloraToInAreaTrees) {
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
 	reg.registerTestDefinition(tree);
 
-	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	ChunkManager* mgr = landChunks();
 	PlacementExecutor placement(reg);
 
 	// Lay a grid of trees over chunks (0,0) and (1,0): one every 8 m across a wide
@@ -1019,10 +1033,9 @@ TEST_F(NavFloraTest, Area_ScopesFloraToInAreaTrees) {
 // deep inside the lake: every triangle is water, with no floor sliver at the border.
 // An area over chunks that were never loaded gives no water at all.
 TEST_F(NavFloraTest, Area_LakeAcrossChunkSeamHasNoGap) {
-	std::vector<ChunkCoordinate> water = {{0, 0}, {1, 0}};
-	auto						 mgr   = readyChunks(std::make_unique<WaterRegionSampler>(water));
-	PlacementExecutor			 placement(AssetRegistry::Get());
-	ConstructionWorld			 cw;
+	ChunkManager*	  mgr = twoChunkLakeChunks();
+	PlacementExecutor placement(AssetRegistry::Get());
+	ConstructionWorld cw;
 
 	const Vec2i64	   center{512000, 256000};
 	const std::int64_t radius = 64000;
@@ -1057,8 +1070,8 @@ TEST_F(NavFloraTest, Area_DeterministicOrdering) {
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
 	reg.registerTestDefinition(tree);
 
-	std::vector<ChunkCoordinate> water = {{0, 0}};
-	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(water));
+	// The area ends short of chunk (1,0), so only chunk (0,0)'s lake enters it.
+	ChunkManager* mgr = twoChunkLakeChunks();
 	PlacementExecutor placement(reg);
 
 	std::unordered_map<ChunkCoordinate, AsyncChunkPlacementResult> byChunk;
@@ -1098,7 +1111,7 @@ TEST_F(NavFloraTest, Area_DeterministicOrdering) {
 
 // Walls entirely outside the area are dropped; a wall crossing into the area is kept.
 TEST_F(NavWallTest, Area_DropsWallsOutsideArea) {
-	auto mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
+	ChunkManager* mgr = landChunks();
 	PlacementExecutor placement(AssetRegistry::Get());
 
 	ConstructionWorld cw;
