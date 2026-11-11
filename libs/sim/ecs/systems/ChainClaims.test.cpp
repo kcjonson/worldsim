@@ -8,6 +8,7 @@
 #include "ChainClaims.h"
 #include "CraftingGoalSystem.h"
 #include "MovementSystem.h"
+#include "NavigationSystem.h"
 #include "PhysicsSystem.h"
 #include "StorageGoalSystem.h"
 #include "TimeSystem.h"
@@ -33,13 +34,19 @@
 #include "../components/WorkQueue.h"
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
+
+#include <construction/ConstructionWorld.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -3475,6 +3482,229 @@ namespace ecs::test {
 		ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Hunger);
 		ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
 		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
+	}
+
+	// The failed-route rule (ClaimIndex::addCurrent) on routes a NavigationSystem plans over real ground,
+	// where the tests above set the nav state by hand.
+	class ClaimsOnRealRoutesTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			assets::ConstructionRegistry::Get().clear();
+			const std::filesystem::path root =
+				std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+			ChainClaimsTest::SetUp();
+			world->registerSystem<TimeSystem>();
+			nav = &world->registerSystem<NavigationSystem>();
+			nav->setChunkManager(openLand());
+			nav->setConstructionWorld(&construction);
+			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
+			ai->setNavigationSystem(nav);
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+			nav->finishPendingBuilds();
+			ASSERT_TRUE(nav->hasMesh());
+		}
+
+		void TearDown() override {
+			ChainClaimsTest::TearDown();
+			assets::ConstructionRegistry::Get().clear();
+		}
+
+		// Generated once per process: nothing here writes to it.
+		static world::ChunkManager* openLand() {
+			static const std::unique_ptr<world::ChunkManager> chunks = [] {
+				auto manager = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
+				manager->setLoadRadius(2);
+				manager->setUnloadRadius(4);
+				manager->update({0.0F, 0.0F});
+				manager->finishPendingGeneration();
+				return manager;
+			}();
+			return chunks.get();
+		}
+
+		// Built walls around [min, max] (millimetres) that `colonist` knows. Returns the west side's segments.
+		std::vector<construction::SegmentId> wallIn(geometry::Vec2i64 min, geometry::Vec2i64 max, EntityID colonist) {
+			const std::array<geometry::Vec2i64, 4> corners{{{max.x, min.y}, max, {min.x, max.y}, min}};
+			std::vector<construction::SegmentId>	 west;
+			geometry::Vec2i64						 from = min;
+			for (const geometry::Vec2i64 to : corners) {
+				const auto commit = construction.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
+				EXPECT_TRUE(commit.ok());
+				for (const auto id : commit.createdSegments) {
+					construction.setSegmentState(id, construction::FoundationState::Built);
+					world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
+					if (to == min) {
+						west.push_back(id);
+					}
+				}
+				from = to;
+			}
+			return west;
+		}
+
+		size_t carried(EntityID colonist, const char* item) {
+			return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), item);
+		}
+
+		bool delivering(EntityID colonist, EntityID destination) {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Haul && task.haulDestinationId == static_cast<uint64_t>(destination);
+		}
+
+		// A hauler at (-7, 0) who knows a pile of `count` `item` at (-6, 0); runs until he has lifted all of
+		// it and is walking it to `destination`.
+		EntityID haulerWalking(EntityID destination, uint32_t item, uint32_t count) {
+			const glm::vec2 pilePos{-6.0F, 0.0F};
+			const EntityID	pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{pilePos});
+			const std::string name = assets::AssetRegistry::Get().getDefName(item);
+			makeLoosePile(*world, pile, item, pilePos, count);
+			const EntityID hauler = createColonist({-7.0F, 0.0F});
+			remember(hauler, pilePos, name, assets::CapabilityType::Carryable);
+			for (int tick = 0; tick < 200 && carried(hauler, name.c_str()) < count; ++tick) {
+				world->update(kTick);
+			}
+			EXPECT_EQ(carried(hauler, name.c_str()), count) << "he never lifted the pile";
+			EXPECT_TRUE(delivering(hauler, destination));
+			EXPECT_EQ(getTask(hauler)->chainStep, 1U);
+			EXPECT_EQ(getTask(hauler)->navState, NavState::Traveling);
+			return hauler;
+		}
+
+		// Runs until the walled-off hauler's route to `destination` fails and he decides again. While his
+		// failed task stands he holds Inbound and InFlight for his cargo and nothing else, and it stands for
+		// at most one update: his next decision lets the delivery go.
+		void runUntilHeLetsTheDeliveryGo(EntityID hauler, EntityID destination, uint32_t item) {
+			int failedUpdates = 0;
+			for (int tick = 0; tick < 100 && delivering(hauler, destination); ++tick) {
+				world->update(kTick);
+				if (!delivering(hauler, destination) || getTask(hauler)->navState != NavState::CantFindWayTo) {
+					continue;
+				}
+				++failedUpdates;
+				ai->claimIndex().forEachClaim([&](const Claim& claim, const ClaimHolder& holder) {
+					if (holder.colonist == hauler) {
+						EXPECT_TRUE(claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight);
+						EXPECT_EQ(claim.itemDefNameId(), item);
+					}
+				});
+			}
+			ASSERT_FALSE(delivering(hauler, destination)) << "the route through the known walls never failed";
+			EXPECT_LE(failedUpdates, 1) << "the failed delivery outlived his next decision";
+		}
+
+		static constexpr float		  kTick = 0.1F;
+		construction::ConstructionWorld construction;
+		NavigationSystem*				nav = nullptr;
+	};
+
+	// A hauler past his pickup is walled off from the station mid-walk by walls he knows. His next decision
+	// lets the delivery go: it is not offered while he believes he cannot reach the station, his claims
+	// toward the root are released, and the stones stay in his pack as uncommitted goods. Once a wall comes
+	// down the verdict is forgotten, he is offered the delivery again, and delivers exactly what the
+	// station wants. Every AI update's validator passes throughout (it aborts on a violation).
+	TEST_F(ClaimsOnRealRoutesTest, AWalledOffHaulerLetsTheDeliveryGoAndTakesItUpOnceTheWayOpens) {
+		const glm::vec2 stationPos{8.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID hauler = haulerWalking(station, stoneId, 3);
+		ASSERT_FALSE(HasFailure());
+
+		const auto west = wallIn({6000, -2000}, {10000, 2000}, hauler);
+		ASSERT_FALSE(west.empty());
+		runUntilHeLetsTheDeliveryGo(hauler, station, stoneId);
+		ASSERT_FALSE(HasFailure());
+
+		for (int tick = 0; tick < 50; ++tick) {
+			world->update(kTick);
+			ASSERT_FALSE(delivering(hauler, station)) << "tick " << tick;
+			ASSERT_EQ(carried(hauler, "Stone"), 3U) << "tick " << tick;
+			ASSERT_EQ(indexedClaimsOf(hauler), 0U) << "tick " << tick;
+			ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U) << "tick " << tick;
+		}
+
+		for (const auto id : west) {
+			ASSERT_TRUE(construction.removeSegment(id));
+		}
+		for (int tick = 0; tick < 300 && world->getComponent<Inventory>(station)->getQuantity("Stone") < 3; ++tick) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 3U) << "he never delivered once the wall was down";
+		EXPECT_EQ(carried(hauler, "Stone"), 0U);
+	}
+
+	// While the first hauler is walled off, a colonist on the station's side of the wall is offered the
+	// fetch and makes it. When the wall comes down the first hauler's stones are surplus there: the
+	// station is never over-supplied, and he keeps them.
+	TEST_F(ClaimsOnRealRoutesTest, AColonistInsideTheWallsFetchesAndTheFreedHaulerDoesNotOverDeliver) {
+		const glm::vec2 stationPos{8.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID hauler = haulerWalking(station, stoneId, 3);
+		ASSERT_FALSE(HasFailure());
+
+		const auto west = wallIn({6000, -2000}, {10000, 2000}, hauler);
+		runUntilHeLetsTheDeliveryGo(hauler, station, stoneId);
+		ASSERT_FALSE(HasFailure());
+		ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U);
+
+		const glm::vec2 innerPilePos{9.0F, 1.0F};
+		const EntityID	innerPile = world->createEntity();
+		world->addComponent<Position>(innerPile, Position{innerPilePos});
+		makeLoosePile(*world, innerPile, stoneId, innerPilePos, 3);
+		const EntityID inside = createColonist({7.0F, -1.0F});
+		remember(inside, innerPilePos, "Stone", assets::CapabilityType::Carryable);
+
+		const auto stationStone = [&] { return world->getComponent<Inventory>(station)->getQuantity("Stone"); };
+		bool	   insideFetched = false;
+		for (int tick = 0; tick < 300 && stationStone() < 3; ++tick) {
+			world->update(kTick);
+			insideFetched = insideFetched || delivering(inside, station);
+			ASSERT_EQ(carried(hauler, "Stone"), 3U) << "tick " << tick;
+		}
+		EXPECT_TRUE(insideFetched);
+		ASSERT_EQ(stationStone(), 3U) << "the colonist inside never fetched";
+
+		for (const auto id : west) {
+			ASSERT_TRUE(construction.removeSegment(id));
+		}
+		for (int tick = 0; tick < 300; ++tick) {
+			world->update(kTick);
+			ASSERT_LE(stationStone(), 3U) << "tick " << tick;
+			ASSERT_FALSE(delivering(hauler, station)) << "tick " << tick;
+		}
+		EXPECT_EQ(carried(hauler, "Stone"), 3U) << "his stones are surplus at the station";
+		EXPECT_EQ(indexedClaimsOf(hauler), 0U);
+	}
+
+	// A two-hand armful bound for a site he is walled off from is put down where he stands when he lets
+	// the delivery go, not carried around: a pile anyone can fetch.
+	TEST_F(ClaimsOnRealRoutesTest, AWalledOffHaulerPutsHisArmfulDown) {
+		std::vector<uint32_t> drops;
+		ai->setDropResourceCallback([&](const std::string& name, float, float, uint32_t quantity, glm::vec2) {
+			EXPECT_EQ(name, "Wood");
+			drops.push_back(quantity);
+		});
+		const glm::vec2 sitePos{8.0F, 0.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 4);
+		const EntityID	hauler = haulerWalking(site.blueprint, woodId, 4);
+		ASSERT_FALSE(HasFailure());
+
+		wallIn({6000, -2000}, {10000, 2000}, hauler);
+		runUntilHeLetsTheDeliveryGo(hauler, site.blueprint, woodId);
+		ASSERT_FALSE(HasFailure());
+
+		ASSERT_EQ(drops.size(), 1U) << "the armful he cannot deliver is carried around";
+		EXPECT_EQ(drops.front(), 4U);
+		EXPECT_EQ(carried(hauler, "Wood"), 0U);
+		EXPECT_EQ(indexedClaimsOf(hauler), 0U);
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, woodId, {}), 0U);
 	}
 
 } // namespace ecs::test
