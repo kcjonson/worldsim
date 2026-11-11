@@ -5072,7 +5072,7 @@ namespace ecs::test {
 		nav->setViewportRect({600.0F, kFordRiverY}, {60.0F, 60.0F});
 		nav->finishPendingBuilds();
 		ASSERT_TRUE(nav->inSimArea({600.0F, kFordRiverY}));
-		ASSERT_TRUE(nav->requestPath(kStart, {620.0F, 20.0F}, 0.3F).has_value()) << "a player's route round the ford";
+		ASSERT_TRUE(nav->requestPath(kStart, {620.0F, 20.0F}, 0.3F, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "a player's route round the ford";
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBehind));
 	}
 
@@ -5290,12 +5290,12 @@ namespace ecs::test {
 	// colonist has walked far enough that its square holds the ford: what it found unreachable at one
 	// spot isn't held as it moves on.
 	// It stays inside the square it first looked from, so nothing but its own walk changed.
-	using AIDecisionFordNearTheSquareTest = AIDecisionFordTest<230>;
+	using AIDecisionFordNearTheSquareTest = AIDecisionFordTest<150>;
 	TEST_F(AIDecisionFordNearTheSquareTest, FordComingIntoTheSquareMakesTheBushAcrossReachable) {
 		const auto colonist = hungryColonistKnowing({kAcross});
-		EXPECT_EQ(hungerTarget(colonist), std::nullopt) << "the ford is 230 m off, outside the square";
-		world->getComponent<Position>(colonist)->value = {120.0F, 0.0F};
-		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kAcross)) << "120 m east, the ford is in its square";
+		EXPECT_EQ(hungerTarget(colonist), std::nullopt) << "the ford is 150 m off, outside the square";
+		world->getComponent<Position>(colonist)->value = {60.0F, 0.0F};
+		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kAcross)) << "60 m east, the ford is in its square";
 	}
 
 	namespace {
@@ -5373,6 +5373,31 @@ namespace ecs::test {
 		EXPECT_EQ(target, std::optional<glm::vec2>(kBush)) << "not taken once the ground landed: the miss was remembered";
 	}
 
+	// A route that fails while chunk (1, 0) is still arriving is stamped unsettled, so once the ground
+	// lands the next decision neither records it nor keeps the failed task: the bush is taken.
+	TEST_F(AIDecisionArrivingGroundTest, RouteThatFailedWhileGroundArrivedIsNotHeld) {
+		const auto colonist = hungryColonistAcrossFromTheBush();
+		nav->finishPendingBuilds();
+		stream({256.0F, 256.0F});
+		ASSERT_FALSE(nav->reachFrom(kAt, 0.3F).settled);
+		ASSERT_TRUE(world->getSystem<AIDecisionSystem>().issuePlayerMoveOrder(colonist, kBush).has_value());
+		ASSERT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo) << "the walk round needs chunk (1, 0)";
+
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->reachFrom(kAt, 0.3F).settled);
+		std::optional<glm::vec2> target;
+		for (int i = 0; i < kTicksAfterMesh && !target.has_value(); ++i) {
+			world->update(kTick);
+			const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+			if (hunger != nullptr && hunger->status == OptionStatus::Selected) {
+				target = hunger->targetPosition;
+			}
+		}
+		EXPECT_FALSE(world->getComponent<SourceReachMemo>(colonist)->knownUnreachable(hashWorldEntity(kBush, 0)))
+			<< "the failure was recorded";
+		EXPECT_EQ(target, std::optional<glm::vec2>(kBush));
+	}
+
 	TEST_F(AIDecisionArrivingGroundTest, BushBehindGroundTheCameraMeshedIsTakenAtOnce) {
 		const auto colonist = hungryColonistAcrossFromTheBush();
 		stream({768.0F, 256.0F}); // the camera over chunk (1, 0) first
@@ -5390,7 +5415,7 @@ namespace ecs::test {
 		setNeedValue(colonist, NeedType::Thirst, 40.0F);
 		addKnownEntity(colonist, {200.0F, 0.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
 		nav->finishPendingBuilds();
-		ASSERT_TRUE(nav->requestPath({0.0F, 0.0F}, {200.0F, 0.0F}, 0.3F).has_value()) << "open ground all the way";
+		ASSERT_TRUE(nav->requestPath({0.0F, 0.0F}, {200.0F, 0.0F}, 0.3F, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "an order gets there";
 
 		world->update(kTick);
 		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {

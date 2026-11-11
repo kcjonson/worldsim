@@ -952,12 +952,12 @@ TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 
 	pushArea(sys, {-300000, 300000}, 40000);
 	settle(sys);
-	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius).has_value()) << "camera elsewhere";
+	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "camera elsewhere";
 	EXPECT_FALSE(isReachable(sys, a, b, kAgentRadius));
 
 	pushArea(sys, {140000, 0}, 40000);
 	settle(sys);
-	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius).has_value()) << "camera over one colonist";
+	EXPECT_TRUE(sys.requestPath(a, b, kAgentRadius, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "camera over one colonist";
 	EXPECT_FALSE(isReachable(sys, a, b, kAgentRadius));
 	EXPECT_EQ(sys.builtRegions().size(), 1u);
 }
@@ -1022,7 +1022,7 @@ TEST_F(NavigationSystemTest, UnloadedChunkKeepsItsGround) {
 	settle(sys);
 	EXPECT_TRUE(sys.inSimArea(treeAt)) << "the unloaded chunk's ground stays";
 	EXPECT_TRUE(meshClear(sys, treeAt)) << "its flora left with its placement";
-	EXPECT_TRUE(sys.requestPath({100.0F, 100.0F}, {700.0F, 300.0F}, kAgentRadius).has_value()) << "routable across it";
+	EXPECT_TRUE(sys.requestPath({100.0F, 100.0F}, {700.0F, 300.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Ordered).has_value()) << "an order routes across it";
 
 	// Back with the same terrain version: no ground patch.
 	const std::uint64_t before = sys.generation();
@@ -3288,6 +3288,10 @@ TEST_F(NavigationSystemTest, GivenUpSearchWalksTheStructuralRouteThroughTheFores
 		rig.world.update(0.016F);
 	}
 	EXPECT_LT(glm::distance(at, goal), 0.3F) << "never arrived";
+
+	const EntityID clearOfTrees = rig.walker({2.0F, 45.0F}, {38.0F, 45.0F});
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(clearOfTrees)->valid);
+	EXPECT_FALSE(rig.pricedRoute(clearOfTrees)) << "a fallback route clear of the stand is marked as crossing flora";
 }
 
 // --- A replan keeps its first confinement ------------------------------------------------------
@@ -3323,6 +3327,93 @@ TEST_F(NavigationSystemTest, ReplanKeepsTheFirstPlansConfinement) {
 	EXPECT_GT(lengthOf(*replan), 300.0F);
 }
 
+// The same walls. A replan from a few centimetres outside the first square (pushed there by
+// collision) keeps it; one from 180 m west (a teleport) takes the square round where it stands, which
+// doesn't hold the gap: no route, never an unconfined search. An autonomous goal outside the start's
+// square has no route on a first plan either; an order there does.
+TEST_F(NavigationSystemTest, AutonomousRoutesAreAlwaysConfined) {
+	ConstructionWorld cw;
+	buildWall(cw, {-300000, 20000}, {120000, 20000});
+	buildWall(cw, {128500, 20000}, {300000, 20000});
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	wireArea(sys);
+	settle(sys);
+	const glm::vec2 goal{0.0F, 40.0F};
+	const EntityID	colonist = world.createEntity();
+	using Kind				 = NavigationSystem::RouteKind;
+	ASSERT_TRUE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, colonist).has_value());
+	EXPECT_TRUE(sys.requestPath({-128.2F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, colonist).has_value())
+		<< "pushed 0.2 m out of the square";
+	EXPECT_FALSE(sys.requestPath({-180.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, colonist).has_value())
+		<< "teleported 52 m out: its own square, without the gap";
+	EXPECT_FALSE(sys.requestPath({0.0F, 0.0F}, {200.0F, 0.0F}, kAgentRadius).has_value()) << "a goal 200 m off, on its own";
+	EXPECT_TRUE(sys.requestPath({0.0F, 0.0F}, {200.0F, 0.0F}, kAgentRadius, {}, Kind::Ordered).has_value()) << "ordered there";
+}
+
+// A wall 20 m north with its only gap 200 m east, out of the start's square. A route keeps the kind its
+// first plan had: an order replanned as if autonomous (control released) still routes through the gap,
+// and an autonomous route replanned as if ordered (control taken) still finds none.
+TEST_F(NavigationSystemTest, ARoutesKindIsFixedByItsFirstPlan) {
+	ConstructionWorld cw;
+	buildWall(cw, {-300000, 20000}, {196000, 20000});
+	buildWall(cw, {204500, 20000}, {400000, 20000});
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setConstructionWorld(&cw);
+	wireArea(sys);
+	settle(sys);
+	const glm::vec2 goal{0.0F, 40.0F};
+	using Kind = NavigationSystem::RouteKind;
+
+	const EntityID ordered = world.createEntity();
+	ASSERT_TRUE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Ordered, ordered).has_value());
+	EXPECT_TRUE(sys.requestPath({50.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, ordered).has_value())
+		<< "control released, the order still routes round";
+	EXPECT_FALSE(sys.requestPath({50.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, world.createEntity()).has_value())
+		<< "a colonist's own plan from there has no gap";
+
+	const EntityID autonomous = world.createEntity();
+	EXPECT_FALSE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Autonomous, autonomous).has_value());
+	EXPECT_FALSE(sys.requestPath({0.0F, 0.0F}, goal, kAgentRadius, {}, Kind::Ordered, autonomous).has_value())
+		<< "control taken, the colonist's own route stays confined";
+}
+
+// Settled means every chunk whose interior meets the square's has meshed ground, loaded or not. A
+// colonist exactly 128 m from chunk (1, 0) has a square that only touches that chunk's side: it is
+// settled with the chunk unloaded, and the chunk's ground coming in moves nothing it reads. A
+// millimetre nearer, the square meets the unloaded chunk: not settled until its ground lands.
+TEST_F(NavigationSystemTest, SettledCountsEveryChunkTheSquareMeets) {
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(0);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	const auto stand = [&] {
+		chunks->update({256.0F, 256.0F});
+		chunks->finishPendingGeneration();
+		settle(sys);
+	};
+	stand();
+	const glm::vec2 edge{384.0F, 256.0F};
+	const glm::vec2 inside{384.001F, 256.0F};
+	ASSERT_EQ(chunks->getChunk({1, 0}), nullptr);
+	EXPECT_TRUE(sys.reachFrom(edge, kAgentRadius).settled);
+	EXPECT_FALSE(sys.reachFrom(inside, kAgentRadius).settled) << "an unloaded chunk the square meets";
+	const std::uint64_t key = sys.reachFrom(edge, kAgentRadius).startRegionGeneration;
+
+	chunks->setLoadRadius(1);
+	chunks->setUnloadRadius(1);
+	stand();
+	ASSERT_TRUE(sys.inSimArea({700.0F, 256.0F}));
+	EXPECT_EQ(sys.reachFrom(edge, kAgentRadius).startRegionGeneration, key) << "a chunk only touching the square";
+	EXPECT_TRUE(sys.reachFrom(inside, kAgentRadius).settled);
+}
+
 // --- Stale stays stale ---------------------------------------------------------------------------
 
 // A route a tree landed across is stale; an unrelated wall job, which restamps the routes it doesn't
@@ -3355,4 +3446,41 @@ TEST_F(NavigationSystemTest, StaleRouteStaysStaleThroughAnUnrelatedWallJob) {
 	ASSERT_NE(sys.generation(), before) << "the wall job is anchored";
 	EXPECT_TRUE(stale(world, sys, hit)) << "the restamp read the stale mark as current";
 	EXPECT_FALSE(stale(world, sys, missed));
+}
+
+// The clear-ground test and the mesh read one outline (nav::floraOutline): a collider set off its
+// entity's centre and mirrored by a negative scale lands on the same side for both.
+TEST_F(NavigationSystemTest, ClearGroundAndTheMeshAgreeOnAMirroredCollider) {
+	AssetDefinition tree;
+	tree.defName					 = "Test_NavMirroredTree";
+	tree.collision.type				 = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.collision.offsetMeters		 = {0.8F, 0.0F};
+	AssetRegistry::Get().registerTestDefinition(tree);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	assets::AsyncChunkPlacementResult	placed;
+	placed.coord = world::worldToChunk({20.0F, 20.0F});
+	PlacedEntity mirrored;
+	mirrored.defName  = "Test_NavMirroredTree";
+	mirrored.position = {20.0F, 20.0F};
+	mirrored.scale	  = -1.0F;
+	placed.spatialIndex.insert(mirrored);
+	executor.storeChunkResult(std::move(placed));
+	processed.insert(world::worldToChunk({20.0F, 20.0F}));
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	sys.setViewportRect({20.0F, 20.0F}, {30.0F, 30.0F});
+	settle(sys);
+	step(world, sys);
+	settle(sys);
+	for (const glm::vec2 p : {glm::vec2{19.2F, 20.0F}, glm::vec2{20.8F, 20.0F}}) {
+		EXPECT_EQ(sys.isValidPosition(p), meshClear(sys, p)) << "at (" << p.x << ", " << p.y << ")";
+	}
+	EXPECT_FALSE(meshClear(sys, {19.2F, 20.0F})) << "the mirrored collider is in the mesh";
 }

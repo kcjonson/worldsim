@@ -64,6 +64,10 @@ namespace nav {
 	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon>
 	floraRingFor(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry);
 
+	// The outline floraRingFor puts in the mesh, written into `out` (cleared first, its storage
+	// reused): false when there is none. What a clear-ground test reads, so the two never differ.
+	[[nodiscard]] bool floraOutline(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry, geometry::Ring& out);
+
 	// --- Walls / doors -----------------------------------------------------------
 
 	// Over the BUILT wall segments: resolve band offsetting + junction trimming once

@@ -162,6 +162,10 @@ namespace ecs {
 			return {.startCell = reach.startCell, .reachGeneration = reach.startRegionGeneration, .beliefVersion = memory.beliefVersion};
 		}
 
+		/// The reach stamp while ground in the colonist's square is still to mesh: a route failure then is
+		/// never recorded, and one stamped with it is a fresh pick at the next decision. (0 is no mesh.)
+		constexpr std::uint64_t kUnsettledStamp = std::numeric_limits<std::uint64_t>::max();
+
 		/// Where a colonist's unreachable verdicts, and a failed route, are held: the anchor they were
 		/// found at while it still answers for `here`, else `here`.
 		[[nodiscard]] SourceReachMemo::Anchor verdictAnchor(
@@ -1843,9 +1847,9 @@ namespace ecs {
 
 						// A task whose route failed on a mesh or belief that has since changed is a fresh
 						// pick: keeping it would leave the colonist stopped with a stale failure and no new
-						// route request.
+						// route request. So is one that failed, or is decided, while ground was arriving.
 						const bool failedOnStaleNav =
-							task.navState == NavState::CantFindWayTo && task.blockedReachStamp != reachStamp;
+							task.navState == NavState::CantFindWayTo && (task.blockedReachStamp != reachStamp || reachStamp == kUnsettledStamp);
 						isSameTask = sameType && sameTarget && samePlaceTarget && !failedOnStaleNav;
 					}
 				}
@@ -2199,12 +2203,12 @@ namespace ecs {
 		// surrounded by unreachable sources doesn't test them all again every decision. A source outside
 		// the square is unreachable on its own and never remembered. While ground in the square is still
 		// to mesh (reach->settled false) a failed walk may only be waiting on it: nothing is remembered,
-		// that source is passed over for this decision only, and the stamp is 0, so a route that failed
-		// meanwhile is a fresh pick, never a recorded failure.
+		// that source is passed over for this decision only, and the stamp is kUnsettledStamp, so a
+		// route that failed then is a fresh pick, never a recorded failure.
 		reachStamp = 0;
 		if (reach.has_value()) {
 			const SourceReachMemo::Anchor anchor = verdictAnchor(*m_navSystem, &sourceReach, position.value, memory);
-			reachStamp = reach->settled ? anchor.stamp() : 0;
+			reachStamp = reach->settled ? anchor.stamp() : kUnsettledStamp;
 			sourceReach.keep(reachKey(*reach, memory), anchor, 2 * Memory::kMaxWorldEntities);
 			// The route to the target this colonist was heading for (a need source, a toilet spot, a work
 			// site) just came back with no believed route, though its reach let it through (a squeeze
@@ -2214,7 +2218,7 @@ namespace ecs {
 			// is: one outside the square reads unreachable anyway, and an unrecorded failure would keep
 			// the task and its claims. A wander point is random, so there's nothing to remember.
 			if (currentTask.type != TaskType::Wander && currentTask.navState == NavState::CantFindWayTo &&
-				currentTask.blockedReachStamp == reachStamp) {
+				currentTask.blockedReachStamp == reachStamp && reachStamp != kUnsettledStamp) {
 				sourceReach.recordFailedRoute(routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition));
 			}
 		}
@@ -3023,9 +3027,13 @@ namespace ecs {
 				navPath->valid = false;
 			}
 			movementTarget.active = false;
+			// Stamped kUnsettledStamp while ground in its square is still to mesh: the failure may only be
+			// waiting on it, so it is never recorded, and the next decision picks afresh.
 			if (auto* task = world->getComponent<Task>(entity)) {
 				task->blockedReachStamp =
-					verdictAnchor(*m_navSystem, world->getComponent<SourceReachMemo>(entity), position.value, memory).stamp();
+					m_navSystem->reachFrom(position.value, radius, belief).settled
+						? verdictAnchor(*m_navSystem, world->getComponent<SourceReachMemo>(entity), position.value, memory).stamp()
+						: kUnsettledStamp;
 			}
 			LOG_DEBUG(Engine, "[Nav] Entity %llu: no believed route to (%.2f, %.2f), stopping",
 				static_cast<unsigned long long>(entity), goal.x, goal.y);

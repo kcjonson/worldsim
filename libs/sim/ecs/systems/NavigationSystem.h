@@ -139,12 +139,13 @@ class NavigationSystem : public ISystem {
 	// what that colonist REMEMBERS. The filter holds pointers into the caller's sets and is
 	// consumed synchronously.
 	//
-	// An Autonomous route (a colonist's own choice) whose goal lies in the start's reach square is
-	// searched inside that square, so it agrees with reaches() and nothing the camera loads changes
-	// it. An Ordered route (the player's) is searched wherever the meshed ground goes. Either is
+	// An Autonomous route (a colonist's own choice) is searched inside the start's reach square, so
+	// it agrees with reaches() and nothing the camera loads changes it; a goal outside the square has
+	// no route. An Ordered route (the player's) is searched wherever the meshed ground goes. Either is
 	// capped in expansions.
-	// A requester's replans toward the same goal keep the confinement (or none) its first plan had,
-	// while its start stays inside it; a new goal, or its route ending, starts afresh.
+	// A requester's replans toward the same goal keep the kind and the square (or none) its first
+	// plan had, while its start stays within its radius of the square; a new goal, or its route
+	// ending, starts afresh.
 	//
 	// When the nav search gives up in priced ground (more expansions than the structural walk
 	// warrants, see kNavExpansionFloor), the route is the structural walk, through the flora at its
@@ -180,8 +181,8 @@ class NavigationSystem : public ISystem {
 		std::int64_t				radiusMm			  = 0;
 		std::int64_t				startCell			  = 0;
 		std::uint64_t				startRegionGeneration = 0;
-		// No chunk the square touches is loaded with its ground still to mesh. While one is, a walk
-		// that fails may only be waiting on it: "not now", which is never remembered.
+		// Every chunk the square meets has its ground meshed. Until then a walk that fails may only be
+		// waiting on it: "not now", which is never remembered.
 		bool						settled = true;
 		geometry::nav::BeliefFilter belief;
 	};
@@ -324,6 +325,9 @@ class NavigationSystem : public ISystem {
 	// collision lets its mover through the trees and the forward snap leaves it alone while it
 	// follows it. Known for a route from the request that made it until its mover drops it.
 	[[nodiscard]] bool routeCrossesPricedFaces(const NavPath& path) const;
+	// The line comes within `radius` (mm) of a tree face on the nav mesh: how a route that isn't the
+	// nav search's own (the structural walk it falls back to) learns whether it crosses flora.
+	[[nodiscard]] bool passesTree(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const;
 
 	// True when `entity`, placed in `chunk`, is a flora ring in the nav mesh queries see. Collision
 	// pushes out of a flora collider only then, so the forward snap has had its turn first and the
@@ -554,8 +558,11 @@ class NavigationSystem : public ISystem {
 	void noteStructural(glm::vec2 lo, glm::vec2 hi, StructuralChange change);
 	// The chunk's ground is in the meshes (gathered and joined).
 	[[nodiscard]] bool groundMeshed(world::ChunkCoordinate coord) const;
-	// A chunk the box touches is loaded but its ground isn't meshed yet.
-	[[nodiscard]] bool groundPendingIn(const geometry::RectMm& box) const;
+	// Every chunk whose interior meets the box's interior has its ground meshed. The same "interiors
+	// meet" rule picks the chunks a stamp reads (forChunksMeeting), so a chunk that only touches a
+	// square's edge never enters either.
+	[[nodiscard]] bool groundMeshedThrough(const geometry::RectMm& box) const;
+	static void		   forChunksMeeting(const geometry::RectMm& box, const std::function<void(world::ChunkCoordinate)>& visit);
 	// As a join moves generation(), the routes current before it that no closing box crosses are
 	// stamped current.
 	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
@@ -568,9 +575,9 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] Rect viewportRect() const;
 	void			   updateDetail();
 	// The ring of the tree collider placed nearest `meters` that holds it, if any.
-	// A placed tree's collider: its box's centre and the distance from there to a corner. Tested as the
-	// padded box in the tree's own frame, the same box the nav mesh's tree ring has (a polygon
-	// collider by its bounding box), with no allocation.
+	// A placed tree's collider: its outline's centre and the distance from there to its farthest
+	// corner. Tested against the same outline the nav mesh's tree ring has (nav::floraOutline), in a
+	// scratch ring that keeps its storage, so no allocation once warm.
 	struct TreeCollider {
 		glm::vec2 centre{0.0F, 0.0F};
 		float	  extent = 0.0F;
@@ -655,6 +662,8 @@ class NavigationSystem : public ISystem {
 	mutable std::uint64_t structuralGeneration = 0;
 	// Structural changes per chunk, for the reach stamps, counted at the join.
 	mutable std::map<world::ChunkCoordinate, std::uint64_t, ChunkLess> chunkStructuralVersion;
+	mutable std::set<world::ChunkCoordinate, ChunkLess>				 unmeshedReported; // logged once each (groundMeshedThrough)
+	mutable geometry::Ring												 colliderScratch;  // treeColliderAt
 	std::vector<glm::vec2>												 anchors;
 	std::set<world::ChunkCoordinate, ChunkLess>							 anchorChunks;
 	// Routes requestPath gave that cross priced faces, by routeKey, each kept whole so a key that two

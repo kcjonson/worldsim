@@ -41,9 +41,18 @@ namespace nav {
 	}
 
 	std::optional<gnav::NavInputPolygon> floraRingFor(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
+		geometry::Ring ring;
+		if (!floraOutline(e, registry, ring)) {
+			return std::nullopt;
+		}
+		return gnav::NavInputPolygon{std::move(ring), true, kProvenanceTree};
+	}
+
+	bool floraOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
+		ring.clear();
 		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
 		if (def == nullptr || !def->collision.blocks()) {
-			return std::nullopt;
+			return false;
 		}
 
 		const float c  = std::cos(e.rotation);
@@ -60,7 +69,6 @@ namespace nav {
 			return toMm({wx, wy});
 		};
 
-		geometry::Ring ring;
 		if (def->collision.type == assets::CollisionShapeType::Rect) {
 			// The rect's 4 corners (local meters), half-extents inflated outward by
 			// the pad so the agent clears the trunk, then transformed -- so entity
@@ -84,13 +92,10 @@ namespace nav {
 		// A negative entity scale would flip winding; normalize so blocked rings
 		// are CCW like the rest, and drop anything degenerate.
 		if (ring.size() < 3) {
-			return std::nullopt;
+			return false;
 		}
 		geometry::ensureCounterClockwise(ring);
-		if (geometry::windingOrder(ring) == geometry::Winding::Degenerate) {
-			return std::nullopt;
-		}
-		return gnav::NavInputPolygon{std::move(ring), true, kProvenanceTree};
+		return geometry::windingOrder(ring) != geometry::Winding::Degenerate;
 	}
 
 	void extractWalls(const construction::ConstructionWorld& world, const assets::ConstructionRegistry& registry,
