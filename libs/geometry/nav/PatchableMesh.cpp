@@ -2256,7 +2256,7 @@ namespace geometry::nav {
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
 		forestsCurrent = false;
-		++patchEpoch;
+		patchEpoch = nextMeshGeneration();
 		return patch.run();
 	}
 
@@ -2315,7 +2315,7 @@ namespace geometry::nav {
 		onEdge.insert(std::lower_bound(onEdge.begin(), onEdge.end(), id), id);
 		retagEdge(door.a, door.b);
 		forestsCurrent = false;
-		++patchEpoch;
+		patchEpoch = nextMeshGeneration();
 		return id;
 	}
 
@@ -2335,7 +2335,7 @@ namespace geometry::nav {
 		freeDoors.push_back(id);
 		retagEdge(door.a, door.b);
 		forestsCurrent = false;
-		++patchEpoch;
+		patchEpoch = nextMeshGeneration();
 	}
 
 	// Each patch since the last refresh left a box holding every triangle and adjacency

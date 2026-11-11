@@ -1295,10 +1295,22 @@ namespace {
 		return c;
 	}
 
+	// Trees priced at kOraclePrice: the game's flora, cheap enough that some walks go
+	// through and some round.
+	constexpr double   kOraclePrice		= 4.0;
+	constexpr TagPrice kOraclePrices[] = {{kTree, kOraclePrice}};
+	// Priced walks are compared for the movers' radii: a priced search skips the forest
+	// pre-check, so each pair it cannot reach costs a search of the whole mesh.
+	constexpr std::int64_t kOracleMaxPricedRadiusMm = 300;
+
 	// Internal bounds edges must not change an answer: the same rings under one bounds
 	// square and under a grid of adjacent squares give the same path verdicts, reach
 	// verdicts, and bottlenecks, path lengths that agree (lengthsAgree), and the same
-	// corridor width at every apex of a triangle both meshes have.
+	// corridor width at every apex of a triangle both meshes have. With the trees priced,
+	// the same verdicts, costs that agree as lengths do (a radius of slack weighed at the
+	// price). A walk through and a way round whose costs agree that closely are a tie the
+	// tilings may settle either way, so whether a walk crosses priced faces is counted,
+	// not required to match.
 	void expectBoundsSplitInvisible(std::int64_t k, std::uint32_t seed) {
 		const TiledGround g = tiledRealRings(k);
 		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000});
@@ -1320,6 +1332,11 @@ namespace {
 		int									   verdictDiffers = 0;
 		int									   reachDiffers	  = 0;
 		int									   bottleneckDiffers = 0;
+		int									   pricedCompared	 = 0;
+		int									   pricedThrough	 = 0;
+		int									   flagsDiffer		 = 0;
+		BeliefFilter						   priced;
+		priced.prices = kOraclePrices;
 		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
 			const Vec2i64& a = points[i];
 			const Vec2i64& b = points[i + 1];
@@ -1349,6 +1366,22 @@ namespace {
 						++reachDiffers;
 					}
 				}
+				if (radius > kOracleMaxPricedRadiusMm) {
+					continue;
+				}
+				const PathResult pw = pathThrough(wv, a, b, radius, priced);
+				const PathResult ps = pathThrough(sv, a, b, radius, priced);
+				EXPECT_EQ(pw.reachable, ps.reachable) << "priced, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
+				if (pw.reachable && ps.reachable) {
+					++pricedCompared;
+					pricedThrough += pw.crossesPricedFaces ? 1 : 0;
+					const double longer	   = std::max(pw.cost, ps.cost);
+					const double tolerance = radius >= kWideDiscRadiusMm ? kWideDiscToleranceFraction * longer
+																		 : kPathLengthToleranceFraction * longer +
+																			   kPathLengthToleranceRadii * kOraclePrice * static_cast<double>(radius);
+					flagsDiffer += pw.crossesPricedFaces != ps.crossesPricedFaces ? 1 : 0;
+					EXPECT_NEAR(pw.cost, ps.cost, tolerance) << "priced, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
+				}
 			}
 		}
 		EXPECT_GT(lengths, 100);
@@ -1358,6 +1391,11 @@ namespace {
 		EXPECT_EQ(verdictDiffers, 0);
 		EXPECT_EQ(reachDiffers, 0);
 		EXPECT_EQ(bottleneckDiffers, 0);
+		EXPECT_GT(pricedCompared, 60);
+		EXPECT_GT(pricedThrough, 10) << "some priced walks must go through trees for the comparison to bind";
+		::testing::Test::RecordProperty("pricedFlagsDiffering", flagsDiffer);
+		::testing::Test::RecordProperty("pricedCompared", pricedCompared);
+		::testing::Test::RecordProperty("pricedThrough", pricedThrough);
 
 		std::map<Corners, std::int32_t> wholeTriangles;
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(whole.triangles().size()); ++t) {
@@ -1783,4 +1821,28 @@ TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 	const NavView view = h.mesh.view();
 	EXPECT_DEBUG_DEATH(EXPECT_EQ(reachFrom(view, {100, 100}, 300).startTri, -1), "no reachability forests");
 	EXPECT_DEBUG_DEATH(EXPECT_TRUE(reaches(view, ReachFrom{}, {9000, 9000})), "no reachability forests");
+}
+
+// A long hedge on an open 512 m chunk, priced: going through costs far less than going
+// round its end, whatever the bounds sides are split into, and says so.
+TEST(PatchableMesh, PricedHedgeIsCrossedOnEveryTiling) {
+	constexpr TagPrice kTrees[] = {{kTree, 50.0}};
+	for (const std::int64_t split : {64000, 16000}) {
+		PatchableMesh mesh({.maxBoundsEdgeMm = split});
+		PatchEdits	  edits;
+		edits.adds.push_back(bounds(rect(0, 0, 512000, 512000)));
+		for (std::int64_t y = 2000; y <= 60000; y += 500) {
+			edits.adds.push_back(blocked(rect(39700, y - 300, 40300, y + 300)));
+		}
+		mesh.applyPatch(edits);
+		mesh.refreshWidths();
+		BeliefFilter belief;
+		belief.prices = kTrees;
+		const PathResult r = pathThrough(mesh.view(), {37000, 30000}, {43000, 30000}, 300, belief);
+		ASSERT_TRUE(r.reachable) << "split " << split;
+		EXPECT_TRUE(r.crossesPricedFaces) << "split " << split;
+		EXPECT_EQ(pathLengthMm(r), 6000) << "split " << split;
+		// 5.4 m of open ground and the 0.6 m hedge at 50 times.
+		EXPECT_NEAR(r.cost, 5400.0 + 50.0 * 600.0, 4.0) << "split " << split;
+	}
 }

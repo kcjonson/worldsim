@@ -138,8 +138,8 @@ namespace geometry::nav {
 		// What path queries and forest builds read (see NavView).
 		NavView view() const;
 
-		// Bumped by every patch and door edit: anything keyed by triangle id is stale once
-		// it moves.
+		// Moves on every patch and door edit, to a value no mesh state has had before
+		// (nextMeshGeneration): anything keyed by triangle id is stale once it moves.
 		std::uint64_t epoch() const { return patchEpoch; }
 
 		// Full consistency check; the first violation found, or empty.
@@ -323,7 +323,7 @@ namespace geometry::nav {
 		ReachabilityForests forests;
 		ForestScratch		forestScratch;
 		bool				forestsCurrent = false;
-		std::uint64_t		patchEpoch	   = 0;
+		std::uint64_t		patchEpoch	   = nextMeshGeneration();
 	};
 
 } // namespace geometry::nav

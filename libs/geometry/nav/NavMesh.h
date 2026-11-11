@@ -4,6 +4,8 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
+#include <utility>
 #include <vector>
 
 // Navmesh assembler: turn a set of tagged polygons (one or more walkable borders
@@ -250,6 +252,10 @@ namespace geometry::nav {
 		std::int32_t						   levels = 0; // number of lifting levels
 	};
 
+	// A process-wide counter, never repeating: what a mesh state is known by (see
+	// NavView::epoch).
+	std::uint64_t nextMeshGeneration();
+
 	struct NavMesh {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
@@ -264,6 +270,9 @@ namespace geometry::nav {
 		//                  since the most optimistic belief routes through unseen walls.
 		ReachabilityForest truthForest;
 		ReachabilityForest terrainForest;
+		// Taken when the mesh is made; a copy carries its source's along with its content.
+		// A caller that edits a built mesh in place takes a fresh one.
+		std::uint64_t generation = nextMeshGeneration();
 	};
 
 	// Build the navmesh from tagged input. The triangles tile the walkable bounds:
@@ -298,7 +307,8 @@ namespace geometry::nav {
 		const ReachabilityForest* forest(bool truth) const { return forestIn(owner, truth); }
 		// False while corridor widths lag behind a patch; queries read widths.
 		bool widthsCurrent() const { return widthsCurrentIn(owner); }
-		// Changes whenever the triangles or their tags do.
+		// Changes whenever the triangles or their tags do, to a value no mesh state in the
+		// process has had before (nextMeshGeneration).
 		std::uint64_t epoch() const { return epochIn(owner); }
 	};
 
@@ -336,16 +346,27 @@ namespace geometry::nav {
 
 	// Scratch for corridor-width searches, reused across calls.
 	struct WidthSearch {
-		std::vector<std::uint32_t> visited; // visited[t] == stamp: seen by the current search
-		std::uint32_t			   stamp = 0;
+		std::vector<std::uint32_t>				  visited; // visited[t] == stamp: seen by the current search
+		std::uint32_t							  stamp = 0;
+		std::vector<std::pair<std::int32_t, int>> star; // freeApexWidthMm: an apex's triangles and corners
 	};
 
 	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)
 	// that passes between the two edges meeting there, against common-knowledge
-	// obstacles. A width at or above maxClearanceMm reads kUnconstrainedWidth, and the
+	// obstacles, faces tagged one of `openTags` read as open ground. A width at or above maxClearanceMm reads kUnconstrainedWidth, and the
 	// search never looks farther than maxClearanceMm from the apex, so the width depends
 	// only on `tri` and the triangles that come within maxClearanceMm of the apex.
-	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
+	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm,
+								 std::span<const std::int64_t> openTags = {});
+
+	// For a path query's squeeze, where the apex is no obstacle vertex (as a vertex two
+	// priced faces share is once both read as open): the widest disc centred on the apex,
+	// which crosses both edges there (kUnconstrainedWidth from maxClearanceMm on); 0 at an
+	// obstacle vertex. corridorWidthMm measures from the apex as if it were an obstacle,
+	// which is right at an obstacle corner and narrower than the gap at a free one; a
+	// passage admits a disc either measure admits. Stored widths stay corridorWidthMm.
+	std::int64_t freeApexWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm,
+								 std::span<const std::int64_t> openTags);
 
 	// The reconstruction-tree node whose subtree is every triangle a disc of `diameterMm` can
 	// POSSIBLY reach from `tri`: tri's highest ancestor whose capacity admits the disc. A goal

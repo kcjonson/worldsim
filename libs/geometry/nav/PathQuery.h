@@ -4,6 +4,7 @@
 #include "NavMesh.h"
 
 #include <cstdint>
+#include <span>
 #include <unordered_set>
 #include <vector>
 
@@ -35,9 +36,12 @@ namespace geometry::nav {
 		std::int64_t nodesExpanded = 0;
 		std::int64_t peakOpenSet   = 0;
 
-		// What the walk costs: its length, with each piece through a priced face (or a
-		// gap only priced faces narrow) weighted by its multiplier (BeliefFilter::pricing).
-		// Equal to the length when nothing priced is crossed.
+		// What the walk costs: its length, with each piece through a priced face weighted
+		// by its multiplier (BeliefFilter::prices), and a squeeze past priced faces charged
+		// its price over at most the disc's diameter of the walk. Equal to the length when
+		// nothing priced is crossed. It is the cost of the
+		// returned path, the corridor's taut walk; inside a corridor the path does not
+		// bend away from priced faces to save cost.
 		double cost = 0.0;
 		// The walk runs through a face crossed at a price (flora it pushes through, a
 		// waiting mover's footprint): the caller acts on it before the mover sets off.
@@ -58,35 +62,28 @@ namespace geometry::nav {
 	// junction with no incident-wall id) and always blocks, filter or not. A junction
 	// tagged with a positive incident-wall segment id is belief-gated like that wall.
 	//
-	// `pricing` (optional) makes faces this filter would block crossable at a price the
-	// caller sets per face, by tag and by place: the hook is asked about each such face
-	// of the tags it names that the search meets, with a point inside it (once per face
-	// per query), and answers a multiplier (each mm walked inside costs that many), or
-	// kFaceBlocked. A multiplier of exactly 1 makes the face open ground for this query,
-	// the disc included (no corner inset against it, no width gate from it), so flora
-	// priced at 1 where detail is off changes no answer. Round a vertex whose priced faces
-	// all carry one tag, one of them stands for all (a tree's footprint does not straddle
-	// a detail boundary in practice). The
-	// search takes the cheapest walk: round by free ground while that is less than the
-	// way through at its price, through otherwise. A gap too narrow for the disc that only
-	// priced faces narrow is squeezed through at their highest price; one a real block
-	// narrows stays shut. The reachability forests treat priced faces as walls, so the
-	// forest pre-check is skipped while a hook is set.
-	constexpr double kFaceBlocked = 0.0;
-	using FacePrice				  = double (*)(const void* context, const NavTriangle& face, const Vec2i64& inside);
-	struct FacePricing {
-		FacePrice	price	= nullptr; // null: no face is priced, the filter's blocks stand
-		const void* context = nullptr;
-		// The tags the hook prices: it is asked only about faces carrying one of these,
-		// and every other blocked face stays blocked without asking.
-		const std::int64_t* tags	 = nullptr;
-		std::size_t			tagCount = 0;
+	// `prices` (optional) makes faces this filter would block crossable at a price: a
+	// face whose faceBlocker is a listed tag costs that tag's multiplier per mm walked
+	// inside it, the same everywhere in the mesh for the query. A tag not listed blocks as
+	// it would without prices. A priced face is still an obstacle a disc keeps its radius
+	// from while it walks free ground; walking into, through, or out of priced ground it
+	// keeps clear only of what it cannot cross. The search takes the cheapest walk: round
+	// by free ground while that is less than the way through at its price, through
+	// otherwise. A gap too narrow for the disc is squeezed through only when it would
+	// admit the disc with priced faces read as open ground, at the least price that opens
+	// it (the higher of two tags that both narrow it), and free beside the priced face
+	// the walk crosses anyway at that price; a gap anything else narrows stays shut. The
+	// reachability forests treat priced faces as walls, so the forest pre-check is
+	// skipped while prices are set.
+	struct TagPrice {
+		std::int64_t tag		= 0;   // a NavTriangle::faceBlocker value; each listed once
+		double		 multiplier = 2.0; // cost per mm walked inside, finite and above 1
 	};
 
 	struct BeliefFilter {
 		const std::unordered_set<std::uint64_t>* knownSegments = nullptr;
 		const std::unordered_set<std::uint64_t>* knownOpenings = nullptr;
-		FacePricing								 pricing;
+		std::span<const TagPrice>				 prices;
 	};
 
 	// Triangle containing p (CCW point-in-triangle, on-edge counts as inside);

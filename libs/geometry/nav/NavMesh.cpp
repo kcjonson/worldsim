@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -76,18 +77,20 @@ namespace geometry::nav {
 		// incident obstacle edges (no bare point obstacles); the paper's edge-based
 		// search therefore captures every obstacle the disc must round.
 
-		bool isCommonKnowledgeBlocked(std::int64_t faceBlocker) {
-			return faceBlocker < 0 && faceBlocker != kNoBlocker;
+		// A width search may be asked to treat some terrain tags as open ground (a path
+		// query's priced flora): those faces are no obstacle to it.
+		bool isCommonKnowledgeBlocked(std::int64_t faceBlocker, std::span<const std::int64_t> openTags) {
+			return faceBlocker < 0 && faceBlocker != kNoBlocker && std::find(openTags.begin(), openTags.end(), faceBlocker) == openTags.end();
 		}
 
 		// Edge e of triangle ti is an obstacle edge iff exactly one of the two faces it
 		// separates is common-knowledge-blocked (the boundary of a water/flora region).
 		// A mesh-boundary edge (neighbor == -1) has no obstacle face outside it, so a
 		// floor border is not an obstacle edge (scope: terrain/flora only).
-		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e) {
-			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker);
+		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e, std::span<const std::int64_t> openTags) {
+			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker, openTags);
 			const std::int32_t nb	 = view.triangle(ti).neighbor[static_cast<std::size_t>(e)];
-			const bool		   other = nb < 0 ? false : isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker);
+			const bool		   other = nb < 0 ? false : isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker, openTags);
 			return self != other;
 		}
 
@@ -168,6 +171,18 @@ namespace geometry::nav {
 		}
 
 		// floor(|d|) < bound, decided on squares: no root is taken.
+		// A fresh mark for one search's triangles.
+		void beginWidthSearch(const NavView& view, WidthSearch& search) {
+			if (search.visited.size() < static_cast<std::size_t>(view.triangleSlots())) {
+				search.visited.resize(static_cast<std::size_t>(view.triangleSlots()), 0);
+			}
+			// A wrapped stamp would match marks left by searches long ago.
+			if (++search.stamp == 0) {
+				std::fill(search.visited.begin(), search.visited.end(), 0);
+				search.stamp = 1;
+			}
+		}
+
 		bool lengthBelow(const Vec2i64& d, std::int64_t bound) {
 			return dot(d, d) < Int128::product(bound, bound);
 		}
@@ -185,7 +200,8 @@ namespace geometry::nav {
 		// The visited stamp only guards against a non-Delaunay sliver: Demyen proves (Thm
 		// 4.3.4/4.3.6) a CDT width search never revisits a triangle, and an already-visited
 		// triangle was fully explored from this apex, so no obstacle is dropped.
-		std::int64_t searchWidth(const NavView& view, WidthSearch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound) {
+		std::int64_t searchWidth(const NavView& view, WidthSearch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound,
+								 std::span<const std::int64_t> openTags) {
 			const NavTriangle& tri = view.triangle(ti);
 			const Vec2i64&	   u   = view.vertex(tri.v[static_cast<std::size_t>(e)]);
 			const Vec2i64&	   v   = view.vertex(tri.v[static_cast<std::size_t>((e + 1) % 3)]);
@@ -200,7 +216,7 @@ namespace geometry::nav {
 			if (!lineDistanceBelow(c, u, v, bound)) {
 				return bound; // nothing closer this way
 			}
-			if (isObstacleEdge(view, ti, e)) {
+			if (isObstacleEdge(view, ti, e, openTags)) {
 				return floorDistancePointToSegment(c, u, v); // closest obstacle is this constrained edge
 			}
 			// Unconstrained: recurse into the opposite triangle's two other edges.
@@ -224,8 +240,8 @@ namespace geometry::nav {
 				return bound; // adjacency inconsistency; bail safely
 			}
 			std::int64_t out = bound;
-			out = searchWidth(view, scratch, c, nb, (back + 1) % 3, out);
-			out = searchWidth(view, scratch, c, nb, (back + 2) % 3, out);
+			out = searchWidth(view, scratch, c, nb, (back + 1) % 3, out, openTags);
+			out = searchWidth(view, scratch, c, nb, (back + 2) % 3, out, openTags);
 			return out;
 		}
 
@@ -366,7 +382,8 @@ namespace geometry::nav {
 	// bounds the width only when it is an obstacle vertex, and an edge's obstacle status
 	// is read only when the edge is nearer than the bound, which keeps every read within
 	// maxClearanceMm of the apex.
-	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm) {
+	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
+								 std::span<const std::int64_t> openTags) {
 		const NavTriangle& tri	  = view.triangle(ti);
 		const int		   cEdge  = (apex + 1) % 3;
 		const int		   bEdge  = (apex + 2) % 3;
@@ -376,10 +393,10 @@ namespace geometry::nav {
 		auto			   capped = [&](std::int64_t d) { return d >= maxClearanceMm ? kUnconstrainedWidth : d; };
 
 		std::int64_t d = maxClearanceMm;
-		if (lengthBelow(a - c, d) && (isObstacleEdge(view, ti, cEdge) || isObstacleEdge(view, ti, apex))) {
+		if (lengthBelow(a - c, d) && (isObstacleEdge(view, ti, cEdge, openTags) || isObstacleEdge(view, ti, apex, openTags))) {
 			d = floorSqrtSquared(dot(a - c, a - c));
 		}
-		if (lengthBelow(b - c, d) && (isObstacleEdge(view, ti, cEdge) || isObstacleEdge(view, ti, bEdge))) {
+		if (lengthBelow(b - c, d) && (isObstacleEdge(view, ti, cEdge, openTags) || isObstacleEdge(view, ti, bEdge, openTags))) {
 			d = floorSqrtSquared(dot(b - c, b - c));
 		}
 		// An obtuse base angle: the nearer base vertex is the closest obstacle in the
@@ -387,19 +404,78 @@ namespace geometry::nav {
 		if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
 			return capped(d);
 		}
-		if (lineDistanceBelow(c, a, b, d) && isObstacleEdge(view, ti, cEdge)) {
+		if (lineDistanceBelow(c, a, b, d) && isObstacleEdge(view, ti, cEdge, openTags)) {
 			return capped(floorDistancePointToSegment(c, a, b));
 		}
-		if (search.visited.size() < static_cast<std::size_t>(view.triangleSlots())) {
-			search.visited.resize(static_cast<std::size_t>(view.triangleSlots()), 0);
-		}
-		// A wrapped stamp would match marks left by searches long ago.
-		if (++search.stamp == 0) {
-			std::fill(search.visited.begin(), search.visited.end(), 0);
-			search.stamp = 1;
-		}
+		beginWidthSearch(view, search);
 		search.visited[static_cast<std::size_t>(ti)] = search.stamp;
-		return capped(searchWidth(view, search, c, ti, cEdge, d));
+		return capped(searchWidth(view, search, c, ti, cEdge, d, openTags));
+	}
+
+	std::int64_t freeApexWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
+								 std::span<const std::int64_t> openTags) {
+		// The star of the apex, both ways round from ti: its triangles and each one's
+		// corner on the apex. An obstacle edge meeting the apex makes it an obstacle vertex.
+		const std::uint32_t						   v = view.triangle(ti).v[static_cast<std::size_t>(apex)];
+		std::vector<std::pair<std::int32_t, int>>& star = search.star;
+		star.clear();
+		auto cornerOf = [&](std::int32_t t) {
+			const NavTriangle& tri = view.triangle(t);
+			return tri.v[0] == v ? 0 : (tri.v[1] == v ? 1 : 2);
+		};
+		bool closed = false;
+		for (const int turn : {2, 0}) {
+			std::int32_t cur = ti;
+			for (int guard = 0; guard < 256 && !closed; ++guard) {
+				const std::int32_t nb = view.triangle(cur).neighbor[static_cast<std::size_t>((cornerOf(cur) + turn) % 3)];
+				if (nb < 0) {
+					break;
+				}
+				closed = nb == ti;
+				if (!closed) {
+					cur = nb;
+					star.push_back({cur, cornerOf(cur)});
+				}
+			}
+			if (closed) {
+				break;
+			}
+		}
+		star.push_back({ti, apex});
+		for (const auto& [t, i] : star) {
+			if (isObstacleEdge(view, t, i, openTags) || isObstacleEdge(view, t, (i + 2) % 3, openTags)) {
+				return 0;
+			}
+		}
+		// A free apex: a disc centred on it crosses both edges, so it passes if it fits
+		// there. Its clearance is the distance to the nearest obstacle all round, found as
+		// the wedge search finds it, across every triangle of the star.
+		const Vec2i64&	   c	 = view.vertex(v);
+		const std::int64_t bound = (maxClearanceMm + 1) / 2;
+		std::int64_t	   d	 = bound;
+		beginWidthSearch(view, search);
+		for (const auto& [t, i] : star) {
+			search.visited[static_cast<std::size_t>(t)] = search.stamp;
+		}
+		for (const auto& [t, i] : star) {
+			const NavTriangle& tri = view.triangle(t);
+			const int		   far = (i + 1) % 3;
+			if (isObstacleEdge(view, t, far, openTags)) {
+				for (const int k : {far, (i + 2) % 3}) {
+					const Vec2i64& x = view.vertex(tri.v[static_cast<std::size_t>(k)]);
+					if (lengthBelow(x - c, d)) {
+						d = floorSqrtSquared(dot(x - c, x - c));
+					}
+				}
+			}
+			d = searchWidth(view, search, c, t, far, d, openTags);
+		}
+		return d >= bound ? kUnconstrainedWidth : 2 * d;
+	}
+
+	std::uint64_t nextMeshGeneration() {
+		static std::atomic<std::uint64_t> next{1};
+		return next.fetch_add(1, std::memory_order_relaxed);
 	}
 
 	NavView navView(const NavMesh& mesh) {
@@ -413,7 +489,7 @@ namespace geometry::nav {
 			   return truth ? &mesh.truthForest : &mesh.terrainForest;
 		};
 		view.widthsCurrentIn = [](const void*) { return true; };
-		view.epochIn		 = [](const void*) { return std::uint64_t{0}; };
+		view.epochIn		 = [](const void* owner) { return static_cast<const NavMesh*>(owner)->generation; };
 		return view;
 	}
 

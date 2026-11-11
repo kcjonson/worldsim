@@ -802,15 +802,13 @@ namespace {
 	}
 
 	// The game's query shape: many movers walking 20 to 100 m to a few goals through
-	// meshed flora, with the trees unpriced (blocks), priced as near the camera, or
-	// priced where half the field has detail on and free where it is off.
-	enum class Pricing { None, Trees, HalfOff };
+	// meshed flora, with the trees unpriced (blocks) or priced (the game's flora price).
+	enum class Pricing { None, Trees };
 
 	struct RequestShape {
 		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000}};
 		std::vector<Vec2i64>				 goals;
 		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
-		std::int64_t						 midX = 0;
 	};
 
 	void loadRequestShape(RequestShape& s, Fixture f) {
@@ -822,7 +820,6 @@ namespace {
 		Vec2i64 lo;
 		Vec2i64 hi;
 		boxOf(rings.base.front().ring, lo, hi);
-		s.midX = (lo.x + hi.x) / 2;
 		std::mt19937 rng(91);
 		auto		 walkable = [&](const Vec2i64& p) {
 			const std::int32_t t = s.detail.locate(p);
@@ -851,28 +848,15 @@ namespace {
 		}
 	}
 
-	// The game's flora pricing, in miniature: trees at `multiplier` where detail is on
-	// (from detailFromX east), free where it is off; anything else stays blocked.
-	struct TreePricing {
-		double		 multiplier	 = 50.0;
-		std::int64_t detailFromX = std::numeric_limits<std::int64_t>::min();
-	};
-
-	double priceTrees(const void* context, const NavTriangle& face, const Vec2i64& inside) {
-		const TreePricing& pricing = *static_cast<const TreePricing*>(context);
-		if (face.faceBlocker != kProvenanceTree) {
-			return kFaceBlocked;
-		}
-		return inside.x < pricing.detailFromX ? 1.0 : pricing.multiplier;
-	}
+	// The game's flora price: trees cost 50 times their length; anything else stays blocked.
+	constexpr TagPrice kTreePrices[] = {{kProvenanceTree, 50.0}};
 
 	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p) {
 		RequestShape s;
 		loadRequestShape(s, f);
-		const TreePricing pricing{50.0, p == Pricing::HalfOff ? s.midX : std::numeric_limits<std::int64_t>::min()};
-		BeliefFilter	  belief;
-		if (p != Pricing::None) {
-			belief.pricing = {&priceTrees, &pricing, &kProvenanceTree, 1};
+		BeliefFilter belief;
+		if (p == Pricing::Trees) {
+			belief.prices = kTreePrices;
 		}
 		std::int64_t nodes = 0;
 		std::int64_t priced = 0;
@@ -908,10 +892,9 @@ namespace {
 		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
 		PatchableMesh mesh;
 		untimedPatch(mesh, adding(all));
-		const TreePricing pricing{50.0};
-		BeliefFilter	  belief;
-		belief.pricing = {&priceTrees, &pricing, &kProvenanceTree, 1};
-		PathResult r;
+		BeliefFilter belief;
+		belief.prices = kTreePrices;
+		PathResult	 r;
 		for (auto _ : state) {
 			r = pathThrough(mesh.view(), g + Vec2i64{20000, 20000}, g, 300, belief);
 			benchmark::DoNotOptimize(r);
@@ -1025,10 +1008,8 @@ BENCHMARK_CAPTURE(BM_PathBuilt, control, Fixture::Control)->Unit(benchmark::kMil
 BENCHMARK_CAPTURE(BM_PathBuilt, realRings, Fixture::RealRings)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_RequestShape, control_unpriced, Fixture::Control, Pricing::None)->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_RequestShape, control_treesPriced, Fixture::Control, Pricing::Trees)->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_RequestShape, control_halfDetailOff, Fixture::Control, Pricing::HalfOff)->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_RequestShape, realRings_unpriced, Fixture::RealRings, Pricing::None)->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_RequestShape, realRings_treesPriced, Fixture::RealRings, Pricing::Trees)->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_RequestShape, realRings_halfDetailOff, Fixture::RealRings, Pricing::HalfOff)->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_SealedGoal)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_structural, Fixture::ManyTrees, false)->Unit(benchmark::kMillisecond);
