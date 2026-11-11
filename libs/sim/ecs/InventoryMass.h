@@ -56,7 +56,8 @@ namespace ecs {
 			if (def != nullptr && def->category == assets::ItemCategory::Tool) {
 				return; // equipment, not cargo
 			}
-			total += registry.getItemMassKg(defName) * static_cast<float>(quantity);
+			const float massKg = def != nullptr && def->itemProperties.has_value() ? def->itemProperties->massKg : 1.0F;
+			total += massKg * static_cast<float>(quantity);
 		};
 
 		if (inv.leftHand.has_value()) {
@@ -115,6 +116,11 @@ namespace ecs {
 		return massUnitsPerTrip(carryCapacityKg, registry.getItemMassKg(defName));
 	}
 
+	/// cargoUnitsPerTrip by interned item id.
+	[[nodiscard]] inline uint32_t cargoUnitsPerTrip(const assets::AssetRegistry& registry, uint32_t item, float carryCapacityKg) {
+		return massUnitsPerTrip(carryCapacityKg, registry.itemMassKg(item));
+	}
+
 	// ── Hand-carried bulk materials ─────────────────────────────────────────────
 	// Two-hand items (handsRequired >= 2, e.g. Wood) live in the hands as a weight-limited
 	// armful and never enter the backpack, so anything that reads or consumes materials must
@@ -124,6 +130,12 @@ namespace ecs {
 	/// True if `defName` must be carried in both hands (so it lives in the hands, not the pack).
 	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, const std::string& defName) {
 		const auto* def = registry.getDefinition(defName);
+		return def != nullptr && def->handsRequired >= 2;
+	}
+
+	/// itemIsTwoHand by interned item id.
+	[[nodiscard]] inline bool itemIsTwoHand(const assets::AssetRegistry& registry, uint32_t item) {
+		const auto* def = registry.getDefinitionById(item);
 		return def != nullptr && def->handsRequired >= 2;
 	}
 
@@ -218,7 +230,31 @@ namespace ecs {
 	/// their take with this, so the AI's no-room gate and what they lift are one rule.
 	/// `carriedKg` is carriedCargoMassKg(inv), passed so a caller asking about several items sums it once.
 	[[nodiscard]] inline uint32_t
-	pickupUnitsThatFit(const Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName, float carriedKg) {
+	pickupUnitsThatFit(const Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName, float carriedKg);
+
+	/// pickupUnitsThatFit by interned item id, for the AI, which asks it of every item it weighs.
+	[[nodiscard]] inline uint32_t pickupUnitsThatFit(const Inventory& inv, const assets::AssetRegistry& registry, uint32_t item, float carriedKg) {
+		const auto*		   def = registry.getDefinitionById(item);
+		const std::string& defName = registry.getDefName(item);
+		const float		   massKg = registry.itemMassKg(item);
+		const uint32_t	   stackCap = Inventory::stackSizeOf(def);
+		if (def == nullptr || def->handsRequired < 2) {
+			const uint32_t byWeight = massUnitsThatFit(inv.carryCapacityKg - carriedKg, massKg, UINT32_MAX);
+			return std::min(byWeight, inv.addableCount(defName, stackCap));
+		}
+		for (const auto* hand : {&inv.leftHand, &inv.rightHand}) {
+			if (hand->has_value() && (*hand)->defName != defName && itemIsTwoHand(registry, (*hand)->defName)) {
+				return 0;
+			}
+		}
+		const uint32_t held = handHeldQuantity(inv, defName);
+		if (held >= stackCap) {
+			return 0;
+		}
+		return std::min(stackCap - held, massUnitsThatFit(inv.carryCapacityKg - carriedKg, massKg, UINT32_MAX));
+	}
+
+	inline uint32_t pickupUnitsThatFit(const Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName, float carriedKg) {
 		if (!itemIsTwoHand(registry, defName)) {
 			const uint32_t byWeight = massUnitsThatFit(inv.carryCapacityKg - carriedKg, registry.getItemMassKg(defName), UINT32_MAX);
 			return std::min(byWeight, inv.addableCount(defName));

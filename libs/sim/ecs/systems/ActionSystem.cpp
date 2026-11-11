@@ -223,10 +223,10 @@ namespace ecs {
 		const bool		   haulLifts = task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw);
 		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
 		const uint32_t	   heldBefore = cutLands	? ecs::availableQuantity(inventory, yieldDefName)
-											: haulLifts ? ecs::availableQuantity(inventory, task.haulItemDefName)
+											: haulLifts ? ecs::availableQuantity(inventory, assets::AssetRegistry::Get().getDefName(task.haulItemDefNameId))
 														: 0U;
 		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
-		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(assets::AssetRegistry::Get(), task), heldBefore) : 0U;
+		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(task), heldBefore) : 0U;
 
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
@@ -273,8 +273,9 @@ namespace ecs {
 		if (haulLifts) {
 			// Of food, only what this pickup lifted is cargo; what the colonist already had is its own
 			// provisions. Anything else it holds of the item rides along.
-			const uint32_t held = ecs::availableQuantity(inventory, task.haulItemDefName);
-			const auto*	   itemDef = assets::AssetRegistry::Get().getDefinition(task.haulItemDefName);
+			const auto&	   registry = assets::AssetRegistry::Get();
+			const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(task.haulItemDefNameId));
+			const auto*	   itemDef = registry.getDefinitionById(task.haulItemDefNameId);
 			const uint32_t cargo =
 				itemDef != nullptr && itemDef->isEdible() ? (held > heldBefore ? held - heldBefore : 0U) + carriedBefore : held;
 			// Nothing came off the source (gone, emptied by another hauler, or no room to take it):
@@ -283,7 +284,7 @@ namespace ecs {
 				LOG_DEBUG(
 					Engine,
 					"[Action] Haul pickup of %s at (%.1f, %.1f) collected nothing - ending the haul",
-					task.haulItemDefName.c_str(),
+					registry.getDefName(task.haulItemDefNameId).c_str(),
 					task.haulSourcePosition.x,
 					task.haulSourcePosition.y
 				);
@@ -462,7 +463,7 @@ namespace ecs {
 		}
 
 		task.type = TaskType::Haul;
-		task.haulItemDefName = itemDefName;
+		task.haulItemDefNameId = item;
 		task.haulQuantity = quantity;
 		task.haulFromInventory = true;
 		task.haulSourceStorageId = 0;

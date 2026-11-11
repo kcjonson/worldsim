@@ -1399,6 +1399,9 @@ namespace assets {
 	}
 
 	const AssetDefinition* AssetRegistry::getDefinition(const std::string& defName) const {
+#ifdef DEVELOPMENT_BUILD
+		m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+#endif
 		auto it = definitions.find(defName);
 		if (it != definitions.end()) {
 			return &it->second;
@@ -2011,6 +2014,7 @@ namespace assets {
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
 		m_harvestablesByYieldId.clear();
+		m_harvestYieldIds.clear();
 		m_validationReport.issues.clear();
 		m_loadProgress.started.store(false);
 		m_loadProgress.done.store(false);
@@ -2076,6 +2080,7 @@ namespace assets {
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
 		m_harvestablesByYieldId.clear();
+		m_harvestYieldIds.clear();
 
 		// Reserve ID 0 as "invalid"
 		m_idToDefName.push_back("");
@@ -2104,10 +2109,17 @@ namespace assets {
 	}
 
 	void AssetRegistry::indexHarvestYield(const AssetDefinition& def, uint32_t id) {
+		if (id < m_harvestYieldIds.size()) {
+			m_harvestYieldIds[id] = 0;
+		}
 		if (!def.capabilities.harvestable.has_value() || def.capabilities.harvestable->yieldDefName.empty()) {
 			return;
 		}
 		const uint32_t yieldId = internName(def.capabilities.harvestable->yieldDefName);
+		if (id >= m_harvestYieldIds.size()) {
+			m_harvestYieldIds.resize(id + 1, 0);
+		}
+		m_harvestYieldIds[id] = yieldId;
 		if (yieldId >= m_harvestablesByYieldId.size()) {
 			m_harvestablesByYieldId.resize(yieldId + 1);
 		}
@@ -2139,6 +2151,9 @@ namespace assets {
 	}
 
 	uint32_t AssetRegistry::getDefNameId(const std::string& defName) const {
+#ifdef DEVELOPMENT_BUILD
+		m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+#endif
 		auto it = m_defNameToId.find(defName);
 		if (it != m_defNameToId.end()) {
 			return it->second;
@@ -2174,9 +2189,22 @@ namespace assets {
 		return 1.0F;
 	}
 
+	float AssetRegistry::itemMassKg(uint32_t id) const {
+		const auto* def = getDefinitionById(id);
+		return def != nullptr && def->itemProperties.has_value() ? def->itemProperties->massKg : 1.0F;
+	}
+
+	uint32_t AssetRegistry::harvestYieldId(uint32_t id) const {
+		return id < m_harvestYieldIds.size() ? m_harvestYieldIds[id] : 0U;
+	}
+
+	bool AssetRegistry::yieldsEdible(uint32_t id) const {
+		const auto* yield = getDefinitionById(harvestYieldId(id));
+		return yield != nullptr && yield->isEdible();
+	}
+
 	const std::string& AssetRegistry::getToolType(uint32_t id) const {
-		const auto& defName = getDefName(id);
-		const auto* def = getDefinition(defName);
+		const auto* def = getDefinitionById(id);
 		if (def != nullptr) {
 			return def->toolType;
 		}
@@ -2289,6 +2317,7 @@ namespace assets {
 		m_capabilityMasks.clear();
 		m_edibleItemNames.clear();
 		m_harvestablesByYieldId.clear();
+		m_harvestYieldIds.clear();
 		LOG_DEBUG(Engine, "Cleared all definitions");
 	}
 

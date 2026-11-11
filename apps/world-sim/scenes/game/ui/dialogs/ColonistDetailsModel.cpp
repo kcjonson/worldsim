@@ -178,7 +178,7 @@ namespace world_sim {
 								dest = "crafting station";
 								break;
 							case ecs::TaskType::Haul:
-								dest = task->haulItemDefName.empty() ? "storage" : task->haulItemDefName;
+								dest = task->haulItemDefNameId == 0 ? "storage" : assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId);
 								break;
 							case ecs::TaskType::Build:
 								dest = "build site";
@@ -212,7 +212,7 @@ namespace world_sim {
 						bioData.currentTask = "Crafting " + task->craftRecipeDefName;
 						break;
 					case ecs::TaskType::Haul:
-						bioData.currentTask = "Hauling " + (task->haulItemDefName.empty() ? "item" : task->haulItemDefName);
+						bioData.currentTask = "Hauling " + (task->haulItemDefNameId == 0 ? std::string("item") : assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId));
 						break;
 					case ecs::TaskType::Build:
 						bioData.currentTask = "Building";

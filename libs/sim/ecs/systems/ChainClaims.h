@@ -58,7 +58,7 @@ namespace ecs {
 
 	/// The goods `task`, a haul or a cut, carries toward the root its own InFlight names
 	/// (cargoOnClaims). 0 for any other task.
-	[[nodiscard]] uint32_t taskCargo(const assets::AssetRegistry& registry, const Task& task);
+	[[nodiscard]] uint32_t taskCargo(const Task& task);
 
 	/// The goods a colonist's task, current or suspended, carries toward `rootGoalId`.
 	[[nodiscard]] uint32_t claimedCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId);
@@ -87,7 +87,7 @@ namespace ecs {
 	void harvestToDeliveryLeg(Task& task, uint64_t rootGoalId, EntityID destination, uint32_t itemDefNameId, uint32_t quantity);
 
 	/// The item a task's chain carries for its root: a haul's item, or a cut's yield. 0 for anything else.
-	[[nodiscard]] uint32_t chainItem(const assets::AssetRegistry& registry, const Task& task);
+	[[nodiscard]] uint32_t chainItem(const Task& task);
 
 	/// The chain has taken what it will take from its source (a pickup, a withdraw, or arriving with the
 	/// goods already in hand): Use and SourceQuantity drop, Inbound and InFlight become `carried`, capped
@@ -98,7 +98,7 @@ namespace ecs {
 	/// keeps: its Inbound and InFlight capped at `held`, the units of the item it still carries, and at
 	/// what it carries (a cut's yield still on the plant is not held). Nothing when the haul has not
 	/// reached its source yet, or nothing is held.
-	[[nodiscard]] std::optional<SuspendedWork> suspendableWork(const assets::AssetRegistry& registry, const Task& task, uint32_t held);
+	[[nodiscard]] std::optional<SuspendedWork> suspendableWork(const Task& task, uint32_t held);
 
 	/// Keep `task`'s suspended record true to what the colonist still holds: gone when its root goal is
 	/// gone or none of the goods are left (eaten, used, dropped), else its claims capped at what is held.
@@ -107,7 +107,7 @@ namespace ecs {
 
 	/// Does `task`, just accepted, take the goods of its suspended record on (same root, item, and
 	/// destination): their carry-in, or a further cut that carries them along?
-	[[nodiscard]] bool adoptsSuspended(const assets::AssetRegistry& registry, const Task& task);
+	[[nodiscard]] bool adoptsSuspended(const Task& task);
 
 	/// Take over `cargo`, a suspended record or a handed-over gathering: its instance id, sequence,
 	/// and claims, which recordChainClaims then sizes to the new task.

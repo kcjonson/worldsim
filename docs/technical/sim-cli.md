@@ -630,7 +630,7 @@ hex of its bits, never as a decimal JSON number. It covers:
 
 - per colonist: position; every need's value; `Task` fields `type`, `state`, `needToFulfill`,
   `targetPosition`, `harvestTargetEntityId`, `targetStationId`, `craftRecipeDefName`,
-  `haulItemDefName`, `haulQuantity`, `haulSourceStorageId`, `haulTargetStorageId`, `haulFromInventory`,
+  `haulItemDefNameId` (written as its def name), `haulQuantity`, `haulSourceStorageId`, `haulTargetStorageId`, `haulFromInventory`,
   `placePackagedEntityId`, `buildBlueprintEntityId`, `chainStep`, `priorityTier`, `navState`; `Action`
   type; inventory (hands, belt, pack); Memory entry count; `Knowledge` defs;
 - every ECS entity's def and position, and each pile's `ResourceStack` quantity;

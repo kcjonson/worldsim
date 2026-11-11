@@ -724,7 +724,7 @@ TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) 
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = item;
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId(item);
 	task->haulQuantity = 5;
 	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 	task->haulSourcePosition = srcPos;
@@ -823,7 +823,7 @@ TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDest
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = item;
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId(item);
 	task->haulQuantity = 5;
 	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 	task->haulSourcePosition = srcPos;
@@ -929,7 +929,7 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "PlantFiber";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("PlantFiber");
 	task->haulQuantity = 1;
 	task->haulTargetStorageId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
@@ -994,7 +994,7 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 2;
 	task->haulSourcePosition = pilePos;
 	task->haulTargetStorageId = 0;
@@ -1141,7 +1141,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = sourcePos;
 	task->haulTargetStorageId = static_cast<uint64_t>(station);
@@ -1186,7 +1186,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = stationPos; // already here, no pickup
 	task->haulTargetStorageId = static_cast<uint64_t>(station);
@@ -1230,7 +1230,7 @@ TEST_F(ActionSystemGoalTest, PickupFromAGoneSourceEndsTheHaul) {
 	auto* task = world->getComponent<Task>(colonist);
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = sourcePos;
 	task->haulTargetPosition = storagePos;
@@ -1308,7 +1308,7 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = sourcePos;
 	task->haulTargetStorageId = static_cast<uint64_t>(station);
@@ -1389,7 +1389,7 @@ TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "Wood";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 	task->haulQuantity = 10;
 	task->haulSourcePosition = sourcePos;
 	task->haulTargetStorageId = static_cast<uint64_t>(box);
@@ -2226,7 +2226,7 @@ TEST_F(LoosePileHaulTest, PileIndexMissTakesNothingFromANeighbour) {
 	auto* task = world->getComponent<Task>(colonist);
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
-	task->haulItemDefName = "Wood";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 	task->haulQuantity = 5;
 	task->haulSourcePosition = rememberedAt;
 	task->haulTargetPosition = {5.0F, 0.0F};

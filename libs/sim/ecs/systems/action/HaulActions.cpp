@@ -228,7 +228,8 @@ namespace ecs {
 	}
 
 	void ActionSystem::startHaulAction(EntityID entity, Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
-		auto& registry = assets::AssetRegistry::Get();
+		auto&			   registry = assets::AssetRegistry::Get();
+		const std::string& haulItem = registry.getDefName(task.haulItemDefNameId);
 
 		constexpr float kPositionTolerance = 0.5F;
 
@@ -242,7 +243,7 @@ namespace ecs {
 			const auto targetEntity = static_cast<EntityID>(task.haulTargetStorageId);
 			const bool targetIsCraftStation = world->hasComponent<WorkQueue>(targetEntity);
 			action = Action::Deposit(
-				task.haulItemDefName,
+				haulItem,
 				task.haulQuantity,
 				task.haulTargetStorageId,
 				task.haulTargetPosition,
@@ -252,7 +253,7 @@ namespace ecs {
 				Engine,
 				"[Action] Haul-from-inventory: deliver %u x %s to %s %llu",
 				task.haulQuantity,
-				task.haulItemDefName.c_str(),
+				haulItem.c_str(),
 				targetIsCraftStation													? "crafting station"
 				: world->hasComponent<StructureBlueprint>(targetEntity) ? "build site"
 																		: "storage box",
@@ -272,16 +273,16 @@ namespace ecs {
 		// and a position-only check would Deposit an empty pack, fail, and re-issue the same
 		// fetch every tick -- an infinite "deposit nothing -> refetch" loop that strands the
 		// craft half-provisioned.
-		const auto*	   haulItemDef = registry.getDefinition(task.haulItemDefName);
-		const uint32_t cargoHeld = cargoToward(task, GoalTaskRegistry::Get().rootOf(task.haulGoalId), registry.getDefNameId(task.haulItemDefName),
-											   ecs::availableQuantity(inventory, task.haulItemDefName), haulItemDef != nullptr && haulItemDef->isEdible());
+		const auto*	   haulItemDef = registry.getDefinitionById(task.haulItemDefNameId);
+		const uint32_t cargoHeld = cargoToward(task, GoalTaskRegistry::Get().rootOf(task.haulGoalId), task.haulItemDefNameId,
+											   ecs::availableQuantity(inventory, haulItem), haulItemDef != nullptr && haulItemDef->isEdible());
 		// A pile pickup that took a gathering over still lifts its own share beside the goods its claims
 		// already carry; only goods beyond those mean the pickup is skipped.
 		const auto sourceClaim = std::find_if(task.claims.begin(), task.claims.end(), [](const Claim& claim) {
 			return claim.kind() == ClaimKind::SourceQuantity;
 		});
 		const bool pickupPending = sourceClaim != task.claims.end();
-		const bool carryingHaulItem = cargoHeld > (pickupPending ? taskCargo(registry, task) : 0U);
+		const bool carryingHaulItem = cargoHeld > (pickupPending ? taskCargo(task) : 0U);
 
 		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
 		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
@@ -311,12 +312,12 @@ namespace ecs {
 					action.clear();
 					return;
 				}
-				action = Action::Withdraw(task.haulItemDefName, task.haulQuantity, task.haulSourceStorageId, task.haulSourcePosition);
+				action = Action::Withdraw(haulItem, task.haulQuantity, task.haulSourceStorageId, task.haulSourcePosition);
 				LOG_DEBUG(
 					Engine,
 					"[Action] Haul phase 1: Withdraw %u x %s from box %llu at (%.1f, %.1f)",
 					task.haulQuantity,
-					task.haulItemDefName.c_str(),
+					haulItem.c_str(),
 					static_cast<unsigned long long>(task.haulSourceStorageId),
 					task.haulSourcePosition.x,
 					task.haulSourcePosition.y
@@ -328,9 +329,9 @@ namespace ecs {
 			// so it is found by its Memory key (the source position and the item), not by a memory scan.
 			std::optional<std::pair<glm::vec2, uint32_t>> staleAtSource;
 			if (const KnownWorldEntity* entity =
-					memory.getWorldEntity(hashWorldEntity(task.haulSourcePosition, registry.getDefNameId(task.haulItemDefName)))) {
-				const auto& defName = task.haulItemDefName;
-				const auto* def = registry.getDefinition(defName);
+					memory.getWorldEntity(hashWorldEntity(task.haulSourcePosition, task.haulItemDefNameId))) {
+				const auto& defName = haulItem;
+				const auto* def = registry.getDefinitionById(task.haulItemDefNameId);
 				if (def != nullptr && def->capabilities.carryable.has_value()) {
 					// A pickup takes what its claim was sized to (the root's need net of in-flight, the
 					// carry), never more than is there: a pile yields that and keeps the rest, a single
@@ -361,7 +362,7 @@ namespace ecs {
 			LOG_WARNING(
 				Engine,
 				"[Action] Haul failed: item %s not found at (%.1f, %.1f)%s",
-				task.haulItemDefName.c_str(),
+				haulItem.c_str(),
 				task.haulSourcePosition.x,
 				task.haulSourcePosition.y,
 				staleAtSource.has_value() ? " - forgot stale entry" : ""
@@ -388,7 +389,7 @@ namespace ecs {
 			claimsToDeliveryLeg(task, cargoHeld);
 			const bool toCraftStation = world->hasComponent<WorkQueue>(storageEntity);
 			action = Action::Deposit(
-				task.haulItemDefName,
+				haulItem,
 				task.haulQuantity,
 				task.haulTargetStorageId,
 				task.haulTargetPosition,
@@ -398,7 +399,7 @@ namespace ecs {
 				Engine,
 				"[Action] Haul phase 2: Deposit %u x %s into storage %llu",
 				task.haulQuantity,
-				task.haulItemDefName.c_str(),
+				haulItem.c_str(),
 				static_cast<unsigned long long>(task.haulTargetStorageId)
 			);
 		} else if (carryingHaulItem) {
@@ -421,7 +422,7 @@ namespace ecs {
 			LOG_DEBUG(
 				Engine,
 				"[Action] Haul: carrying %s at source, redirecting to deposit at (%.1f, %.1f)",
-				task.haulItemDefName.c_str(),
+				haulItem.c_str(),
 				task.haulTargetPosition.x,
 				task.haulTargetPosition.y
 			);

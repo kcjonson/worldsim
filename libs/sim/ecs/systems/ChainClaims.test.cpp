@@ -673,16 +673,16 @@ namespace ecs::test {
 		Task	   task;
 		task.type = TaskType::Haul;
 		task.haulFromInventory = true;
-		task.haulItemDefName = "Stone";
+		task.haulItemDefNameId = stoneId;
 		task.haulGoalId = site.umbrella;
 		task.suspended = SuspendedWork{.instanceId = 3, .claimSeq = 3, .rootGoalId = site.umbrella, .itemDefNameId = stoneId};
 		ASSERT_TRUE(task.suspended->claims.push(Claim::inbound(static_cast<uint64_t>(site.blueprint), stoneId, 2)));
 		ASSERT_TRUE(task.suspended->claims.push(Claim::inFlight(site.umbrella, stoneId, 2)));
 
 		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint) + 1;
-		EXPECT_FALSE(adoptsSuspended(assets::AssetRegistry::Get(), task));
+		EXPECT_FALSE(adoptsSuspended(task));
 		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint);
-		EXPECT_TRUE(adoptsSuspended(assets::AssetRegistry::Get(), task));
+		EXPECT_TRUE(adoptsSuspended(task));
 	}
 
 	TEST_F(ChainClaimsTest, AnySelectionButANeedOrTheCarryInDiscardsTheRecord) {
@@ -824,7 +824,7 @@ namespace ecs::test {
 		getTask(colonist)->clear();
 		decide(colonist);
 		EXPECT_EQ(getTask(colonist)->type, TaskType::Haul);
-		EXPECT_EQ(getTask(colonist)->haulItemDefName, "Stone") << "free hands take other work";
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(getTask(colonist)->haulItemDefNameId), "Stone") << "free hands take other work";
 
 		const EntityID wood = world->createEntity();
 		world->addComponent<Position>(wood, Position{drops.front().at});
@@ -839,7 +839,7 @@ namespace ecs::test {
 		});
 		decide(other);
 		EXPECT_EQ(getTask(other)->type, TaskType::Haul);
-		EXPECT_EQ(getTask(other)->haulItemDefName, "Wood") << "the pile is hauled once a root wants it";
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(getTask(other)->haulItemDefNameId), "Wood") << "the pile is hauled once a root wants it";
 	}
 
 	// Walking an armful of wood to a box, he is offered a site that wants it (a higher tier). The carry-in

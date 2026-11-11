@@ -30,8 +30,7 @@ namespace ecs {
 			if (def == nullptr || !def->capabilities.harvestable.has_value()) {
 				return 0;
 			}
-			const std::string& yieldDefName = registry.getDefName(task.harvestYieldDefNameId);
-			const uint32_t	   room = ecs::pickupUnitsThatFit(inventory, registry, yieldDefName, ecs::carriedCargoMassKg(inventory, registry));
+			const uint32_t room = ecs::pickupUnitsThatFit(inventory, registry, task.harvestYieldDefNameId, ecs::carriedCargoMassKg(inventory, registry));
 			return std::min(def->capabilities.harvestable->amountMax, room);
 		}
 
@@ -78,8 +77,8 @@ namespace ecs {
 		return handed;
 	}
 
-	uint32_t taskCargo(const assets::AssetRegistry& registry, const Task& task) {
-		const uint32_t item = chainItem(registry, task);
+	uint32_t taskCargo(const Task& task) {
+		const uint32_t item = chainItem(task);
 		for (const Claim& claim : task.claims) {
 			if (item != 0 && claim.kind() == ClaimKind::InFlight && claim.itemDefNameId() == item) {
 				return cargoOnClaims(task.claims, claim.target(), item);
@@ -88,10 +87,10 @@ namespace ecs {
 		return 0;
 	}
 
-	uint32_t chainItem(const assets::AssetRegistry& registry, const Task& task) {
+	uint32_t chainItem(const Task& task) {
 		switch (task.type) {
 			case TaskType::Haul:
-				return registry.getDefNameId(task.haulItemDefName);
+				return task.haulItemDefNameId;
 			case TaskType::Harvest:
 				return task.harvestYieldDefNameId;
 			default:
@@ -146,7 +145,7 @@ namespace ecs {
 				break;
 			}
 			case TaskType::Haul: {
-				const uint32_t item = registry.getDefNameId(task.haulItemDefName);
+				const uint32_t item = task.haulItemDefNameId;
 				const uint64_t root = goals.rootOf(task.haulGoalId);
 				const uint32_t handedOver = takeCargoClaims(task, item);
 				if (item == 0 || root == 0 || task.haulQuantity == 0) {
@@ -216,11 +215,11 @@ namespace ecs {
 		push(task, Claim::inFlight(rootGoalId, itemDefNameId, quantity));
 	}
 
-	std::optional<SuspendedWork> suspendableWork(const assets::AssetRegistry& registry, const Task& task, uint32_t held) {
+	std::optional<SuspendedWork> suspendableWork(const Task& task, uint32_t held) {
 		if ((task.type != TaskType::Haul && task.type != TaskType::Harvest) || held == 0 || task.instanceId == 0) {
 			return std::nullopt;
 		}
-		const uint32_t item = chainItem(registry, task);
+		const uint32_t item = chainItem(task);
 		uint64_t	   root = 0;
 		for (const Claim& claim : task.claims) {
 			if (claim.kind() == ClaimKind::InFlight && claim.itemDefNameId() == item) {
@@ -256,7 +255,7 @@ namespace ecs {
 		}
 	}
 
-	bool adoptsSuspended(const assets::AssetRegistry& registry, const Task& task) {
+	bool adoptsSuspended(const Task& task) {
 		if (!task.suspended.has_value()) {
 			return false;
 		}
@@ -267,7 +266,7 @@ namespace ecs {
 		// A build-site clear brings nothing toward a need, so it never carries a gathering's goods on.
 		const bool carries = (task.type == TaskType::Haul && task.haulFromInventory) ||
 							 (task.type == TaskType::Harvest && goal != nullptr && !goal->clearFootprint.has_value());
-		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(registry, task) != task.suspended->itemDefNameId) {
+		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(task) != task.suspended->itemDefNameId) {
 			return false;
 		}
 		const uint64_t destination = task.type == TaskType::Haul ? task.haulTargetStorageId : static_cast<uint64_t>(root->destinationEntity);

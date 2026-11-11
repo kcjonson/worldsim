@@ -151,19 +151,10 @@ namespace ecs {
 			return false;
 		}
 
-		/// Does harvesting this definition yield something edible? Not every harvestable is food
-		/// (WoodyBush yields Stick, Reed yields PlantFiber).
-		[[nodiscard]] bool yieldsEdibleFood(const assets::AssetRegistry& registry, uint32_t defNameId) {
-			const auto* def = registry.getDefinitionById(defNameId);
-			return def != nullptr && def->capabilities.harvestable.has_value() &&
-				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
-		}
-
-		/// The item a harvestable that yieldsEdibleFood gives, by id; 0 for anything else.
+		/// The item a harvestable gives when it is food, by id; 0 for anything else. Not every harvestable
+		/// is food (WoodyBush yields Stick, Reed yields PlantFiber).
 		[[nodiscard]] uint32_t edibleYieldOf(const assets::AssetRegistry& registry, uint32_t defNameId) {
-			return yieldsEdibleFood(registry, defNameId)
-					   ? registry.getDefNameId(registry.getDefinitionById(defNameId)->capabilities.harvestable->yieldDefName)
-					   : 0U;
+			return registry.yieldsEdible(defNameId) ? registry.harvestYieldId(defNameId) : 0U;
 		}
 
 		/// The memo key for a colonist's reach: what every remembered verdict, and a failed route, depends on.
@@ -380,8 +371,8 @@ namespace ecs {
 
 		/// Does the task hold goods of its chain: a haul or placement past its pickup, or a cut or pile
 		/// pickup carrying what earlier legs of its gathering landed?
-		[[nodiscard]] bool carriesChainGoods(const assets::AssetRegistry& registry, const Task& task) {
-			return task.chainStep > 0 || taskCargo(registry, task) > 0;
+		[[nodiscard]] bool carriesChainGoods(const Task& task) {
+			return task.chainStep > 0 || taskCargo(task) > 0;
 		}
 
 		/// Populate the (tier, score) arbitration key for an evaluated option.
@@ -512,7 +503,7 @@ namespace ecs {
 			/// Has the colonist chosen to walk its goods of this item to this root?
 			[[nodiscard]] bool delivering(uint64_t root, uint32_t item) const {
 				return task.deliveryChosen && task.type == TaskType::Haul && GoalTaskRegistry::Get().rootOf(task.haulGoalId) == root &&
-					   registry.getDefNameId(task.haulItemDefName) == item;
+					   task.haulItemDefNameId == item;
 			}
 			/// What the colonist carries of the item that it would deliver to this root; its own food is not.
 			[[nodiscard]] uint32_t cargo(uint64_t root, uint32_t item) const {
@@ -607,11 +598,14 @@ namespace ecs {
 				: inventory(inventory),
 				  registry(registry) {}
 
-			[[nodiscard]] uint32_t operator()(const std::string& itemDefName) {
+			[[nodiscard]] uint32_t operator()(uint32_t item) { return ecs::pickupUnitsThatFit(inventory, registry, item, carried()); }
+
+			/// What the colonist carries, kilograms (carriedCargoMassKg), summed on the first ask.
+			[[nodiscard]] float carried() {
 				if (!carriedKg.has_value()) {
 					carriedKg = ecs::carriedCargoMassKg(inventory, registry);
 				}
-				return ecs::pickupUnitsThatFit(inventory, registry, itemDefName, *carriedKg);
+				return *carriedKg;
 			}
 
 		  private:
@@ -716,7 +710,7 @@ namespace ecs {
 			// so a remembered pile across water, or one never tested, leaves cutting where distance puts it.
 			const auto pushPileHauls = [&](const GoalTask& goal, uint64_t rootId, uint32_t itemDefNameId, uint32_t quantity, bool craftFetch) {
 				const bool	   gathering = supply.gathersFor(rootId, itemDefNameId);
-				const uint32_t room = pickupRoom(registry.getDefName(itemDefNameId));
+				const uint32_t room = pickupRoom(itemDefNameId);
 				if (room == 0) {
 					return;
 				}
@@ -764,7 +758,7 @@ namespace ecs {
 				const EntityID			   destEntity = goal.destinationEntity;
 				const assets::ItemCategory cat = itemDef->category;
 				const StoragePriority	   destPriority = destConfig.getPriorityFor(itemDefName, cat);
-				const uint32_t			   perTrip = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
+				const uint32_t			   perTrip = ecs::cargoUnitsPerTrip(registry, acceptedId, inventory.carryCapacityKg);
 				if (perTrip == 0) {
 					return; // colonist can't carry a single unit of this item
 				}
@@ -843,7 +837,7 @@ namespace ecs {
 						break; // every slot the box has left is promised to goods already on their way
 					}
 					if (!liftNow.has_value()) {
-						liftNow = pickupRoom(itemDefName);
+						liftNow = pickupRoom(acceptedId);
 					}
 					if (*liftNow == 0) {
 						pushNoRoom(goal, acceptedId, "Pulling from lower-priority storage ({}: no room to carry it)");
@@ -882,10 +876,9 @@ namespace ecs {
 						if (need == 0) {
 							continue;
 						}
-						const auto& itemDefName = registry.getDefName(*acceptedIt);
 						// Only fetch what the pickup can actually lift; one that adds 0 would be
 						// re-issued every tick. The craft stays pending until the colonist has room.
-						if (pickupRoom(itemDefName) == 0) {
+						if (pickupRoom(*acceptedIt) == 0) {
 							pushNoRoom(goal, *acceptedIt, "Fetching for crafting ({}: no room to carry it)");
 							continue;
 						}
@@ -924,8 +917,7 @@ namespace ecs {
 					if (want == 0) {
 						return;
 					}
-					const auto& itemDefName = registry.getDefName(itemDefNameId);
-					if (pickupRoom(itemDefName) == 0) {
+					if (pickupRoom(itemDefNameId) == 0) {
 						pushNoRoom(goal, itemDefNameId, "Hauling to storage ({}: no room to carry it)");
 						return;
 					}
@@ -980,8 +972,7 @@ namespace ecs {
 					if (need == 0) {
 						continue;
 					}
-					const auto& itemDefName = registry.getDefName(*dueIt);
-					if (pickupRoom(itemDefName) == 0) {
+					if (pickupRoom(*dueIt) == 0) {
 						pushNoRoom(site, *dueIt, "Fetching {} for a build site (no room to carry it)");
 						continue;
 					}
@@ -1132,7 +1123,7 @@ namespace ecs {
 				// A cut that would land nothing in the colonist's hands or pack (a full armful of something
 				// else, a full pack) brings nothing toward the root, and standing at the source it would win
 				// again every decision. A clear is exempt: it removes its blocker and drops what doesn't fit.
-				const uint32_t room = clearing ? 0U : pickupRoom(registry.getDefName(goal->yieldDefNameId));
+				const uint32_t room = clearing ? 0U : pickupRoom(goal->yieldDefNameId);
 				const bool	   roomToCarry = clearing || room > 0;
 				// What it could cut, before asking what the root needs: most goals have no known source.
 				// With no room to carry the yield no source is listed (WorkSources gates on the fit), so the
@@ -1482,8 +1473,8 @@ namespace ecs {
 		if (store == nullptr) {
 			return;
 		}
-		const std::string& name = registry.getDefName(slot.item);
-		slot.room = {.stack = {.partialRoom = store->partialStackRoom(name), .stackSize = Inventory::itemStackSize(name)},
+		const uint32_t stackSize = Inventory::stackSizeOf(registry.getDefinitionById(slot.item));
+		slot.room = {.stack = {.partialRoom = store->partialStackRoom(registry.getDefName(slot.item), stackSize), .stackSize = stackSize},
 					 .freeSlots = store->freeSlots()};
 	}
 
@@ -1787,10 +1778,9 @@ namespace ecs {
 				//     dropping for an emergency is acceptable. Only same-or-lower-priority challengers
 				//     (the opportunistic pull, idle Wander) are blocked.
 				const bool currentHaulUnreachable = (task.navState == NavState::CantFindWayTo);
-				const uint32_t	   chainGoods = chainItem(m_registry, task);
-				const std::string& chainGoodsName = m_registry.getDefName(chainGoods);
-				const bool		   carryingTwoHandLoad = chainGoods != 0 && (task.type == TaskType::Haul || taskCargo(m_registry, task) > 0) &&
-											   ecs::itemIsTwoHand(m_registry, chainGoodsName) && inventory.isHolding(chainGoodsName);
+				const uint32_t chainGoods = chainItem(task);
+				const bool	   carryingTwoHandLoad = chainGoods != 0 && (task.type == TaskType::Haul || taskCargo(task) > 0) &&
+											 ecs::itemIsTwoHand(m_registry, chainGoods) && inventory.isHolding(m_registry.getDefName(chainGoods));
 				// A root that no longer wants the goods (no carry-in of them to it is offered) is no delivery
 				// to protect: the armful is let go like any other the colonist carries.
 				const auto rootStillWants = [&] {
@@ -1865,7 +1855,7 @@ namespace ecs {
 
 				if (shouldSwitch) {
 					// Handle chain interruption if the abandoned task carries goods and the new task needs hands
-					if (!handedCargo && carriesChainGoods(m_registry, task) && selected != nullptr) {
+					if (!handedCargo && carriesChainGoods(task) && selected != nullptr) {
 						handleChainInterruption(entity, task, inventory, position, *selected);
 					}
 					if (selected != nullptr) {
@@ -1986,7 +1976,7 @@ namespace ecs {
 		// it goes through the index rather than appending it again.
 		if (task.suspended && task.type != TaskType::FulfillNeed) {
 			const uint64_t recordId = task.suspended->instanceId;
-			if (!handedCargo && adoptsSuspended(m_registry, task)) {
+			if (!handedCargo && adoptsSuspended(task)) {
 				takeOverCargo(task, *task.suspended);
 			} else {
 				m_claims.retire(recordId);
@@ -2221,7 +2211,7 @@ namespace ecs {
 			} else {
 				for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Harvestable)) {
 					const KnownWorldEntity* known = memory.getWorldEntity(key);
-					if (known == nullptr || !yieldsEdibleFood(m_registry, known->defNameId)) {
+					if (known == nullptr || !m_registry.yieldsEdible(known->defNameId)) {
 						continue;
 					}
 					if (!notKnownUnreachable(key, *known)) {
@@ -2673,7 +2663,7 @@ namespace ecs {
 		// Populate the (tier, score) key for all options: classify tier, compute the within-tier
 		// score (distance factor, skill, age, hysteresis). Goal createdAt is always 0, so a goal's age is
 		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
-		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? m_registry.getDefNameId(currentTask.haulItemDefName) : 0U;
+		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? currentTask.haulItemDefNameId : 0U;
 		for (auto& option : trace.options) {
 			populatePriorityBonuses(world, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
 		}
@@ -2828,7 +2818,7 @@ namespace ecs {
 
 		// Copy hauling-specific fields for Haul tasks
 		if (selected->taskType == TaskType::Haul) {
-			task.haulItemDefName = m_registry.getDefName(selected->haulItemDefNameId);
+			task.haulItemDefNameId = selected->haulItemDefNameId;
 			task.haulQuantity = selected->haulQuantity;
 			task.haulSourcePosition = selected->haulSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.haulSourceStorageId = selected->haulSourceStorageId;
@@ -3022,7 +3012,8 @@ namespace ecs {
 		const EvaluatedOption& selected
 	) {
 		// The goods a haul or a cut carries for its root.
-		const std::string& item = m_registry.getDefName(chainItem(m_registry, task));
+		const uint32_t	   itemId = chainItem(task);
+		const std::string& item = m_registry.getDefName(itemId);
 
 		// A need interrupting a haul or cut whose goods the colonist keeps leaves it as its suspended
 		// record, so the goods stay committed to where they were going. Called on every path that keeps
@@ -3031,7 +3022,7 @@ namespace ecs {
 			if (selected.taskType != TaskType::FulfillNeed) {
 				return;
 			}
-			auto record = suspendableWork(m_registry, task, ecs::availableQuantity(inventory, item));
+			auto record = suspendableWork(task, ecs::availableQuantity(inventory, item));
 			if (!record) {
 				return;
 			}
@@ -3060,7 +3051,7 @@ namespace ecs {
 				return;
 			}
 
-			const auto* assetDef = m_registry.getDefinition(item);
+			const auto* assetDef = m_registry.getDefinitionById(itemId);
 			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
 
 			if (handsRequired == 1) {

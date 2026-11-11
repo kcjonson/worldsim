@@ -220,7 +220,7 @@ struct Task {
 	uint64_t targetStationId = 0;
 
 	/// For Haul tasks: item to haul and storage container target
-	std::string haulItemDefName;				   // Item being hauled
+	uint32_t	haulItemDefNameId = 0;			   // Item being hauled, interned
 	uint32_t	haulQuantity = 1;				   // Quantity to haul
 	uint64_t	haulSourceStorageId = 0;		   // Entity ID of the source box for a storage->storage pull (0 = loose/inventory source)
 	uint64_t	haulTargetStorageId = 0;		   // Entity ID of the storage container (destination)
@@ -298,7 +298,7 @@ struct Task {
 		harvestYieldDefNameId = 0;
 		craftRecipeDefName.clear();
 		targetStationId = 0;
-		haulItemDefName.clear();
+		haulItemDefNameId = 0;
 		haulQuantity = 1;
 		haulSourceStorageId = 0;
 		haulTargetStorageId = 0;

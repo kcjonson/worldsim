@@ -289,6 +289,16 @@ namespace assets {
 		/// so carry-weight math always has a sane positive divisor.
 		[[nodiscard]] float getItemMassKg(const std::string& defName) const;
 
+		/// getItemMassKg by interned id: one vector read.
+		[[nodiscard]] float itemMassKg(uint32_t id) const;
+
+		/// The id of the item a harvestable definition yields; 0 when it yields nothing. Kept with the
+		/// definitions: cleared and rebuilt with them.
+		[[nodiscard]] uint32_t harvestYieldId(uint32_t id) const;
+
+		/// Does harvesting this definition yield an item that is edible in an inventory?
+		[[nodiscard]] bool yieldsEdible(uint32_t id) const;
+
 		/// Tool type an item provides (e.g. "Axe"), or empty if it is not a tool.
 		[[nodiscard]] const std::string& getToolType(uint32_t id) const;
 
@@ -301,6 +311,12 @@ namespace assets {
 
 		/// Get the total number of capability types (Edible..Storage)
 		static constexpr size_t kCapabilityTypeCount = 9;
+
+#ifdef DEVELOPMENT_BUILD
+		/// Lookups keyed by a definition name (getDefinition, getDefNameId) since startup. Tests read it
+		/// to show a decision's name lookups don't grow with what the colonist remembers.
+		[[nodiscard]] uint64_t nameLookups() const { return m_nameLookups.load(std::memory_order_relaxed); }
+#endif
 
 		// --- Testing API ---
 
@@ -400,6 +416,9 @@ namespace assets {
 		// its id when the first harvestable naming it is filed, and keeps it once it is defined.
 		std::vector<std::vector<uint32_t>> m_harvestablesByYieldId;
 
+		// Harvestable id -> the id of its yield, 0 for anything else; see harvestYieldId().
+		std::vector<uint32_t> m_harvestYieldIds;
+
 		/// File `id` under its harvest yield (if any), keeping the list ascending.
 		void indexHarvestYield(const AssetDefinition& def, uint32_t id);
 		/// The id interned for `defName`, interning it (no definition, no capabilities) when it has none.
@@ -414,6 +433,11 @@ namespace assets {
 		// Asynchronous load worker + its progress
 		LoadProgress m_loadProgress;
 		std::thread	 m_loadThread;
+
+#ifdef DEVELOPMENT_BUILD
+		// Chunk workers read definitions too, so the count is atomic.
+		mutable std::atomic<uint64_t> m_nameLookups{0};
+#endif
 	};
 
 } // namespace assets

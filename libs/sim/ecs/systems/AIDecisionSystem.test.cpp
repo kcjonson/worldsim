@@ -60,6 +60,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -2213,7 +2214,7 @@ namespace ecs::test {
 		task->state = TaskState::Moving; // in-flight toward the dest box (phase 2)
 		task->navState = NavState::Traveling; // has a believed route (NOT CantFindWayTo) -> guard applies
 		task->haulGoalId = haulId;
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		task->haulQuantity = 14;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
@@ -2294,7 +2295,7 @@ namespace ecs::test {
 		task->state = TaskState::Moving;	  // in-flight toward the dest box (phase 2)
 		task->navState = NavState::Traveling; // has a believed route (NOT CantFindWayTo) -> guard applies
 		task->haulGoalId = haulId;
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		task->haulQuantity = 14;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
@@ -2390,7 +2391,7 @@ namespace ecs::test {
 		task->state = TaskState::Moving;
 		task->navState = NavState::Traveling;
 		task->haulGoalId = haulId;
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		task->haulQuantity = carried;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
@@ -3226,7 +3227,7 @@ namespace ecs::test {
 			auto* task = getTask(colonist);
 			task->type = TaskType::Haul;
 			task->chainStep = 1;
-			task->haulItemDefName = "Axe";
+			task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Axe");
 			task->state = TaskState::Moving;
 			return task;
 		}
@@ -3338,7 +3339,7 @@ namespace ecs::test {
 		inventory->rightHand = ItemStack{"Wood", 14};
 
 		auto* task = armMidHaulCarryingAxe(colonist);
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		interruptForHarvest(colonist, *task);
 
 		EXPECT_FALSE(inventory->isHolding("Wood")) << "Both hands freed";
@@ -3495,7 +3496,7 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Haul) << "colonist takes the storage haul when all needs are met";
-		EXPECT_EQ(task->haulItemDefName, "Pellet");
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId), "Pellet");
 		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(storage));
 		EXPECT_EQ(task->haulQuantity, 200U)
 			<< "sized by the storage's addableCount (5 slots x 40 stack = 200), not the 5-slot count";
@@ -3621,7 +3622,7 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_EQ(task->type, TaskType::Haul);
 		EXPECT_TRUE(task->haulFromInventory);
-		EXPECT_EQ(task->haulItemDefName, "Ballast");
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId), "Ballast");
 		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(storage));
 		EXPECT_EQ(task->haulQuantity, 20U);
 
@@ -5231,6 +5232,95 @@ namespace ecs::test {
 		EXPECT_EQ(cache.capacity(), afterFirst);
 		EXPECT_LE(cache.capacity(), 4 * boxes.size());
 		EXPECT_EQ(cache.readOut, 100U * boxes.size());
+	}
+
+	// A hungry, thirsty colonist with work on offer for a stocking box, a box pulling from a lower one, and
+	// a station: the decision asks the registry by name a fixed number of times, however many trees,
+	// bushes, piles, and waters it remembers.
+	TEST_F(AIDecisionSystemTest, NameLookupsPerDecisionDoNotGrowWithMemory) {
+		auto&					registry = assets::AssetRegistry::Get();
+		const auto				carryable = [&](const char* name, uint32_t stack) {
+			 assets::AssetDefinition def;
+			 def.defName = name;
+			 def.label = name;
+			 def.category = assets::ItemCategory::RawMaterial;
+			 def.capabilities.carryable = assets::CarryableCapability{1};
+			 def.itemProperties = assets::ItemProperties{};
+			 def.itemProperties->stackSize = stack;
+			 def.itemProperties->massKg = 0.1F;
+			 registry.registerTestDefinition(std::move(def));
+		};
+		carryable("Wood", 40);
+		carryable("Stone", 40);
+		const auto harvestable = [&](const char* name, const char* yield) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.capabilities.harvestable = assets::HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+			registry.registerTestDefinition(std::move(def));
+		};
+		harvestable("Tree", "Wood");
+		harvestable("Flora_BerryBush", "Berry");
+		assets::AssetDefinition boxDef;
+		boxDef.defName = "Box";
+		boxDef.label = "Box";
+		boxDef.capabilities.storage = assets::StorageCapability{};
+		registry.registerTestDefinition(std::move(boxDef));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		const uint32_t stoneId = registry.getDefNameId("Stone");
+		const uint32_t treeId = registry.getDefNameId("Tree");
+		const uint32_t bushId = registry.getDefNameId("Flora_BerryBush");
+		const uint32_t berryId = registry.getDefNameId("Berry");
+		const uint32_t boxId = registry.getDefNameId("Box");
+
+		// One decision in a fresh world whose colonist remembers `perKind` of each kind of source.
+		const auto lookupsForOneDecision = [&](int perKind) {
+			GoalTaskRegistry::Get().clear();
+			world = std::make_unique<World>();
+			world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
+
+			makeStockingHarvest({0.0F, 8.0F}, "Wood");
+			const glm::vec2 highPos{8.0F, 0.0F};
+			const glm::vec2 lowPos{-8.0F, 0.0F};
+			const EntityID	high = makeStorageBox(highPos, "Box", "Stone", ecs::StoragePriority::High);
+			makeStorageBox(lowPos, "Box", "Stone", ecs::StoragePriority::Low, 30);
+			makeUmbrellaGoal(high, highPos, stoneId);
+			const EntityID station = world->createEntity();
+			world->addComponent<Position>(station, Position{{0.0F, -8.0F}});
+			makeStationNeed(station, "Wood", 5);
+
+			const EntityID colonist = createColonist({0.0F, 0.0F});
+			setNeedValue(colonist, NeedType::Hunger, 40.0F);
+			setNeedValue(colonist, NeedType::Thirst, 40.0F);
+			setNeedValue(colonist, NeedType::Energy, 100.0F);
+			setNeedValue(colonist, NeedType::Bladder, 100.0F);
+			addKnownEntity(colonist, highPos, boxId, assets::CapabilityType::Storage);
+			addKnownEntity(colonist, lowPos, boxId, assets::CapabilityType::Storage);
+			for (int i = 0; i < perKind; ++i) {
+				const float		angle = static_cast<float>(i) * 0.37F;
+				const float		radius = 12.0F + static_cast<float>(i) * 0.25F;
+				const glm::vec2 at{std::cos(angle) * radius, std::sin(angle) * radius};
+				addKnownEntity(colonist, at, treeId, assets::CapabilityType::Harvestable);
+				addKnownEntity(colonist, at, bushId, assets::CapabilityType::Harvestable);
+				addKnownEntity(colonist, at, woodId, assets::CapabilityType::Carryable);
+				addKnownEntity(colonist, at, stoneId, assets::CapabilityType::Carryable);
+				addKnownEntity(colonist, at, berryId, assets::CapabilityType::Carryable);
+				addKnownEntity(colonist, at, kWaterDefId, assets::CapabilityType::Drinkable);
+			}
+
+			const uint64_t before = registry.nameLookups();
+			world->update(0.016F);
+			EXPECT_NE(getTask(colonist)->type, TaskType::None);
+			return registry.nameLookups() - before;
+		};
+
+		const uint64_t single = lookupsForOneDecision(50);
+		const uint64_t doubled = lookupsForOneDecision(100);
+		std::printf("name lookups per decision: %llu at 300 sources, %llu at 600\n", static_cast<unsigned long long>(single),
+					static_cast<unsigned long long>(doubled));
+		EXPECT_EQ(doubled, single);
+		EXPECT_LE(single, 64U);
 	}
 #endif
 
