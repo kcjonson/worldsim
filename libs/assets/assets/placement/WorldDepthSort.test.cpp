@@ -1,9 +1,12 @@
 // Unit tests for the GL-free core of world-space 2.5D depth sorting: the
 // canonical anchorY derivation (bottom-most ground-contact world-Y) and the
-// stable ascending merge/sort. These are the pure pieces the render paths share;
-// the gather + emit steps need a GL context and are exercised in-game.
+// gather's stable ascending merge; the emit step needs a GL context and is
+// exercised in-game.
 
 #include "assets/placement/WorldDepthSort.h"
+
+#include "assets/AssetDefinition.h"
+#include "assets/AssetRegistry.h"
 
 #include "assets/placement/FloraRouting.h"
 #include "assets/placement/RenderContext.h"
@@ -12,6 +15,8 @@
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
+#include <fstream>
 #include <vector>
 
 namespace assets {
@@ -65,6 +70,55 @@ namespace assets {
 		EXPECT_FLOAT_EQ(anchorY, 20.9F);
 	}
 
+	// A def with a footprint anchors at the footprint's lower edge for the instance's age class (a
+	// tree's trunk foot), not at the lowest thing it draws (contact shadow, grass); without one, at the
+	// mesh's bottom.
+	TEST(WorldDepthSort, AnchorFollowsFootprintLowerEdge) {
+		AssetDefinition tree;
+		tree.ageClasses = {{.name = "sapling", .weight = 0.5F, .variants = 1}, {.name = "mature", .weight = 0.5F, .variants = 1}};
+		tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.0F}, .halfExtentsMeters = {0.04F, 0.04F}});
+		tree.setCollision(1, {.type = CollisionShapeType::Rect, .offsetMeters = {0.0F, 0.05F}, .halfExtentsMeters = {0.1F, 0.1F}});
+		const MeshYExtent mesh{.minY = -3.0F, .maxY = 0.6F};
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 0, mesh), 0.04F);
+		EXPECT_FLOAT_EQ(anchorLocalY(&tree, 1, mesh), 0.15F);
+		EXPECT_FLOAT_EQ(computeAnchorY(10.0F, anchorLocalY(&tree, 1, mesh), 2.0F), 10.3F);
+
+		const AssetDefinition bush;
+		EXPECT_FLOAT_EQ(anchorLocalY(&bush, 0, mesh), 0.6F);
+		EXPECT_FLOAT_EQ(anchorLocalY(nullptr, 0, mesh), 0.6F);
+	}
+
+	// A simple (SVG) def's metadata collider is authored about the drawing's bbox centre, and its
+	// mesh is drawn from the SVG's origin; the anchor is the collider's lower edge where the mesh
+	// draws it. The drawing spans y 10 to 100 at 1.5 m, so 1/60 m a unit, and the collider's lower
+	// edge is y 70: 70/60 m below the origin, not the 0.25 m below the bbox centre it is authored at.
+	TEST(WorldDepthSort, SimpleDefAnchorsAtItsMetadataColliderInTheMeshFrame) {
+		namespace fs = std::filesystem;
+		const fs::path root = fs::temp_directory_path() / "world_depth_sort_simple_anchor";
+		fs::remove_all(root);
+		fs::create_directories(root / "Boulder");
+		std::ofstream(root / "Boulder" / "boulder.svg")
+			<< "<?xml version=\"1.0\"?><svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 200 200\" width=\"200\" height=\"200\">"
+			   "<metadata><collision><shape type=\"aabb\" min=\"10,40\" max=\"50,70\"/></collision></metadata>"
+			   "<path d=\"M0,10 L60,10 L60,100 L0,100 Z\" fill=\"#808080\"/></svg>";
+		std::ofstream(root / "Boulder" / "Boulder.xml")
+			<< "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef><defName>Boulder</defName><assetType>simple</assetType>"
+			   "<svgPath>boulder.svg</svgPath><worldHeight>1.5</worldHeight></AssetDef></AssetDefinitions>";
+
+		AssetRegistry& registry = AssetRegistry::Get();
+		registry.clearDefinitions();
+		registry.loadDefinitionsFromFolder(root.string());
+		const AssetDefinition* def = registry.getDefinition("Boulder");
+		ASSERT_NE(def, nullptr);
+		ASSERT_EQ(def->collisionFor(0).type, CollisionShapeType::Rect);
+		const MeshYExtent mesh = meshYExtent(registry.getTemplate("Boulder", {}));
+		EXPECT_NEAR(mesh.maxY, 100.0F / 60.0F, 1e-5F);
+		EXPECT_NEAR(anchorLocalY(def, 0, mesh), 70.0F / 60.0F, 1e-5F);
+
+		registry.clearDefinitions();
+		fs::remove_all(root);
+	}
+
 	// Tall or short routing is one answer per def, from its mature variant 0 at its
 	// unscaled height (FloraRouting.h). These pin the rule the bake and the sort share.
 	TEST(WorldDepthSort, RoutesTallFromMatureHeight) {
@@ -88,47 +142,6 @@ namespace assets {
 		EXPECT_FALSE(routesTall(3.5F, /*isGroundcover=*/true));
 	}
 
-	TEST(WorldDepthSort, SortIsAscendingStableAndDeterministic) {
-		assets::PlacedEntity a;
-		a.defName = "A";
-		assets::PlacedEntity b;
-		b.defName = "B";
-		assets::PlacedEntity c;
-		c.defName = "C";
-		assets::PlacedEntity d;
-		d.defName = "D";
-
-		// Two entries share anchorY == 1.0 (b then d) to check stability.
-		std::vector<DepthSortItem> items = {
-			{3.0F, &a, false},
-			{1.0F, &b, false},
-			{2.0F, &c, false},
-			{1.0F, &d, false},
-		};
-
-		std::vector<DepthSortItem> once = items;
-		sortByAnchorY(once);
-
-		// Ascending by anchorY.
-		for (size_t i = 1; i < once.size(); ++i) {
-			EXPECT_LE(once[i - 1].anchorY, once[i].anchorY);
-		}
-		// Stable: equal keys keep insertion order (b before d).
-		EXPECT_EQ(once[0].entity, &b);
-		EXPECT_EQ(once[1].entity, &d);
-		EXPECT_EQ(once[2].entity, &c);
-		EXPECT_EQ(once[3].entity, &a);
-
-		// Deterministic: sorting the same input again yields the same order.
-		std::vector<DepthSortItem> twice = items;
-		sortByAnchorY(twice);
-		ASSERT_EQ(once.size(), twice.size());
-		for (size_t i = 0; i < once.size(); ++i) {
-			EXPECT_EQ(once[i].entity, twice[i].entity);
-			EXPECT_FLOAT_EQ(once[i].anchorY, twice[i].anchorY);
-		}
-	}
-
 	// The gather's padding: the largest template reach, never under the 2 m every path had before
 	// reach-based margins, so a wide short template still gathers with no tall one loaded.
 	TEST(WorldDepthSort, VisibleBoundsPadByAtLeastTwoMetersAndByAWiderReach) {
@@ -142,6 +155,124 @@ namespace assets {
 		EXPECT_FLOAT_EQ(padOf(0.0F), 2.0F);
 		EXPECT_FLOAT_EQ(padOf(1.5F), 2.0F);
 		EXPECT_FLOAT_EQ(padOf(6.5F), 6.5F);
+	}
+
+
+	// The gather keeps each chunk's statics sorted between frames, culls the stretch the view's rows
+	// reach, and merges them; its stream must be the one a stable sort of every chunk's query, in
+	// (y, x) chunk order, then the dynamic entities, gives, ties between chunks and with actors
+	// included, and must follow an edit, a chunk unloading and reloading, and the camera moving.
+	TEST(WorldDepthSort, GatherMatchesOneStableSortAcrossChunksAndEdits) {
+		PlacementExecutor executor(AssetRegistry::Get());
+		std::unordered_set<world::ChunkCoordinate> processed;
+		const auto addChunk = [&](world::ChunkCoordinate coord, const std::vector<std::pair<glm::vec2, float>>& statics) {
+			SpatialIndex index;
+			for (const auto& [position, anchorY] : statics) {
+				PlacedEntity entity;
+				entity.defName = "Tree";
+				entity.position = position;
+				entity.anchorY = anchorY;
+				entity.isTallOccluder = true;
+				index.insert(entity);
+			}
+			PlacedEntity shortFlora;
+			shortFlora.defName = "Bush";
+			shortFlora.position = statics.front().first;
+			index.insert(shortFlora);
+			AsyncChunkPlacementResult result;
+			result.coord = coord;
+			result.spatialIndex = std::move(index);
+			executor.storeChunkResult(std::move(result));
+			processed.insert(coord);
+		};
+		// Both sides of the origin, so the view spans four chunks; anchorY 3 and 5 tie across chunks. The
+		// static at (5, 8) has its anchorY far below the view's rows, which the cull must still reach.
+		addChunk({0, 0}, {{{4.0F, 3.0F}, 3.0F}, {{9.0F, 1.0F}, 5.0F}, {{1.0F, 8.0F}, 8.0F}, {{2.0F, 2.0F}, 1.0F}, {{5.0F, 8.0F}, 45.0F}});
+		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 3.0F}, {{-2.0F, 6.0F}, 6.0F}, {{-900.0F, 3.0F}, 2.0F}});
+		addChunk({0, -1}, {{{3.0F, -5.0F}, -4.0F}, {{6.0F, -1.0F}, 5.0F}});
+		addChunk({-1, -1}, {{{-3.0F, -3.0F}, 3.0F}});
+
+		std::vector<PlacedEntity> actors(2);
+		actors[0].position = {0.5F, 2.5F};
+		actors[0].anchorY = 3.0F;
+		actors[1].position = {-1.0F, -1.0F};
+		actors[1].anchorY = -1.0F;
+
+		world::WorldCamera camera;
+		camera.setPosition({0.0F, 0.0F});
+		const RenderContext ctx{executor, processed, &actors, camera, 800, 600, 16.0F, 1};
+
+		const auto expected = [&]() {
+			const VisibleBounds vis = computeVisibleBounds(camera, 800, 600, 16.0F, entityCullMarginMeters(AssetRegistry::Get().maxReachMeters()));
+			std::vector<world::ChunkCoordinate> order(processed.begin(), processed.end());
+			std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.y != b.y ? a.y < b.y : a.x < b.x; });
+			std::vector<std::pair<float, const PlacedEntity*>> entities;
+			for (const auto& coord : order) {
+				for (const PlacedEntity* entity : executor.getChunkIndex(coord)->queryRect(vis.minX, vis.minY, vis.maxX, vis.maxY)) {
+					if (entity->isTallOccluder) {
+						entities.emplace_back(entity->anchorY, entity);
+					}
+				}
+			}
+			for (const PlacedEntity& actor : actors) {
+				if (actor.position.x >= vis.minX && actor.position.x <= vis.maxX && actor.position.y >= vis.minY && actor.position.y <= vis.maxY) {
+					entities.emplace_back(actor.anchorY, &actor);
+				}
+			}
+			std::stable_sort(entities.begin(), entities.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+			std::vector<const PlacedEntity*> sorted;
+			for (const auto& entry : entities) {
+				sorted.push_back(entry.second);
+			}
+			return sorted;
+		};
+		// Each item's upright carries its entity's draw fields.
+		const auto entitiesOf = [](const std::vector<DepthSortItem>& items) {
+			std::vector<const PlacedEntity*> entities;
+			for (const DepthSortItem& item : items) {
+				const Upright& upright = *item.upright;
+				EXPECT_EQ(item.anchorY, upright.entity->anchorY);
+				EXPECT_EQ(upright.position, upright.entity->position);
+				EXPECT_EQ(upright.templateId, upright.entity->templateId);
+				entities.push_back(upright.entity);
+			}
+			return entities;
+		};
+
+		WorldDepthGather gather;
+		std::vector<DepthSortItem> out;
+		gather.gather(ctx, out);
+		EXPECT_EQ(out.size(), 12U); // the far static at x -900 is culled
+		EXPECT_EQ(entitiesOf(out), expected());
+
+		ASSERT_TRUE(executor.removeEntity({0, 0}, {9.0F, 1.0F}, "Tree"));
+		gather.gather(ctx, out);
+		EXPECT_EQ(out.size(), 11U);
+		EXPECT_EQ(entitiesOf(out), expected());
+
+		// A chunk that unloads leaves the stream, and comes back with the index it reloads with.
+		processed.erase({-1, 0});
+		gather.gather(ctx, out);
+		EXPECT_EQ(out.size(), 9U);
+		EXPECT_EQ(entitiesOf(out), expected());
+		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 7.0F}});
+		gather.gather(ctx, out);
+		EXPECT_EQ(out.size(), 10U);
+		EXPECT_EQ(entitiesOf(out), expected());
+
+		// Moving the camera culls the same statics differently, then changes which chunks reach the view.
+		camera.setPosition({10.0F, 0.0F});
+		gather.gather(ctx, out);
+		EXPECT_EQ(entitiesOf(out), expected());
+		camera.setPosition({-890.0F, 0.0F});
+		processed.erase({-1, 0});
+		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 7.0F}, {{-900.0F, 3.0F}, 2.0F}});
+		gather.gather(ctx, out);
+		EXPECT_EQ(out.size(), 1U);
+		EXPECT_EQ(entitiesOf(out), expected());
+		camera.setPosition({0.0F, 0.0F});
+		gather.gather(ctx, out);
+		EXPECT_EQ(entitiesOf(out), expected());
 	}
 
 } // namespace assets

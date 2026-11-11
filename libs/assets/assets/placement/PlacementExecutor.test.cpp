@@ -1,10 +1,17 @@
 #include "PlacementExecutor.h"
 
+#include "world/generation/GroveField.h"
+
 #include "assets/AssetRegistry.h"
+#include "assets/placement/CanopyCover.h"
 
 #include <world/chunk/Chunk.h>
 
 #include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
 
 using namespace assets;
 
@@ -476,6 +483,64 @@ TEST(PlacementExecutorTests, SpacedRespectsMinDistance) {
 	}
 }
 
+// The shipped oak and maple keep each other's crowns apart by <crownSpacing>, a thicket core
+// tightening it at most to (1 - kThicketTighten), so no two trunks ever overlap.
+TEST(PlacementExecutorTests, CrownSpacedTreesKeepTheirCrownsApart) {
+	namespace fs = std::filesystem;
+	const fs::path root = fs::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+	const fs::path flora = root / "assets" / "world" / "flora";
+	if (!fs::exists(flora / "OakTree" / "OakTree.xml")) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	registry.setSharedScriptsPath(root / "assets" / "shared" / "scripts");
+	registry.loadDefinitions((flora / "OakTree" / "OakTree.xml").string());
+	registry.loadDefinitions((flora / "MapleTree" / "MapleTree.xml").string());
+	PlacementExecutor executor(registry);
+	executor.initialize();
+	const auto result = executor.processChunk(createTestContext({0, 0}, 424242, world::Biome::TemperateDeciduousForest));
+	ASSERT_GT(result.entities.size(), 1000U);
+
+	auto crown = [&](const PlacedEntity& e) {
+		const auto* mesh = registry.getTemplate(e.templateId);
+		float		minX = 0.0F;
+		float		maxX = 0.0F;
+		for (const auto& v : mesh->vertices) {
+			minX = std::min(minX, v.x);
+			maxX = std::max(maxX, v.x);
+		}
+		return 0.5F * (maxX - minX);
+	};
+	const float k = registry.getDefinition("Flora_TreeOak")->placement.crownSpacing * (1.0F - world::grove::kThicketTighten);
+	const auto trunkOf = [&](const PlacedEntity& e) {
+		return registry.getDefinition(e.defName)->collisionFor(e.traits.ageClass).halfExtentsMeters.x * e.scale;
+	};
+	// Every pair the checks below can fail sits within the largest gap either asks for.
+	float largestCrown = 0.0F;
+	float largestTrunk = 0.0F;
+	for (const PlacedEntity& e : result.entities) {
+		largestCrown = std::max(largestCrown, crown(e));
+		largestTrunk = std::max(largestTrunk, trunkOf(e));
+	}
+	const SpatialIndex* index = executor.getChunkIndex({0, 0});
+	for (const PlacedEntity& e : result.entities) {
+		const float r = crown(e);
+		const float trunk = trunkOf(e);
+		const float reach = std::max(k * (r + largestCrown), (trunk + largestTrunk) * std::sqrt(2.0F)) + 0.01F;
+		for (const PlacedEntity* o : index->queryRadius(e.position, reach)) {
+			if (o->position == e.position) {
+				continue;
+			}
+			const float ro = crown(*o);
+			const float need = k * (r + ro) * (0.5F + 0.5F * std::min(r, ro) / std::max(r, ro));
+			const float d = glm::length(o->position - e.position);
+			ASSERT_GE(d, need - 1e-3F) << e.defName << " and " << o->defName << " crowd each other";
+			ASSERT_GT(d, (trunk + trunkOf(*o)) * std::sqrt(2.0F)) << "trunks overlap";
+		}
+	}
+}
+
 // Riparian flora (near="Water") must actually cluster at a waterline. Diagnoses the
 // "waterside plants don't appear" report: a water stripe with land around it should
 // grow near-water flora, all within near.distance (+ clump spread) of the stripe, and
@@ -669,11 +734,11 @@ namespace {
 
 } // namespace
 
-// Placement of every entity, for a fixed seed, matches what it was before per-tree
-// traits existed, and each carries its computed traits. The hashes were captured from
-// the placer that had no traits or age classes; a change that draws from or reorders
-// the chunk RNG changes them. The standard library's distributions are
-// implementation-defined, so the golden is MSVC's.
+// Placement of every entity, for a fixed seed, matches the golden, and each carries its
+// computed traits. A change that draws from or reorders the chunk RNG, or changes how many
+// trees the grove field lets through, changes the hashes: recaptured from this test's output
+// when the grove and gap bands changed for tree scale and density (WOR-664). The standard
+// library's distributions are implementation-defined, so the golden is MSVC's.
 TEST(PlacementExecutorTests, PlacementMatchesGolden) {
 #if !defined(_MSVC_STL_VERSION)
 	GTEST_SKIP() << "golden captured with MSVC's standard library; other libraries draw differently";
@@ -684,9 +749,9 @@ TEST(PlacementExecutorTests, PlacementMatchesGolden) {
 	executor.initialize();
 
 	const GoldenChunk golden[] = {
-		{{0, 0}, 7344, 17200122207072769837ULL},
-		{{3, -2}, 7072, 16064193191493374804ULL},
-		{{-5, 7}, 7054, 5432118265719953071ULL},
+		{{0, 0}, 5577, 3182917791355955508ULL},
+		{{3, -2}, 4857, 14393224247676498899ULL},
+		{{-5, 7}, 5332, 10402357055143013362ULL},
 	};
 	for (const GoldenChunk& chunk : golden) {
 		const auto result = executor.processChunk(goldenContext(chunk.coord));
@@ -732,4 +797,27 @@ TEST(PlacementExecutorTests, DefScaleRangeMovesOnlyThatDefsScale) {
 		}
 	}
 	EXPECT_GT(oaks, 100U);
+}
+
+// The forest floor's canopy cover comes from the tree defs: a biome the trees stand in densely is
+// closed canopy, one with lone trees is open land, and non-trees (rocks) count for nothing.
+TEST(PlacementExecutorTests, CanopyCoverComesFromTheTreeDefs) {
+	auto& registry = AssetRegistry::Get();
+	registerGoldenDefs(registry);
+	AssetDefinition pine = makeFloraDef("Cover_Pine", world::Biome::MontaneForest, Distribution::Spaced, 0.2F, 3.0F);
+	pine.placement.groups = {"trees"};
+	registry.registerTestDefinition(pine);
+	AssetDefinition oak = *registry.getDefinition("Golden_Oak");
+	oak.placement.groups = {"trees"};
+	registry.registerTestDefinition(oak);
+	AssetDefinition maple = *registry.getDefinition("Golden_Maple");
+	maple.placement.groups = {"trees"};
+	registry.registerTestDefinition(maple);
+
+	const world::grove::CanopyCover cover = canopyCoverFromDefinitions(registry);
+	EXPECT_EQ(cover.at(world::Biome::TemperateDeciduousForest), 1.0F); // (0.45 + 0.40) / 16 a m2
+	EXPECT_EQ(cover.at(world::Biome::TemperateGrassland), 0.0F);		  // a lone maple, 0.01 / 16
+	EXPECT_NEAR(cover.at(world::Biome::MontaneForest), (0.2F / 16.0F - kCanopyOpenDensity) / (kCanopyClosedDensity - kCanopyOpenDensity), 1e-6F);
+	EXPECT_EQ(cover.at(world::Biome::HotDesert), 0.0F);
+	registry.clear();
 }

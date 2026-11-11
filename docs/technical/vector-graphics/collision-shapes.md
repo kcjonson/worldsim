@@ -10,7 +10,7 @@ single trunk rect to collide with.
 
 ## The shape
 
-`AssetDefinition::collision` is a `CollisionShape` (`libs/assets/assets/AssetDefinition.h`):
+`AssetDefinition::collisions` holds one `CollisionShape` per age class (one entry for a def without `<ageClasses>`; read it with `collisionFor(ageClass)`, which a single-class def answers for class 0). A `CollisionShape` (`libs/assets/assets/AssetDefinition.h`) is:
 
 ```cpp
 enum class CollisionShapeType { None, Rect, Polygon };
@@ -51,13 +51,20 @@ world-AABB fast path.
    lazily at first render, `AssetRegistry::loadDefinitions` runs a post-pass that
    executes each procedural generator once at load (cheap; no tessellation) to
    capture the emitted rect, so nav sees the collider before the first render
-   instead of racing it.
+   instead of racing it. A def with `<ageClasses>` is skipped there:
+   `prewarmTreeVariants` takes each class's rect from the variant 0 it
+   generates anyway, and both `loadDefinitions` and `loadDefinitionsFromFolder`
+   end in it, so a def loaded from a single file gets its rects too. The rect
+   is per age class and must not depend on the variant; `asset-cli validate
+   --render-smoke` checks variants 0 and 1 of each class, a def without
+   `<ageClasses>` counting as class 0 of `variantCount` variants
+   (`AssetRegistry::checkCollisionVariantIndependence`).
 
 2. **XML manual override.** `<collision><rect minX="" minY="" maxX="" maxY=""/></collision>`
    parses to center + half-extents (degenerate `max <= min` is rejected to
    `None`); `<collision><polygon><point x="" y=""/>...</polygon></collision>`
-   needs >= 3 points. Parsed in `AssetRegistry.cpp`. **XML wins over a Lua emit**
-   when both are present.
+   needs >= 3 points. Parsed in `AssetRegistry.cpp`, and applied to every age class.
+   **XML wins over a Lua emit** when both are present.
 
 3. **SVG `<metadata>` for simple (SVG-backed) assets** — `<metadata><collision>
    <shape type="aabb" min="x,y" max="x,y"/></collision></metadata>` (or a
@@ -74,7 +81,7 @@ world-AABB fast path.
 
 - **Navigation.** `NavInputBuilder` (`libs/sim/nav/`) carves the rect into the
   viewport-anchored simulation-area navmesh as an obstacle ring, inflated outward
-  by the flora pad `kFloraColliderPadMm` (0.05 m) so a routed agent clears the
+  by the placed-obstacle pad `kPlacedObstaclePadMm` (0.05 m) so a routed agent clears the
   trunk. Polygon and rect both transform through the same scale/rotate/translate.
   Agents route around the obstacle.
 
@@ -94,7 +101,7 @@ future Tier-3 clearance `<=` the nav pad.
 The asset-manager detail pane draws the collider as a cyan outline over the
 preview (aligned via the preview's own `fitToRect` transform), with a "no
 collider" label when `type == None`, so an author can confirm a trunk rect sits
-on the trunk. See `apps/asset-manager/AssetDetailView.cpp`.
+on the trunk (age class 0's, since it draws the default traits). See `apps/asset-manager/AssetDetailView.cpp`.
 
 ## Not built (and intentionally so)
 

@@ -200,8 +200,7 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	PlacementExecutor executor(reg);
@@ -232,8 +231,8 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	// aligned, so check the agent escaped the inflated AABB.
 	auto* nearPos = world.getComponent<Position>(near);
 	ASSERT_NE(nearPos, nullptr);
-	const float ex	  = tree.collision.halfExtentsMeters.x + kStaticRectClearanceMeters;
-	const float ey	  = tree.collision.halfExtentsMeters.y + kStaticRectClearanceMeters;
+	const float ex	  = tree.collisionFor(0).halfExtentsMeters.x + kStaticRectClearanceMeters;
+	const float ey	  = tree.collisionFor(0).halfExtentsMeters.y + kStaticRectClearanceMeters;
 	const float dx	  = std::abs(nearPos->value.x - treeAt.x);
 	const float dy	  = std::abs(nearPos->value.y - treeAt.y);
 	EXPECT_TRUE(dx >= ex - 1e-4F || dy >= ey - 1e-4F) << "agent center still inside inflated rect";
@@ -245,13 +244,52 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	EXPECT_FLOAT_EQ(farPos->value.y, farStart.y);
 }
 
+// The rect an agent hits is the one of the entity's age class: an agent 0.2 m off the trunk is
+// clear of a sapling's rect (half-extent 0.1 m) and inside a mature tree's (0.3 m).
+TEST_F(StaticRectCollisionSystemTest, RectFollowsAgeClass) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName	= "Test_StaticRectAged";
+	tree.ageClasses = {{.name = "sapling", .weight = 0.5F, .variants = 1}, {.name = "mature", .weight = 0.5F, .variants = 1}};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
+	tree.setCollision(1, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
+	reg.registerTestDefinition(tree);
+
+	for (const uint8_t ageClass : {uint8_t{0}, uint8_t{1}}) {
+		PlacementExecutor executor(reg);
+		const glm::vec2					   treeAt{20.0F, 20.0F};
+		const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
+		SpatialIndex					   index;
+		PlacedEntity					   pe;
+		pe.defName		= "Test_StaticRectAged";
+		pe.position		= treeAt;
+		pe.traits.ageClass = ageClass;
+		index.insert(pe);
+		assets::AsyncChunkPlacementResult result;
+		result.coord		= coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+
+		World			world;
+		const glm::vec2 start{treeAt.x + 0.2F, treeAt.y};
+		EntityID		agent = spawnAgent(world, start);
+		wire(world, executor, treeAt).update(0.0F);
+
+		const glm::vec2 end = world.getComponent<Position>(agent)->value;
+		if (ageClass == 0) {
+			EXPECT_FLOAT_EQ(end.x, start.x);
+		} else {
+			EXPECT_GT(end.x, start.x);
+		}
+	}
+}
+
 // Same setup run twice yields an identical corrected position (determinism).
 TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTreeDet";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	auto buildExecutor = [&](PlacementExecutor& executor) {
@@ -299,8 +337,7 @@ TEST_F(StaticRectCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_ScaleRect_JustOutside";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2					   treeAt{50.0F, 50.0F};
@@ -348,8 +385,7 @@ TEST_F(StaticRectCollisionSystemTest, AgentInQueryBoxButOutsideObbNotMoved) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_ScaleRect_InBox";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2					   treeAt{30.0F, 30.0F};
@@ -385,9 +421,9 @@ TEST_F(StaticRectCollisionSystemTest, NonRectCollisionIgnored) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition poly;
 	poly.defName		  = "Test_PolyCollision_Ignored";
-	poly.collision.type	  = CollisionShapeType::Polygon;
-	poly.collision.pointsMeters = {
-		{-1.0F, -1.0F}, {1.0F, -1.0F}, {1.0F, 1.0F}, {-1.0F, 1.0F}};
+	poly.setCollision(
+		0, {.type = CollisionShapeType::Polygon, .pointsMeters = {{-1.0F, -1.0F}, {1.0F, -1.0F}, {1.0F, 1.0F}, {-1.0F, 1.0F}}}
+	);
 	reg.registerTestDefinition(poly);
 
 	const glm::vec2					   treeAt{40.0F, 40.0F};
@@ -424,8 +460,7 @@ TEST_F(StaticRectCollisionSystemTest, PushedOnlyWhereDetailIsOn) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTreeDetail";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2				 treeAt{20.0F, 20.0F};
@@ -465,8 +500,7 @@ TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_StaticRectTreeLate";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2	  treeAt{20.0F, 20.0F};
@@ -496,9 +530,7 @@ TEST_F(StaticRectCollisionSystemTest, MirroredTreeIsCollidedWith) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName					 = "Test_MirroredRect";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
-	tree.collision.offsetMeters		 = {0.5F, 0.0F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.5F, 0.0F}, .halfExtentsMeters = {0.3F, 0.3F}});
 	reg.registerTestDefinition(tree);
 
 	const glm::vec2				 treeAt{50.0F, 50.0F};

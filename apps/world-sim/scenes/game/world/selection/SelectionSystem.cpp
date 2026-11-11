@@ -89,7 +89,7 @@ namespace {
 	}
 
 	// True if the click is under a placed (static/baked) entity's rendered silhouette,
-	// using the SAME position-as-origin transform BatchedEntityRenderer draws it with.
+	// using the SAME position-as-origin transform the instanced and baked paths draw it with.
 	// Falls back to a centroid radius test when the def has no cached silhouette so a
 	// silhouette-less asset stays selectable. Reused for world entities and for each
 	// packaged crate/item sub-entity (both are drawn as position-as-origin instances).

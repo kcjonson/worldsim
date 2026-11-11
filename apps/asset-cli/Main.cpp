@@ -13,6 +13,7 @@
 #include "BaseShader.h"
 #include "backend/gl/GLBackend.h"
 #include "graphics/Color.h"
+#include "PngEncoder.h"
 #include "primitives/Primitives.h"
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
@@ -27,11 +28,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <vector>
 
 using assets::AssetDefinition;
@@ -51,9 +58,25 @@ namespace {
 		"Commands:\n"
 		"  list [--type simple|procedural] [--group <name>] [--json]\n"
 		"  search <query> [--json]\n"
-		"  inspect <defName> [--json]\n"
+		"  inspect <defName> [--level <px/m>] [--param name=value ...] [--json]\n"
 		"  validate [--json] [--render-smoke]\n"
-		"  render <defName> --out <file.png> [--size WxH] [--bg r,g,b,a] [--seed N] [--samples N]\n";
+		"  render <defName> --out <file.png> [--size WxH] [--bg r,g,b,a] [--seed N] [--samples N] [--param name=value ...]\n"
+		"  render <defName> --out <file.png> (--grid | --age a,b,... [--seed s,t,...] [--pairs N]) [--level <px/m>] [--silhouette]\n"
+		"         [--ppm N] [--bg r,g,b,a] [--param name=value ...]\n"
+		"\n"
+		"render with --seed alone fits one generator run to --size. --grid draws every template the game\n"
+		"draws (age classes as rows, variants as columns); --age runs the generator at each age from 0 to 1\n"
+		"(columns) for each seed (rows, default 0), or with --pairs N the i-th age with the i-th seed, N to a\n"
+		"row. Both draw at one scale, --ppm pixels a metre (default\n"
+		"48). --silhouette fills what the selection silhouette keeps in one flat grey, on white unless --bg\n"
+		"is given.\n"
+		"\n"
+		"--level <px/m> picks one of a def's <detailLevels> by its density: a sheet draws its meshes cut for\n"
+		"that level, inspect counts only that level (it counts every level without it). Left out, a sheet\n"
+		"draws the reference level, the default view's (24). A single --seed render is the reference level.\n"
+		"\n"
+		"--param name=value (repeatable) sets one of the def's generator params for this run of inspect or\n"
+		"render, as if its XML said so.\n";
 
 	// --- argument helpers ---
 
@@ -72,7 +95,7 @@ namespace {
 
 	// Flags that consume the following argument as their value.
 	bool flagTakesValue(const std::string& flag) {
-		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples"};
+		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples", "--age", "--ppm", "--pairs", "--param", "--level"};
 		for (const char* vf : kValueFlags) {
 			if (flag == vf) {
 				return true;
@@ -123,6 +146,98 @@ namespace {
 		}
 		AssetRegistry::Get().loadDefinitionsFromFolder(assetsRoot);
 		return true;
+	}
+
+	using ParamSets = std::vector<std::pair<std::string, std::string>>;
+
+	// One number of type T filling the whole of `text` but for surrounding spaces; nullopt for anything
+	// else: trailing text, a sign an unsigned type has no room for, out of range, or not finite.
+	template <typename T> std::optional<T> parseWhole(std::string_view text) {
+		while (!text.empty() && text.front() == ' ') {
+			text.remove_prefix(1);
+		}
+		while (!text.empty() && text.back() == ' ') {
+			text.remove_suffix(1);
+		}
+		T value{};
+		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+		if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+			return std::nullopt;
+		}
+		if constexpr (std::is_floating_point_v<T>) {
+			if (!std::isfinite(value)) {
+				return std::nullopt;
+			}
+		}
+		return value;
+	}
+
+	// A comma-separated list of parseWhole<T> values; nullopt when any item isn't one.
+	template <typename T> std::optional<std::vector<T>> parseList(const std::string& list) {
+		std::vector<T> out;
+		size_t		   start = 0;
+		while (start <= list.size()) {
+			const size_t		   comma = std::min(list.find(',', start), list.size());
+			const std::optional<T> value = parseWhole<T>(std::string_view(list).substr(start, comma - start));
+			if (!value) {
+				return std::nullopt;
+			}
+			out.push_back(*value);
+			start = comma + 1;
+		}
+		return out;
+	}
+
+	// Every --param name=value, in order; nullopt (reported) when one has no value, no name, or no '='.
+	std::optional<ParamSets> paramSets(const std::vector<std::string>& args) {
+		ParamSets sets;
+		for (size_t i = 0; i < args.size(); ++i) {
+			if (args[i] != "--param") {
+				continue;
+			}
+			if (i + 1 == args.size()) {
+				std::cerr << "error: --param needs name=value after it\n";
+				return std::nullopt;
+			}
+			const std::string& pair = args[++i];
+			const size_t	   eq = pair.find('=');
+			if (eq == std::string::npos || eq == 0) {
+				std::cerr << "error: --param takes name=value, got '" << pair << "'\n";
+				return std::nullopt;
+			}
+			sets.emplace_back(pair.substr(0, eq), pair.substr(eq + 1));
+		}
+		return sets;
+	}
+
+	void applyParams(const std::string& defName, const ParamSets& sets) {
+		if (!sets.empty()) {
+			AssetRegistry::Get().overrideGeneratorParams(defName, sets);
+		}
+	}
+
+	// The level --level names by its density: nullopt when the flag is left out; an error (reported)
+	// when it isn't one of the def's <detailLevels>.
+	struct LevelArg {
+		std::optional<uint8_t> level;
+		bool				   valid = true;
+	};
+	LevelArg levelArg(const std::vector<std::string>& args, const AssetDefinition& def) {
+		const auto arg = flagValue(args, "--level");
+		if (!arg) {
+			return {};
+		}
+		const float density = parseWhole<float>(*arg).value_or(0.0F);
+		const auto	found = std::find(def.detailLevels.begin(), def.detailLevels.end(), density);
+		if (found == def.detailLevels.end()) {
+			std::cerr << "error: " << def.defName << " has no detail level " << *arg << "; its <detailLevels> are";
+			for (const float level : def.detailLevels) {
+				std::cerr << " " << level;
+			}
+			std::cerr << (def.detailLevels.empty() ? " none" : "") << "\n";
+			return {.valid = false};
+		}
+		return {.level = static_cast<uint8_t>(found - def.detailLevels.begin())};
 	}
 
 	std::vector<std::string> sortedDefNames() {
@@ -203,36 +318,56 @@ namespace {
 		return def.role != assets::AssetRole::Ground && def.role != assets::AssetRole::Groundcover;
 	}
 
+	json meshCounts(const renderer::TessellatedMesh* mesh) {
+		json counts{{"triangles", nullptr}, {"vertices", nullptr}};
+		if (mesh != nullptr) {
+			counts["triangles"] = mesh->getTriangleCount();
+			counts["vertices"] = mesh->getVertexCount();
+		}
+		return counts;
+	}
+
 	// The template the game draws for one (age class, variant) of the def, by the same key
 	// placement resolves (AssetRegistry::templateId). A simple asset is one drawing, so it
-	// lists one row.
-	json templateCounts(const AssetDefinition& def, assets::TreeTraits traits) {
-		json row{
-			{"ageClass", def.ageClasses.empty() ? json(nullptr) : json(def.ageClasses[traits.ageClass].name)},
-			{"variant", traits.variant},
-			{"seed", AssetRegistry::generationSeed(def, traits)},
-			{"triangles", nullptr},
-			{"vertices", nullptr},
-		};
-		if (const renderer::TessellatedMesh* mesh = AssetRegistry::Get().getTemplate(def.defName, traits)) {
-			row["triangles"] = mesh->getTriangleCount();
-			row["vertices"] = mesh->getVertexCount();
+	// lists one row. Its counts are the reference level's; a def with <detailLevels> also counts
+	// each level (`onlyLevel` alone when given) under "levels".
+	json templateCounts(const AssetDefinition& def, assets::TreeTraits traits, std::optional<uint8_t> onlyLevel) {
+		AssetRegistry& registry = AssetRegistry::Get();
+		const uint32_t id = registry.templateId(def.defName, traits);
+		json		   row{
+			  {"ageClass", def.ageClasses.empty() ? json(nullptr) : json(def.ageClasses[traits.ageClass].name)},
+			  {"variant", traits.variant},
+			  {"seed", AssetRegistry::generationSeed(def, traits)},
+		  };
+		row.update(meshCounts(registry.getTemplate(id)));
+		if (!def.detailLevels.empty()) {
+			json levels = json::array();
+			for (size_t level = 0; level < def.detailLevels.size(); ++level) {
+				if (onlyLevel.has_value() && *onlyLevel != level) {
+					continue;
+				}
+				const AssetRegistry::BuiltTemplate built = registry.buildTemplateLevel(id, static_cast<uint8_t>(level));
+				json							   counts = meshCounts(built.mesh.has_value() ? &*built.mesh : nullptr);
+				counts["pxPerMeter"] = def.detailLevels[level];
+				levels.push_back(counts);
+			}
+			row["levels"] = levels;
 		}
 		return row;
 	}
 
-	json templateTable(const AssetDefinition& def) {
+	json templateTable(const AssetDefinition& def, std::optional<uint8_t> onlyLevel) {
 		json rows = json::array();
 		if (def.assetType == AssetType::Simple) {
-			rows.push_back(templateCounts(def, {}));
+			rows.push_back(templateCounts(def, {}, onlyLevel));
 		} else if (def.ageClasses.empty()) {
 			for (uint32_t v = 0; v < std::max<uint32_t>(def.variantCount, 1U); ++v) {
-				rows.push_back(templateCounts(def, {.ageClass = 0, .variant = static_cast<uint16_t>(v)}));
+				rows.push_back(templateCounts(def, {.ageClass = 0, .variant = static_cast<uint16_t>(v)}, onlyLevel));
 			}
 		} else {
 			for (size_t a = 0; a < def.ageClasses.size(); ++a) {
 				for (uint16_t v = 0; v < def.ageClasses[a].variants; ++v) {
-					rows.push_back(templateCounts(def, {.ageClass = static_cast<uint8_t>(a), .variant = v}));
+					rows.push_back(templateCounts(def, {.ageClass = static_cast<uint8_t>(a), .variant = v}, onlyLevel));
 				}
 			}
 		}
@@ -347,6 +482,10 @@ namespace {
 			std::cerr << "error: inspect needs a defName\n";
 			return kUsage;
 		}
+		const auto sets = paramSets(args);
+		if (!sets) {
+			return kUsage;
+		}
 		if (!loadLibrary()) {
 			return kFailure;
 		}
@@ -356,10 +495,9 @@ namespace {
 			return kNotFound;
 		}
 		const bool asJson = hasFlag(args, "--json");
-
-		std::vector<std::string> resolvedSvgs;
-		for (const std::string& svgPath : d->svgPaths) {
-			resolvedSvgs.push_back(d->resolvePath(svgPath).string());
+		const LevelArg level = levelArg(args, *d);
+		if (!level.valid) {
+			return kUsage;
 		}
 
 		json warnings = json::array();
@@ -367,6 +505,12 @@ namespace {
 			if (issue.defName == *defName) {
 				warnings.push_back({{"severity", severityName(issue.severity)}, {"field", issue.field}, {"message", issue.message}});
 			}
+		}
+		applyParams(*defName, *sets);
+
+		std::vector<std::string> resolvedSvgs;
+		for (const std::string& svgPath : d->svgPaths) {
+			resolvedSvgs.push_back(d->resolvePath(svgPath).string());
 		}
 
 		json out;
@@ -380,7 +524,7 @@ namespace {
 		out["generatorName"] = d->generatorName;
 		out["groups"] = d->placement.groups;
 		if (drawsTemplates(*d)) {
-			out["templates"] = templateTable(*d);
+			out["templates"] = templateTable(*d, level.level);
 		} else {
 			json variants = json::array();
 			for (uint32_t v = 0; v < std::max<uint32_t>(d->variantCount, 1U); ++v) {
@@ -424,6 +568,11 @@ namespace {
 					}
 					std::cout << "variant " << row["variant"].get<uint32_t>() << " (seed " << row["seed"].get<uint32_t>()
 							  << "): " << countsText(row) << "\n";
+					if (row.contains("levels")) {
+						for (const auto& counts : row["levels"]) {
+							std::cout << "    " << counts["pxPerMeter"].get<float>() << " px/m: " << countsText(counts) << "\n";
+						}
+					}
 				}
 			}
 			if (out.contains("variants")) {
@@ -458,6 +607,8 @@ namespace {
 					report.add(Severity::Error, name, "render", "Asset produced no geometry (render smoke test)", "");
 				}
 			}
+			AssetRegistry::Get().checkCollisionVariantIndependence(report);
+			AssetRegistry::Get().checkDetailLevels(report);
 		}
 
 		if (asJson) {
@@ -481,6 +632,163 @@ namespace {
 		return report.errorCount() > 0 ? kFailure : kOk;
 	}
 
+	// A sheet at one scale: every template the game draws for the def (--grid: age classes as rows,
+	// variants as columns), or the generator run at each of --age's ages (columns) for each of --seed's
+	// seeds (rows).
+	int renderSheet(const std::string& defName, const std::string& out, const std::vector<std::string>& args) {
+		const bool grid = hasFlag(args, "--grid");
+		const auto ageArg = flagValue(args, "--age");
+		if (grid == ageArg.has_value()) {
+			std::cerr << "error: a sheet is either --grid or --age <a,b,...>\n";
+			return kUsage;
+		}
+		if (flagValue(args, "--size") || flagValue(args, "--samples")) {
+			std::cerr << "error: a sheet is sized by --ppm; --size and --samples are for a --seed render\n";
+			return kUsage;
+		}
+		if (grid && (flagValue(args, "--seed") || flagValue(args, "--pairs"))) {
+			std::cerr << "error: --grid draws the game's own templates; --seed and --pairs are for an --age sheet\n";
+			return kUsage;
+		}
+		float				  ppm = 48.0F;
+		std::vector<float>	  ages;
+		std::vector<uint32_t> seeds{0U};
+		size_t				  pairsPerRow = 0;
+		if (const auto ppmArg = flagValue(args, "--ppm")) {
+			const std::optional<float> value = parseWhole<float>(*ppmArg);
+			if (!value || !(*value > 0.0F)) {
+				std::cerr << "error: --ppm must be a positive number, got '" << *ppmArg << "'\n";
+				return kUsage;
+			}
+			ppm = *value;
+		}
+		if (ageArg) {
+			const auto values = parseList<float>(*ageArg);
+			if (!values || std::any_of(values->begin(), values->end(), [](float a) { return a < 0.0F || a > 1.0F; })) {
+				std::cerr << "error: --age takes a list of numbers from 0 to 1, got '" << *ageArg << "'\n";
+				return kUsage;
+			}
+			ages = *values;
+		}
+		if (const auto seedArg = flagValue(args, "--seed")) {
+			const auto values = parseList<uint32_t>(*seedArg);
+			if (!values) {
+				std::cerr << "error: --seed takes a list of integers from 0 to 4294967295, got '" << *seedArg << "'\n";
+				return kUsage;
+			}
+			seeds = *values;
+		}
+		if (const auto pairsArg = flagValue(args, "--pairs")) {
+			const std::optional<size_t> value = parseWhole<size_t>(*pairsArg);
+			if (!value || *value == 0 || ages.size() != seeds.size()) {
+				std::cerr << "error: --pairs N takes a positive N and as many --age values as --seed values, N to a row\n";
+				return kUsage;
+			}
+			pairsPerRow = *value;
+		}
+		const bool				silhouette = hasFlag(args, "--silhouette");
+		const auto				bgArg = flagValue(args, "--bg");
+		const Foundation::Color bg = (silhouette && !bgArg) ? Foundation::Color(1.0F, 1.0F, 1.0F, 1.0F) : parseColor(bgArg);
+		const auto				sets = paramSets(args);
+		if (!sets) {
+			return kUsage;
+		}
+
+		if (!loadLibrary()) {
+			return kFailure;
+		}
+		AssetRegistry&		   registry = AssetRegistry::Get();
+		const AssetDefinition* def = registry.getDefinition(defName);
+		if (def == nullptr) {
+			std::cerr << "error: no such defName: " << defName << "\n";
+			return kNotFound;
+		}
+		const LevelArg level = levelArg(args, *def);
+		if (!level.valid) {
+			return kUsage;
+		}
+		applyParams(defName, *sets);
+
+		std::vector<std::vector<const renderer::TessellatedMesh*>> rows;
+		std::vector<std::unique_ptr<renderer::TessellatedMesh>>	   built;
+		if (grid) {
+			const size_t classes = std::max<size_t>(def->ageClasses.size(), 1);
+			for (size_t a = 0; a < classes; ++a) {
+				auto&		   row = rows.emplace_back();
+				const uint32_t variants = def->ageClasses.empty() ? std::max<uint32_t>(def->variantCount, 1U) : def->ageClasses[a].variants;
+				for (uint32_t v = 0; v < (def->assetType == AssetType::Simple ? 1U : variants); ++v) {
+					const uint32_t id = registry.templateId(defName, {.ageClass = static_cast<uint8_t>(a), .variant = static_cast<uint16_t>(v)});
+					if (!level.level.has_value()) {
+						row.push_back(registry.getTemplate(id));
+						continue;
+					}
+					AssetRegistry::BuiltTemplate levelMesh = registry.buildTemplateLevel(id, *level.level);
+					if (!levelMesh.mesh.has_value()) {
+						std::cerr << "error: " << levelMesh.error << "\n";
+						return kFailure;
+					}
+					row.push_back(built.emplace_back(std::make_unique<renderer::TessellatedMesh>(std::move(*levelMesh.mesh))).get());
+				}
+				std::cout << "  row " << (a + 1) << ": " << (def->ageClasses.empty() ? defName : def->ageClasses[a].name) << ", " << row.size()
+						  << " variants\n";
+			}
+		} else {
+			// The generator reads its age from the def's `age` param, so each cell overrides it.
+			// One cell per (age, seed): every age by every seed, or with --pairs N the i-th age with the
+			// i-th seed, N to a row.
+			struct Cell {
+				float	 age;
+				uint32_t seed;
+				size_t	 row;
+			};
+			std::vector<Cell> cells;
+			if (pairsPerRow > 0) {
+				for (size_t i = 0; i < ages.size(); ++i) {
+					cells.push_back({ages[i], seeds[i], i / pairsPerRow});
+				}
+			} else {
+				for (size_t sIdx = 0; sIdx < seeds.size(); ++sIdx) {
+					for (const float age : ages) {
+						cells.push_back({age, seeds[sIdx], sIdx});
+					}
+				}
+			}
+			const float density = level.level.has_value() ? def->detailLevels[*level.level] : AssetRegistry::kFullDetail;
+			for (const Cell& cell : cells) {
+				const float	   age = cell.age;
+				const uint32_t seed = cell.seed;
+				if (rows.size() <= cell.row) {
+					rows.emplace_back();
+				}
+				auto& row = rows.back();
+				{
+					registry.overrideGeneratorParams(defName, {{"age", std::to_string(age)}});
+					auto mesh = std::make_unique<renderer::TessellatedMesh>();
+					if (!registry.buildMesh(defName, seed, *mesh, density)) {
+						std::cerr << "error: " << defName << " at age " << age << " seed " << seed << " drew nothing\n";
+						return kFailure;
+					}
+					std::cout << "  seed " << seed << " age " << age << ": " << mesh->getTriangleCount() << " triangles, "
+							  << mesh->getVertexCount() << " vertices\n";
+					row.push_back(built.emplace_back(std::move(mesh)).get());
+				}
+			}
+		}
+
+		if (!initGl()) {
+			std::cerr << "error: could not create an OpenGL context (need a GPU/display)\n";
+			return kFailure;
+		}
+		const assets::RenderedImage image = assets::renderMeshSheet(rows, ppm, bg, silhouette);
+		shutdownGl();
+		if (image.pixels.empty() || !Renderer::writePngToFile(image.pixels.data(), image.width, image.height, out)) {
+			std::cerr << "error: could not render " << defName << " to " << out << "\n";
+			return kFailure;
+		}
+		std::cout << "wrote " << out << " (" << image.width << "x" << image.height << ")\n";
+		return kOk;
+	}
+
 	int cmdRender(const std::vector<std::string>& args) {
 		const auto defName = positional(args);
 		if (!defName) {
@@ -490,6 +798,17 @@ namespace {
 		const auto out = flagValue(args, "--out");
 		if (!out) {
 			std::cerr << "error: render needs --out <file.png>\n";
+			return kUsage;
+		}
+		if (hasFlag(args, "--grid") || flagValue(args, "--age") || hasFlag(args, "--silhouette")) {
+			return renderSheet(*defName, *out, args);
+		}
+		if (flagValue(args, "--level")) {
+			std::cerr << "error: --level is for a --grid or --age sheet; a --seed render draws the reference level\n";
+			return kUsage;
+		}
+		if (flagValue(args, "--ppm") || flagValue(args, "--pairs")) {
+			std::cerr << "error: --ppm and --pairs are for a --grid or --age sheet; a --seed render is sized by --size\n";
 			return kUsage;
 		}
 
@@ -503,12 +822,12 @@ namespace {
 
 		uint32_t seed = 0U;
 		if (const auto seedArg = flagValue(args, "--seed")) {
-			try {
-				seed = static_cast<uint32_t>(std::stoul(*seedArg));
-			} catch (const std::exception&) {
-				std::cerr << "error: --seed must be a non-negative integer\n";
+			const std::optional<uint32_t> value = parseWhole<uint32_t>(*seedArg);
+			if (!value) {
+				std::cerr << "error: --seed must be an integer from 0 to 4294967295, got '" << *seedArg << "'\n";
 				return kUsage;
 			}
+			seed = *value;
 		}
 
 		int samples = 1;
@@ -521,13 +840,20 @@ namespace {
 			}
 		}
 
+		const auto sets = paramSets(args);
+		if (!sets) {
+			return kUsage;
+		}
+
 		if (!loadLibrary()) {
 			return kFailure;
 		}
-		if (AssetRegistry::Get().getDefinition(*defName) == nullptr) {
+		const AssetDefinition* def = AssetRegistry::Get().getDefinition(*defName);
+		if (def == nullptr) {
 			std::cerr << "error: no such defName: " << *defName << "\n";
 			return kNotFound;
 		}
+		applyParams(*defName, *sets);
 
 		if (!initGl()) {
 			std::cerr << "error: could not create an OpenGL context (need a GPU/display)\n";

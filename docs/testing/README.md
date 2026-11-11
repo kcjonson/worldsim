@@ -229,7 +229,8 @@ spec, and the `/perf-nightly` skill runs it.
 | 08 | HUD text fits | [scenarios/08-hud-text-fits.md](./scenarios/08-hud-text-fits.md) |
 | 09 | Ground tiles | [scenarios/09-ground-tiles.md](./scenarios/09-ground-tiles.md) |
 | 10 | World creator coasts | [scenarios/10-world-creator-coasts.md](./scenarios/10-world-creator-coasts.md) |
-| 11 | Colonists eat | [scenarios/11-colonists-eat.md](./scenarios/11-colonists-eat.md) |
+| 11 | Trees by zoom | [scenarios/11-trees-by-zoom.md](./scenarios/11-trees-by-zoom.md) |
+| 12 | Colonists eat | [scenarios/12-colonists-eat.md](./scenarios/12-colonists-eat.md) |
 
 **Run each scenario in isolation** from a fresh launch, or use `give` / `need` dev verbs to
 set preconditions from a running instance. The fully-combined four-scenario flow now runs
@@ -339,7 +340,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
 | `gpuhold` | `{enabled, target, passes, holdGpuMs, sceneGpuMs, frameMs}`, the GPU hold's state; the GPU times are a few frames old |
-| `uprights` | `{uprightDrawCalls, uprightTriangles}`, last frame's draws in the depth-sorted upright stream (tall statics and actors). `/api/metrics` already counts them in `drawCalls` and `triangleCount`; this splits them out |
+| `uprights` | `{uprightDrawCalls, uprightTriangles, uprightOverlapSplits, ...}`, last frame's draws in the depth-sorted upright stream (tall statics and actors). `/api/metrics` already counts them in `drawCalls` and `triangleCount`; this splits them out |
 
 ### Other endpoints
 

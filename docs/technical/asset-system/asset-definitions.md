@@ -283,6 +283,7 @@ To inherit from an asset in a different folder, use `@defName`:
 | `generator/params` | No | Key-value parameters passed to script |
 | `variantCount` | No | Number of variants to pre-generate |
 | `ageClasses` | No | A tree's age classes, in place of `variantCount` (below) |
+| `detailLevels` | No | The screen densities a mesh is cut for, one mesh a level (below) |
 
 ### Age classes
 
@@ -305,6 +306,20 @@ A tree def can split into age classes. Each placed tree gets one age class and o
 | `workScale` | No | Multiplier on the `<harvestable>` durability, above 0; default 1 |
 
 A def with both `<ageClasses>` and `<variantCount>` is a validation error, as is any broken attribute above; the loader then ignores the whole block. A def without `<ageClasses>` has one age class of `variantCount` variants. Nothing reads the yield and work scales or draws per variant yet.
+
+Collision is per age class. A generator's `asset:setCollisionRect` is captured from each class's variant 0 while the variants are prewarmed at load, and `AssetDefinition::collisionFor(ageClass)` answers with it (a def without `<ageClasses>` answers for class 0). An XML `<collision>` or SVG metadata collider applies to every class and wins over the generator. The rect may not depend on the variant: `asset-cli validate --render-smoke` generates variants 0 and 1 of each class with two or more and fails the def, naming the class, if they differ.
+
+### Detail levels
+
+A procedural plant can be cut for several screen densities, in pixels a meter (the camera's 8 px/m times its zoom, 2 to 160):
+
+```xml
+<detailLevels>2, 4, 8, 24, 40, 80</detailLevels>
+```
+
+Up to 8 positive densities, strictly ascending; anything else is a validation error and the def keeps one mesh. Each template (def, age class, variant) has a mesh at every level, and the generator sees the level's density as the Lua global `detailPxPerMeter`. The game draws a template at the highest level at or below the camera's density, else the lowest (`assets::detailLevelFor`, `DetailLevels.h`). The template id has no level in it, so what entities store doesn't change with the zoom.
+
+The reference level is the one the default view (24 px/m) picks. The load prewarms it, and everything that isn't drawing reads it: the silhouette (picking, selection, see-through), `maxReachMeters` and so the cull margin, tall routing, and the collision rect. The renderer builds the other levels on request, off the main thread, when the camera first needs them, and draws the nearest ready level meanwhile (`InstancedEntityRenderer`). A level may reach at most `kLevelReachMargin` (1.1) times the reference level's reach, since the cull margin reads the reference level widened by that factor. A level's collision rect must equal the reference level's: `asset-cli validate --render-smoke` builds every level of every aged def and fails one that differs, reaches past the margin, or whose generator fails. `asset-cli inspect` counts each level, and `render --grid` or `--age` takes `--level <px/m>`.
 
 ### Variation Elements
 

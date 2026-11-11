@@ -5143,8 +5143,7 @@ namespace ecs::test {
 			assets::AssetDefinition tree;
 			tree.defName					 = halfExtent > 0.5F ? "Test_WideBerryTree" : "Test_NarrowBerryTree";
 			tree.label						 = tree.defName;
-			tree.collision.type				 = assets::CollisionShapeType::Rect;
-			tree.collision.halfExtentsMeters = {halfExtent, halfExtent};
+			tree.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {halfExtent, halfExtent}});
 			tree.capabilities.harvestable	 = assets::HarvestableCapability{};
 			tree.capabilities.harvestable->yieldDefName = "Berry";
 			tree.capabilities.harvestable->amountMin	= 2;
@@ -5269,8 +5268,7 @@ namespace ecs::test {
 		const std::string tree = registerTree(0.2F);
 		assets::AssetDefinition neighbour;
 		neighbour.defName					  = "Test_ThicketTrunk";
-		neighbour.collision.type			  = assets::CollisionShapeType::Rect;
-		neighbour.collision.halfExtentsMeters = {0.2F, 0.2F};
+		neighbour.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(neighbour));
 		const glm::vec2								 a{20.0F, 20.0F};
 		const glm::vec2								 b{60.0F, 20.0F};
@@ -5715,8 +5713,7 @@ namespace ecs::test {
 		void patchFloraFarAway() {
 			assets::AssetDefinition tree;
 			tree.defName					 = "Test_FarTree";
-			tree.collision.type				 = assets::CollisionShapeType::Rect;
-			tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+			tree.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.4F, 0.4F}});
 			assets::AssetRegistry::Get().registerTestDefinition(tree);
 			assets::AsyncChunkPlacementResult placed;
 			placed.coord = world::worldToChunk({kFarTree.x, kFarTree.y});

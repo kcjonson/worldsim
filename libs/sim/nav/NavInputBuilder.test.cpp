@@ -386,8 +386,7 @@ TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName = "Test_NavTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.1F, 0.1F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
 	reg.registerTestDefinition(tree);
 
 	SpatialIndex index(4.0F);
@@ -429,8 +428,7 @@ TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
 	AssetDefinition tree;
 	tree.defName = "Test_NavRotTree";
-	tree.collision.type			   = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.5F, 0.2F}; // non-square so rotation is visible
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.2F}}); // non-square so rotation is visible
 	reg.registerTestDefinition(tree);
 
 	SpatialIndex index(4.0F);

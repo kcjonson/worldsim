@@ -247,8 +247,7 @@ namespace {
 
 			assets::AssetDefinition tree;
 			tree.defName					 = kTreeDef;
-			tree.collision.type				 = assets::CollisionShapeType::Rect;
-			tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+			tree.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 			assets::AssetRegistry::Get().registerTestDefinition(tree);
 
 			chunks = std::make_unique<world::ChunkManager>(std::make_unique<ForestRiverSampler>());

@@ -27,6 +27,7 @@
 #include <application/App.h>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <graphics/Rect.h>
 #include <limits>
 #include <metrics/GPUTimer.h>
@@ -49,8 +50,10 @@
 #include <world/rendering/TemplateBounds.h>
 
 #include <assets/AssetRegistry.h>
+#include <assets/DetailLevels.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS
@@ -126,6 +129,8 @@ namespace {
 	constexpr const char* kSceneName = "game";
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
+	// The registry prewarms, and reads non-drawing template data at, the default view's density.
+	static_assert(kPixelsPerMeter * world::kZoomLevels[world::kDefaultZoomIndex] == assets::kReferencePixelsPerMeter);
 
 	class GameScene : public app::Scene {
 	  public:
@@ -159,7 +164,7 @@ namespace {
 
 				// Create world systems
 				auto sampler = std::make_unique<world::MockWorldSampler>(kDefaultWorldSeed);
-				m_chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler));
+				m_chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get()));
 
 				m_camera = std::make_unique<world::WorldCamera>();
 				m_camera->setPanSpeed(200.0F);
@@ -618,9 +623,26 @@ namespace {
 
 			// The depth-sorted upright stream's draws (trees and actors), which /api/metrics folds into
 			// its totals, split out for perf captures (/api/state?what=uprights)
+			// and the detail levels the trees drew at (/api/state?what=uprights)
 			m_devRegistrations.push_back(owner->devServer().stateProvider("uprights", [this]() {
+				const worldview::InstancedEntityRenderer::LevelStats& levels = m_entityRenderer->lastUprightLevels();
+				auto number = [](float value) {
+					char text[32];
+					std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
+					return std::string(text);
+				};
+				std::string uses;
+				for (const auto& use : levels.uses) {
+					uses += std::string(uses.empty() ? "" : ",") + "{\"pxPerMeter\":" + number(use.pixelsPerMeter) +
+							",\"instances\":" + std::to_string(use.instances) + "}";
+				}
 				return "{\"uprightDrawCalls\":" + std::to_string(m_entityRenderer->lastUprightDrawCallCount()) +
-					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) + "}";
+					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) +
+					   ",\"uprightOverlapSplits\":" + std::to_string(m_entityRenderer->lastUprightOverlapSplits()) +
+					   ",\"screenPxPerMeter\":" + number(levels.screenPixelsPerMeter) + ",\"levels\":[" + uses +
+					   "],\"levelRequestsPending\":" + std::to_string(levels.pendingRequests) +
+					   ",\"residentLevels\":" + std::to_string(levels.residentLevels) +
+					   ",\"residentLevelBytes\":" + std::to_string(levels.residentBytes) + "}";
 			}));
 
 			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels
@@ -1370,9 +1392,9 @@ namespace {
 		}
 
 		/// Radius (world meters) of the open clearing carved around each colonist's landing spot.
-		/// Generous next to the 0.3 m agent radius so the spawn point and its immediate
-		/// neighbourhood are obstacle-free and the navmesh triangulates open walkable ground there.
-		static constexpr float kLandingClearRadius = 2.5F;
+		/// The party ring plus the widest crown's reach (a veteran oak, 4.9 m across at scale 1.2),
+		/// so no tree left standing hides a colonist under its crown at landing.
+		static constexpr float kLandingClearRadius = 4.5F;
 		/// A party stands on a ring this far from the clearing center.
 		static constexpr float kPartyRingRadius = 1.5F;
 		/// Members never land closer than this, center to center (agent radius 0.3 m).

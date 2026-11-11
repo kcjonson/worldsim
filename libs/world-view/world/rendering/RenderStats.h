@@ -21,6 +21,10 @@ namespace worldview {
 		// (an actor's triangle counts as two, an instanced mesh as its indices / 3 per instance).
 		uint32_t uprightDrawCalls = 0;
 		uint32_t uprightTriangles = 0;
+
+		// Runs opened only because something drawn after its mesh's open run overlapped the
+		// entity on screen; the rest of the upright draws are a mesh's first run since a flush.
+		uint32_t uprightOverlapSplits = 0;
 	};
 
 } // namespace worldview

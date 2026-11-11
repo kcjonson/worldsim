@@ -120,7 +120,7 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 							continue;
 						}
 						// Rect colliders only: a polygon one is in the nav mesh but not pushed against here.
-						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, def->collision)) {
+						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, def->collisionFor(e->traits.ageClass))) {
 							rects.push_back(*box);
 						}
 					}

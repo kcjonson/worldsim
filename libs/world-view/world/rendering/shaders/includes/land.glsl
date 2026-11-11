@@ -29,6 +29,8 @@ uniform ivec2	   u_chunkTileOrigin; // world tile of the chunk's tile (0, 0)
 //   u_groundParams: x 1 / period (m), y mip level this draw, z 1 / layer count, w 0.5 z (groundVariant)
 //   u_groundTintBase, u_groundTintLush: the macro tint, base + lush * the macro's R,
 //   multiplied into the sRGB color
+//   u_groundFloorTint: the forest floor's tint at full canopy weight, multiplied in by the
+//   weight; 1 for every surface but the grass family's
 uniform sampler2DArray u_groundTiles0;
 uniform sampler2DArray u_groundTiles1;
 uniform sampler2DArray u_groundTiles2;
@@ -37,6 +39,7 @@ uniform ivec4		   u_groundLayers[10];
 uniform vec4		   u_groundParams[10];
 uniform vec3		   u_groundTintBase[10];
 uniform vec3		   u_groundTintLush[10];
+uniform vec3		   u_groundFloorTint[10];
 uniform uint		   u_groundSeed;
 uniform ivec2		   u_groundCellOrigin;	   // the chunk's first hex cell id (see THE LOOK)
 uniform bool		   u_groundHex;			   // px/m at or over terrain/ground/hexMinPxPerMeter
@@ -46,7 +49,7 @@ uniform vec3		   u_groundMacroValue;	   // value scale: x + y * macro G + z * ma
 
 // The chunk's macro texture (GroundMacro.h): 257x257, a texel every 2 m from the
 // chunk's corner, its last row and column the next chunk's first. R the dry to lush
-// mix, G and B value noise around 0.5.
+// mix, G and B value noise around 0.5, A the forest floor's canopy weight.
 uniform sampler2D u_groundMacro;
 
 // The field (SurfaceFieldParams): per surface id where indexed.
@@ -579,12 +582,30 @@ vec3 groundEncodeSrgb(vec3 linear) {
 	return mix(low, high, step(vec3(0.0031308), linear));
 }
 
+/// How far the macro's value noise moves the forest floor's edge, at the middle of
+/// the edge; nothing where the weight is 0 or 1.
+const float kGroundFloorBreakup = 0.8;
+/// 1 / the peak of w (1 - w), so the breakup is kGroundFloorBreakup at the edge's middle.
+const float kGroundFloorEdgeNormal = 4.0;
+/// The mid (10 m) octave's share of the breakup noise against the fine (5 m) one's 1.
+const float kGroundFloorMidOctave = 0.5;
+
+/// The forest floor's weight at this pixel: the macro's canopy weight, its edge
+/// broken up by the macro's value noise so it isn't a smooth gradient. Exactly 0
+/// wherever the canopy weight is.
+float groundFloor(vec4 macro) {
+	float w		= macro.a;
+	float noise = macro.b - 0.5 + kGroundFloorMidOctave * (macro.g - 0.5);
+	return clamp(w + kGroundFloorBreakup * kGroundFloorEdgeNormal * noise * w * (1.0 - w), 0.0, 1.0);
+}
+
 /// A surface's macro tint and value at this pixel (`macro`, its sample of
-/// u_groundMacro), multiplied into its sRGB color.
-vec3 groundTint(uint surface, vec4 macro) {
+/// u_groundMacro) and its forest floor tint by weight `floorW`, multiplied into its
+/// sRGB color. At weight 0 the floor's factor is exactly 1.
+vec3 groundTint(uint surface, vec4 macro, float floorW) {
 	vec3  tint	= u_groundTintBase[surface] + u_groundTintLush[surface] * macro.r;
 	float value = u_groundMacroValue.x + macro.g * u_groundMacroValue.y + macro.b * u_groundMacroValue.z;
-	return tint * value;
+	return tint * value * mix(vec3(1.0), u_groundFloorTint[surface], floorW);
 }
 
 /// The ground color at chunk-local position `local`, in sRGB. Where an edge's band
@@ -599,6 +620,7 @@ vec3 landColor(vec2 local) {
 	vec2	 frac	 = local - whole;
 	LandEval e		 = evaluateLand(tile, frac, u_landWarpFineOctaves);
 	vec4	 macro	 = textureLod(u_groundMacro, (local * 0.5 + 0.5) * (1.0 / kGroundMacroSide), 0.0);
+	float	 floorW	 = groundFloor(macro);
 	vec4	 painted = groundTexture(e.painted, local);
 	if (e.across != e.painted) {
 		int	  paintedLevel	 = levelOfSurface(e.painted);
@@ -628,8 +650,8 @@ vec3 landColor(vec2 local) {
 			// Mixed in linear light, the way the hex blend mixes, and encoded once; the
 			// macro tints, which multiply the sRGB color, mix by the same weight.
 			vec3 linear = mix(lower.rgb, upper.rgb * stain, a) * light;
-			return groundEncodeSrgb(linear) * mix(groundTint(lowerId, macro), groundTint(upperId, macro), a);
+			return groundEncodeSrgb(linear) * mix(groundTint(lowerId, macro, floorW), groundTint(upperId, macro, floorW), a);
 		}
 	}
-	return groundEncodeSrgb(painted.rgb) * groundTint(e.painted, macro);
+	return groundEncodeSrgb(painted.rgb) * groundTint(e.painted, macro, floorW);
 }

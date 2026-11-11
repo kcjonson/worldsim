@@ -197,8 +197,7 @@ namespace {
 	void registerTree(const std::string& defName, float halfExtent) {
 		AssetDefinition tree;
 		tree.defName					 = defName;
-		tree.collision.type				 = CollisionShapeType::Rect;
-		tree.collision.halfExtentsMeters = {halfExtent, halfExtent};
+		tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {halfExtent, halfExtent}});
 		AssetRegistry::Get().registerTestDefinition(tree);
 	}
 
@@ -3453,9 +3452,7 @@ TEST_F(NavigationSystemTest, StaleRouteStaysStaleThroughAnUnrelatedWallJob) {
 TEST_F(NavigationSystemTest, ClearGroundAndTheMeshAgreeOnAMirroredCollider) {
 	AssetDefinition tree;
 	tree.defName					 = "Test_NavMirroredTree";
-	tree.collision.type				 = CollisionShapeType::Rect;
-	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
-	tree.collision.offsetMeters		 = {0.8F, 0.0F};
+	tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.8F, 0.0F}, .halfExtentsMeters = {0.3F, 0.3F}});
 	AssetRegistry::Get().registerTestDefinition(tree);
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;

@@ -4,7 +4,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/AssetRegistry.test.h"
 #include "assets/VariantSeed.h"
-#include "assets/placement/GroveField.h"
+#include "world/generation/GroveField.h"
 
 #include <vector/Types.h>
 
@@ -84,7 +84,7 @@ namespace assets {
 		int thicketTrees = 0;
 		int thicketSaplings = 0;
 		for (const glm::vec2 p : spreadPositions(200000)) {
-			if (grove::thicketWeight(grove::groveValue(p.x, p.y, kSeed)) > 0.5F) {
+			if (world::grove::thicketWeight(world::grove::groveValue(p.x, p.y, kSeed)) > 0.5F) {
 				++thicketTrees;
 				thicketSaplings += computeTreeTraits(def, p, kSeed).ageClass == 0 ? 1 : 0;
 			}

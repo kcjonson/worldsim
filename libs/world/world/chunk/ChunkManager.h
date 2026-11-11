@@ -28,8 +28,9 @@ class ChunkManager {
 	static constexpr float kDefaultAnchorLoadRangeMeters = 128.0F;
 	static constexpr float kDefaultAnchorKeepRangeMeters = 256.0F;
 
-	/// Create a chunk manager with the given world sampler
-	explicit ChunkManager(std::unique_ptr<IWorldSampler> worldSampler);
+	/// Create a chunk manager with the given world sampler; its chunks lay the forest floor by
+	/// `canopyCover` (none by default).
+	explicit ChunkManager(std::unique_ptr<IWorldSampler> worldSampler, grove::CanopyCover canopyCover = {});
 
 	// Non-copyable
 	ChunkManager(const ChunkManager&) = delete;
@@ -86,6 +87,7 @@ class ChunkManager {
 
   private:
 	std::unique_ptr<IWorldSampler>								sampler;
+	grove::CanopyCover											canopyCover;
 	std::unordered_map<ChunkCoordinate, std::unique_ptr<Chunk>> chunks;
 	ChunkCoordinate												cameraChunk{0, 0};
 

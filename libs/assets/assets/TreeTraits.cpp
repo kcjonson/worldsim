@@ -2,7 +2,7 @@
 
 #include "assets/AssetDefinition.h"
 #include "assets/placement/DecimeterGrid.h"
-#include "assets/placement/GroveField.h"
+#include "world/generation/GroveField.h"
 
 #include <array>
 #include <cstddef>
@@ -24,7 +24,7 @@ namespace assets {
 		// stand of young trees rather than veterans packed trunk to trunk.
 		constexpr float kThicketYoungLean = 0.6F;
 
-		// grove::warpedNoise at the quantiles i/16 (its distribution is the same at any feature
+		// world::grove::warpedNoise at the quantiles i/16 (its distribution is the same at any feature
 		// size and seed), measured over 2.56 million samples across 64 seeds; the ends are its
 		// range. Mapping through them makes the field uniform, so the age weights hold.
 		constexpr std::array<float, 17> kFieldQuantiles{
@@ -94,9 +94,9 @@ namespace assets {
 		if (def.ageClasses.size() > 1) {
 			const float x = static_cast<float>(cell.x) * 0.1F;
 			const float y = static_cast<float>(cell.y) * 0.1F;
-			const float field = uniformFromField(grove::warpedNoise(x, y, kAgeFeatureMeters, worldSeed ^ kAgeFieldSalt));
+			const float field = uniformFromField(world::grove::warpedNoise(x, y, kAgeFeatureMeters, worldSeed ^ kAgeFieldSalt));
 			const float own = unitFloat(cellHash(cell, defSalt ^ kAgeHashSalt));
-			const float thicket = grove::thicketWeight(grove::groveValue(x, y, worldSeed));
+			const float thicket = world::grove::thicketWeight(world::grove::groveValue(x, y, worldSeed));
 			const float age = uniformFromBlend(kFieldShare * field + (1.0F - kFieldShare) * own) * (1.0F - kThicketYoungLean * thicket);
 
 			const size_t last = def.ageClasses.size() - 1;

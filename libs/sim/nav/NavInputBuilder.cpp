@@ -67,22 +67,26 @@ namespace nav {
 	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
 		ring.clear();
 		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
-		if (def == nullptr || !def->collision.blocks()) {
+		if (def == nullptr) {
+			return false;
+		}
+		const assets::CollisionShape& collision = def->collisionFor(e.traits.ageClass);
+		if (!collision.blocks()) {
 			return false;
 		}
 
-		if (def->collision.type == assets::CollisionShapeType::Rect) {
-			const OrientedRect box = *placedObstacleBox(e, def->collision);
+		if (collision.type == assets::CollisionShapeType::Rect) {
+			const OrientedRect box = *placedObstacleBox(e, collision);
 			ring.reserve(4);
 			for (const glm::vec2 corner : {glm::vec2{-1.0F, -1.0F}, glm::vec2{1.0F, -1.0F}, glm::vec2{1.0F, 1.0F}, glm::vec2{-1.0F, 1.0F}}) {
 				ring.push_back(toMm(box.center + box.axisX * (corner.x * box.halfExtents.x) + box.axisY * (corner.y * box.halfExtents.y)));
 			}
-		} else if (def->collision.type == assets::CollisionShapeType::Polygon) {
+		} else if (collision.type == assets::CollisionShapeType::Polygon) {
 			const float c  = std::cos(e.rotation);
 			const float s  = std::sin(e.rotation);
 			const float sc = e.scale;
-			ring.reserve(def->collision.pointsMeters.size());
-			for (const glm::vec2& p : def->collision.pointsMeters) {
+			ring.reserve(collision.pointsMeters.size());
+			for (const glm::vec2& p : collision.pointsMeters) {
 				const glm::vec2 l = p * sc;
 				ring.push_back(toMm({e.position.x + (l.x * c - l.y * s), e.position.y + (l.x * s + l.y * c)}));
 			}

@@ -21,6 +21,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <span>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -92,8 +93,30 @@ namespace assets {
 		/// Thread-safe; generation and tessellation run outside the cache lock.
 		uint32_t templateId(const std::string& defName, TreeTraits traits);
 
-		/// The mesh of a template id, or nullptr for 0 or a template that failed to build.
+		/// The mesh of a template id at its def's reference detail level (DetailLevels.h), or nullptr for 0
+		/// or a template that failed to build. Everything that isn't drawing (silhouette, reach, routing,
+		/// the cull margin) reads this mesh, so it doesn't change with the camera's zoom.
 		const renderer::TessellatedMesh* getTemplate(uint32_t templateId) const;
+
+		/// The highest template id handed out since the last clear; ids run from 1 to this.
+		[[nodiscard]] uint32_t templateCount() const;
+
+		/// A template's mesh at one detail level, or why there is none, and the collision rect its
+		/// generator emitted (asset:setCollisionRect).
+		struct BuiltTemplate {
+			std::optional<renderer::TessellatedMesh> mesh;
+			std::string								 error;
+			std::optional<CollisionShape>			 collision;
+		};
+
+		/// The <detailLevels> of a template's def: the densities its levels are cut for, ascending. Empty
+		/// for 0 or a def without levels, whose one mesh is level 0. Valid until the next clear.
+		[[nodiscard]] std::span<const float> detailLevels(uint32_t templateId) const;
+
+		/// Builds a template's mesh at one of its def's detail levels (0 for a def without levels),
+		/// uncached: getTemplate keeps the reference level's, the renderer keeps the others it draws.
+		/// Touches no cache, so it runs on any thread while no load or clear runs.
+		[[nodiscard]] BuiltTemplate buildTemplateLevel(uint32_t templateId, uint8_t level);
 
 		/// getTemplate(templateId(defName, traits)).
 		const renderer::TessellatedMesh* getTemplate(const std::string& defName, TreeTraits traits);
@@ -113,7 +136,8 @@ namespace assets {
 		/// The farthest any drawn point of a template but groundcover reaches from its origin,
 		/// times the def's largest placement scale, over every template built so far: how far
 		/// from its origin an entity can draw or be clicked. Every placed static has its
-		/// template built at placement, so this covers what can be on screen.
+		/// template built at placement, so this covers what can be on screen. A def with
+		/// <detailLevels> is measured at its reference level and widened by kLevelReachMargin.
 		[[nodiscard]] float maxReachMeters() const { return m_maxReach.load(std::memory_order_relaxed); }
 
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
@@ -146,9 +170,19 @@ namespace assets {
 		///        name as ageClass (nil for a def without age classes)
 		/// @return true if generation succeeded
 		/// @param error When given, receives the script error of a failed Lua generation
+		/// @param level The def's detail level to cut for (Lua sees its density as detailPxPerMeter, nil
+		///        for a def without levels); the reference level when left out
 		bool generateAsset(
-			const std::string& defName, uint32_t seed, GeneratedAsset& outAsset, TreeTraits traits = {}, std::string* error = nullptr
+			const std::string&	   defName,
+			uint32_t			   seed,
+			GeneratedAsset&		   outAsset,
+			TreeTraits			   traits = {},
+			std::string*		   error = nullptr,
+			std::optional<uint8_t> level = std::nullopt
 		);
+
+		/// A pixel density that keeps every path, whatever its setLod threshold.
+		static constexpr float kFullDetail = std::numeric_limits<float>::infinity();
 
 		/// Build an uncached tessellated mesh for an asset at a given seed.
 		/// Simple assets ignore the seed (one drawing) but for an SVG ground def, where it picks the
@@ -156,11 +190,9 @@ namespace assets {
 		/// This is the single shared "defName + seed -> mesh" entry point.
 		/// For callers that draw one mesh. An asset over the 65535 vertices a mesh can index
 		/// needs several, and that fails here (logged); use buildMeshes for those.
+		/// @param pixelsPerMeter As buildMeshes'.
 		/// @return true if a non-empty mesh was produced
-		bool buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh);
-
-		/// A pixel density that keeps every path, whatever its setLod threshold.
-		static constexpr float kFullDetail = std::numeric_limits<float>::infinity();
+		bool buildMesh(const std::string& defName, uint32_t seed, renderer::TessellatedMesh& outMesh, float pixelsPerMeter = kFullDetail);
 
 		/// buildMesh for assets of any size: the tessellated paths are packed into as many
 		/// meshes as it takes to keep each under 65535 vertices (16-bit indices), in path order.
@@ -169,7 +201,9 @@ namespace assets {
 		/// repeated where it crosses into, so the meshes clipped to that square are the seamless tile.
 		/// @param pixelsPerMeter Screen density to build for. A path that called setLod(n), or a
 		///        ground SVG's shape under data-lod="n", is kept only when n <= this; the default
-		///        keeps all of them. Other simple assets are always one drawing, whatever the density.
+		///        keeps all of them. A def with <detailLevels> is cut for the level this density
+		///        draws (detailLevelFor), its reference level by default. Other simple assets are
+		///        always one drawing, whatever the density.
 		/// @return true if at least one non-empty mesh was produced
 		bool buildMeshes(
 			const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter = kFullDetail
@@ -186,6 +220,27 @@ namespace assets {
 		/// @return false when the def is neither procedural nor a ground tile, its generator fails, or
 		///         its SVG breaks a ground SVG rule (logged)
 		bool buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter = kFullDetail);
+
+		/// Adds an error to `report` for each age class of a procedural def whose generator emits a
+		/// different collision rect for two of its variants: the rect is per age class, so it may not
+		/// depend on the variant. A def without <ageClasses> is one implicit class 0 of variantCount
+		/// variants. Generates variants 0 and 1 of each class that has two or more; runs a
+		/// generator, so it is for the render smoke, not for load.
+		void checkCollisionVariantIndependence(ValidationReport& report);
+
+		/// Builds every template (each age class and variant) of each def with <detailLevels> at every
+		/// level, in parallel, and adds an error to `report` for a def with no level at
+		/// kReferencePixelsPerMeter, and for a level whose generator fails (an oversize mesh
+		/// included), whose collision rect differs from the reference level's, or whose reach is past
+		/// kLevelReachMargin times the reference level's. For the render
+		/// smoke, not for load.
+		void checkDetailLevels(ValidationReport& report);
+
+		/// Writes `params` over a def's generator params, as if its XML said so, and drops every built
+		/// template, silhouette and motion so nothing built from the old params is drawn (template ids
+		/// start over). For a tool run that draws one def with changed params; the def's collision rects
+		/// stay as loaded.
+		void overrideGeneratorParams(const std::string& defName, const std::vector<std::pair<std::string, std::string>>& params);
 
 		/// Where a def's generator script is on disk: its scriptPath, with @shared/ resolved against
 		/// the shared scripts folder. Empty when the def names no script, or a @shared/ one with no
@@ -351,12 +406,11 @@ namespace assets {
 			size_t operator()(const TemplateKey& key) const;
 		};
 
-		/// A template's mesh, or why there is none.
-		struct BuiltTemplate {
-			std::optional<renderer::TessellatedMesh> mesh;
-			std::string								 error; // why a procedural template has no mesh
-		};
+		/// A template: its key's def and traits, and its reference level's mesh. The level is not part of
+		/// the key; a template has a mesh at every level of its def, built on request (buildTemplateLevel).
 		struct TemplateEntry {
+			const AssetDefinition*					 def = nullptr;
+			TreeTraits								 traits;
 			std::optional<renderer::TessellatedMesh> mesh;
 			bool									 defTall = false;
 		};
@@ -364,16 +418,24 @@ namespace assets {
 		/// The traits a template of `def` is keyed by (see templateId), or nullopt when out of range.
 		[[nodiscard]] static std::optional<TreeTraits> templateTraits(const AssetDefinition& def, TreeTraits traits);
 
-		/// Generates and tessellates one template. Touches no cache, so it runs on any thread.
-		[[nodiscard]] BuiltTemplate buildTemplate(const AssetDefinition& def, TreeTraits traits);
+		/// Generates and tessellates one template at one detail level. Touches no cache, so it runs on any thread.
+		[[nodiscard]] BuiltTemplate buildTemplate(const AssetDefinition& def, TreeTraits traits, uint8_t level);
 
 		/// Files a built template under its key and returns its id; when another thread filed the
 		/// key first, that one's id. Resolves the def's routing first, outside the lock.
 		uint32_t insertTemplate(const AssetDefinition& def, TreeTraits traits, BuiltTemplate built);
 
-		/// Builds every variant of each def with age classes, in parallel, before the first chunk
-		/// asks for one. A variant over kMaxMeshVertices is an error in the validation report.
-		void prewarmTreeVariants();
+		/// Parses one XML file into `definitions`, appending the names it defined to `loadedNames`.
+		/// Runs the per-def collision passes that need no age classes; leaves each aged def's
+		/// templates and rects to prewarmTreeVariants.
+		bool parseDefinitions(const std::string& xmlPath, std::vector<std::string>& loadedNames);
+
+		/// Builds every variant of each named def with age classes at its reference detail level (the
+		/// default view's; the renderer requests the others as the camera needs them), in parallel,
+		/// before the first chunk asks for one. A variant over kMaxMeshVertices is an error in the validation report.
+		/// Each class's collision rect is taken from its variant 0 (unless the def authors one).
+		/// Both load entry points end here, so a def is complete however it was loaded.
+		void prewarmTreeVariants(const std::vector<std::string>& defNames);
 
 		/// Drops every template, silhouette, and resolved motion.
 		void clearCaches();
