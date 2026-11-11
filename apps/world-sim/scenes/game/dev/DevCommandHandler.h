@@ -30,6 +30,10 @@ namespace ecs {
 }
 namespace world {
 	class ChunkManager;
+	class WorldCamera;
+}
+namespace assets {
+	class PlacementExecutor;
 }
 namespace construction {
 	using FoundationId = std::uint64_t;
@@ -56,6 +60,9 @@ namespace world_sim {
 		world_sim::GameUI*			 ui = nullptr;
 		world::ChunkManager* chunks = nullptr;
 		ecs::NavigationSystem*		 navigation = nullptr; // world-position validity (isValidPosition)
+		const assets::PlacementExecutor* placementIndex = nullptr; // placed statics, for the flora view
+		const world::WorldCamera*		 camera = nullptr;		   // the flora view's default rect
+		float							 pixelsPerMeter = 0.0F;	   // world-to-screen at zoom 1
 
 		// Planet used for the current session; populated from GameStartConfig. Used by
 		// serializeLanding (/api/state?what=landing) for biome + water readback. May be
@@ -65,6 +72,8 @@ namespace world_sim {
 		double landingLonDeg = 0.0;
 
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
+		// GameScene::dropResourcePiles: the one loose-ground drop path (merge, then stack-capped piles).
+		std::function<void(const std::string& defName, float x, float y, uint32_t quantity)> dropLoose;
 	};
 
 	/// The dev verbs and world-state views. Read+write surface for /api/dev/<verb> and
@@ -75,7 +84,7 @@ namespace world_sim {
 
 		/// Registers every verb as a route and every view as a state provider, for as long as the
 		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; verbs with an
-		/// outcome to report (foundation-edit) answer with it. The views are colonists,
+		/// outcome to report (foundation-edit) answer with it, and flora answers with its measurement. The views are colonists,
 		/// construction, stations, storage, time, landing, tunables and summary.
 		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
@@ -96,6 +105,12 @@ namespace world_sim {
 		// Add / Subtract tool's own validate + apply path; answers status ok|rejected,
 		// reason, target, extension (0 unless an Add onto a built foundation), entity, area.
 		std::string devFoundationEdit(const app::DevRequest& cmd);
+		// flora?rect=x0,y0,x1,y1 (world metres, default the camera's view): the trees in the rect
+		// per def and age class, canopy cover, and expected wood (assets::measureFlora). With
+		// age=<name>&near=x,y (and optionally def=) it lists the nearest trees of that age class
+		// instead (assets::nearestTreesOfAge). A route, not a state view, because a state
+		// provider is given no query parameters.
+		app::DevResponse devFlora(const app::DevRequest& cmd);
 		void		devWalls(const app::DevRequest& cmd);
 		void		devOpening(const app::DevRequest& cmd);
 		void		devCraft(const app::DevRequest& cmd);

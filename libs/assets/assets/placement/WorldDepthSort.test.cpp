@@ -5,6 +5,9 @@
 
 #include "assets/placement/WorldDepthSort.h"
 
+#include "assets/placement/FloraRouting.h"
+#include "assets/placement/RenderContext.h"
+
 #include <vector/Types.h>
 
 #include <gtest/gtest.h>
@@ -62,82 +65,27 @@ namespace assets {
 		EXPECT_FLOAT_EQ(anchorY, 20.9F);
 	}
 
-	// Packaged crate + item share the ground baseline; equal anchorY + stable sort
-	// keeps the crate (added first) behind the item after the global sort.
-	TEST(WorldDepthSort, PackagedPairSharesBaselineAndStaysOrdered) {
-		const float bottomY = 5.0F;
+	// Tall or short routing is one answer per def, from its mature variant 0 at its
+	// unscaled height (FloraRouting.h). These pin the rule the bake and the sort share.
+	TEST(WorldDepthSort, RoutesTallFromMatureHeight) {
+		const renderer::TessellatedMesh tree = makeMesh(-3.0F, 0.5F); // 3.5 m
+		const MeshYExtent				treeExt = meshYExtent(&tree);
+		EXPECT_TRUE(routesTall(treeExt.maxY - treeExt.minY, /*isGroundcover=*/false));
 
-		assets::PlacedEntity crate;
-		crate.defName = "PackagingCrate";
-		crate.anchorY = bottomY; // == computeAnchorY(bottomY, 0, 1)
-		assets::PlacedEntity item;
-		item.defName = "BasicBox";
-		item.anchorY = bottomY;
-		assets::PlacedEntity other; // unrelated entity at the same baseline
-		other.defName = "Rock";
-		other.anchorY = bottomY;
-
-		EXPECT_FLOAT_EQ(crate.anchorY, item.anchorY);
-
-		// Interleave an unrelated equal-key entity ahead of the pair; the pair must
-		// still emerge crate-before-item.
-		std::vector<DepthSortItem> items = {
-			{other.anchorY, &other, false},
-			{crate.anchorY, &crate, false},
-			{item.anchorY, &item, false},
-		};
-		sortByAnchorY(items);
-
-		ASSERT_EQ(items.size(), 3U);
-		int crateIdx = -1;
-		int itemIdx = -1;
-		for (int i = 0; i < static_cast<int>(items.size()); ++i) {
-			if (items[i].entity == &crate) {
-				crateIdx = i;
-			}
-			if (items[i].entity == &item) {
-				itemIdx = i;
-			}
-		}
-		EXPECT_LT(crateIdx, itemIdx);
+		const renderer::TessellatedMesh flora = makeMesh(-0.3F, 0.1F); // 0.4 m
+		const MeshYExtent				floraExt = meshYExtent(&flora);
+		EXPECT_FALSE(routesTall(floraExt.maxY - floraExt.minY, /*isGroundcover=*/false));
 	}
 
-	// Placement-time classification (computeStaticDepthAttribs) is the single source
-	// of truth for a static's anchorY + tall/short bit; the per-frame gather only
-	// reads the stored fields. These pin the rule the bake and the sort must agree on.
-	TEST(WorldDepthSort, StaticDepthAttribsTallTreeIsOccluder) {
-		const renderer::TessellatedMesh tree = makeMesh(-3.0F, 0.5F); // worldHeight 3.5m
-		const MeshYExtent				ext = meshYExtent(&tree);
-		const StaticDepthAttribs		d = computeStaticDepthAttribs(10.0F, ext, 2.0F, /*isGroundcover=*/false);
-		EXPECT_TRUE(d.isTallOccluder);
-		// anchorY must equal the canonical rule: 10 + 0.5 * 2.
-		EXPECT_FLOAT_EQ(d.anchorY, 11.0F);
-		EXPECT_FLOAT_EQ(d.anchorY, computeAnchorY(10.0F, ext.maxY, 2.0F));
-	}
-
-	TEST(WorldDepthSort, StaticDepthAttribsShortFloraIsNotOccluder) {
-		const renderer::TessellatedMesh flora = makeMesh(-0.3F, 0.1F); // worldHeight 0.4m < 1m
-		const MeshYExtent				ext = meshYExtent(&flora);
-		const StaticDepthAttribs		d = computeStaticDepthAttribs(5.0F, ext, 1.0F, /*isGroundcover=*/false);
-		EXPECT_FALSE(d.isTallOccluder);
-		EXPECT_FLOAT_EQ(d.anchorY, 5.1F); // still carries a valid anchor
-	}
-
-	// Exactly at the threshold counts as tall (bake bakes only worldHeight < kShortFloraMaxHeight).
-	TEST(WorldDepthSort, StaticDepthAttribsThresholdIsInclusiveTall) {
-		const renderer::TessellatedMesh mesh = makeMesh(0.0F, kShortFloraMaxHeight); // worldHeight == threshold
-		const MeshYExtent				ext = meshYExtent(&mesh);
-		const StaticDepthAttribs		d = computeStaticDepthAttribs(0.0F, ext, 1.0F, /*isGroundcover=*/false);
-		EXPECT_TRUE(d.isTallOccluder);
+	// Exactly at the threshold counts as tall.
+	TEST(WorldDepthSort, RoutesTallThresholdIsInclusive) {
+		EXPECT_TRUE(routesTall(kShortFloraMaxHeight, /*isGroundcover=*/false));
 	}
 
 	// Groundcover is never a tall occluder even when its mesh clears the threshold:
 	// it renders on the instanced path, so it must stay out of the sorted stream.
-	TEST(WorldDepthSort, StaticDepthAttribsGroundcoverIsNeverTall) {
-		const renderer::TessellatedMesh tall = makeMesh(-3.0F, 0.5F);
-		const MeshYExtent				ext = meshYExtent(&tall);
-		const StaticDepthAttribs		d = computeStaticDepthAttribs(0.0F, ext, 1.0F, /*isGroundcover=*/true);
-		EXPECT_FALSE(d.isTallOccluder);
+	TEST(WorldDepthSort, RoutesTallNeverForGroundcover) {
+		EXPECT_FALSE(routesTall(3.5F, /*isGroundcover=*/true));
 	}
 
 	TEST(WorldDepthSort, SortIsAscendingStableAndDeterministic) {
@@ -179,6 +127,21 @@ namespace assets {
 			EXPECT_EQ(once[i].entity, twice[i].entity);
 			EXPECT_FLOAT_EQ(once[i].anchorY, twice[i].anchorY);
 		}
+	}
+
+	// The gather's padding: the largest template reach, never under the 2 m every path had before
+	// reach-based margins, so a wide short template still gathers with no tall one loaded.
+	TEST(WorldDepthSort, VisibleBoundsPadByAtLeastTwoMetersAndByAWiderReach) {
+		const world::WorldCamera camera;
+		const VisibleBounds		 base  = computeVisibleBounds(camera, 800, 600, 16.0F, 0.0F);
+		const auto				 padOf = [&](float reachMeters) {
+			 const VisibleBounds vis = computeVisibleBounds(camera, 800, 600, 16.0F, entityCullMarginMeters(reachMeters));
+			 EXPECT_FLOAT_EQ(base.minX - vis.minX, vis.maxX - base.maxX);
+			 return base.minX - vis.minX;
+		};
+		EXPECT_FLOAT_EQ(padOf(0.0F), 2.0F);
+		EXPECT_FLOAT_EQ(padOf(1.5F), 2.0F);
+		EXPECT_FLOAT_EQ(padOf(6.5F), 6.5F);
 	}
 
 } // namespace assets

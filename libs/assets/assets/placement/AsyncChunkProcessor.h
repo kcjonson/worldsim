@@ -140,11 +140,11 @@ namespace assets {
 				}
 				result.bakedMesh = assets::bakeChunkEntities(
 					entityPtrs, chunkData.coord,
-					[](const std::string& defName) -> const renderer::TessellatedMesh* {
-						if (assets::isGroundcoverDef(defName)) {
+					[](const PlacedEntity& entity) -> const renderer::TessellatedMesh* {
+						if (assets::isGroundcoverDef(entity.defName)) {
 							return nullptr; // groundcover renders via the instanced path, not baking
 						}
-						return AssetRegistry::Get().getTemplate(defName);
+						return AssetRegistry::Get().getTemplate(entity.templateId);
 					}
 				);
 

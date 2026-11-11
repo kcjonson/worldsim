@@ -6,9 +6,12 @@ add_library(assets
     assets/SvgPathNodes.cpp
     assets/MotionEval.cpp
     assets/AssetValidator.cpp
+    assets/GroundSvg.cpp
     assets/GroundTint.cpp
     assets/GroundTransition.cpp
     assets/TessellatedPaths.cpp
+    assets/TreeDefSchema.cpp
+    assets/TreeTraits.cpp
     assets/ConstructionRegistry.cpp
     assets/AssetBatcher.cpp
     assets/ConfigValidator.cpp
@@ -24,6 +27,8 @@ add_library(assets
     assets/placement/PlacementExecutor.cpp
     assets/placement/BakedEntityMesh.cpp
     assets/placement/WorldDepthSort.cpp
+    assets/placement/FloraMeasure.cpp
+    assets/placement/GroveField.cpp
 )
 
 target_include_directories(assets

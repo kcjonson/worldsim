@@ -29,12 +29,13 @@ namespace world_sim {
 
 /// Cached selection identity for detecting structural vs value-only updates
 struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, WallSegment, Opening, Foundation, Room };
+	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, ResourcePile, WallSegment, Opening, Foundation, Room };
 
 	Type			  type = Type::None;
 	ecs::EntityID	  colonistId{0};	 // For Colonist selection
 	ecs::EntityID	  stationId{0};		 // For CraftingStation selection
 	ecs::EntityID	  furnitureId{0};	 // For Furniture selection
+	ecs::EntityID	  pileId{0};		 // For ResourcePile selection
 	std::string		  worldEntityDef;	 // For WorldEntity selection
 	std::string		  stationDefName;	 // For CraftingStation selection
 	std::string		  furnitureDefName;	 // For Furniture selection

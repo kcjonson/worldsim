@@ -171,6 +171,51 @@ first). Not code — engine touch-points are named so the work is concrete.
   and becomes a haul candidate.
 - Acceptance: a 16-wood remainder is one pile; a colonist hauls it in armful-sized trips until
   it's gone; the pile is removed when empty.
+- Every loose drop goes through this one path (`DropResourceCallback` on ActionSystem,
+  AIDecisionSystem, and ConstructionSystem, plus the dev `give where=loose`), landing in
+  `GameScene::dropResourcePiles`. There is no per-unit Packaged drop any more; `Packaged` is
+  crafted furniture only.
+- Store first: when a colonist gets rid of something it holds (freeing its hands for a pickup,
+  stowing a tool for an armful, a chain-interrupted carry, crafted output that doesn't fit),
+  `ecs::storeOrDrop` (`libs/sim/ecs/StoreOrDrop.h`) first deposits into placed storage within
+  `kStoreWithinReachMeters` (1.5 m) of the colonist, nearest first, taking what
+  `ecs::storageRoomFor` allows (the box's rules accept the item; physical room clamped to its
+  configured max, the same rule the storage-to-storage pull uses). Packaged boxes and crafting
+  stations never take it, a box behind a built wall is out of reach (the vision occluders, so
+  doors and windows are gaps), and the colonist doesn't walk. Reach and the wall check are
+  measured from where the colonist stands, never from the tree, pile, or box it is working, so a
+  Withdraw's source box can't swallow the axe the colonist stows for the armful. Only the
+  remainder drops. A fell's leftover wood isn't something the colonist holds, so it still drops
+  straight to the ground.
+- Snap to ground: a drop origin already on the nav mesh is kept as is, so the pile lands at the
+  colonist's feet and never across a wall. Only an off-mesh origin (a tree felled on a river
+  bank) is moved, to the nearest walkable point via `findValidPositionNear`.
+- Merge on drop: `ecs::resourcePileDrops` tops up same-def piles within `kPileMergeRadius` (1 m)
+  of the drop, nearest first, to their stackSize before spawning anything.
+- Footprint spacing: the rest spawns as new stack-capped piles on the first clear spot of a
+  deterministic spiral (origin, then rings of 6, 12, 18 ... spots) stepped by the dropped item's
+  own footprint diameter plus `kGroundClearanceGap` (0.1 m). Before a ring opens a new pile, any
+  same-def pile out to that ring's radius with room is topped up, nearest first, so repeated
+  drops at one spot fill the partial overflow piles earlier drops left instead of starting more.
+  A spot is clear when it is at least both footprint radii plus the gap from every pile and
+  packaged crate nearby, so a different item dropped on a pile lands beside it, never on it.
+- Footprints come from the shared layouts so spacing matches what's drawn:
+  `worldview::pileFootprintRadius` in `PileLayout.h` (the circle around a FULL pile of the item,
+  so top-ups never outgrow it) and `kPackagedFootprintRadius` in `PackagedLayout.h` (half the
+  crate's diagonal, centered on the crate box). `GameScene::dropResourcePiles` gathers every pile
+  and crate. When the drop origin is on the mesh it passes the nav mesh's `isValidPosition` as
+  the ground test for the first `kWalkableSearchRings` rings, past which clearance alone decides
+  so a drop always lands; an off-mesh origin gets no ground test. `ResourceStack.h` holds only
+  the merge radius, the gap, and the ring count; tuning is deferred. Deterministic, no RNG.
+- Visual: `worldview::pileLayout` (`libs/world-view/world/rendering/PileLayout.h`) draws a pile
+  as 1 sprite for a single unit, otherwise ceil(fill x 5) sprites clamped to 2..5 (one per unit
+  up to 5 when unbounded), stacked in overlapping rows 0.3 x worldHeight apart with a small X
+  stagger. Render, hit-test, outline, and drop footprint share it. Loose piles lie bare; only
+  packaged furniture sits in a crate. No quantity text in the world.
+- Selectable: a click on any pile sprite selects it as a `ResourcePileSelection`; with no pile
+  sprite under the click, the nearest pile center within 0.3 m does. It is outlined as one ring
+  around all its sprites, the panel shows the item label, `Quantity`, and `Mass` (units x
+  per-unit kg) live, and the selection clears when the pile is hauled away.
 
 ### 7. Hand-aware haul / craft / deposit
 

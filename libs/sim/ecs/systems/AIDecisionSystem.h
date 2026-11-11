@@ -12,6 +12,7 @@
 // See /docs/design/game-systems/colonists/ai-behavior.md for the design intent.
 // See /docs/design/game-systems/colonists/decision-trace.md for task queue display.
 
+#include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../components/MemoryQueries.h"
@@ -70,10 +71,8 @@ public:
 	/// permanently stranded off the mesh. This is a read of the colony origin, not an independent copy.
 	void setColonyOrigin(glm::vec2 origin) { m_colonyOrigin = origin; }
 
-	/// Set callback for dropping items on the ground (when chain is interrupted)
-	/// Same signature as ActionSystem's drop callback for consistency
-	using DropItemCallback = std::function<void(const std::string& defName, float x, float y)>;
-	void setDropItemCallback(DropItemCallback callback) { m_onDropItem = std::move(callback); }
+	/// Set callback for dropping loose units on the ground when a chain is interrupted.
+	void setDropResourceCallback(DropResourceCallback callback) { onDropResource = std::move(callback); }
 
 	/// Enter direct player control: suspend this colonist's autonomous task selection. While the
 	/// PlayerControlled tag is present, update() skips task (re)selection, so the colonist stands
@@ -221,7 +220,7 @@ private:
 	std::mt19937 m_rng;
 
 	/// Callback for dropping items on the ground (when chain is interrupted)
-	DropItemCallback m_onDropItem = nullptr;
+	DropResourceCallback onDropResource = nullptr;
 };
 
 } // namespace ecs

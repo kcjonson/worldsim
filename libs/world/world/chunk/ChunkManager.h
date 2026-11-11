@@ -59,6 +59,9 @@ class ChunkManager {
 	/// Get number of loaded chunks
 	[[nodiscard]] size_t loadedChunkCount() const { return m_chunks.size(); }
 
+	/// The seed the world sampler generates from
+	[[nodiscard]] uint64_t worldSeed() const { return m_sampler->getWorldSeed(); }
+
 	/// Get the current center chunk (where camera is)
 	[[nodiscard]] ChunkCoordinate centerChunk() const { return m_centerChunk; }
 

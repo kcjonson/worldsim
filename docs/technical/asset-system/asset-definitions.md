@@ -282,6 +282,29 @@ To inherit from an asset in a different folder, use `@defName`:
 | `generator/script` | Yes | Path to script (relative to asset folder) |
 | `generator/params` | No | Key-value parameters passed to script |
 | `variantCount` | No | Number of variants to pre-generate |
+| `ageClasses` | No | A tree's age classes, in place of `variantCount` (below) |
+
+### Age classes
+
+A tree def can split into age classes. Each placed tree gets one age class and one mesh variant from its def, world position, and the world seed (`assets::computeTreeTraits`, [tree-variety.md](./tree-variety.md) R1), so old stands and young regrowth form patches about 30 m across and thickets lean young.
+
+```xml
+<ageClasses>
+  <ageClass name="sapling" weight="0.25" variants="4" yieldScale="0.25" workScale="0.35"/>
+  <ageClass name="mature"  weight="0.55" variants="8" yieldScale="1.0"  workScale="1.0"/>
+  <ageClass name="veteran" weight="0.20" variants="4" yieldScale="1.8"  workScale="1.6"/>
+</ageClasses>
+```
+
+| Attribute | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Unique within the def, not empty |
+| `weight` | Yes | Share of the def's trees in this class, above 0; a def's weights sum to 1 (within 0.001) |
+| `variants` | Yes | Mesh variants in this class, 1 to 65535 |
+| `yieldScale` | No | Multiplier on the `<harvestable>` yield, above 0; default 1 |
+| `workScale` | No | Multiplier on the `<harvestable>` durability, above 0; default 1 |
+
+A def with both `<ageClasses>` and `<variantCount>` is a validation error, as is any broken attribute above; the loader then ignores the whole block. A def without `<ageClasses>` has one age class of `variantCount` variants. Nothing reads the yield and work scales or draws per variant yet.
 
 ### Variation Elements
 
@@ -309,6 +332,7 @@ To inherit from an asset in a different folder, use `@defName`:
 | `biome/@name` | Biome this rule applies to |
 | `spawnChance` | Spawn probability (0-1) |
 | `distribution` | `uniform`, `clumped`, or `spaced` |
+| `scale/@min`, `scale/@max` | This def's placement scale range, with 0 < min <= max; default 0.8 to 1.2 for every def. A def that sets it moves only its own scales. |
 | `groups/group` | Groups this asset belongs to |
 | `relationships/*` | Entity relationship rules |
 

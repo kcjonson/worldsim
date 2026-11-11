@@ -27,9 +27,9 @@ void GhostRenderer::render(const std::string& defName,
 		return;
 	}
 
-	// Get the tessellated mesh template from the asset registry
+	// The def's default template: the preview stands for any instance, so it has no traits.
 	auto& registry = assets::AssetRegistry::Get();
-	const auto* mesh = registry.getTemplate(defName);
+	const auto* mesh = registry.getTemplate(defName, assets::TreeTraits{});
 	if (mesh == nullptr || mesh->vertices.empty()) {
 		return;
 	}

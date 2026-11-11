@@ -12,9 +12,13 @@
 
 #include "assets/AssetRegistry.h"
 
+#include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
+#include <fstream>
+#include <string>
 #include <thread>
 
 namespace assets {
@@ -40,6 +44,32 @@ namespace assets {
 			}
 		}
 	}
+
+	// A throwaway asset folder in the temp directory, removed with it. Each def goes in
+	// <Name>/<Name>.xml, the layout loadDefinitionsFromFolder reads.
+	class TempAssetFolder {
+	  public:
+		TempAssetFolder() {
+			static std::atomic<int> counter{0};
+			root = std::filesystem::temp_directory_path() /
+				   ("asset_folder_" + std::to_string(reinterpret_cast<uintptr_t>(&counter)) + "_" + std::to_string(counter++));
+			std::filesystem::create_directories(root);
+		}
+		~TempAssetFolder() {
+			std::error_code ec;
+			std::filesystem::remove_all(root, ec);
+		}
+		TempAssetFolder(const TempAssetFolder&) = delete;
+		TempAssetFolder& operator=(const TempAssetFolder&) = delete;
+
+		void write(const std::string& relPath, const std::string& content) const {
+			const std::filesystem::path p = root / relPath;
+			std::filesystem::create_directories(p.parent_path());
+			std::ofstream(p) << content;
+		}
+
+		std::filesystem::path root;
+	};
 
 	// Loads the shipped library (<root>/assets/world, with its shared scripts) through
 	// beginLoadAsync and waits for it. False when the library isn't there to load.

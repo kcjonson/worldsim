@@ -1,6 +1,7 @@
 // asset-cli: headless command-line surface for the asset library.
 //
-// Commands: list, search, inspect, validate, render. Everything is
+// Commands: list, search, inspect (with triangle and vertex counts for the
+// def's template and each variant), validate, render. Everything is
 // machine-readable with --json. No window and no debug server, so many
 // invocations can run in parallel (agent loops, CI matrices).
 
@@ -16,6 +17,8 @@
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
 #include "vector/Types.h"
+#include "world/rendering/GlVersion.h"
+#include "world/rendering/GroundTileBaker.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -137,8 +140,8 @@ namespace {
 			return false;
 		}
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, worldview::kGlMajor);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, worldview::kGlMinor);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 		glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 		g_window = glfwCreateWindow(16, 16, "asset-cli", nullptr, nullptr);
@@ -190,6 +193,77 @@ namespace {
 			return path + suffix;
 		}
 		return path.substr(0, dot) + suffix + path.substr(dot);
+	}
+
+	// --- mesh counts for inspect ---
+
+	// Ground tiles and groundcover build their variants by seed in their own renderers; every
+	// other def draws through the registry's templates.
+	bool drawsTemplates(const AssetDefinition& def) {
+		return def.role != assets::AssetRole::Ground && def.role != assets::AssetRole::Groundcover;
+	}
+
+	// The template the game draws for one (age class, variant) of the def, by the same key
+	// placement resolves (AssetRegistry::templateId). A simple asset is one drawing, so it
+	// lists one row.
+	json templateCounts(const AssetDefinition& def, assets::TreeTraits traits) {
+		json row{
+			{"ageClass", def.ageClasses.empty() ? json(nullptr) : json(def.ageClasses[traits.ageClass].name)},
+			{"variant", traits.variant},
+			{"seed", AssetRegistry::generationSeed(def, traits)},
+			{"triangles", nullptr},
+			{"vertices", nullptr},
+		};
+		if (const renderer::TessellatedMesh* mesh = AssetRegistry::Get().getTemplate(def.defName, traits)) {
+			row["triangles"] = mesh->getTriangleCount();
+			row["vertices"] = mesh->getVertexCount();
+		}
+		return row;
+	}
+
+	json templateTable(const AssetDefinition& def) {
+		json rows = json::array();
+		if (def.assetType == AssetType::Simple) {
+			rows.push_back(templateCounts(def, {}));
+		} else if (def.ageClasses.empty()) {
+			for (uint32_t v = 0; v < std::max<uint32_t>(def.variantCount, 1U); ++v) {
+				rows.push_back(templateCounts(def, {.ageClass = 0, .variant = static_cast<uint16_t>(v)}));
+			}
+		} else {
+			for (size_t a = 0; a < def.ageClasses.size(); ++a) {
+				for (uint16_t v = 0; v < def.ageClasses[a].variants; ++v) {
+					rows.push_back(templateCounts(def, {.ageClass = static_cast<uint8_t>(a), .variant = v}));
+				}
+			}
+		}
+		return rows;
+	}
+
+	// One of a ground or groundcover def's variants at the seed its renderer builds it with:
+	// the ground tile baker's variantSeed for a ground def, the variant index for groundcover.
+	json variantCounts(const AssetDefinition& def, uint32_t variant) {
+		const uint32_t seed = def.role == assets::AssetRole::Ground ? worldview::GroundTileBaker::variantSeed(def, variant) : variant;
+		std::vector<renderer::TessellatedMesh> meshes;
+		json								   row{{"seed", seed}, {"triangles", nullptr}, {"vertices", nullptr}};
+		if (AssetRegistry::Get().buildMeshes(def.defName, seed, meshes)) {
+			size_t triangles = 0;
+			size_t vertices = 0;
+			for (const auto& m : meshes) {
+				triangles += m.getTriangleCount();
+				vertices += m.getVertexCount();
+			}
+			row["triangles"] = triangles;
+			row["vertices"] = vertices;
+		}
+		return row;
+	}
+
+	std::string countsText(const json& counts) {
+		if (counts["triangles"].is_null()) {
+			return "no geometry";
+		}
+		return std::to_string(counts["triangles"].get<size_t>()) + " triangles, " + std::to_string(counts["vertices"].get<size_t>()) +
+			   " vertices";
 	}
 
 	// --- commands ---
@@ -283,7 +357,10 @@ namespace {
 		}
 		const bool asJson = hasFlag(args, "--json");
 
-		const std::string resolvedSvg = d->svgPath.empty() ? "" : d->resolvePath(d->svgPath).string();
+		std::vector<std::string> resolvedSvgs;
+		for (const std::string& svgPath : d->svgPaths) {
+			resolvedSvgs.push_back(d->resolvePath(svgPath).string());
+		}
 
 		json warnings = json::array();
 		for (const auto& issue : AssetRegistry::Get().getValidationReport().issues) {
@@ -297,11 +374,22 @@ namespace {
 		out["label"] = d->label;
 		out["type"] = typeName(d->assetType);
 		out["worldHeight"] = d->worldHeight;
-		out["svgPath"] = d->svgPath;
-		out["resolvedSvgPath"] = resolvedSvg;
+		out["svgPaths"] = d->svgPaths;
+		out["resolvedSvgPaths"] = resolvedSvgs;
 		out["scriptPath"] = d->scriptPath;
 		out["generatorName"] = d->generatorName;
 		out["groups"] = d->placement.groups;
+		if (drawsTemplates(*d)) {
+			out["templates"] = templateTable(*d);
+		} else {
+			json variants = json::array();
+			for (uint32_t v = 0; v < std::max<uint32_t>(d->variantCount, 1U); ++v) {
+				json row = variantCounts(*d, v);
+				row["variant"] = v;
+				variants.push_back(row);
+			}
+			out["variants"] = variants;
+		}
 		out["issues"] = warnings;
 
 		if (asJson) {
@@ -311,8 +399,8 @@ namespace {
 			std::cout << "label:         " << d->label << "\n";
 			std::cout << "type:          " << typeName(d->assetType) << "\n";
 			std::cout << "worldHeight:   " << d->worldHeight << "\n";
-			if (!d->svgPath.empty()) {
-				std::cout << "svgPath:       " << d->svgPath << "  ->  " << resolvedSvg << "\n";
+			for (size_t i = 0; i < d->svgPaths.size(); ++i) {
+				std::cout << "svgPath:       " << d->svgPaths[i] << "  ->  " << resolvedSvgs[i] << "\n";
 			}
 			if (!d->scriptPath.empty()) {
 				std::cout << "scriptPath:    " << d->scriptPath << "\n";
@@ -326,6 +414,23 @@ namespace {
 					std::cout << g << " ";
 				}
 				std::cout << "\n";
+			}
+			if (out.contains("templates")) {
+				std::cout << "templates:\n";
+				for (const auto& row : out["templates"]) {
+					std::cout << "  ";
+					if (!row["ageClass"].is_null()) {
+						std::cout << row["ageClass"].get<std::string>() << " ";
+					}
+					std::cout << "variant " << row["variant"].get<uint32_t>() << " (seed " << row["seed"].get<uint32_t>()
+							  << "): " << countsText(row) << "\n";
+				}
+			}
+			if (out.contains("variants")) {
+				for (const auto& row : out["variants"]) {
+					std::cout << "  variant " << row["variant"].get<uint32_t>() << " (seed " << row["seed"].get<uint32_t>()
+							  << "): " << countsText(row) << "\n";
+				}
 			}
 			for (const auto& w : warnings) {
 				std::cout << "[" << w["severity"].get<std::string>() << "] " << w["field"].get<std::string>() << ": "

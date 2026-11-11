@@ -367,10 +367,17 @@ namespace assets {
 		float		nearDistance = 0.0F; // Max tiles from nearTileType to spawn
 	};
 
+	/// The range a placed instance's scale is drawn from (<placement><scale min max/>).
+	struct PlacementScale {
+		float min = 0.8F;
+		float max = 1.2F;
+	};
+
 	/// Placement parameters - where assets spawn in the world.
 	/// Contains per-biome configuration for flexible spawn behavior.
 	struct PlacementParams {
 		std::vector<BiomePlacement> biomes; // Per-biome spawn configuration
+		PlacementScale				scale;
 
 		// Entity placement system fields (self-declared groups and relationships)
 		std::vector<std::string>		   groups;		  // Groups this asset belongs to (e.g., "trees", "flowers")
@@ -387,6 +394,16 @@ namespace assets {
 		}
 	};
 
+	/// One <ageClass> of a def's <ageClasses>: how often it occurs, how many mesh variants it
+	/// has, and how its yield and felling work scale against the def's <harvestable>.
+	struct AgeClass {
+		std::string name;
+		float		weight = 1.0F;
+		uint16_t	variants = 1;
+		float		yieldScale = 1.0F;
+		float		workScale = 1.0F;
+	};
+
 	/// Complete asset definition parsed from XML
 	struct AssetDefinition {
 		std::string			  defName; // Unique identifier (e.g., "Groundcover_Grass")
@@ -394,7 +411,7 @@ namespace assets {
 		AssetType			  assetType = AssetType::Procedural;
 		std::string			  generatorName;	  // Generator to use (e.g., "GrassBlade") - C++ generators
 		std::string			  scriptPath;		  // For Lua generators: path to Lua script (relative to assets/)
-		std::string			  svgPath;			  // For Simple assets: path to SVG file
+		std::vector<std::string> svgPaths;			 // For Simple assets: the SVG files, one for most; a ground def's are its variants
 		std::string			  motionPath;		  // Optional motion (animation clips) file; @shared/ or relative to baseFolder
 		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
 		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
@@ -410,6 +427,8 @@ namespace assets {
 		AssetRole						  role = AssetRole::WorldObject;
 		AssetComplexity					  complexity = AssetComplexity::Simple;
 		uint32_t						  variantCount = 1; // Number of variants to pre-generate (8 for ground defs that omit it)
+		// Empty: one age class of variantCount variants. A def never has both (AssetValidator).
+		std::vector<AgeClass>			  ageClasses;
 		GroundParams					  ground;			// Only meaningful when role == Ground
 
 		CollisionShape collision; // Physical footprint for navmesh/collision; default None = doesn't block

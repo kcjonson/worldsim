@@ -10,11 +10,11 @@
 //
 // The key hashes everything the bake reads: the def as the registry parsed it (its generator params, name,
 // variant count, period and density, seed group and generator name), its generator script as it is on
-// disk (an @shared/ one included; scripts are sandboxed and can't load others) with LuaEngine::kApiVersion,
-// the render tile size, salal's version (git describe of the checkout built against, with a hash of its
-// diff when dirty), and GroundTileBaker::kVersion for worldsim's own bake code. Editing the def's XML or
-// script, then reloading, re-bakes; a part of the XML the bake never reads, like <macro> or <transition>,
-// doesn't.
+// disk (an @shared/ one included) and the prelude files that run before it, with LuaEngine::kApiVersion,
+// or for an SVG def each variant's SVG as it is on disk, the render tile size, salal's version (git
+// describe of the checkout built against, with a hash of its diff when dirty), and GroundTileBaker::kVersion
+// for worldsim's own bake code. Editing the def's XML or script, then reloading, re-bakes, and so does
+// editing an SVG; a part of the XML the bake never reads, like <macro> or <transition>, doesn't.
 //
 // Any thread. Within a process, load and store of one def must not overlap. Across processes (world-sim
 // and the asset-manager share a directory) a store writes a temporary file of its own and renames it
@@ -44,7 +44,7 @@ namespace worldview {
 		/// so every bake runs its generator.
 		[[nodiscard]] static std::optional<GroundTileCache> inUserData(const std::filesystem::path& userDataDir);
 
-		/// The def's key, or nullopt (logged) when its script can't be read.
+		/// The def's key, or nullopt (logged) when its script or one of its SVGs can't be read.
 		[[nodiscard]] static std::optional<uint64_t> keyFor(const assets::AssetDefinition& def, int maxRenderSize);
 
 		/// The bake stored under the key, its timings zero and its metrics measured again, with its file

@@ -12,6 +12,7 @@
 #include <iostream>
 #include <iterator>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace assets;
@@ -189,22 +190,92 @@ TEST(AssetValidatorTest, GroundDefWithDefaultsIsClean) {
 	EXPECT_FALSE(hasIssue(r, Severity::Warning, "role")) << "ground is a known role";
 }
 
-TEST(AssetValidatorTest, SvgGroundDefIsNotSupportedYet) {
-	// The baker only runs generators (AssetRegistry::buildPaths rejects a non-procedural def).
-	for (const char* assetType : {"simple", "Simple"}) {
-		TempAssets t;
+namespace {
+
+	// A 4 m tile in meters: a base and a pebble drawn from 32 px/m, with `inner` after them.
+	std::string tileSvg(const std::string& inner = "", const std::string& viewBox = "viewBox=\"0 0 4 4\"") {
+		return "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"512\" height=\"512\" " + viewBox +
+			   ">\n<rect width=\"4\" height=\"4\" fill=\"#806040\"/>\n<circle cx=\"1\" cy=\"1\" r=\"0.1\" fill=\"#999999\" "
+			   "data-lod=\"32\"/>\n" +
+			   inner + "</svg>\n";
+	}
+
+	// validateGround with Grass an SVG def (assetType simple) of `svgCount` copies of `svg`, plus `extra`.
+	ValidationReport validateSvgGround(const std::string& svg, int svgCount = 2, const std::string& extra = "") {
+		TempAssets	t;
+		std::string paths;
+		for (int i = 0; i < svgCount; ++i) {
+			const std::string name = "tile" + std::to_string(i) + ".svg";
+			paths += "<svgPath>" + name + "</svgPath>";
+			t.writeFile("Grass/" + name, svg);
+		}
 		t.writeXml(
 			"Grass",
 			oneDef(
-				std::string("<defName>Ground_Grass</defName><role>ground</role><surface>Grass</surface><assetType>") + assetType +
-				"</assetType><svgPath>tile.svg</svgPath>"
+				"<defName>Ground_Grass</defName><role>ground</role><surface>Grass</surface><assetType>simple</assetType>" + paths + extra
 			)
 		);
-		t.writeFile("Grass/tile.svg", "<svg/>");
+		for (const char* other : {"Dirt", "Sand", "Rock", "Snow", "Mud", "GrassTall", "GrassShort", "GrassMeadow"}) {
+			addGround(t, other, std::string("<surface>") + other + "</surface>");
+		}
+		return AssetValidator::validate(t.root, "");
+	}
 
-		const ValidationReport r = AssetValidator::validate(t.root, "");
-		EXPECT_TRUE(hasIssue(r, Severity::Error, "assetType")) << assetType;
-		EXPECT_TRUE(hasMessageContaining(r, Severity::Error, "SVG ground defs aren't supported yet")) << assetType;
+} // namespace
+
+TEST(AssetValidatorTest, SvgGroundDefIsClean) {
+	// What sits in <defs> is never drawn, so a <use> or <text> there is no error.
+	const ValidationReport r = validateSvgGround(tileSvg(
+		"<defs><text>note</text><use href=\"#a\"/></defs>\n"
+		"<g data-lod=\"16\" data-height=\"0.4\"><path d=\"M 3.9 2 C 4.3 2 4.3 2.4 3.9 2.4 Z\" fill=\"#405020\" data-height=\"0.9\"/></g>\n"
+	));
+	EXPECT_EQ(r.errorCount() + r.warningCount(), 0);
+	EXPECT_EQ(validateSvgGround(tileSvg(), 2, "<variantCount>2</variantCount>").errorCount(), 0) << "a variantCount that matches";
+}
+
+TEST(AssetValidatorTest, SvgGroundDefsVariantsAreItsSvgs) {
+	EXPECT_TRUE(hasMessageContaining(validateSvgGround(tileSvg(), 0), Severity::Error, "needs one or more <svgPath>s"));
+	EXPECT_TRUE(hasIssue(validateSvgGround(tileSvg(), 2, "<variantCount>3</variantCount>"), Severity::Error, "variantCount"));
+	EXPECT_TRUE(hasIssue(validateSvgGround(tileSvg(), 33), Severity::Error, "variantCount"));
+	EXPECT_EQ(validateSvgGround(tileSvg(), 32).errorCount(), 0);
+	EXPECT_TRUE(hasMessageContaining(validateSvgGround(tileSvg(), 1, "<svgPath></svgPath>"), Severity::Error, "empty <svgPath>"))
+		<< "an empty path is a variant that can never load";
+}
+
+TEST(AssetValidatorTest, SvgGroundDefRejectsWhatTheBakeCantDraw) {
+	const std::vector<std::pair<std::string, std::string>> cases{
+		{tileSvg("", "viewBox=\"0 0 8 8\""), "viewBox=\"0 0 8 8\" must be \"0 0 4 4\""},
+		{tileSvg("", ""), "no viewBox"},
+		{tileSvg("<g data-lod=\"-1\"><rect width=\"1\" height=\"1\"/></g>\n"), "data-lod=\"-1\""},
+		{tileSvg("<rect width=\"1\" height=\"1\" data-lod=\"fine\"/>\n"), "data-lod=\"fine\""},
+		{tileSvg("<g data-height=\"1.5\"><rect width=\"1\" height=\"1\"/></g>\n"), "data-height=\"1.5\""},
+		{tileSvg("<rect width=\"1\" height=\"1\" data-height=\"-0.1\"/>\n"), "data-height=\"-0.1\""},
+		{tileSvg("<rect id=\"rim\" width=\"1\" height=\"1\" fill=\"#000\" stroke=\"#fff\" stroke-width=\"0.05\"/>\n"),
+		 "<rect id=\"rim\"> on line 4 has a stroke"},
+		{tileSvg(
+			 "<defs><linearGradient id=\"g\"><stop offset=\"0\" stop-color=\"#000\"/><stop offset=\"1\" "
+			 "stop-color=\"#fff\"/></linearGradient></defs>\n"
+			 "<rect width=\"1\" height=\"1\" fill=\"url(#g)\"/>\n"
+		 ),
+		 "fills with a gradient"},
+		{tileSvg("<path d=\"M 0 0 H 2 V 2 H 0 Z M 0.5 0.5 H 1 V 1 H 0.5 Z\" fill=\"#000\"/>\n"), "has 2 outlines"},
+		{tileSvg("<text x=\"1\" y=\"1\">moss</text>\n"), "<text> on line 4 is never drawn"},
+		{tileSvg("<rect width=\"1\" height=\"1\" clip-path=\"url(#c)\"/>\n"), "has a clip-path"},
+		{tileSvg("<rect width=\"1\" height=\"1\" style=\"fill:#000; mask : url(#m)\"/>\n"), "has a mask"},
+		{tileSvg("<use href=\"#a\"/>\n"), "<use> on line 4 is never drawn"},
+		{tileSvg("<image href=\"a.png\" width=\"1\" height=\"1\"/>\n"), "<image> on line 4 is never drawn"},
+		{tileSvg("<svg width=\"1\" height=\"1\"><rect width=\"1\" height=\"1\"/></svg>\n"), "is a nested <svg>"},
+		{tileSvg("<style>.a{fill:#000}</style>\n<rect class=\"a\" width=\"1\" height=\"1\"/>\n"), "is a style sheet"},
+		{tileSvg("<rect width=\"1\" height=\"1\" fill=\"url(#none)\"/>\n"), "draws nothing"},
+		{tileSvg("<rect width=\"1\" height=\"1\" filter=\"url(#blur)\"/>\n"), "has a filter"},
+		{"<svg viewBox=\"0 0 4 4\"><rect></svg>", "not well-formed XML"},
+		{"<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 4 4\"/>", "draws no shapes"},
+	};
+	for (const auto& [svg, message] : cases) {
+		const ValidationReport r = validateSvgGround(svg, 1);
+		EXPECT_TRUE(hasIssue(r, Severity::Error, "svgPath")) << message;
+		EXPECT_TRUE(hasMessageContaining(r, Severity::Error, message)) << message;
+		EXPECT_EQ(r.errorCount(), 1) << message;
 	}
 }
 
@@ -427,6 +498,35 @@ TEST(AssetValidatorTest, GroundFieldsOnOtherRolesAreWarnings) {
 	t.writeFile("Stone/stone.svg", "<svg/>");
 
 	EXPECT_TRUE(hasIssue(AssetValidator::validate(t.root, ""), Severity::Warning, "period"));
+}
+
+TEST(AssetValidatorTest, AgeClassesAndPlacementScaleFollowTheSchema) {
+	const auto validateTree = [](const std::string& inner) {
+		TempAssets t;
+		t.writeXml("Tree", oneDef("<defName>Tree</defName><assetType>simple</assetType><svgPath>tree.svg</svgPath>" + inner));
+		t.writeFile("Tree/tree.svg", "<svg/>");
+		return AssetValidator::validate(t.root, "");
+	};
+	const std::string sapling = R"(<ageClass name="sapling" weight="0.25" variants="4" yieldScale="0.25" workScale="0.35"/>)";
+	const std::string mature = R"(<ageClass name="mature" weight="0.75" variants="8"/>)";
+
+	EXPECT_EQ(validateTree("<ageClasses>" + sapling + mature + R"(</ageClasses><placement><scale min="0.93" max="1.07"/></placement>)").errorCount(), 0);
+
+	// Weights off 1, both <ageClasses> and <variantCount>, a duplicate name, an empty name, no variants.
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="mature" weight="0.7" variants="8"/></ageClasses>)"), Severity::Error, "sum to 1"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + mature + "</ageClasses><variantCount>4</variantCount>"), Severity::Error, "variantCount"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="sapling" weight="0.75" variants="8"/></ageClasses>)"), Severity::Error, "duplicate"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="" weight="0.75" variants="8"/></ageClasses>)"), Severity::Error, "empty"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="mature" weight="0.75" variants="0"/></ageClasses>)"), Severity::Error, "variants"));
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1.1" max="0.9"/></placement>)"), Severity::Error, "scale"));
+
+	// Finite doubles that do not survive being stored as a float: out of range, or narrowing to zero.
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1e-50" max="1.2"/></placement>)"), Severity::Error, "scale"));
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1" max="1e40"/></placement>)"), Severity::Error, "scale"));
+	EXPECT_TRUE(hasIssue(validateTree(R"(<placement><scale min="1e-50" max="1e40"/></placement>)"), Severity::Error, "scale"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + mature + R"(<ageClass name="sapling" weight="1e-50" variants="4"/></ageClasses>)"), Severity::Error, "weight"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + mature + R"(<ageClass name="sapling" weight="0.25" variants="4" yieldScale="1e-50"/></ageClasses>)"), Severity::Error, "yieldScale"));
+	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + mature + R"(<ageClass name="sapling" weight="0.25" variants="4" workScale="1e40"/></ageClasses>)"), Severity::Error, "workScale"));
 }
 
 // Guards the shipped library against validation errors, and prints any issues

@@ -8,6 +8,8 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/placement/FloraMeasure.h>
+#include <assets/placement/PlacementExecutor.h>
 
 #include <ui/components/Toast.h>
 
@@ -24,7 +26,6 @@
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
-#include <ecs/components/Packaged.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -39,16 +40,23 @@
 
 #include <utils/Log.h>
 
+#include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
+
+#include <primitives/Primitives.h>
 
 #include <worldgen/data/Biome.h>
 #include <worldgen/data/GeneratedWorld.h>
 #include <worldgen/sampling/LandingSite.h>
 
+#include <algorithm>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <iomanip>
+#include <limits>
+#include <unordered_map>
 
 namespace world_sim {
 
@@ -80,6 +88,7 @@ namespace world_sim {
 		registrations.push_back(server.route("foundation-edit", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
+		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 
 		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
 			registrations.push_back(server.stateProvider(what, [this, serialize] {
@@ -160,28 +169,35 @@ namespace world_sim {
 		}
 
 		if (where == "loose") {
-			if (assets::AssetRegistry::Get().getDefinition(material) == nullptr) {
+			const auto* def = assets::AssetRegistry::Get().getDefinition(material);
+			if (def == nullptr) {
 				LOG_WARNING(Game, "[DevAPI] give loose: unknown asset '%s'", material.c_str());
 				m_ctx.ui->pushNotification("Dev", "Unknown asset: " + material, ui::ToastSeverity::Warning);
+				return;
+			}
+			// Spawning a furniture or station def would make a live box/station that is also a pile.
+			if (!def->itemProperties.has_value()) {
+				LOG_WARNING(Game, "[DevAPI] give loose: '%s' is not an item", material.c_str());
+				m_ctx.ui->pushNotification("Dev", "Not an item: " + material, ui::ToastSeverity::Warning);
+				return;
+			}
+			// Each new pile is cleared against every pile already placed, so the pile count (not
+			// the unit count) is what a big n costs.
+			constexpr uint32_t kMaxLoosePiles = 50;
+			const uint32_t	   stackSize = def->itemProperties->stackSize;
+			const uint32_t	   piles = stackSize == 0 ? 1U : (n - 1U) / stackSize + 1U;
+			if (piles > kMaxLoosePiles) {
+				LOG_WARNING(Game, "[DevAPI] give loose: %u '%s' is %u piles, over the %u limit", n, material.c_str(), piles, kMaxLoosePiles);
+				m_ctx.ui->pushNotification("Dev", "Too many: " + std::to_string(piles) + " piles of " + material, ui::ToastSeverity::Warning);
 				return;
 			}
 			const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 			if (!requireValidPosition(at, "give loose")) {
 				return;
 			}
-			// Each packaged item is its own entity (no ground stacks); cap so a big N can't spawn thousands.
-			constexpr uint32_t kMaxLoose = 50;
-			const uint32_t	   count = n < kMaxLoose ? n : kMaxLoose;
-			for (uint32_t i = 0; i < count; ++i) {
-				const Foundation::Vec2 off = spreadOffset(static_cast<long>(i), static_cast<long>(count), 1.0F);
-				const ecs::EntityID	   entity = m_ctx.placement->spawnEntity(material, {at.x + off.x, at.y + off.y});
-				m_ctx.world->addComponent<ecs::Packaged>(entity, ecs::Packaged{});
-			}
-			if (n > kMaxLoose) {
-				LOG_WARNING(Game, "[DevAPI] give loose: capped %u -> %u entities", n, kMaxLoose);
-			}
-			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' near (%.1f, %.1f)", count, material.c_str(), at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(count) + " " + material, ui::ToastSeverity::Info);
+			m_ctx.dropLoose(material, at.x, at.y, n);
+			LOG_INFO(Game, "[DevAPI] give: dropped %u loose '%s' at (%.1f, %.1f)", n, material.c_str(), at.x, at.y);
+			m_ctx.ui->pushNotification("Dev", "Dropped " + std::to_string(n) + " " + material, ui::ToastSeverity::Info);
 			return;
 		}
 
@@ -608,6 +624,146 @@ namespace world_sim {
 			 << ",\"extension\":" << outcome.extension << ",\"entity\":" << outcome.entity
 			 << ",\"area\":" << outcome.areaSquareMeters << "}";
 		return json.str();
+	}
+
+	app::DevResponse DevCommandHandler::devFlora(const app::DevRequest& cmd) {
+		// Far past any crown (the largest planned is 4.9 m across), so every tree whose
+		// crown reaches into the rect is gathered for the cover.
+		constexpr float kCrownReachMeters = 10.0F;
+		// How far from near= the nearest-of-age query looks.
+		constexpr float kNearSearchMeters = 200.0F;
+
+		// The placed statics over a rect, with the chunk squares placement holds data for.
+		std::vector<assets::FloraRect>			 loadedAreas;
+		std::vector<const assets::PlacedEntity*> entities;
+		const auto gather = [&](const assets::FloraRect& area) {
+			const auto firstChunk = world::worldToChunk({area.minX, area.minY});
+			const auto lastChunk = world::worldToChunk({area.maxX, area.maxY});
+			for (int32_t cy = firstChunk.y; cy <= lastChunk.y; ++cy) {
+				for (int32_t cx = firstChunk.x; cx <= lastChunk.x; ++cx) {
+					const world::ChunkCoordinate coord{cx, cy};
+					const assets::SpatialIndex*	 index = m_ctx.placementIndex->getChunkIndex(coord);
+					if (index == nullptr) {
+						continue;
+					}
+					const world::WorldPosition origin = coord.origin();
+					loadedAreas.push_back({origin.x, origin.y, origin.x + world::kChunkWorldSize, origin.y + world::kChunkWorldSize});
+					const auto nearby = index->queryRect(area.minX, area.minY, area.maxX, area.maxY);
+					entities.insert(entities.end(), nearby.begin(), nearby.end());
+				}
+			}
+		};
+
+		auto&											 registry = assets::AssetRegistry::Get();
+		std::unordered_map<std::string, assets::FloraDefTraits> traits;
+		const auto describeDefs = [&] {
+			for (const assets::PlacedEntity* e : entities) {
+				if (!e->isTallOccluder || traits.contains(e->defName)) {
+					continue;
+				}
+				assets::FloraDefTraits t;
+				if (const auto* def = registry.getDefinition(e->defName); def != nullptr && assets::isTreeDef(*def)) {
+					t.isTree = true;
+					t.woodPerTree = assets::woodPerTree(*def);
+					for (const assets::AgeClass& age : def->ageClasses) {
+						t.ageClassNames.push_back(age.name);
+					}
+				}
+				traits.emplace(e->defName, t);
+			}
+		};
+
+		if (hasParam(cmd, "age") || hasParam(cmd, "near")) {
+			const std::string age = param(cmd, "age");
+			float			  nearX = 0.0F;
+			float			  nearY = 0.0F;
+			if (age.empty() || std::sscanf(param(cmd, "near").c_str(), "%f,%f", &nearX, &nearY) != 2 || !std::isfinite(nearX) ||
+				!std::isfinite(nearY)) {
+				return {.status = 400, .body = R"({"error":"flora: age=<name> and near=x,y go together"})"};
+			}
+			if (!assets::floraPointWithinWorld(nearX, nearY)) {
+				return {.status = 400, .body = R"({"error":"flora: near must be within 16777216 m of the origin on both axes"})"};
+			}
+			const std::string defName = param(cmd, "def");
+			gather({nearX - kNearSearchMeters, nearY - kNearSearchMeters, nearX + kNearSearchMeters, nearY + kNearSearchMeters});
+			describeDefs();
+			const std::vector<assets::FloraTreeSighting> trees =
+				assets::nearestTreesOfAge({nearX, nearY}, age, defName, assets::kFloraNearestMax, entities, traits);
+
+			std::ostringstream json;
+			json << std::fixed << std::setprecision(2) << "{\"age\":\"" << jsonEscape(age) << "\",\"near\":[" << nearX << "," << nearY
+				 << "],\"def\":\"" << jsonEscape(defName) << "\",\"searchHalfSizeM\":" << kNearSearchMeters << ",\"trees\":[";
+			for (size_t i = 0; i < trees.size(); ++i) {
+				const assets::FloraTreeSighting& t = trees[i];
+				// x and y round-trip exactly, so a position read back names the same tree; the distance stays at two decimals.
+				json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(t.defName) << "\",\"x\":" << std::defaultfloat
+					 << std::setprecision(std::numeric_limits<float>::max_digits10) << t.position.x << ",\"y\":" << t.position.y
+					 << std::fixed << std::setprecision(2) << ",\"ageClass\":\"" << jsonEscape(t.ageClass) << "\",\"variant\":" << t.variant
+					 << ",\"distance\":" << t.distance << "}";
+			}
+			json << "]}";
+			return {.body = json.str()};
+		}
+
+		assets::FloraRect rect;
+		if (hasParam(cmd, "rect")) {
+			float x0 = 0.0F;
+			float y0 = 0.0F;
+			float x1 = 0.0F;
+			float y1 = 0.0F;
+			if (std::sscanf(param(cmd, "rect").c_str(), "%f,%f,%f,%f", &x0, &y0, &x1, &y1) != 4 || !std::isfinite(x0) ||
+				!std::isfinite(y0) || !std::isfinite(x1) || !std::isfinite(y1)) {
+				return {.status = 400, .body = R"({"error":"flora: rect must be x0,y0,x1,y1 in world metres"})"};
+			}
+			rect = {std::min(x0, x1), std::min(y0, y1), std::max(x0, x1), std::max(y0, y1)};
+		} else {
+			int w = 0;
+			int h = 0;
+			Renderer::Primitives::getLogicalViewport(w, h);
+			const Foundation::Rect view = m_ctx.camera->getVisibleRect(w, h, m_ctx.pixelsPerMeter);
+			rect = {view.x, view.y, view.x + view.width, view.y + view.height};
+		}
+		if (!assets::floraRectWithinLimits(rect)) {
+			return {
+				.status = 400,
+				.body = R"({"error":"flora: rect sides must be above 0 and at most 500 m, the rect at most 25 million 0.1 m cells, and every coordinate within 16777216 m of the origin"})"
+			};
+		}
+
+		gather({rect.minX - kCrownReachMeters, rect.minY - kCrownReachMeters, rect.maxX + kCrownReachMeters, rect.maxY + kCrownReachMeters});
+		describeDefs();
+		const assets::FloraMeasurement m =
+			assets::measureFlora(rect, loadedAreas, entities, traits, [&registry](const assets::PlacedEntity& tree) {
+				const assets::AssetSilhouette* sil = registry.getSilhouette(tree.templateId);
+				return sil != nullptr && sil->valid ? &sil->rings : nullptr;
+			});
+
+		std::ostringstream json;
+		json << std::fixed << std::setprecision(2) << "{\"rect\":[" << m.rect.minX << "," << m.rect.minY << "," << m.rect.maxX << ","
+			 << m.rect.maxY << "],\"rectAreaM2\":" << m.rectAreaM2 << ",\"measuredAreaM2\":" << m.measuredAreaM2
+			 << ",\"cellSizeM\":" << assets::kFloraCellSizeMeters << ",\"trees\":" << m.treeCount
+			 << ",\"treesPer1000m2\":" << m.treesPerThousandM2 << ",\"canopyCover\":" << std::setprecision(4) << m.canopyCover
+			 << std::setprecision(2) << ",\"woodPer1000m2\":" << m.woodPerThousandM2 << ",\"defs\":[";
+		for (size_t i = 0; i < m.defs.size(); ++i) {
+			const assets::FloraDefMeasure& d = m.defs[i];
+			json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(d.defName) << "\",\"count\":" << d.count
+				 << ",\"per1000m2\":" << d.perThousandM2 << ",\"woodPerTree\":" << d.woodPerTree
+				 << ",\"woodPer1000m2\":" << d.woodPerThousandM2 << ",\"ageClasses\":[";
+			for (size_t k = 0; k < d.ageClasses.size(); ++k) {
+				const assets::FloraAgeMeasure& a = d.ageClasses[k];
+				json << (k == 0 ? "" : ",") << "{\"name\":\"" << jsonEscape(a.name) << "\",\"count\":" << a.count
+					 << ",\"per1000m2\":" << a.perThousandM2 << "}";
+			}
+			json << "]}";
+		}
+		json << "],\"otherTallOccluders\":[";
+		for (size_t i = 0; i < m.otherTallOccluders.size(); ++i) {
+			const assets::FloraDefMeasure& d = m.otherTallOccluders[i];
+			json << (i == 0 ? "" : ",") << "{\"def\":\"" << jsonEscape(d.defName) << "\",\"count\":" << d.count
+				 << ",\"per1000m2\":" << d.perThousandM2 << "}";
+		}
+		json << "]}";
+		return {.body = json.str()};
 	}
 
 	void DevCommandHandler::devWalls(const app::DevRequest& cmd) {

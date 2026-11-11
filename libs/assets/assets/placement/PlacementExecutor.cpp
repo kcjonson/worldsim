@@ -1,9 +1,11 @@
 #include "PlacementExecutor.h"
 
-#include "assets/AssetRegistry.h"
+#include "GroveField.h"
 
-#include <assets/placement/BakedEntityMesh.h> // isGroundcoverDef (short/tall split source of truth)
-#include <assets/placement/WorldDepthSort.h>  // meshYExtent, computeStaticDepthAttribs
+#include "assets/AssetRegistry.h"
+#include "assets/TreeTraits.h"
+
+#include <assets/placement/WorldDepthSort.h> // meshYExtent, computeAnchorY
 #include <utils/Log.h>
 #include <world/chunk/Chunk.h> // Surface, surfaceToString
 #include <world/chunk/ChunkCoordinate.h>
@@ -14,72 +16,6 @@
 #include <cmath>
 
 namespace assets {
-
-	namespace {
-
-		// Grove-density noise: a low-frequency, domain-warped value-noise field in [0,1]
-		// that varies "spaced" flora (trees) so a forest reads as dense stands with both
-		// rare open glades and rare extra-dense thickets, rather than an even orchard. A
-		// pure function of world position + seed, so it is continuous across chunk seams.
-		// The low tail thins to glades (via spawn chance); the high tail tightens spacing
-		// into thickets (via minDistance). The broad middle is normal dense forest.
-		constexpr float kGroveFeatureMeters = 105.0F; // grove/glade/thicket scale
-		constexpr float kGladeSpawnMin = 0.12F;		  // glade floor: fraction of base spawn chance
-		constexpr float kGladeBandLo = 0.20F;		  // raw noise below this -> full glade
-		constexpr float kGladeBandHi = 0.42F;		  // above this -> normal forest density
-		constexpr float kThicketBandLo = 0.70F;		  // raw noise above this -> thickets begin
-		constexpr float kThicketBandHi = 0.90F;		  // ...fully a thicket core here (rare)
-		constexpr float kThicketTighten = 0.45F;	  // thicket cores pack to (1 - this) of base minDistance
-
-		float smooth01(float a, float b, float v) {
-			const float t = std::clamp((v - a) / (b - a), 0.0F, 1.0F);
-			return t * t * (3.0F - 2.0F * t);
-		}
-
-		float groveHash01(int64_t ix, int64_t iy, uint64_t seed) {
-			uint64_t h = seed;
-			h ^= static_cast<uint64_t>(ix) * 0x9E3779B97F4A7C15ull;
-			h ^= static_cast<uint64_t>(iy) * 0xC2B2AE3D27D4EB4Full;
-			h ^= h >> 29;
-			h *= 0xBF58476D1CE4E5B9ull;
-			h ^= h >> 32;
-			return static_cast<float>(static_cast<double>(h >> 11) * (1.0 / 9007199254740992.0));
-		}
-
-		// Smooth bilinear value noise in [0,1] at lattice coords (x,y).
-		float groveValueNoise(float x, float y, uint64_t seed) {
-			const auto	x0 = static_cast<int64_t>(std::floor(x));
-			const auto	y0 = static_cast<int64_t>(std::floor(y));
-			const float fx = x - static_cast<float>(x0);
-			const float fy = y - static_cast<float>(y0);
-			const float sx = fx * fx * (3.0F - 2.0F * fx); // smoothstep
-			const float sy = fy * fy * (3.0F - 2.0F * fy);
-			const float n00 = groveHash01(x0, y0, seed);
-			const float n10 = groveHash01(x0 + 1, y0, seed);
-			const float n01 = groveHash01(x0, y0 + 1, seed);
-			const float n11 = groveHash01(x0 + 1, y0 + 1, seed);
-			const float nx0 = n00 + (n10 - n00) * sx;
-			const float nx1 = n01 + (n11 - n01) * sx;
-			return nx0 + (nx1 - nx0) * sy; // [0,1]
-		}
-
-		// Raw grove field in [0,1]: domain-warped two-octave value noise. The callers
-		// map its tails to glades (low) and thickets (high).
-		float groveValue(float worldX, float worldY, uint64_t seed) {
-			float x = worldX / kGroveFeatureMeters;
-			float y = worldY / kGroveFeatureMeters;
-			// Domain-warp the sample point so the outlines are organic rather than
-			// aligned to the noise lattice (which reads as square patches).
-			const float wx = groveValueNoise(x * 0.6F + 3.1F, y * 0.6F + 1.7F, seed ^ 0x51u) - 0.5F;
-			const float wy = groveValueNoise(x * 0.6F + 5.2F, y * 0.6F + 9.3F, seed ^ 0x52u) - 0.5F;
-			x += wx * 1.1F;
-			y += wy * 1.1F;
-			// Two octaves so shapes aren't a single grid frequency.
-			return 0.65F * groveValueNoise(x, y, seed) +
-				   0.35F * groveValueNoise(x * 2.1F + 11.0F, y * 2.1F + 7.0F, seed ^ 0xA3u);
-		}
-
-	} // namespace
 
 	PlacementExecutor::PlacementExecutor(const AssetRegistry& registry)
 		: m_registry(registry) {}
@@ -209,22 +145,41 @@ namespace assets {
 			return;
 		}
 
-		// Resolve this def's 2.5D depth-sort inputs ONCE per type (not per placed
-		// instance, and not per frame in WorldDepthGather): the template's local-Y
-		// extent and whether it is groundcover. getTemplate on the singleton returns
-		// the same cached template the entity bake reads, so the tall/short split
-		// here is bit-identical to the bake's. getTemplate is mutex-guarded and
-		// getDefinition is read-only, so both are safe on the placement worker.
-		const assets::MeshYExtent templateExtent = assets::meshYExtent(AssetRegistry::Get().getTemplate(defName));
-		const bool				 isGroundcover = assets::isGroundcoverDef(defName);
+		// Resolve this def's 2.5D depth-sort inputs once per type and template, not per
+		// placed instance and not per frame in WorldDepthGather: whether the def routes
+		// tall (one answer for every instance, D9), and per template the id the renderers
+		// key by and its local-Y extent for the anchor. The registry is mutex-guarded and
+		// builds outside its lock, so this is safe on the placement worker.
+		AssetRegistry& registry = AssetRegistry::Get();
+		const bool	   isTall = registry.isTallDef(defName);
+		struct ResolvedTemplate {
+			uint32_t			id = 0;
+			assets::MeshYExtent extent;
+			bool				resolved = false;
+		};
+		// One slot per (age class, variant), indexed by the class's first slot plus the variant.
+		std::vector<uint32_t> classFirstSlot(std::max<size_t>(def->ageClasses.size(), 1), 0);
+		size_t				  slotCount = def->ageClasses.empty() ? std::max<uint32_t>(def->variantCount, 1U) : 0;
+		for (size_t a = 0; a < def->ageClasses.size(); ++a) {
+			classFirstSlot[a] = static_cast<uint32_t>(slotCount);
+			slotCount += def->ageClasses[a].variants;
+		}
+		std::vector<ResolvedTemplate> templates(slotCount);
 
-		// Stamp a placed instance's depth attributes, then file it in the chunk index
-		// and the result list. anchorY + isTallOccluder then ride along on the frozen
-		// index copies for the gather to read directly.
+		// Stamp a placed instance's traits, template, and depth attributes, then file it in
+		// the chunk index and the result list. anchorY + isTallOccluder then ride along on
+		// the frozen index copies for the gather to read directly. Traits draw nothing from rng.
 		auto placeAndRecord = [&](PlacedEntity& entity) {
-			const auto depth = assets::computeStaticDepthAttribs(entity.position.y, templateExtent, entity.scale, isGroundcover);
-			entity.anchorY = depth.anchorY;
-			entity.isTallOccluder = depth.isTallOccluder;
+			entity.traits = computeTreeTraits(*def, entity.position, context.worldSeed);
+			ResolvedTemplate& tmpl = templates[classFirstSlot[entity.traits.ageClass] + entity.traits.variant];
+			if (!tmpl.resolved) {
+				tmpl.id = registry.templateId(defName, entity.traits);
+				tmpl.extent = assets::meshYExtent(registry.getTemplate(tmpl.id));
+				tmpl.resolved = true;
+			}
+			entity.templateId = tmpl.id;
+			entity.anchorY = assets::computeAnchorY(entity.position.y, tmpl.extent.maxY, entity.scale);
+			entity.isTallOccluder = isTall;
 			chunkIndex.insert(entity);
 			outEntities.push_back(entity);
 		};
@@ -247,7 +202,7 @@ namespace assets {
 		// Random orientation only for assets that opt in (ground scatter); upright by default so
 		// trees, grass, and other standing billboards are not tilted. Zero range yields 0 rotation.
 		std::uniform_real_distribution<float> rotationDist(-def->maxRandomRotation, def->maxRandomRotation);
-		std::uniform_real_distribution<float> scaleDist(0.8F, 1.2F);
+		std::uniform_real_distribution<float> scaleDist(def->placement.scale.min, def->placement.scale.max);
 		std::uniform_real_distribution<float> colorDist(-0.08F, 0.08F);
 
 		// Spawn-point stride: sample one tile every N in each dimension. At stride 4
@@ -325,9 +280,8 @@ namespace assets {
 				float groveG = 0.0F;
 				float effectiveChance = bp->spawnChance;
 				if (bp->distribution == Distribution::Spaced) {
-					groveG = groveValue(tileWorldX, tileWorldY, context.worldSeed);
-					const float gladeT = smooth01(kGladeBandLo, kGladeBandHi, groveG);
-					effectiveChance *= kGladeSpawnMin + (1.0F - kGladeSpawnMin) * gladeT;
+					groveG = grove::groveValue(tileWorldX, tileWorldY, context.worldSeed);
+					effectiveChance *= grove::kGladeSpawnMin + (1.0F - grove::kGladeSpawnMin) * grove::gladeWeight(groveG);
 				}
 				if (chanceDist(rng) >= effectiveChance) {
 					continue; // Spawn chance failed
@@ -393,8 +347,7 @@ namespace assets {
 						// the spacing tightens so small patches read denser than the forest.
 						float effMinDist = bp->spacing.minDistance;
 						if (effMinDist > 0.0F) {
-							const float thicketT = smooth01(kThicketBandLo, kThicketBandHi, groveG);
-							effMinDist *= 1.0F - kThicketTighten * thicketT;
+							effMinDist *= 1.0F - grove::kThicketTighten * grove::thicketWeight(groveG);
 							if (chunkIndex.hasNearby(position, effMinDist, defName)) {
 								break;
 							}

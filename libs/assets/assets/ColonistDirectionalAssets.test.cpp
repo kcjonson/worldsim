@@ -20,7 +20,7 @@ TEST(ColonistDirectionalAssets, AllDirectionTemplatesAndMotionsResolve) {
 
 	for (const char* name : {"Colonist_down", "Colonist_up", "Colonist_left", "Colonist_right"}) {
 		SCOPED_TRACE(name);
-		const renderer::TessellatedMesh* mesh = reg.getTemplate(name);
+		const renderer::TessellatedMesh* mesh = reg.getTemplate(name, TreeTraits{});
 		if (mesh == nullptr) {
 			ADD_FAILURE() << "getTemplate returned null";
 			continue;

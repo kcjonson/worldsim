@@ -46,6 +46,7 @@ namespace assets {
 		colors.clear();
 		indices.clear();
 		paths.clear();
+		oversizeVertices = 0;
 
 		renderer::Tessellator	  tessellator;
 		renderer::VectorPath	  vectorPath;
@@ -63,6 +64,7 @@ namespace assets {
 			}
 			if (pathMesh.vertices.size() > kMaxMeshVertices) {
 				LOG_WARNING(Engine, "Path tessellates to %zu vertices, more than one mesh can index; dropping it", pathMesh.vertices.size());
+				oversizeVertices += pathMesh.vertices.size();
 				continue;
 			}
 			paths.push_back({

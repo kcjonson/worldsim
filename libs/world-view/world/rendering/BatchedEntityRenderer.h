@@ -39,7 +39,7 @@ class BatchedEntityRenderer {
 		uint32_t& vertexIndex
 	);
 
-	// Memoized template meshes (keyed by defName)
+	// Memoized template meshes (by template id)
 	TemplateMeshCache m_templateCache;
 
 	// Shared gather/sort of the merged entity stream (one path with the instanced renderer).

@@ -14,6 +14,7 @@
 
 #include "assets/placement/WorldDepthSort.h"
 
+#include "assets/placement/FloraRouting.h"
 #include "assets/placement/SpatialIndex.h"
 
 #include <vector/Types.h>
@@ -31,13 +32,12 @@ namespace {
 
 	using assets::PlacedEntity;
 	using assets::computeAnchorY;
-	using assets::computeStaticDepthAttribs;
 	using assets::DepthSortItem;
 	using assets::kShortFloraMaxHeight;
 	using assets::MeshYExtent;
 	using assets::meshYExtent;
+	using assets::routesTall;
 	using assets::sortByAnchorY;
-	using assets::StaticDepthAttribs;
 
 	// Representative visible-entity counts: a normal scene, a busy one, and the
 	// observed dense zoom-out (~34k).
@@ -111,9 +111,9 @@ namespace {
 			e.position = {posDist(rng), posDist(rng)};
 			e.scale = 1.0F;
 			// Precompute exactly what PlacementExecutor now stamps at placement time.
-			const StaticDepthAttribs d = computeStaticDepthAttribs(e.position.y, s.extentByMesh.at(&t.mesh), e.scale, t.groundcover);
-			e.anchorY = d.anchorY;
-			e.isTallOccluder = d.isTallOccluder;
+			const MeshYExtent ext = s.extentByMesh.at(&t.mesh);
+			e.anchorY = computeAnchorY(e.position.y, ext.maxY, e.scale);
+			e.isTallOccluder = routesTall(ext.maxY - ext.minY, t.groundcover);
 		}
 		return s;
 	}
