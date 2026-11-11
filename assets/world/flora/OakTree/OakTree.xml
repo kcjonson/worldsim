@@ -12,24 +12,48 @@
     <generator>
       <!-- Shared script using @shared/ prefix -->
       <scriptPath>@shared/deciduous.lua</scriptPath>
+      <!-- Growth numbers, palette and sizes (tree-variety.md R5, R6, R9). An oak's stem dissolves
+           into a few heavy boughs at a wide angle; old oaks go stag-headed. -->
       <params>
-        <!-- Trunk dimensions in meters (oak is larger than maple, scaled for top-down) -->
-        <trunkHeight>1.5</trunkHeight>
-        <trunkWidth>0.2</trunkWidth>
-        <!-- Canopy radius in meters -->
-        <canopyRadius>0.8</canopyRadius>
-        <!-- Number of visible branches -->
-        <branchCount>4</branchCount>
+        <!-- Crown across and trunk width in meters as curves over age (0 to 1), R9's oak column: 2.25x
+             the first trees, a sapling 0.62x of mature. The collision rect is half the trunk width. -->
+        <crownWidth>0.15:2.25, 0.55:3.6, 0.9:4.9, 1.0:5.0</crownWidth>
+        <trunkWidth>0.15:0.25, 0.55:0.45, 0.9:0.72</trunkWidth>
+        <apicalControl>0.40</apicalControl>
+        <buds>alternate</buds>
+        <branchAngle>55,75</branchAngle>
+        <lengthRatio>0.8</lengthRatio>
+        <mainLimbs>3,5</mainLimbs>
+        <shedding>0.35</shedding>
+        <droop>0.25</droop>
+        <stemRise>0.4</stemRise>
+        <crownDepth>0.26</crownDepth>
+        <clusterSize>0.13</clusterSize>
+        <lobes>rounded</lobes>
+        <growingOld>stagHeaded</growingOld>
+        <foliageShade>#4a6a2e</foliageShade>
+        <foliageBase>#5b7f36</foliageBase>
+        <foliageLight>#729a43</foliageLight>
+        <foliageHighlight>#93b85a</foliageHighlight>
+        <bark>#5c4b3d</bark>
       </params>
     </generator>
+
+    <!-- The screen densities in pixels a meter a mesh is cut for (the camera's 8 px/m times its zoom, 2 to
+         160); the game draws the highest at or below the camera's, and the generator gets it as
+         detailPxPerMeter: leaves about 6 px long, never under 0.09 m, merged into coarser marks below
+         about 24, and wood under 0.6 px left out. 24 is the default zoom's. A mid-age oak is about 27
+         triangles at 2, 74 at 4, 290 at 8, 3,700 at 24, 7,600 at 40 and 16,000 at 80; the oldest stay
+         under 65,535 vertices (uint16 indices) at 80. -->
+    <detailLevels>2, 4, 8, 24, 40, 80</detailLevels>
 
     <rendering>
       <complexity>complex</complexity>
       <tier>batched</tier>
     </rendering>
 
-    <!-- Trunk-base collision comes from the generator (asset:setCollisionRect,
-         half-extent = trunkWidth/2 = 0.1m), captured eagerly at load. -->
+    <!-- Trunk-foot collision comes from the generator (asset:setCollisionRect, half the age
+         class's trunk width), captured per age class at load. -->
 
     <!-- Entity capabilities - felled for wood with an axe in one destructive action -->
     <!-- Whole-tree yield 20-30 wood (the old pool total); the colonist takes a weight-limited -->
@@ -39,12 +63,17 @@
                    destructive="true" requiresTool="Axe"/>
     </capabilities>
 
+    <!-- Stands of about 80 a 1,000 m2 (R9): a try every 2 m, crowns kept to 0.7 of touching against
+         any tree, the grove field thinning edges and glades and its gap field opening small gaps. -->
     <placement>
+      <samplePitch>2</samplePitch>
+      <crownSpacing>0.7</crownSpacing>
+
       <biome name="TemperateDeciduousForest">
-        <spawnChance>0.45</spawnChance>
+        <spawnChance>0.28</spawnChance>
         <distribution>spaced</distribution>
         <spacing>
-          <minDistance>3.0</minDistance>
+          <minDistance>1.0</minDistance>
         </spacing>
       </biome>
 
@@ -57,20 +86,13 @@
         <group>wild_plants</group>
         <group>wood_sources</group>
       </groups>
-
-      <!-- Relationships with other entities -->
-      <relationships>
-        <!-- minDistance (spaced) owns oak-to-oak spacing now; keep only a mild
-             cross-tree avoid so a mixed canopy intermixes without overlapping trunks. -->
-        <avoids group="trees" distance="2.5" penalty="0.7"/>
-      </relationships>
     </placement>
 
     <!-- Age class by world position (tree-variety.md R1, R2). Weights sum to 1; each class has its own mesh variants. -->
     <ageClasses>
-      <ageClass name="sapling" weight="0.25" variants="4" yieldScale="0.25" workScale="0.35"/>
-      <ageClass name="mature"  weight="0.55" variants="8" yieldScale="1.0"  workScale="1.0"/>
-      <ageClass name="veteran" weight="0.20" variants="4" yieldScale="1.8"  workScale="1.6"/>
+      <ageClass name="sapling" weight="0.15" variants="4" yieldScale="0.25" workScale="0.35"/>
+      <ageClass name="mature"  weight="0.60" variants="8" yieldScale="1.0"  workScale="1.0"/>
+      <ageClass name="veteran" weight="0.25" variants="4" yieldScale="1.8"  workScale="1.6"/>
     </ageClasses>
   </AssetDef>
 </AssetDefinitions>

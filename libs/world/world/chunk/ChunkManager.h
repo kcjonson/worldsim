@@ -21,8 +21,9 @@ namespace world {
 /// Chunks are loaded in a radius around the camera and unloaded when distant.
 class ChunkManager {
   public:
-	/// Create a chunk manager with the given world sampler
-	explicit ChunkManager(std::unique_ptr<IWorldSampler> sampler);
+	/// Create a chunk manager with the given world sampler; its chunks lay the forest floor by
+	/// `canopyCover` (none by default).
+	explicit ChunkManager(std::unique_ptr<IWorldSampler> sampler, grove::CanopyCover canopyCover = {});
 
 	// Non-copyable
 	ChunkManager(const ChunkManager&) = delete;
@@ -73,6 +74,7 @@ class ChunkManager {
 
   private:
 	std::unique_ptr<IWorldSampler> m_sampler;
+	grove::CanopyCover m_canopyCover;
 	std::unordered_map<ChunkCoordinate, std::unique_ptr<Chunk>> m_chunks;
 	ChunkCoordinate m_centerChunk{0, 0};
 

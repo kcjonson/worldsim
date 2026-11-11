@@ -36,10 +36,11 @@ namespace world {
 		}
 	} // namespace
 
-	Chunk::Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed)
+	Chunk::Chunk(ChunkCoordinate coord, ChunkSampleResult biomeData, uint64_t worldSeed, grove::CanopyCover canopyCover)
 		: m_coord(coord),
 		  m_biomeData(std::move(biomeData)),
 		  m_worldSeed(worldSeed),
+		  m_canopyCover(canopyCover),
 		  m_tiles{},
 		  m_generationComplete(false) {
 		touch();
@@ -120,7 +121,20 @@ namespace world {
 
 		computeRenderData(extended, terrain);
 		const double renderMs = stageMs();
-		fillGroundMacro(m_coord, m_worldSeed, m_groundMacro);
+		{
+			// Each macro texel's biome is its tile's, the one placement reads there; the last row and
+			// column are the neighbors' first, whose own chunks pick the same.
+			const int64_t	   originX = static_cast<int64_t>(m_coord.x) * kChunkSize;
+			const int64_t	   originY = static_cast<int64_t>(m_coord.y) * kChunkSize;
+			std::vector<float> cover(static_cast<size_t>(kGroundMacroSide) * kGroundMacroSide);
+			for (int32_t j = 0; j < kGroundMacroSide; ++j) {
+				for (int32_t i = 0; i < kGroundMacroSide; ++i) {
+					const Biome biome = neighborhood.tileBiomeAt(originX + i * kGroundMacroMetersPerTexel, originY + j * kGroundMacroMetersPerTexel).primary;
+					cover[static_cast<size_t>(j) * kGroundMacroSide + static_cast<size_t>(i)] = m_canopyCover.at(biome);
+				}
+			}
+			fillGroundMacro(m_coord, m_worldSeed, cover, m_groundMacro);
+		}
 		const double macroMs = stageMs();
 		// Permanent worker-thread generation cost by stage. DEBUG: dev-tools log server.
 		LOG_DEBUG(

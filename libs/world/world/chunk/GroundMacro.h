@@ -3,7 +3,9 @@
 // The ground's macro layer (docs/technical/ground-textures.md, "Shader"): a chunk's RGBA8 texture at
 // 2 m a texel that the tile shader reads once a pixel, to tint each land surface toward its ground
 // def's dry or lush color and to vary its value at scales the 4 m ground tiles can't carry. Filled
-// on the chunk generation worker beside the render tiles, uploaded under the same version.
+// on the chunk generation worker beside the render tiles, uploaded under the same version. Its alpha
+// is the forest floor's canopy weight (world::grove::canopyWeight), which the shader tints the grass
+// family toward leaf litter by.
 //
 // Texel (i, j) holds the field at chunk-local (2i, 2j) m, i and j from 0 to 256, so a chunk's last
 // row and column are its neighbor's first and a bilinear read matches across the border.
@@ -28,7 +30,9 @@ namespace world {
 
 	/// Fills `rgba` (kGroundMacroBytes, rows top to bottom) for chunk `coord`. R is the dry (0) to lush (1)
 	/// mix; G and B are value noise centered on 0.5 at the mid and fine wavelengths, full scale at 0 and 1;
-	/// A is 255. A pure function of the world position and seed, so neighbors agree on shared texels.
-	void fillGroundMacro(ChunkCoordinate coord, uint64_t worldSeed, std::span<uint8_t> rgba);
+	/// A is the canopy weight, for `canopyCover` the canopy cover of each texel's biome (kGroundMacroSide
+	/// squared, rows top to bottom). A pure function of the world position, seed and biome, so neighbors
+	/// agree on shared texels.
+	void fillGroundMacro(ChunkCoordinate coord, uint64_t worldSeed, std::span<const float> canopyCover, std::span<uint8_t> rgba);
 
 } // namespace world

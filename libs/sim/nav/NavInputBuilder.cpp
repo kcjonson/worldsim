@@ -113,7 +113,11 @@ namespace nav {
 
 	std::optional<gnav::NavInputPolygon> floraRingFor(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
 		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
-		if (def == nullptr || !def->collision.blocks()) {
+		if (def == nullptr) {
+			return std::nullopt;
+		}
+		const assets::CollisionShape& collision = def->collisionFor(e.traits.ageClass);
+		if (!collision.blocks()) {
 			return std::nullopt;
 		}
 
@@ -132,22 +136,22 @@ namespace nav {
 		};
 
 		geometry::Ring ring;
-		if (def->collision.type == assets::CollisionShapeType::Rect) {
+		if (collision.type == assets::CollisionShapeType::Rect) {
 			// The rect's 4 corners (local meters), half-extents inflated outward by
 			// the pad so the agent clears the trunk, then transformed -- so entity
 			// rotation turns it into an oriented quad (OBB) rather than an AABB.
 			const float		padMeters = static_cast<float>(kFloraColliderPadMm) / static_cast<float>(kTileMm);
-			const glm::vec2 c		  = def->collision.offsetMeters;
-			const float		hx		  = def->collision.halfExtentsMeters.x + padMeters;
-			const float		hy		  = def->collision.halfExtentsMeters.y + padMeters;
+			const glm::vec2 c		  = collision.offsetMeters;
+			const float		hx		  = collision.halfExtentsMeters.x + padMeters;
+			const float		hy		  = collision.halfExtentsMeters.y + padMeters;
 			ring.reserve(4);
 			ring.push_back(toWorldMm({c.x - hx, c.y - hy}));
 			ring.push_back(toWorldMm({c.x + hx, c.y - hy}));
 			ring.push_back(toWorldMm({c.x + hx, c.y + hy}));
 			ring.push_back(toWorldMm({c.x - hx, c.y + hy}));
-		} else if (def->collision.type == assets::CollisionShapeType::Polygon) {
-			ring.reserve(def->collision.pointsMeters.size());
-			for (const glm::vec2& p : def->collision.pointsMeters) {
+		} else if (collision.type == assets::CollisionShapeType::Polygon) {
+			ring.reserve(collision.pointsMeters.size());
+			for (const glm::vec2& p : collision.pointsMeters) {
 				ring.push_back(toWorldMm(p));
 			}
 		}

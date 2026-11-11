@@ -170,6 +170,7 @@ class ChunkRenderer {
 		int groundParams = -1;
 		int groundTintBase = -1;
 		int groundTintLush = -1;
+		int groundFloorTint = -1;
 		int groundSeed = -1;
 		int groundCellOrigin = -1;
 		int groundMacroValue = -1;

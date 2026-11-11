@@ -355,3 +355,32 @@ TEST(SpatialIndexTests, RemoveVerifyQueryUpdated) {
 	EXPECT_EQ(results2.size(), 1);
 	EXPECT_EQ(results2[0]->defName, "Flower");
 }
+
+// A rect far larger than the index (a zoomed-out view, queried per chunk) still finds exactly
+// what is inside it, on both sides of the origin.
+TEST(SpatialIndexTests, QueryRectMuchLargerThanTheIndex) {
+	SpatialIndex index;
+	index.insert({"Tree", {-30.0F, 5.0F}});
+	index.insert({"Tree", {40.0F, -12.0F}});
+	index.insert({"Rock", {1000.0F, 1000.0F}});
+
+	EXPECT_EQ(index.queryRect(-1.0e6F, -1.0e6F, 1.0e6F, 1.0e6F).size(), 3U);
+	EXPECT_EQ(index.queryRect(-50.0F, -50.0F, 50.0F, 50.0F).size(), 2U);
+	EXPECT_TRUE(index.queryRect(2000.0F, 2000.0F, 1.0e6F, 1.0e6F).empty());
+	EXPECT_TRUE(SpatialIndex().queryRect(-1.0e6F, -1.0e6F, 1.0e6F, 1.0e6F).empty());
+}
+
+TEST(SpatialIndexTests, VersionChangesWithEveryEditAndCopy) {
+	SpatialIndex index;
+	const uint64_t empty = index.version();
+	index.insert({"Tree", {1.0F, 1.0F}});
+	const uint64_t inserted = index.version();
+	EXPECT_NE(inserted, empty);
+	index.remove({1.0F, 1.0F}, "Tree");
+	EXPECT_NE(index.version(), inserted);
+	const SpatialIndex copy = index;
+	EXPECT_NE(copy.version(), index.version());
+	const uint64_t before = index.version();
+	index.clear();
+	EXPECT_NE(index.version(), before);
+}

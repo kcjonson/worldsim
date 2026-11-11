@@ -511,6 +511,10 @@ TEST(AssetValidatorTest, AgeClassesAndPlacementScaleFollowTheSchema) {
 	const std::string mature = R"(<ageClass name="mature" weight="0.75" variants="8"/>)";
 
 	EXPECT_EQ(validateTree("<ageClasses>" + sapling + mature + R"(</ageClasses><placement><scale min="0.93" max="1.07"/></placement>)").errorCount(), 0);
+	EXPECT_EQ(validateTree("<placement><samplePitch>2</samplePitch><crownSpacing>0.7</crownSpacing></placement>").errorCount(), 0);
+	EXPECT_TRUE(hasIssue(validateTree("<placement><samplePitch>3</samplePitch></placement>"), Severity::Error, "samplePitch"));
+	EXPECT_TRUE(hasIssue(validateTree("<placement><crownSpacing>0</crownSpacing></placement>"), Severity::Error, "crownSpacing"));
+	EXPECT_TRUE(hasIssue(validateTree("<placement><crownSpacing>0.7x</crownSpacing></placement>"), Severity::Error, "crownSpacing"));
 
 	// Weights off 1, both <ageClasses> and <variantCount>, a duplicate name, an empty name, no variants.
 	EXPECT_TRUE(hasMessageContaining(validateTree("<ageClasses>" + sapling + R"(<ageClass name="mature" weight="0.7" variants="8"/></ageClasses>)"), Severity::Error, "sum to 1"));
