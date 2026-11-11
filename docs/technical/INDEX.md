@@ -142,7 +142,7 @@ Applications:
 | [Building & Construction Architecture](./building-construction-architecture.md) | Freeform structures: geometry lib, room detection, structure rendering |
 | [Crafting & Material Provisioning](./crafting-provisioning-architecture.md) | Craft-as-construction: station store, metered/no-leftover deposit, pickup-by-source, giveItemToColonist cascade |
 | [Task Claims](./task-claims.md) | Spec: claims as data on colonist tasks with a derived index, chain claims, availability, bumping, craft binding |
-| [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md) | Draft design: one persistent cell-keyed nav mesh, coarse and fine forms, camera-driven detail, forward snap, chunk anchors; measured builder baseline and per-step perf gates |
+| [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md) | Draft design: one persistent nav mesh patched in place (add, remove, move), structural layer for reachability, detail as a query filter, mover footprints, forward snap, chunk anchors; measured builder baseline and per-step perf gates |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
 | [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery/witnessing, fog of war |
 
