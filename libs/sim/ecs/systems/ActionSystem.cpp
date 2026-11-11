@@ -21,6 +21,8 @@
 
 #include <utils/Log.h>
 
+#include <limits>
+
 namespace ecs {
 
 	void ActionSystem::update(float deltaTime) {
@@ -211,6 +213,12 @@ namespace ecs {
 		Inventory&		inventory,
 		Memory&			memory
 	) {
+		// What a cut lands is what its collection adds to the colonist; what it held of the yield before
+		// is not this cut's.
+		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
+		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
+		const uint32_t	   heldBeforeCut = cutLands ? ecs::availableQuantity(inventory, yieldDefName) : 0U;
+
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
 			applyNeedEffect(action, needs);
@@ -362,9 +370,12 @@ namespace ecs {
 			return;
 		}
 
-		if (task.type == TaskType::Harvest && action.type == ActionType::Harvest && carryHarvestIn(entity, position, task, inventory)) {
-			action.clear();
-			return;
+		if (cutLands) {
+			const uint32_t heldAfterCut = ecs::availableQuantity(inventory, yieldDefName);
+			if (carryHarvestIn(entity, position, task, inventory, heldAfterCut > heldBeforeCut ? heldAfterCut - heldBeforeCut : 0U)) {
+				action.clear();
+				return;
+			}
 		}
 
 		// Handle PlacePackaged completion (phase 2) - move entity to target and remove Packaged component
@@ -393,13 +404,15 @@ namespace ecs {
 		}
 	}
 
-	bool ActionSystem::carryHarvestIn(EntityID entity, const Position& position, Task& task, const Inventory& inventory) {
+	bool ActionSystem::carryHarvestIn(EntityID entity, const Position& position, Task& task, const Inventory& inventory, uint32_t landed) {
 		// The in-flight claim taken at acceptance names the root, which outlives the Harvest child the
 		// cut was picked through (a goal system may retire it while the colonist works).
 		uint64_t rootId = 0;
+		uint32_t accepted = 0;
 		for (const Claim& claim : task.claims) {
 			if (claim.kind() == ClaimKind::InFlight) {
 				rootId = claim.target();
+				accepted = claim.quantity();
 			}
 		}
 		const auto&		goals = GoalTaskRegistry::Get();
@@ -410,17 +423,21 @@ namespace ecs {
 		auto&			   registry = assets::AssetRegistry::Get();
 		const uint32_t	   item = task.harvestYieldDefNameId;
 		const std::string& itemDefName = registry.getDefName(item);
-		const uint32_t	   carried = ecs::availableQuantity(inventory, itemDefName);
-		if (carried == 0) {
+		// The cargo is what earlier cuts of this gathering carry plus what this one landed; anything else
+		// of the yield the colonist holds is not this task's to deliver.
+		const uint32_t cargo = std::min(cargoOnClaims(task.claims, rootId, item) + landed, ecs::availableQuantity(inventory, itemDefName));
+		if (cargo == 0) {
 			return false;
 		}
-		// The index is the one the AI last built; between its updates it can only over-count what
-		// others bring, which commits less now and leaves the rest for a carry-in later.
+		// The index is the one the AI last built, so this commits no more than this task's own in-flight
+		// there: another colonist converting a cut in this same update read that figure, and the two
+		// together never pass the need. The need itself is read now, past every deposit already landed.
 		static const ClaimIndex kNoClaims;
 		const auto*				ai = world->tryGetSystem<AIDecisionSystem>();
-		const uint32_t			quantity =
-			std::min(carried, rootAvailable(*world, ai != nullptr ? ai->claimIndex() : kNoClaims, rootId, item, harvestBasis(*root),
-											ClaimExclusion::of(task)));
+		const uint32_t			quantity = std::min(
+			 {cargo, accepted,
+			  rootAvailable(*world, ai != nullptr ? ai->claimIndex() : kNoClaims, rootId, item, harvestBasis(*root), ClaimExclusion::of(task))}
+		 );
 		if (quantity == 0) {
 			return false;
 		}
@@ -443,10 +460,13 @@ namespace ecs {
 			task.chainId = GoalTaskRegistry::Get().allocateChainId();
 		}
 		headToDeposit(entity, task);
+		// Decided again at once rather than after a step toward the destination: a further cut may come
+		// first (task-claims.md, Batching).
+		task.timeSinceEvaluation = std::numeric_limits<float>::max();
 		LOG_DEBUG(
 			Engine,
 			"[Action] Harvest landed %u x %s; carrying %u toward goal %llu",
-			carried,
+			landed,
 			itemDefName.c_str(),
 			quantity,
 			static_cast<unsigned long long>(rootId)

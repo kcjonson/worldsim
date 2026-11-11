@@ -167,10 +167,11 @@ private:
 	/// destination. The one handoff every way into the deposit leg takes; claims are rewritten by the caller.
 	void headToDeposit(EntityID entity, struct Task& task);
 
-	/// A goal's cut has landed: turn the Harvest task into the deposit leg that carries the yield to its
-	/// root's destination, committing what the root still needs that no other task is bringing. False
-	/// (the task ends) when the cut brings nothing toward a root: a clear, nothing carried, or no need.
-	bool carryHarvestIn(EntityID entity, const struct Position& position, struct Task& task, const struct Inventory& inventory);
+	/// A goal's cut has landed `landed` units: turn the Harvest task into the deposit leg that carries its
+	/// cargo (what earlier cuts of the gathering carry, plus this cut) to its root's destination,
+	/// committing what the root still needs that no other task is bringing. False (the task ends) when
+	/// the cut brings nothing toward a root: a clear, nothing carried, or no need.
+	bool carryHarvestIn(EntityID entity, const struct Position& position, struct Task& task, const struct Inventory& inventory, uint32_t landed);
 
 	/// Apply a completed action's need-restoration effect (primary + side effect).
 	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);

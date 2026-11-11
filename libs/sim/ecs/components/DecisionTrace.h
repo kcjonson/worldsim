@@ -96,6 +96,13 @@ namespace ecs {
 		// Mutually exclusive with servesActiveWorkOrder: a stocking goal is not a work order.
 		bool servesStorageStocking = false;
 
+		// A further cut for a root the colonist already carries goods toward. Within its tier it ranks
+		// above every option that does not, the carry-in of those goods included, so a colonist gathers
+		// a full trip before walking (task-claims.md, Batching). The cut is only offered while the trip
+		// has room and the root wants more than is carried, and a source that is regrowing, unreachable,
+		// or reserved is passed over at selection, so the carry-in wins as soon as none is left.
+		bool continuesGathering = false;
+
 		// --- (tier, score) arbitration key ---
 		// tier: categorical priority, compared FIRST. Lower number = higher priority (1 best).
 		// Set by AIDecisionSystem's classifyTier() from the config base + runtime promotions.
@@ -144,12 +151,15 @@ namespace ecs {
 		}
 
 		/// Lexicographic (tier, score) ordering: returns true if `a` is HIGHER priority than `b`.
-		/// Lower tier wins; within a tier, higher score wins; ties break on tiebreakId ascending
+		/// Lower tier wins; within a tier, a continuing cut first, then higher score; ties break on tiebreakId ascending
 		/// (a multiplayer-determinism guard, since the goal registry iterates hash-bucket order).
 		/// This is THE arbitration: tier is inviolable, score can never cross a tier boundary.
 		[[nodiscard]] static bool higherPriority(const EvaluatedOption& a, const EvaluatedOption& b) {
 			if (a.tier != b.tier) {
 				return a.tier < b.tier;
+			}
+			if (a.continuesGathering != b.continuesGathering) {
+				return a.continuesGathering;
 			}
 			if (a.score != b.score) {
 				return a.score > b.score;

@@ -198,9 +198,13 @@ private:
 		NeedType newNeedType);
 
 	/// A just-accepted task takes its instance id and records its chain's claims; its suspended record
-	/// is kept (a need), adopted (the carry-in of the same goods), or discarded (anything else). The
-	/// result is appended to the index so colonists deciding later this update see it.
-	void acceptClaims(EntityID entity, Task& task, const struct Memory& memory, const struct Inventory& inventory);
+	/// is kept (a need), adopted (the carry-in of the same goods, or a further cut carrying them), or
+	/// discarded (anything else). `handedCargo` is the gathering it continues, whose instance and cargo
+	/// it keeps. The result is appended to the index so colonists deciding later this update see it.
+	void acceptClaims(
+		EntityID entity, Task& task, const struct Memory& memory, const struct Inventory& inventory,
+		const std::optional<SuspendedWork>& handedCargo
+	);
 
 	/// Rebuild the claim index the first time a colonist decides in this update.
 	void ensureClaimIndex();

@@ -173,8 +173,8 @@ conflict only with themselves.
 Inbound and in-flight look redundant for a haul but guard different limits. Inbound protects the
 destination's physical capacity (two hauls into one box must fit in it together; today they can
 both pass the per-trip `addableCount` check and overfill). In-flight protects the goal's need,
-including harvests that have not produced goods yet. A haul carries both; a harvest that has not
-cut yet carries only in-flight.
+including harvests that have not produced goods yet. A haul carries both; a harvest carries Inbound
+only for the goods earlier cuts of its gathering already put in the colonist's hands.
 
 ### Needed now and built later
 
@@ -244,17 +244,41 @@ Craft provisioning, construction delivery, and storage stocking.
 
 | Step | Claims held |
 |---|---|
-| Accept | Use(source), In-flight(root, yield, E) |
-| Harvest completes | The task converts to its deposit leg. Use drops. In-flight becomes the units of the yield the colonist now carries (what landed plus any it held already), capped at the root's remaining need net of other tasks' in-flight; Inbound(destination, yield, same) is added. Nothing carried, or nothing still needed, ends the task and leaves the goods uncommitted |
+| Accept | Use(source), Inbound(destination, yield, C) when C > 0, In-flight(root, yield, C + E) |
+| Harvest completes | The task converts to its deposit leg. Use drops. In-flight and Inbound become its cargo, C plus what this cut landed, capped at its own in-flight and at the root's remaining need net of other tasks' in-flight. Nothing carried, or nothing still needed, ends the task and leaves the goods uncommitted. The colonist decides again at once (batching, below) |
+| A further cut | The deposit leg hands its instance id and cargo claims to the next cut for the same root and item, which adds Use on the new source and raises In-flight by its E |
 | Deposit | all drop with the task |
 
-E is the source's most per cut (`amountMax`; a pooled source gives at most that per cut too), capped
-by what fits in the colonist's carry and by the root's remaining need. Over-estimating only makes
-another colonist briefly see less available; under-estimating brings back the over-harvest this
-spec removes. Units landed beyond the capped need are carried uncommitted; overflow that drops at
-the stump is a loose pile, an ordinary new source with no claims. The cap reads the claim index the
-AI last built; between AI updates that can only over-count others' in-flight, so the leg commits less
-and the rest waits for a carry-in.
+C is what the colonist already carries toward the root: the cargo an earlier cut of the same
+gathering handed on, or an adopted suspended record's (or, with neither, what it carries of the
+item that is not provisions, below), capped at the root's remaining need. E is the source's most per
+cut (`amountMax`; a pooled source gives at most that per cut too), capped by what still fits in the
+colonist's carry and by the root's remaining need less C. Over-estimating only makes another
+colonist briefly see less available; under-estimating brings back the over-harvest this spec
+removes. Units landed beyond the cap are carried uncommitted; overflow that drops at the stump is a
+loose pile, an ordinary new source with no claims. The cap reads the claim index the AI last built,
+and the leg never commits more than its own in-flight there: another colonist converting a cut in
+the same ActionSystem update read that figure, so the two together never pass the need. The need
+itself is read from the world at that moment.
+
+#### Batching
+
+A colonist gathering for a root delivers when one of these holds:
+
+- its trip is full for the item: no more fits (`pickupUnitsThatFit` is 0, the cut shows NoRoom);
+- what it carries covers the root's remaining need net of others' in-flight;
+- it knows no other source of the item that is ready, reachable, and not reserved.
+
+Until then the next cut for the same root and item outranks the carry-in: such a cut is marked as
+continuing the gathering, and within its tier a continuing cut ranks above every option that is not
+one, the carry-in included. The cut is offered only while the first two conditions fail, and a
+source that is regrowing, unreachable, or reserved is passed over at selection, so the carry-in is
+taken as soon as no source is left. A landed cut is decided again at once rather than after a step
+toward the destination. While it gathers, the colonist's in-flight toward the root covers what it
+carries plus the cut it has accepted, so another colonist does not cut what those cover, and the
+cargo moves from task to task under one instance id with no window in which it is uncommitted. A
+need that interrupts the gathering keeps the goods as a suspended record (below), which the next
+cut or the carry-in adopts.
 
 ### Fetch from stock (Chain_PickupDeposit)
 
@@ -332,7 +356,8 @@ vanish, `isSameTask` would fail, and the switch path would clear the task.
 
 - Root available (item) = remaining need (item) - in-flight (root, item).
 - What a colonist would still go and get (fetch or cut) also nets out what it carries of the item:
-  its own goods are already on their way, so it delivers them before cutting more.
+  its own goods are already on their way. Whether it cuts more before delivering them is the
+  batching rule above.
 - Source available = live quantity - claimed quantity, for source quantity claims; a Use target is
   available when no other task holds it. Use is exclusive for every cut, clears included: several
   colonists may clear one site, each its own plant.
@@ -437,7 +462,9 @@ The colonist stows or drops carried goods as today (`handleChainInterruption`, d
 `needsHands` and `handsRequired`; see [Task Chains](../design/game-systems/colonists/task-chains.md)).
 A suspended record is created only when the interrupting selection is a need task:
 
-- Only a haul past its source holds goods of its own (no Use or SourceQuantity left); a placement's
+- Only a haul past its source (no Use or SourceQuantity left) or a cut carrying what earlier cuts
+  of its gathering landed (its Inbound; its Use and the uncut part of its in-flight are not kept)
+  holds goods of its own; a placement's
   packaged item has no root to carry it toward, so it leaves no record.
 - If the colonist keeps the goods (stowed, or the need does not use hands), the interrupted work
   becomes the suspended record: its instance id, claim sequence, root goal, item, and claims
@@ -453,8 +480,9 @@ has.
 On later selections:
 
 - another need task keeps the record;
-- the carry-in-from-possession option for the record's root, item, and destination adopts it: the
-  new task takes the record's instance id, sequence, and claims;
+- the carry-in-from-possession option for the record's root, item, and destination, or a further
+  cut for that root and item, adopts it: the new task takes the record's instance id, sequence, and
+  claims;
 - any other selection (other work, Wander, a player move) discards it, so a stale record never
   holds a goal's in-flight.
 

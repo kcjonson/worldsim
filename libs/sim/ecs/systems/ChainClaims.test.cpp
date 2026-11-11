@@ -7,7 +7,10 @@
 #include "ActionSystem.h"
 #include "ChainClaims.h"
 #include "CraftingGoalSystem.h"
+#include "MovementSystem.h"
+#include "PhysicsSystem.h"
 #include "StorageGoalSystem.h"
+#include "TimeSystem.h"
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
@@ -35,6 +38,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -896,6 +900,178 @@ namespace ecs::test {
 		const auto cutting = [&](EntityID colonist) { return getTask(colonist)->type == TaskType::Harvest ? 1 : 0; };
 		ASSERT_TRUE(runUntil([&] { return cutting(first) + cutting(second) > 0; }, 200));
 		EXPECT_EQ(cutting(first) + cutting(second), 1);
+	}
+
+	// =============================================================================
+	// Batching: a colonist gathering for a root fills its trip before walking (task-claims.md,
+	// Batching). Colonists walk (MovementSystem and PhysicsSystem, no mesh: direct steering) and every
+	// cut starts its plant's regrowth, so nothing teleports and each plant gives once.
+	// =============================================================================
+
+	class ChainWalkTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			world->registerSystem<TimeSystem>();
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+			registerItem("Fibre", 1, kFibreKg);
+			assets::AssetDefinition reed;
+			reed.defName = "Reed";
+			reed.label = "Reed";
+			reed.capabilities.harvestable = assets::HarvestableCapability{};
+			reed.capabilities.harvestable->yieldDefName = "Fibre";
+			reed.capabilities.harvestable->amountMin = 3;
+			reed.capabilities.harvestable->amountMax = 3;
+			reed.capabilities.harvestable->durability = 1.0F;
+			reed.capabilities.harvestable->regrowthTime = 600.0F;
+			reed.capabilities.harvestable->destructive = false;
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(reed));
+			fibreId = assets::AssetRegistry::Get().getDefNameId("Fibre");
+			actions->setTakeSourceCallback([this](const std::string&, float x, float y, ActionSystem::SourceTake take, float) {
+				const glm::vec2 at{x, y};
+				const bool		wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
+				if (take == ActionSystem::SourceTake::Regrow && !wasCut) {
+					cut.push_back(at);
+				}
+				return wasCut ? ActionSystem::SourceState::OnCooldown : ActionSystem::SourceState::Ready;
+			});
+			ai->setSourceRegrowthCallback([this](uint32_t, glm::vec2 at, double) {
+				return std::find(cut.begin(), cut.end(), at) != cut.end() ? std::optional<double>{1.0e9} : std::nullopt;
+			});
+		}
+
+		/// A blueprint wanting `needed` fibre and its construction umbrella with a cutting child.
+		Site fibreSite(glm::vec2 position, uint32_t needed) {
+			const Site site = constructionSite(position, "Fibre", needed);
+			childOf(site, position);
+			return site;
+		}
+
+		void childOf(const Site& site, glm::vec2 position) {
+			GoalTask harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::ConstructionGoalSystem;
+			harvest.destinationEntity = site.blueprint;
+			harvest.destinationPosition = position;
+			harvest.yieldDefNameId = fibreId;
+			harvest.parentGoalId = site.umbrella;
+			GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		}
+
+		void rememberReeds(EntityID colonist, std::initializer_list<glm::vec2> reeds) {
+			for (const glm::vec2 reed : reeds) {
+				remember(colonist, reed, "Reed", assets::CapabilityType::Harvestable);
+			}
+		}
+
+		uint32_t delivered(const Site& site) {
+			const auto* blueprint = world->getComponent<StructureBlueprint>(site.blueprint);
+			return blueprint->required.front().second - blueprint->remaining("Fibre");
+		}
+
+		/// Run frames until `done` holds; each delivery to the site and each cut the colonist lands is
+		/// counted.
+		template <typename Done> bool walkUntil(const Site& site, EntityID colonist, Done done, int maxFrames = 4000) {
+			uint32_t lastDelivered = delivered(site);
+			uint32_t lastCarried = carriedFibre(colonist);
+			for (int frame = 0; frame < maxFrames; ++frame) {
+				world->update(0.1F);
+				const uint32_t nowDelivered = delivered(site);
+				const uint32_t nowCarried = carriedFibre(colonist);
+				trips += nowDelivered > lastDelivered ? 1 : 0;
+				cuts += nowCarried > lastCarried ? 1 : 0;
+				lastDelivered = nowDelivered;
+				lastCarried = nowCarried;
+				if (done()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		uint32_t carriedFibre(EntityID colonist) { return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Fibre"); }
+
+		uint32_t perTrip() { return ecs::cargoUnitsPerTrip(assets::AssetRegistry::Get(), "Fibre", Inventory::createForColonist().carryCapacityKg); }
+
+		static constexpr float kFibreKg = 3.5F;
+		uint32_t			   fibreId = 0;
+		std::vector<glm::vec2> cut;
+		int					   trips = 0;
+		int					   cuts = 0;
+	};
+
+	// Twenty fibre at three a cut: the colonist cuts until its trip is full and only then walks, so the
+	// trips are as few as its carry allows, not one per cut. Per trip the cut demand never passes what
+	// the trip can still take.
+	TEST_F(ChainWalkTest, AColonistFillsItsTripBeforeWalking) {
+		const Site	   site = fibreSite({0.0F, 12.0F}, 20);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}, {3.0F, 1.0F}, {4.0F, 0.0F}, {5.0F, 1.0F}, {6.0F, 0.0F}, {7.0F, 1.0F}, {8.0F, 0.0F}, {9.0F, 1.0F}});
+		ASSERT_EQ(perTrip(), 10U);
+
+		uint32_t mostCarried = 0;
+		uint32_t mostInFlight = 0;
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			mostCarried = std::max(mostCarried, carriedFibre(colonist));
+			mostInFlight = std::max(mostInFlight, ai->claimIndex().inFlight(site.umbrella, fibreId, {}));
+			return delivered(site) == 20;
+		})) << "delivered " << delivered(site);
+		EXPECT_EQ(trips, 2) << "two full trips of ten, not one per cut";
+		EXPECT_GE(cuts, 7);
+		EXPECT_EQ(mostCarried, perTrip()) << "each trip filled before it was walked";
+		EXPECT_LE(mostInFlight, perTrip()) << "the cuts of one trip never claim more than it carries";
+	}
+
+	// While the first colonist gathers, what it carries and the cut it has accepted are its in-flight:
+	// a second colonist sees the need covered and does not cut.
+	TEST_F(ChainWalkTest, ASecondColonistDoesNotCutWhatTheFirstCarriesAndHasAccepted) {
+		const Site	   site = fibreSite({0.0F, 12.0F}, 6);
+		const EntityID first = createColonist({0.0F, 0.0F});
+		rememberReeds(first, {{2.0F, 0.0F}, {4.0F, 0.0F}, {6.0F, 0.0F}});
+
+		ASSERT_TRUE(walkUntil(site, first, [&] {
+			const Task& task = *getTask(first);
+			return task.type == TaskType::Harvest && claimOf(task, ClaimKind::Inbound).has_value();
+		})) << "the first never went on to a second cut";
+		const Task& gathering = *getTask(first);
+		EXPECT_EQ(claimOf(gathering, ClaimKind::Inbound)->quantity(), 3U) << "the first cut's goods ride along";
+		EXPECT_EQ(claimOf(gathering, ClaimKind::InFlight)->quantity(), 6U) << "carried plus the accepted cut";
+
+		const EntityID second = createColonist({0.0F, 1.0F});
+		rememberReeds(second, {{2.0F, 0.0F}, {4.0F, 0.0F}, {6.0F, 0.0F}});
+		decide(second);
+		EXPECT_NE(getTask(second)->type, TaskType::Harvest);
+		EXPECT_EQ(optionOf(second, TaskType::Harvest, OptionStatus::Available), nullptr);
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, {}), 6U);
+	}
+
+	// A partly full trip whose other sources are regrowing or reserved is delivered as it is.
+	TEST_F(ChainWalkTest, APartlyFullTripIsDeliveredWhenNoOtherSourceIsFree) {
+		const Site		site = fibreSite({0.0F, 12.0F}, 20);
+		const glm::vec2 own{2.0F, 0.0F};
+		const glm::vec2 taken{-6.0F, 0.0F};
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {own, taken});
+		const EntityID other = createColonist({-5.0F, 0.0F});
+		rememberReeds(other, {taken});
+		world->addComponent<Skills>(other, Skills{}).setLevel("Farming", 0.0F);
+
+		decideAll({other, colonist});
+		ASSERT_EQ(getTask(other)->harvestTargetEntityId, hashWorldEntity(taken, assets::AssetRegistry::Get().getDefNameId("Reed")));
+		// Walk until the colonist has decided again with its first cut in hand.
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const EvaluatedOption* chosen = world->getComponent<DecisionTrace>(colonist)->getSelected();
+			return carriedFibre(colonist) == 3U && chosen != nullptr && chosen->taskType == TaskType::Haul;
+		}));
+		const Task& task = *getTask(colonist);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.haulQuantity, 3U) << "three of a trip of " << perTrip();
+		// Its own reed is regrowing; the far one is the other colonist's (held, or already cut).
+		EXPECT_EQ(optionOf(colonist, TaskType::Harvest, OptionStatus::Available), nullptr);
+		EXPECT_NE(optionOf(colonist, TaskType::Harvest, OptionStatus::Regrowing), nullptr);
+		ASSERT_TRUE(walkUntil(site, colonist, [&] { return carriedFibre(colonist) == 0U; }, 400));
+		EXPECT_GE(delivered(site), 3U);
 	}
 
 	// =============================================================================

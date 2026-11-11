@@ -18,12 +18,10 @@ namespace ecs {
 			[[maybe_unused]] const bool pushed = task.claims.push(claim);
 		}
 
-		/// What one cut of the remembered harvestable can bring in: its most per cut, capped by what the
-		/// colonist can carry of the yield and by what the root still needs that nobody else is bringing.
-		/// Over-estimating only makes another colonist briefly see less available; under-estimating
-		/// would let it re-cut.
-		uint32_t expectedYield(World& world, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory,
-							   const Inventory& inventory, const Task& task, const GoalTask& root) {
+		/// The most one cut of the remembered harvestable gives, capped by what the colonist can still
+		/// carry of the yield. Over-estimating only makes another colonist briefly see less available;
+		/// under-estimating would let it re-cut.
+		uint32_t mostPerCut(const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, const Task& task) {
 			const KnownWorldEntity* source = memory.getWorldEntity(task.harvestTargetEntityId);
 			if (source == nullptr) {
 				return 0;
@@ -34,12 +32,58 @@ namespace ecs {
 			}
 			const std::string& yieldDefName = registry.getDefName(task.harvestYieldDefNameId);
 			const uint32_t	   room = ecs::pickupUnitsThatFit(inventory, registry, yieldDefName, ecs::carriedCargoMassKg(inventory, registry));
-			const uint32_t need =
-				rootAvailable(world, claims, root.id, task.harvestYieldDefNameId, harvestBasis(root), ClaimExclusion::of(task));
-			return std::min({def->capabilities.harvestable->amountMax, room, need});
+			return std::min(def->capabilities.harvestable->amountMax, room);
+		}
+
+		/// The Inbound quantity of `item` the task took over with its cargo, removing that cargo's
+		/// claims so the chain records them afresh.
+		uint32_t takeCargoClaims(Task& task, uint32_t item) {
+			uint32_t carried = 0;
+			for (const Claim& claim : task.claims) {
+				if (claim.kind() == ClaimKind::Inbound && claim.itemDefNameId() == item) {
+					carried += claim.quantity();
+				}
+			}
+			task.claims.eraseIf([](const Claim& claim) { return claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight; });
+			return carried;
 		}
 
 	} // namespace
+
+	uint32_t claimedCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId) {
+		uint32_t cargo = task.type == TaskType::FulfillNeed ? 0U : cargoOnClaims(task.claims, rootGoalId, itemDefNameId);
+		if (task.suspended && task.suspended->rootGoalId == rootGoalId && task.suspended->itemDefNameId == itemDefNameId) {
+			cargo += cargoOnClaims(task.suspended->claims, rootGoalId, itemDefNameId);
+		}
+		return cargo;
+	}
+
+	std::optional<SuspendedWork> handOverCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId) {
+		const uint32_t cargo = cargoOnClaims(task.claims, rootGoalId, itemDefNameId);
+		if (cargo == 0 || task.instanceId == 0) {
+			return std::nullopt;
+		}
+		SuspendedWork handed{.instanceId = task.instanceId, .claimSeq = task.claimSeq, .rootGoalId = rootGoalId, .itemDefNameId = itemDefNameId};
+		for (const Claim& claim : task.claims) {
+			if (claim.kind() == ClaimKind::Inbound && claim.itemDefNameId() == itemDefNameId) {
+				[[maybe_unused]] const bool pushed = handed.claims.push(Claim::inbound(claim.target(), itemDefNameId, cargo));
+				[[maybe_unused]] const bool paired = handed.claims.push(Claim::inFlight(rootGoalId, itemDefNameId, cargo));
+				break;
+			}
+		}
+		return handed;
+	}
+
+	uint32_t chainItem(const assets::AssetRegistry& registry, const Task& task) {
+		switch (task.type) {
+			case TaskType::Haul:
+				return registry.getDefNameId(task.haulItemDefName);
+			case TaskType::Harvest:
+				return task.harvestYieldDefNameId;
+			default:
+				return 0;
+		}
+	}
 
 	uint32_t
 	rootAvailable(World& world, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis, ClaimExclusion exclude) {
@@ -58,24 +102,36 @@ namespace ecs {
 		const auto& goals = GoalTaskRegistry::Get();
 		switch (task.type) {
 			case TaskType::Harvest: {
+				const uint32_t item = task.harvestYieldDefNameId;
+				const uint32_t handedOver = takeCargoClaims(task, item);
 				push(task, Claim::use(TargetKind::WorldKey, task.harvestTargetEntityId));
 				// A footprint clear removes what stands there and brings nothing toward a need.
 				const GoalTask* goal = goals.getGoal(task.harvestGoalId);
-				if (goal == nullptr || goal->clearFootprint.has_value() || task.harvestYieldDefNameId == 0) {
+				if (goal == nullptr || goal->clearFootprint.has_value() || item == 0) {
 					break;
 				}
 				const GoalTask* root = goals.getGoal(goals.rootOf(goal->id));
 				if (root == nullptr) {
 					break;
 				}
-				if (const uint32_t expected = expectedYield(world, claims, registry, memory, inventory, task, *root); expected > 0) {
-					push(task, Claim::inFlight(root->id, task.harvestYieldDefNameId, expected));
+				// The cut's in-flight covers what the colonist already carries toward the root as well as
+				// what this cut lands, so its goods stay committed between cuts and nobody re-cuts them.
+				const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(item));
+				const uint32_t wanted = rootAvailable(world, claims, root->id, item, harvestBasis(*root), ClaimExclusion::of(task));
+				const uint32_t carried = std::min({handedOver > 0 ? handedOver : held, held, wanted});
+				const uint32_t expected = std::min(mostPerCut(registry, memory, inventory, task), wanted - carried);
+				if (carried > 0) {
+					push(task, Claim::inbound(static_cast<uint64_t>(root->destinationEntity), item, carried));
+				}
+				if (carried + expected > 0) {
+					push(task, Claim::inFlight(root->id, item, carried + expected));
 				}
 				break;
 			}
 			case TaskType::Haul: {
 				const uint32_t item = registry.getDefNameId(task.haulItemDefName);
 				const uint64_t root = goals.rootOf(task.haulGoalId);
+				takeCargoClaims(task, item);
 				if (item == 0 || root == 0 || task.haulQuantity == 0) {
 					break;
 				}
@@ -131,31 +187,23 @@ namespace ecs {
 	}
 
 	std::optional<SuspendedWork> suspendableWork(const assets::AssetRegistry& registry, const Task& task, uint32_t held) {
-		if (task.type != TaskType::Haul || held == 0) {
+		if ((task.type != TaskType::Haul && task.type != TaskType::Harvest) || held == 0 || task.instanceId == 0) {
 			return std::nullopt;
 		}
-		SuspendedWork record{.instanceId = task.instanceId, .claimSeq = task.claimSeq, .itemDefNameId = registry.getDefNameId(task.haulItemDefName)};
-		for (Claim claim : task.claims) {
-			switch (claim.kind()) {
-				case ClaimKind::SourceQuantity:
-				case ClaimKind::Use:
-				case ClaimKind::Slot:
-					return std::nullopt; // the goods held are not this haul's yet
-				case ClaimKind::InFlight:
-					record.rootGoalId = claim.target();
-					[[fallthrough]];
-				case ClaimKind::Inbound:
-					if (claim.itemDefNameId() == record.itemDefNameId) {
-						claim.setQuantity(std::min(claim.quantity(), held));
-						if (!record.claims.push(claim)) {
-							return std::nullopt;
-						}
-					}
-					break;
+		const uint32_t item = chainItem(registry, task);
+		uint64_t	   root = 0;
+		for (const Claim& claim : task.claims) {
+			if (claim.kind() == ClaimKind::InFlight && claim.itemDefNameId() == item) {
+				root = claim.target();
 			}
 		}
-		if (record.rootGoalId == 0 || record.instanceId == 0) {
-			return std::nullopt;
+		const uint32_t cargo = std::min(cargoOnClaims(task.claims, root, item), held);
+		if (root == 0 || cargo == 0) {
+			return std::nullopt; // the goods held are not this chain's yet
+		}
+		auto record = handOverCargo(task, root, item);
+		for (Claim& claim : record->claims) {
+			claim.setQuantity(cargo);
 		}
 		return record;
 	}
@@ -176,27 +224,29 @@ namespace ecs {
 	}
 
 	bool adoptsSuspended(const assets::AssetRegistry& registry, const Task& task) {
-		if (!task.suspended.has_value() || task.type != TaskType::Haul || !task.haulFromInventory ||
-			GoalTaskRegistry::Get().rootOf(task.haulGoalId) != task.suspended->rootGoalId ||
-			registry.getDefNameId(task.haulItemDefName) != task.suspended->itemDefNameId) {
+		if (!task.suspended.has_value()) {
 			return false;
 		}
+		const auto&		goals = GoalTaskRegistry::Get();
+		const uint64_t	goalId = task.type == TaskType::Haul ? task.haulGoalId : task.harvestGoalId;
+		const GoalTask* root = goals.getGoal(goals.rootOf(goalId));
+		const bool		carries = (task.type == TaskType::Haul && task.haulFromInventory) || task.type == TaskType::Harvest;
+		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(registry, task) != task.suspended->itemDefNameId) {
+			return false;
+		}
+		const uint64_t destination = task.type == TaskType::Haul ? task.haulTargetStorageId : static_cast<uint64_t>(root->destinationEntity);
 		return std::any_of(task.suspended->claims.begin(), task.suspended->claims.end(), [&](const Claim& claim) {
-			return claim.kind() == ClaimKind::Inbound && claim.target() == task.haulTargetStorageId;
+			return claim.kind() == ClaimKind::Inbound && claim.target() == destination;
 		});
 	}
 
-	void adoptSuspended(Task& task) {
-		task.instanceId = task.suspended->instanceId;
-		task.claimSeq = task.suspended->claimSeq;
+	void takeOverCargo(Task& task, const SuspendedWork& cargo) {
+		task.instanceId = cargo.instanceId;
+		task.claimSeq = cargo.claimSeq;
 		task.claims.clear();
-		for (Claim claim : task.suspended->claims) {
-			claim.setQuantity(std::min(claim.quantity(), task.haulQuantity));
-			if (claim.quantity() > 0) {
-				push(task, claim);
-			}
+		for (const Claim& claim : cargo.claims) {
+			push(task, claim);
 		}
-		task.discardSuspended();
 	}
 
 } // namespace ecs

@@ -314,6 +314,29 @@ namespace ecs {
 			}
 		}
 
+		/// The cargo `task` hands to `selected` when it is the next leg of the same gathering: a cut, or a
+		/// carry-in, for the root and item the task carries goods toward.
+		[[nodiscard]] std::optional<SuspendedWork> nextGatheringLeg(const EvaluatedOption& selected, const Task& task) {
+			const auto& goals = GoalTaskRegistry::Get();
+			if (selected.taskType == TaskType::Harvest) {
+				return handOverCargo(task, goals.rootOf(selected.harvestGoalId), selected.harvestYieldDefNameId);
+			}
+			if (selected.taskType == TaskType::Haul && selected.haulFromInventory) {
+				return handOverCargo(task, goals.rootOf(selected.haulGoalId), selected.haulItemDefNameId);
+			}
+			return std::nullopt;
+		}
+
+		/// Does the task hold goods of its chain: a haul or placement past its pickup, or a cut carrying
+		/// what earlier cuts landed?
+		[[nodiscard]] bool carriesChainGoods(const Task& task) {
+			if (task.chainId.has_value() && task.chainStep > 0) {
+				return true;
+			}
+			return task.type == TaskType::Harvest &&
+				   std::any_of(task.claims.begin(), task.claims.end(), [](const Claim& claim) { return claim.kind() == ClaimKind::Inbound; });
+		}
+
 		/// Populate the (tier, score) arbitration key for an evaluated option.
 		/// Sets option.tier (classifyTier) and the within-tier score breakdown (distanceFactor,
 		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
@@ -406,6 +429,7 @@ namespace ecs {
 			World&						 world;
 			const ClaimIndex&			 claims;
 			ClaimExclusion				 self;
+			const Task&					 task;
 			const Inventory&			 inventory;
 			const assets::AssetRegistry& registry;
 			const LoosePileIndex*		 piles;
@@ -939,6 +963,7 @@ namespace ecs {
 				// StorageGoalSystem is stocking: above Wander but strictly below work orders.
 				const bool servesWorkOrder = root->type == TaskType::Craft || root->type == TaskType::Build;
 				const bool servesStocking = goal->owner == GoalOwner::StorageGoalSystem;
+				const bool continuesGathering = !clearing && claimedCargo(supply.task, root->id, goal->yieldDefNameId) > 0;
 
 				// A clear is served by what blocks its footprint, the same test the build gate applies; any
 				// other goal by the harvestables that yield its item.
@@ -971,6 +996,7 @@ namespace ecs {
 					harvestOption.tiebreakId = goal->id ^ (key << 1);
 					harvestOption.servesActiveWorkOrder = servesWorkOrder;
 					harvestOption.servesStorageStocking = servesStocking;
+					harvestOption.continuesGathering = continuesGathering;
 					harvestOption.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
 					harvestOption.reservedBy = reservedBy;
 
@@ -1437,6 +1463,12 @@ namespace ecs {
 				// Don't switch if it's the same task we're already doing
 				bool shouldSwitch = !isSameTask;
 
+				// The next leg of the same gathering: a further cut toward the root the colonist carries
+				// goods for, or their carry-in. The goods ride along under the same claims, so nothing is
+				// stowed or dropped and they are never uncommitted between two cuts.
+				const std::optional<SuspendedWork> handedCargo =
+					shouldSwitch && selected != nullptr ? nextGatheringLeg(*selected, task) : std::nullopt;
+
 				// Two-hand-carry-must-finish-deposit invariant. A two-hand armful (e.g. Wood) rides in
 				// BOTH hands and can't be stowed to belt/backpack, so ANY switch whose first action needs
 				// the hands makes the chain-interruption below DROP the whole load on the ground. Protect
@@ -1455,7 +1487,7 @@ namespace ecs {
 				const bool currentHaulUnreachable = (task.navState == NavState::CantFindWayTo);
 				const bool carryingTwoHandLoad = task.type == TaskType::Haul && !task.haulItemDefName.empty() &&
 					ecs::itemIsTwoHand(m_registry, task.haulItemDefName) && inventory.isHolding(task.haulItemDefName);
-				if (shouldSwitch && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
+				if (shouldSwitch && !handedCargo && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
 					// Case 1: a Harvest of the same yield (e.g. a construction material Harvest for Wood). Held regardless of tier -- the chop->drop->chop loop it forms is the
 					// original two-hand-drop bug this guard was built for.
 					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest &&
@@ -1507,14 +1539,15 @@ namespace ecs {
 				}
 
 				if (shouldSwitch) {
-					// Handle chain interruption if mid-chain and new task needs hands
-					if (task.chainId.has_value() && task.chainStep > 0 && selected != nullptr) {
+					// Handle chain interruption if the abandoned task carries goods and the new task needs hands
+					if (!handedCargo && carriesChainGoods(task) && selected != nullptr) {
 						handleChainInterruption(entity, task, inventory, position, selected->taskType, selected->needType);
 					}
 
 					// The abandoned task's claims leave the index now, unless it just became the
-					// suspended record, so a colonist deciding later this update sees them free.
-					if (!task.suspended || task.suspended->instanceId != task.instanceId) {
+					// suspended record or hands its cargo on, so a colonist deciding later this update
+					// sees them free.
+					if (!handedCargo && (!task.suspended || task.suspended->instanceId != task.instanceId)) {
 						m_claims.retire(task.instanceId);
 					}
 
@@ -1524,7 +1557,7 @@ namespace ecs {
 					selectTaskFromTrace(entity, task, movementTarget, *trace, position);
 					task.priorityTier = newTier; // Store the (tier, score) key for future comparisons
 					task.priority = newScore;
-					acceptClaims(entity, task, memory, inventory);
+					acceptClaims(entity, task, memory, inventory, handedCargo);
 
 					LOG_INFO(
 						Engine,
@@ -1557,23 +1590,29 @@ namespace ecs {
 		}
 	}
 
-	void AIDecisionSystem::acceptClaims(EntityID entity, Task& task, const Memory& memory, const Inventory& inventory) {
-		const uint64_t seq = GoalTaskRegistry::Get().allocateClaimSeq();
-		task.instanceId = seq;
-		task.claimSeq = seq;
-		recordChainClaims(*world, m_claims, m_registry, memory, inventory, task);
+	void AIDecisionSystem::acceptClaims(
+		EntityID entity, Task& task, const Memory& memory, const Inventory& inventory, const std::optional<SuspendedWork>& handedCargo
+	) {
+		if (handedCargo) {
+			takeOverCargo(task, *handedCargo);
+		} else {
+			const uint64_t seq = GoalTaskRegistry::Get().allocateClaimSeq();
+			task.instanceId = seq;
+			task.claimSeq = seq;
+		}
 
 		// The record's claims are already indexed under its own instance id, so adopting or discarding
 		// it goes through the index rather than appending it again.
 		if (task.suspended && task.type != TaskType::FulfillNeed) {
 			const uint64_t recordId = task.suspended->instanceId;
-			if (adoptsSuspended(m_registry, task)) {
-				adoptSuspended(task);
+			if (!handedCargo && adoptsSuspended(m_registry, task)) {
+				takeOverCargo(task, *task.suspended);
 			} else {
-				task.discardSuspended();
 				m_claims.retire(recordId);
 			}
+			task.discardSuspended();
 		}
+		recordChainClaims(*world, m_claims, m_registry, memory, inventory, task);
 		m_claims.append(entity, task);
 	}
 
@@ -2055,7 +2094,7 @@ namespace ecs {
 		}
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
-		const RootSupply supply{*world, m_claims, self, inventory, m_registry, m_loosePiles};
+		const RootSupply supply{*world, m_claims, self, currentTask, inventory, m_registry, m_loosePiles};
 		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
 		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, trace);
@@ -2435,14 +2474,17 @@ namespace ecs {
 		TaskType		newTaskType,
 		NeedType		newNeedType
 	) {
-		// A need interrupting a haul whose goods the colonist keeps leaves the haul as its suspended
+		// The goods a haul or a cut carries for its root.
+		const std::string& item = m_registry.getDefName(chainItem(m_registry, task));
+
+		// A need interrupting a haul or cut whose goods the colonist keeps leaves it as its suspended
 		// record, so the goods stay committed to where they were going. Called on every path that keeps
 		// them; a drop keeps none, and the pile it leaves is an ordinary source with no claims.
 		const auto keepGoods = [&]() {
 			if (newTaskType != TaskType::FulfillNeed) {
 				return;
 			}
-			auto record = suspendableWork(m_registry, task, ecs::availableQuantity(inventory, task.haulItemDefName));
+			auto record = suspendableWork(m_registry, task, ecs::availableQuantity(inventory, item));
 			if (!record) {
 				return;
 			}
@@ -2463,41 +2505,38 @@ namespace ecs {
 		// New task needs hands - must handle carried item
 		const auto entityId = static_cast<unsigned long long>(entity);
 
-		// For Haul tasks: item is in hands
-		if (task.type == TaskType::Haul && !task.haulItemDefName.empty()) {
+		// For Haul and Harvest tasks: the goods may be in hands
+		if ((task.type == TaskType::Haul || task.type == TaskType::Harvest) && !item.empty()) {
 			// Verify item is actually in hands before operating
-			if (!inventory.isHolding(task.haulItemDefName)) {
-				LOG_WARNING(Engine, "[AI] Entity %llu: chain interrupted but not holding %s", entityId, task.haulItemDefName.c_str());
-				keepGoods(); // a carry-in's goods ride in the pack, not the hands
+			if (!inventory.isHolding(item)) {
+				keepGoods(); // goods in the pack ride along
 				return;
 			}
 
-			const auto* assetDef = m_registry.getDefinition(task.haulItemDefName);
+			const auto* assetDef = m_registry.getDefinition(item);
 			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
 
 			if (handsRequired == 1) {
 				// 1-handed item: try the belt (quick-draw slot) first, then the backpack. The item is
 				// in hand, so a belt stow seats a copy on the belt and clears the hand.
-				if (inventory.stowToBelt(task.haulItemDefName)) {
-					inventory.putDown(task.haulItemDefName);
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, task.haulItemDefName.c_str());
+				if (inventory.stowToBelt(item)) {
+					inventory.putDown(item);
+					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, item.c_str());
 					keepGoods();
 					return;
 				}
-				if (inventory.stowToBackpack(task.haulItemDefName)) {
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, task.haulItemDefName.c_str());
+				if (inventory.stowToBackpack(item)) {
+					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, item.c_str());
 					keepGoods();
 					return;
 				}
 				// Belt and backpack full - fall through to drop
-				LOG_INFO(
-					Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, task.haulItemDefName.c_str()
-				);
+				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, item.c_str());
 			} else {
-				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, task.haulItemDefName.c_str());
+				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, item.c_str());
 			}
 
-			auto dropped = inventory.putDown(task.haulItemDefName);
+			auto dropped = inventory.putDown(item);
 			if (dropped.has_value() && dropped->quantity > 0 && world != nullptr) {
 				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource);
 			}
