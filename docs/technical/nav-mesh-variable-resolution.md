@@ -604,6 +604,8 @@ decided, why, and how to undo it.
 21. **Public nav members that only made sense with regions keep their signatures until step 6**, for the same reason, with meanings on the one mesh. The list is in the step 4 notes on WOR-707 (Step 4: One mesh in the game).
 22. **Between steps 4 and 5 flora is a hard wall where it has been added.** Reachability reads the structural layer, which has no flora, so a spot ringed by trees reads reachable and then fails to path. Step 5's pass-through cost closes that. The two steps merge together.
 
+23. **Independent review of the step 1 and 3 geometry, and what it found.** A reviewer that did not write the code read all of it. Five correctness findings, none hit by today's tests: a 32-bit visit counter in the width search that wraps after hours of footprint patches and then lets paths through gaps too narrow; path-heuristic caches and query views that go stale across a patch, with no patch counter on the mesh to catch it; the locate table's keys wrapping beyond 68,700 km from the origin; the equal-area tie in entry 6 depending on the order rings were added, which breaks "save and load agree"; and a one-millimetre gap in the width invalidation test. Four cost findings, the main one being that every patch clears an array the size of the whole mesh. All are fixed before the branch is called mergeable, after step 4, because the two share a build directory. Entry 6 is reversed by this: the tie will break on the rings' content, not their ids.
+
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
 
