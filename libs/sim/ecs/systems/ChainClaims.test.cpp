@@ -2017,6 +2017,43 @@ namespace ecs::test {
 		EXPECT_EQ(carriedFibre(colonist) + onTheGround(fibreId), 3U * static_cast<uint32_t>(cut.size())) << "nothing cut is lost";
 	}
 
+	// A box one unit short of full asks for many more by its minimum: a reed gives three, so a cut for the
+	// box would leave two carried about. It is not taken, and the trace says why.
+	TEST_F(ChainWalkTest, NoCutForABoxWithRoomForLessThanItLands) {
+		const glm::vec2 boxPos{0.0F, 12.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		auto store = Inventory::createForStorage();
+		store.maxCapacity = 1;
+		store.addItem("Fibre", 39);
+		world->addComponent<Inventory>(box, std::move(store));
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Fibre", .category = assets::ItemCategory::RawMaterial, .minAmount = 50});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		GoalTask umbrella;
+		umbrella.type = TaskType::Haul;
+		umbrella.owner = GoalOwner::StorageGoalSystem;
+		umbrella.destinationEntity = box;
+		umbrella.destinationPosition = boxPos;
+		umbrella.acceptedDefNameIds = {fibreId};
+		const uint64_t umbrellaId = GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+		GoalTask cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::StorageGoalSystem;
+		cut.destinationEntity = box;
+		cut.destinationPosition = boxPos;
+		cut.yieldDefNameId = fibreId;
+		cut.parentGoalId = umbrellaId;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}});
+
+		decide(colonist);
+		EXPECT_NE(getTask(colonist)->type, TaskType::Harvest);
+		EXPECT_NE(optionOf(colonist, TaskType::Harvest, OptionStatus::NoRoom), nullptr);
+	}
+
 	// Nine fibre carried toward a site that wants more, room for one: a remembered pile of five is no leg
 	// worth walking for one unit, the top-up cut's rule, so he delivers what he has.
 	TEST_F(ChainWalkTest, APileIsNoLegForTheLastUnitOfRoom) {

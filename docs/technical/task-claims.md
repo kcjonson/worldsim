@@ -337,7 +337,11 @@ A top-up cut (one toward a root the colonist already carries goods for) is offer
 left takes at least the smaller of the source's largest yield (`amountMax`) and what the root still
 wants beyond what is carried; otherwise he delivers. So a trip of ten taking cuts of three is walked at
 nine rather than spending a fourth plant on one unit, and no tree is felled for a sliver of its wood.
-A pile leg has the same threshold: room for at least the smaller of what the pile has left for him and
+A cut for a storage box, the first of a trip included, also needs the box's room for the item, beside
+what the colonist already carries toward it and net of others' inbound, to take at least the smaller of
+the source's largest yield and what the box's rules still ask (its named minimum less what it holds and
+what is on its way, whatever its room): a box one unit short of full is not cut for with a plant that
+gives three, which would leave two carried about. A pile leg has the same threshold: room for at least the smaller of what the pile has left for him and
 what the root still wants, so a gatherer with one unit of room does not walk to a remembered pile for it.
 A cut can still land more than fits (the first cut of a trip into a small pack), and the surplus drops
 as a pile. A source that is regrowing, unreachable, or reserved is passed over at selection, so the

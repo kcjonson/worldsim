@@ -492,6 +492,24 @@ namespace ecs {
 				return cargoToward(task, root, item, held, def != nullptr && def->isEdible());
 			}
 
+			/// What a box's rules still ask of an item to stock it by cutting, whatever room it has: the named
+			/// minimum less what it holds, net of every other task's in-flight and of what the colonist carries
+			/// toward it.
+			[[nodiscard]] uint32_t stockingAsk(const GoalTask& root, uint32_t item) const {
+				const auto*		   config = world.getComponent<StorageConfiguration>(root.destinationEntity);
+				const auto*		   store = world.getComponent<Inventory>(root.destinationEntity);
+				const auto*		   def = registry.getDefinitionById(item);
+				if (config == nullptr || store == nullptr || def == nullptr) {
+					return 0;
+				}
+				const std::string& name = registry.getDefName(item);
+				const uint32_t	   minimum = config->getNamedMinAmountFor(name, def->category);
+				const uint32_t	   held = store->getQuantity(name);
+				const uint32_t	   asked = rootAvailable(minimum > held ? minimum - held : 0U, claims, root.id, item, self);
+				const uint32_t	   carried = asked > 0 ? cargo(root.id, item) : 0U;
+				return asked > carried ? asked - carried : 0U;
+			}
+
 			/// Units of the item a remembered pile still offers: its live count less what others will take.
 			/// A pile the world can't find (taken since it was seen, or a world with no pile index) has no
 			/// count to read; it offers the wanted amount while nobody else claims it, so one colonist goes
@@ -1097,8 +1115,19 @@ namespace ecs {
 				if (!clearing && want == 0) {
 					return;
 				}
-				if (!clearing && root->owner == GoalOwner::StorageGoalSystem && supply.storageRoom(root->destinationEntity, goal->yieldDefNameId) == 0) {
-					return; // every slot it has left is promised to goods already on their way
+				// What the box has room for beside the goods the colonist already carries toward it, net of
+				// what others bring, and what its rules still ask for whatever its room: a cut is taken only if
+				// the box can take what it lands.
+				uint32_t boxRoom = UINT32_MAX;
+				uint32_t boxAsks = 0;
+				if (!clearing && root->owner == GoalOwner::StorageGoalSystem) {
+					const uint32_t spare = supply.storageRoom(root->destinationEntity, goal->yieldDefNameId);
+					const uint32_t carried = supply.cargo(root->id, goal->yieldDefNameId);
+					boxRoom = spare > carried ? spare - carried : 0U;
+					if (boxRoom == 0) {
+						return; // every slot it has left is promised to goods already on their way
+					}
+					boxAsks = supply.stockingAsk(*root, goal->yieldDefNameId);
 				}
 				const auto pushNoRoom = [&](const char* reason) {
 					EvaluatedOption noRoom;
@@ -1180,15 +1209,22 @@ namespace ecs {
 				// cut one plant. Several may still clear one site, each its own plant.
 				// A top-up cut lands only what still fits: one is cut only while the room left takes the most
 				// the source gives, or all the root still wants beyond what is carried, so no yield is lost to
-				// a trip with too little room for it.
+				// a trip with too little room for it. A cut for a box, the first of a trip included, also needs
+				// that much room in the box, or the surplus would only be carried about.
 				NearestReserved<HarvestSource> reserved;
 				bool						   tooLittleRoom = false;
+				bool						   tooLittleBoxRoom = false;
 				for (const HarvestSource& source : candidates) {
 					if (clearing && !goal->clearFootprint->blockedBy(registry, source.entity->defNameId, source.entity->position)) {
 						continue;
 					}
-					if (gathering && room < std::min(source.def->capabilities.harvestable->amountMax, want)) {
+					const uint32_t fullCut = std::min(source.def->capabilities.harvestable->amountMax, want);
+					if (gathering && room < fullCut) {
 						tooLittleRoom = true;
+						continue;
+					}
+					if (boxRoom < std::min(source.def->capabilities.harvestable->amountMax, boxAsks)) {
+						tooLittleBoxRoom = true;
 						continue;
 					}
 					const float trip = tripOf(*source.entity);
@@ -1202,8 +1238,12 @@ namespace ecs {
 				if (reserved.shown()) {
 					pushHarvest(*reserved.source, reserved.holder);
 				}
-				if (tooLittleRoom && !std::isfinite(reserved.offeredTrip) && !reserved.source.has_value()) {
-					pushNoRoom("Cutting for {1} (too little room left for another cut)");
+				if (!std::isfinite(reserved.offeredTrip) && !reserved.source.has_value()) {
+					if (tooLittleRoom) {
+						pushNoRoom("Cutting for {1} (too little room left for another cut)");
+					} else if (tooLittleBoxRoom) {
+						pushNoRoom("Cutting for {1} (too little room in the box for another cut)");
+					}
 				}
 			});
 		}
