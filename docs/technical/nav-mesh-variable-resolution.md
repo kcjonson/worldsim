@@ -194,8 +194,8 @@ Structural obstacles always block. Detail obstacles block only where detail is o
 Reachability has to be something the camera cannot touch, and something a walking colonist's
 footprint cannot touch either. So each chunk also keeps its **structural layer**: the
 triangulation of its structural obstacles alone, built once with the chunk and patched only
-when a wall, door, or other structural thing changes. The width-aware reachability forests and
-the RRA* heuristic are built on it. It is small: open ground is two triangles a chunk, and the
+when a wall, door, or other structural thing changes. The width-aware reachability forests
+are built on it. It is small: open ground is two triangles a chunk, and the
 measured structural-only cost of a 128 m region with river is 1.7 to 12.6 ms even with today's
 quadratic loop.
 
@@ -407,9 +407,9 @@ been loaded at some point. Where it never has, they are not joined in this epic;
 
 ### 4.6 Queries
 
-- **Path.** Triangle A* over the nav mesh, then the funnel, with the per-agent filter deciding which tagged faces block: belief for walls, the detail flag for flora and footprints, ownership for the agent's own footprint.
+- **Path.** Triangle A* over the nav mesh scored by taut corridor length (decision 40), with the per-agent filter deciding which tagged faces block and which are passable at a price: belief for walls, a price for flora (decisions 45 and 50), ownership for the agent's own footprint.
 - **Reachability.** The existing width-aware forests (truth and terrain), on the structural layer of all meshed chunks. They change when a chunk is first meshed or reclaimed, or a structural obstacle changes. Rebuild cost is measured in step 4. If it is over budget, or once a large mobile object exists, the forests are kept per chunk with a portal graph across chunk borders (the FFF-317 shape), so a change repairs one chunk.
-- **Heuristic.** RRA* runs on the structural layer, so one reverse search per goal still serves every agent and survives every detail patch.
+- **Heuristic.** None beyond the search's own score. The reverse-search heuristic was removed (decision 44); a detour bound from the structural layer is a follow-up.
 - **Detail that seals.** Structural-reachable must mean reachable, so detail cannot be a hard wall where there is no way around. Open question 1 in section 8.
 - **Locate.** A spatial index over triangles, updated by each patch for its hole.
 - **Widths.** Capped at a maximum clearance and invalidated within that distance of a patch.
@@ -546,7 +546,7 @@ to 7 are tracked as WOR-703 to WOR-710, in order, under the epic.
 1. **Arrangement broad phase.** Replace the all-pairs loop with a uniform grid over segment bounds. Output must be byte-identical to today's on every fixture, which the canonical arrangement makes checkable. A win for main on its own, and what makes a chunk's first mesh affordable.
 2. **Chunk anchors.** `ChunkManager` holds and loads chunks around active simulation. Test with a streaming chunk manager, which the nav tests lack today.
 3. **The patchable mesh, in geometry.** Stable ids, per-edge ring lists, an updatable locate index, capped widths with local invalidation, and the three operations: remove, add, move. Headless only. The oracle tests, the validator, and the patch benchmarks land here. Nothing in the game uses it yet.
-4. **One mesh in the game.** `NavigationSystem` holds the one mesh and the structural layers, built per chunk and patched from then on, with flora added where regions are today so behaviour is comparable. Reachability and RRA* move to the structural layer. Regions are deleted. WOR-644 closes here: a colonist's reach no longer has an input the camera can touch.
+4. **One mesh in the game.** `NavigationSystem` holds the one mesh and the structural layers, built per chunk and patched from then on, with flora added where regions are today so behaviour is comparable. Reachability moves to the structural layer. Regions are deleted. WOR-644 closes here: a colonist's reach no longer has an input the camera can touch.
 5. **Detail as a filter.** Flora enters on first need and blocks only where detail is on. The two rects, the memory budget, the forward snap, the collision gate.
 6. **Movers.** The route system comes out of `AIDecisionSystem`. A wandering deer uses it.
 7. **Footprints.** Every mover's footprint is in the mesh and moves with it. The rate rule, the own-footprint filter, and what a blocked mover does (open question 2).
@@ -632,6 +632,10 @@ decided, why, and how to undo it.
 47. **Step 5, first part, built:** detail is on for 16 m flora cells within 8 m of the view and stays on out to 32 m; collision pushes a mover out of a tree only where detail is on and the tree is in the mesh; a mover a tree lands on moves forward along its route to the first clear point and keeps its task; flora rings are capped at 40,000 (about 64 MB), whole cells leaving least recently wanted first. On a pan over 86,000 trees the nav mesh peaked at 324,000 triangle slots with the cap and 689,000 without. Its benchmarks were not timed: the machine read busy.
 48. **Second review of the game-side code (worker threads, ground budget, step 5 first part): no race, no break in what a query sees, no must-fix.** Three findings being fixed with tests: the forward snap judged points as if walls were open, so it could move a colonist past a wall it had not seen; a chunk holding only a blueprint could lose its kept ground; trimming flora re-routes colonists until entry 45 is wired into the game. One limit recorded, not fixed: ground dropped under entry 39 cannot be routed across until its chunk loads again, so a remembered source more than 16 chunk-unloads back reads unreachable. The old regions had the same limit at 60 m.
 49. **The parent branch is merged in at 3a932b09** with no conflicts; none of its new tests fail on the one mesh.
+50. **Flora is priced wherever it is in the mesh, on camera or off. This changes section 4.4 and narrows entry 45.** Section 4.4 says that where detail is off movers go straight through trees, and that flora leaving the mesh changes cost and never answers. Pricing a tree at nothing where detail is off was built and reviewed, and cannot be made exact: stored corridor widths count a tree as an obstacle whatever it costs, so a free tree beside water still shuts a gap that is open once the tree is trimmed, and trees on either side of the detail boundary made one query's answer depend on earlier queries. So a price is per kind of obstacle, constant for a query, and detail decides only what collision and the forward snap do. Consequence: off camera, a mover in ground that was once viewed routes around the trees still in the mesh and walks straight where there are none, and when the flora cap trims a cell, routes through it get straighter. Path shape off camera depends on where the camera has been; whether a goal can be reached does not, because priced flora never blocks. That is inside rule 6 as I read it, and it is the one place this epic knowingly departs from the spec as you approved it.
+51. **Chunk sides carry a vertex every 64 m, not 16.** Measured in the geometry: an open chunk entering beside an open neighbour costs 58 us against 345 and adds 30 triangle slots against 126; beside water 0.9 ms against 1.1; a tree landing exactly on a shared side 180 us against 139, the one case that gets dearer.
+52. **The geometry costs behind entry 38, after cutting.** The reach forest rebuild is 0.05 us per triangle slot run alone and about 0.08 beside other work, down from 0.14 to 0.17 in the same benchmark (2 to 3 times). An open chunk beside open ground went from 430 to 345 us at 16 m sides; what remains is box queries over long thin triangles. A chunk beside a neighbour with trees along the side went from 4.7 to 2.5 ms. A chunk full of shoreline is still about 1.3 us a triangle (21.6 ms for 18,000 triangles, a third of it inserting into the locate index); that is being cut next. All measured with the machine busy.
+53. **Third review, of the path search fixes and pricing.** It could not build a counterexample to the score any more and found acceptance at exact length sound. It found four must-fixes in the pricing code, two of which are what led to entry 50; all four are being fixed with tests before merge.
 
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
