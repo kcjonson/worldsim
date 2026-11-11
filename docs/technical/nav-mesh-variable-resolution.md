@@ -527,3 +527,27 @@ game depends on it.
 - [Terrain polygons architecture](./organic-terrain/terrain-polygons-architecture.md): the rings the structural layer is built from
 - [Chunk management system](./chunk-management-system.md)
 - Dev log 2026-06-24 (sim-area nav LOD) and 2026-06-28 (multi-region nav): why regions exist
+
+## 10. Decisions log
+
+Calls made without Kevin while he was away, for him to check. Newest last. Each says what was
+decided, why, and how to undo it.
+
+**2026-11-10**
+
+1. **Order of work.** Steps 1 and 3 first, then 2, 4, 5, 7, and 6 last. Step 6 (route system out of `AIDecisionSystem`) touches files the parent branch is changing, so it waits for a merge of that branch.
+2. **One patch mechanism.** Remove, add, and move all re-derive a hole from the rings' original outlines (4.3.1). The earlier draft had removal as vertex deletion. Why: one code path, and the mesh then equals a from-scratch build after any history. Undo: none needed; vertex deletion was never built.
+3. **Edges join a hole whole.** A patch re-derives every affected ring edge corner to corner. Why: it is what makes the mesh independent of its history. Cost: a patch crossing a long edge is larger. Measured in step 3; the remedy, if needed, is to split chunk sides into shorter edges on entry.
+4. **Arrangement cut-order fix (commit 1c103a4d).** A bug on main, fixed here because the oracle tests could not pass without it. It changes `buildArrangement`'s output on inputs that hit the bug, for every user of the arrangement (rooms, booleans). Nav output on the game fixtures is unchanged. Checked through geometry-tests only; the sim suite has not been run against it. Undo: revert that commit, which also breaks the patch oracle.
+5. **Builder tags left alone.** `buildNavMesh` can tag a face by its triangulation (4.3.2). Not fixed, because step 4 decides what still uses the builder. Flagged, no behaviour change.
+6. **Tie between solid rings of equal area.** The lower ring id wins. The builder took whichever came first in its input. Affects only two exactly equal-area solid rings over the same spot.
+7. **No game launches from this branch's session.** The rule was to ask Kevin first, and he is away. Everything here is measured headless; in-game captures are left to the single integrated run on the parent branch.
+
+**Defaults for the open questions in section 8**, applied when the step that needs each is
+reached, each isolated as one constant or one function so it can be changed in one place:
+
+- **Flora that seals (question 1):** a mover with no way around walks through flora at a high path cost. The alternative makes answers differ on and off camera, which rule 6 forbids.
+- **A mover in the way (question 2):** the blocked mover waits and replans when the footprint moves; after a bounded wait it treats footprints on its route as passable at a high cost, so two movers in a corridor cannot deadlock. No "ask the blocker to move" behaviour is built.
+- **Footprints off camera (question 3):** they do not block where detail is off, the same as flora. Collision still separates movers.
+- **Detail around off-camera working colonists (question 4):** none. Only the viewport requests detail in this epic.
+- **Load range around a mover (question 5):** the chunks within 128 m of it.
