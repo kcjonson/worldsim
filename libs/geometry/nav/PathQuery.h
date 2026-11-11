@@ -2,10 +2,8 @@
 
 #include "../core/Vec2i64.h"
 #include "NavMesh.h"
-#include "RraCache.h"
 
 #include <cstdint>
-#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -30,17 +28,16 @@ namespace geometry::nav {
 		bool				 reachable = false; // false => no path (off-mesh or disconnected)
 		std::vector<Vec2i64> points;			// taut polyline start..goal in mm; empty when !reachable
 
-		// A* instrumentation (P3.5): how hard the forward search worked. Lets a caller
-		// VERIFY the RRA* heuristic cuts the explored fan vs the straight-line guide.
-		// nodesExpanded counts states popped and closed (each expanded once); peakOpenSet
+		// Search instrumentation: how hard the search worked. nodesExpanded counts
+		// labels popped and closed (each expanded once); peakOpenSet
 		// is the largest the open-set ever grew. Both stay 0 on the trivial/early-out
 		// paths (off-mesh, same triangle, reachability reject) that never enter the loop.
 		std::int64_t nodesExpanded = 0;
 		std::int64_t peakOpenSet   = 0;
 
-		// What the walk costs: its length, with each piece through a face crossed at a
-		// price (BeliefFilter::passableAtCost) weighted by that face's multiplier. Equal to
-		// the length when no such face is crossed.
+		// What the walk costs: its length, with each piece through a priced face (or a
+		// gap only priced faces narrow) weighted by its multiplier (BeliefFilter::pricing).
+		// Equal to the length when nothing priced is crossed.
 		double cost = 0.0;
 		// The walk runs through a face crossed at a price (flora it pushes through, a
 		// waiting mover's footprint): the caller acts on it before the mover sets off.
@@ -61,19 +58,35 @@ namespace geometry::nav {
 	// junction with no incident-wall id) and always blocks, filter or not. A junction
 	// tagged with a positive incident-wall segment id is belief-gated like that wall.
 	//
-	// passableAtCost (optional) makes some blocked faces crossable at a price: a face this
-	// filter would block, whose faceBlocker tag is a key, may be walked through, each mm
-	// inside it costing its multiplier (>= 1) where open ground costs 1. The search then
-	// takes the cheapest walk: round by free ground while that is less than the
-	// multiplier times the way through, through otherwise. Flora that seals a goal, or a
-	// mover waiting in a doorway, is passable this way rather than a wall. The stored
-	// corridor widths and the reachability forests treat such faces as obstacles, so next
-	// to one the width gates are skipped, and with any in play the forest pre-check and
-	// the RRA heuristic are too (they would wall the goal off).
+	// `pricing` (optional) makes faces this filter would block crossable at a price the
+	// caller sets per face, by tag and by place: the hook is asked about each such face
+	// of the tags it names that the search meets, with a point inside it (once per face
+	// per query), and answers a multiplier (each mm walked inside costs that many), or
+	// kFaceBlocked. A multiplier of exactly 1 makes the face open ground for this query,
+	// the disc included (no corner inset against it, no width gate from it), so flora
+	// priced at 1 where detail is off changes no answer. Round a vertex whose priced faces
+	// all carry one tag, one of them stands for all (a tree's footprint does not straddle
+	// a detail boundary in practice). The
+	// search takes the cheapest walk: round by free ground while that is less than the
+	// way through at its price, through otherwise. A gap too narrow for the disc that only
+	// priced faces narrow is squeezed through at their highest price; one a real block
+	// narrows stays shut. The reachability forests treat priced faces as walls, so the
+	// forest pre-check is skipped while a hook is set.
+	constexpr double kFaceBlocked = 0.0;
+	using FacePrice				  = double (*)(const void* context, const NavTriangle& face, const Vec2i64& inside);
+	struct FacePricing {
+		FacePrice	price	= nullptr; // null: no face is priced, the filter's blocks stand
+		const void* context = nullptr;
+		// The tags the hook prices: it is asked only about faces carrying one of these,
+		// and every other blocked face stays blocked without asking.
+		const std::int64_t* tags	 = nullptr;
+		std::size_t			tagCount = 0;
+	};
+
 	struct BeliefFilter {
-		const std::unordered_set<std::uint64_t>*		knownSegments  = nullptr;
-		const std::unordered_set<std::uint64_t>*		knownOpenings  = nullptr;
-		const std::unordered_map<std::int64_t, double>* passableAtCost = nullptr;
+		const std::unordered_set<std::uint64_t>* knownSegments = nullptr;
+		const std::unordered_set<std::uint64_t>* knownOpenings = nullptr;
+		FacePricing								 pricing;
 	};
 
 	// Triangle containing p (CCW point-in-triangle, on-edge counts as inside);
@@ -90,19 +103,12 @@ namespace geometry::nav {
 	// then the best way on through the portal it last crossed) and accepts a goal only
 	// at its exact string-pulled length (or cost), so it returns the shortest walk of the
 	// corridors it keeps (see PathQuery.cpp's label cap).
-	//
-	// `rra` is an optional Reverse Resumable A* cache (P3.5). When non-null AND its
-	// goalTri matches the located goal triangle, its bound (rraHeuristic) raises the
-	// scores where it is the larger. The cache is belief- and radius-agnostic (built on
-	// the width-unfiltered terrain graph) so one cache per goal serves every agent; it
-	// resumes across calls. Width filter, reachability short-circuit and funnel are the
-	// same either way.
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   BeliefFilter belief = {}, RraCache* rra = nullptr);
+						   BeliefFilter belief = {});
 	// Any mesh through its view (see NavView). Without forests in the view the
 	// reachability pre-check is skipped and the A* decides alone.
 	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   BeliefFilter belief = {}, RraCache* rra = nullptr);
+						   BeliefFilter belief = {});
 
 	// Sound, cheap reachability test (P3.3): can a disc of radius agentRadiusMm POSSIBLY get from
 	// start to goal under `belief`? Uses the precomputed reachability forest, so it rejects a

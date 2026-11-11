@@ -298,7 +298,7 @@ namespace geometry::nav {
 		const ReachabilityForest* forest(bool truth) const { return forestIn(owner, truth); }
 		// False while corridor widths lag behind a patch; queries read widths.
 		bool widthsCurrent() const { return widthsCurrentIn(owner); }
-		// Changes whenever the triangles or their tags do (RraCache keys on it).
+		// Changes whenever the triangles or their tags do.
 		std::uint64_t epoch() const { return epochIn(owner); }
 	};
 

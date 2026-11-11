@@ -1,5 +1,4 @@
 #include "nav/PatchableMesh.h"
-#include "nav/RraCache.h"
 
 #include "arrangement/Arrangement.h"
 #include "nav/NavMesh.h"
@@ -1618,66 +1617,6 @@ TEST(PatchableMesh, WidthStampWrapKeepsWidths) {
 			ASSERT_EQ(corridorWidthMm(view, search, t, apex, kDefaultMaxClearanceMm), first[i++]) << "triangle " << t << " apex " << apex;
 		}
 	}
-}
-
-// RRA* on a patched mesh: the same path as without the cache, never more expansions.
-TEST(PatchableMesh, RraHeuristicOnPatchedMesh) {
-	const WallsAndDoors input = wallsAndDoors();
-	Reached				r;
-	reach(r, input, 31);
-	const NavView				view   = r.h.mesh.view();
-	const std::vector<Vec2i64>	points = samplePoints(input.base.front(), 40, 31);
-	int							guided = 0;
-	for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
-		RraCache cache;
-		cache.goalTri				= view.locate(points[i + 1]);
-		const PathResult with		= pathThrough(view, points[i], points[i + 1], 300, {}, &cache);
-		const PathResult without	= pathThrough(view, points[i], points[i + 1], 300);
-		EXPECT_EQ(with.reachable, without.reachable);
-		if (with.reachable) {
-			EXPECT_EQ(pathLengthMm(with), pathLengthMm(without));
-			EXPECT_LE(with.nodesExpanded, without.nodesExpanded);
-			++guided;
-		}
-	}
-	EXPECT_GT(guided, 5);
-}
-
-// A cache kept across a patch that grows the slots and reuses ids starts over instead
-// of reading past its tables or trusting distances from the old triangles.
-TEST(PatchableMesh, RraCacheReusedAcrossPatch) {
-	const Fixture fixture = realRingsFixture();
-	Harness		  h;
-	PatchEdits	  base;
-	base.adds = fixture.base;
-	h.apply(base);
-	h.mesh.rebuildForests();
-	Vec2i64						start;
-	Vec2i64						goal;
-	const std::vector<Vec2i64>	points = samplePoints(fixture.base.front(), 60, 34);
-	for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
-		if (pathThrough(h.mesh.view(), points[i], points[i + 1], 300).reachable && pathLengthMm(pathThrough(h.mesh.view(), points[i], points[i + 1], 300)) > 50000) {
-			start = points[i];
-			goal  = points[i + 1];
-			break;
-		}
-	}
-	RraCache cache;
-	cache.goalTri = h.mesh.view().locate(goal);
-	ASSERT_TRUE(pathThrough(h.mesh.view(), start, goal, 300, {}, &cache).reachable);
-	const std::size_t slotsBefore = h.mesh.triangles().size();
-	PatchEdits		  trees;
-	trees.adds = fixture.trees;
-	h.apply(trees);
-	h.mesh.rebuildForests();
-	ASSERT_GT(h.mesh.triangles().size(), slotsBefore);
-	cache.goalTri				 = h.mesh.view().locate(goal);
-	const PathResult reused		 = pathThrough(h.mesh.view(), start, goal, 300, {}, &cache);
-	const PathResult uncached	 = pathThrough(h.mesh.view(), start, goal, 300);
-	EXPECT_EQ(reused.reachable, uncached.reachable);
-	EXPECT_EQ(pathLengthMm(reused), pathLengthMm(uncached));
-	EXPECT_EQ(cache.g.size(), h.mesh.triangles().size());
-	EXPECT_EQ(cache.epoch, h.mesh.epoch());
 }
 
 // A view taken before a patch reads the patched mesh: no forests until they are

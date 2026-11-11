@@ -12,7 +12,6 @@
 #include "nav/NavMeshRealRings.test.h"
 #include "nav/PatchableMesh.h"
 #include "nav/PathQuery.h"
-#include "nav/RraCache.h"
 
 #include "predicates/Predicates.h"
 
@@ -21,7 +20,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
-#include <map>
+#include <limits>
 #include <random>
 #include <utility>
 #include <vector>
@@ -706,28 +705,27 @@ namespace {
 	}
 
 	// The game's query shape: many movers walking 20 to 100 m to a few goals through
-	// meshed flora, the search on the mesh with trees, the heuristic's backward search
-	// on the structural mesh (bounds and water) and kept per goal across rounds.
-	enum class Heuristic { None, Cold, Warm };
+	// meshed flora, with the trees unpriced (blocks), priced as near the camera, or
+	// priced where half the field has detail on and free where it is off.
+	enum class Pricing { None, Trees, HalfOff };
 
 	struct RequestShape {
-		PatchableMesh						 structural{{.maxBoundsEdgeMm = 16000}};
 		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000}};
 		std::vector<Vec2i64>				 goals;
 		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
+		std::int64_t						 midX = 0;
 	};
 
 	void loadRequestShape(RequestShape& s, Fixture f) {
-		const Rings rings = fixtureRings(f);
-		untimedPatch(s.structural, adding(rings.base));
-		std::vector<NavInputPolygon> all = rings.base;
+		const Rings					 rings = fixtureRings(f);
+		std::vector<NavInputPolygon> all   = rings.base;
 		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
 		untimedPatch(s.detail, adding(all));
-		s.structural.rebuildForests();
 		s.detail.rebuildForests();
 		Vec2i64 lo;
 		Vec2i64 hi;
 		boxOf(rings.base.front().ring, lo, hi);
+		s.midX = (lo.x + hi.x) / 2;
 		std::mt19937 rng(91);
 		auto		 walkable = [&](const Vec2i64& p) {
 			const std::int32_t t = s.detail.locate(p);
@@ -756,40 +754,75 @@ namespace {
 		}
 	}
 
-	void BM_RequestShape(benchmark::State& state, Fixture f, Heuristic h) {
+	// The game's flora pricing, in miniature: trees at `multiplier` where detail is on
+	// (from detailFromX east), free where it is off; anything else stays blocked.
+	struct TreePricing {
+		double		 multiplier	 = 50.0;
+		std::int64_t detailFromX = std::numeric_limits<std::int64_t>::min();
+	};
+
+	double priceTrees(const void* context, const NavTriangle& face, const Vec2i64& inside) {
+		const TreePricing& pricing = *static_cast<const TreePricing*>(context);
+		if (face.faceBlocker != kProvenanceTree) {
+			return kFaceBlocked;
+		}
+		return inside.x < pricing.detailFromX ? 1.0 : pricing.multiplier;
+	}
+
+	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p) {
 		RequestShape s;
 		loadRequestShape(s, f);
-		std::map<int, RraCache> caches;
-		auto					round = [&]() {
-			   std::int64_t nodes = 0;
-			   for (const auto& [start, gi] : s.starts) {
-				   RraCache* rra = nullptr;
-				   if (h != Heuristic::None) {
-					   RraCache& cache = caches[gi];
-					   cache.goalTri   = s.detail.locate(s.goals[static_cast<std::size_t>(gi)]);
-					   rra			   = &cache;
-				   }
-				   const PathResult r = pathThrough(s.detail.view(), start, s.goals[static_cast<std::size_t>(gi)], 300, {}, rra);
-				   nodes += r.nodesExpanded;
-				   benchmark::DoNotOptimize(r);
-			   }
-			   return nodes;
-		};
-		if (h == Heuristic::Warm) {
-			round();
+		const TreePricing pricing{50.0, p == Pricing::HalfOff ? s.midX : std::numeric_limits<std::int64_t>::min()};
+		BeliefFilter	  belief;
+		if (p != Pricing::None) {
+			belief.pricing = {&priceTrees, &pricing, &kProvenanceTree, 1};
 		}
 		std::int64_t nodes = 0;
+		std::int64_t priced = 0;
 		for (auto _ : state) {
-			if (h == Heuristic::Cold) {
-				state.PauseTiming();
-				caches.clear();
-				state.ResumeTiming();
+			nodes  = 0;
+			priced = 0;
+			for (const auto& [start, gi] : s.starts) {
+				const PathResult r = pathThrough(s.detail.view(), start, s.goals[static_cast<std::size_t>(gi)], 300, belief);
+				nodes += r.nodesExpanded;
+				priced += r.crossesPricedFaces ? 1 : 0;
+				benchmark::DoNotOptimize(r);
 			}
-			nodes = round();
 		}
 		state.counters["usPerQuery"] = benchmark::Counter(static_cast<double>(s.starts.size()) * static_cast<double>(state.iterations()),
 														  benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 		state.counters["nodes"]		 = static_cast<double>(nodes) / static_cast<double>(s.starts.size());
+		state.counters["through"]	 = static_cast<double>(priced);
+	}
+
+	// A goal ringed by trees, the rest of the control fixture round it, the trees priced:
+	// the only way in is through, which the search must find in bounded work.
+	void BM_SealedGoal(benchmark::State& state) {
+		Rings	rings = fixtureRings(Fixture::Control);
+		Vec2i64 lo;
+		Vec2i64 hi;
+		boxOf(rings.base.front().ring, lo, hi);
+		const Vec2i64 g{(lo.x + hi.x) / 2, (lo.y + hi.y) / 2};
+		for (const auto& r : {rect(g.x - 2000, g.y - 2000, g.x + 2000, g.y - 1600), rect(g.x - 2000, g.y + 1600, g.x + 2000, g.y + 2000),
+							  rect(g.x - 2000, g.y - 2000, g.x - 1600, g.y + 2000), rect(g.x + 1600, g.y - 2000, g.x + 2000, g.y + 2000)}) {
+			rings.trees.push_back(NavInputPolygon{r, true, kProvenanceTree});
+		}
+		std::vector<NavInputPolygon> all = rings.base;
+		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
+		PatchableMesh mesh;
+		untimedPatch(mesh, adding(all));
+		const TreePricing pricing{50.0};
+		BeliefFilter	  belief;
+		belief.pricing = {&priceTrees, &pricing, &kProvenanceTree, 1};
+		PathResult r;
+		for (auto _ : state) {
+			r = pathThrough(mesh.view(), g + Vec2i64{20000, 20000}, g, 300, belief);
+			benchmark::DoNotOptimize(r);
+		}
+		state.counters["reachable"] = r.reachable ? 1.0 : 0.0;
+		state.counters["through"]	= r.crossesPricedFaces ? 1.0 : 0.0;
+		state.counters["nodes"]		= static_cast<double>(r.nodesExpanded);
+		state.counters["tris"]		= static_cast<double>(mesh.liveTriangleCount());
 	}
 
 	void runForestRebuild(benchmark::State& state, const Rings& rings, bool withTrees) {
@@ -863,12 +896,13 @@ BENCHMARK_CAPTURE(BM_PathPatchable, realRings, Fixture::RealRings)->Unit(benchma
 BENCHMARK_CAPTURE(BM_PathBuilt, manyTrees, Fixture::ManyTrees)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, control, Fixture::Control)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, realRings, Fixture::RealRings)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_RequestShape, control_none, Fixture::Control, Heuristic::None)->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_RequestShape, control_cold, Fixture::Control, Heuristic::Cold)->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_RequestShape, control_warm, Fixture::Control, Heuristic::Warm)->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_RequestShape, realRings_none, Fixture::RealRings, Heuristic::None)->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_RequestShape, realRings_cold, Fixture::RealRings, Heuristic::Cold)->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_RequestShape, realRings_warm, Fixture::RealRings, Heuristic::Warm)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, control_unpriced, Fixture::Control, Pricing::None)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, control_treesPriced, Fixture::Control, Pricing::Trees)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, control_halfDetailOff, Fixture::Control, Pricing::HalfOff)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, realRings_unpriced, Fixture::RealRings, Pricing::None)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, realRings_treesPriced, Fixture::RealRings, Pricing::Trees)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, realRings_halfDetailOff, Fixture::RealRings, Pricing::HalfOff)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_SealedGoal)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_structural, Fixture::ManyTrees, false)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_ForestRebuild, control_structural, Fixture::Control, false)->Unit(benchmark::kMillisecond);

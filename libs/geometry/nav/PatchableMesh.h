@@ -135,11 +135,11 @@ namespace geometry::nav {
 		void rebuildForests();
 		bool hasForests() const { return forestsCurrent; }
 
-		// What path queries, RRA*, and forest builds read (see NavView).
+		// What path queries and forest builds read (see NavView).
 		NavView view() const;
 
-		// Bumped by every patch and door edit: anything keyed by triangle id, like an
-		// RraCache, is stale once it moves.
+		// Bumped by every patch and door edit: anything keyed by triangle id is stale once
+		// it moves.
 		std::uint64_t epoch() const { return patchEpoch; }
 
 		// Full consistency check; the first violation found, or empty.
