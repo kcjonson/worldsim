@@ -309,6 +309,12 @@ If colonist is hauling 5 sticks (1-hand each, batched):
 1. The deposit takes what still fits; the colonist keeps the rest, which holds no claim
 2. The colonist re-evaluates; a carry-in to any box that wants the item takes it there
 
+### Several Colonists Bound for One Point
+
+Two carriers delivering to one station, or three thirsty colonists at one shore point, push one
+another apart, so no more than one of them could stand on the point itself. Each acts once it is
+within 0.4 m of its task's target (`ActionSystem`), so they deposit or drink side by side.
+
 ### Colonist Dies (planned; colonist death does not exist yet)
 
 1. All carried items spawn at death location
