@@ -205,29 +205,30 @@ which do not exist in `libs/` yet. None of these needs a new kind.
 Availability is computed per item at the root goal: the craft goal, the storage umbrella Haul
 goal, or the construction umbrella Build goal. In-flight claims name the root. Child goals stay as
 markers of which source kinds are open for an item (Harvest: cut a source that yields it; Haul:
-fetch known stock of it), with no counters of their own. Today the counters disagree by child type:
-`recordDelivery` credits the parent only for Haul children (`GoalTaskRegistry.cpp:103-112`), and
-each Harvest child keeps its own `deliveredAmount`; with availability at the root, a Harvest and
-its sibling Haul see one need and one in-flight total, and nobody re-cuts what a sibling task is
-already bringing.
+fetch known stock of it), with no counters of their own: a Harvest and its sibling Haul see one need
+and one in-flight total, and nobody re-cuts what a sibling task is already bringing. A deposit never
+touches goals; each goal system retires the children whose item its root no longer needs on its own
+poll. The construction umbrella names in `acceptedDefNameIds` the materials that are due (empty
+while clearing or while a wall or opening waits on its host), and its remaining need is zero for
+anything else, so goods are not carried to a site before it wants them.
 
-The carry-in after a harvest is part of the harvest task, not a separate goal. Today harvest
-completion clears the task (`ActionSystem.cpp:349-351`), the carry-in Haul goal is spawned only when
-the whole Harvest goal completes (`HarvestActions.cpp:337-346`), and construction pre-creates an
-inventory-source Haul instead (`ConstructionSystem.cpp:485-505`). In every case the cut yield sits
-in the colonist's hands with no task and no claim until it re-selects. Instead, harvest completion
-converts the task in place into its deposit leg, the way a haul's Pickup becomes its Deposit
-(`ActionSystem.cpp:243-262`). Consequences for goal structure:
+The carry-in after a harvest is part of the harvest task, not a separate goal: harvest completion
+converts the task in place into its deposit leg (`ActionSystem::carryHarvestIn`), the way a haul's
+Pickup becomes its Deposit, so the cut yield never sits in the colonist's hands with no task and no
+claim. Every way into a deposit leg (pickup, withdraw, arriving at the source already carrying, a
+landed cut) takes one handoff, `ActionSystem::headToDeposit`. Consequences for goal structure:
 
 - `createHaulForCompletedHarvest`, the chainId-tagged stocking carry-in Haul, and construction's
   per-material inventory-source Haul goals are deleted.
 - Harvest children no longer have `targetAmount`/`deliveredAmount`; the root's need and in-flight
   decide whether another cut is wanted.
 - Craft fetch Haul children stay (they open fetch-from-stock); their counters go too.
-- One carry-in-from-possession option replaces the three inventory-source haul paths in
-  `evaluateHaulOptions`: for any root goal accepting an item the colonist carries uncommitted, offer
-  to deliver it. This also covers plain storage hauls, which have no carry-in path today
-  (`AIDecisionSystem.cpp:457-461`), and goods left over after a bump or a switch.
+- One carry-in-from-possession option (`evaluateCarryInOptions`) replaces the three inventory-source
+  haul paths: for any root goal still wanting an item the colonist carries, offer to deliver it. This
+  also covers plain storage, and goods left over after a cut, a bump, or a switch. Tools are
+  equipment and are never offered, and a storage root is not offered the colonist's edible food,
+  which stays its own provisions. Everything the colonist carries counts as its own, so the option is
+  sized min(carried, root available) and matches the task it is executing.
 
 ---
 
@@ -244,14 +245,16 @@ Craft provisioning, construction delivery, and storage stocking.
 | Step | Claims held |
 |---|---|
 | Accept | Use(source), In-flight(root, yield, E) |
-| Harvest completes | The task converts to its deposit leg. Use drops. In-flight becomes the units landed, capped at the root's remaining need net of other tasks' in-flight; Inbound(destination, yield, same) is added |
+| Harvest completes | The task converts to its deposit leg. Use drops. In-flight becomes the units of the yield the colonist now carries (what landed plus any it held already), capped at the root's remaining need net of other tasks' in-flight; Inbound(destination, yield, same) is added. Nothing carried, or nothing still needed, ends the task and leaves the goods uncommitted |
 | Deposit | all drop with the task |
 
 E is the source's most per cut (`amountMax`; a pooled source gives at most that per cut too), capped
 by what fits in the colonist's carry and by the root's remaining need. Over-estimating only makes
 another colonist briefly see less available; under-estimating brings back the over-harvest this
 spec removes. Units landed beyond the capped need are carried uncommitted; overflow that drops at
-the stump is a loose pile, an ordinary new source with no claims.
+the stump is a loose pile, an ordinary new source with no claims. The cap reads the claim index the
+AI last built; between AI updates that can only over-count others' in-flight, so the leg commits less
+and the rest waits for a carry-in.
 
 ### Fetch from stock (Chain_PickupDeposit)
 
@@ -261,7 +264,7 @@ Loose pile to storage, loose pile to a crafting station store (craft fetch), and
 | Step | Claims held |
 |---|---|
 | Accept | SourceQuantity(source, item, Q), Inbound(destination, item, Q), In-flight(root, item, Q) |
-| Pickup or withdraw | SourceQuantity drops. Inbound and In-flight become the units lifted, capped at Q. Arriving at the source already carrying the item skips the pickup and rewrites the same way, to what is carried |
+| Pickup or withdraw | The pickup asks for Q. SourceQuantity drops. Inbound and In-flight become the units lifted, capped at Q. Arriving at the source or the destination already carrying the item skips the pickup and rewrites the same way, to what is carried |
 | Deposit | all drop with the task |
 
 A box-to-box pull's source claim counts against the box's drainable quantity (stock above its own
@@ -321,6 +324,8 @@ target as claimed and its own in-flight eating the remaining need, the option it
 vanish, `isSameTask` would fail, and the switch path would clear the task.
 
 - Root available (item) = remaining need (item) - in-flight (root, item).
+- What a colonist would still go and get (fetch or cut) also nets out what it carries of the item:
+  its own goods are already on their way, so it delivers them before cutting more.
 - Source available = live quantity - claimed quantity, for source quantity claims; a Use target is
   available when no other task holds it.
 - Destination available, station store or blueprint: the store is sized to the bill of materials or
@@ -345,10 +350,13 @@ Remaining need is target minus what has landed at the destination, per item:
 | Construction umbrella | the blueprint manifest | `delivered[]` |
 
 Storage need is bounded per item and by the box's slots through the destination check above, so
-per-item needs cannot sum past what the box holds. Today storage goals put a free-slot count in
-`targetAmount`, so `availableCapacity()` goes to zero after one stack and the AI bypasses it with an
-owner special case and `Inventory::addableCount`. That ends with item-counted roots and one helper,
-remaining need for (root, item), used by the AI, the goal systems, and the UI.
+per-item needs cannot sum past what the box holds. Either storage target is also capped by the box's
+physical room for the item, and a loose haul now stops at the configured max too (it used to fill to
+physical room). One helper, `GoalTaskRegistry::remainingNeed(world, root, item, basis)`, reads the
+target and what has landed from the world on every call (the station's next job and store, the
+manifest, the box), so a deposit or a consumed input shows at once with no counter to keep in step;
+its cost is the recipe's inputs, the manifest's entries, or the box's rules and slots, never a walk
+of goals or colonists. The AI, the goal systems, the deposit leg, and the UI all use it.
 
 ### Live source quantity (a deliberate compromise)
 
@@ -422,11 +430,16 @@ A suspended record is created only when the interrupting selection is a need tas
 - If it drops the goods, the dropped pile is an ordinary new source with no claims, and no record is
   kept. Anyone can haul the pile, the original colonist included. No ownership.
 
+Before each AI update's index is built, a record is trued up to the goods: capped at what the
+colonist still holds of its item, and dropped when none is left (eaten, used, dropped) or its root
+goal is gone, so a colonist seeing to a need never holds a goal's in-flight with goods it no longer
+has.
+
 On later selections:
 
 - another need task keeps the record;
-- the carry-in-from-possession option for the record's root and item adopts it: the new task takes
-  the record's instance id, sequence, and claims;
+- the carry-in-from-possession option for the record's root, item, and destination adopts it: the
+  new task takes the record's instance id, sequence, and claims;
 - any other selection (other work, Wander, a player move) discards it, so a stale record never
   holds a goal's in-flight.
 
@@ -588,10 +601,12 @@ data.
 
 - Task list availability per root and item: "N available (M in progress)". N is the unclaimed
   quantity of sources the colony knows about, capped at the root's remaining need; M is in-flight.
-- Worker: the colonist(s) holding in-flight claims toward the root for an item the row names (any
-  item for a row naming none, the Build umbrella or a category box), from the index, replacing the
-  adapter's per-goal colonist scan. A clear row has no worker, and the Build umbrella shows only
-  material deliveries until builder slots give builders a claim.
+- Worker: the colonist whose current task serves the row, read once per panel refresh from each
+  colonist's task, replacing the adapter's per-goal colonist scan. A cut or a haul names the goal it
+  was picked through (a carry-in and a cut's deposit leg name their root); a build, craft, or
+  placement names the entity it works, so the Build umbrella names its builder, a Craft row its
+  crafter, and a clear row its clearer. Builds and clears hold no claim until builder slots exist,
+  so claims alone could not name them, and a suspended record is not current work.
 - `knownBy`: colonists whose memory holds at least one unclaimed source for the root, computed on
   the panel's throttle through Memory's capability index.
 - Per-colonist task list: roots for which that colonist knows an unclaimed source.
@@ -686,9 +701,12 @@ asserts: a fresh rebuild is a subset of the appended index, and every surplus en
 instance id that no live task or suspended record holds (a task cleared this update); entries compare
 by holder instance, kind, target, item, and slot with quantities summed, not by tier, which
 `isSameTask` may change within the update; no target is over-subscribed except by
-claims flagged bumped; every Inbound has a matching In-flight on the same task; in-flight per root
-and item never exceeds remaining need plus flagged bumps; every binding names a live crafter bound
-nowhere else and a queued job id; no claim belongs to an inactive task.
+claims flagged bumped; every Inbound has a matching In-flight on the same task; every binding names a
+live crafter bound nowhere else and a queued job id; no claim belongs to an inactive task. In-flight
+is not checked against remaining need: the need can drop under goods already on their way by means
+no claim controls (a player lowers a box's max, a dev give fills a site), and the deposit then keeps
+the surplus, so the check would abort on legitimate play. Its working storage lives on the scratch
+index, so a warm check allocates nothing.
 
 ---
 
@@ -702,21 +720,24 @@ Deleted in the same change that replaces them, per the no-legacy rule:
   owner-index guards for None go with it.
 - `reservationTimeout`: `TimingConfig::reservationTimeout`, `getReservationTimeout()`, its parse in
   `PriorityConfig.cpp`, the element in `priority-tuning.xml`. It is read by nothing today.
-- The in-flight approximations claims replace, all at once so nothing subtracts carried goods twice:
+- Done (WOR-46 step 6): the in-flight approximations claims replace, all at once so nothing subtracts
+  carried goods twice:
   `ConstructionSystem::carriedAmount` and `constructionHarvestDemand`; `CraftingGoalSystem`'s
   `colonyCarriesStock`; the craft-fetch gate `deliveredAmount + carried` in `evaluateHaulOptions`
   (`AIDecisionSystem.cpp:535-537`); the craft pickup sizing from `deliveredAmount + carried` in
   `HaulActions.cpp` (about lines 413-424).
-- `createHaulForCompletedHarvest`, the chainId-tagged stocking carry-in Haul, construction's
+- Done (step 6): `createHaulForCompletedHarvest`, the chainId-tagged stocking carry-in Haul, and with it
+  `GoalTask::chainId`, construction's
   per-material inventory-source Haul goals, and the three inventory-source haul paths in
   `evaluateHaulOptions`, replaced by the in-place deposit leg and carry-in from possession.
-- Child goal counters (`targetAmount`/`deliveredAmount` on Harvest and Haul children), the storage
+- Done (step 6): goal counters (`targetAmount`/`deliveredAmount` on every goal, roots included), the storage
   slot-count use of `targetAmount` and its owner special case in `evaluateHaulOptions`, and
   `GoalTask::availableCapacity()`, replaced by remaining need at the root. `recordDelivery`'s
   Haul-only parent credit goes with them.
 - The per-call colony memory walk inside `colonyKnowsStorageEntity`, replaced by the per-update
   `ColonyStorageKnowledge` (the colony-wide rule itself stays). Done.
-- The adapter's per-goal colonist scan (`colonistWorkingGoal`) in favor of the index.
+- The adapter's per-goal colonist scan (`colonistWorkingGoal`), in favor of one read of the current
+  tasks per refresh. Done.
 - Comments that state there is no reservation system (`enterControl`, the storage-pull gate), and
   the "world entity ID" comment on `harvestTargetEntityId`.
 
