@@ -823,8 +823,8 @@ namespace {
 		return mgr;
 	}
 
-	// Generating a ready region is most of an area test's cost and buildInput only reads
-	// the ChunkManager, so each region is generated once per process and shared.
+	// Generating a ready region is most of an area test's cost and buildInput writes nothing
+	// a test can observe in it, so each region is generated once per process and shared.
 	ChunkManager* landChunks() {
 		static const std::unique_ptr<ChunkManager> mgr = readyChunks(std::make_unique<WaterRegionSampler>(std::vector<ChunkCoordinate>{}));
 		return mgr.get();

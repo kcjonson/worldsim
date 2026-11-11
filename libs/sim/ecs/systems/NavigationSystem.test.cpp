@@ -174,7 +174,7 @@ namespace {
 	};
 
 	// The ready radius-2 chunk region around the origin. Generating it is most of a test's
-	// setup cost, and NavigationSystem only reads its ChunkManager, so each sampler's region
+	// setup cost, and NavigationSystem writes nothing observable in it, so each sampler's region
 	// is generated once per process and shared by every test that wires it.
 	std::unique_ptr<world::ChunkManager> generateOriginChunks(std::unique_ptr<world::IWorldSampler> sampler) {
 		auto chunks = std::make_unique<world::ChunkManager>(std::move(sampler));

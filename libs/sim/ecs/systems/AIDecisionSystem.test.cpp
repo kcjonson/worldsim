@@ -3203,7 +3203,7 @@ namespace ecs::test {
 			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
 		};
 
-		// Generated once per process: NavigationSystem only reads its ChunkManager.
+		// Generated once per process: NavigationSystem writes nothing observable in it.
 		world::ChunkManager* openLandChunks() {
 			static const std::unique_ptr<world::ChunkManager> chunks = [] {
 				auto c = std::make_unique<world::ChunkManager>(std::make_unique<OpenLandSampler>());
