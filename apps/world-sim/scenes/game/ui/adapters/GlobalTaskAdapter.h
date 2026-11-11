@@ -48,9 +48,11 @@ struct GlobalTaskDisplayData {
 );
 
 /// Query goals for the colonist details tab
+/// @param world ECS world, for workers and craft material progress
 /// @param colonistPosition Position to calculate distances from
 /// @return Vector of task display data, unsorted
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getTasksForColonist(
+	ecs::World&		 world,
 	const glm::vec2& colonistPosition
 );
 

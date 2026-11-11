@@ -15,6 +15,7 @@
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
 #include "../../components/WorkQueue.h"
+#include "../ChainClaims.h"
 
 #include "assets/AssetRegistry.h"
 #include "assets/RecipeRegistry.h"
@@ -57,7 +58,7 @@ namespace ecs {
 		}
 	} // namespace
 
-	void ActionSystem::applyDepositEffect(const Action& action, Task& task, Inventory& inventory) {
+	void ActionSystem::applyDepositEffect(const Action& action, Inventory& inventory) {
 		const auto& depEff = action.depositEffect();
 
 		auto&	   registry = assets::AssetRegistry::Get();
@@ -124,16 +125,6 @@ namespace ecs {
 				depEff.itemDefName.c_str(),
 				static_cast<unsigned long long>(depEff.storageEntityId)
 			);
-
-			if (added > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
-				auto& goalRegistry = GoalTaskRegistry::Get();
-				goalRegistry.recordDelivery(task.haulGoalId, added);
-
-				const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-				if (goal != nullptr && goal->availableCapacity() == 0) {
-					goalRegistry.removeGoal(task.haulGoalId);
-				}
-			}
 		} else {
 
 		// Remove item from the colonist: two-hand goods come out of the hands, the rest the pack.
@@ -164,16 +155,6 @@ namespace ecs {
 					depEff.itemDefName.c_str(),
 					static_cast<unsigned long long>(depEff.storageEntityId)
 				);
-
-				if (recorded > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
-					auto& goalRegistry = GoalTaskRegistry::Get();
-					goalRegistry.recordDelivery(task.haulGoalId, recorded);
-
-					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-					if (goal != nullptr && goal->availableCapacity() == 0) {
-						goalRegistry.removeGoal(task.haulGoalId);
-					}
-				}
 			} else if (auto* storageInv = world->getComponent<Inventory>(storageEntity)) {
 				uint32_t added = storageInv->addItem(depEff.itemDefName, removed);
 				if (added < removed) {
@@ -193,41 +174,6 @@ namespace ecs {
 						depEff.itemDefName.c_str(),
 						static_cast<unsigned long long>(depEff.storageEntityId)
 					);
-				}
-
-				if (task.type == TaskType::Haul && task.haulGoalId != 0) {
-					auto& goalRegistry = GoalTaskRegistry::Get();
-					// Credit only what actually landed. A full storage (partial or zero add) credits
-					// nothing more.
-					if (added > 0) {
-						goalRegistry.recordDelivery(task.haulGoalId, added);
-					}
-
-					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-					// Retire signal depends on the goal kind:
-					//  - A stocking carry-in (StorageGoalSystem haul WITH a chainId) is a one-shot
-					//    delivery of a single chopped armful: done once it actually deposits (added > 0),
-					//    like a craft/construction inventory haul. If the box bounced the whole load
-					//    (added == 0, a race against another deposit filling it), the goal stays live and
-					//    re-drives to the box rather than stranding the wood in hand. StorageGoalSystem
-					//    re-emits a fresh Harvest next tick if the box still wants more.
-					//  - A normal storage haul's targetAmount is a slot count and its deliveredAmount
-					//    sums across item types, so availableCapacity() is the wrong "done" signal -- it
-					//    would retire after a single stack. Retire it on the storage's LIVE state
-					//    instead: done once no free slot remains.
-					//  - Other (craft/construction) goals that deposit into a storage Inventory keep
-					//    using their counter.
-					bool done = false;
-					if (goal != nullptr) {
-						if (goal->owner == GoalOwner::StorageGoalSystem) {
-							done = goal->chainId.has_value() ? (added > 0) : !storageInv->hasSpace();
-						} else {
-							done = goal->availableCapacity() == 0;
-						}
-					}
-					if (done) {
-						goalRegistry.removeGoal(task.haulGoalId);
-					}
 				}
 			} else {
 				// Target is neither a build site nor a storage container (destroyed/gone) - put
@@ -395,30 +341,11 @@ namespace ecs {
 				const auto& defName = task.haulItemDefName;
 				const auto* def = registry.getDefinition(defName);
 				if (def != nullptr && def->capabilities.carryable.has_value()) {
-					const auto& carryableCap = def->capabilities.carryable.value();
-					// A pickup from a ground source takes only what's needed, never more than is
-					// there. For a craft-material fetch the request is the EXACT remaining recipe need
-					// (target minus delivered minus already carried): a multi-unit ResourceStack pile
-					// then yields exactly that and leaves the surplus in the pile (clamped in
-					// applyCollectionEffect) -- a 7-unit pile for a recipe needing 2 leaves 5 behind;
-					// a single loose item is capped to its own carryable count there, so a pickup
-					// never mints more than is present. A non-craft haul keeps the asset default. This
-					// contrasts with a HARVEST, which takes all it can carry so freshly cut resources
-					// aren't stranded at a far harvest spot.
-					uint32_t	pickupQty = carryableCap.quantity;
-					const auto* goal = task.haulGoalId != 0 ? GoalTaskRegistry::Get().getGoal(task.haulGoalId) : nullptr;
-					if (goal != nullptr && goal->owner == GoalOwner::CraftingGoalSystem && goal->targetAmount > 0) {
-						// targetAmount is an item count for a craft haul, so the remaining need is exact.
-						const uint32_t carried = ecs::availableQuantity(inventory, task.haulItemDefName);
-						const uint32_t accountedFor = goal->deliveredAmount + carried;
-						pickupQty = goal->targetAmount > accountedFor ? goal->targetAmount - accountedFor : 0U;
-						if (pickupQty == 0) {
-							// Already delivered/carrying enough for the goal: nothing more to pick up.
-							// Clear so the AI re-evaluates (on to the deposit).
-							action.clear();
-							return;
-						}
-					}
+					// A pickup takes what its claim was sized to (the root's need net of in-flight, the
+					// carry), never more than is there: a pile yields that and keeps the rest, a single
+					// loose item is capped to its own carryable count (applyCollectionEffect). A harvest
+					// instead takes all it can carry, so freshly cut goods aren't stranded at a far tree.
+					const uint32_t pickupQty = task.haulQuantity;
 					action = Action::Pickup(defName, pickupQty, entity->position, defName);
 					LOG_DEBUG(
 						Engine,
@@ -464,9 +391,10 @@ namespace ecs {
 				return;
 			}
 
-			// A crafting station (WorkQueue) takes the goods into its own store and credits the
-			// parent Craft goal; a build site or plain storage container takes them as before.
-			// The station carries an Inventory too, so the WorkQueue is what distinguishes it.
+			// Arriving with the goods in hand skips the pickup: the source claim is spent and the deposit
+			// commits what is held. A crafting station (WorkQueue) takes the goods into its own store; a
+			// build site or plain storage container takes them as before.
+			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
 			const bool toCraftStation = world->hasComponent<WorkQueue>(storageEntity);
 			action = Action::Deposit(
 				task.haulItemDefName,
@@ -494,21 +422,9 @@ namespace ecs {
 			// Redirect to the deposit leg, reading the colonist's ACTUAL carry state HERE at action
 			// time -- not at option-build time, where an over-cap two-hand armful is momentarily
 			// dropped and re-picked each tick (availableQuantity reads 0) and any "am I carrying?"
-			// test on the option is unreliable. Mirror completeAction's Pickup->Deposit handoff:
-			// re-point the task at the destination, set it Moving, advance the chain step, re-point
-			// MovementTarget at the goal, and drop the stale pickup-leg route so the AI's per-tick
-			// chain-leg repath plans a fresh A* path. The colonist walks to the box and deposits.
-			task.targetPosition = task.haulTargetPosition;
-			task.state = TaskState::Moving; // Must be Moving for MovementSystem to re-arrive at the destination
-			++task.chainStep;
-
-			if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
-				movementTarget->target = task.haulTargetPosition;
-				movementTarget->active = true;
-			}
-			if (auto* navPath = world->getComponent<NavPath>(entity)) {
-				navPath->valid = false;
-			}
+			// test on the option is unreliable. The colonist walks to the box and deposits.
+			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
+			headToDeposit(entity, task);
 
 			action.clear();
 			LOG_DEBUG(

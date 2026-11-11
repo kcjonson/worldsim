@@ -98,53 +98,6 @@ TEST(ConstructionSystemTests, ClearingGateTakesPriorityOverMaterials) {
 }
 
 // ============================================================================
-// constructionHarvestDemand: bound chopping by what is already carried AND by one
-// trip's carry capacity, so the colonist delivers its load instead of topping up
-// forever (the haul-loop stall). The capacity bound is what lets a manifest larger
-// than one stack ever build: `carried` caps at the stack size, so without it the
-// demand would stay > 0 forever and the colonist would hoard at the cap.
-// ============================================================================
-
-TEST(ConstructionSystemTests, HarvestDemandIsSiteShortfallWhenCarryingNothing) {
-	// Small site (fits in one trip): chop the whole shortfall.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/0, /*carryCapacity=*/99), 20U);
-}
-
-TEST(ConstructionSystemTests, HarvestDemandShrinksByWhatIsCarried) {
-	// Carrying some Wood toward a small site: only chop the difference.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/8, /*carryCapacity=*/99), 12U);
-}
-
-TEST(ConstructionSystemTests, HarvestDemandIsZeroWhenCarryingEnough) {
-	// Carrying exactly enough or more for a small site: stop chopping, go deliver.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/20, /*carryCapacity=*/99), 0U);
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/20, /*carried=*/35, /*carryCapacity=*/99), 0U);
-}
-
-TEST(ConstructionSystemTests, HarvestDemandCapsAtOneTripForLargeManifest) {
-	// The regression: a 313-Wood site with an empty-handed colonist must ask for ONE
-	// trip's worth (99), not the whole 313. Asking for 313 keeps the Harvest goal
-	// Available even when the colonist's stack is full, so it never delivers.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/313, /*carried=*/0, /*carryCapacity=*/99), 99U);
-}
-
-TEST(ConstructionSystemTests, HarvestDemandIsZeroWhenStackFullEvenIfSiteStillNeedsMore) {
-	// Stack full (99) but the site still needs 313: demand is 0 so the colonist DELIVERS
-	// its trip instead of hoarding at the cap. This is the exact stall the fix removes.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/313, /*carried=*/99, /*carryCapacity=*/99), 0U);
-}
-
-TEST(ConstructionSystemTests, HarvestDemandToppingUpToAFullTrip) {
-	// Large site, carrying a partial load: top the trip up to one full stack, no more.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/313, /*carried=*/40, /*carryCapacity=*/99), 59U);
-}
-
-TEST(ConstructionSystemTests, HarvestDemandLastTripIsTheRemainder) {
-	// Final trip: less than a stack still needed and hands empty -> chop just the remainder.
-	EXPECT_EQ(constructionHarvestDemand(/*remaining=*/15, /*carried=*/0, /*carryCapacity=*/99), 15U);
-}
-
-// ============================================================================
 // Goal-graph emission: drive the live update() path against a real
 // GoalTaskRegistry and assert the umbrella + per-material children coexist.
 //
@@ -250,7 +203,7 @@ namespace {
 		}
 
 		/// A colonist carrying `woodCarried` Wood in its backpack (spilled across 40-unit stacks).
-		/// NeedsComponent marks it a colonist so carriedAmount/colonistCarryCapacity see it.
+		/// NeedsComponent marks it a colonist like a real one.
 		EntityID createColonistCarryingWood(uint32_t woodCarried) {
 			auto entity = world->createEntity();
 			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
@@ -299,23 +252,25 @@ TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndS
 	EXPECT_FALSE(umbrella->parentGoalId.has_value());
 	EXPECT_EQ(umbrella->status, GoalStatus::Blocked);
 
-	// Two Harvest + two Haul children, all parented to the umbrella, all coexisting.
+	// Two Harvest children, both parented to the umbrella, coexisting; the umbrella accepts both
+	// materials (carry-in from possession delivers them, so there are no Haul children).
 	auto children = registry.getChildGoals(umbrella->id);
 	EXPECT_EQ(countOfType(children, TaskType::Harvest), 2U);
-	EXPECT_EQ(countOfType(children, TaskType::Haul), 2U);
+	EXPECT_EQ(countOfType(children, TaskType::Haul), 0U);
+	EXPECT_EQ(umbrella->acceptedDefNameIds.size(), 2U);
 	for (const auto* child : children) {
 		ASSERT_TRUE(child->parentGoalId.has_value());
 		EXPECT_EQ(child->parentGoalId.value(), umbrella->id);
 		EXPECT_EQ(child->destinationEntity, foundation);
 	}
 
-	// Whole owned set: 1 umbrella + 4 children.
-	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 5U);
+	// Whole owned set: 1 umbrella + 2 children.
+	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 3U);
 
 	const uint64_t umbrellaId = umbrella->id;
 
 	// A SECOND refresh must NOT clobber any of them (the original collision bug). The umbrella id
-	// is stable, and both materials still have a coexisting Harvest + Haul child.
+	// is stable, and both materials still have their Harvest child.
 	refresh();
 
 	const auto* umbrella2 = registry.getGoalByDestination(foundation);
@@ -324,8 +279,7 @@ TEST_F(ConstructionGoalEmissionTest, TwoMaterialsEmitUmbrellaPlusAllChildrenAndS
 
 	auto children2 = registry.getChildGoals(umbrellaId);
 	EXPECT_EQ(countOfType(children2, TaskType::Harvest), 2U) << "both Harvest children must survive";
-	EXPECT_EQ(countOfType(children2, TaskType::Haul), 2U) << "both Haul children must survive";
-	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 5U);
+	EXPECT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 3U);
 }
 
 // A foundation reshaped in place drops its goal tree; the next tick rebuilds it at the
@@ -352,7 +306,6 @@ TEST_F(ConstructionGoalEmissionTest, ResetBlueprintGoalsRebuildsTheTreeFromTheNe
 	EXPECT_EQ(umbrella->destinationPosition, glm::vec2(12.0F, 3.0F));
 	auto children = registry.getChildGoals(umbrella->id);
 	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
-	EXPECT_EQ(countOfType(children, TaskType::Haul), 1U);
 	for (const auto* child : children) {
 		EXPECT_EQ(child->destinationPosition, glm::vec2(12.0F, 3.0F));
 	}
@@ -429,7 +382,7 @@ TEST_F(ConstructionGoalEmissionTest, GoalsAreCleanedUpWhenBlueprintCompletes) {
 	auto& registry = GoalTaskRegistry::Get();
 
 	refresh();
-	ASSERT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 5U);
+	ASSERT_EQ(registry.goalCount(GoalOwner::ConstructionGoalSystem), 3U);
 
 	// Flip the blueprint to Complete: the next refresh leaves it in the stale set and the cleanup
 	// pass drops the umbrella and every child via removeGoalWithChildren.
@@ -440,50 +393,22 @@ TEST_F(ConstructionGoalEmissionTest, GoalsAreCleanedUpWhenBlueprintCompletes) {
 	EXPECT_EQ(registry.getGoalByDestination(foundation), nullptr);
 }
 
-// ============================================================================
-// The haul-loop stall (this fix): a manifest larger than one carry stack must still
-// emit a sensibly-sized Harvest goal and, once a colonist's stack is full, retire the
-// Harvest so the Haul wins and the load gets delivered. These drive the live update()
-// path with a real colonist so carriedAmount + colonistCarryCapacity feed the bound.
-// ============================================================================
-
-TEST_F(ConstructionGoalEmissionTest, LargeManifestHarvestGoalIsBoundedToOneTrip) {
-	// 313 Wood needed, an empty-handed colonist: the Harvest goal must ask for one trip's
-	// worth, NOT 313. One trip is the carry weight (35 kg) divided by Wood's mass (2.5 kg) =
-	// 14. Asking for 313 is what kept it Available after the load filled.
+// A manifest larger than one carry trip: the umbrella accepts the whole shortfall and its Harvest
+// child stays open however much a colonist carries. What is carried is delivered by carry-in from
+// possession, and how much more to cut is the root's remaining need net of in-flight, so the goal
+// graph no longer guesses at carried stock (the old per-trip harvest demand and its stall).
+TEST_F(ConstructionGoalEmissionTest, LargeManifestAcceptsTheWholeShortfallWhateverIsCarried) {
 	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
-	createColonistCarryingWood(/*woodCarried=*/0);
+	createColonistCarryingWood(/*woodCarried=*/200);
 	auto& registry = GoalTaskRegistry::Get();
 
 	refresh();
 
 	const auto* umbrella = registry.getGoalByDestination(foundation);
 	ASSERT_NE(umbrella, nullptr);
-	const auto* harvest = findChild(umbrella->id, TaskType::Harvest);
-	const auto* haul = findChild(umbrella->id, TaskType::Haul);
-	ASSERT_NE(harvest, nullptr) << "empty-handed colonist + outstanding manifest must have a Harvest goal";
-	ASSERT_NE(haul, nullptr);
-	EXPECT_EQ(harvest->targetAmount, 14U) << "Harvest demand must cap at one carry trip (35 kg / 2.5 kg), not the full 313";
-	EXPECT_EQ(haul->targetAmount, 313U) << "Haul targets the whole site shortfall";
-}
-
-TEST_F(ConstructionGoalEmissionTest, FullStackRetiresHarvestSoHaulWinsForLargeManifest) {
-	// 313 Wood needed, a colonist carrying far more than one trip (200 >> the 14-unit trip):
-	// the Harvest goal must retire (demand 0) while the Haul stays open. Before the trip
-	// bound the Harvest stayed Available (313 - carried > 0) and the colonist hoarded forever.
-	auto foundation = createLargeWoodFoundation(/*woodNeeded=*/313);
-	createColonistCarryingWood(/*woodCarried=*/200); // spills across 5 of the 10 backpack slots
-	auto& registry = GoalTaskRegistry::Get();
-
-	refresh();
-
-	const auto* umbrella = registry.getGoalByDestination(foundation);
-	ASSERT_NE(umbrella, nullptr);
-	EXPECT_EQ(findChild(umbrella->id, TaskType::Harvest), nullptr)
-		<< "a full-stacked colonist must NOT have a Harvest goal (it should deliver)";
-	const auto* haul = findChild(umbrella->id, TaskType::Haul);
-	ASSERT_NE(haul, nullptr) << "the Haul goal must remain so the carried load gets delivered";
-	EXPECT_EQ(haul->targetAmount, 313U);
+	ASSERT_NE(findChild(umbrella->id, TaskType::Harvest), nullptr);
+	EXPECT_EQ(findChild(umbrella->id, TaskType::Haul), nullptr);
+	EXPECT_EQ(registry.remainingNeed(*world, umbrella->id, assets::AssetRegistry::Get().getDefNameId("Wood"), NeedBasis::Stock), 313U);
 }
 
 // A LARGE single-material foundation (200 Wood, far more than one 40-stack) must record its
@@ -640,13 +565,11 @@ TEST_F(ConstructionGoalEmissionTest, OpeningWithNoWorldIsUngatedAndHaulsImmediat
 
 	auto children = registry.getChildGoals(umbrella->id);
 	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
-	EXPECT_EQ(countOfType(children, TaskType::Haul), 1U);
 }
 
 TEST_F(ConstructionGoalEmissionTest, OpeningNeverEmitsClearGoals) {
 	// An opening sits on a built wall: it has no clear phase, so even on first sight it
-	// emits no Harvest CLEAR goal. (Its only Harvest is the per-material delivery chain,
-	// which carries a chainId; a clear goal would not.)
+	// emits no Harvest CLEAR goal. (Its only Harvest is the per-material one.)
 	auto  opening = createOpeningBlueprint(/*openingId=*/1);
 	auto& registry = GoalTaskRegistry::Get();
 
@@ -656,7 +579,7 @@ TEST_F(ConstructionGoalEmissionTest, OpeningNeverEmitsClearGoals) {
 	ASSERT_NE(umbrella, nullptr);
 	for (const auto* child : registry.getChildGoals(umbrella->id)) {
 		if (child->type == TaskType::Harvest) {
-			EXPECT_TRUE(child->chainId.has_value()) << "an opening's only Harvest is a material chain, never a clear goal";
+			EXPECT_FALSE(child->clearFootprint.has_value()) << "an opening's only Harvest is a material one, never a clear goal";
 		}
 	}
 }
@@ -781,12 +704,12 @@ TEST_F(OpeningHostGateTest, BuiltSegmentReleasesOpeningToHaulThenBuild) {
 
 	refresh();
 
-	// Now hauling: a Harvest + Haul child per material under the umbrella.
+	// Materials are due: the umbrella accepts them and a Harvest child per material is open.
 	const auto* umbrella = registry.getGoalByDestination(blueprint);
 	ASSERT_NE(umbrella, nullptr);
 	auto children = registry.getChildGoals(umbrella->id);
 	EXPECT_EQ(countOfType(children, TaskType::Harvest), 1U);
-	EXPECT_EQ(countOfType(children, TaskType::Haul), 1U);
+	EXPECT_FALSE(umbrella->acceptedDefNameIds.empty());
 
 	// Record the materials onto the blueprint's manifest, then refresh: the opening advances
 	// to UnderConstruction and the umbrella flips Available (the Build goal).

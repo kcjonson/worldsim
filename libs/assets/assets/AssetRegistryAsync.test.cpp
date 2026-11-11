@@ -5,7 +5,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace assets;
 
@@ -86,4 +90,93 @@ TEST(AssetRegistryCapabilityTest, MaskCoversStorageAndCraftableHighBits) {
 	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Craftable)) << "hasCapability must see Craftable at bit 7";
 
 	reg.clearDefinitions();
+}
+
+namespace {
+
+	// The yield index, worked out the slow way: every definition, asked whether it is harvestable.
+	std::map<std::string, std::vector<uint32_t>> harvestablesByYieldScan(const AssetRegistry& reg) {
+		std::map<std::string, std::vector<uint32_t>> byYield;
+		for (const std::string& name : reg.getDefinitionNames()) {
+			const AssetDefinition* def = reg.getDefinition(name);
+			if (def != nullptr && def->capabilities.harvestable.has_value() && !def->capabilities.harvestable->yieldDefName.empty()) {
+				byYield[def->capabilities.harvestable->yieldDefName].push_back(reg.getDefNameId(name));
+			}
+		}
+		for (auto& [yield, ids] : byYield) {
+			std::ranges::sort(ids);
+		}
+		return byYield;
+	}
+
+	void expectYieldIndexMatchesScan(const AssetRegistry& reg) {
+		const auto byYield = harvestablesByYieldScan(reg);
+		ASSERT_FALSE(byYield.empty()) << "the shipped library has harvestables";
+		for (const auto& [yield, ids] : byYield) {
+			const uint32_t yieldId = reg.getDefNameId(yield);
+			if (yieldId != 0) {
+				EXPECT_EQ(reg.harvestablesYielding(yieldId), ids) << yield;
+			}
+		}
+		for (const std::string& name : reg.getDefinitionNames()) {
+			EXPECT_EQ(reg.getDefinitionById(reg.getDefNameId(name)), reg.getDefinition(name)) << name;
+		}
+	}
+
+} // namespace
+
+// The yield index after a folder load, after clear(), and after the asset manager's Reload (clear,
+// then load the folder again): each time it names exactly the harvestables yielding each item.
+TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+	const std::filesystem::path world = projectRoot() / "assets" / "world";
+	if (!std::filesystem::exists(world)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+	reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
+
+	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
+	expectYieldIndexMatchesScan(reg);
+	const uint32_t someYield = reg.getDefNameId(harvestablesByYieldScan(reg).begin()->first);
+
+	reg.clear();
+	EXPECT_TRUE(reg.harvestablesYielding(someYield).empty()) << "clear() empties the index";
+	EXPECT_EQ(reg.getDefinitionById(someYield), nullptr);
+
+	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
+	expectYieldIndexMatchesScan(reg);
+
+	reg.clear();
+}
+
+// A test definition registered again with another yield moves to that yield's list, and a yield
+// registered after its harvestable still finds it.
+TEST(AssetRegistryYieldIndexTest, ReregisteredDefinitionMovesToItsNewYield) {
+	auto& reg = AssetRegistry::Get();
+	reg.clearDefinitions();
+	const auto registerDef = [&](const std::string& name, const std::string& yield) {
+		AssetDefinition def;
+		def.defName = name;
+		if (!yield.empty()) {
+			def.capabilities.harvestable = HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+		}
+		reg.registerTestDefinition(std::move(def));
+	};
+
+	registerDef("Test_YieldA", "");
+	registerDef("Test_YieldBush", "Test_YieldA");
+	const uint32_t id = reg.getDefNameId("Test_YieldBush");
+	const uint32_t yieldA = reg.getDefNameId("Test_YieldA");
+	EXPECT_EQ(reg.harvestablesYielding(yieldA), std::vector<uint32_t>{id});
+	registerDef("Test_YieldBush", "Test_YieldB");
+	EXPECT_TRUE(reg.harvestablesYielding(yieldA).empty());
+	registerDef("Test_YieldB", "");
+	const uint32_t yieldB = reg.getDefNameId("Test_YieldB");
+	EXPECT_EQ(reg.harvestablesYielding(yieldB), std::vector<uint32_t>{id}) << "filed before the yield had an id";
+	EXPECT_EQ(reg.getDefinitionById(id), reg.getDefinition("Test_YieldBush"));
+
+	reg.clearDefinitions();
+	EXPECT_TRUE(reg.harvestablesYielding(yieldB).empty());
 }

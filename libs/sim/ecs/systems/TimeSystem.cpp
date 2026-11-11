@@ -2,8 +2,11 @@
 
 #include "../World.h"
 
+#include <utils/Log.h>
+
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 
 namespace ecs {
 
@@ -122,7 +125,14 @@ GameTimeSnapshot TimeSystem::snapshot() const {
 
 double simulationSeconds(World& world) {
 	const auto* timeSystem = world.tryGetSystem<TimeSystem>();
-	return timeSystem != nullptr ? timeSystem->simulationSeconds() : 0.0;
+	if (timeSystem == nullptr) {
+		LOG_ERROR(Engine, "simulationSeconds: the world has no TimeSystem, so a regrowth would never end");
+#ifdef DEVELOPMENT_BUILD
+		std::abort();
+#endif
+		return 0.0;
+	}
+	return timeSystem->simulationSeconds();
 }
 
 }  // namespace ecs

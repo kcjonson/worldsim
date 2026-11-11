@@ -13,6 +13,7 @@ add_library(sim
     ecs/systems/action/BuildActions.cpp
     ecs/systems/StorageGoalSystem.cpp
     ecs/systems/WorkSources.cpp
+    ecs/systems/ChainClaims.cpp
     ecs/systems/CraftingGoalSystem.cpp
     ecs/systems/BuildGoalSystem.cpp
     ecs/systems/ConstructionSystem.cpp
@@ -22,9 +23,11 @@ add_library(sim
     ecs/systems/StaticRectCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
+    ecs/ClaimIndex.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/StoreOrDrop.cpp
     ecs/WorldSource.cpp
+    ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/ConstructionWorld.cpp

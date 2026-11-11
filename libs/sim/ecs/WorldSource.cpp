@@ -2,6 +2,7 @@
 
 #include "World.h"
 #include "components/Appearance.h"
+#include "components/ResourceStack.h"
 #include "components/Transform.h"
 #include "systems/TimeSystem.h"
 
@@ -13,9 +14,22 @@
 
 namespace ecs {
 
-	std::optional<double>
-	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, World& world, uint32_t defNameId, glm::vec2 at) {
-		return placement.regrowthReadyAt(at, defNameId, simulationSeconds(world));
+	std::optional<double> worldSourceRegrowingUntil(assets::PlacementExecutor& placement, uint32_t defNameId, glm::vec2 at, double now) {
+		return placement.regrowthReadyAt(at, defNameId, now);
+	}
+
+	void makeLoosePile(World& world, EntityID entity, uint32_t defNameId, glm::vec2 position, uint32_t quantity) {
+		world.addComponent<ResourceStack>(entity, ResourceStack{quantity});
+		if (auto* actions = world.tryGetSystem<ActionSystem>()) {
+			actions->loosePiles().add(entity, defNameId, position);
+		}
+	}
+
+	void destroyWorldEntity(World& world, EntityID entity) {
+		if (auto* actions = world.tryGetSystem<ActionSystem>()) {
+			actions->loosePiles().remove(entity);
+		}
+		world.destroyEntity(entity);
 	}
 
 	ActionSystem::SourceState takeWorldSource(
@@ -37,6 +51,11 @@ namespace ecs {
 		if (!placed) {
 			constexpr float kSpawnedMatchEps = 0.25F;
 			for (auto [entity, position, appearance] : world.view<Position, Appearance>()) {
+				// A loose pile is found only through LoosePileIndex: one missing from it is gone, and
+				// taking a neighbouring pile here would remove it whole for one pickup's pay.
+				if (world.getComponent<ResourceStack>(entity) != nullptr) {
+					continue;
+				}
 				const glm::vec2 d = position.value - at;
 				if (appearance.defName == defName && d.x * d.x + d.y * d.y <= kSpawnedMatchEps * kSpawnedMatchEps &&
 					std::ranges::find(pendingRemoval, entity) == pendingRemoval.end()) {
@@ -50,7 +69,9 @@ namespace ecs {
 		}
 
 		const uint32_t defNameId = assets::AssetRegistry::Get().getDefNameId(defName);
-		const bool	   regrowing = worldSourceRegrowingUntil(placement, world, defNameId, at).has_value();
+		// With nothing regrowing there is nothing to read, and no clock is asked for.
+		const bool regrowing =
+			placement.regrowthEntryCount() > 0 && worldSourceRegrowingUntil(placement, defNameId, at, simulationSeconds(world)).has_value();
 		if (take == Take::Remove) {
 			if (placed) {
 				placement.removeEntity(coord, at, defName);

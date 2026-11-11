@@ -47,6 +47,7 @@ namespace world_sim {
 					return LineStatus::Available;
 				case ecs::OptionStatus::NoSource:
 				case ecs::OptionStatus::NoRoom:
+				case ecs::OptionStatus::Reserved:
 					return LineStatus::Blocked;
 				case ecs::OptionStatus::Regrowing:
 					return LineStatus::Pending;
@@ -95,8 +96,8 @@ namespace world_sim {
 		std::vector<Line> linesOf(const ecs::World& world, ecs::EntityID colonistId) {
 			std::vector<Line>		  lines;
 			const ecs::DecisionTrace* trace = world.getComponent<ecs::DecisionTrace>(colonistId);
-			if (trace != nullptr && !trace->selectionSummary.empty()) {
-				lines.push_back(status("selection_summary", trace->selectionSummary, LineStatus::Active));
+			if (const ecs::EvaluatedOption* selected = trace != nullptr ? trace->getSelected() : nullptr) {
+				lines.push_back(status("selection_summary", "Selected: " + ecs::describeOption(world, *selected), LineStatus::Active));
 			}
 
 			lines.push_back(header("current_header", "Current"));
@@ -132,11 +133,10 @@ namespace world_sim {
 					if (!seen.insert(key).second) {
 						key += std::format("_{}", lines.size());
 					}
+					const std::string reason = ecs::describeOption(world, option);
 					lines.push_back(status(
 						key,
-						std::format(
-							"[T{} {}] {} - score {}", option.tier, tierLabel(option.tier), option.reason, static_cast<int>(option.score)
-						),
+						std::format("[T{} {}] {} - score {}", option.tier, tierLabel(option.tier), reason, static_cast<int>(option.score)),
 						lineStatusOf(option.status)
 					));
 					lines.push_back({

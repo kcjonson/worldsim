@@ -43,6 +43,7 @@ struct EvaluatedOption {
         NoSource,       // Need exists but no known entity
         Regrowing,      // Known source is regrowing: skipped now, chosen again once ready
         NoRoom,         // Can't lift any of the item now (pack full, hands busy): not offered
+        Reserved,       // Another colonist's claim holds the source, station, or item (reservedBy)
         Satisfied       // Need above threshold, no action needed
     };
     Status status;
@@ -217,7 +218,10 @@ The DecisionTrace respects the memory constraint:
 | No food in memory | Status: `NoSource`, "No known food source" |
 | Food exists but not seen | Status: `NoSource` (colonist doesn't know) |
 | Only known food is regrowing | Status: `Regrowing`, "Hunger at 40% (source regrowing)" |
-| Haul with no room to carry | Status: `NoRoom`, "Hauling Wood to storage (no room to carry it)" |
+| Haul with no room to carry | Status: `NoRoom`, "Hauling to storage (Wood: no room to carry it)" |
+| Only known food is another colonist's next meal | Status: `Reserved`, "Hunger at 40% (reserved by Alice)" |
+| Tree another colonist is cutting | Status: `Reserved`, "Cutting Oak Tree for Wood (reserved by Alice)" |
+| Station another crafter selected | Status: `Reserved`, "Crafting Stone Axe (station in use by Alice)" |
 
 **Key Point:** The trace only shows entities the colonist has observed. If a berry bush exists but the colonist hasn't seen it, it won't appear in the trace.
 
@@ -296,6 +300,7 @@ The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
 | 🔒 | NoSource | Need exists but no known entity |
 | 🌱 | Regrowing | Known source is regrowing; taken again once ready |
 | 🎒 | NoRoom | A haul or fetch the colonist can't lift any of right now; offered again once it has room |
+| 👤 | Reserved | Another colonist's claim takes the source whole; at most one row per goal and item, naming the holder ([Task Claims](../../../technical/task-claims.md)) |
 | ✓ | Satisfied | Need above threshold |
 | 🚶 | Wander | Idle behavior |
 

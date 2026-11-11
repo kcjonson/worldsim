@@ -62,8 +62,6 @@ void BuildGoalSystem::update(float /*deltaTime*/) {
 		goal.destinationPosition = targetPos;
 		goal.destinationDefNameId = 0; // Could get from Appearance if available
 		goal.acceptedCategory = assets::ItemCategory::None;
-		goal.targetAmount = 1; // One item to place
-		goal.deliveredAmount = 0;
 		goal.createdAt = 0.0F; // TODO: use actual game time
 
 		registry.createGoal(std::move(goal));

@@ -1,7 +1,10 @@
 #include "ActionSystem.h"
 
+#include "AIDecisionSystem.h"
+#include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "ChainClaims.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -17,6 +20,8 @@
 #include "../components/WorkQueue.h"
 
 #include <utils/Log.h>
+
+#include <limits>
 
 namespace ecs {
 
@@ -208,6 +213,12 @@ namespace ecs {
 		Inventory&		inventory,
 		Memory&			memory
 	) {
+		// What a cut lands is what its collection adds to the colonist; what it held of the yield before
+		// is not this cut's.
+		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
+		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
+		const uint32_t	   heldBeforeCut = cutLands ? ecs::availableQuantity(inventory, yieldDefName) : 0U;
+
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
 			applyNeedEffect(action, needs);
@@ -215,7 +226,7 @@ namespace ecs {
 
 		// Handle collection effects (Pickup, Harvest)
 		if (action.hasCollectionEffect()) {
-			applyCollectionEffect(action, position.value, task, inventory, memory);
+			applyCollectionEffect(action, position.value, inventory, memory);
 		}
 
 		// Handle consumption effects (Eat action)
@@ -235,7 +246,7 @@ namespace ecs {
 
 		// Handle deposit effects (put items into storage)
 		if (action.hasDepositEffect()) {
-			applyDepositEffect(action, task, inventory);
+			applyDepositEffect(action, inventory);
 		}
 
 		// Handle construction progress effects (Build, Deconstruct).
@@ -267,25 +278,13 @@ namespace ecs {
 				return;
 			}
 
-			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull) - hand off to phase 2
-			// (Deposit). Re-point the task at the deposit goal and set it Moving; the colonist drives
-			// itself to the station. The deposit leg is the SAME haul task, so AIDecisionSystem keeps it
-			// (isSameTask) and never calls selectTaskFromTrace. Set MovementTarget to the deposit GOAL so
-			// the AI's per-tick chain-leg repath (a Moving task with an active target but no live route)
-			// requests a navmesh path for it -- the colonist follows that A* route, it does NOT slide
-			// straight at the bench. Invalidate the pickup-leg route, which still points at the source.
-			task.targetPosition = task.haulTargetPosition;
-			task.state = TaskState::Moving; // Must be Moving for MovementSystem to set Arrived
-			task.chainStep++; // Advance chain: step 0 (Pickup) → step 1 (Deposit)
+			// The source claim is spent; what is now carried is what the deposit leg commits. The
+			// pickup leg starts without the item in hand, so all of it was just lifted.
+			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
 
-			auto* movementTarget = world->getComponent<MovementTarget>(entity);
-			if (movementTarget != nullptr) {
-				movementTarget->target = task.haulTargetPosition;
-				movementTarget->active = true;
-			}
-			if (auto* navPath = world->getComponent<NavPath>(entity)) {
-				navPath->valid = false;
-			}
+			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull): the same task carries on
+			// as its deposit leg, so AIDecisionSystem keeps it (isSameTask) and never reselects it.
+			headToDeposit(entity, task);
 
 			action.clear();
 			LOG_DEBUG(
@@ -303,6 +302,9 @@ namespace ecs {
 			// Phase 1 complete (PickupPackaged) - clear hands, pick up entity, then move to phase 2
 			// Hand clearing: stow items to backpack, drop if can't fit
 			clearHandsForTwoHandedPickup(inventory, action.targetPosition);
+
+			// The packaged item is possessed now; nobody else can take it.
+			claimsToDeliveryLeg(task, 0);
 
 			// Get the packaged entity from the effect
 			if (action.hasPlacePackagedEffect()) {
@@ -368,6 +370,14 @@ namespace ecs {
 			return;
 		}
 
+		if (cutLands) {
+			const uint32_t heldAfterCut = ecs::availableQuantity(inventory, yieldDefName);
+			if (carryHarvestIn(entity, position, task, inventory, heldAfterCut > heldBeforeCut ? heldAfterCut - heldBeforeCut : 0U)) {
+				action.clear();
+				return;
+			}
+		}
+
 		// Handle PlacePackaged completion (phase 2) - move entity to target and remove Packaged component
 		if (action.type == ActionType::PlacePackaged && action.hasPlacePackagedEffect()) {
 			applyPlacePackagedEffect(action, inventory);
@@ -377,6 +387,91 @@ namespace ecs {
 		action.clear();
 		task.clear();
 		task.timeSinceEvaluation = 0.0F;
+	}
+
+	void ActionSystem::headToDeposit(EntityID entity, Task& task) {
+		// Moving with an active target and no live route: the AI's chain-leg repath plans the A* route
+		// to the destination, so the colonist never slides straight at it.
+		task.targetPosition = task.haulTargetPosition;
+		task.state = TaskState::Moving;
+		task.chainStep = 1;
+		if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
+			movementTarget->target = task.haulTargetPosition;
+			movementTarget->active = true;
+		}
+		if (auto* navPath = world->getComponent<NavPath>(entity)) {
+			navPath->valid = false;
+		}
+	}
+
+	bool ActionSystem::carryHarvestIn(EntityID entity, const Position& position, Task& task, const Inventory& inventory, uint32_t landed) {
+		// The in-flight claim taken at acceptance names the root, which outlives the Harvest child the
+		// cut was picked through (a goal system may retire it while the colonist works).
+		uint64_t rootId = 0;
+		uint32_t accepted = 0;
+		for (const Claim& claim : task.claims) {
+			if (claim.kind() == ClaimKind::InFlight) {
+				rootId = claim.target();
+				accepted = claim.quantity();
+			}
+		}
+		const auto&		goals = GoalTaskRegistry::Get();
+		const GoalTask* root = goals.getGoal(rootId);
+		if (root == nullptr) {
+			return false;
+		}
+		auto&			   registry = assets::AssetRegistry::Get();
+		const uint32_t	   item = task.harvestYieldDefNameId;
+		const std::string& itemDefName = registry.getDefName(item);
+		// The cargo is what earlier cuts of this gathering carry plus what this one landed; anything else
+		// of the yield the colonist holds is not this task's to deliver.
+		const uint32_t cargo = std::min(cargoOnClaims(task.claims, rootId, item) + landed, ecs::availableQuantity(inventory, itemDefName));
+		if (cargo == 0) {
+			return false;
+		}
+		// The index is the one the AI last built, so this commits no more than this task's own in-flight
+		// there: another colonist converting a cut in this same update read that figure, and the two
+		// together never pass the need. The need itself is read now, past every deposit already landed.
+		static const ClaimIndex kNoClaims;
+		const auto*				ai = world->tryGetSystem<AIDecisionSystem>();
+		const uint32_t			quantity = std::min(
+			 {cargo, accepted,
+			  rootAvailable(*world, ai != nullptr ? ai->claimIndex() : kNoClaims, rootId, item, harvestBasis(*root), ClaimExclusion::of(task))}
+		 );
+		if (quantity == 0) {
+			return false;
+		}
+
+		task.type = TaskType::Haul;
+		task.haulItemDefName = itemDefName;
+		task.haulQuantity = quantity;
+		task.haulFromInventory = true;
+		task.haulSourceStorageId = 0;
+		task.haulSourcePosition = position.value;
+		task.haulTargetStorageId = static_cast<uint64_t>(root->destinationEntity);
+		task.haulTargetPosition = root->destinationPosition;
+		task.haulGoalId = rootId;
+		task.harvestTargetEntityId = 0;
+		task.harvestGoalId = 0;
+		task.harvestYieldDefNameId = 0;
+		task.reason = "Delivering " + itemDefName;
+		harvestToDeliveryLeg(task, rootId, root->destinationEntity, item, quantity);
+		if (!task.chainId.has_value()) {
+			task.chainId = GoalTaskRegistry::Get().allocateChainId();
+		}
+		headToDeposit(entity, task);
+		// Decided again at once rather than after a step toward the destination: a further cut may come
+		// first (task-claims.md, Batching).
+		task.timeSinceEvaluation = std::numeric_limits<float>::max();
+		LOG_DEBUG(
+			Engine,
+			"[Action] Harvest landed %u x %s; carrying %u toward goal %llu",
+			landed,
+			itemDefName.c_str(),
+			quantity,
+			static_cast<unsigned long long>(rootId)
+		);
+		return true;
 	}
 
 } // namespace ecs

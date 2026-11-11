@@ -32,8 +32,11 @@ namespace ecs {
 		/// remembers it under). Returns the entity id and its live ResourceStack, so a drained pile
 		/// is removed by exact id.
 		[[nodiscard]] LoosePile findLoosePile(World* world, const LoosePileIndex& piles, uint32_t defNameId, glm::vec2 pos) {
-			const EntityID entity = piles.find(defNameId, pos);
-			if (world == nullptr || !world->isAlive(entity)) {
+			if (world == nullptr) {
+				return {};
+			}
+			const EntityID entity = piles.find(*world, defNameId, pos);
+			if (entity == kInvalidEntity) {
 				return {};
 			}
 			ResourceStack* stack = world->getComponent<ResourceStack>(entity);
@@ -56,7 +59,6 @@ namespace ecs {
 	void ActionSystem::applyCollectionEffect(
 		const Action& action,
 		glm::vec2	  colonistPosition,
-		Task&		  task,
 		Inventory&	  inventory,
 		Memory&		  memory
 	) {
@@ -64,14 +66,14 @@ namespace ecs {
 
 		auto& harvestRegistry = assets::AssetRegistry::Get();
 
-		// Cap this withdrawal by what the colonist can actually take this action: the carry
-		// weight (tools are equipment and don't count) AND the backpack's stack/slot headroom.
-		// Clamping by both means the pool below is only debited by what truly lands in the
-		// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing
-		// and leave the source for the next trip rather than dropping items on the floor.
-		const uint32_t massFit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-		const uint32_t slotFit = inventory.addableCount(collEff.itemDefName);
-		const uint32_t wanted = std::min({collEff.quantity, massFit, slotFit});
+		// Cap this withdrawal by what the colonist can actually take this action: the carry weight
+		// (tools are equipment and don't count), and the pack's stack/slot headroom or, for a two-hand
+		// good, the armful's. Clamping by it means a pool is only debited by what truly lands in the
+		// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing and leave
+		// the source for the next trip rather than dropping items on the floor.
+		const uint32_t room =
+			ecs::pickupUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName, ecs::carriedCargoMassKg(inventory, harvestRegistry));
+		const uint32_t wanted = std::min(collEff.quantity, room);
 
 		uint32_t added = 0;
 
@@ -118,7 +120,7 @@ namespace ecs {
 		// Inventory, not a ground entity. removeItem clamps to the box's live quantity, so a concurrent
 		// second colonist that beat us to it just withdraws less and the AI re-evaluates next tick -- the
 		// same self-correcting race handling the loose pickup relies on. Add exactly what we removed to
-		// the colonist (sized by carry weight + slots via `wanted`). This intercepts before every ground
+		// the colonist (sized by pickupUnitsThatFit via `wanted`). This intercepts before every ground
 		// path; a Withdraw never touches a pile, pool, or single-shot source.
 		if (collEff.sourceStorageId != 0) {
 			const auto sourceBox = static_cast<EntityID>(collEff.sourceStorageId);
@@ -168,6 +170,8 @@ namespace ecs {
 		// Only a ground pickup (sourceDefName == itemDefName, e.g. "Wood" from "Wood") may take the
 		// loose-pile path. A tree-fell yields "Wood" from "Flora_Tree..."; its source differs, so it
 		// must NOT be diverted here -- otherwise a pile sitting on the fell spot would hijack the chop.
+		// A pickup whose pile has left the index goes on to the single-shot branch, where the world never
+		// answers for a pile: the source reads Gone, its memory entry is forgotten, and nothing is taken.
 		const LoosePile pile = (collEff.sourceDefName == collEff.itemDefName)
 								   ? findLoosePile(world, m_loosePiles, harvestRegistry.getDefNameId(collEff.itemDefName), collEff.sourcePosition)
 								   : LoosePile{};
@@ -184,8 +188,7 @@ namespace ecs {
 				stowHeldToolsForArmful(inventory, colonistPosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, requested);
 			} else {
-				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-				added = inventory.addItem(collEff.itemDefName, std::min(requested, fit));
+				added = inventory.addItem(collEff.itemDefName, std::min(requested, room));
 			}
 
 			pile.stack->quantity -= added; // mutate the live component so the pile tracks what is left
@@ -225,7 +228,7 @@ namespace ecs {
 			// yield) and the rest drops. The source must still stand before its pool pays, as for a
 			// single-shot source. Removing the source erases its pool, so the removal follows the draw.
 			const uint32_t	  request = collEff.clearsSource ? UINT32_MAX : wanted;
-			const uint32_t	  packRoom = collEff.clearsSource ? std::min(massFit, slotFit) : wanted;
+			const uint32_t	  packRoom = collEff.clearsSource ? room : wanted;
 			const SourceState state = takeSource(SourceTake::Keep);
 			if (state != SourceState::Ready) {
 				if (state == SourceState::OnCooldown && collEff.clearsSource) {
@@ -310,28 +313,6 @@ namespace ecs {
 
 			// Below the full yield when carry- or slot-limited, or the source was gone or regrowing.
 			LOG_INFO(Engine, "[Action] Collected %u of %u x %s", added, collEff.quantity, collEff.itemDefName.c_str());
-		}
-
-		// For goal-driven Harvest tasks, update the GoalTaskRegistry. Record only what actually landed
-		// in inventory, so the goal's progress reflects real items the colonist now carries. A clear
-		// goal records nothing: it stands until the footprint is empty, so colonists clearing other
-		// blockers in it keep their task, and ConstructionSystem retires it then.
-		auto&		goalRegistry = GoalTaskRegistry::Get();
-		const auto* goal = (task.type == TaskType::Harvest && task.harvestGoalId != 0) ? goalRegistry.getGoal(task.harvestGoalId) : nullptr;
-		if (goal != nullptr && !goal->clearFootprint.has_value() && added > 0) {
-			goalRegistry.recordDelivery(task.harvestGoalId, added);
-
-			goal = goalRegistry.getGoal(task.harvestGoalId);
-			if (goal != nullptr && goal->availableCapacity() == 0) {
-				// Harvest done: the material is in the colonist's inventory now, so the Haul that
-				// carries it to the station can be created here (not up front), then the goal is retired.
-				// Construction emits its own per-material Hauls sized to the manifest, so its Harvests
-				// spawn none.
-				if (goal->owner != GoalOwner::ConstructionGoalSystem) {
-					goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
-				}
-				goalRegistry.removeGoal(task.harvestGoalId);
-			}
 		}
 	}
 

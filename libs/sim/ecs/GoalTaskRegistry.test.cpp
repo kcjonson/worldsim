@@ -1,5 +1,14 @@
 #include "GoalTaskRegistry.h"
 
+#include "World.h"
+#include "components/Inventory.h"
+#include "components/StorageConfiguration.h"
+#include "components/StructureBlueprint.h"
+#include "components/WorkQueue.h"
+
+#include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
+
 #include <gtest/gtest.h>
 
 #include <map>
@@ -13,13 +22,12 @@ namespace ecs::test {
 		void TearDown() override { GoalTaskRegistry::Get().clear(); }
 
 		static uint64_t make(
-			TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt, uint32_t target = 0) {
+			TaskType type, GoalOwner owner, EntityID destination, std::optional<uint64_t> parent = std::nullopt) {
 			GoalTask goal;
 			goal.type = type;
 			goal.owner = owner;
 			goal.destinationEntity = destination;
 			goal.parentGoalId = parent;
-			goal.targetAmount = target;
 			return GoalTaskRegistry::Get().createGoal(std::move(goal));
 		}
 
@@ -92,40 +100,6 @@ namespace ecs::test {
 		EXPECT_EQ(registry.allocateChainId(), second);
 	}
 
-	// Pinned: only a Haul child credits its parent Craft; a Harvest child's delivery stays on itself.
-	TEST_F(GoalTaskRegistryTest, RecordDeliveryCreditsParentCraftOnlyForHaulChildren) {
-		auto& registry = GoalTaskRegistry::Get();
-
-		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 10, std::nullopt, 4);
-		registry.updateGoal(craft, [](GoalTask& goal) { goal.status = GoalStatus::Blocked; });
-		const uint64_t harvest = make(TaskType::Harvest, GoalOwner::CraftingGoalSystem, 10, craft, 4);
-		const uint64_t haul = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, 10, craft, 4);
-
-		registry.recordDelivery(harvest, 2);
-		EXPECT_EQ(registry.getGoal(harvest)->deliveredAmount, 2U);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 0U);
-
-		registry.recordDelivery(haul, 3);
-		EXPECT_EQ(registry.getGoal(haul)->deliveredAmount, 3U);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 3U);
-		EXPECT_EQ(registry.getGoal(craft)->status, GoalStatus::Blocked);
-
-		registry.recordDelivery(haul, 1);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 4U);
-		EXPECT_EQ(registry.getGoal(craft)->status, GoalStatus::Available) << "the craft leaves Blocked once materials are met";
-	}
-
-	TEST_F(GoalTaskRegistryTest, RecordDeliveryOfZeroChangesNothing) {
-		auto& registry = GoalTaskRegistry::Get();
-
-		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, 10, std::nullopt, 4);
-		const uint64_t haul = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, 10, craft, 4);
-		registry.recordDelivery(haul, 0);
-
-		EXPECT_EQ(registry.getGoal(haul)->deliveredAmount, 0U);
-		EXPECT_EQ(registry.getGoal(craft)->deliveredAmount, 0U);
-	}
-
 	// Pinned: removal cascades through grandchildren and leaves unrelated goals and their indexes alone.
 	TEST_F(GoalTaskRegistryTest, RemoveGoalWithChildrenRemovesDescendantsOnly) {
 		auto& registry = GoalTaskRegistry::Get();
@@ -186,6 +160,99 @@ namespace ecs::test {
 		EXPECT_EQ(registry.goalCount(GoalOwner::StorageGoalSystem), 0U);
 		EXPECT_EQ(registry.goalCount(GoalOwner::CraftingGoalSystem), 1U);
 		expectIndexesAgreeWithGoalSet();
+	}
+
+	// Remaining need is counted in items at the root, from world truth: what the destination still
+	// lacks, never a slot count or a counter on a goal.
+	class RemainingNeedTest : public GoalTaskRegistryTest {
+	  protected:
+		void SetUp() override {
+			GoalTaskRegistryTest::SetUp();
+			auto& assets = assets::AssetRegistry::Get();
+			assets.clearDefinitions();
+			for (const char* name : {"Stone", "Stick"}) {
+				assets::AssetDefinition def;
+				def.defName = name;
+				def.label = name;
+				def.category = assets::ItemCategory::RawMaterial;
+				def.itemProperties = assets::ItemProperties{};
+				def.itemProperties->stackSize = 10;
+				assets.registerTestDefinition(std::move(def));
+			}
+			stone = assets.getDefNameId("Stone");
+			stick = assets.getDefNameId("Stick");
+			assets::RecipeRegistry::Get().clear();
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_Need";
+			recipe.label = "Need";
+			recipe.inputs = {{.defName = "Stone", .count = 3}, {.defName = "Stick", .count = 1}};
+			assets::RecipeRegistry::Get().registerTestRecipe(std::move(recipe));
+		}
+		void TearDown() override {
+			assets::RecipeRegistry::Get().clear();
+			assets::AssetRegistry::Get().clearDefinitions();
+			GoalTaskRegistryTest::TearDown();
+		}
+
+		World	 world;
+		uint32_t stone = 0;
+		uint32_t stick = 0;
+	};
+
+	TEST_F(RemainingNeedTest, StorageNeedIsItemCountedAgainstMaxOrRoomAndMinimumForHarvest) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		auto		   inventory = Inventory::createForStorage();
+		inventory.maxCapacity = 3;
+		inventory.addItem("Stone", 12); // two slots: 10 and 2
+		world.addComponent<Inventory>(box, std::move(inventory));
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 15, .maxAmount = 20});
+		config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial});
+		world.addComponent<StorageConfiguration>(box, std::move(config));
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 8U) << "max 20 less the 12 held";
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 3U) << "minimum 15 less the 12 held";
+		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Stock), 10U) << "no max: one free slot of room";
+
+		world.getComponent<Inventory>(box)->addItem("Stone", 4);
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 4U) << "a deposit shows at once";
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U);
+	}
+
+	TEST_F(RemainingNeedTest, CraftNeedIsTheNextJobsBillOfMaterialsLessTheStore) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID station = world.createEntity();
+		world.addComponent<WorkQueue>(station).addJob("Recipe_Need", 2);
+		auto& store = world.addComponent<Inventory>(station, Inventory::createForStorage());
+		store.addItem("Stone", 1);
+		const uint64_t root = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, station);
+		const uint64_t child = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, station, root);
+
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 2U);
+		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Stock), 1U);
+		EXPECT_EQ(registry.remainingNeed(world, child, stone, NeedBasis::Stock), 0U) << "need is asked of the root";
+
+		store.addItem("Stone", 2);
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U);
+		store.removeItem("Stone", 3); // a unit consumed its inputs
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 3U) << "the next unit needs them again";
+	}
+
+	TEST_F(RemainingNeedTest, ConstructionNeedIsTheManifestWhileTheUmbrellaAcceptsTheItem) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID site = world.createEntity();
+		StructureBlueprint blueprint;
+		blueprint.required = {{"Stone", 6}};
+		blueprint.recordDelivery("Stone", 2);
+		world.addComponent<StructureBlueprint>(site, std::move(blueprint));
+		const uint64_t root = make(TaskType::Build, GoalOwner::ConstructionGoalSystem, site);
+
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U) << "materials are not due yet";
+		registry.updateGoal(root, [&](GoalTask& goal) { goal.acceptedDefNameIds = {stone}; });
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 4U);
+		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Stock), 0U);
 	}
 
 } // namespace ecs::test

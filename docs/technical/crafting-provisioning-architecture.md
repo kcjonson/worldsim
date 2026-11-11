@@ -44,9 +44,11 @@ recipe's remaining need** — the crafting analogue of construction's
 2 into the station and keeps 5. The station store accumulates up to exactly the recipe's bill of
 materials, then the craft consumes it.
 
-This is ONE shared mechanism with construction. Crafting mirrors construction's
-`StructureBlueprint.delivered[]` / `recordDelivery` / `materialsComplete()` model, so the
-metered-deposit and no-leftover logic is not duplicated.
+This is ONE shared mechanism with construction. Both answer "how much more" through
+`GoalTaskRegistry::remainingNeed`, which reads what has landed live: the station store against the
+recipe's bill of materials, the blueprint's `delivered[]` (`StructureBlueprint::recordDelivery`)
+against its manifest. The deposit leg meters to that answer, so the metered-deposit and no-leftover
+logic is not duplicated.
 
 **Do NOT build handling for "extra/leftover in a station"** (return-excess, station overflow,
 storing or draining surplus). That case does not exist by design. (Deconstruct or cancel mid-craft
@@ -65,10 +67,12 @@ The amount a colonist takes depends on where the material comes from:
 
 So: harvest = take all you can carry; pile/storage pickup = take only what's needed.
 
-A carry gate guards both harvest and craft-fetch: skip emitting the option when no unit of the
-yield fits (no carry weight and no stack/slot headroom). Without it an over-weight or full colonist
-picks the option, collects 0 (the take clamps to carry weight and slots), re-evaluates, picks the
-same option, and loops — the "stuck harvesting beside a tree" and "infinite hauling" symptoms.
+A carry gate guards both harvest and craft-fetch: when a pickup of the item would lift nothing now
+(`pickupUnitsThatFit` is 0: no carry weight, no stack or slot headroom, or hands busy with another
+armful), the goal shows a `NoRoom` row instead of an option. Without it an over-weight or full
+colonist picks the option, collects 0, re-evaluates, picks the same option, and loops: the "stuck
+harvesting beside a tree" and "infinite hauling" symptoms. A build-site clear is exempt; it removes
+its blocker and drops what doesn't fit.
 
 ## 4. The `giveItemToColonist` cascade
 
@@ -90,20 +94,25 @@ speculative chain. Each recipe input resolves against colony knowledge (any colo
 - **neither** to a `NoSource` "waiting (none found)" need that re-resolves to Cut/Haul once a
   colonist discovers a source (`GoalStatus::NoSource`).
 
-**Lazy haul:** a harvestable input creates only a Harvest goal; the haul that carries cut material
-to the station is created when the harvest completes (`createHaulForCompletedHarvest`), so no haul
-row appears before there is anything to haul. **Fetch from stock:** a craft haul can bring a
-remembered loose pile to the station (two-phase pickup then deliver-to-station) instead of
-re-harvesting.
+**The cut carries itself in:** a harvestable input creates only a Harvest goal, and when a cut lands
+the harvest task converts in place into its deposit leg (`ActionSystem::carryHarvestIn`), so the
+yield never sits in the colonist's hands with no task. Goods a colonist already carries, left over
+from a cut or an interruption, are offered to any root that still wants them by one carry-in from
+possession option. **Fetch from stock:** a craft haul can bring a remembered loose pile to the
+station (two-phase pickup then deliver-to-station) instead of re-harvesting, sized to what the pile
+still has once other colonists' claims on it are taken out.
+
+What is already on its way toward a craft is counted by in-flight claims at its root, not by looking
+in colonists' packs ([Task Claims](./task-claims.md)).
 
 ### Reliability rules (AI arbitration)
 
 Single-colonist crafting was made reliable by fixing the blockers that let a queued axe stall:
 
-- **`colonyCarriesStock` is scoped to colonist inventories.** It viewed every `Inventory`, so
-  leftover material in a *different* station's store counted as "carried" and the input resolved to
-  a fetch Haul that could never source it, stranding a second craft. Scope it to entities with a
-  `Colonist` tag (the only deliverable carriers).
+- **Another station's store is never stock on its way.** An earlier pack scan counted leftover
+  material in a *different* station's store as "carried", so the input resolved to a fetch Haul that
+  could never source it, stranding a second craft. That scan is gone: goods on their way are the
+  in-flight claims at the root, held only by tasks that carry or will cut them.
 - **Provisioning that serves an active work order floors above idle Wander.** A craft-provisioning
   Haul/Harvest priority collapsed below Wander once its source was far (distance penalty), so a
   colonist abandoned a half-provisioned craft and wandered. A `servesActiveWorkOrder` flag plus a
@@ -125,17 +134,21 @@ Single-colonist crafting was made reliable by fixing the blockers that let a que
   Completion is guaranteed by the priority floor plus re-resolve; the round-trips are just long.
 - **Consolidate all item-add sites onto `giveItemToColonist`** (harvest-yield and pickup still add
   directly).
-- **Multi-colonist crafting** is a deferred spec ([multi-colonist-crafting.md](../design/multi-colonist-crafting.md));
-  single-colonist is the current scope. The station-store model with metered deposits is the
-  substrate it builds on, and provisioning across colonists raises claim/reservation questions that
-  spec resolves.
+- **Multi-colonist crafting** is a deferred spec ([multi-colonist-crafting.md](../design/multi-colonist-crafting.md)).
+  The station-store model with metered deposits is the substrate it builds on; provisioning across
+  colonists is coordinated by claims ([Task Claims](./task-claims.md)): several colonists may
+  provision one order, each fetch and cut counted at the root, and a station selected for Craft is
+  held by its crafter's slot claim.
 
 ## 7. Related Documents
 
 - [Task Generation Architecture](./task-generation-architecture.md) — goal-driven task existence
   vs UI vs colonist-selection priority; provisioning lives on the goal path described there.
 - [Building & Construction Architecture](./building-construction-architecture.md) — the
-  `StructureBlueprint.delivered[]` / `recordDelivery` / `remaining()` model crafting mirrors.
+  `StructureBlueprint.delivered[]` / `recordDelivery` / `remaining()` model, read with the station
+  store through `GoalTaskRegistry::remainingNeed`.
+- [Task Claims](./task-claims.md): how colonists avoid working against each other: in-flight at the
+  root, source and destination claims, the Reserved status.
 - [Physical Stack Inventory](./physical-stack-inventory.md) — slot-based inventory, stack sizes,
   ground piles, and the build-site delivery model that the station store reuses.
 - [Pathfinding & Navigation](./pathfinding-architecture.md) — `findValidPositionNear`, the ground

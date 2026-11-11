@@ -25,7 +25,6 @@ namespace ecs {
 
 	class GoalTaskRegistry;
 	struct StorageConfiguration;
-	struct Inventory;
 
 	/// System that creates Haul goals from storage containers
 	/// Priority: 55 (runs after NeedsDecay, before AIDecision)
@@ -44,15 +43,10 @@ namespace ecs {
 	  private:
 		/// Emit/maintain stocking Harvest goals for a storage's specific-item rules whose minAmount
 		/// exceeds the count already in the box, when a colonist knows a harvestable source. Each is
-		/// a child of the storage's umbrella Haul goal. Drives the chop -> carry-in chain that fills
+		/// a child of the storage's umbrella Haul goal. Each cut carries its yield in to fill
 		/// the box to its configured minimum; lower priority than construction/craft work.
 		void reconcileStockingHarvests(
-			GoalTaskRegistry&					 registry,
-			const assets::AssetRegistry& assetRegistry,
-			const StorageConfiguration&			 config,
-			const Inventory&					 inventory,
-			uint64_t							 umbrellaId,
-			float								 maxColonistCarryKg
+			GoalTaskRegistry& registry, const assets::AssetRegistry& assetRegistry, const StorageConfiguration& config, uint64_t umbrellaId
 		);
 
 

@@ -4,6 +4,7 @@
 // Captures why a colonist chose their current task and what alternatives exist.
 // See /docs/design/game-systems/colonists/decision-trace.md for design details.
 
+#include "../EntityID.h"
 #include "Needs.h"
 #include "Task.h"
 
@@ -27,8 +28,11 @@ namespace ecs {
 		NoSource,  // Need exists but no known entity in memory
 		Regrowing, // The known source is regrowing: skipped now, chosen again once it is ready
 		NoRoom,	   // The colonist can't lift any of the item now (pack full, or hands busy with another load)
+		Reserved,  // Another colonist's claim holds the source, station, or item (reservedBy names it)
 		Satisfied  // Need above threshold, no action needed
 	};
+
+	class World;
 
 	/// A single evaluated task option in the decision trace
 	struct EvaluatedOption {
@@ -56,13 +60,13 @@ namespace ecs {
 		uint64_t	stationEntityId = 0;
 
 		// Hauling-specific fields (for Haul tasks)
-		std::string				 haulItemDefName;		  // Item to haul
+		uint32_t				 haulItemDefNameId = 0;	  // Item to haul
 		uint32_t				 haulQuantity = 1;		  // Quantity to haul
 		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
 		uint64_t				 haulSourceStorageId = 0; // Source box entity ID for a storage->storage pull (0 = loose/inventory source)
 		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
-		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled (for reservation)
+		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled
 		bool					 haulFromInventory = false; // Source is colonist inventory (craft-material haul)
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
@@ -71,8 +75,8 @@ namespace ecs {
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
 
 		// Harvest-specific fields (for Harvest tasks)
-		uint64_t harvestTargetEntityId = 0;	 // Entity ID of harvestable (tree, bush)
-		uint64_t harvestGoalId = 0;			 // Goal being fulfilled (for reservation)
+		uint64_t harvestTargetEntityId = 0;	 // Memory key of the harvestable (tree, bush), not an ECS id
+		uint64_t harvestGoalId = 0;			 // Goal being fulfilled
 		uint32_t harvestYieldDefNameId = 0;	 // What item will be yielded
 
 		// Build-specific fields (for Build tasks)
@@ -91,6 +95,13 @@ namespace ecs {
 		// always prefers building/crafting (and provisioning those) over filling a box.
 		// Mutually exclusive with servesActiveWorkOrder: a stocking goal is not a work order.
 		bool servesStorageStocking = false;
+
+		// A further cut for a root the colonist already carries goods toward. Within its tier it ranks
+		// above every option that does not, the carry-in of those goods included, so a colonist gathers
+		// a full trip before walking (task-claims.md, Batching). The cut is only offered while the trip
+		// has room and the root wants more than is carried, and a source that is regrowing, unreachable,
+		// or reserved is passed over at selection, so the carry-in wins as soon as none is left.
+		bool continuesGathering = false;
 
 		// --- (tier, score) arbitration key ---
 		// tier: categorical priority, compared FIRST. Lower number = higher priority (1 best).
@@ -123,8 +134,13 @@ namespace ecs {
 		// stable id it has (goal id, station/entity id, etc.); higherPriority() breaks ties on it.
 		uint64_t tiebreakId = 0;
 
-		// Human-readable explanation for UI
-		std::string reason;
+		// What the option is, as a fixed literal: a std::format string whose {} take the option's own
+		// names (the item, the source and its yield, the recipe), which describeOption fills when the
+		// trace is drawn, so evaluating an option builds no string. Need options give a qualifier only.
+		const char* reason = "";
+
+		// Reserved: the highest-ranked other colonist whose claim holds the target.
+		EntityID reservedBy = kInvalidEntity;
 
 		/// Compose the within-tier score from its breakdown fields. Score orders options WITHIN one
 		/// tier only (tier is compared first), so it never needs to encode categorical priority.
@@ -135,12 +151,15 @@ namespace ecs {
 		}
 
 		/// Lexicographic (tier, score) ordering: returns true if `a` is HIGHER priority than `b`.
-		/// Lower tier wins; within a tier, higher score wins; ties break on tiebreakId ascending
+		/// Lower tier wins; within a tier, a continuing cut first, then higher score; ties break on tiebreakId ascending
 		/// (a multiplayer-determinism guard, since the goal registry iterates hash-bucket order).
 		/// This is THE arbitration: tier is inviolable, score can never cross a tier boundary.
 		[[nodiscard]] static bool higherPriority(const EvaluatedOption& a, const EvaluatedOption& b) {
 			if (a.tier != b.tier) {
 				return a.tier < b.tier;
+			}
+			if (a.continuesGathering != b.continuesGathering) {
+				return a.continuesGathering;
 			}
 			if (a.score != b.score) {
 				return a.score > b.score;
@@ -160,15 +179,8 @@ namespace ecs {
 		/// Timestamp of last evaluation (game time in seconds)
 		float lastEvaluationTime = 0.0F;
 
-		/// Summary of why the current task was selected
-		std::string selectionSummary;
-
-		/// Clear the trace for re-evaluation
-		void clear() {
-			options.clear();
-			selectionSummary.clear();
-			// Note: lastEvaluationTime is set by the system after building
-		}
+		/// Clear the trace for re-evaluation (lastEvaluationTime is set by the system after building)
+		void clear() { options.clear(); }
 
 		/// Get the currently selected option (first with Selected status)
 		[[nodiscard]] const EvaluatedOption* getSelected() const {
@@ -183,5 +195,10 @@ namespace ecs {
 		/// Get number of options to display (capped by kMaxDisplayedOptions)
 		[[nodiscard]] size_t displayCount() const { return std::min(options.size(), kMaxDisplayedOptions); }
 	};
+
+	/// The option as the player reads it ("Cutting Oak Tree for Wood", "Hunger at 40% (12m away)"),
+	/// composed from its fixed reason and ids, naming the holder when it is Reserved. Built when drawn or when the option is accepted, never
+	/// while options are evaluated.
+	[[nodiscard]] std::string describeOption(const World& world, const EvaluatedOption& option);
 
 } // namespace ecs

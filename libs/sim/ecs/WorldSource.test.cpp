@@ -54,7 +54,7 @@ namespace ecs::test {
 			}
 
 			bool ready() {
-				return !worldSourceRegrowingUntil(executor, world, assets::AssetRegistry::Get().getDefNameId(kBush), bushAt).has_value();
+				return !worldSourceRegrowingUntil(executor, assets::AssetRegistry::Get().getDefNameId(kBush), bushAt, time->simulationSeconds()).has_value();
 			}
 
 			void run(int frames) {
@@ -113,5 +113,37 @@ namespace ecs::test {
 		EXPECT_FALSE(ready()) << "a regrowing bush is still regrowing";
 		EXPECT_EQ(cut(), ActionSystem::SourceState::OnCooldown);
 	}
+
+#ifdef DEVELOPMENT_BUILD
+	// A world with no TimeSystem has no clock to stamp a regrowth on, so cutting a bush there aborts
+	// instead of starting a regrowth that would never end. Taking a source with nothing regrowing reads
+	// no clock, so worlds that never cut a regrowing source need no TimeSystem.
+	TEST(WorldSourceNoClockTest, CuttingWithoutAClockAborts) {
+		GTEST_FLAG_SET(death_test_style, "threadsafe");
+		auto& registry = assets::AssetRegistry::Get();
+		registry.clearDefinitions();
+		assets::AssetDefinition bush;
+		bush.defName = kBush;
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Berry";
+		registry.registerTestDefinition(std::move(bush));
+		const glm::vec2			  at{10.0F, 10.0F};
+		assets::PlacementExecutor executor{registry};
+		assets::AsyncChunkPlacementResult chunk;
+		chunk.coord = world::worldToChunk({at.x, at.y});
+		chunk.spatialIndex.insert({kBush, at});
+		executor.storeChunkResult(std::move(chunk));
+		World				  world;
+		std::vector<EntityID> pendingRemoval;
+
+		EXPECT_EQ(takeWorldSource(executor, world, pendingRemoval, kBush, at, ActionSystem::SourceTake::Keep, 0.0F), ActionSystem::SourceState::Ready)
+			<< "nothing regrows yet, so no clock is read";
+		EXPECT_DEATH(
+			(void)takeWorldSource(executor, world, pendingRemoval, kBush, at, ActionSystem::SourceTake::Regrow, kRegrowthSeconds),
+			""
+		);
+		registry.clearDefinitions();
+	}
+#endif
 
 } // namespace ecs::test

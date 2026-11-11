@@ -29,6 +29,13 @@ namespace assets {
 
 namespace ecs {
 
+	class World;
+
+	/// What a storage root's need is measured against: the stock colonists may haul in (the item's
+	/// configured max, or physical room when none is set), or what cutting stocks it toward (the
+	/// configured minimum). Craft and construction roots have one target and ignore it.
+	enum class NeedBasis : uint8_t { Stock, Harvest };
+
 	/// Goal status for task hierarchy and dependency tracking
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
@@ -80,10 +87,6 @@ namespace ecs {
 		std::vector<uint32_t>		 acceptedDefNameIds; // Specific items accepted
 		assets::ItemCategory acceptedCategory = assets::ItemCategory::None;
 
-		// Progress tracking
-		uint32_t targetAmount = 0;	  // How many items the goal wants
-		uint32_t deliveredAmount = 0; // How many have been delivered
-
 		// Metadata
 		float	  createdAt = 0.0F;
 		GoalOwner owner{}; // Which system created/owns this goal
@@ -104,20 +107,6 @@ namespace ecs {
 		// recipe, this changes and the child Harvest/Haul goals are rebuilt. 0 = not a Craft
 		// goal (or no recipe).
 		uint32_t recipeNameId = 0;
-
-		// Task chain ID for continuity bonus (cutter gets priority for linked haul)
-		std::optional<uint64_t> chainId;
-
-		// Check if goal is complete
-		[[nodiscard]] bool isComplete() const { return targetAmount > 0 && deliveredAmount >= targetAmount; }
-
-		// Get available capacity (target - delivered)
-		[[nodiscard]] uint32_t availableCapacity() const {
-			if (deliveredAmount >= targetAmount) {
-				return 0;
-			}
-			return targetAmount - deliveredAmount;
-		}
 	};
 
 	/// Filter predicate for goal queries
@@ -140,6 +129,11 @@ namespace ecs {
 		/// job (Harvest -> Haul, Pickup -> Deposit) across goals and tasks; 0 is never handed out.
 		uint64_t allocateChainId() { return nextChainId++; }
 
+		/// The next claim sequence number, unique until the next clear(). A task takes one at acceptance as
+		/// both its claim instance id and its claim sequence (task-claims.md); 0 is never handed out. It
+		/// lives here, beside the chain id counter, because it is colony state a save must keep.
+		uint64_t allocateClaimSeq() { return nextClaimSeq++; }
+
 		// --- Goal Management (called by goal systems: StorageGoalSystem, CraftingGoalSystem, etc.) ---
 
 		/// Create a new goal task
@@ -149,8 +143,8 @@ namespace ecs {
 
 		/// Update an existing goal in place (e.g., capacity changed).
 		///
-		/// CONTRACT: the updater may only mutate amount/accepted-type fields
-		/// (targetAmount, deliveredAmount, acceptedDefNameIds, acceptedCategory, status, ...).
+		/// CONTRACT: the updater may only mutate accepted-type and status fields
+		/// (acceptedDefNameIds, acceptedCategory, status, ...).
 		/// It must NOT change indexed identity fields (type, owner, destinationEntity,
 		/// parentGoalId); only the type index is reconciled here. To change
 		/// identity, remove and recreate the goal.
@@ -164,20 +158,6 @@ namespace ecs {
 
 		/// Remove goal by destination entity (convenience for entity destruction)
 		void removeGoalByDestination(EntityID destinationEntity);
-
-		/// Record delivery of items to a goal (increments deliveredAmount by the amount
-		/// actually moved). Quantities count ITEMS, not actions: a harvest yielding 3 sticks
-		/// or a haul moving 5 wood records 3 or 5, never 1.
-		///
-		/// If the goal is a child of a Craft goal, the same amount is also credited to the
-		/// parent Craft (whose target is the total material count). The parent leaves
-		/// Blocked status once its materials are satisfied. This keeps a single source of
-		/// truth: child progress and parent progress advance together, never double-counted
-		/// against the same goal.
-		///
-		/// @param goalId The goal that received the items
-		/// @param amount Number of items actually delivered (0 is a no-op)
-		void recordDelivery(uint64_t goalId, uint32_t amount);
 
 		// --- Queries ---
 
@@ -216,15 +196,21 @@ namespace ecs {
 		/// Get all child goals of a parent goal
 		[[nodiscard]] std::vector<const GoalTask*> getChildGoals(uint64_t parentId) const;
 
+		/// The root of `goalId`'s hierarchy (itself when it has no parent): the goal in-flight claims
+		/// count toward. 0 when `goalId` is not a goal.
+		[[nodiscard]] uint64_t rootOf(uint64_t goalId) const;
+
+		/// How many more of an item root goal `rootGoalId` needs, in items: its target minus what has
+		/// landed at its destination (task-claims.md, Remaining need). A craft's target is the bill of
+		/// materials of its station's next job against the station store; a construction umbrella's is
+		/// the blueprint manifest against delivered[], while the umbrella accepts the item; a storage
+		/// umbrella's is per `basis` against what the box holds, never past its physical room. Read
+		/// from the world on each call, so a deposit or a consumed input shows at once. In-flight is
+		/// not subtracted here (ClaimIndex::inFlight is). 0 for anything else.
+		[[nodiscard]] uint32_t remainingNeed(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis) const;
+
 		/// Remove a goal and all its children (cascade delete)
 		void removeGoalWithChildren(uint64_t goalId);
-
-		/// Spawn the Haul that carries a just-completed Harvest's yield to the station. The cut
-		/// material now sits in the colonist's inventory, so the Haul is created Available and
-		/// inherits the Harvest's destination, accepted items, parent Craft goal, and chain id.
-		/// Call before removing the Harvest goal. Returns the new Haul's id, or 0 if `harvestGoalId`
-		/// is not a Harvest goal.
-		uint64_t createHaulForCompletedHarvest(uint64_t harvestGoalId);
 
 	  private:
 		GoalTaskRegistry() = default;
@@ -248,6 +234,8 @@ namespace ecs {
 		uint64_t nextGoalId = 1;
 
 		uint64_t nextChainId = 1;
+
+		uint64_t nextClaimSeq = 1;
 
 		// Internal helpers
 		void addToIndices(const GoalTask& goal);

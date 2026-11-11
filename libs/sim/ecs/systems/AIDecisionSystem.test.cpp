@@ -9,6 +9,7 @@
 #include "NavigationSystem.test.h"
 #include "PhysicsSystem.h"
 #include "TimeSystem.h"
+#include "VisionSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -31,6 +32,7 @@
 #include "../components/StructureBlueprint.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+#include "../components/WorkQueue.h"
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
@@ -102,6 +104,7 @@ namespace ecs::test {
 		void TearDown() override {
 			// Clean up test definitions
 			assets::AssetRegistry::Get().clearDefinitions();
+			assets::RecipeRegistry::Get().clear();
 			GoalTaskRegistry::Get().clear();
 			world.reset();
 		}
@@ -149,14 +152,14 @@ namespace ecs::test {
 		/// Memory entries the work evaluators have looked at so far.
 		uint64_t workSourceVisits() { return world->getSystem<AIDecisionSystem>().m_workSources.visits; }
 
-		/// Times the colony's box knowledge has been worked out so far.
-		uint64_t colonyStorageBuilds() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.builds; }
+		/// Boxes the colony's box knowledge has worked out so far.
+		uint64_t colonyStorageWorkedOut() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.workedOut; }
 #endif
 
 		/// Drive the private chain-interruption handler directly. This fixture is a friend of
 		/// AIDecisionSystem (derived fixtures are not), so the seam lives here.
 		void callHandleChainInterruption(
-			EntityID entity, const Task& task, Inventory& inventory, const Position& position,
+			EntityID entity, Task& task, Inventory& inventory, const Position& position,
 			TaskType newTaskType, NeedType newNeedType
 		) {
 			world->getSystem<AIDecisionSystem>().handleChainInterruption(
@@ -214,9 +217,37 @@ namespace ecs::test {
 			haul.destinationEntity = destBox;
 			haul.destinationPosition = destPos;
 			haul.acceptedDefNameIds = {itemDefNameId};
-			haul.targetAmount = 10;
 			haul.status = GoalStatus::Available;
 			return GoalTaskRegistry::Get().createGoal(std::move(haul));
+		}
+
+		/// A storage box at `pos` stocking `item` toward `minAmount`, its umbrella, and the stocking
+		/// Harvest child StorageGoalSystem raises for it. Returns the Harvest goal's id.
+		uint64_t makeStockingHarvest(glm::vec2 pos, const std::string& item, uint32_t minAmount = 10) {
+			const uint32_t itemId = assets::AssetRegistry::Get().getDefNameId(item);
+			const EntityID box = makeStorageBox(pos, "Box", item, ecs::StoragePriority::Medium, 0, minAmount);
+			GoalTask	   harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::StorageGoalSystem;
+			harvest.destinationEntity = box;
+			harvest.destinationPosition = pos;
+			harvest.acceptedDefNameIds = {itemId};
+			harvest.yieldDefNameId = itemId;
+			harvest.parentGoalId = makeUmbrellaGoal(box, pos, itemId);
+			harvest.status = GoalStatus::Available;
+			return GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		}
+
+		/// Queue a job at `station` whose recipe needs `count` of `item`, with an empty store, so the
+		/// station's Craft root needs them.
+		void makeStationNeed(EntityID station, const std::string& item, uint32_t count) {
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_Need_" + item;
+			recipe.label = recipe.defName;
+			recipe.inputs.push_back({item, 0, count});
+			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+			world->addComponent<Inventory>(station, Inventory::createForStorage());
 		}
 
 		std::unique_ptr<World> world;
@@ -788,7 +819,8 @@ namespace ecs::test {
 		constexpr int kNumColonists = 100;
 
 		// A low box holding Wood and a high box wanting it, both known to every colonist, so each
-		// colonist's evaluation asks whether the colony knows the source box.
+		// colonist's evaluation asks whether the colony knows the source box. A second low box holds
+		// Wood nobody has seen, and a third holds none, so it is never asked about.
 		auto&					registry = assets::AssetRegistry::Get();
 		assets::AssetDefinition wood;
 		wood.defName = "Wood";
@@ -810,6 +842,8 @@ namespace ecs::test {
 		const glm::vec2 highPos{6.0F, -4.0F};
 		const EntityID	lowBox = makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
 		const EntityID	highBox = makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High);
+		const EntityID	unseenBox = makeStorageBox({-40.0F, -40.0F}, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		makeStorageBox({-50.0F, -40.0F}, "Box", "Wood", ecs::StoragePriority::Low);
 		makeUmbrellaGoal(highBox, highPos, woodId);
 
 		// Create many colonists
@@ -844,7 +878,7 @@ namespace ecs::test {
 		}
 
 #ifdef DEVELOPMENT_BUILD
-		const uint64_t buildsBefore = colonyStorageBuilds();
+		const uint64_t workedOutBefore = colonyStorageWorkedOut();
 #endif
 		world->update(0.016F);
 
@@ -857,11 +891,15 @@ namespace ecs::test {
 			EXPECT_TRUE(std::any_of(options.begin(), options.end(), [lowBox](const EvaluatedOption& o) {
 				return o.haulSourceStorageId == static_cast<uint64_t>(lowBox);
 			})) << "every colonist is offered the pull from the known low box";
+			EXPECT_FALSE(std::any_of(options.begin(), options.end(), [unseenBox](const EvaluatedOption& o) {
+				return o.haulSourceStorageId == static_cast<uint64_t>(unseenBox);
+			})) << "nobody has seen the other box";
 		}
 
 #ifdef DEVELOPMENT_BUILD
-		// The colony's box knowledge is worked out once for the update, not once per colonist.
-		EXPECT_EQ(colonyStorageBuilds() - buildsBefore, 1U);
+		// Each box asked about is worked out once for the update, not once per colonist, and the box
+		// holding no Wood is never worked out at all.
+		EXPECT_EQ(colonyStorageWorkedOut() - workedOutBefore, 2U);
 #endif
 	}
 
@@ -888,16 +926,7 @@ namespace ecs::test {
 		const uint32_t treeId = registry.getDefNameId("Tree");
 
 		const glm::vec2 boxPos{0.0F, 6.0F};
-		const EntityID	box = makeStorageBox(boxPos, "Box", "Wood", ecs::StoragePriority::Medium);
-		makeUmbrellaGoal(box, boxPos, woodId);
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::CraftingGoalSystem;
-		harvest.yieldDefNameId = woodId;
-		harvest.destinationPosition = {0.0F, 6.0F};
-		harvest.targetAmount = 5;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		makeStockingHarvest(boxPos, "Wood");
 
 		// Two colonists remember the same 3 piles and 2 trees; one also remembers 9,990 waters.
 		constexpr int kPiles = 3;
@@ -941,10 +970,80 @@ namespace ecs::test {
 		}
 
 #ifdef DEVELOPMENT_BUILD
-		// Per colonist: each capability index is collected once, and each goal visits only the sources
-		// of its item. The 9,990 waters add nothing.
-		constexpr uint64_t kPerColonist = (kPiles + kTrees) + kPiles + kTrees;
+		// Per colonist: each goal visits only the sources of its item. The 9,990 waters add nothing.
+		constexpr uint64_t kPerColonist = kPiles + kTrees;
 		EXPECT_EQ(workSourceVisits() - visitsBefore, 2 * kPerColonist);
+#endif
+	}
+
+	// A goal the colonist can't serve visits none of its sources: a full box, a pack with no room, and
+	// a cut without the tool are each settled before any remembered pile or tree is looked at.
+	TEST_F(AIDecisionSystemTest, WorkGatesComeBeforeTheSources) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.category = assets::ItemCategory::RawMaterial;
+		wood.capabilities.carryable = assets::CarryableCapability{1};
+		wood.itemProperties = assets::ItemProperties{};
+		wood.itemProperties->stackSize = 40;
+		wood.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(wood));
+		assets::AssetDefinition tree;
+		tree.defName = "Tree";
+		tree.label = "Tree";
+		tree.capabilities.harvestable = assets::HarvestableCapability{};
+		tree.capabilities.harvestable->yieldDefName = "Wood";
+		tree.capabilities.harvestable->requiredToolType = "Axe";
+		registry.registerTestDefinition(std::move(tree));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		const uint32_t treeId = registry.getDefNameId("Tree");
+
+		const glm::vec2 fullPos{0.0F, 6.0F};
+		const glm::vec2 roomyPos{0.0F, -6.0F};
+		const EntityID	fullBox = makeStorageBox(fullPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/50 * 40);
+		ASSERT_EQ(world->getComponent<Inventory>(fullBox)->addableCount("Wood"), 0U);
+		const EntityID roomyBox = makeStorageBox(roomyPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/0, /*min=*/10);
+		makeUmbrellaGoal(fullBox, fullPos, woodId);
+		GoalTask harvest;
+		harvest.type = TaskType::Harvest;
+		harvest.owner = GoalOwner::StorageGoalSystem;
+		harvest.yieldDefNameId = woodId;
+		harvest.destinationPosition = roomyPos;
+		harvest.parentGoalId = makeUmbrellaGoal(roomyBox, roomyPos, woodId);
+		harvest.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+
+		// No axe, and a pack that can't take a single unit.
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->carryCapacityKg = 0.0F;
+		for (int i = 0; i < 20; ++i) {
+			addKnownEntity(colonist, {3.0F + static_cast<float>(i), 0.0F}, woodId, assets::CapabilityType::Carryable);
+			addKnownEntity(colonist, {-3.0F - static_cast<float>(i), 0.0F}, treeId, assets::CapabilityType::Harvestable);
+		}
+
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t visitsBefore = workSourceVisits();
+#endif
+		world->update(0.016F);
+
+		const auto& options = getTrace(colonist)->options;
+		// The cut is shown as no room, with no source behind it.
+		const auto harvests = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; });
+		const auto harvestNoRoom = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Harvest && o.status == OptionStatus::NoRoom && !o.targetPosition.has_value();
+		});
+		EXPECT_EQ(harvests, 1);
+		EXPECT_EQ(harvestNoRoom, 1);
+		// The roomy box's goal says why it can't be served; the full box's says nothing.
+		const auto hauls = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; });
+		const auto noRoom = std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Haul && o.status == OptionStatus::NoRoom;
+		});
+		EXPECT_EQ(hauls, 1);
+		EXPECT_EQ(noRoom, 1);
+#ifdef DEVELOPMENT_BUILD
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 0U);
 #endif
 	}
 
@@ -1104,7 +1203,7 @@ namespace ecs::test {
 
 		ASSERT_NE(hungerOption, nullptr);
 		EXPECT_EQ(hungerOption->status, OptionStatus::NoSource);
-		EXPECT_TRUE(hungerOption->reason.find("no known source") != std::string::npos);
+		EXPECT_TRUE(describeOption(*world, *hungerOption).find("no known source") != std::string::npos);
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceShowsSatisfiedForHighNeeds) {
@@ -1250,9 +1349,8 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 
-		// Store initial selection summary
-		std::string initialSummary = trace->selectionSummary;
-		EXPECT_FALSE(initialSummary.empty());
+		ASSERT_NE(trace->getSelected(), nullptr);
+		EXPECT_FALSE(describeOption(*world, *trace->getSelected()).empty());
 
 		// Trigger re-evaluation by simulating arrival
 		task->state = TaskState::Arrived;
@@ -1260,7 +1358,8 @@ namespace ecs::test {
 
 		// Trace should be rebuilt (may have same or different summary)
 		// The key is that it's still valid
-		EXPECT_FALSE(trace->selectionSummary.empty());
+		ASSERT_NE(trace->getSelected(), nullptr);
+		EXPECT_FALSE(describeOption(*world, *trace->getSelected()).empty());
 		EXPECT_EQ(trace->options.size(), 6u); // Still has all options (5 needs + wander, no Gather Food since has food)
 	}
 
@@ -1585,6 +1684,7 @@ namespace ecs::test {
 
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+		makeStationNeed(station, "WorkStick", 2);
 
 		// Parent Craft goal + its child Harvest goal (the provisioning step).
 		GoalTask craft;
@@ -1592,7 +1692,6 @@ namespace ecs::test {
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
 		craft.destinationPosition = {4.0F, 0.0F};
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 
@@ -1602,7 +1701,6 @@ namespace ecs::test {
 		harvest.destinationEntity = station;
 		harvest.destinationPosition = {4.0F, 0.0F};
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
 		harvest.parentGoalId = craftId;
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
@@ -1627,20 +1725,10 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);
 
-		auto storage = world->createEntity();
-		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
-
 		// A stocking harvest: StorageGoalSystem chops to fill a box toward its minimum. No Craft/Build
-		// parent, so servesActiveWorkOrder is false and it stays at the opportunistic base tier.
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::StorageGoalSystem;
-		harvest.destinationEntity = storage;
-		harvest.destinationPosition = {4.0F, 0.0F};
-		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 5;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		// root, so servesActiveWorkOrder is false and it stays at the opportunistic base tier.
+		(void)stickId;
+		makeStockingHarvest({4.0F, 0.0F}, "StockStick");
 
 		world->update(0.016F);
 
@@ -2007,7 +2095,7 @@ namespace ecs::test {
 		// withdraw from A as a challenger: the trace shows it as no room instead.
 		EXPECT_EQ(findPullOption(*getTrace(colonist)), nullptr) << "no withdraw a full armful couldn't take";
 		const auto* noRoom = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::Haul && o.status == OptionStatus::NoRoom && o.haulItemDefName == "Wood";
+			return o.taskType == TaskType::Haul && o.status == OptionStatus::NoRoom && o.haulItemDefNameId == assets::AssetRegistry::Get().getDefNameId("Wood");
 		});
 		EXPECT_NE(noRoom, nullptr) << "the trace says why the pull isn't offered";
 
@@ -2045,11 +2133,12 @@ namespace ecs::test {
 		const uint32_t boxDefId = registry.getDefNameId("Box");
 
 		// Source A (Low) is at its OWN min (held == minAmount == 8) -> 0 drainable -> NO pull offered.
-		// Dest B (High) still wants Wood. Mirrors the in-game state after the FIRST haul drained A to min.
 		const glm::vec2 srcPos{2.0F, 0.0F};
 		const glm::vec2 destPos{4.0F, 0.0F};
 		const EntityID srcBox = makeStorageBox(srcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/8, /*min=*/8);
-		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20);
+		// Dest B (High) sits at its max, so it wants nothing more: no carry-in of the armful is offered
+		// either, and Wander is the top option. The guard is what holds the delivery.
+		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20, /*max=*/13);
 
 		// Colonist mid-carry: a two-hand Wood armful in hands, task on its deposit leg (phase 2) to B.
 		auto colonist = createColonist(srcPos);
@@ -2195,17 +2284,8 @@ namespace ecs::test {
 		addKnownEntity(colonist, {0.0F, 30.0F}, bushId, assets::CapabilityType::Harvestable);  // B
 
 		// A stocking goal makes both bushes Available tier-6 harvest options.
-		auto storage = world->createEntity();
-		world->addComponent<Position>(storage, Position{{2.0F, 2.0F}});
-		GoalTask harvest;
-		harvest.type = TaskType::Harvest;
-		harvest.owner = GoalOwner::StorageGoalSystem;
-		harvest.destinationEntity = storage;
-		harvest.destinationPosition = {2.0F, 2.0F};
-		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 99;
-		harvest.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		(void)stickId;
+		makeStockingHarvest({2.0F, 2.0F}, "HystStick", /*minAmount=*/100);
 
 		// First re-eval: the system commits to one of the two equidistant bushes (deterministic via
 		// tiebreakId). Capture that target; it is now the in-progress option.
@@ -2367,12 +2447,12 @@ namespace ecs::test {
 		// A work order wanting sticks: a tier-4 Harvest of the nearer bush.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{6.0F, 0.0F}});
+		makeStationNeed(station, "WorkStick", 2);
 		GoalTask craft;
 		craft.type = TaskType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
 		craft.destinationPosition = {6.0F, 0.0F};
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		GoalTask harvest;
@@ -2381,7 +2461,6 @@ namespace ecs::test {
 		harvest.destinationEntity = station;
 		harvest.destinationPosition = {6.0F, 0.0F};
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
 		harvest.parentGoalId = craftId;
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
@@ -2448,7 +2527,8 @@ namespace ecs::test {
 		const glm::vec2 regrowingSticks{0.0F, 2.0F};
 		const glm::vec2 readySticks{0.0F, 5.0F};
 		int				readinessAsked = 0;
-		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at) {
+		world->registerSystem<TimeSystem>();
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at, double /*now*/) {
 			++readinessAsked;
 			return at == regrowingBerries || at == regrowingSticks ? std::optional<double>{1000.0} : std::nullopt;
 		});
@@ -2464,11 +2544,11 @@ namespace ecs::test {
 		// A work order wanting sticks, so a tier-4 Harvest outranks the tier-5 hunger.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{0.0F, 0.0F}});
+		makeStationNeed(station, "WorkStick", 2);
 		GoalTask craft;
 		craft.type = TaskType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		GoalTask harvest;
@@ -2476,7 +2556,6 @@ namespace ecs::test {
 		harvest.owner = GoalOwner::CraftingGoalSystem;
 		harvest.destinationEntity = station;
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
 		harvest.parentGoalId = craftId;
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
@@ -2515,7 +2594,7 @@ namespace ecs::test {
 		const glm::vec2 seenLater{9.0F, 0.0F};
 		const std::vector<std::pair<glm::vec2, double>> readyAt{{near, 100.0}, {far, 40.0}};
 		int												asked = 0;
-		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at) {
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at, double /*now*/) {
 			++asked;
 			for (const auto& [where, when] : readyAt) {
 				if (where == at && time.simulationSeconds() < when) {
@@ -2565,6 +2644,67 @@ namespace ecs::test {
 		addKnownEntity(colonist, seenLater, berryBushId, assets::CapabilityType::Harvestable);
 		decide();
 		EXPECT_EQ(hungerTarget(), seenLater) << "a newly remembered ready bush is taken at once";
+	}
+
+	// The wait holds with the real VisionSystem looking on: a storage box and a loose pile beside the
+	// colonist live only in the ECS, and seeing them again each vision tick must not read as a change
+	// to what it remembers, or the wait would drop and every regrowing bush be asked again each decision.
+	TEST_F(AIDecisionSystemTest, RegrowingFoodWaitHoldsBesideAPileAndABox) {
+		auto&			registry = assets::AssetRegistry::Get();
+		const uint32_t	berryBushId = registerBerryBush(registry);
+		const uint32_t	boxId = registry.registerSyntheticDefinition(
+			 "Test_WaitBox", static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Storage))
+		 );
+		const uint32_t pileId = registry.registerSyntheticDefinition(
+			"Test_WaitPile", static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Carryable))
+		);
+		const glm::vec2 bushAt{4.0F, 0.0F};
+		const glm::vec2 boxAt{1.0F, 0.0F};
+		const glm::vec2 pileAt{0.0F, 1.0F};
+
+		assets::PlacementExecutor		  executor(registry);
+		assets::AsyncChunkPlacementResult chunk;
+		chunk.coord = world::worldToChunk({bushAt.x, bushAt.y});
+		chunk.spatialIndex.insert({"Flora_BerryBush", bushAt});
+		executor.storeChunkResult(std::move(chunk));
+		const std::unordered_set<world::ChunkCoordinate> processed{world::worldToChunk({bushAt.x, bushAt.y})};
+		auto&											 vision = world->registerSystem<VisionSystem>();
+		vision.setPlacementData(&executor, &processed);
+		vision.setUpdateInterval(1);
+
+		world->registerSystem<TimeSystem>();
+		int asked = 0;
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 /*at*/, double /*now*/) {
+			++asked;
+			return std::optional<double>{1000.0};
+		});
+
+		for (const auto& [defName, at] : {std::pair{"Test_WaitBox", boxAt}, std::pair{"Test_WaitPile", pileAt}}) {
+			const auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{at});
+			world->addComponent<Appearance>(entity, Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		}
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		const auto decide = [&] {
+			getTask(colonist)->timeSinceEvaluation = 1.0F;
+			world->update(0.016F);
+		};
+
+		decide();
+		const Memory* memory = world->getComponent<Memory>(colonist);
+		ASSERT_TRUE(memory->knowsWorldEntity(bushAt, berryBushId));
+		ASSERT_TRUE(memory->knowsWorldEntity(boxAt, boxId));
+		ASSERT_TRUE(memory->knowsWorldEntity(pileAt, pileId));
+		ASSERT_EQ(asked, 1) << "the regrowing bush is asked once";
+		for (int i = 0; i < 5; ++i) {
+			decide();
+		}
+		EXPECT_EQ(asked, 1) << "five vision ticks over an unchanged box and pile leave the wait standing";
+		const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+		ASSERT_NE(hunger, nullptr);
+		EXPECT_EQ(hunger->status, OptionStatus::Regrowing);
 	}
 
 	// =============================================================================
@@ -2750,15 +2890,15 @@ namespace ecs::test {
 		auto& time = world->registerSystem<TimeSystem>();
 		time.setSpeed(GameSpeed::VeryFast);
 		std::vector<EntityID> pendingRemoval;
-		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t defNameId, glm::vec2 at) {
-			return worldSourceRegrowingUntil(executor, *world, defNameId, at);
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t defNameId, glm::vec2 at, double now) {
+			return worldSourceRegrowingUntil(executor, defNameId, at, now);
 		});
 		world->getSystem<ActionSystem>().setTakeSourceCallback(
 			[&](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
 				return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
 			}
 		);
-		const auto bushReady = [&] { return !worldSourceRegrowingUntil(executor, *world, bushId, bushAt).has_value(); };
+		const auto bushReady = [&] { return !worldSourceRegrowingUntil(executor, bushId, bushAt, time.simulationSeconds()).has_value(); };
 
 		// Someone just cut it.
 		ASSERT_EQ(
@@ -2982,7 +3122,7 @@ namespace ecs::test {
 		}
 
 		// Drive the real handler for a switch to a hands-needing Harvest task.
-		void interruptForHarvest(EntityID colonist, const Task& task) {
+		void interruptForHarvest(EntityID colonist, Task& task) {
 			auto* inventory = world->getComponent<Inventory>(colonist);
 			auto* position = world->getComponent<Position>(colonist);
 			callHandleChainInterruption(colonist, task, *inventory, *position, TaskType::Harvest, NeedType::Count);
@@ -3159,7 +3299,6 @@ namespace ecs::test {
 		goal.owner = GoalOwner::ConstructionGoalSystem;
 		goal.destinationEntity = blueprint;
 		goal.destinationPosition = {3.0F, 0.0F};
-		goal.targetAmount = 1;
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
@@ -3214,6 +3353,7 @@ namespace ecs::test {
 		Inventory storageInv;
 		storageInv.maxCapacity = 5;
 		world->addComponent<Inventory>(storage, storageInv);
+		world->addComponent<StorageConfiguration>(storage, StorageConfiguration::createAcceptAll({assets::ItemCategory::RawMaterial}));
 
 		GoalTask goal;
 		goal.type = TaskType::Haul;
@@ -3221,7 +3361,6 @@ namespace ecs::test {
 		goal.destinationEntity = storage;
 		goal.destinationPosition = {4.0F, 0.0F};
 		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
-		goal.targetAmount = 5; // free-slot count, must NOT cap the haul
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
@@ -3272,19 +3411,23 @@ namespace ecs::test {
 		Inventory storageInv;
 		storageInv.maxCapacity = 5;
 		world->addComponent<Inventory>(storage, storageInv);
+		// It takes Pellet and Plank only, so the Ballast and Logs the colonist carries are not stocked into it.
+		StorageConfiguration storageConfig;
+		storageConfig.addRule(StorageRule{.defName = "Pellet", .category = assets::ItemCategory::RawMaterial});
+		storageConfig.addRule(StorageRule{.defName = "Plank", .category = assets::ItemCategory::RawMaterial});
+		world->addComponent<StorageConfiguration>(storage, std::move(storageConfig));
 		GoalTask goal;
 		goal.type = TaskType::Haul;
 		goal.owner = GoalOwner::StorageGoalSystem;
 		goal.destinationEntity = storage;
 		goal.destinationPosition = {4.0F, 0.0F};
 		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
-		goal.targetAmount = 5;
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
 		const auto statusOf = [&](const char* item) {
 			const auto* option = findOption(*getTrace(colonist), [&](const EvaluatedOption& o) {
-				return o.taskType == TaskType::Haul && o.haulItemDefName == item;
+				return o.taskType == TaskType::Haul && o.haulItemDefNameId == assets::AssetRegistry::Get().getDefNameId(item);
 			});
 			return option != nullptr ? std::optional<OptionStatus>{option->status} : std::nullopt;
 		};
@@ -3344,6 +3487,7 @@ namespace ecs::test {
 		storageInv.addItem("Pellet", 80);
 		ASSERT_EQ(storageInv.addableCount("Pellet"), 0U);
 		world->addComponent<Inventory>(storage, storageInv);
+		world->addComponent<StorageConfiguration>(storage, StorageConfiguration::createAcceptAll({assets::ItemCategory::RawMaterial}));
 
 		GoalTask goal;
 		goal.type = TaskType::Haul;
@@ -3351,7 +3495,6 @@ namespace ecs::test {
 		goal.destinationEntity = storage;
 		goal.destinationPosition = {4.0F, 0.0F};
 		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
-		goal.targetAmount = 0;
 		goal.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(goal));
 
@@ -3398,7 +3541,6 @@ namespace ecs::test {
 		haul.destinationEntity = site;
 		haul.destinationPosition = {4.0F, 0.0F};
 		haul.acceptedDefNameIds = {registry.getDefNameId("Plank")};
-		haul.targetAmount = 4; // sized before the site was credited
 		haul.parentGoalId = 999;
 		haul.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(haul));
@@ -3411,7 +3553,8 @@ namespace ecs::test {
 	}
 
 	// A construction clear Harvest is served by any harvestable inside its footprint, whatever it
-	// yields, and by nothing outside it. A bush nearer the colonist but outside is not offered.
+	// yields, and by nothing outside it. A bush nearer the colonist but outside is not offered; a bush
+	// and a tree inside are, though they yield different items.
 	TEST_F(AIDecisionSystemTest, ClearHarvestOffersOnlyHarvestablesInsideItsFootprint) {
 		auto& registry = assets::AssetRegistry::Get();
 
@@ -3425,6 +3568,13 @@ namespace ecs::test {
 		bushDef.capabilities.harvestable = cap;
 		registry.registerTestDefinition(std::move(bushDef));
 		const uint32_t bushId = registry.getDefNameId("Flora_TestBush");
+		assets::AssetDefinition treeDef;
+		treeDef.defName = "Flora_TestTree";
+		treeDef.label = "Test Tree";
+		treeDef.capabilities.harvestable = assets::HarvestableCapability{};
+		treeDef.capabilities.harvestable->yieldDefName = "Wood";
+		registry.registerTestDefinition(std::move(treeDef));
+		const uint32_t treeId = registry.getDefNameId("Flora_TestTree");
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		setNeedValue(colonist, NeedType::Hunger, 100.0F);
@@ -3434,14 +3584,15 @@ namespace ecs::test {
 
 		const glm::vec2 outside{1.0F, 0.0F};
 		const glm::vec2 inside{20.0F, 0.0F};
+		const glm::vec2 treeInside{22.0F, 0.0F};
 		addKnownEntity(colonist, outside, bushId, assets::CapabilityType::Harvestable);
 		addKnownEntity(colonist, inside, bushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, treeInside, treeId, assets::CapabilityType::Harvestable);
 
 		GoalTask clear;
 		clear.type = TaskType::Harvest;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationPosition = {20.0F, 0.0F};
-		clear.targetAmount = 1;
 		clear.clearFootprint = FootprintBounds{{16.0F, -4.0F}, {24.0F, 4.0F}};
 		clear.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(clear));
@@ -3452,6 +3603,158 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest);
 		EXPECT_EQ(task->harvestTargetEntityId, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
+		std::vector<uint64_t> offered;
+		for (const auto& option : getTrace(colonist)->options) {
+			if (option.taskType == TaskType::Harvest) {
+				offered.push_back(option.harvestTargetEntityId);
+			}
+		}
+		std::sort(offered.begin(), offered.end());
+		std::vector<uint64_t> expected{hashWorldEntity(inside, bushId), hashWorldEntity(treeInside, treeId)};
+		std::sort(expected.begin(), expected.end());
+		EXPECT_EQ(offered, expected) << "both blockers inside, and nothing else";
+	}
+
+	// Two defs that yield the same item both serve a harvest goal for it, and a third that yields
+	// something else isn't looked at: the goal visits only the entries of the defs that give its item.
+	TEST_F(AIDecisionSystemTest, HarvestGoalSeesEveryDefThatYieldsItsItem) {
+		auto&	   registry = assets::AssetRegistry::Get();
+		const auto registerFlora = [&](const char* name, const char* yield) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.capabilities.harvestable = assets::HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+			registry.registerTestDefinition(std::move(def));
+			return registry.getDefNameId(name);
+		};
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.itemProperties = assets::ItemProperties{};
+		wood.category = assets::ItemCategory::RawMaterial;
+		wood.itemProperties->stackSize = 40;
+		wood.itemProperties->massKg = 0.1F;
+		registry.registerTestDefinition(std::move(wood));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		const uint32_t oakId = registerFlora("Flora_Oak", "Wood");
+		const uint32_t pineId = registerFlora("Flora_Pine", "Wood");
+		const uint32_t bushId = registerFlora("Flora_Bush", "Berry");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, {3.0F, 0.0F}, oakId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, {0.0F, 3.0F}, pineId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, {0.0F, -3.0F}, pineId, assets::CapabilityType::Harvestable);
+		for (int i = 0; i < 10; ++i) {
+			addKnownEntity(colonist, {-3.0F - static_cast<float>(i), 0.0F}, bushId, assets::CapabilityType::Harvestable);
+		}
+
+		makeStockingHarvest({0.0F, 0.0F}, "Wood");
+
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t visitsBefore = workSourceVisits();
+#endif
+		world->update(0.016F);
+
+		std::vector<uint32_t> cut;
+		for (const auto& option : getTrace(colonist)->options) {
+			if (option.taskType == TaskType::Harvest) {
+				EXPECT_EQ(option.harvestYieldDefNameId, woodId);
+				cut.push_back(*option.targetDefNameId);
+			}
+		}
+		std::sort(cut.begin(), cut.end());
+		std::vector<uint32_t> expected{oakId, pineId, pineId};
+		std::sort(expected.begin(), expected.end());
+		EXPECT_EQ(cut, expected) << "the oak and both pines, no bush";
+#ifdef DEVELOPMENT_BUILD
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 3U) << "the bushes are never visited";
+#endif
+	}
+
+	// A category goal takes every carryable of its category plus the items it names, each pile once
+	// however the goal names it (in its category, named too, or named twice), and visits no other
+	// item. A goal naming one item twice offers each pile of it once too.
+	TEST_F(AIDecisionSystemTest, HaulGoalsOfferEachPileOnce) {
+		auto&	   registry = assets::AssetRegistry::Get();
+		const auto registerItem = [&](const char* name, assets::ItemCategory category) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.handsRequired = 1;
+			def.category = category;
+			def.capabilities.carryable = assets::CarryableCapability{1};
+			def.itemProperties = assets::ItemProperties{};
+			def.itemProperties->stackSize = 40;
+			def.itemProperties->massKg = 0.1F;
+			registry.registerTestDefinition(std::move(def));
+			return registry.getDefNameId(name);
+		};
+		const uint32_t pelletId = registerItem("Pellet", assets::ItemCategory::RawMaterial);
+		const uint32_t breadId = registerItem("Bread", assets::ItemCategory::Food);
+		const uint32_t trinketId = registerItem("Trinket", assets::ItemCategory::Tool);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, {2.0F, 0.0F}, pelletId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, {3.0F, 0.0F}, pelletId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, {0.0F, 2.0F}, breadId, assets::CapabilityType::Carryable);
+		for (int i = 0; i < 10; ++i) {
+			addKnownEntity(colonist, {-2.0F - static_cast<float>(i), 0.0F}, trinketId, assets::CapabilityType::Carryable);
+		}
+
+		const auto makeBox = [&](glm::vec2 at, std::vector<StorageRule> rules) {
+			auto box = world->createEntity();
+			world->addComponent<Position>(box, Position{at});
+			world->addComponent<Inventory>(box, Inventory::createForStorage());
+			StorageConfiguration config;
+			for (StorageRule& rule : rules) {
+				config.addRule(std::move(rule));
+			}
+			world->addComponent<StorageConfiguration>(box, std::move(config));
+			return box;
+		};
+		const glm::vec2 categoryAt{4.0F, 4.0F};
+		const glm::vec2 namedAt{-4.0F, 4.0F};
+		GoalTask category;
+		category.type = TaskType::Haul;
+		category.owner = GoalOwner::StorageGoalSystem;
+		category.destinationEntity = makeBox(categoryAt, {StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial},
+														  StorageRule{.defName = "Bread", .category = assets::ItemCategory::Food}});
+		category.destinationPosition = categoryAt;
+		category.acceptedCategory = assets::ItemCategory::RawMaterial;
+		category.acceptedDefNameIds = {breadId, pelletId, breadId};
+		category.status = GoalStatus::Available;
+		const uint64_t categoryGoal = GoalTaskRegistry::Get().createGoal(std::move(category));
+		GoalTask named;
+		named.type = TaskType::Haul;
+		named.owner = GoalOwner::StorageGoalSystem;
+		named.destinationEntity = makeBox(namedAt, {StorageRule{.defName = "Pellet", .category = assets::ItemCategory::RawMaterial}});
+		named.destinationPosition = namedAt;
+		named.acceptedDefNameIds = {pelletId, pelletId};
+		named.status = GoalStatus::Available;
+		const uint64_t namedGoal = GoalTaskRegistry::Get().createGoal(std::move(named));
+
+#ifdef DEVELOPMENT_BUILD
+		const uint64_t visitsBefore = workSourceVisits();
+#endif
+		world->update(0.016F);
+
+		const auto& options = getTrace(colonist)->options;
+		const auto	offered = [&](uint64_t goal, const char* item) {
+			 return std::count_if(options.begin(), options.end(), [&](const EvaluatedOption& o) {
+				 return o.taskType == TaskType::Haul && o.haulGoalId == goal && o.haulItemDefNameId == assets::AssetRegistry::Get().getDefNameId(item);
+			 });
+		};
+		EXPECT_EQ(offered(categoryGoal, "Pellet"), 2) << "in the category and named: each pile once";
+		EXPECT_EQ(offered(categoryGoal, "Bread"), 1) << "named twice: one option";
+		EXPECT_EQ(offered(categoryGoal, "Trinket"), 0) << "another category";
+		EXPECT_EQ(offered(namedGoal, "Pellet"), 2) << "named twice: each pile once";
+		EXPECT_EQ(offered(namedGoal, "Bread"), 0);
+#ifdef DEVELOPMENT_BUILD
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 2U + 1U + 2U) << "the trinkets are never visited";
+#endif
 	}
 
 	// A craft fetch must not be offered when the colonist is at/over its carry-weight cap: the
@@ -3518,13 +3821,13 @@ namespace ecs::test {
 		// Craft goal needs 2 SmallStone; its child craft-haul goal is Available to fetch.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+		makeStationNeed(station, "SmallStone", 2);
 
 		GoalTask craft;
 		craft.type = TaskType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
 		craft.destinationPosition = {4.0F, 0.0F};
-		craft.targetAmount = 2;
 		craft.status = GoalStatus::Blocked;
 		const uint64_t craftId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 
@@ -3534,7 +3837,6 @@ namespace ecs::test {
 		haul.destinationEntity = station;
 		haul.destinationPosition = {4.0F, 0.0F};
 		haul.acceptedDefNameIds = {stoneId};
-		haul.targetAmount = 2;
 		haul.parentGoalId = craftId;
 		haul.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(haul));
@@ -3610,9 +3912,16 @@ namespace ecs::test {
 		// The colonist remembers a harvestable bush yielding Stick.
 		addKnownEntity(colonist, {2.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);
 
-		// A Harvest goal wanting Stick, available.
+		// A craft wanting Stick, and its Harvest child, available.
 		const auto station = world->createEntity();
 		world->addComponent<Position>(station, Position{{4.0F, 0.0F}});
+		makeStationNeed(station, "Stick", 2);
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = {4.0F, 0.0F};
+		craft.status = GoalStatus::Blocked;
 
 		GoalTask harvest;
 		harvest.type = TaskType::Harvest;
@@ -3621,7 +3930,7 @@ namespace ecs::test {
 		harvest.destinationPosition = {4.0F, 0.0F};
 		harvest.acceptedDefNameIds = {stickId};
 		harvest.yieldDefNameId = stickId;
-		harvest.targetAmount = 2;
+		harvest.parentGoalId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		harvest.status = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(harvest));
 
@@ -4589,14 +4898,31 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		auto& registry = assets::AssetRegistry::Get();
 		addKnownEntity(colonist, kInRoom, registerBerryBush(registry), assets::CapabilityType::Harvestable);
+		// A station whose job needs berries, and the Harvest child that cuts for it. The colonist's own
+		// berry would be carried in instead, so it has none.
+		world->getComponent<Inventory>(colonist)->removeItem("Berry", 1);
+		assets::RecipeDef recipe;
+		recipe.defName = "Recipe_BerryNeed";
+		recipe.label = recipe.defName;
+		recipe.inputs.push_back({"Berry", 0, 3});
+		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+		const EntityID station = world->createEntity();
+		world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+		world->addComponent<Inventory>(station, Inventory::createForStorage());
+		GoalTask craft;
+		craft.type = TaskType::Craft;
+		craft.owner = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity = station;
+		craft.destinationPosition = kStart;
+		craft.status = GoalStatus::Blocked;
 		GoalTask cut;
 		cut.type = TaskType::Harvest;
-		cut.destinationEntity = world->createEntity();
+		cut.destinationEntity = station;
 		cut.destinationPosition = kStart;
 		cut.yieldDefNameId = registry.getDefNameId("Berry");
-		cut.targetAmount = 5;
 		cut.status = GoalStatus::Available;
 		cut.owner = GoalOwner::CraftingGoalSystem;
+		cut.parentGoalId = GoalTaskRegistry::Get().createGoal(std::move(craft));
 		GoalTaskRegistry::Get().createGoal(std::move(cut));
 
 		int	  choseCut = 0;

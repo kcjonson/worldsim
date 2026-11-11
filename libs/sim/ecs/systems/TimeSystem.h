@@ -113,8 +113,8 @@ class TimeSystem : public ISystem {
 
 class World;
 
-/// The world's TimeSystem::simulationSeconds(), or 0 in a world without a TimeSystem (unit contexts with
-/// no clock, where a started regrowth never ends).
+/// The world's TimeSystem::simulationSeconds(). A world without a TimeSystem has no answer: development
+/// builds abort, since a regrowth stamped or read against no clock would silently never end.
 [[nodiscard]] double simulationSeconds(World& world);
 
 }  // namespace ecs

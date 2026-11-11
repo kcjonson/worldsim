@@ -259,7 +259,7 @@ Player can choose:
 |--------|--------------|
 | A colonist discovers or forgets a source | The owning goal system's next poll (NoSource goals re-resolve, stale ones retire) and the colonist's next evaluation |
 | A colonist accepts, advances, or abandons work | Claims on its task, read through the claim index |
-| Items land at a destination | `recordDelivery` and the destination's live contents |
+| Items land at a destination | `GoalTaskRegistry::remainingNeed`, reading the destination's live contents |
 | A goal is fulfilled or cancelled | The goal system removes it |
 
 ---

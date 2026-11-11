@@ -6,7 +6,6 @@
 #include <ecs/components/Memory.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/WorkQueue.h>
-#include <ecs/systems/GoalSystemHelpers.h>
 
 #include <sstream>
 #include <utility>
@@ -104,7 +103,10 @@ std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
 	return obtainable;
 }
 
-bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::string& itemDefName) {
+bool isStorageSourceKnown(
+	ecs::World& world, const std::unordered_set<uint32_t>& memorySources, ecs::ColonyStorageKnowledge& storageKnowledge,
+	ecs::EntityID destBox, const std::string& itemDefName
+) {
 	auto&		   registry = assets::AssetRegistry::Get();
 	const uint32_t itemId = registry.getDefNameId(itemDefName);
 	if (itemId == 0) {
@@ -112,7 +114,7 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 	}
 
 	// A loose pile or a known harvestable's yield satisfies the pull straight from Memory.
-	if (collectMemorySources(world).count(itemId) > 0) {
+	if (memorySources.count(itemId) > 0) {
 		return true;
 	}
 
@@ -132,8 +134,7 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 	}
 	const ecs::StoragePriority destPriority = destConfig->getPriorityFor(itemDefName, category);
 
-	ecs::ColonyStorageKnowledge storageKnowledge;
-	const auto					known = collectInventorySources(
+	const auto known = collectInventorySources(
 		world,
 		[&](ecs::EntityID source, const ecs::Inventory& inv) {
 			if (source == destBox) {

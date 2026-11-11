@@ -20,6 +20,7 @@
 
 #include <ecs/InventoryMass.h>
 #include <ecs/World.h>
+#include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
@@ -32,7 +33,6 @@
 #include <ecs/components/StructureHealth.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
-#include <ecs/systems/ActionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/TimeSystem.h>
@@ -522,10 +522,7 @@ namespace world_sim {
 		if (colonistSel != nullptr && colonistSel->entityId == id) {
 			m_ctx.selection->clearSelection();
 		}
-		if (auto* actions = m_ctx.world->tryGetSystem<ecs::ActionSystem>()) {
-			actions->loosePiles().remove(id);
-		}
-		m_ctx.world->destroyEntity(id);
+		ecs::destroyWorldEntity(*m_ctx.world, id);
 		LOG_INFO(Game, "[DevAPI] kill: removed #%llu", static_cast<unsigned long long>(id));
 		m_ctx.ui->pushNotification("Dev", "Colonist removed", ui::ToastSeverity::Info);
 	}

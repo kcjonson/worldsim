@@ -4,6 +4,7 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../LoosePileIndex.h"
 #include "../StoreOrDrop.h"
 #include "../World.h"
 #include "../components/Action.h"
@@ -18,6 +19,7 @@
 #include "../components/Needs.h"
 #include "../components/Packaged.h"
 #include "../components/PlayerControlled.h"
+#include "../components/ResourceStack.h"
 #include "../components/Skills.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/StorageConfiguration.h"
@@ -26,6 +28,8 @@
 #include "../components/ToiletLocationFinder.h"
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
+#include "ActionSystem.h"
+#include "ChainClaims.h"
 #include "NavigationSystem.h"
 #include "TimeSystem.h"
 #include "WorkSources.h"
@@ -74,27 +78,6 @@ namespace ecs {
 			// All valid NeedTypes must be handled above - hitting this is a bug
 			LOG_ERROR(Engine, "needToCapability: unhandled NeedType %d", static_cast<int>(need));
 			return assets::CapabilityType::Edible;
-		}
-
-		/// Get a human-readable name for a need type (for debug logging)
-		[[nodiscard]] const char* needTypeName(NeedType need) {
-			switch (need) {
-				case NeedType::Hunger:
-					return "Hunger";
-				case NeedType::Thirst:
-					return "Thirst";
-				case NeedType::Energy:
-					return "Energy";
-				case NeedType::Bladder:
-					return "Bladder";
-				case NeedType::Digestion:
-					return "Digestion";
-				case NeedType::Count:
-					break;
-			}
-			// All valid NeedTypes must be handled above - hitting this is a bug
-			LOG_ERROR(Engine, "needTypeName: unhandled NeedType %d", static_cast<int>(need));
-			return "Unknown";
 		}
 
 		/// Get the first action defName for a task type (for chain interruption checks)
@@ -171,7 +154,7 @@ namespace ecs {
 		/// Does harvesting this definition yield something edible? Not every harvestable is food
 		/// (WoodyBush yields Stick, Reed yields PlantFiber).
 		[[nodiscard]] bool yieldsEdibleFood(const assets::AssetRegistry& registry, uint32_t defNameId) {
-			const auto* def = registry.getDefinition(registry.getDefName(defNameId));
+			const auto* def = registry.getDefinitionById(defNameId);
 			return def != nullptr && def->capabilities.harvestable.has_value() &&
 				   assets::isItemEdible(def->capabilities.harvestable->yieldDefName);
 		}
@@ -301,7 +284,7 @@ namespace ecs {
 		}
 
 		/// Check if an option matches the current task (for the hysteresis margin)
-		[[nodiscard]] bool isOptionCurrentTask(const EvaluatedOption& option, const Task& currentTask) {
+		[[nodiscard]] bool isOptionCurrentTask(const EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId) {
 			if (!currentTask.isActive() || option.status != OptionStatus::Available) {
 				return false;
 			}
@@ -316,7 +299,7 @@ namespace ecs {
 					return option.craftRecipeDefName == currentTask.craftRecipeDefName &&
 						   option.stationEntityId == currentTask.targetStationId;
 				case TaskType::Haul:
-					return option.haulItemDefName == currentTask.haulItemDefName &&
+					return option.haulItemDefNameId == currentHaulItemId &&
 						   option.haulTargetStorageId == currentTask.haulTargetStorageId;
 				case TaskType::PlacePackaged:
 					return option.placePackagedEntityId == currentTask.placePackagedEntityId;
@@ -331,6 +314,29 @@ namespace ecs {
 			}
 		}
 
+		/// The cargo `task` hands to `selected` when it is the next leg of the same gathering: a cut, or a
+		/// carry-in, for the root and item the task carries goods toward.
+		[[nodiscard]] std::optional<SuspendedWork> nextGatheringLeg(const EvaluatedOption& selected, const Task& task) {
+			const auto& goals = GoalTaskRegistry::Get();
+			if (selected.taskType == TaskType::Harvest) {
+				return handOverCargo(task, goals.rootOf(selected.harvestGoalId), selected.harvestYieldDefNameId);
+			}
+			if (selected.taskType == TaskType::Haul && selected.haulFromInventory) {
+				return handOverCargo(task, goals.rootOf(selected.haulGoalId), selected.haulItemDefNameId);
+			}
+			return std::nullopt;
+		}
+
+		/// Does the task hold goods of its chain: a haul or placement past its pickup, or a cut carrying
+		/// what earlier cuts landed?
+		[[nodiscard]] bool carriesChainGoods(const Task& task) {
+			if (task.chainId.has_value() && task.chainStep > 0) {
+				return true;
+			}
+			return task.type == TaskType::Harvest &&
+				   std::any_of(task.claims.begin(), task.claims.end(), [](const Claim& claim) { return claim.kind() == ClaimKind::Inbound; });
+		}
+
 		/// Populate the (tier, score) arbitration key for an evaluated option.
 		/// Sets option.tier (classifyTier) and the within-tier score breakdown (distanceFactor,
 		/// taskAgeBonus, hysteresisBonus), then composes option.score. skillBonus is set by the
@@ -338,8 +344,9 @@ namespace ecs {
 		/// @param world ECS world (to read a stocking haul's destination box priority); may be null
 		/// @param option The option to populate (skillBonus already set by its evaluator)
 		/// @param currentTask Current colonist task (for the hysteresis margin)
+		/// @param currentHaulItemId The current task's haul item, interned (0 when not hauling)
 		/// @param currentTime Current game time (for task age calculation)
-		void populatePriorityBonuses(World* world, EvaluatedOption& option, const Task& currentTask, float currentTime) {
+		void populatePriorityBonuses(World* world, EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId, float currentTime) {
 			const auto& priorityConfig = assets::PriorityConfig::Get();
 
 			// Categorical tier first: it is compared before any score term.
@@ -364,7 +371,7 @@ namespace ecs {
 
 			// Hysteresis margin: stick the in-progress option so a same-tier challenger must beat it
 			// by more than this to win (prevents thrashing). Only matters within a tier.
-			if (isOptionCurrentTask(option, currentTask)) {
+			if (isOptionCurrentTask(option, currentTask, currentHaulItemId)) {
 				option.hysteresisBonus = priorityConfig.getInProgressBonus();
 			}
 
@@ -379,9 +386,9 @@ namespace ecs {
 				const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
 				if (destConfig != nullptr) {
 					const auto& reg = assets::AssetRegistry::Get();
-					const auto* itemDef = reg.getDefinition(option.haulItemDefName);
+					const auto* itemDef = reg.getDefinitionById(option.haulItemDefNameId);
 					if (itemDef != nullptr) {
-						const StoragePriority destPriority = destConfig->getPriorityFor(option.haulItemDefName, itemDef->category);
+						const StoragePriority destPriority = destConfig->getPriorityFor(itemDef->defName, itemDef->category);
 						const auto rank = static_cast<int16_t>(static_cast<uint8_t>(destPriority)); // 0..3
 						option.storagePriorityBias = static_cast<int16_t>(rank * priorityConfig.getStoragePriorityWeight());
 					}
@@ -410,443 +417,507 @@ namespace ecs {
 			option.score = option.computeScore();
 		}
 
-		/// Evaluate haul options by querying Haul goals from GoalTaskRegistry
-		/// Goal-driven: Goals define WHAT storage needs items, Memory + inventory provide
-		/// fulfillment options.
+		/// How much a root still wants, as seen by one deciding colonist: the root's remaining need net
+		/// of every other task's in-flight claims (its own current task and suspended record excluded,
+		/// so its own work never reads as taken). What it carries is on its way already, so it is
+		/// netted out before the colonist goes to fetch or cut more.
 		///
-		/// Two source kinds:
-		/// - Craft-material hauls (the Haul is a child of a Craft goal): the colonist harvested
-		///   the materials into its own inventory, so the source is inventory. It carries them
-		///   to the crafting station - no ground pickup. This is what makes the
-		///   harvest -> haul -> craft chain actually connect.
-		/// - Storage hauls: the source is a loose ground item the colonist knows about.
-		///
-		/// @param world ECS world (to read a destination storage's live inventory for haul sizing)
-		/// @param registry Asset registry for capability lookups
-		/// @param sources The colonist's remembered loose items, by item
-		/// @param storageKnowledge The boxes the colony knows, this update
-		/// @param inventory Colonist inventory (for craft-material hauls)
-		/// @param position Colonist position
-		/// @param trace Output decision trace
+		/// It also answers what a source and a destination have left for this colonist once every other
+		/// task's claims are taken out (task-claims.md, Availability). Each answer is one probe of the
+		/// claim index plus the claims on that one target.
+		struct RootSupply {
+			World&						 world;
+			const ClaimIndex&			 claims;
+			ClaimExclusion				 self;
+			const Task&					 task;
+			const Inventory&			 inventory;
+			const assets::AssetRegistry& registry;
+			const LoosePileIndex*		 piles;
+
+			[[nodiscard]] uint32_t available(uint64_t root, uint32_t item, NeedBasis basis) const {
+				return rootAvailable(world, claims, root, item, basis, self);
+			}
+			[[nodiscard]] uint32_t toAcquire(uint64_t root, uint32_t item, NeedBasis basis) const {
+				const uint32_t need = available(root, item, basis);
+				const uint32_t carried = need > 0 ? ecs::availableQuantity(inventory, registry.getDefName(item)) : 0U;
+				return need > carried ? need - carried : 0U;
+			}
+
+			/// Units of the item a remembered pile still offers: its live count less what others will take.
+			/// A pile the world can't find (taken since it was seen, or a world with no pile index) has no
+			/// count to read; it offers the wanted amount while nobody else claims it, so one colonist goes
+			/// to look and the stale memory is corrected on arrival.
+			[[nodiscard]] uint32_t pileLeft(uint64_t key, uint32_t item, glm::vec2 position, uint32_t wanted) const {
+				const uint32_t claimed = claims.sourceClaimed({.kind = TargetKind::WorldKey, .key = key}, item, self);
+				const EntityID pile = piles != nullptr ? piles->find(world, item, position) : kInvalidEntity;
+				if (pile == kInvalidEntity) {
+					return claimed > 0 ? 0U : wanted;
+				}
+				const uint32_t live = world.getComponent<ResourceStack>(pile)->quantity;
+				return live > claimed ? live - claimed : 0U;
+			}
+
+			/// Units of the item a storage box can still take, net of every other task's inbound: the room
+			/// in its own stacks (existing ones, and the stacks its inbound already opens) plus the free
+			/// slots no inbound item has been promised, in stacks of the item. Three hauls of three items
+			/// can't all count on one last slot.
+			[[nodiscard]] uint32_t storageRoom(EntityID box, uint32_t item) const {
+				const auto* store = world.getComponent<Inventory>(box);
+				if (store == nullptr) {
+					return 0;
+				}
+				const auto stackRoom = [&](uint32_t id) {
+					const std::string& name = registry.getDefName(id);
+					return InboundStackRoom{.partialRoom = store->partialStackRoom(name), .stackSize = Inventory::itemStackSize(name)};
+				};
+				const InboundStackRoom own = stackRoom(item);
+				const uint64_t		   stack = own.stackSize == 0 ? UINT32_MAX : own.stackSize;
+				const uint64_t		   inbound = claims.inboundItems(box, item, self);
+				const uint64_t		   ownSlots = inbound > own.partialRoom ? (inbound - own.partialRoom + stack - 1) / stack : 0;
+				const uint64_t		   ownRoom = own.partialRoom + ownSlots * stack - inbound;
+				const uint32_t		   promised = claims.inboundSlots(box, self, stackRoom);
+				const uint64_t		   free = store->freeSlots() > promised ? store->freeSlots() - promised : 0U;
+				return static_cast<uint32_t>(std::min<uint64_t>(ownRoom + free * stack, UINT32_MAX));
+			}
+		};
+
+		/// The nearest source of one (goal, item) that other colonists' claims take whole, kept while its
+		/// sources are visited: the trace shows it as one Reserved row, and only when no source offered
+		/// is nearer, so it is bounded by goals and items rather than by remembered sources.
+		template <typename Source>
+		struct NearestReserved {
+			float				  offeredTrip = std::numeric_limits<float>::infinity();
+			float				  trip = std::numeric_limits<float>::infinity();
+			std::optional<Source> source;
+			EntityID			  holder = kInvalidEntity;
+
+			void offered(float sourceTrip) { offeredTrip = std::min(offeredTrip, sourceTrip); }
+			void reserved(float sourceTrip, const Source& held, EntityID holdBy = kInvalidEntity) {
+				if (sourceTrip < trip) {
+					trip = sourceTrip;
+					source = held;
+					holder = holdBy;
+				}
+			}
+			[[nodiscard]] bool shown() const { return source.has_value() && trip < offeredTrip; }
+		};
+
+		/// What one pickup of an item would lift now (InventoryMass's pickupUnitsThatFit, the rule the
+		/// Pickup and Withdraw effects size their take with), with what the colonist carries summed once,
+		/// on the first item asked about in a decision. Zero means going to get the item gains nothing.
+		class PickupRoom {
+		  public:
+			PickupRoom(const Inventory& inventory, const assets::AssetRegistry& registry)
+				: inventory(inventory),
+				  registry(registry) {}
+
+			[[nodiscard]] uint32_t operator()(const std::string& itemDefName) {
+				if (!carriedKg.has_value()) {
+					carriedKg = ecs::carriedCargoMassKg(inventory, registry);
+				}
+				return ecs::pickupUnitsThatFit(inventory, registry, itemDefName, *carriedKg);
+			}
+
+		  private:
+			const Inventory&			 inventory;
+			const assets::AssetRegistry& registry;
+			std::optional<float>		 carriedKg;
+		};
+
+		/// Evaluate haul options that go and get goods: loose piles and lower-priority boxes for a
+		/// storage umbrella, and remembered loose stock for a craft's fetch child. Each is sized to
+		/// what the root still wants (RootSupply::toAcquire) and one trip's carry. Goods already
+		/// carried are offered by evaluateCarryInOptions.
 		void evaluateHaulOptions(
-			World*								 world,
+			World*						 world,
 			const assets::AssetRegistry& registry,
-			WorkSources&						 sources,
-			ColonyStorageKnowledge&				 storageKnowledge,
-			const Inventory&					 inventory,
-			const glm::vec2&					 position,
-			DecisionTrace&						 trace
+			WorkSources&				 sources,
+			ColonyStorageKnowledge&		 storageKnowledge,
+			const RootSupply&			 supply,
+			PickupRoom&					 pickupRoom,
+			const Inventory&			 inventory,
+			const glm::vec2&			 position,
+			DecisionTrace&				 trace
 		) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
 
-			// Query all Haul goals (storage containers wanting items)
-			auto haulGoals = goalRegistry.getGoalsOfType(TaskType::Haul);
-
 			// A haul whose pickup would lift nothing right now (pack full, hands busy with another load):
 			// not available, so the colonist doesn't repeat a pickup that collects nothing. The trace
-			// says why.
-			const auto pushNoRoom = [&](const GoalTask& goal, const std::string& itemDefName, std::string reason) {
+			// shows the item and why from haulItemDefNameId and the status, so the reason is a fixed string.
+			const auto pushNoRoom = [&](const GoalTask& goal, uint32_t itemDefNameId, const char* reason) {
 				EvaluatedOption option;
 				option.taskType = TaskType::Haul;
 				option.needType = NeedType::Count;
 				option.needValue = 100.0F;
 				option.threshold = 0.0F;
-				option.haulItemDefName = itemDefName;
+				option.haulItemDefNameId = itemDefNameId;
 				option.haulGoalId = goal.id;
 				option.status = OptionStatus::NoRoom;
-				option.reason = std::move(reason) + " (no room to carry it)";
+				option.reason = reason;
 				trace.options.push_back(std::move(option));
 			};
 
-			for (const auto* goal : haulGoals) {
-				if (goal == nullptr) {
-					continue;
-				}
-				// A storage goal's slot-count targetAmount makes availableCapacity() a poor "full"
-				// signal (it goes 0 after one stack); its real headroom is the destination's
-				// per-item addableCount, checked below in the loose-pile path. Only gate the
-				// counter-driven goals (craft/construction) here.
-				if (goal->owner != GoalOwner::StorageGoalSystem && goal->availableCapacity() == 0) {
-					continue; // Goal is full
-				}
+			const auto pushLooseHaul = [&](const GoalTask& goal, const CarrySource& source, uint32_t itemDefNameId, uint32_t quantity,
+										   bool craftFetch, EntityID reservedBy) {
+				const KnownWorldEntity& looseItem = *source.entity;
+				EvaluatedOption			option;
+				option.taskType = TaskType::Haul;
+				option.needType = NeedType::Count;
+				option.needValue = 100.0F;
+				option.threshold = 0.0F;
+				option.targetPosition = looseItem.position;
+				option.targetDefNameId = looseItem.defNameId;
+				option.distanceToTarget = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal.destinationPosition);
+				option.haulItemDefNameId = itemDefNameId;
+				option.haulQuantity = quantity;
+				option.haulSourcePosition = looseItem.position;
+				option.haulTargetStorageId = static_cast<uint64_t>(goal.destinationEntity);
+				option.haulTargetPosition = goal.destinationPosition;
+				option.haulGoalId = goal.id;
+				// Fetching loose stock to provision a started craft is committed work (tier 4), so a far
+				// pile can't strand a half-provisioned craft.
+				option.servesActiveWorkOrder = craftFetch;
+				// Tiebreak on (goal, source item) so two equidistant loose items for the same goal resolve
+				// deterministically rather than by memory's hash order.
+				option.tiebreakId = goal.id ^ (source.key << 1);
+				option.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
+				option.reservedBy = reservedBy;
+				option.reason = craftFetch ? "Fetching {} for crafting" : "Hauling {} to storage";
+				trace.options.push_back(std::move(option));
+			};
 
-				// Inventory-source haul: the colonist already carries the material, so there is no
-				// loose ground pickup. Three cases use this path:
-				//  - Craft-material hauls (Haul is a child of a Craft goal): deliver to the
-				//    crafting station (items stay in inventory for the Craft action).
-				//  - Construction-material hauls (owner ConstructionGoalSystem): deliver to the
-				//    blueprint, where the deposit records the material onto the blueprint's delivered[] manifest.
-				//  - Storage-stocking hauls (owner StorageGoalSystem WITH a chainId): the colonist just
-				//    chopped the wanted item to fill a box toward its minimum, so it carries the yield
-				//    and walks it into the storage container. A storage haul WITHOUT a chainId is the
-				//    ordinary loose-pile haul handled by the memory scan below, not this path.
-				// All skip the memory scan and emit only once the dependency completed (status
-				// Available) and the colonist actually carries the material.
-				const bool isConstructionHaul = goal->owner == GoalOwner::ConstructionGoalSystem;
-				bool isCraftHaul = false;
-				if (!isConstructionHaul && goal->parentGoalId.has_value()) {
-					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
-					isCraftHaul = parent != nullptr && parent->type == TaskType::Craft;
-				}
-				// A storage haul carries from inventory only when it was spawned from a completed
-				// stocking Harvest (it inherits that Harvest's chainId). Ordinary storage hauls have
-				// no chainId and fall through to the loose-pile scan.
-				const bool isStorageStockingHaul = goal->owner == GoalOwner::StorageGoalSystem && goal->chainId.has_value();
-				const bool inventorySourceHaul = isConstructionHaul || isCraftHaul || isStorageStockingHaul;
-				if (inventorySourceHaul) {
-					if (goal->status == GoalStatus::Available) {
-						const bool toBlueprint = isConstructionHaul;
-						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
-							const auto& itemDefName = registry.getDefName(acceptedId);
-							// Hand-carried two-hand goods (a wood armful) count too, not just the pack.
-							uint32_t	carried = ecs::availableQuantity(inventory, itemDefName);
-							if (carried == 0) {
-								continue;
-							}
-
-							// Both craft and construction deposits MOVE the carried material into the
-							// destination (station store or blueprint manifest), so the pack empties on
-							// delivery; the next tick the colonist carries 0 and this option drops out.
-
-							// Size the carry-in by what the destination can actually take, and offer
-							// nothing at 0 (a deposit of 0 would repeat forever):
-							//  - A build site takes only what its manifest still lacks (remaining), so an
-							//    unrequired or already-satisfied item has no option.
-							//  - Storage destinations are slot-counted: the goal's availableCapacity() is a
-							//    free-slot count, not an item count, so use the box's real per-item headroom
-							//    (addableCount: stack room + freeSlots * stackSize), as the loose-pile path does.
-							//  - Craft destinations meter at deposit time; the goal's availableCapacity()
-							//    bounds them.
-							uint32_t haulCap = goal->availableCapacity();
-							if (isConstructionHaul) {
-								const auto* blueprint = world != nullptr ? world->getComponent<StructureBlueprint>(goal->destinationEntity) : nullptr;
-								haulCap = blueprint != nullptr ? std::min(haulCap, blueprint->remaining(itemDefName)) : 0U;
-								if (haulCap == 0) {
-									continue; // the site needs no more of this item
-								}
-							} else if (isStorageStockingHaul) {
-								const auto* destInv = world != nullptr ? world->getComponent<Inventory>(goal->destinationEntity) : nullptr;
-								haulCap = destInv != nullptr ? destInv->addableCount(itemDefName) : 0U;
-								if (haulCap == 0) {
-									continue; // box can't take any more of this item right now
-								}
-							}
-
-							EvaluatedOption haulOption;
-							haulOption.taskType = TaskType::Haul;
-							haulOption.needType = NeedType::Count;
-							haulOption.needValue = 100.0F;
-							haulOption.threshold = 0.0F;
-							haulOption.targetPosition = goal->destinationPosition;
-							haulOption.targetDefNameId = acceptedId;
-							haulOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
-							haulOption.haulItemDefName = itemDefName;
-							haulOption.haulQuantity = std::min(carried, haulCap);
-							haulOption.haulSourcePosition = position; // already carrying
-							haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
-							haulOption.haulTargetPosition = goal->destinationPosition;
-							haulOption.haulGoalId = goal->id;
-							haulOption.haulFromInventory = true;
-							// Craft/construction deliveries provision an active work order (full floor).
-							// Storage stocking is real work too but ranks strictly below work orders, so
-							// it gets the lower stocking floor instead. Mutually exclusive flags.
-							haulOption.servesActiveWorkOrder = isCraftHaul || isConstructionHaul;
-							haulOption.servesStorageStocking = isStorageStockingHaul;
-							haulOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(acceptedId) << 1);
-							haulOption.status = OptionStatus::Available;
-							haulOption.reason = toBlueprint		   ? "Delivering " + itemDefName + " to build site"
-												: isStorageStockingHaul ? "Stocking " + itemDefName + " into storage"
-																		: "Delivering " + itemDefName + " to crafting station";
-							trace.options.push_back(haulOption);
-						}
+			// Every remembered pile of the item, each sized to what it still has for this colonist, so a
+			// fetch never claims more than its source can give.
+			const auto pushPileHauls = [&](const GoalTask& goal, uint32_t itemDefNameId, uint32_t quantity, bool craftFetch) {
+				NearestReserved<CarrySource> reserved;
+				for (const CarrySource& source : sources.carryablesOf(itemDefNameId)) {
+					const glm::vec2 at = source.entity->position;
+					const float		trip = glm::distance(position, at) + glm::distance(at, goal.destinationPosition);
+					const uint32_t	left = supply.pileLeft(source.key, itemDefNameId, at, quantity);
+					if (left == 0) {
+						reserved.reserved(trip, source);
+						continue;
 					}
+					reserved.offered(trip);
+					pushLooseHaul(goal, source, itemDefNameId, std::min(quantity, left), craftFetch, kInvalidEntity);
+				}
+				if (reserved.shown()) {
+					const auto holder =
+						supply.claims.sourceHolder({.kind = TargetKind::WorldKey, .key = reserved.source->key}, itemDefNameId, supply.self);
+					if (holder.has_value()) {
+						pushLooseHaul(goal, *reserved.source, itemDefNameId, quantity, craftFetch, holder->colonist);
+					}
+				}
+			};
 
-					// Craft-only fetch: the colonist isn't carrying the material, so bring a remembered
-					// loose stock to the station (two-phase pickup -> deposit into the station store).
-					// Construction never fetches; its goods come from a cut.
-					if (isCraftHaul && goal->status == GoalStatus::Available) {
-						for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
-							if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
-								continue; // a repeated id names the same sources
-							}
-							const auto stock = sources.carryablesOf(*acceptedIt);
-							if (stock.empty()) {
-								continue;
-							}
-							const auto& itemDefName = registry.getDefName(*acceptedIt);
-							// Deposits move the material into the station, so the pack empties between
-							// trips. Stop fetching once enough is already staged in the station
-							// (deliveredAmount) plus what the colonist is carrying toward this delivery
-							// (carried) to satisfy the goal; otherwise keep fetching the next unit. A
-							// recipe needing 2 with 1 staged and 0 in hand still needs a 2nd unit fetched.
-							const uint32_t carried = ecs::availableQuantity(inventory, itemDefName);
-							if (goal->deliveredAmount + carried >= goal->targetAmount) {
-								continue;
-							}
-							const auto* itemDef = stock.front().def;
-							if (!itemDef->capabilities.carryable.has_value()) {
-								continue;
-							}
-							// Only fetch what the pickup can actually lift; one that adds 0 would be
-							// re-issued every tick. The craft stays pending until the colonist has room.
-							if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
-								pushNoRoom(*goal, itemDefName, "Fetching " + itemDefName + " for crafting");
-								continue;
-							}
-							sources.countVisits(stock.size());
-							for (const CarrySource& source : stock) {
-								const KnownWorldEntity& looseItem = *source.entity;
-								const uint64_t			key = source.key;
-
-								float tripDistance = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal->destinationPosition);
-
-								EvaluatedOption fetchOption;
-								fetchOption.taskType = TaskType::Haul;
-								fetchOption.needType = NeedType::Count;
-								fetchOption.needValue = 100.0F;
-								fetchOption.threshold = 0.0F;
-								fetchOption.targetPosition = looseItem.position;
-								fetchOption.targetDefNameId = looseItem.defNameId;
-								fetchOption.distanceToTarget = tripDistance;
-								fetchOption.haulItemDefName = itemDefName;
-								fetchOption.haulQuantity = std::min(itemDef->capabilities.carryable.value().quantity, goal->availableCapacity());
-								fetchOption.haulSourcePosition = looseItem.position;
-								fetchOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
-								fetchOption.haulTargetPosition = goal->destinationPosition;
-								fetchOption.haulGoalId = goal->id;
-								fetchOption.haulFromInventory = false;
-								// Fetching loose stock to provision a started craft is committed work;
-								// floor it above Wander so a far pile can't strand the craft (this is the
-								// exact case that left axes half-provisioned and the colonist wandering).
-								fetchOption.servesActiveWorkOrder = true;
-								fetchOption.tiebreakId = goal->id ^ (key << 1);
-								fetchOption.status = OptionStatus::Available;
-								fetchOption.reason = "Fetching " + itemDefName + " for crafting";
-								trace.options.push_back(fetchOption);
-							}
+			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Haul)) {
+				// A craft's fetch child: bring remembered loose stock to the station.
+				if (goal->parentGoalId.has_value()) {
+					const auto* craft = goalRegistry.getGoal(goal->parentGoalId.value());
+					if (craft == nullptr || craft->type != TaskType::Craft || goal->status != GoalStatus::Available) {
+						continue;
+					}
+					for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
+						if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
+							continue; // a repeated id names the same sources
 						}
+						const auto* itemDef = sources.knownCarryable(*acceptedIt);
+						if (itemDef == nullptr || !itemDef->capabilities.carryable.has_value()) {
+							continue;
+						}
+						const uint32_t need = supply.toAcquire(craft->id, *acceptedIt, NeedBasis::Stock);
+						if (need == 0) {
+							continue;
+						}
+						const auto& itemDefName = registry.getDefName(*acceptedIt);
+						// Only fetch what the pickup can actually lift; one that adds 0 would be
+						// re-issued every tick. The craft stays pending until the colonist has room.
+						if (pickupRoom(itemDefName) == 0) {
+							pushNoRoom(*goal, *acceptedIt, "Fetching for crafting ({}: no room to carry it)");
+							continue;
+						}
+						const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
+						pushPileHauls(*goal, *acceptedIt, quantity, /*craftFetch=*/true);
 					}
 					continue;
 				}
+				if (goal->owner != GoalOwner::StorageGoalSystem) {
+					continue;
+				}
 
-				// Loose piles the colonist remembers, one run of sources per accepted item.
-				const auto emitLooseHauls = [&](std::span<const CarrySource> run) {
-					const auto& itemDefName = registry.getDefName(run.front().defNameId);
-					// Size the trip by what the DESTINATION storage can actually accept of this
-					// specific item -- its stack headroom plus free-slot * stackSize
-					// (addableCount), not the goal's slot count. A storage with 3 free slots takes
-					// up to 3 full stacks of wood (~120), not 3 wood. Then over-propose only as far
-					// as the colonist can carry (weight); the pickup clamps to the live
-					// ResourceStack and remaining carry capacity, and the deposit clamps to the
-					// storage's PHYSICAL slot capacity (addableCount), NOT the configured max -- storage
-					// max is a soft target. A single colonist's per-trip storageHeadroom clamp keeps it
-					// within physical room, but two concurrent hauls can both pass it and transiently
-					// overfill past the configured max; slot capacity is the only hard cap.
-					uint32_t storageHeadroom = UINT32_MAX;
-					if (const auto* destInv = world != nullptr ? world->getComponent<Inventory>(goal->destinationEntity) : nullptr) {
-						storageHeadroom = destInv->addableCount(itemDefName);
-					}
-					if (storageHeadroom == 0) {
-						return; // storage can't take any more of this item, skip it
-					}
-					if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
-						pushNoRoom(*goal, itemDefName, "Hauling " + itemDefName + " to storage");
+				// Loose piles the colonist remembers of one accepted item. The need and carry gates come
+				// first, so a full box or a full pack visits none of them.
+				const auto emitLooseHauls = [&](uint32_t itemDefNameId) {
+					const uint32_t need = std::min(supply.toAcquire(goal->id, itemDefNameId, NeedBasis::Stock),
+												   supply.storageRoom(goal->destinationEntity, itemDefNameId));
+					if (need == 0) {
 						return;
 					}
-					const uint32_t haulQuantity = std::min(storageHeadroom, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-					sources.countVisits(run.size());
-					for (const CarrySource& source : run) {
-						const KnownWorldEntity& looseItem = *source.entity;
-						// Calculate trip distance: colonist -> item -> goal destination
-						float tripDistance = glm::distance(position, looseItem.position) +
-											 glm::distance(looseItem.position, goal->destinationPosition);
-
-						EvaluatedOption haulOption;
-						haulOption.taskType = TaskType::Haul;
-						haulOption.needType = NeedType::Count;
-						haulOption.needValue = 100.0F;
-						haulOption.threshold = 0.0F;
-						haulOption.targetPosition = looseItem.position;
-						haulOption.targetDefNameId = looseItem.defNameId;
-						haulOption.distanceToTarget = tripDistance;
-						haulOption.haulItemDefName = itemDefName;
-						haulOption.haulQuantity = haulQuantity;
-						haulOption.haulSourcePosition = looseItem.position;
-						haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
-						haulOption.haulTargetPosition = goal->destinationPosition;
-						haulOption.haulGoalId = goal->id;
-						// Tiebreak on (goal, source item) so two equidistant loose items for the same
-						// goal resolve deterministically rather than by memory's hash order.
-						haulOption.tiebreakId = goal->id ^ (source.key << 1);
-						haulOption.status = OptionStatus::Available;
-						haulOption.reason = "Hauling " + itemDefName + " to storage";
-						trace.options.push_back(haulOption);
+					const auto& itemDefName = registry.getDefName(itemDefNameId);
+					if (pickupRoom(itemDefName) == 0) {
+						pushNoRoom(*goal, itemDefNameId, "Hauling to storage ({}: no room to carry it)");
+						return;
 					}
+					const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
+					pushPileHauls(*goal, itemDefNameId, quantity, /*craftFetch=*/false);
 				};
 				if (goal->acceptedCategory != assets::ItemCategory::None) {
 					// A category goal takes any carryable of its category, plus the items it names.
-					const auto all = sources.carryables();
-					for (auto run = all.begin(); run != all.end();) {
-						const uint32_t defNameId = run->defNameId;
-						const auto	   runEnd = std::find_if(run, all.end(), [defNameId](const CarrySource& s) { return s.defNameId != defNameId; });
-						const bool accepted = run->def->category == goal->acceptedCategory ||
+					for (uint32_t defNameId : sources.knownCarryableDefs()) {
+						const bool accepted = sources.knownCarryable(defNameId)->category == goal->acceptedCategory ||
 											  std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), defNameId) != goal->acceptedDefNameIds.end();
 						if (accepted) {
-							emitLooseHauls({run, runEnd});
-						} else {
-							sources.countVisits(static_cast<uint64_t>(runEnd - run));
+							emitLooseHauls(defNameId);
 						}
-						run = runEnd;
 					}
 				} else {
 					for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
 						if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
 							continue; // a repeated id names the same sources
 						}
-						if (const auto run = sources.carryablesOf(*acceptedIt); !run.empty()) {
-							emitLooseHauls(run);
+						if (sources.knownCarryable(*acceptedIt) != nullptr) {
+							emitLooseHauls(*acceptedIt);
 						}
 					}
 				}
 
-				// Storage-to-storage pull (storage priority, Phase 2): for an ordinary storage umbrella
-				// goal (StorageGoalSystem-owned, no chainId/craft parent -- those returned above via
-				// inventorySourceHaul), ALSO scan other storage boxes as sources. A higher-priority
-				// destination box pulls items UP from strictly-lower-priority boxes. The strict-< gate is
-				// the load-bearing invariant: items flow monotonically up the 4-level ladder
-				// (Low<Medium<High<Critical), never sideways or down, which makes A->B->A cycles
-				// impossible with no reservation system.
-				if (world != nullptr && goal->owner == GoalOwner::StorageGoalSystem) {
-					const auto destEntity = goal->destinationEntity;
-					const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
-					const auto* destInv = world->getComponent<Inventory>(destEntity);
-					if (destConfig != nullptr && destInv != nullptr) {
-						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
-							const auto& itemDefName = registry.getDefName(acceptedId);
-							const auto* itemDef = registry.getDefinition(itemDefName);
-							if (itemDef == nullptr || !registry.hasCapability(acceptedId, assets::CapabilityType::Carryable)) {
-								continue;
-							}
-							const assets::ItemCategory cat = itemDef->category;
-							const StoragePriority destPriority = destConfig->getPriorityFor(itemDefName, cat);
+				// Storage-to-storage pull (storage priority, Phase 2): a higher-priority box pulls items UP
+				// from strictly-lower-priority boxes. The strict-< gate is the load-bearing invariant: items
+				// flow monotonically up the 4-level ladder (Low<Medium<High<Critical), never sideways or
+				// down, which makes A->B->A cycles impossible.
+				const auto	destEntity = goal->destinationEntity;
+				const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
+				if (destConfig == nullptr) {
+					continue;
+				}
+				for (uint32_t acceptedId : goal->acceptedDefNameIds) {
+					const auto& itemDefName = registry.getDefName(acceptedId);
+					const auto* itemDef = registry.getDefinitionById(acceptedId);
+					if (itemDef == nullptr || !registry.hasCapability(acceptedId, assets::CapabilityType::Carryable)) {
+						continue;
+					}
+					const assets::ItemCategory cat = itemDef->category;
+					const StoragePriority	   destPriority = destConfig->getPriorityFor(itemDefName, cat);
 
-							// What the dest box takes of this item: physical headroom clamped to its
-							// configured max (don't overfill past it). Computed once per item, outside the
-							// source loop.
-							const uint32_t destRoom = ecs::storageRoomFor(*destConfig, *destInv, itemDefName, cat);
-							if (destRoom == 0) {
-								continue; // dest box can't take any more of this item
-							}
-							const uint32_t perTrip = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
-							if (perTrip == 0) {
-								continue; // colonist can't carry a single unit of this item
-							}
-							const bool roomNow = ecs::pickupUnitsThatFit(inventory, registry, itemDefName) > 0;
+					// What the dest box still wants of this item and has room for, net of what is on its way.
+					// Computed once per item, outside the source loop.
+					const uint32_t destRoom =
+						std::min(supply.toAcquire(goal->id, acceptedId, NeedBasis::Stock), supply.storageRoom(destEntity, acceptedId));
+					if (destRoom == 0) {
+						continue;
+					}
+					const uint32_t perTrip = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
+					if (perTrip == 0) {
+						continue; // colonist can't carry a single unit of this item
+					}
+					std::optional<bool> roomNow; // asked once a source box qualifies
 
-							for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
-								if (srcEntity == destEntity) {
-									continue; // never pull from the destination itself
-								}
-								const uint32_t srcHas = srcInv.getQuantity(itemDefName);
-								if (srcHas == 0) {
-									continue; // source holds none of this item
-								}
-								// Strict-< gate: pull only from a STRICTLY lower-priority box. Never same,
-								// never higher. This is what keeps the flow monotonic and cycle-free.
-								//
-								// INTENDED: getPriorityFor returns Low when the source box has no rule for this item,
-								// so an UNCONFIGURED box holding it is a valid pull source for any Medium+ dest. This
-								// consolidates stray contents upward into boxes that actually want them. Monotonicity
-								// still holds -- Low is the floor, so the strict-< gate can never form a cycle.
-								const StoragePriority srcPriority = srcConfig.getPriorityFor(itemDefName, cat);
-								if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
-									continue;
-								}
-								// Discovery-gating: the colony must KNOW the source box (no god-view),
-								// mirroring how a loose pickup is gated on the pile being in memory.
-								if (!storageKnowledge.knows(*world, registry, srcEntity)) {
-									continue;
-								}
-								// Don't drain the source below ITS OWN configured minimum for this item.
-								const uint32_t srcMin = srcConfig.getMinAmountFor(itemDefName, cat);
-								const uint32_t drainable = srcHas > srcMin ? srcHas - srcMin : 0U;
-								if (drainable == 0) {
-									continue;
-								}
-								// Clamps + one trip, min wins: don't drain source below its min, don't
-								// exceed what the dest takes, carry one trip.
-								const uint32_t qty = std::min({drainable, destRoom, perTrip});
-								if (qty == 0) {
-									continue;
-								}
+					// The source is the box: walk to it, Withdraw, then the deposit leg stocks the dest.
+					const auto pushPull = [&](EntityID srcEntity, glm::vec2 srcPos, uint32_t qty, EntityID reservedBy) {
+						EvaluatedOption pullOption;
+						pullOption.taskType = TaskType::Haul;
+						pullOption.needType = NeedType::Count;
+						pullOption.needValue = 100.0F;
+						pullOption.threshold = 0.0F;
+						pullOption.targetPosition = srcPos;
+						pullOption.targetDefNameId = acceptedId;
+						pullOption.distanceToTarget = glm::distance(position, srcPos) + glm::distance(srcPos, goal->destinationPosition);
+						pullOption.haulItemDefNameId = acceptedId;
+						pullOption.haulQuantity = qty;
+						pullOption.haulSourcePosition = srcPos;
+						pullOption.haulSourceStorageId = static_cast<uint64_t>(srcEntity);
+						pullOption.haulTargetStorageId = static_cast<uint64_t>(destEntity);
+						pullOption.haulTargetPosition = goal->destinationPosition;
+						pullOption.haulGoalId = goal->id;
+						// A pull tops up a box toward its config: opportunistic stocking (tier 6), ordered
+						// within-tier by the dest box priority (populatePriorityBonuses).
+						pullOption.servesStorageStocking = true;
+						// Deterministic tiebreak on (umbrella goal, source box), independent of view order.
+						pullOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(srcEntity) << 1);
+						pullOption.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
+						pullOption.reservedBy = reservedBy;
+						pullOption.reason = "Pulling {} from lower-priority storage";
+						trace.options.push_back(std::move(pullOption));
+					};
+					struct PullSource {
+						EntityID  box;
+						glm::vec2 position;
+					};
+					NearestReserved<PullSource> reserved;
 
-								if (!roomNow) {
-									pushNoRoom(*goal, itemDefName, "Pulling " + itemDefName + " from lower-priority storage");
-									break; // one line says it for every source box
-								}
+					for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
+						if (srcEntity == destEntity) {
+							continue; // never pull from the destination itself
+						}
+						const uint32_t srcHas = srcInv.getQuantity(itemDefName);
+						if (srcHas == 0) {
+							continue; // source holds none of this item
+						}
+						// Strict-< gate: pull only from a STRICTLY lower-priority box. Never same, never
+						// higher. getPriorityFor returns Low when the source box has no rule for this item, so
+						// an unconfigured box holding it is a valid pull source for any Medium+ dest; Low is
+						// the floor, so the gate still never forms a cycle.
+						const StoragePriority srcPriority = srcConfig.getPriorityFor(itemDefName, cat);
+						if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
+							continue;
+						}
+						// Discovery-gating: the colony must KNOW the source box (no god-view), mirroring how
+						// a loose pickup is gated on the pile being in memory.
+						if (!storageKnowledge.knows(*world, registry, srcEntity)) {
+							continue;
+						}
+						// Don't drain the source below ITS OWN configured minimum for this item, counting what
+						// other pulls will take from it, so two pulls can't drain it below that together.
+						const uint32_t srcMin = srcConfig.getMinAmountFor(itemDefName, cat);
+						const uint32_t drainable = srcHas > srcMin ? srcHas - srcMin : 0U;
+						if (drainable == 0) {
+							continue;
+						}
+						const uint32_t claimed =
+							supply.claims.sourceClaimed({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(srcEntity)}, acceptedId, supply.self);
+						const float trip = glm::distance(position, srcPos.value) + glm::distance(srcPos.value, goal->destinationPosition);
+						if (claimed >= drainable) {
+							reserved.reserved(trip, PullSource{srcEntity, srcPos.value});
+							continue;
+						}
+						const uint32_t qty = std::min({drainable - claimed, destRoom, perTrip});
 
-								// Mirror the loose-pile haul option field-for-field, but the source is the
-								// box: walk to it, Withdraw, then the unchanged deposit leg stocks the dest.
-								const float tripDistance =
-									glm::distance(position, srcPos.value) + glm::distance(srcPos.value, goal->destinationPosition);
+						if (!roomNow.has_value()) {
+							roomNow = pickupRoom(itemDefName) > 0;
+						}
+						if (!*roomNow) {
+							pushNoRoom(*goal, acceptedId, "Pulling from lower-priority storage ({}: no room to carry it)");
+							break; // one line says it for every source box
+						}
 
-								EvaluatedOption pullOption;
-								pullOption.taskType = TaskType::Haul;
-								pullOption.needType = NeedType::Count;
-								pullOption.needValue = 100.0F;
-								pullOption.threshold = 0.0F;
-								pullOption.targetPosition = srcPos.value;
-								pullOption.targetDefNameId = acceptedId;
-								pullOption.distanceToTarget = tripDistance;
-								pullOption.haulItemDefName = itemDefName;
-								pullOption.haulQuantity = qty;
-								pullOption.haulSourcePosition = srcPos.value;
-								pullOption.haulSourceStorageId = static_cast<uint64_t>(srcEntity);
-								pullOption.haulTargetStorageId = static_cast<uint64_t>(destEntity);
-								pullOption.haulTargetPosition = goal->destinationPosition;
-								pullOption.haulGoalId = goal->id;
-								pullOption.haulFromInventory = false;
-								// A pull tops up a box toward its config: opportunistic stocking (tier 6),
-								// ordered within-tier by the dest box priority (populatePriorityBonuses).
-								pullOption.servesStorageStocking = true;
-								// Deterministic tiebreak on (umbrella goal, source box), independent of
-								// view iteration order.
-								pullOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(srcEntity) << 1);
-								pullOption.status = OptionStatus::Available;
-								pullOption.reason = "Pulling " + itemDefName + " from lower-priority storage";
-								trace.options.push_back(pullOption);
-							}
+						reserved.offered(trip);
+						pushPull(srcEntity, srcPos.value, qty, kInvalidEntity);
+					}
+					if (reserved.shown() && roomNow.value_or(true)) {
+						const auto holder = supply.claims.sourceHolder(
+							{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(reserved.source->box)}, acceptedId, supply.self
+						);
+						if (holder.has_value()) {
+							pushPull(reserved.source->box, reserved.source->position, perTrip, holder->colonist);
 						}
 					}
 				}
 			}
 		}
 
+		/// Carry-in from possession (task-claims.md): for every root goal that still wants an item the
+		/// colonist carries, offer to deliver it, sized to what the root still wants net of others'
+		/// in-flight. One path for crafts, construction sites, and storage boxes alike, and for goods
+		/// left over after a cut, an interruption, or a switch. Tools are equipment, and the colonist's
+		/// food stays its own provisions rather than being stocked into a box. Costs nothing unless
+		/// the colonist carries cargo.
+		void evaluateCarryInOptions(const RootSupply& supply, const glm::vec2& position, DecisionTrace& trace) {
+			const Inventory&			 inventory = supply.inventory;
+			const assets::AssetRegistry& registry = supply.registry;
+			std::vector<uint32_t>		 carried;
+			const auto					 note = [&](const std::optional<ItemStack>& stack) {
+				if (stack.has_value() && stack->quantity > 0) {
+					carried.push_back(registry.getDefNameId(stack->defName));
+				}
+			};
+			note(inventory.leftHand);
+			note(inventory.rightHand);
+			for (const ItemStack& stack : inventory.items) {
+				if (stack.quantity > 0) {
+					carried.push_back(registry.getDefNameId(stack.defName));
+				}
+			}
+			std::sort(carried.begin(), carried.end());
+			carried.erase(std::unique(carried.begin(), carried.end()), carried.end());
+			std::erase_if(carried, [&](uint32_t item) {
+				const auto* def = registry.getDefinitionById(item);
+				return item == 0 || def == nullptr || def->category == assets::ItemCategory::Tool;
+			});
+			if (carried.empty()) {
+				return;
+			}
+
+			const auto& goalRegistry = GoalTaskRegistry::Get();
+			const auto	offer = [&](const GoalTask& root) {
+				 const bool storage = root.owner == GoalOwner::StorageGoalSystem;
+				 for (uint32_t item : carried) {
+					 const std::string& itemDefName = registry.getDefName(item);
+					 if (storage && assets::isItemEdible(itemDefName)) {
+						 continue;
+					 }
+					 uint32_t quantity =
+						 std::min(ecs::availableQuantity(inventory, itemDefName), supply.available(root.id, item, NeedBasis::Stock));
+					 if (storage && quantity > 0) {
+						 quantity = std::min(quantity, supply.storageRoom(root.destinationEntity, item));
+					 }
+					 if (quantity == 0) {
+						 continue;
+					 }
+					 EvaluatedOption option;
+					 option.taskType = TaskType::Haul;
+					 option.needType = NeedType::Count;
+					 option.needValue = 100.0F;
+					 option.threshold = 0.0F;
+					 option.targetPosition = root.destinationPosition;
+					 option.targetDefNameId = item;
+					 option.distanceToTarget = glm::distance(position, root.destinationPosition);
+					 option.haulItemDefNameId = item;
+					 option.haulQuantity = quantity;
+					 option.haulSourcePosition = position; // already carrying
+					 option.haulTargetStorageId = static_cast<uint64_t>(root.destinationEntity);
+					 option.haulTargetPosition = root.destinationPosition;
+					 option.haulGoalId = root.id;
+					 option.haulFromInventory = true;
+					 // Craft and construction deliveries provision an active work order (tier 4); filling a
+					 // box is stocking, strictly below work orders (tier 6).
+					 option.servesActiveWorkOrder = !storage;
+					 option.servesStorageStocking = storage;
+					 option.tiebreakId = root.id ^ (static_cast<uint64_t>(item) << 1);
+					 option.status = OptionStatus::Available;
+					 option.reason = root.type == TaskType::Build ? "Delivering {} to build site"
+									 : storage					   ? "Stocking {} into storage"
+																   : "Delivering {} to crafting station";
+					 trace.options.push_back(std::move(option));
+				 }
+			};
+			for (const auto* root : goalRegistry.getGoalsOfType(TaskType::Craft)) {
+				offer(*root);
+			}
+			for (const auto* root : goalRegistry.getGoalsOfType(TaskType::Build)) {
+				if (root->owner == GoalOwner::ConstructionGoalSystem) {
+					offer(*root);
+				}
+			}
+			for (const auto* root : goalRegistry.getGoalsOfType(TaskType::Haul)) {
+				if (root->owner == GoalOwner::StorageGoalSystem && !root->parentGoalId.has_value()) {
+					offer(*root);
+				}
+			}
+		}
+
 		/// Evaluate harvest options by querying Harvest goals from GoalTaskRegistry.
 		/// Goal-driven: a goal names the item it needs (yieldDefNameId), or for a construction clear the
-		/// footprint whose harvestables it removes (clearFootprint); Memory provides the sources.
+		/// footprint whose harvestables it removes (clearFootprint); Memory provides the sources. A goal
+		/// that names an item is offered while its root still wants that item (RootSupply::toAcquire).
 		/// @param registry Asset registry for capability and definition lookups
 		/// @param sources The colonist's remembered harvestables, by yield
+		/// @param supply What each root still wants, for this colonist
+		/// @param pickupRoom What a pickup of the yield would lift now
 		/// @param position Colonist position
 		/// @param skills Optional skills component for skill bonus calculation
 		/// @param trace Output decision trace
 		void evaluateHarvestOptions(
 			const assets::AssetRegistry& registry,
-			WorkSources&						 sources,
-			const glm::vec2&					 position,
-			const Skills*						 skills,
-			DecisionTrace&						 trace
+			WorkSources&				 sources,
+			const RootSupply&			 supply,
+			PickupRoom&					 pickupRoom,
+			const glm::vec2&			 position,
+			const Skills*				 skills,
+			DecisionTrace&				 trace
 		) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
 
-			// Query all Harvest goals (requests for items that come from harvestables)
-			auto harvestGoals = goalRegistry.getGoalsOfType(TaskType::Harvest);
-
-			for (const auto* goal : harvestGoals) {
-				if (goal == nullptr || goal->availableCapacity() == 0) {
-					continue; // Goal is full or null
-				}
-
+			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Harvest)) {
 				// Skip goals that aren't workable yet.
 				if (goal->status == GoalStatus::Blocked) {
 					continue;
@@ -854,66 +925,61 @@ namespace ecs {
 
 				// A clear goal is served by any harvestable inside its footprint, whatever it yields.
 				// Every other Harvest goal names the item it needs (yieldDefNameId) and is served by a
-				// harvestable that yields it.
+				// harvestable that yields it, while its root wants more than is already on its way.
 				const bool clearing = goal->clearFootprint.has_value();
 				if (!clearing && goal->yieldDefNameId == 0) {
 					continue; // No yield specified
 				}
-
-				// A Harvest that feeds a Craft or Build goal provisions an active work order: its
-				// priority is floored above idle Wander so a far harvestable can't strand a started
-				// craft or construction.
-				bool servesWorkOrder = false;
-				if (goal->parentGoalId.has_value()) {
-					const auto* parent = goalRegistry.getGoal(goal->parentGoalId.value());
-					servesWorkOrder = parent != nullptr && (parent->type == TaskType::Craft || parent->type == TaskType::Build);
+				const GoalTask* root = goalRegistry.getGoal(goalRegistry.rootOf(goal->id));
+				if (root == nullptr) {
+					continue;
 				}
-				// A Harvest owned by StorageGoalSystem is stocking work (chopping to fill a box toward
-				// its minimum). It is floored above Wander but STRICTLY below work orders, so a colonist
-				// always prefers building/crafting over stocking. Mutually exclusive with servesWorkOrder
-				// (a storage harvest parents a Haul umbrella, never a Craft/Build).
+				if (!clearing && supply.toAcquire(root->id, goal->yieldDefNameId, harvestBasis(*root)) == 0) {
+					continue;
+				}
+				if (!clearing && root->owner == GoalOwner::StorageGoalSystem && supply.storageRoom(root->destinationEntity, goal->yieldDefNameId) == 0) {
+					continue; // every slot it has left is promised to goods already on their way
+				}
+				// A cut that would land nothing in the colonist's hands or pack (a full armful of something
+				// else, a full pack) brings nothing toward the root, and standing at the source it would win
+				// again every decision. A clear is exempt: it removes its blocker and drops what doesn't fit.
+				if (!clearing && pickupRoom(registry.getDefName(goal->yieldDefNameId)) == 0) {
+					EvaluatedOption noRoom;
+					noRoom.taskType = TaskType::Harvest;
+					noRoom.needType = NeedType::Count;
+					noRoom.needValue = 100.0F;
+					noRoom.threshold = 0.0F;
+					noRoom.harvestGoalId = goal->id;
+					noRoom.harvestYieldDefNameId = goal->yieldDefNameId;
+					noRoom.tiebreakId = goal->id;
+					noRoom.status = OptionStatus::NoRoom;
+					noRoom.reason = "Cutting for {1} (no room to carry it)";
+					trace.options.push_back(noRoom);
+					continue;
+				}
+
+				// A Harvest that feeds a Craft or Build goal provisions an active work order: tier 4, so a
+				// far harvestable can't strand a started craft or construction. One owned by
+				// StorageGoalSystem is stocking: above Wander but strictly below work orders.
+				const bool servesWorkOrder = root->type == TaskType::Craft || root->type == TaskType::Build;
 				const bool servesStocking = goal->owner == GoalOwner::StorageGoalSystem;
+				const bool continuesGathering = !clearing && claimedCargo(supply.task, root->id, goal->yieldDefNameId) > 0;
 
 				// A clear is served by what blocks its footprint, the same test the build gate applies; any
 				// other goal by the harvestables that yield its item.
-				const auto candidates = clearing ? sources.harvestables() : sources.harvestablesYielding(goal->yieldDefNameId);
-				sources.countVisits(candidates.size());
-				for (const HarvestSource& source : candidates) {
+				// Score by the full provisioning round-trip (colonist -> harvestable -> destination), not just
+				// colonist -> harvestable, so the source nearest where the yield is needed (the crafting
+				// station / storage box) wins. Matches the haul-fetch source scoring above; without it a
+				// colonist chops the tree nearest itself even when one sits beside the station it provisions.
+				const auto tripOf = [&](const KnownWorldEntity& known) {
+					return glm::distance(position, known.position) + glm::distance(known.position, goal->destinationPosition);
+				};
+				const auto pushHarvest = [&](const HarvestSource& source, EntityID reservedBy) {
 					const KnownWorldEntity& knownEntity = *source.entity;
 					const uint64_t			key = source.key;
-					if (clearing && !goal->clearFootprint->blockedBy(registry, knownEntity.defNameId, knownEntity.position)) {
-						continue;
-					}
-					const auto*	   def = source.def;
-					const uint32_t yieldDefNameId = source.yieldDefNameId;
+					const uint32_t			yieldDefNameId = source.yieldDefNameId;
+					const float				tripDistance = tripOf(knownEntity);
 
-					// Tool gate: chopping a tree needs the colonist to already hold the right
-					// tool (e.g. an axe). Colonists never fetch or equip tools on their own, so
-					// a tool-less colonist simply never sees this harvest as an option.
-					if (!source.holdsTool) {
-						continue;
-					}
-
-					// Carry gate (mirrors the craft-fetch gate above): the harvest yield must fit.
-					// applyCollectionEffect clamps the take to carry weight AND backpack slots; at
-					// the cap it adds 0. Emitting the option anyway makes a full/over-weight colonist
-					// pick the harvest, collect 0 ("Collected 0 of N ... carry-limited"), re-evaluate,
-					// and pick the same harvest again -- an infinite chop-nothing loop. Skip the
-					// option when no unit fits (no stack/slot headroom and no carry weight), leaving
-					// the harvest for a trip when the colonist has room. A clear is exempt: it removes the
-					// blocker whatever fits and drops the rest, so a full pack never stalls a site.
-					if (!clearing && !source.yieldFits) {
-						continue;
-					}
-
-					// Score by the full provisioning round-trip (colonist -> harvestable -> destination), not just
-					// colonist -> harvestable, so the source nearest where the yield is needed (the crafting
-					// station / storage box) wins. Matches the haul-fetch source scoring above; without it a
-					// colonist chops the tree nearest itself even when one sits beside the station it provisions.
-					float tripDistance = glm::distance(position, knownEntity.position) +
-										 glm::distance(knownEntity.position, goal->destinationPosition);
-
-					// Create harvest option
 					EvaluatedOption harvestOption;
 					harvestOption.taskType = TaskType::Harvest;
 					harvestOption.needType = NeedType::Count;
@@ -930,22 +996,38 @@ namespace ecs {
 					harvestOption.tiebreakId = goal->id ^ (key << 1);
 					harvestOption.servesActiveWorkOrder = servesWorkOrder;
 					harvestOption.servesStorageStocking = servesStocking;
-					harvestOption.status = OptionStatus::Available;
+					harvestOption.continuesGathering = continuesGathering;
+					harvestOption.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
+					harvestOption.reservedBy = reservedBy;
 
 					// Harvesting uses Farming skill
 					auto [farmSkillLevel, farmSkillBonus] = calculateSkillBonus(skills, kSkillFarming);
 					harvestOption.skillLevel = farmSkillLevel;
 					harvestOption.skillBonus = farmSkillBonus;
 
-					// Build reason string from friendly labels, not raw defNames ("Oak Tree", not
-					// "Flora_TreeOak"). Falls back to the defName if a label is missing.
-					const auto*		  yieldDef = source.yieldDef;
-					const std::string srcLabel = !def->label.empty() ? def->label : registry.getDefName(knownEntity.defNameId);
-					const std::string yieldLabel =
-						(yieldDef != nullptr && !yieldDef->label.empty()) ? yieldDef->label : registry.getDefName(yieldDefNameId);
-					harvestOption.reason = clearing ? "Clearing " + srcLabel + " from build site" : "Cutting " + srcLabel + " for " + yieldLabel;
+					harvestOption.reason = clearing ? "Clearing {} from build site" : "Cutting {} for {}";
 
 					trace.options.push_back(harvestOption);
+				};
+
+				// A source another colonist is cutting is its alone: Use is exclusive, so two colonists never
+				// cut one plant. Several may still clear one site, each its own plant.
+				NearestReserved<HarvestSource> reserved;
+				const auto candidates = clearing ? sources.clearableHarvestables() : sources.harvestablesYielding(goal->yieldDefNameId);
+				for (const HarvestSource& source : candidates) {
+					if (clearing && !goal->clearFootprint->blockedBy(registry, source.entity->defNameId, source.entity->position)) {
+						continue;
+					}
+					const float trip = tripOf(*source.entity);
+					if (const auto holder = supply.claims.useHolder({.kind = TargetKind::WorldKey, .key = source.key}, supply.self)) {
+						reserved.reserved(trip, source, holder->colonist);
+						continue;
+					}
+					reserved.offered(trip);
+					pushHarvest(source, kInvalidEntity);
+				}
+				if (reserved.shown()) {
+					pushHarvest(*reserved.source, reserved.holder);
 				}
 			}
 		}
@@ -1051,9 +1133,11 @@ namespace ecs {
 		/// @param position Colonist position
 		/// @param inventory Colonist inventory (to check if carrying)
 		/// @param trace Output decision trace
-		void evaluatePlacePackagedOptions(World* world, const glm::vec2& position, const Inventory& inventory, DecisionTrace& trace) {
+		void evaluatePlacePackagedOptions(
+			World* world, const RootSupply& supply, const glm::vec2& position, const Inventory& inventory, DecisionTrace& trace
+		) {
 			// Find packaged items with targetPosition set (awaiting colonist delivery)
-			for (auto [packagedEntity, packagedPos, packaged, packagedAppearance] : world->view<Position, Packaged, Appearance>()) {
+			for ([[maybe_unused]] auto [packagedEntity, packagedPos, packaged, appearance] : world->view<Position, Packaged, Appearance>()) {
 				// Only consider items with a target position set
 				if (!packaged.targetPosition.has_value()) {
 					continue;
@@ -1094,7 +1178,16 @@ namespace ecs {
 				placeOption.placeTargetPosition = targetPos;
 				placeOption.tiebreakId = static_cast<uint64_t>(packagedEntity);
 				placeOption.status = OptionStatus::Available;
-				placeOption.reason = isCarryingThis ? "Delivering " + packagedAppearance.defName : "Placing " + packagedAppearance.defName;
+				placeOption.reason = isCarryingThis ? "Delivering {}" : "Placing {}";
+				// Another colonist on its way to pick it up holds it (Use) until its pickup.
+				if (!isCarryingThis) {
+					if (const auto holder = supply.claims.useHolder(
+							{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(packagedEntity)}, supply.self
+						)) {
+						placeOption.status = OptionStatus::Reserved;
+						placeOption.reservedBy = holder->colonist;
+					}
+				}
 				trace.options.push_back(placeOption);
 			}
 		}
@@ -1113,7 +1206,21 @@ namespace ecs {
 	void AIDecisionSystem::update(float deltaTime) {
 		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).
 		m_elapsedTime += deltaTime;
+		// Only the regrowth callback reports a regrowing source, so without it no food wait is set and
+		// the time goes unread; a world that wires it has a TimeSystem.
+		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
 		m_colonyStorage.invalidate();
+		m_claimsBuilt = false;
+		auto* actionSystem = world->tryGetSystem<ActionSystem>();
+		m_loosePiles = actionSystem != nullptr ? &actionSystem->loosePiles() : nullptr;
+
+		// A suspended record holds goods the colonist may since have eaten, used, or dropped, or toward a
+		// goal that is gone; true it up before this update's index is built from it. Only colonists
+		// interrupted by a need hold one.
+		for (auto [entity, task, inventory] : world->view<Task, Inventory>()) {
+			(void)entity;
+			refreshSuspended(m_registry, inventory, task);
+		}
 
 		// Process all entities with the required components
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
@@ -1162,6 +1269,7 @@ namespace ecs {
 						if (auto* np = world->getComponent<NavPath>(entity)) {
 							np->valid = false;
 						}
+						m_claims.retire(task.instanceId); // later deciders this update see the work free
 						task.clear();
 					} else if (m_colonyOrigin.has_value()) {
 						// Last-resort guarantee: the mesh has NO walkable face anywhere in range
@@ -1177,6 +1285,7 @@ namespace ecs {
 						if (auto* np = world->getComponent<NavPath>(entity)) {
 							np->valid = false;
 						}
+						m_claims.retire(task.instanceId);
 						task.clear();
 					}
 				}
@@ -1291,6 +1400,8 @@ namespace ecs {
 				// Get optional Skills component for skill bonus calculation
 				auto* skills = world->getComponent<Skills>(entity);
 
+				ensureClaimIndex();
+
 				// Build full decision trace (always, for UI updates)
 				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *sourceReach, *trace);
 
@@ -1352,6 +1463,12 @@ namespace ecs {
 				// Don't switch if it's the same task we're already doing
 				bool shouldSwitch = !isSameTask;
 
+				// The next leg of the same gathering: a further cut toward the root the colonist carries
+				// goods for, or their carry-in. The goods ride along under the same claims, so nothing is
+				// stowed or dropped and they are never uncommitted between two cuts.
+				const std::optional<SuspendedWork> handedCargo =
+					shouldSwitch && selected != nullptr ? nextGatheringLeg(*selected, task) : std::nullopt;
+
 				// Two-hand-carry-must-finish-deposit invariant. A two-hand armful (e.g. Wood) rides in
 				// BOTH hands and can't be stowed to belt/backpack, so ANY switch whose first action needs
 				// the hands makes the chain-interruption below DROP the whole load on the ground. Protect
@@ -1370,7 +1487,7 @@ namespace ecs {
 				const bool currentHaulUnreachable = (task.navState == NavState::CantFindWayTo);
 				const bool carryingTwoHandLoad = task.type == TaskType::Haul && !task.haulItemDefName.empty() &&
 					ecs::itemIsTwoHand(m_registry, task.haulItemDefName) && inventory.isHolding(task.haulItemDefName);
-				if (shouldSwitch && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
+				if (shouldSwitch && !handedCargo && !currentHaulUnreachable && carryingTwoHandLoad && selected != nullptr) {
 					// Case 1: a Harvest of the same yield (e.g. a construction material Harvest for Wood). Held regardless of tier -- the chop->drop->chop loop it forms is the
 					// original two-hand-drop bug this guard was built for.
 					const bool sameYieldHarvest = selected->taskType == TaskType::Harvest &&
@@ -1422,9 +1539,16 @@ namespace ecs {
 				}
 
 				if (shouldSwitch) {
-					// Handle chain interruption if mid-chain and new task needs hands
-					if (task.chainId.has_value() && task.chainStep > 0 && selected != nullptr) {
+					// Handle chain interruption if the abandoned task carries goods and the new task needs hands
+					if (!handedCargo && carriesChainGoods(task) && selected != nullptr) {
 						handleChainInterruption(entity, task, inventory, position, selected->taskType, selected->needType);
+					}
+
+					// The abandoned task's claims leave the index now, unless it just became the
+					// suspended record or hands its cargo on, so a colonist deciding later this update
+					// sees them free.
+					if (!handedCargo && (!task.suspended || task.suspended->instanceId != task.instanceId)) {
+						m_claims.retire(task.instanceId);
 					}
 
 					// Clear and assign new task
@@ -1433,6 +1557,7 @@ namespace ecs {
 					selectTaskFromTrace(entity, task, movementTarget, *trace, position);
 					task.priorityTier = newTier; // Store the (tier, score) key for future comparisons
 					task.priority = newScore;
+					acceptClaims(entity, task, memory, inventory, handedCargo);
 
 					LOG_INFO(
 						Engine,
@@ -1447,6 +1572,48 @@ namespace ecs {
 				}
 			}
 		}
+
+#ifdef DEVELOPMENT_BUILD
+		if (m_claimsBuilt) {
+			if (const auto violation = m_claims.findViolation(*world, m_claimsCheck)) {
+				LOG_ERROR(Engine, "[AI] Claim index violation: %s", violation->c_str());
+				std::abort();
+			}
+		}
+#endif
+	}
+
+	void AIDecisionSystem::ensureClaimIndex() {
+		if (!m_claimsBuilt) {
+			m_claims.rebuild(*world);
+			m_claimsBuilt = true;
+		}
+	}
+
+	void AIDecisionSystem::acceptClaims(
+		EntityID entity, Task& task, const Memory& memory, const Inventory& inventory, const std::optional<SuspendedWork>& handedCargo
+	) {
+		if (handedCargo) {
+			takeOverCargo(task, *handedCargo);
+		} else {
+			const uint64_t seq = GoalTaskRegistry::Get().allocateClaimSeq();
+			task.instanceId = seq;
+			task.claimSeq = seq;
+		}
+
+		// The record's claims are already indexed under its own instance id, so adopting or discarding
+		// it goes through the index rather than appending it again.
+		if (task.suspended && task.type != TaskType::FulfillNeed) {
+			const uint64_t recordId = task.suspended->instanceId;
+			if (!handedCargo && adoptsSuspended(m_registry, task)) {
+				takeOverCargo(task, *task.suspended);
+			} else {
+				m_claims.retire(recordId);
+			}
+			task.discardSuspended();
+		}
+		recordChainClaims(*world, m_claims, m_registry, memory, inventory, task);
+		m_claims.append(entity, task);
 	}
 
 	bool AIDecisionSystem::shouldReEvaluate(
@@ -1612,11 +1779,23 @@ namespace ecs {
 		// the nearest reachable one passed over for regrowing is kept to show why the colonist waits.
 		// When every edible source it knows is regrowing, the search isn't run again until the first of
 		// them is ready or its memory of world entities changes (SourceReachMemo::FoodWait).
+		//
+		// A source another colonist is going to eat from (its Hunger task holds the Use) is passed over
+		// like a regrowing one, so two hungry colonists don't converge on one bush; the nearest is kept
+		// to show who holds it. Work claims (a cut for a goal, the idle gather) don't hold food against
+		// a hungry colonist: a need's claim is one harvest it will eat, and nothing else may starve it.
+		// The gather option is idle work and does give way to any holder of the source it picks.
+		const ClaimExclusion self = ClaimExclusion::of(currentTask);
+		const auto			 eats = [](const ClaimHolder& holder) {
+			return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle;
+		};
 		const bool						packHasFood = hasEdibleFood(m_registry, inventory);
 		std::optional<KnownWorldEntity> foodSource;
 		std::optional<KnownWorldEntity> regrowingFood;
+		std::optional<KnownWorldEntity> reservedFood;
+		EntityID						reservedFoodHolder = kInvalidEntity;
 		if (!packHasFood) {
-			const double now = simulationSeconds(*world);
+			const double now = m_simulationNow;
 			if (const auto* wait = sourceReach.waitingForFood(memory.worldEntityVersion, now)) {
 				regrowingFood = wait->nearest;
 			} else {
@@ -1644,7 +1823,17 @@ namespace ecs {
 							return false;
 						}
 						everyCandidateRegrowing = false;
-						return canReachSource(sourceKey, sourcePosition);
+						if (!canReachSource(sourceKey, sourcePosition)) {
+							return false;
+						}
+						if (const auto eater = m_claims.useHolderWhere({.kind = TargetKind::WorldKey, .key = sourceKey}, self, eats)) {
+							if (!reservedFood.has_value()) {
+								reservedFood = *known;
+								reservedFoodHolder = eater->colonist;
+							}
+							return false;
+						}
+						return true;
 					}
 				);
 				sourceReach.foodWait.reset();
@@ -1680,11 +1869,7 @@ namespace ecs {
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
 					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
-					option.reason = formatOptionReason(option, needTypeName(needType));
-					// Add special marker to indicate this is from inventory
-					if (option.status == OptionStatus::Available) {
-						option.reason += " (from inventory)";
-					}
+					option.reason = "from inventory";
 					trace.options.push_back(option);
 					continue;
 				}
@@ -1697,10 +1882,18 @@ namespace ecs {
 					option.targetReachable = true;
 					option.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
-					option.reason = formatOptionReason(option, needTypeName(needType));
-					if (option.status == OptionStatus::Available) {
-						option.reason += " (harvest)";
-					}
+					option.reason = "harvest";
+					trace.options.push_back(option);
+					continue;
+				}
+
+				// The food it knows is someone else's next meal: wait for it, taking other options meanwhile
+				if (reservedFood.has_value() && need.needsAttention()) {
+					option.targetPosition = reservedFood->position;
+					option.targetDefNameId = reservedFood->defNameId;
+					option.distanceToTarget = glm::distance(position.value, reservedFood->position);
+					option.status = OptionStatus::Reserved;
+					option.reservedBy = reservedFoodHolder;
 					trace.options.push_back(option);
 					continue;
 				}
@@ -1711,14 +1904,12 @@ namespace ecs {
 					option.targetDefNameId = regrowingFood->defNameId;
 					option.distanceToTarget = glm::distance(position.value, regrowingFood->position);
 					option.status = OptionStatus::Regrowing;
-					option.reason = formatOptionReason(option, needTypeName(needType));
 					trace.options.push_back(option);
 					continue;
 				}
 
 				// No food in inventory and no reachable food source known
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
-				option.reason = formatOptionReason(option, needTypeName(needType));
 				trace.options.push_back(option);
 				continue;
 			}
@@ -1778,7 +1969,6 @@ namespace ecs {
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
 			}
 
-			option.reason = formatOptionReason(option, needTypeName(needType));
 			trace.options.push_back(option);
 		}
 
@@ -1796,13 +1986,29 @@ namespace ecs {
 			gatherOption.skillLevel = farmSkillLevel;
 			gatherOption.skillBonus = farmSkillBonus;
 
-			if (foodSource.has_value()) {
+			const auto foodSourceHolder =
+				foodSource.has_value()
+					? m_claims.useHolder({.kind = TargetKind::WorldKey, .key = hashWorldEntity(foodSource->position, foodSource->defNameId)}, self)
+					: std::nullopt;
+			if (foodSourceHolder.has_value()) {
+				gatherOption.targetPosition = foodSource->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
+				gatherOption.status = OptionStatus::Reserved;
+				gatherOption.reservedBy = foodSourceHolder->colonist;
+				gatherOption.reason = "Food source";
+			} else if (foodSource.has_value()) {
 				gatherOption.targetPosition = foodSource->position;
 				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
 				gatherOption.targetReachable = true;
 				gatherOption.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
+			} else if (reservedFood.has_value()) {
+				gatherOption.targetPosition = reservedFood->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, reservedFood->position);
+				gatherOption.status = OptionStatus::Reserved;
+				gatherOption.reservedBy = reservedFoodHolder;
+				gatherOption.reason = "Food source";
 			} else if (regrowingFood.has_value()) {
 				gatherOption.targetPosition = regrowingFood->position;
 				gatherOption.distanceToTarget = glm::distance(position.value, regrowingFood->position);
@@ -1870,24 +2076,30 @@ namespace ecs {
 			// option is the crafting WORK, workable only once the station holds every input.
 			if (hasAllInputs) {
 				craftOption.status = OptionStatus::Available;
-				craftOption.reason = "Crafting " + recipe->label;
+				craftOption.reason = "Crafting {}";
+				// Another crafter on its way holds the station's slot from its Craft selection.
+				if (const auto holder = m_claims.slotHolder(
+						{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(stationEntity)}, kAnySlot, self
+					)) {
+					craftOption.status = OptionStatus::Reserved;
+					craftOption.reservedBy = holder->colonist;
+				}
 			} else {
 				craftOption.status = OptionStatus::NoSource;
-				craftOption.reason = "Crafting " + recipe->label + " (awaiting materials)";
+				craftOption.reason = "Crafting {} (awaiting materials)";
 			}
 
 			trace.options.push_back(craftOption);
 
 		}
-
-		// Haul loose items to storage containers (goal-driven), and deliver
-		// harvested craft materials from inventory to crafting stations
-		// (tier per option: tier 4 when serving an active work order, else tier 6)
+		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
+		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
+		const RootSupply supply{*world, m_claims, self, currentTask, inventory, m_registry, m_loosePiles};
+		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
-		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, inventory, position.value, trace);
-
-		// Harvest resources for crafting (goal-driven)
-		evaluateHarvestOptions(m_registry, m_workSources, position.value, skills, trace);
+		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, trace);
+		evaluateCarryInOptions(supply, position.value, trace);
+		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, skills, trace);
 
 		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(world, position.value, skills, trace);
@@ -1896,7 +2108,7 @@ namespace ecs {
 		evaluateDeconstructOptions(world, position.value, skills, trace);
 
 		// Place packaged items at target locations
-		evaluatePlacePackagedOptions(world, position.value, inventory, trace);
+		evaluatePlacePackagedOptions(world, supply, position.value, inventory, trace);
 
 		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
 		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
@@ -1935,11 +2147,11 @@ namespace ecs {
 		}
 
 		// Populate the (tier, score) key for all options: classify tier, compute the within-tier
-		// score (distance factor, skill, age, hysteresis). m_elapsedTime is this system's monotonic
-		// seconds-since-start clock; goal createdAt is still 0 (no wired game clock yet), so age ==
-		// elapsed, harmless and monotonic for the within-tier age term.
+		// score (distance factor, skill, age, hysteresis). Goal createdAt is always 0, so a goal's age is
+		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
+		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? m_registry.getDefNameId(currentTask.haulItemDefName) : 0U;
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(world, option, currentTask, m_elapsedTime);
+			populatePriorityBonuses(world, option, currentTask, currentHaulItemId, m_elapsedTime);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
@@ -1972,7 +2184,6 @@ namespace ecs {
 				const auto* goal = GoalTaskRegistry::Get().getGoal(option.harvestGoalId);
 				if (goal == nullptr || !goal->clearFootprint.has_value()) {
 					option.status = OptionStatus::Regrowing;
-					option.reason += " (regrowing)";
 					continue;
 				}
 			}
@@ -2013,14 +2224,11 @@ namespace ecs {
 				continue;
 			}
 			option.status = OptionStatus::Selected;
-			trace.selectionSummary = "Selected: " + option.reason;
 			break;
 		}
 
-		// Stamp the evaluation time so the inspector can detect a changed trace. m_elapsedTime is
-		// this system's monotonic seconds-since-start clock (deltaTime accumulated in update); a real
-		// game-time clock isn't wired to this system yet, but a monotonic timestamp is all the UI
-		// needs to know the trace was rebuilt.
+		// Stamp the evaluation time so the inspector can detect a changed trace: any monotonic stamp
+		// does, and m_elapsedTime is one.
 		trace.lastEvaluationTime = m_elapsedTime;
 	}
 
@@ -2051,7 +2259,7 @@ namespace ecs {
 		task.type = selected->taskType;
 		task.needToFulfill = selected->needType;
 		task.targetPosition = selected->targetPosition.value_or(position.value);
-		task.reason = selected->reason;
+		task.reason = describeOption(*world, *selected);
 		task.needSourceKey = selected->sourceKey;
 
 		// Copy crafting-specific fields for Craft tasks
@@ -2060,19 +2268,12 @@ namespace ecs {
 			task.targetStationId = selected->stationEntityId;
 		}
 
-
-		// Copy harvest-specific fields for Harvest tasks
-		// Harvest is part of a Harvest→Haul chain: colonist harvests, then linked haul becomes available
+		// Copy harvest-specific fields for Harvest tasks. A cut toward a root becomes its own deposit leg
+		// when it lands (ActionSystem::carryHarvestIn).
 		if (selected->taskType == TaskType::Harvest) {
 			task.harvestTargetEntityId = selected->harvestTargetEntityId;
 			task.harvestGoalId = selected->harvestGoalId;
 			task.harvestYieldDefNameId = selected->harvestYieldDefNameId;
-			// Get chain ID from goal for task continuity bonus
-			const auto* goal = GoalTaskRegistry::Get().getGoal(selected->harvestGoalId);
-			if (goal != nullptr && goal->chainId.has_value()) {
-				task.chainId = goal->chainId;
-				task.chainStep = 0; // Harvest is step 0 of the Harvest→Haul chain
-			}
 		}
 
 		// Copy build-specific fields for Build/Deconstruct tasks. ActionSystem reads the blueprint
@@ -2083,10 +2284,8 @@ namespace ecs {
 		}
 
 		// Copy hauling-specific fields for Haul tasks
-		// Haul is a two-step chain: Pickup (step 0) → Deposit (step 1)
-		// If Haul goal has a chainId (linked to Harvest), use that for continuity bonus
 		if (selected->taskType == TaskType::Haul) {
-			task.haulItemDefName = selected->haulItemDefName;
+			task.haulItemDefName = m_registry.getDefName(selected->haulItemDefNameId);
 			task.haulQuantity = selected->haulQuantity;
 			task.haulSourcePosition = selected->haulSourcePosition.value_or(glm::vec2{0.0F, 0.0F});
 			task.haulSourceStorageId = selected->haulSourceStorageId;
@@ -2097,16 +2296,9 @@ namespace ecs {
 			// Craft-material hauls already carry the items, so head straight to the station.
 			// Standard hauls go to the source first (pickup), then the destination.
 			task.targetPosition = task.haulFromInventory ? task.haulTargetPosition : task.haulSourcePosition;
-			// Check if goal has a chainId (linked to a prior Harvest)
-			const auto* goal = GoalTaskRegistry::Get().getGoal(selected->haulGoalId);
-			if (goal != nullptr && goal->chainId.has_value()) {
-				task.chainId = goal->chainId;
-				task.chainStep = 1; // Haul is step 1 of the Harvest→Haul chain
-			} else {
-				// Standalone haul - generate new chain ID for Pickup→Deposit
-				task.chainId = GoalTaskRegistry::Get().allocateChainId();
-				task.chainStep = 0;
-			}
+			// Pickup (step 0) then Deposit (step 1); goods already carried start at the deposit leg.
+			task.chainId = GoalTaskRegistry::Get().allocateChainId();
+			task.chainStep = task.haulFromInventory ? 1 : 0;
 		}
 
 		// Copy placement-specific fields for PlacePackaged tasks
@@ -2271,85 +2463,80 @@ namespace ecs {
 	}
 
 	std::optional<double> AIDecisionSystem::sourceRegrowingUntil(uint32_t defNameId, glm::vec2 position) const {
-		return onSourceRegrowth ? onSourceRegrowth(defNameId, position) : std::nullopt;
-	}
-
-	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {
-		if (option.taskType == TaskType::Wander) {
-			return "All needs satisfied";
-		}
-
-		std::string reason = needName;
-		reason += " at " + std::to_string(static_cast<int>(option.needValue)) + "%";
-
-		if (option.status == OptionStatus::NoSource) {
-			reason += " (no known source)";
-		} else if (option.status == OptionStatus::Regrowing) {
-			reason += " (source regrowing)";
-		} else if (option.needValue < 10.0F) {
-			reason += " (critical)";
-		} else if (option.status == OptionStatus::Available || option.status == OptionStatus::Selected) {
-			if (option.distanceToTarget > 0.0F) {
-				reason += " (" + std::to_string(static_cast<int>(option.distanceToTarget)) + "m away)";
-			} else if (option.targetPosition.has_value()) {
-				reason += " (using ground)";
-			}
-		} else if (option.status == OptionStatus::Satisfied) {
-			reason += " (satisfied)";
-		}
-
-		return reason;
+		return onSourceRegrowth ? onSourceRegrowth(defNameId, position, m_simulationNow) : std::nullopt;
 	}
 
 	void AIDecisionSystem::handleChainInterruption(
 		EntityID		entity,
-		const Task&		task,
+		Task&			task,
 		Inventory&		inventory,
 		const Position& position,
 		TaskType		newTaskType,
 		NeedType		newNeedType
 	) {
+		// The goods a haul or a cut carries for its root.
+		const std::string& item = m_registry.getDefName(chainItem(m_registry, task));
+
+		// A need interrupting a haul or cut whose goods the colonist keeps leaves it as its suspended
+		// record, so the goods stay committed to where they were going. Called on every path that keeps
+		// them; a drop keeps none, and the pile it leaves is an ordinary source with no claims.
+		const auto keepGoods = [&]() {
+			if (newTaskType != TaskType::FulfillNeed) {
+				return;
+			}
+			auto record = suspendableWork(m_registry, task, ecs::availableQuantity(inventory, item));
+			if (!record) {
+				return;
+			}
+			if (task.suspended) {
+				m_claims.retire(task.suspended->instanceId);
+			}
+			task.suspended = std::move(record);
+			m_claims.suspend(entity, task);
+		};
+
 		// Check if new task's first action needs hands
 		if (!taskFirstActionNeedsHands(newTaskType, newNeedType)) {
 			// New task doesn't need hands - colonist can keep carrying
+			keepGoods();
 			return;
 		}
 
 		// New task needs hands - must handle carried item
 		const auto entityId = static_cast<unsigned long long>(entity);
 
-		// For Haul tasks: item is in hands
-		if (task.type == TaskType::Haul && !task.haulItemDefName.empty()) {
+		// For Haul and Harvest tasks: the goods may be in hands
+		if ((task.type == TaskType::Haul || task.type == TaskType::Harvest) && !item.empty()) {
 			// Verify item is actually in hands before operating
-			if (!inventory.isHolding(task.haulItemDefName)) {
-				LOG_WARNING(Engine, "[AI] Entity %llu: chain interrupted but not holding %s", entityId, task.haulItemDefName.c_str());
+			if (!inventory.isHolding(item)) {
+				keepGoods(); // goods in the pack ride along
 				return;
 			}
 
-			const auto* assetDef = m_registry.getDefinition(task.haulItemDefName);
+			const auto* assetDef = m_registry.getDefinition(item);
 			uint8_t		handsRequired = (assetDef != nullptr) ? assetDef->handsRequired : 1;
 
 			if (handsRequired == 1) {
 				// 1-handed item: try the belt (quick-draw slot) first, then the backpack. The item is
 				// in hand, so a belt stow seats a copy on the belt and clears the hand.
-				if (inventory.stowToBelt(task.haulItemDefName)) {
-					inventory.putDown(task.haulItemDefName);
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, task.haulItemDefName.c_str());
+				if (inventory.stowToBelt(item)) {
+					inventory.putDown(item);
+					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to belt", entityId, item.c_str());
+					keepGoods();
 					return;
 				}
-				if (inventory.stowToBackpack(task.haulItemDefName)) {
-					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, task.haulItemDefName.c_str());
+				if (inventory.stowToBackpack(item)) {
+					LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, stowed %s to backpack", entityId, item.c_str());
+					keepGoods();
 					return;
 				}
 				// Belt and backpack full - fall through to drop
-				LOG_INFO(
-					Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, task.haulItemDefName.c_str()
-				);
+				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (belt and backpack full)", entityId, item.c_str());
 			} else {
-				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, task.haulItemDefName.c_str());
+				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, item.c_str());
 			}
 
-			auto dropped = inventory.putDown(task.haulItemDefName);
+			auto dropped = inventory.putDown(item);
 			if (dropped.has_value() && dropped->quantity > 0 && world != nullptr) {
 				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource);
 			}
@@ -2386,10 +2573,14 @@ namespace ecs {
 		if (world->getComponent<PlayerControlled>(entity) == nullptr) {
 			world->addComponent<PlayerControlled>(entity);
 		}
-		// Abandon the current task. There is no reservation/claim system (goals are re-evaluated
-		// fresh each tick), so clearing the task fully releases its work back to the pool; any
-		// carried items stay with the colonist and are handled normally once control is released.
+		// Abandon the current task and its suspended record. Their claims go with them, so the work
+		// returns to the pool at once; carried items stay with the colonist, uncommitted.
 		if (auto* task = world->getComponent<Task>(entity)) {
+			m_claims.retire(task->instanceId);
+			if (task->suspended) {
+				m_claims.retire(task->suspended->instanceId);
+			}
+			task->discardSuspended();
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
 		}

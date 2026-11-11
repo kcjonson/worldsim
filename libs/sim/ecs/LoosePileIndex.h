@@ -2,11 +2,13 @@
 
 // Loose ground piles (ResourceStack entities) by world key, the key Memory files the pile under:
 // hashWorldEntity(position, defNameId). A pickup from a remembered pile finds it with one lookup
-// instead of a scan of every pile. ActionSystem owns the one instance; whoever spawns a pile adds it
-// and whoever destroys one removes it.
+// instead of a scan of every pile. ActionSystem owns the one instance; piles enter it through
+// makeLoosePile and leave it through destroyWorldEntity (WorldSource.h), which the game and tests share.
 
 #include "EntityID.h"
+#include "World.h"
 #include "components/Memory.h"
+#include "components/ResourceStack.h"
 
 #include <glm/vec2.hpp>
 
@@ -17,14 +19,13 @@ namespace ecs {
 
 	class LoosePileIndex {
 	  public:
-		/// File `pile` under its world key. A later pile in the same 0.1 m cell of the same item
-		/// replaces it.
+		/// File `pile` under its world key. The drop path keeps piles a clearance gap apart, so two in
+		/// one 0.1 m cell are rare, but nothing forbids them: both stay filed, and Memory, which keys
+		/// the cell once, is served by each in turn until both drain.
 		void add(EntityID pile, uint32_t defNameId, glm::vec2 position) {
 			const uint64_t key = hashWorldEntity(position, defNameId);
-			if (const auto it = m_byKey.find(key); it != m_byKey.end()) {
-				m_keyOf.erase(it->second);
-			}
-			m_byKey[key] = pile;
+			remove(pile);
+			m_byKey.emplace(key, pile);
 			m_keyOf[pile] = key;
 		}
 
@@ -34,21 +35,35 @@ namespace ecs {
 			if (it == m_keyOf.end()) {
 				return;
 			}
-			m_byKey.erase(it->second);
+			auto [first, last] = m_byKey.equal_range(it->second);
+			for (; first != last; ++first) {
+				if (first->second == entity) {
+					m_byKey.erase(first);
+					break;
+				}
+			}
 			m_keyOf.erase(it);
 		}
 
-		/// The pile of `defNameId` filed at `position`'s world key, or kInvalidEntity.
-		[[nodiscard]] EntityID find(uint32_t defNameId, glm::vec2 position) const {
-			const auto it = m_byKey.find(hashWorldEntity(position, defNameId));
-			return it == m_byKey.end() ? kInvalidEntity : it->second;
+		/// A pile of `defNameId` filed at `position`'s world key that still holds something, or
+		/// kInvalidEntity. A pile drained earlier in the same update stays filed until its removal is
+		/// drained, and must not hide a live pile filed under the same cell.
+		[[nodiscard]] EntityID find(const World& world, uint32_t defNameId, glm::vec2 position) const {
+			auto [first, last] = m_byKey.equal_range(hashWorldEntity(position, defNameId));
+			for (; first != last; ++first) {
+				const ResourceStack* stack = world.isAlive(first->second) ? world.getComponent<ResourceStack>(first->second) : nullptr;
+				if (stack != nullptr && stack->quantity > 0) {
+					return first->second;
+				}
+			}
+			return kInvalidEntity;
 		}
 
 		[[nodiscard]] size_t size() const { return m_byKey.size(); }
 
 	  private:
-		std::unordered_map<uint64_t, EntityID> m_byKey;
-		std::unordered_map<EntityID, uint64_t> m_keyOf;
+		std::unordered_multimap<uint64_t, EntityID> m_byKey;
+		std::unordered_map<EntityID, uint64_t>		m_keyOf;
 	};
 
 } // namespace ecs

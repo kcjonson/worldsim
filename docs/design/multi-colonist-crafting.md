@@ -9,7 +9,7 @@ Single-colonist crafting (one colonist provisions a bill of materials into a sta
 When two or more colonists are available and there is a single work order:
 - How is the bill of materials fulfilled across colonists? Does one colonist bring everything, or can the requirements be divided among several?
 - How do we avoid DUPLICATING cut / harvest / haul tasks between colonists (two colonists both felling the same tree, or both hauling the same need)? Implies some claim or reservation so a need already in progress is not re-picked.
-- Interaction with the existing model: a need resolves to one Haul/Harvest goal with finite `availableCapacity`; today a brief double-pickup self-corrects via `recordDelivery`, with no reservation by design. Decide whether multi-colonist provisioning needs real reservation, or the capacity model is enough.
+- Interaction with the existing model: goal counters (`availableCapacity`, the goal-level delivery credit) are gone; a root's remaining need is read live from what has landed at its destination, less what other tasks are bringing.
 
 Answered in [Task Claims](../technical/task-claims.md): requirements divide across colonists, each cut or fetch records in-flight and inbound claims against the craft goal so no need is picked twice, and the capacity model alone was not enough.
 

@@ -74,7 +74,7 @@ Stay as totals. **Superseded:** a later refactor made `delivered[]` the authorit
 - `GameScene` drop-resource callback — pile split.
 - Tests: `Inventory.test.cpp`, `ActionSystem.test.cpp` (armful/storage-overflow), `ConstructionSystem.test.cpp`, `AIDecisionSystem.test.cpp`, `InventoryMass.test.cpp` (raw `.items["Stone"]` write).
 
-**Safe** (route through `getQuantity` / `availableQuantity` / `addItem` / `removeItem` / `addableCount`, so they hold once those aggregate across stacks): HarvestActions, HaulActions, CraftActions, NeedActions, AIDecisionSystem, ConstructionSystem `carriedAmount`, UI display via `getAllItems`. The two-hand hand-mirror machinery in `InventoryMass.h` is independent of `items` and stays untouched.
+**Safe** (route through `getQuantity` / `availableQuantity` / `addItem` / `removeItem` / `addableCount`, so they hold once those aggregate across stacks): HarvestActions, HaulActions, CraftActions, NeedActions, AIDecisionSystem, UI display via `getAllItems`. The two-hand hand-mirror machinery in `InventoryMass.h` is independent of `items` and stays untouched.
 
 ## Implementation phases
 

@@ -8,11 +8,140 @@
 
 #include <glm/vec2.hpp>
 
+#include <array>
+#include <cstdlib>
 #include <cstdint>
 #include <optional>
 #include <string>
 
 namespace ecs {
+
+/// What a claim commits to. See /docs/technical/task-claims.md.
+enum class ClaimKind : uint8_t {
+	Use,			// exclusive use of the target, quantity 1
+	SourceQuantity, // units to be taken from a pile or box
+	Slot,			// one slot of a station, bed, or spot; numbered when slotIndex is set
+	Inbound,		// units to be deposited at a destination
+	InFlight		// units on their way toward a root goal
+};
+
+/// Which key space Claim::target is in; the raw integers overlap across them.
+enum class TargetKind : uint8_t {
+	WorldKey, // Memory's hashWorldEntity(position, defNameId)
+	Entity,	  // EntityID
+	Goal	  // GoalTask::id
+};
+
+constexpr uint16_t kAnySlot = 0xFFFF;
+
+/// One commitment held by a task. Built only through the factories, which fix each kind's key space,
+/// so no claim can be filed under a key space its queries never look in. Only the quantity changes
+/// after that, as a chain advances.
+class Claim {
+  public:
+	Claim() = default;
+
+	[[nodiscard]] static Claim use(TargetKind targetKind, uint64_t target) {
+		return {target, 0, 1, kAnySlot, ClaimKind::Use, targetKind};
+	}
+	[[nodiscard]] static Claim sourceQuantity(TargetKind targetKind, uint64_t source, uint32_t itemDefNameId, uint32_t quantity) {
+		return {source, itemDefNameId, quantity, kAnySlot, ClaimKind::SourceQuantity, targetKind};
+	}
+	/// kAnySlot is the target's one unnumbered slot (a station), held exclusively like every numbered
+	/// one; a numbered slot is one position of several (a builder position).
+	[[nodiscard]] static Claim slot(uint64_t entity, uint16_t slotIndex = kAnySlot) {
+		return {entity, 0, 1, slotIndex, ClaimKind::Slot, TargetKind::Entity};
+	}
+	[[nodiscard]] static Claim inbound(uint64_t destination, uint32_t itemDefNameId, uint32_t quantity) {
+		return {destination, itemDefNameId, quantity, kAnySlot, ClaimKind::Inbound, TargetKind::Entity};
+	}
+	[[nodiscard]] static Claim inFlight(uint64_t rootGoalId, uint32_t itemDefNameId, uint32_t quantity) {
+		return {rootGoalId, itemDefNameId, quantity, kAnySlot, ClaimKind::InFlight, TargetKind::Goal};
+	}
+
+	[[nodiscard]] uint64_t	 target() const { return targetId; }
+	[[nodiscard]] uint32_t	 itemDefNameId() const { return item; } // 0 for Use and Slot
+	[[nodiscard]] uint32_t	 quantity() const { return count; }		// 1 for Use and Slot
+	[[nodiscard]] uint16_t	 slotIndex() const { return slotNumber; }
+	[[nodiscard]] ClaimKind	 kind() const { return claimKind; }
+	[[nodiscard]] TargetKind targetKind() const { return space; }
+
+	void setQuantity(uint32_t newQuantity) { count = newQuantity; }
+
+  private:
+	Claim(uint64_t newTarget, uint32_t newItem, uint32_t newCount, uint16_t newSlot, ClaimKind newKind, TargetKind newSpace)
+		: targetId(newTarget),
+		  item(newItem),
+		  count(newCount),
+		  slotNumber(newSlot),
+		  claimKind(newKind),
+		  space(newSpace) {}
+
+	uint64_t   targetId = 0;
+	uint32_t   item = 0;
+	uint32_t   count = 1;
+	uint16_t   slotNumber = kAnySlot;
+	ClaimKind  claimKind = ClaimKind::Use;
+	TargetKind space = TargetKind::WorldKey;
+};
+
+/// Fixed-capacity inline claim list, so a task's claims never need the heap; overfilling one is a
+/// programming error.
+template <uint8_t Capacity>
+class BasicClaimList {
+  public:
+	static constexpr uint8_t kCapacity = Capacity;
+
+	[[nodiscard]] bool push(const Claim& claim) {
+		if (count >= kCapacity) {
+#ifdef DEVELOPMENT_BUILD
+			std::abort();
+#endif
+			return false;
+		}
+		items[count++] = claim;
+		return true;
+	}
+
+	void clear() { count = 0; }
+
+	/// Remove every claim `pred` accepts, keeping the order of the rest.
+	template <typename Pred>
+	void eraseIf(Pred&& pred) {
+		uint8_t kept = 0;
+		for (uint8_t index = 0; index < count; ++index) {
+			if (!pred(items[index])) {
+				items[kept++] = items[index];
+			}
+		}
+		count = kept;
+	}
+
+	[[nodiscard]] uint8_t size() const { return count; }
+	[[nodiscard]] bool empty() const { return count == 0; }
+	[[nodiscard]] const Claim& operator[](uint8_t index) const { return items[index]; }
+	[[nodiscard]] Claim* begin() { return items.data(); }
+	[[nodiscard]] Claim* end() { return items.data() + count; }
+	[[nodiscard]] const Claim* begin() const { return items.data(); }
+	[[nodiscard]] const Claim* end() const { return items.data() + count; }
+
+  private:
+	std::array<Claim, kCapacity> items{};
+	uint8_t count = 0;
+};
+
+/// A task's claims. The longest chain (fetch from stock) holds three.
+using ClaimList = BasicClaimList<4>;
+
+/// One interrupted work task, kept across a need so its claims on the goods still held stay its own.
+/// A record only ever holds that item's Inbound and InFlight.
+struct SuspendedWork {
+	uint64_t		  instanceId = 0;
+	uint64_t		  claimSeq = 0;
+	uint64_t		  rootGoalId = 0;
+	uint32_t		  itemDefNameId = 0;
+	BasicClaimList<2> claims;
+};
 
 /// Task types that colonists can perform. Arbitration tiers (assigned in priority-tuning.xml's
 /// <TaskTiers> + classifyTier promotions): see colonist-task-arbitration.md.
@@ -75,7 +204,7 @@ struct Task {
 	NeedType needToFulfill = NeedType::Count;
 
 	/// For Harvest tasks: target to harvest and goal context
-	uint64_t harvestTargetEntityId = 0;	   // Entity ID of the harvestable (tree, bush, etc.)
+	uint64_t harvestTargetEntityId = 0;	   // Memory key of the harvestable (tree, bush), not an ECS id
 	uint64_t harvestGoalId = 0;			   // Goal ID this harvest is contributing to
 	uint32_t harvestYieldDefNameId = 0;	   // What item type will be yielded
 
@@ -132,8 +261,18 @@ struct Task {
 	/// Debug reason for task selection (e.g., "Hunger at 45%")
 	std::string reason;
 
+	/// Claim owner identity, assigned at acceptance and never reused; 0 while no task is held.
+	uint64_t instanceId = 0;
+	/// Acceptance order, for deterministic tie-breaks between claims.
+	uint64_t claimSeq = 0;
+	ClaimList claims;
+	/// Survives clear(): the switch path clears the task after handleChainInterruption builds it.
+	std::optional<SuspendedWork> suspended;
+
 	/// Check if a task is currently assigned
 	[[nodiscard]] bool isActive() const { return type != TaskType::None; }
+
+	void discardSuspended() { suspended.reset(); }
 
 	/// Reset task to default state (caller responsible for resetting timeSinceEvaluation)
 	void clear() {
@@ -167,6 +306,9 @@ struct Task {
 		priority = 0.0F;
 		// Note: timeSinceEvaluation NOT reset here - caller handles timer logic
 		reason.clear();
+		instanceId = 0;
+		claimSeq = 0;
+		claims.clear();
 	}
 };
 
