@@ -300,7 +300,7 @@ asset:addChild(myLeaf)
 
 ## Example: deciduous tree generator
 
-`assets/shared/scripts/deciduous.lua` is the working example; oak and maple run it with different params. It reads one `age` from 0 to 1 (the `age` param when set, else the `ageClass` global mapped to an age at the top of the script), grows a branch skeleton for that long, hangs leaf clusters on the tips, and draws the crown, trunk, and ground contact through the prelude. Its shape, in brief:
+`assets/shared/scripts/deciduous.lua` is the working example; oak and maple run it with different params. It reads one `age` from 0 to 1 (the `age` param when set, else the `ageClass` global mapped to an age at the top of the script), grows a branch skeleton for that long, hangs sprays of leaf marks along the outer shoots, and draws the crown, trunk, and ground contact through the prelude. Its shape, in brief:
 
 ```lua
 local age = lib.num.clamp(getFloat("age", ({ sapling = 0.15, mature = 0.55, veteran = 0.9 })[ageClass] or 0.55), 0, 1)
@@ -308,12 +308,12 @@ local trunkWidth = lib.num.curve(lib.num.curveParam("trunkWidth", "0.15:0.18, 0.
 asset:setCollisionRect(trunkWidth / 2, trunkWidth / 2, 0, 0) -- from the age only, never the variant
 
 lib.random.stream(3)          -- each stage draws from its own stream
--- ... grow the skeleton, one stream per shoot, then group its tips into clusters ...
+-- ... grow the skeleton, one stream per shoot, then group its tips into clumps and hang sprays of leaves on the outer shoots ...
 
 lib.random.stream(6)
 lib.foot.contactShadow(trunkWidth, lib.color.hex("contactShadow", "#1d2616"), 0.18)
 -- ... the wood as one shape: tapered strips along the skeleton's axes, all in one bark colour ...
-lib.shape.emit(lib.shape.lobed(x, y, r, 10, 0.88, 0.1, rot, 0.88), tone) -- one leaf mass
+lib.shape.emit(lib.shape.leaf(x, y, dx, dy, len, wide, pointed), tone) -- one leaf mark of a spray
 ```
 
 ## Sandbox Restrictions

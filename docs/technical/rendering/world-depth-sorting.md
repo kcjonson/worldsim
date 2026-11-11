@@ -18,7 +18,7 @@ Draw order is decided purely by a fixed pass sequence, not by any per-entity key
 
 Per frame, `GameScene::render()` (`apps/world-sim/scenes/game/GameScene.cpp:888`) runs, in order: terrain tiles (`ChunkRenderer`, :903), one monolithic `EntityRenderer` pass (:910), then committed foundations + in-progress construction preview (`m_drawingSystem->render`, :916), room/nav/vision overlays, selection indicator, placement ghost, and finally `gameUI->render()` (:936).
 
-Inside `EntityRenderer::renderInstanced` (`libs/world-view/world/rendering/EntityRenderer.cpp:84-92`) the entity sub-passes are hardcoded: baked static flora/rocks via one `glDrawElements` per chunk, then GPU-instanced groundcover grass, then dynamic ECS entities. Because dynamic entities are a strictly later pass than static flora, a colonist always paints over any tree regardless of north/south position. That is the root defect.
+Inside `EntityRenderer::renderFrame` (`libs/world-view/world/rendering/EntityRenderer.cpp`) the entity sub-passes are hardcoded: baked static flora/rocks via one `glDrawElements` per chunk, then GPU-instanced groundcover grass, then dynamic ECS entities. Because dynamic entities are a strictly later pass than static flora, a colonist always paints over any tree regardless of north/south position. That is the root defect.
 
 Supporting facts:
 - `assets::PlacedEntity` (`libs/assets/assets/placement/SpatialIndex.h`) carries only `defName`, `position`, `rotation`, `scale`, `colorTint`, and an optional `partTransforms` pointer. No depth/anchor field.
@@ -46,7 +46,7 @@ The only sort primitive in the codebase, `BatchRenderer`'s DrawGroup z-index sta
 Add `float anchorY` to `assets::PlacedEntity` = the bottom-most (max) world-Y of the renderable's mesh, its ground-contact line. Invariant: larger `anchorY` draws later, so it appears in front.
 
 Per-type derivation reconciles the two current position conventions into one rule:
-- **Static occluders** (trees, bushes, rocks): `anchorY = position.y + anchorLocalY * scale`. `anchorLocalY` (`WorldDepthSort.h`) is the lower edge of the def's footprint for the instance's age class (`offsetMeters.y + halfExtentsMeters.y` of a rect, the lowest point of a polygon) when the def has one, so a tree sorts by its trunk foot and the contact shadow, root flare, and grass it draws below the foot do not pull it forward. A def without a footprint uses the bottom of its own (def, age class, variant) template mesh. Computed once at placement and stored on the `PlacedEntity`, not baked into the frozen mesh. Rotation is not applied to either, as before (only scatter rotates, and of the footprinted defs only the big rock).
+- **Static occluders** (trees, bushes, rocks): `anchorY = position.y + anchorLocalY * scale`. `anchorLocalY` (`WorldDepthSort.h`) is the lower edge of the def's footprint for the instance's age class (`offsetMeters.y + halfExtentsMeters.y` of a rect, the lowest point of a polygon) when the def has one, so a tree sorts by its trunk foot and the contact shadow, root flare, and grass it draws below the foot do not pull it forward. A def without a footprint uses the bottom of its own (def, age class, variant) template mesh. A simple (SVG) def's footprint is authored about its drawing's bbox centre and is converted into the mesh's frame, the one the entity's position is the origin of; a procedural def's already is in it. Computed once at placement and stored on the `PlacedEntity`, not baked into the frozen mesh. Rotation is not applied to either, as before (only scatter rotates, and of the footprinted defs only the big rock).
 - **Dynamic entities**: the same rule through `anchorLocalY`. Colonists have no footprint, so it is their feet, `anchorY = position.y + meshMaxY * scale`, reusing the mesh bbox min/max already scanned in `DynamicEntityRenderSystem`; a dev-spawned tree sorts by its trunk foot like a placed one.
 - **Packaged furniture**: three sprites from `packagedLayout`, crate back, item (fitted inside), crate front, all with `anchorY` = the crate's bottom baseline. Equal keys + the stable sort keep that build order after the global sort, so the item draws inside the crate.
 - **Loose ground piles** (`ResourceStack`): each of the pile's 1-5 sprites (`pileLayout`) is its own renderable with the colonist rule applied at that sprite's offset center, so the back rows sort behind the front rows and the heap interleaves correctly with anything standing in it.
@@ -70,7 +70,7 @@ Deliberate simplification: a colonist always covers sub-1m grass and short flora
 
 Global painter's Y-sort of the "upright occluders + actors" subset only.
 
-Each frame, in `EntityRenderer::renderInstanced`, after drawing the background (terrain, foundations, groundcover, short flora):
+Each frame, in `EntityRenderer::renderFrame`, after drawing the background (terrain, foundations, groundcover, short flora):
 
 1. **Gather.** `WorldDepthGather` keeps each chunk's tall statics in a list stable-sorted by `anchorY`, rebuilt only when that chunk's `SpatialIndex::version()` changes, and culls them by origin against `computeVisibleBounds` each frame; the dynamic ECS entities are culled the same way. Items are lightweight `{anchorY, const PlacedEntity*, isAnimated}`.
 2. **Sort.** Each chunk's culled stretch is already in order, so the stretches (chunks in (y, x) order, then the dynamic entities, stable-sorted on their own) are merged pairwise with `std::inplace_merge`. The result is the sequence one `std::stable_sort` of all of them would give. Querying and sorting every visible static each frame cost 17.8 ms at zoom 0.25 on the river view (46,000 trees, each chunk's query walking the whole view's cells); this costs 0.8 ms.
@@ -87,11 +87,11 @@ Rejected alternatives, for the record:
 
 ## Templates, routing, and the gather margin
 
-Added with tree variety (`docs/technical/asset-system/tree-variety.md`, R3). Every placed static and dynamic entity carries `PlacedEntity::templateId`, the registry's integer id for its (def, age class, variant) template, resolved once where the entity is made (placement, or `DynamicEntityRenderSystem` for actors). `InstancedEntityRenderer` keys its GPU meshes and its instanced runs by that id, so `emitSorted` does no string work per entity. A mesh handle starts with room for 4,096 instances and is re-uploaded at the next power of two when a run outgrows it.
+Added with tree variety (`docs/technical/asset-system/tree-variety.md`, R3). Every placed static and dynamic entity carries `PlacedEntity::templateId`, the registry's integer id for its (def, age class, variant) template, resolved once where the entity is made (placement, or `DynamicEntityRenderSystem` for actors). `InstancedEntityRenderer` keys its GPU meshes and its instanced runs by that id, so `emitSorted` does no string work per entity. A mesh handle starts with room for 4,096 instances and is re-uploaded at the next power of two when a run outgrows it. A template has a mesh per detail level (`<detailLevels>`); its reference level uploads the first frame the template is drawn, outside the upload budget, and only the other levels are built off the main thread and queue behind the budget, the nearest ready level drawing meanwhile.
 
 Tall or short is decided per def, not per instance: `AssetRegistry::isTallDef` measures the def's mature variant 0, unscaled, against `kShortFloraMaxHeight` (`FloraRouting.h`). Placement stores the answer in `isTallOccluder` and the bake skips exactly the entities that have it set, so the two can't disagree.
 
-The visible-rect gather is padded by `entityCullMarginMeters(AssetRegistry::maxReachMeters())` (`RenderContext.h`): the farthest any non-groundcover template draws from its origin times its def's largest placement scale, never under 2 m. Statics, dynamic entities, and the batched fallback's short flora are all culled by origin against it, so a wide crown whose trunk is outside the view is still gathered.
+The visible-rect gather is padded by `entityCullMarginMeters(AssetRegistry::maxReachMeters())` (`RenderContext.h`): the farthest any non-groundcover template draws from its origin times its def's largest placement scale, never under 2 m (a def with detail levels is measured at its reference level and widened by `kLevelReachMargin`). Statics and dynamic entities are culled by origin against it, so a wide crown whose trunk is outside the view is still gathered.
 
 ## Walls & foundations as ECS entities
 
@@ -124,7 +124,7 @@ Framerate is a hard gate: no regression, benchmarked before and after.
 
 Two cost components:
 1. The sort itself is negligible. The sortable set is the frustum-culled visible occluders + actors, realistically hundreds to low thousands; a `std::stable_sort` of `{float, pointer}` is tens of microseconds.
-2. The real cost is pulling tall occluders off the baked/instanced fast path into the sorted stream, roughly what `BatchedEntityRenderer` already pays for those entities. Bounded by frustum culling and the far-zoom impostor cutoff.
+2. The real cost is pulling tall occluders off the baked/instanced fast path into the sorted stream, the same per-entity work any entity in the stream costs. Bounded by frustum culling and the far-zoom impostor cutoff.
 
 Levers to hold the budget:
 - Keep the un-reordered majority (groundcover ~486k tufts, short flora, terrain, foundations) on untouched fast paths.
@@ -141,12 +141,11 @@ Benchmark methodology: capture frame time, draw calls, and entity/triangle count
 - **Foundations behind.** A colonist standing on a foundation draws over it, not under it.
 - **Dense-forest stress.** Zoom out over a dense forest with several colonists; confirm correct interleaving, no per-frame ordering flicker at rest, and no frame-time regression vs baseline.
 - **Fast-path regression.** Terrain, groundcover, and short-flora impostor fade render identically before/after (screenshot diff at multiple zooms).
-- **Batched-fallback parity.** With `m_useInstancing=false`, ordering matches the instanced path in the walk-past-tree scene.
 - **Nav/collision intact.** `ConstructionWorld`-driven navmesh and wall collision still behave after walls/foundations become entities.
 
 ## Phasing
 
-- **Phase 1.** `anchorY` field + producers, tall-occluder exclusion from the bake, merged gather/sort/submit in `EntityRenderer`, walls/foundations as ECS entities, batched-fallback parity, tests + before/after benchmarks.
+- **Phase 1.** `anchorY` field + producers, tall-occluder exclusion from the bake, merged gather/sort/submit in `EntityRenderer`, walls/foundations as ECS entities, tests + before/after benchmarks.
 - **Phase 2 (only if a concrete need or perf regression appears).** Trunk/canopy split-sprite, multi-tile footprint occluders, zoom-scaled depth-band bucketing as the instancing-preserving perf fallback. No canopy-fade phase.
 
 ## Key files
@@ -158,6 +157,5 @@ Benchmark methodology: capture frame time, draw calls, and entity/triangle count
 - `libs/world-view/world/rendering/DynamicEntityRenderSystem.cpp` — dynamic `anchorY`.
 - `libs/assets/assets/placement/SpatialIndex.h` — `PlacedEntity.anchorY`, `templateId`, `queryRect`.
 - `libs/assets/assets/placement/FloraRouting.h` — `kShortFloraMaxHeight` and the per-def tall rule.
-- `libs/world-view/world/rendering/BatchedEntityRenderer.cpp` — fallback parity.
 - `scenes/game/world/construction/DrawingSystem.*`, `ConstructionWorld`, `ecs/systems/ConstructionSystem`, `NavigationSystem`, `WallCollisionSystem` — walls/foundations as entities while keeping topology as nav/collision truth.
 - `libs/renderer/primitives/ZSort.bench.cpp` — benchmark reference.
