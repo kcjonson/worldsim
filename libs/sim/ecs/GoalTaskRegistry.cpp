@@ -1,6 +1,12 @@
 #include "GoalTaskRegistry.h"
 
+#include <assets/AssetRegistry.h>
+
 namespace ecs {
+
+	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {
+		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(p);
+	}
 
 	GoalTaskRegistry& GoalTaskRegistry::Get() {
 		static GoalTaskRegistry instance;

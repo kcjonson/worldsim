@@ -10,6 +10,7 @@
 #include "../InventoryMass.h"
 #include "../World.h"
 #include "../components/Action.h"
+#include "../components/Appearance.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
@@ -264,6 +265,18 @@ namespace ecs::test {
 		EXPECT_TRUE(runUntil([&] { return !treeStands(trees[1]); })) << "the known blocker is cleared";
 		EXPECT_TRUE(treeStands(trees[0])) << "the unknown blocker is left for when someone sees it";
 		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
+	}
+
+	// A runtime-spawned bush (an ECS entity, not in the placement index) is a blocker a colonist can
+	// remember and clear, so it holds the site in Clearing exactly as placed flora does.
+	TEST_F(FootprintClearingTest, SpawnedBlockerHoldsTheSiteLikePlacedFlora) {
+		const EntityID bush = world->createEntity();
+		world->addComponent<Position>(bush, Position{{6.0F, 6.0F}});
+		world->addComponent<Appearance>(bush, Appearance{kBush});
+
+		EXPECT_FALSE(runUntil([&] { return phase() != StructureBlueprint::BuildPhase::Clearing; }, 120))
+			<< "the spawned bush blocks the footprint";
+		EXPECT_FALSE(GoalTaskRegistry::Get().getGoalsOfType(TaskType::Harvest).empty()) << "and the site offers its clear goal";
 	}
 
 	// A material Harvest (not a clear) feeds the site through construction's own per-material Haul:

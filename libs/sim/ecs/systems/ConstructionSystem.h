@@ -200,8 +200,8 @@ namespace ecs {
 		/// footprint" for both the clear gate and the clear goal a colonist serves.
 		[[nodiscard]] FootprintBounds footprintBounds(uint64_t foundationId) const;
 
-		/// True if no Harvestable placed entity lies in the foundation's footprintBounds.
-		/// v1 clearing rule (see header): only Harvestable blockers gate clearing.
+		/// True while nothing in the world blocks the footprint (FootprintBounds::blockedBy), placed
+		/// flora and runtime-spawned entities alike: the set the clear goal is served by.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
 
 		/// True once the wall segment's host foundation is Built. Walls draw on a

@@ -23,6 +23,10 @@
 #include <unordered_set>
 #include <vector>
 
+namespace assets {
+	class AssetRegistry;
+}
+
 namespace ecs {
 
 	/// Goal status for task hierarchy and dependency tracking
@@ -52,6 +56,11 @@ namespace ecs {
 
 		[[nodiscard]] bool contains(glm::vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
 		[[nodiscard]] glm::vec2 center() const { return (min + max) * 0.5F; }
+
+		/// A thing of `defNameId` at `p` blocks the site: a harvestable inside the footprint. The clear
+		/// goal is served by exactly the blockers a colonist knows, and the build gate holds while any
+		/// blocker stands in the world, so a site is clear exactly when no clear work remains.
+		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const;
 	};
 
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")

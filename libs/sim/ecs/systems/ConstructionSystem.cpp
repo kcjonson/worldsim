@@ -5,6 +5,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "../components/Appearance.h"
 #include "../components/Inventory.h"
 #include "../components/Needs.h"
 #include "../components/Structure.h"
@@ -201,19 +202,31 @@ namespace ecs {
 	}
 
 	bool ConstructionSystem::isFootprintClear(uint64_t foundationId) const {
-		if (m_constructionWorld == nullptr || m_placementExecutor == nullptr || m_processedChunks == nullptr) {
-			// No placement data wired: treat as clear so the lifecycle still progresses
-			// (e.g. unit/headless contexts). Clearing is a no-op without a world to query.
+		if (m_constructionWorld == nullptr) {
+			// No topology wired (unit/headless contexts): there is no footprint to clear.
 			return true;
 		}
 
 		const FootprintBounds bounds = footprintBounds(foundationId);
-		const float			  minX = bounds.min.x;
-		const float			  minY = bounds.min.y;
-		const float			  maxX = bounds.max.x;
-		const float			  maxY = bounds.max.y;
+		auto&				  assetRegistry = assets::AssetRegistry::Get();
 
-		auto& assetRegistry = assets::AssetRegistry::Get();
+		// Runtime-spawned harvestables are ECS entities a colonist remembers like placed flora, so
+		// they block the site and serve its clear goal the same way.
+		for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
+			(void)entity;
+			if (bounds.blockedBy(assetRegistry, assetRegistry.getDefNameId(appearance.defName), position.value)) {
+				return false;
+			}
+		}
+
+		if (m_placementExecutor == nullptr || m_processedChunks == nullptr) {
+			return true;
+		}
+
+		const float minX = bounds.min.x;
+		const float minY = bounds.min.y;
+		const float maxX = bounds.max.x;
+		const float maxY = bounds.max.y;
 
 		constexpr float kChunkWorldSize = static_cast<float>(world::kChunkSize);
 		const int32_t	chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
@@ -232,12 +245,8 @@ namespace ecs {
 					continue;
 				}
 				for (const auto* placed : chunkIndex->queryRect(minX, minY, maxX, maxY)) {
-					const uint32_t defNameId = assetRegistry.getDefNameId(placed->defName);
-					if (defNameId == 0) {
-						continue;
-					}
-					if (assetRegistry.hasCapability(defNameId, assets::CapabilityType::Harvestable)) {
-						return false; // a choppable blocker sits on the footprint
+					if (bounds.blockedBy(assetRegistry, assetRegistry.getDefNameId(placed->defName), placed->position)) {
+						return false;
 					}
 				}
 			}
@@ -279,7 +288,7 @@ namespace ecs {
 	}
 
 	void ConstructionSystem::emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId) {
-		if (m_constructionWorld == nullptr || m_placementExecutor == nullptr || m_processedChunks == nullptr) {
+		if (m_constructionWorld == nullptr) {
 			return;
 		}
 

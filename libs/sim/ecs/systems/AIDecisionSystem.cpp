@@ -841,13 +841,10 @@ namespace ecs {
 
 				// Search memory for harvestables that yield the target item
 				for (const auto& [key, knownEntity] : memory.knownWorldEntities) {
-					// Check if this entity is harvestable
-					if (!registry.hasCapability(knownEntity.defNameId, assets::CapabilityType::Harvestable)) {
+					// A clear is served by what blocks its footprint, the same test the build gate applies.
+					if (clearing ? !goal->clearFootprint->blockedBy(registry, knownEntity.defNameId, knownEntity.position)
+								 : !registry.hasCapability(knownEntity.defNameId, assets::CapabilityType::Harvestable)) {
 						continue;
-					}
-
-					if (clearing && !goal->clearFootprint->contains(knownEntity.position)) {
-						continue; // a clear only removes what stands in its footprint
 					}
 
 					// Check what this harvestable yields
