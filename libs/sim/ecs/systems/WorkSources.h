@@ -4,11 +4,13 @@
 // so a goal for an item visits only that item's entries, and resolved once per def per evaluation.
 // Each source query fills one reused buffer: its span is valid until the next query.
 
+#include "../GoalTaskRegistry.h"
 #include "../components/Memory.h"
 
 #include <assets/AssetDefinition.h>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -56,9 +58,9 @@ namespace ecs {
 		/// (a cut that collects 0 would be chosen again every decision).
 		[[nodiscard]] std::span<const HarvestSource> harvestablesYielding(uint32_t yieldDefNameId);
 
-		/// Every harvestable this colonist holds the tool for, whatever fits: a clear removes its
-		/// blocker and drops what the pack can't take, so a full pack never stalls a site.
-		[[nodiscard]] std::span<const HarvestSource> clearableHarvestables();
+		/// Every harvestable inside `footprint` that this colonist holds the tool for, whatever fits: a clear
+		/// removes its blocker and drops what the pack can't take, so a full pack never stalls a site.
+		[[nodiscard]] std::span<const HarvestSource> clearableHarvestables(const FootprintBounds& footprint);
 
 #ifdef DEVELOPMENT_BUILD
 		/// Remembered entries placed in a source span since construction. Tests read it to show the
@@ -78,13 +80,15 @@ namespace ecs {
 			bool						   yieldFits = false;
 		};
 		const HarvestDef& harvestDef(uint32_t defNameId);
-		void			  appendHarvestables(uint32_t defNameId, const HarvestDef& resolved);
+		void appendHarvestables(uint32_t defNameId, const HarvestDef& resolved, const FootprintBounds* inside = nullptr);
 
 		const Memory*				 m_memory = nullptr;
 		const assets::AssetRegistry* m_registry = nullptr;
 		const Inventory*			 m_inventory = nullptr;
 		uint64_t					 m_evaluation = 0;
 		bool						 m_carryDefsListed = false;
+		/// What the colonist carries, summed the first time a harvest def asks in an evaluation
+		std::optional<float>		 m_carriedKg;
 		std::vector<uint32_t>		 m_carryDefs;
 		std::vector<HarvestDef>		 m_harvestDefs;
 		std::vector<CarrySource>	 m_carry;

@@ -251,7 +251,7 @@ std::optional<KnownWorldEntity> nearest = findNearestReachableWithCapability(
 );
 ```
 
-A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible and that is ready to give it. A bush on its regrowth cooldown pays nothing, so it is passed over for the next nearest; when it was the only food the colonist knows, both options read `Regrowing` and the colonist takes its next option (other work, a wander) until the bush is ready. Readiness is the live state of a source the colonist already remembers, the game time it is ready again (or none), asked through `AIDecisionSystem::setSourceRegrowthCallback` by interned def id only of candidates on their way to winning, nearest first. When every edible source the colonist knows is regrowing, the search is not run again until the earliest of them is ready or the colonist remembers or forgets a world entity (`SourceReachMemo::FoodWait`), so an idle colonist waiting on food costs one compare a decision. A work Harvest is checked the same way when it comes up for selection; a construction clear is not, since it removes the bush whatever its state. A bed or toilet that can't be reached falls back to the ground, as when none is known.
+A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. With no food in its pack, one nearest-first search answers both food options. The Hunger option takes the nearest reachable known source of any kind: a ready harvestable whose yield is edible, a loose pile of an edible item, or a storage box the colony knows that holds one (piles and boxes only while the colonist is hungry). The gather-food option takes the nearest free ready bush. A bush on its regrowth cooldown pays nothing, so it is passed over for the next nearest; when nothing else edible is known, both options read `Regrowing` and the colonist takes its next option (other work, a wander) until the bush is ready. Readiness is the live state of a source the colonist already remembers, the game time it is ready again (or none), asked through `AIDecisionSystem::setSourceRegrowthCallback` by interned def id only of candidates on their way to winning, nearest first. When the search finds nothing and every edible harvestable the colonist knows is regrowing, the harvestables are not searched again until the earliest of them is ready or the colonist remembers or forgets a world entity (`SourceReachMemo::FoodWait`), so an idle colonist waiting on food costs one compare a decision. A work Harvest is checked the same way when it comes up for selection; a construction clear is not, since it removes the bush whatever its state. A bed or toilet that can't be reached falls back to the ground, as when none is known.
 
 "Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that target as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again. The same holds for a toilet spot or a work target, remembered by its point rather than a Memory key; a toilet spot that failed gives way to the ground where the colonist stands.
 
@@ -259,16 +259,9 @@ A known source the colonist can't reach (across a river, say) is skipped for the
 
 ## UI Display
 
-### Configuration
-
-```cpp
-// In DecisionTrace.h or a config header
-constexpr size_t kMaxDisplayedOptions = 10;  // Configurable for future expansion
-```
-
 ### Task Queue Panel
 
-The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
+The EntityInfoPanel displays the options from the trace:
 
 ```
 ┌─────────────────────────────────────┐
@@ -299,12 +292,17 @@ The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
 | ⏳ | Available | Would do next if current completes |
 | 🔒 | NoSource | Need exists but no known entity |
 | 🌱 | Regrowing | Known source is regrowing; taken again once ready |
-| 🎒 | NoRoom | A haul or fetch the colonist can't lift any of right now; offered again once it has room |
+| 🎒 | NoRoom | A haul, fetch, pull, cut, or food gathering the colonist can't lift any of right now (or, for a top-up cut, too little room left for another cut); offered again once it has room |
 | 👤 | Reserved | Another colonist's claim takes the source whole; at most one row per goal and item, naming the holder ([Task Claims](../../../technical/task-claims.md)) |
 | ✓ | Satisfied | Need above threshold |
 | 🚶 | Wander | Idle behavior |
 
 ### Reason Formatting
+
+An option keeps a fixed format literal in `reason` and the ids it names (item, source and yield,
+recipe); `describeOption` (`DecisionTrace.cpp`) composes the text only when the panel draws it or an
+option is accepted, so evaluating an option builds no string. The sketch below shows the need text's
+shape; the real function also adds "(source regrowing)" and "(reserved by Alice)".
 
 ```cpp
 std::string formatOptionReason(const EvaluatedOption& option) {
@@ -367,12 +365,13 @@ void selectTaskFromTrace(EntityID entity, Task& task, const DecisionTrace& trace
 
 ### Claims
 
-With [task claims](../../../technical/task-claims.md), `OptionStatus` gains `Reserved`: another
-colonist's task holds this target. Options are deduplicated to the best source per goal and item
-before scoring, so the trace keeps at most one Reserved row per goal and item, for a better source
-someone else holds. The row names the holder from the claim index: "Berry Bush (reserved by
-Alice)". A colonist whose claim was taken by a critical need or a player order shows "bumped by
-Alice (critical hunger)" on the option it re-plans to.
+With [task claims](../../../technical/task-claims.md), `OptionStatus` has `Reserved`: another
+colonist's task holds this target. A source others' claims take whole is not offered; each goal and
+item shows at most one Reserved row, for the nearest such source, and only when no source offered is
+nearer. The row names the top holder from the claim index: "Cutting Oak Tree for Wood (reserved by
+Alice)", "Hunger at 40% (reserved by Alice)", or for a Craft option "(station in use by Alice)".
+Options are not deduplicated to the best source per goal and item before scoring; that is planned.
+Bumping is not built, so no trace shows a "bumped by" row.
 
 ---
 

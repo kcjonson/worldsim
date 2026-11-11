@@ -22,40 +22,51 @@ namespace ecs {
 	struct Inventory;
 	struct Memory;
 
-	/// What a root still needs of an item that no other task is bringing: its remaining need less
-	/// the in-flight claims of every task `exclude` leaves out (task-claims.md, Availability).
+	/// What a root still needs of an item that no other task is bringing: `need`, its remaining need,
+	/// less the in-flight claims of every task `exclude` leaves out (task-claims.md, Availability). The
+	/// AI passes the need its update cached; the deposit leg reads it from the world.
 	[[nodiscard]] uint32_t
-	rootAvailable(World& world, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis, ClaimExclusion exclude);
+	rootAvailable(uint32_t need, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, ClaimExclusion exclude);
 
 	/// The basis work toward `root` counts against: cutting to stock a box counts toward its minimum,
 	/// everything else toward its stock target.
 	[[nodiscard]] NeedBasis harvestBasis(const GoalTask& root);
 
-	/// Units of `itemDefNameId` a claim list carries toward `rootGoalId`: its Inbound once it holds no
-	/// source claim (a delivery leg, or a cut carrying what earlier cuts landed), when its InFlight
-	/// names that root.
+	/// Units of `itemDefNameId` a claim list carries toward `rootGoalId`, when its InFlight names that
+	/// root: its Inbound less what it has still to take from a source. A haul on its way to its pile
+	/// carries none of what it will lift there; a delivery leg, a cut carrying what earlier cuts landed,
+	/// or a pile pickup that took a gathering over carry what their Inbound names beyond that.
 	template <uint8_t Capacity>
 	[[nodiscard]] uint32_t cargoOnClaims(const BasicClaimList<Capacity>& claims, uint64_t rootGoalId, uint32_t itemDefNameId) {
 		uint32_t inbound = 0;
+		uint32_t toTake = 0;
 		bool	 towardRoot = false;
 		for (const Claim& claim : claims) {
-			if (claim.kind() == ClaimKind::SourceQuantity) {
-				return 0;
-			}
 			if (claim.itemDefNameId() != itemDefNameId) {
 				continue;
 			}
-			if (claim.kind() == ClaimKind::Inbound) {
+			if (claim.kind() == ClaimKind::SourceQuantity) {
+				toTake += claim.quantity();
+			} else if (claim.kind() == ClaimKind::Inbound) {
 				inbound += claim.quantity();
 			} else if (claim.kind() == ClaimKind::InFlight && claim.target() == rootGoalId) {
 				towardRoot = true;
 			}
 		}
-		return towardRoot ? inbound : 0U;
+		return towardRoot && inbound > toTake ? inbound - toTake : 0U;
 	}
+
+	/// The goods `task`, a haul or a cut, carries toward the root its own InFlight names
+	/// (cargoOnClaims). 0 for any other task.
+	[[nodiscard]] uint32_t taskCargo(const Task& task);
 
 	/// The goods a colonist's task, current or suspended, carries toward `rootGoalId`.
 	[[nodiscard]] uint32_t claimedCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId);
+
+	/// What the colonist may deliver toward `rootGoalId` of the `held` units of an item it carries: all
+	/// of anything but food; of food, only what its task or suspended record carries toward that root.
+	/// The rest of its food is its own provisions, never cargo (task-claims.md, Provisions).
+	[[nodiscard]] uint32_t cargoToward(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId, uint32_t held, bool edible);
 
 	/// The cargo claims `task` hands to the next leg of the same gathering (a further cut, or the
 	/// carry-in), with its instance id and sequence, so goods carried between two cuts are never
@@ -64,10 +75,11 @@ namespace ecs {
 
 	/// Record the claims of the chain `task` was just accepted for. Reads the task's own fields, so it
 	/// runs after selection has filled them. `task.claims` holds nothing, or only the cargo claims it
-	/// took over (handOverCargo, or an adopted suspended record), which a cut counts as carried and a
-	/// carry-in resizes to what it delivers.
+	/// took over (handOverCargo, or an adopted suspended record), which a cut or a pile pickup counts as
+	/// carried and a carry-in resizes to what it delivers.
 	void recordChainClaims(
-		World& world, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, Task& task
+		World& world, RemainingNeedCache& needs, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory,
+		const Inventory& inventory, Task& task
 	);
 
 	/// A cut has landed: the harvest's Use drops, and it brings `quantity` of `itemDefNameId` to
@@ -75,18 +87,18 @@ namespace ecs {
 	void harvestToDeliveryLeg(Task& task, uint64_t rootGoalId, EntityID destination, uint32_t itemDefNameId, uint32_t quantity);
 
 	/// The item a task's chain carries for its root: a haul's item, or a cut's yield. 0 for anything else.
-	[[nodiscard]] uint32_t chainItem(const assets::AssetRegistry& registry, const Task& task);
+	[[nodiscard]] uint32_t chainItem(const Task& task);
 
 	/// The chain has taken what it will take from its source (a pickup, a withdraw, or arriving with the
 	/// goods already in hand): Use and SourceQuantity drop, Inbound and InFlight become `carried`, capped
-	/// at what they were. A claim left at 0 drops.
+	/// at what they were, and a haul delivers no more than that. A claim left at 0 drops.
 	void claimsToDeliveryLeg(Task& task, uint32_t carried);
 
 	/// The suspended record a need would leave of `task`, a haul or a cut carrying goods the colonist
 	/// keeps: its Inbound and InFlight capped at `held`, the units of the item it still carries, and at
 	/// what it carries (a cut's yield still on the plant is not held). Nothing when the haul has not
 	/// reached its source yet, or nothing is held.
-	[[nodiscard]] std::optional<SuspendedWork> suspendableWork(const assets::AssetRegistry& registry, const Task& task, uint32_t held);
+	[[nodiscard]] std::optional<SuspendedWork> suspendableWork(const Task& task, uint32_t held);
 
 	/// Keep `task`'s suspended record true to what the colonist still holds: gone when its root goal is
 	/// gone or none of the goods are left (eaten, used, dropped), else its claims capped at what is held.
@@ -95,7 +107,7 @@ namespace ecs {
 
 	/// Does `task`, just accepted, take the goods of its suspended record on (same root, item, and
 	/// destination): their carry-in, or a further cut that carries them along?
-	[[nodiscard]] bool adoptsSuspended(const assets::AssetRegistry& registry, const Task& task);
+	[[nodiscard]] bool adoptsSuspended(const Task& task);
 
 	/// Take over `cargo`, a suspended record or a handed-over gathering: its instance id, sequence,
 	/// and claims, which recordChainClaims then sizes to the new task.

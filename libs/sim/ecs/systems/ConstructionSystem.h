@@ -306,6 +306,12 @@ namespace ecs {
 		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
 		std::vector<SpawnedHarvestable> m_spawnedHarvestables;
 
+		/// Footprints of foundations that entered construction this pass: the loose piles on them are
+		/// dropped again just outside (movePilesOffSites), so nothing is built over
+		std::vector<FootprintBounds> m_sitesToClearOfPiles;
+		static constexpr float		 kPileMoveMargin = 0.5F;
+		void						 movePilesOffSites();
+
 		// Throttle like the other goal systems: lifecycle changes are slow relative to frames.
 		int					 m_frameCounter = 0;
 		static constexpr int kUpdateFrameInterval = 30; // ~0.5s at 60fps

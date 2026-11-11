@@ -21,6 +21,9 @@ namespace ecs {
 
 	namespace {
 
+		/// How far outside a footprint a clear's surplus drops: past the edge by about a pile's width.
+		constexpr float kClearDropMargin = 0.5F;
+
 		/// The loose pile found at a position: the matched entity plus the live ResourceStack
 		/// to mutate. `stack` is nullptr (and `entity` kInvalidEntity) when no pile is there.
 		struct LoosePile {
@@ -100,20 +103,15 @@ namespace ecs {
 			return state;
 		};
 
-		// Yield the colonist couldn't carry off drops beside the source as one loose, haulable pile.
+		// Yield the colonist couldn't carry off drops as one loose, haulable pile: beside the source, or
+		// for a footprint clear just outside the footprint.
 		const auto dropUncarried = [&](uint32_t quantity) {
 			if (quantity == 0 || !m_onDropResource) {
 				return;
 			}
-			m_onDropResource(collEff.itemDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, quantity);
-			LOG_INFO(
-				Engine,
-				"[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)",
-				quantity,
-				collEff.itemDefName.c_str(),
-				collEff.sourcePosition.x,
-				collEff.sourcePosition.y
-			);
+			const glm::vec2 at = collEff.dropAt.value_or(collEff.sourcePosition);
+			m_onDropResource(collEff.itemDefName, at.x, at.y, quantity);
+			LOG_INFO(Engine, "[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)", quantity, collEff.itemDefName.c_str(), at.x, at.y);
 		};
 
 		// Storage-to-storage pull (ActionType::Withdraw): take the item OUT of the source box's
@@ -156,7 +154,7 @@ namespace ecs {
 				added,
 				collEff.itemDefName.c_str(),
 				static_cast<unsigned long long>(collEff.sourceStorageId),
-				inventory.getQuantity(collEff.itemDefName)
+				ecs::availableQuantity(inventory, collEff.itemDefName)
 			);
 			return; // a pull's harvest-goal credit is N/A; the deposit leg credits the umbrella
 		}
@@ -303,9 +301,12 @@ namespace ecs {
 				} else if (collEff.regrowthTime > 0.0F) {
 					leaves = SourceTake::Regrow;
 				}
+				// A cut gives its whole yield: what the pack can't take drops beside the plant as a loose pile,
+				// as a fell's overflow does, rather than being lost. A loose-item fetch takes only its own item.
+				const bool cut = collEff.sourceDefName != collEff.itemDefName;
 				if ((take > 0 || collEff.clearsSource) && takeSource(leaves) == SourceState::Ready) {
 					added = inventory.addItem(collEff.itemDefName, take);
-					if (collEff.clearsSource) {
+					if (cut || collEff.clearsSource) {
 						dropUncarried(collEff.quantity - added);
 					}
 				}
@@ -316,18 +317,17 @@ namespace ecs {
 		}
 	}
 
-	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
-		(void)position; // the harvest target is the remembered entity, not the colonist's stand point
+	void ActionSystem::startHarvestAction(Task& task, Action& action, Memory& memory, const Inventory& inventory) {
 		auto& registry = assets::AssetRegistry::Get();
 
 		// Goal-driven harvest: locate the harvestable DIRECTLY by the memory key the evaluator chose
-		// (harvestTargetEntityId == the knownWorldEntities key from evaluateHarvestOptions), NOT by a
+		// (harvestTargetKey == the knownWorldEntities key from evaluateHarvestOptions), NOT by a
 		// proximity search around task.targetPosition. The stand point is snapped to an adjacent
 		// reachable nav face (tree centers are navmesh holes), so it sits >0.5 m from the tree; a
 		// proximity scan finds nothing, forgets the (live) entry, and the AI re-selects -> the
 		// phantom-harvest loop. Keying on the id harvests the exact tree the evaluator picked,
 		// regardless of how far the stand point is from it.
-		auto it = memory.knownWorldEntities.find(task.harvestTargetEntityId);
+		auto it = memory.knownWorldEntities.find(task.harvestTargetKey);
 		if (it == memory.knownWorldEntities.end()) {
 			// The chosen entity is gone from memory (consumed, forgotten, evicted). Clear the action
 			// so the AI re-resolves to another source or retires -- never fall back to a proximity
@@ -335,7 +335,7 @@ namespace ecs {
 			LOG_DEBUG(
 				Engine,
 				"[Action] Harvest target %llu no longer in memory (goal %llu) - clearing for re-resolve",
-				static_cast<unsigned long long>(task.harvestTargetEntityId),
+				static_cast<unsigned long long>(task.harvestTargetKey),
 				static_cast<unsigned long long>(task.harvestGoalId)
 			);
 			action.clear();
@@ -417,7 +417,10 @@ namespace ecs {
 		);
 		// A footprint clear removes its source whatever kind it is: regrowing, pooled, or single-shot.
 		const auto* goal = GoalTaskRegistry::Get().getGoal(task.harvestGoalId);
-		action.collectionEffect().clearsSource = goal != nullptr && goal->clearFootprint.has_value();
+		if (goal != nullptr && goal->clearFootprint.has_value()) {
+			action.collectionEffect().clearsSource = true;
+			action.collectionEffect().dropAt = goal->clearFootprint->nearestOutside(entity.position, kClearDropMargin);
+		}
 		LOG_DEBUG(
 			Engine,
 			"[Action] Starting goal-driven Harvest action for %s from %s at (%.1f, %.1f) (durability %.0f, goal %llu)",

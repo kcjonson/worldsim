@@ -121,10 +121,11 @@ namespace ecs::test {
 		hunger.targetPosition = glm::vec2{4.0F, 0.0F};
 		hunger.distanceToTarget = 4.0F;
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 40% (reserved by Alice)");
+		hunger.needValue = 5.0F;
+		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (reserved by Alice)") << "how urgent, and who holds it";
 
 		EvaluatedOption gather = hunger;
-		gather.needValue = 100.0F;
-		gather.threshold = 0.0F;
+		gather.gathersFood = true;
 		gather.reason = "Food source";
 		gather.reservedBy = world.createEntity();
 		EXPECT_EQ(describeOption(world, gather), "Food source (reserved by another colonist)") << "a holder with no name";
@@ -152,8 +153,7 @@ namespace ecs::test {
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (from inventory)");
 
 		EvaluatedOption gather = hunger;
-		gather.needValue = 100.0F;
-		gather.threshold = 0.0F;
+		gather.gathersFood = true;
 		gather.reason = "Gathering food (inventory empty)";
 		EXPECT_EQ(describeOption(world, gather), "Gathering food (inventory empty)");
 	}

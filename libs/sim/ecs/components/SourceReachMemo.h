@@ -55,6 +55,11 @@ namespace ecs {
 			return it != verdicts.end() && !it->second;
 		}
 
+		/// A source already found reachable under the current key.
+		[[nodiscard]] bool knownReachable(std::uint64_t sourceKey) const {
+			const auto it = verdicts.find(sourceKey);
+			return it != verdicts.end() && it->second;
+		}
 		/// A route to this source failed under the current key: it's unreachable whatever a probe said.
 		void recordUnreachable(std::uint64_t sourceKey) { verdicts[sourceKey] = false; }
 
@@ -78,6 +83,10 @@ namespace ecs {
 			std::optional<KnownWorldEntity> nearest;		   // the nearest reachable regrowing source, for the trace
 		};
 		std::optional<FoodWait> foodWait;
+
+		/// The last spot the toilet search found, so the search, asked at every decision while the need
+		/// waits behind other work, is logged only when its answer changes
+		std::optional<glm::vec2> lastToiletSpot;
 
 		/// The wait, while it still holds at `now` for a memory at `memoryVersion`
 		[[nodiscard]] const FoodWait* waitingForFood(std::uint64_t memoryVersion, double now) const {

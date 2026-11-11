@@ -39,6 +39,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -396,10 +397,10 @@ namespace ecs::test {
 		const auto use = claimOf(task, ClaimKind::Use);
 		ASSERT_TRUE(use.has_value());
 		EXPECT_EQ(use->targetKind(), TargetKind::WorldKey);
-		EXPECT_EQ(use->target(), task.harvestTargetEntityId);
+		EXPECT_EQ(use->target(), task.harvestTargetKey);
 		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->target(), root);
 		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U) << "amountMax, under the need and the carry";
-		EXPECT_EQ(ai->claimIndex().useHolder({.kind = TargetKind::WorldKey, .key = task.harvestTargetEntityId}, {})->colonist, colonist);
+		EXPECT_EQ(ai->claimIndex().useHolder({.kind = TargetKind::WorldKey, .key = task.harvestTargetKey}, {})->colonist, colonist);
 
 		act(colonist, bushPos);
 		const uint32_t cut = ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Stick");
@@ -503,6 +504,94 @@ namespace ecs::test {
 		EXPECT_TRUE(task.claims.empty()) << "a carried item is possessed";
 	}
 
+	// Idling by gathering food (ranked above a wander) lets go of an armful nobody wants just as a wander
+	// does: he does not pick berries with his arms full of wood.
+	TEST_F(ChainClaimsTest, AnArmfulNobodyWantsIsPutDownToGatherFood) {
+		uint32_t dropped = 0;
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {4.0F, 0.0F}, "BerryBush", assets::CapabilityType::Harvestable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 4), 4U);
+
+		decide(colonist);
+		const EvaluatedOption* chosen = world->getComponent<DecisionTrace>(colonist)->getSelected();
+		ASSERT_NE(chosen, nullptr);
+		ASSERT_TRUE(chosen->gathersFood);
+		EXPECT_EQ(dropped, 4U);
+		EXPECT_EQ(ecs::availableQuantity(inventory, "Wood"), 0U);
+	}
+
+	// Furniture whose placement is cancelled while it is carried is set down where the colonist stands, as
+	// the packaged item it is: never dropped as a loose pile of its name, never left marked carried with
+	// empty hands. Placed again, it is picked up from there.
+	TEST_F(ChainClaimsTest, FurnitureWhosePlacementIsCancelledIsSetDownPackaged) {
+		registerItem("Shelf", 2, 12.0F);
+		uint32_t loosePiles = 0;
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { loosePiles += quantity; });
+		const glm::vec2 itemPos{3.0F, 0.0F};
+		const EntityID	shelf = world->createEntity();
+		world->addComponent<Position>(shelf, Position{itemPos});
+		world->addComponent<Appearance>(shelf, Appearance{"Shelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Packaged>(shelf, Packaged{.targetPosition = glm::vec2{8.0F, 0.0F}});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::PlacePackaged);
+		act(colonist, itemPos);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(inventory.carryingPackagedEntity, static_cast<uint64_t>(shelf));
+		ASSERT_TRUE(world->getComponent<Packaged>(shelf)->beingCarried);
+
+		const glm::vec2 stoodAt{5.0F, 1.0F};
+		world->getComponent<Position>(colonist)->value = stoodAt;
+		world->getComponent<Packaged>(shelf)->targetPosition.reset();
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Wander);
+		EXPECT_FALSE(inventory.carryingPackagedEntity.has_value());
+		EXPECT_FALSE(inventory.leftHand.has_value());
+		EXPECT_FALSE(inventory.rightHand.has_value());
+		EXPECT_EQ(loosePiles, 0U) << "no loose pile of a shelf";
+		EXPECT_FALSE(world->getComponent<Packaged>(shelf)->beingCarried);
+		EXPECT_EQ(world->getComponent<Position>(shelf)->value, stoodAt);
+
+		world->getComponent<Packaged>(shelf)->targetPosition = glm::vec2{8.0F, 0.0F};
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::PlacePackaged);
+		EXPECT_EQ(getTask(colonist)->placeSourcePosition, stoodAt) << "picked up where it was set down";
+	}
+
+	// A colonist carrying one packaged item sees another only as an item to go and pick up: held by
+	// whoever is on its way to it, never as one it is already delivering.
+	TEST_F(ChainClaimsTest, CarryingOnePackagedItemDoesNotMakeAnotherOneDelivering) {
+		const auto makePackaged = [&](glm::vec2 at, glm::vec2 target) {
+			const EntityID item = world->createEntity();
+			world->addComponent<Position>(item, Position{at});
+			world->addComponent<Appearance>(item, Appearance{"Crate", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			world->addComponent<Packaged>(item, Packaged{.targetPosition = target});
+			return item;
+		};
+		const EntityID carried = makePackaged({0.0F, 0.0F}, {20.0F, 0.0F});
+		const EntityID other = makePackaged({3.0F, 0.0F}, {8.0F, 0.0F});
+		const EntityID holder = createColonist({4.0F, 0.0F});
+		decide(holder);
+		ASSERT_EQ(getTask(holder)->placePackagedEntityId, static_cast<uint64_t>(other));
+
+		const EntityID carrier = createColonist({0.0F, 0.0F});
+		world->getComponent<Packaged>(carried)->beingCarried = true;
+		world->getComponent<Inventory>(carrier)->carryingPackagedEntity = static_cast<uint64_t>(carried);
+		decide(carrier);
+		bool sawOther = false;
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(carrier)->options) {
+			if (option.taskType == TaskType::PlacePackaged && option.placePackagedEntityId == static_cast<uint64_t>(other)) {
+				sawOther = true;
+				EXPECT_EQ(option.status, OptionStatus::Reserved);
+				EXPECT_EQ(option.reservedBy, holder);
+				EXPECT_EQ(option.targetPosition, glm::vec2(3.0F, 0.0F)) << "it would go to pick it up, not deliver it";
+			}
+		}
+		EXPECT_TRUE(sawOther);
+	}
+
 	// The switch path rewrites a live instance into a smaller record and accepts the need in one
 	// update; the record survives task.clear() and the validator holds through it.
 	TEST_F(ChainClaimsTest, NeedKeepsAStowedHaulAsItsSuspendedRecordAndCarryInAdoptsIt) {
@@ -584,16 +673,16 @@ namespace ecs::test {
 		Task	   task;
 		task.type = TaskType::Haul;
 		task.haulFromInventory = true;
-		task.haulItemDefName = "Stone";
+		task.haulItemDefNameId = stoneId;
 		task.haulGoalId = site.umbrella;
 		task.suspended = SuspendedWork{.instanceId = 3, .claimSeq = 3, .rootGoalId = site.umbrella, .itemDefNameId = stoneId};
 		ASSERT_TRUE(task.suspended->claims.push(Claim::inbound(static_cast<uint64_t>(site.blueprint), stoneId, 2)));
 		ASSERT_TRUE(task.suspended->claims.push(Claim::inFlight(site.umbrella, stoneId, 2)));
 
-		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint) + 1;
-		EXPECT_FALSE(adoptsSuspended(assets::AssetRegistry::Get(), task));
-		task.haulTargetStorageId = static_cast<uint64_t>(site.blueprint);
-		EXPECT_TRUE(adoptsSuspended(assets::AssetRegistry::Get(), task));
+		task.haulDestinationId = static_cast<uint64_t>(site.blueprint) + 1;
+		EXPECT_FALSE(adoptsSuspended(task));
+		task.haulDestinationId = static_cast<uint64_t>(site.blueprint);
+		EXPECT_TRUE(adoptsSuspended(task));
 	}
 
 	TEST_F(ChainClaimsTest, AnySelectionButANeedOrTheCarryInDiscardsTheRecord) {
@@ -649,6 +738,239 @@ namespace ecs::test {
 		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, woodId, {}), 0U);
 	}
 
+	// A colonist interrupted beside a wood box puts its armful away there inside an AI update; a second
+	// colonist deciding later in that update sizes its haul to the room the box has left, not what it had
+	// when the first colonist decided.
+	TEST_F(ChainClaimsTest, GoodsPutAwayInsideAnUpdateShowInLaterDecisions) {
+		assets::ActionTypeDef eat;
+		eat.defName = "Eat";
+		eat.needsHands = true;
+		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
+
+		const glm::vec2 boxPos{1.0F, 0.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Wood", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium, .maxAmount = 10});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		GoalTask umbrella;
+		umbrella.type = TaskType::Haul;
+		umbrella.owner = GoalOwner::StorageGoalSystem;
+		umbrella.destinationEntity = box;
+		umbrella.destinationPosition = boxPos;
+		umbrella.acceptedDefNameIds = {woodId};
+		GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+
+		constructionSite({0.0F, 6.0F}, "Wood", 10);
+		const EntityID carrier = createColonist({0.0F, 0.0F});
+		auto&		   inventory = *world->getComponent<Inventory>(carrier);
+		inventory.leftHand = ItemStack{"Wood", 8};
+		inventory.rightHand = ItemStack{"Wood", 8};
+		inventory.addItem("Berry", 1);
+		decide(carrier);
+		ASSERT_EQ(getTask(carrier)->type, TaskType::Haul);
+
+		const glm::vec2 pilePos{0.0F, -5.0F};
+		const EntityID	pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, woodId, pilePos, 10);
+		const EntityID hauler = createColonist({0.0F, -3.0F});
+		remember(hauler, pilePos, "Wood", assets::CapabilityType::Carryable);
+
+		world->getComponent<NeedsComponent>(carrier)->get(NeedType::Hunger).value = 5.0F;
+		decideAll({carrier, hauler});
+		ASSERT_EQ(getTask(carrier)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 8U) << "put away in the box within reach";
+		const EvaluatedOption* toBox = nullptr;
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(hauler)->options) {
+			if (option.taskType == TaskType::Haul && option.haulDestinationId == static_cast<uint64_t>(box)) {
+				toBox = &option;
+			}
+		}
+		ASSERT_NE(toBox, nullptr);
+		EXPECT_EQ(toBox->haulQuantity, 2U) << "the box takes ten, and holds eight now";
+	}
+
+	// A full armful of wood nobody wants fills the colonist's carry, so every haul reads no room. It puts
+	// the armful down before it wanders, takes the stone haul at its next decision, and the wood pile is
+	// hauled once a box wants wood.
+	TEST_F(ChainClaimsTest, AnArmfulNobodyWantsIsPutDown) {
+		struct Drop {
+			glm::vec2 at;
+			uint32_t  quantity;
+		};
+		std::vector<Drop> drops;
+		ai->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity) { drops.push_back({{x, y}, quantity}); });
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		storageGoal(box, boxPos);
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 4);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 14), 14U);
+
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Wander);
+		ASSERT_EQ(drops.size(), 1U);
+		EXPECT_EQ(drops.front().quantity, 14U);
+		EXPECT_EQ(ecs::availableQuantity(inventory, "Wood"), 0U);
+
+		getTask(colonist)->clear();
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Haul);
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(getTask(colonist)->haulItemDefNameId), "Stone") << "free hands take other work";
+
+		const EntityID wood = world->createEntity();
+		world->addComponent<Position>(wood, Position{drops.front().at});
+		makeLoosePile(*world, wood, woodId, drops.front().at, drops.front().quantity);
+		const EntityID other = createColonist({0.0F, 1.0F});
+		remember(other, drops.front().at, "Wood", assets::CapabilityType::Carryable);
+		world->getComponent<StorageConfiguration>(box)->addRule(
+			StorageRule{.defName = "Wood", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium}
+		);
+		GoalTaskRegistry::Get().updateGoal(GoalTaskRegistry::Get().getGoalByDestination(box)->id, [&](GoalTask& goal) {
+			goal.acceptedDefNameIds.push_back(woodId);
+		});
+		decide(other);
+		EXPECT_EQ(getTask(other)->type, TaskType::Haul);
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(getTask(other)->haulItemDefNameId), "Wood") << "the pile is hauled once a root wants it";
+	}
+
+	// Walking an armful of wood to a box, he is offered a site that wants it (a higher tier). The carry-in
+	// to the site delivers what he holds, so it needs no free hands: the wood goes with him, not onto the
+	// ground to be fetched again.
+	TEST_F(ChainClaimsTest, AnArmfulBoundForABoxGoesToASiteWithoutBeingDropped) {
+		assets::ActionTypeDef pickup;
+		pickup.defName = "Pickup";
+		pickup.needsHands = true;
+		assets::ActionTypeRegistry::Get().registerTestAction(std::move(pickup));
+		uint32_t dropped = 0;
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		world->getComponent<StorageConfiguration>(box)->addRule(
+			StorageRule{.defName = "Wood", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium}
+		);
+		const uint64_t umbrella = storageGoal(box, boxPos);
+		GoalTaskRegistry::Get().updateGoal(umbrella, [&](GoalTask& goal) { goal.acceptedDefNameIds.push_back(woodId); });
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		auto&		   inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 14), 14U);
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Haul);
+		ASSERT_EQ(getTask(colonist)->haulGoalId, umbrella);
+
+		const glm::vec2 sitePos{10.0F, 0.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 14);
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(task.haulGoalId, site.umbrella);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(ecs::availableQuantity(inventory, "Wood"), 14U);
+		EXPECT_EQ(dropped, 0U);
+
+		act(colonist, sitePos);
+		EXPECT_EQ(world->getComponent<StructureBlueprint>(site.blueprint)->remaining("Wood"), 0U);
+	}
+
+	// A haul claims of a pile what he can lift now, not what an empty-handed colonist could: the rest stays
+	// free for others from the moment he accepts.
+	TEST_F(ChainClaimsTest, AHaulClaimsWhatHeCanLiftNow) {
+		registerItem("Rock", 1, 30.0F);
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		storageGoal(box, boxPos);
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 40);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		inventory.addItem("Rock", 1);
+		const auto&	   registry = assets::AssetRegistry::Get();
+		const uint32_t liftNow = ecs::pickupUnitsThatFit(inventory, registry, "Stone", ecs::carriedCargoMassKg(inventory, registry));
+		ASSERT_GT(liftNow, 0U);
+		ASSERT_LT(liftNow, ecs::cargoUnitsPerTrip(registry, "Stone", inventory.carryCapacityKg));
+
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(task.haulQuantity, liftNow);
+		const auto source = claimOf(task, ClaimKind::SourceQuantity);
+		ASSERT_TRUE(source.has_value());
+		EXPECT_EQ(source->quantity(), liftNow);
+	}
+
+	// Loose stone lies beside a Low box and far from a High one that also wants it: he carries it to the
+	// High box, so it is never stocked into the Low box only to be pulled out again.
+	TEST_F(ChainClaimsTest, LooseStockGoesToTheHigherPriorityBoxFirst) {
+		const glm::vec2 lowPos{4.0F, 0.0F};
+		const glm::vec2 highPos{-40.0F, 0.0F};
+		const EntityID	low = makeBox(lowPos, StoragePriority::Low);
+		const EntityID	high = makeBox(highPos, StoragePriority::High);
+		storageGoal(low, lowPos);
+		storageGoal(high, highPos);
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 4);
+		const EntityID colonist = createColonist({6.0F, 0.0F});
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(colonist)->haulDestinationId, static_cast<uint64_t>(high));
+	}
+
+	// The task panel lists a storage goal only while a colonist is offered work toward it: a box that
+	// wants stone when no loose stone is known, or one with room for a category nobody has any of, has
+	// nothing to do.
+	TEST_F(ChainClaimsTest, AStorageGoalHasWorkOnlyWhileAColonistIsOfferedSome) {
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		const uint64_t	umbrella = storageGoal(box, boxPos);
+		const EntityID	furnitureBox = makeBox({10.0F, 10.0F}, StoragePriority::Medium);
+		world->getComponent<StorageConfiguration>(furnitureBox)->rules = StorageConfiguration::createAcceptEverything().rules;
+		GoalTask anyFurniture;
+		anyFurniture.type = TaskType::Haul;
+		anyFurniture.owner = GoalOwner::StorageGoalSystem;
+		anyFurniture.destinationEntity = furnitureBox;
+		anyFurniture.destinationPosition = {10.0F, 10.0F};
+		anyFurniture.acceptedCategory = assets::ItemCategory::Furniture;
+		const uint64_t furnitureUmbrella = GoalTaskRegistry::Get().createGoal(std::move(anyFurniture));
+		const auto	   hasWork = [&](uint64_t goal) {
+			return goalHasWork(*GoalTaskRegistry::Get().getGoal(goal), goalsWithOfferedWork(*world));
+		};
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+
+		decide(colonist);
+		EXPECT_FALSE(hasWork(umbrella)) << "no stone is known";
+		EXPECT_FALSE(hasWork(furnitureUmbrella));
+
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 4);
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+		decide(colonist);
+		EXPECT_TRUE(hasWork(umbrella));
+		EXPECT_FALSE(hasWork(furnitureUmbrella)) << "nobody knows any furniture";
+
+		getTask(colonist)->clear();
+		world->getComponent<StorageConfiguration>(box)->rules.front().maxAmount = 3;
+		world->getComponent<Inventory>(box)->addItem("Stone", 3);
+		decide(colonist);
+		EXPECT_FALSE(hasWork(umbrella)) << "the box is at its max";
+	}
+
 	TEST_F(ChainClaimsTest, PlayerControlAndDestructionLeaveNoClaims) {
 		const glm::vec2 sitePos{0.0F, 6.0F};
 		const Site		site = constructionSite(sitePos, "Stone", 20);
@@ -677,6 +999,171 @@ namespace ecs::test {
 		EXPECT_EQ(indexedClaimsOf(controlled), 0U);
 		EXPECT_EQ(indexedClaimsOf(destroyed), 0U);
 		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, stoneId, {}), 0U);
+	}
+
+	// =============================================================================
+	// Provisions: a colonist's own food is never delivered to a root, by a carry-in or along with a
+	// cut. Food it was sent to fetch or cut for a root is that root's cargo, an interruption included.
+	// =============================================================================
+
+	// A hungry colonist's only meal is wanted by a craft and by a box: neither is offered it.
+	TEST_F(ChainClaimsTest, AColonistsOwnFoodIsNeverDelivered) {
+		const uint32_t	berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		craftRoot(station, stationPos, "Berry", 3);
+		const glm::vec2 boxPos{0.0F, -6.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		GoalTask umbrella;
+		umbrella.type = TaskType::Haul;
+		umbrella.owner = GoalOwner::StorageGoalSystem;
+		umbrella.destinationEntity = box;
+		umbrella.destinationPosition = boxPos;
+		umbrella.acceptedDefNameIds = {berryId};
+		GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 60.0F;
+		decide(colonist);
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(colonist)->options) {
+			EXPECT_FALSE(option.taskType == TaskType::Haul && option.haulFromInventory) << "its berry was offered to " << option.haulGoalId;
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 1U);
+	}
+
+	class ProvisionsTest : public ChainClaimsTest {
+	  protected:
+		/// A box stocking berries toward `minimum` by cutting: its umbrella and the stocking Harvest child.
+		struct BerryBox {
+			EntityID box;
+			uint64_t umbrella;
+		};
+
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			registerHarvestable("FullBerryBush", "Berry", 3, 3);
+			berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		}
+
+		BerryBox berryBox(glm::vec2 position, uint32_t minimum) {
+			const EntityID box = world->createEntity();
+			world->addComponent<Position>(box, Position{position});
+			world->addComponent<Inventory>(box, Inventory::createForStorage());
+			StorageConfiguration config;
+			config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .minAmount = minimum});
+			world->addComponent<StorageConfiguration>(box, std::move(config));
+			auto&	 goals = GoalTaskRegistry::Get();
+			GoalTask umbrella;
+			umbrella.type = TaskType::Haul;
+			umbrella.owner = GoalOwner::StorageGoalSystem;
+			umbrella.destinationEntity = box;
+			umbrella.destinationPosition = position;
+			umbrella.acceptedDefNameIds = {berryId};
+			const uint64_t umbrellaId = goals.createGoal(std::move(umbrella));
+			GoalTask harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::StorageGoalSystem;
+			harvest.destinationEntity = box;
+			harvest.destinationPosition = position;
+			harvest.acceptedDefNameIds = {berryId};
+			harvest.yieldDefNameId = berryId;
+			harvest.parentGoalId = umbrellaId;
+			goals.createGoal(std::move(harvest));
+			return {box, umbrellaId};
+		}
+
+		uint32_t berryId = 0;
+	};
+
+	// A colonist with two berries of its own cuts three for a box: the three go in, its two stay.
+	TEST_F(ProvisionsTest, ACutCarriesInOnlyWhatItLanded) {
+		const glm::vec2 boxPos{0.0F, 6.0F};
+		const BerryBox	stock = berryBox(boxPos, 10);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 2);
+		remember(colonist, {3.0F, 0.0F}, "FullBerryBush", assets::CapabilityType::Harvestable);
+
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Harvest);
+		EXPECT_FALSE(claimOf(task, ClaimKind::Inbound).has_value()) << "its own berries are no cut's cargo";
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U);
+		act(colonist, task.targetPosition);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(task.haulQuantity, 3U);
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U);
+
+		act(colonist, boxPos);
+		EXPECT_EQ(world->getComponent<Inventory>(stock.box)->getQuantity("Berry"), 3U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 2U) << "its own two stay with it";
+	}
+
+	// Berries cut for a box are that box's cargo: a need that interrupts their delivery keeps them as
+	// the suspended record, and the carry-in that follows takes the same instance and delivers them.
+	TEST_F(ProvisionsTest, FoodCutForABoxIsResumedAfterANeed) {
+		const glm::vec2 boxPos{0.0F, 6.0F};
+		const BerryBox	stock = berryBox(boxPos, 3);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {3.0F, 0.0F}, "FullBerryBush", assets::CapabilityType::Harvestable);
+
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Harvest);
+		act(colonist, task.targetPosition);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		const uint64_t delivery = task.instanceId;
+
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Bladder).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::FulfillNeed);
+		ASSERT_TRUE(task.suspended.has_value());
+		EXPECT_EQ(ai->claimIndex().inFlight(stock.umbrella, berryId, {}), 3U) << "the berries stay the box's while it sees to the need (sleep would release them)";
+
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Bladder).value = 100.0F;
+		task.clear();
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.instanceId, delivery) << "the carry-in adopted the interrupted delivery";
+		EXPECT_EQ(task.haulQuantity, 3U);
+		act(colonist, boxPos);
+		EXPECT_EQ(world->getComponent<Inventory>(stock.box)->getQuantity("Berry"), 3U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 0U);
+	}
+
+	// Berries fetched from a pile for a craft are its cargo; the colonist's own meal is not lifted with them.
+	TEST_F(ProvisionsTest, FoodFetchedForACraftIsDeliveredAndTheMealKept) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Berry", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, berryId);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, berryId, pilePos, 5);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		remember(colonist, pilePos, "Berry", assets::CapabilityType::Carryable);
+
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		ASSERT_FALSE(task.haulFromInventory) << "its own berry is not the craft's";
+		EXPECT_EQ(task.haulQuantity, 3U);
+		act(colonist, pilePos);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U);
+		act(colonist, stationPos);
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Berry"), 3U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 1U) << "its meal stays with it";
 	}
 
 	// A colonist holding a full armful of wood, standing at a ready tree, skilled at cutting, with a
@@ -710,12 +1197,37 @@ namespace ecs::test {
 			const Task& task = *getTask(colonist);
 			ASSERT_EQ(task.type, TaskType::Haul) << "decision " << decision;
 			EXPECT_TRUE(task.haulFromInventory);
-			EXPECT_EQ(task.haulTargetStorageId, static_cast<uint64_t>(site.blueprint));
+			EXPECT_EQ(task.haulDestinationId, static_cast<uint64_t>(site.blueprint));
 		}
 		const auto& options = world->getComponent<DecisionTrace>(colonist)->options;
 		EXPECT_TRUE(std::any_of(options.begin(), options.end(), [](const EvaluatedOption& option) {
 			return option.taskType == TaskType::Harvest && option.status == OptionStatus::NoRoom;
 		})) << "the cut shows why it is not taken";
+	}
+
+	// A full pack and free hands: wood rides in the hands, so the cut is offered. Its sources are listed by
+	// the same room rule the pickup and the evaluator use, not by the pack's free slots.
+	TEST_F(ChainClaimsTest, AFullPackStillCutsWoodIntoFreeHands) {
+		registerHarvestable("WoodTree", "Wood", 2, 3);
+		const glm::vec2 sitePos{0.0F, 10.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 10);
+		GoalTask		cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::ConstructionGoalSystem;
+		cut.destinationEntity = site.blueprint;
+		cut.destinationPosition = sitePos;
+		cut.yieldDefNameId = woodId;
+		cut.parentGoalId = site.umbrella;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {2.0F, 0.0F}, "WoodTree", assets::CapabilityType::Harvestable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		inventory.maxCapacity = 1;
+		inventory.addItem("Stick", 1);
+		ASSERT_EQ(inventory.addableCount("Wood"), 0U) << "no pack slot";
+
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Harvest);
 	}
 
 	// =============================================================================
@@ -792,6 +1304,32 @@ namespace ecs::test {
 		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 6U) << "exactly the four stones the two units used";
 		EXPECT_EQ(carried(colonist, "Stone"), 0U);
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 0U);
+	}
+
+	// A craft input with a known bush gets a Harvest child; when the bush is regrowing and a pile of the
+	// input becomes known (fell overflow, a dropped load), the input offers the fetch as well, and the
+	// colonist fetches instead of idling with a need and a known source.
+	TEST_F(ChainFlowTest, AnInputOffersBothItsBushAndAKnownPile) {
+		world->registerSystem<TimeSystem>();
+		ai->setSourceRegrowthCallback([](uint32_t, glm::vec2, double) { return std::optional<double>{1.0e9}; });
+		const EntityID station = makeStation({0.0F, 6.0F}, {{"Stick", 0, 2}}, 1);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {-3.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
+
+		auto& goals = GoalTaskRegistry::Get();
+		ASSERT_TRUE(runUntil([&] { return goals.goalCount(TaskType::Harvest) == 1; }, 200)) << "the bush opens a Harvest";
+		runUntil([] { return false; }, 60);
+		EXPECT_NE(getTask(colonist)->type, TaskType::Harvest) << "the bush is regrowing";
+		EXPECT_EQ(goals.goalCount(TaskType::Haul), 0U);
+
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	pile = makePile(pilePos, stickId, 5);
+		remember(colonist, pilePos, "Stick", assets::CapabilityType::Carryable);
+		ASSERT_TRUE(runUntil([&] { return goals.goalCount(TaskType::Haul) == 1; }, 200)) << "the pile opens a fetch beside the Harvest";
+		EXPECT_EQ(goals.goalCount(TaskType::Harvest), 1U) << "both ways stay open";
+
+		ASSERT_TRUE(runUntil([&] { return world->getComponent<WorkQueue>(station)->getNextJob() == nullptr; })) << "the craft is provisioned from the pile";
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 3U);
 	}
 
 	// Stocking cuts toward the box's minimum; known loose stock then fills it to its maximum and never past.
@@ -902,6 +1440,86 @@ namespace ecs::test {
 		EXPECT_EQ(cutting(first) + cutting(second), 1);
 	}
 
+	/// A colonist between two cuts of a gathering for `site`: its task is the next cut, toward a tree it
+	/// has not reached, and it holds an armful of three wood under that cut's cargo claims.
+	class ArmfulBetweenCutsTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			ai->setDropResourceCallback([this](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+			gathered = constructionSite({0.0F, 30.0F}, "Wood", 10);
+			colonist = createColonist({0.0F, 0.0F});
+			auto& inventory = *world->getComponent<Inventory>(colonist);
+			ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 3), 3U);
+			Task& task = *getTask(colonist);
+			task.type = TaskType::Harvest;
+			task.state = TaskState::Moving;
+			task.targetPosition = {50.0F, 50.0F};
+			task.harvestTargetKey = 1;
+			task.harvestYieldDefNameId = woodId;
+			task.priorityTier = 4;
+			task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
+			task.claimSeq = task.instanceId;
+			ASSERT_TRUE(task.claims.push(Claim::inbound(static_cast<uint64_t>(gathered.blueprint), woodId, 3)));
+			ASSERT_TRUE(task.claims.push(Claim::inFlight(gathered.umbrella, woodId, 3)));
+		}
+
+		uint32_t heldWood() { return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Wood"); }
+
+		Site	 gathered{};
+		EntityID colonist = kInvalidEntity;
+		uint32_t dropped = 0;
+	};
+
+	// Another site nearer by wants the same wood (its cut, or the armful carried there) and is picked: no
+	// leg of this gathering, so the colonist keeps its armful and its leg rather than dropping the wood.
+	TEST_F(ArmfulBetweenCutsTest, AnotherSitesPickDoesNotDropTheArmful) {
+		registerHarvestable("Oak", "Wood", 2, 2);
+		const Site other = constructionSite({3.0F, 0.0F}, "Wood", 10);
+		GoalTask cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::ConstructionGoalSystem;
+		cut.destinationEntity = other.blueprint;
+		cut.destinationPosition = {3.0F, 0.0F};
+		cut.yieldDefNameId = woodId;
+		cut.parentGoalId = other.umbrella;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+		remember(colonist, {2.0F, 0.0F}, "Oak", assets::CapabilityType::Harvestable);
+
+		decide(colonist);
+		const EvaluatedOption* chosen = world->getComponent<DecisionTrace>(colonist)->getSelected();
+		ASSERT_NE(chosen, nullptr);
+		ASSERT_TRUE(chosen->taskType == TaskType::Harvest || chosen->haulGoalId == other.umbrella) << "a pick for the other site";
+		EXPECT_EQ(getTask(colonist)->targetPosition, glm::vec2(50.0F, 50.0F)) << "the leg it was on is kept";
+		EXPECT_EQ(heldWood(), 3U);
+		EXPECT_EQ(dropped, 0U);
+	}
+
+	// The root is gone and nothing else is on offer: no delivery is left to protect, so the cut is let go
+	// and the armful nobody wants is put down rather than walked off with on a wander.
+	TEST_F(ArmfulBetweenCutsTest, ALostRootPutsTheArmfulDown) {
+		GoalTaskRegistry::Get().removeGoal(gathered.umbrella);
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Wander);
+		EXPECT_EQ(heldWood(), 0U);
+		EXPECT_EQ(dropped, 3U);
+	}
+
+	// A top-up cut that arrives to find its tree gone from memory starts nothing and ends there, holding
+	// no Arrived task the two-hand guard could keep; the armful is carried in at the next decision.
+	TEST_F(ArmfulBetweenCutsTest, ACutWhoseTreeIsGoneEndsAndTheArmfulIsCarriedIn) {
+		act(colonist, {50.0F, 50.0F});
+		EXPECT_FALSE(getTask(colonist)->isActive());
+		EXPECT_EQ(heldWood(), 3U);
+
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		EXPECT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.haulGoalId, gathered.umbrella);
+		EXPECT_EQ(dropped, 0U);
+	}
+
 	// =============================================================================
 	// Batching: a colonist gathering for a root fills its trip before walking (task-claims.md,
 	// Batching). Colonists walk (MovementSystem and PhysicsSystem, no mesh: direct steering) and every
@@ -930,7 +1548,14 @@ namespace ecs::test {
 			fibreId = assets::AssetRegistry::Get().getDefNameId("Fibre");
 			actions->setTakeSourceCallback([this](const std::string&, float x, float y, ActionSystem::SourceTake take, float) {
 				const glm::vec2 at{x, y};
-				const bool		wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
+				if (std::find(felled.begin(), felled.end(), at) != felled.end()) {
+					return ActionSystem::SourceState::Gone;
+				}
+				if (take == ActionSystem::SourceTake::Remove) {
+					felled.push_back(at);
+					return ActionSystem::SourceState::Ready;
+				}
+				const bool wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
 				if (take == ActionSystem::SourceTake::Regrow && !wasCut) {
 					cut.push_back(at);
 				}
@@ -939,6 +1564,40 @@ namespace ecs::test {
 			ai->setSourceRegrowthCallback([this](uint32_t, glm::vec2 at, double) {
 				return std::find(cut.begin(), cut.end(), at) != cut.end() ? std::optional<double>{1.0e9} : std::nullopt;
 			});
+			actions->setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
+				drops.push_back({assets::AssetRegistry::Get().getDefNameId(defName), {x, y}, quantity});
+			});
+		}
+
+		/// Land the drops queued this frame as loose piles, merged into a pile already at the spot, and let
+		/// every watcher see them (vision, in the game).
+		void landDrops() {
+			for (const Drop& drop : drops) {
+				EntityID pile = actions->loosePiles().find(*world, drop.item, drop.at);
+				if (pile != kInvalidEntity) {
+					world->getComponent<ResourceStack>(pile)->quantity += drop.quantity;
+				} else {
+					pile = world->createEntity();
+					world->addComponent<Position>(pile, Position{drop.at});
+					makeLoosePile(*world, pile, drop.item, drop.at, drop.quantity);
+					piles.emplace_back(pile, drop.item);
+				}
+				for (EntityID watcher : watchers) {
+					remember(watcher, drop.at, assets::AssetRegistry::Get().getDefName(drop.item), assets::CapabilityType::Carryable);
+				}
+				dropped += drop.quantity;
+			}
+			drops.clear();
+		}
+
+		uint32_t onTheGround(uint32_t item) {
+			uint32_t total = 0;
+			for (const auto& [pile, pileItem] : piles) {
+				if (pileItem == item && world->isAlive(pile)) {
+					total += world->getComponent<ResourceStack>(pile)->quantity;
+				}
+			}
+			return total;
 		}
 
 		/// A blueprint wanting `needed` fibre and its construction umbrella with a cutting child.
@@ -948,13 +1607,13 @@ namespace ecs::test {
 			return site;
 		}
 
-		void childOf(const Site& site, glm::vec2 position) {
+		void childOf(const Site& site, glm::vec2 position, uint32_t item = 0) {
 			GoalTask harvest;
 			harvest.type = TaskType::Harvest;
 			harvest.owner = GoalOwner::ConstructionGoalSystem;
 			harvest.destinationEntity = site.blueprint;
 			harvest.destinationPosition = position;
-			harvest.yieldDefNameId = fibreId;
+			harvest.yieldDefNameId = item != 0 ? item : fibreId;
 			harvest.parentGoalId = site.umbrella;
 			GoalTaskRegistry::Get().createGoal(std::move(harvest));
 		}
@@ -967,7 +1626,7 @@ namespace ecs::test {
 
 		uint32_t delivered(const Site& site) {
 			const auto* blueprint = world->getComponent<StructureBlueprint>(site.blueprint);
-			return blueprint->required.front().second - blueprint->remaining("Fibre");
+			return blueprint->required.front().second - blueprint->remaining(blueprint->required.front().first);
 		}
 
 		/// Run frames until `done` holds; each delivery to the site and each cut the colonist lands is
@@ -977,12 +1636,25 @@ namespace ecs::test {
 			uint32_t lastCarried = carriedFibre(colonist);
 			for (int frame = 0; frame < maxFrames; ++frame) {
 				world->update(0.1F);
+				landDrops();
 				const uint32_t nowDelivered = delivered(site);
 				const uint32_t nowCarried = carriedFibre(colonist);
 				trips += nowDelivered > lastDelivered ? 1 : 0;
 				cuts += nowCarried > lastCarried ? 1 : 0;
 				lastDelivered = nowDelivered;
 				lastCarried = nowCarried;
+				if (done()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		/// Run 0.1 s frames, landing drops, until `done` holds.
+		template <typename Done> bool run(Done done, int maxFrames = 4000) {
+			for (int frame = 0; frame < maxFrames; ++frame) {
+				world->update(0.1F);
+				landDrops();
 				if (done()) {
 					return true;
 				}
@@ -997,6 +1669,16 @@ namespace ecs::test {
 		static constexpr float kFibreKg = 3.5F;
 		uint32_t			   fibreId = 0;
 		std::vector<glm::vec2> cut;
+		std::vector<glm::vec2> felled;
+		struct Drop {
+			uint32_t  item = 0;
+			glm::vec2 at{0.0F, 0.0F};
+			uint32_t  quantity = 0;
+		};
+		std::vector<Drop>							drops;
+		std::vector<std::pair<EntityID, uint32_t>> piles;
+		std::vector<EntityID>						watchers;
+		uint32_t									dropped = 0;
 		int					   trips = 0;
 		int					   cuts = 0;
 	};
@@ -1017,10 +1699,82 @@ namespace ecs::test {
 			mostInFlight = std::max(mostInFlight, ai->claimIndex().inFlight(site.umbrella, fibreId, {}));
 			return delivered(site) == 20;
 		})) << "delivered " << delivered(site);
-		EXPECT_EQ(trips, 2) << "two full trips of ten, not one per cut";
-		EXPECT_GE(cuts, 7);
-		EXPECT_EQ(mostCarried, perTrip()) << "each trip filled before it was walked";
+		EXPECT_EQ(trips, 3) << "nine, nine, and the last two";
+		EXPECT_EQ(cuts, 7);
+		EXPECT_EQ(cut.size(), 7U);
+		EXPECT_EQ(mostCarried, 9U) << "a tenth unit is no room for a cut of three";
 		EXPECT_LE(mostInFlight, perTrip()) << "the cuts of one trip never claim more than it carries";
+		EXPECT_EQ(dropped, 0U) << "no cut landed more than fit";
+		EXPECT_EQ(delivered(site) + carriedFibre(colonist), 3U * static_cast<uint32_t>(cut.size())) << "every unit the reeds gave is accounted for";
+	}
+
+	// A first cut into a pack with room for one unit lands one and drops the other two beside the reed as
+	// a pile, which is carried in before another reed is cut: nothing a cut gives is lost.
+	TEST_F(ChainWalkTest, WhatACutCannotCarryDropsAsAPile) {
+		registerItem("Rock", 1, 31.0F);
+		const Site	   site = fibreSite({0.0F, 12.0F}, 3);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		watchers = {colonist};
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		inventory.addItem("Rock", 1);
+		rememberReeds(colonist, {{2.0F, 0.0F}, {4.0F, 0.0F}});
+		ASSERT_EQ(pickupUnitsThatFit(inventory, assets::AssetRegistry::Get(), "Fibre", carriedCargoMassKg(inventory, assets::AssetRegistry::Get())), 1U);
+
+		ASSERT_TRUE(walkUntil(site, colonist, [&] { return dropped > 0; }));
+		EXPECT_EQ(dropped, 2U) << "the two that did not fit";
+		EXPECT_EQ(carriedFibre(colonist), 1U);
+		ASSERT_TRUE(walkUntil(site, colonist, [&] { return delivered(site) == 3; })) << "delivered " << delivered(site);
+		EXPECT_EQ(cut.size(), 1U) << "the pile is carried in before the second reed is cut";
+		EXPECT_EQ(delivered(site) + carriedFibre(colonist) + onTheGround(fibreId), 3U);
+	}
+
+	// A fell gives seven logs; an armful holds five. The two that fall are carried in before another tree
+	// is felled, and the second tree falls only once the room left takes all the site still wants.
+	TEST_F(ChainWalkTest, AFellsOverflowIsFetchedBeforeAnotherTreeFalls) {
+		registerItem("Log", 2, 7.0F);
+		assets::AssetDefinition pine;
+		pine.defName = "Pine";
+		pine.label = "Pine";
+		pine.capabilities.harvestable = assets::HarvestableCapability{};
+		pine.capabilities.harvestable->yieldDefName = "Log";
+		pine.capabilities.harvestable->amountMin = 7;
+		pine.capabilities.harvestable->amountMax = 7;
+		pine.capabilities.harvestable->durability = 1.0F;
+		pine.capabilities.harvestable->destructive = true;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(pine));
+		const uint32_t logId = assets::AssetRegistry::Get().getDefNameId("Log");
+		ASSERT_EQ(ecs::cargoUnitsPerTrip(assets::AssetRegistry::Get(), "Log", Inventory::createForColonist().carryCapacityKg), 5U);
+
+		const Site site = constructionSite({0.0F, 12.0F}, "Log", 10);
+		childOf(site, {0.0F, 12.0F}, logId);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		watchers = {colonist};
+		for (const glm::vec2 tree : {glm::vec2{3.0F, 0.0F}, glm::vec2{6.0F, 0.0F}, glm::vec2{9.0F, 0.0F}}) {
+			remember(colonist, tree, "Pine", assets::CapabilityType::Harvestable);
+		}
+		const auto logs = [&] { return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Log"); };
+
+		int		 firstPickup = -1;
+		int		 secondFell = -1;
+		uint32_t lastGround = 0;
+		for (int frame = 0; frame < 4000 && delivered(site) < 10; ++frame) {
+			world->update(0.1F);
+			landDrops();
+			const uint32_t ground = onTheGround(logId);
+			if (firstPickup < 0 && ground < lastGround) {
+				firstPickup = frame;
+			}
+			lastGround = ground;
+			if (secondFell < 0 && felled.size() == 2) {
+				secondFell = frame;
+			}
+		}
+		ASSERT_EQ(delivered(site), 10U);
+		ASSERT_GE(firstPickup, 0) << "the overflow was never picked up";
+		ASSERT_GE(secondFell, 0);
+		EXPECT_LT(firstPickup, secondFell) << "the pile is taken up before another tree falls";
+		EXPECT_EQ(felled.size(), 2U) << "five, then two from the pile and three from a second tree";
+		EXPECT_EQ(delivered(site) + logs() + onTheGround(logId), 7U * static_cast<uint32_t>(felled.size())) << "every log is accounted for";
 	}
 
 	// While the first colonist gathers, what it carries and the cut it has accepted are its in-flight:
@@ -1047,6 +1801,66 @@ namespace ecs::test {
 	}
 
 	// A partly full trip whose other sources are regrowing or reserved is delivered as it is.
+	// Once the colonist has chosen to carry its cut in, a reed that becomes ready on the way does not turn
+	// it back: the chosen carry-in outranks a top-up cut for the same site.
+	TEST_F(ChainWalkTest, AChosenCarryInIsNotTurnedBackByAReadySource) {
+		const Site		site = fibreSite({0.0F, 12.0F}, 20);
+		const glm::vec2 later{4.0F, 0.0F};
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}, later});
+		cut.push_back(later); // regrowing until the colonist is on its way
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Haul && task.deliveryChosen;
+		}));
+		std::erase(cut, later);
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		EXPECT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.targetPosition, glm::vec2(0.0F, 12.0F));
+		const EvaluatedOption* ready = optionOf(colonist, TaskType::Harvest, OptionStatus::Available);
+		ASSERT_NE(ready, nullptr) << "the ready reed is on offer";
+		EXPECT_EQ(ready->gatheringRank, 0) << "but no longer as a leg of the trip";
+	}
+
+	// A need between two cuts keeps the cut's goods as its suspended record, and the next cut adopts them;
+	// taking the colonist under player control then leaves no claim, and the goods with the colonist.
+	TEST_F(ChainWalkTest, ANeedBetweenCutsKeepsTheGoodsForTheNextCut) {
+		const Site	   site = fibreSite({0.0F, 12.0F}, 20);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}, {4.0F, 0.0F}, {6.0F, 0.0F}});
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Harvest && claimOf(task, ClaimKind::Inbound).has_value();
+		}));
+		Task&		   task = *getTask(colonist);
+		const uint64_t gathering = task.instanceId;
+
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::FulfillNeed);
+		ASSERT_TRUE(task.suspended.has_value());
+		EXPECT_EQ(task.suspended->instanceId, gathering);
+		EXPECT_EQ(cargoOnClaims(task.suspended->claims, site.umbrella, fibreId), 3U) << "the cut's goods, not its uncut yield";
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, {}), 3U);
+
+		world->getComponent<Inventory>(colonist)->removeItem("Berry", 1);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 100.0F;
+		task.clear();
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::Harvest);
+		EXPECT_EQ(task.instanceId, gathering) << "the next cut adopts the record";
+		EXPECT_FALSE(task.suspended.has_value());
+		EXPECT_EQ(claimOf(task, ClaimKind::Inbound)->quantity(), 3U);
+
+		ai->enterControl(colonist);
+		EXPECT_EQ(indexedClaimsOf(colonist), 0U);
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, {}), 0U);
+		EXPECT_EQ(carriedFibre(colonist), 3U) << "the goods stay with the colonist";
+	}
+
 	TEST_F(ChainWalkTest, APartlyFullTripIsDeliveredWhenNoOtherSourceIsFree) {
 		const Site		site = fibreSite({0.0F, 12.0F}, 20);
 		const glm::vec2 own{2.0F, 0.0F};
@@ -1058,7 +1872,7 @@ namespace ecs::test {
 		world->addComponent<Skills>(other, Skills{}).setLevel("Farming", 0.0F);
 
 		decideAll({other, colonist});
-		ASSERT_EQ(getTask(other)->harvestTargetEntityId, hashWorldEntity(taken, assets::AssetRegistry::Get().getDefNameId("Reed")));
+		ASSERT_EQ(getTask(other)->harvestTargetKey, hashWorldEntity(taken, assets::AssetRegistry::Get().getDefNameId("Reed")));
 		// Walk until the colonist has decided again with its first cut in hand.
 		ASSERT_TRUE(walkUntil(site, colonist, [&] {
 			const EvaluatedOption* chosen = world->getComponent<DecisionTrace>(colonist)->getSelected();
@@ -1072,6 +1886,378 @@ namespace ecs::test {
 		EXPECT_NE(optionOf(colonist, TaskType::Harvest, OptionStatus::Regrowing), nullptr);
 		ASSERT_TRUE(walkUntil(site, colonist, [&] { return carriedFibre(colonist) == 0U; }, 400));
 		EXPECT_GE(delivered(site), 3U);
+	}
+
+	// Two colonists gather for one site and their cuts interleave until its need is met exactly: what they
+	// claim together never passes the need, no reed is cut beyond it, and every unit cut is delivered.
+	TEST_F(ChainWalkTest, TwoGatherersMeetANeedExactly) {
+		const Site					 site = fibreSite({0.0F, 12.0F}, 12);
+		const EntityID				 first = createColonist({0.0F, 0.0F});
+		const EntityID				 second = createColonist({1.0F, 0.0F});
+		const std::vector<glm::vec2> reeds{{2.0F, 0.0F}, {3.0F, 1.0F}, {4.0F, 0.0F}, {5.0F, 1.0F}, {-2.0F, 0.0F}, {-3.0F, 1.0F}, {-4.0F, 0.0F}};
+		for (const EntityID colonist : {first, second}) {
+			for (const glm::vec2 reed : reeds) {
+				remember(colonist, reed, "Reed", assets::CapabilityType::Harvestable);
+			}
+		}
+
+		std::array<int, 2>		cutsBy{};
+		std::array<uint32_t, 2> lastCarried{};
+		uint32_t				mostInFlight = 0;
+		const auto				settled = [&] {
+			 return delivered(site) == 12 && carriedFibre(first) + carriedFibre(second) == 0 &&
+					getTask(first)->type != TaskType::Harvest && getTask(second)->type != TaskType::Harvest;
+		};
+		bool done = false;
+		for (int frame = 0; frame < 6000 && !done; ++frame) {
+			world->update(0.1F);
+			landDrops();
+			const std::array<EntityID, 2> both{first, second};
+			for (size_t i = 0; i < both.size(); ++i) {
+				const uint32_t now = carriedFibre(both[i]);
+				cutsBy[i] += now > lastCarried[i] ? 1 : 0;
+				lastCarried[i] = now;
+			}
+			mostInFlight = std::max(mostInFlight, ai->claimIndex().inFlight(site.umbrella, fibreId, {}));
+			done = settled();
+		}
+		ASSERT_TRUE(done) << "delivered " << delivered(site);
+		EXPECT_GT(cutsBy[0], 0);
+		EXPECT_GT(cutsBy[1], 0) << "both cut";
+		EXPECT_LE(mostInFlight, 12U) << "together they never claim past the need";
+		EXPECT_EQ(cut.size(), 4U) << "four cuts of three and none beyond";
+		EXPECT_EQ(dropped, 0U);
+		walkUntil(site, first, [] { return false; }, 300);
+		EXPECT_EQ(cut.size(), 4U);
+		EXPECT_EQ(delivered(site), 12U);
+	}
+
+	// Gathering, his route to the next reed fails. What he carries stays claimed (nobody re-cuts it); the
+	// reed and the uncut yield are free, so another colonist takes them, and he delivers what he has
+	// rather than standing on the stranded cut.
+	TEST_F(ChainWalkTest, ARouteFailureMidGatheringDeliversWhatHeHas) {
+		const Site		site = fibreSite({0.0F, 12.0F}, 6);
+		const glm::vec2 next{4.0F, 0.0F};
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}, next});
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Harvest && claimOf(task, ClaimKind::Inbound).has_value();
+		}));
+		const uint64_t nextKey = hashWorldEntity(next, assets::AssetRegistry::Get().getDefNameId("Reed"));
+		ASSERT_EQ(getTask(colonist)->harvestTargetKey, nextKey);
+		const uint64_t gathering = getTask(colonist)->instanceId;
+
+		// No nav regions in this headless world, so the failed route is set by hand, as requestNavPath
+		// leaves a Blocked one: stopped, under the reach it stands in (stamp 0).
+		getTask(colonist)->navState = NavState::CantFindWayTo;
+		world->getComponent<MovementTarget>(colonist)->active = false;
+		getTask(colonist)->blockedReachStamp = 0;
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->instanceId, gathering);
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, {}), 3U) << "what he carries, not the uncut yield";
+		EXPECT_EQ(ai->claimIndex().inboundItems(site.blueprint, fibreId, {}), 3U);
+		EXPECT_FALSE(ai->claimIndex().useHolder({.kind = TargetKind::WorldKey, .key = nextKey}, {}).has_value());
+
+		const EntityID other = createColonist({5.0F, 0.0F});
+		rememberReeds(other, {next});
+		decide(other);
+		ASSERT_EQ(getTask(other)->type, TaskType::Harvest);
+		EXPECT_EQ(getTask(other)->harvestTargetKey, nextKey);
+
+		ASSERT_TRUE(walkUntil(site, colonist, [&] { return delivered(site) == 6 && carriedFibre(colonist) + carriedFibre(other) == 0; }, 1500))
+			<< "delivered " << delivered(site);
+		EXPECT_EQ(cut.size(), 2U);
+		EXPECT_EQ(dropped, 0U);
+	}
+
+	// The box a colonist gathers for loses its rules between two cuts, and its goal system retires the
+	// root on its own poll. The gathering ends: no further cut, no claim toward the gone root, and the
+	// goods he cut stay with him.
+	TEST_F(ChainWalkTest, ARootRemovedBetweenCutsEndsTheGathering) {
+		world->registerSystem<StorageGoalSystem>();
+		const glm::vec2 boxPos{0.0F, 12.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Fibre", .category = assets::ItemCategory::RawMaterial, .minAmount = 9, .maxAmount = 9});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}, {4.0F, 0.0F}, {6.0F, 0.0F}, {8.0F, 0.0F}});
+
+		uint64_t   root = 0;
+		const auto onTheSecondCut = [&] {
+			const Task& task = *getTask(colonist);
+			if (task.type != TaskType::Harvest || !claimOf(task, ClaimKind::Inbound).has_value()) {
+				return false;
+			}
+			root = GoalTaskRegistry::Get().rootOf(task.harvestGoalId);
+			return true;
+		};
+		for (int frame = 0; frame < 2000 && !onTheSecondCut(); ++frame) {
+			world->update(0.1F);
+			landDrops();
+		}
+		ASSERT_NE(root, 0U) << "he never went on to a second cut";
+		world->getComponent<StorageConfiguration>(box)->rules.clear();
+		const size_t cutsBefore = cut.size();
+
+		for (int frame = 0; frame < 600; ++frame) {
+			world->update(0.1F);
+			landDrops();
+		}
+		EXPECT_EQ(GoalTaskRegistry::Get().getGoal(root), nullptr) << "the goal system retired the root";
+		EXPECT_NE(getTask(colonist)->type, TaskType::Harvest);
+		EXPECT_LE(cut.size(), cutsBefore + 1) << "at most the cut under way finishes";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, fibreId, {}), 0U);
+		EXPECT_EQ(indexedClaimsOf(colonist), 0U);
+		EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Fibre"), 0U);
+		EXPECT_EQ(carriedFibre(colonist) + onTheGround(fibreId), 3U * static_cast<uint32_t>(cut.size())) << "nothing cut is lost";
+	}
+
+	// A box one unit short of full asks for many more by its minimum: a reed gives three, so a cut for the
+	// box would leave two carried about. It is not taken, and the trace says why.
+	TEST_F(ChainWalkTest, NoCutForABoxWithRoomForLessThanItLands) {
+		const glm::vec2 boxPos{0.0F, 12.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		auto store = Inventory::createForStorage();
+		store.maxCapacity = 1;
+		store.addItem("Fibre", 39);
+		world->addComponent<Inventory>(box, std::move(store));
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Fibre", .category = assets::ItemCategory::RawMaterial, .minAmount = 50});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		GoalTask umbrella;
+		umbrella.type = TaskType::Haul;
+		umbrella.owner = GoalOwner::StorageGoalSystem;
+		umbrella.destinationEntity = box;
+		umbrella.destinationPosition = boxPos;
+		umbrella.acceptedDefNameIds = {fibreId};
+		const uint64_t umbrellaId = GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+		GoalTask cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::StorageGoalSystem;
+		cut.destinationEntity = box;
+		cut.destinationPosition = boxPos;
+		cut.yieldDefNameId = fibreId;
+		cut.parentGoalId = umbrellaId;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{2.0F, 0.0F}});
+
+		decide(colonist);
+		EXPECT_NE(getTask(colonist)->type, TaskType::Harvest);
+		EXPECT_NE(optionOf(colonist, TaskType::Harvest, OptionStatus::NoRoom), nullptr);
+	}
+
+	// Nine fibre carried toward a site that wants more, room for one: a remembered pile of five is no leg
+	// worth walking for one unit, the top-up cut's rule, so he delivers what he has.
+	TEST_F(ChainWalkTest, APileIsNoLegForTheLastUnitOfRoom) {
+		const Site	   site = fibreSite({0.0F, 12.0F}, 20);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		ASSERT_EQ(world->getComponent<Inventory>(colonist)->addItem("Fibre", 9), 9U);
+		Task& task = *getTask(colonist);
+		task.type = TaskType::Harvest;
+		task.state = TaskState::Moving;
+		task.targetPosition = {50.0F, 50.0F};
+		task.harvestTargetKey = 1;
+		task.harvestYieldDefNameId = fibreId;
+		task.priorityTier = 4;
+		task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
+		task.claimSeq = task.instanceId;
+		ASSERT_TRUE(task.claims.push(Claim::inbound(static_cast<uint64_t>(site.blueprint), fibreId, 9)));
+		ASSERT_TRUE(task.claims.push(Claim::inFlight(site.umbrella, fibreId, 9)));
+		const glm::vec2 pilePos{30.0F, 0.0F};
+		const EntityID	pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, fibreId, pilePos, 5);
+		remember(colonist, pilePos, "Fibre", assets::CapabilityType::Carryable);
+
+		decide(colonist);
+		EXPECT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory) << "the carry-in, not the pile";
+		EXPECT_EQ(task.haulGoalId, site.umbrella);
+	}
+
+	// With an armful of wood from his first cut he walks to a second tree, which is felled by someone else
+	// on the way: he carries in what he has instead of standing at the stump.
+	TEST_F(ChainWalkTest, ATreeGoneOnTheWayToATopUpCutSendsTheArmfulIn) {
+		assets::AssetDefinition pine;
+		pine.defName = "Pine";
+		pine.label = "Pine";
+		pine.capabilities.harvestable = assets::HarvestableCapability{};
+		pine.capabilities.harvestable->yieldDefName = "Wood";
+		pine.capabilities.harvestable->amountMin = 3;
+		pine.capabilities.harvestable->amountMax = 3;
+		pine.capabilities.harvestable->durability = 1.0F;
+		pine.capabilities.harvestable->regrowthTime = 600.0F;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(pine));
+		const Site site = constructionSite({0.0F, 12.0F}, "Wood", 10);
+		childOf(site, {0.0F, 12.0F}, woodId);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		const glm::vec2 second{6.0F, 0.0F};
+		remember(colonist, {2.0F, 0.0F}, "Pine", assets::CapabilityType::Harvestable);
+		remember(colonist, second, "Pine", assets::CapabilityType::Harvestable);
+		const auto heldWood = [&] { return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Wood"); };
+
+		ASSERT_TRUE(run([&] {
+			const Task& task = *getTask(colonist);
+			return heldWood() == 3 && task.type == TaskType::Harvest && task.state == TaskState::Moving &&
+				   glm::distance(task.targetPosition, second) < 1.0F;
+		})) << "he never went on to the second tree";
+		world->getComponent<Memory>(colonist)->forgetWorldEntity(second, assets::AssetRegistry::Get().getDefNameId("Pine"));
+		felled.push_back(second);
+
+		ASSERT_TRUE(run([&] { return delivered(site) == 3; }, 600)) << "delivered " << delivered(site);
+		EXPECT_EQ(dropped, 0U);
+		EXPECT_EQ(heldWood(), 0U);
+	}
+
+	// His cut for a site has landed and a meal interrupts the carry-in, so the goods wait in his suspended
+	// record. Fed, he picks a clear of the same site at his feet over the walk to the site: a clear brings
+	// nothing toward the need, so it never takes the goods over as the next leg (no handover, no adopted
+	// record). It is a task of its own, and the goods are carried in after.
+	TEST_F(ChainWalkTest, ABuildSiteClearIsNeverTheNextLegOfAGathering) {
+		const Site	   site = fibreSite({0.0F, 30.0F}, 3);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		rememberReeds(colonist, {{1.0F, 0.0F}});
+		// A skilled cutter, so a clear at his feet outscores the long walk to the site.
+		world->addComponent<Skills>(colonist, Skills{}).setLevel("Farming", 10.0F);
+		ASSERT_TRUE(run([&] { return getTask(colonist)->type == TaskType::Haul && carriedFibre(colonist) == 3U; }));
+		const uint64_t gathering = getTask(colonist)->instanceId;
+
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+		ASSERT_TRUE(getTask(colonist)->suspended.has_value());
+		ASSERT_EQ(getTask(colonist)->suspended->instanceId, gathering);
+
+		// A slow plant, so the clear lasts long enough to be seen. It yields the gathered item, as the cut
+		// did, so only the clear rule keeps it from taking the goods on.
+		assets::AssetDefinition thistle;
+		thistle.defName = "Thistle";
+		thistle.label = "Thistle";
+		thistle.capabilities.harvestable = assets::HarvestableCapability{};
+		thistle.capabilities.harvestable->yieldDefName = "Fibre";
+		thistle.capabilities.harvestable->amountMin = 1;
+		thistle.capabilities.harvestable->amountMax = 1;
+		thistle.capabilities.harvestable->durability = 30.0F;
+		thistle.capabilities.harvestable->destructive = true;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(thistle));
+		const glm::vec2 weed = world->getComponent<Position>(colonist)->value + glm::vec2{0.4F, 0.4F};
+		GoalTask		clear;
+		clear.type = TaskType::Harvest;
+		clear.owner = GoalOwner::ConstructionGoalSystem;
+		clear.destinationEntity = site.blueprint;
+		clear.destinationPosition = {0.0F, 30.0F};
+		clear.clearFootprint = FootprintBounds{.min = weed - 0.2F, .max = weed + 0.2F};
+		clear.parentGoalId = site.umbrella;
+		const uint64_t clearGoal = GoalTaskRegistry::Get().createGoal(std::move(clear));
+		remember(colonist, weed, "Thistle", assets::CapabilityType::Harvestable);
+
+		bool cleared = false;
+		bool clearTookTheGoods = false;
+		ASSERT_TRUE(run([&] {
+			const Task& task = *getTask(colonist);
+			if (!cleared && task.type == TaskType::Harvest && task.harvestGoalId == clearGoal) {
+				cleared = true;
+				clearTookTheGoods = task.instanceId == gathering || claimOf(task, ClaimKind::Inbound).has_value();
+			}
+			return delivered(site) == 3U;
+		})) << "delivered " << delivered(site);
+		ASSERT_TRUE(cleared) << "the clear at his feet was never taken, so this test shows nothing";
+		EXPECT_FALSE(clearTookTheGoods) << "the clear is its own task, holding no cargo";
+	}
+
+	// Critically hungry in the middle of tier-4 work, with food only in a box: he leaves the work, takes a
+	// meal from the box, eats, and goes back to finish the work.
+	TEST_F(ChainWalkTest, CriticalHungerLeavesWorkForABoxAndReturns) {
+		const Site		site = fibreSite({0.0F, 12.0F}, 6);
+		const glm::vec2 boxPos{-6.0F, 0.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		auto store = Inventory::createForStorage();
+		store.addItem("Berry", 5);
+		world->addComponent<Inventory>(box, std::move(store));
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, boxPos, "Box", assets::CapabilityType::Storage);
+		rememberReeds(colonist, {{2.0F, 0.0F}, {4.0F, 0.0F}});
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Harvest && claimOf(task, ClaimKind::Inbound).has_value();
+		}));
+		ASSERT_EQ(getTask(colonist)->priorityTier, 4);
+		const uint64_t gathering = getTask(colonist)->instanceId;
+
+		auto& hunger = world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger);
+		hunger.value = 5.0F;
+		bool	 leftTheWork = false;
+		uint64_t resumedBy = 0;
+		ASSERT_TRUE(walkUntil(site, colonist, [&] {
+			const Task& task = *getTask(colonist);
+			leftTheWork |= task.type == TaskType::FulfillNeed && task.needSourceStorageId == static_cast<uint64_t>(box);
+			if (leftTheWork && task.type == TaskType::Harvest) {
+				resumedBy = task.instanceId;
+			}
+			return delivered(site) == 6;
+		})) << "delivered " << delivered(site);
+		EXPECT_TRUE(leftTheWork) << "the critical need took him off tier-4 work to the box";
+		EXPECT_LT(world->getComponent<Inventory>(box)->getQuantity("Berry"), 5U);
+		EXPECT_GE(hunger.value, 10.0F) << "he ate";
+		EXPECT_EQ(resumedBy, gathering) << "the next cut took his gathering back up";
+		EXPECT_EQ(cut.size(), 2U);
+	}
+
+	// A sleeper carrying stones a craft wants holds no claim on them while it sleeps, so another colonist
+	// fetches and delivers the same need from a pile. Awake, the sleeper's record is dropped, nobody
+	// delivers past the need, and the stones stay in his pack.
+	TEST_F(ChainWalkTest, AWokenSleeperWhoseGoodsWereFetchedByAnotherDropsHisRecord) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, stoneId, pilePos, 5);
+		const EntityID sleeper = createColonist({-3.0F, 0.0F});
+		world->getComponent<Inventory>(sleeper)->addItem("Stone", 3);
+		decide(sleeper);
+		ASSERT_EQ(getTask(sleeper)->type, TaskType::Haul);
+		const uint64_t carryIn = getTask(sleeper)->instanceId;
+		world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Energy).value = 5.0F;
+		decide(sleeper);
+		ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Energy);
+		ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
+
+		const EntityID other = createColonist({3.5F, 0.0F});
+		remember(other, pilePos, "Stone", assets::CapabilityType::Carryable);
+		const auto* store = world->getComponent<Inventory>(station);
+		uint32_t	mostStored = 0;
+		const auto	energy = [&] { return world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Energy).value; };
+		ASSERT_TRUE(run([&] {
+			mostStored = std::max(mostStored, store->getQuantity("Stone"));
+			return energy() > 5.0F && getTask(sleeper)->needToFulfill != NeedType::Energy;
+		})) << "he never woke";
+		run([&] {
+			mostStored = std::max(mostStored, store->getQuantity("Stone"));
+			return false;
+		}, 200);
+		EXPECT_FALSE(getTask(sleeper)->suspended.has_value()) << "the record is dropped";
+		EXPECT_NE(getTask(sleeper)->instanceId, carryIn);
+		EXPECT_EQ(mostStored, 3U) << "the other delivered the need, and nobody past it";
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 2U) << "fetched once";
+		EXPECT_EQ(world->getComponent<Inventory>(sleeper)->getQuantity("Stone"), 3U) << "his stones stay in his pack";
 	}
 
 	// =============================================================================
@@ -1337,6 +2523,123 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(first)->type, TaskType::Harvest) << "free once its holder is gone";
 	}
 
+	// A colonist whose route to its claimed bush has failed (in another region, where no verdict is
+	// remembered, so it keeps re-selecting the same cut) holds nothing it has not reached while it stays failed,
+	// neither its Use of the bush nor the cut's expected yield: another colonist is offered the bush and takes it.
+	TEST_F(ChainClaimsTest, AFailedRouteHoldsNothingItHasNotReached) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID stuck = createColonist({0.0F, 0.0F});
+		const EntityID other = createColonist({0.5F, 0.0F});
+		for (EntityID colonist : {stuck, other}) {
+			remember(colonist, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		}
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
+		const uint64_t instance = getTask(stuck)->instanceId;
+
+		// No route under the reach it stands in now (no mesh here: stamp 0), so a re-decision keeps the task.
+		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
+		world->getComponent<MovementTarget>(stuck)->active = false;
+		getTask(stuck)->blockedReachStamp = 0;
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->instanceId, instance) << "it keeps re-selecting the same cut";
+		EXPECT_EQ(indexedClaimsOf(stuck), 0U);
+
+		decide(other);
+		EXPECT_EQ(getTask(other)->type, TaskType::Harvest) << "the stranded colonist's bush is offered";
+		EXPECT_EQ(getTask(other)->harvestTargetKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("StickBush")));
+		EXPECT_NE(getTask(stuck)->type, TaskType::Harvest) << "and the stranded colonist, seeing it taken, lets it go";
+	}
+
+	// The same stranded colonist, with nobody else wanting the bush: once its route succeeds (the reach it
+	// failed under has changed, so it picks again and is routed), its claims are back and others see the
+	// bush taken.
+	TEST_F(ChainClaimsTest, AFailedRouteThatSucceedsTakesItsClaimsBack) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID stuck = createColonist({0.0F, 0.0F});
+		remember(stuck, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
+		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
+		world->getComponent<MovementTarget>(stuck)->active = false;
+		getTask(stuck)->blockedReachStamp = 0;
+		decide(stuck);
+		ASSERT_EQ(indexedClaimsOf(stuck), 0U);
+
+		getTask(stuck)->blockedReachStamp = 1; // failed under a reach it no longer stands in
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
+		EXPECT_EQ(getTask(stuck)->navState, NavState::Traveling);
+		EXPECT_GT(indexedClaimsOf(stuck), 0U);
+
+		const EntityID other = createColonist({0.5F, 0.0F});
+		remember(other, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		decide(other);
+		EXPECT_NE(getTask(other)->type, TaskType::Harvest);
+		const EvaluatedOption* reserved = optionOf(other, TaskType::Harvest, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, stuck);
+	}
+
+	// A hauler past its pickup whose route to the station fails keeps the claims on what it carries: the
+	// root still reads those stones as on their way, so another colonist is not offered a fetch for them,
+	// and once the route recovers the station gets exactly what it needs.
+	TEST_F(ChainClaimsTest, AFailedRoutePastThePickupKeepsItsCargoClaimed) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const glm::vec2 otherPilePos{-4.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		for (const glm::vec2 at : {pilePos, otherPilePos}) {
+			const EntityID pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{at});
+			makeLoosePile(*world, pile, stoneId, at, 3);
+		}
+		const EntityID hauler = createColonist({0.0F, 0.0F});
+		remember(hauler, pilePos, "Stone", assets::CapabilityType::Carryable);
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		act(hauler, pilePos);
+		ASSERT_EQ(getTask(hauler)->chainStep, 1U);
+		ASSERT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(hauler), "Stone"), 3U);
+
+		// No nav regions in this headless world, so the failed route to the station is set by hand, as
+		// requestNavPath leaves a Blocked one: stopped, under the reach it stands in (stamp 0).
+		getTask(hauler)->navState = NavState::CantFindWayTo;
+		world->getComponent<MovementTarget>(hauler)->active = false;
+		getTask(hauler)->blockedReachStamp = 0;
+		const uint64_t instance = getTask(hauler)->instanceId;
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->instanceId, instance) << "it keeps the stranded delivery";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "the carried stones are still on their way";
+		EXPECT_EQ(ai->claimIndex().inboundItems(station, stoneId, {}), 3U);
+
+		const EntityID other = createColonist({-3.0F, 0.0F});
+		remember(other, otherPilePos, "Stone", assets::CapabilityType::Carryable);
+		decide(other);
+		EXPECT_NE(getTask(other)->type, TaskType::Haul) << "nobody fetches what the hauler carries";
+
+		getTask(hauler)->blockedReachStamp = 1; // failed under a reach it no longer stands in: it is routed again
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(hauler)->navState, NavState::Traveling);
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "never more than it carries";
+		act(hauler, stationPos);
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 3U);
+	}
+
 	// Two colonists at one station with every input in its store: the first's Craft selection holds the
 	// station's slot, and the second sees it in use.
 	TEST_F(ChainClaimsTest, AStationsSlotIsHeldByTheCrafterThatSelectedIt) {
@@ -1392,14 +2695,720 @@ namespace ecs::test {
 		ASSERT_NE(reserved, nullptr);
 		EXPECT_EQ(reserved->reservedBy, hungry);
 
-		// A second bush, farther off: the second hungry colonist, now starving, goes there instead (the
-		// work order would outrank a routine meal).
-		const glm::vec2 farBush{-6.0F, 0.0F};
-		remember(alsoHungry, farBush, "BerryBush", assets::CapabilityType::Harvestable);
+		// Starving now, it is the more urgent eater: the routine meal's claim no longer holds the bush.
 		world->getComponent<NeedsComponent>(alsoHungry)->get(NeedType::Hunger).value = 5.0F;
 		decide(alsoHungry);
 		ASSERT_EQ(getTask(alsoHungry)->type, TaskType::FulfillNeed);
-		EXPECT_EQ(getTask(alsoHungry)->needSourceKey, hashWorldEntity(farBush, assets::AssetRegistry::Get().getDefNameId("BerryBush")));
+		EXPECT_EQ(getTask(alsoHungry)->needSourceKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("BerryBush")));
+	}
+
+	// A worker cutting the nearest bush for a craft doesn't keep food from a hungry colonist, but a free
+	// bush a little farther is preferred over walking into the worker; the idle gather likewise takes
+	// the next free bush instead of showing the held one Reserved.
+	TEST_F(ChainClaimsTest, FoodNobodyHoldsIsPreferredToFoodAWorkerHolds) {
+		const glm::vec2 stationPos{0.0F, 8.0F};
+		const glm::vec2 heldBush{3.0F, 0.0F};
+		const glm::vec2 freeBush{-5.0F, 0.0F};
+		const uint32_t	berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		const uint32_t	bushId = assets::AssetRegistry::Get().getDefNameId("BerryBush");
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Berry", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, berryId);
+
+		const EntityID worker = createColonist({0.0F, 0.0F});
+		remember(worker, heldBush, "BerryBush", assets::CapabilityType::Harvestable);
+		decide(worker);
+		ASSERT_EQ(getTask(worker)->harvestTargetKey, hashWorldEntity(heldBush, bushId));
+
+		const EntityID hungry = createColonist({0.0F, 1.0F});
+		const EntityID idle = createColonist({0.0F, -1.0F});
+		for (EntityID colonist : {hungry, idle}) {
+			remember(colonist, heldBush, "BerryBush", assets::CapabilityType::Harvestable);
+			remember(colonist, freeBush, "BerryBush", assets::CapabilityType::Harvestable);
+		}
+		world->getComponent<NeedsComponent>(hungry)->get(NeedType::Hunger).value = 5.0F;
+		decide(hungry);
+		ASSERT_EQ(getTask(hungry)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(hungry)->needSourceKey, hashWorldEntity(freeBush, bushId));
+
+		// The idle colonist knows the worker's bush and another free one farther off.
+		const glm::vec2 otherFree{-7.0F, 0.0F};
+		world->getComponent<Memory>(idle)->forgetWorldEntity(freeBush, bushId);
+		remember(idle, otherFree, "BerryBush", assets::CapabilityType::Harvestable);
+		decide(idle);
+		bool gathersFree = false;
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(idle)->options) {
+			gathersFree |= option.gathersFood &&
+						   option.targetPosition == otherFree && option.status != OptionStatus::Reserved;
+		}
+		EXPECT_TRUE(gathersFree) << "the gather goes to the next free bush";
+	}
+
+	// =============================================================================
+	// Hungry colonists walking to food:MovementSystem and PhysicsSystem move them (no mesh: direct
+	// steering), and a berry bush regrows once cut, so each bush feeds once.
+	// =============================================================================
+
+	class HungerWalkTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			world->registerSystem<TimeSystem>();
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+			assets::AssetDefinition bush;
+			bush.defName = "RipeBush";
+			bush.label = "RipeBush";
+			bush.capabilities.harvestable = assets::HarvestableCapability{};
+			bush.capabilities.harvestable->yieldDefName = "Berry";
+			bush.capabilities.harvestable->amountMin = 3;
+			bush.capabilities.harvestable->amountMax = 3;
+			bush.capabilities.harvestable->durability = 1.0F;
+			bush.capabilities.harvestable->regrowthTime = 600.0F;
+			bush.capabilities.harvestable->destructive = false;
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(bush));
+			berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+			bushId = assets::AssetRegistry::Get().getDefNameId("RipeBush");
+			// Only bushes stand in this world; a pile is answered by the pile index, and a pickup whose
+			// pile has gone finds nothing.
+			actions->setTakeSourceCallback([this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float) {
+				if (defName != "RipeBush") {
+					return ActionSystem::SourceState::Gone;
+				}
+				const glm::vec2 at{x, y};
+				const bool		wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
+				if (take == ActionSystem::SourceTake::Regrow && !wasCut) {
+					cut.push_back(at);
+				}
+				return wasCut ? ActionSystem::SourceState::OnCooldown : ActionSystem::SourceState::Ready;
+			});
+			ai->setSourceRegrowthCallback([this](uint32_t, glm::vec2 at, double) {
+				return std::find(cut.begin(), cut.end(), at) != cut.end() ? std::optional<double>{1.0e9} : std::nullopt;
+			});
+		}
+
+		EntityID hungryColonist(glm::vec2 position, float hunger) {
+			const EntityID colonist = createColonist(position);
+			world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = hunger;
+			return colonist;
+		}
+
+		void rememberBush(EntityID colonist, glm::vec2 position) { remember(colonist, position, "RipeBush", assets::CapabilityType::Harvestable); }
+
+		float hunger(EntityID colonist) { return world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value; }
+
+		/// Run 0.1 s frames until `done` holds, calling `each` after every frame.
+		template <typename Done, typename Each>
+		bool walkUntil(Done done, Each each, int maxFrames = 3000) {
+			for (int frame = 0; frame < maxFrames; ++frame) {
+				world->update(0.1F);
+				each();
+				if (done()) {
+					return true;
+				}
+			}
+			return false;
+		}
+		template <typename Done> bool walkUntil(Done done, int maxFrames = 3000) {
+			return walkUntil(done, [] {}, maxFrames);
+		}
+
+		/// A storage box holding `berries`, which every colonist named remembers (colony knowledge).
+		EntityID foodBox(glm::vec2 position, uint32_t berries, std::initializer_list<EntityID> knownBy) {
+			const EntityID box = world->createEntity();
+			world->addComponent<Position>(box, Position{position});
+			world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			auto inventory = Inventory::createForStorage();
+			if (berries > 0) {
+				inventory.addItem("Berry", berries);
+			}
+			world->addComponent<Inventory>(box, std::move(inventory));
+			StorageConfiguration config;
+			config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
+			world->addComponent<StorageConfiguration>(box, std::move(config));
+			for (EntityID colonist : knownBy) {
+				remember(colonist, position, "Box", assets::CapabilityType::Storage);
+			}
+			return box;
+		}
+
+		EntityID berryPile(glm::vec2 position, uint32_t quantity, std::initializer_list<EntityID> knownBy) {
+			const EntityID pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{position});
+			makeLoosePile(*world, pile, berryId, position, quantity);
+			for (EntityID colonist : knownBy) {
+				remember(colonist, position, "Berry", assets::CapabilityType::Carryable);
+			}
+			return pile;
+		}
+
+		uint32_t boxBerries(EntityID box) { return world->getComponent<Inventory>(box)->getQuantity("Berry"); }
+
+		uint32_t			   berryId = 0;
+		uint32_t			   bushId = 0;
+		std::vector<glm::vec2> cut;
+	};
+
+	// A routinely hungry colonist far off claims the only bush first; a starving one beside it is the
+	// more urgent eater and goes anyway. It eats. The routine eater sees the bush taken by someone at
+	// least as urgent, gives it up, and once the bush is regrowing waits instead of walking back to it.
+	TEST_F(HungerWalkTest, AStarvingColonistBeatsARoutineEaterThatClaimedFirst) {
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	routine = hungryColonist({30.0F, 0.0F}, 30.0F);
+		const EntityID	starving = hungryColonist({0.0F, 0.0F}, 5.0F);
+		rememberBush(routine, bushPos);
+		rememberBush(starving, bushPos);
+		const uint64_t bushKey = hashWorldEntity(bushPos, bushId);
+
+		decide(routine);
+		ASSERT_EQ(getTask(routine)->needSourceKey, bushKey);
+		decide(starving);
+		ASSERT_EQ(getTask(starving)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(getTask(starving)->needSourceKey, bushKey) << "a less urgent eater's claim does not hold the bush";
+
+		std::vector<uint64_t> routineMealsAtTheBush;
+		const auto			  noteRoutine = [&] {
+			const Task& task = *getTask(routine);
+			if (task.type == TaskType::FulfillNeed && task.needSourceKey == bushKey &&
+				std::find(routineMealsAtTheBush.begin(), routineMealsAtTheBush.end(), task.instanceId) == routineMealsAtTheBush.end()) {
+				routineMealsAtTheBush.push_back(task.instanceId);
+			}
+		};
+		ASSERT_TRUE(walkUntil([&] { return hunger(starving) >= 50.0F; }, noteRoutine)) << "the starving colonist ate";
+		walkUntil([] { return false; }, noteRoutine, 300);
+		EXPECT_EQ(routineMealsAtTheBush.size(), 1U) << "the routine eater never went back for the bush";
+		EXPECT_NE(getTask(routine)->needSourceKey, bushKey);
+		EXPECT_NE(optionOf(routine, TaskType::FulfillNeed, OptionStatus::Regrowing), nullptr) << "it waits for the bush to regrow";
+	}
+
+	// =============================================================================
+	// Stored food: a hungry colonist eats from a box the colony knows or a loose pile it remembers,
+	// nearest reachable first among every edible source. The pickup or withdraw puts one meal in its
+	// pack and the next decision eats it.
+	// =============================================================================
+
+	TEST_F(HungerWalkTest, AnEmptyPackEatsFromAKnownBox) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({4.0F, 0.0F}, 3, {colonist});
+
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::FulfillNeed);
+		EXPECT_EQ(task.needSourceStorageId, static_cast<uint64_t>(box));
+		ASSERT_EQ(task.claims.size(), 1);
+		EXPECT_EQ(task.claims[0].kind(), ClaimKind::SourceQuantity);
+		EXPECT_EQ(task.claims[0].targetKind(), TargetKind::Entity);
+		EXPECT_EQ(task.claims[0].quantity(), 1U) << "one meal: a berry takes hunger from 30 past 50";
+		EXPECT_NE(task.reason.find("from storage"), std::string::npos) << task.reason;
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(boxBerries(box), 2U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 0U) << "it took no more than the meal";
+	}
+
+	TEST_F(HungerWalkTest, AnEmptyPackEatsFromAKnownPile) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 5.0F);
+		const EntityID pile = berryPile({4.0F, 0.0F}, 5, {colonist});
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, berryId);
+		EXPECT_EQ(getTask(colonist)->needQuantity, 2U) << "two berries take hunger from 5 past 50";
+		EXPECT_NE(getTask(colonist)->reason.find("from a pile"), std::string::npos) << getTask(colonist)->reason;
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 3U);
+	}
+
+	// Every bush it knows is regrowing, so it waits on them; a box it knows then gains berries, and it
+	// eats from the box instead of waiting out the regrowth.
+	TEST_F(HungerWalkTest, ABoxThatGainsFoodEndsTheWaitOnRegrowingBushes) {
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		rememberBush(colonist, bushPos);
+		cut.push_back(bushPos);
+		const EntityID box = foodBox({-5.0F, 0.0F}, 0, {colonist});
+
+		decide(colonist);
+		ASSERT_NE(optionOf(colonist, TaskType::FulfillNeed, OptionStatus::Regrowing), nullptr);
+		ASSERT_TRUE(world->getComponent<SourceReachMemo>(colonist)->foodWait.has_value()) << "it waits on the bush";
+
+		world->getComponent<Inventory>(box)->addItem("Berry", 2);
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(boxBerries(box), 1U);
+	}
+
+	// One search over every kind, nearest reachable first: the bush, then (once it is cut) the box, then
+	// (once the box is empty) the pile.
+	TEST_F(HungerWalkTest, TheNearestReachableFoodWinsWhateverItsKind) {
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const glm::vec2 pilePos{-7.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		rememberBush(colonist, bushPos);
+		const EntityID box = foodBox({0.0F, 5.0F}, 2, {colonist});
+		berryPile(pilePos, 2, {colonist});
+
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, 0U);
+
+		cut.push_back(bushPos);
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->needSourceStorageId, static_cast<uint64_t>(box));
+
+		world->getComponent<Inventory>(box)->removeItem("Berry", 2);
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->needSourceStorageId, 0U);
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, berryId);
+		EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(pilePos, berryId));
+	}
+
+	// One berry left in a box and two routinely hungry colonists: the first to claim it keeps it from the
+	// other, who looks elsewhere. The second then turns critical: now it is the more urgent and the berry
+	// is its meal. Only one of them eats it.
+	TEST_F(HungerWalkTest, TheLastBerryInABoxGoesToTheMoreUrgentEater) {
+		const EntityID first = hungryColonist({10.0F, 0.0F}, 30.0F);
+		const EntityID second = hungryColonist({-10.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({0.0F, 0.0F}, 1, {first, second});
+
+		decide(first);
+		ASSERT_EQ(getTask(first)->needSourceStorageId, static_cast<uint64_t>(box));
+		decide(second);
+		EXPECT_NE(getTask(second)->type, TaskType::FulfillNeed) << "the berry is the first's meal";
+		const EvaluatedOption* reserved = optionOf(second, TaskType::FulfillNeed, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, first);
+
+		world->getComponent<NeedsComponent>(second)->get(NeedType::Hunger).value = 5.0F;
+		decide(second);
+		ASSERT_EQ(getTask(second)->needSourceStorageId, static_cast<uint64_t>(box)) << "the critical eater outranks the routine one";
+
+		ASSERT_TRUE(walkUntil([&] { return boxBerries(box) == 0; }));
+		walkUntil([] { return false; }, 200);
+		EXPECT_EQ(hunger(first), 30.0F) << "the routine eater gave the berry up";
+		EXPECT_EQ(hunger(second), 35.0F) << "the critical one ate it";
+	}
+
+	// A hauler has claimed a pile of berries for a storage box; a starving colonist takes them anyway (a
+	// work claim never holds food against a hungry colonist). The hauler arrives to nothing and its haul
+	// ends.
+	TEST_F(HungerWalkTest, AStarvingColonistTakesBerriesAHaulerClaimed) {
+		const glm::vec2 storePos{0.0F, 12.0F};
+		const EntityID	store = world->createEntity();
+		world->addComponent<Position>(store, Position{storePos});
+		world->addComponent<Inventory>(store, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
+		world->addComponent<StorageConfiguration>(store, std::move(config));
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = store;
+		goal.destinationPosition = storePos;
+		goal.acceptedDefNameIds = {berryId};
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		const EntityID hauler = createColonist({9.0F, 0.0F});
+		const EntityID starving = hungryColonist({0.0F, 0.0F}, 5.0F);
+		const EntityID pile = berryPile({3.0F, 0.0F}, 2, {hauler, starving});
+
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		decide(starving);
+		ASSERT_EQ(getTask(starving)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(starving)->needQuantity, 2U) << "the hauler's claim doesn't hold the berries";
+
+		bool		haulEnded = false;
+		const auto	noteHauler = [&] { haulEnded |= getTask(hauler)->type != TaskType::Haul; };
+		ASSERT_TRUE(walkUntil([&] { return hunger(starving) >= 50.0F; }, noteHauler));
+		walkUntil([&] { return haulEnded; }, noteHauler, 300);
+		EXPECT_TRUE(haulEnded);
+		EXPECT_FALSE(world->isAlive(pile) && world->getComponent<ResourceStack>(pile)->quantity > 0) << "the pile was eaten";
+		EXPECT_EQ(world->getComponent<Inventory>(store)->getQuantity("Berry"), 0U);
+		EXPECT_EQ(world->getComponent<Inventory>(hauler)->getQuantity("Berry"), 0U) << "the hauler came away with nothing";
+	}
+
+	// A pack with no room for a berry still eats: the colonist puts away what it carries that is not
+	// food, then takes its meal.
+	TEST_F(HungerWalkTest, AFullPackStillEatsStoredFood) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		auto&		   pack = *world->getComponent<Inventory>(colonist);
+		pack.maxCapacity = 1;
+		pack.addItem("Stone", 3);
+		const auto& registry = assets::AssetRegistry::Get();
+		ASSERT_EQ(ecs::pickupUnitsThatFit(pack, registry, "Berry", ecs::carriedCargoMassKg(pack, registry)), 0U);
+		berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Stone"), 0U) << "the stone was put away";
+	}
+
+	// Bushes are his only food and his pack has no room for a berry: the cut makes room as a pile or box
+	// would, so he eats from the first bush instead of coming back to it while it stands ready.
+	TEST_F(HungerWalkTest, AFullPackStillEatsFromABush) {
+		const glm::vec2 bushPos{4.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		auto&			pack = *world->getComponent<Inventory>(colonist);
+		pack.maxCapacity = 1;
+		pack.addItem("Stone", 3);
+		rememberBush(colonist, bushPos);
+		rememberBush(colonist, {-6.0F, 0.0F});
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		EXPECT_GT(getTask(colonist)->needQuantity, 0U) << "a meal is sized whatever the pack holds";
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(cut, std::vector<glm::vec2>{bushPos}) << "one bush cut, once";
+	}
+
+	// Making room to eat frees what limits the pack and no more, and never costs a tool.
+	class MakeRoomToEatTest : public HungerWalkTest {
+	  protected:
+		void SetUp() override {
+			HungerWalkTest::SetUp();
+			assets::AssetDefinition axe;
+			axe.defName = "Axe";
+			axe.label = "Axe";
+			axe.handsRequired = 1;
+			axe.category = assets::ItemCategory::Tool;
+			axe.itemProperties = assets::ItemProperties{};
+			axe.itemProperties->stackSize = 1;
+			axe.itemProperties->massKg = 2.0F;
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(axe));
+		}
+
+		Inventory& pack(EntityID colonist) { return *world->getComponent<Inventory>(colonist); }
+		bool	   holdsAxe(EntityID colonist) {
+			  const Inventory& inventory = pack(colonist);
+			  return inventory.hasItem("Axe") || std::any_of(inventory.belt.begin(), inventory.belt.end(), [](const auto& slot) {
+						 return slot.has_value() && slot->defName == "Axe";
+					 }) || inventory.isHolding("Axe");
+		}
+	};
+
+	// No slot for a berry: the stone's slot is freed, not the axe's.
+	TEST_F(MakeRoomToEatTest, AFullPackGivesUpGoodsNotItsTool) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		pack(colonist).maxCapacity = 2;
+		pack(colonist).addItem("Stone", 3);
+		pack(colonist).addItem("Axe", 1);
+		berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_TRUE(pack(colonist).hasItem("Axe")) << "the axe stays packed";
+		EXPECT_EQ(pack(colonist).getQuantity("Stone"), 0U);
+	}
+
+	// Every slot holds a tool: one moves to the belt, so the meal fits and the tool is kept.
+	TEST_F(MakeRoomToEatTest, APackOfToolsMovesOneToTheBelt) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		pack(colonist).maxCapacity = 1;
+		pack(colonist).addItem("Axe", 1);
+		berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_TRUE(holdsAxe(colonist));
+	}
+
+	// Weight is the limit: one stone is enough to free for one berry, so the rest stay, and the axe,
+	// which weighs nothing as cargo, is not touched.
+	TEST_F(MakeRoomToEatTest, OverweightGivesUpJustEnoughForTheMeal) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		pack(colonist).carryCapacityKg = 5.0F;
+		pack(colonist).addItem("Stone", 10);
+		pack(colonist).addItem("Axe", 1);
+		const auto& registry = assets::AssetRegistry::Get();
+		ASSERT_EQ(ecs::pickupUnitsThatFit(pack(colonist), registry, "Berry", ecs::carriedCargoMassKg(pack(colonist), registry)), 0U);
+		const EntityID pile = berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 2U) << "a meal of one";
+		EXPECT_EQ(pack(colonist).getQuantity("Stone"), 9U) << "one stone freed the weight one berry needs";
+		EXPECT_TRUE(pack(colonist).hasItem("Axe"));
+	}
+
+	// Goods under no claim go first: a critically hungry colonist carrying stones toward a craft keeps
+	// them (its suspended record's cargo) and puts away the stick, though the stones are the last stack.
+	TEST_F(MakeRoomToEatTest, ClaimedCargoGoesLast) {
+		const glm::vec2 stationPos{0.0F, 30.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		pack(colonist).maxCapacity = 2;
+		pack(colonist).addItem("Stick", 1);
+		pack(colonist).addItem("Stone", 3);
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Haul);
+		ASSERT_TRUE(getTask(colonist)->haulFromInventory);
+		const EntityID pile = berryPile({4.0F, 0.0F}, 3, {colonist});
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+
+		ASSERT_TRUE(walkUntil([&] { return pack(colonist).hasItem("Berry"); }));
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 1U) << "a meal of two";
+		EXPECT_EQ(pack(colonist).getQuantity("Stick"), 0U) << "the stick was under no claim";
+		EXPECT_EQ(pack(colonist).getQuantity("Stone"), 3U) << "the stones the carry-in claims stay";
+		ASSERT_TRUE(walkUntil([&] { return world->getComponent<Inventory>(station)->getQuantity("Stone") == 3U; }))
+			<< "and are delivered once it has eaten";
+	}
+
+	// Turning critical on the way to a pile, he keeps the same task but its meal grows to what the
+	// critical hunger needs, and the share of the pile it claims grows with it.
+	TEST_F(HungerWalkTest, AMealGrowsWhenHungerTurnsCriticalOnTheWay) {
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const glm::vec2 pilePos{8.0F, 0.0F};
+		berryPile(pilePos, 5, {colonist});
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needQuantity, 1U);
+		const uint64_t instance = getTask(colonist)->instanceId;
+
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->instanceId, instance) << "the same meal, kept";
+		EXPECT_EQ(getTask(colonist)->priorityTier, 2);
+		EXPECT_EQ(getTask(colonist)->needQuantity, 2U) << "two berries take hunger from 5 past 50";
+		EXPECT_EQ(ai->claimIndex().sourceClaimed({.kind = TargetKind::WorldKey, .key = hashWorldEntity(pilePos, berryId)}, berryId, {}), 2U);
+	}
+
+	// A box holding two kinds of food hands out the same one whatever the platform's heap order: ties
+	// between items in one box (which share its key) go to the lower item id.
+	TEST_F(HungerWalkTest, ABoxWithTwoFoodsHandsOutTheLowerItemId) {
+		registerItem("Nut", 1, 0.1F, 1, /*edible=*/true);
+		const uint32_t nutId = assets::AssetRegistry::Get().getDefNameId("Nut");
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({4.0F, 0.0F}, 2, {colonist});
+		world->getComponent<Inventory>(box)->addItem("Nut", 2);
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needSourceStorageId, static_cast<uint64_t>(box));
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, std::min(berryId, nutId));
+	}
+
+	// A box with no appearance has no world key, so no colonist knows it, and it is never a food source.
+	TEST_F(HungerWalkTest, ABoxWithNoAppearanceIsNoFoodSource) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({4.0F, 0.0F}, 2, {colonist});
+		world->removeComponent<Appearance>(box);
+
+		decide(colonist);
+		EXPECT_NE(getTask(colonist)->type, TaskType::FulfillNeed);
+		EXPECT_NE(optionOf(colonist, TaskType::FulfillNeed, OptionStatus::NoSource), nullptr);
+	}
+
+	// The box he walks to is packaged to be moved before he gets there: he decides again, eats from the
+	// pile he also knows, and never goes back to the box.
+	TEST_F(HungerWalkTest, ABoxPackagedOnTheWaySendsHimToOtherFood) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({8.0F, 0.0F}, 3, {colonist});
+		const EntityID pile = berryPile({-12.0F, 0.0F}, 2, {colonist});
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needSourceStorageId, static_cast<uint64_t>(box));
+		world->addComponent<Packaged>(box, Packaged{});
+
+		std::vector<uint64_t> boxTasks;
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }, [&] {
+			const Task& task = *getTask(colonist);
+			if (task.isActive() && task.needSourceStorageId == static_cast<uint64_t>(box) &&
+				std::find(boxTasks.begin(), boxTasks.end(), task.instanceId) == boxTasks.end()) {
+				boxTasks.push_back(task.instanceId);
+			}
+		}));
+		EXPECT_EQ(boxBerries(box), 3U);
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 1U) << "he ate from the pile";
+		EXPECT_EQ(boxTasks.size(), 1U) << "no second trip to the packaged box";
+	}
+
+	// The last berry in the box he walks to is taken by a more urgent eater before he gets there: he
+	// decides again and eats from the pile, and never loops on the empty box.
+	TEST_F(HungerWalkTest, ABoxEmptiedByAnotherEaterSendsHimToOtherFood) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID starving = hungryColonist({9.0F, 0.0F}, 5.0F);
+		const EntityID box = foodBox({8.0F, 0.0F}, 1, {colonist, starving});
+		const EntityID pile = berryPile({-12.0F, 0.0F}, 2, {colonist});
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needSourceStorageId, static_cast<uint64_t>(box));
+		decide(starving);
+		ASSERT_EQ(getTask(starving)->needSourceStorageId, static_cast<uint64_t>(box)) << "the more urgent eater outranks him";
+
+		std::vector<uint64_t> boxTasks;
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }, [&] {
+			const Task& task = *getTask(colonist);
+			if (task.isActive() && task.needSourceStorageId == static_cast<uint64_t>(box) &&
+				std::find(boxTasks.begin(), boxTasks.end(), task.instanceId) == boxTasks.end()) {
+				boxTasks.push_back(task.instanceId);
+			}
+		}));
+		EXPECT_EQ(boxBerries(box), 0U);
+		EXPECT_GT(hunger(starving), 5.0F) << "the starving one ate the berry";
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 1U) << "he ate from the pile";
+		EXPECT_EQ(boxTasks.size(), 1U) << "no second trip to the empty box";
+	}
+
+	// A pile he remembers was taken since he saw it. He goes to look (nobody else claims it), forgets it
+	// when he finds nothing, and eats from a bush instead.
+	TEST_F(HungerWalkTest, AGonePileIsForgottenAndOtherFoodFound) {
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const glm::vec2 bushPos{-6.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID	pile = berryPile(pilePos, 2, {colonist});
+		destroyWorldEntity(*world, pile);
+		rememberBush(colonist, bushPos);
+		const uint64_t pileKey = hashWorldEntity(pilePos, berryId);
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needSourceKey, pileKey) << "a stale pile is still worth a look";
+
+		std::vector<uint64_t> pileTasks;
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }, [&] {
+			const Task& task = *getTask(colonist);
+			if (task.isActive() && task.needSourceKey == pileKey && std::find(pileTasks.begin(), pileTasks.end(), task.instanceId) == pileTasks.end()) {
+				pileTasks.push_back(task.instanceId);
+			}
+		}));
+		EXPECT_EQ(world->getComponent<Memory>(colonist)->getWorldEntity(pileKey), nullptr) << "he forgot the pile";
+		EXPECT_EQ(cut, std::vector<glm::vec2>{bushPos}) << "and ate from the bush";
+		EXPECT_EQ(pileTasks.size(), 1U) << "one look, no loop";
+	}
+
+	// Gathering food is idle work and makes no room: with a pack that has none for a berry, it is not
+	// offered, so he never walks to a bush he would cut nothing from.
+	TEST_F(HungerWalkTest, GatheringFoodNeedsRoomForTheYield) {
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		auto&		   pack = *world->getComponent<Inventory>(colonist);
+		pack.maxCapacity = 1;
+		pack.addItem("Stone", 3);
+		rememberBush(colonist, {4.0F, 0.0F});
+
+		decide(colonist);
+		EXPECT_NE(getTask(colonist)->type, TaskType::FulfillNeed);
+		const EvaluatedOption* gather = optionOf(colonist, TaskType::FulfillNeed, OptionStatus::NoRoom);
+		ASSERT_NE(gather, nullptr);
+		EXPECT_TRUE(gather->gathersFood);
+	}
+
+	// The same race decided at the pile: the starving colonist lifts the berries before the hauler gets
+	// there, and the hauler's pickup collects nothing, which ends its haul instead of walking an empty
+	// pack to the box.
+	TEST_F(HungerWalkTest, AHaulerArrivingAfterAHungryColonistAteEndsItsHaul) {
+		const glm::vec2 storePos{0.0F, 12.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	store = world->createEntity();
+		world->addComponent<Position>(store, Position{storePos});
+		world->addComponent<Inventory>(store, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
+		world->addComponent<StorageConfiguration>(store, std::move(config));
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = store;
+		goal.destinationPosition = storePos;
+		goal.acceptedDefNameIds = {berryId};
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		const EntityID hauler = createColonist({9.0F, 0.0F});
+		const EntityID starving = hungryColonist({0.0F, 0.0F}, 5.0F);
+		berryPile(pilePos, 2, {hauler, starving});
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		decide(starving);
+		ASSERT_EQ(getTask(starving)->needQuantity, 2U);
+
+		act(starving, pilePos);
+		EXPECT_EQ(world->getComponent<Inventory>(starving)->getQuantity("Berry"), 2U);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		act(hauler, pilePos);
+		EXPECT_FALSE(getTask(hauler)->isActive()) << "the haul ends at an empty pile";
+		EXPECT_EQ(world->getComponent<Inventory>(hauler)->getQuantity("Berry"), 0U);
+	}
+
+	// =============================================================================
+	// Sleep releases the hold: a colonist that falls asleep carrying goods for a root keeps them as its
+	// suspended record, but while it sleeps the record holds no in-flight or inbound, so another colonist
+	// is offered the fetch. Awake, the record is adopted if the root still wants the goods, and discarded
+	// otherwise.
+	// =============================================================================
+
+	class SleepReleaseTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			station = world->createEntity();
+			world->addComponent<Position>(station, Position{stationPos});
+			root = craftRoot(station, stationPos, "Stone", 3);
+			childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+			sleeper = createColonist({0.0F, 0.0F});
+			world->getComponent<Inventory>(sleeper)->addItem("Stone", 3);
+		}
+
+		/// The sleeper takes the carry-in, then falls asleep with the stones.
+		void carryThenSleep() {
+			decide(sleeper);
+			ASSERT_EQ(getTask(sleeper)->type, TaskType::Haul);
+			ASSERT_TRUE(getTask(sleeper)->haulFromInventory);
+			carryIn = getTask(sleeper)->instanceId;
+			world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Energy).value = 5.0F;
+			decide(sleeper);
+			ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Energy);
+			ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
+			ASSERT_EQ(getTask(sleeper)->suspended->instanceId, carryIn);
+		}
+
+		/// The sleep ends as ActionSystem ends it, and the colonist decides awake.
+		void wake() {
+			getTask(sleeper)->clear();
+			world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Energy).value = 100.0F;
+			decide(sleeper);
+		}
+
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		EntityID		station = kInvalidEntity;
+		EntityID		sleeper = kInvalidEntity;
+		uint64_t		root = 0;
+		uint64_t		carryIn = 0;
+	};
+
+	TEST_F(SleepReleaseTest, AnotherColonistIsOfferedWhatASleeperCarries) {
+		carryThenSleep();
+		EXPECT_EQ(indexedClaimsOf(sleeper), 0U) << "asleep, its record holds nothing";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U);
+
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	other = createColonist({0.5F, 0.0F});
+		remember(other, pilePos, "Stone", assets::CapabilityType::Carryable);
+		decide(other);
+		ASSERT_EQ(getTask(other)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(other)->haulQuantity, 3U) << "the whole need is offered";
+
+		// Awake, the need is covered by the other's fetch: no carry-in is offered and the record goes.
+		wake();
+		EXPECT_FALSE(getTask(sleeper)->suspended.has_value());
+		EXPECT_NE(getTask(sleeper)->instanceId, carryIn);
+		EXPECT_EQ(world->getComponent<Inventory>(sleeper)->getQuantity("Stone"), 3U) << "the surplus stays carried";
+	}
+
+	TEST_F(SleepReleaseTest, AWokenColonistDeliversWhatIsStillWanted) {
+		carryThenSleep();
+		wake();
+		const Task& task = *getTask(sleeper);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.instanceId, carryIn) << "the carry-in adopted the record";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
+	}
+
+	// A need other than sleep keeps the record holding, as before.
+	TEST_F(SleepReleaseTest, ARecordKeptByEatingStillHolds) {
+		decide(sleeper);
+		ASSERT_EQ(getTask(sleeper)->type, TaskType::Haul);
+		world->getComponent<Inventory>(sleeper)->addItem("Berry", 1);
+		world->getComponent<NeedsComponent>(sleeper)->get(NeedType::Hunger).value = 5.0F;
+		decide(sleeper);
+		ASSERT_EQ(getTask(sleeper)->needToFulfill, NeedType::Hunger);
+		ASSERT_TRUE(getTask(sleeper)->suspended.has_value());
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
 	}
 
 } // namespace ecs::test

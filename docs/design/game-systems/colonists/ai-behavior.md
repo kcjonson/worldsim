@@ -66,6 +66,8 @@ Physical needs have dropped below comfortable thresholds. Colonist seeks entitie
 
 **Key Constraint:** Colonist must KNOW where to find fulfillment. No omniscient pathfinding to unseen resources. See [Memory System](./memory.md).
 
+**Hunger sources.** A hungry colonist eats from the nearest food it can reach, whatever kind: its own pack first (no walking), then a ripe berry bush, a loose pile of food it remembers, or a storage box the colony knows that holds food. From a pile or box it takes one meal, enough to stop being hungry, and leaves the rest for everyone else; from a bush it keeps what the cut gives. A full pack never stops it eating: at the food it puts away just enough of what it carries to make room for the meal, never a tool, and cargo it is carrying for someone's work last. The one limit: a colonist whose every pack slot, belt slot, and hand holds a tool can't make room, and its take lifts nothing. Stored food is the buffer between harvests, so a colonist whose bushes are all regrowing eats from the larder instead of waiting. Colonists can starve, but only if they never find food: another colonist's work (hauling the berries to a box, cutting the bush for a goal) never keeps food from a hungry one, though a hungry colonist prefers food nobody is heading for. Between two hungry colonists of different urgency, the critically hungry one takes food the routinely hungry one was walking to; at equal urgency the first to claim it keeps it, and the other looks elsewhere. See [Task Claims](../../../technical/task-claims.md#need-tasks).
+
 **MVP Status:** Included in Phase 1
 
 ### Tier 6: Opportunistic work
@@ -76,7 +78,7 @@ Needs comfortable; no active work order. Colonist does available work: haul loos
 
 ### Tier 7: Idle
 
-Nothing else to do. Colonist gathers food for the larder or wanders known areas, which:
+Nothing else to do. Colonist gathers food into its own pack (only while the pack holds none) or wanders known areas, which:
 - Looks natural (no frozen standing)
 - Discovers new entities
 - Creates social interaction opportunities
@@ -102,7 +104,7 @@ Each colonist has a visible queue showing current and pending tasks. The queue i
 
 ## Claims
 
-When a colonist accepts work, its task claims what it will use: the berry bush, the units it will take from a pile, the room it will fill in a box. Other colonists see those claims and pick something else, so two colonists never walk to the same berry bush. Critical needs and player orders can take over a work claim; ordinary work never does. See [Task Claims](../../../technical/task-claims.md).
+When a colonist accepts work, its task claims what it will use: the berry bush, the units it will take from a pile, the room it will fill in a box. Other colonists see those claims and pick something else, so two colonists never cut the same plant or haul the same units. Food is the exception: a hungry colonist still takes a bush or berries that another colonist's work or idle gathering holds, and one a less urgent eater holds, though it picks food nobody holds first when it knows some. Nothing else takes over a claim: there is no bumping, and player orders take nothing from anyone. See [Task Claims](../../../technical/task-claims.md).
 
 ---
 

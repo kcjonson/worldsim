@@ -82,7 +82,7 @@ Even under player control, some things interrupt:
 
 When player releases direct control or finishes issuing commands, what happens?
 
-**Answer:** Suspended task queue resumes. Colonist returns to autonomous behavior, executing any queued commands first.
+**Answer:** The colonist returns to autonomous behavior and decides afresh. Nothing is suspended to resume, and there is no queue of player commands.
 
 Taking control abandons the colonist's current task and returns its half-done work to the pool at once (its claims go with the task; see [Task Claims](../../technical/task-claims.md)). On release the colonist re-evaluates from scratch, keeping anything it carries.
 

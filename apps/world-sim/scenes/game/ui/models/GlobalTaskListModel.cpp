@@ -75,18 +75,8 @@ bool GlobalTaskListModel::hasChanged(const std::vector<TaskData>& newData) const
 			return true;
 		}
 
-		// Reserved state changed
-		if (oldTask.isReserved != newTask.isReserved) {
-			return true;
-		}
-
 		// Distance changed significantly
 		if (distanceChanged(oldTask.distanceValue, newTask.distanceValue)) {
-			return true;
-		}
-
-		// Known by changed (colonist discovered/forgot)
-		if (oldTask.knownBy != newTask.knownBy) {
 			return true;
 		}
 	}

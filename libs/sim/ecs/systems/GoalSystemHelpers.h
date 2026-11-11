@@ -2,20 +2,17 @@
 
 // Shared helpers for the goal-generating systems (CraftingGoalSystem, StorageGoalSystem,
 // ConstructionSystem). Each was duplicated across two systems; this is the single home so
-// "does any colonist know a source" and "one trip's carry budget" have one definition.
+// "does any colonist know a source" and "does the colony know this box" have one definition.
 
 #include "../World.h"
 #include "../components/Appearance.h"
-#include "../components/Inventory.h"
 #include "../components/Memory.h"
-#include "../components/Needs.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <vector>
 
@@ -90,36 +87,18 @@ namespace ecs {
 	/// Colony "availability" = the union of colonist memories (no god-view). A goal created from
 	/// this is still only fulfilled by a colonist that actually remembers the source.
 	[[nodiscard]] inline bool colonyKnowsHarvestableSource(World* world, const assets::AssetRegistry& reg, uint32_t yieldDefNameId) {
+		const auto harvestable = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Harvestable));
 		for (auto [colonist, memory] : world->view<Memory>()) {
 			(void)colonist;
-			for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Harvestable)) {
-				const KnownWorldEntity* known = memory.getWorldEntity(key);
-				if (known == nullptr) {
-					continue;
-				}
-				const auto& srcDefName = reg.getDefName(known->defNameId);
-				const auto* srcDef = reg.getDefinition(srcDefName);
-				if (srcDef != nullptr && srcDef->capabilities.harvestable.has_value() &&
-					reg.getDefNameId(srcDef->capabilities.harvestable->yieldDefName) == yieldDefNameId) {
-					return true;
+			for (uint32_t source : reg.harvestablesYielding(yieldDefNameId)) {
+				for (uint64_t key : memory.worldEntitiesOfDef(source)) {
+					if ((memory.getWorldEntity(key)->capabilityMask & harvestable) != 0) {
+						return true;
+					}
 				}
 			}
 		}
 		return false;
-	}
-
-	/// One trip's carry budget for sizing stocking/material harvests: the largest carry weight
-	/// among colonists (a max, not a sum or first-hit, so it's independent of view iteration order
-	/// and stays deterministic). Falls back to the colonist default in a headless/unit context with
-	/// no colonists yet.
-	[[nodiscard]] inline float colonistCarryCapacityKg(World* world) {
-		float capacity = 0.0F;
-		for (auto [entity, needs, inventory] : world->view<NeedsComponent, Inventory>()) {
-			(void)entity;
-			(void)needs;
-			capacity = std::max(capacity, inventory.carryCapacityKg);
-		}
-		return capacity > 0.0F ? capacity : Inventory::createForColonist().carryCapacityKg;
 	}
 
 } // namespace ecs

@@ -4,7 +4,9 @@
 
 #include "WorldSource.h"
 
+#include "LoosePileIndex.h"
 #include "World.h"
+#include "components/ResourceStack.h"
 #include "systems/TimeSystem.h"
 
 #include <assets/AssetRegistry.h>
@@ -14,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <vector>
 
 namespace ecs::test {
@@ -118,6 +121,24 @@ namespace ecs::test {
 	// A world with no TimeSystem has no clock to stamp a regrowth on, so cutting a bush there aborts
 	// instead of starting a regrowth that would never end. Taking a source with nothing regrowing reads
 	// no clock, so worlds that never cut a regrowing source need no TimeSystem.
+	// Two live piles filed under one cell: a lookup names the lowest entity id, whatever order the
+	// standard library's buckets hold them in.
+	TEST(LoosePileIndexTest, TwoPilesInOneCellResolveToTheLowestEntity) {
+		World				   world;
+		LoosePileIndex		   index;
+		const glm::vec2		   at{4.0F, 2.0F};
+		const EntityID		   first = world.createEntity();
+		const EntityID		   second = world.createEntity();
+		for (EntityID pile : {first, second}) {
+			world.addComponent<ResourceStack>(pile, ResourceStack{.quantity = 3});
+		}
+		index.add(second, 7, at);
+		index.add(first, 7, at);
+		EXPECT_EQ(index.find(world, 7, at), std::min(first, second));
+		world.getComponent<ResourceStack>(std::min(first, second))->quantity = 0;
+		EXPECT_EQ(index.find(world, 7, at), std::max(first, second)) << "a drained pile doesn't hide the live one";
+	}
+
 	TEST(WorldSourceNoClockTest, CuttingWithoutAClockAborts) {
 		GTEST_FLAG_SET(death_test_style, "threadsafe");
 		auto& registry = assets::AssetRegistry::Get();

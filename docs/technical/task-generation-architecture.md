@@ -238,7 +238,7 @@ Player can choose:
 | Goal existence and source resolution | Goal-system poll | Throttled per goal system |
 | Colonist Selection Priority | Task selection | 0.5s (kReEvalInterval) |
 | UI Display Priority | UI frame | 4-10 Hz (100-250ms) |
-| Claim index | Derived from tasks | Rebuilt each AI update ([Task Claims](./task-claims.md)) |
+| Claim index | Derived from tasks | Rebuilt at the first colonist decision of each AI update ([Task Claims](./task-claims.md)) |
 
 ---
 
@@ -248,7 +248,7 @@ Player can choose:
 
 | Goal System | Task Type | Creates Task When | Removes Task When |
 |-------------|-----------|-------------------|-------------------|
-| StorageGoalSystem | Haul (+ stocking Harvest) | Storage rule wants items | Storage need met, storage removed |
+| StorageGoalSystem | Haul (+ stocking Harvest) | Storage has rules; a stocking Harvest per named rule whose minimum is unmet while a source is known | Stocking Harvest: its minimum met or no source known. Umbrella Haul: rules removed or storage gone (a full box keeps it) |
 | CraftingGoalSystem | Haul / Harvest | Recipe queued, needs materials (provisioned into the station store, lazy-haul + availability-resolved) | Recipe completed/cancelled |
 | NeedsSystem | FulfillNeed | Need below threshold | Need satisfied |
 | ConstructionSystem / BuildGoalSystem | Harvest / Haul / Build / PlacePackaged | Blueprint placed, needs clearing or materials, packaged item placed | Build completed/cancelled |

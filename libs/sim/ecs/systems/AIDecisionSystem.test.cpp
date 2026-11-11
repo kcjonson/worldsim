@@ -154,6 +154,10 @@ namespace ecs::test {
 
 		/// Boxes the colony's box knowledge has worked out so far.
 		uint64_t colonyStorageWorkedOut() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.workedOut; }
+		uint64_t boxRoomsReadOut() { return world->getSystem<AIDecisionSystem>().m_boxRooms.readOut; }
+
+		/// Remaining needs the AI has worked out so far.
+		uint64_t needsWorkedOut() { return world->getSystem<AIDecisionSystem>().m_needs.computed; }
 #endif
 
 		/// Drive the private chain-interruption handler directly. This fixture is a friend of
@@ -162,9 +166,10 @@ namespace ecs::test {
 			EntityID entity, Task& task, Inventory& inventory, const Position& position,
 			TaskType newTaskType, NeedType newNeedType
 		) {
-			world->getSystem<AIDecisionSystem>().handleChainInterruption(
-				entity, task, inventory, position, newTaskType, newNeedType
-			);
+			EvaluatedOption selected;
+			selected.taskType = newTaskType;
+			selected.needType = newNeedType;
+			world->getSystem<AIDecisionSystem>().handleChainInterruption(entity, task, inventory, position, selected);
 		}
 
 		/// Read the AI system's colony-origin fallback target. The fixture is a friend of
@@ -208,7 +213,7 @@ namespace ecs::test {
 			return box;
 		}
 
-		/// Create the ordinary umbrella Haul goal (StorageGoalSystem-owned, NO chainId) that a storage
+		/// Create the ordinary umbrella Haul goal (StorageGoalSystem-owned) that a storage
 		/// box raises when it wants items. This is the goal whose evaluation runs the pull scan.
 		uint64_t makeUmbrellaGoal(EntityID destBox, glm::vec2 destPos, uint32_t itemDefNameId) {
 			GoalTask haul;
@@ -815,6 +820,37 @@ namespace ecs::test {
 	// Scale Tests
 	// =============================================================================
 
+#ifdef DEVELOPMENT_BUILD
+	// A box wanting an item nobody knows a source of, and no lower-priority box holding it: its room is
+	// never read, however many items it names.
+	TEST_F(AIDecisionSystemTest, AStorageBoxWithNoSourceIsNeverMeasured) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition wood;
+		wood.defName = "Wood";
+		wood.label = "Wood";
+		wood.category = assets::ItemCategory::RawMaterial;
+		wood.capabilities.carryable = assets::CarryableCapability{1};
+		wood.itemProperties = assets::ItemProperties{};
+		wood.itemProperties->stackSize = 100;
+		registry.registerTestDefinition(std::move(wood));
+		assets::AssetDefinition boxDef;
+		boxDef.defName = "Box";
+		boxDef.label = "Box";
+		boxDef.capabilities.storage = assets::StorageCapability{};
+		registry.registerTestDefinition(std::move(boxDef));
+		const glm::vec2 boxPos{6.0F, -4.0F};
+		const EntityID	box = makeStorageBox(boxPos, "Box", "Wood", ecs::StoragePriority::High);
+		makeUmbrellaGoal(box, boxPos, registry.getDefNameId("Wood"));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		addKnownEntity(colonist, boxPos, registry.getDefNameId("Box"), assets::CapabilityType::Storage);
+
+		const uint64_t before = boxRoomsReadOut();
+		world->update(0.016F);
+		ASSERT_TRUE(getTask(colonist)->isActive());
+		EXPECT_EQ(boxRoomsReadOut(), before);
+	}
+#endif
+
 	TEST_F(AIDecisionSystemTest, EveryColonistOfManyGetsATask) {
 		constexpr int kNumColonists = 100;
 
@@ -879,6 +915,7 @@ namespace ecs::test {
 
 #ifdef DEVELOPMENT_BUILD
 		const uint64_t workedOutBefore = colonyStorageWorkedOut();
+		const uint64_t roomsBefore = boxRoomsReadOut();
 #endif
 		world->update(0.016F);
 
@@ -900,8 +937,103 @@ namespace ecs::test {
 		// Each box asked about is worked out once for the update, not once per colonist, and the box
 		// holding no Wood is never worked out at all.
 		EXPECT_EQ(colonyStorageWorkedOut() - workedOutBefore, 2U);
+		// The high box's room for Wood is read from the world once for the hundred colonists.
+		EXPECT_EQ(boxRoomsReadOut() - roomsBefore, 1U);
 #endif
 	}
+
+#ifdef DEVELOPMENT_BUILD
+	// Twenty colonists decide in one update against ten storage boxes, each naming three items and
+	// stocking one of them by cutting, while each colonist carries two of the items and knows a pile of
+	// each and a bush. Every root's remaining need is asked by the loose haul, the pull, the carry-in,
+	// and the cut, by every colonist, yet each (root, item, basis) is worked out once for the update.
+	TEST_F(AIDecisionSystemTest, EachRemainingNeedIsWorkedOutOncePerUpdate) {
+		auto& registry = assets::AssetRegistry::Get();
+		for (const char* name : {"Ore", "Clay", "Flint"}) {
+			assets::AssetDefinition item;
+			item.defName = name;
+			item.label = name;
+			item.category = assets::ItemCategory::RawMaterial;
+			item.capabilities.carryable = assets::CarryableCapability{1};
+			item.itemProperties = assets::ItemProperties{};
+			item.itemProperties->stackSize = 40;
+			item.itemProperties->massKg = 0.5F;
+			registry.registerTestDefinition(std::move(item));
+		}
+		assets::AssetDefinition bush;
+		bush.defName = "OreBush";
+		bush.label = "OreBush";
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Ore";
+		registry.registerTestDefinition(std::move(bush));
+		assets::AssetDefinition box;
+		box.defName = "Box";
+		box.label = "Box";
+		box.capabilities.storage = assets::StorageCapability{};
+		registry.registerTestDefinition(std::move(box));
+		const uint32_t ore = registry.getDefNameId("Ore");
+		const uint32_t clay = registry.getDefNameId("Clay");
+		const uint32_t flint = registry.getDefNameId("Flint");
+
+		constexpr int kRoots = 10;
+		constexpr int kColonists = 20;
+		for (int i = 0; i < kRoots; ++i) {
+			const glm::vec2 at{static_cast<float>(i) * 4.0F, 20.0F};
+			const EntityID	boxEntity = makeStorageBox(at, "Box", "Ore", StoragePriority::Medium, 0, /*minAmount=*/30);
+			auto&			config = *world->getComponent<StorageConfiguration>(boxEntity);
+			config.addRule(StorageRule{.defName = "Clay", .category = assets::ItemCategory::RawMaterial});
+			config.addRule(StorageRule{.defName = "Flint", .category = assets::ItemCategory::RawMaterial});
+			GoalTask umbrella;
+			umbrella.type = TaskType::Haul;
+			umbrella.owner = GoalOwner::StorageGoalSystem;
+			umbrella.destinationEntity = boxEntity;
+			umbrella.destinationPosition = at;
+			umbrella.acceptedDefNameIds = {ore, clay, flint};
+			const uint64_t umbrellaId = GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+			GoalTask harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::StorageGoalSystem;
+			harvest.destinationEntity = boxEntity;
+			harvest.destinationPosition = at;
+			harvest.acceptedDefNameIds = {ore};
+			harvest.yieldDefNameId = ore;
+			harvest.parentGoalId = umbrellaId;
+			GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		}
+		for (int i = 0; i < kColonists; ++i) {
+			const EntityID colonist = createColonist({static_cast<float>(i), 0.0F});
+			for (auto need : NeedsComponent::kActionableNeeds) {
+				getNeeds(colonist)->get(need).value = 100.0F;
+			}
+			auto& inventory = *world->getComponent<Inventory>(colonist);
+			inventory.addItem("Clay", 1);
+			inventory.addItem("Flint", 1);
+			addKnownEntity(colonist, {-5.0F, 0.0F}, ore, assets::CapabilityType::Carryable);
+			addKnownEntity(colonist, {-6.0F, 0.0F}, clay, assets::CapabilityType::Carryable);
+			addKnownEntity(colonist, {-7.0F, 0.0F}, registry.getDefNameId("OreBush"), assets::CapabilityType::Harvestable);
+		}
+
+		const uint64_t before = needsWorkedOut();
+		world->update(0.016F);
+		int decided = 0;
+		for (auto [entity, trace] : world->view<DecisionTrace>()) {
+			(void)entity;
+			decided += trace.options.empty() ? 0 : 1;
+		}
+		ASSERT_EQ(decided, kColonists);
+		// Ore, Clay, and Flint against each box's stock target, and Ore against its cutting minimum.
+		EXPECT_EQ(needsWorkedOut() - before, static_cast<uint64_t>(kRoots * 3 + kRoots));
+
+		// The next update works them out again: a deposit between updates shows at once.
+		for (auto [entity, task] : world->view<Task>()) {
+			(void)entity;
+			task.timeSinceEvaluation = 1.0F;
+		}
+		const uint64_t second = needsWorkedOut();
+		world->update(0.016F);
+		EXPECT_EQ(needsWorkedOut() - second, static_cast<uint64_t>(kRoots * 3 + kRoots));
+	}
+#endif
 
 	// A memory near capacity, almost all of it water no work goal wants: the need is still found, and
 	// the work evaluators look only at the remembered wood and trees a goal can use.
@@ -963,11 +1095,17 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 
+		// The first to decide fetches a pile before it cuts; its fetch covers the box's minimum, so the
+		// second is offered no cut.
 		for (EntityID colonist : {lean, full}) {
 			const auto& options = getTrace(colonist)->options;
 			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; }), kPiles);
-			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }), kTrees);
+			EXPECT_EQ(
+				std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }),
+				colonist == lean ? kTrees : 0
+			);
 		}
+		EXPECT_EQ(getTask(lean)->type, TaskType::Haul);
 
 #ifdef DEVELOPMENT_BUILD
 		// Per colonist: each goal visits only the sources of its item. The 9,990 waters add nothing.
@@ -1314,20 +1452,6 @@ namespace ecs::test {
 		}
 	}
 
-	TEST_F(AIDecisionSystemTest, TraceDisplayCountRespectsCap) {
-		auto colonist = createColonist({0.0F, 0.0F});
-
-		world->update(0.016F);
-
-		auto* trace = getTrace(colonist);
-		ASSERT_NE(trace, nullptr);
-
-		// displayCount should be at most kMaxDisplayedOptions
-		EXPECT_LE(trace->displayCount(), kMaxDisplayedOptions);
-		// And equal to actual size when below cap
-		EXPECT_EQ(trace->displayCount(), trace->options.size());
-	}
-
 	TEST_F(AIDecisionSystemTest, TraceClearedOnReEvaluation) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
@@ -1534,7 +1658,7 @@ namespace ecs::test {
 	// Within the idle tier (7), a reachable gather-food option must outrank wander. Wander never sets
 	// distanceToTarget, so before the fix its distance factor computed to the MAX (~300) and it beat
 	// gather-food; the fix pins wander's within-tier score to 0 (the idle floor). A gather-food
-	// sentinel (needValue>=100, threshold==0) with a nearby reachable source carries a positive
+	// option with a nearby reachable source carries a positive
 	// distance factor plus any Farming skill, so it wins the (tier, score) key.
 	TEST_F(AIDecisionSystemTest, GatherFoodRanksAboveWanderInIdleTier) {
 		// Wander after the fix: tier 7, score 0 (no distance/skill/age/hysteresis).
@@ -1544,12 +1668,11 @@ namespace ecs::test {
 		wander.tier = 7;
 		wander.score = 0.0F; // the idle floor
 
-		// Gather-food sentinel: tier 7, a nearby (5 m) reachable food source plus modest Farming skill.
+		// Gather food: tier 7, a nearby (5 m) reachable food source plus modest Farming skill.
 		EvaluatedOption gatherFood;
 		gatherFood.taskType = TaskType::FulfillNeed;
 		gatherFood.needType = NeedType::Hunger;
-		gatherFood.needValue = 100.0F; // sentinel marker (not a real hunger need)
-		gatherFood.threshold = 0.0F;   // sentinel marker
+		gatherFood.gathersFood = true;
 		gatherFood.status = OptionStatus::Available;
 		gatherFood.tier = 7;
 		gatherFood.distanceToTarget = 5.0F;
@@ -1561,22 +1684,6 @@ namespace ecs::test {
 		EXPECT_TRUE(EvaluatedOption::higherPriority(gatherFood, wander))
 			<< "gather-food wins the (tier, score) key over wander within tier 7";
 		EXPECT_FALSE(EvaluatedOption::higherPriority(wander, gatherFood));
-	}
-
-	TEST_F(AIDecisionSystemTest, IsActionableReturnsCorrectly) {
-		EvaluatedOption option;
-
-		option.status = OptionStatus::Selected;
-		EXPECT_TRUE(option.isActionable());
-
-		option.status = OptionStatus::Available;
-		EXPECT_TRUE(option.isActionable());
-
-		option.status = OptionStatus::NoSource;
-		EXPECT_FALSE(option.isActionable());
-
-		option.status = OptionStatus::Satisfied;
-		EXPECT_FALSE(option.isActionable());
 	}
 
 	TEST_F(AIDecisionSystemTest, TraceCriticalNeedHasHighestPriority) {
@@ -1615,7 +1722,7 @@ namespace ecs::test {
 	// These build a REAL DecisionTrace through world->update() (the only path that calls the
 	// .cpp-private classifyTier on every option) and assert the tier the system stamped onto the
 	// resulting option. They cover each runtime classification rule from the spec Model table:
-	// work-order Haul/Harvest -> 4, stocking Haul/Harvest -> 6, gather-food sentinel -> 7 (above
+	// work-order Haul/Harvest -> 4, stocking Haul/Harvest -> 6, gather food -> 7 (above
 	// wander), critical need -> 2, actionable need -> 5.
 	// =============================================================================
 
@@ -1809,7 +1916,7 @@ namespace ecs::test {
 		const auto* pull = findPullOption(*getTrace(colonist));
 		ASSERT_NE(pull, nullptr) << "a high box should pull Wood from a low box";
 		EXPECT_EQ(pull->haulSourceStorageId, static_cast<uint64_t>(lowBox));
-		EXPECT_EQ(pull->haulTargetStorageId, static_cast<uint64_t>(highBox));
+		EXPECT_EQ(pull->haulDestinationId, static_cast<uint64_t>(highBox));
 		EXPECT_TRUE(pull->servesStorageStocking);
 	}
 
@@ -1893,7 +2000,7 @@ namespace ecs::test {
 		const auto* selected = getTrace(colonist)->getSelected();
 		ASSERT_NE(selected, nullptr);
 		EXPECT_EQ(selected->haulSourceStorageId, static_cast<uint64_t>(lowBox));
-		EXPECT_EQ(selected->haulTargetStorageId, static_cast<uint64_t>(critBox))
+		EXPECT_EQ(selected->haulDestinationId, static_cast<uint64_t>(critBox))
 			<< "the Critical destination outranks the High one within tier 6";
 	}
 
@@ -1979,17 +2086,17 @@ namespace ecs::test {
 		world->update(0.016F);
 
 		const auto* medPull = findOption(*getTrace(colonist), [medBox](const EvaluatedOption& o) {
-			return o.haulSourceStorageId != 0 && o.haulTargetStorageId == static_cast<uint64_t>(medBox);
+			return o.haulSourceStorageId != 0 && o.haulDestinationId == static_cast<uint64_t>(medBox);
 		});
 		const auto* critPull = findOption(*getTrace(colonist), [critBox](const EvaluatedOption& o) {
-			return o.haulSourceStorageId != 0 && o.haulTargetStorageId == static_cast<uint64_t>(critBox);
+			return o.haulSourceStorageId != 0 && o.haulDestinationId == static_cast<uint64_t>(critBox);
 		});
 		ASSERT_NE(medPull, nullptr);
 		ASSERT_NE(critPull, nullptr);
 		EXPECT_EQ(medPull->tier, 6) << "stocking pulls stay at tier 6";
 		EXPECT_EQ(critPull->tier, 6) << "stocking pulls stay at tier 6";
 		EXPECT_GT(critPull->score, medPull->score) << "Critical destination outscores Medium within the tier";
-		EXPECT_EQ(getTrace(colonist)->getSelected()->haulTargetStorageId, static_cast<uint64_t>(critBox));
+		EXPECT_EQ(getTrace(colonist)->getSelected()->haulDestinationId, static_cast<uint64_t>(critBox));
 	}
 
 	// 8. Discovery-gating: the source box is NOT in any colonist's memory -> no pull option (no god-view).
@@ -2076,15 +2183,14 @@ namespace ecs::test {
 		task->state = TaskState::Moving; // in-flight toward the dest box (phase 2)
 		task->navState = NavState::Traveling; // has a believed route (NOT CantFindWayTo) -> guard applies
 		task->haulGoalId = haulId;
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		task->haulQuantity = 14;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
-		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulDestinationId = static_cast<uint64_t>(destBox);
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos; // the deposit leg targets B; the fresh pull option targets A
-		task->chainId = haulId;
 		task->chainStep = 1; // past the Withdraw leg
 		task->priorityTier = 6; // opportunistic stocking tier
 		task->timeSinceEvaluation = 1.0F; // > kReEvalInterval (0.5) -> force a re-eval this tick
@@ -2102,19 +2208,18 @@ namespace ecs::test {
 		// The colonist must HOLD the in-flight delivery: still hauling the same Wood to box B, with the
 		// armful still in hands. No switch, no drop loop.
 		EXPECT_EQ(task->type, TaskType::Haul) << "stays on the haul (did not switch tasks)";
-		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
 		EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x) << "still targeting the deposit leg, not re-pointed at A";
 		EXPECT_TRUE(inventory->isHolding("Wood")) << "the two-hand armful stayed in hands (not dropped)";
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
 	}
 
-	// 9b. Two-hand carry holds against idle Wander when no pull is left (the second-haul abandonment).
-	//     Same mid-carry setup as #9, but the source box is drained to its OWN min so the pull-source
-	//     scan offers NOTHING. With needs met and no haul option, the top option is Wander (tier 7).
-	//     The old guard only blocked a same-tier *Haul*, so Wander -- not a Haul -- slipped past and the
-	//     colonist walked off carrying the un-stowable armful indefinitely (dest box stalls, Wood
-	//     stranded in hands). The broadened guard (ANY same-or-lower-priority challenger) must HOLD the
-	//     delivery against Wander so the deposit completes.
+	// 9b. A two-hand carry finishes its delivery when the source is drained mid-carry (the second-haul
+	//     abandonment). Same mid-carry setup as #9, but the source box is drained to its OWN min so the
+	//     pull-source scan offers NOTHING, while box B still wants Wood. The colonist once walked off
+	//     carrying the un-stowable armful indefinitely (dest box stalls, Wood stranded in hands). The
+	//     armful's carry-in is the same task as the deposit leg it is on, so it is kept, nothing drops,
+	//     and the deposit stops at B's configured max with the surplus still carried.
 	TEST_F(AIDecisionSystemTest, TwoHandPullHoldsAgainstWanderWhenSourceDrainedMidCarry) {
 		auto& registry = assets::AssetRegistry::Get();
 		// REAL two-hand Wood (handsRequired==2): rides in both hands, can't stow -> a switch drops it.
@@ -2136,9 +2241,8 @@ namespace ecs::test {
 		const glm::vec2 srcPos{2.0F, 0.0F};
 		const glm::vec2 destPos{4.0F, 0.0F};
 		const EntityID srcBox = makeStorageBox(srcPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/8, /*min=*/8);
-		// Dest B (High) sits at its max, so it wants nothing more: no carry-in of the armful is offered
-		// either, and Wander is the top option. The guard is what holds the delivery.
-		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20, /*max=*/13);
+		// Dest B (High) holds 13 and takes up to 20: it still wants 7 of the 14 carried.
+		const EntityID destBox = makeStorageBox(destPos, "Box", "Wood", ecs::StoragePriority::High, /*qty=*/13, /*min=*/20, /*max=*/20);
 
 		// Colonist mid-carry: a two-hand Wood armful in hands, task on its deposit leg (phase 2) to B.
 		auto colonist = createColonist(srcPos);
@@ -2160,36 +2264,49 @@ namespace ecs::test {
 		task->state = TaskState::Moving;	  // in-flight toward the dest box (phase 2)
 		task->navState = NavState::Traveling; // has a believed route (NOT CantFindWayTo) -> guard applies
 		task->haulGoalId = haulId;
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		task->haulQuantity = 14;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
-		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulDestinationId = static_cast<uint64_t>(destBox);
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
-		task->chainId = haulId;
 		task->chainStep = 1;			   // past the Withdraw leg
 		task->priorityTier = 6;			   // opportunistic stocking tier
 		task->timeSinceEvaluation = 1.0F;  // > kReEvalInterval (0.5) -> force a re-eval this tick
 
 		world->update(0.016F);
 
-		// The bug's trigger must be present: the source offers no pull, so Wander is the top option.
+		// The bug's trigger must be present: the source offers no pull.
 		ASSERT_EQ(findPullOption(*getTrace(colonist)), nullptr)
 			<< "source drained to its min -> no pull option offered (the trigger for the Wander abandonment)";
 		const auto* selected = getTrace(colonist)->getSelected();
 		ASSERT_NE(selected, nullptr);
-		EXPECT_EQ(selected->taskType, TaskType::Wander)
-			<< "with needs met and no haul, the highest-ranked option is idle Wander (tier 7)";
+		EXPECT_EQ(selected->taskType, TaskType::Haul) << "the armful's carry-in to B outranks Wander";
+		EXPECT_TRUE(selected->haulFromInventory);
+		EXPECT_EQ(selected->haulDestinationId, static_cast<uint64_t>(destBox));
+		EXPECT_EQ(selected->haulQuantity, 7U) << "sized to what B still takes";
 
-		// The colonist must HOLD the in-flight delivery despite Wander outranking it: still hauling Wood
-		// to box B, armful still in hands. NOT switched to Wander, NOT carrying the load off forever.
-		EXPECT_EQ(task->type, TaskType::Haul) << "did NOT switch to Wander -- the two-hand carry is held to finish";
-		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
+		// It is the delivery the colonist is already on: kept as it is, not cleared and re-selected.
+		EXPECT_EQ(task->type, TaskType::Haul);
+		EXPECT_FALSE(task->haulFromInventory) << "the deposit leg was kept, not replaced by a fresh carry-in";
+		EXPECT_EQ(task->chainStep, 1);
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(destBox)) << "still delivering to the dest box";
 		EXPECT_FLOAT_EQ(task->targetPosition.x, destPos.x) << "still targeting the deposit leg (box B)";
 		EXPECT_TRUE(inventory->isHolding("Wood")) << "the two-hand armful stayed in hands (not stranded by a wander)";
 		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 14U) << "the full armful is intact -- nothing dropped";
+
+		// Arrived at B, the deposit stops at B's max and the rest stays in hand.
+		world->registerSystem<ActionSystem>(kTestRngSeed);
+		world->addComponent<Action>(colonist, Action{});
+		world->getComponent<Position>(colonist)->value = destPos;
+		task->state = TaskState::Arrived;
+		for (int frame = 0; frame < 20 && task->type == TaskType::Haul; ++frame) {
+			world->update(0.25F);
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(destBox)->getQuantity("Wood"), 20U) << "never past the configured max";
+		EXPECT_EQ(ecs::handHeldQuantity(*inventory, "Wood"), 7U) << "the surplus stays carried";
 	}
 
 	// 9c. The broadening must NOT over-hold: a strictly-HIGHER-tier challenger (a critical need, tier 2)
@@ -2243,15 +2360,14 @@ namespace ecs::test {
 		task->state = TaskState::Moving;
 		task->navState = NavState::Traveling;
 		task->haulGoalId = haulId;
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		task->haulQuantity = carried;
 		task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 		task->haulSourcePosition = srcPos;
-		task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+		task->haulDestinationId = static_cast<uint64_t>(destBox);
 		task->haulTargetPosition = destPos;
 		task->haulFromInventory = false;
 		task->targetPosition = destPos;
-		task->chainId = haulId;
 		task->chainStep = 1;
 		task->priorityTier = 6;
 		task->timeSinceEvaluation = 1.0F;
@@ -2293,13 +2409,13 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest) << "colonist commits to the stocking harvest";
-		const uint64_t committedTarget = task->harvestTargetEntityId;
+		const uint64_t committedTarget = task->harvestTargetKey;
 		ASSERT_NE(committedTarget, 0U) << "a concrete harvest target was selected";
 
 		// Second re-eval with the equidistant sibling still present: the in-progress target holds.
 		// Its +50 hysteresis margin is unbeatable by an equal-distance, equal-skill challenger.
 		world->update(0.5F);
-		EXPECT_EQ(task->harvestTargetEntityId, committedTarget)
+		EXPECT_EQ(task->harvestTargetKey, committedTarget)
 			<< "an equidistant same-tier sibling must not overcome the hysteresis margin (no thrash)";
 
 		// Now introduce a clearly-closer source (5 m vs 30 m: 25 m closer, far beyond the ~10 m margin).
@@ -2307,12 +2423,12 @@ namespace ecs::test {
 		addKnownEntity(colonist, {5.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);  // C
 		world->update(0.5F);
 		EXPECT_EQ(task->type, TaskType::Harvest);
-		EXPECT_NE(task->harvestTargetEntityId, committedTarget)
+		EXPECT_NE(task->harvestTargetKey, committedTarget)
 			<< "a clearly-closer same-tier target overcomes hysteresis and wins the switch";
 	}
 
-	// The gather-food sentinel (needValue==100, threshold==0, emitted when the colonist has no food
-	// and knows an edible harvestable) classifies at tier 7 (idle) and, with my wander-floor fix,
+	// The gather-food option (emitted when the colonist has no food and knows an edible harvestable)
+	// classifies at tier 7 (idle) and, with my wander-floor fix,
 	// outranks the same-tier wander option because wander's within-tier score is pinned to 0.
 	TEST_F(AIDecisionSystemTest, GatherFoodClassifiesTier7AndBeatsWander) {
 		auto& registry = assets::AssetRegistry::Get();
@@ -2328,7 +2444,7 @@ namespace ecs::test {
 
 		auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist)); // all needs met -> idle tier; no food in inventory
-		// A nearby edible harvestable: drives the gather-food sentinel (and a reachable food source).
+		// A nearby edible harvestable: drives the gather-food option (and a reachable food source).
 		addKnownEntity(colonist, {3.0F, 0.0F}, berryBushId, assets::CapabilityType::Harvestable);
 
 		world->update(0.016F);
@@ -2336,15 +2452,12 @@ namespace ecs::test {
 		auto* trace = getTrace(colonist);
 		ASSERT_NE(trace, nullptr);
 
-		// The gather-food sentinel reuses FulfillNeed with needValue==100 && threshold==0.
-		const auto* gatherFood = findOption(*trace, [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needValue >= 100.0F && o.threshold == 0.0F;
-		});
+		const auto* gatherFood = findOption(*trace, [](const EvaluatedOption& o) { return o.gathersFood; });
 		const auto* wander = findOption(*trace, [](const EvaluatedOption& o) { return o.taskType == TaskType::Wander; });
 		ASSERT_NE(gatherFood, nullptr) << "an empty-inventory colonist with a known edible source gathers food";
 		ASSERT_NE(wander, nullptr) << "wander is always offered as the idle floor";
 
-		EXPECT_EQ(gatherFood->tier, 7) << "the gather-food sentinel is tier 7 (idle)";
+		EXPECT_EQ(gatherFood->tier, 7) << "gathering food is tier 7 (idle)";
 		EXPECT_EQ(wander->tier, 7) << "wander is tier 7 (idle)";
 		EXPECT_FLOAT_EQ(wander->score, 0.0F) << "wander is the idle floor: within-tier score pinned to 0";
 		EXPECT_GT(gatherFood->score, wander->score) << "reachable gather-food outranks wander within the idle tier";
@@ -2413,9 +2526,9 @@ namespace ecs::test {
 			return registry.getDefNameId("Flora_BerryBush");
 		}
 
-		// The real Hunger option, not the gather-food sentinel that shares its need type.
+		// The real Hunger option, not the gather-food option that shares its need type.
 		[[nodiscard]] bool isHungerNeedOption(const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold > 0.0F;
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && !o.gathersFood;
 		}
 	} // namespace
 
@@ -2509,7 +2622,7 @@ namespace ecs::test {
 		ASSERT_NE(hunger, nullptr);
 		EXPECT_EQ(hunger->status, OptionStatus::NoSource);
 		const auto* gather = findOption(*trace, [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
+			return o.gathersFood;
 		});
 		ASSERT_NE(gather, nullptr);
 		EXPECT_EQ(gather->status, OptionStatus::NoSource);
@@ -2578,7 +2691,7 @@ namespace ecs::test {
 		const auto* selected = trace->getSelected();
 		ASSERT_NE(selected, nullptr);
 		EXPECT_EQ(selected->taskType, TaskType::Harvest);
-		EXPECT_EQ(selected->harvestTargetEntityId, hashWorldEntity(readySticks, stickBushId)) << "the work harvests the ready bush";
+		EXPECT_EQ(selected->harvestTargetKey, hashWorldEntity(readySticks, stickBushId)) << "the work harvests the ready bush";
 		EXPECT_LE(readinessAsked, 4) << "asked only of the candidates that would otherwise win";
 	}
 
@@ -2611,7 +2724,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, far, berryBushId, assets::CapabilityType::Harvestable);
 		const auto hungerTarget = [&]() -> std::optional<glm::vec2> {
 			const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
-			return hunger != nullptr && hunger->isActionable() ? hunger->targetPosition : std::nullopt;
+			return hunger != nullptr && (hunger->status == OptionStatus::Selected || hunger->status == OptionStatus::Available) ? hunger->targetPosition : std::nullopt;
 		};
 		const auto decide = [&] {
 			getTask(colonist)->timeSinceEvaluation = 1.0F;
@@ -2983,37 +3096,6 @@ namespace ecs::test {
 	// Task Chain Tests - Phase 5 Chain System
 	// ========================================================================
 
-	TEST_F(AIDecisionSystemTest, ChainIdAssignedToHaulTask) {
-		// Unit test: Verify Task component supports chainId and chainStep fields.
-		// NOTE: This tests the data structure, not the integration path. The actual
-		// chainId assignment happens in selectTaskFromTrace(), which is tested through
-		// full system update cycles in integration tests.
-		auto colonist = createColonist({0.0F, 0.0F});
-
-		auto* task = getTask(colonist);
-		ASSERT_NE(task, nullptr);
-
-		// Initially no chainId
-		EXPECT_FALSE(task->chainId.has_value());
-		EXPECT_EQ(task->chainStep, 0);
-
-		// Verify the Task struct can store chain data correctly
-		task->type = TaskType::Haul;
-		task->chainId = 42ULL;
-		task->chainStep = 0;
-		task->haulItemDefName = "Berry";
-		task->haulQuantity = 1;
-		task->haulSourcePosition = {5.0F, 5.0F};
-		task->haulTargetPosition = {10.0F, 10.0F};
-		task->targetPosition = task->haulSourcePosition;
-		task->state = TaskState::Moving;
-
-		// Verify chain data is stored correctly
-		EXPECT_TRUE(task->chainId.has_value());
-		EXPECT_EQ(task->chainId.value(), 42ULL);
-		EXPECT_EQ(task->chainStep, 0);
-	}
-
 	TEST_F(AIDecisionSystemTest, ChainHasNoScoreTermOnlyTierClassification) {
 		// The old +2000 chain SCORE bonus is GONE from arbitration. A mid-chain provisioning task is
 		// now a TIER-4 classification (servesActiveWorkOrder), not a score inflation. The
@@ -3052,7 +3134,6 @@ namespace ecs::test {
 
 		// Set up Haul task at step 0 (pickup phase)
 		task->type = TaskType::Haul;
-		task->chainId = 42ULL;
 		task->chainStep = 0;
 		EXPECT_EQ(task->chainStep, 0);
 
@@ -3114,9 +3195,8 @@ namespace ecs::test {
 		Task* armMidHaulCarryingAxe(EntityID colonist) {
 			auto* task = getTask(colonist);
 			task->type = TaskType::Haul;
-			task->chainId = 100ULL;
 			task->chainStep = 1;
-			task->haulItemDefName = "Axe";
+			task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Axe");
 			task->state = TaskState::Moving;
 			return task;
 		}
@@ -3128,6 +3208,22 @@ namespace ecs::test {
 			callHandleChainInterruption(colonist, task, *inventory, *position, TaskType::Harvest, NeedType::Count);
 		}
 	};
+
+	// A switch to Build reads Build's own action, which needs the hands: the carried item is stowed as for
+	// any other hands-on work, not kept in hand on an unknown action.
+	TEST_F(ChainInterruptionFixture, ASwitchToBuildFreesTheHands) {
+		assets::ActionTypeDef buildAction;
+		buildAction.defName = "Build";
+		buildAction.needsHands = true;
+		assets::ActionTypeRegistry::Get().registerTestAction(std::move(buildAction));
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->pickUp("Axe", 1);
+		auto* task = armMidHaulCarryingAxe(colonist);
+		callHandleChainInterruption(colonist, *task, *inventory, *world->getComponent<Position>(colonist), TaskType::Build, NeedType::Count);
+		EXPECT_FALSE(inventory->isHolding("Axe"));
+		EXPECT_TRUE(inventory->belt[0].has_value());
+	}
 
 	TEST_F(ChainInterruptionFixture, FreedOneHandToolStowsToBeltFirst) {
 		auto  colonist = createColonist({5.0F, 5.0F});
@@ -3212,7 +3308,7 @@ namespace ecs::test {
 		inventory->rightHand = ItemStack{"Wood", 14};
 
 		auto* task = armMidHaulCarryingAxe(colonist);
-		task->haulItemDefName = "Wood";
+		task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 		interruptForHarvest(colonist, *task);
 
 		EXPECT_FALSE(inventory->isHolding("Wood")) << "Both hands freed";
@@ -3346,8 +3442,8 @@ namespace ecs::test {
 		addKnownEntity(colonist, {2.0F, 0.0F}, pelletId, assets::CapabilityType::Carryable);
 
 		// A 5-slot storage with an empty Inventory, plus the StorageGoalSystem-style Haul goal
-		// pointing at it. Its targetAmount mirrors the free-slot count (5) -- the value under test
-		// is that the PROPOSED haul is sized by addableCount (200), not this 5.
+		// pointing at it. The value under test is that the PROPOSED haul is sized by the box's room
+		// in items (200), not its 5 slots.
 		auto	  storage = world->createEntity();
 		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
 		Inventory storageInv;
@@ -3369,8 +3465,8 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Haul) << "colonist takes the storage haul when all needs are met";
-		EXPECT_EQ(task->haulItemDefName, "Pellet");
-		EXPECT_EQ(task->haulTargetStorageId, static_cast<uint64_t>(storage));
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId), "Pellet");
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(storage));
 		EXPECT_EQ(task->haulQuantity, 200U)
 			<< "sized by the storage's addableCount (5 slots x 40 stack = 200), not the 5-slot count";
 		EXPECT_GT(task->haulQuantity, 5U) << "not capped at the free-slot count";
@@ -3451,6 +3547,61 @@ namespace ecs::test {
 		EXPECT_TRUE(statusOf("Pellet") == OptionStatus::Available || statusOf("Pellet") == OptionStatus::Selected);
 		EXPECT_TRUE(statusOf("Plank") == OptionStatus::Available || statusOf("Plank") == OptionStatus::Selected);
 		EXPECT_EQ(getTask(colonist)->type, TaskType::Haul) << "and the colonist takes one";
+	}
+
+	// Goods a colonist carries that a box wants are delivered to it: a pack full of Ballast goes into a
+	// box that takes raw materials.
+	TEST_F(AIDecisionSystemTest, CarriedGoodsABoxWantsAreDelivered) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition ballast;
+		ballast.defName = "Ballast";
+		ballast.label = "Ballast";
+		ballast.handsRequired = 1;
+		ballast.category = assets::ItemCategory::RawMaterial;
+		ballast.capabilities.carryable = assets::CarryableCapability{1};
+		ballast.itemProperties = assets::ItemProperties{};
+		ballast.itemProperties->stackSize = 40;
+		ballast.itemProperties->massKg = 1.5F;
+		registry.registerTestDefinition(std::move(ballast));
+		world->registerSystem<ActionSystem>(kTestRngSeed);
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->addComponent<Action>(colonist, Action{});
+		satisfyAllNeeds(*getNeeds(colonist));
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Ballast", 20);
+
+		const glm::vec2 boxAt{4.0F, 0.0F};
+		auto			storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{boxAt});
+		Inventory storageInv;
+		storageInv.maxCapacity = 5;
+		world->addComponent<Inventory>(storage, storageInv);
+		world->addComponent<StorageConfiguration>(storage, StorageConfiguration::createAcceptAll({assets::ItemCategory::RawMaterial}));
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = storage;
+		goal.destinationPosition = boxAt;
+		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
+		goal.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		world->update(0.016F);
+		auto* task = getTask(colonist);
+		ASSERT_EQ(task->type, TaskType::Haul);
+		EXPECT_TRUE(task->haulFromInventory);
+		EXPECT_EQ(assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId), "Ballast");
+		EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(storage));
+		EXPECT_EQ(task->haulQuantity, 20U);
+
+		world->getComponent<Position>(colonist)->value = boxAt;
+		task->state = TaskState::Arrived;
+		for (int frame = 0; frame < 20 && task->type == TaskType::Haul; ++frame) {
+			world->update(0.25F);
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(storage)->getQuantity("Ballast"), 20U);
+		EXPECT_EQ(inventory->getQuantity("Ballast"), 0U);
 	}
 
 	// A storage that is genuinely full (no free slot AND every stack at its cap) offers no haul:
@@ -3602,11 +3753,11 @@ namespace ecs::test {
 		auto* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest);
-		EXPECT_EQ(task->harvestTargetEntityId, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
+		EXPECT_EQ(task->harvestTargetKey, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
 		std::vector<uint64_t> offered;
 		for (const auto& option : getTrace(colonist)->options) {
 			if (option.taskType == TaskType::Harvest) {
-				offered.push_back(option.harvestTargetEntityId);
+				offered.push_back(option.harvestTargetKey);
 			}
 		}
 		std::sort(offered.begin(), offered.end());
@@ -4517,7 +4668,7 @@ namespace ecs::test {
 
 		[[nodiscard]] static const EvaluatedOption* gatherFoodOption(const DecisionTrace& trace) {
 			return findOption(trace, [](const EvaluatedOption& o) {
-				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.threshold == 0.0F;
+				return o.gathersFood;
 			});
 		}
 
@@ -4759,6 +4910,92 @@ namespace ecs::test {
 		EXPECT_EQ(*thirst->targetPosition, nearOther) << "the nearer water wins";
 	}
 
+	// A loose pile of wood remembered inside a known wall can't be reached. It holds back no cut for the
+	// site that wants the wood: the tree beside the colonist is cut ahead of a farther site's work in the
+	// same tier, as distance puts it, and the pile, once found unreachable, stays without effect.
+	TEST_F(AIDecisionWallTest, AnUnreachablePileHoldsNoCutBack) {
+		auto& registry = assets::AssetRegistry::Get();
+		const auto registerItem = [&](const char* name, uint8_t hands) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.handsRequired = hands;
+			def.category = assets::ItemCategory::RawMaterial;
+			def.capabilities.carryable = assets::CarryableCapability{1};
+			def.itemProperties = assets::ItemProperties{};
+			def.itemProperties->stackSize = 40;
+			def.itemProperties->massKg = 1.0F;
+			registry.registerTestDefinition(std::move(def));
+		};
+		const auto registerPlant = [&](const char* name, const char* yield) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.capabilities.harvestable = assets::HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+			def.capabilities.harvestable->amountMin = 2;
+			def.capabilities.harvestable->amountMax = 2;
+			registry.registerTestDefinition(std::move(def));
+		};
+		registerItem("Wood", 2);
+		registerItem("Stick", 1);
+		registerPlant("Oak", "Wood");
+		registerPlant("StickBush", "Stick");
+		const auto site = [&](glm::vec2 at, const char* item) {
+			const EntityID blueprint = world->createEntity();
+			world->addComponent<Position>(blueprint, Position{at});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+			bp.required = {{item, 10}};
+			world->addComponent<StructureBlueprint>(blueprint, std::move(bp));
+			GoalTask umbrella;
+			umbrella.type = TaskType::Build;
+			umbrella.owner = GoalOwner::ConstructionGoalSystem;
+			umbrella.destinationEntity = blueprint;
+			umbrella.destinationPosition = at;
+			umbrella.acceptedDefNameIds = {registry.getDefNameId(item)};
+			umbrella.status = GoalStatus::Blocked;
+			const uint64_t umbrellaId = GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+			GoalTask cut;
+			cut.type = TaskType::Harvest;
+			cut.owner = GoalOwner::ConstructionGoalSystem;
+			cut.destinationEntity = blueprint;
+			cut.destinationPosition = at;
+			cut.yieldDefNameId = registry.getDefNameId(item);
+			cut.parentGoalId = umbrellaId;
+			GoalTaskRegistry::Get().createGoal(std::move(cut));
+		};
+		site({0.0F, 4.0F}, "Wood");
+		site({0.0F, -4.0F}, "Stick");
+
+		const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation);
+		ASSERT_TRUE(commit.ok());
+		for (const auto id : commit.createdSegments) {
+			construction.setSegmentState(id, construction::FoundationState::Built);
+		}
+		const auto colonist = createColonist(kStart);
+		satisfyAllNeeds(*getNeeds(colonist));
+		auto* memory = world->getComponent<Memory>(colonist);
+		for (const auto id : commit.createdSegments) {
+			memory->rememberSegment(static_cast<std::uint64_t>(id));
+		}
+		addKnownEntity(colonist, {2.0F, 1.0F}, registry.getDefNameId("Oak"), assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, {-6.0F, 0.0F}, registry.getDefNameId("StickBush"), assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, kBush, registry.getDefNameId("Wood"), assets::CapabilityType::Carryable);
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh());
+		ASSERT_FALSE(canReachBush(colonist)) << "the pile in the wall must be unreachable";
+
+		for (int decision = 0; decision < 3; ++decision) {
+			getTask(colonist)->clear();
+			world->update(kTick);
+			const auto* chosen = getTrace(colonist)->getSelected();
+			ASSERT_NE(chosen, nullptr);
+			EXPECT_EQ(chosen->taskType, TaskType::Harvest) << "decision " << decision;
+			EXPECT_EQ(chosen->harvestYieldDefNameId, registry.getDefNameId("Wood")) << "decision " << decision;
+		}
+	}
+
 	// Water in a room whose walls the colonist knows: the forest the pre-check uses treats walls as
 	// open, so the room passes it, but the believed route fails. Another water source sits outside.
 	class AIDecisionWalledWaterTest : public AIDecisionWallTest {
@@ -4899,8 +5136,7 @@ namespace ecs::test {
 		auto& registry = assets::AssetRegistry::Get();
 		addKnownEntity(colonist, kInRoom, registerBerryBush(registry), assets::CapabilityType::Harvestable);
 		// A station whose job needs berries, and the Harvest child that cuts for it. The colonist's own
-		// berry would be carried in instead, so it has none.
-		world->getComponent<Inventory>(colonist)->removeItem("Berry", 1);
+		// berry is its provisions, never the station's.
 		assets::RecipeDef recipe;
 		recipe.defName = "Recipe_BerryNeed";
 		recipe.label = recipe.defName;
@@ -4977,5 +5213,119 @@ namespace ecs::test {
 		world->update(kTick);
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over a flora patch";
 	}
+
+#ifdef DEVELOPMENT_BUILD
+	// Each update reads more boxes than the table starts with; over many updates the table stays the size
+	// one update's reads need instead of growing with every read since the session began.
+	TEST_F(AIDecisionSystemTest, BoxRoomCacheStaysSizedToOneUpdate) {
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t berry = registry.getDefNameId("Berry");
+		std::vector<EntityID> boxes;
+		for (int i = 0; i < 200; ++i) {
+			const EntityID box = world->createEntity();
+			world->addComponent<Inventory>(box, Inventory::createForStorage());
+			boxes.push_back(box);
+		}
+		BoxRoomCache cache;
+		size_t		 afterFirst = 0;
+		for (int update = 0; update < 100; ++update) {
+			cache.invalidate();
+			for (EntityID box : boxes) {
+				ASSERT_TRUE(cache.get(*world, registry, box, berry).has_value());
+			}
+			afterFirst = update == 0 ? cache.capacity() : afterFirst;
+		}
+		EXPECT_EQ(cache.capacity(), afterFirst);
+		EXPECT_LE(cache.capacity(), 4 * boxes.size());
+		EXPECT_EQ(cache.readOut, 100U * boxes.size());
+	}
+
+	// A hungry, thirsty colonist with work on offer for a stocking box, a box pulling from a lower one, and
+	// a station: the decision asks the registry by name a fixed number of times, however many trees,
+	// bushes, piles, and waters it remembers.
+	TEST_F(AIDecisionSystemTest, NameLookupsPerDecisionDoNotGrowWithMemory) {
+		auto&					registry = assets::AssetRegistry::Get();
+		const auto				carryable = [&](const char* name, uint32_t stack) {
+			 assets::AssetDefinition def;
+			 def.defName = name;
+			 def.label = name;
+			 def.category = assets::ItemCategory::RawMaterial;
+			 def.capabilities.carryable = assets::CarryableCapability{1};
+			 def.itemProperties = assets::ItemProperties{};
+			 def.itemProperties->stackSize = stack;
+			 def.itemProperties->massKg = 0.1F;
+			 registry.registerTestDefinition(std::move(def));
+		};
+		carryable("Wood", 40);
+		carryable("Stone", 40);
+		const auto harvestable = [&](const char* name, const char* yield) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.capabilities.harvestable = assets::HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+			registry.registerTestDefinition(std::move(def));
+		};
+		harvestable("Tree", "Wood");
+		harvestable("Flora_BerryBush", "Berry");
+		assets::AssetDefinition boxDef;
+		boxDef.defName = "Box";
+		boxDef.label = "Box";
+		boxDef.capabilities.storage = assets::StorageCapability{};
+		registry.registerTestDefinition(std::move(boxDef));
+		const uint32_t woodId = registry.getDefNameId("Wood");
+		const uint32_t stoneId = registry.getDefNameId("Stone");
+		const uint32_t treeId = registry.getDefNameId("Tree");
+		const uint32_t bushId = registry.getDefNameId("Flora_BerryBush");
+		const uint32_t berryId = registry.getDefNameId("Berry");
+		const uint32_t boxId = registry.getDefNameId("Box");
+
+		// One decision in a fresh world whose colonist remembers `perKind` of each kind of source.
+		const auto lookupsForOneDecision = [&](int perKind) {
+			GoalTaskRegistry::Get().clear();
+			world = std::make_unique<World>();
+			world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
+
+			makeStockingHarvest({0.0F, 8.0F}, "Wood");
+			const glm::vec2 highPos{8.0F, 0.0F};
+			const glm::vec2 lowPos{-8.0F, 0.0F};
+			const EntityID	high = makeStorageBox(highPos, "Box", "Stone", ecs::StoragePriority::High);
+			makeStorageBox(lowPos, "Box", "Stone", ecs::StoragePriority::Low, 30);
+			makeUmbrellaGoal(high, highPos, stoneId);
+			const EntityID station = world->createEntity();
+			world->addComponent<Position>(station, Position{{0.0F, -8.0F}});
+			makeStationNeed(station, "Wood", 5);
+
+			const EntityID colonist = createColonist({0.0F, 0.0F});
+			setNeedValue(colonist, NeedType::Hunger, 40.0F);
+			setNeedValue(colonist, NeedType::Thirst, 40.0F);
+			setNeedValue(colonist, NeedType::Energy, 100.0F);
+			setNeedValue(colonist, NeedType::Bladder, 100.0F);
+			addKnownEntity(colonist, highPos, boxId, assets::CapabilityType::Storage);
+			addKnownEntity(colonist, lowPos, boxId, assets::CapabilityType::Storage);
+			for (int i = 0; i < perKind; ++i) {
+				const float		angle = static_cast<float>(i) * 0.37F;
+				const float		radius = 12.0F + static_cast<float>(i) * 0.25F;
+				const glm::vec2 at{std::cos(angle) * radius, std::sin(angle) * radius};
+				addKnownEntity(colonist, at, treeId, assets::CapabilityType::Harvestable);
+				addKnownEntity(colonist, at, bushId, assets::CapabilityType::Harvestable);
+				addKnownEntity(colonist, at, woodId, assets::CapabilityType::Carryable);
+				addKnownEntity(colonist, at, stoneId, assets::CapabilityType::Carryable);
+				addKnownEntity(colonist, at, berryId, assets::CapabilityType::Carryable);
+				addKnownEntity(colonist, at, kWaterDefId, assets::CapabilityType::Drinkable);
+			}
+
+			const uint64_t before = registry.nameLookups();
+			world->update(0.016F);
+			EXPECT_NE(getTask(colonist)->type, TaskType::None);
+			return registry.nameLookups() - before;
+		};
+
+		const uint64_t single = lookupsForOneDecision(50);
+		const uint64_t doubled = lookupsForOneDecision(100);
+		EXPECT_EQ(doubled, single);
+		EXPECT_LE(single, 8U);
+	}
+#endif
 
 } // namespace ecs::test

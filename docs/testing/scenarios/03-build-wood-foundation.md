@@ -82,7 +82,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].delivered.Wood increases over time
 ```
 
-4. Phase moves to `UnderConstruction` once materials are delivered. Bob builds:
+4. Watch a fell during `AwaitingMaterials` that leaves a heap of logs at the stump: Bob's next trip is to that heap, not to another tree, and he carries it to the site (`delivered.Wood` rises) before he cuts again.
+
+5. Phase moves to `UnderConstruction` once materials are delivered. Bob builds:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
@@ -90,7 +92,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].progress increases toward 1.0
 ```
 
-5. Keep Bob's needs up every ~2 real minutes:
+6. Keep Bob's needs up every ~2 real minutes:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Hunger&value=95"
@@ -98,13 +100,15 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Thirst&val
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Energy&value=95"
 ```
 
-6. Poll until foundation is `Built` at `progress == 1.0`:
+7. Poll until foundation is `Built` at `progress == 1.0`:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].state == "Built"
 # -> foundations[0].progress == 1.0
 ```
+
+8. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
 
 ---
 

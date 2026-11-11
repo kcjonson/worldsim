@@ -65,17 +65,22 @@ namespace ecs {
 
 	class ClaimIndex {
 	  public:
-		/// Rebuild from every Task in `world`, current claims and suspended records, in view order.
+		/// Rebuild from every Task in `world`, current claims and suspended records, in view order. A
+		/// current task whose route has failed (NavState::CantFindWayTo) contributes only the Inbound and
+		/// InFlight of the goods it carries (cargoOnClaims).
 		void rebuild(World& world);
 
-		/// Add `task`'s current claims, for a selection made after the last rebuild. Its suspended
+		/// Add `task`'s current claims, for a selection made after the last rebuild, or again when its
+		/// route fails (then only its carried goods) or a failed route succeeds. Its suspended
 		/// record is not appended: a record's claims were indexed when they were the current task's,
 		/// and suspend() rewrites them. An instance already in the index is retired first, so an
 		/// adopted record's instance is never counted twice.
 		void append(EntityID colonist, const Task& task);
 
 		/// The current task of `colonist` has just become its suspended record, with smaller or equal
-		/// claims under the same instance id: replace that instance's entries with the record's.
+		/// claims under the same instance id: replace that instance's entries with the record's. Also
+		/// re-files a kept record when the task holding it changes, since a sleeping colonist's record
+		/// holds nothing.
 		void suspend(EntityID colonist, const Task& task);
 
 		/// Drop every entry of `instanceId` (a discarded record, or a task released outside an AI
@@ -87,6 +92,28 @@ namespace ecs {
 
 		/// The highest-ranked other task taking `item` from `source`, if any.
 		[[nodiscard]] std::optional<ClaimHolder> sourceHolder(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude) const;
+
+		/// Units of `item` the other tasks that accept(holder) admits will take from `source`, and the
+		/// highest-ranked of them.
+		struct SourceShare {
+			uint32_t				   quantity = 0;
+			std::optional<ClaimHolder> holder;
+		};
+		template <typename Accept>
+		[[nodiscard]] SourceShare sourceClaimedWhere(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude, Accept&& accept) const {
+			uint64_t	total = 0;
+			SourceShare share;
+			forEachUnder(keyOf(KeyTag::Source, source.kind, source.key, itemDefNameId), exclude, [&](const Entry& entry) {
+				if (accept(entry.holder)) {
+					total += entry.claim.quantity();
+					if (!share.holder || outranks(entry.holder, *share.holder)) {
+						share.holder = entry.holder;
+					}
+				}
+			});
+			share.quantity = total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
+			return share;
+		}
 
 		/// Units of `item` other tasks will deposit at `destination`.
 		[[nodiscard]] uint32_t inboundItems(EntityID destination, uint32_t itemDefNameId, ClaimExclusion exclude) const;

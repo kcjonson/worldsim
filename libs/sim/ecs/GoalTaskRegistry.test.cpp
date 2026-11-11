@@ -2,6 +2,7 @@
 
 #include "World.h"
 #include "components/Inventory.h"
+#include "components/Packaged.h"
 #include "components/StorageConfiguration.h"
 #include "components/StructureBlueprint.h"
 #include "components/WorkQueue.h"
@@ -39,10 +40,14 @@ namespace ecs::test {
 			return out;
 		}
 
-		// Every lookup the registry offers must describe the same goal set getGoalsMatching walks.
+		// Every lookup the registry offers must describe the same goal set, every goal being of one type.
 		static void expectIndexesAgreeWithGoalSet() {
-			auto&	   registry = GoalTaskRegistry::Get();
-			const auto all = registry.getGoalsMatching([](const GoalTask&) { return true; });
+			auto&						 registry = GoalTaskRegistry::Get();
+			std::vector<const GoalTask*> all;
+			for (size_t type = 0; type <= static_cast<size_t>(TaskType::Wander); ++type) {
+				const auto ofType = registry.getGoalsOfType(static_cast<TaskType>(type));
+				all.insert(all.end(), ofType.begin(), ofType.end());
+			}
 			EXPECT_EQ(all.size(), registry.goalCount());
 
 			std::map<GoalOwner, std::set<uint64_t>> byOwner;
@@ -86,18 +91,18 @@ namespace ecs::test {
 		}
 	};
 
-	// A second session in the same process must hand out the same chain ids as the first.
-	TEST_F(GoalTaskRegistryTest, ChainIdsRestartAfterClear) {
+	// A second session in the same process must hand out the same claim sequence numbers as the first.
+	TEST_F(GoalTaskRegistryTest, ClaimSequenceRestartsAfterClear) {
 		auto& registry = GoalTaskRegistry::Get();
 
-		const uint64_t first = registry.allocateChainId();
-		const uint64_t second = registry.allocateChainId();
+		const uint64_t first = registry.allocateClaimSeq();
+		const uint64_t second = registry.allocateClaimSeq();
 		EXPECT_NE(first, 0U);
 		EXPECT_NE(first, second);
 
 		registry.clear();
-		EXPECT_EQ(registry.allocateChainId(), first);
-		EXPECT_EQ(registry.allocateChainId(), second);
+		EXPECT_EQ(registry.allocateClaimSeq(), first);
+		EXPECT_EQ(registry.allocateClaimSeq(), second);
 	}
 
 	// Pinned: removal cascades through grandchildren and leaves unrelated goals and their indexes alone.
@@ -219,6 +224,64 @@ namespace ecs::test {
 		world.getComponent<Inventory>(box)->addItem("Stone", 4);
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 4U) << "a deposit shows at once";
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U);
+	}
+
+	// A category wildcard's minimum never drives cutting, so it does not inflate the cut need of an
+	// item a rule names; stock hauled in is still bounded by the wildcard's room.
+	TEST_F(RemainingNeedTest, AWildcardMinimumDoesNotInflateTheCutNeed) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		world.addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial, .minAmount = 50});
+		config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial, .minAmount = 4});
+		world.addComponent<StorageConfiguration>(box, std::move(config));
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+
+		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Harvest), 4U) << "the named rule's minimum only";
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U) << "no rule names Stone";
+	}
+
+	// A rule naming an item governs it alone: an unlimited category wildcard beside it lifts neither its
+	// max nor its min, nor raises its priority, while every other item of the category goes by the wildcard.
+	TEST_F(RemainingNeedTest, ANamedRuleWinsOverItsCategoryWildcard) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		auto		   inventory = Inventory::createForStorage();
+		inventory.addItem("Stone", 30);
+		world.addComponent<Inventory>(box, std::move(inventory));
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Critical, .minAmount = 50});
+		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Low, .minAmount = 5, .maxAmount = 40});
+		world.addComponent<StorageConfiguration>(box, config);
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 10U) << "max 40 less the 30 held";
+		EXPECT_EQ(config.getMinAmountFor("Stone", assets::ItemCategory::RawMaterial), 5U);
+		EXPECT_EQ(config.getPriorityFor("Stone", assets::ItemCategory::RawMaterial), StoragePriority::Low);
+		EXPECT_EQ(config.getMaxAmountFor("Stick", assets::ItemCategory::RawMaterial), 0U) << "unlimited, by the wildcard";
+		EXPECT_EQ(config.getMinAmountFor("Stick", assets::ItemCategory::RawMaterial), 50U);
+		EXPECT_EQ(config.getPriorityFor("Stick", assets::ItemCategory::RawMaterial), StoragePriority::Critical);
+		EXPECT_TRUE(config.acceptsItem("Stick", assets::ItemCategory::RawMaterial));
+		EXPECT_FALSE(config.acceptsItem("Stick", assets::ItemCategory::Food));
+	}
+
+	// A packaged box is being moved: no haul, carry-in, or cut is aimed at it until it is placed.
+	TEST_F(RemainingNeedTest, APackagedBoxWantsNothing) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		world.addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 5});
+		world.addComponent<StorageConfiguration>(box, std::move(config));
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+		ASSERT_GT(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U);
+
+		world.addComponent<Packaged>(box, Packaged{std::nullopt, false});
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U);
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U);
+		world.removeComponent<Packaged>(box);
+		EXPECT_GT(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U) << "placed again, it wants stock again";
 	}
 
 	TEST_F(RemainingNeedTest, CraftNeedIsTheNextJobsBillOfMaterialsLessTheStore) {

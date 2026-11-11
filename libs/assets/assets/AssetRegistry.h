@@ -281,6 +281,9 @@ namespace assets {
 		/// item on every platform. Kept with the definitions: cleared and rebuilt with them.
 		[[nodiscard]] const std::vector<std::string>& edibleItemNames() const { return m_edibleItemNames; }
 
+		/// The ids of edibleItemNames(), ascending. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<uint32_t>& edibleItemIds() const { return m_edibleItemIds; }
+
 		/// Ids of the harvestable definitions whose harvest yields the item `yieldDefNameId`, ascending;
 		/// empty when none does. Kept with the definitions: cleared and rebuilt with them.
 		[[nodiscard]] const std::vector<uint32_t>& harvestablesYielding(uint32_t yieldDefNameId) const;
@@ -288,6 +291,16 @@ namespace assets {
 		/// Mass of one unit of an item, in kilograms. Returns 1.0 for unknown/non-item defs
 		/// so carry-weight math always has a sane positive divisor.
 		[[nodiscard]] float getItemMassKg(const std::string& defName) const;
+
+		/// getItemMassKg by interned id: one vector read.
+		[[nodiscard]] float itemMassKg(uint32_t id) const;
+
+		/// The id of the item a harvestable definition yields; 0 when it yields nothing. Kept with the
+		/// definitions: cleared and rebuilt with them.
+		[[nodiscard]] uint32_t harvestYieldId(uint32_t id) const;
+
+		/// Does harvesting this definition yield an item that is edible in an inventory?
+		[[nodiscard]] bool yieldsEdible(uint32_t id) const;
 
 		/// Tool type an item provides (e.g. "Axe"), or empty if it is not a tool.
 		[[nodiscard]] const std::string& getToolType(uint32_t id) const;
@@ -301,6 +314,12 @@ namespace assets {
 
 		/// Get the total number of capability types (Edible..Storage)
 		static constexpr size_t kCapabilityTypeCount = 9;
+
+#ifdef DEVELOPMENT_BUILD
+		/// Lookups keyed by a definition name (getDefinition, getDefNameId) since startup. Tests read it
+		/// to show a decision's name lookups don't grow with what the colonist remembers.
+		[[nodiscard]] uint64_t nameLookups() const { return m_nameLookups.load(std::memory_order_relaxed); }
+#endif
 
 		// --- Testing API ---
 
@@ -391,21 +410,23 @@ namespace assets {
 
 		// Sorted names of the inventory-edible definitions; see edibleItemNames().
 		std::vector<std::string> m_edibleItemNames;
+		std::vector<uint32_t>	 m_edibleItemIds;
 
 		// Definition by interned id, beside m_idToDefName; nullptr for id 0 and synthetic definitions.
 		// Node addresses in `definitions` are stable, so these stay valid until a definition is erased.
 		std::vector<const AssetDefinition*> m_idToDefinition;
 
-		// Yield defName -> ascending ids of the harvestables that yield it. Keyed by name because a
-		// harvestable can be registered before its yield has an id; m_harvestablesByYieldId mirrors it
-		// by yield id once the yield has one, and is what harvestablesYielding() reads.
-		std::unordered_map<std::string, std::vector<uint32_t>> m_harvestablesByYield;
-		std::vector<std::vector<uint32_t>>					   m_harvestablesByYieldId;
+		// Yield id -> ascending ids of the harvestables that yield it. A yield not yet defined is given
+		// its id when the first harvestable naming it is filed, and keeps it once it is defined.
+		std::vector<std::vector<uint32_t>> m_harvestablesByYieldId;
+
+		// Harvestable id -> the id of its yield, 0 for anything else; see harvestYieldId().
+		std::vector<uint32_t> m_harvestYieldIds;
 
 		/// File `id` under its harvest yield (if any), keeping the list ascending.
 		void indexHarvestYield(const AssetDefinition& def, uint32_t id);
-		/// Copy the harvestables filed under `yieldDefName` to its id's entry, when it has an id.
-		void mirrorYieldById(const std::string& yieldDefName);
+		/// The id interned for `defName`, interning it (no definition, no capabilities) when it has none.
+		uint32_t internName(const std::string& defName);
 
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;
@@ -416,6 +437,11 @@ namespace assets {
 		// Asynchronous load worker + its progress
 		LoadProgress m_loadProgress;
 		std::thread	 m_loadThread;
+
+#ifdef DEVELOPMENT_BUILD
+		// Chunk workers read definitions too, so the count is atomic.
+		mutable std::atomic<uint64_t> m_nameLookups{0};
+#endif
 	};
 
 } // namespace assets

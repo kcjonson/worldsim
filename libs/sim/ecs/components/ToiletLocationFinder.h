@@ -38,18 +38,14 @@ namespace ecs {
 	/// @param colonistPos Current colonist world position
 	/// @param chunkManager For the shore rule (the chunk's water rings)
 	/// @param navigation Walkability authority (NavigationSystem::isValidPosition)
-	/// @param ecsWorld Reserved for future use (currently unused)
 	/// @param memory Colonist memory for querying known bio piles and food sources
-	/// @param registry Asset registry for capability lookups
 	/// @param searchRadius Maximum distance to search (meters)
 	/// @return Suitable location, or nullopt if none found (caller should fallback)
 	[[nodiscard]] std::optional<glm::vec2> findToiletLocation(
 		const glm::vec2&						 colonistPos,
 		const world::ChunkManager&		 chunkManager,
 		const NavigationSystem&					 navigation,
-		World&									 ecsWorld,
 		const Memory&							 memory,
-		const assets::AssetRegistry&	 registry,
 		float									 searchRadius = 25.0F);
 
 } // namespace ecs

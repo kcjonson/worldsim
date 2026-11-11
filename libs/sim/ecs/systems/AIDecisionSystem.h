@@ -15,6 +15,7 @@
 #include "../ClaimIndex.h"
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
+#include "../GoalTaskRegistry.h"
 #include "../ISystem.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
@@ -22,10 +23,12 @@
 #include "GoalSystemHelpers.h"
 #include "WorkSources.h"
 
+#include <array>
 #include <functional>
 #include <glm/vec2.hpp>
 #include <optional>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -41,8 +44,145 @@ class ChunkManager;
 
 namespace ecs {
 
+struct EvaluatedOption;
 class LoosePileIndex;
 class NavigationSystem;
+
+/// One kind of goods a deciding colonist carries, read once per decision for the carry-in.
+struct CarriedKind {
+	uint32_t item = 0;
+	uint32_t quantity = 0;
+	bool	 edible = false;
+};
+
+/// A root goal and one item it wants.
+struct RootItem {
+	uint64_t root = 0;
+	uint32_t item = 0;
+};
+
+/// What a storage box offers each item before inbound claims are taken out: the headroom in that
+/// item's partial stacks, its stack size, and the box's free slots. None of it depends on who asks, so
+/// each (box, item) is read from the world once per update; every colonist then takes its own claim
+/// exclusion out of the claim index on top. Box contents change outside an AI update, except when a
+/// colonist inside one puts goods away in a box within reach (storeOrDrop); the AI then refreshes that
+/// box. An open table stamped with the update, so a warm cache allocates nothing.
+class BoxRoomCache {
+  public:
+	/// A new update: every slot of the last one reads as empty and none counts toward the load, so the
+	/// table stays sized to one update's reads.
+	void invalidate() {
+		++pass;
+		used = 0;
+	}
+
+	struct Room {
+		InboundStackRoom stack;
+		uint32_t		 freeSlots = 0;
+	};
+	/// The box's room for `item`, or nullopt when the box has no Inventory.
+	[[nodiscard]] std::optional<Room> get(World& world, const assets::AssetRegistry& registry, EntityID box, uint32_t item);
+
+	/// Read again, from the world, every item of this update's entries for `box`.
+	void refresh(World& world, const assets::AssetRegistry& registry, EntityID box);
+
+#ifdef DEVELOPMENT_BUILD
+	/// (box, item) pairs read from the world since construction; tests read it to show each is read once
+	/// per update, and an item no source offers not at all.
+	uint64_t readOut = 0;
+	[[nodiscard]] size_t capacity() const { return slots.size(); }
+#endif
+
+  private:
+	struct Slot {
+		uint64_t pass = 0;
+		EntityID box = kInvalidEntity;
+		uint32_t item = 0;
+		bool	 hasStore = false;
+		Room	 room;
+	};
+	void read(World& world, const assets::AssetRegistry& registry, Slot& slot);
+	uint64_t		  pass = 1;
+	uint32_t		  used = 0;
+	std::vector<Slot> slots;
+};
+
+/// What every colonist deciding in one update reads alike of the colony's work: the stations with a
+/// job and whether their stores hold its inputs, the blueprints ready to build or tear down, the
+/// packaged furniture awaiting placement, and the lower-priority boxes a storage goal may pull an item
+/// from. Each is worked out the first time a colonist asks in an update; the colonist's own parts
+/// (claims, distance, carry) are applied on top. A colonist inside the update that puts goods in a box
+/// (storeOrDrop) or sets furniture down changes what feeds them, and has them worked out again.
+class SharedWork {
+  public:
+	/// A new update: nothing worked out yet.
+	void invalidate();
+
+	/// A box's contents changed inside the update.
+	void boxChanged();
+
+	/// A packaged item was set down inside the update.
+	void packagesChanged() { packagesBuilt = false; }
+
+	struct Station {
+		EntityID	entity = kInvalidEntity;
+		glm::vec2	position{0.0F, 0.0F};
+		std::string recipeDefName;
+		bool		hasAllInputs = false; // the station's store holds every input of its next job
+	};
+	/// Stations whose next job names a known recipe, in view order.
+	[[nodiscard]] const std::vector<Station>& stations(World& world, const assets::RecipeRegistry& recipes);
+
+	struct Site {
+		uint64_t  goalId = 0;
+		EntityID  blueprint = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+	};
+	/// Available Build goals whose blueprint is UnderConstruction, in goal order.
+	[[nodiscard]] const std::vector<Site>& buildSites(World& world);
+	/// Available Deconstruct goals whose blueprint has work to undo, in goal order.
+	[[nodiscard]] const std::vector<Site>& teardownSites(World& world);
+
+	struct Package {
+		EntityID  entity = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+		glm::vec2 target{0.0F, 0.0F};
+		bool	  beingCarried = false;
+	};
+	/// Packaged items with a placement target, in view order.
+	[[nodiscard]] const std::vector<Package>& packages(World& world);
+
+	struct PullSource {
+		EntityID  box = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+		uint32_t  drainable = 0; // what it holds above its own minimum for the item
+	};
+	/// The boxes `goal` may pull `item` from: another box, not being moved, holding some of it above its
+	/// own minimum, ranked strictly lower for it than `destPriority`, and known to the colony. View order.
+	[[nodiscard]] std::span<const PullSource> pullSources(
+		World& world, const assets::AssetRegistry& registry, ColonyStorageKnowledge& storageKnowledge, const GoalTask& goal, uint32_t item,
+		const assets::AssetDefinition& itemDef, StoragePriority destPriority
+	);
+
+  private:
+	std::vector<Station> stationList;
+	std::vector<Site>	 buildList;
+	std::vector<Site>	 teardownList;
+	std::vector<Package> packageList;
+	bool				 stationsBuilt = false;
+	bool				 buildSitesBuilt = false;
+	bool				 teardownSitesBuilt = false;
+	bool				 packagesBuilt = false;
+
+	struct PullEntry {
+		uint64_t goalId = 0;
+		uint32_t item = 0;
+		uint32_t begin = 0;
+		uint32_t end = 0;
+	};
+	std::vector<PullEntry>	pullEntries;
+	std::vector<PullSource> pullList;
+};
 
 namespace test {
 class AIDecisionSystemTest;
@@ -111,6 +251,9 @@ public:
 	[[nodiscard]] const ClaimIndex& claimIndex() const { return m_claims; }
 
 	[[nodiscard]] int priority() const override { return 60; }
+
+	/// PriorityConfig's base tier of each TaskType, indexed by the type
+	using BaseTiers = std::array<int, static_cast<size_t>(TaskType::Wander) + 1>;
 	[[nodiscard]] const char* name() const override { return "AIDecision"; }
 
 private:
@@ -120,14 +263,13 @@ private:
 	/// Check if entity should re-evaluate its current task
 	/// @param task Current task
 	/// @param needs Current needs component
-	/// @param action Optional action component (nullptr if entity has no Action component)
 	/// @param movementTargetActive Whether the entity's MovementTarget is active (walking to a point);
 	///        a moving Wander re-evaluates every tick only when true, so the no-option hold (movement off)
 	///        keeps its periodic throttle
-	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs, const struct Action* action, bool movementTargetActive);
+	[[nodiscard]] bool shouldReEvaluate(const struct Task& task, const struct NeedsComponent& needs, bool movementTargetActive);
 
-	/// Build decision trace by evaluating all options
-	/// Populates the trace with all needs + wander, sorted by priority
+	/// Build the decision trace: every need, work, and idle option the colonist has, sorted by the
+	/// (tier, score) key, with the best reachable one marked Selected
 	/// @param currentTask Current task (used to preserve target when already pursuing a need)
 	/// @param inventory Colonist inventory (for checking food availability)
 	/// @param skills Optional colonist skills (for skill bonus calculation)
@@ -143,13 +285,15 @@ private:
 		struct SourceReachMemo& sourceReach,
 		struct DecisionTrace& trace);
 
-	/// Select task from the decision trace (picks first Selected option)
+	/// Select task from the decision trace (picks first Selected option); a route is planned over
+	/// `memory`, the colonist's belief
 	void selectTaskFromTrace(
 		EntityID entity,
 		struct Task& task,
 		struct MovementTarget& movementTarget,
 		const struct DecisionTrace& trace,
-		const struct Position& position);
+		const struct Position& position,
+		const struct Memory& memory);
 
 	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, planning over
 	/// the colonist's structural belief (its known segments/openings). On success the NavPath is
@@ -176,26 +320,34 @@ private:
 
 	/// Record a route request's outcome as the task's nav state. Only Blocked is "can't find a way".
 	/// Waiting defers the route (AwaitingMesh) and stamps the current nav generation, so update()
-	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel.
-	void applyNavOutcome(struct Task& task, NavRequestOutcome outcome) const;
+	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel. Entering
+	/// or leaving the failed state re-files the task in this update's index: failed, it holds only the
+	/// goods it carries; routed again, all its claims.
+	void applyNavOutcome(EntityID entity, struct Task& task, NavRequestOutcome outcome);
 
-	/// Handle chain interruption when switching away from a mid-chain task
-	/// Stows 1-handed items to backpack, drops 2-handed items or packaged entities.
-	/// @param entity Entity ID for logging
-	/// When the new task is a need and the colonist keeps a haul's goods, the haul becomes the task's
+	/// About to wander or gather food holding a two-hand armful that no root it knows wants: put it down as
+	/// a loose pile (the drop path, which merges it into a pile at the spot). A carried packaged item is
+	/// never one.
+	void putDownUnwantedArmful(Inventory& inventory, const Position& position, const DecisionTrace& trace);
+
+	/// Switching to anything but placing the packaged item it carries, or a need its hands are free for:
+	/// set the item down where it stands, still packaged, for whoever places it next.
+	void setDownUnplacedFurniture(EntityID entity, Inventory& inventory, const Position& position, const EvaluatedOption& selected);
+
+	/// A colonist put goods away in `box` inside this update: what the caches hold for it is read again.
+	void boxChanged(EntityID box);
+
+	/// Switching away from a task that carries its chain's goods (past its pickup, or a cut with cargo):
+	/// a one-hand item is stowed to the belt, then the backpack, else dropped; a two-hand armful is
+	/// dropped when the selected task's first action needs free hands (a carry-in of what it holds does
+	/// not). When the new task is a need and the colonist keeps the goods, the task becomes its
 	/// suspended record (task-claims.md, interruption by the colonist's own needs).
-	/// @param task Current task (must be mid-chain: chainId set, chainStep > 0)
-	/// @param inventory Colonist inventory to modify
-	/// @param position Colonist position (for dropping items)
-	/// @param newTaskType Type of new task being switched to
-	/// @param newNeedType Need type for FulfillNeed tasks
 	void handleChainInterruption(
 		EntityID entity,
 		Task& task,
 		struct Inventory& inventory,
 		const struct Position& position,
-		TaskType newTaskType,
-		NeedType newNeedType);
+		const EvaluatedOption& selected);
 
 	/// A just-accepted task takes its instance id and records its chain's claims; its suspended record
 	/// is kept (a need), adopted (the carry-in of the same goods, or a further cut carrying them), or
@@ -233,6 +385,35 @@ private:
 	/// The storage boxes the colony knows, worked out at most once per update
 	ColonyStorageKnowledge m_colonyStorage;
 
+	/// Every root's remaining need, worked out at most once per (root, item, basis) per update
+	RemainingNeedCache m_needs;
+
+	/// Each storage box's room per item, read from the world at most once per update
+	BoxRoomCache m_boxRooms;
+
+	/// The colony's work every colonist reads alike, worked out at most once per update
+	SharedWork m_sharedWork;
+
+	/// The deciding colonist's carried kinds, reused across colonists
+	std::vector<CarriedKind> m_carried;
+
+	/// The roots and items the deciding colonist was offered a loose pile for, reused across colonists
+	std::vector<RootItem> m_offeredPiles;
+
+	/// One edible item a storage box the colony knows holds, worked out the first time a hungry colonist
+	/// asks in an update and shared by every one after. Deposits and withdrawals are ActionSystem's; a
+	/// colonist putting goods away inside the update (boxChanged) has it worked out again.
+	struct FoodBox {
+		EntityID  box = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+		uint64_t  key = 0; // the box's world key, as Memory files it
+		uint32_t  item = 0;
+		uint32_t  quantity = 0;
+	};
+	std::vector<FoodBox> m_foodBoxes;
+	bool				 m_foodBoxesBuilt = false;
+	[[nodiscard]] const std::vector<FoodBox>& foodBoxes();
+
 	/// ActionSystem's piles by world key, for a remembered pile's live count; read once per update,
 	/// null in a world without an ActionSystem (a pile's count is then unknown)
 	const LoosePileIndex* m_loosePiles = nullptr;
@@ -245,6 +426,10 @@ private:
 	/// The validator's fresh rebuild, kept so it reuses its storage.
 	ClaimIndex m_claimsCheck;
 #endif
+
+	/// The base tiers as of PriorityConfig::generation() m_baseTiersGeneration, read again when it moves
+	BaseTiers m_baseTiers{};
+	uint64_t  m_baseTiersGeneration = 0;
 
 	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
 	std::uint64_t reachStamp = 0;

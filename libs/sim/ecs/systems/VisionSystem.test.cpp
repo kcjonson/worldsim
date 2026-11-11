@@ -102,7 +102,8 @@ namespace {
 	// Did the observer's Memory record the target's def at `at`?
 	bool remembers(World& world, EntityID observer, glm::vec2 at) {
 		const Memory* mem = world.getComponent<Memory>(observer);
-		return mem != nullptr && mem->knowsWorldEntity(at, kTargetDefName);
+		const uint32_t id = assets::AssetRegistry::Get().getDefNameId(kTargetDefName);
+		return mem != nullptr && id != 0 && mem->knowsWorldEntity(at, id);
 	}
 
 	// A minimal pass-1 placement setup: a PlacementExecutor holding one chunk index

@@ -229,6 +229,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 08 | HUD text fits | [scenarios/08-hud-text-fits.md](./scenarios/08-hud-text-fits.md) |
 | 09 | Ground tiles | [scenarios/09-ground-tiles.md](./scenarios/09-ground-tiles.md) |
 | 10 | World creator coasts | [scenarios/10-world-creator-coasts.md](./scenarios/10-world-creator-coasts.md) |
+| 11 | Colonists eat | [scenarios/11-colonists-eat.md](./scenarios/11-colonists-eat.md) |
 
 **Run each scenario in isolation** from a fresh launch, or use `give` / `need` dev verbs to
 set preconditions from a running instance. The fully-combined four-scenario flow now runs
@@ -397,6 +398,7 @@ These are **open bugs**, not test failures. Do not flag them as regressions.
   colonist now completes end-to-end.
 - **Crafted box placement.** A freshly crafted `BasicBox` lands on the crafting station
   (cosmetic; the box is still usable). `findValidPositionNear` follow-up in flight.
-- **Box won't fill to full minimum unaided.** Once the colonist exhausts the trees he's
-  discovered, the storage box stalls below its minimum, the system needs to re-arm harvest
-  goals when new trees are discovered. Discovery-gating follow-up in flight.
+- **A box below its minimum waits for a known tree.** The box's stocking cut is open only while
+  some colonist knows a tree that yields its item; the storage goal system checks that on every
+  poll, so cutting resumes as soon as a colonist discovers another tree. While nobody knows one, the box
+  waits; that is discovery gating, not a stall.

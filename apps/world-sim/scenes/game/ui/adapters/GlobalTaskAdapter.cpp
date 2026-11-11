@@ -77,7 +77,6 @@ namespace world_sim::adapters {
 				return "";
 			}
 
-			// For now, just show generic context - could be enhanced with recipe name
 			return " (for crafting)";
 		}
 
@@ -276,8 +275,7 @@ namespace world_sim::adapters {
 			// Who, if anyone, is actively working this goal right now.
 			const std::string worker = (world != nullptr && workers != nullptr) ? colonistWorkingGoal(*world, *workers, goal) : std::string{};
 
-			// Build umbrella: its material counters are unused (targetAmount is just a marker);
-			// the real progress lives on the blueprint's workDone. Surface that plus the worker.
+			// Build umbrella: its progress lives on the blueprint's workDone. Surface that plus the worker.
 			if (goal.type == ecs::TaskType::Build) {
 				int	 pct = 0;
 				bool underConstruction = false;
@@ -322,25 +320,26 @@ namespace world_sim::adapters {
 				data.isUnassigned = true;
 			}
 
-			// Known by - for goals, all colonists who know items that can fulfill
-			data.knownBy = ""; // Goal-driven: fulfilled by Memory queries, not tracked per-goal
-
 			data.taskTypePriority = getTaskTypePriority(goal.type);
 
 			return data;
 		}
 
-		/// Every goal row, Cut/Haul/Build reading as a chain per site and Craft/PlacePackaged rounding it
-		/// out. Build is the umbrella (the destination holder), so a site shows its build step, not just
-		/// its material children. Goal systems retire what is satisfied, so every goal is shown.
+		/// Every goal row with something to do, Cut/Haul/Build reading as a chain per site and
+		/// Craft/PlacePackaged rounding it out. Build is the umbrella (the destination holder), so a site
+		/// shows its build step, not just its material children. A box keeps its umbrella while it has rules
+		/// and is left out until some colonist is offered work toward it.
 		std::vector<GlobalTaskDisplayData> goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition) {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
 			std::vector<GlobalTaskDisplayData> result;
 			const Workers					   workers = workersFromTasks(world);
+			const std::vector<uint64_t>		   offered = ecs::goalsWithOfferedWork(world);
 			for (ecs::TaskType type :
 				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
-					result.push_back(goalToDisplayData(registry, *goal, referencePosition, &world, &workers));
+					if (ecs::goalHasWork(*goal, offered)) {
+						result.push_back(goalToDisplayData(registry, *goal, referencePosition, &world, &workers));
+					}
 				}
 			}
 			return result;
@@ -348,37 +347,23 @@ namespace world_sim::adapters {
 
 	} // anonymous namespace
 
-	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& cameraCenter) {
-		return goalsForDisplay(world, cameraCenter);
-	}
-
-	std::vector<GlobalTaskDisplayData> getTasksForColonist(ecs::World& world, const glm::vec2& colonistPosition) {
-		return goalsForDisplay(world, colonistPosition);
+	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& referencePosition) {
+		return goalsForDisplay(world, referencePosition);
 	}
 
 	void sortTasksForDisplay(std::vector<GlobalTaskDisplayData>& tasks) {
 		std::sort(tasks.begin(), tasks.end(), [](const GlobalTaskDisplayData& a, const GlobalTaskDisplayData& b) {
-			// 1. "Mine" tasks first (for colonist view)
-			if (a.isMine != b.isMine) {
-				return a.isMine;
-			}
-
-			// 2. Reserved tasks first
-			if (a.isReserved != b.isReserved) {
-				return a.isReserved;
-			}
-
-			// 3. By task type priority
+			// 1. By task type priority
 			if (a.taskTypePriority != b.taskTypePriority) {
 				return a.taskTypePriority < b.taskTypePriority;
 			}
 
-			// 4. By distance (closer first)
+			// 2. By distance (closer first)
 			if (std::abs(a.distanceValue - b.distanceValue) > 0.5F) {
 				return a.distanceValue < b.distanceValue;
 			}
 
-			// 5. Stable sort by ID
+			// 3. Stable sort by ID
 			return a.id < b.id;
 		});
 	}

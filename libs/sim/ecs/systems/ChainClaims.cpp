@@ -22,7 +22,7 @@ namespace ecs {
 		/// carry of the yield. Over-estimating only makes another colonist briefly see less available;
 		/// under-estimating would let it re-cut.
 		uint32_t mostPerCut(const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, const Task& task) {
-			const KnownWorldEntity* source = memory.getWorldEntity(task.harvestTargetEntityId);
+			const KnownWorldEntity* source = memory.getWorldEntity(task.harvestTargetKey);
 			if (source == nullptr) {
 				return 0;
 			}
@@ -30,8 +30,7 @@ namespace ecs {
 			if (def == nullptr || !def->capabilities.harvestable.has_value()) {
 				return 0;
 			}
-			const std::string& yieldDefName = registry.getDefName(task.harvestYieldDefNameId);
-			const uint32_t	   room = ecs::pickupUnitsThatFit(inventory, registry, yieldDefName, ecs::carriedCargoMassKg(inventory, registry));
+			const uint32_t room = ecs::pickupUnitsThatFit(inventory, registry, task.harvestYieldDefNameId, ecs::carriedCargoMassKg(inventory, registry));
 			return std::min(def->capabilities.harvestable->amountMax, room);
 		}
 
@@ -58,6 +57,10 @@ namespace ecs {
 		return cargo;
 	}
 
+	uint32_t cargoToward(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId, uint32_t held, bool edible) {
+		return edible ? std::min(held, claimedCargo(task, rootGoalId, itemDefNameId)) : held;
+	}
+
 	std::optional<SuspendedWork> handOverCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId) {
 		const uint32_t cargo = cargoOnClaims(task.claims, rootGoalId, itemDefNameId);
 		if (cargo == 0 || task.instanceId == 0) {
@@ -74,10 +77,20 @@ namespace ecs {
 		return handed;
 	}
 
-	uint32_t chainItem(const assets::AssetRegistry& registry, const Task& task) {
+	uint32_t taskCargo(const Task& task) {
+		const uint32_t item = chainItem(task);
+		for (const Claim& claim : task.claims) {
+			if (item != 0 && claim.kind() == ClaimKind::InFlight && claim.itemDefNameId() == item) {
+				return cargoOnClaims(task.claims, claim.target(), item);
+			}
+		}
+		return 0;
+	}
+
+	uint32_t chainItem(const Task& task) {
 		switch (task.type) {
 			case TaskType::Haul:
-				return registry.getDefNameId(task.haulItemDefName);
+				return task.haulItemDefNameId;
 			case TaskType::Harvest:
 				return task.harvestYieldDefNameId;
 			default:
@@ -85,9 +98,7 @@ namespace ecs {
 		}
 	}
 
-	uint32_t
-	rootAvailable(World& world, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis, ClaimExclusion exclude) {
-		const uint32_t need = GoalTaskRegistry::Get().remainingNeed(world, rootGoalId, itemDefNameId, basis);
+	uint32_t rootAvailable(uint32_t need, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, ClaimExclusion exclude) {
 		const uint32_t inFlight = need > 0 ? claims.inFlight(rootGoalId, itemDefNameId, exclude) : 0U;
 		return need > inFlight ? need - inFlight : 0U;
 	}
@@ -97,14 +108,15 @@ namespace ecs {
 	}
 
 	void recordChainClaims(
-		World& world, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, Task& task
+		World& world, RemainingNeedCache& needs, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory,
+		const Inventory& inventory, Task& task
 	) {
 		const auto& goals = GoalTaskRegistry::Get();
 		switch (task.type) {
 			case TaskType::Harvest: {
 				const uint32_t item = task.harvestYieldDefNameId;
 				const uint32_t handedOver = takeCargoClaims(task, item);
-				push(task, Claim::use(TargetKind::WorldKey, task.harvestTargetEntityId));
+				push(task, Claim::use(TargetKind::WorldKey, task.harvestTargetKey));
 				// A footprint clear removes what stands there and brings nothing toward a need.
 				const GoalTask* goal = goals.getGoal(task.harvestGoalId);
 				if (goal == nullptr || goal->clearFootprint.has_value() || item == 0) {
@@ -116,9 +128,13 @@ namespace ecs {
 				}
 				// The cut's in-flight covers what the colonist already carries toward the root as well as
 				// what this cut lands, so its goods stay committed between cuts and nobody re-cuts them.
+				// Food it carries that no earlier cut handed on is its own provisions.
 				const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(item));
-				const uint32_t wanted = rootAvailable(world, claims, root->id, item, harvestBasis(*root), ClaimExclusion::of(task));
-				const uint32_t carried = std::min({handedOver > 0 ? handedOver : held, held, wanted});
+				const auto*	   itemDef = registry.getDefinitionById(item);
+				const bool	   edible = itemDef != nullptr && itemDef->isEdible();
+				const uint32_t wanted =
+					rootAvailable(needs.get(world, root->id, item, harvestBasis(*root)), claims, root->id, item, ClaimExclusion::of(task));
+				const uint32_t carried = std::min({handedOver > 0 ? handedOver : edible ? 0U : held, held, wanted});
 				const uint32_t expected = std::min(mostPerCut(registry, memory, inventory, task), wanted - carried);
 				if (carried > 0) {
 					push(task, Claim::inbound(static_cast<uint64_t>(root->destinationEntity), item, carried));
@@ -129,9 +145,9 @@ namespace ecs {
 				break;
 			}
 			case TaskType::Haul: {
-				const uint32_t item = registry.getDefNameId(task.haulItemDefName);
+				const uint32_t item = task.haulItemDefNameId;
 				const uint64_t root = goals.rootOf(task.haulGoalId);
-				takeCargoClaims(task, item);
+				const uint32_t handedOver = takeCargoClaims(task, item);
 				if (item == 0 || root == 0 || task.haulQuantity == 0) {
 					break;
 				}
@@ -141,8 +157,10 @@ namespace ecs {
 					} else {
 						push(task, Claim::sourceQuantity(TargetKind::WorldKey, hashWorldEntity(task.haulSourcePosition, item), item, task.haulQuantity));
 					}
+					// A pile pickup that took a gathering over delivers what it carries with what it lifts.
+					task.haulQuantity += handedOver;
 				}
-				push(task, Claim::inbound(task.haulTargetStorageId, item, task.haulQuantity));
+				push(task, Claim::inbound(task.haulDestinationId, item, task.haulQuantity));
 				push(task, Claim::inFlight(root, item, task.haulQuantity));
 				break;
 			}
@@ -156,8 +174,16 @@ namespace ecs {
 				push(task, Claim::slot(task.targetStationId));
 				break;
 			case TaskType::FulfillNeed:
-				// Food the colonist walks to; food in its own pack is possessed, and water is unbounded.
-				if (task.needToFulfill == NeedType::Hunger && task.needSourceKey != 0) {
+				// Food the colonist walks to: a bush it will cut, or one meal from a pile or box. Food in its
+				// own pack is possessed, and water is unbounded.
+				if (task.needToFulfill != NeedType::Hunger) {
+					break;
+				}
+				if (task.needSourceStorageId != 0) {
+					push(task, Claim::sourceQuantity(TargetKind::Entity, task.needSourceStorageId, task.needItemDefNameId, task.needQuantity));
+				} else if (task.needItemDefNameId != 0) {
+					push(task, Claim::sourceQuantity(TargetKind::WorldKey, task.needSourceKey, task.needItemDefNameId, task.needQuantity));
+				} else if (task.needSourceKey != 0) {
 					push(task, Claim::use(TargetKind::WorldKey, task.needSourceKey));
 				}
 				break;
@@ -178,6 +204,9 @@ namespace ecs {
 		task.claims.eraseIf([](const Claim& claim) {
 			return claim.kind() == ClaimKind::Use || claim.kind() == ClaimKind::SourceQuantity || claim.quantity() == 0;
 		});
+		if (task.type == TaskType::Haul) {
+			task.haulQuantity = std::min(task.haulQuantity, carried);
+		}
 	}
 
 	void harvestToDeliveryLeg(Task& task, uint64_t rootGoalId, EntityID destination, uint32_t itemDefNameId, uint32_t quantity) {
@@ -186,11 +215,11 @@ namespace ecs {
 		push(task, Claim::inFlight(rootGoalId, itemDefNameId, quantity));
 	}
 
-	std::optional<SuspendedWork> suspendableWork(const assets::AssetRegistry& registry, const Task& task, uint32_t held) {
+	std::optional<SuspendedWork> suspendableWork(const Task& task, uint32_t held) {
 		if ((task.type != TaskType::Haul && task.type != TaskType::Harvest) || held == 0 || task.instanceId == 0) {
 			return std::nullopt;
 		}
-		const uint32_t item = chainItem(registry, task);
+		const uint32_t item = chainItem(task);
 		uint64_t	   root = 0;
 		for (const Claim& claim : task.claims) {
 			if (claim.kind() == ClaimKind::InFlight && claim.itemDefNameId() == item) {
@@ -202,6 +231,9 @@ namespace ecs {
 			return std::nullopt; // the goods held are not this chain's yet
 		}
 		auto record = handOverCargo(task, root, item);
+		if (!record) {
+			return std::nullopt;
+		}
 		for (Claim& claim : record->claims) {
 			claim.setQuantity(cargo);
 		}
@@ -223,18 +255,21 @@ namespace ecs {
 		}
 	}
 
-	bool adoptsSuspended(const assets::AssetRegistry& registry, const Task& task) {
+	bool adoptsSuspended(const Task& task) {
 		if (!task.suspended.has_value()) {
 			return false;
 		}
 		const auto&		goals = GoalTaskRegistry::Get();
 		const uint64_t	goalId = task.type == TaskType::Haul ? task.haulGoalId : task.harvestGoalId;
+		const GoalTask* goal = goals.getGoal(goalId);
 		const GoalTask* root = goals.getGoal(goals.rootOf(goalId));
-		const bool		carries = (task.type == TaskType::Haul && task.haulFromInventory) || task.type == TaskType::Harvest;
-		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(registry, task) != task.suspended->itemDefNameId) {
+		// A build-site clear brings nothing toward a need, so it never carries a gathering's goods on.
+		const bool carries = (task.type == TaskType::Haul && task.haulFromInventory) ||
+							 (task.type == TaskType::Harvest && goal != nullptr && !goal->clearFootprint.has_value());
+		if (!carries || root == nullptr || root->id != task.suspended->rootGoalId || chainItem(task) != task.suspended->itemDefNameId) {
 			return false;
 		}
-		const uint64_t destination = task.type == TaskType::Haul ? task.haulTargetStorageId : static_cast<uint64_t>(root->destinationEntity);
+		const uint64_t destination = task.type == TaskType::Haul ? task.haulDestinationId : static_cast<uint64_t>(root->destinationEntity);
 		return std::any_of(task.suspended->claims.begin(), task.suspended->claims.end(), [&](const Claim& claim) {
 			return claim.kind() == ClaimKind::Inbound && claim.target() == destination;
 		});

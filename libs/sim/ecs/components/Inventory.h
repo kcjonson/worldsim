@@ -95,11 +95,12 @@ namespace ecs {
 		/// entities and unregistered defNames aren't stack-limited, and registry-free tests
 		/// rely on bare defNames staying uncapped.
 		[[nodiscard]] static uint32_t itemStackSize(const std::string& defName) {
-			const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
-			if (def != nullptr && def->itemProperties.has_value()) {
-				return def->itemProperties->stackSize;
-			}
-			return UINT32_MAX;
+			return stackSizeOf(assets::AssetRegistry::Get().getDefinition(defName));
+		}
+
+		/// itemStackSize of a definition already in hand (nullptr: unbounded).
+		[[nodiscard]] static uint32_t stackSizeOf(const assets::AssetDefinition* def) {
+			return def != nullptr && def->itemProperties.has_value() ? def->itemProperties->stackSize : UINT32_MAX;
 		}
 
 		/// Slots currently holding a stack.
@@ -112,9 +113,11 @@ namespace ecs {
 		}
 
 		/// Headroom left in the existing stacks of the item: what addItem tops up before it opens a slot.
-		[[nodiscard]] uint32_t partialStackRoom(const std::string& defName) const {
-			const uint32_t cap = itemStackSize(defName);
-			uint64_t	   total = 0;
+		[[nodiscard]] uint32_t partialStackRoom(const std::string& defName) const { return partialStackRoom(defName, itemStackSize(defName)); }
+
+		/// partialStackRoom for a caller that already knows the item's stack size (itemStackSize).
+		[[nodiscard]] uint32_t partialStackRoom(const std::string& defName, uint32_t cap) const {
+			uint64_t total = 0;
 			for (const auto& stack : items) {
 				if (stack.defName == defName && stack.quantity < cap) {
 					total += cap - stack.quantity;
@@ -139,9 +142,12 @@ namespace ecs {
 		/// left in every existing stack of that material, plus a full stack for each free slot.
 		/// Callers that withdraw from a finite source (a tree's resource pool) must clamp by this
 		/// so they never pull more than the backpack can hold.
-		[[nodiscard]] uint32_t addableCount(const std::string& defName) const {
+		[[nodiscard]] uint32_t addableCount(const std::string& defName) const { return addableCount(defName, itemStackSize(defName)); }
+
+		/// addableCount for a caller that already knows the item's stack size (itemStackSize).
+		[[nodiscard]] uint32_t addableCount(const std::string& defName, uint32_t cap) const {
 			// 64-bit: the freeSlots * cap term overflows uint32 for an unbounded cap
-			const uint64_t total = partialStackRoom(defName) + static_cast<uint64_t>(freeSlots()) * itemStackSize(defName);
+			const uint64_t total = partialStackRoom(defName, cap) + static_cast<uint64_t>(freeSlots()) * cap;
 			return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
 		}
 

@@ -18,9 +18,6 @@
 
 namespace ecs {
 
-	/// Maximum number of options to display in the UI (configurable for future expansion)
-	constexpr size_t kMaxDisplayedOptions = 10;
-
 	/// Status of an evaluated task option
 	enum class OptionStatus : uint8_t {
 		Selected,  // This is the current task
@@ -46,6 +43,10 @@ namespace ecs {
 		// Fulfillment status
 		OptionStatus status = OptionStatus::Satisfied;
 
+		// The idle gather-food option: a Hunger task that picks food for the pack while nobody is
+		// hungry. Tier 7, and described by its reason rather than as a need.
+		bool gathersFood = false;
+
 		// Target information (if Available or Selected)
 		std::optional<glm::vec2> targetPosition;
 		std::optional<uint32_t>	 targetDefNameId; // For display name lookup
@@ -54,6 +55,11 @@ namespace ecs {
 		bool					 targetReachable = false;
 		// Memory key of the remembered source a need option targets; 0 for none (ground, pack, work)
 		std::uint64_t			 sourceKey = 0;
+		// Hunger from stored food (Task::needItemDefNameId and the rest): the item, one meal of it, and
+		// the box it comes from, 0 for a loose pile
+		uint32_t needItemDefNameId = 0;
+		uint32_t needQuantity = 0;
+		uint64_t needSourceStorageId = 0;
 
 		// Crafting-specific fields (for Craft tasks)
 		std::string craftRecipeDefName;
@@ -64,18 +70,20 @@ namespace ecs {
 		uint32_t				 haulQuantity = 1;		  // Quantity to haul
 		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
 		uint64_t				 haulSourceStorageId = 0; // Source box entity ID for a storage->storage pull (0 = loose/inventory source)
-		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
+		uint64_t				 haulSourceKey = 0;		  // Memory key of a loose pile source, 0 for any other
+		uint64_t				 haulDestinationId = 0; // Entity the goods go to: a box, a build site, or a station
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
 		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled
 		bool					 haulFromInventory = false; // Source is colonist inventory (craft-material haul)
 
 		// PlacePackaged-specific fields (for PlacePackaged tasks)
 		uint64_t				 placePackagedEntityId = 0; // Entity ID of packaged item
+		bool					 carryingPackaged = false;	// The colonist already carries it: committed delivery (tier 4)
 		std::optional<glm::vec2> placeSourcePosition;		// Where the packaged item is
 		std::optional<glm::vec2> placeTargetPosition;		// Where to place it
 
 		// Harvest-specific fields (for Harvest tasks)
-		uint64_t harvestTargetEntityId = 0;	 // Memory key of the harvestable (tree, bush), not an ECS id
+		uint64_t harvestTargetKey = 0;	 // Memory key of the harvestable (tree, bush), not an ECS id
 		uint64_t harvestGoalId = 0;			 // Goal being fulfilled
 		uint32_t harvestYieldDefNameId = 0;	 // What item will be yielded
 
@@ -96,12 +104,14 @@ namespace ecs {
 		// Mutually exclusive with servesActiveWorkOrder: a stocking goal is not a work order.
 		bool servesStorageStocking = false;
 
-		// A further cut for a root the colonist already carries goods toward. Within its tier it ranks
-		// above every option that does not, the carry-in of those goods included, so a colonist gathers
-		// a full trip before walking (task-claims.md, Batching). The cut is only offered while the trip
-		// has room and the root wants more than is carried, and a source that is regrowing, unreachable,
-		// or reserved is passed over at selection, so the carry-in wins as soon as none is left.
-		bool continuesGathering = false;
+		// Where the option stands in a gathering trip (task-claims.md, Batching), compared within a tier
+		// before the score, higher first. A loose pile toward a root the colonist gathers for (2) comes
+		// before a further cut toward it (1), and both before any option that is no leg of a trip (0), the
+		// carry-in of the goods included, so a colonist gathers a full trip before walking. A fresh cut
+		// toward a root and item a known pile also serves (-1) comes after everything else in its tier,
+		// so a pile is taken up before another plant is cut. A source that is regrowing, unreachable, or
+		// reserved is passed over at selection, so the carry-in wins as soon as none is left.
+		int8_t gatheringRank = 0;
 
 		// --- (tier, score) arbitration key ---
 		// tier: categorical priority, compared FIRST. Lower number = higher priority (1 best).
@@ -151,24 +161,21 @@ namespace ecs {
 		}
 
 		/// Lexicographic (tier, score) ordering: returns true if `a` is HIGHER priority than `b`.
-		/// Lower tier wins; within a tier, a continuing cut first, then higher score; ties break on tiebreakId ascending
+		/// Lower tier wins; within a tier, the higher gathering rank first, then higher score; ties break on tiebreakId ascending
 		/// (a multiplayer-determinism guard, since the goal registry iterates hash-bucket order).
 		/// This is THE arbitration: tier is inviolable, score can never cross a tier boundary.
 		[[nodiscard]] static bool higherPriority(const EvaluatedOption& a, const EvaluatedOption& b) {
 			if (a.tier != b.tier) {
 				return a.tier < b.tier;
 			}
-			if (a.continuesGathering != b.continuesGathering) {
-				return a.continuesGathering;
+			if (a.gatheringRank != b.gatheringRank) {
+				return a.gatheringRank > b.gatheringRank;
 			}
 			if (a.score != b.score) {
 				return a.score > b.score;
 			}
 			return a.tiebreakId < b.tiebreakId;
 		}
-
-		/// Check if this option can be executed (has a valid target or fallback)
-		[[nodiscard]] bool isActionable() const { return status == OptionStatus::Selected || status == OptionStatus::Available; }
 	};
 
 	/// Decision trace component - captures the full decision context
@@ -191,9 +198,6 @@ namespace ecs {
 			}
 			return nullptr;
 		}
-
-		/// Get number of options to display (capped by kMaxDisplayedOptions)
-		[[nodiscard]] size_t displayCount() const { return std::min(options.size(), kMaxDisplayedOptions); }
 	};
 
 	/// The option as the player reads it ("Cutting Oak Tree for Wood", "Hunger at 40% (12m away)"),

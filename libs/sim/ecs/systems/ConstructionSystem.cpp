@@ -4,7 +4,9 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
+#include "../WorldSource.h"
 #include "../components/Appearance.h"
+#include "../components/ResourceStack.h"
 #include "../components/Structure.h"
 #include "../components/Transform.h"
 
@@ -147,6 +149,11 @@ namespace ecs {
 			// Advance the phase (idempotent). ActionSystem flips Complete itself on the last
 			// Build tick, so we never downgrade out of Complete here.
 			if (blueprint.phase != StructureBlueprint::BuildPhase::Complete) {
+				// A foundation about to be built over moves the loose piles on its footprint off it.
+				if (isFoundation && m_constructionWorld != nullptr && blueprint.phase != StructureBlueprint::BuildPhase::UnderConstruction &&
+					decision.nextPhase == StructureBlueprint::BuildPhase::UnderConstruction) {
+					m_sitesToClearOfPiles.push_back(footprintBounds(graphId));
+				}
 				blueprint.phase = decision.nextPhase;
 			}
 
@@ -180,6 +187,40 @@ namespace ecs {
 		// (demolished, completed and removed). Drop them and their children.
 		for (EntityID stale : entitiesWithGoals) {
 			resetBlueprintGoals(stale);
+		}
+
+		movePilesOffSites();
+	}
+
+	void ConstructionSystem::movePilesOffSites() {
+		// With nowhere to drop them (no drop path wired), the piles stay where they are.
+		if (m_sitesToClearOfPiles.empty() || !m_onDropResource) {
+			m_sitesToClearOfPiles.clear();
+			return;
+		}
+		struct Moved {
+			EntityID	pile;
+			std::string defName;
+			uint32_t	quantity;
+			glm::vec2	to;
+		};
+		std::vector<Moved> moved;
+		for (auto [pile, stack, position, appearance] : world->view<ResourceStack, Position, Appearance>()) {
+			for (const FootprintBounds& site : m_sitesToClearOfPiles) {
+				if (stack.quantity > 0 && site.contains(position.value)) {
+					moved.push_back({pile, appearance.defName, stack.quantity, site.nearestOutside(position.value, kPileMoveMargin)});
+					break;
+				}
+			}
+		}
+		m_sitesToClearOfPiles.clear();
+		for (const Moved& move : moved) {
+			destroyWorldEntity(*world, move.pile);
+			m_onDropResource(move.defName, move.to.x, move.to.y, move.quantity);
+			LOG_DEBUG(
+				Engine, "[Construction] Moved %u x %s off a site about to be built, to (%.1f, %.1f)", move.quantity, move.defName.c_str(), move.to.x,
+				move.to.y
+			);
 		}
 	}
 

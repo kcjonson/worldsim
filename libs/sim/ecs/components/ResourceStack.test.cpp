@@ -87,6 +87,18 @@ TEST(ResourcePileDropsTests, OverflowPilesOfWideItemNeverOverlap) {
 	expectSpawnsClear(plan, kWoodRadius);
 }
 
+// Ground a site will be built on is never used, whatever ring it falls on: a drop inside a footprint
+// lands just past its edge.
+TEST(ResourcePileDropsTests, NeverDropsOnKeptGround) {
+	const auto onSite = [](glm::vec2 p) { return p.x >= -2.0F && p.x <= 2.0F && p.y >= -2.0F && p.y <= 2.0F; };
+	const auto plan	  = resourcePileDrops(10, 60, {0.0F, 0.0F}, kWoodRadius, {}, {}, onSite);
+	EXPECT_EQ(sumQty(plan), 60U);
+	for (const auto& [pos, qty] : plan.spawns) {
+		EXPECT_FALSE(onSite(pos)) << "a pile at (" << pos.x << ", " << pos.y << ")";
+	}
+	expectSpawnsClear(plan, kWoodRadius);
+}
+
 // Repeated drops at one spot grow the pile already there instead of stacking a second sprite on it.
 TEST(ResourcePileDropsTests, TopsUpSameDefPileAtOrigin) {
 	const std::vector<GroundOccupant> nearby{{{3.0F, 4.0F}, kWoodRadius, 5, true}};

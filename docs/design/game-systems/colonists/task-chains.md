@@ -10,7 +10,7 @@
 
 Some tasks require multiple steps that should stay together. A colonist who picks up an item should carry it to storage, not drop it halfway to eat a berry.
 
-**Task Chains** link related steps with a shared identifier. Colonists receive a large priority bonus (+2000) to complete the next step of their current chain.
+**Task Chains** keep related steps on one task. A haul's pickup becomes its deposit leg, and a landed cut becomes its own delivery, on the same `Task`, so the next step is never a separate choice. Steps that serve an active work order are classified at tier 4 ([Colonist Task Arbitration](../../../technical/colonist-task-arbitration.md)), which keeps the colonist on them; there is no shared chain id and no chain score bonus.
 
 ---
 
@@ -247,35 +247,16 @@ struct ChainStep {
 
 ---
 
-## Chain Bonus Mechanics
+## Keeping a chain together
 
-### Priority Bonus (+2000)
+There is no chain bonus. The `ChainContinuation` value still parsed from `priority-tuning.xml` is read by nothing in the decision path. Two things keep a colonist on its chain:
 
-When colonist completes chain step N, step N+1 gets +2000 priority bonus. This is tunable in `priority-tuning.xml`:
+- The next step is the same task. A pickup turns the haul into its deposit leg, and a landed cut converts in place into a carry-in (`ActionSystem::carryHarvestIn`), so arbitration sees the task it is already doing, with its hysteresis margin.
+- Provisioning that serves an active work order (a craft, a build site) is tier 4. Ordinary work and a non-critical need (tier 5) never interrupt it; a critical need (tier 2) does.
 
-```xml
-<Bonuses>
-  <ChainContinuation bonus="2000"/>
-</Bonuses>
-```
+### Example: Bob hauling wood to a build site
 
-### Example: Bob Hauling Large Rock
-
-| Task | Base | Chain | Distance | Final |
-|------|------|-------|----------|-------|
-| Deposit rock (step 1) | 1000 | +2000 | +45 | 3045 |
-| Harvest bush | 3000 | 0 | +30 | 3030 |
-
-Bob deposits rock first. Chain bonus wins.
-
-### Example: Bob Critically Hungry
-
-| Task | Base | Chain | Distance | Final |
-|------|------|-------|----------|-------|
-| Deposit rock (step 1) | 1000 | +2000 | +45 | 3045 |
-| Eat (CRITICAL < 10%) | 30000 | 0 | +40 | 30040 |
-
-Critical need wins. Bob drops rock (handsRequired=2), eats.
+His deposit leg is tier 4. A hungry Bob (Hunger at 40%, tier 5) finishes the delivery first. A critically hungry Bob (below 10%, tier 2) switches: a two-hand armful can't be stowed, so it goes into a box within reach that takes it, else onto the ground as a pile, and he eats.
 
 ---
 
@@ -284,14 +265,18 @@ Critical need wins. Bob drops rock (handsRequired=2), eats.
 ### Item Stowed
 
 1. Item on belt or in backpack
-2. The interrupted work, with its inbound and in-flight claims for the item, is kept as the task's
-   suspended record ([Task Claims](../../../technical/task-claims.md))
-3. After the need, the colonist's carry-in option continues the suspended work and keeps its claims
-4. Choosing any other work discards the suspended record
+2. If a need interrupted the work, the work, with its inbound and in-flight claims for the item, is
+   kept as the task's suspended record ([Task Claims](../../../technical/task-claims.md))
+3. After the need, the colonist's carry-in option, or a further cut for the same goal and item,
+   adopts the record and keeps its claims
+4. While the colonist sleeps the record holds nothing for anyone else, so another colonist may fetch
+   or cut what those goods would have covered; it holds again once the colonist wakes
+5. Choosing any other work discards the suspended record
 
 ### Item Dropped
 
-1. Item spawns at colonist position as a loose pile
+1. Item goes into a box within reach (1.5 m, no wall between) that takes it, else spawns at the
+   colonist's position as a loose pile
 2. Original colonist's chain progress and claims for it end
 3. The pile is an ordinary source with no claims (anyone can haul it)
 4. No ownership: first colonist to select it starts new chain
@@ -305,7 +290,6 @@ Critical need wins. Bob drops rock (handsRequired=2), eats.
 | Item hands required | `assets/world/*/[item].xml` | `<carryable handsRequired="2"/>` |
 | Action needs hands | `assets/config/actions/action-types.xml` | `<Action defName="Eat" needsHands="true"/>` |
 | Chain definitions | `assets/config/work/task-chains.xml` | `<Chain defName="Chain_PickupDeposit">` |
-| Chain bonus value | `assets/config/work/priority-tuning.xml` | `<ChainContinuation bonus="2000"/>` |
 
 **All behavior is data-driven.** To change whether Sleep needs hands, edit XML. To add a new 3-hand item for giants, add XML. No code changes.
 
@@ -322,12 +306,10 @@ If colonist is hauling 5 sticks (1-hand each, batched):
 
 ### Storage Fills Mid-Haul
 
-1. Deposit task becomes invalid
-2. Chain bonus no longer applies (no valid next step)
-3. Colonist keeps item, re-evaluates
-4. May find different storage
+1. The deposit takes what still fits; the colonist keeps the rest, which holds no claim
+2. The colonist re-evaluates; a carry-in to any box that wants the item takes it there
 
-### Colonist Dies
+### Colonist Dies (planned; colonist death does not exist yet)
 
 1. All carried items spawn at death location
 2. Items become new haul tasks
@@ -338,6 +320,6 @@ If colonist is hauling 5 sticks (1-hand each, batched):
 ## Related Documents
 
 - [Task Registry System](./task-registry.md) — Where chain tasks are stored
-- [Priority Config](./priority-config.md) — Chain bonus value
+- [Priority Config](./priority-config.md): priority tuning
 - [Entity Capabilities](../world/entity-capabilities.md) — Carryable capability
 - [AI Behavior](./ai-behavior.md) — Task selection hierarchy

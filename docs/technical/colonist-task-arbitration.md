@@ -41,7 +41,7 @@ hysteresis margin.
 
 This fixes: the harvest loop ("no harvestable entity found" stale-target cycle); "colonist
 won't reliably finish the queued job"; the "colonist chops a tree 70 m away over an
-adjacent one" efficiency issue; the multi-unit craft stall (deliveredAmount staleness); and
+adjacent one" efficiency issue; the multi-unit craft stall (a goal counter gone stale); and
 the category-ordering fragility where adding a new task type can corrupt global ordering.
 
 ---
@@ -130,10 +130,13 @@ Design basis: [Multi-colonist Crafting](../design/multi-colonist-crafting.md) §
 "Finishing is very high priority. Completing an in-progress craft outranks starting new work
 by a wide margin, so if the assigned colonist leaves to sleep or eat, they come back and finish
 it before taking on anything new. The station stays reserved for that colonist across the
-interruption." Tier-4 stickiness is the mechanism that delivers this. A tier-5 actionable need
-(eat, sleep) never preempts tier 4; only a need that goes critical (tier 2, below ~10%) does, and
-the colonist then returns to their active work order, which matches the spec's "comes back and
-finishes" intent.
+interruption." Tier-4 stickiness is the mechanism that delivers the priority half of this. A tier-5
+actionable need (eat, sleep) never preempts tier 4; only a need that goes critical (tier 2, below
+~10%) does, and the colonist then returns to their active work order if it is still the best option.
+The station reservation half is not built: a crafter holds its station only through the Slot claim
+its Craft task takes at selection, which goes with the task when it leaves for the need, so another
+colonist may take the station meanwhile. The craft binding that would keep it is planned in
+[Task Claims](./task-claims.md#craft-binding-planned).
 
 This resolves the apparent tension with `ai-behavior.md`'s "Actionable Needs above Gather Food"
 ordering: that document's tier-6 "Gather Food / work" slot is what this spec calls
@@ -241,12 +244,11 @@ Specific fixes this covers:
 - **Queued craft abandonment**: tier-4 stickiness keeps the colonist on the active work
   order; re-resolution surfaces the next provisioning step automatically when an ingredient
   source changes.
-- **Multi-unit craft stall** (`CraftingGoalSystem.cpp:332-341`): `deliveredAmount` is never
-  decremented after unit 1 consumes the station store, so the same-recipe branch sees
-  `deliveredAmount >= targetAmount` and never rebuilds the Haul/Harvest children — a
-  multi-unit craft hangs after the first unit. Fix: recompute `deliveredAmount` from the
-  live station store each tick rather than accumulating it. Same never-stall family as the
-  harvest loop; folded into this epic, not tracked separately.
+- **Multi-unit craft stall**: a counter of delivered goods on the Craft goal was never
+  decremented after unit 1 consumed the station store, so the goal looked provisioned and a
+  multi-unit craft hung after the first unit. Resolved by WOR-46 step 6: goals keep no counters,
+  and a root's remaining need is read from the station store on every ask
+  ([Task Claims](./task-claims.md#remaining-need)). Same never-stall family as the harvest loop.
 
 Invariant: a goal **never loops** — it completes, re-resolves to another valid target, or retires.
 
@@ -305,8 +307,8 @@ tasks land — that mapping is deferred (see open questions).
 ### [Task Registry System](../design/game-systems/colonists/task-registry.md)
 
 Records the goal-driven `GlobalTaskRegistry` (tasks generated from goals, not discovery),
-discovery-gating (undiscovered entities generate no tasks), and the reservation mechanism
-(Phase 3, unwired).
+discovery-gating (undiscovered entities generate no tasks), and claims on colonist tasks in place of
+reservations.
 
 **Honor:** unchanged. `servesActiveWorkOrder` lives on GoalTasks in the registry. Discovery
 gating is unaffected. Reservations are specified separately as claims on colonist tasks ([Task Claims](./task-claims.md)).
@@ -419,13 +421,12 @@ target still happens within one or two re-eval cycles.
   Done / Abort-and-re-resolve / Retire lifecycle. On target invalidation, attempt to locate
   another valid target of the same goal before retiring.
 - In the Harvest evaluator in `AIDecisionSystem`: locate the target by entity ID
-  (`harvestTargetEntityId`), not by proximity. If the entity is absent from memory or the
+  (`harvestTargetKey`), not by proximity. If the entity is absent from memory or the
   world, mark the option as `NoSource` rather than re-queuing to a random nearby entity.
 - In `StorageGoalSystem::reconcileStockingHarvests`: retire a stocking-harvest goal when
   the storage minimum is already met or the source entity is gone.
-- In `CraftingGoalSystem` (lines 332-341): recompute `deliveredAmount` from the live station
-  store each tick rather than accumulating it. This prevents the multi-unit craft stall where
-  the same-recipe branch incorrectly sees the already-consumed first unit still counted.
+- In `CraftingGoalSystem`: an input's remaining need is read from the live station store
+  (`GoalTaskRegistry::remainingNeed`), so a consumed first unit is never still counted.
 - Confirm Abort triggers on: entity gone (destroyed or unloaded), entity forgotten by the
   colonist's memory system, target no longer reachable (returns `NoSource` from the
   reachability check), or minimum already satisfied (storage goal).
@@ -539,7 +540,7 @@ is visible.
 - [Task Chains](../design/game-systems/colonists/task-chains.md) — multi-step task
   continuation; the chain-becomes-tier-lock decision here supersedes the chainBonus approach.
 - [Task Registry System](../design/game-systems/colonists/task-registry.md) — goal-driven
-  task generation and reservations; unchanged by this spec.
+  task generation; claims are in [Task Claims](./task-claims.md); unchanged by this spec.
 - [Crafting & Material Provisioning — Technical Architecture](./crafting-provisioning-architecture.md)
   — the servesActiveWorkOrder classifier and the predecessor floor mechanism.
 - [Task Generation Architecture](./task-generation-architecture.md) — the two priority
