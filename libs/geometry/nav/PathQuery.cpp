@@ -165,15 +165,45 @@ namespace geometry::nav {
 			return mesh.forest(belief.knownSegments == nullptr);
 		}
 
+		inline bool inRect(const RectMm& rect, const Vec2i64& p) {
+			return p.x >= rect.min.x && p.x <= rect.max.x && p.y >= rect.min.y && p.y <= rect.max.y;
+		}
+
+		// Does triangle t's interior meet the rectangle's? Convex shapes whose interiors
+		// miss are parted by an axis of one of them, touching allowed: the rectangle's
+		// two, or a triangle edge with every rectangle corner on its outer side or on it.
+		bool interiorMeetsRect(const NavView& mesh, std::int32_t t, const RectMm& rect) {
+			const NavTriangle&			 tri = mesh.triangle(t);
+			const std::array<Vec2i64, 3> p{mesh.vertex(tri.v[0]), mesh.vertex(tri.v[1]), mesh.vertex(tri.v[2])};
+			if (std::max({p[0].x, p[1].x, p[2].x}) <= rect.min.x || std::min({p[0].x, p[1].x, p[2].x}) >= rect.max.x ||
+				std::max({p[0].y, p[1].y, p[2].y}) <= rect.min.y || std::min({p[0].y, p[1].y, p[2].y}) >= rect.max.y) {
+				return false;
+			}
+			const std::array<Vec2i64, 4> corners{rect.min, Vec2i64{rect.max.x, rect.min.y}, rect.max, Vec2i64{rect.min.x, rect.max.y}};
+			for (int k = 0; k < 3; ++k) {
+				bool outside = true;
+				for (const Vec2i64& c : corners) {
+					outside = outside && orientation(p[static_cast<std::size_t>(k)], p[static_cast<std::size_t>((k + 1) % 3)], c) != Orientation::CounterClockwise;
+				}
+				if (outside) {
+					return false;
+				}
+			}
+			return true;
+		}
+
 		// The triangle a walker stands in at p, located as `tri`: tri itself when this
 		// belief crosses it freely, else, for a p on an edge or corner of tri, the triangle
 		// holding p it crosses freely whose sorted corners come first, then one it crosses
 		// at a price, then tri. Point location settles a shared edge or corner by geometry
 		// alone, so a start on a tree's or wall's edge would otherwise land in the blocked
 		// face and find no path, or in the priced face and be charged for standing beside
-		// it: only a point strictly inside a priced face stands on it.
-		std::int32_t standOn(const NavView& mesh, std::int32_t tri, const Vec2i64& p, const BeliefFilter& belief) {
-			if (tri < 0 || stepMultiplier(mesh, tri, belief) == 1.0) {
+		// it: only a point strictly inside a priced face stands on it. Within a rectangle,
+		// only a triangle whose interior meets it counts (the search enters no other), so a
+		// point on a side of the rectangle that runs along a mesh edge stands inside it.
+		std::int32_t standOn(const NavView& mesh, std::int32_t tri, const Vec2i64& p, const BeliefFilter& belief, const RectMm* within) {
+			const bool triInside = tri >= 0 && (within == nullptr || interiorMeetsRect(mesh, tri, *within));
+			if (tri < 0 || (triInside && stepMultiplier(mesh, tri, belief) == 1.0)) {
 				return tri;
 			}
 			std::int32_t		   best		= -1;
@@ -184,7 +214,7 @@ namespace geometry::nav {
 					  return;
 				  }
 				  const double m = stepMultiplier(mesh, u, belief);
-				  if (m <= 0.0) {
+				  if (m <= 0.0 || (within != nullptr && !interiorMeetsRect(mesh, u, *within))) {
 					  return;
 				  }
 				  const NavTriangle&	 t = mesh.triangle(u);
@@ -231,37 +261,10 @@ namespace geometry::nav {
 					consider(t.neighbor[e]);
 				}
 			}
-			if (best >= 0 && (bestFree || !traversable(mesh, tri, belief))) {
+			if (best >= 0 && (bestFree || !triInside || !traversable(mesh, tri, belief))) {
 				return best;
 			}
 			return tri;
-		}
-
-		inline bool inRect(const RectMm& rect, const Vec2i64& p) {
-			return p.x >= rect.min.x && p.x <= rect.max.x && p.y >= rect.min.y && p.y <= rect.max.y;
-		}
-
-		// Does triangle t's interior meet the rectangle's? Convex shapes whose interiors
-		// miss are parted by an axis of one of them, touching allowed: the rectangle's
-		// two, or a triangle edge with every rectangle corner on its outer side or on it.
-		bool interiorMeetsRect(const NavView& mesh, std::int32_t t, const RectMm& rect) {
-			const NavTriangle&			 tri = mesh.triangle(t);
-			const std::array<Vec2i64, 3> p{mesh.vertex(tri.v[0]), mesh.vertex(tri.v[1]), mesh.vertex(tri.v[2])};
-			if (std::max({p[0].x, p[1].x, p[2].x}) <= rect.min.x || std::min({p[0].x, p[1].x, p[2].x}) >= rect.max.x ||
-				std::max({p[0].y, p[1].y, p[2].y}) <= rect.min.y || std::min({p[0].y, p[1].y, p[2].y}) >= rect.max.y) {
-				return false;
-			}
-			const std::array<Vec2i64, 4> corners{rect.min, Vec2i64{rect.max.x, rect.min.y}, rect.max, Vec2i64{rect.min.x, rect.max.y}};
-			for (int k = 0; k < 3; ++k) {
-				bool outside = true;
-				for (const Vec2i64& c : corners) {
-					outside = outside && orientation(p[static_cast<std::size_t>(k)], p[static_cast<std::size_t>((k + 1) % 3)], c) != Orientation::CounterClockwise;
-				}
-				if (outside) {
-					return false;
-				}
-			}
-			return true;
 		}
 
 		// pathThrough()'s sound short-circuit, the same test reaches() makes. Both
@@ -950,7 +953,7 @@ namespace geometry::nav {
 		if (forestFor(mesh, belief) == nullptr) {
 			return from; // reaches() answers "maybe" without forests
 		}
-		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief);
+		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief, nullptr);
 		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
 		// endpoint gate (e.g. start inside a wall the agent knows blocks).
 		if (startTri < 0 || !traversable(mesh, startTri, belief)) {
@@ -970,7 +973,7 @@ namespace geometry::nav {
 		if (from.startTri < 0) {
 			return false; // off-mesh or untraversable start
 		}
-		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief);
+		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief, nullptr);
 		if (goalTri < 0 || !traversable(mesh, goalTri, belief)) {
 			return false;
 		}
@@ -985,6 +988,9 @@ namespace geometry::nav {
 						   const BeliefFilter& belief, const PathLimits& limits) {
 		const NavView mesh = meshIn.resolved();
 		PathResult	  result;
+		// Scores are bounds on unrounded walks and a cost is the rounded walk's, so the cap
+		// takes a millimetre's slack: a walk costing the cap to within rounding is kept.
+		const double costCap = limits.maxCost + 1.0;
 		if (limits.within != nullptr && (!inRect(*limits.within, start) || !inRect(*limits.within, goal))) {
 			return result;
 		}
@@ -999,9 +1005,9 @@ namespace geometry::nav {
 			}
 		}
 
-		const std::int32_t startTri	   = standOn(mesh, mesh.locate(start), start, belief);
+		const std::int32_t startTri	   = standOn(mesh, mesh.locate(start), start, belief, limits.within);
 		const std::int32_t locatedGoal = mesh.locate(goal);
-		const std::int32_t goalTri	   = standOn(mesh, locatedGoal, goal, belief);
+		const std::int32_t goalTri	   = standOn(mesh, locatedGoal, goal, belief, limits.within);
 		if (startTri < 0 || goalTri < 0) {
 			return result; // off-mesh
 		}
@@ -1016,7 +1022,7 @@ namespace geometry::nav {
 		if (startTri == goalTri) {
 			const double m			  = stepMultiplier(mesh, startTri, belief);
 			const double length		  = distanceD(toD(start), toD(goal));
-			if (length * m > limits.maxCost) {
+			if (length * m > costCap) {
 				result.stop = PathStop::LimitReached;
 				return result;
 			}
@@ -1294,18 +1300,19 @@ namespace geometry::nav {
 			if (scratch.labels[static_cast<std::size_t>(li)].closed || cur.f != scratch.labels[static_cast<std::size_t>(li)].best) {
 				continue; // stale entry (we push duplicates instead of decrease-key)
 			}
-			// Scores pop in order and bound costs from below: past maxCost nothing open can
-			// cost maxCost or less.
-			if (cur.f > limits.maxCost ||
-				(limits.maxExpansions != 0 && result.nodesExpanded >= static_cast<std::int64_t>(limits.maxExpansions))) {
+			// Scores pop in order and bound costs from below: past the cap nothing open can
+			// cost the cap or less. The expansion count stops anything but the goal, which
+			// expands nothing: a goal popped at the count is still tried.
+			const std::int32_t s	 = scratch.labels[static_cast<std::size_t>(li)].state;
+			const std::int32_t ti	 = s / 4;
+			const int		   entry = s % 4;
+			if (cur.f > costCap ||
+				(ti != goalTri && limits.maxExpansions != 0 && result.nodesExpanded >= static_cast<std::int64_t>(limits.maxExpansions))) {
 				limited = true;
 				break;
 			}
 			scratch.labels[static_cast<std::size_t>(li)].closed = true;
 			++result.nodesExpanded; // a label closed exactly once: one real expansion
-			const std::int32_t s	 = scratch.labels[static_cast<std::size_t>(li)].state;
-			const std::int32_t ti	 = s / 4;
-			const int		   entry = s % 4;
 			if (ti == goalTri) {
 				// The score is a bound; the corridor's taut length to the goal is exact. Only
 				// a label whose exact length is still the least in the open set is accepted.
@@ -1419,7 +1426,7 @@ namespace geometry::nav {
 				}
 				const double inRun = runPrice > 0.0 ? std::max((runPrice - 1.0) * segmentToSegment(runEntry.left, runEntry.right, step.left, step.right), runFloor) : 0.0;
 				const double score = scoreFrom(next, step) + extra + inRun;
-				if (score > limits.maxCost) {
+				if (score > costCap) {
 					limited = true;
 					continue;
 				}

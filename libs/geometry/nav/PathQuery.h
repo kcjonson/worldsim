@@ -37,7 +37,9 @@ namespace geometry::nav {
 	struct PathLimits {
 		// Give up once no corridor still open can cost this or less. Scores are lower
 		// bounds on cost, so a path costing at most this is still found, and one costing
-		// more is never returned.
+		// more than a millimetre past it is never returned: the cap is inclusive to within
+		// a millimetre, since scores bound the unrounded walk and the cost is the rounded
+		// one's.
 		double maxCost = std::numeric_limits<double>::infinity();
 		// Confine the walk to this closed rectangle, whatever the triangulation: a path is
 		// found exactly when one exists on the ground the rectangle's interior covers (as
@@ -45,7 +47,9 @@ namespace geometry::nav {
 		// bounds the disc's centre, not the disc: the rectangle's sides are no obstacle to
 		// keep the radius from. A start or goal outside it is NoPath.
 		const RectMm* within = nullptr;
-		// Give up after this many expansions (PathResult::expansions); 0 is no limit.
+		// Give up after this many expansions (PathResult::expansions); 0 is no limit. A
+		// goal popped once the count is reached is still tried, so a path accepted there
+		// is Found, with one expansion over the count.
 		std::uint32_t maxExpansions = 0;
 	};
 

@@ -1438,8 +1438,8 @@ TEST(PathQuery, APointPortalBendsAtItself) {
 
 // --- Limits on a query ----------------------------------------------------------
 
-// maxCost: a path costing at most the cap is the path found without one; a cap below its
-// cost returns no path and says the limit stopped it; a goal walled off returns NoPath
+// maxCost: a path costing at most the cap (to within a millimetre) is the path found
+// without one; a cap further below its cost returns no path and says the limit stopped it; a goal walled off returns NoPath
 // when everything that could reach it cost under the cap, LimitReached when the cap cut
 // corridors off first.
 TEST(PathQuery, MaxCostFindsPathsWithinItAndNoOthers) {
@@ -1449,13 +1449,13 @@ TEST(PathQuery, MaxCostFindsPathsWithinItAndNoOthers) {
 	const Vec2i64	 goal{10100, 8000};
 	const PathResult free	 = pathThrough(m, start, goal, 300, pricedBy(trees));
 	ASSERT_EQ(free.stop, PathStop::Found);
-	for (const double cap : {free.cost + 1.0, free.cost * 2.0}) {
+	for (const double cap : {free.cost - 0.5, free.cost, free.cost * 2.0}) {
 		const PathResult capped = pathThrough(m, start, goal, 300, pricedBy(trees), {.maxCost = cap});
 		EXPECT_EQ(capped.stop, PathStop::Found);
 		EXPECT_EQ(capped.points, free.points);
 		EXPECT_DOUBLE_EQ(capped.cost, free.cost);
 	}
-	const PathResult under = pathThrough(m, start, goal, 300, pricedBy(trees), {.maxCost = free.cost - 1.0});
+	const PathResult under = pathThrough(m, start, goal, 300, pricedBy(trees), {.maxCost = free.cost - 1.5});
 	EXPECT_EQ(under.stop, PathStop::LimitReached);
 	EXPECT_FALSE(under.reachable);
 	EXPECT_TRUE(under.points.empty());
@@ -1506,6 +1506,15 @@ TEST(PathQuery, MaxExpansionsStopsDeterministically) {
 	EXPECT_EQ(roomy.stop, PathStop::Found);
 	EXPECT_EQ(roomy.points, full.points);
 	EXPECT_EQ(roomy.nodesExpanded, full.nodesExpanded);
+	// The goal accepted on the pop after the count: Found, not stopped. Exactly at the
+	// count it is found as without one.
+	const PathResult exact = pathThrough(m, a, b, 0, {}, {.maxExpansions = full.expansions});
+	EXPECT_EQ(exact.stop, PathStop::Found);
+	EXPECT_EQ(exact.points, full.points);
+	const PathResult atGoal = pathThrough(m, a, b, 0, {}, {.maxExpansions = full.expansions - 1});
+	EXPECT_EQ(atGoal.stop, PathStop::Found);
+	EXPECT_EQ(atGoal.points, full.points);
+	EXPECT_EQ(atGoal.expansions, full.expansions);
 }
 
 // within: confined to the left of two squares that share a side, a query answers as on a
