@@ -292,8 +292,8 @@ namespace ecs {
 		// colonist; once materials are due, the per-material Haul carries any of it the site needs.
 		// The child hangs under the umbrella (parentGoalId set) so it is owned/cleaned alongside the
 		// blueprint without fighting the umbrella for the single-top-level-per-destination slot.
-		for (const auto* g : registry.getGoalsByOwner(GoalOwner::ConstructionGoalSystem)) {
-			if (g->destinationEntity == blueprintEntity && g->clearFootprint.has_value()) {
+		for (const auto* child : registry.getChildGoals(umbrellaGoalId)) {
+			if (child->clearFootprint.has_value()) {
 				return;
 			}
 		}

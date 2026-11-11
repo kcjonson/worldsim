@@ -256,9 +256,10 @@ namespace ecs {
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 
-		/// Emit a clear-Harvest CHILD under the umbrella, served by any Harvestable a colonist
-		/// knows inside the footprint. Each served harvest removes its blocker and retires the
-		/// goal; the next pass re-emits while the footprint still holds one.
+		/// Emit the blueprint's one clear-Harvest CHILD under the umbrella, unless it already has one.
+		/// Any Harvestable a colonist knows inside the footprint serves it; each served harvest
+		/// removes its blocker but records nothing, so the goal stands until the footprint is clear
+		/// and update() retires it then.
 		void emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId);
 
 		/// Emit a Harvest+Haul CHILD chain per outstanding material under the umbrella
