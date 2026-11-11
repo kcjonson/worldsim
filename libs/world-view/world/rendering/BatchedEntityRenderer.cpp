@@ -87,7 +87,7 @@ namespace worldview {
 
 		uint32_t vertexIndex = 0;
 		for (const auto& item : m_sorted) {
-			const auto* templateMesh = m_templateCache.get(item.entity->defName);
+			const auto* templateMesh = m_templateCache.get(item.entity->templateId);
 			if (templateMesh == nullptr) {
 				continue;
 			}

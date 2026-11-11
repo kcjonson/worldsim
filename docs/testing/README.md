@@ -19,7 +19,7 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 |---|---|---|
 | Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI, every push |
 | Happy-path scenarios | [scenarios/](./scenarios/) and [regressions.md](./regressions.md) | before every commit that touches what they cover |
-| Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`), with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state, and the script warns if one wasn't P0, and the depth-sorted upright stream's draws (`uprightDrawCalls`, `uprightTriangles`, from `what=uprights`) so trees read apart from everything else ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | before committing rendering or sim-heavy changes, and after every salal bump |
+| Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`), with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state, and the script warns if one wasn't P0, and the depth-sorted upright stream's draws (`uprightDrawCalls`, `uprightTriangles`, from `what=uprights`) so trees read apart from everything else ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | in a session for its own change, after a machine-load check; the full suite in the nightly batch on `main` ([Performance](#performance)) |
 
 - **Scenarios are the happy-path scripts.** Before committing, the relevant ones are run as a
   manual regression pass by the cheapest subagent fleet that can (Haiku-class), one agent per
@@ -27,16 +27,71 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
   human tester would, and reporting pass or fail with a screenshot of what failed. A feature that
   lands adds steps or a scenario. New scenarios are as short as they can be: a numbered list,
   one line a step, the action and what you should see.
-- **Performance is strict.** Rendering performance dropping in gameplay is the regression this
-  project has hit most. Run the perf capture against `main` on the same machine and compare. When
-  a drop follows a salal bump, run salal's perf suite at the old and new engine tags on the same
-  machine: if the engine's numbers moved, file it in salal; if not, it's worldsim.
+- **Performance is strict, and a worse number needs an idle machine.** Rendering performance
+  dropping in gameplay is the regression this project has hit most. Even or faster is a result on
+  any machine; worse is only a finding on an idle one. See [Performance](#performance).
 - **GL tests run on the Linux CI job.** It installs Xvfb and Mesa llvmpipe and sets `WORLDSIM_REQUIRE_GL=1`, so `SurfaceFieldGolden`, `GroundTileBaker` and `AssetRenderer` fail there if no context comes up instead of skipping. Unset, they skip without one, as on the Windows job (GDI's GL 1.1) or a box with no GL.
 - **Unit tests are bounded.** Before adding one, look for a test covering the same path, and
   merge duplicates when touching a suite.
 - **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
   (expect `"count":0` before screenshotting) and read element bounds from `/api/ui/tree` rather
   than judging coordinates by eye. On demand only; never in CI.
+
+---
+
+## Performance
+
+The dev machine runs several agent sessions at once, each building, baking planets, or running a
+game, so its CPU and GPU are often maxed by something else. A timing taken then measures the other
+sessions as much as the change. Decided 2026-11-10, after sessions lost days to captures taken
+under load and to re-runs chasing regressions that were never there. The GPU hold keeps the card
+at P0; it does nothing about another process taking the card or the cores.
+
+### Timing your own work in a session
+
+Allowed when the change calls for it, with three conditions.
+
+1. **Scoped.** Time what the change could move: the view and the zooms it touches, against `main`.
+   The full three-view suite is the nightly batch's job.
+2. **Checked.** `node scripts/machine-load.mjs` before the capture and again after, with the game
+   closed. It reads CPU, GPU utilization, and other sessions' build, test, and game processes, and
+   answers `idle`, `mostly-idle`, or `busy`. On `busy` don't time anything.
+3. **Budgeted.** Every capture launches the game on Kevin's desktop and holds the machine while it
+   runs. Decide the launches before the first one and stop when the question is answered.
+
+Reading the result:
+
+| Result | Machine | What it means | What to do |
+|---|---|---|---|
+| Even with `main`, or faster | `idle` or `mostly-idle` | Good. Load only makes a change look slower | Record it, move on. No repeat to confirm |
+| Worse | both checks `idle` | Real | Act on it |
+| Worse | either check `mostly-idle` | The change, or the machine. Not a finding | One more run is fine once the check reads `idle`. Otherwise write "worse under load, unconfirmed" in the `Perf:` line and leave it to the nightly batch |
+
+On a worse result that isn't confirmed, don't loop on re-runs, bisect, or start investigating, and
+don't report it as a regression. The same goes for a timing seen in passing (the metrics overlay,
+a slow launch, a test that took long).
+
+**No new baselines with any activity on the machine.** A number is written into a doc or a perf
+ledger for later comparison only when both checks read `idle`. Anything else is a same-run
+comparison and stays in the PR. That includes a win: faster under load says "no regression", and
+the PR says so with the verdict beside it. It isn't a measured speedup to quote in docs or on the
+board.
+
+Counts read the same on a busy machine and need no check: `drawCalls` and `triangleCount` from
+`/api/metrics`, `/api/state?what=uprights`, entity and chunk counts. One launch per side, fixed
+camera, read, exit. Often they answer the question without a timing.
+
+Every PR that could move frame time, sim tick time, or chunk generation carries a `Perf:` line in
+its body: what could move, which views or zooms would show it, and what was measured under which
+verdict. A change that can't move anything says `Perf: none`. Nothing waits on perf to merge.
+
+### The nightly batch
+
+The backstop, and where an unconfirmed result gets settled. In the early morning, once the machine
+measures as idle, an agent times `main`'s tip against the last SHA it tested, and on a major
+regression finds the PR behind it and opens a draft revert. Agents run it and decide what it
+covers; Kevin never asks for a perf run. [nightly-perf-batch.md](./nightly-perf-batch.md) is the
+spec. It is not built yet.
 
 ---
 
@@ -132,7 +187,7 @@ game scene registers them: elsewhere, or for a verb it doesn't have, the request
 |------|-----------|-------|
 | `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). |
 | `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. |
-| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage. |
+| `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles or for a def that isn't an item (furniture, stations). |
 | `need` | `colonist=<id>&need=Hunger\|Thirst\|Energy\|...&value=0..100` | Sets a colonist's need to the given value. |
 | `time` | `speed=0..3` or `set=HH:MM` or `skip=Nh\|Nm` | Controls game time. `speed=3` accelerates. |
 | `teleport` | `colonist=<id>&to=x,y` | Teleports a colonist. |
@@ -143,7 +198,7 @@ game scene registers them: elsewhere, or for a verb it doesn't have, the request
 | `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Adds a StorageRule to the nearest container. |
 | `foundation` | `pts=x0,y0;x1,y1;...&material=Wood&built=0\|1` | `built=0` = blueprint the colonist builds. Refuses if any part of the footprint is off the nav mesh or over water. |
 | `foundation-edit` | `id=<foundationId>&mode=add\|subtract&pts=x0,y0;x1,y1;...` | Foundation Add / Subtract through the tool's own validate + apply path. Answers `{status:"ok"\|"rejected", reason, target, extension, entity, area}`: an editable blueprint is reshaped in place (`extension` 0), an Add onto a built foundation returns the extension blueprint's id (it merges once built, e.g. with `freebuild?on=1`). |
-| `flora` | `rect=x0,y0,x1,y1` (world metres; default the camera's view) | Reads, changes nothing. The trees in the rect (tall occluders whose def is in the `trees` placement group), as `{rect, rectAreaM2, measuredAreaM2, cellSizeM, trees, treesPer1000m2, canopyCover, woodPer1000m2, defs:[{def, count, per1000m2, woodPerTree, woodPer1000m2, ageClasses:[{name, count, per1000m2}]}], otherTallOccluders:[{def, count, per1000m2}]}`. `ageClasses` lists every age class of a def that has `<ageClasses>`, in its order, and is empty otherwise. The other tall occluders (reeds, big rocks) are listed apart and are in neither the totals nor the cover. `measuredAreaM2` is the part of the rect in loaded chunks, and densities and cover are over it. Cover is the union of the silhouettes at 0.1 m cells; wood is each def's yield midpoint. A route, not a state view, because a view takes no parameters. A rect with a side over 500 m, a side of zero or less, or more than 25 million 0.1 m cells is a 400, as is any coordinate beyond 16777216 m (2^24) from the origin. |
+| `flora` | `rect=x0,y0,x1,y1` (world metres; default the camera's view) | Reads, changes nothing. The trees in the rect (tall occluders whose def is in the `trees` placement group), as `{rect, rectAreaM2, measuredAreaM2, cellSizeM, trees, treesPer1000m2, canopyCover, woodPer1000m2, defs:[{def, count, per1000m2, woodPerTree, woodPer1000m2, ageClasses:[{name, count, per1000m2}]}], otherTallOccluders:[{def, count, per1000m2}]}`. `ageClasses` lists every age class of a def that has `<ageClasses>`, in its order, and is empty otherwise. The other tall occluders (reeds, big rocks) are listed apart and are in neither the totals nor the cover. `measuredAreaM2` is the part of the rect in loaded chunks, and densities and cover are over it. Cover is the union of each tree's own silhouette (its variant's, shadows left out) at 0.1 m cells; wood is each def's yield midpoint. A route, not a state view, because a view takes no parameters. A rect with a side over 500 m, a side of zero or less, or more than 25 million 0.1 m cells is a 400, as is any coordinate beyond 16777216 m (2^24) from the origin. |
 | `flora` | `age=<name>&near=x,y&def=<defName>` (`def` optional) | Reads, changes nothing. The nearest trees of that age class within 200 m of `near` (a 400 m square), nearest first, at most 20: `{age, near, def, searchHalfSizeM, trees:[{def, x, y, ageClass, variant, distance}]}`. `x` and `y` print at full float precision, so a listed position names the same tree when read back. `age` without `near`, or the reverse, is a 400, as is a `near` coordinate beyond 16777216 m (2^24) from the origin. |
 | `walls` | `pts=...&material=Wood&thickness=Standard&host=<foundationId>&built=0\|1&close=1` | `built` **defaults to 1** — pass `built=0` for a blueprint. Same off-mesh/water refusal. |
 | `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. |

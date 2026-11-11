@@ -2,17 +2,20 @@
 
 // ResourceStack Component
 //
-// Per-entity count for a loose ground pile of a bulk material (e.g. the wood a
-// felled tree drops beyond the armful the colonist carried off). The pile is one
-// world entity whose defName IS the material; ResourceStack holds how many units
-// remain. Hauling lifts a weight-limited armful and decrements; the entity is
-// removed when the count hits zero.
+// Per-entity count for a loose ground pile (the wood a felled tree drops beyond the
+// armful the colonist carried off, a tool dropped when the hands had to be freed, a
+// cancelled site's staged materials). The pile is one world entity whose defName IS
+// the item; ResourceStack holds how many units remain. Hauling lifts a weight-limited
+// armful and decrements; the entity is removed when the count hits zero.
 //
-// Unlike Packaged (crafted items awaiting placement), a loose pile is spawned
+// Unlike Packaged (crafted furniture awaiting placement), a loose pile is spawned
 // without Packaged: it is immediately haulable, not a ghost the player must site.
 
+#include <algorithm>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <utility>
 #include <vector>
 
@@ -20,56 +23,138 @@
 
 namespace ecs {
 
-/// Count of a bulk material in a loose ground pile (the haulable remainder of a fell).
+/// Count of an item in a loose ground pile.
 struct ResourceStack {
 	uint32_t quantity = 0;
 };
 
-/// Splits a dropped quantity into one loose pile per physical stack, each <= stackCap, and
-/// assigns every pile a distinct ground position clustered near origin.
+// Ground-drop spacing. Tuning is deferred; these are the only knobs.
+inline constexpr float	  kPileMergeRadius = 1.0F;	   // a same-item pile this close to the drop is topped up
+inline constexpr float	  kGroundClearanceGap = 0.1F; // kept between the footprints of two things on the ground
+inline constexpr uint32_t kWalkableSearchRings = 12;  // rings checked against isGround before clearance alone decides
+
+/// Something already on the ground near a drop: the center and radius of its drawn footprint,
+/// and, for a pile, what it holds and whether it is the dropped item (only a same-item pile can
+/// be topped up; a crate or any other pile only takes up room).
+struct GroundOccupant {
+	glm::vec2 position{0.0F, 0.0F};
+	float	  radius = 0.0F;
+	uint32_t  quantity = 0;
+	bool	  sameDef = false;
+};
+
+/// What a drop does to the ground: units added to existing piles (index into the `nearby`
+/// list, units added) and new piles to spawn (position, quantity).
+struct PileDropPlan {
+	std::vector<std::pair<std::size_t, uint32_t>> topUps;
+	std::vector<std::pair<glm::vec2, uint32_t>>	   spawns;
+};
+
+/// Lays `totalQty` units of one item onto the ground at `origin`, given what is already there.
 ///
-/// Returns ceil(totalQty / stackCap) entries: full caps with the remainder in the last. A
-/// stackCap of 0 or UINT32_MAX means the item is unbounded/unknown, so the whole quantity
-/// stays a single pile at origin. totalQty 0 yields no piles.
+/// Same-item piles within kPileMergeRadius of the origin are topped up to `stackCap` first,
+/// nearest first. The rest spawns as new stack-capped piles on the first clear spots of a
+/// deterministic spiral (no RNG): the origin, then rings of 6, 12, 18... spots stepped by the
+/// dropped item's own footprint, so overflow piles of one item sit side by side. A spot is
+/// clear when its distance to every occupant (and every pile this drop already placed) is at
+/// least the two footprint radii plus kGroundClearanceGap, so dissimilar items never overlay.
+/// For the first kWalkableSearchRings rings a spot must also pass `isGround` (when given);
+/// past them clearance alone decides, so a drop on a tiny patch of ground still lands.
+/// Before ring N (N >= 1) opens a new pile, same-item piles out to that ring's radius are
+/// topped up, nearest first, so repeated drops fill the overflow piles earlier drops left.
 ///
-/// Positions follow a deterministic concentric-ring layout (no RNG, reproducible for tests and
-/// any seeded/replay path): the first pile sits at origin, then 6 around at ~0.6 m, 12 at ~1.2 m,
-/// and so on outward. Every pair lands > 0.3 m apart so piles never alias inside the 0.25 m
-/// pickup epsilon. Geometry only -- no walkability check; a later pass can nudge piles onto
-/// walkable tiles, but the drop origin is already walkable (a cleared stump / build site) and
-/// these offsets stay close.
-[[nodiscard]] inline std::vector<std::pair<glm::vec2, uint32_t>>
-resourcePileDrops(uint32_t stackCap, uint32_t totalQty, glm::vec2 origin) {
-	std::vector<std::pair<glm::vec2, uint32_t>> drops;
+/// A stackCap of 0 or UINT32_MAX means unbounded: everything lands in one pile.
+[[nodiscard]] inline PileDropPlan resourcePileDrops(
+	uint32_t							   stackCap,
+	uint32_t							   totalQty,
+	glm::vec2							   origin,
+	float								   footprintRadius,
+	const std::vector<GroundOccupant>&	   nearby,
+	const std::function<bool(glm::vec2)>& isGround = {}
+) {
+	PileDropPlan plan;
 	if (totalQty == 0) {
-		return drops;
+		return plan;
 	}
-	if (stackCap == 0 || stackCap == UINT32_MAX) {
-		drops.emplace_back(origin, totalQty);
-		return drops;
+	const bool unbounded = stackCap == 0 || stackCap == UINT32_MAX;
+	uint32_t   remaining = totalQty;
+
+	auto distSq = [](glm::vec2 a, glm::vec2 b) {
+		const float dx = a.x - b.x;
+		const float dy = a.y - b.y;
+		return dx * dx + dy * dy;
+	};
+
+	// Same-item piles nearest the origin first; each is topped up at most once.
+	std::vector<std::size_t> sameDefByDistance;
+	for (std::size_t i = 0; i < nearby.size(); ++i) {
+		if (nearby[i].sameDef) {
+			sameDefByDistance.push_back(i);
+		}
 	}
+	std::sort(sameDefByDistance.begin(), sameDefByDistance.end(), [&](std::size_t a, std::size_t b) {
+		const float da = distSq(nearby[a].position, origin);
+		const float db = distSq(nearby[b].position, origin);
+		return da != db ? da < db : a < b;
+	});
+	std::size_t topUpCursor = 0;
+	auto		topUpWithin = [&](float reach) {
+		for (; topUpCursor < sameDefByDistance.size() && remaining > 0; ++topUpCursor) {
+			const std::size_t i = sameDefByDistance[topUpCursor];
+			if (distSq(nearby[i].position, origin) > reach * reach) {
+				return;
+			}
+			const uint32_t room = unbounded ? remaining : (nearby[i].quantity < stackCap ? stackCap - nearby[i].quantity : 0U);
+			const uint32_t added = room < remaining ? room : remaining;
+			if (added > 0) {
+				plan.topUps.emplace_back(i, added);
+				remaining -= added;
+			}
+		}
+	};
+	topUpWithin(kPileMergeRadius);
 
-	const uint32_t pileCount = (totalQty + stackCap - 1) / stackCap;
-	drops.reserve(pileCount);
+	std::vector<GroundOccupant> occupied = nearby;
+	constexpr float				kPi = 3.14159265358979323846F;
+	constexpr float				kMinStep = 0.05F;		   // a zero-size footprint still steps outward
+	constexpr float				kEpsilon = 1e-4F;		   // float slack on a ring whose spacing is exactly the step
+	constexpr float				kRingReachEpsilon = 1e-3F; // a pile an earlier drop put on this ring still counts as on it
+	const float					step = std::max(2.0F * footprintRadius + kGroundClearanceGap, kMinStep);
 
-	constexpr float kRingStep = 0.6F; // radial gap and ring-1 radius; keeps min pair distance ~0.6 m
-	uint32_t		remaining = totalQty;
-	uint32_t		placed	  = 0;
-	for (uint32_t ring = 0; placed < pileCount; ++ring) {
+	for (uint32_t ring = 0; remaining > 0; ++ring) {
 		const uint32_t slotsInRing = (ring == 0) ? 1U : 6U * ring;
-		const float	   radius	   = static_cast<float>(ring) * kRingStep;
+		const float	   radius = static_cast<float>(ring) * step;
+		// Fill the partial piles earlier drops left out to this ring before opening a new one.
+		if (ring > 0) {
+			topUpWithin(radius + kRingReachEpsilon);
+			if (remaining == 0) {
+				break;
+			}
+		}
 		// Half-slot angular offset per ring so successive rings don't line up radially.
-		const float baseAngle = (ring == 0) ? 0.0F : (3.14159265358979323846F / static_cast<float>(slotsInRing));
-		for (uint32_t slot = 0; slot < slotsInRing && placed < pileCount; ++slot, ++placed) {
-			const float angle = baseAngle + (2.0F * 3.14159265358979323846F * static_cast<float>(slot)
-											 / static_cast<float>(slotsInRing));
+		const float baseAngle = (ring == 0) ? 0.0F : (kPi / static_cast<float>(slotsInRing));
+		for (uint32_t slot = 0; slot < slotsInRing && remaining > 0; ++slot) {
+			const float		angle = baseAngle + (2.0F * kPi * static_cast<float>(slot) / static_cast<float>(slotsInRing));
 			const glm::vec2 pos{origin.x + radius * std::cos(angle), origin.y + radius * std::sin(angle)};
-			const uint32_t	qty = (remaining > stackCap) ? stackCap : remaining;
-			drops.emplace_back(pos, qty);
+
+			bool clear = true;
+			for (const GroundOccupant& other : occupied) {
+				const float minDist = footprintRadius + other.radius + kGroundClearanceGap - kEpsilon;
+				if (distSq(pos, other.position) < minDist * minDist) {
+					clear = false;
+					break;
+				}
+			}
+			if (!clear || (isGround && ring < kWalkableSearchRings && !isGround(pos))) {
+				continue;
+			}
+			const uint32_t qty = (unbounded || remaining < stackCap) ? remaining : stackCap;
+			plan.spawns.emplace_back(pos, qty);
+			occupied.push_back({pos, footprintRadius, qty, true});
 			remaining -= qty;
 		}
 	}
-	return drops;
+	return plan;
 }
 
 } // namespace ecs

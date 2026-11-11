@@ -5,8 +5,7 @@
 #include "assets/AssetRegistry.h"
 #include "assets/TreeTraits.h"
 
-#include <assets/placement/BakedEntityMesh.h> // isGroundcoverDef (short/tall split source of truth)
-#include <assets/placement/WorldDepthSort.h>  // meshYExtent, computeStaticDepthAttribs
+#include <assets/placement/WorldDepthSort.h> // meshYExtent, computeAnchorY
 #include <utils/Log.h>
 #include <world/chunk/Chunk.h> // Surface, surfaceToString
 #include <world/chunk/ChunkCoordinate.h>
@@ -146,23 +145,41 @@ namespace assets {
 			return;
 		}
 
-		// Resolve this def's 2.5D depth-sort inputs ONCE per type (not per placed
-		// instance, and not per frame in WorldDepthGather): the template's local-Y
-		// extent and whether it is groundcover. getTemplate on the singleton returns
-		// the same cached template the entity bake reads, so the tall/short split
-		// here is bit-identical to the bake's. getTemplate is mutex-guarded and
-		// getDefinition is read-only, so both are safe on the placement worker.
-		const assets::MeshYExtent templateExtent = assets::meshYExtent(AssetRegistry::Get().getTemplate(defName));
-		const bool				 isGroundcover = assets::isGroundcoverDef(defName);
+		// Resolve this def's 2.5D depth-sort inputs once per type and template, not per
+		// placed instance and not per frame in WorldDepthGather: whether the def routes
+		// tall (one answer for every instance, D9), and per template the id the renderers
+		// key by and its local-Y extent for the anchor. The registry is mutex-guarded and
+		// builds outside its lock, so this is safe on the placement worker.
+		AssetRegistry& registry = AssetRegistry::Get();
+		const bool	   isTall = registry.isTallDef(defName);
+		struct ResolvedTemplate {
+			uint32_t			id = 0;
+			assets::MeshYExtent extent;
+			bool				resolved = false;
+		};
+		// One slot per (age class, variant), indexed by the class's first slot plus the variant.
+		std::vector<uint32_t> classFirstSlot(std::max<size_t>(def->ageClasses.size(), 1), 0);
+		size_t				  slotCount = def->ageClasses.empty() ? std::max<uint32_t>(def->variantCount, 1U) : 0;
+		for (size_t a = 0; a < def->ageClasses.size(); ++a) {
+			classFirstSlot[a] = static_cast<uint32_t>(slotCount);
+			slotCount += def->ageClasses[a].variants;
+		}
+		std::vector<ResolvedTemplate> templates(slotCount);
 
-		// Stamp a placed instance's depth attributes and traits, then file it in the chunk
-		// index and the result list. anchorY + isTallOccluder then ride along on the frozen
-		// index copies for the gather to read directly. Traits draw nothing from rng.
+		// Stamp a placed instance's traits, template, and depth attributes, then file it in
+		// the chunk index and the result list. anchorY + isTallOccluder then ride along on
+		// the frozen index copies for the gather to read directly. Traits draw nothing from rng.
 		auto placeAndRecord = [&](PlacedEntity& entity) {
 			entity.traits = computeTreeTraits(*def, entity.position, context.worldSeed);
-			const auto depth = assets::computeStaticDepthAttribs(entity.position.y, templateExtent, entity.scale, isGroundcover);
-			entity.anchorY = depth.anchorY;
-			entity.isTallOccluder = depth.isTallOccluder;
+			ResolvedTemplate& tmpl = templates[classFirstSlot[entity.traits.ageClass] + entity.traits.variant];
+			if (!tmpl.resolved) {
+				tmpl.id = registry.templateId(defName, entity.traits);
+				tmpl.extent = assets::meshYExtent(registry.getTemplate(tmpl.id));
+				tmpl.resolved = true;
+			}
+			entity.templateId = tmpl.id;
+			entity.anchorY = assets::computeAnchorY(entity.position.y, tmpl.extent.maxY, entity.scale);
+			entity.isTallOccluder = isTall;
 			chunkIndex.insert(entity);
 			outEntities.push_back(entity);
 		};

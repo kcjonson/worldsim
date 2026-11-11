@@ -197,17 +197,50 @@ namespace {
 
 	// --- mesh counts for inspect ---
 
-	// The mesh the game's template path draws for every instance of the def (getTemplate).
-	json templateCounts(const std::string& defName) {
-		const renderer::TessellatedMesh* mesh = AssetRegistry::Get().getTemplate(defName);
-		if (mesh == nullptr) {
-			return {{"triangles", nullptr}, {"vertices", nullptr}};
-		}
-		return {{"triangles", mesh->getTriangleCount()}, {"vertices", mesh->getVertexCount()}};
+	// Ground tiles and groundcover build their variants by seed in their own renderers; every
+	// other def draws through the registry's templates.
+	bool drawsTemplates(const AssetDefinition& def) {
+		return def.role != assets::AssetRole::Ground && def.role != assets::AssetRole::Groundcover;
 	}
 
-	// One of a def's variants at the seed its renderer builds it with: the ground tile
-	// baker's variantSeed for a ground def, the variant index for the rest (groundcover).
+	// The template the game draws for one (age class, variant) of the def, by the same key
+	// placement resolves (AssetRegistry::templateId). A simple asset is one drawing, so it
+	// lists one row.
+	json templateCounts(const AssetDefinition& def, assets::TreeTraits traits) {
+		json row{
+			{"ageClass", def.ageClasses.empty() ? json(nullptr) : json(def.ageClasses[traits.ageClass].name)},
+			{"variant", traits.variant},
+			{"seed", AssetRegistry::generationSeed(def, traits)},
+			{"triangles", nullptr},
+			{"vertices", nullptr},
+		};
+		if (const renderer::TessellatedMesh* mesh = AssetRegistry::Get().getTemplate(def.defName, traits)) {
+			row["triangles"] = mesh->getTriangleCount();
+			row["vertices"] = mesh->getVertexCount();
+		}
+		return row;
+	}
+
+	json templateTable(const AssetDefinition& def) {
+		json rows = json::array();
+		if (def.assetType == AssetType::Simple) {
+			rows.push_back(templateCounts(def, {}));
+		} else if (def.ageClasses.empty()) {
+			for (uint32_t v = 0; v < std::max<uint32_t>(def.variantCount, 1U); ++v) {
+				rows.push_back(templateCounts(def, {.ageClass = 0, .variant = static_cast<uint16_t>(v)}));
+			}
+		} else {
+			for (size_t a = 0; a < def.ageClasses.size(); ++a) {
+				for (uint16_t v = 0; v < def.ageClasses[a].variants; ++v) {
+					rows.push_back(templateCounts(def, {.ageClass = static_cast<uint8_t>(a), .variant = v}));
+				}
+			}
+		}
+		return rows;
+	}
+
+	// One of a ground or groundcover def's variants at the seed its renderer builds it with:
+	// the ground tile baker's variantSeed for a ground def, the variant index for groundcover.
 	json variantCounts(const AssetDefinition& def, uint32_t variant) {
 		const uint32_t seed = def.role == assets::AssetRole::Ground ? worldview::GroundTileBaker::variantSeed(def, variant) : variant;
 		std::vector<renderer::TessellatedMesh> meshes;
@@ -346,10 +379,11 @@ namespace {
 		out["scriptPath"] = d->scriptPath;
 		out["generatorName"] = d->generatorName;
 		out["groups"] = d->placement.groups;
-		out["mesh"] = templateCounts(*defName);
-		if (d->variantCount > 1) {
+		if (drawsTemplates(*d)) {
+			out["templates"] = templateTable(*d);
+		} else {
 			json variants = json::array();
-			for (uint32_t v = 0; v < d->variantCount; ++v) {
+			for (uint32_t v = 0; v < std::max<uint32_t>(d->variantCount, 1U); ++v) {
 				json row = variantCounts(*d, v);
 				row["variant"] = v;
 				variants.push_back(row);
@@ -381,7 +415,17 @@ namespace {
 				}
 				std::cout << "\n";
 			}
-			std::cout << "mesh:          " << countsText(out["mesh"]) << "\n";
+			if (out.contains("templates")) {
+				std::cout << "templates:\n";
+				for (const auto& row : out["templates"]) {
+					std::cout << "  ";
+					if (!row["ageClass"].is_null()) {
+						std::cout << row["ageClass"].get<std::string>() << " ";
+					}
+					std::cout << "variant " << row["variant"].get<uint32_t>() << " (seed " << row["seed"].get<uint32_t>()
+							  << "): " << countsText(row) << "\n";
+				}
+			}
 			if (out.contains("variants")) {
 				for (const auto& row : out["variants"]) {
 					std::cout << "  variant " << row["variant"].get<uint32_t>() << " (seed " << row["seed"].get<uint32_t>()

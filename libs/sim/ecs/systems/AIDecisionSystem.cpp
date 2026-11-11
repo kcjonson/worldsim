@@ -4,6 +4,7 @@
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
+#include "../StoreOrDrop.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/AgentRadius.h"
@@ -685,18 +686,12 @@ namespace ecs {
 							const assets::ItemCategory cat = itemDef->category;
 							const StoragePriority destPriority = destConfig->getPriorityFor(itemDefName, cat);
 
-							// Dest headroom for this item (stack room + free slots * stackSize) and the
-							// dest's own max clamp (don't overfill past the configured max). Computed once
-							// per item, outside the source loop.
-							const uint32_t destHeadroom = destInv->addableCount(itemDefName);
-							if (destHeadroom == 0) {
+							// What the dest box takes of this item: physical headroom clamped to its
+							// configured max (don't overfill past it). Computed once per item, outside the
+							// source loop.
+							const uint32_t destRoom = ecs::storageRoomFor(*destConfig, *destInv, itemDefName, cat);
+							if (destRoom == 0) {
 								continue; // dest box can't take any more of this item
-							}
-							const uint32_t destMax = destConfig->getMaxAmountFor(itemDefName, cat);
-							const uint32_t destHas = destInv->getQuantity(itemDefName);
-							const uint32_t maxRemaining = destMax == 0 ? UINT32_MAX : (destMax > destHas ? destMax - destHas : 0U);
-							if (maxRemaining == 0) {
-								continue; // dest already at its configured max
 							}
 							const uint32_t perTrip = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
 							if (perTrip == 0) {
@@ -733,9 +728,9 @@ namespace ecs {
 								if (drainable == 0) {
 									continue;
 								}
-								// Three clamps + one trip, min wins: don't drain source below its min,
-								// don't exceed dest headroom, don't overfill past dest max, carry one trip.
-								const uint32_t qty = std::min({drainable, destHeadroom, maxRemaining, perTrip});
+								// Clamps + one trip, min wins: don't drain source below its min, don't
+								// exceed what the dest takes, carry one trip.
+								const uint32_t qty = std::min({drainable, destRoom, perTrip});
 								if (qty == 0) {
 									continue;
 								}
@@ -2196,10 +2191,9 @@ namespace ecs {
 				LOG_INFO(Engine, "[AI] Entity %llu: chain interrupted, dropping %s (2-handed)", entityId, task.haulItemDefName.c_str());
 			}
 
-			// Drop the item
-			inventory.putDown(task.haulItemDefName);
-			if (m_onDropItem) {
-				m_onDropItem(task.haulItemDefName, position.value.x, position.value.y);
+			auto dropped = inventory.putDown(task.haulItemDefName);
+			if (dropped.has_value() && dropped->quantity > 0 && world != nullptr) {
+				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource);
 			}
 			return;
 		}

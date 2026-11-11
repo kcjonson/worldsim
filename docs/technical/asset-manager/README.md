@@ -65,7 +65,7 @@ std::vector<PreparedAsset> prepareSamples(const std::string& defName, const Rect
 
 Internally:
 
-- **Simple asset:** reuse the existing cached `getTemplate(defName)`. It already loads the SVG and normalizes to `worldHeight`. The seed is irrelevant; a simple asset is one drawing.
+- **Simple asset:** reuse the existing cached template (`getTemplate(defName, {})`; a simple asset has one whatever its traits). It already loads the SVG and normalizes to `worldHeight`. The seed is irrelevant; a simple asset is one drawing.
 - **Procedural asset:** do not use `getTemplate`. It is hard-coded to seed 42 and memoized, so it yields exactly one form. Call `generateAsset(defName, seed, out)` directly (this is what `TreeScene` does to make 40 distinct trees), then tessellate with `tessellateAsset`. Vary the seed to sample the generator's range; fix the seed for a reproducible render. Determinism is real: `generateAsset` reseeds Lua's RNG with the seed on every call, so the same seed gives byte-identical paths.
 - **Fit to frame:** procedural output is in unnormalized generator space and even the normalized templates are centered meters, with no fit helper anywhere today. Add `computeBounds(const TessellatedMesh&) -> Rect` and `fitToRect(TessellatedMesh&, srcBounds, dstRect)` to `renderer` (geometry math on a renderer type, no asset dependency). Geometry prep computes bounds, fits to the target rect in pixel space, and returns the transformed mesh.
 

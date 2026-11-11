@@ -1,4 +1,4 @@
-// Tests for AssetRegistry::getSilhouette (Story B): the per-defName selection
+// Tests for AssetRegistry::getSilhouette (Story B): the per-template selection
 // silhouette, plus the tessellator coverage-oracle cross-check that geometry
 // can't run (it can't link the renderer). The silhouette is rasterized from the
 // tessellated mesh triangles, so it must ENCLOSE the region the tessellator fills
@@ -48,11 +48,11 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 		if (def == nullptr || def->assetType != AssetType::Simple) {
 			continue;
 		}
-		const renderer::TessellatedMesh* mesh = reg.getTemplate(name);
+		const renderer::TessellatedMesh* mesh = reg.getTemplate(name, TreeTraits{});
 		if (mesh == nullptr || mesh->getTriangleCount() < 20) {
 			continue;
 		}
-		const AssetSilhouette* sil = reg.getSilhouette(name);
+		const AssetSilhouette* sil = reg.getSilhouette(name, TreeTraits{});
 		if (sil != nullptr && sil->valid && !sil->rings.empty()) {
 			chosen = name;
 			break;
@@ -60,19 +60,26 @@ TEST(AssetRegistrySilhouette, EnclosesTessellatedFill) {
 	}
 	ASSERT_FALSE(chosen.empty()) << "no Simple fill asset with a usable mesh + silhouette";
 
-	const renderer::TessellatedMesh* mesh = reg.getTemplate(chosen);
-	const AssetSilhouette*			 sil  = reg.getSilhouette(chosen);
+	const renderer::TessellatedMesh* mesh = reg.getTemplate(chosen, TreeTraits{});
+	const AssetSilhouette*			 sil  = reg.getSilhouette(chosen, TreeTraits{});
 	ASSERT_NE(mesh, nullptr);
 	ASSERT_NE(sil, nullptr);
 
-	// Every non-degenerate triangle centroid should be inside the silhouette. Allow
+	// Every non-degenerate opaque triangle centroid should be inside the silhouette. Allow
 	// a small slack for raster staircasing clipping sliver triangles at the boundary.
-	int inside = 0;
-	int total  = 0;
+	const auto faint = [&](uint16_t i) { return mesh->hasColors() && mesh->colors[i].a < AssetRegistry::kSilhouetteMinAlpha; };
+	int		   inside = 0;
+	int		   total  = 0;
 	for (std::size_t t = 0; t < mesh->getTriangleCount(); ++t) {
-		const auto& a = mesh->vertices[mesh->indices[3 * t + 0]];
-		const auto& b = mesh->vertices[mesh->indices[3 * t + 1]];
-		const auto& c = mesh->vertices[mesh->indices[3 * t + 2]];
+		const uint16_t i0 = mesh->indices[3 * t + 0];
+		const uint16_t i1 = mesh->indices[3 * t + 1];
+		const uint16_t i2 = mesh->indices[3 * t + 2];
+		if (faint(i0) && faint(i1) && faint(i2)) {
+			continue; // shadows are left out of the silhouette
+		}
+		const auto& a = mesh->vertices[i0];
+		const auto& b = mesh->vertices[i1];
+		const auto& c = mesh->vertices[i2];
 		const float area2 =
 			std::abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y));
 		if (area2 < 1e-4F) {
@@ -114,11 +121,43 @@ TEST(AssetRegistrySilhouette, StrokeOnlyGetsRealSilhouette) {
 		GTEST_SKIP() << "PlantFiber def not present";
 	}
 
-	const AssetSilhouette* sil = reg.getSilhouette("PlantFiber");
+	const AssetSilhouette* sil = reg.getSilhouette("PlantFiber", TreeTraits{});
 	ASSERT_NE(sil, nullptr);
 	EXPECT_TRUE(sil->valid);
 	EXPECT_FALSE(sil->rings.empty());
 	EXPECT_FALSE(sil->hitRegion.empty());
 
+	reg.clear();
+}
+
+// A cast shadow (under kSilhouetteMinAlpha) is drawn but is not part of the asset: it is
+// neither outlined nor clickable.
+TEST(AssetRegistrySilhouette, ShadowsAreLeftOut) {
+	const TempAssetFolder folder;
+	folder.write("Shaded/Shaded.xml", R"(<?xml version="1.0"?><AssetDefinitions><AssetDef>
+  <defName>Flora_TestShaded</defName>
+  <assetType>procedural</assetType>
+  <generator><scriptPath>gen.lua</scriptPath></generator>
+</AssetDef></AssetDefinitions>)");
+	folder.write("Shaded/gen.lua", R"(
+local function square(cx, alpha)
+  local p = Path()
+  p:addVertex(cx - 1, -1) p:addVertex(cx + 1, -1) p:addVertex(cx + 1, 1) p:addVertex(cx - 1, 1)
+  p:setColor(0.2, 0.3, 0.1, alpha)
+  asset:addPath(p)
+end
+square(5, 0.3)
+square(0, 1.0)
+)");
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+	reg.loadDefinitionsFromFolder(folder.root.string());
+
+	const AssetSilhouette* sil = reg.getSilhouette("Flora_TestShaded", TreeTraits{});
+	ASSERT_NE(sil, nullptr);
+	ASSERT_TRUE(sil->valid);
+	EXPECT_TRUE(insideAny(sil->rings, geometry::quantize({0.0F, 0.0F})));
+	EXPECT_FALSE(insideAny(sil->rings, geometry::quantize({5.0F, 0.0F})));
+	EXPECT_FALSE(insideAny(sil->hitRegion, geometry::quantize({5.0F, 0.0F})));
 	reg.clear();
 }

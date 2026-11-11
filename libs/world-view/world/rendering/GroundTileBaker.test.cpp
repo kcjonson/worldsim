@@ -15,6 +15,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/IAssetGenerator.h>
+#include <assets/VariantSeed.h>
 #include <backend/gl/GLBackend.h>
 #include <primitives/Primitives.h>
 #include <threading/TaskPool.h>

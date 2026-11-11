@@ -1,4 +1,6 @@
 # Perf capture: drives the camera through the dev server and records /api/metrics.
+# Run `node scripts/machine-load.mjs` before and after: the dev machine is shared, and a worse result
+# from a loaded machine is not a finding (docs/testing/README.md, "Performance").
 # Requires a running world-sim instance in the game scene (default port 8081), which registers the
 # camera and gpuhold controls. The dev server is in Debug and RelWithDebInfo builds; a Release build
 # has none unless configured with -DSALAL_DEV_SERVER_IN_RELEASE=ON.

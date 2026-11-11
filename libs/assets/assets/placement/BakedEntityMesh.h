@@ -6,6 +6,7 @@
 // EntityRenderer::uploadBakedChunk. Touches no GL state.
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/FloraRouting.h"
 #include "assets/placement/SpatialIndex.h"
 #include "world/chunk/ChunkCoordinate.h"
 
@@ -28,14 +29,14 @@ inline constexpr int kSubChunkTileSize = world::kChunkSize / kSubChunkGridSize;
 inline constexpr float kSubChunkWorldSize = static_cast<float>(kSubChunkTileSize) * world::kTileSize;
 inline constexpr int kSubChunkCount = kSubChunkGridSize * kSubChunkGridSize;
 
-/// Only SHORT flora (< kShortFloraMaxHeight) is baked. It can stop rendering as
-/// geometry once blades shrink below ~kImpostorCutoffPx on screen; the rasterized
-/// grass tile texture carries the appearance at that distance, keeping far-zoom
-/// triangle count independent of grass density. Tall occluders (bushes, trees,
-/// rocks) are excluded from the bake and drawn live in the Y-sorted upright stream
-/// (WorldDepthSort) so they interleave with colonists by ground-contact Y.
-inline constexpr float kShortFloraMaxHeight = 1.0F; // meters; short/tall split
-inline constexpr float kImpostorCutoffPx = 3.0F;	// on-screen height where short flora fades out
+/// Only statics of a def that routes short (FloraRouting.h) are baked. They can stop
+/// rendering as geometry once blades shrink below ~kImpostorCutoffPx on screen; the
+/// rasterized grass tile texture carries the appearance at that distance, keeping
+/// far-zoom triangle count independent of grass density. Tall occluders
+/// (PlacedEntity::isTallOccluder) are excluded from the bake and drawn live in the
+/// Y-sorted upright stream (WorldDepthSort) so they interleave with colonists by
+/// ground-contact Y.
+inline constexpr float kImpostorCutoffPx = 3.0F; // on-screen height where short flora fades out
 
 /// Per-vertex data: position (Vec2) + color (Color) = 24 bytes
 struct BakedVertex {
@@ -73,9 +74,9 @@ struct BakedChunkCPUData {
 	return def != nullptr && def->role == assets::AssetRole::Groundcover;
 }
 
-/// Resolves an asset defName to its tessellated template mesh.
-/// Must be safe to call from the thread running the bake.
-using TemplateLookup = std::function<const renderer::TessellatedMesh*(const std::string&)>;
+/// Resolves a placed entity to the template mesh it draws (its templateId), or null to
+/// leave it out of the bake. Must be safe to call from the thread running the bake.
+using TemplateLookup = std::function<const renderer::TessellatedMesh*(const assets::PlacedEntity&)>;
 
 /// Transform placed entities into world-space sub-chunk vertex arrays.
 [[nodiscard]] BakedChunkCPUData bakeChunkEntities(

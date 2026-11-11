@@ -10,6 +10,7 @@
 #include "world/camera/WorldCamera.h"
 #include "world/chunk/ChunkCoordinate.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <unordered_set>
 #include <vector>
@@ -33,11 +34,21 @@ struct VisibleBounds {
 	float minX = 0, maxX = 0, minY = 0, maxY = 0;
 };
 
+/// The least a visible rect is padded by, so an entity straddling the screen edge isn't culled.
+inline constexpr float kMinCullMarginMeters = 2.0F;
+
+/// The padding for culling entities by their origin: the farthest any non-groundcover template
+/// draws from its origin (AssetRegistry::maxReachMeters), never under kMinCullMarginMeters.
+/// Without the reach, a wide crown whose origin is outside the view is dropped while on screen.
+[[nodiscard]] inline float entityCullMarginMeters(float maxReachMeters) {
+	return std::max(maxReachMeters, kMinCullMarginMeters);
+}
+
 /// Compute the visible world rect from camera + viewport, padded by `margin`
 /// meters so entities straddling the screen edge aren't culled. Identical math
 /// across all render paths (was copy-pasted; now one source of truth).
 [[nodiscard]] inline VisibleBounds
-computeVisibleBounds(const world::WorldCamera& camera, int vpW, int vpH, float pixelsPerMeter, float margin = 2.0F) {
+computeVisibleBounds(const world::WorldCamera& camera, int vpW, int vpH, float pixelsPerMeter, float margin = kMinCullMarginMeters) {
 	const float camX = camera.position().x;
 	const float camY = camera.position().y;
 	const float scale = pixelsPerMeter * camera.zoom();

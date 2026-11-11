@@ -7,6 +7,7 @@
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <assets/GroundLayer.h>
+#include <assets/VariantSeed.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <resources/RenderTarget.h>
@@ -137,15 +138,7 @@ namespace worldview {
 		: args(newArgs) {}
 
 	uint32_t GroundTileBaker::variantSeed(const assets::AssetDefinition& def, uint32_t variant) {
-		if (def.assetType == assets::AssetType::Simple) {
-			return variant;
-		}
-		uint32_t h = 2166136261U; // FNV-1a over the group
-		for (const char c : def.ground.seedGroup) {
-			h ^= static_cast<uint8_t>(c);
-			h *= 16777619U;
-		}
-		return mix32(h ^ ((variant + 1U) * 0x9E3779B9U));
+		return def.assetType == assets::AssetType::Simple ? variant : assets::variantSeed(def.ground.seedGroup, variant);
 	}
 
 	int GroundTileBaker::layerSize(const assets::AssetDefinition& def) {

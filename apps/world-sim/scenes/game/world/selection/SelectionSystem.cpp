@@ -3,6 +3,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <boolean/RingBoolean.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/OpeningGeometry.h>
 #include <core/Vec2i64.h>
@@ -11,6 +12,7 @@
 #include <ecs/components/FacingDirection.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <offset/WallOffset.h>
@@ -19,6 +21,8 @@
 #include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/rendering/PackagedLayout.h> // shared crate+item placement (no drift)
+#include <world/rendering/PileLayout.h>	   // shared loose-pile placement (no drift)
+#include <world/rendering/TemplateBounds.h>
 
 #include <algorithm>
 #include <cmath>
@@ -90,7 +94,7 @@ namespace {
 	// silhouette-less asset stays selectable. Reused for world entities and for each
 	// packaged crate/item sub-entity (both are drawn as position-as-origin instances).
 	bool placedUnderClick(const assets::PlacedEntity& pe, glm::vec2 worldPos, float fallbackRadius) {
-		const auto* sil = assets::AssetRegistry::Get().getSilhouette(pe.defName);
+		const auto* sil = assets::AssetRegistry::Get().getSilhouette(pe.templateId);
 		if (sil == nullptr || !sil->valid) {
 			const float dx = pe.position.x - worldPos.x;
 			const float dy = pe.position.y - worldPos.y;
@@ -105,28 +109,53 @@ namespace {
 	// centroid pre-cull) when the def has no cached silhouette so silhouette-less types
 	// stay selectable.
 	bool dynamicUnderClick(
-		ecs::World* world, ecs::EntityID entity, const std::string& baseDefName, float scale, glm::vec2 entityPos, glm::vec2 worldPos
+		ecs::World* world, ecs::EntityID entity, const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos
 	) {
-		const std::string defName = dynamicRenderDefName(world, entity, baseDefName);
-		const auto*		  sil = assets::AssetRegistry::Get().getSilhouette(defName);
+		const std::string defName = dynamicRenderDefName(world, entity, appearance.defName);
+		const auto*		  sil = assets::AssetRegistry::Get().getSilhouette(defName, appearance.traits);
 		if (sil == nullptr || !sil->valid) {
 			return true;
 		}
-		return silhouetteRingsContain(*sil, worldview::dynamicInstanceTransform(entityPos, scale, sil->boundsCenterMeters), worldPos);
+		return silhouetteRingsContain(
+			*sil, worldview::dynamicInstanceTransform(entityPos, appearance.scale, sil->boundsCenterMeters), worldPos
+		);
 	}
 
-	// True if the click is under a packaged item's drawn sprite: the crate behind or the
-	// shrunk item in front, laid out and transformed exactly as the render path via
-	// packagedLayout + the per-sub-entity position-as-origin transform.
-	bool packagedUnderClick(const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos, float fallbackRadius) {
-		float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
-		if (const auto* itemDef = assets::AssetRegistry::Get().getDefinition(appearance.defName)) {
-			itemWorldHeight = itemDef->worldHeight;
-		}
-		const worldview::PackagedLayout pl = worldview::packagedLayout(
-			entityPos, appearance.defName, appearance.scale, appearance.colorTint, itemWorldHeight
+	// The sprites packaged furniture draws (back crate, item, front crate), laid out exactly as
+	// DynamicEntityRenderSystem lays them (shared packagedLayout).
+	worldview::PackagedLayout packagedLayoutFor(const ecs::Appearance& appearance, glm::vec2 entityPos) {
+		auto& registry = assets::AssetRegistry::Get();
+		return worldview::packagedLayout(
+			entityPos,
+			appearance.defName,
+			appearance.scale,
+			appearance.colorTint,
+			worldview::templateBounds(registry.getTemplate(appearance.defName, {}))
 		);
-		return placedUnderClick(pl.crate, worldPos, fallbackRadius) || placedUnderClick(pl.item, worldPos, fallbackRadius);
+	}
+
+	// True if the click is under any sprite of a packaged item: the crate layers or the item.
+	bool packagedUnderClick(const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos, float fallbackRadius) {
+		const worldview::PackagedLayout pl = packagedLayoutFor(appearance, entityPos);
+		return placedUnderClick(pl.crateBack, worldPos, fallbackRadius) || placedUnderClick(pl.item, worldPos, fallbackRadius)
+			   || placedUnderClick(pl.crateFront, worldPos, fallbackRadius);
+	}
+
+	// The sprites a loose pile draws, laid out exactly as DynamicEntityRenderSystem lays them
+	// (shared pileLayout).
+	worldview::PileLayout pileLayoutFor(const ecs::Appearance& appearance, std::uint32_t quantity, glm::vec2 entityPos) {
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t templateId = registry.templateId(appearance.defName, appearance.traits);
+		return worldview::pileLayout(
+			entityPos,
+			appearance.defName,
+			templateId,
+			appearance.scale,
+			appearance.colorTint,
+			worldview::templateBounds(registry.getTemplate(templateId)),
+			worldview::pileItem(registry.getDefinition(appearance.defName)),
+			quantity
+		);
 	}
 
 	// Stable identity for a candidate: (variant type index, structure/entity id). Lets
@@ -145,6 +174,8 @@ namespace {
 				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 					return {type, static_cast<std::uint64_t>(s.entityId)};
 				} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
+					return {type, static_cast<std::uint64_t>(s.entityId)};
+				} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
 					return {type, static_cast<std::uint64_t>(s.entityId)};
 				} else if constexpr (std::is_same_v<T, OpeningSelection>) {
 					return {type, static_cast<std::uint64_t>(s.id)};
@@ -196,7 +227,51 @@ namespace {
 			out.push_back(std::move(worldRing));
 		}
 	}
+
+	// The same mapping into world millimeters, for a composite outline's union.
+	void appendWorldRingsMm(
+		const std::vector<geometry::Ring>& rings, const worldview::AssetInstanceTransform& t, std::vector<geometry::Ring>& out
+	) {
+		for (const auto& ring : rings) {
+			if (ring.size() < 3) {
+				continue;
+			}
+			geometry::Ring worldRing;
+			worldRing.reserve(ring.size());
+			for (const geometry::Vec2i64& mm : ring) {
+				const Foundation::Vec2 dq = geometry::dequantize(mm);
+				const glm::vec2		   w = t.toWorld({dq.x, dq.y});
+				worldRing.push_back(geometry::quantize(Foundation::Vec2{w.x, w.y}));
+			}
+			out.push_back(std::move(worldRing));
+		}
+	}
 } // namespace
+
+const std::vector<geometry::Ring>& SelectionSystem::unionCompositeRings(std::vector<geometry::Ring> worldRingsMm) const {
+	if (worldRingsMm == compositeOutlineInput) {
+		return compositeOutlineRings;
+	}
+	compositeOutlineInput = worldRingsMm;
+
+	bool merged = true;
+	while (merged) {
+		merged = false;
+		for (std::size_t i = 0; i < worldRingsMm.size() && !merged; ++i) {
+			for (std::size_t j = i + 1; j < worldRingsMm.size(); ++j) {
+				geometry::BooleanResult u = geometry::unionRings(worldRingsMm[i], worldRingsMm[j]);
+				if (u.ok()) {
+					worldRingsMm[i] = std::move(u.ring);
+					worldRingsMm.erase(worldRingsMm.begin() + static_cast<std::ptrdiff_t>(j));
+					merged = true;
+					break;
+				}
+			}
+		}
+	}
+	compositeOutlineRings = std::move(worldRingsMm);
+	return compositeOutlineRings;
+}
 
 SelectionSystem::SelectionSystem(const Args& args)
 	: ecsWorld(args.world)
@@ -227,7 +302,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		const auto* appearance = ecsWorld->getComponent<ecs::Appearance>(entity);
 		const bool	under = (appearance == nullptr)
 							 ? true
-							 : dynamicUnderClick(ecsWorld, entity, appearance->defName, appearance->scale, pos.value, worldPos);
+							 : dynamicUnderClick(ecsWorld, entity, *appearance, pos.value, worldPos);
 		if (!under) {
 			continue;
 		}
@@ -252,7 +327,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		if (dist >= closestStationDist) {
 			continue;
 		}
-		if (!dynamicUnderClick(ecsWorld, entity, appearance.defName, appearance.scale, pos.value, worldPos)) {
+		if (!dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos)) {
 			continue;
 		}
 		closestStationDist = dist;
@@ -270,7 +345,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	}
 
 	// Priority 1.6: Check ECS storage containers (entities with Inventory but no
-	// WorkQueue). Packaged ones test the crate + item sprite; placed ones test their own
+	// WorkQueue). Packaged ones test the crate layers + item; placed ones test their own
 	// silhouette. Centroid pre-cull first, same as the other dynamic types.
 	float		  closestStorageDist = kSelectionRadius;
 	ecs::EntityID closestStorage = 0;
@@ -295,7 +370,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		const bool packaged = ecsWorld->getComponent<ecs::Packaged>(entity) != nullptr;
 		const bool under = packaged
 							 ? packagedUnderClick(appearance, pos.value, worldPos, kSelectionRadius)
-							 : dynamicUnderClick(ecsWorld, entity, appearance.defName, appearance.scale, pos.value, worldPos);
+							 : dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos);
 		if (!under) {
 			continue;
 		}
@@ -314,16 +389,60 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		}
 	}
 
+	// Priority 1.8: Loose ground piles (ResourceStack). Same centroid pre-cull, then the
+	// silhouette of every sprite the pile draws. A single log or tool is a small target, so a
+	// click within kPilePickSlop of the pile center also hits (like kWallPickSlopMm for thin
+	// walls), but only when no pile's sprites contain the click, so slop around a small pile
+	// never steals a click on a big neighbour's sprite. Nearest pile wins within each kind.
+	float		  closestHitDist = kSelectionRadius;
+	ecs::EntityID closestHit = 0;
+	float		  closestSlopDist = kPilePickSlop;
+	ecs::EntityID closestSlop = 0;
+
+	for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
+		const float dx = pos.value.x - worldPos.x;
+		const float dy = pos.value.y - worldPos.y;
+		const float dist = std::sqrt(dx * dx + dy * dy);
+		if (dist < closestSlopDist) {
+			closestSlopDist = dist;
+			closestSlop = entity;
+		}
+		if (dist >= closestHitDist) {
+			continue;
+		}
+		const worldview::PileLayout pile = pileLayoutFor(appearance, stack.quantity, pos.value);
+		bool						under = false;
+		for (std::size_t i = 0; i < pile.count && !under; ++i) {
+			under = placedUnderClick(pile.sprites[i], worldPos, kPilePickSlop);
+		}
+		if (under) {
+			closestHitDist = dist;
+			closestHit = entity;
+		}
+	}
+
+	if (const ecs::EntityID closestPile = closestHit != 0 ? closestHit : closestSlop; closestPile != 0) {
+		auto* pos = ecsWorld->getComponent<ecs::Position>(closestPile);
+		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestPile);
+		if (pos != nullptr && appearance != nullptr) {
+			candidates.emplace_back(
+				ResourcePileSelection{closestPile, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}}
+			);
+		}
+	}
+
 	// Priority 2: Check world entities (static placed assets). Broad-phase the click
 	// chunk plus its 8 neighbors (a large canopy can sit far from its trunk anchor, or
-	// straddle a chunk edge), each queried at the widened kWorldEntitySelectRadius; the
-	// precise silhouette test then filters the false positives. Every containing entity
+	// straddle a chunk edge), each queried out to the farthest any template reaches from
+	// its origin (never under the centroid fallback radius); the precise silhouette test
+	// then filters the false positives. Every containing entity
 	// is pushed as its own candidate, ordered topmost-first (largest anchorY draws
 	// frontmost) so a same-spot click cycles front to back through the stack.
 	if (placementExecutor != nullptr) {
 		auto&						   assetRegistry = assets::AssetRegistry::Get();
 		const world::ChunkCoordinate cc =
 			world::worldToChunk(world::WorldPosition{worldPos.x, worldPos.y});
+		const float queryRadius = std::max(assetRegistry.maxReachMeters(), kSelectionRadius);
 
 		std::vector<const assets::PlacedEntity*> hits;
 		for (int dyC = -1; dyC <= 1; ++dyC) {
@@ -332,7 +451,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 				if (spatialIndex == nullptr) {
 					continue;
 				}
-				for (const auto* placedEntity : spatialIndex->queryRadius({worldPos.x, worldPos.y}, kWorldEntitySelectRadius)) {
+				for (const auto* placedEntity : spatialIndex->queryRadius({worldPos.x, worldPos.y}, queryRadius)) {
 					// Only select entities with capabilities (not grass/decorative)
 					const auto* def = assetRegistry.getDefinition(placedEntity->defName);
 					if (def == nullptr || !def->capabilities.hasAny()) {
@@ -618,7 +737,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 	}
 
 	// Entity-backed selections (world entities, colonists, stations, furniture,
-	// packaged items) no longer draw here: their outlines are built by
+	// packaged items, loose piles) no longer draw here: their outlines are built by
 	// buildEntityOutline and injected into the entity depth-sort render pass so a
 	// nearer entity correctly occludes a farther selection's outline.
 }
@@ -636,6 +755,8 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 	// outline injects at the exact depth the entity draws; the silhouette-vertex maxY is only
 	// a fallback (raster maxY can differ slightly from the template's).
 	float canonicalAnchorY = kNoY;
+	// Composite selections (packaged furniture, piles) collect world-mm rings here to union.
+	std::vector<geometry::Ring> compositeMm;
 
 	// World entities: re-resolve the live PlacedEntity by defName + position and
 	// build its silhouette at the static/baked transform. A felled or unloaded
@@ -646,13 +767,36 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			return outline;
 		}
 		canonicalAnchorY = pe->anchorY; // exact placement depth key, not the raster maxY
-		const auto* sil = assetRegistry.getSilhouette(pe->defName);
+		const auto* sil = assetRegistry.getSilhouette(pe->templateId);
 		if (sil == nullptr || !sil->valid) {
 			return outline;
 		}
 		appendWorldRings(
 			sil->rings, worldview::staticInstanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
 		);
+	} else if (const auto* pileSel = std::get_if<ResourcePileSelection>(&selection)) {
+		// Loose pile: every sprite of the shared pile layout at its position-as-origin
+		// transform, unioned into one outline around the heap as drawn. A drained (destroyed)
+		// pile -> invalid outline.
+		if (!ecsWorld->isAlive(pileSel->entityId)) {
+			return outline;
+		}
+		const auto* pos = ecsWorld->getComponent<ecs::Position>(pileSel->entityId);
+		const auto* appearance = ecsWorld->getComponent<ecs::Appearance>(pileSel->entityId);
+		const auto* stack = ecsWorld->getComponent<ecs::ResourceStack>(pileSel->entityId);
+		if (pos == nullptr || appearance == nullptr || stack == nullptr) {
+			return outline;
+		}
+		const worldview::PileLayout pile = pileLayoutFor(*appearance, stack->quantity, pos->value);
+		const auto*					sil = assetRegistry.getSilhouette(pile.sprites[0].templateId);
+		if (sil == nullptr || !sil->valid) {
+			return outline;
+		}
+		for (std::size_t i = 0; i < pile.count; ++i) {
+			const assets::PlacedEntity& sprite = pile.sprites[i];
+			appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sprite.position, sprite.rotation, sprite.scale), compositeMm);
+		}
+		canonicalAnchorY = pile.sprites[pile.count - 1].anchorY; // the front-most sprite's key
 	} else {
 		// Colonists, crafting stations, and placed furniture all resolve from the ECS.
 		ecs::EntityID entityId = 0;
@@ -675,30 +819,24 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			return outline;
 		}
 
-		// Packaged furniture: crate + item at their layout transforms (both drawn as
+		// Packaged furniture: crate layers + item at their layout transforms (drawn as
 		// position-as-origin instances, matching the render path; sub-entities are NOT
-		// re-centered).
+		// re-centered), unioned into one outline. With the item inside the crate that is the
+		// crate's silhouette.
 		if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
-			float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
-			if (const auto* itemDef = assetRegistry.getDefinition(appearance->defName)) {
-				itemWorldHeight = itemDef->worldHeight;
-			}
-			const worldview::PackagedLayout pl = worldview::packagedLayout(
-				pos->value, appearance->defName, appearance->scale, appearance->colorTint, itemWorldHeight
-			);
-			for (const assets::PlacedEntity* sub : {&pl.crate, &pl.item}) {
-				const auto* sil = assetRegistry.getSilhouette(sub->defName);
+			const worldview::PackagedLayout pl = packagedLayoutFor(*appearance, pos->value);
+			for (const assets::PlacedEntity* sub : {&pl.crateBack, &pl.item, &pl.crateFront}) {
+				const auto* sil = assetRegistry.getSilhouette(sub->templateId);
 				if (sil != nullptr && sil->valid) {
-					appendWorldRings(
-						sil->rings, worldview::staticInstanceTransform(sub->position, sub->rotation, sub->scale), outline.worldRings, maxY
-					);
+					appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sub->position, sub->rotation, sub->scale), compositeMm);
 				}
 			}
+			canonicalAnchorY = pl.crateFront.anchorY;
 		} else {
 			// Non-packaged dynamic entity: the facing sprite's silhouette at the dynamic
 			// (bbox-centered) transform.
 			const std::string defName = dynamicRenderDefName(ecsWorld, entityId, appearance->defName);
-			const auto*		  sil = assetRegistry.getSilhouette(defName);
+			const auto*		  sil = assetRegistry.getSilhouette(defName, appearance->traits);
 			if (sil == nullptr || !sil->valid) {
 				return outline;
 			}
@@ -708,10 +846,24 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		}
 	}
 
+	if (!compositeMm.empty()) {
+		for (const geometry::Ring& ring : unionCompositeRings(std::move(compositeMm))) {
+			std::vector<Foundation::Vec2> worldRing;
+			worldRing.reserve(ring.size());
+			for (const geometry::Vec2i64& mm : ring) {
+				const Foundation::Vec2 w = geometry::dequantize(mm);
+				worldRing.push_back(w);
+				maxY = std::max(maxY, w.y);
+			}
+			outline.worldRings.push_back(std::move(worldRing));
+		}
+	}
+
 	outline.valid = !outline.worldRings.empty();
 	if (outline.valid) {
-		// Canonical placement anchorY when we have it (world entities), else the silhouette
-		// ground-contact (dynamic entities, whose sprite bottom == the silhouette bottom).
+		// Canonical sprite anchorY when we have it (world entities, piles, packaged crates; a
+		// unioned ring's maxY can land under the sprite's key), else the silhouette ground-contact
+		// (dynamic entities, whose sprite bottom == the silhouette bottom).
 		outline.anchorY = (canonicalAnchorY != kNoY) ? canonicalAnchorY : maxY;
 		outline.rgba	= {1.0F, 0.85F, 0.0F, 0.9F};
 		outline.widthPx = kOutlineWidthPx;
@@ -735,7 +887,7 @@ const assets::PlacedEntity* SelectionSystem::resolveWorldEntity(const WorldEntit
 			if (spatialIndex == nullptr) {
 				continue;
 			}
-			for (const auto* pe : spatialIndex->queryRadius({sel.position.x, sel.position.y}, kWorldEntitySelectRadius)) {
+			for (const auto* pe : spatialIndex->queryRadius({sel.position.x, sel.position.y}, kMatchTolMeters)) {
 				if (pe->defName != sel.defName) {
 					continue;
 				}

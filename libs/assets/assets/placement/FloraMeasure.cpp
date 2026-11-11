@@ -164,7 +164,8 @@ namespace assets {
 		const FloraRect&									   rect,
 		const std::vector<FloraRect>&						   loadedAreas,
 		const std::vector<const PlacedEntity*>&				   entities,
-		const std::unordered_map<std::string, FloraDefTraits>& traits
+		const std::unordered_map<std::string, FloraDefTraits>& traits,
+		const CrownLookup&									   crowns
 	) {
 		if (!floraRectWithinLimits(rect)) {
 			return {};
@@ -211,14 +212,15 @@ namespace assets {
 				}
 			}
 
-			if (!isTree || def->rings == nullptr) {
+			const std::vector<geometry::Ring>* crown = isTree ? crowns(*entity) : nullptr;
+			if (crown == nullptr) {
 				continue;
 			}
 			// world = R(rotation) * (local * scale) + position, the static instance transform
 			const double c = std::cos(entity->rotation);
 			const double s = std::sin(entity->rotation);
 			const double k = entity->scale * kMillimetersToMeters;
-			for (const geometry::Ring& ring : *def->rings) {
+			for (const geometry::Ring& ring : *crown) {
 				worldRing.clear();
 				for (const auto& p : ring) {
 					const double lx = static_cast<double>(p.x) * k;

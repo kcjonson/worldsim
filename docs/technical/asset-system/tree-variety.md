@@ -112,14 +112,14 @@ Sim and tools:
 
 - `getTemplate(defName, traits)`; the cache key is (def, age class, variant). The fixed seed 42 is deleted; a def with one variant generates with seed 0.
 - Callers that take the traits: `TemplateMeshCache`, `InstancedEntityRenderer` (mesh handles and run key), `bakeChunkEntities`, the depth attributes at placement, `getSilhouette` (hit test and selection outline), and `DynamicEntityRenderSystem`. `GhostRenderer` previews placement defs only and passes default traits.
-- Tree variants are generated before the first chunk needs them. That is new: add a prewarm for defs with `<ageClasses>`, run in parallel per variant the way the ground tile baker does, with generation and tessellation outside the registry mutex. Report the load-time delta. If it is more than the player would notice, reuse the ground tile disk cache's keying to store tessellated variants; that would also deliver the planned Variant Cache System.
+- Tree variants are generated before the first chunk needs them. That is new: add a prewarm for defs with `<ageClasses>`, run in parallel per variant the way the ground tile baker does, with generation and tessellation outside the registry mutex. Report the load-time delta. If it is more than the player would notice, reuse the ground tile disk cache's keying to store tessellated variants; that would also deliver the planned Variant Cache System. Built: oak's and maple's 32 variants prewarm in about 11 ms, and the whole library load went from about 145 ms to 160 ms (asset-cli, RelWithDebInfo), so there is no disk cache. Defs without age classes (pine, palm) still build their variants lazily.
 - A variant over 65,535 vertices is a load error naming the def, age class, and variant, never a missing tree.
 - Instance capacity per mesh handle is sized to what a variant can plausibly show (start at 4,096 and grow), not 50,000.
 - Tall or short routing (`kShortFloraMaxHeight`) is decided per def from its mature variant 0 (D9), at both sites that decide it today.
-- The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort.
+- The depth key for a def with a collision rect is the rect's lower edge, the trunk foot, which `world-depth-sorting.md` already allows. Otherwise R7's shadow, flare, and tufts would move every tree forward in the sort. Not built with R3: today's oak and maple draw their trunk foot up to 1.1 m south of the rect, so this waits for R5's generator.
 - The silhouette skips triangles under 0.5 alpha, so shadows are not part of the outline or the hit area.
-- The gather margin and the selection broad phase use the registry's largest tall-entity extent, not 2 m and 8 m. Without this, R9's trees pop in at the screen edges.
-- Asset-manager detail view shows one row per age class, using the same (age class, variant) keys the game uses and one scale across the rows, so a sapling looks small beside a veteran.
+- The gather margin and the selection broad phase use the registry's largest template extent, not 2 m and 8 m. Without this, R9's trees pop in at the screen edges. As built, both use the largest extent of any template but groundcover (`maxReachMeters`), since short selectables such as bushes must stay clickable, and short sprites drawn, where no tree is loaded. The gather states its floor once, `entityCullMarginMeters` in `RenderContext.h`: the reach, never under the 2 m it had before.
+- Asset-manager detail view shows one row per age class, using the same (age class, variant) keys the game uses and one scale across the rows, so a sapling looks small beside a veteran. Not built with R3; its own task.
 
 ### R4 Collision per age class
 
@@ -273,9 +273,20 @@ No tool reports trees per area, canopy cover, or wood per area, and R9 and the y
 
 Trees draw in the depth-sorted stream, and a run breaks whenever the mesh changes. Today two species interleave; after this, up to 16 meshes per species do, so draw calls for visible trees rise toward one per tree.
 
+- The timed steps below were this epic's plan, written before 2026-11-10. Timed runs now follow the [testing README](../../testing/README.md#performance): scoped, after a machine-load check, a worse result unconfirmed unless the machine was idle, and no baselines with any activity on it. The noise-floor baseline below is the nightly batch's.
 - Baseline main twice with `scripts/perf-capture.ps1` for the noise floor, plus a forest view at the quickstart landing at zoom 1 and at 0.25, the furthest zoom (trees draw at every zoom). Record frame time, draw calls, and triangles, with trees counted apart (R11).
 - A/B R3 alone (variants wired, old generator) against that baseline. This isolates the draw-call cost from the new art's triangle cost.
 - Gate: no regression beyond noise in any cell. If R3 fails the gate, pack a def's variants into one vertex and index buffer and draw each by index range, so the run key goes back to the def. salal's backend already takes an index range for instanced draws; `drawInstanced` needs only to expose it. A def's variants must then fit 65,535 vertices together. Taken only on a measured failure.
+- Measured with R3 built (RelWithDebInfo, 3072x1728, landing forest at world 5,4, GPU held, read from `/api/metrics` and `/api/state?what=uprights`): GPU time tracked upright draws, about 5 microseconds each on main and on the branch alike. Forcing every tree to its def's mature variant 0 put zoom 1.5 back at 1,003 draws and 5.3 to 5.9 ms (main: 911 and 4.9 to 5.4), so the cost was the runs breaking between variants; the per-def tall routing added the other 10%. Restoring 50,000-instance buffers changed nothing on the GPU. The fix kept the variants and changed the run rule instead (`world-depth-sorting.md`, "Submit in order"): an entity joins its template's latest open run unless something in a later run may overlap it, so only overlapping pairs keep the painter's order. No salal change was needed.
+
+| Zoom | GPU ms main | before fix | after fix | Upright draws main | before | after |
+|---|---|---|---|---|---|---|
+| 8 | 1.3 to 1.9 | | 1.3 to 1.8 | 40 | | 44 to 49 |
+| 3 | 2.1 to 2.6 | | 1.8 to 2.5 | 229 | | 162 to 165 |
+| 1.5 | 4.9 to 5.4 | 8.6 to 9.5 | 2.7 to 3.2 | 911 | 1,709 | 471 to 473 |
+| 0.75 | 18.0 to 18.7 | 32.8 to 34.0 | 8.3 | 3,310 | 6,398 | 1,457 |
+| 0.25 | 117 | | 45 | 23,700 | | 9,220 |
+
 - If far zoom fails on triangles, gate the leaf flecks and caps with `path:setLod` and build the tree template per zoom band, which the registry already supports for ground tiles.
 - R9 cuts tree count about in half and raises covered pixels from 13.3% (measured, R11) to 35% of a forest view, each crown several layers deep. A/B the rescale on its own (old generator, new sizes and spacing): draw calls should fall, fill cost may rise. If fill fails the gate, the first lever is fewer full-size layers per cluster.
 - R10: measure a forest view with 20 colonists standing under crowns against the same view with none.

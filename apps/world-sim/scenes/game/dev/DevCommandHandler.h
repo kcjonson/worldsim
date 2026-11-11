@@ -72,6 +72,8 @@ namespace world_sim {
 		double landingLonDeg = 0.0;
 
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
+		// GameScene::dropResourcePiles: the one loose-ground drop path (merge, then stack-capped piles).
+		std::function<void(const std::string& defName, float x, float y, uint32_t quantity)> dropLoose;
 	};
 
 	/// The dev verbs and world-state views. Read+write surface for /api/dev/<verb> and

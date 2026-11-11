@@ -2,6 +2,7 @@
 
 #include "../../GoalTaskRegistry.h"
 #include "../../InventoryMass.h"
+#include "../../StoreOrDrop.h"
 #include "../../World.h"
 #include "../../components/Action.h"
 #include "../../components/Appearance.h"
@@ -626,39 +627,15 @@ namespace ecs {
 			if (added == quantity) {
 				LOG_DEBUG(Engine, "[Action] Stowed %u x %s from %s hand to backpack", quantity, itemName.c_str(), handName);
 			} else {
-				// Backpack full - drop what couldn't fit
-				uint32_t toDrop = quantity - added;
-				if (m_onDropItem) {
-					for (uint32_t i = 0; i < toDrop; ++i) {
-						m_onDropItem(itemName, dropPosition.x, dropPosition.y);
-					}
-					LOG_DEBUG(Engine, "[Action] Dropped %u x %s from %s hand (backpack full)", toDrop, itemName.c_str(), handName);
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] Cannot drop %u x %s from %s hand - drop callback not configured (items lost)",
-						toDrop,
-						itemName.c_str(),
-						handName
-					);
-				}
+				// Backpack full - put away or drop what couldn't fit
+				const uint32_t toDispose = quantity - added;
+				ecs::storeOrDrop(*world, itemName, toDispose, dropPosition, m_onDropResource);
+				LOG_DEBUG(Engine, "[Action] Got rid of %u x %s from %s hand (backpack full)", toDispose, itemName.c_str(), handName);
 			}
 		} else {
-			// 2-handed item in hand - must drop
-			if (m_onDropItem) {
-				for (uint32_t i = 0; i < quantity; ++i) {
-					m_onDropItem(itemName, dropPosition.x, dropPosition.y);
-				}
-				LOG_DEBUG(Engine, "[Action] Dropped %u x %s from %s hand (2-handed item)", quantity, itemName.c_str(), handName);
-			} else {
-				LOG_WARNING(
-					Engine,
-					"[Action] Cannot drop %u x %s from %s hand - drop callback not configured (items lost)",
-					quantity,
-					itemName.c_str(),
-					handName
-				);
-			}
+			// 2-handed item in hand - can't be packed, so put away or drop
+			ecs::storeOrDrop(*world, itemName, quantity, dropPosition, m_onDropResource);
+			LOG_DEBUG(Engine, "[Action] Got rid of %u x %s from %s hand (2-handed item)", quantity, itemName.c_str(), handName);
 		}
 
 		handSlot.reset();
@@ -666,44 +643,27 @@ namespace ecs {
 
 	void ActionSystem::stowHeldToolsForArmful(Inventory& inventory, glm::vec2 dropPosition) {
 		// A held one-hand tool blocks a two-hand armful (both hands needed). Move it out of the way
-		// (belt -> pack -> drop). The drop is per-unit loose items, matching clearHandItem's one-hand
-		// drop; a tool is quantity 1, so this is a single dropped axe at the colonist's feet.
+		// (belt -> pack -> storage within reach -> drop). A tool is quantity 1, so a drop is a
+		// single loose axe at the colonist's feet.
 		ecs::stowHeldOneHandItemsToFreeHands(
 			inventory,
 			assets::AssetRegistry::Get(),
 			[this, dropPosition](const std::string& defName, uint32_t count) {
-				if (m_onDropItem) {
-					for (uint32_t i = 0; i < count; ++i) {
-						m_onDropItem(defName, dropPosition.x, dropPosition.y);
-					}
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] Cannot drop %u x %s freeing hands for armful - drop callback not configured (lost)",
-						count,
-						defName.c_str()
-					);
-				}
+				ecs::storeOrDrop(*world, defName, count, dropPosition, m_onDropResource);
 			}
 		);
 	}
 
 	void ActionSystem::clearHandsForTwoHandedPickup(Inventory& inventory, glm::vec2 dropPosition) {
 		// A two-hand armful mirrors one stack across both hands; clearing each hand
-		// independently would drop it twice. Handle the mirror once: drop the whole
-		// armful as a single loose pile (haulable, not per-unit packaged), free both hands.
+		// independently would get rid of it twice. Handle the mirror once: put the whole
+		// armful away (or drop it as one loose pile), free both hands.
 		if (inventory.leftHand.has_value() && inventory.rightHand.has_value()
 			&& inventory.leftHand->defName == inventory.rightHand->defName
 			&& ecs::itemIsTwoHand(assets::AssetRegistry::Get(), inventory.leftHand->defName)) {
 			const std::string defName  = inventory.leftHand->defName;
 			const uint32_t	  quantity = inventory.leftHand->quantity;
-			if (m_onDropResource) {
-				m_onDropResource(defName, dropPosition.x, dropPosition.y, quantity);
-			} else if (m_onDropItem) {
-				for (uint32_t i = 0; i < quantity; ++i) {
-					m_onDropItem(defName, dropPosition.x, dropPosition.y);
-				}
-			}
+			ecs::storeOrDrop(*world, defName, quantity, dropPosition, m_onDropResource);
 			inventory.leftHand.reset();
 			inventory.rightHand.reset();
 			return;

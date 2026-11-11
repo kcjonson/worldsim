@@ -13,7 +13,6 @@
 // stay an unsorted background below this stream. GL_DEPTH_TEST stays disabled;
 // this is a pure CPU painter's sort.
 
-#include "assets/placement/BakedEntityMesh.h" // kShortFloraMaxHeight (short/tall split)
 #include "assets/placement/SpatialIndex.h"
 
 #include <vector>
@@ -46,23 +45,6 @@ namespace assets {
 		float maxY = 0.0F;
 	};
 	[[nodiscard]] MeshYExtent meshYExtent(const renderer::TessellatedMesh* mesh);
-
-	// Placement-time 2.5D depth attributes for one static occluder. Computed once
-	// per placed static (PlacementExecutor) and stored on its PlacedEntity, so the
-	// per-frame gather never re-derives them. worldHeight (== (maxY-minY)*scale) and
-	// the >= kShortFloraMaxHeight threshold are bit-identical to the bake's short/
-	// tall split (BakedEntityMesh), so a static lands on the same side of the
-	// partition whether classified here or baked. Groundcover is never tall (it
-	// renders on the instanced path).
-	struct StaticDepthAttribs {
-		float anchorY = 0.0F;
-		bool  isTallOccluder = false;
-	};
-	[[nodiscard]] inline StaticDepthAttribs
-	computeStaticDepthAttribs(float originWorldY, MeshYExtent ext, float scale, bool isGroundcover) {
-		const float worldHeight = (ext.maxY - ext.minY) * scale;
-		return {computeAnchorY(originWorldY, ext.maxY, scale), worldHeight >= kShortFloraMaxHeight && !isGroundcover};
-	}
 
 	// One sortable reference into the merged upright-occluder + actor stream.
 	struct DepthSortItem {

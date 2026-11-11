@@ -42,6 +42,9 @@ class LuaGenerator : public IAssetGenerator {
 	/// Get the generator name (script filename without extension)
 	const char* getName() const override { return m_name.c_str(); }
 
+	/// The script error behind the last failed generate, empty before one
+	const std::string& lastError() const { return m_engine.getLastError(); }
+
 	/// Get the full script path
 	const std::string& getScriptPath() const { return m_scriptPath; }
 
