@@ -590,11 +590,22 @@ TEST(PlacementExecutorTests, CrownSpacedTreesKeepTheirCrownsApart) {
 		return 0.5F * (maxX - minX);
 	};
 	const float k = registry.getDefinition("Flora_TreeOak")->placement.crownSpacing * (1.0F - world::grove::kThicketTighten);
+	const auto trunkOf = [&](const PlacedEntity& e) {
+		return registry.getDefinition(e.defName)->collisionFor(e.traits.ageClass).halfExtentsMeters.x * e.scale;
+	};
+	// Every pair the checks below can fail sits within the largest gap either asks for.
+	float largestCrown = 0.0F;
+	float largestTrunk = 0.0F;
+	for (const PlacedEntity& e : result.entities) {
+		largestCrown = std::max(largestCrown, crown(e));
+		largestTrunk = std::max(largestTrunk, trunkOf(e));
+	}
 	const SpatialIndex* index = executor.getChunkIndex({0, 0});
 	for (const PlacedEntity& e : result.entities) {
 		const float r = crown(e);
-		const float trunk = registry.getDefinition(e.defName)->collisionFor(e.traits.ageClass).halfExtentsMeters.x * e.scale;
-		for (const PlacedEntity* o : index->queryRadius(e.position, 6.0F)) {
+		const float trunk = trunkOf(e);
+		const float reach = std::max(k * (r + largestCrown), (trunk + largestTrunk) * std::sqrt(2.0F)) + 0.01F;
+		for (const PlacedEntity* o : index->queryRadius(e.position, reach)) {
 			if (o->position == e.position) {
 				continue;
 			}
@@ -602,8 +613,7 @@ TEST(PlacementExecutorTests, CrownSpacedTreesKeepTheirCrownsApart) {
 			const float need = k * (r + ro) * (0.5F + 0.5F * std::min(r, ro) / std::max(r, ro));
 			const float d = glm::length(o->position - e.position);
 			ASSERT_GE(d, need - 1e-3F) << e.defName << " and " << o->defName << " crowd each other";
-			const float otherTrunk = registry.getDefinition(o->defName)->collisionFor(o->traits.ageClass).halfExtentsMeters.x * o->scale;
-			ASSERT_GT(d, (trunk + otherTrunk) * std::sqrt(2.0F)) << "trunks overlap";
+			ASSERT_GT(d, (trunk + trunkOf(*o)) * std::sqrt(2.0F)) << "trunks overlap";
 		}
 	}
 }
