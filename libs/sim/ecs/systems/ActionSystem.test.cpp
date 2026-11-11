@@ -1242,6 +1242,49 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft not double-credited either";
 }
 
+// A pickup whose source another colonist took first collects nothing, so the haul ends at the source
+// instead of walking to storage to deposit an empty pack.
+TEST_F(ActionSystemGoalTest, PickupFromAGoneSourceEndsTheHaul) {
+	assets::AssetDefinition stoneDef;
+	stoneDef.defName = "SmallStone";
+	stoneDef.label = "Small Stone";
+	stoneDef.handsRequired = 1;
+	stoneDef.category = assets::ItemCategory::RawMaterial;
+	stoneDef.capabilities.carryable = assets::CarryableCapability{1};
+	stoneDef.itemProperties = assets::ItemProperties{};
+	stoneDef.itemProperties->stackSize = 10;
+	stoneDef.itemProperties->massKg = 1.5F;
+	assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
+	world->getSystem<ActionSystem>().setTakeSourceCallback(
+		[](const std::string& /*defName*/, float /*x*/, float /*y*/, ActionSystem::SourceTake /*take*/, float /*seconds*/) {
+			return ActionSystem::SourceState::Gone;
+		}
+	);
+
+	const glm::vec2 sourcePos{1.0F, 1.0F};
+	const glm::vec2 storagePos{5.0F, 0.0F};
+	auto			colonist = createColonist(sourcePos);
+	const uint32_t	stoneId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
+	world->getComponent<Memory>(colonist)->rememberWorldEntity(sourcePos, stoneId, assets::AssetRegistry::Get().getCapabilityMask(stoneId));
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulItemDefName = "SmallStone";
+	task->haulQuantity = 1;
+	task->haulSourcePosition = sourcePos;
+	task->haulTargetPosition = storagePos;
+	task->targetPosition = sourcePos;
+
+	world->update(0.1F); // start Pickup
+	ASSERT_EQ(world->getComponent<Action>(colonist)->type, ActionType::Pickup) << "precondition: the pickup started";
+	world->update(1.0F); // complete
+
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("SmallStone"), 0U);
+	EXPECT_FALSE(task->isActive()) << "the haul ends at the source";
+	EXPECT_FALSE(world->getComponent<MovementTarget>(colonist)->active) << "no walk to storage";
+}
+
 // Regression: a loose fetch where the source pile sits right beside the crafting station --
 // within arrival tolerance, so the colonist standing on the source is ALSO "at" the station.
 // A position-only phase check (atSource && !atTarget for pickup, else atTarget for deposit)
