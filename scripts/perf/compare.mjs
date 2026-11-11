@@ -27,16 +27,28 @@ function runValue(scenario, metric) {
 const mean = (values) => values.reduce((total, value) => total + value, 0) / values.length;
 const spread = (values) => Math.max(...values) - Math.min(...values);
 
-function compareCell(baseValues, tipValues, metric) {
-	const base = mean(baseValues);
-	const tip = mean(tipValues);
+const numbers = (entries) => entries.map((entry) => entry.value);
+
+// The spread between unloaded runs of one SHA. Load inflates a void run, and a spread that wide
+// would pass a slower tip as clean. Null when neither SHA has two unloaded runs.
+function noiseOf(...sides) {
+	const spreads = sides
+		.map((entries) => numbers(entries.filter((entry) => !entry.void)))
+		.filter((values) => values.length > 1)
+		.map(spread);
+	return spreads.length > 0 ? Math.max(...spreads) : null;
+}
+
+// baseEntries and tipEntries: one { value, void } per run
+function compareCell(baseEntries, tipEntries, metric) {
+	const base = mean(numbers(baseEntries));
+	const tip = mean(numbers(tipEntries));
 	const delta = tip - base;
-	const noiseKnown = baseValues.length > 1 && tipValues.length > 1;
-	const noise = noiseKnown ? Math.max(spread(baseValues), spread(tipValues)) : null;
+	const noise = noiseOf(baseEntries, tipEntries);
 	const share = base > 0 ? delta / base : 0;
 	const pastMajor = Math.abs(delta) > kMajorDeltaMs && Math.abs(share) > kMajorShare;
-	// With one run a side there is no noise to measure against, so only a step the size of a major one counts
-	const moved = noiseKnown ? Math.abs(delta) > Math.max(kNoiseMultiple * noise, kMinDeltaMs) : pastMajor;
+	// With no noise to measure against, only a step the size of a major one counts
+	const moved = noise !== null ? Math.abs(delta) > Math.max(kNoiseMultiple * noise, kMinDeltaMs) : pastMajor;
 	const regressed = moved && delta > 0;
 	return {
 		metric, base, tip, delta, share, noise,
@@ -51,15 +63,20 @@ function compareCell(baseValues, tipValues, metric) {
 export function compareRuns(baseRuns, tipRuns) {
 	const names = baseRuns[0].scenarios.map((scenario) => scenario.scenario)
 		.filter((name) => [...baseRuns, ...tipRuns].every((run) => run.scenarios.some((scenario) => scenario.scenario === name)));
+	// Nothing compared is not a clean result
+	if (names.length === 0) throw new Error('the base and tip captures share no scenario, so there is nothing to compare');
 	const find = (run, name) => run.scenarios.find((scenario) => scenario.scenario === name);
-	const valuesOf = (runs, name, metric) => runs.map((run) => runValue(find(run, name), metric)).filter((value) => value !== null);
+	const entriesOf = (runs, name, metric) => runs
+		.map((run) => ({ value: runValue(find(run, name), metric), void: Boolean(run.void) }))
+		.filter((entry) => entry.value !== null);
+	const valuesOf = (runs, name, metric) => numbers(entriesOf(runs, name, metric));
 
 	const scenarios = names.map((name) => {
 		const cells = [];
 		for (const metric of kTimings) {
-			const baseValues = valuesOf(baseRuns, name, metric);
-			const tipValues = valuesOf(tipRuns, name, metric);
-			if (baseValues.length > 0 && tipValues.length > 0) cells.push(compareCell(baseValues, tipValues, metric));
+			const baseEntries = entriesOf(baseRuns, name, metric);
+			const tipEntries = entriesOf(tipRuns, name, metric);
+			if (baseEntries.length > 0 && tipEntries.length > 0) cells.push(compareCell(baseEntries, tipEntries, metric));
 		}
 		const counts = {};
 		for (const metric of kCounts) {
@@ -99,8 +116,9 @@ export const worstVerdict = (verdicts) => verdicts.reduce((worst, verdict) => (k
 // One table per view: every scenario's major timings, flagged where they moved
 export function toMarkdown(view, result) {
 	const fixed = (value) => (value === null ? 'n/a' : value.toFixed(2));
+	const why = result.incomplete ?? `${result.tipVoid ? 'tip' : 'base'} capture was loaded`;
 	const lines = [
-		`### ${view}: ${result.verdict}${result.verdict === 'inconclusive' ? ` (found ${result.found}; ${result.tipVoid ? 'tip' : 'base'} capture was loaded)` : ''}`,
+		`### ${view}: ${result.verdict}${result.verdict === 'inconclusive' ? ` (found ${result.found}; ${why})` : ''}`,
 		'',
 		`${result.baseRuns} base and ${result.tipRuns} tip runs. Times in ms as base / tip (noise); \`!\` regressed, \`!!\` major, \`+\` improved.`,
 		'',

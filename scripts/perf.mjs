@@ -4,7 +4,8 @@
 //   capture   --port 8081 (--view river|coast|desert | --x 0 --y 20) [--zooms 3,1.5] [--no-scroll]
 //             [--no-gpu-hold] [--out file]      against a world-sim you started, in the game scene
 //   compare   --base a.json[,b.json] --tip c.json[,d.json] [--md file]
-//             --night <dir> --base <sha> --tip <sha> [--views river,coast]
+//             --night <dir> --base <sha> --tip <sha> [--views river,coast] [--runs 2]
+//             (a night's views and runs are what measure was given; fewer captures is inconclusive)
 //   idle-wait [--until 06:00] [--interval-seconds 300] [--max-minutes n]
 //   range                                       the perf-relevant merges since the last tested SHA
 //   measure   --refs <base>,<tip> [--views ...] [--runs 2] [--stop-at 07:00] [--night <dir>]
@@ -159,19 +160,47 @@ function range() {
 
 // --- measure ---
 
-function snapshot(sha, night) {
+class DeadlineError extends Error {}
+
+// Runs a command to its end or to the deadline, whichever is first. At the deadline the whole
+// process tree goes: killing cmake alone leaves ninja and the compilers holding the machine.
+function runUntil(deadline, command, args, { cwd, log }) {
+	return new Promise((resolve, reject) => {
+		const child = spawn(command, args, { cwd, stdio: ['ignore', log, log], detached: !kWindows });
+		const timer = setTimeout(() => {
+			try {
+				if (kWindows) execFileSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
+				else process.kill(-child.pid);
+			} catch {
+				// already gone
+			}
+			reject(new DeadlineError(`${command} was still running at the deadline`));
+		}, Math.max(0, deadline.getTime() - Date.now()));
+		child.on('error', (error) => {
+			clearTimeout(timer);
+			reject(error);
+		});
+		child.on('exit', (code) => {
+			clearTimeout(timer);
+			if (code === 0) resolve();
+			else reject(new Error(`${command} exited with ${code}`));
+		});
+	});
+}
+
+async function snapshot(sha, night, deadline) {
 	const dir = path.join(nightlyDir, 'builds', sha);
 	if (fs.existsSync(path.join(dir, '.complete'))) return dir;
 
 	const logPath = path.join(night, `build-${sha.slice(0, 12)}.log`);
 	const log = fs.openSync(logPath, 'a');
-	const run = (...args) => execFileSync('cmake', args, { cwd: buildTree, stdio: ['ignore', log, log] });
+	const run = (...args) => runUntil(deadline, 'cmake', args, { cwd: buildTree, log });
 	progress(`building ${sha.slice(0, 12)} (log: ${logPath})`);
 	try {
 		git(buildTree, 'checkout', '--quiet', '--detach', sha);
-		if (!fs.existsSync(path.join(buildTree, 'build', 'CMakeCache.txt'))) run('--preset', kWindows ? 'windows' : 'default');
-		if (kWindows) run('--build', 'build', '--config', 'RelWithDebInfo', '--target', 'world-sim');
-		else run('--build', 'build', '--target', 'world-sim');
+		if (!fs.existsSync(path.join(buildTree, 'build', 'CMakeCache.txt'))) await run('--preset', kWindows ? 'windows' : 'default');
+		if (kWindows) await run('--build', 'build', '--config', 'RelWithDebInfo', '--target', 'world-sim');
+		else await run('--build', 'build', '--target', 'world-sim');
 	} finally {
 		fs.closeSync(log);
 	}
@@ -233,7 +262,7 @@ async function measure(options) {
 	const stopAt = nextTime(typeof options['stop-at'] === 'string' ? options['stop-at'] : '07:00');
 	const gate = !options['no-idle-gate'];
 	const night = nightDir(options);
-	const result = { night, refs: {}, captures: [], buildFailed: [], stopped: null };
+	const result = { night, views, runs, refs: {}, captures: [], buildFailed: [], stopped: null };
 
 	git(buildTree, 'fetch', '--quiet', 'origin');
 	const snapshots = {};
@@ -241,9 +270,15 @@ async function measure(options) {
 		for (const ref of options.refs.split(',')) {
 			const sha = git(buildTree, 'rev-parse', `${ref}^{commit}`);
 			result.refs[ref] = sha;
+			if (Date.now() > stopAt.getTime()) { result.stopped = 'deadline'; break; }
 			try {
-				snapshots[sha] = snapshot(sha, night);
+				snapshots[sha] = await snapshot(sha, night, stopAt);
 			} catch (error) {
+				if (error instanceof DeadlineError) {
+					progress(`build of ${sha.slice(0, 12)} stopped at the deadline`);
+					result.stopped = 'deadline';
+					break;
+				}
 				progress(`build of ${sha.slice(0, 12)} failed: ${error.message.split('\n')[0]}`);
 				result.buildFailed.push(sha);
 			}
@@ -252,6 +287,7 @@ async function measure(options) {
 		// Back to main's tip, so the next command runs the current tooling
 		git(buildTree, 'checkout', '--quiet', '--detach', 'origin/main');
 	}
+	if (result.stopped) return result;
 
 	const waitForIdle = async () => (await idleWait({ until: stopAt, intervalSeconds: 300 })).idle;
 
@@ -298,31 +334,53 @@ function loadCaptures(files) {
 function compare(options) {
 	if (typeof options.base !== 'string' || typeof options.tip !== 'string') fail('compare needs --base and --tip');
 	const sets = {};
+	// What the night was asked to cover: every view, this many runs a side. Zero outside a night,
+	// where the files named are the whole comparison.
+	let expectedRuns = 0;
 	let mdPath = typeof options.md === 'string' ? path.resolve(options.md) : null;
 	if (options.night) {
 		const night = path.resolve(options.night);
 		const base = git(buildTree, 'rev-parse', `${options.base}^{commit}`);
 		const tip = git(buildTree, 'rev-parse', `${options.tip}^{commit}`);
+		expectedRuns = options.runs ? Number(options.runs) : 2;
 		const all = fs.readdirSync(path.join(night, 'captures'));
 		const filesOf = (sha, view) => all.filter((name) => name.startsWith(`${sha.slice(0, 12)}-${view}-`)).map((name) => path.join(night, 'captures', name));
 		for (const view of (typeof options.views === 'string' ? options.views : Object.keys(kViews).join(',')).split(',')) {
-			const baseFiles = filesOf(base, view);
-			const tipFiles = filesOf(tip, view);
-			if (baseFiles.length > 0 && tipFiles.length > 0) sets[view] = [baseFiles, tipFiles];
+			if (!(view in kViews)) fail(`unknown view: ${view}`);
+			sets[view] = [filesOf(base, view), filesOf(tip, view)];
 		}
 		mdPath ??= path.join(night, `compare-${base.slice(0, 12)}-${tip.slice(0, 12)}.md`);
 	} else {
 		sets.capture = [options.base.split(','), options.tip.split(',')];
 	}
-	if (Object.keys(sets).length === 0) fail('no captures to compare');
+	if (Object.values(sets).every(([baseFiles, tipFiles]) => baseFiles.length === 0 && tipFiles.length === 0)) fail('no captures to compare');
 
 	const views = {};
 	const markdown = [];
 	for (const [view, [baseFiles, tipFiles]] of Object.entries(sets)) {
-		const result = compareRuns(loadCaptures(baseFiles), loadCaptures(tipFiles));
+		const incomplete = baseFiles.length < expectedRuns || tipFiles.length < expectedRuns
+			? `captures incomplete: base ${baseFiles.length} and tip ${tipFiles.length} of ${expectedRuns} runs`
+			: null;
+		if (baseFiles.length === 0 || tipFiles.length === 0) {
+			markdown.push(`### ${view}: inconclusive (${incomplete})`);
+			views[view] = { verdict: 'inconclusive', found: null, incomplete };
+			continue;
+		}
+		let result;
+		try {
+			result = compareRuns(loadCaptures(baseFiles), loadCaptures(tipFiles));
+		} catch (error) {
+			fail(`${view}: ${error.message}`);
+		}
+		// Coverage the night asked for and didn't get can't pass as clean, or as only a minor
+		// regression. A major step in what was captured stands.
+		if (incomplete && result.verdict !== 'major') {
+			result.verdict = 'inconclusive';
+			result.incomplete = incomplete;
+		}
 		markdown.push(toMarkdown(view, result));
 		views[view] = {
-			verdict: result.verdict, found: result.found, baseVoid: result.baseVoid, tipVoid: result.tipVoid,
+			verdict: result.verdict, found: result.found, baseVoid: result.baseVoid, tipVoid: result.tipVoid, incomplete,
 			newSpikes: result.scenarios.filter((scenario) => scenario.newSpikes).map((scenario) => scenario.scenario),
 			moved: result.scenarios.flatMap((scenario) => scenario.cells
 				.filter((cell) => cell.regressed || cell.improved)

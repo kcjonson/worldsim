@@ -14,7 +14,7 @@ Nobody is watching. Don't ask questions; make the call the spec implies, and wri
 - **The script decides, you don't.** Verdicts come from `perf.mjs compare`. Never read raw timings out of a capture file and form your own view of whether something regressed.
 - **Never merge, revert, or push to `main`.** The outcome of a regression is a draft PR.
 - **Never time anything outside `perf.mjs measure`.** It holds the idle gate; a capture you run by hand doesn't.
-- **Stop at 07:00.** `measure` stops itself. If you are about to start a step after 07:00, write the report instead.
+- **Stop at 07:00.** `measure` stops itself, a build in progress included. If you are about to start a step after 07:00, write the report instead.
 - `idle-wait` and `measure` run for a long time. Start them with the Bash tool's `run_in_background: true`, redirect stdout to a file in the night's folder, and wait for the completion notice. Don't poll, don't sleep.
 - No AI attribution in any PR, comment, or commit.
 
@@ -58,13 +58,13 @@ node scripts/perf.mjs compare --night <night> --base <base> --tip <tip>
 
 `measure` (background) builds both SHAs, then captures river, coast and desert, two runs each, interleaved, redoing a void capture once after the machine is idle again. Its JSON names the night folder (`night`), any build that failed, and whether it stopped early.
 
-`compare` answers an overall `verdict` and one per view, and writes the tables to a markdown file it names.
+`compare` answers an overall `verdict` and one per view, and writes the tables to a markdown file it names. It expects every view with two runs a side, and a view short of that is `inconclusive`. After a `measure` narrowed with `--views` or `--runs`, give `compare` the same two options.
 
 | Verdict | Meaning | Do |
 |---|---|---|
 | `clean` | nothing past noise, or only improvements | set tested, report |
 | `regressed` | past noise, under the major threshold | set tested, list the cells in the report, nothing else |
-| `inconclusive` | a capture was loaded twice over | report it; leave `lastTested` alone so the range is retried |
+| `inconclusive` | a capture was loaded twice over, or the night stopped or failed short of its captures (the view's `incomplete` says which are missing) | report it; leave `lastTested` alone so the range is retried |
 | `major` | a major regression | step 4 |
 
 `measure` lists a capture that couldn't run with an `error`. "The game exited before its scene was ready" on every capture of one SHA usually means that SHA can't load the shared planet (a worldgen format change): report it, don't bake a planet, and leave `lastTested` alone.
@@ -76,12 +76,12 @@ A build failure of the tip is not a perf result: report it and leave `lastTested
 Work from what the night already produced before building anything.
 
 1. **Name a suspect.** `compare`'s `moved` cells say what got slower (`tileGpuMs`: the ground and water pass; `gpuMs` without it: entities, trees, UI; `entityMs`, `updateMs`, `sceneUpdateMs`: CPU side), and its `counts` say whether draw calls, triangles or upright draws moved with it. `range`'s `Perf:` lines and `perfFiles` say which PR touched that. A PR whose `Perf:` line predicted the cost is the first suspect.
-2. **Test the suspect.** `measure --refs <suspect>^1,<suspect> --views <the views that failed>` then `compare` those two. Major: that's the offender. Clean: go to 3.
+2. **Test the suspect.** `measure --refs <suspect>^1,<suspect> --views <the views that failed>` then `compare` those two with the same `--views`. Major: that's the offender. Clean: go to 3.
 3. **Bisect.** Over the range's relevant merges in first-parent order, halve: measure the middle merge against `base` on the failing views. Major means the offender is at or before it, clean means after. `measure` reuses captures already taken that night, so `base` is not re-captured.
-4. **Check for a second one.** In the batch worktree: `git checkout -b perf/revert-<pr> origin/main && git revert -m 1 --no-edit <offender>`. Measure that branch against `base` on the failing views. Clean: one offender. Still major: repeat from 1 on the remaining merges, reverting onto the same branch. Finish with `git checkout --detach origin/main`.
+4. **Check for a second one.** On a scratch branch that is never pushed, in the batch worktree: `git checkout -B perf/revert-check <tip> && git revert -m 1 --no-edit <offender>`. Measure `perf/revert-check` against `base` on the failing views. Clean: one offender. Still major: repeat from 1 on the remaining merges, adding each new offender's revert to the scratch branch. `measure` leaves the worktree detached on `origin/main`; finish with `git branch -D perf/revert-check`.
 5. **Salal.** Only if the offender's `salalBump` is true: run salal's perf suite at the old and new tags (the `GIT_TAG` values in that merge's `CMakeLists.txt` diff) from `C:\Users\kevin\Code\salal`, per its own docs, to say whether the engine's numbers moved. If they did, file it in salal's board too. Never run salal's suite otherwise.
 
-If the revert doesn't apply cleanly, don't resolve conflicts: report the offender and the conflict, and skip the PR.
+If a revert doesn't apply cleanly, here or in step 5, don't resolve conflicts: `git revert --abort`, report the offender and the conflict, and skip its PR.
 
 If 07:00 arrives mid-isolation, report how far the range was narrowed. Leave `lastTested` alone; tomorrow continues.
 
@@ -89,7 +89,7 @@ If 07:00 arrives mid-isolation, report how far the range was narrowed. Leave `la
 
 For each offender:
 
-1. Push `perf/revert-<pr>` and open a **draft** PR against `main`: title `Revert "<original title>" (perf regression)`, body with what regressed, `compare`'s tables for base against tip and for the offender alone, the date, and `Perf:` saying what the revert restores. One PR per offender when there are several, each reverting only its own merge.
+1. Make the offender's own branch from the tested tip, holding only its revert: `git checkout -B perf/revert-<pr> <tip> && git revert -m 1 --no-edit <offender>`, push it, then `git checkout --detach origin/main`. Open a **draft** PR against `main`: title `Revert "<original title>" (perf regression)`, body with what regressed, `compare`'s tables for base against tip and for the offender alone, the date, and `Perf:` saying what the revert restores. With several offenders that is one branch and one PR each; the scratch branch from step 4 held them together only to measure.
 2. Comment on the original PR with a link to the revert PR and the two or three worst cells.
 3. File a bug on the board (Specboard) titled with the regression and the PR, `discovered_from` the original PR's item when you can find it by branch or key, linking the revert PR.
 4. `node scripts/perf.mjs state --open-regression '{"pr":<pr>,"merge":"<sha>","revertPr":"<url>","bug":"<key>"}'`

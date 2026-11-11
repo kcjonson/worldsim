@@ -38,6 +38,18 @@ test('a loaded tip cannot confirm a regression, but still shows a clean result',
 	assert.equal(compareRuns([run(2.00), run(2.01)], [run(2.00, { isVoid: true }), run(2.01)]).verdict, 'clean');
 });
 
+test('a loaded run supplies no noise, so it cannot hide a slower tip', () => {
+	const result = compareRuns([run(2.00), run(2.01)], [run(3.00), run(4.00, { isVoid: true })]);
+	assert.equal(result.verdict, 'inconclusive');
+	assert.equal(result.found, 'major');
+});
+
+test('captures with no scenario in common are refused', () => {
+	const other = run(2.00);
+	for (const scenario of other.scenarios) scenario.scenario += ' elsewhere';
+	assert.throws(() => compareRuns([run(2.00)], [other]), /share no scenario/);
+});
+
 test('a loaded base cannot confirm a clean result, but a regression against it stands', () => {
 	assert.equal(compareRuns([run(2.00, { isVoid: true }), run(2.01)], [run(2.00), run(2.01)]).verdict, 'inconclusive');
 	assert.equal(compareRuns([run(2.00, { isVoid: true }), run(2.01)], [run(2.60), run(2.61)]).verdict, 'major');

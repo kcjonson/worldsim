@@ -40,9 +40,9 @@ The batch starts at 02:00 local and waits for the machine to be idle. Idle is me
 
 The process list catches a session that is between commands; the CPU and GPU readings catch everything the list doesn't name. Thresholds are constants in the script, tuned from the first week's logs.
 
-The gate holds for the whole batch, not only the start. `measure` rechecks the machine before every capture and waits again if it isn't idle. Every sample also records CPU and GPU use by processes other than the game (one `typeperf` for the capture: total CPU less the game's, and the 3D engine use of every other process). A capture is void when more than a fifth of its samples saw over 10% of either, when another session's build, test or game process ran during it, or when a sample was off P0. The batch waits for idle again and redoes that one capture, once. Void twice and that view is inconclusive for the night.
+The gate holds for the whole batch, not only the start. `measure` rechecks the machine before every capture and waits again if it isn't idle. Every sample also records CPU and GPU use by processes other than the game (one `typeperf` for the capture: total CPU less the game's, and the 3D engine use of every other process). The process list is polled about once a second through the capture, so a build that starts and ends inside one scenario is still seen. A capture is void when more than a fifth of its samples saw over 10% of either, when another session's build, test or game process ran during it, when a sample was off P0, or when a scenario has no load readings or no process list (load nobody read is unknown, not low). The batch waits for idle again and redoes that one capture, once. Void twice and that view is inconclusive for the night.
 
-If the machine never goes idle by 06:00, or the batch is still running at 07:00, it stops. The report says what was busy (the processes that failed the gate) and the untested range carries to the next night.
+If the machine never goes idle by 06:00, or the batch is still running at 07:00, it stops. A build still running at 07:00 is killed with its whole process tree, and no build starts after it. The report says what was busy (the processes that failed the gate) and the untested range carries to the next night.
 
 ## R3. What needs a run
 
@@ -70,11 +70,12 @@ Each SHA is built once in the worktree and its exe directory copied to `perf-res
 
 The script decides. The agent never reads raw timings and forms its own view.
 
-- Noise per cell (view x scenario x metric) is the spread between the two runs of the same SHA that night.
-- A cell regressed when the tip is worse than the base by more than three times that noise, and by at least 0.02 ms.
+- Noise per cell (view x scenario x metric) is the spread between the two runs of the same SHA that night. A void run supplies none: load inflates it, and a spread that wide would pass a slower tip as clean.
+- A cell regressed when the tip is worse than the base by more than three times that noise, and by at least 0.02 ms. With no noise to measure against, only a step the size of a major one counts.
 - A regression is major when a regressed cell is worse by more than 10% and more than 0.25 ms on `gpuMs`, `tileGpuMs`, or frame p50, or a scroll scenario gains 33 ms spikes. Starting values, constants in the script.
 - Regressed but not major is listed in the report and nothing else happens.
 - Load only ever makes a run slower, so a void tip can't confirm a regression and a void base can't confirm a clean result. Either way the view is `inconclusive`. A void tip that is even or faster is still clean.
+- A view short of the captures the night asked for (a failed capture, the 07:00 stop) is `inconclusive` unless what was captured already shows a major regression, so a partial night never advances `lastTested`. Captures that share no scenario are refused, not compared.
 - Draw calls, triangles, and upright counts are reported per cell as context, and a count that moved is the first clue to the cause.
 
 ## R6. Isolating a major regression
@@ -82,7 +83,7 @@ The script decides. The agent never reads raw timings and forms its own view.
 1. Read what's already there before building anything. Which cells and metrics moved points at a subsystem (`tileGpuMs` at the ground shader, upright draws at trees, `updateMs` at the sim), and the range's `Perf:` lines and diffs say which PR touched it. That names a suspect.
 2. With a suspect: build the suspect merge and its first parent, capture only the views that failed, two runs each. If the step is there, it's the offender.
 3. Without one, or if the suspect was clean: bisect the range's perf-relevant merges on first-parent, halving, failing views only.
-4. With the offender found, build the tip with that merge reverted and capture again. Clean: done. Still regressed: there is a second offender, repeat from step 1 on what's left.
+4. With the offender found, build the tip with that merge reverted, on a scratch branch that is never pushed, and capture again. Clean: done. Still regressed: there is a second offender, repeat from step 1 on what's left, adding its revert to the scratch branch. Each offender's draft PR (R7) is its own branch from the tip with only its own revert.
 5. Salal's perf suite runs only when the offending merge changed the salal `GIT_TAG`, at the old and new tags, to say whether the engine's numbers moved (file it in salal) or worldsim's use of it did. Never otherwise.
 
 The idle gate and the 07:00 stop apply throughout. A night that runs out reports what it narrowed the range to and picks up there the next night.

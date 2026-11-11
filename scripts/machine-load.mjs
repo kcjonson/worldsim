@@ -3,7 +3,7 @@
 // Prints one JSON line: { verdict: "idle" | "mostly-idle" | "busy", cpuPct, gpuPct, processes }.
 // Run it before a timed perf run and again after; the game being timed must not be running.
 
-import { execFileSync } from 'node:child_process';
+import { execFile, execFileSync } from 'node:child_process';
 import os from 'node:os';
 import { pathToFileURL } from 'node:url';
 
@@ -31,15 +31,25 @@ function gpuPct() {
 	}
 }
 
-// Lower-case image names, one entry per running process
-export function processNames() {
-	const out = process.platform === 'win32'
-		? execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8' })
-		: execFileSync('ps', ['-A', '-o', 'comm='], { encoding: 'utf8' });
+const kListProcesses = process.platform === 'win32' ? ['tasklist', ['/FO', 'CSV', '/NH']] : ['ps', ['-A', '-o', 'comm=']];
+
+function parseProcessNames(out) {
 	return out.split('\n')
 		.map((line) => line.split(',')[0].replaceAll('"', '').trim())
 		.map((name) => name.split('/').pop().replace(/\.exe$/i, '').toLowerCase())
 		.filter(Boolean);
+}
+
+// Lower-case image names, one entry per running process
+export function processNames() {
+	return parseProcessNames(execFileSync(...kListProcesses, { encoding: 'utf8' }));
+}
+
+// The same without blocking, for a caller that is timing something meanwhile
+export function processNamesAsync() {
+	return new Promise((resolve, reject) => {
+		execFile(...kListProcesses, { encoding: 'utf8' }, (error, out) => (error ? reject(error) : resolve(parseProcessNames(out))));
+	});
 }
 
 export function isBuilder(name) {

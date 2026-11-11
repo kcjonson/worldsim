@@ -5,7 +5,7 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import os from 'node:os';
-import { isBuilder, kGames, processNames } from '../machine-load.mjs';
+import { isBuilder, kGames, processNamesAsync } from '../machine-load.mjs';
 
 export const kDefaultZooms = [20, 8, 3, 1.5, 0.75, 0.5, 0.25];
 export const kForeignMaxPct = 10;
@@ -44,7 +44,8 @@ function gpuClocks() {
 }
 
 // CPU and GPU use by everything that isn't the game, from one typeperf process for the whole
-// capture. Elsewhere than Windows, and if typeperf won't start, read() answers nulls.
+// capture. Elsewhere than Windows, and if typeperf won't start, read() answers nulls and the
+// capture is void: nobody watched the machine.
 function startLoadSampler(gamePid, gameImage) {
 	const pending = [];
 	let columns = null;
@@ -102,14 +103,42 @@ function startLoadSampler(gamePid, gameImage) {
 }
 
 // Other sessions' builds, tests and games; the one game being measured is allowed
-function foreignProcesses(gameImage) {
-	const names = processNames();
+function foreignProcesses(names, gameImage) {
 	const found = new Set(names.filter(isBuilder));
 	for (const game of kGames) {
 		const count = names.filter((name) => name === game).length;
 		if (count > (game === gameImage ? 1 : 0)) found.add(game);
 	}
 	return [...found];
+}
+
+// Polls the process list for the whole capture, so a build that starts and ends inside one
+// scenario is still seen. take() answers what ran since the last take().
+function startProcessWatch(gameImage) {
+	const seen = new Set();
+	let checks = 0;
+	let stopped = false;
+	(async () => {
+		while (!stopped) {
+			const names = await processNamesAsync().catch(() => null);
+			if (names) {
+				checks++;
+				for (const name of foreignProcesses(names, gameImage)) seen.add(name);
+			}
+			await sleep(1000);
+		}
+	})();
+	return {
+		take() {
+			const taken = { foreignProcesses: [...seen], processChecks: checks };
+			seen.clear();
+			checks = 0;
+			return taken;
+		},
+		stop() {
+			stopped = true;
+		},
+	};
 }
 
 function voidReasons(scenarios) {
@@ -123,6 +152,10 @@ function voidReasons(scenarios) {
 	}
 	const processes = [...new Set(scenarios.flatMap((scenario) => scenario.foreignProcesses))];
 	if (processes.length > 0) reasons.push(`other sessions' processes ran: ${processes.join(', ')}`);
+	// Load nobody read is unknown, not low
+	const unwatched = scenarios.filter((scenario) => scenario.processChecks === 0
+		|| !scenario.samples.some((sample) => sample.foreignCpuPct !== null && sample.foreignGpuPct !== null)).length;
+	if (unwatched > 0) reasons.push(`the rest of the machine went unread in ${unwatched} of ${scenarios.length} scenarios (no typeperf readings or no process list)`);
 	return reasons;
 }
 
@@ -136,6 +169,7 @@ export async function capture({
 	const control = (query) => getJson(`${base}/api/control?action=${query}`);
 	const camera = (query) => control(`camera&${query}`);
 	const sampler = startLoadSampler(gamePid, gameImage);
+	const processWatch = startProcessWatch(gameImage);
 	const scenarios = [];
 
 	async function sampleScenario(name, count = 9, intervalMs = 600) {
@@ -159,7 +193,7 @@ export async function capture({
 				...sampler.read(),
 			});
 		}
-		const scenario = { scenario: name, samples, foreignProcesses: foreignProcesses(gameImage) };
+		const scenario = { scenario: name, samples, ...processWatch.take() };
 		const pick = (key) => samples.map((sample) => sample[key]);
 		const fixed = (value, digits = 2) => (value === null ? '?' : value.toFixed(digits));
 		log(`${name.padEnd(18)} frame p50=${fixed(median(pick('frameTimeMs')))}ms p99max=${fixed(Math.max(...pick('p99Ms')))}ms `
@@ -204,6 +238,7 @@ export async function capture({
 		}
 	} finally {
 		sampler.stop();
+		processWatch.stop();
 		if (gpuHold) await control('gpuhold&value=0').catch(() => {});
 		await control('vsync&value=1').catch(() => {});
 		await camera(`x=${x}&y=${y}&zoom=3&panx=0&pany=0`).catch(() => {});
