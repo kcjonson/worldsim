@@ -676,11 +676,36 @@ namespace {
 		}
 	}
 
+	// requestPath's work with no prices on flora: the structural pre-check, then the search over the
+	// nav mesh with flora walled.
+	std::optional<std::vector<glm::vec2>> unpricedPath(const ecs::NavigationSystem& nav, glm::vec2 a, glm::vec2 b) {
+		namespace gnav						   = geometry::nav;
+		const std::int64_t	radius		   = std::llround(kAgentRadius * 1000.0F);
+		const gnav::NavView structuralView = nav.structuralMesh().view();
+		const geometry::Vec2i64 from{std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)};
+		const geometry::Vec2i64 to{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)};
+		if (!gnav::reaches(structuralView, gnav::reachFrom(structuralView, from, radius), to)) {
+			return std::nullopt;
+		}
+		const gnav::PathResult result = gnav::pathThrough(nav.navMesh().view(), from, to, radius);
+		if (!result.reachable) {
+			return std::nullopt;
+		}
+		std::vector<glm::vec2> points;
+		for (const geometry::Vec2i64& p : result.points) {
+			points.emplace_back(static_cast<float>(p.x) / 1000.0F, static_cast<float>(p.y) / 1000.0F);
+		}
+		return points;
+	}
+
 	// Fixed start/goal pairs in a colony's view, once settled. range(0): 0 the colony by the chunk
-	// side (the rows the old system has), 1 a colony in a chunk's middle. Prints each pair's verdict
-	// and length so two builds can be compared pair by pair.
+	// side (the rows the old system has), 1 a colony in a chunk's middle. range(1): gap. range(2): 1
+	// queries as the game does (requestPath, flora priced), 0 the same pre-check and search with no
+	// prices, for the priced/unpriced ratio. Prints each pair's verdict and length so two builds can
+	// be compared pair by pair.
 	void BM_RequestPath(benchmark::State& state) {
-		const glm::vec2 at = state.range(0) == 0 ? kColony : kChunkCentreColony;
+		const glm::vec2 at	   = state.range(0) == 0 ? kColony : kChunkCentreColony;
+		const bool		priced = state.range(2) != 0;
 		for (auto _ : state) {
 			Rig rig(state.range(1));
 			colony(rig, at);
@@ -705,7 +730,8 @@ namespace {
 			for (int round = 0; round < 11; ++round) {
 				const Clock::time_point start = Clock::now();
 				for (std::size_t i = 0; i < pairs.size(); ++i) {
-					const auto path = rig.nav.requestPath(pairs[i].first, pairs[i].second, kAgentRadius);
+					const auto path = priced ? rig.nav.requestPath(pairs[i].first, pairs[i].second, kAgentRadius)
+											 : unpricedPath(rig.nav, pairs[i].first, pairs[i].second);
 					if (round == 0) {
 						double len = 0.0;
 						if (path.has_value()) {
@@ -715,7 +741,8 @@ namespace {
 							}
 							lengthSum += len;
 						}
-						std::printf("pair %d.%2zu %s %.3f m\n", static_cast<int>(state.range(0)), i, path.has_value() ? "ok  " : "fail", len);
+						std::printf("pair %d.%2zu %s %.3f m%s\n", static_cast<int>(state.range(0)), i, path.has_value() ? "ok  " : "fail", len,
+									priced ? "" : " unpriced");
 					}
 				}
 				const double us = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
@@ -861,7 +888,7 @@ BENCHMARK(BM_ZoomSweep)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillise
 BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanPan)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_RequestPath)->Args({0, 0})->Args({1, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RealChunksGround)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
