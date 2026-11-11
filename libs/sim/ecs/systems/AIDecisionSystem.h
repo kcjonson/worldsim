@@ -28,6 +28,7 @@
 #include <glm/vec2.hpp>
 #include <optional>
 #include <random>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -104,6 +105,83 @@ class BoxRoomCache {
 	uint64_t		  pass = 1;
 	uint32_t		  used = 0;
 	std::vector<Slot> slots;
+};
+
+/// What every colonist deciding in one update reads alike of the colony's work: the stations with a
+/// job and whether their stores hold its inputs, the blueprints ready to build or tear down, the
+/// packaged furniture awaiting placement, and the lower-priority boxes a storage goal may pull an item
+/// from. Each is worked out the first time a colonist asks in an update; the colonist's own parts
+/// (claims, distance, carry) are applied on top. A colonist inside the update that puts goods in a box
+/// (storeOrDrop) or sets furniture down changes what feeds them, and has them worked out again.
+class SharedWork {
+  public:
+	/// A new update: nothing worked out yet.
+	void invalidate();
+
+	/// A box's contents changed inside the update.
+	void boxChanged();
+
+	/// A packaged item was set down inside the update.
+	void packagesChanged() { packagesBuilt = false; }
+
+	struct Station {
+		EntityID	entity = kInvalidEntity;
+		glm::vec2	position{0.0F, 0.0F};
+		std::string recipeDefName;
+		bool		hasAllInputs = false; // the station's store holds every input of its next job
+	};
+	/// Stations whose next job names a known recipe, in view order.
+	[[nodiscard]] const std::vector<Station>& stations(World& world, const assets::RecipeRegistry& recipes);
+
+	struct Site {
+		uint64_t  goalId = 0;
+		EntityID  blueprint = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+	};
+	/// Available Build goals whose blueprint is UnderConstruction, in goal order.
+	[[nodiscard]] const std::vector<Site>& buildSites(World& world);
+	/// Available Deconstruct goals whose blueprint has work to undo, in goal order.
+	[[nodiscard]] const std::vector<Site>& teardownSites(World& world);
+
+	struct Package {
+		EntityID  entity = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+		glm::vec2 target{0.0F, 0.0F};
+		bool	  beingCarried = false;
+	};
+	/// Packaged items with a placement target, in view order.
+	[[nodiscard]] const std::vector<Package>& packages(World& world);
+
+	struct PullSource {
+		EntityID  box = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+		uint32_t  drainable = 0; // what it holds above its own minimum for the item
+	};
+	/// The boxes `goal` may pull `item` from: another box, not being moved, holding some of it above its
+	/// own minimum, ranked strictly lower for it than `destPriority`, and known to the colony. View order.
+	[[nodiscard]] std::span<const PullSource> pullSources(
+		World& world, const assets::AssetRegistry& registry, ColonyStorageKnowledge& storageKnowledge, const GoalTask& goal, uint32_t item,
+		const assets::AssetDefinition& itemDef, StoragePriority destPriority
+	);
+
+  private:
+	std::vector<Station> stationList;
+	std::vector<Site>	 buildList;
+	std::vector<Site>	 teardownList;
+	std::vector<Package> packageList;
+	bool				 stationsBuilt = false;
+	bool				 buildSitesBuilt = false;
+	bool				 teardownSitesBuilt = false;
+	bool				 packagesBuilt = false;
+
+	struct PullEntry {
+		uint64_t goalId = 0;
+		uint32_t item = 0;
+		uint32_t begin = 0;
+		uint32_t end = 0;
+	};
+	std::vector<PullEntry>	pullEntries;
+	std::vector<PullSource> pullList;
 };
 
 namespace test {
@@ -312,6 +390,9 @@ private:
 
 	/// Each storage box's room per item, read from the world at most once per update
 	BoxRoomCache m_boxRooms;
+
+	/// The colony's work every colonist reads alike, worked out at most once per update
+	SharedWork m_sharedWork;
 
 	/// The deciding colonist's carried kinds, reused across colonists
 	std::vector<CarriedKind> m_carried;

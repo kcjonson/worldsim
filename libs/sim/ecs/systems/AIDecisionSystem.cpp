@@ -638,6 +638,7 @@ namespace ecs {
 			const assets::AssetRegistry& registry,
 			WorkSources&				 sources,
 			ColonyStorageKnowledge&		 storageKnowledge,
+			SharedWork&					 sharedWork,
 			const RootSupply&			 supply,
 			PickupRoom&					 pickupRoom,
 			const Inventory&			 inventory,
@@ -753,9 +754,8 @@ namespace ecs {
 				if (itemDef == nullptr) {
 					return;
 				}
-				const EntityID			   destEntity = goal.destinationEntity;
-				const assets::ItemCategory cat = itemDef->category;
-				const StoragePriority	   destPriority = destConfig.getPriorityFor(itemDefName, cat);
+				const EntityID		  destEntity = goal.destinationEntity;
+				const StoragePriority destPriority = destConfig.getPriorityFor(itemDefName, itemDef->category);
 				const uint32_t			   perTrip = ecs::cargoUnitsPerTrip(registry, acceptedId, inventory.carryCapacityKg);
 				if (perTrip == 0) {
 					return; // colonist can't carry a single unit of this item
@@ -789,45 +789,16 @@ namespace ecs {
 					pullOption.reason = "Pulling {} from lower-priority storage";
 					trace.options.push_back(std::move(pullOption));
 				};
-				struct PullSource {
-					EntityID  box;
-					glm::vec2 position;
-				};
-				NearestReserved<PullSource> reserved;
+				NearestReserved<SharedWork::PullSource> reserved;
 
-				for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
-					if (srcEntity == destEntity || world->hasComponent<Packaged>(srcEntity)) {
-						continue; // never pull from the destination itself, or from a box being moved
-					}
-					const uint32_t srcHas = srcInv.getQuantity(itemDefName);
-					if (srcHas == 0) {
-						continue; // source holds none of this item
-					}
-					// Strict-< gate: pull only from a STRICTLY lower-priority box. Never same, never
-					// higher. getPriorityFor returns Low when the source box has no rule for this item, so
-					// an unconfigured box holding it is a valid pull source for any Medium+ dest; Low is
-					// the floor, so the gate still never forms a cycle.
-					const StoragePriority srcPriority = srcConfig.getPriorityFor(itemDefName, cat);
-					if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
-						continue;
-					}
-					// Discovery-gating: the colony must KNOW the source box (no god-view), mirroring how
-					// a loose pickup is gated on the pile being in memory.
-					if (!storageKnowledge.knows(*world, registry, srcEntity)) {
-						continue;
-					}
-					// Don't drain the source below ITS OWN configured minimum for this item, counting what
-					// other pulls will take from it, so two pulls can't drain it below that together.
-					const uint32_t srcMin = srcConfig.getMinAmountFor(itemDefName, cat);
-					const uint32_t drainable = srcHas > srcMin ? srcHas - srcMin : 0U;
-					if (drainable == 0) {
-						continue;
-					}
+				for (const SharedWork::PullSource& source : sharedWork.pullSources(*world, registry, storageKnowledge, goal, acceptedId, *itemDef, destPriority)) {
+					// Other pulls' claims count against what the source can give above its minimum, so two
+					// pulls can't drain it below that together.
 					const uint32_t claimed =
-						supply.claims.sourceClaimed({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(srcEntity)}, acceptedId, supply.self);
-					const float trip = glm::distance(position, srcPos.value) + glm::distance(srcPos.value, goal.destinationPosition);
-					if (claimed >= drainable) {
-						reserved.reserved(trip, PullSource{srcEntity, srcPos.value});
+						supply.claims.sourceClaimed({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(source.box)}, acceptedId, supply.self);
+					const float trip = glm::distance(position, source.position) + glm::distance(source.position, goal.destinationPosition);
+					if (claimed >= source.drainable) {
+						reserved.reserved(trip, source);
 						continue;
 					}
 					const uint32_t destRoom = destWant();
@@ -843,7 +814,7 @@ namespace ecs {
 					}
 
 					reserved.offered(trip);
-					pushPull(srcEntity, srcPos.value, std::min({drainable - claimed, destRoom, *liftNow}), kInvalidEntity);
+					pushPull(source.box, source.position, std::min({source.drainable - claimed, destRoom, *liftNow}), kInvalidEntity);
 				}
 				if (reserved.shown() && liftNow.value_or(1) > 0 && destWant() > 0) {
 					const auto holder = supply.claims.sourceHolder(
@@ -1266,30 +1237,17 @@ namespace ecs {
 		/// Goal-driven: ConstructionSystem emits a Build goal once a blueprint's materials are
 		/// staged. We surface it only while the blueprint is actually UnderConstruction (the
 		/// phase ActionSystem's Build action requires), targeting the goal's work slot.
-		void evaluateBuildOptions(World& world, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
-			auto& goalRegistry = GoalTaskRegistry::Get();
-
-			goalRegistry.forEachGoalOfType(TaskType::Build, [&](const GoalTask& buildGoal) {
-				const GoalTask* goal = &buildGoal;
-				if (goal->status != GoalStatus::Available) {
-					return;
-				}
-				const auto blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
-				const auto* blueprint = world.getComponent<StructureBlueprint>(blueprintEntity);
-				if (blueprint == nullptr ||
-					blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
-					return; // not ready to build (cleared/awaiting materials/complete)
-				}
-
+		void evaluateBuildOptions(std::span<const SharedWork::Site> sites, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
+			for (const SharedWork::Site& site : sites) {
 				EvaluatedOption buildOption;
 				buildOption.taskType = TaskType::Build;
 				buildOption.needType = NeedType::Count;
 				buildOption.needValue = 100.0F;
 				buildOption.threshold = 0.0F;
-				buildOption.targetPosition = goal->destinationPosition;
-				buildOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
-				buildOption.buildBlueprintEntityId = goal->destinationEntity;
-				buildOption.tiebreakId = goal->id;
+				buildOption.targetPosition = site.position;
+				buildOption.distanceToTarget = glm::distance(position, site.position);
+				buildOption.buildBlueprintEntityId = site.blueprint;
+				buildOption.tiebreakId = site.goalId;
 				// A blueprint reaches this option only when fully provisioned and UnderConstruction:
 				// the build is committed work. Floor its priority above idle Wander so a far site's
 				// distance penalty can't drop it below Wander and strand the ready foundation
@@ -1300,8 +1258,8 @@ namespace ecs {
 				applySkill(buildOption, skills.construction);
 				buildOption.reason = "Building structure";
 
-				trace.options.push_back(buildOption);
-			});
+				trace.options.push_back(std::move(buildOption));
+			}
 		}
 
 		/// Evaluate deconstruct options by querying Deconstruct goals from GoalTaskRegistry.
@@ -1310,29 +1268,19 @@ namespace ecs {
 		/// only while the blueprint still has work to undo (workDone > 0, the bound ActionSystem's
 		/// Deconstruct action counts down). Deconstruct is Construction work, so it uses the same
 		/// skill and priority tier as Build.
-		void evaluateDeconstructOptions(World& world, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
-			auto& goalRegistry = GoalTaskRegistry::Get();
-
-			goalRegistry.forEachGoalOfType(TaskType::Deconstruct, [&](const GoalTask& deconstructGoal) {
-				const GoalTask* goal = &deconstructGoal;
-				if (goal->status != GoalStatus::Available) {
-					return;
-				}
-				const auto	blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
-				const auto* blueprint = world.getComponent<StructureBlueprint>(blueprintEntity);
-				if (blueprint == nullptr || blueprint->workDone <= 0.0F) {
-					return; // nothing to tear down (already removed, or no work invested)
-				}
-
+		void evaluateDeconstructOptions(
+			std::span<const SharedWork::Site> sites, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace
+		) {
+			for (const SharedWork::Site& site : sites) {
 				EvaluatedOption deconstructOption;
 				deconstructOption.taskType = TaskType::Deconstruct;
 				deconstructOption.needType = NeedType::Count;
 				deconstructOption.needValue = 100.0F;
 				deconstructOption.threshold = 0.0F;
-				deconstructOption.targetPosition = goal->destinationPosition;
-				deconstructOption.distanceToTarget = glm::distance(position, goal->destinationPosition);
-				deconstructOption.buildBlueprintEntityId = goal->destinationEntity;
-				deconstructOption.tiebreakId = goal->id;
+				deconstructOption.targetPosition = site.position;
+				deconstructOption.distanceToTarget = glm::distance(position, site.position);
+				deconstructOption.buildBlueprintEntityId = site.blueprint;
+				deconstructOption.tiebreakId = site.goalId;
 				// Committed construction work (mirrors Build): floor above Wander so a far site's
 				// distance penalty can't strand an in-progress demolish.
 				deconstructOption.servesActiveWorkOrder = true;
@@ -1341,32 +1289,28 @@ namespace ecs {
 				applySkill(deconstructOption, skills.construction);
 				deconstructOption.reason = "Deconstructing structure";
 
-				trace.options.push_back(deconstructOption);
-			});
+				trace.options.push_back(std::move(deconstructOption));
+			}
 		}
 
 		/// Evaluate place packaged options for furniture delivery
-		/// @param world ECS world for entity queries
+		/// @param packages The packaged items awaiting placement
 		/// @param position Colonist position
 		/// @param inventory Colonist inventory (to check if carrying)
 		/// @param trace Output decision trace
 		void evaluatePlacePackagedOptions(
-			World* world, const RootSupply& supply, const glm::vec2& position, const Inventory& inventory, DecisionTrace& trace
+			std::span<const SharedWork::Package> packages, const RootSupply& supply, const glm::vec2& position, const Inventory& inventory,
+			DecisionTrace& trace
 		) {
-			// Find packaged items with targetPosition set (awaiting colonist delivery)
-			for ([[maybe_unused]] auto [packagedEntity, packagedPos, packaged, appearance] : world->view<Position, Packaged, Appearance>()) {
-				// Only consider items with a target position set
-				if (!packaged.targetPosition.has_value()) {
-					continue;
-				}
-
+			for (const SharedWork::Package& package : packages) {
+				const EntityID packagedEntity = package.entity;
 				// Skip items being carried by a DIFFERENT colonist
 				const bool isCarryingThis = inventory.carryingPackagedEntity == static_cast<uint64_t>(packagedEntity);
-				if (packaged.beingCarried && !isCarryingThis) {
+				if (package.beingCarried && !isCarryingThis) {
 					continue;
 				}
 
-				const auto& targetPos = packaged.targetPosition.value();
+				const glm::vec2& targetPos = package.target;
 
 				// Create place packaged option
 				EvaluatedOption placeOption;
@@ -1382,12 +1326,12 @@ namespace ecs {
 					placeOption.carryingPackaged = true;
 				} else {
 					// Phase 1: Need to pick up - go to source
-					placeOption.targetPosition = packagedPos.value;
-					placeOption.distanceToTarget = glm::distance(position, packagedPos.value);
+					placeOption.targetPosition = package.position;
+					placeOption.distanceToTarget = glm::distance(position, package.position);
 				}
 
 				placeOption.placePackagedEntityId = static_cast<uint64_t>(packagedEntity);
-				placeOption.placeSourcePosition = packagedPos.value;
+				placeOption.placeSourcePosition = package.position;
 				placeOption.placeTargetPosition = targetPos;
 				placeOption.tiebreakId = static_cast<uint64_t>(packagedEntity);
 				placeOption.status = OptionStatus::Available;
@@ -1401,7 +1345,7 @@ namespace ecs {
 						placeOption.reservedBy = holder->colonist;
 					}
 				}
-				trace.options.push_back(placeOption);
+				trace.options.push_back(std::move(placeOption));
 			}
 		}
 
@@ -1460,6 +1404,155 @@ namespace ecs {
 					 .freeSlots = store->freeSlots()};
 	}
 
+	void SharedWork::invalidate() {
+		stationsBuilt = false;
+		buildSitesBuilt = false;
+		teardownSitesBuilt = false;
+		packagesBuilt = false;
+		pullEntries.clear();
+		pullList.clear();
+	}
+
+	void SharedWork::boxChanged() {
+		stationsBuilt = false;
+		pullEntries.clear();
+		pullList.clear();
+	}
+
+	const std::vector<SharedWork::Station>& SharedWork::stations(World& world, const assets::RecipeRegistry& recipes) {
+		if (stationsBuilt) {
+			return stationList;
+		}
+		stationsBuilt = true;
+		stationList.clear();
+		for (auto [stationEntity, stationPos, workQueue] : world.view<Position, WorkQueue>()) {
+			if (!workQueue.hasPendingWork()) {
+				continue;
+			}
+			const CraftingJob* nextJob = workQueue.getNextJob();
+			if (nextJob == nullptr) {
+				continue;
+			}
+			const auto* recipe = recipes.getRecipe(nextJob->recipeDefName);
+			if (recipe == nullptr) {
+				continue;
+			}
+			// Does the STATION's store already hold every input? Materials are hauled into the
+			// station during provisioning (mirroring construction); the craft work is only
+			// available once they're all physically present in the station, not in the colonist.
+			const auto* stationStore = world.getComponent<Inventory>(stationEntity);
+			bool		hasAllInputs = stationStore != nullptr;
+			if (hasAllInputs) {
+				for (const auto& input : recipe->inputs) {
+					if (stationStore->getQuantity(input.defName) < input.count) {
+						hasAllInputs = false;
+						break;
+					}
+				}
+			}
+			stationList.push_back({.entity = stationEntity, .position = stationPos.value, .recipeDefName = nextJob->recipeDefName, .hasAllInputs = hasAllInputs});
+		}
+		return stationList;
+	}
+
+	const std::vector<SharedWork::Site>& SharedWork::buildSites(World& world) {
+		if (buildSitesBuilt) {
+			return buildList;
+		}
+		buildSitesBuilt = true;
+		buildList.clear();
+		// Surfaced only while the blueprint is UnderConstruction, the phase the Build action requires.
+		GoalTaskRegistry::Get().forEachGoalOfType(TaskType::Build, [&](const GoalTask& goal) {
+			if (goal.status != GoalStatus::Available) {
+				return;
+			}
+			const auto* blueprint = world.getComponent<StructureBlueprint>(goal.destinationEntity);
+			if (blueprint == nullptr || blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
+				return; // not ready to build (cleared/awaiting materials/complete)
+			}
+			buildList.push_back({.goalId = goal.id, .blueprint = goal.destinationEntity, .position = goal.destinationPosition});
+		});
+		return buildList;
+	}
+
+	const std::vector<SharedWork::Site>& SharedWork::teardownSites(World& world) {
+		if (teardownSitesBuilt) {
+			return teardownList;
+		}
+		teardownSitesBuilt = true;
+		teardownList.clear();
+		GoalTaskRegistry::Get().forEachGoalOfType(TaskType::Deconstruct, [&](const GoalTask& goal) {
+			if (goal.status != GoalStatus::Available) {
+				return;
+			}
+			const auto* blueprint = world.getComponent<StructureBlueprint>(goal.destinationEntity);
+			if (blueprint == nullptr || blueprint->workDone <= 0.0F) {
+				return; // nothing to tear down (already removed, or no work invested)
+			}
+			teardownList.push_back({.goalId = goal.id, .blueprint = goal.destinationEntity, .position = goal.destinationPosition});
+		});
+		return teardownList;
+	}
+
+	const std::vector<SharedWork::Package>& SharedWork::packages(World& world) {
+		if (packagesBuilt) {
+			return packageList;
+		}
+		packagesBuilt = true;
+		packageList.clear();
+		for ([[maybe_unused]] auto [entity, position, packaged, appearance] : world.view<Position, Packaged, Appearance>()) {
+			if (packaged.targetPosition.has_value()) {
+				packageList.push_back(
+					{.entity = entity, .position = position.value, .target = *packaged.targetPosition, .beingCarried = packaged.beingCarried}
+				);
+			}
+		}
+		return packageList;
+	}
+
+	std::span<const SharedWork::PullSource> SharedWork::pullSources(
+		World& world, const assets::AssetRegistry& registry, ColonyStorageKnowledge& storageKnowledge, const GoalTask& goal, uint32_t item,
+		const assets::AssetDefinition& itemDef, StoragePriority destPriority
+	) {
+		for (const PullEntry& entry : pullEntries) {
+			if (entry.goalId == goal.id && entry.item == item) {
+				return std::span<const PullSource>(pullList).subspan(entry.begin, entry.end - entry.begin);
+			}
+		}
+		const std::string&		   itemDefName = registry.getDefName(item);
+		const assets::ItemCategory cat = itemDef.category;
+		const auto				   begin = static_cast<uint32_t>(pullList.size());
+		for (auto [srcEntity, srcConfig, srcInv, srcPos] : world.view<StorageConfiguration, Inventory, Position>()) {
+			if (srcEntity == goal.destinationEntity || world.hasComponent<Packaged>(srcEntity)) {
+				continue; // never pull from the destination itself, or from a box being moved
+			}
+			const uint32_t srcHas = srcInv.getQuantity(itemDefName);
+			if (srcHas == 0) {
+				continue; // source holds none of this item
+			}
+			// Strict-< gate: pull only from a STRICTLY lower-priority box. Never same, never
+			// higher. getPriorityFor returns Low when the source box has no rule for this item, so
+			// an unconfigured box holding it is a valid pull source for any Medium+ dest; Low is
+			// the floor, so the gate still never forms a cycle.
+			const StoragePriority srcPriority = srcConfig.getPriorityFor(itemDefName, cat);
+			if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
+				continue;
+			}
+			// Discovery-gating: the colony must KNOW the source box (no god-view), mirroring how
+			// a loose pickup is gated on the pile being in memory.
+			if (!storageKnowledge.knows(world, registry, srcEntity)) {
+				continue;
+			}
+			// Don't drain the source below ITS OWN configured minimum for this item.
+			const uint32_t srcMin = srcConfig.getMinAmountFor(itemDefName, cat);
+			if (srcHas > srcMin) {
+				pullList.push_back({.box = srcEntity, .position = srcPos.value, .drainable = srcHas - srcMin});
+			}
+		}
+		pullEntries.push_back({.goalId = goal.id, .item = item, .begin = begin, .end = static_cast<uint32_t>(pullList.size())});
+		return std::span<const PullSource>(pullList).subspan(begin);
+	}
+
 	AIDecisionSystem::AIDecisionSystem(
 		const assets::AssetRegistry&  registry,
 		const assets::RecipeRegistry& recipeRegistry,
@@ -1482,6 +1575,7 @@ namespace ecs {
 		m_colonyStorage.invalidate();
 		m_needs.invalidate();
 		m_boxRooms.invalidate();
+		m_sharedWork.invalidate();
 		m_claimsBuilt = false;
 		m_foodBoxesBuilt = false;
 		auto* actionSystem = world->tryGetSystem<ActionSystem>();
@@ -2516,36 +2610,9 @@ namespace ecs {
 
 		// Add "Crafting Work" options and "Gather" options (tier classification set by the evaluators)
 		// Find all stations with pending work that colonist can do
-		for (auto [stationEntity, stationPos, workQueue] : world->view<Position, WorkQueue>()) {
-			if (!workQueue.hasPendingWork()) {
-				continue;
-			}
-
-			const CraftingJob* nextJob = workQueue.getNextJob();
-			if (nextJob == nullptr) {
-				continue;
-			}
-
-			// Get the recipe
-			const auto* recipe = m_recipeRegistry.getRecipe(nextJob->recipeDefName);
-			if (recipe == nullptr) {
-				continue;
-			}
-
-			// Does the STATION's store already hold every input? Materials are hauled into the
-			// station during provisioning (mirroring construction); the craft work is only
-			// available once they're all physically present in the station, not in the colonist.
-			const auto* stationStore = world->getComponent<Inventory>(stationEntity);
-			bool		hasAllInputs = stationStore != nullptr;
-			if (hasAllInputs) {
-				for (const auto& input : recipe->inputs) {
-					if (stationStore->getQuantity(input.defName) < input.count) {
-						hasAllInputs = false;
-						break;
-					}
-				}
-			}
-
+		for (const SharedWork::Station& station : m_sharedWork.stations(*world, m_recipeRegistry)) {
+			const EntityID	 stationEntity = station.entity;
+			const glm::vec2& stationPos = station.position;
 
 			// Add craft option with skill bonus
 			EvaluatedOption craftOption;
@@ -2553,9 +2620,9 @@ namespace ecs {
 			craftOption.needType = NeedType::Count; // N/A for crafting
 			craftOption.needValue = 100.0F;			// Not a need
 			craftOption.threshold = 0.0F;
-			craftOption.targetPosition = stationPos.value;
-			craftOption.distanceToTarget = glm::distance(position.value, stationPos.value);
-			craftOption.craftRecipeDefName = nextJob->recipeDefName;
+			craftOption.targetPosition = stationPos;
+			craftOption.distanceToTarget = glm::distance(position.value, stationPos);
+			craftOption.craftRecipeDefName = station.recipeDefName;
 			craftOption.stationEntityId = static_cast<uint64_t>(stationEntity);
 			craftOption.tiebreakId = static_cast<uint64_t>(stationEntity);
 
@@ -2564,7 +2631,7 @@ namespace ecs {
 
 			// Provisioning the materials is the goal-driven Harvest/Haul options' job; the Craft
 			// option is the crafting WORK, workable only once the station holds every input.
-			if (hasAllInputs) {
+			if (station.hasAllInputs) {
 				craftOption.status = OptionStatus::Available;
 				craftOption.reason = "Crafting {}";
 				// Another crafter on its way holds the station's slot from its Craft selection.
@@ -2579,8 +2646,7 @@ namespace ecs {
 				craftOption.reason = "Crafting {} (awaiting materials)";
 			}
 
-			trace.options.push_back(craftOption);
-
+			trace.options.push_back(std::move(craftOption));
 		}
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
@@ -2590,19 +2656,19 @@ namespace ecs {
 		m_offeredPiles.clear();
 		const PileReach pileReach{.nav = m_navSystem, .reach = reach.has_value() ? &*reach : nullptr, .memo = &sourceReach};
 		evaluateHaulOptions(
-			world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, pileReach, m_offeredPiles, trace
+			world, m_registry, m_workSources, m_colonyStorage, m_sharedWork, supply, pickupRoom, inventory, position.value, pileReach, m_offeredPiles, trace
 		);
 		evaluateCarryInOptions(supply, m_carried, position.value, trace);
 		evaluateHarvestOptions(m_workSources, supply, pickupRoom, position.value, workSkills, m_offeredPiles, trace);
 
 		// Build staged construction blueprints (goal-driven)
-		evaluateBuildOptions(*world, position.value, workSkills, trace);
+		evaluateBuildOptions(m_sharedWork.buildSites(*world), position.value, workSkills, trace);
 
 		// Deconstruct demolishing structures (goal-driven, same tier as Build)
-		evaluateDeconstructOptions(*world, position.value, workSkills, trace);
+		evaluateDeconstructOptions(m_sharedWork.teardownSites(*world), position.value, workSkills, trace);
 
 		// Place packaged items at target locations
-		evaluatePlacePackagedOptions(world, supply, position.value, inventory, trace);
+		evaluatePlacePackagedOptions(m_sharedWork.packages(*world), supply, position.value, inventory, trace);
 
 		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
 		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
@@ -3078,6 +3144,7 @@ namespace ecs {
 		if (auto* state = world->getComponent<Packaged>(packaged)) {
 			state->beingCarried = false;
 		}
+		m_sharedWork.packagesChanged();
 		inventory.carryingPackagedEntity.reset();
 		inventory.leftHand.reset();
 		inventory.rightHand.reset();
@@ -3111,6 +3178,7 @@ namespace ecs {
 
 	void AIDecisionSystem::boxChanged(EntityID box) {
 		m_boxRooms.refresh(*world, m_registry, box);
+		m_sharedWork.boxChanged();
 		if (const GoalTask* root = GoalTaskRegistry::Get().getGoalByDestination(box)) {
 			m_needs.refresh(*world, root->id);
 		}
