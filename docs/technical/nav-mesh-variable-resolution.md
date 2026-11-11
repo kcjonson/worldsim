@@ -1,6 +1,6 @@
 # Nav mesh: one mesh, variable resolution
 
-**Status:** In progress. Go-ahead given 2026-11-10; each open question in section 8 is settled before the step that depends on it.
+**Status:** In progress. Steps 1 to 5 built 2026-11-11 (section 10, entries 1 to 71); steps 6 and 7 not started. Where an entry in section 10 differs from the design text above it, the entry is what was built.
 **Epic:** WOR-702 (Nav mesh: one mesh, variable resolution)
 **Created:** 2026-11-10
 **Replaces, once built:** the "As built: multi-region sim area" section of [pathfinding-architecture.md](./pathfinding-architecture.md), and its rule that agents are never mesh obstacles (risk 7)
@@ -657,6 +657,8 @@ decided, why, and how to undo it.
     - Replans over a 600-tick pan with twenty colonists: 33.
 68. **Resource drops wait for the patch job.** The parent branch drains its drop queue right after the sim tick, just after the nav job is launched, so the first clear-ground check on a drop frame waits for the whole job. Drops are events (a felled tree's yield, a haul with no box in reach). Draining the queue inside the tick removes the wait; that code belongs to the parent branch and is left to it.
 69. **Steps 6 and 7 are not in this merge.** Step 6 (the route system out of `AIDecisionSystem`, a wandering deer) would conflict with nearly everything the parent branch changed in that file; its targeted replans were built inside the nav system instead (entry 56). Step 7 (mover footprints) has not started. The region-era members of `NavigationSystem` that `AIDecisionSystem` still calls stay until step 6.
+70. **The disc case of entry 65 was real and is fixed.** It only bites where a mover crosses an opening that collapses to a point, which a priced squeeze between trees allows; around plain walls the width check already shuts such an opening. On 20,000 priced pairs at 0.3 m radius the search returned a dearer walk 213 times before the fix and 22 after. The seventh review accepted that the 22 come from the dominance rule and named the likely line; filed as WOR-735 (Priced path search returns a dearer walk on about 0.1% of pairs). The wall-end hunt now also runs at 0.3 m radius. The path-request rows of entry 67 were re-run on the final commit and every answer was identical.
+71. **State at the mergeable point** (2026-11-11, commit d3e1f1d1 plus documents): steps 1 to 5 are in. All four suites pass in both build configurations (sim 910, geometry 391, world 203, assets 261). Ten independent review passes; every must-fix found is fixed with a test, and what was filed instead is WOR-721 to WOR-729 and WOR-735 under the epic. Nothing was run in the game from this branch; the in-game pass and the capture against main belong to the parent branch's integration.
 
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
