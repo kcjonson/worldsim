@@ -440,6 +440,22 @@ namespace ecs {
 			// Query all Haul goals (storage containers wanting items)
 			auto haulGoals = goalRegistry.getGoalsOfType(TaskType::Haul);
 
+			// A haul whose pickup would lift nothing right now (pack full, hands busy with another load):
+			// not available, so the colonist doesn't repeat a pickup that collects nothing. The trace
+			// says why.
+			const auto pushNoRoom = [&](const GoalTask& goal, const std::string& itemDefName, std::string reason) {
+				EvaluatedOption option;
+				option.taskType = TaskType::Haul;
+				option.needType = NeedType::Count;
+				option.needValue = 100.0F;
+				option.threshold = 0.0F;
+				option.haulItemDefName = itemDefName;
+				option.haulGoalId = goal.id;
+				option.status = OptionStatus::NoRoom;
+				option.reason = std::move(reason) + " (no room to carry it)";
+				trace.options.push_back(std::move(option));
+			};
+
 			for (const auto* goal : haulGoals) {
 				if (goal == nullptr) {
 					continue;
@@ -569,13 +585,10 @@ namespace ecs {
 							if (!itemDef->capabilities.carryable.has_value()) {
 								continue;
 							}
-							// Only fetch what the pickup can actually lift. The Pickup action clamps to
-							// carry weight (cargoUnitsThatFit); at or over the cap it adds 0, the fetch
-							// collects nothing, and the AI re-issues it every tick -- an infinite "fetch ->
-							// collect 0 -> fetch" loop. A colonist already loaded with unrelated cargo (or
-							// mid-trip carrying the previous unit) can hit this. Skip the fetch when no unit
-							// fits; the craft stays pending until the colonist has room, instead of spinning.
-							if (ecs::cargoUnitsThatFit(inventory, registry, itemDefName) == 0) {
+							// Only fetch what the pickup can actually lift; one that adds 0 would be
+							// re-issued every tick. The craft stays pending until the colonist has room.
+							if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
+								pushNoRoom(*goal, itemDefName, "Fetching " + itemDefName + " for crafting");
 								continue;
 							}
 							sources.countVisits(stock.size());
@@ -633,6 +646,10 @@ namespace ecs {
 					}
 					if (storageHeadroom == 0) {
 						return; // storage can't take any more of this item, skip it
+					}
+					if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
+						pushNoRoom(*goal, itemDefName, "Hauling " + itemDefName + " to storage");
+						return;
 					}
 					const uint32_t haulQuantity = std::min(storageHeadroom, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
 					sources.countVisits(run.size());
@@ -722,6 +739,7 @@ namespace ecs {
 							if (perTrip == 0) {
 								continue; // colonist can't carry a single unit of this item
 							}
+							const bool roomNow = ecs::pickupUnitsThatFit(inventory, registry, itemDefName) > 0;
 
 							for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
 								if (srcEntity == destEntity) {
@@ -758,6 +776,11 @@ namespace ecs {
 								const uint32_t qty = std::min({drainable, destRoom, perTrip});
 								if (qty == 0) {
 									continue;
+								}
+
+								if (!roomNow) {
+									pushNoRoom(*goal, itemDefName, "Pulling " + itemDefName + " from lower-priority storage");
+									break; // one line says it for every source box
 								}
 
 								// Mirror the loose-pile haul option field-for-field, but the source is the

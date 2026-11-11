@@ -1938,7 +1938,8 @@ namespace ecs::test {
 	//    different -> would treat it as a same-tier switch and drop the un-stowable armful, then
 	//    withdraw + drop again forever. The two-hand-carry guard must HOLD the delivery so it
 	//    completes. Real two-hand Wood; this exercises the re-eval mid-carry the action round-trip
-	//    test (WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDestBox) skipped.
+	//    test (WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDestBox) skipped. A full armful now has no
+	//    room for more, so the scan offers no withdraw at all; the hold must still keep the delivery.
 	TEST_F(AIDecisionSystemTest, TwoHandPullHoldsAgainstFreshSamePriorityPullMidCarry) {
 		auto& registry = assets::AssetRegistry::Get();
 		// A REAL two-hand bulk material (handsRequired==2): rides in both hands, can't stow to
@@ -2002,13 +2003,13 @@ namespace ecs::test {
 
 		world->update(0.016F);
 
-		// The bug's trigger must actually be present: a fresh pull option still sourced from box A.
-		const auto* freshPull = findPullOption(*getTrace(colonist));
-		ASSERT_NE(freshPull, nullptr) << "the pull-source scan re-emits a source-A option mid-carry (the trigger)";
-		EXPECT_EQ(freshPull->haulSourceStorageId, static_cast<uint64_t>(srcBox));
-		ASSERT_TRUE(freshPull->targetPosition.has_value());
-		EXPECT_FLOAT_EQ(freshPull->targetPosition->x, srcPos.x)
-			<< "the fresh option targets the SOURCE (A), differing from the in-flight deposit target (B)";
+		// The full armful leaves no room for more Wood, so the pull-source scan no longer offers a fresh
+		// withdraw from A as a challenger: the trace shows it as no room instead.
+		EXPECT_EQ(findPullOption(*getTrace(colonist)), nullptr) << "no withdraw a full armful couldn't take";
+		const auto* noRoom = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Haul && o.status == OptionStatus::NoRoom && o.haulItemDefName == "Wood";
+		});
+		EXPECT_NE(noRoom, nullptr) << "the trace says why the pull isn't offered";
 
 		// The colonist must HOLD the in-flight delivery: still hauling the same Wood to box B, with the
 		// armful still in hands. No switch, no drop loop.
@@ -3170,6 +3171,79 @@ namespace ecs::test {
 		EXPECT_EQ(task->haulQuantity, 200U)
 			<< "sized by the storage's addableCount (5 slots x 40 stack = 200), not the 5-slot count";
 		EXPECT_GT(task->haulQuantity, 5U) << "not capped at the free-slot count";
+	}
+
+	// A storage haul whose pickup would lift nothing is not on offer, or the colonist re-picks it from
+	// point-blank range and repeats a pickup that collects nothing (the action ends a haul whose pickup
+	// came up empty). Two ways to have no room: a pack at its weight cap, and hands busy with an armful
+	// of another two-hand good. The trace says which haul is waiting and why.
+	TEST_F(AIDecisionSystemTest, StorageHaulNeedsRoomToCarryNow) {
+		auto& registry = assets::AssetRegistry::Get();
+		const auto registerItem = [&](const char* name, uint32_t hands, float massKg) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.handsRequired = hands;
+			def.category = assets::ItemCategory::RawMaterial;
+			def.capabilities.carryable = assets::CarryableCapability{1};
+			def.itemProperties = assets::ItemProperties{};
+			def.itemProperties->stackSize = 40;
+			def.itemProperties->massKg = massKg;
+			registry.registerTestDefinition(std::move(def));
+		};
+		registerItem("Pellet", 1, 0.1F);
+		registerItem("Ballast", 1, 1.5F);
+		registerItem("Plank", 2, 1.0F);
+		registerItem("Log", 2, 1.0F);
+		const uint32_t pelletId = registry.getDefNameId("Pellet");
+		const uint32_t plankId = registry.getDefNameId("Plank");
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, {2.0F, 0.0F}, pelletId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, {0.0F, 2.0F}, plankId, assets::CapabilityType::Carryable);
+
+		auto storage = world->createEntity();
+		world->addComponent<Position>(storage, Position{{4.0F, 0.0F}});
+		Inventory storageInv;
+		storageInv.maxCapacity = 5;
+		world->addComponent<Inventory>(storage, storageInv);
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = storage;
+		goal.destinationPosition = {4.0F, 0.0F};
+		goal.acceptedCategory = assets::ItemCategory::RawMaterial;
+		goal.targetAmount = 5;
+		goal.status = GoalStatus::Available;
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		const auto statusOf = [&](const char* item) {
+			const auto* option = findOption(*getTrace(colonist), [&](const EvaluatedOption& o) {
+				return o.taskType == TaskType::Haul && o.haulItemDefName == item;
+			});
+			return option != nullptr ? std::optional<OptionStatus>{option->status} : std::nullopt;
+		};
+
+		// Pack at its weight cap (30 x 1.5 kg > 35 kg), hands holding a Log armful.
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->addItem("Ballast", 30);
+		inventory->leftHand = ItemStack{"Log", 1};
+		inventory->rightHand = ItemStack{"Log", 1};
+		world->update(0.016F);
+		EXPECT_EQ(statusOf("Pellet"), OptionStatus::NoRoom) << "a full pack takes no Pellet";
+		EXPECT_EQ(statusOf("Plank"), OptionStatus::NoRoom) << "hands busy with Logs take no Plank";
+		EXPECT_NE(getTask(colonist)->type, TaskType::Haul);
+
+		// Room again: both hauls are offered.
+		inventory->removeItem("Ballast", 30);
+		inventory->leftHand.reset();
+		inventory->rightHand.reset();
+		getTask(colonist)->timeSinceEvaluation = 1.0F;
+		world->update(0.016F);
+		EXPECT_TRUE(statusOf("Pellet") == OptionStatus::Available || statusOf("Pellet") == OptionStatus::Selected);
+		EXPECT_TRUE(statusOf("Plank") == OptionStatus::Available || statusOf("Plank") == OptionStatus::Selected);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Haul) << "and the colonist takes one";
 	}
 
 	// A storage that is genuinely full (no free slot AND every stack at its cap) offers no haul:

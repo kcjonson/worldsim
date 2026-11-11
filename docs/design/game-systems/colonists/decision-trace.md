@@ -42,6 +42,7 @@ struct EvaluatedOption {
         Available,      // Could do this, but lower priority
         NoSource,       // Need exists but no known entity
         Regrowing,      // Known source is regrowing: skipped now, chosen again once ready
+        NoRoom,         // Can't lift any of the item now (pack full, hands busy): not offered
         Satisfied       // Need above threshold, no action needed
     };
     Status status;
@@ -216,6 +217,7 @@ The DecisionTrace respects the memory constraint:
 | No food in memory | Status: `NoSource`, "No known food source" |
 | Food exists but not seen | Status: `NoSource` (colonist doesn't know) |
 | Only known food is regrowing | Status: `Regrowing`, "Hunger at 40% (source regrowing)" |
+| Haul with no room to carry | Status: `NoRoom`, "Hauling Wood to storage (no room to carry it)" |
 
 **Key Point:** The trace only shows entities the colonist has observed. If a berry bush exists but the colonist hasn't seen it, it won't appear in the trace.
 
@@ -293,6 +295,7 @@ The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
 | ⏳ | Available | Would do next if current completes |
 | 🔒 | NoSource | Need exists but no known entity |
 | 🌱 | Regrowing | Known source is regrowing; taken again once ready |
+| 🎒 | NoRoom | A haul or fetch the colonist can't lift any of right now; offered again once it has room |
 | ✓ | Satisfied | Need above threshold |
 | 🚶 | Wander | Idle behavior |
 

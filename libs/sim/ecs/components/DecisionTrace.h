@@ -26,6 +26,7 @@ namespace ecs {
 		Available, // Could do this, but lower priority
 		NoSource,  // Need exists but no known entity in memory
 		Regrowing, // The known source is regrowing: skipped now, chosen again once it is ready
+		NoRoom,	   // The colonist can't lift any of the item now (pack full, or hands busy with another load)
 		Satisfied  // Need above threshold, no action needed
 	};
 

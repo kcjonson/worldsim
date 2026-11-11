@@ -46,6 +46,7 @@ namespace world_sim {
 				case ecs::OptionStatus::Available:
 					return LineStatus::Available;
 				case ecs::OptionStatus::NoSource:
+				case ecs::OptionStatus::NoRoom:
 					return LineStatus::Blocked;
 				case ecs::OptionStatus::Regrowing:
 					return LineStatus::Pending;
