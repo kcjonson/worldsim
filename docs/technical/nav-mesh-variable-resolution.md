@@ -279,12 +279,46 @@ Getting there found three things:
 - **Rings can meet off loaded ground.** A new ring can cross a ring that hangs over the edge of the mesh, out where there are no triangles, and the rounded crossing can land back on the mesh. The mesh can't show that, so where a changed edge reaches off ground or near its edge the ring registry is asked instead.
 - **The builder's tags depend on which triangle it samples.** `buildNavMesh` tags a face by testing one point of its largest triangle against each ring's original outline. After rounding, a face can straddle an original outline by a fraction of a millimetre, so the tag can depend on the triangulation. It showed in a third of the adversarial states and in none of the game fixtures. The patched mesh doesn't have the problem: it gets tags by counting ring edges crossed, never by sampling. The builder is left as it is until step 4 decides what still uses it.
 
-One assumption is not proven: the off-ground rule treats rounding as moving an edge at most
-2 mm from its original line. It held across the sweep.
+One assumption is known to be false in the general case. The off-ground rule needs to know how
+far rounding can move a piece of an edge from its original line. The arrangement re-splits
+pieces, not originals, so each cascade of rounded crossings can add about 0.7 mm and nothing
+bounds the depth; a search found 2.98 mm from six nearly parallel segments. The rule now
+reaches 8 mm, and reaching too far is always safe. Game geometry (axis-aligned tree rects,
+metre-scale shoreline edges) is nowhere near such a cascade, but the sound fix is an
+arrangement with a proven bound (hot-pixel snap rounding), which changes the builder's output
+and is filed as its own item.
+
+**Measured patch costs** (step 3, RelWithDebInfo, medians, the three game fixtures at full
+tree density; the hole is triangles freed / created):
+
+| Patch | Time | Hole |
+|---|---|---|
+| Add a lone tree | 34 to 41 us | 11 / 16 |
+| Remove a lone tree | 39 to 61 us | 16 / 8 |
+| Move a 0.6 m footprint 0.3 m, open ground | 82 to 86 us | 24 / 24 |
+| Move a footprint through trees | 96 to 110 us | about 27 |
+| Add a tree on the shoreline | 59 to 73 us | 11 / 23 |
+| Add a tree across a border split to 16 m | 63 to 80 us | 17 / 22 |
+| All of an area's trees in one patch | 9.8 to 14.0 ms | |
+| The same in batches of 64 | 12.1 to 15.3 ms | |
+| The same in batches of 16 | 14.4 to 19.2 ms | |
+| First build of the area through the patch path | 7.1 to 10.8 ms | |
+| `buildNavMesh` of the same area, for comparison | 11.5 to 17.0 ms | |
+
+A first build through the patch path is faster than the builder, and stays faster as the area
+grows: 177 ms against 441 ms on the 512 m tiling, because tags come from a flood and not from
+testing every face against every ring. Small batches cost more in total than one build (about
+30 us of fixed cost per patch, most of it the arrangement and triangulation allocating for a
+dozen segments), which is the price of spreading the work over ticks on the main thread.
+
+Point location is about 0.25 us against 0.08 us for the builder's static grid. Whether that
+matters depends on how often the game locates per tick, which step 4 measures.
 
 **The cost of whole edges.** A long edge that many things cross pulls all of them into the
-hole. A chunk's side is 512 m. Step 3 measures a patch that crosses a chunk border; if it
-costs, chunk squares enter the mesh divided into shorter edges.
+hole. A chunk's side is 512 m. Measured in step 3: adding a tree across a 512 m shared side
+with trees along it takes about 1 ms and rebuilds about 200 triangles. So chunk squares enter
+the mesh with their sides divided into 16 m edges, which brings the same patch to about
+0.17 ms and 36 triangles. The split points are exact, since a chunk's side is axis-aligned.
 
 #### 4.3.3 What each operation adds
 
@@ -542,6 +576,10 @@ decided, why, and how to undo it.
 5. **Builder tags left alone.** `buildNavMesh` can tag a face by its triangulation (4.3.2). Not fixed, because step 4 decides what still uses the builder. Flagged, no behaviour change.
 6. **Tie between solid rings of equal area.** The lower ring id wins. The builder took whichever came first in its input. Affects only two exactly equal-area solid rings over the same spot.
 7. **No game launches from this branch's session.** The rule was to ask Kevin first, and he is away. Everything here is measured headless; in-game captures are left to the single integrated run on the parent branch.
+
+8. **Chunk sides enter the mesh split into 16 m edges.** Measured: a patch across a whole 512 m side costs about 1 ms, across a 16 m piece about 0.17 ms. Cost: about 128 more vertices per chunk, so an open chunk is a few hundred triangles, not two. One mesh parameter; 0 turns it off.
+9. **Off-ground reach raised from 2 mm to 8 mm.** The 2 mm bound on rounding drift was disproved (4.3.2). Reaching further only makes a hole slightly larger. The sound fix is filed separately.
+10. **Step 3 gate on batched detail entry is read as a total against the builder, and small batches miss it by design.** One patch of all trees beats the builder; batches of 16 cost 25 to 30% more in total. Spreading the work over ticks is the point, so the per-tick budget decides the batch size in step 5, not this gate.
 
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
