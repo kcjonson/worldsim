@@ -585,14 +585,18 @@ vec3 groundEncodeSrgb(vec3 linear) {
 /// How far the macro's value noise moves the forest floor's edge, at the middle of
 /// the edge; nothing where the weight is 0 or 1.
 const float kGroundFloorBreakup = 0.8;
+/// 1 / the peak of w (1 - w), so the breakup is kGroundFloorBreakup at the edge's middle.
+const float kGroundFloorEdgeNormal = 4.0;
+/// The mid (10 m) octave's share of the breakup noise against the fine (5 m) one's 1.
+const float kGroundFloorMidOctave = 0.5;
 
 /// The forest floor's weight at this pixel: the macro's canopy weight, its edge
 /// broken up by the macro's value noise so it isn't a smooth gradient. Exactly 0
 /// wherever the canopy weight is.
 float groundFloor(vec4 macro) {
 	float w		= macro.a;
-	float noise = macro.b - 0.5 + 0.5 * (macro.g - 0.5);
-	return clamp(w + kGroundFloorBreakup * 4.0 * noise * w * (1.0 - w), 0.0, 1.0);
+	float noise = macro.b - 0.5 + kGroundFloorMidOctave * (macro.g - 0.5);
+	return clamp(w + kGroundFloorBreakup * kGroundFloorEdgeNormal * noise * w * (1.0 - w), 0.0, 1.0);
 }
 
 /// A surface's macro tint and value at this pixel (`macro`, its sample of

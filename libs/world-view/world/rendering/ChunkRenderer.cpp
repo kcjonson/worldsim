@@ -66,11 +66,6 @@ namespace worldview {
 		constexpr float				   kForestFloorStrength = 1.0F;
 		constexpr std::array<float, 3> kForestFloorLitter	= {75.0F / 80.2F, 80.0F / 105.9F, 37.0F / 48.6F};
 
-		bool isGrassFamily(world::Surface surface) {
-			return surface == world::Surface::Grass || surface == world::Surface::GrassTall || surface == world::Surface::GrassShort ||
-				   surface == world::Surface::GrassMeadow;
-		}
-
 		/// u_groundLayers.w: how land.glsl turns a hex cell's tile.
 		int groundRotateCode(assets::GroundRotate rotate) {
 			switch (rotate) {
@@ -535,6 +530,8 @@ namespace worldview {
 		std::array<float, kCount>	  mipLevels{};
 		const float					  bias = *groundLook.lodBias;
 		const float					  macroAmp = *groundLook.macroAmp;
+		// The grass family takes the forest floor: the surfaces in Grass's seed group, which share its hash surface.
+		const int grassFamily = groundTiles->surface(world::Surface::Grass).hashSurface;
 		for (size_t id = 0; id < kCount; ++id) {
 			const GroundTileBank::Surface& s = groundTiles->surface(static_cast<world::Surface>(id));
 			const int					   variants = std::max(s.layerCount, 1);
@@ -551,8 +548,7 @@ namespace worldview {
 			for (size_t c = 0; c < 3; ++c) {
 				tintBase[id * 3 + c] = 1.0F + amp * (s.macro.dry[c] - 1.0F);
 				tintLush[id * 3 + c] = amp * (s.macro.lush[c] - s.macro.dry[c]);
-				floorTint[id * 3 + c] =
-					isGrassFamily(static_cast<world::Surface>(id)) ? 1.0F + kForestFloorStrength * (kForestFloorLitter[c] - 1.0F) : 1.0F;
+				floorTint[id * 3 + c] = s.hashSurface == grassFamily ? 1.0F + kForestFloorStrength * (kForestFloorLitter[c] - 1.0F) : 1.0F;
 			}
 		}
 		glUniform4iv(loc.groundLayers, static_cast<GLsizei>(kCount), layers.data());

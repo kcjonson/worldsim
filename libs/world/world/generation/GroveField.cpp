@@ -71,6 +71,11 @@ namespace world::grove {
 		return smooth01(kGapBandLo, kGapBandHi, warpedNoise(worldX, worldY, kGapFeatureMeters, seed ^ kGapSalt));
 	}
 
+	float spawnScale(float grove, float worldX, float worldY, uint64_t seed) {
+		const float open = gladeWeight(grove) * gapWeight(worldX, worldY, seed);
+		return kGladeSpawnMin + (1.0F - kGladeSpawnMin) * open;
+	}
+
 	float canopyWeight(float worldX, float worldY, uint64_t seed, float cover) {
 		if (cover <= 0.0F) {
 			return 0.0F;

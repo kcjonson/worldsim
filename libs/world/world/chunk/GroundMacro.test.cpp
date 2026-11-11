@@ -15,11 +15,28 @@
 namespace world {
 
 	namespace {
-		std::vector<uint8_t> fill(ChunkCoordinate coord) {
-			std::vector<uint8_t>	 rgba(kGroundMacroBytes);
-			const std::vector<float> cover(static_cast<size_t>(kGroundMacroSide) * kGroundMacroSide, 0.0F);
-			fillGroundMacro(coord, 0x5EED5EED12345678ULL, cover, rgba);
+		constexpr uint64_t kSeed = 0x5EED5EED12345678ULL;
+
+		// A chunk's macro texture for a canopy cover given as a function of the texel's world meters.
+		template <typename CoverAt> std::vector<uint8_t> fill(ChunkCoordinate coord, CoverAt coverAt) {
+			std::vector<uint8_t> rgba(kGroundMacroBytes);
+			std::vector<float>	 cover(static_cast<size_t>(kGroundMacroSide) * kGroundMacroSide);
+			for (int32_t j = 0; j < kGroundMacroSide; ++j) {
+				for (int32_t i = 0; i < kGroundMacroSide; ++i) {
+					cover[(static_cast<size_t>(j) * kGroundMacroSide) + static_cast<size_t>(i)] =
+						coverAt((coord.x * kChunkSize) + (i * kGroundMacroMetersPerTexel), (coord.y * kChunkSize) + (j * kGroundMacroMetersPerTexel));
+				}
+			}
+			fillGroundMacro(coord, kSeed, cover, rgba);
 			return rgba;
+		}
+
+		std::vector<uint8_t> fill(ChunkCoordinate coord) {
+			return fill(coord, [](int32_t, int32_t) { return 0.0F; });
+		}
+
+		float fullCover(int32_t /*x*/, int32_t /*y*/) {
+			return 1.0F;
 		}
 
 		const uint8_t* texel(const uint8_t* rgba, int32_t i, int32_t j) {
@@ -55,6 +72,59 @@ namespace world {
 		for (size_t t = 3; t < self.size(); t += 4) {
 			ASSERT_EQ(self[t], 0) << "texel " << t / 4;
 		}
+	}
+
+	// The corner texel is shared by four chunks: (0, 0)'s last is (1, 1)'s first, and its first is
+	// (-1, -1)'s last, every channel and the floor included.
+	TEST(GroundMacroTest, DiagonalNeighborsShareTheCornerTexel) {
+		const std::vector<uint8_t> self = fill({0, 0}, fullCover);
+		const std::vector<uint8_t> after = fill({1, 1}, fullCover);
+		const std::vector<uint8_t> before = fill({-1, -1}, fullCover);
+		const int32_t			   last = kGroundMacroSide - 1;
+		EXPECT_TRUE(std::equal(texel(self.data(), last, last), texel(self.data(), last, last) + 4, texel(after.data(), 0, 0)));
+		EXPECT_TRUE(std::equal(texel(self.data(), 0, 0), texel(self.data(), 0, 0) + 4, texel(before.data(), last, last)));
+	}
+
+	// The cover differs on each side of a border (a light canopy west of x = -100, inside the chunk
+	// west of the border at x = 0, a closed one east of it, and another cover north of y = 0), and the
+	// shared texels still agree: each is the field at its own position, whichever chunk fills it.
+	TEST(GroundMacroTest, BorderTexelsAgreeWhereTheCoverDiffersAcrossIt) {
+		const auto coverAt = [](int32_t x, int32_t y) {
+			if (y < 0) {
+				return 0.5F;
+			}
+			return x < -100 ? 0.3F : 1.0F;
+		};
+		const std::vector<uint8_t> west = fill({-1, 0}, coverAt);
+		const std::vector<uint8_t> east = fill({0, 0}, coverAt);
+		const std::vector<uint8_t> north = fill({0, -1}, coverAt);
+		const int32_t			   last = kGroundMacroSide - 1;
+		size_t					   floor = 0;
+		for (int32_t k = 0; k < kGroundMacroSide; ++k) {
+			EXPECT_EQ(texel(west.data(), last, k)[3], texel(east.data(), 0, k)[3]) << "row " << k;
+			EXPECT_EQ(texel(north.data(), k, last)[3], texel(east.data(), k, 0)[3]) << "column " << k;
+			floor += texel(east.data(), 0, k)[3] > 0 ? 1 : 0;
+		}
+		EXPECT_GT(floor, 0U) << "the border carries some floor, so the comparison isn't all zeros";
+	}
+
+	// Under a closed canopy a glade still has no floor: wherever the grove field is at or below the
+	// floor's edge, alpha is exactly 0.
+	TEST(GroundMacroTest, AGladeUnderFullCoverHasNoFloor) {
+		const ChunkCoordinate	   coord{-2, 1};
+		const std::vector<uint8_t> rgba = fill(coord, fullCover);
+		size_t					   glade = 0;
+		for (int32_t j = 0; j < kGroundMacroSide; ++j) {
+			for (int32_t i = 0; i < kGroundMacroSide; ++i) {
+				const auto x = static_cast<float>((coord.x * kChunkSize) + (i * kGroundMacroMetersPerTexel));
+				const auto y = static_cast<float>((coord.y * kChunkSize) + (j * kGroundMacroMetersPerTexel));
+				if (grove::groveValue(x, y, kSeed) <= grove::kFloorEdgeLo) {
+					ASSERT_EQ(texel(rgba.data(), i, j)[3], 0) << i << ", " << j;
+					++glade;
+				}
+			}
+		}
+		EXPECT_GT(glade, 0U) << "the chunk holds a glade";
 	}
 
 	// The forest floor in alpha, from chunks generated independently the way ChunkManager does it, each

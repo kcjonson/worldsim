@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <iostream>
 #include <vector>
 
 namespace world::grove {
@@ -28,8 +27,7 @@ namespace world::grove {
 				ASSERT_GE(w, 0.0F);
 				ASSERT_LE(w, 1.0F);
 				const float grove = groveValue(fx, fy, kSeed);
-				// Placement's spawn scale (PlacementExecutor): a glade keeps kGladeSpawnMin of it.
-				const float spawn = kGladeSpawnMin + (1.0F - kGladeSpawnMin) * gladeWeight(grove) * gapWeight(fx, fy, kSeed);
+				const float spawn = spawnScale(grove, fx, fy, kSeed);
 				if (grove <= kFloorEdgeLo) {
 					ASSERT_EQ(w, 0.0F) << x << ", " << y;
 				}
@@ -66,11 +64,13 @@ namespace world::grove {
 		}
 		ASSERT_GT(widths.size(), 50U);
 		std::sort(widths.begin(), widths.end());
+		// At this seed the quartiles are 5, 7, and 11 m: the spread is bounded too, so a fade that keeps
+		// its median but smears its long tail (or snaps its short one) still fails.
 		const float median = widths[widths.size() / 2];
-		std::cout << "canopy edge: " << widths.size() << " crossings, quartiles " << widths[widths.size() / 4] << " / " << median
-				  << " / " << widths[widths.size() * 3 / 4] << " m\n";
 		EXPECT_GE(median, 2.0F);
 		EXPECT_LE(median, 8.0F);
+		EXPECT_GE(widths[widths.size() / 4], 2.0F);
+		EXPECT_LE(widths[widths.size() * 3 / 4], 16.0F);
 	}
 
 } // namespace world::grove

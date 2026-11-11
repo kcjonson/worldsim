@@ -339,8 +339,7 @@ namespace assets {
 				float effectiveChance = bp->spawnChance;
 				if (bp->distribution == Distribution::Spaced) {
 					groveG = world::grove::groveValue(tileWorldX, tileWorldY, context.worldSeed);
-					const float open = world::grove::gladeWeight(groveG) * world::grove::gapWeight(tileWorldX, tileWorldY, context.worldSeed);
-					effectiveChance *= world::grove::kGladeSpawnMin + (1.0F - world::grove::kGladeSpawnMin) * open;
+					effectiveChance *= world::grove::spawnScale(groveG, tileWorldX, tileWorldY, context.worldSeed);
 				}
 				if (chanceDist(rng) >= effectiveChance) {
 					continue; // Spawn chance failed

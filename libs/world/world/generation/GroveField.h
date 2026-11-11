@@ -50,6 +50,10 @@ namespace world::grove {
 	/// kGapFeatureMeters through the gap band.
 	[[nodiscard]] float gapWeight(float worldX, float worldY, uint64_t seed);
 
+	/// The share of its base spawn chance spaced flora keeps at a world position whose grove field
+	/// is `grove` (groveValue there): kGladeSpawnMin in a full glade or small gap, 1 in a stand.
+	[[nodiscard]] float spawnScale(float grove, float worldX, float worldY, uint64_t seed);
+
 	// The forest floor follows the canopy: its edge sits partway up the glade band, where the
 	// trees have thinned to about a third of a stand's, and crosses it over a few meters; inside,
 	// the loose forest near the edge carries less floor than a stand core, and the small gaps
