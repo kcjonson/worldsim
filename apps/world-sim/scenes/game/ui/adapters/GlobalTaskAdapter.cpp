@@ -329,9 +329,10 @@ namespace world_sim::adapters {
 			return data;
 		}
 
-		/// Every goal row, Cut/Haul/Build reading as a chain per site and Craft/PlacePackaged rounding it
-		/// out. Build is the umbrella (the destination holder), so a site shows its build step, not just
-		/// its material children. Goal systems retire what is satisfied, so every goal is shown.
+		/// Every goal row with something to do, Cut/Haul/Build reading as a chain per site and
+		/// Craft/PlacePackaged rounding it out. Build is the umbrella (the destination holder), so a site
+		/// shows its build step, not just its material children. A full box keeps its umbrella and is left
+		/// out until it wants something again.
 		std::vector<GlobalTaskDisplayData> goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition) {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
 			std::vector<GlobalTaskDisplayData> result;
@@ -339,7 +340,9 @@ namespace world_sim::adapters {
 			for (ecs::TaskType type :
 				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
-					result.push_back(goalToDisplayData(registry, *goal, referencePosition, &world, &workers));
+					if (ecs::goalHasWork(world, *goal)) {
+						result.push_back(goalToDisplayData(registry, *goal, referencePosition, &world, &workers));
+					}
 				}
 			}
 			return result;

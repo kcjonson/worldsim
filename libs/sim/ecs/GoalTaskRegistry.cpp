@@ -57,6 +57,24 @@ namespace ecs {
 		return 0;
 	}
 
+	bool goalHasWork(World& world, const GoalTask& goal) {
+		if (goal.owner != GoalOwner::StorageGoalSystem) {
+			return true;
+		}
+		const auto& registry = GoalTaskRegistry::Get();
+		if (goal.parentGoalId.has_value()) {
+			return registry.remainingNeed(world, registry.rootOf(goal.id), goal.yieldDefNameId, NeedBasis::Harvest) > 0;
+		}
+		if (std::any_of(goal.acceptedDefNameIds.begin(), goal.acceptedDefNameIds.end(), [&](uint32_t item) {
+				return registry.remainingNeed(world, goal.id, item, NeedBasis::Stock) > 0;
+			})) {
+			return true;
+		}
+		const auto* inventory = world.getComponent<Inventory>(goal.destinationEntity);
+		return goal.acceptedCategory != assets::ItemCategory::None && inventory != nullptr &&
+			   !world.hasComponent<Packaged>(goal.destinationEntity) && inventory->hasSpace();
+	}
+
 	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {
 		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(p);
 	}

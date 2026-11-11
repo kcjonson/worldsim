@@ -256,6 +256,39 @@ namespace ecs::test {
 		EXPECT_GT(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U) << "placed again, it wants stock again";
 	}
 
+	// The task panel shows a storage umbrella or a stocking cut only while it has something to do.
+	TEST_F(RemainingNeedTest, AStorageGoalHasWorkOnlyWhileItsBoxWantsSomething) {
+		const EntityID box = world.createEntity();
+		auto		   inventory = Inventory::createForStorage();
+		inventory.maxCapacity = 1;
+		world.addComponent<Inventory>(box, std::move(inventory));
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 4});
+		world.addComponent<StorageConfiguration>(box, std::move(config));
+		auto&		   registry = GoalTaskRegistry::Get();
+		GoalTask	   umbrella;
+		umbrella.type = TaskType::Haul;
+		umbrella.owner = GoalOwner::StorageGoalSystem;
+		umbrella.destinationEntity = box;
+		umbrella.acceptedDefNameIds = {stone};
+		const uint64_t umbrellaId = registry.createGoal(std::move(umbrella));
+		GoalTask	   cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::StorageGoalSystem;
+		cut.destinationEntity = box;
+		cut.yieldDefNameId = stone;
+		cut.parentGoalId = umbrellaId;
+		const uint64_t cutId = registry.createGoal(std::move(cut));
+
+		EXPECT_TRUE(goalHasWork(world, *registry.getGoal(umbrellaId)));
+		EXPECT_TRUE(goalHasWork(world, *registry.getGoal(cutId)));
+		world.getComponent<Inventory>(box)->addItem("Stone", 4);
+		EXPECT_TRUE(goalHasWork(world, *registry.getGoal(umbrellaId))) << "room for more stone";
+		EXPECT_FALSE(goalHasWork(world, *registry.getGoal(cutId))) << "the minimum is met";
+		world.getComponent<Inventory>(box)->addItem("Stone", 6);
+		EXPECT_FALSE(goalHasWork(world, *registry.getGoal(umbrellaId))) << "a full box wants nothing";
+	}
+
 	TEST_F(RemainingNeedTest, CraftNeedIsTheNextJobsBillOfMaterialsLessTheStore) {
 		auto&		   registry = GoalTaskRegistry::Get();
 		const EntityID station = world.createEntity();

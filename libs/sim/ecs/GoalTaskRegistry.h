@@ -256,6 +256,12 @@ namespace ecs {
 	/// remaining need, and what a deposit into the station is metered to.
 	[[nodiscard]] uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId);
 
+	/// Whether a goal has anything to do now, for the task panel. A storage umbrella stays while its box
+	/// has rules, full or not, so it has work only while it needs an item it names or has room for its
+	/// category; a stocking cut only while its box is short of the minimum. Every other goal exists only
+	/// while it has work: its goal system retires it.
+	[[nodiscard]] bool goalHasWork(World& world, const GoalTask& goal);
+
 	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
 	/// first time each is asked. A pass is one AI update: every deposit and every consumed input lands
 	/// in ActionSystem or a goal system, never inside it, so nothing it reads changes until the next
