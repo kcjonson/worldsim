@@ -42,6 +42,7 @@ class ChunkManager;
 
 namespace ecs {
 
+struct EvaluatedOption;
 class LoosePileIndex;
 class NavigationSystem;
 
@@ -241,23 +242,22 @@ private:
 	/// goods it carries; routed again, all its claims.
 	void applyNavOutcome(EntityID entity, struct Task& task, NavRequestOutcome outcome);
 
-	/// Handle chain interruption when switching away from a mid-chain task
-	/// Stows 1-handed items to backpack, drops 2-handed items or packaged entities.
-	/// @param entity Entity ID for logging
-	/// When the new task is a need and the colonist keeps a haul's goods, the haul becomes the task's
-	/// suspended record (task-claims.md, interruption by the colonist's own needs).
-	/// @param task Current task, carrying its chain's goods (past its pickup, or a cut with cargo)
-	/// @param inventory Colonist inventory to modify
-	/// @param position Colonist position (for dropping items)
-	/// @param newTaskType Type of new task being switched to
-	/// @param newNeedType Need type for FulfillNeed tasks
-	/// About to wander holding a two-hand armful under no claim that no root it knows wants: put it down
-	/// as a loose pile (the drop path, which merges it into a pile at the spot).
-	void putDownUnwantedArmful(const Task& task, Inventory& inventory, const Position& position, const DecisionTrace& trace);
+	/// About to wander holding a two-hand armful that no root it knows wants: put it down as a loose pile
+	/// (the drop path, which merges it into a pile at the spot). A carried packaged item is never one.
+	void putDownUnwantedArmful(Inventory& inventory, const Position& position, const DecisionTrace& trace);
+
+	/// Switching to anything but placing the packaged item it carries, or a need its hands are free for:
+	/// set the item down where it stands, still packaged, for whoever places it next.
+	void setDownUnplacedFurniture(EntityID entity, Inventory& inventory, const Position& position, const EvaluatedOption& selected);
 
 	/// A colonist put goods away in `box` inside this update: what the caches hold for it is read again.
 	void boxChanged(EntityID box);
 
+	/// Switching away from a task that carries its chain's goods (past its pickup, or a cut with cargo):
+	/// a one-hand item is stowed to the belt, then the backpack, else dropped; a two-hand armful is
+	/// dropped when the new task's first action needs the hands. When the new task is a need and the
+	/// colonist keeps the goods, the task becomes its suspended record (task-claims.md, interruption by
+	/// the colonist's own needs).
 	void handleChainInterruption(
 		EntityID entity,
 		Task& task,

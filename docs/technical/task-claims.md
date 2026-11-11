@@ -377,16 +377,23 @@ from [Crafting & Material Provisioning](./crafting-provisioning-architecture.md)
 deposits exactly what is needed and keeps the rest, which holds no claim.
 
 A two-hand armful kept this way, or left when its root is gone, fills the colonist's carry, so every
-haul and cut reads no room. A colonist about to wander while holding a two-hand armful under no
-suspended record that no root it knows wants (no carry-in of it is offered) puts it down where it
-stands through the drop path, which merges it into a pile at the spot
-(`AIDecisionSystem::putDownUnwantedArmful`); the pile is an ordinary source with no claims, hauled once
-a root wants it. One-hand surplus stays in the pack.
+haul and cut reads no room. A colonist about to wander while holding a two-hand armful that no root it
+knows wants (no carry-in of it is offered) puts it down where it stands through the drop path, which
+merges it into a pile at the spot (`AIDecisionSystem::putDownUnwantedArmful`); the pile is an ordinary
+source with no claims, hauled once a root wants it. One-hand surplus stays in the pack. A carried
+packaged item is never put down as a pile (Chain_PlaceItem, below).
 
 ### Chain_PlaceItem
 
 Accept records Use(packaged entity), unless the colonist already carries it. Pickup drops it (the item
 is now possessed). The placement target is fixed on the packaged item, so no slot is needed.
+
+A carrier whose decision picks anything but placing the item it carries, or a need whose action leaves
+the hands free (sleep), sets the item down where it stands, still packaged and no longer carried
+(`AIDecisionSystem::setDownUnplacedFurniture`): its placement was cancelled, its target became
+unreachable, or other work outranks it. Once a placement is offered again, a colonist picks it up from
+there. The pickup is offered only while the placement target is reachable, so a carrier with no way to
+the target does not pick the item up again only to set it down.
 
 ### Craft (Chain_CraftWithGather)
 

@@ -504,6 +504,44 @@ namespace ecs::test {
 		EXPECT_TRUE(task.claims.empty()) << "a carried item is possessed";
 	}
 
+	// Furniture whose placement is cancelled while it is carried is set down where the colonist stands, as
+	// the packaged item it is: never dropped as a loose pile of its name, never left marked carried with
+	// empty hands. Placed again, it is picked up from there.
+	TEST_F(ChainClaimsTest, FurnitureWhosePlacementIsCancelledIsSetDownPackaged) {
+		registerItem("Shelf", 2, 12.0F);
+		uint32_t loosePiles = 0;
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { loosePiles += quantity; });
+		const glm::vec2 itemPos{3.0F, 0.0F};
+		const EntityID	shelf = world->createEntity();
+		world->addComponent<Position>(shelf, Position{itemPos});
+		world->addComponent<Appearance>(shelf, Appearance{"Shelf", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		world->addComponent<Packaged>(shelf, Packaged{.targetPosition = glm::vec2{8.0F, 0.0F}});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::PlacePackaged);
+		act(colonist, itemPos);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(inventory.carryingPackagedEntity, static_cast<uint64_t>(shelf));
+		ASSERT_TRUE(world->getComponent<Packaged>(shelf)->beingCarried);
+
+		const glm::vec2 stoodAt{5.0F, 1.0F};
+		world->getComponent<Position>(colonist)->value = stoodAt;
+		world->getComponent<Packaged>(shelf)->targetPosition.reset();
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Wander);
+		EXPECT_FALSE(inventory.carryingPackagedEntity.has_value());
+		EXPECT_FALSE(inventory.leftHand.has_value());
+		EXPECT_FALSE(inventory.rightHand.has_value());
+		EXPECT_EQ(loosePiles, 0U) << "no loose pile of a shelf";
+		EXPECT_FALSE(world->getComponent<Packaged>(shelf)->beingCarried);
+		EXPECT_EQ(world->getComponent<Position>(shelf)->value, stoodAt);
+
+		world->getComponent<Packaged>(shelf)->targetPosition = glm::vec2{8.0F, 0.0F};
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::PlacePackaged);
+		EXPECT_EQ(getTask(colonist)->placeSourcePosition, stoodAt) << "picked up where it was set down";
+	}
+
 	// A colonist carrying one packaged item sees another only as an item to go and pick up: held by
 	// whoever is on its way to it, never as one it is already delivering.
 	TEST_F(ChainClaimsTest, CarryingOnePackagedItemDoesNotMakeAnotherOneDelivering) {

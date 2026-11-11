@@ -1763,6 +1763,9 @@ namespace ecs {
 					if (!handedCargo && carriesChainGoods(m_registry, task) && selected != nullptr) {
 						handleChainInterruption(entity, task, inventory, position, selected->taskType, selected->needType);
 					}
+					if (selected != nullptr) {
+						setDownUnplacedFurniture(entity, inventory, position, *selected);
+					}
 
 					// The abandoned task's claims leave the index now, unless it just became the
 					// suspended record or hands its cargo on, so a colonist deciding later this update
@@ -1780,7 +1783,7 @@ namespace ecs {
 					acceptClaims(entity, task, memory, inventory, handedCargo);
 					task.deliveryChosen = task.type == TaskType::Haul && task.chainStep == 1;
 					if (task.type == TaskType::Wander) {
-						putDownUnwantedArmful(task, inventory, position, *trace);
+						putDownUnwantedArmful(inventory, position, *trace);
 					}
 
 					LOG_INFO(
@@ -2636,6 +2639,13 @@ namespace ecs {
 				option.status = OptionStatus::NoSource; // its route already failed under this key
 				continue;
 			}
+			// Picking up furniture whose spot he can't reach would only carry it off and set it down again.
+			if (option.taskType == TaskType::PlacePackaged && option.placeTargetPosition.has_value() &&
+				option.placeTargetPosition != option.targetPosition &&
+				(!canReach(*option.placeTargetPosition) || routeFailed(0, *option.placeTargetPosition))) {
+				option.status = OptionStatus::NoSource;
+				continue;
+			}
 			option.status = OptionStatus::Selected;
 			break;
 		}
@@ -2961,48 +2971,52 @@ namespace ecs {
 			if (dropped.has_value() && dropped->quantity > 0 && world != nullptr) {
 				ecs::storeOrDrop(*world, dropped->defName, dropped->quantity, position.value, onDropResource, [this](EntityID box) { boxChanged(box); });
 			}
-			return;
-		}
-
-		// For PlacePackaged tasks: packaged entity is being carried
-		if (task.type == TaskType::PlacePackaged && inventory.carryingPackagedEntity.has_value()) {
-			uint64_t packagedEntityId = inventory.carryingPackagedEntity.value();
-
-			// Update packaged entity's position to colonist's position (drop it here)
-			auto* packagedPos = world->getComponent<Position>(packagedEntityId);
-			if (packagedPos != nullptr) {
-				packagedPos->value = position.value;
-			}
-
-			// Clear carrying state
-			inventory.carryingPackagedEntity.reset();
-			inventory.leftHand.reset();
-			inventory.rightHand.reset();
-
-			LOG_INFO(
-				Engine,
-				"[AI] Entity %llu: chain interrupted, dropped packaged entity %llu at (%.1f, %.1f)",
-				entityId,
-				static_cast<unsigned long long>(packagedEntityId),
-				position.value.x,
-				position.value.y
-			);
 		}
 	}
 
-	void AIDecisionSystem::putDownUnwantedArmful(const Task& task, Inventory& inventory, const Position& position, const DecisionTrace& trace) {
-		if (!inventory.leftHand.has_value() || !ecs::itemIsTwoHand(m_registry, inventory.leftHand->defName)) {
+	void AIDecisionSystem::setDownUnplacedFurniture(EntityID entity, Inventory& inventory, const Position& position, const EvaluatedOption& selected) {
+		if (!inventory.carryingPackagedEntity.has_value()) {
 			return;
 		}
-		// An armful fills the carry, so every haul and cut would read no room: one under no claim that no
-		// root he knows wants is put down where he stands, a pile any colonist can haul once a root wants it.
+		const uint64_t carried = *inventory.carryingPackagedEntity;
+		if (selected.taskType == TaskType::PlacePackaged && selected.placePackagedEntityId == carried) {
+			return;
+		}
+		// Sleep and other hands-free needs keep it, and the placement resumes after.
+		if (selected.taskType == TaskType::FulfillNeed && !selected.gathersFood && !taskFirstActionNeedsHands(selected.taskType, selected.needType)) {
+			return;
+		}
+		// Set down as the packaged item it is, where he stands: the placement, once offered again, picks it
+		// up from here.
+		const auto packaged = static_cast<EntityID>(carried);
+		if (auto* packagedPos = world->getComponent<Position>(packaged)) {
+			packagedPos->value = position.value;
+		}
+		if (auto* state = world->getComponent<Packaged>(packaged)) {
+			state->beingCarried = false;
+		}
+		inventory.carryingPackagedEntity.reset();
+		inventory.leftHand.reset();
+		inventory.rightHand.reset();
+		LOG_INFO(
+			Engine, "[AI] Entity %llu: set down packaged entity %llu at (%.1f, %.1f)", static_cast<unsigned long long>(entity),
+			static_cast<unsigned long long>(carried), position.value.x, position.value.y
+		);
+	}
+
+	void AIDecisionSystem::putDownUnwantedArmful(Inventory& inventory, const Position& position, const DecisionTrace& trace) {
+		if (inventory.carryingPackagedEntity.has_value() || !inventory.leftHand.has_value() ||
+			!ecs::itemIsTwoHand(m_registry, inventory.leftHand->defName)) {
+			return;
+		}
+		// An armful fills the carry, so every haul and cut would read no room: one that no root he knows
+		// wants is put down where he stands, a pile any colonist can haul once a root wants it.
 		const std::string name = inventory.leftHand->defName;
 		const uint32_t	  item = m_registry.getDefNameId(name);
-		const bool	   recorded = task.suspended.has_value() && task.suspended->itemDefNameId == item;
-		const bool	   wanted = std::any_of(trace.options.begin(), trace.options.end(), [item](const EvaluatedOption& option) {
-			  return option.taskType == TaskType::Haul && option.haulFromInventory && option.haulItemDefNameId == item;
-		  });
-		if (recorded || wanted) {
+		const bool		  wanted = std::any_of(trace.options.begin(), trace.options.end(), [item](const EvaluatedOption& option) {
+			   return option.taskType == TaskType::Haul && option.haulFromInventory && option.haulItemDefNameId == item;
+		   });
+		if (wanted) {
 			return;
 		}
 		const auto dropped = inventory.putDown(name);
