@@ -436,7 +436,8 @@ namespace ecs {
 		const auto*				ai = world->tryGetSystem<AIDecisionSystem>();
 		const uint32_t			quantity = std::min(
 			 {cargo, accepted,
-			  rootAvailable(*world, ai != nullptr ? ai->claimIndex() : kNoClaims, rootId, item, harvestBasis(*root), ClaimExclusion::of(task))}
+			  rootAvailable(goals.remainingNeed(*world, rootId, item, harvestBasis(*root)), ai != nullptr ? ai->claimIndex() : kNoClaims, rootId,
+							item, ClaimExclusion::of(task))}
 		 );
 		if (quantity == 0) {
 			return false;

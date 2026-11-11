@@ -172,6 +172,10 @@ namespace assets {
 
 	void RecipeRegistry::registerTestRecipe(RecipeDef recipe) {
 		const std::string defName = recipe.defName;
+		// Inputs are matched by interned id, so a test recipe names the items its test registered.
+		for (auto& input : recipe.inputs) {
+			input.defNameId = AssetRegistry::Get().getDefNameId(input.defName);
+		}
 		auto [it, inserted] = m_recipes.emplace(defName, std::move(recipe));
 		if (inserted) {
 			// Index by station (don't need full populateDefNameIds for test recipes)

@@ -394,6 +394,14 @@ manifest, the box), so a deposit or a consumed input shows at once with no count
 its cost is the recipe's inputs, the manifest's entries, or the box's rules and slots, never a walk
 of goals or colonists. The AI, the goal systems, the deposit leg, and the UI all use it.
 
+The AI asks it per goal, per item, per deciding colonist, so it reads it through a per-update cache
+(`RemainingNeedCache`): each (root, item, basis) is worked out the first time any colonist asks in
+that update and read from the cache after, in reused storage that allocates nothing once warm. That is
+safe because no deposit and no consumed input lands inside an AI update; ActionSystem and the goal
+systems run outside it. Only the in-flight exclusion and the colonist's own goods are worked out per
+decision. ActionSystem (the deposit leg's commit, a deposit) never reads the cache: other deposits
+may have landed earlier in the same ActionSystem update, so it reads `remainingNeed` itself.
+
 ### Live source quantity (a deliberate compromise)
 
 A colonist reads the live count of a pile or box it already knows about (a pile's `ResourceStack`,

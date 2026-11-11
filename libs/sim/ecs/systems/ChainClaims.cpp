@@ -85,9 +85,7 @@ namespace ecs {
 		}
 	}
 
-	uint32_t
-	rootAvailable(World& world, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis, ClaimExclusion exclude) {
-		const uint32_t need = GoalTaskRegistry::Get().remainingNeed(world, rootGoalId, itemDefNameId, basis);
+	uint32_t rootAvailable(uint32_t need, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, ClaimExclusion exclude) {
 		const uint32_t inFlight = need > 0 ? claims.inFlight(rootGoalId, itemDefNameId, exclude) : 0U;
 		return need > inFlight ? need - inFlight : 0U;
 	}
@@ -97,7 +95,8 @@ namespace ecs {
 	}
 
 	void recordChainClaims(
-		World& world, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, Task& task
+		World& world, RemainingNeedCache& needs, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory,
+		const Inventory& inventory, Task& task
 	) {
 		const auto& goals = GoalTaskRegistry::Get();
 		switch (task.type) {
@@ -117,7 +116,8 @@ namespace ecs {
 				// The cut's in-flight covers what the colonist already carries toward the root as well as
 				// what this cut lands, so its goods stay committed between cuts and nobody re-cuts them.
 				const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(item));
-				const uint32_t wanted = rootAvailable(world, claims, root->id, item, harvestBasis(*root), ClaimExclusion::of(task));
+				const uint32_t wanted =
+					rootAvailable(needs.get(world, root->id, item, harvestBasis(*root)), claims, root->id, item, ClaimExclusion::of(task));
 				const uint32_t carried = std::min({handedOver > 0 ? handedOver : held, held, wanted});
 				const uint32_t expected = std::min(mostPerCut(registry, memory, inventory, task), wanted - carried);
 				if (carried > 0) {

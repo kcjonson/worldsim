@@ -173,6 +173,21 @@ namespace ecs {
 		/// Get all goals of a specific type
 		[[nodiscard]] std::vector<const GoalTask*> getGoalsOfType(TaskType type) const;
 
+		/// Call fn(const GoalTask&) for every goal of a type, in the order getGoalsOfType lists them,
+		/// without building a list.
+		template <typename Fn>
+		void forEachGoalOfType(TaskType type, Fn&& fn) const {
+			const auto it = typeToGoals.find(type);
+			if (it == typeToGoals.end()) {
+				return;
+			}
+			for (uint64_t goalId : it->second) {
+				if (const auto goalIt = goals.find(goalId); goalIt != goals.end()) {
+					fn(goalIt->second);
+				}
+			}
+		}
+
 		/// Get all goals matching a filter
 		[[nodiscard]] std::vector<const GoalTask*> getGoalsMatching(const GoalFilter& filter) const;
 
@@ -240,6 +255,37 @@ namespace ecs {
 		// Internal helpers
 		void addToIndices(const GoalTask& goal);
 		void removeFromIndices(const GoalTask& goal);
+	};
+
+	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
+	/// first time each is asked. A pass is one AI update: every deposit and every consumed input lands
+	/// in ActionSystem or a goal system, never inside it, so nothing it reads changes until the next
+	/// invalidate(). Callers outside the pass (the deposit leg, a deposit) ask remainingNeed itself.
+	/// The table keeps its storage across passes, so a warm pass allocates nothing.
+	class RemainingNeedCache {
+	  public:
+		void invalidate();
+
+		[[nodiscard]] uint32_t get(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis);
+
+#ifdef DEVELOPMENT_BUILD
+		/// Needs worked out since construction; tests read it to show each is worked out once per pass.
+		uint64_t computed = 0;
+#endif
+
+	  private:
+		struct Slot {
+			uint64_t  root = 0;
+			uint32_t  item = 0;
+			uint32_t  value = 0;
+			uint32_t  pass = 0;
+			NeedBasis basis = NeedBasis::Stock;
+		};
+		void grow();
+
+		std::vector<Slot> m_slots;
+		uint32_t		  m_pass = 1;
+		uint32_t		  m_used = 0;
 	};
 
 } // namespace ecs

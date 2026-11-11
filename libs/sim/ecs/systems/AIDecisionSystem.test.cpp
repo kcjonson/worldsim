@@ -154,6 +154,9 @@ namespace ecs::test {
 
 		/// Boxes the colony's box knowledge has worked out so far.
 		uint64_t colonyStorageWorkedOut() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.workedOut; }
+
+		/// Remaining needs the AI has worked out so far.
+		uint64_t needsWorkedOut() { return world->getSystem<AIDecisionSystem>().m_needs.computed; }
 #endif
 
 		/// Drive the private chain-interruption handler directly. This fixture is a friend of
@@ -902,6 +905,99 @@ namespace ecs::test {
 		EXPECT_EQ(colonyStorageWorkedOut() - workedOutBefore, 2U);
 #endif
 	}
+
+#ifdef DEVELOPMENT_BUILD
+	// Twenty colonists decide in one update against ten storage boxes, each naming three items and
+	// stocking one of them by cutting, while each colonist carries two of the items and knows a pile of
+	// each and a bush. Every root's remaining need is asked by the loose haul, the pull, the carry-in,
+	// and the cut, by every colonist, yet each (root, item, basis) is worked out once for the update.
+	TEST_F(AIDecisionSystemTest, EachRemainingNeedIsWorkedOutOncePerUpdate) {
+		auto& registry = assets::AssetRegistry::Get();
+		for (const char* name : {"Ore", "Clay", "Flint"}) {
+			assets::AssetDefinition item;
+			item.defName = name;
+			item.label = name;
+			item.category = assets::ItemCategory::RawMaterial;
+			item.capabilities.carryable = assets::CarryableCapability{1};
+			item.itemProperties = assets::ItemProperties{};
+			item.itemProperties->stackSize = 40;
+			item.itemProperties->massKg = 0.5F;
+			registry.registerTestDefinition(std::move(item));
+		}
+		assets::AssetDefinition bush;
+		bush.defName = "OreBush";
+		bush.label = "OreBush";
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Ore";
+		registry.registerTestDefinition(std::move(bush));
+		assets::AssetDefinition box;
+		box.defName = "Box";
+		box.label = "Box";
+		box.capabilities.storage = assets::StorageCapability{};
+		registry.registerTestDefinition(std::move(box));
+		const uint32_t ore = registry.getDefNameId("Ore");
+		const uint32_t clay = registry.getDefNameId("Clay");
+		const uint32_t flint = registry.getDefNameId("Flint");
+
+		constexpr int kRoots = 10;
+		constexpr int kColonists = 20;
+		for (int i = 0; i < kRoots; ++i) {
+			const glm::vec2 at{static_cast<float>(i) * 4.0F, 20.0F};
+			const EntityID	boxEntity = makeStorageBox(at, "Box", "Ore", StoragePriority::Medium, 0, /*minAmount=*/30);
+			auto&			config = *world->getComponent<StorageConfiguration>(boxEntity);
+			config.addRule(StorageRule{.defName = "Clay", .category = assets::ItemCategory::RawMaterial});
+			config.addRule(StorageRule{.defName = "Flint", .category = assets::ItemCategory::RawMaterial});
+			GoalTask umbrella;
+			umbrella.type = TaskType::Haul;
+			umbrella.owner = GoalOwner::StorageGoalSystem;
+			umbrella.destinationEntity = boxEntity;
+			umbrella.destinationPosition = at;
+			umbrella.acceptedDefNameIds = {ore, clay, flint};
+			const uint64_t umbrellaId = GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+			GoalTask harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::StorageGoalSystem;
+			harvest.destinationEntity = boxEntity;
+			harvest.destinationPosition = at;
+			harvest.acceptedDefNameIds = {ore};
+			harvest.yieldDefNameId = ore;
+			harvest.parentGoalId = umbrellaId;
+			GoalTaskRegistry::Get().createGoal(std::move(harvest));
+		}
+		for (int i = 0; i < kColonists; ++i) {
+			const EntityID colonist = createColonist({static_cast<float>(i), 0.0F});
+			for (auto need : NeedsComponent::kActionableNeeds) {
+				getNeeds(colonist)->get(need).value = 100.0F;
+			}
+			auto& inventory = *world->getComponent<Inventory>(colonist);
+			inventory.addItem("Clay", 1);
+			inventory.addItem("Flint", 1);
+			addKnownEntity(colonist, {-5.0F, 0.0F}, ore, assets::CapabilityType::Carryable);
+			addKnownEntity(colonist, {-6.0F, 0.0F}, clay, assets::CapabilityType::Carryable);
+			addKnownEntity(colonist, {-7.0F, 0.0F}, registry.getDefNameId("OreBush"), assets::CapabilityType::Harvestable);
+		}
+
+		const uint64_t before = needsWorkedOut();
+		world->update(0.016F);
+		int decided = 0;
+		for (auto [entity, trace] : world->view<DecisionTrace>()) {
+			(void)entity;
+			decided += trace.options.empty() ? 0 : 1;
+		}
+		ASSERT_EQ(decided, kColonists);
+		// Ore, Clay, and Flint against each box's stock target, and Ore against its cutting minimum.
+		EXPECT_EQ(needsWorkedOut() - before, static_cast<uint64_t>(kRoots * 3 + kRoots));
+
+		// The next update works them out again: a deposit between updates shows at once.
+		for (auto [entity, task] : world->view<Task>()) {
+			(void)entity;
+			task.timeSinceEvaluation = 1.0F;
+		}
+		const uint64_t second = needsWorkedOut();
+		world->update(0.016F);
+		EXPECT_EQ(needsWorkedOut() - second, static_cast<uint64_t>(kRoots * 3 + kRoots));
+	}
+#endif
 
 	// A memory near capacity, almost all of it water no work goal wants: the need is still found, and
 	// the work evaluators look only at the remembered wood and trees a goal can use.

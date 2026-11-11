@@ -15,6 +15,7 @@
 #include "../ClaimIndex.h"
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
+#include "../GoalTaskRegistry.h"
 #include "../ISystem.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
@@ -43,6 +44,13 @@ namespace ecs {
 
 class LoosePileIndex;
 class NavigationSystem;
+
+/// One kind of goods a deciding colonist carries, read once per decision for the carry-in.
+struct CarriedKind {
+	uint32_t item = 0;
+	uint32_t quantity = 0;
+	bool	 edible = false;
+};
 
 namespace test {
 class AIDecisionSystemTest;
@@ -232,6 +240,12 @@ private:
 
 	/// The storage boxes the colony knows, worked out at most once per update
 	ColonyStorageKnowledge m_colonyStorage;
+
+	/// Every root's remaining need, worked out at most once per (root, item, basis) per update
+	RemainingNeedCache m_needs;
+
+	/// The deciding colonist's carried kinds, reused across colonists
+	std::vector<CarriedKind> m_carried;
 
 	/// ActionSystem's piles by world key, for a remembered pile's live count; read once per update,
 	/// null in a world without an ActionSystem (a pile's count is then unknown)

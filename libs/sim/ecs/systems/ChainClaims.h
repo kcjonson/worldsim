@@ -22,10 +22,11 @@ namespace ecs {
 	struct Inventory;
 	struct Memory;
 
-	/// What a root still needs of an item that no other task is bringing: its remaining need less
-	/// the in-flight claims of every task `exclude` leaves out (task-claims.md, Availability).
+	/// What a root still needs of an item that no other task is bringing: `need`, its remaining need,
+	/// less the in-flight claims of every task `exclude` leaves out (task-claims.md, Availability). The
+	/// AI passes the need its update cached; the deposit leg reads it from the world.
 	[[nodiscard]] uint32_t
-	rootAvailable(World& world, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis, ClaimExclusion exclude);
+	rootAvailable(uint32_t need, const ClaimIndex& claims, uint64_t rootGoalId, uint32_t itemDefNameId, ClaimExclusion exclude);
 
 	/// The basis work toward `root` counts against: cutting to stock a box counts toward its minimum,
 	/// everything else toward its stock target.
@@ -67,7 +68,8 @@ namespace ecs {
 	/// took over (handOverCargo, or an adopted suspended record), which a cut counts as carried and a
 	/// carry-in resizes to what it delivers.
 	void recordChainClaims(
-		World& world, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory, const Inventory& inventory, Task& task
+		World& world, RemainingNeedCache& needs, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory,
+		const Inventory& inventory, Task& task
 	);
 
 	/// A cut has landed: the harvest's Use drops, and it brings `quantity` of `itemDefNameId` to

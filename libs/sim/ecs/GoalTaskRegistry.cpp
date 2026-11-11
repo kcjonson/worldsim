@@ -16,27 +16,27 @@ namespace ecs {
 
 	namespace {
 
-		uint32_t craftNeed(World& world, EntityID station, const std::string& item) {
+		uint32_t craftNeed(World& world, EntityID station, uint32_t itemDefNameId, const std::string& item) {
 			const auto*		   queue = world.getComponent<WorkQueue>(station);
 			const CraftingJob* job = queue != nullptr ? queue->getNextJob() : nullptr;
 			const auto*		   recipe = job != nullptr ? assets::RecipeRegistry::Get().getRecipe(job->recipeDefName) : nullptr;
 			if (recipe == nullptr) {
 				return 0;
 			}
-			const auto*	   store = world.getComponent<Inventory>(station);
-			const uint32_t inStore = store != nullptr ? store->getQuantity(item) : 0U;
 			for (const auto& input : recipe->inputs) {
-				if (input.defName == item) {
+				if (input.defNameId == itemDefNameId) {
+					const auto*	   store = world.getComponent<Inventory>(station);
+					const uint32_t inStore = store != nullptr ? store->getQuantity(item) : 0U;
 					return input.count > inStore ? input.count - inStore : 0U;
 				}
 			}
 			return 0;
 		}
 
-		uint32_t storageNeed(World& world, EntityID box, const std::string& item, NeedBasis basis) {
+		uint32_t storageNeed(World& world, EntityID box, uint32_t itemDefNameId, const std::string& item, NeedBasis basis) {
 			const auto* config = world.getComponent<StorageConfiguration>(box);
 			const auto* inventory = world.getComponent<Inventory>(box);
-			const auto* def = assets::AssetRegistry::Get().getDefinition(item);
+			const auto* def = assets::AssetRegistry::Get().getDefinitionById(itemDefNameId);
 			if (config == nullptr || inventory == nullptr || def == nullptr) {
 				return 0;
 			}
@@ -46,6 +46,11 @@ namespace ecs {
 			const uint32_t minimum = config->getMinAmountFor(item, def->category);
 			const uint32_t held = inventory->getQuantity(item);
 			return minimum > held ? std::min(minimum - held, inventory->addableCount(item)) : 0U;
+		}
+
+		uint64_t needHash(uint64_t root, uint32_t item, NeedBasis basis) {
+			const uint64_t hash = (root * 0x9E3779B97F4A7C15ULL) ^ (uint64_t{item} << 1) ^ static_cast<uint64_t>(basis);
+			return hash ^ (hash >> 29);
 		}
 
 	} // namespace
@@ -165,7 +170,7 @@ namespace ecs {
 		const std::string& item = assets::AssetRegistry::Get().getDefName(itemDefNameId);
 		switch (root.owner) {
 			case GoalOwner::CraftingGoalSystem:
-				return root.type == TaskType::Craft ? craftNeed(world, root.destinationEntity, item) : 0U;
+				return root.type == TaskType::Craft ? craftNeed(world, root.destinationEntity, itemDefNameId, item) : 0U;
 			case GoalOwner::ConstructionGoalSystem: {
 				const auto& accepted = root.acceptedDefNameIds;
 				const auto* blueprint = world.getComponent<StructureBlueprint>(root.destinationEntity);
@@ -176,11 +181,59 @@ namespace ecs {
 				return blueprint->remaining(item);
 			}
 			case GoalOwner::StorageGoalSystem:
-				return storageNeed(world, root.destinationEntity, item, basis);
+				return storageNeed(world, root.destinationEntity, itemDefNameId, item, basis);
 			case GoalOwner::BuildGoalSystem:
 				return 0;
 		}
 		return 0;
+	}
+
+	void RemainingNeedCache::invalidate() {
+		if (++m_pass == 0) {
+			for (Slot& slot : m_slots) {
+				slot.pass = 0;
+			}
+			m_pass = 1;
+		}
+		m_used = 0;
+	}
+
+	uint32_t RemainingNeedCache::get(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis) {
+		if ((m_used + 1) * 2 > m_slots.size()) {
+			grow();
+		}
+		const size_t mask = m_slots.size() - 1;
+		size_t		 index = needHash(rootGoalId, itemDefNameId, basis) & mask;
+		for (; m_slots[index].pass == m_pass; index = (index + 1) & mask) {
+			const Slot& slot = m_slots[index];
+			if (slot.root == rootGoalId && slot.item == itemDefNameId && slot.basis == basis) {
+				return slot.value;
+			}
+		}
+#ifdef DEVELOPMENT_BUILD
+		++computed;
+#endif
+		const uint32_t value = GoalTaskRegistry::Get().remainingNeed(world, rootGoalId, itemDefNameId, basis);
+		m_slots[index] = {.root = rootGoalId, .item = itemDefNameId, .value = value, .pass = m_pass, .basis = basis};
+		++m_used;
+		return value;
+	}
+
+	void RemainingNeedCache::grow() {
+		std::vector<Slot> old;
+		old.swap(m_slots);
+		m_slots.assign(std::max<size_t>(64, old.size() * 2), Slot{});
+		const size_t mask = m_slots.size() - 1;
+		for (const Slot& slot : old) {
+			if (slot.pass != m_pass) {
+				continue;
+			}
+			size_t index = needHash(slot.root, slot.item, slot.basis) & mask;
+			while (m_slots[index].pass == m_pass) {
+				index = (index + 1) & mask;
+			}
+			m_slots[index] = slot;
+		}
 	}
 
 	const GoalTask* GoalTaskRegistry::getGoal(uint64_t goalId) const {

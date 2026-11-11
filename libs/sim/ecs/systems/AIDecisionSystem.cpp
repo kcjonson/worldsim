@@ -424,9 +424,12 @@ namespace ecs {
 		///
 		/// It also answers what a source and a destination have left for this colonist once every other
 		/// task's claims are taken out (task-claims.md, Availability). Each answer is one probe of the
-		/// claim index plus the claims on that one target.
+		/// claim index plus the claims on that one target. The remaining need behind it is worked out
+		/// once per update for every colonist (RemainingNeedCache); only the in-flight exclusion and the
+		/// colonist's own goods are this decision's.
 		struct RootSupply {
 			World&						 world;
+			RemainingNeedCache&			 needs;
 			const ClaimIndex&			 claims;
 			ClaimExclusion				 self;
 			const Task&					 task;
@@ -435,7 +438,7 @@ namespace ecs {
 			const LoosePileIndex*		 piles;
 
 			[[nodiscard]] uint32_t available(uint64_t root, uint32_t item, NeedBasis basis) const {
-				return rootAvailable(world, claims, root, item, basis, self);
+				return rootAvailable(needs.get(world, root, item, basis), claims, root, item, self);
 			}
 			[[nodiscard]] uint32_t toAcquire(uint64_t root, uint32_t item, NeedBasis basis) const {
 				const uint32_t need = available(root, item, basis);
@@ -610,15 +613,125 @@ namespace ecs {
 				}
 			};
 
-			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Haul)) {
-				// A craft's fetch child: bring remembered loose stock to the station.
-				if (goal->parentGoalId.has_value()) {
-					const auto* craft = goalRegistry.getGoal(goal->parentGoalId.value());
-					if (craft == nullptr || craft->type != TaskType::Craft || goal->status != GoalStatus::Available) {
+			// The pull from strictly lower-priority boxes for one item a storage umbrella names, wanting
+			// `destRoom` more of it (storage priority, Phase 2). The strict-< gate is the load-bearing
+			// invariant: items flow monotonically up the 4-level ladder (Low<Medium<High<Critical), never
+			// sideways or down, which makes A->B->A cycles impossible.
+			const auto emitPulls = [&](const GoalTask& goal, const StorageConfiguration& destConfig, uint32_t acceptedId, uint32_t destRoom) {
+				const auto& itemDefName = registry.getDefName(acceptedId);
+				const auto* itemDef = registry.getDefinitionById(acceptedId);
+				if (itemDef == nullptr) {
+					return;
+				}
+				const EntityID			   destEntity = goal.destinationEntity;
+				const assets::ItemCategory cat = itemDef->category;
+				const StoragePriority	   destPriority = destConfig.getPriorityFor(itemDefName, cat);
+				const uint32_t			   perTrip = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
+				if (perTrip == 0) {
+					return; // colonist can't carry a single unit of this item
+				}
+				std::optional<bool> roomNow; // asked once a source box qualifies
+
+				// The source is the box: walk to it, Withdraw, then the deposit leg stocks the dest.
+				const auto pushPull = [&](EntityID srcEntity, glm::vec2 srcPos, uint32_t qty, EntityID reservedBy) {
+					EvaluatedOption pullOption;
+					pullOption.taskType = TaskType::Haul;
+					pullOption.needType = NeedType::Count;
+					pullOption.needValue = 100.0F;
+					pullOption.threshold = 0.0F;
+					pullOption.targetPosition = srcPos;
+					pullOption.targetDefNameId = acceptedId;
+					pullOption.distanceToTarget = glm::distance(position, srcPos) + glm::distance(srcPos, goal.destinationPosition);
+					pullOption.haulItemDefNameId = acceptedId;
+					pullOption.haulQuantity = qty;
+					pullOption.haulSourcePosition = srcPos;
+					pullOption.haulSourceStorageId = static_cast<uint64_t>(srcEntity);
+					pullOption.haulTargetStorageId = static_cast<uint64_t>(destEntity);
+					pullOption.haulTargetPosition = goal.destinationPosition;
+					pullOption.haulGoalId = goal.id;
+					// A pull tops up a box toward its config: opportunistic stocking (tier 6), ordered
+					// within-tier by the dest box priority (populatePriorityBonuses).
+					pullOption.servesStorageStocking = true;
+					// Deterministic tiebreak on (umbrella goal, source box), independent of view order.
+					pullOption.tiebreakId = goal.id ^ (static_cast<uint64_t>(srcEntity) << 1);
+					pullOption.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
+					pullOption.reservedBy = reservedBy;
+					pullOption.reason = "Pulling {} from lower-priority storage";
+					trace.options.push_back(std::move(pullOption));
+				};
+				struct PullSource {
+					EntityID  box;
+					glm::vec2 position;
+				};
+				NearestReserved<PullSource> reserved;
+
+				for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
+					if (srcEntity == destEntity) {
+						continue; // never pull from the destination itself
+					}
+					const uint32_t srcHas = srcInv.getQuantity(itemDefName);
+					if (srcHas == 0) {
+						continue; // source holds none of this item
+					}
+					// Strict-< gate: pull only from a STRICTLY lower-priority box. Never same, never
+					// higher. getPriorityFor returns Low when the source box has no rule for this item, so
+					// an unconfigured box holding it is a valid pull source for any Medium+ dest; Low is
+					// the floor, so the gate still never forms a cycle.
+					const StoragePriority srcPriority = srcConfig.getPriorityFor(itemDefName, cat);
+					if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
 						continue;
 					}
-					for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
-						if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
+					// Discovery-gating: the colony must KNOW the source box (no god-view), mirroring how
+					// a loose pickup is gated on the pile being in memory.
+					if (!storageKnowledge.knows(*world, registry, srcEntity)) {
+						continue;
+					}
+					// Don't drain the source below ITS OWN configured minimum for this item, counting what
+					// other pulls will take from it, so two pulls can't drain it below that together.
+					const uint32_t srcMin = srcConfig.getMinAmountFor(itemDefName, cat);
+					const uint32_t drainable = srcHas > srcMin ? srcHas - srcMin : 0U;
+					if (drainable == 0) {
+						continue;
+					}
+					const uint32_t claimed =
+						supply.claims.sourceClaimed({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(srcEntity)}, acceptedId, supply.self);
+					const float trip = glm::distance(position, srcPos.value) + glm::distance(srcPos.value, goal.destinationPosition);
+					if (claimed >= drainable) {
+						reserved.reserved(trip, PullSource{srcEntity, srcPos.value});
+						continue;
+					}
+					const uint32_t qty = std::min({drainable - claimed, destRoom, perTrip});
+
+					if (!roomNow.has_value()) {
+						roomNow = pickupRoom(itemDefName) > 0;
+					}
+					if (!*roomNow) {
+						pushNoRoom(goal, acceptedId, "Pulling from lower-priority storage ({}: no room to carry it)");
+						break; // one line says it for every source box
+					}
+
+					reserved.offered(trip);
+					pushPull(srcEntity, srcPos.value, qty, kInvalidEntity);
+				}
+				if (reserved.shown() && roomNow.value_or(true)) {
+					const auto holder = supply.claims.sourceHolder(
+						{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(reserved.source->box)}, acceptedId, supply.self
+					);
+					if (holder.has_value()) {
+						pushPull(reserved.source->box, reserved.source->position, perTrip, holder->colonist);
+					}
+				}
+			};
+
+			goalRegistry.forEachGoalOfType(TaskType::Haul, [&](const GoalTask& goal) {
+				// A craft's fetch child: bring remembered loose stock to the station.
+				if (goal.parentGoalId.has_value()) {
+					const auto* craft = goalRegistry.getGoal(goal.parentGoalId.value());
+					if (craft == nullptr || craft->type != TaskType::Craft || goal.status != GoalStatus::Available) {
+						return;
+					}
+					for (auto acceptedIt = goal.acceptedDefNameIds.begin(); acceptedIt != goal.acceptedDefNameIds.end(); ++acceptedIt) {
+						if (std::find(goal.acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
 							continue; // a repeated id names the same sources
 						}
 						const auto* itemDef = sources.knownCarryable(*acceptedIt);
@@ -633,176 +746,71 @@ namespace ecs {
 						// Only fetch what the pickup can actually lift; one that adds 0 would be
 						// re-issued every tick. The craft stays pending until the colonist has room.
 						if (pickupRoom(itemDefName) == 0) {
-							pushNoRoom(*goal, *acceptedIt, "Fetching for crafting ({}: no room to carry it)");
+							pushNoRoom(goal, *acceptedIt, "Fetching for crafting ({}: no room to carry it)");
 							continue;
 						}
 						const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-						pushPileHauls(*goal, *acceptedIt, quantity, /*craftFetch=*/true);
+						pushPileHauls(goal, *acceptedIt, quantity, /*craftFetch=*/true);
 					}
-					continue;
+					return;
 				}
-				if (goal->owner != GoalOwner::StorageGoalSystem) {
-					continue;
+				if (goal.owner != GoalOwner::StorageGoalSystem) {
+					return;
+				}
+				const auto* destConfig = world->getComponent<StorageConfiguration>(goal.destinationEntity);
+				if (destConfig == nullptr) {
+					return;
 				}
 
+				// What the box still wants of an item and has room for, net of what is on its way: asked
+				// once per item, for its loose piles and its pulls alike.
+				const auto wantOf = [&](uint32_t itemDefNameId) {
+					const uint32_t want = supply.toAcquire(goal.id, itemDefNameId, NeedBasis::Stock);
+					return want > 0 ? std::min(want, supply.storageRoom(goal.destinationEntity, itemDefNameId)) : 0U;
+				};
 				// Loose piles the colonist remembers of one accepted item. The need and carry gates come
 				// first, so a full box or a full pack visits none of them.
-				const auto emitLooseHauls = [&](uint32_t itemDefNameId) {
-					const uint32_t need = std::min(supply.toAcquire(goal->id, itemDefNameId, NeedBasis::Stock),
-												   supply.storageRoom(goal->destinationEntity, itemDefNameId));
-					if (need == 0) {
-						return;
-					}
+				const auto emitLooseHauls = [&](uint32_t itemDefNameId, uint32_t want) {
 					const auto& itemDefName = registry.getDefName(itemDefNameId);
 					if (pickupRoom(itemDefName) == 0) {
-						pushNoRoom(*goal, itemDefNameId, "Hauling to storage ({}: no room to carry it)");
+						pushNoRoom(goal, itemDefNameId, "Hauling to storage ({}: no room to carry it)");
 						return;
 					}
-					const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-					pushPileHauls(*goal, itemDefNameId, quantity, /*craftFetch=*/false);
+					const uint32_t quantity = std::min(want, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
+					pushPileHauls(goal, itemDefNameId, quantity, /*craftFetch=*/false);
 				};
-				if (goal->acceptedCategory != assets::ItemCategory::None) {
-					// A category goal takes any carryable of its category, plus the items it names.
+
+				// The items it names: their loose piles and their pulls from lower-priority boxes.
+				const auto& named = goal.acceptedDefNameIds;
+				for (auto acceptedIt = named.begin(); acceptedIt != named.end(); ++acceptedIt) {
+					if (std::find(named.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
+						continue; // a repeated id names the same sources
+					}
+					if (!registry.hasCapability(*acceptedIt, assets::CapabilityType::Carryable)) {
+						continue;
+					}
+					const uint32_t want = wantOf(*acceptedIt);
+					if (want == 0) {
+						continue;
+					}
+					if (sources.knownCarryable(*acceptedIt) != nullptr) {
+						emitLooseHauls(*acceptedIt, want);
+					}
+					emitPulls(goal, *destConfig, *acceptedIt, want);
+				}
+				// A category goal also takes loose piles of any other carryable of its category.
+				if (goal.acceptedCategory != assets::ItemCategory::None) {
 					for (uint32_t defNameId : sources.knownCarryableDefs()) {
-						const bool accepted = sources.knownCarryable(defNameId)->category == goal->acceptedCategory ||
-											  std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), defNameId) != goal->acceptedDefNameIds.end();
-						if (accepted) {
-							emitLooseHauls(defNameId);
+						if (sources.knownCarryable(defNameId)->category != goal.acceptedCategory ||
+							std::find(named.begin(), named.end(), defNameId) != named.end()) {
+							continue;
 						}
-					}
-				} else {
-					for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
-						if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
-							continue; // a repeated id names the same sources
-						}
-						if (sources.knownCarryable(*acceptedIt) != nullptr) {
-							emitLooseHauls(*acceptedIt);
+						if (const uint32_t want = wantOf(defNameId); want > 0) {
+							emitLooseHauls(defNameId, want);
 						}
 					}
 				}
-
-				// Storage-to-storage pull (storage priority, Phase 2): a higher-priority box pulls items UP
-				// from strictly-lower-priority boxes. The strict-< gate is the load-bearing invariant: items
-				// flow monotonically up the 4-level ladder (Low<Medium<High<Critical), never sideways or
-				// down, which makes A->B->A cycles impossible.
-				const auto	destEntity = goal->destinationEntity;
-				const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
-				if (destConfig == nullptr) {
-					continue;
-				}
-				for (uint32_t acceptedId : goal->acceptedDefNameIds) {
-					const auto& itemDefName = registry.getDefName(acceptedId);
-					const auto* itemDef = registry.getDefinitionById(acceptedId);
-					if (itemDef == nullptr || !registry.hasCapability(acceptedId, assets::CapabilityType::Carryable)) {
-						continue;
-					}
-					const assets::ItemCategory cat = itemDef->category;
-					const StoragePriority	   destPriority = destConfig->getPriorityFor(itemDefName, cat);
-
-					// What the dest box still wants of this item and has room for, net of what is on its way.
-					// Computed once per item, outside the source loop.
-					const uint32_t destRoom =
-						std::min(supply.toAcquire(goal->id, acceptedId, NeedBasis::Stock), supply.storageRoom(destEntity, acceptedId));
-					if (destRoom == 0) {
-						continue;
-					}
-					const uint32_t perTrip = ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg);
-					if (perTrip == 0) {
-						continue; // colonist can't carry a single unit of this item
-					}
-					std::optional<bool> roomNow; // asked once a source box qualifies
-
-					// The source is the box: walk to it, Withdraw, then the deposit leg stocks the dest.
-					const auto pushPull = [&](EntityID srcEntity, glm::vec2 srcPos, uint32_t qty, EntityID reservedBy) {
-						EvaluatedOption pullOption;
-						pullOption.taskType = TaskType::Haul;
-						pullOption.needType = NeedType::Count;
-						pullOption.needValue = 100.0F;
-						pullOption.threshold = 0.0F;
-						pullOption.targetPosition = srcPos;
-						pullOption.targetDefNameId = acceptedId;
-						pullOption.distanceToTarget = glm::distance(position, srcPos) + glm::distance(srcPos, goal->destinationPosition);
-						pullOption.haulItemDefNameId = acceptedId;
-						pullOption.haulQuantity = qty;
-						pullOption.haulSourcePosition = srcPos;
-						pullOption.haulSourceStorageId = static_cast<uint64_t>(srcEntity);
-						pullOption.haulTargetStorageId = static_cast<uint64_t>(destEntity);
-						pullOption.haulTargetPosition = goal->destinationPosition;
-						pullOption.haulGoalId = goal->id;
-						// A pull tops up a box toward its config: opportunistic stocking (tier 6), ordered
-						// within-tier by the dest box priority (populatePriorityBonuses).
-						pullOption.servesStorageStocking = true;
-						// Deterministic tiebreak on (umbrella goal, source box), independent of view order.
-						pullOption.tiebreakId = goal->id ^ (static_cast<uint64_t>(srcEntity) << 1);
-						pullOption.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
-						pullOption.reservedBy = reservedBy;
-						pullOption.reason = "Pulling {} from lower-priority storage";
-						trace.options.push_back(std::move(pullOption));
-					};
-					struct PullSource {
-						EntityID  box;
-						glm::vec2 position;
-					};
-					NearestReserved<PullSource> reserved;
-
-					for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
-						if (srcEntity == destEntity) {
-							continue; // never pull from the destination itself
-						}
-						const uint32_t srcHas = srcInv.getQuantity(itemDefName);
-						if (srcHas == 0) {
-							continue; // source holds none of this item
-						}
-						// Strict-< gate: pull only from a STRICTLY lower-priority box. Never same, never
-						// higher. getPriorityFor returns Low when the source box has no rule for this item, so
-						// an unconfigured box holding it is a valid pull source for any Medium+ dest; Low is
-						// the floor, so the gate still never forms a cycle.
-						const StoragePriority srcPriority = srcConfig.getPriorityFor(itemDefName, cat);
-						if (!(static_cast<uint8_t>(srcPriority) < static_cast<uint8_t>(destPriority))) {
-							continue;
-						}
-						// Discovery-gating: the colony must KNOW the source box (no god-view), mirroring how
-						// a loose pickup is gated on the pile being in memory.
-						if (!storageKnowledge.knows(*world, registry, srcEntity)) {
-							continue;
-						}
-						// Don't drain the source below ITS OWN configured minimum for this item, counting what
-						// other pulls will take from it, so two pulls can't drain it below that together.
-						const uint32_t srcMin = srcConfig.getMinAmountFor(itemDefName, cat);
-						const uint32_t drainable = srcHas > srcMin ? srcHas - srcMin : 0U;
-						if (drainable == 0) {
-							continue;
-						}
-						const uint32_t claimed =
-							supply.claims.sourceClaimed({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(srcEntity)}, acceptedId, supply.self);
-						const float trip = glm::distance(position, srcPos.value) + glm::distance(srcPos.value, goal->destinationPosition);
-						if (claimed >= drainable) {
-							reserved.reserved(trip, PullSource{srcEntity, srcPos.value});
-							continue;
-						}
-						const uint32_t qty = std::min({drainable - claimed, destRoom, perTrip});
-
-						if (!roomNow.has_value()) {
-							roomNow = pickupRoom(itemDefName) > 0;
-						}
-						if (!*roomNow) {
-							pushNoRoom(*goal, acceptedId, "Pulling from lower-priority storage ({}: no room to carry it)");
-							break; // one line says it for every source box
-						}
-
-						reserved.offered(trip);
-						pushPull(srcEntity, srcPos.value, qty, kInvalidEntity);
-					}
-					if (reserved.shown() && roomNow.value_or(true)) {
-						const auto holder = supply.claims.sourceHolder(
-							{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(reserved.source->box)}, acceptedId, supply.self
-						);
-						if (holder.has_value()) {
-							pushPull(reserved.source->box, reserved.source->position, perTrip, holder->colonist);
-						}
-					}
-				}
-			}
+			});
 		}
 
 		/// Carry-in from possession (task-claims.md): for every root goal that still wants an item the
@@ -810,89 +818,92 @@ namespace ecs {
 		/// in-flight. One path for crafts, construction sites, and storage boxes alike, and for goods
 		/// left over after a cut, an interruption, or a switch. Tools are equipment, and the colonist's
 		/// food stays its own provisions rather than being stocked into a box. Costs nothing unless
-		/// the colonist carries cargo.
-		void evaluateCarryInOptions(const RootSupply& supply, const glm::vec2& position, DecisionTrace& trace) {
+		/// the colonist carries cargo; what it carries is read once, into `carried`, reused storage.
+		void evaluateCarryInOptions(const RootSupply& supply, std::vector<CarriedKind>& carried, const glm::vec2& position, DecisionTrace& trace) {
 			const Inventory&			 inventory = supply.inventory;
 			const assets::AssetRegistry& registry = supply.registry;
-			std::vector<uint32_t>		 carried;
-			const auto					 note = [&](const std::optional<ItemStack>& stack) {
+			carried.clear();
+			const auto note = [&](const std::optional<ItemStack>& stack) {
 				if (stack.has_value() && stack->quantity > 0) {
-					carried.push_back(registry.getDefNameId(stack->defName));
+					carried.push_back({.item = registry.getDefNameId(stack->defName)});
 				}
 			};
 			note(inventory.leftHand);
 			note(inventory.rightHand);
 			for (const ItemStack& stack : inventory.items) {
 				if (stack.quantity > 0) {
-					carried.push_back(registry.getDefNameId(stack.defName));
+					carried.push_back({.item = registry.getDefNameId(stack.defName)});
 				}
 			}
-			std::sort(carried.begin(), carried.end());
-			carried.erase(std::unique(carried.begin(), carried.end()), carried.end());
-			std::erase_if(carried, [&](uint32_t item) {
-				const auto* def = registry.getDefinitionById(item);
-				return item == 0 || def == nullptr || def->category == assets::ItemCategory::Tool;
+			std::sort(carried.begin(), carried.end(), [](const CarriedKind& a, const CarriedKind& b) { return a.item < b.item; });
+			carried.erase(
+				std::unique(carried.begin(), carried.end(), [](const CarriedKind& a, const CarriedKind& b) { return a.item == b.item; }), carried.end()
+			);
+			std::erase_if(carried, [&](CarriedKind& kind) {
+				const auto* def = registry.getDefinitionById(kind.item);
+				if (kind.item == 0 || def == nullptr || def->category == assets::ItemCategory::Tool) {
+					return true;
+				}
+				kind.quantity = ecs::availableQuantity(inventory, registry.getDefName(kind.item));
+				kind.edible = def->isEdible();
+				return kind.quantity == 0;
 			});
 			if (carried.empty()) {
 				return;
 			}
 
-			const auto& goalRegistry = GoalTaskRegistry::Get();
-			const auto	offer = [&](const GoalTask& root) {
-				 const bool storage = root.owner == GoalOwner::StorageGoalSystem;
-				 for (uint32_t item : carried) {
-					 const std::string& itemDefName = registry.getDefName(item);
-					 if (storage && assets::isItemEdible(itemDefName)) {
-						 continue;
-					 }
-					 uint32_t quantity =
-						 std::min(ecs::availableQuantity(inventory, itemDefName), supply.available(root.id, item, NeedBasis::Stock));
-					 if (storage && quantity > 0) {
-						 quantity = std::min(quantity, supply.storageRoom(root.destinationEntity, item));
-					 }
-					 if (quantity == 0) {
-						 continue;
-					 }
-					 EvaluatedOption option;
-					 option.taskType = TaskType::Haul;
-					 option.needType = NeedType::Count;
-					 option.needValue = 100.0F;
-					 option.threshold = 0.0F;
-					 option.targetPosition = root.destinationPosition;
-					 option.targetDefNameId = item;
-					 option.distanceToTarget = glm::distance(position, root.destinationPosition);
-					 option.haulItemDefNameId = item;
-					 option.haulQuantity = quantity;
-					 option.haulSourcePosition = position; // already carrying
-					 option.haulTargetStorageId = static_cast<uint64_t>(root.destinationEntity);
-					 option.haulTargetPosition = root.destinationPosition;
-					 option.haulGoalId = root.id;
-					 option.haulFromInventory = true;
-					 // Craft and construction deliveries provision an active work order (tier 4); filling a
-					 // box is stocking, strictly below work orders (tier 6).
-					 option.servesActiveWorkOrder = !storage;
-					 option.servesStorageStocking = storage;
-					 option.tiebreakId = root.id ^ (static_cast<uint64_t>(item) << 1);
-					 option.status = OptionStatus::Available;
-					 option.reason = root.type == TaskType::Build ? "Delivering {} to build site"
-									 : storage					   ? "Stocking {} into storage"
+			const auto offer = [&](const GoalTask& root) {
+				const bool storage = root.owner == GoalOwner::StorageGoalSystem;
+				for (const CarriedKind& kind : carried) {
+					if (storage && kind.edible) {
+						continue;
+					}
+					uint32_t quantity = std::min(kind.quantity, supply.available(root.id, kind.item, NeedBasis::Stock));
+					if (storage && quantity > 0) {
+						quantity = std::min(quantity, supply.storageRoom(root.destinationEntity, kind.item));
+					}
+					if (quantity == 0) {
+						continue;
+					}
+					EvaluatedOption option;
+					option.taskType = TaskType::Haul;
+					option.needType = NeedType::Count;
+					option.needValue = 100.0F;
+					option.threshold = 0.0F;
+					option.targetPosition = root.destinationPosition;
+					option.targetDefNameId = kind.item;
+					option.distanceToTarget = glm::distance(position, root.destinationPosition);
+					option.haulItemDefNameId = kind.item;
+					option.haulQuantity = quantity;
+					option.haulSourcePosition = position; // already carrying
+					option.haulTargetStorageId = static_cast<uint64_t>(root.destinationEntity);
+					option.haulTargetPosition = root.destinationPosition;
+					option.haulGoalId = root.id;
+					option.haulFromInventory = true;
+					// Craft and construction deliveries provision an active work order (tier 4); filling a
+					// box is stocking, strictly below work orders (tier 6).
+					option.servesActiveWorkOrder = !storage;
+					option.servesStorageStocking = storage;
+					option.tiebreakId = root.id ^ (static_cast<uint64_t>(kind.item) << 1);
+					option.status = OptionStatus::Available;
+					option.reason = root.type == TaskType::Build ? "Delivering {} to build site"
+									: storage					   ? "Stocking {} into storage"
 																   : "Delivering {} to crafting station";
-					 trace.options.push_back(std::move(option));
-				 }
+					trace.options.push_back(std::move(option));
+				}
 			};
-			for (const auto* root : goalRegistry.getGoalsOfType(TaskType::Craft)) {
-				offer(*root);
-			}
-			for (const auto* root : goalRegistry.getGoalsOfType(TaskType::Build)) {
-				if (root->owner == GoalOwner::ConstructionGoalSystem) {
-					offer(*root);
+			const auto& goalRegistry = GoalTaskRegistry::Get();
+			goalRegistry.forEachGoalOfType(TaskType::Craft, offer);
+			goalRegistry.forEachGoalOfType(TaskType::Build, [&](const GoalTask& root) {
+				if (root.owner == GoalOwner::ConstructionGoalSystem) {
+					offer(root);
 				}
-			}
-			for (const auto* root : goalRegistry.getGoalsOfType(TaskType::Haul)) {
-				if (root->owner == GoalOwner::StorageGoalSystem && !root->parentGoalId.has_value()) {
-					offer(*root);
+			});
+			goalRegistry.forEachGoalOfType(TaskType::Haul, [&](const GoalTask& root) {
+				if (root.owner == GoalOwner::StorageGoalSystem && !root.parentGoalId.has_value()) {
+					offer(root);
 				}
-			}
+			});
 		}
 
 		/// Evaluate harvest options by querying Harvest goals from GoalTaskRegistry.
@@ -917,10 +928,11 @@ namespace ecs {
 		) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
 
-			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Harvest)) {
+			goalRegistry.forEachGoalOfType(TaskType::Harvest, [&](const GoalTask& harvestGoal) {
+				const GoalTask* goal = &harvestGoal;
 				// Skip goals that aren't workable yet.
 				if (goal->status == GoalStatus::Blocked) {
-					continue;
+					return;
 				}
 
 				// A clear goal is served by any harvestable inside its footprint, whatever it yields.
@@ -928,22 +940,32 @@ namespace ecs {
 				// harvestable that yields it, while its root wants more than is already on its way.
 				const bool clearing = goal->clearFootprint.has_value();
 				if (!clearing && goal->yieldDefNameId == 0) {
-					continue; // No yield specified
+					return; // No yield specified
 				}
 				const GoalTask* root = goalRegistry.getGoal(goalRegistry.rootOf(goal->id));
 				if (root == nullptr) {
-					continue;
-				}
-				if (!clearing && supply.toAcquire(root->id, goal->yieldDefNameId, harvestBasis(*root)) == 0) {
-					continue;
-				}
-				if (!clearing && root->owner == GoalOwner::StorageGoalSystem && supply.storageRoom(root->destinationEntity, goal->yieldDefNameId) == 0) {
-					continue; // every slot it has left is promised to goods already on their way
+					return;
 				}
 				// A cut that would land nothing in the colonist's hands or pack (a full armful of something
 				// else, a full pack) brings nothing toward the root, and standing at the source it would win
 				// again every decision. A clear is exempt: it removes its blocker and drops what doesn't fit.
-				if (!clearing && pickupRoom(registry.getDefName(goal->yieldDefNameId)) == 0) {
+				const bool roomToCarry = clearing || pickupRoom(registry.getDefName(goal->yieldDefNameId)) > 0;
+				// What it could cut, before asking what the root needs: most goals have no known source.
+				// With no room to carry the yield no source is listed (WorkSources gates on the fit), so the
+				// need is asked to show why the cut is not taken.
+				const auto candidates = clearing		? sources.clearableHarvestables()
+										: roomToCarry ? sources.harvestablesYielding(goal->yieldDefNameId)
+													  : std::span<const HarvestSource>{};
+				if (roomToCarry && candidates.empty()) {
+					return;
+				}
+				if (!clearing && supply.toAcquire(root->id, goal->yieldDefNameId, harvestBasis(*root)) == 0) {
+					return;
+				}
+				if (!clearing && root->owner == GoalOwner::StorageGoalSystem && supply.storageRoom(root->destinationEntity, goal->yieldDefNameId) == 0) {
+					return; // every slot it has left is promised to goods already on their way
+				}
+				if (!roomToCarry) {
 					EvaluatedOption noRoom;
 					noRoom.taskType = TaskType::Harvest;
 					noRoom.needType = NeedType::Count;
@@ -955,7 +977,7 @@ namespace ecs {
 					noRoom.status = OptionStatus::NoRoom;
 					noRoom.reason = "Cutting for {1} (no room to carry it)";
 					trace.options.push_back(noRoom);
-					continue;
+					return;
 				}
 
 				// A Harvest that feeds a Craft or Build goal provisions an active work order: tier 4, so a
@@ -1013,7 +1035,6 @@ namespace ecs {
 				// A source another colonist is cutting is its alone: Use is exclusive, so two colonists never
 				// cut one plant. Several may still clear one site, each its own plant.
 				NearestReserved<HarvestSource> reserved;
-				const auto candidates = clearing ? sources.clearableHarvestables() : sources.harvestablesYielding(goal->yieldDefNameId);
 				for (const HarvestSource& source : candidates) {
 					if (clearing && !goal->clearFootprint->blockedBy(registry, source.entity->defNameId, source.entity->position)) {
 						continue;
@@ -1029,7 +1050,7 @@ namespace ecs {
 				if (reserved.shown()) {
 					pushHarvest(*reserved.source, reserved.holder);
 				}
-			}
+			});
 		}
 
 		/// Evaluate build options by querying Build goals from GoalTaskRegistry.
@@ -1047,15 +1068,16 @@ namespace ecs {
 			}
 			auto& goalRegistry = GoalTaskRegistry::Get();
 
-			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Build)) {
-				if (goal == nullptr || goal->status != GoalStatus::Available) {
-					continue;
+			goalRegistry.forEachGoalOfType(TaskType::Build, [&](const GoalTask& buildGoal) {
+				const GoalTask* goal = &buildGoal;
+				if (goal->status != GoalStatus::Available) {
+					return;
 				}
 				const auto blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
 				const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
 				if (blueprint == nullptr ||
 					blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
-					continue; // not ready to build (cleared/awaiting materials/complete)
+					return; // not ready to build (cleared/awaiting materials/complete)
 				}
 
 				EvaluatedOption buildOption;
@@ -1080,7 +1102,7 @@ namespace ecs {
 				buildOption.reason = "Building structure";
 
 				trace.options.push_back(buildOption);
-			}
+			});
 		}
 
 		/// Evaluate deconstruct options by querying Deconstruct goals from GoalTaskRegistry.
@@ -1095,14 +1117,15 @@ namespace ecs {
 			}
 			auto& goalRegistry = GoalTaskRegistry::Get();
 
-			for (const auto* goal : goalRegistry.getGoalsOfType(TaskType::Deconstruct)) {
-				if (goal == nullptr || goal->status != GoalStatus::Available) {
-					continue;
+			goalRegistry.forEachGoalOfType(TaskType::Deconstruct, [&](const GoalTask& deconstructGoal) {
+				const GoalTask* goal = &deconstructGoal;
+				if (goal->status != GoalStatus::Available) {
+					return;
 				}
 				const auto	blueprintEntity = static_cast<EntityID>(goal->destinationEntity);
 				const auto* blueprint = world->getComponent<StructureBlueprint>(blueprintEntity);
 				if (blueprint == nullptr || blueprint->workDone <= 0.0F) {
-					continue; // nothing to tear down (already removed, or no work invested)
+					return; // nothing to tear down (already removed, or no work invested)
 				}
 
 				EvaluatedOption deconstructOption;
@@ -1125,7 +1148,7 @@ namespace ecs {
 				deconstructOption.reason = "Deconstructing structure";
 
 				trace.options.push_back(deconstructOption);
-			}
+			});
 		}
 
 		/// Evaluate place packaged options for furniture delivery
@@ -1210,6 +1233,7 @@ namespace ecs {
 		// the time goes unread; a world that wires it has a TimeSystem.
 		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
 		m_colonyStorage.invalidate();
+		m_needs.invalidate();
 		m_claimsBuilt = false;
 		auto* actionSystem = world->tryGetSystem<ActionSystem>();
 		m_loosePiles = actionSystem != nullptr ? &actionSystem->loosePiles() : nullptr;
@@ -1612,7 +1636,7 @@ namespace ecs {
 			}
 			task.discardSuspended();
 		}
-		recordChainClaims(*world, m_claims, m_registry, memory, inventory, task);
+		recordChainClaims(*world, m_needs, m_claims, m_registry, memory, inventory, task);
 		m_claims.append(entity, task);
 	}
 
@@ -2094,11 +2118,11 @@ namespace ecs {
 		}
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
-		const RootSupply supply{*world, m_claims, self, currentTask, inventory, m_registry, m_loosePiles};
+		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles};
 		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
 		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, trace);
-		evaluateCarryInOptions(supply, position.value, trace);
+		evaluateCarryInOptions(supply, m_carried, position.value, trace);
 		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, skills, trace);
 
 		// Build staged construction blueprints (goal-driven)
