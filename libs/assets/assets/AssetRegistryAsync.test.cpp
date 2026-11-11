@@ -5,7 +5,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace assets;
 
@@ -86,4 +90,78 @@ TEST(AssetRegistryCapabilityTest, MaskCoversStorageAndCraftableHighBits) {
 	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Craftable)) << "hasCapability must see Craftable at bit 7";
 
 	reg.clearDefinitions();
+}
+
+namespace {
+
+	// The yield index, worked out the slow way: every definition, asked whether it is harvestable.
+	std::map<std::string, std::vector<uint32_t>> harvestablesByYieldScan(const AssetRegistry& reg) {
+		std::map<std::string, std::vector<uint32_t>> byYield;
+		for (const std::string& name : reg.getDefinitionNames()) {
+			const AssetDefinition* def = reg.getDefinition(name);
+			if (def != nullptr && def->capabilities.harvestable.has_value() && !def->capabilities.harvestable->yieldDefName.empty()) {
+				byYield[def->capabilities.harvestable->yieldDefName].push_back(reg.getDefNameId(name));
+			}
+		}
+		for (auto& [yield, ids] : byYield) {
+			std::ranges::sort(ids);
+		}
+		return byYield;
+	}
+
+	void expectYieldIndexMatchesScan(const AssetRegistry& reg) {
+		const auto byYield = harvestablesByYieldScan(reg);
+		ASSERT_FALSE(byYield.empty()) << "the shipped library has harvestables";
+		for (const auto& [yield, ids] : byYield) {
+			EXPECT_EQ(reg.harvestablesYielding(yield), ids) << yield;
+		}
+	}
+
+} // namespace
+
+// The yield index after a folder load, after clear(), and after the asset manager's Reload (clear,
+// then load the folder again): each time it names exactly the harvestables yielding each item.
+TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+	const std::filesystem::path world = projectRoot() / "assets" / "world";
+	if (!std::filesystem::exists(world)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+	reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
+
+	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
+	expectYieldIndexMatchesScan(reg);
+	const std::string someYield = harvestablesByYieldScan(reg).begin()->first;
+
+	reg.clear();
+	EXPECT_TRUE(reg.harvestablesYielding(someYield).empty()) << "clear() empties the index";
+
+	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
+	expectYieldIndexMatchesScan(reg);
+
+	reg.clear();
+}
+
+// A test definition registered again with another yield moves to that yield's list.
+TEST(AssetRegistryYieldIndexTest, ReregisteredDefinitionMovesToItsNewYield) {
+	auto& reg = AssetRegistry::Get();
+	reg.clearDefinitions();
+	const auto registerBush = [&](const std::string& yield) {
+		AssetDefinition bush;
+		bush.defName = "Test_YieldBush";
+		bush.capabilities.harvestable = HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = yield;
+		reg.registerTestDefinition(std::move(bush));
+	};
+
+	registerBush("Test_YieldA");
+	const uint32_t id = reg.getDefNameId("Test_YieldBush");
+	EXPECT_EQ(reg.harvestablesYielding("Test_YieldA"), std::vector<uint32_t>{id});
+	registerBush("Test_YieldB");
+	EXPECT_TRUE(reg.harvestablesYielding("Test_YieldA").empty());
+	EXPECT_EQ(reg.harvestablesYielding("Test_YieldB"), std::vector<uint32_t>{id});
+
+	reg.clearDefinitions();
+	EXPECT_TRUE(reg.harvestablesYielding("Test_YieldB").empty());
 }
