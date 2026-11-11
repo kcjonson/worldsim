@@ -218,7 +218,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `time` | `{...}` |
 | `tunables` | every registered tunable and its value |
 | `gpuhold` | `{enabled, target, passes, holdGpuMs, sceneGpuMs, frameMs}`, the GPU hold's state; the GPU times are a few frames old |
-| `uprights` | `{uprightDrawCalls, uprightTriangles}`, last frame's draws in the depth-sorted upright stream (tall statics and actors). `/api/metrics` already counts them in `drawCalls` and `triangleCount`; this splits them out |
+| `uprights` | `{uprightDrawCalls, uprightTriangles, uprightOverlapSplits, ...}`, last frame's draws in the depth-sorted upright stream (tall statics and actors). `/api/metrics` already counts them in `drawCalls` and `triangleCount`; this splits them out |
 
 ### Other endpoints
 

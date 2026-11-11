@@ -201,69 +201,80 @@ namespace worldview {
 				bounds.kind = ItemKind::Animated;
 				continue;
 			}
-			const TemplateLevels& levels = levelsOf(entity.templateId);
-			bounds.wanted = assets::detailLevelFor(levels.densities, scale);
-			want(entity.templateId, levels.reference, *templateMesh); // the fallback of last resort
-			want(entity.templateId, bounds.wanted, *templateMesh);
+			TemplateLevels& levels = levelsOf(entity.templateId);
+			if (levels.wantedFrame != frameIndex) {
+				levels.wantedFrame = frameIndex;
+				levels.wanted = assets::detailLevelFor(levels.densities, scale);
+				want(entity.templateId, levels.reference, *templateMesh); // the fallback of last resort
+				want(entity.templateId, levels.wanted, *templateMesh);
+			}
 			bounds.kind = ItemKind::Instanced;
 		}
 		levelBuilder.endFrame();
 		collectAndUpload();
 
-		// Bound every instanced entity by the level it draws: the wanted one when it is on the
-		// GPU, else the nearest that is. The overlap grid is sized to their extent and cells to
-		// their mean size.
+		// Bound every instanced entity on the screen by the level it draws: the wanted one when
+		// it is on the GPU, else the nearest that is.
 		LevelStats levelStats{.screenPixelsPerMeter = scale};
-		Foundation::Vec2 extentMin{0.0F, 0.0F};
-		Foundation::Vec2 extentMax{0.0F, 0.0F};
-		float			 sizeSum = 0.0F;
-		uint32_t		 instancedCount = 0;
+		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
+		overlapAll.beginFrame(ctx.viewportWidth, ctx.viewportHeight);
+		overlapLarge.beginFrame(ctx.viewportWidth, ctx.viewportHeight);
 		for (size_t i = 0; i < items.size(); ++i) {
 			ItemBounds& bounds = itemBounds[i];
 			if (bounds.kind != ItemKind::Instanced) {
 				continue;
 			}
-			const assets::PlacedEntity&	 entity = *items[i].entity;
-			const TemplateLevels&		 levels = templateLevels[entity.templateId];
-			const std::optional<uint8_t> level = assets::nearestReadyLevel(levels.readyMask, bounds.wanted);
-			if (!level.has_value()) {
+			const assets::PlacedEntity& entity = *items[i].entity;
+			TemplateLevels&				levels = templateLevels[entity.templateId];
+			if (levels.drawFrame != frameIndex) {
+				levels.drawFrame = frameIndex;
+				const std::optional<uint8_t> level = assets::nearestReadyLevel(levels.readyMask, levels.wanted);
+				levels.drawSlot = level.has_value() ? std::optional<uint32_t>(slotIndex(entity.templateId, *level)) : std::nullopt;
+				levels.use = kNoUse;
+				if (level.has_value()) {
+					meshSlots[*levels.drawSlot].lastDrawnFrame = frameIndex;
+				}
+				if (level.has_value() && !levels.densities.empty()) {
+					const float density = levels.densities[*level];
+					auto		use = std::find_if(levelStats.uses.begin(), levelStats.uses.end(), [&](const LevelStats::Use& u) {
+						   return u.pixelsPerMeter == density;
+					   });
+					if (use == levelStats.uses.end()) {
+						use = levelStats.uses.insert(levelStats.uses.end(), LevelStats::Use{.pixelsPerMeter = density});
+					}
+					levels.use = static_cast<uint32_t>(use - levelStats.uses.begin());
+				}
+			}
+			if (!levels.drawSlot.has_value()) {
 				bounds.kind = ItemKind::Skip;
 				continue;
 			}
-			bounds.slot = slotIndex(entity.templateId, *level);
-			MeshSlot& slot = meshSlots[bounds.slot];
-			slot.lastDrawnFrame = frameIndex;
-			if (!levels.densities.empty()) {
-				const float density = levels.densities[*level];
-				auto		use = std::find_if(levelStats.uses.begin(), levelStats.uses.end(), [&](const LevelStats::Use& u) {
-					   return u.pixelsPerMeter == density;
-				   });
-				if (use == levelStats.uses.end()) {
-					use = levelStats.uses.insert(levelStats.uses.end(), LevelStats::Use{.pixelsPerMeter = density});
-				}
-				++use->instances;
+			bounds.slot = *levels.drawSlot;
+			const MeshSlot& slot = meshSlots[bounds.slot];
+			if (levels.use != kNoUse) {
+				++levelStats.uses[levels.use].instances;
 			}
 
-			// The shader places a vertex at position + rotate(vertex * scale).
+			// The shader places a vertex at position + rotate(vertex * scale), and the camera
+			// maps world to screen by scale and offset alone.
 			const Foundation::Vec2 position{entity.position.x, entity.position.y};
+			bounds.instance = Renderer::InstanceData(position, entity.rotation, entity.scale, entity.colorTint);
+			Foundation::Vec2	   worldMin;
+			Foundation::Vec2	   worldMax;
 			if (entity.rotation == 0.0F) {
 				const Foundation::Vec2 a = slot.boundsMin * entity.scale;
 				const Foundation::Vec2 b = slot.boundsMax * entity.scale;
-				bounds.min = position + Foundation::Vec2{std::min(a.x, b.x), std::min(a.y, b.y)};
-				bounds.max = position + Foundation::Vec2{std::max(a.x, b.x), std::max(a.y, b.y)};
+				worldMin = position + Foundation::Vec2{std::min(a.x, b.x), std::min(a.y, b.y)};
+				worldMax = position + Foundation::Vec2{std::max(a.x, b.x), std::max(a.y, b.y)};
 			} else {
 				const float r = slot.radius * std::abs(entity.scale);
-				bounds.min = position - Foundation::Vec2{r, r};
-				bounds.max = position + Foundation::Vec2{r, r};
+				worldMin = position - Foundation::Vec2{r, r};
+				worldMax = position + Foundation::Vec2{r, r};
 			}
-			if (instancedCount == 0) {
-				extentMin = bounds.min;
-				extentMax = bounds.max;
-			}
-			extentMin = {std::min(extentMin.x, bounds.min.x), std::min(extentMin.y, bounds.min.y)};
-			extentMax = {std::max(extentMax.x, bounds.max.x), std::max(extentMax.y, bounds.max.y)};
-			sizeSum += std::max(bounds.max.x - bounds.min.x, bounds.max.y - bounds.min.y);
-			++instancedCount;
+			const Foundation::Vec2 pixelMin = (worldMin * scale) + screenOffset;
+			const Foundation::Vec2 pixelMax = (worldMax * scale) + screenOffset;
+			bounds.cells = overlapAll.cellsOf(pixelMin, pixelMax);
+			bounds.small = std::max(pixelMax.x - pixelMin.x, pixelMax.y - pixelMin.y) <= kUnorderedFootprintPixels;
 		}
 		std::sort(levelStats.uses.begin(), levelStats.uses.end(), [](const LevelStats::Use& a, const LevelStats::Use& b) {
 			return a.pixelsPerMeter < b.pixelsPerMeter;
@@ -271,22 +282,6 @@ namespace worldview {
 		levelStats.pendingRequests = static_cast<uint32_t>(levelBuilder.pending() + uploadQueue.size());
 		lastLevelStats = std::move(levelStats);
 		evictStale();
-
-		uint32_t gridW = 1;
-		uint32_t gridH = 1;
-		float	 cellSize = 1.0F;
-		if (instancedCount > 0) {
-			const float extentW = extentMax.x - extentMin.x;
-			const float extentH = extentMax.y - extentMin.y;
-			const auto	maxSide = static_cast<float>(kMaxOverlapGridSide);
-			cellSize = std::max({sizeSum / static_cast<float>(instancedCount), extentW / maxSide, extentH / maxSide, 1.0e-3F});
-			gridW = std::clamp(static_cast<uint32_t>(std::ceil(extentW / cellSize)), 1U, kMaxOverlapGridSide);
-			gridH = std::clamp(static_cast<uint32_t>(std::ceil(extentH / cellSize)), 1U, kMaxOverlapGridSide);
-		}
-		overlapGrid.assign(static_cast<size_t>(gridW) * gridH, 0);
-		auto cellOf = [&](float v, float origin, uint32_t cells) {
-			return std::min(static_cast<uint32_t>(std::max((v - origin) / cellSize, 0.0F)), cells - 1);
-		};
 
 		latestRunOfSlot.assign(meshSlots.size(), 0);
 		runCount = 0;
@@ -323,20 +318,14 @@ namespace worldview {
 		// An entity joins its mesh's latest open run only if no entity in a run after
 		// that one shares a grid cell with it: those are drawn after the run but sit behind
 		// this entity in depth, so the two must not overlap. Otherwise it opens a new run.
-		auto addInstanced = [&](const assets::PlacedEntity& entity, const ItemBounds& bounds) {
-			const uint32_t x0 = cellOf(bounds.min.x, extentMin.x, gridW);
-			const uint32_t x1 = cellOf(bounds.max.x, extentMin.x, gridW);
-			const uint32_t y0 = cellOf(bounds.min.y, extentMin.y, gridH);
-			const uint32_t y1 = cellOf(bounds.max.y, extentMin.y, gridH);
-			uint32_t	   latestCovering = 0;
-			for (uint32_t y = y0; y <= y1; ++y) {
-				for (uint32_t x = x0; x <= x1; ++x) {
-					latestCovering = std::max(latestCovering, overlapGrid[(static_cast<size_t>(y) * gridW) + x]);
-				}
-			}
-			uint32_t   runKey = latestRunOfSlot[bounds.slot]; // 1 + run index
+		// A small entity checks only the large entities' grid, so small pairs may swap.
+		auto addInstanced = [&](const ItemBounds& bounds) {
+			const uint32_t latestCovering = (bounds.small ? overlapLarge : overlapAll).latest(bounds.cells);
+			uint32_t	   runKey = latestRunOfSlot[bounds.slot]; // 1 + run index
 			const bool joinable = runKey > firstOpenRun && latestCovering <= runKey;
 			if (!joinable) {
+				// Its mesh has an open run, and something drawn after that run lies under it.
+				stats.uprightOverlapSplits += runKey > firstOpenRun ? 1 : 0;
 				if (runCount == runs.size()) {
 					runs.emplace_back();
 				}
@@ -344,14 +333,12 @@ namespace worldview {
 				runKey = ++runCount;
 				latestRunOfSlot[bounds.slot] = runKey;
 			}
-			runs[runKey - 1].instances.emplace_back(
-				Foundation::Vec2(entity.position.x, entity.position.y), entity.rotation, entity.scale, entity.colorTint
-			);
-			// Every covered cell held at most runKey, so runKey is now the latest there.
-			for (uint32_t y = y0; y <= y1; ++y) {
-				for (uint32_t x = x0; x <= x1; ++x) {
-					overlapGrid[(static_cast<size_t>(y) * gridW) + x] = runKey;
-				}
+			runs[runKey - 1].instances.push_back(bounds.instance);
+			// A small entity is only tested against large ones, so a later run of a small one may
+			// already be in its cells; mark keeps the later run.
+			overlapAll.mark(bounds.cells, runKey);
+			if (!bounds.small) {
+				overlapLarge.mark(bounds.cells, runKey);
 			}
 		};
 		auto flushAnim = [&]() {
@@ -424,7 +411,7 @@ namespace worldview {
 			const assets::PlacedEntity& entity = *item.entity;
 			if (bounds.kind == ItemKind::Instanced) {
 				flushAnim(); // draw any pending anim behind this entity
-				addInstanced(entity, bounds);
+				addInstanced(bounds);
 				stats.entities++;
 			} else if (bounds.kind == ItemKind::Animated) {
 				// Animated entities carry per-part transforms; they can't be GPU-instanced

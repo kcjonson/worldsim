@@ -631,6 +631,7 @@ namespace {
 				}
 				return "{\"uprightDrawCalls\":" + std::to_string(m_entityRenderer->lastUprightDrawCallCount()) +
 					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) +
+					   ",\"uprightOverlapSplits\":" + std::to_string(m_entityRenderer->lastUprightOverlapSplits()) +
 					   ",\"screenPxPerMeter\":" + number(levels.screenPixelsPerMeter) + ",\"levels\":[" + uses +
 					   "],\"levelRequestsPending\":" + std::to_string(levels.pendingRequests) +
 					   ",\"residentLevels\":" + std::to_string(levels.residentLevels) +

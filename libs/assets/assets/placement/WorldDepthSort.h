@@ -14,8 +14,10 @@
 // this is a pure CPU painter's sort.
 
 #include "assets/placement/SpatialIndex.h"
+#include "world/chunk/ChunkCoordinate.h"
 
 #include <cstdint>
+#include <unordered_map>
 #include <vector>
 
 namespace renderer {
@@ -75,9 +77,40 @@ namespace assets {
 	// are excluded from the sorted stream, leaving only tall occluders + actors.
 	// backgroundOnFastPath == false (batched fallback, which has no separate
 	// background): every static is included so nothing is dropped.
+	//
+	// Each chunk's statics are kept sorted between frames, rebuilt when its index changes,
+	// so a frame culls those lists and merges them instead of querying and sorting every
+	// static in view. The result is the same sequence a stable sort of the chunks' queries,
+	// in (y, x) chunk order, then the dynamic entities, would give.
 	class WorldDepthGather {
 	  public:
 		void gather(const RenderContext& ctx, std::vector<DepthSortItem>& out, bool backgroundOnFastPath);
+
+	  private:
+		// One static of a chunk, with what culling and sorting read copied out of the entity.
+		struct Static {
+			float				anchorY = 0.0F;
+			glm::vec2			position{0.0F, 0.0F};
+			const PlacedEntity* entity = nullptr;
+		};
+		// A chunk's statics as of an index version, stable-sorted by anchorY from the index's
+		// query order, and the box their positions span.
+		struct ChunkStatics {
+			const SpatialIndex* index = nullptr;
+			uint64_t			version = 0;
+			bool				tallOnly = false;
+			uint64_t			usedFrame = 0;
+			glm::vec2			min{0.0F, 0.0F};
+			glm::vec2			max{0.0F, 0.0F};
+			std::vector<Static> statics;
+		};
+		std::unordered_map<world::ChunkCoordinate, ChunkStatics> chunks;
+		std::vector<world::ChunkCoordinate>						 orderedChunks;
+		std::vector<size_t>										 segmentEnds; // per chunk, where its items end in out
+		uint64_t												 frame = 0;
+
+		/// The chunk's sorted statics, rebuilt when its index is new or has changed.
+		const ChunkStatics& staticsOf(world::ChunkCoordinate coord, const SpatialIndex& index, bool tallOnly);
 	};
 
 } // namespace assets

@@ -105,6 +105,10 @@ namespace assets {
 		/// Get total number of entities in the index
 		[[nodiscard]] size_t size() const { return m_entityCount; }
 
+		/// Changes with every insert, remove and clear, and is never shared with another index,
+		/// so a caller holding pointers into this one can tell they may have moved.
+		[[nodiscard]] uint64_t version() const { return m_version.value; }
+
 		/// Find all entities within radius of center
 		/// @param center Query center position
 		/// @param radius Search radius in tiles
@@ -154,9 +158,30 @@ namespace assets {
 	  private:
 		float  m_cellSize;
 		size_t m_entityCount = 0;
+		// A copied or moved index holds new storage, so it takes a new version too.
+		struct Version {
+			uint64_t value = nextVersion();
+			Version() = default;
+			Version(const Version& /*other*/) {}
+			Version& operator=(const Version& /*other*/) {
+				value = nextVersion();
+				return *this;
+			}
+			~Version() = default;
+		};
+		Version m_version;
+
+		// The cells ever inserted into since the last clear (min > max: none); removals leave it as is.
+		int32_t m_minCellX = 1;
+		int32_t m_minCellY = 1;
+		int32_t m_maxCellX = 0;
+		int32_t m_maxCellY = 0;
 
 		// Cell storage: hash(cellX, cellY) → entities in that cell
 		std::unordered_map<int64_t, std::vector<PlacedEntity>> m_cells;
+
+		/// A version no index has had, from a counter shared by every index and thread.
+		[[nodiscard]] static uint64_t nextVersion();
 
 		/// Get cell key from world position
 		[[nodiscard]] int64_t getCellKey(glm::vec2 pos) const;

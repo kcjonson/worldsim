@@ -10,6 +10,7 @@
 #include "assets/placement/RenderContext.h"
 #include "assets/placement/WorldDepthSort.h"
 #include "primitives/InstanceData.h"
+#include "world/rendering/OverlapGrid.h"
 #include "world/rendering/RenderStats.h"
 #include "world/rendering/SelectionOutline.h"
 #include "world/rendering/TemplateLevelBuilder.h"
@@ -32,8 +33,9 @@ namespace worldview {
 
 /// Emits the Y-sorted upright stream (tall static occluders + dynamic ECS
 /// entities) so that every pair of entities whose drawn areas can overlap is
-/// submitted in depth order. Non-animated entities are gathered into runs of one
-/// template mesh, each one GPU-instanced draw: an entity joins its mesh's latest
+/// submitted in depth order, except two that are both a few pixels across.
+/// Non-animated entities are gathered into runs of one template mesh, each one
+/// GPU-instanced draw: an entity joins its mesh's latest
 /// open run unless something in a later run may overlap it, so entities that
 /// cannot touch reorder freely and variants interleaved by depth still share a
 /// draw. Animated colonists (per-part deformed) and the selection outline draw on
@@ -74,9 +76,13 @@ class InstancedEntityRenderer {
 	// frame costs 128 KB and one carpeting a zoomed-out view grows to fit.
 	static constexpr uint32_t kInitialInstanceCapacity = 4096;
 
-	// The overlap grid's side is at most this many cells; its cells are never smaller
-	// than the mean entity, so a typical entity covers a few cells.
-	static constexpr uint32_t kMaxOverlapGridSide = 256;
+	// An entity whose screen bounds are at most this many pixels on their longer side is small,
+	// and two small entities may draw in either order: they share a few pixels at most, and
+	// which of two specks of foliage is on top is not something a player can pick out. Order
+	// against anything larger is kept. Measured on the river view at zoom 0.25 (trees about
+	// 2 px across): 154 of 5.3M pixels changed against exact ordering, and upright draws fell
+	// from 6,505 to 550.
+	static constexpr float kUnorderedFootprintPixels = 4.0F;
 
 	// Mesh vertices uploaded a frame; the first waiting mesh always goes, however large.
 	// A level 80 tree is about 20,000, the reference level about 5,000.
@@ -117,12 +123,21 @@ class InstancedEntityRenderer {
 		return (templateId * static_cast<uint32_t>(assets::kMaxDetailLevels)) + level;
 	}
 
-	// Per template id: its def's detail levels and which are on the GPU.
+	static constexpr uint32_t kNoUse = UINT32_MAX;
+
+	// Per template id: its def's detail levels and which are on the GPU, and what this frame
+	// settled for it once, at its first entity: the level it wants, and the slot it draws and
+	// its LevelStats::uses entry.
 	struct TemplateLevels {
-		std::span<const float> densities; // empty: one level, 0
-		uint8_t				   reference = 0;
-		uint8_t				   readyMask = 0; // bit i: level i is Ready
-		bool				   resolved = false;
+		std::span<const float>	densities; // empty: one level, 0
+		uint8_t					reference = 0;
+		uint8_t					readyMask = 0; // bit i: level i is Ready
+		bool					resolved = false;
+		uint8_t					wanted = 0;
+		uint64_t				wantedFrame = 0;
+		uint64_t				drawFrame = 0;
+		std::optional<uint32_t> drawSlot; // none: no level is ready
+		uint32_t				use = kNoUse;
 	};
 	std::vector<TemplateLevels> templateLevels;
 
@@ -131,13 +146,13 @@ class InstancedEntityRenderer {
 	uint64_t			 frameIndex = 0;
 	LevelStats			 lastLevelStats;
 
-	// One entity of the stream, classified and, when instanced, bounded in world space.
+	// One entity of the stream, classified and, when instanced, bounded on the screen.
 	enum class ItemKind : uint8_t { Skip, Animated, Instanced };
 	struct ItemBounds {
-		Foundation::Vec2 min{0.0F, 0.0F};
-		Foundation::Vec2 max{0.0F, 0.0F};
+		Renderer::InstanceData instance; // what its run draws it with
+		OverlapGrid::Cells cells;		 // the overlap grid cells it covers
+		bool small = false;				 // at most kUnorderedFootprintPixels across
 		uint32_t		 slot = 0;	// the mesh slot it draws
-		uint8_t			 wanted = 0; // the level the camera's density picks
 		ItemKind		 kind = ItemKind::Skip;
 	};
 	std::vector<ItemBounds> itemBounds;
@@ -155,9 +170,11 @@ class InstancedEntityRenderer {
 	// Per mesh slot, 1 + the index of its latest run this frame (0: none yet).
 	std::vector<uint32_t> latestRunOfSlot;
 
-	// World-space grid over this frame's instanced entities: per cell, 1 + the index of
-	// the latest run holding an entity whose bounds touch the cell (0: none).
-	std::vector<uint32_t> overlapGrid;
+	// Screen grids: per cell, the latest run holding an entity whose bounds touch the cell; every
+	// entity marks overlapAll and only those over kUnorderedFootprintPixels mark overlapLarge.
+	// A large entity is tested against overlapAll, a small one against overlapLarge.
+	OverlapGrid overlapAll;
+	OverlapGrid overlapLarge;
 
 	// Memoized reference template meshes (by template id)
 	TemplateMeshCache templateCache;

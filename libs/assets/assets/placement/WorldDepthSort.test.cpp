@@ -6,6 +6,7 @@
 #include "assets/placement/WorldDepthSort.h"
 
 #include "assets/AssetDefinition.h"
+#include "assets/AssetRegistry.h"
 
 #include "assets/placement/FloraRouting.h"
 #include "assets/placement/RenderContext.h"
@@ -161,6 +162,87 @@ namespace assets {
 		EXPECT_FLOAT_EQ(padOf(0.0F), 2.0F);
 		EXPECT_FLOAT_EQ(padOf(1.5F), 2.0F);
 		EXPECT_FLOAT_EQ(padOf(6.5F), 6.5F);
+	}
+
+
+	// The gather keeps each chunk's statics sorted between frames and merges them; its stream must
+	// be the one a stable sort of every chunk's query, in (y, x) chunk order, then the dynamic
+	// entities, gives, ties between chunks and with actors included, and must follow an edit.
+	TEST(WorldDepthSort, GatherMatchesOneStableSortAcrossChunksAndEdits) {
+		PlacementExecutor executor(AssetRegistry::Get());
+		std::unordered_set<world::ChunkCoordinate> processed;
+		const auto addChunk = [&](world::ChunkCoordinate coord, const std::vector<std::pair<glm::vec2, float>>& statics) {
+			SpatialIndex index;
+			for (const auto& [position, anchorY] : statics) {
+				PlacedEntity entity;
+				entity.defName = "Tree";
+				entity.position = position;
+				entity.anchorY = anchorY;
+				entity.isTallOccluder = true;
+				index.insert(entity);
+			}
+			PlacedEntity shortFlora;
+			shortFlora.defName = "Bush";
+			shortFlora.position = statics.front().first;
+			index.insert(shortFlora);
+			AsyncChunkPlacementResult result;
+			result.coord = coord;
+			result.spatialIndex = std::move(index);
+			executor.storeChunkResult(std::move(result));
+			processed.insert(coord);
+		};
+		// Both sides of the origin, so the view spans four chunks; anchorY 3 and 5 tie across chunks.
+		addChunk({0, 0}, {{{4.0F, 3.0F}, 3.0F}, {{9.0F, 1.0F}, 5.0F}, {{1.0F, 8.0F}, 8.0F}, {{2.0F, 2.0F}, 1.0F}});
+		addChunk({-1, 0}, {{{-4.0F, 3.0F}, 3.0F}, {{-2.0F, 6.0F}, 6.0F}, {{-900.0F, 3.0F}, 2.0F}});
+		addChunk({0, -1}, {{{3.0F, -5.0F}, -4.0F}, {{6.0F, -1.0F}, 5.0F}});
+		addChunk({-1, -1}, {{{-3.0F, -3.0F}, 3.0F}});
+
+		std::vector<PlacedEntity> actors(2);
+		actors[0].position = {0.5F, 2.5F};
+		actors[0].anchorY = 3.0F;
+		actors[1].position = {-1.0F, -1.0F};
+		actors[1].anchorY = -1.0F;
+
+		world::WorldCamera camera;
+		camera.setPosition({0.0F, 0.0F});
+		const RenderContext ctx{executor, processed, &actors, camera, 800, 600, 16.0F, 1};
+
+		const auto expected = [&]() {
+			const VisibleBounds vis = computeVisibleBounds(camera, 800, 600, 16.0F, entityCullMarginMeters(AssetRegistry::Get().maxReachMeters()));
+			std::vector<world::ChunkCoordinate> order(processed.begin(), processed.end());
+			std::sort(order.begin(), order.end(), [](const auto& a, const auto& b) { return a.y != b.y ? a.y < b.y : a.x < b.x; });
+			std::vector<DepthSortItem> items;
+			for (const auto& coord : order) {
+				for (const PlacedEntity* entity : executor.getChunkIndex(coord)->queryRect(vis.minX, vis.minY, vis.maxX, vis.maxY)) {
+					if (entity->isTallOccluder) {
+						items.push_back({entity->anchorY, entity, false});
+					}
+				}
+			}
+			for (const PlacedEntity& actor : actors) {
+				items.push_back({actor.anchorY, &actor, false});
+			}
+			sortByAnchorY(items);
+			return items;
+		};
+		const auto entitiesOf = [](const std::vector<DepthSortItem>& items) {
+			std::vector<const PlacedEntity*> entities;
+			for (const DepthSortItem& item : items) {
+				entities.push_back(item.entity);
+			}
+			return entities;
+		};
+
+		WorldDepthGather gather;
+		std::vector<DepthSortItem> out;
+		gather.gather(ctx, out, true);
+		EXPECT_EQ(out.size(), 11U); // the far static at x -900 is culled
+		EXPECT_EQ(entitiesOf(out), entitiesOf(expected()));
+
+		ASSERT_TRUE(executor.removeEntity({0, 0}, {9.0F, 1.0F}, "Tree"));
+		gather.gather(ctx, out, true);
+		EXPECT_EQ(out.size(), 10U);
+		EXPECT_EQ(entitiesOf(out), entitiesOf(expected()));
 	}
 
 } // namespace assets

@@ -27,6 +27,7 @@ namespace worldview {
 			m_lastTriangleCount = stats.triangles;
 			m_lastUprightDrawCallCount = 0;
 			m_lastUprightTriangleCount = 0;
+			m_lastUprightOverlapSplits = 0;
 		}
 	}
 
@@ -51,6 +52,7 @@ namespace worldview {
 			m_lastTriangleCount = stats.triangles;
 			m_lastUprightDrawCallCount = 0;
 			m_lastUprightTriangleCount = 0;
+			m_lastUprightOverlapSplits = 0;
 		}
 	}
 
@@ -110,6 +112,7 @@ namespace worldview {
 		m_lastTriangleCount = stats.triangles;
 		m_lastUprightDrawCallCount = stats.uprightDrawCalls;
 		m_lastUprightTriangleCount = stats.uprightTriangles;
+		m_lastUprightOverlapSplits = stats.uprightOverlapSplits;
 	}
 
 	void EntityRenderer::uploadBakedChunk(const world::ChunkCoordinate& coord, assets::BakedChunkCPUData&& cpuData) {

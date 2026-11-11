@@ -93,6 +93,7 @@ class EntityRenderer {
 	/// The depth-sorted upright stream's share of last frame's draws (RenderStats::upright*)
 	[[nodiscard]] uint32_t lastUprightDrawCallCount() const { return m_lastUprightDrawCallCount; }
 	[[nodiscard]] uint32_t lastUprightTriangleCount() const { return m_lastUprightTriangleCount; }
+	[[nodiscard]] uint32_t lastUprightOverlapSplits() const { return m_lastUprightOverlapSplits; }
 	/// The detail levels last frame's upright stream drew, and the level requests still pending
 	[[nodiscard]] const InstancedEntityRenderer::LevelStats& lastUprightLevels() const { return instancedDynamic.levelStats(); }
 
@@ -120,6 +121,7 @@ class EntityRenderer {
 	uint32_t m_lastTriangleCount = 0;
 	uint32_t m_lastUprightDrawCallCount = 0;
 	uint32_t m_lastUprightTriangleCount = 0;
+	uint32_t m_lastUprightOverlapSplits = 0;
 	uint64_t frameCounter = 0;  // Incremented each render call (for LRU tracking)
 
 	// --- Instancing Mode ---
