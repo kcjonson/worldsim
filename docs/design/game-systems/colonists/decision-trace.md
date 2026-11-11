@@ -225,19 +225,27 @@ std::optional<NavigationSystem::Reach> reach;
 if (haveMesh) reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
 auto canReach = [&](const glm::vec2& p) { return !reach || m_navSystem->reaches(*reach, p); };
 
-auto nearest = findNearestReachableWithCapability(
+// Both tests take the source's Memory key, so a verdict can be remembered per source (SourceReachMemo)
+auto accept = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
+    return notKnownUnreachable(sourceKey, known);  // Hunger also requires an edible yield
+};
+auto reachable = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+    return canReachSource(sourceKey, sourcePosition);  // remembered verdict, or canReach the first time
+};
+
+std::optional<KnownWorldEntity> nearest = findNearestReachableWithCapability(
     memory,          // Colonist's personal memory
     capability,      // Harvestable, Drinkable, etc.
     position.value,  // Colonist position
-    accept,          // Hunger: the harvestable's yield is edible; other needs accept any source
-    canReach,        // A satisfied need passes an always-true test: it only shows its nearest
-    m_sourceScratch  // Reused candidate storage
+    accept,          // A satisfied need passes always-true tests: it only shows its nearest
+    reachable,
+    sourceScratch    // Reused candidate storage (std::vector<SourceCandidate>)
 );
 ```
 
 A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible. A bed or toilet that can't be reached falls back to the ground, as when none is known.
 
-"Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that source as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again.
+"Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that target as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again. The same holds for a toilet spot or a work target, remembered by its point rather than a Memory key; a toilet spot that failed gives way to the ground where the colonist stands.
 
 ---
 

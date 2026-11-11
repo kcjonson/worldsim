@@ -54,7 +54,7 @@ Player has taken direct control. See [Player Control](../features/player-control
 
 ### Tier 4: Active Work Orders (STICKY)
 
-A queued craft or build order and its entire provisioning chain (haul, harvest). The colonist commits to this work and will not switch to a same- or lower-tier task without a large score advantage. A tier-5 need (eat, sleep) briefly interrupts tier 4, then the colonist returns to finish.
+A queued craft or build order and its entire provisioning chain (haul, harvest). The colonist commits to this work and will not switch to a same- or lower-tier task without a large score advantage. A non-critical need (tier 5) never interrupts it; only a need that drops below the critical threshold (~10%, tier 2) does, and the colonist returns to finish afterwards.
 
 This tier is the mechanism that implements the "finishing is very high priority" invariant from [Multi-colonist Crafting](../multi-colonist-crafting.md). Chain steps (provisioning hauls and harvests that serve an active work order) are classified at tier 4, not tier 6, so they stay bound to the parent order.
 
