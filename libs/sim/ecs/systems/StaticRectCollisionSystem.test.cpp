@@ -291,7 +291,7 @@ TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
 // 0.05 m pad, producing world boundary = scale*halfExtent + 0.05. The nav built
 // scale*(halfExtent + 0.05). At scale 0.8 the collision boundary was 0.01 m OUTSIDE
 // the nav boundary, spuriously pushing agents on valid nav routes. After the fix
-// both read nav::floraBoxFor, scale*(halfExtent + 0.05), so boundaries coincide.
+// both read nav::placedObstacleBox, scale*(halfExtent + 0.05), so boundaries coincide.
 //
 // Rect halfExtents {0.3, 0.3}, scale 0.8:
 //   expected boundary = 0.8 * (0.3 + 0.05) = 0.28 m from center on each axis.
@@ -491,7 +491,7 @@ TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
 
 // A tree mirrored by a negative scale is collided with like any other: its box is the same size
 // (|scale| times the padded half extents), its offset mirrored through its position, the box the mesh
-// ring is built from (nav::floraBoxFor).
+// ring is built from (nav::placedObstacleBox).
 TEST_F(StaticRectCollisionSystemTest, MirroredTreeIsCollidedWith) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;

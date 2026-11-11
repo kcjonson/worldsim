@@ -72,22 +72,22 @@ namespace geometry::nav {
 		//      (no incident obstacle edges) unconstrained instead of falsely narrow.
 		//   2. "Constrained edge" in the paper == "common-knowledge obstacle edge" here:
 		//      a triangle edge whose two incident faces differ in common-knowledge-
-		//      blockedness (the boundary of a water/flora region). Belief-dependent walls
+		//      blockedness (the boundary of a water/obstacle region). Belief-dependent walls
 		//      (faceBlocker > 0) are NOT obstacles for this pass (see NavMesh.h).
 		// All obstacles in our model are filled polygons, so every obstacle vertex has
 		// incident obstacle edges (no bare point obstacles); the paper's edge-based
 		// search therefore captures every obstacle the disc must round.
 
 		// A width search may be asked to treat some terrain tags as open ground (a path
-		// query's priced flora): those faces are no obstacle to it.
+		// query's priced detail): those faces are no obstacle to it.
 		bool isCommonKnowledgeBlocked(std::int64_t faceBlocker, std::span<const std::int64_t> openTags) {
 			return faceBlocker < 0 && faceBlocker != kNoBlocker && std::find(openTags.begin(), openTags.end(), faceBlocker) == openTags.end();
 		}
 
 		// Edge e of triangle ti is an obstacle edge iff exactly one of the two faces it
-		// separates is common-knowledge-blocked (the boundary of a water/flora region).
+		// separates is common-knowledge-blocked (the boundary of a water/obstacle region).
 		// A mesh-boundary edge (neighbor == -1) has no obstacle face outside it, so a
-		// floor border is not an obstacle edge (scope: terrain/flora only).
+		// floor border is not an obstacle edge (scope: terrain/obstacles only).
 		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e, std::span<const std::int64_t> openTags) {
 			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker, openTags);
 			const std::int32_t nb	 = view.triangle(ti).neighbor[static_cast<std::size_t>(e)];

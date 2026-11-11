@@ -75,7 +75,7 @@ namespace geometry::nav {
 		// taut walk; inside a corridor the path does not bend away from priced faces to
 		// save cost.
 		double cost = 0.0;
-		// The walk runs through a face crossed at a price (flora it pushes through, a
+		// The walk runs through a face crossed at a price (detail it pushes through, a
 		// waiting mover's footprint): the caller acts on it before the mover sets off.
 		bool crossesPricedFaces = false;
 	};
@@ -90,7 +90,7 @@ namespace geometry::nav {
 	//                                seen is treated as ABSENT (path goes straight
 	//                                through it); a seen wall blocks unless the agent
 	//                                also knows a door through it.
-	// A negative faceBlocker is a common-knowledge terrain sentinel (water/tree, or a
+	// A negative faceBlocker is a common-knowledge terrain sentinel (water/placed obstacle, or a
 	// junction with no incident-wall id) and always blocks, filter or not. A junction
 	// tagged with a positive incident-wall segment id is belief-gated like that wall.
 	//

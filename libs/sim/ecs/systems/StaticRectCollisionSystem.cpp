@@ -31,7 +31,7 @@ namespace {
 	// Generous fixed half-size margin added to the query box (meters). It MUST
 	// exceed the largest collider half-extent + clearance so queryRect (which
 	// filters by entity CENTER) never misses a rect whose body overlaps the agent
-	// while its center sits outside the unpadded box. Trunk rects are <= 0.1 m
+	// while its center sits outside the unpadded box. Collider rects here are <= 0.1 m
 	// half-extent, so 2 m is safe with wide headroom.
 	constexpr float kStaticRectQueryMarginMeters = 2.0F;
 
@@ -73,7 +73,7 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 	}
 
 	const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-	// The box from nav::floraBoxFor is pre-inflated by the nav flora pad (already
+	// The box from nav::placedObstacleBox is pre-inflated by the placed-obstacle pad (already
 	// baked into halfExtents), so the query box needs only the spatial margin.
 	const float boxHalf = kStaticRectQueryMarginMeters;
 
@@ -89,7 +89,7 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 				continue;
 			}
 			if (const NavPath* path = world->getComponent<NavPath>(entity); path != nullptr && !path->done() && detail->routeCrossesPricedFaces(*path)) {
-				continue; // walking through flora on purpose, at its price
+				continue; // walking through detail on purpose, at its price
 			}
 
 			// --- Gather the nearby rects locally (position tiles == meters) ---
@@ -116,11 +116,11 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 						index->queryRect(boxMinX, boxMinY, boxMaxX, boxMaxY);
 					for (const assets::PlacedEntity* e : hits) {
 						const assets::AssetDefinition* def = registry.getDefinition(e->defName);
-						if (def == nullptr || !detail->floraInNavMesh({cx, cy}, *e)) {
+						if (def == nullptr || !detail->placedObstacleInNavMesh({cx, cy}, *e)) {
 							continue;
 						}
 						// Rect colliders only: a polygon one is in the nav mesh but not pushed against here.
-						if (const std::optional<nav::OrientedRect> box = nav::floraBoxFor(*e, def->collision)) {
+						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, def->collision)) {
 							rects.push_back(*box);
 						}
 					}
@@ -141,7 +141,7 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 			});
 
 			for (const nav::OrientedRect& rect : rects) {
-				// clearance 0: the OBB is already pre-inflated by the nav flora pad.
+				// clearance 0: the OBB is already pre-inflated by the placed-obstacle pad.
 				std::optional<glm::vec2> corrected = resolveCenterAgainstRect(p, 0.0F, rect);
 				if (corrected.has_value()) {
 					p = *corrected;

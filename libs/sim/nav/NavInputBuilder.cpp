@@ -40,21 +40,21 @@ namespace nav {
 		}
 	}
 
-	std::optional<gnav::NavInputPolygon> floraRingFor(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
+	std::optional<gnav::NavInputPolygon> placedObstacleRing(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {
 		geometry::Ring ring;
-		if (!floraOutline(e, registry, ring)) {
+		if (!placedObstacleOutline(e, registry, ring)) {
 			return std::nullopt;
 		}
-		return gnav::NavInputPolygon{std::move(ring), true, kProvenanceTree};
+		return gnav::NavInputPolygon{std::move(ring), true, kProvenancePlaced};
 	}
 
-	std::optional<OrientedRect> floraBoxFor(const assets::PlacedEntity& e, const assets::CollisionShape& collision) {
+	std::optional<OrientedRect> placedObstacleBox(const assets::PlacedEntity& e, const assets::CollisionShape& collision) {
 		if (collision.type != assets::CollisionShapeType::Rect) {
 			return std::nullopt;
 		}
 		const float		c	= std::cos(e.rotation);
 		const float		s	= std::sin(e.rotation);
-		const float		pad = static_cast<float>(kFloraColliderPadMm) / static_cast<float>(kTileMm);
+		const float		pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
 		const glm::vec2 off = collision.offsetMeters * e.scale;
 		OrientedRect	box;
 		box.center		= e.position + glm::vec2{off.x * c - off.y * s, off.x * s + off.y * c};
@@ -64,7 +64,7 @@ namespace nav {
 		return box;
 	}
 
-	bool floraOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
+	bool placedObstacleOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
 		ring.clear();
 		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
 		if (def == nullptr || !def->collision.blocks()) {
@@ -72,7 +72,7 @@ namespace nav {
 		}
 
 		if (def->collision.type == assets::CollisionShapeType::Rect) {
-			const OrientedRect box = *floraBoxFor(e, def->collision);
+			const OrientedRect box = *placedObstacleBox(e, def->collision);
 			ring.reserve(4);
 			for (const glm::vec2 corner : {glm::vec2{-1.0F, -1.0F}, glm::vec2{1.0F, -1.0F}, glm::vec2{1.0F, 1.0F}, glm::vec2{-1.0F, 1.0F}}) {
 				ring.push_back(toMm(box.center + box.axisX * (corner.x * box.halfExtents.x) + box.axisY * (corner.y * box.halfExtents.y)));

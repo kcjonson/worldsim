@@ -196,7 +196,7 @@ namespace geometry::nav {
 		// belief crosses it freely, else, for a p on an edge or corner of tri, the triangle
 		// holding p it crosses freely whose sorted corners come first, then one it crosses
 		// at a price, then tri. Point location settles a shared edge or corner by geometry
-		// alone, so a start on a tree's or wall's edge would otherwise land in the blocked
+		// alone, so a start on an obstacle's or wall's edge would otherwise land in the blocked
 		// face and find no path, or in the priced face and be charged for standing beside
 		// it: only a point strictly inside a priced face stands on it. Within a rectangle,
 		// only a triangle whose interior meets it counts (the search enters no other), so a

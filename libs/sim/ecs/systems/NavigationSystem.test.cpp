@@ -631,7 +631,7 @@ TEST_F(NavigationSystemTest, ViewportFloraRectIsClamped) {
 	EXPECT_TRUE(meshClear(sys, outsideMax)) << "and no farther";
 }
 
-// Flora enters at most kFloraRingsPerTick rings a tick, nearest the view first, and
+// Flora enters at most kDetailRingsPerTick rings a tick, nearest the view first, and
 // finishPendingBuilds takes in the rest.
 TEST_F(NavigationSystemTest, FloraEntersWithinTheBudget) {
 	registerTree("Test_NavBudgetTree", 0.3F);
@@ -657,10 +657,10 @@ TEST_F(NavigationSystemTest, FloraEntersWithinTheBudget) {
 	};
 	step(world, sys);
 	ASSERT_TRUE(sys.inSimArea({1.0F, 1.0F})) << "the viewport's chunk is meshed first";
-	EXPECT_EQ(inMesh(), NavigationSystem::kFloraRingsPerTick) << "the first tick takes in one budget of flora";
+	EXPECT_EQ(inMesh(), NavigationSystem::kDetailRingsPerTick) << "the first tick takes in one budget of flora";
 	EXPECT_FALSE(meshClear(sys, {1.5F, 1.5F})) << "nearest the view centre first";
 	step(world, sys);
-	EXPECT_EQ(inMesh(), 2 * NavigationSystem::kFloraRingsPerTick);
+	EXPECT_EQ(inMesh(), 2 * NavigationSystem::kDetailRingsPerTick);
 	EXPECT_TRUE(sys.isBuilding());
 
 	settle(sys);
@@ -844,7 +844,7 @@ TEST_F(NavigationSystemTest, LostChunkRemovalsDontHoldBackAdds) {
 			ahead.push_back({-200.0F - 3.0F * static_cast<float>(i), 200.0F + 3.0F * static_cast<float>(j)});
 		}
 	}
-	ASSERT_GT(lost.size(), NavigationSystem::kFloraRemovalsPerTick);
+	ASSERT_GT(lost.size(), NavigationSystem::kDetailRemovalsPerTick);
 	placeTrees(executor, processed, "Test_NavLostTree", lost);
 
 	ConstructionWorld cw;
@@ -868,10 +868,10 @@ TEST_F(NavigationSystemTest, LostChunkRemovalsDontHoldBackAdds) {
 	sys.resetNavQueryStats();
 	step(world, sys);
 	EXPECT_GT(inMesh(ahead), 0u) << "adds went ahead of the backlog";
-	EXPECT_LE(inMesh(ahead), NavigationSystem::kFloraRingsPerTick);
+	EXPECT_LE(inMesh(ahead), NavigationSystem::kDetailRingsPerTick);
 	EXPECT_LT(inMesh(lost), lost.size()) << "removals drained alongside";
-	EXPECT_GE(inMesh(lost), lost.size() - NavigationSystem::kFloraRemovalsPerTick) << "under their own budget";
-	EXPECT_LE(sys.navQueryStats().navPatches, 2 * NavigationSystem::kFloraCellsPerTick) << "a few cells each way";
+	EXPECT_GE(inMesh(lost), lost.size() - NavigationSystem::kDetailRemovalsPerTick) << "under their own budget";
+	EXPECT_LE(sys.navQueryStats().navPatches, 2 * NavigationSystem::kDetailCellsPerTick) << "a few cells each way";
 
 	settle(sys);
 	EXPECT_EQ(inMesh(lost), 0u);
@@ -2242,7 +2242,7 @@ TEST_F(NavigationSystemTest, FloraBudgetHoldsWhilePanning) {
 				}
 				was[k] = now;
 			}
-			ASSERT_LE(count, kBudget + NavigationSystem::kFloraRingsPerTick) << "view at " << x;
+			ASSERT_LE(count, kBudget + NavigationSystem::kDetailRingsPerTick) << "view at " << x;
 		}
 	}
 	EXPECT_FALSE(inMesh(trees.front())) << "the far end of the pan was trimmed";
@@ -2307,7 +2307,7 @@ TEST_F(NavigationSystemTest, GroundDroppedWhileItsFloraRemovalsAreQueued) {
 			trees.push_back({ChunkWalk::centre(0).x - 14.25F + 1.5F * static_cast<float>(i), ChunkWalk::centre(0).y - 14.25F + 1.5F * static_cast<float>(j)});
 		}
 	}
-	ASSERT_GT(trees.size(), 3 * NavigationSystem::kFloraRemovalsPerTick);
+	ASSERT_GT(trees.size(), 3 * NavigationSystem::kDetailRemovalsPerTick);
 	placeTrees(executor, processed, "Test_NavDropTree", trees);
 
 	ChunkWalk		  walk;
@@ -2430,7 +2430,7 @@ TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
 	processed.erase(ChunkCoordinate{0, 0});
 	sys.resetNavQueryStats();
 	step(world, sys);
-	for (int i = 0; i < 4 && sys.isBuilding(); ++i) { // kFloraCellsPerTick cells a tick
+	for (int i = 0; i < 4 && sys.isBuilding(); ++i) { // kDetailCellsPerTick cells a tick
 		step(world, sys);
 	}
 	ASSERT_FALSE(sys.isBuilding());
@@ -3448,7 +3448,7 @@ TEST_F(NavigationSystemTest, StaleRouteStaysStaleThroughAnUnrelatedWallJob) {
 	EXPECT_FALSE(stale(world, sys, missed));
 }
 
-// The clear-ground test and the mesh read one outline (nav::floraOutline): a collider set off its
+// The clear-ground test and the mesh read one outline (nav::placedObstacleOutline): a collider set off its
 // entity's centre and mirrored by a negative scale lands on the same side for both.
 TEST_F(NavigationSystemTest, ClearGroundAndTheMeshAgreeOnAMirroredCollider) {
 	AssetDefinition tree;

@@ -4,15 +4,15 @@
 // (nav-mesh-variable-resolution.md, steps 4 and decision 24).
 //
 // Two persistent geometry::nav::PatchableMesh instances cover every chunk that has been loaded:
-//  - navMesh: each ready chunk's square and water, built walls and doors, and flora around each
+//  - navMesh: each ready chunk's square and water, built walls and doors, and detail (placed obstacles) around each
 //    mover (Position + Colonist) and the viewport. Paths, on-mesh and walkability, recovery
 //    snaps and nearby placement read it.
-//  - structural: the same without flora. Reachability (its forests), placement buildability and
-//    the landing search read it, so neither the camera nor a felled tree changes what is reachable.
+//  - structural: the same without detail. Reachability (its forests), placement buildability and
+//    the landing search read it, so neither the camera nor a removed placed obstacle changes what is reachable.
 // Neither mesh is ever rebuilt. Each update() diffs what should be in them against what is and
 // gathers the difference as patches, in a fixed order, under per-tick count and vertex budgets
 // (never a time budget, so which tick a ring enters doesn't depend on frame time):
-//  1. Felled trees (PlacementExecutor::takeRemovals) and the flora of chunks whose placement
+//  1. Removed placed obstacles (PlacementExecutor::takeRemovals) and the detail of chunks whose placement
 //     went away are queued for removal.
 //  2. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
 //  3. Ground: ready chunks whose ground is missing, nearest a mover or the view first, one patch
@@ -20,23 +20,23 @@
 //     chunk with water goes alone. A chunk whose terrain changes has its water re-derived. A chunk
 //     that unloads keeps its ground, up to kKeptUnloadedChunks of them; past that the one unloaded
 //     longest ago holding no construction loses it, one chunk a tick, on a tick no ground arrives.
-//  4. Flora: the rects scanned for colliders in kFloraCellMm cells; up to kFloraRemovalsPerTick
-//     removals and kFloraRingsPerTick adds, one patch per cell, adds nearest a rect centre first.
+//  4. Detail: the rects scanned for colliders in kDetailCellMm cells; up to kDetailRemovalsPerTick
+//     removals and kDetailRingsPerTick adds, one patch per cell, adds nearest a rect centre first.
 // endTick() hands the tick's patches to two worker threads, one per mesh, after every system has
 // run; each also refreshes its widths or rebuilds its forests. The next update() or the first
 // query waits for them, so a query always sees exactly the patches gathered through the previous
 // tick, however long the workers took, and nothing reads a mesh while it is patched. Points on
 // meshed ground route to each other wherever they are.
 //
-// Flora is priced, not walled, for movement (spec 4.4, 4.7): a tree in the nav mesh costs
-// kFloraPassMultiplier times its length to walk through, on camera or off, so a mover standing in
+// Detail is priced, not walled, for movement (spec 4.4, 4.7): a placed obstacle in the nav mesh costs
+// kDetailPassMultiplier times its length to walk through, on camera or off, so a mover standing in
 // one is on valid ground and its route can take it out. Detail decides only what collision and the
-// forward snap do. Placement, spawning, drops and construction still treat a tree as blocked
+// forward snap do. Placement, spawning, drops and construction still treat a placed obstacle as blocked
 // (isValidPosition and the walkers built on it).
 //
 // Staleness (spec 4.6): generation() moves only when a structural job lands (ground in or out,
-// water re-derived, walls or doors), which can change any route. Flora landing instead marks
-// stale just the routes whose rest crosses the new trees; flora leaving only opens ground and
+// water re-derived, walls or doors), which can change any route. Detail landing instead marks
+// stale just the routes whose rest crosses the new obstacles; detail leaving only opens ground and
 // marks nobody.
 
 #include "../EntityID.h"
@@ -90,8 +90,8 @@ struct NavPath;
 /// the world mid-frame.
 class NavigationSystem : public ISystem {
   public:
-	// `floraRingBudget` caps the flora rings the nav mesh holds; see kFloraRingBudget.
-	explicit NavigationSystem(std::size_t floraRingBudget = kFloraRingBudget);
+	// `detailRingBudget` caps the detail rings the nav mesh holds; see kDetailRingBudget.
+	explicit NavigationSystem(std::size_t detailRingBudget = kDetailRingBudget);
 	~NavigationSystem() override;
 
 	NavigationSystem(const NavigationSystem&) = delete;
@@ -107,7 +107,7 @@ class NavigationSystem : public ISystem {
 
 	void setChunkManager(world::ChunkManager* manager) { chunkManager = manager; }
 
-	// The viewport rect (world meters) for this tick, the one thing that asks for flora. GameScene
+	// The viewport rect (world meters) for this tick, the one thing that asks for detail. GameScene
 	// pushes it every frame with the camera's visible rect expanded by kViewportMargin.
 	void setViewportRect(glm::vec2 centerMeters, glm::vec2 halfExtentMeters) {
 		viewportCenterM = centerMeters;
@@ -122,7 +122,7 @@ class NavigationSystem : public ISystem {
 	// ahead of the camera's and never dropped.
 	void appendAnchors(std::vector<world::WorldPosition>& out) const;
 
-	// Flora comes from `executor`'s chunk indices, and only for chunks in `processed` (the
+	// Detail comes from `executor`'s chunk indices, and only for chunks in `processed` (the
 	// chunks that have finished entity placement; null reads every indexed chunk as finished).
 	// Removals the executor made before this call are discarded.
 	void setPlacementData(assets::PlacementExecutor* executor, const std::unordered_set<world::ChunkCoordinate>* processed);
@@ -149,7 +149,7 @@ class NavigationSystem : public ISystem {
 	// task starts afresh. A requester with no task instance is held to one goal instead.
 	//
 	// When the nav search gives up in priced ground (more expansions than the structural walk
-	// warrants, see kNavExpansionFloor), the route is the structural walk, through the flora at its
+	// warrants, see kNavExpansionFloor), the route is the structural walk, through the detail at its
 	// price.
 	enum class RouteKind { Autonomous, Ordered };
 	[[nodiscard]] std::optional<std::vector<glm::vec2>> requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
@@ -164,7 +164,7 @@ class NavigationSystem : public ISystem {
 	}
 
 	// What a colonist can reach on its own, and how far it walks there: a walk on the structural
-	// mesh (no flora, so the camera changes nothing) under the colonist's belief, confined to the
+	// mesh (no detail, so the camera changes nothing) under the colonist's belief, confined to the
 	// square of half-side autonomousReachMm() around where it stands. That square is the ground the
 	// colonist's own anchor keeps loaded, whatever the camera does. reachFrom notes the start once;
 	// reaches() and walkDistance() walk to one goal each.
@@ -225,7 +225,7 @@ class NavigationSystem : public ISystem {
 	// for each the structural search expanded (see requestPath).
 	static constexpr std::uint32_t kNavExpansionFloor		   = 4000;
 	static constexpr std::uint32_t kNavExpansionsPerStructural = 16;
-	// A route's builtNavVersion once marked stale (flora landed across it, no clear point ahead): a
+	// A route's builtNavVersion once marked stale (detail landed across it, no clear point ahead): a
 	// value generation() never takes, so no re-stamp reads it as current.
 	static constexpr std::uint64_t kStaleRoute = std::numeric_limits<std::uint64_t>::max();
 
@@ -234,14 +234,14 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
 
 	// Ground a mover may stand on: a face of the nav mesh a route can cross, which is anything but
-	// water, trees included (they are priced, not walled); any wall face reads open
+	// water, placed obstacles included (they are priced, not walled); any wall face reads open
 	// (terrain-optimistic). False off meshed ground. Lets a path failure tell a stranded colonist
 	// (recover by snapping back onto land) from one merely walled off.
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
 
 	// Canonical world-position validity for spawn/placement/teleport/drops: ground a mover may stand
-	// on that is clear, so not water and not inside a tree's collider (read from the placement data,
-	// whether or not the tree is in the mesh); any wall face reads open. Validity
+	// on that is clear, so not water and not inside a placed obstacle's collider (read from the placement data,
+	// whether or not it is in the mesh); any wall face reads open. Validity
 	// is owned by the runtime nav mesh; the 3D world source is load-time data and is not consulted.
 	// This is the ONE predicate every world-positioning path goes through; do not reintroduce
 	// ad-hoc terrain/isWaterAt checks elsewhere.
@@ -262,7 +262,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
 
 	// Whole-FOOTPRINT BUILDABILITY: isAreaWalkable's sampling against the structural mesh, where
-	// trees and rocks are absent (ConstructionSystem turns them into clear tasks) and every wall
+	// placed obstacles are absent (ConstructionSystem turns them into clear tasks) and every wall
 	// face reads open (wall conflicts are ConstructionValidator's job). Only water and ground
 	// that isn't meshed block. The placement gate for the build tool.
 	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
@@ -271,7 +271,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
 
 	// `meters` itself when it is walkable in truth on the structural mesh (water and built walls
-	// block, trees and rocks don't), else the nearest point that is, searched outward over the
+	// block, placed obstacles don't), else the nearest point that is, searched outward over the
 	// mesh from `meters`. nullopt when `meters` is off meshed ground.
 	[[nodiscard]] std::optional<glm::vec2> nearestTerrainWalkablePoint(glm::vec2 meters) const;
 
@@ -298,13 +298,13 @@ class NavigationSystem : public ISystem {
 	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
 
 	// Nearest clear ground (isValidPosition) to `meters`, searched outward over the mesh from it,
-	// or nullopt when it is off meshed ground or no face is clear. Moves a work target off a trunk
+	// or nullopt when it is off meshed ground or no face is clear. Moves a work target off a collider
 	// to the ground beside it, and places things.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
 
-	// Where a colonist at `from` stands to work a target at `target` (a tree, a bush): when a
+	// Where a colonist at `from` stands to work a target at `target` (a placed entity): when a
 	// collider is placed there, the point just outside it nearest `from` that is clear ground on the
-	// structural mesh, its disc clear of every collider, else (a tree in a thicket) the nearest that is
+	// structural mesh, its disc clear of every collider, else (an obstacle among others) the nearest that is
 	// at least ground a mover crosses; with no collider, the target itself when it is clear ground,
 	// else the nearest that is. The same on camera and off. nullopt off meshed ground, or with every
 	// point round the collider in water or a wall.
@@ -315,7 +315,7 @@ class NavigationSystem : public ISystem {
 	// clearance WallCollisionSystem enforces), so the two systems never push a snapped colonist back
 	// and forth (the colonist-wall-trap bug). Falls back to the nearest band-clear triangle interior
 	// when the closest pocket is too thin to hold the agent. Snaps a stranded colonist, and a move
-	// order clicked on water or a tree.
+	// order clicked on water or a placed obstacle.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const;
 
 	// A clear point (isValidPosition) at least `minDistMeters` away from `origin`, used to place a thing a short
@@ -327,30 +327,30 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] std::optional<glm::vec2>
 	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
 
-	// Where detail is on (spec 4.4): flora cells (kFloraCellMm) the viewport rect has come within
+	// Where detail is on (spec 4.4): detail cells (kDetailCellMm) the viewport rect has come within
 	// kDetailOnMarginMm of, kept on until it moves more than kDetailKeepMarginMm away, so a view edge
 	// resting on a cell boundary doesn't flip it. Updated once per update() from the viewport, no
-	// mesh involved; off everywhere without a viewport. Flora pushes movers out only where it is on.
+	// mesh involved; off everywhere without a viewport. Detail pushes movers out only where it is on.
 	[[nodiscard]] bool detailOnAt(glm::vec2 meters) const;
 
-	// True when `path` is a route requestPath gave that walks through flora at its price, on purpose:
-	// collision lets its mover through the trees and the forward snap leaves it alone while it
+	// True when `path` is a route requestPath gave that walks through detail at its price, on purpose:
+	// collision lets its mover through the obstacles and the forward snap leaves it alone while it
 	// follows it. Known for a route from the request that made it until its mover drops it.
 	[[nodiscard]] bool routeCrossesPricedFaces(const NavPath& path) const;
-	// The line comes within `radius` (mm) of a tree in the nav mesh (its outline, exactly): how a route
+	// The line comes within `radius` (mm) of a placed obstacle in the nav mesh (its outline, exactly): how a route
 	// that isn't the nav search's own (the structural walk it falls back to) learns whether it crosses
-	// flora.
-	[[nodiscard]] bool passesTree(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const;
+	// detail.
+	[[nodiscard]] bool passesPlacedObstacle(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const;
 
-	// True when `entity`, placed in `chunk`, is a flora ring in the nav mesh queries see. Collision
-	// pushes out of a flora collider only then, so the forward snap has had its turn first and the
-	// push and the mesh never disagree about a tree. Read between update() and endTick().
-	[[nodiscard]] bool floraInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const;
+	// True when `entity`, placed in `chunk`, is a detail ring in the nav mesh queries see. Collision
+	// pushes out of a placed obstacle only then, so the forward snap has had its turn first and the
+	// push and the mesh never disagree about it. Read between update() and endTick().
+	[[nodiscard]] bool placedObstacleInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const;
 
 	// True once any ground is meshed.
 	[[nodiscard]] bool hasMesh() const;
 
-	// True while anything is queued or gathered and not yet joined: ground, flora adds or
+	// True while anything is queued or gathered and not yet joined: ground, detail adds or
 	// removals, patches waiting for endTick.
 	[[nodiscard]] bool isBuilding() const;
 
@@ -362,7 +362,7 @@ class NavigationSystem : public ISystem {
 
 	// Monotonic count of joins that patched the structural mesh (ground, water, walls, doors): the
 	// changes that can move any route. A stored NavPath stamps it at plan time so the replan loop
-	// sees "the mesh changed under me", and a deferred route waits on it. Flora changes don't move
+	// sees "the mesh changed under me", and a deferred route waits on it. Detail changes don't move
 	// it; the routes they touch are marked stale one by one (see the file comment).
 	[[nodiscard]] std::uint64_t generation() const;
 
@@ -392,7 +392,7 @@ class NavigationSystem : public ISystem {
 	};
 	[[nodiscard]] std::vector<RegionView> builtRegions() const;
 
-	// Flora detail rects. A mover asks for its square (center +/- kSimRadiusMm); the viewport for
+	// Detail rects. A mover asks for its square (center +/- kSimRadiusMm); the viewport for
 	// its rect with each half extent clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	static constexpr std::int64_t kMinSimHalfExtentMm = 30000; // 30 m
 	static constexpr std::int64_t kMaxSimHalfExtentMm = 64000; // 64 m
@@ -400,17 +400,17 @@ class NavigationSystem : public ISystem {
 	// Margin GameScene applies to the camera's visible half extents before setViewportRect.
 	static constexpr float kViewportMargin = 1.3F;
 
-	// Count budgets per tick, from sim-benchmarks (NavigationSystem.bench.cpp). Flora adds are
-	// held so a tick's flora job stays near kJobBudgetMs on the worker; removals are cheaper per
-	// ring and mostly a lost chunk's flora far from every mover, so they get their own, larger,
+	// Count budgets per tick, from sim-benchmarks (NavigationSystem.bench.cpp). Detail adds are
+	// held so a tick's detail job stays near kJobBudgetMs on the worker; removals are cheaper per
+	// ring and mostly a lost chunk's detail far from every mover, so they get their own, larger,
 	// budget and never hold adds back.
 	static constexpr double		 kJobBudgetMs		   = 2.0;
-	static constexpr std::size_t kFloraRingsPerTick	   = 32;
-	static constexpr std::size_t kFloraRemovalsPerTick = 128;
+	static constexpr std::size_t kDetailRingsPerTick	   = 32;
+	static constexpr std::size_t kDetailRemovalsPerTick = 128;
 	// And in cells (one patch each): a patch's width refresh covers its cell and around it, about
-	// a millisecond for a 16 m cell of dense forest, which outweighs its rings. Adds and removals
+	// a millisecond for a 16 m cell densely placed, which outweighs its rings. Adds and removals
 	// each touch at most this many cells a tick.
-	static constexpr std::size_t kFloraCellsPerTick = 2;
+	static constexpr std::size_t kDetailCellsPerTick = 2;
 	// Open chunks (no water) share a tick until their squares' vertices would pass this; a chunk
 	// with water always goes alone. Eight open chunks (32 vertices each at kMaxBoundsEdgeMm): five
 	// measured 3.7 ms against 6.3 for the dearest shoreline chunk alone, so eight stay under it.
@@ -423,11 +423,11 @@ class NavigationSystem : public ISystem {
 	// kViewportMargin), and stays on until the rect is this much farther away.
 	static constexpr std::int64_t kDetailOnMarginMm	  = 8000;
 	static constexpr std::int64_t kDetailKeepMarginMm = 32000;
-	// Flora rings the nav mesh holds before the cells longest out of every wanted rect lose theirs
+	// Detail rings the nav mesh holds before the cells longest out of every wanted rect lose theirs
 	// (down to 7/8 of it, so the trim runs now and then rather than every tick). Section 6's
-	// estimate is about 1.6 KB a tree, so 40,000 is about 64 MB. Never trims where detail is on,
+	// estimate is about 1.6 KB a ring, so 40,000 is about 64 MB. Never trims where detail is on,
 	// inside the detail keep rect, or in a cell a mover or the view wants.
-	static constexpr std::size_t kFloraRingBudget = 40000;
+	static constexpr std::size_t kDetailRingBudget = 40000;
 	// A stranded mover is moved forward along its route to the first point this far apart that is
 	// walkable with its clearance.
 	static constexpr std::int64_t kSnapStepMm = 100;
@@ -435,13 +435,13 @@ class NavigationSystem : public ISystem {
 	// walking it: a teleport, a long shove) has its route marked stale, so it is replanned from
 	// where it stands rather than steered straight back at a waypoint through whatever lies between.
 	static constexpr std::int64_t kOffRouteMm = 2000;
-	// What walking a metre through a tree costs, in metres of open ground: 50
-	// makes a 0.6 m trunk cost a 30 m detour, so a mover goes round a tree when it can and through
+	// What walking a metre through a placed obstacle costs, in metres of open ground: 50
+	// makes a 0.6 m obstacle cost a 30 m detour, so a mover goes round one when it can and through
 	// one only when the way round is longer than that.
-	static constexpr double kFloraPassMultiplier = 50.0;
-	// Flora is scanned in square cells of this side, aligned to chunk squares; a cell is scanned
+	static constexpr double kDetailPassMultiplier = 50.0;
+	// Detail is scanned in square cells of this side, aligned to chunk squares; a cell is scanned
 	// once and stays scanned until its chunk's placement goes away.
-	static constexpr std::int64_t kFloraCellMm = 16000;
+	static constexpr std::int64_t kDetailCellMm = 16000;
 	// Chunk sides enter both meshes split to this (decision 8 in the spec): eight pieces a side,
 	// which is what an open chunk's ground costs to patch in and how many triangle slots it adds.
 	static constexpr std::int64_t kMaxBoundsEdgeMm = 64000;
@@ -488,25 +488,25 @@ class NavigationSystem : public ISystem {
 	// A placed entity by the identity PlacementExecutor removes it by, with the scan cell its
 	// position falls in. Ordered chunk first, then cell, so one chunk's entries are a contiguous
 	// range and so are one cell's.
-	struct FloraKey {
+	struct DetailKey {
 		world::ChunkCoordinate chunk;
 		std::int64_t		   cell	 = 0;
 		std::uint32_t		   xBits = 0;
 		std::uint32_t		   yBits = 0;
 		std::string			   defName;
-		bool				   operator<(const FloraKey& o) const;
+		bool				   operator<(const DetailKey& o) const;
 	};
-	struct PendingFlora {
+	struct PendingDetail {
 		geometry::nav::NavInputPolygon ring;
 		std::int64_t				   cell = 0;
 	};
-	// A flora ring in the nav mesh and the scan cell that holds its entity.
-	struct FloraRing {
+	// A detail ring in the nav mesh and the scan cell that holds its entity.
+	struct DetailRing {
 		RingId		 ring = geometry::nav::kNoRing;
 		std::int64_t cell = 0;
 	};
 
-	// A rect's flora cells, inclusive.
+	// A rect's detail cells, inclusive.
 	struct CellRange {
 		std::int64_t minX = 0;
 		std::int64_t minY = 0;
@@ -525,7 +525,7 @@ class NavigationSystem : public ISystem {
 		std::vector<geometry::nav::DoorPortal>								 doorAdds;
 		std::vector<DoorId>													 doorRemoves;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
-		std::vector<std::pair<glm::vec2, glm::vec2>>						 floraAddBoxes; // each added tree's box, metres
+		std::vector<std::pair<glm::vec2, glm::vec2>>						 detailAddBoxes; // each added obstacle's box, metres
 		// Structural only: the chunks the job changes, the boxes where it closes ground (a wall, new
 		// water, ground leaving), and whether it touches a chunk an anchor holds.
 		std::vector<world::ChunkCoordinate>				  structuralChunks;
@@ -587,35 +587,35 @@ class NavigationSystem : public ISystem {
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	[[nodiscard]] Rect viewportRect() const;
 	void			   updateDetail();
-	// The ring of the tree collider placed nearest `meters` that holds it, if any.
-	// A placed tree's collider: its outline's centre and the distance from there to its farthest
-	// corner. Tested against the same outline the nav mesh's tree ring has (nav::floraOutline), in a
+	// The collider of the placed obstacle nearest `meters` that holds it, if any.
+	// A placed obstacle's collider: its outline's centre and the distance from there to its farthest
+	// corner. Tested against the same outline the nav mesh's detail ring has (nav::placedObstacleOutline), in a
 	// scratch ring that keeps its storage, so no allocation once warm.
-	struct TreeCollider {
+	struct PlacedObstacle {
 		glm::vec2 centre{0.0F, 0.0F};
 		float	  extent = 0.0F;
 	};
-	[[nodiscard]] std::optional<TreeCollider> treeColliderAt(glm::vec2 meters, float reachMeters = 0.0F) const;
-	// The BeliefFilter a movement query runs with: `belief` with flora priced (the one place).
+	[[nodiscard]] std::optional<PlacedObstacle> placedObstacleAt(glm::vec2 meters, float reachMeters = 0.0F) const;
+	// The BeliefFilter a movement query runs with: `belief` with detail priced (the one place).
 	[[nodiscard]] static geometry::nav::BeliefFilter pricedFor(geometry::nav::BeliefFilter belief);
-	// Marks stale the routes whose rest comes within the mover's radius of a tree that landed in
+	// Marks stale the routes whose rest comes within the mover's radius of a placed obstacle that landed in
 	// the joined jobs.
 	void markCrossedRoutes();
 	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
 	void markStrayedRoutes();
 	void forgetDroppedRoutes();
 	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
-	// Spec 4.7: a mover inside flora moves forward along its route to the first point walkable in
+	// Spec 4.7: a mover inside detail moves forward along its route to the first point walkable in
 	// truth, never past a wall or water on the way; with none, it stays and its route goes stale.
 	// Without a route it steps out to the nearest spot within 4 m, ring by ring, where its disc is
 	// clear and the straight step there crosses no wall or water; with none, it stays.
 	void snapMovers();
 	// Over budget, queues the cells to trim, oldest out of a wanted rect first, then takes them
 	// out a few a tick: at most `removeBudget` rings' worth.
-	void trimFlora(const std::vector<Rect>& rects, std::size_t removeBudget);
-	void							queueRemovedFlora();
-	void							dropFloraOfLostChunks();
-	[[nodiscard]] bool				floraChunkUsable(world::ChunkCoordinate coord) const;
+	void trimDetail(const std::vector<Rect>& rects, std::size_t removeBudget);
+	void							queueRemovedDetail();
+	void							dropDetailOfLostChunks();
+	[[nodiscard]] bool				detailChunkUsable(world::ChunkCoordinate coord) const;
 	void							gatherWalls();
 	// Ground in and out: new and reloaded chunks are noted, a chunk whose terrain changed has its
 	// water re-derived, then chunks go in, nearest a rect first, within `vertexBudget`, and chunks
@@ -626,8 +626,8 @@ class NavigationSystem : public ISystem {
 	std::size_t					dropUnloadedGround(std::size_t maxChunks);
 	[[nodiscard]] bool			holdsConstruction(world::ChunkCoordinate coord) const;
 	[[nodiscard]] bool			chunkGroundMeshed(world::ChunkCoordinate coord) const;
-	void scanFlora(const std::vector<Rect>& rects);
-	void gatherFlora(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects);
+	void scanDetail(const std::vector<Rect>& rects);
+	void gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects);
 
 	world::ChunkManager*							  chunkManager		= nullptr;
 	assets::PlacementExecutor*						  placement			= nullptr;
@@ -650,11 +650,11 @@ class NavigationSystem : public ISystem {
 	std::vector<WallRing> walls;
 	std::vector<WallDoor> doors;
 
-	std::map<FloraKey, FloraRing>				floraInMesh;
-	std::map<FloraKey, PendingFlora>			floraAdds;
-	std::vector<FloraRing>						floraRemovals;
+	std::map<DetailKey, DetailRing>				detailInMesh;
+	std::map<DetailKey, PendingDetail>			detailAdds;
+	std::vector<DetailRing>						detailRemovals;
 	std::unordered_set<std::int64_t>			scannedCells;
-	std::set<world::ChunkCoordinate, ChunkLess> floraChunks; // chunks with a scanned cell
+	std::set<world::ChunkCoordinate, ChunkLess> detailChunks; // chunks with a scanned cell
 	std::vector<CellRange>						scannedRanges;
 	std::uint64_t								scannedGround = 0;
 	std::unordered_set<world::ChunkCoordinate>	scannedProcessed;
@@ -676,7 +676,7 @@ class NavigationSystem : public ISystem {
 	// Structural changes per chunk, for the reach stamps, counted at the join.
 	mutable std::map<world::ChunkCoordinate, std::uint64_t, ChunkLess> chunkStructuralVersion;
 	mutable std::set<world::ChunkCoordinate, ChunkLess>				 unmeshedReported; // logged once each (groundMeshedThrough)
-	mutable geometry::Ring												 colliderScratch;  // treeColliderAt
+	mutable geometry::Ring												 colliderScratch;  // placedObstacleAt
 	std::vector<glm::vec2>												 anchors;
 	std::set<world::ChunkCoordinate, ChunkLess>							 anchorChunks;
 	// Routes requestPath gave that cross priced faces, by routeKey, each kept whole so a key that two
@@ -693,13 +693,13 @@ class NavigationSystem : public ISystem {
 	mutable std::unordered_map<EntityID, RouteScope> routeScopes; // by requester
 	std::uint32_t									 navExpansionFloor			= kNavExpansionFloor;
 	std::uint32_t									 navExpansionsPerStructural = kNavExpansionsPerStructural;
-	// The boxes of the trees that landed in the joined jobs, for markCrossedRoutes.
-	std::vector<std::pair<glm::vec2, glm::vec2>> floraLanded;
+	// The boxes of the placed obstacles that landed in the joined jobs, for markCrossedRoutes.
+	std::vector<std::pair<glm::vec2, glm::vec2>> detailLanded;
 
 
 	mutable NavQueryStats navStats;
 
-	std::size_t								floraRingBudget;
+	std::size_t								detailRingBudget;
 	std::uint64_t							tickCount = 0;
 	std::unordered_set<std::int64_t>		detailCells;
 	std::optional<Rect>						detailFor; // the viewport rect detailCells were made for

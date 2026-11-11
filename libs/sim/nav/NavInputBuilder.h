@@ -8,7 +8,7 @@
 // crossed only via NavCoords.h.
 //
 // Provenance ids tag each obstacle's origin so a triangle edge can be attributed to its
-// source: negative sentinels for the engine-synthesized obstacles (water/tree/border/junction),
+// source: negative sentinels for the engine-synthesized obstacles (water/placed obstacle/border/junction),
 // positive +segmentId for wall bands.
 
 #include "world/chunk/ChunkCoordinate.h"
@@ -21,7 +21,7 @@
 
 #include <nav/NavMesh.h>
 
-#include "FloraCollider.h"
+#include "PlacedObstacle.h"
 
 #include <cstdint>
 #include <optional>
@@ -33,7 +33,7 @@ namespace nav {
 	// engine-synthesized obstacle classes take distinct negative ids. These are the
 	// `provenanceId` written on each emitted NavInputPolygon.
 	constexpr std::int64_t kProvenanceWater	   = -1;
-	constexpr std::int64_t kProvenanceTree	   = -2;
+	constexpr std::int64_t kProvenancePlaced	   = -2;
 	constexpr std::int64_t kProvenanceBorder   = -3;
 	constexpr std::int64_t kProvenanceJunction = -4;
 
@@ -52,19 +52,19 @@ namespace nav {
 	// stored order. Fordable channel pieces (blocksMovement false) are skipped.
 	void appendChunkWater(const world::ChunkTerrainPolygons& polygons, std::vector<geometry::nav::NavInputPolygon>& out);
 
-	// --- Flora -------------------------------------------------------------------
+	// --- Placed obstacles --------------------------------------------------------
 
 	// One blocked ring for a single placed entity whose AssetDefinition has a
 	// blocking collision shape, transformed into world mm by the entity's position
 	// (tiles), rotation, and scale. Rect -> a padded oriented quad; Polygon -> its
 	// points transformed. Returns nullopt when the entity has no blocking collision
-	// (most flora) or the resulting ring is degenerate.
+	// (most placed entities) or the resulting ring is degenerate.
 	[[nodiscard]] std::optional<geometry::nav::NavInputPolygon>
-	floraRingFor(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry);
+	placedObstacleRing(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry);
 
-	// The outline floraRingFor puts in the mesh, written into `out` (cleared first, its storage
+	// The outline placedObstacleRing puts in the mesh, written into `out` (cleared first, its storage
 	// reused): false when there is none. What a clear-ground test reads, so the two never differ.
-	[[nodiscard]] bool floraOutline(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry, geometry::Ring& out);
+	[[nodiscard]] bool placedObstacleOutline(const assets::PlacedEntity& entity, const assets::AssetRegistry& registry, geometry::Ring& out);
 
 	// --- Walls / doors -----------------------------------------------------------
 

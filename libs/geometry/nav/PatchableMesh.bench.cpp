@@ -32,7 +32,7 @@ namespace {
 	using namespace geometry::nav;
 
 	constexpr std::int64_t kProvenanceWater	 = -1;
-	constexpr std::int64_t kProvenanceTree	 = -2;
+	constexpr std::int64_t kProvenancePlaced	 = -2;
 	constexpr std::int64_t kProvenanceBorder = -3;
 
 	enum class Fixture { ManyTrees, Control, RealRings };
@@ -49,13 +49,13 @@ namespace {
 			rings.base.push_back(NavInputPolygon{td::realBorderRing(), false, kProvenanceBorder});
 			rings.base.push_back(NavInputPolygon{td::realWaterRing(), true, kProvenanceWater, kNoOpening, true});
 			for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-				rings.trees.push_back(NavInputPolygon{tree, true, kProvenanceTree});
+				rings.trees.push_back(NavInputPolygon{tree, true, kProvenancePlaced});
 			}
 			return rings;
 		}
 		for (const td::DumpRing& r : f == Fixture::ManyTrees ? td::manyTreesDump() : td::controlDump()) {
 			NavInputPolygon poly{r.ring, r.blocked, r.provenanceId, kNoOpening, r.holeCapable};
-			(r.provenanceId == kProvenanceTree ? rings.trees : rings.base).push_back(std::move(poly));
+			(r.provenanceId == kProvenancePlaced ? rings.trees : rings.base).push_back(std::move(poly));
 		}
 		return rings;
 	}
@@ -177,7 +177,7 @@ namespace {
 
 	// The fixture fully loaded, each tree under its current id.
 	struct Loaded {
-		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm, .detailTags = {kProvenanceTree}}) {}
+		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm, .detailTags = {kProvenancePlaced}}) {}
 
 		Rings						 rings;
 		PatchableMesh				 mesh;
@@ -350,7 +350,7 @@ namespace {
 				if (at.x >= bandWidth || at.y + y0 + 1000 >= side) {
 					continue;
 				}
-				rings.trees.push_back(NavInputPolygon{translated(tree.ring, Vec2i64{-lo.x - bandWidth / 2, -lo.y + y0}), true, kProvenanceTree});
+				rings.trees.push_back(NavInputPolygon{translated(tree.ring, Vec2i64{-lo.x - bandWidth / 2, -lo.y + y0}), true, kProvenancePlaced});
 			}
 		}
 		return rings;
@@ -405,7 +405,7 @@ namespace {
 			runFootprint(state, l.mesh, pathAlong(from, 21), Refresh::Untimed);
 			return;
 		}
-		NavInputPolygon tree{straddlingRect(l, x, lo.y, hi.y), true, kProvenanceTree};
+		NavInputPolygon tree{straddlingRect(l, x, lo.y, hi.y), true, kProvenancePlaced};
 		if (what == 3) {
 			const std::int64_t y = tree.ring.front().y;
 			tree				 = NavInputPolygon{rect(x - 4000, y, x + 4000, y + 200), true, 40};
@@ -568,7 +568,7 @@ namespace {
 				out.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
 				if (fill == Fill::WaterTrees) {
 					for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-						out.push_back(NavInputPolygon{translated(tree, by), true, kProvenanceTree});
+						out.push_back(NavInputPolygon{translated(tree, by), true, kProvenancePlaced});
 					}
 				}
 			}
@@ -742,7 +742,7 @@ namespace {
 		Vec2i64 lo;
 		Vec2i64 hi;
 		boxOf(l.rings.base.front().ring, lo, hi);
-		const NavInputPolygon tree{straddlingRect(l, kind == 0 ? lo.x : hi.x, lo.y, hi.y), true, kProvenanceTree};
+		const NavInputPolygon tree{straddlingRect(l, kind == 0 ? lo.x : hi.x, lo.y, hi.y), true, kProvenancePlaced};
 		PatchTally			  tally;
 		for (auto _ : state) {
 			const PatchReport r = timedPatch(state, l.mesh, adding({tree}));
@@ -812,7 +812,7 @@ namespace {
 	enum class Between { Nothing, OtherMesh, TwoOtherMeshes };
 
 	struct RequestShape {
-		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000, .detailTags = {kProvenanceTree}}};
+		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000, .detailTags = {kProvenancePlaced}}};
 		std::vector<Vec2i64>				 goals;
 		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
 	};
@@ -835,7 +835,7 @@ namespace {
 		std::int64_t mid = (lo.x + hi.x) / 2;
 		const bool	 chunks = colony == Colony::ChunkMiddle || colony == Colony::ChunkSide;
 		if (colony != Colony::Anywhere) {
-			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 		}
 		if (chunks) {
 			const std::int64_t tile = hi.x - lo.x;
@@ -895,7 +895,7 @@ namespace {
 	}
 
 	// The game's flora price: trees cost 50 times their length; anything else stays blocked.
-	constexpr TagPrice kTreePrices[] = {{kProvenanceTree, 50.0}};
+	constexpr TagPrice kTreePrices[] = {{kProvenancePlaced, 50.0}};
 
 	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p, Between between, Colony colony = Colony::Anywhere) {
 		RequestShape s;
@@ -908,7 +908,7 @@ namespace {
 		for (std::size_t i = 0; i < others.size(); ++i) {
 			const std::int64_t side = 20000 + 4000 * static_cast<std::int64_t>(i);
 			untimedPatch(others[i], adding({NavInputPolygon{rect(0, 0, side, side), false, kProvenanceBorder},
-											NavInputPolygon{rect(side / 3, side / 3, side / 2, side / 2), true, kProvenanceTree}}));
+											NavInputPolygon{rect(side / 3, side / 3, side / 2, side / 2), true, kProvenancePlaced}}));
 		}
 		const int otherQueries = between == Between::Nothing ? 0 : (between == Between::OtherMesh ? 1 : 2);
 		std::int64_t nodes	   = 0;
@@ -945,11 +945,11 @@ namespace {
 		const Vec2i64 g{(lo.x + hi.x) / 2, (lo.y + hi.y) / 2};
 		for (const auto& r : {rect(g.x - 2000, g.y - 2000, g.x + 2000, g.y - 1600), rect(g.x - 2000, g.y + 1600, g.x + 2000, g.y + 2000),
 							  rect(g.x - 2000, g.y - 2000, g.x - 1600, g.y + 2000), rect(g.x + 1600, g.y - 2000, g.x + 2000, g.y + 2000)}) {
-			rings.trees.push_back(NavInputPolygon{r, true, kProvenanceTree});
+			rings.trees.push_back(NavInputPolygon{r, true, kProvenancePlaced});
 		}
 		std::vector<NavInputPolygon> all = rings.base;
 		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
-		PatchableMesh mesh({.detailTags = {kProvenanceTree}});
+		PatchableMesh mesh({.detailTags = {kProvenancePlaced}});
 		untimedPatch(mesh, adding(all));
 		BeliefFilter belief;
 		belief.prices = kTreePrices;
@@ -1014,7 +1014,7 @@ namespace {
 		Vec2i64			   lo;
 		Vec2i64			   hi;
 		boxOf(td::realBorderRing(), lo, hi);
-		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 		std::vector<NavInputPolygon> ground{NavInputPolygon{rect(0, 0, tiles * kRealTileMm, tiles * kRealTileMm), false, kProvenanceBorder}};
 		std::vector<NavInputPolygon> moving;
 		for (std::int64_t b = 0; b < tiles; ++b) {
@@ -1025,7 +1025,7 @@ namespace {
 					ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
 				}
 				for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-					NavInputPolygon ring{translated(tree, by), true, kProvenanceTree};
+					NavInputPolygon ring{translated(tree, by), true, kProvenancePlaced};
 					Vec2i64			tLo;
 					Vec2i64			tHi;
 					boxOf(ring.ring, tLo, tHi);
@@ -1082,7 +1082,7 @@ namespace {
 				ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
 				std::vector<std::vector<NavInputPolygon>> tileRows(8);
 				for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-					NavInputPolygon ring{translated(tree, by), true, kProvenanceTree};
+					NavInputPolygon ring{translated(tree, by), true, kProvenancePlaced};
 					Vec2i64			tLo;
 					Vec2i64			tHi;
 					boxOf(ring.ring, tLo, tHi);
@@ -1100,7 +1100,7 @@ namespace {
 		double		total = 0.0;
 		std::size_t slots = 0;
 		for (auto _ : state) {
-			PatchableMesh mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+			PatchableMesh mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 			untimedPatch(mesh, adding(ground));
 			worst = 0.0;
 			total = 0.0;
@@ -1138,7 +1138,7 @@ namespace {
 				ground.push_back(NavInputPolygon{translated(td::realWaterRing(), by), true, kProvenanceWater, kNoOpening, true});
 				if (trees) {
 					for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-						ground.push_back(NavInputPolygon{translated(tree, by), true, kProvenanceTree});
+						ground.push_back(NavInputPolygon{translated(tree, by), true, kProvenancePlaced});
 					}
 				}
 			}
@@ -1153,12 +1153,12 @@ namespace {
 	// 2 within a 256 m square round the start.
 	void BM_WalledGoal(benchmark::State& state, int limit) {
 		const std::int64_t tiles = state.range(0);
-		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 		const std::int64_t side = tiles * kRealTileMm;
 		// The room's centre: open floor near the middle, found on a trial mesh of the tile.
 		Vec2i64			   g{side / 2, side / 2};
 		{
-			PatchableMesh trial({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+			PatchableMesh trial({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 			loadTiledGround(trial, tiles, true);
 			std::mt19937 rng(5);
 			auto		 clear = [&](const Vec2i64& p) {

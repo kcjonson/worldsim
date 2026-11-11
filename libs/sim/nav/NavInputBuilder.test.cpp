@@ -371,10 +371,10 @@ class NavFloraTest : public ::testing::Test {
 
 namespace {
 	// Every blocking ring the index's entities give, in its stable order.
-	std::vector<NavInputPolygon> floraOf(const SpatialIndex& index, const AssetRegistry& registry) {
+	std::vector<NavInputPolygon> placedObstaclesOf(const SpatialIndex& index, const AssetRegistry& registry) {
 		std::vector<NavInputPolygon> out;
 		for (const PlacedEntity& e : index.allEntities()) {
-			if (std::optional<NavInputPolygon> ring = floraRingFor(e, registry)) {
+			if (std::optional<NavInputPolygon> ring = placedObstacleRing(e, registry)) {
 				out.push_back(std::move(*ring));
 			}
 		}
@@ -397,10 +397,10 @@ TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 	e.scale = 1.0F;
 	index.insert(e);
 
-	std::vector<NavInputPolygon> polys = floraOf(index, reg);
+	std::vector<NavInputPolygon> polys = placedObstaclesOf(index, reg);
 	ASSERT_EQ(polys.size(), 1u);
 	EXPECT_TRUE(polys[0].blocked);
-	EXPECT_EQ(polys[0].provenanceId, kProvenanceTree);
+	EXPECT_EQ(polys[0].provenanceId, kProvenancePlaced);
 	EXPECT_EQ(polys[0].ring.size(), 4u);
 	EXPECT_TRUE(isCcw(polys[0].ring));
 
@@ -441,7 +441,7 @@ TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
 	e.rotation = 3.14159265358979323846F / 4.0F; // 45 degrees
 	index.insert(e);
 
-	std::vector<NavInputPolygon> polys = floraOf(index, reg);
+	std::vector<NavInputPolygon> polys = placedObstaclesOf(index, reg);
 	ASSERT_EQ(polys.size(), 1u);
 	ASSERT_EQ(polys[0].ring.size(), 4u);
 	EXPECT_TRUE(isCcw(polys[0].ring));
@@ -496,7 +496,7 @@ TEST_F(NavFloraTest, NoCollision_EmitsNothing) {
 	e.position = {5.0F, 5.0F};
 	index.insert(e);
 
-	EXPECT_TRUE(floraOf(index, reg).empty());
+	EXPECT_TRUE(placedObstaclesOf(index, reg).empty());
 }
 
 // ---------------------------------------------------------------------------

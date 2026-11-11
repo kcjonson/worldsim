@@ -1,19 +1,19 @@
 #pragma once
 
-// StaticRectCollisionSystem - Tier-3 safety-net collision against placed flora
-// rects (trees, etc).
+// StaticRectCollisionSystem - Tier-3 safety-net collision against placed obstacles' collider
+// rects.
 //
-// Agents normally PATH around blocking flora; the navmesh carves an obstacle for
+// Agents normally PATH around placed obstacles; the navmesh carves an obstacle for
 // each one and routes the agent CENTER to stay outside it. This system is the
-// fallback for the case the path can't cover: an agent shoved into a flora rect
+// fallback for the case the path can't cover: an agent shoved into a placed obstacle's rect
 // by agent-agent separation (CollisionSystem) or by beelining a goal before the
 // mesh exists. It pushes such an agent's center back out, while staying flush with
 // the navmesh boundary so it never fights the path.
 //
-// THE BOUNDARY: the navmesh inflates each flora collision rect by kFloraColliderPadMm
+// THE BOUNDARY: the navmesh inflates each placed obstacle's collision rect by kPlacedObstaclePadMm
 // (50 mm = 0.05 m) in LOCAL space before scale, then transforms to world -- so the
 // world boundary is |scale|*(halfExtent + 0.05). This system pushes against the very same box,
-// nav::floraBoxFor (which the mesh ring is built from), pre-inflated, at clearance 0. The
+// nav::placedObstacleBox (which the mesh ring is built from), pre-inflated, at clearance 0. The
 // boundary is NOT a disc-vs-OBB push-out using AgentRadius (0.3 m); using the disc
 // radius would overshoot the navmesh boundary and create a fight (jitter, agents
 // shoved off valid nav paths). AgentRadius is used ONLY to identify agents
@@ -25,12 +25,12 @@
 // Velocity stays PhysicsSystem's. A position-only correction is enough for a
 // safety net and avoids fighting the mover.
 //
-// DETAIL GATE (nav-mesh-variable-resolution 4.7): a mover is pushed out of flora only where
-// NavigationSystem::detailOnAt says detail is on, and only once that tree is in the nav mesh
-// (NavigationSystem::floraInNavMesh): the forward snap moves a mover out of a tree it finds itself in
-// before this system ever sees it, so the two never disagree about a tree. A mover following a route
-// that walks through flora at its price (NavigationSystem::routeCrossesPricedFaces) is let through.
-// Off camera, movers walk through trees; the camera decides detail, never outcomes.
+// DETAIL GATE (nav-mesh-variable-resolution 4.7): a mover is pushed out of a placed obstacle only where
+// NavigationSystem::detailOnAt says detail is on, and only once that obstacle is in the nav mesh
+// (NavigationSystem::placedObstacleInNavMesh): the forward snap moves a mover out of an obstacle it finds itself in
+// before this system ever sees it, so the two never disagree about one. A mover following a route
+// that walks through detail at its price (NavigationSystem::routeCrossesPricedFaces) is let through.
+// Off camera, movers walk through placed obstacles; the camera decides detail, never outcomes.
 //
 // The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op). Rects are
 // gathered LOCALLY per agent each frame from placement (no caching): query the chunks around the agent for rect-collision entities, keep
@@ -39,7 +39,7 @@
 
 #include "../ISystem.h"
 
-#include <nav/FloraCollider.h>
+#include <nav/PlacedObstacle.h>
 
 #include <glm/vec2.hpp>
 
@@ -53,9 +53,9 @@ namespace ecs {
 
 class NavigationSystem;
 
-// The nav flora pad in meters (nav::kFloraColliderPadMm / 1000), for tests that assert on the
+// The placed-obstacle pad in meters (nav::kPlacedObstaclePadMm / 1000), for tests that assert on the
 // expected boundary. The system calls resolveCenterAgainstRect with clearance 0 (not this
-// constant) because nav::floraBoxFor's box is already pre-inflated.
+// constant) because nav::placedObstacleBox's box is already pre-inflated.
 constexpr float kStaticRectClearanceMeters = 0.05F;
 
 // Push `center` out of `rect` inflated by `clearance`. Returns the corrected

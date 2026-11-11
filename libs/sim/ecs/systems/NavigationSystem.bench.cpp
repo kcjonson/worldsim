@@ -347,9 +347,9 @@ namespace {
 		std::chrono::microseconds				   gap;
 
 		explicit Rig(std::int64_t gapMs, world::ChunkManager* chunks = forest().chunks.get(),
-					 std::size_t floraRingBudget = ecs::NavigationSystem::kFloraRingBudget)
+					 std::size_t detailRingBudget = ecs::NavigationSystem::kDetailRingBudget)
 			: placement(forest().place(processed)),
-			  nav(world.registerSystem<ecs::NavigationSystem>(floraRingBudget)),
+			  nav(world.registerSystem<ecs::NavigationSystem>(detailRingBudget)),
 			  gap(std::chrono::microseconds(gapMs * 1000)) {
 			nav.setChunkManager(chunks);
 			nav.setPlacementData(placement.get(), &processed);
@@ -531,11 +531,11 @@ namespace {
 		}
 	}
 
-	// The view mows the whole forest (about 86,000 trees, twice kFloraRingBudget) at 83 m/s in rows
+	// The view mows the whole forest (about 86,000 trees, twice kDetailRingBudget) at 83 m/s in rows
 	// 56 m apart, the colony staying where it is. range(0): 1 for the flora budget, 0 for none;
 	// range(1): gap.
 	void BM_LongPan(benchmark::State& state) {
-		const std::size_t budget = state.range(0) != 0 ? ecs::NavigationSystem::kFloraRingBudget : SIZE_MAX;
+		const std::size_t budget = state.range(0) != 0 ? ecs::NavigationSystem::kDetailRingBudget : SIZE_MAX;
 		constexpr float	  kSpeed = 83.0F;
 		constexpr float	  kLo	 = 40.0F;
 		constexpr float	  kHi	 = kWorldMaxM - 40.0F;

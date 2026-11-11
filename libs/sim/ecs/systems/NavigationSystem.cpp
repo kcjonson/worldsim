@@ -55,8 +55,8 @@ namespace ecs {
 
 		constexpr std::size_t  kUnlimited	  = std::numeric_limits<std::size_t>::max();
 		constexpr std::int64_t kChunkMm		  = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
-		constexpr std::int64_t kCellsPerChunk = kChunkMm / NavigationSystem::kFloraCellMm;
-		static_assert(kCellsPerChunk * NavigationSystem::kFloraCellMm == kChunkMm, "flora cells tile a chunk");
+		constexpr std::int64_t kCellsPerChunk = kChunkMm / NavigationSystem::kDetailCellMm;
+		static_assert(kCellsPerChunk * NavigationSystem::kDetailCellMm == kChunkMm, "detail cells tile a chunk");
 
 		double msSince(Clock::time_point start) {
 			return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
@@ -71,10 +71,10 @@ namespace ecs {
 			return {static_cast<std::int32_t>(geometry::floorDiv(cellX(key), kCellsPerChunk)),
 					static_cast<std::int32_t>(geometry::floorDiv(cellY(key), kCellsPerChunk))};
 		}
-		// The scan cell that owns a placed entity: [lo, lo + side) on each axis, as scanFlora tests
+		// The scan cell that owns a placed entity: [lo, lo + side) on each axis, as scanDetail tests
 		// it (the side is a power of two in metres, so the division is exact).
 		std::int64_t cellOfEntity(glm::vec2 position) {
-			constexpr float kSide = static_cast<float>(NavigationSystem::kFloraCellMm / geometry::kMillimetersPerMeter);
+			constexpr float kSide = static_cast<float>(NavigationSystem::kDetailCellMm / geometry::kMillimetersPerMeter);
 			return cellKey(static_cast<std::int64_t>(std::floor(position.x / kSide)), static_cast<std::int64_t>(std::floor(position.y / kSide)));
 		}
 		constexpr std::int64_t kFirstCell = std::numeric_limits<std::int64_t>::min();
@@ -199,14 +199,32 @@ namespace ecs {
 			return tri >= 0 && faceOk(mesh.triangles()[static_cast<std::size_t>(tri)]);
 		}
 
-		// Walkable for the most optimistic belief: only common-knowledge terrain (water, trees) blocks.
+		// Walkable for the most optimistic belief: only common-knowledge terrain (water, placed obstacles) blocks.
 		bool terrainWalkable(const gnav::PatchableMesh& mesh, glm::vec2 meters) {
 			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
 		}
 
-		// Ground a mover may stand on: terrain-walkable, or a tree, which movement prices.
+		// The detail obstacle kinds, by the tag their rings carry: what walking a metre through one
+		// costs. Each is in the nav mesh only (the structural mesh never holds detail), only where a
+		// wanted rect brings it, and priced, never walled. One kind so far, every placed entity's
+		// collider whatever the entity is.
+		constexpr gnav::TagPrice kDetailKinds[] = {{.tag = nav::kProvenancePlaced, .multiplier = NavigationSystem::kDetailPassMultiplier}};
+
+		bool isDetailTag(std::int64_t tag) {
+			return std::any_of(std::begin(kDetailKinds), std::end(kDetailKinds), [tag](const gnav::TagPrice& kind) { return kind.tag == tag; });
+		}
+
+		std::vector<std::int64_t> detailTags() {
+			std::vector<std::int64_t> tags;
+			for (const gnav::TagPrice& kind : kDetailKinds) {
+				tags.push_back(kind.tag);
+			}
+			return tags;
+		}
+
+		// Ground a mover may stand on: terrain-walkable, or detail, which movement prices.
 		bool moverFace(const gnav::NavTriangle& t) {
-			return gnav::terrainTraversable(t) || t.faceBlocker == nav::kProvenanceTree;
+			return gnav::terrainTraversable(t) || isDetailTag(t.faceBlocker);
 		}
 
 		// Walkable in truth: a solid wall face blocks, a door's span passes.
@@ -530,19 +548,19 @@ namespace ecs {
 		job.ms		 = msSince(start);
 	}
 
-	bool NavigationSystem::FloraKey::operator<(const FloraKey& o) const {
+	bool NavigationSystem::DetailKey::operator<(const DetailKey& o) const {
 		if (chunk.y != o.chunk.y || chunk.x != o.chunk.x) {
 			return ChunkLess{}(chunk, o.chunk);
 		}
 		return std::tie(cell, xBits, yBits, defName) < std::tie(o.cell, o.xBits, o.yBits, o.defName);
 	}
 
-	NavigationSystem::NavigationSystem(std::size_t floraRingBudget)
-		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = {nav::kProvenanceTree}}),
+	NavigationSystem::NavigationSystem(std::size_t detailRingBudget)
+		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = detailTags()}),
 		  structural({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
 		  structuralWorker(std::make_unique<Worker>()),
-		  floraRingBudget(floraRingBudget) {}
+		  detailRingBudget(detailRingBudget) {}
 
 	NavigationSystem::~NavigationSystem() {
 		join();
@@ -697,7 +715,7 @@ namespace ecs {
 		markStrayedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
-			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kFloraCellsPerTick, kGroundVerticesPerTick);
+			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kDetailCellsPerTick, kGroundVerticesPerTick);
 		}
 	}
 
@@ -718,13 +736,13 @@ namespace ecs {
 	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t groundVertexBudget) {
 		collectAnchors();
 		const std::vector<Rect> rects = wantedRects();
-		queueRemovedFlora();
-		dropFloraOfLostChunks();
+		queueRemovedDetail();
+		dropDetailOfLostChunks();
 		gatherWalls();
 		gatherGround(groundVertexBudget, rects, nullptr);
-		scanFlora(rects);
-		trimFlora(rects, removeBudget);
-		gatherFlora(addBudget, removeBudget, cellBudget, rects);
+		scanDetail(rects);
+		trimDetail(rects, removeBudget);
+		gatherDetail(addBudget, removeBudget, cellBudget, rects);
 	}
 
 	void NavigationSystem::submit() {
@@ -800,7 +818,7 @@ namespace ecs {
 		}
 		join();
 		collected = true;
-		floraLanded.insert(floraLanded.end(), runningNav.floraAddBoxes.begin(), runningNav.floraAddBoxes.end());
+		detailLanded.insert(detailLanded.end(), runningNav.detailAddBoxes.begin(), runningNav.detailAddBoxes.end());
 		for (MeshJob* job : {&runningNav, &runningStructural}) {
 			for (std::size_t i = 0; i < job->onPatched.size(); ++i) {
 				job->onPatched[i](job->added[i], job->patchMs[i]);
@@ -1256,60 +1274,60 @@ namespace ecs {
 		return it != ground.end() && gathered(it->second.square.nav);
 	}
 
-	// --- Flora ---------------------------------------------------------------------
+	// --- Detail ---------------------------------------------------------------------
 
-	bool NavigationSystem::floraChunkUsable(world::ChunkCoordinate coord) const {
+	bool NavigationSystem::detailChunkUsable(world::ChunkCoordinate coord) const {
 		return placement != nullptr && chunkManager->getChunk(coord) != nullptr && placement->getChunkIndex(coord) != nullptr &&
 			   (processedChunks == nullptr || processedChunks->contains(coord));
 	}
 
-	void NavigationSystem::queueRemovedFlora() {
+	void NavigationSystem::queueRemovedDetail() {
 		if (placement == nullptr) {
 			return;
 		}
 		for (const assets::PlacementExecutor::RemovedEntity& entry : placement->takeRemovals()) {
-			const FloraKey key{entry.coord, cellOfEntity(entry.position), std::bit_cast<std::uint32_t>(entry.position.x),
+			const DetailKey key{entry.coord, cellOfEntity(entry.position), std::bit_cast<std::uint32_t>(entry.position.x),
 							   std::bit_cast<std::uint32_t>(entry.position.y), entry.defName};
-			if (const auto it = floraInMesh.find(key); it != floraInMesh.end()) {
-				floraRemovals.push_back(it->second);
-				floraInMesh.erase(it);
+			if (const auto it = detailInMesh.find(key); it != detailInMesh.end()) {
+				detailRemovals.push_back(it->second);
+				detailInMesh.erase(it);
 			} else {
-				floraAdds.erase(key);
+				detailAdds.erase(key);
 			}
 		}
 	}
 
-	void NavigationSystem::dropFloraOfLostChunks() {
-		for (auto chunkIt = floraChunks.begin(); chunkIt != floraChunks.end();) {
+	void NavigationSystem::dropDetailOfLostChunks() {
+		for (auto chunkIt = detailChunks.begin(); chunkIt != detailChunks.end();) {
 			const world::ChunkCoordinate coord = *chunkIt;
-			if (floraChunkUsable(coord)) {
+			if (detailChunkUsable(coord)) {
 				++chunkIt;
 				continue;
 			}
 			// In key order, which is by cell, so the removals batch into one patch per cell.
-			const FloraKey first{coord, kFirstCell, 0, 0, {}};
-			for (auto it = floraInMesh.lower_bound(first); it != floraInMesh.end() && it->first.chunk == coord;) {
-				floraRemovals.push_back(it->second);
-				it = floraInMesh.erase(it);
+			const DetailKey first{coord, kFirstCell, 0, 0, {}};
+			for (auto it = detailInMesh.lower_bound(first); it != detailInMesh.end() && it->first.chunk == coord;) {
+				detailRemovals.push_back(it->second);
+				it = detailInMesh.erase(it);
 			}
-			for (auto it = floraAdds.lower_bound(first); it != floraAdds.end() && it->first.chunk == coord;) {
-				it = floraAdds.erase(it);
+			for (auto it = detailAdds.lower_bound(first); it != detailAdds.end() && it->first.chunk == coord;) {
+				it = detailAdds.erase(it);
 			}
 			std::erase_if(scannedCells, [coord](std::int64_t cell) { return cellChunk(cell) == coord; });
 			std::erase_if(cellLastWanted, [coord](const auto& entry) { return cellChunk(entry.first) == coord; });
-			chunkIt = floraChunks.erase(chunkIt);
+			chunkIt = detailChunks.erase(chunkIt);
 		}
 	}
 
-	void NavigationSystem::scanFlora(const std::vector<Rect>& rects) {
+	void NavigationSystem::scanDetail(const std::vector<Rect>& rects) {
 		if (placement == nullptr) {
 			return;
 		}
 		std::vector<CellRange> ranges;
 		ranges.reserve(rects.size());
 		for (const Rect& r : rects) {
-			ranges.push_back({geometry::floorDiv(r.lo.x, kFloraCellMm), geometry::floorDiv(r.lo.y, kFloraCellMm),
-							  geometry::floorDiv(r.hi.x, kFloraCellMm), geometry::floorDiv(r.hi.y, kFloraCellMm)});
+			ranges.push_back({geometry::floorDiv(r.lo.x, kDetailCellMm), geometry::floorDiv(r.lo.y, kDetailCellMm),
+							  geometry::floorDiv(r.hi.x, kDetailCellMm), geometry::floorDiv(r.hi.y, kDetailCellMm)});
 		}
 		// groundVersion moves whenever ground comes in, changes or goes out, so it can't alias; the
 		// processed set can (one chunk leaves as another arrives), so it is compared whole.
@@ -1334,52 +1352,52 @@ namespace ecs {
 						continue;
 					}
 					const world::ChunkCoordinate chunk = cellChunk(cell);
-					if (!chunkGroundMeshed(chunk) || !floraChunkUsable(chunk)) {
+					if (!chunkGroundMeshed(chunk) || !detailChunkUsable(chunk)) {
 						continue;
 					}
 					// One cell owns each entity, by its position in [lo, lo + cell).
-					const float lox	 = static_cast<float>(cx * kFloraCellMm / geometry::kMillimetersPerMeter);
-					const float loy	 = static_cast<float>(cy * kFloraCellMm / geometry::kMillimetersPerMeter);
-					const float side = static_cast<float>(kFloraCellMm / geometry::kMillimetersPerMeter);
+					const float lox	 = static_cast<float>(cx * kDetailCellMm / geometry::kMillimetersPerMeter);
+					const float loy	 = static_cast<float>(cy * kDetailCellMm / geometry::kMillimetersPerMeter);
+					const float side = static_cast<float>(kDetailCellMm / geometry::kMillimetersPerMeter);
 					for (const assets::PlacedEntity* e : placement->getChunkIndex(chunk)->queryRect(lox, loy, lox + side, loy + side)) {
 						if (e->position.x < lox || e->position.x >= lox + side || e->position.y < loy || e->position.y >= loy + side) {
 							continue;
 						}
-						FloraKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
-						if (floraInMesh.contains(key) || floraAdds.contains(key)) {
+						DetailKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
+						if (detailInMesh.contains(key) || detailAdds.contains(key)) {
 							continue;
 						}
-						std::optional<gnav::NavInputPolygon> ring = nav::floraRingFor(*e, registry);
+						std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
 						if (!ring.has_value()) {
 							continue;
 						}
-						floraAdds.emplace(std::move(key), PendingFlora{std::move(*ring), cell});
+						detailAdds.emplace(std::move(key), PendingDetail{std::move(*ring), cell});
 					}
 					scannedCells.insert(cell);
 					cellLastWanted[cell] = tickCount;
-					floraChunks.insert(chunk);
+					detailChunks.insert(chunk);
 				}
 			}
 		}
-		// Flora still queued in a cell nothing wants any more is dropped, and the cell scanned
+		// Detail still queued in a cell nothing wants any more is dropped, and the cell scanned
 		// again if it is wanted later.
-		for (auto it = floraAdds.begin(); it != floraAdds.end();) {
+		for (auto it = detailAdds.begin(); it != detailAdds.end();) {
 			if (wanted.contains(it->second.cell)) {
 				++it;
 				continue;
 			}
 			scannedCells.erase(it->second.cell);
 			cellLastWanted.erase(it->second.cell);
-			it = floraAdds.erase(it);
+			it = detailAdds.erase(it);
 		}
 	}
 
-	void NavigationSystem::gatherFlora(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects) {
+	void NavigationSystem::gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects) {
 		// Removals, oldest first, one patch per run of one cell: a patch's width refresh covers the
 		// box around everything it changed, so a patch spread over a chunk would refresh the chunk.
-		std::size_t removeCount = std::min(removeBudget, floraRemovals.size());
+		std::size_t removeCount = std::min(removeBudget, detailRemovals.size());
 		for (std::size_t i = 0, cells = 0; i < removeCount; ++i) {
-			if (i == 0 || floraRemovals[i].cell != floraRemovals[i - 1].cell) {
+			if (i == 0 || detailRemovals[i].cell != detailRemovals[i - 1].cell) {
 				if (++cells > cellBudget) {
 					removeCount = i;
 				}
@@ -1388,31 +1406,31 @@ namespace ecs {
 		for (std::size_t first = 0; first < removeCount;) {
 			std::size_t		 last = first;
 			gnav::PatchEdits edits;
-			for (; last < removeCount && floraRemovals[last].cell == floraRemovals[first].cell; ++last) {
-				edits.removes.push_back(floraRemovals[last].ring);
+			for (; last < removeCount && detailRemovals[last].cell == detailRemovals[first].cell; ++last) {
+				edits.removes.push_back(detailRemovals[last].ring);
 			}
 			gatheredNav.patches.push_back(std::move(edits));
 			gatheredNav.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
 			first = last;
 		}
-		floraRemovals.erase(floraRemovals.begin(), floraRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
+		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
 
-		if (addBudget == 0 || floraAdds.empty()) {
+		if (addBudget == 0 || detailAdds.empty()) {
 			return;
 		}
-		// Cells nearest a rect centre first, a cell's flora together, map order within a cell.
+		// Cells nearest a rect centre first, a cell's detail together, map order within a cell.
 		struct Ranked {
 			std::int64_t							   priority;
 			std::int64_t							   cell;
 			std::size_t								   order;
-			std::map<FloraKey, PendingFlora>::iterator it;
+			std::map<DetailKey, PendingDetail>::iterator it;
 		};
 		std::vector<Ranked> ranked;
-		ranked.reserve(floraAdds.size());
+		ranked.reserve(detailAdds.size());
 		std::size_t order = 0;
-		for (auto it = floraAdds.begin(); it != floraAdds.end(); ++it) {
+		for (auto it = detailAdds.begin(); it != detailAdds.end(); ++it) {
 			const std::int64_t		cell = it->second.cell;
-			const geometry::Vec2i64 cellCenter{cellX(cell) * kFloraCellMm + kFloraCellMm / 2, cellY(cell) * kFloraCellMm + kFloraCellMm / 2};
+			const geometry::Vec2i64 cellCenter{cellX(cell) * kDetailCellMm + kDetailCellMm / 2, cellY(cell) * kDetailCellMm + kDetailCellMm / 2};
 			std::int64_t			priority = std::numeric_limits<std::int64_t>::max();
 			for (const Rect& r : rects) {
 				priority = std::min(priority, dist2Mm(cellCenter, {(r.lo.x + r.hi.x) / 2, (r.lo.y + r.hi.y) / 2}));
@@ -1437,7 +1455,7 @@ namespace ecs {
 		for (std::size_t first = 0; first < ranked.size();) {
 			std::size_t			  last = first;
 			gnav::PatchEdits	  edits;
-			std::vector<FloraKey> keys;
+			std::vector<DetailKey> keys;
 			for (; last < ranked.size() && ranked[last].cell == ranked[first].cell; ++last) {
 				const std::vector<geometry::Vec2i64>& ring = ranked[last].it->second.ring.ring;
 				geometry::Vec2i64					  lo   = ring.front();
@@ -1446,27 +1464,27 @@ namespace ecs {
 					lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
 					hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
 				}
-				gatheredNav.floraAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
+				gatheredNav.detailAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
 				edits.adds.push_back(std::move(ranked[last].it->second.ring));
 				keys.push_back(ranked[last].it->first);
-				floraAdds.erase(ranked[last].it);
+				detailAdds.erase(ranked[last].it);
 			}
 			gatheredNav.patches.push_back(std::move(edits));
 			gatheredNav.onPatched.emplace_back(
 				[this, keys = std::move(keys), cell = ranked[first].cell](const std::vector<RingId>& added, double) {
 					for (std::size_t k = 0; k < keys.size(); ++k) {
-						floraInMesh.emplace(keys[k], FloraRing{added[k], cell});
+						detailInMesh.emplace(keys[k], DetailRing{added[k], cell});
 					}
 				});
 			first = last;
 		}
 	}
 
-	// --- Detail, the forward snap and the flora budget ---------------------------------
+	// --- Detail, the forward snap and the detail budget --------------------------------
 
 	namespace {
 		std::int64_t cellAt(const geometry::Vec2i64& p) {
-			return cellKey(geometry::floorDiv(p.x, NavigationSystem::kFloraCellMm), geometry::floorDiv(p.y, NavigationSystem::kFloraCellMm));
+			return cellKey(geometry::floorDiv(p.x, NavigationSystem::kDetailCellMm), geometry::floorDiv(p.y, NavigationSystem::kDetailCellMm));
 		}
 
 		// The part of a..b inside lo..hi, as parameters along it, or nothing.
@@ -1496,9 +1514,9 @@ namespace ecs {
 		}
 
 		bool cellMeetsRect(std::int64_t cell, const geometry::Vec2i64& lo, const geometry::Vec2i64& hi) {
-			const std::int64_t x = cellX(cell) * NavigationSystem::kFloraCellMm;
-			const std::int64_t y = cellY(cell) * NavigationSystem::kFloraCellMm;
-			return x <= hi.x && x + NavigationSystem::kFloraCellMm >= lo.x && y <= hi.y && y + NavigationSystem::kFloraCellMm >= lo.y;
+			const std::int64_t x = cellX(cell) * NavigationSystem::kDetailCellMm;
+			const std::int64_t y = cellY(cell) * NavigationSystem::kDetailCellMm;
+			return x <= hi.x && x + NavigationSystem::kDetailCellMm >= lo.x && y <= hi.y && y + NavigationSystem::kDetailCellMm >= lo.y;
 		}
 	} // namespace
 
@@ -1518,8 +1536,8 @@ namespace ecs {
 		std::erase_if(detailCells, [&](std::int64_t cell) { return !cellMeetsRect(cell, keepLo, keepHi); });
 		const geometry::Vec2i64 onLo{view.lo.x - kDetailOnMarginMm, view.lo.y - kDetailOnMarginMm};
 		const geometry::Vec2i64 onHi{view.hi.x + kDetailOnMarginMm, view.hi.y + kDetailOnMarginMm};
-		for (std::int64_t cy = geometry::floorDiv(onLo.y, kFloraCellMm); cy <= geometry::floorDiv(onHi.y, kFloraCellMm); ++cy) {
-			for (std::int64_t cx = geometry::floorDiv(onLo.x, kFloraCellMm); cx <= geometry::floorDiv(onHi.x, kFloraCellMm); ++cx) {
+		for (std::int64_t cy = geometry::floorDiv(onLo.y, kDetailCellMm); cy <= geometry::floorDiv(onHi.y, kDetailCellMm); ++cy) {
+			for (std::int64_t cx = geometry::floorDiv(onLo.x, kDetailCellMm); cx <= geometry::floorDiv(onHi.x, kDetailCellMm); ++cx) {
 				detailCells.insert(cellKey(cx, cy));
 			}
 		}
@@ -1530,8 +1548,7 @@ namespace ecs {
 	}
 
 	gnav::BeliefFilter NavigationSystem::pricedFor(gnav::BeliefFilter belief) {
-		static constexpr gnav::TagPrice kFloraPrices[] = {{.tag = nav::kProvenanceTree, .multiplier = kFloraPassMultiplier}};
-		belief.prices								   = kFloraPrices;
+		belief.prices = kDetailKinds;
 		return belief;
 	}
 
@@ -1584,16 +1601,16 @@ namespace ecs {
 	}
 
 	void NavigationSystem::markCrossedRoutes() {
-		if (floraLanded.empty()) {
+		if (detailLanded.empty()) {
 			return;
 		}
-		const std::vector<std::pair<glm::vec2, glm::vec2>> landed = std::move(floraLanded);
-		floraLanded.clear();
+		const std::vector<std::pair<glm::vec2, glm::vec2>> landed = std::move(detailLanded);
+		detailLanded.clear();
 		if (world == nullptr) {
 			return;
 		}
-		// A piece of route that comes within the mover's radius of a new tree's box crosses it:
-		// trees that were already there are no news to a route planned past or through them.
+		// A piece of route that comes within the mover's radius of a new obstacle's box crosses it:
+		// obstacles that were already there are no news to a route planned past or through them.
 		const auto crosses = [&](glm::vec2 a, glm::vec2 b, float radius) {
 			return std::any_of(landed.begin(), landed.end(), [&](const std::pair<glm::vec2, glm::vec2>& box) {
 				return clipToRect(a, b, box.first - glm::vec2{radius}, box.second + glm::vec2{radius}).has_value();
@@ -1669,9 +1686,9 @@ namespace ecs {
 		}
 	}
 
-	bool NavigationSystem::floraInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
-		return floraInMesh.contains(
-			FloraKey{chunk, cellOfEntity(entity.position), std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y),
+	bool NavigationSystem::placedObstacleInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
+		return detailInMesh.contains(
+			DetailKey{chunk, cellOfEntity(entity.position), std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y),
 					 entity.defName});
 	}
 
@@ -1681,7 +1698,7 @@ namespace ecs {
 		}
 		// A route is planned over what the mover remembers, so it can run through a wall it hasn't
 		// seen: a candidate has to be walkable in truth, its disc clear on all sides, and the walk
-		// stops at the first face that blocks in truth for a reason other than flora (a wall, water,
+		// stops at the first face that blocks in truth for a reason other than detail (a wall, water,
 		// unmeshed ground). Nothing past that is a candidate. The disc is sampled out to its rim at
 		// the snap step along 8 rays, so a wall band thinner than the radius can't fall between.
 		const float step = static_cast<float>(kSnapStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
@@ -1708,11 +1725,11 @@ namespace ecs {
 				return true;
 			}
 			const gnav::NavTriangle& t = detailMesh.triangles()[static_cast<std::size_t>(tri)];
-			return !gnav::truthTraversable(t) && t.faceBlocker != nav::kProvenanceTree;
+			return !gnav::truthTraversable(t) && !isDetailTag(t.faceBlocker);
 		};
 
-		// Only where detail is on is a mover pushed out of a tree, and so snapped out of one. A
-		// mover whose route walks through flora on purpose, at its price, is left to it.
+		// Only where detail is on is a mover pushed out of a placed obstacle, and so snapped out of one.
+		// A mover whose route walks through detail on purpose, at its price, is left to it.
 		const std::uint64_t current = generation();
 		for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
 			(void)colonist;
@@ -1720,7 +1737,7 @@ namespace ecs {
 				continue;
 			}
 			const std::int32_t tri = detailMesh.locate(nav::toMm(position.value));
-			if (tri < 0 || detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker != nav::kProvenanceTree) {
+			if (tri < 0 || !isDetailTag(detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker)) {
 				continue;
 			}
 			NavPath* path = world->getComponent<NavPath>(entity);
@@ -1786,13 +1803,13 @@ namespace ecs {
 		}
 	}
 
-	void NavigationSystem::trimFlora(const std::vector<Rect>& rects, std::size_t removeBudget) {
-		if (trimQueue.empty() && floraInMesh.size() <= floraRingBudget) {
+	void NavigationSystem::trimDetail(const std::vector<Rect>& rects, std::size_t removeBudget) {
+		if (trimQueue.empty() && detailInMesh.size() <= detailRingBudget) {
 			return;
 		}
-		// Cells that may lose their flora: out of every wanted rect, out of the detail keep rect,
+		// Cells that may lose their detail: out of every wanted rect, out of the detail keep rect,
 		// and not detail-on. The choice is over scanned cells, never the rings, and each cell's
-		// rings are one range of floraInMesh, so what the main thread spends is the cells once per
+		// rings are one range of detailInMesh, so what the main thread spends is the cells once per
 		// trim and the rings that leave, a removal budget's worth a tick.
 		std::optional<Rect> keep;
 		if (haveViewport) {
@@ -1817,25 +1834,25 @@ namespace ecs {
 				trimQueue.push_back(cell);
 			}
 		}
-		const std::size_t target  = floraRingBudget - floraRingBudget / 8;
+		const std::size_t target  = detailRingBudget - detailRingBudget / 8;
 		std::size_t		  removed = 0;
-		while (!trimQueue.empty() && floraInMesh.size() > target && removed < removeBudget) {
+		while (!trimQueue.empty() && detailInMesh.size() > target && removed < removeBudget) {
 			const std::int64_t cell = trimQueue.back();
 			trimQueue.pop_back();
 			if (spared(cell) || !cellLastWanted.contains(cell)) {
 				continue; // wanted again, or its chunk went, since it was queued
 			}
 			const world::ChunkCoordinate chunk = cellChunk(cell);
-			for (auto it = floraInMesh.lower_bound(FloraKey{chunk, cell, 0, 0, {}});
-				 it != floraInMesh.end() && it->first.chunk == chunk && it->first.cell == cell;) {
-				floraRemovals.push_back(it->second);
-				it = floraInMesh.erase(it);
+			for (auto it = detailInMesh.lower_bound(DetailKey{chunk, cell, 0, 0, {}});
+				 it != detailInMesh.end() && it->first.chunk == chunk && it->first.cell == cell;) {
+				detailRemovals.push_back(it->second);
+				it = detailInMesh.erase(it);
 				++removed;
 			}
 			scannedCells.erase(cell);
 			cellLastWanted.erase(cell);
 		}
-		if (floraInMesh.size() <= target) {
+		if (detailInMesh.size() <= target) {
 			trimQueue.clear();
 		}
 	}
@@ -1943,7 +1960,7 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !floraAdds.empty() || !floraRemovals.empty() || !trimQueue.empty() || !gatheredNav.empty() ||
+		return groundPending > 0 || !detailAdds.empty() || !detailRemovals.empty() || !trimQueue.empty() || !gatheredNav.empty() ||
 			   !gatheredStructural.empty();
 	}
 
@@ -2034,16 +2051,16 @@ namespace ecs {
 		}
 		const geometry::RectMm* confine = within.has_value() ? &*within : nullptr;
 
-		// The structural mesh holds the nav mesh's ground without flora, so where it has no walk
+		// The structural mesh holds the nav mesh's ground without detail, so where it has no walk
 		// under this belief (its known walls block) the nav mesh has none either: no nav search.
 		const gnav::PathResult walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.within = confine});
 		if (walk.stop != gnav::PathStop::Found) {
 			return std::nullopt;
 		}
 
-		// Flora only makes the nav search's corridors finer and its walk dearer, so it needs some
+		// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
 		// multiple of the structural search's expansions. Past that it is lost in priced ground, and
-		// the route is the structural walk itself, through the flora at its price, as it would be off
+		// the route is the structural walk itself, through the detail at its price, as it would be off
 		// camera: so a route exists on camera exactly when it does off it.
 		const std::uint32_t	   cap	  = navExpansionFloor + navExpansionsPerStructural * walk.expansions;
 		gnav::PathResult	   result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief),
@@ -2052,7 +2069,7 @@ namespace ecs {
 			LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
 					  result.expansions, walk.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
 			result					  = walk;
-			result.crossesPricedFaces = passesTree(result.points, radius);
+			result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
 		} else if (!result.reachable) {
 			return std::nullopt;
 		}
@@ -2198,10 +2215,10 @@ namespace ecs {
 
 	bool NavigationSystem::isValidPosition(glm::vec2 meters) const {
 		join();
-		return pointOnFace(detailMesh, meters, moverFace) && !treeColliderAt(meters).has_value();
+		return pointOnFace(detailMesh, meters, moverFace) && !placedObstacleAt(meters).has_value();
 	}
 
-	std::optional<NavigationSystem::TreeCollider> NavigationSystem::treeColliderAt(glm::vec2 meters, float reachMeters) const {
+	std::optional<NavigationSystem::PlacedObstacle> NavigationSystem::placedObstacleAt(glm::vec2 meters, float reachMeters) const {
 		if (placement == nullptr) {
 			return std::nullopt;
 		}
@@ -2212,7 +2229,7 @@ namespace ecs {
 		const world::ChunkCoordinate hi				= world::worldToChunk({meters.x + reach, meters.y + reach});
 		const assets::AssetRegistry& registry		= assets::AssetRegistry::Get();
 		const geometry::Vec2i64		 p				= nav::toMm(meters);
-		std::optional<TreeCollider>	 nearest;
+		std::optional<PlacedObstacle>	 nearest;
 		float						 nearestD2 = 0.0F;
 		for (std::int32_t cy = lo.y; cy <= hi.y; ++cy) {
 			for (std::int32_t cx = lo.x; cx <= hi.x; ++cx) {
@@ -2221,7 +2238,7 @@ namespace ecs {
 					continue;
 				}
 				for (const assets::PlacedEntity* e : index->queryRect(meters.x - reach, meters.y - reach, meters.x + reach, meters.y + reach)) {
-					if (!nav::floraOutline(*e, registry, colliderScratch)) {
+					if (!nav::placedObstacleOutline(*e, registry, colliderScratch)) {
 						continue;
 					}
 					const bool holds = geometry::pointInPolygon(p, colliderScratch) != geometry::PointInPolygon::Outside;
@@ -2241,7 +2258,7 @@ namespace ecs {
 					for (const geometry::Vec2i64& v : colliderScratch) {
 						extent2 = std::max(extent2, dist2(centre, nav::toMeters(v)));
 					}
-					nearest	  = TreeCollider{centre, std::sqrt(extent2)};
+					nearest	  = PlacedObstacle{centre, std::sqrt(extent2)};
 					nearestD2 = d2;
 				}
 			}
@@ -2249,12 +2266,12 @@ namespace ecs {
 		return nearest;
 	}
 
-	bool NavigationSystem::passesTree(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const {
+	bool NavigationSystem::passesPlacedObstacle(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const {
 		if (placement == nullptr) {
 			return false;
 		}
-		// Each segment against the outline of every tree in the nav mesh near it: within the radius
-		// when it crosses an edge or starts inside, or an edge comes that close. Exact, so no trunk
+		// Each segment against the outline of every placed obstacle in the nav mesh near it: within the radius
+		// when it crosses an edge or starts inside, or an edge comes that close. Exact, so no obstacle
 		// however narrow is missed between samples.
 		using P						  = glm::dvec2;
 		const auto pointToSegment2	  = [](P p, P a, P b) {
@@ -2295,7 +2312,7 @@ namespace ecs {
 						continue;
 					}
 					for (const assets::PlacedEntity* e : index->queryRect(lo.x, lo.y, hi.x, hi.y)) {
-						if (!floraInNavMesh({cx, cy}, *e) || !nav::floraOutline(*e, registry, colliderScratch)) {
+						if (!placedObstacleInNavMesh({cx, cy}, *e) || !nav::placedObstacleOutline(*e, registry, colliderScratch)) {
 							continue;
 						}
 						if (geometry::pointInPolygon(points[k - 1], colliderScratch) != geometry::PointInPolygon::Outside) {
@@ -2322,8 +2339,8 @@ namespace ecs {
 			return std::nullopt;
 		}
 		const auto walkable = [&](glm::vec2 p) { return truthWalkable(structural, p); };
-		const auto clear	= [&](glm::vec2 p) { return walkable(p) && !treeColliderAt(p).has_value(); };
-		const std::optional<TreeCollider> collider = treeColliderAt(target, 0.05F);
+		const auto clear	= [&](glm::vec2 p) { return walkable(p) && !placedObstacleAt(p).has_value(); };
+		const std::optional<PlacedObstacle> collider = placedObstacleAt(target, 0.05F);
 		if (!collider.has_value()) {
 			if (clear(target)) {
 				return target;
@@ -2331,8 +2348,8 @@ namespace ecs {
 			return nearestFaceOnMesh(structural, target, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
 		}
 		// Round the collider at the disc's radius out from it, nearest the colonist first: a spot clear
-		// of every collider, else (a tree in a thicket) one that is at least ground a mover can cross,
-		// inside a neighbour's trunk, which a route reaches through the flora at its price.
+		// of every collider, else (an obstacle among others) one that is at least ground a mover can cross,
+		// inside a neighbour's collider, which a route reaches through the detail at its price.
 		const float								 standOff = collider->extent + agentRadiusMeters + 0.05F;
 		constexpr int							 kSpots	  = 32;
 		std::array<std::pair<float, glm::vec2>, kSpots> spots;
@@ -2391,8 +2408,8 @@ namespace ecs {
 			terrainWalkable(detailMesh, meters)
 				? std::optional<glm::vec2>(meters)
 				: nearestFaceOnMesh(detailMesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
-		// A tree the mesh doesn't hold is still in the way: step out of its collider.
-		if (!nearest.has_value() || !treeColliderAt(*nearest).has_value()) {
+		// A placed obstacle the mesh doesn't hold is still in the way: step out of its collider.
+		if (!nearest.has_value() || !placedObstacleAt(*nearest).has_value()) {
 			return nearest;
 		}
 		return standPointBeside(*nearest, meters, 0.0F);

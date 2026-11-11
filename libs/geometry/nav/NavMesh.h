@@ -37,7 +37,7 @@
 // (faceBlocker > 0). Those widths vary per agent belief and only bite oversized
 // agents in built corridors; construction guarantees walkable wall gaps >= 0.7 m,
 // so for the one shipped agent size (0.3 m radius, 0.6 m diameter) every wall
-// portal fits. Width filtering here covers common-knowledge terrain/flora and
+// portal fits. Width filtering here covers common-knowledge terrain/obstacles and
 // door gaps only.
 
 namespace geometry::nav {
@@ -73,7 +73,7 @@ namespace geometry::nav {
 		// land-island holes), all blocked. holeCapable marks those rings so face
 		// classification uses even-odd containment parity among them (a point inside
 		// an even number of nested hole-capable rings is land = floor; odd = water).
-		// Everything else (river channels, ponds, flora, walls, the border) leaves this
+		// Everything else (river channels, ponds, obstacles, walls, the border) leaves this
 		// false: solid containment, and any solid ring blocks whatever the parity.
 		bool				 holeCapable  = false;
 	};
@@ -90,7 +90,7 @@ namespace geometry::nav {
 	struct NavMeshInput {
 		std::vector<NavInputPolygon> polygons;
 		std::vector<DoorPortal>		 doors;
-		// The detail-class obstacle tags (flora, later movers' footprints): a path query may
+		// The detail-class obstacle tags (placed obstacles, later movers' footprints): a path query may
 		// squeeze a disc past them at a price (NavTriangle::structuralWidthMm). Empty: none.
 		std::vector<std::int64_t> detailTags;
 	};
@@ -124,7 +124,7 @@ namespace geometry::nav {
 		//   kNoBlocker (== INT64_MIN) -> real floor, always walkable.
 		//   > 0  -> a wall segment id; belief-gated (truth: walkable iff faceOpening
 		//           is set, i.e. a door passes and solid wall blocks).
-		//   < 0  -> a terrain/common-knowledge sentinel (water/tree); always blocks.
+		//   < 0  -> a terrain/common-knowledge sentinel (water/placed obstacle); always blocks.
 		std::int64_t faceBlocker = kNoBlocker;
 		// Pathable door's openingId when this triangle is inside that door's footprint
 		// (faceBlocker is then the hosting segment id); else kNoOpening.
@@ -141,7 +141,7 @@ namespace geometry::nav {
 	inline bool isFloorFace(const NavTriangle& t) {
 		return t.faceBlocker == kNoBlocker;
 	}
-	// Common-knowledge terrain sentinel (water/tree, or a junction with no incident
+	// Common-knowledge terrain sentinel (water/placed obstacle, or a junction with no incident
 	// wall id): always blocks, belief or not. (faceBlocker < 0 and != kNoBlocker.)
 	inline bool isCommonKnowledgeTerrainFace(const NavTriangle& t) {
 		return t.faceBlocker < 0 && t.faceBlocker != kNoBlocker;
@@ -196,7 +196,7 @@ namespace geometry::nav {
 
 	// Tags of in-bounds ground inside exactly the blocked rings `containing`, in any
 	// order: equal areas tie-break on content (provenance, then opening, then outline),
-	// so the answer never depends on input order or edit history. SOLID rings (flora,
+	// so the answer never depends on input order or edit history. SOLID rings (placed obstacles,
 	// walls) go by solid containment: the smallest-area one wins, so a door-span
 	// footprint beats the wall band around it. HOLE-CAPABLE rings (water) go by
 	// nesting parity: a water body arrives as a CCW outer boundary plus CW land-island

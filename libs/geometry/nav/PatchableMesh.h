@@ -98,7 +98,7 @@ namespace geometry::nav {
 		// The detail-class obstacle tags (NavMeshInput::detailTags).
 		std::vector<std::int64_t> detailTags;
 		// A priced squeeze past detail opens for discs up to this wide (apexWidthsMm): the
-		// structural width reads no farther, which keeps its refresh local in dense flora.
+		// structural width reads no farther, which keeps its refresh local among dense obstacles.
 		std::int64_t maxSqueezeMm = kDefaultMaxSqueezeMm;
 	};
 
