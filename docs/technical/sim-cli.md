@@ -897,10 +897,6 @@ These are out of scope here and need their own tickets; each changes what a scen
 - Vision and the goal systems throttle by frame count (VisionSystem.h:134-135 every 5 frames; frame
   counters in StorageGoalSystem, CraftingGoalSystem, BuildGoalSystem, ConstructionSystem), so the tick
   rate matters as well as the speed. Scenarios keep the default 60 Hz.
-- Harvest regrowth cooldowns are written (`setEntityCooldown`) and never read or advanced:
-  `PlacementExecutor::updateCooldowns` has no non-test caller and nothing calls `isEntityOnCooldown`
-  (see the TODO at NeedActions.cpp:96). A berry bush is harvestable again at once, so food is unlimited
-  in long runs and no scenario can test regrowth.
 - A static entity spawned at runtime lives in its chunk's placement index, so it is gone when that
   chunk unloads and does not come back on reload. Only the game streams chunks, so only dev-spawned
   things in the game are affected; persisting runtime statics belongs with save and load.

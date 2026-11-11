@@ -158,7 +158,9 @@ first). Not code — engine touch-points are named so the work is concrete.
   (`m_onDecrementResource`) is no longer used by trees but still serves pooled bushes (sticks). It
   follows the same rule: `m_onTakeSource` with Keep confirms the bush stands, the pool is drawn
   and paid, then the bush is removed once the pool is empty or a clear takes it. Removing a source
-  erases its pool and cooldown, so neither outlives it.
+  erases its pool and regrowth, so neither outlives it. A regrowing bush stores the game time it is
+  ready again (`TimeSystem::simulationSeconds`, which stops while paused and scales with speed); the
+  entry is erased the first time it is read past that time, so nothing ticks regrowth per frame.
 - Acceptance: one harvest action destroys the tree; the colonist carries an armful; leftover wood
   sits at the stump as a haulable stack; no wood is lost.
 

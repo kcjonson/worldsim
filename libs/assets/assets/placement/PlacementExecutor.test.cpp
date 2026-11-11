@@ -332,160 +332,81 @@ TEST(PlacementExecutorTests, NegativeChunkCoordinates) {
 }
 
 // ============================================================================
-// Entity Cooldown Tests
+// Regrowth Tests
 // ============================================================================
 
-TEST(PlacementExecutorTests, IsEntityOnCooldownReturnsFalseInitially) {
+TEST(PlacementExecutorTests, EntityIsReadyUntilItStartsRegrowing) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
 
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	// Entity not on cooldown initially
-	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 0.0).has_value());
+	executor.startRegrowth({10.0F, 20.0F}, "BerryBush", 100.0, 60.0);
+	EXPECT_EQ(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 100.0), 160.0);
+	EXPECT_FALSE(executor.regrowthReadyAt({15.0F, 25.0F}, "BerryBush", 100.0).has_value()) << "another position";
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "WoodyBush", 100.0).has_value()) << "another def";
 }
 
-TEST(PlacementExecutorTests, SetEntityCooldownMakesEntityOnCooldown) {
+// Ready again exactly at its stamped time, read against whatever clock the caller passes: nothing
+// ticks in between.
+TEST(PlacementExecutorTests, RegrowthLapsesAtItsTime) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
 
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
-
-	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
+	executor.startRegrowth({10.0F, 20.0F}, "BerryBush", 0.0, 5.0);
+	executor.startRegrowth({30.0F, 40.0F}, "BerryBush", 0.0, 10.0);
+	EXPECT_TRUE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 4.9).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 5.0).has_value());
+	EXPECT_TRUE(executor.regrowthReadyAt({30.0F, 40.0F}, "BerryBush", 5.0).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 0.0).has_value()) << "a lapsed entry is gone";
 }
 
-TEST(PlacementExecutorTests, DifferentPositionsAreIndependentCooldowns) {
+// Unloading a chunk leaves its entities' regrowth alone: a regrowing bush is still regrowing when the
+// chunk comes back, and ready once its time has passed.
+TEST(PlacementExecutorTests, RegrowthOutlivesAChunkUnload) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
 
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
+	const glm::vec2 bush{10.0F, 20.0F};
+	AsyncChunkPlacementResult chunk;
+	chunk.coord = world::worldToChunk({bush.x, bush.y});
+	chunk.spatialIndex.insert({"BerryBush", bush});
+	executor.storeChunkResult(std::move(chunk));
+	executor.startRegrowth(bush, "BerryBush", 0.0, 60.0);
 
-	// Same chunk, different position
-	EXPECT_FALSE(executor.isEntityOnCooldown({15.0F, 25.0F}, "BerryBush"));
+	executor.unloadChunk(world::worldToChunk({bush.x, bush.y}));
+	AsyncChunkPlacementResult reloaded;
+	reloaded.coord = world::worldToChunk({bush.x, bush.y});
+	reloaded.spatialIndex.insert({"BerryBush", bush});
+	executor.storeChunkResult(std::move(reloaded));
+
+	EXPECT_EQ(executor.regrowthReadyAt(bush, "BerryBush", 30.0), 60.0);
+	EXPECT_FALSE(executor.regrowthReadyAt(bush, "BerryBush", 60.0).has_value());
 }
 
-TEST(PlacementExecutorTests, DifferentDefNamesAreIndependentCooldowns) {
+// Lapsed entries nobody looks up again are swept as the map grows, so it can't grow without bound.
+TEST(PlacementExecutorTests, LapsedRegrowthIsSweptAsTheMapGrows) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
 
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
-
-	// Same position, different defName
-	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "WoodyBush"));
-}
-
-TEST(PlacementExecutorTests, UpdateCooldownsDecrementsCooldownTime) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
-	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-
-	// Update with 2 seconds
-	executor.updateCooldowns(2.0F);
-
-	// Still on cooldown (5 - 2 = 3 seconds remaining)
-	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-}
-
-TEST(PlacementExecutorTests, UpdateCooldownsRemovesExpiredCooldowns) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
-	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-
-	// Update with 6 seconds (cooldown expires)
-	executor.updateCooldowns(6.0F);
-
-	// No longer on cooldown
-	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-}
-
-TEST(PlacementExecutorTests, UpdateCooldownsExactExpiration) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
-
-	// Update with exactly 5 seconds
-	executor.updateCooldowns(5.0F);
-
-	// Should be expired at exactly 0 or slightly negative
-	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-}
-
-TEST(PlacementExecutorTests, MultipleCooldownsUpdateIndependently) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 3.0F);
-	executor.setEntityCooldown({30.0F, 40.0F}, "BerryBush", 10.0F);
-
-	// Update with 5 seconds
-	executor.updateCooldowns(5.0F);
-
-	// First cooldown expired, second still active
-	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-	EXPECT_TRUE(executor.isEntityOnCooldown({30.0F, 40.0F}, "BerryBush"));
-}
-
-TEST(PlacementExecutorTests, ResetCooldownOverwritesExisting) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
-
-	// Reset cooldown to longer time
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 100.0F);
-
-	// Update with 10 seconds (would have expired with original 5s cooldown)
-	executor.updateCooldowns(10.0F);
-
-	// Still on cooldown due to reset
-	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-}
-
-TEST(PlacementExecutorTests, ZeroCooldownExpiresOnFirstUpdate) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	// Set zero cooldown - still registered as on cooldown initially
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 0.0F);
-
-	// Zero cooldown expires immediately on first update
-	executor.updateCooldowns(0.001F);
-
-	// Now it should be expired
-	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
+	for (int i = 0; i < 5000; ++i) {
+		executor.startRegrowth({static_cast<float>(i), 0.0F}, "BerryBush", static_cast<double>(i), 1.0);
+	}
+	const glm::vec2 last{4999.0F, 0.0F};
+	EXPECT_TRUE(executor.regrowthReadyAt(last, "BerryBush", 4999.5).has_value()) << "the live entry survives sweeps";
+	EXPECT_FALSE(executor.regrowthReadyAt({0.0F, 0.0F}, "BerryBush", 4999.5).has_value());
+	EXPECT_LE(executor.regrowthEntryCount(), 2048U) << "lapsed entries were swept, not kept for the session";
 }
 
 // ============================================================================
@@ -601,23 +522,19 @@ TEST(PlacementExecutorTests, NearSurfaceReadsThePaintedLand) {
 	}
 }
 
-TEST(PlacementExecutorTests, ClearRemovesCooldowns) {
+TEST(PlacementExecutorTests, ClearRemovesRegrowth) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
 
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
-	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
-
+	executor.startRegrowth({10.0F, 20.0F}, "BerryBush", 0.0, 60.0);
 	executor.clear();
-
-	// After clear, cooldown should be gone
-	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 0.0).has_value());
 }
 
-// A cooldown and a resource pool belong to one entity, named by its position on Memory's 0.1 m grid:
+// Regrowth and a resource pool belong to one entity, named by its position on Memory's 0.1 m grid:
 // two bushes of one def in the same 1 m tile never share them, and a position that drifted within
 // the entity's own cell still names it.
 TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
@@ -629,10 +546,10 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 
 	const glm::vec2 cut{10.3F, 20.7F};
 	const glm::vec2 neighbour{10.8F, 20.2F};
-	executor.setEntityCooldown(cut, "BerryBush", 60.0F);
-	EXPECT_TRUE(executor.isEntityOnCooldown({10.31F, 20.71F}, "BerryBush"));
-	EXPECT_FALSE(executor.isEntityOnCooldown(neighbour, "BerryBush")) << "the other bush in the tile is not regrowing";
-	EXPECT_FALSE(executor.isEntityOnCooldown({-10.3F, -20.7F}, "BerryBush"));
+	executor.startRegrowth(cut, "BerryBush", 0.0, 60.0);
+	EXPECT_TRUE(executor.regrowthReadyAt({10.31F, 20.71F}, "BerryBush", 0.0).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt(neighbour, "BerryBush", 0.0).has_value()) << "the other bush in the tile is not regrowing";
+	EXPECT_FALSE(executor.regrowthReadyAt({-10.3F, -20.7F}, "BerryBush", 0.0).has_value());
 
 	executor.initResourceCount(cut, "BerryBush", 5);
 	executor.initResourceCount(neighbour, "BerryBush", 5);
@@ -640,14 +557,14 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 	EXPECT_FALSE(executor.getResourceCount(cut, "BerryBush").has_value());
 	EXPECT_EQ(executor.getResourceCount(neighbour, "BerryBush"), 5U) << "the other bush keeps its own pool";
 
-	// Removing an entity takes its cooldown and pool with it, so neither outlives the plant.
+	// Removing an entity takes its regrowth and pool with it, so neither outlives the plant.
 	AsyncChunkPlacementResult chunk;
 	chunk.coord = world::worldToChunk({neighbour.x, neighbour.y});
 	chunk.spatialIndex.insert({"BerryBush", neighbour});
 	executor.storeChunkResult(std::move(chunk));
-	executor.setEntityCooldown(neighbour, "BerryBush", 60.0F);
+	executor.startRegrowth(neighbour, "BerryBush", 0.0, 60.0);
 	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({neighbour.x, neighbour.y}), neighbour, "BerryBush"));
-	EXPECT_FALSE(executor.isEntityOnCooldown(neighbour, "BerryBush"));
+	EXPECT_FALSE(executor.regrowthReadyAt(neighbour, "BerryBush", 0.0).has_value());
 	EXPECT_FALSE(executor.getResourceCount(neighbour, "BerryBush").has_value());
 }
 

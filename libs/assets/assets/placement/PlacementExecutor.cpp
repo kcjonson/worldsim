@@ -645,7 +645,8 @@ namespace assets {
 		m_dependencyGraph.clear();
 		m_spawnOrder.clear();
 		m_chunkIndices.clear();
-		m_cooldowns.clear();
+		m_regrowthReadyAt.clear();
+		m_regrowthSweepSize = kMinRegrowthSweepSize;
 		m_resourceCounts.clear();
 		m_initialized = false;
 	}
@@ -683,58 +684,29 @@ namespace assets {
 
 	void PlacementExecutor::forgetEntityState(glm::vec2 position, const std::string& defName) {
 		const EntityStateKey key = makeEntityStateKey(position, defName);
-		m_cooldowns.erase(key);
+		m_regrowthReadyAt.erase(key);
 		m_resourceCounts.erase(key);
 	}
 
-	void PlacementExecutor::setEntityCooldown(glm::vec2 position, const std::string& defName, float cooldownSeconds) {
-		auto key = makeEntityStateKey(position, defName);
-
-		// O(1) insert or update
-		auto [iter, inserted] = m_cooldowns.insert_or_assign(key, cooldownSeconds);
-
-		if (inserted) {
-			LOG_DEBUG(
-				Engine,
-				"PlacementExecutor: Set cooldown for %s at (%.1f, %.1f) for %.1fs",
-				defName.c_str(),
-				position.x,
-				position.y,
-				cooldownSeconds
-			);
-		} else {
-			LOG_DEBUG(
-				Engine,
-				"PlacementExecutor: Updated cooldown for %s at (%.1f, %.1f) to %.1fs",
-				defName.c_str(),
-				position.x,
-				position.y,
-				cooldownSeconds
-			);
+	void PlacementExecutor::startRegrowth(glm::vec2 position, const std::string& defName, double now, double seconds) {
+		if (m_regrowthReadyAt.size() >= m_regrowthSweepSize) {
+			std::erase_if(m_regrowthReadyAt, [now](const auto& entry) { return entry.second <= now; });
+			m_regrowthSweepSize = std::max(kMinRegrowthSweepSize, 2 * m_regrowthReadyAt.size());
 		}
+		m_regrowthReadyAt.insert_or_assign(makeEntityStateKey(position, defName), now + seconds);
+		LOG_DEBUG(Engine, "PlacementExecutor: %s at (%.1f, %.1f) regrows for %.1fs", defName.c_str(), position.x, position.y, seconds);
 	}
 
-	bool PlacementExecutor::isEntityOnCooldown(glm::vec2 position, const std::string& defName) const {
-		return m_cooldowns.contains(makeEntityStateKey(position, defName));
-	}
-
-	void PlacementExecutor::updateCooldowns(float deltaTime) {
-		// Update all cooldowns and remove expired ones
-		for (auto it = m_cooldowns.begin(); it != m_cooldowns.end(); ) {
-			it->second -= deltaTime;
-			if (it->second <= 0.0F) {
-				LOG_DEBUG(
-					Engine,
-					"PlacementExecutor: Cooldown expired for %s at (%.1f, %.1f)",
-					it->first.defName.c_str(),
-					static_cast<float>(it->first.cell.x) * 0.1F,
-					static_cast<float>(it->first.cell.y) * 0.1F
-				);
-				it = m_cooldowns.erase(it);
-			} else {
-				++it;
-			}
+	std::optional<double> PlacementExecutor::regrowthReadyAt(glm::vec2 position, const std::string& defName, double now) {
+		const auto it = m_regrowthReadyAt.find(makeEntityStateKey(position, defName));
+		if (it == m_regrowthReadyAt.end()) {
+			return std::nullopt;
 		}
+		if (it->second <= now) {
+			m_regrowthReadyAt.erase(it);
+			return std::nullopt;
+		}
+		return it->second;
 	}
 
 	void PlacementExecutor::initResourceCount(glm::vec2 position, const std::string& defName, uint32_t count) {

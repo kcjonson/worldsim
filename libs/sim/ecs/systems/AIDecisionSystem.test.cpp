@@ -8,10 +8,12 @@
 #include "NavigationSystem.h"
 #include "NavigationSystem.test.h"
 #include "PhysicsSystem.h"
+#include "TimeSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "../WorldSource.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
 #include "../components/Colonist.h"
@@ -35,6 +37,7 @@
 #include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
+#include "assets/placement/PlacementExecutor.h"
 
 #include <construction/ConstructionWorld.h>
 
@@ -2654,9 +2657,9 @@ namespace ecs::test {
 		EXPECT_GT(needs->hunger().value, initialHunger) << "Hunger should have been restored by eat action";
 	}
 
-	/// A hungry colonist whose only known food is a bush on its regrowth cooldown neither starts a
-	/// harvest that would pay nothing nor stalls: it takes its next option, and harvests the bush once
-	/// it is ready again.
+	/// A hungry colonist whose only known food is a bush it cut a moment ago neither starts a harvest that
+	/// would pay nothing nor stalls: it takes its next option, and harvests the bush once its regrowth time
+	/// has passed on the game clock. The bush, its regrowth, and the clock are the game's own pieces.
 	TEST_F(AIActionIntegrationTest, RegrowingOnlyFoodIsHarvestedOnceReady) {
 		auto&					registry = assets::AssetRegistry::Get();
 		assets::AssetDefinition bush;
@@ -2664,23 +2667,50 @@ namespace ecs::test {
 		bush.label = "Berry Bush";
 		bush.capabilities.harvestable = assets::HarvestableCapability{};
 		bush.capabilities.harvestable->yieldDefName = "Berry";
+		bush.capabilities.harvestable->amountMin = 3;
+		bush.capabilities.harvestable->amountMax = 3;
+		bush.capabilities.harvestable->durability = 50.0F; // 5 s, so the harvest spans frames at 10x
+		bush.capabilities.harvestable->destructive = false;
 		bush.capabilities.harvestable->regrowthTime = 60.0F;
 		registry.registerTestDefinition(std::move(bush));
 		const uint32_t bushId = registry.getDefNameId("Flora_BerryBush");
 
+		const glm::vec2		  bushAt{0.0F, 0.0F};
+		assets::PlacementExecutor executor(registry);
+		assets::AsyncChunkPlacementResult chunk;
+		chunk.coord = world::worldToChunk({bushAt.x, bushAt.y});
+		chunk.spatialIndex.insert({"Flora_BerryBush", bushAt});
+		executor.storeChunkResult(std::move(chunk));
+
+		auto& time = world->registerSystem<TimeSystem>();
+		time.setSpeed(GameSpeed::VeryFast);
+		std::vector<EntityID> pendingRemoval;
+		world->getSystem<AIDecisionSystem>().setSourceReadyCallback([&](const std::string& defName, glm::vec2 at) {
+			return !worldSourceRegrowingUntil(executor, *world, defName, at).has_value();
+		});
+		world->getSystem<ActionSystem>().setTakeSourceCallback(
+			[&](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
+				return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
+			}
+		);
+		const auto bushReady = [&] { return !worldSourceRegrowingUntil(executor, *world, "Flora_BerryBush", bushAt).has_value(); };
+
+		// Someone just cut it.
+		ASSERT_EQ(
+			takeWorldSource(executor, *world, pendingRemoval, "Flora_BerryBush", bushAt, ActionSystem::SourceTake::Regrow, 60.0F),
+			ActionSystem::SourceState::Ready
+		);
+
 		// Standing at the bush, so a hunger task arrives at once and its harvest starts.
-		auto colonist = createColonist({0.0F, 0.0F});
-		world->getComponent<Memory>(colonist)->rememberWorldEntity({0.0F, 0.0F}, bushId, registry.getCapabilityMask(bushId));
+		auto colonist = createColonist(bushAt);
+		world->getComponent<Memory>(colonist)->rememberWorldEntity(bushAt, bushId, registry.getCapabilityMask(bushId));
 		setNeedValue(colonist, NeedType::Hunger, 40.0F);
 		setNeedValue(colonist, NeedType::Thirst, 100.0F);
 		setNeedValue(colonist, NeedType::Energy, 100.0F);
 		setNeedValue(colonist, NeedType::Bladder, 100.0F);
-		bool regrowing = true;
-		world->getSystem<AIDecisionSystem>().setSourceReadyCallback([&](const std::string& /*defName*/, glm::vec2 /*at*/) {
-			return !regrowing;
-		});
 
-		for (int frame = 0; frame < 20; ++frame) {
+		// 0.1 s frames at 10x: one game second a frame.
+		for (int frame = 0; frame < 55; ++frame) {
 			world->update(0.1F);
 			ASSERT_NE(getAction(colonist)->type, ActionType::Harvest) << "no harvest of a regrowing bush, frame " << frame;
 		}
@@ -2690,13 +2720,21 @@ namespace ecs::test {
 			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Hunger && o.status == OptionStatus::Regrowing;
 		})) << "the trace shows the food it is waiting on";
 
-		regrowing = false;
 		bool harvested = false;
 		for (int frame = 0; frame < 20 && !harvested; ++frame) {
 			world->update(0.1F);
 			harvested = getAction(colonist)->type == ActionType::Harvest;
 		}
-		EXPECT_TRUE(harvested) << "the bush is harvested once it is ready";
+		ASSERT_TRUE(harvested) << "the bush is harvested once it is ready";
+		EXPECT_GE(time.simulationSeconds(), 60.0) << "and not before its regrowth time";
+
+		for (int frame = 0; frame < 20 && bushReady(); ++frame) {
+			world->update(0.1F);
+		}
+		EXPECT_FALSE(bushReady()) << "the harvest took the bush, starting its next regrowth";
+		EXPECT_TRUE(
+			world->getComponent<Inventory>(colonist)->getQuantity("Berry") > 0 || getNeeds(colonist)->hunger().value > 40.0F
+		) << "and paid its berries";
 	}
 
 	/// Test that a colonist can complete a full need-fulfill cycle:

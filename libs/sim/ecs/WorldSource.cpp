@@ -3,6 +3,7 @@
 #include "World.h"
 #include "components/Appearance.h"
 #include "components/Transform.h"
+#include "systems/TimeSystem.h"
 
 #include <assets/placement/PlacementExecutor.h>
 #include <world/chunk/ChunkCoordinate.h>
@@ -10,6 +11,11 @@
 #include <algorithm>
 
 namespace ecs {
+
+	std::optional<double>
+	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, World& world, const std::string& defName, glm::vec2 at) {
+		return placement.regrowthReadyAt(at, defName, simulationSeconds(world));
+	}
 
 	ActionSystem::SourceState takeWorldSource(
 		assets::PlacementExecutor& placement,
@@ -42,7 +48,7 @@ namespace ecs {
 			return State::Gone;
 		}
 
-		const bool regrowing = placement.isEntityOnCooldown(at, defName);
+		const bool regrowing = worldSourceRegrowingUntil(placement, world, defName, at).has_value();
 		if (take == Take::Remove) {
 			if (placed) {
 				placement.removeEntity(coord, at, defName);
@@ -51,7 +57,7 @@ namespace ecs {
 				placement.forgetEntityState(at, defName);
 			}
 		} else if (take == Take::Regrow && !regrowing) {
-			placement.setEntityCooldown(at, defName, regrowthSeconds);
+			placement.startRegrowth(at, defName, simulationSeconds(world), regrowthSeconds);
 		}
 		return regrowing ? State::OnCooldown : State::Ready;
 	}

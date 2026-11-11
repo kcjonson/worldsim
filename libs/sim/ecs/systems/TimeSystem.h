@@ -65,6 +65,11 @@ class TimeSystem : public ISystem {
 	[[nodiscard]] float timeOfDay() const { return currentTimeOfDay; }
 	[[nodiscard]] GameTimeSnapshot snapshot() const;
 
+	/// Scaled seconds since the colony started: every frame's deltaTime * effectiveTimeScale(), the time
+	/// actions and movement run on, plus any skipTime. Stops while paused, runs 3x or 10x at speed, never
+	/// goes back (setTimeOfDay leaves it alone). Timers that outlive a frame (regrowth) stamp against it.
+	[[nodiscard]] double simulationSeconds() const { return elapsedSimulationSeconds; }
+
 	// --- Time Scale (for other systems) ---
 	/// Returns the effective time multiplier for this frame (game-minutes per real-second).
 	/// Returns 0.0 when paused. NOTE: this also scales MovementSystem/PhysicsSystem integration, so
@@ -90,6 +95,7 @@ class TimeSystem : public ISystem {
 	int dayCount = 1;						   // Day 1 is the first day
 	Season currentSeason = Season::Spring;
 	float currentTimeOfDay = 6.0F;			   // Start at 6:00 AM
+	double elapsedSimulationSeconds = 0.0;
 
 	// Speed state
 	GameSpeed currentSpeed = GameSpeed::Normal;
@@ -104,5 +110,11 @@ class TimeSystem : public ISystem {
 
 	void advanceTime(float gameMinutes);
 };
+
+class World;
+
+/// The world's TimeSystem::simulationSeconds(), or 0 in a world without a TimeSystem (unit contexts with
+/// no clock, where a started regrowth never ends).
+[[nodiscard]] double simulationSeconds(World& world);
 
 }  // namespace ecs

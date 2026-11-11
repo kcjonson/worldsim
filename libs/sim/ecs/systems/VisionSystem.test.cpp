@@ -492,8 +492,8 @@ TEST_F(VisionSystemTest, PresentEntityInViewIsKept) {
 	ASSERT_TRUE(remembers(world, observer, targetPos));
 
 	// Put it on cooldown: still in the index, just not harvestable -> must be kept.
-	executor.setEntityCooldown(targetPos, kTargetDefName, 30.0F);
-	ASSERT_TRUE(executor.isEntityOnCooldown(targetPos, kTargetDefName));
+	executor.startRegrowth(targetPos, kTargetDefName, 0.0, 30.0);
+	ASSERT_TRUE(executor.regrowthReadyAt(targetPos, kTargetDefName, 0.0).has_value());
 
 	tick(sys);
 	EXPECT_TRUE(remembers(world, observer, targetPos)) << "a cooldowned (still-indexed) entity must not be forgotten";

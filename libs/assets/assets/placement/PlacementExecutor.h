@@ -22,8 +22,9 @@
 // 4. ENTITY REMOVAL: Supports removing entities when harvested/destroyed.
 //    Called by ActionSystem when collection actions complete.
 //
-// 5. COOLDOWN TRACKING: Non-destructive harvests (berry bushes) put entities
-//    on cooldown. Tracks remaining time and exposes query for AI/Vision.
+// 5. REGROWTH: A non-destructive harvest (a berry bush) stamps the time the
+//    entity is ready again. Times are the caller's simulation clock; assets
+//    keeps none of its own. An entry lapses on the first lookup past its time.
 //
 // Thread Safety:
 // - processChunk() modifies internal state - NOT thread-safe
@@ -35,7 +36,6 @@
 // 2. Call initialize() after assets are loaded (builds dependency graph)
 // 3. For each chunk: processChunk() or computeChunkEntities()+storeChunkResult()
 // 4. Query getChunkIndex() for spatial lookups
-// 5. Call updateCooldowns() each frame for regrowth timing
 //
 // Related Documentation:
 // - /docs/design/game-systems/world/entity-placement.md (design spec)
@@ -171,21 +171,19 @@ namespace assets {
 		/// runtime-spawned harvestable (an ECS entity in no chunk index) is forgotten here when taken.
 		void forgetEntityState(glm::vec2 position, const std::string& defName);
 
-		/// Set an entity on cooldown (for regrowth after non-destructive harvest)
-		/// @param position World position of the entity
-		/// @param defName DefName of the entity
-		/// @param cooldownSeconds Time until entity can be harvested again
-		void setEntityCooldown(glm::vec2 position, const std::string& defName, float cooldownSeconds);
+		/// Start an entity regrowing after a non-destructive harvest: it is ready again at now + seconds,
+		/// on the caller's clock. Every entry is kept across chunk unloads (it is keyed by world position,
+		/// not by chunk), so a bush regrowing when its chunk unloads is still regrowing on reload until
+		/// its time. Lapsed entries nothing looked up again are swept here once the map has doubled since
+		/// the last sweep, so it stays within twice the entities regrowing at that sweep.
+		void startRegrowth(glm::vec2 position, const std::string& defName, double now, double seconds);
 
-		/// Check if an entity is currently on cooldown
-		/// @param position World position of the entity
-		/// @param defName DefName of the entity
-		/// @return true if entity is on cooldown (not harvestable)
-		[[nodiscard]] bool isEntityOnCooldown(glm::vec2 position, const std::string& defName) const;
+		/// When a regrowing entity is ready again, or nullopt if it is ready at `now`. An entry whose time
+		/// has come is erased here.
+		[[nodiscard]] std::optional<double> regrowthReadyAt(glm::vec2 position, const std::string& defName, double now);
 
-		/// Update cooldown timers (call once per frame)
-		/// @param deltaTime Time elapsed since last update
-		void updateCooldowns(float deltaTime);
+		/// Regrowth entries held, lapsed ones not yet looked up or swept included
+		[[nodiscard]] size_t regrowthEntryCount() const { return m_regrowthReadyAt.size(); }
 
 		/// Initialize resource count for an entity (called during spawn)
 		/// @param position World position of the entity
@@ -254,8 +252,12 @@ namespace assets {
 			}
 		};
 
-		/// Remaining regrowth cooldown in seconds, per entity
-		std::unordered_map<EntityStateKey, float, EntityStateKeyHash> m_cooldowns;
+		/// The time each regrowing entity is ready again, on the caller's clock
+		std::unordered_map<EntityStateKey, double, EntityStateKeyHash> m_regrowthReadyAt;
+
+		/// startRegrowth sweeps lapsed entries once the map reaches this size
+		static constexpr size_t kMinRegrowthSweepSize = 1024;
+		size_t					m_regrowthSweepSize = kMinRegrowthSweepSize;
 
 		/// Remaining resource pool (units left to harvest), per entity
 		std::unordered_map<EntityStateKey, uint32_t, EntityStateKeyHash> m_resourceCounts;
