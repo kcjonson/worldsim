@@ -394,18 +394,24 @@ namespace ecs {
 				option.hysteresisBonus = priorityConfig.getInProgressBonus();
 			}
 
-			// Storage-priority within-tier bias: a storage-stocking haul (a pull from a lower-priority
-			// box, or a stocking carry-in) is ordered within tier 6 by its DESTINATION box's priority
-			// for the item. Rank the dest box's StoragePriority (Low=0..Critical=3) and weight it to
-			// dominate distance, so a Critical box farther away beats a Low box nearer. Tier is compared
-			// first, so this never lets stocking preempt a tier-5 need or tier-4 work order. 0 for every
-			// non-stocking option.
-			if (option.servesStorageStocking && option.haulTargetStorageId != 0 && world != nullptr) {
-				const auto destEntity = static_cast<EntityID>(option.haulTargetStorageId);
+			// Storage-priority within-tier bias: a storage-stocking option (a loose haul, a pull from a
+			// lower-priority box, a stocking carry-in, or a stocking cut) is ordered within tier 6 by its
+			// DESTINATION box's priority for the item. Rank the dest box's StoragePriority (Low=0..Critical=3)
+			// and weight it to dominate distance, so a Critical box farther away beats a Low box nearer, and
+			// goods never go first to a box a higher one would pull them from. Tier is compared first, so
+			// this never lets stocking preempt a tier-5 need or tier-4 work order. 0 for every non-stocking
+			// option.
+			const GoalTask* stockedBy = option.taskType == TaskType::Harvest && option.servesStorageStocking
+											? GoalTaskRegistry::Get().getGoal(option.harvestGoalId)
+											: nullptr;
+			const uint64_t	destBox = stockedBy != nullptr ? static_cast<uint64_t>(stockedBy->destinationEntity) : option.haulTargetStorageId;
+			const uint32_t	stockedItem = stockedBy != nullptr ? option.harvestYieldDefNameId : option.haulItemDefNameId;
+			if (option.servesStorageStocking && destBox != 0 && world != nullptr) {
+				const auto destEntity = static_cast<EntityID>(destBox);
 				const auto* destConfig = world->getComponent<StorageConfiguration>(destEntity);
 				if (destConfig != nullptr) {
 					const auto& reg = assets::AssetRegistry::Get();
-					const auto* itemDef = reg.getDefinitionById(option.haulItemDefNameId);
+					const auto* itemDef = reg.getDefinitionById(stockedItem);
 					if (itemDef != nullptr) {
 						const StoragePriority destPriority = destConfig->getPriorityFor(itemDef->defName, itemDef->category);
 						const auto rank = static_cast<int16_t>(static_cast<uint8_t>(destPriority)); // 0..3
@@ -618,6 +624,7 @@ namespace ecs {
 				// Fetching loose stock to provision a started craft is committed work (tier 4), so a far
 				// pile can't strand a half-provisioned craft.
 				option.servesActiveWorkOrder = craftFetch;
+				option.servesStorageStocking = goal.owner == GoalOwner::StorageGoalSystem;
 				option.gatheringRank = rank;
 				// Tiebreak on (goal, source item) so two equidistant loose items for the same goal resolve
 				// deterministically rather than by memory's hash order.

@@ -862,6 +862,27 @@ namespace ecs::test {
 		EXPECT_EQ(world->getComponent<StructureBlueprint>(site.blueprint)->remaining("Wood"), 0U);
 	}
 
+	// Loose stone lies beside a Low box and far from a High one that also wants it: he carries it to the
+	// High box, so it is never stocked into the Low box only to be pulled out again.
+	TEST_F(ChainClaimsTest, LooseStockGoesToTheHigherPriorityBoxFirst) {
+		const glm::vec2 lowPos{4.0F, 0.0F};
+		const glm::vec2 highPos{-40.0F, 0.0F};
+		const EntityID	low = makeBox(lowPos, StoragePriority::Low);
+		const EntityID	high = makeBox(highPos, StoragePriority::High);
+		storageGoal(low, lowPos);
+		storageGoal(high, highPos);
+		const glm::vec2 stonePos{5.0F, 0.0F};
+		const EntityID	stone = world->createEntity();
+		world->addComponent<Position>(stone, Position{stonePos});
+		makeLoosePile(*world, stone, stoneId, stonePos, 4);
+		const EntityID colonist = createColonist({6.0F, 0.0F});
+		remember(colonist, stonePos, "Stone", assets::CapabilityType::Carryable);
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(colonist)->haulTargetStorageId, static_cast<uint64_t>(high));
+	}
+
 	// The task panel lists a storage goal only while a colonist is offered work toward it: a box that
 	// wants stone when no loose stone is known, or one with room for a category nobody has any of, has
 	// nothing to do.
