@@ -5,18 +5,12 @@
 
 import { execFileSync } from 'node:child_process';
 import os from 'node:os';
+import { pathToFileURL } from 'node:url';
 
-const kIdleMaxPct = 10;
-const kMostlyIdleMaxPct = 35;
-const kGames = ['world-sim', 'ui-sandbox', 'asset-manager'];
+export const kIdleMaxPct = 10;
+export const kMostlyIdleMaxPct = 35;
+export const kGames = ['world-sim', 'ui-sandbox', 'asset-manager'];
 const kBuilders = ['cl', 'link', 'ninja', 'cmake', 'ctest', 'ccache', 'clang', 'clang++', 'clang-cl', 'worldgen-cli'];
-
-const secondsArg = process.argv.indexOf('--seconds');
-const seconds = secondsArg > 0 ? Number(process.argv[secondsArg + 1]) : 5;
-if (!Number.isFinite(seconds) || seconds <= 0) {
-	console.error('--seconds takes a positive number');
-	process.exit(2);
-}
 
 function cpuTimes() {
 	let idle = 0;
@@ -37,7 +31,8 @@ function gpuPct() {
 	}
 }
 
-function processNames() {
+// Lower-case image names, one entry per running process
+export function processNames() {
 	const out = process.platform === 'win32'
 		? execFileSync('tasklist', ['/FO', 'CSV', '/NH'], { encoding: 'utf8' })
 		: execFileSync('ps', ['-A', '-o', 'comm='], { encoding: 'utf8' });
@@ -47,26 +42,41 @@ function processNames() {
 		.filter(Boolean);
 }
 
-const before = cpuTimes();
-const gpuSamples = [];
-for (let i = 0; i < seconds; i++) {
-	gpuSamples.push(gpuPct());
-	await new Promise((resolve) => setTimeout(resolve, 1000));
-}
-const after = cpuTimes();
-
-const cpu = Math.round(100 * (1 - (after.idle - before.idle) / (after.total - before.total)));
-const gpuReadings = gpuSamples.filter((value) => value !== null && Number.isFinite(value));
-const gpu = gpuReadings.length > 0 ? Math.max(...gpuReadings) : null;
-
-const running = new Set(processNames());
-const games = kGames.filter((name) => running.has(name));
-const builders = [...running].filter((name) => kBuilders.includes(name) || name.endsWith('-tests'));
-
-const worst = Math.max(cpu, gpu ?? 0);
-let verdict = 'busy';
-if (games.length === 0 && worst < kMostlyIdleMaxPct) {
-	verdict = builders.length === 0 && worst < kIdleMaxPct ? 'idle' : 'mostly-idle';
+export function isBuilder(name) {
+	return kBuilders.includes(name) || name.endsWith('-tests');
 }
 
-console.log(JSON.stringify({ verdict, cpuPct: cpu, gpuPct: gpu, processes: [...games, ...builders] }));
+export async function readMachineLoad({ seconds = 5 } = {}) {
+	const before = cpuTimes();
+	const gpuSamples = [];
+	for (let i = 0; i < seconds; i++) {
+		gpuSamples.push(gpuPct());
+		await new Promise((resolve) => setTimeout(resolve, 1000));
+	}
+	const after = cpuTimes();
+
+	const cpu = Math.round(100 * (1 - (after.idle - before.idle) / (after.total - before.total)));
+	const gpuReadings = gpuSamples.filter((value) => value !== null && Number.isFinite(value));
+	const gpu = gpuReadings.length > 0 ? Math.max(...gpuReadings) : null;
+
+	const running = new Set(processNames());
+	const games = kGames.filter((name) => running.has(name));
+	const builders = [...running].filter(isBuilder);
+
+	const worst = Math.max(cpu, gpu ?? 0);
+	let verdict = 'busy';
+	if (games.length === 0 && worst < kMostlyIdleMaxPct) {
+		verdict = builders.length === 0 && worst < kIdleMaxPct ? 'idle' : 'mostly-idle';
+	}
+	return { verdict, cpuPct: cpu, gpuPct: gpu, processes: [...games, ...builders] };
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+	const secondsArg = process.argv.indexOf('--seconds');
+	const seconds = secondsArg > 0 ? Number(process.argv[secondsArg + 1]) : 5;
+	if (!Number.isFinite(seconds) || seconds <= 0) {
+		console.error('--seconds takes a positive number');
+		process.exit(2);
+	}
+	console.log(JSON.stringify(await readMachineLoad({ seconds })));
+}

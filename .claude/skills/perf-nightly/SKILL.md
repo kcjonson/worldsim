@@ -1,0 +1,112 @@
+---
+name: perf-nightly
+description: Run the nightly perf batch for world-sim - wait for an idle machine, time main's tip against the last tested SHA, and on a major regression isolate the PR and open a draft revert. Use when the scheduled 02:00 task fires, or when asked to run the nightly perf batch or perf-nightly.
+---
+
+# perf-nightly
+
+Runs the batch specced in `docs/testing/nightly-perf-batch.md`. Read that spec once before the first step; this file is the procedure.
+
+Nobody is watching. Don't ask questions; make the call the spec implies, and write down what you did in the report.
+
+## Rules that hold all night
+
+- **The script decides, you don't.** Verdicts come from `perf.mjs compare`. Never read raw timings out of a capture file and form your own view of whether something regressed.
+- **Never merge, revert, or push to `main`.** The outcome of a regression is a draft PR.
+- **Never time anything outside `perf.mjs measure`.** It holds the idle gate; a capture you run by hand doesn't.
+- **Stop at 07:00.** `measure` stops itself. If you are about to start a step after 07:00, write the report instead.
+- `idle-wait` and `measure` run for a long time. Start them with the Bash tool's `run_in_background: true`, redirect stdout to a file in the night's folder, and wait for the completion notice. Don't poll, don't sleep.
+- No AI attribution in any PR, comment, or commit.
+
+## 0. Get on the current tooling
+
+Everything runs from the batch's own worktree, `C:\Users\kevin\Code\worldsim\.claude\worktrees\perf-nightly`. It is permanent; never remove it.
+
+```bash
+cd C:/Users/kevin/Code/worldsim/.claude/worktrees/perf-nightly
+git fetch origin
+git checkout --detach origin/main
+```
+
+If the worktree is missing, run `node scripts/perf.mjs setup` from any checkout of the repo, then come back here. `measure` moves this worktree's HEAD while it builds and puts it back on `origin/main` when it finishes; if a command ever fails with a missing script, repeat the checkout above.
+
+## 1. What needs a run
+
+```bash
+node scripts/perf.mjs range
+```
+
+It answers `base` (the last tested SHA), `tip`, every merge between them with its PR, `Perf:` line and whether it is perf-relevant, and the open regressions.
+
+- No merges, or none relevant: `node scripts/perf.mjs state --set-tested <tip>`, write a one-line report (step 6), done. Don't wait for idle, don't build.
+- Otherwise go on. The whole range is tested at once on the tip.
+
+## 2. Wait for the machine
+
+```bash
+node scripts/perf.mjs idle-wait --until 06:00
+```
+
+In the background. It checks every 5 minutes and exits 0 on two idle checks in a row, or 3 at 06:00. On 3: write the report with what was busy (its `checks` list names the processes) and stop. `lastTested` stays where it was, so tomorrow's range includes today's.
+
+## 3. Measure and get the verdict
+
+```bash
+node scripts/perf.mjs measure --refs <base>,<tip>
+node scripts/perf.mjs compare --night <night> --base <base> --tip <tip>
+```
+
+`measure` (background) builds both SHAs, then captures river, coast and desert, two runs each, interleaved, redoing a void capture once after the machine is idle again. Its JSON names the night folder (`night`), any build that failed, and whether it stopped early.
+
+`compare` answers an overall `verdict` and one per view, and writes the tables to a markdown file it names.
+
+| Verdict | Meaning | Do |
+|---|---|---|
+| `clean` | nothing past noise, or only improvements | set tested, report |
+| `regressed` | past noise, under the major threshold | set tested, list the cells in the report, nothing else |
+| `inconclusive` | a capture was loaded twice over | report it; leave `lastTested` alone so the range is retried |
+| `major` | a major regression | step 4 |
+
+`measure` lists a capture that couldn't run with an `error`. "The game exited before its scene was ready" on every capture of one SHA usually means that SHA can't load the shared planet (a worldgen format change): report it, don't bake a planet, and leave `lastTested` alone.
+
+A build failure of the tip is not a perf result: report it and leave `lastTested` alone. A build failure of the base: use the newest earlier SHA from `git log --first-parent` that builds, and say so.
+
+## 4. Isolate a major regression
+
+Work from what the night already produced before building anything.
+
+1. **Name a suspect.** `compare`'s `moved` cells say what got slower (`tileGpuMs`: the ground and water pass; `gpuMs` without it: entities, trees, UI; `entityMs`, `updateMs`, `sceneUpdateMs`: CPU side), and its `counts` say whether draw calls, triangles or upright draws moved with it. `range`'s `Perf:` lines and `perfFiles` say which PR touched that. A PR whose `Perf:` line predicted the cost is the first suspect.
+2. **Test the suspect.** `measure --refs <suspect>^1,<suspect> --views <the views that failed>` then `compare` those two. Major: that's the offender. Clean: go to 3.
+3. **Bisect.** Over the range's relevant merges in first-parent order, halve: measure the middle merge against `base` on the failing views. Major means the offender is at or before it, clean means after. `measure` reuses captures already taken that night, so `base` is not re-captured.
+4. **Check for a second one.** In the batch worktree: `git checkout -b perf/revert-<pr> origin/main && git revert -m 1 --no-edit <offender>`. Measure that branch against `base` on the failing views. Clean: one offender. Still major: repeat from 1 on the remaining merges, reverting onto the same branch. Finish with `git checkout --detach origin/main`.
+5. **Salal.** Only if the offender's `salalBump` is true: run salal's perf suite at the old and new tags (the `GIT_TAG` values in that merge's `CMakeLists.txt` diff) from `C:\Users\kevin\Code\salal`, per its own docs, to say whether the engine's numbers moved. If they did, file it in salal's board too. Never run salal's suite otherwise.
+
+If the revert doesn't apply cleanly, don't resolve conflicts: report the offender and the conflict, and skip the PR.
+
+If 07:00 arrives mid-isolation, report how far the range was narrowed. Leave `lastTested` alone; tomorrow continues.
+
+## 5. File the outcome
+
+For each offender:
+
+1. Push `perf/revert-<pr>` and open a **draft** PR against `main`: title `Revert "<original title>" (perf regression)`, body with what regressed, `compare`'s tables for base against tip and for the offender alone, the date, and `Perf:` saying what the revert restores. One PR per offender when there are several, each reverting only its own merge.
+2. Comment on the original PR with a link to the revert PR and the two or three worst cells.
+3. File a bug on the board (Specboard) titled with the regression and the PR, `discovered_from` the original PR's item when you can find it by branch or key, linking the revert PR.
+4. `node scripts/perf.mjs state --open-regression '{"pr":<pr>,"merge":"<sha>","revertPr":"<url>","bug":"<key>"}'`
+
+Then `node scripts/perf.mjs state --set-tested <tip>`: the tip is the new base either way, so tomorrow measures against it and doesn't report the same regression again.
+
+Each night, check the open regressions `range` lists: if a revert PR was merged or closed, `state --close-regression <pr>`.
+
+## 6. Report
+
+Write `<night>/report.md` (for a no-run night, `perf-results/nightly/<date>/report.md` in the main checkout, which `measure` would have created):
+
+- The range: base, tip, each merge with its PR and whether it was relevant and why.
+- The verdict per view, with `compare`'s markdown tables pasted in.
+- Anything void, inconclusive, skipped, or that failed to build.
+- What was isolated and how (suspect or bisect, which merges were measured).
+- Links to every PR, comment and bug filed.
+- Open regressions still waiting on Kevin.
+
+End the session with a three or four line summary of the report: verdict, offender and revert PR if any, and the report's path.

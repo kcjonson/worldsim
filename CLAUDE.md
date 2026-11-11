@@ -259,6 +259,8 @@ captures taken under load, then on re-runs chasing regressions that were never t
   and zooms that could move, not the whole suite by reflex), and only when
   `node scripts/machine-load.mjs` answers `idle` or `mostly-idle`. Run the check before the capture
   and again after. On `busy`, don't time anything; the nightly batch will.
+- Capture with `node scripts/perf.mjs capture` (scope it with `--zooms` and `--no-scroll`) and take
+  the verdict from `node scripts/perf.mjs compare`, not from reading timings by eye.
 - Know what the run costs before starting it: every capture launches the game on Kevin's desktop
   and holds the machine. Decide the launches up front and stop when the question is answered.
 - Even with `main`, or faster, is a good result, loaded machine or not. Record it and move on. No
@@ -275,7 +277,7 @@ captures taken under load, then on re-runs chasing regressions that were never t
 - The nightly batch times `main` in the early morning once the machine is idle, and opens a draft
   revert for a PR behind a major regression. Agents run it and decide what it covers; Kevin never
   asks for a perf run. `/docs/testing/README.md` has the rule in full and
-  `/docs/testing/nightly-perf-batch.md` the batch (specced, not built yet).
+  `/docs/testing/nightly-perf-batch.md` the batch, which the `/perf-nightly` skill runs.
 
 **Visual Verification:**
 - When user reports visual issues ("X doesn't appear", "layout is wrong")
@@ -367,6 +369,7 @@ See `/docs/development-log/README.md` for the full template.
 
 Worktrees are disposable scratch space, not permanent fixtures. Remove a worktree when the session that created it ends; its branch and commits stay in the repo after removal, so nothing is lost. This goes double for sub-agent worktrees (`isolation: "worktree"`): they are per-agent and should be removed as soon as the agent finishes, never left to accumulate under `.claude/worktrees/`.
 
+- The one permanent worktree is `.claude/worktrees/perf-nightly`, where the nightly perf batch builds and runs. Never remove it, and don't work in it.
 - Clean up with `git worktree remove <path>`, then `git worktree prune`. It refuses a worktree with uncommitted changes unless you pass `--force`; leave those in place and surface them rather than discarding unsaved work.
 - Removing a worktree keeps its branch. If there's uncommitted work worth saving, commit it to the branch before removing.
 

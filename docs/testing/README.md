@@ -19,7 +19,7 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 |---|---|---|
 | Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI, every push |
 | Happy-path scenarios | [scenarios/](./scenarios/) and [regressions.md](./regressions.md) | before every commit that touches what they cover |
-| Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`), with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state, and the script warns if one wasn't P0, and the depth-sorted upright stream's draws (`uprightDrawCalls`, `uprightTriangles`, from `what=uprights`) so trees read apart from everything else ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | in a session for its own change, after a machine-load check; the full suite in the nightly batch on `main` ([Performance](#performance)) |
+| Gameplay perf | `node scripts/perf.mjs capture`, with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state and what the rest of the machine was doing, a capture taken under load is marked void, and it records the depth-sorted upright stream's draws (`uprightDrawCalls`, `uprightTriangles`, from `what=uprights`) so trees read apart from everything else ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | in a session for its own change, after a machine-load check; the full suite in the nightly batch on `main` ([Performance](#performance)) |
 
 - **Scenarios are the happy-path scripts.** Before committing, the relevant ones are run as a
   manual regression pass by the cheapest subagent fleet that can (Haiku-class), one agent per
@@ -59,6 +59,21 @@ Allowed when the change calls for it, with three conditions.
 3. **Budgeted.** Every capture launches the game on Kevin's desktop and holds the machine while it
    runs. Decide the launches before the first one and stop when the question is answered.
 
+With world-sim in the game scene on your port, once on `main` and once on the branch:
+
+```
+node scripts/perf.mjs capture --port <PORT> --view river --zooms 3,1.5 --no-scroll --out <file>.json
+node scripts/perf.mjs compare --base <main>.json --tip <branch>.json
+```
+
+`--view` is `river`, `coast` or `desert` (or `--x` and `--y` in world meters); leave out `--zooms` and
+`--no-scroll` for every zoom and the two scroll scenarios. The capture also watches the machine
+while it runs: CPU and GPU use by everything that isn't the game, and other sessions' build, test
+and game processes. Past a threshold it marks itself void, and `compare` then answers
+`inconclusive` where a loaded capture can't settle it. Take the verdict from `compare`; don't read
+timings out of the files by eye. With one capture a side it has no noise to measure against and
+flags only a step the size of a major regression; two a side measures the noise.
+
 Reading the result:
 
 | Result | Machine | What it means | What to do |
@@ -91,7 +106,7 @@ The backstop, and where an unconfirmed result gets settled. In the early morning
 measures as idle, an agent times `main`'s tip against the last SHA it tested, and on a major
 regression finds the PR behind it and opens a draft revert. Agents run it and decide what it
 covers; Kevin never asks for a perf run. [nightly-perf-batch.md](./nightly-perf-batch.md) is the
-spec. It is not built yet.
+spec, and the `/perf-nightly` skill runs it.
 
 ---
 
