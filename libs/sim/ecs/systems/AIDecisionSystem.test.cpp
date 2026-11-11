@@ -4902,8 +4902,8 @@ namespace ecs::test {
 		addKnownEntity(colonist, farther, kWaterDefId, assets::CapabilityType::Drinkable);
 
 		nav->finishPendingBuilds();
-		ASSERT_TRUE(nav->requestPath(start, nearOther, 0.3F).has_value()) << "one mesh: a route to the other colonist's side";
-		ASSERT_TRUE(nav->requestPath(start, farther, 0.3F).has_value());
+		ASSERT_TRUE(nav->requestPath(start, nearOther, 0.3F).route.has_value()) << "one mesh: a route to the other colonist's side";
+		ASSERT_TRUE(nav->requestPath(start, farther, 0.3F).route.has_value());
 
 		world->update(kTick);
 
@@ -5074,7 +5074,7 @@ namespace ecs::test {
 		nav->setViewportRect({600.0F, kFordRiverY}, {60.0F, 60.0F});
 		nav->finishPendingBuilds();
 		ASSERT_TRUE(nav->inSimArea({600.0F, kFordRiverY}));
-		ASSERT_TRUE(nav->requestPath(kStart, {620.0F, 20.0F}, 0.3F).has_value()) << "a player's route round the ford";
+		ASSERT_TRUE(nav->requestPath(kStart, {620.0F, 20.0F}, 0.3F).route.has_value()) << "a player's route round the ford";
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBehind));
 	}
 
@@ -5119,6 +5119,36 @@ namespace ecs::test {
 		}
 		EXPECT_LT(glm::distance(at, kAcross), 0.3F) << "never arrived";
 		EXPECT_GT(east, 300.0F) << "it went round the ford";
+	}
+
+	// The only food is 10 m across the river and 1.5 km round its end. The colonist sets off and arrives,
+	// or, where that is past what the searches spend, its trace says the search gave up: never "no source".
+	using AIDecisionLongFordTest = AIDecisionFordTest<750>;
+	TEST_F(AIDecisionLongFordTest, OnlyFoodRoundALongRiverIsReachedOrTheSearchSaysItGaveUp) {
+		const auto		 colonist = hungryColonistKnowing({kAcross});
+		const glm::vec2& at		  = world->getComponent<Position>(colonist)->value;
+		bool			 noSource = false;
+		bool			 gaveUp	  = false;
+		float			 east	  = 0.0F;
+		float			 lastDecision = -1.0F;
+		for (int i = 0; i < 20000 && glm::distance(at, kAcross) > 1.5F && !gaveUp; ++i) {
+			world->update(kTick);
+			east = std::max(east, at.x);
+			const auto* trace = getTrace(colonist);
+			if (trace->lastEvaluationTime == lastDecision) {
+				continue;
+			}
+			lastDecision		= trace->lastEvaluationTime;
+			const auto* hunger = findOption(*trace, isHungerNeedOption);
+			ASSERT_NE(hunger, nullptr);
+			noSource = noSource || hunger->status == OptionStatus::NoSource;
+			gaveUp	 = hunger->status == OptionStatus::SearchGaveUp;
+		}
+		EXPECT_FALSE(noSource) << "the trace said no source";
+		EXPECT_TRUE(gaveUp || glm::distance(at, kAcross) <= 1.5F) << "neither arrived nor gave up; reached x " << east;
+		if (!gaveUp) {
+			EXPECT_GT(east, 750.0F) << "it went round the river's end";
+		}
 	}
 
 	// A goal-driven harvest, end to end with the real AI, MovementSystem and ActionSystem: the colonist
@@ -5915,6 +5945,77 @@ namespace ecs::test {
 		EXPECT_EQ(decideAt(kSpot), std::optional<glm::vec2>(kFar));
 	}
 
+	// A failed route to water 600 m off, far past the ground the anchor's stamp covers, is forgotten once
+	// a wall beside the water goes: the stamp of the ground between the colonist and the water moved. A
+	// wall built well off that ground changes nothing.
+	TEST_F(AIDecisionWallTest, FailedRouteToAFarTargetClearsWhenAWallBesideItGoes) {
+		constexpr glm::vec2 kSpot{0.0F, 0.0F};
+		constexpr glm::vec2 kWater{600.0F, 0.0F};
+		const auto			buildWallAt = [&](geometry::Vec2i64 a, geometry::Vec2i64 b) {
+			   const auto commit = construction.commitSegment(a, b, "Wood", "Standard", construction::kInvalidFoundation);
+			   EXPECT_TRUE(commit.ok());
+			   for (const auto id : commit.createdSegments) {
+				   construction.setSegmentState(id, construction::FoundationState::Built);
+			   }
+			   return commit.createdSegments;
+		};
+		const auto besideWater = buildWallAt({604000, -3000}, {604000, 3000});
+
+		const auto colonist = createColonist(kSpot);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 30.0F);
+		addKnownEntity(colonist, kWater, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->finishPendingBuilds();
+		// A wall edit is gathered by the system's update and lands at the join.
+		const auto landWallEdits = [&] {
+			world->getComponent<Position>(colonist)->value = kSpot;
+			world->update(kTick);
+			nav->finishPendingBuilds();
+		};
+
+		const auto thirstTarget = [&]() -> std::optional<glm::vec2> {
+			const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+			});
+			return thirst != nullptr && thirst->status == OptionStatus::Selected ? thirst->targetPosition : std::nullopt;
+		};
+		const auto decide = [&] {
+			const float last = getTrace(colonist)->lastEvaluationTime;
+			for (int i = 0; i < kTicksAfterMesh && getTrace(colonist)->lastEvaluationTime == last; ++i) {
+				world->getComponent<Position>(colonist)->value = kSpot;
+				world->update(kTick);
+			}
+			return thirstTarget();
+		};
+
+		getTask(colonist)->clear();
+		ASSERT_EQ(decide(), std::optional<glm::vec2>(kWater));
+		Task* task = getTask(colonist);
+		task->navState			= NavState::CantFindWayTo;
+		task->blockedReachStamp = SourceReachMemo::Anchor{.at = kSpot, .structural = nav->verdictStamp(kSpot),
+														  .beliefVersion = world->getComponent<Memory>(colonist)->beliefVersion}
+									  .stamp();
+		getMovementTarget(colonist)->active = false;
+		EXPECT_EQ(decide(), std::nullopt) << "the failure is recorded";
+
+		const std::uint64_t epochBefore = nav->reachFrom(kSpot, 0.3F).structuralEpoch;
+		buildWallAt({300000, 600000}, {304000, 600000});
+		landWallEdits();
+		ASSERT_NE(nav->reachFrom(kSpot, 0.3F).structuralEpoch, epochBefore);
+		getTask(colonist)->clear();
+		EXPECT_EQ(decide(), std::nullopt) << "a wall off the ground between them cleared the failure";
+
+		const std::uint64_t spanBefore = nav->spanStamp(kSpot, kWater);
+		for (const auto id : besideWater) {
+			ASSERT_TRUE(construction.removeSegment(id));
+		}
+		landWallEdits();
+		ASSERT_NE(nav->spanStamp(kSpot, kWater), spanBefore);
+		getTask(colonist)->clear();
+		EXPECT_EQ(decide(), std::optional<glm::vec2>(kWater)) << "the failure outlived the wall beside the water";
+	}
+
 	// Water in a room whose walls the colonist knows, with no door it knows: its reach walks the
 	// structural mesh under its belief, so the room reads unreachable and is never chosen, and no route
 	// to it is ever asked for. Another water source sits outside.
@@ -5951,7 +6052,7 @@ namespace ecs::test {
 			EXPECT_TRUE(nav->hasMesh()) << "navmesh never built";
 			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
 			EXPECT_FALSE(isReachable(*nav, kStart, kInRoom, 0.3F, belief)) << "the known walls close the room";
-			EXPECT_FALSE(nav->requestPath(kStart, kInRoom, 0.3F, belief).has_value()) << "and the route agrees";
+			EXPECT_FALSE(nav->requestPath(kStart, kInRoom, 0.3F, belief).route.has_value()) << "and the route agrees";
 			return colonist;
 		}
 

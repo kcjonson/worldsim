@@ -317,6 +317,38 @@ TEST(MemoryQueries, NearestSourceIsByWalkNotStraightLine) {
 	EXPECT_EQ(asked[2], std::pair(behind, 100.0F));
 }
 
+// A far source (the search gave up) is never "no": it loses to any source with a walk, however long,
+// and is taken when it is the only one, the nearer far one first by straight line.
+TEST(MemoryQueries, FarSourceLosesToAWalkAndWinsAlone) {
+	const glm::vec2 farNear{30.0F, 0.0F};
+	const glm::vec2 farFarther{0.0F, 60.0F};
+	const glm::vec2 longWalk{-50.0F, 0.0F};
+	const auto		walk = [&](uint64_t, const glm::vec2& p, float maxWalk) {
+		 if (p != longWalk) {
+			 return ecs::WalkAnswer::farAway();
+		 }
+		 return ecs::WalkAnswer(500.0F <= maxWalk ? std::optional<float>(500.0F) : std::nullopt);
+	};
+	const auto reachable = [](uint64_t, const glm::vec2&) { return true; };
+	std::vector<ecs::SourceCandidate> scratch;
+
+	ecs::Memory all;
+	for (const glm::vec2 p : {farNear, farFarther, longWalk}) {
+		ASSERT_TRUE(all.rememberWorldEntity(p, kDefId, kSourceMask));
+	}
+	const auto withWalk = ecs::findNearestReachableWithCapability(all, kSourceCapability, {0.0F, 0.0F}, anySource, walk, reachable, scratch);
+	ASSERT_TRUE(withWalk.has_value());
+	EXPECT_EQ(withWalk->position, longWalk) << "a 500 m walk beats a far source 30 m off in a straight line";
+
+	ecs::Memory onlyFar;
+	for (const glm::vec2 p : {farFarther, farNear}) {
+		ASSERT_TRUE(onlyFar.rememberWorldEntity(p, kDefId, kSourceMask));
+	}
+	const auto alone = ecs::findNearestReachableWithCapability(onlyFar, kSourceCapability, {0.0F, 0.0F}, anySource, walk, reachable, scratch);
+	ASSERT_TRUE(alone.has_value()) << "a far source is a candidate";
+	EXPECT_EQ(alone->position, farNear);
+}
+
 // The reach memo: a colonist among unreachable sources tests each one twice (to kWalkStretch times its
 // straight line, then in full), and never again under the key. Learning a new source tests only that
 // one, and a changed key (a nav change here) tests them all again.
@@ -385,7 +417,7 @@ TEST(MemoryQueries, SourceReachMemoHoldsFailedRoutesUnderTheAnchor) {
 
 	memo.keep(here, anchor, 16);
 	ASSERT_TRUE(memo.reachable(kSource, at, probe));
-	memo.recordFailedRoute(kSource);
+	memo.recordFailedRoute(kSource, {.target = at});
 	memo.keep(stepOn, anchor, 16);
 	EXPECT_TRUE(memo.knownUnreachable(kSource));
 	EXPECT_FALSE(memo.reachable(kSource, at, probe));

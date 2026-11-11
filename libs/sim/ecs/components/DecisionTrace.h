@@ -26,6 +26,7 @@ namespace ecs {
 		Regrowing, // The known source is regrowing: skipped now, chosen again once it is ready
 		NoRoom,	   // The colonist can't lift any of the item now (pack full, or hands busy with another load)
 		Reserved,  // Another colonist's claim holds the source, station, or item (reservedBy names it)
+		SearchGaveUp, // The route search gave up before reaching the target: too far to search now, not "no way"
 		Satisfied  // Need above threshold, no action needed
 	};
 

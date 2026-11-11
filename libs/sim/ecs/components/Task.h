@@ -194,6 +194,8 @@ struct Task {
 	// while its own anchor still stamps the same, so the verdict never outlives the structural mesh and
 	// belief it was found under, and a change outside the anchor's reach doesn't stop it being recorded.
 	std::uint64_t blockedReachStamp = 0;
+	// That route's search gave up (NavigationSystem::PathAnswer::gaveUp) rather than finding no way.
+	bool blockedSearchGaveUp = false;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;

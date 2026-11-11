@@ -5,6 +5,7 @@
 // See /docs/design/game-systems/colonists/memory.md for design details.
 
 #include "Memory.h"
+#include "WalkAnswer.h"
 
 #include "../EntityID.h"
 
@@ -43,6 +44,7 @@ struct SourceCandidate {
 	uint32_t				storageIndex = 0;
 	bool					walked		 = false;
 	bool					stretched	 = false; // walked once, to kWalkStretch times the straight line, and found longer
+	float					straightSq	 = 0.0F;  // the straight line, squared, whatever distSq has become
 };
 
 /// How far a candidate is first walked when no walk has been found yet: this many times its straight-line
@@ -58,14 +60,17 @@ inline constexpr float kWalkStretch = 2.0F;
 /// left: a candidate that is no nearer in a straight line than the best walk found is never walked. A
 /// walk is asked no longer than the best one found, and one that is goes back keyed at that bound, to
 /// be walked in full if it comes off again. An unreachable candidate goes to `reachable` as it comes
-/// off, so the caller still sees it.
+/// off, so the caller still sees it. A far candidate (the search gave up, WalkAnswer) is set aside: far
+/// candidates are taken only when no candidate with a walk is, nearest first by straight line, since
+/// nothing is known of their walks.
 template <typename Walk, typename Reachable>
 [[nodiscard]] std::optional<SourceCandidate>
 nearestReachable(std::vector<SourceCandidate>& scratch, Walk&& walk, Reachable&& reachable) {
 	const auto farther = [](const SourceCandidate& a, const SourceCandidate& b) {
 		return std::tie(a.distSq, a.key, a.item) > std::tie(b.distSq, b.key, b.item);
 	};
-	constexpr float kAnyWalk = std::numeric_limits<float>::infinity();
+	constexpr float				 kAnyWalk = std::numeric_limits<float>::infinity();
+	std::vector<SourceCandidate> farAway;
 	std::make_heap(scratch.begin(), scratch.end(), farther);
 	while (!scratch.empty()) {
 		std::pop_heap(scratch.begin(), scratch.end(), farther);
@@ -82,7 +87,12 @@ nearestReachable(std::vector<SourceCandidate>& scratch, Walk&& walk, Reachable&&
 			// first time, and in full the next.
 			const bool				   firstWalk = best == kAnyWalk && !nearest.stretched;
 			const float				   bound	 = best != kAnyWalk ? std::sqrt(best) : (firstWalk ? kWalkStretch * std::sqrt(nearest.distSq) : kAnyWalk);
-			const std::optional<float> measured	 = walk(nearest, bound);
+			const WalkAnswer		   answer	 = walk(nearest, bound);
+			const std::optional<float> measured	 = answer.walk;
+			if (answer.far) {
+				farAway.push_back(nearest);
+				continue;
+			}
 			if (measured.has_value()) {
 				nearest.distSq = *measured * *measured;
 				nearest.walked = true;
@@ -104,13 +114,21 @@ nearestReachable(std::vector<SourceCandidate>& scratch, Walk&& walk, Reachable&&
 			return nearest;
 		}
 	}
+	std::sort(farAway.begin(), farAway.end(), [](const SourceCandidate& a, const SourceCandidate& b) {
+		return std::tie(a.straightSq, a.key, a.item) < std::tie(b.straightSq, b.key, b.item);
+	});
+	for (const SourceCandidate& candidate : farAway) {
+		if (reachable(candidate)) {
+			return candidate;
+		}
+	}
 	return std::nullopt;
 }
 
 /// A candidate at `position` seen from `fromPosition`.
 [[nodiscard]] inline SourceCandidate sourceCandidate(const glm::vec2& fromPosition, uint64_t key, const glm::vec2& position) {
 	const glm::vec2 diff = position - fromPosition;
-	return {.distSq = glm::dot(diff, diff), .key = key, .entity = nullptr, .position = position};
+	return {.distSq = glm::dot(diff, diff), .key = key, .entity = nullptr, .position = position, .straightSq = glm::dot(diff, diff)};
 }
 
 /// The nearest known world entity with `capability`, ties broken by memory key: what

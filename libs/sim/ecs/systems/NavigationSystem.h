@@ -144,12 +144,18 @@ class NavigationSystem : public ISystem {
 	// consumed synchronously.
 	//
 	// The route is planned over whatever ground is meshed, for anyone, at any distance. The structural
-	// walk under the same belief comes first: where it finds none, neither would the nav search, so
-	// there is none. When the nav search then gives up in priced ground (more expansions than the
-	// structural walk warrants, see kNavExpansionFloor), the route is the structural walk, through the
-	// detail at its price.
-	[[nodiscard]] std::optional<std::vector<glm::vec2>> requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-																	geometry::nav::BeliefFilter belief = {}) const;
+	// walk under the same belief comes first, three ways as a reach walk (walk()): where it finds none,
+	// neither would the nav search, so there is none. When the nav search then gives up in priced
+	// ground (more expansions than the structural walk warrants, see kNavExpansionFloor), the route is
+	// the structural walk, through the detail at its price. When the structural walk gave up (far) and
+	// the nav search gives up too, there is no route and `gaveUp` says the search gave up, which is
+	// not "no route".
+	struct PathAnswer {
+		std::optional<std::vector<glm::vec2>> route;
+		bool								  gaveUp = false;
+	};
+	[[nodiscard]] PathAnswer requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
+										 geometry::nav::BeliefFilter belief = {}) const;
 	// The nav search's expansion cap, kNavExpansionFloor and kNavExpansionsPerStructural by default;
 	// tests set a small one to make it give up.
 	void setNavExpansionCap(std::uint32_t floor, std::uint32_t perStructural) {
@@ -159,13 +165,15 @@ class NavigationSystem : public ISystem {
 
 	// What a colonist can reach, and how far it walks there: a walk on the structural mesh (no
 	// detail, so the camera changes nothing) under the colonist's belief, over all meshed ground,
-	// bounded by the walk asked about and by kReachExpansionCap. reachFrom notes the start once;
-	// reaches(), walk() and walkDistance() walk to one goal each.
+	// bounded by the walk asked about. reachFrom notes the start once; reaches(), walk() and
+	// walkDistance() walk to one goal each.
 	//   A start off meshed ground: every goal "maybe" (true; the straight line).
 	//   A goal off meshed ground: "maybe" while its chunk is loaded (its ground is on the way, and a
 	//   route to it waits for it), unreachable otherwise.
-	//   A search that hits kReachExpansionCap: not reachable now, and not definite (walk()), so it is
-	//   never remembered as a verdict.
+	//   Otherwise three answers: a length, "no", or far. A search from the goal toward the start
+	//   (kReachProbeExpansions) answers first: a goal sealed in a pocket runs it dry at once, a definite
+	//   no, and one that finds the start has the walk. Only then the search from the start
+	//   (kReachExpansionCap); when both give up, the goal is far, which is never "no" (WalkAnswer).
 	// startCell (the start, kReachCellMm to a step) and structuralEpoch (moves with every structural
 	// job, anywhere) together say when a walk from here still holds. A Reach is used within one
 	// frame; the belief's sets must outlive it.
@@ -183,7 +191,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
 	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or none when it
-	// is unreachable or every walk there is longer than maxWalk; definite unless the search gave up.
+	// is unreachable or every walk there is longer than maxWalk, or far when the searches gave up.
 	[[nodiscard]] WalkAnswer		   walk(const Reach& reach, glm::vec2 goalMeters, float maxWalk = std::numeric_limits<float>::infinity()) const;
 	[[nodiscard]] std::optional<float> walkDistance(const Reach& reach, glm::vec2 goalMeters,
 													float maxWalk = std::numeric_limits<float>::infinity()) const;
@@ -194,6 +202,9 @@ class NavigationSystem : public ISystem {
 	// of the chunks within twice the anchor load range of it. Ground arriving or leaving doesn't move
 	// it, so nothing the camera loads or drops does.
 	[[nodiscard]] std::uint64_t verdictStamp(glm::vec2 anchor) const;
+	// The structural content of the chunks in the box spanning `from` and `to`, grown by the anchor
+	// load range for a route that bends out of it: what a failed route to a far target was true for.
+	[[nodiscard]] std::uint64_t spanStamp(glm::vec2 from, glm::vec2 to) const;
 	// `here` is within the anchor load range of `anchor`, per axis: where a failed route recorded at
 	// the anchor still holds.
 	[[nodiscard]] bool nearAnchor(glm::vec2 anchor, glm::vec2 here) const;
@@ -202,8 +213,11 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] float anchorLoadRangeMeters() const;
 	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
 	static constexpr std::int64_t kReachCellMm = 2000;
-	// A reach question's structural search expands at most this many triangles: about 70 chunks of
-	// open ground, so a failing walk costs a bounded few milliseconds at worst.
+	// The search from the goal expands at most this many triangles: a walled room or an islet runs
+	// dry well inside it.
+	static constexpr std::uint32_t kReachProbeExpansions = 2000;
+	// The search from the start expands at most this many: about 70 chunks of open ground, so a walk
+	// that gives up costs a bounded few milliseconds at worst.
 	static constexpr std::uint32_t kReachExpansionCap = 20000;
 	// The nav search behind a found structural walk may expand this many triangles plus this many
 	// for each the structural search expanded (see requestPath).
@@ -359,6 +373,15 @@ class NavigationSystem : public ISystem {
 		std::int64_t  lastPeakOpenSet	 = 0;
 		std::uint64_t navPatches		 = 0;
 		std::uint64_t structuralPatches	 = 0;
+		// Structural walks (reach and requestPath's first step): those the goal-side search answered,
+		// those that went on to the start-side search, the expansions of each, and those that were far.
+		std::uint64_t structuralWalks	   = 0;
+		std::uint64_t probeAnswered		   = 0;
+		std::uint64_t forwardSearches	   = 0;
+		std::uint64_t probeExpansions	   = 0;
+		std::uint64_t forwardExpansions	   = 0;
+		std::uint64_t farWalks			   = 0;
+		std::uint64_t routeSearchesGaveUp  = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
@@ -567,6 +590,16 @@ class NavigationSystem : public ISystem {
 	// The structural content of the chunks the box touches, and with withGround which of them have
 	// their ground meshed.
 	[[nodiscard]] std::uint64_t			  chunkStamp(const geometry::RectMm& box) const;
+	// The structural walk from start to goal, three ways (see Reach): the goal-side search, then the
+	// start-side one. `far` when both gave up; else `walk` holds the answer, its points from start
+	// to goal. `expansions` is both searches'.
+	struct StructuralWalk {
+		geometry::nav::PathResult walk;
+		bool					  far		 = false;
+		std::uint32_t			  expansions = 0;
+	};
+	[[nodiscard]] StructuralWalk structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm, std::int64_t radius,
+												const geometry::nav::BeliefFilter& belief, double maxCost) const;
 	[[nodiscard]] static geometry::RectMm boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm);
 	[[nodiscard]] std::int64_t			  anchorLoadRangeMm() const;
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].

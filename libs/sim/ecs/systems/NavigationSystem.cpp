@@ -1990,11 +1990,11 @@ namespace ecs {
 		return detailMesh.locate(nav::toMm(meters)) >= 0;
 	}
 
-	std::optional<std::vector<glm::vec2>>
+	NavigationSystem::PathAnswer
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
 		join();
 		if (detailMesh.liveTriangleCount() == 0) {
-			return std::nullopt;
+			return {};
 		}
 		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
 		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
@@ -2002,24 +2002,33 @@ namespace ecs {
 
 		// The structural mesh holds the nav mesh's ground without detail, so where it has no walk
 		// under this belief (its known walls block) the nav mesh has none either: no nav search.
-		const gnav::PathResult walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief);
-		if (walk.stop != gnav::PathStop::Found) {
-			return std::nullopt;
+		const StructuralWalk structuralAnswer = structuralWalk(startMm, goalMm, radius, belief, std::numeric_limits<double>::infinity());
+		if (!structuralAnswer.far && structuralAnswer.walk.stop != gnav::PathStop::Found) {
+			return {};
 		}
 
 		// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
 		// multiple of the structural search's expansions. Past that it is lost in priced ground, and
 		// the route is the structural walk itself, through the detail at its price, as it would be off
-		// camera: so a route exists on camera exactly when it does off it.
-		const std::uint32_t	   cap	  = navExpansionFloor + navExpansionsPerStructural * walk.expansions;
-		gnav::PathResult	   result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
+		// camera: so a route exists on camera exactly when it does off it. A far goal has no structural
+		// walk to fall back on: when the nav search gives up too, the search gave up.
+		const std::uint32_t cap	   = navExpansionFloor + navExpansionsPerStructural * structuralAnswer.expansions;
+		gnav::PathResult	result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
+		if (result.stop == gnav::PathStop::LimitReached && structuralAnswer.far) {
+			++navStats.routeSearchesGaveUp;
+			LOG_DEBUG(Engine,
+					  "[Nav] path search gave up toward (%.2f, %.2f), %.0f m in a straight line from (%.2f, %.2f): structural %u expansions, nav %u",
+					  goalMeters.x, goalMeters.y, std::sqrt(dist2(startMeters, goalMeters)), startMeters.x, startMeters.y, structuralAnswer.expansions,
+					  result.expansions);
+			return {.route = std::nullopt, .gaveUp = true};
+		}
 		if (result.stop == gnav::PathStop::LimitReached) {
 			LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
-					  result.expansions, walk.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
-			result					  = walk;
+					  result.expansions, structuralAnswer.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
+			result					  = structuralAnswer.walk;
 			result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
 		} else if (!result.reachable) {
-			return std::nullopt;
+			return {};
 		}
 		++navStats.totalQueries;
 		navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
@@ -2039,7 +2048,33 @@ namespace ecs {
 		} else if (const auto it = pricedRoutes.find(routeKey(waypoints)); it != pricedRoutes.end() && it->second == waypoints) {
 			pricedRoutes.erase(it);
 		}
-		return waypoints;
+		return {.route = std::move(waypoints)};
+	}
+
+	NavigationSystem::StructuralWalk NavigationSystem::structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm,
+																	   std::int64_t radius, const gnav::BeliefFilter& belief, double maxCost) const {
+		// LimitReached is either limit: one under its expansion cap stopped at maxCost, which is a
+		// definite "no walk that short".
+		const auto outOfSteps = [](const gnav::PathResult& r, std::uint32_t cap) {
+			return r.stop == gnav::PathStop::LimitReached && r.expansions >= cap;
+		};
+		++navStats.structuralWalks;
+		StructuralWalk answer;
+		answer.walk = gnav::pathThrough(structural.view(), goalMm, startMm, radius, belief, {.maxCost = maxCost, .maxExpansions = kReachProbeExpansions});
+		answer.expansions = answer.walk.expansions;
+		navStats.probeExpansions += answer.walk.expansions;
+		if (!outOfSteps(answer.walk, kReachProbeExpansions)) {
+			++navStats.probeAnswered;
+			std::reverse(answer.walk.points.begin(), answer.walk.points.end());
+			return answer;
+		}
+		++navStats.forwardSearches;
+		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = kReachExpansionCap});
+		answer.expansions += answer.walk.expansions;
+		navStats.forwardExpansions += answer.walk.expansions;
+		answer.far = outOfSteps(answer.walk, kReachExpansionCap);
+		navStats.farWalks += answer.far ? 1 : 0;
+		return answer;
 	}
 
 	float NavigationSystem::anchorLoadRangeMeters() const {
@@ -2087,6 +2122,14 @@ namespace ecs {
 		return chunkStamp(boxAround(nav::toMm(anchor), 2 * anchorLoadRangeMm()));
 	}
 
+	std::uint64_t NavigationSystem::spanStamp(glm::vec2 from, glm::vec2 to) const {
+		join();
+		const geometry::Vec2i64 a	 = nav::toMm(from);
+		const geometry::Vec2i64 b	 = nav::toMm(to);
+		const std::int64_t		grow = anchorLoadRangeMm();
+		return chunkStamp({{std::min(a.x, b.x) - grow, std::min(a.y, b.y) - grow}, {std::max(a.x, b.x) + grow, std::max(a.y, b.y) + grow}});
+	}
+
 	bool NavigationSystem::nearAnchor(glm::vec2 anchor, glm::vec2 here) const {
 		const geometry::Vec2i64 a = nav::toMm(anchor);
 		const geometry::Vec2i64 h = nav::toMm(here);
@@ -2105,18 +2148,17 @@ namespace ecs {
 			const bool coming = chunkManager == nullptr || std::as_const(*chunkManager).getChunk(world::worldToChunk({goalMeters.x, goalMeters.y})) != nullptr;
 			return coming && straight <= maxWalk ? std::optional<float>(straight) : std::nullopt;
 		}
-		const gnav::PathResult found =
-			gnav::pathThrough(structural.view(), reach.startMm, goal, reach.radiusMm, reach.belief,
-							  {.maxCost = static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter), .maxExpansions = kReachExpansionCap});
-		if (found.stop == gnav::PathStop::LimitReached) {
-			LOG_DEBUG(Engine, "[Nav] reach gave up after %u expansions toward (%.2f, %.2f): not reachable now", found.expansions, goalMeters.x,
-					  goalMeters.y);
-			return WalkAnswer(std::nullopt, false);
+		const StructuralWalk found = structuralWalk(reach.startMm, goal, reach.radiusMm, reach.belief,
+													static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter));
+		if (found.far) {
+			LOG_DEBUG(Engine, "[Nav] reach gave up after %u expansions toward (%.2f, %.2f), %.0f m in a straight line: far", found.expansions,
+					  goalMeters.x, goalMeters.y, straight);
+			return WalkAnswer::farAway();
 		}
-		if (found.stop != gnav::PathStop::Found) {
+		if (found.walk.stop != gnav::PathStop::Found) {
 			return std::optional<float>{};
 		}
-		return std::optional<float>(static_cast<float>(found.cost / static_cast<double>(geometry::kMillimetersPerMeter)));
+		return std::optional<float>(static_cast<float>(found.walk.cost / static_cast<double>(geometry::kMillimetersPerMeter)));
 	}
 
 	std::optional<float> NavigationSystem::walkDistance(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
@@ -2124,7 +2166,7 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
-		return walkDistance(reach, goalMeters).has_value();
+		return walk(reach, goalMeters).reachable();
 	}
 
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
