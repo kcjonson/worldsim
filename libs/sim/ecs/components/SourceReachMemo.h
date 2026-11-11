@@ -84,6 +84,10 @@ namespace ecs {
 		};
 		std::optional<FoodWait> foodWait;
 
+		/// The last spot the toilet search found, so the search, asked at every decision while the need
+		/// waits behind other work, is logged only when its answer changes
+		std::optional<glm::vec2> lastToiletSpot;
+
 		/// The wait, while it still holds at `now` for a memory at `memoryVersion`
 		[[nodiscard]] const FoodWait* waitingForFood(std::uint64_t memoryVersion, double now) const {
 			return foodWait.has_value() && foodWait->memoryVersion == memoryVersion && now < foodWait->readyAt ? &*foodWait : nullptr;

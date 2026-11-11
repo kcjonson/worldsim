@@ -2435,6 +2435,13 @@ namespace ecs {
 					// For toilet needs, try smart location finder
 					// A spot whose route already failed is no spot: go where the colonist stands instead.
 					auto location = findToiletLocation(position.value, *m_chunkManager, *m_navSystem, *world, memory, m_registry);
+					// Asked at every decision while the need waits behind other work: say only when the answer moves.
+					if (location != sourceReach.lastToiletSpot) {
+						sourceReach.lastToiletSpot = location;
+						if (location.has_value()) {
+							LOG_DEBUG(Engine, "[ToiletLocation] Entity %llu: found at (%.1f, %.1f)", static_cast<unsigned long long>(entity), location->x, location->y);
+						}
+					}
 					if (location.has_value() && !routeFailed(0, *location)) {
 						option.targetPosition = *location;
 						option.distanceToTarget = glm::distance(position.value, *location);

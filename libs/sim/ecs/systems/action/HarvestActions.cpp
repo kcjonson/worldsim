@@ -154,7 +154,7 @@ namespace ecs {
 				added,
 				collEff.itemDefName.c_str(),
 				static_cast<unsigned long long>(collEff.sourceStorageId),
-				inventory.getQuantity(collEff.itemDefName)
+				ecs::availableQuantity(inventory, collEff.itemDefName)
 			);
 			return; // a pull's harvest-goal credit is N/A; the deposit leg credits the umbrella
 		}

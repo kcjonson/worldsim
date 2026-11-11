@@ -11,7 +11,6 @@
 #include "world/chunk/TerrainPolygonQuery.h"
 
 #include <core/Vec2i64.h>
-#include <utils/Log.h>
 
 #include <cmath>
 #include <limits>
@@ -165,16 +164,6 @@ std::optional<glm::vec2> findToiletLocation(
 				bestPosition = candidate;
 			}
 		}
-	}
-
-	if (bestPosition.has_value()) {
-		LOG_DEBUG(
-			Engine,
-			"[ToiletLocation] Found at (%.1f, %.1f) score=%.1f",
-			bestPosition->x,
-			bestPosition->y,
-			bestScore
-		);
 	}
 
 	return bestPosition;

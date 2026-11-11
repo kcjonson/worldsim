@@ -253,7 +253,9 @@ namespace ecs {
 				"[Action] Haul-from-inventory: deliver %u x %s to %s %llu",
 				task.haulQuantity,
 				task.haulItemDefName.c_str(),
-				targetIsCraftStation ? "crafting station" : "build site",
+				targetIsCraftStation													? "crafting station"
+				: world->hasComponent<StructureBlueprint>(targetEntity) ? "build site"
+																		: "storage box",
 				static_cast<unsigned long long>(task.haulTargetStorageId)
 			);
 			return;
