@@ -131,11 +131,12 @@ jobs:
         cd build
         LIBGL_ALWAYS_SOFTWARE=1 WORLDSIM_REQUIRE_GL=1 \
           xvfb-run -a -s "-screen 0 1280x1024x24" \
-          ctest -j4 --output-on-failure -R "$RUN_REGEX" -E "$TEST_EXCLUDE" \
+          ctest -j4 --output-on-failure --no-tests=error -R "$RUN_REGEX" -E "$TEST_EXCLUDE" \
             --output-junit Testing/junit.xml
 
     # Not on cancel: a cancelled run's results are partial. A failed run still
-    # records the tests that passed.
+    # records the tests that passed. A planned test with no result in the JUnit
+    # file fails this step, which leaves the job red and skips the save.
     - name: Record passing tests
       id: record
       if: (success() || failure()) && steps.plan.outcome == 'success'
@@ -253,7 +254,7 @@ jobs:
         RUN_REGEX: ${{ steps.plan.outputs.run-regex }}
       run: |
         cd build
-        ctest -j4 --output-on-failure -R "$RUN_REGEX" -E "$TEST_EXCLUDE" \
+        ctest -j4 --output-on-failure --no-tests=error -R "$RUN_REGEX" -E "$TEST_EXCLUDE" \
           --output-junit Testing/junit.xml
 
     - name: Record passing tests
