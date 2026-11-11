@@ -593,6 +593,11 @@ decided, why, and how to undo it.
 12. **Clearance cap of 4 m.** Widths at or above it read as unconstrained, which is exact for any agent up to 2 m radius. Today's only agent is 0.3 m. One mesh parameter.
 13. **Forests rebuild whole.** At 0.13 us per triangle a structural-layer rebuild is well under a millisecond at current sizes, so no per-chunk repair is built.
 
+14. **A mover loads chunks within 128 m and keeps them within 256 m (step 2).** The gap is hysteresis, so a mover pacing near a chunk side doesn't load and unload it. Two constants on `ChunkManager`. Measured: one loaded chunk is 2.8 MB on land and about 7.5 MB beside water before placement data, so an off-camera group at a chunk corner costs 11 to 31 MB.
+15. **A mover is a colonist for now.** Anchors are the Position + Colonist entities, the set that drove nav regions. Step 6 widens it when the route system stops being colonist-only.
+16. **`ChunkManager::update`'s anchor argument has a default.** Making it required means editing one call in `AIDecisionSystem.test.cpp`, which the parent branch is changing. To be made required after that merge.
+17. **Two things found and filed, not fixed:** WOR-717 (Felled trees and harvested nodes come back when their chunk unloads and reloads), an existing bug that anchors make rarer; WOR-718 (Off-camera chunks hold flora meshes on the GPU and grass instance lists on the CPU), memory that now grows with how spread out the colony is.
+
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
 
