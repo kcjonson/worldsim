@@ -27,6 +27,7 @@
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
 #include "NavigationSystem.h"
+#include "TimeSystem.h"
 #include "WorkSources.h"
 
 #include "assets/ActionTypeRegistry.h"
@@ -42,6 +43,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
 #include <span>
 
@@ -1608,26 +1610,49 @@ namespace ecs {
 		// to give it. The gather option is on offer whenever the pack is empty, so this is probed even
 		// when Hunger is met. Readiness is asked of candidates nearest first, only until one is chosen;
 		// the nearest reachable one passed over for regrowing is kept to show why the colonist waits.
+		// When every edible source it knows is regrowing, the search isn't run again until the first of
+		// them is ready or its memory of world entities changes (SourceReachMemo::FoodWait).
 		const bool						packHasFood = hasEdibleFood(m_registry, inventory);
 		std::optional<KnownWorldEntity> foodSource;
 		std::optional<KnownWorldEntity> regrowingFood;
 		if (!packHasFood) {
-			foodSource = findNeedSource(
-				assets::CapabilityType::Harvestable,
-				[&](uint64_t sourceKey, const KnownWorldEntity& known) {
-					return notKnownUnreachable(sourceKey, known) && yieldsEdibleFood(m_registry, known.defNameId);
-				},
-				[&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-					const KnownWorldEntity* known = memory.getWorldEntity(sourceKey);
-					if (known != nullptr && !sourceReady(known->defNameId, sourcePosition)) {
-						if (!regrowingFood.has_value() && canReachSource(sourceKey, sourcePosition)) {
-							regrowingFood = *known;
+			const double now = simulationSeconds(*world);
+			if (const auto* wait = sourceReach.waitingForFood(memory.worldEntityVersion, now)) {
+				regrowingFood = wait->nearest;
+			} else {
+				bool   everyCandidateRegrowing = true;
+				double firstReadyAt = std::numeric_limits<double>::infinity();
+				foodSource = findNeedSource(
+					assets::CapabilityType::Harvestable,
+					[&](uint64_t sourceKey, const KnownWorldEntity& known) {
+						if (!yieldsEdibleFood(m_registry, known.defNameId)) {
+							return false;
 						}
-						return false;
+						if (!notKnownUnreachable(sourceKey, known)) {
+							everyCandidateRegrowing = false; // never asked, so it may be ready
+							return false;
+						}
+						return true;
+					},
+					[&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+						const KnownWorldEntity* known = memory.getWorldEntity(sourceKey);
+						if (const auto readyAt = sourceRegrowingUntil(known->defNameId, sourcePosition)) {
+							firstReadyAt = std::min(firstReadyAt, *readyAt);
+							if (!regrowingFood.has_value() && canReachSource(sourceKey, sourcePosition)) {
+								regrowingFood = *known;
+							}
+							return false;
+						}
+						everyCandidateRegrowing = false;
+						return canReachSource(sourceKey, sourcePosition);
 					}
-					return canReachSource(sourceKey, sourcePosition);
+				);
+				sourceReach.foodWait.reset();
+				if (!foodSource.has_value() && everyCandidateRegrowing && firstReadyAt > now &&
+					firstReadyAt < std::numeric_limits<double>::infinity()) {
+					sourceReach.foodWait = SourceReachMemo::FoodWait{memory.worldEntityVersion, firstReadyAt, regrowingFood};
 				}
-			);
+			}
 		}
 
 		// Evaluate each actionable need type
@@ -1943,7 +1968,7 @@ namespace ecs {
 			// option, and it is chosen again once ready. A clear removes its source whatever its state.
 			// Asked before the snap moves the target off the source's own position.
 			if (option.taskType == TaskType::Harvest && needsTarget && option.targetDefNameId.has_value() &&
-				!sourceReady(*option.targetDefNameId, *option.targetPosition)) {
+				sourceRegrowingUntil(*option.targetDefNameId, *option.targetPosition).has_value()) {
 				const auto* goal = GoalTaskRegistry::Get().getGoal(option.harvestGoalId);
 				if (goal == nullptr || !goal->clearFootprint.has_value()) {
 					option.status = OptionStatus::Regrowing;
@@ -2245,8 +2270,8 @@ namespace ecs {
 		}
 	}
 
-	bool AIDecisionSystem::sourceReady(uint32_t defNameId, glm::vec2 position) const {
-		return !onSourceReady || onSourceReady(m_registry.getDefName(defNameId), position);
+	std::optional<double> AIDecisionSystem::sourceRegrowingUntil(uint32_t defNameId, glm::vec2 position) const {
+		return onSourceRegrowth ? onSourceRegrowth(defNameId, position) : std::nullopt;
 	}
 
 	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {

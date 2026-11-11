@@ -53,7 +53,9 @@ namespace ecs::test {
 				return takeWorldSource(executor, world, pendingRemoval, kBush, bushAt, ActionSystem::SourceTake::Regrow, kRegrowthSeconds);
 			}
 
-			bool ready() { return !worldSourceRegrowingUntil(executor, world, kBush, bushAt).has_value(); }
+			bool ready() {
+				return !worldSourceRegrowingUntil(executor, world, assets::AssetRegistry::Get().getDefNameId(kBush), bushAt).has_value();
+			}
 
 			void run(int frames) {
 				for (int i = 0; i < frames; ++i) {

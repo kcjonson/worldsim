@@ -176,11 +176,12 @@ namespace assets {
 		/// not by chunk), so a bush regrowing when its chunk unloads is still regrowing on reload until
 		/// its time. Lapsed entries nothing looked up again are swept here once the map has doubled since
 		/// the last sweep, so it stays within twice the entities regrowing at that sweep.
-		void startRegrowth(glm::vec2 position, const std::string& defName, double now, double seconds);
+		void startRegrowth(glm::vec2 position, uint32_t defNameId, double now, double seconds);
 
 		/// When a regrowing entity is ready again, or nullopt if it is ready at `now`. An entry whose time
-		/// has come is erased here.
-		[[nodiscard]] std::optional<double> regrowthReadyAt(glm::vec2 position, const std::string& defName, double now);
+		/// has come is erased here. Keyed by interned def id (AssetRegistry::getDefNameId), so a lookup
+		/// hashes three integers and never a name.
+		[[nodiscard]] std::optional<double> regrowthReadyAt(glm::vec2 position, uint32_t defNameId, double now);
 
 		/// Regrowth entries held, lapsed ones not yet looked up or swept included
 		[[nodiscard]] size_t regrowthEntryCount() const { return m_regrowthReadyAt.size(); }
@@ -232,14 +233,14 @@ namespace assets {
 		uint64_t m_removalEpoch = 0;
 
 		/// One entity's identity for its cooldown and resource pool: its placed position on the 0.1 m
-		/// grid colonist Memory keys it by, and its defName. Two bushes of one def in the same tile are
-		/// two entities and never share a regrowth timer or a pool.
+		/// grid colonist Memory keys it by, and its interned def id. Two bushes of one def in the same tile
+		/// are two entities and never share a regrowth timer or a pool.
 		struct EntityStateKey {
 			DecimeterCell cell;
-			std::string	  defName;
+			uint32_t	  defNameId = 0;
 
 			bool operator==(const EntityStateKey& other) const {
-				return cell.x == other.cell.x && cell.y == other.cell.y && defName == other.defName;
+				return cell.x == other.cell.x && cell.y == other.cell.y && defNameId == other.defNameId;
 			}
 		};
 
@@ -247,7 +248,7 @@ namespace assets {
 			std::size_t operator()(const EntityStateKey& key) const {
 				std::size_t seed = std::hash<int32_t>{}(key.cell.x);
 				seed = seed * 31 + std::hash<int32_t>{}(key.cell.y);
-				seed = seed * 31 + std::hash<std::string>{}(key.defName);
+				seed = seed * 31 + std::hash<uint32_t>{}(key.defNameId);
 				return seed;
 			}
 		};
@@ -262,7 +263,8 @@ namespace assets {
 		/// Remaining resource pool (units left to harvest), per entity
 		std::unordered_map<EntityStateKey, uint32_t, EntityStateKeyHash> m_resourceCounts;
 
-		[[nodiscard]] static EntityStateKey makeEntityStateKey(glm::vec2 position, const std::string& defName);
+		[[nodiscard]] EntityStateKey makeEntityStateKey(glm::vec2 position, const std::string& defName) const;
+		[[nodiscard]] static EntityStateKey makeEntityStateKey(glm::vec2 position, uint32_t defNameId);
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();

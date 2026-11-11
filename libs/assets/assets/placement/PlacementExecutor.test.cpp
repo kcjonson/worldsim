@@ -335,6 +335,21 @@ TEST(PlacementExecutorTests, NegativeChunkCoordinates) {
 // Regrowth Tests
 // ============================================================================
 
+namespace {
+	/// The interned id of `name`, registering a bare definition for it first if needed: regrowth is
+	/// keyed by def id, and these tests run against a cleared registry.
+	uint32_t defId(AssetRegistry& registry, const std::string& name) {
+		if (const uint32_t id = registry.getDefNameId(name); id != 0) {
+			return id;
+		}
+		AssetDefinition def;
+		def.defName = name;
+		def.label = name;
+		registry.registerTestDefinition(std::move(def));
+		return registry.getDefNameId(name);
+	}
+} // namespace
+
 TEST(PlacementExecutorTests, EntityIsReadyUntilItStartsRegrowing) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
@@ -342,11 +357,11 @@ TEST(PlacementExecutorTests, EntityIsReadyUntilItStartsRegrowing) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 0.0).has_value());
-	executor.startRegrowth({10.0F, 20.0F}, "BerryBush", 100.0, 60.0);
-	EXPECT_EQ(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 100.0), 160.0);
-	EXPECT_FALSE(executor.regrowthReadyAt({15.0F, 25.0F}, "BerryBush", 100.0).has_value()) << "another position";
-	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "WoodyBush", 100.0).has_value()) << "another def";
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, defId(registry, "BerryBush"), 0.0).has_value());
+	executor.startRegrowth({10.0F, 20.0F}, defId(registry, "BerryBush"), 100.0, 60.0);
+	EXPECT_EQ(executor.regrowthReadyAt({10.0F, 20.0F}, defId(registry, "BerryBush"), 100.0), 160.0);
+	EXPECT_FALSE(executor.regrowthReadyAt({15.0F, 25.0F}, defId(registry, "BerryBush"), 100.0).has_value()) << "another position";
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, defId(registry, "WoodyBush"), 100.0).has_value()) << "another def";
 }
 
 // Ready again exactly at its stamped time, read against whatever clock the caller passes: nothing
@@ -358,12 +373,12 @@ TEST(PlacementExecutorTests, RegrowthLapsesAtItsTime) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.startRegrowth({10.0F, 20.0F}, "BerryBush", 0.0, 5.0);
-	executor.startRegrowth({30.0F, 40.0F}, "BerryBush", 0.0, 10.0);
-	EXPECT_TRUE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 4.9).has_value());
-	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 5.0).has_value());
-	EXPECT_TRUE(executor.regrowthReadyAt({30.0F, 40.0F}, "BerryBush", 5.0).has_value());
-	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 0.0).has_value()) << "a lapsed entry is gone";
+	executor.startRegrowth({10.0F, 20.0F}, defId(registry, "BerryBush"), 0.0, 5.0);
+	executor.startRegrowth({30.0F, 40.0F}, defId(registry, "BerryBush"), 0.0, 10.0);
+	EXPECT_TRUE(executor.regrowthReadyAt({10.0F, 20.0F}, defId(registry, "BerryBush"), 4.9).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, defId(registry, "BerryBush"), 5.0).has_value());
+	EXPECT_TRUE(executor.regrowthReadyAt({30.0F, 40.0F}, defId(registry, "BerryBush"), 5.0).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, defId(registry, "BerryBush"), 0.0).has_value()) << "a lapsed entry is gone";
 }
 
 // Unloading a chunk leaves its entities' regrowth alone: a regrowing bush is still regrowing when the
@@ -380,7 +395,7 @@ TEST(PlacementExecutorTests, RegrowthOutlivesAChunkUnload) {
 	chunk.coord = world::worldToChunk({bush.x, bush.y});
 	chunk.spatialIndex.insert({"BerryBush", bush});
 	executor.storeChunkResult(std::move(chunk));
-	executor.startRegrowth(bush, "BerryBush", 0.0, 60.0);
+	executor.startRegrowth(bush, defId(registry, "BerryBush"), 0.0, 60.0);
 
 	executor.unloadChunk(world::worldToChunk({bush.x, bush.y}));
 	AsyncChunkPlacementResult reloaded;
@@ -388,8 +403,8 @@ TEST(PlacementExecutorTests, RegrowthOutlivesAChunkUnload) {
 	reloaded.spatialIndex.insert({"BerryBush", bush});
 	executor.storeChunkResult(std::move(reloaded));
 
-	EXPECT_EQ(executor.regrowthReadyAt(bush, "BerryBush", 30.0), 60.0);
-	EXPECT_FALSE(executor.regrowthReadyAt(bush, "BerryBush", 60.0).has_value());
+	EXPECT_EQ(executor.regrowthReadyAt(bush, defId(registry, "BerryBush"), 30.0), 60.0);
+	EXPECT_FALSE(executor.regrowthReadyAt(bush, defId(registry, "BerryBush"), 60.0).has_value());
 }
 
 // Lapsed entries nobody looks up again are swept as the map grows, so it can't grow without bound.
@@ -401,11 +416,11 @@ TEST(PlacementExecutorTests, LapsedRegrowthIsSweptAsTheMapGrows) {
 	executor.initialize();
 
 	for (int i = 0; i < 5000; ++i) {
-		executor.startRegrowth({static_cast<float>(i), 0.0F}, "BerryBush", static_cast<double>(i), 1.0);
+		executor.startRegrowth({static_cast<float>(i), 0.0F}, defId(registry, "BerryBush"), static_cast<double>(i), 1.0);
 	}
 	const glm::vec2 last{4999.0F, 0.0F};
-	EXPECT_TRUE(executor.regrowthReadyAt(last, "BerryBush", 4999.5).has_value()) << "the live entry survives sweeps";
-	EXPECT_FALSE(executor.regrowthReadyAt({0.0F, 0.0F}, "BerryBush", 4999.5).has_value());
+	EXPECT_TRUE(executor.regrowthReadyAt(last, defId(registry, "BerryBush"), 4999.5).has_value()) << "the live entry survives sweeps";
+	EXPECT_FALSE(executor.regrowthReadyAt({0.0F, 0.0F}, defId(registry, "BerryBush"), 4999.5).has_value());
 	EXPECT_LE(executor.regrowthEntryCount(), 2048U) << "lapsed entries were swept, not kept for the session";
 }
 
@@ -529,9 +544,9 @@ TEST(PlacementExecutorTests, ClearRemovesRegrowth) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.startRegrowth({10.0F, 20.0F}, "BerryBush", 0.0, 60.0);
+	executor.startRegrowth({10.0F, 20.0F}, defId(registry, "BerryBush"), 0.0, 60.0);
 	executor.clear();
-	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, "BerryBush", 0.0).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt({10.0F, 20.0F}, defId(registry, "BerryBush"), 0.0).has_value());
 }
 
 // Regrowth and a resource pool belong to one entity, named by its position on Memory's 0.1 m grid:
@@ -546,10 +561,10 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 
 	const glm::vec2 cut{10.3F, 20.7F};
 	const glm::vec2 neighbour{10.8F, 20.2F};
-	executor.startRegrowth(cut, "BerryBush", 0.0, 60.0);
-	EXPECT_TRUE(executor.regrowthReadyAt({10.31F, 20.71F}, "BerryBush", 0.0).has_value());
-	EXPECT_FALSE(executor.regrowthReadyAt(neighbour, "BerryBush", 0.0).has_value()) << "the other bush in the tile is not regrowing";
-	EXPECT_FALSE(executor.regrowthReadyAt({-10.3F, -20.7F}, "BerryBush", 0.0).has_value());
+	executor.startRegrowth(cut, defId(registry, "BerryBush"), 0.0, 60.0);
+	EXPECT_TRUE(executor.regrowthReadyAt({10.31F, 20.71F}, defId(registry, "BerryBush"), 0.0).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt(neighbour, defId(registry, "BerryBush"), 0.0).has_value()) << "the other bush in the tile is not regrowing";
+	EXPECT_FALSE(executor.regrowthReadyAt({-10.3F, -20.7F}, defId(registry, "BerryBush"), 0.0).has_value());
 
 	executor.initResourceCount(cut, "BerryBush", 5);
 	executor.initResourceCount(neighbour, "BerryBush", 5);
@@ -562,9 +577,9 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 	chunk.coord = world::worldToChunk({neighbour.x, neighbour.y});
 	chunk.spatialIndex.insert({"BerryBush", neighbour});
 	executor.storeChunkResult(std::move(chunk));
-	executor.startRegrowth(neighbour, "BerryBush", 0.0, 60.0);
+	executor.startRegrowth(neighbour, defId(registry, "BerryBush"), 0.0, 60.0);
 	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({neighbour.x, neighbour.y}), neighbour, "BerryBush"));
-	EXPECT_FALSE(executor.regrowthReadyAt(neighbour, "BerryBush", 0.0).has_value());
+	EXPECT_FALSE(executor.regrowthReadyAt(neighbour, defId(registry, "BerryBush"), 0.0).has_value());
 	EXPECT_FALSE(executor.getResourceCount(neighbour, "BerryBush").has_value());
 }
 

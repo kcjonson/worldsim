@@ -2448,9 +2448,9 @@ namespace ecs::test {
 		const glm::vec2 regrowingSticks{0.0F, 2.0F};
 		const glm::vec2 readySticks{0.0F, 5.0F};
 		int				readinessAsked = 0;
-		world->getSystem<AIDecisionSystem>().setSourceReadyCallback([&](const std::string& /*defName*/, glm::vec2 at) {
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at) {
 			++readinessAsked;
-			return at != regrowingBerries && at != regrowingSticks;
+			return at == regrowingBerries || at == regrowingSticks ? std::optional<double>{1000.0} : std::nullopt;
 		});
 
 		auto colonist = createColonist({0.0F, 0.0F});
@@ -2501,6 +2501,70 @@ namespace ecs::test {
 		EXPECT_EQ(selected->taskType, TaskType::Harvest);
 		EXPECT_EQ(selected->harvestTargetEntityId, hashWorldEntity(readySticks, stickBushId)) << "the work harvests the ready bush";
 		EXPECT_LE(readinessAsked, 4) << "asked only of the candidates that would otherwise win";
+	}
+
+	// With every edible source it knows regrowing, an idle colonist doesn't ask after each of them every
+	// decision: the search waits until the first is ready or its memory changes. Neither ever hides a
+	// ready source: a newly seen ready bush is taken at once, and a regrowing one once its time comes.
+	TEST_F(AIDecisionSystemTest, RegrowingFoodIsNotProbedAgainUntilSomethingChanges) {
+		auto&			registry = assets::AssetRegistry::Get();
+		const uint32_t	berryBushId = registerBerryBush(registry);
+		auto&			time = world->registerSystem<TimeSystem>();
+		const glm::vec2 near{2.0F, 0.0F};
+		const glm::vec2 far{6.0F, 0.0F};
+		const glm::vec2 seenLater{9.0F, 0.0F};
+		const std::vector<std::pair<glm::vec2, double>> readyAt{{near, 100.0}, {far, 40.0}};
+		int												asked = 0;
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at) {
+			++asked;
+			for (const auto& [where, when] : readyAt) {
+				if (where == at && time.simulationSeconds() < when) {
+					return std::optional<double>{when};
+				}
+			}
+			return std::optional<double>{};
+		});
+
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		addKnownEntity(colonist, near, berryBushId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, far, berryBushId, assets::CapabilityType::Harvestable);
+		const auto hungerTarget = [&]() -> std::optional<glm::vec2> {
+			const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+			return hunger != nullptr && hunger->isActionable() ? hunger->targetPosition : std::nullopt;
+		};
+		const auto decide = [&] {
+			getTask(colonist)->timeSinceEvaluation = 1.0F;
+			world->update(0.016F);
+		};
+
+		decide();
+		EXPECT_EQ(asked, 2) << "both bushes asked once";
+		EXPECT_FALSE(hungerTarget().has_value());
+		for (int i = 0; i < 5; ++i) {
+			decide();
+		}
+		EXPECT_EQ(asked, 2) << "nothing changed, so nothing is asked again";
+		const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+		ASSERT_NE(hunger, nullptr);
+		EXPECT_EQ(hunger->status, OptionStatus::Regrowing) << "the trace still says what it waits on";
+
+		time.skipTime(41.0F); // the far bush is ready at 40
+		decide();
+		EXPECT_EQ(hungerTarget(), far) << "taken as soon as its time comes";
+
+		// Back to waiting on the near bush alone, then a ready bush comes into view.
+		getNeeds(colonist)->get(NeedType::Hunger).value = 40.0F;
+		world->getComponent<Memory>(colonist)->forgetWorldEntity(far, berryBushId);
+		decide();
+		EXPECT_FALSE(hungerTarget().has_value());
+		const int askedBefore = asked;
+		decide();
+		EXPECT_EQ(asked, askedBefore);
+		addKnownEntity(colonist, seenLater, berryBushId, assets::CapabilityType::Harvestable);
+		decide();
+		EXPECT_EQ(hungerTarget(), seenLater) << "a newly remembered ready bush is taken at once";
 	}
 
 	// =============================================================================
@@ -2686,15 +2750,15 @@ namespace ecs::test {
 		auto& time = world->registerSystem<TimeSystem>();
 		time.setSpeed(GameSpeed::VeryFast);
 		std::vector<EntityID> pendingRemoval;
-		world->getSystem<AIDecisionSystem>().setSourceReadyCallback([&](const std::string& defName, glm::vec2 at) {
-			return !worldSourceRegrowingUntil(executor, *world, defName, at).has_value();
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t defNameId, glm::vec2 at) {
+			return worldSourceRegrowingUntil(executor, *world, defNameId, at);
 		});
 		world->getSystem<ActionSystem>().setTakeSourceCallback(
 			[&](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
 				return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
 			}
 		);
-		const auto bushReady = [&] { return !worldSourceRegrowingUntil(executor, *world, "Flora_BerryBush", bushAt).has_value(); };
+		const auto bushReady = [&] { return !worldSourceRegrowingUntil(executor, *world, bushId, bushAt).has_value(); };
 
 		// Someone just cut it.
 		ASSERT_EQ(

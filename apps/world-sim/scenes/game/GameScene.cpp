@@ -1349,8 +1349,8 @@ namespace {
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
-			aiDecisionSystem.setSourceReadyCallback([this](const std::string& defName, glm::vec2 at) {
-				return !ecs::worldSourceRegrowingUntil(*m_placementExecutor, *ecsWorld, defName, at).has_value();
+			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at) {
+				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, *ecsWorld, defNameId, at);
 			});
 
 			// Wire up ActionSystem to take a harvested or picked-up source from the world as the action

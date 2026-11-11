@@ -651,8 +651,12 @@ namespace assets {
 		m_initialized = false;
 	}
 
-	PlacementExecutor::EntityStateKey PlacementExecutor::makeEntityStateKey(glm::vec2 position, const std::string& defName) {
-		return EntityStateKey{decimeterCell(position), defName};
+	PlacementExecutor::EntityStateKey PlacementExecutor::makeEntityStateKey(glm::vec2 position, const std::string& defName) const {
+		return makeEntityStateKey(position, m_registry.getDefNameId(defName));
+	}
+
+	PlacementExecutor::EntityStateKey PlacementExecutor::makeEntityStateKey(glm::vec2 position, uint32_t defNameId) {
+		return EntityStateKey{decimeterCell(position), defNameId};
 	}
 
 	bool PlacementExecutor::removeEntity(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) {
@@ -688,17 +692,24 @@ namespace assets {
 		m_resourceCounts.erase(key);
 	}
 
-	void PlacementExecutor::startRegrowth(glm::vec2 position, const std::string& defName, double now, double seconds) {
+	void PlacementExecutor::startRegrowth(glm::vec2 position, uint32_t defNameId, double now, double seconds) {
 		if (m_regrowthReadyAt.size() >= m_regrowthSweepSize) {
 			std::erase_if(m_regrowthReadyAt, [now](const auto& entry) { return entry.second <= now; });
 			m_regrowthSweepSize = std::max(kMinRegrowthSweepSize, 2 * m_regrowthReadyAt.size());
 		}
-		m_regrowthReadyAt.insert_or_assign(makeEntityStateKey(position, defName), now + seconds);
-		LOG_DEBUG(Engine, "PlacementExecutor: %s at (%.1f, %.1f) regrows for %.1fs", defName.c_str(), position.x, position.y, seconds);
+		m_regrowthReadyAt.insert_or_assign(makeEntityStateKey(position, defNameId), now + seconds);
+		LOG_DEBUG(
+			Engine,
+			"PlacementExecutor: %s at (%.1f, %.1f) regrows for %.1fs",
+			m_registry.getDefName(defNameId).c_str(),
+			position.x,
+			position.y,
+			seconds
+		);
 	}
 
-	std::optional<double> PlacementExecutor::regrowthReadyAt(glm::vec2 position, const std::string& defName, double now) {
-		const auto it = m_regrowthReadyAt.find(makeEntityStateKey(position, defName));
+	std::optional<double> PlacementExecutor::regrowthReadyAt(glm::vec2 position, uint32_t defNameId, double now) {
+		const auto it = m_regrowthReadyAt.find(makeEntityStateKey(position, defNameId));
 		if (it == m_regrowthReadyAt.end()) {
 			return std::nullopt;
 		}

@@ -1,6 +1,9 @@
 #pragma once
 
-// Per-colonist AI state: reach verdicts for the sources a colonist remembers.
+// Per-colonist AI state: reach verdicts for the sources a colonist remembers, and the wait on its
+// regrowing food.
+
+#include "Memory.h"
 
 #include <glm/vec2.hpp>
 
@@ -63,6 +66,22 @@ namespace ecs {
 				it->second = probe(position);
 			}
 			return it->second;
+		}
+
+		/// Set when the last food search found every edible source the colonist remembers regrowing:
+		/// until the earliest of them is ready, or the colonist remembers or forgets a world entity, the
+		/// search would find the same, so it isn't run. Readiness doesn't depend on reach, and a search
+		/// that set this saw no source it skipped for reach, so nothing ready can hide behind it.
+		struct FoodWait {
+			std::uint64_t					memoryVersion = 0; // Memory::worldEntityVersion when set
+			double							readyAt = 0.0;	   // earliest ready time, on the simulation clock
+			std::optional<KnownWorldEntity> nearest;		   // the nearest reachable regrowing source, for the trace
+		};
+		std::optional<FoodWait> foodWait;
+
+		/// The wait, while it still holds at `now` for a memory at `memoryVersion`
+		[[nodiscard]] const FoodWait* waitingForFood(std::uint64_t memoryVersion, double now) const {
+			return foodWait.has_value() && foodWait->memoryVersion == memoryVersion && now < foodWait->readyAt ? &*foodWait : nullptr;
 		}
 
 	  private:
