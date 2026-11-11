@@ -75,7 +75,7 @@ namespace asset_manager {
 		defName = def != nullptr ? name : std::string();
 		procedural = def != nullptr && def->assetType != assets::AssetType::Simple;
 		ground = def != nullptr && def->role == assets::AssetRole::Ground;
-		variantBase = 1U;
+		variantBase = procedural ? 1U : 0U; // an SVG ground def's seed is its variant, so it starts at the first SVG
 		if (getContext() != nullptr) {
 			build();
 		}
@@ -137,7 +137,7 @@ namespace asset_manager {
 	}
 
 	// One framed thumbnail, or six in a 2x3 grid under Randomize; the collider over the first. A ground
-	// tile puts the first variant, tiled 3x3, to the left of the grid.
+	// tile, procedural or SVG, puts the first variant, tiled 3x3, to the left of the grid.
 	void AssetDetailView::preview(ui::Ref<ui::Component> column) {
 		const auto cell = [this](ui::Ref<ui::Component> parent, int index) {
 			ui::Ref<ui::Rectangle> frame =
@@ -149,7 +149,7 @@ namespace asset_manager {
 				.coordinateSystem = coordinateSystem,
 			});
 		};
-		if (!procedural) {
+		if (!procedural && !ground) {
 			cell(column, 0);
 		} else {
 			column.addChild<ui::Button>({.layout = kHug, .label = "Randomize", .controlSize = ui::ControlSize::Sm, .onPress = [this] {
@@ -184,8 +184,8 @@ namespace asset_manager {
 			meta += def.label + "\n";
 		}
 		meta += "worldHeight  " + fmtFloat(def.worldHeight);
-		if (!def.svgPath.empty()) {
-			meta += "\nsvg  " + def.svgPath;
+		for (const std::string& svgPath : def.svgPaths) {
+			meta += "\nsvg  " + svgPath;
 		}
 		if (!def.scriptPath.empty()) {
 			meta += "\nscript  " + def.scriptPath;
@@ -245,7 +245,7 @@ namespace asset_manager {
 	void AssetDetailView::applyVariantSeeds() {
 		for (int i = 0; i < kVariants; ++i) {
 			if (AssetThumbnail* thumb = variants[static_cast<std::size_t>(i)].get()) {
-				thumb->setAsset(defName, procedural ? variantBase + static_cast<uint32_t>(i) : 42U);
+				thumb->setAsset(defName, procedural || ground ? variantBase + static_cast<uint32_t>(i) : 42U);
 			}
 		}
 		if (AssetThumbnail* thumb = tiling.get()) {

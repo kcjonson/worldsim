@@ -147,8 +147,8 @@ namespace assets {
 		);
 
 		/// Build an uncached tessellated mesh for an asset at a given seed.
-		/// Simple assets ignore the seed (one drawing); procedural assets use it to
-		/// select a form (vary the seed to sample the generator's range).
+		/// Simple assets ignore the seed (one drawing) but for an SVG ground def, where it picks the
+		/// variant; procedural assets use it to select a form (vary the seed to sample the generator's range).
 		/// This is the single shared "defName + seed -> mesh" entry point.
 		/// For callers that draw one mesh. An asset over the 65535 vertices a mesh can index
 		/// needs several, and that fails here (logged); use buildMeshes for those.
@@ -161,30 +161,32 @@ namespace assets {
 		/// buildMesh for assets of any size: the tessellated paths are packed into as many
 		/// meshes as it takes to keep each under 65535 vertices (16-bit indices), in path order.
 		/// A single path that alone tessellates past that is dropped with a warning.
-		/// A procedural ground tile comes back wrapped: a path crossing an edge of its [0, period]
-		/// square is repeated where it crosses into, so the meshes clipped to that square are the
-		/// seamless tile.
-		/// @param pixelsPerMeter Screen density to build for. A procedural path that called
-		///        setLod(n) is kept only when n <= this; the default keeps all of them. Simple
-		///        assets are always one drawing, whatever the density.
+		/// A ground tile comes back wrapped: a path crossing an edge of its [0, period] square is
+		/// repeated where it crosses into, so the meshes clipped to that square are the seamless tile.
+		/// @param pixelsPerMeter Screen density to build for. A path that called setLod(n), or a
+		///        ground SVG's shape under data-lod="n", is kept only when n <= this; the default
+		///        keeps all of them. Other simple assets are always one drawing, whatever the density.
 		/// @return true if at least one non-empty mesh was produced
 		bool buildMeshes(
 			const std::string& defName, uint32_t seed, std::vector<renderer::TessellatedMesh>& outMeshes, float pixelsPerMeter = kFullDetail
 		);
 
-		/// The procedural half of buildMeshes, for callers that want several densities from one
-		/// generator run: the seed's paths, each tessellated once (a ground tile's wrapped, as
-		/// above), so outPaths.meshesAt(d) is what buildMeshes returns at d. Safe to call from
+		/// The path half of buildMeshes, for callers that want several densities from one generator
+		/// run or SVG read: the seed's paths, each tessellated once (a ground tile's wrapped, as
+		/// above), so outPaths.meshesAt(d) is what buildMeshes returns at d. An SVG ground def's seed
+		/// picks its variant's SVG, seed modulo their count (GroundSvg.h reads it). Safe to call from
 		/// several threads at once while no load or clear runs: each call runs its own generator
-		/// (a fresh Lua state for a script) and touches no cache.
+		/// (a fresh Lua state for a script) or reads its own SVG, and touches no cache.
 		/// @param maxPixelsPerMeter The finest density meshesAt will be asked for; paths that need
 		///        more aren't tessellated.
-		/// @return false when the def isn't procedural or its generator fails (logged)
+		/// @return false when the def is neither procedural nor a ground tile, its generator fails, or
+		///         its SVG breaks a ground SVG rule (logged)
 		bool buildPaths(const std::string& defName, uint32_t seed, TessellatedPaths& outPaths, float maxPixelsPerMeter = kFullDetail);
 
-		/// Adds an error to `report` for each age class of a def whose generator emits a different
-		/// collision rect for two of its variants: the rect is per age class, so it may not depend on
-		/// the variant. Generates variants 0 and 1 of each class that has two or more; runs a
+		/// Adds an error to `report` for each age class of a procedural def whose generator emits a
+		/// different collision rect for two of its variants: the rect is per age class, so it may not
+		/// depend on the variant. A def without <ageClasses> is one implicit class 0 of variantCount
+		/// variants. Generates variants 0 and 1 of each class that has two or more; runs a
 		/// generator, so it is for the render smoke, not for load.
 		void checkCollisionVariantIndependence(ValidationReport& report);
 
@@ -345,10 +347,16 @@ namespace assets {
 		/// key first, that one's id. Resolves the def's routing first, outside the lock.
 		uint32_t insertTemplate(const AssetDefinition& def, TreeTraits traits, BuiltTemplate built);
 
-		/// Builds every variant of each def with age classes, in parallel, before the first chunk
-		/// asks for one. A variant over kMaxMeshVertices is an error in the validation report.
+		/// Parses one XML file into `definitions`, appending the names it defined to `loadedNames`.
+		/// Runs the per-def collision passes that need no age classes; leaves each aged def's
+		/// templates and rects to prewarmTreeVariants.
+		bool parseDefinitions(const std::string& xmlPath, std::vector<std::string>& loadedNames);
+
+		/// Builds every variant of each named def with age classes, in parallel, before the first
+		/// chunk asks for one. A variant over kMaxMeshVertices is an error in the validation report.
 		/// Each class's collision rect is taken from its variant 0 (unless the def authors one).
-		void prewarmTreeVariants();
+		/// Both load entry points end here, so a def is complete however it was loaded.
+		void prewarmTreeVariants(const std::vector<std::string>& defNames);
 
 		/// Drops every template, silhouette, and resolved motion.
 		void clearCaches();

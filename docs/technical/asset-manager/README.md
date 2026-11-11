@@ -102,7 +102,7 @@ Because the CLI is a short-lived, server-less process with its own context, N in
 
 ## Asset enumeration and inspection
 
-The registry already exposes the browse and inspect surface. The tool walks `getDefinitionNames()` (sort it; the backing store is unordered) and calls `getDefinition(name)` for the full parsed `AssetDefinition`. Resource paths come off the def: `svgPath`, `scriptPath`, `generatorName`, resolved with `def->resolvePath`, plus the manual `@shared/` handling that `generateAsset` does (the tool must replicate that prefix logic to show the real Lua path). Groups come from `getGroups()` / `getGroupMembers()`.
+The registry already exposes the browse and inspect surface. The tool walks `getDefinitionNames()` (sort it; the backing store is unordered) and calls `getDefinition(name)` for the full parsed `AssetDefinition`. Resource paths come off the def: `svgPaths`, `scriptPath`, `generatorName`, resolved with `def->resolvePath`, plus the manual `@shared/` handling that `generateAsset` does (the tool must replicate that prefix logic to show the real Lua path). Groups come from `getGroups()` / `getGroupMembers()`.
 
 The inspector model is the parsed def, the resolved resource paths, the asset's groups and placement rules, the raw file text shown beside the parsed view, and the warnings for that def from the validation report (see below). Documented-but-ignored fields are shown as warnings, not silently dropped.
 

@@ -1,5 +1,7 @@
 #include "world/rendering/GroundTileBank.h"
 
+#include "world/rendering/Bc3.h"
+
 #include <assets/AssetRegistry.h>
 #include <assets/GroundLayer.h>
 #include <threading/TaskPool.h>
@@ -27,9 +29,13 @@ namespace worldview {
 			return static_cast<double>(bytes) / (1024.0 * 1024.0);
 		}
 
+		// BC3 (DXT5) with sRGB color: a quarter of RGBA8's bytes, and S3TC is the block format every
+		// desktop GL decodes, macOS's 4.1 included (BC7 needs 4.2).
+		constexpr GLenum kTileFormat = GL_COMPRESSED_SRGB_ALPHA_S3TC_DXT5_EXT;
+
 		size_t levelBytes(int layerSize, int level, int layers) {
-			const auto size = static_cast<size_t>(std::max(1, layerSize >> level));
-			return size * size * 4 * static_cast<size_t>(layers);
+			const int size = std::max(1, layerSize >> level);
+			return bc3Bytes(size, size) * static_cast<size_t>(layers);
 		}
 
 		// Runs a bake step and catches what it throws, the message in `error`: left to salal's guard, an
@@ -229,8 +235,11 @@ namespace worldview {
 			glBindTexture(GL_TEXTURE_2D_ARRAY, a.texture);
 			for (int level = 0; level < a.levels; ++level) {
 				const int size = std::max(1, a.layerSize >> level);
-				glTexImage3D(GL_TEXTURE_2D_ARRAY, level, GL_SRGB8_ALPHA8, size, size, a.layers, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-				a.bytes += levelBytes(a.layerSize, level, a.layers);
+				const size_t bytes = levelBytes(a.layerSize, level, a.layers);
+				glCompressedTexImage3D(
+					GL_TEXTURE_2D_ARRAY, level, kTileFormat, size, size, a.layers, 0, static_cast<GLsizei>(bytes), nullptr
+				);
+				a.bytes += bytes;
 			}
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_S, GL_REPEAT);
 			glTexParameteri(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_WRAP_T, GL_REPEAT);
@@ -254,7 +263,8 @@ namespace worldview {
 				a.layerSize,
 				mebibytes(a.bytes),
 				status,
-				status == GL_OUT_OF_MEMORY ? " (out of video memory)" : ""
+				status == GL_OUT_OF_MEMORY ? " (out of video memory)"
+										   : (status == GL_INVALID_ENUM ? " (no BC3 sRGB textures on this GPU)" : "")
 			);
 			fail(line);
 			clearGlErrors();
@@ -280,17 +290,25 @@ namespace worldview {
 		}
 		const Array& a = arrayTable[static_cast<size_t>(def.array)];
 		const int	 layer = def.firstLayer + static_cast<int>(bake.variant);
-		GLint		 previousAlignment = 4;
-		glGetIntegerv(GL_UNPACK_ALIGNMENT, &previousAlignment);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
 		glBindTexture(GL_TEXTURE_2D_ARRAY, a.texture);
 		const int levels = std::min(a.levels, static_cast<int>(bake.mips.size()));
 		for (int level = 0; level < levels; ++level) {
 			const GroundMip& mip = bake.mips[static_cast<size_t>(level)];
-			glTexSubImage3D(GL_TEXTURE_2D_ARRAY, level, 0, 0, layer, mip.size, mip.size, 1, GL_RGBA, GL_UNSIGNED_BYTE, mip.rgba.data());
+			glCompressedTexSubImage3D(
+				GL_TEXTURE_2D_ARRAY,
+				level,
+				0,
+				0,
+				layer,
+				mip.size,
+				mip.size,
+				1,
+				kTileFormat,
+				static_cast<GLsizei>(mip.bc3.size()),
+				mip.bc3.data()
+			);
 		}
 		glBindTexture(GL_TEXTURE_2D_ARRAY, 0);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, previousAlignment);
 	}
 
 	bool GroundTileBank::bakeNext() {

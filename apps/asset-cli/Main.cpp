@@ -9,7 +9,6 @@
 #include "assets/AssetRegistry.h"
 #include "assets/AssetRenderer.h"
 #include "assets/AssetValidator.h"
-#include "assets/VariantSeed.h"
 
 #include "BaseShader.h"
 #include "backend/gl/GLBackend.h"
@@ -19,6 +18,8 @@
 #include "utils/Log.h"
 #include "utils/ResourcePath.h"
 #include "vector/Types.h"
+#include "world/rendering/GlVersion.h"
+#include "world/rendering/GroundTileBaker.h"
 
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
@@ -188,8 +189,8 @@ namespace {
 			return false;
 		}
 		glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, worldview::kGlMajor);
+		glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, worldview::kGlMinor);
 		glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 		glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 		g_window = glfwCreateWindow(16, 16, "asset-cli", nullptr, nullptr);
@@ -290,8 +291,7 @@ namespace {
 	// One of a ground or groundcover def's variants at the seed its renderer builds it with:
 	// the ground tile baker's variantSeed for a ground def, the variant index for groundcover.
 	json variantCounts(const AssetDefinition& def, uint32_t variant) {
-		const uint32_t seed =
-			def.role == assets::AssetRole::Ground ? assets::variantSeed(def.ground.seedGroup, variant) : variant;
+		const uint32_t seed = def.role == assets::AssetRole::Ground ? worldview::GroundTileBaker::variantSeed(def, variant) : variant;
 		std::vector<renderer::TessellatedMesh> meshes;
 		json								   row{{"seed", seed}, {"triangles", nullptr}, {"vertices", nullptr}};
 		if (AssetRegistry::Get().buildMeshes(def.defName, seed, meshes)) {
@@ -420,15 +420,18 @@ namespace {
 		applyParams(*d, *sets);
 		d = AssetRegistry::Get().getDefinition(*defName);
 
-		const std::string resolvedSvg = d->svgPath.empty() ? "" : d->resolvePath(d->svgPath).string();
+		std::vector<std::string> resolvedSvgs;
+		for (const std::string& svgPath : d->svgPaths) {
+			resolvedSvgs.push_back(d->resolvePath(svgPath).string());
+		}
 
 		json out;
 		out["defName"] = d->defName;
 		out["label"] = d->label;
 		out["type"] = typeName(d->assetType);
 		out["worldHeight"] = d->worldHeight;
-		out["svgPath"] = d->svgPath;
-		out["resolvedSvgPath"] = resolvedSvg;
+		out["svgPaths"] = d->svgPaths;
+		out["resolvedSvgPaths"] = resolvedSvgs;
 		out["scriptPath"] = d->scriptPath;
 		out["generatorName"] = d->generatorName;
 		out["groups"] = d->placement.groups;
@@ -452,8 +455,8 @@ namespace {
 			std::cout << "label:         " << d->label << "\n";
 			std::cout << "type:          " << typeName(d->assetType) << "\n";
 			std::cout << "worldHeight:   " << d->worldHeight << "\n";
-			if (!d->svgPath.empty()) {
-				std::cout << "svgPath:       " << d->svgPath << "  ->  " << resolvedSvg << "\n";
+			for (size_t i = 0; i < d->svgPaths.size(); ++i) {
+				std::cout << "svgPath:       " << d->svgPaths[i] << "  ->  " << resolvedSvgs[i] << "\n";
 			}
 			if (!d->scriptPath.empty()) {
 				std::cout << "scriptPath:    " << d->scriptPath << "\n";

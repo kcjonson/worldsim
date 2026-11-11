@@ -9,6 +9,8 @@
 #include <primitives/Primitives.h>
 #include <theme/Tokens.h>
 #include <ui/Context.h>
+#include <utils/Log.h>
+#include <world/rendering/ScreenStateGuard.h>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -165,7 +167,11 @@ namespace asset_manager {
 		  animated(args.animated),
 		  collider(args.collider),
 		  tiles(std::max(1, args.tiles)),
-		  coordinateSystem(args.coordinateSystem) {}
+		  coordinateSystem(args.coordinateSystem) {
+		// A layout pass runs between the frame's update and its render, so a thumbnail the tree or the
+		// detail pane just built draws its picture before its first frame instead of a frame late.
+		setOnLayout([this](ui::Component&) { refreshPicture(); });
+	}
 
 	void AssetThumbnail::clearCache() {
 		MeshCache& cache = meshCache();
@@ -187,14 +193,14 @@ namespace asset_manager {
 		}
 	}
 
-	void AssetThumbnail::ensureMesh() {
+	bool AssetThumbnail::ensureMesh() {
 		// Refetch when dirty, resized, moved to a screen of another pixel ratio, or after a reload cleared
 		// the cache, which means the art may have changed.
 		const Foundation::Vec2 size = getSize();
 		const float			   scale = pixelScale();
 		MeshCache&			   cache = meshCache();
 		if (!dirty && cacheGen == cache.generation && fetchedSize.x == size.x && fetchedSize.y == size.y && fetchedScale == scale) {
-			return;
+			return false;
 		}
 		dirty = false;
 		cacheGen = cache.generation;
@@ -206,7 +212,7 @@ namespace asset_manager {
 		targetRect = {0.0F, 0.0F, size.x, size.y};
 		clip.reset();
 		if (defName.empty() || size.x <= 0.0F || size.y <= 0.0F) {
-			return;
+			return true;
 		}
 		// A tiled ground tile fits its centre tile; render() repeats it around that one.
 		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
@@ -239,6 +245,20 @@ namespace asset_manager {
 		sourceBounds = mesh->sourceBounds;
 		clip = mesh->clip;
 		trimMeshCache(key);
+		return true;
+	}
+
+	const assets::MotionClip* AssetThumbnail::motionClip() const {
+		if (!animated || sourceBounds.width <= 0.0F || sourceBounds.height <= 0.0F) {
+			return nullptr;
+		}
+		const assets::MotionDef* motion = assets::AssetRegistry::Get().getMotion(defName);
+		if (motion == nullptr || motion->clips.empty()) {
+			return nullptr;
+		}
+		const assets::MotionClip* walk = motion->findClip("walk");
+		const assets::MotionClip* chosen = walk != nullptr ? walk : &motion->clips.front();
+		return chosen->drivers.empty() ? nullptr : chosen;
 	}
 
 	// Replays fitToRect (see renderer::fitToRect): scale to fit the source bounds into this box
@@ -271,51 +291,110 @@ namespace asset_manager {
 	}
 
 	void AssetThumbnail::render() {
-		ensureMesh();
+		if (ensureMesh()) {
+			pictureStale = true;
+		}
 		if (mesh != nullptr && !mesh->meshes.empty()) {
-			drawMeshes();
+			if (const assets::MotionClip* motion = motionClip()) {
+				// Sweep the clip's phase over time, posing the part vertex ranges in the fitted preview space.
+				std::unordered_map<std::string, assets::PartTransform> xforms;
+				assets::evaluateClip(*motion, sweepPhase(), xforms);
+				drawMeshes(xforms, opacity(), drawKey());
+			} else {
+				if (pictureStale) {
+					requestUpdate(); // the old picture, if any, stands in until update() draws the new one
+				}
+				drawPicture();
+			}
 		}
 		if (collider) {
 			drawCollider();
 		}
 	}
 
-	void AssetThumbnail::drawMeshes() {
-		// Animate: if this asset declares a motion, sweep its first clip's phase over time and
-		// deform the part vertex ranges in the fitted preview space, so the preview shows the
-		// walk cycle in motion. Assets without a motion (the vast majority) skip this entirely.
-		std::unordered_map<std::string, assets::PartTransform> xforms;
-		const bool											   framed = sourceBounds.width > 0.0F && sourceBounds.height > 0.0F;
-		const auto* motion = animated && framed ? assets::AssetRegistry::Get().getMotion(defName) : nullptr;
-		if (motion != nullptr) {
-			const assets::MotionClip* walk = motion->findClip("walk");
-			const assets::MotionClip* motionClip = (walk != nullptr) ? walk : &motion->clips.front();
-			if (!motionClip->drivers.empty()) {
-				assets::evaluateClip(*motionClip, sweepPhase(), xforms);
-			}
-		}
-		const float fade = opacity();
+	void AssetThumbnail::update(float /*dt*/) {
+		refreshPicture();
+	}
 
-		if (!clip.has_value()) {
-			for (const renderer::TessellatedMesh& part : mesh->meshes) {
-				drawMesh(part, xforms, sourceBounds, targetRect, fade, drawKey());
-			}
+	void AssetThumbnail::refreshPicture() {
+		if (ensureMesh()) {
+			pictureStale = true;
+		}
+		if (!pictureStale || mesh == nullptr || mesh->meshes.empty() || motionClip() != nullptr) {
 			return;
 		}
-		// A ground tile: each copy clipped to its own square, so the art crossing its edges shows only
-		// where the wrap put it. The meshes are fit to the centre copy.
-		const int mid = repeat / 2;
-		for (int row = 0; row < repeat; ++row) {
-			for (int col = 0; col < repeat; ++col) {
-				const float dx = static_cast<float>(col - mid) * clip->width;
-				const float dy = static_cast<float>(row - mid) * clip->height;
-				Renderer::Primitives::pushClip({clip->x + dx, clip->y + dy, clip->width, clip->height});
-				Renderer::Primitives::PushTransform(glm::translate(Foundation::Mat4(1.0F), glm::vec3(dx, dy, 0.0F)));
-				for (const renderer::TessellatedMesh& part : mesh->meshes) {
-					drawMesh(part, xforms, sourceBounds, targetRect, fade, drawKey());
-				}
-				Renderer::Primitives::PopTransform();
-				Renderer::Primitives::popClip();
+		pictureStale = false;
+		if (coordinateSystem == nullptr) {
+			// The pass couldn't put the screen's projection back without it.
+			LOG_ERROR(Engine, "AssetThumbnail: %s has no coordinate system to draw its picture with", defName.c_str());
+			return;
+		}
+		// A ground tile's copies are one clipped square, so the picture is that square; anything else is the box.
+		const Foundation::Rect region = clip.value_or(Foundation::Rect{0.0F, 0.0F, fetchedSize.x, fetchedSize.y});
+		const int			   width = std::max(1, static_cast<int>(std::lround(region.width * fetchedScale)));
+		const int			   height = std::max(1, static_cast<int>(std::lround(region.height * fetchedScale)));
+		if (!picture.isValid() || picture.width() != width || picture.height() != height) {
+			picture = Renderer::RenderTarget::create(width, height);
+			if (!picture.isValid()) {
+				LOG_ERROR(Engine, "AssetThumbnail: could not create a %dx%d render target for %s", width, height, defName.c_str());
+				return;
+			}
+		}
+
+		const worldview::ScreenStateGuard guard(coordinateSystem);
+		picture.begin();
+		// The screen-space fallback projection (no coordinate system) matches the target exactly. After
+		// begin(), so the size is the target's, not remembered as the backbuffer's.
+		Renderer::Primitives::setCoordinateSystem(nullptr);
+		Renderer::Primitives::setViewport(width, height);
+		Renderer::Primitives::clear(Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F));
+		Renderer::Primitives::beginFrame();
+		Foundation::Mat4 toPixels = glm::scale(
+			Foundation::Mat4(1.0F), glm::vec3(static_cast<float>(width) / region.width, static_cast<float>(height) / region.height, 1.0F)
+		);
+		toPixels = glm::translate(toPixels, glm::vec3(-region.x, -region.y, 0.0F));
+		Renderer::Primitives::PushTransform(toPixels);
+		if (clip.has_value()) {
+			Renderer::Primitives::pushClip(*clip); // the art crossing the square's edges shows only where the wrap put it
+		}
+		drawMeshes({}, 1.0F, 0);
+		if (clip.has_value()) {
+			Renderer::Primitives::popClip();
+		}
+		Renderer::Primitives::PopTransform();
+		Renderer::Primitives::endFrame();
+		picture.end();
+	}
+
+	void AssetThumbnail::drawMeshes(const std::unordered_map<std::string, assets::PartTransform>& xforms, float fade, int32_t key) {
+		for (const renderer::TessellatedMesh& part : mesh->meshes) {
+			drawMesh(part, xforms, sourceBounds, targetRect, fade, key);
+		}
+	}
+
+	// The picture over its region, or a ground tile's tiles x tiles copies edge to edge around the centre one.
+	void AssetThumbnail::drawPicture() {
+		if (!picture.isValid()) {
+			return;
+		}
+		const Foundation::Rect region = clip.value_or(Foundation::Rect{0.0F, 0.0F, fetchedSize.x, fetchedSize.y});
+		const int			   copies = clip.has_value() ? repeat : 1;
+		const int			   mid = copies / 2;
+		for (int row = 0; row < copies; ++row) {
+			for (int col = 0; col < copies; ++col) {
+				Renderer::Primitives::drawImage({
+					.texture = picture.texture(),
+					.bounds =
+						{region.x + (static_cast<float>(col - mid) * region.width),
+						 region.y + (static_cast<float>(row - mid) * region.height),
+						 region.width,
+						 region.height},
+					.uvMin = {0.0F, 1.0F}, // a target holds its bottom row at row 0
+					.uvMax = {1.0F, 0.0F},
+					.tint = Foundation::Color(1.0F, 1.0F, 1.0F, opacity()),
+					.id = "am_thumbnail",
+					.key = drawKey(),
+				});
 			}
 		}
 	}

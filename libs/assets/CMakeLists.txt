@@ -6,6 +6,7 @@ add_library(assets
     assets/SvgPathNodes.cpp
     assets/MotionEval.cpp
     assets/AssetValidator.cpp
+    assets/GroundSvg.cpp
     assets/GroundTint.cpp
     assets/GroundTransition.cpp
     assets/TessellatedPaths.cpp
