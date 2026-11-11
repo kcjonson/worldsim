@@ -55,4 +55,25 @@ if(BUILD_TESTING)
 
         add_test(NAME geometry-tests COMMAND geometry-tests)
     endif()
+
+    file(GLOB_RECURSE GEOMETRY_BENCHMARK_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.bench.cpp"
+    )
+
+    if(GEOMETRY_BENCHMARK_SOURCES)
+        find_package(benchmark CONFIG REQUIRED)
+        add_executable(geometry-benchmarks ${GEOMETRY_BENCHMARK_SOURCES})
+        target_link_libraries(geometry-benchmarks
+            PRIVATE
+                geometry
+                benchmark::benchmark
+                benchmark::benchmark_main
+        )
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(geometry-benchmarks PRIVATE -O3)
+        endif()
+        add_test(NAME geometry-benchmarks COMMAND geometry-benchmarks)
+    endif()
 endif()
