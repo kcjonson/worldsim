@@ -6,7 +6,7 @@ Trees in a forest read as one tree at a few sizes. This spec makes each tree a d
 
 The aim is trees and forests more realistic than RimWorld's, held to what stays readable and fast. Form comes from botany (branching habit, crown shape, how a species ages, relative sizes). Absolute size and density are compressed to the game.
 
-A plant's age is one number. A species lives a set number of years, a plant is some number of years old, and everything about how it looks and what it yields follows from the fraction of its life it has lived. There are no named age classes. Aging is a plant mechanism, not a tree one: any flora def that declares an age block gets it, and trees are the first users and the only ones this document tunes. Plants age in real game time with real lifespans, so a forest does not visibly mature during a colony; the mechanism's visible effect belongs to short-lived plants, later (R12).
+A plant's age is one number. A species lives a set number of years, a plant is some number of years old, and everything about how it looks and what it yields follows from the fraction of its life it has lived. There are no named age classes. Aging is a plant mechanism, not a tree one: any flora def that declares an age block gets it, and trees are the first users and the only ones this document tunes. Plants age in real game time with real lifespans, so most of a forest does not change within a colony, and young trees grow a bit in a very long one; the mechanism's larger visible effect belongs to short-lived plants, later (R12).
 
 ## Where it stands today
 
@@ -103,10 +103,11 @@ Sim and tools:
 | D16 | Growth steps are mesh sharing and nothing more. The engine draws a tree at the nearest of a fixed number of growth steps per species so thousands of trees share GPU meshes. Steps are unnamed and never appear in data files or UI. The generator draws each step at its true size; placement scale narrows to 0.93 to 1.07. A species uses one render path, chosen at its reference age. Decided 2026-11-10. |
 | D17 | Trees age with game time. On a slow tick (once per game season) every loaded tree whose age has crossed into the next growth step takes its new step. Size follows a saturating curve of age, so young trees change within a playthrough and old ones barely. Decided 2026-11-10 by the owner. |
 | D18 | A tree's collision rect, wood yield, and felling work come from the generator per growth step, from the tree it drew: never from a named scale and never from the individual. Decided 2026-11-10. |
-| D19 | Plants age in real game time with real lifespans. Forests are not meant to visibly mature during a colony. No growth-rate factor, shorter year, or younger age mix is added to make them. Decided 2026-11-10 by the owner. |
+| D19 | Plants age in real game time with real lifespans. Nothing is added to speed that up: no growth-rate factor, shorter year, or younger age mix. Most of a forest does not change within a colony, and in a very long colony young trees grow a bit, which is fine and expected. That follows from real time and is not a rule against change. Decided 2026-11-10 by the owner. |
 | D20 | Aging is a plant mechanism. Lifespan, age as a fraction of it, the `age` generator input, growth steps, and the per-step box and yield apply to any flora def that declares an age block. Trees are the first users and the only ones this document tunes. Decided 2026-11-10 by the owner. |
 | D21 | The mechanism's code is named for plants (R1, R2). Tree-specific parts, the skeleton generator, species, scale and density, and see-through crowns, keep tree names. |
 | D22 | The slow plant tick is deliberately coarse and has little to do until other inputs exist. Seasons and fruit are two later inputs that land in the same tick; both are out of scope here (R12). |
+| D23 | Wood does not depend on regrowth. The forest is effectively unbounded, so wood is not scarce; a colony that has cut what is near it goes further for more. Felled trees are not replanted or regrown, by design. Decided 2026-11-10 by the owner. |
 
 ## Requirements
 
@@ -309,7 +310,7 @@ No tool reported trees per area, canopy cover, or wood per area, and R9 and the 
 
 ### R12 Aging during play
 
-Plants age with game time (D19, D20). A plant's age advances at the clock's rate, so change is slow, and the size curve (R9) puts most of it in the young. Forests are not meant to visibly mature during a colony; the arithmetic below is the intended behaviour.
+Plants age with game time (D19, D20). A plant's age advances at the clock's rate, so change is slow, and the size curve (R9) puts most of it in the young. Most of a forest does not change within a colony, and in a very long one young trees grow a bit. That follows from real time, and the arithmetic below is the intended behaviour.
 
 What a colony sees, from `TimeSystem`'s defaults (a year is 60 game days, 24 real hours at 1x, 8 at 3x): a colony played for about 40 real hours, mostly at 3x, lives about 5 game years. Twenty hours at 1x is under one year; 60 hours at 10x is 25. In 5 years:
 
@@ -318,7 +319,7 @@ What a colony sees, from `TimeSystem`'s defaults (a year is 60 game days, 24 rea
 - An oak at age 0.10 (20 years, 1.6 m) widens about 12%, about half a step. An oak seedling at 0.02 (4 years, about 0.6 m) widens by half and crosses about two steps.
 - A birch at age 0.10 (8 years, 0.7 m) widens about a third and crosses one or two steps. A median birch does not visibly change.
 
-So the bulk of a forest looks the same from founding to the end of a colony, and only the youngest trees step at all. That is the design, and nothing here speeds it up. A plant with a short lifespan gets the same arithmetic at a different scale: a bush or an annual is a large fraction of its life older within one colony, so growth shows there, and that is where growth is meant to be visible. Giving those defs age blocks and age-driven generators is future work and no task in this document. The berry bush already has a regrowth mechanic (`regrowthTime` and a cooldown after a non-destructive harvest, plus optional `totalResourceMin` and `totalResourceMax` resource pools on other bushes); how age would meet it is for that work to settle, and nothing here changes it.
+So the bulk of a forest looks the same from founding to the end of a colony, and only the youngest trees step at all. That is expected, and nothing here speeds it up. A plant with a short lifespan gets the same arithmetic at a different scale: a bush or an annual is a large fraction of its life older within one colony, so growth shows there, and that is where growth is meant to be visible. Giving those defs age blocks and age-driven generators is future work and no task in this document. The berry bush already has a regrowth mechanic (`regrowthTime` and a cooldown after a non-destructive harvest, plus optional `totalResourceMin` and `totalResourceMax` resource pools on other bushes); how age would meet it is for that work to settle, and nothing here changes it.
 
 - Tick: once per game season (starting value), every loaded plant with an age block computes its growth step from its age. Every plant whose step changed takes the new one. With a 15-day season that is every 2 real hours at 3x, every 36 minutes at 10x. The tick is slow and coarse on purpose; with trees as the only users it mostly finds nothing to do. Crossings are spread out across ticks on their own, because every plant has its own base age.
 - Room for later inputs: the same slow update is where seasons (a plant looks different in each season) and fruit (a plant's fruiting state) would land. Each is its own future work and is not designed here. The design leaves room by shape only: they would be further parts of the template key (R3) beside growth step and individual, and further reasons for the tick to refresh a plant, beside crossing a step. Neither is built, and nothing in this document depends on them.
@@ -329,7 +330,8 @@ So the bulk of a forest looks the same from founding to the end of a colony, and
 
 ## Out of scope
 
-- A plant dying at the end of its lifespan, and regrowth after death or felling. A plant at age fraction 1 stays old.
+- A plant dying at the end of its lifespan, and regrowth after death. A plant at age fraction 1 stays old.
+- Regrowth or replanting after felling. Not planned: the forest is effectively unbounded, so wood is not scarce (D23).
 - Seasons in how plants look. They would land in the slow plant tick and the template key (R12); not designed here.
 - Fruit, a plant's fruiting state, likewise a later input to that tick and key (R12).
 - Age blocks and age-driven generators for short-lived plants (bushes, grasses, annuals), where growth shows within a colony (R12), and how age meets a bush's regrowth and resource pool.
