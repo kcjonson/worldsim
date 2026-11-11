@@ -21,6 +21,8 @@
 
 #include <nav/NavMesh.h>
 
+#include "FloraCollider.h"
+
 #include <cstdint>
 #include <optional>
 #include <vector>
@@ -34,10 +36,6 @@ namespace nav {
 	constexpr std::int64_t kProvenanceTree	   = -2;
 	constexpr std::int64_t kProvenanceBorder   = -3;
 	constexpr std::int64_t kProvenanceJunction = -4;
-
-	// Pad added outward around a flora collider before emitting its ring, in mm. A
-	// small inflation keeps the agent clear of the trunk rather than grazing it.
-	constexpr std::int64_t kFloraColliderPadMm = 50;
 
 	// --- Ground ------------------------------------------------------------------
 	//

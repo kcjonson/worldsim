@@ -577,7 +577,7 @@ namespace ecs {
 		}
 		// A route's rest, so the ground under it stays loaded and meshed: no two anchors along it
 		// farther apart than half the load range, so every chunk it crosses is held.
-		const float spacing = world::ChunkManager::kDefaultAnchorLoadRangeMeters / 2.0F;
+		const float spacing = anchorLoadRangeMeters() / 2.0F;
 		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
 			(void)entity;
 			if (path.done()) {
@@ -609,7 +609,7 @@ namespace ecs {
 		appendAnchors(held);
 		anchors.clear();
 		anchorChunks.clear();
-		const float range = world::ChunkManager::kDefaultAnchorLoadRangeMeters;
+		const float range = anchorLoadRangeMeters();
 		for (const world::WorldPosition& p : held) {
 			anchors.emplace_back(p.x, p.y);
 			const world::ChunkCoordinate lo = world::worldToChunk({p.x - range, p.y - range});
@@ -1554,10 +1554,19 @@ namespace ecs {
 	}
 
 	void NavigationSystem::forgetDroppedRoutes() {
-		// A requester's confinement lasts while its route does; arrived, or with none, it's forgotten.
+		// A requester's confinement lasts while its task does, or with no task instance while its route
+		// does; then it's forgotten. A scope planned before its task had an instance id is the task's
+		// first route, and is that instance's from here on.
 		for (auto it = routeScopes.begin(); it != routeScopes.end();) {
-			const NavPath* path = world != nullptr && world->isAlive(it->first) ? world->getComponent<NavPath>(it->first) : nullptr;
-			it					= path == nullptr || path->done() ? routeScopes.erase(it) : std::next(it);
+			const bool	   alive = world != nullptr && world->isAlive(it->first);
+			const Task*	   task	 = alive ? world->getComponent<Task>(it->first) : nullptr;
+			const NavPath* path	 = alive ? world->getComponent<NavPath>(it->first) : nullptr;
+			if (it->second.instance == 0 && task != nullptr && task->instanceId != 0) {
+				it->second.instance = task->instanceId;
+			}
+			const bool held = it->second.instance != 0 ? task != nullptr && task->instanceId == it->second.instance
+													   : path != nullptr && !path->done();
+			it				= held ? std::next(it) : routeScopes.erase(it);
 		}
 		if (pricedRoutes.empty()) {
 			return;
@@ -1987,22 +1996,30 @@ namespace ecs {
 		const std::int64_t		radius	= radiusMm(agentRadiusMeters);
 
 		// An autonomous route (a colonist's own choice) is always confined, to the square round where
-		// its first plan started, the ground its anchor holds: a goal outside it has no route. A
-		// player's order isn't confined. A requester's replans toward the same goal keep the kind and
-		// the square its first plan had, so a detour that plan approved never fails partway because the
-		// square moved with the colonist, nor turns into another kind of route when control changes
-		// hands. A start pushed out of the square by no more than the mover's radius keeps it; one
-		// farther out (a teleport) takes the square round where it now stands.
+		// its task's first route started, the ground its anchor held when it chose: a goal outside it
+		// has no route. A player's order isn't confined. Every later route of the same task (its next
+		// leg, a replan) keeps the kind and the square the first had, so a detour or a second leg that
+		// choice approved never fails because the square moved with the colonist, nor turns into
+		// another kind of route when control changes hands. A task's first route is planned before its
+		// instance id is given (the AI routes, then takes its claims), so the first instance to ask
+		// takes up a scope that has none. A requester with no task instance (an order, a test) is held
+		// to one goal instead. A start pushed out of the square by no more than
+		// the mover's radius keeps it; one farther out (a teleport) takes the square round where it
+		// now stands.
 		const auto inside = [](const geometry::RectMm& r, const geometry::Vec2i64& p) {
 			return p.x >= r.min.x && p.x <= r.max.x && p.y >= r.min.y && p.y <= r.max.y;
 		};
 		const auto grown = [](const geometry::RectMm& r, std::int64_t by) {
 			return geometry::RectMm{{r.min.x - by, r.min.y - by}, {r.max.x + by, r.max.y + by}};
 		};
-		RouteScope scope{goalMm, kind, kind == RouteKind::Autonomous ? std::optional(squareAround(startMm)) : std::nullopt};
+		const Task*	   task		= requester != kInvalidEntity && world != nullptr ? world->getComponent<Task>(requester) : nullptr;
+		const uint64_t instance = task != nullptr ? task->instanceId : 0;
+		RouteScope	   scope{instance, goalMm, kind, kind == RouteKind::Autonomous ? std::optional(squareAround(startMm)) : std::nullopt};
 		if (requester != kInvalidEntity) {
 			const auto held = routeScopes.find(requester);
-			if (held != routeScopes.end() && held->second.goalMm == goalMm) {
+			if (held != routeScopes.end() &&
+				(instance != 0 ? held->second.instance == instance || held->second.instance == 0
+							   : held->second.instance == 0 && held->second.goalMm == goalMm)) {
 				scope.kind	 = held->second.kind;
 				scope.within = held->second.within;
 				if (scope.within.has_value() && !inside(grown(*scope.within, radius), startMm)) {
@@ -2060,8 +2077,17 @@ namespace ecs {
 		return waypoints;
 	}
 
-	geometry::RectMm NavigationSystem::squareAround(const geometry::Vec2i64& centerMm) {
-		return {{centerMm.x - kAutonomousReachMm, centerMm.y - kAutonomousReachMm}, {centerMm.x + kAutonomousReachMm, centerMm.y + kAutonomousReachMm}};
+	float NavigationSystem::anchorLoadRangeMeters() const {
+		return chunkManager != nullptr ? chunkManager->anchorLoadRangeMeters() : world::ChunkManager::kDefaultAnchorLoadRangeMeters;
+	}
+
+	std::int64_t NavigationSystem::autonomousReachMm() const {
+		return std::llround(static_cast<double>(anchorLoadRangeMeters()) * static_cast<double>(geometry::kMillimetersPerMeter));
+	}
+
+	geometry::RectMm NavigationSystem::squareAround(const geometry::Vec2i64& centerMm) const {
+		const std::int64_t half = autonomousReachMm();
+		return {{centerMm.x - half, centerMm.y - half}, {centerMm.x + half, centerMm.y + half}};
 	}
 
 	std::uint64_t NavigationSystem::chunkStamp(const geometry::RectMm& box, StampGround withGround) const {
@@ -2097,14 +2123,14 @@ namespace ecs {
 	std::uint64_t NavigationSystem::verdictStamp(glm::vec2 anchor) const {
 		join();
 		const geometry::Vec2i64 c = nav::toMm(anchor);
-		constexpr std::int64_t	kHalf = 2 * kAutonomousReachMm;
+		const std::int64_t		kHalf = 2 * autonomousReachMm();
 		return chunkStamp({{c.x - kHalf, c.y - kHalf}, {c.x + kHalf, c.y + kHalf}}, StampGround::Without);
 	}
 
-	bool NavigationSystem::inSquareOf(glm::vec2 anchor, glm::vec2 here) {
+	bool NavigationSystem::inSquareOf(glm::vec2 anchor, glm::vec2 here) const {
 		const geometry::Vec2i64 a = nav::toMm(anchor);
 		const geometry::Vec2i64 h = nav::toMm(here);
-		return std::abs(h.x - a.x) <= kAutonomousReachMm && std::abs(h.y - a.y) <= kAutonomousReachMm;
+		return std::abs(h.x - a.x) <= autonomousReachMm() && std::abs(h.y - a.y) <= autonomousReachMm();
 	}
 
 	std::optional<float> NavigationSystem::walkDistance(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
@@ -2195,27 +2221,66 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::passesTree(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const {
-		// Every 0.25 m along the line, the point and the two a radius either side of it.
-		constexpr double kStepMm = 250.0;
-		const auto		 inTree	 = [this](double x, double y) {
-			  const std::int32_t tri = detailMesh.locate({std::llround(x), std::llround(y)});
-			  return tri >= 0 && detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker == nav::kProvenanceTree;
+		if (placement == nullptr) {
+			return false;
+		}
+		// Each segment against the outline of every tree in the nav mesh near it: within the radius
+		// when it crosses an edge or starts inside, or an edge comes that close. Exact, so no trunk
+		// however narrow is missed between samples.
+		using P						  = glm::dvec2;
+		const auto pointToSegment2	  = [](P p, P a, P b) {
+			   const P		d	 = b - a;
+			   const double len2 = glm::dot(d, d);
+			   const double t	 = len2 > 0.0 ? std::clamp(glm::dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
+			   const P		q	 = a + d * t - p;
+			   return glm::dot(q, q);
 		};
-		for (std::size_t k = 1; k < points.size(); ++k) {
-			const double dx		= static_cast<double>(points[k].x - points[k - 1].x);
-			const double dy		= static_cast<double>(points[k].y - points[k - 1].y);
-			const double length = std::hypot(dx, dy);
-			if (length <= 0.0) {
-				continue;
+		const auto cross = [](P o, P a, P b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
+		const auto segmentsWithin = [&](P a, P b, P c, P d, double r2) {
+			const double d1 = cross(c, d, a);
+			const double d2 = cross(c, d, b);
+			const double d3 = cross(a, b, c);
+			const double d4 = cross(a, b, d);
+			if (((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))) {
+				return true;
 			}
-			const double nx	   = -dy / length * static_cast<double>(radius);
-			const double ny	   = dx / length * static_cast<double>(radius);
-			const int	 steps = static_cast<int>(std::ceil(length / kStepMm));
-			for (int i = 0; i <= steps; ++i) {
-				const double x = static_cast<double>(points[k - 1].x) + dx * i / steps;
-				const double y = static_cast<double>(points[k - 1].y) + dy * i / steps;
-				if (inTree(x, y) || inTree(x + nx, y + ny) || inTree(x - nx, y - ny)) {
-					return true;
+			return std::min({pointToSegment2(a, c, d), pointToSegment2(b, c, d), pointToSegment2(c, a, b), pointToSegment2(d, a, b)}) <= r2;
+		};
+		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		const double				 r2		  = static_cast<double>(radius) * static_cast<double>(radius);
+		// Placed entities are found by their centre, so the box reaches past the largest collider.
+		constexpr float kColliderReach = 4.0F;
+		for (std::size_t k = 1; k < points.size(); ++k) {
+			const P			a{static_cast<double>(points[k - 1].x), static_cast<double>(points[k - 1].y)};
+			const P			b{static_cast<double>(points[k].x), static_cast<double>(points[k].y)};
+			const glm::vec2 lo = glm::min(nav::toMeters(points[k - 1]), nav::toMeters(points[k])) -
+								 glm::vec2{kColliderReach + static_cast<float>(radius) / 1000.0F};
+			const glm::vec2 hi = glm::max(nav::toMeters(points[k - 1]), nav::toMeters(points[k])) +
+								 glm::vec2{kColliderReach + static_cast<float>(radius) / 1000.0F};
+			const world::ChunkCoordinate cLo = world::worldToChunk({lo.x, lo.y});
+			const world::ChunkCoordinate cHi = world::worldToChunk({hi.x, hi.y});
+			for (std::int32_t cy = cLo.y; cy <= cHi.y; ++cy) {
+				for (std::int32_t cx = cLo.x; cx <= cHi.x; ++cx) {
+					const assets::SpatialIndex* index = placement->getChunkIndex({cx, cy});
+					if (index == nullptr) {
+						continue;
+					}
+					for (const assets::PlacedEntity* e : index->queryRect(lo.x, lo.y, hi.x, hi.y)) {
+						if (!floraInNavMesh({cx, cy}, *e) || !nav::floraOutline(*e, registry, colliderScratch)) {
+							continue;
+						}
+						if (geometry::pointInPolygon(points[k - 1], colliderScratch) != geometry::PointInPolygon::Outside) {
+							return true;
+						}
+						for (std::size_t v = 0; v < colliderScratch.size(); ++v) {
+							const geometry::Vec2i64& c = colliderScratch[v];
+							const geometry::Vec2i64& d = colliderScratch[(v + 1) % colliderScratch.size()];
+							if (segmentsWithin(a, b, {static_cast<double>(c.x), static_cast<double>(c.y)},
+											   {static_cast<double>(d.x), static_cast<double>(d.y)}, r2)) {
+								return true;
+							}
+						}
+					}
 				}
 			}
 		}

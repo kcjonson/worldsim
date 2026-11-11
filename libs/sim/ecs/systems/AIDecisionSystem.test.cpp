@@ -5407,6 +5407,124 @@ namespace ecs::test {
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBush));
 	}
 
+	// A haul's two legs with the real AI, MovementSystem and ActionSystem: stone from a pile
+	// 100 m west to a station east of the colonist. Every route of the task keeps the square round
+	// where its first route started (the colonist's, when it chose), so the deposit leg, 200 m from
+	// the pickup, routes as long as the station is in that square, and has no route when it isn't.
+	class AIDecisionHaulLegTest : public AIDecisionFirstMeshTest {
+	  protected:
+		void SetUp() override {
+			AIDecisionFirstMeshTest::SetUp();
+			world->registerSystem<TimeSystem>();
+			world->registerSystem<ActionSystem>(kTestRngSeed);
+			assets::AssetDefinition stone;
+			stone.defName						= "Stone";
+			stone.label							= "Stone";
+			stone.handsRequired					= 1;
+			stone.category						= assets::ItemCategory::RawMaterial;
+			stone.capabilities.carryable		= assets::CarryableCapability{5};
+			stone.itemProperties				= assets::ItemProperties{};
+			stone.itemProperties->stackSize		= 40;
+			stone.itemProperties->massKg		= 0.5F;
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(stone));
+		}
+
+		// A colonist at the origin who knows a pile of 3 stone 100 m west, and a station at
+		// `stationAt` whose job needs those 3.
+		EntityID haulerFor(glm::vec2 stationAt) {
+			auto&			registry = assets::AssetRegistry::Get();
+			const uint32_t	stoneId	 = registry.getDefNameId("Stone");
+			const glm::vec2 pileAt{-100.0F, 0.0F};
+			const EntityID	pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{pileAt});
+			makeLoosePile(*world, pile, stoneId, pileAt, 3);
+
+			station = world->createEntity();
+			world->addComponent<Position>(station, Position{stationAt});
+			assets::RecipeDef recipe;
+			recipe.defName = "Recipe_Stone";
+			recipe.label   = recipe.defName;
+			recipe.inputs.push_back({"Stone", 0, 3});
+			assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+			world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+			world->addComponent<Inventory>(station, Inventory::createForStorage());
+			GoalTask craft;
+			craft.type				  = TaskType::Craft;
+			craft.owner				  = GoalOwner::CraftingGoalSystem;
+			craft.destinationEntity	  = station;
+			craft.destinationPosition = stationAt;
+			craft.status			  = GoalStatus::Blocked;
+			GoalTask haul;
+			haul.type				 = TaskType::Haul;
+			haul.owner				 = GoalOwner::CraftingGoalSystem;
+			haul.destinationEntity	 = station;
+			haul.destinationPosition = stationAt;
+			haul.acceptedDefNameIds	 = {stoneId};
+			haul.parentGoalId		 = GoalTaskRegistry::Get().createGoal(std::move(craft));
+			GoalTaskRegistry::Get().createGoal(std::move(haul));
+
+			const EntityID colonist = createColonist({0.0F, 0.0F});
+			world->addComponent<Action>(colonist, Action{});
+			satisfyAllNeeds(*getNeeds(colonist));
+			addKnownEntity(colonist, pileAt, stoneId, assets::CapabilityType::Carryable);
+			nav->finishPendingBuilds();
+			return colonist;
+		}
+
+		[[nodiscard]] uint32_t delivered() { return world->getComponent<Inventory>(station)->getQuantity("Stone"); }
+		[[nodiscard]] uint32_t carried(EntityID colonist) { return world->getComponent<Inventory>(colonist)->getQuantity("Stone"); }
+		[[nodiscard]] size_t   claimsOf(EntityID colonist) {
+			  size_t held = 0;
+			  world->getSystem<AIDecisionSystem>().claimIndex().forEachClaim([&](const Claim&, const ClaimHolder& holder) {
+				  held += holder.colonist == colonist ? 1 : 0;
+			  });
+			  return held;
+		}
+
+		EntityID station = kInvalidEntity;
+	};
+
+	// The deposit leg, 200 m from the pickup, gets its route: the task's square round where the colonist
+	// chose holds both ends. (What the next decision then does with the delivery is the AI's carry-in
+	// check, from where the colonist stands: see the hand-back.)
+	TEST_F(AIDecisionHaulLegTest, DepositLegTwoHundredMetresFromThePickupRoutes) {
+		const EntityID colonist = haulerFor({100.0F, 0.0F});
+		for (int i = 0; i < 3000 && carried(colonist) == 0; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(carried(colonist), 3U) << "never picked the stone up";
+		bool routed = false;
+		bool failed = false;
+		for (int i = 0; i < 10 && !routed; ++i) {
+			world->update(kTick);
+			const NavPath* route = world->getComponent<NavPath>(colonist);
+			routed = route != nullptr && route->valid && !route->waypoints.empty() &&
+					 glm::distance(route->waypoints.back(), glm::vec2{100.0F, 0.0F}) < 0.5F;
+			failed = failed || getTask(colonist)->navState == NavState::CantFindWayTo;
+		}
+		EXPECT_TRUE(routed) << "the deposit leg had no route";
+		EXPECT_FALSE(failed);
+	}
+
+	// The station 150 m east is outside the square round the colonist when it chose: the deposit leg
+	// has no route. The colonist lets the delivery go with nothing held: no claim, no task on it, the
+	// stone in its pack.
+	TEST_F(AIDecisionHaulLegTest, DepositLegOutsideTheTasksSquareFailsCleanly) {
+		const EntityID colonist = haulerFor({150.0F, 0.0F});
+		for (int i = 0; i < 3000 && carried(colonist) == 0; ++i) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(carried(colonist), 3U) << "never picked the stone up";
+		for (int i = 0; i < 20; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(delivered(), 0U);
+		EXPECT_EQ(carried(colonist), 3U);
+		EXPECT_EQ(claimsOf(colonist), 0U) << "a claim outlived the failed delivery";
+		EXPECT_FALSE(getTask(colonist)->type == TaskType::Haul && getTask(colonist)->haulDestinationId == static_cast<uint64_t>(station))
+			<< "still on the delivery";
+	}
+
 	// A source 200 m off is outside the colonist's reach square: on its own it never goes there.
 	TEST_F(AIDecisionFirstMeshTest, WaterTwoHundredMetresOffIsNotChosen) {
 		const auto colonist = createColonist({0.0F, 0.0F});

@@ -143,9 +143,9 @@ class NavigationSystem : public ISystem {
 	// it agrees with reaches() and nothing the camera loads changes it; a goal outside the square has
 	// no route. An Ordered route (the player's) is searched wherever the meshed ground goes. Either is
 	// capped in expansions.
-	// A requester's replans toward the same goal keep the kind and the square (or none) its first
-	// plan had, while its start stays within its radius of the square; a new goal, or its route
-	// ending, starts afresh.
+	// Every route of a requester's task (its legs, its replans) keeps the kind and the square (or
+	// none) the task's first route had, while its start stays within its radius of the square; a new
+	// task starts afresh. A requester with no task instance is held to one goal instead.
 	//
 	// When the nav search gives up in priced ground (more expansions than the structural walk
 	// warrants, see kNavExpansionFloor), the route is the structural walk, through the flora at its
@@ -164,7 +164,7 @@ class NavigationSystem : public ISystem {
 
 	// What a colonist can reach on its own, and how far it walks there: a walk on the structural
 	// mesh (no flora, so the camera changes nothing) under the colonist's belief, confined to the
-	// square of half-side kAutonomousReachMm around where it stands. That square is the ground the
+	// square of half-side autonomousReachMm() around where it stands. That square is the ground the
 	// colonist's own anchor keeps loaded, whatever the camera does. reachFrom notes the start once;
 	// reaches() and walkDistance() walk to one goal each.
 	//   A start off meshed ground: every goal "maybe" (true; walkDistance answers the straight line).
@@ -173,8 +173,8 @@ class NavigationSystem : public ISystem {
 	//   on the way), unreachable otherwise.
 	// startCell (the start, kReachCellMm to a step) and startRegionGeneration (a stamp that moves
 	// when the structural content of a chunk the square touches changes, or its ground is meshed)
-	// together say when a walk from here still holds. A Reach is used within one frame; the belief's sets must
-	// outlive it.
+	// together say when a walk from here still holds. A Reach is used within one frame; the
+	// belief's sets must outlive it.
 	struct Reach {
 		bool						onGround = false;
 		geometry::Vec2i64			startMm{0, 0};
@@ -198,15 +198,16 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
 	// The structural stamp behind a route that failed at `anchor`: it moves when the structural
 	// content (walls, doors, water) changes in a chunk touching the anchor's square grown by
-	// kAutonomousReachMm, which holds every square a colonist still inside the anchor's square walks
+	// autonomousReachMm(), which holds every square a colonist still inside the anchor's square walks
 	// over. Ground arriving or leaving doesn't move it, so nothing the camera loads or drops does.
 	[[nodiscard]] std::uint64_t verdictStamp(glm::vec2 anchor) const;
 	// `here` is inside the square around `anchor`.
-	[[nodiscard]] static bool inSquareOf(glm::vec2 anchor, glm::vec2 here);
-	// Half the side of the square a colonist reaches and routes in on its own: the anchor load
-	// range, the ground its own anchor loads.
-	static constexpr std::int64_t kAutonomousReachMm =
-		static_cast<std::int64_t>(world::ChunkManager::kDefaultAnchorLoadRangeMeters) * geometry::kMillimetersPerMeter;
+	[[nodiscard]] bool inSquareOf(glm::vec2 anchor, glm::vec2 here) const;
+	// Half the side of the square a colonist reaches and routes in on its own: the anchor load range
+	// of the chunk manager wired in (ChunkManager::kDefaultAnchorLoadRangeMeters with none), the
+	// ground its own anchor loads, so the two never differ.
+	[[nodiscard]] std::int64_t autonomousReachMm() const;
+	[[nodiscard]] float		   anchorLoadRangeMeters() const;
 	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
 	static constexpr std::int64_t kReachCellMm = 2000;
 	// The nav search behind a found structural walk may expand this many triangles plus this many
@@ -325,8 +326,9 @@ class NavigationSystem : public ISystem {
 	// collision lets its mover through the trees and the forward snap leaves it alone while it
 	// follows it. Known for a route from the request that made it until its mover drops it.
 	[[nodiscard]] bool routeCrossesPricedFaces(const NavPath& path) const;
-	// The line comes within `radius` (mm) of a tree face on the nav mesh: how a route that isn't the
-	// nav search's own (the structural walk it falls back to) learns whether it crosses flora.
+	// The line comes within `radius` (mm) of a tree in the nav mesh (its outline, exactly): how a route
+	// that isn't the nav search's own (the structural walk it falls back to) learns whether it crosses
+	// flora.
 	[[nodiscard]] bool passesTree(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const;
 
 	// True when `entity`, placed in `chunk`, is a flora ring in the nav mesh queries see. Collision
@@ -570,7 +572,7 @@ class NavigationSystem : public ISystem {
 	// their ground meshed.
 	enum class StampGround { Without, With };
 	[[nodiscard]] std::uint64_t chunkStamp(const geometry::RectMm& box, StampGround withGround) const;
-	[[nodiscard]] static geometry::RectMm		squareAround(const geometry::Vec2i64& centerMm);
+	[[nodiscard]] geometry::RectMm				squareAround(const geometry::Vec2i64& centerMm) const;
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	[[nodiscard]] Rect viewportRect() const;
 	void			   updateDetail();
@@ -672,6 +674,7 @@ class NavigationSystem : public ISystem {
 	// tick's queries.
 	mutable std::unordered_map<std::uint64_t, std::vector<glm::vec2>> pricedRoutes;
 	struct RouteScope {
+		std::uint64_t					instance = 0; // the requester's Task::instanceId; 0 for none
 		geometry::Vec2i64				goalMm;
 		RouteKind						kind = RouteKind::Autonomous;
 		std::optional<geometry::RectMm> within;

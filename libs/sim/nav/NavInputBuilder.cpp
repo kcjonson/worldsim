@@ -48,6 +48,22 @@ namespace nav {
 		return gnav::NavInputPolygon{std::move(ring), true, kProvenanceTree};
 	}
 
+	std::optional<OrientedRect> floraBoxFor(const assets::PlacedEntity& e, const assets::CollisionShape& collision) {
+		if (collision.type != assets::CollisionShapeType::Rect) {
+			return std::nullopt;
+		}
+		const float		c	= std::cos(e.rotation);
+		const float		s	= std::sin(e.rotation);
+		const float		pad = static_cast<float>(kFloraColliderPadMm) / static_cast<float>(kTileMm);
+		const glm::vec2 off = collision.offsetMeters * e.scale;
+		OrientedRect	box;
+		box.center		= e.position + glm::vec2{off.x * c - off.y * s, off.x * s + off.y * c};
+		box.axisX		= {c, s};
+		box.axisY		= {-s, c};
+		box.halfExtents = std::abs(e.scale) * (collision.halfExtentsMeters + glm::vec2{pad, pad});
+		return box;
+	}
+
 	bool floraOutline(const assets::PlacedEntity& e, const assets::AssetRegistry& registry, geometry::Ring& ring) {
 		ring.clear();
 		const assets::AssetDefinition* def = registry.getDefinition(e.defName);
@@ -55,37 +71,20 @@ namespace nav {
 			return false;
 		}
 
-		const float c  = std::cos(e.rotation);
-		const float s  = std::sin(e.rotation);
-		const float sc = e.scale;
-		// Local-space point (meters) -> world mm: scale, rotate, translate by the
-		// entity position (which is in tiles == meters). The single trig step is
-		// rounded to mm at the boundary, matching the module's rounding policy.
-		auto toWorldMm = [&](glm::vec2 local) -> geometry::Vec2i64 {
-			const float lx = local.x * sc;
-			const float ly = local.y * sc;
-			const float wx = e.position.x + (lx * c - ly * s);
-			const float wy = e.position.y + (lx * s + ly * c);
-			return toMm({wx, wy});
-		};
-
 		if (def->collision.type == assets::CollisionShapeType::Rect) {
-			// The rect's 4 corners (local meters), half-extents inflated outward by
-			// the pad so the agent clears the trunk, then transformed -- so entity
-			// rotation turns it into an oriented quad (OBB) rather than an AABB.
-			const float		padMeters = static_cast<float>(kFloraColliderPadMm) / static_cast<float>(kTileMm);
-			const glm::vec2 c		  = def->collision.offsetMeters;
-			const float		hx		  = def->collision.halfExtentsMeters.x + padMeters;
-			const float		hy		  = def->collision.halfExtentsMeters.y + padMeters;
+			const OrientedRect box = *floraBoxFor(e, def->collision);
 			ring.reserve(4);
-			ring.push_back(toWorldMm({c.x - hx, c.y - hy}));
-			ring.push_back(toWorldMm({c.x + hx, c.y - hy}));
-			ring.push_back(toWorldMm({c.x + hx, c.y + hy}));
-			ring.push_back(toWorldMm({c.x - hx, c.y + hy}));
+			for (const glm::vec2 corner : {glm::vec2{-1.0F, -1.0F}, glm::vec2{1.0F, -1.0F}, glm::vec2{1.0F, 1.0F}, glm::vec2{-1.0F, 1.0F}}) {
+				ring.push_back(toMm(box.center + box.axisX * (corner.x * box.halfExtents.x) + box.axisY * (corner.y * box.halfExtents.y)));
+			}
 		} else if (def->collision.type == assets::CollisionShapeType::Polygon) {
+			const float c  = std::cos(e.rotation);
+			const float s  = std::sin(e.rotation);
+			const float sc = e.scale;
 			ring.reserve(def->collision.pointsMeters.size());
 			for (const glm::vec2& p : def->collision.pointsMeters) {
-				ring.push_back(toWorldMm(p));
+				const glm::vec2 l = p * sc;
+				ring.push_back(toMm({e.position.x + (l.x * c - l.y * s), e.position.y + (l.x * s + l.y * c)}));
 			}
 		}
 

@@ -173,7 +173,7 @@ namespace ecs {
 		) {
 			if (memo != nullptr && memo->heldAnchor().has_value()) {
 				const SourceReachMemo::Anchor& held = *memo->heldAnchor();
-				if (held.beliefVersion == memory.beliefVersion && NavigationSystem::inSquareOf(held.at, here) &&
+				if (held.beliefVersion == memory.beliefVersion && nav.inSquareOf(held.at, here) &&
 					nav.verdictStamp(held.at) == held.structural) {
 					return held;
 				}

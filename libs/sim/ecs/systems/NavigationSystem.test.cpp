@@ -3484,3 +3484,46 @@ TEST_F(NavigationSystemTest, ClearGroundAndTheMeshAgreeOnAMirroredCollider) {
 	}
 	EXPECT_FALSE(meshClear(sys, {19.2F, 20.0F})) << "the mirrored collider is in the mesh";
 }
+
+// A task's routes keep the square round where its first route started, planned before the task had
+// its instance id: its next leg, 200 m from that leg's start, routes, and so does a replan halfway
+// along it, inside the square. A new task from the pickup gets the square round the pickup, which
+// doesn't hold the far end.
+TEST_F(NavigationSystemTest, ATasksLegsAndReplansKeepItsFirstSquare) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	settle(sys);
+	const EntityID colonist = world.createEntity();
+	world.addComponent<Task>(colonist, Task{});
+	const auto inFirstSquare = [](const std::vector<glm::vec2>& route) {
+		return std::all_of(route.begin(), route.end(), [](glm::vec2 p) { return std::abs(p.x) <= 128.0F && std::abs(p.y) <= 128.0F; });
+	};
+	ASSERT_TRUE(sys.requestPath({0.0F, 0.0F}, {-100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist).has_value());
+	world.getComponent<Task>(colonist)->instanceId = 7; // its claims, taken after its first route
+
+	const auto leg = sys.requestPath({-100.0F, 0.0F}, {100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(leg.has_value()) << "the second leg had no route";
+	EXPECT_TRUE(inFirstSquare(*leg));
+	const auto replan = sys.requestPath({-20.0F, 0.0F}, {100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist);
+	ASSERT_TRUE(replan.has_value());
+	EXPECT_TRUE(inFirstSquare(*replan));
+
+	world.getComponent<Task>(colonist)->instanceId = 8;
+	EXPECT_FALSE(sys.requestPath({-100.0F, 0.0F}, {100.0F, 0.0F}, kAgentRadius, {}, NavigationSystem::RouteKind::Autonomous, colonist).has_value())
+		<< "a new task's square is round where it starts";
+}
+
+// A sapling 0.04 m across, 0.2 m off a fallback route's line, is within the walker's radius of it:
+// the route is marked as crossing flora however narrow the trunk.
+TEST_F(NavigationSystemTest, FallbackRoutePastANarrowTrunkIsMarked) {
+	registerTree("Test_NavSapling", 0.02F);
+	WalkRig rig({20.0F, 20.0F});
+	placeTrees(rig.executor, rig.processed, "Test_NavSapling", {{20.03F, 20.2F}});
+	rig.start();
+	ASSERT_FALSE(meshClear(rig.nav, {20.03F, 20.2F})) << "the sapling is in the mesh";
+	rig.nav.setNavExpansionCap(1, 0);
+	const EntityID walker = rig.walker({2.0F, 20.0F}, {38.0F, 20.0F});
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(walker)->valid);
+	EXPECT_TRUE(rig.pricedRoute(walker)) << "the sapling was missed";
+}
