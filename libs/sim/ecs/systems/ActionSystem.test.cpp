@@ -296,6 +296,34 @@ TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
 	EXPECT_EQ(action->type, ActionType::Eat);
 }
 
+// With an empty pack, the colonist harvests the food source its decision named by Memory key, even
+// with another edible bush remembered on the same spot.
+TEST_F(ActionSystemTest, HungerHarvestsTheSourceTheDecisionNamed) {
+	auto& registry = assets::AssetRegistry::Get();
+	for (const char* name : {"Flora_TestBushA", "Flora_TestBushB"}) {
+		assets::AssetDefinition bush;
+		bush.defName = name;
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Berry";
+		registry.registerTestDefinition(std::move(bush));
+	}
+	const glm::vec2 spot{5.0F, 5.0F};
+	auto			colonist = createColonist(spot);
+	setupArrivedForNeed(colonist, NeedType::Hunger, spot);
+	auto* memory = world->getComponent<Memory>(colonist);
+	for (const char* name : {"Flora_TestBushA", "Flora_TestBushB"}) {
+		const uint32_t id = registry.getDefNameId(name);
+		memory->rememberWorldEntity(spot, id, registry.getCapabilityMask(id));
+	}
+	world->getComponent<Task>(colonist)->needSourceKey = hashWorldEntity(spot, registry.getDefNameId("Flora_TestBushB"));
+
+	world->update(0.1F);
+
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_EQ(action->type, ActionType::Harvest);
+	EXPECT_EQ(action->collectionEffect().sourceDefName, "Flora_TestBushB");
+}
+
 TEST_F(ActionSystemTest, StartsDrinkActionOnArrival) {
 	auto colonist = createColonist();
 	setupArrivedForNeed(colonist, NeedType::Thirst);
