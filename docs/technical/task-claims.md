@@ -226,9 +226,29 @@ landed cut) takes one handoff, `ActionSystem::headToDeposit`. Consequences for g
 - One carry-in-from-possession option (`evaluateCarryInOptions`) replaces the three inventory-source
   haul paths: for any root goal still wanting an item the colonist carries, offer to deliver it. This
   also covers plain storage, and goods left over after a cut, a bump, or a switch. Tools are
-  equipment and are never offered, and a storage root is not offered the colonist's edible food,
-  which stays its own provisions. Everything the colonist carries counts as its own, so the option is
-  sized min(carried, root available) and matches the task it is executing.
+  equipment and are never offered, and the colonist's provisions (below) are offered to no root. The
+  option is sized min(cargo, root available) and matches the task it is executing.
+
+### Provisions
+
+A colonist's own food is its provisions, never cargo: no carry-in offers it to any root, a cut does
+not sweep it along with what it lands, and a fetch does not count it as already picked up. Food is
+cargo toward a root only while the colonist's task or suspended record carries it there: berries it
+was sent to fetch from a pile or cut for that root, which its Inbound names. Everything else a
+colonist carries (anything that is not food) is cargo for any root that wants it. So:
+
+- a carry-in of food is sized to the food its task or record carries toward that root, which is how an
+  interrupted delivery of food, to storage or anywhere else, resumes: the record marks it as cargo and
+  the carry-in adopts it;
+- a cut toward a root counts as already carried only food an earlier cut handed on, and a landed cut
+  commits what that cut landed plus that, never the colonist's own;
+- a pickup of food commits what the pickup lifted, and a haul of food still on its way to its source
+  counts the food in the colonist's pack as provisions, not as goods already in hand;
+- a deposit never takes more than the task carries, so the meal stays in the pack.
+
+What the colonist would still fetch or cut for a root nets out its cargo for that root, never its
+provisions. Eating is not limited by this: a hungry colonist eats from its pack, cargo included, and a
+record whose goods were eaten shrinks to what is left.
 
 ---
 
@@ -251,7 +271,7 @@ Craft provisioning, construction delivery, and storage stocking.
 
 C is what the colonist already carries toward the root: the cargo an earlier cut of the same
 gathering handed on, or an adopted suspended record's (or, with neither, what it carries of the
-item that is not provisions, below), capped at the root's remaining need. E is the source's most per
+item that is not provisions, above), capped at the root's remaining need. E is the source's most per
 cut (`amountMax`; a pooled source gives at most that per cut too), capped by what still fits in the
 colonist's carry and by the root's remaining need less C. Over-estimating only makes another
 colonist briefly see less available; under-estimating brings back the over-harvest this spec

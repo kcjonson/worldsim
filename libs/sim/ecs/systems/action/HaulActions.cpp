@@ -90,7 +90,7 @@ namespace ecs {
 			// shortfall and keeps the rest on himself. Banking the excess would masquerade as
 			// available stock for later crafts and mis-route their provisioning.
 			const uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
-			const uint32_t toDeposit = std::min(carried, craftStationRemaining(world, stationEntity, *stationInv, depEff.itemDefName));
+			const uint32_t toDeposit = std::min({depEff.quantity, carried, craftStationRemaining(world, stationEntity, *stationInv, depEff.itemDefName)});
 			if (toDeposit == 0) {
 				// Station already holds the full requirement for this input; keep the surplus carried.
 				LOG_DEBUG(Engine, "[Action] Craft deposit skipped: station %llu already has enough %s",
@@ -290,7 +290,10 @@ namespace ecs {
 		// and a position-only check would Deposit an empty pack, fail, and re-issue the same
 		// fetch every tick -- an infinite "deposit nothing -> refetch" loop that strands the
 		// craft half-provisioned.
-		const bool carryingHaulItem = ecs::availableQuantity(inventory, task.haulItemDefName) > 0;
+		const auto*	   haulItemDef = registry.getDefinition(task.haulItemDefName);
+		const uint32_t cargoHeld =
+			haulCargo(task, ecs::availableQuantity(inventory, task.haulItemDefName), haulItemDef != nullptr && haulItemDef->isEdible());
+		const bool carryingHaulItem = cargoHeld > 0;
 
 		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
 		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
@@ -394,7 +397,7 @@ namespace ecs {
 			// Arriving with the goods in hand skips the pickup: the source claim is spent and the deposit
 			// commits what is held. A crafting station (WorkQueue) takes the goods into its own store; a
 			// build site or plain storage container takes them as before.
-			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
+			claimsToDeliveryLeg(task, cargoHeld);
 			const bool toCraftStation = world->hasComponent<WorkQueue>(storageEntity);
 			action = Action::Deposit(
 				task.haulItemDefName,
@@ -423,7 +426,7 @@ namespace ecs {
 			// time -- not at option-build time, where an over-cap two-hand armful is momentarily
 			// dropped and re-picked each tick (availableQuantity reads 0) and any "am I carrying?"
 			// test on the option is unreliable. The colonist walks to the box and deposits.
-			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
+			claimsToDeliveryLeg(task, cargoHeld);
 			headToDeposit(entity, task);
 
 			action.clear();

@@ -679,6 +679,171 @@ namespace ecs::test {
 		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, stoneId, {}), 0U);
 	}
 
+	// =============================================================================
+	// Provisions: a colonist's own food is never delivered to a root, by a carry-in or along with a
+	// cut. Food it was sent to fetch or cut for a root is that root's cargo, an interruption included.
+	// =============================================================================
+
+	// A hungry colonist's only meal is wanted by a craft and by a box: neither is offered it.
+	TEST_F(ChainClaimsTest, AColonistsOwnFoodIsNeverDelivered) {
+		const uint32_t	berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		craftRoot(station, stationPos, "Berry", 3);
+		const glm::vec2 boxPos{0.0F, -6.0F};
+		const EntityID	box = world->createEntity();
+		world->addComponent<Position>(box, Position{boxPos});
+		world->addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial});
+		world->addComponent<StorageConfiguration>(box, std::move(config));
+		GoalTask umbrella;
+		umbrella.type = TaskType::Haul;
+		umbrella.owner = GoalOwner::StorageGoalSystem;
+		umbrella.destinationEntity = box;
+		umbrella.destinationPosition = boxPos;
+		umbrella.acceptedDefNameIds = {berryId};
+		GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 60.0F;
+		decide(colonist);
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(colonist)->options) {
+			EXPECT_FALSE(option.taskType == TaskType::Haul && option.haulFromInventory) << "its berry was offered to " << option.haulGoalId;
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 1U);
+	}
+
+	class ProvisionsTest : public ChainClaimsTest {
+	  protected:
+		/// A box stocking berries toward `minimum` by cutting: its umbrella and the stocking Harvest child.
+		struct BerryBox {
+			EntityID box;
+			uint64_t umbrella;
+		};
+
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			registerHarvestable("FullBerryBush", "Berry", 3, 3);
+			berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		}
+
+		BerryBox berryBox(glm::vec2 position, uint32_t minimum) {
+			const EntityID box = world->createEntity();
+			world->addComponent<Position>(box, Position{position});
+			world->addComponent<Inventory>(box, Inventory::createForStorage());
+			StorageConfiguration config;
+			config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .minAmount = minimum});
+			world->addComponent<StorageConfiguration>(box, std::move(config));
+			auto&	 goals = GoalTaskRegistry::Get();
+			GoalTask umbrella;
+			umbrella.type = TaskType::Haul;
+			umbrella.owner = GoalOwner::StorageGoalSystem;
+			umbrella.destinationEntity = box;
+			umbrella.destinationPosition = position;
+			umbrella.acceptedDefNameIds = {berryId};
+			const uint64_t umbrellaId = goals.createGoal(std::move(umbrella));
+			GoalTask harvest;
+			harvest.type = TaskType::Harvest;
+			harvest.owner = GoalOwner::StorageGoalSystem;
+			harvest.destinationEntity = box;
+			harvest.destinationPosition = position;
+			harvest.acceptedDefNameIds = {berryId};
+			harvest.yieldDefNameId = berryId;
+			harvest.parentGoalId = umbrellaId;
+			goals.createGoal(std::move(harvest));
+			return {box, umbrellaId};
+		}
+
+		uint32_t berryId = 0;
+	};
+
+	// A colonist with two berries of its own cuts three for a box: the three go in, its two stay.
+	TEST_F(ProvisionsTest, ACutCarriesInOnlyWhatItLanded) {
+		const glm::vec2 boxPos{0.0F, 6.0F};
+		const BerryBox	stock = berryBox(boxPos, 10);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 2);
+		remember(colonist, {3.0F, 0.0F}, "FullBerryBush", assets::CapabilityType::Harvestable);
+
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Harvest);
+		EXPECT_FALSE(claimOf(task, ClaimKind::Inbound).has_value()) << "its own berries are no cut's cargo";
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U);
+		act(colonist, task.targetPosition);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(task.haulQuantity, 3U);
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U);
+
+		act(colonist, boxPos);
+		EXPECT_EQ(world->getComponent<Inventory>(stock.box)->getQuantity("Berry"), 3U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 2U) << "its own two stay with it";
+	}
+
+	// Berries cut for a box are that box's cargo: a need that interrupts their delivery keeps them as
+	// the suspended record, and the carry-in that follows takes the same instance and delivers them.
+	TEST_F(ProvisionsTest, FoodCutForABoxIsResumedAfterANeed) {
+		const glm::vec2 boxPos{0.0F, 6.0F};
+		const BerryBox	stock = berryBox(boxPos, 3);
+		const EntityID	colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {3.0F, 0.0F}, "FullBerryBush", assets::CapabilityType::Harvestable);
+
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Harvest);
+		act(colonist, task.targetPosition);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		const uint64_t delivery = task.instanceId;
+
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Energy).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::FulfillNeed);
+		ASSERT_TRUE(task.suspended.has_value());
+		EXPECT_EQ(ai->claimIndex().inFlight(stock.umbrella, berryId, {}), 3U) << "the berries stay the box's while it rests";
+
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Energy).value = 100.0F;
+		task.clear();
+		decide(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(task.instanceId, delivery) << "the carry-in adopted the interrupted delivery";
+		EXPECT_EQ(task.haulQuantity, 3U);
+		act(colonist, boxPos);
+		EXPECT_EQ(world->getComponent<Inventory>(stock.box)->getQuantity("Berry"), 3U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 0U);
+	}
+
+	// Berries fetched from a pile for a craft are its cargo; the colonist's own meal is not lifted with them.
+	TEST_F(ProvisionsTest, FoodFetchedForACraftIsDeliveredAndTheMealKept) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Berry", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, berryId);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, berryId, pilePos, 5);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		remember(colonist, pilePos, "Berry", assets::CapabilityType::Carryable);
+
+		decide(colonist);
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		ASSERT_FALSE(task.haulFromInventory) << "its own berry is not the craft's";
+		EXPECT_EQ(task.haulQuantity, 3U);
+		act(colonist, pilePos);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(claimOf(task, ClaimKind::InFlight)->quantity(), 3U);
+		act(colonist, stationPos);
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Berry"), 3U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 1U) << "its meal stays with it";
+	}
+
 	// A colonist holding a full armful of wood, standing at a ready tree, skilled at cutting, with a
 	// site that wants far more: the cut would land nothing, so it carries in what it holds instead of
 	// cutting in place forever. Real positions and skill scoring, no arrival shortcut.

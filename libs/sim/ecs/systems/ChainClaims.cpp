@@ -58,6 +58,24 @@ namespace ecs {
 		return cargo;
 	}
 
+	uint32_t cargoToward(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId, uint32_t held, bool edible) {
+		return edible ? std::min(held, claimedCargo(task, rootGoalId, itemDefNameId)) : held;
+	}
+
+	uint32_t haulCargo(const Task& task, uint32_t held, bool edible) {
+		if (!edible) {
+			return held;
+		}
+		uint32_t inbound = 0;
+		for (const Claim& claim : task.claims) {
+			if (claim.kind() == ClaimKind::SourceQuantity) {
+				return 0;
+			}
+			inbound += claim.kind() == ClaimKind::Inbound ? claim.quantity() : 0U;
+		}
+		return std::min(held, inbound);
+	}
+
 	std::optional<SuspendedWork> handOverCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId) {
 		const uint32_t cargo = cargoOnClaims(task.claims, rootGoalId, itemDefNameId);
 		if (cargo == 0 || task.instanceId == 0) {
@@ -115,10 +133,13 @@ namespace ecs {
 				}
 				// The cut's in-flight covers what the colonist already carries toward the root as well as
 				// what this cut lands, so its goods stay committed between cuts and nobody re-cuts them.
+				// Food it carries that no earlier cut handed on is its own provisions.
 				const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(item));
+				const auto*	   itemDef = registry.getDefinitionById(item);
+				const bool	   edible = itemDef != nullptr && itemDef->isEdible();
 				const uint32_t wanted =
 					rootAvailable(needs.get(world, root->id, item, harvestBasis(*root)), claims, root->id, item, ClaimExclusion::of(task));
-				const uint32_t carried = std::min({handedOver > 0 ? handedOver : held, held, wanted});
+				const uint32_t carried = std::min({handedOver > 0 ? handedOver : edible ? 0U : held, held, wanted});
 				const uint32_t expected = std::min(mostPerCut(registry, memory, inventory, task), wanted - carried);
 				if (carried > 0) {
 					push(task, Claim::inbound(static_cast<uint64_t>(root->destinationEntity), item, carried));
@@ -178,6 +199,9 @@ namespace ecs {
 		task.claims.eraseIf([](const Claim& claim) {
 			return claim.kind() == ClaimKind::Use || claim.kind() == ClaimKind::SourceQuantity || claim.quantity() == 0;
 		});
+		if (task.type == TaskType::Haul) {
+			task.haulQuantity = std::min(task.haulQuantity, carried);
+		}
 	}
 
 	void harvestToDeliveryLeg(Task& task, uint64_t rootGoalId, EntityID destination, uint32_t itemDefNameId, uint32_t quantity) {

@@ -442,8 +442,17 @@ namespace ecs {
 			}
 			[[nodiscard]] uint32_t toAcquire(uint64_t root, uint32_t item, NeedBasis basis) const {
 				const uint32_t need = available(root, item, basis);
-				const uint32_t carried = need > 0 ? ecs::availableQuantity(inventory, registry.getDefName(item)) : 0U;
+				const uint32_t carried = need > 0 ? cargo(root, item) : 0U;
 				return need > carried ? need - carried : 0U;
+			}
+			/// What the colonist carries of the item that it would deliver to this root; its own food is not.
+			[[nodiscard]] uint32_t cargo(uint64_t root, uint32_t item) const {
+				const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(item));
+				if (held == 0) {
+					return 0;
+				}
+				const auto* def = registry.getDefinitionById(item);
+				return cargoToward(task, root, item, held, def != nullptr && def->isEdible());
 			}
 
 			/// Units of the item a remembered pile still offers: its live count less what others will take.
@@ -817,8 +826,9 @@ namespace ecs {
 		/// colonist carries, offer to deliver it, sized to what the root still wants net of others'
 		/// in-flight. One path for crafts, construction sites, and storage boxes alike, and for goods
 		/// left over after a cut, an interruption, or a switch. Tools are equipment, and the colonist's
-		/// food stays its own provisions rather than being stocked into a box. Costs nothing unless
-		/// the colonist carries cargo; what it carries is read once, into `carried`, reused storage.
+		/// food is its own provisions, offered to no root, unless its task or suspended record carries it
+		/// toward that root (food it was sent to fetch or cut). Costs nothing unless the colonist carries
+		/// cargo; what it carries is read once, into `carried`, reused storage.
 		void evaluateCarryInOptions(const RootSupply& supply, std::vector<CarriedKind>& carried, const glm::vec2& position, DecisionTrace& trace) {
 			const Inventory&			 inventory = supply.inventory;
 			const assets::AssetRegistry& registry = supply.registry;
@@ -855,10 +865,11 @@ namespace ecs {
 			const auto offer = [&](const GoalTask& root) {
 				const bool storage = root.owner == GoalOwner::StorageGoalSystem;
 				for (const CarriedKind& kind : carried) {
-					if (storage && kind.edible) {
+					const uint32_t cargo = cargoToward(supply.task, root.id, kind.item, kind.quantity, kind.edible);
+					if (cargo == 0) {
 						continue;
 					}
-					uint32_t quantity = std::min(kind.quantity, supply.available(root.id, kind.item, NeedBasis::Stock));
+					uint32_t quantity = std::min(cargo, supply.available(root.id, kind.item, NeedBasis::Stock));
 					if (storage && quantity > 0) {
 						quantity = std::min(quantity, supply.storageRoom(root.destinationEntity, kind.item));
 					}

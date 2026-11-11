@@ -213,11 +213,14 @@ namespace ecs {
 		Inventory&		inventory,
 		Memory&			memory
 	) {
-		// What a cut lands is what its collection adds to the colonist; what it held of the yield before
-		// is not this cut's.
+		// What a cut or a pickup lands is what its collection adds to the colonist; what it held of the
+		// item before is not this chain's.
 		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
+		const bool		   haulLifts = task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw);
 		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
-		const uint32_t	   heldBeforeCut = cutLands ? ecs::availableQuantity(inventory, yieldDefName) : 0U;
+		const uint32_t	   heldBefore = cutLands	? ecs::availableQuantity(inventory, yieldDefName)
+											: haulLifts ? ecs::availableQuantity(inventory, task.haulItemDefName)
+														: 0U;
 
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
@@ -261,10 +264,15 @@ namespace ecs {
 		// two-phase task (Pickup→Deposit), so after phase 1 we set up phase 2 and return.
 		// The action is cleared but the task persists. This differs from single-phase
 		// tasks that clear both action and task at the end of this function.
-		if (task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw)) {
+		if (haulLifts) {
+			// Of food, only what this pickup lifted is cargo; what the colonist already had is its own
+			// provisions. Anything else it holds of the item rides along.
+			const uint32_t held = ecs::availableQuantity(inventory, task.haulItemDefName);
+			const auto*	   itemDef = assets::AssetRegistry::Get().getDefinition(task.haulItemDefName);
+			const uint32_t cargo = itemDef != nullptr && itemDef->isEdible() ? (held > heldBefore ? held - heldBefore : 0U) : held;
 			// Nothing came off the source (gone, emptied by another hauler, or no room to take it):
 			// there is nothing to deliver, so the haul ends here instead of walking to storage empty.
-			if (ecs::availableQuantity(inventory, task.haulItemDefName) == 0) {
+			if (cargo == 0) {
 				LOG_DEBUG(
 					Engine,
 					"[Action] Haul pickup of %s at (%.1f, %.1f) collected nothing - ending the haul",
@@ -278,9 +286,8 @@ namespace ecs {
 				return;
 			}
 
-			// The source claim is spent; what is now carried is what the deposit leg commits. The
-			// pickup leg starts without the item in hand, so all of it was just lifted.
-			claimsToDeliveryLeg(task, ecs::availableQuantity(inventory, task.haulItemDefName));
+			// The source claim is spent; the cargo is what the deposit leg commits.
+			claimsToDeliveryLeg(task, cargo);
 
 			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull): the same task carries on
 			// as its deposit leg, so AIDecisionSystem keeps it (isSameTask) and never reselects it.
@@ -372,7 +379,7 @@ namespace ecs {
 
 		if (cutLands) {
 			const uint32_t heldAfterCut = ecs::availableQuantity(inventory, yieldDefName);
-			if (carryHarvestIn(entity, position, task, inventory, heldAfterCut > heldBeforeCut ? heldAfterCut - heldBeforeCut : 0U)) {
+			if (carryHarvestIn(entity, position, task, inventory, heldAfterCut > heldBefore ? heldAfterCut - heldBefore : 0U)) {
 				action.clear();
 				return;
 			}

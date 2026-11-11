@@ -58,6 +58,15 @@ namespace ecs {
 	/// The goods a colonist's task, current or suspended, carries toward `rootGoalId`.
 	[[nodiscard]] uint32_t claimedCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId);
 
+	/// What the colonist may deliver toward `rootGoalId` of the `held` units of an item it carries: all
+	/// of anything but food; of food, only what its task or suspended record carries toward that root.
+	/// The rest of its food is its own provisions, never cargo (task-claims.md, Provisions).
+	[[nodiscard]] uint32_t cargoToward(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId, uint32_t held, bool edible);
+
+	/// What a haul may deliver of the `held` units of its item: all of anything but food; of food, only
+	/// what its Inbound carries, and none while it has still to take its own from a source.
+	[[nodiscard]] uint32_t haulCargo(const Task& task, uint32_t held, bool edible);
+
 	/// The cargo claims `task` hands to the next leg of the same gathering (a further cut, or the
 	/// carry-in), with its instance id and sequence, so goods carried between two cuts are never
 	/// uncommitted (task-claims.md, Batching). Nothing when it carries none of the item toward the root.
@@ -81,7 +90,7 @@ namespace ecs {
 
 	/// The chain has taken what it will take from its source (a pickup, a withdraw, or arriving with the
 	/// goods already in hand): Use and SourceQuantity drop, Inbound and InFlight become `carried`, capped
-	/// at what they were. A claim left at 0 drops.
+	/// at what they were, and a haul delivers no more than that. A claim left at 0 drops.
 	void claimsToDeliveryLeg(Task& task, uint32_t carried);
 
 	/// The suspended record a need would leave of `task`, a haul or a cut carrying goods the colonist
