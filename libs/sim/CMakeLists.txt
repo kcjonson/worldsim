@@ -22,6 +22,7 @@ add_library(sim
     ecs/systems/StaticRectCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
+    ecs/ClaimIndex.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/StoreOrDrop.cpp
     ecs/WorldSource.cpp

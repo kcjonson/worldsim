@@ -356,7 +356,9 @@ It indexes world truth, not claims, and is not part of the claim index.
 
 A claim's rank is its task's current `priorityTier`, read at each index rebuild, so rank follows
 tier changes: a routine Eat that turns critical mid-walk is re-tiered on the next `isSameTask`
-evaluation and its claims gain critical rank with it. Lower tier number is higher rank.
+evaluation and its claims gain critical rank with it. Lower tier number is higher rank; within a
+tier the earlier `claimSeq` ranks higher. A suspended record ranks with the task that holds it
+(its goods are possessed, so it is never bumped either way).
 
 ### Rules
 
@@ -652,9 +654,11 @@ Unit tests by behavior, in the existing suites (`AIDecisionSystem.test.cpp`, `Ac
   destruction, and a craft at another station.
 - Storage remaining need is item-counted and matches the box's per-item room.
 
-The debug validator runs at the end of every AI update in debug builds and asserts: a fresh rebuild
-is a subset of the appended index, and every surplus entry belongs to an instance id that no live
-task or suspended record holds (a task cleared this update); no target is over-subscribed except by
+The debug validator runs at the end of every AI update in development builds (`DEVELOPMENT_BUILD`)
+and asserts: a fresh rebuild is a subset of the appended index, and every surplus entry belongs to an
+instance id that no live task or suspended record holds (a task cleared this update); entries compare
+by holder instance, kind, target, item, and slot with quantities summed, not by tier, which
+`isSameTask` may change within the update; no target is over-subscribed except by
 claims flagged bumped; every Inbound has a matching In-flight on the same task; in-flight per root
 and item never exceeds remaining need plus flagged bumps; every binding names a live crafter bound
 nowhere else and a queued job id; no claim belongs to an inactive task.
