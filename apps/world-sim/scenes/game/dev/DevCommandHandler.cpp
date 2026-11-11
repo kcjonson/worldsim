@@ -957,6 +957,11 @@ namespace world_sim {
 		const auto		  minAmount = static_cast<uint32_t>(std::strtol(param(cmd, "min", "0").c_str(), nullptr, 10));
 		const auto		  maxAmount = static_cast<uint32_t>(std::strtol(param(cmd, "max", "0").c_str(), nullptr, 10));
 
+		// As the storage dialog does: a rule naming an item replaces its category's wildcard.
+		if (defName != "*") {
+			std::erase_if(storageConfig->rules, [&](const ecs::StorageRule& existing) { return existing.isWildcard() && existing.category == category; });
+		}
+
 		ecs::StorageRule rule;
 		rule.defName = defName;
 		rule.category = category;

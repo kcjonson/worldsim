@@ -238,6 +238,30 @@ namespace ecs::test {
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U) << "no rule names Stone";
 	}
 
+	// A rule naming an item governs it alone: an unlimited category wildcard beside it lifts neither its
+	// max nor its min, nor raises its priority, while every other item of the category goes by the wildcard.
+	TEST_F(RemainingNeedTest, ANamedRuleWinsOverItsCategoryWildcard) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		auto		   inventory = Inventory::createForStorage();
+		inventory.addItem("Stone", 30);
+		world.addComponent<Inventory>(box, std::move(inventory));
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Critical, .minAmount = 50});
+		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Low, .minAmount = 5, .maxAmount = 40});
+		world.addComponent<StorageConfiguration>(box, config);
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 10U) << "max 40 less the 30 held";
+		EXPECT_EQ(config.getMinAmountFor("Stone", assets::ItemCategory::RawMaterial), 5U);
+		EXPECT_EQ(config.getPriorityFor("Stone", assets::ItemCategory::RawMaterial), StoragePriority::Low);
+		EXPECT_EQ(config.getMaxAmountFor("Stick", assets::ItemCategory::RawMaterial), 0U) << "unlimited, by the wildcard";
+		EXPECT_EQ(config.getMinAmountFor("Stick", assets::ItemCategory::RawMaterial), 50U);
+		EXPECT_EQ(config.getPriorityFor("Stick", assets::ItemCategory::RawMaterial), StoragePriority::Critical);
+		EXPECT_TRUE(config.acceptsItem("Stick", assets::ItemCategory::RawMaterial));
+		EXPECT_FALSE(config.acceptsItem("Stick", assets::ItemCategory::Food));
+	}
+
 	// A packaged box is being moved: no haul, carry-in, or cut is aimed at it until it is placed.
 	TEST_F(RemainingNeedTest, APackagedBoxWantsNothing) {
 		auto&		   registry = GoalTaskRegistry::Get();

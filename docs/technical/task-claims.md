@@ -543,10 +543,11 @@ Remaining need is target minus what has landed at the destination, per item:
 Storage need is bounded per item and by the box's slots through the destination check above, so
 per-item needs cannot sum past what the box holds. Either storage target is also capped by the box's
 physical room for the item, and a loose haul stops at the configured max, as does a deposit, which
-keeps the surplus carried. The configured max is summed over every rule that matches the item, and
-any matching rule with no max (a category wildcard with max 0, which every placed box starts with)
-makes the item unlimited; the storage dialog removes a category's wildcard when a named rule for that
-category is added. A packaged box (being moved) needs nothing and is no pull source. A box keeps its
+keeps the surplus carried. A rule naming the item governs it alone: its max, minimum, and priority
+replace a category wildcard's for that item (`StorageConfiguration::forEachGoverningRule`), and the
+wildcard governs only the items no rule names. The configured max is summed over the governing rules,
+and one with no max makes the item unlimited. The storage dialog and the dev `storage` verb both remove
+a category's wildcard when a named rule for that category is added. A packaged box (being moved) needs nothing and is no pull source. A box keeps its
 umbrella, and so its root id, while it has rules, full or not: a full box simply needs nothing, and
 goods on their way toward it, a suspended record's included, keep counting toward the same root when
 room returns. One helper, `GoalTaskRegistry::remainingNeed(world, root, item, basis)`, reads the
@@ -939,9 +940,6 @@ Behaviour the code has that no doc should promise otherwise, kept here until fix
 - Interrupting a sleeping colonist for a higher tier leaves the Sleep action active (the switch path
   clears the task but not the Action, and ActionSystem starts a new action only when none is active).
   Not covered by a test; it may run the rest of the sleep under the next task when it arrives.
-- A named storage rule's max does not cap the item while a matching category wildcard has no max, and
-  every placed box starts with such wildcards; the storage dialog removes them when it adds a named
-  rule, the dev `storage` verb does not.
 
 ---
 

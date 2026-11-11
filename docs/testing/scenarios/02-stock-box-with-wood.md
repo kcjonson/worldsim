@@ -44,9 +44,10 @@ Note the box's position, then add a storage rule targeting 200 Wood:
 curl.exe "http://127.0.0.1:<PORT>/api/dev/storage?at=<BX+8>,<BY>&item=Wood&category=RawMaterial&priority=High&min=200&max=0"
 ```
 
-`min=200` is how far Bob cuts trees for the box. `max=0` sets no limit (and the box's default
-"all raw materials" rule has none either), so past 200 he stops cutting but still carries any wood
-he knows of lying loose (a fell's leftover heap) into the box, until it is full.
+`min=200` is how far Bob cuts trees for the box. `max=0` sets no limit, so past 200 he stops
+cutting but still carries any wood he knows of lying loose (a fell's leftover heap) into the box,
+until it is full. The verb removes the box's default "all raw materials" rule, as the storage dialog
+does when a named rule is added.
 
 The natural forest has trees. Optionally spawn a few `Flora_TreeOak` nearby if the nearest
 natural trees are far away — but **do not cram many into a small area**, since that can trigger
@@ -117,7 +118,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
 # -> storages[0].inventory.Wood >= 200
 ```
 
-12. Add a berry rule with a cap to the box (`/api/dev/storage?at=<BX+8>,<BY>&item=Berry&category=Food&min=0&max=5`) and drop 20 berries 3 m from it (`/api/dev/give?material=Berry&n=20&where=loose&at=<BX+11>,<BY>`): a colonist carries berries in, `what=storage` shows the box's `Berry` reach 5 and stay there, and the heap keeps the other 15. (A Food rule is used because the box's default "all raw materials" rule has no max, which would lift a Wood cap.)
+12. Add a berry rule with a cap to the box (`/api/dev/storage?at=<BX+8>,<BY>&item=Berry&category=Food&min=0&max=5`) and drop 20 berries 3 m from it (`/api/dev/give?material=Berry&n=20&where=loose&at=<BX+11>,<BY>`): a colonist carries berries in, `what=storage` shows the box's `Berry` reach 5 and stay there, and the heap keeps the other 15.
 
 13. Open the Tasks panel, then fill the box (`/api/dev/give?material=Wood&n=2000&where=storage&at=<BX+8>,<BY>`): within a second the box's "Haul Wood" row leaves the panel, though the box still has its rules.
 

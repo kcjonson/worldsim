@@ -13,6 +13,7 @@
 // - Priority: Higher priority containers "pull" items from lower priority ones
 // - Min Amount: Pull threshold - maintain at least this many items
 // - Max Amount: Stop accepting after this many (0 = unlimited)
+// - A rule naming an item governs that item alone; a category wildcard governs the rest
 //
 // Example rules:
 // - {"Stick", RawMaterial, High, min=10, max=0} = Keep at least 10 sticks, no limit
@@ -21,6 +22,7 @@
 
 #include "assets/AssetDefinition.h" // For ItemCategory
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -92,67 +94,59 @@ struct StorageConfiguration {
 	// Query Methods
 	// ============================================================================
 
+	/// Whether a rule naming this item exists. A rule naming an item governs it alone: its priority,
+	/// minimum, and maximum replace the category wildcard's for that item.
+	[[nodiscard]] bool hasNamedRule(const std::string& defName, assets::ItemCategory category) const {
+		return std::any_of(rules.begin(), rules.end(), [&](const StorageRule& rule) { return !rule.isWildcard() && rule.matches(defName, category); });
+	}
+
+	/// Call fn for each rule governing this item: the rules naming it when there are any, else the
+	/// category wildcards that match it.
+	template <typename Fn> void forEachGoverningRule(const std::string& defName, assets::ItemCategory category, Fn&& fn) const {
+		const bool named = hasNamedRule(defName, category);
+		for (const auto& rule : rules) {
+			if (rule.isWildcard() != named && rule.matches(defName, category)) {
+				fn(rule);
+			}
+		}
+	}
+
 	/// Check if this container accepts a specific item
 	/// Returns true if any rule matches the item
 	[[nodiscard]] bool acceptsItem(const std::string& defName,
 								   assets::ItemCategory category) const {
-		for (const auto& rule : rules) {
-			if (rule.matches(defName, category)) {
-				return true;
-			}
-		}
-		return false;
+		return std::any_of(rules.begin(), rules.end(), [&](const StorageRule& rule) { return rule.matches(defName, category); });
 	}
 
-	/// Get the highest priority for a specific item
-	/// Returns Low if no rule matches
+	/// The highest priority among the rules governing the item; Low if none does
 	[[nodiscard]] StoragePriority getPriorityFor(
 		const std::string& defName, assets::ItemCategory category) const {
 		StoragePriority highest = StoragePriority::Low;
-		bool			found = false;
-
-		for (const auto& rule : rules) {
-			if (rule.matches(defName, category)) {
-				if (!found || rule.priority > highest) {
-					highest = rule.priority;
-					found = true;
-				}
-			}
-		}
+		forEachGoverningRule(defName, category, [&](const StorageRule& rule) { highest = std::max(highest, rule.priority); });
 		return highest;
 	}
 
-	/// Get the max amount for a specific item (sum of all matching rules)
-	/// Returns 0 if unlimited or no rules match
+	/// The max amount the rules governing the item allow, summed; 0 when any of them is unlimited or
+	/// none governs it
 	[[nodiscard]] uint32_t getMaxAmountFor(const std::string& defName,
 										   assets::ItemCategory category) const {
 		uint32_t total = 0;
 		bool	 hasUnlimited = false;
-
-		for (const auto& rule : rules) {
-			if (rule.matches(defName, category)) {
-				if (rule.maxAmount == 0) {
-					hasUnlimited = true;
-				} else {
-					total += rule.maxAmount;
-				}
+		forEachGoverningRule(defName, category, [&](const StorageRule& rule) {
+			if (rule.maxAmount == 0) {
+				hasUnlimited = true;
+			} else {
+				total += rule.maxAmount;
 			}
-		}
-
-		// If any rule is unlimited, return 0 (unlimited)
+		});
 		return hasUnlimited ? 0 : total;
 	}
 
-	/// Get the min amount (pull threshold) for a specific item
-	/// Returns the sum of all matching rules' min amounts
+	/// The min amount (pull threshold) the rules governing the item set, summed
 	[[nodiscard]] uint32_t getMinAmountFor(const std::string& defName,
 										   assets::ItemCategory category) const {
 		uint32_t total = 0;
-		for (const auto& rule : rules) {
-			if (rule.matches(defName, category)) {
-				total += rule.minAmount;
-			}
-		}
+		forEachGoverningRule(defName, category, [&](const StorageRule& rule) { total += rule.minAmount; });
 		return total;
 	}
 
