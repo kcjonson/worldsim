@@ -3167,7 +3167,7 @@ namespace ecs {
 		}
 		const auto dropped = inventory.putDown(name);
 		if (dropped.has_value() && dropped->quantity > 0 && onDropResource) {
-			onDropResource(dropped->defName, position.value.x, position.value.y, dropped->quantity);
+			onDropResource(dropped->defName, position.value.x, position.value.y, dropped->quantity, position.value);
 			LOG_DEBUG(Engine, "[AI] Put down %u x %s nobody wants", dropped->quantity, dropped->defName.c_str());
 		}
 	}

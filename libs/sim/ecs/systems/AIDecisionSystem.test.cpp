@@ -3174,7 +3174,7 @@ namespace ecs::test {
 
 			// Capture drops through the real callback the handler fires.
 			world->getSystem<AIDecisionSystem>().setDropResourceCallback(
-				[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
+				[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity, glm::vec2) {
 					++dropCalls;
 					droppedDef = defName;
 					droppedQty = quantity;

@@ -1574,7 +1574,7 @@ class FellingTest : public ::testing::Test {
 
 		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		action.setDropResourceCallback(
-			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
+			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity, glm::vec2) {
 				++dropCalls;
 				lastDropDef = defName;
 				lastDropQty = quantity;
@@ -3164,7 +3164,7 @@ class ClearHarvestTest : public ::testing::Test {
 				return was;
 			}
 		);
-		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t qty) {
+		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t qty, glm::vec2) {
 			++dropCalls;
 			droppedQuantity += qty;
 		});

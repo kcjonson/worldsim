@@ -479,7 +479,7 @@ namespace {
 						for (const auto& [defName, qty] : blueprint->delivered) {
 							const auto salvageQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
 							if (salvageQty > 0) {
-								dropResourcePiles(defName, dropPos.x, dropPos.y, salvageQty);
+								dropResourcePiles(defName, dropPos, dropPos, salvageQty);
 							}
 						}
 					}
@@ -588,7 +588,7 @@ namespace {
 				.landingLonDeg = m_landingLonDeg,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 				.dropLoose = [this](const std::string& defName, float x, float y, uint32_t quantity) {
-					dropResourcePiles(defName, x, y, quantity);
+					dropResourcePiles(defName, {x, y}, {x, y}, quantity);
 				},
 			});
 			m_devRegistrations = m_devHandler->registerWith(owner->devServer());
@@ -925,7 +925,7 @@ namespace {
 							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
 						}
 					} else {
-						dropResourcePiles(spawn.defName, spawn.x, spawn.y, spawn.quantity);
+						dropResourcePiles(spawn.defName, {spawn.x, spawn.y}, spawn.fallback, spawn.quantity);
 					}
 				}
 				m_pendingSpawns.clear();
@@ -1301,23 +1301,6 @@ namespace {
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
 
-			// Every ground drop -- a felled tree's uncarried remainder, craft overflow, a stowed
-			// tool, a cancelled build site's salvage -- lands on a walkable nav point. An origin
-			// already on the mesh is kept as is: findValidPositionNear always lands at least its
-			// min distance away, which would push a drop off the colonist's feet and possibly
-			// across a wall. Only an off-mesh origin (a tree felled on a river bank) is searched
-			// for solid ground. The snap lives here, at the two drop funnels (loose pile, packaged
-			// item), so no upstream drop site needs its own nav check (One-Path). The search is
-			// deterministic (no RNG, canonical +X bias) and returns nullopt only when no mesh
-			// covers the origin -- then we keep the raw origin so a drop never hard-fails.
-			auto snapDropToGround = [&navSystem](float x, float y) -> glm::vec2 {
-				const glm::vec2 origin{x, y};
-				if (navSystem.isValidPosition(origin)) {
-					return origin;
-				}
-				return navSystem.findValidPositionNear(origin, 1.0F).value_or(origin);
-			};
-
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
 			// station via the existing PlacePackaged flow (it must not seat in the colonist's
 			// hands or stack on the station). Resolve a walkable spot >= 1 m away; the aim rotates
@@ -1343,9 +1326,8 @@ namespace {
 			// carry, a cancelled build site's staged materials) lands as a ResourceStack pile, not
 			// Packaged. The callbacks fire from inside their system's view loop, so they ENQUEUE; the
 			// drain runs dropResourcePiles (the single loose-drop path) after ecsWorld->update().
-			auto enqueueResourceDrop = [this, snapDropToGround](const std::string& defName, float x, float y, uint32_t quantity) {
-				const glm::vec2 at = snapDropToGround(x, y);
-				m_pendingSpawns.push_back({defName, at.x, at.y, quantity, /*packaged=*/false});
+			auto enqueueResourceDrop = [this](const std::string& defName, float x, float y, uint32_t quantity, glm::vec2 fallback) {
+				m_pendingSpawns.push_back({defName, x, y, quantity, /*packaged=*/false, std::nullopt, fallback});
 			};
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
@@ -1727,14 +1709,15 @@ namespace {
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
-		/// Lay `quantity` x `defName` on the ground at (x, y) as loose, haulable ResourceStack piles
+		/// Lay `quantity` x `defName` on the ground at `at` as loose, haulable ResourceStack piles
 		/// (not Packaged). Same-def piles near the spot are topped up to the item's stackSize first,
-		/// then the rest spawns as new stack-capped piles on walkable spots clear of every pile and
-		/// packaged crate around (footprints from the shared layouts, so spacing matches what's
-		/// drawn). No def / no itemProperties means unbounded -> one pile. The SINGLE loose-drop
+		/// then the rest spawns as new stack-capped piles on walkable spots (isValidPosition) off every
+		/// unbuilt footprint and clear of every pile and packaged crate around (footprints from the
+		/// shared layouts, so spacing matches what's drawn), searched outward from `at`, then from
+		/// `fallback` (resourcePileDrops). No def / no itemProperties means unbounded -> one pile. The SINGLE loose-drop
 		/// path: every sim drop callback, the cancelled site's salvage, and the dev `give
 		/// where=loose` route through it.
-		void dropResourcePiles(const std::string& defName, float x, float y, uint32_t quantity) {
+		void dropResourcePiles(const std::string& defName, glm::vec2 at, glm::vec2 fallback, uint32_t quantity) {
 			auto&		   registry = assets::AssetRegistry::Get();
 			const auto*	   def = registry.getDefinition(defName);
 			const uint32_t cap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
@@ -1789,12 +1772,9 @@ namespace {
 				nearby.push_back({worldview::packagedFootprintCenter(pos.value), worldview::kPackagedFootprintRadius, 0, false});
 			}
 
-			const auto& nav = ecsWorld->getSystem<ecs::NavigationSystem>();
-			std::function<bool(glm::vec2)> isGround;
-			if (nav.isValidPosition({x, y})) {
-				isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
-			}
-			const auto plan = ecs::resourcePileDrops(cap, quantity, {x, y}, pileRadius(defName, 1.0F), nearby, isGround, onSite);
+			const auto&	   nav = ecsWorld->getSystem<ecs::NavigationSystem>();
+			const auto	   isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
+			const auto plan = ecs::resourcePileDrops(cap, quantity, at, pileRadius(defName, 1.0F), nearby, isGround, onSite, fallback);
 			for (const auto& [index, added] : plan.topUps) {
 				nearbyStacks[index]->quantity += added;
 			}
@@ -1807,8 +1787,8 @@ namespace {
 				"Dropped %u x '%s' at (%.1f, %.1f): topped up %zu piles, spawned %zu",
 				quantity,
 				defName.c_str(),
-				x,
-				y,
+				at.x,
+				at.y,
 				plan.topUps.size(),
 				plan.spawns.size()
 			);
@@ -2182,6 +2162,8 @@ namespace {
 			// raises the place goal immediately (no manual [Place]). nullopt -> the player-driven
 			// path (spawn in place, await a [Place] click) when no nav mesh covers the station.
 			std::optional<glm::vec2> targetPosition;
+			// A loose drop's fallback: where the goods came from (DropResourceCallback).
+			glm::vec2 fallback{0.0F, 0.0F};
 		};
 		std::vector<PendingSpawn> m_pendingSpawns;
 

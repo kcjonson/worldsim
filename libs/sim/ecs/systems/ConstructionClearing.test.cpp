@@ -112,7 +112,7 @@ namespace ecs::test {
 						return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
 					}
 				);
-				action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/) {
+				action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/, glm::vec2) {
 					++piles;
 				});
 				construction = &world->registerSystem<ConstructionSystem>();
@@ -426,7 +426,7 @@ namespace ecs::test {
 	// What a clear can't carry drops just outside the footprint, not on the ground the site will stand on.
 	TEST_F(FootprintClearingTest, AClearsSurplusDropsOutsideTheFootprint) {
 		std::vector<glm::vec2> drops;
-		world->getSystem<ActionSystem>().setDropResourceCallback([&](const std::string&, float x, float y, uint32_t) { drops.emplace_back(x, y); });
+		world->getSystem<ActionSystem>().setDropResourceCallback([&](const std::string&, float x, float y, uint32_t, glm::vec2) { drops.emplace_back(x, y); });
 		const std::vector<glm::vec2> trees{{2.0F, 2.0F}};
 		plantTrees(trees);
 		createColonist({1.0F, 1.0F}, trees);
@@ -444,9 +444,12 @@ namespace ecs::test {
 		struct Drop {
 			glm::vec2 at;
 			uint32_t  quantity;
+			glm::vec2 fallback;
 		};
 		std::vector<Drop> drops;
-		construction->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity) { drops.push_back({{x, y}, quantity}); });
+		construction->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity, glm::vec2 fallback) {
+			drops.push_back({{x, y}, quantity, fallback});
+		});
 		placeBareChunk({4.0F, 4.0F});
 		const EntityID pile = world->createEntity();
 		world->addComponent<Position>(pile, Position{{5.0F, 4.0F}});
@@ -459,6 +462,7 @@ namespace ecs::test {
 		ASSERT_EQ(drops.size(), 1U);
 		EXPECT_EQ(drops.front().quantity, 7U);
 		EXPECT_GT(drops.front().at.x, 8.0F) << "out past the nearest edge";
+		EXPECT_EQ(drops.front().fallback, glm::vec2(5.0F, 4.0F)) << "with no ground past the edge, the search restarts from the old spot";
 	}
 
 } // namespace ecs::test

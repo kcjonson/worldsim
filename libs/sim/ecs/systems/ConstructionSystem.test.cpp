@@ -452,7 +452,7 @@ TEST_F(ConstructionGoalEmissionTest, CancelledPartiallyDeliveredSiteDumpsDeliver
 	// Capture ground-pile drops the system requests, and accept the no-work removal so the branch
 	// runs to completion (a null deconstructed callback would only warn).
 	std::vector<std::tuple<std::string, float, float, uint32_t>> drops;
-	construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t qty) {
+	construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t qty, glm::vec2) {
 		drops.emplace_back(defName, x, y, qty);
 	});
 	bool removed = false;
@@ -519,7 +519,7 @@ TEST_F(ConstructionGoalEmissionTest, BuiltStructureDemolishDoesNotDropSalvageAtO
 	auto foundation = createBuiltDemolishing(StructureKind::Foundation); // built, delivered Wood 30
 
 	std::vector<std::tuple<std::string, float, float, uint32_t>> drops;
-	construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t qty) {
+	construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t qty, glm::vec2) {
 		drops.emplace_back(defName, x, y, qty);
 	});
 

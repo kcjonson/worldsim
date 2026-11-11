@@ -508,7 +508,7 @@ namespace ecs::test {
 	// does: he does not pick berries with his arms full of wood.
 	TEST_F(ChainClaimsTest, AnArmfulNobodyWantsIsPutDownToGatherFood) {
 		uint32_t dropped = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 		const EntityID colonist = createColonist({0.0F, 0.0F});
 		remember(colonist, {4.0F, 0.0F}, "BerryBush", assets::CapabilityType::Harvestable);
 		auto& inventory = *world->getComponent<Inventory>(colonist);
@@ -528,7 +528,7 @@ namespace ecs::test {
 	TEST_F(ChainClaimsTest, FurnitureWhosePlacementIsCancelledIsSetDownPackaged) {
 		registerItem("Shelf", 2, 12.0F);
 		uint32_t loosePiles = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { loosePiles += quantity; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { loosePiles += quantity; });
 		const glm::vec2 itemPos{3.0F, 0.0F};
 		const EntityID	shelf = world->createEntity();
 		world->addComponent<Position>(shelf, Position{itemPos});
@@ -716,7 +716,7 @@ namespace ecs::test {
 		eat.needsHands = true;
 		assets::ActionTypeRegistry::Get().registerTestAction(std::move(eat));
 		int drops = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t) { ++drops; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t, glm::vec2) { ++drops; });
 
 		const glm::vec2 sitePos{0.0F, 6.0F};
 		const Site		site = constructionSite(sitePos, "Wood", 10);
@@ -802,7 +802,7 @@ namespace ecs::test {
 			uint32_t  quantity;
 		};
 		std::vector<Drop> drops;
-		ai->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity) { drops.push_back({{x, y}, quantity}); });
+		ai->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t quantity, glm::vec2) { drops.push_back({{x, y}, quantity}); });
 		const glm::vec2 boxPos{0.0F, 10.0F};
 		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
 		storageGoal(box, boxPos);
@@ -851,7 +851,7 @@ namespace ecs::test {
 		pickup.needsHands = true;
 		assets::ActionTypeRegistry::Get().registerTestAction(std::move(pickup));
 		uint32_t dropped = 0;
-		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 		const glm::vec2 boxPos{0.0F, 10.0F};
 		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
 		world->getComponent<StorageConfiguration>(box)->addRule(
@@ -1446,7 +1446,7 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			ChainClaimsTest::SetUp();
-			ai->setDropResourceCallback([this](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+			ai->setDropResourceCallback([this](const std::string&, float, float, uint32_t quantity, glm::vec2) { dropped += quantity; });
 			gathered = constructionSite({0.0F, 30.0F}, "Wood", 10);
 			colonist = createColonist({0.0F, 0.0F});
 			auto& inventory = *world->getComponent<Inventory>(colonist);
@@ -1564,7 +1564,7 @@ namespace ecs::test {
 			ai->setSourceRegrowthCallback([this](uint32_t, glm::vec2 at, double) {
 				return std::find(cut.begin(), cut.end(), at) != cut.end() ? std::optional<double>{1.0e9} : std::nullopt;
 			});
-			actions->setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
+			actions->setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity, glm::vec2) {
 				drops.push_back({assets::AssetRegistry::Get().getDefNameId(defName), {x, y}, quantity});
 			});
 		}
