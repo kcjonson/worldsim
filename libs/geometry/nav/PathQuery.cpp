@@ -237,6 +237,33 @@ namespace geometry::nav {
 			return tri;
 		}
 
+		inline bool inRect(const RectMm& rect, const Vec2i64& p) {
+			return p.x >= rect.min.x && p.x <= rect.max.x && p.y >= rect.min.y && p.y <= rect.max.y;
+		}
+
+		// Does triangle t's interior meet the rectangle's? Convex shapes whose interiors
+		// miss are parted by an axis of one of them, touching allowed: the rectangle's
+		// two, or a triangle edge with every rectangle corner on its outer side or on it.
+		bool interiorMeetsRect(const NavView& mesh, std::int32_t t, const RectMm& rect) {
+			const NavTriangle&			 tri = mesh.triangle(t);
+			const std::array<Vec2i64, 3> p{mesh.vertex(tri.v[0]), mesh.vertex(tri.v[1]), mesh.vertex(tri.v[2])};
+			if (std::max({p[0].x, p[1].x, p[2].x}) <= rect.min.x || std::min({p[0].x, p[1].x, p[2].x}) >= rect.max.x ||
+				std::max({p[0].y, p[1].y, p[2].y}) <= rect.min.y || std::min({p[0].y, p[1].y, p[2].y}) >= rect.max.y) {
+				return false;
+			}
+			const std::array<Vec2i64, 4> corners{rect.min, Vec2i64{rect.max.x, rect.min.y}, rect.max, Vec2i64{rect.min.x, rect.max.y}};
+			for (int k = 0; k < 3; ++k) {
+				bool outside = true;
+				for (const Vec2i64& c : corners) {
+					outside = outside && orientation(p[static_cast<std::size_t>(k)], p[static_cast<std::size_t>((k + 1) % 3)], c) != Orientation::CounterClockwise;
+				}
+				if (outside) {
+					return false;
+				}
+			}
+			return true;
+		}
+
 		// pathThrough()'s sound short-circuit, the same test reaches() makes. Both
 		// triangles are already located and known traversable. Returns true when the
 		// forest PROVES no disc of `diameterMm` can get from startTri to goalTri:
@@ -914,9 +941,12 @@ namespace geometry::nav {
 	}
 
 	PathResult pathThrough(const NavView& meshIn, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   BeliefFilter belief) {
+						   const BeliefFilter& belief, const PathLimits& limits) {
 		const NavView mesh = meshIn.resolved();
 		PathResult	  result;
+		if (limits.within != nullptr && (!inRect(*limits.within, start) || !inRect(*limits.within, goal))) {
+			return result;
+		}
 		assert(mesh.widthsCurrent() && "pathThrough: corridor widths lag behind a patch");
 		if (!mesh.widthsCurrent()) {
 			return result; // stale widths could route a disc through a gap it does not fit
@@ -945,6 +975,11 @@ namespace geometry::nav {
 		if (startTri == goalTri) {
 			const double m			  = stepMultiplier(mesh, startTri, belief);
 			const double length		  = distanceD(toD(start), toD(goal));
+			if (length * m > limits.maxCost) {
+				result.stop = PathStop::LimitReached;
+				return result;
+			}
+			result.stop				  = PathStop::Found;
 			result.reachable		  = true;
 			result.points			  = {start, goal};
 			result.cost				  = length * m;
@@ -1210,12 +1245,20 @@ namespace geometry::nav {
 		};
 
 		std::int32_t goalLabel = -1;
+		bool		 limited   = false; // a corridor was left untried for a limit
 		while (!open.empty()) {
 			const Node cur = open.top();
 			open.pop();
 			const std::int32_t li = cur.label;
 			if (scratch.labels[static_cast<std::size_t>(li)].closed || cur.f != scratch.labels[static_cast<std::size_t>(li)].best) {
 				continue; // stale entry (we push duplicates instead of decrease-key)
+			}
+			// Scores pop in order and bound costs from below: past maxCost nothing open can
+			// cost maxCost or less.
+			if (cur.f > limits.maxCost ||
+				(limits.maxExpansions != 0 && result.nodesExpanded >= static_cast<std::int64_t>(limits.maxExpansions))) {
+				limited = true;
+				break;
 			}
 			scratch.labels[static_cast<std::size_t>(li)].closed = true;
 			++result.nodesExpanded; // a label closed exactly once: one real expansion
@@ -1248,7 +1291,7 @@ namespace geometry::nav {
 					continue; // U-turn back through the entry edge: never on a taut path
 				}
 				const std::int32_t nb = tri.neighbor[e];
-				if (nb < 0) {
+				if (nb < 0 || (limits.within != nullptr && !interiorMeetsRect(mesh, nb, *limits.within))) {
 					continue;
 				}
 				// Belief gate: skip a neighbor this agent may not cross. The only place
@@ -1329,6 +1372,10 @@ namespace geometry::nav {
 				}
 				const double inRun = runPrice > 0.0 ? std::max((runPrice - 1.0) * segmentToSegment(runEntry.left, runEntry.right, step.left, step.right), runFloor) : 0.0;
 				const double score = scoreFrom(next, step) + extra + inRun;
+				if (score > limits.maxCost) {
+					limited = true;
+					continue;
+				}
 				std::int32_t slot = -1; // the label this corridor takes over, if any
 				bool		 beaten = false;
 				// A corridor that crosses priced faces is also beaten by a free one at this state
@@ -1419,9 +1466,14 @@ namespace geometry::nav {
 			}
 		}
 
+		result.expansions = static_cast<std::uint32_t>(result.nodesExpanded);
 		if (goalLabel < 0) {
-			return result; // disconnected (or every corridor too narrow for the agent)
+			// Disconnected (or every corridor too narrow for the agent), unless a limit
+			// left corridors untried.
+			result.stop = limited ? PathStop::LimitReached : PathStop::NoPath;
+			return result;
 		}
+		result.stop = PathStop::Found;
 
 		// --- The winning corridor's string-pull ----------------------------------
 		std::vector<Vec2i64> pts;
@@ -1442,8 +1494,8 @@ namespace geometry::nav {
 	}
 
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   BeliefFilter belief) {
-		return pathThrough(navView(mesh), start, goal, agentRadiusMm, belief);
+						   const BeliefFilter& belief, const PathLimits& limits) {
+		return pathThrough(navView(mesh), start, goal, agentRadiusMm, belief, limits);
 	}
 
 } // namespace geometry::nav
