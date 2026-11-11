@@ -10,22 +10,37 @@ on:
       - '.claude/**'
   # Actions caches are branch-scoped: PR runs can only restore caches created on
   # the same PR or on main. The post-merge run on main is what seeds the sccache
-  # cache every new PR warm-starts from.
+  # and test-marker caches every new PR warm-starts from.
   push:
     branches: [ main ]
     paths-ignore:
       - 'docs/**'
       - '**.md'
       - '.claude/**'
+  # Runs every test whatever the markers say, and records the passes, to catch
+  # what a key can't see (runner image, Mesa, the system GL).
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+    inputs:
+      full_run:
+        description: Ignore recorded passes and run every test
+        type: boolean
+        default: false
 
-# A force-push supersedes the in-flight run for the same PR; cancel it.
+# A force-push supersedes the in-flight run for the same PR; cancel it. The
+# event name keeps a push to main from cancelling the nightly run.
 concurrency:
-  group: tests-${{ github.event.pull_request.number || github.ref }}
+  group: tests-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 # Heavy worldgen tests live in tests-heavy.yml, path-gated to
 # worldgen changes (libs/worldgen, vcpkg.json, root CMakeLists) with
 # a nightly backstop run. This workflow is the always-on fast gate.
+#
+# Both jobs build everything, then skip each ctest entry that already passed
+# with the same inputs (scripts/ci/test-select.mjs; docs/testing/README.md,
+# "CI test selection"). The step summary says what ran, what was skipped, and why.
 jobs:
   test:
     # Skip while the PR is a draft; re-runs when marked ready for review.
@@ -33,6 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
+      # Benchmarks never run here; the heavy bucket runs in tests-heavy.yml.
+      TEST_EXCLUDE: (benchmarks|worldgen-tests-heavy)
 
     steps:
     - name: Checkout code
@@ -54,8 +71,10 @@ jobs:
       with:
         vcpkgGitCommitId: '8f54ef5453e7e76ff01e15988bf243e7247c5eb5'
 
+    # The query asks CMake's file API for the target graph test selection reads.
     - name: Configure CMake
       run: |
+        node scripts/ci/test-select.mjs query --build-dir build
         cmake -S . -B build \
           -DCMAKE_BUILD_TYPE=Debug \
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
@@ -80,24 +99,68 @@ jobs:
     - name: Show software GL
       run: LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a -s "-screen 0 1280x1024x24" glxinfo -B
 
-    # Gating step: every unit-test target except benchmarks and the heavy
-    # worldgen bucket (which runs in tests-heavy.yml). -j4 matches the runner's
+    # The key never matches: this restores the newest marker set on this branch,
+    # else main's.
+    - name: Restore test markers
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: build/test-markers
+        key: test-markers-linux-${{ github.run_id }}
+        restore-keys: test-markers-linux-
+
+    - name: Select tests
+      id: plan
+      env:
+        FULL_RUN: ${{ github.event_name == 'schedule' || inputs.full_run == true }}
+      run: |
+        full=()
+        if [ "$FULL_RUN" = true ]; then full=(--ignore-markers); fi
+        node scripts/ci/test-select.mjs plan --build-dir build --markers build/test-markers \
+          --exclude "$TEST_EXCLUDE" "${full[@]}"
+
+    # Gating step: the selected unit-test targets. -j4 matches the runner's
     # cores; the per-lib test exes are independent. The GL tests (SurfaceFieldGolden,
     # GroundTileBaker, AssetRenderer) run on Mesa llvmpipe behind Xvfb, and
     # WORLDSIM_REQUIRE_GL makes them fail instead of skip if no context comes up.
     - name: Run fast tests
+      if: steps.plan.outputs.run-count != '0'
+      env:
+        RUN_REGEX: ${{ steps.plan.outputs.run-regex }}
       run: |
         cd build
         LIBGL_ALWAYS_SOFTWARE=1 WORLDSIM_REQUIRE_GL=1 \
           xvfb-run -a -s "-screen 0 1280x1024x24" \
-          ctest -j4 --output-on-failure -E "(benchmarks|worldgen-tests-heavy)"
+          ctest -j4 --output-on-failure --no-tests=error -R "$RUN_REGEX" -E "$TEST_EXCLUDE" \
+            --output-junit Testing/junit.xml
+
+    # Not on cancel: a cancelled run's results are partial. A failed run still
+    # records the tests that passed. A planned test with no result in the JUnit
+    # file fails this step, which leaves the job red and skips the save.
+    - name: Record passing tests
+      id: record
+      if: (success() || failure()) && steps.plan.outcome == 'success'
+      run: |
+        node scripts/ci/test-select.mjs record --build-dir build --markers build/test-markers \
+          --junit build/Testing/junit.xml
+
+    - name: Save test markers
+      if: >-
+        (success() || failure()) && steps.record.outcome == 'success' &&
+        !startsWith(steps.restore.outputs.cache-matched-key, format('test-markers-linux-{0}-', steps.record.outputs.digest))
+      uses: actions/cache/save@v4
+      with:
+        path: build/test-markers
+        key: test-markers-linux-${{ steps.record.outputs.digest }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: test-results
-        path: build/Testing/
+        path: |
+          build/Testing/
+          build/test-select/
         retention-days: 7
 
   test-windows:
@@ -106,6 +169,7 @@ jobs:
     runs-on: windows-latest
     env:
       SCCACHE_GHA_ENABLED: "true"
+      TEST_EXCLUDE: (benchmarks|worldgen-tests-heavy)
 
     steps:
     - name: Checkout code
@@ -133,10 +197,12 @@ jobs:
     # CMP0141=NEW + Embedded selects /Z7 debug info; sccache cannot cache /Zi
     # compilations. BUILD_DEVELOPER_CLIENT=OFF keeps the npm web-app build out
     # of this job (it never ran here under the VS generator, where
-    # CMAKE_BUILD_TYPE is empty).
+    # CMAKE_BUILD_TYPE is empty). The query asks CMake's file API for the target
+    # graph test selection reads.
     - name: Configure CMake
       shell: bash
       run: |
+        node scripts/ci/test-select.mjs query --build-dir build
         cmake -S . -B build -G Ninja \
           -DCMAKE_BUILD_TYPE=Debug \
           -DCMAKE_C_COMPILER=cl \
@@ -152,6 +218,7 @@ jobs:
     - name: Save vcpkg cache
       uses: ./.github/actions/save-vcpkg-cache
 
+    # Whole even when every test is skipped: this is the only Windows build of the apps.
     - name: Build
       shell: bash
       run: cmake --build build
@@ -160,17 +227,59 @@ jobs:
       shell: bash
       run: sccache --show-stats
 
+    - name: Restore test markers
+      id: restore
+      uses: actions/cache/restore@v4
+      with:
+        path: build/test-markers
+        key: test-markers-windows-${{ github.run_id }}
+        restore-keys: test-markers-windows-
+
+    - name: Select tests
+      id: plan
+      shell: bash
+      env:
+        FULL_RUN: ${{ github.event_name == 'schedule' || inputs.full_run == true }}
+      run: |
+        full=()
+        if [ "$FULL_RUN" = true ]; then full=(--ignore-markers); fi
+        node scripts/ci/test-select.mjs plan --build-dir build --markers build/test-markers \
+          --exclude "$TEST_EXCLUDE" "${full[@]}"
+
     # Single-config Ninja: no -C Debug needed.
     - name: Run fast tests
+      if: steps.plan.outputs.run-count != '0'
       shell: bash
+      env:
+        RUN_REGEX: ${{ steps.plan.outputs.run-regex }}
       run: |
         cd build
-        ctest -j4 --output-on-failure -E "(benchmarks|worldgen-tests-heavy)"
+        ctest -j4 --output-on-failure --no-tests=error -R "$RUN_REGEX" -E "$TEST_EXCLUDE" \
+          --output-junit Testing/junit.xml
+
+    - name: Record passing tests
+      id: record
+      if: (success() || failure()) && steps.plan.outcome == 'success'
+      shell: bash
+      run: |
+        node scripts/ci/test-select.mjs record --build-dir build --markers build/test-markers \
+          --junit build/Testing/junit.xml
+
+    - name: Save test markers
+      if: >-
+        (success() || failure()) && steps.record.outcome == 'success' &&
+        !startsWith(steps.restore.outputs.cache-matched-key, format('test-markers-windows-{0}-', steps.record.outputs.digest))
+      uses: actions/cache/save@v4
+      with:
+        path: build/test-markers
+        key: test-markers-windows-${{ steps.record.outputs.digest }}-${{ github.run_id }}-${{ github.run_attempt }}
 
     - name: Upload test results
       if: always()
       uses: actions/upload-artifact@v4
       with:
         name: test-results-windows
-        path: build/Testing/
+        path: |
+          build/Testing/
+          build/test-select/
         retention-days: 7

@@ -3452,10 +3452,39 @@ namespace ecs::test {
 			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
 			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
 		};
+
+		// The ready radius-2 chunk region around the origin. NavigationSystem writes nothing observable
+		// in it and these fixtures wire no placement data, so each sampler's region is generated once
+		// per process and shared by every test that wires it.
+		std::unique_ptr<world::ChunkManager> generateOriginChunks(std::unique_ptr<world::IWorldSampler> sampler) {
+			auto chunks = std::make_unique<world::ChunkManager>(std::move(sampler));
+			chunks->setLoadRadius(2);
+			chunks->setUnloadRadius(4);
+			chunks->update({0.0F, 0.0F});
+			chunks->finishPendingGeneration();
+			return chunks;
+		}
+
+		world::ChunkManager* openLandChunks() {
+			static const std::unique_ptr<world::ChunkManager> chunks =
+				generateOriginChunks(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
+			return chunks.get();
+		}
+
+		world::ChunkManager* slidePondChunks() {
+			static const std::unique_ptr<world::ChunkManager> chunks =
+				generateOriginChunks(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{.pond = kSlidePond}));
+			return chunks.get();
+		}
+
+		world::ChunkManager* twoRiverChunks() {
+			static const std::unique_ptr<world::ChunkManager> chunks = generateOriginChunks(std::make_unique<TwoRiverSampler>());
+			return chunks.get();
+		}
 	} // namespace
 
 	// The running game's first decision happens before the async region build has produced a mesh.
-	// This wires a real NavigationSystem (all-land chunks unless a fixture swaps the sampler, a
+	// This wires a real NavigationSystem (all-land chunks unless a fixture picks another shared region, a
 	// viewport region at the origin, an empty construction world) plus MovementSystem and
 	// PhysicsSystem, so a test can let the AI decide with no mesh, settle the NavigationSystem alone
 	// (finishPendingBuilds: no sim time passes however long the build takes, and the AI sees the mesh
@@ -3465,14 +3494,8 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionSystemTest::SetUp();
 
-			chunks = std::make_unique<world::ChunkManager>(makeSampler());
-			chunks->setLoadRadius(2);
-			chunks->setUnloadRadius(4);
-			chunks->update({0.0F, 0.0F});
-			chunks->finishPendingGeneration();
-
 			nav = &world->registerSystem<NavigationSystem>();
-			nav->setChunkManager(chunks.get());
+			nav->setChunkManager(chunkRegion());
 			nav->setConstructionWorld(&construction);
 			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
 			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
@@ -3480,16 +3503,9 @@ namespace ecs::test {
 			world->registerSystem<PhysicsSystem>();
 		}
 
-		void TearDown() override {
-			// The base resets the world first, and its NavigationSystem waits out any in-flight build
-			// before the chunks and construction world go away.
-			AIDecisionSystemTest::TearDown();
-			chunks.reset();
-		}
-
-		[[nodiscard]] virtual std::unique_ptr<world::IWorldSampler> makeSampler() const {
-			return std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{});
-		}
+		// The shared region the fixture's NavigationSystem builds over; a fixture that needs a different
+		// world returns that sampler's shared region.
+		[[nodiscard]] virtual world::ChunkManager* chunkRegion() const { return openLandChunks(); }
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
 			const auto* navPath = world->getComponent<NavPath>(colonist);
@@ -3510,7 +3526,8 @@ namespace ecs::test {
 		static constexpr float kTick = 0.1F;
 		static constexpr int   kTicksAfterMesh = 20; // 2 s, four kReEvalInterval (0.5 s) periods
 
-		std::unique_ptr<world::ChunkManager> chunks;
+		// The base TearDown resets the world, and its NavigationSystem waits out any in-flight
+		// build, before this member goes away.
 		construction::ConstructionWorld		 construction;
 		NavigationSystem*							 nav = nullptr;
 	};
@@ -3650,9 +3667,7 @@ namespace ecs::test {
 			ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		}
 
-		[[nodiscard]] std::unique_ptr<world::IWorldSampler> makeSampler() const override {
-			return std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{.pond = kSlidePond});
-		}
+		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return slidePondChunks(); }
 
 		EntityID createActingColonist(glm::vec2 position) {
 			const auto colonist = createColonist(position);
@@ -3764,9 +3779,7 @@ namespace ecs::test {
 	// A need takes the nearest REACHABLE source, however many unreachable ones are nearer (WOR-607).
 	class AIDecisionRiverTest : public AIDecisionFirstMeshTest {
 	  protected:
-		[[nodiscard]] std::unique_ptr<world::IWorldSampler> makeSampler() const override {
-			return std::make_unique<TwoRiverSampler>();
-		}
+		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return twoRiverChunks(); }
 
 		// A colonist between the rivers with the mesh built, both banks proven unreachable and
 		// kReachable proven reachable, so a failure is the AI's choice and not the fixture.

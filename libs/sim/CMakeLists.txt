@@ -74,6 +74,7 @@ if(BUILD_TESTING)
             target_compile_options(sim-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME sim-tests COMMAND sim-tests)
+        worldsim_test_data(sim-tests assets/config)
         # TIMEOUT is the only hang guard: the navigation waits block in
         # NavigationSystem::finishPendingBuilds until every build lands, with no
         # wall-clock budget of their own.
