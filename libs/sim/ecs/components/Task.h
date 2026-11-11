@@ -254,6 +254,17 @@ struct Task {
 	/// Time since last decision re-evaluation (seconds)
 	float timeSinceEvaluation = 0.0F;
 
+	/// One bit per NeedType, set for each actionable need that was critical when the colonist last
+	/// decided. A need crossing into critical decides at once; one that stays critical waits for the
+	/// re-decide interval. Survives clear(), like the timer.
+	uint8_t criticalNeedsAtDecision = 0;
+	static_assert(static_cast<size_t>(NeedType::Count) <= 8, "criticalNeedsAtDecision holds one bit per need");
+
+	/// The last decision ran on a failed route (NavState::CantFindWayTo) and left the route failed, so
+	/// the failure has had its prompt decision and the next waits for the re-decide interval. Survives
+	/// clear(), like the timer.
+	bool routeFailureDecided = false;
+
 	/// Arbitration tier of this task when selected (lower = higher priority). Paired with `priority`
 	/// (the within-tier score) to form the (tier, score) key. The action-interruption gate is
 	/// tier-only: a strictly higher-tier challenger interrupts, a same-tier (or lower) challenger

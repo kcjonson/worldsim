@@ -541,6 +541,28 @@ namespace ecs::test {
 		EXPECT_TRUE(task->reason.find("critical") != std::string::npos);
 	}
 
+	// A colonist on a task that only decides on the interval (walking to water) decides the frame a need
+	// crosses into critical, not at the next interval.
+	TEST_F(AIDecisionSystemTest, CrossingIntoCriticalDecidesAtOnce) {
+		auto colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 3);
+		addKnownEntity(colonist, {8.0F, 3.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
+		setNeedValue(colonist, NeedType::Hunger, 100.0F);
+		setNeedValue(colonist, NeedType::Thirst, 40.0F);
+		setNeedValue(colonist, NeedType::Energy, 100.0F);
+		setNeedValue(colonist, NeedType::Bladder, 100.0F);
+		world->update(0.016F);
+		auto* task = getTask(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Thirst);
+		world->update(0.016F);
+		ASSERT_GT(task->timeSinceEvaluation, 0.0F) << "walking to water, he waits for the interval";
+
+		setNeedValue(colonist, NeedType::Hunger, 5.0F);
+		world->update(0.016F);
+		EXPECT_EQ(task->needToFulfill, NeedType::Hunger);
+		EXPECT_EQ(task->priorityTier, 2);
+	}
+
 	TEST_F(AIDecisionSystemTest, DoesNotReEvaluateWhileHandlingCriticalNeed) {
 		auto colonist = createColonist({0.0F, 0.0F});
 
@@ -5156,7 +5178,11 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kInRoom) << "a failure from before the swap was recorded";
 		EXPECT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo);
 
-		world->update(kTick);
+		// That was the failure's prompt decision; the next comes on the re-decide interval.
+		const float retried = getTrace(colonist)->lastEvaluationTime;
+		for (int i = 0; i < 10 && getTrace(colonist)->lastEvaluationTime == retried; ++i) {
+			world->update(kTick);
+		}
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure on the new mesh is recorded";
 	}
 
