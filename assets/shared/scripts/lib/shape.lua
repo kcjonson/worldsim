@@ -129,6 +129,31 @@ function shape.lobed(cx, cy, r, n, notch, jitter, rot, squash)
 	return shape.polygon(xs, ys)
 end
 
+-- A leaf mark from its stalk at (x, y) along the unit direction (dx, dy), len long and wide times its
+-- usual width: a kite when pointed, else a broad blunt leaf with one shoulder fuller than the other, so
+-- leaves in a spray don't stamp.
+function shape.leaf(x, y, dx, dy, len, wide, pointed)
+	local nx, ny = -dy * len * wide, dx * len * wide
+	local ux, uy = dx * len, dy * len
+	local function at(a, b)
+		return x + ux * a + nx * b, y + uy * a + ny * b
+	end
+	local xs, ys = {}, {}
+	if pointed then
+		xs[1], ys[1] = at(0, 0)
+		xs[2], ys[2] = at(0.42, -0.26)
+		xs[3], ys[3] = at(1, 0)
+		xs[4], ys[4] = at(0.42, 0.26)
+	else
+		xs[1], ys[1] = at(0, 0)
+		xs[2], ys[2] = at(0.36, -0.3)
+		xs[3], ys[3] = at(0.84, -0.2)
+		xs[4], ys[4] = at(1, 0.04)
+		xs[5], ys[5] = at(0.55, 0.3)
+	end
+	return shape.polygon(xs, ys)
+end
+
 -- Adds poly to the asset in color c, a {r, g, b} table, at alpha (1 when nil).
 function shape.emit(poly, c, alpha)
 	local p = Path()

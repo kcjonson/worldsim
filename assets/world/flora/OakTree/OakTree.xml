@@ -29,12 +29,16 @@
         <stemRise>0.4</stemRise>
         <crownDepth>0.26</crownDepth>
         <clusterSize>0.13</clusterSize>
+        <!-- How finely the crown is cut into leaves: about 1,100 triangles for a mature oak at 0.45,
+             2,900 at 1.8, 9,800 at 8. The leaf mark is leafSize / sqrt(foliageDetail) meters. -->
+        <foliageDetail>1.8</foliageDetail>
         <lobes>rounded</lobes>
         <growingOld>stagHeaded</growingOld>
         <foliageShade>#4a6a2e</foliageShade>
         <foliageBase>#5b7f36</foliageBase>
         <foliageLight>#729a43</foliageLight>
         <foliageHighlight>#93b85a</foliageHighlight>
+        <bark>#5c4b3d</bark>
       </params>
     </generator>
 
