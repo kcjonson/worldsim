@@ -6,7 +6,7 @@ Trees in a forest read as one tree at a few sizes. This spec makes each tree a d
 
 The aim is trees and forests more realistic than RimWorld's, held to what stays readable and fast. Form comes from botany (branching habit, crown shape, how a species ages, relative sizes). Absolute size and density are compressed to the game.
 
-A tree's age is one number. A species lives a set number of years, a tree is some number of years old, and everything about how it looks and what it yields follows from the fraction of its life it has lived. There are no named age classes.
+A plant's age is one number. A species lives a set number of years, a plant is some number of years old, and everything about how it looks and what it yields follows from the fraction of its life it has lived. There are no named age classes. Aging is a plant mechanism, not a tree one: any flora def that declares an age block gets it, and trees are the first users and the only ones this document tunes. Plants age in real game time with real lifespans, so a forest does not visibly mature during a colony; the mechanism's visible effect belongs to short-lived plants, later (R12).
 
 ## Where it stands today
 
@@ -103,22 +103,28 @@ Sim and tools:
 | D16 | Growth steps are mesh sharing and nothing more. The engine draws a tree at the nearest of a fixed number of growth steps per species so thousands of trees share GPU meshes. Steps are unnamed and never appear in data files or UI. The generator draws each step at its true size; placement scale narrows to 0.93 to 1.07. A species uses one render path, chosen at its reference age. Decided 2026-11-10. |
 | D17 | Trees age with game time. On a slow tick (once per game season) every loaded tree whose age has crossed into the next growth step takes its new step. Size follows a saturating curve of age, so young trees change within a playthrough and old ones barely. Decided 2026-11-10 by the owner. |
 | D18 | A tree's collision rect, wood yield, and felling work come from the generator per growth step, from the tree it drew: never from a named scale and never from the individual. Decided 2026-11-10. |
+| D19 | Plants age in real game time with real lifespans. Forests are not meant to visibly mature during a colony. No growth-rate factor, shorter year, or younger age mix is added to make them. Decided 2026-11-10 by the owner. |
+| D20 | Aging is a plant mechanism. Lifespan, age as a fraction of it, the `age` generator input, growth steps, and the per-step box and yield apply to any flora def that declares an age block. Trees are the first users and the only ones this document tunes. Decided 2026-11-10 by the owner. |
+| D21 | The mechanism's code is named for plants (R1, R2). Tree-specific parts, the skeleton generator, species, scale and density, and see-through crowns, keep tree names. |
+| D22 | The slow plant tick is deliberately coarse and has little to do until other inputs exist. Seasons and fruit are two later inputs that land in the same tick; both are out of scope here (R12). |
 
 ## Requirements
 
 ### R1 Per-tree age and traits
 
-- One function in `libs/assets` gives a tree's age in years from (def, world position, world seed, game years elapsed). A second gives its traits, `assets::TreeTraits { uint8_t growthStep; uint16_t variant; }`, from the same inputs. They link no renderer, so `sim` can call them.
-- Harvest, selection, and dev-spawned trees have only a def and a position, so they call the functions with the current game clock. `PlacedEntity` and the ECS `Appearance` keep a copy of the traits for the renderer. Position is quantised to 0.1 m first, the grid colonist memory already uses, so every caller agrees.
+- One function in `libs/assets` gives a plant's age in years from (def, world position, world seed, game years elapsed). A second gives its traits, `assets::PlantTraits { uint8_t growthStep; uint16_t variant; }`, from the same inputs. They link no renderer, so `sim` can call them. The mechanism is plant-general (D20): today's `TreeTraits`, `computeTreeTraits`, and the `TreeTraits` files become `PlantTraits`, `computePlantTraits`, and `PlantTraits.h/.cpp`, and the age function is `plantAgeYears`. `kAgeFeatureMeters` keeps its name.
+- Harvest, selection, and dev-spawned plants have only a def and a position, so they call the functions with the current game clock. `PlacedEntity` and the ECS `Appearance` keep a copy of the traits for the renderer. Position is quantised to 0.1 m first, the grid colonist memory already uses, so every caller agrees.
 - Game years elapsed is the clock's days since founding, plus the time of day, over 60. When saving exists, the game clock is saved; no tree is.
-- Base age keeps today's mechanism. The age field is the grove field's noise at about 30 m with its own salt, blended with a per-tree hash term and made uniform. Where the grove field is in its thicket band the value leans young, so a thicket is a dense stand of small trees and not old trees packed trunk to trunk. That uniform value then maps to an age fraction through the def's age distribution (R2): piecewise linear through (0, 0), its three percentile points, and (1, 1). Base age in years is that fraction times the lifespan.
+- Base age keeps today's mechanism. The thicket lean applies to a def placed in groves; it is a tree detail. The age field is the grove field's noise at about 30 m with its own salt, blended with a per-tree hash term and made uniform. Where the grove field is in its thicket band the value leans young, so a thicket is a dense stand of small trees and not old trees packed trunk to trunk. That uniform value then maps to an age fraction through the def's age distribution (R2): piecewise linear through (0, 0), its three percentile points, and (1, 1). Base age in years is that fraction times the lifespan.
 - Age in years is base age plus game years elapsed. The age fraction is that over the lifespan, clamped to 0 to 1. Outside thickets, at founding, the fractions follow the def's distribution.
 - The growth step is the step whose age range holds the age fraction (R3).
 - The variant is the individual: a hash of position, world seed, and the def, modulo the def's individual count. It does not depend on age, so a tree keeps its variant for life.
 - Placement positions, rotation, scale, and tint of every existing entity are unchanged for a given seed, apart from the scale range in D16.
-- A def without a lifespan does not age: it has one growth step and `variantCount` variants, and every non-tree asset behaves as today. Pine and palm are such defs until their generators are rewritten.
+- A def without an age block does not age: it has one growth step and `variantCount` variants, and every other asset behaves as today. Pine, palm, and every bush, grass, and reed are such defs until they are given one (R12).
 
 ### R2 Def schema
+
+The block belongs to any flora def (D20). Oak, maple, and birch are the first to declare it. Today's `TreeDefSchema.h/.cpp` (`TreeDefIssue`, `readAgeClasses`, `readPlacementScale`) become `PlantDefSchema.h/.cpp` and `PlantDefIssue`, with `readAgeClasses` replaced by `readAge`; `readPlacementScale` keeps its name.
 
 ```xml
 <age lifespanYears="200" steps="16" individuals="8">
@@ -137,14 +143,14 @@ Sim and tools:
 
 ### R3 Growth steps and meshes on every tree path
 
-Thousands of trees share GPU meshes, so a tree is drawn at the nearest of a fixed set of growth steps of its species. This is an implementation detail: steps have no names and are not in data or UI.
+Thousands of plants share GPU meshes, so a plant is drawn at the nearest of a fixed set of growth steps of its species. This is an implementation detail: steps have no names and are not in data or UI. The key is (def, growth step, individual) and nothing in it is tree-specific. Later inputs (R12) would add further parts to it beside the step and the individual; none is built here.
 
 - Step ages are spaced so each step is a similar visible change: from age 0 to 0.75 at equal ratios of crown width along the def's size curve (R9), which puts them closer together where the tree grows fastest, when young. The remaining steps cover old age at equal intervals of age, since old-age change is shape, not width. With 16 steps, starting split: 14 up to 0.75, two for old age at 0.875 and 1.0. For oak (0.4 m at age 0 to 4.9 m at 0.75) that is about 21% wider per step.
 - Each step owns the age range from halfway to the step below to halfway to the step above (halfway in log width below 0.75, in age above it).
 - `getTemplate(defName, traits)`; the cache key is (def, growth step, individual). A def that does not age keys on (def, 0, variant) as today.
 - Template count: 3 species x 16 steps x 8 individuals = 384. R5's triangle budget applies to each of them, and so does the prewarm.
 - Callers that take the traits: `TemplateMeshCache`, `InstancedEntityRenderer` (mesh handles and run key), `bakeChunkEntities`, the depth attributes at placement, `getSilhouette` (hit test and selection outline), and `DynamicEntityRenderSystem`. `GhostRenderer` previews placement defs only and passes default traits.
-- Tree templates are generated before the first chunk needs them. `prewarmTreeVariants` already does this in parallel for the classed defs, with generation and tessellation outside the registry mutex. It moves to (step, individual): 128 templates per species. Built for 32 classed variants it took about 11 ms, and the whole library load went from about 145 ms to 160 ms (asset-cli, RelWithDebInfo). Report the delta at 384 templates with the new generator. If it is more than the player would notice, reuse the ground tile disk cache's keying to store tessellated templates.
+- Templates of aging defs are generated before the first chunk needs them. `prewarmTreeVariants` already does this in parallel for the classed defs, with generation and tessellation outside the registry mutex. It is renamed `prewarmPlantVariants` and moves to (step, individual): 128 templates per species. Built for 32 classed variants it took about 11 ms, and the whole library load went from about 145 ms to 160 ms (asset-cli, RelWithDebInfo). Report the delta at 384 templates with the new generator. If it is more than the player would notice, reuse the ground tile disk cache's keying to store tessellated templates.
 - A template over 65,535 vertices is a load error naming the def, step, and individual, never a missing tree.
 - Instance capacity per mesh handle starts at 4,096 and doubles on demand (built). Handles are made on first draw, so only templates on screen hold one; 384 handles at 4,096 would be about 50 MB, and a view shows a fraction of them.
 - Tall or short routing (`kShortFloraMaxHeight`) is decided per def from its step at the reference age, individual 0 (D16), at both sites that decide it today. A seedling of a tall species stays on the tall path.
@@ -303,7 +309,7 @@ No tool reported trees per area, canopy cover, or wood per area, and R9 and the 
 
 ### R12 Aging during play
 
-Trees grow during play. A tree's age advances with game time, so change is slow, and the size curve (R9) puts most of it in the young.
+Plants age with game time (D19, D20). A plant's age advances at the clock's rate, so change is slow, and the size curve (R9) puts most of it in the young. Forests are not meant to visibly mature during a colony; the arithmetic below is the intended behaviour.
 
 What a colony sees, from `TimeSystem`'s defaults (a year is 60 game days, 24 real hours at 1x, 8 at 3x): a colony played for about 40 real hours, mostly at 3x, lives about 5 game years. Twenty hours at 1x is under one year; 60 hours at 10x is 25. In 5 years:
 
@@ -312,19 +318,22 @@ What a colony sees, from `TimeSystem`'s defaults (a year is 60 game days, 24 rea
 - An oak at age 0.10 (20 years, 1.6 m) widens about 12%, about half a step. An oak seedling at 0.02 (4 years, about 0.6 m) widens by half and crosses about two steps.
 - A birch at age 0.10 (8 years, 0.7 m) widens about a third and crosses one or two steps. A median birch does not visibly change.
 
-So young trees change within a playthrough and the bulk of the forest does not. Only trees below about the 10th to 30th percentile of age, depending on species, step at all in a typical colony.
+So the bulk of a forest looks the same from founding to the end of a colony, and only the youngest trees step at all. That is the design, and nothing here speeds it up. A plant with a short lifespan gets the same arithmetic at a different scale: a bush or an annual is a large fraction of its life older within one colony, so growth shows there, and that is where growth is meant to be visible. Giving those defs age blocks and age-driven generators is future work and no task in this document. The berry bush already has a regrowth mechanic (`regrowthTime` and a cooldown after a non-destructive harvest, plus optional `totalResourceMin` and `totalResourceMax` resource pools on other bushes); how age would meet it is for that work to settle, and nothing here changes it.
 
-- Tick: once per game season (starting value), every loaded tree computes its growth step from its age. Every tree whose step changed takes the new one. With a 15-day season that is every 2 real hours at 3x, every 36 minutes at 10x. Crossings are spread out across ticks on their own, because every tree has its own base age.
-- A chunk generated between ticks places its trees at their current age, so a tree loaded later is never behind.
+- Tick: once per game season (starting value), every loaded plant with an age block computes its growth step from its age. Every plant whose step changed takes the new one. With a 15-day season that is every 2 real hours at 3x, every 36 minutes at 10x. The tick is slow and coarse on purpose; with trees as the only users it mostly finds nothing to do. Crossings are spread out across ticks on their own, because every plant has its own base age.
+- Room for later inputs: the same slow update is where seasons (a plant looks different in each season) and fruit (a plant's fruiting state) would land. Each is its own future work and is not designed here. The design leaves room by shape only: they would be further parts of the template key (R3) beside growth step and individual, and further reasons for the tick to refresh a plant, beside crossing a step. Neither is built, and nothing in this document depends on them.
+- A chunk generated between ticks places its plants at their current age, so one loaded later is never behind.
 - What a step refreshes: the placed entity's traits and `templateId`; its entry in the sorted tall path (the spatial index copy and its depth attributes, `anchorY`), or its chunk's baked mesh if the def routes short; the nav input for its chunk if the collision rect changed, which triggers that chunk's nav rebuild the way felling one does; the selection silhouette and panel if it is selected; and the see-through cell if it is ghosted. Colonists already holding a work target on it re-resolve the target point, since the trunk foot moved.
 - Cost: measure the tick at a loaded area of a few thousand trees, both the tick itself and the frame where many trees step at once (the first tick after a long skip). Nav rebuilds are the likely cost; if they dominate, batch a chunk's steps into one rebuild per tick.
 - `/api/dev/time?skip=` already skips game time, in minutes or hours (a year is 1440h). It gains a year unit, and a skip runs the aging tick once at its end, so the age strip can be checked in game and a long colony simulated.
 
 ## Out of scope
 
-- A tree dying at the end of its lifespan, and regrowth after death or felling. A tree at age fraction 1 stays an old tree.
-- Seasons in how trees look.
-- Rewriting the pine and palm generators on the skeleton model (pine: one whorl of limbs per year, conical then flat-topped with age; palm: a single bud and a rosette), and giving them a lifespan.
+- A plant dying at the end of its lifespan, and regrowth after death or felling. A plant at age fraction 1 stays old.
+- Seasons in how plants look. They would land in the slow plant tick and the template key (R12); not designed here.
+- Fruit, a plant's fruiting state, likewise a later input to that tick and key (R12).
+- Age blocks and age-driven generators for short-lived plants (bushes, grasses, annuals), where growth shows within a colony (R12), and how age meets a bush's regrowth and resource pool.
+- Rewriting the pine and palm generators on the skeleton model (pine: one whorl of limbs per year, conical then flat-topped with age; palm: a single bud and a rosette), and giving them an age block.
 - Crowns shaped by their neighbours, and open-grown versus forest-grown form.
 - Making `<avoids>` and `<affinity>` strengths take effect, and spacing across chunk seams. Both are placement bugs that predate this and change every biome.
 - Named parts on procedural meshes, and with them wind sway that knows trunk from crown. The Living Environment plan bends by mesh height, which needs neither.
