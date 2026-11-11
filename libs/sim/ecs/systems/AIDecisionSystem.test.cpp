@@ -9,6 +9,7 @@
 #include "NavigationSystem.test.h"
 #include "PhysicsSystem.h"
 #include "TimeSystem.h"
+#include "VisionSystem.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -2637,6 +2638,67 @@ namespace ecs::test {
 		addKnownEntity(colonist, seenLater, berryBushId, assets::CapabilityType::Harvestable);
 		decide();
 		EXPECT_EQ(hungerTarget(), seenLater) << "a newly remembered ready bush is taken at once";
+	}
+
+	// The wait holds with the real VisionSystem looking on: a storage box and a loose pile beside the
+	// colonist live only in the ECS, and seeing them again each vision tick must not read as a change
+	// to what it remembers, or the wait would drop and every regrowing bush be asked again each decision.
+	TEST_F(AIDecisionSystemTest, RegrowingFoodWaitHoldsBesideAPileAndABox) {
+		auto&			registry = assets::AssetRegistry::Get();
+		const uint32_t	berryBushId = registerBerryBush(registry);
+		const uint32_t	boxId = registry.registerSyntheticDefinition(
+			 "Test_WaitBox", static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Storage))
+		 );
+		const uint32_t pileId = registry.registerSyntheticDefinition(
+			"Test_WaitPile", static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Carryable))
+		);
+		const glm::vec2 bushAt{4.0F, 0.0F};
+		const glm::vec2 boxAt{1.0F, 0.0F};
+		const glm::vec2 pileAt{0.0F, 1.0F};
+
+		assets::PlacementExecutor		  executor(registry);
+		assets::AsyncChunkPlacementResult chunk;
+		chunk.coord = world::worldToChunk({bushAt.x, bushAt.y});
+		chunk.spatialIndex.insert({"Flora_BerryBush", bushAt});
+		executor.storeChunkResult(std::move(chunk));
+		const std::unordered_set<world::ChunkCoordinate> processed{world::worldToChunk({bushAt.x, bushAt.y})};
+		auto&											 vision = world->registerSystem<VisionSystem>();
+		vision.setPlacementData(&executor, &processed);
+		vision.setUpdateInterval(1);
+
+		world->registerSystem<TimeSystem>();
+		int asked = 0;
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 /*at*/) {
+			++asked;
+			return std::optional<double>{1000.0};
+		});
+
+		for (const auto& [defName, at] : {std::pair{"Test_WaitBox", boxAt}, std::pair{"Test_WaitPile", pileAt}}) {
+			const auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{at});
+			world->addComponent<Appearance>(entity, Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		}
+		auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		setNeedValue(colonist, NeedType::Hunger, 40.0F);
+		const auto decide = [&] {
+			getTask(colonist)->timeSinceEvaluation = 1.0F;
+			world->update(0.016F);
+		};
+
+		decide();
+		const Memory* memory = world->getComponent<Memory>(colonist);
+		ASSERT_TRUE(memory->knowsWorldEntity(bushAt, berryBushId));
+		ASSERT_TRUE(memory->knowsWorldEntity(boxAt, boxId));
+		ASSERT_TRUE(memory->knowsWorldEntity(pileAt, pileId));
+		ASSERT_EQ(asked, 1) << "the regrowing bush is asked once";
+		for (int i = 0; i < 5; ++i) {
+			decide();
+		}
+		EXPECT_EQ(asked, 1) << "five vision ticks over an unchanged box and pile leave the wait standing";
+		const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+		ASSERT_NE(hunger, nullptr);
+		EXPECT_EQ(hunger->status, OptionStatus::Regrowing);
 	}
 
 	// =============================================================================

@@ -606,6 +606,47 @@ TEST_F(VisionSystemTest, ShoreNeverReconciled) {
 	EXPECT_TRUE(mem->knowsWorldEntity(shorePos, shoreId)) << "the shore is terrain, never reconciled away";
 }
 
+// Piles and boxes live only in the ECS, never in the placement index. Seen by pass 2 each tick, they
+// stay remembered without a memory write: the set of remembered entities doesn't change, so
+// worldEntityVersion holds. One destroyed while in view is forgotten on the next tick.
+TEST_F(VisionSystemTest, EcsEntitiesInViewAreKeptWithoutChurn) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						placedPos{6.0F, 6.0F};
+	placeTarget(executor, processed, placedPos); // a live index for the chunk the pile and box stand in
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	const glm::vec2 pilePos{3.0F, 1.0F};
+	const glm::vec2 boxPos{1.0F, 3.0F};
+	const EntityID	pile = spawnTarget(world, pilePos);
+	spawnTarget(world, boxPos);
+	const EntityID observer = spawnObserver(world, {0.5F, 0.5F});
+	const Memory*  mem = world.getComponent<Memory>(observer);
+
+	tick(sys);
+	ASSERT_TRUE(remembers(world, observer, pilePos));
+	ASSERT_TRUE(remembers(world, observer, boxPos));
+	ASSERT_TRUE(remembers(world, observer, placedPos));
+	const std::uint64_t version = mem->worldEntityVersion;
+
+	for (int i = 0; i < 4; ++i) {
+		tick(sys);
+	}
+	EXPECT_EQ(mem->worldEntityVersion, version) << "an unchanged pile and box in view write nothing to memory";
+	EXPECT_TRUE(remembers(world, observer, pilePos));
+	EXPECT_TRUE(remembers(world, observer, boxPos));
+
+	world.destroyEntity(pile);
+	tick(sys);
+	EXPECT_FALSE(remembers(world, observer, pilePos)) << "a pile gone from in view is forgotten";
+	EXPECT_TRUE(remembers(world, observer, boxPos));
+	EXPECT_TRUE(remembers(world, observer, placedPos));
+}
+
 // Pass 3 (terrain polygons D11): every shore point of a loaded chunk within sight
 // is remembered as the drinkable Terrain_Shore, and none beyond it; each stands
 // on land at the water's edge.

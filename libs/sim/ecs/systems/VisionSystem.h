@@ -19,6 +19,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 namespace assets {
 	class PlacementExecutor;
@@ -125,6 +126,16 @@ class VisionSystem : public ISystem {
 		bool		   seenThisTick = false; // mark-and-sweep prune flag
 	};
 	std::unordered_map<EntityID, VisibilityCache> m_visibilityCache;
+
+	// A remembered entity in view that the placement index doesn't hold: forgotten unless pass 2
+	// sees it in the ECS. Sorted by key for pass 2's lookup; reused across observers.
+	struct StaleCandidate {
+		uint64_t  key = 0;
+		glm::vec2 position{0.0F, 0.0F};
+		uint32_t  defNameId = 0;
+		bool	  seen = false;
+	};
+	std::vector<StaleCandidate> m_staleScratch;
 
 	// Test-only diagnostic: incremented on each actual polygon (re)build.
 	uint64_t m_polygonBuildCount = 0;
