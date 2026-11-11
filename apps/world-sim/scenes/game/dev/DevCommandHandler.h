@@ -114,7 +114,10 @@ namespace world_sim {
 		void		devWalls(const app::DevRequest& cmd);
 		void		devOpening(const app::DevRequest& cmd);
 		void		devCraft(const app::DevRequest& cmd);
-		void		devStorage(const app::DevRequest& cmd);
+		// storage?at=x,y&item=<def>|*&category=&priority=&min=&max=: adds a rule to the nearest box. A
+		// named item's category comes from its definition (category= may only repeat it); an unknown
+		// item is a 400. category= picks the wildcard's category, RawMaterial by default.
+		app::DevResponse devStorage(const app::DevRequest& cmd);
 		void		devTunable(const app::DevRequest& cmd);
 
 		// --- world-position validity (single gate for every placing/moving verb) ---
