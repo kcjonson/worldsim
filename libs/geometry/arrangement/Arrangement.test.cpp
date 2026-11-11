@@ -390,7 +390,87 @@ namespace {
 		}
 	}
 
+	Vec2i64 transposed(const Vec2i64& p, bool transpose) {
+		return transpose ? Vec2i64{p.y, p.x} : p;
+	}
+
+	// A T-touch at every integer x (or y): a unit stem arriving from the low side
+	// ends on a short perpendicular segment's interior, and nothing touches that
+	// point from the high side. Whatever the broad phase's cell size, some of these
+	// touch points lie exactly on a cell boundary with the stem in the cell below.
+	std::vector<InputSegment> lowSideTouchLattice(bool transpose) {
+		std::vector<InputSegment> segs;
+		std::int64_t			  id = 0;
+		for (std::int64_t row = 0; row < 8; ++row) {
+			const std::int64_t y = 4 * row;
+			for (std::int64_t x = 1 + row % 2; x <= 40; x += 2) {
+				segs.push_back({transposed({x - 1, y}, transpose), transposed({x, y}, transpose), id++});
+				segs.push_back({transposed({x, y - 1}, transpose), transposed({x, y + 1}, transpose), id++});
+			}
+		}
+		return segs;
+	}
+
+	// One long segment over a field of short crossing segments spread across many cells.
+	std::vector<InputSegment> longOverShorts(const Vec2i64& from, const Vec2i64& to) {
+		std::vector<InputSegment> segs;
+		std::int64_t			  id = 0;
+		for (std::int64_t x = 0; x < 2000; x += 100) {
+			for (std::int64_t y = 0; y < 2000; y += 100) {
+				segs.push_back({{x + 10, y + 3}, {x + 70, y + 91}, id++});
+				segs.push_back({{x + 5, y + 80}, {x + 90, y + 20}, id++});
+			}
+		}
+		segs.push_back({from, to, id});
+		return segs;
+	}
+
+	// Two random tangles millions of mm apart along x: a lopsided extent the grid
+	// must cap rather than cut into millions of columns.
+	std::vector<InputSegment> farClusters() {
+		std::mt19937								rng(0xFA12);
+		std::uniform_int_distribution<std::int64_t> coord(0, 40);
+		std::vector<InputSegment>					segs;
+		for (const std::int64_t ox : {std::int64_t{0}, std::int64_t{6000000}}) {
+			for (int i = 0; i < 60; ++i) {
+				segs.push_back({{ox + coord(rng), coord(rng)}, {ox + coord(rng), coord(rng)}, i});
+			}
+		}
+		return segs;
+	}
+
+	// Every segment on one line, overlapping and nested, so the extent is zero on
+	// one axis.
+	std::vector<InputSegment> collinearOverlaps(bool transpose) {
+		std::vector<InputSegment> segs;
+		for (std::int64_t i = 0; i < 40; ++i) {
+			segs.push_back({transposed({i * 37, 500}, transpose), transposed({i * 37 + 150 + i % 7 * 20, 500}, transpose), i});
+		}
+		return segs;
+	}
+
 } // namespace
+
+TEST(Arrangement, BroadPhaseInputsResolveClean) {
+	struct Case {
+		const char*				  name;
+		std::vector<InputSegment> segs;
+	};
+	const std::vector<Case> cases = {
+		{"low-side touches on x", lowSideTouchLattice(false)},
+		{"low-side touches on y", lowSideTouchLattice(true)},
+		{"long horizontal over shorts", longOverShorts({-50, 1037}, {2050, 1037})},
+		{"long diagonal over shorts", longOverShorts({-50, -40}, {2050, 2013})},
+		{"far clusters", farClusters()},
+		{"collinear overlaps on a horizontal", collinearOverlaps(false)},
+		{"collinear overlaps on a vertical", collinearOverlaps(true)},
+	};
+	for (const Case& c : cases) {
+		const Arrangement arr = buildArrangement(c.segs);
+		EXPECT_TRUE(noVertexInteriorToAnyEdge(arr)) << c.name;
+		EXPECT_TRUE(edgesCleanlyDisjoint(arr)) << c.name;
+	}
+}
 
 // The navmesh triangulates the arrangement's edges as constraints, so ring input
 // must come out as a planar straight-line graph. A ring vertex resting on another

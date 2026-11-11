@@ -3,8 +3,11 @@
 #include "../core/Int128.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstdint>
 #include <map>
 #include <tuple>
+#include <vector>
 
 namespace geometry {
 
@@ -98,6 +101,96 @@ namespace geometry {
 			}
 		}
 
+		struct Box {
+			Vec2i64 lo;
+			Vec2i64 hi;
+		};
+
+		Box boxOf(const WorkSegment& s) {
+			return {{std::min(s.a.x, s.b.x), std::min(s.a.y, s.b.y)}, {std::max(s.a.x, s.b.x), std::max(s.a.y, s.b.y)}};
+		}
+
+		bool boxesOverlap(const Box& p, const Box& q) {
+			return p.lo.x <= q.hi.x && q.lo.x <= p.hi.x && p.lo.y <= q.hi.y && q.lo.y <= p.hi.y;
+		}
+
+		// Broad phase for the split pass. Every non-Disjoint relation from
+		// intersectSegments means the two segments share a point, so their closed
+		// boxes overlap and both cover that point's cell. Each segment is registered
+		// in every cell its closed box covers, so no such pair is missed.
+		struct SegmentGrid {
+			Vec2i64					 origin;
+			std::int64_t			 cellSize = 1;
+			std::int64_t			 cols = 0;
+			std::int64_t			 rows = 0;
+			std::vector<std::size_t> cellStart; // CSR: cell c holds entries[cellStart[c] .. cellStart[c+1])
+			std::vector<std::size_t> entries;	// segment indices
+		};
+
+		struct CellRange {
+			std::int64_t x0, y0, x1, y1;
+		};
+
+		CellRange cellRangeOf(const SegmentGrid& grid, const Box& b) {
+			return {
+				(b.lo.x - grid.origin.x) / grid.cellSize,
+				(b.lo.y - grid.origin.y) / grid.cellSize,
+				(b.hi.x - grid.origin.x) / grid.cellSize,
+				(b.hi.y - grid.origin.y) / grid.cellSize
+			};
+		}
+
+		SegmentGrid buildSegmentGrid(const std::vector<Box>& boxes) {
+			SegmentGrid grid;
+			Vec2i64		lo = boxes.front().lo;
+			Vec2i64		hi = boxes.front().hi;
+			for (const Box& b : boxes) {
+				lo = {std::min(lo.x, b.lo.x), std::min(lo.y, b.lo.y)};
+				hi = {std::max(hi.x, b.hi.x), std::max(hi.y, b.hi.y)};
+			}
+			const std::int64_t width = hi.x - lo.x;
+			const std::int64_t height = hi.y - lo.y;
+			const auto		   n = static_cast<double>(boxes.size());
+
+			// About one cell per segment, then capped per axis so a degenerate
+			// (collinear) or very lopsided extent can't allocate a huge grid.
+			const double ideal = std::ceil(std::sqrt(static_cast<double>(width) * static_cast<double>(height) / n));
+			const double limit = static_cast<double>(std::max(width, height)) + 1.0;
+			std::int64_t cellSize = std::max<std::int64_t>(1, static_cast<std::int64_t>(std::min(ideal, limit)));
+			const auto	 maxAxisCells = static_cast<std::int64_t>(4 * std::ceil(std::sqrt(n)));
+			cellSize = std::max({cellSize, width / maxAxisCells + 1, height / maxAxisCells + 1});
+
+			grid.origin = lo;
+			grid.cellSize = cellSize;
+			grid.cols = width / cellSize + 1;
+			grid.rows = height / cellSize + 1;
+
+			const auto cellCount = static_cast<std::size_t>(grid.cols * grid.rows);
+			grid.cellStart.assign(cellCount + 1, 0);
+			for (const Box& b : boxes) {
+				const CellRange r = cellRangeOf(grid, b);
+				for (std::int64_t cy = r.y0; cy <= r.y1; ++cy) {
+					for (std::int64_t cx = r.x0; cx <= r.x1; ++cx) {
+						++grid.cellStart[static_cast<std::size_t>(cy * grid.cols + cx) + 1];
+					}
+				}
+			}
+			for (std::size_t c = 0; c < cellCount; ++c) {
+				grid.cellStart[c + 1] += grid.cellStart[c];
+			}
+			grid.entries.resize(grid.cellStart[cellCount]);
+			std::vector<std::size_t> fill(grid.cellStart.begin(), grid.cellStart.end() - 1);
+			for (std::size_t i = 0; i < boxes.size(); ++i) {
+				const CellRange r = cellRangeOf(grid, boxes[i]);
+				for (std::int64_t cy = r.y0; cy <= r.y1; ++cy) {
+					for (std::int64_t cx = r.x0; cx <= r.x1; ++cx) {
+						grid.entries[fill[static_cast<std::size_t>(cy * grid.cols + cx)]++] = i;
+					}
+				}
+			}
+			return grid;
+		}
+
 	} // namespace
 
 	Arrangement buildArrangement(const std::vector<InputSegment>& segments) {
@@ -117,21 +210,39 @@ namespace geometry {
 		// again. The loop terminates because every split strictly shortens a
 		// segment and points live on the finite integer-mm grid, so the supply of
 		// distinct interior points is bounded.
-		bool changed = true;
+		bool changed = !work.empty();
 		while (changed) {
 			changed = false;
 			std::vector<WorkSegment> next;
 			next.reserve(work.size());
 
+			std::vector<Box> boxes;
+			boxes.reserve(work.size());
+			for (const WorkSegment& s : work) {
+				boxes.push_back(boxOf(s));
+			}
+			const SegmentGrid		 grid = buildSegmentGrid(boxes);
+			std::vector<std::size_t> lastSeen(work.size(), SIZE_MAX);
+
 			for (std::size_t i = 0; i < work.size(); ++i) {
 				const WorkSegment& s = work[i];
 
 				std::vector<Vec2i64> cuts;
-				for (std::size_t j = 0; j < work.size(); ++j) {
-					if (i == j) {
-						continue;
+				const CellRange		 r = cellRangeOf(grid, boxes[i]);
+				for (std::int64_t cy = r.y0; cy <= r.y1; ++cy) {
+					for (std::int64_t cx = r.x0; cx <= r.x1; ++cx) {
+						const auto cell = static_cast<std::size_t>(cy * grid.cols + cx);
+						for (std::size_t k = grid.cellStart[cell]; k < grid.cellStart[cell + 1]; ++k) {
+							const std::size_t j = grid.entries[k];
+							if (j == i || lastSeen[j] == i) {
+								continue;
+							}
+							lastSeen[j] = i;
+							if (boxesOverlap(boxes[i], boxes[j])) {
+								interiorSplitPoints(s, work[j], cuts);
+							}
+						}
 					}
-					interiorSplitPoints(s, work[j], cuts);
 				}
 
 				if (cuts.empty()) {
