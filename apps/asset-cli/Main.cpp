@@ -28,12 +28,17 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <cmath>
 #include <cstdio>
 #include <iostream>
 #include <memory>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <string_view>
+#include <system_error>
+#include <type_traits>
 #include <vector>
 
 using assets::AssetDefinition;
@@ -145,12 +150,54 @@ namespace {
 
 	using ParamSets = std::vector<std::pair<std::string, std::string>>;
 
-	// Every --param name=value, in order; nullopt (reported) when one has no name or no '='.
+	// One number of type T filling the whole of `text` but for surrounding spaces; nullopt for anything
+	// else: trailing text, a sign an unsigned type has no room for, out of range, or not finite.
+	template <typename T> std::optional<T> parseWhole(std::string_view text) {
+		while (!text.empty() && text.front() == ' ') {
+			text.remove_prefix(1);
+		}
+		while (!text.empty() && text.back() == ' ') {
+			text.remove_suffix(1);
+		}
+		T value{};
+		const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
+		if (text.empty() || error != std::errc{} || end != text.data() + text.size()) {
+			return std::nullopt;
+		}
+		if constexpr (std::is_floating_point_v<T>) {
+			if (!std::isfinite(value)) {
+				return std::nullopt;
+			}
+		}
+		return value;
+	}
+
+	// A comma-separated list of parseWhole<T> values; nullopt when any item isn't one.
+	template <typename T> std::optional<std::vector<T>> parseList(const std::string& list) {
+		std::vector<T> out;
+		size_t		   start = 0;
+		while (start <= list.size()) {
+			const size_t		   comma = std::min(list.find(',', start), list.size());
+			const std::optional<T> value = parseWhole<T>(std::string_view(list).substr(start, comma - start));
+			if (!value) {
+				return std::nullopt;
+			}
+			out.push_back(*value);
+			start = comma + 1;
+		}
+		return out;
+	}
+
+	// Every --param name=value, in order; nullopt (reported) when one has no value, no name, or no '='.
 	std::optional<ParamSets> paramSets(const std::vector<std::string>& args) {
 		ParamSets sets;
-		for (size_t i = 0; i + 1 < args.size(); ++i) {
+		for (size_t i = 0; i < args.size(); ++i) {
 			if (args[i] != "--param") {
 				continue;
+			}
+			if (i + 1 == args.size()) {
+				std::cerr << "error: --param needs name=value after it\n";
+				return std::nullopt;
 			}
 			const std::string& pair = args[++i];
 			const size_t	   eq = pair.find('=');
@@ -180,12 +227,8 @@ namespace {
 		if (!arg) {
 			return {};
 		}
-		float density = 0.0F;
-		try {
-			density = std::stof(*arg);
-		} catch (const std::exception&) {
-		}
-		const auto found = std::find(def.detailLevels.begin(), def.detailLevels.end(), density);
+		const float density = parseWhole<float>(*arg).value_or(0.0F);
+		const auto	found = std::find(def.detailLevels.begin(), def.detailLevels.end(), density);
 		if (found == def.detailLevels.end()) {
 			std::cerr << "error: " << def.defName << " has no detail level " << *arg << "; its <detailLevels> are";
 			for (const float level : def.detailLevels) {
@@ -589,17 +632,6 @@ namespace {
 		return report.errorCount() > 0 ? kFailure : kOk;
 	}
 
-	std::vector<float> parseNumbers(const std::string& list) {
-		std::vector<float> out;
-		size_t			   start = 0;
-		while (start <= list.size()) {
-			const size_t comma = std::min(list.find(',', start), list.size());
-			out.push_back(std::stof(list.substr(start, comma - start)));
-			start = comma + 1;
-		}
-		return out;
-	}
-
 	// A sheet at one scale: every template the game draws for the def (--grid: age classes as rows,
 	// variants as columns), or the generator run at each of --age's ages (columns) for each of --seed's
 	// seeds (rows).
@@ -610,38 +642,49 @@ namespace {
 			std::cerr << "error: a sheet is either --grid or --age <a,b,...>\n";
 			return kUsage;
 		}
-		if (flagValue(args, "--size") || flagValue(args, "--samples") || (grid && flagValue(args, "--seed"))) {
-			std::cerr << "error: a sheet is sized by --ppm, and --grid draws the game's own seeds\n";
+		if (flagValue(args, "--size") || flagValue(args, "--samples")) {
+			std::cerr << "error: a sheet is sized by --ppm; --size and --samples are for a --seed render\n";
 			return kUsage;
 		}
-		float			   ppm = 48.0F;
-		std::vector<float> ages;
-		std::vector<float> seeds{0.0F};
-		size_t			   pairsPerRow = 0;
-		try {
-			if (const auto pairsArg = flagValue(args, "--pairs")) {
-				pairsPerRow = static_cast<size_t>(std::stoul(*pairsArg));
-			}
-			if (const auto ppmArg = flagValue(args, "--ppm")) {
-				ppm = std::stof(*ppmArg);
-			}
-			if (ageArg) {
-				ages = parseNumbers(*ageArg);
-			}
-			if (const auto seedArg = flagValue(args, "--seed")) {
-				seeds = parseNumbers(*seedArg);
-			}
-		} catch (const std::exception&) {
-			ppm = 0.0F;
-		}
-		if (flagValue(args, "--pairs") && (pairsPerRow == 0 || ages.size() != seeds.size())) {
-			std::cerr << "error: --pairs N takes as many --age values as --seed values, N to a row\n";
+		if (grid && (flagValue(args, "--seed") || flagValue(args, "--pairs"))) {
+			std::cerr << "error: --grid draws the game's own templates; --seed and --pairs are for an --age sheet\n";
 			return kUsage;
 		}
-		if (!(ppm > 0.0F) || std::any_of(ages.begin(), ages.end(), [](float a) { return a < 0.0F || a > 1.0F; }) ||
-			std::any_of(seeds.begin(), seeds.end(), [](float v) { return v < 0.0F; })) {
-			std::cerr << "error: --ppm must be positive, --age a list of numbers from 0 to 1, --seed a list of non-negative integers\n";
-			return kUsage;
+		float				  ppm = 48.0F;
+		std::vector<float>	  ages;
+		std::vector<uint32_t> seeds{0U};
+		size_t				  pairsPerRow = 0;
+		if (const auto ppmArg = flagValue(args, "--ppm")) {
+			const std::optional<float> value = parseWhole<float>(*ppmArg);
+			if (!value || !(*value > 0.0F)) {
+				std::cerr << "error: --ppm must be a positive number, got '" << *ppmArg << "'\n";
+				return kUsage;
+			}
+			ppm = *value;
+		}
+		if (ageArg) {
+			const auto values = parseList<float>(*ageArg);
+			if (!values || std::any_of(values->begin(), values->end(), [](float a) { return a < 0.0F || a > 1.0F; })) {
+				std::cerr << "error: --age takes a list of numbers from 0 to 1, got '" << *ageArg << "'\n";
+				return kUsage;
+			}
+			ages = *values;
+		}
+		if (const auto seedArg = flagValue(args, "--seed")) {
+			const auto values = parseList<uint32_t>(*seedArg);
+			if (!values) {
+				std::cerr << "error: --seed takes a list of integers from 0 to 4294967295, got '" << *seedArg << "'\n";
+				return kUsage;
+			}
+			seeds = *values;
+		}
+		if (const auto pairsArg = flagValue(args, "--pairs")) {
+			const std::optional<size_t> value = parseWhole<size_t>(*pairsArg);
+			if (!value || *value == 0 || ages.size() != seeds.size()) {
+				std::cerr << "error: --pairs N takes a positive N and as many --age values as --seed values, N to a row\n";
+				return kUsage;
+			}
+			pairsPerRow = *value;
 		}
 		const bool				silhouette = hasFlag(args, "--silhouette");
 		const auto				bgArg = flagValue(args, "--bg");
@@ -694,9 +737,9 @@ namespace {
 			// One cell per (age, seed): every age by every seed, or with --pairs N the i-th age with the
 			// i-th seed, N to a row.
 			struct Cell {
-				float  age;
-				float  seed;
-				size_t row;
+				float	 age;
+				uint32_t seed;
+				size_t	 row;
 			};
 			std::vector<Cell> cells;
 			if (pairsPerRow > 0) {
@@ -712,8 +755,8 @@ namespace {
 			}
 			const float density = level.level.has_value() ? def->detailLevels[*level.level] : AssetRegistry::kFullDetail;
 			for (const Cell& cell : cells) {
-				const float age = cell.age;
-				const float seed = cell.seed;
+				const float	   age = cell.age;
+				const uint32_t seed = cell.seed;
 				if (rows.size() <= cell.row) {
 					rows.emplace_back();
 				}
@@ -721,11 +764,11 @@ namespace {
 				{
 					registry.overrideGeneratorParams(defName, {{"age", std::to_string(age)}});
 					auto mesh = std::make_unique<renderer::TessellatedMesh>();
-					if (!registry.buildMesh(defName, static_cast<uint32_t>(seed), *mesh, density)) {
+					if (!registry.buildMesh(defName, seed, *mesh, density)) {
 						std::cerr << "error: " << defName << " at age " << age << " seed " << seed << " drew nothing\n";
 						return kFailure;
 					}
-					std::cout << "  seed " << static_cast<uint32_t>(seed) << " age " << age << ": " << mesh->getTriangleCount() << " triangles, "
+					std::cout << "  seed " << seed << " age " << age << ": " << mesh->getTriangleCount() << " triangles, "
 							  << mesh->getVertexCount() << " vertices\n";
 					row.push_back(built.emplace_back(std::move(mesh)).get());
 				}
@@ -764,6 +807,10 @@ namespace {
 			std::cerr << "error: --level is for a --grid or --age sheet; a --seed render draws the reference level\n";
 			return kUsage;
 		}
+		if (flagValue(args, "--ppm") || flagValue(args, "--pairs")) {
+			std::cerr << "error: --ppm and --pairs are for a --grid or --age sheet; a --seed render is sized by --size\n";
+			return kUsage;
+		}
 
 		int w = 256;
 		int h = 256;
@@ -775,12 +822,12 @@ namespace {
 
 		uint32_t seed = 0U;
 		if (const auto seedArg = flagValue(args, "--seed")) {
-			try {
-				seed = static_cast<uint32_t>(std::stoul(*seedArg));
-			} catch (const std::exception&) {
-				std::cerr << "error: --seed must be a non-negative integer\n";
+			const std::optional<uint32_t> value = parseWhole<uint32_t>(*seedArg);
+			if (!value) {
+				std::cerr << "error: --seed must be an integer from 0 to 4294967295, got '" << *seedArg << "'\n";
 				return kUsage;
 			}
+			seed = *value;
 		}
 
 		int samples = 1;
