@@ -111,25 +111,31 @@ the owner to confirm.
 - Idle food gathering is offered only while the pack has no food and has room (decided during
   implementation). A colonist's own food is never hauled anywhere unless he fetched or cut it for
   there (decided during implementation).
-- A box's configured max caps hauls and deposits, as long as no wildcard rule for the category has
-  no max (decided during implementation). A category wildcard's minimum no longer drives cutting
-  (decided during implementation).
+- A rule naming an item governs it over the category wildcard: its max caps hauls and deposits, and
+  its minimum and priority apply, whatever the wildcard says (decided during implementation). A
+  category wildcard's minimum no longer drives cutting (decided during implementation). The dev
+  `storage` verb removes the category's wildcard when it adds a named rule, as the dialog does.
 - Two colonists never cut one plant, never fetch one pile past its count, and never overfill a box's
   last slot. A haul whose pickup finds nothing ends at the source.
 - Colonists gather a full trip before delivering; a top-up cut is taken only if its yield fits; a
-  known loose pile comes before a fresh cut whatever the distance; a cut's surplus drops beside the
-  source as a pile; once a delivery starts nothing turns it back (all decided during implementation).
+  known loose pile comes before a fresh cut whatever the distance, once the colonist knows he can
+  reach it; a pile leg, and a cut for a box, need room for what they bring; a cut's surplus drops
+  beside the source as a pile, or just outside a site's footprint for a clear; once a delivery starts
+  nothing turns it back (all decided during implementation). Loose stock and stocking cuts go to the
+  highest-priority box that wants them first.
 - A colonist with no route releases what he hasn't reached (decided during implementation).
 - An interrupted haul's goods go into a box within 1.5 m before the ground. A colonist interrupted by
   a need resumes the delivery afterwards; while he sleeps another colonist may fetch the same goods
   instead (decided during implementation). A two-hand armful nobody wants is put down before he
-  wanders (decided during implementation).
+  wanders or gathers food (decided during implementation); switching to a carry-in takes it along.
+  Furniture he can no longer place is set down where he stands, still packaged (decided during
+  implementation).
 - Several colonists can provision one craft without over-delivering. A station another crafter is
   walking to reads Reserved; it is free again once that crafter leaves for a need.
 - Construction sites take known loose piles of a due material (a fell's overflow) before anyone cuts
   more (decided during implementation), and nothing is carried to a site before it wants it.
-- The task panel hides rows with nothing to do and names one worker per row; the trace shows
-  Reserved, Regrowing, and no-room rows.
+- The task panel shows a storage goal only while some colonist is offered work toward it, and names
+  one worker per row; the trace shows Reserved, Regrowing, and no-room rows.
 
 ### Not built
 
