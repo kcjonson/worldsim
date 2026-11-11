@@ -5288,8 +5288,16 @@ namespace ecs::test {
 			return registry.nameLookups() - before;
 		};
 
+		struct Counting {
+			assets::AssetRegistry& registry;
+			explicit Counting(assets::AssetRegistry& r) : registry(r) { registry.countNameLookups(true); }
+			~Counting() { registry.countNameLookups(false); }
+			Counting(const Counting&) = delete;
+			Counting& operator=(const Counting&) = delete;
+		} counting{registry};
 		const uint64_t single = lookupsForOneDecision(50);
 		const uint64_t doubled = lookupsForOneDecision(100);
+		EXPECT_GT(single, 0U) << "counting is on";
 		EXPECT_EQ(doubled, single);
 		EXPECT_LE(single, 8U);
 	}

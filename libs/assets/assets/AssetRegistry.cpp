@@ -1400,7 +1400,9 @@ namespace assets {
 
 	const AssetDefinition* AssetRegistry::getDefinition(const std::string& defName) const {
 #ifdef DEVELOPMENT_BUILD
-		m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+		if (m_countingNameLookups.load(std::memory_order_relaxed)) {
+			m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+		}
 #endif
 		auto it = definitions.find(defName);
 		if (it != definitions.end()) {
@@ -2156,7 +2158,9 @@ namespace assets {
 
 	uint32_t AssetRegistry::getDefNameId(const std::string& defName) const {
 #ifdef DEVELOPMENT_BUILD
-		m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+		if (m_countingNameLookups.load(std::memory_order_relaxed)) {
+			m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+		}
 #endif
 		auto it = m_defNameToId.find(defName);
 		if (it != m_defNameToId.end()) {

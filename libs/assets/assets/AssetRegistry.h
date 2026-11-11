@@ -316,9 +316,10 @@ namespace assets {
 		static constexpr size_t kCapabilityTypeCount = 9;
 
 #ifdef DEVELOPMENT_BUILD
-		/// Lookups keyed by a definition name (getDefinition, getDefNameId) since startup. Tests read it
-		/// to show a decision's name lookups don't grow with what the colonist remembers.
+		/// Lookups keyed by a definition name (getDefinition, getDefNameId) while counting is on. Tests
+		/// switch it on to show a decision's name lookups don't grow with what the colonist remembers.
 		[[nodiscard]] uint64_t nameLookups() const { return m_nameLookups.load(std::memory_order_relaxed); }
+		void				   countNameLookups(bool on) { m_countingNameLookups.store(on, std::memory_order_relaxed); }
 #endif
 
 		// --- Testing API ---
@@ -439,7 +440,9 @@ namespace assets {
 		std::thread	 m_loadThread;
 
 #ifdef DEVELOPMENT_BUILD
-		// Chunk workers read definitions too, so the count is atomic.
+		// Chunk workers look names up from several threads. Off, each lookup only loads a flag nothing
+		// writes, so its cache line stays shared; the counter's line is written only while a test counts.
+		std::atomic<bool>			  m_countingNameLookups{false};
 		mutable std::atomic<uint64_t> m_nameLookups{0};
 #endif
 	};
