@@ -9,6 +9,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "../WorldSource.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
 #include "../components/DecisionTrace.h"
@@ -107,17 +108,7 @@ namespace ecs::test {
 				auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 				action.setTakeSourceCallback(
 					[this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
-						const auto coord = world::worldToChunk({x, y});
-						if (!treeStands({x, y}, defName.c_str())) {
-							return ActionSystem::SourceState::Gone;
-						}
-						const bool regrowing = executor.isEntityOnCooldown({x, y}, defName);
-						if (take == ActionSystem::SourceTake::Remove) {
-							executor.removeEntity(coord, {x, y}, defName);
-						} else if (take == ActionSystem::SourceTake::Regrow && !regrowing) {
-							executor.setEntityCooldown({x, y}, defName, seconds);
-						}
-						return regrowing ? ActionSystem::SourceState::OnCooldown : ActionSystem::SourceState::Ready;
+						return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
 					}
 				);
 				action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/) {
@@ -201,10 +192,15 @@ namespace ecs::test {
 			}
 
 			/// Run frames, arriving each colonist at its task target at once (unless `held`, who stays
-			/// on the way), until `done` holds.
+			/// on the way), until `done` holds. Taken spawned entities are destroyed after each update,
+			/// as the game drains them.
 			template <typename Done> bool runUntil(Done done, int maxFrames = 3000, EntityID held = kInvalidEntity) {
 				for (int frame = 0; frame < maxFrames; ++frame) {
 					world->update(0.016F);
+					for (EntityID taken : pendingRemoval) {
+						world->destroyEntity(taken);
+					}
+					pendingRemoval.clear();
 					for (auto [entity, task, pos] : world->view<Task, Position>()) {
 						if (task.state == TaskState::Moving && entity != held) {
 							pos.value = task.targetPosition;
@@ -226,6 +222,7 @@ namespace ecs::test {
 			assets::PlacementExecutor			   executor{assets::AssetRegistry::Get()};
 			std::unordered_set<world::ChunkCoordinate> processed;
 			EntityID							   site = kInvalidEntity;
+			std::vector<EntityID>				   pendingRemoval;
 			int									   piles = 0;
 		};
 	} // namespace
@@ -280,15 +277,24 @@ namespace ecs::test {
 	}
 
 	// A runtime-spawned bush (an ECS entity, not in the placement index) is a blocker a colonist can
-	// remember and clear, so it holds the site in Clearing exactly as placed flora does.
-	TEST_F(FootprintClearingTest, SpawnedBlockerHoldsTheSiteLikePlacedFlora) {
-		const EntityID bush = world->createEntity();
-		world->addComponent<Position>(bush, Position{{6.0F, 6.0F}});
+	// remember and clear: it holds the site in Clearing exactly as placed flora does until his clear
+	// takes it, through the same take-source the game wires.
+	TEST_F(FootprintClearingTest, SpawnedBlockerIsClearedLikePlacedFlora) {
+		const glm::vec2 at{6.0F, 6.0F};
+		const EntityID	bush = world->createEntity();
+		world->addComponent<Position>(bush, Position{at});
 		world->addComponent<Appearance>(bush, Appearance{kBush});
+		auto colonist = createColonist({1.0F, 1.0F}, {});
+		remember(*world->getComponent<Memory>(colonist), at, kBush);
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 5); // fed: he takes the bush only to clear it
 
-		EXPECT_FALSE(runUntil([&] { return phase() != StructureBlueprint::BuildPhase::Clearing; }, 120))
-			<< "the spawned bush blocks the footprint";
-		EXPECT_FALSE(GoalTaskRegistry::Get().getGoalsOfType(TaskType::Harvest).empty()) << "and the site offers its clear goal";
+		ASSERT_TRUE(runUntil([] { return !GoalTaskRegistry::Get().getGoalsOfType(TaskType::Harvest).empty(); }))
+			<< "the spawned bush blocks the footprint and the site offers its clear goal";
+		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }))
+			<< "his clear takes the spawned bush and the site moves on";
+		EXPECT_FALSE(world->isAlive(bush));
 	}
 
 	// A material Harvest (not a clear) feeds the site through construction's own per-material Haul:

@@ -55,6 +55,7 @@
 // ECS
 #include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
+#include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/AnimationState.h>
@@ -1349,54 +1350,11 @@ namespace {
 
 			// Wire up ActionSystem to take a harvested or picked-up source from the world as the action
 			// completes, reporting what it was just before: gone, standing, or regrowing.
-			actionSystem.setTakeSourceCallback([this](
-												   const std::string&				 defName,
-												   float							 x,
-												   float							 y,
-												   ecs::ActionSystem::SourceTake take,
-												   float							 regrowthSeconds
-											   ) {
-				using State = ecs::ActionSystem::SourceState;
-				using Take = ecs::ActionSystem::SourceTake;
-				const auto		coord = world::worldToChunk({x, y});
-				const glm::vec2 at{x, y};
-
-				// World-gen flora live in the placement index, matched as exactly as removeEntity matches.
-				constexpr float kPlacedMatchEps = 0.001F;
-				const auto*		index = m_placementExecutor->getChunkIndex(coord);
-				const bool		placed = index != nullptr && index->hasNearby(at, kPlacedMatchEps, defName);
-
-				// Runtime-spawned harvestables (dev spawns, future saplings) are ECS entities that
-				// VisionSystem Pass 2 sees by Appearance. Their removal is deferred to the drain after
-				// the update, so one already queued is gone to a second colonist finishing on it now.
-				ecs::EntityID spawned = ecs::kInvalidEntity;
-				if (!placed) {
-					constexpr float kSpawnedMatchEps = 0.25F;
-					for (auto [ent, entPos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
-						const glm::vec2 d = entPos.value - at;
-						if (appearance.defName == defName && d.x * d.x + d.y * d.y <= kSpawnedMatchEps * kSpawnedMatchEps &&
-							std::find(m_pendingEntityRemoval.begin(), m_pendingEntityRemoval.end(), ent) == m_pendingEntityRemoval.end()) {
-							spawned = ent;
-							break;
-						}
-					}
+			actionSystem.setTakeSourceCallback(
+				[this](const std::string& defName, float x, float y, ecs::ActionSystem::SourceTake take, float regrowthSeconds) {
+					return ecs::takeWorldSource(*m_placementExecutor, *ecsWorld, m_pendingEntityRemoval, defName, {x, y}, take, regrowthSeconds);
 				}
-				if (!placed && spawned == ecs::kInvalidEntity) {
-					return State::Gone;
-				}
-
-				const bool regrowing = m_placementExecutor->isEntityOnCooldown(at, defName);
-				if (take == Take::Remove) {
-					if (placed) {
-						m_placementExecutor->removeEntity(coord, at, defName);
-					} else {
-						m_pendingEntityRemoval.push_back(spawned);
-					}
-				} else if (take == Take::Regrow && !regrowing) {
-					m_placementExecutor->setEntityCooldown(at, defName, regrowthSeconds);
-				}
-				return regrowing ? State::OnCooldown : State::Ready;
-			});
+			);
 
 			// Wire up ActionSystem to remove a specific entity by id (a loose pile drained to
 			// zero). The system already holds the exact entity, so there is no position scan to

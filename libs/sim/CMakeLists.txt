@@ -23,6 +23,7 @@ add_library(sim
     ecs/spatial/AgentSpatialHash.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/StoreOrDrop.cpp
+    ecs/WorldSource.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/ConstructionWorld.cpp
