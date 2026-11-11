@@ -1278,6 +1278,7 @@ namespace {
 			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
 			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
 			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
+			staticRectCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();

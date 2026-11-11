@@ -74,7 +74,8 @@ namespace ecs {
 /// the world mid-frame.
 class NavigationSystem : public ISystem {
   public:
-	NavigationSystem();
+	// `floraRingBudget` caps the flora rings the nav mesh holds; see kFloraRingBudget.
+	explicit NavigationSystem(std::size_t floraRingBudget = kFloraRingBudget);
 	~NavigationSystem() override;
 
 	NavigationSystem(const NavigationSystem&) = delete;
@@ -233,6 +234,12 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] std::optional<glm::vec2>
 	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
 
+	// Where detail is on (spec 4.4): flora cells (kFloraCellMm) the viewport rect has come within
+	// kDetailOnMarginMm of, kept on until it moves more than kDetailKeepMarginMm away, so a view edge
+	// resting on a cell boundary doesn't flip it. Updated once per update() from the viewport, no
+	// mesh involved; off everywhere without a viewport. Flora pushes movers out only where it is on.
+	[[nodiscard]] bool detailOnAt(glm::vec2 meters) const;
+
 	// True once any ground is meshed.
 	[[nodiscard]] bool hasMesh() const;
 
@@ -297,6 +304,18 @@ class NavigationSystem : public ISystem {
 	// Unloaded chunks whose ground stays meshed, so going back to them meshes nothing. Beyond
 	// it, the chunk unloaded longest ago without walls or doors loses its ground.
 	static constexpr std::size_t kKeptUnloadedChunks = 16;
+	// Detail turns on within this of the viewport rect GameScene pushes (which already carries
+	// kViewportMargin), and stays on until the rect is this much farther away.
+	static constexpr std::int64_t kDetailOnMarginMm	  = 8000;
+	static constexpr std::int64_t kDetailKeepMarginMm = 32000;
+	// Flora rings the nav mesh holds before the cells longest out of every wanted rect lose theirs
+	// (down to 7/8 of it, so the trim runs now and then rather than every tick). Section 6's
+	// estimate is about 1.6 KB a tree, so 40,000 is about 64 MB. Never trims where detail is on,
+	// inside the detail keep rect, or in a cell a mover or the view wants.
+	static constexpr std::size_t kFloraRingBudget = 40000;
+	// A stranded mover is moved forward along its route to the first point this far apart that is
+	// walkable with its clearance.
+	static constexpr std::int64_t kSnapStepMm = 100;
 	// Flora is scanned in square cells of this side, aligned to chunk squares; a cell is scanned
 	// once and stays scanned until its chunk's placement goes away.
 	static constexpr std::int64_t kFloraCellMm = 16000;
@@ -410,6 +429,13 @@ class NavigationSystem : public ISystem {
 	void settle();
 
 	[[nodiscard]] std::vector<Rect> wantedRects() const;
+	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
+	[[nodiscard]] Rect viewportRect() const;
+	void			   updateDetail();
+	// Spec 4.7: a mover inside flora walks forward along its route to clear ground, or to the
+	// nearest walkable point without one.
+	void snapMovers();
+	void trimFlora(const std::vector<Rect>& rects);
 	void							queueRemovedFlora();
 	void							dropFloraOfLostChunks();
 	[[nodiscard]] bool				floraChunkUsable(world::ChunkCoordinate coord) const;
@@ -476,6 +502,12 @@ class NavigationSystem : public ISystem {
 	static constexpr std::size_t									   kMaxRraCaches = 64;
 
 	mutable NavQueryStats navStats;
+
+	std::size_t								floraRingBudget;
+	std::uint64_t							tickCount = 0;
+	std::unordered_set<std::int64_t>		detailCells;
+	std::optional<Rect>						detailFor; // the viewport rect detailCells were made for
+	std::unordered_map<std::int64_t, std::uint64_t> cellLastWanted; // tickCount when a scan last wanted the cell
 };
 
 } // namespace ecs

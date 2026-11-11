@@ -2,7 +2,11 @@
 #include "NavigationSystem.test.h"
 
 #include "AIDecisionSystem.h"
+#include "MovementSystem.h"
+#include "PhysicsSystem.h"
+#include "StaticRectCollisionSystem.h"
 #include "../World.h"
+#include "../components/AgentRadius.h"
 #include "../components/Colonist.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
@@ -1931,4 +1935,348 @@ TEST_F(NavigationSystemTest, FinishPendingBuildsIsANoOpUntilAnInputChanges) {
 	settle(sys);
 	EXPECT_FALSE(sys.isBuilding());
 	EXPECT_GT(sys.generation(), settled) << "the wall edit's patch landed before returning";
+}
+
+// --- Detail -----------------------------------------------------------------------
+
+// Detail turns on for the cells within kDetailOnMarginMm of the viewport rect and stays on until the
+// rect is more than kDetailKeepMarginMm away, so a view edge resting near a cell boundary never
+// flips it. Off everywhere without a viewport.
+TEST_F(NavigationSystemTest, DetailTurnsOnNearTheViewAndOffFarFromIt) {
+	ASSERT_EQ(NavigationSystem::kDetailOnMarginMm, 8000);
+	ASSERT_EQ(NavigationSystem::kDetailKeepMarginMm, 32000);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	world.update(0.016F);
+	EXPECT_FALSE(sys.detailOnAt({0.0F, 0.0F})) << "no viewport, no detail";
+
+	// A 30 m view at the origin: on reaches 38 m, so the cell [32, 48) is on and [48, 64) is not.
+	sys.setViewportRect({0.0F, 0.0F}, {30.0F, 30.0F});
+	world.update(0.016F);
+	EXPECT_TRUE(sys.detailOnAt({0.0F, 0.0F}));
+	EXPECT_TRUE(sys.detailOnAt({40.0F, 0.0F}));
+	EXPECT_FALSE(sys.detailOnAt({50.0F, 0.0F}));
+
+	// 20 m east turns [48, 64) on; back at the origin it is within the keep margin (62 m), so it
+	// stays on, however often the view rocks between the two.
+	for (int i = 0; i < 4; ++i) {
+		sys.setViewportRect({20.0F, 0.0F}, {30.0F, 30.0F});
+		world.update(0.016F);
+		EXPECT_TRUE(sys.detailOnAt({50.0F, 0.0F}));
+		sys.setViewportRect({0.0F, 0.0F}, {30.0F, 30.0F});
+		world.update(0.016F);
+		EXPECT_TRUE(sys.detailOnAt({50.0F, 0.0F})) << "the cell flipped off within the keep margin";
+	}
+
+	// 40 m west the keep rect ends at 22 m: the cells past it go off, the ones within it stay.
+	sys.setViewportRect({-40.0F, 0.0F}, {30.0F, 30.0F});
+	world.update(0.016F);
+	EXPECT_FALSE(sys.detailOnAt({50.0F, 0.0F}));
+	EXPECT_FALSE(sys.detailOnAt({40.0F, 0.0F}));
+	EXPECT_TRUE(sys.detailOnAt({10.0F, 0.0F}));
+}
+
+// --- Forward snap -------------------------------------------------------------------
+
+namespace {
+	// A colonist (it asks for flora) on a route, or none when `route` is empty.
+	EntityID routedColonist(World& world, glm::vec2 at, const std::vector<glm::vec2>& route, std::size_t current = 1) {
+		const EntityID e = addColonist(world, at, "Snap");
+		if (!route.empty()) {
+			NavPath path;
+			path.waypoints = route;
+			path.current   = current;
+			path.valid	   = true;
+			world.addComponent<NavPath>(e, std::move(path));
+		}
+		return e;
+	}
+
+	class ForwardSnapTest : public NavigationSystemTest {
+	  protected:
+		void SetUp() override {
+			NavigationSystemTest::SetUp();
+			registerTree("Test_NavSnapTree", 0.8F);
+			sys = &world.registerSystem<NavigationSystem>();
+			wireArea(*sys);
+			sys->setPlacementData(&executor, &processed);
+			sys->setConstructionWorld(&cw);
+			placeTrees(executor, processed, "Test_NavSnapTree", {kTree});
+			settle(*sys);
+			ASSERT_FALSE(sys->isOnMesh(kTree));
+		}
+
+		static constexpr glm::vec2 kTree{10.0F, 10.0F};
+
+		PlacementExecutor					executor{AssetRegistry::Get()};
+		std::unordered_set<ChunkCoordinate> processed;
+		ConstructionWorld					cw;
+		World								world;
+		NavigationSystem*					sys = nullptr;
+	};
+} // namespace
+
+// On walkable ground with a route clear of flora, nothing moves and the route is kept.
+TEST_F(ForwardSnapTest, ClearRouteOnWalkableGroundIsKept) {
+	const glm::vec2 at{0.0F, 0.0F};
+	const EntityID	colonist = routedColonist(world, at, {at, {5.0F, 0.0F}});
+	step(world, *sys);
+	EXPECT_EQ(world.getComponent<Position>(colonist)->value, at);
+	EXPECT_EQ(world.getComponent<NavPath>(colonist)->current, 1u);
+}
+
+// On walkable ground with a tree arriving across the route ahead, the snap leaves it where it stands;
+// the generation moves, which is the AI's cue to replan from there.
+TEST_F(ForwardSnapTest, RouteBlockedAheadIsReplannedFromWhereItStands) {
+	const glm::vec2 at{-16.0F, 20.0F};
+	const glm::vec2 across{-10.0F, 20.0F}; // chunk (-1, 0), whose placement arrives late
+	const EntityID	colonist = routedColonist(world, at, {at, {-4.0F, 20.0F}});
+	world.getComponent<NavPath>(colonist)->builtNavVersion = sys->generation();
+	placeTrees(executor, processed, "Test_NavSnapTree", {across});
+	step(world, *sys);
+	step(world, *sys);
+	ASSERT_FALSE(sys->isOnMesh(across)) << "the tree across the route is in";
+	EXPECT_EQ(world.getComponent<Position>(colonist)->value, at);
+	EXPECT_NE(world.getComponent<NavPath>(colonist)->builtNavVersion, sys->generation()) << "no replan cue";
+}
+
+// Inside a tree with a route, it moves to the first point along the rest of the route that is
+// walkable with its clearance: ahead of where it stood, never behind.
+TEST_F(ForwardSnapTest, InsideTreeWithRouteMovesForward) {
+	const glm::vec2 at{9.7F, 10.0F};
+	const EntityID	colonist = routedColonist(world, at, {{6.0F, 10.0F}, {14.0F, 10.0F}, {14.0F, 16.0F}});
+	step(world, *sys);
+	const glm::vec2 now = world.getComponent<Position>(colonist)->value;
+	EXPECT_TRUE(sys->isOnMesh(now));
+	EXPECT_FLOAT_EQ(now.y, 10.0F) << "on the route";
+	EXPECT_GT(now.x, kTree.x + 0.8F + kAgentRadius) << "past the tree with its clearance";
+	EXPECT_LT(now.x, kTree.x + 0.8F + kAgentRadius + 0.3F) << "the first clear point, not a later one";
+	EXPECT_EQ(world.getComponent<NavPath>(colonist)->current, 1u);
+}
+
+// Inside a tree with no route, it goes to the nearest walkable point.
+TEST_F(ForwardSnapTest, InsideTreeWithoutRouteTakesNearestWalkable) {
+	const glm::vec2 at{9.7F, 10.0F};
+	const EntityID	colonist = routedColonist(world, at, {});
+	step(world, *sys);
+	const glm::vec2 now = world.getComponent<Position>(colonist)->value;
+	EXPECT_TRUE(sys->isOnMesh(now));
+	EXPECT_LT(glm::distance(now, at), 1.5F) << "the nearest walkable point, not a far one";
+}
+
+// A colonist walking a move order: a tree lands on it while the view is away, then the view arrives
+// over it. It is moved forward along its route, keeps the order, never steps back and gets there.
+TEST_F(NavigationSystemTest, WalkerUnderArrivingTreeKeepsItsTask) {
+	registerTree("Test_NavWalkerTree", 0.4F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	ConstructionWorld					cw;
+	World								world;
+	NavigationSystem&					nav = world.registerSystem<NavigationSystem>();
+	nav.setChunkManager(landChunks());
+	nav.setPlacementData(&executor, &processed);
+	nav.setConstructionWorld(&cw);
+	const glm::vec2 away{-300.0F, 300.0F};
+	nav.setViewportRect(away, {30.0F, 30.0F});
+	settle(nav);
+
+	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	ai.setNavigationSystem(&nav);
+	world.registerSystem<MovementSystem>();
+	world.registerSystem<PhysicsSystem>();
+	auto& collision = world.registerSystem<StaticRectCollisionSystem>();
+	collision.setPlacementData(&executor);
+	collision.setDetailSource(&nav);
+
+	const glm::vec2 start{2.0F, 5.0F};
+	const glm::vec2 goal{22.0F, 5.0F};
+	const EntityID	colonist = spawnRecoverableColonist(world, start);
+	world.addComponent<Colonist>(colonist, Colonist{"Walker"});
+	world.addComponent<AgentRadius>(colonist, AgentRadius{kAgentRadius, 1.0F});
+	NeedsComponent& needs = *world.getComponent<NeedsComponent>(colonist);
+	for (const NeedType need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder, NeedType::Digestion}) {
+		needs.get(need).value = 100.0F;
+	}
+	ai.enterControl(colonist);
+	ASSERT_TRUE(ai.issuePlayerMoveOrder(colonist, goal).has_value());
+
+	constexpr float kTick = 0.1F;
+	const Position& position = *world.getComponent<Position>(colonist);
+	while (position.value.x < 6.0F) {
+		world.update(kTick);
+	}
+	ASSERT_LT(std::abs(position.value.y - start.y), 0.05F) << "walking the straight route";
+
+	// The tree lands just ahead; the walker steps into it this tick, and the job brings it into the
+	// mesh at endTick.
+	const glm::vec2 treeAt{position.value.x + 0.25F, start.y};
+	placeTrees(executor, processed, "Test_NavWalkerTree", {treeAt});
+	step(world, nav);
+	ASSERT_FALSE(nav.isOnMesh(position.value)) << "the walker stands in the tree";
+
+	nav.setViewportRect(position.value, {30.0F, 30.0F});
+	const Task& task  = *world.getComponent<Task>(colonist);
+	float		lastX = position.value.x;
+	for (int i = 0; i < 100 && glm::distance(position.value, goal) > 0.3F; ++i) {
+		world.update(kTick);
+		expectMeshesValid(nav);
+		ASSERT_GE(position.value.x, lastX - 1e-4F) << "tick " << i << ": moved back";
+		ASSERT_EQ(task.targetPosition, goal) << "tick " << i << ": the move order was dropped";
+		lastX = position.value.x;
+	}
+	EXPECT_TRUE(nav.detailOnAt(treeAt));
+	EXPECT_LT(glm::distance(position.value, goal), 0.3F) << "never got there";
+}
+
+// --- Flora budget -------------------------------------------------------------------
+
+// Panning the view along a strip of forest: the nav mesh holds at most the budget (plus one tick's
+// adds, which come in after the trim), nothing inside the detail keep rect ever leaves, the strip
+// far behind does, and going back to ground the view has just left adds nothing.
+TEST_F(NavigationSystemTest, FloraBudgetHoldsWhilePanning) {
+	constexpr std::size_t kBudget = 400;
+	registerTree("Test_NavPanTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	std::vector<glm::vec2>				trees; // four by four in every 16 m cell of the row y in [0, 16)
+	for (float x = -960.0F; x < 1440.0F; x += 4.0F) {
+		for (float y = 2.0F; y < 16.0F; y += 4.0F) {
+			trees.push_back({x + 2.0F, y});
+		}
+	}
+	placeTrees(executor, processed, "Test_NavPanTree", trees);
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>(kBudget);
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	const auto view = [&](float x) { sys.setViewportRect({x, 8.0F}, {30.0F, 30.0F}); };
+	view(-900.0F);
+	settle(sys);
+
+	const auto inMesh = [&](glm::vec2 t) { return sys.inSimArea(t) && !sys.isOnMesh(t); };
+	std::vector<bool> was(trees.size());
+	for (std::size_t k = 0; k < trees.size(); ++k) {
+		was[k] = inMesh(trees[k]);
+	}
+	const float keep = 30.0F + static_cast<float>(NavigationSystem::kDetailKeepMarginMm) / 1000.0F;
+	for (float x = -900.0F; x <= 1400.0F; x += 16.0F) {
+		view(x);
+		for (int tick = 0; tick < 3; ++tick) {
+			step(world, sys);
+			std::size_t count = 0;
+			for (std::size_t k = 0; k < trees.size(); ++k) {
+				const bool now = inMesh(trees[k]);
+				count += now ? 1 : 0;
+				if (was[k] && !now) {
+					ASSERT_GT(std::abs(trees[k].x - x), keep) << "a tree inside the keep rect left, view at " << x;
+				}
+				was[k] = now;
+			}
+			ASSERT_LE(count, kBudget + NavigationSystem::kFloraRingsPerTick) << "view at " << x;
+		}
+	}
+	EXPECT_FALSE(inMesh(trees.front())) << "the far end of the pan was trimmed";
+
+	for (int tick = 0; tick < 3; ++tick) {
+		step(world, sys);
+	}
+	const std::uint64_t generation = sys.generation();
+	view(1400.0F - 6.0F * 16.0F);
+	for (int tick = 0; tick < 3; ++tick) {
+		step(world, sys);
+	}
+	EXPECT_EQ(sys.generation(), generation) << "the revisit patched the mesh";
+}
+
+// --- Ground edge cases ---------------------------------------------------------------
+
+// A meshed chunk whose terrain is rebuilt has its water taken out and put back in one tick, leaving
+// the same mesh: the pond still blocks, the land around it is walkable, no triangle is gained or lost.
+TEST_F(NavigationSystemTest, TerrainChangeOnMeshedChunkRederivesItsWater) {
+	const std::unique_ptr<world::ChunkManager> chunks = readyChunks(waterPatchSampler(), {256.0F, 256.0F}, 0);
+	ConstructionWorld						   cw;
+	World									   world;
+	NavigationSystem&						   sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	const glm::vec2 pond{40.0F, 40.0F};
+	const glm::vec2 land{20.0F, 20.0F};
+	ASSERT_FALSE(sys.isOnMesh(pond));
+	ASSERT_TRUE(sys.isOnMesh(land));
+	const std::int32_t	navTriangles		= sys.navMesh().liveTriangleCount();
+	const std::int32_t	structuralTriangles = sys.structuralMesh().liveTriangleCount();
+	const std::uint64_t generation			= sys.generation();
+
+	world::Chunk* chunk = chunks->getChunk({0, 0});
+	ASSERT_NE(chunk, nullptr);
+	const std::uint32_t version = chunk->terrainPolygons().version;
+	chunk->generate();
+	ASSERT_EQ(chunk->terrainPolygons().version, version + 1);
+
+	step(world, sys);
+	EXPECT_EQ(sys.generation(), generation + 1) << "re-derived in one tick";
+	EXPECT_FALSE(sys.isBuilding());
+	EXPECT_FALSE(sys.isOnMesh(pond)) << "the pond still blocks";
+	EXPECT_TRUE(sys.isOnMesh(land));
+	EXPECT_EQ(sys.navMesh().liveTriangleCount(), navTriangles);
+	EXPECT_EQ(sys.structuralMesh().liveTriangleCount(), structuralTriangles);
+}
+
+// A chunk loses its ground while its flora is still queued for removal (three ticks' worth, and the
+// ground goes within two, the first tick being the next chunk's arrival): the flora drains after the
+// ground under its budget, every tick's mesh is valid and nothing is left building.
+TEST_F(NavigationSystemTest, GroundDroppedWhileItsFloraRemovalsAreQueued) {
+	registerTree("Test_NavDropTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	std::vector<glm::vec2>				trees;
+	for (int i = 0; i < 20; ++i) {
+		for (int j = 0; j < 20; ++j) {
+			trees.push_back({ChunkWalk::centre(0).x - 14.25F + 1.5F * static_cast<float>(i), ChunkWalk::centre(0).y - 14.25F + 1.5F * static_cast<float>(j)});
+		}
+	}
+	ASSERT_GT(trees.size(), 3 * NavigationSystem::kFloraRemovalsPerTick);
+	placeTrees(executor, processed, "Test_NavDropTree", trees);
+
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	const auto stand = [&](int i) {
+		walk.stand(i);
+		sys.setViewportRect(ChunkWalk::centre(i), {30.0F, 30.0F});
+	};
+
+	// Chunks 1..kKeptUnloadedChunks get walls, so they keep their ground and chunk 0 is the one to
+	// go the moment it unloads.
+	const int walled = static_cast<int>(NavigationSystem::kKeptUnloadedChunks);
+	for (int i = 1; i <= walled; ++i) {
+		const glm::vec2 c = ChunkWalk::centre(i);
+		buildWall(cw, nav::toMm(c - glm::vec2{2.0F, 0.0F}), nav::toMm(c + glm::vec2{2.0F, 0.0F}));
+		stand(i);
+		settle(sys);
+	}
+	stand(0);
+	settle(sys);
+	ASSERT_EQ(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !sys.isOnMesh(t); }), static_cast<std::ptrdiff_t>(trees.size()));
+
+	stand(walled + 1);
+	step(world, sys);
+	step(world, sys);
+	EXPECT_FALSE(sys.inSimArea(ChunkWalk::centre(0))) << "chunk 0's ground went";
+	EXPECT_TRUE(sys.isBuilding()) << "while its flora was still draining";
+	for (int i = 0; i < 4; ++i) {
+		step(world, sys);
+	}
+	EXPECT_FALSE(sys.isBuilding());
+	for (int i = 1; i <= walled; ++i) {
+		EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(i))) << "walled chunk " << i;
+	}
 }

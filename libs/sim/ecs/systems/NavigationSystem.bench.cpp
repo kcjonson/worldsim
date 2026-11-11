@@ -332,9 +332,10 @@ namespace {
 		std::vector<ecs::EntityID>				   movers;
 		std::chrono::microseconds				   gap;
 
-		explicit Rig(std::int64_t gapMs, world::ChunkManager* chunks = forest().chunks.get())
+		explicit Rig(std::int64_t gapMs, world::ChunkManager* chunks = forest().chunks.get(),
+					 std::size_t floraRingBudget = ecs::NavigationSystem::kFloraRingBudget)
 			: placement(forest().place(processed)),
-			  nav(world.registerSystem<ecs::NavigationSystem>()),
+			  nav(world.registerSystem<ecs::NavigationSystem>(floraRingBudget)),
 			  gap(std::chrono::microseconds(gapMs * 1000)) {
 			nav.setChunkManager(chunks);
 			nav.setPlacementData(placement.get(), &processed);
@@ -508,6 +509,37 @@ namespace {
 				const float t = static_cast<float>(i) / 600.0F;
 				const float k = 0.5F + 3.0F * (t < 0.5F ? 2.0F * t : 2.0F - 2.0F * t);
 				rig.nav.setViewportRect(kColony, kViewHalf * k);
+				rig.tick(stats);
+			}
+			end();
+			stats.report(state);
+		}
+	}
+
+	// The view mows the whole forest (about 86,000 trees, twice kFloraRingBudget) at 83 m/s in rows
+	// 56 m apart, the colony staying where it is. range(0): 1 for the flora budget, 0 for none;
+	// range(1): gap.
+	void BM_LongPan(benchmark::State& state) {
+		const std::size_t budget = state.range(0) != 0 ? ecs::NavigationSystem::kFloraRingBudget : SIZE_MAX;
+		constexpr float	  kSpeed = 83.0F;
+		constexpr float	  kLo	 = 40.0F;
+		constexpr float	  kHi	 = kWorldMaxM - 40.0F;
+		for (auto _ : state) {
+			Rig rig(state.range(1), forest().chunks.get(), budget);
+			colony(rig);
+			rig.settle();
+			begin();
+			TickStats stats;
+			glm::vec2 at{kLo, kLo};
+			float	  dir = 1.0F;
+			while (at.y <= kHi) {
+				at.x += dir * kSpeed * kTickSeconds;
+				if (at.x > kHi || at.x < kLo) {
+					at.x = std::clamp(at.x, kLo, kHi);
+					dir	 = -dir;
+					at.y += 56.0F;
+				}
+				rig.nav.setViewportRect(at, kViewHalf);
 				rig.tick(stats);
 			}
 			end();
@@ -749,6 +781,7 @@ BENCHMARK(BM_Pan)
 	->Args({83, 1, 2})
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_LongPan)->Args({1, 0})->Args({1, 2})->Args({0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ZoomSweep)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);

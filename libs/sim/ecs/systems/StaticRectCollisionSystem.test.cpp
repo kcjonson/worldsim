@@ -1,5 +1,7 @@
 #include "StaticRectCollisionSystem.h"
 
+#include "NavigationSystem.h"
+
 #include "../World.h"
 #include "../components/AgentRadius.h"
 #include "../components/Transform.h"
@@ -140,6 +142,18 @@ namespace {
 			world.addComponent<AgentRadius>(e, AgentRadius{radius, 1.0F});
 			return e;
 		}
+
+		// A NavigationSystem whose viewport sits over `at`, ticked once so detail is on there.
+		// The collision system is wired to it and pushes only where it says detail is on.
+		static StaticRectCollisionSystem& wire(World& world, const PlacementExecutor& executor, glm::vec2 at) {
+			auto& nav = world.registerSystem<NavigationSystem>();
+			nav.setViewportRect(at, {10.0F, 10.0F});
+			nav.update(0.0F);
+			auto& sys = world.registerSystem<StaticRectCollisionSystem>();
+			sys.setPlacementData(&executor);
+			sys.setDetailSource(&nav);
+			return sys;
+		}
 	};
 
 } // namespace
@@ -151,7 +165,7 @@ TEST_F(StaticRectCollisionSystemTest, UnwiredUpdateIsNoOp) {
 	EntityID		agent = spawnAgent(world, start);
 
 	auto& sys = world.registerSystem<StaticRectCollisionSystem>();
-	// Deliberately do NOT setPlacementData.
+	// Deliberately wire neither placement nor detail.
 	sys.update(0.0F);
 
 	auto* pos = world.getComponent<Position>(agent);
@@ -192,9 +206,7 @@ TEST_F(StaticRectCollisionSystemTest, AgentInsideRectIsPushedOut) {
 	const glm::vec2 farStart{5.0F, 5.0F};
 	EntityID		far = spawnAgent(world, farStart);
 
-	auto& sys = world.registerSystem<StaticRectCollisionSystem>();
-	sys.setPlacementData(&executor);
-	sys.update(0.0F);
+	wire(world, executor, treeAt).update(0.0F);
 
 	// Near agent: now outside the rect inflated by clearance. The rect is axis
 	// aligned, so check the agent escaped the inflated AABB.
@@ -243,9 +255,7 @@ TEST_F(StaticRectCollisionSystemTest, DeterministicCorrection) {
 		buildExecutor(executor);
 		World	 world;
 		EntityID agent = spawnAgent(world, inside);
-		auto&	 sys   = world.registerSystem<StaticRectCollisionSystem>();
-		sys.setPlacementData(&executor);
-		sys.update(0.0F);
+		wire(world, executor, inside).update(0.0F);
 		return world.getComponent<Position>(agent)->value;
 	};
 
@@ -296,9 +306,7 @@ TEST_F(StaticRectCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 	World	 worldA;
 	const glm::vec2 justOutside{treeAt.x + boundary + 0.005F, treeAt.y};
 	EntityID agentA = spawnAgent(worldA, justOutside);
-	auto&	 sysA   = worldA.registerSystem<StaticRectCollisionSystem>();
-	sysA.setPlacementData(&executor);
-	sysA.update(0.0F);
+	wire(worldA, executor, treeAt).update(0.0F);
 	auto* posA = worldA.getComponent<Position>(agentA);
 	ASSERT_NE(posA, nullptr);
 	EXPECT_FLOAT_EQ(posA->value.x, justOutside.x) << "agent just outside boundary was wrongly moved (scale-0.8 bug)";
@@ -308,9 +316,7 @@ TEST_F(StaticRectCollisionSystemTest, NonUnitScaleRegressionJustOutside) {
 	World	 worldB;
 	const glm::vec2 justInside{treeAt.x + boundary - 0.01F, treeAt.y};
 	EntityID agentB = spawnAgent(worldB, justInside);
-	auto&	 sysB   = worldB.registerSystem<StaticRectCollisionSystem>();
-	sysB.setPlacementData(&executor);
-	sysB.update(0.0F);
+	wire(worldB, executor, treeAt).update(0.0F);
 	auto* posB = worldB.getComponent<Position>(agentB);
 	ASSERT_NE(posB, nullptr);
 	EXPECT_NEAR(posB->value.x, treeAt.x + boundary, 1e-4F) << "agent inside boundary not pushed to correct boundary (scale-0.8 bug)";
@@ -347,9 +353,7 @@ TEST_F(StaticRectCollisionSystemTest, AgentInQueryBoxButOutsideObbNotMoved) {
 	const glm::vec2 start{treeAt.x + 0.6F, treeAt.y};
 	World	 world;
 	EntityID agent = spawnAgent(world, start);
-	auto&	 sys   = world.registerSystem<StaticRectCollisionSystem>();
-	sys.setPlacementData(&executor);
-	sys.update(0.0F);
+	wire(world, executor, treeAt).update(0.0F);
 	auto* pos = world.getComponent<Position>(agent);
 	ASSERT_NE(pos, nullptr);
 	EXPECT_FLOAT_EQ(pos->value.x, start.x);
@@ -386,11 +390,47 @@ TEST_F(StaticRectCollisionSystemTest, NonRectCollisionIgnored) {
 	const glm::vec2 start{treeAt.x + 0.1F, treeAt.y};
 	World	 world;
 	EntityID agent = spawnAgent(world, start);
-	auto&	 sys   = world.registerSystem<StaticRectCollisionSystem>();
-	sys.setPlacementData(&executor);
-	sys.update(0.0F);
+	wire(world, executor, treeAt).update(0.0F);
 	auto* pos = world.getComponent<Position>(agent);
 	ASSERT_NE(pos, nullptr);
 	EXPECT_FLOAT_EQ(pos->value.x, start.x);
 	EXPECT_FLOAT_EQ(pos->value.y, start.y);
+}
+
+// Detail is a filter on collision: the same agent inside the same tree is pushed out where detail
+// is on and left alone where it is off (the viewport is far away), since off camera movers walk
+// through trees.
+TEST_F(StaticRectCollisionSystemTest, PushedOnlyWhereDetailIsOn) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName					 = "Test_StaticRectTreeDetail";
+	tree.collision.type				 = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	reg.registerTestDefinition(tree);
+
+	const glm::vec2				 treeAt{20.0F, 20.0F};
+	const world::ChunkCoordinate coord = world::worldToChunk({treeAt.x, treeAt.y});
+	PlacementExecutor			 executor(reg);
+	{
+		SpatialIndex index;
+		PlacedEntity pe;
+		pe.defName	= "Test_StaticRectTreeDetail";
+		pe.position = treeAt;
+		index.insert(pe);
+		assets::AsyncChunkPlacementResult result;
+		result.coord		= coord;
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+	}
+	const glm::vec2 inside{treeAt.x + 0.1F, treeAt.y + 0.05F};
+
+	World	 onCamera;
+	EntityID seen = spawnAgent(onCamera, inside);
+	wire(onCamera, executor, treeAt).update(0.0F);
+	EXPECT_NE(onCamera.getComponent<Position>(seen)->value, inside);
+
+	World	 offCamera;
+	EntityID unseen = spawnAgent(offCamera, inside);
+	wire(offCamera, executor, treeAt + glm::vec2{2000.0F, 0.0F}).update(0.0F);
+	EXPECT_EQ(offCamera.getComponent<Position>(unseen)->value, inside);
 }

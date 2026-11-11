@@ -1,7 +1,9 @@
 #include "NavigationSystem.h"
 
 #include "../World.h"
+#include "../components/AgentRadius.h"
 #include "../components/Colonist.h"
+#include "../components/NavPath.h"
 #include "../components/Transform.h"
 
 #include "nav/NavCoords.h"
@@ -517,11 +519,12 @@ namespace ecs {
 		return std::tie(xBits, yBits, defName) < std::tie(o.xBits, o.yBits, o.defName);
 	}
 
-	NavigationSystem::NavigationSystem()
+	NavigationSystem::NavigationSystem(std::size_t floraRingBudget)
 		: detailMesh({.maxBoundsEdgeMm = kNavMaxBoundsEdgeMm}),
 		  structural({.maxBoundsEdgeMm = kStructuralMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
-		  structuralWorker(std::make_unique<Worker>()) {}
+		  structuralWorker(std::make_unique<Worker>()),
+		  floraRingBudget(floraRingBudget) {}
 
 	NavigationSystem::~NavigationSystem() {
 		join();
@@ -561,18 +564,25 @@ namespace ecs {
 			rects.push_back({{c.x - kSimRadiusMm, c.y - kSimRadiusMm}, {c.x + kSimRadiusMm, c.y + kSimRadiusMm}});
 		}
 		if (haveViewport) {
-			const geometry::Vec2i64 c  = nav::toMm(viewportCenterM);
-			const std::int64_t		hx = std::clamp(radiusMm(viewportHalfM.x), kMinSimHalfExtentMm, kMaxSimHalfExtentMm);
-			const std::int64_t		hy = std::clamp(radiusMm(viewportHalfM.y), kMinSimHalfExtentMm, kMaxSimHalfExtentMm);
-			rects.push_back({{c.x - hx, c.y - hy}, {c.x + hx, c.y + hy}});
+			rects.push_back(viewportRect());
 		}
 		return rects;
+	}
+
+	NavigationSystem::Rect NavigationSystem::viewportRect() const {
+		const geometry::Vec2i64 c  = nav::toMm(viewportCenterM);
+		const std::int64_t		hx = std::clamp(radiusMm(viewportHalfM.x), kMinSimHalfExtentMm, kMaxSimHalfExtentMm);
+		const std::int64_t		hy = std::clamp(radiusMm(viewportHalfM.y), kMinSimHalfExtentMm, kMaxSimHalfExtentMm);
+		return {{c.x - hx, c.y - hy}, {c.x + hx, c.y + hy}};
 	}
 
 	// --- Ticks, jobs and the join -------------------------------------------------
 
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
+		++tickCount;
+		updateDetail();
+		snapMovers();
 		if (chunkManager != nullptr) {
 			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kGroundVerticesPerTick);
 		}
@@ -599,6 +609,7 @@ namespace ecs {
 		gatherWalls();
 		gatherGround(groundVertexBudget, rects, nullptr);
 		scanFlora(rects);
+		trimFlora(rects);
 		gatherFlora(addBudget, removeBudget, rects);
 	}
 
@@ -1040,6 +1051,7 @@ namespace ecs {
 				it = floraAdds.erase(it);
 			}
 			std::erase_if(scannedCells, [coord](std::int64_t cell) { return cellChunk(cell) == coord; });
+			std::erase_if(cellLastWanted, [coord](const auto& entry) { return cellChunk(entry.first) == coord; });
 			chunkIt = floraChunks.erase(chunkIt);
 		}
 	}
@@ -1073,6 +1085,7 @@ namespace ecs {
 					const std::int64_t cell = cellKey(cx, cy);
 					wanted.insert(cell);
 					if (scannedCells.contains(cell)) {
+						cellLastWanted[cell] = tickCount;
 						continue;
 					}
 					const world::ChunkCoordinate chunk = cellChunk(cell);
@@ -1098,6 +1111,7 @@ namespace ecs {
 						floraAdds.emplace(std::move(key), PendingFlora{std::move(*ring), cell});
 					}
 					scannedCells.insert(cell);
+					cellLastWanted[cell] = tickCount;
 					floraChunks.insert(chunk);
 				}
 			}
@@ -1110,6 +1124,7 @@ namespace ecs {
 				continue;
 			}
 			scannedCells.erase(it->second.cell);
+			cellLastWanted.erase(it->second.cell);
 			it = floraAdds.erase(it);
 		}
 	}
@@ -1179,6 +1194,146 @@ namespace ecs {
 					}
 				});
 			first = last;
+		}
+	}
+
+	// --- Detail, the forward snap and the flora budget ---------------------------------
+
+	namespace {
+		std::int64_t cellAt(const geometry::Vec2i64& p) {
+			return cellKey(geometry::floorDiv(p.x, NavigationSystem::kFloraCellMm), geometry::floorDiv(p.y, NavigationSystem::kFloraCellMm));
+		}
+
+		bool cellMeetsRect(std::int64_t cell, const geometry::Vec2i64& lo, const geometry::Vec2i64& hi) {
+			const std::int64_t x = cellX(cell) * NavigationSystem::kFloraCellMm;
+			const std::int64_t y = cellY(cell) * NavigationSystem::kFloraCellMm;
+			return x <= hi.x && x + NavigationSystem::kFloraCellMm >= lo.x && y <= hi.y && y + NavigationSystem::kFloraCellMm >= lo.y;
+		}
+	} // namespace
+
+	void NavigationSystem::updateDetail() {
+		if (!haveViewport) {
+			detailCells.clear();
+			detailFor.reset();
+			return;
+		}
+		const Rect view = viewportRect();
+		if (detailFor.has_value() && detailFor->lo == view.lo && detailFor->hi == view.hi) {
+			return;
+		}
+		detailFor = view;
+		const geometry::Vec2i64 keepLo{view.lo.x - kDetailKeepMarginMm, view.lo.y - kDetailKeepMarginMm};
+		const geometry::Vec2i64 keepHi{view.hi.x + kDetailKeepMarginMm, view.hi.y + kDetailKeepMarginMm};
+		std::erase_if(detailCells, [&](std::int64_t cell) { return !cellMeetsRect(cell, keepLo, keepHi); });
+		const geometry::Vec2i64 onLo{view.lo.x - kDetailOnMarginMm, view.lo.y - kDetailOnMarginMm};
+		const geometry::Vec2i64 onHi{view.hi.x + kDetailOnMarginMm, view.hi.y + kDetailOnMarginMm};
+		for (std::int64_t cy = geometry::floorDiv(onLo.y, kFloraCellMm); cy <= geometry::floorDiv(onHi.y, kFloraCellMm); ++cy) {
+			for (std::int64_t cx = geometry::floorDiv(onLo.x, kFloraCellMm); cx <= geometry::floorDiv(onHi.x, kFloraCellMm); ++cx) {
+				detailCells.insert(cellKey(cx, cy));
+			}
+		}
+	}
+
+	bool NavigationSystem::detailOnAt(glm::vec2 meters) const {
+		return detailCells.contains(cellAt(nav::toMm(meters)));
+	}
+
+	void NavigationSystem::snapMovers() {
+		if (world == nullptr || detailMesh.liveTriangleCount() == 0) {
+			return;
+		}
+		// Walkable for the mover: on a walkable face, with its disc clear on all sides.
+		const auto clearFor = [this](glm::vec2 p, float radius) {
+			if (!terrainWalkable(detailMesh, p)) {
+				return false;
+			}
+			for (int k = 0; k < 8; ++k) {
+				const float angle = 6.2831853F * static_cast<float>(k) / 8.0F;
+				if (!terrainWalkable(detailMesh, p + glm::vec2{std::cos(angle), std::sin(angle)} * radius)) {
+					return false;
+				}
+			}
+			return true;
+		};
+		const float step = static_cast<float>(kSnapStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+
+		for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
+			(void)colonist;
+			const std::int32_t tri = detailMesh.locate(nav::toMm(position.value));
+			if (tri < 0 || detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker != nav::kProvenanceTree) {
+				continue;
+			}
+			const AgentRadius* agent  = world->getComponent<AgentRadius>(entity);
+			const float		   radius = agent != nullptr ? agent->radiusMeters : AgentRadius{}.radiusMeters;
+
+			// Forward along the remaining route only: from where it stands to the waypoint it is
+			// steering for, then on through the rest. Points behind it are never candidates.
+			bool	 moved = false;
+			NavPath* path  = world->getComponent<NavPath>(entity);
+			if (path != nullptr && !path->done()) {
+				glm::vec2 from = position.value;
+				for (std::size_t next = path->current; next < path->waypoints.size() && !moved; ++next) {
+					const glm::vec2 to	   = path->waypoints[next];
+					const float		length = std::sqrt(dist2(from, to));
+					const int		steps  = std::max(1, static_cast<int>(std::ceil(length / step)));
+					for (int i = 1; i <= steps && !moved; ++i) {
+						const glm::vec2 p = from + (to - from) * (static_cast<float>(i) / static_cast<float>(steps));
+						if (clearFor(p, radius)) {
+							position.value = p;
+							path->current  = next;
+							moved		   = true;
+						}
+					}
+					from = to;
+				}
+			}
+			if (!moved) {
+				if (const std::optional<glm::vec2> nearest = nearestPathablePoint(position.value, radius)) {
+					position.value = *nearest;
+				}
+			}
+		}
+	}
+
+	void NavigationSystem::trimFlora(const std::vector<Rect>& rects) {
+		if (floraInMesh.size() <= floraRingBudget) {
+			return;
+		}
+		// Cells that may lose their flora: out of every wanted rect, out of the detail keep rect,
+		// and not detail-on. Oldest out of a wanted rect first.
+		std::optional<Rect> keep;
+		if (haveViewport) {
+			const Rect view = viewportRect();
+			keep			= Rect{{view.lo.x - kDetailKeepMarginMm, view.lo.y - kDetailKeepMarginMm}, {view.hi.x + kDetailKeepMarginMm, view.hi.y + kDetailKeepMarginMm}};
+		}
+		const auto spared = [&](std::int64_t cell) {
+			if (detailCells.contains(cell) || (keep.has_value() && cellMeetsRect(cell, keep->lo, keep->hi))) {
+				return true;
+			}
+			return std::any_of(rects.begin(), rects.end(), [cell](const Rect& r) { return cellMeetsRect(cell, r.lo, r.hi); });
+		};
+		std::map<std::int64_t, std::vector<std::map<FloraKey, FloraRing>::iterator>> byCell;
+		for (auto it = floraInMesh.begin(); it != floraInMesh.end(); ++it) {
+			if (!spared(it->second.cell)) {
+				byCell[it->second.cell].push_back(it);
+			}
+		}
+		std::vector<std::pair<std::uint64_t, std::int64_t>> oldest;
+		for (const auto& [cell, rings] : byCell) {
+			oldest.emplace_back(cellLastWanted[cell], cell);
+		}
+		std::sort(oldest.begin(), oldest.end());
+		const std::size_t target = floraRingBudget - floraRingBudget / 8;
+		for (const auto& [wanted, cell] : oldest) {
+			if (floraInMesh.size() <= target) {
+				break;
+			}
+			for (const auto& it : byCell[cell]) {
+				floraRemovals.push_back(it->second);
+				floraInMesh.erase(it);
+			}
+			scannedCells.erase(cell);
+			cellLastWanted.erase(cell);
 		}
 	}
 
