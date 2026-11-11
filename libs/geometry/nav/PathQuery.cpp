@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cassert>
 #include <cmath>
 #include <cstdint>
@@ -23,40 +24,40 @@ namespace geometry::nav {
 			double y = 0.0;
 		};
 
-		Vec2d toD(const Vec2i64& p) {
+		inline Vec2d toD(const Vec2i64& p) {
 			return {static_cast<double>(p.x), static_cast<double>(p.y)};
 		}
 
-		Vec2d operator+(const Vec2d& a, const Vec2d& b) {
+		inline Vec2d operator+(const Vec2d& a, const Vec2d& b) {
 			return {a.x + b.x, a.y + b.y};
 		}
-		Vec2d operator-(const Vec2d& a, const Vec2d& b) {
+		inline Vec2d operator-(const Vec2d& a, const Vec2d& b) {
 			return {a.x - b.x, a.y - b.y};
 		}
-		Vec2d operator*(const Vec2d& a, double s) {
+		inline Vec2d operator*(const Vec2d& a, double s) {
 			return {a.x * s, a.y * s};
 		}
 
-		bool same(const Vec2d& a, const Vec2d& b) {
+		inline bool same(const Vec2d& a, const Vec2d& b) {
 			return a.x == b.x && a.y == b.y;
 		}
 
-		double lengthD(const Vec2d& a) {
+		inline double lengthD(const Vec2d& a) {
 			return std::sqrt(a.x * a.x + a.y * a.y);
 		}
 
-		double distanceD(const Vec2d& a, const Vec2d& b) {
+		inline double distanceD(const Vec2d& a, const Vec2d& b) {
 			return lengthD(b - a);
 		}
 
 		// Signed doubled area of triangle (a, b, c); >0 when CCW. Matches the
 		// orientation predicate's sign convention but in double for the funnel's
 		// shape math only.
-		double area2(const Vec2d& a, const Vec2d& b, const Vec2d& c) {
+		inline double area2(const Vec2d& a, const Vec2d& b, const Vec2d& c) {
 			return (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
 		}
 
-		double distanceToSegment(const Vec2d& p, const Vec2d& a, const Vec2d& b) {
+		inline double distanceToSegment(const Vec2d& p, const Vec2d& a, const Vec2d& b) {
 			const Vec2d	 d	  = b - a;
 			const double len2 = d.x * d.x + d.y * d.y;
 			if (len2 <= 0.0) {
@@ -66,16 +67,16 @@ namespace geometry::nav {
 			return distanceD(p, a + d * u);
 		}
 
-		Vec2i64 cornerSum(const NavView& mesh, const NavTriangle& t) {
+		inline Vec2i64 cornerSum(const NavView& mesh, const NavTriangle& t) {
 			return mesh.vertex(t.v[0]) + mesh.vertex(t.v[1]) + mesh.vertex(t.v[2]);
 		}
 
-		Vec2i64 edgeSum(const NavView& mesh, const NavTriangle& t, int e) {
+		inline Vec2i64 edgeSum(const NavView& mesh, const NavTriangle& t, int e) {
 			return mesh.vertex(t.v[e]) + mesh.vertex(t.v[(e + 1) % 3]);
 		}
 
 		// Locate which edge of `from` faces neighbor `to`.
-		int sharedEdgeIndex(const NavTriangle& from, std::int32_t to) {
+		inline int sharedEdgeIndex(const NavTriangle& from, std::int32_t to) {
 			for (int e = 0; e < 3; ++e) {
 				if (from.neighbor[e] == to) {
 					return e;
@@ -88,7 +89,7 @@ namespace geometry::nav {
 		// common to edge e1 = (v[e1],v[e1+1]) and e2 = (v[e2],v[e2+1]). For two distinct
 		// edges of a triangle exactly one vertex is shared; that vertex keys the Demyen
 		// edge-pair width for the passage that enters one edge and leaves the other.
-		int apexVertexOfEdgePair(int e1, int e2) {
+		inline int apexVertexOfEdgePair(int e1, int e2) {
 			const int a0 = e1, a1 = (e1 + 1) % 3;
 			const int b0 = e2, b1 = (e2 + 1) % 3;
 			if (a0 == b0 || a0 == b1) {
@@ -101,7 +102,7 @@ namespace geometry::nav {
 		// meeting at apex `apexLocal`? Demyen edge-pair width vs common-knowledge
 		// obstacles. kUnconstrainedWidth always admits. Exact: width is the floored mm
 		// clearance, and floor(width) >= 2r iff width >= 2r for the integer threshold.
-		bool widthAdmits(const NavTriangle& t, int apexLocal, std::int64_t diameterMm) {
+		inline bool widthAdmits(const NavTriangle& t, int apexLocal, std::int64_t diameterMm) {
 			return t.edgePairWidthMm[apexLocal] >= diameterMm;
 		}
 
@@ -113,7 +114,7 @@ namespace geometry::nav {
 		// pathfinding-architecture section 5; the door-span trick (a pathable door's
 		// footprint is a blocked face carrying faceOpening) is what makes a truth query
 		// reproduce v1: solid wall blocks, door passes.
-		bool traversable(const NavTriangle& t, const BeliefFilter& belief) {
+		inline bool freelyTraversable(const NavTriangle& t, const BeliefFilter& belief) {
 			if (isFloorFace(t)) {
 				return true; // real floor
 			}
@@ -137,12 +138,92 @@ namespace geometry::nav {
 				   belief.knownOpenings->count(static_cast<std::uint64_t>(t.faceOpening)) != 0;
 		}
 
+		// What walking a length inside triangle t costs per mm for this query: 1 on ground
+		// it crosses freely, the multiplier for a blocked face whose tag it may cross at a
+		// price (BeliefFilter::passableAtCost), 0 for a face it may not cross at all.
+		inline double stepMultiplier(const NavTriangle& t, const BeliefFilter& belief) {
+			if (freelyTraversable(t, belief)) {
+				return 1.0;
+			}
+			if (belief.passableAtCost != nullptr) {
+				const auto it = belief.passableAtCost->find(t.faceBlocker);
+				if (it != belief.passableAtCost->end()) {
+					return it->second;
+				}
+			}
+			return 0.0;
+		}
+
+		inline bool traversable(const NavTriangle& t, const BeliefFilter& belief) {
+			return stepMultiplier(t, belief) > 0.0;
+		}
+
 		// The reachability forest the belief selects: truth (AI goal validity) when the
 		// agent knows everything, else terrain (the sound reject for every belief). A
 		// belief query never uses the truth forest, because an agent optimistically
 		// routing through unseen walls can reach triangles the truth forest walls off.
 		const ReachabilityForest* forestFor(const NavView& mesh, const BeliefFilter& belief) {
 			return mesh.forest(belief.knownSegments == nullptr);
+		}
+
+		// The triangle a walker stands in at p, located as `tri`: tri itself when this
+		// belief can cross it, else, for a p on an edge or corner of tri, the crossable
+		// triangle holding p whose sorted corners come first. Point location settles a
+		// shared edge or corner by geometry alone, so a start on a tree's or wall's edge
+		// would otherwise land in the blocked face and find no path.
+		std::int32_t standOn(const NavView& mesh, std::int32_t tri, const Vec2i64& p, const BeliefFilter& belief) {
+			if (tri < 0 || traversable(mesh.triangle(tri), belief)) {
+				return tri;
+			}
+			std::int32_t		   best = -1;
+			std::array<Vec2i64, 3> bestCorners;
+			auto				   consider = [&](std::int32_t u) {
+				  if (u < 0 || !traversable(mesh.triangle(u), belief)) {
+					  return;
+				  }
+				  const NavTriangle&	 t = mesh.triangle(u);
+				  std::array<Vec2i64, 3> corners{mesh.vertex(t.v[0]), mesh.vertex(t.v[1]), mesh.vertex(t.v[2])};
+				  std::sort(corners.begin(), corners.end());
+				  if (best < 0 || corners < bestCorners) {
+					  best		  = u;
+					  bestCorners = corners;
+				  }
+			};
+			const NavTriangle& t = mesh.triangle(tri);
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& a = mesh.vertex(t.v[e]);
+				const Vec2i64& b = mesh.vertex(t.v[(e + 1) % 3]);
+				if (p == a) {
+					// A corner: every triangle round it holds p.
+					std::int32_t cur = tri;
+					int			 li	 = e;
+					for (int guard = 0; guard < 256; ++guard) {
+						consider(cur);
+						const std::int32_t nb = mesh.triangle(cur).neighbor[(li + 2) % 3];
+						if (nb < 0 || nb == tri) {
+							break;
+						}
+						const NavTriangle& next = mesh.triangle(nb);
+						li						= next.v[0] == t.v[e] ? 0 : (next.v[1] == t.v[e] ? 1 : 2);
+						cur						= nb;
+					}
+					cur = tri;
+					li	= e;
+					for (int guard = 0; guard < 256; ++guard) {
+						const std::int32_t nb = mesh.triangle(cur).neighbor[li];
+						if (nb < 0 || nb == tri) {
+							break;
+						}
+						const NavTriangle& next = mesh.triangle(nb);
+						li						= next.v[0] == t.v[e] ? 0 : (next.v[1] == t.v[e] ? 1 : 2);
+						cur						= nb;
+						consider(cur);
+					}
+				} else if (orientation(a, b, p) == Orientation::Collinear) {
+					consider(t.neighbor[e]);
+				}
+			}
+			return best >= 0 ? best : tri;
 		}
 
 		// pathThrough()'s sound short-circuit, the same test reaches() makes. Both
@@ -189,7 +270,7 @@ namespace geometry::nav {
 			int			 li	 = i;
 			for (int guard = 0; guard < 256; ++guard) {
 				const NavTriangle& tri = mesh.triangle(cur);
-				if (!traversable(tri, belief)) {
+				if (!freelyTraversable(tri, belief)) {
 					return true;
 				}
 				const std::uint32_t v  = tri.v[li];
@@ -209,9 +290,9 @@ namespace geometry::nav {
 
 		// Edge e of triangle t as a portal, in the string-pull's terms: the edge runs
 		// v[e] -> v[e+1] with t's interior on its left, so walking out through it the
-		// tail is `left` and the head `right` under the funnel's sign convention. Each
-		// corner end is pulled toward the other by the radius, at most half the edge, so
-		// the taut path keeps that clearance from the walls.
+		// tail is `left` and the head `right` under the funnel's sign convention. An end
+		// a disc must keep clear of is pulled in along the edge (see portalSpan), so the
+		// taut path keeps that clearance from the walls.
 		//
 		// CLEARANCE CAVEAT: this per-endpoint inset along the portal edge approximates
 		// the true radius-offset (Minkowski) shortest path. When a leg rounds an obstacle
@@ -224,7 +305,73 @@ namespace geometry::nav {
 			Vec2d right;
 		};
 
-		PortalSpan portalSpan(const NavView& mesh, std::int32_t t, int e, double radius, const BeliefFilter& belief) {
+		// What a vertex's star holds, for isCorner: nothing a walker can be stopped by
+		// (open ground, never a corner), common-knowledge terrain or the mesh boundary
+		// (always a corner, whatever the belief), or walls and doors only (a corner or not
+		// by belief, so walked per query).
+		enum class Star : std::uint8_t { Unknown, Open, Obstacle, Walls };
+
+		Star starOf(const NavView& mesh, std::int32_t t, int i) {
+			std::int32_t cur   = t;
+			int			 li	   = i;
+			bool		 walls = false;
+			for (int guard = 0; guard < 256; ++guard) {
+				const NavTriangle& tri = mesh.triangle(cur);
+				if (isCommonKnowledgeTerrainFace(tri)) {
+					return Star::Obstacle;
+				}
+				walls					= walls || !isFloorFace(tri);
+				const std::uint32_t v  = tri.v[li];
+				const std::int32_t	nb = tri.neighbor[(li + 2) % 3]; // across the edge ending at v
+				if (nb < 0) {
+					return Star::Obstacle;
+				}
+				if (nb == t) {
+					return walls ? Star::Walls : Star::Open;
+				}
+				const NavTriangle& next = mesh.triangle(nb);
+				li						= next.v[0] == v ? 0 : (next.v[1] == v ? 1 : 2);
+				cur						= nb;
+			}
+			return Star::Obstacle;
+		}
+
+		// Each vertex's Star, walked once per mesh state and kept between queries on
+		// this thread: stars only change when the mesh does, which its epoch tracks (with
+		// the vertex and triangle storage for a NavMesh, whose epoch never moves).
+		struct CornerMemo {
+			const void*			  owner		= nullptr;
+			std::uint64_t		  epoch		= 0;
+			const void*			  vertices	= nullptr;
+			const void*			  triangles = nullptr;
+			std::vector<Star>	  star;
+
+			void begin(const NavView& mesh) {
+				const void* v = mesh.vertices->data();
+				const void* t = mesh.triangles->data();
+				if (owner != mesh.owner || epoch != mesh.epoch() || vertices != v || triangles != t || star.size() != mesh.vertices->size()) {
+					owner	  = mesh.owner;
+					epoch	  = mesh.epoch();
+					vertices  = v;
+					triangles = t;
+					star.assign(mesh.vertices->size(), Star::Unknown);
+				}
+			}
+
+			bool at(const NavView& mesh, std::int32_t t, int i, const BeliefFilter& belief) {
+				Star& s = star[mesh.triangle(t).v[i]];
+				if (s == Star::Unknown) {
+					s = starOf(mesh, t, i);
+				}
+				return s == Star::Obstacle || (s == Star::Walls && isCorner(mesh, t, i, belief));
+			}
+		};
+
+		// Edge e of triangle t as a portal, each end a disc must keep clear of pulled in
+		// along the edge by the radius. With both ends pulled in, each moves at most half the
+		// edge (the width gates have judged that the disc fits); with one, it may move the
+		// whole edge, so a short edge from a corner still keeps the disc its radius away.
+		inline PortalSpan portalSpan(const NavView& mesh, std::int32_t t, int e, double radius, const BeliefFilter& belief, CornerMemo& corners) {
 			const NavTriangle& tri = mesh.triangle(t);
 			PortalSpan		   span{toD(mesh.vertex(tri.v[e])), toD(mesh.vertex(tri.v[(e + 1) % 3]))};
 			if (radius <= 0.0) {
@@ -235,13 +382,15 @@ namespace geometry::nav {
 			if (len <= 0.0) {
 				return span;
 			}
-			const Vec2d	 unit = dir * (1.0 / len);
-			const double off  = std::min(radius, len * 0.5);
-			const Vec2d	 tail = span.left;
-			if (isCorner(mesh, t, e, belief)) {
+			const Vec2d	 unit	   = dir * (1.0 / len);
+			const bool	 leftEnd   = corners.at(mesh, t, e, belief);
+			const bool	 rightEnd  = corners.at(mesh, t, (e + 1) % 3, belief);
+			const double off	   = std::min(radius, leftEnd && rightEnd ? len * 0.5 : len);
+			const Vec2d	 tail	   = span.left;
+			if (leftEnd) {
 				span.left = tail + unit * off;
 			}
-			if (isCorner(mesh, t, (e + 1) % 3, belief)) {
+			if (rightEnd) {
 				span.right = span.right - unit * off;
 			}
 			return span;
@@ -269,7 +418,7 @@ namespace geometry::nav {
 			std::int32_t rightFrom = -1;
 		};
 
-		Funnel funnelAt(const Vec2d& p, std::int32_t state) {
+		inline Funnel funnelAt(const Vec2d& p, std::int32_t state) {
 			return {p, p, p, 0.0, state, state, state};
 		}
 
@@ -279,7 +428,30 @@ namespace geometry::nav {
 		// one that bound came from. A bound from before `portals` resumes at the start,
 		// so the cone after it is only as narrow as the portals given; the result says
 		// whether that happened. `bends` (when given) collects the bend points.
-		bool pull(Funnel& f, const std::vector<Portal>& portals, std::vector<Vec2i64>* bends) {
+		// One portal into a funnel that needs no bend for it: narrow the bounds and say so,
+		// or leave the funnel as it was and say a bend is due.
+		inline bool narrow(Funnel& f, const Portal& p) {
+			const bool rightTightens = area2(f.apex, f.right, p.right) <= 0.0;
+			if (rightTightens && !same(f.apex, f.right) && area2(f.apex, f.left, p.right) <= 0.0) {
+				return false;
+			}
+			const bool leftTightens = area2(f.apex, f.left, p.left) >= 0.0;
+			const Vec2d right	   = rightTightens ? p.right : f.right;
+			if (leftTightens && !same(f.apex, f.left) && area2(f.apex, right, p.left) >= 0.0) {
+				return false;
+			}
+			if (rightTightens) {
+				f.right		= p.right;
+				f.rightFrom = p.label;
+			}
+			if (leftTightens) {
+				f.left	   = p.left;
+				f.leftFrom = p.label;
+			}
+			return true;
+		}
+
+		inline bool pull(Funnel& f, const std::vector<Portal>& portals, std::vector<Vec2i64>* bends) {
 			bool		 lostHistory = false;
 			std::int64_t leftIdx	 = -1;
 			std::int64_t rightIdx	 = -1;
@@ -329,16 +501,101 @@ namespace geometry::nav {
 			return lostHistory;
 		}
 
-		// The funnel's length on to p: through the cone straight when p is inside it,
-		// else around the bound p lies past. Never more than the taut path to p through
-		// the funnel's portals and then open ground.
+		// The point of segment [a, b] where the walk p -> point -> target is shortest: the
+		// straight line's crossing when it crosses, else the nearer end. The walk's length
+		// is convex along the segment, so this is its minimum; reflecting the target across
+		// the segment's line covers a target on p's side.
+		inline Vec2d shortestCrossing(const Vec2d& a, const Vec2d& b, const Vec2d& p, const Vec2d& target) {
+			const Vec2d	 d	  = b - a;
+			const double len2 = d.x * d.x + d.y * d.y;
+			if (len2 <= 0.0) {
+				return a;
+			}
+			const double sideP = area2(a, b, p);
+			if (sideP == 0.0) {
+				// p on the line: the nearest point of the segment to p is best.
+				return a + d * std::clamp(((p.x - a.x) * d.x + (p.y - a.y) * d.y) / len2, 0.0, 1.0);
+			}
+			Vec2d aim = target;
+			if ((sideP > 0.0) == (area2(a, b, target) > 0.0)) {
+				const double k = 2.0 * ((target.x - a.x) * d.x + (target.y - a.y) * d.y) / len2;
+				aim			   = a + d * k - (target - a);
+			}
+			const Vec2d	 w	   = aim - p;
+			const double denom = d.x * w.y - d.y * w.x;
+			double		 u	   = 0.5;
+			if (denom != 0.0) {
+				u = ((p.x - a.x) * w.y - (p.y - a.y) * w.x) / denom;
+			}
+			return a + d * std::clamp(u, 0.0, 1.0);
+		}
+
+		// A lower bound on the walk from the corridor's start to `target` that leaves the
+		// corridor through `portal` (the portal the funnel was last pulled through). Every
+		// such walk reaches the apex and crosses the portal: straight to the part the cone
+		// sees, or round a bound to the part past it. So the least of those three, each to
+		// its best crossing and then straight on, is no longer than any of them.
+		inline double walkVia(const Funnel& f, const Portal& portal, const Vec2d& target) {
+			// The common case first: the straight line from the apex to the target crosses
+			// the portal where the cone sees it, and nothing is shorter than that line.
+			const double sideApex	= area2(portal.left, portal.right, f.apex);
+			const double sideTarget = area2(portal.left, portal.right, target);
+			if ((sideApex > 0.0 && sideTarget < 0.0) || (sideApex < 0.0 && sideTarget > 0.0)) {
+				const Vec2d x = f.apex + (target - f.apex) * (sideApex / (sideApex - sideTarget));
+				if (area2(f.apex, target, portal.left) * area2(f.apex, target, portal.right) <= 0.0 &&
+					(same(f.left, f.apex) || area2(f.apex, f.left, x) >= 0.0) && (same(f.right, f.apex) || area2(f.apex, f.right, x) <= 0.0)) {
+					return f.length + distanceD(f.apex, target);
+				}
+			}
+			const Vec2d d  = portal.right - portal.left;
+			double		lo = 0.0;
+			double		hi = 1.0;
+			// Keep the points of the portal on the inner side of a bound: area2 against the
+			// bound's ray is linear along the portal.
+			auto clip = [&](const Vec2d& bound, double side) {
+				if (same(bound, f.apex)) {
+					return;
+				}
+				const double a0 = side * area2(f.apex, bound, portal.left);
+				const double a1 = side * area2(f.apex, bound, portal.right);
+				if (a0 >= 0.0 && a1 >= 0.0) {
+					return;
+				}
+				if (a0 < 0.0 && a1 < 0.0) {
+					lo = 1.0;
+					hi = 0.0;
+					return;
+				}
+				const double t = a0 / (a0 - a1);
+				if (a0 < 0.0) {
+					lo = std::max(lo, t);
+				} else {
+					hi = std::min(hi, t);
+				}
+			};
+			clip(f.left, 1.0);
+			clip(f.right, -1.0);
+			if (lo > hi) {
+				// Rounding left the cone just off the portal: the whole portal still bounds it.
+				lo = 0.0;
+				hi = 1.0;
+			}
+			auto via = [&](const Vec2d& from, double t0, double t1) {
+				const Vec2d x = shortestCrossing(portal.left + d * t0, portal.left + d * t1, from, target);
+				return distanceD(from, x) + distanceD(x, target);
+			};
+			double best = via(f.apex, lo, hi);
+			if (lo > 0.0) {
+				best = std::min(best, distanceD(f.apex, f.left) + via(f.left, 0.0, lo));
+			}
+			if (hi < 1.0) {
+				best = std::min(best, distanceD(f.apex, f.right) + via(f.right, hi, 1.0));
+			}
+			return f.length + best;
+		}
+
+		// The corridor's taut length to p once p is pulled in as its last portal.
 		double lengthTo(const Funnel& f, const Vec2d& p) {
-			if (!same(f.left, f.apex) && area2(f.apex, f.left, p) < 0.0) {
-				return f.length + distanceD(f.apex, f.left) + distanceD(f.left, p);
-			}
-			if (!same(f.right, f.apex) && area2(f.apex, f.right, p) > 0.0) {
-				return f.length + distanceD(f.apex, f.right) + distanceD(f.right, p);
-			}
 			return f.length + distanceD(f.apex, p);
 		}
 
@@ -351,6 +608,8 @@ namespace geometry::nav {
 			std::int32_t state	  = -1;
 			std::int32_t cameFrom = -1;
 			bool		 closed	  = false;
+			bool		 exact	  = false; // best is the corridor's taut length (or cost) to the goal
+			bool		 priced	  = false; // the corridor crosses a face walked at a price
 		};
 
 		// A state holds up to kLabelsPerState corridors at once. Corridors that bend at
@@ -374,6 +633,9 @@ namespace geometry::nav {
 			std::vector<std::uint32_t> stamp;
 			std::uint32_t			   current = 0;
 			std::vector<Portal>		   replay;
+			std::vector<std::int32_t>  corridor; // a winning corridor's triangles
+			std::vector<Vec2i64>	   points;	 // a candidate corridor's string-pull
+			CornerMemo				   corners;
 
 			StateLabels& held(std::int32_t state) {
 				const std::size_t s = static_cast<std::size_t>(state);
@@ -399,15 +661,34 @@ namespace geometry::nav {
 			return scratch;
 		}
 
-		// Is `a` at least as short as `b` to each sample point of the portal they share?
-		bool noLonger(const Funnel& a, const Funnel& b, const Portal& portal) {
-			const Vec2d mid = (portal.left + portal.right) * 0.5;
-			for (const Vec2d& p : {portal.left, portal.right, mid}) {
-				if (lengthTo(a, p) > lengthTo(b, p)) {
-					return false;
-				}
+		// A funnel's lengths to the sample points of a portal: its ends and middle.
+		// The corridor's taut length to p, a point of the portal it was last pulled
+		// through: straight when the cone sees p, else round the bound p lies past.
+		inline double reachTo(const Funnel& f, const Vec2d& p) {
+			if (!same(f.left, f.apex) && area2(f.apex, f.left, p) < 0.0) {
+				return f.length + distanceD(f.apex, f.left) + distanceD(f.left, p);
 			}
-			return true;
+			if (!same(f.right, f.apex) && area2(f.apex, f.right, p) > 0.0) {
+				return f.length + distanceD(f.apex, f.right) + distanceD(f.right, p);
+			}
+			return f.length + distanceD(f.apex, p);
+		}
+
+		inline std::array<double, 3> reachOf(const Funnel& f, const Portal& portal) {
+			return {reachTo(f, portal.left), reachTo(f, portal.right), reachTo(f, (portal.left + portal.right) * 0.5)};
+		}
+
+		// Is a corridor reaching a portal with lengths `a` at least as short as one with `b`?
+		inline bool noLonger(const std::array<double, 3>& a, const std::array<double, 3>& b) {
+			return a[0] <= b[0] && a[1] <= b[1] && a[2] <= b[2];
+		}
+
+		// Mixes a coordinate into a geometric tie key.
+		inline std::uint64_t mixKey(std::uint64_t key, std::uint64_t value) {
+			key ^= value + 0x9E3779B97F4A7C15ULL + (key << 6) + (key >> 2);
+			key ^= key >> 31;
+			key *= 0xBF58476D1CE4E5B9ULL;
+			return key ^ (key >> 27);
 		}
 
 		// The distance between segment [a, b] and the (closed, CCW) triangle: 0 when they
@@ -560,7 +841,7 @@ namespace geometry::nav {
 		if (forestFor(mesh, belief) == nullptr) {
 			return from; // reaches() answers "maybe" without forests
 		}
-		const std::int32_t startTri = mesh.locate(start);
+		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief);
 		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
 		// endpoint gate (e.g. start inside a wall the agent knows blocks).
 		if (startTri < 0 || !traversable(mesh.triangle(startTri), belief)) {
@@ -579,12 +860,12 @@ namespace geometry::nav {
 		if (from.startTri < 0) {
 			return false; // off-mesh or untraversable start
 		}
-		const std::int32_t goalTri = mesh.locate(goal);
+		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief);
 		if (goalTri < 0 || !traversable(mesh.triangle(goalTri), belief)) {
 			return false;
 		}
-		if (goalTri == from.startTri) {
-			return true; // same triangle: trivially reachable
+		if (goalTri == from.startTri || belief.passableAtCost != nullptr) {
+			return true; // same triangle, or faces crossed at a price that the forest walls off
 		}
 		// `false` = the forest proves unreachability (sound); otherwise "maybe".
 		return inForestSubtree(*forestFor(mesh, belief), from.root, goalTri);
@@ -598,8 +879,9 @@ namespace geometry::nav {
 			return result; // stale widths could route a disc through a gap it does not fit
 		}
 
-		const std::int32_t startTri = mesh.locate(start);
-		const std::int32_t goalTri	= mesh.locate(goal);
+		const std::int32_t startTri	   = standOn(mesh, mesh.locate(start), start, belief);
+		const std::int32_t locatedGoal = mesh.locate(goal);
+		const std::int32_t goalTri	   = standOn(mesh, locatedGoal, goal, belief);
 		if (startTri < 0 || goalTri < 0) {
 			return result; // off-mesh
 		}
@@ -626,7 +908,9 @@ namespace geometry::nav {
 		// goal before paying for the search. Sound: a `true` from the forest is "maybe"
 		// and falls through to the A* (which decides for real); a reject is a proof no
 		// path admits this disc.
-		if (reachabilityRejects(mesh, startTri, goalTri, diameterMm, belief)) {
+		// Faces crossed at a price are walls to the forests, so they prove nothing then.
+		const bool priced = belief.passableAtCost != nullptr && !belief.passableAtCost->empty();
+		if (!priced && reachabilityRejects(mesh, startTri, goalTri, diameterMm, belief)) {
 			return result; // empty PathResult: definitely unreachable
 		}
 
@@ -647,15 +931,18 @@ namespace geometry::nav {
 		const int kStartEntry = 3;
 		auto	  stateId	  = [](std::int32_t tri, int entry) { return tri * 4 + entry; };
 
-		SearchScratch& scratch = searchScratch(static_cast<std::size_t>(mesh.triangleSlots()) * 4);
+		// A state keeps corridors that cross priced faces apart from those that do not, so
+		// a cheap-looking way through never crowds out a free way round.
+		SearchScratch& scratch = searchScratch(static_cast<std::size_t>(mesh.triangleSlots()) * 8);
+		scratch.corners.begin(mesh);
 
 		const Vec2d	 goalD	= toD(goal);
 		const double radius = static_cast<double>(agentRadiusMm);
 
 		// RRA* applies only when a cache is supplied AND it targets THIS goal triangle.
-		const bool useRra	 = (rra != nullptr) && (rra->goalTri == goalTri);
-		auto	   scoreFrom = [&](const Funnel& f, std::int32_t tri) {
-			const double through = lengthTo(f, goalD);
+		const bool useRra	 = (rra != nullptr) && (rra->goalTri == locatedGoal) && !priced;
+		auto	   scoreFrom = [&](const Funnel& f, const Portal& portal, std::int32_t tri) {
+			const double through = walkVia(f, portal, goalD);
 			if (!useRra) {
 				return through;
 			}
@@ -663,34 +950,34 @@ namespace geometry::nav {
 			return std::max(through, f.length + rraHeuristic(*rra, mesh, tri));
 		};
 
-		// Open-set node: score, then geometry, so equal scores resolve the same way
-		// whatever slots the triangles sit in: the triangle's corners, then the entry
-		// edge's. std::priority_queue is a max-heap, hence the reversed comparisons.
+		// Open-set node: score, then a key mixed from geometry (the triangle's corners,
+		// the entry edge's ends, the apex), so equal scores resolve the same way whatever
+		// slots the triangles sit in. std::priority_queue is a max-heap, hence the
+		// reversed comparisons.
 		struct Node {
-			double		 f;
-			Vec2i64		 corners; // sum of the triangle's corners
-			Vec2i64		 entry;	  // sum of the entry edge's ends (the start point twice for the start)
-			Vec2d		 apex;
-			std::int32_t label;
+			double		  f;
+			double		  near; // distance on from the entry portal's middle: nearer the goal first
+			std::uint64_t tie;
+			std::int32_t  label;
 		};
 		struct NodeWorse {
 			bool operator()(const Node& a, const Node& b) const {
 				if (a.f != b.f) {
 					return a.f > b.f;
 				}
-				if (a.corners != b.corners) {
-					return b.corners < a.corners;
+				if (a.near != b.near) {
+					return a.near > b.near;
 				}
-				if (a.entry != b.entry) {
-					return b.entry < a.entry;
-				}
-				if (a.apex.x != b.apex.x) {
-					return a.apex.x > b.apex.x;
-				}
-				return a.apex.y > b.apex.y;
+				return a.tie > b.tie;
 			}
 		};
 		std::priority_queue<Node, std::vector<Node>, NodeWorse> open;
+		auto tieOf = [&](const NavTriangle& t, const Vec2i64& entry, const Vec2d& apex) {
+			const Vec2i64 corners = cornerSum(mesh, t);
+			std::uint64_t key	  = mixKey(static_cast<std::uint64_t>(corners.x), static_cast<std::uint64_t>(corners.y));
+			key					  = mixKey(mixKey(key, static_cast<std::uint64_t>(entry.x)), static_cast<std::uint64_t>(entry.y));
+			return mixKey(mixKey(key, std::bit_cast<std::uint64_t>(apex.x)), std::bit_cast<std::uint64_t>(apex.y));
+		};
 
 		const std::int32_t startState = stateId(startTri, kStartEntry);
 		const Vec2d		   startD	  = toD(start);
@@ -698,16 +985,102 @@ namespace geometry::nav {
 			Label first;
 			first.funnel = funnelAt(startD, 0);
 			first.entry	 = {startD, startD, 0};
-			first.best	 = scoreFrom(first.funnel, startTri);
+			first.best	 = scoreFrom(first.funnel, first.entry, startTri);
 			first.state	 = startState;
+			first.priced = stepMultiplier(mesh.triangle(startTri), belief) > 1.0;
 			scratch.labels.push_back(first);
-			StateLabels& held = scratch.held(startState);
+			StateLabels& held = scratch.held(startState * 2 + (first.priced ? 1 : 0));
 			held.ids[0]		  = 0;
 			held.count		  = 1;
-			open.push({first.best, cornerSum(mesh, mesh.triangle(startTri)), start + start, startD, 0});
+			open.push({first.best, distanceD(startD, goalD), tieOf(mesh.triangle(startTri), start + start, startD), 0});
 		}
 		result.peakOpenSet = static_cast<std::int64_t>(open.size());
 		std::vector<Portal>& replay = scratch.replay;
+
+		// Pull one more portal into a label's funnel. When the path bends at a corner from
+		// an earlier portal, the funnel restarts there with this portal alone: looser than
+		// the string-pull's, which would narrow it by every portal since, so its scores stay
+		// lower bounds; a goal label is pulled exactly before it is accepted.
+		auto advance = [&](Funnel& funnel, const Portal& step) {
+			if (narrow(funnel, step)) {
+				return;
+			}
+			replay.assign(1, step);
+			pull(funnel, replay, nullptr);
+		};
+
+		// The exact taut length of label li's corridor to the goal: the string-pull of
+		// every portal from the start.
+		// The string-pull of label li's corridor, every portal from the start: its points
+		// into `points`, and its cost, which is its length unless the corridor crosses a
+		// face walked at a price; then each piece of the path is weighted by the
+		// multiplier of the triangle it runs through.
+		bool crossesPriced = false;
+		auto walkCorridor  = [&](std::int32_t li, std::vector<Vec2i64>& points) {
+			std::vector<std::int32_t>& tris = scratch.corridor;
+			replay.clear();
+			tris.clear();
+			for (std::int32_t at = li; at >= 0; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
+				tris.push_back(scratch.labels[static_cast<std::size_t>(at)].state / 4);
+				if (at > 0) {
+					replay.push_back(scratch.labels[static_cast<std::size_t>(at)].entry);
+				}
+			}
+			std::reverse(replay.begin(), replay.end());
+			std::reverse(tris.begin(), tris.end());
+			replay.push_back({goalD, goalD, -1});
+			points.assign(1, start);
+			Funnel taut = funnelAt(startD, -1);
+			pull(taut, replay, &points);
+			appendTaut(points, goal);
+			crossesPriced = false;
+			if (!scratch.labels[static_cast<std::size_t>(li)].priced) {
+				return lengthTo(taut, goalD);
+			}
+			// Walk the path through the corridor: triangle k ends where the path crosses
+			// to the far side of the edge it shares with triangle k + 1.
+			double		cost  = 0.0;
+			double		piece = 0.0;
+			std::size_t s	  = 0;
+			Vec2d		at	  = toD(points[0]);
+			for (std::size_t k = 0; k + 1 < tris.size(); ++k) {
+				const NavTriangle& tri = mesh.triangle(tris[k]);
+				const int		   e   = sharedEdgeIndex(tri, tris[k + 1]);
+				const Vec2d		   a   = toD(mesh.vertex(tri.v[e]));
+				const Vec2d		   b   = toD(mesh.vertex(tri.v[(e + 1) % 3]));
+				const double	   len = std::max(distanceD(a, b), 1e-9);
+				auto			   side = [&](const Vec2d& p) { return area2(a, b, p) / len; }; // mm, positive inside tri
+				while (s + 1 < points.size()) {
+					const Vec2d	 q	= toD(points[s + 1]);
+					const double sq = side(q);
+					if (sq > 0.5) {
+						piece += distanceD(at, q);
+						at = q;
+						++s;
+						continue;
+					}
+					const double sa	  = side(at);
+					const double t	  = sa > sq ? std::clamp(sa / (sa - sq), 0.0, 1.0) : 0.0;
+					const Vec2d	 cross = at + (q - at) * t;
+					piece += distanceD(at, cross);
+					at = cross;
+					break;
+				}
+				const double m = stepMultiplier(tri, belief);
+				cost += piece * m;
+				crossesPriced = crossesPriced || (m > 1.0 && piece > 0.0);
+				piece		  = 0.0;
+			}
+			while (s + 1 < points.size()) {
+				const Vec2d q = toD(points[s + 1]);
+				piece += distanceD(at, q);
+				at = q;
+				++s;
+			}
+			const double m = stepMultiplier(mesh.triangle(tris.back()), belief);
+			crossesPriced  = crossesPriced || (m > 1.0 && piece > 0.0);
+			return cost + piece * m;
+		};
 
 		std::int32_t goalLabel = -1;
 		while (!open.empty()) {
@@ -723,6 +1096,20 @@ namespace geometry::nav {
 			const std::int32_t ti	 = s / 4;
 			const int		   entry = s % 4;
 			if (ti == goalTri) {
+				// The score is a bound; the corridor's taut length to the goal is exact. Only
+				// a label whose exact length is still the least in the open set is accepted.
+				Label& at = scratch.labels[static_cast<std::size_t>(li)];
+				if (!at.exact) {
+					at.exact			= true;
+					at.closed			= false;
+					const double length = walkCorridor(li, scratch.points);
+					if (length > at.best) {
+						at.best = length;
+						open.push({length, cur.near, cur.tie, li});
+						--result.nodesExpanded;
+						continue;
+					}
+				}
 				goalLabel = li;
 				break;
 			}
@@ -746,7 +1133,11 @@ namespace geometry::nav {
 				// entered by `entry`, the disc must clear the Demyen width of the edge
 				// pair meeting at their shared apex. The start state has no entry edge,
 				// so nothing to clear inside the start triangle.
-				if (entry != kStartEntry && !widthAdmits(tri, apexVertexOfEdgePair(entry, e), diameterMm)) {
+				// The stored widths treat a face crossed at a price as an obstacle; next to one
+				// they say nothing about a disc that walks through it.
+				const double nbMultiplier = stepMultiplier(mesh.triangle(nb), belief);
+				const bool	 nearPriced	  = priced && (nbMultiplier > 1.0 || stepMultiplier(tri, belief) > 1.0);
+				if (entry != kStartEntry && !nearPriced && !widthAdmits(tri, apexVertexOfEdgePair(entry, e), diameterMm)) {
 					continue;
 				}
 				// Width gate (door portal): a door edge is gated by its clear width.
@@ -760,34 +1151,32 @@ namespace geometry::nav {
 					continue; // adjacency inconsistency; skip safely
 				}
 				const std::int32_t ns	 = stateId(nb, back);
+				const bool	 freshPriced = scratch.labels[static_cast<std::size_t>(li)].priced || nbMultiplier > 1.0;
+				StateLabels& held		 = scratch.held(ns * 2 + (freshPriced ? 1 : 0));
+				if (held.count == kLabelsPerState) {
+					bool anyOpen = false;
+					for (int k = 0; k < held.count; ++k) {
+						anyOpen = anyOpen || !scratch.labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])].closed;
+					}
+					if (!anyOpen) {
+						continue; // full of expanded corridors: nothing this one could take over
+					}
+				}
 				const std::int32_t label = static_cast<std::int32_t>(scratch.labels.size()); // the label a new one would take
-				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief);
+				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, scratch.corners);
 				const Portal	   step{span.left, span.right, label};
 				Funnel			   next = funnel;
-				replay.assign(1, step);
-				if (pull(next, replay, nullptr)) {
-					// The path bends at a corner from an earlier portal: pull again from
-					// that corner through every portal since, as the string-pull would.
-					replay.clear();
-					for (std::int32_t at = li; at != next.apexFrom && at >= 0; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
-						replay.push_back(scratch.labels[static_cast<std::size_t>(at)].entry);
-					}
-					std::reverse(replay.begin(), replay.end());
-					replay.push_back(step);
-					Funnel restart = funnelAt(next.apex, next.apexFrom);
-					restart.length = next.length;
-					pull(restart, replay, nullptr);
-					next = restart;
-				}
-				const double score = scoreFrom(next, nb);
-				StateLabels& held = scratch.held(ns);
+				advance(next, step);
+				const double score = scoreFrom(next, step, nb);
 				std::int32_t slot = -1; // the label this corridor takes over, if any
 				bool		 beaten = false;
+				const std::array<double, 3> reach = held.count > 0 ? reachOf(next, step) : std::array<double, 3>{};
 				for (int k = 0; k < held.count && !beaten; ++k) {
-					Label& other = scratch.labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])];
-					if (noLonger(other.funnel, next, step)) {
+					Label&						other	   = scratch.labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])];
+					const std::array<double, 3> otherReach = reachOf(other.funnel, step);
+					if (noLonger(otherReach, reach)) {
 						beaten = true;
-					} else if (!other.closed && noLonger(next, other.funnel, step)) {
+					} else if (!other.closed && noLonger(reach, otherReach)) {
 						if (slot < 0) {
 							slot = held.ids[static_cast<std::size_t>(k)];
 						} else {
@@ -817,6 +1206,7 @@ namespace geometry::nav {
 				fresh.best	   = score;
 				fresh.state	   = ns;
 				fresh.cameFrom = li;
+				fresh.priced   = freshPriced;
 				if (slot < 0) {
 					slot = label;
 					held.ids[static_cast<std::size_t>(held.count++)] = label;
@@ -836,7 +1226,7 @@ namespace geometry::nav {
 					}
 					scratch.labels[static_cast<std::size_t>(slot)] = fresh;
 				}
-				open.push({score, cornerSum(mesh, mesh.triangle(nb)), edgeSum(mesh, tri, e), next.apex, slot});
+				open.push({score, distanceD((step.left + step.right) * 0.5, goalD), tieOf(mesh.triangle(nb), edgeSum(mesh, tri, e), next.apex), slot});
 				const std::int64_t sz = static_cast<std::int64_t>(open.size());
 				if (sz > result.peakOpenSet) {
 					result.peakOpenSet = sz;
@@ -848,31 +1238,10 @@ namespace geometry::nav {
 			return result; // disconnected (or every corridor too narrow for the agent)
 		}
 
-		// Reconstruct the triangle corridor start..goal.
-		std::vector<std::int32_t> corridor;
-		for (std::int32_t at = goalLabel; at != -1; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
-			corridor.push_back(scratch.labels[static_cast<std::size_t>(at)].state / 4);
-		}
-		std::reverse(corridor.begin(), corridor.end());
-
-		// --- String-pull the corridor ------------------------------------------
-		std::vector<Portal> portals;
-		portals.reserve(corridor.size());
-		for (std::size_t i = 0; i + 1 < corridor.size(); ++i) {
-			const int e = sharedEdgeIndex(mesh.triangle(corridor[i]), corridor[i + 1]);
-			if (e < 0) {
-				// Corridor adjacency is built from neighbor[], so this is unreachable;
-				// bail safely rather than indexing past the edge.
-				return result;
-			}
-			const PortalSpan span = portalSpan(mesh, corridor[i], e, radius, belief);
-			portals.push_back({span.left, span.right, -1});
-		}
-		portals.push_back({goalD, goalD, -1});
-		std::vector<Vec2i64> pts{start};
-		Funnel				 taut = funnelAt(toD(start), -1);
-		pull(taut, portals, &pts);
-		appendTaut(pts, goal);
+		// --- The winning corridor's string-pull ----------------------------------
+		std::vector<Vec2i64> pts;
+		result.cost				  = walkCorridor(goalLabel, pts);
+		result.crossesPricedFaces = crossesPriced;
 
 		result.reachable = true;
 		result.points	 = std::move(pts);

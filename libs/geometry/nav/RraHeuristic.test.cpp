@@ -5,6 +5,8 @@
 
 #include <cmath>
 #include <cstdint>
+#include <limits>
+#include <random>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -141,38 +143,179 @@ TEST(RraHeuristic, SamePathFewerExpansionsWideDetour) {
 
 // --- Admissibility: h never overestimates the walk ---------------------------
 
-TEST(RraHeuristic, AdmissibleVsWalkLength) {
-	NavMesh m = buildConcaveWallMesh();
-	ASSERT_FALSE(m.triangles.empty());
+namespace {
 
-	const Vec2i64	   goal{3200, 2400};
-	const std::int32_t goalTri = locateTriangle(m, goal);
-	ASSERT_GE(goalTri, 0);
+	struct Rect {
+		std::int64_t x0, y0, x1, y1;
+	};
 
-	RraCache cache;
-	cache.goalTri = goalTri;
+	// Walls of axis-aligned rects in a 6 x 4 m box: a long slab with both ends open, a
+	// C round a pocket (whose way in is behind the start of anything inside it), and
+	// posts, so shortest walks wrap ends, double back, and thread gaps.
+	const std::vector<Rect>& refereeRects() {
+		static const std::vector<Rect> rects = {
+			{800, 1400, 4400, 1600},  // slab
+			{3600, 2200, 5200, 2400}, // C: top
+			{5000, 2200, 5200, 3600}, // C: back (overlapping its arms, so no seam is open)
+			{3600, 3400, 5200, 3600}, // C: bottom
+			{1200, 2400, 1600, 2800}, // posts
+			{2200, 2800, 2600, 3200},
+			{1800, 400, 2200, 800},
+		};
+		return rects;
+	}
 
-	// Every triangle's bound is at most the walk from a point in it (its centroid) to the goal.
-	for (std::int32_t t = 0; t < static_cast<std::int32_t>(m.triangles.size()); ++t) {
-		if (!truthTraversable(m.triangles[static_cast<std::size_t>(t)])) {
-			continue;
+	NavMesh buildRefereeMesh() {
+		NavMeshInput in;
+		in.polygons.push_back(border({{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}));
+		std::int64_t id = -40;
+		for (const Rect& r : refereeRects()) {
+			in.polygons.push_back(water({{r.x0, r.y0}, {r.x1, r.y0}, {r.x1, r.y1}, {r.x0, r.y1}}, id--));
 		}
-		const NavTriangle& tri = m.triangles[static_cast<std::size_t>(t)];
-		const Vec2i64	   c{(m.vertices[tri.v[0]].x + m.vertices[tri.v[1]].x + m.vertices[tri.v[2]].x) / 3,
-							 (m.vertices[tri.v[0]].y + m.vertices[tri.v[1]].y + m.vertices[tri.v[2]].y) / 3};
-		const PathResult walk = pathThrough(m, c, goal, 0);
-		if (!walk.reachable) {
-			continue;
+		return buildNavMesh(in);
+	}
+
+	// Does segment p-q pass through the open interior of rect r?
+	bool crossesInterior(const Vec2i64& p, const Vec2i64& q, const Rect& r) {
+		double		 lo = 0.0;
+		double		 hi = 1.0;
+		const double dx = static_cast<double>(q.x - p.x);
+		const double dy = static_cast<double>(q.y - p.y);
+		auto		 clip = [&](double start, double delta, double min, double max) {
+			if (delta == 0.0) {
+				if (start <= min || start >= max) {
+					hi = -1.0;
+				}
+				return;
+			}
+			double a = (min - start) / delta;
+			double b = (max - start) / delta;
+			if (a > b) {
+				std::swap(a, b);
+			}
+			lo = std::max(lo, a);
+			hi = std::min(hi, b);
+		};
+		clip(static_cast<double>(p.x), dx, static_cast<double>(r.x0), static_cast<double>(r.x1));
+		clip(static_cast<double>(p.y), dy, static_cast<double>(r.y0), static_cast<double>(r.y1));
+		return hi - lo > 1e-9;
+	}
+
+	// The exact shortest walk from a to b round the rects (radius 0): Dijkstra over the
+	// visibility graph of a, b and every rect corner. Independent of the mesh and of
+	// pathThrough.
+	double refereeLength(const Vec2i64& a, const Vec2i64& b) {
+		std::vector<Vec2i64> nodes{a, b};
+		for (const Rect& r : refereeRects()) {
+			nodes.insert(nodes.end(), {{r.x0, r.y0}, {r.x1, r.y0}, {r.x1, r.y1}, {r.x0, r.y1}});
 		}
+		auto visible = [&](const Vec2i64& p, const Vec2i64& q) {
+			for (const Rect& r : refereeRects()) {
+				if (crossesInterior(p, q, r)) {
+					return false;
+				}
+			}
+			return true;
+		};
+		std::vector<double> dist(nodes.size(), std::numeric_limits<double>::infinity());
+		std::vector<char>	done(nodes.size(), 0);
+		dist[0] = 0.0;
+		for (std::size_t round = 0; round < nodes.size(); ++round) {
+			std::size_t u = nodes.size();
+			for (std::size_t i = 0; i < nodes.size(); ++i) {
+				if (done[i] == 0 && (u == nodes.size() || dist[i] < dist[u])) {
+					u = i;
+				}
+			}
+			if (u == nodes.size() || std::isinf(dist[u])) {
+				break;
+			}
+			done[u] = 1;
+			for (std::size_t v = 0; v < nodes.size(); ++v) {
+				if (done[v] == 0 && visible(nodes[u], nodes[v])) {
+					const double dx = static_cast<double>(nodes[v].x - nodes[u].x);
+					const double dy = static_cast<double>(nodes[v].y - nodes[u].y);
+					dist[v]			= std::min(dist[v], dist[u] + std::sqrt(dx * dx + dy * dy));
+				}
+			}
+		}
+		return dist[1];
+	}
+
+	double walkLength(const PathResult& p) {
 		double length = 0.0;
-		for (std::size_t i = 1; i < walk.points.size(); ++i) {
-			const double dx = static_cast<double>(walk.points[i].x - walk.points[i - 1].x);
-			const double dy = static_cast<double>(walk.points[i].y - walk.points[i - 1].y);
+		for (std::size_t i = 1; i < p.points.size(); ++i) {
+			const double dx = static_cast<double>(p.points[i].x - p.points[i - 1].x);
+			const double dy = static_cast<double>(p.points[i].y - p.points[i - 1].y);
 			length += std::sqrt(dx * dx + dy * dy);
 		}
-		const double h = rraHeuristic(cache, navView(m), t);
-		ASSERT_FALSE(std::isinf(h)) << "tri " << t << " reaches the goal but h is +inf";
-		EXPECT_LE(h, length + 2.0) << "tri " << t << " h=" << h << " > walk " << length; // the walk's corners are rounded to the mm
+		return length;
+	}
+
+	std::vector<Vec2i64> refereePoints(std::size_t n) {
+		std::mt19937		 rng(19);
+		std::vector<Vec2i64> out;
+		while (out.size() < n) {
+			const Vec2i64 p{1 + static_cast<std::int64_t>(rng() % 5998), 1 + static_cast<std::int64_t>(rng() % 3998)};
+			bool		  inside = false;
+			for (const Rect& r : refereeRects()) {
+				inside = inside || (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1);
+			}
+			if (!inside) {
+				out.push_back(p);
+			}
+		}
+		return out;
+	}
+
+} // namespace
+
+// The search returns the shortest walk at radius 0, checked against an exact referee that
+// shares no code with it: wrapping a wall end, doubling back into the C's pocket (the
+// goal behind the start, past both bounds of any funnel heading out), threading posts.
+// The walk's corners are rounded to the mm, so a few mm either way.
+TEST(PathQuery, ShortestWalkMatchesVisibilityGraph) {
+	const NavMesh				m	   = buildRefereeMesh();
+	const std::vector<Vec2i64> points = refereePoints(160);
+	int						   checked = 0;
+	for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
+		const PathResult walk = pathThrough(m, points[i], points[i + 1], 0);
+		ASSERT_TRUE(walk.reachable) << "pair " << i;
+		const double exact = refereeLength(points[i], points[i + 1]);
+		EXPECT_NEAR(walkLength(walk), exact, 4.0) << "from (" << points[i].x << ", " << points[i].y << ") to (" << points[i + 1].x << ", "
+												 << points[i + 1].y << ")";
+		++checked;
+	}
+	// Into the C's pocket from just outside its back: out round an end and back.
+	const Vec2i64	 start{5400, 3000};
+	const Vec2i64	 goal{4300, 3000};
+	const PathResult uTurn = pathThrough(m, start, goal, 0);
+	ASSERT_TRUE(uTurn.reachable);
+	EXPECT_NEAR(walkLength(uTurn), refereeLength(start, goal), 4.0);
+	EXPECT_EQ(checked, 80);
+}
+
+// The bound never exceeds the exact shortest walk from a point of the triangle (its
+// corners and centroid) to the goal, by the referee.
+TEST(RraHeuristic, AdmissibleVsShortestWalk) {
+	const NavMesh m = buildRefereeMesh();
+	for (const Vec2i64& goal : {Vec2i64{4300, 3000}, Vec2i64{300, 3700}, Vec2i64{3000, 1000}}) {
+		RraCache cache;
+		cache.goalTri = locateTriangle(m, goal);
+		ASSERT_GE(cache.goalTri, 0);
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(m.triangles.size()); ++t) {
+			const NavTriangle& tri = m.triangles[static_cast<std::size_t>(t)];
+			if (!truthTraversable(tri)) {
+				continue;
+			}
+			const double h = rraHeuristic(cache, navView(m), t);
+			ASSERT_FALSE(std::isinf(h)) << "tri " << t;
+			const Vec2i64 c{(m.vertices[tri.v[0]].x + m.vertices[tri.v[1]].x + m.vertices[tri.v[2]].x) / 3,
+							(m.vertices[tri.v[0]].y + m.vertices[tri.v[1]].y + m.vertices[tri.v[2]].y) / 3};
+			for (const Vec2i64& p : {c, m.vertices[tri.v[0]], m.vertices[tri.v[1]], m.vertices[tri.v[2]]}) {
+				EXPECT_LE(h, refereeLength(p, goal) + 1e-6) << "tri " << t;
+			}
+		}
 	}
 }
 

@@ -12,6 +12,7 @@
 #include "nav/NavMeshRealRings.test.h"
 #include "nav/PatchableMesh.h"
 #include "nav/PathQuery.h"
+#include "nav/RraCache.h"
 
 #include "predicates/Predicates.h"
 
@@ -20,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <map>
 #include <random>
 #include <utility>
 #include <vector>
@@ -703,6 +705,93 @@ namespace {
 		runPaths(state, navView(mesh), queryPairs(rings));
 	}
 
+	// The game's query shape: many movers walking 20 to 100 m to a few goals through
+	// meshed flora, the search on the mesh with trees, the heuristic's backward search
+	// on the structural mesh (bounds and water) and kept per goal across rounds.
+	enum class Heuristic { None, Cold, Warm };
+
+	struct RequestShape {
+		PatchableMesh						 structural{{.maxBoundsEdgeMm = 16000}};
+		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000}};
+		std::vector<Vec2i64>				 goals;
+		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
+	};
+
+	void loadRequestShape(RequestShape& s, Fixture f) {
+		const Rings rings = fixtureRings(f);
+		untimedPatch(s.structural, adding(rings.base));
+		std::vector<NavInputPolygon> all = rings.base;
+		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
+		untimedPatch(s.detail, adding(all));
+		s.structural.rebuildForests();
+		s.detail.rebuildForests();
+		Vec2i64 lo;
+		Vec2i64 hi;
+		boxOf(rings.base.front().ring, lo, hi);
+		std::mt19937 rng(91);
+		auto		 walkable = [&](const Vec2i64& p) {
+			const std::int32_t t = s.detail.locate(p);
+			return t >= 0 && isFloorFace(s.detail.triangles()[static_cast<std::size_t>(t)]);
+		};
+		while (s.goals.size() < 4) {
+			const Vec2i64 g{lo.x + 20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.x - lo.x - 40000)),
+							lo.y + 20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.y - lo.y - 40000))};
+			if (walkable(g)) {
+				s.goals.push_back(g);
+			}
+		}
+		for (int gi = 0; gi < 4; ++gi) {
+			int placed = 0;
+			while (placed < 16) {
+				const double  angle = static_cast<double>(rng() % 6283) / 1000.0;
+				const double  dist	= 20000.0 + static_cast<double>(rng() % 80000);
+				const Vec2i64 p{s.goals[static_cast<std::size_t>(gi)].x + static_cast<std::int64_t>(dist * std::cos(angle)),
+								s.goals[static_cast<std::size_t>(gi)].y + static_cast<std::int64_t>(dist * std::sin(angle))};
+				if (p.x > lo.x && p.y > lo.y && p.x < hi.x && p.y < hi.y && walkable(p) &&
+					pathThrough(s.detail.view(), p, s.goals[static_cast<std::size_t>(gi)], 300).reachable) {
+					s.starts.push_back({p, gi});
+					++placed;
+				}
+			}
+		}
+	}
+
+	void BM_RequestShape(benchmark::State& state, Fixture f, Heuristic h) {
+		RequestShape s;
+		loadRequestShape(s, f);
+		std::map<int, RraCache> caches;
+		auto					round = [&]() {
+			   std::int64_t nodes = 0;
+			   for (const auto& [start, gi] : s.starts) {
+				   RraCache* rra = nullptr;
+				   if (h != Heuristic::None) {
+					   RraCache& cache = caches[gi];
+					   cache.goalTri   = s.detail.locate(s.goals[static_cast<std::size_t>(gi)]);
+					   rra			   = &cache;
+				   }
+				   const PathResult r = pathThrough(s.detail.view(), start, s.goals[static_cast<std::size_t>(gi)], 300, {}, rra);
+				   nodes += r.nodesExpanded;
+				   benchmark::DoNotOptimize(r);
+			   }
+			   return nodes;
+		};
+		if (h == Heuristic::Warm) {
+			round();
+		}
+		std::int64_t nodes = 0;
+		for (auto _ : state) {
+			if (h == Heuristic::Cold) {
+				state.PauseTiming();
+				caches.clear();
+				state.ResumeTiming();
+			}
+			nodes = round();
+		}
+		state.counters["usPerQuery"] = benchmark::Counter(static_cast<double>(s.starts.size()) * static_cast<double>(state.iterations()),
+														  benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
+		state.counters["nodes"]		 = static_cast<double>(nodes) / static_cast<double>(s.starts.size());
+	}
+
 	void runForestRebuild(benchmark::State& state, const Rings& rings, bool withTrees) {
 		PatchableMesh mesh;
 		PatchEdits	  edits = adding(rings.base);
@@ -774,6 +863,12 @@ BENCHMARK_CAPTURE(BM_PathPatchable, realRings, Fixture::RealRings)->Unit(benchma
 BENCHMARK_CAPTURE(BM_PathBuilt, manyTrees, Fixture::ManyTrees)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, control, Fixture::Control)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, realRings, Fixture::RealRings)->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_RequestShape, control_none, Fixture::Control, Heuristic::None)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, control_cold, Fixture::Control, Heuristic::Cold)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, control_warm, Fixture::Control, Heuristic::Warm)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, realRings_none, Fixture::RealRings, Heuristic::None)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, realRings_cold, Fixture::RealRings, Heuristic::Cold)->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_RequestShape, realRings_warm, Fixture::RealRings, Heuristic::Warm)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_structural, Fixture::ManyTrees, false)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_ForestRebuild, control_structural, Fixture::Control, false)->Unit(benchmark::kMillisecond);

@@ -4,7 +4,9 @@
 #include "NavMesh.h"
 
 #include <array>
+#include <cmath>
 #include <cstdint>
+#include <unordered_map>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -731,4 +733,97 @@ TEST(LocateGrid, OffMeshPointsReturnMinusOne) {
 	EXPECT_EQ(locateTriangle(m, Vec2i64{500, -1}), -1);
 	EXPECT_EQ(locateTriangle(m, Vec2i64{1001, 500}), -1);
 	EXPECT_EQ(locateTriangle(m, Vec2i64{500, 1001}), -1);
+}
+
+// --- Faces crossed at a price ----------------------------------------------------
+
+namespace {
+
+	constexpr std::int64_t kTreeTag = -2;
+
+	NavInputPolygon treeRect(std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
+		return {{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, kTreeTag};
+	}
+
+	double polylineLength(const PathResult& p) {
+		double length = 0.0;
+		for (std::size_t i = 1; i < p.points.size(); ++i) {
+			length += std::hypot(static_cast<double>(p.points[i].x - p.points[i - 1].x), static_cast<double>(p.points[i].y - p.points[i - 1].y));
+		}
+		return length;
+	}
+
+	// A hedge of tree squares across a 20 x 12 m field, from x = 2 m to x = 18 m at
+	// y = 6 m, open at both ends.
+	NavMesh hedgeMesh() {
+		NavMeshInput in;
+		in.polygons.push_back({{{0, 0}, {20000, 0}, {20000, 12000}, {0, 12000}}, false, 1});
+		for (std::int64_t x = 2000; x < 18000; x += 1000) {
+			in.polygons.push_back(treeRect(x, 5800, x + 1000, 6200));
+		}
+		return buildNavMesh(in);
+	}
+
+} // namespace
+
+// A goal walled in by a ring of trees is reachable only through them: without a price it
+// is no path; with one, the walk goes through, says so, and costs more than its length.
+TEST(PathQuery, PricedFacesOpenARingOfTrees) {
+	NavMeshInput in;
+	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
+	in.polygons.push_back(treeRect(3000, 3000, 7000, 3500));
+	in.polygons.push_back(treeRect(3000, 6500, 7000, 7000));
+	in.polygons.push_back(treeRect(3000, 3000, 3500, 7000));
+	in.polygons.push_back(treeRect(6500, 3000, 7000, 7000));
+	const NavMesh m = buildNavMesh(in);
+	const Vec2i64 start{1000, 5000};
+	const Vec2i64 goal{5000, 5000};
+	EXPECT_FALSE(pathThrough(m, start, goal, 0).reachable);
+
+	const std::unordered_map<std::int64_t, double> price{{kTreeTag, 3.0}};
+	const PathResult								through = pathThrough(m, start, goal, 0, BeliefFilter{nullptr, nullptr, &price});
+	ASSERT_TRUE(through.reachable);
+	EXPECT_TRUE(through.crossesPricedFaces);
+	// Straight in through the 500 mm west wall: 4000 mm, 500 of them at three times.
+	EXPECT_NEAR(polylineLength(through), 4000.0, 2.0);
+	EXPECT_NEAR(through.cost, 3500.0 + 3.0 * 500.0, 2.0);
+}
+
+// A free way round a hedge that costs less than the way through at the hedge's price is
+// taken; at a lower price the way through is cheaper and is taken instead.
+TEST(PathQuery, PricedFacesWeighTheWayRoundAgainstTheWayThrough) {
+	const NavMesh m = hedgeMesh();
+	const Vec2i64 start{10000, 4000};
+	const Vec2i64 goal{10000, 8000};
+	const PathResult round = pathThrough(m, start, goal, 0);
+	ASSERT_TRUE(round.reachable);
+	EXPECT_FALSE(round.crossesPricedFaces);
+	EXPECT_NEAR(round.cost, polylineLength(round), 1e-6);
+	// Through: 4000 mm, 400 of them in the hedge. Round an end: about 16.5 m.
+	const std::unordered_map<std::int64_t, double> dear{{kTreeTag, 40.0}};
+	const PathResult								stayOut = pathThrough(m, start, goal, 0, BeliefFilter{nullptr, nullptr, &dear});
+	ASSERT_TRUE(stayOut.reachable);
+	EXPECT_FALSE(stayOut.crossesPricedFaces) << "3600 + 40 x 400 = 19600 mm through is dearer than the way round";
+	EXPECT_NEAR(polylineLength(stayOut), polylineLength(round), 2.0);
+
+	const std::unordered_map<std::int64_t, double> cheap{{kTreeTag, 4.0}};
+	const PathResult								pushThrough = pathThrough(m, start, goal, 0, BeliefFilter{nullptr, nullptr, &cheap});
+	ASSERT_TRUE(pushThrough.reachable);
+	EXPECT_TRUE(pushThrough.crossesPricedFaces) << "3600 + 4 x 400 = 5200 mm through is cheaper than the way round";
+	EXPECT_NEAR(pushThrough.cost, 3600.0 + 4.0 * 400.0, 2.0);
+	EXPECT_LT(pushThrough.cost, polylineLength(round));
+}
+
+// No price in play, or a price for a tag the walk never meets: the same walk as without.
+TEST(PathQuery, UnusedPriceChangesNothing) {
+	const NavMesh								   m = hedgeMesh();
+	const std::unordered_map<std::int64_t, double> other{{-7, 5.0}};
+	for (const auto& [a, b] : std::vector<std::pair<Vec2i64, Vec2i64>>{{{1000, 1000}, {19000, 11000}}, {{10000, 4000}, {10000, 8000}}}) {
+		for (const std::int64_t radius : {0, 300}) {
+			const PathResult plain = pathThrough(m, a, b, radius);
+			const PathResult priced = pathThrough(m, a, b, radius, BeliefFilter{nullptr, nullptr, &other});
+			EXPECT_EQ(plain.points, priced.points);
+			EXPECT_FALSE(priced.crossesPricedFaces);
+		}
+	}
 }

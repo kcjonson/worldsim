@@ -1218,16 +1218,21 @@ namespace {
 
 	// How far apart two paths between the same points may be in length when only the
 	// triangulation differs (seams, split vertices, free diagonals): a fraction of the
-	// length, for corridors the search weighs as near-equal, plus some radii, for what a
-	// disc meets that a point does not: its clearance at a corner is set along whichever
-	// portal ends there, and the corridor widths that gate it are read per triangle, so
-	// a gap one triangulation lets a wide disc through can turn it one obstacle over in
-	// another.
-	constexpr double kPathLengthToleranceFraction = 0.01;
-	constexpr double kPathLengthToleranceRadii	  = 5.0;
+	// length, for corridors the search keeps or drops by the per-state label cap, plus
+	// two radii, for a disc's clearance at a corner being set along whichever portal
+	// ends there.
+	constexpr double kPathLengthToleranceFraction = 0.02;
+	constexpr double kPathLengthToleranceRadii	  = 2.0;
+	// From this radius on the corridor widths that gate a disc, read per triangle, can
+	// shut a gap in one triangulation that the other leaves open, sending the disc one
+	// obstacle over: a different route, bounded only by this fraction of the length.
+	constexpr std::int64_t kWideDiscRadiusMm		  = 1000;
+	constexpr double	   kWideDiscToleranceFraction = 0.15;
 
 	bool lengthsAgree(std::int64_t a, std::int64_t b, std::int64_t radius) {
-		const double tolerance = kPathLengthToleranceFraction * static_cast<double>(std::max(a, b)) + kPathLengthToleranceRadii * static_cast<double>(radius);
+		const double longer	   = static_cast<double>(std::max(a, b));
+		const double tolerance = radius >= kWideDiscRadiusMm ? kWideDiscToleranceFraction * longer
+															 : kPathLengthToleranceFraction * longer + kPathLengthToleranceRadii * static_cast<double>(radius);
 		return static_cast<double>(std::abs(a - b)) <= tolerance;
 	}
 
@@ -1476,6 +1481,29 @@ TEST(PatchableMesh, PathsIgnoreEditHistory) {
 
 // Where the history picks different free diagonals, paths may differ, within the
 // tolerance the bounds-split oracle uses.
+// A start or goal exactly on a tree's edge or corner stands on the floor beside it:
+// point location settles a shared edge by geometry, which may name the tree's face, and
+// the query looks past it to a face it can cross.
+TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
+	PatchableMesh mesh;
+	PatchEdits	  edits;
+	edits.adds.push_back(bounds(rect(0, 0, 4000, 4000)));
+	edits.adds.push_back(blocked(rect(1000, 1000, 2000, 2000)));
+	mesh.applyPatch(edits);
+	mesh.refreshWidths();
+	mesh.rebuildForests();
+	const NavView view		  = mesh.view();
+	int			  onTreeFace = 0;
+	for (const Vec2i64& p : {Vec2i64{1500, 1000}, Vec2i64{2000, 1500}, Vec2i64{1500, 2000}, Vec2i64{1000, 1500}, Vec2i64{1000, 1000},
+							 Vec2i64{2000, 2000}, Vec2i64{2000, 1000}, Vec2i64{1000, 2000}}) {
+		onTreeFace += isFloorFace(mesh.triangles()[static_cast<std::size_t>(mesh.locate(p))]) ? 0 : 1;
+		EXPECT_TRUE(pathThrough(view, p, {3500, 3500}, 0).reachable) << "from (" << p.x << ", " << p.y << ")";
+		EXPECT_TRUE(pathThrough(view, {3500, 3500}, p, 0).reachable) << "to (" << p.x << ", " << p.y << ")";
+		EXPECT_TRUE(reaches(view, reachFrom(view, p, 0), {3500, 3500})) << "reach from (" << p.x << ", " << p.y << ")";
+	}
+	EXPECT_GT(onTreeFace, 0) << "some of these points must locate to the tree's face for the test to bind";
+}
+
 TEST(PatchableMesh, PathsAcrossFreeDiagonalsAgree) {
 	const HistoryComparison r = compareHistories(posts(5000, 0, 0), 31000, 79);
 	EXPECT_GT(r.otherTriangles, 0) << "the lattice must leave diagonals to choose";

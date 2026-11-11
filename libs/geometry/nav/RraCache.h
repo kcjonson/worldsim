@@ -14,15 +14,15 @@
 //
 // The bound is a bottleneck, not a sum: a triangle's value is the least, over the
 // routes from the goal triangle to it, of the farthest any portal on the route lies
-// from the goal triangle's centroid. Every walk from the centroid to a point in the
+// from the (closed) goal triangle. Every walk from a point in the triangle to the goal
 // triangle crosses some route's portals, and is at least as long as its straight
-// distance to each of them, so the value never exceeds the walk. Around a lake it is
-// how far out the walk has to swing, which is what the straight line misses.
+// distance from the goal triangle to each of them, so the value never exceeds the walk.
+// Around a lake it is how far out the walk has to swing, which is what the straight
+// line misses.
 //
-// ADMISSIBILITY: a walk from a point in triangle t to the goal point is at least the
-// walk from t to the centroid less the goal point's distance from the centroid, so
-// the forward search uses g(t) less the goal triangle's centroid radius; that never
-// overestimates the funnelled score it is compared with. The search walks the
+// ADMISSIBILITY: the forward search adds g(t) to the length its funnel has already
+// walked, for the rest of a walk that enters triangle t; no such walk is shorter, for
+// any goal point in the goal triangle, so nothing is subtracted. The search walks the
 // TERRAIN graph (terrainTraversable() triangles: floor or ANY wall face open, only
 // common-knowledge terrain blocks), WIDTH-UNFILTERED, so every agent's walk is one of
 // its routes and one cache keyed by the goal triangle serves every belief and disc

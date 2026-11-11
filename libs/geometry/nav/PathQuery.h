@@ -5,6 +5,7 @@
 #include "RraCache.h"
 
 #include <cstdint>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -19,8 +20,9 @@
 // funnel does its apex/bound math in double, then rounds each emitted corner to
 // the nearest millimeter. So whether a path exists is exact; where its bends sit
 // is rounded-deterministic. The float work is platform-stable (no transcendental
-// functions, fixed evaluation order) and the A* tie-break is by triangle index,
-// so a given (mesh, start, goal, radius) yields identical points every run.
+// functions, fixed evaluation order), and search ties and point location on a shared
+// edge are settled by coordinates, never slot ids, so the same ground gives the same
+// points whatever edit history built the mesh.
 
 namespace geometry::nav {
 
@@ -35,6 +37,14 @@ namespace geometry::nav {
 		// paths (off-mesh, same triangle, reachability reject) that never enter the loop.
 		std::int64_t nodesExpanded = 0;
 		std::int64_t peakOpenSet   = 0;
+
+		// What the walk costs: its length, with each piece through a face crossed at a
+		// price (BeliefFilter::passableAtCost) weighted by that face's multiplier. Equal to
+		// the length when no such face is crossed.
+		double cost = 0.0;
+		// The walk runs through a face crossed at a price (flora it pushes through, a
+		// waiting mover's footprint): the caller acts on it before the mover sets off.
+		bool crossesPricedFaces = false;
 	};
 
 	// Per-agent belief overlay on the shared truth mesh (see pathfinding-architecture
@@ -50,9 +60,20 @@ namespace geometry::nav {
 	// A negative faceBlocker is a common-knowledge terrain sentinel (water/tree, or a
 	// junction with no incident-wall id) and always blocks, filter or not. A junction
 	// tagged with a positive incident-wall segment id is belief-gated like that wall.
+	//
+	// passableAtCost (optional) makes some blocked faces crossable at a price: a face this
+	// filter would block, whose faceBlocker tag is a key, may be walked through, each mm
+	// inside it costing its multiplier (>= 1) where open ground costs 1. The search then
+	// takes the cheapest walk: round by free ground while that is less than the
+	// multiplier times the way through, through otherwise. Flora that seals a goal, or a
+	// mover waiting in a doorway, is passable this way rather than a wall. The stored
+	// corridor widths and the reachability forests treat such faces as obstacles, so next
+	// to one the width gates are skipped, and with any in play the forest pre-check and
+	// the RRA heuristic are too (they would wall the goal off).
 	struct BeliefFilter {
-		const std::unordered_set<std::uint64_t>* knownSegments = nullptr;
-		const std::unordered_set<std::uint64_t>* knownOpenings = nullptr;
+		const std::unordered_set<std::uint64_t>*		knownSegments  = nullptr;
+		const std::unordered_set<std::uint64_t>*		knownOpenings  = nullptr;
+		const std::unordered_map<std::int64_t, double>* passableAtCost = nullptr;
 	};
 
 	// Triangle containing p (CCW point-in-triangle, on-edge counts as inside);
@@ -65,16 +86,17 @@ namespace geometry::nav {
 	// A* expansion (and the start/goal triangles) are gated by `belief`: a default
 	// (empty) BeliefFilter is a truth query that routes exactly as v1 did.
 	//
+	// The search scores each corridor by a lower bound on its walk (its funnel so far,
+	// then the best way on through the portal it last crossed) and accepts a goal only
+	// at its exact string-pulled length (or cost), so it returns the shortest walk of the
+	// corridors it keeps (see PathQuery.cpp's label cap).
+	//
 	// `rra` is an optional Reverse Resumable A* cache (P3.5). When non-null AND its
-	// goalTri matches the located goal triangle, the A* heuristic becomes the exact
-	// terrain-graph distance-to-goal (rraHeuristic) -- a far tighter guide around big
-	// concave obstacles that cuts the explored fan. The cache is belief- and
-	// radius-agnostic (built on the width-unfiltered terrain graph) so one cache per
-	// goal serves every agent; it resumes across calls. When `rra` is null (the default)
-	// or its goal does not match, the heuristic falls back to the straight-line centroid
-	// estimate, so the pure free function and every geometry-test keep working unchanged.
-	// Cost, tie-break, width filter, reachability short-circuit, and funnel are identical
-	// either way: only the heuristic VALUES change, never the routing rules.
+	// goalTri matches the located goal triangle, its bound (rraHeuristic) raises the
+	// scores where it is the larger. The cache is belief- and radius-agnostic (built on
+	// the width-unfiltered terrain graph) so one cache per goal serves every agent; it
+	// resumes across calls. Width filter, reachability short-circuit and funnel are the
+	// same either way.
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief = {}, RraCache* rra = nullptr);
 	// Any mesh through its view (see NavView). Without forests in the view the
