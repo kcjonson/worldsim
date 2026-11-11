@@ -309,8 +309,29 @@ namespace geometry::nav {
 		ReachabilityForest terrain;
 	};
 
+	// Working storage for a forest build, kept between builds so a rebuild allocates
+	// nothing once it has grown.
+	struct ForestScratch {
+		// A portal between two triangles with its sound disc-diameter capacity, owned
+		// by the lower triangle.
+		struct Portal {
+			std::int32_t triA = -1;
+			std::int32_t triB = -1;
+			std::int64_t cap  = kUnconstrainedWidth;
+		};
+		std::vector<Portal>		  portals;
+		std::vector<Portal>		  sorted;
+		std::vector<std::uint8_t> truthNode;
+		std::vector<std::uint8_t> terrainNode;
+		std::vector<std::int32_t> parent;
+		std::vector<std::int32_t> setNode;
+		std::vector<std::int32_t> nodeParent;
+		std::vector<std::int32_t> root;
+	};
+
 	// Both forests over the view's live triangles, from their corridor widths and door
-	// tags (see ReachabilityForest).
+	// tags (see ReachabilityForest), built into `out` and reusing its storage.
+	void				buildReachabilityForests(const NavView& view, ForestScratch& scratch, ReachabilityForests& out);
 	ReachabilityForests buildReachabilityForests(const NavView& view);
 
 	// Scratch for corridor-width searches, reused across calls.

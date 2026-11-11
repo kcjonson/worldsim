@@ -659,6 +659,57 @@ TEST(PatchableMesh, AddRemoveMoveTree) {
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
+// Ground pinched at a point: two squares meeting at one corner, so the corner's star
+// is two fans the walk around a vertex can't cross between.
+TEST(PatchableMesh, SquaresMeetingAtACorner) {
+	Harness h;
+	h.add(bounds(rect(0, 0, 10000, 10000)));
+	h.add(bounds(rect(10000, 10000, 20000, 20000)));
+	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
+	const RingId tree = h.add(blocked(rect(9500, 9000, 10500, 10000)));
+	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
+	PatchEdits remove;
+	remove.removes.push_back(tree);
+	h.apply(remove);
+	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
+	h.add(bounds(rect(10000, 0, 20000, 10000)));
+	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
+}
+
+// A copy starts with empty patch scratch; its first patch must size it before reading.
+TEST(PatchableMesh, CopiedMeshPatchesLikeTheOriginal) {
+	PatchableMesh original;
+	PatchEdits	  load;
+	load.adds.push_back(bounds(rect(0, 0, 40000, 40000)));
+	for (std::int64_t i = 0; i < 30; ++i) {
+		load.adds.push_back(blocked(rect(2000 + i * 1200, 3000 + (i % 5) * 6000, 2600 + i * 1200, 3700 + (i % 5) * 6000)));
+	}
+	const PatchReport loaded = original.applyPatch(load);
+	PatchEdits		  edits;
+	edits.removes.push_back(loaded.added[12]);
+	edits.adds.push_back(blocked(rect(20000, 20000, 21000, 21500)));
+
+	PatchableMesh copy = original;
+	PatchableMesh moved(PatchableMesh{original});
+	const PatchReport expected = original.applyPatch(edits);
+	for (PatchableMesh* mesh : {&copy, &moved}) {
+		const PatchReport got = mesh->applyPatch(edits);
+		EXPECT_EQ(mesh->validate(), "");
+		EXPECT_EQ(got.added, expected.added);
+		EXPECT_EQ(got.freedTriangles, expected.freedTriangles);
+		EXPECT_EQ(got.newTriangles, expected.newTriangles);
+		EXPECT_EQ(mesh->vertices(), original.vertices());
+		ASSERT_EQ(mesh->triangles().size(), original.triangles().size());
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(original.triangles().size()); ++t) {
+			ASSERT_EQ(mesh->triangleLive(t), original.triangleLive(t));
+			if (original.triangleLive(t)) {
+				EXPECT_EQ(mesh->triangles()[static_cast<std::size_t>(t)].v, original.triangles()[static_cast<std::size_t>(t)].v);
+				EXPECT_EQ(mesh->cover(t), original.cover(t));
+			}
+		}
+	}
+}
+
 TEST(PatchableMesh, StableIdsOutsideTheHole) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 100000, 100000)));

@@ -157,10 +157,17 @@ namespace geometry::nav {
 			std::int32_t refCount(std::int32_t id) const { return refs[static_cast<std::size_t>(id)]; }
 
 		  private:
-			std::vector<Value>			   values;
-			std::vector<std::int32_t>	   refs;
-			std::vector<std::int32_t>	   freeIds;
-			std::map<Value, std::int32_t> ids;
+			// Open addressing over ids by each value's hash: a lookup, or a fresh slot
+			// once the table and a freed value's storage have grown, allocates nothing.
+			std::size_t homeOf(std::uint64_t hash) const;
+			void		grow();
+
+			std::vector<Value>		   values; // a freed id keeps its value's capacity
+			std::vector<std::uint64_t> hashes; // per id
+			std::vector<std::int32_t>  refs;
+			std::vector<std::int32_t>  freeIds;
+			std::vector<std::int32_t>  table; // ids, -1 empty
+			std::size_t				   used = 0;
 		};
 
 		// Boxes by id, for point location and box queries: a grid per level, cell side
@@ -244,7 +251,7 @@ namespace geometry::nav {
 
 		std::int32_t locateScaled(const Vec2i64& p, std::int64_t scale) const;
 		template <typename Visit> void forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const;
-		template <typename Visit> void forEachAroundVertex(std::uint32_t v, Visit visit) const;
+		template <typename Visit> void forEachAroundVertex(std::uint32_t v, std::int32_t seed, Visit visit) const;
 		void triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const;
 		std::vector<RingId> ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const;
 		// found = every registered ring edge whose segment box overlaps the box, each once,
@@ -314,6 +321,7 @@ namespace geometry::nav {
 		std::vector<std::int32_t>				 staleApexes;		  // refreshWidths scratch: 3 * t + apex
 
 		ReachabilityForests forests;
+		ForestScratch		forestScratch;
 		bool				forestsCurrent = false;
 		std::uint64_t		patchEpoch	   = 0;
 	};

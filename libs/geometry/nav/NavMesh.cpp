@@ -234,14 +234,6 @@ namespace geometry::nav {
 		// geometric edge capacities; they differ only in which triangles are nodes (the
 		// traversability predicate). See NavMesh.h ReachabilityForest for the contract.
 
-		// A portal between two triangles, with its sound disc-diameter capacity. Built
-		// once over all interior edges, then filtered per forest by the node predicate.
-		struct PortalEdge {
-			std::int32_t triA = -1; // lower triangle index (canonical owner of the edge)
-			std::int32_t triB = -1; // higher triangle index
-			std::int64_t cap  = kUnconstrainedWidth;
-		};
-
 		// T-side capacity of portal edge `e` in triangle `ti`: the widest disc that can
 		// cross the portal THROUGH ti. The disc enters via one of ti's OTHER two edges
 		// and pivots about one of the portal's two endpoints (local vertices e and
@@ -278,155 +270,95 @@ namespace geometry::nav {
 			return cap;
 		}
 
-		// Union-find over triangle leaves, with the merge-tree node id carried on each
-		// set so a union can wire the new internal node's children. find() uses path
-		// compression; union is by the caller's deterministic edge order (no rank), so
-		// the tree shape is reproducible.
-		struct ForestBuilder {
-			std::vector<std::int32_t> parent;	 // DSU parent over leaves [0,n)
-			std::vector<std::int32_t> setNode;	 // current merge-tree root node for each DSU set
-			std::vector<std::int64_t> nodeCap;	 // capacity stored at each merge-tree node
-			std::vector<std::int32_t> nodeLeft;	 // left child of each internal node (-1 for leaves)
-			std::vector<std::int32_t> nodeRight; // right child of each internal node (-1 for leaves)
-
-			std::int32_t find(std::int32_t x) {
-				while (parent[x] != x) {
-					parent[x] = parent[parent[x]];
-					x		  = parent[x];
+		// One forest from the portals in Kruskal order (capacity descending, then lower
+		// triA, then lower triB, for a reproducible tree), over the triangles `node` marks;
+		// a portal joins only when both its triangles are nodes. Union-find with path
+		// halving, union by that order (no rank), so the tree shape is reproducible: each
+		// union makes an internal node holding the portal's capacity, parent of the two
+		// merged subtree roots.
+		void buildForest(const std::vector<ForestScratch::Portal>& order, const std::vector<std::uint8_t>& node, ForestScratch& s,
+						 ReachabilityForest& forest) {
+			const std::int32_t		   n		  = static_cast<std::int32_t>(node.size());
+			std::vector<std::int32_t>& parent	  = s.parent;
+			std::vector<std::int32_t>& setNode	  = s.setNode; // merge-tree root of each set
+			std::vector<std::int32_t>& nodeParent = s.nodeParent;
+			parent.resize(static_cast<std::size_t>(n));
+			setNode.resize(static_cast<std::size_t>(n));
+			nodeParent.resize(static_cast<std::size_t>(n));
+			for (std::int32_t i = 0; i < n; ++i) {
+				parent[static_cast<std::size_t>(i)]		= i;
+				setNode[static_cast<std::size_t>(i)]	= i;
+				nodeParent[static_cast<std::size_t>(i)] = i;
+			}
+			auto find = [&](std::int32_t x) {
+				while (parent[static_cast<std::size_t>(x)] != x) {
+					parent[static_cast<std::size_t>(x)] = parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
+					x									= parent[static_cast<std::size_t>(x)];
 				}
 				return x;
-			}
-		};
-
-		// Build one forest from the node predicate and the shared portal list. Edges are
-		// processed in DESCENDING capacity (Kruskal max-spanning-forest); ties break by
-		// (cap desc, lower triA, lower triB) for a reproducible tree. Only edges whose
-		// BOTH endpoints are nodes participate; a dead slot is never a node. Returns the
-		// populated ReachabilityForest.
-		template <typename NodePredicate>
-		ReachabilityForest buildForest(const NavView& view, const std::vector<PortalEdge>& portals, NodePredicate traversable) {
-			const std::int32_t n	  = view.triangleSlots();
-			auto			   isNode = [&](std::int32_t t) { return view.isLive(t) && traversable(view.triangle(t)); };
-
-			ForestBuilder fb;
-			fb.parent.resize(n);
-			fb.setNode.resize(n);
-			// Leaves first; internal nodes appended on each union. At most n-1 unions, so
-			// reserve 2n-1 to avoid reallocation invalidating nothing (we store indices).
-			fb.nodeCap.assign(n, kUnconstrainedWidth);
-			fb.nodeLeft.assign(n, -1);
-			fb.nodeRight.assign(n, -1);
-			fb.nodeCap.reserve(static_cast<std::size_t>(2) * n);
-			fb.nodeLeft.reserve(static_cast<std::size_t>(2) * n);
-			fb.nodeRight.reserve(static_cast<std::size_t>(2) * n);
-			for (std::int32_t i = 0; i < n; ++i) {
-				fb.parent[i]  = i;
-				fb.setNode[i] = i; // each traversable leaf starts as its own merge-tree root
-			}
-
-			// Filter to participating edges (both endpoints are nodes), then sort by the
-			// deterministic Kruskal order. Non-node triangles never appear, so they stay
-			// singleton sets and get component -1 below.
-			std::vector<PortalEdge> edges;
-			edges.reserve(portals.size());
-			for (const PortalEdge& pe : portals) {
-				if (isNode(pe.triA) && isNode(pe.triB)) {
-					edges.push_back(pe);
+			};
+			forest.nodeCap.assign(static_cast<std::size_t>(n), kUnconstrainedWidth);
+			for (const ForestScratch::Portal& pe : order) {
+				if (node[static_cast<std::size_t>(pe.triA)] == 0 || node[static_cast<std::size_t>(pe.triB)] == 0) {
+					continue;
 				}
-			}
-			std::sort(edges.begin(), edges.end(), [](const PortalEdge& a, const PortalEdge& b) {
-				if (a.cap != b.cap) {
-					return a.cap > b.cap; // descending capacity
-				}
-				if (a.triA != b.triA) {
-					return a.triA < b.triA; // then lower triangle index
-				}
-				return a.triB < b.triB; // then lower neighbor index
-			});
-
-			for (const PortalEdge& pe : edges) {
-				const std::int32_t ra = fb.find(pe.triA);
-				const std::int32_t rb = fb.find(pe.triB);
+				const std::int32_t ra = find(pe.triA);
+				const std::int32_t rb = find(pe.triB);
 				if (ra == rb) {
-					continue; // already connected; this edge closes a cycle
+					continue;
 				}
-				// New internal node merging the two subtree roots at this edge's capacity.
-				const std::int32_t node = static_cast<std::int32_t>(fb.nodeCap.size());
-				fb.nodeCap.push_back(pe.cap);
-				fb.nodeLeft.push_back(fb.setNode[ra]);
-				fb.nodeRight.push_back(fb.setNode[rb]);
-				// Union (attach rb's set under ra) and route the set's merge-tree root to
-				// the new internal node.
-				fb.parent[rb]  = ra;
-				fb.setNode[ra] = node;
+				const std::int32_t merged = static_cast<std::int32_t>(forest.nodeCap.size());
+				forest.nodeCap.push_back(pe.cap);
+				nodeParent.push_back(merged);
+				nodeParent[static_cast<std::size_t>(setNode[static_cast<std::size_t>(ra)])] = merged;
+				nodeParent[static_cast<std::size_t>(setNode[static_cast<std::size_t>(rb)])] = merged;
+				parent[static_cast<std::size_t>(rb)]										 = ra;
+				setNode[static_cast<std::size_t>(ra)]										 = merged;
 			}
-
-			// Assemble the ReachabilityForest: node capacities, then component ids and
-			// binary-lifting LCA tables over the reconstruction-tree forest.
-			ReachabilityForest forest;
-			forest.nodeCap = std::move(fb.nodeCap);
 			const std::int32_t nodeCount = static_cast<std::int32_t>(forest.nodeCap.size());
 
-			// Parent of each merge-tree node (roots point to themselves), from the
-			// child links recorded during the unions. depth via a root-down pass.
-			std::vector<std::int32_t> nodeParent(nodeCount);
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				nodeParent[i] = i; // default: root
-			}
-			for (std::int32_t i = n; i < nodeCount; ++i) {
-				nodeParent[fb.nodeLeft[i]]  = i;
-				nodeParent[fb.nodeRight[i]] = i;
-			}
-
-			// depth[]: roots have depth 0; a child is parent depth + 1. Processing nodes
-			// in DESCENDING id is a valid topological order because every internal node
-			// has a HIGHER id than both its children (created after them), so a parent's
-			// depth is finalized before any child reads it.
-			forest.depth.assign(nodeCount, 0);
+			// Every internal node has a higher id than its children, so a descending pass
+			// sees a parent before its children: depth and root come down from it.
+			std::vector<std::int32_t>& root = s.root;
+			root.resize(static_cast<std::size_t>(nodeCount));
+			forest.depth.resize(static_cast<std::size_t>(nodeCount));
+			std::int32_t maxDepth = 0;
 			for (std::int32_t i = nodeCount - 1; i >= 0; --i) {
-				if (nodeParent[i] != i) {
-					forest.depth[i] = forest.depth[nodeParent[i]] + 1;
+				const std::int32_t p = nodeParent[static_cast<std::size_t>(i)];
+				if (p == i) {
+					forest.depth[static_cast<std::size_t>(i)] = 0;
+					root[static_cast<std::size_t>(i)]		  = i;
+				} else {
+					forest.depth[static_cast<std::size_t>(i)] = forest.depth[static_cast<std::size_t>(p)] + 1;
+					root[static_cast<std::size_t>(i)]		  = root[static_cast<std::size_t>(p)];
+					maxDepth								  = std::max(maxDepth, forest.depth[static_cast<std::size_t>(i)]);
 				}
 			}
 
-			// Binary-lifting table. levels = ceil(log2(maxDepth+1)); at least 1 so up[0]
-			// always exists. up[0] is the direct parent (root -> itself).
-			std::int32_t maxDepth = 0;
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				maxDepth = std::max(maxDepth, forest.depth[i]);
-			}
+			// Binary lifting: levels = ceil(log2(maxDepth + 1)), at least 1; up[0] is the
+			// parent, a root's its own.
 			std::int32_t levels = 1;
 			while ((1 << levels) <= maxDepth) {
 				++levels;
 			}
 			forest.levels = levels;
-			forest.up.assign(static_cast<std::size_t>(levels), std::vector<std::int32_t>(nodeCount));
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				forest.up[0][i] = nodeParent[i];
-			}
-			for (std::int32_t k = 1; k < levels; ++k) {
-				for (std::int32_t i = 0; i < nodeCount; ++i) {
-					forest.up[k][i] = forest.up[k - 1][forest.up[k - 1][i]];
+			forest.up.resize(static_cast<std::size_t>(levels));
+			forest.up[0].assign(nodeParent.begin(), nodeParent.end());
+			for (std::size_t k = 1; k < static_cast<std::size_t>(levels); ++k) {
+				const std::vector<std::int32_t>& below = forest.up[k - 1];
+				std::vector<std::int32_t>&		 up	   = forest.up[k];
+				up.resize(static_cast<std::size_t>(nodeCount));
+				for (std::size_t i = 0; i < static_cast<std::size_t>(nodeCount); ++i) {
+					up[i] = below[static_cast<std::size_t>(below[i])];
 				}
 			}
 
-			// component[]: a traversable leaf's component is its reconstruction-tree
-			// root; a non-traversable leaf (never a node) is -1 (isolated/unreachable).
-			forest.component.assign(n, -1);
+			// A node leaf's component is its tree's root; a non-node is -1.
+			forest.component.resize(static_cast<std::size_t>(n));
 			for (std::int32_t i = 0; i < n; ++i) {
-				if (!isNode(i)) {
-					continue;
-				}
-				std::int32_t r = i;
-				for (std::int32_t k = levels - 1; k >= 0; --k) {
-					r = forest.up[k][r]; // climb to the root (overshoot stops at root via self-loop)
-				}
-				forest.component[i] = r;
+				forest.component[static_cast<std::size_t>(i)] = node[static_cast<std::size_t>(i)] != 0 ? root[static_cast<std::size_t>(i)] : -1;
 			}
-
-			return forest;
 		}
-
 	} // namespace
 
 	// Demyen Algorithm 3, CalculateWidth, for the edge pair meeting at apex v[apex]: edges
@@ -486,23 +418,79 @@ namespace geometry::nav {
 	}
 
 	// Every interior portal edge once, owned by its lower live triangle, with its sound
-	// disc-diameter capacity, then the truth and terrain forests over that one set.
-	ReachabilityForests buildReachabilityForests(const NavView& view) {
-		std::vector<PortalEdge> portals;
-		for (std::int32_t ti = 0; ti < view.triangleSlots(); ++ti) {
+	// disc-diameter capacity, put in Kruskal order once for both forests. Where the two
+	// predicates pick the same nodes (no wall without a door) the forests are equal, and
+	// the terrain forest is a copy.
+	void buildReachabilityForests(const NavView& view, ForestScratch& scratch, ReachabilityForests& out) {
+		using Portal		 = ForestScratch::Portal;
+		const std::int32_t n = view.triangleSlots();
+		scratch.truthNode.assign(static_cast<std::size_t>(n), 0);
+		scratch.terrainNode.assign(static_cast<std::size_t>(n), 0);
+		std::vector<Portal>& portals = scratch.portals;
+		portals.clear();
+		std::int64_t maxFinite = INT64_MIN;
+		std::int64_t minFinite = INT64_MAX;
+		for (std::int32_t ti = 0; ti < n; ++ti) {
 			if (!view.isLive(ti)) {
 				continue;
 			}
-			const NavTriangle& tri = view.triangle(ti);
+			const NavTriangle& tri					 = view.triangle(ti);
+			scratch.truthNode[static_cast<std::size_t>(ti)]	 = truthTraversable(tri) ? 1 : 0;
+			scratch.terrainNode[static_cast<std::size_t>(ti)] = terrainTraversable(tri) ? 1 : 0;
+			const std::size_t first					 = portals.size();
 			for (int e = 0; e < 3; ++e) {
 				const std::int32_t nb = tri.neighbor[static_cast<std::size_t>(e)];
 				if (nb < 0 || nb <= ti) {
 					continue;
 				}
-				portals.push_back({ti, nb, portalCapacity(view, ti, e, nb)});
+				const std::int64_t cap = portalCapacity(view, ti, e, nb);
+				if (cap != kUnconstrainedWidth) {
+					maxFinite = std::max(maxFinite, cap);
+					minFinite = std::min(minFinite, cap);
+				}
+				portals.push_back({ti, nb, cap});
 			}
+			std::sort(portals.begin() + static_cast<std::ptrdiff_t>(first), portals.end(),
+					  [](const Portal& a, const Portal& b) { return a.triB < b.triB; });
 		}
-		return {buildForest(view, portals, truthTraversable), buildForest(view, portals, terrainTraversable)};
+
+		// Kruskal order (capacity descending, then triA, then triB): portals are in
+		// (triA, triB) order, so a stable LSD radix sort on a key that ascends as the
+		// capacity descends finishes it. Unconstrained is key 0, the widest finite 1.
+		auto keyOf = [&](const Portal& p) -> std::uint64_t {
+			return p.cap == kUnconstrainedWidth ? 0 : static_cast<std::uint64_t>(maxFinite) - static_cast<std::uint64_t>(p.cap) + 1;
+		};
+		const std::uint64_t maxKey = maxFinite == INT64_MIN ? 0 : static_cast<std::uint64_t>(maxFinite) - static_cast<std::uint64_t>(minFinite) + 1;
+		std::vector<Portal>* from  = &portals;
+		std::vector<Portal>* to	   = &scratch.sorted;
+		to->resize(portals.size());
+		for (int shift = 0; shift < 64 && (maxKey >> shift) != 0; shift += 8) {
+			std::array<std::size_t, 257> start{};
+			for (const Portal& p : *from) {
+				++start[((keyOf(p) >> shift) & 0xFF) + 1];
+			}
+			for (std::size_t d = 0; d < 256; ++d) {
+				start[d + 1] += start[d];
+			}
+			for (const Portal& p : *from) {
+				(*to)[start[(keyOf(p) >> shift) & 0xFF]++] = p;
+			}
+			std::swap(from, to);
+		}
+
+		buildForest(*from, scratch.truthNode, scratch, out.truth);
+		if (scratch.truthNode == scratch.terrainNode) {
+			out.terrain = out.truth;
+		} else {
+			buildForest(*from, scratch.terrainNode, scratch, out.terrain);
+		}
+	}
+
+	ReachabilityForests buildReachabilityForests(const NavView& view) {
+		ForestScratch		scratch;
+		ReachabilityForests out;
+		buildReachabilityForests(view, scratch, out);
+		return out;
 	}
 
 	SampleRing sampleRing(const NavInputPolygon& poly) {

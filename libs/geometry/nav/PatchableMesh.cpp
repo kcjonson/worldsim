@@ -73,8 +73,18 @@ namespace geometry::nav {
 				   p.y >= std::min(a.y, b.y) && p.y <= std::max(a.y, b.y);
 		}
 
+		// Are all three corners strictly on one side of the line through a and b? Then
+		// the closed triangle misses the line, and the segment with it.
+		bool triangleOffLine(const Vec2i64& a, const Vec2i64& b, const std::array<Vec2i64, 3>& t) {
+			const Orientation o = orientation(a, b, t[0]);
+			return o != Orientation::Collinear && orientation(a, b, t[1]) == o && orientation(a, b, t[2]) == o;
+		}
+
 		// Does closed segment ab meet the closed triangle?
 		bool segmentTouchesTriangle(const Vec2i64& a, const Vec2i64& b, const std::array<Vec2i64, 3>& t) {
+			if (triangleOffLine(a, b, t)) {
+				return false;
+			}
 			if (insideOrOn(t[0], t[1], t[2], a) || insideOrOn(t[0], t[1], t[2], b)) {
 				return true;
 			}
@@ -88,6 +98,9 @@ namespace geometry::nav {
 
 		// Does closed segment ab meet the closed triangle anywhere but at its corners?
 		bool segmentEntersTriangle(const Vec2i64& a, const Vec2i64& b, const std::array<Vec2i64, 3>& t) {
+			if (triangleOffLine(a, b, t)) {
+				return false;
+			}
 			if (strictlyInside(t[0], t[1], t[2], a) || strictlyInside(t[0], t[1], t[2], b)) {
 				return true;
 			}
@@ -158,11 +171,65 @@ namespace geometry::nav {
 
 	// --- InternTable -------------------------------------------------------------
 
+	namespace {
+
+		std::uint64_t mixHash(std::uint64_t h, std::uint64_t v) {
+			h ^= v + 0x9E3779B97F4A7C15ULL + (h << 6) + (h >> 2);
+			return h;
+		}
+
+		std::uint64_t hashValue(const std::vector<EdgeSource>& list) {
+			std::uint64_t h = list.size();
+			for (const EdgeSource& s : list) {
+				h = mixHash(h, static_cast<std::uint64_t>(static_cast<std::uint32_t>(s.ring)) << 32 | static_cast<std::uint32_t>(s.edge));
+			}
+			return h;
+		}
+
+		std::uint64_t hashValue(const std::vector<RingId>& list) {
+			std::uint64_t h = list.size();
+			for (const RingId r : list) {
+				h = mixHash(h, static_cast<std::uint32_t>(r));
+			}
+			return h;
+		}
+
+	} // namespace
+
+	template <typename Value> std::size_t PatchableMesh::InternTable<Value>::homeOf(std::uint64_t hash) const {
+		hash ^= hash >> 31;
+		hash *= 0xBF58476D1CE4E5B9ULL;
+		hash ^= hash >> 29;
+		return static_cast<std::size_t>(hash) & (table.size() - 1);
+	}
+
+	template <typename Value> void PatchableMesh::InternTable<Value>::grow() {
+		const std::size_t capacity = std::max<std::size_t>(64, 2 * table.size());
+		table.assign(capacity, -1);
+		for (std::size_t id = 0; id < values.size(); ++id) {
+			if (refs[id] == 0) {
+				continue;
+			}
+			std::size_t i = homeOf(hashes[id]);
+			while (table[i] >= 0) {
+				i = (i + 1) & (capacity - 1);
+			}
+			table[i] = static_cast<std::int32_t>(id);
+		}
+	}
+
 	template <typename Value> std::int32_t PatchableMesh::InternTable<Value>::acquire(const Value& value) {
-		auto it = ids.find(value);
-		if (it != ids.end()) {
-			++refs[static_cast<std::size_t>(it->second)];
-			return it->second;
+		if (2 * (used + 1) > table.size()) {
+			grow();
+		}
+		const std::uint64_t hash = hashValue(value);
+		std::size_t			i	 = homeOf(hash);
+		for (; table[i] >= 0; i = (i + 1) & (table.size() - 1)) {
+			const std::size_t at = static_cast<std::size_t>(table[i]);
+			if (hashes[at] == hash && values[at] == value) {
+				++refs[at];
+				return table[i];
+			}
 		}
 		std::int32_t id = 0;
 		if (!freeIds.empty()) {
@@ -171,21 +238,38 @@ namespace geometry::nav {
 		} else {
 			id = static_cast<std::int32_t>(values.size());
 			values.emplace_back();
+			hashes.push_back(0);
 			refs.push_back(0);
 		}
-		values[static_cast<std::size_t>(id)] = value;
-		refs[static_cast<std::size_t>(id)]	  = 1;
-		ids.emplace(value, id);
+		values[static_cast<std::size_t>(id)].assign(value.begin(), value.end());
+		hashes[static_cast<std::size_t>(id)] = hash;
+		refs[static_cast<std::size_t>(id)]	 = 1;
+		table[i]							 = id;
+		++used;
 		return id;
 	}
 
+	// Backward-shift deletion, as BoxGrid's, keeps every probe run unbroken.
 	template <typename Value> void PatchableMesh::InternTable<Value>::release(std::int32_t id) {
 		assert(refs[static_cast<std::size_t>(id)] > 0 && "InternTable: releasing a dead entry");
-		if (--refs[static_cast<std::size_t>(id)] == 0) {
-			ids.erase(values[static_cast<std::size_t>(id)]);
-			values[static_cast<std::size_t>(id)] = {};
-			freeIds.push_back(id);
+		if (--refs[static_cast<std::size_t>(id)] != 0) {
+			return;
 		}
+		const std::size_t mask = table.size() - 1;
+		std::size_t		  i	   = homeOf(hashes[static_cast<std::size_t>(id)]);
+		while (table[i] != id) {
+			i = (i + 1) & mask;
+		}
+		for (std::size_t j = (i + 1) & mask; table[j] >= 0; j = (j + 1) & mask) {
+			if (((j - homeOf(hashes[static_cast<std::size_t>(table[j])])) & mask) >= ((j - i) & mask)) {
+				table[i] = table[j];
+				i		 = j;
+			}
+		}
+		table[i] = -1;
+		--used;
+		values[static_cast<std::size_t>(id)].clear();
+		freeIds.push_back(id);
 	}
 
 	// --- BoxGrid -----------------------------------------------------------------
@@ -489,15 +573,65 @@ namespace geometry::nav {
 		boxQueryOpen = false;
 	}
 
-	template <typename Visit> void PatchableMesh::forEachAroundVertex(std::uint32_t v, Visit visit) const {
-		// Each level has one cell holding the point, and a triangle on the vertex is in
-		// the one of its level, so every triangle comes up once.
-		grid.forEachAtPoint(verts[v], 1, [&](std::int32_t t) {
-			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
-			for (int i = 0; i < 3; ++i) {
-				if (tri.v[i] == v) {
-					visit(t, i);
+	namespace {
+
+		int cornerOf(const NavTriangle& tri, std::uint32_t v) {
+			return tri.v[0] == v ? 0 : (tri.v[1] == v ? 1 : (tri.v[2] == v ? 2 : -1));
+		}
+
+	} // namespace
+
+	// The fan around v is walked across the edges at v from `seed`, a live triangle on
+	// v (-1: the locate grid finds one). The grid alone would scan every triangle whose
+	// box holds the point, and a long sliver's box holds many. Ground pinched at v (two
+	// fans meeting at one point) leaves corners the walk can't reach; the grid finds them.
+	template <typename Visit> void PatchableMesh::forEachAroundVertex(std::uint32_t v, std::int32_t seed, Visit visit) const {
+		if (seed < 0) {
+			grid.forEachAtPoint(verts[v], 1, [&](std::int32_t t) {
+				seed = cornerOf(tris[static_cast<std::size_t>(t)], v) >= 0 ? t : -1;
+				return seed >= 0;
+			});
+			if (seed < 0) {
+				return;
+			}
+		}
+		// `from`, then the triangles across v's edges each way until the fan closes or
+		// meets the mesh boundary.
+		auto fan = [&](std::int32_t from, auto&& each) {
+			each(from);
+			for (const bool forward : {true, false}) {
+				std::int32_t t = from;
+				for (;;) {
+					const NavTriangle& tri	= tris[static_cast<std::size_t>(t)];
+					const int		   i	= cornerOf(tri, v);
+					const std::int32_t next = tri.neighbor[static_cast<std::size_t>(forward ? i : prev3(i))];
+					if (next < 0) {
+						break;
+					}
+					if (next == from) {
+						return;
+					}
+					each(next);
+					t = next;
 				}
+			}
+		};
+		std::int32_t found = 0;
+		fan(seed, [&](std::int32_t t) {
+			++found;
+			visit(t, cornerOf(tris[static_cast<std::size_t>(t)], v));
+		});
+		if (found == vertexUses[v]) {
+			return;
+		}
+		std::vector<std::int32_t> seen;
+		fan(seed, [&](std::int32_t t) { seen.push_back(t); });
+		grid.forEachAtPoint(verts[v], 1, [&](std::int32_t t) {
+			if (cornerOf(tris[static_cast<std::size_t>(t)], v) >= 0 && std::find(seen.begin(), seen.end(), t) == seen.end()) {
+				fan(t, [&](std::int32_t u) {
+					seen.push_back(u);
+					visit(u, cornerOf(tris[static_cast<std::size_t>(u)], v));
+				});
 			}
 			return false;
 		});
@@ -755,6 +889,7 @@ namespace geometry::nav {
 			SampleRing		sample;
 			Vec2i64			lo;
 			Vec2i64			hi;
+			std::vector<EdgeSource> band; // new bounds: blocked edges just outside, see begin
 		};
 
 		// A mesh edge in or around the hole that goes into the arrangement unchanged. Its
@@ -810,7 +945,7 @@ namespace geometry::nav {
 		std::vector<RingId>		   testRings;
 		std::vector<std::uint8_t>  inHole; // per triangle slot
 		std::vector<std::int32_t>  hole;
-		std::vector<std::uint32_t> ends;
+		std::vector<std::pair<std::uint32_t, std::int32_t>> ends;
 		std::vector<EdgeSource>	   edgesNear;
 		std::vector<std::int32_t>  edgeIdsNear;
 		std::vector<RingId>		   ringsNear;
@@ -894,8 +1029,8 @@ namespace geometry::nav {
 		void addToS(const EdgeSource& z);
 		void addToHole(std::int32_t t);
 		void addToTest(RingId r);
-		void pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge);
-		void pullAtVertex(std::uint32_t v, const Vec2i64& p, std::span<const std::pair<EdgeSource, bool>> xs, bool takeStar);
+		void pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge, const std::vector<EdgeSource>* band = nullptr);
+		void pullAtVertex(std::uint32_t v, std::int32_t seed, std::span<const std::pair<EdgeSource, bool>> xs, bool takeStar);
 		void walkNewOutlines();
 		void closeS();
 		bool deriveOnce();
@@ -1025,7 +1160,7 @@ namespace geometry::nav {
 	// the boundary, so it always asks the registry, but it never pulls the boundary
 	// pieces beside it: those are bounds edges too, which the mesh shows whole, and
 	// pulling them would walk the whole border.
-	void PatchableMesh::Patch::pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge) {
+	void PatchableMesh::Patch::pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge, const std::vector<EdgeSource>* band) {
 		const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
 		Vec2i64		  lo = a;
 		Vec2i64		  hi = a;
@@ -1059,7 +1194,20 @@ namespace geometry::nav {
 				return;
 			}
 		}
-		m.ringEdgesInBox(lo, hi, work.edgeIdsNear, work.edgesNear);
+		if (band != nullptr) {
+			work.edgesNear.clear();
+			for (const EdgeSource& z : *band) {
+				const std::vector<Vec2i64>& outline = m.rings[static_cast<std::size_t>(z.ring)].polygon.ring;
+				Vec2i64						zLo		= edgeStart(outline, z.edge);
+				Vec2i64						zHi		= zLo;
+				growBox(zLo, zHi, edgeEnd(outline, z.edge));
+				if (boxesOverlap(lo, hi, zLo, zHi)) {
+					work.edgesNear.push_back(z);
+				}
+			}
+		} else {
+			m.ringEdgesInBox(lo, hi, work.edgeIdsNear, work.edgesNear);
+		}
 		for (const EdgeSource& z : work.edgesNear) {
 			const RegisteredRing& reg = m.rings[static_cast<std::size_t>(z.ring)];
 			if (!reg.polygon.blocked || changed(z.ring) || inS(z)) {
@@ -1135,6 +1283,11 @@ namespace geometry::nav {
 			moved.ring			  = move.outline;
 			setNew(c, std::move(moved));
 		}
+		// Every mark covers the registry as it now stands, so a copied mesh's empty scratch
+		// is read in bounds too.
+		work.inTest.resize(std::max(work.inTest.size(), m.rings.size()), 0);
+		work.changeSlot.resize(std::max(work.changeSlot.size(), m.rings.size()), -1);
+		work.inS.resize(std::max(work.inS.size(), m.edgeOf.size()), 0);
 		std::sort(changes.begin(), changes.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 		for (std::size_t i = 0; i < changes.size(); ++i) {
 			work.changeSlot[static_cast<std::size_t>(changes[i].first)] = static_cast<std::int32_t>(i);
@@ -1155,7 +1308,10 @@ namespace geometry::nav {
 
 		// New ground completes every ring hanging over it: its edges over the new bounds
 		// re-derive there, and a ring around the whole new bounds still gets tested.
-		for (const auto& [id, c] : changes) {
+		// The same query, reaching kOffGroundReachMm further, gives the blocked edges just
+		// outside the new bounds that the off-ground pull of its edges reads (the rest of
+		// what that pull could find is in s already), so those edges skip the registry.
+		for (auto& [id, c] : changes) {
 			if (!c.hasNew || c.polygon.blocked) {
 				continue;
 			}
@@ -1164,10 +1320,21 @@ namespace geometry::nav {
 					addToTest(r);
 				}
 			}
-			m.ringEdgesInBox(c.lo, c.hi, work.edgeIdsNear, work.edgesNear);
+			const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
+			m.ringEdgesInBox(c.lo - reach, c.hi + reach, work.edgeIdsNear, work.edgesNear);
+			c.band.clear();
 			for (const EdgeSource& z : work.edgesNear) {
-				if (!changed(z.ring)) {
+				const RegisteredRing& reg = m.rings[static_cast<std::size_t>(z.ring)];
+				if (changed(z.ring)) {
+					continue;
+				}
+				Vec2i64 zLo = edgeStart(reg.polygon.ring, z.edge);
+				Vec2i64 zHi = zLo;
+				growBox(zLo, zHi, edgeEnd(reg.polygon.ring, z.edge));
+				if (boxesOverlap(c.lo, c.hi, zLo, zHi)) {
 					addToS(z);
+				} else if (reg.polygon.blocked) {
+					c.band.push_back(z);
 				}
 			}
 		}
@@ -1176,8 +1343,9 @@ namespace geometry::nav {
 	// Every ring edge on the mesh at vertex v joins s unless v is an original corner of
 	// both it and each x touching v there: a corner of neither, or of one only, means one
 	// split the other at v.
-	void PatchableMesh::Patch::pullAtVertex(std::uint32_t v, const Vec2i64& p, std::span<const std::pair<EdgeSource, bool>> xs, bool takeStar) {
-		m.forEachAroundVertex(v, [&](std::int32_t t, int i) {
+	void PatchableMesh::Patch::pullAtVertex(std::uint32_t v, std::int32_t seed, std::span<const std::pair<EdgeSource, bool>> xs, bool takeStar) {
+		const Vec2i64& p = m.verts[v];
+		m.forEachAroundVertex(v, seed, [&](std::int32_t t, int i) {
 			if (takeStar) {
 				addToHole(t);
 			}
@@ -1212,7 +1380,7 @@ namespace geometry::nav {
 				if (a == b) {
 					continue;
 				}
-				pullOffGround(a, b, !c.polygon.blocked);
+				pullOffGround(a, b, !c.polygon.blocked, c.polygon.blocked ? nullptr : &c.band);
 				Vec2i64 lo = a;
 				Vec2i64 hi = a;
 				growBox(lo, hi, b);
@@ -1243,10 +1411,16 @@ namespace geometry::nav {
 						const Vec2i64& p = pts[static_cast<std::size_t>(k)];
 						if (onClosedSegment(p, a, b)) {
 							const std::pair<EdgeSource, bool> x{{id, e}, p == a || p == b};
-							pullAtVertex(tri.v[static_cast<std::size_t>(k)], p, {&x, 1}, false);
+							pullAtVertex(tri.v[static_cast<std::size_t>(k)], t, {&x, 1}, false);
 						}
 					}
 				});
+			}
+			// Bounds interiors never overlap, so the only old ground inside a new bounds ring
+			// and clear of its edges belongs to a bounds ring this patch moves or removes,
+			// whose triangles join below. A chunk-sized box query would scan the whole mesh.
+			if (!c.polygon.blocked) {
+				continue;
 			}
 			m.forEachLiveInBox(c.lo, c.hi, [&](std::int32_t t) {
 				const NavTriangle& tri = m.tris[static_cast<std::size_t>(t)];
@@ -1281,23 +1455,22 @@ namespace geometry::nav {
 				pullOffGround(a, b, !m.rings[static_cast<std::size_t>(x.ring)].polygon.blocked);
 			}
 			const std::vector<std::int32_t>& under = m.piecesOf(x);
-			std::vector<std::uint32_t>& ends = work.ends;
+			std::vector<std::pair<std::uint32_t, std::int32_t>>& ends = work.ends; // vertex, a triangle on it
 			ends.clear();
 			for (std::int32_t h : under) {
 				const std::int32_t t   = h / 3;
 				const int		   e   = h % 3;
 				const NavTriangle& tri = m.tris[static_cast<std::size_t>(t)];
 				addToHole(t);
-				ends.push_back(tri.v[static_cast<std::size_t>(e)]);
-				ends.push_back(tri.v[static_cast<std::size_t>(next3(e))]);
+				ends.push_back({tri.v[static_cast<std::size_t>(e)], t});
+				ends.push_back({tri.v[static_cast<std::size_t>(next3(e))], t});
 			}
 			std::sort(ends.begin(), ends.end());
-			ends.erase(std::unique(ends.begin(), ends.end()), ends.end());
+			ends.erase(std::unique(ends.begin(), ends.end(), [](const auto& a, const auto& b) { return a.first == b.first; }), ends.end());
 			// The whole star of each vertex: one that goes must not stay on the boundary.
-			for (std::uint32_t v : ends) {
-				const Vec2i64& p = m.verts[v];
-				const std::pair<EdgeSource, bool> one{x, isOriginalEndpoint(oldOutline(x.ring), x.edge, p)};
-				pullAtVertex(v, p, {&one, 1}, true);
+			for (const auto& [v, seed] : ends) {
+				const std::pair<EdgeSource, bool> one{x, isOriginalEndpoint(oldOutline(x.ring), x.edge, m.verts[v])};
+				pullAtVertex(v, seed, {&one, 1}, true);
 			}
 		}
 	}
@@ -1508,7 +1681,7 @@ namespace geometry::nav {
 				xs.push_back({touching[i].source, touching[i].corner});
 			}
 			const std::size_t before = work.sList.size();
-			pullAtVertex(v, m.verts[v], xs, false);
+			pullAtVertex(v, -1, xs, false);
 			grew = grew || work.sList.size() != before;
 		}
 		return !grew;
@@ -2115,7 +2288,7 @@ namespace geometry::nav {
 			return;
 		}
 		std::vector<std::int32_t> onEdge;
-		forEachAroundVertex(va->second, [&](std::int32_t t, int i) {
+		forEachAroundVertex(va->second, -1, [&](std::int32_t t, int i) {
 			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 			if (tri.v[static_cast<std::size_t>(next3(i))] == vb->second || tri.v[static_cast<std::size_t>(prev3(i))] == vb->second) {
 				onEdge.push_back(t);
@@ -2211,7 +2384,7 @@ namespace geometry::nav {
 
 	void PatchableMesh::rebuildForests() {
 		refreshWidths();
-		forests		   = buildReachabilityForests(view());
+		buildReachabilityForests(view(), forestScratch, forests);
 		forestsCurrent = true;
 	}
 
