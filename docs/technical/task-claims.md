@@ -322,17 +322,23 @@ Until then the next leg for the same root and item outranks the carry-in. Within
 (`EvaluatedOption::gatheringRank`, compared after tier and before score) is: the carry-in the colonist
 has already chosen, then a known loose pile of the item toward the root it gathers for, then a further
 cut toward it, then every other option, the carry-in it has not chosen yet included, then last a fresh
-cut for a root and item that a known pile also serves. A pile counts as a source here too: he picks up
-what he or anyone dropped before cutting again. A pile is offered for every root that wants the item,
-construction sites included; when one is offered, a fresh cut for the same root and item ranks below
-everything else in its tier, so even at the start of a trip the pile is taken up first, however far
-off it is and however near the plant. A pickup that continues a gathering lifts what still fits and is
-decided again at once, like a landed cut.
+cut for a root and item that a pile he knows he can reach also serves. A pile counts as a source here
+too: he picks up what he or anyone dropped before cutting again. A pile is offered for every root that
+wants the item, construction sites included. A fresh cut for the same root and item ranks below
+everything else in its tier only while a pile offered for them is known reachable: its reach verdict,
+remembered per source (`SourceReachMemo`), says so under the current reach key, and no nav query is
+asked to find out. A pile is tested when selection reaches it, as any option is; until then, or when it
+lies in another nav region, it ranks by distance like a cut, and one found unreachable (across water,
+inside a known wall) holds nothing back. A pile leg of a gathering is offered unless the pile is known
+unreachable, and selection tests its reach. A pickup that continues a gathering is decided again at
+once, like a landed cut.
 
 A top-up cut (one toward a root the colonist already carries goods for) is offered only when the room
 left takes at least the smaller of the source's largest yield (`amountMax`) and what the root still
 wants beyond what is carried; otherwise he delivers. So a trip of ten taking cuts of three is walked at
 nine rather than spending a fourth plant on one unit, and no tree is felled for a sliver of its wood.
+A pile leg has the same threshold: room for at least the smaller of what the pile has left for him and
+what the root still wants, so a gatherer with one unit of room does not walk to a remembered pile for it.
 A cut can still land more than fits (the first cut of a trip into a small pack), and the surplus drops
 as a pile. A source that is regrowing, unreachable, or reserved is passed over at selection, so the
 carry-in is taken as soon as no source is left.
@@ -941,8 +947,6 @@ Behaviour the code has that no doc should promise otherwise, kept here until fix
   by gathering food (tier 7, ranked above Wander) carries it until it wanders.
 - A colonist whose every pack slot, belt slot, and hand holds a tool can't make room to eat and picks
   the same source again.
-- A known loose pile of an item demotes every fresh cut for the same root and item, however far the
-  pile and however near the plant.
 - Interrupting a sleeping colonist for a higher tier leaves the Sleep action active (the switch path
   clears the task but not the Action, and ActionSystem starts a new action only when none is active).
   Not covered by a test; it may run the rest of the sleep under the next task when it arrives.

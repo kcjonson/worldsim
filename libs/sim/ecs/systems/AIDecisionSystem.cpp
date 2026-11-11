@@ -570,6 +570,22 @@ namespace ecs {
 			std::optional<float>		 carriedKg;
 		};
 
+		/// What the colonist's reach verdicts already say of a remembered pile, asking no nav query: a pile
+		/// in another region, or one selection has not tested under the current reach, is neither. With no
+		/// mesh nothing is provably unreachable, so every pile is known reachable.
+		struct PileReach {
+			const NavigationSystem*		   nav = nullptr;
+			const NavigationSystem::Reach* reach = nullptr;
+			const SourceReachMemo*		   memo = nullptr;
+
+			[[nodiscard]] bool knownReachable(uint64_t key, glm::vec2 at) const {
+				return reach == nullptr || (memo->knownReachable(key) && nav->sharesStartRegion(*reach, at));
+			}
+			[[nodiscard]] bool knownUnreachable(uint64_t key, glm::vec2 at) const {
+				return reach != nullptr && memo->knownUnreachable(key) && nav->sharesStartRegion(*reach, at);
+			}
+		};
+
 		/// Evaluate haul options that go and get goods: loose piles and lower-priority boxes for a
 		/// storage umbrella, and remembered loose stock for a craft's fetch child. Each is sized to
 		/// what the root still wants (RootSupply::toAcquire) and one trip's carry. Goods already
@@ -583,6 +599,7 @@ namespace ecs {
 			PickupRoom&					 pickupRoom,
 			const Inventory&			 inventory,
 			const glm::vec2&			 position,
+			const PileReach&			 pileReach,
 			std::vector<RootItem>&		 offeredPiles,
 			DecisionTrace&				 trace
 		) {
@@ -618,6 +635,7 @@ namespace ecs {
 				option.haulItemDefNameId = itemDefNameId;
 				option.haulQuantity = quantity;
 				option.haulSourcePosition = looseItem.position;
+				option.haulSourceKey = source.key;
 				option.haulTargetStorageId = static_cast<uint64_t>(goal.destinationEntity);
 				option.haulTargetPosition = goal.destinationPosition;
 				option.haulGoalId = goal.id;
@@ -639,19 +657,20 @@ namespace ecs {
 
 			// Every remembered pile of the item toward `rootId`, each sized to what it still has for this
 			// colonist, so a fetch never claims more than its source can give. A pile toward a root the
-			// colonist gathers for is a leg of that trip: it lifts what still fits beside the goods it
-			// carries, and it is taken up before another plant is cut.
+			// colonist gathers for is a leg of that trip, taken up before another plant is cut, when he has
+			// room for the smaller of what it has left for him and what the root still wants (the top-up
+			// cut's rule) and it is not known unreachable; selection tests its reach as it tests any leg. Only a
+			// pile already known reachable holds a fresh cut for the same root and item back (offeredPiles),
+			// so a remembered pile across water, or one never tested, leaves cutting where distance puts it.
 			const auto pushPileHauls = [&](const GoalTask& goal, uint64_t rootId, uint32_t itemDefNameId, uint32_t quantity, bool craftFetch) {
-				const bool gathering = supply.gathersFor(rootId, itemDefNameId);
-				if (gathering) {
-					quantity = std::min(quantity, pickupRoom(registry.getDefName(itemDefNameId)));
-					if (quantity == 0) {
-						return;
-					}
+				const bool	   gathering = supply.gathersFor(rootId, itemDefNameId);
+				const uint32_t room = gathering ? pickupRoom(registry.getDefName(itemDefNameId)) : 0U;
+				if (gathering && room == 0) {
+					return;
 				}
 				const int8_t				 rank = gathering ? kRankLoosePile : int8_t{0};
 				NearestReserved<CarrySource> reserved;
-				bool						 offered = false;
+				bool						 knownOffered = false;
 				for (const CarrySource& source : sources.carryablesOf(itemDefNameId)) {
 					const glm::vec2 at = source.entity->position;
 					const float		trip = glm::distance(position, at) + glm::distance(at, goal.destinationPosition);
@@ -660,11 +679,15 @@ namespace ecs {
 						reserved.reserved(trip, source);
 						continue;
 					}
+					const uint32_t take = std::min(quantity, left);
+					if (gathering && (room < take || pileReach.knownUnreachable(source.key, at))) {
+						continue;
+					}
 					reserved.offered(trip);
-					offered = true;
-					pushLooseHaul(goal, source, itemDefNameId, std::min(quantity, left), craftFetch, rank, kInvalidEntity);
+					knownOffered = knownOffered || pileReach.knownReachable(source.key, at);
+					pushLooseHaul(goal, source, itemDefNameId, take, craftFetch, rank, kInvalidEntity);
 				}
-				if (offered) {
+				if (knownOffered) {
 					offeredPiles.push_back({.root = rootId, .item = itemDefNameId});
 				}
 				if (reserved.shown()) {
@@ -2523,7 +2546,10 @@ namespace ecs {
 		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
 		m_offeredPiles.clear();
-		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, m_offeredPiles, trace);
+		const PileReach pileReach{.nav = m_navSystem, .reach = reach.has_value() ? &*reach : nullptr, .memo = &sourceReach};
+		evaluateHaulOptions(
+			world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, pileReach, m_offeredPiles, trace
+		);
 		evaluateCarryInOptions(supply, m_carried, position.value, trace);
 		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, skills, m_offeredPiles, trace);
 
@@ -2643,9 +2669,9 @@ namespace ecs {
 			}
 			// A cut's reach is remembered under its source like a need's, so the flagged cuts sorted ahead of
 			// the carry-in are not tested afresh at every decision while the colonist cuts and deposits.
-			const bool reachable = option.targetReachable || (option.taskType == TaskType::Harvest
-																  ? canReachSource(option.harvestTargetEntityId, option.targetPosition.value())
-																  : canReach(option.targetPosition.value()));
+			const bool reachable = option.targetReachable || (option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetEntityId, option.targetPosition.value())
+															  : option.haulSourceKey != 0 ? canReachSource(option.haulSourceKey, option.targetPosition.value())
+																						  : canReach(option.targetPosition.value()));
 			if (needsTarget && !reachable) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
 				continue;

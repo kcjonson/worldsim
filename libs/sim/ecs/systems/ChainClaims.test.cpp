@@ -1970,6 +1970,35 @@ namespace ecs::test {
 		EXPECT_EQ(carriedFibre(colonist) + onTheGround(fibreId), 3U * static_cast<uint32_t>(cut.size())) << "nothing cut is lost";
 	}
 
+	// Nine fibre carried toward a site that wants more, room for one: a remembered pile of five is no leg
+	// worth walking for one unit, the top-up cut's rule, so he delivers what he has.
+	TEST_F(ChainWalkTest, APileIsNoLegForTheLastUnitOfRoom) {
+		const Site	   site = fibreSite({0.0F, 12.0F}, 20);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		ASSERT_EQ(world->getComponent<Inventory>(colonist)->addItem("Fibre", 9), 9U);
+		Task& task = *getTask(colonist);
+		task.type = TaskType::Harvest;
+		task.state = TaskState::Moving;
+		task.targetPosition = {50.0F, 50.0F};
+		task.harvestTargetEntityId = 1;
+		task.harvestYieldDefNameId = fibreId;
+		task.priorityTier = 4;
+		task.instanceId = GoalTaskRegistry::Get().allocateClaimSeq();
+		task.claimSeq = task.instanceId;
+		ASSERT_TRUE(task.claims.push(Claim::inbound(static_cast<uint64_t>(site.blueprint), fibreId, 9)));
+		ASSERT_TRUE(task.claims.push(Claim::inFlight(site.umbrella, fibreId, 9)));
+		const glm::vec2 pilePos{30.0F, 0.0F};
+		const EntityID	pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{pilePos});
+		makeLoosePile(*world, pile, fibreId, pilePos, 5);
+		remember(colonist, pilePos, "Fibre", assets::CapabilityType::Carryable);
+
+		decide(colonist);
+		EXPECT_EQ(task.type, TaskType::Haul);
+		EXPECT_TRUE(task.haulFromInventory) << "the carry-in, not the pile";
+		EXPECT_EQ(task.haulGoalId, site.umbrella);
+	}
+
 	// With an armful of wood from his first cut he walks to a second tree, which is felled by someone else
 	// on the way: he carries in what he has instead of standing at the stump.
 	TEST_F(ChainWalkTest, ATreeGoneOnTheWayToATopUpCutSendsTheArmfulIn) {

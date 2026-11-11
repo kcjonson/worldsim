@@ -55,6 +55,11 @@ namespace ecs {
 			return it != verdicts.end() && !it->second;
 		}
 
+		/// A source already found reachable under the current key.
+		[[nodiscard]] bool knownReachable(std::uint64_t sourceKey) const {
+			const auto it = verdicts.find(sourceKey);
+			return it != verdicts.end() && it->second;
+		}
 		/// A route to this source failed under the current key: it's unreachable whatever a probe said.
 		void recordUnreachable(std::uint64_t sourceKey) { verdicts[sourceKey] = false; }
 

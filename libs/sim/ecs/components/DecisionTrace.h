@@ -73,6 +73,7 @@ namespace ecs {
 		uint32_t				 haulQuantity = 1;		  // Quantity to haul
 		std::optional<glm::vec2> haulSourcePosition;	  // Where to pick up from
 		uint64_t				 haulSourceStorageId = 0; // Source box entity ID for a storage->storage pull (0 = loose/inventory source)
+		uint64_t				 haulSourceKey = 0;		  // Memory key of a loose pile source, 0 for any other
 		uint64_t				 haulTargetStorageId = 0; // Storage container entity ID
 		std::optional<glm::vec2> haulTargetPosition;	  // Where to deposit
 		uint64_t				 haulGoalId = 0;		  // Goal being fulfilled

@@ -4914,6 +4914,92 @@ namespace ecs::test {
 		EXPECT_EQ(*thirst->targetPosition, ownRegion) << "the water in the other region can't be routed to";
 	}
 
+	// A loose pile of wood remembered inside a known wall can't be reached. It holds back no cut for the
+	// site that wants the wood: the tree beside the colonist is cut ahead of a farther site's work in the
+	// same tier, as distance puts it, and the pile, once found unreachable, stays without effect.
+	TEST_F(AIDecisionWallTest, AnUnreachablePileHoldsNoCutBack) {
+		auto& registry = assets::AssetRegistry::Get();
+		const auto registerItem = [&](const char* name, uint8_t hands) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.handsRequired = hands;
+			def.category = assets::ItemCategory::RawMaterial;
+			def.capabilities.carryable = assets::CarryableCapability{1};
+			def.itemProperties = assets::ItemProperties{};
+			def.itemProperties->stackSize = 40;
+			def.itemProperties->massKg = 1.0F;
+			registry.registerTestDefinition(std::move(def));
+		};
+		const auto registerPlant = [&](const char* name, const char* yield) {
+			assets::AssetDefinition def;
+			def.defName = name;
+			def.label = name;
+			def.capabilities.harvestable = assets::HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+			def.capabilities.harvestable->amountMin = 2;
+			def.capabilities.harvestable->amountMax = 2;
+			registry.registerTestDefinition(std::move(def));
+		};
+		registerItem("Wood", 2);
+		registerItem("Stick", 1);
+		registerPlant("Oak", "Wood");
+		registerPlant("StickBush", "Stick");
+		const auto site = [&](glm::vec2 at, const char* item) {
+			const EntityID blueprint = world->createEntity();
+			world->addComponent<Position>(blueprint, Position{at});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
+			bp.required = {{item, 10}};
+			world->addComponent<StructureBlueprint>(blueprint, std::move(bp));
+			GoalTask umbrella;
+			umbrella.type = TaskType::Build;
+			umbrella.owner = GoalOwner::ConstructionGoalSystem;
+			umbrella.destinationEntity = blueprint;
+			umbrella.destinationPosition = at;
+			umbrella.acceptedDefNameIds = {registry.getDefNameId(item)};
+			umbrella.status = GoalStatus::Blocked;
+			const uint64_t umbrellaId = GoalTaskRegistry::Get().createGoal(std::move(umbrella));
+			GoalTask cut;
+			cut.type = TaskType::Harvest;
+			cut.owner = GoalOwner::ConstructionGoalSystem;
+			cut.destinationEntity = blueprint;
+			cut.destinationPosition = at;
+			cut.yieldDefNameId = registry.getDefNameId(item);
+			cut.parentGoalId = umbrellaId;
+			GoalTaskRegistry::Get().createGoal(std::move(cut));
+		};
+		site({0.0F, 4.0F}, "Wood");
+		site({0.0F, -4.0F}, "Stick");
+
+		const auto commit = construction.commitSegment({8000, -2000}, {8000, 2000}, "Wood", "Standard", construction::kInvalidFoundation);
+		ASSERT_TRUE(commit.ok());
+		for (const auto id : commit.createdSegments) {
+			construction.setSegmentState(id, construction::FoundationState::Built);
+		}
+		const auto colonist = createColonist(kStart);
+		satisfyAllNeeds(*getNeeds(colonist));
+		auto* memory = world->getComponent<Memory>(colonist);
+		for (const auto id : commit.createdSegments) {
+			memory->rememberSegment(static_cast<std::uint64_t>(id));
+		}
+		addKnownEntity(colonist, {2.0F, 1.0F}, registry.getDefNameId("Oak"), assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, {-6.0F, 0.0F}, registry.getDefNameId("StickBush"), assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, kBush, registry.getDefNameId("Wood"), assets::CapabilityType::Carryable);
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh());
+		ASSERT_FALSE(canReachBush(colonist)) << "the pile in the wall must be unreachable";
+
+		for (int decision = 0; decision < 3; ++decision) {
+			getTask(colonist)->clear();
+			world->update(kTick);
+			const auto* chosen = getTrace(colonist)->getSelected();
+			ASSERT_NE(chosen, nullptr);
+			EXPECT_EQ(chosen->taskType, TaskType::Harvest) << "decision " << decision;
+			EXPECT_EQ(chosen->harvestYieldDefNameId, registry.getDefNameId("Wood")) << "decision " << decision;
+		}
+	}
+
 	// Water in a room whose walls the colonist knows: the forest the pre-check uses treats walls as
 	// open, so the room passes it, but the believed route fails. Another water source sits outside.
 	class AIDecisionWalledWaterTest : public AIDecisionWallTest {
