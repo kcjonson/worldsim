@@ -1,8 +1,7 @@
 #pragma once
 
-// OverlapGrid - which of a frame's instanced runs last drew over each patch of the screen, so
-// InstancedEntityRenderer can tell whether an entity may join an earlier run without changing what
-// overlaps what. Cells are a few screen pixels, so the test follows each entity's real footprint at
+// OverlapGrid - the latest of a frame's instanced draws over each patch of the screen, so
+// RunPlanner can tell how early an entity may draw without changing what overlaps what. Cells are a few screen pixels, so the test follows each entity's real footprint at
 // every zoom: far out, where a tree is a couple of pixels across, trees that don't touch don't
 // collide just because they share a cell sized for the whole view.
 
@@ -18,11 +17,16 @@ class OverlapGrid {
 	// Side of a cell in screen pixels.
 	static constexpr float kCellPixels = 4.0F;
 
-	// A footprint is widened by this much on every side, so antialiased or rounded edges that
-	// spill past the mesh's bounds still count as overlap.
-	static constexpr float kPadPixels = 1.0F;
+	// A footprint is shrunk by this much on every side, so two whose bounds overlap by about a pixel
+	// may draw in either order: the corners of two round crowns' boxes, or one pixel of an edge
+	// (instanced meshes are not antialiased). Measured on the river view against exact order (a
+	// footprint widened by 1 px): at zoom 0.5, 15 of 5.3M pixels changed, all isolated one- and
+	// two-pixel specks of one leaf tone for another, and upright draws fell from 2,018 to 603; at
+	// zoom 0.25, 119 pixels; at zooms 1 and 3, none.
+	static constexpr float kTolerancePixels = 0.5F;
 
-	// The cells a footprint covers (x0 > x1: none, for one wholly off the screen).
+	// The cells a footprint covers (x0 > x1: none, for one wholly off the screen or narrower than
+	// twice the tolerance).
 	struct Cells {
 		uint32_t x0 = 1;
 		uint32_t y0 = 1;
@@ -39,7 +43,7 @@ class OverlapGrid {
 	/// The latest run key marked on any of these cells this frame (0: none).
 	[[nodiscard]] uint32_t latest(const Cells& cells) const;
 
-	/// Mark these cells as last drawn by `runKey` (1 + run index), which is at least latest(cells).
+	/// Mark these cells as drawn over by `runKey` (RunPlanner's, 1 and up); a cell keeps its largest.
 	void mark(const Cells& cells, uint32_t runKey);
 
   private:

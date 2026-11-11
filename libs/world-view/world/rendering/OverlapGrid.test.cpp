@@ -4,11 +4,19 @@
 
 namespace worldview {
 
-	TEST(OverlapGrid, FootprintsThatShareAPixelCollide) {
+	TEST(OverlapGrid, OverlappingFootprintsCollide) {
 		OverlapGrid grid;
 		grid.beginFrame(400, 300);
 		grid.mark(grid.cellsOf({100.0F, 100.0F}, {110.0F, 110.0F}), 3);
-		EXPECT_EQ(grid.latest(grid.cellsOf({110.0F, 105.0F}, {120.0F, 115.0F})), 3U);
+		EXPECT_EQ(grid.latest(grid.cellsOf({106.0F, 105.0F}, {120.0F, 115.0F})), 3U);
+	}
+
+	// Bounds that overlap by under a pixel (kTolerancePixels a side) may swap.
+	TEST(OverlapGrid, FootprintsOverlappingByUnderAPixelDoNotCollide) {
+		OverlapGrid grid;
+		grid.beginFrame(400, 300);
+		grid.mark(grid.cellsOf({100.0F, 100.0F}, {108.4F, 110.0F}), 3);
+		EXPECT_EQ(grid.latest(grid.cellsOf({107.6F, 100.0F}, {116.0F, 110.0F})), 0U);
 	}
 
 	// Far out a tree is a couple of pixels across; two of them a few cells apart must not
