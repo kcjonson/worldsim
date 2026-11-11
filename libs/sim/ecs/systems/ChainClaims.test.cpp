@@ -2830,6 +2830,49 @@ namespace ecs::test {
 			<< "and are delivered once it has eaten";
 	}
 
+	// Turning critical on the way to a pile, he keeps the same task but its meal grows to what the
+	// critical hunger needs, and the share of the pile it claims grows with it.
+	TEST_F(HungerWalkTest, AMealGrowsWhenHungerTurnsCriticalOnTheWay) {
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const glm::vec2 pilePos{8.0F, 0.0F};
+		berryPile(pilePos, 5, {colonist});
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needQuantity, 1U);
+		const uint64_t instance = getTask(colonist)->instanceId;
+
+		world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = 5.0F;
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->instanceId, instance) << "the same meal, kept";
+		EXPECT_EQ(getTask(colonist)->priorityTier, 2);
+		EXPECT_EQ(getTask(colonist)->needQuantity, 2U) << "two berries take hunger from 5 past 50";
+		EXPECT_EQ(ai->claimIndex().sourceClaimed({.kind = TargetKind::WorldKey, .key = hashWorldEntity(pilePos, berryId)}, berryId, {}), 2U);
+	}
+
+	// A box holding two kinds of food hands out the same one whatever the platform's heap order: ties
+	// between items in one box (which share its key) go to the lower item id.
+	TEST_F(HungerWalkTest, ABoxWithTwoFoodsHandsOutTheLowerItemId) {
+		registerItem("Nut", 1, 0.1F, 1, /*edible=*/true);
+		const uint32_t nutId = assets::AssetRegistry::Get().getDefNameId("Nut");
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({4.0F, 0.0F}, 2, {colonist});
+		world->getComponent<Inventory>(box)->addItem("Nut", 2);
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->needSourceStorageId, static_cast<uint64_t>(box));
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, std::min(berryId, nutId));
+	}
+
+	// A box with no appearance has no world key, so no colonist knows it, and it is never a food source.
+	TEST_F(HungerWalkTest, ABoxWithNoAppearanceIsNoFoodSource) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({4.0F, 0.0F}, 2, {colonist});
+		world->removeComponent<Appearance>(box);
+
+		decide(colonist);
+		EXPECT_NE(getTask(colonist)->type, TaskType::FulfillNeed);
+		EXPECT_NE(optionOf(colonist, TaskType::FulfillNeed, OptionStatus::NoSource), nullptr);
+	}
+
 	// The box he walks to is packaged to be moved before he gets there: he decides again, eats from the
 	// pile he also knows, and never goes back to the box.
 	TEST_F(HungerWalkTest, ABoxPackagedOnTheWaySendsHimToOtherFood) {

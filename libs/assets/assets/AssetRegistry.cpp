@@ -2188,7 +2188,12 @@ namespace assets {
 		// Check if already registered
 		auto it = m_defNameToId.find(defName);
 		if (it != m_defNameToId.end()) {
-			return it->second; // Already registered, return existing ID
+			// A name first interned as an undefined harvest yield has an id but no definition and no
+			// capabilities; the synthetic definition gives it its capabilities. A real definition keeps its own.
+			if (m_idToDefinition[it->second] == nullptr) {
+				m_capabilityMasks[it->second] = capabilityMask;
+			}
+			return it->second;
 		}
 
 		// Assign new ID

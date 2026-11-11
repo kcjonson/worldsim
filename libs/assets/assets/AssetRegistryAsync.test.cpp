@@ -180,3 +180,30 @@ TEST(AssetRegistryYieldIndexTest, ReregisteredDefinitionMovesToItsNewYield) {
 	reg.clearDefinitions();
 	EXPECT_TRUE(reg.harvestablesYielding(yieldB).empty());
 }
+
+// A synthetic definition whose name was first interned as an undefined harvest yield keeps that id and
+// takes its capabilities; a real definition's capabilities are not replaced by a synthetic registration.
+TEST(AssetRegistryYieldIndexTest, ASyntheticDefinitionNamedAsAYieldTakesItsCapabilities) {
+	auto& reg = AssetRegistry::Get();
+	reg.clearDefinitions();
+	AssetDefinition spring;
+	spring.defName = "Test_Spring";
+	spring.capabilities.harvestable = HarvestableCapability{};
+	spring.capabilities.harvestable->yieldDefName = "Test_SynthWater";
+	reg.registerTestDefinition(std::move(spring));
+	const uint32_t interned = reg.getDefNameId("Test_SynthWater");
+	ASSERT_NE(interned, 0U);
+	ASSERT_EQ(reg.getCapabilityMask(interned), 0U);
+
+	const auto	   drinkable = static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Drinkable));
+	const uint32_t id = reg.registerSyntheticDefinition("Test_SynthWater", drinkable);
+	EXPECT_EQ(id, interned);
+	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Drinkable));
+
+	const uint32_t springId = reg.getDefNameId("Test_Spring");
+	const uint16_t springMask = reg.getCapabilityMask(springId);
+	EXPECT_EQ(reg.registerSyntheticDefinition("Test_Spring", drinkable), springId);
+	EXPECT_EQ(reg.getCapabilityMask(springId), springMask) << "a real definition keeps its own capabilities";
+
+	reg.clearDefinitions();
+}

@@ -390,7 +390,9 @@ box the colony knows (the `ColonyStorageKnowledge` rule the box-to-box pull uses
 item. A box's own minimum does not keep its food from a hungry colonist; stored food is the buffer
 between harvests. One meal is what takes the need back to its seek threshold at the item's
 nutrition, at least one unit, capped by what the source has left for this colonist; what the pack
-holds does not size it. A bush is cut whole, as before, because a cut gives what it gives; a pile or
+holds does not size it. It is sized again at every decision that keeps the task, so a colonist who
+turns critical on the way takes the larger meal, and its claim on a pile or box follows. Between two
+foods in one box, the lower item id is taken first. A bush is cut whole, as before, because a cut gives what it gives; a pile or
 box gives the meal and no more, because stored food is the colony's and anything taken past the meal
 would become one colonist's provisions, out of everyone else's reach. The pickup or withdraw ends the
 task and the next decision eats from the pack, the way a harvest does.

@@ -1725,6 +1725,18 @@ namespace ecs {
 					// change, e.g. PlacePackaged promotes to tier 4 when the colonist starts carrying).
 					task.priorityTier = newTier;
 					task.priority = newScore;
+					// A meal is sized to the hunger at each decision: one who turns critical on the way takes
+					// the larger meal, and the source share it claims follows.
+					if (task.type == TaskType::FulfillNeed && task.needToFulfill == NeedType::Hunger &&
+						task.needQuantity != selected->needQuantity) {
+						task.needQuantity = selected->needQuantity;
+						for (Claim& claim : task.claims) {
+							if (claim.kind() == ClaimKind::SourceQuantity) {
+								claim.setQuantity(task.needQuantity);
+							}
+						}
+						m_claims.append(entity, task);
+					}
 				}
 
 				// If action in progress, check if we can/should interrupt. Tier is inviolable; the
@@ -1832,17 +1844,19 @@ namespace ecs {
 					m_foodBoxes.push_back({.box = box, .position = boxPos.value, .item = item, .quantity = stack.quantity});
 				}
 			}
-			// Colony-placed storage is common colony knowledge, the rule the box-to-box pull uses.
-			if (m_foodBoxes.size() > first && !m_colonyStorage.knows(*world, m_registry, box)) {
+			if (m_foodBoxes.size() == first) {
+				continue;
+			}
+			// Colony-placed storage is common colony knowledge, the rule the box-to-box pull uses. A box with
+			// no appearance has no world key, so no colonist can know it.
+			const auto* appearance = world->getComponent<Appearance>(box);
+			if (appearance == nullptr || !m_colonyStorage.knows(*world, m_registry, box)) {
 				m_foodBoxes.resize(first);
 				continue;
 			}
-			if (m_foodBoxes.size() > first) {
-				const auto*	   appearance = world->getComponent<Appearance>(box);
-				const uint64_t key = hashWorldEntity(boxPos.value, m_registry.getDefNameId(appearance->defName));
-				for (size_t index = first; index < m_foodBoxes.size(); ++index) {
-					m_foodBoxes[index].key = key;
-				}
+			const uint64_t key = hashWorldEntity(boxPos.value, m_registry.getDefNameId(appearance->defName));
+			for (size_t index = first; index < m_foodBoxes.size(); ++index) {
+				m_foodBoxes[index].key = key;
 			}
 		}
 		return m_foodBoxes;
@@ -2124,10 +2138,11 @@ namespace ecs {
 						sourceScratch.push_back(candidate);
 					}
 				}
-				for (const FoodBox& food : boxes) {
-					SourceCandidate candidate = sourceCandidate(position.value, food.key, food.position);
-					candidate.item = food.item;
-					candidate.storage = food.box;
+				for (size_t index = 0; index < boxes.size(); ++index) {
+					SourceCandidate candidate = sourceCandidate(position.value, boxes[index].key, boxes[index].position);
+					candidate.item = boxes[index].item;
+					candidate.storage = boxes[index].box;
+					candidate.storageIndex = static_cast<uint32_t>(index);
 					sourceScratch.push_back(candidate);
 				}
 			}
@@ -2178,10 +2193,7 @@ namespace ecs {
 				const uint32_t			meal = mealOf(source.item);
 				std::optional<uint32_t> live;
 				if (source.storage != kInvalidEntity) {
-					const auto food = std::find_if(m_foodBoxes.begin(), m_foodBoxes.end(), [&](const FoodBox& box) {
-						return box.box == source.storage && box.item == source.item;
-					});
-					live = food->quantity;
+					live = m_foodBoxes[source.storageIndex].quantity;
 				} else if (const EntityID pile = m_loosePiles != nullptr ? m_loosePiles->find(*world, source.item, source.position) : kInvalidEntity;
 						   pile != kInvalidEntity) {
 					live = world->getComponent<ResourceStack>(pile)->quantity;

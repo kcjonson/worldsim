@@ -35,8 +35,9 @@ namespace ecs {
 	assets::CapabilityType		  capability);
 
 /// A source and its squared distance, as nearestReachable orders them. A remembered world entity has
-/// `entity`; a storage box the colony knows has `storage` instead, `key` its world key, and `item` what
-/// it is a source of (also set for a loose pile, whose entity is the item itself).
+/// `entity`; a storage box the colony knows has `storage` instead, `key` its world key, `item` what it is
+/// a source of (also set for a loose pile, whose entity is the item itself), and `storageIndex` its place
+/// in the caller's list of boxes.
 struct SourceCandidate {
 	float					distSq;
 	uint64_t				key;
@@ -44,14 +45,16 @@ struct SourceCandidate {
 	glm::vec2				position;
 	uint32_t				item = 0;
 	EntityID				storage = kInvalidEntity;
+	uint32_t				storageIndex = 0;
 };
 
-/// Pop `scratch`'s candidates nearest first, ties broken by key so the pick is deterministic, until
+/// Pop `scratch`'s candidates nearest first, ties broken by key and then item (every item in one box shares
+/// the box's key) so the pick is deterministic, until
 /// `reachable(candidate)` admits one. O(n + k log n) for the k-th nearest, plus k `reachable` calls.
 template <typename Reachable>
 [[nodiscard]] std::optional<SourceCandidate> nearestReachable(std::vector<SourceCandidate>& scratch, Reachable&& reachable) {
 	const auto farther = [](const SourceCandidate& a, const SourceCandidate& b) {
-		return std::tie(a.distSq, a.key) > std::tie(b.distSq, b.key);
+		return std::tie(a.distSq, a.key, a.item) > std::tie(b.distSq, b.key, b.item);
 	};
 	std::make_heap(scratch.begin(), scratch.end(), farther);
 	while (!scratch.empty()) {
