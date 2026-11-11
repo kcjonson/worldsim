@@ -1094,11 +1094,17 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 
+		// The first to decide fetches a pile before it cuts; its fetch covers the box's minimum, so the
+		// second is offered no cut.
 		for (EntityID colonist : {lean, full}) {
 			const auto& options = getTrace(colonist)->options;
 			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; }), kPiles);
-			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }), kTrees);
+			EXPECT_EQ(
+				std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }),
+				colonist == lean ? kTrees : 0
+			);
 		}
+		EXPECT_EQ(getTask(lean)->type, TaskType::Haul);
 
 #ifdef DEVELOPMENT_BUILD
 		// Per colonist: each goal visits only the sources of its item. The 9,990 waters add nothing.

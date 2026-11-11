@@ -318,27 +318,29 @@ namespace ecs {
 			}
 		}
 
-		/// The cargo `task` hands to `selected` when it is the next leg of the same gathering: a cut, or a
-		/// carry-in, for the root and item the task carries goods toward.
+		/// Within a tier, where an option stands in a gathering trip (EvaluatedOption::gatheringRank).
+		constexpr int8_t kRankDemotedCut = -1; // a fresh cut for a root and item a known pile also serves
+		constexpr int8_t kRankFurtherCut = 1;  // a cut toward the root the colonist gathers for
+		constexpr int8_t kRankLoosePile = 2;   // a pile toward the root the colonist gathers for
+
+		/// The cargo `task` hands to `selected` when it is the next leg of the same gathering: a cut, a
+		/// pile pickup, or the carry-in, for the root and item the task carries goods toward.
 		[[nodiscard]] std::optional<SuspendedWork> nextGatheringLeg(const EvaluatedOption& selected, const Task& task) {
 			const auto& goals = GoalTaskRegistry::Get();
 			if (selected.taskType == TaskType::Harvest) {
 				return handOverCargo(task, goals.rootOf(selected.harvestGoalId), selected.harvestYieldDefNameId);
 			}
-			if (selected.taskType == TaskType::Haul && selected.haulFromInventory) {
+			const bool pileLeg = selected.haulSourceStorageId == 0 && selected.gatheringRank == kRankLoosePile;
+			if (selected.taskType == TaskType::Haul && (selected.haulFromInventory || pileLeg)) {
 				return handOverCargo(task, goals.rootOf(selected.haulGoalId), selected.haulItemDefNameId);
 			}
 			return std::nullopt;
 		}
 
-		/// Does the task hold goods of its chain: a haul or placement past its pickup, or a cut carrying
-		/// what earlier cuts landed?
-		[[nodiscard]] bool carriesChainGoods(const Task& task) {
-			if (task.chainStep > 0) {
-				return true;
-			}
-			return task.type == TaskType::Harvest &&
-				   std::any_of(task.claims.begin(), task.claims.end(), [](const Claim& claim) { return claim.kind() == ClaimKind::Inbound; });
+		/// Does the task hold goods of its chain: a haul or placement past its pickup, or a cut or pile
+		/// pickup carrying what earlier legs of its gathering landed?
+		[[nodiscard]] bool carriesChainGoods(const assets::AssetRegistry& registry, const Task& task) {
+			return task.chainStep > 0 || taskCargo(registry, task) > 0;
 		}
 
 		/// Populate the (tier, score) arbitration key for an evaluated option.
@@ -450,6 +452,9 @@ namespace ecs {
 				const uint32_t carried = need > 0 ? cargo(root, item) : 0U;
 				return need > carried ? need - carried : 0U;
 			}
+			/// Is the colonist gathering for this root and item: does its task or suspended record carry
+			/// goods toward it?
+			[[nodiscard]] bool gathersFor(uint64_t root, uint32_t item) const { return claimedCargo(task, root, item) > 0; }
 			/// What the colonist carries of the item that it would deliver to this root; its own food is not.
 			[[nodiscard]] uint32_t cargo(uint64_t root, uint32_t item) const {
 				const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(item));
@@ -551,6 +556,7 @@ namespace ecs {
 			PickupRoom&					 pickupRoom,
 			const Inventory&			 inventory,
 			const glm::vec2&			 position,
+			std::vector<RootItem>&		 offeredPiles,
 			DecisionTrace&				 trace
 		) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
@@ -572,7 +578,7 @@ namespace ecs {
 			};
 
 			const auto pushLooseHaul = [&](const GoalTask& goal, const CarrySource& source, uint32_t itemDefNameId, uint32_t quantity,
-										   bool craftFetch, EntityID reservedBy) {
+										   bool craftFetch, int8_t rank, EntityID reservedBy) {
 				const KnownWorldEntity& looseItem = *source.entity;
 				EvaluatedOption			option;
 				option.taskType = TaskType::Haul;
@@ -591,19 +597,33 @@ namespace ecs {
 				// Fetching loose stock to provision a started craft is committed work (tier 4), so a far
 				// pile can't strand a half-provisioned craft.
 				option.servesActiveWorkOrder = craftFetch;
+				option.gatheringRank = rank;
 				// Tiebreak on (goal, source item) so two equidistant loose items for the same goal resolve
 				// deterministically rather than by memory's hash order.
 				option.tiebreakId = goal.id ^ (source.key << 1);
 				option.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
 				option.reservedBy = reservedBy;
-				option.reason = craftFetch ? "Fetching {} for crafting" : "Hauling {} to storage";
+				option.reason = goal.type == TaskType::Build ? "Fetching {} for a build site"
+								: craftFetch				 ? "Fetching {} for crafting"
+															 : "Hauling {} to storage";
 				trace.options.push_back(std::move(option));
 			};
 
-			// Every remembered pile of the item, each sized to what it still has for this colonist, so a
-			// fetch never claims more than its source can give.
-			const auto pushPileHauls = [&](const GoalTask& goal, uint32_t itemDefNameId, uint32_t quantity, bool craftFetch) {
+			// Every remembered pile of the item toward `rootId`, each sized to what it still has for this
+			// colonist, so a fetch never claims more than its source can give. A pile toward a root the
+			// colonist gathers for is a leg of that trip: it lifts what still fits beside the goods it
+			// carries, and it is taken up before another plant is cut.
+			const auto pushPileHauls = [&](const GoalTask& goal, uint64_t rootId, uint32_t itemDefNameId, uint32_t quantity, bool craftFetch) {
+				const bool gathering = supply.gathersFor(rootId, itemDefNameId);
+				if (gathering) {
+					quantity = std::min(quantity, pickupRoom(registry.getDefName(itemDefNameId)));
+					if (quantity == 0) {
+						return;
+					}
+				}
+				const int8_t				 rank = gathering ? kRankLoosePile : int8_t{0};
 				NearestReserved<CarrySource> reserved;
+				bool						 offered = false;
 				for (const CarrySource& source : sources.carryablesOf(itemDefNameId)) {
 					const glm::vec2 at = source.entity->position;
 					const float		trip = glm::distance(position, at) + glm::distance(at, goal.destinationPosition);
@@ -613,13 +633,17 @@ namespace ecs {
 						continue;
 					}
 					reserved.offered(trip);
-					pushLooseHaul(goal, source, itemDefNameId, std::min(quantity, left), craftFetch, kInvalidEntity);
+					offered = true;
+					pushLooseHaul(goal, source, itemDefNameId, std::min(quantity, left), craftFetch, rank, kInvalidEntity);
+				}
+				if (offered) {
+					offeredPiles.push_back({.root = rootId, .item = itemDefNameId});
 				}
 				if (reserved.shown()) {
 					const auto holder =
 						supply.claims.sourceHolder({.kind = TargetKind::WorldKey, .key = reserved.source->key}, itemDefNameId, supply.self);
 					if (holder.has_value()) {
-						pushLooseHaul(goal, *reserved.source, itemDefNameId, quantity, craftFetch, holder->colonist);
+						pushLooseHaul(goal, *reserved.source, itemDefNameId, quantity, craftFetch, rank, holder->colonist);
 					}
 				}
 			};
@@ -765,7 +789,7 @@ namespace ecs {
 							continue;
 						}
 						const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-						pushPileHauls(goal, *acceptedIt, quantity, /*craftFetch=*/true);
+						pushPileHauls(goal, craft->id, *acceptedIt, quantity, /*craftFetch=*/true);
 					}
 					return;
 				}
@@ -806,7 +830,7 @@ namespace ecs {
 						return;
 					}
 					const uint32_t quantity = std::min(want, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-					pushPileHauls(goal, itemDefNameId, quantity, /*craftFetch=*/false);
+					pushPileHauls(goal, goal.id, itemDefNameId, quantity, /*craftFetch=*/false);
 				};
 
 				// The items it names: their loose piles and their pulls from lower-priority boxes.
@@ -839,6 +863,31 @@ namespace ecs {
 							emitLooseHauls(defNameId, destWant);
 						}
 					}
+				}
+			});
+
+			// A construction site takes the known loose piles of a material it is due, the overflow of a
+			// fell among them, so a pile is carried in before another plant is cut for the site.
+			goalRegistry.forEachGoalOfType(TaskType::Build, [&](const GoalTask& site) {
+				if (site.owner != GoalOwner::ConstructionGoalSystem) {
+					return;
+				}
+				const auto& due = site.acceptedDefNameIds;
+				for (auto dueIt = due.begin(); dueIt != due.end(); ++dueIt) {
+					if (std::find(due.begin(), dueIt, *dueIt) != dueIt || sources.knownCarryable(*dueIt) == nullptr) {
+						continue;
+					}
+					const uint32_t need = supply.toAcquire(site.id, *dueIt, NeedBasis::Stock);
+					if (need == 0) {
+						continue;
+					}
+					const auto& itemDefName = registry.getDefName(*dueIt);
+					if (pickupRoom(itemDefName) == 0) {
+						pushNoRoom(site, *dueIt, "Fetching {} for a build site (no room to carry it)");
+						continue;
+					}
+					const uint32_t quantity = std::min(need, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
+					pushPileHauls(site, site.id, *dueIt, quantity, /*craftFetch=*/true);
 				}
 			});
 		}
@@ -956,6 +1005,7 @@ namespace ecs {
 			PickupRoom&					 pickupRoom,
 			const glm::vec2&			 position,
 			const Skills*				 skills,
+			std::span<const RootItem>	 offeredPiles,
 			DecisionTrace&				 trace
 		) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
@@ -981,7 +1031,8 @@ namespace ecs {
 				// A cut that would land nothing in the colonist's hands or pack (a full armful of something
 				// else, a full pack) brings nothing toward the root, and standing at the source it would win
 				// again every decision. A clear is exempt: it removes its blocker and drops what doesn't fit.
-				const bool roomToCarry = clearing || pickupRoom(registry.getDefName(goal->yieldDefNameId)) > 0;
+				const uint32_t room = clearing ? 0U : pickupRoom(registry.getDefName(goal->yieldDefNameId));
+				const bool	   roomToCarry = clearing || room > 0;
 				// What it could cut, before asking what the root needs: most goals have no known source.
 				// With no room to carry the yield no source is listed (WorkSources gates on the fit), so the
 				// need is asked to show why the cut is not taken.
@@ -991,13 +1042,14 @@ namespace ecs {
 				if (roomToCarry && candidates.empty()) {
 					return;
 				}
-				if (!clearing && supply.toAcquire(root->id, goal->yieldDefNameId, harvestBasis(*root)) == 0) {
+				const uint32_t want = clearing ? 0U : supply.toAcquire(root->id, goal->yieldDefNameId, harvestBasis(*root));
+				if (!clearing && want == 0) {
 					return;
 				}
 				if (!clearing && root->owner == GoalOwner::StorageGoalSystem && supply.storageRoom(root->destinationEntity, goal->yieldDefNameId) == 0) {
 					return; // every slot it has left is promised to goods already on their way
 				}
-				if (!roomToCarry) {
+				const auto pushNoRoom = [&](const char* reason) {
 					EvaluatedOption noRoom;
 					noRoom.taskType = TaskType::Harvest;
 					noRoom.needType = NeedType::Count;
@@ -1007,8 +1059,11 @@ namespace ecs {
 					noRoom.harvestYieldDefNameId = goal->yieldDefNameId;
 					noRoom.tiebreakId = goal->id;
 					noRoom.status = OptionStatus::NoRoom;
-					noRoom.reason = "Cutting for {1} (no room to carry it)";
+					noRoom.reason = reason;
 					trace.options.push_back(noRoom);
+				};
+				if (!roomToCarry) {
+					pushNoRoom("Cutting for {1} (no room to carry it)");
 					return;
 				}
 
@@ -1017,7 +1072,13 @@ namespace ecs {
 				// StorageGoalSystem is stocking: above Wander but strictly below work orders.
 				const bool servesWorkOrder = root->type == TaskType::Craft || root->type == TaskType::Build;
 				const bool servesStocking = goal->owner == GoalOwner::StorageGoalSystem;
-				const bool continuesGathering = !clearing && claimedCargo(supply.task, root->id, goal->yieldDefNameId) > 0;
+				// A cut toward a root the colonist gathers for tops its trip up; one toward a root and item a
+				// known pile also serves waits for the pile to be taken up first.
+				const bool gathering = !clearing && supply.gathersFor(root->id, goal->yieldDefNameId);
+				const bool pileServes = !clearing && std::any_of(offeredPiles.begin(), offeredPiles.end(), [&](const RootItem& pile) {
+					return pile.root == root->id && pile.item == goal->yieldDefNameId;
+				});
+				const int8_t rank = gathering ? kRankFurtherCut : pileServes ? kRankDemotedCut : int8_t{0};
 
 				// A clear is served by what blocks its footprint, the same test the build gate applies; any
 				// other goal by the harvestables that yield its item.
@@ -1050,7 +1111,7 @@ namespace ecs {
 					harvestOption.tiebreakId = goal->id ^ (key << 1);
 					harvestOption.servesActiveWorkOrder = servesWorkOrder;
 					harvestOption.servesStorageStocking = servesStocking;
-					harvestOption.continuesGathering = continuesGathering;
+					harvestOption.gatheringRank = rank;
 					harvestOption.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
 					harvestOption.reservedBy = reservedBy;
 
@@ -1066,9 +1127,17 @@ namespace ecs {
 
 				// A source another colonist is cutting is its alone: Use is exclusive, so two colonists never
 				// cut one plant. Several may still clear one site, each its own plant.
+				// A top-up cut lands only what still fits: one is cut only while the room left takes the most
+				// the source gives, or all the root still wants beyond what is carried, so no yield is lost to
+				// a trip with too little room for it.
 				NearestReserved<HarvestSource> reserved;
+				bool						   tooLittleRoom = false;
 				for (const HarvestSource& source : candidates) {
 					if (clearing && !goal->clearFootprint->blockedBy(registry, source.entity->defNameId, source.entity->position)) {
+						continue;
+					}
+					if (gathering && room < std::min(source.def->capabilities.harvestable->amountMax, want)) {
+						tooLittleRoom = true;
 						continue;
 					}
 					const float trip = tripOf(*source.entity);
@@ -1081,6 +1150,9 @@ namespace ecs {
 				}
 				if (reserved.shown()) {
 					pushHarvest(*reserved.source, reserved.holder);
+				}
+				if (tooLittleRoom && !std::isfinite(reserved.offeredTrip) && !reserved.source.has_value()) {
+					pushNoRoom("Cutting for {1} (too little room left for another cut)");
 				}
 			});
 		}
@@ -1638,7 +1710,7 @@ namespace ecs {
 
 				if (shouldSwitch) {
 					// Handle chain interruption if the abandoned task carries goods and the new task needs hands
-					if (!handedCargo && carriesChainGoods(task) && selected != nullptr) {
+					if (!handedCargo && carriesChainGoods(m_registry, task) && selected != nullptr) {
 						handleChainInterruption(entity, task, inventory, position, selected->taskType, selected->needType);
 					}
 
@@ -2368,9 +2440,10 @@ namespace ecs {
 		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles, m_boxRooms};
 		PickupRoom		 pickupRoom(inventory, m_registry);
 		m_workSources.begin(memory, m_registry, inventory);
-		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, trace);
+		m_offeredPiles.clear();
+		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, supply, pickupRoom, inventory, position.value, m_offeredPiles, trace);
 		evaluateCarryInOptions(supply, m_carried, position.value, trace);
-		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, skills, trace);
+		evaluateHarvestOptions(m_registry, m_workSources, supply, pickupRoom, position.value, skills, m_offeredPiles, trace);
 
 		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(world, position.value, skills, trace);

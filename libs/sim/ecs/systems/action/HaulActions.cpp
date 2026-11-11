@@ -273,7 +273,13 @@ namespace ecs {
 		const auto*	   haulItemDef = registry.getDefinition(task.haulItemDefName);
 		const uint32_t cargoHeld =
 			haulCargo(task, ecs::availableQuantity(inventory, task.haulItemDefName), haulItemDef != nullptr && haulItemDef->isEdible());
-		const bool carryingHaulItem = cargoHeld > 0;
+		// A pile pickup that took a gathering over still lifts its own share beside the goods its claims
+		// already carry; only goods beyond those mean the pickup is skipped.
+		const auto sourceClaim = std::find_if(task.claims.begin(), task.claims.end(), [](const Claim& claim) {
+			return claim.kind() == ClaimKind::SourceQuantity;
+		});
+		const bool pickupPending = sourceClaim != task.claims.end();
+		const bool carryingHaulItem = cargoHeld > (pickupPending ? taskCargo(registry, task) : 0U);
 
 		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
 		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
@@ -328,7 +334,7 @@ namespace ecs {
 					// carry), never more than is there: a pile yields that and keeps the rest, a single
 					// loose item is capped to its own carryable count (applyCollectionEffect). A harvest
 					// instead takes all it can carry, so freshly cut goods aren't stranded at a far tree.
-					const uint32_t pickupQty = task.haulQuantity;
+					const uint32_t pickupQty = pickupPending ? sourceClaim->quantity() : task.haulQuantity;
 					action = Action::Pickup(defName, pickupQty, entity->position, defName);
 					LOG_DEBUG(
 						Engine,

@@ -92,6 +92,16 @@ namespace ecs {
 		return handed;
 	}
 
+	uint32_t taskCargo(const assets::AssetRegistry& registry, const Task& task) {
+		const uint32_t item = chainItem(registry, task);
+		for (const Claim& claim : task.claims) {
+			if (item != 0 && claim.kind() == ClaimKind::InFlight && claim.itemDefNameId() == item) {
+				return cargoOnClaims(task.claims, claim.target(), item);
+			}
+		}
+		return 0;
+	}
+
 	uint32_t chainItem(const assets::AssetRegistry& registry, const Task& task) {
 		switch (task.type) {
 			case TaskType::Haul:
@@ -152,7 +162,7 @@ namespace ecs {
 			case TaskType::Haul: {
 				const uint32_t item = registry.getDefNameId(task.haulItemDefName);
 				const uint64_t root = goals.rootOf(task.haulGoalId);
-				takeCargoClaims(task, item);
+				const uint32_t handedOver = takeCargoClaims(task, item);
 				if (item == 0 || root == 0 || task.haulQuantity == 0) {
 					break;
 				}
@@ -162,6 +172,8 @@ namespace ecs {
 					} else {
 						push(task, Claim::sourceQuantity(TargetKind::WorldKey, hashWorldEntity(task.haulSourcePosition, item), item, task.haulQuantity));
 					}
+					// A pile pickup that took a gathering over delivers what it carries with what it lifts.
+					task.haulQuantity += handedOver;
 				}
 				push(task, Claim::inbound(task.haulTargetStorageId, item, task.haulQuantity));
 				push(task, Claim::inFlight(root, item, task.haulQuantity));

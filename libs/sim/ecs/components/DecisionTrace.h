@@ -105,12 +105,14 @@ namespace ecs {
 		// Mutually exclusive with servesActiveWorkOrder: a stocking goal is not a work order.
 		bool servesStorageStocking = false;
 
-		// A further cut for a root the colonist already carries goods toward. Within its tier it ranks
-		// above every option that does not, the carry-in of those goods included, so a colonist gathers
-		// a full trip before walking (task-claims.md, Batching). The cut is only offered while the trip
-		// has room and the root wants more than is carried, and a source that is regrowing, unreachable,
-		// or reserved is passed over at selection, so the carry-in wins as soon as none is left.
-		bool continuesGathering = false;
+		// Where the option stands in a gathering trip (task-claims.md, Batching), compared within a tier
+		// before the score, higher first. A loose pile toward a root the colonist gathers for (2) comes
+		// before a further cut toward it (1), and both before any option that is no leg of a trip (0), the
+		// carry-in of the goods included, so a colonist gathers a full trip before walking. A fresh cut
+		// toward a root and item a known pile also serves (-1) comes after everything else in its tier,
+		// so a pile is taken up before another plant is cut. A source that is regrowing, unreachable, or
+		// reserved is passed over at selection, so the carry-in wins as soon as none is left.
+		int8_t gatheringRank = 0;
 
 		// --- (tier, score) arbitration key ---
 		// tier: categorical priority, compared FIRST. Lower number = higher priority (1 best).
@@ -160,15 +162,15 @@ namespace ecs {
 		}
 
 		/// Lexicographic (tier, score) ordering: returns true if `a` is HIGHER priority than `b`.
-		/// Lower tier wins; within a tier, a continuing cut first, then higher score; ties break on tiebreakId ascending
+		/// Lower tier wins; within a tier, the higher gathering rank first, then higher score; ties break on tiebreakId ascending
 		/// (a multiplayer-determinism guard, since the goal registry iterates hash-bucket order).
 		/// This is THE arbitration: tier is inviolable, score can never cross a tier boundary.
 		[[nodiscard]] static bool higherPriority(const EvaluatedOption& a, const EvaluatedOption& b) {
 			if (a.tier != b.tier) {
 				return a.tier < b.tier;
 			}
-			if (a.continuesGathering != b.continuesGathering) {
-				return a.continuesGathering;
+			if (a.gatheringRank != b.gatheringRank) {
+				return a.gatheringRank > b.gatheringRank;
 			}
 			if (a.score != b.score) {
 				return a.score > b.score;

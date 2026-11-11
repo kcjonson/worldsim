@@ -221,6 +221,8 @@ namespace ecs {
 		const uint32_t	   heldBefore = cutLands	? ecs::availableQuantity(inventory, yieldDefName)
 											: haulLifts ? ecs::availableQuantity(inventory, task.haulItemDefName)
 														: 0U;
+		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
+		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(assets::AssetRegistry::Get(), task), heldBefore) : 0U;
 
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
@@ -269,7 +271,8 @@ namespace ecs {
 			// provisions. Anything else it holds of the item rides along.
 			const uint32_t held = ecs::availableQuantity(inventory, task.haulItemDefName);
 			const auto*	   itemDef = assets::AssetRegistry::Get().getDefinition(task.haulItemDefName);
-			const uint32_t cargo = itemDef != nullptr && itemDef->isEdible() ? (held > heldBefore ? held - heldBefore : 0U) : held;
+			const uint32_t cargo =
+				itemDef != nullptr && itemDef->isEdible() ? (held > heldBefore ? held - heldBefore : 0U) + carriedBefore : held;
 			// Nothing came off the source (gone, emptied by another hauler, or no room to take it):
 			// there is nothing to deliver, so the haul ends here instead of walking to storage empty.
 			if (cargo == 0) {
@@ -292,6 +295,10 @@ namespace ecs {
 			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull): the same task carries on
 			// as its deposit leg, so AIDecisionSystem keeps it (isSameTask) and never reselects it.
 			headToDeposit(entity, task);
+			if (carriedBefore > 0) {
+				// A leg of a gathering: decided again at once, as after a cut (task-claims.md, Batching).
+				task.timeSinceEvaluation = std::numeric_limits<float>::max();
+			}
 
 			action.clear();
 			LOG_DEBUG(

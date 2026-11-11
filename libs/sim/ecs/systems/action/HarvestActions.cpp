@@ -303,9 +303,12 @@ namespace ecs {
 				} else if (collEff.regrowthTime > 0.0F) {
 					leaves = SourceTake::Regrow;
 				}
+				// A cut gives its whole yield: what the pack can't take drops beside the plant as a loose pile,
+				// as a fell's overflow does, rather than being lost. A loose-item fetch takes only its own item.
+				const bool cut = collEff.sourceDefName != collEff.itemDefName;
 				if ((take > 0 || collEff.clearsSource) && takeSource(leaves) == SourceState::Ready) {
 					added = inventory.addItem(collEff.itemDefName, take);
-					if (collEff.clearsSource) {
+					if (cut || collEff.clearsSource) {
 						dropUncarried(collEff.quantity - added);
 					}
 				}

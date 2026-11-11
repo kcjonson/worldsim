@@ -52,6 +52,12 @@ struct CarriedKind {
 	bool	 edible = false;
 };
 
+/// A root goal and one item it wants.
+struct RootItem {
+	uint64_t root = 0;
+	uint32_t item = 0;
+};
+
 /// What a storage box offers each item before inbound claims are taken out: the headroom in that
 /// item's partial stacks, its stack size, and the box's free slots. None of it depends on who asks, and
 /// box contents change only outside an AI update, so each (box, item) is read from the world once per
@@ -285,6 +291,9 @@ private:
 
 	/// The deciding colonist's carried kinds, reused across colonists
 	std::vector<CarriedKind> m_carried;
+
+	/// The roots and items the deciding colonist was offered a loose pile for, reused across colonists
+	std::vector<RootItem> m_offeredPiles;
 
 	/// One edible item a storage box the colony knows holds. Box contents don't change inside an AI
 	/// update (deposits and withdrawals are ActionSystem's), so the list is worked out the first time a

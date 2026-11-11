@@ -1153,7 +1153,14 @@ namespace ecs::test {
 			fibreId = assets::AssetRegistry::Get().getDefNameId("Fibre");
 			actions->setTakeSourceCallback([this](const std::string&, float x, float y, ActionSystem::SourceTake take, float) {
 				const glm::vec2 at{x, y};
-				const bool		wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
+				if (std::find(felled.begin(), felled.end(), at) != felled.end()) {
+					return ActionSystem::SourceState::Gone;
+				}
+				if (take == ActionSystem::SourceTake::Remove) {
+					felled.push_back(at);
+					return ActionSystem::SourceState::Ready;
+				}
+				const bool wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
 				if (take == ActionSystem::SourceTake::Regrow && !wasCut) {
 					cut.push_back(at);
 				}
@@ -1162,6 +1169,40 @@ namespace ecs::test {
 			ai->setSourceRegrowthCallback([this](uint32_t, glm::vec2 at, double) {
 				return std::find(cut.begin(), cut.end(), at) != cut.end() ? std::optional<double>{1.0e9} : std::nullopt;
 			});
+			actions->setDropResourceCallback([this](const std::string& defName, float x, float y, uint32_t quantity) {
+				drops.push_back({assets::AssetRegistry::Get().getDefNameId(defName), {x, y}, quantity});
+			});
+		}
+
+		/// Land the drops queued this frame as loose piles, merged into a pile already at the spot, and let
+		/// every watcher see them (vision, in the game).
+		void landDrops() {
+			for (const Drop& drop : drops) {
+				EntityID pile = actions->loosePiles().find(*world, drop.item, drop.at);
+				if (pile != kInvalidEntity) {
+					world->getComponent<ResourceStack>(pile)->quantity += drop.quantity;
+				} else {
+					pile = world->createEntity();
+					world->addComponent<Position>(pile, Position{drop.at});
+					makeLoosePile(*world, pile, drop.item, drop.at, drop.quantity);
+					piles.emplace_back(pile, drop.item);
+				}
+				for (EntityID watcher : watchers) {
+					remember(watcher, drop.at, assets::AssetRegistry::Get().getDefName(drop.item), assets::CapabilityType::Carryable);
+				}
+				dropped += drop.quantity;
+			}
+			drops.clear();
+		}
+
+		uint32_t onTheGround(uint32_t item) {
+			uint32_t total = 0;
+			for (const auto& [pile, pileItem] : piles) {
+				if (pileItem == item && world->isAlive(pile)) {
+					total += world->getComponent<ResourceStack>(pile)->quantity;
+				}
+			}
+			return total;
 		}
 
 		/// A blueprint wanting `needed` fibre and its construction umbrella with a cutting child.
@@ -1171,13 +1212,13 @@ namespace ecs::test {
 			return site;
 		}
 
-		void childOf(const Site& site, glm::vec2 position) {
+		void childOf(const Site& site, glm::vec2 position, uint32_t item = 0) {
 			GoalTask harvest;
 			harvest.type = TaskType::Harvest;
 			harvest.owner = GoalOwner::ConstructionGoalSystem;
 			harvest.destinationEntity = site.blueprint;
 			harvest.destinationPosition = position;
-			harvest.yieldDefNameId = fibreId;
+			harvest.yieldDefNameId = item != 0 ? item : fibreId;
 			harvest.parentGoalId = site.umbrella;
 			GoalTaskRegistry::Get().createGoal(std::move(harvest));
 		}
@@ -1190,7 +1231,7 @@ namespace ecs::test {
 
 		uint32_t delivered(const Site& site) {
 			const auto* blueprint = world->getComponent<StructureBlueprint>(site.blueprint);
-			return blueprint->required.front().second - blueprint->remaining("Fibre");
+			return blueprint->required.front().second - blueprint->remaining(blueprint->required.front().first);
 		}
 
 		/// Run frames until `done` holds; each delivery to the site and each cut the colonist lands is
@@ -1200,6 +1241,7 @@ namespace ecs::test {
 			uint32_t lastCarried = carriedFibre(colonist);
 			for (int frame = 0; frame < maxFrames; ++frame) {
 				world->update(0.1F);
+				landDrops();
 				const uint32_t nowDelivered = delivered(site);
 				const uint32_t nowCarried = carriedFibre(colonist);
 				trips += nowDelivered > lastDelivered ? 1 : 0;
@@ -1220,6 +1262,16 @@ namespace ecs::test {
 		static constexpr float kFibreKg = 3.5F;
 		uint32_t			   fibreId = 0;
 		std::vector<glm::vec2> cut;
+		std::vector<glm::vec2> felled;
+		struct Drop {
+			uint32_t  item = 0;
+			glm::vec2 at{0.0F, 0.0F};
+			uint32_t  quantity = 0;
+		};
+		std::vector<Drop>							drops;
+		std::vector<std::pair<EntityID, uint32_t>> piles;
+		std::vector<EntityID>						watchers;
+		uint32_t									dropped = 0;
 		int					   trips = 0;
 		int					   cuts = 0;
 	};
@@ -1240,10 +1292,82 @@ namespace ecs::test {
 			mostInFlight = std::max(mostInFlight, ai->claimIndex().inFlight(site.umbrella, fibreId, {}));
 			return delivered(site) == 20;
 		})) << "delivered " << delivered(site);
-		EXPECT_EQ(trips, 2) << "two full trips of ten, not one per cut";
-		EXPECT_GE(cuts, 7);
-		EXPECT_EQ(mostCarried, perTrip()) << "each trip filled before it was walked";
+		EXPECT_EQ(trips, 3) << "nine, nine, and the last two";
+		EXPECT_EQ(cuts, 7);
+		EXPECT_EQ(cut.size(), 7U);
+		EXPECT_EQ(mostCarried, 9U) << "a tenth unit is no room for a cut of three";
 		EXPECT_LE(mostInFlight, perTrip()) << "the cuts of one trip never claim more than it carries";
+		EXPECT_EQ(dropped, 0U) << "no cut landed more than fit";
+		EXPECT_EQ(delivered(site) + carriedFibre(colonist), 3U * static_cast<uint32_t>(cut.size())) << "every unit the reeds gave is accounted for";
+	}
+
+	// A first cut into a pack with room for one unit lands one and drops the other two beside the reed as
+	// a pile, which is carried in before another reed is cut: nothing a cut gives is lost.
+	TEST_F(ChainWalkTest, WhatACutCannotCarryDropsAsAPile) {
+		registerItem("Rock", 1, 31.0F);
+		const Site	   site = fibreSite({0.0F, 12.0F}, 3);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		watchers = {colonist};
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		inventory.addItem("Rock", 1);
+		rememberReeds(colonist, {{2.0F, 0.0F}, {4.0F, 0.0F}});
+		ASSERT_EQ(pickupUnitsThatFit(inventory, assets::AssetRegistry::Get(), "Fibre", carriedCargoMassKg(inventory, assets::AssetRegistry::Get())), 1U);
+
+		ASSERT_TRUE(walkUntil(site, colonist, [&] { return dropped > 0; }));
+		EXPECT_EQ(dropped, 2U) << "the two that did not fit";
+		EXPECT_EQ(carriedFibre(colonist), 1U);
+		ASSERT_TRUE(walkUntil(site, colonist, [&] { return delivered(site) == 3; })) << "delivered " << delivered(site);
+		EXPECT_EQ(cut.size(), 1U) << "the pile is carried in before the second reed is cut";
+		EXPECT_EQ(delivered(site) + carriedFibre(colonist) + onTheGround(fibreId), 3U);
+	}
+
+	// A fell gives seven logs; an armful holds five. The two that fall are carried in before another tree
+	// is felled, and the second tree falls only once the room left takes all the site still wants.
+	TEST_F(ChainWalkTest, AFellsOverflowIsFetchedBeforeAnotherTreeFalls) {
+		registerItem("Log", 2, 7.0F);
+		assets::AssetDefinition pine;
+		pine.defName = "Pine";
+		pine.label = "Pine";
+		pine.capabilities.harvestable = assets::HarvestableCapability{};
+		pine.capabilities.harvestable->yieldDefName = "Log";
+		pine.capabilities.harvestable->amountMin = 7;
+		pine.capabilities.harvestable->amountMax = 7;
+		pine.capabilities.harvestable->durability = 1.0F;
+		pine.capabilities.harvestable->destructive = true;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(pine));
+		const uint32_t logId = assets::AssetRegistry::Get().getDefNameId("Log");
+		ASSERT_EQ(ecs::cargoUnitsPerTrip(assets::AssetRegistry::Get(), "Log", Inventory::createForColonist().carryCapacityKg), 5U);
+
+		const Site site = constructionSite({0.0F, 12.0F}, "Log", 10);
+		childOf(site, {0.0F, 12.0F}, logId);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		watchers = {colonist};
+		for (const glm::vec2 tree : {glm::vec2{3.0F, 0.0F}, glm::vec2{6.0F, 0.0F}, glm::vec2{9.0F, 0.0F}}) {
+			remember(colonist, tree, "Pine", assets::CapabilityType::Harvestable);
+		}
+		const auto logs = [&] { return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), "Log"); };
+
+		int		 firstPickup = -1;
+		int		 secondFell = -1;
+		uint32_t lastGround = 0;
+		for (int frame = 0; frame < 4000 && delivered(site) < 10; ++frame) {
+			world->update(0.1F);
+			landDrops();
+			const uint32_t ground = onTheGround(logId);
+			if (firstPickup < 0 && ground < lastGround) {
+				firstPickup = frame;
+			}
+			lastGround = ground;
+			if (secondFell < 0 && felled.size() == 2) {
+				secondFell = frame;
+			}
+		}
+		ASSERT_EQ(delivered(site), 10U);
+		ASSERT_GE(firstPickup, 0) << "the overflow was never picked up";
+		ASSERT_GE(secondFell, 0);
+		EXPECT_LT(firstPickup, secondFell) << "the pile is taken up before another tree falls";
+		EXPECT_EQ(felled.size(), 2U) << "five, then two from the pile and three from a second tree";
+		EXPECT_EQ(delivered(site) + logs() + onTheGround(logId), 7U * static_cast<uint32_t>(felled.size())) << "every log is accounted for";
 	}
 
 	// While the first colonist gathers, what it carries and the cut it has accepted are its in-flight:

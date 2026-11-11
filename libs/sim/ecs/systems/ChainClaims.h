@@ -32,28 +32,33 @@ namespace ecs {
 	/// everything else toward its stock target.
 	[[nodiscard]] NeedBasis harvestBasis(const GoalTask& root);
 
-	/// Units of `itemDefNameId` a claim list carries toward `rootGoalId`: its Inbound once it holds no
-	/// source claim (a delivery leg, or a cut carrying what earlier cuts landed), when its InFlight
-	/// names that root.
+	/// Units of `itemDefNameId` a claim list carries toward `rootGoalId`, when its InFlight names that
+	/// root: its Inbound less what it has still to take from a source. A haul on its way to its pile
+	/// carries none of what it will lift there; a delivery leg, a cut carrying what earlier cuts landed,
+	/// or a pile pickup that took a gathering over carry what their Inbound names beyond that.
 	template <uint8_t Capacity>
 	[[nodiscard]] uint32_t cargoOnClaims(const BasicClaimList<Capacity>& claims, uint64_t rootGoalId, uint32_t itemDefNameId) {
 		uint32_t inbound = 0;
+		uint32_t toTake = 0;
 		bool	 towardRoot = false;
 		for (const Claim& claim : claims) {
-			if (claim.kind() == ClaimKind::SourceQuantity) {
-				return 0;
-			}
 			if (claim.itemDefNameId() != itemDefNameId) {
 				continue;
 			}
-			if (claim.kind() == ClaimKind::Inbound) {
+			if (claim.kind() == ClaimKind::SourceQuantity) {
+				toTake += claim.quantity();
+			} else if (claim.kind() == ClaimKind::Inbound) {
 				inbound += claim.quantity();
 			} else if (claim.kind() == ClaimKind::InFlight && claim.target() == rootGoalId) {
 				towardRoot = true;
 			}
 		}
-		return towardRoot ? inbound : 0U;
+		return towardRoot && inbound > toTake ? inbound - toTake : 0U;
 	}
+
+	/// The goods `task`, a haul or a cut, carries toward the root its own InFlight names
+	/// (cargoOnClaims). 0 for any other task.
+	[[nodiscard]] uint32_t taskCargo(const assets::AssetRegistry& registry, const Task& task);
 
 	/// The goods a colonist's task, current or suspended, carries toward `rootGoalId`.
 	[[nodiscard]] uint32_t claimedCargo(const Task& task, uint64_t rootGoalId, uint32_t itemDefNameId);
@@ -74,8 +79,8 @@ namespace ecs {
 
 	/// Record the claims of the chain `task` was just accepted for. Reads the task's own fields, so it
 	/// runs after selection has filled them. `task.claims` holds nothing, or only the cargo claims it
-	/// took over (handOverCargo, or an adopted suspended record), which a cut counts as carried and a
-	/// carry-in resizes to what it delivers.
+	/// took over (handOverCargo, or an adopted suspended record), which a cut or a pile pickup counts as
+	/// carried and a carry-in resizes to what it delivers.
 	void recordChainClaims(
 		World& world, RemainingNeedCache& needs, const ClaimIndex& claims, const assets::AssetRegistry& registry, const Memory& memory,
 		const Inventory& inventory, Task& task

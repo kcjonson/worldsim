@@ -267,6 +267,7 @@ Craft provisioning, construction delivery, and storage stocking.
 | Accept | Use(source), Inbound(destination, yield, C) when C > 0, In-flight(root, yield, C + E) |
 | Harvest completes | The task converts to its deposit leg. Use drops. In-flight and Inbound become its cargo, C plus what this cut landed, capped at its own in-flight and at the root's remaining need net of other tasks' in-flight. Nothing carried, or nothing still needed, ends the task and leaves the goods uncommitted. The colonist decides again at once (batching, below) |
 | A further cut | The deposit leg hands its instance id and cargo claims to the next cut for the same root and item, which adds Use on the new source and raises In-flight by its E |
+| A loose pile | The leg hands its cargo claims to a pickup of a known pile of the item for the same root, which adds SourceQuantity(pile, Q) and raises Inbound and In-flight to C + Q; it lifts Q and delivers C + Q |
 | Deposit | all drop with the task |
 
 C is what the colonist already carries toward the root: the cargo an earlier cut of the same
@@ -275,8 +276,9 @@ item that is not provisions, above), capped at the root's remaining need. E is t
 cut (`amountMax`; a pooled source gives at most that per cut too), capped by what still fits in the
 colonist's carry and by the root's remaining need less C. Over-estimating only makes another
 colonist briefly see less available; under-estimating brings back the over-harvest this spec
-removes. Units landed beyond the cap are carried uncommitted; overflow that drops at the stump is a
-loose pile, an ordinary new source with no claims. The cap reads the claim index the AI last built,
+removes. Units landed beyond the cap are carried uncommitted. A cut gives its whole yield: what the
+colonist can't carry drops beside the source as a loose pile, a one-hand yield like a fell's overflow,
+an ordinary new source with no claims. The cap reads the claim index the AI last built,
 and the leg never commits more than its own in-flight there: another colonist converting a cut in
 the same ActionSystem update read that figure, so the two together never pass the need. The need
 itself is read from the world at that moment.
@@ -285,15 +287,26 @@ itself is read from the world at that moment.
 
 A colonist gathering for a root delivers when one of these holds:
 
-- its trip is full for the item: no more fits (`pickupUnitsThatFit` is 0, the cut shows NoRoom);
+- its trip is full for the item: the room left is too little for another cut (below), or none (the
+  cut shows NoRoom);
 - what it carries covers the root's remaining need net of others' in-flight;
 - it knows no other source of the item that is ready, reachable, and not reserved.
 
-Until then the next cut for the same root and item outranks the carry-in: such a cut is marked as
-continuing the gathering, and within its tier a continuing cut ranks above every option that is not
-one, the carry-in included. The cut is offered only while the first two conditions fail, and a
-source that is regrowing, unreachable, or reserved is passed over at selection, so the carry-in is
-taken as soon as no source is left. A landed cut is decided again at once rather than after a step
+Until then the next leg for the same root and item outranks the carry-in. Within a tier the order
+is: a known loose pile of the item toward that root, then a further cut toward it, then every option
+that is no leg of a trip, the carry-in included. A pile counts as a source here too: he picks up what
+he or anyone dropped before cutting again. A pile is offered for every root that wants the item,
+construction sites included; when one is offered, a fresh cut for the same root and item ranks below
+everything else in its tier, so even at the start of a trip the pile is taken up first. A pickup that
+continues a gathering lifts what still fits and is decided again at once, like a landed cut.
+
+A top-up cut (one toward a root the colonist already carries goods for) is offered only when the room
+left takes at least the smaller of the source's largest yield (`amountMax`) and what the root still
+wants beyond what is carried; otherwise he delivers. So a trip of ten taking cuts of three is walked at
+nine rather than spending a fourth plant on one unit, and no tree is felled for a sliver of its wood.
+A cut can still land more than fits (the first cut of a trip into a small pack), and the surplus drops
+as a pile. A source that is regrowing, unreachable, or reserved is passed over at selection, so the
+carry-in is taken as soon as no source is left. A landed cut is decided again at once rather than after a step
 toward the destination. While it gathers, the colonist's in-flight toward the root covers what it
 carries plus the cut it has accepted, so another colonist does not cut what those cover, and the
 cargo moves from task to task under one instance id with no window in which it is uncommitted. A
@@ -308,7 +321,7 @@ Loose pile to storage, loose pile to a crafting station store (craft fetch), and
 | Step | Claims held |
 |---|---|
 | Accept | SourceQuantity(source, item, Q), Inbound(destination, item, Q), In-flight(root, item, Q) |
-| Pickup or withdraw | The pickup asks for Q. SourceQuantity drops. Inbound and In-flight become the units lifted, capped at Q. Arriving at the source or the destination already carrying the item skips the pickup and rewrites the same way, to what is carried |
+| Pickup or withdraw | The pickup asks for Q (its SourceQuantity; a pile pickup that took a gathering over delivers its cargo with it). SourceQuantity drops. Inbound and In-flight become the units lifted, capped at Q. Arriving at the source or the destination already carrying the item skips the pickup and rewrites the same way, to what is carried |
 | Deposit | all drop with the task |
 
 A box-to-box pull's source claim counts against the box's drainable quantity (stock above its own
