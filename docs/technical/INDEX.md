@@ -93,10 +93,10 @@ Applications:
 
 | Document | Description |
 |----------|-------------|
-| [Observability Overview](./observability/INDEX.md) | Complete system overview |
-| [Developer Server](./observability/developer-server.md) | HTTP/SSE streaming from applications |
+| [Observability Overview](./observability/INDEX.md) | The dev server (salal's), its endpoints and streams, and when in the frame each is served |
+| [Developer Server](./observability/developer-server.md) | What world-sim registers on salal's dev server: routes, controls, state views |
 | [Developer Client](./observability/developer-client.md) | External TypeScript/Vite web app |
-| [UI Inspection](./observability/ui-inspection.md) | UI hierarchy and hover inspection |
+| [UI Inspection](./observability/ui-inspection.md) | UI tree, layout lint, screenshots, synthetic input |
 | [sim-cli](./sim-cli.md) | Spec: headless colonist sim over a shared SimSession; command scripts, decision history, determinism, scenario ctests |
 
 ### Vector Graphics System
