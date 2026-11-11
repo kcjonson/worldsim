@@ -272,8 +272,7 @@ namespace {
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
 				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
-					auto coord = world::worldToChunk({position.x, position.y});
-					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
+					return m_placementExecutor->getResourceCount({position.x, position.y}, defName);
 				},
 				.onStructureSelected =
 					[this](const std::string& structure) {
@@ -1386,7 +1385,7 @@ namespace {
 					return State::Gone;
 				}
 
-				const bool regrowing = m_placementExecutor->isEntityOnCooldown(coord, at, defName);
+				const bool regrowing = m_placementExecutor->isEntityOnCooldown(at, defName);
 				if (take == Take::Remove) {
 					if (placed) {
 						m_placementExecutor->removeEntity(coord, at, defName);
@@ -1394,7 +1393,7 @@ namespace {
 						m_pendingEntityRemoval.push_back(spawned);
 					}
 				} else if (take == Take::Regrow && !regrowing) {
-					m_placementExecutor->setEntityCooldown(coord, at, defName, regrowthSeconds);
+					m_placementExecutor->setEntityCooldown(at, defName, regrowthSeconds);
 				}
 				return regrowing ? State::OnCooldown : State::Ready;
 			});
@@ -1409,9 +1408,8 @@ namespace {
 			// was actually taken plus whether the pool is now empty (so the tree gets removed).
 			actionSystem.setDecrementResourceCallback(
 				[this](const std::string& defName, float x, float y, uint32_t requested) -> ecs::ActionSystem::ResourceDraw {
-					auto		   coord = world::worldToChunk({x, y});
-					const uint32_t removed = m_placementExecutor->decrementResourceCount(coord, {x, y}, defName, requested);
-					const bool	   depleted = !m_placementExecutor->getResourceCount(coord, {x, y}, defName).has_value();
+					const uint32_t removed = m_placementExecutor->decrementResourceCount({x, y}, defName, requested);
+					const bool	   depleted = !m_placementExecutor->getResourceCount({x, y}, defName).has_value();
 					return {removed, depleted};
 				}
 			);

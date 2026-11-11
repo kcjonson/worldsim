@@ -343,7 +343,7 @@ TEST(PlacementExecutorTests, IsEntityOnCooldownReturnsFalseInitially) {
 	executor.initialize();
 
 	// Entity not on cooldown initially
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, SetEntityCooldownMakesEntityOnCooldown) {
@@ -353,9 +353,9 @@ TEST(PlacementExecutorTests, SetEntityCooldownMakesEntityOnCooldown) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
 
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, DifferentPositionsAreIndependentCooldowns) {
@@ -365,10 +365,10 @@ TEST(PlacementExecutorTests, DifferentPositionsAreIndependentCooldowns) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
 
 	// Same chunk, different position
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {15.0F, 25.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({15.0F, 25.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, DifferentDefNamesAreIndependentCooldowns) {
@@ -378,23 +378,10 @@ TEST(PlacementExecutorTests, DifferentDefNamesAreIndependentCooldowns) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
 
 	// Same position, different defName
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "WoodyBush"));
-}
-
-TEST(PlacementExecutorTests, DifferentChunksAreIndependentCooldowns) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
-
-	// Same position and defName, different chunk
-	EXPECT_FALSE(executor.isEntityOnCooldown({1, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "WoodyBush"));
 }
 
 TEST(PlacementExecutorTests, UpdateCooldownsDecrementsCooldownTime) {
@@ -404,14 +391,14 @@ TEST(PlacementExecutorTests, UpdateCooldownsDecrementsCooldownTime) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 
 	// Update with 2 seconds
 	executor.updateCooldowns(2.0F);
 
 	// Still on cooldown (5 - 2 = 3 seconds remaining)
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, UpdateCooldownsRemovesExpiredCooldowns) {
@@ -421,14 +408,14 @@ TEST(PlacementExecutorTests, UpdateCooldownsRemovesExpiredCooldowns) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 
 	// Update with 6 seconds (cooldown expires)
 	executor.updateCooldowns(6.0F);
 
 	// No longer on cooldown
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, UpdateCooldownsExactExpiration) {
@@ -438,13 +425,13 @@ TEST(PlacementExecutorTests, UpdateCooldownsExactExpiration) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
 
 	// Update with exactly 5 seconds
 	executor.updateCooldowns(5.0F);
 
 	// Should be expired at exactly 0 or slightly negative
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, MultipleCooldownsUpdateIndependently) {
@@ -454,15 +441,15 @@ TEST(PlacementExecutorTests, MultipleCooldownsUpdateIndependently) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 3.0F);
-	executor.setEntityCooldown({0, 0}, {30.0F, 40.0F}, "BerryBush", 10.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 3.0F);
+	executor.setEntityCooldown({30.0F, 40.0F}, "BerryBush", 10.0F);
 
 	// Update with 5 seconds
 	executor.updateCooldowns(5.0F);
 
 	// First cooldown expired, second still active
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {30.0F, 40.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({30.0F, 40.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, ResetCooldownOverwritesExisting) {
@@ -472,16 +459,16 @@ TEST(PlacementExecutorTests, ResetCooldownOverwritesExisting) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 5.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 5.0F);
 
 	// Reset cooldown to longer time
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 100.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 100.0F);
 
 	// Update with 10 seconds (would have expired with original 5s cooldown)
 	executor.updateCooldowns(10.0F);
 
 	// Still on cooldown due to reset
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
 TEST(PlacementExecutorTests, ZeroCooldownExpiresOnFirstUpdate) {
@@ -492,13 +479,13 @@ TEST(PlacementExecutorTests, ZeroCooldownExpiresOnFirstUpdate) {
 	executor.initialize();
 
 	// Set zero cooldown - still registered as on cooldown initially
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 0.0F);
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 0.0F);
 
 	// Zero cooldown expires immediately on first update
 	executor.updateCooldowns(0.001F);
 
 	// Now it should be expired
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
 // ============================================================================
@@ -614,19 +601,6 @@ TEST(PlacementExecutorTests, NearSurfaceReadsThePaintedLand) {
 	}
 }
 
-TEST(PlacementExecutorTests, NegativeChunkCooldowns) {
-	auto& registry = AssetRegistry::Get();
-	registry.clear();
-
-	PlacementExecutor executor(registry);
-	executor.initialize();
-
-	executor.setEntityCooldown({-5, -10}, {10.0F, 20.0F}, "BerryBush", 60.0F);
-
-	EXPECT_TRUE(executor.isEntityOnCooldown({-5, -10}, {10.0F, 20.0F}, "BerryBush"));
-	EXPECT_FALSE(executor.isEntityOnCooldown({5, 10}, {10.0F, 20.0F}, "BerryBush"));
-}
-
 TEST(PlacementExecutorTests, ClearRemovesCooldowns) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
@@ -634,33 +608,37 @@ TEST(PlacementExecutorTests, ClearRemovesCooldowns) {
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	executor.setEntityCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush", 60.0F);
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	executor.setEntityCooldown({10.0F, 20.0F}, "BerryBush", 60.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 
 	executor.clear();
 
 	// After clear, cooldown should be gone
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 20.0F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown({10.0F, 20.0F}, "BerryBush"));
 }
 
-TEST(PlacementExecutorTests, CooldownPositionQuantization) {
+// A cooldown and a resource pool belong to one entity, named by its position on Memory's 0.1 m grid:
+// two bushes of one def in the same 1 m tile never share them, and a position that drifted within
+// the entity's own cell still names it.
+TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 	auto& registry = AssetRegistry::Get();
 	registry.clear();
 
 	PlacementExecutor executor(registry);
 	executor.initialize();
 
-	// Set cooldown at position 10.3, 20.7
-	executor.setEntityCooldown({0, 0}, {10.3F, 20.7F}, "BerryBush", 60.0F);
+	const glm::vec2 cut{10.3F, 20.7F};
+	const glm::vec2 neighbour{10.8F, 20.2F};
+	executor.setEntityCooldown(cut, "BerryBush", 60.0F);
+	EXPECT_TRUE(executor.isEntityOnCooldown({10.31F, 20.71F}, "BerryBush"));
+	EXPECT_FALSE(executor.isEntityOnCooldown(neighbour, "BerryBush")) << "the other bush in the tile is not regrowing";
+	EXPECT_FALSE(executor.isEntityOnCooldown({-10.3F, -20.7F}, "BerryBush"));
 
-	// Query with slightly different position that quantizes to same tile
-	// Position is quantized to integer tile coordinates (floor)
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.1F, 20.9F}, "BerryBush"));
-	EXPECT_TRUE(executor.isEntityOnCooldown({0, 0}, {10.9F, 20.0F}, "BerryBush"));
-
-	// Different tile should not be on cooldown
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {11.0F, 20.0F}, "BerryBush"));
-	EXPECT_FALSE(executor.isEntityOnCooldown({0, 0}, {10.0F, 21.0F}, "BerryBush"));
+	executor.initResourceCount(cut, "BerryBush", 5);
+	executor.initResourceCount(neighbour, "BerryBush", 5);
+	EXPECT_EQ(executor.decrementResourceCount(cut, "BerryBush", 5), 5U);
+	EXPECT_FALSE(executor.getResourceCount(cut, "BerryBush").has_value());
+	EXPECT_EQ(executor.getResourceCount(neighbour, "BerryBush"), 5U) << "the other bush keeps its own pool";
 }
 
 // ============================================================================

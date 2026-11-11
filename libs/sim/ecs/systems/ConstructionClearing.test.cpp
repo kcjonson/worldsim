@@ -111,11 +111,11 @@ namespace ecs::test {
 						if (!treeStands({x, y}, defName.c_str())) {
 							return ActionSystem::SourceState::Gone;
 						}
-						const bool regrowing = executor.isEntityOnCooldown(coord, {x, y}, defName);
+						const bool regrowing = executor.isEntityOnCooldown({x, y}, defName);
 						if (take == ActionSystem::SourceTake::Remove) {
 							executor.removeEntity(coord, {x, y}, defName);
 						} else if (take == ActionSystem::SourceTake::Regrow && !regrowing) {
-							executor.setEntityCooldown(coord, {x, y}, defName, seconds);
+							executor.setEntityCooldown({x, y}, defName, seconds);
 						}
 						return regrowing ? ActionSystem::SourceState::OnCooldown : ActionSystem::SourceState::Ready;
 					}

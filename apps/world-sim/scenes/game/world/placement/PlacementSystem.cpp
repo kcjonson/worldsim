@@ -13,7 +13,6 @@
 #include <ecs/systems/NavigationSystem.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
-#include <world/chunk/ChunkCoordinate.h>
 
 #include <bit>
 #include <random>
@@ -265,8 +264,7 @@ namespace world_sim {
 				std::mt19937   rng(seed);
 				std::uniform_int_distribution<uint32_t> dist(harv.totalResourceMin, harv.totalResourceMax);
 				const uint32_t initialCount = dist(rng);
-				const auto	   coord = world::worldToChunk({worldPos.x, worldPos.y});
-				placementExecutor->initResourceCount(coord, {worldPos.x, worldPos.y}, defName, initialCount);
+				placementExecutor->initResourceCount({worldPos.x, worldPos.y}, defName, initialCount);
 			}
 		}
 
