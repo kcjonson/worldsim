@@ -100,7 +100,7 @@ What was found, and what this design takes from each.
 | Source | What it shows | What we take |
 |---|---|---|
 | Recast/Detour tile cache, Unreal, Unity, A* Pathfinding Project `NavmeshCut` ([Granberg](https://arongranberg.com/2013/08/navmesh-cutting/)) | Every shipping engine patches at tile granularity, and none documents a smaller patch. They rasterize to voxels, so a tile is the smallest thing they can re-derive | We depart from this. Our mesh is exact polygons in a triangulation, where the smallest unit is the hole around one obstacle |
-| Unity `NavMeshObstacle` carving | A moving obstacle carves the mesh only after it has moved past a threshold or been still for a set time; in between, agents avoid it by steering | The same rule for mover footprints (4.3.3) |
+| Unity `NavMeshObstacle` carving (its Move Threshold, Time To Stationary, and Carve Only Stationary settings; from memory, not re-read for this document) | A moving obstacle carves the mesh only after it has moved past a threshold or been still for a set time; in between, agents avoid it by steering | The same rule for mover footprints (4.3.3) |
 | Unreal navigation invokers ([docs](https://dev.epicgames.com/documentation/unreal-engine/using-navigation-invokers-in-unreal-engine)) | Detail exists only around agents, with a generation radius and a larger removal radius | Two rects for detail, so a view edge doesn't thrash |
 | Unreal per-area navmesh resolution ([docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/navigation-mesh-resolutions-user-guide)) | Resolution there is voxel size, and low resolution can delete real paths | Not a precedent. Our detail is which obstacle classes block, never geometric precision |
 | Godot region connection ([docs](https://docs.godotengine.org/en/4.2/tutorials/navigation/navigation_connecting_navmesh.html)) | Regions join cleanly only when edge vertices coincide exactly; margin heuristics fail on partial overlaps | Chunk borders are exact shared integer vertices in one mesh |
@@ -255,8 +255,9 @@ Motion adds what a one-off edit doesn't have:
 - **Large mobile objects** are structural, so their moves also patch the structural layer, and each can open or close a gap. The first one in the game is what forces the reachability forests to be repaired per chunk and not rebuilt whole (4.6).
 
 This reverses risk 7 in the pathfinding doc ("dynamic agents are never navmesh obstacles").
-That rule came from StarCraft 2, where the mesh is rebuilt by resetting it and reinserting
-obstacles. With a patch that costs what a move costs, the reason for it is gone. Steering and
+That rule came from StarCraft 2, which by secondhand accounts resets its mesh and reinserts
+every obstacle on a change, so a unit in the mesh would mean a rebuild per step. With a patch
+that costs what a move costs, the reason for it is gone. Steering and
 crowd behaviour (P5 there) still stand, and still do the work between patches.
 
 ### 4.4 Detail is a filter
