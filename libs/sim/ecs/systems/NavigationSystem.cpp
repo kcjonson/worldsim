@@ -648,11 +648,10 @@ namespace ecs {
 		}
 		published = true;
 		++meshGeneration;
+		navStats.navPatches += runningNav.patches.size();
+		navStats.structuralPatches += runningStructural.patches.size();
 		if (!runningStructural.empty()) {
 			++structuralGeneration;
-		}
-		if (!runningNav.empty()) {
-			rraCaches.clear();
 		}
 		const double longest = std::max(runningNav.ms, runningStructural.ms);
 		// Permanent nav-mesh work diagnostic: one tick's job on each mesh's worker (of which the
@@ -1537,11 +1536,6 @@ namespace ecs {
 		return meshGeneration;
 	}
 
-	std::size_t NavigationSystem::rraCacheCount() const {
-		join();
-		return rraCaches.size();
-	}
-
 	const geometry::nav::PatchableMesh& NavigationSystem::navMesh() const {
 		join();
 		return detailMesh;
@@ -1593,19 +1587,7 @@ namespace ecs {
 			return std::nullopt;
 		}
 
-		// RRA* heuristic: one resumable reverse search per goal triangle, dropped on every nav patch.
-		gnav::RraCache*	   rra	   = nullptr;
-		const std::int32_t goalTri = detailMesh.locate(goalMm);
-		if (goalTri >= 0) {
-			if (rraCaches.size() >= kMaxRraCaches && !rraCaches.contains(goalTri)) {
-				rraCaches.clear();
-			}
-			gnav::RraCache& cache = rraCaches[goalTri];
-			cache.goalTri		  = goalTri;
-			rra					  = &cache;
-		}
-
-		const gnav::PathResult result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, belief, rra);
+		const gnav::PathResult result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, belief);
 		if (!result.reachable) {
 			return std::nullopt;
 		}

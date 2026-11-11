@@ -30,8 +30,6 @@
 
 #include <nav/PathQuery.h>
 
-#include <utils/Log.h>
-
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 #include <worldgen/sampling/PondNetwork2D.h>
@@ -40,8 +38,6 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -549,7 +545,7 @@ TEST_F(NavigationSystemTest, ReachKeyMovesWithAPatch) {
 	EXPECT_NE(after.startRegionGeneration, first.startRegionGeneration) << "the patch left the reach key unchanged";
 }
 
-// --- RRA* heuristic wiring + instrumentation (P3.5) --------------------------
+// --- Path query instrumentation -----------------------------------------------
 
 TEST_F(NavigationSystemTest, NavQueryStatsPopulatedOnPath) {
 	ConstructionWorld cw;
@@ -576,73 +572,6 @@ TEST_F(NavigationSystemTest, NavQueryStatsPopulatedOnPath) {
 	ASSERT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 	EXPECT_EQ(sys.navQueryStats().totalQueries, 2u) << "cumulative query count moves";
 	EXPECT_GE(sys.navQueryStats().totalNodesExpanded, s.totalNodesExpanded);
-}
-
-// A query that locates its goal creates that goal's RRA* cache; a nav patch drops them all,
-// since a patched triangle id can hold a different triangle.
-TEST_F(NavigationSystemTest, PatchClearsRraCaches) {
-	ConstructionWorld cw;
-	SegmentId		  south = buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
-
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-
-	ASSERT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
-	EXPECT_EQ(sys.rraCacheCount(), 1u);
-
-	for (const auto& op : cw.openings()) {
-		ASSERT_TRUE(cw.setOpeningState(op.id, FoundationState::Blueprint));
-	}
-	(void)south;
-	step(world, sys);
-	EXPECT_EQ(sys.rraCacheCount(), 0u) << "the patch dropped the stale caches";
-	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
-}
-
-// The cache map is bounded: many DISTINCT goal triangles must not grow it past the cap. A grid
-// of pillars fragments the mesh so a spread of goal points lands on > 64 distinct triangles.
-TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
-	ConstructionWorld cw;
-	buildWall(cw, {0, 0}, {14000, 0});
-	buildWall(cw, {14000, 0}, {14000, 14000});
-	buildWall(cw, {14000, 14000}, {0, 14000});
-	buildWall(cw, {0, 14000}, {0, 0});
-	for (int px = 0; px < 5; ++px) {
-		for (int py = 0; py < 5; ++py) {
-			const std::int64_t cx = 2500 + px * 2200;
-			const std::int64_t cy = 2500 + py * 2200;
-			buildWall(cw, {cx, cy}, {cx + 400, cy});
-			buildWall(cw, {cx + 400, cy}, {cx + 400, cy + 400});
-			buildWall(cw, {cx + 400, cy + 400}, {cx, cy + 400});
-			buildWall(cw, {cx, cy + 400}, {cx, cy});
-		}
-	}
-
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
-
-	const glm::vec2					 start{1.0F, 1.0F};
-	std::unordered_set<std::int32_t> distinctGoalTris;
-	for (int gx = 0; gx < 13; ++gx) {
-		for (int gy = 0; gy < 13; ++gy) {
-			const glm::vec2	   goal{0.7F + static_cast<float>(gx), 0.7F + static_cast<float>(gy)};
-			const std::int32_t t = sys.navMesh().locate(nav::toMm(goal));
-			if (t >= 0) {
-				distinctGoalTris.insert(t);
-			}
-			(void)sys.requestPath(start, goal, kAgentRadius);
-		}
-	}
-
-	EXPECT_LE(sys.rraCacheCount(), 64u) << "the cache map must stay within its cap under goal churn";
-	EXPECT_GT(distinctGoalTris.size(), 64u) << "test setup must produce > 64 distinct goal triangles to exercise the cap";
 }
 
 // --- Flora ---------------------------------------------------------------------
@@ -2400,29 +2329,6 @@ TEST_F(NavigationSystemTest, BlueprintChunkKeepsItsGround) {
 	EXPECT_FALSE(sys.inSimArea(ChunkWalk::centre(2))) << "the oldest without construction went";
 }
 
-namespace {
-	// The nav job diagnostics logged while it is alive.
-	struct JobLog {
-		std::vector<std::string> jobs;
-
-		JobLog() { foundation::Logger::setSink(&JobLog::sink, this); }
-		~JobLog() { foundation::Logger::setSink(nullptr, nullptr); }
-		JobLog(const JobLog&)			 = delete;
-		JobLog& operator=(const JobLog&) = delete;
-
-		static void sink(void* context, const foundation::LogRecord& record) {
-			if (std::strstr(record.message, "[NavBuild] job ") != nullptr) {
-				static_cast<JobLog*>(context)->jobs.emplace_back(record.message);
-			}
-		}
-
-		[[nodiscard]] long long last(const char* tag) const {
-			const char* at = std::strstr(jobs.back().c_str(), tag);
-			return at != nullptr ? std::atoll(at + std::strlen(tag)) : -1;
-		}
-	};
-} // namespace
-
 // A lost chunk's flora comes out one patch per cell, so each patch's width refresh covers its own
 // cell and not the box around all of them.
 TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
@@ -2448,10 +2354,11 @@ TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
 
 	executor.unloadChunk({0, 0});
 	processed.erase(ChunkCoordinate{0, 0});
-	JobLog log;
+	sys.resetNavQueryStats();
 	step(world, sys);
-	ASSERT_FALSE(log.jobs.empty());
-	EXPECT_EQ(log.last(" patches "), 3) << log.jobs.back();
+	ASSERT_FALSE(sys.isBuilding());
+	EXPECT_EQ(sys.navQueryStats().navPatches, 3u);
+	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "flora is in the nav mesh only";
 	EXPECT_TRUE(std::all_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return sys.isOnMesh(t); })) << "all removed";
 }
 

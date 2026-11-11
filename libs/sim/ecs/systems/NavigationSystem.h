@@ -26,7 +26,7 @@
 // run; each also refreshes its widths or rebuilds its forests. The next update() or the first
 // query waits for them, so a query always sees exactly the patches gathered through the previous
 // tick, however long the workers took, and nothing reads a mesh while it is patched. The join
-// drops the RRA* caches and bumps generation(). Points on meshed ground route to each other
+// bumps generation(). Points on meshed ground route to each other
 // wherever they are.
 
 #include "../ISystem.h"
@@ -36,7 +36,6 @@
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
-#include <nav/RraCache.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -263,18 +262,19 @@ class NavigationSystem : public ISystem {
 	// so the replan loop sees "the mesh changed under me", and a deferred route waits on it.
 	[[nodiscard]] std::uint64_t generation() const;
 
-	// Cumulative A* instrumentation since the last resetNavQueryStats() (P3.5).
+	// Cumulative instrumentation since the last resetNavQueryStats(): the path searches, and the
+	// patches the joined jobs applied to each mesh.
 	struct NavQueryStats {
 		std::uint64_t totalQueries		 = 0;
 		std::uint64_t totalNodesExpanded = 0;
 		std::int64_t  lastNodesExpanded	 = 0;
 		std::int64_t  lastPeakOpenSet	 = 0;
+		std::uint64_t navPatches		 = 0;
+		std::uint64_t structuralPatches	 = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
 
-	// Live RRA* reverse-search caches (one per goal triangle), dropped on every nav-mesh patch.
-	[[nodiscard]] std::size_t rraCacheCount() const;
 
 	// The meshes, for the debug overlay and tests. Dead triangle slots must be skipped
 	// (PatchableMesh::triangleLive). A reference is good until the next update() or endTick().
@@ -427,8 +427,8 @@ class NavigationSystem : public ISystem {
 	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundVertexBudget);
 	// Hand `gathered` to the workers. No-op when it is empty.
 	void submit();
-	// Wait for the workers and, once per job, publish what it changed (generation counters, RRA*
-	// caches). Every query and every mesh accessor goes through it.
+	// Wait for the workers and, once per job, publish what it changed (the generation counters).
+	// Every query and every mesh accessor goes through it.
 	void join() const;
 	// Hand the joined jobs' ring and door ids back to the bookkeeping that gathered them.
 	void collect();
@@ -506,8 +506,6 @@ class NavigationSystem : public ISystem {
 	mutable std::uint64_t meshGeneration	   = 0;
 	mutable std::uint64_t structuralGeneration = 0;
 
-	mutable std::unordered_map<std::int32_t, geometry::nav::RraCache> rraCaches;
-	static constexpr std::size_t									   kMaxRraCaches = 64;
 
 	mutable NavQueryStats navStats;
 
