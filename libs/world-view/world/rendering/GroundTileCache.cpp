@@ -1,5 +1,7 @@
 #include "world/rendering/GroundTileCache.h"
 
+#include "world/rendering/Bc3.h"
+
 #include "SalalVersion.h"
 
 #include <assets/AssetDefinition.h>
@@ -33,7 +35,7 @@ namespace worldview {
 		namespace fs = std::filesystem;
 
 		constexpr uint32_t kMagic = 0x54475357U; // "WSGT" read as little-endian bytes
-		constexpr uint32_t kFormatVersion = 2;	 // the file layout below; part of the key
+		constexpr uint32_t kFormatVersion = 3;	 // the file layout below; part of the key
 		constexpr auto	   kStaleTemporary = std::chrono::hours(1);
 		constexpr char	   kTemporaryExtension[] = ".tmp";
 
@@ -145,6 +147,8 @@ namespace worldview {
 			w.put(s.referenceContrast);
 			w.put(s.lockShift);
 			w.put(s.heightSpread);
+			w.put(s.bc3DeltaE);
+			w.put(s.bc3Rms);
 		}
 
 		GroundMipSample getSample(Reader& r) {
@@ -158,6 +162,8 @@ namespace worldview {
 			s.referenceContrast = r.get<float>();
 			s.lockShift = r.get<glm::vec3>();
 			s.heightSpread = r.get<float>();
+			s.bc3DeltaE = r.get<float>();
+			s.bc3Rms = r.get<float>();
 			return s;
 		}
 
@@ -247,6 +253,22 @@ namespace worldview {
 			}
 			mix(assets::LuaEngine::kApiVersion);
 		}
+		if (def.assetType == assets::AssetType::Simple) {
+			// An SVG def reads its variants' files on every bake, so they are keyed as they are now.
+			mix(static_cast<uint64_t>(def.svgPaths.size()));
+			for (const std::string& svgPath : def.svgPaths) {
+				const fs::path							  file = def.resolvePath(svgPath);
+				const std::optional<std::vector<uint8_t>> bytes = readBytes(file);
+				if (!bytes.has_value()) {
+					LOG_WARNING(
+						Engine, "GroundTileCache: can't read %s's SVG %s; not caching it", def.defName.c_str(), file.string().c_str()
+					);
+					return std::nullopt;
+				}
+				mixText(svgPath);
+				mixBytes(*bytes);
+			}
+		}
 		return h;
 	}
 
@@ -305,7 +327,8 @@ namespace worldview {
 				variant.samples.push_back(getSample(r));
 				const int					   size = std::max(1, layer >> level);
 				const std::span<const uint8_t> rgba = r.take(static_cast<size_t>(size) * static_cast<size_t>(size) * 4);
-				variant.mips.push_back({.size = size, .rgba = {rgba.begin(), rgba.end()}});
+				const std::span<const uint8_t> bc3 = r.take(bc3Bytes(size, size));
+				variant.mips.push_back({.size = size, .rgba = {rgba.begin(), rgba.end()}, .bc3 = {bc3.begin(), bc3.end()}});
 			}
 		}
 		if (!r.atEnd()) {
@@ -332,6 +355,7 @@ namespace worldview {
 			for (size_t level = 0; level < variant.mips.size(); ++level) {
 				putSample(w, variant.samples[level]);
 				w.putBytes(variant.mips[level].rgba);
+				w.putBytes(variant.mips[level].bc3);
 			}
 		}
 		w.put(checksum(w.bytes));

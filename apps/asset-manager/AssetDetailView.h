@@ -2,8 +2,9 @@
 
 // The right-hand detail pane: a header (category kicker, name, type badge), then two columns. Left, a
 // large preview: one framed thumbnail for a simple asset, or a 2x3 grid of seeded variants under a
-// Randomize button for a procedural one (each cell a different generator seed), the collider drawn over
-// the first. A ground tile shows its first variant tiled 3x3 beside the grid, so seams show. Right, the
+// Randomize button for a procedural one (each cell a different generator seed) or an SVG ground def (each
+// cell an SVG, Randomize stepping through them), the collider drawn over the first. A ground tile shows
+// its first variant tiled 3x3 beside the grid, so seams show. Right, the
 // asset's facts, its validation issues, and its source XML in a scrolling well. A ground def also gets a
 // Vectors / Bake switch; Bake swaps both columns for its GroundBakeView.
 
@@ -42,7 +43,7 @@ namespace asset_manager {
 		void preview(ui::Ref<ui::Component> column);
 		void info(ui::Ref<ui::Component> column);
 		void applyVariantSeeds();
-		void randomize(); // advance to the next set of procedural variant seeds
+		void randomize(); // advance to the next set of variant seeds
 
 		static constexpr int kVariants = 6;
 
