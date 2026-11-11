@@ -3239,6 +3239,22 @@ namespace ecs::test {
 		}
 	};
 
+	// A switch to Build reads Build's own action, which needs the hands: the carried item is stowed as for
+	// any other hands-on work, not kept in hand on an unknown action.
+	TEST_F(ChainInterruptionFixture, ASwitchToBuildFreesTheHands) {
+		assets::ActionTypeDef buildAction;
+		buildAction.defName = "Build";
+		buildAction.needsHands = true;
+		assets::ActionTypeRegistry::Get().registerTestAction(std::move(buildAction));
+		auto  colonist = createColonist({5.0F, 5.0F});
+		auto* inventory = world->getComponent<Inventory>(colonist);
+		inventory->pickUp("Axe", 1);
+		auto* task = armMidHaulCarryingAxe(colonist);
+		callHandleChainInterruption(colonist, *task, *inventory, *world->getComponent<Position>(colonist), TaskType::Build, NeedType::Count);
+		EXPECT_FALSE(inventory->isHolding("Axe"));
+		EXPECT_TRUE(inventory->belt[0].has_value());
+	}
+
 	TEST_F(ChainInterruptionFixture, FreedOneHandToolStowsToBeltFirst) {
 		auto  colonist = createColonist({5.0F, 5.0F});
 		auto* inventory = world->getComponent<Inventory>(colonist);

@@ -92,9 +92,9 @@ namespace ecs {
 					return "Craft";
 				case TaskType::Harvest:
 					return "Harvest";
+				case TaskType::Build:
+					return "Build";
 				case TaskType::Deconstruct:
-					// Config-driven like Build: the Deconstruct action is defined in
-					// action-types.xml (needsHands=true), so actionNeedsHands reads it.
 					return "Deconstruct";
 				case TaskType::FulfillNeed:
 					switch (needType) {
