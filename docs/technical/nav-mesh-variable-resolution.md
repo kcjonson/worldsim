@@ -85,6 +85,27 @@ what it touches by walking the triangles under it. So a patch skips the cost a r
 made of, and the quadratic loop only matters where a whole chunk's terrain is meshed for the
 first time.
 
+**After step 1** (the all-pairs loop replaced by a uniform grid; output byte-identical on the
+three fixtures, the 2x2 tiling, and 340 random inputs). Median of 5, same machine:
+
+| Input | Before | After |
+|---|---|---|
+| manyTreesDump | 152 ms | 11.7 ms |
+| controlDump | 234 ms | 14.5 ms |
+| realRings | 295 ms | 17.3 ms |
+| controlDump, trees removed | 1.7 ms | 0.77 ms |
+| realRings, trees removed | 12.6 ms | 3.0 ms |
+| Tiled 256 m (2,556 trees) | 3.3 s | 67 ms |
+| Tiled 384 m (5,751 trees) | 17.6 s | 191 ms |
+| Tiled 512 m (10,224 trees) | 56 s | 441 ms |
+| `buildArrangement` alone, controlDump | 211 to 229 ms | 1.9 ms |
+
+A second run with the machine busier read about a third higher on every row. Arrangement is
+now about 2 ms of a 14.5 ms build and the triangulation about 2 ms; the other 10 ms is
+classification, widths, the locate grid, and the forests. Area still scales worse than linear
+(16 times the input takes 30 times as long), and that is in those later stages. It gets
+profiled before step 4 relies on meshing a whole chunk at once.
+
 ### 2.2 Not measured yet
 
 These need the running game, one launch (section 6):
