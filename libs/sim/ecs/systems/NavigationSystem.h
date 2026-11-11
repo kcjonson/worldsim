@@ -18,8 +18,10 @@
 //  3. Ground: ready chunks whose ground is missing, nearest a mover or the view first, one patch
 //     per chunk per mesh: open chunks share a tick up to kGroundVerticesPerTick ring vertices, a
 //     chunk with water goes alone. A chunk whose terrain changes has its water re-derived. A chunk
-//     that unloads keeps its ground, up to kKeptUnloadedChunks of them; past that the one unloaded
-//     longest ago holding no construction loses it, one chunk a tick, on a tick no ground arrives.
+//     that unloads keeps its ground. Ground a mover (a colonist, a live route, a waiting goal) has
+//     ever held is never dropped; of ground only the camera held, up to kCameraOnlyUnloadedChunks
+//     unloaded chunks are kept, and past that the one unloaded longest ago holding no construction
+//     loses it, one chunk a tick, on a tick no ground arrives.
 //  4. Detail: the rects scanned for colliders in kDetailCellMm cells; up to kDetailRemovalsPerTick
 //     removals and kDetailRingsPerTick adds, one patch per cell, adds nearest a rect centre first.
 // endTick() hands the tick's patches to two worker threads, one per mesh, after every system has
@@ -41,6 +43,7 @@
 
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "../components/SourceReachMemo.h"
 
 #include <core/RectMm.h>
 #include <core/Vec2i64.h>
@@ -140,22 +143,13 @@ class NavigationSystem : public ISystem {
 	// what that colonist REMEMBERS. The filter holds pointers into the caller's sets and is
 	// consumed synchronously.
 	//
-	// An Autonomous route (a colonist's own choice) is searched inside the start's reach square, so
-	// it agrees with reaches() and nothing the camera loads changes it; a goal outside the square has
-	// no route. An Ordered route (the player's) is searched wherever the meshed ground goes. Either is
-	// capped in expansions.
-	// Every route of a requester's task (its legs, its replans) keeps the kind and the square (or
-	// none) the task's first route had, while its start stays within its radius of the square; a new
-	// task starts afresh. A requester with no task instance is held to one goal instead.
-	//
-	// When the nav search gives up in priced ground (more expansions than the structural walk
-	// warrants, see kNavExpansionFloor), the route is the structural walk, through the detail at its
-	// price.
-	enum class RouteKind { Autonomous, Ordered };
+	// The route is planned over whatever ground is meshed, for anyone, at any distance. The structural
+	// walk under the same belief comes first: where it finds none, neither would the nav search, so
+	// there is none. When the nav search then gives up in priced ground (more expansions than the
+	// structural walk warrants, see kNavExpansionFloor), the route is the structural walk, through the
+	// detail at its price.
 	[[nodiscard]] std::optional<std::vector<glm::vec2>> requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-																	geometry::nav::BeliefFilter belief = {},
-																	RouteKind kind = RouteKind::Autonomous,
-																	EntityID requester = kInvalidEntity) const;
+																	geometry::nav::BeliefFilter belief = {}) const;
 	// The nav search's expansion cap, kNavExpansionFloor and kNavExpansionsPerStructural by default;
 	// tests set a small one to make it give up.
 	void setNavExpansionCap(std::uint32_t floor, std::uint32_t perStructural) {
@@ -163,64 +157,54 @@ class NavigationSystem : public ISystem {
 		navExpansionsPerStructural = perStructural;
 	}
 
-	// What a colonist can reach on its own, and how far it walks there: a walk on the structural
-	// mesh (no detail, so the camera changes nothing) under the colonist's belief, confined to the
-	// square of half-side autonomousReachMm() around where it stands. That square is the ground the
-	// colonist's own anchor keeps loaded, whatever the camera does. reachFrom notes the start once;
-	// reaches() and walkDistance() walk to one goal each.
-	//   A start off meshed ground: every goal "maybe" (true; walkDistance answers the straight line).
-	//   A goal outside the square, or not walkable to within it: unreachable.
-	//   A goal off meshed ground inside the square: "maybe" while its chunk is loaded (its ground is
-	//   on the way), unreachable otherwise.
-	// startCell (the start, kReachCellMm to a step) and startRegionGeneration (a stamp that moves
-	// when the structural content of a chunk the square touches changes, or its ground is meshed)
-	// together say when a walk from here still holds. A Reach is used within one frame; the
-	// belief's sets must outlive it.
+	// What a colonist can reach, and how far it walks there: a walk on the structural mesh (no
+	// detail, so the camera changes nothing) under the colonist's belief, over all meshed ground,
+	// bounded by the walk asked about and by kReachExpansionCap. reachFrom notes the start once;
+	// reaches(), walk() and walkDistance() walk to one goal each.
+	//   A start off meshed ground: every goal "maybe" (true; the straight line).
+	//   A goal off meshed ground: "maybe" while its chunk is loaded (its ground is on the way, and a
+	//   route to it waits for it), unreachable otherwise.
+	//   A search that hits kReachExpansionCap: not reachable now, and not definite (walk()), so it is
+	//   never remembered as a verdict.
+	// startCell (the start, kReachCellMm to a step) and structuralEpoch (moves with every structural
+	// job, anywhere) together say when a walk from here still holds. A Reach is used within one
+	// frame; the belief's sets must outlive it.
 	struct Reach {
 		bool						onGround = false;
 		geometry::Vec2i64			startMm{0, 0};
-		std::int64_t				radiusMm			  = 0;
-		std::int64_t				startCell			  = 0;
-		std::uint64_t				startRegionGeneration = 0;
-		// Every chunk the square meets has its ground meshed. Until then a walk that fails may only be
-		// waiting on it: "not now", which is never remembered.
+		std::int64_t				radiusMm		= 0;
+		std::int64_t				startCell		= 0;
+		std::uint64_t				structuralEpoch = 0;
+		// Every chunk within the anchor load range of the start has its ground meshed. Until then a
+		// walk that fails may only be waiting on it: "not now", which is never remembered.
 		bool						settled = true;
-		// The rect walks are confined to: the square round the start, or for taskReachFrom the
-		// requester's task's square (taskScoped).
-		geometry::RectMm			square{{0, 0}, {0, 0}};
-		bool						taskScoped = false;
 		geometry::nav::BeliefFilter belief;
 	};
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
-	// The reach for questions about the requester's task in progress: walks confined to the square
-	// its routes are (requestPath's scope for its current task instance) while it stands inside that
-	// square, give or take its radius, so reach and route agree for the task's own goals; otherwise
-	// reachFrom. Never for choosing a new task, whose square is round where the colonist stands.
-	[[nodiscard]] Reach taskReachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief,
-									  EntityID requester) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
-	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or nullopt
-	// when it is unreachable or every walk there is longer than maxWalk.
+	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or none when it
+	// is unreachable or every walk there is longer than maxWalk; definite unless the search gave up.
+	[[nodiscard]] WalkAnswer		   walk(const Reach& reach, glm::vec2 goalMeters, float maxWalk = std::numeric_limits<float>::infinity()) const;
 	[[nodiscard]] std::optional<float> walkDistance(const Reach& reach, glm::vec2 goalMeters,
 													float maxWalk = std::numeric_limits<float>::infinity()) const;
-	// The goal is inside the reach's rect, from a start on meshed ground: a verdict on it is the
-	// colonist's to keep (SourceReachMemo). Anything outside is unreachable on its own and only a
-	// player's order sends a colonist there.
+	// Both ends are on meshed ground: a walk between them is the colonist's to remember
+	// (SourceReachMemo).
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
-	// The structural stamp behind a route that failed at `anchor`: it moves when the structural
-	// content (walls, doors, water) changes in a chunk touching the anchor's square grown by
-	// autonomousReachMm(), which holds every square a colonist still inside the anchor's square walks
-	// over. Ground arriving or leaving doesn't move it, so nothing the camera loads or drops does.
+	// The stamp behind a route that failed at `anchor`: the structural content (walls, doors, water)
+	// of the chunks within twice the anchor load range of it. Ground arriving or leaving doesn't move
+	// it, so nothing the camera loads or drops does.
 	[[nodiscard]] std::uint64_t verdictStamp(glm::vec2 anchor) const;
-	// `here` is inside the square around `anchor`.
-	[[nodiscard]] bool inSquareOf(glm::vec2 anchor, glm::vec2 here) const;
-	// Half the side of the square a colonist reaches and routes in on its own: the anchor load range
-	// of the chunk manager wired in (ChunkManager::kDefaultAnchorLoadRangeMeters with none), the
-	// ground its own anchor loads, so the two never differ.
-	[[nodiscard]] std::int64_t autonomousReachMm() const;
-	[[nodiscard]] float		   anchorLoadRangeMeters() const;
+	// `here` is within the anchor load range of `anchor`, per axis: where a failed route recorded at
+	// the anchor still holds.
+	[[nodiscard]] bool nearAnchor(glm::vec2 anchor, glm::vec2 here) const;
+	// The anchor load range of the chunk manager wired in (ChunkManager::kDefaultAnchorLoadRangeMeters
+	// with none).
+	[[nodiscard]] float anchorLoadRangeMeters() const;
 	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
 	static constexpr std::int64_t kReachCellMm = 2000;
+	// A reach question's structural search expands at most this many triangles: about 70 chunks of
+	// open ground, so a failing walk costs a bounded few milliseconds at worst.
+	static constexpr std::uint32_t kReachExpansionCap = 20000;
 	// The nav search behind a found structural walk may expand this many triangles plus this many
 	// for each the structural search expanded (see requestPath).
 	static constexpr std::uint32_t kNavExpansionFloor		   = 4000;
@@ -415,10 +399,11 @@ class NavigationSystem : public ISystem {
 	// with water always goes alone. Eight open chunks (32 vertices each at kMaxBoundsEdgeMm): five
 	// measured 3.7 ms against 6.3 for the dearest shoreline chunk alone, so eight stay under it.
 	static constexpr std::size_t kGroundVerticesPerTick = 256;
-	// Unloaded chunks whose ground stays meshed, so going back to them meshes nothing. Beyond
-	// it, the chunk unloaded longest ago that holds nothing of the ConstructionWorld (a wall,
-	// opening or foundation, blueprint or built) loses its ground.
-	static constexpr std::size_t kKeptUnloadedChunks = 16;
+	// Unloaded chunks whose ground only the camera ever held (no mover, live route or waiting goal
+	// did) that stay meshed, so going back to them meshes nothing. Beyond it, the one unloaded
+	// longest ago that holds nothing of the ConstructionWorld (a wall, opening or foundation,
+	// blueprint or built) loses its ground. Ground a mover has held is never dropped.
+	static constexpr std::size_t kCameraOnlyUnloadedChunks = 16;
 	// Detail turns on within this of the viewport rect GameScene pushes (which already carries
 	// kViewportMargin), and stays on until the rect is this much farther away.
 	static constexpr std::int64_t kDetailOnMarginMm	  = 8000;
@@ -573,7 +558,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool groundMeshed(world::ChunkCoordinate coord) const;
 	// Every chunk whose interior meets the box's interior has its ground meshed. The same "interiors
 	// meet" rule picks the chunks a stamp reads (forChunksMeeting), so a chunk that only touches a
-	// square's edge never enters either.
+	// box's edge never enters either.
 	[[nodiscard]] bool groundMeshedThrough(const geometry::RectMm& box) const;
 	static void		   forChunksMeeting(const geometry::RectMm& box, const std::function<void(world::ChunkCoordinate)>& visit);
 	// As a join moves generation(), the routes current before it that no closing box crosses are
@@ -581,9 +566,9 @@ class NavigationSystem : public ISystem {
 	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
 	// The structural content of the chunks the box touches, and with withGround which of them have
 	// their ground meshed.
-	enum class StampGround { Without, With };
-	[[nodiscard]] std::uint64_t chunkStamp(const geometry::RectMm& box, StampGround withGround) const;
-	[[nodiscard]] geometry::RectMm				squareAround(const geometry::Vec2i64& centerMm) const;
+	[[nodiscard]] std::uint64_t			  chunkStamp(const geometry::RectMm& box) const;
+	[[nodiscard]] static geometry::RectMm boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm);
+	[[nodiscard]] std::int64_t			  anchorLoadRangeMm() const;
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	[[nodiscard]] Rect viewportRect() const;
 	void			   updateDetail();
@@ -673,24 +658,21 @@ class NavigationSystem : public ISystem {
 	std::unique_ptr<Worker> structuralWorker;
 
 	mutable std::uint64_t structuralGeneration = 0;
+	// Every structural job joined, wherever it lands: what a walk can find may have changed (Reach).
+	mutable std::uint64_t structuralEpoch = 0;
 	// Structural changes per chunk, for the reach stamps, counted at the join.
 	mutable std::map<world::ChunkCoordinate, std::uint64_t, ChunkLess> chunkStructuralVersion;
 	mutable std::set<world::ChunkCoordinate, ChunkLess>				 unmeshedReported; // logged once each (groundMeshedThrough)
 	mutable geometry::Ring												 colliderScratch;  // placedObstacleAt
 	std::vector<glm::vec2>												 anchors;
 	std::set<world::ChunkCoordinate, ChunkLess>							 anchorChunks;
+	// Every chunk an anchor has held, ever: its ground is never dropped (dropUnloadedGround).
+	std::set<world::ChunkCoordinate, ChunkLess> moverHeld;
 	// Routes requestPath gave that cross priced faces, by routeKey, each kept whole so a key that two
 	// routes share never answers for the wrong one. The latest answer for a route stands, and each
 	// update() keeps only the routes some mover holds, so it never outgrows the movers and one
 	// tick's queries.
 	mutable std::unordered_map<std::uint64_t, std::vector<glm::vec2>> pricedRoutes;
-	struct RouteScope {
-		std::uint64_t					instance = 0; // the requester's Task::instanceId; 0 for none
-		geometry::Vec2i64				goalMm;
-		RouteKind						kind = RouteKind::Autonomous;
-		std::optional<geometry::RectMm> within;
-	};
-	mutable std::unordered_map<EntityID, RouteScope> routeScopes; // by requester
 	std::uint32_t									 navExpansionFloor			= kNavExpansionFloor;
 	std::uint32_t									 navExpansionsPerStructural = kNavExpansionsPerStructural;
 	// The boxes of the placed obstacles that landed in the joined jobs, for markCrossedRoutes.

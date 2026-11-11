@@ -345,7 +345,7 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 		);
 	};
 
-	const ecs::SourceReachMemo::Key	   meshA{.startCell = 5, .reachGeneration = 1, .beliefVersion = 0};
+	const ecs::SourceReachMemo::Key	   meshA{.startCell = 5, .structuralEpoch = 1, .beliefVersion = 0};
 	const ecs::SourceReachMemo::Anchor anchorA{.at = {0.0F, 0.0F}, .structural = 1, .beliefVersion = 0};
 	EXPECT_FALSE(query(meshA, anchorA).has_value());
 	EXPECT_EQ(probes, 2 * kSources) << "the first decision tests every source, stretched then in full";
@@ -359,7 +359,7 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	EXPECT_EQ(learned->position, reachableSource);
 	EXPECT_EQ(probes, 2 * kSources + 1) << "only the new source is tested";
 
-	const ecs::SourceReachMemo::Key	   meshB{.startCell = 5, .reachGeneration = 2, .beliefVersion = 0};
+	const ecs::SourceReachMemo::Key	   meshB{.startCell = 5, .structuralEpoch = 2, .beliefVersion = 0};
 	const ecs::SourceReachMemo::Anchor anchorB{.at = {0.0F, 0.0F}, .structural = 2, .beliefVersion = 0};
 	const size_t before = probes;
 	EXPECT_TRUE(query(meshB, anchorB).has_value());
@@ -378,8 +378,8 @@ TEST(MemoryQueries, SourceReachMemoHoldsFailedRoutesUnderTheAnchor) {
 		 ++probes;
 		 return std::optional<float>(glm::length(p));
 	};
-	const ecs::SourceReachMemo::Key	   here{.startCell = 5, .reachGeneration = 1};
-	const ecs::SourceReachMemo::Key	   stepOn{.startCell = 6, .reachGeneration = 1};
+	const ecs::SourceReachMemo::Key	   here{.startCell = 5, .structuralEpoch = 1};
+	const ecs::SourceReachMemo::Key	   stepOn{.startCell = 6, .structuralEpoch = 1};
 	const ecs::SourceReachMemo::Anchor anchor{.at = {0.0F, 0.0F}, .structural = 1};
 	const ecs::SourceReachMemo::Anchor moved{.at = {200.0F, 0.0F}, .structural = 1};
 

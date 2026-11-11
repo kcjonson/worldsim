@@ -635,6 +635,7 @@ namespace ecs {
 			for (std::int32_t cy = lo.y; cy <= hi.y; ++cy) {
 				for (std::int32_t cx = lo.x; cx <= hi.x; ++cx) {
 					anchorChunks.insert({cx, cy});
+					moverHeld.insert({cx, cy});
 				}
 			}
 		}
@@ -781,6 +782,7 @@ namespace ecs {
 		navStats.navPatches += runningNav.patches.size();
 		navStats.structuralPatches += runningStructural.patches.size();
 		if (!runningStructural.empty()) {
+			++structuralEpoch;
 			for (const world::ChunkCoordinate coord : runningStructural.structuralChunks) {
 				++chunkStructuralVersion[coord];
 			}
@@ -1216,12 +1218,13 @@ namespace ecs {
 	}
 
 	std::size_t NavigationSystem::dropUnloadedGround(std::size_t maxChunks) {
-		// Past the budget, the chunks unloaded longest ago that hold no construction lose their
+		// Ground a mover has ever held is never dropped. Of the unloaded ground only the camera ever
+		// held, past the budget, the chunks unloaded longest ago that hold no construction lose their
 		// ground, up to maxChunks of them, one patch per chunk, oldest first. Returns how many more
 		// are still to go.
 		std::vector<std::pair<std::uint64_t, world::ChunkCoordinate>> unloaded;
 		for (const auto& [coord, g] : ground) {
-			if (!g.loaded) {
+			if (!g.loaded && !moverHeld.contains(coord)) {
 				unloaded.emplace_back(g.unloadedAt, coord);
 			}
 		}
@@ -1230,10 +1233,10 @@ namespace ecs {
 		std::size_t taken	 = 0;
 		std::size_t leftOver = 0;
 		for (const auto& [at, coord] : unloaded) {
-			if (kept <= kKeptUnloadedChunks) {
+			if (kept <= kCameraOnlyUnloadedChunks) {
 				break;
 			}
-			if (holdsConstruction(coord) || anchorHolds(coord)) {
+			if (holdsConstruction(coord)) {
 				continue;
 			}
 			--kept;
@@ -1571,20 +1574,6 @@ namespace ecs {
 	}
 
 	void NavigationSystem::forgetDroppedRoutes() {
-		// A requester's confinement lasts while its task does, or with no task instance while its route
-		// does; then it's forgotten. A scope planned before its task had an instance id is the task's
-		// first route, and is that instance's from here on.
-		for (auto it = routeScopes.begin(); it != routeScopes.end();) {
-			const bool	   alive = world != nullptr && world->isAlive(it->first);
-			const Task*	   task	 = alive ? world->getComponent<Task>(it->first) : nullptr;
-			const NavPath* path	 = alive ? world->getComponent<NavPath>(it->first) : nullptr;
-			if (it->second.instance == 0 && task != nullptr && task->instanceId != 0) {
-				it->second.instance = task->instanceId;
-			}
-			const bool held = it->second.instance != 0 ? task != nullptr && task->instanceId == it->second.instance
-													   : path != nullptr && !path->done();
-			it				= held ? std::next(it) : routeScopes.erase(it);
-		}
 		if (pricedRoutes.empty()) {
 			return;
 		}
@@ -2002,8 +1991,7 @@ namespace ecs {
 	}
 
 	std::optional<std::vector<glm::vec2>>
-	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, gnav::BeliefFilter belief,
-								  RouteKind kind, EntityID requester) const {
+	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
 		join();
 		if (detailMesh.liveTriangleCount() == 0) {
 			return std::nullopt;
@@ -2012,48 +2000,9 @@ namespace ecs {
 		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
 		const std::int64_t		radius	= radiusMm(agentRadiusMeters);
 
-		// An autonomous route (a colonist's own choice) is always confined, to the square round where
-		// its task's first route started, the ground its anchor held when it chose: a goal outside it
-		// has no route. A player's order isn't confined. Every later route of the same task (its next
-		// leg, a replan) keeps the kind and the square the first had, so a detour or a second leg that
-		// choice approved never fails because the square moved with the colonist, nor turns into
-		// another kind of route when control changes hands. A task's first route is planned before its
-		// instance id is given (the AI routes, then takes its claims), so the first instance to ask
-		// takes up a scope that has none. A requester with no task instance (an order, a test) is held
-		// to one goal instead. A start pushed out of the square by no more than
-		// the mover's radius keeps it; one farther out (a teleport) takes the square round where it
-		// now stands.
-		const auto inside = [](const geometry::RectMm& r, const geometry::Vec2i64& p) {
-			return p.x >= r.min.x && p.x <= r.max.x && p.y >= r.min.y && p.y <= r.max.y;
-		};
-		const auto grown = [](const geometry::RectMm& r, std::int64_t by) {
-			return geometry::RectMm{{r.min.x - by, r.min.y - by}, {r.max.x + by, r.max.y + by}};
-		};
-		const Task*	   task		= requester != kInvalidEntity && world != nullptr ? world->getComponent<Task>(requester) : nullptr;
-		const uint64_t instance = task != nullptr ? task->instanceId : 0;
-		RouteScope	   scope{instance, goalMm, kind, kind == RouteKind::Autonomous ? std::optional(squareAround(startMm)) : std::nullopt};
-		if (requester != kInvalidEntity) {
-			const auto held = routeScopes.find(requester);
-			if (held != routeScopes.end() &&
-				(instance != 0 ? held->second.instance == instance || held->second.instance == 0
-							   : held->second.instance == 0 && held->second.goalMm == goalMm)) {
-				scope.kind	 = held->second.kind;
-				scope.within = held->second.within;
-				if (scope.within.has_value() && !inside(grown(*scope.within, radius), startMm)) {
-					scope.within = squareAround(startMm);
-				}
-			}
-			routeScopes[requester] = scope;
-		}
-		std::optional<geometry::RectMm> within = scope.within;
-		if (within.has_value() && !inside(*within, startMm)) {
-			within = grown(*within, radius);
-		}
-		const geometry::RectMm* confine = within.has_value() ? &*within : nullptr;
-
 		// The structural mesh holds the nav mesh's ground without detail, so where it has no walk
 		// under this belief (its known walls block) the nav mesh has none either: no nav search.
-		const gnav::PathResult walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.within = confine});
+		const gnav::PathResult walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief);
 		if (walk.stop != gnav::PathStop::Found) {
 			return std::nullopt;
 		}
@@ -2063,8 +2012,7 @@ namespace ecs {
 		// the route is the structural walk itself, through the detail at its price, as it would be off
 		// camera: so a route exists on camera exactly when it does off it.
 		const std::uint32_t	   cap	  = navExpansionFloor + navExpansionsPerStructural * walk.expansions;
-		gnav::PathResult	   result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief),
-														  {.within = confine, .maxExpansions = cap});
+		gnav::PathResult	   result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
 		if (result.stop == gnav::PathStop::LimitReached) {
 			LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
 					  result.expansions, walk.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
@@ -2098,24 +2046,20 @@ namespace ecs {
 		return chunkManager != nullptr ? chunkManager->anchorLoadRangeMeters() : world::ChunkManager::kDefaultAnchorLoadRangeMeters;
 	}
 
-	std::int64_t NavigationSystem::autonomousReachMm() const {
+	geometry::RectMm NavigationSystem::boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm) {
+		return {{centerMm.x - halfMm, centerMm.y - halfMm}, {centerMm.x + halfMm, centerMm.y + halfMm}};
+	}
+
+	std::int64_t NavigationSystem::anchorLoadRangeMm() const {
 		return std::llround(static_cast<double>(anchorLoadRangeMeters()) * static_cast<double>(geometry::kMillimetersPerMeter));
 	}
 
-	geometry::RectMm NavigationSystem::squareAround(const geometry::Vec2i64& centerMm) const {
-		const std::int64_t half = autonomousReachMm();
-		return {{centerMm.x - half, centerMm.y - half}, {centerMm.x + half, centerMm.y + half}};
-	}
-
-	std::uint64_t NavigationSystem::chunkStamp(const geometry::RectMm& box, StampGround withGround) const {
+	std::uint64_t NavigationSystem::chunkStamp(const geometry::RectMm& box) const {
 		std::uint64_t stamp = 1469598103934665603ULL;
 		forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
 			const auto			it		= chunkStructuralVersion.find(coord);
 			const std::uint64_t version = it != chunkStructuralVersion.end() ? it->second : 0;
 			stamp						= (stamp ^ version) * 1099511628211ULL;
-			if (withGround == StampGround::With) {
-				stamp = (stamp ^ (groundMeshed(coord) ? 1U : 0U)) * 1099511628211ULL;
-			}
 		});
 		return stamp;
 	}
@@ -2123,85 +2067,60 @@ namespace ecs {
 	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
 		join();
 		Reach reach;
-		reach.belief				= belief;
-		reach.startMm				= nav::toMm(startMeters);
-		reach.radiusMm				= radiusMm(agentRadiusMeters);
-		reach.square				= squareAround(reach.startMm);
-		reach.onGround				= structural.locate(reach.startMm) >= 0;
-		reach.startCell				= cellKey(geometry::floorDiv(reach.startMm.x, kReachCellMm), geometry::floorDiv(reach.startMm.y, kReachCellMm));
-		reach.startRegionGeneration = chunkStamp(reach.square, StampGround::With);
-		reach.settled				= groundMeshedThrough(reach.square);
-		return reach;
-	}
-
-	NavigationSystem::Reach NavigationSystem::taskReachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief,
-															EntityID requester) const {
-		Reach		reach = reachFrom(startMeters, agentRadiusMeters, belief);
-		const Task* task  = world != nullptr ? world->getComponent<Task>(requester) : nullptr;
-		const auto	held  = routeScopes.find(requester);
-		if (task == nullptr || task->instanceId == 0 || held == routeScopes.end() || held->second.instance != task->instanceId ||
-			!held->second.within.has_value()) {
-			return reach;
-		}
-		const geometry::RectMm& r		= *held->second.within;
-		const geometry::RectMm	grown{{r.min.x - reach.radiusMm, r.min.y - reach.radiusMm}, {r.max.x + reach.radiusMm, r.max.y + reach.radiusMm}};
-		const auto				inside = [&](const geometry::RectMm& box) {
-			   return reach.startMm.x >= box.min.x && reach.startMm.x <= box.max.x && reach.startMm.y >= box.min.y && reach.startMm.y <= box.max.y;
-		};
-		if (!inside(grown)) {
-			return reach;
-		}
-		// The same rect requestPath confines this task's routes to (grown by the radius for a start
-		// pushed just outside it), so reach and route agree for the task's own goals.
-		reach.square				= inside(r) ? r : grown;
-		reach.taskScoped			= true;
-		reach.startRegionGeneration = chunkStamp(reach.square, StampGround::With);
-		reach.settled				= groundMeshedThrough(reach.square);
+		reach.belief		  = belief;
+		reach.startMm		  = nav::toMm(startMeters);
+		reach.radiusMm		  = radiusMm(agentRadiusMeters);
+		reach.onGround		  = structural.locate(reach.startMm) >= 0;
+		reach.startCell		  = cellKey(geometry::floorDiv(reach.startMm.x, kReachCellMm), geometry::floorDiv(reach.startMm.y, kReachCellMm));
+		reach.structuralEpoch = structuralEpoch;
+		reach.settled		  = groundMeshedThrough(boxAround(reach.startMm, anchorLoadRangeMm()));
 		return reach;
 	}
 
 	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
-		const geometry::Vec2i64 goal = nav::toMm(goalMeters);
-		return reach.onGround && goal.x >= reach.square.min.x && goal.x <= reach.square.max.x && goal.y >= reach.square.min.y &&
-			   goal.y <= reach.square.max.y;
+		join();
+		return reach.onGround && structural.locate(nav::toMm(goalMeters)) >= 0;
 	}
 
 	std::uint64_t NavigationSystem::verdictStamp(glm::vec2 anchor) const {
 		join();
-		const geometry::Vec2i64 c = nav::toMm(anchor);
-		const std::int64_t		kHalf = 2 * autonomousReachMm();
-		return chunkStamp({{c.x - kHalf, c.y - kHalf}, {c.x + kHalf, c.y + kHalf}}, StampGround::Without);
+		return chunkStamp(boxAround(nav::toMm(anchor), 2 * anchorLoadRangeMm()));
 	}
 
-	bool NavigationSystem::inSquareOf(glm::vec2 anchor, glm::vec2 here) const {
+	bool NavigationSystem::nearAnchor(glm::vec2 anchor, glm::vec2 here) const {
 		const geometry::Vec2i64 a = nav::toMm(anchor);
 		const geometry::Vec2i64 h = nav::toMm(here);
-		return std::abs(h.x - a.x) <= autonomousReachMm() && std::abs(h.y - a.y) <= autonomousReachMm();
+		return std::abs(h.x - a.x) <= anchorLoadRangeMm() && std::abs(h.y - a.y) <= anchorLoadRangeMm();
 	}
 
-	std::optional<float> NavigationSystem::walkDistance(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
+	WalkAnswer NavigationSystem::walk(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
 		join();
 		const geometry::Vec2i64 goal	 = nav::toMm(goalMeters);
 		const float				straight = std::sqrt(dist2(nav::toMeters(reach.startMm), goalMeters));
 		if (!reach.onGround) {
-			return straight; // can't prove anything from off the ground
-		}
-		const geometry::RectMm& square = reach.square;
-		if (goal.x < square.min.x || goal.x > square.max.x || goal.y < square.min.y || goal.y > square.max.y) {
-			return std::nullopt;
+			return std::optional<float>(straight); // can't prove anything from off the ground
 		}
 		if (structural.locate(goal) < 0) {
 			// Off meshed ground: maybe, while its ground is on the way.
 			const bool coming = chunkManager == nullptr || std::as_const(*chunkManager).getChunk(world::worldToChunk({goalMeters.x, goalMeters.y})) != nullptr;
 			return coming && straight <= maxWalk ? std::optional<float>(straight) : std::nullopt;
 		}
-		const gnav::PathResult walk = gnav::pathThrough(
-			structural.view(), reach.startMm, goal, reach.radiusMm, reach.belief,
-			{.maxCost = static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter), .within = &square});
-		if (walk.stop != gnav::PathStop::Found) {
-			return std::nullopt;
+		const gnav::PathResult found =
+			gnav::pathThrough(structural.view(), reach.startMm, goal, reach.radiusMm, reach.belief,
+							  {.maxCost = static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter), .maxExpansions = kReachExpansionCap});
+		if (found.stop == gnav::PathStop::LimitReached) {
+			LOG_DEBUG(Engine, "[Nav] reach gave up after %u expansions toward (%.2f, %.2f): not reachable now", found.expansions, goalMeters.x,
+					  goalMeters.y);
+			return WalkAnswer(std::nullopt, false);
 		}
-		return static_cast<float>(walk.cost / static_cast<double>(geometry::kMillimetersPerMeter));
+		if (found.stop != gnav::PathStop::Found) {
+			return std::optional<float>{};
+		}
+		return std::optional<float>(static_cast<float>(found.cost / static_cast<double>(geometry::kMillimetersPerMeter)));
+	}
+
+	std::optional<float> NavigationSystem::walkDistance(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
+		return walk(reach, goalMeters, maxWalk).walk;
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {

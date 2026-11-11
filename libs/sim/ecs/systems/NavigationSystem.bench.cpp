@@ -900,7 +900,7 @@ namespace {
 			const auto						   capability = static_cast<assets::CapabilityType>(0);
 			std::vector<ecs::SourceCandidate>  scratch;
 			const ecs::NavigationSystem::Reach reach = rig.nav.reachFrom(kColony, kAgentRadius);
-			const ecs::SourceReachMemo::Key	   key{.startCell = reach.startCell, .reachGeneration = reach.startRegionGeneration};
+			const ecs::SourceReachMemo::Key	   key{.startCell = reach.startCell, .structuralEpoch = reach.structuralEpoch};
 			const ecs::SourceReachMemo::Anchor anchor{.at = kColony, .structural = rig.nav.verdictStamp(kColony)};
 			int								   walks  = 0;
 			const auto						   decide = [&](ecs::SourceReachMemo& memo) {
@@ -999,7 +999,7 @@ namespace {
 	// A wall built once every loaded chunk's ground is meshed: its job carries the structural forest
 	// rebuild over all of it. range(0) is the chunk load radius around the forest's middle: 2 meshes
 	// 25 chunks, 5 meshes 121 (the most the system holds is the loaded chunks plus
-	// kKeptUnloadedChunks).
+	// kCameraOnlyUnloadedChunks).
 	void BM_WallEditMeshedChunks(benchmark::State& state) {
 		const auto radius = static_cast<std::int32_t>(state.range(0));
 		world::ChunkManager chunks(std::make_unique<ForestRiverSampler>());

@@ -17,24 +17,35 @@
 
 namespace ecs {
 
-	/// What a colonist has found about the targets it remembers in its own reach square
-	/// (NavigationSystem::Reach), by Memory key, kept two ways.
+	/// A walk's answer: its length in metres, or none; not definite when the search gave up, which is
+	/// "not now" and never remembered. Converts from a plain length or none, which is definite.
+	struct WalkAnswer {
+		std::optional<float> walk;
+		bool				 definite = true;
+
+		WalkAnswer(std::optional<float> length = std::nullopt, bool isDefinite = true)
+			: walk(length),
+			  definite(isDefinite) {}
+	};
+
+	/// What a colonist has found about the targets it remembers (NavigationSystem::Reach), by Memory
+	/// key, kept two ways.
 	///
 	/// A walk, its length or "none" (within a bound, or at any length), is a function of where the
-	/// colonist stands, the structural mesh in its square and its belief, so it is held under a Key:
-	/// the start to a NavigationSystem::kReachCellMm step, the stamp of the structural content of the
-	/// chunks its square touches, and the belief version. It is cheap to walk again.
+	/// colonist stands, the structural mesh and its belief, so it is held under a Key: the start to a
+	/// NavigationSystem::kReachCellMm step, the structural mesh's epoch (any structural job anywhere
+	/// moves it) and the belief version. It is cheap to walk again.
 	///
 	/// A route that failed where the walk said yes is the rare disagreement, and picking that target
 	/// again would only fail again, so it is held under an Anchor: the spot it failed at, the stamp of
-	/// the structural content a colonist anywhere in that spot's square could walk over
-	/// (NavigationSystem::verdictStamp) and the belief version. It holds while the colonist stays in
-	/// the anchor's square and neither changes, so a colonist wandering about one spot doesn't pick the
-	/// failed target again.
+	/// the structural content near it (NavigationSystem::verdictStamp) and the belief version. It holds
+	/// while the colonist stays near the anchor (NavigationSystem::nearAnchor) and neither changes, so
+	/// neither ground landing elsewhere nor a colonist wandering about one spot has it pick the failed
+	/// target again.
 	struct SourceReachMemo {
 		struct Key {
 			std::int64_t  startCell = 0;		// NavigationSystem::Reach::startCell
-			std::uint64_t reachGeneration = 0; // NavigationSystem::Reach::startRegionGeneration
+			std::uint64_t structuralEpoch = 0; // NavigationSystem::Reach::structuralEpoch
 			std::uint64_t beliefVersion = 0;	// Memory::beliefVersion
 			bool		  operator==(const Key&) const = default;
 		};
@@ -92,7 +103,7 @@ namespace ecs {
 		void recordFailedRoute(std::uint64_t sourceKey) { failedRoutes.insert(sourceKey); }
 
 		/// The walk to a source no longer than maxWalk, running probe(position, maxWalk) when what is
-		/// held doesn't answer it.
+		/// held doesn't answer it; an answer that isn't definite is passed on, not held.
 		template <typename Probe>
 		[[nodiscard]] std::optional<float> walk(std::uint64_t sourceKey, const glm::vec2& position, float maxWalk, Probe&& probe) {
 			if (failedRoutes.contains(sourceKey)) {
@@ -107,9 +118,11 @@ namespace ecs {
 					return std::nullopt;
 				}
 			}
-			const std::optional<float> found = probe(position, maxWalk);
-			walks[sourceKey]				 = {found, maxWalk};
-			return found;
+			const WalkAnswer found = probe(position, maxWalk);
+			if (found.definite) {
+				walks[sourceKey] = {found.walk, maxWalk};
+			}
+			return found.walk;
 		}
 
 		/// Whether a source can be walked to at all, as walk() with no bound.
