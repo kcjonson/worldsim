@@ -5171,7 +5171,8 @@ namespace ecs::test {
 
 		// One harvest of the tree at `tree` by a colonist starting at `from`, with the view over the tree
 		// or far away. Checks where it stood when the harvest started and that it completed.
-		// clearSpot: the stand point must be clear of every collider (false for a tree in a thicket).
+		// clearSpot: the stand point is clear of every collider; false for a tree in a thicket, whose stand
+		// point is inside a neighbour and which the harvest starts within reach of (ActionSystem, 0.4 m).
 		void harvestFrom(const std::string& defName, float halfExtent, glm::vec2 tree, glm::vec2 from, bool onCamera, bool clearSpot = true) {
 			SCOPED_TRACE(defName + (onCamera ? " on camera" : " off camera") + " from (" + std::to_string(from.x) + ", " +
 						 std::to_string(from.y) + ")");
@@ -5222,7 +5223,9 @@ namespace ecs::test {
 			}
 			ASSERT_TRUE(startedAt.has_value()) << "the harvest never started";
 			EXPECT_TRUE(harvested) << "the harvest never completed";
-			EXPECT_EQ(nav->isValidPosition(*startedAt), clearSpot) << "where it stood";
+			if (clearSpot) {
+				EXPECT_TRUE(nav->isValidPosition(*startedAt)) << "it stood inside a collider";
+			}
 			const glm::vec2 off = glm::abs(*startedAt - tree);
 			EXPECT_GT(std::max(off.x, off.y), halfExtent) << "it stood inside the collider";
 			EXPECT_LT(glm::distance(*startedAt, tree), halfExtent * 1.5F + 1.0F) << "it stood away from the tree";
