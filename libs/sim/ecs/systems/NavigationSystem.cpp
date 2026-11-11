@@ -405,6 +405,18 @@ namespace ecs {
 		return false;
 	}
 
+	void NavigationSystem::appendMoverPositions(std::vector<world::WorldPosition>& out) const {
+		// Null only in headless tests with no colonists, where the viewport drives the regions.
+		if (world == nullptr) {
+			return;
+		}
+		for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
+			(void)entity;
+			(void)colonist;
+			out.emplace_back(position.value.x, position.value.y);
+		}
+	}
+
 	std::vector<NavigationSystem::DesiredRegion> NavigationSystem::computeDesiredRegions() const {
 		// A driver is a point (colonist position or viewport center) and its own square.
 		struct Driver {
@@ -413,17 +425,12 @@ namespace ecs {
 		};
 		std::vector<Driver> drivers;
 
-		// One square per colonist: center +/- kSimRadiusMm. ECS view is colonist-only; the
-		// world is always wired when this runs in-game (null only in headless tests with no
-		// colonists, where the viewport drives the regions instead).
-		if (world != nullptr) {
-			for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
-				(void)entity;
-				(void)colonist;
-				const geometry::Vec2i64 c = nav::toMm(position.value);
-				drivers.push_back(
-					{c, {c.x - kSimRadiusMm, c.y - kSimRadiusMm, c.x + kSimRadiusMm, c.y + kSimRadiusMm}});
-			}
+		// One square per mover: center +/- kSimRadiusMm.
+		std::vector<world::WorldPosition> movers;
+		appendMoverPositions(movers);
+		for (const world::WorldPosition& mover : movers) {
+			const geometry::Vec2i64 c = nav::toMm(glm::vec2{mover.x, mover.y});
+			drivers.push_back({c, {c.x - kSimRadiusMm, c.y - kSimRadiusMm, c.x + kSimRadiusMm, c.y + kSimRadiusMm}});
 		}
 
 		// One square for the viewport, half-extents clamped so a zoomed-out viewport doesn't

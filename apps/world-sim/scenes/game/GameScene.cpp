@@ -181,8 +181,8 @@ namespace {
 				m_placementExecutor->initialize();
 				LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", m_placementExecutor->getSpawnOrder().size());
 
-				// Initial chunk load (entity placement happens async in update())
-				m_chunkManager->update(m_camera->position());
+				// Initial chunk load (entity placement happens async in update()); no movers exist yet
+				m_chunkManager->update(m_camera->position(), {});
 
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
@@ -851,7 +851,11 @@ namespace {
 			auto updateStart = Clock::now();
 
 			m_camera->update(dt);
-			m_chunkManager->update(m_camera->position());
+
+			// Every mover anchors the chunks around it, so panning away never unloads the colony
+			anchorPositions.clear();
+			ecsWorld->getSystem<ecs::NavigationSystem>().appendMoverPositions(anchorPositions);
+			m_chunkManager->update(m_camera->position(), anchorPositions);
 
 			// Feed the viewport rect to NavigationSystem as PLAIN DATA -- the scene no
 			// longer drives the navmesh. NavigationSystem owns the sim area: it tracks the
@@ -2091,6 +2095,8 @@ namespace {
 		std::unique_ptr<world::ChunkManager>		 m_chunkManager;
 		std::unique_ptr<world::WorldCamera>			 m_camera;
 		glm::vec2									 m_spawnPosition{0.0F, 0.0F};
+		// The movers' positions handed to the chunk manager each frame; a member so the frame reuses its storage.
+		std::vector<world::WorldPosition> anchorPositions;
 
 		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
 		// by the player (0 = none); it is always the selected colonist (control is released when the

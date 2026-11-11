@@ -134,6 +134,10 @@ class NavigationSystem : public ISystem {
 		haveViewport	   = true;
 	}
 
+	// Append the positions of the movers (Position + Colonist) that drive the regions.
+	// The same set anchors chunk streaming: the scene hands it to ChunkManager::update.
+	void appendMoverPositions(std::vector<world::WorldPosition>& out) const;
+
 	// Same signature VisionSystem uses. `processed` is the set of chunks that have
 	// finished entity placement; it grows as spawn-ring chunks complete after the first
 	// build. It does NOT gate the gather (the area sweep reads chunk readiness directly
