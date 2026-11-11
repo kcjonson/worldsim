@@ -387,24 +387,12 @@ namespace ecs {
 				return;
 			}
 
-			// Phase 1: At source - do Pickup
-			// Look for a carryable entity at the source position matching the item we want to haul
+			// Phase 1: At source - do Pickup. The decision chose the remembered pile it set as the source,
+			// so it is found by its Memory key (the source position and the item), not by a memory scan.
 			std::optional<std::pair<glm::vec2, uint32_t>> staleAtSource;
-			for (const auto& [key, entity] : memory.knownWorldEntities) {
-				// Check if entity is at the source position
-				glm::vec2 diff = entity.position - task.haulSourcePosition;
-				float	  distSq = diff.x * diff.x + diff.y * diff.y;
-				if (distSq > kPositionTolerance * kPositionTolerance) {
-					continue;
-				}
-
-				const auto& defName = registry.getDefName(entity.defNameId);
-
-				// Check if this is the item we want to haul
-				if (defName != task.haulItemDefName) {
-					continue;
-				}
-
+			if (const KnownWorldEntity* entity =
+					memory.getWorldEntity(hashWorldEntity(task.haulSourcePosition, registry.getDefNameId(task.haulItemDefName)))) {
+				const auto& defName = task.haulItemDefName;
 				const auto* def = registry.getDefinition(defName);
 				if (def != nullptr && def->capabilities.carryable.has_value()) {
 					const auto& carryableCap = def->capabilities.carryable.value();
@@ -431,20 +419,20 @@ namespace ecs {
 							return;
 						}
 					}
-					action = Action::Pickup(defName, pickupQty, entity.position, defName);
+					action = Action::Pickup(defName, pickupQty, entity->position, defName);
 					LOG_DEBUG(
 						Engine,
 						"[Action] Haul phase 1: Pickup %u x %s at (%.1f, %.1f)",
 						pickupQty,
 						defName.c_str(),
-						entity.position.x,
-						entity.position.y
+						entity->position.x,
+						entity->position.y
 					);
 					return;
 				}
 
-				// Matches by name but isn't actually carryable anymore - stale memory entry
-				staleAtSource = std::make_pair(entity.position, entity.defNameId);
+				// Remembered but isn't actually carryable anymore - stale memory entry
+				staleAtSource = std::make_pair(entity->position, entity->defNameId);
 			}
 
 			// Pickup target gone - forget the stale entry so AIDecision stops re-selecting it.

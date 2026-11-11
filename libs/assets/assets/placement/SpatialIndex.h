@@ -103,6 +103,9 @@ namespace assets {
 		/// @return true if entity was found and removed
 		bool remove(glm::vec2 position, const std::string& defName);
 
+		/// True if remove() with the same arguments would find an entity to remove
+		[[nodiscard]] bool contains(glm::vec2 position, const std::string& defName) const;
+
 		/// Clear all entities from the index
 		void clear();
 

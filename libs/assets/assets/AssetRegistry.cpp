@@ -2004,6 +2004,7 @@ namespace assets {
 		m_defNameToId.clear();
 		m_idToDefName.clear();
 		m_capabilityMasks.clear();
+		m_edibleItemNames.clear();
 		m_validationReport.issues.clear();
 		m_loadProgress.started.store(false);
 		m_loadProgress.done.store(false);
@@ -2066,6 +2067,7 @@ namespace assets {
 		m_defNameToId.clear();
 		m_idToDefName.clear();
 		m_capabilityMasks.clear();
+		m_edibleItemNames.clear();
 
 		// Reserve ID 0 as "invalid"
 		m_idToDefName.push_back("");
@@ -2077,8 +2079,12 @@ namespace assets {
 			m_defNameToId[defName] = nextId;
 			m_idToDefName.push_back(defName);
 			m_capabilityMasks.push_back(computeCapabilityMask(def));
+			if (def.isEdible()) {
+				m_edibleItemNames.push_back(defName);
+			}
 			nextId++;
 		}
+		std::sort(m_edibleItemNames.begin(), m_edibleItemNames.end());
 
 		LOG_DEBUG(Engine, "Built defName index: %zu entries", m_idToDefName.size() - 1);
 	}
@@ -2154,7 +2160,16 @@ namespace assets {
 	void AssetRegistry::registerTestDefinition(AssetDefinition def) {
 		std::string defName = def.defName;
 		const uint16_t mask = computeCapabilityMask(def);
+		const bool edible = def.isEdible();
 		definitions[defName] = std::move(def);
+
+		const auto edibleAt = std::lower_bound(m_edibleItemNames.begin(), m_edibleItemNames.end(), defName);
+		const bool listed = edibleAt != m_edibleItemNames.end() && *edibleAt == defName;
+		if (edible && !listed) {
+			m_edibleItemNames.insert(edibleAt, defName);
+		} else if (!edible && listed) {
+			m_edibleItemNames.erase(edibleAt);
+		}
 
 		// Assign the interning id by APPENDING, never by rebuilding the whole index. A full rebuild
 		// iterates the unordered definitions map, so every prior id could be reshuffled when the map
@@ -2204,6 +2219,7 @@ namespace assets {
 		m_defNameToId.clear();
 		m_idToDefName.clear();
 		m_capabilityMasks.clear();
+		m_edibleItemNames.clear();
 		LOG_DEBUG(Engine, "Cleared all definitions");
 	}
 

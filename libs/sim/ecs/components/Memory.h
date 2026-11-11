@@ -75,6 +75,10 @@ namespace ecs {
 		/// Key: hash of position + defNameId
 		std::unordered_map<uint64_t, KnownWorldEntity> knownWorldEntities;
 
+		/// Bumped whenever a world entity is remembered for the first time or forgotten, so a decision can
+		/// tell by one compare that the set of remembered sources hasn't changed since it last looked.
+		std::uint64_t worldEntityVersion = 0;
+
 		/// Known dynamic ECS entities (colonists, animals, etc.)
 		/// Key: EntityID
 		std::unordered_map<EntityID, KnownDynamicEntity> knownDynamicEntities;
@@ -213,6 +217,7 @@ namespace ecs {
 
 			// Add to primary storage
 			knownWorldEntities[key] = KnownWorldEntity{defNameId, position};
+			++worldEntityVersion;
 
 			// Add to capability indices
 			for (size_t cap = 0; cap < kCapabilityTypeCount; ++cap) {
@@ -251,6 +256,7 @@ namespace ecs {
 		/// Clear all memory
 		void clear() {
 			knownWorldEntities.clear();
+			++worldEntityVersion;
 			knownDynamicEntities.clear();
 			for (auto& index : capabilityIndex) {
 				index.clear();
@@ -443,6 +449,7 @@ namespace ecs {
 					index.erase(key);
 				}
 				knownWorldEntities.erase(it);
+				++worldEntityVersion;
 			}
 
 			// Remove from LRU tracking (recycle the node slot)

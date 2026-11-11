@@ -30,8 +30,8 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 
 Choose a ~3x3 area on valid land that has at least one or two trees and a berry bush
 (`Flora_BerryBush`) standing on it (the forest around the Quick Start landing usually provides
-this). They must be world-generated: `/api/dev/spawn` makes runtime entities the clearing gate
-doesn't see. Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
+this). A tree or bush placed with `/api/dev/spawn` blocks the footprint and is cleared the same way
+as world-generated ones. Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
 
 Blueprint the foundation (built=0 queues the colonist to build it):
 
@@ -66,12 +66,12 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 ```
 
 2. The berry bush on the footprint is cleared too: it disappears after one harvest (it doesn't
-   regrow in place), even when Bob's arms are already full of wood, and Bob never shows
-   `Delivering Berry to build site`:
+   regrow in place), even when Bob's arms are already full of wood, and no berries are delivered
+   to the site:
 
 ```
-curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
-# -> colonists[0].action never "Delivering Berry to build site"
+curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
+# -> foundations[0].delivered never has a "Berry" key
 ```
 
 3. Phase moves to `AwaitingMaterials`. Bob chops nearby trees and provisions wood:

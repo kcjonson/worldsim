@@ -1,8 +1,21 @@
 #include "SpatialIndex.h"
 
+#include <algorithm>
 #include <cmath>
 
 namespace assets {
+
+	namespace {
+
+		/// The one test for "this is the entity at that position": find(), and through it remove()
+		/// and contains(), use it.
+		[[nodiscard]] bool isEntityAt(const PlacedEntity& entity, glm::vec2 position, const std::string& defName) {
+			constexpr float kEpsilon = 0.001F;
+			const glm::vec2 diff = entity.position - position;
+			return entity.defName == defName && diff.x * diff.x + diff.y * diff.y < kEpsilon * kEpsilon;
+		}
+
+	} // namespace
 
 	SpatialIndex::SpatialIndex(float cellSize)
 		: m_cellSize(cellSize) {}
@@ -18,15 +31,8 @@ namespace assets {
 		if (cellIt == m_cells.end()) {
 			return nullptr;
 		}
-		// Small tolerance for floating point comparison
-		constexpr float kEpsilon = 0.001F;
-		for (const PlacedEntity& entity : cellIt->second) {
-			const glm::vec2 diff = entity.position - position;
-			if (entity.defName == defName && diff.x * diff.x + diff.y * diff.y < kEpsilon * kEpsilon) {
-				return &entity;
-			}
-		}
-		return nullptr;
+		const auto it = std::ranges::find_if(cellIt->second, [&](const PlacedEntity& e) { return isEntityAt(e, position, defName); });
+		return it != cellIt->second.end() ? &*it : nullptr;
 	}
 
 	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
@@ -44,6 +50,10 @@ namespace assets {
 			m_cells.erase(cellIt);
 		}
 		return true;
+	}
+
+	bool SpatialIndex::contains(glm::vec2 position, const std::string& defName) const {
+		return find(position, defName) != nullptr;
 	}
 
 	void SpatialIndex::clear() {

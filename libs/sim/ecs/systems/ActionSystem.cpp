@@ -1,5 +1,6 @@
 #include "ActionSystem.h"
 
+#include "../InventoryMass.h"
 #include "../World.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
@@ -250,6 +251,22 @@ namespace ecs {
 		// The action is cleared but the task persists. This differs from single-phase
 		// tasks that clear both action and task at the end of this function.
 		if (task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw)) {
+			// Nothing came off the source (gone, emptied by another hauler, or no room to take it):
+			// there is nothing to deliver, so the haul ends here instead of walking to storage empty.
+			if (ecs::availableQuantity(inventory, task.haulItemDefName) == 0) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Haul pickup of %s at (%.1f, %.1f) collected nothing - ending the haul",
+					task.haulItemDefName.c_str(),
+					task.haulSourcePosition.x,
+					task.haulSourcePosition.y
+				);
+				action.clear();
+				task.clear();
+				task.timeSinceEvaluation = 0.0F;
+				return;
+			}
+
 			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull) - hand off to phase 2
 			// (Deposit). Re-point the task at the deposit goal and set it Moving; the colonist drives
 			// itself to the station. The deposit leg is the SAME haul task, so AIDecisionSystem keeps it

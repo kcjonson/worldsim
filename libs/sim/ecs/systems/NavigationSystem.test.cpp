@@ -167,6 +167,19 @@ namespace {
 		return chunks;
 	}
 
+	// The ready radius-2 chunk region around the origin. Generating it is most of a test's setup
+	// cost and NavigationSystem writes nothing in it, so each sampler's region is generated once
+	// per process and shared by every test that wires it.
+	world::ChunkManager* landChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks = readyChunks(landSampler());
+		return chunks.get();
+	}
+
+	world::ChunkManager* waterPatchChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks = readyChunks(waterPatchSampler());
+		return chunks.get();
+	}
+
 	// A blocking tree definition with a square collider of the given half extent.
 	void registerTree(const std::string& defName, float halfExtent) {
 		AssetDefinition tree;
@@ -201,13 +214,12 @@ namespace {
 		void SetUp() override {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
-			m_chunks = readyChunks(landSampler());
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 
 		// Chunks plus a 60 m viewport at the origin, which asks for flora there.
-		void wireArea(NavigationSystem& sys) {
-			sys.setChunkManager(m_chunks.get());
+		static void wireArea(NavigationSystem& sys) {
+			sys.setChunkManager(landChunks());
 			pushArea(sys, {0, 0}, 60000);
 		}
 
@@ -217,7 +229,6 @@ namespace {
 			sys.setViewportRect(centerM, glm::vec2{halfM, halfM});
 		}
 
-		std::unique_ptr<world::ChunkManager> m_chunks;
 	};
 
 	EntityID addColonist(World& world, glm::vec2 at, const char* name) {
@@ -510,7 +521,7 @@ TEST_F(NavigationSystemTest, ReachKeyMovesWithAPatch) {
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 	addColonist(world, {0.0F, 0.0F}, "A");
 	settle(sys);
@@ -640,7 +651,7 @@ TEST_F(NavigationSystemTest, ViewportFloraRectIsClamped) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 
@@ -809,7 +820,7 @@ TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 	const glm::vec2 a{0.0F, 0.0F};
 	const glm::vec2 b{150.0F, 20.0F};
@@ -902,7 +913,7 @@ TEST_F(NavigationSystemTest, UnloadedChunkKeepsItsGround) {
 TEST_F(NavigationSystemTest, SameScenarioSameMeshesAndPaths) {
 	registerTree("Test_NavDeterminismTree", 0.35F);
 	struct Run {
-		std::unique_ptr<world::ChunkManager> chunks = readyChunks(waterPatchSampler());
+		world::ChunkManager*				 chunks = waterPatchChunks();
 		PlacementExecutor					 executor{AssetRegistry::Get()};
 		std::unordered_set<ChunkCoordinate>	 processed;
 		ConstructionWorld					 cw;
@@ -920,7 +931,7 @@ TEST_F(NavigationSystemTest, SameScenarioSameMeshesAndPaths) {
 
 	auto play = [&](Run& r) {
 		placeTrees(r.executor, r.processed, "Test_NavDeterminismTree", trees);
-		r.sys.setChunkManager(r.chunks.get());
+		r.sys.setChunkManager(r.chunks);
 		r.sys.setPlacementData(&r.executor, &r.processed);
 		r.sys.setConstructionWorld(&r.cw);
 		addColonist(r.world, {0.0F, 0.0F}, "A");
@@ -978,7 +989,7 @@ TEST_F(NavigationSystemTest, InSimAreaFalseBeforeBuild) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 	pushArea(sys, {0, 0}, 60000);
 
@@ -991,7 +1002,7 @@ TEST_F(NavigationSystemTest, InSimAreaCoversEveryMeshedChunk) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 	pushArea(sys, {0, 0}, 60000);
 	settle(sys);
@@ -1003,12 +1014,11 @@ TEST_F(NavigationSystemTest, InSimAreaCoversEveryMeshedChunk) {
 }
 
 TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOffMesh) {
-	auto			  chunks = readyChunks(waterPatchSampler());
 	ConstructionWorld cw;
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(chunks.get());
+	sys.setChunkManager(waterPatchChunks());
 	pushArea(sys, {0, 0}, 60000);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
@@ -1097,12 +1107,11 @@ TEST_F(NavigationSystemTest, WaterAcrossChunkBordersHasNoSeam) {
 // Before any mover or view, nothing is meshed; once the ground is in, a drop point in the water
 // moves to the nearest shore, and a land point stays put.
 TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWater) {
-	auto chunks = readyChunks(waterPatchSampler());
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	EXPECT_FALSE(sys.nearestTerrainWalkablePoint({40.0F, 40.0F}).has_value()) << "no ground meshed";
-	sys.setChunkManager(chunks.get());
+	sys.setChunkManager(waterPatchChunks());
 	settle(sys);
 
 	const glm::vec2				   land{2.0F, 2.0F};
@@ -1125,11 +1134,10 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWater) {
 // it needs itself (the landing runs before the first update), and every member spawns on walkable
 // ground of its own, apart from the others, and near the drop.
 TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGround) {
-	auto chunks = readyChunks(waterPatchSampler());
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(chunks.get());
+	sys.setChunkManager(waterPatchChunks());
 
 	// The pond's west shore is x = 32; (34, 40) is ~2 m in from it.
 	const glm::vec2	 drop{34.0F, 40.0F};
@@ -1184,7 +1192,7 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointStepsOutOfBuiltWallBand)
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 
@@ -1209,7 +1217,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	const glm::vec2	 drop{5.0F, 0.0F};
@@ -1239,12 +1247,10 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 // center to any shore.
 
 namespace {
-	std::unique_ptr<world::ChunkManager> wireWaterPatch(NavigationSystem& sys, ConstructionWorld& cw) {
-		auto chunks = readyChunks(waterPatchSampler());
-		sys.setChunkManager(chunks.get());
+	void wireWaterPatch(NavigationSystem& sys, ConstructionWorld& cw) {
+		sys.setChunkManager(waterPatchChunks());
 		sys.setViewportRect(glm::vec2{0.0F, 0.0F}, glm::vec2{60.0F, 60.0F});
 		sys.setConstructionWorld(&cw);
-		return chunks;
 	}
 } // namespace
 
@@ -1252,7 +1258,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	settle(sys);
 
 	const std::vector<glm::vec2> onLand{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}, {4.0F, 8.0F}};
@@ -1266,7 +1272,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	settle(sys);
 
 	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
@@ -1280,7 +1286,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	settle(sys);
 
 	const std::vector<glm::vec2> enclosing{{28.0F, 28.0F}, {52.0F, 28.0F}, {52.0F, 52.0F}, {28.0F, 52.0F}};
@@ -1296,7 +1302,7 @@ TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeTrees) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	settle(sys);
 
 	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
@@ -1315,7 +1321,7 @@ TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	settle(sys);
 
 	EXPECT_TRUE(sys.isSegmentWalkable({4.0F, 4.0F}, {8.0F, 4.0F}));
@@ -1552,7 +1558,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalk
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	settle(sys);
 
 	const glm::vec2 origin{40.0F, 40.0F};
@@ -1573,7 +1579,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearPushedFallbackStaysOnMesh) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	settle(sys);
 
 	const glm::vec2 origin{40.0F, 40.0F};

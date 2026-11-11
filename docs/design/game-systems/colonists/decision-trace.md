@@ -41,6 +41,8 @@ struct EvaluatedOption {
         Selected,       // This is the current task
         Available,      // Could do this, but lower priority
         NoSource,       // Need exists but no known entity
+        Regrowing,      // Known source is regrowing: skipped now, chosen again once ready
+        NoRoom,         // Can't lift any of the item now (pack full, hands busy): not offered
         Satisfied       // Need above threshold, no action needed
     };
     Status status;
@@ -214,6 +216,8 @@ The DecisionTrace respects the memory constraint:
 | Berry bush in memory | "Eat at Berry Bush (12m away)" |
 | No food in memory | Status: `NoSource`, "No known food source" |
 | Food exists but not seen | Status: `NoSource` (colonist doesn't know) |
+| Only known food is regrowing | Status: `Regrowing`, "Hunger at 40% (source regrowing)" |
+| Haul with no room to carry | Status: `NoRoom`, "Hauling Wood to storage (no room to carry it)" |
 
 **Key Point:** The trace only shows entities the colonist has observed. If a berry bush exists but the colonist hasn't seen it, it won't appear in the trace.
 
@@ -225,19 +229,27 @@ std::optional<NavigationSystem::Reach> reach;
 if (haveMesh) reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
 auto canReach = [&](const glm::vec2& p) { return !reach || m_navSystem->reaches(*reach, p); };
 
-auto nearest = findNearestReachableWithCapability(
+// Both tests take the source's Memory key, so a verdict can be remembered per source (SourceReachMemo)
+auto accept = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
+    return notKnownUnreachable(sourceKey, known);  // Hunger also requires an edible yield
+};
+auto reachable = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+    return canReachSource(sourceKey, sourcePosition);  // remembered verdict, or canReach the first time
+};
+
+std::optional<KnownWorldEntity> nearest = findNearestReachableWithCapability(
     memory,          // Colonist's personal memory
     capability,      // Harvestable, Drinkable, etc.
     position.value,  // Colonist position
-    accept,          // Hunger: the harvestable's yield is edible; other needs accept any source
-    canReach,        // A satisfied need passes an always-true test: it only shows its nearest
-    m_sourceScratch  // Reused candidate storage
+    accept,          // A satisfied need passes always-true tests: it only shows its nearest
+    reachable,
+    sourceScratch    // Reused candidate storage (std::vector<SourceCandidate>)
 );
 ```
 
-A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible. A bed or toilet that can't be reached falls back to the ground, as when none is known.
+A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. The Hunger option and the gather-food option share one food source: the nearest reachable known harvestable whose yield is edible and that is ready to give it. A bush on its regrowth cooldown pays nothing, so it is passed over for the next nearest; when it was the only food the colonist knows, both options read `Regrowing` and the colonist takes its next option (other work, a wander) until the bush is ready. Readiness is the live state of a source the colonist already remembers, the game time it is ready again (or none), asked through `AIDecisionSystem::setSourceRegrowthCallback` by interned def id only of candidates on their way to winning, nearest first. When every edible source the colonist knows is regrowing, the search is not run again until the earliest of them is ready or the colonist remembers or forgets a world entity (`SourceReachMemo::FoodWait`), so an idle colonist waiting on food costs one compare a decision. A work Harvest is checked the same way when it comes up for selection; a construction clear is not, since it removes the bush whatever its state. A bed or toilet that can't be reached falls back to the ground, as when none is known.
 
-"Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that source as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again.
+"Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that target as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again. The same holds for a toilet spot or a work target, remembered by its point rather than a Memory key; a toilet spot that failed gives way to the ground where the colonist stands.
 
 ---
 
@@ -282,6 +294,8 @@ The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
 | 🟢 | Selected | Currently executing this task |
 | ⏳ | Available | Would do next if current completes |
 | 🔒 | NoSource | Need exists but no known entity |
+| 🌱 | Regrowing | Known source is regrowing; taken again once ready |
+| 🎒 | NoRoom | A haul or fetch the colonist can't lift any of right now; offered again once it has room |
 | ✓ | Satisfied | Need above threshold |
 | 🚶 | Wander | Idle behavior |
 

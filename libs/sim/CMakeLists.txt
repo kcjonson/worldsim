@@ -12,6 +12,7 @@ add_library(sim
     ecs/systems/action/HaulActions.cpp
     ecs/systems/action/BuildActions.cpp
     ecs/systems/StorageGoalSystem.cpp
+    ecs/systems/WorkSources.cpp
     ecs/systems/CraftingGoalSystem.cpp
     ecs/systems/BuildGoalSystem.cpp
     ecs/systems/ConstructionSystem.cpp
@@ -23,6 +24,7 @@ add_library(sim
     ecs/spatial/AgentSpatialHash.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/StoreOrDrop.cpp
+    ecs/WorldSource.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/ConstructionWorld.cpp
@@ -94,6 +96,7 @@ if(BUILD_TESTING)
             target_compile_options(sim-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME sim-tests COMMAND sim-tests)
+        worldsim_test_data(sim-tests assets/config)
         # TIMEOUT is the only hang guard: the navigation waits block in
         # NavigationSystem::finishPendingBuilds until every build lands, with no
         # wall-clock budget of their own.

@@ -158,9 +158,6 @@
 
     <!-- How often colonists re-evaluate tasks (seconds) -->
     <reEvalInterval>0.5</reEvalInterval>
-
-    <!-- Reservation timeout: release if no progress (seconds) -->
-    <reservationTimeout>10.0</reservationTimeout>
   </Thresholds>
 
   <!-- Hauling-specific tuning to avoid the "hauling problem" -->

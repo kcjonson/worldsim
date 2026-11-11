@@ -5,6 +5,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "../components/Appearance.h"
 #include "../components/Inventory.h"
 #include "../components/Needs.h"
 #include "../components/Structure.h"
@@ -90,6 +91,7 @@ namespace ecs {
 		}
 
 		m_activeBlueprintCount = 0;
+		bool gatheredSpawned = false;
 
 		for (auto [entity, structure, blueprint] : world->view<Structure, StructureBlueprint>()) {
 			// Foundations, walls, and openings all flow through; rooms are not blueprints yet.
@@ -141,9 +143,20 @@ namespace ecs {
 			}
 
 			// Walls and openings have no clear phase: they sit on a cleared, built host, so
-			// the footprint is clear by construction. Foundations query their footprint.
-			const bool footprintClear = isWall || isOpening || isFootprintClear(graphId);
+			// the footprint is clear by construction. A foundation queries its footprint while clearing,
+			// and once more as its materials complete, on the way into UnderConstruction: flora placed
+			// after the site left Clearing (a chunk processed late) sends it back to Clearing then.
+			// Between the two it is not rescanned (editing the footprint puts it back to Clearing).
 			const bool materialsDone = blueprint.materialsComplete();
+			const bool isFoundation = !isWall && !isOpening;
+			const bool checkFootprint =
+				isFoundation && (blueprint.phase == StructureBlueprint::BuildPhase::Clearing ||
+								 (blueprint.phase == StructureBlueprint::BuildPhase::AwaitingMaterials && materialsDone));
+			if (checkFootprint && !gatheredSpawned) {
+				gatherSpawnedHarvestables();
+				gatheredSpawned = true;
+			}
+			const bool footprintClear = !checkFootprint || isFootprintClear(graphId);
 
 			const ConstructionDecision decision = decideConstructionPhase(blueprint, footprintClear, materialsDone);
 
@@ -200,20 +213,41 @@ namespace ecs {
 		return {geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)};
 	}
 
+	void ConstructionSystem::gatherSpawnedHarvestables() {
+		m_spawnedHarvestables.clear();
+		const auto& assetRegistry = assets::AssetRegistry::Get();
+		for (auto [entity, position, appearance] : world->view<Position, Appearance>()) {
+			(void)entity;
+			const uint32_t defNameId = assetRegistry.getDefNameId(appearance.defName);
+			if (assetRegistry.hasCapability(defNameId, assets::CapabilityType::Harvestable)) {
+				m_spawnedHarvestables.push_back({defNameId, position.value});
+			}
+		}
+	}
+
 	bool ConstructionSystem::isFootprintClear(uint64_t foundationId) const {
-		if (m_constructionWorld == nullptr || m_placementExecutor == nullptr || m_processedChunks == nullptr) {
-			// No placement data wired: treat as clear so the lifecycle still progresses
-			// (e.g. unit/headless contexts). Clearing is a no-op without a world to query.
+		if (m_constructionWorld == nullptr) {
+			// No topology wired (unit/headless contexts): there is no footprint to clear.
 			return true;
 		}
 
 		const FootprintBounds bounds = footprintBounds(foundationId);
-		const float			  minX = bounds.min.x;
-		const float			  minY = bounds.min.y;
-		const float			  maxX = bounds.max.x;
-		const float			  maxY = bounds.max.y;
+		auto&				  assetRegistry = assets::AssetRegistry::Get();
 
-		auto& assetRegistry = assets::AssetRegistry::Get();
+		for (const SpawnedHarvestable& spawned : m_spawnedHarvestables) {
+			if (bounds.blockedBy(assetRegistry, spawned.defNameId, spawned.position)) {
+				return false;
+			}
+		}
+
+		if (m_placementExecutor == nullptr || m_processedChunks == nullptr) {
+			return true;
+		}
+
+		const float minX = bounds.min.x;
+		const float minY = bounds.min.y;
+		const float maxX = bounds.max.x;
+		const float maxY = bounds.max.y;
 
 		constexpr float kChunkWorldSize = static_cast<float>(world::kChunkSize);
 		const int32_t	chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
@@ -223,21 +257,15 @@ namespace ecs {
 
 		for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
 			for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
+				// A chunk whose flora isn't placed yet may hold a blocker: not known clear, so the site waits.
 				world::ChunkCoordinate coord{cx, cy};
-				if (m_processedChunks->find(coord) == m_processedChunks->end()) {
-					continue;
-				}
-				const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
+				const auto* chunkIndex = m_processedChunks->contains(coord) ? m_placementExecutor->getChunkIndex(coord) : nullptr;
 				if (chunkIndex == nullptr) {
-					continue;
+					return false;
 				}
 				for (const auto* placed : chunkIndex->queryRect(minX, minY, maxX, maxY)) {
-					const uint32_t defNameId = assetRegistry.getDefNameId(placed->defName);
-					if (defNameId == 0) {
-						continue;
-					}
-					if (assetRegistry.hasCapability(defNameId, assets::CapabilityType::Harvestable)) {
-						return false; // a choppable blocker sits on the footprint
+					if (bounds.blockedBy(assetRegistry, assetRegistry.getDefNameId(placed->defName), placed->position)) {
+						return false;
 					}
 				}
 			}
@@ -279,7 +307,7 @@ namespace ecs {
 	}
 
 	void ConstructionSystem::emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId) {
-		if (m_constructionWorld == nullptr || m_placementExecutor == nullptr || m_processedChunks == nullptr) {
+		if (m_constructionWorld == nullptr) {
 			return;
 		}
 
@@ -292,8 +320,8 @@ namespace ecs {
 		// colonist; once materials are due, the per-material Haul carries any of it the site needs.
 		// The child hangs under the umbrella (parentGoalId set) so it is owned/cleaned alongside the
 		// blueprint without fighting the umbrella for the single-top-level-per-destination slot.
-		for (const auto* g : registry.getGoalsByOwner(GoalOwner::ConstructionGoalSystem)) {
-			if (g->destinationEntity == blueprintEntity && g->clearFootprint.has_value()) {
+		for (const auto* child : registry.getChildGoals(umbrellaGoalId)) {
+			if (child->clearFootprint.has_value()) {
 				return;
 			}
 		}

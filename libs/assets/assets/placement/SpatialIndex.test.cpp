@@ -296,10 +296,12 @@ TEST(SpatialIndexTests, RemoveExistingEntity) {
 	index.insert({"Tree", {10.0F, 20.0F}});
 
 	EXPECT_EQ(index.size(), 1);
+	EXPECT_TRUE(index.contains({10.0F, 20.0F}, "Tree"));
 
 	bool removed = index.remove({10.0F, 20.0F}, "Tree");
 	EXPECT_TRUE(removed);
 	EXPECT_EQ(index.size(), 0);
+	EXPECT_FALSE(index.contains({10.0F, 20.0F}, "Tree"));
 }
 
 TEST(SpatialIndexTests, RemoveNonExistentEntity) {
@@ -315,9 +317,22 @@ TEST(SpatialIndexTests, RemoveWrongDefName) {
 	SpatialIndex index;
 	index.insert({"Tree", {10.0F, 20.0F}});
 
+	EXPECT_FALSE(index.contains({10.0F, 20.0F}, "Flower"));
 	bool removed = index.remove({10.0F, 20.0F}, "Flower");
 	EXPECT_FALSE(removed);
 	EXPECT_EQ(index.size(), 1);
+}
+
+// contains() and remove() match by one rule, even for an entity a hair across a cell edge from the
+// queried point: what contains() reports is exactly what remove() takes out.
+TEST(SpatialIndexTests, ContainsAgreesWithRemoveAcrossACellEdge) {
+	SpatialIndex index;
+	index.insert({"Tree", {3.9996F, 0.0F}}); // cell 0; the query point below is in cell 1
+
+	const glm::vec2 query{4.0F, 0.0F};
+	EXPECT_TRUE(index.hasNearby(query, 0.001F, "Tree")) << "precondition: a radius query sees it";
+	const bool contained = index.contains(query, "Tree");
+	EXPECT_EQ(index.remove(query, "Tree"), contained);
 }
 
 TEST(SpatialIndexTests, RemoveFromEmpty) {

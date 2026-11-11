@@ -23,21 +23,22 @@
 #include <unordered_set>
 #include <vector>
 
+namespace assets {
+	class AssetRegistry;
+}
+
 namespace ecs {
 
 	/// Goal status for task hierarchy and dependency tracking
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
-		InProgress,		 // Colonist(s) actively working
 		Blocked,		 // Craft waiting for all materials to be delivered
-		NoSource,		 // Need known, but no source (stock or harvestable) is known yet
-		Complete		 // Done
+		NoSource		 // Need known, but no source (stock or harvestable) is known yet
 	};
 
 	/// Systems that can own/create goals
 	/// Used to track which system is responsible for a goal's lifecycle
 	enum class GoalOwner : uint8_t {
-		None = 0,			// Unowned (legacy compatibility)
 		StorageGoalSystem,	// Haul goals for storage containers
 		CraftingGoalSystem, // Craft + child Harvest/Haul goals
 		BuildGoalSystem,	// PlacePackaged goals
@@ -52,6 +53,11 @@ namespace ecs {
 
 		[[nodiscard]] bool contains(glm::vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
 		[[nodiscard]] glm::vec2 center() const { return (min + max) * 0.5F; }
+
+		/// A thing of `defNameId` at `p` blocks the site: a harvestable inside the footprint. The clear
+		/// goal is served by exactly the blockers a colonist knows, and the build gate holds while any
+		/// blocker stands in the world, so a site is clear exactly when no clear work remains.
+		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const;
 	};
 
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")
@@ -80,7 +86,7 @@ namespace ecs {
 
 		// Metadata
 		float	  createdAt = 0.0F;
-		GoalOwner owner = GoalOwner::None; // Which system created/owns this goal
+		GoalOwner owner{}; // Which system created/owns this goal
 
 		// Parent-child hierarchy (for craft → harvest/haul relationships)
 		std::optional<uint64_t> parentGoalId;	 // Parent goal (e.g., Harvest/Haul → Craft)

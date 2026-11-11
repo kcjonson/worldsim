@@ -18,11 +18,14 @@
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
 #include "../components/Task.h"
+#include "GoalSystemHelpers.h"
+#include "WorkSources.h"
 
 #include <functional>
 #include <glm/vec2.hpp>
 #include <optional>
 #include <random>
+#include <string>
 #include <vector>
 
 namespace assets {
@@ -73,6 +76,15 @@ public:
 
 	/// Set callback for dropping loose units on the ground when a chain is interrupted.
 	void setDropResourceCallback(DropResourceCallback callback) { onDropResource = std::move(callback); }
+
+	/// When a harvestable the colonist remembers is ready to give its yield again while it regrows from
+	/// an earlier cut, on the simulation clock; nullopt when it is ready now. Colonists read the live
+	/// state of sources they already know, as they read claims; this never reveals a source. Asked
+	/// lazily, only of the candidate that would otherwise win, so a regrowing bush is passed over for the
+	/// next option and taken again once it is ready. Unwired (unit contexts with no world behind them),
+	/// every source is ready.
+	using SourceRegrowthCallback = std::function<std::optional<double>(uint32_t defNameId, glm::vec2 position)>;
+	void setSourceRegrowthCallback(SourceRegrowthCallback callback) { onSourceRegrowth = std::move(callback); }
 
 	/// Enter direct player control: suspend this colonist's autonomous task selection. While the
 	/// PlayerControlled tag is present, update() skips task (re)selection, so the colonist stands
@@ -199,10 +211,16 @@ private:
 	std::optional<glm::vec2> m_colonyOrigin;
 
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
-	std::vector<SourceCandidate> m_sourceScratch;
+	std::vector<SourceCandidate> sourceScratch;
+
+	/// The deciding colonist's remembered work sources, reused across colonists
+	WorkSources m_workSources;
+
+	/// The storage boxes the colony knows, worked out at most once per update
+	ColonyStorageKnowledge m_colonyStorage;
 
 	/// SourceReachMemo::Key::stamp() of the colonist being decided this update (0 without a mesh)
-	std::uint64_t m_reachStamp = 0;
+	std::uint64_t reachStamp = 0;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;
@@ -221,6 +239,12 @@ private:
 
 	/// Callback for dropping items on the ground (when chain is interrupted)
 	DropResourceCallback onDropResource = nullptr;
+
+	/// Callback asking the world when a remembered harvestable is ready to give again
+	SourceRegrowthCallback onSourceRegrowth = nullptr;
+
+	/// onSourceRegrowth for a remembered source of `defNameId` at `position`; nullopt (ready) when unwired
+	[[nodiscard]] std::optional<double> sourceRegrowingUntil(uint32_t defNameId, glm::vec2 position) const;
 };
 
 } // namespace ecs

@@ -118,7 +118,7 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 
 	// Otherwise the engine pull only sources from a STRICTLY-lower-priority box the colony KNOWS.
 	// Mirror evaluateHaulOptions' source gate exactly: same item, strict-< getPriorityFor on the
-	// item's category, colonyKnowsStorageEntity. getPriorityFor falls back to Low for an
+	// item's category, ColonyStorageKnowledge. getPriorityFor falls back to Low for an
 	// unconfigured box, so an unknown-priority box holding the item is a valid lower source.
 	const auto* itemDef = registry.getDefinition(itemDefName);
 	if (itemDef == nullptr) {
@@ -132,7 +132,8 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 	}
 	const ecs::StoragePriority destPriority = destConfig->getPriorityFor(itemDefName, category);
 
-	const auto known = collectInventorySources(
+	ecs::ColonyStorageKnowledge storageKnowledge;
+	const auto					known = collectInventorySources(
 		world,
 		[&](ecs::EntityID source, const ecs::Inventory& inv) {
 			if (source == destBox) {
@@ -154,7 +155,7 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 			if (inv.getQuantity(itemDefName) <= srcConfig->getMinAmountFor(itemDefName, category)) {
 				return false;
 			}
-			return ecs::colonyKnowsStorageEntity(&world, registry, source);
+			return storageKnowledge.knows(world, registry, source);
 		}
 	);
 	return known.count(itemId) > 0;

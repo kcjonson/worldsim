@@ -22,8 +22,9 @@
 // 4. ENTITY REMOVAL: Supports removing entities when harvested/destroyed.
 //    Called by ActionSystem when collection actions complete.
 //
-// 5. COOLDOWN TRACKING: Non-destructive harvests (berry bushes) put entities
-//    on cooldown. Tracks remaining time and exposes query for AI/Vision.
+// 5. REGROWTH: A non-destructive harvest (a berry bush) stamps the time the
+//    entity is ready again. Times are the caller's simulation clock; assets
+//    keeps none of its own. An entry lapses on the first lookup past its time.
 //
 // Thread Safety:
 // - processChunk() modifies internal state - NOT thread-safe
@@ -35,13 +36,13 @@
 // 2. Call initialize() after assets are loaded (builds dependency graph)
 // 3. For each chunk: processChunk() or computeChunkEntities()+storeChunkResult()
 // 4. Query getChunkIndex() for spatial lookups
-// 5. Call updateCooldowns() each frame for regrowth timing
 //
 // Related Documentation:
 // - /docs/design/game-systems/world/entity-placement.md (design spec)
 // - /docs/technical/procedural-generation.md (algorithm details)
 // - AssetDefinition.h for PlacementRelationship struct
 
+#include "DecimeterGrid.h"
 #include "DependencyGraph.h"
 #include "PlacementTypes.h"
 #include "SpatialIndex.h"
@@ -159,47 +160,47 @@ namespace assets {
 		/// Remove chunk data (call when chunk is unloaded)
 		void unloadChunk(world::ChunkCoordinate coord);
 
-		/// Remove an entity at the specified position
+		/// Remove an entity at the specified position, with its cooldown and resource pool
 		/// @param coord Chunk coordinate containing the entity
 		/// @param position World position of the entity
 		/// @param defName DefName of the entity to remove
 		/// @return true if entity was found and removed
 		bool removeEntity(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
 
-		/// Set an entity on cooldown (for regrowth after non-destructive harvest)
-		/// @param coord Chunk coordinate containing the entity
-		/// @param position World position of the entity
-		/// @param defName DefName of the entity
-		/// @param cooldownSeconds Time until entity can be harvested again
-		void setEntityCooldown(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, float cooldownSeconds);
+		/// Erase an entity's cooldown and resource pool. removeEntity does this for placed flora; a
+		/// runtime-spawned harvestable (an ECS entity in no chunk index) is forgotten here when taken.
+		void forgetEntityState(glm::vec2 position, const std::string& defName);
 
-		/// Check if an entity is currently on cooldown
-		/// @param coord Chunk coordinate containing the entity
-		/// @param position World position of the entity
-		/// @param defName DefName of the entity
-		/// @return true if entity is on cooldown (not harvestable)
-		[[nodiscard]] bool isEntityOnCooldown(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) const;
+		/// Start an entity regrowing after a non-destructive harvest: it is ready again at now + seconds,
+		/// on the caller's clock. Every entry is kept across chunk unloads (it is keyed by world position,
+		/// not by chunk), so a bush regrowing when its chunk unloads is still regrowing on reload until
+		/// its time. Lapsed entries nothing looked up again are swept here once the map has doubled since
+		/// the last sweep, so it stays within twice the entities regrowing at that sweep.
+		void startRegrowth(glm::vec2 position, uint32_t defNameId, double now, double seconds);
 
-		/// Update cooldown timers (call once per frame)
-		/// @param deltaTime Time elapsed since last update
-		void updateCooldowns(float deltaTime);
+		/// When a regrowing entity is ready again, or nullopt if it is ready at `now`. An entry whose time
+		/// has come is erased here. Keyed by interned def id (AssetRegistry::getDefNameId), so a lookup
+		/// hashes three integers and never a name.
+		[[nodiscard]] std::optional<double> regrowthReadyAt(glm::vec2 position, uint32_t defNameId, double now);
+
+		/// Regrowth entries held, lapsed ones not yet looked up or swept included
+		[[nodiscard]] size_t regrowthEntryCount() const { return m_regrowthReadyAt.size(); }
 
 		/// Initialize resource count for an entity (called during spawn)
-		/// @param coord Chunk coordinate containing the entity
 		/// @param position World position of the entity
 		/// @param defName DefName of the entity
 		/// @param count Initial resource count
-		void initResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, uint32_t count);
+		void initResourceCount(glm::vec2 position, const std::string& defName, uint32_t count);
 
 		/// Get the current resource count for an entity
 		/// @return Resource count, or nullopt if entity has no resource tracking
-		[[nodiscard]] std::optional<uint32_t> getResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) const;
+		[[nodiscard]] std::optional<uint32_t> getResourceCount(glm::vec2 position, const std::string& defName) const;
 
 		/// Withdraw up to `requested` units from an entity's resource pool after a harvest.
 		/// @return The number of units actually removed (clamped to what the pool held; 0 if
 		///         the entity has no resource tracking). When this empties the pool the entry
 		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
-		uint32_t decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName, uint32_t requested);
+		uint32_t decrementResourceCount(glm::vec2 position, const std::string& defName, uint32_t requested);
 
 		/// One entity removeEntity took out of a chunk index, by the identity removeEntity takes.
 		struct RemovedEntity {
@@ -235,51 +236,39 @@ namespace assets {
 
 		std::vector<RemovedEntity> m_removals;
 
-		/// Entity cooldown key - uniquely identifies an entity for cooldown tracking
-		/// Uses quantized position (integer tile coordinates) for reliable hashing
-		struct CooldownKey {
-			world::ChunkCoordinate coord;
-			int32_t				   tileX; // Position quantized to tile
-			int32_t				   tileY;
-			std::string			   defName;
+		/// One entity's identity for its cooldown and resource pool: its placed position on the 0.1 m
+		/// grid colonist Memory keys it by, and its interned def id. Two bushes of one def in the same tile
+		/// are two entities and never share a regrowth timer or a pool.
+		struct EntityStateKey {
+			DecimeterCell cell;
+			uint32_t	  defNameId = 0;
 
-			bool operator==(const CooldownKey& other) const {
-				return coord == other.coord && tileX == other.tileX && tileY == other.tileY && defName == other.defName;
+			bool operator==(const EntityStateKey& other) const {
+				return cell.x == other.cell.x && cell.y == other.cell.y && defNameId == other.defNameId;
 			}
 		};
 
-		/// Hash function for CooldownKey
-		/// Uses multiplicative hash combining for better avalanche properties
-		struct CooldownKeyHash {
-			std::size_t operator()(const CooldownKey& key) const {
-				std::size_t h1 = std::hash<int32_t>{}(key.coord.x);
-				std::size_t h2 = std::hash<int32_t>{}(key.coord.y);
-				std::size_t h3 = std::hash<int32_t>{}(key.tileX);
-				std::size_t h4 = std::hash<int32_t>{}(key.tileY);
-				std::size_t h5 = std::hash<std::string>{}(key.defName);
-				// Combine hashes using multiplicative method for better distribution
-				std::size_t seed = 0;
-				seed = seed * 31 + h1;
-				seed = seed * 31 + h2;
-				seed = seed * 31 + h3;
-				seed = seed * 31 + h4;
-				seed = seed * 31 + h5;
+		struct EntityStateKeyHash {
+			std::size_t operator()(const EntityStateKey& key) const {
+				std::size_t seed = std::hash<int32_t>{}(key.cell.x);
+				seed = seed * 31 + std::hash<int32_t>{}(key.cell.y);
+				seed = seed * 31 + std::hash<uint32_t>{}(key.defNameId);
 				return seed;
 			}
 		};
 
-		/// Entity cooldown tracking using hash map for O(1) lookup
-		/// Key: (chunk coord, quantized position, defName)
-		/// Value: remaining cooldown time in seconds
-		std::unordered_map<CooldownKey, float, CooldownKeyHash> m_cooldowns;
+		/// The time each regrowing entity is ready again, on the caller's clock
+		std::unordered_map<EntityStateKey, double, EntityStateKeyHash> m_regrowthReadyAt;
 
-		/// Entity resource count tracking using same key pattern
-		/// Key: (chunk coord, quantized position, defName)
-		/// Value: remaining resource count (number of harvests left)
-		std::unordered_map<CooldownKey, uint32_t, CooldownKeyHash> m_resourceCounts;
+		/// startRegrowth sweeps lapsed entries once the map reaches this size
+		static constexpr size_t kMinRegrowthSweepSize = 1024;
+		size_t					m_regrowthSweepSize = kMinRegrowthSweepSize;
 
-		/// Convert world position to cooldown key
-		[[nodiscard]] static CooldownKey makeCooldownKey(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName);
+		/// Remaining resource pool (units left to harvest), per entity
+		std::unordered_map<EntityStateKey, uint32_t, EntityStateKeyHash> m_resourceCounts;
+
+		[[nodiscard]] EntityStateKey makeEntityStateKey(glm::vec2 position, const std::string& defName) const;
+		[[nodiscard]] static EntityStateKey makeEntityStateKey(glm::vec2 position, uint32_t defNameId);
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();

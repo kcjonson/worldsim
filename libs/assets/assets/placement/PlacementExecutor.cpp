@@ -116,7 +116,7 @@ namespace assets {
 				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
 					std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
 					uint32_t initialCount = resourceDist(rng);
-					initResourceCount(context.coord, entity.position, entity.defName, initialCount);
+					initResourceCount(entity.position, entity.defName, initialCount);
 				}
 			}
 		}
@@ -633,7 +633,7 @@ namespace assets {
 				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
 					std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
 					uint32_t initialCount = resourceDist(rng);
-					initResourceCount(result.coord, entity.position, entity.defName, initialCount);
+					initResourceCount(entity.position, entity.defName, initialCount);
 				}
 			}
 		}
@@ -645,24 +645,18 @@ namespace assets {
 		m_dependencyGraph.clear();
 		m_spawnOrder.clear();
 		m_chunkIndices.clear();
-		m_cooldowns.clear();
+		m_regrowthReadyAt.clear();
+		m_regrowthSweepSize = kMinRegrowthSweepSize;
 		m_resourceCounts.clear();
 		m_initialized = false;
 	}
 
-	PlacementExecutor::CooldownKey PlacementExecutor::makeCooldownKey(
-		world::ChunkCoordinate coord,
-		glm::vec2 position,
-		const std::string& defName
-	) {
-		// Quantize position to tile coordinates for reliable hashing
-		// Using floor to ensure consistent quantization
-		return CooldownKey{
-			coord,
-			static_cast<int32_t>(std::floor(position.x)),
-			static_cast<int32_t>(std::floor(position.y)),
-			defName
-		};
+	PlacementExecutor::EntityStateKey PlacementExecutor::makeEntityStateKey(glm::vec2 position, const std::string& defName) const {
+		return makeEntityStateKey(position, m_registry.getDefNameId(defName));
+	}
+
+	PlacementExecutor::EntityStateKey PlacementExecutor::makeEntityStateKey(glm::vec2 position, uint32_t defNameId) {
+		return EntityStateKey{decimeterCell(position), defNameId};
 	}
 
 	bool PlacementExecutor::removeEntity(world::ChunkCoordinate coord, glm::vec2 position, const std::string& defName) {
@@ -680,6 +674,7 @@ namespace assets {
 		// how the nav mesh finds the entity's ring.
 		const glm::vec2 stored = found->position;
 		it->second.remove(stored, defName);
+		forgetEntityState(stored, defName);
 		m_removals.push_back({coord, stored, defName});
 		LOG_DEBUG(
 			Engine,
@@ -693,63 +688,42 @@ namespace assets {
 		return true;
 	}
 
-	void PlacementExecutor::setEntityCooldown(world::ChunkCoordinate coord, glm::vec2 position,
-											  const std::string& defName, float cooldownSeconds) {
-		auto key = makeCooldownKey(coord, position, defName);
+	void PlacementExecutor::forgetEntityState(glm::vec2 position, const std::string& defName) {
+		const EntityStateKey key = makeEntityStateKey(position, defName);
+		m_regrowthReadyAt.erase(key);
+		m_resourceCounts.erase(key);
+	}
 
-		// O(1) insert or update
-		auto [iter, inserted] = m_cooldowns.insert_or_assign(key, cooldownSeconds);
-
-		if (inserted) {
-			LOG_DEBUG(
-				Engine,
-				"PlacementExecutor: Set cooldown for %s at (%.1f, %.1f) for %.1fs",
-				defName.c_str(),
-				position.x,
-				position.y,
-				cooldownSeconds
-			);
-		} else {
-			LOG_DEBUG(
-				Engine,
-				"PlacementExecutor: Updated cooldown for %s at (%.1f, %.1f) to %.1fs",
-				defName.c_str(),
-				position.x,
-				position.y,
-				cooldownSeconds
-			);
+	void PlacementExecutor::startRegrowth(glm::vec2 position, uint32_t defNameId, double now, double seconds) {
+		if (m_regrowthReadyAt.size() >= m_regrowthSweepSize) {
+			std::erase_if(m_regrowthReadyAt, [now](const auto& entry) { return entry.second <= now; });
+			m_regrowthSweepSize = std::max(kMinRegrowthSweepSize, 2 * m_regrowthReadyAt.size());
 		}
+		m_regrowthReadyAt.insert_or_assign(makeEntityStateKey(position, defNameId), now + seconds);
+		LOG_DEBUG(
+			Engine,
+			"PlacementExecutor: %s at (%.1f, %.1f) regrows for %.1fs",
+			m_registry.getDefName(defNameId).c_str(),
+			position.x,
+			position.y,
+			seconds
+		);
 	}
 
-	bool PlacementExecutor::isEntityOnCooldown(world::ChunkCoordinate coord, glm::vec2 position,
-											   const std::string& defName) const {
-		auto key = makeCooldownKey(coord, position, defName);
-		return m_cooldowns.find(key) != m_cooldowns.end();  // O(1) lookup
-	}
-
-	void PlacementExecutor::updateCooldowns(float deltaTime) {
-		// Update all cooldowns and remove expired ones
-		for (auto it = m_cooldowns.begin(); it != m_cooldowns.end(); ) {
-			it->second -= deltaTime;
-			if (it->second <= 0.0F) {
-				LOG_DEBUG(
-					Engine,
-					"PlacementExecutor: Cooldown expired for %s at tile (%d, %d)",
-					it->first.defName.c_str(),
-					it->first.tileX,
-					it->first.tileY
-				);
-				it = m_cooldowns.erase(it);
-			} else {
-				++it;
-			}
+	std::optional<double> PlacementExecutor::regrowthReadyAt(glm::vec2 position, uint32_t defNameId, double now) {
+		const auto it = m_regrowthReadyAt.find(makeEntityStateKey(position, defNameId));
+		if (it == m_regrowthReadyAt.end()) {
+			return std::nullopt;
 		}
+		if (it->second <= now) {
+			m_regrowthReadyAt.erase(it);
+			return std::nullopt;
+		}
+		return it->second;
 	}
 
-	void PlacementExecutor::initResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
-											  const std::string& defName, uint32_t count) {
-		auto key = makeCooldownKey(coord, position, defName);
-		m_resourceCounts[key] = count;
+	void PlacementExecutor::initResourceCount(glm::vec2 position, const std::string& defName, uint32_t count) {
+		m_resourceCounts[makeEntityStateKey(position, defName)] = count;
 		LOG_DEBUG(
 			Engine,
 			"PlacementExecutor: Initialized resource count for %s at (%.1f, %.1f) = %u",
@@ -760,20 +734,16 @@ namespace assets {
 		);
 	}
 
-	std::optional<uint32_t> PlacementExecutor::getResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
-																const std::string& defName) const {
-		auto key = makeCooldownKey(coord, position, defName);
-		auto it = m_resourceCounts.find(key);
+	std::optional<uint32_t> PlacementExecutor::getResourceCount(glm::vec2 position, const std::string& defName) const {
+		auto it = m_resourceCounts.find(makeEntityStateKey(position, defName));
 		if (it != m_resourceCounts.end()) {
 			return it->second;
 		}
 		return std::nullopt;
 	}
 
-	uint32_t PlacementExecutor::decrementResourceCount(world::ChunkCoordinate coord, glm::vec2 position,
-													   const std::string& defName, uint32_t requested) {
-		auto key = makeCooldownKey(coord, position, defName);
-		auto it = m_resourceCounts.find(key);
+	uint32_t PlacementExecutor::decrementResourceCount(glm::vec2 position, const std::string& defName, uint32_t requested) {
+		auto it = m_resourceCounts.find(makeEntityStateKey(position, defName));
 		if (it == m_resourceCounts.end()) {
 			// No resource tracking for this entity - nothing to withdraw
 			return 0;

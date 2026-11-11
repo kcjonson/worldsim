@@ -103,7 +103,7 @@ trips the one-session assert.
 | Colony origin and the landing clearing | GameScene.cpp:1380-1400, 1444-1518 |
 | The packaged-spawn fan-out counter | GameScene.cpp:1295, 2110 |
 | `EntityFactory` | `GameScene::spawnColonist`, `PlacementSystem::spawnEntity`, `GameScene::dropResourcePiles` |
-| The session seed and the per-system seeds derived from it | none (systems fall back to `std::random_device`) |
+| The session seed and the per-system seeds derived from it | `GameScene::initializeECS` (GameScene.cpp:1228-1231, `ecs::deriveSystemSeeds` in SystemSeeds.h) |
 | An event ring (see [Views](#views)) and per-system timing accumulators | none |
 
 Inputs a host sets before a step: the chunk focus (a world position the chunk manager loads around)
@@ -160,9 +160,9 @@ passes none, and nothing else in the processor changes.
 1. `ChunkManager::finishPendingGeneration()`.
 2. Launch placement for every ready chunk not yet processed, `AsyncChunkProcessor::waitAll()`, then
    integrate.
-3. `NavigationSystem::finishPendingBuilds()` (new): evaluate the region rebuild gates against current
-   inputs, launch what they call for, wait for every in-flight build (they run on `std::async`,
-   NavigationSystem.cpp:501), swap each in through the same path `update()` uses to drain finished
+3. `NavigationSystem::finishPendingBuilds()` (NavigationSystem.cpp:727): evaluate the region rebuild
+   gates against current inputs, launch what they call for, wait for every in-flight build (they run
+   on `std::async`), swap each in through the same path `update()` uses to drain finished
    builds, and repeat until no gate fires. It advances nothing else; `isBuilding()` is false when it
    returns.
 
@@ -230,12 +230,12 @@ moves, so nothing unloads; in the game a dev-spawned tree is lost when its chunk
 ### Config loading
 
 Asset definitions and recipes already load without GL through `assets::initializeAssetSystem`
-(AssetBootstrap.cpp); `asset-cli` opens GL only for its `render` command. The work configs load in
-`GameLoadingScene::loadWorkConfigs` (GameLoadingScene.cpp:485-551): action types, task chains, work
-types, priority tuning with the required-tier check, construction, and cross-validation. That moves to
-`assets::loadWorkConfig(configRoot)` in libs/assets with the same order and checks, returning the
-errors instead of logging and returning false. Its one sim-side line, clearing `GoalTaskRegistry`,
-moves to session construction. sim-cli takes `--config-root <dir>` (default: the staged
+(AssetBootstrap.cpp); `asset-cli` opens GL only for its `render` command. The work configs load
+through `assets::loadWorkConfig(configRoot)` (libs/assets/assets/WorkConfig.cpp, done in build step 2):
+action types, task chains, work types, priority tuning with the required-tier check, construction, and
+cross-validation, returning the errors rather than logging them. The loading scene calls it
+(GameLoadingScene.cpp:327) and clears `GoalTaskRegistry` itself; that one sim-side line moves to
+session construction. sim-cli takes `--config-root <dir>` (default: the staged
 `assets/config`) so a sweep can point it at a patched copy.
 
 ### Process statics
@@ -245,11 +245,11 @@ namespace-scope, excluding `const` and `constexpr`), with a verdict on each:
 
 | Static | Verdict |
 |---|---|
-| `nextChainId` in StorageGoalSystem.cpp:26, CraftingGoalSystem.cpp:26, ConstructionSystem.cpp:31 | Breaks a second session: chain ids keep counting, and `chainId` is in the task view and the digest. Move to one counter in `GoalTaskRegistry`, which `clear()` resets at session construction. |
+| Chain id counter | Done (build step 3): the three per-system `nextChainId` statics are one counter, `GoalTaskRegistry::allocateChainId`, which `clear()` resets at session construction. |
 | `GoalTaskRegistry` instance | Cleared at session construction. |
 | Work-config registries (`ActionTypeRegistry`, `TaskChainRegistry`, `WorkTypeRegistry`, `PriorityConfig`, `ConstructionRegistry`) and `ConfigValidator::errors` | Cleared and reloaded by `loadWorkConfig`. |
-| `AssetRegistry`, `RecipeRegistry`, `GeneratorRegistry` | Loaded once per process; definitions don't change between sessions. The synthetic `Terrain_Shore` def is registered idempotently (AssetRegistry.cpp:1843-1848), so ids match across sessions. |
-| `getEdibleItemNames` cache (ItemProperties.h:61) | Computed once from the asset registry, which doesn't change. Fine while definitions load once per process. |
+| `AssetRegistry`, `RecipeRegistry`, `GeneratorRegistry` | Loaded once per process; definitions don't change between sessions. The synthetic `Terrain_Shore` def is registered idempotently (`AssetRegistry::registerSyntheticDefinition`, called from VisionSystem.cpp:87), so ids match across sessions. |
+| The edible item list | No static: `AssetRegistry::edibleItemNames()` is built with the definitions and cleared with them. |
 | `GameWorldState::s_pending` (app) | Handled by the loading scene, above. |
 
 The audit is a build step, so it is redone against the code of the day, and the in-process
@@ -279,13 +279,14 @@ moved: `select`, `tunable`, `landing`, `tunables`, `gpuhold`, and in phase 1 the
 | Loading scene's chunk polling, placement launch, and bake hand-off | `SimSession::pumpStreaming` | the loading scene's `asyncProcessor` and its loop |
 | `prepareLandingClearing`, `clearLandingArea` | `SimSession::land(rawSpawn, crew)`, returning spawn points, colonist ids, and changed chunks | the GameScene functions |
 | `spawnColonist`, `PlacementSystem::spawnEntity`, `dropResourcePiles` | `EntityFactory` | all three |
-| The ECS-entity scan in the harvest removal callback (GameScene.cpp:1321-1348) and the harvestable-pool branch of `spawnEntity` (PlacementSystem.cpp:247-265) | nothing: every harvestable def is static (below) | both |
-| `nextChainId` statics | `GoalTaskRegistry` chain id counter | the three statics |
-| `GameLoadingScene::loadWorkConfigs` | `assets::loadWorkConfig` | the scene function |
+| The ECS-entity scans for spawned harvestables in the take-source callback (GameScene.cpp:1371-1384) and in `ConstructionSystem::isFootprintClear`, and the harvestable-pool branch of `spawnEntity` (PlacementSystem.cpp:253-270) | nothing: every harvestable def is static (below) | all three |
 | `DevCommandHandler` verb bodies, `nearestColonist` and friends, `parsePoint`, `jsonEscape` | `SimCommands` | the moved bodies and helpers |
-| `pumpUntil`, `pumpUntilMesh` (NavigationSystem.test.h) | `NavigationSystem::finishPendingBuilds()` | the header's polling helpers and their sleeps |
-| `std::optional` RNG seeds with a `random_device` fallback (ActionSystem.h:24-25, AIDecisionSystem.cpp:1073) | required seed arguments | the fallbacks |
 | Off-area and unreachable options relabeled `NoSource` | `OffArea` and `Unreachable` statuses | the relabels |
+
+Done in build steps 1 to 4: the `std::optional` RNG seeds and their `random_device` fallback became
+required seed arguments; the three `nextChainId` statics became the `GoalTaskRegistry` chain id
+counter; `GameLoadingScene::loadWorkConfigs` became `assets::loadWorkConfig`; and the `pumpUntil` and
+`pumpUntilMesh` test helpers gave way to `NavigationSystem::finishPendingBuilds()`.
 
 ---
 
@@ -607,11 +608,10 @@ sequence. Different compilers, platforms, or builds are out of scope.
 
 What makes it hold:
 
-- Required seeds. `AIDecisionSystem` and `ActionSystem` take their seed as a required constructor
-  argument; the optional parameter and the `std::random_device` fallback are deleted. The session
-  derives each system's seed from the session seed with a fixed mix (splitmix64 of the seed and a
-  per-system constant). The game draws one session seed at new game, logs it at info level, and passes
-  it; sim-cli takes it from `world seed=`. Other RNG in the sim is already seeded by position or entity
+- Required seeds (done). `AIDecisionSystem` and `ActionSystem` take their seed as a required
+  constructor argument. Each system's seed is derived from the session seed with a fixed mix
+  (splitmix64 of the seed and a per-system constant, `ecs::deriveSystemSeeds`). The game draws one
+  session seed at new game, logs it at info level, and passes it; sim-cli takes it from `world seed=`. Other RNG in the sim is already seeded by position or entity
   id (PlacementSystem.cpp:249-259, GameScene.cpp:1534-1539) and stays so.
 - Settling after every tick removes thread timing from chunk generation, placement, and nav builds.
 - A constant `dt` and a pinned speed.
@@ -817,27 +817,27 @@ independent of each other.
 
 ### Phase 1
 
-1. Required RNG seeds. `AIDecisionSystem` and `ActionSystem` take a required `uint32_t` seed; delete the
+1. Done. Required RNG seeds. `AIDecisionSystem` and `ActionSystem` take a required `uint32_t` seed; delete the
    optional parameters and the `random_device` fallbacks. GameScene draws, logs, and passes a session
    seed with derived per-system seeds. Every test construction passes a fixed seed. Tests: existing
    suites, updated.
-2. Work config loading in libs/assets. New `assets::loadWorkConfig` (libs/assets/assets/WorkConfig.{h,cpp})
+2. Done. Work config loading in libs/assets. New `assets::loadWorkConfig` (libs/assets/assets/WorkConfig.{h,cpp})
    with the order and checks of `GameLoadingScene::loadWorkConfigs`, which is deleted; the scene calls
    the new function and clears `GoalTaskRegistry` itself until step 7b. Test: an assets-tests case that
    loads the real config folder and reports no errors, unless ConfigValidator's tests already cover it.
-3. Process statics. Move the three `nextChainId` statics into a `GoalTaskRegistry` counter reset by
+3. Done. Process statics. Move the three `nextChainId` statics into a `GoalTaskRegistry` counter reset by
    `clear()`; redo the [audit](#process-statics) against the code and fix anything else it finds.
    Test: a GoalTaskRegistry case that chain ids restart after `clear()`.
-4. `NavigationSystem::finishPendingBuilds()`. Add it and convert the 58 `pumpUntil`/`pumpUntilMesh`
+4. Done. `NavigationSystem::finishPendingBuilds()`. Add it and convert the 58 `pumpUntil`/`pumpUntilMesh`
    call sites; delete those helpers and their sleeps, and update the sim-tests TIMEOUT comment that
    refers to them. Checks that a rebuild does not happen keep their fixed frame counts.
-5. `SyntheticWorldSampler` in libs/world with the map parameters; move the flat-land and one-pond test
+5. Done. `SyntheticWorldSampler` in libs/world with the map parameters; move the flat-land and one-pond test
    samplers onto it where touched. Test: world-tests cases that a pond's shore points exist where the
    blob says.
 6. EntityFactory. libs/sim/session/EntityFactory.{h,cpp} with its operations, the `PlacementExecutor`
    insert (rejecting unprocessed chunks) and edit epoch. Delete `GameScene::spawnColonist`,
    `PlacementSystem::spawnEntity`, and `GameScene::dropResourcePiles`; their callers use the factory. The
-   dev `spawn` verb routes static defs to `placeStatic`, and the ECS harvest scan and the harvestable-pool
+   dev `spawn` verb routes static defs to `placeStatic`, and the ECS harvestable scans and the harvestable-pool
    branch are deleted. Tests: sim-tests cases for `placeStatic` (the inserted tree is a nav obstacle after
    a rebuild; an insert into an unprocessed chunk is refused) and pile splitting, checking for
    duplicates first. Regression: manual scenario 01 in the game.
@@ -897,10 +897,6 @@ These are out of scope here and need their own tickets; each changes what a scen
 - Vision and the goal systems throttle by frame count (VisionSystem.h:134-135 every 5 frames; frame
   counters in StorageGoalSystem, CraftingGoalSystem, BuildGoalSystem, ConstructionSystem), so the tick
   rate matters as well as the speed. Scenarios keep the default 60 Hz.
-- Harvest regrowth cooldowns are written (`setEntityCooldown`) and never read or advanced:
-  `PlacementExecutor::updateCooldowns` has no non-test caller and nothing calls `isEntityOnCooldown`
-  (see the TODO at NeedActions.cpp:96). A berry bush is harvestable again at once, so food is unlimited
-  in long runs and no scenario can test regrowth.
 - A static entity spawned at runtime lives in its chunk's placement index, so it is gone when that
   chunk unloads and does not come back on reload. Only the game streams chunks, so only dev-spawned
   things in the game are affected; persisting runtime statics belongs with save and load.

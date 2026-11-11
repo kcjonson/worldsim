@@ -84,10 +84,10 @@ A colonist deciding about a target applies, in order:
 1. Discovery: the target is in its own Memory ([Memory](../design/game-systems/colonists/memory.md)).
    A colonist never targets something it has not seen. The one exception is storage the colony
    has placed, as a source for box-to-box transfer: it is common colony knowledge, gated by
-   `colonyKnowsStorageEntity` (any colonist remembers the box), and any colonist may carry out the
+   `ColonyStorageKnowledge` (any colonist remembers the box), and any colonist may carry out the
    transfer. Boxes are things the colony built, and transfer, driven by the item's priority in each
    box, should run reliably rather than wait for a colonist who personally saw the source box. The
-   exception covers colony-placed storage only. Its cost is handled by the per-poll cache under
+   exception covers colony-placed storage only. Its cost is handled by the per-update cache under
    performance requirements.
 2. Permission: ownership filters (not this colonist's bed, a work order restricted to someone
    else). Stored, long-lived, out of scope.
@@ -589,11 +589,11 @@ Measured on the perf capture against `main` on the same machine, plus unit bench
   `MemoryCapacityDoesNotAffectDecisionSpeed` with 10,000 remembered entities that match no goal:
   decision time stays within noise of an empty memory.
 - Live pile quantity is one keyed lookup through the WorldKey-to-pile map, not a scan of piles.
-- Box-pull gating keeps today's colony-wide rule, but not its cost. Today `colonyKnowsStorageEntity`
-  walks every colonist's memory per box per goal per evaluating colonist, which is quadratic in
-  colonists. Instead, colony knowledge of each storage entity is computed once per goal-system poll
-  (one pass over colonist memories per box) and cached; evaluators read the cache. Same behavior,
-  linear cost, and staleness of one poll interval, the same as every other goal-system input.
+- Box-pull gating keeps the colony-wide rule without its old cost (a walk of every colonist's
+  memory per box per goal per evaluating colonist, quadratic in colonists). `ColonyStorageKnowledge`
+  works out every box's answer on the first pull check of an `AIDecisionSystem::update`, one probe
+  of each colonist's memory per box, and the rest of that update reads the set. It is rebuilt per AI
+  update rather than per goal-system poll so the answer is never staler than the memories it reads.
 - Trace size per colonist is bounded by roots times accepted items after dedup, not by remembered
   sources.
 - The UI's availability and `knownBy` run on the panel throttle, never per frame, and also use the
@@ -677,8 +677,8 @@ Deleted in the same change that replaces them, per the no-legacy rule:
   slot-count use of `targetAmount` and its owner special case in `evaluateHaulOptions`, and
   `GoalTask::availableCapacity()`, replaced by remaining need at the root. `recordDelivery`'s
   Haul-only parent credit goes with them.
-- The per-call colony memory walk inside `colonyKnowsStorageEntity`, replaced by the per-poll cache
-  (the colony-wide rule itself stays).
+- The per-call colony memory walk inside `colonyKnowsStorageEntity`, replaced by the per-update
+  `ColonyStorageKnowledge` (the colony-wide rule itself stays). Done.
 - The adapter's per-goal colonist scan (`colonistWorkingGoal`) in favor of the index.
 - Comments that state there is no reservation system (`enterControl`, the storage-pull gate), and
   the "world entity ID" comment on `harvestTargetEntityId`.

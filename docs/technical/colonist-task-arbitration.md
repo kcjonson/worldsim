@@ -131,8 +131,9 @@ Design basis: [Multi-colonist Crafting](../design/multi-colonist-crafting.md) §
 by a wide margin, so if the assigned colonist leaves to sleep or eat, they come back and finish
 it before taking on anything new. The station stays reserved for that colonist across the
 interruption." Tier-4 stickiness is the mechanism that delivers this. A tier-5 actionable need
-(eat, sleep) briefly preempts tier 4, then the colonist returns to their active work order; this
-matches the spec's "comes back and finishes" intent.
+(eat, sleep) never preempts tier 4; only a need that goes critical (tier 2, below ~10%) does, and
+the colonist then returns to their active work order, which matches the spec's "comes back and
+finishes" intent.
 
 This resolves the apparent tension with `ai-behavior.md`'s "Actionable Needs above Gather Food"
 ordering: that document's tier-6 "Gather Food / work" slot is what this spec calls
@@ -347,7 +348,8 @@ Records workstation ownership (one colonist per active craft, station reserved a
 interruptions) and the "finishing is very high priority" invariant.
 
 **Honor:** tier-4 stickiness is the mechanism that implements this. "Return to finish after
-eat/sleep" is tier-5 actionable needs briefly preempting tier 4, then the colonist returning.
+eat/sleep" is a critical need (tier 2) preempting tier 4, then the colonist returning; a tier-5
+need waits until the work order is done.
 This spec also answers the open question from multi-colonist-crafting.md — "what outranks
 finish-priority?" — the answer is only tiers 1-2 (danger, critical needs).
 

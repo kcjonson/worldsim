@@ -37,6 +37,7 @@ vcpkg_installed/
 perf-results/nightly/
 
 # Test outputs
+/Testing/
 *.png
 *.jpg
 tests/golden/*.actual.png

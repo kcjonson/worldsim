@@ -55,6 +55,7 @@
 // ECS
 #include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
+#include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/AnimationState.h>
@@ -272,8 +273,7 @@ namespace {
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
 				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
-					auto coord = world::worldToChunk({position.x, position.y});
-					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
+					return m_placementExecutor->getResourceCount({position.x, position.y}, defName);
 				},
 				.onStructureSelected =
 					[this](const std::string& structure) {
@@ -886,6 +886,7 @@ namespace {
 			// destroys here instead of calling destroyEntity mid-iteration, which
 			// would swap-and-pop the component pools out from under a live view.
 			if (!m_pendingEntityRemoval.empty()) {
+				auto& loosePiles = ecsWorld->getSystem<ecs::ActionSystem>().loosePiles();
 				for (ecs::EntityID entity : m_pendingEntityRemoval) {
 					// Drop control if the controlled colonist is being destroyed, so a recycled
 					// entity index can't later resolve m_controlledColonist to a different live entity.
@@ -893,6 +894,7 @@ namespace {
 						m_controlledColonist = 0;
 						m_moveMarkerTtl = 0.0F;
 					}
+					loosePiles.remove(entity);
 					ecsWorld->destroyEntity(entity);
 				}
 				m_pendingEntityRemoval.clear();
@@ -1348,55 +1350,30 @@ namespace {
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
-
-			// Wire up ActionSystem to remove harvested entities (destructive harvest)
-			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
-				auto coord = world::worldToChunk({x, y});
-				bool removedFromIndex = m_placementExecutor->removeEntity(coord, {x, y}, defName);
-
-				// World-gen flora live only in the placement index (above). Runtime-spawned
-				// harvestables (dev spawns, future saplings) are ECS entities that VisionSystem
-				// Pass 2 sees by Appearance; the index removal misses them, so a depleted one
-				// would linger and get re-discovered forever. Find the matching ECS entity and
-				// queue it for the deferred drain (never destroy mid-view-iteration).
-				bool			queuedEcs = false;
-				constexpr float kMatchEps = 0.25F;
-				for (auto [ent, entPos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
-					if (appearance.defName != defName) {
-						continue;
-					}
-					const float ddx = entPos.value.x - x;
-					const float ddy = entPos.value.y - y;
-					if (ddx * ddx + ddy * ddy <= kMatchEps * kMatchEps) {
-						m_pendingEntityRemoval.push_back(ent);
-						queuedEcs = true;
-						break;
-					}
-				}
-
-				if (!removedFromIndex && !queuedEcs) {
-					LOG_WARNING(Game, "Failed to remove harvested entity %s at (%.1f, %.1f)", defName.c_str(), x, y);
-				}
+			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at) {
+				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, *ecsWorld, defNameId, at);
 			});
+
+			// Wire up ActionSystem to take a harvested or picked-up source from the world as the action
+			// completes, reporting what it was just before: gone, standing, or regrowing.
+			actionSystem.setTakeSourceCallback(
+				[this](const std::string& defName, float x, float y, ecs::ActionSystem::SourceTake take, float regrowthSeconds) {
+					return ecs::takeWorldSource(*m_placementExecutor, *ecsWorld, m_pendingEntityRemoval, defName, {x, y}, take, regrowthSeconds);
+				}
+			);
 
 			// Wire up ActionSystem to remove a specific entity by id (a loose pile drained to
 			// zero). The system already holds the exact entity, so there is no position scan to
 			// alias between two same-material piles. Queue for the deferred drain like the others.
 			actionSystem.setRemoveEntityByIdCallback([this](ecs::EntityID entity) { m_pendingEntityRemoval.push_back(entity); });
 
-			// Wire up ActionSystem to set cooldown on harvested entities (regrowth)
-			actionSystem.setEntityCooldownCallback([this](const std::string& defName, float x, float y, float cooldownSeconds) {
-				auto coord = world::worldToChunk({x, y});
-				m_placementExecutor->setEntityCooldown(coord, {x, y}, defName, cooldownSeconds);
-			});
 
 			// Wire up ActionSystem to withdraw from harvestable resource pools. Returns how much
 			// was actually taken plus whether the pool is now empty (so the tree gets removed).
 			actionSystem.setDecrementResourceCallback(
 				[this](const std::string& defName, float x, float y, uint32_t requested) -> ecs::ActionSystem::ResourceDraw {
-					auto		   coord = world::worldToChunk({x, y});
-					const uint32_t removed = m_placementExecutor->decrementResourceCount(coord, {x, y}, defName, requested);
-					const bool	   depleted = !m_placementExecutor->getResourceCount(coord, {x, y}, defName).has_value();
+					const uint32_t removed = m_placementExecutor->decrementResourceCount({x, y}, defName, requested);
+					const bool	   depleted = !m_placementExecutor->getResourceCount({x, y}, defName).has_value();
 					return {removed, depleted};
 				}
 			);
@@ -1804,9 +1781,12 @@ namespace {
 			for (const auto& [index, added] : plan.topUps) {
 				nearbyStacks[index]->quantity += added;
 			}
+			auto&		   loosePiles = ecsWorld->getSystem<ecs::ActionSystem>().loosePiles();
+			const uint32_t defNameId = registry.getDefNameId(defName);
 			for (const auto& [pos, qty] : plan.spawns) {
 				auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
 				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
+				loosePiles.add(entity, defNameId, pos);
 			}
 			LOG_INFO(
 				Game,

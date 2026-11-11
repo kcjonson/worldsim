@@ -9,7 +9,9 @@
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
 #include "../World.h"
+#include "../WorldSource.h"
 #include "../components/Action.h"
+#include "../components/Appearance.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
@@ -76,8 +78,7 @@ namespace ecs::test {
 
 				// A berry bush: one-hand yield, regrows rather than falling, and slower to strip than
 				// the tree is to fell, so a tree clear finishes while a bush clear is still underway.
-				// Edible as the other suites register it: assets::getEdibleItemNames() caches the edible
-				// set on first call for the whole process, and the AI here may be the first caller.
+				// Edible like the real berry, so a colonist holding some counts as carrying food.
 				assets::AssetDefinition berry;
 				berry.defName = "Berry";
 				berry.label = "Berry";
@@ -105,9 +106,11 @@ namespace ecs::test {
 				world = std::make_unique<World>();
 				world->registerSystem<AIDecisionSystem>(registry, assets::RecipeRegistry::Get(), kTestRngSeed);
 				auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
-				action.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
-					executor.removeEntity(world::worldToChunk({x, y}), {x, y}, defName);
-				});
+				action.setTakeSourceCallback(
+					[this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
+						return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
+					}
+				);
 				action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t /*qty*/) {
 					++piles;
 				});
@@ -158,6 +161,14 @@ namespace ecs::test {
 				processed.insert(coord);
 			}
 
+			/// Place the chunk under `at` with nothing growing in it, as world generation would for bare ground.
+			void placeBareChunk(glm::vec2 at) {
+				assets::AsyncChunkPlacementResult result;
+				result.coord = world::worldToChunk({at.x, at.y});
+				processed.insert(result.coord);
+				executor.storeChunkResult(std::move(result));
+			}
+
 			EntityID createColonist(glm::vec2 position, const std::vector<glm::vec2>& knownTrees) {
 				auto entity = world->createEntity();
 				world->addComponent<Position>(entity, Position{position});
@@ -189,10 +200,15 @@ namespace ecs::test {
 			}
 
 			/// Run frames, arriving each colonist at its task target at once (unless `held`, who stays
-			/// on the way), until `done` holds.
+			/// on the way), until `done` holds. Taken spawned entities are destroyed after each update,
+			/// as the game drains them.
 			template <typename Done> bool runUntil(Done done, int maxFrames = 3000, EntityID held = kInvalidEntity) {
 				for (int frame = 0; frame < maxFrames; ++frame) {
 					world->update(0.016F);
+					for (EntityID taken : pendingRemoval) {
+						world->destroyEntity(taken);
+					}
+					pendingRemoval.clear();
 					for (auto [entity, task, pos] : world->view<Task, Position>()) {
 						if (task.state == TaskState::Moving && entity != held) {
 							pos.value = task.targetPosition;
@@ -214,6 +230,7 @@ namespace ecs::test {
 			assets::PlacementExecutor			   executor{assets::AssetRegistry::Get()};
 			std::unordered_set<world::ChunkCoordinate> processed;
 			EntityID							   site = kInvalidEntity;
+			std::vector<EntityID>				   pendingRemoval;
 			int									   piles = 0;
 		};
 	} // namespace
@@ -267,6 +284,28 @@ namespace ecs::test {
 		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
 	}
 
+	// A runtime-spawned bush (an ECS entity, not in the placement index) is a blocker a colonist can
+	// remember and clear: it holds the site in Clearing exactly as placed flora does until his clear
+	// takes it, through the same take-source the game wires.
+	TEST_F(FootprintClearingTest, SpawnedBlockerIsClearedLikePlacedFlora) {
+		const glm::vec2 at{6.0F, 6.0F};
+		placeBareChunk(at);
+		const EntityID	bush = world->createEntity();
+		world->addComponent<Position>(bush, Position{at});
+		world->addComponent<Appearance>(bush, Appearance{kBush});
+		auto colonist = createColonist({1.0F, 1.0F}, {});
+		remember(*world->getComponent<Memory>(colonist), at, kBush);
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 5); // fed: he takes the bush only to clear it
+
+		ASSERT_TRUE(runUntil([] { return !GoalTaskRegistry::Get().getGoalsOfType(TaskType::Harvest).empty(); }))
+			<< "the spawned bush blocks the footprint and the site offers its clear goal";
+		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }))
+			<< "his clear takes the spawned bush and the site moves on";
+		EXPECT_FALSE(world->isAlive(bush));
+	}
+
 	// A material Harvest (not a clear) feeds the site through construction's own per-material Haul:
 	// completing it creates no second Haul, and the Wood still lands on the manifest.
 	TEST_F(FootprintClearingTest, MaterialHarvestDeliversThroughTheSiteHaulAlone) {
@@ -285,8 +324,9 @@ namespace ecs::test {
 
 
 	// Two colonists clear different blockers in one footprint. The tree falls while the other
-	// colonist is still on his way to the bush; that must not end his clear (same task, same goal),
-	// and both blockers end up removed.
+	// colonist is still on his way to the bush; that must not end his clear (same task, same goal).
+	// Reaching the bush only after the tree fell, the harvest he starts on that clear removes the bush
+	// rather than leaving it to regrow, and the site leaves Clearing.
 	TEST_F(FootprintClearingTest, FirstClearToFinishDoesNotResetAnother) {
 		const glm::vec2 tree{2.0F, 2.0F};
 		const glm::vec2 bush{6.0F, 6.0F};
@@ -297,7 +337,7 @@ namespace ecs::test {
 		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
 
 		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
-		const Task* task = world->getComponent<Task>(stripper);
+		auto* task = world->getComponent<Task>(stripper);
 		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
 		const uint64_t goalId = task->harvestGoalId;
 
@@ -312,31 +352,8 @@ namespace ecs::test {
 		);
 		EXPECT_TRUE(kept) << "the tree falling must not reset his clear";
 
-		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "both are cleared";
-		EXPECT_FALSE(treeStands(tree));
-		EXPECT_FALSE(treeStands(bush, kBush));
-	}
-
-	// A colonist who reaches his blocker only after another blocker was cleared still clears it: the
-	// harvest he started on that clear removes the bush rather than leaving it to regrow.
-	TEST_F(FootprintClearingTest, ClearStartedAfterAnotherBlockerFellStillRemovesItsBlocker) {
-		const glm::vec2 tree{2.0F, 2.0F};
-		const glm::vec2 bush{6.0F, 6.0F};
-		plantTrees({tree}, {bush});
-		createColonist({1.0F, 1.0F}, {tree});
-		auto stripper = createColonist({30.0F, 30.0F}, {});
-		remember(*world->getComponent<Memory>(stripper), bush, kBush);
-		world->getComponent<Inventory>(stripper)->addItem("Berry", 5); // fed: he strips the bush only to clear it
-
-		ASSERT_TRUE(runUntil([&] { return !treeStands(tree); }, 3000, stripper)) << "precondition: the tree is felled first";
-		auto* task = world->getComponent<Task>(stripper);
-		ASSERT_EQ(task->type, TaskType::Harvest) << "precondition: he is on his way to the bush";
-		const uint64_t goalId = task->harvestGoalId;
-
-		// He arrives right after the tree fell.
 		world->getComponent<Position>(stripper)->value = task->targetPosition;
 		task->state = TaskState::Arrived;
-
 		bool harvested = false;
 		bool sameClear = true;
 		ASSERT_TRUE(runUntil([&] {
@@ -347,6 +364,42 @@ namespace ecs::test {
 		})) << "he harvests the bush";
 		EXPECT_TRUE(sameClear) << "on the clear he set out on";
 		EXPECT_FALSE(treeStands(bush, kBush)) << "that harvest removed the bush";
+
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "both are cleared";
+		EXPECT_FALSE(treeStands(tree));
+	}
+
+	// A footprint over a chunk whose flora isn't placed yet is not known to be clear: the site waits in
+	// Clearing, and moves on once the chunk is placed and holds nothing.
+	TEST_F(FootprintClearingTest, SiteOverAnUnplacedChunkWaitsInClearing) {
+		EXPECT_FALSE(runUntil([&] { return phase() != StructureBlueprint::BuildPhase::Clearing; }, 300))
+			<< "nothing placed under the footprint yet";
+		placeBareChunk({4.0F, 4.0F});
+		EXPECT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }, 300));
+	}
+
+	// Past Clearing the footprint is not rescanned each pass, but it is checked once more as the materials
+	// complete: a tree placed under it after the site left Clearing sends it back to Clearing instead of
+	// into UnderConstruction.
+	TEST_F(FootprintClearingTest, BlockerFoundEnteringConstructionReturnsTheSiteToClearing) {
+		placeBareChunk({4.0F, 4.0F});
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }, 300));
+
+		plantTrees({{3.0F, 3.0F}}); // the chunk's flora, placed late
+		runUntil([] { return false; }, 120);
+		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::AwaitingMaterials) << "no rescan while awaiting materials";
+
+		world->getComponent<StructureBlueprint>(site)->delivered = {{"Wood", 10}};
+		bool built = false;
+		runUntil(
+			[&] {
+				built = built || phase() == StructureBlueprint::BuildPhase::UnderConstruction;
+				return phase() == StructureBlueprint::BuildPhase::Clearing;
+			},
+			300
+		);
+		EXPECT_FALSE(built) << "never entered UnderConstruction over the tree";
+		EXPECT_EQ(phase(), StructureBlueprint::BuildPhase::Clearing);
 	}
 
 } // namespace ecs::test

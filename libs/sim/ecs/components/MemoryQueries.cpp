@@ -5,9 +5,6 @@
 #include <glm/geometric.hpp>
 #include <utils/Log.h>
 
-#include <cmath>
-#include <limits>
-
 namespace ecs {
 
 	std::vector<KnownWorldEntity>
@@ -26,34 +23,6 @@ namespace ecs {
 		}
 
 		return result;
-	}
-
-	std::optional<KnownWorldEntity> findOptimalForTrip(
-		const Memory&										memory,
-		const glm::vec2&									fromPosition,
-		const glm::vec2&									destination,
-		const std::function<bool(const KnownWorldEntity&)>& candidateFilter
-	) {
-		std::optional<KnownWorldEntity> best;
-		float							minTotalTrip = std::numeric_limits<float>::max();
-
-		for (const auto& [key, entity] : memory.knownWorldEntities) {
-			if (!candidateFilter(entity)) {
-				continue;
-			}
-
-			// totalTrip = distance(start, entity) + distance(entity, destination)
-			float legOne = glm::distance(fromPosition, entity.position);
-			float legTwo = glm::distance(entity.position, destination);
-			float totalTrip = legOne + legTwo;
-
-			if (totalTrip < minTotalTrip) {
-				minTotalTrip = totalTrip;
-				best = entity;
-			}
-		}
-
-		return best;
 	}
 
 	size_t countKnownWithCapability(const Memory& memory, const assets::AssetRegistry& /*registry*/, assets::CapabilityType capability) {

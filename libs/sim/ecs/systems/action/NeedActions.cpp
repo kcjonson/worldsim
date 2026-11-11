@@ -26,9 +26,6 @@ namespace ecs {
 		/// Default water quality for drinking
 		constexpr float kDefaultWaterQuality = 1.0F;
 
-		/// Position tolerance for matching entities at target location (in tiles)
-		constexpr float kPositionTolerance = 0.1F;
-
 	} // namespace
 
 	void ActionSystem::startNeedAction(
@@ -45,7 +42,7 @@ namespace ecs {
 		switch (task.needToFulfill) {
 			case NeedType::Hunger: {
 				// Priority 1: Check inventory for any edible food (data-driven)
-				for (const auto& edibleItemName : assets::getEdibleItemNames()) {
+				for (const auto& edibleItemName : registry.edibleItemNames()) {
 					if (inventory.hasItem(edibleItemName)) {
 						// Get nutrition from item properties
 						auto  edibleInfo = assets::getEdibleItemInfo(edibleItemName);
@@ -67,36 +64,18 @@ namespace ecs {
 					break;
 				}
 
-				// Priority 2: Check if we're at a harvestable food source
-				// Look for harvestable entities at target position
-				for (const auto& [key, entity] : memory.knownWorldEntities) {
-					// Check if entity is at target position (with tolerance)
-					glm::vec2 diff = entity.position - task.targetPosition;
-					float	  distSq = diff.x * diff.x + diff.y * diff.y;
-					if (distSq > kPositionTolerance * kPositionTolerance) {
-						continue;
-					}
-
-					// Check if entity has harvestable capability via registry
-					if (!registry.hasCapability(entity.defNameId, assets::CapabilityType::Harvestable)) {
-						continue;
-					}
-
-					// Found harvestable entity at target - get harvest details
-					const auto& defName = registry.getDefName(entity.defNameId);
+				// Priority 2: harvest the food source the decision chose, by its Memory key, so two
+				// sources at one spot can't swap places by memory's hash order.
+				if (const KnownWorldEntity* entity = memory.getWorldEntity(task.needSourceKey);
+					entity != nullptr && registry.hasCapability(entity->defNameId, assets::CapabilityType::Harvestable)) {
+					const auto& defName = registry.getDefName(entity->defNameId);
 					const auto* def = registry.getDefinition(defName);
-					if (def != nullptr && def->capabilities.harvestable.has_value()) {
+					if (def != nullptr && def->capabilities.harvestable.has_value() &&
+						assets::isItemEdible(def->capabilities.harvestable->yieldDefName)) {
 						const auto& harvestCap = def->capabilities.harvestable.value();
 
-						// Only consider harvestables that yield edible items
-						if (!assets::isItemEdible(harvestCap.yieldDefName)) {
-							continue;
-						}
-
-						// TODO: Check if entity is on cooldown before creating harvest action.
-						// Proper fix: VisionSystem should filter entities on cooldown so they
-						// don't appear as harvestable in Memory. Until then, colonists may
-						// arrive at recently-harvested bushes expecting to harvest again.
+						// The decision passes over a regrowing bush, but one another colonist cut while this
+						// one walked over still pays nothing at completion (applyCollectionEffect).
 
 						// Calculate random yield within range using proper RNG
 						uint32_t yield = harvestCap.amountMin;
@@ -109,7 +88,7 @@ namespace ecs {
 							harvestCap.yieldDefName,
 							yield,
 							harvestCap.durability,
-							entity.position,
+							entity->position,
 							def->defName,
 							harvestCap.destructive,
 							harvestCap.regrowthTime
@@ -121,7 +100,6 @@ namespace ecs {
 							yield,
 							harvestCap.yieldDefName.c_str()
 						);
-						break;
 					}
 				}
 

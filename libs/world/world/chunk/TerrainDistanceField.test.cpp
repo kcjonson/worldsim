@@ -52,8 +52,12 @@ namespace {
 	}
 
 	// Half precision: 11 significant bits, plus the float rounding before it.
-	void expectHalfNear(uint16_t half, double expected, const std::string& what) {
-		EXPECT_NEAR(decode(half), expected, std::abs(expected) * 1.0e-3 + 1.0e-6) << what;
+	double halfTolerance(double expected) {
+		return std::abs(expected) * 1.0e-3 + 1.0e-6;
+	}
+
+	void expectHalfNear(uint16_t half, double expected, const char* what) {
+		EXPECT_NEAR(decode(half), expected, halfTolerance(expected)) << what;
 	}
 
 	// ---- Hand-built rings ----
@@ -594,7 +598,9 @@ TEST(TerrainDistanceFieldTest, MouthShorelineIsTheUnionBoundary) {
 			if (const auto t = nearAt(f, i, j)) {
 				const double x = nearCenterM(f, i, true);
 				const double y = nearCenterM(f, j, false);
-				expectHalfNear(t->r, clampSdf(unionSigned(x, y)), "near union R at " + std::to_string(x) + ", " + std::to_string(y));
+				// The label streams only on failure: building it for each of ~330k texels cost most of the test.
+				const double expected = clampSdf(unionSigned(x, y));
+				EXPECT_NEAR(decode(t->r), expected, halfTolerance(expected)) << "near union R at " << x << ", " << y;
 				++near;
 				if (::testing::Test::HasFailure()) {
 					return;

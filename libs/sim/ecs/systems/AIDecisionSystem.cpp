@@ -27,6 +27,8 @@
 #include "../components/Transform.h"
 #include "../components/WorkQueue.h"
 #include "NavigationSystem.h"
+#include "TimeSystem.h"
+#include "WorkSources.h"
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetDefinition.h"
@@ -41,7 +43,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <numbers>
+#include <span>
 
 namespace ecs {
 
@@ -155,8 +159,8 @@ namespace ecs {
 		}
 
 		/// Check if inventory contains any edible food item
-		[[nodiscard]] bool hasEdibleFood(const Inventory& inventory) {
-			for (const auto& edibleItemName : assets::getEdibleItemNames()) {
+		[[nodiscard]] bool hasEdibleFood(const assets::AssetRegistry& registry, const Inventory& inventory) {
+			for (const auto& edibleItemName : registry.edibleItemNames()) {
 				if (inventory.hasItem(edibleItemName)) {
 					return true;
 				}
@@ -179,6 +183,13 @@ namespace ecs {
 					.beliefVersion = memory.beliefVersion,
 					.reachRoot = reach.from.root,
 					.startTri = reach.from.root < 0 ? reach.from.startTri : -1};
+		}
+
+		/// The key a failed route is remembered under in SourceReachMemo: the Memory key of a remembered
+		/// source, else the target point itself (a toilet spot, a work site's stand point), quantized
+		/// like Memory keys so the same point picked again maps to the same verdict.
+		[[nodiscard]] std::uint64_t routeTargetKey(std::uint64_t sourceKey, const glm::vec2& target) {
+			return sourceKey != 0 ? sourceKey : hashWorldEntity(target, 0);
 		}
 
 		/// Skill names for work types
@@ -412,14 +423,16 @@ namespace ecs {
 		///
 		/// @param world ECS world (to read a destination storage's live inventory for haul sizing)
 		/// @param registry Asset registry for capability lookups
-		/// @param memory Colonist memory (known entities)
+		/// @param sources The colonist's remembered loose items, by item
+		/// @param storageKnowledge The boxes the colony knows, this update
 		/// @param inventory Colonist inventory (for craft-material hauls)
 		/// @param position Colonist position
 		/// @param trace Output decision trace
 		void evaluateHaulOptions(
 			World*								 world,
 			const assets::AssetRegistry& registry,
-			const Memory&						 memory,
+			WorkSources&						 sources,
+			ColonyStorageKnowledge&				 storageKnowledge,
 			const Inventory&					 inventory,
 			const glm::vec2&					 position,
 			DecisionTrace&						 trace
@@ -428,6 +441,22 @@ namespace ecs {
 
 			// Query all Haul goals (storage containers wanting items)
 			auto haulGoals = goalRegistry.getGoalsOfType(TaskType::Haul);
+
+			// A haul whose pickup would lift nothing right now (pack full, hands busy with another load):
+			// not available, so the colonist doesn't repeat a pickup that collects nothing. The trace
+			// says why.
+			const auto pushNoRoom = [&](const GoalTask& goal, const std::string& itemDefName, std::string reason) {
+				EvaluatedOption option;
+				option.taskType = TaskType::Haul;
+				option.needType = NeedType::Count;
+				option.needValue = 100.0F;
+				option.threshold = 0.0F;
+				option.haulItemDefName = itemDefName;
+				option.haulGoalId = goal.id;
+				option.status = OptionStatus::NoRoom;
+				option.reason = std::move(reason) + " (no room to carry it)";
+				trace.options.push_back(std::move(option));
+			};
 
 			for (const auto* goal : haulGoals) {
 				if (goal == nullptr) {
@@ -536,12 +565,15 @@ namespace ecs {
 					// loose stock to the station (two-phase pickup -> deposit into the station store).
 					// Construction never fetches; its goods come from a cut.
 					if (isCraftHaul && goal->status == GoalStatus::Available) {
-						for (const auto& [key, looseItem] : memory.knownWorldEntities) {
-							const bool accepted = std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), looseItem.defNameId) != goal->acceptedDefNameIds.end();
-							if (!accepted || !registry.hasCapability(looseItem.defNameId, assets::CapabilityType::Carryable)) {
+						for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
+							if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
+								continue; // a repeated id names the same sources
+							}
+							const auto stock = sources.carryablesOf(*acceptedIt);
+							if (stock.empty()) {
 								continue;
 							}
-							const auto& itemDefName = registry.getDefName(looseItem.defNameId);
+							const auto& itemDefName = registry.getDefName(*acceptedIt);
 							// Deposits move the material into the station, so the pack empties between
 							// trips. Stop fetching once enough is already staged in the station
 							// (deliveredAmount) plus what the colonist is carrying toward this delivery
@@ -551,103 +583,55 @@ namespace ecs {
 							if (goal->deliveredAmount + carried >= goal->targetAmount) {
 								continue;
 							}
-							const auto* itemDef = registry.getDefinition(itemDefName);
-							if (itemDef == nullptr || !itemDef->capabilities.carryable.has_value()) {
+							const auto* itemDef = stock.front().def;
+							if (!itemDef->capabilities.carryable.has_value()) {
 								continue;
 							}
-							// Only fetch what the pickup can actually lift. The Pickup action clamps to
-							// carry weight (cargoUnitsThatFit); at or over the cap it adds 0, the fetch
-							// collects nothing, and the AI re-issues it every tick -- an infinite "fetch ->
-							// collect 0 -> fetch" loop. A colonist already loaded with unrelated cargo (or
-							// mid-trip carrying the previous unit) can hit this. Skip the fetch when no unit
-							// fits; the craft stays pending until the colonist has room, instead of spinning.
-							if (ecs::cargoUnitsThatFit(inventory, registry, itemDefName) == 0) {
+							// Only fetch what the pickup can actually lift; one that adds 0 would be
+							// re-issued every tick. The craft stays pending until the colonist has room.
+							if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
+								pushNoRoom(*goal, itemDefName, "Fetching " + itemDefName + " for crafting");
 								continue;
 							}
+							sources.countVisits(stock.size());
+							for (const CarrySource& source : stock) {
+								const KnownWorldEntity& looseItem = *source.entity;
+								const uint64_t			key = source.key;
 
-							float tripDistance = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal->destinationPosition);
+								float tripDistance = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal->destinationPosition);
 
-							EvaluatedOption fetchOption;
-							fetchOption.taskType = TaskType::Haul;
-							fetchOption.needType = NeedType::Count;
-							fetchOption.needValue = 100.0F;
-							fetchOption.threshold = 0.0F;
-							fetchOption.targetPosition = looseItem.position;
-							fetchOption.targetDefNameId = looseItem.defNameId;
-							fetchOption.distanceToTarget = tripDistance;
-							fetchOption.haulItemDefName = itemDefName;
-							fetchOption.haulQuantity = std::min(itemDef->capabilities.carryable.value().quantity, goal->availableCapacity());
-							fetchOption.haulSourcePosition = looseItem.position;
-							fetchOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
-							fetchOption.haulTargetPosition = goal->destinationPosition;
-							fetchOption.haulGoalId = goal->id;
-							fetchOption.haulFromInventory = false;
-							// Fetching loose stock to provision a started craft is committed work;
-							// floor it above Wander so a far pile can't strand the craft (this is the
-							// exact case that left axes half-provisioned and the colonist wandering).
-							fetchOption.servesActiveWorkOrder = true;
-							fetchOption.tiebreakId = goal->id ^ (key << 1);
-							fetchOption.status = OptionStatus::Available;
-							fetchOption.reason = "Fetching " + itemDefName + " for crafting";
-							trace.options.push_back(fetchOption);
+								EvaluatedOption fetchOption;
+								fetchOption.taskType = TaskType::Haul;
+								fetchOption.needType = NeedType::Count;
+								fetchOption.needValue = 100.0F;
+								fetchOption.threshold = 0.0F;
+								fetchOption.targetPosition = looseItem.position;
+								fetchOption.targetDefNameId = looseItem.defNameId;
+								fetchOption.distanceToTarget = tripDistance;
+								fetchOption.haulItemDefName = itemDefName;
+								fetchOption.haulQuantity = std::min(itemDef->capabilities.carryable.value().quantity, goal->availableCapacity());
+								fetchOption.haulSourcePosition = looseItem.position;
+								fetchOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
+								fetchOption.haulTargetPosition = goal->destinationPosition;
+								fetchOption.haulGoalId = goal->id;
+								fetchOption.haulFromInventory = false;
+								// Fetching loose stock to provision a started craft is committed work;
+								// floor it above Wander so a far pile can't strand the craft (this is the
+								// exact case that left axes half-provisioned and the colonist wandering).
+								fetchOption.servesActiveWorkOrder = true;
+								fetchOption.tiebreakId = goal->id ^ (key << 1);
+								fetchOption.status = OptionStatus::Available;
+								fetchOption.reason = "Fetching " + itemDefName + " for crafting";
+								trace.options.push_back(fetchOption);
+							}
 						}
 					}
 					continue;
 				}
 
-				// Check colonist's memory for items that can fulfill this goal
-				for (const auto& [key, looseItem] : memory.knownWorldEntities) {
-					// Check if this item type is accepted by the goal
-					bool accepted = false;
-
-					// Check by category
-					if (goal->acceptedCategory != assets::ItemCategory::None) {
-						const auto& defName = registry.getDefName(looseItem.defNameId);
-						const auto* def = registry.getDefinition(defName);
-						if (def != nullptr && def->category == goal->acceptedCategory) {
-							accepted = true;
-						}
-					}
-
-					// Check by specific defNameId
-					if (!accepted) {
-						for (uint32_t acceptedId : goal->acceptedDefNameIds) {
-							if (looseItem.defNameId == acceptedId) {
-								accepted = true;
-								break;
-							}
-						}
-					}
-
-					if (!accepted) {
-						continue;
-					}
-
-					// Check if entity is actually Carryable
-					if (!registry.hasCapability(looseItem.defNameId, assets::CapabilityType::Carryable)) {
-						continue;
-					}
-
-					const auto& itemDefName = registry.getDefName(looseItem.defNameId);
-					const auto* itemDef = registry.getDefinition(itemDefName);
-					if (itemDef == nullptr) {
-						continue;
-					}
-
-					// Calculate trip distance: colonist -> item -> goal destination
-					float tripDistance = glm::distance(position, looseItem.position) +
-										 glm::distance(looseItem.position, goal->destinationPosition);
-
-					// Create haul option
-					EvaluatedOption haulOption;
-					haulOption.taskType = TaskType::Haul;
-					haulOption.needType = NeedType::Count;
-					haulOption.needValue = 100.0F;
-					haulOption.threshold = 0.0F;
-					haulOption.targetPosition = looseItem.position;
-					haulOption.targetDefNameId = looseItem.defNameId;
-					haulOption.distanceToTarget = tripDistance;
-					haulOption.haulItemDefName = itemDefName;
+				// Loose piles the colonist remembers, one run of sources per accepted item.
+				const auto emitLooseHauls = [&](std::span<const CarrySource> run) {
+					const auto& itemDefName = registry.getDefName(run.front().defNameId);
 					// Size the trip by what the DESTINATION storage can actually accept of this
 					// specific item -- its stack headroom plus free-slot * stackSize
 					// (addableCount), not the goal's slot count. A storage with 3 free slots takes
@@ -663,20 +647,66 @@ namespace ecs {
 						storageHeadroom = destInv->addableCount(itemDefName);
 					}
 					if (storageHeadroom == 0) {
-						continue; // storage can't take any more of this item, skip it
+						return; // storage can't take any more of this item, skip it
 					}
-					haulOption.haulQuantity =
-						std::min(storageHeadroom, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
-					haulOption.haulSourcePosition = looseItem.position;
-					haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
-					haulOption.haulTargetPosition = goal->destinationPosition;
-					haulOption.haulGoalId = goal->id;
-					// Tiebreak on (goal, source item) so two equidistant loose items for the same
-					// goal resolve deterministically rather than by memory's hash order.
-					haulOption.tiebreakId = goal->id ^ (key << 1);
-					haulOption.status = OptionStatus::Available;
-					haulOption.reason = "Hauling " + itemDefName + " to storage";
-					trace.options.push_back(haulOption);
+					if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName) == 0) {
+						pushNoRoom(*goal, itemDefName, "Hauling " + itemDefName + " to storage");
+						return;
+					}
+					const uint32_t haulQuantity = std::min(storageHeadroom, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
+					sources.countVisits(run.size());
+					for (const CarrySource& source : run) {
+						const KnownWorldEntity& looseItem = *source.entity;
+						// Calculate trip distance: colonist -> item -> goal destination
+						float tripDistance = glm::distance(position, looseItem.position) +
+											 glm::distance(looseItem.position, goal->destinationPosition);
+
+						EvaluatedOption haulOption;
+						haulOption.taskType = TaskType::Haul;
+						haulOption.needType = NeedType::Count;
+						haulOption.needValue = 100.0F;
+						haulOption.threshold = 0.0F;
+						haulOption.targetPosition = looseItem.position;
+						haulOption.targetDefNameId = looseItem.defNameId;
+						haulOption.distanceToTarget = tripDistance;
+						haulOption.haulItemDefName = itemDefName;
+						haulOption.haulQuantity = haulQuantity;
+						haulOption.haulSourcePosition = looseItem.position;
+						haulOption.haulTargetStorageId = static_cast<uint64_t>(goal->destinationEntity);
+						haulOption.haulTargetPosition = goal->destinationPosition;
+						haulOption.haulGoalId = goal->id;
+						// Tiebreak on (goal, source item) so two equidistant loose items for the same
+						// goal resolve deterministically rather than by memory's hash order.
+						haulOption.tiebreakId = goal->id ^ (source.key << 1);
+						haulOption.status = OptionStatus::Available;
+						haulOption.reason = "Hauling " + itemDefName + " to storage";
+						trace.options.push_back(haulOption);
+					}
+				};
+				if (goal->acceptedCategory != assets::ItemCategory::None) {
+					// A category goal takes any carryable of its category, plus the items it names.
+					const auto all = sources.carryables();
+					for (auto run = all.begin(); run != all.end();) {
+						const uint32_t defNameId = run->defNameId;
+						const auto	   runEnd = std::find_if(run, all.end(), [defNameId](const CarrySource& s) { return s.defNameId != defNameId; });
+						const bool accepted = run->def->category == goal->acceptedCategory ||
+											  std::find(goal->acceptedDefNameIds.begin(), goal->acceptedDefNameIds.end(), defNameId) != goal->acceptedDefNameIds.end();
+						if (accepted) {
+							emitLooseHauls({run, runEnd});
+						} else {
+							sources.countVisits(static_cast<uint64_t>(runEnd - run));
+						}
+						run = runEnd;
+					}
+				} else {
+					for (auto acceptedIt = goal->acceptedDefNameIds.begin(); acceptedIt != goal->acceptedDefNameIds.end(); ++acceptedIt) {
+						if (std::find(goal->acceptedDefNameIds.begin(), acceptedIt, *acceptedIt) != acceptedIt) {
+							continue; // a repeated id names the same sources
+						}
+						if (const auto run = sources.carryablesOf(*acceptedIt); !run.empty()) {
+							emitLooseHauls(run);
+						}
+					}
 				}
 
 				// Storage-to-storage pull (storage priority, Phase 2): for an ordinary storage umbrella
@@ -711,6 +741,7 @@ namespace ecs {
 							if (perTrip == 0) {
 								continue; // colonist can't carry a single unit of this item
 							}
+							const bool roomNow = ecs::pickupUnitsThatFit(inventory, registry, itemDefName) > 0;
 
 							for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
 								if (srcEntity == destEntity) {
@@ -733,7 +764,7 @@ namespace ecs {
 								}
 								// Discovery-gating: the colony must KNOW the source box (no god-view),
 								// mirroring how a loose pickup is gated on the pile being in memory.
-								if (!ecs::colonyKnowsStorageEntity(world, registry, srcEntity)) {
+								if (!storageKnowledge.knows(*world, registry, srcEntity)) {
 									continue;
 								}
 								// Don't drain the source below ITS OWN configured minimum for this item.
@@ -747,6 +778,11 @@ namespace ecs {
 								const uint32_t qty = std::min({drainable, destRoom, perTrip});
 								if (qty == 0) {
 									continue;
+								}
+
+								if (!roomNow) {
+									pushNoRoom(*goal, itemDefName, "Pulling " + itemDefName + " from lower-priority storage");
+									break; // one line says it for every source box
 								}
 
 								// Mirror the loose-pile haul option field-for-field, but the source is the
@@ -790,14 +826,13 @@ namespace ecs {
 		/// Goal-driven: a goal names the item it needs (yieldDefNameId), or for a construction clear the
 		/// footprint whose harvestables it removes (clearFootprint); Memory provides the sources.
 		/// @param registry Asset registry for capability and definition lookups
-		/// @param memory Colonist memory (known entities)
+		/// @param sources The colonist's remembered harvestables, by yield
 		/// @param position Colonist position
 		/// @param skills Optional skills component for skill bonus calculation
 		/// @param trace Output decision trace
 		void evaluateHarvestOptions(
 			const assets::AssetRegistry& registry,
-			const Memory&						 memory,
-			const Inventory&					 inventory,
+			WorkSources&						 sources,
 			const glm::vec2&					 position,
 			const Skills*						 skills,
 			DecisionTrace&						 trace
@@ -839,34 +874,23 @@ namespace ecs {
 				// (a storage harvest parents a Haul umbrella, never a Craft/Build).
 				const bool servesStocking = goal->owner == GoalOwner::StorageGoalSystem;
 
-				// Search memory for harvestables that yield the target item
-				for (const auto& [key, knownEntity] : memory.knownWorldEntities) {
-					// Check if this entity is harvestable
-					if (!registry.hasCapability(knownEntity.defNameId, assets::CapabilityType::Harvestable)) {
+				// A clear is served by what blocks its footprint, the same test the build gate applies; any
+				// other goal by the harvestables that yield its item.
+				const auto candidates = clearing ? sources.harvestables() : sources.harvestablesYielding(goal->yieldDefNameId);
+				sources.countVisits(candidates.size());
+				for (const HarvestSource& source : candidates) {
+					const KnownWorldEntity& knownEntity = *source.entity;
+					const uint64_t			key = source.key;
+					if (clearing && !goal->clearFootprint->blockedBy(registry, knownEntity.defNameId, knownEntity.position)) {
 						continue;
 					}
-
-					if (clearing && !goal->clearFootprint->contains(knownEntity.position)) {
-						continue; // a clear only removes what stands in its footprint
-					}
-
-					// Check what this harvestable yields
-					const auto& defName = registry.getDefName(knownEntity.defNameId);
-					const auto* def = registry.getDefinition(defName);
-					if (def == nullptr || !def->capabilities.harvestable.has_value()) {
-						continue;
-					}
-
-					// Get the yield defNameId for this harvestable
-					uint32_t yieldDefNameId = registry.getDefNameId(def->capabilities.harvestable->yieldDefName);
-					if (!clearing && yieldDefNameId != goal->yieldDefNameId) {
-						continue; // Yields different item than what goal needs
-					}
+					const auto*	   def = source.def;
+					const uint32_t yieldDefNameId = source.yieldDefNameId;
 
 					// Tool gate: chopping a tree needs the colonist to already hold the right
 					// tool (e.g. an axe). Colonists never fetch or equip tools on their own, so
 					// a tool-less colonist simply never sees this harvest as an option.
-					if (!ecs::inventoryHoldsToolType(inventory, registry, def->capabilities.harvestable->requiredToolType)) {
+					if (!source.holdsTool) {
 						continue;
 					}
 
@@ -878,9 +902,7 @@ namespace ecs {
 					// option when no unit fits (no stack/slot headroom and no carry weight), leaving
 					// the harvest for a trip when the colonist has room. A clear is exempt: it removes the
 					// blocker whatever fits and drops the rest, so a full pack never stalls a site.
-					const std::string& yieldName = def->capabilities.harvestable->yieldDefName;
-					if (!clearing && (ecs::cargoUnitsThatFit(inventory, registry, yieldName) == 0 ||
-									  inventory.addableCount(yieldName) == 0)) {
+					if (!clearing && !source.yieldFits) {
 						continue;
 					}
 
@@ -900,7 +922,7 @@ namespace ecs {
 					harvestOption.targetPosition = knownEntity.position;
 					harvestOption.targetDefNameId = knownEntity.defNameId;
 					harvestOption.distanceToTarget = tripDistance;
-					harvestOption.harvestTargetEntityId = key; // The world entity ID
+					harvestOption.harvestTargetEntityId = key; // the Memory key, not an ECS id
 					harvestOption.harvestGoalId = goal->id;
 					harvestOption.harvestYieldDefNameId = yieldDefNameId;
 					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
@@ -917,11 +939,10 @@ namespace ecs {
 
 					// Build reason string from friendly labels, not raw defNames ("Oak Tree", not
 					// "Flora_TreeOak"). Falls back to the defName if a label is missing.
-					const auto&		  yieldDefName = registry.getDefName(yieldDefNameId);
-					const auto*		  yieldDef = registry.getDefinition(yieldDefName);
-					const std::string srcLabel = !def->label.empty() ? def->label : defName;
+					const auto*		  yieldDef = source.yieldDef;
+					const std::string srcLabel = !def->label.empty() ? def->label : registry.getDefName(knownEntity.defNameId);
 					const std::string yieldLabel =
-						(yieldDef != nullptr && !yieldDef->label.empty()) ? yieldDef->label : yieldDefName;
+						(yieldDef != nullptr && !yieldDef->label.empty()) ? yieldDef->label : registry.getDefName(yieldDefNameId);
 					harvestOption.reason = clearing ? "Clearing " + srcLabel + " from build site" : "Cutting " + srcLabel + " for " + yieldLabel;
 
 					trace.options.push_back(harvestOption);
@@ -1092,6 +1113,7 @@ namespace ecs {
 	void AIDecisionSystem::update(float deltaTime) {
 		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).
 		m_elapsedTime += deltaTime;
+		m_colonyStorage.invalidate();
 
 		// Process all entities with the required components
 		for (auto [entity, position, needs, memory, task, movementTarget, inventory] :
@@ -1321,7 +1343,7 @@ namespace ecs {
 						// pick: keeping it would leave the colonist stopped with a stale failure and no new
 						// route request.
 						const bool failedOnStaleNav =
-							task.navState == NavState::CantFindWayTo && task.blockedReachStamp != m_reachStamp;
+							task.navState == NavState::CantFindWayTo && task.blockedReachStamp != reachStamp;
 						isSameTask = sameType && sameTarget && samePlaceTarget && !failedOnStaleNav;
 					}
 				}
@@ -1541,22 +1563,27 @@ namespace ecs {
 		// reach subtree of the same mesh, so one surrounded by unreachable sources doesn't test them all
 		// again every decision. A source anywhere else is judged live (by which regions cover it, no
 		// mesh involved) and never remembered, since which region a point falls in moves on its own.
-		m_reachStamp = 0;
+		reachStamp = 0;
 		if (reach.has_value()) {
 			const SourceReachMemo::Key key = reachKey(*reach, memory);
-			m_reachStamp = key.stamp();
+			reachStamp = key.stamp();
 			sourceReach.keep(key, 2 * Memory::kMaxWorldEntities);
-			// The route to the need source this colonist was heading for just came back with no believed
-			// route, though the forest let it through (a known wall's room, a passage the funnel can't
-			// take). Remember it unreachable like any other verdict so the walk moves on to the next
-			// source, but only under the key it failed under, or the verdict would outlive what it was
-			// true for.
-			if (currentTask.type == TaskType::FulfillNeed && currentTask.navState == NavState::CantFindWayTo &&
-				currentTask.needSourceKey != 0 && currentTask.blockedReachStamp == m_reachStamp &&
-				m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
-				sourceReach.recordUnreachable(currentTask.needSourceKey);
+			// The route to the target this colonist was heading for (a need source, a toilet spot, a work
+			// site) just came back with no believed route, though the forest let it through (a known
+			// wall's room, a passage the funnel can't take). Remember it unreachable like any other
+			// verdict so the next decision picks something else instead of re-deciding the same target
+			// every frame, but only under the key it failed under, or the verdict would outlive what it
+			// was true for. A wander point is random, so there's nothing to remember.
+			if (currentTask.type != TaskType::Wander && currentTask.navState == NavState::CantFindWayTo &&
+				currentTask.blockedReachStamp == reachStamp && m_navSystem->sharesStartRegion(*reach, currentTask.targetPosition)) {
+				sourceReach.recordUnreachable(routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition));
 			}
 		}
+		// A target whose route already failed under the current key; one in another region is judged live.
+		const auto routeFailed = [&](std::uint64_t sourceKey, const glm::vec2& target) {
+			return reach.has_value() && sourceReach.knownUnreachable(routeTargetKey(sourceKey, target)) &&
+				   m_navSystem->sharesStartRegion(*reach, target);
+		};
 		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
 			if (!reach.has_value()) {
 				return true;
@@ -1575,22 +1602,57 @@ namespace ecs {
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
 		// a river don't hide a reachable one farther off.
 		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
-			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, m_sourceScratch);
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, sourceScratch);
 		};
 
 		// With an empty pack, the one food source both the Hunger option and the gather-food option
-		// target: the nearest reachable remembered harvestable whose yield is edible. The gather
-		// option is on offer whenever the pack is empty, so this is probed even when Hunger is met.
-		const bool						packHasFood = hasEdibleFood(inventory);
+		// target: the nearest reachable remembered harvestable whose yield is edible and that is ready
+		// to give it. The gather option is on offer whenever the pack is empty, so this is probed even
+		// when Hunger is met. Readiness is asked of candidates nearest first, only until one is chosen;
+		// the nearest reachable one passed over for regrowing is kept to show why the colonist waits.
+		// When every edible source it knows is regrowing, the search isn't run again until the first of
+		// them is ready or its memory of world entities changes (SourceReachMemo::FoodWait).
+		const bool						packHasFood = hasEdibleFood(m_registry, inventory);
 		std::optional<KnownWorldEntity> foodSource;
+		std::optional<KnownWorldEntity> regrowingFood;
 		if (!packHasFood) {
-			foodSource = findNeedSource(
-				assets::CapabilityType::Harvestable,
-				[&](uint64_t sourceKey, const KnownWorldEntity& known) {
-					return notKnownUnreachable(sourceKey, known) && yieldsEdibleFood(m_registry, known.defNameId);
-				},
-				canReachSource
-			);
+			const double now = simulationSeconds(*world);
+			if (const auto* wait = sourceReach.waitingForFood(memory.worldEntityVersion, now)) {
+				regrowingFood = wait->nearest;
+			} else {
+				bool   everyCandidateRegrowing = true;
+				double firstReadyAt = std::numeric_limits<double>::infinity();
+				foodSource = findNeedSource(
+					assets::CapabilityType::Harvestable,
+					[&](uint64_t sourceKey, const KnownWorldEntity& known) {
+						if (!yieldsEdibleFood(m_registry, known.defNameId)) {
+							return false;
+						}
+						if (!notKnownUnreachable(sourceKey, known)) {
+							everyCandidateRegrowing = false; // never asked, so it may be ready
+							return false;
+						}
+						return true;
+					},
+					[&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+						const KnownWorldEntity* known = memory.getWorldEntity(sourceKey);
+						if (const auto readyAt = sourceRegrowingUntil(known->defNameId, sourcePosition)) {
+							firstReadyAt = std::min(firstReadyAt, *readyAt);
+							if (!regrowingFood.has_value() && canReachSource(sourceKey, sourcePosition)) {
+								regrowingFood = *known;
+							}
+							return false;
+						}
+						everyCandidateRegrowing = false;
+						return canReachSource(sourceKey, sourcePosition);
+					}
+				);
+				sourceReach.foodWait.reset();
+				if (!foodSource.has_value() && everyCandidateRegrowing && firstReadyAt > now &&
+					firstReadyAt < std::numeric_limits<double>::infinity()) {
+					sourceReach.foodWait = SourceReachMemo::FoodWait{memory.worldEntityVersion, firstReadyAt, regrowingFood};
+				}
+			}
 		}
 
 		// Evaluate each actionable need type
@@ -1643,6 +1705,17 @@ namespace ecs {
 					continue;
 				}
 
+				// The only reachable food known is regrowing: wait on it, taking other options meanwhile
+				if (regrowingFood.has_value() && need.needsAttention()) {
+					option.targetPosition = regrowingFood->position;
+					option.targetDefNameId = regrowingFood->defNameId;
+					option.distanceToTarget = glm::distance(position.value, regrowingFood->position);
+					option.status = OptionStatus::Regrowing;
+					option.reason = formatOptionReason(option, needTypeName(needType));
+					trace.options.push_back(option);
+					continue;
+				}
+
 				// No food in inventory and no reachable food source known
 				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
 				option.reason = formatOptionReason(option, needTypeName(needType));
@@ -1675,7 +1748,7 @@ namespace ecs {
 					option.status = OptionStatus::Satisfied;
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
-				} else if (alreadyPursuingThisNeed) {
+				} else if (alreadyPursuingThisNeed && !routeFailed(0, currentTask.targetPosition)) {
 					// Preserve existing target to avoid "chasing" a moving target
 					option.targetPosition = currentTask.targetPosition;
 					option.distanceToTarget = glm::distance(position.value, currentTask.targetPosition);
@@ -1683,8 +1756,9 @@ namespace ecs {
 				} else if ((needType == NeedType::Bladder || needType == NeedType::Digestion) && m_chunkManager != nullptr &&
 						   m_navSystem != nullptr) {
 					// For toilet needs, try smart location finder
+					// A spot whose route already failed is no spot: go where the colonist stands instead.
 					auto location = findToiletLocation(position.value, *m_chunkManager, *m_navSystem, *world, memory, m_registry);
-					if (location.has_value()) {
+					if (location.has_value() && !routeFailed(0, *location)) {
 						option.targetPosition = *location;
 						option.distanceToTarget = glm::distance(position.value, *location);
 						option.status = OptionStatus::Available;
@@ -1729,6 +1803,11 @@ namespace ecs {
 				gatherOption.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
+			} else if (regrowingFood.has_value()) {
+				gatherOption.targetPosition = regrowingFood->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, regrowingFood->position);
+				gatherOption.status = OptionStatus::Regrowing;
+				gatherOption.reason = "Food source regrowing";
 			} else {
 				gatherOption.status = OptionStatus::NoSource;
 				gatherOption.reason = "No food source known";
@@ -1804,10 +1883,11 @@ namespace ecs {
 		// Haul loose items to storage containers (goal-driven), and deliver
 		// harvested craft materials from inventory to crafting stations
 		// (tier per option: tier 4 when serving an active work order, else tier 6)
-		evaluateHaulOptions(world, m_registry, memory, inventory, position.value, trace);
+		m_workSources.begin(memory, m_registry, inventory);
+		evaluateHaulOptions(world, m_registry, m_workSources, m_colonyStorage, inventory, position.value, trace);
 
 		// Harvest resources for crafting (goal-driven)
-		evaluateHarvestOptions(m_registry, memory, inventory, position.value, skills, trace);
+		evaluateHarvestOptions(m_registry, m_workSources, position.value, skills, trace);
 
 		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(world, position.value, skills, trace);
@@ -1820,9 +1900,8 @@ namespace ecs {
 
 		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
 		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
-		// and isReachable can't help -- it returns true ("can't prove unreachable") when there's no
-		// mesh, so the old check was leaky and the colonist committed to a wander it couldn't follow,
-		// then stalled. So only OFFER the wander when navigation is genuinely possible: a mesh
+		// and canReach can't help: with no reach it passes every point, so a wander offered then is
+		// one the colonist can't follow. So only OFFER the wander when navigation is possible: a mesh
 		// exists, or there's no nav system at all (headless/tests, direct movement). With a nav
 		// system but no mesh, emit no idle option; the colonist holds (see the no-option hold in
 		// selectTaskFromTrace) until the mesh lands. Needs and work keep their own options, but they
@@ -1885,6 +1964,18 @@ namespace ecs {
 				continue;
 			}
 			const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
+			// A harvest of a regrowing source would pay nothing at completion: pass it over for the next
+			// option, and it is chosen again once ready. A clear removes its source whatever its state.
+			// Asked before the snap moves the target off the source's own position.
+			if (option.taskType == TaskType::Harvest && needsTarget && option.targetDefNameId.has_value() &&
+				sourceRegrowingUntil(*option.targetDefNameId, *option.targetPosition).has_value()) {
+				const auto* goal = GoalTaskRegistry::Get().getGoal(option.harvestGoalId);
+				if (goal == nullptr || !goal->clearFootprint.has_value()) {
+					option.status = OptionStatus::Regrowing;
+					option.reason += " (regrowing)";
+					continue;
+				}
+			}
 			// Snap only the task types whose action looks its target up by entity/footprint and so
 			// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
 			// Deconstruct. Their stored target is a CENTER that can sit in a navmesh hole -- a tree
@@ -1915,6 +2006,10 @@ namespace ecs {
 			}
 			if (needsTarget && !option.targetReachable && !canReach(option.targetPosition.value())) {
 				option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
+				continue;
+			}
+			if (needsTarget && routeFailed(option.sourceKey, option.targetPosition.value())) {
+				option.status = OptionStatus::NoSource; // its route already failed under this key
 				continue;
 			}
 			option.status = OptionStatus::Selected;
@@ -2175,6 +2270,10 @@ namespace ecs {
 		}
 	}
 
+	std::optional<double> AIDecisionSystem::sourceRegrowingUntil(uint32_t defNameId, glm::vec2 position) const {
+		return onSourceRegrowth ? onSourceRegrowth(defNameId, position) : std::nullopt;
+	}
+
 	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {
 		if (option.taskType == TaskType::Wander) {
 			return "All needs satisfied";
@@ -2185,6 +2284,8 @@ namespace ecs {
 
 		if (option.status == OptionStatus::NoSource) {
 			reason += " (no known source)";
+		} else if (option.status == OptionStatus::Regrowing) {
+			reason += " (source regrowing)";
 		} else if (option.needValue < 10.0F) {
 			reason += " (critical)";
 		} else if (option.status == OptionStatus::Available || option.status == OptionStatus::Selected) {

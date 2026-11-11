@@ -20,11 +20,13 @@
 //
 //   Clearing           -> emit Harvest goals for choppable entities sitting on
 //                         the footprint; advance to AwaitingMaterials once the
-//                         footprint is clear. (Foundations only.)
+//                         footprint is known clear (every chunk under it placed).
+//                         (Foundations only.)
 //   AwaitingMaterials  -> emit a Harvest+Haul chain per outstanding material (Wood
 //                         from trees, hauled to the site where the deposit records it
 //                         directly onto the blueprint's delivered[] manifest); advance
-//                         to UnderConstruction once materialsComplete().
+//                         to UnderConstruction once materialsComplete(), after one more
+//                         footprint check (a blocker found then sends it back to Clearing).
 //   UnderConstruction  -> emit one Build goal; ActionSystem's Build action
 //                         advances workDone. Multiple colonists may build the
 //                         same blueprint concurrently.
@@ -57,6 +59,8 @@
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../components/StructureBlueprint.h"
+
+#include <glm/vec2.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -200,8 +204,22 @@ namespace ecs {
 		/// footprint" for both the clear gate and the clear goal a colonist serves.
 		[[nodiscard]] FootprintBounds footprintBounds(uint64_t foundationId) const;
 
-		/// True if no Harvestable placed entity lies in the foundation's footprintBounds.
-		/// v1 clearing rule (see header): only Harvestable blockers gate clearing.
+		/// A runtime-spawned harvestable (an ECS entity, not in the placement index): a colonist
+		/// remembers it like placed flora, so it blocks a site and serves its clear goal the same way.
+		struct SpawnedHarvestable {
+			uint32_t  defNameId = 0;
+			glm::vec2 position{0.0F, 0.0F};
+		};
+
+		/// Collect every spawned harvestable into m_spawnedHarvestables, once per pass that has a
+		/// site to check (clearing, or entering UnderConstruction), so each site's check is a scan of
+		/// those few rather than of every entity.
+		void gatherSpawnedHarvestables();
+
+		/// True while nothing in the world blocks the footprint (FootprintBounds::blockedBy), placed
+		/// flora and spawned harvestables (m_spawnedHarvestables, gathered this pass) alike: the set
+		/// the clear goal is served by. A footprint over a chunk whose flora isn't placed yet is not known
+		/// clear and reads false.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
 
 		/// True once the wall segment's host foundation is Built. Walls draw on a
@@ -256,9 +274,10 @@ namespace ecs {
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 
-		/// Emit a clear-Harvest CHILD under the umbrella, served by any Harvestable a colonist
-		/// knows inside the footprint. Each served harvest removes its blocker and retires the
-		/// goal; the next pass re-emits while the footprint still holds one.
+		/// Emit the blueprint's one clear-Harvest CHILD under the umbrella, unless it already has one.
+		/// Any Harvestable a colonist knows inside the footprint serves it; each served harvest
+		/// removes its blocker but records nothing, so the goal stands until the footprint is clear
+		/// and update() retires it then.
 		void emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId);
 
 		/// Emit a Harvest+Haul CHILD chain per outstanding material under the umbrella
@@ -305,6 +324,9 @@ namespace ecs {
 		std::unordered_set<EntityID> m_warnedNoDeconstructCallback;
 
 		size_t m_activeBlueprintCount = 0;
+
+		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
+		std::vector<SpawnedHarvestable> m_spawnedHarvestables;
 
 		// Throttle like the other goal systems: lifecycle changes are slow relative to frames.
 		int					 m_frameCounter = 0;

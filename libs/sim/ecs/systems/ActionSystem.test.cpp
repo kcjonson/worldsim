@@ -296,6 +296,34 @@ TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
 	EXPECT_EQ(action->type, ActionType::Eat);
 }
 
+// With an empty pack, the colonist harvests the food source its decision named by Memory key, even
+// with another edible bush remembered on the same spot.
+TEST_F(ActionSystemTest, HungerHarvestsTheSourceTheDecisionNamed) {
+	auto& registry = assets::AssetRegistry::Get();
+	for (const char* name : {"Flora_TestBushA", "Flora_TestBushB"}) {
+		assets::AssetDefinition bush;
+		bush.defName = name;
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Berry";
+		registry.registerTestDefinition(std::move(bush));
+	}
+	const glm::vec2 spot{5.0F, 5.0F};
+	auto			colonist = createColonist(spot);
+	setupArrivedForNeed(colonist, NeedType::Hunger, spot);
+	auto* memory = world->getComponent<Memory>(colonist);
+	for (const char* name : {"Flora_TestBushA", "Flora_TestBushB"}) {
+		const uint32_t id = registry.getDefNameId(name);
+		memory->rememberWorldEntity(spot, id, registry.getCapabilityMask(id));
+	}
+	world->getComponent<Task>(colonist)->needSourceKey = hashWorldEntity(spot, registry.getDefNameId("Flora_TestBushB"));
+
+	world->update(0.1F);
+
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_EQ(action->type, ActionType::Harvest);
+	EXPECT_EQ(action->collectionEffect().sourceDefName, "Flora_TestBushB");
+}
+
 TEST_F(ActionSystemTest, StartsDrinkActionOnArrival) {
 	auto colonist = createColonist();
 	setupArrivedForNeed(colonist, NeedType::Thirst);
@@ -986,6 +1014,7 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	world->addComponent<Position>(pile, Position{pilePos});
 	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 	world->addComponent<ResourceStack>(pile, ResourceStack{7});
+	world->getSystem<ActionSystem>().loosePiles().add(pile, assets::AssetRegistry::Get().getDefNameId("SmallStone"), pilePos);
 
 	auto colonist = createColonist(pilePos);
 	auto* memory = world->getComponent<Memory>(colonist);
@@ -1212,6 +1241,49 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 1U)
 		<< "An empty-pack deposit credits nothing (no double-count)";
 	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft not double-credited either";
+}
+
+// A pickup whose source another colonist took first collects nothing, so the haul ends at the source
+// instead of walking to storage to deposit an empty pack.
+TEST_F(ActionSystemGoalTest, PickupFromAGoneSourceEndsTheHaul) {
+	assets::AssetDefinition stoneDef;
+	stoneDef.defName = "SmallStone";
+	stoneDef.label = "Small Stone";
+	stoneDef.handsRequired = 1;
+	stoneDef.category = assets::ItemCategory::RawMaterial;
+	stoneDef.capabilities.carryable = assets::CarryableCapability{1};
+	stoneDef.itemProperties = assets::ItemProperties{};
+	stoneDef.itemProperties->stackSize = 10;
+	stoneDef.itemProperties->massKg = 1.5F;
+	assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
+	world->getSystem<ActionSystem>().setTakeSourceCallback(
+		[](const std::string& /*defName*/, float /*x*/, float /*y*/, ActionSystem::SourceTake /*take*/, float /*seconds*/) {
+			return ActionSystem::SourceState::Gone;
+		}
+	);
+
+	const glm::vec2 sourcePos{1.0F, 1.0F};
+	const glm::vec2 storagePos{5.0F, 0.0F};
+	auto			colonist = createColonist(sourcePos);
+	const uint32_t	stoneId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
+	world->getComponent<Memory>(colonist)->rememberWorldEntity(sourcePos, stoneId, assets::AssetRegistry::Get().getCapabilityMask(stoneId));
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulItemDefName = "SmallStone";
+	task->haulQuantity = 1;
+	task->haulSourcePosition = sourcePos;
+	task->haulTargetPosition = storagePos;
+	task->targetPosition = sourcePos;
+
+	world->update(0.1F); // start Pickup
+	ASSERT_EQ(world->getComponent<Action>(colonist)->type, ActionType::Pickup) << "precondition: the pickup started";
+	world->update(1.0F); // complete
+
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("SmallStone"), 0U);
+	EXPECT_FALSE(task->isActive()) << "the haul ends at the source";
+	EXPECT_FALSE(world->getComponent<MovementTarget>(colonist)->active) << "no walk to storage";
 }
 
 // Regression: a loose fetch where the source pile sits right beside the crafting station --
@@ -1552,10 +1624,15 @@ class FellingTest : public ::testing::Test {
 				lastDropQty = quantity;
 			}
 		);
-		action.setRemoveEntityCallback([this](const std::string& defName, float /*x*/, float /*y*/) {
-			++removeCalls;
-			lastRemoveDef = defName;
-		});
+		action.setTakeSourceCallback(
+			[this](const std::string& defName, float /*x*/, float /*y*/, ActionSystem::SourceTake take, float /*seconds*/) {
+				if (take == ActionSystem::SourceTake::Remove) {
+					++removeCalls;
+					lastRemoveDef = defName;
+				}
+				return ActionSystem::SourceState::Ready;
+			}
+		);
 	}
 
 	void TearDown() override {
@@ -1936,10 +2013,11 @@ class LoosePileHaulTest : public ::testing::Test {
 
 		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		// Mirror GameScene: a drained pile is removed by its exact entity id (not a position
-		// scan), so two same-material piles within the match epsilon can never alias.
-		action.setRemoveEntityByIdCallback([this](EntityID entity) {
+		// scan), so two same-material piles can never alias.
+		action.setRemoveEntityByIdCallback([this, &action](EntityID entity) {
 			++removeCalls;
 			lastRemovedEntity = entity;
+			action.loosePiles().remove(entity);
 			world->destroyEntity(entity);
 		});
 	}
@@ -1969,6 +2047,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		world->addComponent<Position>(entity, Position{pos});
 		world->addComponent<Appearance>(entity, Appearance{"Wood", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 		world->addComponent<ResourceStack>(entity, ResourceStack{count});
+		world->getSystem<ActionSystem>().loosePiles().add(entity, assets::AssetRegistry::Get().getDefNameId("Wood"), pos);
 		return entity;
 	}
 
@@ -2028,14 +2107,14 @@ TEST_F(LoosePileHaulTest, ArmfulDrainsPileAcrossTwoPickupsThenRemoves) {
 	EXPECT_FALSE(world->isAlive(pile)) << "Pile entity destroyed once drained to zero";
 }
 
-// Two same-material piles sit on top of each other (within the 0.25 m match epsilon). Draining
+// Two same-material piles sit almost on top of each other, 0.1 m apart. Draining
 // ONE to zero must destroy that exact entity and leave the other intact -- a position-keyed
 // removal could orphan the emptied pile or delete the still-loaded one. Both piles here hold a
 // small count (5) so whichever findLoosePile matches first drains fully in one pickup, and the
 // removal must target that exact entity id; the other pile's count stays untouched.
 TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
 	const glm::vec2 pilePos{1.0F, 1.0F};
-	// Both within epsilon of each other and the pickup position. 5 < the 14-unit armful cap, so a
+	// Both close to each other and the pickup position. 5 < the 14-unit armful cap, so a
 	// single pickup empties whichever pile is matched first (no need to know view order up front).
 	EntityID pileA = spawnPile(5, pilePos);
 	EntityID pileB = spawnPile(5, {pilePos.x + 0.1F, pilePos.y});
@@ -3023,10 +3102,23 @@ class ClearHarvestTest : public ::testing::Test {
 			pool -= removed;
 			return ActionSystem::ResourceDraw{removed, pool == 0};
 		});
-		action.setRemoveEntityCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/) { ++removeCalls; });
-		action.setEntityCooldownCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, float /*seconds*/) {
-			++cooldownCalls;
-		});
+		// The bush as the world holds it: taking it changes what the next finisher finds.
+		action.setTakeSourceCallback(
+			[this](const std::string& /*defName*/, float /*x*/, float /*y*/, ActionSystem::SourceTake take, float /*seconds*/) {
+				const ActionSystem::SourceState was = sourceState;
+				if (was == ActionSystem::SourceState::Gone) {
+					return was;
+				}
+				if (take == ActionSystem::SourceTake::Remove) {
+					++removeCalls;
+					sourceState = ActionSystem::SourceState::Gone;
+				} else if (take == ActionSystem::SourceTake::Regrow && was == ActionSystem::SourceState::Ready) {
+					++cooldownCalls;
+					sourceState = ActionSystem::SourceState::OnCooldown;
+				}
+				return was;
+			}
+		);
 		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t qty) {
 			++dropCalls;
 			droppedQuantity += qty;
@@ -3066,8 +3158,14 @@ class ClearHarvestTest : public ::testing::Test {
 		clear.parentGoalId = umbrellaId;
 		clear.status = GoalStatus::Available;
 		clearGoalId = goals.createGoal(std::move(clear));
+		return addHarvester(clearGoalId, sourceDefName);
+	}
 
-		auto entity = world->createEntity();
+	/// A colonist standing at the bush with a Harvest task on `goalId`.
+	EntityID addHarvester(uint64_t goalId, const char* sourceDefName = "Flora_TestBerryBush") {
+		auto&		   assetRegistry = assets::AssetRegistry::Get();
+		const uint32_t berryId = assetRegistry.getDefNameId("TestBerry");
+		auto		   entity = world->createEntity();
 		world->addComponent<Position>(entity, Position{bushPos + glm::vec2{1.0F, 0.0F}});
 		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
@@ -3084,7 +3182,7 @@ class ClearHarvestTest : public ::testing::Test {
 		task.type = TaskType::Harvest;
 		task.state = TaskState::Arrived;
 		task.targetPosition = bushPos + glm::vec2{1.0F, 0.0F};
-		task.harvestGoalId = clearGoalId;
+		task.harvestGoalId = goalId;
 		task.harvestTargetEntityId = hashWorldEntity(bushPos, bushId);
 		task.harvestYieldDefNameId = berryId;
 		world->addComponent<Task>(entity, std::move(task));
@@ -3105,7 +3203,48 @@ class ClearHarvestTest : public ::testing::Test {
 	int					   dropCalls = 0;
 	uint32_t			   droppedQuantity = 0;
 	uint32_t			   pool = 5;
+	ActionSystem::SourceState sourceState = ActionSystem::SourceState::Ready;
 };
+
+// Two colonists finish clearing the same bush in one update. The world pays the bush's yield once:
+// the first to complete takes it, the second finds it gone and gets nothing.
+TEST_F(ClearHarvestTest, TwoFinishersOnOneBushShareASingleYield) {
+	auto first = createClearingColonist();
+	auto second = addHarvester(clearGoalId);
+	harvest();
+
+	const uint32_t total = world->getComponent<Inventory>(first)->getQuantity("TestBerry") +
+						   world->getComponent<Inventory>(second)->getQuantity("TestBerry");
+	EXPECT_EQ(total, 3U) << "one yield between them";
+	EXPECT_EQ(removeCalls, 1);
+	EXPECT_EQ(dropCalls, 0) << "the late finisher drops nothing either";
+	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
+	EXPECT_FALSE(world->getComponent<Memory>(second)->knowsWorldEntity(bushPos, bushId)) << "the late finisher forgets it";
+}
+
+// A bush on its regrowth cooldown has nothing to give: cutting it pays nothing and leaves its timer
+// alone, and clearing it removes it, still with no yield.
+TEST_F(ClearHarvestTest, RegrowingBushPaysNoYield) {
+	GoalTask cut;
+	cut.type = TaskType::Harvest;
+	cut.destinationEntity = world->createEntity();
+	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
+	cut.targetAmount = 10;
+	cut.status = GoalStatus::Available;
+	cut.owner = GoalOwner::CraftingGoalSystem;
+	auto cutter = addHarvester(GoalTaskRegistry::Get().createGoal(std::move(cut)));
+
+	sourceState = ActionSystem::SourceState::OnCooldown;
+	harvest();
+	EXPECT_EQ(world->getComponent<Inventory>(cutter)->getQuantity("TestBerry"), 0U) << "a cut of a regrowing bush";
+	EXPECT_EQ(cooldownCalls, 0) << "its regrowth timer is left alone";
+
+	auto clearer = createClearingColonist();
+	harvest();
+	EXPECT_EQ(removeCalls, 1) << "the clear still removes it";
+	EXPECT_EQ(world->getComponent<Inventory>(clearer)->getQuantity("TestBerry"), 0U) << "a clear of a regrowing bush";
+	EXPECT_EQ(dropCalls, 0) << "and nothing drops";
+}
 
 // Clearing a footprint removes what stands in it: a regrowing bush is removed (not put on a
 // regrowth cooldown it would survive), the colonist yields once, and nothing drops to the ground.
@@ -3148,6 +3287,25 @@ TEST_F(ClearHarvestTest, PoolSourceClearRemovesShrubInOnePass) {
 	EXPECT_EQ(pool, 0U) << "the whole pool was taken";
 	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 5U) << "all of it fits in the pack";
 	EXPECT_EQ(dropCalls, 0) << "nothing drops when it all fits";
+}
+
+// A pool pays only while its shrub stands: one removed some other way (another colonist's clear)
+// gives a cut finishing on it nothing, and its pool is not drawn.
+TEST_F(ClearHarvestTest, PoolOfAGoneShrubPaysNothing) {
+	GoalTask cut;
+	cut.type = TaskType::Harvest;
+	cut.destinationEntity = world->createEntity();
+	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
+	cut.targetAmount = 10;
+	cut.status = GoalStatus::Available;
+	cut.owner = GoalOwner::CraftingGoalSystem;
+	auto cutter = addHarvester(GoalTaskRegistry::Get().createGoal(std::move(cut)), "Flora_TestPoolShrub");
+
+	sourceState = ActionSystem::SourceState::Gone;
+	harvest();
+	EXPECT_EQ(world->getComponent<Inventory>(cutter)->getQuantity("TestBerry"), 0U);
+	EXPECT_EQ(pool, 5U) << "the pool is not drawn";
+	EXPECT_EQ(dropCalls, 0);
 }
 
 } // namespace ecs::test

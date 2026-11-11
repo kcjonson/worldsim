@@ -203,6 +203,26 @@ namespace ecs {
 		return lifted;
 	}
 
+	/// How many units of `defName` a pickup could lift right now, as the Pickup and Withdraw effects
+	/// lift them: a two-hand good as an armful (growing one of the same good, or seating a new one once
+	/// held one-hand items are stowed, so an armful of another good blocks it), anything else into the
+	/// pack, bounded by weight and slot room. Zero means a pickup now would collect nothing.
+	[[nodiscard]] inline uint32_t pickupUnitsThatFit(const Inventory& inv, const assets::AssetRegistry& registry, const std::string& defName) {
+		const uint32_t byWeight = cargoUnitsThatFit(inv, registry, defName);
+		if (!itemIsTwoHand(registry, defName)) {
+			return std::min(byWeight, inv.addableCount(defName));
+		}
+		for (const auto* hand : {&inv.leftHand, &inv.rightHand}) {
+			if (hand->has_value() && (*hand)->defName != defName && itemIsTwoHand(registry, (*hand)->defName)) {
+				return 0;
+			}
+		}
+		const auto*	   def		= registry.getDefinition(defName);
+		const uint32_t stackCap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+		const uint32_t held		= handHeldQuantity(inv, defName);
+		return held >= stackCap ? 0U : std::min(byWeight, stackCap - held);
+	}
+
 	/// Stow any ONE-hand items held in the hands out of the way so both hands are free for a
 	/// two-hand armful. Stow order per slot: belt (if a slot is free) -> pack (by weight) -> drop.
 	/// A two-hand item already in the hands (an existing armful mirrored across both hands) is left
