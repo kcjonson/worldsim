@@ -1588,7 +1588,9 @@ namespace ecs {
 		std::optional<KnownWorldEntity> foodSource;
 		std::optional<KnownWorldEntity> regrowingFood;
 		if (!packHasFood) {
-			const double now = simulationSeconds(*world);
+			// Only the regrowth callback reports a regrowing source, so without it no wait is ever set
+			// and the time goes unread; a world that wires it has a TimeSystem.
+			const double now = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
 			if (const auto* wait = sourceReach.waitingForFood(memory.worldEntityVersion, now)) {
 				regrowingFood = wait->nearest;
 			} else {
@@ -1907,9 +1909,8 @@ namespace ecs {
 		}
 
 		// Populate the (tier, score) key for all options: classify tier, compute the within-tier
-		// score (distance factor, skill, age, hysteresis). m_elapsedTime is this system's monotonic
-		// seconds-since-start clock; goal createdAt is still 0 (no wired game clock yet), so age ==
-		// elapsed, harmless and monotonic for the within-tier age term.
+		// score (distance factor, skill, age, hysteresis). Goal createdAt is always 0, so a goal's age is
+		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
 		for (auto& option : trace.options) {
 			populatePriorityBonuses(world, option, currentTask, m_elapsedTime);
 		}
@@ -1989,10 +1990,8 @@ namespace ecs {
 			break;
 		}
 
-		// Stamp the evaluation time so the inspector can detect a changed trace. m_elapsedTime is
-		// this system's monotonic seconds-since-start clock (deltaTime accumulated in update); a real
-		// game-time clock isn't wired to this system yet, but a monotonic timestamp is all the UI
-		// needs to know the trace was rebuilt.
+		// Stamp the evaluation time so the inspector can detect a changed trace: any monotonic stamp
+		// does, and m_elapsedTime is one.
 		trace.lastEvaluationTime = m_elapsedTime;
 	}
 

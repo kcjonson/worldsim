@@ -2521,6 +2521,7 @@ namespace ecs::test {
 		const glm::vec2 regrowingSticks{0.0F, 2.0F};
 		const glm::vec2 readySticks{0.0F, 5.0F};
 		int				readinessAsked = 0;
+		world->registerSystem<TimeSystem>();
 		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at) {
 			++readinessAsked;
 			return at == regrowingBerries || at == regrowingSticks ? std::optional<double>{1000.0} : std::nullopt;

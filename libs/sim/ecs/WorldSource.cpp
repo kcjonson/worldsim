@@ -16,6 +16,9 @@ namespace ecs {
 
 	std::optional<double>
 	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, World& world, uint32_t defNameId, glm::vec2 at) {
+		if (placement.regrowthEntryCount() == 0) {
+			return std::nullopt; // nothing has started regrowing, so there is no clock to read
+		}
 		return placement.regrowthReadyAt(at, defNameId, simulationSeconds(world));
 	}
 

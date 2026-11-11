@@ -228,10 +228,10 @@ private:
 	/// Maximum distance for wander targets
 	static constexpr float kWanderRadius = 8.0F;
 
-	/// Monotonic seconds-since-start clock for this system (deltaTime accumulated each update).
-	/// Used to stamp DecisionTrace::lastEvaluationTime (so the inspector can detect a rebuilt trace)
-	/// and as the currentTime for the within-tier task-age term. A real game-time clock (TimeSystem)
-	/// is not wired to this system yet; this monotonic accumulator is sufficient for both uses.
+	/// The frame deltaTime this system was updated with, summed: unscaled by game speed and still
+	/// running while paused, like the re-decide timer (Task::timeSinceEvaluation). Stamps
+	/// DecisionTrace::lastEvaluationTime and is the clock of the within-tier task-age term. Regrowth
+	/// waits run on TimeSystem::simulationSeconds instead, the clock regrowth is stamped on.
 	float m_elapsedTime = 0.0F;
 
 	/// Random number generator for wander behavior
