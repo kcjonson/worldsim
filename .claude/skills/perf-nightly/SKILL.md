@@ -13,9 +13,9 @@ Nobody is watching. Don't ask questions; make the call the spec implies, and wri
 
 - **The script decides, you don't.** Verdicts come from `perf.mjs compare`. Never read raw timings out of a capture file and form your own view of whether something regressed.
 - **Never merge, revert, or push to `main`.** The outcome of a regression is a draft PR.
-- **Never time anything outside `perf.mjs measure`.** It holds the idle gate; a capture you run by hand doesn't.
+- **Never time anything outside `perf.mjs measure` and `perf.mjs bench`.** They hold the idle gate; a capture or benchmark you run by hand doesn't.
 - **Stop at 07:00.** `measure` stops itself, a build in progress included. If you are about to start a step after 07:00, write the report instead.
-- `idle-wait` and `measure` run for a long time. Start them with the Bash tool's `run_in_background: true`, redirect stdout to a file in the night's folder, and wait for the completion notice. Don't poll, don't sleep.
+- `idle-wait`, `measure` and `bench` run for a long time. Start them with the Bash tool's `run_in_background: true`, redirect stdout to a file in the night's folder, and wait for the completion notice. Don't poll, don't sleep.
 - No AI attribution in any PR, comment, or commit.
 
 ## 0. Get on the current tooling
@@ -36,10 +36,15 @@ If the worktree is missing, run `node scripts/perf.mjs setup` from any checkout 
 node scripts/perf.mjs range
 ```
 
-It answers `base` (the last tested SHA), `tip`, every merge between them with its PR, `Perf:` line and whether it is perf-relevant, and the open regressions.
+It answers `base` (the last tested SHA), `tip`, every merge between them with its PR, `Perf:` line and whether it is perf-relevant, and the open regressions. Two lists decide the night:
 
-- No merges, or none relevant: `node scripts/perf.mjs state --set-tested <tip>`, write a one-line report (step 6), done. Don't wait for idle, don't build.
-- Otherwise go on. The whole range is tested at once on the tip.
+- `relevant`: merges that could move frame time. Not empty means the frame captures run (`measure`).
+- `benchTargets`: the libraries whose microbenchmarks a merge reached (`world`, `assets`, `worldgen`). Not empty means those run (`bench`). They time chunk and planet generation directly, with no game. `benchRewritten` names a target left out because a merge changed its `.bench.cpp`, so base and tip time different work: say so in the report.
+
+Then:
+
+- Both empty: `node scripts/perf.mjs state --set-tested <tip>`, write a one-line report (step 6), done. Don't wait for idle, don't build.
+- Otherwise go on with whichever of the two the range calls for. The whole range is tested at once on the tip.
 
 ## 2. Wait for the machine
 
@@ -53,12 +58,15 @@ In the background. It checks every 5 minutes and exits 0 on two idle checks in a
 
 ```bash
 node scripts/perf.mjs measure --refs <base>,<tip>
-node scripts/perf.mjs compare --night <night> --base <base> --tip <tip>
+node scripts/perf.mjs bench --refs <base>,<tip> --targets <benchTargets>
+node scripts/perf.mjs compare --night <night> --base <base> --tip <tip> --bench <benchTargets>
 ```
 
-`measure` (background) builds both SHAs, then captures river, coast and desert, two runs each, interleaved, redoing a void capture once after the machine is idle again. Its JSON names the night folder (`night`), any build that failed, and whether it stopped early.
+Run `measure` only when `relevant` is not empty and `bench` only when `benchTargets` is not empty, one after the other, never together. With no `measure`, give `compare` `--views none`; with no `bench`, leave `--bench` off.
 
-`compare` answers an overall `verdict` and one per view, and writes the tables to a markdown file it names. It expects every view with two runs a side, and a view short of that is `inconclusive`. After a `measure` narrowed with `--views` or `--runs`, give `compare` the same two options.
+`measure` (background) builds both SHAs, then captures river, coast and desert, two runs each, interleaved, redoing a void capture once after the machine is idle again. `bench` (background) does the same with each target's benchmark executable. Each one's JSON names the night folder (`night`), what it took (`taken`), any build that failed, and whether it stopped early.
+
+`compare` answers an overall `verdict`, one per view (`views`) and one per benchmark target (`benchmarks`), and writes the tables to a markdown file it names. It expects two runs a side of every view and every target it was given, and one short of that is `inconclusive`. After a `measure` or `bench` narrowed with `--views`, `--targets` or `--runs`, give `compare` the matching `--views`, `--bench` and `--runs`.
 
 | Verdict | Meaning | Do |
 |---|---|---|
@@ -67,13 +75,15 @@ node scripts/perf.mjs compare --night <night> --base <base> --tip <tip>
 | `inconclusive` | a capture was loaded twice over, or the night stopped or failed short of its captures (the view's `incomplete` says which are missing) | report it; leave `lastTested` alone so the range is retried |
 | `major` | a major regression | step 4 |
 
-`measure` lists a capture that couldn't run with an `error`. "The game exited before its scene was ready" on every capture of one SHA usually means that SHA can't load the shared planet (a worldgen format change): report it, don't bake a planet, and leave `lastTested` alone.
+`measure` and `bench` list a take that couldn't run with an `error`. "The game exited before its scene was ready" on every capture of one SHA usually means that SHA can't load the shared planet (a worldgen format change): report it, don't bake a planet, and leave `lastTested` alone.
 
 A build failure of the tip is not a perf result: report it and leave `lastTested` alone. A build failure of the base: use the newest earlier SHA from `git log --first-parent` that builds, and say so.
 
 ## 4. Isolate a major regression
 
 Work from what the night already produced before building anything.
+
+A major benchmark is isolated the same way as a major view, with `bench --targets <the target that failed>` in place of `measure --views`, `compare --views none --bench <target>`, and only the merges whose `bench` list holds that target as candidates. Its `moved` cells name the benchmarks, and the benchmark's name says what it times.
 
 1. **Name a suspect.** `compare`'s `moved` cells say what got slower (`tileGpuMs`: the ground and water pass; `gpuMs` without it: entities, trees, UI; `entityMs`, `updateMs`, `sceneUpdateMs`: CPU side), and its `counts` say whether draw calls, triangles or upright draws moved with it. `range`'s `Perf:` lines and `perfFiles` say which PR touched that. A PR whose `Perf:` line predicted the cost is the first suspect.
 2. **Test the suspect.** `measure --refs <suspect>^1,<suspect> --views <the views that failed>` then `compare` those two with the same `--views`. Major: that's the offender. Clean: go to 3.
@@ -103,7 +113,7 @@ Each night, check the open regressions `range` lists: if a revert PR was merged 
 Write `<night>/report.md` (for a no-run night, `perf-results/nightly/<date>/report.md` in the main checkout, which `measure` would have created):
 
 - The range: base, tip, each merge with its PR and whether it was relevant and why.
-- The verdict per view, with `compare`'s markdown tables pasted in.
+- The verdict per view and per benchmark target, with `compare`'s markdown tables pasted in.
 - Anything void, inconclusive, skipped, or that failed to build.
 - What was isolated and how (suspect or bisect, which merges were measured).
 - Links to every PR, comment and bug filed.

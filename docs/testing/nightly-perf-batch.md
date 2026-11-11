@@ -50,7 +50,8 @@ State lives in `perf-results/nightly/state.json`: the last `main` SHA the batch 
 
 1. The range is the first-parent merges in `lastTested..origin/main`. `main` takes merge commits, so each one is a PR.
 2. A merge is perf-relevant if its PR's `Perf:` line says so, or its diff touches `libs/world-view`, `libs/world`, `libs/sim`, `libs/assets`, `apps/world-sim`, shaders, Lua generators or asset definitions, or the salal `GIT_TAG`. A `Perf: none` on a diff that touches those paths is overruled by the paths.
-3. No relevant merge in the range: advance `lastTested`, write a one-line report, done. No build, no launch.
+3. A merge reaches a library's microbenchmarks (`world-benchmarks`, `assets-benchmarks`, `worldgen-benchmarks`) when its diff touches that library, or `libs/worldgen` for `world`, whose chunk sampling reads worldgen's data, or the salal `GIT_TAG`. A target whose own `.bench.cpp` changed in the range is left out that night: base and tip would time different work.
+4. No relevant merge and no benchmark target in the range: advance `lastTested`, write a one-line report, done. No build, no launch.
 
 Everything relevant is already together on the tip, so the first run covers the whole day at once.
 
@@ -64,6 +65,8 @@ The batch never bakes a planet. Each build copy gets a hard link to the main che
 - Capture both the same night, interleaved base, tip, base, tip: two runs each at the river, coast, and desert views (`organic-terrain/terrain-polygons-architecture.md`, section 6). Twelve captures.
 - Each capture is today's suite: idle at zooms 20, 8, 3, 1.5, 0.75, 0.5, 0.25, then the two scroll scenarios, with the GPU hold on.
 
+The frame capture sees chunk generation only as scroll spikes, so the libraries' microbenchmarks run beside it (`perf.mjs bench`) on nights when a merge reached them (R3): the same two SHAs, two runs each, interleaved, under the same idle gate and machine watch. They are CPU-only, launch no game, and other processes' GPU use doesn't void them. Their executables are copied to `perf-results/nightly/bench-builds/<sha>/<target>/`. A night can run either measurement without the other.
+
 Each SHA is built once in the worktree and its exe directory copied to `perf-results/nightly/builds/<sha>/`, without the debug files. Captures launch from the copies, a fresh game for each one, so interleaving costs no rebuilds and a bisect step reuses a SHA already built. The capture is `scripts/perf/capture.mjs`, the same code a session runs as `node scripts/perf.mjs capture`.
 
 ## R5. Verdict
@@ -73,6 +76,7 @@ The script decides. The agent never reads raw timings and forms its own view.
 - Noise per cell (view x scenario x metric) is the spread between the two runs of the same SHA that night. A void run supplies none: load inflates it, and a spread that wide would pass a slower tip as clean.
 - A cell regressed when the tip is worse than the base by more than three times that noise, and by at least 0.02 ms. With no noise to measure against, only a step the size of a major one counts.
 - A regression is major when a regressed cell is worse by more than 10% and more than 0.25 ms on `gpuMs`, `tileGpuMs`, or frame p50, or a scroll scenario gains 33 ms spikes. Starting values, constants in the script.
+- A microbenchmark is one cell, on real time (the planet pipeline benchmark works on another thread). Benchmarks run from nanoseconds to seconds, so their thresholds are shares of the base: regressed past three times the noise and 5% (two builds of unchanged code differ by 2 to 3% from layout alone), major past 25%. A major benchmark is handled like a major view.
 - Regressed but not major is listed in the report and nothing else happens.
 - Load only ever makes a run slower, so a void tip can't confirm a regression and a void base can't confirm a clean result. Either way the view is `inconclusive`. A void tip that is even or faster is still clean.
 - A view short of the captures the night asked for (a failed capture, the 07:00 stop) is `inconclusive` unless what was captured already shows a major regression, so a partial night never advances `lastTested`. Captures that share no scenario are refused, not compared.
@@ -100,11 +104,11 @@ The batch never merges or reverts on `main` itself.
 
 An agent orchestrates and a script measures.
 
-- `scripts/perf.mjs` (Node, ESM, no dependencies) has one subcommand per deterministic step: `idle-wait`, `range`, `measure`, `compare`, `state`, and `setup`, plus `capture` for a session's own change. Its header lists the options. `scripts/perf/capture.mjs` is the capture and `scripts/perf/compare.mjs` the verdict, with R5's thresholds as constants.
+- `scripts/perf.mjs` (Node, ESM, no dependencies) has one subcommand per deterministic step: `idle-wait`, `range`, `measure`, `bench`, `compare`, `state`, and `setup`, plus `capture` and `bench --exe` for a session's own change. Its header lists the options. `scripts/perf/capture.mjs` is the capture, `scripts/perf/bench.mjs` the microbenchmark run, and `scripts/perf/compare.mjs` the verdict, with R5's thresholds as constants.
 - `.claude/skills/perf-nightly/SKILL.md` is the procedure the agent follows: it calls the subcommands in order and does the parts that take judgement, which are reading the `Perf:` lines, picking a suspect, and writing the revert PR, the bug, and the report.
 - A Claude scheduled task starts a local agent session at 02:00 that runs the skill.
 - The build worktree is `.claude/worktrees/perf-nightly` in the main checkout. The tooling runs from it too, at `origin/main`: `measure` moves its HEAD to build a SHA and puts it back when it finishes.
-- State and results live in the main checkout's `perf-results/nightly/`, which git ignores: `state.json`, `builds/<sha>/`, and one folder a night with its captures, build logs, comparison tables, and report.
+- State and results live in the main checkout's `perf-results/nightly/`, which git ignores: `state.json`, `builds/<sha>/`, `bench-builds/<sha>/`, and one folder a night with its captures, build logs, comparison tables, and report.
 
 `node scripts/perf.mjs setup` creates the worktree and the first `lastTested`.
 
@@ -116,7 +120,8 @@ As of 2026-11-10:
 - `range` against `main`'s history: eight merges, six relevant by path, one salal bump, one `Perf: none` read from its PR.
 - `idle-wait` and the gate inside `measure`, on a working day: a capture voided itself when another session's `cmake` started, and the batch then held for 25 minutes while the machine alternated between `idle` and `mostly-idle`, never reaching two idle checks in a row.
 - `measure` and `compare` on two real SHAs at the river view, one run each, with the gate off: both built in the batch worktree, the game launched from the build copies, and `compare` answered `clean` with the tip's capture marked loaded. That run found two faults, both fixed: a base build older than the `uprights` view answered 404 and stopped the capture, and the batch baked its own planet (R4).
-- Not run with numbers that mean anything. Every capture so far was taken with other sessions working.
+- `bench` and `compare --bench`, with the gate off: the assets benchmarks built at two real SHAs in the batch worktree and run twice each, and the world benchmarks run twice from one build, which agreed within about 3%. On `main`'s history `range` names `world` and `worldgen` and leaves `assets` out, because the tree-variety merge changed its benchmark.
+- Not run with numbers that mean anything. Every capture and benchmark so far was taken with other sessions working.
 - Not run: a scheduled night end to end, isolation (R6), and filing an outcome (R7). The thresholds in R2 and R5 are first values.
 
 ## Related

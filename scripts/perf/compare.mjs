@@ -5,6 +5,9 @@ export const kNoiseMultiple = 3;      // regressed: worse than base by more than
 export const kMinDeltaMs = 0.02;      // and by at least this, so two identical runs don't make noise zero
 export const kMajorDeltaMs = 0.25;    // major: worse by more than this
 export const kMajorShare = 0.10;      // and by more than this share of base
+export const kBenchMinShare = 0.05;   // a benchmark regressed: past the noise and by at least this share of base (two builds of
+                                      // unchanged code differ by 2 to 3% from layout alone)
+export const kBenchMajorShare = 0.25; // major: slower by more than this share
 
 const kTimings = ['frameTimeMs', 'p99Ms', 'gpuMs', 'tileGpuMs', 'tileMs', 'entityMs', 'updateMs', 'sceneUpdateMs', 'sceneRenderMs'];
 const kMajorTimings = ['frameTimeMs', 'gpuMs', 'tileGpuMs'];
@@ -97,28 +100,76 @@ export function compareRuns(baseRuns, tipRuns) {
 
 	const anyMajor = scenarios.some((scenario) => scenario.newSpikes || scenario.cells.some((cell) => cell.major));
 	const anyRegressed = scenarios.some((scenario) => scenario.cells.some((cell) => cell.regressed));
-	let verdict = anyMajor ? 'major' : anyRegressed ? 'regressed' : 'clean';
+	return { ...settle(anyMajor ? 'major' : anyRegressed ? 'regressed' : 'clean', baseRuns, tipRuns), scenarios };
+}
 
-	// Load only ever makes a run slower. A loaded tip can't confirm a regression, and a loaded
-	// base can't confirm there isn't one.
+// Load only ever makes a run slower. A loaded tip can't confirm a regression, and a loaded
+// base can't confirm there isn't one.
+function settle(found, baseRuns, tipRuns) {
 	const baseVoid = baseRuns.some((run) => run.void);
 	const tipVoid = tipRuns.some((run) => run.void);
-	const unconfirmed = (tipVoid && verdict !== 'clean') || (baseVoid && verdict === 'clean');
-	const found = verdict;
-	if (unconfirmed) verdict = 'inconclusive';
+	const unconfirmed = (tipVoid && found !== 'clean') || (baseVoid && found === 'clean');
+	return { verdict: unconfirmed ? 'inconclusive' : found, found, baseVoid, tipVoid, baseRuns: baseRuns.length, tipRuns: tipRuns.length };
+}
 
-	return { verdict, found, baseVoid, tipVoid, baseRuns: baseRuns.length, tipRuns: tipRuns.length, scenarios };
+// baseRuns and tipRuns: runs of one benchmark executable (scripts/perf/bench.mjs). One cell a
+// benchmark, on real time. Benchmarks run from nanoseconds to seconds, so the thresholds are
+// shares of base, where a frame capture's are milliseconds.
+export function compareBenchRuns(baseRuns, tipRuns) {
+	const names = baseRuns[0].benchmarks.map((entry) => entry.name)
+		.filter((name) => [...baseRuns, ...tipRuns].every((run) => run.benchmarks.some((entry) => entry.name === name)));
+	if (names.length === 0) throw new Error('the base and tip runs share no benchmark, so there is nothing to compare');
+	const entriesOf = (runs, name) => runs.map((run) => ({ value: run.benchmarks.find((entry) => entry.name === name).realTimeMs, void: Boolean(run.void) }));
+
+	const cells = names.map((name) => {
+		const baseEntries = entriesOf(baseRuns, name);
+		const tipEntries = entriesOf(tipRuns, name);
+		const base = mean(numbers(baseEntries));
+		const tip = mean(numbers(tipEntries));
+		const delta = tip - base;
+		const share = base > 0 ? delta / base : 0;
+		const noise = noiseOf(baseEntries, tipEntries);
+		const pastMajor = Math.abs(share) > kBenchMajorShare;
+		const moved = noise !== null ? Math.abs(delta) > Math.max(kNoiseMultiple * noise, kBenchMinShare * base) : pastMajor;
+		const regressed = moved && delta > 0;
+		return { benchmark: name, base, tip, delta, share, noise, regressed, improved: moved && delta < 0, major: regressed && pastMajor };
+	});
+
+	const found = cells.some((cell) => cell.major) ? 'major' : cells.some((cell) => cell.regressed) ? 'regressed' : 'clean';
+	return { ...settle(found, baseRuns, tipRuns), cells };
 }
 
 const kVerdictRank = ['clean', 'regressed', 'inconclusive', 'major'];
 export const worstVerdict = (verdicts) => verdicts.reduce((worst, verdict) => (kVerdictRank.indexOf(verdict) > kVerdictRank.indexOf(worst) ? verdict : worst), 'clean');
 
+function heading(name, result) {
+	const why = result.incomplete ?? `${result.tipVoid ? 'tip' : 'base'} run was loaded`;
+	return `### ${name}: ${result.verdict}${result.verdict === 'inconclusive' ? ` (found ${result.found}; ${why})` : ''}`;
+}
+
+// One row a benchmark
+export function benchToMarkdown(target, result) {
+	const time = (value) => (value === null ? 'n/a' : value.toPrecision(4));
+	const lines = [
+		heading(`${target} benchmarks`, result),
+		'',
+		`${result.baseRuns} base and ${result.tipRuns} tip runs. Real time in ms; \`!\` regressed, \`!!\` major, \`+\` improved.`,
+		'',
+		'| Benchmark | base | tip | change | noise |',
+		'|---|---|---|---|---|',
+	];
+	for (const cell of result.cells) {
+		const flag = cell.major ? ' `!!`' : cell.regressed ? ' `!`' : cell.improved ? ' `+`' : '';
+		lines.push(`| ${cell.benchmark} | ${time(cell.base)} | ${time(cell.tip)} | ${(100 * cell.share).toFixed(1)}%${flag} | ${time(cell.noise)} |`);
+	}
+	return lines.join('\n');
+}
+
 // One table per view: every scenario's major timings, flagged where they moved
 export function toMarkdown(view, result) {
 	const fixed = (value) => (value === null ? 'n/a' : value.toFixed(2));
-	const why = result.incomplete ?? `${result.tipVoid ? 'tip' : 'base'} capture was loaded`;
 	const lines = [
-		`### ${view}: ${result.verdict}${result.verdict === 'inconclusive' ? ` (found ${result.found}; ${why})` : ''}`,
+		heading(view, result),
 		'',
 		`${result.baseRuns} base and ${result.tipRuns} tip runs. Times in ms as base / tip (noise); \`!\` regressed, \`!!\` major, \`+\` improved.`,
 		'',

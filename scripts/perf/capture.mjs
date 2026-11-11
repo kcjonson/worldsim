@@ -46,7 +46,7 @@ function gpuClocks() {
 // CPU and GPU use by everything that isn't the game, from one typeperf process for the whole
 // capture. Elsewhere than Windows, and if typeperf won't start, read() answers nulls and the
 // capture is void: nobody watched the machine.
-function startLoadSampler(gamePid, gameImage) {
+export function startLoadSampler(gamePid, gameImage) {
 	const pending = [];
 	let columns = null;
 	let child = null;
@@ -114,7 +114,7 @@ function foreignProcesses(names, gameImage) {
 
 // Polls the process list for the whole capture, so a build that starts and ends inside one
 // scenario is still seen. take() answers what ran since the last take().
-function startProcessWatch(gameImage) {
+export function startProcessWatch(gameImage) {
 	const seen = new Set();
 	let checks = 0;
 	let stopped = false;
@@ -141,20 +141,22 @@ function startProcessWatch(gameImage) {
 	};
 }
 
-function voidReasons(scenarios) {
+// `gpu: false` for a CPU-only measurement, where other processes' GPU use doesn't count
+export function voidReasons(scenarios, { gpu = true } = {}) {
 	const reasons = [];
 	const samples = scenarios.flatMap((scenario) => scenario.samples);
+	const over = (sample) => sample.foreignCpuPct > kForeignMaxPct || (gpu && sample.foreignGpuPct > kForeignMaxPct);
+	const read = (sample) => sample.foreignCpuPct !== null && (!gpu || sample.foreignGpuPct !== null);
 	const offP0 = samples.filter((sample) => sample.pstate !== null && sample.pstate !== 'P0').length;
 	if (offP0 > 0) reasons.push(`${offP0} of ${samples.length} samples off P0`);
-	const loaded = samples.filter((sample) => sample.foreignCpuPct > kForeignMaxPct || sample.foreignGpuPct > kForeignMaxPct).length;
+	const loaded = samples.filter(over).length;
 	if (loaded > samples.length * kForeignSampleShare) {
-		reasons.push(`${loaded} of ${samples.length} samples saw other processes over ${kForeignMaxPct}% CPU or GPU`);
+		reasons.push(`${loaded} of ${samples.length} samples saw other processes over ${kForeignMaxPct}% ${gpu ? 'CPU or GPU' : 'CPU'}`);
 	}
 	const processes = [...new Set(scenarios.flatMap((scenario) => scenario.foreignProcesses))];
 	if (processes.length > 0) reasons.push(`other sessions' processes ran: ${processes.join(', ')}`);
 	// Load nobody read is unknown, not low
-	const unwatched = scenarios.filter((scenario) => scenario.processChecks === 0
-		|| !scenario.samples.some((sample) => sample.foreignCpuPct !== null && sample.foreignGpuPct !== null)).length;
+	const unwatched = scenarios.filter((scenario) => scenario.processChecks === 0 || !scenario.samples.some(read)).length;
 	if (unwatched > 0) reasons.push(`the rest of the machine went unread in ${unwatched} of ${scenarios.length} scenarios (no typeperf readings or no process list)`);
 	return reasons;
 }

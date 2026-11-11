@@ -74,6 +74,19 @@ and game processes. Past a threshold it marks itself void, and `compare` then an
 timings out of the files by eye. With one capture a side it has no noise to measure against and
 flags only a step the size of a major regression; two a side measures the noise.
 
+Chunk and planet generation have microbenchmarks (`*.bench.cpp`, built as `world-benchmarks`,
+`assets-benchmarks` and `worldgen-benchmarks`), which time them directly and launch no game. For a
+change to that code, build the target in RelWithDebInfo on `main` and on the branch and run it
+through the same watch:
+
+```
+node scripts/perf.mjs bench --exe build/libs/world/RelWithDebInfo/world-benchmarks.exe --out <file>.json
+node scripts/perf.mjs compare --base <main>.json --tip <branch>.json
+```
+
+The same rules apply, with thresholds as shares of the base time: past the noise and 5% is
+regressed, past 25% is major.
+
 Reading the result:
 
 | Result | Machine | What it means | What to do |

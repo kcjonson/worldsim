@@ -1,7 +1,7 @@
 // node --test scripts/perf/compare.test.mjs
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { compareRuns } from './compare.mjs';
+import { compareBenchRuns, compareRuns } from './compare.mjs';
 
 function run(gpuMs, { isVoid = false, spikes33 = 0 } = {}) {
 	const sample = { frameTimeMs: 8.33, p99Ms: 8.4, gpuMs, tileGpuMs: 0.5, spikes33, drawCalls: 60, triangles: 1000 };
@@ -59,4 +59,13 @@ test('33 ms spikes in every tip scroll run and no base run is major', () => {
 	const result = compareRuns([run(2.00), run(2.01)], [run(2.00, { spikes33: 3 }), run(2.01, { spikes33: 2 })]);
 	assert.equal(result.verdict, 'major');
 	assert.deepEqual(result.scenarios.filter((scenario) => scenario.newSpikes).map((scenario) => scenario.scenario), ['scroll zoom=3']);
+});
+
+const bench = (ms, isVoid = false) => ({ void: isVoid, benchmarks: [{ name: 'BM_Build', realTimeMs: ms }, { name: 'BM_Lookup', realTimeMs: 0.000004 }] });
+
+test('benchmarks are judged by share of base, whatever their scale', () => {
+	assert.equal(compareBenchRuns([bench(10.0), bench(10.1)], [bench(10.05), bench(10.15)]).verdict, 'clean');
+	assert.equal(compareBenchRuns([bench(10.0), bench(10.1)], [bench(11.0), bench(11.1)]).verdict, 'regressed');
+	assert.equal(compareBenchRuns([bench(10.0), bench(10.1)], [bench(13.0), bench(13.1)]).verdict, 'major');
+	assert.equal(compareBenchRuns([bench(10.0), bench(10.1)], [bench(13.0, true), bench(13.1)]).verdict, 'inconclusive');
 });
