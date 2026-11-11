@@ -82,86 +82,19 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
 
 ## Config File Format
 
-**File:** `assets/config/work/priority-tuning.xml`
+**File:** `assets/config/work/priority-tuning.xml`. The file itself is the reference for values; its comments explain each element. What reads each one:
 
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<PriorityTuning>
-  <!-- Work category tier ordering (for simple mode) -->
-  <WorkCategoryOrder>
-    <Category name="Emergency" tier="1"/>
-    <Category name="Medical" tier="2"/>
-    <Category name="Farming" tier="3"/>
-    <Category name="Crafting" tier="4"/>
-    <Category name="Construction" tier="5"/>
-    <Category name="Hauling" tier="6"/>
-    <Category name="Cleaning" tier="7"/>
-  </WorkCategoryOrder>
-
-  <!-- Bonus calculations -->
-  <Bonuses>
-    <!-- Distance factor: dominant within-tier term; nearest source wins -->
-    <Distance>
-      <formula>300 * max(0, 1 - distance / 60)</formula>
-      <description>
-        Yields 0-300 across the working range (~60m). Dominates skill and age
-        so that the nearest reachable source reliably wins within a tier.
-        Replaces the old -50..+50 distanceBonus, which was too narrow relative
-        to the skill/age terms and allowed distant tasks to win via bonuses.
-      </description>
-    </Distance>
-
-    <!-- In-progress: within-tier hysteresis margin (replaces the old cross-tier bonus) -->
-    <InProgress>
-      <bonus>50</bonus>
-      <description>
-        Applied to the currently in-progress option when comparing within the same tier.
-        Prevents thrashing on small score differences. A same-tier challenger must
-        exceed the in-progress option's score by this margin to trigger a switch.
-        This is the taskSwitchThreshold from Thresholds (kept in sync).
-      </description>
-    </InProgress>
-
-    <!-- Task age: old unclaimed tasks slowly rise in priority -->
-    <TaskAge>
-      <bonusPerMinute>1</bonusPerMinute>
-      <maxBonus>100</maxBonus>
-      <description>
-        Prevents task starvation. After 100 minutes, even low-priority
-        tasks get +100 bonus.
-      </description>
-    </TaskAge>
-  </Bonuses>
-
-  <!-- Thresholds and timings -->
-  <Thresholds>
-    <!-- Within-tier hysteresis margin: same-tier challenger must exceed in-progress
-         option's score by this amount to trigger a switch. Matches InProgress.bonus. -->
-    <taskSwitchThreshold>50</taskSwitchThreshold>
-
-    <!-- How often colonists re-evaluate tasks (seconds), unchanged -->
-    <reEvalInterval>0.5</reEvalInterval>
-  </Thresholds>
-
-  <!-- Hauling-specific tuning to avoid the "hauling problem" -->
-  <HaulingTuning>
-    <!-- Boost haul priority when storage is critically low -->
-    <storageCriticalThreshold>0.2</storageCriticalThreshold>
-    <storageCriticalBonus>500</storageCriticalBonus>
-
-    <!-- Boost if loose item is blocking construction -->
-    <blockingConstructionBonus>1000</blockingConstructionBonus>
-
-    <!-- Boost if item is perishable and will spoil soon -->
-    <perishableSpoilThreshold>60.0</perishableSpoilThreshold>
-    <perishableBonus>800</perishableBonus>
-
-    <!-- Batch nearby items to reduce task spam -->
-    <batchRadius>8.0</batchRadius>
-    <maxBatchSize>5</maxBatchSize>
-  </HaulingTuning>
-</PriorityTuning>
-```
+| Element | Read by | Effect |
+|---|---|---|
+| `<TaskTiers>` | `AIDecisionSystem` (`readBaseTiers`), checked at load by `validateTaskTiers` | each task type's base tier |
+| `<WorkCategoryOrder>` | `ConfigValidator` only | none on decisions |
+| `<Bonuses><DistanceFactor>` (`maxDistance` 60, `maxFactor` 300) | `calculateDistanceFactor` | the distance term |
+| `<Bonuses><InProgress><bonus>` (50) | `getInProgressBonus` | the hysteresis term |
+| `<Bonuses><TaskAge>` (1 per minute, at most 100) | `calculateTaskAgeBonus` | the task-age term |
+| `<Bonuses><StoragePriority><weight>` (300) | `getStoragePriorityWeight` | the storage-priority term |
+| `<Thresholds><taskSwitchThreshold>` | nothing | parsed, read by nothing; the switch margin is `<InProgress><bonus>` |
+| `<Thresholds><reEvalInterval>` | nothing | parsed, read by nothing; the interval is `AIDecisionSystem::kReEvalInterval` (0.5 s) |
+| `<HaulingTuning>` | nothing | parsed, read by nothing; none of its boosts or batching exist |
 
 ---
 
@@ -216,29 +149,25 @@ int16_t calculateTaskAgeBonus(float taskAge, const TaskAgeConfig& config) {
 }
 ```
 
-**Example (1 per minute, max 100):**
-- Created just now: +0
-- 30 minutes old: +30
-- 100+ minutes old: +100 (capped)
+In the game the age is not a goal's own: no goal system stamps `createdAt` (it stays 0), so the age is the AI clock (`AIDecisionSystem::m_elapsedTime`, real seconds since the session started) and every Haul and Harvest option with a goal gets the same term. It reaches +100 after 100 real minutes and orders nothing against other goals.
 
 ---
 
-## Hauling Problem Mitigation
+## What orders hauling
 
-The "hauling problem" (from RimWorld) occurs when colonists haul everything before doing other work, often walking across the entire map for low-value items.
+The "hauling problem" (from RimWorld) is colonists hauling everything before other work, walking across the map for low-value items. Nothing hauling-specific guards against it; the general `(tier, score)` key does, as follows.
 
-### Mitigation Strategies
+1. **Tier.** A Haul or Harvest serving an active work order (`servesActiveWorkOrder`: provisioning a build or a craft) is tier 4; any other, storage stocking included, keeps its base tier 6. A PlacePackaged serving a work order or already carried is tier 4. Tier 6 loses to every need (tier 5, or 2 when critical) and to work orders, so an opportunistic haul only happens when nothing above it is available (`classifyTier`).
+2. **Gathering rank, within a tier and before the score** (`EvaluatedOption::gatheringRank`): a loose pile toward a root the colonist gathers for (2), then a further cut toward it (1), then everything else, the carry-in included (0), then a fresh cut toward a root and item a known pile also serves (-1). A colonist fills its trip before walking it in, and takes a pile before cutting another plant.
+3. **Score, within a tier and rank** (`populatePriorityBonuses`, `EvaluatedOption::computeScore`), the sum of:
+   - distance factor, `300 * max(0, 1 - d / 60)`, so the nearest reachable source wins;
+   - skill bonus, `min(skillLevel * 10, 100)`;
+   - task age, the same for every goal today (see Task Age Bonus);
+   - hysteresis, +50 on the option the colonist is already doing;
+   - storage priority, for a stocking option only: the destination box's priority for the item (Low 0 to Critical 3) times `<StoragePriority><weight>` (300), so a higher-priority box beats a nearer lower one.
+4. **Ties** break on `tiebreakId`, a stable id, never container order.
 
-1. **Distance Bonus:** Nearby items score higher than distant ones
-2. **Storage Critical Boost:** When storage is < 20% full for an item category, boost haul priority by +500
-3. **Blocking Construction:** Items blocking build sites get +1000 boost
-4. **Perishable Items:** Food that will spoil in < 60s gets +800 boost
-5. **Batch Nearby Items:** Group items within 8m into single task (max 5 per batch)
-
-Hauling no longer computes a single additive priority. A haul's rank is its `(tier, score)` key:
-a haul serving an active work order is tier 4; an opportunistic haul is tier 6. The situational
-factors above (storage critical, blocking construction, perishable) are within-tier score lifts,
-applied only against other tier-6 hauls, and can never push a haul across a tier boundary.
+The boosts this section used to list (+500 when storage runs low, +1000 for items blocking construction, +800 for food about to spoil, batching items within 8 m) are `<HaulingTuning>` values that nothing reads.
 
 ---
 

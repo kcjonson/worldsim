@@ -144,7 +144,7 @@ Applications:
 | [Crafting & Material Provisioning](./crafting-provisioning-architecture.md) | Craft-as-construction: station store, metered/no-leftover deposit, pickup-by-source, giveItemToColonist cascade |
 | [Task Claims](./task-claims.md) | Partly built: claims as data on colonist tasks with a derived index, chain claims, availability, need tasks; bumping and the craft binding planned |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
-| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery/witnessing, fog of war |
+| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing, player visibility (planned) |
 
 ### Graphics & Rendering
 
