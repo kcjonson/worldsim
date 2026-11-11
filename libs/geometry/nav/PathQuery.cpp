@@ -725,7 +725,7 @@ namespace geometry::nav {
 			bool		 closed	  = false;
 			bool		 exact	  = false; // best is the corridor's taut length (or cost) to the goal
 			bool		 priced	  = false; // the corridor crosses a face walked at a price
-			double		 squeeze  = 1.0;   // the price of the step into this label's triangle (see the width gate)
+			double		 squeeze  = 0.0;   // what the squeeze of the step into this label's triangle costs (see the width gate)
 			// A lower bound on what priced faces add to the corridor's cost: the runs it has
 			// left, each (multiplier - 1) times the least distance between the portals it
 			// came in and went out by, and the run it is in (entered by runEntry, at the
@@ -757,7 +757,6 @@ namespace geometry::nav {
 			std::uint32_t			   current = 0;
 			std::vector<Portal>		   replay;
 			std::vector<std::int32_t>  corridor; // a winning corridor's triangles
-			std::vector<double>		   squeeze;	 // and the price of leaving each
 			std::vector<Vec2i64>	   points;	 // a candidate corridor's string-pull
 			CornerMemos				   corners;
 
@@ -1065,15 +1064,40 @@ namespace geometry::nav {
 		result.peakOpenSet = static_cast<std::int64_t>(open.size());
 		std::vector<Portal>& replay = scratch.replay;
 
-		// Pull one more portal into a label's funnel. When the path bends at a corner from
-		// an earlier portal, the funnel restarts there with this portal alone: looser than
-		// the string-pull's, which would narrow it by every portal since, so its scores stay
-		// lower bounds; a goal label is pulled exactly before it is accepted.
-		auto advance = [&](Funnel& funnel, const Portal& step) {
+		// Pull one more portal into the funnel of label li's corridor. When the path bends at
+		// a bound, the bound becomes the apex and the funnel restarts there with this portal
+		// alone: looser than the string-pull's, which would resume with every portal after
+		// the one that set the bound, so its scores stay lower bounds while every walk
+		// through this portal must round the bound, which holds while the bound and the
+		// apex lie on this portal's near side (left of its edge (a, b), the side of the
+		// triangle the step leaves). Wrapping a wall's end the portals turn past half a
+		// turn, and either can lie beyond the portal's line, where the restart over-scores:
+		// then the pull resumes as the string-pull does, with the portals since the bound,
+		// found back along the corridor's labels. Sides are read against the edge, not the
+		// portal: one pulled in from both ends can shrink to a point.
+		auto advance = [&](std::int32_t li, Funnel& funnel, const Portal& step, const Vec2d& a, const Vec2d& b) {
 			if (narrow(funnel, step)) {
 				return;
 			}
-			replay.assign(1, step);
+			const bool rightCrossesLeft = area2(funnel.apex, funnel.right, step.right) <= 0.0 && !same(funnel.apex, funnel.right) &&
+										  area2(funnel.apex, funnel.left, step.right) <= 0.0;
+			const Vec2d		   bound = rightCrossesLeft ? funnel.left : funnel.right;
+			const std::int32_t from	 = rightCrossesLeft ? funnel.leftFrom : funnel.rightFrom;
+			replay.clear();
+			if (area2(a, b, bound) < 0.0 || area2(a, b, funnel.apex) < 0.0) {
+				for (std::int32_t at = li; at > 0 && at != from; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
+					replay.push_back(scratch.labels[static_cast<std::size_t>(at)].entry);
+				}
+				std::reverse(replay.begin(), replay.end());
+			}
+			replay.push_back(step);
+			funnel.length += distanceD(funnel.apex, bound);
+			funnel.apex		 = bound;
+			funnel.left		 = bound;
+			funnel.right	 = bound;
+			funnel.apexFrom	 = from;
+			funnel.leftFrom	 = from;
+			funnel.rightFrom = from;
 			pull(funnel, replay, nullptr);
 		};
 
@@ -1083,10 +1107,7 @@ namespace geometry::nav {
 		// its multiplier, but a run of priced triangles costs at least its least multiplier
 		// over the disc's diameter: a disc entering priced ground overlaps it that far
 		// however little of the centreline is inside (a corner shaved through the face's
-		// own triangle has none). A squeeze dearer than the triangle it leaves charges its
-		// surplus over at most the diameter of the piece, the stretch where the disc overlaps
-		// what narrows the gap (a large triangle's piece can run far from it); a squeeze
-		// beside the priced run it crosses is that run's (see the width gate).
+		// own triangle has none). Each squeeze adds what the width gate charged for it.
 		bool   crossesPriced = false;
 		double cost			 = 0.0;
 		double runSurplus	 = 0.0;
@@ -1100,7 +1121,7 @@ namespace geometry::nav {
 			  runSurplus = 0.0;
 			  runLeast	 = 0.0;
 		};
-		auto addPiece = [&](std::int32_t t, double squeeze, double piece) {
+		auto addPiece = [&](std::int32_t t, double piece) {
 			const double m = stepMultiplier(mesh, t, belief);
 			cost += piece;
 			if (m > 1.0) {
@@ -1109,29 +1130,21 @@ namespace geometry::nav {
 			} else {
 				closeRun();
 			}
-			if (squeeze > m) {
-				cost += (squeeze - m) * std::min(piece, static_cast<double>(diameterMm));
-				crossesPriced = crossesPriced || diameterMm > 0;
-			}
 		};
 		auto walkCorridor = [&](std::int32_t li, std::vector<Vec2i64>& points) {
-			std::vector<std::int32_t>& tris	   = scratch.corridor;
-			std::vector<double>&	   squeeze = scratch.squeeze; // squeeze[k]: the price of leaving tris[k]
+			std::vector<std::int32_t>& tris = scratch.corridor;
 			replay.clear();
 			tris.clear();
-			squeeze.clear();
-			double leaving = 1.0;
+			double squeezes = 0.0;
 			for (std::int32_t at = li; at >= 0; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
 				tris.push_back(scratch.labels[static_cast<std::size_t>(at)].state / 4);
-				squeeze.push_back(leaving);
-				leaving = scratch.labels[static_cast<std::size_t>(at)].squeeze;
+				squeezes += scratch.labels[static_cast<std::size_t>(at)].squeeze;
 				if (at > 0) {
 					replay.push_back(scratch.labels[static_cast<std::size_t>(at)].entry);
 				}
 			}
 			std::reverse(replay.begin(), replay.end());
 			std::reverse(tris.begin(), tris.end());
-			std::reverse(squeeze.begin(), squeeze.end());
 			replay.push_back({goalD, goalD, -1});
 			points.assign(1, start);
 			Funnel taut = funnelAt(startD, -1);
@@ -1143,7 +1156,8 @@ namespace geometry::nav {
 			}
 			// Walk the path through the corridor: triangle k ends where the path crosses
 			// to the far side of the edge it shares with triangle k + 1.
-			cost			  = 0.0;
+			cost			  = squeezes;
+			crossesPriced	  = squeezes > 0.0;
 			runSurplus		  = 0.0;
 			runLeast		  = 0.0;
 			double		piece = 0.0;
@@ -1172,7 +1186,7 @@ namespace geometry::nav {
 					at = cross;
 					break;
 				}
-				addPiece(tris[k], squeeze[k], piece);
+				addPiece(tris[k], piece);
 				piece = 0.0;
 			}
 			while (s + 1 < points.size()) {
@@ -1181,7 +1195,7 @@ namespace geometry::nav {
 				at = q;
 				++s;
 			}
-			addPiece(tris.back(), squeeze.back(), piece);
+			addPiece(tris.back(), piece);
 			closeRun();
 			return cost;
 		};
@@ -1240,19 +1254,23 @@ namespace geometry::nav {
 				// so nothing to clear inside the start triangle.
 				// A gap too narrow for the disc that only detail narrows (its structural width
 				// admits the disc) is squeezed through at squeezePrice; anything else stays shut.
-				double squeeze = 1.0;
+				// The disc overlaps what narrows the gap at least over the chord it cuts from a
+				// circle of its radius at the gap's half-width (w / 2 from the narrowing), so
+				// the squeeze costs its surplus price over that chord: a cost the walk's length
+				// cannot shrink, which the corridor's score counts from this step on. Beside a
+				// priced face the corridor walks into, came out of, or is in, the overlap is
+				// that crossing, already paid: only a dearer narrowing is charged.
+				double squeeze = 0.0;
 				if (entry != kStartEntry && !widthAdmits(tri, apexVertexOfEdgePair(entry, e), diameterMm)) {
 					if (squeezePrice <= 0.0 || tri.structuralWidthMm[apexVertexOfEdgePair(entry, e)] < diameterMm) {
 						continue;
 					}
-					squeeze = squeezePrice;
-					// Beside a priced face the corridor walks into, came out of, or is in, the
-					// disc's overlap with it is that crossing, already paid: only a dearer
-					// narrowing is charged.
 					const std::int32_t from	  = scratch.labels[static_cast<std::size_t>(li)].cameFrom;
 					const double	   before = from >= 0 ? stepMultiplier(mesh, scratch.labels[static_cast<std::size_t>(from)].state / 4, belief) : 1.0;
-					if (squeeze <= std::max({nbMultiplier, before, stepMultiplier(mesh, ti, belief)})) {
-						squeeze = 1.0;
+					const double	   here	  = stepMultiplier(mesh, ti, belief);
+					if (squeezePrice > std::max({nbMultiplier, before, here})) {
+						const double halfGap = 0.5 * static_cast<double>(tri.edgePairWidthMm[apexVertexOfEdgePair(entry, e)]);
+						squeeze				 = (squeezePrice - here) * 2.0 * std::sqrt(std::max(0.0, radius * radius - halfGap * halfGap));
 					}
 				}
 				// Width gate (door portal): a door edge is gated by its clear width.
@@ -1266,7 +1284,7 @@ namespace geometry::nav {
 					continue; // adjacency inconsistency; skip safely
 				}
 				const std::int32_t ns	 = stateId(nb, back);
-				const bool	 freshPriced = scratch.labels[static_cast<std::size_t>(li)].priced || nbMultiplier > 1.0 || squeeze > 1.0;
+				const bool	 freshPriced = scratch.labels[static_cast<std::size_t>(li)].priced || nbMultiplier > 1.0 || squeeze > 0.0;
 				StateLabels& held		 = scratch.held(ns * 2 + (freshPriced ? 1 : 0));
 				if (held.count == kLabelsPerState) {
 					bool anyOpen = false;
@@ -1281,12 +1299,12 @@ namespace geometry::nav {
 				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, corners);
 				const Portal	   step{span.left, span.right, label};
 				Funnel			   next = funnel;
-				advance(next, step);
+				advance(li, next, step, toD(mesh.vertex(tri.v[e])), toD(mesh.vertex(tri.v[(e + 1) % 3])));
 				// What priced faces add, as a bound: a run of them is entered, carried on, or
 				// left (charged then for the distance across it, or its least price over the
 				// disc's diameter, as walkCorridor does) by this step.
 				const Label& parent	  = scratch.labels[static_cast<std::size_t>(li)];
-				double		 extra	  = parent.extra;
+				double		 extra	  = parent.extra + squeeze;
 				double		 runPrice = 0.0;
 				Portal		 runEntry = step;
 				if (parent.runPrice > 0.0) {
@@ -1304,9 +1322,17 @@ namespace geometry::nav {
 				const double score = scoreFrom(next, step) + extra + inRun;
 				std::int32_t slot = -1; // the label this corridor takes over, if any
 				bool		 beaten = false;
-				std::array<double, 3> reach = held.count > 0 ? reachOf(next, step) : std::array<double, 3>{};
+				// A corridor that crosses priced faces is also beaten by a free one at this state
+				// that is no longer: their futures are the same, and the free one's past costs
+				// its length while this one's costs at least its length and its bound.
+				const StateLabels* freeHeld = freshPriced ? &scratch.held(ns * 2) : nullptr;
+				std::array<double, 3> reach = held.count > 0 || (freeHeld != nullptr && freeHeld->count > 0) ? reachOf(next, step) : std::array<double, 3>{};
 				for (double& r : reach) {
 					r += extra + inRun;
+				}
+				for (int k = 0; freeHeld != nullptr && k < freeHeld->count && !beaten; ++k) {
+					const Label& other = scratch.labels[static_cast<std::size_t>(freeHeld->ids[static_cast<std::size_t>(k)])];
+					beaten			   = other.exact ? score >= other.best : noLonger(reachOf(other.funnel, step), reach);
 				}
 				for (int k = 0; k < held.count && !beaten; ++k) {
 					Label&						other	   = scratch.labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])];

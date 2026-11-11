@@ -816,23 +816,63 @@ namespace {
 		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
 	};
 
-	void loadRequestShape(RequestShape& s, Fixture f) {
+	// Where the goals sit: anywhere in one bounds square split every 16 m; or, with the
+	// square cut in two down its middle and the sides split every 64 m (the game's chunk
+	// sides), 32 m from that shared side or 12 m from it, where open ground beside the
+	// side is a fan of long thin triangles from its far-apart vertices. The Chunk
+	// placements do the same on two of the game's 512 m chunks side by side, each 4 x 4
+	// tiles of the fixture's water and trees: in a chunk's middle, or 12 m from the side.
+	enum class Colony { Anywhere, Middle, NearSide, ChunkMiddle, ChunkSide };
+
+	void loadRequestShape(RequestShape& s, Fixture f, Colony colony = Colony::Anywhere) {
 		const Rings					 rings = fixtureRings(f);
 		std::vector<NavInputPolygon> all   = rings.base;
 		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
-		untimedPatch(s.detail, adding(all));
-		s.detail.rebuildForests();
 		Vec2i64 lo;
 		Vec2i64 hi;
 		boxOf(rings.base.front().ring, lo, hi);
+		std::int64_t mid = (lo.x + hi.x) / 2;
+		const bool	 chunks = colony == Colony::ChunkMiddle || colony == Colony::ChunkSide;
+		if (colony != Colony::Anywhere) {
+			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenanceTree}});
+		}
+		if (chunks) {
+			const std::int64_t tile = hi.x - lo.x;
+			const std::int64_t side = 4 * tile;
+			std::vector<NavInputPolygon> tiled{NavInputPolygon{rect(lo.x, lo.y, lo.x + side, lo.y + side), false, kProvenanceBorder},
+											   NavInputPolygon{rect(lo.x + side, lo.y, lo.x + 2 * side, lo.y + side), false, kProvenanceBorder}};
+			for (std::int64_t b = 0; b < 4; ++b) {
+				for (std::int64_t a = 0; a < 8; ++a) {
+					for (std::size_t k = 1; k < all.size(); ++k) {
+						tiled.push_back(all[k]);
+						tiled.back().ring = translated(tiled.back().ring, {a * tile, b * tile});
+					}
+				}
+			}
+			all = std::move(tiled);
+			hi	= {lo.x + 2 * side, lo.y + side};
+			mid = lo.x + side;
+		} else if (colony != Colony::Anywhere) {
+			all.front() = NavInputPolygon{rect(lo.x, lo.y, mid, hi.y), false, kProvenanceBorder};
+			all.insert(all.begin() + 1, NavInputPolygon{rect(mid, lo.y, hi.x, hi.y), false, kProvenanceBorder});
+		}
+		untimedPatch(s.detail, adding(all));
+		s.detail.rebuildForests();
 		std::mt19937 rng(91);
 		auto		 walkable = [&](const Vec2i64& p) {
 			const std::int32_t t = s.detail.locate(p);
 			return t >= 0 && isFloorFace(s.detail.triangles()[static_cast<std::size_t>(t)]);
 		};
 		while (s.goals.size() < 4) {
-			const Vec2i64 g{lo.x + 20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.x - lo.x - 40000)),
-							lo.y + 20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.y - lo.y - 40000))};
+			Vec2i64 g{lo.x + 20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.x - lo.x - 40000)),
+					  lo.y + 20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.y - lo.y - 40000))};
+			if (colony != Colony::Anywhere) {
+				const std::int64_t back = colony == Colony::NearSide || colony == Colony::ChunkSide ? 12000 : (chunks ? (mid - lo.x) / 2 : 32000);
+				g.x						= mid - back + static_cast<std::int64_t>(rng() % 2000) - 1000;
+				if (chunks) {
+					g.y = (lo.y + hi.y) / 2 + static_cast<std::int64_t>(rng() % 40000) - 20000;
+				}
+			}
 			if (walkable(g)) {
 				s.goals.push_back(g);
 			}
@@ -856,9 +896,9 @@ namespace {
 	// The game's flora price: trees cost 50 times their length; anything else stays blocked.
 	constexpr TagPrice kTreePrices[] = {{kProvenanceTree, 50.0}};
 
-	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p, Between between) {
+	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p, Between between, Colony colony = Colony::Anywhere) {
 		RequestShape s;
-		loadRequestShape(s, f);
+		loadRequestShape(s, f, colony);
 		BeliefFilter belief;
 		if (p == Pricing::Trees) {
 			belief.prices = kTreePrices;
@@ -1149,6 +1189,15 @@ BENCHMARK_CAPTURE(BM_PathBuilt, realRings, Fixture::RealRings)->Unit(benchmark::
 #define REQUEST_ROWS(name, fixture)                                                                                                          	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None, Between::Nothing)->UseManualTime()->Unit(benchmark::kMicrosecond);  	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees, Between::Nothing)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced_otherMesh, fixture, Pricing::None, Between::OtherMesh)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced_otherMesh, fixture, Pricing::Trees, Between::OtherMesh)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced_cold, fixture, Pricing::None, Between::TwoOtherMeshes)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced_cold, fixture, Pricing::Trees, Between::TwoOtherMeshes)->UseManualTime()->Unit(benchmark::kMicrosecond)
 REQUEST_ROWS(control, Fixture::Control);
 REQUEST_ROWS(realRings, Fixture::RealRings);
+#define COLONY_ROWS(name, fixture, colony)                                                                                                                       \
+	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None, Between::Nothing, colony)->UseManualTime()->Unit(benchmark::kMicrosecond); \
+	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees, Between::Nothing, colony)->UseManualTime()->Unit(benchmark::kMicrosecond)
+COLONY_ROWS(control_middle, Fixture::Control, Colony::Middle);
+COLONY_ROWS(control_side12, Fixture::Control, Colony::NearSide);
+COLONY_ROWS(realRings_middle, Fixture::RealRings, Colony::Middle);
+COLONY_ROWS(realRings_side12, Fixture::RealRings, Colony::NearSide);
+COLONY_ROWS(realRings_chunkMiddle, Fixture::RealRings, Colony::ChunkMiddle);
+COLONY_ROWS(realRings_chunkSide12, Fixture::RealRings, Colony::ChunkSide);
 BENCHMARK(BM_SealedGoal)->Unit(benchmark::kMicrosecond);
 
 BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_structural, Fixture::ManyTrees, false)->Unit(benchmark::kMillisecond);

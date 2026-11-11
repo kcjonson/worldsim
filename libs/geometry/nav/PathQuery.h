@@ -39,10 +39,11 @@ namespace geometry::nav {
 		// What the walk costs: its length, with each piece through a priced face weighted
 		// by its multiplier, each run of priced faces at least its least multiplier over
 		// the disc's diameter (a disc that enters priced ground overlaps it that far), and a
-		// squeeze past detail charged its price over at most the disc's diameter of the
-		// walk. Equal to the length when nothing priced is crossed. It is the cost of the
-		// returned path, the corridor's taut walk; inside a corridor the path does not
-		// bend away from priced faces to save cost.
+		// squeeze past detail charged its price over the chord the disc cuts at the gap's
+		// half-width, the least it overlaps what narrows the gap. Equal to the length when
+		// nothing priced is crossed. It is the cost of the returned path, the corridor's
+		// taut walk; inside a corridor the path does not bend away from priced faces to
+		// save cost.
 		double cost = 0.0;
 		// The walk runs through a face crossed at a price (flora it pushes through, a
 		// waiting mover's footprint): the caller acts on it before the mover sets off.

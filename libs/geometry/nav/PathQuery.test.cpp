@@ -1288,20 +1288,30 @@ namespace {
 
 } // namespace
 
-// Walks that wrap a wall's end to reach its far side, against the referee. A goal label
-// pulled exactly kept out a newcomer by its funnel's reach, a bound, though the
-// newcomer's walk was shorter; this layout held such a walk.
+// Walks round a wall and posts against the referee, over many layouts: the shortest walk
+// often wraps the wall's end to reach its far side. Two ways the search kept a longer
+// one: a goal label pulled exactly kept out a newcomer by its funnel's reach, a bound,
+// though the newcomer's walk was shorter (seed 238); and a cone restarted at a corner
+// past the next portal, which over-scored corridors that wrap (seeds 7, 8, 14, 17, 20).
+// Layouts whose rects touch are skipped: the referee walks between touching rects, the
+// mesh does not.
 TEST(PathQuery, ShortestWalksWrapWallEnds) {
-	int checked = 0;
-	for (const std::uint32_t seed : {238u}) {
+	int	   checked = 0;
+	int	   longer  = 0;
+	double worst   = 0.0;
+	for (std::uint32_t seed = 0; seed < 300; ++seed) {
 		std::mt19937			rng(seed);
 		const std::vector<Rect> rects = wallAndPosts(rng);
+		bool					touch = false;
 		for (std::size_t i = 0; i < rects.size(); ++i) {
 			for (std::size_t j = 0; j < i; ++j) {
 				const Rect& p = rects[i];
 				const Rect& q = rects[j];
-				ASSERT_TRUE(p.x1 < q.x0 || q.x1 < p.x0 || p.y1 < q.y0 || q.y1 < p.y0) << "seed " << seed << ": rects touch";
+				touch		  = touch || !(p.x1 < q.x0 || q.x1 < p.x0 || p.y1 < q.y0 || q.y1 < p.y0);
 			}
+		}
+		if (touch) {
+			continue;
 		}
 		const NavMesh m = buildRefereeMesh(rects);
 		for (int pair = 0; pair < 20; ++pair) {
@@ -1317,11 +1327,16 @@ TEST(PathQuery, ShortestWalksWrapWallEnds) {
 				continue;
 			}
 			const PathResult walk = pathThrough(m, a, b, 0);
+			const double	 exact = refereeLength(rects, a, b);
 			ASSERT_TRUE(walk.reachable);
-			EXPECT_NEAR(walkLength(walk), refereeLength(rects, a, b), 4.0)
-				<< "seed " << seed << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
+			EXPECT_NEAR(walkLength(walk), exact, 4.0) << "seed " << seed << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
 			++checked;
+			longer += walkLength(walk) > exact + 4.0 ? 1 : 0;
+			worst = std::max(worst, (walkLength(walk) - exact) / exact);
 		}
 	}
-	EXPECT_GT(checked, 10);
+	EXPECT_GT(checked, 2000);
+	::testing::Test::RecordProperty("pairs", checked);
+	::testing::Test::RecordProperty("longer", longer);
+	::testing::Test::RecordProperty("worstExcessPermille", std::to_string(1000.0 * worst));
 }

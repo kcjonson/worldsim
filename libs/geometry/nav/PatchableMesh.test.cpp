@@ -1674,6 +1674,57 @@ TEST(PatchableMesh, OneRefreshServesManyPatches) {
 	EXPECT_TRUE(mesh.validate().empty()) << mesh.validate();
 }
 
+// The refresh walks out from where patches changed the mesh, so it must see every kind of
+// change left pending at once: ground removed (its neighbours' far side gone, no fresh
+// triangle beside them), ground added, and patches that re-derive triangles an earlier
+// pending patch made. One refresh after all of them gives widths a fresh search agrees
+// with, detail tags included.
+TEST(PatchableMesh, OneRefreshServesRemovedGroundAndReplacedTriangles) {
+	const Fixture fixture = realRingsFixture();
+	PatchableMesh mesh({.maxBoundsEdgeMm = 16000, .detailTags = {kTree}});
+	Vec2i64		  lo;
+	Vec2i64		  hi;
+	lo = hi = fixture.base.front().ring.front();
+	for (const Vec2i64& p : fixture.base.front().ring) {
+		lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+		hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+	}
+	const std::int64_t side = hi.x - lo.x;
+	PatchEdits		   base;
+	base.adds = fixture.base;
+	base.adds.insert(base.adds.end(), fixture.trees.begin(), fixture.trees.end());
+	base.adds.push_back(bounds(rect(hi.x, lo.y, hi.x + side, hi.y))); // a neighbour square
+	const PatchReport first = mesh.applyPatch(base);
+	mesh.refreshWidths();
+	ASSERT_TRUE(mesh.validate().empty()) << mesh.validate();
+	const RingId neighbour = first.added.back();
+
+	// A tree beside the shared side, then the same ground re-derived by two more patches.
+	PatchEdits addTree;
+	addTree.adds.push_back(blocked(rect(hi.x - 1500, (lo.y + hi.y) / 2, hi.x - 900, (lo.y + hi.y) / 2 + 600)));
+	const RingId tree = mesh.applyPatch(addTree).added.front();
+	EXPECT_FALSE(mesh.widthsCurrent());
+	PatchEdits moveTree;
+	moveTree.moves.push_back({tree, rect(hi.x - 1200, (lo.y + hi.y) / 2 + 300, hi.x - 600, (lo.y + hi.y) / 2 + 900)});
+	mesh.applyPatch(moveTree);
+	PatchEdits removeTrees;
+	removeTrees.removes.push_back(first.added[fixture.base.size()]);
+	removeTrees.removes.push_back(first.added[fixture.base.size() + 1]);
+	mesh.applyPatch(removeTrees);
+	// The neighbour square goes: ground beside the shared side loses its far side.
+	PatchEdits removeGround;
+	removeGround.removes.push_back(neighbour);
+	mesh.applyPatch(removeGround);
+	// And a new square comes back further out, joined by nothing.
+	PatchEdits addGround;
+	addGround.adds.push_back(bounds(rect(hi.x + side, lo.y, hi.x + 2 * side, hi.y)));
+	mesh.applyPatch(addGround);
+	EXPECT_FALSE(mesh.widthsCurrent());
+	mesh.refreshWidths();
+	EXPECT_TRUE(mesh.widthsCurrent());
+	EXPECT_TRUE(mesh.validate().empty()) << mesh.validate();
+}
+
 // --- Review findings ---------------------------------------------------------------
 
 // A width search's visit stamp wraps after 2^32 searches on a long-lived mesh. A wrapped
