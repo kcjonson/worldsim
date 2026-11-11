@@ -363,7 +363,10 @@ first-come). A critically hungry colonist (tier 2) ignores a routinely hungry on
 however far off that one is and whoever decided first. A work claim (a cut toward a goal) or the idle
 gather-food option does not hold food against a need, so the hungry colonist still targets that bush
 and both claim it until bumping (step 8) flags the worker; before claims both walked to it anyway, so
-nobody is worse off. The gather-food option is idle work and gives way to any holder.
+nobody is worse off. Such a held source is still the colonist's to take, but one nobody holds is
+preferred when it knows one that is reachable and ready: the search, nearest first, passes over a held
+source and comes back to the nearest held one only when nothing free is left. The gather-food option
+is idle work and gives way to any holder, so it takes the nearest free bush.
 
 The less urgent eater is not flagged (that is the rest of step 8). At its next decision it sees the
 bush held by someone at least as urgent and looks elsewhere; if it reaches the bush first it eats, and

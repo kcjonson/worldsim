@@ -1658,8 +1658,51 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(alsoHungry)->needSourceKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("BerryBush")));
 	}
 
+	// A worker cutting the nearest bush for a craft doesn't keep food from a hungry colonist, but a free
+	// bush a little farther is preferred over walking into the worker; the idle gather likewise takes
+	// the next free bush instead of showing the held one Reserved.
+	TEST_F(ChainClaimsTest, FoodNobodyHoldsIsPreferredToFoodAWorkerHolds) {
+		const glm::vec2 stationPos{0.0F, 8.0F};
+		const glm::vec2 heldBush{3.0F, 0.0F};
+		const glm::vec2 freeBush{-5.0F, 0.0F};
+		const uint32_t	berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		const uint32_t	bushId = assets::AssetRegistry::Get().getDefNameId("BerryBush");
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Berry", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, berryId);
+
+		const EntityID worker = createColonist({0.0F, 0.0F});
+		remember(worker, heldBush, "BerryBush", assets::CapabilityType::Harvestable);
+		decide(worker);
+		ASSERT_EQ(getTask(worker)->harvestTargetEntityId, hashWorldEntity(heldBush, bushId));
+
+		const EntityID hungry = createColonist({0.0F, 1.0F});
+		const EntityID idle = createColonist({0.0F, -1.0F});
+		for (EntityID colonist : {hungry, idle}) {
+			remember(colonist, heldBush, "BerryBush", assets::CapabilityType::Harvestable);
+			remember(colonist, freeBush, "BerryBush", assets::CapabilityType::Harvestable);
+		}
+		world->getComponent<NeedsComponent>(hungry)->get(NeedType::Hunger).value = 5.0F;
+		decide(hungry);
+		ASSERT_EQ(getTask(hungry)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(hungry)->needSourceKey, hashWorldEntity(freeBush, bushId));
+
+		// The idle colonist knows the worker's bush and another free one farther off.
+		const glm::vec2 otherFree{-7.0F, 0.0F};
+		world->getComponent<Memory>(idle)->forgetWorldEntity(freeBush, bushId);
+		remember(idle, otherFree, "BerryBush", assets::CapabilityType::Harvestable);
+		decide(idle);
+		bool gathersFree = false;
+		for (const EvaluatedOption& option : world->getComponent<DecisionTrace>(idle)->options) {
+			gathersFree |= option.taskType == TaskType::FulfillNeed && option.needType == NeedType::Hunger && option.threshold == 0.0F &&
+						   option.targetPosition == otherFree && option.status != OptionStatus::Reserved;
+		}
+		EXPECT_TRUE(gathersFree) << "the gather goes to the next free bush";
+	}
+
 	// =============================================================================
-	// Hungry colonists walking to food: MovementSystem and PhysicsSystem move them (no mesh: direct
+	// Hungry colonists walking to food:MovementSystem and PhysicsSystem move them (no mesh: direct
 	// steering), and a berry bush regrows once cut, so each bush feeds once.
 	// =============================================================================
 

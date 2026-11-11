@@ -1826,8 +1826,10 @@ namespace ecs {
 		// to show who holds it. Only an eater at least as urgent holds it: a critically hungry colonist
 		// ignores a routinely hungry one's claim, and between equal tiers the first to claim keeps it.
 		// Work claims (a cut for a goal, the idle gather) don't hold food against a hungry colonist: a
-		// need's claim is one harvest it will eat, and nothing else may starve it. The gather option is
-		// idle work and does give way to any holder of the source it picks.
+		// need's claim is one harvest it will eat, and nothing else may starve it. Still, a source nobody
+		// holds is preferred to one held by such a claim when one is known, reachable, and ready, so the
+		// search goes on past a held one and comes back to it only when nothing free is left. That also
+		// gives the gather option, which is idle work and gives way to any holder, the nearest free bush.
 		const ClaimExclusion self = ClaimExclusion::of(currentTask);
 		const int			 hungerTier = needTier(needs.get(NeedType::Hunger));
 		const auto			 eats = [hungerTier](const ClaimHolder& holder) {
@@ -1837,6 +1839,7 @@ namespace ecs {
 		std::optional<KnownWorldEntity> foodSource;
 		std::optional<KnownWorldEntity> regrowingFood;
 		std::optional<KnownWorldEntity> reservedFood;
+		std::optional<KnownWorldEntity> heldFood;
 		EntityID						reservedFoodHolder = kInvalidEntity;
 		if (!packHasFood) {
 			const double now = m_simulationNow;
@@ -1877,9 +1880,20 @@ namespace ecs {
 							}
 							return false;
 						}
+						// Held by someone it need not give way to (a worker, the idle gather, a less urgent
+						// eater): kept in case nothing free is known, so the two don't converge on one bush.
+						if (m_claims.useHolder({.kind = TargetKind::WorldKey, .key = sourceKey}, self).has_value()) {
+							if (!heldFood.has_value()) {
+								heldFood = *known;
+							}
+							return false;
+						}
 						return true;
 					}
 				);
+				if (!foodSource.has_value()) {
+					foodSource = heldFood;
+				}
 				sourceReach.foodWait.reset();
 				if (!foodSource.has_value() && everyCandidateRegrowing && firstReadyAt > now &&
 					firstReadyAt < std::numeric_limits<double>::infinity()) {
