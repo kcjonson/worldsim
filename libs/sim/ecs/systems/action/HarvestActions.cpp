@@ -32,8 +32,11 @@ namespace ecs {
 		/// remembers it under). Returns the entity id and its live ResourceStack, so a drained pile
 		/// is removed by exact id.
 		[[nodiscard]] LoosePile findLoosePile(World* world, const LoosePileIndex& piles, uint32_t defNameId, glm::vec2 pos) {
-			const EntityID entity = piles.find(defNameId, pos);
-			if (world == nullptr || !world->isAlive(entity)) {
+			if (world == nullptr) {
+				return {};
+			}
+			const EntityID entity = piles.find(*world, defNameId, pos);
+			if (entity == kInvalidEntity) {
 				return {};
 			}
 			ResourceStack* stack = world->getComponent<ResourceStack>(entity);

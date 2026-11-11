@@ -5,9 +5,10 @@
 //
 // Layout: one flat entry array, plus an open-addressed table from a claim key to the head of an
 // intrusive chain of the entries under that key. Keys are (Use, target), (SourceQuantity, target,
-// item), (Slot, target, slotIndex), (InFlight, root, item), and for inbound (destination, item) to a
-// group whose chain holds that item's entries, with the destination's groups chained off
-// (destination) so the slot query walks one group per item. Every query is one probe plus a walk of
+// item), (Slot, target), (InFlight, root, item), and for inbound (destination, item) to a group whose
+// chain holds that item's entries, with the destination's groups chained off (destination) so the
+// slot query walks one group per item. A second chain links each instance's entries, so a rewrite
+// within an update retires exactly that instance's entries. Every query is one probe plus a walk of
 // the entries under one key. Table slots carry a generation, so a rebuild empties the table without
 // touching it; entries, groups, and table keep their storage across rebuilds.
 
@@ -67,8 +68,18 @@ namespace ecs {
 		void rebuild(World& world);
 
 		/// Add `task`'s current claims, for a selection made after the last rebuild. Its suspended
-		/// record is not appended: a record's claims were indexed when they were the current task's.
+		/// record is not appended: a record's claims were indexed when they were the current task's,
+		/// and suspend() rewrites them. An instance already in the index is retired first, so an
+		/// adopted record's instance is never counted twice.
 		void append(EntityID colonist, const Task& task);
+
+		/// The current task of `colonist` has just become its suspended record, with smaller or equal
+		/// claims under the same instance id: replace that instance's entries with the record's.
+		void suspend(EntityID colonist, const Task& task);
+
+		/// Drop every entry of `instanceId` (a discarded record, or a task released outside an AI
+		/// update) until the next rebuild. Unknown ids are ignored.
+		void retire(uint64_t instanceId);
 
 		/// Units of `item` other tasks will take from `source`.
 		[[nodiscard]] uint32_t sourceClaimed(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude) const;
@@ -87,9 +98,21 @@ namespace ecs {
 		/// The highest-ranked other holder of a Use target, if any.
 		[[nodiscard]] std::optional<ClaimHolder> useHolder(ClaimTarget target, ClaimExclusion exclude) const;
 
-		/// The highest-ranked other holder of slot `slotIndex` on `target`, if any.
+		/// The highest-ranked other holder of slot `slotIndex` on `target`, if any. kAnySlot, the
+		/// target's one unnumbered slot, conflicts with every slot on the target, numbered or not.
 		[[nodiscard]] std::optional<ClaimHolder> slotHolder(ClaimTarget target, uint16_t slotIndex, ClaimExclusion exclude) const;
 
+		/// Every claim still in the index (retired ones left out), with its holder.
+		template <typename Fn>
+		void forEachClaim(Fn&& fn) const {
+			for (const Entry& entry : entries) {
+				if (!entry.retired) {
+					fn(entry.claim, entry.holder);
+				}
+			}
+		}
+
+		/// Entries held, retired ones included.
 		[[nodiscard]] size_t size() const { return entries.size(); }
 
 #ifdef DEVELOPMENT_BUILD
@@ -103,12 +126,14 @@ namespace ecs {
 	  private:
 		static constexpr uint32_t kNone = 0xFFFFFFFF;
 
-		enum class KeyTag : uint8_t { Use, Source, Slot, InboundItem, InboundDestination, InFlight };
+		enum class KeyTag : uint8_t { Use, Source, Slot, InboundItem, InboundDestination, InFlight, Instance };
 
 		struct Entry {
 			Claim		claim;
 			ClaimHolder holder;
 			uint32_t	next = kNone;
+			uint32_t	nextOfInstance = kNone;
+			bool		retired = false;
 		};
 
 		struct InboundGroup {
@@ -117,14 +142,18 @@ namespace ecs {
 			uint32_t nextGroup = kNone;
 		};
 
+		// Built only through keyOf, which names every field, so no key falls back to a default key space.
 		struct Key {
 			uint64_t   target = 0;
-			uint32_t   sub = 0; // item, or slot index
+			uint32_t   sub = 0; // item, or 0
 			KeyTag	   tag = KeyTag::Use;
-			TargetKind targetKind = TargetKind::Entity;
+			TargetKind targetKind = TargetKind::WorldKey;
 
 			bool operator==(const Key&) const = default;
 		};
+		[[nodiscard]] static Key keyOf(KeyTag tag, TargetKind targetKind, uint64_t target, uint32_t sub) {
+			return {.target = target, .sub = sub, .tag = tag, .targetKind = targetKind};
+		}
 
 		struct Bucket {
 			Key		 key;
@@ -134,6 +163,9 @@ namespace ecs {
 
 		[[nodiscard]] static uint64_t bucketOf(const Key& key);
 		void						  add(const Claim& claim, const ClaimHolder& holder);
+		void						  addCurrent(EntityID colonist, const Task& task);
+		void						  addSuspended(EntityID colonist, const Task& task);
+		[[nodiscard]] static Key	  keyFor(const Claim& claim);
 		void clearAll();
 
 		/// The value under `key`, or kNone.
@@ -145,13 +177,22 @@ namespace ecs {
 		template <typename Fn>
 		void forEachUnder(const Key& key, ClaimExclusion exclude, Fn&& fn) const {
 			for (uint32_t index = find(key); index != kNone; index = entries[index].next) {
-				if (!exclude.excludes(entries[index].holder.instanceId)) {
+				if (!entries[index].retired && !exclude.excludes(entries[index].holder.instanceId)) {
 					fn(entries[index]);
 				}
 			}
 		}
 
-		[[nodiscard]] std::optional<ClaimHolder> topHolder(const Key& key, ClaimExclusion exclude) const;
+		template <typename Accept>
+		[[nodiscard]] std::optional<ClaimHolder> topHolder(const Key& key, ClaimExclusion exclude, Accept&& accept) const {
+			std::optional<ClaimHolder> best;
+			forEachUnder(key, exclude, [&](const Entry& entry) {
+				if (accept(entry.claim) && (!best || outranks(entry.holder, *best))) {
+					best = entry.holder;
+				}
+			});
+			return best;
+		}
 
 		std::vector<Entry>		  entries;
 		std::vector<InboundGroup> groups;
@@ -163,11 +204,12 @@ namespace ecs {
 	template <typename StackRoomFn>
 	uint32_t ClaimIndex::inboundSlots(EntityID destination, ClaimExclusion exclude, StackRoomFn&& stackRoom) const {
 		uint64_t slots = 0;
-		for (uint32_t group = find({.target = destination, .tag = KeyTag::InboundDestination}); group != kNone; group = groups[group].nextGroup) {
+		for (uint32_t group = find(keyOf(KeyTag::InboundDestination, TargetKind::Entity, destination, 0)); group != kNone;
+			 group = groups[group].nextGroup) {
 			uint64_t quantity = 0;
 			for (uint32_t index = groups[group].firstEntry; index != kNone; index = entries[index].next) {
-				if (!exclude.excludes(entries[index].holder.instanceId)) {
-					quantity += entries[index].claim.quantity;
+				if (!entries[index].retired && !exclude.excludes(entries[index].holder.instanceId)) {
+					quantity += entries[index].claim.quantity();
 				}
 			}
 			const InboundStackRoom room = stackRoom(groups[group].itemDefNameId);

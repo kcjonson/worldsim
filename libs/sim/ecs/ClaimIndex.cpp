@@ -46,69 +46,100 @@ namespace ecs {
 	void ClaimIndex::rebuild(World& world) {
 		clearAll();
 		for (auto [colonist, task] : world.view<Task>()) {
-			append(colonist, task);
-			if (task.suspended) {
-				// A record has no tier of its own; it ranks with the task holding it, and possessed
-				// goods are never bumped anyway.
-				const ClaimHolder holder{
-					.colonist = colonist,
-					.instanceId = task.suspended->instanceId,
-					.claimSeq = task.suspended->claimSeq,
-					.tier = tierOf(task),
-					.suspended = true,
-				};
-				for (const Claim& claim : task.suspended->claims) {
-					add(claim, holder);
-				}
-			}
+			addCurrent(colonist, task);
+			addSuspended(colonist, task);
 		}
 	}
 
 	void ClaimIndex::append(EntityID colonist, const Task& task) {
+		retire(task.instanceId);
+		addCurrent(colonist, task);
+	}
+
+	void ClaimIndex::suspend(EntityID colonist, const Task& task) {
+		if (task.suspended) {
+			retire(task.suspended->instanceId);
+			addSuspended(colonist, task);
+		}
+	}
+
+	void ClaimIndex::retire(uint64_t instanceId) {
+		if (instanceId == 0) {
+			return;
+		}
+		for (uint32_t index = find(keyOf(KeyTag::Instance, TargetKind::Entity, instanceId, 0)); index != kNone;
+			 index = entries[index].nextOfInstance) {
+			entries[index].retired = true;
+		}
+	}
+
+	void ClaimIndex::addCurrent(EntityID colonist, const Task& task) {
 		const ClaimHolder holder{.colonist = colonist, .instanceId = task.instanceId, .claimSeq = task.claimSeq, .tier = tierOf(task)};
 		for (const Claim& claim : task.claims) {
 			add(claim, holder);
 		}
 	}
 
+	void ClaimIndex::addSuspended(EntityID colonist, const Task& task) {
+		if (!task.suspended) {
+			return;
+		}
+		// A record has no tier of its own; it ranks with the task holding it, and possessed goods are
+		// never bumped anyway.
+		const ClaimHolder holder{
+			.colonist = colonist,
+			.instanceId = task.suspended->instanceId,
+			.claimSeq = task.suspended->claimSeq,
+			.tier = tierOf(task),
+			.suspended = true,
+		};
+		for (const Claim& claim : task.suspended->claims) {
+			add(claim, holder);
+		}
+	}
+
+	ClaimIndex::Key ClaimIndex::keyFor(const Claim& claim) {
+		switch (claim.kind()) {
+			case ClaimKind::Use:
+				return keyOf(KeyTag::Use, claim.targetKind(), claim.target(), 0);
+			case ClaimKind::SourceQuantity:
+				return keyOf(KeyTag::Source, claim.targetKind(), claim.target(), claim.itemDefNameId());
+			case ClaimKind::Slot:
+				// Every slot of a target shares one key, so the unnumbered slot sees the numbered ones.
+				return keyOf(KeyTag::Slot, claim.targetKind(), claim.target(), 0);
+			case ClaimKind::InFlight:
+				return keyOf(KeyTag::InFlight, claim.targetKind(), claim.target(), claim.itemDefNameId());
+			case ClaimKind::Inbound:
+				return keyOf(KeyTag::InboundItem, claim.targetKind(), claim.target(), claim.itemDefNameId());
+		}
+		return keyOf(KeyTag::Use, claim.targetKind(), claim.target(), 0);
+	}
+
 	void ClaimIndex::add(const Claim& claim, const ClaimHolder& holder) {
 		const auto entryIndex = static_cast<uint32_t>(entries.size());
 		entries.push_back({.claim = claim, .holder = holder});
 
-		Key key{.target = claim.target, .targetKind = claim.targetKind};
-		switch (claim.kind) {
-			case ClaimKind::Use:
-				key.tag = KeyTag::Use;
-				break;
-			case ClaimKind::SourceQuantity:
-				key.tag = KeyTag::Source;
-				key.sub = claim.itemDefNameId;
-				break;
-			case ClaimKind::Slot:
-				key.tag = KeyTag::Slot;
-				key.sub = claim.slotIndex;
-				break;
-			case ClaimKind::InFlight:
-				key.tag = KeyTag::InFlight;
-				key.sub = claim.itemDefNameId;
-				break;
-			case ClaimKind::Inbound: {
-				key.tag = KeyTag::InboundItem;
-				key.sub = claim.itemDefNameId;
-				// Each findOrInsert may grow the table, so no bucket reference outlives the next insert.
-				uint32_t groupIndex = find(key);
-				if (groupIndex == kNone) {
-					groupIndex = static_cast<uint32_t>(groups.size());
-					uint32_t& firstGroup = findOrInsert({.target = claim.target, .tag = KeyTag::InboundDestination, .targetKind = claim.targetKind});
-					groups.push_back({.itemDefNameId = claim.itemDefNameId, .nextGroup = firstGroup});
-					firstGroup = groupIndex;
-					findOrInsert(key) = groupIndex;
-				}
-				InboundGroup& group = groups[groupIndex];
-				entries[entryIndex].next = group.firstEntry;
-				group.firstEntry = entryIndex;
-				return;
+		// Each findOrInsert may grow the table, so no bucket reference outlives the next insert.
+		if (holder.instanceId != 0) {
+			uint32_t& instanceHead = findOrInsert(keyOf(KeyTag::Instance, TargetKind::Entity, holder.instanceId, 0));
+			entries[entryIndex].nextOfInstance = instanceHead;
+			instanceHead = entryIndex;
+		}
+
+		const Key key = keyFor(claim);
+		if (claim.kind() == ClaimKind::Inbound) {
+			uint32_t groupIndex = find(key);
+			if (groupIndex == kNone) {
+				groupIndex = static_cast<uint32_t>(groups.size());
+				uint32_t& firstGroup = findOrInsert(keyOf(KeyTag::InboundDestination, claim.targetKind(), claim.target(), 0));
+				groups.push_back({.itemDefNameId = claim.itemDefNameId(), .nextGroup = firstGroup});
+				firstGroup = groupIndex;
+				findOrInsert(key) = groupIndex;
 			}
+			InboundGroup& group = groups[groupIndex];
+			entries[entryIndex].next = group.firstEntry;
+			group.firstEntry = entryIndex;
+			return;
 		}
 		uint32_t& head = findOrInsert(key);
 		entries[entryIndex].next = head;
@@ -157,32 +188,22 @@ namespace ecs {
 		}
 	}
 
-	std::optional<ClaimHolder> ClaimIndex::topHolder(const Key& key, ClaimExclusion exclude) const {
-		std::optional<ClaimHolder> best;
-		forEachUnder(key, exclude, [&](const Entry& entry) {
-			if (!best || outranks(entry.holder, *best)) {
-				best = entry.holder;
-			}
-		});
-		return best;
-	}
-
 	uint32_t ClaimIndex::sourceClaimed(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude) const {
 		uint64_t total = 0;
-		forEachUnder({.target = source.key, .sub = itemDefNameId, .tag = KeyTag::Source, .targetKind = source.kind}, exclude,
-					 [&](const Entry& entry) { total += entry.claim.quantity; });
+		forEachUnder(keyOf(KeyTag::Source, source.kind, source.key, itemDefNameId), exclude,
+					 [&](const Entry& entry) { total += entry.claim.quantity(); });
 		return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
 	}
 
 	uint32_t ClaimIndex::inboundItems(EntityID destination, uint32_t itemDefNameId, ClaimExclusion exclude) const {
-		const uint32_t group = find({.target = destination, .sub = itemDefNameId, .tag = KeyTag::InboundItem});
+		const uint32_t group = find(keyOf(KeyTag::InboundItem, TargetKind::Entity, destination, itemDefNameId));
 		if (group == kNone) {
 			return 0;
 		}
 		uint64_t total = 0;
 		for (uint32_t index = groups[group].firstEntry; index != kNone; index = entries[index].next) {
-			if (!exclude.excludes(entries[index].holder.instanceId)) {
-				total += entries[index].claim.quantity;
+			if (!entries[index].retired && !exclude.excludes(entries[index].holder.instanceId)) {
+				total += entries[index].claim.quantity();
 			}
 		}
 		return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
@@ -190,17 +211,19 @@ namespace ecs {
 
 	uint32_t ClaimIndex::inFlight(uint64_t rootGoalId, uint32_t itemDefNameId, ClaimExclusion exclude) const {
 		uint64_t total = 0;
-		forEachUnder({.target = rootGoalId, .sub = itemDefNameId, .tag = KeyTag::InFlight, .targetKind = TargetKind::Goal}, exclude,
-					 [&](const Entry& entry) { total += entry.claim.quantity; });
+		forEachUnder(keyOf(KeyTag::InFlight, TargetKind::Goal, rootGoalId, itemDefNameId), exclude,
+					 [&](const Entry& entry) { total += entry.claim.quantity(); });
 		return total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
 	}
 
 	std::optional<ClaimHolder> ClaimIndex::useHolder(ClaimTarget target, ClaimExclusion exclude) const {
-		return topHolder({.target = target.key, .tag = KeyTag::Use, .targetKind = target.kind}, exclude);
+		return topHolder(keyOf(KeyTag::Use, target.kind, target.key, 0), exclude, [](const Claim&) { return true; });
 	}
 
 	std::optional<ClaimHolder> ClaimIndex::slotHolder(ClaimTarget target, uint16_t slotIndex, ClaimExclusion exclude) const {
-		return topHolder({.target = target.key, .sub = slotIndex, .tag = KeyTag::Slot, .targetKind = target.kind}, exclude);
+		return topHolder(keyOf(KeyTag::Slot, target.kind, target.key, 0), exclude, [slotIndex](const Claim& claim) {
+			return slotIndex == kAnySlot || claim.slotIndex() == kAnySlot || claim.slotIndex() == slotIndex;
+		});
 	}
 
 #ifdef DEVELOPMENT_BUILD
@@ -256,10 +279,10 @@ namespace ecs {
 			if (task.suspended) {
 				live.push_back(task.suspended->instanceId);
 			}
-			const auto unpairedInbound = [](const ClaimList& claims) {
+			const auto unpairedInbound = [](const auto& claims) {
 				return std::any_of(claims.begin(), claims.end(), [&](const Claim& inbound) {
-					return inbound.kind == ClaimKind::Inbound && std::none_of(claims.begin(), claims.end(), [&](const Claim& other) {
-							   return other.kind == ClaimKind::InFlight && other.itemDefNameId == inbound.itemDefNameId;
+					return inbound.kind() == ClaimKind::Inbound && std::none_of(claims.begin(), claims.end(), [&](const Claim& other) {
+							   return other.kind() == ClaimKind::InFlight && other.itemDefNameId() == inbound.itemDefNameId();
 						   });
 				});
 			};
@@ -274,8 +297,10 @@ namespace ecs {
 			std::vector<ClaimIdentity> raw;
 			raw.reserve(index.entries.size());
 			for (const Entry& entry : index.entries) {
-				raw.push_back({entry.holder.instanceId, entry.claim.target, entry.claim.itemDefNameId, entry.claim.slotIndex,
-							   entry.claim.kind, entry.claim.targetKind, entry.claim.quantity});
+				if (!entry.retired) {
+					raw.push_back({entry.holder.instanceId, entry.claim.target(), entry.claim.itemDefNameId(), entry.claim.slotIndex(),
+								   entry.claim.kind(), entry.claim.targetKind(), entry.claim.quantity()});
+				}
 			}
 			return identities(raw);
 		};

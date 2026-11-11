@@ -6,7 +6,9 @@
 // makeLoosePile and leave it through destroyWorldEntity (WorldSource.h), which the game and tests share.
 
 #include "EntityID.h"
+#include "World.h"
 #include "components/Memory.h"
+#include "components/ResourceStack.h"
 
 #include <glm/vec2.hpp>
 
@@ -43,10 +45,18 @@ namespace ecs {
 			m_keyOf.erase(it);
 		}
 
-		/// A pile of `defNameId` filed at `position`'s world key, or kInvalidEntity.
-		[[nodiscard]] EntityID find(uint32_t defNameId, glm::vec2 position) const {
-			const auto it = m_byKey.find(hashWorldEntity(position, defNameId));
-			return it == m_byKey.end() ? kInvalidEntity : it->second;
+		/// A pile of `defNameId` filed at `position`'s world key that still holds something, or
+		/// kInvalidEntity. A pile drained earlier in the same update stays filed until its removal is
+		/// drained, and must not hide a live pile filed under the same cell.
+		[[nodiscard]] EntityID find(const World& world, uint32_t defNameId, glm::vec2 position) const {
+			auto [first, last] = m_byKey.equal_range(hashWorldEntity(position, defNameId));
+			for (; first != last; ++first) {
+				const ResourceStack* stack = world.isAlive(first->second) ? world.getComponent<ResourceStack>(first->second) : nullptr;
+				if (stack != nullptr && stack->quantity > 0) {
+					return first->second;
+				}
+			}
+			return kInvalidEntity;
 		}
 
 		[[nodiscard]] size_t size() const { return m_byKey.size(); }

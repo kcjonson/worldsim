@@ -2192,7 +2192,7 @@ TEST_F(LoosePileHaulTest, TwoPilesInOneCellDrainOneAfterTheOther) {
 	EXPECT_FALSE(world->isAlive(drained));
 	ASSERT_TRUE(world->isAlive(survivor));
 	EXPECT_EQ(world->getComponent<ResourceStack>(survivor)->quantity, 5U) << "the other pile is untouched";
-	EXPECT_EQ(piles.find(woodId, pilePos), survivor) << "and still filed under the cell";
+	EXPECT_EQ(piles.find(*world, woodId, pilePos), survivor) << "and still filed under the cell";
 
 	inventory->leftHand.reset();
 	inventory->rightHand.reset();
@@ -2204,6 +2204,25 @@ TEST_F(LoosePileHaulTest, TwoPilesInOneCellDrainOneAfterTheOther) {
 	EXPECT_EQ(piles.size(), 0U);
 }
 
+// A pile drained earlier in the same update stays filed until the removal drain runs. A second pickup
+// on that cell before then lifts from the live pile beside it, not 0 from the drained one (which also
+// forgot the cell's memory entry while a live pile was still filed there).
+TEST_F(LoosePileHaulTest, DrainedPileAwaitingRemovalDoesNotHideALivePile) {
+	const glm::vec2 pilePos{1.0F, 1.0F};
+	const EntityID	drained = spawnPile(5, pilePos);
+	const EntityID	live = spawnPile(5, {pilePos.x + 0.04F, pilePos.y});
+	const uint32_t	woodId = assets::AssetRegistry::Get().getDefNameId("Wood");
+	world->getComponent<ResourceStack>(drained)->quantity = 0;
+
+	EXPECT_EQ(world->getSystem<ActionSystem>().loosePiles().find(*world, woodId, pilePos), live);
+
+	auto  colonist = createColonist(pilePos);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	pickUpPile(colonist, pilePos);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U) << "the live pile pays";
+	EXPECT_FALSE(world->isAlive(live));
+}
+
 // The game files a dropped pile and unfiles it in its deferred removal drain through the same two
 // functions this fixture uses, whatever queued the removal: a drained pile, a dev kill, or an
 // entity that was never a pile.
@@ -2213,7 +2232,7 @@ TEST_F(LoosePileHaulTest, DropFilesAPileAndTheDrainUnfilesIt) {
 	const auto&		piles = world->getSystem<ActionSystem>().loosePiles();
 
 	const EntityID pile = spawnPile(7, pilePos);
-	EXPECT_EQ(piles.find(woodId, pilePos), pile);
+	EXPECT_EQ(piles.find(*world, woodId, pilePos), pile);
 	EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 7U);
 
 	const EntityID other = world->createEntity();
@@ -2221,7 +2240,7 @@ TEST_F(LoosePileHaulTest, DropFilesAPileAndTheDrainUnfilesIt) {
 	drainRemovals();
 	EXPECT_FALSE(world->isAlive(pile));
 	EXPECT_FALSE(world->isAlive(other));
-	EXPECT_EQ(piles.find(woodId, pilePos), kInvalidEntity);
+	EXPECT_EQ(piles.find(*world, woodId, pilePos), kInvalidEntity);
 	EXPECT_EQ(piles.size(), 0U);
 }
 

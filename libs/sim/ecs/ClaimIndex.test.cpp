@@ -33,7 +33,7 @@ namespace ecs::test {
 			task.claimSeq = spec.claimSeq;
 			task.priorityTier = spec.tier;
 			for (const Claim& claim : spec.claims) {
-				task.claims.push(claim);
+				EXPECT_TRUE(task.claims.push(claim));
 			}
 			return colonist;
 		}
@@ -64,7 +64,8 @@ namespace ecs::test {
 		EXPECT_EQ(index.inFlight(kRoot, kWood, {}), 16U);
 		EXPECT_EQ(index.useHolder(kTreeTarget, {})->instanceId, 3U);
 		EXPECT_EQ(index.slotHolder(kStationTarget, kAnySlot, {})->instanceId, 4U);
-		EXPECT_FALSE(index.slotHolder(kStationTarget, 0, {}).has_value());
+		// The station's one unnumbered slot is held against every numbered slot on it too.
+		EXPECT_EQ(index.slotHolder(kStationTarget, 0, {})->instanceId, 4U);
 		// The same integer in another key space is a different target.
 		EXPECT_FALSE(index.useHolder({.kind = TargetKind::Entity, .key = kTree}, {}).has_value());
 	}
@@ -103,7 +104,9 @@ namespace ecs::test {
 		World		   world;
 		const EntityID colonist = addColonist(world, {.instanceId = 5, .claimSeq = 5, .claims = {Claim::inbound(kBox, kWood, 6), Claim::inFlight(kRoot, kWood, 6)}});
 		Task&		   task = *world.getComponent<Task>(colonist);
-		task.suspended = SuspendedWork{.instanceId = 5, .claimSeq = 5, .rootGoalId = kRoot, .itemDefNameId = kWood, .claims = task.claims};
+		task.suspended = SuspendedWork{.instanceId = 5, .claimSeq = 5, .rootGoalId = kRoot, .itemDefNameId = kWood};
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inbound(kBox, kWood, 6)));
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inFlight(kRoot, kWood, 6)));
 		task.clear();
 		ASSERT_TRUE(task.suspended.has_value());
 		task.type = TaskType::FulfillNeed;
@@ -186,7 +189,77 @@ namespace ecs::test {
 		}
 	}
 
+	// A station has one unnumbered slot; it conflicts with any numbered slot on the same target, while
+	// two numbered slots (builder positions) are held independently.
+	TEST(ClaimIndexTest, UnnumberedSlotSeesNumberedSlotsOnTheTarget) {
+		World world;
+		addColonist(world, {.instanceId = 1, .claims = {Claim::slot(kStation, 2)}});
+
+		ClaimIndex index;
+		index.rebuild(world);
+
+		EXPECT_EQ(index.slotHolder(kStationTarget, kAnySlot, {})->instanceId, 1U);
+		EXPECT_EQ(index.slotHolder(kStationTarget, 2, {})->instanceId, 1U);
+		EXPECT_FALSE(index.slotHolder(kStationTarget, 3, {}).has_value());
+
+		addColonist(world, {.instanceId = 2, .claims = {Claim::slot(kStation)}});
+		index.rebuild(world);
+		EXPECT_EQ(index.slotHolder(kStationTarget, 3, {.current = 1})->instanceId, 2U);
+	}
+
+	TEST(ClaimIndexTest, AppendReplacesAnInstanceAlreadyIndexed) {
+		World		   world;
+		const EntityID colonist = addColonist(world, {.instanceId = 5, .claims = {Claim::inbound(kBox, kWood, 6), Claim::inFlight(kRoot, kWood, 6)}});
+		ClaimIndex	   index;
+		index.rebuild(world);
+
+		// The same instance appended again (an adopted record) counts once.
+		index.append(colonist, *world.getComponent<Task>(colonist));
+		EXPECT_EQ(index.inboundItems(kBox, kWood, {}), 6U);
+		EXPECT_EQ(index.inFlight(kRoot, kWood, {}), 6U);
+
+		index.retire(5);
+		EXPECT_EQ(index.inFlight(kRoot, kWood, {}), 0U);
+		EXPECT_EQ(index.inboundSlots(kBox, {}, [](uint32_t) { return InboundStackRoom{.partialRoom = 0, .stackSize = 1}; }), 0U);
+	}
+
+	TEST(ClaimIndexTest, SuspendRewritesTheInstanceToItsRecord) {
+		World		   world;
+		const EntityID colonist = addColonist(world, {.instanceId = 5, .claimSeq = 5, .claims = {Claim::inbound(kBox, kWood, 6), Claim::inFlight(kRoot, kWood, 6)}});
+		ClaimIndex	   index;
+		index.rebuild(world);
+
+		Task& task = *world.getComponent<Task>(colonist);
+		task.suspended = SuspendedWork{.instanceId = 5, .claimSeq = 5, .rootGoalId = kRoot, .itemDefNameId = kWood};
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inbound(kBox, kWood, 4)));
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inFlight(kRoot, kWood, 4)));
+		index.suspend(colonist, task);
+		task.clear();
+
+		EXPECT_EQ(index.inboundItems(kBox, kWood, {}), 4U);
+		EXPECT_EQ(index.inFlight(kRoot, kWood, {}), 4U);
+	}
+
 #ifdef DEVELOPMENT_BUILD
+	// A rewrite to smaller claims within an update goes through suspend(), so the subset rule holds
+	// without an exception for live instances.
+	TEST(ClaimIndexValidatorTest, AcceptsASuspendWithSmallerClaims) {
+		World		   world;
+		const EntityID colonist = addColonist(world, {.instanceId = 5, .claimSeq = 5, .claims = {Claim::inbound(kBox, kWood, 6), Claim::inFlight(kRoot, kWood, 6)}});
+		ClaimIndex	   index;
+		ClaimIndex	   scratch;
+		index.rebuild(world);
+
+		Task& task = *world.getComponent<Task>(colonist);
+		task.suspended = SuspendedWork{.instanceId = 5, .claimSeq = 5, .rootGoalId = kRoot, .itemDefNameId = kWood};
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inbound(kBox, kWood, 4)));
+		ASSERT_TRUE(task.suspended->claims.push(Claim::inFlight(kRoot, kWood, 4)));
+		index.suspend(colonist, task);
+		task.clear();
+
+		EXPECT_EQ(index.findViolation(world, scratch), std::nullopt);
+	}
+
 	TEST(ClaimIndexValidatorTest, AcceptsSurplusLeftByAClearedInstance) {
 		World		   world;
 		const EntityID colonist = addColonist(world, {.instanceId = 1, .claims = {Claim::use(TargetKind::WorldKey, kTree)}});
@@ -198,7 +271,7 @@ namespace ecs::test {
 		task.clear();
 		task.type = TaskType::Haul;
 		task.instanceId = 2;
-		task.claims.push(Claim::sourceQuantity(TargetKind::WorldKey, kPile, kWood, 4));
+		ASSERT_TRUE(task.claims.push(Claim::sourceQuantity(TargetKind::WorldKey, kPile, kWood, 4)));
 		index.append(colonist, task);
 
 		EXPECT_EQ(index.findViolation(world, scratch), std::nullopt);
@@ -211,7 +284,7 @@ namespace ecs::test {
 		ClaimIndex	   scratch;
 		index.rebuild(world);
 
-		world.getComponent<Task>(colonist)->claims.push(Claim::inFlight(kRoot, kWood, 4));
+		ASSERT_TRUE(world.getComponent<Task>(colonist)->claims.push(Claim::inFlight(kRoot, kWood, 4)));
 
 		EXPECT_NE(index.findViolation(world, scratch), std::nullopt);
 	}
