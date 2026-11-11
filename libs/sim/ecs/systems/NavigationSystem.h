@@ -142,7 +142,11 @@ class NavigationSystem : public ISystem {
 	// subtree check.
 	//   false => DEFINITELY unreachable (disconnected component or bottleneck < disc).
 	//   true  => MAYBE reachable. Caller runs requestPath for certainty.
-	// A start or goal off meshed ground answers true ("can't prove unreachable").
+	// A start off meshed ground answers true ("can't prove unreachable"). A goal off meshed ground
+	// answers true while its chunk is loaded (its ground is on the way) and false otherwise: ground
+	// that is neither meshed nor loaded comes back only if a mover or the view goes there, so a goal
+	// in it is skipped like any unreachable one. The reach key moves when ground lands, so the
+	// verdict is asked again then.
 	//
 	// startRegion is 0 when the start is on meshed ground, -1 otherwise; startRegionId is 0 then,
 	// and startRegionGeneration counts the joins that patched the structural mesh, so flora

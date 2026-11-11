@@ -479,8 +479,10 @@ TEST_F(NavigationSystemTest, IsReachableTrueWhenNoMesh) {
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
 
-// A goal or start off meshed ground can't be proven unreachable, even with the start walled in.
-TEST_F(NavigationSystemTest, IsReachableTrueForUnmeshedGoal) {
+// Off meshed ground: a start can't be proven unreachable from, even walled in; a goal can't be
+// proven unreachable while its chunk is loaded (its ground is on the way), and is unreachable in
+// ground that isn't loaded either.
+TEST_F(NavigationSystemTest, IsReachableForUnmeshedGoalDependsOnItsChunk) {
 	ConstructionWorld cw;
 	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
 
@@ -492,8 +494,14 @@ TEST_F(NavigationSystemTest, IsReachableTrueForUnmeshedGoal) {
 	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
 
 	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius)) << "baseline: the closed room blocks";
-	EXPECT_TRUE(isReachable(sys, kInside, kUnmeshed, kAgentRadius)) << "an unmeshed goal can't be proven unreachable";
-	EXPECT_TRUE(isReachable(sys, kUnmeshed, kInside, kAgentRadius)) << "nor from an unmeshed start";
+	EXPECT_TRUE(isReachable(sys, kUnmeshed, kInside, kAgentRadius)) << "an unmeshed start can't be proven to reach nothing";
+	EXPECT_FALSE(isReachable(sys, kOutside, kUnmeshed, kAgentRadius)) << "a goal in ground neither meshed nor loaded";
+
+	const std::unique_ptr<world::ChunkManager> wider = readyChunks(landSampler(), {0.0F, 0.0F}, 3);
+	sys.setChunkManager(wider.get()); // chunk (3, 0) is loaded now, its ground not meshed yet
+	const glm::vec2 coming{1700.0F, 10.0F};
+	ASSERT_FALSE(sys.inSimArea(coming));
+	EXPECT_TRUE(isReachable(sys, kOutside, coming, kAgentRadius)) << "a goal whose ground is on the way";
 }
 
 // generation() bumps on the tick that first meshes ground and on every later patch.
@@ -3017,4 +3025,66 @@ TEST_F(NavigationSystemTest, ColonistMovedOffItsRouteReplansFromWhereItIs) {
 		EXPECT_EQ(task.targetPosition, goal) << where << ": the order was dropped";
 		EXPECT_LT(glm::distance(position.value, goal), 0.3F) << where << ": never got back to its goal";
 	}
+}
+
+// --- Goals in ground that isn't coming ------------------------------------------------------
+
+namespace {
+	const EvaluatedOption* thirstOption(World& world, EntityID colonist) {
+		for (const EvaluatedOption& option : world.getComponent<DecisionTrace>(colonist)->options) {
+			if (option.taskType == TaskType::FulfillNeed && option.needType == NeedType::Thirst) {
+				return &option;
+			}
+		}
+		return nullptr;
+	}
+
+	void rememberWater(World& world, EntityID colonist, glm::vec2 at) {
+		world.getComponent<Memory>(colonist)->rememberWorldEntity(
+			at, kTestWaterDefId, static_cast<std::uint16_t>(1U << static_cast<std::size_t>(assets::CapabilityType::Drinkable)));
+	}
+} // namespace
+
+// A thirsty colonist whose only known water lies in ground that is neither meshed nor loaded (a
+// chunk dropped long ago, or never visited): the water reads unreachable, so the colonist doesn't
+// hold for it; the thirst option finds no reachable source, as for any unreachable one.
+TEST_F(NavigationSystemTest, WaterInGroundThatIsntComingIsSkipped) {
+	WalkRig rig({0.0F, 0.0F});
+	rig.start();
+	ASSERT_FALSE(rig.nav.inSimArea(kUnmeshed));
+	ASSERT_EQ(landChunks()->getChunk(world::worldToChunk({kUnmeshed.x, kUnmeshed.y})), nullptr) << "not loaded";
+	EXPECT_FALSE(rig.nav.reaches(rig.nav.reachFrom({0.0F, 0.0F}, kAgentRadius), kUnmeshed));
+
+	const EntityID colonist = needyColonist(rig, {0.0F, 0.0F}, NeedType::Thirst, 10.0F);
+	rememberWater(rig.world, colonist, kUnmeshed);
+	const Task& task = *rig.world.getComponent<Task>(colonist);
+	for (int i = 0; i < 20; ++i) {
+		rig.world.update(0.1F);
+		ASSERT_NE(task.navState, NavState::AwaitingMesh) << "tick " << i << ": held for water in ground that isn't coming";
+		ASSERT_NE(task.targetPosition, kUnmeshed) << "tick " << i;
+	}
+	const EvaluatedOption* thirst = thirstOption(rig.world, colonist);
+	ASSERT_NE(thirst, nullptr);
+	EXPECT_NE(thirst->status, OptionStatus::Selected) << "no reachable source";
+}
+
+// Knowing that nearer water and a farther source on meshed ground, the colonist takes the farther.
+TEST_F(NavigationSystemTest, FartherReachableWaterBeatsNearerWaterInGroundThatIsntComing) {
+	WalkRig rig({1000.0F, 0.0F});
+	rig.start();
+	const glm::vec2 gone{1700.0F, 0.0F};   // chunk (3, 0), beyond the loaded radius
+	const glm::vec2 meshed{-900.0F, 0.0F}; // chunk (-2, 0)
+	ASSERT_EQ(landChunks()->getChunk(world::worldToChunk({gone.x, gone.y})), nullptr);
+	ASSERT_TRUE(rig.nav.inSimArea(meshed));
+
+	const EntityID colonist = needyColonist(rig, {1000.0F, 0.0F}, NeedType::Thirst, 10.0F);
+	rememberWater(rig.world, colonist, gone);
+	rememberWater(rig.world, colonist, meshed);
+	rig.world.update(0.1F);
+	const EvaluatedOption* thirst = thirstOption(rig.world, colonist);
+	ASSERT_NE(thirst, nullptr);
+	EXPECT_EQ(thirst->status, OptionStatus::Selected);
+	ASSERT_TRUE(thirst->targetPosition.has_value());
+	EXPECT_EQ(*thirst->targetPosition, meshed);
+	EXPECT_NE(rig.world.getComponent<Task>(colonist)->navState, NavState::AwaitingMesh);
 }

@@ -1821,8 +1821,11 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
-		if (!sharesStartRegion(reach, goalMeters)) {
+		if (reach.startRegion < 0) {
 			return true;
+		}
+		if (!sharesStartRegion(reach, goalMeters)) {
+			return chunkManager == nullptr || std::as_const(*chunkManager).getChunk(world::worldToChunk({goalMeters.x, goalMeters.y})) != nullptr;
 		}
 		return gnav::reaches(structural.view(), reach.from, nav::toMm(goalMeters), reach.belief);
 	}
