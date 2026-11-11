@@ -357,12 +357,20 @@ Eat records Use on a bush or SourceQuantity of one meal on a pile or box; food a
 possessed and takes none, and the gather-food option claims its bush like Eat. Drink takes no claim
 from unbounded water. Sleep and toilet slots come with beds and toilets.
 
-A hungry colonist reads a bush as taken only when the holder will eat from it: a Hunger task at tier
-2 or 5. A work claim (a cut toward a goal) or the idle gather-food option does not hold food against a
-need, so the hungry colonist still targets that bush and both claim it until bumping (step 8) flags
-the worker; before claims both walked to it anyway, so nobody is worse off. The gather-food option is
-idle work and gives way to any holder. Colonists can starve only if they never find food: a Reserved
-food source is always one another colonist is about to eat, for one harvest.
+A hungry colonist reads a bush as taken only when the holder will eat from it and is at least as
+urgent: a Hunger task whose tier is no higher a number than its own (lower tier wins, equal tiers keep
+first-come). A critically hungry colonist (tier 2) ignores a routinely hungry one's claim (tier 5),
+however far off that one is and whoever decided first. A work claim (a cut toward a goal) or the idle
+gather-food option does not hold food against a need, so the hungry colonist still targets that bush
+and both claim it until bumping (step 8) flags the worker; before claims both walked to it anyway, so
+nobody is worse off. The gather-food option is idle work and gives way to any holder.
+
+The less urgent eater is not flagged (that is the rest of step 8). At its next decision it sees the
+bush held by someone at least as urgent and looks elsewhere; if it reaches the bush first it eats, and
+if it arrives second the bush pays nothing (gone or regrowing), its task ends, and its next decision
+passes the regrowing bush over like any other, so it never loops on it. Colonists can starve only if
+they never find food: a Reserved food source is always one another colonist at least as hungry is
+about to eat, for one harvest.
 
 ---
 

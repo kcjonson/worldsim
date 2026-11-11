@@ -260,10 +260,7 @@ namespace ecs {
 					if (option.status == OptionStatus::Satisfied) {
 						return kTierIdle;
 					}
-					if (option.needValue < kCriticalNeedThreshold) {
-						return kTierCriticalNeed;
-					}
-					return baseTier; // actionable need
+					return option.needValue < kCriticalNeedThreshold ? kTierCriticalNeed : baseTier;
 				}
 				case TaskType::Haul:
 				case TaskType::Harvest:
@@ -281,6 +278,15 @@ namespace ecs {
 					return baseTier;
 			}
 			return baseTier;
+		}
+
+		/// The tier a need's option takes (classifyTier's FulfillNeed rule): critical, actionable, or idle
+		/// while the need is met.
+		[[nodiscard]] int needTier(const Need& need) {
+			if (!need.needsAttention()) {
+				return kTierIdle;
+			}
+			return need.value < kCriticalNeedThreshold ? kTierCriticalNeed : assets::PriorityConfig::Get().getTaskTier("FulfillNeed");
 		}
 
 		/// Check if an option matches the current task (for the hysteresis margin)
@@ -1817,12 +1823,15 @@ namespace ecs {
 		//
 		// A source another colonist is going to eat from (its Hunger task holds the Use) is passed over
 		// like a regrowing one, so two hungry colonists don't converge on one bush; the nearest is kept
-		// to show who holds it. Work claims (a cut for a goal, the idle gather) don't hold food against
-		// a hungry colonist: a need's claim is one harvest it will eat, and nothing else may starve it.
-		// The gather option is idle work and does give way to any holder of the source it picks.
+		// to show who holds it. Only an eater at least as urgent holds it: a critically hungry colonist
+		// ignores a routinely hungry one's claim, and between equal tiers the first to claim keeps it.
+		// Work claims (a cut for a goal, the idle gather) don't hold food against a hungry colonist: a
+		// need's claim is one harvest it will eat, and nothing else may starve it. The gather option is
+		// idle work and does give way to any holder of the source it picks.
 		const ClaimExclusion self = ClaimExclusion::of(currentTask);
-		const auto			 eats = [](const ClaimHolder& holder) {
-			return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle;
+		const int			 hungerTier = needTier(needs.get(NeedType::Hunger));
+		const auto			 eats = [hungerTier](const ClaimHolder& holder) {
+			return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle && holder.tier <= hungerTier;
 		};
 		const bool						packHasFood = hasEdibleFood(m_registry, inventory);
 		std::optional<KnownWorldEntity> foodSource;

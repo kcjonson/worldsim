@@ -1583,14 +1583,112 @@ namespace ecs::test {
 		ASSERT_NE(reserved, nullptr);
 		EXPECT_EQ(reserved->reservedBy, hungry);
 
-		// A second bush, farther off: the second hungry colonist, now starving, goes there instead (the
-		// work order would outrank a routine meal).
-		const glm::vec2 farBush{-6.0F, 0.0F};
-		remember(alsoHungry, farBush, "BerryBush", assets::CapabilityType::Harvestable);
+		// Starving now, it is the more urgent eater: the routine meal's claim no longer holds the bush.
 		world->getComponent<NeedsComponent>(alsoHungry)->get(NeedType::Hunger).value = 5.0F;
 		decide(alsoHungry);
 		ASSERT_EQ(getTask(alsoHungry)->type, TaskType::FulfillNeed);
-		EXPECT_EQ(getTask(alsoHungry)->needSourceKey, hashWorldEntity(farBush, assets::AssetRegistry::Get().getDefNameId("BerryBush")));
+		EXPECT_EQ(getTask(alsoHungry)->needSourceKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("BerryBush")));
+	}
+
+	// =============================================================================
+	// Hungry colonists walking to food: MovementSystem and PhysicsSystem move them (no mesh: direct
+	// steering), and a berry bush regrows once cut, so each bush feeds once.
+	// =============================================================================
+
+	class HungerWalkTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			ChainClaimsTest::SetUp();
+			world->registerSystem<TimeSystem>();
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+			assets::AssetDefinition bush;
+			bush.defName = "RipeBush";
+			bush.label = "RipeBush";
+			bush.capabilities.harvestable = assets::HarvestableCapability{};
+			bush.capabilities.harvestable->yieldDefName = "Berry";
+			bush.capabilities.harvestable->amountMin = 3;
+			bush.capabilities.harvestable->amountMax = 3;
+			bush.capabilities.harvestable->durability = 1.0F;
+			bush.capabilities.harvestable->regrowthTime = 600.0F;
+			bush.capabilities.harvestable->destructive = false;
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(bush));
+			berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+			bushId = assets::AssetRegistry::Get().getDefNameId("RipeBush");
+			actions->setTakeSourceCallback([this](const std::string&, float x, float y, ActionSystem::SourceTake take, float) {
+				const glm::vec2 at{x, y};
+				const bool		wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
+				if (take == ActionSystem::SourceTake::Regrow && !wasCut) {
+					cut.push_back(at);
+				}
+				return wasCut ? ActionSystem::SourceState::OnCooldown : ActionSystem::SourceState::Ready;
+			});
+			ai->setSourceRegrowthCallback([this](uint32_t, glm::vec2 at, double) {
+				return std::find(cut.begin(), cut.end(), at) != cut.end() ? std::optional<double>{1.0e9} : std::nullopt;
+			});
+		}
+
+		EntityID hungryColonist(glm::vec2 position, float hunger) {
+			const EntityID colonist = createColonist(position);
+			world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value = hunger;
+			return colonist;
+		}
+
+		void rememberBush(EntityID colonist, glm::vec2 position) { remember(colonist, position, "RipeBush", assets::CapabilityType::Harvestable); }
+
+		float hunger(EntityID colonist) { return world->getComponent<NeedsComponent>(colonist)->get(NeedType::Hunger).value; }
+
+		/// Run 0.1 s frames until `done` holds, calling `each` after every frame.
+		template <typename Done, typename Each>
+		bool walkUntil(Done done, Each each, int maxFrames = 3000) {
+			for (int frame = 0; frame < maxFrames; ++frame) {
+				world->update(0.1F);
+				each();
+				if (done()) {
+					return true;
+				}
+			}
+			return false;
+		}
+		template <typename Done> bool walkUntil(Done done, int maxFrames = 3000) {
+			return walkUntil(done, [] {}, maxFrames);
+		}
+
+		uint32_t			   berryId = 0;
+		uint32_t			   bushId = 0;
+		std::vector<glm::vec2> cut;
+	};
+
+	// A routinely hungry colonist far off claims the only bush first; a starving one beside it is the
+	// more urgent eater and goes anyway. It eats. The routine eater sees the bush taken by someone at
+	// least as urgent, gives it up, and once the bush is regrowing waits instead of walking back to it.
+	TEST_F(HungerWalkTest, AStarvingColonistBeatsARoutineEaterThatClaimedFirst) {
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	routine = hungryColonist({30.0F, 0.0F}, 30.0F);
+		const EntityID	starving = hungryColonist({0.0F, 0.0F}, 5.0F);
+		rememberBush(routine, bushPos);
+		rememberBush(starving, bushPos);
+		const uint64_t bushKey = hashWorldEntity(bushPos, bushId);
+
+		decide(routine);
+		ASSERT_EQ(getTask(routine)->needSourceKey, bushKey);
+		decide(starving);
+		ASSERT_EQ(getTask(starving)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(getTask(starving)->needSourceKey, bushKey) << "a less urgent eater's claim does not hold the bush";
+
+		std::vector<uint64_t> routineMealsAtTheBush;
+		const auto			  noteRoutine = [&] {
+			const Task& task = *getTask(routine);
+			if (task.type == TaskType::FulfillNeed && task.needSourceKey == bushKey &&
+				std::find(routineMealsAtTheBush.begin(), routineMealsAtTheBush.end(), task.instanceId) == routineMealsAtTheBush.end()) {
+				routineMealsAtTheBush.push_back(task.instanceId);
+			}
+		};
+		ASSERT_TRUE(walkUntil([&] { return hunger(starving) >= 50.0F; }, noteRoutine)) << "the starving colonist ate";
+		walkUntil([] { return false; }, noteRoutine, 300);
+		EXPECT_EQ(routineMealsAtTheBush.size(), 1U) << "the routine eater never went back for the bush";
+		EXPECT_NE(getTask(routine)->needSourceKey, bushKey);
+		EXPECT_NE(optionOf(routine, TaskType::FulfillNeed, OptionStatus::Regrowing), nullptr) << "it waits for the bush to regrow";
 	}
 
 } // namespace ecs::test
