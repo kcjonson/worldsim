@@ -136,7 +136,8 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 						index->queryRect(boxMinX, boxMinY, boxMaxX, boxMaxY);
 					for (const assets::PlacedEntity* e : hits) {
 						const assets::AssetDefinition* def = registry.getDefinition(e->defName);
-						if (def == nullptr || def->collision.type != assets::CollisionShapeType::Rect) {
+						if (def == nullptr || def->collision.type != assets::CollisionShapeType::Rect ||
+							!detail->floraInNavMesh({cx, cy}, *e)) {
 							continue;
 						}
 						rects.push_back(orientedRectFor(*e, def->collision));

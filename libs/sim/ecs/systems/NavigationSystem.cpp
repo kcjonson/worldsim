@@ -1238,6 +1238,11 @@ namespace ecs {
 		return detailCells.contains(cellAt(nav::toMm(meters)));
 	}
 
+	bool NavigationSystem::floraInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
+		return floraInMesh.contains(
+			FloraKey{chunk, std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y), entity.defName});
+	}
+
 	void NavigationSystem::snapMovers() {
 		if (world == nullptr || detailMesh.liveTriangleCount() == 0) {
 			return;

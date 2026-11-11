@@ -4,6 +4,7 @@
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
+#include "../components/Colonist.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
@@ -12,6 +13,8 @@
 #include <assets/placement/SpatialIndex.h>
 
 #include <world/chunk/ChunkCoordinate.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <glm/geometric.hpp>
 #include <glm/vec2.hpp>
@@ -143,11 +146,28 @@ namespace {
 			return e;
 		}
 
-		// A NavigationSystem whose viewport sits over `at`, ticked once so detail is on there.
-		// The collision system is wired to it and pushes only where it says detail is on.
-		static StaticRectCollisionSystem& wire(World& world, const PlacementExecutor& executor, glm::vec2 at) {
+		// Chunk (0, 0), all land, generated once for every test.
+		static world::ChunkManager* landChunk() {
+			static const std::unique_ptr<world::ChunkManager> chunks = [] {
+				auto c = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7, world::SyntheticMap{}));
+				c->setLoadRadius(0);
+				c->setUnloadRadius(2);
+				c->update({256.0F, 256.0F});
+				c->finishPendingGeneration();
+				return c;
+			}();
+			return chunks.get();
+		}
+
+		// A NavigationSystem over `executor`'s flora with its viewport over `at`, settled and ticked
+		// once, so detail is on there and the trees around it are in the nav mesh. The collision
+		// system pushes only where both hold.
+		static StaticRectCollisionSystem& wire(World& world, PlacementExecutor& executor, glm::vec2 at) {
 			auto& nav = world.registerSystem<NavigationSystem>();
+			nav.setChunkManager(landChunk());
+			nav.setPlacementData(&executor, nullptr);
 			nav.setViewportRect(at, {10.0F, 10.0F});
+			nav.finishPendingBuilds();
 			nav.update(0.0F);
 			auto& sys = world.registerSystem<StaticRectCollisionSystem>();
 			sys.setPlacementData(&executor);
@@ -397,9 +417,9 @@ TEST_F(StaticRectCollisionSystemTest, NonRectCollisionIgnored) {
 	EXPECT_FLOAT_EQ(pos->value.y, start.y);
 }
 
-// Detail is a filter on collision: the same agent inside the same tree is pushed out where detail
-// is on and left alone where it is off (the viewport is far away), since off camera movers walk
-// through trees.
+// Detail is a filter on collision: the same agent inside the same tree (in the nav mesh both times,
+// off camera because a colonist nearby asks for it) is pushed out where detail is on and left
+// alone where it is off (the viewport is far away), since off camera movers walk through trees.
 TEST_F(StaticRectCollisionSystemTest, PushedOnlyWhereDetailIsOn) {
 	AssetRegistry&	reg = AssetRegistry::Get();
 	AssetDefinition tree;
@@ -431,6 +451,40 @@ TEST_F(StaticRectCollisionSystemTest, PushedOnlyWhereDetailIsOn) {
 
 	World	 offCamera;
 	EntityID unseen = spawnAgent(offCamera, inside);
+	const EntityID neighbour = offCamera.createEntity(); // a colonist nearby asks for the flora
+	offCamera.addComponent<Position>(neighbour, Position{treeAt + glm::vec2{3.0F, 0.0F}});
+	offCamera.addComponent<Colonist>(neighbour, Colonist{"Neighbour"});
 	wire(offCamera, executor, treeAt + glm::vec2{2000.0F, 0.0F}).update(0.0F);
+	ASSERT_FALSE(offCamera.getSystem<NavigationSystem>().isOnMesh(treeAt + glm::vec2{0.0F, 0.1F})) << "the tree is in the mesh";
 	EXPECT_EQ(offCamera.getComponent<Position>(unseen)->value, inside);
+}
+
+// A tree whose placement has landed but which is not in the nav mesh yet is not pushed out of, even
+// where detail is on: the forward snap gets the first look once the mesh has it.
+TEST_F(StaticRectCollisionSystemTest, TreeNotYetInNavMeshIsNotPushed) {
+	AssetRegistry&	reg = AssetRegistry::Get();
+	AssetDefinition tree;
+	tree.defName					 = "Test_StaticRectTreeLate";
+	tree.collision.type				 = CollisionShapeType::Rect;
+	tree.collision.halfExtentsMeters = {0.3F, 0.3F};
+	reg.registerTestDefinition(tree);
+
+	const glm::vec2	  treeAt{20.0F, 20.0F};
+	const glm::vec2	  inside{treeAt.x + 0.1F, treeAt.y + 0.05F};
+	PlacementExecutor executor(reg);
+	World			  world;
+	EntityID		  agent = spawnAgent(world, inside);
+	StaticRectCollisionSystem& sys = wire(world, executor, treeAt);
+
+	SpatialIndex index;
+	PlacedEntity pe;
+	pe.defName	= "Test_StaticRectTreeLate";
+	pe.position = treeAt;
+	index.insert(pe);
+	assets::AsyncChunkPlacementResult result;
+	result.coord		= world::worldToChunk({treeAt.x, treeAt.y});
+	result.spatialIndex = std::move(index);
+	executor.storeChunkResult(std::move(result));
+	sys.update(0.0F);
+	EXPECT_EQ(world.getComponent<Position>(agent)->value, inside);
 }

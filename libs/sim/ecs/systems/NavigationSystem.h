@@ -54,6 +54,7 @@
 
 namespace assets {
 	class PlacementExecutor;
+	struct PlacedEntity;
 }
 
 namespace construction {
@@ -239,6 +240,11 @@ class NavigationSystem : public ISystem {
 	// resting on a cell boundary doesn't flip it. Updated once per update() from the viewport, no
 	// mesh involved; off everywhere without a viewport. Flora pushes movers out only where it is on.
 	[[nodiscard]] bool detailOnAt(glm::vec2 meters) const;
+
+	// True when `entity`, placed in `chunk`, is a flora ring in the nav mesh queries see. Collision
+	// pushes out of a flora collider only then, so the forward snap has had its turn first and the
+	// push and the mesh never disagree about a tree. Read between update() and endTick().
+	[[nodiscard]] bool floraInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const;
 
 	// True once any ground is meshed.
 	[[nodiscard]] bool hasMesh() const;

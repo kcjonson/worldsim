@@ -2064,68 +2064,86 @@ TEST_F(ForwardSnapTest, InsideTreeWithoutRouteTakesNearestWalkable) {
 	EXPECT_LT(glm::distance(now, at), 1.5F) << "the nearest walkable point, not a far one";
 }
 
-// A colonist walking a move order: a tree lands on it while the view is away, then the view arrives
-// over it. It is moved forward along its route, keeps the order, never steps back and gets there.
-TEST_F(NavigationSystemTest, WalkerUnderArrivingTreeKeepsItsTask) {
-	registerTree("Test_NavWalkerTree", 0.4F);
-	PlacementExecutor					executor(AssetRegistry::Get());
-	std::unordered_set<ChunkCoordinate> processed;
-	ConstructionWorld					cw;
-	World								world;
-	NavigationSystem&					nav = world.registerSystem<NavigationSystem>();
-	nav.setChunkManager(landChunks());
-	nav.setPlacementData(&executor, &processed);
-	nav.setConstructionWorld(&cw);
-	const glm::vec2 away{-300.0F, 300.0F};
-	nav.setViewportRect(away, {30.0F, 30.0F});
-	settle(nav);
+namespace {
+	// A colonist walking a move order has a tree land on it, the view arriving over it either a tick
+	// later or in the same tick. It is moved forward along its route, keeps the order, never steps
+	// back and gets there.
+	void walkUnderLandingTree(bool viewArrivesWithTree) {
+		registerTree("Test_NavWalkerTree", 0.4F);
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		ConstructionWorld					cw;
+		World								world;
+		NavigationSystem&					nav = world.registerSystem<NavigationSystem>();
+		nav.setChunkManager(landChunks());
+		nav.setPlacementData(&executor, &processed);
+		nav.setConstructionWorld(&cw);
+		const glm::vec2 away{-300.0F, 300.0F};
+		nav.setViewportRect(away, {30.0F, 30.0F});
+		settle(nav);
 
-	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
-	ai.setNavigationSystem(&nav);
-	world.registerSystem<MovementSystem>();
-	world.registerSystem<PhysicsSystem>();
-	auto& collision = world.registerSystem<StaticRectCollisionSystem>();
-	collision.setPlacementData(&executor);
-	collision.setDetailSource(&nav);
+		AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+		ai.setNavigationSystem(&nav);
+		world.registerSystem<MovementSystem>();
+		world.registerSystem<PhysicsSystem>();
+		auto& collision = world.registerSystem<StaticRectCollisionSystem>();
+		collision.setPlacementData(&executor);
+		collision.setDetailSource(&nav);
 
-	const glm::vec2 start{2.0F, 5.0F};
-	const glm::vec2 goal{22.0F, 5.0F};
-	const EntityID	colonist = spawnRecoverableColonist(world, start);
-	world.addComponent<Colonist>(colonist, Colonist{"Walker"});
-	world.addComponent<AgentRadius>(colonist, AgentRadius{kAgentRadius, 1.0F});
-	NeedsComponent& needs = *world.getComponent<NeedsComponent>(colonist);
-	for (const NeedType need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder, NeedType::Digestion}) {
-		needs.get(need).value = 100.0F;
-	}
-	ai.enterControl(colonist);
-	ASSERT_TRUE(ai.issuePlayerMoveOrder(colonist, goal).has_value());
+		const glm::vec2 start{2.0F, 5.0F};
+		const glm::vec2 goal{22.0F, 5.0F};
+		const EntityID	colonist = spawnRecoverableColonist(world, start);
+		world.addComponent<Colonist>(colonist, Colonist{"Walker"});
+		world.addComponent<AgentRadius>(colonist, AgentRadius{kAgentRadius, 1.0F});
+		NeedsComponent& needs = *world.getComponent<NeedsComponent>(colonist);
+		for (const NeedType need : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder, NeedType::Digestion}) {
+			needs.get(need).value = 100.0F;
+		}
+		ai.enterControl(colonist);
+		ASSERT_TRUE(ai.issuePlayerMoveOrder(colonist, goal).has_value());
 
-	constexpr float kTick = 0.1F;
-	const Position& position = *world.getComponent<Position>(colonist);
-	while (position.value.x < 6.0F) {
-		world.update(kTick);
-	}
-	ASSERT_LT(std::abs(position.value.y - start.y), 0.05F) << "walking the straight route";
+		constexpr float kTick = 0.1F;
+		const Position& position = *world.getComponent<Position>(colonist);
+		while (position.value.x < 6.0F) {
+			world.update(kTick);
+		}
+		ASSERT_LT(std::abs(position.value.y - start.y), 0.05F) << "walking the straight route";
 
-	// The tree lands just ahead; the walker steps into it this tick, and the job brings it into the
-	// mesh at endTick.
-	const glm::vec2 treeAt{position.value.x + 0.25F, start.y};
-	placeTrees(executor, processed, "Test_NavWalkerTree", {treeAt});
-	step(world, nav);
-	ASSERT_FALSE(nav.isOnMesh(position.value)) << "the walker stands in the tree";
-
-	nav.setViewportRect(position.value, {30.0F, 30.0F});
-	const Task& task  = *world.getComponent<Task>(colonist);
-	float		lastX = position.value.x;
-	for (int i = 0; i < 100 && glm::distance(position.value, goal) > 0.3F; ++i) {
-		world.update(kTick);
-		expectMeshesValid(nav);
-		ASSERT_GE(position.value.x, lastX - 1e-4F) << "tick " << i << ": moved back";
-		ASSERT_EQ(task.targetPosition, goal) << "tick " << i << ": the move order was dropped";
+		// The tree lands just ahead; the walker steps into it this tick, and the job brings it into the
+		// mesh at endTick.
+		const glm::vec2 treeAt{position.value.x + 0.25F, start.y};
+		const Task&		task  = *world.getComponent<Task>(colonist);
+		float			lastX = position.value.x;
+		placeTrees(executor, processed, "Test_NavWalkerTree", {treeAt});
+		if (viewArrivesWithTree) {
+			nav.setViewportRect(position.value, {30.0F, 30.0F});
+		}
+		step(world, nav);
+		ASSERT_FALSE(nav.isOnMesh(position.value)) << "the walker stands in the tree, not pushed out of it";
+		ASSERT_GE(position.value.x, lastX - 1e-4F) << "moved back as the tree landed";
 		lastX = position.value.x;
+
+		nav.setViewportRect(position.value, {30.0F, 30.0F});
+		for (int i = 0; i < 100 && glm::distance(position.value, goal) > 0.3F; ++i) {
+			world.update(kTick);
+			expectMeshesValid(nav);
+			ASSERT_GE(position.value.x, lastX - 1e-4F) << "tick " << i << ": moved back";
+			ASSERT_EQ(task.targetPosition, goal) << "tick " << i << ": the move order was dropped";
+			lastX = position.value.x;
+		}
+		EXPECT_TRUE(nav.detailOnAt(treeAt));
+		EXPECT_LT(glm::distance(position.value, goal), 0.3F) << "never got there";
 	}
-	EXPECT_TRUE(nav.detailOnAt(treeAt));
-	EXPECT_LT(glm::distance(position.value, goal), 0.3F) << "never got there";
+} // namespace
+
+TEST_F(NavigationSystemTest, WalkerUnderTreeKeepsItsTaskWhenTheViewArrivesLater) {
+	walkUnderLandingTree(false);
+}
+
+// The placement lands in the tick the view arrives, before the tree is in the nav mesh: collision
+// leaves the walker alone until the mesh has the tree and the forward snap has moved it.
+TEST_F(NavigationSystemTest, WalkerUnderTreeKeepsItsTaskWhenTheViewArrivesWithIt) {
+	walkUnderLandingTree(true);
 }
 
 // --- Flora budget -------------------------------------------------------------------

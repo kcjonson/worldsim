@@ -27,8 +27,10 @@
 // safety net and avoids fighting the mover.
 //
 // DETAIL GATE (nav-mesh-variable-resolution 4.7): a mover is pushed out of flora only where
-// NavigationSystem::detailOnAt says detail is on. Off camera, movers walk through trees; the camera
-// decides detail, never outcomes.
+// NavigationSystem::detailOnAt says detail is on, and only once that tree is in the nav mesh
+// (NavigationSystem::floraInNavMesh): the forward snap moves a mover out of a tree it finds itself in
+// before this system ever sees it, so the two never disagree about a tree. Off camera, movers walk
+// through trees; the camera decides detail, never outcomes.
 //
 // The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op). Rects are
 // gathered LOCALLY per agent each frame from placement (no caching): query the chunks around the agent for rect-collision entities, keep
