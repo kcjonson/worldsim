@@ -149,8 +149,8 @@ namespace ecs::test {
 		/// Memory entries the work evaluators have looked at so far.
 		uint64_t workSourceVisits() { return world->getSystem<AIDecisionSystem>().m_workSources.visits; }
 
-		/// Times the colony's box knowledge has been worked out so far.
-		uint64_t colonyStorageBuilds() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.builds; }
+		/// Boxes the colony's box knowledge has worked out so far.
+		uint64_t colonyStorageWorkedOut() { return world->getSystem<AIDecisionSystem>().m_colonyStorage.workedOut; }
 #endif
 
 		/// Drive the private chain-interruption handler directly. This fixture is a friend of
@@ -788,7 +788,8 @@ namespace ecs::test {
 		constexpr int kNumColonists = 100;
 
 		// A low box holding Wood and a high box wanting it, both known to every colonist, so each
-		// colonist's evaluation asks whether the colony knows the source box.
+		// colonist's evaluation asks whether the colony knows the source box. A second low box holds
+		// Wood nobody has seen, and a third holds none, so it is never asked about.
 		auto&					registry = assets::AssetRegistry::Get();
 		assets::AssetDefinition wood;
 		wood.defName = "Wood";
@@ -810,6 +811,8 @@ namespace ecs::test {
 		const glm::vec2 highPos{6.0F, -4.0F};
 		const EntityID	lowBox = makeStorageBox(lowPos, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
 		const EntityID	highBox = makeStorageBox(highPos, "Box", "Wood", ecs::StoragePriority::High);
+		const EntityID	unseenBox = makeStorageBox({-40.0F, -40.0F}, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		makeStorageBox({-50.0F, -40.0F}, "Box", "Wood", ecs::StoragePriority::Low);
 		makeUmbrellaGoal(highBox, highPos, woodId);
 
 		// Create many colonists
@@ -844,7 +847,7 @@ namespace ecs::test {
 		}
 
 #ifdef DEVELOPMENT_BUILD
-		const uint64_t buildsBefore = colonyStorageBuilds();
+		const uint64_t workedOutBefore = colonyStorageWorkedOut();
 #endif
 		world->update(0.016F);
 
@@ -857,11 +860,15 @@ namespace ecs::test {
 			EXPECT_TRUE(std::any_of(options.begin(), options.end(), [lowBox](const EvaluatedOption& o) {
 				return o.haulSourceStorageId == static_cast<uint64_t>(lowBox);
 			})) << "every colonist is offered the pull from the known low box";
+			EXPECT_FALSE(std::any_of(options.begin(), options.end(), [unseenBox](const EvaluatedOption& o) {
+				return o.haulSourceStorageId == static_cast<uint64_t>(unseenBox);
+			})) << "nobody has seen the other box";
 		}
 
 #ifdef DEVELOPMENT_BUILD
-		// The colony's box knowledge is worked out once for the update, not once per colonist.
-		EXPECT_EQ(colonyStorageBuilds() - buildsBefore, 1U);
+		// Each box asked about is worked out once for the update, not once per colonist, and the box
+		// holding no Wood is never worked out at all.
+		EXPECT_EQ(colonyStorageWorkedOut() - workedOutBefore, 2U);
 #endif
 	}
 

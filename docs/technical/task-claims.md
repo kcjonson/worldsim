@@ -87,7 +87,7 @@ A colonist deciding about a target applies, in order:
    `ColonyStorageKnowledge` (any colonist remembers the box), and any colonist may carry out the
    transfer. Boxes are things the colony built, and transfer, driven by the item's priority in each
    box, should run reliably rather than wait for a colonist who personally saw the source box. The
-   exception covers colony-placed storage only. Its cost is handled by the per-update cache under
+   exception covers colony-placed storage only. Its cost is handled by the per-update memo under
    performance requirements.
 2. Permission: ownership filters (not this colonist's bed, a work order restricted to someone
    else). Stored, long-lived, out of scope.
@@ -593,9 +593,13 @@ Measured on the perf capture against `main` on the same machine, plus unit bench
 - Live pile quantity is one keyed lookup through the WorldKey-to-pile map, not a scan of piles.
 - Box-pull gating keeps the colony-wide rule without its old cost (a walk of every colonist's
   memory per box per goal per evaluating colonist, quadratic in colonists). `ColonyStorageKnowledge`
-  works out every box's answer on the first pull check of an `AIDecisionSystem::update`, one probe
-  of each colonist's memory per box, and the rest of that update reads the set. It is rebuilt per AI
-  update rather than per goal-system poll so the answer is never staler than the memories it reads.
+  is a memo: a box's answer is worked out the first time a pull check asks about it in a pass, one
+  probe of each colonist's memory, and later checks in that pass read it; a box nobody asks about
+  (holding none of the item, or not strictly lower priority) costs nothing. `AIDecisionSystem` keeps
+  one for every colonist it decides in an update, and invalidates it at the start of each update
+  rather than per goal-system poll, so the answer is never staler than the memories it reads. The
+  storage dialog's model keeps another for its known-source affordance, invalidated per refresh and
+  shared by every rule it checks. Warm, neither memo allocates.
 - Trace size per colonist is bounded by roots times accepted items after dedup, not by remembered
   sources.
 - The UI's availability and `knownBy` run on the panel throttle, never per frame, and also use the

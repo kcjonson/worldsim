@@ -17,7 +17,7 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <unordered_set>
+#include <vector>
 
 namespace ecs {
 
@@ -27,49 +27,63 @@ namespace ecs {
 	/// VisionSystem's Pass 2 uses when it sees the box). A colony-placed/-built box is normally already
 	/// in memory.
 	///
-	/// The answer for every box is worked out on the first question after invalidate(), one probe of
-	/// each colonist's memory per box, and later questions are a set lookup.
+	/// A memo for one pass (an AI update, a UI model refresh): a box's answer is worked out the first
+	/// time it is asked about after invalidate(), one probe of each colonist's memory, and later
+	/// questions about it read the memo. Boxes nobody asks about cost nothing. Indexed by entity index
+	/// and stamped with the pass, so a warm memo allocates nothing.
 	class ColonyStorageKnowledge {
 	  public:
-		void invalidate() { m_built = false; }
+		void invalidate() { ++m_pass; }
 
 		[[nodiscard]] bool knows(World& world, const assets::AssetRegistry& reg, EntityID box) {
-			if (!m_built) {
-				build(world, reg);
+			const uint32_t index = getIndex(box);
+			if (index >= m_answers.size()) {
+				m_answers.resize(index + 1);
 			}
-			return m_known.contains(box);
+			Answer& answer = m_answers[index];
+			if (answer.pass != m_pass || answer.box != box) {
+				answer = {m_pass, box, workOut(world, reg, box)};
+			}
+			return answer.known;
 		}
 
 #ifdef DEVELOPMENT_BUILD
-		/// Builds since construction; tests read it to show the walk runs once per AI update.
-		uint64_t builds = 0;
+		/// Boxes worked out since construction; tests read it to show each asked box is worked out
+		/// once per pass, and unasked boxes not at all.
+		uint64_t workedOut = 0;
 #endif
 
 	  private:
-		void build(World& world, const assets::AssetRegistry& reg) {
-			m_built = true;
-			m_known.clear();
+		struct Answer {
+			uint64_t pass = 0;
+			EntityID box = kInvalidEntity;
+			bool	 known = false;
+		};
+
+		[[nodiscard]] bool workOut(World& world, const assets::AssetRegistry& reg, EntityID box) {
 #ifdef DEVELOPMENT_BUILD
-			++builds;
+			++workedOut;
 #endif
-			for (auto [box, config, appearance, boxPos] : world.view<StorageConfiguration, Appearance, Position>()) {
-				(void)config;
-				const uint32_t defNameId = reg.getDefNameId(appearance.defName);
-				if (defNameId == 0) {
-					continue;
-				}
-				for (auto [colonist, memory] : world.view<Memory>()) {
-					(void)colonist;
-					if (memory.knowsWorldEntity(boxPos.value, defNameId)) {
-						m_known.insert(box);
-						break;
-					}
+			const auto* appearance = world.getComponent<Appearance>(box);
+			const auto* boxPos = world.getComponent<Position>(box);
+			if (appearance == nullptr || boxPos == nullptr || world.getComponent<StorageConfiguration>(box) == nullptr) {
+				return false;
+			}
+			const uint32_t defNameId = reg.getDefNameId(appearance->defName);
+			if (defNameId == 0) {
+				return false;
+			}
+			for (auto [colonist, memory] : world.view<Memory>()) {
+				(void)colonist;
+				if (memory.knowsWorldEntity(boxPos->value, defNameId)) {
+					return true;
 				}
 			}
+			return false;
 		}
 
-		bool						 m_built = false;
-		std::unordered_set<EntityID> m_known;
+		uint64_t			m_pass = 1;
+		std::vector<Answer> m_answers;
 	};
 
 	/// Does any colonist remember a harvestable whose yield is this item (e.g. a tree for Wood)?

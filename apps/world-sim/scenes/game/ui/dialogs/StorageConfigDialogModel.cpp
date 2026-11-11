@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <unordered_map>
 
 namespace world_sim {
@@ -393,6 +394,10 @@ void StorageConfigDialogModel::updateKnownSources(ecs::World& world) {
 	// out of the toast set (and re-toasts once if added back later while still unsourced).
 	std::unordered_set<std::string> configuredSpecificItems;
 
+	// One memory walk and one box memo serve every item this refresh asks about.
+	std::optional<std::unordered_set<uint32_t>> memorySources;
+	storageKnowledge.invalidate();
+
 	for (const auto& rule : config->rules) {
 		if (rule.isWildcard()) {
 			continue; // a wildcard names no single item to source
@@ -402,7 +407,10 @@ void StorageConfigDialogModel::updateKnownSources(ecs::World& world) {
 			continue; // already evaluated this item this frame
 		}
 
-		const bool known = isStorageSourceKnown(world, currentContainerId, rule.defName);
+		if (!memorySources.has_value()) {
+			memorySources = collectMemorySources(world);
+		}
+		const bool known = isStorageSourceKnown(world, *memorySources, storageKnowledge, currentContainerId, rule.defName);
 		knownSourceByDefName[rule.defName] = known;
 
 		if (known) {
