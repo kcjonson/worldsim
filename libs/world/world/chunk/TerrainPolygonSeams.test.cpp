@@ -351,6 +351,18 @@ namespace {
 		return buildHand(tiles, kWorldSeed, g.segments, g.ponds);
 	}
 
+	// The four chunks at the game's apron, built once for the three tests that read them.
+	const ChunkTerrainPolygons& seamWorldChunk(ChunkCoordinate coord) {
+		static const std::map<std::pair<int32_t, int32_t>, ChunkTerrainPolygons> built = [] {
+			std::map<std::pair<int32_t, int32_t>, ChunkTerrainPolygons> out;
+			for (const ChunkCoordinate c : {ChunkCoordinate{0, 0}, ChunkCoordinate{1, 0}, ChunkCoordinate{0, 1}, ChunkCoordinate{1, 1}}) {
+				out.emplace(std::pair{c.x, c.y}, buildSeamWorld(c, kApronTiles, kRiverGatherMarginM));
+			}
+			return out;
+		}();
+		return built.at({coord.x, coord.y});
+	}
+
 	std::string name(ChunkCoordinate c) {
 		return "(" + std::to_string(c.x) + ", " + std::to_string(c.y) + ")";
 	}
@@ -467,17 +479,14 @@ TEST(TerrainPolygonSeamsTest, ApronHoldsTheBorderLatticeCellPlusTheEdgeEffect) {
 // ============================================================================
 
 TEST(TerrainPolygonSeamsTest, BorderTexelsReadTheSameGeometryFromEitherChunk) {
-	const std::vector<ChunkCoordinate>				coords = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
-	std::map<std::pair<int32_t, int32_t>, ChunkTerrainPolygons> built;
-	for (const ChunkCoordinate& c : coords) {
-		built[{c.x, c.y}] = buildSeamWorld(c, kApronTiles, kRiverGatherMarginM);
-		expectAllSimple(built[{c.x, c.y}], "seam world " + name(c));
+	for (const ChunkCoordinate c : {ChunkCoordinate{0, 0}, ChunkCoordinate{1, 0}, ChunkCoordinate{0, 1}, ChunkCoordinate{1, 1}}) {
+		expectAllSimple(seamWorldChunk(c), "seam world " + name(c));
 	}
 
 	size_t edges  = 0;
 	size_t points = 0;
 	for (const auto& [ca, cb] : kCornerPairs) {
-		const auto [e, p] = expectPairSeamless(ca, built[{ca.x, ca.y}], cb, built[{cb.x, cb.y}], name(ca) + " / " + name(cb));
+		const auto [e, p] = expectPairSeamless(ca, seamWorldChunk(ca), cb, seamWorldChunk(cb), name(ca) + " / " + name(cb));
 		edges += e;
 		points += p;
 	}
@@ -489,9 +498,8 @@ TEST(TerrainPolygonSeamsTest, BorderTexelsReadTheSameGeometryFromEitherChunk) {
 
 TEST(TerrainPolygonSeamsTest, BorderGeometryMatchesAWideApronBuild) {
 	for (const ChunkCoordinate c : {ChunkCoordinate{0, 0}, ChunkCoordinate{1, 0}, ChunkCoordinate{0, 1}, ChunkCoordinate{1, 1}}) {
-		const ChunkTerrainPolygons built	 = buildSeamWorld(c, kApronTiles, kRiverGatherMarginM);
 		const ChunkTerrainPolygons reference = buildSeamWorld(c, kReferenceApron, kReferenceMarginM);
-		const auto [edges, points]			 = expectMatchesReference(c, built, reference, "reference " + name(c));
+		const auto [edges, points]			 = expectMatchesReference(c, seamWorldChunk(c), reference, "reference " + name(c));
 		EXPECT_GT(edges, 100U);
 		EXPECT_GT(points, 200U);
 	}
@@ -501,8 +509,8 @@ TEST(TerrainPolygonSeamsTest, BorderGeometryMatchesAWideApronBuild) {
 // rivers exactly as chunk (1, 0) does, because both read the ground along the
 // centerline from the world, not from their rings.
 TEST(TerrainPolygonSeamsTest, AMouthPastTheApronFlaresTheSameInBothChunks) {
-	const ChunkTerrainPolygons west = buildSeamWorld({0, 0}, kApronTiles, kRiverGatherMarginM);
-	const ChunkTerrainPolygons east = buildSeamWorld({1, 0}, kApronTiles, kRiverGatherMarginM);
+	const ChunkTerrainPolygons& west = seamWorldChunk({0, 0});
+	const ChunkTerrainPolygons& east = seamWorldChunk({1, 0});
 	// Chunk (0, 0) has neither receiving lake among its rings.
 	for (const TerrainRing& ring : west.rings) {
 		if (ring.kind == TerrainRingKind::Waterline) {

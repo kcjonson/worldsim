@@ -74,6 +74,7 @@ if(BUILD_TESTING)
             target_compile_options(sim-tests PRIVATE -O0 -g)
         endif()
         add_test(NAME sim-tests COMMAND sim-tests)
+        worldsim_test_data(sim-tests assets/config)
         # TIMEOUT is the only hang guard: the navigation waits pump until their build
         # lands, with no frame or wall-clock budget (NavigationSystem.test.h).
         # Calibration (2026-11, CI Debug, ctest -j4): 179-384 s across Linux and

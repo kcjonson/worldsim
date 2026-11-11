@@ -27,6 +27,7 @@
 #include <future>
 #include <iostream>
 #include <limits>
+#include <map>
 #include <memory>
 #include <string>
 #include <utility>
@@ -245,6 +246,20 @@ namespace {
 		auto chunk = std::make_unique<Chunk>(coord, sampler.sampleChunk(coord), sampler.getWorldSeed());
 		chunk->generate();
 		return chunk;
+	}
+
+	// The four corner-lake chunks, generated serially in this order once for the seam
+	// and determinism tests that read them.
+	const Chunk& cornerLakeChunk(ChunkCoordinate coord) {
+		static const std::map<std::pair<int32_t, int32_t>, std::unique_ptr<Chunk>> built = [] {
+			const CornerBiomeSampler										  sampler = cornerLakeSampler();
+			std::map<std::pair<int32_t, int32_t>, std::unique_ptr<Chunk>> out;
+			for (const ChunkCoordinate c : {ChunkCoordinate{0, 0}, ChunkCoordinate{1, 0}, ChunkCoordinate{0, 1}, ChunkCoordinate{1, 1}}) {
+				out.emplace(std::pair{c.x, c.y}, generateChunk(sampler, c));
+			}
+			return out;
+		}();
+		return *built.at({coord.x, coord.y});
 	}
 
 } // namespace
@@ -608,61 +623,58 @@ TEST(TerrainPolygonBuilderTest, ShoreSlopeIsBoundedAndVariesAlongTheShore) {
 // ============================================================================
 
 TEST(TerrainPolygonBuilderTest, HorizontalNeighborsMeetAtIdenticalBorderVertices) {
-	const CornerBiomeSampler sampler = cornerLakeSampler();
-	const auto				 west	 = generateChunk(sampler, {0, 0});
-	const auto				 east	 = generateChunk(sampler, {1, 0});
-	expectAllSimple(west->terrainPolygons(), "west");
-	expectAllSimple(east->terrainPolygons(), "east");
-	for (const TerrainRing& ring : west->terrainPolygons().rings) {
+	const Chunk& west = cornerLakeChunk({0, 0});
+	const Chunk& east = cornerLakeChunk({1, 0});
+	expectAllSimple(west.terrainPolygons(), "west");
+	expectAllSimple(east.terrainPolygons(), "east");
+	for (const TerrainRing& ring : west.terrainPolygons().rings) {
 		EXPECT_EQ(ring.water, WaterKind::Lake);
 	}
 
-	expectBorderVerticesMatch(*west, *east, true);
+	expectBorderVerticesMatch(west, east, true);
 
-	const SeamSide				 a	  = seamChunk(*west);
-	const SeamSide				 b	  = seamChunk(*east);
+	const SeamSide				 a	  = seamChunk(west);
+	const SeamSide				 b	  = seamChunk(east);
 	const geometry::nav::NavMesh mesh = buildSeamMesh({a, b});
 	ASSERT_FALSE(mesh.triangles.empty());
 	expectSeamClassificationAgrees(mesh, a, b, true);
 }
 
 TEST(TerrainPolygonBuilderTest, VerticalNeighborsMeetAtIdenticalBorderVertices) {
-	const CornerBiomeSampler sampler = cornerLakeSampler();
-	const auto				 south	 = generateChunk(sampler, {0, 0});
-	const auto				 north	 = generateChunk(sampler, {0, 1});
-	expectAllSimple(south->terrainPolygons(), "south");
-	expectAllSimple(north->terrainPolygons(), "north");
+	const Chunk& south = cornerLakeChunk({0, 0});
+	const Chunk& north = cornerLakeChunk({0, 1});
+	expectAllSimple(south.terrainPolygons(), "south");
+	expectAllSimple(north.terrainPolygons(), "north");
 
-	expectBorderVerticesMatch(*south, *north, false);
+	expectBorderVerticesMatch(south, north, false);
 
-	const SeamSide				 a	  = seamChunk(*south);
-	const SeamSide				 b	  = seamChunk(*north);
+	const SeamSide				 a	  = seamChunk(south);
+	const SeamSide				 b	  = seamChunk(north);
 	const geometry::nav::NavMesh mesh = buildSeamMesh({a, b});
 	ASSERT_FALSE(mesh.triangles.empty());
 	expectSeamClassificationAgrees(mesh, a, b, false);
 }
 
 TEST(TerrainPolygonBuilderTest, FourChunksMeetingAtACornerAgreeOnEveryBorder) {
-	const CornerBiomeSampler sampler = cornerLakeSampler();
-	const auto				 c00	 = generateChunk(sampler, {0, 0});
-	const auto				 c10	 = generateChunk(sampler, {1, 0});
-	const auto				 c01	 = generateChunk(sampler, {0, 1});
-	const auto				 c11	 = generateChunk(sampler, {1, 1});
+	const Chunk& c00 = cornerLakeChunk({0, 0});
+	const Chunk& c10 = cornerLakeChunk({1, 0});
+	const Chunk& c01 = cornerLakeChunk({0, 1});
+	const Chunk& c11 = cornerLakeChunk({1, 1});
 
-	expectBorderVerticesMatch(*c00, *c10, true);
-	expectBorderVerticesMatch(*c01, *c11, true);
-	expectBorderVerticesMatch(*c00, *c01, false);
-	expectBorderVerticesMatch(*c10, *c11, false);
+	expectBorderVerticesMatch(c00, c10, true);
+	expectBorderVerticesMatch(c01, c11, true);
+	expectBorderVerticesMatch(c00, c01, false);
+	expectBorderVerticesMatch(c10, c11, false);
 
 	// All four share the corner point, which lies in the lake.
 	const Vec2i64 corner{kChunkMm, kChunkMm};
-	for (const Chunk* c : {c00.get(), c10.get(), c01.get(), c11.get()}) {
+	for (const Chunk* c : {&c00, &c10, &c01, &c11}) {
 		expectAllSimple(c->terrainPolygons(), "corner");
 		const std::vector<Vec2i64> onLine = navVerticesOnLine(c->terrainPolygons(), true, kChunkMm);
 		EXPECT_NE(std::find(onLine.begin(), onLine.end(), corner), onLine.end());
 	}
 
-	const std::vector<SeamSide> all  = {seamChunk(*c00), seamChunk(*c10), seamChunk(*c01), seamChunk(*c11)};
+	const std::vector<SeamSide> all  = {seamChunk(c00), seamChunk(c10), seamChunk(c01), seamChunk(c11)};
 	const geometry::nav::NavMesh mesh = buildSeamMesh(all);
 	ASSERT_FALSE(mesh.triangles.empty());
 	expectSeamClassificationAgrees(mesh, all[0], all[1], true);
@@ -679,9 +691,10 @@ TEST(TerrainPolygonBuilderTest, IdenticalAcrossThreadCountsAndCompletionOrders) 
 	const CornerBiomeSampler			 sampler = cornerLakeSampler();
 	const std::vector<ChunkCoordinate> coords	 = {{0, 0}, {1, 0}, {0, 1}, {1, 1}};
 
-	std::vector<std::unique_ptr<Chunk>> serial;
+	// The shared corner-lake chunks are the serial run.
+	std::vector<const Chunk*> serial;
 	for (const ChunkCoordinate& c : coords) {
-		serial.push_back(generateChunk(sampler, c));
+		serial.push_back(&cornerLakeChunk(c));
 	}
 
 	// Concurrent, launched in reverse so completion order differs from the serial run.

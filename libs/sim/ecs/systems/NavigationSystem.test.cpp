@@ -173,29 +173,42 @@ namespace {
 		[[nodiscard]] uint64_t getWorldSeed() const override { return 7u; }
 	};
 
+	// The ready radius-2 chunk region around the origin. Generating it is most of a test's
+	// setup cost, and NavigationSystem writes nothing observable in it, so each sampler's region
+	// is generated once per process and shared by every test that wires it.
+	std::unique_ptr<world::ChunkManager> generateOriginChunks(std::unique_ptr<world::IWorldSampler> sampler) {
+		auto chunks = std::make_unique<world::ChunkManager>(std::move(sampler));
+		chunks->setLoadRadius(2);
+		chunks->setUnloadRadius(4);
+		chunks->update({0.0F, 0.0F});
+		chunks->finishPendingGeneration();
+		return chunks;
+	}
+
+	world::ChunkManager* landChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks = generateOriginChunks(std::make_unique<LandSampler>());
+		return chunks.get();
+	}
+
+	world::ChunkManager* waterPatchChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks = generateOriginChunks(std::make_unique<WaterPatchSampler>());
+		return chunks.get();
+	}
+
 	class NavigationSystemTest : public ::testing::Test {
 	  protected:
 		void SetUp() override {
 			ConstructionRegistry::Get().clear();
 			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
-
-			// A ready chunk region (all land) and a 60 m simulation area at the origin, so
-			// the NavigationSystem build runs through the SIMULATION-AREA path. The origin
-			// room (0..4 m x 0..3 m) sits well inside the area.
-			m_chunks = std::make_unique<world::ChunkManager>(std::make_unique<LandSampler>());
-			m_chunks->setLoadRadius(2);
-			m_chunks->setUnloadRadius(4);
-			m_chunks->update({0.0F, 0.0F});
-			m_chunks->finishPendingGeneration();
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 
-		// Wire the area build (chunks + a 60 m viewport region at origin) onto a system in
-		// addition to its ConstructionWorld, so the test exercises the simulation-region
-		// path. The viewport drives a single region centered at origin; the 3x5 m origin
-		// room sits well inside it.
-		void wireArea(NavigationSystem& sys) {
-			sys.setChunkManager(m_chunks.get());
+		// Wire the area build (the all-land chunks + a 60 m viewport region at origin) onto
+		// a system in addition to its ConstructionWorld, so the test exercises the
+		// simulation-region path. The viewport drives a single region centered at origin;
+		// the 3x5 m origin room sits well inside it.
+		static void wireArea(NavigationSystem& sys) {
+			sys.setChunkManager(landChunks());
 			pushArea(sys, {0, 0}, 60000); // 60 m -- covers the origin room comfortably
 		}
 
@@ -208,8 +221,6 @@ namespace {
 			const float halfM = static_cast<float>(halfExtentMm) / 1000.0F;
 			sys.setViewportRect(centerM, glm::vec2{halfM, halfM});
 		}
-
-		std::unique_ptr<world::ChunkManager> m_chunks;
 	};
 
 } // namespace
@@ -509,7 +520,7 @@ TEST_F(NavigationSystemTest, GenerationMovesWhenALaggingRegionSwaps) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// Colonist A's region builds, then rebuilds on two wall edits, so its swap count runs ahead.
@@ -694,7 +705,7 @@ TEST_F(NavigationSystemTest, ZoomOutRebuildExpandsArea) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// First push: 30 m (min clamp, covers origin room).
@@ -724,7 +735,7 @@ TEST_F(NavigationSystemTest, ZoomInRebuildShrinksArea) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// First push: 100 m.
@@ -755,7 +766,7 @@ TEST_F(NavigationSystemTest, PanPastEdgeMarginTriggersRebuild) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// First build centered at origin with 60 m radius (built rect [-60 m, 60 m]).
@@ -778,7 +789,7 @@ TEST_F(NavigationSystemTest, PanWithinMarginNoRebuild) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	pushArea(sys, {0, 0}, 60000);
@@ -803,7 +814,7 @@ TEST_F(NavigationSystemTest, HalfExtentClampedToMin) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// Request 1 m: should be clamped to kMinSimHalfExtentMm (30 m).
@@ -822,7 +833,7 @@ TEST_F(NavigationSystemTest, HalfExtentClampedToMax) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// Request 2000 m (2 000 000 mm): should be clamped to kMaxSimHalfExtentMm (64 m).
@@ -1014,7 +1025,7 @@ TEST_F(NavigationSystemTest, InSimAreaFalseBeforeBuild) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 	// Push an area but don't pump -- no mesh built yet.
 	pushArea(sys, {0, 0}, 60000);
@@ -1030,7 +1041,7 @@ TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// 60 m area at origin: covers roughly (-60 m, -60 m) to (+60 m, +60 m).
@@ -1054,17 +1065,12 @@ TEST_F(NavigationSystemTest, InSimAreaTrueInsideFalseOutside) {
 
 TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOffMesh) {
 	// Mostly-land world with a pond at (40,40) inside the origin chunk.
-	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
-	chunks->setLoadRadius(2);
-	chunks->setUnloadRadius(4);
-	chunks->update({0.0F, 0.0F});
-	chunks->finishPendingGeneration();
 
 	ConstructionWorld cw; // empty: open terrain plus the pond obstacle
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(chunks.get());
+	sys.setChunkManager(waterPatchChunks());
 	pushArea(sys, {0, 0}, 60000); // 60 m region (clamped to 64) covers origin and the patch
 	sys.setConstructionWorld(&cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
@@ -1136,16 +1142,11 @@ TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
 // The landing snap: before any sim region or construction world exists, a drop point in
 // the water moves to the nearest walkable terrain beside it, and a land point stays put.
 TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWaterBeforeAnyRegion) {
-	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
-	chunks->setLoadRadius(2);
-	chunks->setUnloadRadius(4);
-	chunks->update({0.0F, 0.0F});
-	chunks->finishPendingGeneration();
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	EXPECT_FALSE(sys.nearestTerrainWalkablePoint({40.0F, 40.0F}).has_value()) << "no chunks wired";
-	sys.setChunkManager(chunks.get());
+	sys.setChunkManager(waterPatchChunks());
 	ASSERT_FALSE(sys.hasMesh());
 
 	const glm::vec2				   land{2.0F, 2.0F};
@@ -1172,15 +1173,10 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWaterBeforeAnyRegi
 // others, and near the drop. Checked against the runtime mesh built afterwards, the same
 // isValidPosition the recovery snap would otherwise have to fix.
 TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGround) {
-	auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
-	chunks->setLoadRadius(2);
-	chunks->setUnloadRadius(4);
-	chunks->update({0.0F, 0.0F});
-	chunks->finishPendingGeneration();
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(chunks.get());
+	sys.setChunkManager(waterPatchChunks());
 
 	// The pond's west shore is x = 32; (34, 40) is ~2 m in from it.
 	const glm::vec2	 drop{34.0F, 40.0F};
@@ -1242,7 +1238,7 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointStepsOutOfBuiltWallBand)
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// A solid span of the wall: the query point sits dead-center in the band.
@@ -1269,7 +1265,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	const glm::vec2	 drop{5.0F, 0.0F}; // dead-center on the wall
@@ -1302,20 +1298,13 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 
 namespace {
 	// Set up a system over the water-patch world + a 60 m origin region with a built mesh.
-	// Returns the ChunkManager the caller must keep alive for the system's lifetime.
-	std::unique_ptr<world::ChunkManager> wireWaterPatch(NavigationSystem& sys, ConstructionWorld& cw) {
-		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<WaterPatchSampler>());
-		chunks->setLoadRadius(2);
-		chunks->setUnloadRadius(4);
-		chunks->update({0.0F, 0.0F});
-		chunks->finishPendingGeneration();
-		sys.setChunkManager(chunks.get());
+	void wireWaterPatch(NavigationSystem& sys, ConstructionWorld& cw) {
+		sys.setChunkManager(waterPatchChunks());
 		// 60 m region at origin (clamped to 64), exactly as the existing water-patch test
 		// wires it: covers the origin land AND the pond. (Viewport center/
 		// half in meters; mirrors NavigationSystemTest::pushArea, inlined for a free helper.)
 		sys.setViewportRect(glm::vec2{0.0F, 0.0F}, glm::vec2{60.0F, 60.0F});
 		sys.setConstructionWorld(&cw);
-		return chunks;
 	}
 } // namespace
 
@@ -1323,7 +1312,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A 4 m square wholly on land (well clear of the pond).
@@ -1338,7 +1327,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// Corners straddle the pond horizontally: x=28 and x=52 are LAND (12 m from its center,
@@ -1355,7 +1344,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A big square whose corners AND edges are all on land but that fully encloses the
@@ -1377,7 +1366,7 @@ TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeTrees) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	auto			  chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	const std::vector<glm::vec2> spanning{{28.0F, 38.0F}, {52.0F, 38.0F}, {52.0F, 42.0F}, {28.0F, 42.0F}};
@@ -1395,7 +1384,7 @@ TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw);
+	wireWaterPatch(sys, cw);
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// A wall segment fully on land is walkable.
@@ -1753,7 +1742,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearInPocketFallsBackToNearestWalk
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40)
+	wireWaterPatch(sys, cw); // pond at world (40,40)
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// Center of the pond: in-region but off-mesh, and a 1 m ring around it is wholly
@@ -1781,7 +1770,7 @@ TEST_F(NavigationSystemTest, FindValidPositionNearPushedFallbackStaysOnMesh) {
 	ConstructionWorld cw;
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	auto chunks = wireWaterPatch(sys, cw); // pond at world (40,40), region [-60, 60] on both axes
+	wireWaterPatch(sys, cw); // pond at world (40,40), region [-60, 60] on both axes
 	ASSERT_TRUE(pumpUntilMesh(sys)) << "navmesh never built";
 
 	// The region's farthest corner, (-60, -60), is 141.4 m from the origin, so a 150 m ring clears
@@ -1916,7 +1905,7 @@ TEST_F(NavigationSystemTest, QueryDispatchSelectsRegionContainingPoint) {
 
 	World world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(m_chunks.get());
+	sys.setChunkManager(landChunks());
 	sys.setConstructionWorld(&cw);
 
 	// Two colonists ~100 m apart: each drives its own 30 m square (kSimRadiusMm), and the

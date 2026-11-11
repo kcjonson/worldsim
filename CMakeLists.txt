@@ -64,6 +64,7 @@ find_package(nlohmann_json CONFIG REQUIRED)
 # Enable testing (must be before subdirectories)
 include(CTest)
 enable_testing()
+include(cmake/test-data.cmake)
 
 # Engine libraries from salal, pinned to a tag. Its vcpkg.json is ignored here
 # (manifest mode reads only the top-level manifest); this one provides every port
