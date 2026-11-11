@@ -2637,7 +2637,7 @@ namespace ecs {
 			radius = agentRadius->radiusMeters;
 		}
 		glm::vec2 goal = worldGoal;
-		if (m_navSystem != nullptr && !m_navSystem->isOnMesh(goal)) {
+		if (m_navSystem != nullptr && !m_navSystem->isValidPosition(goal)) {
 			const auto snapped = m_navSystem->nearestPathablePoint(goal, radius);
 			if (!snapped.has_value()) {
 				return std::nullopt;  // nothing reachable near the click; leave the colonist be

@@ -4,6 +4,7 @@
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
+#include "../components/NavPath.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
@@ -110,6 +111,9 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 			glm::vec2 p = pos.value;
 			if (!detail->detailOnAt(p)) {
 				continue;
+			}
+			if (const NavPath* path = world->getComponent<NavPath>(entity); path != nullptr && !path->done() && detail->routeCrossesPricedFaces(*path)) {
+				continue; // walking through flora on purpose, at its price
 			}
 
 			// --- Gather the nearby rects locally (position tiles == meters) ---

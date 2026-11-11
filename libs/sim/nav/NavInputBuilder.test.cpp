@@ -141,7 +141,7 @@ namespace {
 
 	// Each chunk's ground (its square and water) in one mesh, as NavigationSystem adds it.
 	geometry::nav::PatchableMesh meshFor(const FakeTerrain& terrain) {
-		geometry::nav::PatchableMesh mesh({.maxBoundsEdgeMm = 16000});
+		geometry::nav::PatchableMesh mesh({.maxBoundsEdgeMm = 64000});
 		geometry::nav::PatchEdits	 edits;
 		for (const auto& [coord, polygons] : terrain.chunks) {
 			edits.adds.push_back(chunkSquare({coord.first, coord.second}));

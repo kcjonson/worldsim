@@ -4959,9 +4959,9 @@ namespace ecs::test {
 	}
 
 	// Flora entering the nav mesh far away (around another colonist, or under the camera as it pans)
-	// changes nothing this colonist's verdicts depend on, since reachability reads the structural mesh:
-	// the failure is still recorded and the colonist moves on, instead of retrying the walled-in water
-	// every time flora lands somewhere.
+	// changes nothing this colonist's verdicts depend on, since reachability reads the structural mesh
+	// and flora landing leaves the nav generation where it is: the failure is still recorded and the
+	// colonist moves on, instead of retrying the walled-in water every time flora lands somewhere.
 	TEST_F(AIDecisionWalledWaterTest, FloraPatchFarAwayStillRecordsTheFailure) {
 		const auto colonist = makeThirstyColonistWithWalledWater();
 		world->update(kTick);
@@ -4971,8 +4971,8 @@ namespace ecs::test {
 		const std::uint64_t before = nav->generation();
 		patchFloraFarAway();
 		nav->finishPendingBuilds();
-		ASSERT_FALSE(nav->isOnMesh(kFarTree)) << "the far tree is in the nav mesh";
-		ASSERT_NE(nav->generation(), before) << "the flora patch moved the global generation";
+		ASSERT_FALSE(nav->isValidPosition(kFarTree)) << "the far tree is in the nav mesh";
+		ASSERT_EQ(nav->generation(), before) << "the flora patch moved the global generation";
 
 		world->update(kTick);
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over a flora patch";

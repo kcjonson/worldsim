@@ -22,12 +22,25 @@
 
 #include "NavigationSystem.h"
 
+#include "AIDecisionSystem.h"
+#include "MovementSystem.h"
+#include "PhysicsSystem.h"
+
 #include "../World.h"
+#include "../components/AgentRadius.h"
 #include "../components/Colonist.h"
+#include "../components/DecisionTrace.h"
+#include "../components/Inventory.h"
+#include "../components/Memory.h"
+#include "../components/Movement.h"
+#include "../components/Needs.h"
+#include "../components/SourceReachMemo.h"
+#include "../components/Task.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
+#include <assets/RecipeRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
@@ -601,6 +614,68 @@ namespace {
 		}
 	}
 
+	// 20 colonists, the real AI and movement, each walking a move order 80 m east while the view
+	// sweeps back and forth over them at 30 m/s with flora streaming in. Counts the path requests
+	// each tick: the replans. range(0): gap.
+	void BM_ReplanPan(benchmark::State& state) {
+		for (auto _ : state) {
+			Rig					   rig(state.range(0));
+			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ai.setNavigationSystem(&rig.nav);
+			rig.world.registerSystem<ecs::MovementSystem>();
+			rig.world.registerSystem<ecs::PhysicsSystem>();
+			rig.nav.setViewportRect(kColony, kViewHalf);
+			rig.settle();
+			for (int i = 0; i < 20; ++i) {
+				const glm::vec2		at = kColony + glm::vec2{static_cast<float>(i % 5) * 4.0F - 8.0F, static_cast<float>(i / 5) * 4.0F - 6.0F};
+				const ecs::EntityID e  = rig.world.createEntity();
+				rig.world.addComponent<ecs::Position>(e, ecs::Position{at});
+				rig.world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
+				rig.world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+				ecs::NeedsComponent needs = ecs::NeedsComponent::createDefault();
+				for (const ecs::NeedType need : {ecs::NeedType::Hunger, ecs::NeedType::Thirst, ecs::NeedType::Energy, ecs::NeedType::Bladder,
+												 ecs::NeedType::Digestion}) {
+					needs.get(need).value = 100.0F;
+				}
+				rig.world.addComponent<ecs::NeedsComponent>(e, needs);
+				rig.world.addComponent<ecs::Memory>(e, ecs::Memory{});
+				rig.world.addComponent<ecs::Inventory>(e, ecs::Inventory::createForColonist());
+				rig.world.addComponent<ecs::Task>(e, ecs::Task{});
+				rig.world.addComponent<ecs::DecisionTrace>(e, ecs::DecisionTrace{});
+				rig.world.addComponent<ecs::SourceReachMemo>(e, ecs::SourceReachMemo{});
+				rig.world.addComponent<ecs::Colonist>(e, ecs::Colonist{"Walker"});
+				rig.world.addComponent<ecs::AgentRadius>(e, ecs::AgentRadius{kAgentRadius, 1.0F});
+				ai.enterControl(e);
+				static_cast<void>(ai.issuePlayerMoveOrder(e, at + glm::vec2{80.0F, 0.0F}));
+				rig.movers.push_back(e);
+			}
+			rig.settle();
+			begin();
+			TickStats			stats;
+			std::vector<double> perTick;
+			float				offset = 0.0F;
+			float				dir	   = 1.0F;
+			rig.nav.resetNavQueryStats();
+			std::uint64_t last = 0;
+			for (int i = 0; i < 600; ++i) {
+				offset += dir * 30.0F * kTickSeconds;
+				if (offset > 150.0F || offset < -150.0F) {
+					dir = -dir;
+				}
+				rig.nav.setViewportRect(kColony + glm::vec2{offset, 0.0F}, kViewHalf);
+				rig.tick(stats);
+				const std::uint64_t queries = rig.nav.navQueryStats().totalQueries;
+				perTick.push_back(static_cast<double>(queries - last));
+				last = queries;
+			}
+			end();
+			stats.report(state);
+			state.counters["replans"]		 = static_cast<double>(last);
+			state.counters["replansPerTick"] = meanOf(perTick);
+			state.counters["replansMaxTick"] = atPercentile(perTick, 1.0);
+		}
+	}
+
 	// Fixed start/goal pairs in a colony's view, once settled. range(0): 0 the colony by the chunk
 	// side (the rows the old system has), 1 a colony in a chunk's middle. Prints each pair's verdict
 	// and length so two builds can be compared pair by pair.
@@ -785,6 +860,7 @@ BENCHMARK(BM_LongPan)->Args({1, 0})->Args({1, 2})->Args({0, 0})->Iterations(1)->
 BENCHMARK(BM_ZoomSweep)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ReplanPan)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0})->Args({1, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);

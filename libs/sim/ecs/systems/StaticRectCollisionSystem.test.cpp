@@ -455,7 +455,7 @@ TEST_F(StaticRectCollisionSystemTest, PushedOnlyWhereDetailIsOn) {
 	offCamera.addComponent<Position>(neighbour, Position{treeAt + glm::vec2{3.0F, 0.0F}});
 	offCamera.addComponent<Colonist>(neighbour, Colonist{"Neighbour"});
 	wire(offCamera, executor, treeAt + glm::vec2{2000.0F, 0.0F}).update(0.0F);
-	ASSERT_FALSE(offCamera.getSystem<NavigationSystem>().isOnMesh(treeAt + glm::vec2{0.0F, 0.1F})) << "the tree is in the mesh";
+	ASSERT_FALSE(offCamera.getSystem<NavigationSystem>().isValidPosition(treeAt + glm::vec2{0.0F, 0.1F})) << "the tree is in the mesh";
 	EXPECT_EQ(offCamera.getComponent<Position>(unseen)->value, inside);
 }
 
