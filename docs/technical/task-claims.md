@@ -401,14 +401,17 @@ Remaining need is target minus what has landed at the destination, per item:
 
 | Root | Target | Landed |
 |---|---|---|
-| Storage umbrella | to haul known stock: the item's configured max, or physical room when none is set; to stock by harvesting: the configured minimum | stored quantity of the item in the box |
+| Storage umbrella | to haul known stock: the item's configured max, or physical room when none is set; to stock by harvesting: the minimum of the rules naming the item (a category wildcard's minimum never drives cutting) | stored quantity of the item in the box |
 | Craft | the current recipe's bill of materials | station store contents |
 | Construction umbrella | the blueprint manifest | `delivered[]` |
 
 Storage need is bounded per item and by the box's slots through the destination check above, so
 per-item needs cannot sum past what the box holds. Either storage target is also capped by the box's
 physical room for the item, and a loose haul now stops at the configured max too (it used to fill to
-physical room). One helper, `GoalTaskRegistry::remainingNeed(world, root, item, basis)`, reads the
+physical room), as does a deposit, which keeps the surplus carried. A packaged box (being moved) needs
+nothing and is no pull source. A box keeps its umbrella, and so its root id, while it has rules, full
+or not: a full box simply needs nothing, and goods on their way toward it, a suspended record's
+included, keep counting toward the same root when room returns. One helper, `GoalTaskRegistry::remainingNeed(world, root, item, basis)`, reads the
 target and what has landed from the world on every call (the station's next job and store, the
 manifest, the box), so a deposit or a consumed input shows at once with no counter to keep in step;
 its cost is the recipe's inputs, the manifest's entries, or the box's rules and slots, never a walk

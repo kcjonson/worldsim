@@ -921,6 +921,39 @@ TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenBoxReachesMinimum) {
 
 // Retire (b): an existing stocking Harvest is REMOVED when no colony-known harvestable source for
 // its yield remains (the source vanished / was forgotten), and is not re-emitted.
+// A box that fills up keeps its umbrella: goods on their way toward it keep counting, and its id is the
+// same once room returns.
+TEST_F(MultiSystemGoalTest, AFullBoxKeepsItsUmbrella) {
+	auto& registry = GoalTaskRegistry::Get();
+	auto  box = world->createEntity();
+	world->addComponent<Position>(box, Position{{0.0F, 0.0F}});
+	auto store = Inventory::createForStorage();
+	store.maxCapacity = 1;
+	world->addComponent<Inventory>(box, std::move(store));
+	StorageConfiguration config;
+	config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial});
+	world->addComponent<StorageConfiguration>(box, std::move(config));
+
+	runUpdates(60);
+	const GoalTask* umbrella = registry.getGoalByDestination(box);
+	ASSERT_NE(umbrella, nullptr);
+	const uint64_t umbrellaId = umbrella->id;
+
+	auto& inventory = *world->getComponent<Inventory>(box);
+	inventory.addItem("Stick", inventory.addableCount("Stick"));
+	ASSERT_EQ(inventory.addableCount("Stick"), 0U);
+	runUpdates(60);
+	ASSERT_NE(registry.getGoalByDestination(box), nullptr) << "full, it keeps its umbrella";
+	EXPECT_EQ(registry.getGoalByDestination(box)->id, umbrellaId);
+	EXPECT_EQ(registry.remainingNeed(*world, umbrellaId, assets::AssetRegistry::Get().getDefNameId("Stick"), NeedBasis::Stock), 0U)
+		<< "and wants nothing";
+
+	inventory.removeItem("Stick", 5);
+	runUpdates(60);
+	ASSERT_NE(registry.getGoalByDestination(box), nullptr);
+	EXPECT_EQ(registry.getGoalByDestination(box)->id, umbrellaId) << "the same root once room returns";
+}
+
 TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenSourceVanishes) {
 	registerWoodAndTree();
 

@@ -50,7 +50,7 @@ namespace ecs {
 		};
 
 		// Query all entities with StorageConfiguration + Inventory + Position
-		for (auto [entity, config, inventory, position] :
+		for ([[maybe_unused]] auto [entity, config, inventory, position] :
 			 world->view<StorageConfiguration, Inventory, Position>()) {
 			// Only process storages with rules configured
 			if (!config.hasRules()) {
@@ -61,18 +61,10 @@ namespace ecs {
 				continue;
 			}
 
-			// A box with no room left for anything (every slot used, every stack full) wants nothing.
-			// How much of each item it wants is its remaining need (GoalTaskRegistry::remainingNeed),
-			// counted in items against its rules, never a slot count.
-			const bool hasRoom = inventory.hasSpace() || std::any_of(inventory.items.begin(), inventory.items.end(), [&inventory](const ItemStack& stack) {
-				return inventory.addableCount(stack.defName) > 0;
-			});
-			if (!hasRoom) {
-				removeStorageGoalTree(entity);
-				storagesWithGoals.erase(entity);
-				continue;
-			}
-
+			// The umbrella stays while the box has rules, full or not, so goods on their way keep counting
+			// toward it and a suspended record of them stays adoptable. How much of each item it wants is
+			// its remaining need (GoalTaskRegistry::remainingNeed), counted in items against its rules and
+			// its room, so a full box simply wants nothing.
 			std::vector<uint32_t> acceptedDefNameIds;
 			assets::ItemCategory  primaryCategory = assets::ItemCategory::None;
 			for (const auto& rule : config.rules) {

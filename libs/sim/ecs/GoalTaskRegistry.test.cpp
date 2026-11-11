@@ -2,6 +2,7 @@
 
 #include "World.h"
 #include "components/Inventory.h"
+#include "components/Packaged.h"
 #include "components/StorageConfiguration.h"
 #include "components/StructureBlueprint.h"
 #include "components/WorkQueue.h"
@@ -219,6 +220,40 @@ namespace ecs::test {
 		world.getComponent<Inventory>(box)->addItem("Stone", 4);
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 4U) << "a deposit shows at once";
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U);
+	}
+
+	// A category wildcard's minimum never drives cutting, so it does not inflate the cut need of an
+	// item a rule names; stock hauled in is still bounded by the wildcard's room.
+	TEST_F(RemainingNeedTest, AWildcardMinimumDoesNotInflateTheCutNeed) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		world.addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "*", .category = assets::ItemCategory::RawMaterial, .minAmount = 50});
+		config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial, .minAmount = 4});
+		world.addComponent<StorageConfiguration>(box, std::move(config));
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+
+		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Harvest), 4U) << "the named rule's minimum only";
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U) << "no rule names Stone";
+	}
+
+	// A packaged box is being moved: no haul, carry-in, or cut is aimed at it until it is placed.
+	TEST_F(RemainingNeedTest, APackagedBoxWantsNothing) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		world.addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .minAmount = 5});
+		world.addComponent<StorageConfiguration>(box, std::move(config));
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+		ASSERT_GT(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U);
+
+		world.addComponent<Packaged>(box, Packaged{std::nullopt, false});
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U);
+		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Harvest), 0U);
+		world.removeComponent<Packaged>(box);
+		EXPECT_GT(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 0U) << "placed again, it wants stock again";
 	}
 
 	TEST_F(RemainingNeedTest, CraftNeedIsTheNextJobsBillOfMaterialsLessTheStore) {

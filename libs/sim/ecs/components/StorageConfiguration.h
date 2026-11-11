@@ -156,6 +156,18 @@ struct StorageConfiguration {
 		return total;
 	}
 
+	/// The min amount the rules naming this item set, summed; category wildcards never drive cutting,
+	/// so their minimums are left out.
+	[[nodiscard]] uint32_t getNamedMinAmountFor(const std::string& defName, assets::ItemCategory category) const {
+		uint32_t total = 0;
+		for (const auto& rule : rules) {
+			if (!rule.isWildcard() && rule.matches(defName, category)) {
+				total += rule.minAmount;
+			}
+		}
+		return total;
+	}
+
 	/// Get all rules that match a specific item
 	[[nodiscard]] std::vector<const StorageRule*> getRulesFor(
 		const std::string& defName, assets::ItemCategory category) const {

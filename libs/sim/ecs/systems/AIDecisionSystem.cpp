@@ -675,8 +675,8 @@ namespace ecs {
 				NearestReserved<PullSource> reserved;
 
 				for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
-					if (srcEntity == destEntity) {
-						continue; // never pull from the destination itself
+					if (srcEntity == destEntity || world->hasComponent<Packaged>(srcEntity)) {
+						continue; // never pull from the destination itself, or from a box being moved
 					}
 					const uint32_t srcHas = srcInv.getQuantity(itemDefName);
 					if (srcHas == 0) {

@@ -3,6 +3,7 @@
 #include "StoreOrDrop.h"
 #include "World.h"
 #include "components/Inventory.h"
+#include "components/Packaged.h"
 #include "components/StorageConfiguration.h"
 #include "components/StructureBlueprint.h"
 #include "components/WorkQueue.h"
@@ -37,13 +38,14 @@ namespace ecs {
 			const auto* config = world.getComponent<StorageConfiguration>(box);
 			const auto* inventory = world.getComponent<Inventory>(box);
 			const auto* def = assets::AssetRegistry::Get().getDefinitionById(itemDefNameId);
-			if (config == nullptr || inventory == nullptr || def == nullptr) {
+			// A packaged box is being moved: it takes nothing until it is placed again.
+			if (config == nullptr || inventory == nullptr || def == nullptr || world.hasComponent<Packaged>(box)) {
 				return 0;
 			}
 			if (basis == NeedBasis::Stock) {
 				return storageRoomFor(*config, *inventory, item, def->category);
 			}
-			const uint32_t minimum = config->getMinAmountFor(item, def->category);
+			const uint32_t minimum = config->getNamedMinAmountFor(item, def->category);
 			const uint32_t held = inventory->getQuantity(item);
 			return minimum > held ? std::min(minimum - held, inventory->addableCount(item)) : 0U;
 		}
