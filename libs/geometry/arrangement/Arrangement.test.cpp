@@ -507,3 +507,20 @@ TEST(Arrangement, RingsSharingCollinearSubEdgeYieldPslg) {
 	EXPECT_TRUE(hasEdge(arr, {1000, 0}, {1000, 200}));
 	EXPECT_TRUE(hasEdge(arr, {1000, 800}, {1000, 1200}));
 }
+
+// Two crossings on one segment round to points sharing an x, off the segment's line:
+// (11.74, 25.96) to (12, 26) and (12.26, 25.04) to (12, 25). The segment runs toward
+// -x, +y, so its chain must reach (12, 25) first. Ordered by coordinates the chain
+// zigzagged back through (12, 26), and the ring it belonged to forked.
+TEST(Arrangement, RoundedCutsSharingAnXFollowTheSegment) {
+	const std::vector<InputSegment> segs = {
+		{{14, 22}, {10, 29}, 1},
+		{{20, 21}, {10, 27}, 2},
+		{{10, 27}, {25, 14}, 3},
+	};
+	const Arrangement arr = buildArrangement(segs);
+	EXPECT_TRUE(hasEdge(arr, {14, 22}, {12, 25})) << canonical(arr);
+	EXPECT_TRUE(hasEdge(arr, {12, 25}, {12, 26})) << canonical(arr);
+	EXPECT_TRUE(hasEdge(arr, {12, 26}, {10, 29})) << canonical(arr);
+	EXPECT_FALSE(hasEdge(arr, {14, 22}, {12, 26})) << canonical(arr);
+}

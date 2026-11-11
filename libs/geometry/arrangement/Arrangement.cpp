@@ -252,9 +252,14 @@ namespace geometry {
 
 				// Order the cut points along the segment and emit the chain of
 				// sub-segments. Dedup identical cuts so a point hit by several
-				// neighbors splits only once.
+				// neighbors splits only once. A rounded crossing sits off the line, so
+				// two cuts can share an x on a segment that is not vertical: order by
+				// exact projection onto the segment, not by coordinates.
+				const Vec2i64 dir = s.b - s.a;
 				std::sort(cuts.begin(), cuts.end(), [&](const Vec2i64& p, const Vec2i64& q) {
-					return s.a < s.b ? p < q : q < p;
+					const Int128 tp = dot(p - s.a, dir);
+					const Int128 tq = dot(q - s.a, dir);
+					return tp != tq ? tp < tq : p < q;
 				});
 				cuts.erase(std::unique(cuts.begin(), cuts.end()), cuts.end());
 
