@@ -94,6 +94,9 @@ namespace assets {
 		/// the cull margin) reads this mesh, so it doesn't change with the camera's zoom.
 		const renderer::TessellatedMesh* getTemplate(uint32_t templateId) const;
 
+		/// The highest template id handed out since the last clear; ids run from 1 to this.
+		[[nodiscard]] uint32_t templateCount() const;
+
 		/// A template's mesh at one detail level, or why there is none, and the collision rect its
 		/// generator emitted (asset:setCollisionRect).
 		struct BuiltTemplate {

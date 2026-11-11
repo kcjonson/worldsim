@@ -1674,6 +1674,11 @@ namespace assets {
 		return mesh.has_value() ? &*mesh : nullptr;
 	}
 
+	uint32_t AssetRegistry::templateCount() const {
+		std::lock_guard<std::mutex> lock(templateCacheMutex);
+		return static_cast<uint32_t>(m_templates.size());
+	}
+
 	const renderer::TessellatedMesh* AssetRegistry::getTemplate(const std::string& defName, TreeTraits traits) {
 		return getTemplate(templateId(defName, traits));
 	}

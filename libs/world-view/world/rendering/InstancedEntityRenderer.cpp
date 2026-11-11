@@ -41,9 +41,9 @@ namespace worldview {
 		if (slot.state == SlotState::Absent) {
 			const TemplateLevels& levels = levelsOf(templateId);
 			if (level == levels.reference) {
+				// Uploaded now, outside the budget, so a template draws on the frame it first appears.
 				slot.registryMesh = levels.mesh;
-				slot.state = SlotState::Waiting;
-				uploadQueue.push_back(index);
+				upload(index);
 				return;
 			}
 			slot.state = SlotState::Requested;
@@ -78,27 +78,44 @@ namespace worldview {
 			const uint32_t index = uploadQueue.front();
 			uploadQueue.pop_front();
 			uploadedVertices += vertices;
-
-			slot.handle = Renderer::Primitives::uploadInstancedMesh(mesh, kInitialInstanceCapacity);
-			if (!slot.handle.isValid()) {
-				slot.state = SlotState::Failed;
-				continue;
-			}
-			slot.capacity = kInitialInstanceCapacity;
-			slot.triangles = static_cast<uint32_t>(mesh.getTriangleCount());
-			slot.boundsMin = mesh.vertices.front();
-			slot.boundsMax = mesh.vertices.front();
-			slot.radius = 0.0F;
-			for (const auto& v : mesh.vertices) {
-				slot.boundsMin = {std::min(slot.boundsMin.x, v.x), std::min(slot.boundsMin.y, v.y)};
-				slot.boundsMax = {std::max(slot.boundsMax.x, v.x), std::max(slot.boundsMax.y, v.y)};
-				slot.radius = std::max(slot.radius, std::sqrt((v.x * v.x) + (v.y * v.y)));
-			}
-			slot.state = SlotState::Ready;
-			slot.lastDrawnFrame = frameIndex;
-			const uint32_t templateId = index / static_cast<uint32_t>(assets::kMaxDetailLevels);
-			levelsOf(templateId).readyMask |= static_cast<uint8_t>(1U << (index % assets::kMaxDetailLevels));
+			upload(index);
 		}
+	}
+
+	void InstancedEntityRenderer::upload(uint32_t index) {
+		MeshSlot&						 slot = meshSlots[index];
+		const renderer::TessellatedMesh& mesh = *slot.mesh();
+		const uint32_t					 templateId = index / static_cast<uint32_t>(assets::kMaxDetailLevels);
+		const auto						 level = static_cast<uint8_t>(index % assets::kMaxDetailLevels);
+		slot.handle = Renderer::Primitives::uploadInstancedMesh(mesh, kInitialInstanceCapacity);
+		if (!slot.handle.isValid()) {
+			LOG_ERROR(Engine, "Template %u failed to upload at detail level %u", templateId, static_cast<unsigned>(level));
+			release(index, SlotState::Failed);
+			return;
+		}
+		slot.capacity = kInitialInstanceCapacity;
+		slot.triangles = static_cast<uint32_t>(mesh.getTriangleCount());
+		slot.boundsMin = mesh.vertices.front();
+		slot.boundsMax = mesh.vertices.front();
+		slot.radius = 0.0F;
+		for (const auto& v : mesh.vertices) {
+			slot.boundsMin = {std::min(slot.boundsMin.x, v.x), std::min(slot.boundsMin.y, v.y)};
+			slot.boundsMax = {std::max(slot.boundsMax.x, v.x), std::max(slot.boundsMax.y, v.y)};
+			slot.radius = std::max(slot.radius, std::sqrt((v.x * v.x) + (v.y * v.y)));
+		}
+		slot.state = SlotState::Ready;
+		slot.lastDrawnFrame = frameIndex;
+		levelsOf(templateId).readyMask |= static_cast<uint8_t>(1U << level);
+	}
+
+	void InstancedEntityRenderer::release(uint32_t index, SlotState state) {
+		MeshSlot& slot = meshSlots[index];
+		slot.handle = {};
+		slot.builtMesh.reset();
+		slot.capacity = 0;
+		slot.state = state;
+		TemplateLevels& levels = templateLevels[index / assets::kMaxDetailLevels];
+		levels.readyMask = static_cast<uint8_t>(levels.readyMask & ~(1U << (index % assets::kMaxDetailLevels)));
 	}
 
 	void InstancedEntityRenderer::evictStale() {
@@ -110,16 +127,12 @@ namespace worldview {
 				continue; // reference levels stay while the registry keeps their template
 			}
 			if (frameIndex - slot.lastDrawnFrame > kEvictAfterFrames) {
-				slot.handle = {};
-				slot.builtMesh.reset();
-				slot.state = SlotState::Absent;
-				TemplateLevels& levels = templateLevels[index / assets::kMaxDetailLevels];
-				levels.readyMask = static_cast<uint8_t>(levels.readyMask & ~(1U << (index % assets::kMaxDetailLevels)));
+				release(index, SlotState::Absent);
 				continue;
 			}
 			++resident;
 			bytes += (slot.builtMesh->vertices.size() * (sizeof(Foundation::Vec2) + sizeof(Foundation::Color))) +
-					 (slot.builtMesh->indices.size() * sizeof(uint16_t));
+					 (slot.builtMesh->indices.size() * sizeof(uint16_t)) + (static_cast<size_t>(slot.capacity) * sizeof(Renderer::InstanceData));
 		}
 		lastLevelStats.residentLevels = resident;
 		lastLevelStats.residentBytes = bytes;
@@ -216,16 +229,18 @@ namespace worldview {
 		animIndices.clear();
 		uint32_t animVertexBase = 0;
 
-		// Take what the level builder finished and the reference meshes asked for last frame and
-		// upload them within budget first, so the walk below draws every level that is ready: a
-		// level first wanted in this frame's walk draws from the next frame, and its template draws
-		// the nearest ready level until then.
+		// Take what the level builder finished and upload it within budget first, so the walk below
+		// draws every level that is ready: a level other than the reference first wanted in this
+		// frame's walk draws from a later frame, and its template draws the nearest ready level until
+		// then. A reference level uploads in the walk, the first time its template is drawn.
 		collectAndUpload();
 
-		// Every slot a template draws is Ready, so it exists now; a slot the walk makes isn't drawn this frame.
+		// The items were gathered before this, so every template they name has an id the registry
+		// has handed out, and every slot the walk can draw is below this bound.
+		const uint32_t		   slotBound = (assets::AssetRegistry::Get().templateCount() + 1) * static_cast<uint32_t>(assets::kMaxDetailLevels);
 		LevelStats			   levelStats{.screenPixelsPerMeter = scale};
 		const Foundation::Vec2 screenOffset{halfViewW - (camX * scale), halfViewH - (camY * scale)};
-		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, static_cast<uint32_t>(meshSlots.size()));
+		planner.beginFrame(ctx.viewportWidth, ctx.viewportHeight, slotBound);
 		runCount = 0;
 
 		// drawInstanced draws immediately; the CPU triangle batch only draws when the
@@ -238,15 +253,20 @@ namespace worldview {
 				Run&	   run = runs[r];
 				MeshSlot&  slot = meshSlots[run.slot];
 				const auto count = static_cast<uint32_t>(run.instances.size());
-				if (count > slot.capacity) {
+				if (slot.state == SlotState::Ready && count > slot.capacity) {
 					uint32_t capacity = slot.capacity;
 					while (capacity < count) {
 						capacity *= 2;
 					}
 					slot.handle = Renderer::Primitives::uploadInstancedMesh(*slot.mesh(), capacity);
 					slot.capacity = capacity;
+					if (!slot.handle.isValid()) {
+						// Its template settles on another ready level from the next frame.
+						LOG_ERROR(Engine, "Mesh slot %u failed to grow to %u instances; that level is dropped", run.slot, capacity);
+						release(run.slot, SlotState::Failed);
+					}
 				}
-				if (slot.handle.isValid()) {
+				if (slot.state == SlotState::Ready) {
 					Renderer::Primitives::drawInstanced(slot.handle, run.instances.data(), count, camera);
 					stats.uprightDrawCalls++;
 					stats.uprightTriangles += count * slot.triangles;

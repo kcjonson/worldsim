@@ -40,10 +40,10 @@ namespace worldview {
 /// sorted position, after every run opened before them.
 ///
 /// A template whose def declares <detailLevels> draws at the level the camera's density
-/// picks (assets::detailLevelFor). The registry holds the reference level's mesh; the
-/// others are built on request by a TemplateLevelBuilder off this thread, uploaded here
-/// within kUploadVertexBudget a frame, and until a level is uploaded its template draws
-/// the nearest one that is. A level not drawn for kEvictAfterFrames is released.
+/// picks (assets::detailLevelFor). The registry holds the reference level's mesh, uploaded the
+/// first time its template is drawn; the others are built on request by a TemplateLevelBuilder
+/// off this thread, uploaded here within kUploadVertexBudget a frame, and until a level is
+/// uploaded its template draws the nearest one that is. A level not drawn for kEvictAfterFrames is released.
 class InstancedEntityRenderer {
   public:
 	/// What the last frame drew at which detail level, for /api/state?what=uprights.
@@ -56,7 +56,7 @@ class InstancedEntityRenderer {
 		std::vector<Use> uses;				// instances of leveled templates, by the level they drew
 		uint32_t		 pendingRequests = 0; // levels wanted and not yet uploaded
 		uint32_t		 residentLevels = 0;  // non-reference level meshes on the GPU
-		size_t			 residentBytes = 0;   // and their vertex and index bytes
+		size_t			 residentBytes = 0;   // and their vertex, index, and instance buffer bytes
 	};
 
 	/// Emit the pre-sorted upright stream in order (ascending anchorY).
@@ -83,7 +83,7 @@ class InstancedEntityRenderer {
 	// 8 px across now; the bound grew with them.
 	static constexpr float kUnorderedFootprintPixels = 8.0F;
 
-	// Mesh vertices uploaded a frame; the first waiting mesh always goes, however large.
+	// Non-reference level vertices uploaded a frame; the first waiting mesh always goes, however large.
 	// A level 80 tree is about 20,000, the reference level about 5,000.
 	static constexpr uint32_t kUploadVertexBudget = 131072;
 
@@ -95,7 +95,7 @@ class InstancedEntityRenderer {
 		Requested, // with the level builder
 		Waiting,   // built, waiting for an upload
 		Ready,	   // on the GPU
-		Failed,	   // the build or upload failed; never retried
+		Failed,	   // the build or upload failed (logged); never retried
 	};
 
 	// GPU mesh per (template id, detail level): the SHARED geometry (VBO/IBO) every instance
@@ -177,9 +177,15 @@ class InstancedEntityRenderer {
 	/// The slot of a template's level, made on first use.
 	MeshSlot& slotAt(uint32_t index);
 
-	/// Asks for a template's level this frame: the reference level is the registry's mesh, queued
-	/// for upload; another goes to the level builder until it comes back.
+	/// Asks for a template's level this frame: the reference level is the registry's mesh, uploaded
+	/// at once; another goes to the level builder until it comes back.
 	void want(uint32_t templateId, uint8_t level);
+
+	/// Uploads a slot's mesh and marks its level ready, or logs the failure and marks it Failed.
+	void upload(uint32_t index);
+
+	/// Frees a slot's GPU mesh and built mesh, leaving it in `state` and its level not ready.
+	void release(uint32_t index, SlotState state);
 
 	/// Takes the level builder's finished meshes, then uploads waiting meshes within the budget.
 	void collectAndUpload();
