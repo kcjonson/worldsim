@@ -143,7 +143,7 @@ class VisionSystem : public ISystem {
 	// Throttling: only update every N frames to reduce CPU overhead
 	// Initialize to interval so first update() call executes immediately
 	uint32_t m_frameCounter = 5;
-	uint32_t m_updateInterval = 5; // Default: update every 5 frames (12x/sec at 60fps)
+	uint32_t m_updateInterval = 5; // Every 5 frames: 12 passes a second at 60 fps, 24 at 120
 };
 
 } // namespace ecs

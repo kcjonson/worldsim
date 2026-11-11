@@ -1697,7 +1697,7 @@ namespace ecs {
 			// with current belief. Not a re-task -- the destination is unchanged. Runs
 			// before the shouldReEvaluate gate so it isn't skipped between re-evals, and
 			// only when a version actually changed, so it can't thrash. Vision bumps
-			// beliefVersion at most ~12 Hz while this runs per frame, so the version
+			// beliefVersion at most every 5th frame while this runs per frame, so the version
 			// compare naturally coalesces many idle frames into at most one repath per
 			// discovery. Gate on a still-pursued goal: a valid route on a Moving task.
 			if (auto* navPath = world->getComponent<NavPath>(entity);
