@@ -60,7 +60,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <cstdio>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -5287,10 +5286,8 @@ namespace ecs::test {
 
 		const uint64_t single = lookupsForOneDecision(50);
 		const uint64_t doubled = lookupsForOneDecision(100);
-		std::printf("name lookups per decision: %llu at 300 sources, %llu at 600\n", static_cast<unsigned long long>(single),
-					static_cast<unsigned long long>(doubled));
 		EXPECT_EQ(doubled, single);
-		EXPECT_LE(single, 64U);
+		EXPECT_LE(single, 8U);
 	}
 #endif
 

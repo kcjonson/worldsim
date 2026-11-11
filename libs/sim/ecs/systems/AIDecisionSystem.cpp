@@ -2208,8 +2208,6 @@ namespace ecs {
 			return !reach.has_value() || !sourceReach.knownUnreachable(sourceKey) ||
 				   !m_navSystem->sharesStartRegion(*reach, known.position);
 		};
-		const auto anywhere = [](uint64_t, const glm::vec2&) { return true; };
-		const auto anySource = [](uint64_t, const KnownWorldEntity&) { return true; };
 
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
 		// a river don't hide a reachable one farther off.
@@ -2498,9 +2496,10 @@ namespace ecs {
 
 			// Standard handling for other needs
 			auto capability = needToCapability(needType);
-			// A satisfied need only shows its nearest source, so it spends no reachability tests.
+			// A satisfied need only shows its nearest source (its row and its place among the idle options),
+			// so it spends no reachability tests and builds no candidate list.
 			const auto nearest = need.needsAttention() ? findNeedSource(capability, notKnownUnreachable, canReachSource)
-													   : findNeedSource(capability, anySource, anywhere);
+													   : findNearestWithCapability(memory, capability, position.value);
 
 			if (nearest.has_value()) {
 				option.targetPosition = nearest->position;

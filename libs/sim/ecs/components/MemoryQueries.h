@@ -66,6 +66,27 @@ template <typename Reachable>
 	return {.distSq = glm::dot(diff, diff), .key = key, .entity = nullptr, .position = position};
 }
 
+/// The nearest known world entity with `capability`, ties broken by memory key: what
+/// findNearestReachableWithCapability picks when it accepts and reaches every candidate, in one pass
+/// with no candidate list.
+[[nodiscard]] inline std::optional<KnownWorldEntity>
+findNearestWithCapability(const Memory& memory, assets::CapabilityType capability, const glm::vec2& fromPosition) {
+	const KnownWorldEntity* best = nullptr;
+	SourceCandidate			bestAt{};
+	for (uint64_t key : memory.getEntitiesWithCapability(capability)) {
+		const auto* entity = memory.getWorldEntity(key);
+		if (entity == nullptr) {
+			continue;
+		}
+		const SourceCandidate candidate = sourceCandidate(fromPosition, key, entity->position);
+		if (best == nullptr || std::tie(candidate.distSq, candidate.key) < std::tie(bestAt.distSq, bestAt.key)) {
+			best = entity;
+			bestAt = candidate;
+		}
+	}
+	return best != nullptr ? std::optional<KnownWorldEntity>{*best} : std::nullopt;
+}
+
 /// Find the nearest known world entity with `capability` that `accept(memoryKey, entity)` admits and
 /// `reachable(memoryKey, position)` confirms. One pass over Memory's capability index collects the
 /// accepted candidates into `scratch` (caller-owned and reused, so no allocation once it has grown to
