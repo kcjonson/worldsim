@@ -598,6 +598,12 @@ decided, why, and how to undo it.
 16. **`ChunkManager::update`'s anchor argument has a default.** Making it required means editing one call in `AIDecisionSystem.test.cpp`, which the parent branch is changing. To be made required after that merge.
 17. **Two things found and filed, not fixed:** WOR-717 (Felled trees and harvested nodes come back when their chunk unloads and reloads), an existing bug that anchors make rarer; WOR-718 (Off-camera chunks hold flora meshes on the GPU and grass instance lists on the CPU), memory that now grows with how spread out the colony is.
 
+18. **The per-tick patch budget is a count, not a time (step 4).** Section 4.8 said "time budget". A time budget makes the tick a tree enters depend on frame time, which breaks rule 6's bar on reproducible outcomes. So: a fixed number of flora rings and of chunks' ground per tick, the numbers chosen from measurement.
+19. **The path heuristic stays on the nav mesh in step 4.** Section 4.6 moves RRA* to the structural layer. That needs a map from nav triangles to structural triangles and a check that a coarse structural triangle still gives a useful estimate, so it waits for a measurement. Until then the caches are cleared on any tick that patches the nav mesh, as a region swap cleared them before.
+20. **`generation()` still bumps for everyone, once per tick with patches.** Targeted replans (only movers whose route crosses a hole) need a one-line change in `AIDecisionSystem`, which the parent branch is editing. Done with step 6.
+21. **Public nav members that only made sense with regions keep their signatures until step 6**, for the same reason, with meanings on the one mesh. The list is in the step 4 notes on WOR-707 (Step 4: One mesh in the game).
+22. **Between steps 4 and 5 flora is a hard wall where it has been added.** Reachability reads the structural layer, which has no flora, so a spot ringed by trees reads reachable and then fails to path. Step 5's pass-through cost closes that. The two steps merge together.
+
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
 
