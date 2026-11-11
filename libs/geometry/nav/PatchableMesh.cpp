@@ -16,9 +16,12 @@ namespace geometry::nav {
 
 	namespace {
 
-		// How far snap rounding can leave a ring's edges from its original lines, with
-		// margin: each rounding moves a crossing under a millimetre.
-		constexpr std::int64_t kSnapReachMm = 2;
+		// How close two original edges must come for the off-ground pull to treat them as
+		// interacting. buildArrangement's rounding has no proven drift bound: each cascade
+		// level can move a piece another 0.71 mm, and the six segments in the arrangement
+		// test RepeatedRoundingDriftsPastTwoMillimetres drift 2.98 mm. Pulling too much
+		// into s is only slower; pulling too little loses exactness.
+		constexpr std::int64_t kOffGroundReachMm = 8;
 
 		int next3(int i) {
 			return i == 2 ? 0 : i + 1;
@@ -177,7 +180,7 @@ namespace geometry::nav {
 	}
 
 	template <typename Value> void PatchableMesh::InternTable<Value>::release(std::int32_t id) {
-		assert(refs[static_cast<std::size_t>(id)] > 0);
+		assert(refs[static_cast<std::size_t>(id)] > 0 && "InternTable: releasing a dead entry");
 		if (--refs[static_cast<std::size_t>(id)] == 0) {
 			ids.erase(values[static_cast<std::size_t>(id)]);
 			values[static_cast<std::size_t>(id)] = {};
@@ -330,10 +333,10 @@ namespace geometry::nav {
 		for (std::int64_t cy = floorDiv(lo.y, side); cy <= floorDiv(hi.y, side); ++cy) {
 			for (std::int64_t cx = floorDiv(lo.x, side); cx <= floorDiv(hi.x, side); ++cx) {
 				const std::int32_t cell = find(keyOf(level, cx, cy));
-				assert(cell >= 0);
+				assert(cell >= 0 && "BoxGrid: erasing from a cell that does not exist");
 				std::vector<Entry>& entries = cells[static_cast<std::size_t>(cell)].entries;
 				auto				pos		= std::find_if(entries.begin(), entries.end(), [&](const Entry& e) { return e.id == id; });
-				assert(pos != entries.end());
+				assert(pos != entries.end() && "BoxGrid: erasing an id the cell does not hold");
 				*pos = entries.back();
 				entries.pop_back();
 				if (entries.empty()) {
@@ -590,7 +593,7 @@ namespace geometry::nav {
 			auto					   it	= halfEdgesOf.find(sourceKey(s));
 			std::vector<std::int32_t>& list = it->second;
 			auto					   pos	= std::find(list.begin(), list.end(), t * 3 + e);
-			assert(pos != list.end());
+			assert(pos != list.end() && "PatchableMesh: a half-edge missing from the ring edge index");
 			*pos = list.back();
 			list.pop_back();
 			if (list.empty()) {
@@ -610,7 +613,7 @@ namespace geometry::nav {
 		while (uu.neighbor[static_cast<std::size_t>(j)] != t) {
 			++j;
 		}
-		assert(coverIds[static_cast<std::size_t>(t)] == coverIds[static_cast<std::size_t>(u)]);
+		assert(coverIds[static_cast<std::size_t>(t)] == coverIds[static_cast<std::size_t>(u)] && "PatchableMesh: flipping between two covers");
 
 		Vec2i64 lo;
 		Vec2i64 hi;
@@ -834,51 +837,44 @@ namespace geometry::nav {
 	// The mesh shows every interaction on kept ground, but a segment that reaches off
 	// ground can meet a hanging ring there, and the rounded crossing can still land on
 	// ground. Off ground and near its edge the registry stands in: every blocked ring
-	// edge whose original comes within two snap reaches joins s. A bounds edge runs along
+	// edge whose original comes within kOffGroundReachMm joins s. A bounds edge runs along
 	// the boundary, so it always asks the registry, but it never pulls the boundary
 	// pieces beside it: those are bounds edges too, which the mesh shows whole, and
 	// pulling them would walk the whole border.
 	void PatchableMesh::Patch::pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge) {
-		const Vec2i64 reach{kSnapReachMm, kSnapReachMm};
+		const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
 		Vec2i64		  lo = a;
 		Vec2i64		  hi = a;
 		growBox(lo, hi, b);
 		lo = lo - reach;
 		hi = hi + reach;
-		if (!boundsEdge && m.nearBoundsEdge(lo - reach, hi + reach)) {
+		if (!boundsEdge) {
 			bool nearBoundary = false;
-			m.forEachLiveInBox(lo, hi, [&](std::int32_t t) {
-				const NavTriangle& tri = m.tris[static_cast<std::size_t>(t)];
-				for (int e = 0; e < 3; ++e) {
-					if (tri.neighbor[static_cast<std::size_t>(e)] >= 0) {
-						continue;
-					}
-					const Vec2i64& p   = m.verts[tri.v[static_cast<std::size_t>(e)]];
-					const Vec2i64& q   = m.verts[tri.v[static_cast<std::size_t>(next3(e))]];
-					Vec2i64		   eLo = p;
-					Vec2i64		   eHi = p;
-					growBox(eLo, eHi, q);
-					if (!boxesOverlap(lo, hi, eLo, eHi)) {
-						continue;
-					}
-					nearBoundary = true;
-					// Off ground a segment can still end on the boundary, at a vertex with
-					// no piece of it on the mesh.
-					if (segmentsWithin(a, b, p, q, 2 * kSnapReachMm)) {
+			if (m.nearBoundsEdge(lo - reach, hi + reach)) {
+				m.forEachLiveInBox(lo, hi, [&](std::int32_t t) {
+					const NavTriangle& tri = m.tris[static_cast<std::size_t>(t)];
+					for (int e = 0; e < 3; ++e) {
+						if (tri.neighbor[static_cast<std::size_t>(e)] >= 0) {
+							continue;
+						}
+						const Vec2i64& p = m.verts[tri.v[static_cast<std::size_t>(e)]];
+						const Vec2i64& q = m.verts[tri.v[static_cast<std::size_t>(next3(e))]];
+						if (!segmentsWithin(a, b, p, q, kOffGroundReachMm)) {
+							continue;
+						}
+						// Off ground a segment can still end on the boundary, at a vertex
+						// with no piece of it on the mesh.
+						nearBoundary = true;
 						for (const EdgeSource& z : m.edgeSources(t, e)) {
 							addToS(z);
 						}
 					}
-				}
-			});
+				});
+			}
 			if (!nearBoundary && m.locateScaled(a + b, 2) >= 0) {
 				return;
-				}
-		} else if (!boundsEdge && m.locateScaled(a + b, 2) >= 0) {
-			return;
+			}
 		}
-		lo = lo - reach;
-		hi = hi + reach;
 		for (RingId r : m.ringsInBox(lo, hi)) {
 			const RegisteredRing& reg = m.rings[static_cast<std::size_t>(r)];
 			if (!reg.polygon.blocked || changes.count(r) != 0) {
@@ -888,7 +884,7 @@ namespace geometry::nav {
 			for (std::int32_t e = 0; e < static_cast<std::int32_t>(outline.size()); ++e) {
 				const Vec2i64 p = edgeStart(outline, e);
 				const Vec2i64 q = edgeEnd(outline, e);
-				if (p != q && s.count({r, e}) == 0 && segmentsWithin(a, b, p, q, 2 * kSnapReachMm)) {
+				if (p != q && s.count({r, e}) == 0 && segmentsWithin(a, b, p, q, kOffGroundReachMm)) {
 					addToS({r, e});
 				}
 			}
@@ -912,11 +908,11 @@ namespace geometry::nav {
 			setNew(changes[id], add);
 		}
 		for (RingId id : edits.removes) {
-			assert(m.rings[static_cast<std::size_t>(id)].live && changes.count(id) == 0);
+			assert(m.rings[static_cast<std::size_t>(id)].live && changes.count(id) == 0 && "PatchableMesh: removing a dead ring, or editing one twice");
 			changes[id].hadOld = true;
 		}
 		for (const RingMove& move : edits.moves) {
-			assert(m.rings[static_cast<std::size_t>(move.ring)].live && changes.count(move.ring) == 0);
+			assert(m.rings[static_cast<std::size_t>(move.ring)].live && changes.count(move.ring) == 0 && "PatchableMesh: moving a dead ring, or editing one twice");
 			Change& c	   = changes[move.ring];
 			c.hadOld	   = true;
 			NavInputPolygon moved = m.rings[static_cast<std::size_t>(move.ring)].polygon;
@@ -1793,6 +1789,17 @@ namespace geometry::nav {
 		}
 		out.lo = lo;
 		out.hi = hi;
+
+		// A flip moves edges between triangles, so door tags are set afresh on every new
+		// and flipped triangle; their widths, and widths near what changed, wait for
+		// refreshWidths.
+		for (std::int32_t t : out.newTriangles) {
+			m.applyDoorTags(t);
+		}
+		if (boxSet) {
+			m.pendingWidthBoxes.push_back({lo, hi});
+			m.freshWidthTriangles.insert(m.freshWidthTriangles.end(), out.newTriangles.begin(), out.newTriangles.end());
+		}
 	}
 
 	// --- Public edits ---------------------------------------------------------------
@@ -1829,31 +1836,179 @@ namespace geometry::nav {
 		return out;
 	}
 
+	PatchableMesh::PatchableMesh(const PatchableMeshArgs& args)
+		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm) {}
+
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
-		report = patch.run();
-		return report;
+		forestsCurrent = false;
+		return patch.run();
 	}
 
-	RingId PatchableMesh::addRing(const NavInputPolygon& ring) {
-		PatchEdits edits;
-		edits.adds.push_back(ring);
-		return applyPatch(edits).added.front();
+	// --- Doors, widths, forests, and the view ---------------------------------------
+
+	std::pair<Vec2i64, Vec2i64> PatchableMesh::edgeKey(Vec2i64 a, Vec2i64 b) {
+		if (b < a) {
+			std::swap(a, b);
+		}
+		return {a, b};
 	}
 
-	void PatchableMesh::removeRing(RingId ring) {
-		PatchEdits edits;
-		edits.removes.push_back(ring);
-		applyPatch(edits);
+	void PatchableMesh::applyDoorTags(std::int32_t t) {
+		NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+		for (int e = 0; e < 3; ++e) {
+			auto it = doorsAt.find(edgeKey(verts[tri.v[static_cast<std::size_t>(e)]], verts[tri.v[static_cast<std::size_t>(next3(e))]]));
+			const bool tagged						 = it != doorsAt.end();
+			tri.edgeOpening[static_cast<std::size_t>(e)] = tagged ? doors[static_cast<std::size_t>(it->second.front())].openingId : kNoOpening;
+			tri.edgeClearWidthMm[static_cast<std::size_t>(e)] =
+				tagged ? doors[static_cast<std::size_t>(it->second.front())].clearWidthMm : kUnconstrainedWidth;
+		}
 	}
 
-	void PatchableMesh::moveRing(RingId ring, const std::vector<Vec2i64>& outline) {
-		PatchEdits edits;
-		edits.moves.push_back({ring, outline});
-		applyPatch(edits);
+	// The triangles on edge (a, b), if it is a mesh edge, take its tags again.
+	void PatchableMesh::retagEdge(const Vec2i64& a, const Vec2i64& b) {
+		auto va = vertexAt.find(a);
+		auto vb = vertexAt.find(b);
+		if (va == vertexAt.end() || vb == vertexAt.end()) {
+			return;
+		}
+		std::vector<std::int32_t> onEdge;
+		forEachAroundVertex(va->second, [&](std::int32_t t, int i) {
+			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+			if (tri.v[static_cast<std::size_t>(next3(i))] == vb->second || tri.v[static_cast<std::size_t>(prev3(i))] == vb->second) {
+				onEdge.push_back(t);
+			}
+		});
+		for (std::int32_t t : onEdge) {
+			applyDoorTags(t);
+		}
+	}
+
+	DoorId PatchableMesh::addDoor(const DoorPortal& door) {
+		DoorId id = 0;
+		if (!freeDoors.empty()) {
+			id = freeDoors.back();
+			freeDoors.pop_back();
+			doors[static_cast<std::size_t>(id)]	   = door;
+			doorLive[static_cast<std::size_t>(id)] = 1;
+		} else {
+			id = static_cast<DoorId>(doors.size());
+			doors.push_back(door);
+			doorLive.push_back(1);
+		}
+		std::vector<DoorId>& onEdge = doorsAt[edgeKey(door.a, door.b)];
+		onEdge.insert(std::lower_bound(onEdge.begin(), onEdge.end(), id), id);
+		retagEdge(door.a, door.b);
+		forestsCurrent = false;
+		return id;
+	}
+
+	void PatchableMesh::removeDoor(DoorId id) {
+		assert(doorLive[static_cast<std::size_t>(id)] != 0 && "PatchableMesh: removing a door twice");
+		const DoorPortal	 door	= doors[static_cast<std::size_t>(id)];
+		auto				 it		= doorsAt.find(edgeKey(door.a, door.b));
+		std::vector<DoorId>& onEdge = it->second;
+		onEdge.erase(std::find(onEdge.begin(), onEdge.end(), id));
+		if (onEdge.empty()) {
+			doorsAt.erase(it);
+		}
+		doorLive[static_cast<std::size_t>(id)] = 0;
+		freeDoors.push_back(id);
+		retagEdge(door.a, door.b);
+		forestsCurrent = false;
+	}
+
+	// Each patch since the last refresh left a box holding every triangle and adjacency
+	// it changed, and marked its new and flipped triangles, which get their widths from
+	// scratch. An unchanged triangle's width w at apex C (w read as maxClearanceMm when
+	// unconstrained) stays right unless a box comes within w of C: the obstacle at
+	// distance w is found through triangles inside the disc of radius w around C, none of
+	// them changed, and nothing nearer than w can appear outside the boxes
+	// (corridorWidthMm reads nothing farther than maxClearanceMm). So only those apexes
+	// are searched again.
+	void PatchableMesh::refreshWidths() {
+		const Vec2i64			  reach{maxClearanceMm, maxClearanceMm};
+		std::vector<std::int32_t> near;
+		for (const auto& [lo, hi] : pendingWidthBoxes) {
+			forEachLiveInBox(lo - reach, hi + reach, [&](std::int32_t t) { near.push_back(t); });
+		}
+		std::sort(near.begin(), near.end());
+		near.erase(std::unique(near.begin(), near.end()), near.end());
+		std::sort(freshWidthTriangles.begin(), freshWidthTriangles.end());
+		const NavView view = meshView();
+		for (std::int32_t t : near) {
+			const bool fresh = std::binary_search(freshWidthTriangles.begin(), freshWidthTriangles.end(), t);
+			NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+			for (int apex = 0; apex < 3; ++apex) {
+				const Vec2i64&	   c	 = verts[tri.v[static_cast<std::size_t>(apex)]];
+				const std::int64_t w	 = std::min(tri.edgePairWidthMm[static_cast<std::size_t>(apex)], maxClearanceMm);
+				bool			   stale = fresh;
+				for (std::size_t b = 0; b < pendingWidthBoxes.size() && !stale; ++b) {
+					const auto& [lo, hi] = pendingWidthBoxes[b];
+					const Vec2i64 gap{std::max({lo.x - c.x, c.x - hi.x, std::int64_t{0}}), std::max({lo.y - c.y, c.y - hi.y, std::int64_t{0}})};
+					stale = dot(gap, gap) <= Int128::product(w, w);
+				}
+				if (stale) {
+					tri.edgePairWidthMm[static_cast<std::size_t>(apex)] = corridorWidthMm(view, widthSearch, t, apex, maxClearanceMm);
+				}
+			}
+		}
+		freshWidthTriangles.clear();
+		pendingWidthBoxes.clear();
+	}
+
+	void PatchableMesh::rebuildForests() {
+		refreshWidths();
+		forests		   = buildReachabilityForests(meshView());
+		forestsCurrent = true;
+	}
+
+	NavView PatchableMesh::view() const {
+		assert(widthsCurrent() && "PatchableMesh: refreshWidths before a query");
+		return meshView();
+	}
+
+	NavView PatchableMesh::meshView() const {
+		NavView v;
+		v.vertices	= &verts;
+		v.triangles = &tris;
+		v.live		= &live;
+		v.locate	= [](const void* owner, const Vec2i64& p) { return static_cast<const PatchableMesh*>(owner)->locate(p); };
+		v.owner		= this;
+		if (forestsCurrent) {
+			v.truthForest	= &forests.truth;
+			v.terrainForest = &forests.terrain;
+		}
+		return v;
 	}
 
 	// --- Validator -------------------------------------------------------------------
+
+	// The farthest any vertex of this ring's pieces on the mesh lies from the line of
+	// the original edge it is on, rounded up to a millimetre.
+	std::int64_t PatchableMesh::pieceDeviationMm(RingId ring) const {
+		const std::vector<Vec2i64>& outline = rings[static_cast<std::size_t>(ring)].polygon.ring;
+		std::int64_t				worst	= 0;
+		for (std::int32_t e = 0; e < static_cast<std::int32_t>(outline.size()); ++e) {
+			auto pieces = halfEdgesOf.find(sourceKey({ring, e}));
+			if (pieces == halfEdgesOf.end()) {
+				continue;
+			}
+			const Vec2i64 a	   = edgeStart(outline, e);
+			const Vec2i64 dir  = edgeEnd(outline, e) - a;
+			const Int128  len2 = dot(dir, dir);
+			for (std::int32_t h : pieces->second) {
+				const NavTriangle& tri = tris[static_cast<std::size_t>(h / 3)];
+				for (const std::uint32_t v : {tri.v[static_cast<std::size_t>(h % 3)], tri.v[static_cast<std::size_t>(next3(h % 3))]}) {
+					const Int128 off = cross(dir, verts[v] - a);
+					while (Int128::compareSquareToProduct(off, Int128::product(worst, worst), len2) > 0) {
+						++worst;
+					}
+				}
+			}
+		}
+		return worst;
+	}
 
 	std::string PatchableMesh::validate() const {
 		std::ostringstream err;
@@ -1946,7 +2101,7 @@ namespace geometry::nav {
 			std::vector<const SampleRing*> containing;
 			int							   boundsCount = 0;
 			for (RingId r : ringSet) {
-				if (r < 0 || r >= ringSlots() || !rings[static_cast<std::size_t>(r)].live) {
+				if (r < 0 || r >= static_cast<RingId>(rings.size()) || !rings[static_cast<std::size_t>(r)].live) {
 					fail() << "triangle " << t << " covered by dead ring " << r;
 					break;
 				}
@@ -1987,7 +2142,7 @@ namespace geometry::nav {
 					}
 					++sourceRefs[static_cast<std::size_t>(sourceId)];
 					for (const EdgeSource& z : sourceLists.get(sourceId)) {
-						if (z.ring < 0 || z.ring >= ringSlots() || !rings[static_cast<std::size_t>(z.ring)].live) {
+						if (z.ring < 0 || z.ring >= static_cast<RingId>(rings.size()) || !rings[static_cast<std::size_t>(z.ring)].live) {
 							fail() << "triangle " << t << " edge " << e << " names dead ring " << z.ring;
 							break;
 						}
@@ -2093,7 +2248,7 @@ namespace geometry::nav {
 			return "locate index holds a dead triangle";
 		}
 		std::size_t liveRings = 0;
-		for (RingId r = 0; r < ringSlots(); ++r) {
+		for (RingId r = 0; r < static_cast<RingId>(rings.size()); ++r) {
 			const RegisteredRing& reg = rings[static_cast<std::size_t>(r)];
 			if (!reg.live) {
 				continue;
@@ -2109,7 +2264,7 @@ namespace geometry::nav {
 		bool		deadRing	 = false;
 		ringGrid.forEachEntry([&](std::int32_t r) {
 			++indexedRings;
-			deadRing = deadRing || r < 0 || r >= ringSlots() || !rings[static_cast<std::size_t>(r)].live;
+			deadRing = deadRing || r < 0 || r >= static_cast<RingId>(rings.size()) || !rings[static_cast<std::size_t>(r)].live;
 		});
 		if (deadRing || indexedRings < liveRings) {
 			return "ring index holds a dead ring";
@@ -2159,7 +2314,7 @@ namespace geometry::nav {
 			}
 		}
 		// An original corner over kept ground is a vertex with both its edges on it.
-		for (RingId r = 0; r < ringSlots(); ++r) {
+		for (RingId r = 0; r < static_cast<RingId>(rings.size()); ++r) {
 			const RegisteredRing& reg = rings[static_cast<std::size_t>(r)];
 			if (!reg.live) {
 				continue;
@@ -2196,6 +2351,40 @@ namespace geometry::nav {
 						fail() << "ring " << r << " edge " << edge << " is missing at its corner " << i;
 						return err.str();
 					}
+				}
+			}
+		}
+
+		// Widths, once refreshed, are what a fresh search gives; door tags are what the door
+		// registry says; forests, when the mesh has them, are what a fresh build gives.
+		{
+			const NavView v = meshView();
+			WidthSearch	  search;
+			for (std::int32_t t = 0; t < triCount; ++t) {
+				if (live[static_cast<std::size_t>(t)] == 0) {
+					continue;
+				}
+				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+				for (int e = 0; e < 3; ++e) {
+					if (widthsCurrent() && tri.edgePairWidthMm[static_cast<std::size_t>(e)] != corridorWidthMm(v, search, t, e, maxClearanceMm)) {
+						fail() << "triangle " << t << " apex " << e << " has a stale corridor width";
+						return err.str();
+					}
+					auto		 door	 = doorsAt.find(edgeKey(verts[tri.v[static_cast<std::size_t>(e)]], verts[tri.v[static_cast<std::size_t>(next3(e))]]));
+					const bool	 tagged	 = door != doorsAt.end();
+					std::int64_t opening = tagged ? doors[static_cast<std::size_t>(door->second.front())].openingId : kNoOpening;
+					std::int64_t width	 = tagged ? doors[static_cast<std::size_t>(door->second.front())].clearWidthMm : kUnconstrainedWidth;
+					if (tri.edgeOpening[static_cast<std::size_t>(e)] != opening || tri.edgeClearWidthMm[static_cast<std::size_t>(e)] != width) {
+						fail() << "triangle " << t << " edge " << e << " has stale door tags";
+						return err.str();
+					}
+				}
+			}
+			if (forestsCurrent) {
+				const ReachabilityForests fresh = buildReachabilityForests(v);
+				if (fresh.truth.component != forests.truth.component || fresh.truth.nodeCap != forests.truth.nodeCap ||
+					fresh.terrain.component != forests.terrain.component || fresh.terrain.nodeCap != forests.terrain.nodeCap) {
+					return "reachability forests differ from a fresh build";
 				}
 			}
 		}
@@ -2245,11 +2434,13 @@ namespace geometry::nav {
 			std::set_symmetric_difference(exact.begin(), exact.end(), cover(best).begin(), cover(best).end(), std::back_inserter(differ));
 			for (RingId r : differ) {
 				// Snap rounding bends a ring's edges off its original lines, so a face can
-				// straddle one; within that reach the original outline does not decide.
-				const std::vector<Vec2i64>& ring3 = rings[static_cast<std::size_t>(r)].sample.ring3;
-				bool						near  = false;
+				// straddle one; within as far as this ring's pieces stray from its outline,
+				// the original outline does not decide.
+				const std::vector<Vec2i64>& ring3  = rings[static_cast<std::size_t>(r)].sample.ring3;
+				const std::int64_t			stray  = pieceDeviationMm(r);
+				bool						near   = false;
 				for (std::size_t i = 0; i < ring3.size() && !near; ++i) {
-					near = withinDistanceOfSegment(sample3, ring3[i], ring3[(i + 1) % ring3.size()], 3 * kSnapReachMm);
+					near = withinDistanceOfSegment(sample3, ring3[i], ring3[(i + 1) % ring3.size()], 3 * stray);
 				}
 				if (!near) {
 					fail() << "face of triangle " << best << ": cover disagrees with exact containment of its sample in ring " << r;

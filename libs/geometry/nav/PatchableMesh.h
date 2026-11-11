@@ -24,8 +24,10 @@
 // triangles. Bounds rings may share edges and vertices but their interiors must not
 // overlap.
 //
-// Corridor widths, door portals, and reachability forests are not maintained here:
-// edgeOpening, edgeClearWidthMm, and edgePairWidthMm stay at their defaults.
+// The mesh carries what path queries and reachability read: face tags from the rings,
+// door tags on door edges, corridor widths capped at a maximum clearance (brought up to
+// date by refreshWidths), and both reachability forests (rebuilt by rebuildForests).
+// view() hands all of it to PathQuery and the forest builder, which serve NavMesh too.
 
 namespace geometry::nav {
 
@@ -75,22 +77,29 @@ namespace geometry::nav {
 	// cuts. maxEdgeMm 0 returns the outline whole.
 	std::vector<Vec2i64> splitLongEdges(const std::vector<Vec2i64>& outline, std::int64_t maxEdgeMm);
 
+	using DoorId		   = std::int32_t;
+
+	// Covers any agent the game could have: a 2 m radius, over six times the colonist's.
+	constexpr std::int64_t kDefaultMaxClearanceMm = 4000;
+
+	struct PatchableMeshArgs {
+		// A bounds ring enters the mesh with its edges split to at most this
+		// (splitLongEdges), and ring() returns that outline; 0 keeps them whole. A patch
+		// re-derives a changed edge whole, so this bounds the cost of a ring crossing a
+		// long chunk side.
+		std::int64_t maxBoundsEdgeMm = 0;
+		// Corridor widths are exact below this and read kUnconstrainedWidth at or above
+		// it, so a patch refreshes only the widths within this distance of what it changed.
+		std::int64_t maxClearanceMm = kDefaultMaxClearanceMm;
+	};
+
 	class PatchableMesh {
 	  public:
-		// A bounds ring enters the mesh with its edges split to at most maxBoundsEdgeMm
-		// (splitLongEdges), and ring() returns that outline. A patch re-derives a changed
-		// edge whole, so this bounds the cost of a ring crossing a long chunk side.
-		explicit PatchableMesh(std::int64_t maxBoundsEdgeMm = 0) : maxBoundsEdgeMm(maxBoundsEdgeMm) {}
+		explicit PatchableMesh(const PatchableMeshArgs& args = {});
 
-		RingId		addRing(const NavInputPolygon& ring);
-		void		removeRing(RingId ring);
-		void		moveRing(RingId ring, const std::vector<Vec2i64>& outline);
 		PatchReport applyPatch(const PatchEdits& edits);
 
-		const PatchReport& lastPatch() const { return report; }
-
 		const std::vector<Vec2i64>&		vertices() const { return verts; }
-		bool							vertexLive(std::uint32_t v) const { return vertexUses[v] > 0; }
 		const std::vector<NavTriangle>& triangles() const { return tris; }
 		bool							triangleLive(std::int32_t t) const { return live[static_cast<std::size_t>(t)] != 0; }
 		std::int32_t					liveTriangleCount() const { return liveTriangles; }
@@ -100,12 +109,33 @@ namespace geometry::nav {
 		// The rings the triangle lies inside, ascending.
 		const std::vector<RingId>& cover(std::int32_t tri) const;
 
-		std::int32_t		  ringSlots() const { return static_cast<std::int32_t>(rings.size()); }
 		const RegisteredRing& ring(RingId id) const { return rings[static_cast<std::size_t>(id)]; }
 
 		// The live triangle containing p (edges and vertices included), the lowest id on
 		// a tie; -1 off the mesh.
 		std::int32_t locate(const Vec2i64& p) const;
+
+		// A door tags the triangle edge (a, b) with its opening and clear width wherever
+		// that edge exists, through every later patch; where two doors name one edge, the
+		// lower id tags it. Tags only: no geometry changes.
+		DoorId addDoor(const DoorPortal& door);
+		void   removeDoor(DoorId door);
+
+		// Corridor widths (NavTriangle::edgePairWidthMm, capped at maxClearanceMm) lag
+		// behind patches: a patch only records where it changed the mesh, and this brings
+		// every width up to date, once for all the patches since the last call.
+		void refreshWidths();
+		bool widthsCurrent() const { return pendingWidthBoxes.empty(); }
+
+		// Refreshes widths, then rebuilds both reachability forests from the live
+		// triangles. A patch or a door edit drops them, so the mesh has forests only when
+		// this ran after its last change.
+		void rebuildForests();
+		bool hasForests() const { return forestsCurrent; }
+
+		// What path queries, RRA*, and forest builds read (see NavView), with the forests
+		// when the mesh has them. Widths must be current.
+		NavView view() const;
 
 		// Full consistency check; the first violation found, or empty.
 		std::string validate() const;
@@ -200,9 +230,16 @@ namespace geometry::nav {
 		void		 legalize(std::vector<std::pair<std::int32_t, int>>& stack, std::vector<std::int32_t>& flipped);
 		void		 flip(std::int32_t t, int e);
 
+		std::int64_t pieceDeviationMm(RingId ring) const;
+		void		 applyDoorTags(std::int32_t t);
+		void		 retagEdge(const Vec2i64& a, const Vec2i64& b);
+		NavView		 meshView() const;
+		static std::pair<Vec2i64, Vec2i64> edgeKey(Vec2i64 a, Vec2i64 b);
+
 		static std::uint64_t sourceKey(const EdgeSource& s);
 
 		std::int64_t				maxBoundsEdgeMm = 0;
+		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
 		std::vector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;
 
@@ -229,9 +266,20 @@ namespace geometry::nav {
 		mutable std::uint32_t			   stamp		= 0;
 		mutable bool					   boxQueryOpen = false;
 
-		BoxGrid		grid;	   // live triangles
-		BoxGrid		ringGrid;  // live rings, by outline box
-		PatchReport report;
+		BoxGrid grid;	  // live triangles
+		BoxGrid ringGrid; // live rings, by outline box
+
+		std::vector<DoorPortal>									   doors;
+		std::vector<std::uint8_t>								   doorLive;
+		std::vector<DoorId>										   freeDoors;
+		std::map<std::pair<Vec2i64, Vec2i64>, std::vector<DoorId>> doorsAt; // ascending ids per edge
+
+		WidthSearch								 widthSearch;
+		std::vector<std::pair<Vec2i64, Vec2i64>> pendingWidthBoxes;	  // one per patch since refreshWidths
+		std::vector<std::int32_t>				 freshWidthTriangles; // new or flipped since then
+
+		ReachabilityForests forests;
+		bool				forestsCurrent = false;
 	};
 
 } // namespace geometry::nav

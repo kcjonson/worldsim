@@ -4,6 +4,7 @@
 #include "../core/Int128.h"
 #include "../predicates/Predicates.h"
 #include "../triangulation/ConstrainedDelaunay.h"
+#include "PathQuery.h"
 
 #include <algorithm>
 #include <array>
@@ -82,10 +83,10 @@ namespace geometry::nav {
 		// separates is common-knowledge-blocked (the boundary of a water/flora region).
 		// A mesh-boundary edge (neighbor == -1) has no obstacle face outside it, so a
 		// floor border is not an obstacle edge (scope: terrain/flora only).
-		bool isObstacleEdge(const NavMesh& mesh, std::int32_t ti, int e) {
-			const bool self	 = isCommonKnowledgeBlocked(mesh.triangles[ti].faceBlocker);
-			const std::int32_t nb = mesh.triangles[ti].neighbor[e];
-			const bool other = nb < 0 ? false : isCommonKnowledgeBlocked(mesh.triangles[nb].faceBlocker);
+		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e) {
+			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker);
+			const std::int32_t nb	 = view.triangle(ti).neighbor[static_cast<std::size_t>(e)];
+			const bool		   other = nb < 0 ? false : isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker);
 			return self != other;
 		}
 
@@ -165,30 +166,28 @@ namespace geometry::nav {
 			return floorSqrtRational(cross(uv, uc), den); // perpendicular, foot interior
 		}
 
-		std::int64_t minWidth(std::int64_t a, std::int64_t b) {
-			return a < b ? a : b;
+		// floor(|d|) < bound, decided on squares: no root is taken.
+		bool lengthBelow(const Vec2i64& d, std::int64_t bound) {
+			return dot(d, d) < Int128::product(bound, bound);
 		}
 
-		// Per-query scratch for the width search: a generation stamp per triangle so the
-		// recursion never re-enters a triangle within one CalculateWidth call. Demyen
-		// proves (Thm 4.3.4/4.3.6) a CDT width search never revisits a triangle, so this
-		// only fires as a defensive guard against a non-Delaunay sliver, where it
-		// terminates safely without dropping any reachable obstacle (an already-visited
-		// triangle was fully explored from this apex). One buffer is reused across the
-		// whole build via an incrementing stamp, so there is no per-call clearing.
-		struct WidthScratch {
-			std::vector<std::int32_t> visited; // visited[ti] == stamp -> seen this query
-			std::int32_t			  stamp = 0;
-		};
+		// floor(distance from c to the line through u and v) < bound, on squares:
+		// cross^2 < bound^2 * |uv|^2.
+		bool lineDistanceBelow(const Vec2i64& c, const Vec2i64& u, const Vec2i64& v, std::int64_t bound) {
+			const Vec2i64 uv = v - u;
+			return Int128::compareSquareToProduct(cross(uv, c - u), Int128::product(bound, bound), dot(uv, uv)) < 0;
+		}
 
 		// Demyen Algorithm 2: SearchWidth. Walk across non-obstacle edges from apex C,
 		// bounded above by the closest obstacle found so far (`bound`, a floored mm
 		// distance), returning the tightened bound. `ti`/`e` is the edge being entered.
-		std::int64_t searchWidth(
-			const NavMesh& mesh, WidthScratch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound) {
-			const NavTriangle& tri = mesh.triangles[ti];
-			const Vec2i64&	   u   = mesh.vertices[tri.v[e]];
-			const Vec2i64&	   v   = mesh.vertices[tri.v[(e + 1) % 3]];
+		// The visited stamp only guards against a non-Delaunay sliver: Demyen proves (Thm
+		// 4.3.4/4.3.6) a CDT width search never revisits a triangle, and an already-visited
+		// triangle was fully explored from this apex, so no obstacle is dropped.
+		std::int64_t searchWidth(const NavView& view, WidthSearch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound) {
+			const NavTriangle& tri = view.triangle(ti);
+			const Vec2i64&	   u   = view.vertex(tri.v[static_cast<std::size_t>(e)]);
+			const Vec2i64&	   v   = view.vertex(tri.v[static_cast<std::size_t>((e + 1) % 3)]);
 
 			// Prune: if the foot of the perpendicular from C to line UV is outside the
 			// segment, no obstacle reachable across this edge is in the wedge (Demyen
@@ -196,12 +195,12 @@ namespace geometry::nav {
 			if (obtuseAt(c, u, v) || obtuseAt(c, v, u)) {
 				return bound;
 			}
-			const std::int64_t d = floorDistancePointToSegment(c, u, v);
-			if (d >= bound) {
+			// The foot is on the segment here, so its distance is the line distance.
+			if (!lineDistanceBelow(c, u, v, bound)) {
 				return bound; // nothing closer this way
 			}
-			if (isObstacleEdge(mesh, ti, e)) {
-				return d; // closest obstacle is this constrained edge
+			if (isObstacleEdge(view, ti, e)) {
+				return floorDistancePointToSegment(c, u, v); // closest obstacle is this constrained edge
 			}
 			// Unconstrained: recurse into the opposite triangle's two other edges.
 			const std::int32_t nb = tri.neighbor[e];
@@ -212,7 +211,7 @@ namespace geometry::nav {
 				return bound; // already explored from this apex (loop guard)
 			}
 			scratch.visited[nb] = scratch.stamp;
-			const NavTriangle& opp = mesh.triangles[nb];
+			const NavTriangle& opp = view.triangle(nb);
 			int back = -1;
 			for (int k = 0; k < 3; ++k) {
 				if (opp.neighbor[k] == ti) {
@@ -224,57 +223,9 @@ namespace geometry::nav {
 				return bound; // adjacency inconsistency; bail safely
 			}
 			std::int64_t out = bound;
-			out = searchWidth(mesh, scratch, c, nb, (back + 1) % 3, out);
-			out = searchWidth(mesh, scratch, c, nb, (back + 2) % 3, out);
+			out = searchWidth(view, scratch, c, nb, (back + 1) % 3, out);
+			out = searchWidth(view, scratch, c, nb, (back + 2) % 3, out);
 			return out;
-		}
-
-		// Demyen Algorithm 3: CalculateWidth, for the edge pair meeting at apex v[apex]
-		// of triangle ti. Edges incident to the apex are `apex` and `(apex+2)%3`; the
-		// opposite edge c is `(apex+1)%3`, between base vertices A=v[(apex+1)%3] and
-		// B=v[(apex+2)%3]. Returns the floored max disc diameter (mm), or
-		// kUnconstrainedWidth when no common-knowledge obstacle pinches the passage.
-		std::int64_t calculateEdgePairWidth(const NavMesh& mesh, WidthScratch& scratch, std::int32_t ti, int apex) {
-			const NavTriangle& tri = mesh.triangles[ti];
-			const int		   cEdge = (apex + 1) % 3; // edge opposite the apex
-			const Vec2i64&	   c	 = mesh.vertices[tri.v[apex]];
-			const Vec2i64&	   a	 = mesh.vertices[tri.v[cEdge]];			// base vertex A
-			const Vec2i64&	   b	 = mesh.vertices[tri.v[(apex + 2) % 3]]; // base vertex B
-
-			// A base vertex bounds the width only if it is an obstacle vertex, i.e. an
-			// endpoint of an incident obstacle edge. Edge cEdge = (A,B); edge `apex` =
-			// (C,A)? No: edge `apex` is (v[apex], v[apex+1]) = (C, A); edge (apex+2)%3 is
-			// (v[apex+2], v[apex]) = (B, C). So A is shared by edges cEdge and apex; B is
-			// shared by edges cEdge and (apex+2)%3.
-			const bool aObstacle = isObstacleEdge(mesh, ti, cEdge) || isObstacleEdge(mesh, ti, apex);
-			const bool bObstacle = isObstacleEdge(mesh, ti, cEdge) || isObstacleEdge(mesh, ti, (apex + 2) % 3);
-
-			std::int64_t d = kUnconstrainedWidth;
-			if (aObstacle) {
-				const Vec2i64 ca = a - c;
-				d = minWidth(d, floorSqrtSquared(dot(ca, ca)));
-			}
-			if (bObstacle) {
-				const Vec2i64 cb = b - c;
-				d = minWidth(d, floorSqrtSquared(dot(cb, cb)));
-			}
-
-			// Case 1: an obtuse base angle means the nearer base vertex is the closest
-			// obstacle in the wedge and the search must not cross edge c (it would leave
-			// the wedge). The bound above already captured that vertex.
-			if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
-				return d;
-			}
-			// Case 2: opposite edge constrained -> perpendicular distance to it (which is
-			// <= either base-vertex distance, the foot being interior here).
-			if (isObstacleEdge(mesh, ti, cEdge)) {
-				return minWidth(d, floorDistancePointToSegment(c, a, b));
-			}
-			// Case 3: opposite edge unconstrained -> search across it (the start triangle
-			// is marked visited so the search never re-enters it).
-			++scratch.stamp;
-			scratch.visited[ti] = scratch.stamp;
-			return searchWidth(mesh, scratch, c, ti, cEdge, d);
 		}
 
 		// --- Width-aware reachability forest (P3.3) ----------------------------------
@@ -295,8 +246,8 @@ namespace geometry::nav {
 		// and pivots about one of the portal's two endpoints (local vertices e and
 		// (e+1)%3), so it may use the wider of the two apex widths; the max is the sound
 		// upper bound (Demyen edge-pair width is keyed by apex).
-		std::int64_t portalSideCap(const NavMesh& mesh, std::int32_t ti, int e) {
-			const NavTriangle& t  = mesh.triangles[ti];
+		std::int64_t portalSideCap(const NavView& view, std::int32_t ti, int e) {
+			const NavTriangle& t  = view.triangle(ti);
 			const std::int64_t w0 = t.edgePairWidthMm[e];
 			const std::int64_t w1 = t.edgePairWidthMm[(e + 1) % 3];
 			return w0 > w1 ? w0 : w1;
@@ -306,19 +257,19 @@ namespace geometry::nav {
 		// side's capacity and the door clear width when the edge is a door portal. A
 		// door span has unconstrained Demyen widths (walls are not common-knowledge
 		// obstacles), so the door clear width is what binds there -- hence in the min.
-		std::int64_t portalCapacity(const NavMesh& mesh, std::int32_t t1, int eInT1, std::int32_t t2) {
-			const NavTriangle& tri1	   = mesh.triangles[t1];
+		std::int64_t portalCapacity(const NavView& view, std::int32_t t1, int eInT1, std::int32_t t2) {
+			const NavTriangle& tri1	   = view.triangle(t1);
 			const std::int32_t backEdge = [&]() {
 				for (int k = 0; k < 3; ++k) {
-					if (mesh.triangles[t2].neighbor[k] == t1) {
+					if (view.triangle(t2).neighbor[static_cast<std::size_t>(k)] == t1) {
 						return k;
 					}
 				}
 				return -1;
 			}();
-			std::int64_t cap = portalSideCap(mesh, t1, eInT1);
+			std::int64_t cap = portalSideCap(view, t1, eInT1);
 			if (backEdge >= 0) {
-				cap = std::min(cap, portalSideCap(mesh, t2, backEdge));
+				cap = std::min(cap, portalSideCap(view, t2, backEdge));
 			}
 			if (tri1.edgeOpening[eInT1] != kNoOpening) {
 				cap = std::min(cap, tri1.edgeClearWidthMm[eInT1]);
@@ -349,11 +300,12 @@ namespace geometry::nav {
 		// Build one forest from the node predicate and the shared portal list. Edges are
 		// processed in DESCENDING capacity (Kruskal max-spanning-forest); ties break by
 		// (cap desc, lower triA, lower triB) for a reproducible tree. Only edges whose
-		// BOTH endpoints are nodes participate. Returns the populated ReachabilityForest.
+		// BOTH endpoints are nodes participate; a dead slot is never a node. Returns the
+		// populated ReachabilityForest.
 		template <typename NodePredicate>
-		ReachabilityForest buildForest(
-			const NavMesh& mesh, const std::vector<PortalEdge>& portals, NodePredicate isNode) {
-			const std::int32_t n = static_cast<std::int32_t>(mesh.triangles.size());
+		ReachabilityForest buildForest(const NavView& view, const std::vector<PortalEdge>& portals, NodePredicate traversable) {
+			const std::int32_t n	  = view.triangleSlots();
+			auto			   isNode = [&](std::int32_t t) { return view.isLive(t) && traversable(view.triangle(t)); };
 
 			ForestBuilder fb;
 			fb.parent.resize(n);
@@ -377,7 +329,7 @@ namespace geometry::nav {
 			std::vector<PortalEdge> edges;
 			edges.reserve(portals.size());
 			for (const PortalEdge& pe : portals) {
-				if (isNode(mesh.triangles[pe.triA]) && isNode(mesh.triangles[pe.triB])) {
+				if (isNode(pe.triA) && isNode(pe.triB)) {
 					edges.push_back(pe);
 				}
 			}
@@ -461,7 +413,7 @@ namespace geometry::nav {
 			// root; a non-traversable leaf (never a node) is -1 (isolated/unreachable).
 			forest.component.assign(n, -1);
 			for (std::int32_t i = 0; i < n; ++i) {
-				if (!isNode(mesh.triangles[i])) {
+				if (!isNode(i)) {
 					continue;
 				}
 				std::int32_t r = i;
@@ -475,6 +427,74 @@ namespace geometry::nav {
 		}
 
 	} // namespace
+
+	// Demyen Algorithm 3, CalculateWidth, for the edge pair meeting at apex v[apex]: edges
+	// apex (C, A) and (apex+2)%3 (B, C), opposite edge (apex+1)%3 (A, B). A base vertex
+	// bounds the width only when it is an obstacle vertex, and an edge's obstacle status
+	// is read only when the edge is nearer than the bound, which keeps every read within
+	// maxClearanceMm of the apex.
+	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm) {
+		const NavTriangle& tri	  = view.triangle(ti);
+		const int		   cEdge  = (apex + 1) % 3;
+		const int		   bEdge  = (apex + 2) % 3;
+		const Vec2i64&	   c	  = view.vertex(tri.v[static_cast<std::size_t>(apex)]);
+		const Vec2i64&	   a	  = view.vertex(tri.v[static_cast<std::size_t>(cEdge)]);
+		const Vec2i64&	   b	  = view.vertex(tri.v[static_cast<std::size_t>(bEdge)]);
+		auto			   capped = [&](std::int64_t d) { return d >= maxClearanceMm ? kUnconstrainedWidth : d; };
+
+		std::int64_t d = maxClearanceMm;
+		if (lengthBelow(a - c, d) && (isObstacleEdge(view, ti, cEdge) || isObstacleEdge(view, ti, apex))) {
+			d = floorSqrtSquared(dot(a - c, a - c));
+		}
+		if (lengthBelow(b - c, d) && (isObstacleEdge(view, ti, cEdge) || isObstacleEdge(view, ti, bEdge))) {
+			d = floorSqrtSquared(dot(b - c, b - c));
+		}
+		// An obtuse base angle: the nearer base vertex is the closest obstacle in the
+		// wedge, and crossing the opposite edge would leave it.
+		if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
+			return capped(d);
+		}
+		if (lineDistanceBelow(c, a, b, d) && isObstacleEdge(view, ti, cEdge)) {
+			return capped(floorDistancePointToSegment(c, a, b));
+		}
+		if (search.visited.size() < static_cast<std::size_t>(view.triangleSlots())) {
+			search.visited.resize(static_cast<std::size_t>(view.triangleSlots()), 0);
+		}
+		++search.stamp;
+		search.visited[static_cast<std::size_t>(ti)] = search.stamp;
+		return capped(searchWidth(view, search, c, ti, cEdge, d));
+	}
+
+	NavView navView(const NavMesh& mesh) {
+		NavView view;
+		view.vertices	   = &mesh.vertices;
+		view.triangles	   = &mesh.triangles;
+		view.locate		   = [](const void* owner, const Vec2i64& p) { return locateTriangle(*static_cast<const NavMesh*>(owner), p); };
+		view.owner		   = &mesh;
+		view.truthForest   = &mesh.truthForest;
+		view.terrainForest = &mesh.terrainForest;
+		return view;
+	}
+
+	// Every interior portal edge once, owned by its lower live triangle, with its sound
+	// disc-diameter capacity, then the truth and terrain forests over that one set.
+	ReachabilityForests buildReachabilityForests(const NavView& view) {
+		std::vector<PortalEdge> portals;
+		for (std::int32_t ti = 0; ti < view.triangleSlots(); ++ti) {
+			if (!view.isLive(ti)) {
+				continue;
+			}
+			const NavTriangle& tri = view.triangle(ti);
+			for (int e = 0; e < 3; ++e) {
+				const std::int32_t nb = tri.neighbor[static_cast<std::size_t>(e)];
+				if (nb < 0 || nb <= ti) {
+					continue;
+				}
+				portals.push_back({ti, nb, portalCapacity(view, ti, e, nb)});
+			}
+		}
+		return {buildForest(view, portals, truthTraversable), buildForest(view, portals, terrainTraversable)};
+	}
 
 	SampleRing sampleRing(const NavInputPolygon& poly) {
 		SampleRing r;
@@ -779,17 +799,16 @@ namespace geometry::nav {
 			}
 		}
 
-		// 8. Corridor widths. For every triangle and every apex vertex, compute the
-		// Demyen-Buro width of the passage between the two edges meeting at that apex
-		// (max disc diameter vs common-knowledge obstacles). This needs the finished
-		// adjacency and face tags, so it runs last. Belief-dependent walls are excluded
-		// (see calculateEdgePairWidth / NavMesh.h).
-		WidthScratch widthScratch;
-		widthScratch.visited.assign(result.triangles.size(), 0);
-		widthScratch.stamp = 0; // first ++stamp makes 1; initial visited[] of 0 never matches
-		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
-			for (int apex = 0; apex < 3; ++apex) {
-				result.triangles[ti].edgePairWidthMm[apex] = calculateEdgePairWidth(result, widthScratch, ti, apex);
+		// 8. Corridor widths for every triangle and apex, uncapped. They need the
+		// finished adjacency and face tags.
+		{
+			const NavView view = navView(result);
+			WidthSearch	  search;
+			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
+				for (int apex = 0; apex < 3; ++apex) {
+					result.triangles[static_cast<std::size_t>(ti)].edgePairWidthMm[static_cast<std::size_t>(apex)] =
+						corridorWidthMm(view, search, ti, apex, kUnconstrainedWidth);
+				}
 			}
 		}
 
@@ -871,31 +890,11 @@ namespace geometry::nav {
 			}
 		}
 
-		// 10. Width-aware reachability forests. Collect every interior portal edge once
-		// (canonical owner = the lower triangle index, so each shared edge is listed a
-		// single time) with its sound disc-diameter capacity, then build the truth and
-		// terrain forests over that one capacity set. This needs finished adjacency,
-		// widths, and door tags, so it runs last.
-		{
-			std::vector<PortalEdge> portals;
-			portals.reserve(result.triangles.size() * 3 / 2);
-			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
-				const NavTriangle& tri = result.triangles[ti];
-				for (int e = 0; e < 3; ++e) {
-					const std::int32_t nb = tri.neighbor[e];
-					if (nb < 0 || nb <= ti) {
-						continue; // boundary, or already listed from the lower-index side
-					}
-					PortalEdge pe;
-					pe.triA = ti;
-					pe.triB = nb;
-					pe.cap	= portalCapacity(result, ti, e, nb);
-					portals.push_back(pe);
-				}
-			}
-			result.truthForest	 = buildForest(result, portals, truthTraversable);
-			result.terrainForest = buildForest(result, portals, terrainTraversable);
-		}
+		// 10. Width-aware reachability forests; they need finished adjacency, widths, and
+		// door tags.
+		ReachabilityForests forests = buildReachabilityForests(navView(result));
+		result.truthForest			= std::move(forests.truth);
+		result.terrainForest		= std::move(forests.terrain);
 
 		return result;
 	}

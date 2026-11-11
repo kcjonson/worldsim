@@ -524,3 +524,28 @@ TEST(Arrangement, RoundedCutsSharingAnXFollowTheSegment) {
 	EXPECT_TRUE(hasEdge(arr, {12, 26}, {10, 29})) << canonical(arr);
 	EXPECT_FALSE(hasEdge(arr, {14, 22}, {12, 26})) << canonical(arr);
 }
+
+// Splits are taken from the current pieces, not the originals, so each level of
+// cascading rounding can move a piece another 0.71 mm from its original line. Four
+// nearly parallel segments and two crossers drift past 2 mm. This pins that the
+// arrangement has no 2 mm drift bound; PatchableMesh's off-ground reach allows for it.
+TEST(Arrangement, RepeatedRoundingDriftsPastTwoMillimetres) {
+	const std::vector<InputSegment> segs = {
+		{{2, 3}, {1586, 5}, 0},	   {{3, 3}, {1589, 4}, 1},	  {{4, 1}, {1589, 6}, 2},
+		{{5, 0}, {1589, 3}, 3},	   {{970, -50}, {994, 60}, 4}, {{1420, -50}, {1375, 60}, 5},
+	};
+	const Arrangement arr	= buildArrangement(segs);
+	bool			  pastTwo = false;
+	for (const ArrangementEdge& e : arr.edges) {
+		for (std::int64_t p : e.provenance) {
+			const InputSegment& s	= segs[static_cast<std::size_t>(p)];
+			const Vec2i64		dir = s.b - s.a;
+			for (const std::size_t v : {e.from, e.to}) {
+				// distance^2 > 4 mm^2  <=>  cross^2 > 4 * |dir|^2
+				const Int128 off = cross(dir, arr.vertices[v] - s.a);
+				pastTwo			 = pastTwo || Int128::compareSquareToProduct(off, Int128(4), dot(dir, dir)) > 0;
+			}
+		}
+	}
+	EXPECT_TRUE(pastTwo) << canonical(arr);
+}

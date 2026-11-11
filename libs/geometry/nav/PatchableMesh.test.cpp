@@ -1,4 +1,5 @@
 #include "nav/PatchableMesh.h"
+#include "nav/RraCache.h"
 
 #include "arrangement/Arrangement.h"
 #include "nav/NavMesh.h"
@@ -11,6 +12,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
+#include <cmath>
+#include <string>
+#include <unordered_set>
 #include <cstdint>
 #include <map>
 #include <random>
@@ -383,13 +388,16 @@ namespace {
 	// Applies a patch to the mesh and the model together. The model takes each ring as
 	// registered, so a split bounds outline is what the from-scratch build sees too.
 	struct Harness {
-		explicit Harness(std::int64_t maxBoundsEdgeMm = 0) : mesh(maxBoundsEdgeMm) {}
+		explicit Harness(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm}) {}
 
 		PatchableMesh mesh;
 		Model		  model;
+		PatchReport	  last;
 
 		PatchReport apply(const PatchEdits& edits) {
 			PatchReport report = mesh.applyPatch(edits);
+			mesh.refreshWidths();
+			last = report;
 			for (RingId r : report.added) {
 				model[r] = mesh.ring(r).polygon;
 			}
@@ -621,8 +629,8 @@ TEST(PatchableMesh, FirstBoundsMeshesAnEmptyMesh) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	EXPECT_EQ(h.mesh.liveTriangleCount(), 2);
-	EXPECT_EQ(h.mesh.lastPatch().newTriangles.size(), 2U);
-	EXPECT_TRUE(h.mesh.lastPatch().freedTriangles.empty());
+	EXPECT_EQ(h.last.newTriangles.size(), 2U);
+	EXPECT_TRUE(h.last.freedTriangles.empty());
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
@@ -631,7 +639,7 @@ TEST(PatchableMesh, RingOffGroundTouchesNothing) {
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	h.add(blocked(rect(2000, 2000, 2100, 2100)));
 	EXPECT_EQ(h.mesh.liveTriangleCount(), 2);
-	EXPECT_TRUE(h.mesh.lastPatch().newTriangles.empty());
+	EXPECT_TRUE(h.last.newTriangles.empty());
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
@@ -663,7 +671,7 @@ TEST(PatchableMesh, StableIdsOutsideTheHole) {
 		liveBefore.push_back(h.mesh.triangleLive(t) ? 1 : 0);
 	}
 	h.add(blocked(rect(50000, 80000, 51000, 81000)));
-	const PatchReport report = h.mesh.lastPatch();
+	const PatchReport report = h.last;
 	for (std::int32_t t = 0; t < static_cast<std::int32_t>(before.size()); ++t) {
 		const bool touched = std::binary_search(report.freedTriangles.begin(), report.freedTriangles.end(), t);
 		if (liveBefore[static_cast<std::size_t>(t)] == 0 || touched) {
@@ -748,7 +756,7 @@ TEST(PatchableMesh, OverlappingAddsInOneBatchMerge) {
 		batch.adds.push_back(blocked({{3000 + i * 97, 3000 + i * 61}, {3900 + i * 83, 3100 + i * 71}, {3800 + i * 53, 4100 + i * 43}}));
 	}
 	h.apply(batch);
-	EXPECT_EQ(h.mesh.lastPatch().added.size(), 30U);
+	EXPECT_EQ(h.last.added.size(), 30U);
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
@@ -883,9 +891,9 @@ TEST(PatchableMesh, HoleSizesOnRealRings) {
 		}
 	}
 	h.add(blocked(rect(-63300, 30000, -62700, 30600)));
-	sizes["border"].freed.push_back(h.mesh.lastPatch().freedTriangles.size());
-	sizes["border"].created.push_back(h.mesh.lastPatch().newTriangles.size());
-	sizes["border"].passes.push_back(h.mesh.lastPatch().passes);
+	sizes["border"].freed.push_back(h.last.freedTriangles.size());
+	sizes["border"].created.push_back(h.last.newTriangles.size());
+	sizes["border"].passes.push_back(h.last.passes);
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
 
 	for (auto& [kind, s] : sizes) {
@@ -900,3 +908,307 @@ TEST(PatchableMesh, HoleSizesOnRealRings) {
 	}
 }
 
+
+// --- Queries: doors, widths, paths, and reachability against buildNavMesh ---------
+
+namespace {
+
+	// Rooms behind wall bands with door spans, door portals on the spans' faces, and
+	// trees scattered over walls and floor alike.
+	struct WallsAndDoors {
+		std::vector<NavInputPolygon> base;
+		std::vector<NavInputPolygon> rings; // walls, door spans, trees
+		std::vector<DoorPortal>		 doors;
+	};
+
+	WallsAndDoors wallsAndDoors() {
+		WallsAndDoors w;
+		w.base.push_back(bounds(rect(0, 0, 20000, 20000)));
+		auto wall = [&](std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1, std::int64_t segment) {
+			w.rings.push_back(NavInputPolygon{rect(x0, y0, x1, y1), true, segment});
+		};
+		auto door = [&](std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1, std::int64_t segment, std::int64_t opening,
+						std::int64_t clearWidth) {
+			w.rings.push_back(NavInputPolygon{rect(x0, y0, x1, y1), true, segment, opening});
+			DoorPortal portal;
+			portal.openingId	= opening;
+			portal.a			= {x0, y0};
+			portal.b			= x1 - x0 > y1 - y0 ? Vec2i64{x1, y0} : Vec2i64{x0, y1};
+			portal.clearWidthMm = clearWidth;
+			w.doors.push_back(portal);
+		};
+		wall(2000, 10000, 7000, 10200, 11);
+		door(7000, 10000, 8000, 10200, 11, 1, 900);
+		wall(8000, 10000, 12000, 10200, 11);
+		door(12000, 10000, 12500, 10200, 11, 2, 450);
+		wall(12500, 10000, 18000, 10200, 11);
+		wall(10000, 2000, 10200, 5000, 12);
+		door(10000, 5000, 10200, 6000, 12, 3, 900);
+		wall(10000, 6000, 10200, 10000, 12);
+		std::mt19937 rng(17);
+		for (int i = 0; i < 120; ++i) {
+			const std::int64_t x = 500 + static_cast<std::int64_t>(rng() % 19000);
+			const std::int64_t y = 500 + static_cast<std::int64_t>(rng() % 19000);
+			w.rings.push_back(blocked({{x, y}, {x + 400, y + 60}, {x + 350, y + 420}, {x - 40, y + 380}}));
+		}
+		return w;
+	}
+
+	WallsAndDoors fixtureRings(const Fixture& f) {
+		return {f.base, f.trees, {}};
+	}
+
+	// A mesh that reached `rings` through a random sequence: batches in, some taken out
+	// and put back, doors added early and some removed and re-added. Forests rebuilt.
+	struct Reached {
+		Harness				h;
+		std::vector<DoorId> doorIds;
+	};
+
+	void reach(Reached& r, const WallsAndDoors& input, std::uint32_t seed) {
+		std::mt19937 rng(seed);
+		{
+			PatchEdits edits;
+			edits.adds = input.base;
+			r.h.apply(edits);
+		}
+		for (const DoorPortal& d : input.doors) {
+			r.doorIds.push_back(r.h.mesh.addDoor(d));
+		}
+		std::vector<NavInputPolygon> pending = input.rings;
+		std::shuffle(pending.begin(), pending.end(), rng);
+		std::vector<RingId> placed;
+		while (!pending.empty()) {
+			PatchEdits		  edits;
+			const std::size_t count = std::min<std::size_t>(pending.size(), 1 + pick(rng, 48));
+			edits.adds.assign(pending.end() - static_cast<std::ptrdiff_t>(count), pending.end());
+			pending.resize(pending.size() - count);
+			if (placed.size() > 10 && pick(rng, 3) == 0) {
+				const std::size_t at = pick(rng, placed.size());
+				pending.insert(pending.begin(), r.h.model[placed[at]]);
+				edits.removes.push_back(placed[at]);
+				placed.erase(placed.begin() + static_cast<std::ptrdiff_t>(at));
+			}
+			const PatchReport report = r.h.apply(edits);
+			placed.insert(placed.end(), report.added.begin(), report.added.end());
+			if (!r.doorIds.empty() && pick(rng, 4) == 0) {
+				const std::size_t at = pick(rng, r.doorIds.size());
+				r.h.mesh.removeDoor(r.doorIds[at]);
+				r.doorIds[at] = r.h.mesh.addDoor(input.doors[at]);
+			}
+		}
+		r.h.mesh.rebuildForests();
+	}
+
+	NavMeshInput freshInput(const Reached& r, const WallsAndDoors& input) {
+		NavMeshInput in;
+		for (const auto& [id, poly] : r.h.model) {
+			in.polygons.push_back(poly);
+		}
+		std::vector<std::pair<DoorId, DoorPortal>> doors;
+		for (std::size_t i = 0; i < r.doorIds.size(); ++i) {
+			doors.push_back({r.doorIds[i], input.doors[i]});
+		}
+		std::sort(doors.begin(), doors.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		for (const auto& [id, door] : doors) {
+			in.doors.push_back(door);
+		}
+		return in;
+	}
+
+	// Floor points from a fixed sequence, the same in both meshes' frames.
+	std::vector<Vec2i64> samplePoints(const NavInputPolygon& border, std::size_t n, std::uint32_t seed) {
+		Vec2i64 lo = border.ring.front();
+		Vec2i64 hi = lo;
+		for (const Vec2i64& p : border.ring) {
+			lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+			hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+		}
+		std::mt19937		 rng(seed);
+		std::vector<Vec2i64> out;
+		for (std::size_t i = 0; i < n; ++i) {
+			out.push_back({lo.x + 1 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.x - lo.x - 2)),
+						   lo.y + 1 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.y - lo.y - 2))});
+		}
+		return out;
+	}
+
+	std::int64_t pathLengthMm(const PathResult& p) {
+		double length = 0;
+		for (std::size_t i = 1; i < p.points.size(); ++i) {
+			const double dx = static_cast<double>(p.points[i].x - p.points[i - 1].x);
+			const double dy = static_cast<double>(p.points[i].y - p.points[i - 1].y);
+			length += std::sqrt(dx * dx + dy * dy);
+		}
+		return std::llround(length);
+	}
+
+	// Door tags on every edge both meshes have, and every patched width equal to the
+	// uncapped width read through the cap.
+	::testing::AssertionResult tagsAndWidthsMatch(const PatchableMesh& mesh, const NavMesh& fresh, std::int64_t maxClearanceMm) {
+		std::map<EdgeKey, std::pair<std::int64_t, std::int64_t>> freshTags;
+		for (const NavTriangle& t : fresh.triangles) {
+			for (int e = 0; e < 3; ++e) {
+				freshTags[edgeKey(fresh.vertices[t.v[static_cast<std::size_t>(e)]], fresh.vertices[t.v[static_cast<std::size_t>((e + 1) % 3)]])] = {
+					t.edgeOpening[static_cast<std::size_t>(e)], t.edgeClearWidthMm[static_cast<std::size_t>(e)]};
+			}
+		}
+		const NavView view = mesh.view();
+		WidthSearch	  search;
+		int			  sharedDoorEdges = 0;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				auto it = freshTags.find(edgeKey(mesh.vertices()[tri.v[static_cast<std::size_t>(e)]], mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]]));
+				if (it != freshTags.end()) {
+					if (it->second != std::make_pair(tri.edgeOpening[static_cast<std::size_t>(e)], tri.edgeClearWidthMm[static_cast<std::size_t>(e)])) {
+						return ::testing::AssertionFailure() << "door tags differ on an edge of triangle " << t;
+					}
+					sharedDoorEdges += tri.edgeOpening[static_cast<std::size_t>(e)] != kNoOpening ? 1 : 0;
+				}
+				const std::int64_t uncapped = corridorWidthMm(view, search, t, e, kUnconstrainedWidth);
+				const std::int64_t expected = uncapped < maxClearanceMm ? uncapped : kUnconstrainedWidth;
+				if (tri.edgePairWidthMm[static_cast<std::size_t>(e)] != expected) {
+					return ::testing::AssertionFailure() << "triangle " << t << " apex " << e << " width " << tri.edgePairWidthMm[static_cast<std::size_t>(e)]
+														 << ", uncapped " << uncapped;
+				}
+			}
+		}
+		return ::testing::AssertionSuccess() << sharedDoorEdges << " door half-edges";
+	}
+
+	constexpr std::array<std::int64_t, 4> kRadii = {0, 300, 600, 1500};
+
+	// Same verdict and the same length to the millimetre for every pair and radius, the
+	// patched mesh through its view against buildNavMesh of the same rings and doors;
+	// and the forests' reach verdicts agree, in truth and for an optimistic belief.
+	void expectQueriesMatch(const Reached& r, const NavMesh& fresh, const NavInputPolygon& border, std::uint32_t seed) {
+		const NavView				  view	 = r.h.mesh.view();
+		const std::vector<Vec2i64>	  points = samplePoints(border, 96, seed);
+		const std::unordered_set<std::uint64_t> noneKnown;
+		const BeliefFilter			  optimistic{&noneKnown, &noneKnown};
+		int							  lengths = 0;
+		int							  blocked = 0;
+		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
+			const Vec2i64& a = points[i];
+			const Vec2i64& b = points[i + 1];
+			for (const std::int64_t radius : kRadii) {
+				const PathResult patched = pathThrough(view, a, b, radius);
+				const PathResult built	 = pathThrough(fresh, a, b, radius);
+				EXPECT_EQ(patched.reachable, built.reachable) << "pair " << i << " radius " << radius;
+				blocked += built.reachable ? 0 : 1;
+				if (patched.reachable && built.reachable) {
+					++lengths;
+					EXPECT_EQ(pathLengthMm(patched), pathLengthMm(built)) << "pair " << i << " radius " << radius << " from (" << a.x << ", " << a.y
+																		 << ") to (" << b.x << ", " << b.y << ")";
+				}
+				for (const BeliefFilter& belief : {BeliefFilter{}, optimistic}) {
+					EXPECT_EQ(reaches(view, reachFrom(view, a, radius, belief), b, belief), reaches(fresh, reachFrom(fresh, a, radius, belief), b, belief))
+						<< "reach verdict, pair " << i << " radius " << radius;
+				}
+			}
+		}
+		// The pairs exercise both answers: real paths compared, and some refused.
+		EXPECT_GT(lengths, 40);
+		EXPECT_GT(blocked, 0);
+		::testing::Test::RecordProperty("pathsCompared", lengths);
+	}
+
+} // namespace
+
+TEST(PatchableMesh, WallsAndDoorsQueriesMatchBuildNavMesh) {
+	const WallsAndDoors input = wallsAndDoors();
+	for (const std::uint32_t seed : {3U, 4U}) {
+		Reached r;
+		reach(r, input, seed);
+		ASSERT_TRUE(matchesFresh(r.h.mesh, r.h.model));
+		const NavMesh fresh = buildNavMesh(freshInput(r, input));
+		const auto	  tags	= tagsAndWidthsMatch(r.h.mesh, fresh, kDefaultMaxClearanceMm);
+		ASSERT_TRUE(tags);
+		EXPECT_NE(std::string(tags.message()), "0 door half-edges");
+		expectQueriesMatch(r, fresh, input.base.front(), seed);
+	}
+}
+
+TEST(PatchableMesh, FixtureQueriesMatchBuildNavMesh) {
+	const std::array<Fixture, 3> fixtures = {dumpFixture(testdata::manyTreesDump()), dumpFixture(testdata::controlDump()), realRingsFixture()};
+	for (std::size_t f = 0; f < fixtures.size(); ++f) {
+		const WallsAndDoors input = fixtureRings(fixtures[f]);
+		Reached				r;
+		reach(r, input, static_cast<std::uint32_t>(50 + f));
+		const NavMesh fresh = buildNavMesh(freshInput(r, input));
+		ASSERT_TRUE(tagsAndWidthsMatch(r.h.mesh, fresh, kDefaultMaxClearanceMm)) << "fixture " << f;
+		expectQueriesMatch(r, fresh, input.base.front(), static_cast<std::uint32_t>(f));
+	}
+}
+
+TEST(PatchableMesh, DoorEditsChangeTagsOnly) {
+	const WallsAndDoors input = wallsAndDoors();
+	Reached				r;
+	reach(r, input, 9);
+	const std::vector<NavTriangle> before = r.h.mesh.triangles();
+	r.h.mesh.removeDoor(r.doorIds[1]);
+	EXPECT_FALSE(r.h.mesh.hasForests());
+	EXPECT_TRUE(r.h.mesh.validate().empty()) << r.h.mesh.validate();
+	for (std::size_t t = 0; t < before.size(); ++t) {
+		EXPECT_EQ(before[t].v, r.h.mesh.triangles()[t].v);
+	}
+	r.doorIds[1] = r.h.mesh.addDoor(input.doors[1]);
+	EXPECT_TRUE(r.h.mesh.validate().empty()) << r.h.mesh.validate();
+	r.h.mesh.rebuildForests();
+	const NavMesh fresh = buildNavMesh(freshInput(r, input));
+	EXPECT_TRUE(tagsAndWidthsMatch(r.h.mesh, fresh, kDefaultMaxClearanceMm));
+}
+
+// A dead slot is never located, never a neighbour, never a forest node.
+TEST(PatchableMesh, DeadSlotsAreUnreachable) {
+	Harness h;
+	h.add(bounds(rect(0, 0, 10000, 10000)));
+	const RingId tree = h.add(blocked(rect(4000, 4000, 6000, 6000)));
+	PatchEdits	 remove;
+	remove.removes.push_back(tree);
+	h.apply(remove);
+	h.mesh.rebuildForests();
+	const NavView view = h.mesh.view();
+	int			  dead = 0;
+	for (std::int32_t t = 0; t < view.triangleSlots(); ++t) {
+		if (view.isLive(t)) {
+			continue;
+		}
+		++dead;
+		EXPECT_EQ(view.truthForest->component[static_cast<std::size_t>(t)], -1);
+		EXPECT_EQ(view.terrainForest->component[static_cast<std::size_t>(t)], -1);
+	}
+	EXPECT_GT(dead, 0);
+	EXPECT_TRUE(pathThrough(view, {1000, 1000}, {9000, 9000}, 300).reachable);
+}
+
+// Widths lag behind patches until refreshWidths, which serves every patch since the
+// last call at once.
+TEST(PatchableMesh, OneRefreshServesManyPatches) {
+	const Fixture fixture = realRingsFixture();
+	PatchableMesh mesh;
+	PatchEdits	  base;
+	base.adds = fixture.base;
+	mesh.applyPatch(base);
+	mesh.refreshWidths();
+	std::mt19937		rng(21);
+	std::vector<RingId> placed;
+	for (std::size_t i = 0; i < fixture.trees.size(); i += 37) {
+		PatchEdits edits;
+		edits.adds.push_back(fixture.trees[i]);
+		if (!placed.empty() && pick(rng, 3) == 0) {
+			edits.removes.push_back(placed.back());
+			placed.pop_back();
+		}
+		const PatchReport r = mesh.applyPatch(edits);
+		placed.push_back(r.added.front());
+		EXPECT_FALSE(mesh.widthsCurrent());
+	}
+	mesh.refreshWidths();
+	EXPECT_TRUE(mesh.widthsCurrent());
+	EXPECT_TRUE(mesh.validate().empty()) << mesh.validate();
+}

@@ -269,6 +269,51 @@ namespace geometry::nav {
 	// no face is dropped, however its rings touch, pinch, or nest.
 	NavMesh buildNavMesh(const NavMeshInput& input);
 
+	// The triangles a path query, a corridor width, or a forest reads, and the means to
+	// locate a point among them. NavMesh and PatchableMesh each produce one, so each of
+	// those algorithms has one implementation. A slot `live` marks dead is never located,
+	// never a live triangle's neighbour, and never a forest node.
+	struct NavView {
+		const std::vector<Vec2i64>*		 vertices  = nullptr;
+		const std::vector<NavTriangle>*	 triangles = nullptr;
+		const std::vector<std::uint8_t>* live	   = nullptr; // null: every slot is live
+		std::int32_t (*locate)(const void* owner, const Vec2i64& p) = nullptr;
+		const void* owner = nullptr;
+		// The reachability forests over these triangles; null when there are none, and
+		// then a path query skips its forest pre-check.
+		const ReachabilityForest* truthForest	= nullptr;
+		const ReachabilityForest* terrainForest = nullptr;
+
+		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles->size()); }
+		bool			   isLive(std::int32_t t) const { return live == nullptr || (*live)[static_cast<std::size_t>(t)] != 0; }
+		const NavTriangle& triangle(std::int32_t t) const { return (*triangles)[static_cast<std::size_t>(t)]; }
+		const Vec2i64&	   vertex(std::uint32_t v) const { return (*vertices)[v]; }
+	};
+
+	NavView navView(const NavMesh& mesh);
+
+	struct ReachabilityForests {
+		ReachabilityForest truth;
+		ReachabilityForest terrain;
+	};
+
+	// Both forests over the view's live triangles, from their corridor widths and door
+	// tags (see ReachabilityForest).
+	ReachabilityForests buildReachabilityForests(const NavView& view);
+
+	// Scratch for corridor-width searches, reused across calls.
+	struct WidthSearch {
+		std::vector<std::int32_t> visited; // visited[t] == stamp: seen by the current search
+		std::int32_t			  stamp = 0;
+	};
+
+	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)
+	// that passes between the two edges meeting there, against common-knowledge
+	// obstacles. A width at or above maxClearanceMm reads kUnconstrainedWidth, and the
+	// search never looks farther than maxClearanceMm from the apex, so the width depends
+	// only on `tri` and the triangles that come within maxClearanceMm of the apex.
+	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
+
 	// The reconstruction-tree node whose subtree is every triangle a disc of `diameterMm` can
 	// POSSIBLY reach from `tri`: tri's highest ancestor whose capacity admits the disc. A goal
 	// triangle is under it iff the widest disc any path from tri to it admits is >= diameterMm.

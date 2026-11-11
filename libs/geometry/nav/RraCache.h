@@ -78,5 +78,6 @@ namespace geometry::nav {
 	// guarantees this. Cheap when `tri` is already settled (a table read); otherwise pops
 	// and expands reverse nodes until `tri` settles or the open-set empties.
 	double rraHeuristic(RraCache& cache, const NavMesh& mesh, std::int32_t tri);
+	double rraHeuristic(RraCache& cache, const NavView& mesh, std::int32_t tri);
 
 } // namespace geometry::nav

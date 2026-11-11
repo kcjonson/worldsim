@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <limits>
@@ -51,10 +52,10 @@ namespace geometry::nav {
 			return (b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y);
 		}
 
-		Vec2i64 centroidI(const NavMesh& mesh, const NavTriangle& t) {
-			const Vec2i64& a = mesh.vertices[t.v[0]];
-			const Vec2i64& b = mesh.vertices[t.v[1]];
-			const Vec2i64& c = mesh.vertices[t.v[2]];
+		Vec2i64 centroidI(const NavView& mesh, const NavTriangle& t) {
+			const Vec2i64& a = mesh.vertex(t.v[0]);
+			const Vec2i64& b = mesh.vertex(t.v[1]);
+			const Vec2i64& c = mesh.vertex(t.v[2]);
 			return {(a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3};
 		}
 
@@ -132,7 +133,7 @@ namespace geometry::nav {
 		// agent knows everything, else terrain (the sound reject for every belief). A
 		// belief query never uses the truth forest, because an agent optimistically
 		// routing through unseen walls can reach triangles the truth forest walls off.
-		const ReachabilityForest& forestFor(const NavMesh& mesh, const BeliefFilter& belief) {
+		const ReachabilityForest* forestFor(const NavView& mesh, const BeliefFilter& belief) {
 			return belief.knownSegments == nullptr ? mesh.truthForest : mesh.terrainForest;
 		}
 
@@ -141,10 +142,10 @@ namespace geometry::nav {
 		// forest PROVES no disc of `diameterMm` can get from startTri to goalTri:
 		// different component (any diameter), or the path bottleneck < the diameter.
 		bool reachabilityRejects(
-			const NavMesh& mesh, std::int32_t startTri, std::int32_t goalTri, std::int64_t diameterMm,
+			const NavView& mesh, std::int32_t startTri, std::int32_t goalTri, std::int64_t diameterMm,
 			const BeliefFilter& belief) {
-			const ReachabilityForest& forest = forestFor(mesh, belief);
-			return !inForestSubtree(forest, reachRootInForest(forest, startTri, diameterMm), goalTri);
+			const ReachabilityForest* forest = forestFor(mesh, belief);
+			return forest != nullptr && !inForestSubtree(*forest, reachRootInForest(*forest, startTri, diameterMm), goalTri);
 		}
 
 		[[nodiscard]] std::int64_t discDiameterMm(std::int64_t agentRadiusMm) {
@@ -173,8 +174,8 @@ namespace geometry::nav {
 
 	} // namespace
 
-	double rraHeuristic(RraCache& cache, const NavMesh& mesh, std::int32_t tri) {
-		const std::int32_t n	= static_cast<std::int32_t>(mesh.triangles.size());
+	double rraHeuristic(RraCache& cache, const NavView& mesh, std::int32_t tri) {
+		const std::int32_t n	= static_cast<std::int32_t>(mesh.triangleSlots());
 		const double	   kInf = std::numeric_limits<double>::infinity();
 
 		if (tri < 0 || tri >= n) {
@@ -215,8 +216,8 @@ namespace geometry::nav {
 			}
 			cache.settled[static_cast<std::size_t>(ct)] = 1;
 
-			const Vec2d cc = toD(centroidI(mesh, mesh.triangles[ct]));
-			const NavTriangle& t = mesh.triangles[ct];
+			const Vec2d cc = toD(centroidI(mesh, mesh.triangle(ct)));
+			const NavTriangle& t = mesh.triangle(ct);
 			for (int e = 0; e < 3; ++e) {
 				const std::int32_t nb = t.neighbor[e];
 				if (nb < 0) {
@@ -225,14 +226,14 @@ namespace geometry::nav {
 				// Terrain-graph membership only: floor or ANY wall face counts as open;
 				// only common-knowledge terrain (water/tree) is excluded. No width gate --
 				// the reverse search ignores edge widths so it serves every disc size.
-				if (!terrainTraversable(mesh.triangles[nb])) {
+				if (!terrainTraversable(mesh.triangle(nb))) {
 					continue;
 				}
 				if (cache.settled[static_cast<std::size_t>(nb)]) {
 					continue;
 				}
 				const double tentative = cache.g[static_cast<std::size_t>(ct)] +
-										 distanceD(cc, toD(centroidI(mesh, mesh.triangles[nb])));
+										 distanceD(cc, toD(centroidI(mesh, mesh.triangle(nb))));
 				if (tentative < cache.g[static_cast<std::size_t>(nb)]) {
 					cache.g[static_cast<std::size_t>(nb)] = tentative;
 					cache.open.push({tentative, nb});
@@ -284,40 +285,42 @@ namespace geometry::nav {
 		return -1;
 	}
 
-	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
+	ReachFrom reachFrom(const NavView& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
+		assert(forestFor(mesh, belief) != nullptr && "reachFrom: the mesh has no reachability forests");
 		ReachFrom from;
-		const std::int32_t startTri = locateTriangle(mesh, start);
+		const std::int32_t startTri = mesh.locate(mesh.owner, start);
 		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
 		// endpoint gate (e.g. start inside a wall the agent knows blocks).
-		if (startTri < 0 || !traversable(mesh.triangles[startTri], belief)) {
+		if (startTri < 0 || !traversable(mesh.triangle(startTri), belief)) {
 			return from;
 		}
 		from.startTri = startTri;
-		from.root	  = reachRootInForest(forestFor(mesh, belief), startTri, discDiameterMm(agentRadiusMm));
+		from.root	  = reachRootInForest(*forestFor(mesh, belief), startTri, discDiameterMm(agentRadiusMm));
 		return from;
 	}
 
-	bool reaches(const NavMesh& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
+	bool reaches(const NavView& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
+		assert(forestFor(mesh, belief) != nullptr && "reaches: the mesh has no reachability forests");
 		if (from.startTri < 0) {
 			return false; // off-mesh or untraversable start
 		}
-		const std::int32_t goalTri = locateTriangle(mesh, goal);
-		if (goalTri < 0 || !traversable(mesh.triangles[goalTri], belief)) {
+		const std::int32_t goalTri = mesh.locate(mesh.owner, goal);
+		if (goalTri < 0 || !traversable(mesh.triangle(goalTri), belief)) {
 			return false;
 		}
 		if (goalTri == from.startTri) {
 			return true; // same triangle: trivially reachable
 		}
 		// `false` = the forest proves unreachability (sound); otherwise "maybe".
-		return inForestSubtree(forestFor(mesh, belief), from.root, goalTri);
+		return inForestSubtree(*forestFor(mesh, belief), from.root, goalTri);
 	}
 
-	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief, RraCache* rra) {
 		PathResult result;
 
-		const std::int32_t startTri = locateTriangle(mesh, start);
-		const std::int32_t goalTri	= locateTriangle(mesh, goal);
+		const std::int32_t startTri = mesh.locate(mesh.owner, start);
+		const std::int32_t goalTri	= mesh.locate(mesh.owner, goal);
 		if (startTri < 0 || goalTri < 0) {
 			return result; // off-mesh
 		}
@@ -325,7 +328,7 @@ namespace geometry::nav {
 		// Reject a query whose endpoints sit on an untraversable face for this belief
 		// (e.g. start inside a wall the agent knows blocks): no path. Without this, A*
 		// could exit a blocked start through a floor neighbor and "escape" a wall.
-		if (!traversable(mesh.triangles[startTri], belief) || !traversable(mesh.triangles[goalTri], belief)) {
+		if (!traversable(mesh.triangle(startTri), belief) || !traversable(mesh.triangle(goalTri), belief)) {
 			return result;
 		}
 
@@ -354,7 +357,7 @@ namespace geometry::nav {
 		// keyed by the apex shared by the entry and exit edges), so the same triangle is
 		// distinct per entry edge. entry == 3 is the start triangle (no entry edge, no
 		// squeeze). At most 4 states per triangle.
-		const std::int32_t n	= static_cast<std::int32_t>(mesh.triangles.size());
+		const std::int32_t n	= static_cast<std::int32_t>(mesh.triangleSlots());
 		const double	   kInf = std::numeric_limits<double>::infinity();
 
 		const int kStartEntry = 3;
@@ -364,7 +367,7 @@ namespace geometry::nav {
 		std::vector<std::int32_t> cameFrom(static_cast<std::size_t>(n) * 4, -1);
 		std::vector<char>		  closed(static_cast<std::size_t>(n) * 4, 0);
 
-		const Vec2d goalC = toD(centroidI(mesh, mesh.triangles[goalTri]));
+		const Vec2d goalC = toD(centroidI(mesh, mesh.triangle(goalTri)));
 
 		// RRA* applies only when a cache is supplied AND it targets THIS goal triangle;
 		// otherwise fall back to the straight-line centroid estimate (the pure free
@@ -376,7 +379,7 @@ namespace geometry::nav {
 			if (useRra) {
 				return rraHeuristic(*rra, mesh, ti);
 			}
-			return distanceD(toD(centroidI(mesh, mesh.triangles[ti])), goalC);
+			return distanceD(toD(centroidI(mesh, mesh.triangle(ti))), goalC);
 		};
 
 		// Open-set node: f-score plus state id. The comparator orders by f, then by
@@ -418,8 +421,8 @@ namespace geometry::nav {
 				break;
 			}
 
-			const Vec2d ci = toD(centroidI(mesh, mesh.triangles[ti]));
-			const NavTriangle& tri = mesh.triangles[ti];
+			const Vec2d ci = toD(centroidI(mesh, mesh.triangle(ti)));
+			const NavTriangle& tri = mesh.triangle(ti);
 			for (int e = 0; e < 3; ++e) {
 				if (e == entry) {
 					continue; // U-turn back through the entry edge: never on a taut path
@@ -430,7 +433,7 @@ namespace geometry::nav {
 				}
 				// Belief gate: skip a neighbor this agent may not cross. The only place
 				// truth/belief changes routing; the funnel below is untouched.
-				if (!traversable(mesh.triangles[nb], belief)) {
+				if (!traversable(mesh.triangle(nb), belief)) {
 					continue;
 				}
 				// Width gate (intra-triangle squeeze): to leave `ti` via edge e having
@@ -449,7 +452,7 @@ namespace geometry::nav {
 				}
 
 				// The edge of `nb` that faces `ti` is nb's entry edge for this step.
-				const int back = sharedEdgeIndex(mesh.triangles[nb], ti);
+				const int back = sharedEdgeIndex(mesh.triangle(nb), ti);
 				if (back < 0) {
 					continue; // adjacency inconsistency; skip safely
 				}
@@ -459,7 +462,7 @@ namespace geometry::nav {
 				}
 				// Cost: centroid-to-centroid distance. Integer mesh, double cost; the
 				// metric only orders the search, the funnel decides the real shape.
-				const double tentative = g[s] + distanceD(ci, toD(centroidI(mesh, mesh.triangles[nb])));
+				const double tentative = g[s] + distanceD(ci, toD(centroidI(mesh, mesh.triangle(nb))));
 				if (tentative < g[ns]) {
 					g[ns]		 = tentative;
 					cameFrom[ns] = s;
@@ -501,7 +504,7 @@ namespace geometry::nav {
 		portals.push_back({toD(start), toD(start)});
 
 		for (std::size_t i = 0; i + 1 < corridor.size(); ++i) {
-			const NavTriangle& from = mesh.triangles[corridor[i]];
+			const NavTriangle& from = mesh.triangle(corridor[i]);
 			const int		   e	= sharedEdgeIndex(from, corridor[i + 1]);
 			if (e < 0) {
 				// Corridor adjacency is built from neighbor[], so this is unreachable;
@@ -510,8 +513,8 @@ namespace geometry::nav {
 			}
 			const std::uint32_t ia = from.v[e];
 			const std::uint32_t ib = from.v[(e + 1) % 3];
-			Vec2i64				pa = mesh.vertices[ia];
-			Vec2i64				pb = mesh.vertices[ib];
+			Vec2i64				pa = mesh.vertex(ia);
+			Vec2i64				pb = mesh.vertex(ib);
 
 			// Directed edge pa->pb (= v[e]->v[(e+1)%3]) in a CCW triangle keeps the
 			// interior on its left, so the agent exits to its RIGHT. Facing the exit
@@ -626,6 +629,27 @@ namespace geometry::nav {
 		result.reachable = true;
 		result.points	 = std::move(pts);
 		return result;
+	}
+
+} // namespace geometry::nav
+
+namespace geometry::nav {
+
+	double rraHeuristic(RraCache& cache, const NavMesh& mesh, std::int32_t tri) {
+		return rraHeuristic(cache, navView(mesh), tri);
+	}
+
+	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
+		return reachFrom(navView(mesh), start, agentRadiusMm, belief);
+	}
+
+	bool reaches(const NavMesh& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
+		return reaches(navView(mesh), from, goal, belief);
+	}
+
+	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+						   BeliefFilter belief, RraCache* rra) {
+		return pathThrough(navView(mesh), start, goal, agentRadiusMm, belief, rra);
 	}
 
 } // namespace geometry::nav

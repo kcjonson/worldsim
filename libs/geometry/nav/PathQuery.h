@@ -77,6 +77,10 @@ namespace geometry::nav {
 	// either way: only the heuristic VALUES change, never the routing rules.
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   BeliefFilter belief = {}, RraCache* rra = nullptr);
+	// Any mesh through its view (see NavView). Without forests in the view the
+	// reachability pre-check is skipped and the A* decides alone.
+	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+						   BeliefFilter belief = {}, RraCache* rra = nullptr);
 
 	// Sound, cheap reachability test (P3.3): can a disc of radius agentRadiusMm POSSIBLY get from
 	// start to goal under `belief`? Uses the precomputed reachability forest, so it rejects a
@@ -100,5 +104,8 @@ namespace geometry::nav {
 	};
 	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief = {});
 	bool	  reaches(const NavMesh& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief = {});
+	// The view must carry the forests.
+	ReachFrom reachFrom(const NavView& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief = {});
+	bool	  reaches(const NavView& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief = {});
 
 } // namespace geometry::nav
