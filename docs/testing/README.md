@@ -17,7 +17,7 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 
 | Layer | Where | When |
 |---|---|---|
-| Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI, every push |
+| Unit tests | `*.test.cpp` (one `<lib>-tests` per library: `sim-tests`, `world-tests`, `assets-tests` and so on) | CI, every push, less what already passed with the same inputs ([CI test selection](#ci-test-selection)) |
 | Happy-path scenarios | [scenarios/](./scenarios/) and [regressions.md](./regressions.md) | before every commit that touches what they cover |
 | Gameplay perf | `scripts/perf-capture.ps1` (to port to `.mjs`), with the game's GPU hold on so the card stays at P0 and nobody locks clocks; each sample records the P-state, and the script warns if one wasn't P0, and the depth-sorted upright stream's draws (`uprightDrawCalls`, `uprightTriangles`, from `what=uprights`) so trees read apart from everything else ([ground-textures.md](../technical/ground-textures.md#gpu-hold-wor-553)) | in a session for its own change, after a machine-load check; the full suite in the nightly batch on `main` ([Performance](#performance)) |
 
@@ -36,6 +36,72 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 - **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
   (expect `"count":0` before screenshotting) and read element bounds from `/api/ui/tree` rather
   than judging coordinates by eye. On demand only; never in CI.
+
+---
+
+## CI test selection
+
+The Tests workflow (`.github/workflows/tests.yml`) builds everything on both jobs, then runs only
+the ctest entries that haven't already passed with exactly the same inputs: test-result caching,
+per test exe. `scripts/ci/test-select.mjs` does it, from what CMake reports after configure, so a
+new library or test needs no edit to the script or the workflow.
+
+A test's key is a hash of:
+
+- the git tree of the source dir of every in-repo target in its exe's dependency closure, from
+  CMake's file API, custom targets included (the base shader, shader staging, the font atlases'
+  `tools/generate_sdf_atlas`), and any source a target lists from outside its own dir;
+- any in-repo include dir those targets compile with that isn't inside one of their own dirs, whole:
+  planet-view exports `libs/`, so `planet-view-tests` reruns on any change under `libs/`. A
+  library whose include root is its own dir adds nothing;
+- its command line and the properties that change what runs (`ENVIRONMENT`, `WORKING_DIRECTORY`;
+  not `TIMEOUT`, `PROCESSORS` or `LABELS`);
+- the data dirs it declares;
+- a global part: every top-level file and dir except `docs/`, `.claude/`, `perf-results/`,
+  `*.md`, `.vscode/`, `.clang-format`, `.clang-tidy`, `.gitignore`, `LICENSE`,
+  `scripts/` and `.github/`, and except the dirs targets and data dirs already account for
+  (`libs/`, `apps/`, `tools/`, `assets/`, `fonts/`). `tests.yml`, `.github/actions/` and
+  `scripts/ci/` are added back. So the root `CMakeLists.txt` (salal's tag), `cmake/`,
+  `vcpkg.json` and any new top-level file rerun everything;
+- the OS, the compiler and its version, and the build type.
+
+A pass is a marker file named for the test and its key, kept in the Actions cache per job
+(`test-markers-linux-`, `test-markers-windows-`). A run restores the newest set on its branch,
+else main's, skips each test whose marker is there, and saves a new set when it changed: one
+marker for each test that passed in this run or was skipped on a valid one, nothing else, so a
+failed, cancelled, or missing test never has one. On a pull request the checkout is the merge
+commit, so keys describe the merged tree.
+
+**Declaring data dirs.** A test that reads repo files at run time (through `__FILE__`, say) names
+their dirs next to its `add_test`, relative to the repo root:
+
+```cmake
+add_test(NAME sim-tests COMMAND sim-tests)
+worldsim_test_data(sim-tests assets/config)
+```
+
+`cmake/test-data.cmake` stores them as the test's `REQUIRED_FILES`, which ctest's JSON reports and
+the script reads back; ctest also reports the test Not Run if one is missing. Today `assets-tests`
+declares `assets`, `sim-tests` `assets/config`, and `theme-tests` `fonts`. A test that starts
+reading a new dir has to declare it, or a change there won't rerun it.
+
+**Forcing a full run.** Run the workflow by hand (Actions, Tests, Run workflow) with "Ignore
+recorded passes" ticked. The nightly run at 09:00 UTC does the same and records the passes, which
+catches what a key can't see: a new runner image, Mesa, the system GL.
+
+**Reading it.** Each job's summary has a table: every test, run or skipped, its key, and why. A
+skipped test names the commit and run where it passed with that key; a test that runs names the
+inputs that changed since its last recorded pass. The `test-results` artifacts carry
+`test-select/plan.json` with every key's inputs. Locally, against any configured build dir that
+had `query` run before its configure:
+
+```bash
+node scripts/ci/test-select.mjs query --build-dir <dir>   # then configure and build
+node scripts/ci/test-select.mjs plan --build-dir <dir> --explain [--rev <rev>]
+```
+
+`--explain` prints each test's inputs and key; `--rev` keys another commit's tree with this
+build's graph.
 
 ---
 
