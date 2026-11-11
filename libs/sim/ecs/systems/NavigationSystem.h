@@ -19,7 +19,7 @@
 //     per chunk per mesh: open chunks share a tick up to kGroundVerticesPerTick ring vertices, a
 //     chunk with water goes alone. A chunk whose terrain changes has its water re-derived. A chunk
 //     that unloads keeps its ground, up to kKeptUnloadedChunks of them; past that the one unloaded
-//     longest ago without walls or doors loses it, one chunk a tick, on a tick no ground arrives.
+//     longest ago holding no construction loses it, one chunk a tick, on a tick no ground arrives.
 //  4. Flora: the rects scanned for colliders in kFloraCellMm cells; up to kFloraRemovalsPerTick
 //     removals and kFloraRingsPerTick adds, one patch per cell, adds nearest a rect centre first.
 // endTick() hands the tick's patches to two worker threads, one per mesh, after every system has
@@ -308,7 +308,8 @@ class NavigationSystem : public ISystem {
 	// job is no longer than one chunk with shoreline at today's costs; three measured longer.
 	static constexpr std::size_t kGroundVerticesPerTick = 256;
 	// Unloaded chunks whose ground stays meshed, so going back to them meshes nothing. Beyond
-	// it, the chunk unloaded longest ago without walls or doors loses its ground.
+	// it, the chunk unloaded longest ago that holds nothing of the ConstructionWorld (a wall,
+	// opening or foundation, blueprint or built) loses its ground.
 	static constexpr std::size_t kKeptUnloadedChunks = 16;
 	// Detail turns on within this of the viewport rect GameScene pushes (which already carries
 	// kViewportMargin), and stays on until the rect is this much farther away.
@@ -438,8 +439,9 @@ class NavigationSystem : public ISystem {
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	[[nodiscard]] Rect viewportRect() const;
 	void			   updateDetail();
-	// Spec 4.7: a mover inside flora walks forward along its route to clear ground, or to the
-	// nearest walkable point without one.
+	// Spec 4.7: a mover inside flora moves forward along its route to the first point walkable in
+	// truth, never past a wall or water on the way; with none, it stays and its route goes stale.
+	// Without a route it goes to the nearest walkable point.
 	void snapMovers();
 	void trimFlora(const std::vector<Rect>& rects);
 	void							queueRemovedFlora();
@@ -453,7 +455,7 @@ class NavigationSystem : public ISystem {
 	void						gatherGround(std::size_t vertexBudget, const std::vector<Rect>& rects, const Rect* within);
 	void						noteLoadedChunks();
 	std::size_t					dropUnloadedGround(std::size_t maxChunks);
-	[[nodiscard]] bool			hasStructures(world::ChunkCoordinate coord) const;
+	[[nodiscard]] bool			holdsConstruction(world::ChunkCoordinate coord) const;
 	[[nodiscard]] bool			chunkGroundMeshed(world::ChunkCoordinate coord) const;
 	void scanFlora(const std::vector<Rect>& rects);
 	void gatherFlora(std::size_t addBudget, std::size_t removeBudget, const std::vector<Rect>& rects);

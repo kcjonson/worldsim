@@ -16,6 +16,7 @@
 
 #include <core/IntegerDivision.h>
 #include <nav/PathQuery.h>
+#include <predicates/Predicates.h>
 
 #include <utils/Log.h>
 
@@ -655,11 +656,14 @@ namespace ecs {
 		}
 		const double longest = std::max(runningNav.ms, runningStructural.ms);
 		// Permanent nav-mesh work diagnostic: one tick's job on each mesh's worker (of which the
-		// width refresh and the forest rebuild), how long the main thread waited for it, and the
-		// meshes' triangle slots then. DEBUG, dev-tools log server.
-		LOG_DEBUG(Engine, "[NavBuild] job nav %.3f ms structural %.3f ms (widths %.3f ms forests %.3f ms) wait %.3f ms slots %zu structuralSlots %zu%s",
+		// width refresh and the forest rebuild), how long the main thread waited for it, the meshes'
+		// triangle slots then, and how many patches each job ran. DEBUG, dev-tools log server.
+		LOG_DEBUG(Engine,
+				  "[NavBuild] job nav %.3f ms structural %.3f ms (widths %.3f ms forests %.3f ms) wait %.3f ms slots %zu structuralSlots %zu "
+				  "patches %zu structuralPatches %zu%s",
 				  runningNav.ms, runningStructural.ms, runningNav.finishMs, runningStructural.finishMs, waitMs, detailMesh.triangles().size(),
-				  structural.triangles().size(), longest > kJobBudgetMs ? " over budget" : "");
+				  structural.triangles().size(), runningNav.patches.size(), runningStructural.patches.size(),
+				  longest > kJobBudgetMs ? " over budget" : "");
 	}
 
 	void NavigationSystem::collect() {
@@ -893,8 +897,13 @@ namespace ecs {
 		const bool	unlimited = vertexBudget == kUnlimited;
 		std::size_t taken	  = 0;
 		for (const Candidate& c : candidates) {
+			// Reloaded since the last tick and still generating: its polygons are being written.
+			const world::Chunk* chunk = chunkManager->getChunk(c.coord);
+			if (chunk == nullptr || !chunk->isReady()) {
+				continue;
+			}
 			std::vector<gnav::NavInputPolygon> water;
-			nav::appendChunkWater(chunkManager->getChunk(c.coord)->terrainPolygons(), water);
+			nav::appendChunkWater(chunk->terrainPolygons(), water);
 			const std::size_t cost = kSquareVertices + waterVertices(water);
 			if (taken > 0 && !unlimited && (!water.empty() || cost > vertexBudget)) {
 				break;
@@ -945,16 +954,68 @@ namespace ecs {
 		groundPending = candidates.size() - taken + dropUnloadedGround(unlimited ? kUnlimited : (taken > 0 ? 0 : 1));
 	}
 
-	bool NavigationSystem::hasStructures(world::ChunkCoordinate coord) const {
-		const geometry::Vec2i64 lo = nav::chunkOriginMm(coord);
-		const geometry::Vec2i64 hi{lo.x + kChunkMm, lo.y + kChunkMm};
+	bool NavigationSystem::holdsConstruction(world::ChunkCoordinate coord) const {
+		if (constructionWorld == nullptr) {
+			return false;
+		}
+		// The chunk grown past any wall band's half thickness, so a band whose centreline runs just
+		// outside it still holds it. Openings sit on their segments.
+		constexpr std::int64_t	kConstructionReachMm = 1000;
+		const geometry::Vec2i64 origin = nav::chunkOriginMm(coord);
+		const geometry::Vec2i64 lo{origin.x - kConstructionReachMm, origin.y - kConstructionReachMm};
+		const geometry::Vec2i64 hi{origin.x + kChunkMm + kConstructionReachMm, origin.y + kChunkMm + kConstructionReachMm};
 		const auto				inside = [&](const geometry::Vec2i64& p) { return p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y; };
-		return std::any_of(walls.begin(), walls.end(), [&](const WallRing& wall) { return std::any_of(wall.polygon.ring.begin(), wall.polygon.ring.end(), inside); }) ||
-			   std::any_of(doors.begin(), doors.end(), [&](const WallDoor& door) { return inside(door.portal.a); });
+		// Liang-Barsky: does a..b meet the box?
+		const auto crosses = [&](const geometry::Vec2i64& a, const geometry::Vec2i64& b) {
+			double		 t0 = 0.0;
+			double		 t1 = 1.0;
+			const double d[2]	 = {static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y)};
+			const double from[2] = {static_cast<double>(a.x), static_cast<double>(a.y)};
+			const double mins[2] = {static_cast<double>(lo.x), static_cast<double>(lo.y)};
+			const double maxs[2] = {static_cast<double>(hi.x), static_cast<double>(hi.y)};
+			for (int axis = 0; axis < 2; ++axis) {
+				if (d[axis] == 0.0) {
+					if (from[axis] < mins[axis] || from[axis] > maxs[axis]) {
+						return false;
+					}
+					continue;
+				}
+				double enter = (mins[axis] - from[axis]) / d[axis];
+				double leave = (maxs[axis] - from[axis]) / d[axis];
+				if (enter > leave) {
+					std::swap(enter, leave);
+				}
+				t0 = std::max(t0, enter);
+				t1 = std::min(t1, leave);
+				if (t0 > t1) {
+					return false;
+				}
+			}
+			return true;
+		};
+		for (const construction::WallSegment& segment : constructionWorld->segments()) {
+			const construction::Vertex* v0 = constructionWorld->getVertex(segment.v0);
+			const construction::Vertex* v1 = constructionWorld->getVertex(segment.v1);
+			if (v0 != nullptr && v1 != nullptr && crosses(v0->pos, v1->pos)) {
+				return true;
+			}
+		}
+		for (const construction::Foundation& foundation : constructionWorld->foundations()) {
+			const geometry::Ring& ring = foundation.ring;
+			for (std::size_t i = 0; i < ring.size(); ++i) {
+				if (crosses(ring[i], ring[(i + 1) % ring.size()])) {
+					return true;
+				}
+			}
+			if (!ring.empty() && geometry::pointInPolygon(origin, ring) != geometry::PointInPolygon::Outside) {
+				return true; // the chunk lies wholly inside the foundation
+			}
+		}
+		return false;
 	}
 
 	std::size_t NavigationSystem::dropUnloadedGround(std::size_t maxChunks) {
-		// Past the budget, the chunks unloaded longest ago that hold no walls or doors lose their
+		// Past the budget, the chunks unloaded longest ago that hold no construction lose their
 		// ground, up to maxChunks of them, one patch per chunk, oldest first. Returns how many more
 		// are still to go.
 		std::vector<std::pair<std::uint64_t, world::ChunkCoordinate>> unloaded;
@@ -971,7 +1032,7 @@ namespace ecs {
 			if (kept <= kKeptUnloadedChunks) {
 				break;
 			}
-			if (hasStructures(coord)) {
+			if (holdsConstruction(coord)) {
 				continue;
 			}
 			--kept;
@@ -1247,20 +1308,37 @@ namespace ecs {
 		if (world == nullptr || detailMesh.liveTriangleCount() == 0) {
 			return;
 		}
-		// Walkable for the mover: on a walkable face, with its disc clear on all sides.
-		const auto clearFor = [this](glm::vec2 p, float radius) {
-			if (!terrainWalkable(detailMesh, p)) {
+		// A route is planned over what the mover remembers, so it can run through a wall it hasn't
+		// seen: a candidate has to be walkable in truth, its disc clear on all sides, and the walk
+		// stops at the first face that blocks in truth for a reason other than flora (a wall, water,
+		// unmeshed ground). Nothing past that is a candidate. The disc is sampled out to its rim at
+		// the snap step along 8 rays, so a wall band thinner than the radius can't fall between.
+		const float step = static_cast<float>(kSnapStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+
+		const auto clearFor = [this, step](glm::vec2 p, float radius) {
+			if (!truthWalkable(detailMesh, p)) {
 				return false;
 			}
+			const int rings = std::max(1, static_cast<int>(std::ceil(radius / step)));
 			for (int k = 0; k < 8; ++k) {
-				const float angle = 6.2831853F * static_cast<float>(k) / 8.0F;
-				if (!terrainWalkable(detailMesh, p + glm::vec2{std::cos(angle), std::sin(angle)} * radius)) {
-					return false;
+				const float	 angle = 6.2831853F * static_cast<float>(k) / 8.0F;
+				const glm::vec2 ray{std::cos(angle), std::sin(angle)};
+				for (int r = 1; r <= rings; ++r) {
+					if (!truthWalkable(detailMesh, p + ray * (radius * static_cast<float>(r) / static_cast<float>(rings)))) {
+						return false;
+					}
 				}
 			}
 			return true;
 		};
-		const float step = static_cast<float>(kSnapStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+		const auto stopsTheWalk = [this](glm::vec2 p) {
+			const std::int32_t tri = detailMesh.locate(nav::toMm(p));
+			if (tri < 0) {
+				return true;
+			}
+			const gnav::NavTriangle& t = detailMesh.triangles()[static_cast<std::size_t>(tri)];
+			return !gnav::truthTraversable(t) && t.faceBlocker != nav::kProvenanceTree;
+		};
 
 		for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
 			(void)colonist;
@@ -1271,31 +1349,37 @@ namespace ecs {
 			const AgentRadius* agent  = world->getComponent<AgentRadius>(entity);
 			const float		   radius = agent != nullptr ? agent->radiusMeters : AgentRadius{}.radiusMeters;
 
-			// Forward along the remaining route only: from where it stands to the waypoint it is
-			// steering for, then on through the rest. Points behind it are never candidates.
-			bool	 moved = false;
-			NavPath* path  = world->getComponent<NavPath>(entity);
-			if (path != nullptr && !path->done()) {
-				glm::vec2 from = position.value;
-				for (std::size_t next = path->current; next < path->waypoints.size() && !moved; ++next) {
-					const glm::vec2 to	   = path->waypoints[next];
-					const float		length = std::sqrt(dist2(from, to));
-					const int		steps  = std::max(1, static_cast<int>(std::ceil(length / step)));
-					for (int i = 1; i <= steps && !moved; ++i) {
-						const glm::vec2 p = from + (to - from) * (static_cast<float>(i) / static_cast<float>(steps));
-						if (clearFor(p, radius)) {
-							position.value = p;
-							path->current  = next;
-							moved		   = true;
-						}
-					}
-					from = to;
-				}
-			}
-			if (!moved) {
+			// With a route: forward along what remains of it only, from where it stands to the
+			// waypoint it is steering for, then on through the rest. Points behind it are never
+			// candidates; with none ahead it stays put and its route goes stale, so the AI replans.
+			NavPath* path = world->getComponent<NavPath>(entity);
+			if (path == nullptr || path->done()) {
 				if (const std::optional<glm::vec2> nearest = nearestPathablePoint(position.value, radius)) {
 					position.value = *nearest;
 				}
+				continue;
+			}
+			bool	  moved	  = false;
+			bool	  stopped = false;
+			glm::vec2 from	  = position.value;
+			for (std::size_t next = path->current; next < path->waypoints.size() && !moved && !stopped; ++next) {
+				const glm::vec2 to	   = path->waypoints[next];
+				const float		length = std::sqrt(dist2(from, to));
+				const int		steps  = std::max(1, static_cast<int>(std::ceil(length / step)));
+				for (int i = 1; i <= steps && !moved && !stopped; ++i) {
+					const glm::vec2 p = from + (to - from) * (static_cast<float>(i) / static_cast<float>(steps));
+					if (stopsTheWalk(p)) {
+						stopped = true;
+					} else if (clearFor(p, radius)) {
+						position.value = p;
+						path->current  = next;
+						moved		   = true;
+					}
+				}
+				from = to;
+			}
+			if (!moved) {
+				path->builtNavVersion = generation() - 1;
 			}
 		}
 	}

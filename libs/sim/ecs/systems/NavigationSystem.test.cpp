@@ -30,6 +30,8 @@
 
 #include <nav/PathQuery.h>
 
+#include <utils/Log.h>
+
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 #include <worldgen/sampling/PondNetwork2D.h>
@@ -38,6 +40,8 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -2025,19 +2029,37 @@ TEST_F(ForwardSnapTest, ClearRouteOnWalkableGroundIsKept) {
 	EXPECT_EQ(world.getComponent<NavPath>(colonist)->current, 1u);
 }
 
-// On walkable ground with a tree arriving across the route ahead, the snap leaves it where it stands;
-// the generation moves, which is the AI's cue to replan from there.
+// On walkable ground with a tree arriving across the route ahead, the snap leaves it where it stands
+// and the AI replans from there: a route stamped with the new generation that goes round the tree.
 TEST_F(ForwardSnapTest, RouteBlockedAheadIsReplannedFromWhereItStands) {
+	AIDecisionSystem& ai = world.registerSystem<AIDecisionSystem>(AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234u);
+	ai.setNavigationSystem(sys);
 	const glm::vec2 at{-16.0F, 20.0F};
+	const glm::vec2 goal{-4.0F, 20.0F};
 	const glm::vec2 across{-10.0F, 20.0F}; // chunk (-1, 0), whose placement arrives late
-	const EntityID	colonist = routedColonist(world, at, {at, {-4.0F, 20.0F}});
-	world.getComponent<NavPath>(colonist)->builtNavVersion = sys->generation();
+	const EntityID	colonist = spawnRecoverableColonist(world, at);
+	world.addComponent<Colonist>(colonist, Colonist{"Replanner"});
+	ai.enterControl(colonist);
+	ASSERT_TRUE(ai.issuePlayerMoveOrder(colonist, goal).has_value());
+	const NavPath& path = *world.getComponent<NavPath>(colonist);
+	ASSERT_TRUE(path.valid);
+	ASSERT_EQ(path.waypoints.size(), 2u) << "straight through where the tree will stand";
+
 	placeTrees(executor, processed, "Test_NavSnapTree", {across});
-	step(world, *sys);
-	step(world, *sys);
+	for (int i = 0; i < 3; ++i) {
+		step(world, *sys);
+	}
 	ASSERT_FALSE(sys->isOnMesh(across)) << "the tree across the route is in";
 	EXPECT_EQ(world.getComponent<Position>(colonist)->value, at);
-	EXPECT_NE(world.getComponent<NavPath>(colonist)->builtNavVersion, sys->generation()) << "no replan cue";
+	ASSERT_TRUE(path.valid);
+	EXPECT_EQ(path.builtNavVersion, sys->generation()) << "not replanned";
+	EXPECT_EQ(path.waypoints.front(), at) << "replanned from where it stands";
+	for (std::size_t k = 0; k + 1 < path.waypoints.size(); ++k) {
+		for (int i = 0; i <= 20; ++i) {
+			const glm::vec2 p = path.waypoints[k] + (path.waypoints[k + 1] - path.waypoints[k]) * (static_cast<float>(i) / 20.0F);
+			EXPECT_TRUE(sys->isOnMesh(p)) << "the new route crosses the tree at (" << p.x << ", " << p.y << ")";
+		}
+	}
 }
 
 // Inside a tree with a route, it moves to the first point along the rest of the route that is
@@ -2052,6 +2074,31 @@ TEST_F(ForwardSnapTest, InsideTreeWithRouteMovesForward) {
 	EXPECT_GT(now.x, kTree.x + 0.8F + kAgentRadius) << "past the tree with its clearance";
 	EXPECT_LT(now.x, kTree.x + 0.8F + kAgentRadius + 0.3F) << "the first clear point, not a later one";
 	EXPECT_EQ(world.getComponent<NavPath>(colonist)->current, 1u);
+}
+
+// A wall the mover hasn't seen runs across its route just past the tree. No point before the wall
+// clears, and nothing past it is a candidate, so it stays where it is and its route goes stale.
+TEST_F(ForwardSnapTest, WallBeyondTheTreeStopsTheWalk) {
+	buildWall(cw, {11300, 7000}, {11300, 13000});
+	settle(*sys);
+	const glm::vec2 at{9.7F, 10.0F};
+	const EntityID	colonist = routedColonist(world, at, {{6.0F, 10.0F}, {14.0F, 10.0F}, {14.0F, 16.0F}});
+	world.getComponent<NavPath>(colonist)->builtNavVersion = sys->generation();
+	step(world, *sys);
+	EXPECT_EQ(world.getComponent<Position>(colonist)->value, at);
+	EXPECT_EQ(world.getComponent<NavPath>(colonist)->current, 1u);
+	EXPECT_NE(world.getComponent<NavPath>(colonist)->builtNavVersion, sys->generation()) << "the route isn't stale";
+}
+
+// The rest of the route lies inside the tree: no point ahead clears, so it stays and its route goes
+// stale; the nearest walkable point, which may be behind it, is only for a mover with no route.
+TEST_F(ForwardSnapTest, RouteEndingInsideTheTreeStays) {
+	const glm::vec2 at{9.7F, 10.0F};
+	const EntityID	colonist = routedColonist(world, at, {{6.0F, 10.0F}, {9.9F, 10.0F}});
+	world.getComponent<NavPath>(colonist)->builtNavVersion = sys->generation();
+	step(world, *sys);
+	EXPECT_EQ(world.getComponent<Position>(colonist)->value, at);
+	EXPECT_NE(world.getComponent<NavPath>(colonist)->builtNavVersion, sys->generation()) << "the route isn't stale";
 }
 
 // Inside a tree with no route, it goes to the nearest walkable point.
@@ -2297,4 +2344,140 @@ TEST_F(NavigationSystemTest, GroundDroppedWhileItsFloraRemovalsAreQueued) {
 	for (int i = 1; i <= walled; ++i) {
 		EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(i))) << "walled chunk " << i;
 	}
+}
+
+// Water past the tree: the pond's west shore is at x = 32 and the tree ends just short of it, too
+// close for the mover's clearance. The walk stops at the water, so the mover stays and its route goes
+// stale rather than landing in or across the pond.
+TEST_F(NavigationSystemTest, WaterBeyondTheTreeStopsTheSnap) {
+	registerTree("Test_NavShoreTree", 0.8F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{31.0F, 40.0F};
+	placeTrees(executor, processed, "Test_NavShoreTree", {treeAt});
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(waterPatchChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	sys.setViewportRect({40.0F, 40.0F}, {60.0F, 60.0F});
+	settle(sys);
+	ASSERT_FALSE(sys.isOnMesh({40.0F, 40.0F})) << "the pond";
+
+	const glm::vec2 at{30.8F, 40.0F};
+	const EntityID	colonist = routedColonist(world, at, {{26.0F, 40.0F}, {48.0F, 40.0F}, {54.0F, 40.0F}});
+	world.getComponent<NavPath>(colonist)->builtNavVersion = sys.generation();
+	step(world, sys);
+	EXPECT_EQ(world.getComponent<Position>(colonist)->value, at);
+	EXPECT_NE(world.getComponent<NavPath>(colonist)->builtNavVersion, sys.generation()) << "the route isn't stale";
+}
+
+// A chunk holding only construction blueprints (a wall and a foundation, nothing built) keeps its
+// ground however long ago it unloaded, like a walled one.
+TEST_F(NavigationSystemTest, BlueprintChunkKeepsItsGround) {
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setConstructionWorld(&cw);
+
+	walk.stand(0);
+	ASSERT_TRUE(cw.commitSegment({200000, 200000}, {204000, 200000}, "Wood", "Standard", kInvalidFoundation).ok());
+	settle(sys);
+	walk.stand(1);
+	ASSERT_TRUE(cw.commitFoundation(geometry::Ring{{700000, 200000}, {704000, 200000}, {704000, 204000}, {700000, 204000}}, "Wood").ok());
+	settle(sys);
+	const int steps = static_cast<int>(NavigationSystem::kKeptUnloadedChunks) + 5;
+	for (int i = 2; i < steps; ++i) {
+		walk.stand(i);
+		settle(sys);
+	}
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(0))) << "the blueprint wall's chunk kept its ground";
+	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(1))) << "the blueprint foundation's chunk kept its ground";
+	EXPECT_FALSE(sys.inSimArea(ChunkWalk::centre(2))) << "the oldest without construction went";
+}
+
+namespace {
+	// The nav job diagnostics logged while it is alive.
+	struct JobLog {
+		std::vector<std::string> jobs;
+
+		JobLog() { foundation::Logger::setSink(&JobLog::sink, this); }
+		~JobLog() { foundation::Logger::setSink(nullptr, nullptr); }
+		JobLog(const JobLog&)			 = delete;
+		JobLog& operator=(const JobLog&) = delete;
+
+		static void sink(void* context, const foundation::LogRecord& record) {
+			if (std::strstr(record.message, "[NavBuild] job ") != nullptr) {
+				static_cast<JobLog*>(context)->jobs.emplace_back(record.message);
+			}
+		}
+
+		[[nodiscard]] long long last(const char* tag) const {
+			const char* at = std::strstr(jobs.back().c_str(), tag);
+			return at != nullptr ? std::atoll(at + std::strlen(tag)) : -1;
+		}
+	};
+} // namespace
+
+// A lost chunk's flora comes out one patch per cell, so each patch's width refresh covers its own
+// cell and not the box around all of them.
+TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
+	registerTree("Test_NavCellTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	std::vector<glm::vec2>				trees;
+	for (const float x : {4.0F, 20.0F, 36.0F}) { // three cells of chunk (0, 0)
+		for (int i = 0; i < 4; ++i) {
+			trees.push_back({x + 2.0F * static_cast<float>(i), 6.0F});
+		}
+	}
+	placeTrees(executor, processed, "Test_NavCellTree", trees);
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	ASSERT_TRUE(std::none_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return sys.isOnMesh(t); }));
+
+	executor.unloadChunk({0, 0});
+	processed.erase(ChunkCoordinate{0, 0});
+	JobLog log;
+	step(world, sys);
+	ASSERT_FALSE(log.jobs.empty());
+	EXPECT_EQ(log.last(" patches "), 3) << log.jobs.back();
+	EXPECT_TRUE(std::all_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return sys.isOnMesh(t); })) << "all removed";
+}
+
+// Swapping the ConstructionWorld for another at the same version still re-reads the walls: the old
+// world's wall leaves the mesh and the new one's comes in.
+TEST_F(NavigationSystemTest, ConstructionWorldSwapRereadsWalls) {
+	ConstructionWorld first;
+	ConstructionWorld second;
+	buildWall(first, {10000, 0}, {10000, 20000});
+	buildWall(second, {30000, 0}, {30000, 20000});
+	ASSERT_EQ(first.version(), second.version()) << "the swap has to be caught by more than the version";
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&first);
+	settle(sys);
+	const auto straight = [&](float x) {
+		const auto path = sys.requestPath({x - 5.0F, 10.0F}, {x + 5.0F, 10.0F}, kAgentRadius);
+		return path.has_value() && path->size() == 2;
+	};
+	ASSERT_FALSE(straight(10.0F)) << "the first world's wall is in";
+	ASSERT_TRUE(straight(30.0F));
+
+	sys.setConstructionWorld(&second);
+	settle(sys);
+	EXPECT_TRUE(straight(10.0F)) << "the old world's wall is gone";
+	EXPECT_FALSE(straight(30.0F)) << "the new world's wall is in";
 }
