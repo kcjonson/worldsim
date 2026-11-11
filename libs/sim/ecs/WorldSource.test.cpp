@@ -54,7 +54,7 @@ namespace ecs::test {
 			}
 
 			bool ready() {
-				return !worldSourceRegrowingUntil(executor, world, assets::AssetRegistry::Get().getDefNameId(kBush), bushAt).has_value();
+				return !worldSourceRegrowingUntil(executor, assets::AssetRegistry::Get().getDefNameId(kBush), bushAt, time->simulationSeconds()).has_value();
 			}
 
 			void run(int frames) {

@@ -1347,8 +1347,8 @@ namespace {
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
-			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at) {
-				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, *ecsWorld, defNameId, at);
+			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at, double now) {
+				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, defNameId, at, now);
 			});
 
 			// Wire up ActionSystem to take a harvested or picked-up source from the world as the action

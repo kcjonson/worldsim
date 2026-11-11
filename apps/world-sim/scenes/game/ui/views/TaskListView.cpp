@@ -132,11 +132,13 @@ namespace world_sim {
 					if (!seen.insert(key).second) {
 						key += std::format("_{}", lines.size());
 					}
+					// A no-room haul's reason is fixed; the item it can't carry is composed in here.
+					const std::string reason = option.status == ecs::OptionStatus::NoRoom
+												   ? std::format("{} ({}: no room to carry it)", option.reason, option.haulItemDefName)
+												   : option.reason;
 					lines.push_back(status(
 						key,
-						std::format(
-							"[T{} {}] {} - score {}", option.tier, tierLabel(option.tier), option.reason, static_cast<int>(option.score)
-						),
+						std::format("[T{} {}] {} - score {}", option.tier, tierLabel(option.tier), reason, static_cast<int>(option.score)),
 						lineStatusOf(option.status)
 					));
 					lines.push_back({

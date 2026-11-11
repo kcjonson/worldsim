@@ -14,12 +14,8 @@
 
 namespace ecs {
 
-	std::optional<double>
-	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, World& world, uint32_t defNameId, glm::vec2 at) {
-		if (placement.regrowthEntryCount() == 0) {
-			return std::nullopt; // nothing has started regrowing, so there is no clock to read
-		}
-		return placement.regrowthReadyAt(at, defNameId, simulationSeconds(world));
+	std::optional<double> worldSourceRegrowingUntil(assets::PlacementExecutor& placement, uint32_t defNameId, glm::vec2 at, double now) {
+		return placement.regrowthReadyAt(at, defNameId, now);
 	}
 
 	void makeLoosePile(World& world, EntityID entity, uint32_t defNameId, glm::vec2 position, uint32_t quantity) {
@@ -73,7 +69,9 @@ namespace ecs {
 		}
 
 		const uint32_t defNameId = assets::AssetRegistry::Get().getDefNameId(defName);
-		const bool	   regrowing = worldSourceRegrowingUntil(placement, world, defNameId, at).has_value();
+		// With nothing regrowing there is nothing to read, and no clock is asked for.
+		const bool regrowing =
+			placement.regrowthEntryCount() > 0 && worldSourceRegrowingUntil(placement, defNameId, at, simulationSeconds(world)).has_value();
 		if (take == Take::Remove) {
 			if (placed) {
 				placement.removeEntity(coord, at, defName);

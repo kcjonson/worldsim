@@ -2522,7 +2522,7 @@ namespace ecs::test {
 		const glm::vec2 readySticks{0.0F, 5.0F};
 		int				readinessAsked = 0;
 		world->registerSystem<TimeSystem>();
-		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at) {
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at, double /*now*/) {
 			++readinessAsked;
 			return at == regrowingBerries || at == regrowingSticks ? std::optional<double>{1000.0} : std::nullopt;
 		});
@@ -2589,7 +2589,7 @@ namespace ecs::test {
 		const glm::vec2 seenLater{9.0F, 0.0F};
 		const std::vector<std::pair<glm::vec2, double>> readyAt{{near, 100.0}, {far, 40.0}};
 		int												asked = 0;
-		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at) {
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at, double /*now*/) {
 			++asked;
 			for (const auto& [where, when] : readyAt) {
 				if (where == at && time.simulationSeconds() < when) {
@@ -2669,7 +2669,7 @@ namespace ecs::test {
 
 		world->registerSystem<TimeSystem>();
 		int asked = 0;
-		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 /*at*/) {
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 /*at*/, double /*now*/) {
 			++asked;
 			return std::optional<double>{1000.0};
 		});
@@ -2885,15 +2885,15 @@ namespace ecs::test {
 		auto& time = world->registerSystem<TimeSystem>();
 		time.setSpeed(GameSpeed::VeryFast);
 		std::vector<EntityID> pendingRemoval;
-		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t defNameId, glm::vec2 at) {
-			return worldSourceRegrowingUntil(executor, *world, defNameId, at);
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t defNameId, glm::vec2 at, double now) {
+			return worldSourceRegrowingUntil(executor, defNameId, at, now);
 		});
 		world->getSystem<ActionSystem>().setTakeSourceCallback(
 			[&](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
 				return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
 			}
 		);
-		const auto bushReady = [&] { return !worldSourceRegrowingUntil(executor, *world, bushId, bushAt).has_value(); };
+		const auto bushReady = [&] { return !worldSourceRegrowingUntil(executor, bushId, bushAt, time.simulationSeconds()).has_value(); };
 
 		// Someone just cut it.
 		ASSERT_EQ(

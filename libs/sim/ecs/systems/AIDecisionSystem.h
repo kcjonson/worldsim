@@ -81,9 +81,9 @@ public:
 	/// an earlier cut, on the simulation clock; nullopt when it is ready now. Colonists read the live
 	/// state of sources they already know, as they read claims; this never reveals a source. Asked
 	/// lazily, only of the candidate that would otherwise win, so a regrowing bush is passed over for the
-	/// next option and taken again once it is ready. Unwired (unit contexts with no world behind them),
-	/// every source is ready.
-	using SourceRegrowthCallback = std::function<std::optional<double>(uint32_t defNameId, glm::vec2 position)>;
+	/// next option and taken again once it is ready. `now` is TimeSystem::simulationSeconds for this
+	/// update. Unwired (unit contexts with no world behind them), every source is ready.
+	using SourceRegrowthCallback = std::function<std::optional<double>(uint32_t defNameId, glm::vec2 position, double now)>;
 	void setSourceRegrowthCallback(SourceRegrowthCallback callback) { onSourceRegrowth = std::move(callback); }
 
 	/// Enter direct player control: suspend this colonist's autonomous task selection. While the
@@ -233,6 +233,10 @@ private:
 	/// DecisionTrace::lastEvaluationTime and is the clock of the within-tier task-age term. Regrowth
 	/// waits run on TimeSystem::simulationSeconds instead, the clock regrowth is stamped on.
 	float m_elapsedTime = 0.0F;
+
+	/// TimeSystem::simulationSeconds, read once per update while onSourceRegrowth is wired (0 otherwise:
+	/// nothing regrows then, so nothing reads it)
+	double m_simulationNow = 0.0;
 
 	/// Random number generator for wander behavior
 	std::mt19937 m_rng;

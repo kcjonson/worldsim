@@ -217,7 +217,7 @@ The DecisionTrace respects the memory constraint:
 | No food in memory | Status: `NoSource`, "No known food source" |
 | Food exists but not seen | Status: `NoSource` (colonist doesn't know) |
 | Only known food is regrowing | Status: `Regrowing`, "Hunger at 40% (source regrowing)" |
-| Haul with no room to carry | Status: `NoRoom`, "Hauling Wood to storage (no room to carry it)" |
+| Haul with no room to carry | Status: `NoRoom`, "Hauling to storage (Wood: no room to carry it)" |
 
 **Key Point:** The trace only shows entities the colonist has observed. If a berry bush exists but the colonist hasn't seen it, it won't appear in the trace.
 

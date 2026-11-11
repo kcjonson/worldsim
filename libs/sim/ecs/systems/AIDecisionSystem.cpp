@@ -442,10 +442,19 @@ namespace ecs {
 			// Query all Haul goals (storage containers wanting items)
 			auto haulGoals = goalRegistry.getGoalsOfType(TaskType::Haul);
 
+			// What the colonist carries, summed once on the first carry gate asked this decision.
+			std::optional<float> carriedKg;
+			const auto			 pickupRoom = [&](const std::string& itemDefName) {
+				if (!carriedKg.has_value()) {
+					carriedKg = ecs::carriedCargoMassKg(inventory, registry);
+				}
+				return ecs::pickupUnitsThatFit(inventory, registry, itemDefName, *carriedKg);
+			};
+
 			// A haul whose pickup would lift nothing right now (pack full, hands busy with another load):
 			// not available, so the colonist doesn't repeat a pickup that collects nothing. The trace
-			// says why.
-			const auto pushNoRoom = [&](const GoalTask& goal, const std::string& itemDefName, std::string reason) {
+			// shows the item and why from haulItemDefName and the status, so the reason is a fixed string.
+			const auto pushNoRoom = [&](const GoalTask& goal, const std::string& itemDefName, const char* reason) {
 				EvaluatedOption option;
 				option.taskType = TaskType::Haul;
 				option.needType = NeedType::Count;
@@ -454,7 +463,7 @@ namespace ecs {
 				option.haulItemDefName = itemDefName;
 				option.haulGoalId = goal.id;
 				option.status = OptionStatus::NoRoom;
-				option.reason = std::move(reason) + " (no room to carry it)";
+				option.reason = reason;
 				trace.options.push_back(std::move(option));
 			};
 
@@ -588,8 +597,8 @@ namespace ecs {
 							}
 							// Only fetch what the pickup can actually lift; one that adds 0 would be
 							// re-issued every tick. The craft stays pending until the colonist has room.
-							if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName, ecs::carriedCargoMassKg(inventory, registry)) == 0) {
-								pushNoRoom(*goal, itemDefName, "Fetching " + itemDefName + " for crafting");
+							if (pickupRoom(itemDefName) == 0) {
+								pushNoRoom(*goal, itemDefName, "Fetching for crafting");
 								continue;
 							}
 							for (const CarrySource& source : sources.carryablesOf(*acceptedIt)) {
@@ -648,8 +657,8 @@ namespace ecs {
 					if (storageHeadroom == 0) {
 						return; // storage can't take any more of this item, skip it
 					}
-					if (ecs::pickupUnitsThatFit(inventory, registry, itemDefName, ecs::carriedCargoMassKg(inventory, registry)) == 0) {
-						pushNoRoom(*goal, itemDefName, "Hauling " + itemDefName + " to storage");
+					if (pickupRoom(itemDefName) == 0) {
+						pushNoRoom(*goal, itemDefName, "Hauling to storage");
 						return;
 					}
 					const uint32_t haulQuantity = std::min(storageHeadroom, ecs::cargoUnitsPerTrip(registry, itemDefName, inventory.carryCapacityKg));
@@ -733,7 +742,7 @@ namespace ecs {
 							if (perTrip == 0) {
 								continue; // colonist can't carry a single unit of this item
 							}
-							const bool roomNow = ecs::pickupUnitsThatFit(inventory, registry, itemDefName, ecs::carriedCargoMassKg(inventory, registry)) > 0;
+							std::optional<bool> roomNow; // asked once a source box qualifies
 
 							for (auto [srcEntity, srcConfig, srcInv, srcPos] : world->view<StorageConfiguration, Inventory, Position>()) {
 								if (srcEntity == destEntity) {
@@ -772,8 +781,11 @@ namespace ecs {
 									continue;
 								}
 
-								if (!roomNow) {
-									pushNoRoom(*goal, itemDefName, "Pulling " + itemDefName + " from lower-priority storage");
+								if (!roomNow.has_value()) {
+									roomNow = pickupRoom(itemDefName) > 0;
+								}
+								if (!*roomNow) {
+									pushNoRoom(*goal, itemDefName, "Pulling from lower-priority storage");
 									break; // one line says it for every source box
 								}
 
@@ -1085,6 +1097,9 @@ namespace ecs {
 	void AIDecisionSystem::update(float deltaTime) {
 		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).
 		m_elapsedTime += deltaTime;
+		// Only the regrowth callback reports a regrowing source, so without it no food wait is set and
+		// the time goes unread; a world that wires it has a TimeSystem.
+		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
 		m_colonyStorage.invalidate();
 
 		// Process all entities with the required components
@@ -1588,9 +1603,7 @@ namespace ecs {
 		std::optional<KnownWorldEntity> foodSource;
 		std::optional<KnownWorldEntity> regrowingFood;
 		if (!packHasFood) {
-			// Only the regrowth callback reports a regrowing source, so without it no wait is ever set
-			// and the time goes unread; a world that wires it has a TimeSystem.
-			const double now = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
+			const double now = m_simulationNow;
 			if (const auto* wait = sourceReach.waitingForFood(memory.worldEntityVersion, now)) {
 				regrowingFood = wait->nearest;
 			} else {
@@ -2242,7 +2255,7 @@ namespace ecs {
 	}
 
 	std::optional<double> AIDecisionSystem::sourceRegrowingUntil(uint32_t defNameId, glm::vec2 position) const {
-		return onSourceRegrowth ? onSourceRegrowth(defNameId, position) : std::nullopt;
+		return onSourceRegrowth ? onSourceRegrowth(defNameId, position, m_simulationNow) : std::nullopt;
 	}
 
 	std::string AIDecisionSystem::formatOptionReason(const EvaluatedOption& option, const char* needName) {

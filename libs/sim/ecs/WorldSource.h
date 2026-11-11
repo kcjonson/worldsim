@@ -25,11 +25,11 @@ namespace ecs {
 	class World;
 
 	/// When the source `defNameId` (interned, AssetRegistry::getDefNameId) at `at` is ready to give again while it regrows from a cut, or nullopt when
-	/// it is ready now, on the world's simulation clock (simulationSeconds). The one answer to "is this
+	/// it is ready at `now`, a time on the world's simulation clock (simulationSeconds). The one answer to "is this
 	/// source ready": the decision asks it of the sources a colonist remembers, and takeWorldSource of the
 	/// one it takes.
 	[[nodiscard]] std::optional<double>
-	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, World& world, uint32_t defNameId, glm::vec2 at);
+	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, uint32_t defNameId, glm::vec2 at, double now);
 
 	/// Take the source `defName` at `at` from the world and report what it was just before: Gone if
 	/// neither the placement index nor a live spawned entity holds it (a loose pile, a ResourceStack,
