@@ -1023,6 +1023,13 @@ namespace ecs::test {
 		EXPECT_TRUE(hasWork(umbrella));
 		EXPECT_FALSE(hasWork(furnitureUmbrella)) << "nobody knows any furniture";
 
+		ai->enterControl(colonist);
+		decide(colonist);
+		EXPECT_FALSE(hasWork(umbrella)) << "a controlled colonist is offered nothing";
+		ai->releaseControl(colonist);
+		decide(colonist);
+		EXPECT_TRUE(hasWork(umbrella)) << "offered again once released";
+
 		getTask(colonist)->clear();
 		world->getComponent<StorageConfiguration>(box)->rules.front().maxAmount = 3;
 		world->getComponent<Inventory>(box)->addItem("Stone", 3);

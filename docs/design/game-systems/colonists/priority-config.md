@@ -73,6 +73,7 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
       + skillBonus          // 0 to +100
       + taskAgeBonus        // 0 to +100 (old tasks rise)
       + hysteresisBonus     // +50 applied to the in-progress option only (same tier)
+      + storagePriorityBias // stocking only: the destination box's priority rank (0..3) * 300
 ```
 
 `chainBonus` (+2000) is gone; a chain step is classified at tier 4 (active work order), not scored higher within tier 6. `inProgressBonus` is gone; it is replaced by the `hysteresisBonus` (50) applied within the same tier only. `kWorkOrderProvisionFloor` and `kStorageStockingFloor` are deleted; tiers make them unnecessary.
@@ -296,17 +297,29 @@ void initializeGameSystems() {
 
 ## Tuning Guidelines
 
-### When to Increase Distance Penalty
+Tier is decided first and is not tuned by a score: move a task type between tiers in `<TaskTiers>`, or fix `classifyTier` when one option lands in the wrong tier. The knobs below only reorder options inside a tier.
 
-**Symptom:** Colonists walk across map for distant tasks when nearby tasks exist.
+### When to increase the distance factor
 
-**Fix:** Increase `maxPenalty` or decrease `maxPenaltyDistance`.
+**Symptom:** Colonists walk across the map for a task when a nearby one of the same tier exists.
 
-### When to Increase Skill Bonus
+**Fix:** Increase `<DistanceFactor><maxFactor>` so distance outweighs skill, age, and hysteresis more, or decrease `<maxDistance>` so the factor falls to 0 sooner.
 
-**Symptom:** Skilled colonists don't gravitate toward their specialty.
+### Skill bonus (no knob)
 
-**Fix:** Increase `multiplier` (but watch for skill bonus dominating distance).
+The skill bonus is `min(skillLevel * 10, 100)`, fixed in AIDecisionSystem; `priority-tuning.xml` has no skill setting. If skill must count for more against distance, lower `maxFactor` instead.
+
+### When to change the hysteresis margin
+
+**Symptom:** Colonists flip between two same-tier tasks, or stick to a far task when a much nearer one appears.
+
+**Fix:** Raise `<InProgress><bonus>` against thrashing, lower it against stickiness.
+
+### When to change the storage priority weight
+
+**Symptom:** A higher-priority box is stocked after a nearer lower-priority one, or the reverse is wanted.
+
+**Fix:** `<StoragePriority><weight>` at or above `maxFactor` makes box priority beat distance within tier 6; below it, a much nearer lower box can win.
 
 ### Chain continuation (no score to tune)
 
@@ -315,15 +328,9 @@ classified at tier 4, and tier beats score, so the colonist stays on the chain b
 If chains break, the bug is in tier classification (the option not being marked as serving the
 work order), not in a bonus value.
 
-### When to Adjust Hauling Config
+### Hauling config (not read)
 
-**Symptom:** Colonists haul constantly instead of doing other work.
-
-**Fix:** Decrease `storageCriticalBonus`, or tighten `storageCriticalThreshold`.
-
-**Symptom:** Food spoils because nobody hauls it.
-
-**Fix:** Increase `perishableBonus` or increase `perishableSpoilThreshold`.
+`<HaulingTuning>` is parsed but nothing in the decision reads it, so changing it changes no behaviour.
 
 ---
 

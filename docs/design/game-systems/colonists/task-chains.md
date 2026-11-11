@@ -249,7 +249,7 @@ struct ChainStep {
 
 ## Keeping a chain together
 
-There is no chain bonus. The `ChainContinuation` value still parsed from `priority-tuning.xml` is read by nothing in the decision path. Two things keep a colonist on its chain:
+There is no chain bonus, and `priority-tuning.xml` holds no chain value. Two things keep a colonist on its chain:
 
 - The next step is the same task. A pickup turns the haul into its deposit leg, and a landed cut converts in place into a carry-in (`ActionSystem::carryHarvestIn`), so arbitration sees the task it is already doing, with its hysteresis margin.
 - Provisioning that serves an active work order (a craft, a build site) is tier 4. Ordinary work and a non-critical need (tier 5) never interrupt it; a critical need (tier 2) does.

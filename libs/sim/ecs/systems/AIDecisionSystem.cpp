@@ -3216,6 +3216,11 @@ namespace ecs {
 			task->clear();
 			task->timeSinceEvaluation = 0.0F;
 		}
+		// He decides nothing while controlled, so his last trace would keep offering its work to the
+		// task panel (goalsWithOfferedWork) until release.
+		if (auto* trace = world->getComponent<DecisionTrace>(entity)) {
+			trace->clear();
+		}
 		// Clear any in-progress action too. Unlike the normal task-switch path (which is gated so a
 		// non-interruptable Eat/Drink/Toilet is never abandoned), taking control unconditionally
 		// abandons the task, so a stale active Action must be cleared here -- otherwise ActionSystem
