@@ -111,9 +111,10 @@ namespace {
 		expectMeshesValid(sys);
 	}
 
-	// One budgeted tick, then check both meshes.
-	void step(NavigationSystem& sys) {
-		sys.update(0.016F);
+	// One budgeted tick of the world (the update, then the job its endTick hands over), then check
+	// both meshes.
+	void step(World& world, const NavigationSystem& sys) {
+		world.update(0.016F);
 		expectMeshesValid(sys);
 	}
 
@@ -256,7 +257,7 @@ TEST_F(NavigationSystemTest, UnwiredUpdateIsNoOp) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	for (int i = 0; i < 10; ++i) {
-		sys.update(0.016F);
+		world.update(0.016F);
 	}
 	EXPECT_FALSE(sys.hasMesh());
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
@@ -324,14 +325,14 @@ TEST_F(NavigationSystemTest, WallBuiltBlocksAndDoorOpens) {
 	ASSERT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "open ground routes";
 
 	const SegmentId south = buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
-	step(sys);
+	step(world, sys);
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "the walls block in the tick they are seen";
 	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius));
 
 	const OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
-	step(sys);
+	step(world, sys);
 	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "the door opens the room";
 	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 }
@@ -370,7 +371,7 @@ TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	for (int i = 0; i < 10; ++i) {
-		sys.update(0.016F);
+		world.update(0.016F);
 	}
 	ASSERT_FALSE(sys.hasMesh());
 
@@ -509,9 +510,9 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnPatch) {
 	OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
-	step(sys);
+	step(world, sys);
 	EXPECT_EQ(sys.generation(), afterFirst + 1) << "one tick of patches, one bump";
-	step(sys);
+	step(world, sys);
 	EXPECT_EQ(sys.generation(), afterFirst + 1) << "a tick with nothing to patch leaves it";
 }
 
@@ -534,7 +535,7 @@ TEST_F(NavigationSystemTest, ReachKeyMovesWithAPatch) {
 	EXPECT_EQ(sys.reachFrom(kUnmeshed, kAgentRadius).startRegion, -1);
 
 	buildWall(cw, {10000, 10000}, {11000, 10000});
-	step(sys);
+	step(world, sys);
 	const NavigationSystem::Reach after = sys.reachFrom({0.0F, 0.0F}, kAgentRadius);
 	EXPECT_EQ(after.startRegionId, first.startRegionId);
 	EXPECT_NE(after.startRegionGeneration, first.startRegionGeneration) << "the patch left the reach key unchanged";
@@ -588,7 +589,7 @@ TEST_F(NavigationSystemTest, PatchClearsRraCaches) {
 		ASSERT_TRUE(cw.setOpeningState(op.id, FoundationState::Blueprint));
 	}
 	(void)south;
-	step(sys);
+	step(world, sys);
 	EXPECT_EQ(sys.rraCacheCount(), 0u) << "the patch dropped the stale caches";
 	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
 }
@@ -639,14 +640,20 @@ TEST_F(NavigationSystemTest, RraCacheMapIsBounded) {
 // --- Flora ---------------------------------------------------------------------
 
 // The viewport's flora rect is clamped: a 1 m request still covers kMinSimHalfExtentMm, and a
-// 2 km request stops at kMaxSimHalfExtentMm.
+// 2 km request stops at kMaxSimHalfExtentMm. Flora enters in whole 16 m cells, so each clamp is
+// pinned to within one cell: 30 m reaches the cell [16, 32) and not [32, 48); 64 m reaches
+// [64, 80) and not [80, 96).
 TEST_F(NavigationSystemTest, ViewportFloraRectIsClamped) {
+	ASSERT_EQ(NavigationSystem::kMinSimHalfExtentMm, 30000);
+	ASSERT_EQ(NavigationSystem::kMaxSimHalfExtentMm, 64000);
 	registerTree("Test_NavClampTree", 0.4F);
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
-	const glm::vec2						nearTree{20.0F, 5.0F};	// inside the 30 m minimum
-	const glm::vec2						farTree{100.0F, 5.0F}; // outside the 64 m maximum
-	placeTrees(executor, processed, "Test_NavClampTree", {nearTree, farTree});
+	const glm::vec2						insideMin{20.0F, 5.0F};
+	const glm::vec2						outsideMin{33.0F, 5.0F};
+	const glm::vec2						insideMax{70.0F, 5.0F};
+	const glm::vec2						outsideMax{81.0F, 5.0F};
+	placeTrees(executor, processed, "Test_NavClampTree", {insideMin, outsideMin, insideMax, outsideMax});
 
 	ConstructionWorld cw;
 	World			  world;
@@ -657,11 +664,13 @@ TEST_F(NavigationSystemTest, ViewportFloraRectIsClamped) {
 
 	pushArea(sys, {0, 0}, 1000);
 	settle(sys);
-	EXPECT_FALSE(sys.isOnMesh(nearTree)) << "the 1 m view still asks for flora within 30 m";
+	EXPECT_FALSE(sys.isOnMesh(insideMin)) << "the 1 m view still asks for flora within 30 m";
+	EXPECT_TRUE(sys.isOnMesh(outsideMin)) << "and no farther";
 
 	pushArea(sys, {0, 0}, 2000000);
 	settle(sys);
-	EXPECT_TRUE(sys.isOnMesh(farTree)) << "the 2 km view asks for flora within 64 m, not 100 m";
+	EXPECT_FALSE(sys.isOnMesh(insideMax)) << "the 2 km view asks for flora within 64 m";
+	EXPECT_TRUE(sys.isOnMesh(outsideMax)) << "and no farther";
 }
 
 // Flora enters at most kFloraRingsPerTick rings a tick, nearest the view first, and
@@ -671,9 +680,9 @@ TEST_F(NavigationSystemTest, FloraEntersWithinTheBudget) {
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
 	std::vector<glm::vec2>				trees;
-	for (int i = 0; i < 6; ++i) {
-		for (int j = 0; j < 6; ++j) {
-			trees.push_back({3.0F + 4.0F * static_cast<float>(i), 3.0F + 4.0F * static_cast<float>(j)});
+	for (int i = 0; i < 10; ++i) {
+		for (int j = 0; j < 10; ++j) {
+			trees.push_back({1.5F + 3.0F * static_cast<float>(i), 1.5F + 3.0F * static_cast<float>(j)});
 		}
 	}
 	placeTrees(executor, processed, "Test_NavBudgetTree", trees);
@@ -688,11 +697,11 @@ TEST_F(NavigationSystemTest, FloraEntersWithinTheBudget) {
 	auto inMesh = [&] {
 		return static_cast<std::size_t>(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !sys.isOnMesh(t); }));
 	};
-	step(sys);
+	step(world, sys);
 	ASSERT_TRUE(sys.inSimArea({1.0F, 1.0F})) << "the viewport's chunk is meshed first";
 	EXPECT_EQ(inMesh(), NavigationSystem::kFloraRingsPerTick) << "the first tick takes in one budget of flora";
-	EXPECT_FALSE(sys.isOnMesh({3.0F, 3.0F})) << "nearest the view centre first";
-	step(sys);
+	EXPECT_FALSE(sys.isOnMesh({1.5F, 1.5F})) << "nearest the view centre first";
+	step(world, sys);
 	EXPECT_EQ(inMesh(), 2 * NavigationSystem::kFloraRingsPerTick);
 	EXPECT_TRUE(sys.isBuilding());
 
@@ -798,7 +807,7 @@ TEST_F(NavigationSystemTest, FelledTreePatchesOnlyItsHole) {
 	const std::uint64_t before = sys.generation();
 
 	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({treeAt.x, treeAt.y}), treeAt, "Test_NavFellTree"));
-	step(sys);
+	step(world, sys);
 	EXPECT_EQ(sys.generation(), before + 1) << "the felled tree is patched out on the next tick";
 	EXPECT_FALSE(sys.isBuilding());
 	EXPECT_TRUE(sys.isOnMesh(treeAt)) << "the trunk's ground is walkable";
@@ -810,6 +819,142 @@ TEST_F(NavigationSystemTest, FelledTreePatchesOnlyItsHole) {
 			EXPECT_EQ(mesh.vertices()[mesh.triangles()[static_cast<std::size_t>(k.id)].v[i]], k.corners[i]) << "triangle " << k.id;
 		}
 	}
+}
+
+// A flora patch (a tree felled, late placement) moves generation() but not the reach key, which
+// counts structural patches only: a colonist's remembered unreachable goals stay remembered while
+// flora drains. A wall moves it.
+TEST_F(NavigationSystemTest, ReachKeyIgnoresFloraPatches) {
+	registerTree("Test_NavReachKeyTree", 0.4F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{10.0F, 10.0F};
+	placeTrees(executor, processed, "Test_NavReachKeyTree", {treeAt});
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	const NavigationSystem::Reach before	 = sys.reachFrom({0.0F, 0.0F}, kAgentRadius);
+	const std::uint64_t			  generation = sys.generation();
+
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({treeAt.x, treeAt.y}), treeAt, "Test_NavReachKeyTree"));
+	step(world, sys);
+	ASSERT_EQ(sys.generation(), generation + 1) << "the felled tree was patched out";
+	EXPECT_EQ(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).startRegionGeneration, before.startRegionGeneration)
+		<< "a flora patch moved the reach key";
+
+	placeTrees(executor, processed, "Test_NavReachKeyTree", {{-14.0F, 10.0F}}); // late placement in chunk (-1, 0)
+	step(world, sys);
+	ASSERT_FALSE(sys.isOnMesh({-14.0F, 10.0F})) << "the late tree is in";
+	EXPECT_EQ(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).startRegionGeneration, before.startRegionGeneration);
+
+	buildWall(cw, {20000, 20000}, {22000, 20000});
+	step(world, sys);
+	EXPECT_NE(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).startRegionGeneration, before.startRegionGeneration)
+		<< "a wall moves the reach key";
+}
+
+// A chunk whose placement goes away queues all its flora for removal. That backlog drains under its
+// own budget and never holds back the flora entering ahead of the view.
+TEST_F(NavigationSystemTest, LostChunkRemovalsDontHoldBackAdds) {
+	registerTree("Test_NavLostTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	std::vector<glm::vec2>				lost;
+	std::vector<glm::vec2>				ahead;
+	for (int i = 0; i < 20; ++i) {
+		for (int j = 0; j < 10; ++j) {
+			lost.push_back({200.0F + 3.0F * static_cast<float>(i), 200.0F + 3.0F * static_cast<float>(j)});
+			ahead.push_back({-200.0F - 3.0F * static_cast<float>(i), 200.0F + 3.0F * static_cast<float>(j)});
+		}
+	}
+	ASSERT_GT(lost.size(), NavigationSystem::kFloraRemovalsPerTick);
+	placeTrees(executor, processed, "Test_NavLostTree", lost);
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	sys.setViewportRect({228.0F, 214.0F}, {60.0F, 60.0F});
+	settle(sys);
+	auto inMesh = [&](const std::vector<glm::vec2>& trees) {
+		return static_cast<std::size_t>(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return !sys.isOnMesh(t); }));
+	};
+	ASSERT_EQ(inMesh(lost), lost.size());
+
+	// The view moves to the other chunk and the first chunk's placement is dropped.
+	executor.unloadChunk({0, 0});
+	processed.erase(ChunkCoordinate{0, 0});
+	placeTrees(executor, processed, "Test_NavLostTree", ahead);
+	sys.setViewportRect({-228.0F, 214.0F}, {60.0F, 60.0F});
+	step(world, sys);
+	EXPECT_EQ(inMesh(ahead), NavigationSystem::kFloraRingsPerTick) << "adds went ahead of the backlog";
+	EXPECT_EQ(inMesh(lost), lost.size() - NavigationSystem::kFloraRemovalsPerTick) << "removals drained under their own budget";
+
+	settle(sys);
+	EXPECT_EQ(inMesh(lost), 0u);
+	EXPECT_EQ(inMesh(ahead), ahead.size());
+}
+
+// One chunk's placement leaves and another's arrives in the same tick, so the processed set keeps
+// its size: the arriving chunk's flora is still scanned.
+TEST_F(NavigationSystemTest, PlacementSwapInOneTickIsScanned) {
+	registerTree("Test_NavSwapTree", 0.4F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						leaving{-20.0F, 10.0F}; // chunk (-1, 0)
+	const glm::vec2						arriving{20.0F, 10.0F}; // chunk (0, 0)
+	placeTrees(executor, processed, "Test_NavSwapTree", {leaving});
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	ASSERT_FALSE(sys.isOnMesh(leaving));
+	ASSERT_TRUE(sys.isOnMesh(arriving));
+
+	executor.unloadChunk({-1, 0});
+	processed.erase(ChunkCoordinate{-1, 0});
+	const std::size_t size = processed.size();
+	placeTrees(executor, processed, "Test_NavSwapTree", {arriving});
+	ASSERT_EQ(processed.size(), size + 1);
+	settle(sys);
+	EXPECT_TRUE(sys.isOnMesh(leaving)) << "the leaving chunk's flora is gone";
+	EXPECT_FALSE(sys.isOnMesh(arriving)) << "the arriving chunk's flora is in";
+}
+
+// A query sees exactly the patches gathered through the previous tick: update() gathers, the job
+// starts at endTick, and only then does a query see it.
+TEST_F(NavigationSystemTest, QueriesSeePatchesFromEndTickOn) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	ASSERT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value());
+	const std::uint64_t generation = sys.generation();
+
+	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+	sys.update(0.016F);
+	EXPECT_TRUE(sys.isBuilding()) << "the room is gathered";
+	EXPECT_TRUE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "but not applied within its own tick";
+	EXPECT_EQ(sys.generation(), generation);
+
+	sys.endTick();
+	EXPECT_FALSE(sys.requestPath(kOutside, kInside, kAgentRadius).has_value()) << "applied once the tick ended";
+	EXPECT_EQ(sys.generation(), generation + 1);
+	EXPECT_FALSE(sys.isBuilding());
+	expectMeshesValid(sys);
 }
 
 // --- One mesh ------------------------------------------------------------------
@@ -937,12 +1082,12 @@ TEST_F(NavigationSystemTest, SameScenarioSameMeshesAndPaths) {
 		addColonist(r.world, {0.0F, 0.0F}, "A");
 		r.sys.setViewportRect({20.0F, 20.0F}, {40.0F, 30.0F});
 		for (int i = 0; i < 40; ++i) {
-			r.sys.update(0.016F);
+			r.world.update(0.016F);
 		}
 		buildRoom(r.cw, true, true);
 		r.executor.removeEntity(world::worldToChunk({trees[30].x, trees[30].y}), trees[30], "Test_NavDeterminismTree");
 		for (int i = 0; i < 40; ++i) {
-			r.sys.update(0.016F);
+			r.world.update(0.016F);
 		}
 		r.sys.finishPendingBuilds();
 		expectMeshesValid(r.sys);

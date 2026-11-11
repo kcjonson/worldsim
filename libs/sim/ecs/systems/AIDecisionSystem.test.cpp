@@ -3825,9 +3825,10 @@ namespace ecs::test {
 		constexpr worldgen::PondNetwork2D::Pond kSlidePond{
 			.cx = 40.0, .cy = 40.0, .radius = 8.0F, .phaseA = 0.0F, .phaseB = 0.0F, .depth = 120};
 
-		// Open land cut by two straight rivers, 6 m wide, along y = +20 and y = -20 across the whole
-		// area: three land components, the band between them (where the colonist stands), the north bank
-		// and the south bank.
+		// Open land cut by two straight rivers, 6 m wide, along y = +20 and y = -20, running past both
+		// ends of everything the nav meshes (the shared region is chunks -2..2, x from -1024 to 1536 m):
+		// three land components, the band between them (where the colonist stands), the north bank and
+		// the south bank.
 		constexpr float kRiverY = 20.0F;
 		constexpr float kRiverHalfWidth = 3.0F;
 
@@ -3837,8 +3838,8 @@ namespace ecs::test {
 				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
 					world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
 				for (const float y : {kRiverY, -kRiverY}) {
-					r.riverSegments.push_back({.x0 = -400.0, .y0 = y, .x1 = 400.0, .y1 = y, .halfWidth0 = kRiverHalfWidth,
-											   .halfWidth1 = kRiverHalfWidth, .s0 = 0.0, .s1 = 800.0});
+					r.riverSegments.push_back({.x0 = -2048.0, .y0 = y, .x1 = 2560.0, .y1 = y, .halfWidth0 = kRiverHalfWidth,
+											   .halfWidth1 = kRiverHalfWidth, .s0 = 0.0, .s1 = 4608.0});
 				}
 				return r;
 			}
@@ -3876,12 +3877,12 @@ namespace ecs::test {
 		}
 	} // namespace
 
-	// The running game's first decision happens before the async region build has produced a mesh.
-	// This wires a real NavigationSystem (all-land chunks unless a fixture picks another shared region, a
-	// viewport region at the origin, an empty construction world) plus MovementSystem and
-	// PhysicsSystem, so a test can let the AI decide with no mesh, settle the NavigationSystem alone
-	// (finishPendingBuilds: no sim time passes however long the build takes, and the AI sees the mesh
-	// on the next tick), and then check the colonist walks a route.
+	// The running game's first decision can happen before its chunks are ready, so before any ground
+	// is meshed. This wires a real NavigationSystem (all-land chunks unless a fixture picks another
+	// shared region, a viewport region at the origin, an empty construction world) plus MovementSystem
+	// and PhysicsSystem, so a test can hold the chunks back (withholdChunks) to let the AI decide with
+	// no mesh, then hand them over and settle the NavigationSystem alone (finishPendingBuilds: no sim
+	// time passes, and the AI sees the mesh on the next tick), and then check the colonist walks a route.
 	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
 	  protected:
 		void SetUp() override {
@@ -3899,6 +3900,15 @@ namespace ecs::test {
 		// The shared region the fixture's NavigationSystem builds over; a fixture that needs a different
 		// world returns that sampler's shared region.
 		[[nodiscard]] virtual world::ChunkManager* chunkRegion() const { return openLandChunks(); }
+
+		// The chunks aren't ready yet: nothing can be meshed until settleWithChunks hands them over.
+		void withholdChunks() { nav->setChunkManager(nullptr); }
+
+		// The chunks are ready: hand them to the NavigationSystem and settle it.
+		void settleWithChunks() {
+			nav->setChunkManager(chunkRegion());
+			nav->finishPendingBuilds();
+		}
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
 			const auto* navPath = world->getComponent<NavPath>(colonist);
@@ -3919,20 +3929,22 @@ namespace ecs::test {
 		static constexpr float kTick = 0.1F;
 		static constexpr int   kTicksAfterMesh = 20; // 2 s, four kReEvalInterval (0.5 s) periods
 
-		// The base TearDown resets the world, and its NavigationSystem waits out any in-flight
-		// build, before this member goes away.
+		// The base TearDown resets the world, and its NavigationSystem waits out any patches in
+		// flight, before this member goes away.
 		construction::ConstructionWorld		 construction;
 		NavigationSystem*							 nav = nullptr;
 	};
 
-	// With no mesh an idle colonist (needs met, no known sources) has nothing it can navigate to, so
-	// selectTaskFromTrace parks the no-option hold: a Wander with movement off. Once the mesh lands the
-	// re-eval offers a real, reachable Wander, and the parked one has to give way to it.
+	// With no mesh (the chunks aren't ready yet) an idle colonist (needs met, no known sources) has
+	// nothing it can navigate to, so selectTaskFromTrace parks the no-option hold: a Wander with
+	// movement off. Once the mesh lands the re-eval offers a real, reachable Wander, and the parked one
+	// has to give way to it.
 	TEST_F(AIDecisionFirstMeshTest, IdleHoldTakesLiveWanderOnceMeshLands) {
 		const auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist));
+		withholdChunks();
 
-		world->update(kTick); // launches the region build; NavigationSystem drained before launching
+		world->update(kTick);
 		ASSERT_FALSE(nav->hasMesh()) << "the first decision must run before any mesh exists";
 		const Task* task = getTask(colonist);
 		ASSERT_NE(task, nullptr);
@@ -3945,7 +3957,7 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(getTrace(colonist)->lastEvaluationTime, firstEvaluation)
 			<< "a parked colonist must not re-decide every frame";
 
-		nav->finishPendingBuilds();
+		settleWithChunks();
 		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 
 		bool walking = false;
@@ -3958,7 +3970,8 @@ namespace ecs::test {
 	}
 
 	// A colonist that knows an edible harvestable picks the gather-food option on its first decision,
-	// before any mesh exists, and requestNavPath holds that route. When the mesh lands the re-eval
+	// before any mesh exists (the chunks aren't ready yet), and requestNavPath holds that route. When
+	// the mesh lands the re-eval
 	// re-selects the same option and keeps the task as it is, so the held route has to be requested
 	// again or the colonist never moves.
 	TEST_F(AIDecisionFirstMeshTest, HeldGatherFoodRouteRequestedOnceMeshLands) {
@@ -3975,6 +3988,7 @@ namespace ecs::test {
 		const auto colonist = createColonist(start);
 		satisfyAllNeeds(*getNeeds(colonist)); // idle with an empty inventory: gathering food is the pick
 		addKnownEntity(colonist, bush, registry.getDefNameId("Flora_BerryBush"), assets::CapabilityType::Harvestable);
+		withholdChunks();
 
 		world->update(kTick);
 		ASSERT_FALSE(nav->hasMesh()) << "the first decision must run before any mesh exists";
@@ -3985,7 +3999,7 @@ namespace ecs::test {
 		ASSERT_FALSE(getMovementTarget(colonist)->active) << "the route is held until a mesh exists";
 		EXPECT_EQ(task->navState, NavState::AwaitingMesh) << "the held route shows as waiting, not traveling";
 
-		nav->finishPendingBuilds();
+		settleWithChunks();
 		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 
 		bool routed = false;
@@ -4403,16 +4417,13 @@ namespace ecs::test {
 		EXPECT_TRUE(hungerSelectedWithin(colonist)) << "the colonist kept the stale verdict and left the bush alone";
 	}
 
-	// The nearest known water sits in another built region. requestPath routes only within one region,
-	// so the pre-check has to say no; saying "can't prove unreachable" sent a thirsty colonist at that
-	// water over and over, each route coming back "no believed route", while it knew water it could
-	// reach (seen live: 13 game-hours at Thirst 0 beside the viewport's region).
-	TEST_F(AIDecisionFirstMeshTest, NeedSkipsSourceInAnotherRegion) {
-		// The colonist stands in the viewport's region (-60..60); another colonist 100 m out drives a
-		// second region (70..130) with a gap between them.
+	// Two known waters, one near another colonist 21 m away, one 30 m away the other way. All loaded
+	// ground is one mesh, so both are routable and the nearer one wins. (While each colonist and the
+	// view had a region of its own, water in another region read unreachable and was skipped.)
+	TEST_F(AIDecisionFirstMeshTest, NeedTakesNearerSourceNearAnotherColonist) {
 		const glm::vec2 start{50.0F, 0.0F};
-		const glm::vec2 otherRegion{71.0F, 0.0F}; // in the far region, 21 m away
-		const glm::vec2 ownRegion{20.0F, 0.0F};	  // in its own region, 30 m away
+		const glm::vec2 nearOther{71.0F, 0.0F}; // by the other colonist, 21 m away
+		const glm::vec2 farther{20.0F, 0.0F};	// 30 m away
 		const auto		farColonist = world->createEntity();
 		world->addComponent<Position>(farColonist, Position{{100.0F, 0.0F}});
 		world->addComponent<Colonist>(farColonist, Colonist{"B"});
@@ -4421,13 +4432,12 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
 		setNeedValue(colonist, NeedType::Thirst, 40.0F);
-		addKnownEntity(colonist, otherRegion, kWaterDefId, assets::CapabilityType::Drinkable);
-		addKnownEntity(colonist, ownRegion, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, nearOther, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, farther, kWaterDefId, assets::CapabilityType::Drinkable);
 
 		nav->finishPendingBuilds();
-		ASSERT_EQ(nav->builtRegions().size(), 2U);
-		ASSERT_FALSE(nav->requestPath(start, otherRegion, 0.3F).has_value()) << "no route between regions";
-		ASSERT_TRUE(nav->requestPath(start, ownRegion, 0.3F).has_value());
+		ASSERT_TRUE(nav->requestPath(start, nearOther, 0.3F).has_value()) << "one mesh: a route to the other colonist's side";
+		ASSERT_TRUE(nav->requestPath(start, farther, 0.3F).has_value());
 
 		world->update(kTick);
 
@@ -4437,7 +4447,7 @@ namespace ecs::test {
 		ASSERT_NE(thirst, nullptr);
 		EXPECT_EQ(thirst->status, OptionStatus::Selected);
 		ASSERT_TRUE(thirst->targetPosition.has_value());
-		EXPECT_EQ(*thirst->targetPosition, ownRegion) << "the water in the other region can't be routed to";
+		EXPECT_EQ(*thirst->targetPosition, nearOther) << "the nearer water wins";
 	}
 
 	// Water in a room whose walls the colonist knows: the forest the pre-check uses treats walls as
@@ -4510,8 +4520,36 @@ namespace ecs::test {
 			}
 		}
 
+		// A tree placed far from the colonist with another colonist beside it, so its flora enters the
+		// nav mesh: a nav-mesh patch that leaves the structural mesh alone.
+		void patchFloraFarAway() {
+			assets::AssetDefinition tree;
+			tree.defName					 = "Test_FarTree";
+			tree.collision.type				 = assets::CollisionShapeType::Rect;
+			tree.collision.halfExtentsMeters = {0.4F, 0.4F};
+			assets::AssetRegistry::Get().registerTestDefinition(tree);
+			assets::AsyncChunkPlacementResult placed;
+			placed.coord = world::worldToChunk({kFarTree.x, kFarTree.y});
+			assets::PlacedEntity entity;
+			entity.defName	= "Test_FarTree";
+			entity.position = kFarTree;
+			placed.spatialIndex.insert(entity);
+			farProcessed.insert(placed.coord);
+			farFlora.storeChunkResult(std::move(placed));
+			nav->setPlacementData(&farFlora, &farProcessed);
+
+			const auto farColonist = world->createEntity();
+			world->addComponent<Position>(farColonist, Position{kFarTree - glm::vec2{5.0F, 0.0F}});
+			world->addComponent<Colonist>(farColonist, Colonist{"Far"});
+		}
+
 		static constexpr glm::vec2 kInRoom{8.0F, 0.0F};
 		static constexpr glm::vec2 kOutside{-30.0F, 0.0F};
+		static constexpr glm::vec2 kFarTree{305.0F, 0.0F};
+
+		// The NavigationSystem reads these until the base TearDown resets the world.
+		assets::PlacementExecutor							farFlora{assets::AssetRegistry::Get()};
+		std::unordered_set<world::ChunkCoordinate>			farProcessed;
 	};
 
 	// The failed route is remembered like any other verdict, so the colonist goes for the next water
@@ -4594,25 +4632,24 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure on the new mesh is recorded";
 	}
 
-	// A mesh swap in some other region (another colonist's, or the viewport's while the camera pans)
-	// changes nothing this colonist's verdicts depend on: the failure is still recorded and the
-	// colonist moves on, instead of retrying the walled-in water every time any region rebuilds.
-	TEST_F(AIDecisionWalledWaterTest, SwapInAnotherRegionStillRecordsTheFailure) {
+	// Flora entering the nav mesh far away (around another colonist, or under the camera as it pans)
+	// changes nothing this colonist's verdicts depend on, since reachability reads the structural mesh:
+	// the failure is still recorded and the colonist moves on, instead of retrying the walled-in water
+	// every time flora lands somewhere.
+	TEST_F(AIDecisionWalledWaterTest, FloraPatchFarAwayStillRecordsTheFailure) {
 		const auto colonist = makeThirstyColonistWithWalledWater();
 		world->update(kTick);
 		ASSERT_EQ(getTask(colonist)->targetPosition, kInRoom);
 		ASSERT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo);
 
 		const std::uint64_t before = nav->generation();
-		const auto			farDriver = world->createEntity();
-		world->addComponent<Position>(farDriver, Position{{300.0F, 0.0F}});
-		world->addComponent<Colonist>(farDriver, Colonist{"Far"});
+		patchFloraFarAway();
 		nav->finishPendingBuilds();
-		ASSERT_EQ(nav->builtRegions().size(), 2U);
-		ASSERT_NE(nav->generation(), before) << "the far region's swap moved the global generation";
+		ASSERT_FALSE(nav->isOnMesh(kFarTree)) << "the far tree is in the nav mesh";
+		ASSERT_NE(nav->generation(), before) << "the flora patch moved the global generation";
 
 		world->update(kTick);
-		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over an unrelated swap";
+		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside) << "the failure was dropped over a flora patch";
 	}
 
 } // namespace ecs::test

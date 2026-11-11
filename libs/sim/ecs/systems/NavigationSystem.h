@@ -1,7 +1,7 @@
 #pragma once
 
 // NavigationSystem - the game's one nav mesh and the queries over it
-// (nav-mesh-variable-resolution.md, step 4).
+// (nav-mesh-variable-resolution.md, steps 4 and decision 24).
 //
 // Two persistent geometry::nav::PatchableMesh instances cover every chunk that has been loaded:
 //  - navMesh: each ready chunk's square and water, built walls and doors, and flora around each
@@ -10,17 +10,20 @@
 //  - structural: the same without flora. Reachability (its forests), placement buildability and
 //    the landing search read it, so neither the camera nor a felled tree changes what is reachable.
 // Neither mesh is ever rebuilt. Each update() diffs what should be in them against what is and
-// patches the difference on the main thread, in a fixed order, under per-tick COUNT budgets
-// (never a time budget, so which tick a ring enters doesn't depend on frame time):
-//  1. Felled trees (PlacementExecutor::removals) and the flora of chunks whose placement went
-//     away are queued for removal; a chunk that unloads keeps its ground.
+// gathers the difference as patches, in a fixed order, under per-tick COUNT budgets (never a
+// time budget, so which tick a ring enters doesn't depend on frame time):
+//  1. Felled trees (PlacementExecutor::takeRemovals) and the flora of chunks whose placement
+//     went away are queued for removal; a chunk that unloads keeps its ground.
 //  2. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
 //  3. Ground: kChunkGroundPerTick ready chunks whose ground is missing or whose terrain polygon
 //     version moved, nearest a mover or the view first. Each chunk is one patch per mesh.
-//  4. Flora: the rects scanned for colliders in kFloraCellMm cells; up to kFloraRingsPerTick
-//     removals and then adds, nearest a rect centre first, in one nav-mesh patch.
-// After a tick's patches: refreshWidths on the nav mesh, rebuildForests on the structural mesh,
-// the RRA* caches dropped, generation() bumped. Points on meshed ground route to each other
+//  4. Flora: the rects scanned for colliders in kFloraCellMm cells; up to kFloraRemovalsPerTick
+//     removals and kFloraRingsPerTick adds, one patch per cell, adds nearest a rect centre first.
+// endTick() hands the tick's patches to two worker threads, one per mesh, after every system has
+// run; each also refreshes its widths or rebuilds its forests. The next update() or the first
+// query waits for them, so a query always sees exactly the patches gathered through the previous
+// tick, however long the workers took, and nothing reads a mesh while it is patched. The join
+// drops the RRA* caches and bumps generation(). Points on meshed ground route to each other
 // wherever they are.
 
 #include "../ISystem.h"
@@ -35,10 +38,12 @@
 #include <world/chunk/ChunkCoordinate.h>
 
 #include <cstdint>
-#include <set>
+#include <functional>
 #include <glm/vec2.hpp>
 #include <map>
+#include <memory>
 #include <optional>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -61,17 +66,19 @@ namespace ecs {
 /// Holds the nav mesh and its structural layer, patched from live world data, and serves path
 /// and placement queries.
 ///
-/// Priority 51: below the AI/goal band (those sit at 50-60) so a patch applied this frame is
-/// queryable by the goal systems the SAME frame, yet still above any system that might mutate
+/// Priority 51: below the AI/goal band (those sit at 50-60), so the patches the previous tick
+/// gathered are joined before the goal systems query, and above any system that might mutate
 /// the world mid-frame.
 class NavigationSystem : public ISystem {
   public:
 	NavigationSystem();
+	~NavigationSystem() override;
 
 	NavigationSystem(const NavigationSystem&) = delete;
 	NavigationSystem& operator=(const NavigationSystem&) = delete;
 
 	void update(float deltaTime) override;
+	void endTick() override;
 
 	[[nodiscard]] int		  priority() const override { return 51; }
 	[[nodiscard]] const char* name() const override { return "NavigationSystem"; }
@@ -95,16 +102,16 @@ class NavigationSystem : public ISystem {
 
 	// Flora comes from `executor`'s chunk indices, and only for chunks in `processed` (the
 	// chunks that have finished entity placement; null reads every indexed chunk as finished).
-	// Removals the executor made before this call are not looked at.
+	// Removals the executor made before this call are discarded.
 	void setPlacementData(assets::PlacementExecutor* executor, const std::unordered_set<world::ChunkCoordinate>* processed);
 
-	void setConstructionWorld(const construction::ConstructionWorld* world) { constructionWorld = world; }
+	// Walls are diffed against this world from the next update on.
+	void setConstructionWorld(const construction::ConstructionWorld* world);
 
-	// --- Queries ---------------------------------------------------------------
+	// --- Queries (each waits for the patches in flight first) -------------------
 
 	// Taut polyline in world meters from start to goal for a disc agent of the given radius, or
-	// nullopt when either end is off meshed ground or no route exists. The structural forest
-	// rejects a provably unreachable goal before the A* runs.
+	// nullopt when either end is off meshed ground or no route exists.
 	//
 	// `belief` is applied at query time against the truth mesh: a default (empty) BeliefFilter
 	// routes over truth, a filter built from a colonist's known segments/openings routes over
@@ -121,9 +128,10 @@ class NavigationSystem : public ISystem {
 	//   true  => MAYBE reachable. Caller runs requestPath for certainty.
 	// A start or goal off meshed ground answers true ("can't prove unreachable").
 	//
-	// startRegion is 0 when the start is on meshed ground, -1 otherwise; startRegionId is 0 and
-	// startRegionGeneration is generation() then. A Reach is used within one frame; the belief's
-	// sets must outlive it.
+	// startRegion is 0 when the start is on meshed ground, -1 otherwise; startRegionId is 0 then,
+	// and startRegionGeneration counts the joins that patched the structural mesh, so flora
+	// arriving or leaving never moves it. A Reach is used within one frame; the belief's sets must
+	// outlive it.
 	struct Reach {
 		int							startRegion			  = -1;
 		std::int32_t				startRegionId		  = -1;
@@ -175,8 +183,8 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
 
 	// `meters` itself when it is walkable in truth on the structural mesh (water and built walls
-	// block, trees and rocks don't), else the nearest point that is. nullopt when no ground is
-	// meshed.
+	// block, trees and rocks don't), else the nearest point that is, searched outward over the
+	// mesh from `meters`. nullopt when `meters` is off meshed ground.
 	[[nodiscard]] std::optional<glm::vec2> nearestTerrainWalkablePoint(glm::vec2 meters) const;
 
 	// Where a landing party of `count` stands, judged on the structural mesh like
@@ -186,13 +194,14 @@ class NavigationSystem : public ISystem {
 		std::vector<glm::vec2> points; // one per member, in order
 	};
 	// First brings walls and the ground of the ready chunks the search can touch into the meshes
-	// (the landing runs before the first update). The center is the nearest point to `drop`
-	// (searched outward in rings) whose whole member ring -- `count` points spaced evenly on a
-	// circle of `ringRadiusMeters`, or the center alone for one member -- is clear ground, so the
-	// ring never straddles a shore. Clear means walkable at the point and at `clearanceMeters`
-	// around it. Every member then stands on its ring point when that point is clear and at least
-	// `minSeparationMeters` from the members already placed, else on the nearest spot around it
-	// that is. With no chunks wired, the center is `drop` and the points are the raw ring.
+	// (the landing runs before the first update), and waits for it. The center is the nearest
+	// point to `drop` (searched outward in rings) whose whole member ring -- `count` points spaced
+	// evenly on a circle of `ringRadiusMeters`, or the center alone for one member -- is clear
+	// ground, so the ring never straddles a shore. Clear means walkable at the point and at
+	// `clearanceMeters` around it. Every member then stands on its ring point when that point is
+	// clear and at least `minSeparationMeters` from the members already placed, else on the
+	// nearest spot around it that is. With no chunks wired, the center is `drop` and the points
+	// are the raw ring.
 	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters, float minSeparationMeters,
 											  float clearanceMeters);
 
@@ -200,8 +209,9 @@ class NavigationSystem : public ISystem {
 	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
 	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
 
-	// Nearest walkable point to `meters`, or nullopt when it is off meshed ground or no face is
-	// walkable. Snaps a stranded (off-mesh, on meshed ground) colonist back onto pathable ground.
+	// Nearest walkable point to `meters`, searched outward over the mesh from it, or nullopt when
+	// it is off meshed ground or no face is walkable. Snaps a stranded (off-mesh, on meshed
+	// ground) colonist back onto pathable ground.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters) const;
 
 	// Like nearestPathablePoint, but the returned point also clears the BUILT-wall collision bands
@@ -223,19 +233,19 @@ class NavigationSystem : public ISystem {
 	// True once any ground is meshed.
 	[[nodiscard]] bool hasMesh() const;
 
-	// True while anything is queued: ground, flora adds or removals. update() applies walls the
-	// tick it sees them, so false right after an update means the system has settled.
+	// True while anything is queued or gathered and not yet joined: ground, flora adds or
+	// removals, patches waiting for endTick.
 	[[nodiscard]] bool isBuilding() const;
 
-	// Drains every queue with no budget, repeating until nothing is left: the same patches
-	// update() would apply over several ticks. It reads only chunks that are ready now, so a
-	// caller settles chunk generation and placement first. For tests and the headless sim, never
-	// the game.
+	// Gathers every queue with no budget, applies it and waits, repeating until nothing is left:
+	// the same patches update() would apply over several ticks. It reads only chunks that are
+	// ready now, so a caller settles chunk generation and placement first. For tests and the
+	// headless sim, never the game.
 	void finishPendingBuilds();
 
-	// Monotonic count of ticks that patched either mesh. A stored NavPath stamps it at plan time
+	// Monotonic count of joins that patched either mesh. A stored NavPath stamps it at plan time
 	// so the replan loop sees "the mesh changed under me", and a deferred route waits on it.
-	[[nodiscard]] std::uint64_t generation() const { return meshGeneration; }
+	[[nodiscard]] std::uint64_t generation() const;
 
 	// Cumulative A* instrumentation since the last resetNavQueryStats() (P3.5).
 	struct NavQueryStats {
@@ -248,12 +258,12 @@ class NavigationSystem : public ISystem {
 	void							   resetNavQueryStats() { navStats = {}; }
 
 	// Live RRA* reverse-search caches (one per goal triangle), dropped on every nav-mesh patch.
-	[[nodiscard]] std::size_t rraCacheCount() const { return rraCaches.size(); }
+	[[nodiscard]] std::size_t rraCacheCount() const;
 
 	// The meshes, for the debug overlay and tests. Dead triangle slots must be skipped
-	// (PatchableMesh::triangleLive).
-	[[nodiscard]] const geometry::nav::PatchableMesh& navMesh() const { return detailMesh; }
-	[[nodiscard]] const geometry::nav::PatchableMesh& structuralMesh() const { return structural; }
+	// (PatchableMesh::triangleLive). A reference is good until the next update() or endTick().
+	[[nodiscard]] const geometry::nav::PatchableMesh& navMesh() const;
+	[[nodiscard]] const geometry::nav::PatchableMesh& structuralMesh() const;
 
 	// The meshed ground as one square, or none before any ground is meshed.
 	struct RegionView {
@@ -270,9 +280,14 @@ class NavigationSystem : public ISystem {
 	// Margin GameScene applies to the camera's visible half extents before setViewportRect.
 	static constexpr float kViewportMargin = 1.3F;
 
-	// Count budgets per update(), from sim-benchmarks (NavigationSystem.bench.cpp).
-	static constexpr std::size_t kFloraRingsPerTick	 = 4;
-	static constexpr std::size_t kChunkGroundPerTick = 1;
+	// Count budgets per tick, from sim-benchmarks (NavigationSystem.bench.cpp). Flora adds are
+	// held so a tick's flora job stays near kJobBudgetMs on the worker; removals are cheaper per
+	// ring and mostly a lost chunk's flora far from every mover, so they get their own, larger,
+	// budget and never hold adds back.
+	static constexpr double		 kJobBudgetMs			= 2.0;
+	static constexpr std::size_t kFloraRingsPerTick		= 32;
+	static constexpr std::size_t kFloraRemovalsPerTick	= 128;
+	static constexpr std::size_t kChunkGroundPerTick	= 1;
 	// Flora is scanned in square cells of this side, aligned to chunk squares; a cell is scanned
 	// once and stays scanned until its chunk's placement goes away.
 	static constexpr std::int64_t kFloraCellMm = 16000;
@@ -321,8 +336,12 @@ class NavigationSystem : public ISystem {
 	};
 	struct PendingFlora {
 		geometry::nav::NavInputPolygon ring;
-		geometry::Vec2i64			   centerMm;
 		std::int64_t				   cell = 0;
+	};
+	// A flora ring in the nav mesh and the scan cell that holds its entity.
+	struct FloraRing {
+		RingId		 ring = geometry::nav::kNoRing;
+		std::int64_t cell = 0;
 	};
 
 	struct Rect {
@@ -338,21 +357,53 @@ class NavigationSystem : public ISystem {
 		bool		 operator==(const CellRange&) const = default;
 	};
 
-	// One step of update() with the given budgets; finishPendingBuilds runs it unbudgeted.
-	void tick(std::size_t floraBudget, std::size_t groundBudget);
+	// One mesh's share of a tick: its patches in order, door tag edits, then the width refresh
+	// (nav) or forest rebuild (structural). Filled on the main thread, run on that mesh's worker,
+	// read back on the main thread after the join.
+	struct MeshJob {
+		std::vector<geometry::nav::PatchEdits>				  patches;
+		// Per patch, on the main thread after the join: the ids of its added rings and its time.
+		std::vector<std::function<void(const std::vector<RingId>&, double)>> onPatched;
+		std::vector<geometry::nav::DoorPortal>								 doorAdds;
+		std::vector<DoorId>													 doorRemoves;
+		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
+
+		std::vector<std::vector<RingId>> added;
+		std::vector<double>				 patchMs;
+		std::vector<DoorId>				 doorsAdded;
+		double							 ms		  = 0.0; // the whole job
+		double							 finishMs = 0.0; // widths or forests
+
+		[[nodiscard]] bool empty() const { return patches.empty() && doorAdds.empty() && doorRemoves.empty(); }
+	};
+
+	class Worker;
+
+	static void runJob(geometry::nav::PatchableMesh& mesh, MeshJob& job, bool forests);
+
+	// One tick's patches with the given budgets into the gathered jobs; finishPendingBuilds runs
+	// it unbudgeted.
+	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundBudget);
+	// Hand `gathered` to the workers. No-op when it is empty.
+	void submit();
+	// Wait for the workers and, once per job, publish what it changed (generation counters, RRA*
+	// caches). Every query and every mesh accessor goes through it.
+	void join() const;
+	// Hand the joined jobs' ring and door ids back to the bookkeeping that gathered them.
+	void collect();
+	// Everything gathered so far applied and collected.
+	void settle();
 
 	[[nodiscard]] std::vector<Rect> wantedRects() const;
 	void							queueRemovedFlora();
 	void							dropFloraOfLostChunks();
 	[[nodiscard]] bool				floraChunkUsable(world::ChunkCoordinate coord) const;
-	void							syncWalls();
+	void							gatherWalls();
 	// Up to `budget` ready chunks whose ground is missing or stale, nearest a rect first; only
 	// chunks meeting `within` when it is given.
-	void patchGround(std::size_t budget, const std::vector<Rect>& rects, const Rect* within);
+	void gatherGround(std::size_t budget, const std::vector<Rect>& rects, const Rect* within);
 	void scanFlora(const std::vector<Rect>& rects);
-	void patchFlora(std::size_t budget, const std::vector<Rect>& rects);
-	// Refresh widths and forests after a tick's patches, drop the RRA* caches, bump generation().
-	void finishTick();
+	void gatherFlora(std::size_t addBudget, std::size_t removeBudget, const std::vector<Rect>& rects);
 
 	world::ChunkManager*							  chunkManager		= nullptr;
 	assets::PlacementExecutor*						  placement			= nullptr;
@@ -373,21 +424,30 @@ class NavigationSystem : public ISystem {
 	std::vector<WallRing> walls;
 	std::vector<WallDoor> doors;
 
-	std::map<FloraKey, RingId>					floraInMesh;
+	std::map<FloraKey, FloraRing>				floraInMesh;
 	std::map<FloraKey, PendingFlora>			floraAdds;
-	std::vector<RingId>							floraRemovals;
+	std::vector<FloraRing>						floraRemovals;
 	std::unordered_set<std::int64_t>			scannedCells;
 	std::set<world::ChunkCoordinate, ChunkLess> floraChunks; // chunks with a scanned cell
 	std::vector<CellRange>						scannedRanges;
-	std::size_t									scannedGround	 = 0;
-	std::size_t									scannedProcessed = 0;
-	std::size_t									removalsSeen	 = 0;
+	std::size_t									scannedGround = 0;
+	std::unordered_set<world::ChunkCoordinate>	scannedProcessed;
 
-	bool		  navPatched		= false;
-	bool		  structuralPatched = false;
-	double		  navPatchMs		= 0.0;
-	double		  structuralPatchMs = 0.0;
-	std::uint64_t meshGeneration	= 0;
+	// The patches gathered and not yet handed to the workers, and the ones they are running or
+	// have finished but not yet been collected.
+	MeshJob gatheredNav;
+	MeshJob gatheredStructural;
+	MeshJob runningNav;
+	MeshJob runningStructural;
+	bool		 collected = true;
+	mutable bool running   = false;
+	mutable bool published = true;
+
+	std::unique_ptr<Worker> navWorker;
+	std::unique_ptr<Worker> structuralWorker;
+
+	mutable std::uint64_t meshGeneration	   = 0;
+	mutable std::uint64_t structuralGeneration = 0;
 
 	mutable std::unordered_map<std::int32_t, geometry::nav::RraCache> rraCaches;
 	static constexpr std::size_t									   kMaxRraCaches = 64;

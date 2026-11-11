@@ -24,9 +24,17 @@
 #include <bit>
 #include <chrono>
 #include <cmath>
+#include <condition_variable>
+#include <functional>
 #include <limits>
 #include <map>
+#include <memory>
+#include <mutex>
+#include <queue>
+#include <stop_token>
+#include <thread>
 #include <tuple>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -62,15 +70,6 @@ namespace ecs {
 			const std::int64_t dx = a.x - b.x;
 			const std::int64_t dy = a.y - b.y;
 			return dx * dx + dy * dy;
-		}
-
-		template <typename Visit> void forEachLiveTriangle(const gnav::PatchableMesh& mesh, Visit visit) {
-			const std::vector<gnav::NavTriangle>& tris = mesh.triangles();
-			for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
-				if (mesh.triangleLive(t)) {
-					visit(tris[static_cast<std::size_t>(t)]);
-				}
-			}
 		}
 
 		// Squared distance and closest-point-on-segment, in meters.
@@ -117,6 +116,45 @@ namespace ecs {
 			return {nav::toMeters(mesh.vertices()[t.v[0]]), nav::toMeters(mesh.vertices()[t.v[1]]), nav::toMeters(mesh.vertices()[t.v[2]])};
 		}
 
+		// Squared distance from p to the triangle: 0 inside it.
+		float triangleDist2(glm::vec2 p, const TriangleMeters& t) {
+			const auto side = [](glm::vec2 a, glm::vec2 b, glm::vec2 q) { return (b.x - a.x) * (q.y - a.y) - (b.y - a.y) * (q.x - a.x); };
+			const float s0 = side(t.a, t.b, p);
+			const float s1 = side(t.b, t.c, p);
+			const float s2 = side(t.c, t.a, p);
+			if ((s0 >= 0.0F && s1 >= 0.0F && s2 >= 0.0F) || (s0 <= 0.0F && s1 <= 0.0F && s2 <= 0.0F)) {
+				return 0.0F;
+			}
+			return closestPointOnTriangle(p, t.a, t.b, t.c).dist2;
+		}
+
+		// Visits the triangles of `mesh` nearest `p` first, from the one holding it outward over
+		// adjacency, so a search touches only the triangles nearer than its answer. `visit` returns
+		// the squared distance the search has settled for so far, and the walk stops once every
+		// triangle left is farther. Off the mesh it visits nothing.
+		template <typename Visit> void nearestFirst(const gnav::PatchableMesh& mesh, glm::vec2 p, Visit visit) {
+			const std::int32_t start = mesh.locate(nav::toMm(p));
+			if (start < 0) {
+				return;
+			}
+			using Entry = std::pair<float, std::int32_t>;
+			std::priority_queue<Entry, std::vector<Entry>, std::greater<>> open;
+			std::unordered_set<std::int32_t>								 seen{start};
+			open.push({0.0F, start});
+			float settled = std::numeric_limits<float>::infinity();
+			while (!open.empty() && open.top().first <= settled) {
+				const std::int32_t t = open.top().second;
+				open.pop();
+				const gnav::NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+				settled						 = std::min(settled, visit(tri, trianglePoints(mesh, tri)));
+				for (const std::int32_t n : tri.neighbor) {
+					if (n >= 0 && seen.insert(n).second) {
+						open.push({triangleDist2(p, trianglePoints(mesh, mesh.triangles()[static_cast<std::size_t>(n)])), n});
+					}
+				}
+			}
+		}
+
 		// Nearest point on `mesh` to `meters` whose face passes `faceOk`, nudged a hair toward that
 		// face's centroid so it locates inside it, or nullopt when no face does.
 		template <typename FaceOk>
@@ -124,11 +162,11 @@ namespace ecs {
 			bool	  found	 = false;
 			float	  bestD2 = 0.0F;
 			glm::vec2 best{0.0F, 0.0F};
-			forEachLiveTriangle(mesh, [&](const gnav::NavTriangle& t) {
+			constexpr float kNone = std::numeric_limits<float>::infinity();
+			nearestFirst(mesh, meters, [&](const gnav::NavTriangle& t, const TriangleMeters& tri) {
 				if (!faceOk(t)) {
-					return;
+					return found ? bestD2 : kNone;
 				}
-				const TriangleMeters tri = trianglePoints(mesh, t);
 				const ClosestPoint	 cp	 = closestPointOnTriangle(meters, tri.a, tri.b, tri.c);
 				if (!found || cp.dist2 < bestD2) {
 					const glm::vec2 centroid = (tri.a + tri.b + tri.c) / 3.0F;
@@ -136,6 +174,7 @@ namespace ecs {
 					bestD2					 = cp.dist2;
 					found					 = true;
 				}
+				return bestD2;
 			});
 			return found ? std::optional<glm::vec2>(best) : std::nullopt;
 		}
@@ -292,15 +331,14 @@ namespace ecs {
 					 found	= true;
 				 }
 			};
-			forEachLiveTriangle(mesh, [&](const gnav::NavTriangle& t) {
-				if (!gnav::terrainTraversable(t)) {
-					return;
+			nearestFirst(mesh, meters, [&](const gnav::NavTriangle& t, const TriangleMeters& tri) {
+				if (gnav::terrainTraversable(t)) {
+					const glm::vec2 centroid = (tri.a + tri.b + tri.c) / 3.0F;
+					const glm::vec2 cand	 = closestPointOnTriangle(meters, tri.a, tri.b, tri.c).point;
+					consider(cand + (centroid - cand) * 0.34F);
+					consider(centroid);
 				}
-				const TriangleMeters tri	  = trianglePoints(mesh, t);
-				const glm::vec2		 centroid = (tri.a + tri.b + tri.c) / 3.0F;
-				const glm::vec2		 cand	  = closestPointOnTriangle(meters, tri.a, tri.b, tri.c).point;
-				consider(cand + (centroid - cand) * 0.34F);
-				consider(centroid);
+				return found ? bestD2 : std::numeric_limits<float>::infinity();
 			});
 			return found ? std::optional<glm::vec2>(best) : std::nullopt;
 		}
@@ -403,6 +441,78 @@ namespace ecs {
 		}
 	} // namespace
 
+	// A thread that runs one job at a time, handed over by start() and waited for by wait().
+	class NavigationSystem::Worker {
+	  public:
+		Worker()
+			: thread([this](const std::stop_token& stop) { loop(stop); }) {}
+
+		void start(std::function<void()> work) {
+			{
+				const std::lock_guard lock(mutex);
+				job	 = std::move(work);
+				busy = true;
+			}
+			changed.notify_all();
+		}
+
+		void wait() {
+			std::unique_lock lock(mutex);
+			changed.wait(lock, [this] { return !busy; });
+		}
+
+	  private:
+		void loop(const std::stop_token& stop) {
+			while (true) {
+				std::function<void()> work;
+				{
+					std::unique_lock lock(mutex);
+					if (!changed.wait(lock, stop, [this] { return job != nullptr; })) {
+						return;
+					}
+					work = std::move(job);
+					job	 = nullptr;
+				}
+				work();
+				{
+					const std::lock_guard lock(mutex);
+					busy = false;
+				}
+				changed.notify_all();
+			}
+		}
+
+		std::mutex					mutex;
+		std::condition_variable_any changed;
+		std::function<void()>		job;
+		bool						busy = false;
+		std::jthread				thread; // last: it starts running the loop over the members above
+	};
+
+	// One mesh's share of a tick, on that mesh's worker.
+	void NavigationSystem::runJob(gnav::PatchableMesh& mesh, MeshJob& job, bool forests) {
+		const Clock::time_point start = Clock::now();
+		for (const gnav::PatchEdits& edits : job.patches) {
+			const Clock::time_point patchStart = Clock::now();
+			job.added.push_back(mesh.applyPatch(edits).added);
+			job.patchMs.push_back(msSince(patchStart));
+		}
+		for (const gnav::DoorId door : job.doorRemoves) {
+			mesh.removeDoor(door);
+		}
+		for (const gnav::DoorPortal& portal : job.doorAdds) {
+			job.doorsAdded.push_back(mesh.addDoor(portal));
+		}
+		const Clock::time_point finishStart = Clock::now();
+		if (forests) {
+			mesh.rebuildForests();
+		} else {
+			mesh.refreshWidths();
+		}
+		job.finishMs = msSince(finishStart);
+		job.ms		 = msSince(start);
+	}
+
 	bool NavigationSystem::FloraKey::operator<(const FloraKey& o) const {
 		if (chunk.y != o.chunk.y || chunk.x != o.chunk.x) {
 			return ChunkLess{}(chunk, o.chunk);
@@ -412,12 +522,25 @@ namespace ecs {
 
 	NavigationSystem::NavigationSystem()
 		: detailMesh(meshArgs()),
-		  structural(meshArgs()) {}
+		  structural(meshArgs()),
+		  navWorker(std::make_unique<Worker>()),
+		  structuralWorker(std::make_unique<Worker>()) {}
+
+	NavigationSystem::~NavigationSystem() {
+		join();
+	}
 
 	void NavigationSystem::setPlacementData(assets::PlacementExecutor* executor, const std::unordered_set<world::ChunkCoordinate>* processed) {
 		placement		= executor;
 		processedChunks = processed;
-		removalsSeen	= executor != nullptr ? executor->removals().size() : 0;
+		if (executor != nullptr) {
+			executor->takeRemovals();
+		}
+	}
+
+	void NavigationSystem::setConstructionWorld(const construction::ConstructionWorld* world) {
+		constructionWorld = world;
+		wallsVersion	  = UINT64_MAX;
 	}
 
 	void NavigationSystem::appendMoverPositions(std::vector<world::WorldPosition>& out) const {
@@ -449,65 +572,112 @@ namespace ecs {
 		return rects;
 	}
 
+	// --- Ticks, jobs and the join -------------------------------------------------
+
 	void NavigationSystem::update(float /*deltaTime*/) {
-		tick(kFloraRingsPerTick, kChunkGroundPerTick);
+		settle();
+		if (chunkManager != nullptr) {
+			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kChunkGroundPerTick);
+		}
+	}
+
+	void NavigationSystem::endTick() {
+		submit();
 	}
 
 	void NavigationSystem::finishPendingBuilds() {
 		do {
-			tick(kUnlimited, kUnlimited);
+			settle();
+			if (chunkManager != nullptr) {
+				gather(kUnlimited, kUnlimited, kUnlimited);
+			}
+			settle();
 		} while (chunkManager != nullptr && isBuilding());
 	}
 
-	void NavigationSystem::tick(std::size_t floraBudget, std::size_t groundBudget) {
-		if (chunkManager == nullptr) {
-			return;
-		}
+	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t groundBudget) {
 		const std::vector<Rect> rects = wantedRects();
 		queueRemovedFlora();
 		dropFloraOfLostChunks();
-		syncWalls();
-		patchGround(groundBudget, rects, nullptr);
+		gatherWalls();
+		gatherGround(groundBudget, rects, nullptr);
 		scanFlora(rects);
-		patchFlora(floraBudget, rects);
-		finishTick();
+		gatherFlora(addBudget, removeBudget, rects);
 	}
 
-	void NavigationSystem::finishTick() {
-		if (!navPatched && !structuralPatched) {
+	void NavigationSystem::submit() {
+		if (gatheredNav.empty() && gatheredStructural.empty()) {
 			return;
 		}
-		double refreshMs = 0.0;
-		double forestsMs = 0.0;
-		if (navPatched) {
+		collect();
+		runningNav		   = std::move(gatheredNav);
+		runningStructural  = std::move(gatheredStructural);
+		gatheredNav		   = {};
+		gatheredStructural = {};
+		running			   = true;
+		published		   = false;
+		collected		   = false;
+		if (!runningNav.empty()) {
+			navWorker->start([this] { runJob(detailMesh, runningNav, false); });
+		}
+		if (!runningStructural.empty()) {
+			structuralWorker->start([this] { runJob(structural, runningStructural, true); });
+		}
+	}
+
+	void NavigationSystem::join() const {
+		double waitMs = 0.0;
+		if (running) {
 			const Clock::time_point start = Clock::now();
-			detailMesh.refreshWidths();
-			refreshMs = msSince(start);
-			navPatchMs += refreshMs;
+			navWorker->wait();
+			structuralWorker->wait();
+			waitMs	= msSince(start);
+			running = false;
+		}
+		if (published) {
+			return;
+		}
+		published = true;
+		++meshGeneration;
+		if (!runningStructural.empty()) {
+			++structuralGeneration;
+		}
+		if (!runningNav.empty()) {
 			rraCaches.clear();
 		}
-		if (structuralPatched) {
-			const Clock::time_point start = Clock::now();
-			structural.rebuildForests();
-			forestsMs = msSince(start);
-			structuralPatchMs += forestsMs;
+		const double longest = std::max(runningNav.ms, runningStructural.ms);
+		// Permanent nav-mesh work diagnostic: one tick's job on each mesh's worker (of which the
+		// width refresh and the forest rebuild), how long the main thread waited for it, and the
+		// meshes' triangle slots then. DEBUG, dev-tools log server.
+		LOG_DEBUG(Engine, "[NavBuild] job nav %.3f ms structural %.3f ms (widths %.3f ms forests %.3f ms) wait %.3f ms slots %zu structuralSlots %zu%s",
+				  runningNav.ms, runningStructural.ms, runningNav.finishMs, runningStructural.finishMs, waitMs, detailMesh.triangles().size(),
+				  structural.triangles().size(), longest > kJobBudgetMs ? " over budget" : "");
+	}
+
+	void NavigationSystem::collect() {
+		if (collected) {
+			return;
 		}
-		++meshGeneration;
-		// Permanent nav-mesh work diagnostic: what this tick's patches cost on the main thread,
-		// of which the nav mesh's width refresh and the structural forests, and the meshes' triangle
-		// slots then. DEBUG, dev-tools log server.
-		LOG_DEBUG(Engine, "[NavBuild] patch nav %.3f ms structural %.3f ms (widths %.3f ms forests %.3f ms) slots %zu structuralSlots %zu gen %llu",
-				  navPatchMs, structuralPatchMs, refreshMs, forestsMs, detailMesh.triangles().size(), structural.triangles().size(),
-				  static_cast<unsigned long long>(meshGeneration));
-		navPatched		  = false;
-		structuralPatched = false;
-		navPatchMs		  = 0.0;
-		structuralPatchMs = 0.0;
+		join();
+		collected = true;
+		for (MeshJob* job : {&runningNav, &runningStructural}) {
+			for (std::size_t i = 0; i < job->onPatched.size(); ++i) {
+				job->onPatched[i](job->added[i], job->patchMs[i]);
+			}
+			if (job->onDoorsAdded) {
+				job->onDoorsAdded(job->doorsAdded);
+			}
+		}
+	}
+
+	void NavigationSystem::settle() {
+		submit();
+		collect();
 	}
 
 	// --- Walls and doors -------------------------------------------------------
 
-	void NavigationSystem::syncWalls() {
+	void NavigationSystem::gatherWalls() {
 		const std::uint64_t version = constructionWorld != nullptr ? constructionWorld->version() : 0;
 		if (version == wallsVersion) {
 			return;
@@ -552,17 +722,18 @@ namespace ecs {
 		walls = std::move(next);
 
 		if (!navEdits.adds.empty() || !navEdits.removes.empty()) {
-			Clock::time_point		 start	   = Clock::now();
-			const gnav::PatchReport navReport = detailMesh.applyPatch(navEdits);
-			navPatchMs += msSince(start);
-			start								  = Clock::now();
-			const gnav::PatchReport structuralReport = structural.applyPatch(structuralEdits);
-			structuralPatchMs += msSince(start);
-			for (std::size_t k = 0; k < navReport.added.size(); ++k) {
-				walls[firstAdded + k].ids = {navReport.added[k], structuralReport.added[k]};
-			}
-			navPatched		  = true;
-			structuralPatched = true;
+			gatheredNav.patches.push_back(std::move(navEdits));
+			gatheredNav.onPatched.emplace_back([this, firstAdded](const std::vector<RingId>& added, double) {
+				for (std::size_t k = 0; k < added.size(); ++k) {
+					walls[firstAdded + k].ids.nav = added[k];
+				}
+			});
+			gatheredStructural.patches.push_back(std::move(structuralEdits));
+			gatheredStructural.onPatched.emplace_back([this, firstAdded](const std::vector<RingId>& added, double) {
+				for (std::size_t k = 0; k < added.size(); ++k) {
+					walls[firstAdded + k].ids.structural = added[k];
+				}
+			});
 		}
 
 		std::vector<WallDoor> nextDoors;
@@ -579,29 +750,40 @@ namespace ecs {
 				nextDoors.push_back(door);
 				continue;
 			}
-			detailMesh.removeDoor(door.nav);
-			structural.removeDoor(door.structural);
-			navPatched		  = true;
-			structuralPatched = true;
+			gatheredNav.doorRemoves.push_back(door.nav);
+			gatheredStructural.doorRemoves.push_back(door.structural);
 		}
+		const std::size_t firstDoor = nextDoors.size();
 		for (std::size_t i = 0; i < portals.size(); ++i) {
 			if (portalKept[i]) {
 				continue;
 			}
-			nextDoors.push_back({portals[i], detailMesh.addDoor(portals[i]), structural.addDoor(portals[i])});
-			navPatched		  = true;
-			structuralPatched = true;
+			gatheredNav.doorAdds.push_back(portals[i]);
+			gatheredStructural.doorAdds.push_back(portals[i]);
+			nextDoors.push_back({portals[i], -1, -1});
 		}
 		doors = std::move(nextDoors);
+		if (firstDoor < doors.size()) {
+			gatheredNav.onDoorsAdded = [this, firstDoor](const std::vector<DoorId>& added) {
+				for (std::size_t k = 0; k < added.size(); ++k) {
+					doors[firstDoor + k].nav = added[k];
+				}
+			};
+			gatheredStructural.onDoorsAdded = [this, firstDoor](const std::vector<DoorId>& added) {
+				for (std::size_t k = 0; k < added.size(); ++k) {
+					doors[firstDoor + k].structural = added[k];
+				}
+			};
+		}
 	}
 
 	// --- Ground ------------------------------------------------------------------
 
-	void NavigationSystem::patchGround(std::size_t budget, const std::vector<Rect>& rects, const Rect* within) {
+	void NavigationSystem::gatherGround(std::size_t budget, const std::vector<Rect>& rects, const Rect* within) {
 		struct Candidate {
-			std::int64_t		 priority;
+			std::int64_t		   priority;
 			world::ChunkCoordinate coord;
-			const world::Chunk*	 chunk;
+			const world::Chunk*	   chunk;
 		};
 		std::vector<Candidate> candidates;
 		for (const world::Chunk* chunk : std::as_const(*chunkManager).getLoadedChunks()) {
@@ -630,15 +812,15 @@ namespace ecs {
 		std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
 			return a.priority != b.priority ? a.priority < b.priority : ChunkLess{}(a.coord, b.coord);
 		});
-		if (within == nullptr) {
-			groundPending = candidates.size();
-		}
 
 		const std::size_t count = std::min(budget, candidates.size());
+		if (within == nullptr) {
+			groundPending = candidates.size() - count;
+		}
 		for (std::size_t i = 0; i < count; ++i) {
-			const Candidate&				   c	  = candidates[i];
-			ChunkGround&					   g	  = ground[c.coord];
-			const world::ChunkTerrainPolygons& polys  = c.chunk->terrainPolygons();
+			const Candidate&				   c	 = candidates[i];
+			ChunkGround&					   g	 = ground[c.coord];
+			const world::ChunkTerrainPolygons& polys = c.chunk->terrainPolygons();
 			const bool						   isNew = g.square.nav == gnav::kNoRing;
 
 			gnav::PatchEdits navEdits;
@@ -651,35 +833,37 @@ namespace ecs {
 				navEdits.removes.push_back(water.nav);
 				structuralEdits.removes.push_back(water.structural);
 			}
+			const std::size_t rings = navEdits.adds.size();
+			g.terrainVersion		= polys.version;
 
-			Clock::time_point		start	  = Clock::now();
-			const gnav::PatchReport navReport = detailMesh.applyPatch(navEdits);
-			const double			navMs	  = msSince(start);
-			start							  = Clock::now();
-			const gnav::PatchReport structuralReport = structural.applyPatch(structuralEdits);
-			const double			structuralMs	 = msSince(start);
-			navPatchMs += navMs;
-			structuralPatchMs += structuralMs;
-
-			std::size_t k = 0;
-			if (isNew) {
-				g.square = {navReport.added[0], structuralReport.added[0]};
-				k		 = 1;
-			}
-			g.water.clear();
-			for (; k < navReport.added.size(); ++k) {
-				g.water.push_back({navReport.added[k], structuralReport.added[k]});
-			}
-			g.terrainVersion  = polys.version;
-			navPatched		  = true;
-			structuralPatched = true;
-			if (within == nullptr) {
-				--groundPending;
-			}
-			// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering
-			// both meshes. DEBUG, dev-tools log server.
-			LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) nav %.3f ms structural %.3f ms rings %zu", c.coord.x, c.coord.y, navMs,
-					  structuralMs, navEdits.adds.size());
+			// The nav mesh's time is held for the structural mesh's sink, which collects second and
+			// logs both.
+			auto navMs = std::make_shared<double>(0.0);
+			gatheredNav.patches.push_back(std::move(navEdits));
+			gatheredNav.onPatched.emplace_back([&g, isNew, navMs](const std::vector<RingId>& added, double ms) {
+				const std::size_t first = isNew ? 1 : 0;
+				if (isNew) {
+					g.square.nav = added[0];
+				}
+				g.water.assign(added.size() - first, {});
+				for (std::size_t k = first; k < added.size(); ++k) {
+					g.water[k - first].nav = added[k];
+				}
+				*navMs = ms;
+			});
+			gatheredStructural.patches.push_back(std::move(structuralEdits));
+			gatheredStructural.onPatched.emplace_back([&g, isNew, navMs, coord = c.coord, rings](const std::vector<RingId>& added, double ms) {
+				const std::size_t first = isNew ? 1 : 0;
+				if (isNew) {
+					g.square.structural = added[0];
+				}
+				for (std::size_t k = first; k < added.size(); ++k) {
+					g.water[k - first].structural = added[k];
+				}
+				// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering
+				// both meshes. DEBUG, dev-tools log server.
+				LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) nav %.3f ms structural %.3f ms rings %zu", coord.x, coord.y, *navMs, ms, rings);
+			});
 		}
 	}
 
@@ -694,9 +878,7 @@ namespace ecs {
 		if (placement == nullptr) {
 			return;
 		}
-		const std::vector<assets::PlacementExecutor::RemovedEntity>& removed = placement->removals();
-		for (; removalsSeen < removed.size(); ++removalsSeen) {
-			const assets::PlacementExecutor::RemovedEntity& entry = removed[removalsSeen];
+		for (const assets::PlacementExecutor::RemovedEntity& entry : placement->takeRemovals()) {
 			const FloraKey key{entry.coord, std::bit_cast<std::uint32_t>(entry.position.x), std::bit_cast<std::uint32_t>(entry.position.y),
 							   entry.defName};
 			if (const auto it = floraInMesh.find(key); it != floraInMesh.end()) {
@@ -715,11 +897,15 @@ namespace ecs {
 				++chunkIt;
 				continue;
 			}
-			const FloraKey first{coord, 0, 0, {}};
+			// Queued by cell, so the removals batch into one patch per cell.
+			const FloraKey			  first{coord, 0, 0, {}};
+			std::vector<FloraRing> lost;
 			for (auto it = floraInMesh.lower_bound(first); it != floraInMesh.end() && it->first.chunk == coord;) {
-				floraRemovals.push_back(it->second);
+				lost.push_back(it->second);
 				it = floraInMesh.erase(it);
 			}
+			std::stable_sort(lost.begin(), lost.end(), [](const FloraRing& a, const FloraRing& b) { return a.cell < b.cell; });
+			floraRemovals.insert(floraRemovals.end(), lost.begin(), lost.end());
 			for (auto it = floraAdds.lower_bound(first); it != floraAdds.end() && it->first.chunk == coord;) {
 				it = floraAdds.erase(it);
 			}
@@ -738,13 +924,16 @@ namespace ecs {
 			ranges.push_back({geometry::floorDiv(r.lo.x, kFloraCellMm), geometry::floorDiv(r.lo.y, kFloraCellMm),
 							  geometry::floorDiv(r.hi.x, kFloraCellMm), geometry::floorDiv(r.hi.y, kFloraCellMm)});
 		}
-		const std::size_t processedCount = processedChunks != nullptr ? processedChunks->size() : 0;
-		if (ranges == scannedRanges && ground.size() == scannedGround && processedCount == scannedProcessed) {
+		// Ground only ever grows, so its size can't alias; the processed set can (one chunk leaves
+		// as another arrives), so it is compared whole.
+		const std::unordered_set<world::ChunkCoordinate> noneProcessed;
+		const std::unordered_set<world::ChunkCoordinate>& processed = processedChunks != nullptr ? *processedChunks : noneProcessed;
+		if (ranges == scannedRanges && ground.size() == scannedGround && processed == scannedProcessed) {
 			return;
 		}
 		scannedRanges	 = ranges;
 		scannedGround	 = ground.size();
-		scannedProcessed = processedCount;
+		scannedProcessed = processed;
 
 		std::unordered_set<std::int64_t> wanted;
 		const assets::AssetRegistry&	 registry = assets::AssetRegistry::Get();
@@ -761,8 +950,8 @@ namespace ecs {
 						continue;
 					}
 					// One cell owns each entity, by its position in [lo, lo + cell).
-					const float lox = static_cast<float>(cx * kFloraCellMm / geometry::kMillimetersPerMeter);
-					const float loy = static_cast<float>(cy * kFloraCellMm / geometry::kMillimetersPerMeter);
+					const float lox	 = static_cast<float>(cx * kFloraCellMm / geometry::kMillimetersPerMeter);
+					const float loy	 = static_cast<float>(cy * kFloraCellMm / geometry::kMillimetersPerMeter);
 					const float side = static_cast<float>(kFloraCellMm / geometry::kMillimetersPerMeter);
 					for (const assets::PlacedEntity* e : placement->getChunkIndex(chunk)->queryRect(lox, loy, lox + side, loy + side)) {
 						if (e->position.x < lox || e->position.x >= lox + side || e->position.y < loy || e->position.y >= loy + side) {
@@ -776,7 +965,7 @@ namespace ecs {
 						if (!ring.has_value()) {
 							continue;
 						}
-						floraAdds.emplace(std::move(key), PendingFlora{std::move(*ring), nav::toMm(e->position), cell});
+						floraAdds.emplace(std::move(key), PendingFlora{std::move(*ring), cell});
 					}
 					scannedCells.insert(cell);
 					floraChunks.insert(chunk);
@@ -795,21 +984,25 @@ namespace ecs {
 		}
 	}
 
-	void NavigationSystem::patchFlora(std::size_t budget, const std::vector<Rect>& rects) {
-		if (floraRemovals.empty() && floraAdds.empty()) {
+	void NavigationSystem::gatherFlora(std::size_t addBudget, std::size_t removeBudget, const std::vector<Rect>& rects) {
+		// Removals, oldest first, one patch per run of one cell: a patch's width refresh covers the
+		// box around everything it changed, so a patch spread over a chunk would refresh the chunk.
+		const std::size_t removeCount = std::min(removeBudget, floraRemovals.size());
+		for (std::size_t first = 0; first < removeCount;) {
+			std::size_t		 last = first;
+			gnav::PatchEdits edits;
+			for (; last < removeCount && floraRemovals[last].cell == floraRemovals[first].cell; ++last) {
+				edits.removes.push_back(floraRemovals[last].ring);
+			}
+			gatheredNav.patches.push_back(std::move(edits));
+			gatheredNav.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
+			first = last;
+		}
+		floraRemovals.erase(floraRemovals.begin(), floraRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
+
+		if (addBudget == 0 || floraAdds.empty()) {
 			return;
 		}
-		const std::size_t removeCount = std::min(budget, floraRemovals.size());
-		if (removeCount > 0) {
-			gnav::PatchEdits edits;
-			edits.removes.assign(floraRemovals.begin(), floraRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
-			floraRemovals.erase(floraRemovals.begin(), floraRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
-			const Clock::time_point start = Clock::now();
-			detailMesh.applyPatch(edits);
-			navPatchMs += msSince(start);
-			navPatched = true;
-		}
-
 		// Cells nearest a rect centre first, a cell's flora together, map order within a cell.
 		struct Ranked {
 			std::int64_t							   priority;
@@ -829,7 +1022,7 @@ namespace ecs {
 			}
 			ranked.push_back({priority, cell, order++, it});
 		}
-		const std::size_t addCount = std::min(budget - removeCount, ranked.size());
+		const std::size_t addCount = std::min(addBudget, ranked.size());
 		const auto		  before   = [](const Ranked& a, const Ranked& b) {
 			   return std::tie(a.priority, a.cell, a.order) < std::tie(b.priority, b.cell, b.order);
 		};
@@ -839,23 +1032,23 @@ namespace ecs {
 		}
 		std::sort(ranked.begin(), ranked.end(), before);
 
-		// One patch per cell: a patch's width refresh covers the box around everything it
-		// changed, so a batch spread over the view would refresh the whole view.
 		for (std::size_t first = 0; first < ranked.size();) {
-			std::size_t		 last = first;
-			gnav::PatchEdits edits;
+			std::size_t			  last = first;
+			gnav::PatchEdits	  edits;
+			std::vector<FloraKey> keys;
 			for (; last < ranked.size() && ranked[last].cell == ranked[first].cell; ++last) {
-				edits.adds.push_back(ranked[last].it->second.ring);
+				edits.adds.push_back(std::move(ranked[last].it->second.ring));
+				keys.push_back(ranked[last].it->first);
+				floraAdds.erase(ranked[last].it);
 			}
-			const Clock::time_point start  = Clock::now();
-			const gnav::PatchReport report = detailMesh.applyPatch(edits);
-			navPatchMs += msSince(start);
-			for (std::size_t k = first; k < last; ++k) {
-				floraInMesh.emplace(ranked[k].it->first, report.added[k - first]);
-				floraAdds.erase(ranked[k].it);
-			}
-			navPatched = true;
-			first	   = last;
+			gatheredNav.patches.push_back(std::move(edits));
+			gatheredNav.onPatched.emplace_back(
+				[this, keys = std::move(keys), cell = ranked[first].cell](const std::vector<RingId>& added, double) {
+					for (std::size_t k = 0; k < keys.size(); ++k) {
+						floraInMesh.emplace(keys[k], FloraRing{added[k], cell});
+					}
+				});
+			first = last;
 		}
 	}
 
@@ -892,12 +1085,13 @@ namespace ecs {
 		}
 
 		// The landing runs before the first update: bring in walls and the ground every point the
-		// searches can touch stands on.
+		// searches can touch stands on, and wait for it.
 		const float padM = 2.0F * reachM + ringRadiusMeters + clearanceMeters + 1.0F;
 		const Rect	within{nav::toMm(drop - glm::vec2{padM, padM}), nav::toMm(drop + glm::vec2{padM, padM})};
-		syncWalls();
-		patchGround(kUnlimited, {}, &within);
-		finishTick();
+		settle();
+		gatherWalls();
+		gatherGround(kUnlimited, {}, &within);
+		settle();
 
 		auto clear = [this, clearanceMeters](glm::vec2 p) {
 			if (!truthWalkable(structural, p)) {
@@ -955,14 +1149,37 @@ namespace ecs {
 	// --- State ---------------------------------------------------------------------
 
 	bool NavigationSystem::hasMesh() const {
+		join();
 		return detailMesh.liveTriangleCount() > 0;
 	}
 
 	bool NavigationSystem::isBuilding() const {
-		return groundPending > 0 || !floraAdds.empty() || !floraRemovals.empty();
+		join();
+		return groundPending > 0 || !floraAdds.empty() || !floraRemovals.empty() || !gatheredNav.empty() || !gatheredStructural.empty();
+	}
+
+	std::uint64_t NavigationSystem::generation() const {
+		join();
+		return meshGeneration;
+	}
+
+	std::size_t NavigationSystem::rraCacheCount() const {
+		join();
+		return rraCaches.size();
+	}
+
+	const geometry::nav::PatchableMesh& NavigationSystem::navMesh() const {
+		join();
+		return detailMesh;
+	}
+
+	const geometry::nav::PatchableMesh& NavigationSystem::structuralMesh() const {
+		join();
+		return structural;
 	}
 
 	std::vector<NavigationSystem::RegionView> NavigationSystem::builtRegions() const {
+		join();
 		if (ground.empty()) {
 			return {};
 		}
@@ -979,12 +1196,14 @@ namespace ecs {
 	// --- Queries -------------------------------------------------------------------
 
 	bool NavigationSystem::inSimArea(glm::vec2 meters) const {
+		join();
 		return detailMesh.locate(nav::toMm(meters)) >= 0;
 	}
 
 	std::optional<std::vector<glm::vec2>>
 	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
-		if (!hasMesh()) {
+		join();
+		if (detailMesh.liveTriangleCount() == 0) {
 			return std::nullopt;
 		}
 		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
@@ -992,12 +1211,12 @@ namespace ecs {
 		const std::int64_t		radius	= radiusMm(agentRadiusMeters);
 
 		// The structural mesh's walkable ground holds the nav mesh's and its corridors are no
-		// narrower, so its forest rejecting the goal proves there is no path.
-		if (structural.hasForests()) {
-			const gnav::NavView view = structural.view();
-			if (!gnav::reaches(view, gnav::reachFrom(view, startMm, radius, belief), goalMm, belief)) {
-				return std::nullopt;
-			}
+		// narrower, so its forest rejecting the goal proves there is no path; without it an
+		// unreachable goal floods the A* over its whole component of the nav mesh, which has no
+		// forest of its own.
+		const gnav::NavView structuralView = structural.view();
+		if (!gnav::reaches(structuralView, gnav::reachFrom(structuralView, startMm, radius, belief), goalMm, belief)) {
+			return std::nullopt;
 		}
 
 		// RRA* heuristic: one resumable reverse search per goal triangle, dropped on every nav patch.
@@ -1033,19 +1252,21 @@ namespace ecs {
 	}
 
 	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
+		join();
 		Reach reach;
 		reach.belief = belief;
-		if (!structural.hasForests() || structural.locate(nav::toMm(startMeters)) < 0) {
+		if (structural.locate(nav::toMm(startMeters)) < 0) {
 			return reach;
 		}
 		reach.startRegion			= 0;
 		reach.startRegionId			= 0;
-		reach.startRegionGeneration = meshGeneration;
+		reach.startRegionGeneration = structuralGeneration;
 		reach.from = gnav::reachFrom(structural.view(), nav::toMm(startMeters), radiusMm(agentRadiusMeters), belief);
 		return reach;
 	}
 
 	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
+		join();
 		return reach.startRegion >= 0 && structural.locate(nav::toMm(goalMeters)) >= 0;
 	}
 
@@ -1057,6 +1278,7 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {
+		join();
 		return terrainWalkable(detailMesh, meters);
 	}
 
@@ -1073,14 +1295,17 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {
+		join();
 		return areaWalkableUnder([this](glm::vec2 p) { return terrainWalkable(structural, p); }, polygonMeters);
 	}
 
 	bool NavigationSystem::isPointBuildable(glm::vec2 meters) const {
+		join();
 		return terrainWalkable(structural, meters);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestTerrainWalkablePoint(glm::vec2 meters) const {
+		join();
 		if (truthWalkable(structural, meters)) {
 			return meters;
 		}
@@ -1088,14 +1313,12 @@ namespace ecs {
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
-		if (!inSimArea(meters)) {
-			return std::nullopt; // off meshed ground: the caller leaves the colonist put
-		}
+		join();
 		return nearestFaceOnMesh(detailMesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const {
-		const std::optional<glm::vec2> bare = nearestPathablePoint(meters);
+		const std::optional<glm::vec2> bare	 = nearestPathablePoint(meters);
 		const std::vector<WallBandM>   bands = resolveBuiltBands(constructionWorld);
 		if (!bare.has_value() || bands.empty()) {
 			return bare;

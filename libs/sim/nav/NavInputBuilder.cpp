@@ -27,7 +27,7 @@ namespace nav {
 	} // namespace
 
 	gnav::NavInputPolygon chunkSquare(world::ChunkCoordinate coord) {
-		const geometry::Vec2i64 lo{static_cast<std::int64_t>(coord.x) * kChunkMm, static_cast<std::int64_t>(coord.y) * kChunkMm};
+		const geometry::Vec2i64 lo = chunkOriginMm(coord);
 		return borderRing(lo, {lo.x + kChunkMm, lo.y + kChunkMm});
 	}
 

@@ -62,6 +62,7 @@
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace world {
@@ -209,12 +210,11 @@ namespace assets {
 			std::string			   defName;
 		};
 
-		/// Every entity removed so far (a destructive harvest felling a tree, a depleted
-		/// resource node), oldest first. The nav mesh holds a ring per blocking entity and
-		/// takes out just the removed ones, reading the entries past the count it has seen;
-		/// chunk membership alone doesn't show an in-chunk removal. Never shrinks: one entry
-		/// per felled tree or emptied node over a session.
-		[[nodiscard]] const std::vector<RemovedEntity>& removals() const { return m_removals; }
+		/// The entities removed since the last call (a destructive harvest felling a tree, a
+		/// depleted resource node), oldest first, and forgets them. The nav mesh holds a ring per
+		/// blocking entity and takes out just the removed ones; chunk membership alone doesn't
+		/// show an in-chunk removal. Its one reader takes them every tick, which bounds the list.
+		[[nodiscard]] std::vector<RemovedEntity> takeRemovals() { return std::exchange(m_removals, {}); }
 
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
