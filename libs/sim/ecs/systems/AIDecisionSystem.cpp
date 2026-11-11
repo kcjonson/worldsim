@@ -1820,9 +1820,8 @@ namespace ecs {
 
 		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
 		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
-		// and isReachable can't help -- it returns true ("can't prove unreachable") when there's no
-		// mesh, so the old check was leaky and the colonist committed to a wander it couldn't follow,
-		// then stalled. So only OFFER the wander when navigation is genuinely possible: a mesh
+		// and canReach can't help: with no reach it passes every point, so a wander offered then is
+		// one the colonist can't follow. So only OFFER the wander when navigation is possible: a mesh
 		// exists, or there's no nav system at all (headless/tests, direct movement). With a nav
 		// system but no mesh, emit no idle option; the colonist holds (see the no-option hold in
 		// selectTaskFromTrace) until the mesh lands. Needs and work keep their own options, but they
