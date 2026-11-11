@@ -93,6 +93,8 @@ namespace geometry::nav {
 		// Corridor widths are exact below this and read kUnconstrainedWidth at or above
 		// it, so a patch refreshes only the widths within this distance of what it changed.
 		std::int64_t maxClearanceMm = kDefaultMaxClearanceMm;
+		// The detail-class obstacle tags (NavMeshInput::detailTags).
+		std::vector<std::int64_t> detailTags;
 	};
 
 	class PatchableMesh {
@@ -123,7 +125,7 @@ namespace geometry::nav {
 		DoorId addDoor(const DoorPortal& door);
 		void   removeDoor(DoorId door);
 
-		// Corridor widths (NavTriangle::edgePairWidthMm, capped at maxClearanceMm) lag
+		// Corridor widths (NavTriangle::edgePairWidthMm and structuralWidthMm, capped at maxClearanceMm) lag
 		// behind patches: a patch only records where it changed the mesh, and this brings
 		// every width up to date, once for all the patches since the last call.
 		void refreshWidths();
@@ -278,6 +280,7 @@ namespace geometry::nav {
 
 		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
+		std::vector<std::int64_t>	detailTags;
 		std::vector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;
 

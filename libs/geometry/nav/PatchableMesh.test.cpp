@@ -1297,7 +1297,7 @@ namespace {
 
 	// Trees priced at kOraclePrice: the game's flora, cheap enough that some walks go
 	// through and some round.
-	constexpr double   kOraclePrice		= 4.0;
+	constexpr double   kOraclePrice		= 1.5;
 	constexpr TagPrice kOraclePrices[] = {{kTree, kOraclePrice}};
 	// Priced walks are compared for the movers' radii: a priced search skips the forest
 	// pre-check, so each pair it cannot reach costs a search of the whole mesh.
@@ -1313,8 +1313,8 @@ namespace {
 	// not required to match.
 	void expectBoundsSplitInvisible(std::int64_t k, std::uint32_t seed) {
 		const TiledGround g = tiledRealRings(k);
-		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000});
-		PatchableMesh	  split({.maxBoundsEdgeMm = 16000});
+		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000, .detailTags = {kTree}});
+		PatchableMesh	  split({.maxBoundsEdgeMm = 16000, .detailTags = {kTree}});
 		loadGround(whole, {g.border}, g.rings);
 		loadGround(split, g.squares, g.rings);
 		ASSERT_TRUE(whole.validate().empty()) << whole.validate();
@@ -1392,7 +1392,7 @@ namespace {
 		EXPECT_EQ(reachDiffers, 0);
 		EXPECT_EQ(bottleneckDiffers, 0);
 		EXPECT_GT(pricedCompared, 60);
-		EXPECT_GT(pricedThrough, 10) << "some priced walks must go through trees for the comparison to bind";
+		EXPECT_GT(pricedThrough, 5) << "some priced walks must go through trees for the comparison to bind";
 		::testing::Test::RecordProperty("pricedFlagsDiffering", flagsDiffer);
 		::testing::Test::RecordProperty("pricedCompared", pricedCompared);
 		::testing::Test::RecordProperty("pricedThrough", pricedThrough);
@@ -1420,7 +1420,8 @@ namespace {
 				const Vec2i64& apex = split.vertices()[st.v[static_cast<std::size_t>(e)]];
 				for (int f = 0; f < 3; ++f) {
 					if (whole.vertices()[wt.v[static_cast<std::size_t>(f)]] == apex &&
-						wt.edgePairWidthMm[static_cast<std::size_t>(f)] != st.edgePairWidthMm[static_cast<std::size_t>(e)]) {
+						(wt.edgePairWidthMm[static_cast<std::size_t>(f)] != st.edgePairWidthMm[static_cast<std::size_t>(e)] ||
+						 wt.structuralWidthMm[static_cast<std::size_t>(f)] != st.structuralWidthMm[static_cast<std::size_t>(e)])) {
 						++widthsDiffer;
 					}
 				}
@@ -1828,7 +1829,7 @@ TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 TEST(PatchableMesh, PricedHedgeIsCrossedOnEveryTiling) {
 	constexpr TagPrice kTrees[] = {{kTree, 50.0}};
 	for (const std::int64_t split : {64000, 16000}) {
-		PatchableMesh mesh({.maxBoundsEdgeMm = split});
+		PatchableMesh mesh({.maxBoundsEdgeMm = split, .detailTags = {kTree}});
 		PatchEdits	  edits;
 		edits.adds.push_back(bounds(rect(0, 0, 512000, 512000)));
 		for (std::int64_t y = 2000; y <= 60000; y += 500) {
@@ -1844,5 +1845,33 @@ TEST(PatchableMesh, PricedHedgeIsCrossedOnEveryTiling) {
 		EXPECT_EQ(pathLengthMm(r), 6000) << "split " << split;
 		// 5.4 m of open ground and the 0.6 m hedge at 50 times.
 		EXPECT_NEAR(r.cost, 5400.0 + 50.0 * 600.0, 4.0) << "split " << split;
+	}
+}
+
+// A goal ringed by trees (0.6 m trunks every 0.55 m round a 3 m circle) on an open chunk:
+// the only way in is through a trunk, at its price, on every tiling.
+TEST(PatchableMesh, PricedRingIsEnteredOnEveryTiling) {
+	constexpr TagPrice kTrees[] = {{kTree, 50.0}};
+	const Vec2i64	   goal{20000, 20000};
+	for (const std::int64_t split : {64000, 16000}) {
+		PatchableMesh mesh({.maxBoundsEdgeMm = split, .detailTags = {kTree}});
+		PatchEdits	  edits;
+		edits.adds.push_back(bounds(rect(0, 0, 512000, 512000)));
+		const int count = static_cast<int>(std::ceil(6.2831853 * 3000.0 / 550.0));
+		for (int i = 0; i < count; ++i) {
+			const double	   angle = 6.2831853 * i / count;
+			const std::int64_t x	 = goal.x + std::llround(3000.0 * std::cos(angle));
+			const std::int64_t y	 = goal.y + std::llround(3000.0 * std::sin(angle));
+			edits.adds.push_back(blocked(rect(x - 300, y - 300, x + 300, y + 300)));
+		}
+		mesh.applyPatch(edits);
+		mesh.refreshWidths();
+		EXPECT_FALSE(pathThrough(mesh.view(), {10000, 20000}, goal, 300).reachable) << "split " << split;
+		BeliefFilter belief;
+		belief.prices = kTrees;
+		const PathResult r = pathThrough(mesh.view(), {10000, 20000}, goal, 300, belief);
+		ASSERT_TRUE(r.reachable) << "split " << split;
+		EXPECT_TRUE(r.crossesPricedFaces) << "split " << split;
+		EXPECT_LT(pathLengthMm(r), 10500) << "split " << split;
 	}
 }

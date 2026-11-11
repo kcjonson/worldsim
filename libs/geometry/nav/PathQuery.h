@@ -37,9 +37,10 @@ namespace geometry::nav {
 		std::int64_t peakOpenSet   = 0;
 
 		// What the walk costs: its length, with each piece through a priced face weighted
-		// by its multiplier (BeliefFilter::prices), and a squeeze past priced faces charged
-		// its price over at most the disc's diameter of the walk. Equal to the length when
-		// nothing priced is crossed. It is the cost of the
+		// by its multiplier, each run of priced faces at least its least multiplier over
+		// the disc's diameter (a disc that enters priced ground overlaps it that far), and a
+		// squeeze past detail charged its price over at most the disc's diameter of the
+		// walk. Equal to the length when nothing priced is crossed. It is the cost of the
 		// returned path, the corridor's taut walk; inside a corridor the path does not
 		// bend away from priced faces to save cost.
 		double cost = 0.0;
@@ -69,11 +70,12 @@ namespace geometry::nav {
 	// from while it walks free ground; walking into, through, or out of priced ground it
 	// keeps clear only of what it cannot cross. The search takes the cheapest walk: round
 	// by free ground while that is less than the way through at its price, through
-	// otherwise. A gap too narrow for the disc is squeezed through only when it would
-	// admit the disc with priced faces read as open ground, at the least price that opens
-	// it (the higher of two tags that both narrow it), and free beside the priced face
-	// the walk crosses anyway at that price; a gap anything else narrows stays shut. The
-	// reachability forests treat priced faces as walls, so the forest pre-check is
+	// otherwise. A gap too narrow for the disc is squeezed through only when the mesh's
+	// structural width admits it (NavTriangle::structuralWidthMm: detail-class faces read
+	// as open ground) and the query prices every detail tag, at the dearest detail price,
+	// free beside the priced face the walk crosses anyway at that price; a gap anything
+	// else narrows stays shut, and with a detail tag left unpriced every such gap does.
+	// The reachability forests treat priced faces as walls, so the forest pre-check is
 	// skipped while prices are set.
 	struct TagPrice {
 		std::int64_t tag		= 0;   // a NavTriangle::faceBlocker value; each listed once

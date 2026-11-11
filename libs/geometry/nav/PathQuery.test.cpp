@@ -775,6 +775,7 @@ namespace {
 	// 18 m, open at both ends, with `gap` mm between trunks.
 	NavMesh hedgeMesh(std::int64_t gap = 0) {
 		NavMeshInput in;
+		in.detailTags = {kTreeTag};
 		in.polygons.push_back(field());
 		for (std::int64_t x = 2000; x < 18000; x += 1000) {
 			in.polygons.push_back(treeRect(x, 5800, x + 1000 - gap, 6200));
@@ -784,8 +785,9 @@ namespace {
 
 	// The field split at y = 6 m from x = 2 m to x = 18 m by a band of `pieces`, each
 	// {x0, x1, tag} spanning y 5.8 to 6.2 m; where they leave a gap, it is open floor.
-	NavMesh bandMesh(const std::vector<std::array<std::int64_t, 3>>& pieces) {
+	NavMesh bandMesh(const std::vector<std::array<std::int64_t, 3>>& pieces, std::vector<std::int64_t> detail = {kTreeTag}) {
 		NavMeshInput in;
+		in.detailTags = std::move(detail);
 		in.polygons.push_back(field());
 		for (const auto& [x0, x1, tag] : pieces) {
 			in.polygons.push_back(taggedRect(x0, 5800, x1, 6200, tag));
@@ -799,6 +801,7 @@ namespace {
 // is no path; with one, the walk goes through, says so, and costs more than its length.
 TEST(PathQuery, PricedFacesOpenARingOfTrees) {
 	NavMeshInput in;
+	in.detailTags = {kTreeTag};
 	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
 	in.polygons.push_back(treeRect(3000, 3000, 7000, 3500));
 	in.polygons.push_back(treeRect(3000, 6500, 7000, 7000));
@@ -903,6 +906,7 @@ TEST(PathQuery, SqueezesOpenOnlyWherePricedFacesNarrow) {
 	const Vec2i64  goal{10200, 8000};
 	{
 		NavMeshInput in;
+		in.detailTags = {kTreeTag};
 		in.polygons.push_back(field());
 		in.polygons.push_back(taggedRect(2000, 5800, 10100, 6200, kWaterTag));
 		in.polygons.push_back(taggedRect(10300, 5800, 18000, 6200, kWaterTag));
@@ -931,7 +935,7 @@ TEST(PathQuery, SqueezesOpenOnlyWherePricedFacesNarrow) {
 // 600 mm disc, both do, so the squeeze costs the higher price: dearer than with the
 // footprint at the tree's price, no dearer than with the tree at the footprint's.
 TEST(PathQuery, AGapTwoPricedTagsNarrowCostsTheHigherPrice) {
-	const NavMesh m = bandMesh({{2000, 9650, kWaterTag}, {9650, 10000, kTreeTag}, {10000, 10350, kFootprintTag}, {10350, 18000, kWaterTag}});
+	const NavMesh m = bandMesh({{2000, 9650, kWaterTag}, {9650, 10000, kTreeTag}, {10000, 10350, kFootprintTag}, {10350, 18000, kWaterTag}}, {kTreeTag, kFootprintTag});
 	const Vec2i64 start{10000, 4000};
 	const Vec2i64 goal{10000, 8000};
 	EXPECT_GT(polylineLength(pathThrough(m, start, goal, 300)), 12000.0);
@@ -954,6 +958,7 @@ TEST(PathQuery, AGapTwoPricedTagsNarrowCostsTheHigherPrice) {
 // priced, and the flag says so.
 TEST(PathQuery, OneTriangleWalkIsCosted) {
 	NavMeshInput in;
+	in.detailTags = {kTreeTag};
 	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
 	in.polygons.push_back({{{4000, 4000}, {8000, 4000}, {4000, 8000}}, true, kTreeTag});
 	const NavMesh m = buildNavMesh(in);
@@ -967,6 +972,7 @@ TEST(PathQuery, OneTriangleWalkIsCosted) {
 	EXPECT_NEAR(inTree.cost, 3000.0, 1e-6);
 
 	NavMeshInput openInput;
+	openInput.detailTags = {kTreeTag};
 	openInput.polygons.push_back({{{0, 0}, {10000, 0}, {0, 10000}}, false, 1});
 	const NavMesh	 open  = buildNavMesh(openInput);
 	const PathResult plain = pathThrough(open, {1000, 1000}, {1600, 1800}, 0);
@@ -979,6 +985,7 @@ TEST(PathQuery, OneTriangleWalkIsCosted) {
 // trunk is not charged for it.
 TEST(PathQuery, AnEndOnAPricedEdgeStandsOnFreeGround) {
 	NavMeshInput in;
+	in.detailTags = {kTreeTag};
 	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
 	in.polygons.push_back(treeRect(4000, 4000, 6000, 6000));
 	const NavMesh  m	   = buildNavMesh(in);
@@ -992,12 +999,95 @@ TEST(PathQuery, AnEndOnAPricedEdgeStandsOnFreeGround) {
 	}
 }
 
+namespace {
+
+	// The least distance from the polyline to the closed rect [x0, x1] x [y0, y1], 0 where
+	// it enters it.
+	double clearanceFromRect(const std::vector<Vec2i64>& points, double x0, double y0, double x1, double y1) {
+		auto pointToRect = [&](double x, double y) {
+			const double dx = std::max({x0 - x, 0.0, x - x1});
+			const double dy = std::max({y0 - y, 0.0, y - y1});
+			return std::hypot(dx, dy);
+		};
+		double least = std::numeric_limits<double>::infinity();
+		for (std::size_t i = 0; i + 1 < points.size(); ++i) {
+			const double ax = static_cast<double>(points[i].x);
+			const double ay = static_cast<double>(points[i].y);
+			const double bx = static_cast<double>(points[i + 1].x);
+			const double by = static_cast<double>(points[i + 1].y);
+			for (int k = 0; k <= 4000; ++k) {
+				const double t = k / 4000.0;
+				least		   = std::min(least, pointToRect(ax + (bx - ax) * t, ay + (by - ay) * t));
+			}
+		}
+		return least;
+	}
+
+} // namespace
+
+// A disc rounding a priced tree's corner keeps the clearance it keeps from an unpriced
+// one (the funnel's corner insets; see PathQuery.cpp's clearance caveat), or pays at
+// least the tree's price over its diameter to push through and says so; it never shaves
+// the corner through the tree's own triangle for free.
+TEST(PathQuery, APricedCornerIsRoundedOrPaidFor) {
+	NavMeshInput in;
+	in.detailTags = {kTreeTag};
+	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
+	in.polygons.push_back(treeRect(4800, 4600, 5200, 5400));
+	const NavMesh  m	   = buildNavMesh(in);
+	const TagPrice trees[] = {{kTreeTag, 3.0}};
+	int			   rounded = 0;
+	for (const auto& [a, b] : std::vector<std::pair<Vec2i64, Vec2i64>>{
+			 {{3800, 4000}, {6200, 6000}}, {{3800, 6000}, {6200, 4000}}, {{5000, 3000}, {5000, 7000}}, {{4000, 5000}, {6000, 5000}}, {{4400, 4000}, {5600, 6000}}}) {
+		const PathResult plain	= pathThrough(m, a, b, 300);
+		const PathResult priced = pathThrough(m, a, b, 300, pricedBy(trees));
+		ASSERT_TRUE(plain.reachable);
+		ASSERT_TRUE(priced.reachable);
+		if (!priced.crossesPricedFaces) {
+			++rounded;
+			EXPECT_GE(clearanceFromRect(priced.points, 4800, 4600, 5200, 5400), clearanceFromRect(plain.points, 4800, 4600, 5200, 5400) - 1.0)
+				<< "priced from (" << a.x << ", " << a.y << ")";
+			EXPECT_NEAR(priced.cost, polylineLength(priced), 2.0);
+		} else {
+			EXPECT_GT(priced.cost, polylineLength(priced) + 2.0 * 600.0 - 1.0) << "priced from (" << a.x << ", " << a.y << ")";
+		}
+	}
+	EXPECT_GT(rounded, 0);
+}
+
+// A rock's tip 283 mm off a tree's corner, joined to it by a mesh edge, with no rock edge
+// in the triangles round the corner: with the tree read as open the corner is a free apex,
+// and the tip still bounds what passes there. No structural width at the corner, in a
+// triangle that reaches the tip, admits a disc wider than twice that gap.
+TEST(PathQuery, AHardTipBoundsAFreedCorner) {
+	NavMeshInput in;
+	in.detailTags = {kTreeTag};
+	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
+	in.polygons.push_back(treeRect(4000, 4000, 5000, 5000));
+	in.polygons.push_back({{{5200, 5200}, {5900, 5400}, {5400, 5900}}, true, kWaterTag});
+	const NavMesh m = buildNavMesh(in);
+	const Vec2i64 corner{5000, 5000};
+	const Vec2i64 tip{5200, 5200};
+	int			  checked = 0;
+	for (const NavTriangle& tri : m.triangles) {
+		for (int i = 0; i < 3; ++i) {
+			const bool reachesTip = m.vertices[tri.v[static_cast<std::size_t>((i + 1) % 3)]] == tip || m.vertices[tri.v[static_cast<std::size_t>((i + 2) % 3)]] == tip;
+			if (m.vertices[tri.v[static_cast<std::size_t>(i)]] == corner && reachesTip) {
+				++checked;
+				EXPECT_LE(tri.structuralWidthMm[static_cast<std::size_t>(i)], 2 * 282);
+			}
+		}
+	}
+	EXPECT_GT(checked, 0) << "the tip must share a triangle with the corner for the test to bind";
+}
+
 // Corner classes are kept per mesh state. A mesh assigned another's content in place,
 // buffers and all, answers as that content does: a door span where a tree stood is no
 // corner to keep clear of.
 TEST(PathQuery, AMeshRebuiltInPlaceForgetsItsCorners) {
 	auto build = [](NavInputPolygon square) {
 		NavMeshInput in;
+		in.detailTags = {kTreeTag};
 		in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
 		in.polygons.push_back(std::move(square));
 		return buildNavMesh(in);
@@ -1043,11 +1133,11 @@ namespace {
 		return rects;
 	}
 
-	NavMesh buildRefereeMesh() {
+	NavMesh buildRefereeMesh(const std::vector<Rect>& rects) {
 		NavMeshInput in;
 		in.polygons.push_back({{{0, 0}, {6000, 0}, {6000, 4000}, {0, 4000}}, false, 1});
 		std::int64_t id = -40;
-		for (const Rect& r : refereeRects()) {
+		for (const Rect& r : rects) {
 			in.polygons.push_back({{{r.x0, r.y0}, {r.x1, r.y0}, {r.x1, r.y1}, {r.x0, r.y1}}, true, id--});
 		}
 		return buildNavMesh(in);
@@ -1082,13 +1172,13 @@ namespace {
 	// The exact shortest walk from a to b round the rects (radius 0): Dijkstra over the
 	// visibility graph of a, b and every rect corner. Independent of the mesh and of
 	// pathThrough.
-	double refereeLength(const Vec2i64& a, const Vec2i64& b) {
+	double refereeLength(const std::vector<Rect>& rects, const Vec2i64& a, const Vec2i64& b) {
 		std::vector<Vec2i64> nodes{a, b};
-		for (const Rect& r : refereeRects()) {
+		for (const Rect& r : rects) {
 			nodes.insert(nodes.end(), {{r.x0, r.y0}, {r.x1, r.y0}, {r.x1, r.y1}, {r.x0, r.y1}});
 		}
 		auto visible = [&](const Vec2i64& p, const Vec2i64& q) {
-			for (const Rect& r : refereeRects()) {
+			for (const Rect& r : rects) {
 				if (crossesInterior(p, q, r)) {
 					return false;
 				}
@@ -1153,13 +1243,13 @@ namespace {
 // goal behind the start, past both bounds of any funnel heading out), threading posts.
 // The walk's corners are rounded to the mm, so a few mm either way.
 TEST(PathQuery, ShortestWalkMatchesVisibilityGraph) {
-	const NavMesh				m	   = buildRefereeMesh();
+	const NavMesh				m	   = buildRefereeMesh(refereeRects());
 	const std::vector<Vec2i64> points = refereePoints(160);
 	int						   checked = 0;
 	for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
 		const PathResult walk = pathThrough(m, points[i], points[i + 1], 0);
 		ASSERT_TRUE(walk.reachable) << "pair " << i;
-		const double exact = refereeLength(points[i], points[i + 1]);
+		const double exact = refereeLength(refereeRects(), points[i], points[i + 1]);
 		EXPECT_NEAR(walkLength(walk), exact, 4.0) << "from (" << points[i].x << ", " << points[i].y << ") to (" << points[i + 1].x << ", "
 												 << points[i + 1].y << ")";
 		++checked;
@@ -1169,6 +1259,69 @@ TEST(PathQuery, ShortestWalkMatchesVisibilityGraph) {
 	const Vec2i64	 goal{4300, 3000};
 	const PathResult uTurn = pathThrough(m, start, goal, 0);
 	ASSERT_TRUE(uTurn.reachable);
-	EXPECT_NEAR(walkLength(uTurn), refereeLength(start, goal), 4.0);
+	EXPECT_NEAR(walkLength(uTurn), refereeLength(refereeRects(), start, goal), 4.0);
 	EXPECT_EQ(checked, 80);
+}
+
+namespace {
+
+	std::int64_t between(std::mt19937& rng, std::int64_t lo, std::int64_t hi) {
+		return lo + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi - lo + 1));
+	}
+
+	// A wall 200 mm thick across the box, its ends somewhere inside, and 3 to 8 square
+	// posts, from `rng`.
+	std::vector<Rect> wallAndPosts(std::mt19937& rng) {
+		auto			  between = [&](std::int64_t lo, std::int64_t hi) { return ::between(rng, lo, hi); };
+		std::vector<Rect> rects;
+		const std::int64_t wy = between(1500, 2500);
+		rects.push_back({between(300, 2500), wy, between(3500, 5700), wy + 200});
+		const int posts = 3 + static_cast<int>(rng() % 6);
+		for (int k = 0; k < posts; ++k) {
+			const std::int64_t x = between(100, 5500);
+			const std::int64_t y = between(100, 3500);
+			const std::int64_t s = between(100, 500);
+			rects.push_back({x, y, x + s, y + s});
+		}
+		return rects;
+	}
+
+} // namespace
+
+// Walks that wrap a wall's end to reach its far side, against the referee. A goal label
+// pulled exactly kept out a newcomer by its funnel's reach, a bound, though the
+// newcomer's walk was shorter; this layout held such a walk.
+TEST(PathQuery, ShortestWalksWrapWallEnds) {
+	int checked = 0;
+	for (const std::uint32_t seed : {238u}) {
+		std::mt19937			rng(seed);
+		const std::vector<Rect> rects = wallAndPosts(rng);
+		for (std::size_t i = 0; i < rects.size(); ++i) {
+			for (std::size_t j = 0; j < i; ++j) {
+				const Rect& p = rects[i];
+				const Rect& q = rects[j];
+				ASSERT_TRUE(p.x1 < q.x0 || q.x1 < p.x0 || p.y1 < q.y0 || q.y1 < p.y0) << "seed " << seed << ": rects touch";
+			}
+		}
+		const NavMesh m = buildRefereeMesh(rects);
+		for (int pair = 0; pair < 20; ++pair) {
+			const Vec2i64 a{between(rng, 1, 5999), between(rng, 1, 3999)};
+			const Vec2i64 b{between(rng, 1, 5999), between(rng, 1, 3999)};
+			bool		  inside = false;
+			for (const Rect& r : rects) {
+				for (const Vec2i64& p : {a, b}) {
+					inside = inside || (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1);
+				}
+			}
+			if (inside) {
+				continue;
+			}
+			const PathResult walk = pathThrough(m, a, b, 0);
+			ASSERT_TRUE(walk.reachable);
+			EXPECT_NEAR(walkLength(walk), refereeLength(rects, a, b), 4.0)
+				<< "seed " << seed << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
+			++checked;
+		}
+	}
+	EXPECT_GT(checked, 10);
 }

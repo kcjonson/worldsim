@@ -12,6 +12,7 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <span>
 #include <unordered_map>
 #include <tuple>
 #include <utility>
@@ -377,100 +378,150 @@ namespace geometry::nav {
 		}
 	} // namespace
 
-	// Demyen Algorithm 3, CalculateWidth, for the edge pair meeting at apex v[apex]: edges
-	// apex (C, A) and (apex+2)%3 (B, C), opposite edge (apex+1)%3 (A, B). A base vertex
-	// bounds the width only when it is an obstacle vertex, and an edge's obstacle status
-	// is read only when the edge is nearer than the bound, which keeps every read within
-	// maxClearanceMm of the apex.
-	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
-								 std::span<const std::int64_t> openTags) {
-		const NavTriangle& tri	  = view.triangle(ti);
-		const int		   cEdge  = (apex + 1) % 3;
-		const int		   bEdge  = (apex + 2) % 3;
-		const Vec2i64&	   c	  = view.vertex(tri.v[static_cast<std::size_t>(apex)]);
-		const Vec2i64&	   a	  = view.vertex(tri.v[static_cast<std::size_t>(cEdge)]);
-		const Vec2i64&	   b	  = view.vertex(tri.v[static_cast<std::size_t>(bEdge)]);
-		auto			   capped = [&](std::int64_t d) { return d >= maxClearanceMm ? kUnconstrainedWidth : d; };
+	namespace {
 
-		std::int64_t d = maxClearanceMm;
-		if (lengthBelow(a - c, d) && (isObstacleEdge(view, ti, cEdge, openTags) || isObstacleEdge(view, ti, apex, openTags))) {
-			d = floorSqrtSquared(dot(a - c, a - c));
-		}
-		if (lengthBelow(b - c, d) && (isObstacleEdge(view, ti, cEdge, openTags) || isObstacleEdge(view, ti, bEdge, openTags))) {
-			d = floorSqrtSquared(dot(b - c, b - c));
-		}
-		// An obtuse base angle: the nearer base vertex is the closest obstacle in the
-		// wedge, and crossing the opposite edge would leave it.
-		if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
-			return capped(d);
-		}
-		if (lineDistanceBelow(c, a, b, d) && isObstacleEdge(view, ti, cEdge, openTags)) {
-			return capped(floorDistancePointToSegment(c, a, b));
-		}
-		beginWidthSearch(view, search);
-		search.visited[static_cast<std::size_t>(ti)] = search.stamp;
-		return capped(searchWidth(view, search, c, ti, cEdge, d, openTags));
-	}
-
-	std::int64_t freeApexWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
-								 std::span<const std::int64_t> openTags) {
-		// The star of the apex, both ways round from ti: its triangles and each one's
-		// corner on the apex. An obstacle edge meeting the apex makes it an obstacle vertex.
-		const std::uint32_t						   v = view.triangle(ti).v[static_cast<std::size_t>(apex)];
-		std::vector<std::pair<std::int32_t, int>>& star = search.star;
-		star.clear();
-		auto cornerOf = [&](std::int32_t t) {
-			const NavTriangle& tri = view.triangle(t);
-			return tri.v[0] == v ? 0 : (tri.v[1] == v ? 1 : 2);
-		};
-		bool closed = false;
-		for (const int turn : {2, 0}) {
-			std::int32_t cur = ti;
-			for (int guard = 0; guard < 256 && !closed; ++guard) {
-				const std::int32_t nb = view.triangle(cur).neighbor[static_cast<std::size_t>((cornerOf(cur) + turn) % 3)];
-				if (nb < 0) {
-					break;
-				}
-				closed = nb == ti;
-				if (!closed) {
+		// Visits each triangle round corner `corner` of triangle ti with its own corner on that
+		// vertex, both ways round from ti, until `visit` returns true; says whether it did.
+		template <typename Visit> bool anyInStar(const NavView& view, std::int32_t ti, int corner, Visit visit) {
+			const std::uint32_t v		 = view.triangle(ti).v[static_cast<std::size_t>(corner)];
+			auto				cornerOf = [&](std::int32_t t) {
+				   const NavTriangle& tri = view.triangle(t);
+				   return tri.v[0] == v ? 0 : (tri.v[1] == v ? 1 : 2);
+			};
+			if (visit(ti, corner)) {
+				return true;
+			}
+			for (const int turn : {2, 0}) {
+				std::int32_t cur = ti;
+				for (int guard = 0; guard < 256; ++guard) {
+					const std::int32_t nb = view.triangle(cur).neighbor[static_cast<std::size_t>((cornerOf(cur) + turn) % 3)];
+					if (nb < 0) {
+						break;
+					}
+					if (nb == ti) {
+						return false; // closed round: every triangle seen
+					}
 					cur = nb;
-					star.push_back({cur, cornerOf(cur)});
+					if (visit(cur, cornerOf(cur))) {
+						return true;
+					}
 				}
 			}
-			if (closed) {
-				break;
-			}
+			return false;
 		}
-		star.push_back({ti, apex});
-		for (const auto& [t, i] : star) {
-			if (isObstacleEdge(view, t, i, openTags) || isObstacleEdge(view, t, (i + 2) % 3, openTags)) {
+
+		// Does an obstacle edge meet corner `corner` of triangle ti?
+		bool isObstacleVertex(const NavView& view, std::int32_t ti, int corner, std::span<const std::int64_t> openTags) {
+			return anyInStar(view, ti, corner, [&](std::int32_t t, int i) {
+				return isObstacleEdge(view, t, i, openTags) || isObstacleEdge(view, t, (i + 2) % 3, openTags);
+			});
+		}
+
+		// Demyen Algorithm 3, CalculateWidth, for the edge pair meeting at apex v[apex]:
+		// edges apex (C, A) and (apex+2)%3 (B, C), opposite edge (apex+1)%3 (A, B), faces
+		// tagged one of `openTags` read as open ground. A base vertex bounds the width only
+		// when it is an obstacle vertex, and an edge's obstacle status is read only when the
+		// edge is nearer than the bound, which keeps every read within maxClearanceMm of the
+		// apex. Whether a base vertex is one is read from this triangle's edges, or, with
+		// `wholeStar`, from every edge that meets it: this triangle's edges miss an
+		// obstacle that only touches the vertex from outside it (a rock's tip), and the
+		// width comes out too wide. Stored full widths still read the triangle's edges (the
+		// bounds-split oracle holds them equal across tilings); the structural width, which
+		// opens squeezes, reads the whole star.
+		std::int64_t wedgeWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
+								  std::span<const std::int64_t> openTags, bool wholeStar) {
+			const NavTriangle& tri	  = view.triangle(ti);
+			const int		   cEdge  = (apex + 1) % 3;
+			const int		   bEdge  = (apex + 2) % 3;
+			const Vec2i64&	   c	  = view.vertex(tri.v[static_cast<std::size_t>(apex)]);
+			const Vec2i64&	   a	  = view.vertex(tri.v[static_cast<std::size_t>(cEdge)]);
+			const Vec2i64&	   b	  = view.vertex(tri.v[static_cast<std::size_t>(bEdge)]);
+			auto			   capped = [&](std::int64_t d) { return d >= maxClearanceMm ? kUnconstrainedWidth : d; };
+
+			std::int64_t d = maxClearanceMm;
+			auto obstacleVertex = [&](int k, int edgeIn) {
+				return wholeStar ? isObstacleVertex(view, ti, k, openTags)
+								 : isObstacleEdge(view, ti, cEdge, openTags) || isObstacleEdge(view, ti, edgeIn, openTags);
+			};
+			if (lengthBelow(a - c, d) && obstacleVertex(cEdge, apex)) {
+				d = floorSqrtSquared(dot(a - c, a - c));
+			}
+			if (lengthBelow(b - c, d) && obstacleVertex(bEdge, bEdge)) {
+				d = floorSqrtSquared(dot(b - c, b - c));
+			}
+			// An obtuse base angle: the nearer base vertex is the closest obstacle in the
+			// wedge, and crossing the opposite edge would leave it.
+			if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
+				return capped(d);
+			}
+			if (lineDistanceBelow(c, a, b, d) && isObstacleEdge(view, ti, cEdge, openTags)) {
+				return capped(floorDistancePointToSegment(c, a, b));
+			}
+			beginWidthSearch(view, search);
+			search.visited[static_cast<std::size_t>(ti)] = search.stamp;
+			return capped(searchWidth(view, search, c, ti, cEdge, d, openTags));
+		}
+
+		// The widest disc centred on a free apex, with `openTags` read as open ground: it
+		// crosses both edges there, so the passage admits it if it fits. Its clearance is the
+		// distance to the nearest obstacle all round: an obstacle vertex of the star, or
+		// what the wedge search finds across each star triangle's far edge. 0 at an
+		// obstacle vertex; kUnconstrainedWidth from maxClearanceMm on.
+		std::int64_t freeApexWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm,
+									 std::span<const std::int64_t> openTags) {
+			if (isObstacleVertex(view, ti, apex, openTags)) {
 				return 0;
 			}
-		}
-		// A free apex: a disc centred on it crosses both edges, so it passes if it fits
-		// there. Its clearance is the distance to the nearest obstacle all round, found as
-		// the wedge search finds it, across every triangle of the star.
-		const Vec2i64&	   c	 = view.vertex(v);
-		const std::int64_t bound = (maxClearanceMm + 1) / 2;
-		std::int64_t	   d	 = bound;
-		beginWidthSearch(view, search);
-		for (const auto& [t, i] : star) {
-			search.visited[static_cast<std::size_t>(t)] = search.stamp;
-		}
-		for (const auto& [t, i] : star) {
-			const NavTriangle& tri = view.triangle(t);
-			const int		   far = (i + 1) % 3;
-			if (isObstacleEdge(view, t, far, openTags)) {
-				for (const int k : {far, (i + 2) % 3}) {
+			std::vector<std::pair<std::int32_t, int>>& star = search.star;
+			star.clear();
+			anyInStar(view, ti, apex, [&](std::int32_t t, int i) {
+				star.push_back({t, i});
+				return false;
+			});
+			const Vec2i64&	   c	 = view.vertex(view.triangle(ti).v[static_cast<std::size_t>(apex)]);
+			const std::int64_t bound = maxClearanceMm / 2 + maxClearanceMm % 2;
+			std::int64_t	   d	 = bound;
+			for (const auto& [t, i] : star) {
+				const NavTriangle& tri = view.triangle(t);
+				for (const int k : {(i + 1) % 3, (i + 2) % 3}) {
 					const Vec2i64& x = view.vertex(tri.v[static_cast<std::size_t>(k)]);
-					if (lengthBelow(x - c, d)) {
+					if (lengthBelow(x - c, d) && isObstacleVertex(view, t, k, openTags)) {
 						d = floorSqrtSquared(dot(x - c, x - c));
 					}
 				}
 			}
-			d = searchWidth(view, search, c, t, far, d, openTags);
+			beginWidthSearch(view, search);
+			for (const auto& [t, i] : star) {
+				search.visited[static_cast<std::size_t>(t)] = search.stamp;
+			}
+			for (const auto& [t, i] : star) {
+				d = searchWidth(view, search, c, t, (i + 1) % 3, d, openTags);
+			}
+			return d >= bound ? kUnconstrainedWidth : 2 * d;
 		}
-		return d >= bound ? kUnconstrainedWidth : 2 * d;
+
+	} // namespace
+
+	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm) {
+		return wedgeWidthMm(view, search, ti, apex, maxClearanceMm, {}, false);
+	}
+
+	ApexWidths apexWidthsMm(const NavView& view, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm) {
+		ApexWidths out;
+		out.full = wedgeWidthMm(view, search, ti, apex, maxClearanceMm, {}, false);
+		if (view.detailTags == nullptr || view.detailTags->empty() || out.full == kUnconstrainedWidth) {
+			out.structural = out.full;
+			return out;
+		}
+		const std::span<const std::int64_t> detail(*view.detailTags);
+		out.structural = wedgeWidthMm(view, search, ti, apex, maxClearanceMm, detail, true);
+		// An apex that only detail made an obstacle vertex is free once detail is open, and
+		// the wedge measure is too narrow there. One free already is left to the wedge
+		// measure, as the full width leaves it: what narrows it there is not detail.
+		if (out.structural != kUnconstrainedWidth && isObstacleVertex(view, ti, apex, {})) {
+			out.structural = std::max(out.structural, freeApexWidthMm(view, search, ti, apex, maxClearanceMm, detail));
+		}
+		return out;
 	}
 
 	std::uint64_t nextMeshGeneration() {
@@ -490,6 +541,7 @@ namespace geometry::nav {
 		};
 		view.widthsCurrentIn = [](const void*) { return true; };
 		view.epochIn		 = [](const void* owner) { return static_cast<const NavMesh*>(owner)->generation; };
+		view.detailTags		 = &mesh.detailTags;
 		return view;
 	}
 
@@ -870,12 +922,15 @@ namespace geometry::nav {
 		// 8. Corridor widths for every triangle and apex, uncapped. They need the
 		// finished adjacency and face tags.
 		{
+			result.detailTags = input.detailTags;
 			const NavView view = navView(result);
 			WidthSearch	  search;
 			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
+				NavTriangle& tri = result.triangles[static_cast<std::size_t>(ti)];
 				for (int apex = 0; apex < 3; ++apex) {
-					result.triangles[static_cast<std::size_t>(ti)].edgePairWidthMm[static_cast<std::size_t>(apex)] =
-						corridorWidthMm(view, search, ti, apex, kUnconstrainedWidth);
+					const ApexWidths w							 = apexWidthsMm(view, search, ti, apex, kUnconstrainedWidth);
+					tri.edgePairWidthMm[static_cast<std::size_t>(apex)]	 = w.full;
+					tri.structuralWidthMm[static_cast<std::size_t>(apex)] = w.structural;
 				}
 			}
 		}

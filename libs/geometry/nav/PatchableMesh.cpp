@@ -2251,7 +2251,7 @@ namespace geometry::nav {
 	}
 
 	PatchableMesh::PatchableMesh(const PatchableMeshArgs& args)
-		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm) {}
+		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), detailTags(args.detailTags) {}
 
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
@@ -2362,8 +2362,9 @@ namespace geometry::nav {
 				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 				for (int apex = 0; apex < 3; ++apex) {
 					const Vec2i64& c = verts[tri.v[static_cast<std::size_t>(apex)]];
-					// The stored width is floored: the obstacle can lie up to a millimetre farther.
-					const std::int64_t reachMm = std::min(tri.edgePairWidthMm[static_cast<std::size_t>(apex)], maxClearanceMm) + 1;
+					// The stored widths are floored: the obstacle can lie up to a millimetre
+					// farther. The structural width is the wider, reading farther.
+					const std::int64_t reachMm = std::min(std::max(tri.edgePairWidthMm[static_cast<std::size_t>(apex)], tri.structuralWidthMm[static_cast<std::size_t>(apex)]), maxClearanceMm) + 1;
 					const Vec2i64	   gap{std::max({lo.x - c.x, c.x - hi.x, std::int64_t{0}}), std::max({lo.y - c.y, c.y - hi.y, std::int64_t{0}})};
 					if (dot(gap, gap) < Int128::product(reachMm, reachMm)) {
 						stale.push_back(3 * t + apex);
@@ -2375,8 +2376,9 @@ namespace geometry::nav {
 		stale.erase(std::unique(stale.begin(), stale.end()), stale.end());
 		const NavView meshView = view();
 		for (std::int32_t a : stale) {
-			tris[static_cast<std::size_t>(a / 3)].edgePairWidthMm[static_cast<std::size_t>(a % 3)] =
-				corridorWidthMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm);
+			const ApexWidths w														 = apexWidthsMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm);
+			tris[static_cast<std::size_t>(a / 3)].edgePairWidthMm[static_cast<std::size_t>(a % 3)]	 = w.full;
+			tris[static_cast<std::size_t>(a / 3)].structuralWidthMm[static_cast<std::size_t>(a % 3)] = w.structural;
 		}
 		freshWidthTriangles.clear();
 		pendingWidthBoxes.clear();
@@ -2404,6 +2406,7 @@ namespace geometry::nav {
 		};
 		v.widthsCurrentIn = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->widthsCurrent(); };
 		v.epochIn		  = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->epoch(); };
+		v.detailTags	  = &detailTags;
 		return v;
 	}
 
@@ -2836,9 +2839,12 @@ namespace geometry::nav {
 				}
 				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 				for (int e = 0; e < 3; ++e) {
-					if (widthsCurrent() && tri.edgePairWidthMm[static_cast<std::size_t>(e)] != corridorWidthMm(v, search, t, e, maxClearanceMm)) {
-						fail() << "triangle " << t << " apex " << e << " has a stale corridor width";
-						return err.str();
+					if (widthsCurrent()) {
+						const ApexWidths w = apexWidthsMm(v, search, t, e, maxClearanceMm);
+						if (tri.edgePairWidthMm[static_cast<std::size_t>(e)] != w.full || tri.structuralWidthMm[static_cast<std::size_t>(e)] != w.structural) {
+							fail() << "triangle " << t << " apex " << e << " has a stale corridor width";
+							return err.str();
+						}
 					}
 					auto		 door	 = doorsAt.find(edgeKey(verts[tri.v[static_cast<std::size_t>(e)]], verts[tri.v[static_cast<std::size_t>(next3(e))]]));
 					const bool	 tagged	 = door != doorsAt.end();

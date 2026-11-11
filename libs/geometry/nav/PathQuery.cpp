@@ -325,38 +325,61 @@ namespace geometry::nav {
 		// belief, so walked per query).
 		enum class Star : std::uint8_t { Unknown, Open, Boundary, Obstacle, Walls };
 
-		Star starOf(const NavView& mesh, std::int32_t t, int i) {
-			std::int32_t cur	 = t;
-			int			 li		 = i;
-			bool		 walls	 = false;
-			bool		 terrain = false;
+		// A vertex's Star, and for an Obstacle the terrain tags round it, up to two (a third
+		// marks more): whether the corner is hard for a query, a corner even with its priced
+		// faces open, is then whether a tag is one the query does not price.
+		struct StarInfo {
+			Star						star = Star::Unknown;
+			std::uint8_t				tagCount = 0;
+			std::array<std::int64_t, 2> tags{};
+		};
+
+		StarInfo starOf(const NavView& mesh, std::int32_t t, int i) {
+			std::int32_t cur	= t;
+			int			 li		= i;
+			bool		 walls	= false;
+			StarInfo	 out;
 			for (int guard = 0; guard < 256; ++guard) {
 				const NavTriangle& tri = mesh.triangle(cur);
-				terrain				   = terrain || isCommonKnowledgeTerrainFace(tri);
+				if (isCommonKnowledgeTerrainFace(tri)) {
+					const bool seen = (out.tagCount > 0 && out.tags[0] == tri.faceBlocker) || (out.tagCount > 1 && out.tags[1] == tri.faceBlocker);
+					if (!seen && out.tagCount < 3) {
+						if (out.tagCount < 2) {
+							out.tags[out.tagCount] = tri.faceBlocker;
+						}
+						++out.tagCount;
+					}
+				}
 				walls				   = walls || (!isFloorFace(tri) && !isCommonKnowledgeTerrainFace(tri));
 				const std::uint32_t v  = tri.v[li];
 				const std::int32_t	nb = tri.neighbor[(li + 2) % 3]; // across the edge ending at v
 				if (nb < 0) {
-					return Star::Boundary;
+					out.star = Star::Boundary;
+					return out;
 				}
 				if (nb == t) {
-					return walls ? Star::Walls : (terrain ? Star::Obstacle : Star::Open);
+					out.star = walls ? Star::Walls : (out.tagCount > 0 ? Star::Obstacle : Star::Open);
+					return out;
 				}
 				const NavTriangle& next = mesh.triangle(nb);
 				li						= next.v[0] == v ? 0 : (next.v[1] == v ? 1 : 2);
 				cur						= nb;
 			}
-			return Star::Boundary;
+			out.star = Star::Boundary;
+			return out;
 		}
 
 		// Each vertex's Star, walked once per mesh state and kept between queries on
 		// this thread. A mesh state is known by its owner and its epoch, which no other
 		// state in the process has had (nextMeshGeneration), so a mesh rebuilt where an
-		// old one stood never reads the old one's stars.
+		// old one stood never reads the old one's stars. A new state costs a stamp, not a
+		// pass over the vertices: a star is this state's when its stamp is.
 		struct CornerMemo {
-			const void*		  owner = nullptr;
-			std::uint64_t	  epoch = 0;
-			std::vector<Star> star;
+			const void*				   owner = nullptr;
+			std::uint64_t			   epoch = 0;
+			std::vector<StarInfo>	   star;
+			std::vector<std::uint32_t> starStamp;
+			std::uint32_t			   state = 0;
 			// Round walls a corner depends on the query's belief, and whether one is hard
 			// (a corner without its priced faces) on its prices, so those answers last one
 			// query: stamped with the query, 1 a corner, 0 not.
@@ -378,24 +401,34 @@ namespace geometry::nav {
 					std::fill(hardStamp.begin(), hardStamp.end(), 0);
 					query = 1;
 				}
-				if (owner != mesh.owner || epoch != mesh.epoch() || star.size() != mesh.vertices->size()) {
+				if (star.size() < mesh.vertices->size()) {
+					star.resize(mesh.vertices->size());
+					starStamp.resize(mesh.vertices->size(), 0);
+				}
+				if (owner != mesh.owner || epoch != mesh.epoch()) {
 					owner = mesh.owner;
 					epoch = mesh.epoch();
-					star.assign(mesh.vertices->size(), Star::Unknown);
+					if (++state == 0) {
+						std::fill(starStamp.begin(), starStamp.end(), 0);
+						state = 1;
+					}
 				}
 			}
 
-			Star starAt(const NavView& mesh, std::int32_t t, int i) {
-				Star& s = star[mesh.triangle(t).v[i]];
-				if (s == Star::Unknown) {
-					s = starOf(mesh, t, i);
+			bool holds(const NavView& mesh) const { return owner == mesh.owner && epoch == mesh.epoch(); }
+
+			const StarInfo& starAt(const NavView& mesh, std::int32_t t, int i) {
+				const std::uint32_t v = mesh.triangle(t).v[i];
+				if (starStamp[v] != state) {
+					starStamp[v] = state;
+					star[v]		 = starOf(mesh, t, i);
 				}
-				return s;
+				return star[v];
 			}
 
 			bool at(const NavView& mesh, std::int32_t t, int i, const BeliefFilter& belief) {
 				const std::uint32_t v = mesh.triangle(t).v[i];
-				const Star			s = starAt(mesh, t, i);
+				const Star			s = starAt(mesh, t, i).star;
 				if (s != Star::Walls) {
 					return s != Star::Open;
 				}
@@ -407,10 +440,20 @@ namespace geometry::nav {
 			}
 
 			bool hardAt(const NavView& mesh, std::int32_t t, int i, const BeliefFilter& belief) {
-				const std::uint32_t v = mesh.triangle(t).v[i];
-				const Star			s = starAt(mesh, t, i);
+				const std::uint32_t v	 = mesh.triangle(t).v[i];
+				const StarInfo&		info = starAt(mesh, t, i);
+				const Star			s	 = info.star;
 				if (s == Star::Open || s == Star::Boundary) {
 					return s == Star::Boundary;
+				}
+				if (s == Star::Obstacle && info.tagCount <= 2) {
+					for (std::uint8_t k = 0; k < info.tagCount; ++k) {
+						const auto priced = std::find_if(belief.prices.begin(), belief.prices.end(), [&](const TagPrice& p) { return p.tag == info.tags[k]; });
+						if (priced == belief.prices.end()) {
+							return true;
+						}
+					}
+					return false;
 				}
 				if (hardStamp[v] != query) {
 					hardStamp[v] = query;
@@ -420,80 +463,22 @@ namespace geometry::nav {
 			}
 		};
 
-		// The price of squeezing a disc of `diameterMm` past the apex of triangle t whose
-		// width gate says the gap is too narrow: the least multiplier m such that, with every
-		// priced tag of multiplier m or less read as open ground, the gap admits the disc (so
-		// faces priced m are what narrow it); 0 when it stays too narrow with every priced
-		// face open, as something the query cannot cross narrows it, or when it admits the
-		// disc at a free apex with nothing opened (freeApexWidthMm). Answers are kept by
-		// triangle and apex, between queries on this thread while the mesh state, the prices,
-		// and the disc stay the same: a price is the same for every query that sets it.
-		struct Squeezes {
-			std::vector<TagPrice>	   byPrice; // the prices, cheapest first
-			std::vector<TagPrice>	   asked;	// this query's, sorted likewise
-			const void*				   owner	= nullptr;
-			std::uint64_t			   epoch	= 0;
-			std::int64_t			   diameter = -1;
-			std::vector<std::int64_t>  open;
-			WidthSearch				   width;
-			std::vector<std::uint32_t> stamp; // per 3 * triangle + apex
-			std::vector<double>		   price;
-			std::uint32_t			   kept = 0; // the stamp of answers still good
+		// Memos for two mesh states, so a thread that alternates two meshes (the game's
+		// structural and nav meshes) keeps both: the state asked for, else the one used
+		// longer ago gives way.
+		struct CornerMemos {
+			std::array<CornerMemo, 2>	 slots;
+			std::array<std::uint64_t, 2> used{};
+			std::uint64_t				 clock = 0;
 
-			void begin(const NavView& mesh, const BeliefFilter& belief, std::int64_t diameterMm) {
-				if (belief.prices.empty()) {
-					return;
+			CornerMemo& begin(const NavView& mesh) {
+				std::size_t pick = slots[1].holds(mesh) ? 1 : 0;
+				if (!slots[pick].holds(mesh)) {
+					pick = used[0] <= used[1] ? 0 : 1;
 				}
-				asked.assign(belief.prices.begin(), belief.prices.end());
-				std::sort(asked.begin(), asked.end(), [](const TagPrice& a, const TagPrice& b) {
-					return a.multiplier != b.multiplier ? a.multiplier < b.multiplier : a.tag < b.tag;
-				});
-				const bool samePrices = std::equal(asked.begin(), asked.end(), byPrice.begin(), byPrice.end(), [](const TagPrice& a, const TagPrice& b) {
-					return a.tag == b.tag && a.multiplier == b.multiplier;
-				});
-				const std::size_t slots = 3 * static_cast<std::size_t>(mesh.triangleSlots());
-				if (samePrices && owner == mesh.owner && epoch == mesh.epoch() && diameter == diameterMm && stamp.size() >= slots) {
-					return;
-				}
-				byPrice.swap(asked);
-				owner	 = mesh.owner;
-				epoch	 = mesh.epoch();
-				diameter = diameterMm;
-				if (stamp.size() < slots) {
-					stamp.resize(slots, 0);
-					price.resize(slots, 0.0);
-				}
-				if (++kept == 0) {
-					std::fill(stamp.begin(), stamp.end(), 0);
-					kept = 1;
-				}
-			}
-
-			double at(const NavView& mesh, std::int32_t t, int apex, std::int64_t diameterMm) {
-				const std::size_t slot = 3 * static_cast<std::size_t>(t) + static_cast<std::size_t>(apex);
-				if (stamp[slot] == kept) {
-					return price[slot];
-				}
-				double found = 0.0;
-				open.clear();
-				// Wide enough at a free apex with nothing opened: what refused it is the
-				// stored width, conservative there, not a priced face. It stays refused, as
-				// it is without prices.
-				const bool pricedNarrows = freeApexWidthMm(mesh, width, t, apex, diameterMm, open) < diameterMm;
-				for (std::size_t k = 0; pricedNarrows && k < byPrice.size(); ++k) {
-					open.push_back(byPrice[k].tag);
-					if (k + 1 < byPrice.size() && byPrice[k + 1].multiplier == byPrice[k].multiplier) {
-						continue;
-					}
-					if (freeApexWidthMm(mesh, width, t, apex, diameterMm, open) >= diameterMm ||
-						corridorWidthMm(mesh, width, t, apex, diameterMm, open) >= diameterMm) {
-						found = byPrice[k].multiplier;
-						break;
-					}
-				}
-				stamp[slot] = kept;
-				price[slot] = found;
-				return found;
+				used[pick] = ++clock;
+				slots[pick].begin(mesh);
+				return slots[pick];
 			}
 		};
 
@@ -778,8 +763,7 @@ namespace geometry::nav {
 			std::vector<std::int32_t>  corridor; // a winning corridor's triangles
 			std::vector<double>		   squeeze;	 // and the price of leaving each
 			std::vector<Vec2i64>	   points;	 // a candidate corridor's string-pull
-			CornerMemo				   corners;
-			Squeezes				   squeezes;
+			CornerMemos				   corners;
 
 			StateLabels& held(std::int32_t state) {
 				const std::size_t s = static_cast<std::size_t>(state);
@@ -1008,8 +992,29 @@ namespace geometry::nav {
 		// A state keeps corridors that cross priced faces apart from those that do not, so
 		// a cheap-looking way through never crowds out a free way round.
 		SearchScratch& scratch = searchScratch(static_cast<std::size_t>(mesh.triangleSlots()) * 8);
-		scratch.corners.begin(mesh);
-		scratch.squeezes.begin(mesh, belief, diameterMm);
+		CornerMemo& corners = scratch.corners.begin(mesh);
+		// A squeeze past detail-class faces (a gate the full width fails and the structural
+		// width passes) costs the dearest detail price, when the query prices every detail
+		// tag; with any left unpriced, detail is hard and such a gap stays shut.
+		double squeezePrice = 0.0;
+		// The least price a query sets: a priced run costs at least that over the disc's
+		// diameter, whichever tags it holds (see walkCorridor), which the search's bound
+		// counts as soon as a run starts.
+		double leastPrice = 0.0;
+		for (const TagPrice& p : belief.prices) {
+			leastPrice = leastPrice > 0.0 ? std::min(leastPrice, p.multiplier) : p.multiplier;
+		}
+		const double runFloor = leastPrice > 0.0 ? (leastPrice - 1.0) * static_cast<double>(diameterMm) : 0.0;
+		if (priced && mesh.detailTags != nullptr) {
+			for (const std::int64_t tag : *mesh.detailTags) {
+				const auto it = std::find_if(belief.prices.begin(), belief.prices.end(), [&](const TagPrice& p) { return p.tag == tag; });
+				if (it == belief.prices.end()) {
+					squeezePrice = 0.0;
+					break;
+				}
+				squeezePrice = std::max(squeezePrice, it->multiplier);
+			}
+		}
 
 		const Vec2d	 goalD	= toD(goal);
 		const double radius = static_cast<double>(agentRadiusMm);
@@ -1077,18 +1082,40 @@ namespace geometry::nav {
 
 		// The string-pull of label li's corridor, every portal from the start: its points
 		// into `points`, and its cost, which is its length unless the corridor crosses a
-		// face walked at a price; then each piece of the path is weighted by the
-		// multiplier of the triangle it runs through.
-		// A piece of the walk inside triangle t, left by a squeeze priced `squeeze`: the
-		// triangle's multiplier over the piece, and a dearer squeeze's surplus over at most
-		// the disc's diameter of it, the stretch where the disc overlaps what narrows the
-		// gap (a large triangle's piece can run far from it).
-		bool crossesPriced = false;
-		auto pieceCost	   = [&](std::int32_t t, double squeeze, double piece) {
-			const double m		= stepMultiplier(mesh, t, belief);
-			const double surplus = std::max(0.0, squeeze - m) * std::min(piece, static_cast<double>(diameterMm));
-			crossesPriced		 = crossesPriced || (piece > 0.0 && (m > 1.0 || squeeze > 1.0));
-			return piece * m + surplus;
+		// face walked at a price. Then each piece inside a priced triangle is weighted by
+		// its multiplier, but a run of priced triangles costs at least its least multiplier
+		// over the disc's diameter: a disc entering priced ground overlaps it that far
+		// however little of the centreline is inside (a corner shaved through the face's
+		// own triangle has none). A squeeze dearer than the triangle it leaves charges its
+		// surplus over at most the diameter of the piece, the stretch where the disc overlaps
+		// what narrows the gap (a large triangle's piece can run far from it); a squeeze
+		// beside the priced run it crosses is that run's (see the width gate).
+		bool   crossesPriced = false;
+		double cost			 = 0.0;
+		double runSurplus	 = 0.0;
+		double runLeast		 = 0.0; // the least multiplier of the priced run the walk is in, 0 outside one
+		auto   closeRun		 = [&]() {
+			  if (runLeast > 0.0) {
+				  const double surplus = std::max(runSurplus, (runLeast - 1.0) * static_cast<double>(diameterMm));
+				  cost += surplus;
+				  crossesPriced = crossesPriced || surplus > 0.0;
+			  }
+			  runSurplus = 0.0;
+			  runLeast	 = 0.0;
+		};
+		auto addPiece = [&](std::int32_t t, double squeeze, double piece) {
+			const double m = stepMultiplier(mesh, t, belief);
+			cost += piece;
+			if (m > 1.0) {
+				runSurplus += (m - 1.0) * piece;
+				runLeast = runLeast > 0.0 ? std::min(runLeast, m) : m;
+			} else {
+				closeRun();
+			}
+			if (squeeze > m) {
+				cost += (squeeze - m) * std::min(piece, static_cast<double>(diameterMm));
+				crossesPriced = crossesPriced || diameterMm > 0;
+			}
 		};
 		auto walkCorridor = [&](std::int32_t li, std::vector<Vec2i64>& points) {
 			std::vector<std::int32_t>& tris	   = scratch.corridor;
@@ -1119,7 +1146,9 @@ namespace geometry::nav {
 			}
 			// Walk the path through the corridor: triangle k ends where the path crosses
 			// to the far side of the edge it shares with triangle k + 1.
-			double		cost  = 0.0;
+			cost			  = 0.0;
+			runSurplus		  = 0.0;
+			runLeast		  = 0.0;
 			double		piece = 0.0;
 			std::size_t s	  = 0;
 			Vec2d		at	  = toD(points[0]);
@@ -1146,7 +1175,7 @@ namespace geometry::nav {
 					at = cross;
 					break;
 				}
-				cost += pieceCost(tris[k], squeeze[k], piece);
+				addPiece(tris[k], squeeze[k], piece);
 				piece = 0.0;
 			}
 			while (s + 1 < points.size()) {
@@ -1155,7 +1184,9 @@ namespace geometry::nav {
 				at = q;
 				++s;
 			}
-			return cost + pieceCost(tris.back(), squeeze.back(), piece);
+			addPiece(tris.back(), squeeze.back(), piece);
+			closeRun();
+			return cost;
 		};
 
 		std::int32_t goalLabel = -1;
@@ -1210,18 +1241,14 @@ namespace geometry::nav {
 				// entered by `entry`, the disc must clear the Demyen width of the edge
 				// pair meeting at their shared apex. The start state has no entry edge,
 				// so nothing to clear inside the start triangle.
-				// Under pricing a gap too narrow for the disc may be narrow only because of
-				// priced faces: the disc squeezes through at their price for this step, while
-				// a gap anything else narrows stays shut (see Squeezes).
+				// A gap too narrow for the disc that only detail narrows (its structural width
+				// admits the disc) is squeezed through at squeezePrice; anything else stays shut.
 				double squeeze = 1.0;
 				if (entry != kStartEntry && !widthAdmits(tri, apexVertexOfEdgePair(entry, e), diameterMm)) {
-					if (!priced) {
+					if (squeezePrice <= 0.0 || tri.structuralWidthMm[apexVertexOfEdgePair(entry, e)] < diameterMm) {
 						continue;
 					}
-					squeeze = scratch.squeezes.at(mesh, ti, apexVertexOfEdgePair(entry, e), diameterMm);
-					if (squeeze <= 0.0) {
-						continue;
-					}
+					squeeze = squeezePrice;
 					// Beside a priced face the corridor walks into, came out of, or is in, the
 					// disc's overlap with it is that crossing, already paid: only a dearer
 					// narrowing is charged.
@@ -1254,12 +1281,13 @@ namespace geometry::nav {
 					}
 				}
 				const std::int32_t label = static_cast<std::int32_t>(scratch.labels.size()); // the label a new one would take
-				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, scratch.corners);
+				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, corners);
 				const Portal	   step{span.left, span.right, label};
 				Funnel			   next = funnel;
 				advance(next, step);
 				// What priced faces add, as a bound: a run of them is entered, carried on, or
-				// left (charged then for the distance across it) by this step.
+				// left (charged then for the distance across it, or its least price over the
+				// disc's diameter, as walkCorridor does) by this step.
 				const Label& parent	  = scratch.labels[static_cast<std::size_t>(li)];
 				double		 extra	  = parent.extra;
 				double		 runPrice = 0.0;
@@ -1270,12 +1298,12 @@ namespace geometry::nav {
 						runPrice = std::min(parent.runPrice, nbMultiplier);
 						runEntry = parent.runEntry;
 					} else {
-						extra += across;
+						extra += std::max(across, (parent.runPrice - 1.0) * static_cast<double>(diameterMm));
 					}
 				} else if (nbMultiplier > 1.0) {
 					runPrice = nbMultiplier;
 				}
-				const double inRun = runPrice > 0.0 ? (runPrice - 1.0) * segmentToSegment(runEntry.left, runEntry.right, step.left, step.right) : 0.0;
+				const double inRun = runPrice > 0.0 ? std::max((runPrice - 1.0) * segmentToSegment(runEntry.left, runEntry.right, step.left, step.right), runFloor) : 0.0;
 				const double score = scoreFrom(next, step) + extra + inRun;
 				std::int32_t slot = -1; // the label this corridor takes over, if any
 				bool		 beaten = false;
@@ -1286,11 +1314,14 @@ namespace geometry::nav {
 				for (int k = 0; k < held.count && !beaten; ++k) {
 					Label&						other	   = scratch.labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])];
 					std::array<double, 3>		otherReach = reachOf(other.funnel, step);
-					const double				otherExtra = other.extra + (other.runPrice > 0.0 ? (other.runPrice - 1.0) * segmentToSegment(other.runEntry.left, other.runEntry.right, step.left, step.right) : 0.0);
+					const double				otherExtra = other.extra + (other.runPrice > 0.0 ? std::max((other.runPrice - 1.0) * segmentToSegment(other.runEntry.left, other.runEntry.right, step.left, step.right), runFloor) : 0.0);
 					for (double& r : otherReach) {
 						r += otherExtra;
 					}
-					if (noLonger(otherReach, reach)) {
+					// A goal label pulled exactly is known by its walk, not its funnel (whose
+					// reach is a bound from a restarted cone): it beats only a corridor whose own
+					// bound is no better.
+					if (other.exact ? score >= other.best : noLonger(otherReach, reach)) {
 						beaten = true;
 					} else if (!other.closed && !other.exact && noLonger(reach, otherReach)) {
 						if (slot < 0) {
