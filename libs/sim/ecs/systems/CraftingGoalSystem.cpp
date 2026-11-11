@@ -123,45 +123,41 @@ namespace ecs {
 				craftId = goalRegistry.createGoal(std::move(craftGoal));
 			}
 
-			// One provisioning child per input the station store still lacks, re-resolved against what
-			// the colony knows each poll: known stock opens a fetch Haul, otherwise a known harvestable
-			// opens a Harvest, otherwise a Haul waits NoSource. A child only marks which source kind is
-			// open; how much more to bring is the Craft root's remaining need net of in-flight, so an
-			// input is provisioned unit after unit of a multi-unit job without rebuilding anything.
+			// Provisioning children per input the station store still lacks, re-resolved against what the
+			// colony knows each poll: one per way of getting it. Known stock opens a fetch Haul, a known
+			// harvestable a Harvest, both when both are known, so a regrowing bush never hides a known
+			// pile; with neither, a Haul waits NoSource. A child only marks which source kind is open; how
+			// much more to bring is the Craft root's remaining need net of in-flight, so an input is
+			// provisioned unit after unit of a multi-unit job without rebuilding anything.
 			bool allStaged = true;
 			for (const auto& input : recipe->inputs) {
 				const uint32_t inputId = assetRegistry.getDefNameId(input.defName);
 				if (inputId == 0) {
 					continue;
 				}
-				const GoalTask* child = nullptr;
-				for (const auto* candidate : goalRegistry.getChildGoals(craftId)) {
-					if (!candidate->acceptedDefNameIds.empty() && candidate->acceptedDefNameIds.front() == inputId) {
-						child = candidate;
+				const bool needed = goalRegistry.remainingNeed(*world, craftId, inputId, NeedBasis::Stock) > 0;
+				allStaged = allStaged && !needed;
+				const bool stockKnown = needed && colonyKnowsStock(world, inputId);
+				const bool harvestKnown = needed && colonyKnowsHarvestableSource(world, assetRegistry, inputId);
+				const auto keep = [&](TaskType type, bool wanted, GoalStatus status) {
+					const GoalTask* child = nullptr;
+					for (const auto* candidate : goalRegistry.getChildGoals(craftId)) {
+						if (candidate->type == type && !candidate->acceptedDefNameIds.empty() && candidate->acceptedDefNameIds.front() == inputId) {
+							child = candidate;
+						}
 					}
-				}
-				if (goalRegistry.remainingNeed(*world, craftId, inputId, NeedBasis::Stock) == 0) {
-					if (child != nullptr) {
-						goalRegistry.removeGoal(child->id);
+					if (!wanted) {
+						if (child != nullptr) {
+							goalRegistry.removeGoal(child->id);
+						}
+					} else if (child != nullptr) {
+						goalRegistry.updateGoal(child->id, [status](GoalTask& goal) { goal.status = status; });
+					} else {
+						goalRegistry.createGoal(provisioningChild(type, *goalRegistry.getGoal(craftId), inputId, status));
 					}
-					continue;
-				}
-				allStaged = false;
-				if (child != nullptr && child->type == TaskType::Harvest) {
-					continue;
-				}
-				const bool		stockKnown = colonyKnowsStock(world, inputId);
-				const bool		harvestKnown = !stockKnown && colonyKnowsHarvestableSource(world, assetRegistry, inputId);
-				const TaskType	type = harvestKnown ? TaskType::Harvest : TaskType::Haul;
-				const GoalStatus status = stockKnown || harvestKnown ? GoalStatus::Available : GoalStatus::NoSource;
-				if (child != nullptr && child->type == type) {
-					goalRegistry.updateGoal(child->id, [status](GoalTask& goal) { goal.status = status; });
-					continue;
-				}
-				if (child != nullptr) {
-					goalRegistry.removeGoal(child->id);
-				}
-				goalRegistry.createGoal(provisioningChild(type, *goalRegistry.getGoal(craftId), inputId, status));
+				};
+				keep(TaskType::Haul, needed && (stockKnown || !harvestKnown), stockKnown ? GoalStatus::Available : GoalStatus::NoSource);
+				keep(TaskType::Harvest, harvestKnown, GoalStatus::Available);
 			}
 
 			const GoalStatus craftStatus = allStaged ? GoalStatus::Available : GoalStatus::Blocked;

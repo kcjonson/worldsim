@@ -87,14 +87,17 @@ this one cascade (open follow-up).
 ## 5. Provisioning model (goal-driven, availability-resolved)
 
 Provisioning is the goal path's job; the global task list shows what's actually obtainable, not a
-speculative chain. Each recipe input resolves against colony knowledge (any colonist's memory):
+speculative chain. Each recipe input resolves against colony knowledge (any colonist's memory),
+one child per way of getting it, re-resolved on every poll:
 
 - **known stock** to a **Haul**,
 - **known harvestable source** to a **Harvest**,
+- **both** to both, so a bush that is regrowing or reserved never hides a known pile of the input
+  (fell overflow, goods dropped by an interruption), and the colonist picks between them by trip,
 - **neither** to a `NoSource` "waiting (none found)" need that re-resolves to Cut/Haul once a
   colonist discovers a source (`GoalStatus::NoSource`).
 
-**The cut carries itself in:** a harvestable input creates only a Harvest goal, and when a cut lands
+**The cut carries itself in:** a harvestable input's Harvest goal needs no carry-in goal; when a cut lands
 the harvest task converts in place into its deposit leg (`ActionSystem::carryHarvestIn`), so the
 yield never sits in the colonist's hands with no task. Goods a colonist already carries, left over
 from a cut or an interruption, are offered to any root that still wants them by one carry-in from
@@ -117,10 +120,11 @@ Single-colonist crafting was made reliable by fixing the blockers that let a que
   Haul/Harvest priority collapsed below Wander once its source was far (distance penalty), so a
   colonist abandoned a half-provisioned craft and wandered. A `servesActiveWorkOrder` flag plus a
   priority floor keeps provisioning above Wander.
-- **Available craft Hauls re-resolve, not just `NoSource` ones.** A fetch Haul born `Available`
-  from known loose stock that was then consumed/forgotten produced no AI option and stranded the
-  craft. Re-resolve `Available` craft Hauls too: when no stock is fetchable but a harvestable
-  source is known, swap to a Harvest.
+- **Every child re-resolves, each way on its own.** A fetch Haul born `Available` from known loose
+  stock that was then consumed/forgotten produced no AI option and stranded the craft, and a Harvest
+  child once never turned back into a fetch, so an input whose bushes were all regrowing idled beside
+  a known pile. Each poll keeps the Haul exactly while stock is known (or nothing is), and the
+  Harvest exactly while a harvestable is known.
 - **Haul phase is carry-state-first, not position-first.** `startHaulAction` chose Pickup vs
   Deposit by position (`atSource` / `atTarget`). When a loose pile sits within tolerance of the
   station, the colonist is `atSource` AND `atTarget` at once, skips Pickup, runs an empty Deposit,

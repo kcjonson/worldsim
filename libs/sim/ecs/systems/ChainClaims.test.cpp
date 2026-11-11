@@ -959,6 +959,32 @@ namespace ecs::test {
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 0U);
 	}
 
+	// A craft input with a known bush gets a Harvest child; when the bush is regrowing and a pile of the
+	// input becomes known (fell overflow, a dropped load), the input offers the fetch as well, and the
+	// colonist fetches instead of idling with a need and a known source.
+	TEST_F(ChainFlowTest, AnInputOffersBothItsBushAndAKnownPile) {
+		world->registerSystem<TimeSystem>();
+		ai->setSourceRegrowthCallback([](uint32_t, glm::vec2, double) { return std::optional<double>{1.0e9}; });
+		const EntityID station = makeStation({0.0F, 6.0F}, {{"Stick", 0, 2}}, 1);
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {-3.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable);
+
+		auto& goals = GoalTaskRegistry::Get();
+		ASSERT_TRUE(runUntil([&] { return goals.goalCount(TaskType::Harvest) == 1; }, 200)) << "the bush opens a Harvest";
+		runUntil([] { return false; }, 60);
+		EXPECT_NE(getTask(colonist)->type, TaskType::Harvest) << "the bush is regrowing";
+		EXPECT_EQ(goals.goalCount(TaskType::Haul), 0U);
+
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	pile = makePile(pilePos, stickId, 5);
+		remember(colonist, pilePos, "Stick", assets::CapabilityType::Carryable);
+		ASSERT_TRUE(runUntil([&] { return goals.goalCount(TaskType::Haul) == 1; }, 200)) << "the pile opens a fetch beside the Harvest";
+		EXPECT_EQ(goals.goalCount(TaskType::Harvest), 1U) << "both ways stay open";
+
+		ASSERT_TRUE(runUntil([&] { return world->getComponent<WorkQueue>(station)->getNextJob() == nullptr; })) << "the craft is provisioned from the pile";
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 3U);
+	}
+
 	// Stocking cuts toward the box's minimum; known loose stock then fills it to its maximum and never past.
 	TEST_F(ChainFlowTest, StockingFillsToTheMinimumAndHaulingNeverPassesTheMaximum) {
 		const glm::vec2 boxPos{0.0F, 8.0F};
