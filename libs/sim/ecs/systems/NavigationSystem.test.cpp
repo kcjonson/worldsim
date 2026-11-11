@@ -2933,3 +2933,88 @@ TEST_F(NavigationSystemTest, WallCrossingAChunkKeepsItsGround) {
 	}
 	EXPECT_TRUE(sys.inSimArea(ChunkWalk::centre(1))) << "the chunk the wall crosses kept its ground";
 }
+
+// --- Colonists away from the others, and colonists moved off their routes -------------------
+
+namespace {
+	constexpr std::uint32_t kTestWaterDefId = 1002;
+
+	// A colonist the real AI drives on its own (no move order): needs met but the one given.
+	EntityID needyColonist(WalkRig& rig, glm::vec2 at, NeedType need, float value) {
+		const EntityID	colonist = spawnRecoverableColonist(rig.world, at);
+		rig.world.addComponent<Colonist>(colonist, Colonist{"Far"});
+		rig.world.addComponent<AgentRadius>(colonist, AgentRadius{kAgentRadius, 1.0F});
+		NeedsComponent& needs = *rig.world.getComponent<NeedsComponent>(colonist);
+		for (const NeedType n : {NeedType::Hunger, NeedType::Thirst, NeedType::Energy, NeedType::Bladder, NeedType::Digestion}) {
+			needs.get(n).value = n == need ? value : 100.0F;
+		}
+		return colonist;
+	}
+} // namespace
+
+// A thirsty colonist 110 m from the others and the view, knowing water 90 m on across open ground
+// with trees in it: the mesh covers both ends wherever they are, so it gets a route and walks to the
+// water, and never holds for an off-area endpoint (the old regions' failure).
+TEST_F(NavigationSystemTest, FarColonistReachesWaterItKnows) {
+	registerTree("Test_NavFarTree", 0.3F);
+	WalkRig rig({0.0F, 0.0F});
+	std::vector<glm::vec2> trees;
+	for (float x = 120.0F; x < 190.0F; x += 7.0F) {
+		trees.push_back({x, -3.0F + std::fmod(x, 6.0F)});
+	}
+	placeTrees(rig.executor, rig.processed, "Test_NavFarTree", trees);
+	addColonist(rig.world, {0.0F, 0.0F}, "Home");
+	rig.start();
+
+	const glm::vec2 water{200.0F, 0.0F};
+	const EntityID	colonist = needyColonist(rig, {110.0F, 0.0F}, NeedType::Thirst, 10.0F);
+	rig.world.getComponent<Memory>(colonist)->rememberWorldEntity(
+		water, kTestWaterDefId, static_cast<std::uint16_t>(1U << static_cast<std::size_t>(assets::CapabilityType::Drinkable)));
+
+	const Position& position = *rig.world.getComponent<Position>(colonist);
+	const Task&		task	 = *rig.world.getComponent<Task>(colonist);
+	float			nearest	 = glm::distance(position.value, water);
+	bool			routed	 = false;
+	for (int i = 0; i < 800 && nearest > 0.5F; ++i) {
+		rig.world.update(0.1F);
+		ASSERT_NE(task.navState, NavState::AwaitingMesh) << "tick " << i << ": held for an off-area endpoint";
+		routed	= routed || (task.state == TaskState::Moving && task.targetPosition == water);
+		nearest = std::min(nearest, glm::distance(position.value, water));
+	}
+	EXPECT_TRUE(routed) << "it never set off for the water";
+	EXPECT_LT(nearest, 0.5F) << "never got to the water";
+}
+
+// A colonist walking a move order is moved 60 m (a dev teleport sets Position and nothing else). Its
+// route is marked stale and replanned from where it now stands, so it walks to its goal instead of
+// steering straight back at its old waypoint; with a wall it knows between the two it goes round.
+TEST_F(NavigationSystemTest, ColonistMovedOffItsRouteReplansFromWhereItIs) {
+	for (const bool wallBetween : {false, true}) {
+		const char* where = wallBetween ? "wall between" : "open ground";
+		WalkRig		rig({0.0F, 0.0F});
+		if (wallBetween) {
+			buildWall(rig.cw, {30000, -20000}, {30000, 50000}); // between the jump and the old route
+		}
+		rig.start();
+		const glm::vec2 goal{20.0F, 5.0F};
+		const EntityID	colonist = rig.walker({0.0F, 5.0F}, goal);
+		for (const std::uint64_t id : allSegmentIds(rig.cw)) {
+			rig.world.getComponent<Memory>(colonist)->rememberSegment(id);
+		}
+		Position& position = *rig.world.getComponent<Position>(colonist);
+		for (int i = 0; i < 20; ++i) {
+			rig.world.update(0.1F);
+		}
+		position.value = {50.0F, 30.0F}; // what the dev teleport does
+		const Task& task = *rig.world.getComponent<Task>(colonist);
+		for (int i = 0; i < 600 && glm::distance(position.value, goal) > 0.3F; ++i) {
+			rig.world.update(0.1F);
+			if (wallBetween) {
+				ASSERT_FALSE(std::abs(position.value.x - 30.0F) < 0.15F && position.value.y > -20.0F && position.value.y < 50.0F)
+					<< where << ", tick " << i << ": in the wall at " << position.value.x << ", " << position.value.y;
+			}
+		}
+		EXPECT_EQ(task.targetPosition, goal) << where << ": the order was dropped";
+		EXPECT_LT(glm::distance(position.value, goal), 0.3F) << where << ": never got back to its goal";
+	}
+}

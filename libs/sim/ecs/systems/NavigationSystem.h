@@ -349,6 +349,10 @@ class NavigationSystem : public ISystem {
 	// A stranded mover is moved forward along its route to the first point this far apart that is
 	// walkable with its clearance.
 	static constexpr std::int64_t kSnapStepMm = 100;
+	// A mover farther than this from the leg of its route it is on (moved by something other than
+	// walking it: a teleport, a long shove) has its route marked stale, so it is replanned from
+	// where it stands rather than steered straight back at a waypoint through whatever lies between.
+	static constexpr std::int64_t kOffRouteMm = 2000;
 	// What walking a metre through a tree costs, in metres of open ground: 50
 	// makes a 0.6 m trunk cost a 30 m detour, so a mover goes round a tree when it can and through
 	// one only when the way round is longer than that.
@@ -476,6 +480,8 @@ class NavigationSystem : public ISystem {
 	// Marks stale the routes whose rest comes within the mover's radius of a tree that landed in
 	// the joined jobs.
 	void markCrossedRoutes();
+	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
+	void markStrayedRoutes();
 	void forgetDroppedRoutes();
 	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
 	// Spec 4.7: a mover inside flora moves forward along its route to the first point walkable in

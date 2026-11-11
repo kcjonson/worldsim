@@ -23,6 +23,8 @@
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <bit>
 #include <chrono>
@@ -597,6 +599,7 @@ namespace ecs {
 		updateDetail();
 		forgetDroppedRoutes();
 		markCrossedRoutes();
+		markStrayedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
 			gather(kFloraRingsPerTick, kFloraRemovalsPerTick, kFloraCellsPerTick, kGroundVerticesPerTick);
@@ -1434,6 +1437,29 @@ namespace ecs {
 					break;
 				}
 				from = path.waypoints[next];
+			}
+		}
+	}
+
+	void NavigationSystem::markStrayedRoutes() {
+		if (world == nullptr) {
+			return;
+		}
+		const float			kOff2	= static_cast<float>(kOffRouteMm * kOffRouteMm) / 1.0e6F;
+		const std::uint64_t current = generation();
+		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
+			(void)entity;
+			if (path.done() || path.builtNavVersion != current) {
+				continue;
+			}
+			// The leg it is on runs from the waypoint it last passed to the one it steers for.
+			const glm::vec2 to	 = path.waypoints[path.current];
+			const glm::vec2 from = path.current > 0 ? path.waypoints[path.current - 1] : to;
+			const glm::vec2 leg	 = to - from;
+			const float		len2 = dist2(from, to);
+			const float		t	 = len2 > 0.0F ? std::clamp(glm::dot(position.value - from, leg) / len2, 0.0F, 1.0F) : 0.0F;
+			if (dist2(position.value, from + leg * t) > kOff2) {
+				path.builtNavVersion = current - 1;
 			}
 		}
 	}
