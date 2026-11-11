@@ -8,12 +8,10 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/WorkQueue.h>
-#include <ecs/systems/AIDecisionSystem.h>
 
 #include <algorithm>
 #include <cmath>
 #include <format>
-#include <map>
 #include <optional>
 #include <sstream>
 #include <unordered_map>
@@ -171,53 +169,59 @@ namespace world_sim::adapters {
 			return prefix;
 		}
 
-		/// Who is bringing goods toward each root goal, from the claim index's in-flight claims: per
-		/// root, and per (root, item). Built once per refresh, so a goal's worker is one lookup.
+		/// Who works each goal row right now, from each colonist's current task, built once per refresh
+		/// so a row's worker is one lookup. A cut or a haul names the goal it was picked through (a carry-in
+		/// and a cut's own deposit leg name their root); a build, a craft, or a placement names the entity
+		/// it works. A suspended record is not current work, so a colonist seeing to a need works nothing.
 		struct Workers {
-			std::unordered_map<uint64_t, ecs::EntityID>				 byRoot;
-			std::map<std::pair<uint64_t, uint32_t>, ecs::EntityID> byRootItem;
+			std::unordered_map<uint64_t, ecs::EntityID> byGoal;
+			std::unordered_map<uint64_t, ecs::EntityID> byEntity;
 		};
 
-		Workers workersFromClaims(ecs::World& world) {
+		Workers workersFromTasks(ecs::World& world) {
 			Workers workers;
-			const auto* ai = world.tryGetSystem<ecs::AIDecisionSystem>();
-			if (ai == nullptr) {
-				return workers;
-			}
-			ai->claimIndex().forEachClaim([&](const ecs::Claim& claim, const ecs::ClaimHolder& holder) {
-				if (claim.kind() == ecs::ClaimKind::InFlight) {
-					workers.byRoot.try_emplace(claim.target(), holder.colonist);
-					workers.byRootItem.try_emplace({claim.target(), claim.itemDefNameId()}, holder.colonist);
+			for (auto [entity, colonist, task] : world.view<ecs::Colonist, ecs::Task>()) {
+				(void)colonist;
+				if (!task.isActive()) {
+					continue;
 				}
-			});
+				switch (task.type) {
+					case ecs::TaskType::Harvest:
+						workers.byGoal.try_emplace(task.harvestGoalId, entity);
+						break;
+					case ecs::TaskType::Haul:
+						workers.byGoal.try_emplace(task.haulGoalId, entity);
+						break;
+					case ecs::TaskType::Build:
+					case ecs::TaskType::Deconstruct:
+						workers.byEntity.try_emplace(task.buildBlueprintEntityId, entity);
+						break;
+					case ecs::TaskType::Craft:
+						workers.byEntity.try_emplace(task.targetStationId, entity);
+						break;
+					case ecs::TaskType::PlacePackaged:
+						workers.byEntity.try_emplace(task.placePackagedEntityId, entity);
+						break;
+					case ecs::TaskType::FulfillNeed:
+					case ecs::TaskType::Wander:
+					case ecs::TaskType::None:
+						break;
+				}
+			}
 			return workers;
 		}
 
-		/// Name of a colonist holding in-flight claims toward this goal's root for an item the goal
-		/// names, or "" if none. A goal naming no item (the Build umbrella, a category box) takes any
-		/// item toward its root. A footprint clear brings nothing toward a need, so it has no worker.
+		/// Name of the colonist whose current task serves this row, or "". A Build, Craft, or placement
+		/// row is worked by whoever works its entity (the builder, the crafter) and otherwise by whoever
+		/// delivers toward it; every other row by whoever picked it.
 		std::string colonistWorkingGoal(ecs::World& world, const Workers& workers, const ecs::GoalTask& goal) {
-			if (goal.clearFootprint.has_value()) {
-				return "";
-			}
-			const uint64_t root = ecs::GoalTaskRegistry::Get().rootOf(goal.id);
 			std::optional<ecs::EntityID> worker;
-			if (goal.yieldDefNameId == 0 && goal.acceptedDefNameIds.empty()) {
-				if (const auto it = workers.byRoot.find(root); it != workers.byRoot.end()) {
-					worker = it->second;
-				}
-			} else {
-				const auto byItem = [&](uint32_t item) {
-					if (const auto it = workers.byRootItem.find({root, item}); it != workers.byRootItem.end()) {
-						worker = it->second;
-					}
-				};
-				if (goal.yieldDefNameId != 0) {
-					byItem(goal.yieldDefNameId);
-				}
-				for (auto item = goal.acceptedDefNameIds.begin(); !worker && item != goal.acceptedDefNameIds.end(); ++item) {
-					byItem(*item);
-				}
+			const bool					 worksEntity =
+				goal.type == ecs::TaskType::Build || goal.type == ecs::TaskType::Craft || goal.type == ecs::TaskType::PlacePackaged;
+			if (const auto it = workers.byEntity.find(static_cast<uint64_t>(goal.destinationEntity)); worksEntity && it != workers.byEntity.end()) {
+				worker = it->second;
+			} else if (const auto byGoal = workers.byGoal.find(goal.id); byGoal != workers.byGoal.end()) {
+				worker = byGoal->second;
 			}
 			const auto* colonist = worker ? world.getComponent<ecs::Colonist>(*worker) : nullptr;
 			return colonist != nullptr ? colonist->name : std::string{};
@@ -285,6 +289,7 @@ namespace world_sim::adapters {
 				}
 				if (!underConstruction) {
 					data.status = "Needs materials";
+					data.statusDetail = worker; // whoever is delivering to the site
 					data.isBlocked = true;
 				} else if (!worker.empty()) {
 					data.status = "Building";
@@ -331,7 +336,7 @@ namespace world_sim::adapters {
 		std::vector<GlobalTaskDisplayData> goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition) {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
 			std::vector<GlobalTaskDisplayData> result;
-			const Workers					   workers = workersFromClaims(world);
+			const Workers					   workers = workersFromTasks(world);
 			for (ecs::TaskType type :
 				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
