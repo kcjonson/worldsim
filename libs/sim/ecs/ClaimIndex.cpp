@@ -1,6 +1,7 @@
 #include "ClaimIndex.h"
 
 #include "World.h"
+#include "systems/ChainClaims.h"
 
 #include <algorithm>
 #include <tuple>
@@ -74,16 +75,34 @@ namespace ecs {
 	}
 
 	void ClaimIndex::addCurrent(EntityID colonist, const Task& task) {
-		// A colonist whose route to its target failed holds nothing while it stays failed: it may
-		// re-select the same stranded work every frame, and others must not see that work as taken.
-		if (task.navState == NavState::CantFindWayTo) {
-			return;
-		}
 		const ClaimHolder holder{
 			.colonist = colonist, .instanceId = task.instanceId, .claimSeq = task.claimSeq, .tier = tierOf(task), .taskType = task.type
 		};
+		// A colonist whose route to its target failed may re-select the same stranded work every frame,
+		// so while it stays failed it holds only the goods it carries (Inbound and InFlight up to its
+		// cargo): what it has not reached (a source, a Use, a slot, the uncut part of an in-flight) is
+		// left for others, and what it carries is still on its way, so nobody fetches it again.
+		const bool failed = task.navState == NavState::CantFindWayTo;
 		for (const Claim& claim : task.claims) {
-			add(claim, holder);
+			if (!failed) {
+				add(claim, holder);
+				continue;
+			}
+			if (claim.kind() != ClaimKind::Inbound && claim.kind() != ClaimKind::InFlight) {
+				continue;
+			}
+			uint32_t cargo = 0;
+			for (const Claim& root : task.claims) {
+				if (root.kind() == ClaimKind::InFlight && root.itemDefNameId() == claim.itemDefNameId()) {
+					cargo = cargoOnClaims(task.claims, root.target(), claim.itemDefNameId());
+					break;
+				}
+			}
+			if (cargo > 0) {
+				Claim carried = claim;
+				carried.setQuantity(std::min(claim.quantity(), cargo));
+				add(carried, holder);
+			}
 		}
 	}
 

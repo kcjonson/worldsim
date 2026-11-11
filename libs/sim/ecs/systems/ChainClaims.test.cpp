@@ -1914,9 +1914,9 @@ namespace ecs::test {
 	}
 
 	// A colonist whose route to its claimed bush has failed (in another region, where no verdict is
-	// remembered, so it keeps re-selecting the same cut) holds nothing while it stays failed: another
-	// colonist is offered the bush and takes it.
-	TEST_F(ChainClaimsTest, AColonistWhoseRouteFailedHoldsNoClaims) {
+	// remembered, so it keeps re-selecting the same cut) holds nothing it has not reached while it stays failed,
+	// neither its Use of the bush nor the cut's expected yield: another colonist is offered the bush and takes it.
+	TEST_F(ChainClaimsTest, AFailedRouteHoldsNothingItHasNotReached) {
 		const glm::vec2 stationPos{0.0F, 6.0F};
 		const glm::vec2 bushPos{3.0F, 0.0F};
 		const EntityID	station = world->createEntity();
@@ -1979,6 +1979,55 @@ namespace ecs::test {
 		const EvaluatedOption* reserved = optionOf(other, TaskType::Harvest, OptionStatus::Reserved);
 		ASSERT_NE(reserved, nullptr);
 		EXPECT_EQ(reserved->reservedBy, stuck);
+	}
+
+	// A hauler past its pickup whose route to the station fails keeps the claims on what it carries: the
+	// root still reads those stones as on their way, so another colonist is not offered a fetch for them,
+	// and once the route recovers the station gets exactly what it needs.
+	TEST_F(ChainClaimsTest, AFailedRoutePastThePickupKeepsItsCargoClaimed) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const glm::vec2 otherPilePos{-4.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		for (const glm::vec2 at : {pilePos, otherPilePos}) {
+			const EntityID pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{at});
+			makeLoosePile(*world, pile, stoneId, at, 3);
+		}
+		const EntityID hauler = createColonist({0.0F, 0.0F});
+		remember(hauler, pilePos, "Stone", assets::CapabilityType::Carryable);
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		act(hauler, pilePos);
+		ASSERT_EQ(getTask(hauler)->chainStep, 1U);
+		ASSERT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(hauler), "Stone"), 3U);
+
+		// No nav regions in this headless world, so the failed route to the station is set by hand, as
+		// requestNavPath leaves a Blocked one: stopped, under the reach it stands in (stamp 0).
+		getTask(hauler)->navState = NavState::CantFindWayTo;
+		world->getComponent<MovementTarget>(hauler)->active = false;
+		getTask(hauler)->blockedReachStamp = 0;
+		const uint64_t instance = getTask(hauler)->instanceId;
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->instanceId, instance) << "it keeps the stranded delivery";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "the carried stones are still on their way";
+		EXPECT_EQ(ai->claimIndex().inboundItems(station, stoneId, {}), 3U);
+
+		const EntityID other = createColonist({-3.0F, 0.0F});
+		remember(other, otherPilePos, "Stone", assets::CapabilityType::Carryable);
+		decide(other);
+		EXPECT_NE(getTask(other)->type, TaskType::Haul) << "nobody fetches what the hauler carries";
+
+		getTask(hauler)->blockedReachStamp = 1; // failed under a reach it no longer stands in: it is routed again
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		EXPECT_EQ(getTask(hauler)->navState, NavState::Traveling);
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "never more than it carries";
+		act(hauler, stationPos);
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 3U);
 	}
 
 	// Two colonists at one station with every input in its store: the first's Craft selection holds the

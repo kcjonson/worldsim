@@ -2862,15 +2862,12 @@ namespace ecs {
 				task.navState = NavState::CantFindWayTo;
 				break;
 		}
-		// A failed route holds no claims (ClaimIndex::addCurrent): colonists deciding later this update
-		// see its work free while it stays failed, and taken again once a route succeeds.
+		// A failed route holds only the goods it carries (ClaimIndex::addCurrent): re-filing the task as the
+		// rebuild would see it lets colonists deciding later this update take what it has not reached while
+		// it stays failed, and see it taken again once a route succeeds.
 		const bool failed = task.navState == NavState::CantFindWayTo;
 		if (m_claimsBuilt && failed != wasFailed) {
-			if (failed) {
-				m_claims.retire(task.instanceId);
-			} else {
-				m_claims.append(entity, task);
-			}
+			m_claims.append(entity, task);
 		}
 	}
 

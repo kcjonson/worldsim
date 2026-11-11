@@ -66,11 +66,12 @@ namespace ecs {
 	class ClaimIndex {
 	  public:
 		/// Rebuild from every Task in `world`, current claims and suspended records, in view order. A
-		/// current task whose route has failed (NavState::CantFindWayTo) contributes nothing.
+		/// current task whose route has failed (NavState::CantFindWayTo) contributes only the Inbound and
+		/// InFlight of the goods it carries (cargoOnClaims).
 		void rebuild(World& world);
 
-		/// Add `task`'s current claims, for a selection made after the last rebuild (nothing while its
-		/// route has failed), or again once a failed route succeeds. Its suspended
+		/// Add `task`'s current claims, for a selection made after the last rebuild, or again when its
+		/// route fails (then only its carried goods) or a failed route succeeds. Its suspended
 		/// record is not appended: a record's claims were indexed when they were the current task's,
 		/// and suspend() rewrites them. An instance already in the index is retired first, so an
 		/// adopted record's instance is never counted twice.
