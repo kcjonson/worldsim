@@ -11,12 +11,10 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <iterator>
 #include <memory>
 #include <string>
-#include <thread>
 #include <tuple>
 #include <unordered_set>
 #include <vector>
@@ -100,18 +98,14 @@ namespace {
 		return layoutOf(executor.computeChunkEntities(ctx).entities);
 	}
 
-	// Launch the chunk and pump the processor the way the game loop does, until it is integrated.
-	// No deadline: a slow runner can't be told from a hang by the clock, so a task that never
-	// finishes is left to the assets-tests ctest TIMEOUT.
+	// Launch the chunk and block until it is integrated. No deadline: a slow runner can't be told
+	// from a hang by the clock, so a task that never finishes is left to the assets-tests ctest TIMEOUT.
 	::testing::AssertionResult placeAndWait(AsyncChunkProcessor& processor, const world::Chunk& chunk) {
 		processor.launchTask(&chunk);
 		if (!processor.isProcessing(chunk.coordinate())) {
 			return ::testing::AssertionFailure() << "launchTask did not start the chunk";
 		}
-		while (processor.hasPending()) {
-			processor.pollCompleted();
-			std::this_thread::sleep_for(std::chrono::milliseconds(2));
-		}
+		processor.waitAll();
 		return ::testing::AssertionSuccess();
 	}
 
