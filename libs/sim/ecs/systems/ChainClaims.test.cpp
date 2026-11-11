@@ -1158,6 +1158,31 @@ namespace ecs::test {
 		})) << "the cut shows why it is not taken";
 	}
 
+	// A full pack and free hands: wood rides in the hands, so the cut is offered. Its sources are listed by
+	// the same room rule the pickup and the evaluator use, not by the pack's free slots.
+	TEST_F(ChainClaimsTest, AFullPackStillCutsWoodIntoFreeHands) {
+		registerHarvestable("WoodTree", "Wood", 2, 3);
+		const glm::vec2 sitePos{0.0F, 10.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 10);
+		GoalTask		cut;
+		cut.type = TaskType::Harvest;
+		cut.owner = GoalOwner::ConstructionGoalSystem;
+		cut.destinationEntity = site.blueprint;
+		cut.destinationPosition = sitePos;
+		cut.yieldDefNameId = woodId;
+		cut.parentGoalId = site.umbrella;
+		GoalTaskRegistry::Get().createGoal(std::move(cut));
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		remember(colonist, {2.0F, 0.0F}, "WoodTree", assets::CapabilityType::Harvestable);
+		auto& inventory = *world->getComponent<Inventory>(colonist);
+		inventory.maxCapacity = 1;
+		inventory.addItem("Stick", 1);
+		ASSERT_EQ(inventory.addableCount("Wood"), 0U) << "no pack slot";
+
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->type, TaskType::Harvest);
+	}
+
 	// =============================================================================
 	// Whole flows: the goal systems, the AI, and the actions run together. Movement is skipped: a
 	// colonist arrives the moment it heads somewhere. Each asserts outcomes, never which colonist won.

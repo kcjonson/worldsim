@@ -21,6 +21,7 @@ namespace ecs {
 		m_inventory = &inventory;
 		++m_evaluation;
 		m_carryDefsListed = false;
+		m_carriedKg.reset();
 	}
 
 	const assets::AssetDefinition* WorkSources::knownCarryable(uint32_t defNameId) const {
@@ -97,7 +98,11 @@ namespace ecs {
 		resolved.yieldDefNameId = yieldId;
 		resolved.yieldDef = m_registry->getDefinitionById(yieldId);
 		resolved.holdsTool = ecs::inventoryHoldsToolType(*m_inventory, *m_registry, harvestable.requiredToolType);
-		resolved.yieldFits = ecs::cargoUnitsThatFit(*m_inventory, *m_registry, yieldName) != 0 && m_inventory->addableCount(yieldName) != 0;
+		// The rule the pickup and the cut's landing use: a two-hand yield goes to free hands whatever the pack holds.
+		if (!m_carriedKg.has_value()) {
+			m_carriedKg = ecs::carriedCargoMassKg(*m_inventory, *m_registry);
+		}
+		resolved.yieldFits = ecs::pickupUnitsThatFit(*m_inventory, *m_registry, yieldName, *m_carriedKg) != 0;
 		return resolved;
 	}
 

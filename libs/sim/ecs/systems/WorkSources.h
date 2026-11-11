@@ -9,6 +9,7 @@
 #include <assets/AssetDefinition.h>
 
 #include <cstdint>
+#include <optional>
 #include <span>
 #include <vector>
 
@@ -85,6 +86,8 @@ namespace ecs {
 		const Inventory*			 m_inventory = nullptr;
 		uint64_t					 m_evaluation = 0;
 		bool						 m_carryDefsListed = false;
+		/// What the colonist carries, summed the first time a harvest def asks in an evaluation
+		std::optional<float>		 m_carriedKg;
 		std::vector<uint32_t>		 m_carryDefs;
 		std::vector<HarvestDef>		 m_harvestDefs;
 		std::vector<CarrySource>	 m_carry;
