@@ -177,8 +177,16 @@ namespace ecs {
 				push(task, Claim::slot(task.targetStationId));
 				break;
 			case TaskType::FulfillNeed:
-				// Food the colonist walks to; food in its own pack is possessed, and water is unbounded.
-				if (task.needToFulfill == NeedType::Hunger && task.needSourceKey != 0) {
+				// Food the colonist walks to: a bush it will cut, or one meal from a pile or box. Food in its
+				// own pack is possessed, and water is unbounded.
+				if (task.needToFulfill != NeedType::Hunger) {
+					break;
+				}
+				if (task.needSourceStorageId != 0) {
+					push(task, Claim::sourceQuantity(TargetKind::Entity, task.needSourceStorageId, task.needItemDefNameId, task.needQuantity));
+				} else if (task.needItemDefNameId != 0) {
+					push(task, Claim::sourceQuantity(TargetKind::WorldKey, task.needSourceKey, task.needItemDefNameId, task.needQuantity));
+				} else if (task.needSourceKey != 0) {
 					push(task, Claim::use(TargetKind::WorldKey, task.needSourceKey));
 				}
 				break;

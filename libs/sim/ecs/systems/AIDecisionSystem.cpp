@@ -1252,6 +1252,7 @@ namespace ecs {
 		m_colonyStorage.invalidate();
 		m_needs.invalidate();
 		m_claimsBuilt = false;
+		m_foodBoxesBuilt = false;
 		auto* actionSystem = world->tryGetSystem<ActionSystem>();
 		m_loosePiles = actionSystem != nullptr ? &actionSystem->loosePiles() : nullptr;
 
@@ -1631,6 +1632,52 @@ namespace ecs {
 		}
 	}
 
+	const std::vector<AIDecisionSystem::FoodBox>& AIDecisionSystem::foodBoxes() {
+		if (m_foodBoxesBuilt) {
+			return m_foodBoxes;
+		}
+		m_foodBoxesBuilt = true;
+		m_foodBoxes.clear();
+		m_edibleItems.clear();
+		for (const std::string& name : m_registry.edibleItemNames()) {
+			m_edibleItems.push_back(m_registry.getDefNameId(name));
+		}
+		std::sort(m_edibleItems.begin(), m_edibleItems.end());
+		for (auto [box, config, store, boxPos] : world->view<StorageConfiguration, Inventory, Position>()) {
+			(void)config;
+			if (world->hasComponent<Packaged>(box) || store.items.empty()) {
+				continue;
+			}
+			const size_t first = m_foodBoxes.size();
+			for (const ItemStack& stack : store.items) {
+				const uint32_t item = m_registry.getDefNameId(stack.defName);
+				if (!std::binary_search(m_edibleItems.begin(), m_edibleItems.end(), item)) {
+					continue;
+				}
+				const auto same = std::find_if(m_foodBoxes.begin() + static_cast<std::ptrdiff_t>(first), m_foodBoxes.end(),
+											   [item](const FoodBox& food) { return food.item == item; });
+				if (same != m_foodBoxes.end()) {
+					same->quantity += stack.quantity;
+				} else {
+					m_foodBoxes.push_back({.box = box, .position = boxPos.value, .item = item, .quantity = stack.quantity});
+				}
+			}
+			// Colony-placed storage is common colony knowledge, the rule the box-to-box pull uses.
+			if (m_foodBoxes.size() > first && !m_colonyStorage.knows(*world, m_registry, box)) {
+				m_foodBoxes.resize(first);
+				continue;
+			}
+			if (m_foodBoxes.size() > first) {
+				const auto*	   appearance = world->getComponent<Appearance>(box);
+				const uint64_t key = hashWorldEntity(boxPos.value, m_registry.getDefNameId(appearance->defName));
+				for (size_t index = first; index < m_foodBoxes.size(); ++index) {
+					m_foodBoxes[index].key = key;
+				}
+			}
+		}
+		return m_foodBoxes;
+	}
+
 	void AIDecisionSystem::acceptClaims(
 		EntityID entity, Task& task, const Memory& memory, const Inventory& inventory, const std::optional<SuspendedWork>& handedCargo
 	) {
@@ -1813,90 +1860,182 @@ namespace ecs {
 			return findNearestReachableWithCapability(memory, capability, position.value, accept, reachable, sourceScratch);
 		};
 
-		// With an empty pack, the one food source both the Hunger option and the gather-food option
-		// target: the nearest reachable remembered harvestable whose yield is edible and that is ready
-		// to give it. The gather option is on offer whenever the pack is empty, so this is probed even
-		// when Hunger is met. Readiness is asked of candidates nearest first, only until one is chosen;
-		// the nearest reachable one passed over for regrowing is kept to show why the colonist waits.
-		// When every edible source it knows is regrowing, the search isn't run again until the first of
-		// them is ready or its memory of world entities changes (SourceReachMemo::FoodWait).
+		// With an empty pack, one search finds both what the Hunger option eats from and the bush the
+		// gather-food option goes to, over every edible source the colonist knows, nearest reachable
+		// first: a ready harvestable whose yield is edible, a loose pile of an edible item it remembers,
+		// and a storage box the colony knows that holds one. Piles and boxes only feed a colonist that is
+		// hungry; the gather option, on offer whenever the pack is empty, takes bushes only. Candidates
+		// are asked nearest first, only until the answers are found; the nearest reachable bush passed
+		// over for regrowing is kept to show why the colonist waits. When every edible harvestable it
+		// knows is regrowing, they aren't searched again until the first is ready or its memory of world
+		// entities changes (SourceReachMemo::FoodWait); piles and boxes are never part of that wait, so a
+		// box that gains berries while it waits is seen at the next decision.
 		//
-		// A source another colonist is going to eat from (its Hunger task holds the Use) is passed over
-		// like a regrowing one, so two hungry colonists don't converge on one bush; the nearest is kept
-		// to show who holds it. Only an eater at least as urgent holds it: a critically hungry colonist
-		// ignores a routinely hungry one's claim, and between equal tiers the first to claim keeps it.
-		// Work claims (a cut for a goal, the idle gather) don't hold food against a hungry colonist: a
-		// need's claim is one harvest it will eat, and nothing else may starve it. Still, a source nobody
-		// holds is preferred to one held by such a claim when one is known, reachable, and ready, so the
-		// search goes on past a held one and comes back to it only when nothing free is left. That also
-		// gives the gather option, which is idle work and gives way to any holder, the nearest free bush.
+		// A source another colonist is going to eat from (its Hunger task holds the Use, or a share of a
+		// pile or box) is passed over like a regrowing one, so two hungry colonists don't converge on one
+		// meal; the nearest is kept to show who holds it. Only an eater at least as urgent holds it: a
+		// critically hungry colonist ignores a routinely hungry one's claim, and between equal tiers the
+		// first to claim keeps it. Work claims (a cut for a goal, a haul, the idle gather) don't hold food
+		// against a hungry colonist: a need's claim is one meal it will eat, and nothing else may starve
+		// it. Still, a source nobody holds is preferred to one held by such a claim when one is known,
+		// reachable, and ready, so the search goes on past a held one and comes back to it only when
+		// nothing free is left. The gather option is idle work and gives way to any holder: it takes the
+		// nearest free bush.
 		const ClaimExclusion self = ClaimExclusion::of(currentTask);
-		const int			 hungerTier = needTier(needs.get(NeedType::Hunger));
+		const Need&			 hunger = needs.get(NeedType::Hunger);
+		const int			 hungerTier = needTier(hunger);
 		const auto			 eats = [hungerTier](const ClaimHolder& holder) {
 			return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle && holder.tier <= hungerTier;
 		};
-		const bool						packHasFood = hasEdibleFood(m_registry, inventory);
-		std::optional<KnownWorldEntity> foodSource;
+		const bool packHasFood = hasEdibleFood(m_registry, inventory);
+		const bool seeksFood = !packHasFood && hunger.needsAttention();
+		struct FoodChoice {
+			SourceCandidate source;
+			uint32_t		left = 0; // what a pile or box has left for this colonist
+		};
+		std::optional<FoodChoice>		foodSource;
+		std::optional<FoodChoice>		heldFood;
+		std::optional<SourceCandidate>	gatherSource;
+		std::optional<SourceCandidate>	heldBush;
+		EntityID						heldBushHolder = kInvalidEntity;
 		std::optional<KnownWorldEntity> regrowingFood;
-		std::optional<KnownWorldEntity> reservedFood;
-		std::optional<KnownWorldEntity> heldFood;
+		std::optional<SourceCandidate>	reservedFood;
 		EntityID						reservedFoodHolder = kInvalidEntity;
+		bool							searchExhausted = true;
+		const auto						isBush = [](const SourceCandidate& source) { return source.item == 0; };
+		const auto						mealOf = [&](uint32_t item) {
+			const auto* def = m_registry.getDefinitionById(item);
+			const float restore = def != nullptr && def->itemProperties.has_value() && def->itemProperties->edible.has_value()
+									  ? def->itemProperties->edible->nutrition * 100.0F
+									  : 0.0F;
+			const float shortfall = hunger.seekThreshold - hunger.value;
+			return restore > 0.0F && shortfall > restore ? static_cast<uint32_t>(std::ceil(shortfall / restore)) : 1U;
+		};
 		if (!packHasFood) {
 			const double now = m_simulationNow;
-			if (const auto* wait = sourceReach.waitingForFood(memory.worldEntityVersion, now)) {
+			const auto*	 wait = sourceReach.waitingForFood(memory.worldEntityVersion, now);
+			bool		 everyBushRegrowing = true;
+			double		 firstReadyAt = std::numeric_limits<double>::infinity();
+			sourceScratch.clear();
+			if (wait != nullptr) {
 				regrowingFood = wait->nearest;
 			} else {
-				bool   everyCandidateRegrowing = true;
-				double firstReadyAt = std::numeric_limits<double>::infinity();
-				foodSource = findNeedSource(
-					assets::CapabilityType::Harvestable,
-					[&](uint64_t sourceKey, const KnownWorldEntity& known) {
-						if (!yieldsEdibleFood(m_registry, known.defNameId)) {
-							return false;
+				for (uint64_t key : memory.getEntitiesWithCapability(assets::CapabilityType::Harvestable)) {
+					const KnownWorldEntity* known = memory.getWorldEntity(key);
+					if (known == nullptr || !yieldsEdibleFood(m_registry, known->defNameId)) {
+						continue;
+					}
+					if (!notKnownUnreachable(key, *known)) {
+						everyBushRegrowing = false; // never asked, so it may be ready
+						continue;
+					}
+					SourceCandidate candidate = sourceCandidate(position.value, key, known->position);
+					candidate.entity = known;
+					sourceScratch.push_back(candidate);
+				}
+			}
+			if (seeksFood) {
+				const std::vector<FoodBox>& boxes = foodBoxes();
+				const auto					carryable = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Carryable));
+				for (uint32_t item : m_edibleItems) {
+					for (uint64_t key : memory.worldEntitiesOfDef(item)) {
+						const KnownWorldEntity* known = memory.getWorldEntity(key);
+						if (known == nullptr || (known->capabilityMask & carryable) == 0 || !notKnownUnreachable(key, *known)) {
+							continue;
 						}
-						if (!notKnownUnreachable(sourceKey, known)) {
-							everyCandidateRegrowing = false; // never asked, so it may be ready
-							return false;
+						SourceCandidate candidate = sourceCandidate(position.value, key, known->position);
+						candidate.entity = known;
+						candidate.item = item;
+						sourceScratch.push_back(candidate);
+					}
+				}
+				for (const FoodBox& food : boxes) {
+					SourceCandidate candidate = sourceCandidate(position.value, food.key, food.position);
+					candidate.item = food.item;
+					candidate.storage = food.box;
+					sourceScratch.push_back(candidate);
+				}
+			}
+			const auto answered = [&] { return seeksFood ? foodSource.has_value() : gatherSource.has_value(); };
+			searchExhausted = !nearestReachable(sourceScratch, [&](const SourceCandidate& source) {
+				if (isBush(source)) {
+					if (const auto readyAt = sourceRegrowingUntil(source.entity->defNameId, source.position)) {
+						firstReadyAt = std::min(firstReadyAt, *readyAt);
+						if (!regrowingFood.has_value() && canReachSource(source.key, source.position)) {
+							regrowingFood = *source.entity;
 						}
-						return true;
-					},
-					[&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-						const KnownWorldEntity* known = memory.getWorldEntity(sourceKey);
-						if (const auto readyAt = sourceRegrowingUntil(known->defNameId, sourcePosition)) {
-							firstReadyAt = std::min(firstReadyAt, *readyAt);
-							if (!regrowingFood.has_value() && canReachSource(sourceKey, sourcePosition)) {
-								regrowingFood = *known;
-							}
-							return false;
-						}
-						everyCandidateRegrowing = false;
-						if (!canReachSource(sourceKey, sourcePosition)) {
-							return false;
-						}
-						if (const auto eater = m_claims.useHolderWhere({.kind = TargetKind::WorldKey, .key = sourceKey}, self, eats)) {
+						return false;
+					}
+					everyBushRegrowing = false;
+				}
+				if (!canReachSource(source.key, source.position)) {
+					return false;
+				}
+				if (isBush(source)) {
+					const ClaimTarget bush{.kind = TargetKind::WorldKey, .key = source.key};
+					const auto		  holder = m_claims.useHolder(bush, self);
+					if (!holder.has_value()) {
+						gatherSource = gatherSource.value_or(source);
+					} else if (!heldBush.has_value()) {
+						heldBush = source;
+						heldBushHolder = holder->colonist;
+					}
+					if (seeksFood) {
+						if (const auto eater = m_claims.useHolderWhere(bush, self, eats)) {
 							if (!reservedFood.has_value()) {
-								reservedFood = *known;
+								reservedFood = source;
 								reservedFoodHolder = eater->colonist;
 							}
-							return false;
+						} else if (holder.has_value()) {
+							heldFood = heldFood.value_or(FoodChoice{source});
+						} else {
+							foodSource = FoodChoice{source};
 						}
-						// Held by someone it need not give way to (a worker, the idle gather, a less urgent
-						// eater): kept in case nothing free is known, so the two don't converge on one bush.
-						if (m_claims.useHolder({.kind = TargetKind::WorldKey, .key = sourceKey}, self).has_value()) {
-							if (!heldFood.has_value()) {
-								heldFood = *known;
-							}
-							return false;
-						}
-						return true;
 					}
-				);
-				if (!foodSource.has_value()) {
-					foodSource = heldFood;
+					return answered();
 				}
+				// A pile or a box: what it has left once eaters at least as urgent take theirs. A remembered
+				// pile the world can't find has no count; it is offered while no eater claims it, so the
+				// colonist goes to look and its memory is corrected on arrival.
+				const ClaimTarget target = source.storage != kInvalidEntity
+											   ? ClaimTarget{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(source.storage)}
+											   : ClaimTarget{.kind = TargetKind::WorldKey, .key = source.key};
+				const uint32_t			meal = mealOf(source.item);
+				std::optional<uint32_t> live;
+				if (source.storage != kInvalidEntity) {
+					const auto food = std::find_if(m_foodBoxes.begin(), m_foodBoxes.end(), [&](const FoodBox& box) {
+						return box.box == source.storage && box.item == source.item;
+					});
+					live = food->quantity;
+				} else if (const EntityID pile = m_loosePiles != nullptr ? m_loosePiles->find(*world, source.item, source.position) : kInvalidEntity;
+						   pile != kInvalidEntity) {
+					live = world->getComponent<ResourceStack>(pile)->quantity;
+				}
+				const auto	   eaten = m_claims.sourceClaimedWhere(target, source.item, self, eats);
+				const uint32_t claimed = m_claims.sourceClaimed(target, source.item, self);
+				const uint32_t have = live.value_or(eaten.quantity > 0 ? 0U : meal);
+				const uint32_t left = have > eaten.quantity ? have - eaten.quantity : 0U;
+				if (left == 0) {
+					if (!reservedFood.has_value() && eaten.holder.has_value()) {
+						reservedFood = source;
+						reservedFoodHolder = eaten.holder->colonist;
+					}
+					return false;
+				}
+				const uint32_t unclaimed = live.has_value() ? (have > claimed ? have - claimed : 0U) : (claimed > 0 ? 0U : meal);
+				if (unclaimed < std::min(meal, left)) {
+					heldFood = heldFood.value_or(FoodChoice{source, left});
+					return false;
+				}
+				foodSource = FoodChoice{source, left};
+				return answered();
+			}).has_value();
+			if (seeksFood && !foodSource.has_value()) {
+				foodSource = heldFood;
+			}
+			if (wait == nullptr) {
 				sourceReach.foodWait.reset();
-				if (!foodSource.has_value() && everyCandidateRegrowing && firstReadyAt > now &&
-					firstReadyAt < std::numeric_limits<double>::infinity()) {
+				if (searchExhausted && everyBushRegrowing && firstReadyAt > now && firstReadyAt < std::numeric_limits<double>::infinity()) {
 					sourceReach.foodWait = SourceReachMemo::FoodWait{memory.worldEntityVersion, firstReadyAt, regrowingFood};
 				}
 			}
@@ -1932,23 +2071,47 @@ namespace ecs {
 					continue;
 				}
 
-				// Second priority: harvest the known food source
+				// Second priority: the known food source, by kind. A pile or box gives one meal, no more:
+				// stored food is the colony's, and what goes into the pack is the colonist's own.
 				if (foodSource.has_value()) {
-					option.targetPosition = foodSource->position;
-					option.targetDefNameId = foodSource->defNameId;
-					option.distanceToTarget = glm::distance(position.value, foodSource->position);
+					const SourceCandidate& source = foodSource->source;
+					option.targetPosition = source.position;
+					option.targetDefNameId = isBush(source) ? source.entity->defNameId : source.item;
+					option.distanceToTarget = glm::distance(position.value, source.position);
 					option.targetReachable = true;
-					option.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
-					option.status = need.needsAttention() ? OptionStatus::Available : OptionStatus::Satisfied;
-					option.reason = "harvest";
+					option.sourceKey = source.key;
+					option.status = OptionStatus::Available;
+					option.reason = isBush(source) ? "harvest" : source.storage != kInvalidEntity ? "from storage" : "from a pile";
+					if (!isBush(source)) {
+						// A full pack still eats: the meal is sized to at least one unit, and the pickup makes
+						// room for it (ActionSystem::makeRoomToEat).
+						const uint32_t room = ecs::pickupUnitsThatFit(
+							inventory, m_registry, m_registry.getDefName(source.item), ecs::carriedCargoMassKg(inventory, m_registry)
+						);
+						option.needItemDefNameId = source.item;
+						option.needQuantity = std::min({mealOf(source.item), foodSource->left, std::max(room, 1U)});
+						option.needSourceStorageId = static_cast<uint64_t>(source.storage);
+					}
+					trace.options.push_back(option);
+					continue;
+				}
+
+				// Met: nothing to walk to; the nearest free bush is shown as where it would go
+				if (!need.needsAttention()) {
+					if (gatherSource.has_value()) {
+						option.targetPosition = gatherSource->position;
+						option.targetDefNameId = gatherSource->entity->defNameId;
+						option.distanceToTarget = glm::distance(position.value, gatherSource->position);
+					}
+					option.status = OptionStatus::Satisfied;
 					trace.options.push_back(option);
 					continue;
 				}
 
 				// The food it knows is someone else's next meal: wait for it, taking other options meanwhile
-				if (reservedFood.has_value() && need.needsAttention()) {
+				if (reservedFood.has_value()) {
 					option.targetPosition = reservedFood->position;
-					option.targetDefNameId = reservedFood->defNameId;
+					option.targetDefNameId = isBush(*reservedFood) ? reservedFood->entity->defNameId : reservedFood->item;
 					option.distanceToTarget = glm::distance(position.value, reservedFood->position);
 					option.status = OptionStatus::Reserved;
 					option.reservedBy = reservedFoodHolder;
@@ -1957,7 +2120,7 @@ namespace ecs {
 				}
 
 				// The only reachable food known is regrowing: wait on it, taking other options meanwhile
-				if (regrowingFood.has_value() && need.needsAttention()) {
+				if (regrowingFood.has_value()) {
 					option.targetPosition = regrowingFood->position;
 					option.targetDefNameId = regrowingFood->defNameId;
 					option.distanceToTarget = glm::distance(position.value, regrowingFood->position);
@@ -1967,7 +2130,7 @@ namespace ecs {
 				}
 
 				// No food in inventory and no reachable food source known
-				option.status = need.needsAttention() ? OptionStatus::NoSource : OptionStatus::Satisfied;
+				option.status = OptionStatus::NoSource;
 				trace.options.push_back(option);
 				continue;
 			}
@@ -2030,9 +2193,9 @@ namespace ecs {
 			trace.options.push_back(option);
 		}
 
-		// Add "Gather Food" work option (tier 7)
-		// Only show if colonist has no food in inventory
-		if (!packHasFood) {
+		// Add "Gather Food" work option (tier 7): the nearest free bush, while the pack has no food. Not
+		// known when the search stopped at stored food a hungry colonist will eat first; it is not shown then.
+		if (!packHasFood && (gatherSource.has_value() || !seeksFood || searchExhausted)) {
 			EvaluatedOption gatherOption;
 			gatherOption.taskType = TaskType::FulfillNeed; // Reuse FulfillNeed for now
 			gatherOption.needType = NeedType::Hunger;	   // Will trigger Harvest action
@@ -2044,28 +2207,18 @@ namespace ecs {
 			gatherOption.skillLevel = farmSkillLevel;
 			gatherOption.skillBonus = farmSkillBonus;
 
-			const auto foodSourceHolder =
-				foodSource.has_value()
-					? m_claims.useHolder({.kind = TargetKind::WorldKey, .key = hashWorldEntity(foodSource->position, foodSource->defNameId)}, self)
-					: std::nullopt;
-			if (foodSourceHolder.has_value()) {
-				gatherOption.targetPosition = foodSource->position;
-				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
-				gatherOption.status = OptionStatus::Reserved;
-				gatherOption.reservedBy = foodSourceHolder->colonist;
-				gatherOption.reason = "Food source";
-			} else if (foodSource.has_value()) {
-				gatherOption.targetPosition = foodSource->position;
-				gatherOption.distanceToTarget = glm::distance(position.value, foodSource->position);
+			if (gatherSource.has_value()) {
+				gatherOption.targetPosition = gatherSource->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, gatherSource->position);
 				gatherOption.targetReachable = true;
-				gatherOption.sourceKey = hashWorldEntity(foodSource->position, foodSource->defNameId);
+				gatherOption.sourceKey = gatherSource->key;
 				gatherOption.status = OptionStatus::Available;
 				gatherOption.reason = "Gathering food (inventory empty)";
-			} else if (reservedFood.has_value()) {
-				gatherOption.targetPosition = reservedFood->position;
-				gatherOption.distanceToTarget = glm::distance(position.value, reservedFood->position);
+			} else if (heldBush.has_value()) {
+				gatherOption.targetPosition = heldBush->position;
+				gatherOption.distanceToTarget = glm::distance(position.value, heldBush->position);
 				gatherOption.status = OptionStatus::Reserved;
-				gatherOption.reservedBy = reservedFoodHolder;
+				gatherOption.reservedBy = heldBushHolder;
 				gatherOption.reason = "Food source";
 			} else if (regrowingFood.has_value()) {
 				gatherOption.targetPosition = regrowingFood->position;
@@ -2319,6 +2472,9 @@ namespace ecs {
 		task.targetPosition = selected->targetPosition.value_or(position.value);
 		task.reason = describeOption(*world, *selected);
 		task.needSourceKey = selected->sourceKey;
+		task.needItemDefNameId = selected->needItemDefNameId;
+		task.needQuantity = selected->needQuantity;
+		task.needSourceStorageId = selected->needSourceStorageId;
 
 		// Copy crafting-specific fields for Craft tasks
 		if (selected->taskType == TaskType::Craft) {

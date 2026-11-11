@@ -248,6 +248,21 @@ private:
 	/// The deciding colonist's carried kinds, reused across colonists
 	std::vector<CarriedKind> m_carried;
 
+	/// One edible item a storage box the colony knows holds. Box contents don't change inside an AI
+	/// update (deposits and withdrawals are ActionSystem's), so the list is worked out the first time a
+	/// hungry colonist asks in an update and shared by every one after.
+	struct FoodBox {
+		EntityID  box = kInvalidEntity;
+		glm::vec2 position{0.0F, 0.0F};
+		uint64_t  key = 0; // the box's world key, as Memory files it
+		uint32_t  item = 0;
+		uint32_t  quantity = 0;
+	};
+	std::vector<FoodBox>  m_foodBoxes;
+	std::vector<uint32_t> m_edibleItems;
+	bool				  m_foodBoxesBuilt = false;
+	[[nodiscard]] const std::vector<FoodBox>& foodBoxes();
+
 	/// ActionSystem's piles by world key, for a remembered pile's live count; read once per update,
 	/// null in a world without an ActionSystem (a pile's count is then unknown)
 	const LoosePileIndex* m_loosePiles = nullptr;

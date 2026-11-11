@@ -156,7 +156,7 @@ namespace ecs {
 		const Position&		  position,
 		Memory&				  memory,
 		const NeedsComponent& needs,
-		const Inventory&	  inventory
+		Inventory&			  inventory
 	) {
 		// Handle Craft tasks separately
 		if (task.type == TaskType::Craft) {

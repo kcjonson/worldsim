@@ -357,6 +357,31 @@ Eat records Use on a bush or SourceQuantity of one meal on a pile or box; food a
 possessed and takes none, and the gather-food option claims its bush like Eat. Drink takes no claim
 from unbounded water. Sleep and toilet slots come with beds and toilets.
 
+A hungry colonist's sources are, nearest reachable first in one search: its own pack (no walking),
+a ready harvestable whose yield is edible, a loose pile of an edible item it remembers, and a storage
+box the colony knows (the `ColonyStorageKnowledge` rule the box-to-box pull uses) that holds an edible
+item. A box's own minimum does not keep its food from a hungry colonist; stored food is the buffer
+between harvests. One meal is what takes the need back to its seek threshold at the item's
+nutrition, at least one unit, capped by what the source has left for this colonist and by what one
+pickup can lift (`pickupUnitsThatFit`, never below one). A bush is cut whole, as before, because a
+cut gives what it gives; a pile or box gives the meal and no more, because stored food is the
+colony's and anything taken past the meal would become one colonist's provisions, out of everyone
+else's reach. The pickup or withdraw ends the task and the next decision eats from the pack, the way
+a harvest does. A pack with no room for one unit still eats: the pickup first puts away what the
+colonist carries that is not food (the pack's last stack, then its hands) by the store-or-drop rule.
+
+What a pile or box has left for a hungry colonist is its live count less the shares of eaters at
+least as urgent. Work claims on food (a haul of berries to a box, a pull between boxes, a craft fetch)
+never hold it: the hungry colonist takes it, and a hauler that arrives after finds less or nothing,
+and its empty pickup ends the haul (or, re-deciding first, it sees the pile taken and lets it go).
+Such a held source still comes after a free one, as for bushes.
+
+The regrowing-food wait (`SourceReachMemo::FoodWait`) covers harvestables only: it is set when every
+edible harvestable the colonist knows is regrowing, and while it holds those are not searched again.
+Piles and boxes are searched at every decision of a hungry colonist, so a box that gains berries, or
+a pile that appears, ends the wait at once. The boxes holding food are worked out once per AI update
+and shared by every hungry colonist; box contents change only in ActionSystem.
+
 A hungry colonist reads a bush as taken only when the holder will eat from it and is at least as
 urgent: a Hunger task whose tier is no higher a number than its own (lower tier wins, equal tiers keep
 first-come). A critically hungry colonist (tier 2) ignores a routinely hungry one's claim (tier 5),

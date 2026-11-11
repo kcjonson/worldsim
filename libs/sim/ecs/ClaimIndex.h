@@ -90,6 +90,28 @@ namespace ecs {
 		/// The highest-ranked other task taking `item` from `source`, if any.
 		[[nodiscard]] std::optional<ClaimHolder> sourceHolder(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude) const;
 
+		/// Units of `item` the other tasks that accept(holder) admits will take from `source`, and the
+		/// highest-ranked of them.
+		struct SourceShare {
+			uint32_t				   quantity = 0;
+			std::optional<ClaimHolder> holder;
+		};
+		template <typename Accept>
+		[[nodiscard]] SourceShare sourceClaimedWhere(ClaimTarget source, uint32_t itemDefNameId, ClaimExclusion exclude, Accept&& accept) const {
+			uint64_t	total = 0;
+			SourceShare share;
+			forEachUnder(keyOf(KeyTag::Source, source.kind, source.key, itemDefNameId), exclude, [&](const Entry& entry) {
+				if (accept(entry.holder)) {
+					total += entry.claim.quantity();
+					if (!share.holder || outranks(entry.holder, *share.holder)) {
+						share.holder = entry.holder;
+					}
+				}
+			});
+			share.quantity = total > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(total);
+			return share;
+		}
+
 		/// Units of `item` other tasks will deposit at `destination`.
 		[[nodiscard]] uint32_t inboundItems(EntityID destination, uint32_t itemDefNameId, ClaimExclusion exclude) const;
 

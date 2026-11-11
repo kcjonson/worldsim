@@ -1726,7 +1726,12 @@ namespace ecs::test {
 			assets::AssetRegistry::Get().registerTestDefinition(std::move(bush));
 			berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
 			bushId = assets::AssetRegistry::Get().getDefNameId("RipeBush");
-			actions->setTakeSourceCallback([this](const std::string&, float x, float y, ActionSystem::SourceTake take, float) {
+			// Only bushes stand in this world; a pile is answered by the pile index, and a pickup whose
+			// pile has gone finds nothing.
+			actions->setTakeSourceCallback([this](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float) {
+				if (defName != "RipeBush") {
+					return ActionSystem::SourceState::Gone;
+				}
 				const glm::vec2 at{x, y};
 				const bool		wasCut = std::find(cut.begin(), cut.end(), at) != cut.end();
 				if (take == ActionSystem::SourceTake::Regrow && !wasCut) {
@@ -1765,6 +1770,37 @@ namespace ecs::test {
 			return walkUntil(done, [] {}, maxFrames);
 		}
 
+		/// A storage box holding `berries`, which every colonist named remembers (colony knowledge).
+		EntityID foodBox(glm::vec2 position, uint32_t berries, std::initializer_list<EntityID> knownBy) {
+			const EntityID box = world->createEntity();
+			world->addComponent<Position>(box, Position{position});
+			world->addComponent<Appearance>(box, Appearance{"Box", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			auto inventory = Inventory::createForStorage();
+			if (berries > 0) {
+				inventory.addItem("Berry", berries);
+			}
+			world->addComponent<Inventory>(box, std::move(inventory));
+			StorageConfiguration config;
+			config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
+			world->addComponent<StorageConfiguration>(box, std::move(config));
+			for (EntityID colonist : knownBy) {
+				remember(colonist, position, "Box", assets::CapabilityType::Storage);
+			}
+			return box;
+		}
+
+		EntityID berryPile(glm::vec2 position, uint32_t quantity, std::initializer_list<EntityID> knownBy) {
+			const EntityID pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{position});
+			makeLoosePile(*world, pile, berryId, position, quantity);
+			for (EntityID colonist : knownBy) {
+				remember(colonist, position, "Berry", assets::CapabilityType::Carryable);
+			}
+			return pile;
+		}
+
+		uint32_t boxBerries(EntityID box) { return world->getComponent<Inventory>(box)->getQuantity("Berry"); }
+
 		uint32_t			   berryId = 0;
 		uint32_t			   bushId = 0;
 		std::vector<glm::vec2> cut;
@@ -1800,6 +1836,204 @@ namespace ecs::test {
 		EXPECT_EQ(routineMealsAtTheBush.size(), 1U) << "the routine eater never went back for the bush";
 		EXPECT_NE(getTask(routine)->needSourceKey, bushKey);
 		EXPECT_NE(optionOf(routine, TaskType::FulfillNeed, OptionStatus::Regrowing), nullptr) << "it waits for the bush to regrow";
+	}
+
+	// =============================================================================
+	// Stored food: a hungry colonist eats from a box the colony knows or a loose pile it remembers,
+	// nearest reachable first among every edible source. The pickup or withdraw puts one meal in its
+	// pack and the next decision eats it.
+	// =============================================================================
+
+	TEST_F(HungerWalkTest, AnEmptyPackEatsFromAKnownBox) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({4.0F, 0.0F}, 3, {colonist});
+
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::FulfillNeed);
+		EXPECT_EQ(task.needSourceStorageId, static_cast<uint64_t>(box));
+		ASSERT_EQ(task.claims.size(), 1);
+		EXPECT_EQ(task.claims[0].kind(), ClaimKind::SourceQuantity);
+		EXPECT_EQ(task.claims[0].targetKind(), TargetKind::Entity);
+		EXPECT_EQ(task.claims[0].quantity(), 1U) << "one meal: a berry takes hunger from 30 past 50";
+		EXPECT_NE(task.reason.find("from storage"), std::string::npos) << task.reason;
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(boxBerries(box), 2U);
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Berry"), 0U) << "it took no more than the meal";
+	}
+
+	TEST_F(HungerWalkTest, AnEmptyPackEatsFromAKnownPile) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 5.0F);
+		const EntityID pile = berryPile({4.0F, 0.0F}, 5, {colonist});
+
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, berryId);
+		EXPECT_EQ(getTask(colonist)->needQuantity, 2U) << "two berries take hunger from 5 past 50";
+		EXPECT_NE(getTask(colonist)->reason.find("from a pile"), std::string::npos) << getTask(colonist)->reason;
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 3U);
+	}
+
+	// Every bush it knows is regrowing, so it waits on them; a box it knows then gains berries, and it
+	// eats from the box instead of waiting out the regrowth.
+	TEST_F(HungerWalkTest, ABoxThatGainsFoodEndsTheWaitOnRegrowingBushes) {
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		rememberBush(colonist, bushPos);
+		cut.push_back(bushPos);
+		const EntityID box = foodBox({-5.0F, 0.0F}, 0, {colonist});
+
+		decide(colonist);
+		ASSERT_NE(optionOf(colonist, TaskType::FulfillNeed, OptionStatus::Regrowing), nullptr);
+		ASSERT_TRUE(world->getComponent<SourceReachMemo>(colonist)->foodWait.has_value()) << "it waits on the bush";
+
+		world->getComponent<Inventory>(box)->addItem("Berry", 2);
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(boxBerries(box), 1U);
+	}
+
+	// One search over every kind, nearest reachable first: the bush, then (once it is cut) the box, then
+	// (once the box is empty) the pile.
+	TEST_F(HungerWalkTest, TheNearestReachableFoodWinsWhateverItsKind) {
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const glm::vec2 pilePos{-7.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		rememberBush(colonist, bushPos);
+		const EntityID box = foodBox({0.0F, 5.0F}, 2, {colonist});
+		berryPile(pilePos, 2, {colonist});
+
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(bushPos, bushId));
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, 0U);
+
+		cut.push_back(bushPos);
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->needSourceStorageId, static_cast<uint64_t>(box));
+
+		world->getComponent<Inventory>(box)->removeItem("Berry", 2);
+		decide(colonist);
+		EXPECT_EQ(getTask(colonist)->needSourceStorageId, 0U);
+		EXPECT_EQ(getTask(colonist)->needItemDefNameId, berryId);
+		EXPECT_EQ(getTask(colonist)->needSourceKey, hashWorldEntity(pilePos, berryId));
+	}
+
+	// One berry left in a box and two routinely hungry colonists: the first to claim it keeps it from the
+	// other, who looks elsewhere. The second then turns critical: now it is the more urgent and the berry
+	// is its meal. Only one of them eats it.
+	TEST_F(HungerWalkTest, TheLastBerryInABoxGoesToTheMoreUrgentEater) {
+		const EntityID first = hungryColonist({10.0F, 0.0F}, 30.0F);
+		const EntityID second = hungryColonist({-10.0F, 0.0F}, 30.0F);
+		const EntityID box = foodBox({0.0F, 0.0F}, 1, {first, second});
+
+		decide(first);
+		ASSERT_EQ(getTask(first)->needSourceStorageId, static_cast<uint64_t>(box));
+		decide(second);
+		EXPECT_NE(getTask(second)->type, TaskType::FulfillNeed) << "the berry is the first's meal";
+		const EvaluatedOption* reserved = optionOf(second, TaskType::FulfillNeed, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, first);
+
+		world->getComponent<NeedsComponent>(second)->get(NeedType::Hunger).value = 5.0F;
+		decide(second);
+		ASSERT_EQ(getTask(second)->needSourceStorageId, static_cast<uint64_t>(box)) << "the critical eater outranks the routine one";
+
+		ASSERT_TRUE(walkUntil([&] { return boxBerries(box) == 0; }));
+		walkUntil([] { return false; }, 200);
+		EXPECT_EQ(hunger(first), 30.0F) << "the routine eater gave the berry up";
+		EXPECT_EQ(hunger(second), 35.0F) << "the critical one ate it";
+	}
+
+	// A hauler has claimed a pile of berries for a storage box; a starving colonist takes them anyway (a
+	// work claim never holds food against a hungry colonist). The hauler arrives to nothing and its haul
+	// ends.
+	TEST_F(HungerWalkTest, AStarvingColonistTakesBerriesAHaulerClaimed) {
+		const glm::vec2 storePos{0.0F, 12.0F};
+		const EntityID	store = world->createEntity();
+		world->addComponent<Position>(store, Position{storePos});
+		world->addComponent<Inventory>(store, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
+		world->addComponent<StorageConfiguration>(store, std::move(config));
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = store;
+		goal.destinationPosition = storePos;
+		goal.acceptedDefNameIds = {berryId};
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		const EntityID hauler = createColonist({9.0F, 0.0F});
+		const EntityID starving = hungryColonist({0.0F, 0.0F}, 5.0F);
+		const EntityID pile = berryPile({3.0F, 0.0F}, 2, {hauler, starving});
+
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		decide(starving);
+		ASSERT_EQ(getTask(starving)->type, TaskType::FulfillNeed);
+		EXPECT_EQ(getTask(starving)->needQuantity, 2U) << "the hauler's claim doesn't hold the berries";
+
+		bool		haulEnded = false;
+		const auto	noteHauler = [&] { haulEnded |= getTask(hauler)->type != TaskType::Haul; };
+		ASSERT_TRUE(walkUntil([&] { return hunger(starving) >= 50.0F; }, noteHauler));
+		walkUntil([&] { return haulEnded; }, noteHauler, 300);
+		EXPECT_TRUE(haulEnded);
+		EXPECT_FALSE(world->isAlive(pile) && world->getComponent<ResourceStack>(pile)->quantity > 0) << "the pile was eaten";
+		EXPECT_EQ(world->getComponent<Inventory>(store)->getQuantity("Berry"), 0U);
+		EXPECT_EQ(world->getComponent<Inventory>(hauler)->getQuantity("Berry"), 0U) << "the hauler came away with nothing";
+	}
+
+	// A pack with no room for a berry still eats: the colonist puts away what it carries that is not
+	// food, then takes its meal.
+	TEST_F(HungerWalkTest, AFullPackStillEatsStoredFood) {
+		const EntityID colonist = hungryColonist({0.0F, 0.0F}, 30.0F);
+		auto&		   pack = *world->getComponent<Inventory>(colonist);
+		pack.maxCapacity = 1;
+		pack.addItem("Stone", 3);
+		const auto& registry = assets::AssetRegistry::Get();
+		ASSERT_EQ(ecs::pickupUnitsThatFit(pack, registry, "Berry", ecs::carriedCargoMassKg(pack, registry)), 0U);
+		berryPile({4.0F, 0.0F}, 3, {colonist});
+
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
+		EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("Stone"), 0U) << "the stone was put away";
+	}
+
+	// The same race decided at the pile: the starving colonist lifts the berries before the hauler gets
+	// there, and the hauler's pickup collects nothing, which ends its haul instead of walking an empty
+	// pack to the box.
+	TEST_F(HungerWalkTest, AHaulerArrivingAfterAHungryColonistAteEndsItsHaul) {
+		const glm::vec2 storePos{0.0F, 12.0F};
+		const glm::vec2 pilePos{3.0F, 0.0F};
+		const EntityID	store = world->createEntity();
+		world->addComponent<Position>(store, Position{storePos});
+		world->addComponent<Inventory>(store, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Berry", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium});
+		world->addComponent<StorageConfiguration>(store, std::move(config));
+		GoalTask goal;
+		goal.type = TaskType::Haul;
+		goal.owner = GoalOwner::StorageGoalSystem;
+		goal.destinationEntity = store;
+		goal.destinationPosition = storePos;
+		goal.acceptedDefNameIds = {berryId};
+		GoalTaskRegistry::Get().createGoal(std::move(goal));
+
+		const EntityID hauler = createColonist({9.0F, 0.0F});
+		const EntityID starving = hungryColonist({0.0F, 0.0F}, 5.0F);
+		berryPile(pilePos, 2, {hauler, starving});
+		decide(hauler);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		decide(starving);
+		ASSERT_EQ(getTask(starving)->needQuantity, 2U);
+
+		act(starving, pilePos);
+		EXPECT_EQ(world->getComponent<Inventory>(starving)->getQuantity("Berry"), 2U);
+		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
+		act(hauler, pilePos);
+		EXPECT_FALSE(getTask(hauler)->isActive()) << "the haul ends at an empty pile";
+		EXPECT_EQ(world->getComponent<Inventory>(hauler)->getQuantity("Berry"), 0U);
 	}
 
 } // namespace ecs::test

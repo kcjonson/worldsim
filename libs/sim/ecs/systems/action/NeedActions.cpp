@@ -1,11 +1,14 @@
 #include "../ActionSystem.h"
 
+#include "../../InventoryMass.h"
+#include "../../StoreOrDrop.h"
 #include "../../World.h"
 #include "../../components/Action.h"
 #include "../../components/Appearance.h"
 #include "../../components/Inventory.h"
 #include "../../components/Memory.h"
 #include "../../components/Needs.h"
+#include "../../components/Packaged.h"
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
 
@@ -14,6 +17,8 @@
 
 #include <utils/Log.h>
 
+#include <algorithm>
+#include <iterator>
 #include <random>
 
 namespace ecs {
@@ -34,7 +39,7 @@ namespace ecs {
 		const Position&		  position,
 		Memory&				  memory,
 		const NeedsComponent& needs,
-		const Inventory&	  inventory
+		Inventory&	  inventory
 	) {
 		auto& registry = assets::AssetRegistry::Get();
 
@@ -64,7 +69,30 @@ namespace ecs {
 					break;
 				}
 
-				// Priority 2: harvest the food source the decision chose, by its Memory key, so two
+				// Priority 2: one meal from the storage box or loose pile the decision chose. The pickup or
+				// withdraw puts it in the pack, the task ends, and the next decision eats it from there, as
+				// after a harvest. The effect lifts only what is there and what fits; an emptied box or a
+				// pile gone since it was seen lifts nothing, and the colonist decides again.
+				if (task.needItemDefNameId != 0) {
+					const std::string& food = registry.getDefName(task.needItemDefNameId);
+					if (task.needSourceStorageId != 0) {
+						const auto box = static_cast<EntityID>(task.needSourceStorageId);
+						if (!world->isAlive(box) || world->getComponent<Inventory>(box) == nullptr || world->hasComponent<Packaged>(box)) {
+							LOG_DEBUG(Engine, "[Action] Food box %llu is gone or being moved", static_cast<unsigned long long>(task.needSourceStorageId));
+							action.clear();
+							break;
+						}
+						makeRoomToEat(inventory, food, position.value);
+						action = Action::Withdraw(food, task.needQuantity, task.needSourceStorageId, task.targetPosition);
+					} else {
+						makeRoomToEat(inventory, food, position.value);
+						action = Action::Pickup(food, task.needQuantity, task.targetPosition, food);
+					}
+					LOG_DEBUG(Engine, "[Action] Taking %u x %s to eat", task.needQuantity, food.c_str());
+					break;
+				}
+
+				// Priority 3: harvest the food source the decision chose, by its Memory key, so two
 				// sources at one spot can't swap places by memory's hash order.
 				if (const KnownWorldEntity* entity = memory.getWorldEntity(task.needSourceKey);
 					entity != nullptr && registry.hasCapability(entity->defNameId, assets::CapabilityType::Harvestable)) {
@@ -161,6 +189,30 @@ namespace ecs {
 				// Invalid need type - shouldn't happen
 				LOG_ERROR(Engine, "[Action] Invalid need type in task: %d", static_cast<int>(task.needToFulfill));
 				break;
+		}
+	}
+
+	void ActionSystem::makeRoomToEat(Inventory& inventory, const std::string& food, glm::vec2 position) {
+		auto& registry = assets::AssetRegistry::Get();
+		const auto isFood = [&](const std::string& defName) {
+			const auto* def = registry.getDefinition(defName);
+			return def != nullptr && def->isEdible();
+		};
+		while (ecs::pickupUnitsThatFit(inventory, registry, food, ecs::carriedCargoMassKg(inventory, registry)) == 0) {
+			const auto stack = std::find_if(inventory.items.rbegin(), inventory.items.rend(), [&](const ItemStack& item) { return !isFood(item.defName); });
+			if (stack != inventory.items.rend()) {
+				const ItemStack putAway = *stack;
+				inventory.items.erase(std::next(stack).base());
+				ecs::storeOrDrop(*world, putAway.defName, putAway.quantity, position, m_onDropResource);
+				LOG_DEBUG(Engine, "[Action] Put away %u x %s to make room to eat", putAway.quantity, putAway.defName.c_str());
+				continue;
+			}
+			const bool handsHoldCargo = (inventory.leftHand.has_value() && !isFood(inventory.leftHand->defName)) ||
+										(inventory.rightHand.has_value() && !isFood(inventory.rightHand->defName));
+			if (!handsHoldCargo) {
+				return;
+			}
+			clearHandsForTwoHandedPickup(inventory, position);
 		}
 	}
 

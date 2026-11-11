@@ -66,6 +66,8 @@ Physical needs have dropped below comfortable thresholds. Colonist seeks entitie
 
 **Key Constraint:** Colonist must KNOW where to find fulfillment. No omniscient pathfinding to unseen resources. See [Memory System](./memory.md).
 
+**Hunger sources.** A hungry colonist eats from the nearest food it can reach, whatever kind: its own pack first (no walking), then a ripe berry bush, a loose pile of food it remembers, or a storage box the colony knows that holds food. From a pile or box it takes one meal, enough to stop being hungry, and leaves the rest for everyone else; from a bush it keeps what the cut gives. Stored food is the buffer between harvests, so a colonist whose bushes are all regrowing eats from the larder instead of waiting. Colonists can starve, but only if they never find food: another colonist's work (hauling the berries to a box) never keeps food from a hungry one, and between two hungry colonists the more urgent eats first. See [Task Claims](../../../technical/task-claims.md#need-tasks).
+
 **MVP Status:** Included in Phase 1
 
 ### Tier 6: Opportunistic work

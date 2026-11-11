@@ -54,6 +54,11 @@ namespace ecs {
 		bool					 targetReachable = false;
 		// Memory key of the remembered source a need option targets; 0 for none (ground, pack, work)
 		std::uint64_t			 sourceKey = 0;
+		// Hunger from stored food (Task::needItemDefNameId and the rest): the item, one meal of it, and
+		// the box it comes from, 0 for a loose pile
+		uint32_t needItemDefNameId = 0;
+		uint32_t needQuantity = 0;
+		uint64_t needSourceStorageId = 0;
 
 		// Crafting-specific fields (for Craft tasks)
 		std::string craftRecipeDefName;
