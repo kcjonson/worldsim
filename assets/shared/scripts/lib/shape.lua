@@ -126,21 +126,7 @@ function shape.lobed(cx, cy, r, n, notch, jitter, rot, squash)
 		local rr = r * (i % 2 == 0 and notch or 1) * (1 + (math.random() * 2 - 1) * jitter)
 		xs[i], ys[i] = cx + cos(a) * rr, cy + sin(a) * rr * squash
 	end
-	local p = shape.polygon(xs, ys)
-	p.cx, p.cy = cx, cy
-	return p
-end
-
--- poly scaled by k about its center (cx, cy) and moved by (dx, dy); the copy keeps the center, moved.
-function shape.scaled(poly, k, dx, dy)
-	local xs, ys = {}, {}
-	for i = 1, poly.n do
-		xs[i] = poly.cx + (poly.xs[i] - poly.cx) * k + dx
-		ys[i] = poly.cy + (poly.ys[i] - poly.cy) * k + dy
-	end
-	local p = shape.polygon(xs, ys)
-	p.cx, p.cy = poly.cx + dx, poly.cy + dy
-	return p
+	return shape.polygon(xs, ys)
 end
 
 -- Adds poly to the asset in color c, a {r, g, b} table, at alpha (1 when nil).
@@ -154,36 +140,3 @@ function shape.emit(poly, c, alpha)
 	asset:addPath(p)
 end
 
--- The convex hull of the points (xs, ys), counter-clockwise on screen, as a polygon.
-function shape.hull(xs, ys)
-	local idx = {}
-	for i = 1, #xs do
-		idx[i] = i
-	end
-	table.sort(idx, function(a, b)
-		if xs[a] ~= xs[b] then
-			return xs[a] < xs[b]
-		end
-		return ys[a] < ys[b]
-	end)
-	local function cross(o, a, b)
-		return (xs[a] - xs[o]) * (ys[b] - ys[o]) - (ys[a] - ys[o]) * (xs[b] - xs[o])
-	end
-	local h = {}
-	for pass = 1, 2 do
-		local start = #h
-		for j = 1, #idx do
-			local i = pass == 1 and idx[j] or idx[#idx + 1 - j]
-			while #h >= start + 2 and cross(h[#h - 1], h[#h], i) <= 0 do
-				h[#h] = nil
-			end
-			h[#h + 1] = i
-		end
-		h[#h] = nil
-	end
-	local hx, hy = {}, {}
-	for k = 1, #h do
-		hx[k], hy[k] = xs[h[k]], ys[h[k]]
-	end
-	return shape.polygon(hx, hy)
-end

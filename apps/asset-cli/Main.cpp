@@ -55,11 +55,12 @@ namespace {
 		"  inspect <defName> [--json]\n"
 		"  validate [--json] [--render-smoke]\n"
 		"  render <defName> --out <file.png> [--size WxH] [--bg r,g,b,a] [--seed N] [--samples N]\n"
-		"  render <defName> --out <file.png> (--grid | --age a,b,... [--seed s,t,...]) [--silhouette] [--ppm N] [--bg r,g,b,a]\n"
+		"  render <defName> --out <file.png> (--grid | --age a,b,... [--seed s,t,...] [--pairs N]) [--silhouette] [--ppm N] [--bg r,g,b,a]\n"
 		"\n"
 		"render with --seed alone fits one generator run to --size. --grid draws every template the game\n"
 		"draws (age classes as rows, variants as columns); --age runs the generator at each age from 0 to 1\n"
-		"(columns) for each seed (rows, default 0). Both draw at one scale, --ppm pixels a metre (default\n"
+		"(columns) for each seed (rows, default 0), or with --pairs N the i-th age with the i-th seed, N to a\n"
+		"row. Both draw at one scale, --ppm pixels a metre (default\n"
 		"48). --silhouette fills what the selection silhouette keeps in one flat grey, on white unless --bg\n"
 		"is given.\n";
 
@@ -80,7 +81,7 @@ namespace {
 
 	// Flags that consume the following argument as their value.
 	bool flagTakesValue(const std::string& flag) {
-		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples", "--age", "--ppm"};
+		static const char* kValueFlags[] = {"--type", "--group", "--out", "--size", "--bg", "--seed", "--samples", "--age", "--ppm", "--pairs"};
 		for (const char* vf : kValueFlags) {
 			if (flag == vf) {
 				return true;
@@ -516,7 +517,11 @@ namespace {
 		float			   ppm = 48.0F;
 		std::vector<float> ages;
 		std::vector<float> seeds{0.0F};
+		size_t			   pairsPerRow = 0;
 		try {
+			if (const auto pairsArg = flagValue(args, "--pairs")) {
+				pairsPerRow = static_cast<size_t>(std::stoul(*pairsArg));
+			}
 			if (const auto ppmArg = flagValue(args, "--ppm")) {
 				ppm = std::stof(*ppmArg);
 			}
@@ -528,6 +533,10 @@ namespace {
 			}
 		} catch (const std::exception&) {
 			ppm = 0.0F;
+		}
+		if (flagValue(args, "--pairs") && (pairsPerRow == 0 || ages.size() != seeds.size())) {
+			std::cerr << "error: --pairs N takes as many --age values as --seed values, N to a row\n";
+			return kUsage;
 		}
 		if (!(ppm > 0.0F) || std::any_of(ages.begin(), ages.end(), [](float a) { return a < 0.0F || a > 1.0F; }) ||
 			std::any_of(seeds.begin(), seeds.end(), [](float v) { return v < 0.0F; })) {
@@ -563,10 +572,34 @@ namespace {
 			}
 		} else {
 			// The generator reads its age from the def's `age` param, so the def is registered again with it set.
+			// One cell per (age, seed): every age by every seed, or with --pairs N the i-th age with the
+			// i-th seed, N to a row.
+			struct Cell {
+				float  age;
+				float  seed;
+				size_t row;
+			};
+			std::vector<Cell> cells;
+			if (pairsPerRow > 0) {
+				for (size_t i = 0; i < ages.size(); ++i) {
+					cells.push_back({ages[i], seeds[i], i / pairsPerRow});
+				}
+			} else {
+				for (size_t sIdx = 0; sIdx < seeds.size(); ++sIdx) {
+					for (const float age : ages) {
+						cells.push_back({age, seeds[sIdx], sIdx});
+					}
+				}
+			}
 			const AssetDefinition original = *def;
-			for (const float seed : seeds) {
-				auto& row = rows.emplace_back();
-				for (const float age : ages) {
+			for (const Cell& cell : cells) {
+				const float age = cell.age;
+				const float seed = cell.seed;
+				if (rows.size() <= cell.row) {
+					rows.emplace_back();
+				}
+				auto& row = rows.back();
+				{
 					AssetDefinition aged = original;
 					aged.params.setFloat("age", age);
 					registry.registerTestDefinition(aged);

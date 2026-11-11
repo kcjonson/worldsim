@@ -38,20 +38,19 @@ local stagHeaded = getString("growingOld", "stagHeaded") == "stagHeaded"
 local growth = 1.5 + 6 * age -- growth steps; the last one partly done
 local clusterCount = curve(curveParam("clusters", "0.15:4, 0.55:9.5, 0.9:13.5"), age)
 local capScale = smooth(0.2, 0.45, age) -- lit caps come in as the crown fills out
-local fleckCount = curve(curveParam("flecks", "0.15:0, 0.55:3, 0.9:4"), age)
 
-local edgeTone = color.hex("foliageEdge", "#2f4a26")
-local baseTone = color.hex("foliageBase", "#3e5e2c")
-local midTone = color.hex("foliageMid", "#4f7536")
-local hiTone = color.hex("foliageHighlight", "#6f9a4a")
-local barkBase = color.hex("barkBase", "#5a3f26")
-local barkShadow = color.hex("barkShadow", "#45301d")
-local deadLimb = color.hex("deadLimb", "#6e6450")
-local deadLimbEdge = color.hex("deadLimbEdge", "#3a3326")
+-- Foliage runs from shade through base and light to highlight; each individual turns all four by up
+-- to hueSpread degrees and scales saturation and value by up to satSpread and valueSpread.
+local shadeTone = color.hex("foliageShade", "#4a6a2e")
+local baseTone = color.hex("foliageBase", "#5b7f36")
+local lightTone = color.hex("foliageLight", "#729a43")
+local hiTone = color.hex("foliageHighlight", "#93b85a")
+local hueSpread = getFloat("hueSpread", 14)
+local satSpread = getFloat("saturationSpread", 0.18)
+local valueSpread = getFloat("valueSpread", 0.1)
+local barkTone = color.hex("bark", "#6b4a2d")
 local shadowTone = color.hex("contactShadow", "#1d2616")
-local tuftDark = color.hex("tuftDark", "#527530")
-local tuftLight = color.hex("tuftLight", "#5E883A")
-local yellowing = color.hex("yellowing", "#9c8a2c")
+local yellowing = color.hex("yellowing", "#a8973a")
 
 -- The 3/4 view: ground y is foreshortened and height rises up the screen.
 local kGround, kRise = 0.5, 0.72
@@ -322,7 +321,7 @@ do
 		maxRadial = max(maxRadial, sqrt(t.x * t.x + t.y * t.y))
 		top = max(top, t.z)
 	end
-	local s = (crownWidth * 0.5 - rc) / maxRadial
+	local s = (crownWidth * 0.5 - rc * 0.8) / maxRadial -- the outer leaf masses reach about 0.8 rc past their tips
 	local sz = min(s, crownDepth * crownWidth / max(1e-6, top - 1))
 	local stemTop = stemRise * crownWidth
 	for _, n in ipairs(nodes) do
@@ -330,7 +329,7 @@ do
 		n.z = n.z >= 1 and stemTop + (n.z - 1) * sz or n.z * stemTop
 		if form == "windPruned" and n.z > stemTop then
 			-- the crown leans away from the wind
-			local lean = 0.9 * (n.z - stemTop)
+			local lean = 0.35 * (n.z - stemTop)
 			n.x, n.y = n.x - cos(windAz) * lean, n.y - sin(windAz) * lean
 		end
 	end
@@ -423,7 +422,7 @@ for _, g in ipairs(groups) do
 end
 
 -- Old age (R6): an oak goes stag-headed, the clusters along the top of its crown dying back one after
--- another late in life, to bare limbs that stand past what is left; a maple broadens (its crownWidth
+-- another late in life, leaving their limbs bare past what is left; a maple broadens (its crownWidth
 -- curve) and stays dense.
 local dying = {}
 if stagHeaded then
@@ -447,7 +446,7 @@ end
 stream(11)
 if raggedness > 0 and #clusters > 5 then
 	-- heavy shedding: the cluster nearest the trunk and a few at the edge are gone, so the crown is
-	-- gappy and a limb shows
+	-- gappy and limbs show
 	table.sort(clusters, function(a, b)
 		return a.x * a.x + a.y * a.y < b.x * b.x + b.y * b.y
 	end)
@@ -457,50 +456,121 @@ if raggedness > 0 and #clusters > 5 then
 	end
 end
 
+-- A cluster is drawn as a few leaf masses: one at its middle and one reaching toward each of up to
+-- three of its tips, so the crown's edge breaks where its shoots end. Each draws from its own shoot's
+-- stream, so it holds as the tree grows.
+local lobes = {}
+for _, c in ipairs(clusters) do
+	stream(3072 + c.node.id)
+	lobes[#lobes + 1] = { x = c.x, y = c.y, z = c.z, r = c.r * uniform(0.85, 1.0), tone = uniform(-1, 1) }
+	local far = {}
+	for _, t in ipairs(c.tips) do
+		far[#far + 1] = { t = t, d = (t.x - c.x) ^ 2 + (t.y - c.y) ^ 2 + (t.z - c.z) ^ 2 }
+	end
+	table.sort(far, function(a, b)
+		return a.d > b.d
+	end)
+	for k = 1, min(2, #far) do
+		local t, f = far[k].t, uniform(0.55, 0.85)
+		local reach = sqrt(far[k].d)
+		if reach > c.r * 0.25 then
+			lobes[#lobes + 1] = {
+				x = c.x + (t.x - c.x) * f, y = c.y + (t.y - c.y) * f, z = c.z + (t.z - c.z) * f,
+				r = c.r * uniform(0.55, 0.8), tone = uniform(-1, 1),
+			}
+		end
+	end
+end
+-- The inside of the crown low down is too shaded to hold leaves, so the boughs show under it: no
+-- leaf mass low in the middle, and none hanging over the fork at the top of the trunk.
+do
+	local forkX, forkY = project(stem)
+	local zTop, reach = -1e9, 1e-6
+	for _, l in ipairs(lobes) do
+		zTop = max(zTop, l.z)
+		reach = max(reach, sqrt(l.x * l.x + l.y * l.y))
+	end
+	local zBase = stemRise * crownWidth
+	for i = #lobes, 1, -1 do
+		local l = lobes[i]
+		local sx, sy = project(l)
+		local overFork = abs(sx - forkX) < 0.12 * crownWidth and sy + 0.3 * l.r > forkY - 0.04 * crownWidth
+		local inner = l.z < zBase + 0.35 * (zTop - zBase) and sqrt(l.x * l.x + l.y * l.y) < 0.3 * reach
+		if #lobes > 4 and (inner or overFork) then
+			table.remove(lobes, i)
+		end
+	end
+end
 local zLo, zHi = 1e9, -1e9
 local midX, midY = 0, 0
-for _, c in ipairs(clusters) do
-	zLo, zHi = min(zLo, c.z), max(zHi, c.z)
-	midX, midY = midX + c.sx / #clusters, midY + c.sy / #clusters
+for _, l in ipairs(lobes) do
+	l.sx, l.sy = project(l)
+	zLo, zHi = min(zLo, l.z), max(zHi, l.z)
+	midX, midY = midX + l.sx / #lobes, midY + l.sy / #lobes
 end
--- Back to front: low and far clusters first, high and near last.
-table.sort(clusters, function(a, b)
+-- Back to front: low and far masses first, high and near last.
+table.sort(lobes, function(a, b)
 	return a.z + a.y * 0.6 < b.z + b.y * 0.6
 end)
 
--- Palette: the species' tones, jittered +/-3% per channel for the variant.
+-- Palette: the species' four tones, turned for this individual (hue, saturation and value from its
+-- seed, wide enough to tell neighbours apart), then mixed per leaf mass by height, light and a little
+-- of its own.
 stream(5)
-local function jitter(c)
-	return { c[1] * uniform(0.97, 1.03), c[2] * uniform(0.97, 1.03), c[3] * uniform(0.97, 1.03) }
+do
+	local hue, sat, val = uniform(-1, 1) * hueSpread, uniform(1 - satSpread, 1 + satSpread), uniform(1 - valueSpread, 1 + valueSpread)
+	shadeTone = color.tone(shadeTone, val, hue, sat)
+	baseTone = color.tone(baseTone, val, hue, sat)
+	lightTone = color.tone(lightTone, val, hue, sat)
+	hiTone = color.tone(hiTone, val, hue, sat)
+	barkTone = color.tone(barkTone, uniform(0.9, 1.1), 0, 1)
 end
-edgeTone, baseTone, midTone, hiTone = jitter(edgeTone), jitter(baseTone), jitter(midTone), jitter(hiTone)
--- a yellowing patch sits on the side of the crown its seed points to
 local yellowX, yellowY = midX + cos(yellowAz) * crownWidth * 0.3, midY + sin(yellowAz) * crownWidth * 0.3 * kGround
+local function foliage(t)
+	if t < 0.5 then
+		return color.mixLinear(shadeTone, baseTone, t * 2)
+	end
+	return color.mixLinear(baseTone, lightTone, t * 2 - 1)
+end
 
 -- ---- drawing -----------------------------------------------------------------------------------
 
 local squash = 0.88
-local rimWidth = max(0.035, crownWidth * 0.026)
-local stemTopX, stemTopY = project(stem)
 
--- the drawn width of a shoot by the pipe rule, about twice real so limbs read at game zoom
-local function limbWidth(n)
-	return trunkWidth * sqrt(n.area / max(1, stem.area))
+-- Whether (x, y) is under one of the leaf masses from index `from` on.
+local function underLobes(from, x, y)
+	for j = from, #lobes do
+		local o = lobes[j]
+		if (x - o.sx) ^ 2 + ((y - o.sy) / squash) ^ 2 < (o.r * 0.85) ^ 2 then
+			return true
+		end
+	end
+	return false
 end
 
--- A tapered strip through the skeleton from `from` out to `to`, through every node between.
-local function limb(from, to, w0, w1, c)
-	local chain = {}
-	local n = to
-	while n and n ~= from do
-		table.insert(chain, 1, n)
-		n = n.parent
+-- 1. contact shadow
+stream(6)
+lib.foot.contactShadow(trunkWidth, shadowTone, 0.18)
+
+-- 2. the wood: one bark-coloured shape traced around the skeleton. Each axis follows a shoot out
+-- through its strongest child, drawn as a strip that tapers by the pipe rule (about twice real, so it
+-- reads at game zoom) and starts inside the axis it grows from; the trunk's axis flares at the root.
+-- In one colour with no outline the strips read as one shape. Foliage is drawn over it, so limbs show
+-- below the crown and through its gaps; an axis is cut where the foliage covers the rest of it.
+local minWidth = 0.018
+local function widthOf(n)
+	return trunkWidth * 0.8 * sqrt(n.area / max(1, stem.area))
+end
+local function strongest(n)
+	local best = nil
+	for _, k in ipairs(n.kids) do
+		if k.area > 0 and (best == nil or k.area > best.area) then
+			best = k
+		end
 	end
-	table.insert(chain, 1, from)
-	local px, py = {}, {}
-	for _, node in ipairs(chain) do
-		px[#px + 1], py[#py + 1] = project(node)
-	end
+	return best
+end
+local function strip(px, py, pw)
 	local count = #px
 	local left, right = {}, {}
 	for i = 1, count do
@@ -508,143 +578,106 @@ local function limb(from, to, w0, w1, c)
 		local bx, by = px[min(count, i + 1)], py[min(count, i + 1)]
 		local dx, dy = bx - ax, by - ay
 		local l = max(1e-6, sqrt(dx * dx + dy * dy))
-		local w = (w0 + (w1 - w0) * (i - 1) / max(1, count - 1)) * 0.5
+		local w = pw[i] * 0.5
 		left[i] = { px[i] - dy / l * w, py[i] + dx / l * w }
 		right[i] = { px[i] + dy / l * w, py[i] - dx / l * w }
 	end
-	shape.emit(shape.stripPart(left, right, 1, count), c)
-end
-
--- 1. contact shadow, root flare, trunk
-stream(6)
-local flare = smooth(0.3, 1, age)
-lib.foot.contactShadow(trunkWidth, shadowTone, 0.3)
-lib.foot.rootFlare(trunkWidth, trunkWidth * (0.3 + 0.4 * flare), 1.3 + 0.9 * flare, barkBase)
-lib.bark.texturedTrunk(stemTopY, 0, trunkWidth * 0.78, trunkWidth, barkBase[1], barkBase[2], barkBase[3])
-
--- 2. one dark rim around the union of the clusters, which also backs the crown so a gap reads as
--- deep shade: the farthest the union reaches along rays from the crown's middle, pushed out by the rim
-local function inUnion(x, y, grow)
-	for _, c in ipairs(clusters) do
-		if (x - c.sx) ^ 2 + ((y - c.sy) / squash) ^ 2 < (c.r + grow) ^ 2 then
-			return true
-		end
-	end
-	return false
+	shape.emit(shape.stripPart(left, right, 1, count), barkTone)
 end
 do
-	local rays = clamp(#clusters * 2 + 10, 16, 34)
-	local xs, ys = {}, {}
-	for k = 1, rays do
-		local a = (k - 1) * 2 * pi / rays
-		local far = 0
-		for _, c in ipairs(clusters) do
-			-- the ray from the middle against the cluster's ellipse, in the space where it is a circle
-			local ox, oy = midX - c.sx, (midY - c.sy) / squash
-			local R = c.r + rimWidth
-			local b = ox * cos(a) + oy * sin(a)
-			local disc = b * b - (ox * ox + oy * oy - R * R)
-			if disc >= 0 then
-				far = max(far, -b + sqrt(disc))
+	local flare = smooth(0.3, 1, age)
+	local queue = { { base = root, child = stem } }
+	while #queue > 0 do
+		local axis = table.remove(queue, 1)
+		local trunk = axis.base == root
+		local px, py, pw = {}, {}, {}
+		if trunk then
+			-- the root flare: wide at the ground, the trunk's own width a little above it
+			px[1], py[1], pw[1] = 0, 0, trunkWidth * (1.25 + 0.4 * flare)
+			px[2], py[2], pw[2] = 0, -trunkWidth * (0.2 + 0.25 * flare), trunkWidth * 1.04
+		else
+			px[1], py[1] = project(axis.base)
+			pw[1] = widthOf(axis.child)
+		end
+		local n = axis.child
+		while n and widthOf(n) >= minWidth * 0.7 do
+			px[#px + 1], py[#py + 1] = project(n)
+			pw[#pw + 1] = widthOf(n)
+			local next = strongest(n)
+			for _, k in ipairs(n.kids) do
+				if k ~= next and k.area > 0 and widthOf(k) >= minWidth then
+					queue[#queue + 1] = { base = n, child = k }
+				end
+			end
+			n = next
+		end
+		local last = #px
+		while last > 2 and underLobes(1, px[last - 1], py[last - 1]) and underLobes(1, px[last], py[last]) do
+			last = last - 1
+		end
+		if trunk or not (underLobes(1, px[1], py[1]) and underLobes(1, px[2], py[2])) then
+			for i = #px, last + 1, -1 do
+				px[i], py[i], pw[i] = nil, nil, nil
+			end
+			pw[#pw] = pw[#pw] * 0.4 -- a shoot ends in a point, not a cut
+			strip(px, py, pw)
+		end
+	end
+	-- dieback: a dying cluster's limb runs on bare past its leaves, to its highest tip and beyond
+	for _, c in ipairs(dying) do
+		local tip = c.tips[1]
+		for _, t in ipairs(c.tips) do
+			if select(2, project(t)) < select(2, project(tip)) then
+				tip = t
 			end
 		end
-		xs[k], ys[k] = midX + cos(a) * far, midY + sin(a) * squash * far
+		local chain = { addNode(tip, tip.dx, tip.dy, max(tip.dz, 0.3), rc * 2.4 * c.dieback, 0, tip.order, tip.az) }
+		local m = tip
+		while m and m ~= c.node.parent do
+			table.insert(chain, 1, m)
+			m = m.parent
+		end
+		local px, py, pw = {}, {}, {}
+		local w0 = widthOf(c.node)
+		for i, node in ipairs(chain) do
+			px[i], py[i] = project(node)
+			pw[i] = max(minWidth, w0 * (1 - 0.6 * (i - 1) / max(1, #chain - 1)))
+		end
+		table.insert(px, 1, (project(c.node.parent or stem)))
+		table.insert(py, 1, select(2, project(c.node.parent or stem)))
+		table.insert(pw, 1, w0)
+		strip(px, py, pw)
 	end
-	shape.emit(shape.polygon(xs, ys), color.shade(edgeTone, 0.45))
 end
 
--- 3. limbs, only where one can show: through a gap the clusters leave
-do
-	local drawn = 0
-	for _, s in ipairs(scaffold) do
-		if not s.dead and drawn < 2 then
-			local mx, my = project(s)
-			local hx, hy = (mx + stemTopX) * 0.5, (my + stemTopY) * 0.5
-			if not inUnion(hx, hy, -0.15 * rc) or not inUnion(mx, my, -0.15 * rc) then
-				limb(s.parent, s, limbWidth(s) * 1.1, limbWidth(s) * 0.7, barkShadow)
-				drawn = drawn + 1
-			end
-		end
-	end
-end
-
--- 4. clusters, back to front: a dark base, a mid cap offset up-left, and a lit cap on the highest.
--- Whatever a later cluster covers whole is left out.
-local function hiddenAfter(i, x, y)
-	for j = i + 1, #clusters do
-		local o = clusters[j]
-		if (x - o.sx) ^ 2 + ((y - o.sy) / squash) ^ 2 < (o.r * 0.84) ^ 2 then
-			return true
-		end
-	end
-	return false
-end
+-- 3. leaf masses, back to front, each in its own tone, with a lit cap on the brightest; whatever a
+-- later mass covers whole is left out
 stream(8)
-local notch = pointed and 0.66 or 0.84
-local verts = getInt("clusterVertices", 8)
-for i, c in ipairs(clusters) do
-	local h = (zHi > zLo) and (c.z - zLo) / (zHi - zLo) or 1
-	local ox, oy = c.sx - midX, c.sy - midY
+local notch = pointed and 0.68 or 0.88
+local verts = getInt("lobeVertices", 10)
+for i, l in ipairs(lobes) do
+	local h = (zHi > zLo) and (l.z - zLo) / (zHi - zLo) or 1
+	local ox, oy = l.sx - midX, l.sy - midY
 	local ol = max(1e-6, sqrt(ox * ox + oy * oy))
 	local facing = (ox * -0.6 + oy * -0.8) / ol * min(1, ol / rc)
-	local lit = clamp(0.15 + 0.6 * h + 0.25 * facing, 0, 1)
-	c.lit = lit
-	local base, mid, hi = baseTone, midTone, hiTone
-	if condition == "yellowing" then
-		local k = 1 - smooth(0.25, 0.45, sqrt((c.sx - yellowX) ^ 2 + (c.sy - yellowY) ^ 2) / crownWidth)
-		base, mid, hi = color.mixLinear(base, yellowing, 0.35 * k), color.mixLinear(mid, yellowing, 0.45 * k), color.mixLinear(hi, yellowing, 0.45 * k)
-	end
-	local seen = not hiddenAfter(i, c.sx, c.sy)
+	local t = clamp(0.12 + 0.55 * h + 0.22 * facing + 0.14 * l.tone, 0, 1)
+	local seen = not underLobes(i + 1, l.sx, l.sy)
 	for k = 0, 7 do
-		seen = seen or not hiddenAfter(i, c.sx + cos(k * pi / 4) * c.r * 0.85, c.sy + sin(k * pi / 4) * c.r * 0.85 * squash)
+		seen = seen or not underLobes(i + 1, l.sx + cos(k * pi / 4) * l.r * 0.85, l.sy + sin(k * pi / 4) * l.r * 0.85 * squash)
 	end
 	local rot = rand() * 2 * pi
 	if seen then
-		shape.emit(shape.lobed(c.sx, c.sy, c.r, verts, notch, 0.08, rot, squash), color.mixLinear(edgeTone, base, 0.3 + 0.7 * lit))
-	end
-	local capX, capY = c.sx - c.r * 0.16, c.sy - c.r * 0.2
-	if seen and not hiddenAfter(i, capX, capY) then
-		shape.emit(shape.lobed(capX, capY, c.r * 0.66, 6, notch, 0.12, rot + 0.5, squash), color.mixLinear(base, mid, 0.3 + 0.7 * lit))
-		local hiX, hiY = c.sx - c.r * 0.3, c.sy - c.r * 0.36
-		if capScale > 0.3 and lit > 0.62 and not hiddenAfter(i, hiX, hiY) then
-			shape.emit(shape.lobed(hiX, hiY, c.r * 0.34 * capScale, 5, notch, 0.12, rot + 1, squash), color.mixLinear(mid, hi, lit))
+		local tone = foliage(t)
+		local light, hi = lightTone, hiTone
+		if condition == "yellowing" then
+			local k = 1 - smooth(0.25, 0.45, sqrt((l.sx - yellowX) ^ 2 + (l.sy - yellowY) ^ 2) / crownWidth)
+			tone, light, hi = color.mixLinear(tone, yellowing, 0.4 * k), color.mixLinear(light, yellowing, 0.4 * k), color.mixLinear(hi, yellowing, 0.4 * k)
+		end
+		shape.emit(shape.lobed(l.sx, l.sy, l.r, verts, notch, 0.1, rot, squash), tone)
+		local capX, capY = l.sx - l.r * 0.22, l.sy - l.r * 0.26
+		if t > 0.55 and capScale > 0 and not underLobes(i + 1, capX, capY) then
+			shape.emit(shape.lobed(capX, capY, l.r * 0.5 * capScale, 7, notch, 0.16, rot + 0.7, squash),
+				color.mixLinear(light, hi, smooth(0.55, 1, t)))
 		end
 	end
 end
-
--- 5. leaf-scale flecks: small chips in the mid and highlight tones along the lit clusters' upper edges
-stream(9)
-do
-	table.sort(clusters, function(a, b)
-		return a.lit > b.lit
-	end)
-	for i = 1, min(floor(fleckCount + 0.5), #clusters) do
-		local c = clusters[i]
-		local a = uniform(-2.4, -0.7)
-		local d = c.r * uniform(0.5, 0.8)
-		local x, y = c.sx + cos(a) * d, c.sy + sin(a) * d * squash
-		local k = c.r * 0.18
-		local t = uniform(0, pi)
-		shape.emit(shape.polygon({ x + cos(t) * k, x - sin(t) * k * 0.5, x - cos(t) * k },
-			{ y + sin(t) * k, y + cos(t) * k * 0.5, y - sin(t) * k }), (i % 2 == 0) and midTone or hiTone)
-	end
-end
-
--- 6. what died back: bare limbs standing past the crown, longer the further the dieback has gone
-for _, c in ipairs(dying) do
-	local tip = c.tips[1]
-	for _, t in ipairs(c.tips) do
-		if select(2, project(t)) < select(2, project(tip)) then
-			tip = t
-		end
-	end
-	local from = c.node.parent or stem
-	local snag = addNode(tip, tip.dx, tip.dy, max(tip.dz, 0.3), rc * 2.4 * c.dieback, 0, tip.order, tip.az)
-	local w = limbWidth(c.node) * 0.6
-	limb(from, snag, w + rimWidth * 1.2, w * 0.25 + rimWidth, deadLimbEdge)
-	limb(from, snag, w, w * 0.25, deadLimb)
-end
-
--- 7. grass over the trunk foot
-stream(10)
-lib.foot.tufts(trunkWidth, floor(uniform(2, 3.999)), getFloat("tuftLength", 0.09), tuftDark, tuftLight)

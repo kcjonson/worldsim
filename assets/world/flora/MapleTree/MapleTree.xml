@@ -31,10 +31,10 @@
         <clusterSize>0.2</clusterSize>
         <lobes>pointed</lobes>
         <growingOld>broadens</growingOld>
-        <foliageEdge>#344c22</foliageEdge>
-        <foliageBase>#47662a</foliageBase>
-        <foliageMid>#5e8335</foliageMid>
-        <foliageHighlight>#7fa64b</foliageHighlight>
+        <foliageShade>#55712c</foliageShade>
+        <foliageBase>#678a34</foliageBase>
+        <foliageLight>#80a441</foliageLight>
+        <foliageHighlight>#a0c15a</foliageHighlight>
       </params>
     </generator>
 

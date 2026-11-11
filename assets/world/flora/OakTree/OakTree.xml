@@ -26,15 +26,15 @@
         <mainLimbs>3,5</mainLimbs>
         <shedding>0.35</shedding>
         <droop>0.25</droop>
-        <stemRise>0.5</stemRise>
+        <stemRise>0.4</stemRise>
         <crownDepth>0.26</crownDepth>
         <clusterSize>0.13</clusterSize>
         <lobes>rounded</lobes>
         <growingOld>stagHeaded</growingOld>
-        <foliageEdge>#2f4a26</foliageEdge>
-        <foliageBase>#3e5e2c</foliageBase>
-        <foliageMid>#4f7536</foliageMid>
-        <foliageHighlight>#6f9a4a</foliageHighlight>
+        <foliageShade>#4a6a2e</foliageShade>
+        <foliageBase>#5b7f36</foliageBase>
+        <foliageLight>#729a43</foliageLight>
+        <foliageHighlight>#93b85a</foliageHighlight>
       </params>
     </generator>
 

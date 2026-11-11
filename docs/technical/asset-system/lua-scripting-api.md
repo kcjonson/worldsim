@@ -43,8 +43,8 @@ Everything lives in one global table, `lib`, with one sub-table per file:
 | `num.lua` | `lib.num` | `clamp` (doubles; the global `clamp` the engine binds is a float one), `smoothstep`, `curve` (a monotone cubic through points, straight on past the ends), `curveParam` (a curve param written `x:y, x:y`) |
 | `random.lua` | `lib.random` | `uniform`, `signed`, `gauss`, `lognormal`, `stream(id)` (reseeds `math.random` from the variant's seed and an id, one stream per stage) |
 | `color.lua` | `lib.color` | `parseHex`, `hex`, `toLinear`, `toSrgb`, `luminance`, `shade`, `mixLinear`, `mixSrgb`, `toHsv`, `fromHsv`, `tone` |
-| `shape.lua` | `lib.shape` | `polygon`, `stripSides`, `stripPart`, `strip` (a tapered strip along a polyline), `upFan` (a grass tuft), `up`, `lobed` (a lobed blob), `scaled`, `emit` (adds a polygon to the asset), `hull` |
-| `foot.lua` | `lib.foot` | `contactShadow`, `rootFlare`, `tufts` (where a plant meets the ground) |
+| `shape.lua` | `lib.shape` | `polygon`, `stripSides`, `stripPart`, `strip` (a tapered strip along a polyline), `upFan` (a grass tuft), `up`, `lobed` (a lobed blob), `emit` (adds a polygon to the asset) |
+| `foot.lua` | `lib.foot` | `contactShadow` (where a plant meets the ground) |
 | `bark.lua` | `lib.bark` | `texturedTrunk` |
 
 A script that calls a helper often can alias it once at the top (`local clamp = lib.num.clamp`). Moving a helper into the prelude must not change what a generator draws, so keep its arithmetic and its random draw order as they were.
@@ -310,9 +310,9 @@ lib.random.stream(3)          -- each stage draws from its own stream
 -- ... grow the skeleton, one stream per shoot, then group its tips into clusters ...
 
 lib.random.stream(6)
-lib.foot.contactShadow(trunkWidth, lib.color.hex("contactShadow", "#1d2616"), 0.3)
-lib.bark.texturedTrunk(trunkTopY, 0, trunkWidth * 0.78, trunkWidth, bark[1], bark[2], bark[3])
-lib.shape.emit(lib.shape.lobed(x, y, r, 8, 0.84, 0.08, rot, 0.88), tone) -- one leaf cluster
+lib.foot.contactShadow(trunkWidth, lib.color.hex("contactShadow", "#1d2616"), 0.18)
+-- ... the wood as one shape: tapered strips along the skeleton's axes, all in one bark colour ...
+lib.shape.emit(lib.shape.lobed(x, y, r, 10, 0.88, 0.1, rot, 0.88), tone) -- one leaf mass
 ```
 
 ## Sandbox Restrictions
