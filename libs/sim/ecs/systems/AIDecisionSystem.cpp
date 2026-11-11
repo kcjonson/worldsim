@@ -55,6 +55,17 @@ namespace ecs {
 
 	namespace {
 
+		/// The actionable needs that are critical now, one bit per NeedType (Task::criticalNeedsAtDecision).
+		[[nodiscard]] uint8_t criticalNeedMask(const NeedsComponent& needs) {
+			uint8_t mask = 0;
+			for (const NeedType needType : NeedsComponent::kActionableNeeds) {
+				if (needs.get(needType).isCritical()) {
+					mask = static_cast<uint8_t>(mask | (1U << static_cast<unsigned>(needType)));
+				}
+			}
+			return mask;
+		}
+
 		/// Map NeedType to the CapabilityType that fulfills it
 		[[nodiscard]] assets::CapabilityType needToCapability(NeedType need) {
 			switch (need) {
@@ -1783,6 +1794,8 @@ namespace ecs {
 				task.timeSinceEvaluation += deltaTime;
 				continue;
 			}
+			task.criticalNeedsAtDecision = criticalNeedMask(needs);
+			const bool decidingOnFailedRoute = task.navState == NavState::CantFindWayTo;
 
 			// Store current task state for the (tier, score) interruption comparison
 			int		  currentTier = task.priorityTier;
@@ -1999,6 +2012,7 @@ namespace ecs {
 					);
 				}
 			}
+			task.routeFailureDecided = decidingOnFailedRoute && task.navState == NavState::CantFindWayTo;
 		}
 
 #ifdef DEVELOPMENT_BUILD
@@ -2107,11 +2121,10 @@ namespace ecs {
 		}
 
 		// Nav has stopped the colonist: no believed route to its target (a wander point or work
-		// site across water, or a route the freshly-built mesh invalidated). Re-evaluate so it
-		// picks a reachable target instead of standing frozen -- a Wander would otherwise never
-		// re-eval while "Moving". selectTaskFromTrace re-stamps navState from the new route, so this
-		// clears as soon as a reachable target is chosen (no thrash).
-		if (task.navState == NavState::CantFindWayTo) {
+		// site across water, or a route the freshly-built mesh invalidated). Decide once at once so it
+		// picks a reachable target instead of standing frozen. If that decision's pick fails too, the
+		// failure has had its prompt decision and the colonist re-decides on the interval below.
+		if (task.navState == NavState::CantFindWayTo && !task.routeFailureDecided) {
 			return true;
 		}
 
@@ -2120,25 +2133,16 @@ namespace ecs {
 			return true;
 		}
 
-		// Check if any critical need requires immediate attention (tier 2 interrupts all lower tiers)
-		bool hasCriticalNeed = false;
-		for (auto needType : NeedsComponent::kActionableNeeds) {
-			if (needs.get(needType).isCritical()) {
-				hasCriticalNeed = true;
-				break;
+		// A need crossing into critical decides at once (tier 2 interrupts all lower tiers); one that
+		// stays critical waits for the interval, so a colonist with nothing reachable doesn't decide
+		// every frame. Already serving a critical need, he isn't interrupted for another.
+		const uint8_t newlyCritical = static_cast<uint8_t>(criticalNeedMask(needs) & ~task.criticalNeedsAtDecision);
+		if (newlyCritical != 0) {
+			const bool servingCriticalNeed =
+				task.type == TaskType::FulfillNeed && needs.get(task.needToFulfill).isCritical();
+			if (!servingCriticalNeed) {
+				return true;
 			}
-		}
-
-		if (hasCriticalNeed) {
-			// If already handling a critical need, don't interrupt for other critical needs
-			if (task.type == TaskType::FulfillNeed) {
-				const auto& currentNeed = needs.get(task.needToFulfill);
-				if (currentNeed.isCritical()) {
-					return false;
-				}
-			}
-			// Critical need interrupts non-critical tasks and wander
-			return true;
 		}
 
 		// Idle Wander with a LIVE target is freely preemptible: re-evaluate every tick so any higher-tier

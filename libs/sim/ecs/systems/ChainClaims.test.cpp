@@ -2628,7 +2628,53 @@ namespace ecs::test {
 		decide(other);
 		EXPECT_EQ(getTask(other)->type, TaskType::Harvest) << "the stranded colonist's bush is offered";
 		EXPECT_EQ(getTask(other)->harvestTargetKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("StickBush")));
-		EXPECT_NE(getTask(stuck)->type, TaskType::Harvest) << "and the stranded colonist, seeing it taken, lets it go";
+		decide(stuck);
+		EXPECT_NE(getTask(stuck)->type, TaskType::Harvest) << "and the stranded colonist, seeing it taken, lets it go at his next decision";
+	}
+
+	// A stranded colonist whose every pick fails its route (here the same cut, kept, as in another region)
+	// decides once at once when the route fails, then on the re-decide interval, not every frame. Once a
+	// way opens he is moving again within one interval.
+	TEST_F(ChainClaimsTest, AColonistWhoseEveryRouteFailsDecidesOnTheInterval) {
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
+		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
+		const EntityID stuck = createColonist({0.0F, 0.0F});
+		remember(stuck, bushPos, "StickBush", assets::CapabilityType::Harvestable);
+		decide(stuck);
+		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
+
+		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
+		world->getComponent<MovementTarget>(stuck)->active = false;
+		getTask(stuck)->blockedReachStamp = 0;
+
+		constexpr float kFrame = 0.02F;
+		constexpr int	kFramesPerInterval = static_cast<int>(0.5F / kFrame) + 2; // kReEvalInterval of frames, the deciding frame, and float rounding
+		const auto*		trace = world->getComponent<DecisionTrace>(stuck);
+		float			lastDecision = trace->lastEvaluationTime;
+		int				decisions = 0;
+		for (int frame = 0; frame < 150; ++frame) { // 3 s
+			ai->update(kFrame);
+			if (trace->lastEvaluationTime != lastDecision) {
+				lastDecision = trace->lastEvaluationTime;
+				++decisions;
+			}
+		}
+		ASSERT_EQ(getTask(stuck)->navState, NavState::CantFindWayTo) << "every pick still fails";
+		EXPECT_GE(decisions, 5) << "he never freezes";
+		EXPECT_LE(decisions, 7) << "about one decision per 0.5 s interval over 3 s, not one per frame";
+
+		getTask(stuck)->blockedReachStamp = 1; // the reach the failure was found under has changed: a way opens
+		int framesToMove = 0;
+		while (framesToMove < 10 * kFramesPerInterval &&
+			   (getTask(stuck)->navState != NavState::Traveling || !world->getComponent<MovementTarget>(stuck)->active)) {
+			ai->update(kFrame);
+			++framesToMove;
+		}
+		EXPECT_LE(framesToMove, kFramesPerInterval) << "moving again within one interval of the way opening";
 	}
 
 	// The same stranded colonist, with nobody else wanting the bush: once its route succeeds (the reach it
@@ -3246,6 +3292,52 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->priorityTier, 2);
 		EXPECT_EQ(getTask(colonist)->needQuantity, 2U) << "two berries take hunger from 5 past 50";
 		EXPECT_EQ(ai->claimIndex().sourceClaimed({.kind = TargetKind::WorldKey, .key = hashWorldEntity(pilePos, berryId)}, berryId, {}), 2U);
+	}
+
+	// A critically hungry colonist whose only food is regrowing goes on with the work he has, deciding on
+	// the re-decide interval rather than every frame, and doesn't freeze: food that turns up in a box is
+	// his meal within one interval. (With no work he wanders, and a walking wander decides every frame.)
+	TEST_F(HungerWalkTest, ACriticalColonistWithNoFoodDecidesOnTheInterval) {
+		const glm::vec2 bushPos{3.0F, 0.0F};
+		const EntityID	colonist = hungryColonist({0.0F, 0.0F}, 5.0F);
+		rememberBush(colonist, bushPos);
+		cut.push_back(bushPos);
+		const EntityID box = foodBox({-5.0F, 0.0F}, 0, {colonist});
+		const glm::vec2 stationPos{0.0F, 6.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		childGoal(TaskType::Harvest, craftRoot(station, stationPos, "Stick", 20), station, stationPos, stickId);
+		remember(colonist, {40.0F, 0.0F}, "StickBush", assets::CapabilityType::Harvestable); // far: he is still walking at the end
+
+		constexpr float kFrame = 0.02F;
+		constexpr int	kFramesPerInterval = static_cast<int>(0.5F / kFrame) + 2; // kReEvalInterval of frames, the deciding frame, and float rounding
+		world->update(kFrame);
+		ASSERT_NE(optionOf(colonist, TaskType::FulfillNeed, OptionStatus::Regrowing), nullptr) << "he waits on the bush";
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Harvest) << "and works meanwhile";
+
+		const auto* trace = world->getComponent<DecisionTrace>(colonist);
+		float		lastDecision = trace->lastEvaluationTime;
+		int			decisions = 0;
+		for (int frame = 0; frame < 150; ++frame) { // 3 s
+			world->update(kFrame);
+			if (trace->lastEvaluationTime != lastDecision) {
+				lastDecision = trace->lastEvaluationTime;
+				++decisions;
+			}
+		}
+		ASSERT_LT(hunger(colonist), 10.0F) << "still critical";
+		ASSERT_EQ(getTask(colonist)->state, TaskState::Moving) << "still on his way to the cut";
+		EXPECT_GE(decisions, 5) << "he never freezes";
+		EXPECT_LE(decisions, 7) << "about one decision per 0.5 s interval over 3 s, not one per frame";
+
+		world->getComponent<Inventory>(box)->addItem("Berry", 2);
+		int framesToChoose = 0;
+		while (framesToChoose < 10 * kFramesPerInterval && getTask(colonist)->needSourceStorageId != static_cast<uint64_t>(box)) {
+			world->update(kFrame);
+			++framesToChoose;
+		}
+		EXPECT_LE(framesToChoose, kFramesPerInterval) << "the box's food is his meal within one interval";
+		ASSERT_TRUE(walkUntil([&] { return hunger(colonist) >= 50.0F; }));
 	}
 
 	// A box holding two kinds of food hands out the same one whatever the platform's heap order: ties

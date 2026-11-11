@@ -78,7 +78,7 @@ namespace ecs {
 		const ClaimHolder holder{
 			.colonist = colonist, .instanceId = task.instanceId, .claimSeq = task.claimSeq, .tier = tierOf(task), .taskType = task.type
 		};
-		// A colonist whose route to its target failed may re-select the same stranded work every frame,
+		// A colonist whose route to its target failed may re-select the same stranded work at each decision,
 		// so while it stays failed it holds only the goods it carries (Inbound and InFlight up to its
 		// cargo): what it has not reached (a source, a Use, a slot, the uncut part of an in-flight) is
 		// left for others, and what it carries is still on its way, so nobody fetches it again.
