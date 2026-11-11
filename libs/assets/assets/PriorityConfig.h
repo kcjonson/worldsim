@@ -98,7 +98,6 @@ namespace assets {
 	struct TimingConfig {
 		int16_t taskSwitchThreshold = 50;	// Min priority gap to switch tasks
 		float	reEvalInterval = 0.5F;		// Seconds between task re-evaluation
-		float	reservationTimeout = 10.0F; // Seconds before reservation expires
 	};
 
 	/// Priority tuning configuration
@@ -204,7 +203,6 @@ namespace assets {
 
 		[[nodiscard]] int16_t getTaskSwitchThreshold() const { return timingConfig.taskSwitchThreshold; }
 		[[nodiscard]] float	  getReEvalInterval() const { return timingConfig.reEvalInterval; }
-		[[nodiscard]] float	  getReservationTimeout() const { return timingConfig.reservationTimeout; }
 
 		// --- Work Category Order ---
 

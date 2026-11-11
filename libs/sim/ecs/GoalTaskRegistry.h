@@ -32,16 +32,13 @@ namespace ecs {
 	/// Goal status for task hierarchy and dependency tracking
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
-		InProgress,		 // Colonist(s) actively working
 		Blocked,		 // Craft waiting for all materials to be delivered
-		NoSource,		 // Need known, but no source (stock or harvestable) is known yet
-		Complete		 // Done
+		NoSource		 // Need known, but no source (stock or harvestable) is known yet
 	};
 
 	/// Systems that can own/create goals
 	/// Used to track which system is responsible for a goal's lifecycle
 	enum class GoalOwner : uint8_t {
-		None = 0,			// Unowned (legacy compatibility)
 		StorageGoalSystem,	// Haul goals for storage containers
 		CraftingGoalSystem, // Craft + child Harvest/Haul goals
 		BuildGoalSystem,	// PlacePackaged goals
@@ -89,7 +86,7 @@ namespace ecs {
 
 		// Metadata
 		float	  createdAt = 0.0F;
-		GoalOwner owner = GoalOwner::None; // Which system created/owns this goal
+		GoalOwner owner{}; // Which system created/owns this goal
 
 		// Parent-child hierarchy (for craft → harvest/haul relationships)
 		std::optional<uint64_t> parentGoalId;	 // Parent goal (e.g., Harvest/Haul → Craft)

@@ -3185,6 +3185,7 @@ TEST_F(ClearHarvestTest, RegrowingBushPaysNoYield) {
 	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
 	cut.targetAmount = 10;
 	cut.status = GoalStatus::Available;
+	cut.owner = GoalOwner::CraftingGoalSystem;
 	auto cutter = addHarvester(GoalTaskRegistry::Get().createGoal(std::move(cut)));
 
 	sourceState = ActionSystem::SourceState::OnCooldown;

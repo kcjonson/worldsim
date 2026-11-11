@@ -4165,6 +4165,7 @@ namespace ecs::test {
 		cut.yieldDefNameId = registry.getDefNameId("Berry");
 		cut.targetAmount = 5;
 		cut.status = GoalStatus::Available;
+		cut.owner = GoalOwner::CraftingGoalSystem;
 		GoalTaskRegistry::Get().createGoal(std::move(cut));
 
 		int	  choseCut = 0;

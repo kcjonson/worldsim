@@ -236,9 +236,7 @@ namespace ecs {
 		typeToGoals[goal.type].insert(goal.id);
 
 		// Owner index
-		if (goal.owner != GoalOwner::None) {
-			ownerToGoals[goal.owner].insert(goal.id);
-		}
+		ownerToGoals[goal.owner].insert(goal.id);
 
 		// Parent-child index
 		if (goal.parentGoalId.has_value()) {
@@ -262,13 +260,11 @@ namespace ecs {
 		}
 
 		// Owner index
-		if (goal.owner != GoalOwner::None) {
-			auto ownerIt = ownerToGoals.find(goal.owner);
-			if (ownerIt != ownerToGoals.end()) {
-				ownerIt->second.erase(goal.id);
-				if (ownerIt->second.empty()) {
-					ownerToGoals.erase(ownerIt);
-				}
+		auto ownerIt = ownerToGoals.find(goal.owner);
+		if (ownerIt != ownerToGoals.end()) {
+			ownerIt->second.erase(goal.id);
+			if (ownerIt->second.empty()) {
+				ownerToGoals.erase(ownerIt);
 			}
 		}
 

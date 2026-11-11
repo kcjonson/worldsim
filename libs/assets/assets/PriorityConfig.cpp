@@ -360,9 +360,6 @@ namespace assets {
 		if (auto n = node.child("reEvalInterval")) {
 			timingConfig.reEvalInterval = n.text().as_float(0.5F);
 		}
-		if (auto n = node.child("reservationTimeout")) {
-			timingConfig.reservationTimeout = n.text().as_float(10.0F);
-		}
 	}
 
 	void PriorityConfig::parseHaulingTuning(const void* nodePtr) {
