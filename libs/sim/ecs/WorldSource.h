@@ -31,7 +31,8 @@ namespace ecs {
 	worldSourceRegrowingUntil(assets::PlacementExecutor& placement, World& world, uint32_t defNameId, glm::vec2 at);
 
 	/// Take the source `defName` at `at` from the world and report what it was just before: Gone if
-	/// neither the placement index nor a live spawned entity holds it, OnCooldown if it stands but is
+	/// neither the placement index nor a live spawned entity holds it (a loose pile, a ResourceStack,
+	/// never counts: piles are LoosePileIndex's), OnCooldown if it stands but is
 	/// regrowing, Ready otherwise. Remove takes a placed source out of the index at once and queues a
 	/// spawned one on `pendingRemoval` (the caller destroys it after the update, never inside a view),
 	/// erasing its cooldown and resource pool either way; a spawned entity already queued there reads

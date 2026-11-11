@@ -2,6 +2,7 @@
 
 #include "World.h"
 #include "components/Appearance.h"
+#include "components/ResourceStack.h"
 #include "components/Transform.h"
 #include "systems/TimeSystem.h"
 
@@ -37,6 +38,11 @@ namespace ecs {
 		if (!placed) {
 			constexpr float kSpawnedMatchEps = 0.25F;
 			for (auto [entity, position, appearance] : world.view<Position, Appearance>()) {
+				// A loose pile is found only through LoosePileIndex: one missing from it is gone, and
+				// taking a neighbouring pile here would remove it whole for one pickup's pay.
+				if (world.getComponent<ResourceStack>(entity) != nullptr) {
+					continue;
+				}
 				const glm::vec2 d = position.value - at;
 				if (appearance.defName == defName && d.x * d.x + d.y * d.y <= kSpawnedMatchEps * kSpawnedMatchEps &&
 					std::ranges::find(pendingRemoval, entity) == pendingRemoval.end()) {

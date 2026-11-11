@@ -8,6 +8,7 @@
 #include "../InventoryMass.h"
 #include "../StoreOrDrop.h"
 #include "../World.h"
+#include "../WorldSource.h"
 #include "TimeSystem.h"
 #include "VisionSystem.h"
 #include "../components/Action.h"
@@ -30,6 +31,7 @@
 #include "assets/ConstructionRegistry.h"
 #include "assets/RecipeDef.h"
 #include "assets/RecipeRegistry.h"
+#include "assets/placement/PlacementExecutor.h"
 
 #include <construction/ConstructionWorld.h>
 
@@ -2139,6 +2141,53 @@ TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
 	auto* survivorStack = world->getComponent<ResourceStack>(survivor);
 	ASSERT_NE(survivorStack, nullptr);
 	EXPECT_EQ(survivorStack->quantity, 5U) << "Survivor's count is untouched";
+}
+
+// The remembered pile is gone (another hauler emptied it) and a second Wood pile stands 0.2 m away,
+// inside the reach the world's source lookup gives a spawned source. The pickup misses the pile index,
+// so it takes nothing: the neighbour is neither removed nor paid out, the stale memory entry is
+// forgotten, and the haul ends instead of walking to storage empty.
+TEST_F(LoosePileHaulTest, PileIndexMissTakesNothingFromANeighbour) {
+	auto&					registry = assets::AssetRegistry::Get();
+	assets::AssetDefinition wood = *registry.getDefinition("Wood");
+	wood.capabilities.carryable = assets::CarryableCapability{1};
+	registry.registerTestDefinition(std::move(wood));
+	const uint32_t woodId = registry.getDefNameId("Wood");
+
+	assets::PlacementExecutor executor{registry};
+	std::vector<EntityID>	  pendingRemoval;
+	world->getSystem<ActionSystem>().setTakeSourceCallback(
+		[&](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
+			return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
+		}
+	);
+
+	const glm::vec2 rememberedAt{1.0F, 1.0F};
+	const EntityID	neighbour = spawnPile(5, {1.2F, 1.0F});
+	const EntityID	colonist = createColonist(rememberedAt);
+	auto*			memory = world->getComponent<Memory>(colonist);
+	memory->rememberWorldEntity(rememberedAt, woodId, registry.getCapabilityMask(woodId));
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulItemDefName = "Wood";
+	task->haulQuantity = 5;
+	task->haulSourcePosition = rememberedAt;
+	task->haulTargetPosition = {5.0F, 0.0F};
+	task->haulFromInventory = false;
+	task->targetPosition = rememberedAt;
+	task->chainStep = 0;
+
+	world->update(0.1F); // start Pickup
+	world->update(1.0F); // complete
+
+	EXPECT_TRUE(pendingRemoval.empty()) << "nothing is queued for removal";
+	ASSERT_TRUE(world->isAlive(neighbour));
+	EXPECT_EQ(world->getComponent<ResourceStack>(neighbour)->quantity, 5U) << "the neighbour keeps every unit";
+	EXPECT_EQ(handHeldQuantity(*world->getComponent<Inventory>(colonist), "Wood"), 0U);
+	EXPECT_FALSE(memory->knowsWorldEntity(rememberedAt, woodId)) << "the stale entry is forgotten";
+	EXPECT_FALSE(task->isActive()) << "the haul ends at the source";
 }
 
 // =============================================================================

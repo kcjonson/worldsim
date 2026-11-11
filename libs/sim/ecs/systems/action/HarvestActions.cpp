@@ -168,6 +168,8 @@ namespace ecs {
 		// Only a ground pickup (sourceDefName == itemDefName, e.g. "Wood" from "Wood") may take the
 		// loose-pile path. A tree-fell yields "Wood" from "Flora_Tree..."; its source differs, so it
 		// must NOT be diverted here -- otherwise a pile sitting on the fell spot would hijack the chop.
+		// A pickup whose pile has left the index goes on to the single-shot branch, where the world never
+		// answers for a pile: the source reads Gone, its memory entry is forgotten, and nothing is taken.
 		const LoosePile pile = (collEff.sourceDefName == collEff.itemDefName)
 								   ? findLoosePile(world, m_loosePiles, harvestRegistry.getDefNameId(collEff.itemDefName), collEff.sourcePosition)
 								   : LoosePile{};
