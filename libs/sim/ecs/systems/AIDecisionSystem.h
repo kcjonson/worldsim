@@ -255,7 +255,8 @@ private:
 
 	/// Switching away from a task that carries its chain's goods (past its pickup, or a cut with cargo):
 	/// a one-hand item is stowed to the belt, then the backpack, else dropped; a two-hand armful is
-	/// dropped when the new task's first action needs the hands. When the new task is a need and the
+	/// dropped when the selected task's first action needs free hands (a carry-in of what it holds does
+	/// not). When the new task is a need and the
 	/// colonist keeps the goods, the task becomes its suspended record (task-claims.md, interruption by
 	/// the colonist's own needs).
 	void handleChainInterruption(
@@ -263,8 +264,7 @@ private:
 		Task& task,
 		struct Inventory& inventory,
 		const struct Position& position,
-		TaskType newTaskType,
-		NeedType newNeedType);
+		const EvaluatedOption& selected);
 
 	/// A just-accepted task takes its instance id and records its chain's claims; its suspended record
 	/// is kept (a need), adopted (the carry-in of the same goods, or a further cut carrying them), or

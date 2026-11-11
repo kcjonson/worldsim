@@ -824,6 +824,44 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(other)->haulItemDefName, "Wood") << "the pile is hauled once a root wants it";
 	}
 
+	// Walking an armful of wood to a box, he is offered a site that wants it (a higher tier). The carry-in
+	// to the site delivers what he holds, so it needs no free hands: the wood goes with him, not onto the
+	// ground to be fetched again.
+	TEST_F(ChainClaimsTest, AnArmfulBoundForABoxGoesToASiteWithoutBeingDropped) {
+		assets::ActionTypeDef pickup;
+		pickup.defName = "Pickup";
+		pickup.needsHands = true;
+		assets::ActionTypeRegistry::Get().registerTestAction(std::move(pickup));
+		uint32_t dropped = 0;
+		ai->setDropResourceCallback([&](const std::string&, float, float, uint32_t quantity) { dropped += quantity; });
+		const glm::vec2 boxPos{0.0F, 10.0F};
+		const EntityID	box = makeBox(boxPos, StoragePriority::Medium);
+		world->getComponent<StorageConfiguration>(box)->addRule(
+			StorageRule{.defName = "Wood", .category = assets::ItemCategory::RawMaterial, .priority = StoragePriority::Medium}
+		);
+		const uint64_t umbrella = storageGoal(box, boxPos);
+		GoalTaskRegistry::Get().updateGoal(umbrella, [&](GoalTask& goal) { goal.acceptedDefNameIds.push_back(woodId); });
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		auto&		   inventory = *world->getComponent<Inventory>(colonist);
+		ASSERT_EQ(ecs::addArmful(inventory, assets::AssetRegistry::Get(), "Wood", 14), 14U);
+		decide(colonist);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Haul);
+		ASSERT_EQ(getTask(colonist)->haulGoalId, umbrella);
+
+		const glm::vec2 sitePos{10.0F, 0.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 14);
+		decide(colonist);
+		const Task& task = *getTask(colonist);
+		ASSERT_EQ(task.type, TaskType::Haul);
+		EXPECT_EQ(task.haulGoalId, site.umbrella);
+		EXPECT_TRUE(task.haulFromInventory);
+		EXPECT_EQ(ecs::availableQuantity(inventory, "Wood"), 14U);
+		EXPECT_EQ(dropped, 0U);
+
+		act(colonist, sitePos);
+		EXPECT_EQ(world->getComponent<StructureBlueprint>(site.blueprint)->remaining("Wood"), 0U);
+	}
+
 	// The task panel lists a storage goal only while a colonist is offered work toward it: a box that
 	// wants stone when no loose stone is known, or one with room for a category nobody has any of, has
 	// nothing to do.

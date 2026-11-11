@@ -1769,7 +1769,7 @@ namespace ecs {
 				if (shouldSwitch) {
 					// Handle chain interruption if the abandoned task carries goods and the new task needs hands
 					if (!handedCargo && carriesChainGoods(m_registry, task) && selected != nullptr) {
-						handleChainInterruption(entity, task, inventory, position, selected->taskType, selected->needType);
+						handleChainInterruption(entity, task, inventory, position, *selected);
 					}
 					if (selected != nullptr) {
 						setDownUnplacedFurniture(entity, inventory, position, *selected);
@@ -2910,8 +2910,7 @@ namespace ecs {
 		Task&			task,
 		Inventory&		inventory,
 		const Position& position,
-		TaskType		newTaskType,
-		NeedType		newNeedType
+		const EvaluatedOption& selected
 	) {
 		// The goods a haul or a cut carries for its root.
 		const std::string& item = m_registry.getDefName(chainItem(m_registry, task));
@@ -2920,7 +2919,7 @@ namespace ecs {
 		// record, so the goods stay committed to where they were going. Called on every path that keeps
 		// them; a drop keeps none, and the pile it leaves is an ordinary source with no claims.
 		const auto keepGoods = [&]() {
-			if (newTaskType != TaskType::FulfillNeed) {
+			if (selected.taskType != TaskType::FulfillNeed) {
 				return;
 			}
 			auto record = suspendableWork(m_registry, task, ecs::availableQuantity(inventory, item));
@@ -2934,9 +2933,9 @@ namespace ecs {
 			m_claims.suspend(entity, task);
 		};
 
-		// Check if new task's first action needs hands
-		if (!taskFirstActionNeedsHands(newTaskType, newNeedType)) {
-			// New task doesn't need hands - colonist can keep carrying
+		// A carry-in delivers what the colonist holds, so it needs no free hands: the goods ride along to it.
+		const bool carriesIn = selected.taskType == TaskType::Haul && selected.haulFromInventory;
+		if (carriesIn || !taskFirstActionNeedsHands(selected.taskType, selected.needType)) {
 			keepGoods();
 			return;
 		}

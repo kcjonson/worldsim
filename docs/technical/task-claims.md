@@ -595,7 +595,9 @@ The colonist stows or drops carried goods (`AIDecisionSystem::handleChainInterru
 `needsHands` and `handsRequired`; see [Task Chains](../design/game-systems/colonists/task-chains.md)).
 A one-hand item goes to the belt, else the pack; a two-hand armful, or one-hand goods with no belt or
 pack room, go through `storeOrDrop`: into a box within reach that takes them, else onto the ground as a
-pile. Only a strictly higher tier interrupts a task carrying a two-hand armful its root still wants (a
+pile, when the selected task's first action needs free hands. A carry-in delivers what the colonist
+holds, so it needs none: a switch from one carry-in to another (a site that starts wanting the wood an
+armful bound for a box holds) takes the goods along. Only a strictly higher tier interrupts a task carrying a two-hand armful its root still wants (a
 carry-in of it to that root is offered), and never a cut of the same item: anything else would drop the
 armful, so the delivery is held.
 Once the root wants none of it, or the route to it has failed, nothing is held. A suspended record is

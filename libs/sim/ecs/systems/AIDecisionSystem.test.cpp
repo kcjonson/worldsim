@@ -166,9 +166,10 @@ namespace ecs::test {
 			EntityID entity, Task& task, Inventory& inventory, const Position& position,
 			TaskType newTaskType, NeedType newNeedType
 		) {
-			world->getSystem<AIDecisionSystem>().handleChainInterruption(
-				entity, task, inventory, position, newTaskType, newNeedType
-			);
+			EvaluatedOption selected;
+			selected.taskType = newTaskType;
+			selected.needType = newNeedType;
+			world->getSystem<AIDecisionSystem>().handleChainInterruption(entity, task, inventory, position, selected);
 		}
 
 		/// Read the AI system's colony-origin fallback target. The fixture is a friend of
