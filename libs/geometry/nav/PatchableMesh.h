@@ -23,9 +23,10 @@
 //
 // Triangle and vertex ids are stable: a patch frees some slots and reuses them, and
 // every id it did not touch still means what it meant. Ground exists only where a
-// triangle's cover set holds a bounds ring (blocked == false); elsewhere there are no
+// triangle's cover set holds kGroundToken (inside a bounds ring); elsewhere there are no
 // triangles. Bounds rings may share edges and vertices but their interiors must not
-// overlap.
+// overlap. Two bounds rings' edges on the same segment are dissolved (findBoundsSeams):
+// ground runs across them with no mesh edge there, and their end points stay vertices.
 //
 // The mesh carries what path queries and reachability read: face tags from the rings,
 // door tags on door edges, corridor widths capped at a maximum clearance (brought up to
@@ -34,16 +35,10 @@
 
 namespace geometry::nav {
 
-	using RingId		   = std::int32_t;
-	constexpr RingId kNoRing = -1;
-
-	// Original edge `edge` of a ring: outline[edge] -> outline[(edge + 1) % n].
-	struct EdgeSource {
-		RingId		 ring = kNoRing;
-		std::int32_t edge = 0;
-
-		auto operator<=>(const EdgeSource&) const = default;
-	};
+	// Stands in a cover for every bounds ring (blocked == false): the cover holds it when
+	// an odd number of bounds rings contain the triangle, so the two sides of an edge two
+	// bounds rings share have the same cover. Sorts before every ring id.
+	constexpr RingId kGroundToken = -2;
 
 	struct RegisteredRing {
 		NavInputPolygon			  polygon; // original outline and tags
@@ -51,7 +46,10 @@ namespace geometry::nav {
 		Vec2i64					  lo;
 		Vec2i64					  hi;
 		std::vector<std::int32_t> edgeIds; // per outline edge, its id in the edge index
-		bool					  live = false;
+		// A bounds ring's, per outline edge: the live bounds ring edge on the same segment
+		// (the two are dissolved), ring kNoRing when none. Empty for a blocked ring.
+		std::vector<EdgeSource> partners;
+		bool					live = false;
 	};
 
 	struct RingMove {
@@ -131,7 +129,8 @@ namespace geometry::nav {
 
 		// The ring edges a triangle edge lies on; empty when the edge is unconstrained.
 		const std::vector<EdgeSource>& edgeSources(std::int32_t tri, int edge) const;
-		// The rings the triangle lies inside, ascending.
+		// The blocked rings the triangle lies inside, and kGroundToken when it is ground;
+		// ascending.
 		const std::vector<RingId>& cover(std::int32_t tri) const;
 
 		const RegisteredRing& ring(RingId id) const { return rings[static_cast<std::size_t>(id)]; }
@@ -276,6 +275,9 @@ namespace geometry::nav {
 		};
 
 		std::int32_t locateScaled(const Vec2i64& p, std::int64_t scale) const;
+		// The live triangle holding the 3x-space point moved by (e, e^2), for an
+		// infinitesimal e (boundsContainSample's rule); -1 off the mesh.
+		std::int32_t locateSample(const Vec2i64& p3) const;
 		template <typename Visit> void forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit);
 		template <typename Visit> void forEachAroundVertex(std::uint32_t v, std::int32_t seed, Visit visit) const;
 		void triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const;
@@ -301,6 +303,8 @@ namespace geometry::nav {
 
 		// The half-edges a registered ring edge lies under.
 		const std::vector<std::int32_t>& piecesOf(const EdgeSource& s) const;
+		// The live edge dissolved with this one, ring kNoRing when none.
+		EdgeSource partnerOf(const EdgeSource& s) const;
 
 		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
@@ -311,6 +315,9 @@ namespace geometry::nav {
 		PagedVector<std::int32_t>						vertexUses; // live triangle corners on the vertex
 		std::vector<std::uint32_t>						freeVertices;
 		IncrementalHashMap<Vec2i64, std::uint32_t, VertexHash> vertexAt;
+		// Pins: per end point of dissolved pairs, how many pairs end there.
+		IncrementalHashMap<Vec2i64, std::int32_t, VertexHash> pins;
+		PagedVector<std::uint8_t>							  vertexPinned; // per vertex: its point is in pins
 
 		PagedVector<NavTriangle>				 tris;
 		PagedVector<std::uint8_t>				 live;

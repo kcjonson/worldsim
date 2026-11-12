@@ -31,7 +31,7 @@ replaces is marked, and the rest still stand.
 
 22. Only movers generate mesh. The camera has no effect on the mesh: it cannot reveal unexplored area, so it has no reason to bring ground or obstacles in.
 23. A mover generates the full real mesh around it as it moves: ground, water, walls, doors, and every object movers cannot path through, of which there will be many. There is no lesser tier of mesh where nobody is looking. (How far around it is rule 32.)
-24. The mesh is one entity, patched in place, never destroyed and regenerated, and it never unloads. (Rule 33 states the second half exactly: the mesh only grows. The rule as first given called the mesh small; measured, ground alone is about 1 MB a square kilometre, but with its placed obstacles meshed ground is about 435 to 490 MB a square kilometre as built, about 7.2 KB a placed obstacle, and about 75 to 85 MB once the records are slimmed under WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB). Section 6 has the measurements.)
+24. The mesh is one entity, patched in place, never destroyed and regenerated, and it never unloads. (Rule 33 states the second half exactly: the mesh only grows. The rule as first given called the mesh small; measured, ground alone is about 1 MB a square kilometre, but with its placed obstacles meshed ground is about 435 to 490 MB a square kilometre as built, about 7.2 KB a placed obstacle (5.8 KB measured since, section 6), and about 75 to 85 MB once the records are slimmed under WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB). Section 6 has the measurements.)
 25. Nav is any place to any place, with no distance limit. There is no colony ground and no owned area.
 26. A mover whose destination has no mesh heads in that direction and generates the mesh as it goes. Meeting an obstacle it cannot pass on the way is a future exploring task, WOR-775 (Exploring: a colonist blocked on the way to a remembered place looks for a way round), and is not needed for the current merge. Until the geography mesh exists (rule 38), "pathing doesn't use a mesh at that distance / in that circumstance" (Kevin, 2026-11-12): how such a route is planned is WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet), and as built such a goal reads "no known way" (4.10).
 27. The meshed area is larger than the visible area. Some movers (approaching enemies) generate mesh without revealing anything, so the area the player sees is a subset of the meshed area. The player builds and interacts only on visible terrain, which a mover has seen and so meshed. "Has mesh" never stands for "the player can see or act here". Player visibility is WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)), planned and not built. (Restated for placement by rule 35.)
@@ -103,8 +103,13 @@ is what remains before they close.
 
 Still open:
 
-- **Memory per placed obstacle.** WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB) is not done. A placed obstacle still costs about 7.2 KB in the mesh, so meshed dense ground is about 435 to 490 MB per square kilometre, and the mesh only grows (rule 37, section 6).
-- **Chunk-border slivers.** WOR-809 (chunk-border slivers) is not done. Chunk borders stay constrained edges split every 64 m, so long thin triangles bunch along them.
+- **Memory per placed obstacle.** WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB) is not done. A placed obstacle costs about 5.8 KB in the mesh now (`BM_PlacedObstacleBytes` 5,803 B; the 7.2 KB below was measured earlier, entry 95), so meshed dense ground is about 435 to 490 MB per square kilometre, and the mesh only grows (rule 37, section 6).
+- **Chunk-border slivers: done, with limits.** WOR-809 (chunk-border slivers) is built (entry 115): a border between two meshed open squares meshes like the interior. What remains:
+  - The one-sided band. A mover's obstacle cells can reach a chunk side before the chunk across is meshed; that side is still the constrained mesh boundary and long triangles bunch there until the neighbour arrives.
+  - Borders through water stay constrained edges.
+  - Open-ground fans inside chunks with few obstacles are unchanged.
+  - Slanted outlines in the library: slanted chunk-style outlines with obstacles crossing at shallow angles can differ from a from-scratch build by a millimetre sliver (WOR-812). The game's axis-aligned squares are not affected.
+  - A chunk arriving beside a neighbour measured 66 us against 58 us recorded earlier (entry 51), on another day; unconfirmed.
 - **Bench fixes.** WOR-808 (bench fixes after the geometry clean-up) is not done.
 - **The geography mesh.** WOR-802 (Geography mesh (Tier 1): computed at load, always exists) comes later: long-distance travel is not being done yet. Until it exists the real mesh answers only for ground movers have meshed (rule 38).
 - **Goals beyond meshed ground.** WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet). A route to a goal off meshed ground, or cut off from the start by ground no mover has meshed, answers "no known way" at once (4.10).
@@ -257,7 +262,8 @@ seam problem where a detailed cell meets a plain one.
 **The chunk is the one partition, and it already exists.** Ground arrives a chunk at a time, so
 each chunk's square is a ring of constrained edges in the mesh. Vertices on a border between two
 chunks are shared, exactly, because it is one mesh, and paths and patches cross it like any other
-edge. In that narrow sense the chunk is a cell: it is the unit ground arrives in and the unit its
+edge. Where two open squares meet, their shared side is dissolved: it is neither a constraint nor
+a mesh edge, so triangles run across it like anywhere else in open ground (entry 115). In that narrow sense the chunk is a cell: it is the unit ground arrives in and the unit its
 first mesh is built in. It is never the unit a change is applied in. Ground stays patched in a
 whole chunk at a time for now (rule 32).
 
@@ -326,7 +332,8 @@ The mesh keeps three things to make it possible:
 
 - **A ring registry.** Every ring in the mesh, under a stable id, with its original outline, its class, and its tags.
 - **Sources on each constrained edge.** The list of (ring, which edge of that ring) that put the edge there. A piece of edge two rings share lists both.
-- **A cover set on each triangle.** The set of rings the triangle lies inside, stored once and shared by every triangle with the same set. Floor, water, wall, tree, and door tags are computed from the set by the rule the builder uses today (the smallest solid ring wins; water goes by nesting parity), so that rule exists in one place.
+- **A cover set on each triangle.** The set of rings the triangle lies inside, stored once and shared by every triangle with the same set. Floor, water, wall, tree, and door tags are computed from the set by the rule the builder uses today (the smallest solid ring wins; water goes by nesting parity), so that rule exists in one place. Open-ground rings (chunk squares) do not appear by name: the cover holds one ground entry (`kGroundToken`) when an odd number of them contain the triangle, with parity counted per entry. Blocked rings such as water keep their ids.
+- **A partner on each bounds ring edge.** The registered edge (already a 64 m piece) of another live open-ground ring that is the same segment, in either direction. A ring edge with a partner is dissolved: it adds no constraint and no mesh edge, and its end points stay as loose vertices (pins, reference-counted per point) so open ground keeps its shape. A side with ground on one side only has no partner and stays the constrained mesh boundary. Blocked rings never dissolve. The rule is a function of the live rings alone, so `buildNavMesh` applies the same one through a shared helper and a patched mesh equals a build from scratch.
 
 The patch:
 
@@ -417,7 +424,10 @@ hole. A chunk's side is 512 m. Measured in step 3: adding a tree across a 512 m 
 with trees along it takes about 1 ms and rebuilds about 200 triangles. So chunk squares enter
 the mesh with their sides divided into 16 m edges, which brings the same patch to about
 0.17 ms and 36 triangles. The split points are exact, since a chunk's side is axis-aligned. (The
-pieces are 64 m as built, `kMaxBoundsEdgeMm`, entry 51.)
+pieces are 64 m as built, `kMaxBoundsEdgeMm`, entry 51.) A long edge is cut from its
+lexicographically lower end point, so two squares walking the same side from opposite ends cut it
+at the same points and the pieces partner. Once a neighbour is live the shared pieces dissolve
+(entry 115), and a placed obstacle on the side costs what one inside a chunk costs.
 
 #### 4.3.3 What each operation adds
 
@@ -437,8 +447,12 @@ ticks inside the patch budget, nearest the mover first (4.4).
 new position.
 
 **A chunk's square** is a ring like any other, of the class that makes ground exist: a triangle
-is kept only if its cover set holds one. Adding a square meshes new ground and joins it to its
-neighbours along their shared side; a ring that hung over the edge of loaded ground is
+is kept only if its cover set holds the ground entry. Adding a square meshes new ground and joins
+it to its neighbours along their shared side, which dissolves (the piece of each square's side that
+the other has identically leaves the constraint set; its end points stay as pins). A point exactly
+on a shared side or corner belongs to exactly one square: containment tests move the sample by
+(e, e^2), a fixed perturbation. Removing or moving a square gives its partners' sides back their
+constraints; a ring that hung over the edge of loaded ground is
 completed then.
 
 **Mover footprints** (not built: WOR-710 (Step 7: Mover footprints in the mesh)). Every mover has
@@ -784,7 +798,8 @@ sentinel, and packing it could halve the figure; measure before making that a st
 estimate above wherever the two differ.
 
 - On the real planet around the landing, placed obstacles run at 0.060 to 0.068 per square metre, 75 to 85% of the 0.0802 worst case.
-- A placed obstacle costs about 7.2 KB in the mesh as built: 8 triangles and 4 vertices. The triangle box grid is 29% of that, the triangle records 21%.
+- Now: about 5.8 KB a placed obstacle (`BM_PlacedObstacleBytes` 5,803 B, 2026-11-12). The 435 to 490 MB figure below was taken at the earlier 7.2 KB.
+- A placed obstacle cost about 7.2 KB in the mesh as first measured: 8 triangles and 4 vertices. The triangle box grid is 29% of that, the triangle records 21%.
 - So meshed ground costs about 435 to 490 MB per square kilometre with its placed obstacles, against about 1 MB for ground alone.
 - A field-by-field accounting puts a placed obstacle at about 1.25 KB with mechanical changes to the records (no design change), about 75 to 85 MB per square kilometre.
 
@@ -1041,3 +1056,4 @@ mesh).
 - **Detail around off-camera working colonists (question 4):** none. Only the viewport requests detail in this epic. Replaced by rule 22.
 - **Load range around a mover (question 5):** the chunks within 128 m of it. Now the larger of 128 m and the mover's range (4.5).
 114. **The geometry clean-up and the disc rule landed after the correction.** The geometry library lost tag prices and the squeeze, the second corridor width (`structuralWidthMm`, `detailTags`), the reachability forests and `PatchReport::freedTriangles` and `newTriangles`. `pathThrough` rejects a query across components by their labels, and a path costs its length. `BM_SearchReach`, `BM_SearchDeadEnds`, `BM_ForestRebuild*` and `BM_SealedGoal` are deleted. A mover now wants every 16 m cell whose nearest point is within R of where he stands, retaken every 4 m (4.4); before, the distance was cell to cell over a 7 x 7 square of cells. Still open: record slimming (WOR-801), chunk-border slivers (WOR-809), bench fixes (WOR-808).
+115. **Chunk borders are dissolved where two open squares meet (WOR-809, chunk-border slivers; 2026-11-12).** Measured with `BM_ChunkSeam` on two squares with 5,135 placed obstacles: within 16 m of the shared side the longest edge had mean 4.43 m, p99 22.1 m and max 64.0 m against 4.5 and 4.7 m in the interior; aspect p99 was 358 against 10; 14 triangles had an edge over 32 m. The cause was entry 51's constrained, 64 m split side: every constrained edge is skipped by the flip pass, and a triangle's cover named its square, so a triangle across the side would have lain in neither. Fixed in two moves. Covers carry one ground entry for all open-ground rings, with parity counted per entry. A bounds ring edge whose identical segment belongs to another live open-ground ring is dissolved: no constraint, no mesh edge, its end points kept as loose vertices (pins) so empty ground keeps its shape. Blocked rings such as water keep their edges; a side with ground on one side only stays the constrained boundary. `buildNavMesh` applies the same rule through one helper, so a patched mesh still equals a build from scratch. Long edges are cut from their lower end point so both neighbours cut alike, and a point on a shared side or corner belongs to exactly one square by a fixed perturbation. Rejected: finer pieces (only shortens the slivers, and costs the ground budget, entry 51); refinement points (break vertex equality with a build from scratch). After: the border band equals the interior (longest edge 3.71 / 4.53 / 4.72 m mean / p99 / max, aspect p99 10.3, no edge over 32 m); locate 120 to 102 ns; a 40 m route across the border 77 to 66 expansions; a placed obstacle on a shared side 180 to 22.6 us; an interior placed obstacle unchanged at about 31 us to add and 28 us to remove (a per-vertex pin flag keeps the pin lookup off the interior path). Memory per placed obstacle is unchanged by it (`sizeof(RegisteredRing)` 248 B). What remains is under "Chunk-border slivers" in 1.1.

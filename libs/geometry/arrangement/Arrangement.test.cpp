@@ -1,9 +1,12 @@
 #include "Arrangement.h"
 #include "../core/Vec2i64.h"
+#include "HalfEdge.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <random>
+#include <string>
+#include <tuple>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -548,4 +551,126 @@ TEST(Arrangement, RepeatedRoundingDriftsPastTwoMillimetres) {
 		}
 	}
 	EXPECT_TRUE(pastTwo) << canonical(arr);
+}
+
+namespace {
+
+	const std::vector<InputSegment> kUnitSquare = {
+		{{0, 0}, {1000, 0}, 0},
+		{{1000, 0}, {1000, 1000}, 1},
+		{{1000, 1000}, {0, 1000}, 2},
+		{{0, 1000}, {0, 0}, 3},
+	};
+
+	// Edges as coordinate pairs with provenance, independent of vertex numbering.
+	std::vector<std::tuple<Vec2i64, Vec2i64, std::vector<std::int64_t>>> edgeGeometry(const Arrangement& arr) {
+		std::vector<std::tuple<Vec2i64, Vec2i64, std::vector<std::int64_t>>> out;
+		for (const ArrangementEdge& e : arr.edges) {
+			out.emplace_back(arr.vertices[e.from], arr.vertices[e.to], e.provenance);
+		}
+		return out;
+	}
+
+} // namespace
+
+TEST(Arrangement, PointSiteOnEdgeSplitsIt) {
+	const Arrangement arr = buildArrangement(kUnitSquare, {{400, 0}});
+	EXPECT_EQ(arr.vertices.size(), 5u);
+	EXPECT_EQ(arr.edges.size(), 5u);
+	EXPECT_TRUE(hasEdge(arr, {0, 0}, {400, 0})) << canonical(arr);
+	EXPECT_TRUE(hasEdge(arr, {400, 0}, {1000, 0})) << canonical(arr);
+	EXPECT_FALSE(hasEdge(arr, {0, 0}, {1000, 0})) << canonical(arr);
+	EXPECT_EQ(arr.edges[findEdge(arr, {0, 0}, {400, 0})].provenance, (std::vector<std::int64_t>{0}));
+}
+
+TEST(Arrangement, PointSiteOnSplitCrossingEdgeSplitsItsPiece) {
+	// The diagonals cross at (500,500); a point at (250,250) must split the piece
+	// left after the crossing cut, not only the original segment.
+	const std::vector<InputSegment> segs = {
+		{{0, 0}, {1000, 1000}, 0},
+		{{0, 1000}, {1000, 0}, 1},
+	};
+	const Arrangement arr = buildArrangement(segs, {{250, 250}});
+	EXPECT_TRUE(hasEdge(arr, {0, 0}, {250, 250})) << canonical(arr);
+	EXPECT_TRUE(hasEdge(arr, {250, 250}, {500, 500})) << canonical(arr);
+	EXPECT_EQ(arr.edges.size(), 5u);
+}
+
+// A point site exactly on a crossing, or on the point a crossing rounds to, is the
+// crossing's vertex and adds nothing.
+TEST(Arrangement, PointSiteAtACrossingAddsNothing) {
+	const std::vector<InputSegment> exact = {
+		{{0, 0}, {1000, 1000}, 0},
+		{{0, 1000}, {1000, 0}, 1},
+	};
+	EXPECT_EQ(canonical(buildArrangement(exact, {{500, 500}})), canonical(buildArrangement(exact)));
+	// These cross at (500, 333.5), off the lattice.
+	const std::vector<InputSegment> rounded = {
+		{{0, 0}, {1000, 667}, 0},
+		{{0, 667}, {1000, 0}, 1},
+	};
+	const Arrangement plain = buildArrangement(rounded);
+	ASSERT_EQ(plain.vertices.size(), 5u) << canonical(plain);
+	Vec2i64 crossing;
+	for (const Vec2i64& v : plain.vertices) {
+		if (v.x == 500) {
+			crossing = v;
+		}
+	}
+	ASSERT_EQ(crossing.x, 500) << canonical(plain);
+	EXPECT_EQ(canonical(buildArrangement(rounded, {crossing})), canonical(plain));
+}
+
+TEST(Arrangement, PointSiteAtVertexAddsNothing) {
+	EXPECT_EQ(canonical(buildArrangement(kUnitSquare, {{1000, 0}})), canonical(buildArrangement(kUnitSquare)));
+}
+
+TEST(Arrangement, IsolatedPointSiteIsAVertexAndChangesNoFace) {
+	const Arrangement plain = buildArrangement(kUnitSquare);
+	const Arrangement withPoint = buildArrangement(kUnitSquare, {{500, 500}, {3000, -7}});
+	EXPECT_EQ(withPoint.vertices.size(), plain.vertices.size() + 2);
+	EXPECT_TRUE(std::binary_search(withPoint.vertices.begin(), withPoint.vertices.end(), Vec2i64{500, 500}));
+	EXPECT_TRUE(std::binary_search(withPoint.vertices.begin(), withPoint.vertices.end(), Vec2i64{3000, -7}));
+	EXPECT_EQ(edgeGeometry(withPoint), edgeGeometry(plain));
+
+	const HalfEdgeMesh a = extractFaces(plain);
+	const HalfEdgeMesh b = extractFaces(withPoint);
+	ASSERT_EQ(a.faces.size(), b.faces.size());
+	for (std::size_t f = 0; f < a.faces.size(); ++f) {
+		EXPECT_EQ(a.faces[f].signedAreaDoubled, b.faces[f].signedAreaDoubled);
+		EXPECT_EQ(a.faces[f].provenance, b.faces[f].provenance);
+		EXPECT_EQ(a.faces[f].outer, b.faces[f].outer);
+	}
+}
+
+TEST(Arrangement, NoPointSitesGiveIdenticalOutput) {
+	std::vector<InputSegment> segs = kUnitSquare;
+	segs.push_back({{0, 0}, {1000, 1000}, 4});
+	segs.push_back({{0, 1000}, {1000, 0}, 5});
+	segs.push_back({{0, 500}, {1000, 503}, 6});
+	EXPECT_EQ(canonical(buildArrangement(segs, {})), canonical(buildArrangement(segs)));
+
+	ArrangementWorkspace workspace;
+	Arrangement			 reused;
+	buildArrangement(segs, workspace, reused, {{500, 500}, {0, 300}});
+	buildArrangement(segs, workspace, reused);
+	EXPECT_EQ(canonical(reused), canonical(buildArrangement(segs)));
+}
+
+TEST(Arrangement, DuplicatePointSitesCollapse) {
+	const Arrangement once	= buildArrangement(kUnitSquare, {{400, 0}, {200, 200}});
+	const Arrangement twice = buildArrangement(kUnitSquare, {{200, 200}, {400, 0}, {400, 0}, {200, 200}});
+	EXPECT_EQ(canonical(twice), canonical(once));
+}
+
+TEST(Arrangement, PointSitesWithoutSegments) {
+	const Arrangement arr = buildArrangement({}, {{5, 5}, {1, 2}, {5, 5}});
+	EXPECT_EQ(arr.vertices, (std::vector<Vec2i64>{{1, 2}, {5, 5}}));
+	EXPECT_TRUE(arr.edges.empty());
+}
+
+TEST(Arrangement, ZeroLengthSegmentStillRejectedBesidePointSites) {
+	const Arrangement arr = buildArrangement({{{500, 500}, {500, 500}, 0}, {{0, 0}, {1000, 0}, 1}}, {{700, 0}});
+	EXPECT_EQ(arr.vertices.size(), 3u);
+	EXPECT_EQ(arr.edges.size(), 2u);
 }

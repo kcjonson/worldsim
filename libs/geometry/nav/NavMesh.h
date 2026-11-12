@@ -1,10 +1,12 @@
 #pragma once
 
+#include "../arrangement/Arrangement.h"
 #include "../core/PagedVector.h"
 #include "../core/ScratchArray.h"
 #include "../core/Vec2i64.h"
 
 #include <array>
+#include <compare>
 #include <cstdint>
 #include <utility>
 #include <vector>
@@ -179,6 +181,13 @@ namespace geometry::nav {
 	// Strictly inside: a sample on the ring's boundary is outside it.
 	bool ringContainsSample(const SampleRing& ring, const Vec2i64& sample3);
 
+	// Ground test for a bounds ring: whether the sample moved by (e, e^2), for an
+	// infinitesimal e, is inside. Off the outline it is ringContainsSample; on it, of
+	// rings sharing that stretch of outline without overlapping, exactly one holds the
+	// sample. A face's sample lies on a bounds edge where the edge is dissolved, and an
+	// old triangle's patch sample can lie on a removed ring's outline.
+	bool boundsContainSample(const SampleRing& ring, const Vec2i64& sample3);
+
 	struct FaceTags {
 		std::int64_t blocker = kNoBlocker;
 		std::int64_t opening = kNoOpening;
@@ -225,6 +234,68 @@ namespace geometry::nav {
 		// A caller that edits a built mesh in place takes a fresh one.
 		std::uint64_t generation = nextMeshGeneration();
 	};
+
+	// --- Shared sides of bounds rings ---------------------------------------------
+	// Where two bounds rings each have an edge on the same segment (the same two end
+	// points), there is ground on both sides of it, so neither edge is a constraint or a
+	// mesh edge: the pair is dissolved, each edge the other's partner. The end points of
+	// dissolved pairs, pins, stay mesh vertices, so open ground across the side keeps the
+	// shape it has inside one ring. buildNavMesh and PatchableMesh apply this one rule.
+
+	using RingId			 = std::int32_t;
+	constexpr RingId kNoRing = -1;
+
+	// Original edge `edge` of a ring: outline[edge] -> outline[(edge + 1) % n]. The ring
+	// is a PatchableMesh ring id, or for findBoundsSeams an index into the rings given.
+	struct EdgeSource {
+		RingId		 ring = kNoRing;
+		std::int32_t edge = 0;
+
+		auto operator<=>(const EdgeSource&) const = default;
+	};
+
+	inline bool sameSegment(const Vec2i64& a0, const Vec2i64& a1, const Vec2i64& b0, const Vec2i64& b1) {
+		return a0 != a1 && ((a0 == b1 && a1 == b0) || (a0 == b0 && a1 == b1));
+	}
+
+	struct BoundsSeams {
+		// Per ring, per edge: its partner, or none. Empty for a blocked ring and for one
+		// under three vertices.
+		std::vector<std::vector<EdgeSource>> partner;
+		// Ascending by point: each end point of a dissolved pair, with how many pairs end
+		// there.
+		std::vector<std::pair<Vec2i64, std::int32_t>> pins;
+	};
+
+	// Two bounds ring edges on one segment are partners. Three or more on one segment
+	// means bounds interiors overlap, which is invalid input (PatchableMesh::validate
+	// reports it); each edge then takes the lowest other ring's, only so the answer is
+	// deterministic.
+	BoundsSeams findBoundsSeams(const std::vector<const NavInputPolygon*>& rings);
+
+	// The arrangement input of the rings: every edge that is not dissolved, as a segment
+	// with index tag(ring, edge), and every pin as a point site. Rings under three
+	// vertices add nothing.
+	template <typename Tag>
+	void ringsArrangementInput(const std::vector<const NavInputPolygon*>& rings, const BoundsSeams& seams, Tag tag,
+							   std::vector<InputSegment>& segments, std::vector<Vec2i64>& points) {
+		for (std::size_t r = 0; r < rings.size(); ++r) {
+			const std::vector<Vec2i64>& ring = rings[r]->ring;
+			if (ring.size() < 3) {
+				continue;
+			}
+			const std::vector<EdgeSource>& partner = seams.partner[r];
+			for (std::size_t i = 0; i < ring.size(); ++i) {
+				if (!partner.empty() && partner[i].ring >= 0) {
+					continue;
+				}
+				segments.push_back({ring[i], ring[(i + 1) % ring.size()], tag(static_cast<std::int32_t>(r), static_cast<std::int32_t>(i))});
+			}
+		}
+		for (const auto& [p, count] : seams.pins) {
+			points.push_back(p);
+		}
+	}
 
 	// Build the navmesh from tagged input. The triangles tile the walkable bounds:
 	// no face is dropped, however its rings touch, pinch, or nest.

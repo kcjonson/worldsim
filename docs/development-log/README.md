@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-12 - Chunk borders dissolve: no more slivers along the shared side](./entries/2026-11-12-chunk-border-dissolve.md)
 - [2026-11-12 - Nav correction: movers mesh, obstacles block, routes by ticket](./entries/2026-11-12-nav-correction.md)
 - [2026-11-11 - Nav mesh: one mesh, variable resolution (steps 1 to 5 of WOR-702)](./entries/2026-11-11-nav-mesh-one-mesh.md)
 - [2026-11-11 - Task claims and colonist survival](./entries/2026-11-11-task-claims-and-colonist-survival.md)
@@ -145,7 +146,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 112 (entry files; the Major Milestones list below highlights notable ones)
+- **Total Entries:** 113 (entry files; the Major Milestones list below highlights notable ones)
 - **Latest Entry:** 2026-11-12
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
