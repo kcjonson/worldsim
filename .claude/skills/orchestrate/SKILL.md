@@ -22,6 +22,7 @@ Every brief states:
 
 - The worktree path and branch, and that nothing outside it is touched.
 - The files or area the agent owns. Name them.
+- The requirements the piece must meet, quoted from the current-requirements list, not paraphrased.
 - What done looks like, so the task has an end.
 - The rule for everything else: a follow-up, a tangent, or a problem in someone else's area comes back as a note (what is wrong, where, what the agent would do), never as a change.
 - The standing rules that apply (commit by explicit path, no history rewrites, no attribution lines, build and test commands, what must not be built or launched).
@@ -72,6 +73,8 @@ The wait before a merge is the build and the suite, so optimize for total time s
 ## Review
 
 - Every piece of code gets an independent review before it merges. Give the reviewer the code and the spec, not your conclusion.
+- Review against Kevin's requirements, not only against the agent's own spec: give the reviewer the current-requirements list. A review of code against a spec that states the wrong design finds nothing.
+- Before a plan goes to Kevin, have a fresh agent compare it with the requirements list and the record. He should not be the one to find that the plan forgot something he said.
 - A reviewer reads only the area its author owned. Changes an agent made outside its area count as unreviewed until the owner's reviewer reads them.
 - Fact-check docs that state rates, orders, or thresholds against the code before pushing them.
 - Review findings come to you. You decide which are must-fix and who fixes them.
@@ -85,7 +88,21 @@ Kevin answers a design question once. If an agent asked it, you never heard the 
 - When Kevin does talk to a session directly, read what he said there, in its transcript, the same turn. A relay or a hand-off note is that session's summary of his words, not his words.
 - Before briefing anyone on a design, re-read what Kevin wrote, not your own note of it. When an exchange moved through several positions, the last one is the decision.
 - Quote him in the brief. A paraphrase that gets built on becomes the design, whether or not he agreed to it.
-- Keep one running statement of the settled design for the task, in the decision log, and put it back in front of him when it changes or when work is about to be built on it.
+- His messages sent mid-turn and his answers to question dialogs are part of a transcript. Make sure what you read includes them.
+- A design conversation with Kevin happens with you. A session is never started to "work with Kevin on X"; it gets the result of that conversation as a bounded task.
+
+## Requirements change as the work goes
+
+Kevin refines requirements as defects show up, and he may contradict something he said earlier. His most recent statement on a point is the requirement. An older one is history, and a keyword search returns both with nothing marking which is live.
+
+- Keep one current-requirements list per piece of work: one dated line per point, in his words, and a "superseded, do not cite" section. It is the only thing briefs, plans, and reviews are written from.
+- When he says something new, update the list the same turn, move what it replaces to the superseded section, and correct memory, the spec, and every running agent's brief.
+- Call a contradiction out when it happens: quote the earlier statement with its date, say the new one replaces it, and name what it invalidates (docs, tickets, code built on it, costs that change). Then proceed on the newest. Ask once, as "which holds", only when the new statement looks like a slip.
+- Read history in order and track what each statement replaces. Never settle a point by searching for a sentence.
+- Silence is not agreement. Something an agent proposed and he did not object to is not a requirement, and an agent's own decisions log is not his.
+- Where his words do not cover a point, the plan's answer is a choice: mark it as one, with its reason. Never present a choice as settled.
+- When a measurement overturns a number he decided on, tell him so, with the number he was given and the number measured.
+- Keep the spec true to the current list. A spec that still states a retired design is how the next agent builds the wrong thing and ten reviews pass it.
 
 ## Authority
 
