@@ -47,8 +47,7 @@ The findings and fixes of the four review rounds are in the spec's entry 113.
 Not done: record slimming, WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB
 to about 1.25 KB), so a placed obstacle still costs about 7.2 KB and meshed dense ground about 435
 to 490 MB per square kilometre; the geometry clean-up (prices, the second corridor width, the
-reachability forests, still in the library and unused by the sim); the rename of
-`NavQueryStats::structuralPatches`. The route and walking-mover measurements have not run.
+reachability forests, still in the library and unused by the sim). The route and walking-mover measurements have not run.
 
 Files: `libs/geometry/nav/{MeshComponents,PathQuery,PatchableMesh}.*`,
 `libs/sim/nav/RouteQueue.*`, `libs/sim/ecs/systems/{NavigationSystem,StaticRectCollisionSystem,AIDecisionSystem,ActionSystem}.*`,
