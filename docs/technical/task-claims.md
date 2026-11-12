@@ -325,9 +325,9 @@ cut toward it, then every other option, the carry-in it has not chosen yet inclu
 cut for a root and item that a pile he knows he can reach also serves. A pile counts as a source here
 too: he picks up what he or anyone dropped before cutting again. A pile is offered for every root that
 wants the item, construction sites included. A fresh cut for the same root and item ranks below
-everything else in its tier only while a pile offered for them is known reachable: its reach verdict,
-remembered per source (`SourceReachMemo`), says so under the current reach key, and no nav query is
-asked to find out. A pile is tested when selection reaches it, as any option is; until then it ranks by
+everything else in its tier only while a pile offered for them is known reachable: it carries no
+"no known way" verdict (`SourceReachMemo`) and stands on ground connected to him
+(`NavigationSystem::connected`, a label compare), so no route is asked for to find out. A pile is tested when selection reaches it, as any option is; until then it ranks by
 distance like a cut, and one found unreachable (across water,
 inside a known wall) holds nothing back. A pile leg of a gathering is offered unless the pile is known
 unreachable, and selection tests its reach. A pickup that continues a gathering is decided again at
@@ -768,7 +768,8 @@ re-sees the target on arrival, within sight range. All of these log at debug lev
 
 A colonist who believes he cannot reach his destination does not hold the work. When his route fails
 (`NavState::CantFindWayTo`) he decides again once, at once (see [AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides)), and that decision
-records the target unreachable in `SourceReachMemo` under the reach key the route failed under. The
+records a verdict on the target in `SourceReachMemo`, under the connectivity epoch and his belief
+version. The
 work is then not offered to him: its option reads NoSource, he takes something else, and the switch
 retires his claims toward that root. Another colonist who can reach the destination is offered the
 fetch or the cut. Holding in-flight for goods that cannot arrive would stall the root for everyone.
@@ -784,12 +785,14 @@ part of an in-flight not yet landed (a cut's expected yield). What it carries ke
 In-flight, up to its cargo by the one cargo rule (`cargoOnClaims`): a haul past its pickup, or a cut
 carrying what earlier cuts of its gathering landed. The index files a failed task this way
 (`ClaimIndex::addCurrent`, which the rebuild and every append share, so the validator's fresh rebuild
-agrees), and `AIDecisionSystem::applyNavOutcome` re-files the task the moment a route fails inside an
-update. The window lasts one decision at most.
+agrees), and `AIDecisionSystem::failRoute` re-files the task the moment a route answers "no known way" inside
+an update. The window lasts one decision at most.
 
-The verdict lasts only while the reach key it was recorded under holds. When the way opens (a wall
-removed, a door built or learned of) the key moves with the colonist's belief version or the mesh, the
-verdict is forgotten, and he is offered the delivery again if the root still wants his goods. If another
+The verdict lasts only while the connectivity epoch and his belief version it was recorded under hold
+(how long a verdict survives an epoch move is being reworked; see
+[nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md) entry 110). When the way opens (a
+wall removed, a door built or learned of) the epoch or his belief version moves, the verdict is
+forgotten, and he is offered the delivery again if the root still wants his goods. If another
 colonist delivered meanwhile, no carry-in to that root is offered and his goods are surplus there, so the
 root is never over-supplied. A suspended record is not affected by any of this: its goods are possessed
 and the record follows its own rules (Interruption, above).
@@ -935,7 +938,9 @@ time.
   time stays within noise of an empty memory.
 - Remaining need is worked out once per (root, item, basis) per update, counted by
   `AIDecisionSystemTest.EachRemainingNeedIsWorkedOutOncePerUpdate`. A need source's reachability is
-  tested once per source per reach key, counted by `MemoryQueries.SourceReachMemoTestsEachSourceOncePerKey`.
+  a label compare per candidate (`NavigationSystem::connected`) and one nearest-of route request per
+  round, with no search in the decision; the decision's cost is being reworked (see
+  [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md) entry 110).
 - Live pile quantity is one keyed lookup through `LoosePileIndex`, not a scan of piles.
 - Box-pull gating keeps the colony-wide rule without its old cost (a walk of every colonist's
   memory per box per goal per evaluating colonist, quadratic in colonists). `ColonyStorageKnowledge`

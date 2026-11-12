@@ -14,7 +14,7 @@ From the game, not from the literature:
 
 1. **Vector-native.** The entire world is vector geometry: terrain features, freeform polygon buildings, even moving entities. Navigation should consume exact geometry, not rasterize it away.
 2. **Agents take up space (hard requirement).** Colonists, animals, and raiders cannot overlap. Doorway congestion, queues at chokepoints, and crowd pressure should emerge from agents being physical.
-3. **Infinite world.** Chunks stream around the camera and around movers (512 m; in the game the camera loads 3 by 3 chunks and keeps 5 by 5). Nav mesh exists only where movers have generated it, each within its sight distance plus a buffer, and it only grows (the design; as built the camera's chunks are meshed too, WOR-796 (Nav: the camera must have no effect on the mesh)). Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
+3. **Infinite world.** Chunks stream around the camera and around movers (512 m; in the game the camera loads 3 by 3 chunks and keeps 5 by 5). Nav mesh exists only where movers have generated it, each within its sight distance plus a buffer, and it only grows; the camera's chunks are drawn, not meshed. Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
 4. **The raid scenario end-to-end:** route from anywhere on the planet → arrive near the settlement → coordinate an approach as a group → pick targets → navigate interiors through doors. Section 6 traces it through every tier.
 5. **Colony-sim scale.** Dozens to low hundreds of exact agents near the action; arbitrarily many abstract parties far away.
 6. **Plays well with the engine:** TimeSystem speed multipliers (up to 10x), determinism-friendly (multiplayer future), async-friendly (TaskPool exists), and the construction contract (walls publish exact band polygons, openings publish portals, shared clearance constant, nav version counter).
@@ -78,7 +78,7 @@ Built lazily for loaded chunks; invalidated locally by construction edits (the s
 The vector-native core, proven in production by StarCraft 2 (CDT navmesh + funnel + steering, units not in the mesh) and documented end-to-end by the jdxdev RTS series:
 
 - **Inputs are exact vector geometry:** wall band polygons from the construction contract, water/terrain feature contours (each chunk's terrain polygon `navRings`, built once per chunk and clipped to its square, see [terrain-polygons-architecture.md](organic-terrain/terrain-polygons-architecture.md) D9), large static entity footprints (config-flagged). No rasterization anywhere.
-- **Tiled per chunk** with chunk borders as constrained edges, so meshes stitch like Recast/UE5 streamed tiles and regenerate independently.
+- **One mesh, chunk borders as constrained edges.** Ground arrives a chunk at a time and each chunk's square is a ring in the one mesh, so borders are exact shared vertices; nothing is regenerated, per chunk or otherwise. A change patches the triangles around it ([nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md) 4.1, 4.3).
 - **Local dynamic updates:** construction changes retriangulate only the affected triangles (insert: retriangulate intersected set; remove: regenerate around freed constraints). This is the jdxdev design, ~50-100x faster than full rebuilds for single obstacles.
 - **Query pipeline:** triangle A* (guided by the Tier 1 heuristic) with **corridor-width filtering** (Demyen & Buro: each triangle pair knows its max passable width, so one mesh serves all agent radii) → funnel with per-query portal shrinking by agent radius → line-of-sight waypoint skipping.
 - **Doors are constraint edges with metadata:** traversal flag + cost per faction/permission class. A locked door is a high-cost breakable edge for raiders, which is what makes "attack the weakest point" emerge (the They Are Billions trick) without any special siege AI.
@@ -93,7 +93,7 @@ The hard requirement, decomposed:
 - **Congestion shaping:** small occupancy costs on mesh edges where crowds stand (planners route around loiterers, the RimWorld/TAB trick) and **door slot queues** (a door portal owns N slots; agents without a slot wait at a queue point or repath). Full space-time reservation (WHCA*) is disproportionate at our agent counts; doors are the only place it matters and slots get the same observable behavior.
 - **Escape hatch, pre-approved:** if same-faction crowd collision ever produces unfixable clogs, Factorio's shipped answer (FFF-316) is to relax same-faction collision to a separation force while keeping hard collision against other factions and geometry. Documented here so the fallback is a tuning decision, not a redesign.
 
-**Agent shape: routing vs collision (decided 2026-06-23).** Collision (this tier) uses the agent's real, possibly non-circular, per-direction footprint: a long creature is a long thin rectangle, and `FacingDirection` already drives four directional sprites. Routing (Tiers 1 and 2), though, reduces each agent to a scalar clearance equal to half its narrow cross-section, because facing follows velocity, so a creature moving down a corridor presents its narrow side and the long body trails the head along the routed path (articulated). The funnel and the reachability widths therefore consume one scalar (`AgentRadius.radiusMeters`, reread as half the narrow width), not a bounding circle (a snake's bounding circle is huge, so it could enter nothing) and not a fixed set of size classes. Per-direction collision shapes, and deriving the routing clearance from an asset's collision shape, are Tier-3 and asset work, not the router's concern. A resting agent sprawled across a path is a *dynamic* obstacle for crowd avoidance (P5), never baked into the static mesh.
+**Agent shape: routing vs collision (decided 2026-06-23).** Collision (this tier) uses the agent's real, possibly non-circular, per-direction footprint: a long creature is a long thin rectangle, and `FacingDirection` already drives four directional sprites. Routing (Tiers 1 and 2), though, reduces each agent to a scalar clearance equal to half its narrow cross-section, because facing follows velocity, so a creature moving down a corridor presents its narrow side and the long body trails the head along the routed path (articulated). The funnel and the reachability widths therefore consume one scalar (`AgentRadius.radiusMeters`, reread as half the narrow width), not a bounding circle (a snake's bounding circle is huge, so it could enter nothing) and not a fixed set of size classes. Per-direction collision shapes, and deriving the routing clearance from an asset's collision shape, are Tier-3 and asset work, not the router's concern. A resting agent sprawled across a path is a *dynamic* obstacle for crowd avoidance (P5). Whether mover footprints go into the mesh is no longer ruled out: the nav mesh spec puts them in (risk 7), not built yet, WOR-710 (Step 7: Mover footprints in the mesh).
 
 ### As built: runtime validity and beeline removal (2026-06-28)
 
@@ -104,34 +104,38 @@ specified in [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md
 coarse or structural layer. Only movers generate it, each adding everything within its own sight
 distance plus a buffer, every object movers cannot path through included and blocking. It only
 grows: meshed ground never leaves it, and a chunk unloading does nothing to it. The camera has no effect on
-it, and nav routes any place to any place. How reach is answered on one mesh, and the search
-budgets, are open there (rule 36). For now a route search that reaches its step limit lists the
-target as impossible, an interim departure from its budget rule (rule 18), recorded in its
-section 1.1 as accepted for now and not part of the design.
+it, and nav routes any place to any place. Whether two places are joined by meshed ground is a
+component label compare (`connected`); whether a given mover can get there is a route request,
+answered by ticket a tick or more later. A route search has no limit of its own: a route worker
+does a fixed amount of search work a tick (`kRouteWorkPerSlice`, sized from a time target),
+shared by every request, and a search carries on across ticks until it finds a goal or has
+explored all the mover can reach, which answers "no known way" (spec 4.6).
 
 The geography mesh (also called the regional mesh) is Tier 1 above. In the design it is computed
 when the world loads and always exists. It is much less detailed than the real mesh, and the real
 mesh is a detail view of it, as game tiles are a detail view of world tiles. The two must be
 aligned; one is derived from the other and then filled in (rule 38). It is not the removed
 coarse layer. As built it does not exist: WOR-802 (Geography mesh (Tier 1): computed at load,
-always exists). What is built is the reach forests (`buildReachabilityForests` in
-`libs/geometry/nav/NavMesh.h`), an index over a mesh's own triangles, which the game rebuilds
-only on the structural mesh.
+always exists). The reach forests (`buildReachabilityForests` in `libs/geometry/nav/NavMesh.h`),
+an index over a mesh's own triangles, are still in the geometry library but no longer used by the
+game.
 
-As built, the code departs from that in five places, listed in that spec's section 1.1: the
-camera loads chunks whose ground is meshed and is the only thing that brings placed obstacles in,
-WOR-796 (Nav: the camera must have no effect on the mesh); movers mesh a fixed range, without
-placed obstacles, and mesh is removed (camera-only ground shed, placed obstacles dropped on chunk
-unload and by a cap), WOR-797 (Nav: movers generate the full real mesh around them, placed
-obstacles included); placed obstacles are priced rather than blocking, WOR-798 (Nav: objects
-movers cannot path through block in the mesh instead of being priced); a second, structural
-mesh carries reach, its forests, far routes and the search budgets, WOR-799 (Nav: one full-detail
-mesh with no coarse layer); and there is no geography mesh, WOR-802 (Geography mesh (Tier 1): computed at load, always
-exists). Its section 10 is what was built.
+The correction of 2026-11-12 brought the code to that design for WOR-796 (Nav: the camera must
+have no effect on the mesh), WOR-797 (Nav: movers generate the full real mesh around them, placed
+obstacles included), WOR-798 (Nav: objects movers cannot path through block in the mesh instead of
+being priced) and WOR-799 (Nav: one full-detail mesh with no coarse layer); their in-game pass is
+what remains. Still open, as that spec's section 1.1 lists: the memory per placed obstacle, WOR-801
+(Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB); unused price,
+second-width and forest code in the geometry library; the geography mesh, WOR-802; goals beyond
+meshed ground, WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet); player
+visibility, WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)), without which a
+move order or placement on ground no mover has meshed does nothing or reads invalid; mover
+footprints, WOR-710 (Step 7: Mover footprints in the mesh); and nav queries made outside the sim
+tick waiting on the route slice as well as the patch job. Its section 10 is what was built.
 
 **`isValidPosition`: the one runtime validity predicate.** A point is valid when it is meshed
-ground a mover may stand on, not water and not inside a placed obstacle's collider (read from the
-placement data, on camera or off). Every world-positioning path respects it (One Path Rule): dev spawn,
+ground a mover may stand on, not water and not inside a placed obstacle in the mesh. It reads the
+mesh alone, never the placement data, so it holds after a chunk unloads. Every world-positioning path respects it (One Path Rule): dev spawn,
 give-loose, colonist, teleport and the build-placement preview.
 
 **World-data-vs-runtime boundary (load-bearing).** The 3D world/planet data exists ONLY to spawn
@@ -212,7 +216,7 @@ out. The real inputs are regression fixtures in `libs/geometry/nav/NavMeshDumpRi
 The two classic failure points, with the standard solutions:
 
 - **Materialization.** When a Tier 0 party's route enters the attention/loaded boundary, spawn its members as ECS entities at the boundary on the route's approach bearing (the Mount & Blade / RimWorld caravan handoff). Reverse for de-materialization: surviving raiders that flee past the boundary collapse back into a record.
-- **Time consistency.** Abstract travel runs on the shared world clock through TimeSystem speeds, so arrivals are consistent no matter what the player watches. Colonists must not walk off the loaded world: destinations are validated against loaded space (Tier 1 query), and the chunk loader gains anchor points beyond the camera (settlement, active agents). Built: movers, their live routes and their waiting goals anchor chunks (risk 3).
+- **Time consistency.** Abstract travel runs on the shared world clock through TimeSystem speeds, so arrivals are consistent no matter what the player watches. Colonists must not walk off the meshed world: a route is planned only over ground movers have meshed, and a destination off it answers "no known way" until a mover meshes the way (WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet) has movers head that way and mesh as they go). The chunk loader holds chunks around every mover, each by its own range (risk 3).
 
 ## 4. The Ray Marching Verdict
 
@@ -279,7 +283,7 @@ The signature scenario through every tier:
 5. **Assault (Tiers 2 + 3).** Raiders request exact paths through their believed layout: triangle A*, corridor-width filtered for each body size, funneled through door portals. Door slot queues form the siege crush at the breach; collision circles make the crowd physical; a colonist holding the doorway is actually holding a doorway. Surprises mid-assault (an interior wall they didn't know, a corridor the player just sealed) hit the same discovery-replan loop as everyone else.
 6. **Rout (handoff, reversed).** Survivors fleeing past the boundary collapse back into a Tier 0 record and route home.
 
-The AI/pathfinding interface this implies is thin: `reachFrom(from, radius, belief)` once per start, then `reaches(reach, to)` or `walk(reach, to)` per goal (as built, a walk over the structural mesh, which the forest check rejects at once where it can, and which WOR-799 (Nav: one full-detail mesh with no coarse layer) removes; see [Nav mesh at variable resolution](./nav-mesh-variable-resolution.md)), `requestPath(...)` (a synchronous search on the main thread, answered in the call), `generation()` for replan triggers, and spatial target queries filtered by reachability. Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
+The AI/pathfinding interface this implies is thin: `connected(a, b)` (a label compare, no search) to filter candidates, `requestRoute(start, goals, radius, belief)` for the nearest of several goals by walk, answered by ticket on a later tick (`takeRouteAnswer`, `cancelRoute`, `routeTicketLive`), `generation()` and `connectivityEpoch()` for replan triggers and remembered verdicts, and position queries on the mesh (see [Nav mesh at variable resolution](./nav-mesh-variable-resolution.md) 4.6). Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
 
 ## 7. Phasing
 
@@ -301,7 +305,7 @@ Each phase lands independently testable and useful.
 
 1. **CDT robustness is the long pole.** Every implementer says so. Mitigations: shared integer-coordinate substrate with construction, constrained inputs (editor invariants, simplified terrain contours), exhaustive geometry tests, and a time-accelerated smoke-test rig before any content depends on it.
 2. **Velocity-obstacle deadlocks at doorways** are documented failure modes, not surprises. Mitigations adopted up front (substepping, cornering planes, door queues); FFF-316 same-faction relaxation pre-approved as the fallback.
-3. **Camera-only chunk loading** was a correctness hole (colonists could walk into the void) that pathfinding made load-bearing. Resolved by chunk anchoring: movers, their live routes and their waiting goals keep the chunks around them loaded (`ChunkManager::update` with `NavigationSystem::appendAnchors`).
+3. **Camera-only chunk loading** was a correctness hole (colonists could walk into the void) that pathfinding made load-bearing. Resolved by chunk anchoring: every mover keeps the chunks within the larger of 128 m and its meshing range loaded (`ChunkManager::update` with `NavigationSystem::appendAnchors`).
 4. **Off-screen simulation LOD is bigger than pathfinding.** Needs/AI/vision currently tick for every entity everywhere. Tier 0 sidesteps it for raids (records, not entities), but a general entity-simulation LOD (and the restraint lesson from Kenshi: don't over-simulate the far world) deserves its own future spec.
 5. **Time-scale interactions.** 10x game speed multiplies avoidance substeps and replan rates; budget Tier 3 for worst-case speed, or clamp avoidance fidelity at high speeds (movement correctness over crowd aesthetics when fast-forwarding).
 6. **Memory/perf envelopes** for per-chunk meshes and component graphs need numbers during P2/P3; the perf tooling from the render overhaul applies.

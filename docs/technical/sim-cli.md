@@ -139,11 +139,9 @@ does by hand today (`GameLoadingScene::loadChunks` and `placeEntities`); it neve
 `pumpStreaming()` followed by the rest of the game's update sequence (`GameScene::update`) with the
 camera and render parts removed:
 
-1. Push the viewport rect into `NavigationSystem::setViewportRect`. Today this happens between the
-   chunk update and chunk processing; the rect is plain data that nav reads only in its own
-   `update`, so pushing it before `pumpStreaming()` changes nothing.
-2. `pumpStreaming()`.
-3. `world.update(dt)`. Inside it, a drain system at priority 800 (`DeferredEditsSystem`, after
+1. `pumpStreaming()`. (The game no longer pushes a viewport rect to nav; the camera has no effect on
+   the nav mesh.)
+2. `world.update(dt)`. Inside it, a drain system at priority 800 (`DeferredEditsSystem`, after
    ActionSystem, the last system that queues) drains entity removals, emitting an entity-removed notice
    for each, then pending spawns through `EntityFactory`. It runs inside the tick because
    NavigationSystem joins its patch job in its own `update` and launches the next in `endTick`: after
