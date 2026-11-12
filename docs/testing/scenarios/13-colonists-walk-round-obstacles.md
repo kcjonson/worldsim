@@ -1,7 +1,7 @@
 # Scenario 13: colonists walk round obstacles
 
-**Status:** draft  
-**Last verified:** not yet run
+**Status:** ready  
+**Last verified:** 2026-11-12
 
 A colonist walks into fresh dense ground and goes round the obstacles, and panning the camera away
 changes nothing. Spec: [nav-mesh-variable-resolution.md](../../technical/nav-mesh-variable-resolution.md)

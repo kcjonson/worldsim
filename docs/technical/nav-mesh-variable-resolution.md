@@ -104,12 +104,13 @@ is what remains before they close.
 Still open:
 
 - **Memory per placed obstacle.** WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB) is not done. A placed obstacle still costs about 7.2 KB in the mesh, so meshed dense ground is about 435 to 490 MB per square kilometre, and the mesh only grows (rule 37, section 6).
-- **Dead code in the geometry library.** Prices (`TagPrice`), the second corridor width (`detailTags`, still passed when the nav system constructs its mesh, so every corner still stores and refreshes two widths), the reachability forests with `pathThrough`'s forest pre-check, and the search benches for the deleted reach budgets are unused by the sim and not deleted yet.
+- **Chunk-border slivers.** WOR-809 (chunk-border slivers) is not done. Chunk borders stay constrained edges split every 64 m, so long thin triangles bunch along them.
+- **Bench fixes.** WOR-808 (bench fixes after the geometry clean-up) is not done.
 - **The geography mesh.** WOR-802 (Geography mesh (Tier 1): computed at load, always exists) comes later: long-distance travel is not being done yet. Until it exists the real mesh answers only for ground movers have meshed (rule 38).
 - **Goals beyond meshed ground.** WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet). A route to a goal off meshed ground, or cut off from the start by ground no mover has meshed, answers "no known way" at once (4.10).
 - **Player visibility.** WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)) is not built, so the player can still pan to and click ground no mover has meshed. Until it exists a move order there does nothing and a placement there reads invalid (rules 27 and 35). Nothing is built for either.
 - **Mover footprints.** WOR-710 (Step 7: Mover footprints in the mesh) is not built. Labels can already read a footprint tag as open (`MeshComponentsArgs::openTags`), so a mover in a doorway need never split a component; what a blocked mover does is question 2 (section 8).
-- **Queries outside the sim tick wait on the route slice.** A nav query made outside the tick (the build tool's cursor, placement, the nav overlay) joins the patch job, which waits for the tick's route slice, so it can wait up to a slice (about 8 ms) longer while a search runs. Not filed yet.
+- **Queries outside the sim tick wait on the route slice.** A nav query made outside the tick (the build tool's cursor, placement, the nav overlay) joins the patch job, which waits for the tick's route slice, so it can wait up to a slice (about 8 ms) longer while a search runs. WOR-804 (queries outside the tick waiting on the route slice).
 
 **No longer arises: a route search that cannot finish.** Kevin allowed, for now, a route search at
 its step limit to list its target as impossible. There is no step limit: a search ends only by
@@ -161,7 +162,7 @@ Area swept at fixed density (the region tiled k by k): 128 m 228 ms, 256 m 3.3 s
 Stage split on controlDump: `buildArrangement` alone is 211 to 229 ms of the 234. The
 constrained Delaunay triangulation is below the noise; on the tree-free input, where it can be
 resolved, it is 0.08 ms for 160 vertices. Classification, corridor widths, the locate grid, and
-the reachability forests together are 5 to 20 ms.
+the reachability forests (since deleted) together are 5 to 20 ms.
 
 The cause is in the code, not inferred: `buildArrangement` tests every segment against every
 other segment, and repeats the whole pass until nothing splits
@@ -192,7 +193,7 @@ three fixtures, the 2x2 tiling, and 340 random inputs). Median of 5, same machin
 
 A second run with the machine busier read about a third higher on every row. Arrangement is
 now about 2 ms of a 14.5 ms build and the triangulation about 2 ms; the other 10 ms is
-classification, widths, the locate grid, and the forests. Area still scales worse than linear
+classification, widths, the locate grid, and the forests (since deleted). Area still scales worse than linear
 (16 times the input takes 30 times as long), and that is in those later stages. It gets
 profiled before step 4 relies on meshing a whole chunk at once.
 
@@ -403,13 +404,13 @@ dozen segments), which is the price of spreading the work over ticks on the main
 Point location is about 0.25 us against 0.08 us for the builder's static grid. Whether that
 matters depends on how often the game locates per tick, which step 4 measures.
 
-**Queries on the patched mesh** (step 3). Path queries, the heuristic, corridor widths, and the
-reachability forests read a mesh through one view type, so each has one implementation whether
+**Queries on the patched mesh** (step 3). Path queries, the heuristic, and corridor widths
+read a mesh through one view type, so each has one implementation whether
 the mesh was built or patched.
 
 - Paths through a patched mesh match the builder's in verdict and in length to the millimetre, on the fixtures and on wall-and-door inputs, at agent radii from 0 to 1.5 m. Query time and nodes expanded are the same (2.54 ms against 2.58 ms for 96 queries on one fixture).
 - Corridor widths are capped at 4 m of clearance and recomputed on request, not inside each patch: computing them in the patch added 100 to 240% to a lone tree. A corner's width is recomputed only when a patch came within that width of the corner. One request serves any number of patches, so the game asks once per tick after its patches.
-- Historical: a reachability forest rebuild is about 0.13 us per triangle: 0.03 to 0.1 ms for a 128 m region's structural layer, 0.67 ms for a 512 m one. The structural layer and the game's use of the forests are deleted (4.2).
+- Historical: a reachability forest rebuild was about 0.13 us per triangle: 0.03 to 0.1 ms for a 128 m region's structural layer, 0.67 ms for a 512 m one. The structural layer and the forests are deleted (4.2); component labels answer whether two places are joined.
 
 **The cost of whole edges.** A long edge that many things cross pulls all of them into the
 hole. A chunk's side is 512 m. Measured in step 3: adding a tree across a 512 m shared side
@@ -474,12 +475,17 @@ chunks, and is snapped and collided with. The camera does none of these (rule 22
 unclamped (`NavigationSystem::meshingRange`). R is 46 m for every colonist today. The buffer is
 there so the placed obstacles ahead of a walking mover land before he reaches them.
 
-**The disc, by cell.** Placed obstacles are wanted in 16 m cells (`kDetailCellMm`). When a mover
-enters a new cell, or its R changes, every cell within R of its cell's square that is not wanted
+**The disc, by cell.** Placed obstacles are wanted in 16 m cells (`kDetailCellMm`). A mover
+wants every cell whose nearest point is within R of where he stands, true distance. The set is
+taken again every 4 m he moves (`kDiscRetakeStepMm`) or when R changes: every such cell not wanted
 yet becomes wanted, and so does the ground of the chunks those cells lie in (`trackMovers`,
-`wantDisc`). The distance is the gap between the two squares, so wherever the mover stands in its
-cell everything within R of it is wanted. A wanted cell or chunk stays wanted forever, and a cell
-is scanned for colliders once, ever. A mover that stays in its cell costs one compare a tick.
+`wantDisc`). The reach to an obstacle's centre is at worst about R plus one cell diagonal. A
+wanted cell or chunk stays wanted forever, and a cell is scanned for colliders once, ever. A mover
+that has not moved 4 m costs one compare a tick.
+
+Ground is terrain (land outline and water), immutable, and is meshed a whole 512 m chunk at a
+time for any chunk a mover's range touches. Placed obstacles are separate, can change, and are
+meshed only within the mover's range.
 
 **Order.** A disc's new cells join a first-in, first-out queue nearest first, behind the cells
 already waiting. A mover's own cell and the eight touching it go to a near lane served ahead of
@@ -720,8 +726,10 @@ their setters (`setReachBudgets`, `setNavExpansionCap`); prices, and both exempt
 collision and the snap; the camera's inputs (`setViewportRect`, the view rects, `detailOnAt`);
 every removal path (ground shed after unloading, a chunk's placed obstacles leaving on unload,
 the placed-obstacle cap and its trim); the anchors of a route's rest and of a goal waiting for
-ground; and the settled-ground wake. Still in the geometry library and unused by the sim: prices,
-the second corridor width, the reachability forests and `pathThrough`'s forest pre-check (1.1).
+ground; and the settled-ground wake. The geometry library's tag prices and squeeze, the second corridor
+width (`structuralWidthMm`, `detailTags`), the reachability forests and
+`PatchReport::freedTriangles` and `newTriangles` are deleted too. `pathThrough` rejects a query
+across components by their labels, and a path's cost is its length.
 
 ## 6. Performance plan
 
@@ -1016,7 +1024,7 @@ plan and why, and what four review rounds found.
 109. **The route API's edges.** `requestRoute` judges both ends where a search would stand them (`standingTriangle`) before its at-once label check; with the raw located triangle, a goal just inside a placed obstacle's ring was refused where a search would have routed it. A start that locates nowhere is its own outcome, `StartOffMesh`, never "no known way". `routeTicketLive` tells a ticket still being searched from one nav has dropped or never knew, which `takeRouteAnswer` alone could not, so a caller is never left waiting on a dead ticket. An answer untaken for `kUntakenAnswerTicks` (600) is dropped. Answers carry the label and patch epochs they hold for, and a finished answer not yet delivered is checked against the patches before its delivery and restarted on a hit, so a stale "no known way" can never be delivered under a newer epoch.
 110. **The AI asks by ticket, and its choice of target.** Built: a colonist stands in the awaiting-route state while his route is out, or keeps walking his old route while a replacement is out and joins the new one where he stands; the panel shows "Finding a way" (standing) or "Re-routing" (walking) after 10 ticks; a target inside a placed obstacle is routed to its stand point and judged arrived there; an answer for a goal the task has since left is dropped and asked again; "no known way" while the snap holds him waits for the snap. The target choice replaces the reach walk. Its rule: a route's answer is the truth about whether this mover can get there, so "no known way" is a verdict on that target for him, remembered until the label epoch or his belief moves, and a target with a live verdict is not asked about again; a need's source is chosen by one nearest-of route request over the nearest few connected candidates with no verdict, so a sealed nearest source loses to the next in the same request. This fixed a livelock in which a source sealed for his width but connected at zero width was chosen, answered "no known way", and chosen again forever. A verdict is recorded under the epoch as it stands and his belief version. A move of his belief clears every verdict at once; a move of the label epoch clears only verdicts recorded before it and at least `kVerdictMinTicks` (300) AI updates old, so a busy colony, where the epoch moves often, cannot keep wiping them, and a newly opened way can be noticed up to 300 updates (5 s at 60 updates a second) late. A need round is one nearest-of request over the nearest `kNearestOfCount` (8) connected sources with no verdict; a round that ends in "no known way" widens that need's next round to 16, then `kWidestRound` (32, the capacity of `SourceChoices`), and a routed answer resets it. A failed route decides once at the failure, then on the 0.5 s interval until a route is found. While the snap holds him his decision waits, one interval per wait, up to `kSnapWaitDecisions` (4); a snap wait that runs out fails the route with no verdict on the target. A nearest-of answer whose source another colonist has claimed meanwhile is not taken: his claims are retired, the task cleared, and he decides again at once. A decision locates him once and costs one component-label lookup (`NavigationSystem::componentAt`) and a compare per target; `standPointBeside` runs only for targets with no label that are on the mesh, and route ends are cached per decision. A wander point must share his component label and fit his disc (8 rim samples of `isValidPosition`); a wander under way keeps its point and probes nothing. A late route is joined at his projection onto its nearest leg (`joinRoute`). Shore points are generated every 1 m along shore edges, 300 mm onto land (`kShoreOffsetMm`), so they have a land face, pass the connected filter, and are their own route goal. The bench row `BM_NeedDecision` (1, 5 and 40 sources) is in `NavigationSystem.bench.cpp` and has not been run.
 111. **`generation()` moves on ground, water, walls and doors only.** It goes up by one at the join of any patch job in which ground arrived, water was re-derived, walls changed, or a door was added or removed; placed obstacles landing or leaving never move it. A route a newly meshed placed obstacle crosses is marked stale one by one, and the AI asks again by ticket. `NavQueryStats::groundWaterWallPatches` counts ground, water and wall patches, and an AI test reads it.
-112. **Not done in the correction.** Record slimming (WOR-801, Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB) was planned as part of it and was not done, so a placed obstacle still costs about 7.2 KB. The geometry clean-up was not done either: prices, the second corridor width (still configured on the nav mesh), the reachability forests and `pathThrough`'s pre-check on them, and the benches for the deleted reach budgets remain, unused by the sim. The route and walking-mover measurements planned for the end of the correction have not run; `BM_RouteSlice` (1, 20 and 200 requests pending) compiles.
+112. **Not done in the correction (the geometry clean-up since landed, entry 114).** Record slimming (WOR-801, Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB) was planned as part of it and was not done, so a placed obstacle still costs about 7.2 KB. The geometry clean-up was not done either: prices, the second corridor width (still configured on the nav mesh), the reachability forests and `pathThrough`'s pre-check on them, and the benches for the deleted reach budgets remain, unused by the sim. The route and walking-mover measurements planned for the end of the correction have not run; `BM_RouteSlice` (1, 20 and 200 requests pending) compiles.
 113. **Four review rounds.** Every must-fix below is fixed, with a test.
     - Round one, of the labels, the search and the route queue. Findings: the deferral box could not stop a second hit; an answer finished in a slice was delivered after that tick's patches with no epoch on it, so a stale "no known way" could be stored under a new epoch; a door added did not move the label epoch. Fixes: entries 104 and 109; `addDoor` moves the epoch; a new request gets its first turn at the head of the next slice; the star memo became per search and the forest pre-check left the search (entry 101).
     - Round two, of the chunk hold, mover meshing, collision and the snap. Findings: the camera still decided when some wanted ground and placed obstacles were meshed; collision undid the forward snap; a mover's disc could cover less than its sight; first-in-first-out service ignored nearness; a goal off meshed ground read "maybe" while its chunk was loaded, so a chunk only the camera loaded could park a colonist waiting for good. Fixes: entries 106 and 107; the "maybe" went with reach (entry 99).
@@ -1032,3 +1040,4 @@ mesh).
 - **Footprints off camera (question 3):** they do not block where detail is off, the same as flora. Collision still separates movers. Replaced by rule 22.
 - **Detail around off-camera working colonists (question 4):** none. Only the viewport requests detail in this epic. Replaced by rule 22.
 - **Load range around a mover (question 5):** the chunks within 128 m of it. Now the larger of 128 m and the mover's range (4.5).
+114. **The geometry clean-up and the disc rule landed after the correction.** The geometry library lost tag prices and the squeeze, the second corridor width (`structuralWidthMm`, `detailTags`), the reachability forests and `PatchReport::freedTriangles` and `newTriangles`. `pathThrough` rejects a query across components by their labels, and a path costs its length. `BM_SearchReach`, `BM_SearchDeadEnds`, `BM_ForestRebuild*` and `BM_SealedGoal` are deleted. A mover now wants every 16 m cell whose nearest point is within R of where he stands, retaken every 4 m (4.4); before, the distance was cell to cell over a 7 x 7 square of cells. Still open: record slimming (WOR-801), chunk-border slivers (WOR-809), bench fixes (WOR-808).
