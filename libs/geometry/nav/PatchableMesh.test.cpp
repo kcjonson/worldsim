@@ -1210,7 +1210,9 @@ TEST(PatchableMesh, FixtureRealRingsWithSplitBoundsMatchesFreshBuild) {
 TEST(PatchableMesh, SplitLongEdgesCutsOnTheEdge) {
 	EXPECT_EQ(splitLongEdges(rect(0, 0, 10, 4), 0), rect(0, 0, 10, 4));
 	EXPECT_EQ(splitLongEdges(rect(0, 0, 10, 4), 4),
-			  (std::vector<Vec2i64>{{0, 0}, {3, 0}, {6, 0}, {10, 0}, {10, 4}, {7, 4}, {4, 4}, {0, 4}}));
+			  (std::vector<Vec2i64>{{0, 0}, {3, 0}, {6, 0}, {10, 0}, {10, 4}, {6, 4}, {3, 4}, {0, 4}}));
+	// Either direction, the same cuts.
+	EXPECT_EQ(splitLongEdges({{10, 4}, {0, 4}, {0, 0}}, 4), (std::vector<Vec2i64>{{10, 4}, {6, 4}, {3, 4}, {0, 4}, {0, 0}, {5, 2}}));
 	// A diagonal edge cuts only at its lattice points: (0, 0)-(9, 6) has them every (3, 2).
 	const std::vector<Vec2i64> diagonal = splitLongEdges({{0, 0}, {9, 6}, {0, 6}}, 4);
 	EXPECT_EQ(diagonal, (std::vector<Vec2i64>{{0, 0}, {3, 2}, {6, 4}, {9, 6}, {6, 6}, {3, 6}, {0, 6}, {0, 3}}));
@@ -2485,5 +2487,36 @@ TEST(PatchableMesh, SquaresArriveAmongObstaclesMatchFreshBuild) {
 		if (HasFatalFailure()) {
 			return;
 		}
+	}
+}
+
+// A shared side whose length is no multiple of the piece length is cut at the same
+// points from both squares, so it dissolves.
+TEST(PatchableMesh, UnevenlyCutSharedSideDissolves) {
+	const NavInputPolygon west = bounds(rect(0, 0, 10000, 10000));
+	const NavInputPolygon east = bounds(rect(10000, 0, 20000, 10000));
+	for (const bool westFirst : {true, false}) {
+		Harness		 h(4000);
+		const RingId first	= h.add(westFirst ? west : east);
+		const RingId second = h.add(westFirst ? east : west);
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+		int partnered = 0;
+		for (const EdgeSource& partner : h.mesh.ring(second).partners) {
+			partnered += partner.ring == first ? 1 : 0;
+		}
+		EXPECT_EQ(partnered, 3) << "the side's three pieces";
+		int constrainedOnSide = 0;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+			if (!h.mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = h.mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& a = h.mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
+				const Vec2i64& b = h.mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
+				constrainedOnSide += a.x == 10000 && b.x == 10000 && !h.mesh.edgeSources(t, e).empty() ? 1 : 0;
+			}
+		}
+		EXPECT_EQ(constrainedOnSide, 0);
 	}
 }

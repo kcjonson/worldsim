@@ -2488,10 +2488,13 @@ namespace geometry::nav {
 			if (steps == 0) {
 				continue;
 			}
+			// Cuts are measured from the lower end, so a side two rings walk in opposite
+			// directions is cut at the same points.
+			const bool	  fromA = a < b;
 			const Vec2i64 step{d.x / steps, d.y / steps};
 			std::int64_t  previous = 0;
 			for (std::int64_t k = 1; k < pieces; ++k) {
-				const std::int64_t at = k * steps / pieces;
+				const std::int64_t at = fromA ? k * steps / pieces : steps - (pieces - k) * steps / pieces;
 				if (at > previous && at < steps) {
 					out.push_back(a + step * at);
 					previous = at;
