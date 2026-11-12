@@ -52,7 +52,7 @@ A hand-off file is written for a reader with none of the writer's context: head 
 ## Parallel work
 
 - Pieces run in parallel only when their files are disjoint. Two writers never touch the same files.
-- Parallel writers get their own worktrees or branches and meet in one merge.
+- Each parallel writer gets its own worktree and its own branch; they meet in one merge. A branch alone doesn't isolate: writers in one checkout share the working tree, the index, and HEAD.
 - State the seam between pieces before starting: which functions cross it, who owns each side.
 - Use a session when the piece outlives the turn and Kevin may want to open or steer it. Use a subagent when you need the result back in this turn.
 
@@ -65,7 +65,7 @@ Every push to a branch someone else merges from costs them a merge, a build, and
 - Don't re-run what an agent just ran. Read its result, check the tree it ran on, and move on.
 - Take another agent's conflict resolution when it already has one. Never resolve the same conflict twice.
 - Don't build or measure on the machine while another agent is measuring. Follow the perf rules in `docs/testing/README.md`.
-- Judge a rewrite on its own numbers against what the game needs. Build an old-side comparison only when the new numbers look bad and the cause is in question.
+- Timing a change against `main` with `perf.mjs capture` and `compare` stays as that doc says. What is optional is extra work on the old side: don't build a second harness to re-measure the old implementation on a new fixture unless the new numbers look bad and the cause is in question.
 
 ## Review
 
