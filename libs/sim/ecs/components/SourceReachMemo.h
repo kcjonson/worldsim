@@ -8,7 +8,9 @@
 
 #include <glm/vec2.hpp>
 
+#include <algorithm>
 #include <bit>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -38,9 +40,9 @@ namespace ecs {
 	/// target, whose answer doesn't change when the colonist takes ten steps, so it isn't held under
 	/// the anchor: it keeps where the search started, the target and the stamp of the ground between
 	/// them, and holds until that stamp or the belief moves or the colonist is more than
-	/// kGaveUpMoveFraction of the way from there to the target away from where it started
-	/// (forgetGaveUpRoutes). So a colonist that knows only far targets with no way to them tries each
-	/// once, not once per anchor.
+	/// kGaveUpMoveFraction of the way from there to the target, and at least kGaveUpMoveFloorMeters, away
+	/// from where it started (forgetGaveUpRoutes). So a colonist that knows only far targets with no way
+	/// to them tries each once, not once per anchor.
 	struct SourceReachMemo {
 		struct Key {
 			std::int64_t  startCell = 0;		// NavigationSystem::Reach::startCell
@@ -116,6 +118,9 @@ namespace ecs {
 		void recordFailedRoute(std::uint64_t sourceKey, const FailedRoute& route) { failedRoutes[sourceKey] = route; }
 
 		/// A route to this source whose search gave up, from `from`: unreachable until it is forgotten.
+		/// A known limit: a way that opens outside the span (a ford meshed beyond the box between `from`
+		/// and the target, or ground arriving, which no span stamp counts) doesn't clear it; moving away
+		/// or a change inside the span does.
 		struct GaveUpRoute {
 			glm::vec2	  from{0.0F, 0.0F};
 			glm::vec2	  target{0.0F, 0.0F};
@@ -128,6 +133,9 @@ namespace ecs {
 		/// How far the colonist moves from where a search gave up, as a fraction of the straight line from
 		/// there to the target, before the target is asked about again.
 		static constexpr float kGaveUpMoveFraction = 0.25F;
+		/// And at least this far, so a target a few metres off across a long river isn't asked about again
+		/// at every step: the default anchor load range (ChunkManager::kDefaultAnchorLoadRangeMeters).
+		static constexpr float kGaveUpMoveFloorMeters = 128.0F;
 
 		/// Forget the failed and gave-up routes whose span stamp moved: `spanStamp(from, target)` is the
 		/// stamp now, read once per structural epoch (no span stamp moves without it). A failed route's
@@ -144,13 +152,14 @@ namespace ecs {
 		}
 
 		/// Forget the gave-up routes the colonist, at `here` with belief `beliefVersion`, has moved or
-		/// learned its way out of (kGaveUpMoveFraction).
+		/// learned its way out of (kGaveUpMoveFraction, kGaveUpMoveFloorMeters).
 		void forgetGaveUpRoutes(const glm::vec2& here, std::uint64_t beliefVersion) {
 			std::erase_if(gaveUpRoutes, [&](const auto& entry) {
 				const GaveUpRoute& route = entry.second;
 				const glm::vec2	   moved = here - route.from;
 				const glm::vec2	   span	 = route.target - route.from;
-				const float		   limit = kGaveUpMoveFraction * kGaveUpMoveFraction * (span.x * span.x + span.y * span.y);
+				const float		   reach = std::max(kGaveUpMoveFraction * std::sqrt(span.x * span.x + span.y * span.y), kGaveUpMoveFloorMeters);
+				const float		   limit = reach * reach;
 				return route.beliefVersion != beliefVersion || moved.x * moved.x + moved.y * moved.y > limit;
 			});
 		}

@@ -5902,6 +5902,28 @@ namespace ecs::test {
 	// A route that failed is held as a verdict while the colonist stays in the square it failed in, so a
 	// colonist wandering about one spot never picks the failed target again: here, 40 decisions from
 	// points up to 50 m round the spot. Leaving the square drops the verdict, so it may pick it once more
+	// requestDecision has a colonist mid-interval, walking to water, decide at the AI's next update; without
+	// it the next update decides nothing.
+	TEST_F(AIDecisionFirstMeshTest, RequestDecisionDecidesAtTheNextUpdate) {
+		constexpr float kShortTick = 0.01F;
+		const auto		colonist   = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 30.0F);
+		addKnownEntity(colonist, {40.0F, 0.0F}, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->finishPendingBuilds();
+		world->update(kShortTick);
+		ASSERT_EQ(getTask(colonist)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(getTask(colonist)->state, TaskState::Moving);
+
+		const float decided = getTrace(colonist)->lastEvaluationTime;
+		world->update(kShortTick);
+		ASSERT_EQ(getTrace(colonist)->lastEvaluationTime, decided) << "decided mid-interval unasked";
+		requestDecision(*getTask(colonist));
+		world->update(kShortTick);
+		EXPECT_NE(getTrace(colonist)->lastEvaluationTime, decided) << "no decision at the next update";
+	}
+
 	// (at most once per anchor: after the next failure the verdict holds again).
 	TEST_F(AIDecisionFirstMeshTest, WanderingColonistDoesNotRepickAFailedRoute) {
 		constexpr glm::vec2 kSpot{0.0F, 0.0F};
@@ -5969,7 +5991,7 @@ namespace ecs::test {
 	// wall built well off that ground changes nothing.
 	// The far path end to end, with search budgets small enough that every walk here is far: water 60 m
 	// off, past a wall the colonist doesn't know (so the two ends are in different triangles), is far,
-	// chosen as the only candidate, and its route found by the far nav search; he walks there.
+	// chosen as the only candidate, and its route found by the far route search; he walks there.
 	TEST_F(AIDecisionWallTest, FarWaterIsChosenRoutedAndReached) {
 		constexpr glm::vec2 kWater{60.0F, 0.0F};
 		const auto			commit = construction.commitSegment({30000, -10000}, {30000, 10000}, "Wood", "Standard", construction::kInvalidFoundation);
@@ -5977,7 +5999,7 @@ namespace ecs::test {
 		for (const auto id : commit.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
 		}
-		nav->setReachBudgets(1, 1, NavigationSystem::kFarNavExpansions);
+		nav->setReachBudgets(1, 1, NavigationSystem::kFarRouteExpansions);
 		const auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist));
 		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
@@ -5994,7 +6016,7 @@ namespace ecs::test {
 		EXPECT_EQ(thirst->status, OptionStatus::Selected);
 		EXPECT_GT(nav->navQueryStats().farWalks, 0U) << "the walk wasn't far";
 		const NavPath* route = world->getComponent<NavPath>(colonist);
-		ASSERT_TRUE(route != nullptr && route->valid) << "the far nav search found no route";
+		ASSERT_TRUE(route != nullptr && route->valid) << "the far route search found no route";
 		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 0U);
 
 		const glm::vec2& at = world->getComponent<Position>(colonist)->value;

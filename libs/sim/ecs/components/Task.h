@@ -302,6 +302,8 @@ struct Task {
 		navState = NavState::Traveling;
 		navStateHold = 0;
 		deferredNavGeneration = 0;
+		blockedReachStamp = 0;
+		blockedSearchGaveUp = false;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
 		needItemDefNameId = 0;
