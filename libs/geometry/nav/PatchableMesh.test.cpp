@@ -791,7 +791,43 @@ TEST(PatchableMesh, LocateTieBreaksOnCorners) {
 
 // Chunk squares sharing a side, in both orders, with a tree hanging off the first one's
 // edge: its outside part has no triangles until the neighbour arrives and completes it.
+// When the first square leaves, the second's side is the mesh's constrained boundary again;
+// when it comes back, the side is dissolved again.
 TEST(PatchableMesh, HangingRingCompletedByNeighbourBounds) {
+	// Mesh edges on x = 10000: their length, how much of it is boundary carrying `square`'s
+	// edge, and how many name any bounds ring.
+	struct SharedLine {
+		std::int64_t length		  = 0;
+		std::int64_t ownBoundary  = 0;
+		int			 boundsEdges  = 0;
+	};
+	const auto onSharedLine = [](const PatchableMesh& mesh, RingId square) {
+		SharedLine out;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& a = mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
+				const Vec2i64& b = mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
+				if (a.x != 10000 || b.x != 10000) {
+					continue;
+				}
+				const std::int64_t length = std::abs(b.y - a.y);
+				out.length += length;
+				bool own = false;
+				for (const EdgeSource& s : mesh.edgeSources(t, e)) {
+					own = own || s.ring == square;
+					out.boundsEdges += mesh.ring(s.ring).polygon.blocked ? 0 : 1;
+				}
+				if (own && tri.neighbor[static_cast<std::size_t>(e)] < 0) {
+					out.ownBoundary += length;
+				}
+			}
+		}
+		return out;
+	};
 	for (const bool westFirst : {true, false}) {
 		Harness				  h;
 		const NavInputPolygon west = bounds(rect(0, 0, 10000, 10000));
@@ -800,12 +836,22 @@ TEST(PatchableMesh, HangingRingCompletedByNeighbourBounds) {
 		h.add(blocked({{9400, 4000}, {10700, 4300}, {10500, 5200}, {9300, 5100}}));
 		h.add(blocked(rect(9000, 6000, 11000, 6500)));
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (westFirst ? "west" : "east") << " alone";
-		h.add(westFirst ? east : west);
+		const RingId second = h.add(westFirst ? east : west);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "both";
+		EXPECT_EQ(onSharedLine(h.mesh, second).boundsEdges, 0) << "both";
 		PatchEdits leave;
 		leave.removes.push_back(h.model.begin()->first);
 		h.apply(leave);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "first square unloaded";
+		const SharedLine alone = onSharedLine(h.mesh, second);
+		EXPECT_EQ(alone.ownBoundary, 10000) << "the side, whole, is boundary carrying the second square's edge";
+		EXPECT_EQ(alone.length, 10000);
+		for (const EdgeSource& partner : h.mesh.ring(second).partners) {
+			EXPECT_EQ(partner.ring, kNoRing);
+		}
+		h.add(westFirst ? west : east);
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "first square back";
+		EXPECT_EQ(onSharedLine(h.mesh, second).boundsEdges, 0) << "first square back";
 	}
 }
 

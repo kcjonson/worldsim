@@ -45,6 +45,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <optional>
@@ -906,10 +907,50 @@ namespace {
 		chunks.update({camera.x, camera.y}, anchors);
 		chunks.finishPendingGeneration();
 	}
+
+	// Mesh edges on the line x = xMm between y loMm and hiMm, each counted once.
+	struct LineEdges {
+		int boundary		   = 0; // the mesh ends there
+		int landConstrained	   = 0; // floor on both sides, on a ring edge
+		int blockedConstrained = 0; // blocked terrain on both sides, on a ring edge
+	};
+
+	LineEdges edgesOnLine(const geometry::nav::PatchableMesh& mesh, std::int64_t xMm, std::int64_t loMm, std::int64_t hiMm) {
+		LineEdges out;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const geometry::nav::NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (std::size_t e = 0; e < 3; ++e) {
+				const Vec2i64& a = mesh.vertices()[tri.v[e]];
+				const Vec2i64& b = mesh.vertices()[tri.v[(e + 1) % 3]];
+				if (a.x != xMm || b.x != xMm || std::min(a.y, b.y) < loMm || std::max(a.y, b.y) > hiMm) {
+					continue;
+				}
+				const std::int32_t across = tri.neighbor[e];
+				if (across < 0) {
+					++out.boundary;
+					continue;
+				}
+				if (across < t || mesh.edgeSources(t, static_cast<int>(e)).empty()) {
+					continue;
+				}
+				const geometry::nav::NavTriangle& other = mesh.triangles()[static_cast<std::size_t>(across)];
+				if (geometry::nav::isFloorFace(tri) && geometry::nav::isFloorFace(other)) {
+					++out.landConstrained;
+				} else if (!geometry::nav::terrainTraversable(tri) && !geometry::nav::terrainTraversable(other)) {
+					++out.blockedConstrained;
+				}
+			}
+		}
+		return out;
+	}
 } // namespace
 
 // A chunk arriving next to meshed ground joins it: a path crosses the border. The chunk comes because
-// a mover walked up to it, with the camera still.
+// a mover walked up to it, with the camera still. Before, its side is the mesh's boundary; after, the
+// side shared by the two squares is no edge the mesh keeps.
 TEST_F(NavigationSystemTest, ArrivingChunkJoinsItsNeighbour) {
 	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
 	chunks->setLoadRadius(0);
@@ -930,6 +971,7 @@ TEST_F(NavigationSystemTest, ArrivingChunkJoinsItsNeighbour) {
 	ASSERT_FALSE(sys.inSimArea(east));
 	ASSERT_EQ(chunks->getChunk({1, 0}), nullptr);
 	EXPECT_FALSE(routeBetween(sys, west, east).has_value());
+	EXPECT_EQ(edgesOnLine(sys.navMesh(), 512000, 0, 512000).boundary, 8) << "the side, in its eight pieces";
 
 	world.getComponent<Position>(mover)->value = {512.0F, 100.0F};
 	step(world, sys); // wants (1, 0)
@@ -937,6 +979,143 @@ TEST_F(NavigationSystemTest, ArrivingChunkJoinsItsNeighbour) {
 	settle(sys);
 	EXPECT_TRUE(routeBetween(sys, west, east).has_value()) << "the path crosses x = 512 m";
 	EXPECT_TRUE(sys.connected(west, east));
+	const LineEdges shared = edgesOnLine(sys.navMesh(), 512000, 0, 512000);
+	EXPECT_EQ(shared.boundary, 0);
+	EXPECT_EQ(shared.landConstrained, 0) << "a constrained edge between land on the shared side";
+}
+
+namespace {
+	// Placed obstacles every 1.6 m, 44 across and 30 up, centred on `gapOrigin`: the gaps between
+	// them lie on x = gapOrigin.x + 1.6 i and y = gapOrigin.y + 1.6 j.
+	std::vector<glm::vec2> postField(glm::vec2 gapOrigin) {
+		std::vector<glm::vec2> posts;
+		for (int i = -22; i < 22; ++i) {
+			for (int j = -15; j < 15; ++j) {
+				posts.push_back(gapOrigin + glm::vec2{0.8F + 1.6F * static_cast<float>(i), 0.8F + 1.6F * static_cast<float>(j)});
+			}
+		}
+		return posts;
+	}
+
+	constexpr float		  kPostHalf = 0.25F;
+	constexpr const char* kPost		= "Test_NavBorderPost";
+
+	// The longest edge of a floor triangle meeting the segment x = xMm, y loMm..hiMm.
+	double longestEdgeAcross(const geometry::nav::PatchableMesh& mesh, std::int64_t xMm, std::int64_t loMm, std::int64_t hiMm) {
+		double longest = 0.0;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const geometry::nav::NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			if (!geometry::nav::isFloorFace(tri)) {
+				continue;
+			}
+			const std::array<Vec2i64, 3> p{mesh.vertices()[tri.v[0]], mesh.vertices()[tri.v[1]], mesh.vertices()[tri.v[2]]};
+			// The triangle's span along the line, from where its edges meet it.
+			double spanLo = std::numeric_limits<double>::max();
+			double spanHi = std::numeric_limits<double>::lowest();
+			for (std::size_t i = 0; i < 3; ++i) {
+				const Vec2i64& a = p[i];
+				const Vec2i64& b = p[(i + 1) % 3];
+				if (std::min(a.x, b.x) > xMm || std::max(a.x, b.x) < xMm) {
+					continue;
+				}
+				const double ys[2] = {static_cast<double>(a.y), static_cast<double>(b.y)};
+				const double y	   = a.x == b.x ? ys[0] : ys[0] + (ys[1] - ys[0]) * static_cast<double>(xMm - a.x) / static_cast<double>(b.x - a.x);
+				spanLo			   = std::min({spanLo, y, a.x == b.x ? ys[1] : y});
+				spanHi			   = std::max({spanHi, y, a.x == b.x ? ys[1] : y});
+			}
+			if (spanLo > static_cast<double>(hiMm) || spanHi < static_cast<double>(loMm)) {
+				continue;
+			}
+			for (std::size_t i = 0; i < 3; ++i) {
+				const double dx = static_cast<double>(p[(i + 1) % 3].x - p[i].x);
+				const double dy = static_cast<double>(p[(i + 1) % 3].y - p[i].y);
+				longest			= std::max(longest, std::sqrt(dx * dx + dy * dy));
+			}
+		}
+		return longest;
+	}
+} // namespace
+
+// The same route through a post field is as long when the field straddles a chunk border as when the
+// field lies inside one chunk: the border adds no detour.
+TEST_F(NavigationSystemTest, RouteThroughPostsAcrossABorderIsAsLongAsInsideAChunk) {
+	registerTree(kPost, kPostHalf);
+	const auto routeLength = [](glm::vec2 gapOrigin) {
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		placeTrees(executor, processed, kPost, postField(gapOrigin));
+		ConstructionWorld cw;
+		World			  world;
+		NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+		sys.setChunkManager(landChunks());
+		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
+		meshAround(world, gapOrigin - glm::vec2{12.0F, 0.0F}, 50.0F);
+		settle(sys);
+		const std::optional<std::vector<glm::vec2>> route =
+			routeBetween(sys, gapOrigin + glm::vec2{-9.6F, -4.8F}, gapOrigin + glm::vec2{9.6F, 6.4F});
+		float length = -1.0F;
+		if (route.has_value()) {
+			length = 0.0F;
+			for (std::size_t i = 1; i < route->size(); ++i) {
+				length += glm::distance((*route)[i - 1], (*route)[i]);
+			}
+		}
+		return length;
+	};
+	const float across = routeLength({512.0F, 100.0F});
+	const float inside = routeLength({256.0F, 100.0F});
+	ASSERT_GT(inside, 0.0F) << "no route inside chunk (0, 0)";
+	ASSERT_GT(across, 0.0F) << "no route across x = 512 m";
+	EXPECT_NEAR(across, inside, 0.01F);
+}
+
+// A mover in a post field beside a chunk border meshes both chunks: the floor triangles over the
+// border are no longer than those over a line of the field inside the chunk. While only one of the
+// two is meshed its side is the mesh's boundary, cut every 64 m, and they are.
+TEST_F(NavigationSystemTest, BorderInAPostFieldMeshesLikeTheInterior) {
+	registerTree(kPost, kPostHalf);
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(8);
+	const glm::vec2 camera{256.0F, 256.0F};
+	chunks->update({camera.x, camera.y});
+	chunks->finishPendingGeneration();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, kPost, postField({512.0F, 100.0F}));
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	meshAround(world, {500.0F, 100.0F}, 50.0F);
+	settle(sys);
+	ASSERT_FALSE(sys.inSimArea({530.0F, 100.0F}));
+
+	constexpr std::int64_t kBorderMm  = 512000;
+	constexpr std::int64_t kInteriorMm = 486400; // 16 gaps west of the border
+	constexpr std::int64_t kLoMm	   = 84000;
+	constexpr std::int64_t kHiMm	   = 116000;
+	const double		   oneSided	   = longestEdgeAcross(sys.navMesh(), kBorderMm, kLoMm, kHiMm);
+	const double		   bound	   = 1.25 * longestEdgeAcross(sys.navMesh(), kInteriorMm, kLoMm, kHiMm);
+	EXPECT_GT(oneSided, bound) << "one chunk meshed: its side holds the triangles along it to 64 m pieces";
+
+	loadFor(*chunks, sys, camera);
+	settle(sys);
+	ASSERT_TRUE(sys.inSimArea({530.0F, 100.0F}));
+	const double interior = longestEdgeAcross(sys.navMesh(), kInteriorMm, kLoMm, kHiMm);
+	const double border	  = longestEdgeAcross(sys.navMesh(), kBorderMm, kLoMm, kHiMm);
+	RecordProperty("oneSidedLongestMm", std::to_string(oneSided));
+	RecordProperty("borderLongestMm", std::to_string(border));
+	RecordProperty("interiorLongestMm", std::to_string(interior));
+	ASSERT_GT(interior, 0.0);
+	EXPECT_LE(border, 1.25 * interior);
 }
 
 // A wanted chunk whose mover left before it loaded is not meshed when only the camera loads it; it is
@@ -1385,6 +1564,24 @@ TEST_F(NavigationSystemTest, WaterAcrossChunkBordersHasNoSeam) {
 	}
 	EXPECT_FALSE(sys.connected({-30.0F, 0.0F}, {0.5F, 0.5F})) << "the pond's middle is water on every side";
 	EXPECT_TRUE(routeBetween(sys, {-30.0F, 0.0F}, {30.0F, 0.0F}).has_value()) << "around the pond, across both borders";
+}
+
+// Each chunk's water arrives clipped to its square, so where the pond crosses x = 0 the border is
+// two water rings' edges and stays constrained; along its land stretches the shared side is gone.
+TEST_F(NavigationSystemTest, WaterStretchOfABorderStaysConstrained) {
+	auto			  chunks = readyChunks(cornerPondSampler(), {0.0F, 0.0F}, 1);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	meshAround(world, {0.0F, 0.0F}, 60.0F);
+	settle(sys);
+
+	const LineEdges border = edgesOnLine(sys.navMesh(), 0, -512000, 512000);
+	EXPECT_GT(border.blockedConstrained, 0) << "the water stretch";
+	EXPECT_EQ(border.landConstrained, 0) << "a land stretch";
+	EXPECT_EQ(border.boundary, 0);
 }
 
 // --- Landing and placement -------------------------------------------------------
