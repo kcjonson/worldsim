@@ -1545,6 +1545,12 @@ namespace geometry::nav {
 		return inForestSubtree(*forestFor(mesh, belief), from.root, goalTri);
 	}
 
+	std::int32_t standingTriangle(const NavView& meshIn, const Vec2i64& p, const BeliefFilter& belief) {
+		const NavView	   mesh = meshIn.resolved();
+		const std::int32_t tri	= standOn(mesh, mesh.locate(p), p, belief, [](std::int32_t) {});
+		return tri >= 0 && traversable(mesh, tri, belief) ? tri : -1;
+	}
+
 	SearchBelief copyBelief(const BeliefFilter& belief) {
 		SearchBelief out;
 		out.truth = belief.knownSegments == nullptr;

@@ -827,9 +827,7 @@ namespace ecs {
 		markStrayedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
-			const std::size_t adds	 = holdingAdditions ? 0 : kDetailRingsPerTick;
-			const std::size_t ground = holdingAdditions ? 0 : kGroundVerticesPerTick;
-			gather(adds, kDetailRemovalsPerTick, kDetailCellsPerTick, kDetailScansPerTick, ground);
+			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kDetailCellsPerTick, kDetailScansPerTick, kGroundVerticesPerTick, holdingFar);
 		}
 	}
 
@@ -837,6 +835,7 @@ namespace ecs {
 		// settle() waited for the nav mesh's job, which waited for the slice; with no job, the slice
 		// may still run.
 		routeWorker->wait();
+		const bool sliceRan = sliceStarted;
 		if (sliceStarted) {
 			sliceStarted		= false;
 			std::uint32_t spent = 0;
@@ -870,17 +869,36 @@ namespace ecs {
 		}
 		dropUntakenAnswers();
 
-		if (routes.searchSpansTicks() && heldInARow < kMaxHeldAdditionTicks) {
-			holdingAdditions = true;
+		// A search still waiting after a slice it had a turn in spans ticks: its window opens now,
+		// once, and a restart leaves it where it is.
+		if (sliceRan) {
+			for (const nav::RouteTurn& turn : routes.lastSlice()) {
+				const auto ours = byQueueTicket.find(turn.ticket);
+				if (ours == byQueueTicket.end() || !routes.waiting(turn.ticket)) {
+					continue;
+				}
+				QueuedRoute& route = queuedRoutes.at(ours->second);
+				if (route.holdFrom == 0) {
+					route.holdFrom = routeTick;
+				}
+			}
+		}
+		bool searching = false;
+		holdingFar	   = false;
+		for (const auto& [ticket, route] : queuedRoutes) {
+			if (!routes.waiting(route.queued)) {
+				continue;
+			}
+			searching  = true;
+			holdingFar = holdingFar || (route.holdFrom != 0 && routeTick - route.holdFrom < kMaxHeldAdditionTicks);
+		}
+		if (holdingFar) {
 			++heldInARow;
 			++routeStatsTotal.ticksHeld;
 			routeStatsTotal.longestHold = std::max(routeStatsTotal.longestHold, heldInARow);
 		} else {
-			holdingAdditions = false;
-			heldInARow		 = 0;
+			heldInARow = 0;
 		}
-
-		const bool searching = std::any_of(queuedRoutes.begin(), queuedRoutes.end(), [this](const auto& entry) { return routes.waiting(entry.second.queued); });
 		if (!searching) {
 			return;
 		}
@@ -922,21 +940,21 @@ namespace ecs {
 		do {
 			settle();
 			if (chunkManager != nullptr) {
-				gather(kUnlimited, kUnlimited, kUnlimited, kUnlimited, kUnlimited);
+				gather(kUnlimited, kUnlimited, kUnlimited, kUnlimited, kUnlimited, false);
 			}
 			settle();
 		} while (chunkManager != nullptr && isBuilding());
 	}
 
 	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget,
-								  std::size_t groundVertexBudget) {
+								  std::size_t groundVertexBudget, bool holdFar) {
 		collectAnchors();
 		trackMovers();
 		queueRemovedDetail();
 		gatherWalls();
 		gatherGround(groundVertexBudget);
 		releaseAwaitingCells();
-		gatherDetail(addBudget, removeBudget, cellBudget, scanBudget);
+		gatherDetail(addBudget, removeBudget, cellBudget, scanBudget, holdFar);
 	}
 
 	void NavigationSystem::submit() {
@@ -1250,11 +1268,10 @@ namespace ecs {
 		rederiveChangedWater();
 		// Open chunks share a tick until their vertices would pass the budget; a chunk with water
 		// is the costliest kind of job there is, so it goes alone. Chunks not ready yet, or that no
-		// mover holds (whatever loaded them), keep their place in the queue. A budget of 0
-		// (additions held) takes none.
+		// mover holds (whatever loaded them), keep their place in the queue.
 		const bool	unlimited = vertexBudget == kUnlimited;
 		std::size_t taken	  = 0;
-		bool		full	  = vertexBudget == 0;
+		bool		full	  = false;
 		// True when it was meshed; `waiting` when it is held and ready but over the budget.
 		const auto serve = [&](world::ChunkCoordinate coord, bool& waiting) {
 			waiting					  = false;
@@ -1373,12 +1390,17 @@ namespace ecs {
 			if (const auto it = detailInMesh.find(key); it != detailInMesh.end()) {
 				detailRemovals.push_back(it->second);
 				detailInMesh.erase(it);
-			} else if (addingCell.has_value()) {
-				auto& rings = addingCell->rings;
-				const auto pending = std::find_if(rings.begin() + static_cast<std::ptrdiff_t>(addingCell->next), rings.end(),
-												  [&key](const auto& entry) { return !(entry.first < key) && !(key < entry.first); });
-				if (pending != rings.end()) {
-					rings.erase(pending);
+			} else {
+				for (std::optional<ScannedCell>* adding : {&addingNear, &addingFar}) {
+					if (!adding->has_value() || (*adding)->cell != key.cell) {
+						continue;
+					}
+					auto&	   rings   = (*adding)->rings;
+					const auto pending = std::find_if(rings.begin() + static_cast<std::ptrdiff_t>((*adding)->next), rings.end(),
+													  [&key](const auto& entry) { return !(entry.first < key) && !(key < entry.first); });
+					if (pending != rings.end()) {
+						rings.erase(pending);
+					}
 				}
 			}
 		}
@@ -1423,7 +1445,7 @@ namespace ecs {
 		return out;
 	}
 
-	void NavigationSystem::gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget) {
+	void NavigationSystem::gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget, bool holdFar) {
 		// Removals, oldest first, one patch per run of one cell: a patch's width refresh covers the
 		// box around everything it changed, so a patch spread over a chunk would refresh the chunk.
 		std::size_t removeCount = std::min(removeBudget, detailRemovals.size());
@@ -1446,45 +1468,52 @@ namespace ecs {
 		}
 		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
 
-		// Adds: the cells round movers first, then the wanted cells first in, first out, one patch per
-		// cell a tick; a cell larger than what is left of the ring budget goes in over several ticks.
-		// Only a scan counts against scanBudget: a cell already scanned is dropped, and one whose chunk
-		// unloaded or that no mover holds any more goes back to wait for its chunk.
-		const auto nextCell = [this]() -> std::optional<std::int64_t> {
-			for (std::deque<std::int64_t>* queue : {&nearReady, &readyCells}) {
-				while (!queue->empty()) {
-					const std::int64_t cell = queue->front();
-					queue->pop_front();
-					if (!pendingCells.contains(cell)) {
-						continue;
-					}
-					if (!cellServable(cell)) {
-						cellsAwaitingChunk[cellChunk(cell)].push_back(cell);
-						continue;
-					}
-					return cell;
-				}
+		// Adds: the cells round movers first, then, unless `holdFar`, the wanted cells first in, first
+		// out, one patch per cell a tick; a cell larger than what is left of the ring budget goes in
+		// over several ticks. Only a scan counts against scanBudget: a cell already scanned is dropped,
+		// and one whose chunk unloaded or that no mover holds any more goes back to wait for its chunk.
+		std::size_t scans	 = 0;
+		const auto	nextCell = [this](std::deque<std::int64_t>& queue) -> std::optional<std::int64_t> {
+			 while (!queue.empty()) {
+				 const std::int64_t cell = queue.front();
+				 queue.pop_front();
+				 if (!pendingCells.contains(cell)) {
+					 continue;
+				 }
+				 if (!cellServable(cell)) {
+					 cellsAwaitingChunk[cellChunk(cell)].push_back(cell);
+					 continue;
+				 }
+				 return cell;
+			 }
+			 return std::nullopt;
+		};
+		const auto fill = [&](std::optional<ScannedCell>& slot, std::deque<std::int64_t>& queue) {
+			if (slot.has_value() || scans == scanBudget) {
+				return slot.has_value();
 			}
-			return std::nullopt;
+			const std::optional<std::int64_t> cell = nextCell(queue);
+			if (!cell.has_value()) {
+				return false;
+			}
+			++scans;
+			pendingCells.erase(*cell);
+			nearCells.erase(*cell);
+			slot = scanCell(*cell);
+			return true;
 		};
 		std::size_t rings = 0;
 		std::size_t cells = 0;
-		std::size_t scans = 0;
 		while (rings < addBudget && cells < cellBudget) {
-			if (!addingCell.has_value()) {
-				if (scans == scanBudget) {
-					break;
-				}
-				const std::optional<std::int64_t> cell = nextCell();
-				if (!cell.has_value()) {
-					break;
-				}
-				++scans;
-				pendingCells.erase(*cell);
-				nearCells.erase(*cell);
-				addingCell = scanCell(*cell);
+			std::optional<ScannedCell>* slot = nullptr;
+			if (fill(addingNear, nearReady)) {
+				slot = &addingNear;
+			} else if (!holdFar && fill(addingFar, readyCells)) {
+				slot = &addingFar;
+			} else {
+				break;
 			}
-			ScannedCell&	  adding = *addingCell;
+			ScannedCell&	  adding = **slot;
 			const std::size_t take	 = std::min(adding.rings.size() - adding.next, addBudget - rings);
 			if (take > 0) {
 				gnav::PatchEdits	   edits;
@@ -1512,7 +1541,7 @@ namespace ecs {
 				++cells;
 			}
 			if (adding.next == adding.rings.size()) {
-				addingCell.reset();
+				slot->reset();
 			}
 		}
 	}
@@ -1882,7 +1911,7 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !nearReady.empty() || !readyCells.empty() || addingCell.has_value() || !detailRemovals.empty() || !gatheredNav.empty() ||
+		return groundPending > 0 || !nearReady.empty() || !readyCells.empty() || addingNear.has_value() || addingFar.has_value() || !detailRemovals.empty() || !gatheredNav.empty() ||
 			   !gatheredStructural.empty();
 	}
 
@@ -1929,14 +1958,16 @@ namespace ecs {
 		const nav::RouteTicket ticket = nextRouteTicket++;
 		++routeStatsTotal.requests;
 		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
-		const std::int32_t		startTri = detailMesh.locate(startMm);
+		const bool				startOnMesh = detailMesh.locate(startMm) >= 0;
 		nav::RouteRequestArgs	args{.start = startMm, .agentRadiusMm = radiusMm(agentRadiusMeters), .belief = belief};
 		std::vector<std::int32_t> goalIndices;
+		const gnav::NavView		  view	   = detailMesh.view();
+		const std::int32_t		  startTri = startOnMesh ? gnav::standingTriangle(view, startMm, belief) : -1;
 		if (startTri >= 0) {
 			const gnav::MeshComponents& labels = detailMesh.components();
 			for (std::size_t i = 0; i < goalsMeters.size(); ++i) {
 				const geometry::Vec2i64 goalMm	= nav::toMm(goalsMeters[i]);
-				const std::int32_t		goalTri = detailMesh.locate(goalMm);
+				const std::int32_t		goalTri = gnav::standingTriangle(view, goalMm, belief);
 				if (goalTri >= 0 && labels.sameComponent(startTri, goalTri)) {
 					args.goals.push_back(goalMm);
 					goalIndices.push_back(static_cast<std::int32_t>(i));
@@ -1945,7 +1976,7 @@ namespace ecs {
 		}
 		if (args.goals.empty()) {
 			++routeStatsTotal.answeredAtOnce;
-			answeredAtOnce.emplace(ticket, RouteAnswer{.outcome	   = startTri < 0 ? nav::RouteOutcome::StartOffMesh : nav::RouteOutcome::NoKnownWay,
+			answeredAtOnce.emplace(ticket, RouteAnswer{.outcome	   = startOnMesh ? nav::RouteOutcome::NoKnownWay : nav::RouteOutcome::StartOffMesh,
 													   .labelEpoch = detailMesh.components().epoch(),
 													   .patchEpoch = detailMesh.epoch()});
 			takeableSince.emplace_back(routeTick, ticket);
@@ -2000,6 +2031,10 @@ namespace ecs {
 		routeStatsTotal.restarts += answer.restarts;
 		countOutstandingRoutes();
 		return answer;
+	}
+
+	bool NavigationSystem::routeTicketLive(nav::RouteTicket ticket) const {
+		return answeredAtOnce.contains(ticket) || queuedRoutes.contains(ticket);
 	}
 
 	void NavigationSystem::cancelRoute(nav::RouteTicket ticket) {

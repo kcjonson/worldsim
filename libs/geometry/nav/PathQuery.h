@@ -123,6 +123,11 @@ namespace geometry::nav {
 	};
 	SearchBelief copyBelief(const BeliefFilter& belief);
 
+	// The triangle a search stands an end at p on under `belief`: the located triangle, or for a p
+	// on its edge or corner a neighbour holding p that the belief crosses. -1 when p is off the mesh
+	// or stands on nothing the belief may cross (inside a placed obstacle, or a wall it knows).
+	std::int32_t standingTriangle(const NavView& mesh, const Vec2i64& p, const BeliefFilter& belief = {});
+
 	// Triangle containing p (CCW point-in-triangle, on-edge counts as inside);
 	// -1 if p is outside every triangle. Linear scan (walking-locate is a later
 	// optimization behind the same signature).

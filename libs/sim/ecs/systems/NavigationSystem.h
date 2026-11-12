@@ -45,9 +45,9 @@
 //  2. The rest of update(), the other systems, and every query read the nav mesh alongside the
 //     slice; all of it is const reads (the mesh keeps no lazily built state).
 //  3. endTick() starts the patch jobs; the nav mesh's job waits for the slice before it writes.
-// While a search runs across ticks, additions (new ground, newly meshed placed obstacles) are held
-// for at most kMaxHeldAdditionTicks; removals from the world, walls, doors, and re-derived water
-// never are.
+// While a search is inside its hold window (kMaxHeldAdditionTicks), placed obstacles of cells away
+// from every mover wait; ground, the cells round movers, removals from the world, walls, doors, and
+// re-derived water never do.
 //
 // A placed obstacle in the nav mesh blocks routes: the route search is given no prices. It keeps its
 // interior triangles, so a mover standing in one reads on a placed-obstacle face (isOnMesh), which
@@ -163,7 +163,8 @@ class NavigationSystem : public ISystem {
 	// nearest on foot, for a disc of `agentRadiusMeters` under `belief` (a default BeliefFilter routes
 	// over truth, one built from a colonist's known walls and openings over what he remembers). The
 	// belief's sets are copied at the call. A placed obstacle blocks a route. Answered at once, with no search, when the start is off meshed ground or no goal stands on meshed ground
-	// connected to the start's (component labels). Otherwise the search runs in the route slices,
+	// connected to the start's (component labels, read where the search stands each end: a point on
+	// the edge of a placed obstacle or a wall stands on the free triangle beside it). Otherwise the search runs in the route slices,
 	// a fixed count of expansions a tick shared by every request, and nothing limits it: it ends
 	// by finding a goal or by exploring all the mover can reach.
 	//
@@ -191,20 +192,27 @@ class NavigationSystem : public ISystem {
 	};
 	[[nodiscard]] nav::RouteTicket requestRoute(glm::vec2 startMeters, std::span<const glm::vec2> goalsMeters, float agentRadiusMeters,
 												const geometry::nav::BeliefFilter& belief = {});
-	// The answer once takeable, removed by the take; nothing before then, or for a cancelled, dropped
-	// or unknown ticket.
+	// The answer once takeable, removed by the take; nothing before then, or for a ticket that is not
+	// live.
 	[[nodiscard]] std::optional<RouteAnswer> takeRouteAnswer(nav::RouteTicket ticket);
+	// Nav still holds the ticket: it is being searched, or its answer waits to be taken. False for a
+	// ticket taken, cancelled, dropped (kUntakenAnswerTicks), or never issued: it will never answer,
+	// so whoever holds it asks again or gives up. Two lookups.
+	[[nodiscard]] bool routeTicketLive(nav::RouteTicket ticket) const;
 	// Drops the request, its search, and its answer.
 	void cancelRoute(nav::RouteTicket ticket);
 	// An answer not taken this many ticks after it became takeable means the asker is gone (a mover
 	// destroyed with a ticket out): the request and its answer are dropped, as cancelRoute would.
 	static constexpr std::uint64_t kUntakenAnswerTicks = 600;
-	// While a search runs across ticks, additions to the nav mesh (new ground, newly meshed placed
-	// obstacles) wait, so its reads stay current and it does not restart; at most this many ticks
-	// in a row, then the backlog goes in for a tick before they wait again. From the buffer: a
-	// mover meshes kSightBufferMeters (16 m) past what it sees, so walking at 2 m/s it is about 8 s
-	// before a placed obstacle it has not meshed comes into its sight. 240 ticks is half that at 60
-	// ticks a second. A count, so the tick additions land on never depends on the machine.
+	// A search that spans ticks holds back the placed obstacles of cells away from every mover (not
+	// a mover's own cell or the eight touching it, and never ground), so its reads stay current and
+	// it does not restart; for this many ticks over its whole life, counted from the first tick it
+	// is still running after a slice, and a restart does not count again. A search past its window
+	// holds nothing; with no search inside one, the held cells go in at the normal budget, tick
+	// after tick, until none wait. From the buffer: a mover meshes kSightBufferMeters (16 m) past
+	// what it sees, so walking at 2 m/s it is about 8 s before a placed obstacle it has not meshed
+	// comes into its sight. 240 ticks is half that at 60 ticks a second. A count, so the tick
+	// additions land on never depends on the machine.
 	static constexpr std::uint32_t kMaxHeldAdditionTicks = 240;
 	// Cumulative since construction, but for outstanding.
 	struct RouteStats {
@@ -220,7 +228,7 @@ class NavigationSystem : public ISystem {
 		std::uint32_t maxSliceExpansions  = 0;
 		double		  lastSliceMs		  = 0.0; // on the route worker
 		double		  maxSliceMs		  = 0.0;
-		std::uint64_t ticksHeld			  = 0; // ticks additions waited
+		std::uint64_t ticksHeld			  = 0; // ticks the cells away from movers waited
 		std::uint32_t longestHold		  = 0; // the most in a row
 	};
 	[[nodiscard]] const RouteStats& routeStats() const { return routeStatsTotal; }
@@ -599,12 +607,14 @@ class NavigationSystem : public ISystem {
 	static void runJob(geometry::nav::PatchableMesh& mesh, MeshJob& job, bool forests);
 
 	// After the last slice and the patches that followed it: their reports to the route queue,
-	// admit, the hold on additions for this tick, and the next slice on the route worker.
+	// admit, the hold on cells away from movers for this tick, and the next slice on the route
+	// worker.
 	void startRouteSlice();
 
 	// One tick's patches with the given budgets into the gathered jobs; finishPendingBuilds runs
-	// it unbudgeted.
-	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget, std::size_t groundVertexBudget);
+	// it unbudgeted. `holdFar` keeps the cells away from movers waiting.
+	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget, std::size_t groundVertexBudget,
+				bool holdFar);
 	// Hand `gathered` to the workers. No-op when it is empty.
 	void submit();
 	// Wait for the workers and, once per job, publish what it changed (the generation counters).
@@ -708,7 +718,7 @@ class NavigationSystem : public ISystem {
 	// or readyCells.
 	void			   releaseAwaitingCells();
 	[[nodiscard]] ScannedCell scanCell(std::int64_t cell) const;
-	void gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget);
+	void gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget, bool holdFar);
 
 	world::ChunkManager*							  chunkManager		= nullptr;
 	assets::PlacementExecutor*						  placement			= nullptr;
@@ -739,10 +749,12 @@ class NavigationSystem : public ISystem {
 	// twice or after its scan; only a cell still in pendingCells is scanned.
 	std::unordered_set<std::int64_t> pendingCells;
 	std::unordered_set<std::int64_t> nearCells;
-	// Cells ready to scan, first in, first out: nearReady before readyCells. And the one being added.
+	// Cells ready to scan, first in, first out: nearReady before readyCells. And the one of each
+	// being added: a cell away from movers that is held part way in never stands in the near lane's way.
 	std::deque<std::int64_t>   nearReady;
 	std::deque<std::int64_t>   readyCells;
-	std::optional<ScannedCell> addingCell;
+	std::optional<ScannedCell> addingNear;
+	std::optional<ScannedCell> addingFar;
 	// The chunks of nearCells whose ground isn't gathered, served ahead of groundQueue.
 	std::vector<world::ChunkCoordinate>		nearGround;
 	std::unordered_map<EntityID, MoverDisc> moverDiscs;
@@ -770,6 +782,8 @@ class NavigationSystem : public ISystem {
 		nav::RouteTicket		  queued = nav::kNoRouteTicket;
 		std::vector<std::int32_t> goalIndices;
 		bool					  takeable = false;
+		// The routeTick it was first still running after a slice; 0 until then. Its hold window.
+		std::uint64_t holdFrom = 0;
 	};
 	nav::RouteQueue										   routes;
 	nav::RouteTicket									   nextRouteTicket = 1;
@@ -784,7 +798,7 @@ class NavigationSystem : public ISystem {
 	std::vector<geometry::nav::PatchReport> routeReports;
 	bool									sliceStarted	 = false;
 	double									sliceMs			 = 0.0; // written by the route worker
-	bool									holdingAdditions = false;
+	bool									holdingFar		 = false;
 	std::uint32_t							heldInARow		 = 0;
 	RouteStats								routeStatsTotal;
 	// Declared after the mesh and the queue, so it stops before what a slice reads is destroyed.
