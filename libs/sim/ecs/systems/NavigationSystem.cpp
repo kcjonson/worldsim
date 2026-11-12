@@ -78,15 +78,7 @@ namespace ecs {
 			constexpr float kSide = static_cast<float>(NavigationSystem::kDetailCellMm / geometry::kMillimetersPerMeter);
 			return cellKey(static_cast<std::int64_t>(std::floor(position.x / kSide)), static_cast<std::int64_t>(std::floor(position.y / kSide)));
 		}
-		constexpr std::int64_t kFirstCell = std::numeric_limits<std::int64_t>::min();
-
 		std::int64_t radiusMm(float meters) { return static_cast<std::int64_t>(std::llround(static_cast<double>(meters) * 1000.0)); }
-
-		std::int64_t dist2Mm(const geometry::Vec2i64& a, const geometry::Vec2i64& b) {
-			const std::int64_t dx = a.x - b.x;
-			const std::int64_t dy = a.y - b.y;
-			return dx * dx + dy * dy;
-		}
 
 		// Squared distance and closest-point-on-segment, in meters.
 		float dist2(glm::vec2 a, glm::vec2 b) {
@@ -556,12 +548,11 @@ namespace ecs {
 		return std::tie(cell, xBits, yBits, defName) < std::tie(o.cell, o.xBits, o.yBits, o.defName);
 	}
 
-	NavigationSystem::NavigationSystem(std::size_t detailRingBudget)
+	NavigationSystem::NavigationSystem()
 		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = detailTags()}),
 		  structural({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
-		  structuralWorker(std::make_unique<Worker>()),
-		  detailRingBudget(detailRingBudget) {}
+		  structuralWorker(std::make_unique<Worker>()) {}
 
 	NavigationSystem::~NavigationSystem() {
 		join();
@@ -587,34 +578,77 @@ namespace ecs {
 		}
 		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
 			(void)agent;
-			const Memory* memory = world->getComponent<Memory>(entity);
-			const float	  sight	 = memory != nullptr ? memory->sightRadius : kDefaultSightRadius;
-			out.push_back({{position.value.x, position.value.y}, sight + kSightBufferMeters});
+			out.push_back({{position.value.x, position.value.y}, meshingRange(entity)});
 		}
 	}
 
-	std::vector<NavigationSystem::Rect> NavigationSystem::wantedRects() const {
-		if (!haveViewport) {
-			return {};
-		}
-		return {viewportRect()};
+	float NavigationSystem::meshingRange(EntityID mover) const {
+		const Memory* memory = world->getComponent<Memory>(mover);
+		return (memory != nullptr ? memory->sightRadius : kDefaultSightRadius) + kSightBufferMeters;
 	}
 
 	void NavigationSystem::collectAnchors() {
 		std::vector<world::ChunkAnchor> held;
 		appendAnchors(held);
-		anchors.clear();
 		anchorChunks.clear();
 		for (const world::ChunkAnchor& anchor : held) {
-			const world::WorldPosition p	 = anchor.position;
-			const float				   range = world::ChunkManager::anchorLoadRange(anchor.rangeMeters);
-			anchors.emplace_back(p.x, p.y);
-			const world::ChunkCoordinate lo = world::worldToChunk({p.x - range, p.y - range});
-			const world::ChunkCoordinate hi = world::worldToChunk({p.x + range, p.y + range});
+			const world::WorldPosition	 p	   = anchor.position;
+			const float					 range = world::ChunkManager::anchorLoadRange(anchor.rangeMeters);
+			const world::ChunkCoordinate lo	   = world::worldToChunk({p.x - range, p.y - range});
+			const world::ChunkCoordinate hi	   = world::worldToChunk({p.x + range, p.y + range});
 			for (std::int32_t cy = lo.y; cy <= hi.y; ++cy) {
 				for (std::int32_t cx = lo.x; cx <= hi.x; ++cx) {
 					anchorChunks.insert({cx, cy});
-					moverHeld.insert({cx, cy});
+				}
+			}
+		}
+	}
+
+	void NavigationSystem::trackMovers() {
+		if (world == nullptr) {
+			return;
+		}
+		++moverPass;
+		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
+			(void)agent;
+			const std::int64_t cell	 = cellOfEntity(position.value);
+			const float		   range = meshingRange(entity);
+			auto [it, fresh]		 = moverDiscs.try_emplace(entity);
+			MoverDisc& disc			 = it->second;
+			disc.seen				 = moverPass;
+			if (!fresh && disc.cell == cell && disc.rangeMeters == range) {
+				continue;
+			}
+			disc.cell		 = cell;
+			disc.rangeMeters = range;
+			wantDisc(position.value, range);
+		}
+		std::erase_if(moverDiscs, [this](const auto& entry) { return entry.second.seen != moverPass; });
+	}
+
+	void NavigationSystem::wantDisc(glm::vec2 centerMeters, float rangeMeters) {
+		const geometry::Vec2i64 c = nav::toMm(centerMeters);
+		const std::int64_t		r = radiusMm(rangeMeters);
+		for (std::int64_t cy = geometry::floorDiv(c.y - r, kDetailCellMm); cy <= geometry::floorDiv(c.y + r, kDetailCellMm); ++cy) {
+			for (std::int64_t cx = geometry::floorDiv(c.x - r, kDetailCellMm); cx <= geometry::floorDiv(c.x + r, kDetailCellMm); ++cx) {
+				const std::int64_t dx = c.x - std::clamp(c.x, cx * kDetailCellMm, (cx + 1) * kDetailCellMm);
+				const std::int64_t dy = c.y - std::clamp(c.y, cy * kDetailCellMm, (cy + 1) * kDetailCellMm);
+				if (dx * dx + dy * dy > r * r) {
+					continue;
+				}
+				const std::int64_t cell = cellKey(cx, cy);
+				if (!wantedCells.insert(cell).second) {
+					continue;
+				}
+				const world::ChunkCoordinate chunk = cellChunk(cell);
+				if (wantedChunks.insert(chunk).second && !ground.contains(chunk)) {
+					groundQueue.push_back(chunk);
+				}
+				// Behind any of its chunk's cells still waiting, so a chunk's cells keep their order.
+				if (!cellsAwaitingChunk.contains(chunk) && chunkGroundMeshed(chunk) && placementReady(chunk)) {
+					readyCells.push_back(cell);
+				} else {
+					cellsAwaitingChunk[chunk].push_back(cell);
 				}
 			}
 		}
@@ -636,7 +670,7 @@ namespace ecs {
 				gatheredStructural.anchored = gatheredStructural.anchored || anchorHolds({cx, cy});
 			}
 		}
-		if (change == StructuralChange::Closes || change == StructuralChange::GroundLeaves) {
+		if (change == StructuralChange::Closes) {
 			gatheredStructural.blockingBoxes.emplace_back(lo, hi);
 		}
 	}
@@ -677,28 +711,19 @@ namespace ecs {
 		return meshed;
 	}
 
-	NavigationSystem::Rect NavigationSystem::viewportRect() const {
-		const geometry::Vec2i64 c  = nav::toMm(viewportCenterM);
-		const std::int64_t		hx = std::clamp(radiusMm(viewportHalfM.x), kMinSimHalfExtentMm, kMaxSimHalfExtentMm);
-		const std::int64_t		hy = std::clamp(radiusMm(viewportHalfM.y), kMinSimHalfExtentMm, kMaxSimHalfExtentMm);
-		return {{c.x - hx, c.y - hy}, {c.x + hx, c.y + hy}};
-	}
-
 	// --- Ticks, jobs and the join -------------------------------------------------
 
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
-		++tickCount;
 		landedThisUpdate = std::move(groundLanded);
 		groundLanded.clear();
 		std::sort(landedThisUpdate.begin(), landedThisUpdate.end(), ChunkLess{});
-		updateDetail();
 		forgetDroppedRoutes();
 		markCrossedRoutes();
 		markStrayedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
-			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kDetailCellsPerTick, kGroundVerticesPerTick);
+			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kDetailCellsPerTick, kDetailScansPerTick, kGroundVerticesPerTick);
 		}
 	}
 
@@ -710,22 +735,21 @@ namespace ecs {
 		do {
 			settle();
 			if (chunkManager != nullptr) {
-				gather(kUnlimited, kUnlimited, kUnlimited, kUnlimited);
+				gather(kUnlimited, kUnlimited, kUnlimited, kUnlimited, kUnlimited);
 			}
 			settle();
 		} while (chunkManager != nullptr && isBuilding());
 	}
 
-	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t groundVertexBudget) {
+	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget,
+								  std::size_t groundVertexBudget) {
 		collectAnchors();
-		const std::vector<Rect> rects = wantedRects();
+		trackMovers();
 		queueRemovedDetail();
-		dropDetailOfLostChunks();
 		gatherWalls();
-		gatherGround(groundVertexBudget, rects, nullptr);
-		scanDetail(rects);
-		trimDetail(rects, removeBudget);
-		gatherDetail(addBudget, removeBudget, cellBudget, rects);
+		gatherGround(groundVertexBudget);
+		releaseAwaitingCells();
+		gatherDetail(addBudget, removeBudget, cellBudget, scanBudget);
 	}
 
 	void NavigationSystem::submit() {
@@ -769,7 +793,7 @@ namespace ecs {
 				++chunkStructuralVersion[coord];
 			}
 			groundLanded.insert(groundLanded.end(), runningStructural.groundChunks.begin(), runningStructural.groundChunks.end());
-			// Ground the camera alone holds changes no colonist's route or wait. Routes are restamped
+			// Ground no anchor holds changes no colonist's route or wait. Routes are restamped
 			// here, not on the next tick, since a query may join mid-frame and the AI reads them next.
 			if (runningStructural.anchored) {
 				++structuralGeneration;
@@ -974,18 +998,20 @@ namespace ecs {
 		}
 	} // namespace
 
-	void NavigationSystem::noteLoadedChunks() {
-		std::unordered_set<world::ChunkCoordinate> loaded;
+	void NavigationSystem::rederiveChangedWater() {
+		std::unordered_set<world::ChunkCoordinate> ready;
 		for (const world::Chunk* chunk : std::as_const(*chunkManager).getLoadedChunks()) {
-			loaded.insert(chunk->coordinate());
 			if (!chunk->isReady()) {
 				continue;
 			}
+			ready.insert(chunk->coordinate());
+			const auto it = ground.find(chunk->coordinate());
+			if (it == ground.end()) {
+				continue;
+			}
 			const world::ChunkTerrainPolygons& polys = chunk->terrainPolygons();
-			auto [it, added]						 = ground.try_emplace(chunk->coordinate());
 			ChunkGround&					   g	 = it->second;
-			g.loaded								 = true;
-			if (added || !gathered(g.square.nav)) {
+			if (!readyLastCall.contains(chunk->coordinate())) {
 				g.terrainVersion = polys.version;
 				continue;
 			}
@@ -1005,7 +1031,6 @@ namespace ecs {
 			structuralEdits.adds = navEdits.adds;
 			g.water.assign(navEdits.adds.size(), {kGatheredRing, kGatheredRing});
 			g.terrainVersion = polys.version;
-			++groundVersion;
 			{
 				const auto [lo, hi] = chunkBoxM(chunk->coordinate());
 				noteStructural(lo, hi, StructuralChange::Closes);
@@ -1023,237 +1048,100 @@ namespace ecs {
 				}
 			});
 		}
-		for (auto& [coord, g] : ground) {
-			if (g.loaded && !loaded.contains(coord)) {
-				g.loaded	 = false;
-				g.unloadedAt = ++unloadTicker;
-			}
-		}
+		readyLastCall = std::move(ready);
 	}
 
-	void NavigationSystem::gatherGround(std::size_t vertexBudget, const std::vector<Rect>& rects, const Rect* within) {
-		noteLoadedChunks();
-
-		struct Candidate {
-			std::int64_t		   priority;
-			world::ChunkCoordinate coord;
-		};
-		std::vector<Candidate> candidates;
-		for (const auto& [coord, g] : ground) {
-			if (!g.loaded || gathered(g.square.nav)) {
-				continue;
-			}
-			const geometry::Vec2i64 lo = nav::chunkOriginMm(coord);
-			const geometry::Vec2i64 hi{lo.x + kChunkMm, lo.y + kChunkMm};
-			if (within != nullptr && (hi.x < within->lo.x || lo.x > within->hi.x || hi.y < within->lo.y || lo.y > within->hi.y)) {
-				continue;
-			}
-			// Ground an anchor holds first, nearest an anchor first, so panning the camera never holds
-			// a colonist's ground back; then the camera's, nearest the view first. Distances are
-			// Chebyshev, in chunks.
-			const auto chunksTo = [&coord](glm::vec2 at) {
-				const world::ChunkCoordinate c = world::worldToChunk({at.x, at.y});
-				return static_cast<std::int64_t>(std::max(std::abs(c.x - coord.x), std::abs(c.y - coord.y)));
-			};
-			constexpr std::int64_t kCameraOnly = std::int64_t{1} << 32;
-			std::int64_t		   priority	   = kCameraOnly;
-			if (anchorHolds(coord)) {
-				for (const glm::vec2 anchor : anchors) {
-					priority = std::min(priority, chunksTo(anchor));
-				}
-			} else {
-				std::int64_t nearest = rects.empty() ? 0 : std::numeric_limits<std::int64_t>::max();
-				for (const Rect& r : rects) {
-					nearest = std::min(nearest, chunksTo(nav::toMeters({(r.lo.x + r.hi.x) / 2, (r.lo.y + r.hi.y) / 2})));
-				}
-				priority = kCameraOnly + nearest;
-			}
-			candidates.push_back({priority, coord});
-		}
-		std::sort(candidates.begin(), candidates.end(), [](const Candidate& a, const Candidate& b) {
-			return a.priority != b.priority ? a.priority < b.priority : ChunkLess{}(a.coord, b.coord);
-		});
-
+	void NavigationSystem::gatherGround(std::size_t vertexBudget) {
+		rederiveChangedWater();
 		// Open chunks share a tick until their vertices would pass the budget; a chunk with water
-		// is the costliest kind of job there is, so it goes alone.
+		// is the costliest kind of job there is, so it goes alone. Chunks not ready yet keep their
+		// place in the queue.
 		const bool	unlimited = vertexBudget == kUnlimited;
 		std::size_t taken	  = 0;
-		for (const Candidate& c : candidates) {
-			// Reloaded since the last tick and still generating: its polygons are being written.
-			const world::Chunk* chunk = chunkManager->getChunk(c.coord);
-			if (chunk == nullptr || !chunk->isReady()) {
+		bool		full	  = false;
+		std::size_t kept	  = 0;
+		groundPending		  = 0;
+		for (const world::ChunkCoordinate coord : groundQueue) {
+			if (ground.contains(coord)) {
+				continue; // the landing meshed it
+			}
+			const world::Chunk* chunk = chunkManager->getChunk(coord);
+			if (chunk == nullptr || !chunk->isReady() || full) {
+				groundPending += chunk != nullptr && chunk->isReady() ? 1 : 0;
+				groundQueue[kept++] = coord;
 				continue;
 			}
 			std::vector<gnav::NavInputPolygon> water;
 			nav::appendChunkWater(chunk->terrainPolygons(), water);
 			const std::size_t cost = kSquareVertices + waterVertices(water);
 			if (taken > 0 && !unlimited && (!water.empty() || cost > vertexBudget)) {
-				break;
+				full = true;
+				++groundPending;
+				groundQueue[kept++] = coord;
+				continue;
 			}
 			vertexBudget -= std::min(cost, vertexBudget);
 			++taken;
-
-			ChunkGround& g = ground[c.coord];
-			g.square	   = {kGatheredRing, kGatheredRing};
-			g.water.assign(water.size(), {kGatheredRing, kGatheredRing});
-			++groundVersion;
-			{
-				const auto [lo, hi] = chunkBoxM(c.coord);
-				noteStructural(lo, hi, StructuralChange::GroundArrives);
-			}
-			gatheredStructural.groundChunks.push_back(c.coord);
-			gnav::PatchEdits navEdits;
-			navEdits.adds.push_back(nav::chunkSquare(c.coord));
-			navEdits.adds.insert(navEdits.adds.end(), water.begin(), water.end());
-			gnav::PatchEdits structuralEdits = navEdits;
-			const std::size_t rings			 = navEdits.adds.size();
-
-			// The nav mesh's time is held for the structural mesh's sink, which collects second and
-			// logs both.
-			auto navMs = std::make_shared<double>(0.0);
-			gatheredNav.patches.push_back(std::move(navEdits));
-			gatheredNav.onPatched.emplace_back([&g, navMs](const std::vector<RingId>& ids, double ms) {
-				g.square.nav = ids[0];
-				for (std::size_t k = 1; k < ids.size(); ++k) {
-					g.water[k - 1].nav = ids[k];
-				}
-				*navMs = ms;
-			});
-			gatheredStructural.patches.push_back(std::move(structuralEdits));
-			gatheredStructural.onPatched.emplace_back([&g, navMs, coord = c.coord, rings, cost](const std::vector<RingId>& ids, double ms) {
-				g.square.structural = ids[0];
-				for (std::size_t k = 1; k < ids.size(); ++k) {
-					g.water[k - 1].structural = ids[k];
-				}
-				// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering
-				// both meshes. DEBUG, dev-tools log server.
-				LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) nav %.3f ms structural %.3f ms rings %zu vertices %zu", coord.x, coord.y,
-						  *navMs, ms, rings, cost);
-			});
-			if (!water.empty() && !unlimited) {
-				break;
-			}
+			full = !water.empty() && !unlimited;
+			meshGround(coord, std::move(water), chunk->terrainPolygons().version);
 		}
-		if (within != nullptr) {
-			return;
-		}
-		// Ground leaves a chunk a tick, on a tick no ground arrived.
-		groundPending = candidates.size() - taken + dropUnloadedGround(unlimited ? kUnlimited : (taken > 0 ? 0 : 1));
+		groundQueue.resize(kept);
 	}
 
-	bool NavigationSystem::holdsConstruction(world::ChunkCoordinate coord) const {
-		if (constructionWorld == nullptr) {
-			return false;
+	void NavigationSystem::gatherGroundWithin(const Rect& within) {
+		for (const world::Chunk* chunk : std::as_const(*chunkManager).getLoadedChunks()) {
+			const world::ChunkCoordinate coord = chunk->coordinate();
+			const geometry::Vec2i64		 lo	   = nav::chunkOriginMm(coord);
+			const geometry::Vec2i64		 hi{lo.x + kChunkMm, lo.y + kChunkMm};
+			if (!chunk->isReady() || ground.contains(coord) || hi.x < within.lo.x || lo.x > within.hi.x || hi.y < within.lo.y ||
+				lo.y > within.hi.y) {
+				continue;
+			}
+			std::vector<gnav::NavInputPolygon> water;
+			nav::appendChunkWater(chunk->terrainPolygons(), water);
+			meshGround(coord, std::move(water), chunk->terrainPolygons().version);
 		}
-		// The chunk grown past any wall band's half thickness, so a band whose centreline runs just
-		// outside it still holds it. Openings sit on their segments.
-		constexpr std::int64_t	kConstructionReachMm = 1000;
-		const geometry::Vec2i64 origin = nav::chunkOriginMm(coord);
-		const geometry::Vec2i64 lo{origin.x - kConstructionReachMm, origin.y - kConstructionReachMm};
-		const geometry::Vec2i64 hi{origin.x + kChunkMm + kConstructionReachMm, origin.y + kChunkMm + kConstructionReachMm};
-		const auto				inside = [&](const geometry::Vec2i64& p) { return p.x >= lo.x && p.x <= hi.x && p.y >= lo.y && p.y <= hi.y; };
-		// Liang-Barsky: does a..b meet the box?
-		const auto crosses = [&](const geometry::Vec2i64& a, const geometry::Vec2i64& b) {
-			double		 t0 = 0.0;
-			double		 t1 = 1.0;
-			const double d[2]	 = {static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y)};
-			const double from[2] = {static_cast<double>(a.x), static_cast<double>(a.y)};
-			const double mins[2] = {static_cast<double>(lo.x), static_cast<double>(lo.y)};
-			const double maxs[2] = {static_cast<double>(hi.x), static_cast<double>(hi.y)};
-			for (int axis = 0; axis < 2; ++axis) {
-				if (d[axis] == 0.0) {
-					if (from[axis] < mins[axis] || from[axis] > maxs[axis]) {
-						return false;
-					}
-					continue;
-				}
-				double enter = (mins[axis] - from[axis]) / d[axis];
-				double leave = (maxs[axis] - from[axis]) / d[axis];
-				if (enter > leave) {
-					std::swap(enter, leave);
-				}
-				t0 = std::max(t0, enter);
-				t1 = std::min(t1, leave);
-				if (t0 > t1) {
-					return false;
-				}
-			}
-			return true;
-		};
-		for (const construction::WallSegment& segment : constructionWorld->segments()) {
-			const construction::Vertex* v0 = constructionWorld->getVertex(segment.v0);
-			const construction::Vertex* v1 = constructionWorld->getVertex(segment.v1);
-			if (v0 != nullptr && v1 != nullptr && crosses(v0->pos, v1->pos)) {
-				return true;
-			}
-		}
-		for (const construction::Foundation& foundation : constructionWorld->foundations()) {
-			const geometry::Ring& ring = foundation.ring;
-			for (std::size_t i = 0; i < ring.size(); ++i) {
-				if (crosses(ring[i], ring[(i + 1) % ring.size()])) {
-					return true;
-				}
-			}
-			if (!ring.empty() && geometry::pointInPolygon(origin, ring) != geometry::PointInPolygon::Outside) {
-				return true; // the chunk lies wholly inside the foundation
-			}
-		}
-		return false;
 	}
 
-	std::size_t NavigationSystem::dropUnloadedGround(std::size_t maxChunks) {
-		// Ground a mover has ever held is never dropped. Of the unloaded ground only the camera ever
-		// held, past the budget, the chunks unloaded longest ago that hold no construction lose their
-		// ground, up to maxChunks of them, one patch per chunk, oldest first. Returns how many more
-		// are still to go.
-		std::vector<std::pair<std::uint64_t, world::ChunkCoordinate>> unloaded;
-		for (const auto& [coord, g] : ground) {
-			if (!g.loaded && !moverHeld.contains(coord)) {
-				unloaded.emplace_back(g.unloadedAt, coord);
-			}
+	void NavigationSystem::meshGround(world::ChunkCoordinate coord, std::vector<gnav::NavInputPolygon> water, std::uint32_t terrainVersion) {
+		const std::size_t cost = kSquareVertices + waterVertices(water);
+		ChunkGround&	  g	   = ground[coord];
+		g.square			   = {kGatheredRing, kGatheredRing};
+		g.water.assign(water.size(), {kGatheredRing, kGatheredRing});
+		g.terrainVersion = terrainVersion;
+		{
+			const auto [lo, hi] = chunkBoxM(coord);
+			noteStructural(lo, hi, StructuralChange::GroundArrives);
 		}
-		std::sort(unloaded.begin(), unloaded.end(), [](const auto& a, const auto& b) { return a.first < b.first; }); // unloadedAt is unique
-		std::size_t kept	 = unloaded.size();
-		std::size_t taken	 = 0;
-		std::size_t leftOver = 0;
-		for (const auto& [at, coord] : unloaded) {
-			if (kept <= kCameraOnlyUnloadedChunks) {
-				break;
+		gatheredStructural.groundChunks.push_back(coord);
+		gnav::PatchEdits navEdits;
+		navEdits.adds.push_back(nav::chunkSquare(coord));
+		navEdits.adds.insert(navEdits.adds.end(), std::make_move_iterator(water.begin()), std::make_move_iterator(water.end()));
+		gnav::PatchEdits  structuralEdits = navEdits;
+		const std::size_t rings			  = navEdits.adds.size();
+
+		// The nav mesh's time is held for the structural mesh's sink, which collects second and
+		// logs both.
+		auto navMs = std::make_shared<double>(0.0);
+		gatheredNav.patches.push_back(std::move(navEdits));
+		gatheredNav.onPatched.emplace_back([&g, navMs](const std::vector<RingId>& ids, double ms) {
+			g.square.nav = ids[0];
+			for (std::size_t k = 1; k < ids.size(); ++k) {
+				g.water[k - 1].nav = ids[k];
 			}
-			if (holdsConstruction(coord)) {
-				continue;
+			*navMs = ms;
+		});
+		gatheredStructural.patches.push_back(std::move(structuralEdits));
+		gatheredStructural.onPatched.emplace_back([&g, navMs, coord, rings, cost](const std::vector<RingId>& ids, double ms) {
+			g.square.structural = ids[0];
+			for (std::size_t k = 1; k < ids.size(); ++k) {
+				g.water[k - 1].structural = ids[k];
 			}
-			--kept;
-			ChunkGround& g = ground[coord];
-			if (!gathered(g.square.nav)) {
-				ground.erase(coord);
-				continue;
-			}
-			if (taken == maxChunks) {
-				++leftOver;
-				continue;
-			}
-			++taken;
-			gnav::PatchEdits navEdits;
-			gnav::PatchEdits structuralEdits;
-			navEdits.removes.push_back(g.square.nav);
-			structuralEdits.removes.push_back(g.square.structural);
-			for (const RingPair& water : g.water) {
-				navEdits.removes.push_back(water.nav);
-				structuralEdits.removes.push_back(water.structural);
-			}
-			ground.erase(coord);
-			++groundVersion;
-			{
-				const auto [lo, hi] = chunkBoxM(coord);
-				noteStructural(lo, hi, StructuralChange::GroundLeaves);
-			}
-			gatheredNav.patches.push_back(std::move(navEdits));
-			gatheredNav.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
-			gatheredStructural.patches.push_back(std::move(structuralEdits));
-			gatheredStructural.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
-		}
-		return leftOver;
+			// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering
+			// both meshes. DEBUG, dev-tools log server.
+			LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) nav %.3f ms structural %.3f ms rings %zu vertices %zu", coord.x, coord.y, *navMs,
+					  ms, rings, cost);
+		});
 	}
 
 	bool NavigationSystem::chunkGroundMeshed(world::ChunkCoordinate coord) const {
@@ -1263,9 +1151,8 @@ namespace ecs {
 
 	// --- Detail ---------------------------------------------------------------------
 
-	bool NavigationSystem::detailChunkUsable(world::ChunkCoordinate coord) const {
-		return placement != nullptr && chunkManager->getChunk(coord) != nullptr && placement->getChunkIndex(coord) != nullptr &&
-			   (processedChunks == nullptr || processedChunks->contains(coord));
+	bool NavigationSystem::placementReady(world::ChunkCoordinate coord) const {
+		return placement != nullptr && placement->getChunkIndex(coord) != nullptr && (processedChunks == nullptr || processedChunks->contains(coord));
 	}
 
 	void NavigationSystem::queueRemovedDetail() {
@@ -1278,108 +1165,55 @@ namespace ecs {
 			if (const auto it = detailInMesh.find(key); it != detailInMesh.end()) {
 				detailRemovals.push_back(it->second);
 				detailInMesh.erase(it);
-			} else {
-				detailAdds.erase(key);
-			}
-		}
-	}
-
-	void NavigationSystem::dropDetailOfLostChunks() {
-		for (auto chunkIt = detailChunks.begin(); chunkIt != detailChunks.end();) {
-			const world::ChunkCoordinate coord = *chunkIt;
-			if (detailChunkUsable(coord)) {
-				++chunkIt;
-				continue;
-			}
-			// In key order, which is by cell, so the removals batch into one patch per cell.
-			const DetailKey first{coord, kFirstCell, 0, 0, {}};
-			for (auto it = detailInMesh.lower_bound(first); it != detailInMesh.end() && it->first.chunk == coord;) {
-				detailRemovals.push_back(it->second);
-				it = detailInMesh.erase(it);
-			}
-			for (auto it = detailAdds.lower_bound(first); it != detailAdds.end() && it->first.chunk == coord;) {
-				it = detailAdds.erase(it);
-			}
-			std::erase_if(scannedCells, [coord](std::int64_t cell) { return cellChunk(cell) == coord; });
-			std::erase_if(cellLastWanted, [coord](const auto& entry) { return cellChunk(entry.first) == coord; });
-			chunkIt = detailChunks.erase(chunkIt);
-		}
-	}
-
-	void NavigationSystem::scanDetail(const std::vector<Rect>& rects) {
-		if (placement == nullptr) {
-			return;
-		}
-		std::vector<CellRange> ranges;
-		ranges.reserve(rects.size());
-		for (const Rect& r : rects) {
-			ranges.push_back({geometry::floorDiv(r.lo.x, kDetailCellMm), geometry::floorDiv(r.lo.y, kDetailCellMm),
-							  geometry::floorDiv(r.hi.x, kDetailCellMm), geometry::floorDiv(r.hi.y, kDetailCellMm)});
-		}
-		// groundVersion moves whenever ground comes in, changes or goes out, so it can't alias; the
-		// processed set can (one chunk leaves as another arrives), so it is compared whole.
-		const std::unordered_set<world::ChunkCoordinate> noneProcessed;
-		const std::unordered_set<world::ChunkCoordinate>& processed = processedChunks != nullptr ? *processedChunks : noneProcessed;
-		if (ranges == scannedRanges && groundVersion == scannedGround && processed == scannedProcessed) {
-			return;
-		}
-		scannedRanges	 = ranges;
-		scannedGround	 = groundVersion;
-		scannedProcessed = processed;
-
-		std::unordered_set<std::int64_t> wanted;
-		const assets::AssetRegistry&	 registry = assets::AssetRegistry::Get();
-		for (const CellRange& range : ranges) {
-			for (std::int64_t cy = range.minY; cy <= range.maxY; ++cy) {
-				for (std::int64_t cx = range.minX; cx <= range.maxX; ++cx) {
-					const std::int64_t cell = cellKey(cx, cy);
-					wanted.insert(cell);
-					if (scannedCells.contains(cell)) {
-						cellLastWanted[cell] = tickCount;
-						continue;
-					}
-					const world::ChunkCoordinate chunk = cellChunk(cell);
-					if (!chunkGroundMeshed(chunk) || !detailChunkUsable(chunk)) {
-						continue;
-					}
-					// One cell owns each entity, by its position in [lo, lo + cell).
-					const float lox	 = static_cast<float>(cx * kDetailCellMm / geometry::kMillimetersPerMeter);
-					const float loy	 = static_cast<float>(cy * kDetailCellMm / geometry::kMillimetersPerMeter);
-					const float side = static_cast<float>(kDetailCellMm / geometry::kMillimetersPerMeter);
-					for (const assets::PlacedEntity* e : placement->getChunkIndex(chunk)->queryRect(lox, loy, lox + side, loy + side)) {
-						if (e->position.x < lox || e->position.x >= lox + side || e->position.y < loy || e->position.y >= loy + side) {
-							continue;
-						}
-						DetailKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
-						if (detailInMesh.contains(key) || detailAdds.contains(key)) {
-							continue;
-						}
-						std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
-						if (!ring.has_value()) {
-							continue;
-						}
-						detailAdds.emplace(std::move(key), PendingDetail{std::move(*ring), cell});
-					}
-					scannedCells.insert(cell);
-					cellLastWanted[cell] = tickCount;
-					detailChunks.insert(chunk);
+			} else if (addingCell.has_value()) {
+				auto& rings = addingCell->rings;
+				const auto pending = std::find_if(rings.begin() + static_cast<std::ptrdiff_t>(addingCell->next), rings.end(),
+												  [&key](const auto& entry) { return !(entry.first < key) && !(key < entry.first); });
+				if (pending != rings.end()) {
+					rings.erase(pending);
 				}
 			}
 		}
-		// Detail still queued in a cell nothing wants any more is dropped, and the cell scanned
-		// again if it is wanted later.
-		for (auto it = detailAdds.begin(); it != detailAdds.end();) {
-			if (wanted.contains(it->second.cell)) {
+	}
+
+	void NavigationSystem::releaseAwaitingCells() {
+		for (auto it = cellsAwaitingChunk.begin(); it != cellsAwaitingChunk.end();) {
+			if (!chunkGroundMeshed(it->first) || !placementReady(it->first)) {
 				++it;
 				continue;
 			}
-			scannedCells.erase(it->second.cell);
-			cellLastWanted.erase(it->second.cell);
-			it = detailAdds.erase(it);
+			readyCells.insert(readyCells.end(), it->second.begin(), it->second.end());
+			it = cellsAwaitingChunk.erase(it);
 		}
 	}
 
-	void NavigationSystem::gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, const std::vector<Rect>& rects) {
+	NavigationSystem::ScannedCell NavigationSystem::scanCell(std::int64_t cell) const {
+		ScannedCell					 out{.cell = cell};
+		const world::ChunkCoordinate chunk	  = cellChunk(cell);
+		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		// One cell owns each entity, by its position in [lo, lo + cell).
+		const float lox	 = static_cast<float>(cellX(cell) * kDetailCellMm / geometry::kMillimetersPerMeter);
+		const float loy	 = static_cast<float>(cellY(cell) * kDetailCellMm / geometry::kMillimetersPerMeter);
+		const float side = static_cast<float>(kDetailCellMm / geometry::kMillimetersPerMeter);
+		for (const assets::PlacedEntity* e : placement->getChunkIndex(chunk)->queryRect(lox, loy, lox + side, loy + side)) {
+			if (e->position.x < lox || e->position.x >= lox + side || e->position.y < loy || e->position.y >= loy + side) {
+				continue;
+			}
+			DetailKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
+			if (detailInMesh.contains(key)) {
+				continue;
+			}
+			std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
+			if (ring.has_value()) {
+				out.rings.emplace_back(std::move(key), std::move(*ring));
+			}
+		}
+		// Key order, so a cell's rings go in the same order however the index returns them.
+		std::sort(out.rings.begin(), out.rings.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
+		return out;
+	}
+
+	void NavigationSystem::gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget) {
 		// Removals, oldest first, one patch per run of one cell: a patch's width refresh covers the
 		// box around everything it changed, so a patch spread over a chunk would refresh the chunk.
 		std::size_t removeCount = std::min(removeBudget, detailRemovals.size());
@@ -1402,78 +1236,62 @@ namespace ecs {
 		}
 		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
 
-		if (addBudget == 0 || detailAdds.empty()) {
-			return;
-		}
-		// Cells nearest a rect centre first, a cell's detail together, map order within a cell.
-		struct Ranked {
-			std::int64_t							   priority;
-			std::int64_t							   cell;
-			std::size_t								   order;
-			std::map<DetailKey, PendingDetail>::iterator it;
-		};
-		std::vector<Ranked> ranked;
-		ranked.reserve(detailAdds.size());
-		std::size_t order = 0;
-		for (auto it = detailAdds.begin(); it != detailAdds.end(); ++it) {
-			const std::int64_t		cell = it->second.cell;
-			const geometry::Vec2i64 cellCenter{cellX(cell) * kDetailCellMm + kDetailCellMm / 2, cellY(cell) * kDetailCellMm + kDetailCellMm / 2};
-			std::int64_t			priority = std::numeric_limits<std::int64_t>::max();
-			for (const Rect& r : rects) {
-				priority = std::min(priority, dist2Mm(cellCenter, {(r.lo.x + r.hi.x) / 2, (r.lo.y + r.hi.y) / 2}));
-			}
-			ranked.push_back({priority, cell, order++, it});
-		}
-		const std::size_t addCount = std::min(addBudget, ranked.size());
-		const auto		  before   = [](const Ranked& a, const Ranked& b) {
-			   return std::tie(a.priority, a.cell, a.order) < std::tie(b.priority, b.cell, b.order);
-		};
-		if (addCount < ranked.size()) {
-			std::nth_element(ranked.begin(), ranked.begin() + static_cast<std::ptrdiff_t>(addCount), ranked.end(), before);
-			ranked.resize(addCount);
-		}
-		std::sort(ranked.begin(), ranked.end(), before);
-		for (std::size_t i = 0, cells = 0; i < ranked.size(); ++i) {
-			if ((i == 0 || ranked[i].cell != ranked[i - 1].cell) && ++cells > cellBudget) {
-				ranked.resize(i);
-			}
-		}
-
-		for (std::size_t first = 0; first < ranked.size();) {
-			std::size_t			  last = first;
-			gnav::PatchEdits	  edits;
-			std::vector<DetailKey> keys;
-			for (; last < ranked.size() && ranked[last].cell == ranked[first].cell; ++last) {
-				const std::vector<geometry::Vec2i64>& ring = ranked[last].it->second.ring.ring;
-				geometry::Vec2i64					  lo   = ring.front();
-				geometry::Vec2i64					  hi   = ring.front();
-				for (const geometry::Vec2i64& p : ring) {
-					lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
-					hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+		// Adds: the wanted cells first in, first out, one patch per cell a tick; a cell larger than
+		// what is left of the ring budget goes in over several ticks.
+		std::size_t rings = 0;
+		std::size_t cells = 0;
+		std::size_t scans = 0;
+		while (rings < addBudget && cells < cellBudget) {
+			if (!addingCell.has_value()) {
+				if (readyCells.empty() || scans == scanBudget) {
+					break;
 				}
-				gatheredNav.detailAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
-				edits.adds.push_back(std::move(ranked[last].it->second.ring));
-				keys.push_back(ranked[last].it->first);
-				detailAdds.erase(ranked[last].it);
+				const std::int64_t cell = readyCells.front();
+				readyCells.pop_front();
+				++scans;
+				// Its chunk unloaded since the cell was ready: it waits for the chunk's placement again.
+				if (!placementReady(cellChunk(cell))) {
+					cellsAwaitingChunk[cellChunk(cell)].push_back(cell);
+					continue;
+				}
+				addingCell = scanCell(cell);
 			}
-			gatheredNav.patches.push_back(std::move(edits));
-			gatheredNav.onPatched.emplace_back(
-				[this, keys = std::move(keys), cell = ranked[first].cell](const std::vector<RingId>& added, double) {
+			ScannedCell&	  adding = *addingCell;
+			const std::size_t take	 = std::min(adding.rings.size() - adding.next, addBudget - rings);
+			if (take > 0) {
+				gnav::PatchEdits	   edits;
+				std::vector<DetailKey> keys;
+				for (std::size_t k = adding.next; k < adding.next + take; ++k) {
+					const std::vector<geometry::Vec2i64>& ring = adding.rings[k].second.ring;
+					geometry::Vec2i64					  lo   = ring.front();
+					geometry::Vec2i64					  hi   = ring.front();
+					for (const geometry::Vec2i64& p : ring) {
+						lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
+						hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
+					}
+					gatheredNav.detailAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
+					edits.adds.push_back(std::move(adding.rings[k].second));
+					keys.push_back(adding.rings[k].first);
+				}
+				gatheredNav.patches.push_back(std::move(edits));
+				gatheredNav.onPatched.emplace_back([this, keys = std::move(keys), cell = adding.cell](const std::vector<RingId>& added, double) {
 					for (std::size_t k = 0; k < keys.size(); ++k) {
 						detailInMesh.emplace(keys[k], DetailRing{added[k], cell});
 					}
 				});
-			first = last;
+				adding.next += take;
+				rings += take;
+				++cells;
+			}
+			if (adding.next == adding.rings.size()) {
+				addingCell.reset();
+			}
 		}
 	}
 
-	// --- Detail, the forward snap and the detail budget --------------------------------
+	// --- The forward snap -------------------------------------------------------------
 
 	namespace {
-		std::int64_t cellAt(const geometry::Vec2i64& p) {
-			return cellKey(geometry::floorDiv(p.x, NavigationSystem::kDetailCellMm), geometry::floorDiv(p.y, NavigationSystem::kDetailCellMm));
-		}
-
 		// The part of a..b inside lo..hi, as parameters along it, or nothing.
 		std::optional<std::pair<float, float>> clipToRect(glm::vec2 a, glm::vec2 b, glm::vec2 lo, glm::vec2 hi) {
 			float t0 = 0.0F;
@@ -1499,39 +1317,10 @@ namespace ecs {
 			}
 			return std::pair{t0, t1};
 		}
-
-		bool cellMeetsRect(std::int64_t cell, const geometry::Vec2i64& lo, const geometry::Vec2i64& hi) {
-			const std::int64_t x = cellX(cell) * NavigationSystem::kDetailCellMm;
-			const std::int64_t y = cellY(cell) * NavigationSystem::kDetailCellMm;
-			return x <= hi.x && x + NavigationSystem::kDetailCellMm >= lo.x && y <= hi.y && y + NavigationSystem::kDetailCellMm >= lo.y;
-		}
 	} // namespace
 
-	void NavigationSystem::updateDetail() {
-		if (!haveViewport) {
-			detailCells.clear();
-			detailFor.reset();
-			return;
-		}
-		const Rect view = viewportRect();
-		if (detailFor.has_value() && detailFor->lo == view.lo && detailFor->hi == view.hi) {
-			return;
-		}
-		detailFor = view;
-		const geometry::Vec2i64 keepLo{view.lo.x - kDetailKeepMarginMm, view.lo.y - kDetailKeepMarginMm};
-		const geometry::Vec2i64 keepHi{view.hi.x + kDetailKeepMarginMm, view.hi.y + kDetailKeepMarginMm};
-		std::erase_if(detailCells, [&](std::int64_t cell) { return !cellMeetsRect(cell, keepLo, keepHi); });
-		const geometry::Vec2i64 onLo{view.lo.x - kDetailOnMarginMm, view.lo.y - kDetailOnMarginMm};
-		const geometry::Vec2i64 onHi{view.hi.x + kDetailOnMarginMm, view.hi.y + kDetailOnMarginMm};
-		for (std::int64_t cy = geometry::floorDiv(onLo.y, kDetailCellMm); cy <= geometry::floorDiv(onHi.y, kDetailCellMm); ++cy) {
-			for (std::int64_t cx = geometry::floorDiv(onLo.x, kDetailCellMm); cx <= geometry::floorDiv(onHi.x, kDetailCellMm); ++cx) {
-				detailCells.insert(cellKey(cx, cy));
-			}
-		}
-	}
-
-	bool NavigationSystem::detailOnAt(glm::vec2 meters) const {
-		return detailCells.contains(cellAt(nav::toMm(meters)));
+	bool NavigationSystem::detailOnAt(glm::vec2 /*meters*/) const {
+		return true;
 	}
 
 	gnav::BeliefFilter NavigationSystem::pricedFor(gnav::BeliefFilter belief) {
@@ -1810,60 +1599,6 @@ namespace ecs {
 		}
 	}
 
-	void NavigationSystem::trimDetail(const std::vector<Rect>& rects, std::size_t removeBudget) {
-		if (trimQueue.empty() && detailInMesh.size() <= detailRingBudget) {
-			return;
-		}
-		// Cells that may lose their detail: out of every wanted rect, out of the detail keep rect,
-		// and not detail-on. The choice is over scanned cells, never the rings, and each cell's
-		// rings are one range of detailInMesh, so what the main thread spends is the cells once per
-		// trim and the rings that leave, a removal budget's worth a tick.
-		std::optional<Rect> keep;
-		if (haveViewport) {
-			const Rect view = viewportRect();
-			keep			= Rect{{view.lo.x - kDetailKeepMarginMm, view.lo.y - kDetailKeepMarginMm}, {view.hi.x + kDetailKeepMarginMm, view.hi.y + kDetailKeepMarginMm}};
-		}
-		const auto spared = [&](std::int64_t cell) {
-			if (detailCells.contains(cell) || (keep.has_value() && cellMeetsRect(cell, keep->lo, keep->hi))) {
-				return true;
-			}
-			return std::any_of(rects.begin(), rects.end(), [cell](const Rect& r) { return cellMeetsRect(cell, r.lo, r.hi); });
-		};
-		if (trimQueue.empty()) {
-			std::vector<std::pair<std::uint64_t, std::int64_t>> oldest;
-			for (const auto& [cell, wanted] : cellLastWanted) {
-				if (!spared(cell)) {
-					oldest.emplace_back(wanted, cell);
-				}
-			}
-			std::sort(oldest.begin(), oldest.end(), std::greater<>());
-			for (const auto& [wanted, cell] : oldest) {
-				trimQueue.push_back(cell);
-			}
-		}
-		const std::size_t target  = detailRingBudget - detailRingBudget / 8;
-		std::size_t		  removed = 0;
-		while (!trimQueue.empty() && detailInMesh.size() > target && removed < removeBudget) {
-			const std::int64_t cell = trimQueue.back();
-			trimQueue.pop_back();
-			if (spared(cell) || !cellLastWanted.contains(cell)) {
-				continue; // wanted again, or its chunk went, since it was queued
-			}
-			const world::ChunkCoordinate chunk = cellChunk(cell);
-			for (auto it = detailInMesh.lower_bound(DetailKey{chunk, cell, 0, 0, {}});
-				 it != detailInMesh.end() && it->first.chunk == chunk && it->first.cell == cell;) {
-				detailRemovals.push_back(it->second);
-				it = detailInMesh.erase(it);
-				++removed;
-			}
-			scannedCells.erase(cell);
-			cellLastWanted.erase(cell);
-		}
-		if (detailInMesh.size() <= target) {
-			trimQueue.clear();
-		}
-	}
-
 	// --- Landing -------------------------------------------------------------------
 
 	NavigationSystem::GroupSpawn NavigationSystem::groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
@@ -1902,7 +1637,7 @@ namespace ecs {
 		const Rect	within{nav::toMm(drop - glm::vec2{padM, padM}), nav::toMm(drop + glm::vec2{padM, padM})};
 		settle();
 		gatherWalls();
-		gatherGround(kUnlimited, {}, &within);
+		gatherGroundWithin(within);
 		settle();
 
 		auto clear = [this, clearanceMeters](glm::vec2 p) {
@@ -1967,7 +1702,7 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !detailAdds.empty() || !detailRemovals.empty() || !trimQueue.empty() || !gatheredNav.empty() ||
+		return groundPending > 0 || !readyCells.empty() || addingCell.has_value() || !detailRemovals.empty() || !gatheredNav.empty() ||
 			   !gatheredStructural.empty();
 	}
 

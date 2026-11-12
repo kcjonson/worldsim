@@ -883,21 +883,6 @@ namespace {
 			ecsWorld->getSystem<ecs::NavigationSystem>().appendAnchors(anchors);
 			m_chunkManager->update(m_camera->position(), anchors);
 
-			// Feed the viewport rect to NavigationSystem as plain data: flora is brought into the
-			// mesh there and nowhere else, and detail follows it. The visible rect is expanded
-			// by kViewportMargin for scroll/zoom headroom; the system clamps the half-extents.
-			{
-				int vpW = 0;
-				int vpH = 0;
-				Renderer::Primitives::getLogicalViewport(vpW, vpH);
-				Foundation::Rect vis = m_camera->getVisibleRect(vpW, vpH, kPixelsPerMeter);
-				const glm::vec2	 halfExtentMeters{
-					 0.5F * vis.width * ecs::NavigationSystem::kViewportMargin, 0.5F * vis.height * ecs::NavigationSystem::kViewportMargin
-				 };
-				const world::WorldPosition pos = m_camera->position();
-				ecsWorld->getSystem<ecs::NavigationSystem>().setViewportRect(glm::vec2{pos.x, pos.y}, halfExtentMeters);
-			}
-
 			// Process newly loaded chunks for entity placement
 			processNewChunks();
 
@@ -1245,9 +1230,8 @@ namespace {
 
 			// Wire NavigationSystem resources (same data VisionSystem consumes). The
 			// ConstructionWorld pointer is wired after DrawingSystem is created, back in
-			// initialize(), exactly like ConstructionSystem. The viewport rect is pushed
-			// per-frame in update() via setViewportRect (GameScene owns the camera); it only
-			// brings flora into the nav mesh. Ground follows the anchors.
+			// initialize(), exactly like ConstructionSystem. The mesh follows the movers;
+			// the camera has no say in it.
 			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);

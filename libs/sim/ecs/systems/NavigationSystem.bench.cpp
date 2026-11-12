@@ -117,8 +117,6 @@ namespace {
 	constexpr float	 kAgentRadius  = 0.3F;
 	const glm::vec2	 kColony{500.0F, 555.0F};		// 12 m from the x = 512 chunk side; the river is ~30 m north
 	const glm::vec2	 kChunkCentreColony{256.0F, 256.0F}; // the middle of chunk (0, 0), far from every seam
-	// A 1920x1080 view at 30 px/m, half extents times kViewportMargin.
-	const glm::vec2 kViewHalf{32.0F * ecs::NavigationSystem::kViewportMargin, 18.0F * ecs::NavigationSystem::kViewportMargin};
 	const char*		kTreeDef = "Bench_NavTree";
 
 	std::filesystem::path projectRoot() {
@@ -388,21 +386,25 @@ namespace {
 		std::vector<ecs::EntityID>				   movers;
 		std::chrono::microseconds				   gap;
 
-		explicit Rig(std::int64_t gapMs, world::ChunkManager* chunks = forest().chunks.get(),
-					 std::size_t detailRingBudget = ecs::NavigationSystem::kDetailRingBudget)
+		explicit Rig(std::int64_t gapMs, world::ChunkManager* chunks = forest().chunks.get())
 			: placement(forest().place(processed)),
-			  nav(world.registerSystem<ecs::NavigationSystem>(detailRingBudget)),
+			  nav(world.registerSystem<ecs::NavigationSystem>()),
 			  gap(std::chrono::microseconds(gapMs * 1000)) {
 			nav.setChunkManager(chunks);
 			nav.setPlacementData(placement.get(), &processed);
 			nav.setConstructionWorld(&construction);
 		}
 
-		void addMover(glm::vec2 at) {
+		// A mover meshes the disc of its sight distance plus the buffer around it.
+		void addMover(glm::vec2 at, float sightMeters = ecs::kDefaultSightRadius) {
 			const ecs::EntityID e = world.createEntity();
 			world.addComponent<ecs::Position>(e, ecs::Position{at});
 			world.addComponent<ecs::Colonist>(e, ecs::Colonist{"Bench"});
 			world.addComponent<ecs::Task>(e, ecs::Task{});
+			world.addComponent<ecs::AgentRadius>(e, ecs::AgentRadius{kAgentRadius, 1.0F});
+			ecs::Memory memory;
+			memory.sightRadius = sightMeters;
+			world.addComponent<ecs::Memory>(e, std::move(memory));
 			movers.push_back(e);
 		}
 
@@ -457,12 +459,16 @@ namespace {
 		}
 	};
 
+	// A sight distance whose disc, from anywhere in a chunk, meets every chunk within `chunkRadius` of it.
+	float sightCovering(std::int32_t chunkRadius) {
+		return static_cast<float>(chunkRadius + 1) * world::kChunkSize * 1.4143F - ecs::NavigationSystem::kSightBufferMeters;
+	}
+
 	void colony(Rig& rig, glm::vec2 at = kColony) {
 		const glm::vec2 offsets[] = {{0.0F, 0.0F}, {6.0F, 3.0F}, {-5.0F, 4.0F}, {3.0F, -6.0F}, {-8.0F, -3.0F}};
 		for (const glm::vec2 o : offsets) {
 			rig.addMover(at + o);
 		}
-		rig.nav.setViewportRect(at, kViewHalf);
 	}
 
 	void begin() {
@@ -472,8 +478,7 @@ namespace {
 
 	void end() { foundation::Logger::setSink(nullptr, nullptr); }
 
-	// All nine chunks' ground and the colony's flora from nothing: the old system meshed one region
-	// here, so this is different work from its row, not the same work done two ways.
+	// The colony's discs, ground and placed obstacles, from nothing.
 	void BM_ColdSettleNineChunks(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(state.range(0));
@@ -529,82 +534,36 @@ namespace {
 		}
 	}
 
-	// range(0): metres per second; range(1): 1 to sweep back and forth over 200 m.
-	void BM_Pan(benchmark::State& state) {
-		const float speed = static_cast<float>(state.range(0));
-		const bool	sweep = state.range(1) != 0;
-		const int	count = speed < 10.0F ? 1200 : 600;
+	// range(0) movers on a grid 100 m apart over the forest, their discs settled, then every one walking
+	// east at 2 m/s for 1,800 ticks (60 m), its disc's leading edge in dense ground no disc has met
+	// for most of it. Reports the main thread's tick (mover tracking, ground and detail gathering),
+	// the wait, the patch jobs, and the nav patches the walk took. range(1): gap.
+	void BM_WalkingMovers(benchmark::State& state) {
+		const auto count = static_cast<int>(state.range(0));
 		for (auto _ : state) {
-			Rig rig(state.range(2));
-			colony(rig);
-			rig.settle();
-			begin();
-			TickStats stats;
-			float	  offset = 0.0F;
-			float	  dir	 = 1.0F;
+			Rig		  rig(state.range(1));
+			const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count))));
 			for (int i = 0; i < count; ++i) {
-				offset += dir * speed * kTickSeconds;
-				if (sweep && (offset > 200.0F || offset < 0.0F)) {
-					dir = -dir;
-				}
-				rig.nav.setViewportRect(kColony + glm::vec2{offset, 0.0F}, kViewHalf);
-				rig.tick(stats);
+				rig.addMover({60.0F + static_cast<float>(i % side) * 100.0F, 40.0F + static_cast<float>(i / side) * 100.0F});
 			}
-			end();
-			stats.report(state);
-		}
-	}
-
-	void BM_ZoomSweep(benchmark::State& state) {
-		for (auto _ : state) {
-			Rig rig(state.range(0));
-			colony(rig);
 			rig.settle();
+			const std::uint64_t patchesBefore = rig.nav.navQueryStats().navPatches;
 			begin();
 			TickStats stats;
-			for (int i = 0; i < 600; ++i) {
-				const float t = static_cast<float>(i) / 600.0F;
-				const float k = 0.5F + 3.0F * (t < 0.5F ? 2.0F * t : 2.0F - 2.0F * t);
-				rig.nav.setViewportRect(kColony, kViewHalf * k);
-				rig.tick(stats);
-			}
-			end();
-			stats.report(state);
-		}
-	}
-
-	// The view mows the whole forest (about 86,000 trees, twice kDetailRingBudget) at 83 m/s in rows
-	// 56 m apart, the colony staying where it is. range(0): 1 for the flora budget, 0 for none;
-	// range(1): gap.
-	void BM_LongPan(benchmark::State& state) {
-		const std::size_t budget = state.range(0) != 0 ? ecs::NavigationSystem::kDetailRingBudget : SIZE_MAX;
-		constexpr float	  kSpeed = 83.0F;
-		constexpr float	  kLo	 = 40.0F;
-		constexpr float	  kHi	 = kWorldMaxM - 40.0F;
-		for (auto _ : state) {
-			Rig rig(state.range(1), forest().chunks.get(), budget);
-			colony(rig);
-			rig.settle();
-			begin();
-			TickStats stats;
-			glm::vec2 at{kLo, kLo};
-			float	  dir = 1.0F;
-			while (at.y <= kHi) {
-				at.x += dir * kSpeed * kTickSeconds;
-				if (at.x > kHi || at.x < kLo) {
-					at.x = std::clamp(at.x, kLo, kHi);
-					dir	 = -dir;
-					at.y += 56.0F;
+			for (int t = 0; t < 1800; ++t) {
+				for (std::size_t m = 0; m < rig.movers.size(); ++m) {
+					rig.moveMover(m, {2.0F * kTickSeconds, 0.0F});
 				}
-				rig.nav.setViewportRect(at, kViewHalf);
 				rig.tick(stats);
 			}
 			end();
 			stats.report(state);
+			state.counters["movers"]	  = static_cast<double>(count);
+			state.counters["navPatches"] = static_cast<double>(rig.nav.navQueryStats().navPatches - patchesBefore);
 		}
 	}
 
-	// Every mover walks 100 m east at 4 m/s, the view staying on the colony.
+	// Every mover walks 100 m east at 4 m/s.
 	void BM_ColonistsWalk(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(state.range(0));
@@ -630,7 +589,6 @@ namespace {
 				rig.addMover(c + glm::vec2{static_cast<float>(k) * 4.0F - 8.0F, static_cast<float>(k % 2) * 5.0F});
 			}
 		}
-		rig.nav.setViewportRect(kColony, kViewHalf);
 	}
 
 	// range(0): 0 settles from cold and then holds 600 ticks; 1 walks every mover 50 m east.
@@ -658,17 +616,15 @@ namespace {
 		}
 	}
 
-	// 20 colonists, the real AI and movement, each walking a move order 80 m east while the view
-	// sweeps back and forth over them at 30 m/s with flora streaming in. Counts the path requests
-	// each tick: the replans. range(0): gap.
-	void BM_ReplanPan(benchmark::State& state) {
+	// 20 colonists, the real AI and movement, each walking a move order 80 m east with placed obstacles
+	// streaming in ahead of them. Counts the path requests each tick: the replans. range(0): gap.
+	void BM_ReplanWalk(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig					   rig(state.range(0));
 			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
 			ai.setNavigationSystem(&rig.nav);
 			rig.world.registerSystem<ecs::MovementSystem>();
 			rig.world.registerSystem<ecs::PhysicsSystem>();
-			rig.nav.setViewportRect(kColony, kViewHalf);
 			rig.settle();
 			for (int i = 0; i < 20; ++i) {
 				const glm::vec2		at = kColony + glm::vec2{static_cast<float>(i % 5) * 4.0F - 8.0F, static_cast<float>(i / 5) * 4.0F - 6.0F};
@@ -697,16 +653,9 @@ namespace {
 			begin();
 			TickStats			stats;
 			std::vector<double> perTick;
-			float				offset = 0.0F;
-			float				dir	   = 1.0F;
 			rig.nav.resetNavQueryStats();
 			std::uint64_t last = 0;
 			for (int i = 0; i < 600; ++i) {
-				offset += dir * 30.0F * kTickSeconds;
-				if (offset > 150.0F || offset < -150.0F) {
-					dir = -dir;
-				}
-				rig.nav.setViewportRect(kColony + glm::vec2{offset, 0.0F}, kViewHalf);
 				rig.tick(stats);
 				const std::uint64_t queries = rig.nav.navQueryStats().totalQueries;
 				perTick.push_back(static_cast<double>(queries - last));
@@ -741,7 +690,7 @@ namespace {
 		return points;
 	}
 
-	// Fixed start/goal pairs in a colony's view, once settled. range(0): 0 the colony by the chunk
+	// Fixed start/goal pairs round a colony, once settled. range(0): 0 the colony by the chunk
 	// side (the rows the old system has), 1 a colony in a chunk's middle. range(1): gap. range(2): 1
 	// queries as the game does (requestPath, flora priced), 0 the same pre-check and search with no
 	// prices, for the priced/unpriced ratio. Prints each pair's verdict and length so two builds can
@@ -851,7 +800,7 @@ namespace {
 			}
 			rig.settle();
 			TickStats warmup;
-			rig.ticks(warmup, 4); // the view's flora in
+			rig.ticks(warmup, 4); // the colony's flora in
 			rig.settle();
 			const geometry::nav::BeliefFilter belief = room ? geometry::nav::BeliefFilter{&knownSegments, &knownOpenings}
 															: geometry::nav::BeliefFilter{};
@@ -986,7 +935,7 @@ namespace {
 		}
 	}
 
-	// The AI's reach code while structural jobs land elsewhere, as when the camera pans over new ground:
+	// The AI's reach code while structural jobs land elsewhere, as when a far mover meshes new ground:
 	// 20 colonists standing still, each remembering 40 sources, and each deciding every 30 ticks
 	// (staggered) the way AIDecisionSystem does (its SourceReachMemo keyed by the Reach, then
 	// findNearestReachableWithCapability through memo.walk onto NavigationSystem::walk). range(0): 0 half
@@ -1008,7 +957,6 @@ namespace {
 			for (int i = 0; i < 20; ++i) {
 				rig.addMover(kColony + glm::vec2{static_cast<float>(i % 5) * 4.0F - 8.0F, static_cast<float>(i / 5) * 4.0F - 30.0F});
 			}
-			rig.nav.setViewportRect(kColony, kViewHalf);
 			const glm::vec2 corners[] = {roomLo, {roomHi.x, roomLo.y}, roomHi, {roomLo.x, roomHi.y}};
 			for (int k = 0; k < 4; ++k) {
 				const glm::vec2 a	   = corners[k];
@@ -1081,7 +1029,6 @@ namespace {
 						farWall.clear();
 					}
 				}
-				rig.nav.setViewportRect(kColony + glm::vec2{150.0F * std::sin(static_cast<float>(tick) * 0.02F), 0.0F}, kViewHalf);
 				if (walking) {
 					for (std::size_t m = 0; m < rig.movers.size(); ++m) {
 						rig.moveMover(m, {2.0F * kTickSeconds, 0.0F});
@@ -1172,7 +1119,7 @@ namespace {
 		}
 	}
 
-	// WOR-644: two colonists 160 m apart on connected ground, the view elsewhere.
+	// WOR-644: two colonists 160 m apart on connected ground.
 	void BM_TwoGroupsApart(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig				rig(state.range(0));
@@ -1180,7 +1127,6 @@ namespace {
 			const glm::vec2 b{460.0F, 470.0F};
 			rig.addMover(a);
 			rig.addMover(b);
-			rig.nav.setViewportRect({900.0F, 300.0F}, kViewHalf);
 			rig.settle();
 			const Clock::time_point start = Clock::now();
 			const auto				path  = rig.nav.requestPath(a + glm::vec2{1.0F, 0.0F}, b + glm::vec2{1.0F, 0.0F}, kAgentRadius).route;
@@ -1191,10 +1137,9 @@ namespace {
 		}
 	}
 
-	// A wall built once every loaded chunk's ground is meshed: its job carries the structural forest
-	// rebuild over all of it. range(0) is the chunk load radius around the forest's middle: 2 meshes
-	// 25 chunks, 5 meshes 121 (the most the system holds is the loaded chunks plus
-	// kCameraOnlyUnloadedChunks).
+	// A wall built once every loaded chunk's ground is meshed (one mover at the middle whose disc
+	// meets them all): its job carries the structural forest rebuild over all of it. range(0) is the
+	// chunk load radius around the forest's middle: 2 meshes 25 chunks, 5 meshes 121.
 	void BM_WallEditMeshedChunks(benchmark::State& state) {
 		const auto radius = static_cast<std::int32_t>(state.range(0));
 		world::ChunkManager chunks(std::make_unique<ForestRiverSampler>());
@@ -1205,6 +1150,7 @@ namespace {
 		for (auto _ : state) {
 			Rig rig(state.range(1), &chunks);
 			rig.nav.setPlacementData(nullptr, nullptr);
+			rig.addMover({768.0F, 768.0F}, sightCovering(radius));
 			rig.settle();
 			begin();
 			rig.wall(kColony + glm::vec2{12.0F, 8.0F}, kColony + glm::vec2{20.0F, 8.0F}, false);
@@ -1268,7 +1214,7 @@ namespace {
 		for (auto _ : state) {
 			Rig rig(state.range(0), &chunks);
 			rig.nav.setPlacementData(nullptr, nullptr);
-			rig.nav.setViewportRect(at, kViewHalf);
+			rig.addMover(at, sightCovering(2));
 			begin();
 			TickStats stats;
 			rig.ticksUntilSettled(stats, 600);
@@ -1505,15 +1451,11 @@ namespace {
 	NAV_BENCH_TAG(RSystemContainer, out.count += static_cast<double>(v.size());
 				  out.bytes += static_cast<double>(v.size() * sizeof(typename std::remove_cvref_t<decltype(v)>::value_type)))
 	NAV_BENCH_TAG(RDetailInMesh, RSystemContainer::visit(v, out))
-	NAV_BENCH_TAG(RScannedCells, RSystemContainer::visit(v, out))
-	NAV_BENCH_TAG(RCellLastWanted, RSystemContainer::visit(v, out))
-	NAV_BENCH_TAG(RDetailCells, RSystemContainer::visit(v, out))
-	NAV_BENCH_TAG(RDetailChunks, RSystemContainer::visit(v, out))
+	NAV_BENCH_TAG(RWantedCells, RSystemContainer::visit(v, out))
+	NAV_BENCH_TAG(RWantedChunks, RSystemContainer::visit(v, out))
 	template struct Rob<&ecs::NavigationSystem::detailInMesh, RDetailInMesh>;
-	template struct Rob<&ecs::NavigationSystem::scannedCells, RScannedCells>;
-	template struct Rob<&ecs::NavigationSystem::cellLastWanted, RCellLastWanted>;
-	template struct Rob<&ecs::NavigationSystem::detailCells, RDetailCells>;
-	template struct Rob<&ecs::NavigationSystem::detailChunks, RDetailChunks>;
+	template struct Rob<&ecs::NavigationSystem::wantedCells, RWantedCells>;
+	template struct Rob<&ecs::NavigationSystem::wantedChunks, RWantedChunks>;
 #undef NAV_BENCH_INTERN
 #undef NAV_BENCH_MAP
 #undef NAV_BENCH_LEAF
@@ -1671,12 +1613,12 @@ namespace {
 		}
 	}
 
-	// The system at the bench forest's density: the view settled on the colony, then panned 800 m east
-	// a settle at a time. What the heap grew by, less both meshes' container growth, is the system's
-	// own records (and its jobs' retained capacity), per placed obstacle that entered.
+	// The system at the bench forest's density: the colony settled, then its first mover walked 800 m
+	// east 40 m a settle at a time. What the heap grew by, less both meshes' container growth, is the
+	// system's own records (and its jobs' retained capacity), per placed obstacle that entered.
 	void BM_PlacedObstacleSystemBytes(benchmark::State& state) {
 		for (auto _ : state) {
-			Rig rig(0, forest().chunks.get(), SIZE_MAX);
+			Rig rig(0);
 			colony(rig);
 			TickStats warm;
 			rig.ticksUntilSettled(warm, 20000);
@@ -1687,7 +1629,7 @@ namespace {
 			const std::int64_t heapBefore	 = heapAllocated();
 			const std::int64_t privateBefore = privateBytes();
 			for (float dx = 40.0F; dx <= 800.0F; dx += 40.0F) {
-				rig.nav.setViewportRect(kColony + glm::vec2{dx, 0.0F}, kViewHalf);
+				rig.moveMover(0, {40.0F, 0.0F});
 				TickStats stats;
 				rig.ticksUntilSettled(stats, 20000);
 			}
@@ -1701,11 +1643,9 @@ namespace {
 			const Tally	 inMesh	   = visit<RDetailInMesh>(rig.nav);
 			std::fprintf(stderr,
 						 "  structural mesh growth %.0f B; heap growth beyond both meshes' containers %.1f B per obstacle\n"
-						 "  detailInMesh %.0f entries of %.0f B each (a std::map node adds 4 pointers); scannedCells %.0f; cellLastWanted %.0f; "
-						 "detailCells %.0f; detailChunks %.0f\n",
+						 "  detailInMesh %.0f entries of %.0f B each (a std::map node adds 4 pointers); wantedCells %.0f; wantedChunks %.0f\n",
 						 structural1.total().bytes - structural0.total().bytes, (heapDelta - meshDelta) / added, inMesh.count, inMesh.bytes / inMesh.count,
-						 visit<RScannedCells>(rig.nav).count, visit<RCellLastWanted>(rig.nav).count, visit<RDetailCells>(rig.nav).count,
-						 visit<RDetailChunks>(rig.nav).count);
+						 visit<RWantedCells>(rig.nav).count, visit<RWantedChunks>(rig.nav).count);
 			state.counters["systemBeyondMeshesBPerObst"] = (heapDelta - meshDelta) / added;
 		}
 	}
@@ -1867,20 +1807,10 @@ BENCHMARK(BM_ColdSettleNineChunks)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmar
 BENCHMARK(BM_Steady)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_FellTree)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_BuildWall)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_Pan)
-	->Args({2, 0, 0})
-	->Args({2, 0, 2})
-	->Args({83, 0, 0})
-	->Args({83, 0, 2})
-	->Args({83, 1, 0})
-	->Args({83, 1, 2})
-	->Iterations(1)
-	->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_LongPan)->Args({1, 0})->Args({1, 2})->Args({0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ZoomSweep)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_WalkingMovers)->Args({20, 0})->Args({200, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ReplanPan)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ReplanWalk)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
