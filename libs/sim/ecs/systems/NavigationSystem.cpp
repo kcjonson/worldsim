@@ -764,14 +764,10 @@ namespace ecs {
 	}
 
 	void NavigationSystem::noteStructural(glm::vec2 lo, glm::vec2 hi, StructuralChange change) {
-		const bool					 content = change == StructuralChange::Opens || change == StructuralChange::Closes;
-		const world::ChunkCoordinate a		 = world::worldToChunk({lo.x, lo.y});
-		const world::ChunkCoordinate b		 = world::worldToChunk({hi.x, hi.y});
+		const world::ChunkCoordinate a = world::worldToChunk({lo.x, lo.y});
+		const world::ChunkCoordinate b = world::worldToChunk({hi.x, hi.y});
 		for (std::int32_t cy = a.y; cy <= b.y; ++cy) {
 			for (std::int32_t cx = a.x; cx <= b.x; ++cx) {
-				if (content) {
-					gatheredStructural.structuralChunks.push_back({cx, cy});
-				}
 				gatheredStructural.anchored = gatheredStructural.anchored || anchorHolds({cx, cy});
 			}
 		}
@@ -780,49 +776,11 @@ namespace ecs {
 		}
 	}
 
-	bool NavigationSystem::groundMeshed(world::ChunkCoordinate coord) const {
-		const auto it = ground.find(coord);
-		return it != ground.end() && it->second.square.structural >= 0; // a gathered patch has no ring id yet
-	}
-
-	void NavigationSystem::forChunksMeeting(const geometry::RectMm& box, const std::function<void(world::ChunkCoordinate)>& visit) {
-		static_assert(world::kTileSize == 1.0F, "a chunk's side in mm assumes 1 m tiles");
-		constexpr std::int64_t kChunkMm = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
-		// Chunk c's interior (c * side, (c + 1) * side) meets (min, max) when c * side < max and
-		// (c + 1) * side > min.
-		const auto first = [](std::int64_t min) { return static_cast<std::int32_t>(geometry::floorDiv(min, kChunkMm)); };
-		const auto last	 = [](std::int64_t max) { return static_cast<std::int32_t>(geometry::floorDiv(max - 1, kChunkMm)); };
-		for (std::int32_t cy = first(box.min.y); cy <= last(box.max.y); ++cy) {
-			for (std::int32_t cx = first(box.min.x); cx <= last(box.max.x); ++cx) {
-				visit({cx, cy});
-			}
-		}
-	}
-
-	bool NavigationSystem::groundMeshedThrough(const geometry::RectMm& box) const {
-		bool meshed = true;
-		forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
-			if (groundMeshed(coord)) {
-				return;
-			}
-			meshed = false;
-			// One the chunk manager hasn't loaded either is noted once, in case it never is.
-			const bool loaded = chunkManager != nullptr && std::as_const(*chunkManager).getChunk(coord) != nullptr;
-			if (!loaded && unmeshedReported.insert(coord).second) {
-				LOG_DEBUG(Engine, "[Nav] reach box meets chunk (%d, %d), not loaded yet: its colonists read unsettled until it is", coord.x, coord.y);
-			}
-		});
-		return meshed;
-	}
-
 	// --- Ticks, jobs and the join -------------------------------------------------
 
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
 		startRouteSlice();
-		landedThisUpdate = std::move(groundLanded);
-		groundLanded.clear();
-		std::sort(landedThisUpdate.begin(), landedThisUpdate.end(), ChunkLess{});
 		markCrossedRoutes();
 		markStrayedRoutes();
 		snapMovers();
@@ -996,18 +954,11 @@ namespace ecs {
 		published = true;
 		navStats.navPatches += runningNav.patches.size();
 		navStats.structuralPatches += runningStructural.patches.size();
-		if (!runningStructural.empty()) {
-			++structuralEpoch;
-			for (const world::ChunkCoordinate coord : runningStructural.structuralChunks) {
-				++chunkStructuralVersion[coord];
-			}
-			groundLanded.insert(groundLanded.end(), runningStructural.groundChunks.begin(), runningStructural.groundChunks.end());
-			// Ground no anchor holds changes no colonist's route or wait. Routes are restamped
-			// here, not on the next tick, since a query may join mid-frame and the AI reads them next.
-			if (runningStructural.anchored) {
-				++structuralGeneration;
-				restampRoutes(runningStructural.blockingBoxes);
-			}
+		// Ground no anchor holds changes no colonist's route or wait. Routes are restamped here, not
+		// on the next tick, since a query may join mid-frame and the AI reads them next.
+		if (runningStructural.anchored) {
+			++structuralGeneration;
+			restampRoutes(runningStructural.blockingBoxes);
 		}
 		const double longest = std::max(runningNav.ms, runningStructural.ms);
 		// Permanent nav-mesh work diagnostic: one tick's job on each mesh's worker (of which the
@@ -1338,7 +1289,6 @@ namespace ecs {
 			const auto [lo, hi] = chunkBoxM(coord);
 			noteStructural(lo, hi, StructuralChange::GroundArrives);
 		}
-		gatheredStructural.groundChunks.push_back(coord);
 		gnav::PatchEdits navEdits;
 		navEdits.adds.push_back(nav::chunkSquare(coord));
 		navEdits.adds.insert(navEdits.adds.end(), std::make_move_iterator(water.begin()), std::make_move_iterator(water.end()));
@@ -1575,19 +1525,6 @@ namespace ecs {
 			return std::pair{t0, t1};
 		}
 	} // namespace
-
-	bool NavigationSystem::reachSettledThisUpdate(glm::vec2 meters) const {
-		if (landedThisUpdate.empty()) {
-			return false;
-		}
-		join();
-		const geometry::RectMm box	   = boxAround(nav::toMm(meters), anchorLoadRangeMm());
-		bool				   touched = false;
-		forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
-			touched = touched || std::binary_search(landedThisUpdate.begin(), landedThisUpdate.end(), coord, ChunkLess{});
-		});
-		return touched && groundMeshedThrough(box);
-	}
 
 	void NavigationSystem::markCrossedRoutes() {
 		if (detailLanded.empty()) {
@@ -2045,119 +1982,6 @@ namespace ecs {
 			queuedRoutes.erase(queued);
 		}
 		countOutstandingRoutes();
-	}
-
-	NavigationSystem::StructuralWalk NavigationSystem::structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm,
-																	   std::int64_t radius, const gnav::BeliefFilter& belief, double maxCost) const {
-		// LimitReached is either limit: one under its expansion cap stopped at maxCost, which is a
-		// definite "no walk that short".
-		const auto outOfSteps = [](const gnav::PathResult& r, std::uint32_t cap) {
-			return r.stop == gnav::PathStop::LimitReached && r.expansions >= cap;
-		};
-		++navStats.structuralWalks;
-		StructuralWalk answer;
-		answer.walk = gnav::pathThrough(structural.view(), goalMm, startMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachProbeExpansions});
-		answer.expansions = answer.walk.expansions;
-		navStats.probeExpansions += answer.walk.expansions;
-		if (!outOfSteps(answer.walk, reachProbeExpansions)) {
-			++navStats.probeAnswered;
-			return answer;
-		}
-		++navStats.forwardSearches;
-		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachExpansionCap});
-		answer.expansions += answer.walk.expansions;
-		navStats.forwardExpansions += answer.walk.expansions;
-		answer.gaveUp = outOfSteps(answer.walk, reachExpansionCap);
-		return answer;
-	}
-
-	float NavigationSystem::anchorLoadRangeMeters() const {
-		return world::ChunkManager::kMinAnchorLoadRangeMeters;
-	}
-
-	geometry::RectMm NavigationSystem::boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm) {
-		return {{centerMm.x - halfMm, centerMm.y - halfMm}, {centerMm.x + halfMm, centerMm.y + halfMm}};
-	}
-
-	std::int64_t NavigationSystem::anchorLoadRangeMm() const {
-		return std::llround(static_cast<double>(anchorLoadRangeMeters()) * static_cast<double>(geometry::kMillimetersPerMeter));
-	}
-
-	std::uint64_t NavigationSystem::chunkStamp(const geometry::RectMm& box) const {
-		std::uint64_t stamp = 1469598103934665603ULL;
-		forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
-			const auto			it		= chunkStructuralVersion.find(coord);
-			const std::uint64_t version = it != chunkStructuralVersion.end() ? it->second : 0;
-			stamp						= (stamp ^ version) * 1099511628211ULL;
-		});
-		return stamp;
-	}
-
-	NavigationSystem::Reach NavigationSystem::reachFrom(glm::vec2 startMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
-		join();
-		Reach reach;
-		reach.belief		  = belief;
-		reach.startMm		  = nav::toMm(startMeters);
-		reach.radiusMm		  = radiusMm(agentRadiusMeters);
-		reach.onGround		  = structural.locate(reach.startMm) >= 0;
-		reach.startCell		  = cellKey(geometry::floorDiv(reach.startMm.x, kReachCellMm), geometry::floorDiv(reach.startMm.y, kReachCellMm));
-		reach.structuralEpoch = structuralEpoch;
-		reach.settled		  = groundMeshedThrough(boxAround(reach.startMm, anchorLoadRangeMm()));
-		return reach;
-	}
-
-	bool NavigationSystem::sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const {
-		join();
-		return reach.onGround && structural.locate(nav::toMm(goalMeters)) >= 0;
-	}
-
-	std::uint64_t NavigationSystem::verdictStamp(glm::vec2 anchor) const {
-		join();
-		return chunkStamp(boxAround(nav::toMm(anchor), 2 * anchorLoadRangeMm()));
-	}
-
-	std::uint64_t NavigationSystem::spanStamp(glm::vec2 from, glm::vec2 to) const {
-		join();
-		const geometry::Vec2i64 a	 = nav::toMm(from);
-		const geometry::Vec2i64 b	 = nav::toMm(to);
-		const std::int64_t		grow = anchorLoadRangeMm();
-		return chunkStamp({{std::min(a.x, b.x) - grow, std::min(a.y, b.y) - grow}, {std::max(a.x, b.x) + grow, std::max(a.y, b.y) + grow}});
-	}
-
-	bool NavigationSystem::nearAnchor(glm::vec2 anchor, glm::vec2 here) const {
-		const geometry::Vec2i64 a = nav::toMm(anchor);
-		const geometry::Vec2i64 h = nav::toMm(here);
-		return std::abs(h.x - a.x) <= anchorLoadRangeMm() && std::abs(h.y - a.y) <= anchorLoadRangeMm();
-	}
-
-	WalkAnswer NavigationSystem::walk(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
-		join();
-		const geometry::Vec2i64 goal	 = nav::toMm(goalMeters);
-		const float				straight = std::sqrt(dist2(nav::toMeters(reach.startMm), goalMeters));
-		if (!reach.onGround) {
-			return std::optional<float>(straight); // can't prove anything from off the ground
-		}
-		if (structural.locate(goal) < 0) {
-			// Off meshed ground: maybe, while a mover wants its chunk, so its ground is queued.
-			const bool coming = wantedChunks.contains(world::worldToChunk({goalMeters.x, goalMeters.y}));
-			return coming && straight <= maxWalk ? std::optional<float>(straight) : std::nullopt;
-		}
-		const StructuralWalk found = structuralWalk(reach.startMm, goal, reach.radiusMm, reach.belief,
-													static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter));
-		if (found.gaveUp) {
-			++navStats.farWalks;
-			LOG_DEBUG(Engine, "[Nav] reach gave up after %u expansions toward (%.2f, %.2f), %.0f m in a straight line: far", found.expansions,
-					  goalMeters.x, goalMeters.y, straight);
-			return WalkAnswer::farAway();
-		}
-		if (found.walk.stop != gnav::PathStop::Found) {
-			return std::optional<float>{};
-		}
-		return std::optional<float>(static_cast<float>(found.walk.cost / static_cast<double>(geometry::kMillimetersPerMeter)));
-	}
-
-	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
-		return walk(reach, goalMeters).reachable();
 	}
 
 	bool NavigationSystem::isOnMesh(glm::vec2 meters) const {

@@ -7,17 +7,15 @@
 //
 // BM_NavScaleGround: per-chunk bytes of the structural mesh and of the nav mesh (ground only), the
 // whole build's patch and forest-rebuild time, then on the built structural mesh: a wall edit's job
-// (its patch, its forest rebuild) and one more chunk's ground arriving (the same split); a failing
-// walk the forest rejects (a goal ringed by water) and one it can't (a goal behind walls the belief
-// knows), capped at NavigationSystem::kReachExpansionCap and uncapped; and the farthest straight-line distance a capped walk still finds east of the start.
+// (its patch, its forest rebuild) and one more chunk's ground arriving (the same split).
 //
 // BM_NavScaleDetail: one chunk fully covered by forest at the game's density (a tree every 3.54 m,
 // colliders by age class), patched into a nav mesh 16 m cell by cell as the view brings it: rings,
 // bytes and time.
 //
 // BM_SearchReach, BM_SearchCases and BM_SearchDeadEnds: what one search step costs, how far a capped
-// search reaches, and how many steps real routes and real dead ends take, to choose the reach and
-// budgets from (see "Choosing the search cap" below).
+// search reaches, and how many steps real routes and real dead ends take (see "Choosing the search
+// cap" below).
 
 #include "NavigationSystem.h"
 
@@ -227,18 +225,6 @@ namespace {
 			const std::int64_t structuralBytes = privateBytes() - before;
 
 			const glm::vec2 start = *landNear(structural, region->start);
-			// A goal ringed by water (the forest rejects it) and one behind walls the belief knows.
-			const glm::vec2 moated = *landNear(structural, start + glm::vec2{40.0F, 0.0F});
-			const glm::vec2 walled = *landNear(structural, start + glm::vec2{-40.0F, 0.0F});
-			std::vector<gnav::NavInputPolygon> obstacles = ringRound(moated - glm::vec2{4.0F}, moated + glm::vec2{4.0F}, 3.0F, nav::kProvenanceWater, 0);
-			const std::vector<gnav::NavInputPolygon> walls = ringRound(walled - glm::vec2{4.0F}, walled + glm::vec2{4.0F}, 0.2F, 1, 1);
-			obstacles.insert(obstacles.end(), walls.begin(), walls.end());
-			structural.applyPatch({.adds = obstacles});
-			structural.rebuildForests();
-			const std::unordered_set<std::uint64_t> known{1, 2, 3, 4};
-			const std::unordered_set<std::uint64_t> noOpenings;
-			const gnav::BeliefFilter				belief{&known, &noOpenings};
-			const std::int64_t						radius = 300;
 
 			// A wall edit's structural job.
 			const Clock::time_point wallStart = Clock::now();
@@ -258,38 +244,6 @@ namespace {
 			structural.rebuildForests();
 			const double groundForestMs = msSince(groundForest);
 
-			const auto timedWalk = [&](glm::vec2 goal, std::uint32_t cap, double& us) {
-				const Clock::time_point t = Clock::now();
-				const gnav::PathResult	r = gnav::pathThrough(structural.view(), nav::toMm(start), nav::toMm(goal), radius, belief, {.maxExpansions = cap});
-				us						  = std::chrono::duration<double, std::micro>(Clock::now() - t).count();
-				return r;
-			};
-			double				   moatUs		 = 0.0;
-			const gnav::PathResult moat			 = timedWalk(moated, ecs::NavigationSystem::kReachExpansionCap, moatUs);
-			double				   wallCappedUs	 = 0.0;
-			const gnav::PathResult wallCapped	 = timedWalk(walled, ecs::NavigationSystem::kReachExpansionCap, wallCappedUs);
-			double				   wallUncappedUs = 0.0;
-			const gnav::PathResult wallUncapped	  = timedWalk(walled, 0, wallUncappedUs);
-
-			// The farthest goal east (100 m steps) a capped walk still finds.
-			float		  farthest	   = 0.0F;
-			std::uint32_t farthestExps = 0;
-			for (float d = 100.0F; d < 16000.0F; d += 100.0F) {
-				const std::optional<glm::vec2> goal = landNear(structural, start + glm::vec2{d, 0.0F});
-				if (!goal.has_value()) {
-					continue;
-				}
-				double				   us = 0.0;
-				const gnav::PathResult r  = timedWalk(*goal, ecs::NavigationSystem::kReachExpansionCap, us);
-				if (r.stop == gnav::PathStop::LimitReached) {
-					break;
-				}
-				if (r.stop == gnav::PathStop::Found) {
-					farthest	 = glm::distance(start, *goal);
-					farthestExps = r.expansions;
-				}
-			}
-
 			state.counters["chunks"]				= static_cast<double>(n);
 			state.counters["waterVertsPerChunk"]	= static_cast<double>(waterVertices) / static_cast<double>(n);
 			state.counters["structKBPerChunk"]		= static_cast<double>(structuralBytes) / 1024.0 / static_cast<double>(n);
@@ -301,16 +255,6 @@ namespace {
 			state.counters["wallForestMs"]			= wallForestMs;
 			state.counters["groundPatchMs"]			= groundPatchMs;
 			state.counters["groundForestMs"]		= groundForestMs;
-			state.counters["moatWalkUs"]			= moatUs;
-			state.counters["moatWalkExps"]			= static_cast<double>(moat.expansions);
-			state.counters["moatWalkStop"]			= static_cast<double>(moat.stop);
-			state.counters["walledWalkUs"]			= wallCappedUs;
-			state.counters["walledWalkExps"]		= static_cast<double>(wallCapped.expansions);
-			state.counters["walledWalkStop"]		= static_cast<double>(wallCapped.stop);
-			state.counters["walledPrecheckUs"]		= wallUncappedUs;
-			state.counters["walledPrecheckExps"]	= static_cast<double>(wallUncapped.expansions);
-			state.counters["farthestCappedWalkM"]	= farthest;
-			state.counters["farthestCappedWalkExps"] = static_cast<double>(farthestExps);
 		}
 	}
 

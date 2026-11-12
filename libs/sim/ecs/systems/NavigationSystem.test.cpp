@@ -1,5 +1,4 @@
 #include "NavigationSystem.h"
-#include "NavigationSystem.test.h"
 
 #include "AIDecisionSystem.h"
 #include "ActionSystem.h"
@@ -287,14 +286,14 @@ namespace {
 
 } // namespace
 
-// A query before any mesh is built returns nullopt; reaches() can't prove unreachable.
+// Before any mesh is built there is no route and no known way.
 TEST_F(NavigationSystemTest, NoMeshBeforeBuildReturnsNullopt) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 
 	EXPECT_FALSE(sys.hasMesh());
 	EXPECT_FALSE(routeBetween(sys, kOutside, kInside).has_value());
-	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
+	EXPECT_FALSE(sys.connected(kOutside, kInside));
 }
 
 // update() with nothing wired is a safe no-op, and a query still returns nullopt.
@@ -325,7 +324,7 @@ TEST_F(NavigationSystemTest, PathThroughDoorSucceeds) {
 	std::optional<std::vector<glm::vec2>> path = routeBetween(sys, kOutside, kInside);
 	ASSERT_TRUE(path.has_value());
 	EXPECT_GE(path->size(), 2u);
-	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
+	EXPECT_TRUE(sys.connected(kOutside, kInside));
 }
 
 // A window (non-pathable opening) leaves the wall solid: no path.
@@ -373,14 +372,12 @@ TEST_F(NavigationSystemTest, WallBuiltBlocksAndDoorOpens) {
 	const SegmentId south = buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
 	step(world, sys);
 	EXPECT_FALSE(routeBetween(sys, kOutside, kInside).has_value()) << "the walls block in the tick they are seen";
-	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius));
 
 	const OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
 	ASSERT_NE(op, kInvalidOpening);
 	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
 	step(world, sys);
 	EXPECT_TRUE(routeBetween(sys, kOutside, kInside).has_value()) << "the door opens the room";
-	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 }
 
 // An open (door) room is pathable; setting the door back to Blueprint makes the band solid
@@ -478,166 +475,6 @@ TEST_F(NavigationSystemTest, BeliefFilterGatesQueryVsTruth) {
 		<< "knowing the walls and the door should route through it";
 }
 
-// A goal in a room whose walls the colonist knows (and not its door) is a definite no from the search
-// that starts at the goal: it runs dry inside the room in a few dozen expansions, and the search from
-// the start, which would flood all the ground outside, never runs. The route says the same.
-TEST_F(NavigationSystemTest, KnownWalledRoomIsADefiniteNoFromTheGoalSide) {
-	ConstructionWorld cw;
-	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(world, sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-
-	const std::unordered_set<std::uint64_t> knownWalls = allSegmentIds(cw);
-	const std::unordered_set<std::uint64_t> noOpenings;
-	const geometry::nav::BeliefFilter		walledBelief{&knownWalls, &noOpenings};
-	sys.resetNavQueryStats();
-	const WalkAnswer answer = sys.walk(sys.reachFrom(kOutside, kAgentRadius, walledBelief), kInside);
-	EXPECT_FALSE(answer.walk.has_value());
-	EXPECT_FALSE(answer.far) << "a sealed room is no, not far";
-	EXPECT_EQ(sys.navQueryStats().probeAnswered, 1U);
-	EXPECT_EQ(sys.navQueryStats().forwardSearches, 0U) << "the search from the start ran";
-	EXPECT_LE(sys.navQueryStats().probeExpansions, 40U) << "the room took more than a few dozen expansions";
-
-	EXPECT_FALSE(routeBetween(sys, kOutside, kInside, walledBelief).has_value());
-}
-
-// A reach walk past its budgets is far, never "no", and a route by ticket has no budget: with reach
-// budgets small enough that every walk here is far, the route into a room whose walls are known (its
-// door isn't) answers no known way, and the route to a goal outside it is found.
-TEST_F(NavigationSystemTest, FarWalkIsSettledByTheRoute) {
-	ConstructionWorld cw;
-	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(world, sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-	sys.setReachBudgets(1, 3);
-
-	const std::unordered_set<std::uint64_t> knownWalls = allSegmentIds(cw);
-	const std::unordered_set<std::uint64_t> noOpenings;
-	const geometry::nav::BeliefFilter		walledBelief{&knownWalls, &noOpenings};
-	ASSERT_TRUE(sys.walk(sys.reachFrom(kOutside, kAgentRadius, walledBelief), kInside).far);
-	EXPECT_FALSE(routeBetween(sys, kOutside, kInside, walledBelief).has_value());
-
-	const glm::vec2 away{30.0F, 20.0F};
-	ASSERT_TRUE(sys.walk(sys.reachFrom(kOutside, kAgentRadius), away).far);
-	EXPECT_TRUE(routeBetween(sys, kOutside, away).has_value());
-}
-
-// The walk found by the search from the goal is the walk: its length is the search from the start's,
-// and the same both ways, round the room and through its door.
-TEST_F(NavigationSystemTest, WalkLengthIsTheSameBothWays) {
-	ConstructionWorld cw;
-	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(world, sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-
-	std::uint32_t seed = 5;
-	const auto	  unit = [&seed] {
-		   seed = seed * 1664525U + 1013904223U;
-		   return static_cast<float>(seed >> 8) / static_cast<float>(1U << 24);
-	};
-	std::vector<std::pair<glm::vec2, glm::vec2>> pairs{{kOutside, kInside}, {{-6.0F, 1.5F}, {10.0F, 1.5F}}, {{2.0F, 6.0F}, kInside}};
-	for (int i = 0; i < 24; ++i) {
-		pairs.push_back({{-20.0F + 40.0F * unit(), -20.0F + 40.0F * unit()}, {-20.0F + 40.0F * unit(), -20.0F + 40.0F * unit()}});
-	}
-	int walked = 0;
-	for (const auto& [a, b] : pairs) {
-		const WalkAnswer there = sys.walk(sys.reachFrom(a, kAgentRadius), b);
-		const WalkAnswer back  = sys.walk(sys.reachFrom(b, kAgentRadius), a);
-		ASSERT_FALSE(there.far || back.far);
-		ASSERT_EQ(there.walk.has_value(), back.walk.has_value()) << a.x << "," << a.y << " to " << b.x << "," << b.y;
-		const geometry::nav::PathResult forward =
-			geometry::nav::pathThrough(sys.structuralMesh().view(), nav::toMm(a), nav::toMm(b), sys.reachFrom(a, kAgentRadius).radiusMm, {});
-		ASSERT_EQ(forward.reachable, there.walk.has_value());
-		if (!there.walk.has_value()) {
-			continue;
-		}
-		++walked;
-		const float forwardMeters = static_cast<float>(forward.cost / 1000.0);
-		EXPECT_NEAR(*there.walk, forwardMeters, 0.002F) << "the goal-side walk is the start-side one";
-		EXPECT_NEAR(*there.walk, *back.walk, 0.002F) << a.x << "," << a.y << " to " << b.x << "," << b.y;
-	}
-	EXPECT_GT(walked, 20);
-}
-
-// --- isReachable semantics ---------------------------------------------------
-//
-// false = DEFINITELY unreachable (sound), true = MAYBE reachable. No mesh => always true.
-
-TEST_F(NavigationSystemTest, IsReachableTrueForReachableGoal) {
-	ConstructionWorld cw;
-	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
-
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(world, sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
-
-	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
-	EXPECT_TRUE(routeBetween(sys, kOutside, kInside).has_value());
-}
-
-TEST_F(NavigationSystemTest, IsReachableFalseForWalledOffGoal) {
-	ConstructionWorld cw;
-	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
-
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(world, sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
-
-	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius));
-	EXPECT_FALSE(routeBetween(sys, kOutside, kInside).has_value());
-}
-
-TEST_F(NavigationSystemTest, IsReachableTrueWhenNoMesh) {
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-
-	ASSERT_FALSE(sys.hasMesh());
-	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
-	EXPECT_FALSE(routeBetween(sys, kOutside, kInside).has_value());
-}
-
-// Off meshed ground: a start can't be proven unreachable from, even walled in; a goal can't be
-// proven unreachable while its chunk is loaded (its ground is on the way), and is unreachable in
-// ground that isn't loaded either.
-TEST_F(NavigationSystemTest, IsReachableForUnmeshedGoalDependsOnItsChunk) {
-	ConstructionWorld cw;
-	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
-
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	wireArea(world, sys);
-	sys.setConstructionWorld(&cw);
-	settle(sys);
-	ASSERT_TRUE(sys.hasMesh()) << "navmesh never built";
-
-	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius)) << "baseline: the closed room blocks";
-	EXPECT_TRUE(isReachable(sys, kUnmeshed, kInside, kAgentRadius)) << "an unmeshed start can't be proven to reach nothing";
-	EXPECT_FALSE(isReachable(sys, kOutside, kUnmeshed, kAgentRadius)) << "a goal in ground neither meshed nor loaded";
-
-	const std::unique_ptr<world::ChunkManager> wider = readyChunks(landSampler(), {0.0F, 0.0F}, 3);
-	sys.setChunkManager(wider.get()); // chunk (3, 0) is loaded now, its ground not meshed yet
-	const glm::vec2 edge{1530.0F, 10.0F};	// chunk (2, 0), meshed
-	const glm::vec2 coming{1560.0F, 10.0F}; // chunk (3, 0), 30 m on
-	ASSERT_TRUE(sys.inSimArea(edge));
-	ASSERT_FALSE(sys.inSimArea(coming));
-	EXPECT_TRUE(isReachable(sys, edge, coming, kAgentRadius)) << "a goal whose ground is on the way";
-}
-
 // generation() bumps on the tick that first meshes ground an anchor holds and on every later patch
 // there.
 TEST_F(NavigationSystemTest, GenerationBumpsOnPatch) {
@@ -662,31 +499,6 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnPatch) {
 	EXPECT_EQ(sys.generation(), afterFirst + 1) << "one tick of patches, one bump";
 	step(world, sys);
 	EXPECT_EQ(sys.generation(), afterFirst + 1) << "a tick with nothing to patch leaves it";
-}
-
-// A Reach on meshed ground has the one region, keyed by generation(): a patch moves its key.
-TEST_F(NavigationSystemTest, ReachKeyMovesWithAPatch) {
-	ConstructionWorld cw;
-
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(landChunks());
-	sys.setConstructionWorld(&cw);
-	addColonist(world, {0.0F, 0.0F}, "A");
-	settle(sys);
-
-	const NavigationSystem::Reach first = sys.reachFrom({0.0F, 0.0F}, kAgentRadius);
-	EXPECT_TRUE(first.onGround);
-	EXPECT_TRUE(sys.sharesStartRegion(first, {100.0F, 0.0F})) << "meshed ground";
-	EXPECT_TRUE(sys.sharesStartRegion(first, {300.0F, 0.0F})) << "meshed ground, however far";
-	EXPECT_FALSE(sys.sharesStartRegion(first, kUnmeshed));
-	EXPECT_FALSE(sys.reachFrom(kUnmeshed, kAgentRadius).onGround);
-
-	buildWall(cw, {10000, 10000}, {11000, 10000});
-	step(world, sys);
-	const NavigationSystem::Reach after = sys.reachFrom({0.0F, 0.0F}, kAgentRadius);
-	EXPECT_EQ(after.startCell, first.startCell);
-	EXPECT_NE(after.structuralEpoch, first.structuralEpoch) << "the patch left the reach key unchanged";
 }
 
 // --- Flora ---------------------------------------------------------------------
@@ -818,9 +630,8 @@ TEST_F(NavigationSystemTest, FootprintOverTreeIsBuildableButNotOnMesh) {
 	EXPECT_TRUE(sys.isPointBuildable(treeAt));
 }
 
-// A tree in a room's doorway seals it for a route (reachability, on the structural mesh, ignores it);
-// felling it opens the doorway again and patches only around the tree: every triangle more than 10 m
-// from it keeps its id and its corners.
+// A tree in a room's doorway seals it for a route; felling it opens the doorway again and patches only
+// around the tree: every triangle more than 10 m from it keeps its id and its corners.
 TEST_F(NavigationSystemTest, FelledTreePatchesOnlyItsHole) {
 	registerTree("Test_NavFellTree", 0.45F);
 	PlacementExecutor					executor(AssetRegistry::Get());
@@ -837,7 +648,6 @@ TEST_F(NavigationSystemTest, FelledTreePatchesOnlyItsHole) {
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 	EXPECT_FALSE(routeBetween(sys, kOutside, kInside).has_value()) << "a route went through the tree in the doorway";
-	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius)) << "reachability ignores flora";
 
 	struct Kept {
 		std::int32_t			   id;
@@ -878,10 +688,8 @@ TEST_F(NavigationSystemTest, FelledTreePatchesOnlyItsHole) {
 	}
 }
 
-// A flora patch (a tree felled, late placement) moves generation() but not the reach key, which
-// counts structural patches only: a colonist's remembered unreachable goals stay remembered while
-// flora drains. A wall moves it.
-TEST_F(NavigationSystemTest, GenerationAndReachKeyIgnoreFloraPatches) {
+// A flora patch (a tree felled, late placement) leaves generation(); a wall moves it.
+TEST_F(NavigationSystemTest, GenerationIgnoresFloraPatches) {
 	registerTree("Test_NavReachKeyTree", 0.4F);
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
@@ -896,27 +704,21 @@ TEST_F(NavigationSystemTest, GenerationAndReachKeyIgnoreFloraPatches) {
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
-	const NavigationSystem::Reach before	 = sys.reachFrom({0.0F, 0.0F}, kAgentRadius);
-	const std::uint64_t			  generation = sys.generation();
+	const std::uint64_t generation = sys.generation();
 
 	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({treeAt.x, treeAt.y}), treeAt, "Test_NavReachKeyTree"));
 	step(world, sys);
 	ASSERT_TRUE(meshClear(sys, treeAt)) << "the felled tree was patched out";
 	EXPECT_EQ(sys.generation(), generation) << "a flora patch moved the generation";
-	EXPECT_EQ(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).structuralEpoch, before.structuralEpoch)
-		<< "a flora patch moved the reach key";
 
 	placeTrees(executor, processed, "Test_NavReachKeyTree", {{-14.0F, 10.0F}}); // late placement in chunk (-1, 0)
 	step(world, sys);
 	ASSERT_FALSE(meshClear(sys, {-14.0F, 10.0F})) << "the late tree is in";
 	EXPECT_EQ(sys.generation(), generation);
-	EXPECT_EQ(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).structuralEpoch, before.structuralEpoch);
 
 	buildWall(cw, {20000, 20000}, {22000, 20000});
 	step(world, sys);
 	EXPECT_NE(sys.generation(), generation) << "a wall moves the generation";
-	EXPECT_NE(sys.reachFrom({0.0F, 0.0F}, kAgentRadius).structuralEpoch, before.structuralEpoch)
-		<< "a wall moves the reach key";
 }
 
 // Many placed obstacles leaving the world at once (felled) queue for removal. That backlog drains
@@ -1014,18 +816,15 @@ TEST_F(NavigationSystemTest, QueriesSeePatchesFromEndTickOn) {
 	wireArea(world, sys);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
-	ASSERT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius));
 	const std::uint64_t generation = sys.generation();
 
 	buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
 	sys.update(0.016F);
 	EXPECT_TRUE(sys.isBuilding()) << "the room is gathered";
-	EXPECT_TRUE(isReachable(sys, kOutside, kInside, kAgentRadius)) << "but not applied within its own tick";
-	EXPECT_EQ(sys.generation(), generation);
+	EXPECT_EQ(sys.generation(), generation) << "but not applied within its own tick";
 
 	sys.endTick();
-	EXPECT_FALSE(isReachable(sys, kOutside, kInside, kAgentRadius)) << "applied once the tick ended";
-	EXPECT_EQ(sys.generation(), generation + 1);
+	EXPECT_EQ(sys.generation(), generation + 1) << "applied once the tick ended";
 	EXPECT_FALSE(sys.isBuilding());
 	expectMeshesValid(sys);
 }
@@ -1033,7 +832,7 @@ TEST_F(NavigationSystemTest, QueriesSeePatchesFromEndTickOn) {
 // --- One mesh ------------------------------------------------------------------
 
 // WOR-644: two colonists far apart. Their ground is one mesh, so a route between them exists and
-// reaches() agrees.
+// connected() agrees.
 TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 	ConstructionWorld cw;
 	World			  world;
@@ -1047,7 +846,7 @@ TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 
 	settle(sys);
 	EXPECT_TRUE(routeBetween(sys, a, b).has_value());
-	EXPECT_TRUE(isReachable(sys, a, b, kAgentRadius));
+	EXPECT_TRUE(sys.connected(a, b));
 	EXPECT_EQ(sys.builtRegions().size(), 1u);
 }
 
@@ -1138,7 +937,7 @@ TEST_F(NavigationSystemTest, ArrivingChunkJoinsItsNeighbour) {
 	loadFor(*chunks, sys, camera);
 	settle(sys);
 	EXPECT_TRUE(routeBetween(sys, west, east).has_value()) << "the path crosses x = 512 m";
-	EXPECT_TRUE(isReachable(sys, west, east, kAgentRadius));
+	EXPECT_TRUE(sys.connected(west, east));
 }
 
 // A wanted chunk whose mover left before it loaded is not meshed when only the camera loads it; it is
@@ -1386,8 +1185,7 @@ namespace {
 	const glm::vec2 kPondAcross{0.0F, 10.0F}; // across the river, 10 m in a straight line
 } // namespace
 
-// The far bank of a river whose ford is 150 m east, among ponds, is about 15,000 structural steps
-// round, past the reach searches (2,000 from the goal, 5,000 from the start): walk() says far. The
+// The far bank of a river whose ford is 150 m east, among ponds, is about 15,000 steps round. The
 // route by ticket finds it, round the ford, and every leg of the route is clear of water.
 TEST_F(NavigationSystemTest, FarGoalIsRoutedRoundTheFord) {
 	World			  world;
@@ -1397,12 +1195,6 @@ TEST_F(NavigationSystemTest, FarGoalIsRoutedRoundTheFord) {
 	meshAround(world, {0.0F, 0.0F}, 1536.0F);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
-
-	sys.resetNavQueryStats();
-	const WalkAnswer walk = sys.walk(sys.reachFrom(kPondStart, kAgentRadius), kPondAcross);
-	EXPECT_TRUE(walk.far) << "the reach searches found it within their budgets";
-	EXPECT_EQ(sys.navQueryStats().probeExpansions, NavigationSystem::kReachProbeExpansions);
-	EXPECT_EQ(sys.navQueryStats().forwardExpansions, NavigationSystem::kReachExpansionCap);
 
 	const std::optional<std::vector<glm::vec2>> path = routeBetween(sys, kPondStart, kPondAcross);
 	ASSERT_TRUE(path.has_value()) << "no route round the ford";
@@ -1426,7 +1218,6 @@ TEST_F(NavigationSystemTest, FordFarAroundIsRoutedOverSeveralSlices) {
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 
-	EXPECT_TRUE(sys.walk(sys.reachFrom(kPondStart, kAgentRadius), kPondAcross).far);
 	const nav::RouteTicket						ticket = sys.requestRoute(kPondStart, std::array{kPondAcross}, kAgentRadius);
 	std::optional<NavigationSystem::RouteAnswer> answer;
 	for (int i = 0; i < 600 && !answer.has_value(); ++i) {
@@ -1440,9 +1231,9 @@ TEST_F(NavigationSystemTest, FordFarAroundIsRoutedOverSeveralSlices) {
 	EXPECT_LT(glm::distance(answer->waypoints.back(), kPondAcross), 0.01F);
 }
 
-// Every structural job moves the reach key, wherever it lands (an unbounded walk can find what any of
-// them changed): ground arriving in a far chunk, then walls; a quiet tick after them leaves it.
-TEST_F(NavigationSystemTest, ReachKeyMovesOncePerStructuralJob) {
+// generation() moves once for a tick that brings ground into a chunk, and once for a tick that
+// brings walls; a quiet tick after them leaves it.
+TEST_F(NavigationSystemTest, GenerationMovesOncePerGroundOrWallJob) {
 	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
 	chunks->setLoadRadius(0);
 	chunks->setUnloadRadius(8);
@@ -1456,23 +1247,23 @@ TEST_F(NavigationSystemTest, ReachKeyMovesOncePerStructuralJob) {
 	loadFor(*chunks, sys, camera);
 	settle(sys);
 	ASSERT_FALSE(sys.inSimArea({768.0F, 256.0F}));
-	const std::uint64_t key = sys.reachFrom({256.0F, 256.0F}, kAgentRadius).structuralEpoch;
+	const std::uint64_t key = sys.generation();
 
 	// The mover walks into (1, 0), which loads round it.
 	world.getComponent<Position>(mover)->value = {768.0F, 256.0F};
 	loadFor(*chunks, sys, camera);
 	step(world, sys);
 	ASSERT_TRUE(sys.inSimArea({768.0F, 256.0F})) << "the new chunk came in";
-	const std::uint64_t grounded = sys.reachFrom({256.0F, 256.0F}, kAgentRadius).structuralEpoch;
-	EXPECT_NE(grounded, key) << "ground arriving far away";
+	const std::uint64_t grounded = sys.generation();
+	EXPECT_EQ(grounded, key + 1) << "ground arriving";
 
-	buildWall(cw, {100000, 100000}, {104000, 100000});
-	buildWall(cw, {100000, 110000}, {104000, 110000});
+	buildWall(cw, {700000, 100000}, {704000, 100000});
+	buildWall(cw, {700000, 110000}, {704000, 110000});
 	step(world, sys);
-	const std::uint64_t walled = sys.reachFrom({256.0F, 256.0F}, kAgentRadius).structuralEpoch;
-	EXPECT_NE(walled, grounded) << "walls";
+	const std::uint64_t walled = sys.generation();
+	EXPECT_EQ(walled, grounded + 1) << "walls";
 	step(world, sys);
-	EXPECT_EQ(sys.reachFrom({256.0F, 256.0F}, kAgentRadius).structuralEpoch, walled);
+	EXPECT_EQ(sys.generation(), walled);
 }
 
 // --- Meshed ground: inSimArea, validity, water ---------------------------------
@@ -1595,7 +1386,7 @@ TEST_F(NavigationSystemTest, WaterAcrossChunkBordersHasNoSeam) {
 			EXPECT_FALSE(meshClear(sys, {along, off})) << "seam on y = 0 at x = " << along;
 		}
 	}
-	EXPECT_FALSE(isReachable(sys, {-30.0F, 0.0F}, {0.5F, 0.5F}, kAgentRadius)) << "the pond's middle is water on every side";
+	EXPECT_FALSE(sys.connected({-30.0F, 0.0F}, {0.5F, 0.5F})) << "the pond's middle is water on every side";
 	EXPECT_TRUE(routeBetween(sys, {-30.0F, 0.0F}, {30.0F, 0.0F}).has_value()) << "around the pond, across both borders";
 }
 
@@ -2757,8 +2548,7 @@ namespace {
 } // namespace
 
 // A goal ringed by trees so close no 0.6 m disc gets between them has no known way: the route
-// answers so, and a walker ordered there never walks through the ring, collision and all. The reach
-// walk, on the structural mesh, still says yes.
+// answers so, and a walker ordered there never walks through the ring, collision and all.
 TEST_F(NavigationSystemTest, GoalRingedByTreesHasNoKnownWay) {
 	registerTree("Test_NavRingTree", 0.3F);
 	const glm::vec2 goal{20.0F, 20.0F};
@@ -2767,7 +2557,6 @@ TEST_F(NavigationSystemTest, GoalRingedByTreesHasNoKnownWay) {
 	placeTrees(rig.executor, rig.processed, "Test_NavRingTree", treeRing(goal, 3.0F));
 	settle(rig.nav);
 	ASSERT_FALSE(meshClear(rig.nav, treeRing(goal, 3.0F).front())) << "the ring is in";
-	EXPECT_TRUE(rig.nav.reaches(rig.nav.reachFrom(from, kAgentRadius), goal));
 	const nav::RouteTicket						 ticket = rig.nav.requestRoute(from, std::array{goal}, kAgentRadius);
 	std::optional<NavigationSystem::RouteAnswer> answer;
 	for (int i = 0; i < 60 && !answer.has_value(); ++i) {
@@ -3124,7 +2913,7 @@ TEST_F(NavigationSystemTest, WaterInGroundThatIsntComingIsSkipped) {
 	rig.start();
 	ASSERT_FALSE(rig.nav.inSimArea(kUnmeshed));
 	ASSERT_EQ(landChunks()->getChunk(world::worldToChunk({kUnmeshed.x, kUnmeshed.y})), nullptr) << "not loaded";
-	EXPECT_FALSE(rig.nav.reaches(rig.nav.reachFrom({0.0F, 0.0F}, kAgentRadius), kUnmeshed));
+	EXPECT_FALSE(rig.nav.connected({0.0F, 0.0F}, kUnmeshed));
 
 	const EntityID colonist = needyColonist(rig, {0.0F, 0.0F}, NeedType::Thirst, 10.0F);
 	rememberWater(rig.world, colonist, kUnmeshed);
@@ -3265,12 +3054,9 @@ TEST_F(NavigationSystemTest, LongMoveOrderKeepsItsGroundWhileTheCameraWanders) {
 
 // --- What the camera can't move ---------------------------------------------------------------
 
-// A failed route recorded at a spot 172 m from chunk (1, 0), the colonist since walked 120 m west
-// (still near the spot): the chunk is in the band the anchor's stamp covers (256 m round the
-// spot) but neither loaded nor kept by the colonist's own anchor (292 m off). The camera loads the
-// chunk, which meshes nothing, and then wanders 20 chunks east. Neither moves the anchor's stamp or
-// generation(); a wall built in the chunk while it is loaded does move the stamp.
-TEST_F(NavigationSystemTest, CameraComingAndGoingLeavesTheVerdictStamp) {
+// A colonist 292 m from chunk (1, 0), so his anchor does not keep it. The camera loads the chunk,
+// which meshes nothing, and then wanders 20 chunks east. Neither moves generation().
+TEST_F(NavigationSystemTest, CameraComingAndGoingLeavesTheGeneration) {
 	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
 	chunks->setLoadRadius(0);
 	chunks->setUnloadRadius(0);
@@ -3279,7 +3065,6 @@ TEST_F(NavigationSystemTest, CameraComingAndGoingLeavesTheVerdictStamp) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
 	sys.setConstructionWorld(&cw);
-	const glm::vec2 at{340.0F, 256.0F};
 	const glm::vec2 colonistAt{220.0F, 256.0F};
 	addColonist(world, colonistAt, "Keeper");
 	std::vector<world::ChunkAnchor> anchors;
@@ -3292,25 +3077,17 @@ TEST_F(NavigationSystemTest, CameraComingAndGoingLeavesTheVerdictStamp) {
 		 settle(sys);
 	};
 	stand(0);
-	const std::uint64_t verdict	   = sys.verdictStamp(at);
 	const std::uint64_t generation = sys.generation();
 
 	stand(1);
 	ASSERT_NE(chunks->getChunk({1, 0}), nullptr) << "the camera loaded chunk (1, 0)";
 	ASSERT_FALSE(sys.inSimArea({768.0F, 256.0F})) << "and meshed it";
-	EXPECT_EQ(sys.verdictStamp(at), verdict);
 	EXPECT_EQ(sys.generation(), generation);
 	for (int i = 2; i < 22; ++i) {
 		stand(i);
 	}
 	ASSERT_TRUE(sys.inSimArea(colonistAt)) << "the colonist's own ground stays";
-	EXPECT_EQ(sys.verdictStamp(at), verdict) << "the camera moved the stamp";
-	EXPECT_EQ(sys.generation(), generation);
-
-	stand(1);
-	buildWall(cw, {700000, 200000}, {704000, 200000});
-	stand(1);
-	EXPECT_NE(sys.verdictStamp(at), verdict) << "a wall in the band";
+	EXPECT_EQ(sys.generation(), generation) << "the camera moved the generation";
 }
 
 // --- Stale stays stale ---------------------------------------------------------------------------
@@ -3773,9 +3550,9 @@ namespace {
 
 } // namespace
 
-// A route by ticket on ground with no placed obstacles is the walk the reach search finds: through a
-// door, from the start to the goal, the same length.
-TEST_F(NavigationSystemTest, RouteByTicketIsTheReachWalk) {
+// A route by ticket is the walk a direct search of the mesh finds: through a door, from the start to
+// the goal, the same length.
+TEST_F(NavigationSystemTest, RouteByTicketIsTheDirectSearch) {
 	ConstructionWorld cw;
 	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
 	World			  world;
@@ -3784,8 +3561,9 @@ TEST_F(NavigationSystemTest, RouteByTicketIsTheReachWalk) {
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 
-	const WalkAnswer walked = sys.walk(sys.reachFrom(kOutside, kAgentRadius), kInside);
-	ASSERT_TRUE(walked.walk.has_value());
+	const geometry::nav::PathResult walked =
+		geometry::nav::pathThrough(sys.navMesh().view(), mm(kOutside), mm(kInside), static_cast<std::int64_t>(std::llround(kAgentRadius * 1000.0F)), {});
+	ASSERT_TRUE(walked.reachable);
 	const nav::RouteTicket	   ticket = sys.requestRoute(kOutside, std::array{kInside}, kAgentRadius);
 	std::optional<RouteAnswer> answer;
 	for (int i = 0; i < 4 && !answer.has_value(); ++i) {
@@ -3797,7 +3575,7 @@ TEST_F(NavigationSystemTest, RouteByTicketIsTheReachWalk) {
 	EXPECT_EQ(answer->goalIndex, 0);
 	EXPECT_EQ(mm(answer->waypoints.front()), mm(kOutside));
 	EXPECT_EQ(mm(answer->waypoints.back()), mm(kInside));
-	EXPECT_NEAR(answer->lengthMeters, *walked.walk, 0.01F);
+	EXPECT_NEAR(answer->lengthMeters, static_cast<float>(walked.cost / 1000.0), 0.01F);
 	EXPECT_NEAR(answer->lengthMeters, lengthOf(answer->waypoints), 0.002F);
 	EXPECT_EQ(answer->restarts, 0U);
 }
@@ -4596,29 +4374,6 @@ TEST_F(NavigationSystemTest, LargeDiscDoesNotDelayANearbyMover) {
 		EXPECT_GE(landed[k], 0) << "tree " << k << " waited behind the large disc";
 		EXPECT_LE(landed[k], 12) << "tree " << k;
 	}
-}
-
-// --- Reach answers while ground arrives ------------------------------------------------------------
-
-// A goal off meshed ground is "maybe" only in a chunk a mover wants: loaded but wanted by nobody, it
-// is unreachable (nothing will mesh it); wanted but not loaded yet, it is "maybe".
-TEST_F(NavigationSystemTest, GoalOffMeshedGroundIsMaybeOnlyInAWantedChunk) {
-	ConstructionWorld cw;
-	World			  world;
-	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
-	sys.setChunkManager(landChunks());
-	sys.setConstructionWorld(&cw);
-	addColonist(world, {420.0F, 100.0F}, "West");  // wants chunk (0, 0) only
-	addColonist(world, {1500.0F, 100.0F}, "East"); // wants (2, 0) and (3, 0), past the loaded chunks
-	settle(sys);
-	const glm::vec2 loadedUnwanted{600.0F, 100.0F};
-	const glm::vec2 wantedUnloaded{1600.0F, 100.0F};
-	ASSERT_NE(landChunks()->getChunk(world::worldToChunk({loadedUnwanted.x, loadedUnwanted.y})), nullptr);
-	ASSERT_EQ(landChunks()->getChunk(world::worldToChunk({wantedUnloaded.x, wantedUnloaded.y})), nullptr);
-	ASSERT_FALSE(sys.inSimArea(loadedUnwanted));
-	ASSERT_FALSE(sys.inSimArea(wantedUnloaded));
-	EXPECT_FALSE(sys.walk(sys.reachFrom({420.0F, 100.0F}, kAgentRadius), loadedUnwanted).reachable());
-	EXPECT_TRUE(sys.walk(sys.reachFrom({1500.0F, 100.0F}, kAgentRadius), wantedUnloaded).reachable());
 }
 
 // --- Connectivity (connected, connectivityEpoch) and position checks on the real mesh -------------

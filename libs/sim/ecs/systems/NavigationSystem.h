@@ -8,7 +8,7 @@
 //  - navMesh: ground and water, built walls and doors, and detail (placed obstacles). Routes,
 //    connectivity (connected), and every position check (validity, buildability, stand points, the
 //    landing) read it.
-//  - structural: the same without detail. Only the reach walk (reachFrom, walk) reads it.
+//  - structural: the same without detail. No query reads it.
 // A mover (Position + AgentRadius) wants every kDetailCellMm cell within R of the cell it stands in
 // (R is its sight distance plus kSightBufferMeters), so wherever it stands in that cell everything
 // within R of it is wanted. The disc is taken when it enters a new cell or its R changes, nearest
@@ -63,9 +63,7 @@
 
 #include "../EntityID.h"
 #include "../ISystem.h"
-#include "../components/WalkAnswer.h"
 
-#include <core/RectMm.h>
 #include <core/Vec2i64.h>
 
 #include <nav/NavMesh.h>
@@ -149,13 +147,6 @@ class NavigationSystem : public ISystem {
 	void setConstructionWorld(const construction::ConstructionWorld* world);
 
 	// --- Queries (each waits for the patches in flight first) -------------------
-
-	// The budgets of a reach walk (walk()): the goal-side and start-side structural searches,
-	// kReachProbeExpansions and kReachExpansionCap by default; tests set small ones to make a goal far.
-	void setReachBudgets(std::uint32_t probe, std::uint32_t forward) {
-		reachProbeExpansions = probe;
-		reachExpansionCap	 = forward;
-	}
 
 	// Routes under the time budget, asked for by ticket and answered on a later tick.
 	//
@@ -251,68 +242,6 @@ class NavigationSystem : public ISystem {
 	// route answer's labelEpoch) holds while it has not moved. Values never repeat.
 	[[nodiscard]] std::uint64_t connectivityEpoch() const;
 
-	// What a colonist can reach, and how far it walks there: a walk on the structural mesh (no
-	// placed obstacles) under the colonist's belief, over all meshed ground, bounded by the walk asked
-	// about. reachFrom notes the start once; reaches() and walk() walk to one goal each.
-	//   A start off meshed ground: every goal "maybe" (true; the straight line).
-	//   A goal off meshed ground: "maybe" while a mover wants its chunk (its ground is queued), and
-	//   unreachable otherwise.
-	//   Otherwise three answers: a length, "no", or far. A search from the goal toward the start
-	//   (kReachProbeExpansions) answers first: a goal sealed in a pocket runs it dry at once, a definite
-	//   no, and one that finds the start has the walk. Only then the search from the start
-	//   (kReachExpansionCap); when both give up, the goal is far, which is never "no" (WalkAnswer).
-	// startCell (the start, kReachCellMm to a step) and structuralEpoch (moves with every structural
-	// job, anywhere) together say when a walk from here still holds. A Reach is used within one
-	// frame; the belief's sets must outlive it.
-	struct Reach {
-		bool						onGround = false;
-		geometry::Vec2i64			startMm{0, 0};
-		std::int64_t				radiusMm		= 0;
-		std::int64_t				startCell		= 0;
-		std::uint64_t				structuralEpoch = 0;
-		// Every chunk within the anchor load range of the start has its ground meshed. Until then a
-		// walk that fails may only be waiting on it: "not now", which is never remembered.
-		bool						settled = true;
-		geometry::nav::BeliefFilter belief;
-	};
-	// Ground landed at this update's join (reachSettledThisUpdate), cleared at the next update.
-	[[nodiscard]] bool groundLandedThisUpdate() const { return !landedThisUpdate.empty(); }
-	// The ground this update's join landed is what settled a reach from `meters` (Reach::settled):
-	// some of it is in a chunk the reach box meets, and every such chunk is meshed now.
-	[[nodiscard]] bool reachSettledThisUpdate(glm::vec2 meters) const;
-	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
-	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
-	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or none when it
-	// is unreachable or every walk there is longer than maxWalk, or far when the searches gave up.
-	[[nodiscard]] WalkAnswer walk(const Reach& reach, glm::vec2 goalMeters, float maxWalk = std::numeric_limits<float>::infinity()) const;
-	// Both ends are on meshed ground: a walk between them is the colonist's to remember
-	// (SourceReachMemo).
-	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
-	// The stamp behind a route that failed at `anchor`: the structural content (walls, doors, water)
-	// of the chunks within twice the anchor load range of it. Ground arriving doesn't move it.
-	[[nodiscard]] std::uint64_t verdictStamp(glm::vec2 anchor) const;
-	// The structural content of the chunks in the box spanning `from` and `to`, grown by the anchor
-	// load range for a route that bends out of it: what a failed route to a far target was true for.
-	[[nodiscard]] std::uint64_t spanStamp(glm::vec2 from, glm::vec2 to) const;
-	// `here` is within the anchor load range of `anchor`, per axis: where a failed route recorded at
-	// the anchor still holds.
-	[[nodiscard]] bool nearAnchor(glm::vec2 anchor, glm::vec2 here) const;
-	// The least load range any anchor has (ChunkManager::kMinAnchorLoadRangeMeters).
-	[[nodiscard]] float anchorLoadRangeMeters() const;
-	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
-	static constexpr std::int64_t kReachCellMm = 2000;
-	// The search budgets, chosen from measurements (nav-gate-result-2.md in the nav notes, 2026-11-11,
-	// NavScale.bench.cpp's BM_SearchReach, BM_SearchCases and BM_DefaultBudgets on the Quick Start
-	// planet's chunks): a structural step costs 0.29-0.32 us on the main thread, 0.56 us at worst.
-	// Change them from new measurements, not by feel.
-	//
-	// The search from the goal expands at most this many triangles: 0.6 ms, 1.1 ms at worst. Every
-	// dead end measured runs dry well inside it (a sealed room in 2, compound rooms in 67-482).
-	static constexpr std::uint32_t kReachProbeExpansions = 2000;
-	// The search from the start expands at most this many: 1.6 ms, 2.8 ms at worst (with the probe a
-	// reach walk stays under 4 ms). Real ground reaches 1.1 km at the median within it; a goal past it
-	// is far, which a route request then settles.
-	static constexpr std::uint32_t kReachExpansionCap = 5000;
 	// A route's builtNavVersion once marked stale (detail landed across it, no clear point ahead): a
 	// value generation() never takes, so no re-stamp reads it as current.
 	static constexpr std::uint64_t kStaleRoute = std::numeric_limits<std::uint64_t>::max();
@@ -445,18 +374,10 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] std::uint64_t generation() const;
 
 	// Cumulative instrumentation since the last resetNavQueryStats(): the patches the joined jobs
-	// applied to each mesh, and the reach walks.
+	// applied to each mesh.
 	struct NavQueryStats {
 		std::uint64_t navPatches		= 0;
 		std::uint64_t structuralPatches = 0;
-		// Reach walks: those the goal-side search answered, those that went on to the start-side
-		// search, the expansions of each, and those that were far.
-		std::uint64_t structuralWalks	= 0;
-		std::uint64_t probeAnswered		= 0;
-		std::uint64_t forwardSearches	= 0;
-		std::uint64_t probeExpansions	= 0;
-		std::uint64_t forwardExpansions = 0;
-		std::uint64_t farWalks			= 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
@@ -584,10 +505,8 @@ class NavigationSystem : public ISystem {
 		std::vector<geometry::nav::DoorPortal>								 doorEdges;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
 		std::vector<std::pair<glm::vec2, glm::vec2>>						 detailAddBoxes; // each added obstacle's box, metres
-		// Structural only: the chunks the job changes, those whose ground arrives, the boxes where it
-		// closes ground (a wall, new water), and whether it touches a chunk an anchor holds.
-		std::vector<world::ChunkCoordinate>				  structuralChunks;
-		std::vector<world::ChunkCoordinate>				  groundChunks;
+		// Structural only: the boxes where it closes ground (a wall, new water), and whether it
+		// touches a chunk an anchor holds.
 		std::vector<std::pair<glm::vec2, glm::vec2>>		  blockingBoxes;
 		bool												  anchored = false;
 
@@ -644,35 +563,12 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool anchorHolds(world::ChunkCoordinate coord) const;
 	// A structural change in the chunks meeting [lo, hi] (metres). Every one moves generation() when
 	// an anchor holds one of those chunks, and one that closes ground leaves the routes it crosses
-	// stale (restampRoutes). A change of content (a wall, a door, a chunk's water) is counted against
-	// the chunks for the reach stamps; ground arriving is not, since ground never leaves.
+	// stale (restampRoutes).
 	enum class StructuralChange { Opens, Closes, GroundArrives };
 	void noteStructural(glm::vec2 lo, glm::vec2 hi, StructuralChange change);
-	// The chunk's ground is in the meshes (gathered and joined).
-	[[nodiscard]] bool groundMeshed(world::ChunkCoordinate coord) const;
-	// Every chunk whose interior meets the box's interior has its ground meshed. The same "interiors
-	// meet" rule picks the chunks a stamp reads (forChunksMeeting), so a chunk that only touches a
-	// box's edge never enters either.
-	[[nodiscard]] bool groundMeshedThrough(const geometry::RectMm& box) const;
-	static void		   forChunksMeeting(const geometry::RectMm& box, const std::function<void(world::ChunkCoordinate)>& visit);
 	// As a join moves generation(), the routes current before it that no closing box crosses are
 	// stamped current.
 	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
-	// The structural content of the chunks the box touches, and with withGround which of them have
-	// their ground meshed.
-	[[nodiscard]] std::uint64_t			  chunkStamp(const geometry::RectMm& box) const;
-	// The structural walk from start to goal no dearer than maxCost, three ways (see Reach): the
-	// goal-side search, then the start-side one. `gaveUp` when both ran out of steps (far); else
-	// `walk` holds the answer. `expansions` is both searches'.
-	struct StructuralWalk {
-		geometry::nav::PathResult walk;
-		bool					  gaveUp	 = false;
-		std::uint32_t			  expansions = 0;
-	};
-	[[nodiscard]] StructuralWalk structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm, std::int64_t radius,
-												const geometry::nav::BeliefFilter& belief, double maxCost) const;
-	[[nodiscard]] static geometry::RectMm boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm);
-	[[nodiscard]] std::int64_t			  anchorLoadRangeMm() const;
 	// A placed obstacle in the nav mesh: its outline's centre and the distance from there to its
 	// farthest corner.
 	struct PlacedObstacle {
@@ -805,18 +701,7 @@ class NavigationSystem : public ISystem {
 	std::unique_ptr<Worker> routeWorker;
 
 	mutable std::uint64_t structuralGeneration = 0;
-	// Every structural job joined, wherever it lands: what a walk can find may have changed (Reach).
-	mutable std::uint64_t structuralEpoch = 0;
-	// Structural changes per chunk, for the reach stamps, counted at the join.
-	mutable std::map<world::ChunkCoordinate, std::uint64_t, ChunkLess> chunkStructuralVersion;
-	// The chunks whose ground the joins since the last update landed, and those the last update took,
-	// sorted (reachSettledThisUpdate).
-	mutable std::vector<world::ChunkCoordinate> groundLanded;
-	std::vector<world::ChunkCoordinate>			landedThisUpdate;
-	mutable std::set<world::ChunkCoordinate, ChunkLess>				 unmeshedReported; // logged once each (groundMeshedThrough)
-	std::set<world::ChunkCoordinate, ChunkLess>							 anchorChunks;
-	std::uint32_t reachProbeExpansions = kReachProbeExpansions;
-	std::uint32_t reachExpansionCap	   = kReachExpansionCap;
+	std::set<world::ChunkCoordinate, ChunkLess> anchorChunks;
 	// The boxes of the placed obstacles that landed in the joined jobs, for markCrossedRoutes.
 	std::vector<std::pair<glm::vec2, glm::vec2>> detailLanded;
 

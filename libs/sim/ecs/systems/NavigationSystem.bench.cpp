@@ -743,104 +743,6 @@ namespace {
 		}
 	}
 
-	// Reach against route (nav-mesh-variable-resolution.md section 10): over random pairs in the
-	// colony's reach square, the structural walk's verdict (walk) against the confined route's
-	// (by ticket), under the same belief. range(0): 0 no belief, 1 a belief knowing a doorless room's
-	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, times one walk
-	// call (mean and worst), and counts the ticks the belief route into the room takes to answer.
-	void BM_ReachAgainstRoute(benchmark::State& state) {
-		const bool						  room = state.range(0) != 0;
-		std::unordered_set<std::uint64_t> knownSegments;
-		std::unordered_set<std::uint64_t> knownOpenings;
-		const glm::vec2					  roomLo = kColony + glm::vec2{20.0F, -30.0F};
-		const glm::vec2					  roomHi = roomLo + glm::vec2{12.0F, 10.0F};
-		for (auto _ : state) {
-			Rig rig(0);
-			colony(rig);
-			if (room) {
-				const glm::vec2 corners[] = {roomLo, {roomHi.x, roomLo.y}, roomHi, {roomLo.x, roomHi.y}};
-				for (int k = 0; k < 4; ++k) {
-					const glm::vec2 a	   = corners[k];
-					const glm::vec2 b	   = corners[(k + 1) % 4];
-					const auto		commit = rig.construction.commitSegment({std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
-																			{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)}, "Wood",
-																			"Standard", construction::kInvalidFoundation);
-					for (const auto id : commit.createdSegments) {
-						rig.construction.setSegmentState(id, construction::FoundationState::Built);
-						knownSegments.insert(static_cast<std::uint64_t>(id));
-					}
-				}
-			}
-			rig.settle();
-			TickStats warmup;
-			rig.ticks(warmup, 4); // the colony's flora in
-			rig.settle();
-			const geometry::nav::BeliefFilter belief = room ? geometry::nav::BeliefFilter{&knownSegments, &knownOpenings}
-															: geometry::nav::BeliefFilter{};
-
-			std::uint32_t seed = 11;
-			auto		  unit = [&seed] {
-				 seed = hashU32(seed + 0x9e3779b9U);
-				 return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
-			};
-			int	   pairs	  = 0;
-			int	   bothYes	  = 0;
-			int	   bothNo	  = 0;
-			int	   reachOnly  = 0; // reach says yes, the route fails
-			int	   routeOnly  = 0; // reach says no, a route exists
-			double walkUs	  = 0.0;
-			double walkMaxUs  = 0.0;
-			double walkFailUs = 0.0;
-			int	   walkFails  = 0;
-			for (int i = 0; i < 400; ++i) {
-				const glm::vec2 a = kColony + glm::vec2{(unit() - 0.5F) * 60.0F, (unit() - 0.5F) * 30.0F};
-				const glm::vec2 b = room && i % 4 == 0 ? roomLo + glm::vec2{1.0F + unit() * 10.0F, 1.0F + unit() * 8.0F}
-													   : a + glm::vec2{(unit() - 0.5F) * 240.0F, (unit() - 0.5F) * 240.0F};
-				if (!rig.nav.isValidPosition(a)) {
-					continue;
-				}
-				++pairs;
-				const Clock::time_point start = Clock::now();
-				const bool				walk  = rig.nav.walk(rig.nav.reachFrom(a, kAgentRadius, belief), b).reachable();
-				const double			us	  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
-				walkUs += us;
-				walkMaxUs = std::max(walkMaxUs, us);
-				if (!walk) {
-					walkFailUs += us;
-					++walkFails;
-				}
-				int		   routeTicks = 0;
-				const auto answer	  = rig.route(a, b, belief, routeTicks);
-				const bool route	  = answer.has_value() && answer->outcome == nav::RouteOutcome::Routed;
-				bothYes += walk && route ? 1 : 0;
-				bothNo += !walk && !route ? 1 : 0;
-				reachOnly += walk && !route ? 1 : 0;
-				routeOnly += !walk && route ? 1 : 0;
-				if (walk != route) {
-					std::printf("disagree %s (%.2f, %.2f) -> (%.2f, %.2f) goal valid %d\n", walk ? "reachOnly" : "routeOnly", a.x, a.y, b.x, b.y,
-								rig.nav.isValidPosition(b) ? 1 : 0);
-				}
-			}
-			state.counters["pairs"]			 = pairs;
-			state.counters["bothYes"]		 = bothYes;
-			state.counters["bothNo"]		 = bothNo;
-			state.counters["reachOnly"]		 = reachOnly;
-			state.counters["routeOnly"]		 = routeOnly;
-			state.counters["walkMeanUs"]	 = walkUs / std::max(pairs, 1);
-			state.counters["walkMaxUs"]		 = walkMaxUs;
-			state.counters["walkFailMeanUs"] = walkFailUs / std::max(walkFails, 1);
-
-			if (room) {
-				const glm::vec2 inside		   = (roomLo + roomHi) * 0.5F;
-				int				roomTicks	   = 0;
-				const auto		answer		   = rig.route(kColony, inside, belief, roomTicks);
-				state.counters["roomRouteTicks"] = roomTicks;
-				state.counters["roomRouted"]	   = answer.has_value() && answer->outcome == nav::RouteOutcome::Routed ? 1.0 : 0.0;
-			}
-
-		}
-	}
-
 	// The build tool's per-frame cursor checks in the forest: isAreaWalkable over a 4 m square
 	// footprint and isPolylineWalkable over a 20 m wall line, each sampled every 0.5 m, at 200 spots
 	// round the colony. Reports one frame's pair of checks.
@@ -888,8 +790,6 @@ namespace {
 			const auto answer			 = rig.route(a + glm::vec2{1.0F, 0.0F}, b + glm::vec2{1.0F, 0.0F}, {}, pathTicks);
 			state.counters["pathTicks"] = pathTicks;
 			state.counters["routes"]	 = answer.has_value() && answer->outcome == nav::RouteOutcome::Routed ? 1.0 : 0.0;
-			state.counters["reaches"] =
-				rig.nav.reaches(rig.nav.reachFrom(a + glm::vec2{1.0F, 0.0F}, kAgentRadius), b + glm::vec2{1.0F, 0.0F}) ? 1.0 : 0.0;
 		}
 	}
 
@@ -1568,7 +1468,6 @@ BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMil
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanWalk)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RouteSlice)->Arg(1)->Arg(20)->Arg(200)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_CursorCheck)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
