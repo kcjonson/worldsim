@@ -186,8 +186,8 @@ struct Task {
 	// zero means the Rerouting display window has elapsed (revert to Traveling).
 	std::uint8_t navStateHold = 0;
 	// NavigationSystem::generation() when the route was deferred (navState AwaitingMesh). The route
-	// is requested again once generation() moves off this value: a structural build has landed in
-	// ground an anchor holds, and the waiting goal is one (NavigationSystem::appendAnchors).
+	// is requested again once generation() moves off this value: a structural build has landed
+	// where the route was asked about.
 	std::uint64_t deferredNavGeneration = 0;
 	// SourceReachMemo::Anchor::stamp() of the colonist's verdicts when the route came back with no
 	// believed route (navState CantFindWayTo). The next decision records needSourceKey unreachable only

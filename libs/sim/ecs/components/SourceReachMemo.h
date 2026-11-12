@@ -135,7 +135,7 @@ namespace ecs {
 		/// there to the target, before the target is asked about again.
 		static constexpr float kGaveUpMoveFraction = 0.25F;
 		/// And at least this far, so a target a few metres off across a long river isn't asked about again
-		/// at every step: the default anchor load range (ChunkManager::kDefaultAnchorLoadRangeMeters).
+		/// at every step.
 		static constexpr float kGaveUpMoveFloorMeters = 128.0F;
 
 		/// Forget the failed and gave-up routes whose span stamp moved: `spanStamp(from, target)` is the

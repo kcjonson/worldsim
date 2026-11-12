@@ -16,6 +16,7 @@
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Action.h"
+#include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
 #include "../components/Colonist.h"
 #include "../components/DecisionTrace.h"
@@ -114,6 +115,7 @@ namespace ecs::test {
 		EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
+			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
@@ -2889,6 +2891,7 @@ namespace ecs::test {
 		EntityID createColonist(glm::vec2 position = {0.0F, 0.0F}) {
 			auto entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
+			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
@@ -4915,6 +4918,7 @@ namespace ecs::test {
 		const auto		farColonist = world->createEntity();
 		world->addComponent<Position>(farColonist, Position{{100.0F, 0.0F}});
 		world->addComponent<Colonist>(farColonist, Colonist{"B"});
+		world->addComponent<AgentRadius>(farColonist, AgentRadius{});
 
 		const auto colonist = createColonist(start);
 		satisfyAllNeeds(*getNeeds(colonist));

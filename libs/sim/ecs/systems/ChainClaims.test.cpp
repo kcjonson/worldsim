@@ -140,6 +140,7 @@ namespace ecs::test {
 		EntityID createColonist(glm::vec2 position) {
 			const EntityID entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
+			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			auto needs = NeedsComponent::createDefault();
@@ -3818,7 +3819,6 @@ namespace ecs::test {
 
 		EntityID walker(glm::vec2 position) {
 			const EntityID colonist = createColonist(position);
-			world->addComponent<AgentRadius>(colonist, AgentRadius{});
 			return colonist;
 		}
 
