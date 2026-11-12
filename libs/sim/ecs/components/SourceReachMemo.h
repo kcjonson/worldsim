@@ -85,8 +85,9 @@ namespace ecs {
 		}
 
 		/// The reach stamp a route failure gets while ground within the anchor load range of the colonist
-		/// is still to mesh (NavigationSystem::Reach::settled): never recorded, and the next decision
-		/// picks afresh. NavigationSystem wakes a mover whose failure carries it once that ground lands.
+		/// is still to mesh (NavigationSystem::Reach::settled): not recorded unless its search gave up,
+		/// and the next decision picks afresh. The AI wakes a colonist whose failure carries it once that
+		/// ground lands (AIDecisionSystem::wakeSettledFailures).
 		static constexpr std::uint64_t kUnsettledStamp = std::numeric_limits<std::uint64_t>::max();
 
 		/// Where the failed routes were found, until the first keep().
@@ -176,8 +177,12 @@ namespace ecs {
 				if (it->second.walk.has_value()) {
 					return *it->second.walk <= maxWalk ? it->second.walk : std::nullopt;
 				}
+				// The searches ran out of steps short of the bound, so a larger one runs out the same way.
+				if (it->second.far) {
+					return WalkAnswer::farAway();
+				}
 				if (it->second.bound >= maxWalk) {
-					return it->second.far ? WalkAnswer::farAway() : WalkAnswer{};
+					return {};
 				}
 			}
 			const WalkAnswer found = probe(position, maxWalk);

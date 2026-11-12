@@ -193,6 +193,7 @@ struct Task {
 	// believed route (navState CantFindWayTo). The next decision records needSourceKey unreachable only
 	// while its own anchor still stamps the same, so the verdict never outlives the structural mesh and
 	// belief it was found under, and a change outside the anchor's reach doesn't stop it being recorded.
+	// A route whose search gave up is recorded whatever the stamp.
 	std::uint64_t blockedReachStamp = 0;
 	// That route's search gave up (NavigationSystem::PathAnswer::gaveUp) rather than finding no way.
 	bool blockedSearchGaveUp = false;
@@ -304,6 +305,7 @@ struct Task {
 		deferredNavGeneration = 0;
 		blockedReachStamp = 0;
 		blockedSearchGaveUp = false;
+		needSourceKey = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
 		needItemDefNameId = 0;

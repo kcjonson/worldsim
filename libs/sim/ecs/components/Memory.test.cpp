@@ -399,6 +399,24 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	EXPECT_LE(probes - before, 2 * kSources + 1) << "the ones nearer than its walk once more, bounded by it";
 }
 
+// A far verdict is held whatever bound it is asked with: the source is probed once, not again for the
+// full walk after its stretched one.
+TEST(MemoryQueries, SourceReachMemoHoldsAFarVerdictAtALargerBound) {
+	ecs::SourceReachMemo memo;
+	memo.keep({.startCell = 1, .structuralEpoch = 1, .beliefVersion = 0}, {.at = {0.0F, 0.0F}, .structural = 1, .beliefVersion = 0}, 16);
+	constexpr uint64_t kSource = 9;
+	constexpr glm::vec2 kAt{0.0F, 30.0F};
+	size_t			   probes = 0;
+	const auto		   probe  = [&](const glm::vec2&, float) {
+		   ++probes;
+		   return ecs::WalkAnswer::farAway();
+	};
+	EXPECT_TRUE(memo.walk(kSource, kAt, 60.0F, probe).far);
+	EXPECT_TRUE(memo.walk(kSource, kAt, std::numeric_limits<float>::infinity(), probe).far);
+	EXPECT_TRUE(memo.walk(kSource, kAt, 10.0F, probe).far);
+	EXPECT_EQ(probes, 1U) << "the far verdict was probed again";
+}
+
 // A search that gave up is asked again only once the colonist has moved a quarter of the way to its
 // target, and never for less than kGaveUpMoveFloorMeters: a target 4 m across a river holds through
 // 100 m of walking about, one 2 km off through 200 m.

@@ -53,7 +53,7 @@ namespace ecs {
 			} else if (option.status == OptionStatus::Regrowing) {
 				text += " (source regrowing)";
 			} else if (option.status == OptionStatus::SearchGaveUp) {
-				text += " (gave up searching for a way there)";
+				text += std::format("{} (gave up searching for a way there)", option.needValue < 10.0F ? " (critical)" : "");
 			} else if (option.status == OptionStatus::Reserved) {
 				text += std::format("{} (reserved by {})", option.needValue < 10.0F ? " (critical)" : "", holderName(world, option));
 			} else if (option.needValue < 10.0F) {
