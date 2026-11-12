@@ -9,6 +9,7 @@
 #include "CollisionSystem.h"
 #include "CraftingGoalSystem.h"
 #include "MovementSystem.h"
+#include "NavigationSystem.h"
 #include "PhysicsSystem.h"
 #include "StorageGoalSystem.h"
 #include "TimeSystem.h"
@@ -35,13 +36,19 @@
 #include "../components/WorkQueue.h"
 #include "assets/ActionTypeRegistry.h"
 #include "assets/AssetRegistry.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/RecipeRegistry.h"
+
+#include <construction/ConstructionWorld.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <array>
+#include <filesystem>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -133,6 +140,7 @@ namespace ecs::test {
 		EntityID createColonist(glm::vec2 position) {
 			const EntityID entity = world->createEntity();
 			world->addComponent<Position>(entity, Position{position});
+			world->addComponent<AgentRadius>(entity, AgentRadius{});
 			world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
 			world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			auto needs = NeedsComponent::createDefault();
@@ -2016,20 +2024,19 @@ namespace ecs::test {
 		ASSERT_EQ(getTask(colonist)->harvestTargetKey, nextKey);
 		const uint64_t gathering = getTask(colonist)->instanceId;
 
-		// No nav regions in this headless world, so the failed route is set by hand, as requestNavPath
-		// leaves a Blocked one: stopped, under the reach it stands in (stamp 0).
+		// No nav in this headless world, so the failed route is set by hand, as failRoute leaves it: stopped,
+		// its prompt decision had. The claim index the next decider builds holds only what it carries.
 		getTask(colonist)->navState = NavState::CantFindWayTo;
+		getTask(colonist)->routeFailureDecided = true;
+		getTask(colonist)->timeSinceEvaluation = 0.0F;
 		world->getComponent<MovementTarget>(colonist)->active = false;
-		getTask(colonist)->blockedReachStamp = 0;
-		decide(colonist);
-		ASSERT_EQ(getTask(colonist)->instanceId, gathering);
-		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, {}), 3U) << "what he carries, not the uncut yield";
-		EXPECT_EQ(ai->claimIndex().inboundItems(site.blueprint, fibreId, {}), 3U);
-		EXPECT_FALSE(ai->claimIndex().useHolder({.kind = TargetKind::WorldKey, .key = nextKey}, {}).has_value());
-
 		const EntityID other = createColonist({5.0F, 0.0F});
 		rememberReeds(other, {next});
 		decide(other);
+		ASSERT_EQ(getTask(colonist)->instanceId, gathering);
+		const ClaimExclusion notOther = ClaimExclusion::of(*getTask(other));
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, fibreId, notOther), 3U) << "what he carries, not the uncut yield";
+		EXPECT_EQ(ai->claimIndex().inboundItems(site.blueprint, fibreId, notOther), 3U);
 		ASSERT_EQ(getTask(other)->type, TaskType::Harvest);
 		EXPECT_EQ(getTask(other)->harvestTargetKey, nextKey);
 
@@ -2591,9 +2598,9 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(first)->type, TaskType::Harvest) << "free once its holder is gone";
 	}
 
-	// A colonist whose route to its claimed bush has failed (in another region, where no verdict is
-	// remembered, so it keeps re-selecting the same cut) holds nothing it has not reached while it stays failed,
-	// neither its Use of the bush nor the cut's expected yield: another colonist is offered the bush and takes it.
+	// A colonist whose route to its claimed bush has failed holds nothing it has not reached while it stays
+	// failed, neither its Use of the bush nor the cut's expected yield: another colonist deciding meanwhile
+	// is offered the bush and takes it, and the failed colonist, seeing it taken, lets it go.
 	TEST_F(ChainClaimsTest, AFailedRouteHoldsNothingItHasNotReached) {
 		const glm::vec2 stationPos{0.0F, 6.0F};
 		const glm::vec2 bushPos{3.0F, 0.0F};
@@ -2610,69 +2617,24 @@ namespace ecs::test {
 		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
 		const uint64_t instance = getTask(stuck)->instanceId;
 
-		// No route under the reach it stands in now (no mesh here: stamp 0), so a re-decision keeps the task.
-		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
+		// No nav in this headless world, so the failed route is set by hand, as failRoute leaves it, its
+		// prompt decision had.
+		getTask(stuck)->navState = NavState::CantFindWayTo;
+		getTask(stuck)->routeFailureDecided = true;
+		getTask(stuck)->timeSinceEvaluation = 0.0F;
 		world->getComponent<MovementTarget>(stuck)->active = false;
-		getTask(stuck)->blockedReachStamp = 0;
-		decide(stuck);
-		ASSERT_EQ(getTask(stuck)->instanceId, instance) << "it keeps re-selecting the same cut";
-		EXPECT_EQ(indexedClaimsOf(stuck), 0U);
-
 		decide(other);
+		ASSERT_EQ(getTask(stuck)->instanceId, instance);
+		EXPECT_EQ(indexedClaimsOf(stuck), 0U);
 		EXPECT_EQ(getTask(other)->type, TaskType::Harvest) << "the stranded colonist's bush is offered";
 		EXPECT_EQ(getTask(other)->harvestTargetKey, hashWorldEntity(bushPos, assets::AssetRegistry::Get().getDefNameId("StickBush")));
 		decide(stuck);
 		EXPECT_NE(getTask(stuck)->type, TaskType::Harvest) << "and the stranded colonist, seeing it taken, lets it go at his next decision";
 	}
 
-	// A stranded colonist whose every pick fails its route (here the same cut, kept, as in another region)
-	// decides once at once when the route fails, then on the re-decide interval, not every frame. Once a
-	// way opens he is moving again within one interval.
-	TEST_F(ChainClaimsTest, AColonistWhoseEveryRouteFailsDecidesOnTheInterval) {
-		const glm::vec2 stationPos{0.0F, 6.0F};
-		const glm::vec2 bushPos{3.0F, 0.0F};
-		const EntityID	station = world->createEntity();
-		world->addComponent<Position>(station, Position{stationPos});
-		const uint64_t root = craftRoot(station, stationPos, "Stick", 20);
-		childGoal(TaskType::Harvest, root, station, stationPos, stickId);
-		const EntityID stuck = createColonist({0.0F, 0.0F});
-		remember(stuck, bushPos, "StickBush", assets::CapabilityType::Harvestable);
-		decide(stuck);
-		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
-
-		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
-		world->getComponent<MovementTarget>(stuck)->active = false;
-		getTask(stuck)->blockedReachStamp = 0;
-
-		constexpr float kFrame = 0.02F;
-		constexpr int	kFramesPerInterval = static_cast<int>(0.5F / kFrame) + 2; // kReEvalInterval of frames, the deciding frame, and float rounding
-		const auto*		trace = world->getComponent<DecisionTrace>(stuck);
-		float			lastDecision = trace->lastEvaluationTime;
-		int				decisions = 0;
-		for (int frame = 0; frame < 150; ++frame) { // 3 s
-			ai->update(kFrame);
-			if (trace->lastEvaluationTime != lastDecision) {
-				lastDecision = trace->lastEvaluationTime;
-				++decisions;
-			}
-		}
-		ASSERT_EQ(getTask(stuck)->navState, NavState::CantFindWayTo) << "every pick still fails";
-		EXPECT_GE(decisions, 5) << "he never freezes";
-		EXPECT_LE(decisions, 7) << "about one decision per 0.5 s interval over 3 s, not one per frame";
-
-		getTask(stuck)->blockedReachStamp = 1; // the reach the failure was found under has changed: a way opens
-		int framesToMove = 0;
-		while (framesToMove < 10 * kFramesPerInterval &&
-			   (getTask(stuck)->navState != NavState::Traveling || !world->getComponent<MovementTarget>(stuck)->active)) {
-			ai->update(kFrame);
-			++framesToMove;
-		}
-		EXPECT_LE(framesToMove, kFramesPerInterval) << "moving again within one interval of the way opening";
-	}
-
-	// The same stranded colonist, with nobody else wanting the bush: once its route succeeds (the reach it
-	// failed under has changed, so it picks again and is routed), its claims are back and others see the
-	// bush taken.
+	// The same stranded colonist, with nobody else wanting the bush: once its route succeeds (here at once:
+	// with no nav there is no verdict, so he picks the cut again and is routed), its claims are back and
+	// others see the bush taken.
 	TEST_F(ChainClaimsTest, AFailedRouteThatSucceedsTakesItsClaimsBack) {
 		const glm::vec2 stationPos{0.0F, 6.0F};
 		const glm::vec2 bushPos{3.0F, 0.0F};
@@ -2684,13 +2646,8 @@ namespace ecs::test {
 		remember(stuck, bushPos, "StickBush", assets::CapabilityType::Harvestable);
 		decide(stuck);
 		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
-		getTask(stuck)->navState = NavState::CantFindWayTo; // as requestNavPath leaves a Blocked route: stopped
+		getTask(stuck)->navState = NavState::CantFindWayTo; // as failRoute leaves it: stopped
 		world->getComponent<MovementTarget>(stuck)->active = false;
-		getTask(stuck)->blockedReachStamp = 0;
-		decide(stuck);
-		ASSERT_EQ(indexedClaimsOf(stuck), 0U);
-
-		getTask(stuck)->blockedReachStamp = 1; // failed under a reach it no longer stands in
 		decide(stuck);
 		ASSERT_EQ(getTask(stuck)->type, TaskType::Harvest);
 		EXPECT_EQ(getTask(stuck)->navState, NavState::Traveling);
@@ -2729,23 +2686,20 @@ namespace ecs::test {
 		ASSERT_EQ(getTask(hauler)->chainStep, 1U);
 		ASSERT_EQ(ecs::availableQuantity(*world->getComponent<Inventory>(hauler), "Stone"), 3U);
 
-		// No nav regions in this headless world, so the failed route to the station is set by hand, as
-		// requestNavPath leaves a Blocked one: stopped, under the reach it stands in (stamp 0).
+		// No nav in this headless world, so the failed route to the station is set by hand, as failRoute
+		// leaves it: stopped, its prompt decision had.
 		getTask(hauler)->navState = NavState::CantFindWayTo;
+		getTask(hauler)->routeFailureDecided = true;
+		getTask(hauler)->timeSinceEvaluation = 0.0F;
 		world->getComponent<MovementTarget>(hauler)->active = false;
-		getTask(hauler)->blockedReachStamp = 0;
-		const uint64_t instance = getTask(hauler)->instanceId;
-		decide(hauler);
-		ASSERT_EQ(getTask(hauler)->instanceId, instance) << "it keeps the stranded delivery";
-		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "the carried stones are still on their way";
-		EXPECT_EQ(ai->claimIndex().inboundItems(station, stoneId, {}), 3U);
-
 		const EntityID other = createColonist({-3.0F, 0.0F});
 		remember(other, otherPilePos, "Stone", assets::CapabilityType::Carryable);
 		decide(other);
 		EXPECT_NE(getTask(other)->type, TaskType::Haul) << "nobody fetches what the hauler carries";
+		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U) << "the carried stones are still on their way";
+		EXPECT_EQ(ai->claimIndex().inboundItems(station, stoneId, {}), 3U);
 
-		getTask(hauler)->blockedReachStamp = 1; // failed under a reach it no longer stands in: it is routed again
+		// With no nav there is no verdict on the station, so his next decision routes the delivery again.
 		decide(hauler);
 		ASSERT_EQ(getTask(hauler)->type, TaskType::Haul);
 		EXPECT_EQ(getTask(hauler)->navState, NavState::Traveling);
@@ -3571,6 +3525,231 @@ namespace ecs::test {
 		EXPECT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 3U);
 	}
 
+	// The failed-route rule (ClaimIndex::addCurrent) on routes a NavigationSystem plans over real ground,
+	// where the tests above set the nav state by hand.
+	class ClaimsOnRealRoutesTest : public ChainClaimsTest {
+	  protected:
+		void SetUp() override {
+			assets::ConstructionRegistry::Get().clear();
+			const std::filesystem::path root =
+				std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path().parent_path();
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((root / "assets" / "config" / "construction").string()));
+			ChainClaimsTest::SetUp();
+			world->registerSystem<TimeSystem>();
+			nav = &world->registerSystem<NavigationSystem>();
+			nav->setChunkManager(openLand());
+			nav->setConstructionWorld(&construction);
+			ai->setNavigationSystem(nav);
+			world->registerSystem<MovementSystem>();
+			world->registerSystem<PhysicsSystem>();
+		}
+
+		void TearDown() override {
+			ChainClaimsTest::TearDown();
+			assets::ConstructionRegistry::Get().clear();
+		}
+
+		// Generated once per process: nothing here writes to it.
+		static world::ChunkManager* openLand() {
+			static const std::unique_ptr<world::ChunkManager> chunks = [] {
+				auto manager = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
+				manager->setLoadRadius(2);
+				manager->setUnloadRadius(4);
+				manager->update({0.0F, 0.0F});
+				manager->finishPendingGeneration();
+				return manager;
+			}();
+			return chunks.get();
+		}
+
+		// Built walls around [min, max] (millimetres) that `colonist` knows. Returns the west side's segments.
+		std::vector<construction::SegmentId> wallIn(geometry::Vec2i64 min, geometry::Vec2i64 max, EntityID colonist) {
+			const std::array<geometry::Vec2i64, 4> corners{{{max.x, min.y}, max, {min.x, max.y}, min}};
+			std::vector<construction::SegmentId>	 west;
+			geometry::Vec2i64						 from = min;
+			for (const geometry::Vec2i64 to : corners) {
+				const auto commit = construction.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
+				EXPECT_TRUE(commit.ok());
+				for (const auto id : commit.createdSegments) {
+					construction.setSegmentState(id, construction::FoundationState::Built);
+					world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
+					if (to == min) {
+						west.push_back(id);
+					}
+				}
+				from = to;
+			}
+			return west;
+		}
+
+		size_t carried(EntityID colonist, const char* item) {
+			return ecs::availableQuantity(*world->getComponent<Inventory>(colonist), item);
+		}
+
+		bool delivering(EntityID colonist, EntityID destination) {
+			const Task& task = *getTask(colonist);
+			return task.type == TaskType::Haul && task.haulDestinationId == static_cast<uint64_t>(destination);
+		}
+
+		// A hauler at (-7, 0) who knows a pile of `count` `item` at (-6, 0); runs until he has lifted all of
+		// it and is walking it to `destination`.
+		EntityID haulerWalking(EntityID destination, uint32_t item, uint32_t count) {
+			const glm::vec2 pilePos{-6.0F, 0.0F};
+			const EntityID	pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{pilePos});
+			const std::string name = assets::AssetRegistry::Get().getDefName(item);
+			makeLoosePile(*world, pile, item, pilePos, count);
+			const EntityID hauler = createColonist({-7.0F, 0.0F});
+			remember(hauler, pilePos, name, assets::CapabilityType::Carryable);
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh()) << "the hauler meshed nothing";
+			for (int tick = 0; tick < 200 && carried(hauler, name.c_str()) < count; ++tick) {
+				world->update(kTick);
+			}
+			EXPECT_EQ(carried(hauler, name.c_str()), count) << "he never lifted the pile";
+			EXPECT_TRUE(delivering(hauler, destination));
+			EXPECT_EQ(getTask(hauler)->chainStep, 1U);
+			EXPECT_EQ(getTask(hauler)->navState, NavState::Traveling);
+			return hauler;
+		}
+
+		// Runs until the walled-off hauler's route to `destination` fails and he decides again. While his
+		// failed task stands he holds Inbound and InFlight for his cargo and nothing else, and it stands for
+		// at most one update: his next decision lets the delivery go.
+		void runUntilHeLetsTheDeliveryGo(EntityID hauler, EntityID destination, uint32_t item) {
+			int failedUpdates = 0;
+			for (int tick = 0; tick < 100 && delivering(hauler, destination); ++tick) {
+				world->update(kTick);
+				if (!delivering(hauler, destination) || getTask(hauler)->navState != NavState::CantFindWayTo) {
+					continue;
+				}
+				++failedUpdates;
+				ai->claimIndex().forEachClaim([&](const Claim& claim, const ClaimHolder& holder) {
+					if (holder.colonist == hauler) {
+						EXPECT_TRUE(claim.kind() == ClaimKind::Inbound || claim.kind() == ClaimKind::InFlight);
+						EXPECT_EQ(claim.itemDefNameId(), item);
+					}
+				});
+			}
+			ASSERT_FALSE(delivering(hauler, destination)) << "the route through the known walls never failed";
+			EXPECT_LE(failedUpdates, 1) << "the failed delivery outlived his next decision";
+		}
+
+		static constexpr float kTick = 0.1F;
+		// Taking a wall down moves the mesh's connectivity epoch, not his belief, so his no-known-way
+		// verdict stands until it is kVerdictMinTicks AI updates old; then 30 s to walk round and deliver.
+		static constexpr int			kTicksForTheWayToOpen = static_cast<int>(SourceReachMemo::kVerdictMinTicks) + 300;
+		construction::ConstructionWorld construction;
+		NavigationSystem*				nav = nullptr;
+	};
+
+	// A hauler past his pickup is walled off from the station mid-walk by walls he knows. His next decision
+	// lets the delivery go: it is not offered while he believes he cannot reach the station, his claims
+	// toward the root are released, and the stones stay in his pack as uncommitted goods. Once a wall comes
+	// down and the verdict ages out, he is offered the delivery again, and delivers exactly what the
+	// station wants. Every AI update's validator passes throughout (it aborts on a violation).
+	TEST_F(ClaimsOnRealRoutesTest, AWalledOffHaulerLetsTheDeliveryGoAndTakesItUpOnceTheWayOpens) {
+		const glm::vec2 stationPos{8.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID hauler = haulerWalking(station, stoneId, 3);
+		ASSERT_FALSE(HasFailure());
+
+		const auto west = wallIn({6000, -2000}, {10000, 2000}, hauler);
+		ASSERT_FALSE(west.empty());
+		runUntilHeLetsTheDeliveryGo(hauler, station, stoneId);
+		ASSERT_FALSE(HasFailure());
+
+		for (int tick = 0; tick < 50; ++tick) {
+			world->update(kTick);
+			ASSERT_FALSE(delivering(hauler, station)) << "tick " << tick;
+			ASSERT_EQ(carried(hauler, "Stone"), 3U) << "tick " << tick;
+			ASSERT_EQ(indexedClaimsOf(hauler), 0U) << "tick " << tick;
+			ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U) << "tick " << tick;
+		}
+
+		for (const auto id : west) {
+			ASSERT_TRUE(construction.removeSegment(id));
+		}
+		for (int tick = 0; tick < kTicksForTheWayToOpen && world->getComponent<Inventory>(station)->getQuantity("Stone") < 3; ++tick) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 3U) << "he never delivered once the wall was down";
+		EXPECT_EQ(carried(hauler, "Stone"), 0U);
+	}
+
+	// While the first hauler is walled off, a colonist on the station's side of the wall is offered the
+	// fetch and makes it. When the wall comes down the first hauler's stones are surplus there: the
+	// station is never over-supplied, and he keeps them.
+	TEST_F(ClaimsOnRealRoutesTest, AColonistInsideTheWallsFetchesAndTheFreedHaulerDoesNotOverDeliver) {
+		const glm::vec2 stationPos{8.0F, 0.0F};
+		const EntityID	station = world->createEntity();
+		world->addComponent<Position>(station, Position{stationPos});
+		const uint64_t root = craftRoot(station, stationPos, "Stone", 3);
+		childGoal(TaskType::Haul, root, station, stationPos, stoneId);
+		const EntityID hauler = haulerWalking(station, stoneId, 3);
+		ASSERT_FALSE(HasFailure());
+
+		const auto west = wallIn({6000, -2000}, {10000, 2000}, hauler);
+		runUntilHeLetsTheDeliveryGo(hauler, station, stoneId);
+		ASSERT_FALSE(HasFailure());
+		ASSERT_EQ(ai->claimIndex().inFlight(root, stoneId, {}), 0U);
+
+		const glm::vec2 innerPilePos{9.0F, 1.0F};
+		const EntityID	innerPile = world->createEntity();
+		world->addComponent<Position>(innerPile, Position{innerPilePos});
+		makeLoosePile(*world, innerPile, stoneId, innerPilePos, 3);
+		const EntityID inside = createColonist({7.0F, -1.0F});
+		remember(inside, innerPilePos, "Stone", assets::CapabilityType::Carryable);
+
+		const auto stationStone = [&] { return world->getComponent<Inventory>(station)->getQuantity("Stone"); };
+		bool	   insideFetched = false;
+		for (int tick = 0; tick < 300 && stationStone() < 3; ++tick) {
+			world->update(kTick);
+			insideFetched = insideFetched || delivering(inside, station);
+			ASSERT_EQ(carried(hauler, "Stone"), 3U) << "tick " << tick;
+		}
+		EXPECT_TRUE(insideFetched);
+		ASSERT_EQ(stationStone(), 3U) << "the colonist inside never fetched";
+
+		for (const auto id : west) {
+			ASSERT_TRUE(construction.removeSegment(id));
+		}
+		for (int tick = 0; tick < kTicksForTheWayToOpen; ++tick) {
+			world->update(kTick);
+			ASSERT_LE(stationStone(), 3U) << "tick " << tick;
+			ASSERT_FALSE(delivering(hauler, station)) << "tick " << tick;
+		}
+		EXPECT_EQ(carried(hauler, "Stone"), 3U) << "his stones are surplus at the station";
+		EXPECT_EQ(indexedClaimsOf(hauler), 0U);
+	}
+
+	// A two-hand armful bound for a site he is walled off from is put down where he stands when he lets
+	// the delivery go, not carried around: a pile anyone can fetch.
+	TEST_F(ClaimsOnRealRoutesTest, AWalledOffHaulerPutsHisArmfulDown) {
+		std::vector<uint32_t> drops;
+		ai->setDropResourceCallback([&](const std::string& name, float, float, uint32_t quantity, glm::vec2) {
+			EXPECT_EQ(name, "Wood");
+			drops.push_back(quantity);
+		});
+		const glm::vec2 sitePos{8.0F, 0.0F};
+		const Site		site = constructionSite(sitePos, "Wood", 4);
+		const EntityID	hauler = haulerWalking(site.blueprint, woodId, 4);
+		ASSERT_FALSE(HasFailure());
+
+		wallIn({6000, -2000}, {10000, 2000}, hauler);
+		runUntilHeLetsTheDeliveryGo(hauler, site.blueprint, woodId);
+		ASSERT_FALSE(HasFailure());
+
+		ASSERT_EQ(drops.size(), 1U) << "the armful he cannot deliver is carried around";
+		EXPECT_EQ(drops.front(), 4U);
+		EXPECT_EQ(carried(hauler, "Wood"), 0U);
+		EXPECT_EQ(indexedClaimsOf(hauler), 0U);
+		EXPECT_EQ(ai->claimIndex().inFlight(site.umbrella, woodId, {}), 0U);
+	}
+
 	// =============================================================================
 	// Colonists bound for one point: separation keeps them apart, so no more than one of them can stand
 	// on it. Each must still act once it is within reach of the point, or both stand there for good.
@@ -3588,7 +3767,6 @@ namespace ecs::test {
 
 		EntityID walker(glm::vec2 position) {
 			const EntityID colonist = createColonist(position);
-			world->addComponent<AgentRadius>(colonist, AgentRadius{});
 			return colonist;
 		}
 

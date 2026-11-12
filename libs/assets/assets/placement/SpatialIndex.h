@@ -93,6 +93,10 @@ namespace assets {
 		/// Insert an entity into the index
 		void insert(const PlacedEntity& entity);
 
+		/// The entity with matching defName within 1 mm of `position`, the match remove() takes;
+		/// null when there is none. Valid until the index changes.
+		[[nodiscard]] const PlacedEntity* find(glm::vec2 position, const std::string& defName) const;
+
 		/// Remove an entity at specific position with matching defName
 		/// @param position Entity position to remove
 		/// @param defName Asset definition name to match

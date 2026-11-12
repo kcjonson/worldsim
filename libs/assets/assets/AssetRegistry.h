@@ -281,8 +281,10 @@ namespace assets {
 
 		/// Load the asset folder on a background worker thread. Definitions are not
 		/// safe to read until isLoadComplete() returns true. Only one async load may
-		/// run at a time; a prior one is joined first.
-		void beginLoadAsync(const std::string& folderPath);
+		/// run at a time; a prior one is joined first. `afterDefinitions` runs on the worker once the
+		/// definitions and their id index are in, before isLoadComplete() turns true, so whatever it
+		/// loads is read under the same completion guarantee.
+		void beginLoadAsync(const std::string& folderPath, std::function<void()> afterDefinitions = {});
 
 		/// Progress of the most recent beginLoadAsync (atomics; safe to poll).
 		[[nodiscard]] const LoadProgress& loadProgress() const { return m_loadProgress; }

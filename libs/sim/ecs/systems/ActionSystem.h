@@ -170,6 +170,11 @@ private:
 	/// destination. The one handoff every way into the deposit leg takes; claims are rewritten by the caller.
 	void headToDeposit(EntityID entity, struct Task& task);
 
+	/// Point the task at its next leg's target, Moving, for the AI to route: its MovementTarget follows,
+	/// and the old leg's route and any route still out for it are dropped. Every change of a task's
+	/// target in action code goes through here.
+	void headTo(EntityID entity, struct Task& task, glm::vec2 target);
+
 	/// A goal's cut has landed `landed` units: turn the Harvest task into the deposit leg that carries its
 	/// cargo (what earlier cuts of the gathering carry, plus this cut) to its root's destination,
 	/// committing what the root still needs that no other task is bringing. False (the task ends) when

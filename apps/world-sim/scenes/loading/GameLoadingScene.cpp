@@ -389,8 +389,9 @@ namespace {
 		/// Phase 2: Load chunks (generation runs on workers; keep polling until ready)
 		void loadChunks() {
 			// ChunkManager::update() starts loads for the grid around the camera
-			// and integrates finished generation workers each call
-			worldState->chunkManager->update(worldState->camera->position());
+			// and integrates finished generation workers each call. No movers exist
+			// yet; the camera sits on the spawn, so the colony's chunk loads here.
+			worldState->chunkManager->update(worldState->camera->position(), {});
 
 			// Count chunks whose tile generation has completed
 			chunksLoaded = 0;
@@ -424,7 +425,7 @@ namespace {
 		/// Phase 3: Place entities asynchronously for responsive UI
 		void placeEntities() {
 			// Chunks that finished generating after phase 2 still need placement
-			worldState->chunkManager->update(worldState->camera->position());
+			worldState->chunkManager->update(worldState->camera->position(), {});
 			for (auto* chunk : worldState->chunkManager->getLoadedChunks()) {
 				asyncProcessor->launchTask(chunk);
 			}

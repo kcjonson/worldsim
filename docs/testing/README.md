@@ -231,6 +231,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 10 | World creator coasts | [scenarios/10-world-creator-coasts.md](./scenarios/10-world-creator-coasts.md) |
 | 11 | Trees by zoom | [scenarios/11-trees-by-zoom.md](./scenarios/11-trees-by-zoom.md) |
 | 12 | Colonists eat | [scenarios/12-colonists-eat.md](./scenarios/12-colonists-eat.md) |
+| 13 | Colonists walk round obstacles | [scenarios/13-colonists-walk-round-obstacles.md](./scenarios/13-colonists-walk-round-obstacles.md) |
 
 **Run each scenario in isolation** from a fresh launch, or use `give` / `need` dev verbs to
 set preconditions from a running instance. The fully-combined four-scenario flow now runs

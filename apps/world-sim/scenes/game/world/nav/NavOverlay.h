@@ -1,7 +1,7 @@
 #pragma once
 
 // NavOverlay - scene-owned world-space overlay that makes the navmesh and live
-// agent routes visible for debugging. The NavigationSystem owns the cached mesh
+// agent routes visible for debugging. The NavigationSystem owns the nav mesh
 // and the per-entity NavPath components hold each colonist's current route;
 // neither draws anything on its own. When toggled on (N), this draws the mesh
 // triangle edges and each valid NavPath's waypoint polyline.

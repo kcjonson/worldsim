@@ -1,20 +1,19 @@
 #pragma once
 
-// StaticRectCollisionSystem - Tier-3 safety-net collision against placed flora
-// rects (trees, etc).
+// StaticRectCollisionSystem - Tier-3 safety-net collision against placed obstacles' collider
+// rects.
 //
-// Agents normally PATH around blocking flora; the navmesh carves an obstacle for
+// Agents normally PATH around placed obstacles; the navmesh carves an obstacle for
 // each one and routes the agent CENTER to stay outside it. This system is the
-// fallback for the case the path can't cover: an agent shoved into a flora rect
+// fallback for the case the path can't cover: an agent shoved into a placed obstacle's rect
 // by agent-agent separation (CollisionSystem) or by beelining a goal before the
 // mesh exists. It pushes such an agent's center back out, while staying flush with
 // the navmesh boundary so it never fights the path.
 //
-// THE BOUNDARY: the navmesh inflates each flora collision rect by kFloraColliderPadMm
+// THE BOUNDARY: the navmesh inflates each placed obstacle's collision rect by kPlacedObstaclePadMm
 // (50 mm = 0.05 m) in LOCAL space before scale, then transforms to world -- so the
-// world boundary is scale*(halfExtent + 0.05). This system matches that EXACTLY:
-// orientedRectFor() bakes the same pad in local space before scale, producing a
-// pre-inflated OBB, and the push-out runs at clearance 0 against that OBB. The
+// world boundary is |scale|*(halfExtent + 0.05). This system pushes against the very same box,
+// nav::placedObstacleBox (which the mesh ring is built from), pre-inflated, at clearance 0. The
 // boundary is NOT a disc-vs-OBB push-out using AgentRadius (0.3 m); using the disc
 // radius would overshoot the navmesh boundary and create a fight (jitter, agents
 // shoved off valid nav paths). AgentRadius is used ONLY to identify agents
@@ -26,12 +25,22 @@
 // Velocity stays PhysicsSystem's. A position-only correction is enough for a
 // safety net and avoids fighting the mover.
 //
-// The PlacementExecutor is injected by the caller (null => no-op). Rects are
-// gathered LOCALLY per agent each frame from placement (no caching, no nav
-// coupling): query the chunks around the agent for rect-collision entities, keep
-// only those whose AssetDefinition has CollisionShapeType::Rect.
+// ONE RULE WITH THE SNAP: a mover whose centre is inside a placed obstacle in the nav mesh at the start
+// of the tick belongs to the forward snap (NavigationSystem::snapMovers), which moves it forward along
+// its route or leaves it where it stands; one the snap left inside (NavigationSystem::snapHolds) is
+// never pushed here, so it never goes back. This system keeps a mover that was outside from entering:
+// it pushes out of an obstacle only once the obstacle is in the nav mesh
+// (NavigationSystem::placedObstacleInNavMesh). No route is let through: a route never crosses a placed
+// obstacle.
+//
+// The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op). Rects are
+// gathered LOCALLY per agent each frame from placement (no caching): query the chunks around the agent for rect-collision entities, keep
+// only those whose AssetDefinition has CollisionShapeType::Rect (a polygon collider is in the nav
+// mesh but not pushed against here).
 
 #include "../ISystem.h"
+
+#include <nav/PlacedObstacle.h>
 
 #include <glm/vec2.hpp>
 
@@ -43,25 +52,12 @@ namespace assets {
 
 namespace ecs {
 
-// The nav flora pad in meters (nav::kFloraColliderPadMm / 1000). Exposed
-// here for tests that want to assert on the expected boundary without depending
-// on the heavy NavInputBuilder.h include chain. orientedRectFor() bakes this pad
-// into the OBB in LOCAL space before scale, so the world boundary is
-// scale*(halfExtent + pad) -- matching the navmesh. The system calls
-// resolveCenterAgainstRect with clearance 0 (not this constant) because the OBB
-// is already pre-inflated.
-constexpr float kStaticRectClearanceMeters = 0.05F;
+class NavigationSystem;
 
-// A placed flora rect resolved to world meters as an oriented bounding box. axisX
-// and axisY are unit (rotation only); halfExtents include entity scale AND the nav
-// flora pad (baked in local space before scale by orientedRectFor). The boundary
-// coincides with the navmesh obstacle boundary at all scales.
-struct OrientedRect {
-	glm::vec2 center{0.0F, 0.0F};
-	glm::vec2 axisX{1.0F, 0.0F};
-	glm::vec2 axisY{0.0F, 1.0F};
-	glm::vec2 halfExtents{0.0F, 0.0F};
-};
+// The placed-obstacle pad in meters (nav::kPlacedObstaclePadMm / 1000), for tests that assert on the
+// expected boundary. The system calls resolveCenterAgainstRect with clearance 0 (not this
+// constant) because nav::placedObstacleBox's box is already pre-inflated.
+constexpr float kStaticRectClearanceMeters = 0.05F;
 
 // Push `center` out of `rect` inflated by `clearance`. Returns the corrected
 // world-space center, or nullopt when the center is already outside the inflated
@@ -69,7 +65,7 @@ struct OrientedRect {
 // rect's local frame, and when inside pushes along the local axis of LEAST
 // penetration (ties and the exact-center case break toward +axis). No libm: the
 // caller supplies the precomputed axes.
-[[nodiscard]] std::optional<glm::vec2> resolveCenterAgainstRect(glm::vec2 center, float clearance, const OrientedRect& rect);
+[[nodiscard]] std::optional<glm::vec2> resolveCenterAgainstRect(glm::vec2 center, float clearance, const nav::OrientedRect& rect);
 
 class StaticRectCollisionSystem : public ISystem {
   public:
@@ -83,9 +79,11 @@ class StaticRectCollisionSystem : public ISystem {
 	// Setter injection, mirroring WallCollisionSystem. Null until wired (e.g.
 	// headless tests, early init): update() is a no-op.
 	void setPlacementData(const assets::PlacementExecutor* placement) { m_placement = placement; }
+	void setDetailSource(const NavigationSystem* navigation) { detail = navigation; }
 
   private:
 	const assets::PlacementExecutor* m_placement = nullptr;
+	const NavigationSystem*			 detail		 = nullptr;
 };
 
 } // namespace ecs

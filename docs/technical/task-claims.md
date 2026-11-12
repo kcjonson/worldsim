@@ -325,10 +325,10 @@ cut toward it, then every other option, the carry-in it has not chosen yet inclu
 cut for a root and item that a pile he knows he can reach also serves. A pile counts as a source here
 too: he picks up what he or anyone dropped before cutting again. A pile is offered for every root that
 wants the item, construction sites included. A fresh cut for the same root and item ranks below
-everything else in its tier only while a pile offered for them is known reachable: its reach verdict,
-remembered per source (`SourceReachMemo`), says so under the current reach key, and no nav query is
-asked to find out. A pile is tested when selection reaches it, as any option is; until then, or when it
-lies in another nav region, it ranks by distance like a cut, and one found unreachable (across water,
+everything else in its tier only while a pile offered for them is known reachable: it carries no
+"no known way" verdict (`SourceReachMemo`) and stands on ground connected to him
+(`NavigationSystem::connected`, a label compare), so no route is asked for to find out. A pile is tested when selection reaches it, as any option is; until then it ranks by
+distance like a cut, and one found unreachable (across water,
 inside a known wall) holds nothing back. A pile leg of a gathering is offered unless the pile is known
 unreachable, and selection tests its reach. A pickup that continues a gathering is decided again at
 once, like a landed cut.
@@ -389,7 +389,7 @@ deposits exactly what is needed and keeps the rest, which holds no claim.
 
 A two-hand armful kept this way, or left when its root is gone, fills the colonist's carry, so every
 haul and cut reads no room. A colonist about to idle, by wandering or by gathering food, while holding a
-two-hand armful that no root it knows wants (no carry-in of it is offered) puts it down where it stands through the drop path, which
+two-hand armful that no root it knows wants (no carry-in of it is offered; one to a destination it believes it cannot reach is not) puts it down where it stands through the drop path, which
 merges it into a pile at the spot (`AIDecisionSystem::putDownUnwantedArmful`); the pile is an ordinary
 source with no claims, hauled once a root wants it. One-hand surplus stays in the pack. A carried
 packaged item is never put down as a pile (Chain_PlaceItem, below).
@@ -766,23 +766,36 @@ and max gate it, and for a station or site the need read from the world does. A 
 is evicted from memory while it travels keeps its claim (the claim is on the task, not in memory) and
 re-sees the target on arrival, within sight range. All of these log at debug level; they are expected.
 
-A colonist whose route to its target has failed (`NavState::CantFindWayTo`) holds, while it stays
-failed, only the claims on goods it already carries. A failure toward a target in another nav region is
-not remembered as a reach verdict, so the colonist may re-select the same work at each decision and
-`isSameTask` keeps it (the first decision after a route fails comes at once, and if that one's route
-fails too the next comes on the 0.5 s interval; see [AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides)); without this rule its pile, bush, slot, or box room would read as taken for as
-long as it stands there. What it has not reached is dropped: source quantity, Use, and slot claims, and
-the part of an in-flight not yet landed (a cut's expected yield). What it carries keeps its Inbound and
+A colonist who believes he cannot reach his destination does not hold the work. When his route fails
+(`NavState::CantFindWayTo`) he decides again once, at once (see [AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides)), and that decision
+records a verdict on the target in `SourceReachMemo`, under the connectivity epoch and his belief
+version. The
+work is then not offered to him: its option reads NoSource, he takes something else, and the switch
+retires his claims toward that root. Another colonist who can reach the destination is offered the
+fetch or the cut. Holding in-flight for goods that cannot arrive would stall the root for everyone.
+
+His goods stay with him by the rules that already govern uncommitted goods. One-hand goods stay in the
+pack with no claim; a later carry-in from possession may take them to any root that wants them. A
+two-hand armful is put down where he stands by the unwanted-armful rule (Carry-in from possession,
+above), since a carry-in he cannot reach is no offer, and anyone can fetch the pile.
+
+Between the failure and that decision his task still exists, failed, and holds only the claims on goods
+it already carries. What it has not reached is dropped: source quantity, Use, and slot claims, and the
+part of an in-flight not yet landed (a cut's expected yield). What it carries keeps its Inbound and
 In-flight, up to its cargo by the one cargo rule (`cargoOnClaims`): a haul past its pickup, or a cut
-carrying what earlier cuts of its gathering landed. Those goods are possessed and on their way, so
-dropping their claims would make the root read as wanting them, others would fetch them again, and
-once the route recovered the root would be over-supplied. The index files a failed task this way
+carrying what earlier cuts of its gathering landed. The index files a failed task this way
 (`ClaimIndex::addCurrent`, which the rebuild and every append share, so the validator's fresh rebuild
-agrees), and `AIDecisionSystem::applyNavOutcome` re-files the task the moment a route fails inside an
-update and again when a later route for the same task succeeds. Another colonist is offered the work
-meanwhile; if it takes it, the stranded colonist sees it taken at its next decision and lets it go, and
-if nobody does, its claims return with its next successful route. Its suspended record is not affected:
-those goods are possessed.
+agrees), and `AIDecisionSystem::failRoute` re-files the task the moment a route answers "no known way" inside
+an update. The window lasts one decision at most.
+
+The verdict lasts only while the connectivity epoch and his belief version it was recorded under hold
+(how long a verdict survives an epoch move is being reworked; see
+[nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md) entry 110). When the way opens (a
+wall removed, a door built or learned of) the epoch or his belief version moves, the verdict is
+forgotten, and he is offered the delivery again if the root still wants his goods. If another
+colonist delivered meanwhile, no carry-in to that root is offered and his goods are surplus there, so the
+root is never over-supplied. A suspended record is not affected by any of this: its goods are possessed
+and the record follows its own rules (Interruption, above).
 
 ---
 
@@ -925,7 +938,9 @@ time.
   time stays within noise of an empty memory.
 - Remaining need is worked out once per (root, item, basis) per update, counted by
   `AIDecisionSystemTest.EachRemainingNeedIsWorkedOutOncePerUpdate`. A need source's reachability is
-  tested once per source per reach key, counted by `MemoryQueries.SourceReachMemoTestsEachSourceOncePerKey`.
+  a label compare per candidate (`NavigationSystem::connected`) and one nearest-of route request per
+  round, with no search in the decision; the decision's cost is being reworked (see
+  [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md) entry 110).
 - Live pile quantity is one keyed lookup through `LoosePileIndex`, not a scan of piles.
 - Box-pull gating keeps the colony-wide rule without its old cost (a walk of every colonist's
   memory per box per goal per evaluating colonist, quadratic in colonists). `ColonyStorageKnowledge`

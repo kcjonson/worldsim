@@ -143,6 +143,42 @@ struct SuspendedWork {
 	BasicClaimList<2> claims;
 };
 
+/// One source a need's route request names: where the source is, where a route to it ends (beside the
+/// placed obstacle it lies in, or the source itself), and what the task takes from it (the Task fields
+/// of the same names).
+struct SourceChoice {
+	glm::vec2	  target{0.0F, 0.0F};
+	glm::vec2	  goal{0.0F, 0.0F};
+	std::uint64_t sourceKey = 0;
+	std::uint64_t storageId = 0;
+	std::uint32_t itemDefNameId = 0;
+	std::uint32_t quantity = 0;
+};
+
+/// The sources a need's nearest-of route request names, nearest by straight line first; the route's
+/// answer picks one. Fixed capacity, the widest round (kWidestRound), so a task never needs the heap for
+/// them.
+class SourceChoices {
+  public:
+	static constexpr std::uint8_t kCapacity = 32;
+
+	void clear() { count = 0; }
+	void push(const SourceChoice& choice) {
+		if (count < kCapacity) {
+			items[count++] = choice;
+		}
+	}
+	[[nodiscard]] std::uint8_t		  size() const { return count; }
+	[[nodiscard]] bool				  empty() const { return count == 0; }
+	[[nodiscard]] const SourceChoice& operator[](std::uint8_t index) const { return items[index]; }
+	[[nodiscard]] const SourceChoice* begin() const { return items.data(); }
+	[[nodiscard]] const SourceChoice* end() const { return items.data() + count; }
+
+  private:
+	std::array<SourceChoice, kCapacity> items{};
+	std::uint8_t						count = 0;
+};
+
 /// Task types that colonists can perform. Arbitration tiers (assigned in priority-tuning.xml's
 /// <TaskTiers> + classifyTier promotions): see colonist-task-arbitration.md.
 enum class TaskType : uint8_t {
@@ -165,15 +201,16 @@ enum class TaskState : uint8_t {
 };
 
 /// Navigation belief state - what the colonist believes about its route.
-/// Drives the info panel vocabulary ("Going to", "Re-routing", "Can't find a way").
+/// Drives the info panel vocabulary ("Going to", "Re-routing", "Finding a way", "Can't find a way").
 /// SearchingLKP and LookingForWayIn are reserved for deferred search behaviors.
 enum class NavState : uint8_t {
 	Traveling,      // Route planned and being followed
-	Rerouting,      // Replanning because a new wall/opening was discovered
+	Rerouting,      // Walking his route while its replacement is overdue (kFindingWayTicks)
 	SearchingLKP,   // (reserved) searching last-known position
 	LookingForWayIn, // (reserved) searching for an entrance to a building
-	CantFindWayTo,  // Believed route denied; colonist is stopped
-	AwaitingMesh    // No built mesh covers the route yet; held until the nav generation moves
+	CantFindWayTo,  // Nav knows no way to the target; colonist is stopped
+	AwaitingMesh,   // He stands off the mesh; the route is asked for again once the nav generation moves
+	AwaitingRoute   // He has no route to walk: one is asked for (routeTicket), or the snap holds him (awaitingSnap)
 };
 
 /// Task component - tracks a colonist's current activity
@@ -181,18 +218,39 @@ struct Task {
 	TaskType  type = TaskType::None;
 	TaskState state = TaskState::Pending;
 	NavState  navState = NavState::Traveling;
-	// Rerouting is momentary: set to ~30 ticks when a repath fires so the player sees a brief
-	// "Re-routing" beat before the panel reverts to "Going to". Decremented each update tick;
-	// zero means the Rerouting display window has elapsed (revert to Traveling).
-	std::uint8_t navStateHold = 0;
 	// NavigationSystem::generation() when the route was deferred (navState AwaitingMesh). The route
-	// is requested again once generation() moves off this value, i.e. a mesh build has landed.
+	// is requested again once generation() moves off this value: a structural build has landed
+	// where the route was asked about.
 	std::uint64_t deferredNavGeneration = 0;
-	// SourceReachMemo::Key::stamp() of the colonist's reach when the route came back with no believed
-	// route (navState CantFindWayTo). The next decision records needSourceKey unreachable only while its
-	// own key still stamps the same, so the verdict never outlives the meshes and belief it was found
-	// under, and a swap in some unrelated region doesn't stop it being recorded.
-	std::uint64_t blockedReachStamp = 0;
+	// The route asked of NavigationSystem::requestRoute and not yet answered; 0 for none. Survives
+	// clear(): the AI cancels it (NavigationSystem::cancelRoute) once the task it was asked for ends.
+	std::uint64_t routeTicket = 0;
+	// Memory::beliefVersion the route was asked under, stamped on the route it answers with.
+	std::uint64_t routeBeliefVersion = 0;
+	// The goal routeTicket was asked for. An answer for any other goal (the target moved on while it was
+	// out) is not applied.
+	glm::vec2 routeGoal{0.0F, 0.0F};
+	// Ticks the route has been out (or the snap has held him). Standing, the panel says "Finding a way"
+	// from kFindingWayTicks on, so the usual two-tick wait doesn't flicker; walking his old route, he
+	// shows "Re-routing" from then on.
+	std::uint16_t routeWaitTicks = 0;
+	static constexpr std::uint16_t kFindingWayTicks = 10;
+	// No known way from where the snap holds him inside a placed obstacle: he asks again once the snap lets
+	// go or the nav generation moves (deferredNavGeneration), and after kSnapWaitDecisions interval
+	// decisions still held, his route fails.
+	bool awaitingSnap = false;
+	// Interval decisions the snap has held him for in a row: a decision while it holds him is put off
+	// (he is connected to nothing there) until kSnapWaitDecisions of them. Survives clear(), like the
+	// timer; a decision while the snap does not hold him resets it.
+	std::uint8_t snapWaitDecisions = 0;
+	static constexpr std::uint8_t kSnapWaitDecisions = 4;
+	// The target itself when targetPosition is the stand point beside the placed obstacle it lies in (a
+	// pile at a source's centre); nullopt when targetPosition is the target. Arrival is judged at
+	// targetPosition, the work done on this.
+	std::optional<glm::vec2> obstructedTarget;
+	// The sources a need's route was asked for at once, until its answer picks one (the task holds the
+	// first meanwhile); empty once routed, and for every task with one target.
+	SourceChoices sourceChoices;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
@@ -260,8 +318,8 @@ struct Task {
 	uint8_t criticalNeedsAtDecision = 0;
 	static_assert(static_cast<size_t>(NeedType::Count) <= 8, "criticalNeedsAtDecision holds one bit per need");
 
-	/// The last decision ran on a failed route (NavState::CantFindWayTo) and left the route failed, so
-	/// the failure has had its prompt decision and the next waits for the re-decide interval. Survives
+	/// A failed route (NavState::CantFindWayTo) has had its prompt decision, and no route has been found
+	/// since: a further failure, the next pick's included, waits for the re-decide interval. Survives
 	/// clear(), like the timer.
 	bool routeFailureDecided = false;
 
@@ -290,6 +348,19 @@ struct Task {
 	/// Check if a task is currently assigned
 	[[nodiscard]] bool isActive() const { return type != TaskType::None; }
 
+	/// What the task works on: the target, wherever he stands to reach it.
+	[[nodiscard]] glm::vec2 workTarget() const { return obstructedTarget.value_or(targetPosition); }
+
+	/// Standing at `position`, he is within `tolerance` of `point`, or `point` is the target in a placed
+	/// obstacle and he is within it of the stand point beside it.
+	[[nodiscard]] bool standsAt(glm::vec2 point, glm::vec2 position, float tolerance) const {
+		const auto near = [&](glm::vec2 at) {
+			const glm::vec2 d = position - at;
+			return d.x * d.x + d.y * d.y <= tolerance * tolerance;
+		};
+		return near(point) || (obstructedTarget == point && near(targetPosition));
+	}
+
 	void discardSuspended() { suspended.reset(); }
 
 	/// Reset task to default state (caller responsible for resetting timeSinceEvaluation)
@@ -297,8 +368,14 @@ struct Task {
 		type = TaskType::None;
 		state = TaskState::Pending;
 		navState = NavState::Traveling;
-		navStateHold = 0;
 		deferredNavGeneration = 0;
+		sourceChoices.clear();
+		routeBeliefVersion = 0;
+		routeGoal = glm::vec2{0.0F, 0.0F};
+		routeWaitTicks = 0;
+		awaitingSnap = false;
+		obstructedTarget.reset();
+		needSourceKey = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
 		needItemDefNameId = 0;

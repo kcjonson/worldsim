@@ -6,17 +6,18 @@
 #include <primitives/Primitives.h>
 
 #include <array>
+#include <cstdint>
 #include <string>
 
 namespace world_sim {
 
 	namespace {
-		// Mesh wireframe color-coded by walkability: green = walkable ground, red = blocked
-		// (water / tree / wall). A glance confirms whether the navmesh classifies land vs water
-		// correctly. Bright magenta routes read over both.
-		constexpr Foundation::Color kWalkableEdge{1.0F, 0.95F, 0.15F, 0.75F}; // bright yellow: reads on grass AND water
+		// Mesh wireframe color-coded by walkability: purple = walkable ground, red = blocked
+		// (water / placed obstacle / wall). A glance confirms whether the navmesh classifies land vs water
+		// correctly. Bright yellow routes read over both.
+		constexpr Foundation::Color kWalkableEdge{0.78F, 0.35F, 1.0F, 0.9F}; // bright purple: reads on grass AND water
 		constexpr Foundation::Color kBlockedEdge{0.95F, 0.2F, 0.2F, 0.6F};	  // red
-		constexpr Foundation::Color kPathLine{1.0F, 0.2F, 0.8F, 0.95F};
+		constexpr Foundation::Color kPathLine{1.0F, 0.95F, 0.15F, 0.95F}; // bright yellow
 		constexpr Foundation::Color kWaypointMarker{1.0F, 0.9F, 0.2F, 1.0F};
 
 		// Post-entity world flush domain: committed construction flushes earlier,
@@ -39,44 +40,52 @@ namespace world_sim {
 			return;
 		}
 
-		// Mesh wireframe: draw each triangle's three edges, for every built region. Edges
-		// are shared between neighbors, so this overdraws once per interior edge; fine for a
-		// debug layer. Ids are prefixed with the region index so two regions' triangles
-		// don't collide on the same primitive id.
-		const std::vector<ecs::NavigationSystem::RegionView> built = navigation->builtRegions();
-		for (std::size_t ri = 0; ri < built.size(); ++ri) {
-			const geometry::nav::NavMesh& mesh = *built[ri].mesh;
-			for (std::size_t t = 0; t < mesh.triangles.size(); ++t) {
-				const auto& tri = mesh.triangles[t];
-				const Foundation::Color edgeColor =
-					geometry::nav::terrainTraversable(tri) ? kWalkableEdge : kBlockedEdge;
+		// Mesh wireframe: draw each on-screen live triangle's three edges. Edges are shared
+		// between neighbors, so this overdraws once per interior edge; fine for a debug layer.
+		// The mesh covers every chunk ever loaded, so triangles wholly off one side of the
+		// viewport are skipped.
+		const geometry::nav::PatchableMesh& mesh = navigation->navMesh();
+		const auto&							tris = mesh.triangles();
+		const float							w	 = static_cast<float>(viewportW);
+		const float							h	 = static_cast<float>(viewportH);
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const auto&				tri = tris[static_cast<std::size_t>(t)];
+			const Foundation::Color edgeColor =
+				geometry::nav::terrainTraversable(tri) ? kWalkableEdge : kBlockedEdge;
 
-				std::array<Foundation::Vec2, 3> screen;
-				for (int i = 0; i < 3; ++i) {
-					const auto& v = mesh.vertices[tri.v[i]];
-					const float wx = static_cast<float>(v.x) * kMmToMeters;
-					const float wy = static_cast<float>(v.y) * kMmToMeters;
-					const auto	s = camera->worldToScreen(wx, wy, viewportW, viewportH, kPixelsPerMeter);
-					screen[i] = Foundation::Vec2{s.x, s.y};
-				}
+			std::array<Foundation::Vec2, 3> screen;
+			for (int i = 0; i < 3; ++i) {
+				const auto& v  = mesh.vertices()[tri.v[i]];
+				const float wx = static_cast<float>(v.x) * kMmToMeters;
+				const float wy = static_cast<float>(v.y) * kMmToMeters;
+				const auto	s  = camera->worldToScreen(wx, wy, viewportW, viewportH, kPixelsPerMeter);
+				screen[i]	   = Foundation::Vec2{s.x, s.y};
+			}
+			const auto offSide = [&](auto outside) { return outside(screen[0]) && outside(screen[1]) && outside(screen[2]); };
+			if (offSide([](Foundation::Vec2 p) { return p.x < 0.0F; }) || offSide([w](Foundation::Vec2 p) { return p.x > w; }) ||
+				offSide([](Foundation::Vec2 p) { return p.y < 0.0F; }) || offSide([h](Foundation::Vec2 p) { return p.y > h; })) {
+				continue;
+			}
 
-				const std::string idBase = "nav_tri_" + std::to_string(ri) + "_" + std::to_string(t);
-				for (int i = 0; i < 3; ++i) {
-					const std::string edgeId = idBase + "_" + std::to_string(i);
-					Renderer::Primitives::drawLine(
-						Renderer::Primitives::LineArgs{
-							.start = screen[i],
-							.end = screen[(i + 1) % 3],
-							.style =
-								Foundation::LineStyle{
-									.color = edgeColor,
-									.width = 1.0F,
-								},
-							.id = edgeId.c_str(),
-							.key = kZMeshEdge,
-						}
-					);
-				}
+			const std::string idBase = "nav_tri_" + std::to_string(t);
+			for (int i = 0; i < 3; ++i) {
+				const std::string edgeId = idBase + "_" + std::to_string(i);
+				Renderer::Primitives::drawLine(
+					Renderer::Primitives::LineArgs{
+						.start = screen[i],
+						.end = screen[(i + 1) % 3],
+						.style =
+							Foundation::LineStyle{
+								.color = edgeColor,
+								.width = 1.0F,
+							},
+						.id = edgeId.c_str(),
+						.key = kZMeshEdge,
+					}
+				);
 			}
 		}
 

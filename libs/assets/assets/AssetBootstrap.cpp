@@ -24,21 +24,21 @@ namespace assets {
 			LOG_INFO(Engine, "Set shared scripts path: %s", sharedPath.c_str());
 		}
 
-		// Load all asset definitions from the root folder.
-		// Item properties are now part of unified entity definitions (itemProperties section).
+		// Recipes resolve their def-name ids against the definition index, so they load after the
+		// definitions in both paths: on the worker before it reports done, or after the blocking load.
+		auto loadRecipes = [recipesPath = Foundation::findResourceString("assets/recipes")]() {
+			if (!recipesPath.empty()) {
+				RecipeRegistry::Get().loadRecipesFromFolder(recipesPath);
+			}
+		};
+
 		if (async) {
-			AssetRegistry::Get().beginLoadAsync(fullPath);
+			AssetRegistry::Get().beginLoadAsync(fullPath, loadRecipes);
 			LOG_INFO(Engine, "Asset loading started asynchronously from %s", fullPath.c_str());
 		} else {
 			size_t loaded = AssetRegistry::Get().loadDefinitionsFromFolder(fullPath);
 			LOG_INFO(Engine, "Loaded %zu asset definitions from %s", loaded, fullPath.c_str());
-		}
-
-		// Load recipes from the recipes folder
-		std::string recipesPath = Foundation::findResourceString("assets/recipes");
-		if (!recipesPath.empty()) {
-			size_t recipesLoaded = RecipeRegistry::Get().loadRecipesFromFolder(recipesPath);
-			LOG_INFO(Engine, "Loaded %zu recipes from %s", recipesLoaded, recipesPath.c_str());
+			loadRecipes();
 		}
 	}
 

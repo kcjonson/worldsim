@@ -1390,7 +1390,7 @@ namespace assets {
 		return totalLoaded;
 	}
 
-	void AssetRegistry::beginLoadAsync(const std::string& folderPath) {
+	void AssetRegistry::beginLoadAsync(const std::string& folderPath, std::function<void()> afterDefinitions) {
 		if (m_loadThread.joinable()) {
 			m_loadThread.join();
 		}
@@ -1398,10 +1398,13 @@ namespace assets {
 		m_loadProgress.done.store(false);
 		m_loadProgress.started.store(true, std::memory_order_release);
 
-		m_loadThread = std::thread([this, folderPath]() {
+		m_loadThread = std::thread([this, folderPath, afterDefinitions = std::move(afterDefinitions)]() {
 			loadDefinitionsFromFolder(folderPath, [this](int loaded) { m_loadProgress.defsLoaded.store(loaded); });
-			// Release so a reader that observes done (acquire) sees all the writes
-			// the worker made to definitions, indices, and the validation report.
+			if (afterDefinitions) {
+				afterDefinitions();
+			}
+			// Release so a reader that observes done (acquire) sees all the writes the worker
+			// made to definitions, indices, the validation report, and afterDefinitions' loads.
 			m_loadProgress.done.store(true, std::memory_order_release);
 		});
 	}

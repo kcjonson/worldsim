@@ -131,7 +131,7 @@ void AIDecisionSystem::buildDecisionTrace(
         auto capability = needToCapability(needType);
         // Nearest known source the colonist can reach (see Query Pattern below)
         auto nearest = findNearestReachableWithCapability(
-            memory, capability, position.value, anySource, canReach, m_sourceScratch);
+            memory, capability, position.value, anySource, reachable, m_sourceScratch);
 
         if (nearest.has_value()) {
             option.targetPosition = nearest->position;
@@ -207,17 +207,15 @@ The DecisionTrace respects the memory constraint:
 ### Query Pattern
 
 ```cpp
-// The colonist's reach, computed once per decision: one climb of the nav reachability forest
-std::optional<NavigationSystem::Reach> reach;
-if (haveMesh) reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
-auto canReach = [&](const glm::vec2& p) { return !reach || m_navSystem->reaches(*reach, p); };
+// A candidate is filtered by the nav mesh's component labels (are the two places joined by meshed ground);
+// the nearest few connected ones go to one nearest-of route request that answers for his width and belief.
 
 // Both tests take the source's Memory key, so a verdict can be remembered per source (SourceReachMemo)
 auto accept = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
     return notKnownUnreachable(sourceKey, known);  // Hunger also requires an edible yield
 };
 auto reachable = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-    return canReachSource(sourceKey, sourcePosition);  // remembered verdict, or canReach the first time
+    return canReachSource(sourceKey, sourcePosition);  // remembered verdict, or asked of the route request the first time
 };
 
 std::optional<KnownWorldEntity> nearest = findNearestReachableWithCapability(
@@ -232,7 +230,7 @@ std::optional<KnownWorldEntity> nearest = findNearestReachableWithCapability(
 
 A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. With no food in its pack, one nearest-first search answers both food options. The Hunger option takes the nearest reachable known source of any kind: a ready harvestable whose yield is edible, a loose pile of an edible item, or a storage box the colony knows that holds one (piles and boxes only while the colonist is hungry). The gather-food option takes the nearest free ready bush. A bush on its regrowth cooldown pays nothing, so it is passed over for the next nearest; when nothing else edible is known, both options read `Regrowing` and the colonist takes its next option (other work, a wander) until the bush is ready. Readiness is the live state of a source the colonist already remembers, the game time it is ready again (or none), asked through `AIDecisionSystem::setSourceRegrowthCallback` by interned def id only of candidates on their way to winning, nearest first. When the search finds nothing and every edible harvestable the colonist knows is regrowing, the harvestables are not searched again until the earliest of them is ready or the colonist remembers or forgets a world entity (`SourceReachMemo::FoodWait`), so an idle colonist waiting on food costs one compare a decision. A work Harvest is checked the same way when it comes up for selection; a construction clear is not, since it removes the bush whatever its state. A bed or toilet that can't be reached falls back to the ground, as when none is known.
 
-"Can't reach" means two things. The pre-check: no route through the nav forest, or the source sits in a different built nav region (routes stay inside one region). And a route that actually came back "no believed route": the colonist remembers that target as unreachable until its region's mesh, its wall belief, or the part of the map it stands in changes, then tries it again. The same holds for a toilet spot or a work target, remembered by its point rather than a Memory key; a toilet spot that failed gives way to the ground where the colonist stands.
+"Can't reach" means two things. The pre-check: the source is in a different component of the nav mesh than the colonist. And a route request that came back "no known way": the colonist remembers a verdict on that target until his belief moves, or the label epoch moves and the verdict is at least `kVerdictMinTicks` old, then tries it again; a target with a live verdict is not asked about again. The same holds for a toilet spot or a work target, remembered by its point rather than a Memory key; a toilet spot that failed gives way to the ground where the colonist stands.
 
 ---
 

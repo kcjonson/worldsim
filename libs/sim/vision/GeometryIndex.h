@@ -15,8 +15,8 @@
 // gap for the same opening.
 //
 // Extraction is synchronous and CPU-light (centerline segments, no triangulation,
-// no offsetting), so unlike NavigationSystem there is no async/worker path: the
-// rebuild runs inline, version-gated against ConstructionWorld::version().
+// no offsetting), so the rebuild runs inline, version-gated against
+// ConstructionWorld::version().
 
 #include <construction/ConstructionWorld.h> // SegmentId/OpeningId typedefs used in records
 

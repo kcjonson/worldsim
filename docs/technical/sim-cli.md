@@ -78,8 +78,8 @@ apps/sim-cli          repl and run front ends, expression evaluator, script runn
 `SimSession` owns the simulation and its setup. The game and sim-cli both construct one and both
 call its `step(dt)`, so there is one setup path and one tick path (CLAUDE.md one-path rule). There
 are no mode flags inside systems and no "headless" branch anywhere in libs/sim. Differences between
-the hosts are things a host does or doesn't do around the session: the game pushes a camera
-viewport and registers its render system; sim-cli pushes a fixed viewport and calls `settle()`.
+the hosts are things a host does or doesn't do around the session: the game sets the chunk focus
+from its camera and registers its render system; sim-cli fixes the focus at the origin and calls `settle()`.
 
 Registries (assets, recipes, work types, task chains, priority config, construction, and
 `GoalTaskRegistry`) are process singletons, so there is one session per process at a time. A session
@@ -108,8 +108,7 @@ trips the one-session assert.
 | The session seed and the per-system seeds derived from it | `GameScene::initializeECS` (`ecs::deriveSystemSeeds` in SystemSeeds.h) |
 | An event ring (see [Views](#views)) and per-system timing accumulators | none |
 
-Inputs a host sets before a step: the chunk focus (a world position the chunk manager loads around)
-and the viewport rect (the nav sim area's camera contribution). Outputs a host drains after a step:
+Inputs a host sets before a step: the chunk focus (a world position the chunk manager loads around). Outputs a host drains after a step:
 events, entity-removed notices, changed-chunk notices, and chunk mesh bakes when the host supplied a
 bake stage.
 
@@ -121,9 +120,9 @@ add re-bake work to the game's frame.
 Code that runs between steps or inside system callbacks and needs a deferred change calls the
 session: `queueRemoval(entity)` puts an entity on the removal drain, and `factory()` gives the
 `EntityFactory`, whose `dropResourcePiles` is the one ground-pile path. The phase-1 structure
-callbacks that stay in GameScene use exactly these: the extension merge, opening
-teardown, and blueprint teardown (all wired in `GameScene::onEnter`) call `queueRemoval`, and the salvage drop calls
-`factory().dropResourcePiles`.
+callbacks that stay in GameScene use exactly these: the extension merge, opening teardown, and
+blueprint teardown (all wired in `GameScene::onEnter`) call `queueRemoval`, and the salvage drop queues
+a pending spawn, since it fires inside ActionSystem's view loop.
 
 ### pumpStreaming() and step(dt)
 
@@ -139,14 +138,13 @@ does by hand today (`GameLoadingScene::loadChunks` and `placeEntities`); it neve
 `pumpStreaming()` followed by the rest of the game's update sequence (`GameScene::update`) with the
 camera and render parts removed:
 
-1. Push the viewport rect into `NavigationSystem::setViewportRect`. Today this happens between the
-   chunk update and chunk processing; the rect is plain data that nav reads only in its own
-   `update`, so pushing it before `pumpStreaming()` changes nothing.
-2. `pumpStreaming()`.
-3. `world.update(dt)`. The render system, if the host registered one, runs here at priority
-   900 after every sim system.
-4. Drain entity removals, emitting an entity-removed notice for each.
-5. Drain pending spawns through `EntityFactory`.
+1. `pumpStreaming()`. (The camera has no effect on the nav mesh.)
+2. `world.update(dt)`. Inside it, a drain system at priority 800 (`DeferredEditsSystem`, after
+   ActionSystem, the last system that queues) drains entity removals, emitting an entity-removed notice
+   for each, then pending spawns through `EntityFactory`. It runs inside the tick because
+   NavigationSystem joins its patch job in its own `update` and launches the next in `endTick`: after
+   `world.update` returns, a drop's ground probe would wait for that job. The render system, if the
+   host registered one, runs at priority 900 after it.
 
 The game keeps passing its real frame dt. sim-cli passes a constant `dt = 1 / hz`.
 
@@ -161,10 +159,9 @@ passes none, and nothing else in the processor changes.
 1. `ChunkManager::finishPendingGeneration()`.
 2. Launch placement for every ready chunk not yet processed, `AsyncChunkProcessor::waitAll()`, then
    integrate.
-3. `NavigationSystem::finishPendingBuilds()`: evaluate the region rebuild
-   gates against current inputs, launch what they call for, wait for every in-flight build (they run
-   on `std::async`), swap each in through the same path `update()` uses to drain finished
-   builds, and repeat until no gate fires, then wait for the builds of dropped regions still running. It
+3. `NavigationSystem::finishPendingBuilds()`: gather every nav queue with no
+   budget, apply it as patches and wait for the patch job, repeating until nothing is left: the same
+   patches `update()` would apply over several ticks. It reads only chunks that are ready now. It
    advances nothing else; `isBuilding()` is false when it returns.
 
 sim-cli calls `settle()` after every tick and after every command that changes the world. The game
@@ -172,11 +169,11 @@ never calls it. The trade is deliberate: repeatable results matter more here tha
 
 What settling hides, so nobody mistakes a passing scenario for coverage of it:
 
-- The pre-mesh window. In the game the first decisions happen before any region mesh exists and
-  colonists hold or recover; in sim-cli a mesh is always present.
+- The pre-mesh window. In the game the first decisions happen before any ground is meshed and
+  colonists hold or recover; in sim-cli the mesh around the movers is always present.
 - Mesh staleness after a change. A felled tree or a wall built or torn down leaves the old mesh serving
-  queries until the region rebuild lands in the game, frames later; in sim-cli the next tick sees the rebuilt mesh. Deferred-route
-  retries keyed on mesh generation, and replans after a mid-route rebuild, behave differently.
+  queries until the patch lands in the game, frames later; in sim-cli the next tick sees the patched mesh. Routes are asked
+  by ticket and answered a tick or two later, in the game and in sim-cli alike. Routes marked stale by a patch, and replans after a mid-route patch, behave differently.
 - Chunk streaming and placement pop-in, and anything ordered by which worker finished first.
 - Frame-time variance.
 
@@ -188,7 +185,7 @@ scenarios.
 GameScene keeps the camera, input, `GameUI` and toasts, `SelectionSystem`, the placement and drawing
 tools (`PlacementSystem`, `DrawingSystem`), overlays, renderers, the GPU hold, player control, and the
 dev server adapter. It registers `DynamicEntityRenderSystem` on `session.world()` after construction.
-Each frame it updates the camera, sets the session's focus and viewport, calls `step(dt)`, then drains
+Each frame it updates the camera, sets the session's focus, calls `step(dt)`, then drains
 events into toasts, drains removal notices (dropping selection and control of a removed colonist,
 today in `GameScene::update`'s removal drain), releases baked render caches for changed chunks, and renders.
 
@@ -221,7 +218,7 @@ the landing, the shared commands, and the game's placement tool:
 - `createPackaged(def, position, target)`: the packaged branch of the spawn drain.
 
 `PlacementExecutor` gains the insert, and its removal epoch becomes an edit epoch bumped by inserts as
-well, so nav regions rebuild over an inserted obstacle (`NavigationSystem::regionObstaclesChanged`, and the epoch snapshot in `launchBuild`). An
+well, so nav patches over an inserted obstacle (the edit epoch is what nav reads to find placement changes). An
 insert into a chunk that has not finished placement is rejected: integration replaces the chunk's
 whole index (`PlacementExecutor::storeChunkResult` assigns `m_chunkIndices[result.coord]`), so the inserted entity would
 vanish. Inserted statics live in the chunk's index like generated ones, so unloading the chunk drops
@@ -276,13 +273,13 @@ moved: `select`, `tunable`, `landing`, `tunables`, `gpuhold`, and in phase 1 the
 | Today | Becomes | Deleted |
 |---|---|---|
 | `GameScene::initializeECS` registration and sim callback wiring | `SimSession` construction | the GameScene code, and its toast lambdas (events replace them) |
-| `processNewChunks`, `cleanupUnloadedChunks`, both drains in `GameScene::update` | `SimSession::pumpStreaming` and `step` | the GameScene functions, `m_pendingSpawns`, `m_pendingEntityRemoval`, `PendingSpawn` |
+| `processNewChunks`, `cleanupUnloadedChunks`, `GameScene::drainDeferredEdits` and its `DeferredEditsSystem` | `SimSession::pumpStreaming` and `step` | the GameScene functions, `m_pendingSpawns`, `m_pendingEntityRemoval`, `PendingSpawn` |
 | Loading scene's chunk polling, placement launch, and bake hand-off | `SimSession::pumpStreaming` | the loading scene's `asyncProcessor` and its loop |
 | `prepareLandingClearing`, `clearLandingArea` | `SimSession::land(rawSpawn, crew)`, returning spawn points, colonist ids, and changed chunks | the GameScene functions |
 | `spawnColonist`, `PlacementSystem::spawnEntity`, `dropResourcePiles` | `EntityFactory` | all three |
 | The ECS-entity scans for spawned harvestables in the take-source path (`ecs::takeWorldSource`, WorldSource.cpp) and in `ConstructionSystem::isFootprintClear`, and the harvestable-pool branch of `PlacementSystem::spawnEntity` | nothing: every harvestable def is static (below) | all three |
 | `DevCommandHandler` verb bodies, `nearestColonist` and friends, `parsePoint`, `jsonEscape` | `SimCommands` | the moved bodies and helpers |
-| Off-area and unreachable options relabeled `NoSource` | `OffArea` and `Unreachable` statuses | the relabels |
+| Unreachable options relabeled `NoSource` | `Unreachable` status | the relabel |
 
 Done in build steps 1 to 4: the `std::optional` RNG seeds and their `random_device` fallback became
 required seed arguments; the three `nextChainId` statics became the `GoalTaskRegistry` chain id
@@ -310,8 +307,7 @@ touched.
 | `pond` | `40,0,15` | pond center x, y and radius in meters, when `water=pond` |
 | `flora` | `none` | `none` places nothing at chunk processing; `generated` runs the biome's placement rules |
 | `origin` | `0,0` | colony origin and chunk focus |
-| `area` | `60` | half-extent in meters of the fixed viewport square at the origin (nav clamps it to 64) |
-| `chunks` | `1` | chunk load radius around the origin (512 m chunks); 1 to 2, and 0 is rejected because nav clamps a region's half-extent to the load radius and 0 clamps it to nothing (`NavigationSystem::clampHalfExtent`) |
+| `chunks` | `1` | chunk load radius around the origin (512 m chunks); 1 to 2, and 0 is rejected because nothing would load for the mesh to grow over |
 | `hz` | `60` | ticks per real second; `dt = 1 / hz` |
 | `clock` | `06:00` | starting time of day |
 
@@ -340,8 +336,8 @@ a script and the colonist agree on where the water is.
 Two stores hold world things, and which one a thing lives in decides what sees it:
 
 - The placement index (`PlacementExecutor`'s per-chunk `SpatialIndex`) holds static world entities.
-  Nav builds obstacles only from the index (`nav::buildInput` in NavInputBuilder.h, flora via
-  `floraRingFor`), and `StaticRectCollisionSystem` reads only the index. Vision pass 1 reads it,
+  Nav builds obstacles only from the index (`nav::placedObstacleRing` in NavInputBuilder.h, one ring
+  per placed obstacle), and `StaticRectCollisionSystem` reads only the index. Vision pass 1 reads it,
   harvest decrements and removes through it.
 - ECS entities with `Appearance` hold runtime things: stations, storage, piles, packaged items,
   colonists. Vision pass 2 reads them.
@@ -361,11 +357,11 @@ stones become placement-index entities; the scenario's steps don't change.
 
 ### Validity
 
-A position is valid when it is on a walkable face of an active nav region
+A position is valid when it is on a walkable face of the nav mesh
 (`NavigationSystem::isValidPosition`; [Pathfinding Architecture](./pathfinding-architecture.md)).
-Every verb that takes a position checks it after settling and rejects with `off-mesh`. The active area
-is the fixed viewport square around the origin plus each colonist's own 30 m square, so positions far
-from both are invalid even on dry land. Scattered placements snap each point with
+Every verb that takes a position checks it after settling and rejects with `off-mesh`. Only movers
+generate the mesh (their sight radius plus a 16 m buffer) and nothing is ever removed from it, so
+ground no mover has meshed is invalid even on dry land. Scattered placements snap each point with
 `findValidPositionNear(point, 0)` as the dev verb does today and report how many landed.
 
 ---
@@ -442,7 +438,7 @@ parameter that picks what to act on (`give`'s `material=Wood` and `n=100`, `DevC
 
 | Verb | Required | Optional | Reply on ok | Rejections |
 |---|---|---|---|---|
-| `world` (CLI) | `seed`, `speed` | the other map parameters | `seed`, `origin`, `shore` (when water), `area`, `regions` | `world-exists`, `bad-param`, `missing-param` |
+| `world` (CLI) | `seed`, `speed` | the other map parameters | `seed`, `origin`, `shore` (when water) | `world-exists`, `bad-param`, `missing-param` |
 | `colonist` | `at` | `n=1`, `name=Dev` | `ids`, `names` | `off-mesh`, `name-taken` |
 | `spawn` | `def`, `at` | `n=1`, `scatter=0`, `rotation=0`, `name`, `resources` | `store` (`static` or `ecs`), `requested`, `placed`, `ids` (ECS) or `positions` (static) | `unknown-def`, `off-mesh` (none placed), `chunk-not-ready`, `name-taken`, `bad-param` |
 | `give` | `material`, `n`, `where=site\|loose\|pile\|colonist\|storage\|station` | `at`, `colonist`, `slot=pack` | `added` (may be less than `n`; partial is not a refusal) | `unknown-def`, `not-found`, `no-storage`, `no-station`, `off-mesh`, `missing-param` |
@@ -503,7 +499,7 @@ are lists over colonists and take `colonist=` to narrow to one. Item maps (`inve
 | `events` | the event ring: `tick`, `minutes`, `kind`, `colonist`, `entity`, `detail`; `since=<tick>` |
 | `time` | `day`, `hour`, `minute`, `minutes` (since session start), `tick`, `speed`, `paused`, `season` |
 | `timings` | per system: `meanUs`, `p99Us`, `maxUs` over ticks since the last reset, from `World::getSystemTimings`; `stepUs` and `settleUs` likewise; `reset=1` |
-| `world` | the world parameters, `shore`, nav `regions` and `generation` |
+| `world` | the world parameters, `shore` and nav `generation` |
 | `summary` | `colonists`, `entities` by def, `chunks`, `ticks` |
 | `digest` | `tick` and a 64-bit hash of the canonical state (see [Determinism](#determinism)) |
 
@@ -568,14 +564,12 @@ doing that". Both live in libs/sim and both front ends read them; the game's dec
 reason, with statuses `Selected`, `Available`, `NoSource`, and `Satisfied`, and nothing older than the
 latest evaluation. This epic adds:
 
-- Two statuses for options selection drops after scoring. Today selection relabels an option
-  `NoSource` in two cases: its target is outside every active sim region, and the nav reachability
-  pre-filter proves it unreachable. "Never seen one", "it's outside the simulated area", and "I can't
-  get to the one I know" read the same. They become `OffArea` and `Unreachable`. Need source
-  selection is being reworked on another branch (WOR-605/607: walk the candidates for a reachable one
-  and carry a proven-reachable fact on options); whatever shape lands, each place that drops an option
-  for area or reachability sets the matching status instead of `NoSource`.
-- A reason code on every option that is not actionable (`no-source`, `off-area`, `unreachable`,
+- A status for options selection drops after scoring. Selection relabels an option `NoSource` when
+  every source the colonist remembers is not joined to him by explored ground, or carries a "no known
+  way" verdict for him (see [Colonist AI behavior](../design/game-systems/colonists/ai-behavior.md)).
+  "Never seen one" and "I can't get to the one I know" read the same. The second becomes `Unreachable`;
+  each place that drops an option for reachability sets it instead of `NoSource`.
+- A reason code on every option that is not actionable (`no-source`, `unreachable`,
   `satisfied`, `undiscovered-recipe`, `missing-tool`, `no-room`, and the claims codes), next to the
   prose reason. Scripts match codes; the UI shows prose.
 - The cause of each evaluation, one per trigger in `AIDecisionSystem::shouldReEvaluate`: `no-task`
@@ -622,7 +616,7 @@ What makes it hold:
   id (the resource roll in `PlacementSystem::spawnEntity`, the attribute roll in `GameScene::spawnColonist`) and stays so.
 - Settling after every tick removes thread timing from chunk generation, placement, and nav builds.
 - A constant `dt` and a pinned speed.
-- No camera: the viewport and chunk focus are fixed at the origin.
+- No camera: the chunk focus is fixed at the origin, and the camera has no effect on the mesh in the game either.
 - No state carried between sessions ([Process statics](#process-statics)).
 
 What can still break it, and is what the test is for: iteration over an unordered container whose
@@ -869,7 +863,7 @@ independent of each other.
    rejections and required parameters, `remember`, `discover`, `give where=pile|station` and `colonist=`,
    `spawn resources=`, name and anchor resolution, the views that need no new sim data, the full digest.
    DevCommandHandler becomes the adapter. Tests: dispatcher cases for each rejection reason.
-9. Decision introspection. `OffArea` and `Unreachable` statuses, reason codes, evaluation causes, the
+9. Decision introspection. The `Unreachable` status, reason codes, evaluation causes, the
    `DecisionHistory` component, the `trace` and `task` views, the event kinds that come from history.
    Tests: AIDecisionSystem cases for each new status and for history records on preemption and
    completion.
@@ -946,7 +940,7 @@ When sim-cli exists (not before):
   shows, and the trace statuses it adds.
 - [Colonist Task Arbitration](./colonist-task-arbitration.md): tiers and scores the trace reports.
 - [Decision Trace](../design/game-systems/colonists/decision-trace.md): the player-facing trace.
-- [Pathfinding Architecture](./pathfinding-architecture.md): sim regions, the validity predicate,
+- [Pathfinding Architecture](./pathfinding-architecture.md): the validity predicate,
   `findValidPositionNear`.
 - [Main Loop Timing](./main-loop-timing.md): the tick `step(dt)` reproduces, its order, and which rates follow frames, real time, or game time.
 - [Vision Architecture](./vision-architecture.md): discovery, shore points.

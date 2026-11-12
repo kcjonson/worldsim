@@ -1,7 +1,7 @@
 # Scenario 01: Craft axe and box
 
 **Status:** ready  
-**Last verified:** 2026-11-02
+**Last verified:** 2026-11-12
 
 Verifies the full gather-and-craft loop: a colonist harvests raw materials from nearby world
 entities (no freebies) and produces both a `Recipe_AxePrimitive` and a `Recipe_BasicBox` at a

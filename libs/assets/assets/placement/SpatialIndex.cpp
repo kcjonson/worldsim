@@ -8,8 +8,8 @@ namespace assets {
 
 	namespace {
 
-		/// The one test for "this is the entity at that position": remove() and contains() share it,
-		/// so an entity contains() reports is always one remove() can take out.
+		/// The one test for "this is the entity at that position": find(), and through it remove()
+		/// and contains(), use it.
 		[[nodiscard]] bool isEntityAt(const PlacedEntity& entity, glm::vec2 position, const std::string& defName) {
 			constexpr float kEpsilon = 0.001F;
 			const glm::vec2 diff = entity.position - position;
@@ -42,19 +42,23 @@ namespace assets {
 		m_version.value = nextVersion();
 	}
 
-	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
-		int64_t key = getCellKey(position);
-		auto	cellIt = m_cells.find(key);
+	const PlacedEntity* SpatialIndex::find(glm::vec2 position, const std::string& defName) const {
+		const auto cellIt = m_cells.find(getCellKey(position));
 		if (cellIt == m_cells.end()) {
-			return false;
+			return nullptr;
 		}
+		const auto it = std::ranges::find_if(cellIt->second, [&](const PlacedEntity& e) { return isEntityAt(e, position, defName); });
+		return it != cellIt->second.end() ? &*it : nullptr;
+	}
 
-		auto&	   entities = cellIt->second;
-		const auto it = std::ranges::find_if(entities, [&](const PlacedEntity& e) { return isEntityAt(e, position, defName); });
-		if (it == entities.end()) {
+	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
+		const PlacedEntity* found = find(position, defName);
+		if (found == nullptr) {
 			return false;
 		}
-		entities.erase(it);
+		const auto cellIt	= m_cells.find(getCellKey(position));
+		auto&	   entities = cellIt->second;
+		entities.erase(entities.begin() + (found - entities.data()));
 		--m_entityCount;
 		m_version.value = nextVersion();
 
@@ -66,9 +70,7 @@ namespace assets {
 	}
 
 	bool SpatialIndex::contains(glm::vec2 position, const std::string& defName) const {
-		const auto cellIt = m_cells.find(getCellKey(position));
-		return cellIt != m_cells.end() &&
-			   std::ranges::any_of(cellIt->second, [&](const PlacedEntity& e) { return isEntityAt(e, position, defName); });
+		return find(position, defName) != nullptr;
 	}
 
 	void SpatialIndex::clear() {

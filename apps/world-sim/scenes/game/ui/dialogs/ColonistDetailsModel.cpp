@@ -150,7 +150,11 @@ namespace world_sim {
 			// For moving tasks, prefer the nav-state vocabulary so the player understands
 			// belief-driven navigation ("Re-routing", "Can't find a way") as intent, not bug.
 			if (task->state == ecs::TaskState::Moving) {
-				switch (task->navState) {
+				const bool briefWait = task->navState == ecs::NavState::AwaitingRoute && task->routeWaitTicks < ecs::Task::kFindingWayTicks;
+				switch (briefWait ? ecs::NavState::Traveling : task->navState) {
+					case ecs::NavState::AwaitingRoute:
+						bioData.currentTask = "Finding a way";
+						break;
 					case ecs::NavState::Rerouting:
 						bioData.currentTask = "Re-routing";
 						break;

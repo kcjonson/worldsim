@@ -5,6 +5,7 @@
 #include "../InventoryMass.h"
 #include "../World.h"
 #include "ChainClaims.h"
+#include "NavigationSystem.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -319,7 +320,7 @@ namespace ecs {
 			headToDeposit(entity, task);
 			if (carriedBefore > 0) {
 				// A leg of a gathering: decided again at once, as after a cut (task-claims.md, Batching).
-				task.timeSinceEvaluation = std::numeric_limits<float>::max();
+				requestDecision(task);
 			}
 
 			action.clear();
@@ -377,23 +378,9 @@ namespace ecs {
 				}
 			}
 
-			// Transition to phase 2 - walk to placement target. Re-point the task at the place
-			// GOAL and set it Moving; the AI's per-tick chain-leg repath (a Moving task with an
-			// active target but no live route) requests a navmesh path, and the colonist follows
-			// that A* route to the bench. Invalidate the pickup-leg route, which still points at
-			// the source, so the stale path can't carry the colonist the wrong way for a frame.
-			task.targetPosition = task.placeTargetPosition;
-			task.state = TaskState::Moving;  // Must be Moving for MovementSystem to set Arrived
+			// Transition to phase 2 - walk to placement target.
+			headTo(entity, task, task.placeTargetPosition);
 			task.chainStep++; // Advance chain: step 0 (PickupPackaged) → step 1 (Place)
-
-			auto* movementTarget = world->getComponent<MovementTarget>(entity);
-			if (movementTarget != nullptr) {
-				movementTarget->target = task.placeTargetPosition;
-				movementTarget->active = true;
-			}
-			if (auto* navPath = world->getComponent<NavPath>(entity)) {
-				navPath->valid = false;
-			}
 
 			action.clear();
 			LOG_DEBUG(
@@ -426,13 +413,25 @@ namespace ecs {
 	}
 
 	void ActionSystem::headToDeposit(EntityID entity, Task& task) {
-		// Moving with an active target and no live route: the AI's chain-leg repath plans the A* route
-		// to the destination, so the colonist never slides straight at it.
-		task.targetPosition = task.haulTargetPosition;
-		task.state = TaskState::Moving;
+		headTo(entity, task, task.haulTargetPosition);
 		task.chainStep = 1;
+	}
+
+	void ActionSystem::headTo(EntityID entity, Task& task, glm::vec2 target) {
+		// A route still out was asked for the leg just finished.
+		if (task.routeTicket != 0) {
+			if (auto* nav = world->tryGetSystem<NavigationSystem>()) {
+				nav->cancelRoute(task.routeTicket);
+			}
+			task.routeTicket = 0;
+		}
+		// Moving with an active target and no route: the AI asks for the route to the new target, so the
+		// colonist never slides straight at it, and the old leg's route can't carry him the wrong way.
+		task.targetPosition = target;
+		task.obstructedTarget.reset();
+		task.state			= TaskState::Moving;
 		if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
-			movementTarget->target = task.haulTargetPosition;
+			movementTarget->target = target;
 			movementTarget->active = true;
 		}
 		if (auto* navPath = world->getComponent<NavPath>(entity)) {
@@ -496,7 +495,7 @@ namespace ecs {
 		headToDeposit(entity, task);
 		// Decided again at once rather than after a step toward the destination: a further cut may come
 		// first (task-claims.md, Batching).
-		task.timeSinceEvaluation = std::numeric_limits<float>::max();
+		requestDecision(task);
 		LOG_DEBUG(
 			Engine,
 			"[Action] Harvest landed %u x %s; carrying %u toward goal %llu",
