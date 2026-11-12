@@ -148,8 +148,9 @@ class NavigationSystem : public ISystem {
 	// neither would the nav search, so there is none. When the nav search then gives up in priced
 	// ground (more expansions than the structural walk warrants, see kNavExpansionFloor), the route is
 	// the structural walk, through the detail at its price. When the structural walk gave up (far)
-	// there is no corridor to scale from: the nav search gets the fixed kFarNavExpansions, and when it
-	// gives up too there is no route and `gaveUp` says the search gave up, which is not "no route".
+	// there is no nav search: the structural search runs again from the start to kFarRouteExpansions,
+	// and its walk is the route, through the detail at its price like the fallback's. When it gives up
+	// too there is no route and `gaveUp` says the search gave up, which is not "no route".
 	struct PathAnswer {
 		std::optional<std::vector<glm::vec2>> route;
 		bool								  gaveUp = false;
@@ -163,12 +164,12 @@ class NavigationSystem : public ISystem {
 		navExpansionsPerStructural = perStructural;
 	}
 	// The budgets of a far question: the goal-side and start-side structural searches and a far goal's
-	// nav search, kReachProbeExpansions, kReachExpansionCap and kFarNavExpansions by default; tests
+	// route search, kReachProbeExpansions, kReachExpansionCap and kFarRouteExpansions by default; tests
 	// set small ones to make a goal far.
-	void setReachBudgets(std::uint32_t probe, std::uint32_t forward, std::uint32_t farNav) {
+	void setReachBudgets(std::uint32_t probe, std::uint32_t forward, std::uint32_t farRoute) {
 		reachProbeExpansions = probe;
 		reachExpansionCap	 = forward;
-		farNavExpansions	 = farNav;
+		farRouteExpansions	 = farRoute;
 	}
 
 	// What a colonist can reach, and how far it walks there: a walk on the structural mesh (no
@@ -219,15 +220,21 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] float anchorLoadRangeMeters() const;
 	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
 	static constexpr std::int64_t kReachCellMm = 2000;
-	// The search from the goal expands at most this many triangles: a walled room or an islet runs
-	// dry well inside it.
+	// The search budgets, chosen from measurements (nav-gate-result-2.md in the nav notes, 2026-11-11,
+	// NavScale.bench.cpp's BM_SearchReach, BM_SearchCases and BM_DefaultBudgets on the Quick Start
+	// planet's chunks): a structural step costs 0.29-0.32 us on the main thread, 0.56 us at worst.
+	// Change them from new measurements, not by feel.
+	//
+	// The search from the goal expands at most this many triangles: 0.6 ms, 1.1 ms at worst. Every
+	// dead end measured runs dry well inside it (a sealed room in 2, compound rooms in 67-482).
 	static constexpr std::uint32_t kReachProbeExpansions = 2000;
-	// The search from the start expands at most this many: about 70 chunks of open ground, so a walk
-	// that gives up costs a bounded few milliseconds at worst.
-	static constexpr std::uint32_t kReachExpansionCap = 20000;
-	// A far goal's nav search expands at most this many: a whole far request (both structural searches
-	// and this) stays within about twice one capped reach walk.
-	static constexpr std::uint32_t kFarNavExpansions = 20000;
+	// The search from the start expands at most this many: 1.6 ms, 2.8 ms at worst (with the probe a
+	// reach walk stays under 4 ms). Real ground reaches 1.1 km at the median within it; a goal past it
+	// is far, which a route request then settles.
+	static constexpr std::uint32_t kReachExpansionCap = 5000;
+	// A far goal's route search expands at most this many: 19 ms, 34 ms at worst, once per far target.
+	// Every real far goal measured to 10 km needed at most 41,006.
+	static constexpr std::uint32_t kFarRouteExpansions = 60000;
 	// The nav search behind a found structural walk may expand this many triangles plus this many
 	// for each the structural search expanded (see requestPath).
 	static constexpr std::uint32_t kNavExpansionFloor		   = 4000;
@@ -390,6 +397,7 @@ class NavigationSystem : public ISystem {
 		std::uint64_t probeExpansions	   = 0;
 		std::uint64_t forwardExpansions	   = 0;
 		std::uint64_t farWalks			   = 0;
+		std::uint64_t farRouteExpansions   = 0;
 		std::uint64_t routeSearchesGaveUp  = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
@@ -631,8 +639,9 @@ class NavigationSystem : public ISystem {
 	void markCrossedRoutes();
 	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
 	void markStrayedRoutes();
-	// A mover whose last route failure was stamped unsettled (SourceReachMemo::kUnsettledStamp) decides
-	// again on the update whose join lands the ground that settles its reach: ground in a chunk within
+	// A mover whose task stands on a route failure stamped unsettled (navState CantFindWayTo,
+	// SourceReachMemo::kUnsettledStamp) decides again (requestDecision) on the update whose join lands
+	// the ground that settles its reach: ground in a chunk within
 	// the anchor load range of it, after which every such chunk is meshed. Run after the join, before
 	// the AI. Waiting goals need nothing here: their ground landing moves generation(), and the AI
 	// retries them on that.
@@ -728,7 +737,7 @@ class NavigationSystem : public ISystem {
 	std::uint32_t									 navExpansionsPerStructural = kNavExpansionsPerStructural;
 	std::uint32_t									 reachProbeExpansions		= kReachProbeExpansions;
 	std::uint32_t									 reachExpansionCap			= kReachExpansionCap;
-	std::uint32_t									 farNavExpansions			= kFarNavExpansions;
+	std::uint32_t									 farRouteExpansions			= kFarRouteExpansions;
 	// The boxes of the placed obstacles that landed in the joined jobs, for markCrossedRoutes.
 	std::vector<std::pair<glm::vec2, glm::vec2>> detailLanded;
 

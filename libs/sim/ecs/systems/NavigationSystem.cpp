@@ -1,5 +1,7 @@
 #include "NavigationSystem.h"
 
+#include "AIDecisionSystem.h"
+
 #include "../World.h"
 #include "../components/AgentRadius.h"
 #include "../components/Colonist.h"
@@ -1592,13 +1594,6 @@ namespace ecs {
 		pricedRoutes = std::move(live);
 	}
 
-	namespace {
-		// AIDecisionSystem has no hook for "decide again now", so this writes the Task field its scheduler
-		// reads, as ActionSystem does after a landed cut: shouldReEvaluate's interval check passes at the
-		// next AI update. It belongs on the AI's side; replace it with that hook once there is one.
-		void decideAgainNow(Task& task) { task.timeSinceEvaluation = std::numeric_limits<float>::max(); }
-	} // namespace
-
 	void NavigationSystem::wakeUnsettledFailures() {
 		if (groundLanded.empty()) {
 			return;
@@ -1610,7 +1605,8 @@ namespace ecs {
 		}
 		std::sort(landed.begin(), landed.end(), ChunkLess{});
 		for (auto [entity, position, task] : world->view<Position, Task>()) {
-			if (task.blockedReachStamp != SourceReachMemo::kUnsettledStamp) {
+			// Only a task still standing on the failure: its route failed and the stamp says unsettled.
+			if (task.navState != NavState::CantFindWayTo || task.blockedReachStamp != SourceReachMemo::kUnsettledStamp) {
 				continue;
 			}
 			// The box Reach::settled reads: ground landing in it settles the reach once all of it is in.
@@ -1620,7 +1616,7 @@ namespace ecs {
 				touched = touched || std::binary_search(landed.begin(), landed.end(), coord, ChunkLess{});
 			});
 			if (touched && groundMeshedThrough(box)) {
-				decideAgainNow(task);
+				requestDecision(task);
 			}
 		}
 	}
@@ -2043,29 +2039,41 @@ namespace ecs {
 			return {};
 		}
 
-		// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
-		// multiple of the structural search's expansions. Past that it is lost in priced ground, and
-		// the route is the structural walk itself, through the detail at its price, as it would be off
-		// camera: so a route exists on camera exactly when it does off it. A far goal has no structural
-		// walk to fall back on: when the nav search gives up too, the search gave up.
-		const std::uint32_t cap	   = structuralAnswer.far ? farNavExpansions : navExpansionFloor + navExpansionsPerStructural * structuralAnswer.expansions;
-		gnav::PathResult	result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
-		if (result.stop == gnav::PathStop::LimitReached && structuralAnswer.far) {
-			++navStats.routeSearchesGaveUp;
-			navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
-			LOG_DEBUG(Engine,
-					  "[Nav] path search gave up toward (%.2f, %.2f), %.0f m in a straight line from (%.2f, %.2f): structural %u expansions, nav %u",
-					  goalMeters.x, goalMeters.y, std::sqrt(dist2(startMeters, goalMeters)), startMeters.x, startMeters.y, structuralAnswer.expansions,
-					  result.expansions);
-			return {.route = std::nullopt, .gaveUp = true};
-		}
-		if (result.stop == gnav::PathStop::LimitReached) {
-			LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
-					  result.expansions, structuralAnswer.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
-			result					  = structuralAnswer.walk;
+		gnav::PathResult result;
+		if (structuralAnswer.far) {
+			// A far goal: the structural search again, from the start, to farRouteExpansions, and its walk is
+			// the route, through the detail at its price, as the fallback below takes it. No nav search:
+			// scaled from a walk this long its budget would be unbounded, and with a fixed one it gave up on
+			// every far goal measured (nav-gate-result-2.md). The route is replanned as he goes.
+			result = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxExpansions = farRouteExpansions});
+			navStats.farRouteExpansions += result.expansions;
+			if (result.stop == gnav::PathStop::LimitReached) {
+				++navStats.routeSearchesGaveUp;
+				LOG_DEBUG(Engine,
+						  "[Nav] path search gave up toward (%.2f, %.2f), %.0f m in a straight line from (%.2f, %.2f): reach %u expansions, route %u",
+						  goalMeters.x, goalMeters.y, std::sqrt(dist2(startMeters, goalMeters)), startMeters.x, startMeters.y, structuralAnswer.expansions,
+						  result.expansions);
+				return {.route = std::nullopt, .gaveUp = true};
+			}
+			if (result.stop != gnav::PathStop::Found) {
+				return {};
+			}
 			result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
-		} else if (!result.reachable) {
-			return {};
+		} else {
+			// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
+			// multiple of the structural search's expansions. Past that it is lost in priced ground, and
+			// the route is the structural walk itself, through the detail at its price, as it would be off
+			// camera: so a route exists on camera exactly when it does off it.
+			const std::uint32_t cap = navExpansionFloor + navExpansionsPerStructural * structuralAnswer.expansions;
+			result					= gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
+			if (result.stop == gnav::PathStop::LimitReached) {
+				LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
+						  result.expansions, structuralAnswer.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
+				result					  = structuralAnswer.walk;
+				result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
+			} else if (!result.reachable) {
+				return {};
+			}
 		}
 		++navStats.totalQueries;
 		navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);

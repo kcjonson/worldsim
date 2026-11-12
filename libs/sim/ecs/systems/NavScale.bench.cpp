@@ -677,7 +677,8 @@ namespace {
 	// What the shipped budgets answer at each distance (NavigationSystem's structuralWalk then
 	// requestPath, replayed on these meshes with the default constants). range(0): ground; range(1):
 	// straight-line distance (m). From 8 starts in 8 directions: how many goals come back with a walk,
-	// "no", or far; of the far ones how many the far nav search routes, gives up on, or finds no way to;
+	// "no", or far; of the far ones how many the far route search (structural, to kFarRouteExpansions) routes,
+	// gives up on, or finds no way to;
 	// the steps each search used. Then, for the far ones, the alternative of running the structural search
 	// to completion: its steps, time, and whether it finds a walk (which the existing fallback would take
 	// as the route). The forest's structural mesh is the open ground under it.
@@ -692,15 +693,13 @@ namespace {
 		}
 		constexpr std::uint32_t kProbe	 = ecs::NavigationSystem::kReachProbeExpansions;
 		constexpr std::uint32_t kForward = ecs::NavigationSystem::kReachExpansionCap;
-		constexpr std::uint32_t kFarNav	 = ecs::NavigationSystem::kFarNavExpansions;
+		constexpr std::uint32_t kFarRoute = ecs::NavigationSystem::kFarRouteExpansions;
 		const auto outOfSteps = [](const gnav::PathResult& r, std::uint32_t cap) { return r.stop == gnav::PathStop::LimitReached && r.expansions >= cap; };
 		gnav::BeliefFilter structuralFilter = structural->filter();
 		structuralFilter.prices				= {};
-		gnav::BeliefFilter navFilter		= nav->filter();
-		navFilter.prices					= std::span<const gnav::TagPrice>(&kDetailPrice, 1);
 		for (auto _ : state) {
 			int					walk = 0, no = 0, farGoals = 0, farRouted = 0, farGaveUp = 0, farNoPath = 0, fullFound = 0;
-			std::vector<double> probeSteps, forwardSteps, navSteps, fullSteps, fullMs, farRequestMs;
+			std::vector<double> probeSteps, forwardSteps, routeSteps, fullSteps, fullMs, farRequestMs;
 			for (const glm::vec2 start : startsFor(g, *nav, 8)) {
 				for (int k = 0; k < 8; ++k) {
 					const float					   a	= 0.785398F * static_cast<float>(k) + 0.2F;
@@ -724,12 +723,12 @@ namespace {
 						continue;
 					}
 					++farGoals;
-					const gnav::PathResult route = gnav::pathThrough(nav->mesh.view(), s, t, 300, navFilter, {.maxExpansions = kFarNav});
-					navSteps.push_back(route.expansions);
+					const gnav::PathResult route = gnav::pathThrough(structural->mesh.view(), s, t, 300, structuralFilter, {.maxExpansions = kFarRoute});
+					routeSteps.push_back(route.expansions);
 					farRequestMs.push_back(msSince(requestStart));
 					if (route.stop == gnav::PathStop::Found) {
 						++farRouted;
-					} else if (outOfSteps(route, kFarNav)) {
+					} else if (outOfSteps(route, kFarRoute)) {
 						++farGaveUp;
 					} else {
 						++farNoPath;
@@ -752,7 +751,7 @@ namespace {
 			state.counters["farNoPath"]			= farNoPath;
 			state.counters["probeStepsMean"]	= meanOf(probeSteps);
 			state.counters["forwardStepsMean"]	= meanOf(forwardSteps);
-			state.counters["farNavStepsMean"]	= meanOf(navSteps);
+			state.counters["farRouteStepsMean"] = meanOf(routeSteps);
 			state.counters["farRequestMsMean"]	= meanOf(farRequestMs);
 			state.counters["farRequestMsWorst"] = worst(farRequestMs);
 			state.counters["fullFound"]			= fullFound;
