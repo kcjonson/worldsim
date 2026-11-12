@@ -1,12 +1,14 @@
 // Cost of a PatchableMesh patch on real game inputs: one tree in and out, a footprint
 // moving over open ground and through trees, trees on the shoreline, rings across a
-// long bounds edge, detail entering an area, a first build, and point location.
+// long bounds edge, detail entering an area, a first build, point location, and the
+// component labels' upkeep per patch.
 //
 // Every patch row times only the applyPatch call (plus refreshWidths in the _refreshed
 // rows), with a steady clock around it and UseManualTime, so the untimed setup between
 // patches (taking a tree out before timing its add, building the mesh) never reaches
 // the reported time.
 
+#include "nav/MeshComponents.h"
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
 #include "nav/NavMeshRealRings.test.h"
@@ -1273,6 +1275,40 @@ namespace {
 														  benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 	}
 
+	// Component-label upkeep alone, per patch, for every tree taken out and put back in
+	// turn (lone and shoreline alike). A second MeshComponents follows the mesh's reports;
+	// only its updates are timed.
+	void BM_LabelUpkeep(benchmark::State& state, Fixture f) {
+		const Rings					 rings = fixtureRings(f);
+		PatchableMesh				 mesh;
+		MeshComponents				 labels;
+		std::vector<NavInputPolygon> all = rings.base;
+		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
+		const PatchReport first = mesh.applyPatch(adding(all));
+		labels.update(mesh.view(), first);
+		std::vector<RingId> ids(first.added.begin() + static_cast<std::ptrdiff_t>(rings.base.size()), first.added.end());
+		double				visited = 0;
+		double				splits	= 0;
+		double				patches = 0;
+		std::size_t			next	= 0;
+		for (auto _ : state) {
+			const std::size_t i		= next++ % ids.size();
+			const PatchReport out	= mesh.applyPatch(removing(ids[i]));
+			double			  spent = secondsOf([&] { labels.update(mesh.view(), out); });
+			visited += static_cast<double>(labels.lastUpkeep().visited);
+			splits += labels.lastUpkeep().splits;
+			const PatchReport in = mesh.applyPatch(adding({rings.trees[i]}));
+			spent += secondsOf([&] { labels.update(mesh.view(), in); });
+			visited += static_cast<double>(labels.lastUpkeep().visited);
+			splits += labels.lastUpkeep().splits;
+			ids[i] = in.added.front();
+			patches += 2;
+			state.SetIterationTime(spent / 2);
+		}
+		state.counters["visited"] = visited / std::max(1.0, patches);
+		state.counters["splits"]  = splits / std::max(1.0, patches);
+	}
+
 } // namespace
 
 #define PATCH_ROWS(name, fn, ...)                                                                                              \
@@ -1290,6 +1326,9 @@ PATCH_ROWS(_throughTrees, BM_PatchFootprintMove, true, Refresh::Untimed);
 PATCH_ROWS(_throughTrees_refreshed, BM_PatchFootprintMove, true, Refresh::Timed);
 PATCH_ROWS(_add, BM_PatchShorelineTree, true);
 PATCH_ROWS(_remove, BM_PatchShorelineTree, false);
+BENCHMARK_CAPTURE(BM_LabelUpkeep, manyTrees, Fixture::ManyTrees)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LabelUpkeep, control, Fixture::Control)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_LabelUpkeep, realRings, Fixture::RealRings)->UseManualTime()->Unit(benchmark::kMicrosecond);
 #define BOUNDS_ROWS(name, ...)                                                                                                         	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, manyTrees##name, Fixture::ManyTrees, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, control##name, Fixture::Control, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);     	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, realRings##name, Fixture::RealRings, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond)
 
 BOUNDS_ROWS(_border128_add, 0, 0);
