@@ -479,10 +479,10 @@ TEST_F(NavigationSystemTest, KnownWalledRoomIsADefiniteNoFromTheGoalSide) {
 }
 
 // With budgets small enough that the walk into a room whose walls are known (its door isn't) is far,
-// the request asks the goal-side search, the start-side search and the far route search, each to its
-// budget and no further, and says it gave up. A goal outside the room with the same budgets is far
-// too, and the far route search routes it.
-TEST_F(NavigationSystemTest, FarRequestSpendsAtMostItsThreeBudgets) {
+// the request asks the goal-side search and one search from the start carried to the far route
+// budget, each to its budget and no further, and says it gave up. A goal outside the room with the
+// same budgets is far too, and that one search routes it.
+TEST_F(NavigationSystemTest, FarRequestSpendsAtMostItsTwoBudgets) {
 	ConstructionWorld cw;
 	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
 	World			  world;
@@ -506,9 +506,10 @@ TEST_F(NavigationSystemTest, FarRequestSpendsAtMostItsThreeBudgets) {
 	const auto& stats = sys.navQueryStats();
 	// A search may expand one past its cap (it still tries a goal popped at the cap).
 	EXPECT_LE(stats.probeExpansions, kProbe + 1);
-	EXPECT_LE(stats.forwardExpansions, kStart + 1);
-	EXPECT_LE(stats.farRouteExpansions, kFarRoute + 1);
-	EXPECT_LE(stats.probeExpansions + stats.forwardExpansions + stats.farRouteExpansions, kProbe + kStart + kFarRoute + 3);
+	EXPECT_EQ(stats.forwardSearches, 1U);
+	EXPECT_LE(stats.forwardExpansions, kFarRoute + 1);
+	EXPECT_EQ(stats.totalQueries, 1U) << "a search that gave up wasn't counted";
+	EXPECT_EQ(stats.totalNodesExpanded, stats.forwardExpansions);
 
 	sys.setReachBudgets(kProbe, kStart, NavigationSystem::kFarRouteExpansions);
 	const glm::vec2 away{30.0F, 20.0F};
@@ -1372,7 +1373,7 @@ namespace {
 
 // With the shipped budgets: the far bank of a river whose ford is 150 m east, among ponds, is about
 // 15,000 structural steps round, past the reach searches (2,000 from the goal, 5,000 from the start):
-// walk() says far. Inside the far route search's 60,000, requestPath routes it, round the ford, and
+// walk() says far. Its one search from the start, carried to 60,000, routes it, round the ford, and
 // every leg of the route is clear of water.
 TEST_F(NavigationSystemTest, FarGoalWithinTheRouteBudgetIsRoutedRoundTheFord) {
 	World			  world;
@@ -1388,11 +1389,14 @@ TEST_F(NavigationSystemTest, FarGoalWithinTheRouteBudgetIsRoutedRoundTheFord) {
 	EXPECT_EQ(sys.navQueryStats().probeExpansions, NavigationSystem::kReachProbeExpansions);
 	EXPECT_EQ(sys.navQueryStats().forwardExpansions, NavigationSystem::kReachExpansionCap);
 
+	sys.resetNavQueryStats();
 	const NavigationSystem::PathAnswer path = sys.requestPath(kPondStart, kPondAcross, kAgentRadius);
 	ASSERT_TRUE(path.route.has_value()) << "the far route search found no route";
 	EXPECT_FALSE(path.gaveUp);
-	EXPECT_GT(sys.navQueryStats().farRouteExpansions, NavigationSystem::kReachExpansionCap);
-	EXPECT_LT(sys.navQueryStats().farRouteExpansions, NavigationSystem::kFarRouteExpansions);
+	EXPECT_EQ(sys.navQueryStats().forwardSearches, 1U) << "the search from the start ran more than once";
+	EXPECT_EQ(sys.navQueryStats().navSearches, 0U);
+	EXPECT_GT(sys.navQueryStats().forwardExpansions, NavigationSystem::kReachExpansionCap);
+	EXPECT_LT(sys.navQueryStats().forwardExpansions, NavigationSystem::kFarRouteExpansions);
 	const std::vector<glm::vec2>& route = *path.route;
 	EXPECT_LT(glm::distance(route.back(), kPondAcross), 0.01F);
 	EXPECT_GT(std::max_element(route.begin(), route.end(), [](glm::vec2 a, glm::vec2 b) { return a.x < b.x; })->x, 150.0F)
@@ -1403,8 +1407,8 @@ TEST_F(NavigationSystemTest, FarGoalWithinTheRouteBudgetIsRoutedRoundTheFord) {
 }
 
 // With the shipped budgets: the ford 400 m east is about 800 m round through the ponds, past the far
-// route search's 60,000 steps too. The request gives up and says so, which is not "no route", after
-// at most the three budgets.
+// route budget's 60,000 steps too. The request gives up and says so, which is not "no route", after
+// at most the two budgets.
 TEST_F(NavigationSystemTest, FarGoalPastTheRouteBudgetGivesUpAndSaysSo) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
@@ -1419,7 +1423,9 @@ TEST_F(NavigationSystemTest, FarGoalPastTheRouteBudgetGivesUpAndSaysSo) {
 	EXPECT_FALSE(path.route.has_value());
 	EXPECT_TRUE(path.gaveUp) << "a search that ran out read as no route";
 	EXPECT_EQ(sys.navQueryStats().routeSearchesGaveUp, 1U);
-	EXPECT_LE(sys.navQueryStats().farRouteExpansions, NavigationSystem::kFarRouteExpansions + 1);
+	EXPECT_EQ(sys.navQueryStats().forwardSearches, 1U);
+	EXPECT_LE(sys.navQueryStats().forwardExpansions, NavigationSystem::kFarRouteExpansions + 1);
+	EXPECT_EQ(sys.navQueryStats().totalQueries, 1U);
 }
 
 // Ground stays meshed for at most kCameraOnlyUnloadedChunks unloaded chunks; past that the ones unloaded
@@ -3695,6 +3701,94 @@ TEST_F(NavigationSystemTest, FallbackRoutePastANarrowTrunkIsMarked) {
 	const EntityID walker = rig.walker({2.0F, 20.0F}, {38.0F, 20.0F});
 	ASSERT_TRUE(rig.world.getComponent<NavPath>(walker)->valid);
 	EXPECT_TRUE(rig.pricedRoute(walker)) << "the sapling was missed";
+}
+
+// The shipped near cap: the floor for a walk the goal-side search found at once, the floor plus 16 a
+// step for a longer one, and the ceiling past that, however long the walk's search ran.
+TEST_F(NavigationSystemTest, NearSearchCapAtTheDefaultBudgets) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	EXPECT_EQ(sys.navExpansionCap(0), NavigationSystem::kNavExpansionFloor);
+	EXPECT_EQ(sys.navExpansionCap(100), NavigationSystem::kNavExpansionFloor + 100 * NavigationSystem::kNavExpansionsPerStructural);
+	EXPECT_EQ(sys.navExpansionCap(NavigationSystem::kReachExpansionCap), NavigationSystem::kNavExpansionCeiling);
+	EXPECT_EQ(sys.navExpansionCap(NavigationSystem::kFarRouteExpansions), NavigationSystem::kNavExpansionCeiling);
+}
+
+// At the shipped budgets: a goal in the middle of a 40 m thicket too tight for the disc, on camera.
+// The structural walk is the straight line, found at once; the nav search runs into the thicket's
+// priced ground, stops at its cap, and the route is the structural walk.
+TEST_F(NavigationSystemTest, NearSearchFallsBackAtTheDefaultCap) {
+	registerTree("Test_NavThicketTree", 0.3F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	std::vector<glm::vec2>				thicket;
+	for (float x = 0.5F; x < 40.0F; x += 0.75F) {
+		for (float y = 0.5F; y < 40.0F; y += 0.75F) {
+			thicket.emplace_back(x, y);
+		}
+	}
+	placeTrees(executor, processed, "Test_NavThicketTree", thicket);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	sys.setViewportRect({20.0F, 20.0F}, {30.0F, 30.0F});
+	settle(sys);
+	step(world, sys);
+	settle(sys);
+	ASSERT_FALSE(meshClear(sys, thicket[thicket.size() / 2])) << "the thicket isn't in the mesh";
+
+	const glm::vec2 start{-10.0F, 20.2F};
+	const glm::vec2 goal{20.2F, 20.2F};
+	sys.resetNavQueryStats();
+	const NavigationSystem::PathAnswer path = sys.requestPath(start, goal, kAgentRadius);
+	ASSERT_TRUE(path.route.has_value()) << "a capped nav search left no route";
+	EXPECT_FALSE(path.gaveUp);
+	const NavigationSystem::NavQueryStats& stats = sys.navQueryStats();
+	EXPECT_EQ(stats.navSearches, 1U);
+	EXPECT_EQ(stats.navSearchesCapped, 1U) << "the nav search found its way within the cap: grow the thicket";
+	EXPECT_GE(stats.navSearchExpansions, NavigationSystem::kNavExpansionFloor);
+	EXPECT_LE(stats.navSearchExpansions, NavigationSystem::kNavExpansionCeiling + 1);
+	EXPECT_EQ(path.route->size(), 2U) << "the route isn't the structural walk";
+	EXPECT_LT(glm::distance(path.route->back(), goal), 0.01F);
+}
+
+// A far route's walk is the structural search's, which detail never changes: as the view pans over a
+// stand across it and the stand streams into the mesh, the route is re-priced where it stands, never
+// marked stale, so no request searches it again.
+TEST_F(NavigationSystemTest, DetailLandingOnAFarRouteRepricesItWithoutASearch) {
+	registerTree("Test_NavFarPanTree", 0.3F);
+	WalkRig				   rig({0.0F, -300.0F});
+	std::vector<glm::vec2> stand;
+	for (float x = 10.0F; x < 30.0F; x += 1.5F) {
+		for (float y = 2.0F; y < 38.0F; y += 1.5F) {
+			stand.emplace_back(x, y);
+		}
+	}
+	placeTrees(rig.executor, rig.processed, "Test_NavFarPanTree", stand);
+	rig.start();
+	const glm::vec2 onRoute{19.0F, 20.0F};
+	ASSERT_TRUE(meshClear(rig.nav, onRoute)) << "the stand is in before the view gets there";
+	rig.nav.setReachBudgets(1, 1, NavigationSystem::kFarRouteExpansions);
+	rig.nav.resetNavQueryStats();
+	const EntityID walker = rig.walker({2.0F, 20.5F}, {70.0F, 20.5F});
+	const NavPath& path	  = *rig.world.getComponent<NavPath>(walker);
+	ASSERT_TRUE(path.valid);
+	ASSERT_EQ(rig.nav.navQueryStats().totalQueries, 1U);
+	EXPECT_FALSE(rig.pricedRoute(walker));
+	const std::vector<glm::vec2> route = path.waypoints;
+
+	for (float x = -40.0F; x <= 80.0F; x += 2.0F) {
+		rig.nav.setViewportRect({x, 20.0F}, {30.0F, 30.0F});
+		rig.world.update(0.016F);
+	}
+	ASSERT_FALSE(meshClear(rig.nav, onRoute)) << "the stand never streamed in";
+	EXPECT_EQ(rig.nav.navQueryStats().totalQueries, 1U) << "detail landing on a far route searched it again";
+	EXPECT_EQ(path.waypoints, route);
+	EXPECT_EQ(path.builtNavVersion, rig.nav.generation()) << "the far route was marked stale";
+	EXPECT_TRUE(rig.pricedRoute(walker)) << "the route through the stand isn't priced";
 }
 
 // --- Ground a mover has held stays ---------------------------------------------------------------

@@ -4,9 +4,8 @@
 // (nav-mesh-variable-resolution.md, steps 4 and decision 24).
 //
 // Two persistent geometry::nav::PatchableMesh instances cover every chunk that has been loaded:
-//  - navMesh: each ready chunk's square and water, built walls and doors, and detail (placed obstacles) around each
-//    mover (Position + Colonist) and the viewport. Paths, on-mesh and walkability, recovery
-//    snaps and nearby placement read it.
+//  - navMesh: each ready chunk's square and water, built walls and doors, and detail (placed obstacles) under the
+//    viewport. Paths, on-mesh and walkability, recovery snaps and nearby placement read it.
 //  - structural: the same without detail. Reachability (its forests), placement buildability and
 //    the landing search read it, so neither the camera nor a removed placed obstacle changes what is reachable.
 // Neither mesh is ever rebuilt. Each update() diffs what should be in them against what is and
@@ -144,28 +143,31 @@ class NavigationSystem : public ISystem {
 	// consumed synchronously.
 	//
 	// The route is planned over whatever ground is meshed, for anyone, at any distance. The structural
-	// walk under the same belief comes first, three ways as a reach walk (walk()): where it finds none,
-	// neither would the nav search, so there is none. When the nav search then gives up in priced
-	// ground (more expansions than the structural walk warrants, see kNavExpansionFloor), the route is
-	// the structural walk, through the detail at its price. When the structural walk gave up (far)
-	// there is no nav search: the structural search runs again from the start to kFarRouteExpansions,
-	// and its walk is the route, through the detail at its price like the fallback's. When it gives up
-	// too there is no route and `gaveUp` says the search gave up, which is not "no route".
+	// walk under the same belief comes first, as a reach walk (walk()) asks it but with the search from
+	// the start carried on to kFarRouteExpansions: where it finds none, neither would the nav search, so
+	// there is none. A walk found within the reach budgets is near: the nav search runs (navExpansionCap),
+	// and when it gives up in priced ground the route is the structural walk, through the detail at its
+	// price. A walk found past them is far: there is no nav search, and that walk is the route, through
+	// the detail at its price like the fallback's. When the search runs out of steps there is no route
+	// and `gaveUp` says the search gave up, which is not "no route".
 	struct PathAnswer {
 		std::optional<std::vector<glm::vec2>> route;
 		bool								  gaveUp = false;
 	};
 	[[nodiscard]] PathAnswer requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
 										 geometry::nav::BeliefFilter belief = {}) const;
-	// The nav search's expansion cap, kNavExpansionFloor and kNavExpansionsPerStructural by default;
-	// tests set a small one to make it give up.
+	// The nav search's expansion cap, kNavExpansionFloor and kNavExpansionsPerStructural by default
+	// (navExpansionCap); tests set a small one to make it give up.
 	void setNavExpansionCap(std::uint32_t floor, std::uint32_t perStructural) {
 		navExpansionFloor		   = floor;
 		navExpansionsPerStructural = perStructural;
 	}
-	// The budgets of a far question: the goal-side and start-side structural searches and a far goal's
-	// route search, kReachProbeExpansions, kReachExpansionCap and kFarRouteExpansions by default; tests
-	// set small ones to make a goal far.
+	// The nav search's cap behind a near structural walk whose search took `walkSteps` expansions:
+	// the floor plus the per-step allowance, never past kNavExpansionCeiling.
+	[[nodiscard]] std::uint32_t navExpansionCap(std::uint32_t walkSteps) const;
+	// The budgets of a far question: the goal-side and start-side structural searches and the start-side
+	// search a route request carries on, kReachProbeExpansions, kReachExpansionCap and kFarRouteExpansions
+	// by default; tests set small ones to make a goal far.
 	void setReachBudgets(std::uint32_t probe, std::uint32_t forward, std::uint32_t farRoute) {
 		reachProbeExpansions = probe;
 		reachExpansionCap	 = forward;
@@ -232,12 +234,17 @@ class NavigationSystem : public ISystem {
 	// reach walk stays under 4 ms). Real ground reaches 1.1 km at the median within it; a goal past it
 	// is far, which a route request then settles.
 	static constexpr std::uint32_t kReachExpansionCap = 5000;
-	// A far goal's route search expands at most this many: 19 ms, 34 ms at worst, once per far target.
-	// Every real far goal measured to 10 km needed at most 41,006.
+	// A route request carries the search from the start on to this many: 19 ms, 34 ms at worst, once
+	// per far target. Every real far goal measured to 10 km needed at most 41,006.
 	static constexpr std::uint32_t kFarRouteExpansions = 60000;
-	// The nav search behind a found structural walk may expand this many triangles plus this many
-	// for each the structural search expanded (see requestPath).
-	static constexpr std::uint32_t kNavExpansionFloor		   = 4000;
+	// The nav search behind a near structural walk: the floor plus kNavExpansionsPerStructural for each
+	// step of the search that found the walk, up to the ceiling (navExpansionCap). A priced nav step in
+	// dense forest costs 0.45 us, 1.48 us at worst.
+	// Floor: the dense-forest worst (7,090 steps at 2 km, 5,938 at 500 m) with the far budget's 1.5x headroom.
+	static constexpr std::uint32_t kNavExpansionFloor = 11000;
+	// Ceiling: 34 ms (the accepted far stall) less both reach searches at worst (7,000 x 0.56 us = 3.9 ms)
+	// is 30 ms, 20,300 forest steps at 1.48 us.
+	static constexpr std::uint32_t kNavExpansionCeiling		   = 20000;
 	static constexpr std::uint32_t kNavExpansionsPerStructural = 16;
 	// A route's builtNavVersion once marked stale (detail landed across it, no clear point ahead): a
 	// value generation() never takes, so no re-stamp reads it as current.
@@ -397,8 +404,11 @@ class NavigationSystem : public ISystem {
 		std::uint64_t probeExpansions	   = 0;
 		std::uint64_t forwardExpansions	   = 0;
 		std::uint64_t farWalks			   = 0;
-		std::uint64_t farRouteExpansions   = 0;
 		std::uint64_t routeSearchesGaveUp  = 0;
+		// Nav searches behind near walks, their expansions, and those that hit their cap.
+		std::uint64_t navSearches		   = 0;
+		std::uint64_t navSearchExpansions  = 0;
+		std::uint64_t navSearchesCapped	   = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
@@ -416,11 +426,9 @@ class NavigationSystem : public ISystem {
 	};
 	[[nodiscard]] std::vector<RegionView> builtRegions() const;
 
-	// Detail rects. A mover asks for its square (center +/- kSimRadiusMm); the viewport for
-	// its rect with each half extent clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
+	// The detail rect: the viewport's, each half extent clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
 	static constexpr std::int64_t kMinSimHalfExtentMm = 30000; // 30 m
 	static constexpr std::int64_t kMaxSimHalfExtentMm = 64000; // 64 m
-	static constexpr std::int64_t kSimRadiusMm		  = kMinSimHalfExtentMm;
 	// Margin GameScene applies to the camera's visible half extents before setViewportRect.
 	static constexpr float kViewportMargin = 1.3F;
 
@@ -448,10 +456,10 @@ class NavigationSystem : public ISystem {
 	// kViewportMargin), and stays on until the rect is this much farther away.
 	static constexpr std::int64_t kDetailOnMarginMm	  = 8000;
 	static constexpr std::int64_t kDetailKeepMarginMm = 32000;
-	// Detail rings the nav mesh holds before the cells longest out of every wanted rect lose theirs
-	// (down to 7/8 of it, so the trim runs now and then rather than every tick). Section 6's
-	// estimate is about 1.6 KB a ring, so 40,000 is about 64 MB. Never trims where detail is on,
-	// inside the detail keep rect, or in a cell a mover or the view wants.
+	// Detail rings the nav mesh holds before the cells longest out of the view's rect lose theirs
+	// (down to 7/8 of it, so the trim runs now and then rather than every tick). Measured at about
+	// 6.4 KB a ring at main's forest density, so 40,000 is about 250 MB (nav-gate-result-2.md).
+	// Never trims where detail is on, inside the detail keep rect, or in a cell the view wants.
 	static constexpr std::size_t kDetailRingBudget = 40000;
 	// A stranded mover is moved forward along its route to the first point this far apart that is
 	// walkable with its clearance.
@@ -609,15 +617,18 @@ class NavigationSystem : public ISystem {
 	// their ground meshed.
 	[[nodiscard]] std::uint64_t			  chunkStamp(const geometry::RectMm& box) const;
 	// The structural walk from start to goal, three ways (see Reach): the goal-side search, then the
-	// start-side one. `far` when both gave up; else `walk` holds the answer, its points from start
-	// to goal. `expansions` is both searches'.
+	// start-side one to `forwardCap`. `gaveUp` when both ran out of steps (to walk(), far); else
+	// `walk` holds the answer, its points from start to goal. `expansions` is both searches';
+	// `walkExpansions` is the one whose answer `walk` is.
 	struct StructuralWalk {
 		geometry::nav::PathResult walk;
-		bool					  far		 = false;
-		std::uint32_t			  expansions = 0;
+		bool					  gaveUp		 = false;
+		bool					  probeAnswered	 = false;
+		std::uint32_t			  expansions	 = 0;
+		std::uint32_t			  walkExpansions = 0;
 	};
 	[[nodiscard]] StructuralWalk structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm, std::int64_t radius,
-												const geometry::nav::BeliefFilter& belief, double maxCost) const;
+												const geometry::nav::BeliefFilter& belief, double maxCost, std::uint32_t forwardCap) const;
 	[[nodiscard]] static geometry::RectMm boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm);
 	[[nodiscard]] std::int64_t			  anchorLoadRangeMm() const;
 	// The viewport rect, half extents clamped to [kMinSimHalfExtentMm, kMaxSimHalfExtentMm].
@@ -635,7 +646,7 @@ class NavigationSystem : public ISystem {
 	// The BeliefFilter a movement query runs with: `belief` with detail priced (the one place).
 	[[nodiscard]] static geometry::nav::BeliefFilter pricedFor(geometry::nav::BeliefFilter belief);
 	// Marks stale the routes whose rest comes within the mover's radius of a placed obstacle that landed in
-	// the joined jobs.
+	// the joined jobs; a route from a structural walk is re-priced instead (structuralRoutes).
 	void markCrossedRoutes();
 	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
 	void markStrayedRoutes();
@@ -648,6 +659,9 @@ class NavigationSystem : public ISystem {
 	void wakeUnsettledFailures();
 	void forgetDroppedRoutes();
 	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
+	using RouteSet = std::unordered_map<std::uint64_t, std::vector<glm::vec2>>;
+	[[nodiscard]] static bool holds(const RouteSet& routes, const std::vector<glm::vec2>& waypoints);
+	static void				  note(RouteSet& routes, const std::vector<glm::vec2>& waypoints, bool in);
 	// Spec 4.7: a mover inside detail moves forward along its route to the first point walkable in
 	// truth, never past a wall or water on the way; with none, it stays and its route goes stale.
 	// Without a route it steps out to the nearest spot within 4 m, ring by ring, where its disc is
@@ -732,7 +746,11 @@ class NavigationSystem : public ISystem {
 	// routes share never answers for the wrong one. The latest answer for a route stands, and each
 	// update() keeps only the routes some mover holds, so it never outgrows the movers and one
 	// tick's queries.
-	mutable std::unordered_map<std::uint64_t, std::vector<glm::vec2>> pricedRoutes;
+	mutable RouteSet pricedRoutes;
+	// Routes requestPath took from a structural walk (a far route, or the walk a near search fell back
+	// to), kept as pricedRoutes are. The structural mesh holds no detail, so detail landing on one
+	// changes nothing a new request would find: it is re-priced where it stands, never marked stale.
+	mutable RouteSet structuralRoutes;
 	std::uint32_t									 navExpansionFloor			= kNavExpansionFloor;
 	std::uint32_t									 navExpansionsPerStructural = kNavExpansionsPerStructural;
 	std::uint32_t									 reachProbeExpansions		= kReachProbeExpansions;

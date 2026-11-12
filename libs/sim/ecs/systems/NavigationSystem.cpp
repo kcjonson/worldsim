@@ -1570,28 +1570,39 @@ namespace ecs {
 		return hash;
 	}
 
-	bool NavigationSystem::routeCrossesPricedFaces(const NavPath& path) const {
-		if (!path.valid) {
-			return false;
+	bool NavigationSystem::holds(const RouteSet& routes, const std::vector<glm::vec2>& waypoints) {
+		const auto it = routes.find(routeKey(waypoints));
+		return it != routes.end() && it->second == waypoints;
+	}
+
+	void NavigationSystem::note(RouteSet& routes, const std::vector<glm::vec2>& waypoints, bool in) {
+		if (in) {
+			routes[routeKey(waypoints)] = waypoints;
+		} else if (holds(routes, waypoints)) {
+			routes.erase(routeKey(waypoints));
 		}
-		const auto it = pricedRoutes.find(routeKey(path.waypoints));
-		return it != pricedRoutes.end() && it->second == path.waypoints;
+	}
+
+	bool NavigationSystem::routeCrossesPricedFaces(const NavPath& path) const {
+		return path.valid && holds(pricedRoutes, path.waypoints);
 	}
 
 	void NavigationSystem::forgetDroppedRoutes() {
-		if (pricedRoutes.empty()) {
-			return;
-		}
-		std::unordered_map<std::uint64_t, std::vector<glm::vec2>> live;
-		if (world != nullptr) {
-			for (auto [entity, path] : world->view<NavPath>()) {
-				(void)entity;
-				if (routeCrossesPricedFaces(path)) {
-					live.emplace(routeKey(path.waypoints), path.waypoints);
+		for (RouteSet* routes : {&pricedRoutes, &structuralRoutes}) {
+			if (routes->empty()) {
+				continue;
+			}
+			RouteSet live;
+			if (world != nullptr) {
+				for (auto [entity, path] : world->view<NavPath>()) {
+					(void)entity;
+					if (path.valid && holds(*routes, path.waypoints)) {
+						live.emplace(routeKey(path.waypoints), path.waypoints);
+					}
 				}
 			}
+			*routes = std::move(live);
 		}
-		pricedRoutes = std::move(live);
 	}
 
 	void NavigationSystem::wakeUnsettledFailures() {
@@ -1645,13 +1656,23 @@ namespace ecs {
 			const AgentRadius* agent  = world->getComponent<AgentRadius>(entity);
 			const float		   radius = agent != nullptr ? agent->radiusMeters : AgentRadius{}.radiusMeters;
 			glm::vec2		   from	  = position.value;
-			for (std::size_t next = path.current; next < path.waypoints.size(); ++next) {
-				if (crosses(from, path.waypoints[next], radius)) {
-					path.builtNavVersion = kStaleRoute;
-					break;
-				}
-				from = path.waypoints[next];
+			bool			   crossed = false;
+			for (std::size_t next = path.current; next < path.waypoints.size() && !crossed; ++next) {
+				crossed = crosses(from, path.waypoints[next], radius);
+				from	= path.waypoints[next];
 			}
+			if (!crossed) {
+				continue;
+			}
+			if (!holds(structuralRoutes, path.waypoints)) {
+				path.builtNavVersion = kStaleRoute;
+				continue;
+			}
+			std::vector<geometry::Vec2i64> rest{nav::toMm(position.value)};
+			for (std::size_t next = path.current; next < path.waypoints.size(); ++next) {
+				rest.push_back(nav::toMm(path.waypoints[next]));
+			}
+			note(pricedRoutes, path.waypoints, passesPlacedObstacle(rest, radiusMm(radius)));
 		}
 	}
 
@@ -2034,70 +2055,82 @@ namespace ecs {
 
 		// The structural mesh holds the nav mesh's ground without detail, so where it has no walk
 		// under this belief (its known walls block) the nav mesh has none either: no nav search.
-		const StructuralWalk structuralAnswer = structuralWalk(startMm, goalMm, radius, belief, std::numeric_limits<double>::infinity());
-		if (!structuralAnswer.far && structuralAnswer.walk.stop != gnav::PathStop::Found) {
+		const StructuralWalk structuralAnswer =
+			structuralWalk(startMm, goalMm, radius, belief, std::numeric_limits<double>::infinity(), farRouteExpansions);
+		const auto counted = [&](const gnav::PathResult& search) {
+			++navStats.totalQueries;
+			navStats.totalNodesExpanded += static_cast<std::uint64_t>(search.nodesExpanded);
+			navStats.lastNodesExpanded = search.nodesExpanded;
+			navStats.lastPeakOpenSet   = search.peakOpenSet;
+			LOG_DEBUG(Engine, "[Nav] path query expanded=%lld peakOpen=%lld (cumulative queries=%llu nodes=%llu)",
+					  static_cast<long long>(search.nodesExpanded), static_cast<long long>(search.peakOpenSet),
+					  static_cast<unsigned long long>(navStats.totalQueries), static_cast<unsigned long long>(navStats.totalNodesExpanded));
+		};
+		if (structuralAnswer.gaveUp) {
+			++navStats.farWalks;
+			counted(structuralAnswer.walk);
+			++navStats.routeSearchesGaveUp;
+			LOG_DEBUG(Engine, "[Nav] path search gave up toward (%.2f, %.2f), %.0f m in a straight line from (%.2f, %.2f) after %u expansions",
+					  goalMeters.x, goalMeters.y, std::sqrt(dist2(startMeters, goalMeters)), startMeters.x, startMeters.y, structuralAnswer.expansions);
+			return {.route = std::nullopt, .gaveUp = true};
+		}
+		if (structuralAnswer.walk.stop != gnav::PathStop::Found) {
 			return {};
 		}
 
 		gnav::PathResult result;
-		if (structuralAnswer.far) {
-			// A far goal: the structural search again, from the start, to farRouteExpansions, and its walk is
-			// the route, through the detail at its price, as the fallback below takes it. No nav search:
-			// scaled from a walk this long its budget would be unbounded, and with a fixed one it gave up on
-			// every far goal measured (nav-gate-result-2.md). The route is replanned as he goes.
-			result = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxExpansions = farRouteExpansions});
-			navStats.farRouteExpansions += result.expansions;
-			if (result.stop == gnav::PathStop::LimitReached) {
-				++navStats.routeSearchesGaveUp;
-				LOG_DEBUG(Engine,
-						  "[Nav] path search gave up toward (%.2f, %.2f), %.0f m in a straight line from (%.2f, %.2f): reach %u expansions, route %u",
-						  goalMeters.x, goalMeters.y, std::sqrt(dist2(startMeters, goalMeters)), startMeters.x, startMeters.y, structuralAnswer.expansions,
-						  result.expansions);
-				return {.route = std::nullopt, .gaveUp = true};
-			}
-			if (result.stop != gnav::PathStop::Found) {
-				return {};
-			}
-			result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
+		bool			 fromStructural = true;
+		if (!structuralAnswer.probeAnswered && structuralAnswer.walkExpansions > reachExpansionCap) {
+			// A far goal: the structural walk is the route, through the detail at its price, as the
+			// fallback below takes it. No nav search: scaled from a walk this long its budget would be
+			// unbounded, and with a fixed one it gave up on every far goal measured
+			// (nav-gate-result-2.md). The route is replanned as he goes.
+			++navStats.farWalks;
+			result = structuralAnswer.walk;
+			counted(result);
 		} else {
 			// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
 			// multiple of the structural search's expansions. Past that it is lost in priced ground, and
 			// the route is the structural walk itself, through the detail at its price, as it would be off
 			// camera: so a route exists on camera exactly when it does off it.
-			const std::uint32_t cap = navExpansionFloor + navExpansionsPerStructural * structuralAnswer.expansions;
+			const std::uint32_t cap = navExpansionCap(structuralAnswer.walkExpansions);
 			result					= gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
+			counted(result);
+			++navStats.navSearches;
+			navStats.navSearchExpansions += result.expansions;
 			if (result.stop == gnav::PathStop::LimitReached) {
+				++navStats.navSearchesCapped;
 				LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
-						  result.expansions, structuralAnswer.expansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
-				result					  = structuralAnswer.walk;
-				result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
+						  result.expansions, structuralAnswer.walkExpansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
+				result = structuralAnswer.walk;
 			} else if (!result.reachable) {
 				return {};
+			} else {
+				fromStructural = false;
 			}
 		}
-		++navStats.totalQueries;
-		navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
-		navStats.lastNodesExpanded = result.nodesExpanded;
-		navStats.lastPeakOpenSet   = result.peakOpenSet;
-		LOG_DEBUG(Engine, "[Nav] path query expanded=%lld peakOpen=%lld (cumulative queries=%llu nodes=%llu)",
-				  static_cast<long long>(result.nodesExpanded), static_cast<long long>(result.peakOpenSet),
-				  static_cast<unsigned long long>(navStats.totalQueries), static_cast<unsigned long long>(navStats.totalNodesExpanded));
+		if (fromStructural) {
+			result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
+		}
 
 		std::vector<glm::vec2> waypoints;
 		waypoints.reserve(result.points.size());
 		for (const geometry::Vec2i64& p : result.points) {
 			waypoints.push_back(nav::toMeters(p));
 		}
-		if (result.crossesPricedFaces) {
-			pricedRoutes[routeKey(waypoints)] = waypoints;
-		} else if (const auto it = pricedRoutes.find(routeKey(waypoints)); it != pricedRoutes.end() && it->second == waypoints) {
-			pricedRoutes.erase(it);
-		}
+		note(pricedRoutes, waypoints, result.crossesPricedFaces);
+		note(structuralRoutes, waypoints, fromStructural);
 		return {.route = std::move(waypoints)};
 	}
 
+	std::uint32_t NavigationSystem::navExpansionCap(std::uint32_t walkSteps) const {
+		const std::uint64_t scaled = static_cast<std::uint64_t>(navExpansionFloor) + static_cast<std::uint64_t>(navExpansionsPerStructural) * walkSteps;
+		return static_cast<std::uint32_t>(std::min<std::uint64_t>(scaled, kNavExpansionCeiling));
+	}
+
 	NavigationSystem::StructuralWalk NavigationSystem::structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm,
-																	   std::int64_t radius, const gnav::BeliefFilter& belief, double maxCost) const {
+																	   std::int64_t radius, const gnav::BeliefFilter& belief, double maxCost,
+																	   std::uint32_t forwardCap) const {
 		// LimitReached is either limit: one under its expansion cap stopped at maxCost, which is a
 		// definite "no walk that short".
 		const auto outOfSteps = [](const gnav::PathResult& r, std::uint32_t cap) {
@@ -2106,19 +2139,21 @@ namespace ecs {
 		++navStats.structuralWalks;
 		StructuralWalk answer;
 		answer.walk = gnav::pathThrough(structural.view(), goalMm, startMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachProbeExpansions});
-		answer.expansions = answer.walk.expansions;
+		answer.expansions	  = answer.walk.expansions;
+		answer.walkExpansions = answer.walk.expansions;
 		navStats.probeExpansions += answer.walk.expansions;
 		if (!outOfSteps(answer.walk, reachProbeExpansions)) {
 			++navStats.probeAnswered;
+			answer.probeAnswered = true;
 			std::reverse(answer.walk.points.begin(), answer.walk.points.end());
 			return answer;
 		}
 		++navStats.forwardSearches;
-		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachExpansionCap});
+		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = forwardCap});
 		answer.expansions += answer.walk.expansions;
+		answer.walkExpansions = answer.walk.expansions;
 		navStats.forwardExpansions += answer.walk.expansions;
-		answer.far = outOfSteps(answer.walk, reachExpansionCap);
-		navStats.farWalks += answer.far ? 1 : 0;
+		answer.gaveUp = outOfSteps(answer.walk, forwardCap);
 		return answer;
 	}
 
@@ -2194,8 +2229,9 @@ namespace ecs {
 			return coming && straight <= maxWalk ? std::optional<float>(straight) : std::nullopt;
 		}
 		const StructuralWalk found = structuralWalk(reach.startMm, goal, reach.radiusMm, reach.belief,
-													static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter));
-		if (found.far) {
+													static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter), reachExpansionCap);
+		if (found.gaveUp) {
+			++navStats.farWalks;
 			LOG_DEBUG(Engine, "[Nav] reach gave up after %u expansions toward (%.2f, %.2f), %.0f m in a straight line: far", found.expansions,
 					  goalMeters.x, goalMeters.y, straight);
 			return WalkAnswer::farAway();
