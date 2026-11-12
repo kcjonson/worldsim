@@ -320,25 +320,32 @@ private:
 		const struct Position& position,
 		const struct Memory& memory);
 
-	/// Ask nav for a route from where the colonist stands to `goal` (NavigationSystem::requestRoute),
-	/// under his belief (known segments and openings), and keep the ticket on the task, cancelling any
-	/// still out. He stands (movement off, no route) awaiting it (NavState::AwaitingRoute) until
-	/// takeRouteAnswer applies the answer; one nav gives at once is applied here. `rerouting`: the
-	/// goal was already routed to and its route went stale.
+	/// Ask nav for a route from where the colonist stands to the task's target (NavigationSystem::requestRoute),
+	/// under his belief (known segments and openings), and keep the ticket and its goal on the task,
+	/// cancelling any still out. `keepWalking`: the target is the one his route leads to (a replan); while
+	/// he has that route he walks on, and the answer replaces it. Otherwise, or with no route left to walk,
+	/// he stands (movement off, no route) awaiting it (NavState::AwaitingRoute). An answer nav gives at
+	/// once is applied here.
 	///
 	/// MOVEMENT INVARIANT: a colonist moves ONLY by following a NavPath. With no NavigationSystem
 	/// wired (headless tests only) there is no mesh, and MovementSystem steers straight at the target.
-	void requestRoute(EntityID entity, struct Task& task, const glm::vec2& goal, const struct Position& position,
-					  const struct Memory& memory, struct MovementTarget& movementTarget, bool rerouting);
+	void requestRoute(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
+					  struct MovementTarget& movementTarget, bool keepWalking);
 
-	/// Apply the answer to the task's route once nav has one; nothing while it is out. Routed: the
-	/// route is attached, stamped with the belief it was asked under and the current nav generation,
-	/// and he walks it. No known way: he stays stopped (NavState::CantFindWayTo), which his next
-	/// decision records (buildDecisionTrace) so he takes his next choice. Start off the mesh: not a
-	/// failure, he waits (AwaitingMesh) and asks again once the nav generation moves. No known way for
-	/// a colonist the snap holds inside a placed obstacle is "not now": asked again next update.
+	/// Apply the answer to the task's route once nav has one; nothing while it is out, and a ticket nav no
+	/// longer holds is asked again. An answer for a goal the task has since left is dropped and the current
+	/// target asked for. Routed: the route is attached from where he now stands (joinRoute), stamped with
+	/// the belief it was asked under and the current nav generation, and he walks it. No known way: he
+	/// stops (NavState::CantFindWayTo, failRoute). Start off the mesh: not a failure, he waits
+	/// (AwaitingMesh) and asks again once the nav generation moves. No known way for a colonist the snap
+	/// holds inside a placed obstacle is "not now": he stands (awaitingSnap) until the snap lets go.
 	void takeRouteAnswer(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
 						 struct MovementTarget& movementTarget);
+
+	/// The route stands as failed: stopped, CantFindWayTo, stamped for the next decision to record
+	/// (buildDecisionTrace) so he takes his next choice.
+	void failRoute(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
+				   struct MovementTarget& movementTarget);
 
 	/// Cancel the task's route still out, if any.
 	void dropRoute(struct Task& task);

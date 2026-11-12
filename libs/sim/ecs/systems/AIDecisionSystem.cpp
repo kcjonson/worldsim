@@ -200,6 +200,35 @@ namespace ecs {
 			return sourceKey != 0 ? sourceKey : hashWorldEntity(target, 0);
 		}
 
+		/// A route found from where he asked, starting where he stands now: he may have walked on while it
+		/// was out. He joins it on the leg nearest him among those that start no further along it than he
+		/// stands from where he asked (plus a margin), and steers for that leg's end, so he never turns back
+		/// to a point he has passed.
+		[[nodiscard]] std::vector<glm::vec2> joinRoute(std::vector<glm::vec2> waypoints, glm::vec2 at) {
+			if (waypoints.size() < 2) {
+				return waypoints;
+			}
+			constexpr float kJoinMarginMeters = 1.0F;
+			const float		reach = glm::distance(waypoints.front(), at) + kJoinMarginMeters;
+			std::size_t		next = 1;
+			float			nearest = std::numeric_limits<float>::max();
+			float			along = 0.0F;
+			for (std::size_t i = 0; i + 1 < waypoints.size() && along <= reach; ++i) {
+				const glm::vec2 leg	 = waypoints[i + 1] - waypoints[i];
+				const float		len2 = glm::dot(leg, leg);
+				const float		t	 = len2 > 0.0F ? std::clamp(glm::dot(at - waypoints[i], leg) / len2, 0.0F, 1.0F) : 0.0F;
+				const float		off	 = glm::distance(at, waypoints[i] + leg * t);
+				if (off <= nearest) {
+					nearest = off;
+					next	= i + 1;
+				}
+				along += std::sqrt(len2);
+			}
+			waypoints.erase(waypoints.begin(), waypoints.begin() + static_cast<std::ptrdiff_t>(next - 1));
+			waypoints.front() = at;
+			return waypoints;
+		}
+
 		/// Skill names for work types
 		constexpr const char* kSkillFarming = "Farming";
 		constexpr const char* kSkillCrafting = "Crafting";
@@ -1706,9 +1735,8 @@ namespace ecs {
 
 			// His route's answer, once nav has it: applied without a decision. A ticket whose task ended
 			// outside this system (an action finished or replaced it) is cancelled.
-			const bool awaitingRoute = task.state == TaskState::Moving && task.navState == NavState::AwaitingRoute;
 			if (task.routeTicket != 0) {
-				if (awaitingRoute) {
+				if (task.state == TaskState::Moving) {
 					takeRouteAnswer(entity, task, position, memory, movementTarget);
 				} else {
 					dropRoute(task);
@@ -1718,31 +1746,32 @@ namespace ecs {
 			// A Moving task with no route and none asked for: a chain leg ActionSystem handed on
 			// (Haul pickup->deposit, PlacePackaged pickup->place: same task, so the re-eval below keeps
 			// it and never routes it, and with its target active and no route MovementSystem would steer
-			// straight at the goal), or a route the snap made "not now". Asked here, before the
-			// requests below, so a route asked later this update is not asked twice.
+			// straight at the goal), or one the snap held, once it lets go or the mesh moves under him.
+			// Asked here, before the requests below, so a route asked later this update is not asked twice.
 			if (auto* navPath = world->getComponent<NavPath>(entity);
 				task.state == TaskState::Moving && task.routeTicket == 0 && (navPath == nullptr || !navPath->valid) &&
-				(task.navState == NavState::AwaitingRoute || movementTarget.active)) {
-				requestRoute(entity, task, task.targetPosition, position, memory, movementTarget, task.rerouting);
+				(task.navState == NavState::AwaitingRoute || movementTarget.active) &&
+				(!task.awaitingSnap || m_navSystem == nullptr || !m_navSystem->snapHolds(entity) ||
+				 m_navSystem->generation() != task.deferredNavGeneration)) {
+				requestRoute(entity, task, position, memory, movementTarget, false);
 			}
 
 			// Replan-on-discovery: this is the free-space-assumption loop. A colonist
 			// plans over what it remembers, walks, and when vision reveals a wall that
 			// cuts its corridor (Memory::beliefVersion moves) or the navmesh rebuilds
 			// under it (NavigationSystem::generation() moves, or nav marks the route stale),
-			// ask again for the SAME goal with current belief. Not a re-task -- the destination
-			// is unchanged. Runs before the shouldReEvaluate gate so it isn't skipped between
-			// re-evals, and only when a version actually changed, so it can't thrash. Vision
-			// bumps beliefVersion at most every 5th frame, so the version compare coalesces many
-			// frames into at most one request per discovery. Gate on a still-pursued goal: a
-			// valid route on a Moving task.
+			// ask again for the SAME goal with current belief, and walk on meanwhile. Not a re-task --
+			// the destination is unchanged. Runs before the shouldReEvaluate gate so it isn't skipped
+			// between re-evals, and only when a version changed and no replacement is already out, so
+			// it can't thrash: a change while one is out is caught when its route lands, stamped with
+			// the versions it was asked under.
 			if (auto* navPath = world->getComponent<NavPath>(entity);
-				navPath != nullptr && navPath->valid && task.state == TaskState::Moving) {
+				navPath != nullptr && navPath->valid && task.state == TaskState::Moving && task.routeTicket == 0) {
 				const bool beliefMoved = memory.beliefVersion != navPath->builtBeliefVersion;
 				const bool navMoved =
 					(m_navSystem != nullptr) && (m_navSystem->generation() != navPath->builtNavVersion);
 				if (beliefMoved || navMoved) {
-					requestRoute(entity, task, task.targetPosition, position, memory, movementTarget, true);
+					requestRoute(entity, task, position, memory, movementTarget, true);
 				}
 			}
 
@@ -1750,20 +1779,16 @@ namespace ecs {
 			// which moves when ground lands, so it costs one request per landing, not one per frame.
 			if (task.state == TaskState::Moving && task.navState == NavState::AwaitingMesh && m_navSystem != nullptr &&
 				m_navSystem->generation() != task.deferredNavGeneration) {
-				requestRoute(entity, task, task.targetPosition, position, memory, movementTarget, false);
+				requestRoute(entity, task, position, memory, movementTarget, false);
 			}
 
-			if (task.state == TaskState::Moving && task.navState == NavState::AwaitingRoute && task.routeWaitTicks < std::numeric_limits<std::uint16_t>::max()) {
+			// Standing, the panel says "Finding a way" once the wait is noticeable; walking his old route
+			// while the replacement is that late, "Re-routing".
+			if (task.state == TaskState::Moving && (task.navState == NavState::AwaitingRoute || task.routeTicket != 0) &&
+				task.routeWaitTicks < std::numeric_limits<std::uint16_t>::max()) {
 				++task.routeWaitTicks;
-			}
-
-			// Drain the Rerouting hold counter so "Re-routing" is a brief visible beat.
-			// Once it reaches zero the info panel maps navState to the display string,
-			// so the colonist naturally shows "Going to" again without any extra set.
-			if (task.navState == NavState::Rerouting && task.navStateHold > 0) {
-				--task.navStateHold;
-				if (task.navStateHold == 0) {
-					task.navState = NavState::Traveling;
+				if (task.navState == NavState::Traveling && task.routeWaitTicks >= Task::kFindingWayTicks) {
+					setNavState(entity, task, NavState::Rerouting);
 				}
 			}
 
@@ -1785,6 +1810,10 @@ namespace ecs {
 				continue;
 			}
 			task.criticalNeedsAtDecision = criticalNeedMask(needs);
+			// Held by the snap for this many decisions: the route fails, and this decision takes it as one.
+			if (task.awaitingSnap && task.routeTicket == 0 && ++task.snapWaitDecisions >= Task::kSnapWaitDecisions) {
+				failRoute(entity, task, position, memory, movementTarget);
+			}
 			const bool decidingOnFailedRoute = task.navState == NavState::CantFindWayTo;
 
 			// Store current task state for the (tier, score) interruption comparison
@@ -2990,14 +3019,15 @@ namespace ecs {
 		} else {
 			movementTarget.active = true;
 			task.state = TaskState::Moving;
-			requestRoute(entity, task, task.targetPosition, position, memory, movementTarget, false);
+			requestRoute(entity, task, position, memory, movementTarget, false);
 		}
 	}
 
-	void AIDecisionSystem::requestRoute(EntityID entity, Task& task, const glm::vec2& goal, const Position& position,
-										const Memory& memory, MovementTarget& movementTarget, bool rerouting) {
+	void AIDecisionSystem::requestRoute(EntityID entity, Task& task, const Position& position, const Memory& memory,
+										MovementTarget& movementTarget, bool keepWalking) {
 		auto* navPath = world->getComponent<NavPath>(entity);
-		if (navPath != nullptr) {
+		const bool walking = keepWalking && navPath != nullptr && !navPath->done() && movementTarget.active;
+		if (!walking && navPath != nullptr) {
 			navPath->valid = false;
 		}
 		if (m_navSystem == nullptr) {
@@ -3005,9 +3035,7 @@ namespace ecs {
 			return;
 		}
 		dropRoute(task);
-		// He stands while the route is out: a route found from where he asked starts where he is, so a
-		// walk in the meantime would start it stale.
-		movementTarget.active = false;
+		task.awaitingSnap = false;
 		float radius = 0.3F;
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
 			radius = agentRadius->radiusMeters;
@@ -3015,11 +3043,15 @@ namespace ecs {
 		// Planned over what he remembers: unseen walls are absent, seen walls block, known doors pass.
 		// requestRoute copies the sets.
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
+		const glm::vec2					  goal = task.targetPosition;
 		task.routeTicket		= m_navSystem->requestRoute(position.value, std::span<const glm::vec2>(&goal, 1), radius, belief);
+		task.routeGoal			= goal;
 		task.routeBeliefVersion = memory.beliefVersion;
-		task.rerouting			= rerouting;
 		task.routeWaitTicks		= 0;
-		setNavState(entity, task, NavState::AwaitingRoute);
+		if (!walking) {
+			movementTarget.active = false;
+			setNavState(entity, task, NavState::AwaitingRoute);
+		}
 		takeRouteAnswer(entity, task, position, memory, movementTarget);
 	}
 
@@ -3030,33 +3062,44 @@ namespace ecs {
 		}
 		std::optional<NavigationSystem::RouteAnswer> answer = m_navSystem->takeRouteAnswer(task.routeTicket);
 		if (!answer.has_value()) {
+			// Nav no longer holds it (dropped, or never issued): it will never answer.
+			if (!m_navSystem->routeTicketLive(task.routeTicket)) {
+				task.routeTicket = 0;
+				requestRoute(entity, task, position, memory, movementTarget, true);
+			}
 			return;
 		}
 		task.routeTicket = 0;
+		if (task.routeGoal != task.targetPosition) {
+			requestRoute(entity, task, position, memory, movementTarget, false);
+			return;
+		}
+		auto* navPath = world->getComponent<NavPath>(entity);
 		switch (answer->outcome) {
 			case nav::RouteOutcome::Routed: {
-				// waypoints[0] is where he stands: steer toward index 1.
 				NavPath route;
-				route.waypoints			 = std::move(answer->waypoints);
+				route.waypoints			 = joinRoute(std::move(answer->waypoints), position.value);
 				route.current			 = route.waypoints.size() >= 2 ? 1 : 0;
 				route.valid				 = true;
 				route.builtBeliefVersion = task.routeBeliefVersion;
 				route.builtNavVersion	 = m_navSystem->generation();
 				LOG_DEBUG(Engine, "[Nav] Entity %llu: route to (%.2f, %.2f), %zu waypoints", static_cast<unsigned long long>(entity),
 						  task.targetPosition.x, task.targetPosition.y, route.waypoints.size());
-				if (auto* existing = world->getComponent<NavPath>(entity)) {
-					*existing = std::move(route);
+				if (navPath != nullptr) {
+					*navPath = std::move(route);
 				} else {
 					world->addComponent<NavPath>(entity, std::move(route));
 				}
-				movementTarget.active = true;
-				setNavState(entity, task, task.rerouting ? NavState::Rerouting : NavState::Traveling);
-				// "Re-routing" for about 30 ticks, so the player sees him react to what he found.
-				task.navStateHold = task.rerouting ? 30 : 0;
-				task.rerouting	  = false;
+				movementTarget.active  = true;
+				task.snapWaitDecisions = 0;
+				setNavState(entity, task, NavState::Traveling);
 				return;
 			}
 			case nav::RouteOutcome::StartOffMesh:
+				if (navPath != nullptr) {
+					navPath->valid = false;
+				}
+				movementTarget.active = false;
 				setNavState(entity, task, NavState::AwaitingMesh);
 				task.deferredNavGeneration = m_navSystem->generation();
 				LOG_DEBUG(Engine, "[Nav] Entity %llu: standing off the mesh, waiting for it", static_cast<unsigned long long>(entity));
@@ -3065,10 +3108,28 @@ namespace ecs {
 				break;
 		}
 		// The snap holds him inside a placed obstacle and moves him out: no way from there is "not now".
-		// Still awaiting, with no ticket: update() asks again.
+		// He stands with no ticket until the snap lets go or the mesh moves (update() asks then), or
+		// kSnapWaitDecisions decisions pass.
 		if (m_navSystem->snapHolds(entity)) {
+			if (navPath != nullptr) {
+				navPath->valid = false;
+			}
+			movementTarget.active	   = false;
+			task.awaitingSnap		   = true;
+			task.deferredNavGeneration = m_navSystem->generation();
+			setNavState(entity, task, NavState::AwaitingRoute);
 			return;
 		}
+		failRoute(entity, task, position, memory, movementTarget);
+	}
+
+	void AIDecisionSystem::failRoute(EntityID entity, Task& task, const Position& position, const Memory& memory,
+									 MovementTarget& movementTarget) {
+		if (auto* navPath = world->getComponent<NavPath>(entity)) {
+			navPath->valid = false;
+		}
+		movementTarget.active = false;
+		task.awaitingSnap	  = false;
 		// Stamped kUnsettledStamp while ground near him is still to mesh: a failure then may only be
 		// waiting on it, so it is not recorded and the next decision picks afresh (buildDecisionTrace).
 		float radius = 0.3F;
@@ -3094,7 +3155,6 @@ namespace ecs {
 	void AIDecisionSystem::setNavState(EntityID entity, Task& task, NavState navState) {
 		const bool wasFailed = task.navState == NavState::CantFindWayTo;
 		task.navState		 = navState;
-		task.navStateHold	 = 0;
 		// A failed route holds only the goods it carries (ClaimIndex::addCurrent): re-filing the task as the
 		// rebuild would see it lets colonists deciding later this update take what it has not reached while
 		// it stays failed, and see it taken again once a route succeeds.
@@ -3350,7 +3410,7 @@ namespace ecs {
 			// The answer is applied by update() ahead of the control gate, like any AI route. No known
 			// way shows "can't get there" and waits for the player to re-click (the control gate skips
 			// re-eval); a start off the mesh waits and asks again once the mesh lands.
-			requestRoute(entity, *task, goal, *position, *memory, *movementTarget, false);
+			requestRoute(entity, *task, *position, *memory, *movementTarget, false);
 		}
 		return goal;
 	}

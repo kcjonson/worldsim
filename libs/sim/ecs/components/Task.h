@@ -169,12 +169,12 @@ enum class TaskState : uint8_t {
 /// SearchingLKP and LookingForWayIn are reserved for deferred search behaviors.
 enum class NavState : uint8_t {
 	Traveling,      // Route planned and being followed
-	Rerouting,      // Replanning because a new wall/opening was discovered
+	Rerouting,      // Walking his route while its replacement is overdue (kFindingWayTicks)
 	SearchingLKP,   // (reserved) searching last-known position
 	LookingForWayIn, // (reserved) searching for an entrance to a building
 	CantFindWayTo,  // Nav knows no way to the target; colonist is stopped
 	AwaitingMesh,   // He stands off the mesh; the route is asked for again once the nav generation moves
-	AwaitingRoute   // A route is asked for (routeTicket); he stands until it is answered
+	AwaitingRoute   // He has no route to walk: one is asked for (routeTicket), or the snap holds him (awaitingSnap)
 };
 
 /// Task component - tracks a colonist's current activity
@@ -182,10 +182,6 @@ struct Task {
 	TaskType  type = TaskType::None;
 	TaskState state = TaskState::Pending;
 	NavState  navState = NavState::Traveling;
-	// Rerouting is momentary: set to ~30 ticks when a repath fires so the player sees a brief
-	// "Re-routing" beat before the panel reverts to "Going to". Decremented each update tick;
-	// zero means the Rerouting display window has elapsed (revert to Traveling).
-	std::uint8_t navStateHold = 0;
 	// NavigationSystem::generation() when the route was deferred (navState AwaitingMesh). The route
 	// is requested again once generation() moves off this value: a structural build has landed
 	// where the route was asked about.
@@ -200,12 +196,20 @@ struct Task {
 	std::uint64_t routeTicket = 0;
 	// Memory::beliefVersion the route was asked under, stamped on the route it answers with.
 	std::uint64_t routeBeliefVersion = 0;
-	// The route is asked again for a goal already routed to (a stale route): shown as "Re-routing" once routed.
-	bool rerouting = false;
-	// Ticks the colonist has stood awaiting his route. The panel says "Finding a way" from
-	// kFindingWayTicks on, so the usual two-tick wait doesn't flicker.
+	// The goal routeTicket was asked for. An answer for any other goal (the target moved on while it was
+	// out) is not applied.
+	glm::vec2 routeGoal{0.0F, 0.0F};
+	// Ticks the route has been out (or the snap has held him). Standing, the panel says "Finding a way"
+	// from kFindingWayTicks on, so the usual two-tick wait doesn't flicker; walking his old route, he
+	// shows "Re-routing" from then on.
 	std::uint16_t routeWaitTicks = 0;
 	static constexpr std::uint16_t kFindingWayTicks = 10;
+	// No known way from where the snap holds him inside a placed obstacle: he asks again once the snap lets
+	// go or the nav generation moves (deferredNavGeneration), and after kSnapWaitDecisions interval
+	// decisions still held, his route fails.
+	bool		 awaitingSnap		= false;
+	std::uint8_t snapWaitDecisions = 0;
+	static constexpr std::uint8_t kSnapWaitDecisions = 4;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
@@ -310,12 +314,13 @@ struct Task {
 		type = TaskType::None;
 		state = TaskState::Pending;
 		navState = NavState::Traveling;
-		navStateHold = 0;
 		deferredNavGeneration = 0;
 		blockedReachStamp = 0;
 		routeBeliefVersion = 0;
-		rerouting = false;
+		routeGoal = glm::vec2{0.0F, 0.0F};
 		routeWaitTicks = 0;
+		awaitingSnap = false;
+		snapWaitDecisions = 0;
 		needSourceKey = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;
