@@ -133,6 +133,18 @@ namespace geometry::nav {
 
 		PatchReport applyPatch(const PatchEdits& edits);
 
+		// The triangle ids applyPatch(edits) frees in its first re-derivation, ascending:
+		// what the new outlines overlap, the triangles along every changed ring edge, and
+		// the whole star of every vertex on one, however far that reaches. The mesh is left
+		// as it is. A lower bound on the patch's freed ids: where the first pass's boundary
+		// does not hold, later passes grow the hole, and legalizing the patched boundary
+		// flips kept triangles beside it, the flips carrying on outward as far as they must;
+		// neither is known until the hole is rebuilt. Kept triangles the patch marks
+		// kTriangleBorder are not listed either. It writes only
+		// applyPatch's own scratch, so it may run while searches read the mesh, never while
+		// a patch runs.
+		std::vector<std::int32_t> holeOf(const PatchEdits& edits);
+
 		const PagedVector<Vec2i64>&		vertices() const { return verts; }
 		const PagedVector<NavTriangle>& triangles() const { return tris; }
 		bool							triangleLive(std::int32_t t) const { return live[static_cast<std::size_t>(t)] != 0; }

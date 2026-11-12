@@ -1927,3 +1927,96 @@ TEST(PatchableMesh, PricedRingIsEnteredOnEveryTiling) {
 		EXPECT_LT(pathLengthMm(r), 10500) << "split " << split;
 	}
 }
+
+// holeOf, asked before a patch, names only ids the patch frees, and changes nothing the
+// patch does. What the patch frees beyond it (later passes, boundary flips) is counted.
+TEST(PatchableMesh, HoleOfIsALowerBoundOnWhatAPatchFrees) {
+	struct Case {
+		const char*	  name;
+		Fixture		  fixture;
+		std::uint32_t seed;
+	};
+	const Case cases[] = {
+		{"manyTrees", dumpFixture(testdata::manyTreesDump()), 3}, {"control", dumpFixture(testdata::controlDump()), 5}, {"realRings", realRingsFixture(), 7}};
+	std::int64_t patches = 0;
+	std::int64_t missed	 = 0; // patches that freed an id holeOf did not give
+	std::int64_t given	 = 0;
+	std::int64_t freed	 = 0;
+	std::int64_t flipped = 0; // freed by flips at the patched boundary
+	std::int64_t grown	 = 0; // patches whose hole grew past the first pass
+	std::int64_t beside	 = 0; // flipped ids that were next to the predicted hole
+	for (const Case& c : cases) {
+		std::mt19937 rng(c.seed);
+		Harness		 h;
+		{
+			PatchEdits edits;
+			edits.adds = c.fixture.base;
+			h.apply(edits);
+		}
+		std::vector<NavInputPolygon> pending = c.fixture.trees;
+		std::shuffle(pending.begin(), pending.end(), rng);
+		std::vector<RingId> placed;
+		for (int step = 0; step < 150; ++step) {
+			PatchEdits	   edits;
+			const unsigned op = static_cast<unsigned>(pick(rng, 10));
+			if ((op < 6 || placed.size() < 8) && !pending.empty()) {
+				const std::size_t count = std::min<std::size_t>(pending.size(), 1 + pick(rng, 6));
+				edits.adds.assign(pending.end() - static_cast<std::ptrdiff_t>(count), pending.end());
+				pending.resize(pending.size() - count);
+			} else if (op < 8 && !placed.empty()) {
+				const std::size_t count = std::min<std::size_t>(placed.size(), 1 + pick(rng, 4));
+				for (std::size_t i = 0; i < count; ++i) {
+					const std::size_t at = pick(rng, placed.size());
+					pending.insert(pending.begin(), h.model[placed[at]]);
+					edits.removes.push_back(placed[at]);
+					placed.erase(placed.begin() + static_cast<std::ptrdiff_t>(at));
+				}
+			} else if (!placed.empty()) {
+				const RingId r = placed[pick(rng, placed.size())];
+				edits.moves.push_back({r, translated(h.model[r].ring, {between(rng, -1500, 1500), between(rng, -1500, 1500)})});
+			} else {
+				continue;
+			}
+			const std::uint64_t epoch = h.mesh.epoch();
+			const bool			check = step % 10 == 0;
+			PatchableMesh		twin  = check ? h.mesh : PatchableMesh();
+			const std::vector<std::int32_t> hole = h.mesh.holeOf(edits);
+			ASSERT_EQ(h.mesh.epoch(), epoch) << c.name << " step " << step;
+			ASSERT_TRUE(std::is_sorted(hole.begin(), hole.end()) && std::adjacent_find(hole.begin(), hole.end()) == hole.end());
+			std::set<std::int32_t> next;
+			for (const std::int32_t id : hole) {
+				for (const std::int32_t nb : h.mesh.triangles()[static_cast<std::size_t>(id)].neighbor) {
+					if (nb >= 0 && !std::binary_search(hole.begin(), hole.end(), nb)) {
+						next.insert(nb);
+					}
+				}
+			}
+			const PatchReport report = h.apply(edits);
+			for (const std::int32_t id : hole) {
+				ASSERT_TRUE(std::binary_search(report.freedTriangles.begin(), report.freedTriangles.end(), id))
+					<< c.name << " step " << step << ": holeOf gave " << id << ", which the patch kept";
+			}
+			if (check) {
+				const PatchReport alone = twin.applyPatch(edits);
+				ASSERT_EQ(alone.added, report.added) << c.name << " step " << step;
+				ASSERT_EQ(alone.changes, report.changes) << c.name << " step " << step << ": holeOf changed what the patch does";
+			}
+			++patches;
+			given += static_cast<std::int64_t>(hole.size());
+			freed += static_cast<std::int64_t>(report.freedTriangles.size());
+			missed += report.freedTriangles.size() > hole.size() ? 1 : 0;
+			flipped += std::count_if(report.changes.begin(), report.changes.end(), [](const ChangedTriangle& t) { return (t.why & kTriangleFlipped) != 0; });
+			grown += report.passes > 1 ? 1 : 0;
+			beside += std::count_if(report.changes.begin(), report.changes.end(), [&](const ChangedTriangle& t) { return (t.why & kTriangleFlipped) != 0 && next.count(t.id) != 0; });
+			placed.insert(placed.end(), report.added.begin(), report.added.end());
+		}
+	}
+	EXPECT_GT(patches, 400);
+	RecordProperty("Patches", static_cast<int>(patches));
+	RecordProperty("PatchesFreeingUnpredicted", static_cast<int>(missed));
+	RecordProperty("IdsGiven", static_cast<int>(given));
+	RecordProperty("IdsFreed", static_cast<int>(freed));
+	RecordProperty("IdsFlipped", static_cast<int>(flipped));
+	RecordProperty("PatchesPastTheFirstPass", static_cast<int>(grown));
+	RecordProperty("IdsFlippedBesideTheHole", static_cast<int>(beside));
+}

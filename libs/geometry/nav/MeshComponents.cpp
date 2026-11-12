@@ -417,8 +417,10 @@ namespace geometry::nav {
 			}
 		}
 		upkeep.emptied -= upkeep.merges;
-		// A split whose whole component was re-derived shows as fresh labels, not a split.
-		if (report.opens || upkeep.splits > 0 || upkeep.merges > 0 || upkeep.fresh > 0) {
+		// A split whose whole component was re-derived shows as fresh labels, not a split. A
+		// component whose every triangle was re-derived shows as emptied, whether its ground
+		// went or joined another component (an open-tag ring laid over what bounded it).
+		if (report.opens || upkeep.splits > 0 || upkeep.merges > 0 || upkeep.fresh > 0 || upkeep.emptied > 0) {
 			connectivityEpoch = nextMeshGeneration();
 		}
 	}
