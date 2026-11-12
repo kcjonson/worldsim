@@ -29,9 +29,8 @@
 //
 // The mesh carries what path queries and reachability read: face tags from the rings,
 // door tags on door edges, corridor widths capped at a maximum clearance (brought up to
-// date by refreshWidths), both reachability forests (rebuilt by rebuildForests), and
-// connected-component labels (kept by every patch).
-// view() hands all of it to PathQuery and the forest builder, which serve NavMesh too.
+// date by refreshWidths), and connected-component labels (kept by every patch).
+// view() hands all of it to PathQuery, which serves NavMesh too.
 
 namespace geometry::nav {
 
@@ -162,13 +161,7 @@ namespace geometry::nav {
 		PatchReport refreshWidths();
 		bool widthsCurrent() const { return freshWidthTriangles.empty() && pendingWidthSeeds.empty(); }
 
-		// Refreshes widths, then rebuilds both reachability forests from the live
-		// triangles. A patch or a door edit drops them, so the mesh has forests only when
-		// this ran after its last change.
-		void rebuildForests();
-		bool hasForests() const { return forestsCurrent; }
-
-		// What path queries and forest builds read (see NavView).
+		// What path queries read (see NavView).
 		NavView view() const;
 
 		// Moves on every patch and door edit, to a value no mesh state has had before
@@ -381,11 +374,8 @@ namespace geometry::nav {
 		std::uint32_t										freshStamp = 0;
 		std::uint32_t										walkStamp  = 0;
 
-		ReachabilityForests forests;
-		ForestScratch		forestScratch;
-		bool				forestsCurrent = false;
-		std::uint64_t		patchEpoch	   = nextMeshGeneration();
-		MeshComponents		labels;
+		std::uint64_t  patchEpoch = nextMeshGeneration();
+		MeshComponents labels;
 	};
 
 } // namespace geometry::nav

@@ -99,7 +99,7 @@ namespace geometry::nav {
 	// as open ground) and the query prices every detail tag, at the dearest detail price,
 	// free beside the priced face the walk crosses anyway at that price; a gap anything
 	// else narrows stays shut, and with a detail tag left unpriced every such gap does.
-	// The reachability forests treat priced faces as walls, so the forest pre-check is
+	// Component labels treat priced faces as walls, so the component pre-check is
 	// skipped while prices are set.
 	struct TagPrice {
 		std::int64_t tag		= 0;   // a NavTriangle::faceBlocker value; each listed once
@@ -172,8 +172,8 @@ namespace geometry::nav {
 	// restarted: ids it holds name that mesh's triangles. A caller that patches the mesh
 	// between steps checks the patch's triangle ids against touches() and restarts the
 	// search on a hit; a search no patch touched may carry on. So a search reads nothing
-	// outside its touched set: never the reachability forests, which describe the whole
-	// mesh and could drop a goal a later patch opened.
+	// outside its touched set: never the component labels, which describe the whole mesh
+	// and could drop a goal a later patch opened.
 	//
 	// A search's state is its own (belief included), so any number of searches, on any
 	// threads, may read one mesh at once while nothing writes it; one search is stepped by
@@ -211,40 +211,14 @@ namespace geometry::nav {
 	};
 
 	// Path for a disc of radius agentRadiusMm from start to goal: a SearchState from the
-	// start only, run to the end (or to limits.maxExpansions), unless the reachability
-	// forests prove the goal out of reach first (no expansions then). A default (empty)
-	// BeliefFilter is a truth query that routes exactly as v1 did.
+	// start only, run to the end (or to limits.maxExpansions), unless the mesh's component
+	// labels put the goal in another component first (no expansions then). A default
+	// (empty) BeliefFilter is a truth query that routes exactly as v1 did.
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   const BeliefFilter& belief = {}, const PathLimits& limits = {});
-	// Any mesh through its view (see NavView). Without forests in the view the
-	// reachability pre-check is skipped and the A* decides alone.
+	// Any mesh through its view (see NavView). Without component labels in the view the
+	// pre-check is skipped and the A* decides alone.
 	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   const BeliefFilter& belief = {}, const PathLimits& limits = {});
-
-	// Sound, cheap reachability test (P3.3): can a disc of radius agentRadiusMm POSSIBLY get from
-	// start to goal under `belief`? Uses the precomputed reachability forest, so it rejects a
-	// provably-unreachable goal without running A*. reachFrom does the start-side work once
-	// (locate, endpoint gate, the disc's reach root in the forest); reaches() tests one goal against
-	// it with a locate and an O(log n) subtree check, so many goals from one start cost one climb.
-	// Pass reaches() the belief reachFrom took.
-	//
-	// Semantics are asymmetric and that asymmetry is the point:
-	//   false => DEFINITELY unreachable (off-mesh, an untraversable endpoint, a
-	//            different component, or the path's widest bottleneck < the disc
-	//            diameter). A `false` never hides a real path -- it is sound.
-	//   true  => MAYBE reachable. The forest over-approximates (bottleneck is an
-	//            upper bound), so the caller must still run pathThrough for certainty.
-	//
-	// belief.knownSegments == nullptr selects the truth forest (AI goal validity);
-	// otherwise the terrain forest, whose disconnect is sound for every belief.
-	struct ReachFrom {
-		std::int32_t startTri = -1; // -1: off-mesh or untraversable start, reaches nothing
-		std::int32_t root	  = -1; // forest node whose subtree the disc can reach; -1 for a non-node start
-	};
-	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief = {});
-	bool	  reaches(const NavMesh& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief = {});
-	// The view must carry the forests.
-	ReachFrom reachFrom(const NavView& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief = {});
-	bool	  reaches(const NavView& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief = {});
 
 } // namespace geometry::nav

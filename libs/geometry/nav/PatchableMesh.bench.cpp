@@ -754,7 +754,7 @@ namespace {
 		state.counters["tris"] = static_cast<double>(l.mesh.liveTriangleCount());
 	}
 
-	// --- Path queries and forests ----------------------------------------------------
+	// --- Path queries ----------------------------------------------------------------
 
 	// Start/goal pairs from a fixed sequence; the same points on both meshes.
 	std::vector<std::pair<Vec2i64, Vec2i64>> queryPairs(const Rings& rings) {
@@ -790,7 +790,6 @@ namespace {
 	void BM_PathPatchable(benchmark::State& state, Fixture f) {
 		Loaded l;
 		load(l, fixtureRings(f));
-		l.mesh.rebuildForests();
 		runPaths(state, l.mesh.view(), queryPairs(l.rings));
 	}
 
@@ -854,7 +853,6 @@ namespace {
 			all.insert(all.begin() + 1, NavInputPolygon{rect(mid, lo.y, hi.x, hi.y), false, kProvenanceBorder});
 		}
 		untimedPatch(s.detail, adding(all));
-		s.detail.rebuildForests();
 		std::mt19937 rng(91);
 		auto		 walkable = [&](const Vec2i64& p) {
 			const std::int32_t t = s.detail.locate(p);
@@ -948,42 +946,6 @@ namespace {
 		state.counters["through"]	= r.crossesPricedFaces ? 1.0 : 0.0;
 		state.counters["nodes"]		= static_cast<double>(r.nodesExpanded);
 		state.counters["tris"]		= static_cast<double>(mesh.liveTriangleCount());
-	}
-
-	void runForestRebuild(benchmark::State& state, const Rings& rings, bool withTrees) {
-		PatchableMesh mesh;
-		PatchEdits	  edits = adding(rings.base);
-		if (withTrees) {
-			edits.adds.insert(edits.adds.end(), rings.trees.begin(), rings.trees.end());
-		}
-		untimedPatch(mesh, edits);
-		for (auto _ : state) {
-			mesh.rebuildForests();
-			benchmark::DoNotOptimize(mesh.hasForests());
-		}
-		state.counters["tris"] = static_cast<double>(mesh.liveTriangleCount());
-	}
-
-	void BM_ForestRebuild(benchmark::State& state, Fixture f, bool withTrees) {
-		runForestRebuild(state, fixtureRings(f), withTrees);
-	}
-
-	void BM_ForestRebuildTiledStructural(benchmark::State& state) {
-		runForestRebuild(state, tiledControl(state.range(0)), false);
-	}
-
-	// A structural mesh of state.range(0) x state.range(0) realRings water tiles under one
-	// bounds square: about 10k, 18k, and 40k triangle slots at 3, 4, and 6.
-	void BM_ForestRebuildWater(benchmark::State& state) {
-		PatchableMesh mesh({.maxBoundsEdgeMm = 16000});
-		untimedPatch(mesh, adding(chunkRings(0, 0, state.range(0), Fill::Water)));
-		for (auto _ : state) {
-			mesh.rebuildForests();
-			benchmark::DoNotOptimize(mesh.hasForests());
-		}
-		const double slots		  = static_cast<double>(mesh.triangles().size());
-		state.counters["slots"]	  = slots;
-		state.counters["timePerSlot"] = benchmark::Counter(slots, benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
 	}
 
 	// --- Flora cells entering a large mesh -------------------------------------------
@@ -1170,7 +1132,6 @@ namespace {
 			NavInputPolygon{rect(g.x - kHalf, g.y - kHalf, g.x - kHalf + kWall, g.y + kHalf), true, 103},
 			NavInputPolygon{rect(g.x + kHalf - kWall, g.y - kHalf, g.x + kHalf, g.y + kHalf), true, 104}};
 		loadTiledGround(mesh, tiles, true, walls);
-		mesh.rebuildForests();
 		std::unordered_set<std::uint64_t> known{101, 102, 103, 104};
 		std::unordered_set<std::uint64_t> noDoors;
 		BeliefFilter					  belief{&known, &noDoors};
@@ -1215,7 +1176,6 @@ namespace {
 		const std::int64_t tiles = 5;
 		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000});
 		loadTiledGround(mesh, tiles, false);
-		mesh.rebuildForests();
 		const std::int64_t side = tiles * kRealTileMm;
 		std::mt19937	   rng(29);
 		auto			   floor = [&](const Vec2i64& p) {
@@ -1419,15 +1379,6 @@ COLONY_ROWS(realRings_side12, Fixture::RealRings, Colony::NearSide);
 COLONY_ROWS(realRings_chunkMiddle, Fixture::RealRings, Colony::ChunkMiddle);
 COLONY_ROWS(realRings_chunkSide12, Fixture::RealRings, Colony::ChunkSide);
 BENCHMARK(BM_SealedGoal)->Unit(benchmark::kMicrosecond);
-
-BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_structural, Fixture::ManyTrees, false)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, control_structural, Fixture::Control, false)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, realRings_structural, Fixture::RealRings, false)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_full, Fixture::ManyTrees, true)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, control_full, Fixture::Control, true)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, realRings_full, Fixture::RealRings, true)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ForestRebuildTiledStructural)->Arg(2)->Arg(4)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ForestRebuildWater)->Arg(3)->Arg(4)->Arg(6)->Unit(benchmark::kMillisecond);
 
 BENCHMARK_CAPTURE(BM_LargeTree, tiled_lone_add, 0, false, true)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LargeTree, tiled_lone_remove, 0, false, false)->UseManualTime()->Unit(benchmark::kMicrosecond);

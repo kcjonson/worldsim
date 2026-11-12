@@ -2231,7 +2231,6 @@ namespace geometry::nav {
 
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
-		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
 		PatchReport report = patch.run();
 		report.opens	   = !edits.removes.empty() || !edits.moves.empty() || !std::all_of(edits.adds.begin(), edits.adds.end(), onlyCloses);
@@ -2239,7 +2238,7 @@ namespace geometry::nav {
 		return report;
 	}
 
-	// --- Doors, widths, forests, and the view ---------------------------------------
+	// --- Doors, widths, and the view ------------------------------------------------
 
 	std::pair<Vec2i64, Vec2i64> PatchableMesh::edgeKey(Vec2i64 a, Vec2i64 b) {
 		if (b < a) {
@@ -2293,7 +2292,6 @@ namespace geometry::nav {
 		std::vector<DoorId>& onEdge = doorsAt[edgeKey(door.a, door.b)];
 		onEdge.insert(std::lower_bound(onEdge.begin(), onEdge.end(), id), id);
 		retagEdge(door.a, door.b);
-		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
 		labels.noteOpening();
 		return id;
@@ -2314,7 +2312,6 @@ namespace geometry::nav {
 		doorLive[static_cast<std::size_t>(id)] = 0;
 		freeDoors.push_back(id);
 		retagEdge(door.a, door.b);
-		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
 	}
 
@@ -2578,12 +2575,6 @@ namespace geometry::nav {
 		return report;
 	}
 
-	void PatchableMesh::rebuildForests() {
-		refreshWidths();
-		buildReachabilityForests(view(), forestScratch, forests);
-		forestsCurrent = true;
-	}
-
 	NavView PatchableMesh::view() const {
 		NavView v;
 		v.vertices.of(verts);
@@ -2591,13 +2582,7 @@ namespace geometry::nav {
 		v.live.of(live);
 		v.owner			  = this;
 		v.locateIn		  = [](const void* owner, const Vec2i64& p) { return static_cast<const PatchableMesh*>(owner)->locate(p); };
-		v.forestIn		  = [](const void* owner, bool truth) -> const ReachabilityForest* {
-			   const PatchableMesh& mesh = *static_cast<const PatchableMesh*>(owner);
-			   if (!mesh.forestsCurrent) {
-				   return nullptr;
-			   }
-			   return truth ? &mesh.forests.truth : &mesh.forests.terrain;
-		};
+		v.componentsIn	  = [](const void* owner) -> const MeshComponents* { return &static_cast<const PatchableMesh*>(owner)->labels; };
 		v.widthsCurrentIn = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->widthsCurrent(); };
 		v.epochIn		  = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->epoch(); };
 		v.detailTags	  = &detailTags;
@@ -3029,7 +3014,7 @@ namespace geometry::nav {
 		}
 
 		// Widths, once refreshed, are what a fresh search gives; door tags are what the door
-		// registry says; forests, when the mesh has them, are what a fresh build gives.
+		// registry says.
 		{
 			const NavView v = view();
 			WidthSearch	  search;
@@ -3054,13 +3039,6 @@ namespace geometry::nav {
 						fail() << "triangle " << t << " edge " << e << " has stale door tags";
 						return err.str();
 					}
-				}
-			}
-			if (forestsCurrent) {
-				const ReachabilityForests fresh = buildReachabilityForests(v);
-				if (fresh.truth.component != forests.truth.component || fresh.truth.nodeCap != forests.truth.nodeCap ||
-					fresh.terrain.component != forests.terrain.component || fresh.terrain.nodeCap != forests.terrain.nodeCap) {
-					return "reachability forests differ from a fresh build";
 				}
 			}
 		}

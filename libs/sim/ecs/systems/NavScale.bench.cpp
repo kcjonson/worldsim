@@ -13,9 +13,7 @@
 // colliders by age class), patched into a nav mesh 16 m cell by cell as the view brings it: rings,
 // bytes and time.
 //
-// BM_SearchReach, BM_SearchCases and BM_SearchDeadEnds: what one search step costs, how far a capped
-// search reaches, and how many steps real routes and real dead ends take (see "Choosing the search
-// cap" below).
+// BM_SearchCases: how many steps real routes take (see "Choosing the search cap" below).
 
 #include "NavigationSystem.h"
 
@@ -47,7 +45,6 @@
 #include <optional>
 #include <span>
 #include <string>
-#include <unordered_set>
 #include <vector>
 
 #ifdef _WIN32
@@ -163,13 +160,6 @@ namespace {
 
 	gnav::NavInputPolygon box(glm::vec2 lo, glm::vec2 hi, bool blocked, std::int64_t provenance) {
 		return {{nav::toMm(lo), nav::toMm({hi.x, lo.y}), nav::toMm(hi), nav::toMm({lo.x, hi.y})}, blocked, provenance};
-	}
-
-	// Four thin rings round [lo, hi]: walls (provenance = segment ids from firstId) or water.
-	std::vector<gnav::NavInputPolygon> ringRound(glm::vec2 lo, glm::vec2 hi, float thick, std::int64_t provenance, std::int64_t firstId) {
-		auto id = [&](int k) { return provenance > 0 ? firstId + k : provenance; };
-		return {box({lo.x - thick, lo.y - thick}, {hi.x + thick, lo.y}, true, id(0)), box({lo.x - thick, hi.y}, {hi.x + thick, hi.y + thick}, true, id(1)),
-				box({lo.x - thick, lo.y}, {lo.x, hi.y}, true, id(2)), box({hi.x, lo.y}, {hi.x + thick, hi.y}, true, id(3))};
 	}
 
 	// A land point near `p` (the mesh walkable there in truth).
@@ -292,14 +282,12 @@ namespace {
 
 	// --- Choosing the search cap ----------------------------------------------------------------
 	//
-	// Four grounds, each 1,024 chunks (16 km a side) of mesh: "open" (squares, no water), "real" (the
-	// Quick Start chunks round its landing, rivers and lakes; needs WORLDSIM_PLANET), "forest" (open
+	// Three grounds, each 1,024 chunks (16 km a side) of mesh: "open" (squares, no water), "real" (the
+	// Quick Start chunks round its landing, rivers and lakes; needs WORLDSIM_PLANET) and "forest" (open
 	// ground with the chunk round the start covered by forest at the game's density in a nav mesh,
-	// its placed obstacles blocking) and "compound" (open ground with a
-	// 5 x 5 block of 10 m rooms round the start, a door gap in every wall, and a belief that knows
-	// every wall).
+	// its placed obstacles blocking).
 
-	enum class Ground { Open, Real, Forest, Compound };
+	enum class Ground { Open, Real, Forest };
 	const char* groundName(Ground g) {
 		switch (g) {
 			case Ground::Open:
@@ -308,30 +296,16 @@ namespace {
 				return "real";
 			case Ground::Forest:
 				return "forest";
-			case Ground::Compound:
-				return "compound";
 		}
 		return "";
 	}
 
 	struct SearchGround {
-		gnav::PatchableMesh				  mesh;
-		glm::vec2						  centre{0.0F, 0.0F};
-		std::unordered_set<std::uint64_t> knownWalls;
-		std::unordered_set<std::uint64_t> knownOpenings;
-		bool							  belief = false;
+		gnav::PatchableMesh mesh;
+		glm::vec2			centre{0.0F, 0.0F};
 
 		explicit SearchGround(bool detail)
 			: mesh(makeMesh(detail)) {}
-
-		[[nodiscard]] gnav::BeliefFilter filter() const {
-			gnav::BeliefFilter f;
-			if (belief) {
-				f.knownSegments = &knownWalls;
-				f.knownOpenings = &knownOpenings;
-			}
-			return f;
-		}
 	};
 
 	// The forest of BM_NavScaleDetail over the chunk holding `centre`.
@@ -348,34 +322,6 @@ namespace {
 			}
 		}
 		return trees;
-	}
-
-	// A 5 x 5 block of 10 m rooms centred on `centre`: every wall 0.2 m thick, with a 1.2 m gap in its
-	// middle (outer walls included). Wall ids start at 1000.
-	std::vector<gnav::NavInputPolygon> compoundAt(glm::vec2 centre, std::unordered_set<std::uint64_t>& ids) {
-		std::vector<gnav::NavInputPolygon> walls;
-		const glm::vec2					   lo = centre - glm::vec2{25.0F};
-		std::int64_t					   id = 1000;
-		const auto						   wall = [&](glm::vec2 a, glm::vec2 b) {
-			   const bool	   alongX = a.y == b.y;
-			   const glm::vec2 mid	  = (a + b) * 0.5F;
-			   const glm::vec2 dir	  = alongX ? glm::vec2{1.0F, 0.0F} : glm::vec2{0.0F, 1.0F};
-			   const glm::vec2 side	  = alongX ? glm::vec2{0.0F, 0.1F} : glm::vec2{0.1F, 0.0F};
-			   for (const auto& [from, to] : {std::pair{a, mid - 0.6F * dir}, std::pair{mid + 0.6F * dir, b}}) {
-				   walls.push_back(box(glm::min(from, to) - side, glm::max(from, to) + side, true, id));
-				   ids.insert(static_cast<std::uint64_t>(id));
-				   ++id;
-			   }
-		};
-		for (int k = 0; k <= 5; ++k) {
-			const float o = static_cast<float>(k) * 10.0F;
-			for (int j = 0; j < 5; ++j) {
-				const float s = static_cast<float>(j) * 10.0F;
-				wall(lo + glm::vec2{s, o}, lo + glm::vec2{s + 10.0F, o});
-				wall(lo + glm::vec2{o, s}, lo + glm::vec2{o, s + 10.0F});
-			}
-		}
-		return walls;
 	}
 
 	const SearchGround* searchGround(Ground g) {
@@ -396,12 +342,7 @@ namespace {
 		if (g == Ground::Forest) {
 			out->mesh.applyPatch({.adds = forestOver(world::worldToChunk({out->centre.x, out->centre.y}))});
 		}
-		if (g == Ground::Compound) {
-			out->mesh.applyPatch({.adds = compoundAt(out->centre, out->knownWalls)});
-			out->belief = true;
-		}
 		out->mesh.refreshWidths();
-		out->mesh.rebuildForests();
 		if (g == Ground::Real) {
 			out->centre = *landNear(out->mesh, out->centre);
 		}
@@ -414,16 +355,16 @@ namespace {
 		double			 us = 0.0;
 	};
 
-	Timed timedSearch(const SearchGround& g, glm::vec2 from, glm::vec2 to, std::uint32_t cap) {
+	Timed timedSearch(const SearchGround& g, glm::vec2 from, glm::vec2 to) {
 		const Clock::time_point t = Clock::now();
 		Timed					out;
-		out.result = gnav::pathThrough(g.mesh.view(), nav::toMm(from), nav::toMm(to), 300, g.filter(), {.maxExpansions = cap});
+		out.result = gnav::pathThrough(g.mesh.view(), nav::toMm(from), nav::toMm(to), 300);
 		out.us	   = std::chrono::duration<double, std::micro>(Clock::now() - t).count();
 		return out;
 	}
 
 	// Starts round the ground's centre: within 2 km on open and real ground, inside the forest chunk's
-	// middle 200 m, and in the compound's rooms.
+	// middle 200 m.
 	std::vector<glm::vec2> startsFor(Ground g, const SearchGround& ground, int count) {
 		std::vector<glm::vec2> out;
 		std::uint32_t		   seed = 97;
@@ -431,91 +372,15 @@ namespace {
 			  seed = seed * 1664525U + 1013904223U;
 			  return static_cast<float>(seed >> 8) / static_cast<float>(1U << 24);
 		};
-		const float spread = g == Ground::Forest ? 200.0F : g == Ground::Compound ? 46.0F : 4000.0F;
+		const float spread = g == Ground::Forest ? 200.0F : 4000.0F;
 		while (static_cast<int>(out.size()) < count) {
-			glm::vec2 p = ground.centre + glm::vec2{(unit() - 0.5F) * spread, (unit() - 0.5F) * spread};
-			if (g == Ground::Compound) {
-				p = ground.centre + glm::vec2{std::floor((p.x - ground.centre.x) / 10.0F) * 10.0F + 5.0F, std::floor((p.y - ground.centre.y) / 10.0F) * 10.0F + 5.0F};
-			}
+			const glm::vec2 p = ground.centre + glm::vec2{(unit() - 0.5F) * spread, (unit() - 0.5F) * spread};
 			const std::optional<glm::vec2> land = landNear(ground.mesh, p);
 			if (land.has_value() && (g != Ground::Forest || ground.mesh.locate(nav::toMm(*land)) >= 0)) {
 				out.push_back(*land);
 			}
 		}
 		return out;
-	}
-
-	double median(std::vector<double> v) {
-		if (v.empty()) {
-			return 0.0;
-		}
-		std::sort(v.begin(), v.end());
-		return v[v.size() / 2];
-	}
-
-	// Cost of a step, and how far N steps reach. range(0): ground; range(1): N. From each start, in 8
-	// directions, the farthest goal (to 5 m) a search capped at N still finds, by doubling then halving
-	// the distance. Per start: reach = the nearest of the 8 limits (the nearest goal not found),
-	// farthest = the farthest found. Every search that stopped at its cap gives a microseconds-per-
-	// expansion sample.
-	void BM_SearchReach(benchmark::State& state) {
-		const auto				  g		 = static_cast<Ground>(state.range(0));
-		const auto				  n		 = static_cast<std::uint32_t>(state.range(1));
-		const SearchGround* const ground = searchGround(g);
-		if (ground == nullptr) {
-			state.SkipWithMessage("no planet (WORLDSIM_PLANET)");
-			return;
-		}
-		const int	maxStarts = g == Ground::Open || g == Ground::Real ? 32 : 16;
-		const float maxD	  = g == Ground::Compound ? 400.0F : 16000.0F;
-		for (auto _ : state) {
-			std::vector<double> reach;
-			std::vector<double> farthest;
-			std::vector<double> usPerStep;
-			for (const glm::vec2 start : startsFor(g, *ground, maxStarts)) {
-				double nearestMiss = maxD;
-				double farHit	   = 0.0;
-				for (int k = 0; k < 8; ++k) {
-					const glm::vec2 dir{std::cos(0.785398F * static_cast<float>(k) + 0.3F), std::sin(0.785398F * static_cast<float>(k) + 0.3F)};
-					const auto		finds = [&](float d) -> std::optional<bool> {
-						 const std::optional<glm::vec2> goal = landNear(ground->mesh, start + d * dir);
-						 if (!goal.has_value()) {
-							 return std::nullopt;
-						 }
-						 const Timed t = timedSearch(*ground, start, *goal, n);
-						 if (t.result.stop == gnav::PathStop::LimitReached && t.result.expansions > 100) {
-							 usPerStep.push_back(t.us / static_cast<double>(t.result.expansions));
-						 }
-						 return t.result.stop == gnav::PathStop::Found;
-					};
-					float hit  = 0.0F;
-					float miss = 5.0F;
-					while (miss < maxD && finds(miss).value_or(true)) {
-						hit	 = miss;
-						miss = miss * 2.0F;
-					}
-					miss = std::min(miss, maxD);
-					while (miss - hit > 5.0F) {
-						const float mid = 0.5F * (hit + miss);
-						(finds(mid).value_or(true) ? hit : miss) = mid;
-					}
-					nearestMiss = std::min(nearestMiss, static_cast<double>(miss));
-					farHit		= std::max(farHit, static_cast<double>(hit));
-				}
-				reach.push_back(nearestMiss);
-				farthest.push_back(farHit);
-			}
-			state.SetLabel(groundName(g));
-			state.counters["steps"]			   = n;
-			state.counters["starts"]		   = static_cast<double>(reach.size());
-			state.counters["reachMedianM"]	   = median(reach);
-			state.counters["reachWorstM"]	   = *std::min_element(reach.begin(), reach.end());
-			state.counters["farthestMedianM"]  = median(farthest);
-			state.counters["farthestBestM"]	   = *std::max_element(farthest.begin(), farthest.end());
-			state.counters["usPerStepMean"]	   = meanOf(usPerStep);
-			state.counters["usPerStepWorst"]   = usPerStep.empty() ? 0.0 : *std::max_element(usPerStep.begin(), usPerStep.end());
-			state.counters["usPerStepSamples"] = static_cast<double>(usPerStep.size());
-		}
 	}
 
 	// Steps real cases need. range(0): ground; range(1): straight-line distance (m). From 8 starts, 16
@@ -540,7 +405,7 @@ namespace {
 					if (!goal.has_value()) {
 						continue;
 					}
-					const Timed t = timedSearch(*ground, start, *goal, 0);
+					const Timed t = timedSearch(*ground, start, *goal);
 					if (t.result.stop != gnav::PathStop::Found) {
 						++none;
 						continue;
@@ -560,41 +425,6 @@ namespace {
 		}
 	}
 
-	// Real dead ends on open ground: a goal on an islet (water all round), a goal in a sealed room
-	// whose walls the belief knows, asked from the goal side and from the start side, uncapped: the
-	// expansions each takes before it can say no, and the time.
-	void BM_SearchDeadEnds(benchmark::State& state) {
-		const Region* region = openRegion();
-		for (auto _ : state) {
-			gnav::PatchableMesh mesh = makeMesh(false);
-			for (const ChunkRings& c : region->chunks) {
-				mesh.applyPatch({.adds = c.rings});
-			}
-			const glm::vec2					   start = region->start;
-			const glm::vec2					   islet = start + glm::vec2{300.0F, 0.0F};
-			const glm::vec2					   room	 = start + glm::vec2{-300.0F, 0.0F};
-			std::vector<gnav::NavInputPolygon> adds	 = ringRound(islet - glm::vec2{10.0F}, islet + glm::vec2{10.0F}, 20.0F, nav::kProvenanceWater, 0);
-			const auto walls = ringRound(room - glm::vec2{5.0F}, room + glm::vec2{5.0F}, 0.2F, 1, 1);
-			adds.insert(adds.end(), walls.begin(), walls.end());
-			mesh.applyPatch({.adds = adds});
-			mesh.refreshWidths();
-			mesh.rebuildForests();
-			const std::unordered_set<std::uint64_t> known{1, 2, 3, 4};
-			const std::unordered_set<std::uint64_t> noOpenings;
-			const gnav::BeliefFilter				belief{&known, &noOpenings};
-			const auto								timed = [&](glm::vec2 a, glm::vec2 b, const gnav::BeliefFilter& f, const char* name) {
-				 const Clock::time_point t = Clock::now();
-				 const gnav::PathResult	 r = gnav::pathThrough(mesh.view(), nav::toMm(a), nav::toMm(b), 300, f, {});
-				 state.counters[std::string(name) + "Steps"] = static_cast<double>(r.expansions);
-				 state.counters[std::string(name) + "Ms"]	 = msSince(t);
-				 state.counters[std::string(name) + "Stop"] = static_cast<double>(r.stop);
-			};
-			timed(start, islet, belief, "islet");
-			timed(room, start, belief, "roomFromGoal");
-			timed(start, room, belief, "roomFromStart");
-		}
-	}
-
 } // namespace
 
 BENCHMARK(BM_NavScaleGround)
@@ -609,12 +439,7 @@ BENCHMARK(BM_NavScaleGround)
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_NavScaleDetail)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_SearchReach)
-	->ArgsProduct({{0, 1, 2, 3}, {2000, 5000, 20000}})
-	->Iterations(1)
-	->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_SearchCases)
 	->ArgsProduct({{0, 1, 2}, {100, 500, 2000, 10000}})
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_SearchDeadEnds)->Iterations(1)->Unit(benchmark::kMillisecond);

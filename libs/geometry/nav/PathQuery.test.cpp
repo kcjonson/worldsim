@@ -1710,7 +1710,6 @@ namespace {
 		}
 		mesh.applyPatch(edits);
 		mesh.refreshWidths();
-		mesh.rebuildForests();
 		return mesh;
 	}
 
@@ -1876,18 +1875,31 @@ TEST(PathQuerySearch,HighDegreeVertexWalksItsWholeFan) {
 	}
 }
 
-// A search never reads the reachability forests: they hold the whole mesh, not what the
-// search has read, so a goal they reject is still searched for (here two goals sealed in
-// a room under truth: the search explores and runs dry). pathThrough keeps the forests'
-// reject, before any search.
-TEST(PathQuerySearch,SearchNeverConsultsTheForests) {
-	const NavMesh m	   = buildNavMesh(buildBoxRoom(false));
-	const NavView view = navView(m);
-	ASSERT_NE(view.forest(true), nullptr);
-	const SearchRun run = runInSlices(view, argsFor(kOutside, {kInside, {1500, 1500}}, 0), kRunToEnd);
+// A search never reads the component labels: they hold the whole mesh, not what the
+// search has read, so a goal across water is still searched for (the search explores and
+// runs dry). pathThrough keeps the labels' reject, before any search. Labels read every
+// wall open, so a room sealed by walls is searched for by pathThrough too.
+TEST(PathQuerySearch,SearchNeverConsultsTheComponentLabels) {
+	PatchableMesh split;
+	PatchEdits	  edits;
+	edits.adds.push_back({{{0, 0}, {6000, 0}, {6000, 6000}, {0, 6000}}, false, 1});
+	edits.adds.push_back({{{0, 2800}, {6000, 2800}, {6000, 3200}, {0, 3200}}, true, -1});
+	split.applyPatch(edits);
+	split.refreshWidths();
+	const NavView	splitView = split.view();
+	const SearchRun run		  = runInSlices(splitView, argsFor({1000, 1000}, {{1000, 5000}, {5000, 5000}}, 0), kRunToEnd);
 	EXPECT_EQ(run.progress, SearchProgress::Exhausted);
-	EXPECT_GT(run.expansions, 10) << "the sealed goals were searched for, not dropped";
-	const PathResult once = pathThrough(view, kOutside, kInside, 0);
-	EXPECT_EQ(once.stop, PathStop::NoPath);
-	EXPECT_EQ(once.nodesExpanded, 0) << "pathThrough rejects on the forests before it searches";
+	EXPECT_GT(run.expansions, 0) << "the goals across the water were searched for, not dropped";
+	const PathResult across = pathThrough(splitView, {1000, 1000}, {1000, 5000}, 0);
+	EXPECT_EQ(across.stop, PathStop::NoPath);
+	EXPECT_EQ(across.nodesExpanded, 0) << "pathThrough rejects on the labels before it searches";
+
+	PatchableMesh room;
+	PatchEdits	  roomEdits;
+	roomEdits.adds = buildBoxRoom(false).polygons;
+	room.applyPatch(roomEdits);
+	room.refreshWidths();
+	const PathResult sealed = pathThrough(room.view(), kOutside, kInside, 0);
+	EXPECT_EQ(sealed.stop, PathStop::NoPath);
+	EXPECT_GT(sealed.nodesExpanded, 0) << "walls never split a label, so the sealed room is searched";
 }

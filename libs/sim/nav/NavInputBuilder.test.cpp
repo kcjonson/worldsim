@@ -148,7 +148,7 @@ namespace {
 			appendChunkWater(polygons, edits.adds);
 		}
 		mesh.applyPatch(edits);
-		mesh.rebuildForests();
+		mesh.refreshWidths();
 		EXPECT_EQ(mesh.validate(), "");
 		return mesh;
 	}

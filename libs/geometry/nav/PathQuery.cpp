@@ -3,6 +3,7 @@
 #include "../core/IncrementalHashMap.h"
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
+#include "MeshComponents.h"
 #include "NavMesh.h"
 
 #include <algorithm>
@@ -113,8 +114,8 @@ namespace geometry::nav {
 			return {static_cast<std::int64_t>(std::llround(p.x)), static_cast<std::int64_t>(std::llround(p.y))};
 		}
 
-		// A belief's questions, asked of either form: the caller's sets (reachFrom,
-		// reaches) or a search's own sorted copies.
+		// A belief's questions, asked of either form: the caller's sets (standingTriangle)
+		// or a search's own sorted copies.
 		inline bool knowsAll(const BeliefFilter& belief) {
 			return belief.knownSegments == nullptr;
 		}
@@ -185,14 +186,6 @@ namespace geometry::nav {
 
 		template <typename Belief> inline bool traversable(const NavView& mesh, std::int32_t t, const Belief& belief) {
 			return stepMultiplier(mesh, t, belief) > 0.0;
-		}
-
-		// The reachability forest the belief selects: truth (AI goal validity) when the
-		// agent knows everything, else terrain (the sound reject for every belief). A
-		// belief query never uses the truth forest, because an agent optimistically
-		// routing through unseen walls can reach triangles the truth forest walls off.
-		template <typename Belief> const ReachabilityForest* forestFor(const NavView& mesh, const Belief& belief) {
-			return mesh.forest(knowsAll(belief));
 		}
 
 		// The triangle a walker stands in at p, located as `tri`: tri itself when this
@@ -273,17 +266,6 @@ namespace geometry::nav {
 				return best;
 			}
 			return tri;
-		}
-
-		// pathThrough()'s sound short-circuit, the same test reaches() makes. Both
-		// triangles are already located and known traversable. Returns true when the
-		// forest PROVES no disc of `diameterMm` can get from startTri to goalTri:
-		// different component (any diameter), or the path bottleneck < the diameter.
-		bool reachabilityRejects(
-			const NavView& mesh, std::int32_t startTri, std::int32_t goalTri, std::int64_t diameterMm,
-			const SearchBelief& belief) {
-			const ReachabilityForest* forest = forestFor(mesh, belief);
-			return forest != nullptr && !inForestSubtree(*forest, reachRootInForest(*forest, startTri, diameterMm), goalTri);
 		}
 
 		[[nodiscard]] std::int64_t discDiameterMm(std::int64_t agentRadiusMm) {
@@ -1507,44 +1489,6 @@ namespace geometry::nav {
 		return best;
 	}
 
-	ReachFrom reachFrom(const NavView& meshIn, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
-		const NavView mesh = meshIn.resolved();
-		assert(forestFor(mesh, belief) != nullptr && "reachFrom: the mesh has no reachability forests");
-		ReachFrom from;
-		if (forestFor(mesh, belief) == nullptr) {
-			return from; // reaches() answers "maybe" without forests
-		}
-		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief, [](std::int32_t) {});
-		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
-		// endpoint gate (e.g. start inside a wall the agent knows blocks).
-		if (startTri < 0 || !traversable(mesh, startTri, belief)) {
-			return from;
-		}
-		from.startTri = startTri;
-		from.root	  = reachRootInForest(*forestFor(mesh, belief), startTri, discDiameterMm(agentRadiusMm));
-		return from;
-	}
-
-	bool reaches(const NavView& meshIn, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
-		const NavView mesh = meshIn.resolved();
-		assert(forestFor(mesh, belief) != nullptr && "reaches: the mesh has no reachability forests");
-		if (forestFor(mesh, belief) == nullptr) {
-			return true; // nothing proves the goal unreachable
-		}
-		if (from.startTri < 0) {
-			return false; // off-mesh or untraversable start
-		}
-		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief, [](std::int32_t) {});
-		if (goalTri < 0 || !traversable(mesh, goalTri, belief)) {
-			return false;
-		}
-		if (goalTri == from.startTri || !belief.prices.empty()) {
-			return true; // same triangle, or faces crossed at a price that the forest walls off
-		}
-		// `false` = the forest proves unreachability (sound); otherwise "maybe".
-		return inForestSubtree(*forestFor(mesh, belief), from.root, goalTri);
-	}
-
 	std::int32_t standingTriangle(const NavView& meshIn, const Vec2i64& p, const BeliefFilter& belief) {
 		const NavView	   mesh = meshIn.resolved();
 		const std::int32_t tri	= standOn(mesh, mesh.locate(p), p, belief, [](std::int32_t) {});
@@ -1776,17 +1720,18 @@ namespace geometry::nav {
 			return {}; // stale widths could route a disc through a gap it does not fit
 		}
 		SearchBelief held = copyBelief(belief);
-		// Width-aware reachability short-circuit (P3.3): a provably unreachable goal costs no
-		// search. Sound: a reject is a proof no path admits this disc, and anything else
-		// is left to the search. Faces crossed at a price are walls to the forests, so they
-		// prove nothing then. The forests describe the whole mesh, so this belongs to a
-		// call that answers at once, never to a SearchState that carries on across patches.
-		if (held.prices.empty() && forestFor(view, held) != nullptr) {
+		// A goal in another connected component costs no search. Sound for every disc and
+		// belief: labels read every wall open. Faces crossed at a price are walls to the
+		// labels, so they prove nothing then. Labels describe the whole mesh, so this
+		// belongs to a call that answers at once, never to a SearchState that carries on
+		// across patches.
+		const MeshComponents* components = view.components();
+		if (held.prices.empty() && components != nullptr) {
 			auto			   ignore	= [](std::int32_t) {};
 			const std::int32_t startTri = standOn(view, view.locate(start), start, held, ignore);
 			const std::int32_t goalTri	= standOn(view, view.locate(goal), goal, held, ignore);
 			if (startTri >= 0 && goalTri >= 0 && startTri != goalTri && traversable(view, startTri, held) && traversable(view, goalTri, held) &&
-				reachabilityRejects(view, startTri, goalTri, discDiameterMm(agentRadiusMm), held)) {
+				!components->sameComponent(startTri, goalTri)) {
 				return {};
 			}
 		}
@@ -1794,14 +1739,6 @@ namespace geometry::nav {
 		search.step(view, limits.maxExpansions == 0 ? kRunToEnd : limits.maxExpansions);
 		return search.result();
 	}
-	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
-		return reachFrom(navView(mesh), start, agentRadiusMm, belief);
-	}
-
-	bool reaches(const NavMesh& mesh, const ReachFrom& from, const Vec2i64& goal, BeliefFilter belief) {
-		return reaches(navView(mesh), from, goal, belief);
-	}
-
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   const BeliefFilter& belief, const PathLimits& limits) {
 		return pathThrough(navView(mesh), start, goal, agentRadiusMm, belief, limits);

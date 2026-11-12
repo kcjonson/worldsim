@@ -243,137 +243,6 @@ namespace geometry::nav {
 			out = searchWidth(view, scratch, c, nb, (back + 2) % 3, out, openTags);
 			return out;
 		}
-
-		// --- Width-aware reachability forest (P3.3) ----------------------------------
-		// Two max-spanning-forests over the triangle dual graph, sharing one set of
-		// geometric edge capacities; they differ only in which triangles are nodes (the
-		// traversability predicate). See NavMesh.h ReachabilityForest for the contract.
-
-		// T-side capacity of portal edge `e` in triangle `ti`: the widest disc that can
-		// cross the portal THROUGH ti. The disc enters via one of ti's OTHER two edges
-		// and pivots about one of the portal's two endpoints (local vertices e and
-		// (e+1)%3), so it may use the wider of the two apex widths; the max is the sound
-		// upper bound (Demyen edge-pair width is keyed by apex).
-		std::int64_t portalSideCap(const NavView& view, std::int32_t ti, int e) {
-			const NavTriangle& t  = view.triangle(ti);
-			const std::int64_t w0 = t.edgePairWidthMm[e];
-			const std::int64_t w1 = t.edgePairWidthMm[(e + 1) % 3];
-			return w0 > w1 ? w0 : w1;
-		}
-
-		// Capacity of the portal shared by T1 (edge eInT1) and T2: the min of each
-		// side's capacity and the door clear width when the edge is a door portal. A
-		// door span has unconstrained Demyen widths (walls are not common-knowledge
-		// obstacles), so the door clear width is what binds there -- hence in the min.
-		std::int64_t portalCapacity(const NavView& view, std::int32_t t1, int eInT1, std::int32_t t2) {
-			const NavTriangle& tri1	   = view.triangle(t1);
-			const std::int32_t backEdge = [&]() {
-				for (int k = 0; k < 3; ++k) {
-					if (view.triangle(t2).neighbor[static_cast<std::size_t>(k)] == t1) {
-						return k;
-					}
-				}
-				return -1;
-			}();
-			std::int64_t cap = portalSideCap(view, t1, eInT1);
-			if (backEdge >= 0) {
-				cap = std::min(cap, portalSideCap(view, t2, backEdge));
-			}
-			if (tri1.edgeOpening[eInT1] != kNoOpening) {
-				cap = std::min(cap, tri1.edgeClearWidthMm[eInT1]);
-			}
-			return cap;
-		}
-
-		// One forest from the portals in Kruskal order (capacity descending, then lower
-		// triA, then lower triB, for a reproducible tree), over the triangles `node` marks;
-		// a portal joins only when both its triangles are nodes. Union-find with path
-		// halving, union by that order (no rank), so the tree shape is reproducible: each
-		// union makes an internal node holding the portal's capacity, parent of the two
-		// merged subtree roots.
-		void buildForest(const std::vector<ForestScratch::Portal>& order, const std::vector<std::uint8_t>& node, ForestScratch& s,
-						 ReachabilityForest& forest) {
-			const std::int32_t		   n		  = static_cast<std::int32_t>(node.size());
-			std::vector<std::int32_t>& parent	  = s.parent;
-			std::vector<std::int32_t>& setNode	  = s.setNode; // merge-tree root of each set
-			std::vector<std::int32_t>& nodeParent = s.nodeParent;
-			parent.resize(static_cast<std::size_t>(n));
-			setNode.resize(static_cast<std::size_t>(n));
-			nodeParent.resize(static_cast<std::size_t>(n));
-			for (std::int32_t i = 0; i < n; ++i) {
-				parent[static_cast<std::size_t>(i)]		= i;
-				setNode[static_cast<std::size_t>(i)]	= i;
-				nodeParent[static_cast<std::size_t>(i)] = i;
-			}
-			auto find = [&](std::int32_t x) {
-				while (parent[static_cast<std::size_t>(x)] != x) {
-					parent[static_cast<std::size_t>(x)] = parent[static_cast<std::size_t>(parent[static_cast<std::size_t>(x)])];
-					x									= parent[static_cast<std::size_t>(x)];
-				}
-				return x;
-			};
-			forest.nodeCap.assign(static_cast<std::size_t>(n), kUnconstrainedWidth);
-			for (const ForestScratch::Portal& pe : order) {
-				if (node[static_cast<std::size_t>(pe.triA)] == 0 || node[static_cast<std::size_t>(pe.triB)] == 0) {
-					continue;
-				}
-				const std::int32_t ra = find(pe.triA);
-				const std::int32_t rb = find(pe.triB);
-				if (ra == rb) {
-					continue;
-				}
-				const std::int32_t merged = static_cast<std::int32_t>(forest.nodeCap.size());
-				forest.nodeCap.push_back(pe.cap);
-				nodeParent.push_back(merged);
-				nodeParent[static_cast<std::size_t>(setNode[static_cast<std::size_t>(ra)])] = merged;
-				nodeParent[static_cast<std::size_t>(setNode[static_cast<std::size_t>(rb)])] = merged;
-				parent[static_cast<std::size_t>(rb)]										 = ra;
-				setNode[static_cast<std::size_t>(ra)]										 = merged;
-			}
-			const std::int32_t nodeCount = static_cast<std::int32_t>(forest.nodeCap.size());
-
-			// Every internal node has a higher id than its children, so a descending pass
-			// sees a parent before its children: depth and root come down from it.
-			std::vector<std::int32_t>& root = s.root;
-			root.resize(static_cast<std::size_t>(nodeCount));
-			forest.depth.resize(static_cast<std::size_t>(nodeCount));
-			std::int32_t maxDepth = 0;
-			for (std::int32_t i = nodeCount - 1; i >= 0; --i) {
-				const std::int32_t p = nodeParent[static_cast<std::size_t>(i)];
-				if (p == i) {
-					forest.depth[static_cast<std::size_t>(i)] = 0;
-					root[static_cast<std::size_t>(i)]		  = i;
-				} else {
-					forest.depth[static_cast<std::size_t>(i)] = forest.depth[static_cast<std::size_t>(p)] + 1;
-					root[static_cast<std::size_t>(i)]		  = root[static_cast<std::size_t>(p)];
-					maxDepth								  = std::max(maxDepth, forest.depth[static_cast<std::size_t>(i)]);
-				}
-			}
-
-			// Binary lifting: levels = ceil(log2(maxDepth + 1)), at least 1; up[0] is the
-			// parent, a root's its own.
-			std::int32_t levels = 1;
-			while ((1 << levels) <= maxDepth) {
-				++levels;
-			}
-			forest.levels = levels;
-			forest.up.resize(static_cast<std::size_t>(levels));
-			forest.up[0].assign(nodeParent.begin(), nodeParent.end());
-			for (std::size_t k = 1; k < static_cast<std::size_t>(levels); ++k) {
-				const std::vector<std::int32_t>& below = forest.up[k - 1];
-				std::vector<std::int32_t>&		 up	   = forest.up[k];
-				up.resize(static_cast<std::size_t>(nodeCount));
-				for (std::size_t i = 0; i < static_cast<std::size_t>(nodeCount); ++i) {
-					up[i] = below[static_cast<std::size_t>(below[i])];
-				}
-			}
-
-			// A node leaf's component is its tree's root; a non-node is -1.
-			forest.component.resize(static_cast<std::size_t>(n));
-			for (std::int32_t i = 0; i < n; ++i) {
-				forest.component[static_cast<std::size_t>(i)] = node[static_cast<std::size_t>(i)] != 0 ? root[static_cast<std::size_t>(i)] : -1;
-			}
-		}
 	} // namespace
 
 	namespace {
@@ -558,10 +427,7 @@ namespace geometry::nav {
 		view.triangles.of(mesh.triangles);
 		view.owner			 = &mesh;
 		view.locateIn		 = [](const void* owner, const Vec2i64& p) { return locateTriangle(*static_cast<const NavMesh*>(owner), p); };
-		view.forestIn		 = [](const void* owner, bool truth) {
-			   const NavMesh& mesh = *static_cast<const NavMesh*>(owner);
-			   return truth ? &mesh.truthForest : &mesh.terrainForest;
-		};
+		view.componentsIn	 = [](const void*) -> const MeshComponents* { return nullptr; };
 		view.widthsCurrentIn = [](const void*) { return true; };
 		view.epochIn		 = [](const void* owner) { return static_cast<const NavMesh*>(owner)->generation; };
 		view.detailTags		 = &mesh.detailTags;
@@ -571,83 +437,6 @@ namespace geometry::nav {
 			v.triangles.of(m.triangles);
 		};
 		return view;
-	}
-
-	// Every interior portal edge once, owned by its lower live triangle, with its sound
-	// disc-diameter capacity, put in Kruskal order once for both forests. Where the two
-	// predicates pick the same nodes (no wall without a door) the forests are equal, and
-	// the terrain forest is a copy.
-	void buildReachabilityForests(const NavView& viewIn, ForestScratch& scratch, ReachabilityForests& out) {
-		const NavView view = viewIn.resolved();
-		using Portal		 = ForestScratch::Portal;
-		const std::int32_t n = view.triangleSlots();
-		scratch.truthNode.assign(static_cast<std::size_t>(n), 0);
-		scratch.terrainNode.assign(static_cast<std::size_t>(n), 0);
-		std::vector<Portal>& portals = scratch.portals;
-		portals.clear();
-		std::int64_t maxFinite = INT64_MIN;
-		std::int64_t minFinite = INT64_MAX;
-		for (std::int32_t ti = 0; ti < n; ++ti) {
-			if (!view.isLive(ti)) {
-				continue;
-			}
-			const NavTriangle& tri					 = view.triangle(ti);
-			scratch.truthNode[static_cast<std::size_t>(ti)]	 = truthTraversable(tri) ? 1 : 0;
-			scratch.terrainNode[static_cast<std::size_t>(ti)] = terrainTraversable(tri) ? 1 : 0;
-			const std::size_t first					 = portals.size();
-			for (int e = 0; e < 3; ++e) {
-				const std::int32_t nb = tri.neighbor[static_cast<std::size_t>(e)];
-				if (nb < 0 || nb <= ti) {
-					continue;
-				}
-				const std::int64_t cap = portalCapacity(view, ti, e, nb);
-				if (cap != kUnconstrainedWidth) {
-					maxFinite = std::max(maxFinite, cap);
-					minFinite = std::min(minFinite, cap);
-				}
-				portals.push_back({ti, nb, cap});
-			}
-			std::sort(portals.begin() + static_cast<std::ptrdiff_t>(first), portals.end(),
-					  [](const Portal& a, const Portal& b) { return a.triB < b.triB; });
-		}
-
-		// Kruskal order (capacity descending, then triA, then triB): portals are in
-		// (triA, triB) order, so a stable LSD radix sort on a key that ascends as the
-		// capacity descends finishes it. Unconstrained is key 0, the widest finite 1.
-		auto keyOf = [&](const Portal& p) -> std::uint64_t {
-			return p.cap == kUnconstrainedWidth ? 0 : static_cast<std::uint64_t>(maxFinite) - static_cast<std::uint64_t>(p.cap) + 1;
-		};
-		const std::uint64_t maxKey = maxFinite == INT64_MIN ? 0 : static_cast<std::uint64_t>(maxFinite) - static_cast<std::uint64_t>(minFinite) + 1;
-		std::vector<Portal>* from  = &portals;
-		std::vector<Portal>* to	   = &scratch.sorted;
-		to->resize(portals.size());
-		for (int shift = 0; shift < 64 && (maxKey >> shift) != 0; shift += 8) {
-			std::array<std::size_t, 257> start{};
-			for (const Portal& p : *from) {
-				++start[((keyOf(p) >> shift) & 0xFF) + 1];
-			}
-			for (std::size_t d = 0; d < 256; ++d) {
-				start[d + 1] += start[d];
-			}
-			for (const Portal& p : *from) {
-				(*to)[start[(keyOf(p) >> shift) & 0xFF]++] = p;
-			}
-			std::swap(from, to);
-		}
-
-		buildForest(*from, scratch.truthNode, scratch, out.truth);
-		if (scratch.truthNode == scratch.terrainNode) {
-			out.terrain = out.truth;
-		} else {
-			buildForest(*from, scratch.terrainNode, scratch, out.terrain);
-		}
-	}
-
-	ReachabilityForests buildReachabilityForests(const NavView& view) {
-		ForestScratch		scratch;
-		ReachabilityForests out;
-		buildReachabilityForests(view, scratch, out);
-		return out;
 	}
 
 	SampleRing sampleRing(const NavInputPolygon& poly) {
@@ -709,38 +498,6 @@ namespace geometry::nav {
 			return {waterBlocker, waterOpening};
 		}
 		return {};
-	}
-
-	std::int32_t reachRootInForest(const ReachabilityForest& f, std::int32_t tri, std::int64_t diameterMm) {
-		if (tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
-			return -1;
-		}
-		// Capacities never increase toward the root (Kruskal merges in descending capacity), so the
-		// ancestors admitting the disc are a prefix of the climb and binary lifting finds its end.
-		std::int32_t node = tri;
-		for (std::int32_t k = f.levels - 1; k >= 0; --k) {
-			const std::int32_t up = f.up[k][node];
-			if (f.nodeCap[up] >= diameterMm) {
-				node = up;
-			}
-		}
-		return node;
-	}
-
-	bool inForestSubtree(const ReachabilityForest& f, std::int32_t node, std::int32_t tri) {
-		if (node < 0 || tri < 0 || tri >= static_cast<std::int32_t>(f.component.size()) || f.component[tri] < 0) {
-			return false;
-		}
-		std::int32_t diff = f.depth[tri] - f.depth[node];
-		if (diff < 0) {
-			return false;
-		}
-		for (std::int32_t k = 0; k < f.levels; ++k) {
-			if ((diff >> k) & 1) {
-				tri = f.up[k][tri];
-			}
-		}
-		return tri == node;
 	}
 
 	NavMesh buildNavMesh(const NavMeshInput& input) {
@@ -1041,12 +798,6 @@ namespace geometry::nav {
 				g.candidates.insert(g.candidates.end(), cell.begin(), cell.end());
 			}
 		}
-
-		// 10. Width-aware reachability forests; they need finished adjacency, widths, and
-		// door tags.
-		ReachabilityForests forests = buildReachabilityForests(navView(result));
-		result.truthForest			= std::move(forests.truth);
-		result.terrainForest		= std::move(forests.terrain);
 
 		return result;
 	}

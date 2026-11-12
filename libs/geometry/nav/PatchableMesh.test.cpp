@@ -1017,7 +1017,7 @@ namespace {
 	}
 
 	// A mesh that reached `rings` through a random sequence: batches in, some taken out
-	// and put back, doors added early and some removed and re-added. Forests rebuilt.
+	// and put back, doors added early and some removed and re-added. Widths refreshed.
 	struct Reached {
 		Harness				h;
 		std::vector<DoorId> doorIds;
@@ -1055,7 +1055,7 @@ namespace {
 				r.doorIds[at] = r.h.mesh.addDoor(input.doors[at]);
 			}
 		}
-		r.h.mesh.rebuildForests();
+		r.h.mesh.refreshWidths();
 	}
 
 	NavMeshInput freshInput(const Reached& r, const WallsAndDoors& input) {
@@ -1142,7 +1142,7 @@ namespace {
 
 	// Same verdict and the same length to the millimetre for every pair and radius, the
 	// patched mesh through its view against buildNavMesh of the same rings and doors;
-	// and the forests' reach verdicts agree, in truth and for an optimistic belief.
+	// and the verdicts agree for an optimistic belief.
 	void expectQueriesMatch(const Reached& r, const NavMesh& fresh, const NavInputPolygon& border, std::uint32_t seed) {
 		const NavView				  view	 = r.h.mesh.view();
 		const std::vector<Vec2i64>	  points = samplePoints(border, 96, seed);
@@ -1163,10 +1163,8 @@ namespace {
 					EXPECT_EQ(pathLengthMm(patched), pathLengthMm(built)) << "pair " << i << " radius " << radius << " from (" << a.x << ", " << a.y
 																		 << ") to (" << b.x << ", " << b.y << ")";
 				}
-				for (const BeliefFilter& belief : {BeliefFilter{}, optimistic}) {
-					EXPECT_EQ(reaches(view, reachFrom(view, a, radius, belief), b, belief), reaches(fresh, reachFrom(fresh, a, radius, belief), b, belief))
-						<< "reach verdict, pair " << i << " radius " << radius;
-				}
+				EXPECT_EQ(pathThrough(view, a, b, radius, optimistic).reachable, pathThrough(fresh, a, b, radius, optimistic).reachable)
+					<< "optimistic verdict, pair " << i << " radius " << radius;
 			}
 		}
 		// The pairs exercise both answers: real paths compared, and some refused.
@@ -1247,24 +1245,10 @@ namespace {
 		edits.adds.insert(edits.adds.end(), rings.begin(), rings.end());
 		mesh.applyPatch(edits);
 		mesh.refreshWidths();
-		mesh.rebuildForests();
 	}
 
-	// The widest disc diameter some path between the truth-forest triangles holding a
-	// and b admits; -1 when either is no node or they are apart.
-	std::int64_t bottleneckMm(const NavView& view, const Vec2i64& a, const Vec2i64& b) {
-		const ReachabilityForest& forest = *view.forest(true);
-		const std::int32_t		  ta	 = view.locate(a);
-		const std::int32_t		  tb	 = view.locate(b);
-		if (ta < 0 || tb < 0 || forest.component[static_cast<std::size_t>(ta)] < 0 ||
-			forest.component[static_cast<std::size_t>(ta)] != forest.component[static_cast<std::size_t>(tb)]) {
-			return -1;
-		}
-		std::int32_t node = ta;
-		while (!inForestSubtree(forest, node, tb)) {
-			node = forest.up[0][static_cast<std::size_t>(node)];
-		}
-		return forest.nodeCap[static_cast<std::size_t>(node)];
+	bool sameComponentAt(const PatchableMesh& mesh, const Vec2i64& a, const Vec2i64& b) {
+		return mesh.components().sameComponent(mesh.locate(a), mesh.locate(b));
 	}
 
 	// How far apart two paths between the same points may be in length when only the
@@ -1305,8 +1289,8 @@ namespace {
 	constexpr std::int64_t kOracleMaxPricedRadiusMm = 300;
 
 	// Internal bounds edges must not change an answer: the same rings under one bounds
-	// square and under a grid of adjacent squares give the same path verdicts, reach
-	// verdicts, and bottlenecks, path lengths that agree (lengthsAgree), and the same
+	// square and under a grid of adjacent squares give the same path verdicts and
+	// component verdicts, path lengths that agree (lengthsAgree), and the same
 	// corridor width at every apex of a triangle both meshes have. With the trees priced,
 	// the same verdicts, costs that agree as lengths do (a radius of slack weighed at the
 	// price). A walk through and a way round whose costs agree that closely are a tie the
@@ -1324,15 +1308,12 @@ namespace {
 		const NavView						   wv = whole.view();
 		const NavView						   sv = split.view();
 		const std::vector<Vec2i64>			   points = samplePoints(g.border, 128, seed);
-		const std::unordered_set<std::uint64_t> noneKnown;
-		const BeliefFilter					   optimistic{&noneKnown, &noneKnown};
 		int									   lengths		  = 0;
 		int									   lengthDiffers  = 0;
 		int									   lengthsApart	  = 0;
 		std::int64_t						   worstDeltaMm	  = 0;
 		int									   verdictDiffers = 0;
-		int									   reachDiffers	  = 0;
-		int									   bottleneckDiffers = 0;
+		int									   componentsDiffer = 0;
 		int									   pricedCompared	 = 0;
 		int									   pricedThrough	 = 0;
 		int									   flagsDiffer		 = 0;
@@ -1341,8 +1322,8 @@ namespace {
 		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
 			const Vec2i64& a = points[i];
 			const Vec2i64& b = points[i + 1];
-			if (bottleneckMm(wv, a, b) != bottleneckMm(sv, a, b)) {
-				++bottleneckDiffers;
+			if (sameComponentAt(whole, a, b) != sameComponentAt(split, a, b)) {
+				++componentsDiffer;
 			}
 			for (const std::int64_t radius : kRadii) {
 				const PathResult w = pathThrough(wv, a, b, radius);
@@ -1360,11 +1341,6 @@ namespace {
 						++lengthsApart;
 						ADD_FAILURE() << "radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y
 									  << "): whole " << pathLengthMm(w) << " mm, split " << pathLengthMm(s) << " mm";
-					}
-				}
-				for (const BeliefFilter& belief : {BeliefFilter{}, optimistic}) {
-					if (reaches(wv, reachFrom(wv, a, radius, belief), b, belief) != reaches(sv, reachFrom(sv, a, radius, belief), b, belief)) {
-						++reachDiffers;
 					}
 				}
 				if (radius > kOracleMaxPricedRadiusMm) {
@@ -1390,8 +1366,7 @@ namespace {
 		::testing::Test::RecordProperty("pathLengthsDiffering", lengthDiffers);
 		::testing::Test::RecordProperty("worstSplitMinusWholeMm", std::to_string(worstDeltaMm));
 		EXPECT_EQ(verdictDiffers, 0);
-		EXPECT_EQ(reachDiffers, 0);
-		EXPECT_EQ(bottleneckDiffers, 0);
+		EXPECT_EQ(componentsDiffer, 0);
 		EXPECT_GT(pricedCompared, 60);
 		EXPECT_GT(pricedThrough, 5) << "some priced walks must go through trees for the comparison to bind";
 		::testing::Test::RecordProperty("pricedFlagsDiffering", flagsDiffer);
@@ -1581,7 +1556,6 @@ TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
 	edits.adds.push_back(blocked(rect(1000, 1000, 2000, 2000)));
 	mesh.applyPatch(edits);
 	mesh.refreshWidths();
-	mesh.rebuildForests();
 	const NavView view		  = mesh.view();
 	int			  onTreeFace = 0;
 	for (const Vec2i64& p : {Vec2i64{1500, 1000}, Vec2i64{2000, 1500}, Vec2i64{1500, 2000}, Vec2i64{1000, 1500}, Vec2i64{1000, 1000},
@@ -1589,7 +1563,6 @@ TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
 		onTreeFace += isFloorFace(mesh.triangles()[static_cast<std::size_t>(mesh.locate(p))]) ? 0 : 1;
 		EXPECT_TRUE(pathThrough(view, p, {3500, 3500}, 0).reachable) << "from (" << p.x << ", " << p.y << ")";
 		EXPECT_TRUE(pathThrough(view, {3500, 3500}, p, 0).reachable) << "to (" << p.x << ", " << p.y << ")";
-		EXPECT_TRUE(reaches(view, reachFrom(view, p, 0), {3500, 3500})) << "reach from (" << p.x << ", " << p.y << ")";
 	}
 	EXPECT_GT(onTreeFace, 0) << "some of these points must locate to the tree's face for the test to bind";
 }
@@ -1612,19 +1585,18 @@ TEST(PatchableMesh, DoorEditsChangeTagsOnly) {
 	reach(r, input, 9);
 	const PagedVector<NavTriangle> before = r.h.mesh.triangles();
 	r.h.mesh.removeDoor(r.doorIds[1]);
-	EXPECT_FALSE(r.h.mesh.hasForests());
 	EXPECT_TRUE(r.h.mesh.validate().empty()) << r.h.mesh.validate();
 	for (std::size_t t = 0; t < before.size(); ++t) {
 		EXPECT_EQ(before[t].v, r.h.mesh.triangles()[t].v);
 	}
 	r.doorIds[1] = r.h.mesh.addDoor(input.doors[1]);
 	EXPECT_TRUE(r.h.mesh.validate().empty()) << r.h.mesh.validate();
-	r.h.mesh.rebuildForests();
+	r.h.mesh.refreshWidths();
 	const NavMesh fresh = buildNavMesh(freshInput(r, input));
 	EXPECT_TRUE(tagsAndWidthsMatch(r.h.mesh, fresh, kDefaultMaxClearanceMm));
 }
 
-// A dead slot is never located, never a neighbour, never a forest node.
+// A dead slot is never located, never a neighbour, and carries no component label.
 TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
@@ -1632,7 +1604,7 @@ TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 	PatchEdits	 remove;
 	remove.removes.push_back(tree);
 	h.apply(remove);
-	h.mesh.rebuildForests();
+	h.mesh.refreshWidths();
 	const NavView view = h.mesh.view();
 	int			  dead = 0;
 	for (std::int32_t t = 0; t < view.triangleSlots(); ++t) {
@@ -1640,8 +1612,7 @@ TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 			continue;
 		}
 		++dead;
-		EXPECT_EQ(view.forest(true)->component[static_cast<std::size_t>(t)], -1);
-		EXPECT_EQ(view.forest(false)->component[static_cast<std::size_t>(t)], -1);
+		EXPECT_EQ(h.mesh.components().label(t), kNoComponent);
 	}
 	EXPECT_GT(dead, 0);
 	EXPECT_TRUE(pathThrough(view, {1000, 1000}, {9000, 9000}, 300).reachable);
@@ -1761,8 +1732,8 @@ TEST(PatchableMesh, WidthStampWrapKeepsWidths) {
 	}
 }
 
-// A view taken before a patch reads the patched mesh: no forests until they are
-// rebuilt, no path while widths lag, then the same answers as a fresh view.
+// A view taken before a patch reads the patched mesh: no path while widths lag, then
+// the same answers as a fresh view.
 TEST(PatchableMesh, ViewTakenBeforePatch) {
 	const WallsAndDoors input = wallsAndDoors();
 	Reached				r;
@@ -1776,11 +1747,9 @@ TEST(PatchableMesh, ViewTakenBeforePatch) {
 	moreTrees.adds.push_back(blocked(rect(4000, 4000, 4600, 4500)));
 	r.h.mesh.applyPatch(moreTrees);
 	EXPECT_NE(early.epoch(), epoch);
-	EXPECT_EQ(early.forest(true), nullptr);
 	EXPECT_FALSE(early.widthsCurrent());
 	EXPECT_DEBUG_DEATH(EXPECT_FALSE(pathThrough(early, a, b, 300).reachable), "widths lag");
-	r.h.mesh.rebuildForests();
-	EXPECT_NE(early.forest(true), nullptr);
+	r.h.mesh.refreshWidths();
 	EXPECT_EQ(pathLengthMm(pathThrough(early, a, b, 300)), pathLengthMm(pathThrough(r.h.mesh.view(), a, b, 300)));
 }
 
@@ -1846,7 +1815,7 @@ TEST(PatchableMesh, EqualAreaTieBreakIgnoresHistory) {
 }
 
 // Misuse in release: a ring removed twice, or removed dead, is refused and leaves the
-// registry sound; reachability without forests answers "maybe" instead of crashing.
+// registry sound.
 TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
@@ -1870,10 +1839,6 @@ TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 	EXPECT_NE(a, b);
 	h.mesh.refreshWidths();
 	EXPECT_TRUE(h.mesh.validate().empty()) << h.mesh.validate();
-	ASSERT_FALSE(h.mesh.hasForests());
-	const NavView view = h.mesh.view();
-	EXPECT_DEBUG_DEATH(EXPECT_EQ(reachFrom(view, {100, 100}, 300).startTri, -1), "no reachability forests");
-	EXPECT_DEBUG_DEATH(EXPECT_TRUE(reaches(view, ReachFrom{}, {9000, 9000})), "no reachability forests");
 }
 
 // A long hedge on an open 512 m chunk, priced: going through costs far less than going
