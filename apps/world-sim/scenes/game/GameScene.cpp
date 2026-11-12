@@ -1386,7 +1386,7 @@ namespace {
 		static constexpr float kSpawnClearance = 0.3F;
 
 		/// Turn the raw drop point into guaranteed-clear, on-mesh spawns for a crew of `crewSize`:
-		///  1. pick the points on the structural nav mesh (the chunks' water rings, no entities):
+		///  1. pick the points on the ground nav mesh (the chunks' water rings, no entities):
 		///     the clearing center is the nearest spot to the drop whose whole party ring stands on
 		///     clear ground, so the ring never straddles a shore, and each member's point is clear
 		///     ground of its own, kPartyMinSeparation from the others;
