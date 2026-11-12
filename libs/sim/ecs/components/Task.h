@@ -210,6 +210,10 @@ struct Task {
 	bool		 awaitingSnap		= false;
 	std::uint8_t snapWaitDecisions = 0;
 	static constexpr std::uint8_t kSnapWaitDecisions = 4;
+	// The target itself when targetPosition is the stand point beside the placed obstacle it lies in (a
+	// pile at a source's centre); nullopt when targetPosition is the target. Arrival is judged at
+	// targetPosition, the work done on this.
+	std::optional<glm::vec2> obstructedTarget;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
@@ -307,6 +311,19 @@ struct Task {
 	/// Check if a task is currently assigned
 	[[nodiscard]] bool isActive() const { return type != TaskType::None; }
 
+	/// What the task works on: the target, wherever he stands to reach it.
+	[[nodiscard]] glm::vec2 workTarget() const { return obstructedTarget.value_or(targetPosition); }
+
+	/// Standing at `position`, he is within `tolerance` of `point`, or `point` is the target in a placed
+	/// obstacle and he is within it of the stand point beside it.
+	[[nodiscard]] bool standsAt(glm::vec2 point, glm::vec2 position, float tolerance) const {
+		const auto near = [&](glm::vec2 at) {
+			const glm::vec2 d = position - at;
+			return d.x * d.x + d.y * d.y <= tolerance * tolerance;
+		};
+		return near(point) || (obstructedTarget == point && near(targetPosition));
+	}
+
 	void discardSuspended() { suspended.reset(); }
 
 	/// Reset task to default state (caller responsible for resetting timeSinceEvaluation)
@@ -321,6 +338,7 @@ struct Task {
 		routeWaitTicks = 0;
 		awaitingSnap = false;
 		snapWaitDecisions = 0;
+		obstructedTarget.reset();
 		needSourceKey = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;

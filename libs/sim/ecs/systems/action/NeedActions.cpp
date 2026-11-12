@@ -85,10 +85,10 @@ namespace ecs {
 							break;
 						}
 						makeRoomToEat(inventory, task, food, task.needQuantity, position.value);
-						action = Action::Withdraw(food, task.needQuantity, task.needSourceStorageId, task.targetPosition);
+						action = Action::Withdraw(food, task.needQuantity, task.needSourceStorageId, task.workTarget());
 					} else {
 						makeRoomToEat(inventory, task, food, task.needQuantity, position.value);
-						action = Action::Pickup(food, task.needQuantity, task.targetPosition, food);
+						action = Action::Pickup(food, task.needQuantity, task.workTarget(), food);
 					}
 					LOG_DEBUG(Engine, "[Action] Taking %u x %s to eat", task.needQuantity, food.c_str());
 					break;
@@ -131,6 +131,7 @@ namespace ecs {
 							harvestCap.destructive,
 							harvestCap.regrowthTime
 						);
+						action.collectionEffect().dropAt = task.targetPosition;
 						LOG_DEBUG(
 							Engine,
 							"[Action] Creating Harvest action for %s → %u x %s",

@@ -1859,9 +1859,10 @@ namespace ecs {
 							const float selectedLen2 = glm::dot(selectedPos, selectedPos);
 							const float currentLen2 = glm::dot(task.targetPosition, task.targetPosition);
 							if (selectedLen2 > 0.0001F || currentLen2 > 0.0001F) {
-								// Use distance threshold for "same" position (within 0.5 meters)
-								float dist = glm::distance(task.targetPosition, selectedPos);
-								sameTarget = (dist < 0.5F);
+								// Use distance threshold for "same" position (within 0.5 meters); a target moved
+								// to a stand point is the same as the target it stands beside.
+								sameTarget = glm::distance(task.targetPosition, selectedPos) < 0.5F ||
+											 glm::distance(task.workTarget(), selectedPos) < 0.5F;
 							}
 						}
 						// For PlacePackaged tasks, check entity ID instead of position
@@ -2262,8 +2263,9 @@ namespace ecs {
 			// there's nothing to remember.
 			if (currentTask.type != TaskType::Wander && currentTask.navState == NavState::CantFindWayTo &&
 				currentTask.blockedReachStamp == reachStamp && reachStamp != kUnsettledStamp) {
-				sourceReach.recordFailedRoute(routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition),
-											  {.target = currentTask.targetPosition, .spanStamp = m_navSystem->spanStamp(anchor.at, currentTask.targetPosition)});
+				const glm::vec2 target = currentTask.workTarget();
+				sourceReach.recordFailedRoute(routeTargetKey(currentTask.needSourceKey, target),
+											  {.target = target, .spanStamp = m_navSystem->spanStamp(anchor.at, target)});
 			}
 		}
 		// A target whose route already failed under the current anchor; one off meshed ground is judged
@@ -2851,14 +2853,17 @@ namespace ecs {
 			// Deconstruct. Their stored target is a CENTER that can sit inside a tree's collider or a
 			// wall, which no route ends in. A harvest stands just outside the target's collider on
 			// the colonist's side, read from the placement data so it is the same spot on camera and
-			// off; Build and Deconstruct take the nearest walkable point. Haul/Craft are EXCLUDED:
-			// their actions validate arrival against the EXACT source/target position
-			// (haulSourcePosition / haulTargetPosition / station) within a tight tolerance, and their
-			// targets (loose piles, storage, stations) already sit on walkable ground -- snapping would
-			// move the nav goal off the tolerance-checked point and the action would report "not at
-			// source or target" forever.
+			// off; Build and Deconstruct take the nearest walkable point. Any other target (a pile, a
+			// need source, a box, a station) keeps its own position on the option and the task, and is
+			// moved to a stand point beside the placed obstacle it lies in when its route is asked
+			// (requestRoute); with no stand point there, it is no source.
 			const bool snapEligible = option.taskType == TaskType::Harvest ||
 									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
+			if (haveMesh && needsTarget && !snapEligible &&
+				!standPointFor(*option.targetPosition, position.value, agentRadius, false).has_value()) {
+				option.status = OptionStatus::NoSource;
+				continue;
+			}
 			if (haveMesh && needsTarget && snapEligible) {
 				// nullopt means the target is off meshed ground, or every spot round it is water or a
 				// wall: drop the option to NoSource so the colonist prefers a reachable nearby source and
@@ -2872,7 +2877,7 @@ namespace ecs {
 										  currentTask.harvestTargetKey != 0 && currentTask.harvestTargetKey == option.harvestTargetKey &&
 										  currentTask.targetPosition != centre;
 				const auto snapped = sameHarvest							  ? std::optional<glm::vec2>(currentTask.targetPosition)
-									 : option.taskType == TaskType::Harvest ? m_navSystem->standPointBeside(centre, position.value, agentRadius)
+									 : option.taskType == TaskType::Harvest ? standPointFor(centre, position.value, agentRadius, true)
 																			: m_navSystem->nearestPathablePoint(centre);
 				if (!snapped.has_value()) {
 					option.status = OptionStatus::NoSource; // nowhere to stand: don't commit
@@ -3040,6 +3045,20 @@ namespace ecs {
 		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
 			radius = agentRadius->radiusMeters;
 		}
+		// A target lying in a placed obstacle is reached from beside it; nowhere to stand there is no way.
+		if (!task.obstructedTarget.has_value()) {
+			const glm::vec2				   target = task.targetPosition;
+			const std::optional<glm::vec2> stand  = standPointFor(target, position.value, radius, false);
+			if (!stand.has_value()) {
+				failRoute(entity, task, position, memory, movementTarget);
+				return;
+			}
+			if (*stand != target) {
+				task.obstructedTarget  = target;
+				task.targetPosition	   = *stand;
+				movementTarget.target = *stand;
+			}
+		}
 		// Planned over what he remembers: unseen walls are absent, seen walls block, known doors pass.
 		// requestRoute copies the sets.
 		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
@@ -3121,6 +3140,18 @@ namespace ecs {
 			return;
 		}
 		failRoute(entity, task, position, memory, movementTarget);
+	}
+
+	std::optional<glm::vec2> AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
+		if (m_navSystem == nullptr) {
+			return target;
+		}
+		// Inside a placed obstacle in the mesh: on a face a mover may stand on (isOnMesh) that is not clear
+		// ground (isValidPosition). Water and unmeshed ground are left to the route.
+		if (!placedTarget && (m_navSystem->isValidPosition(target) || !m_navSystem->isOnMesh(target))) {
+			return target;
+		}
+		return m_navSystem->standPointBeside(target, from, radius);
 	}
 
 	void AIDecisionSystem::failRoute(EntityID entity, Task& task, const Position& position, const Memory& memory,

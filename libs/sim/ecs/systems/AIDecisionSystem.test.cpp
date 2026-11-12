@@ -5600,9 +5600,9 @@ namespace ecs::test {
 		harvestFrom(tree, 0.2F, d, d + glm::vec2{0.0F, 12.0F});
 	}
 
-	// A tree ringed by other trunks, so every spot just outside its collider is inside a neighbour's: a
-	// placed obstacle blocks a route, so there is no known way to it. The colonist asks, is told so, and
-	// goes on to something else; the cut is never started, and he doesn't stand on the failure.
+	// A tree ringed by other trunks, so every spot just outside its collider is inside a neighbour's: there
+	// is nowhere to stand to work it, so neither the cut nor gathering food from it is offered, and no
+	// route to it is asked. He goes on to something else and never stands on a failure.
 	TEST_F(AIDecisionHarvestStandTest, TreeInAThicketHasNoKnownWay) {
 		const std::string tree = registerTree(0.2F);
 		const glm::vec2	  a{20.0F, 20.0F};
@@ -5628,8 +5628,7 @@ namespace ecs::test {
 			harvestStarted		 = harvestStarted || (action.isActive() && action.type == ActionType::Harvest);
 		}
 		EXPECT_FALSE(harvestStarted);
-		EXPECT_GE(failures, 1) << "the tree was never asked for";
-		EXPECT_LE(failures, 2) << "the tree was asked for again and again";
+		EXPECT_EQ(failures, 0) << "a route to a tree with nowhere to stand was asked";
 		EXPECT_NE(getTask(colonist)->navState, NavState::CantFindWayTo) << "he stands on the failure";
 	}
 
@@ -5750,6 +5749,120 @@ namespace ecs::test {
 			harvested = worldSourceRegrowingUntil(trees, assets::AssetRegistry::Get().getDefNameId(tree), at, time.simulationSeconds()).has_value();
 		}
 		EXPECT_TRUE(harvested);
+	}
+
+	// A pile lying at the centre of a placed obstacle that stays in the world (what a harvest dropped before
+	// drops went beside the source) is reached from a stand point beside the obstacle and hauled.
+	TEST_F(AIDecisionHarvestStandTest, PileInsideAPlacedObstacleIsHauled) {
+		assets::AssetDefinition stone;
+		stone.defName					= "Stone";
+		stone.label						= "Stone";
+		stone.handsRequired				= 1;
+		stone.category					= assets::ItemCategory::RawMaterial;
+		stone.capabilities.carryable	= assets::CarryableCapability{5};
+		stone.itemProperties			= assets::ItemProperties{};
+		stone.itemProperties->stackSize = 40;
+		stone.itemProperties->massKg	= 0.5F;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(stone));
+		const uint32_t stoneId = assets::AssetRegistry::Get().getDefNameId("Stone");
+
+		constexpr glm::vec2 kRock{100.0F, 100.0F};
+		constexpr glm::vec2 kStation{115.0F, 100.0F};
+		placeTrees({{registerBoulder(1.0F), kRock}});
+		const EntityID colonist = createColonist({85.0F, 100.0F});
+		world->addComponent<Action>(colonist, Action{});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		const EntityID pile = world->createEntity();
+		world->addComponent<Position>(pile, Position{kRock});
+		makeLoosePile(*world, pile, stoneId, kRock, 3);
+		addKnownEntity(colonist, kRock, stoneId, assets::CapabilityType::Carryable);
+
+		GoalTaskRegistry::Get().clear();
+		const EntityID station = world->createEntity();
+		world->addComponent<Position>(station, Position{kStation});
+		assets::RecipeDef recipe;
+		recipe.defName = "Recipe_StoneThree";
+		recipe.label   = recipe.defName;
+		recipe.inputs.push_back({"Stone", 0, 3});
+		assets::RecipeRegistry::Get().registerTestRecipe(recipe);
+		world->addComponent<WorkQueue>(station).addJob(recipe.defName, 1);
+		world->addComponent<Inventory>(station, Inventory::createForStorage());
+		GoalTask craft;
+		craft.type				  = TaskType::Craft;
+		craft.owner				  = GoalOwner::CraftingGoalSystem;
+		craft.destinationEntity	  = station;
+		craft.destinationPosition = kStation;
+		craft.status			  = GoalStatus::Blocked;
+		GoalTask haul;
+		haul.type				 = TaskType::Haul;
+		haul.owner				 = GoalOwner::CraftingGoalSystem;
+		haul.destinationEntity	 = station;
+		haul.destinationPosition = kStation;
+		haul.acceptedDefNameIds	 = {stoneId};
+		haul.parentGoalId		 = GoalTaskRegistry::Get().createGoal(std::move(craft));
+		GoalTaskRegistry::Get().createGoal(std::move(haul));
+		nav->finishPendingBuilds();
+		ASSERT_FALSE(nav->isValidPosition(kRock)) << "the boulder's collider is placed";
+
+		const auto delivered = [&] { return world->getComponent<Inventory>(station)->getQuantity("Stone"); };
+		for (int i = 0; i < 600 && delivered() < 3; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(delivered(), 3U) << "the pile inside the boulder was never hauled";
+	}
+
+	// A cut that yields more than he can carry leaves the rest beside the source, outside its collider, on
+	// ground he can stand on: never at its centre, which no route reaches while the source stands.
+	TEST_F(AIDecisionHarvestStandTest, UncarriedYieldLandsBesideTheSource) {
+		assets::AssetDefinition tree;
+		tree.defName = "Test_LadenBerryTree";
+		tree.label	 = tree.defName;
+		tree.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {1.0F, 1.0F}});
+		tree.capabilities.harvestable				= assets::HarvestableCapability{};
+		tree.capabilities.harvestable->yieldDefName = "Berry";
+		tree.capabilities.harvestable->amountMin	= 2000;
+		tree.capabilities.harvestable->amountMax	= 2000;
+		tree.capabilities.harvestable->durability	= 10.0F;
+		tree.capabilities.harvestable->destructive	= false;
+		tree.capabilities.harvestable->regrowthTime = 600.0F;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
+		std::vector<glm::vec2> drops;
+		world->getSystem<ActionSystem>().setDropResourceCallback(
+			[&](const std::string&, float x, float y, uint32_t, glm::vec2) { drops.emplace_back(x, y); });
+
+		constexpr glm::vec2 kTree{20.0F, 20.0F};
+		placeTrees({{"Test_LadenBerryTree", kTree}});
+		harvestFrom("Test_LadenBerryTree", 1.0F, kTree, kTree + glm::vec2{-12.0F, 0.0F});
+		ASSERT_FALSE(drops.empty()) << "everything was carried: nothing was left to drop";
+		for (const glm::vec2 drop : drops) {
+			const glm::vec2 off = glm::abs(drop - kTree);
+			EXPECT_GT(std::max(off.x, off.y), 1.0F) << "dropped inside the source's collider";
+			EXPECT_TRUE(nav->isValidPosition(drop)) << "dropped where nobody can stand";
+			EXPECT_LT(glm::distance(drop, kTree), 3.0F) << "dropped away from the source";
+		}
+	}
+
+	// A hungry colonist whose only food is a pile lying at the centre of a placed obstacle eats it.
+	TEST_F(AIDecisionHarvestStandTest, FoodOnlyInsideAPlacedObstacleIsEaten) {
+		constexpr glm::vec2 kRock{100.0F, 100.0F};
+		placeTrees({{registerBoulder(1.0F), kRock}});
+		const EntityID colonist = createColonist({88.0F, 100.0F});
+		world->addComponent<Action>(colonist, Action{});
+		satisfyAllNeeds(*getNeeds(colonist));
+		setNeedValue(colonist, NeedType::Hunger, 5.0F);
+		const uint32_t berryId = assets::AssetRegistry::Get().getDefNameId("Berry");
+		const EntityID pile	   = world->createEntity();
+		world->addComponent<Position>(pile, Position{kRock});
+		makeLoosePile(*world, pile, berryId, kRock, 5);
+		addKnownEntity(colonist, kRock, berryId, assets::CapabilityType::Carryable);
+		nav->finishPendingBuilds();
+		ASSERT_FALSE(nav->isValidPosition(kRock)) << "the boulder's collider is placed";
+
+		for (int i = 0; i < 600 && getNeeds(colonist)->get(NeedType::Hunger).value < 50.0F; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_GE(getNeeds(colonist)->get(NeedType::Hunger).value, 50.0F) << "the food inside the boulder was never eaten";
 	}
 
 	// Walking east through ground he meshes as he goes, placed obstacles land across his route ahead of

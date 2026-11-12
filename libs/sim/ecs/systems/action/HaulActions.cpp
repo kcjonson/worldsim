@@ -284,13 +284,8 @@ namespace ecs {
 		const bool pickupPending = sourceClaim != task.claims.end();
 		const bool carryingHaulItem = cargoHeld > (pickupPending ? taskCargo(task) : 0U);
 
-		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
-		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
-		bool	  atSource = distSqToSource <= kPositionTolerance * kPositionTolerance;
-
-		glm::vec2 diffToTarget = position.value - task.haulTargetPosition;
-		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
-		bool	  atTarget = distSqToTarget <= kPositionTolerance * kPositionTolerance;
+		const bool atSource = task.standsAt(task.haulSourcePosition, position.value, kPositionTolerance);
+		const bool atTarget = task.standsAt(task.haulTargetPosition, position.value, kPositionTolerance);
 
 		// Not carrying yet: this is the pickup leg, regardless of also being in range of the
 		// destination. Pick up at the source.
@@ -447,13 +442,8 @@ namespace ecs {
 
 		constexpr float kPlacementPositionTolerance = 0.5F;
 
-		glm::vec2 diffToSource = position.value - task.placeSourcePosition;
-		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
-		bool	  atSource = distSqToSource <= kPlacementPositionTolerance * kPlacementPositionTolerance;
-
-		glm::vec2 diffToTarget = position.value - task.placeTargetPosition;
-		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
-		bool	  atTarget = distSqToTarget <= kPlacementPositionTolerance * kPlacementPositionTolerance;
+		const bool atSource = task.standsAt(task.placeSourcePosition, position.value, kPlacementPositionTolerance);
+		const bool atTarget = task.standsAt(task.placeTargetPosition, position.value, kPlacementPositionTolerance);
 
 		// Check inventory to determine if we're already carrying the item (phase 2)
 		bool alreadyCarrying = inventory.carryingPackagedEntity.has_value() &&

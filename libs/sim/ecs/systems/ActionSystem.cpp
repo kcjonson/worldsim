@@ -428,6 +428,7 @@ namespace ecs {
 		// Moving with an active target and no route: the AI asks for the route to the new target, so the
 		// colonist never slides straight at it, and the old leg's route can't carry him the wrong way.
 		task.targetPosition = target;
+		task.obstructedTarget.reset();
 		task.state			= TaskState::Moving;
 		if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
 			movementTarget->target = target;

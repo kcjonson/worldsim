@@ -342,6 +342,11 @@ private:
 	void takeRouteAnswer(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
 						 struct MovementTarget& movementTarget);
 
+	/// Where a colonist at `from` stands to reach `target`: beside the placed obstacle in the mesh it lies
+	/// in (NavigationSystem::standPointBeside), else the target itself. `placedTarget`: the target is a
+	/// placed thing (a harvest's source), always asked of standPointBeside. nullopt: nowhere to stand.
+	[[nodiscard]] std::optional<glm::vec2> standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const;
+
 	/// The route stands as failed: stopped, CantFindWayTo, stamped for the next decision to record
 	/// (buildDecisionTrace) so he takes his next choice.
 	void failRoute(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
