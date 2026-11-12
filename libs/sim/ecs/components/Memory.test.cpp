@@ -314,30 +314,44 @@ TEST(MemoryQueries, HeadedForSourceIsKeptWhileItPasses) {
 	EXPECT_EQ(chosen.front().position, posFor(1));
 }
 
-// A verdict holds while the connectivity epoch and the belief it was found under stand; either moving
-// forgets every verdict. One found under a key that has since moved is not held.
-TEST(MemoryQueries, SourceReachMemoHoldsVerdictsUnderTheirKey) {
-	ecs::SourceReachMemo			 memo;
-	constexpr uint64_t				 kSource = 77;
-	constexpr uint64_t				 kOther	 = 78;
-	const ecs::SourceReachMemo::Key	 now{.connectivityEpoch = 3, .beliefVersion = 5};
-	const ecs::SourceReachMemo::Key	 epochMoved{.connectivityEpoch = 4, .beliefVersion = 5};
-	const ecs::SourceReachMemo::Key	 beliefMoved{.connectivityEpoch = 4, .beliefVersion = 6};
+// A verdict holds while nothing moves. His belief moving forgets every verdict at once; the connectivity
+// epoch moving forgets only those at least kVerdictMinTicks old, however often it moves meanwhile, and one
+// recorded after it last moved is held.
+TEST(MemoryQueries, SourceReachMemoHoldsVerdictsUntilTheyMayNoLongerHold) {
+	ecs::SourceReachMemo			memo;
+	constexpr uint64_t				kSource = 77;
+	constexpr uint64_t				kOther	= 78;
+	constexpr uint64_t				kAge	= ecs::SourceReachMemo::kVerdictMinTicks;
+	ecs::SourceReachMemo::Key		now{.connectivityEpoch = 3, .beliefVersion = 5};
+	const ecs::SourceReachMemo::Key beliefMoved{.connectivityEpoch = 100, .beliefVersion = 6};
 
-	memo.keep(now);
-	memo.recordVerdict(kSource, now, now);
+	memo.keep(now, 0);
+	memo.recordVerdict(kSource, now, 0);
 	EXPECT_TRUE(memo.hasVerdict(kSource));
 	EXPECT_FALSE(memo.hasVerdict(kOther));
-	memo.keep(now);
-	EXPECT_TRUE(memo.hasVerdict(kSource)) << "held while nothing moves";
+	memo.keep(now, 10 * kAge);
+	EXPECT_TRUE(memo.hasVerdict(kSource)) << "held while nothing moves, however old";
 
-	memo.keep(epochMoved);
-	EXPECT_FALSE(memo.hasVerdict(kSource)) << "the epoch moved";
-	memo.recordVerdict(kOther, now, epochMoved);
-	EXPECT_FALSE(memo.hasVerdict(kOther)) << "found under the old epoch";
-	memo.recordVerdict(kOther, epochMoved, epochMoved);
-	EXPECT_TRUE(memo.hasVerdict(kOther));
-	memo.keep(beliefMoved);
+	// Recorded at tick 0 and again at 10 * kAge (refreshed); the epoch moves every tick from there on.
+	memo.recordVerdict(kSource, now, 10 * kAge);
+	for (uint64_t tick = 10 * kAge + 1; tick < 11 * kAge; ++tick) {
+		++now.connectivityEpoch;
+		memo.keep(now, tick);
+		ASSERT_TRUE(memo.hasVerdict(kSource)) << "forgotten young at tick " << tick;
+		if (tick == 10 * kAge + 5) {
+			memo.recordVerdict(kOther, now, tick);
+		}
+	}
+	memo.keep(now, 11 * kAge);
+	EXPECT_FALSE(memo.hasVerdict(kSource)) << "the epoch moved and it is old enough, though the epoch stands now";
+	EXPECT_TRUE(memo.hasVerdict(kOther)) << "younger than kVerdictMinTicks";
+	memo.keep(now, 11 * kAge + 5);
+	EXPECT_FALSE(memo.hasVerdict(kOther)) << "the epoch moved after it was recorded, and it is old enough";
+
+	memo.recordVerdict(kOther, now, 12 * kAge);
+	memo.keep(now, 20 * kAge);
+	EXPECT_TRUE(memo.hasVerdict(kOther)) << "recorded after the epoch last moved";
+	memo.keep(beliefMoved, 20 * kAge + 1);
 	EXPECT_FALSE(memo.hasVerdict(kOther)) << "his belief moved";
 	EXPECT_EQ(memo.verdictCount(), 0U);
 }
@@ -346,7 +360,7 @@ TEST(MemoryQueries, SourceReachMemoStaysBounded) {
 	ecs::SourceReachMemo			memo;
 	const ecs::SourceReachMemo::Key now{.connectivityEpoch = 1, .beliefVersion = 1};
 	for (uint64_t target = 0; target < 3 * ecs::SourceReachMemo::kMaxVerdicts; ++target) {
-		memo.recordVerdict(target, now, now);
+		memo.recordVerdict(target, now, target);
 		ASSERT_LE(memo.verdictCount(), ecs::SourceReachMemo::kMaxVerdicts);
 	}
 }

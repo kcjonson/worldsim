@@ -923,7 +923,7 @@ namespace ecs {
 		}
 		published = true;
 		navStats.navPatches += runningJob.patches.size();
-		navStats.structuralPatches += runningJob.routePatches;
+		navStats.groundWaterWallPatches += runningJob.routePatches;
 		// Routes are restamped here, not on the next tick, since a query may join mid-frame and the
 		// AI reads them next.
 		if (runningJob.movesRoutes()) {
@@ -2013,6 +2013,11 @@ namespace ecs {
 		join();
 		const std::int32_t a = detailMesh.locate(nav::toMm(aMeters));
 		return a >= 0 && detailMesh.components().sameComponent(a, detailMesh.locate(nav::toMm(bMeters)));
+	}
+
+	geometry::nav::ComponentLabel NavigationSystem::componentAt(glm::vec2 meters) const {
+		join();
+		return detailMesh.components().label(detailMesh.locate(nav::toMm(meters)));
 	}
 
 	std::uint64_t NavigationSystem::connectivityEpoch() const {

@@ -30,7 +30,9 @@ namespace ecs {
 
 /// How many sources one need decision asks a route for at once: its nearest-of request names this many
 /// goals, the nearest by straight line that pass its filter, and the task holds them (SourceChoices).
-inline constexpr std::size_t kNearestOfCount = SourceChoices::kCapacity;
+/// A round that finds no known way widens the next (SourceReachMemo::roundWidening) up to kWidestRound.
+inline constexpr std::size_t kNearestOfCount = 8;
+inline constexpr std::size_t kWidestRound	 = SourceChoices::kCapacity;
 
 /// A source and its squared straight-line distance. A remembered world entity has `entity`; a storage
 /// box the colony knows has `storage` instead, `key` its world key, `item` what it is a source of (also

@@ -156,10 +156,11 @@ struct SourceChoice {
 };
 
 /// The sources a need's nearest-of route request names, nearest by straight line first; the route's
-/// answer picks one. Fixed capacity, so a task never needs the heap for them.
+/// answer picks one. Fixed capacity, the widest round (kWidestRound), so a task never needs the heap for
+/// them.
 class SourceChoices {
   public:
-	static constexpr std::uint8_t kCapacity = 8;
+	static constexpr std::uint8_t kCapacity = 32;
 
 	void clear() { count = 0; }
 	void push(const SourceChoice& choice) {
@@ -237,7 +238,10 @@ struct Task {
 	// No known way from where the snap holds him inside a placed obstacle: he asks again once the snap lets
 	// go or the nav generation moves (deferredNavGeneration), and after kSnapWaitDecisions interval
 	// decisions still held, his route fails.
-	bool		 awaitingSnap		= false;
+	bool awaitingSnap = false;
+	// Interval decisions the snap has held him for in a row: a decision while it holds him is put off
+	// (he is connected to nothing there) until kSnapWaitDecisions of them. Survives clear(), like the
+	// timer; a decision while the snap does not hold him resets it.
 	std::uint8_t snapWaitDecisions = 0;
 	static constexpr std::uint8_t kSnapWaitDecisions = 4;
 	// The target itself when targetPosition is the stand point beside the placed obstacle it lies in (a
@@ -314,8 +318,8 @@ struct Task {
 	uint8_t criticalNeedsAtDecision = 0;
 	static_assert(static_cast<size_t>(NeedType::Count) <= 8, "criticalNeedsAtDecision holds one bit per need");
 
-	/// The last decision ran on a failed route (NavState::CantFindWayTo) and left the route failed, so
-	/// the failure has had its prompt decision and the next waits for the re-decide interval. Survives
+	/// A failed route (NavState::CantFindWayTo) has had its prompt decision, and no route has been found
+	/// since: a further failure, the next pick's included, waits for the re-decide interval. Survives
 	/// clear(), like the timer.
 	bool routeFailureDecided = false;
 
@@ -370,7 +374,6 @@ struct Task {
 		routeGoal = glm::vec2{0.0F, 0.0F};
 		routeWaitTicks = 0;
 		awaitingSnap = false;
-		snapWaitDecisions = 0;
 		obstructedTarget.reset();
 		needSourceKey = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};

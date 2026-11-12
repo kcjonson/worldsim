@@ -56,6 +56,12 @@ inline void requestDecision(Task& task) {
 	task.timeSinceEvaluation = std::numeric_limits<float>::max();
 }
 
+/// A route found from where he asked, starting where he stands now (`at`): he may have walked on while it
+/// was out. He joins it at the projection of where he stands onto its nearest leg, among the legs that
+/// start no further along it than he stands from where he asked (plus a margin), and walks on along that
+/// leg: never straight to a later waypoint, which could cut the corner the route bends round.
+[[nodiscard]] std::vector<glm::vec2> joinRoute(std::vector<glm::vec2> waypoints, glm::vec2 at);
+
 /// One kind of goods a deciding colonist carries, read once per decision for the carry-in.
 struct CarriedKind {
 	uint32_t item = 0;
@@ -300,6 +306,8 @@ private:
 	/// @param inventory Colonist inventory (for checking food availability)
 	/// @param skills Optional colonist skills (for skill bonus calculation)
 	/// @param sourceReach The colonist's route verdicts (targets a route found no known way to)
+	/// @param wanderUnderway He is on a wander that is going somewhere: its point is offered again as it
+	///        is, with no new point probed
 	void buildDecisionTrace(
 		EntityID entity,
 		const struct Position& position,
@@ -309,6 +317,7 @@ private:
 		const struct Inventory& inventory,
 		const struct Skills* skills,
 		struct SourceReachMemo& sourceReach,
+		bool wanderUnderway,
 		struct DecisionTrace& trace);
 
 	/// Select task from the decision trace (picks first Selected option); a route is planned over
@@ -338,22 +347,35 @@ private:
 	/// target asked for. Routed: a need asked for several sources (Task::sourceChoices) heads for the one
 	/// the route reached, its claim moved there; the route is attached from where he now stands
 	/// (joinRoute), stamped with the belief it was asked under and the current nav generation, and he
-	/// walks it. No known way: he stops (NavState::CantFindWayTo, failRoute), a verdict on every target. Start off the mesh: not a failure, he waits
-	/// (AwaitingMesh) and asks again once the nav generation moves. No known way for a colonist the snap
-	/// holds inside a placed obstacle is "not now": he stands (awaitingSnap) until the snap lets go.
+	/// walks it; a source another colonist has claimed since the request went out (and holds against him)
+	/// is not taken, and he decides again at once. No known way: he stops (NavState::CantFindWayTo,
+	/// failRoute), a verdict on every target. Start off the mesh: not a failure, he waits (AwaitingMesh)
+	/// and asks again once the nav generation moves. No known way for a colonist the snap holds inside a
+	/// placed obstacle is "not now": he stands (awaitingSnap) until the snap lets go.
 	void takeRouteAnswer(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
 						 struct MovementTarget& movementTarget);
+
+	/// Another colonist holds `choice` of this need task against him by the rules the decision offers food
+	/// by: an eater at least as urgent holds a bush or a meal's share of a pile or box against a hungry
+	/// colonist, any holder holds a bush against gathering. Only food is claimed.
+	[[nodiscard]] bool sourceHeldAgainst(EntityID entity, const struct Task& task, const SourceChoice& choice);
 
 	/// Where a colonist at `from` stands to reach `target`: beside the placed obstacle in the mesh it lies
 	/// in (NavigationSystem::standPointBeside), else the target itself. `placedTarget`: the target is a
 	/// placed thing (a harvest's source), always asked of standPointBeside. nullopt: nowhere to stand.
 	[[nodiscard]] std::optional<glm::vec2> standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const;
 
-	/// The route stands as failed: stopped, CantFindWayTo, and a verdict on every target it was asked for
-	/// (SourceReachMemo), found under `foundUnder` (a route answer's label epoch and the belief it was asked
-	/// under; nullopt, as things stand now), so the next decision takes his next choice.
-	void failRoute(EntityID entity, struct Task& task, const struct Memory& memory, struct MovementTarget& movementTarget,
-				   std::optional<SourceReachMemo::Key> foundUnder = std::nullopt);
+	/// Why a route failed, which decides what the failure says about its targets.
+	enum class RouteFailure : std::uint8_t {
+		NoStandPoint, // nowhere to stand beside the target: a verdict on it
+		NoKnownWay,	  // the route's answer: a verdict on every target, unless his belief moved since it was asked
+		SnapHeld	  // the snap held him past the wait: his start was the problem, no verdict
+	};
+
+	/// The route stands as failed: stopped, CantFindWayTo, and, by `why`, a verdict on every target it was
+	/// asked for (SourceReachMemo) under the current connectivity epoch, so the next decision takes his
+	/// next choice. A need's nearest-of round that found no known way widens its next round.
+	void failRoute(EntityID entity, struct Task& task, const struct Memory& memory, struct MovementTarget& movementTarget, RouteFailure why);
 
 	/// The task heads for its `index`th source choice: its target, goal, and what it takes from it.
 	static void takeSourceChoice(struct Task& task, std::uint8_t index);
@@ -363,6 +385,16 @@ private:
 	[[nodiscard]] static std::size_t needChoiceSlot(NeedType needType, bool gathersFood) {
 		return gathersFood ? static_cast<std::size_t>(NeedType::Count) : static_cast<std::size_t>(needType);
 	}
+
+	/// The slot of the need option a FulfillNeed task was chosen from: gathering food is the Hunger task
+	/// that takes no meal.
+	[[nodiscard]] static std::size_t needSlotOf(const struct Task& task) {
+		return needChoiceSlot(task.needToFulfill, task.needToFulfill == NeedType::Hunger && task.needQuantity == 0 && task.needItemDefNameId == 0);
+	}
+
+	/// Times a need's round can be doubled (SourceReachMemo::roundWidening): kNearestOfCount up to kWidestRound.
+	static constexpr std::uint8_t kMaxRoundWidening = 2;
+	static_assert((kNearestOfCount << kMaxRoundWidening) == kWidestRound);
 
 	/// Cancel the task's route still out, if any.
 	void dropRoute(struct Task& task);
@@ -429,6 +461,10 @@ private:
 	/// The deciding colonist's source choices per need option (needChoiceSlot), read by selectTaskFromTrace
 	std::array<SourceChoices, static_cast<std::size_t>(NeedType::Count) + 1> m_needChoices{};
 
+	/// Where a route from the deciding colonist to each target asked about in this decision ends (nullopt:
+	/// no known way), so no target is tested twice in one decision. Reused across colonists.
+	std::vector<std::pair<glm::vec2, std::optional<glm::vec2>>> m_routeEnds;
+
 	/// The deciding colonist's remembered work sources, reused across colonists
 	WorkSources m_workSources;
 
@@ -492,6 +528,9 @@ private:
 	/// DecisionTrace::lastEvaluationTime and is the clock of the within-tier task-age term. Regrowth
 	/// waits run on TimeSystem::simulationSeconds instead, the clock regrowth is stamped on.
 	float m_elapsedTime = 0.0F;
+
+	/// AI updates run, the clock verdicts age on (SourceReachMemo::kVerdictMinTicks)
+	std::uint64_t m_tick = 0;
 
 	/// TimeSystem::simulationSeconds, read once per update while onSourceRegrowth is wired (0 otherwise:
 	/// nothing regrows then, so nothing reads it)

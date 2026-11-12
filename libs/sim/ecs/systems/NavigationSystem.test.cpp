@@ -2335,8 +2335,8 @@ TEST_F(NavigationSystemTest, OverlappingDiscsAddEachCellOnce) {
 	addColonist(world, b, "B");
 	settle(sys);
 	const NavigationSystem::NavQueryStats& stats = sys.navQueryStats();
-	EXPECT_EQ(stats.structuralPatches, 4u) << "the four chunks round the origin, once each";
-	EXPECT_EQ(stats.navPatches - stats.structuralPatches, wantedCells) << "one patch per wanted cell";
+	EXPECT_EQ(stats.groundWaterWallPatches, 4u) << "the four chunks round the origin, once each";
+	EXPECT_EQ(stats.navPatches - stats.groundWaterWallPatches, wantedCells) << "one patch per wanted cell";
 	for (const glm::vec2 t : trees) {
 		EXPECT_EQ(!meshClear(sys, t), meets(a, t) || meets(b, t)) << "the tree at (" << t.x << ", " << t.y << ")";
 	}
@@ -2437,7 +2437,7 @@ TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
 	}
 	ASSERT_FALSE(sys.isBuilding());
 	EXPECT_EQ(sys.navQueryStats().navPatches, 3u);
-	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "a removal patched ground or walls";
+	EXPECT_EQ(sys.navQueryStats().groundWaterWallPatches, 0u) << "a removal patched ground or walls";
 	EXPECT_TRUE(std::all_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return meshClear(sys, t); })) << "all removed";
 }
 

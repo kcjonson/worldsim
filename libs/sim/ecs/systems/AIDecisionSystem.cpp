@@ -181,34 +181,6 @@ namespace ecs {
 			return verdictKey(task.type == TaskType::Harvest ? task.harvestTargetKey : task.needSourceKey, task.workTarget());
 		}
 
-		/// A route found from where he asked, starting where he stands now: he may have walked on while it
-		/// was out. He joins it on the leg nearest him among those that start no further along it than he
-		/// stands from where he asked (plus a margin), and steers for that leg's end, so he never turns back
-		/// to a point he has passed.
-		[[nodiscard]] std::vector<glm::vec2> joinRoute(std::vector<glm::vec2> waypoints, glm::vec2 at) {
-			if (waypoints.size() < 2) {
-				return waypoints;
-			}
-			constexpr float kJoinMarginMeters = 1.0F;
-			const float		reach = glm::distance(waypoints.front(), at) + kJoinMarginMeters;
-			std::size_t		next = 1;
-			float			nearest = std::numeric_limits<float>::max();
-			float			along = 0.0F;
-			for (std::size_t i = 0; i + 1 < waypoints.size() && along <= reach; ++i) {
-				const glm::vec2 leg	 = waypoints[i + 1] - waypoints[i];
-				const float		len2 = glm::dot(leg, leg);
-				const float		t	 = len2 > 0.0F ? std::clamp(glm::dot(at - waypoints[i], leg) / len2, 0.0F, 1.0F) : 0.0F;
-				const float		off	 = glm::distance(at, waypoints[i] + leg * t);
-				if (off <= nearest) {
-					nearest = off;
-					next	= i + 1;
-				}
-				along += std::sqrt(len2);
-			}
-			waypoints.erase(waypoints.begin(), waypoints.begin() + static_cast<std::ptrdiff_t>(next - 1));
-			waypoints.front() = at;
-			return waypoints;
-		}
 
 		/// Skill names for work types
 		constexpr const char* kSkillFarming = "Farming";
@@ -1603,6 +1575,39 @@ namespace ecs {
 		return std::span<const PullSource>(pullList).subspan(begin);
 	}
 
+	std::vector<glm::vec2> joinRoute(std::vector<glm::vec2> waypoints, glm::vec2 at) {
+		if (waypoints.size() < 2) {
+			return waypoints;
+		}
+		constexpr float kJoinMarginMeters = 1.0F;
+		constexpr float kOnLegMeters	  = 0.01F;
+		const float		reach			  = glm::distance(waypoints.front(), at) + kJoinMarginMeters;
+		std::size_t		leg				  = 0;
+		glm::vec2		joinAt			  = waypoints.front();
+		float			nearest			  = std::numeric_limits<float>::max();
+		float			along			  = 0.0F;
+		for (std::size_t i = 0; i + 1 < waypoints.size() && along <= reach; ++i) {
+			const glm::vec2 d	 = waypoints[i + 1] - waypoints[i];
+			const float		len2 = glm::dot(d, d);
+			const float		t	 = len2 > 0.0F ? std::clamp(glm::dot(at - waypoints[i], d) / len2, 0.0F, 1.0F) : 0.0F;
+			const glm::vec2 p	 = waypoints[i] + d * t;
+			const float		off	 = glm::distance(at, p);
+			if (off <= nearest) {
+				nearest = off;
+				leg		= i;
+				joinAt	= p;
+			}
+			along += std::sqrt(len2);
+		}
+		// [at, joinAt, end of the leg, ...]: joinAt is dropped when he stands on it or it is the leg's end.
+		waypoints.erase(waypoints.begin(), waypoints.begin() + static_cast<std::ptrdiff_t>(leg + 1));
+		if (nearest > kOnLegMeters && glm::distance(joinAt, waypoints.front()) > kOnLegMeters) {
+			waypoints.insert(waypoints.begin(), joinAt);
+		}
+		waypoints.insert(waypoints.begin(), at);
+		return waypoints;
+	}
+
 	AIDecisionSystem::AIDecisionSystem(
 		const assets::AssetRegistry&  registry,
 		const assets::RecipeRegistry& recipeRegistry,
@@ -1615,6 +1620,7 @@ namespace ecs {
 	void AIDecisionSystem::update(float deltaTime) {
 		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).
 		m_elapsedTime += deltaTime;
+		++m_tick;
 		// Only the regrowth callback reports a regrowing source, so without it no food wait is set and
 		// the time goes unread; a world that wires it has a TimeSystem.
 		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
@@ -1784,17 +1790,28 @@ namespace ecs {
 				task.timeSinceEvaluation += deltaTime;
 				continue;
 			}
-			task.criticalNeedsAtDecision = criticalNeedMask(needs);
 			// Held by the snap inside a placed obstacle he is connected to nothing, so a decision there could
-			// only drop his task: the interval passes as a wait on the snap instead. After this many the route
-			// fails, and this decision takes it as one.
-			if (task.awaitingSnap && task.routeTicket == 0) {
-				if (++task.snapWaitDecisions < Task::kSnapWaitDecisions) {
+			// only drop his task: each interval passes as a wait on the snap instead (a decision asked for
+			// sooner waits for the interval). After kSnapWaitDecisions the decision runs, and a route that
+			// waited on the snap fails, with no verdict on its target: his start was the problem.
+			if (m_navSystem != nullptr && m_navSystem->snapHolds(entity)) {
+				if (task.snapWaitDecisions < Task::kSnapWaitDecisions) {
+					if (task.timeSinceEvaluation < kReEvalInterval) {
+						task.timeSinceEvaluation += deltaTime;
+						continue;
+					}
 					task.timeSinceEvaluation = 0.0F;
-					continue;
+					if (++task.snapWaitDecisions < Task::kSnapWaitDecisions) {
+						continue;
+					}
 				}
-				failRoute(entity, task, memory, movementTarget);
+				if (task.awaitingSnap && task.routeTicket == 0) {
+					failRoute(entity, task, memory, movementTarget, RouteFailure::SnapHeld);
+				}
+			} else {
+				task.snapWaitDecisions = 0;
 			}
+			task.criticalNeedsAtDecision = criticalNeedMask(needs);
 			const bool decidingOnFailedRoute = task.navState == NavState::CantFindWayTo;
 
 			// Store current task state for the (tier, score) interruption comparison
@@ -1812,7 +1829,9 @@ namespace ecs {
 				ensureClaimIndex();
 
 				// Build full decision trace (always, for UI updates)
-				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *sourceReach, *trace);
+				const bool wanderUnderway = task.type == TaskType::Wander && task.state == TaskState::Moving &&
+											(movementTarget.active || task.navState == NavState::AwaitingRoute);
+				buildDecisionTrace(entity, position, needs, memory, task, inventory, skills, *sourceReach, wanderUnderway, *trace);
 
 				// Get the best option's (tier, score) key
 				const auto* selected = trace->getSelected();
@@ -1862,7 +1881,7 @@ namespace ecs {
 						}
 
 						// A task whose route failed is always a fresh pick. Its target holds a verdict, so it is
-						// offered again only once the connectivity epoch or his belief has moved, and keeping
+						// offered again only once the verdict is forgotten (SourceReachMemo::keep), and keeping
 						// it then would leave him stopped with a stale failure and no new route request.
 						const bool failed = task.navState == NavState::CantFindWayTo;
 						isSameTask = sameType && sameTarget && samePlaceTarget && !failed;
@@ -2014,7 +2033,7 @@ namespace ecs {
 					);
 				}
 			}
-			task.routeFailureDecided = decidingOnFailedRoute && task.navState == NavState::CantFindWayTo;
+			task.routeFailureDecided = task.routeFailureDecided || decidingOnFailedRoute;
 		}
 
 #ifdef DEVELOPMENT_BUILD
@@ -2124,8 +2143,8 @@ namespace ecs {
 
 		// Nav has stopped the colonist: no believed route to its target (a wander point or work
 		// site across water, or a route the freshly-built mesh invalidated). Decide once at once so it
-		// picks a reachable target instead of standing frozen. If that decision's pick fails too, the
-		// failure has had its prompt decision and the colonist re-decides on the interval below.
+		// picks a reachable target instead of standing frozen. Until a route is found again, every later
+		// failure (the picks that decision and the next make) waits for the interval below.
 		if (task.navState == NavState::CantFindWayTo && !task.routeFailureDecided) {
 			return true;
 		}
@@ -2181,6 +2200,7 @@ namespace ecs {
 		const Inventory&	  inventory,
 		const Skills*		  skills,
 		SourceReachMemo&	  sourceReach,
+		bool				  wanderUnderway,
 		DecisionTrace&		  trace
 	) {
 		trace.clear();
@@ -2194,28 +2214,45 @@ namespace ecs {
 		}
 		const bool haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
-		// What he can get to, with no search in the decision. connected() (two locates and a label compare)
-		// is the filter: false is no known way, never stored. A route's "no known way" is the truth for him
-		// (his width, the walls he believes in): a verdict on its target (SourceReachMemo), held until the
-		// connectivity epoch or his belief moves, and a target with one is not asked about again. With no
-		// mesh nothing is known unreachable.
+		// What he can get to, with no search in the decision. His component label, found once, against each
+		// target's (one locate a target) is the filter: a different label is no known way, never stored. A
+		// route's "no known way" is the truth for him (his width, the walls he believes in): a verdict on its
+		// target (SourceReachMemo), held as SourceReachMemo::keep says, and a target with one is not asked
+		// about again. With no mesh nothing is known unreachable.
 		if (haveMesh) {
-			sourceReach.keep({.connectivityEpoch = m_navSystem->connectivityEpoch(), .beliefVersion = memory.beliefVersion});
+			sourceReach.keep({.connectivityEpoch = m_navSystem->connectivityEpoch(), .beliefVersion = memory.beliefVersion}, m_tick);
 		}
+		const geometry::nav::ComponentLabel hisLabel = haveMesh ? m_navSystem->componentAt(position.value) : geometry::nav::kNoComponent;
+		const auto connectedTo = [&](const glm::vec2& point) {
+			return hisLabel != geometry::nav::kNoComponent && m_navSystem->componentAt(point) == hisLabel;
+		};
 		const auto hasVerdict = [&](std::uint64_t sourceKey, const glm::vec2& target) {
 			return haveMesh && sourceReach.hasVerdict(verdictKey(sourceKey, target));
 		};
 		// Where a route to `target` ends when he is connected to it: the target, or the stand point beside
-		// the placed obstacle it lies in. nullopt: no known way, or nowhere to stand.
+		// the placed obstacle it lies in. nullopt: no known way, or nowhere to stand. Ground with a label is
+		// clear, so the target is its own end; a target with none is in water, off meshed ground, or in a
+		// placed obstacle, and only the last is asked for a stand point. Each target once a decision.
+		m_routeEnds.clear();
 		const auto routeEnd = [&](const glm::vec2& target) -> std::optional<glm::vec2> {
 			if (!haveMesh) {
 				return target;
 			}
-			const std::optional<glm::vec2> stand = standPointFor(target, position.value, agentRadius, false);
-			if (!stand.has_value() || !m_navSystem->connected(position.value, *stand)) {
-				return std::nullopt;
+			for (const auto& [asked, end] : m_routeEnds) {
+				if (asked == target) {
+					return end;
+				}
 			}
-			return stand;
+			std::optional<glm::vec2>				end;
+			const geometry::nav::ComponentLabel label = m_navSystem->componentAt(target);
+			if (label != geometry::nav::kNoComponent) {
+				end = label == hisLabel ? std::optional<glm::vec2>(target) : std::nullopt;
+			} else if (hisLabel != geometry::nav::kNoComponent && m_navSystem->isOnMesh(target)) {
+				const std::optional<glm::vec2> stand = m_navSystem->standPointBeside(target, position.value, agentRadius);
+				end = stand.has_value() && connectedTo(*stand) ? stand : std::nullopt;
+			}
+			m_routeEnds.emplace_back(target, end);
+			return end;
 		};
 		const auto canGetTo = [&](const glm::vec2& target) { return routeEnd(target).has_value(); };
 		// A remembered source he may be sent to: no verdict, and connected to where a route to it ends,
@@ -2243,6 +2280,9 @@ namespace ecs {
 		const auto choiceOf = [](const SourceCandidate& source) {
 			return SourceChoice{.target = source.position, .goal = source.goal, .sourceKey = source.key};
 		};
+		// How many sources a need option's round names: kNearestOfCount, doubled for each round of it in a
+		// row that found no known way.
+		const auto roundSize = [&](std::size_t slot) -> std::size_t { return kNearestOfCount << sourceReach.roundWidening[slot]; };
 
 		// With an empty pack, one search finds both what the Hunger option eats from and the bush the
 		// gather-food option goes to, over every edible source the colonist knows, nearest by straight line
@@ -2355,10 +2395,13 @@ namespace ecs {
 			// The sources each option's route request names, nearest first: a meal for the Hunger option, a
 			// bush for the gather option. Either is complete at kNearestOfCount, or at the one he is heading
 			// for when it comes first (it comes off first when it is a candidate).
-			SourceChoices& foodChoices	 = m_needChoices[needChoiceSlot(NeedType::Hunger, false)];
-			SourceChoices& gatherChoices = m_needChoices[needChoiceSlot(NeedType::Hunger, true)];
-			const auto	   complete		 = [&](const SourceChoices& choices) {
-				return choices.size() >= kNearestOfCount || (choices.size() == 1 && headingFor == choices[0].sourceKey);
+			SourceChoices&	  foodChoices	= m_needChoices[needChoiceSlot(NeedType::Hunger, false)];
+			SourceChoices&	  gatherChoices = m_needChoices[needChoiceSlot(NeedType::Hunger, true)];
+			const std::size_t foodRound		= roundSize(needChoiceSlot(NeedType::Hunger, false));
+			const std::size_t gatherRound	= roundSize(needChoiceSlot(NeedType::Hunger, true));
+			const auto		  complete		= [&](const SourceChoices& choices) {
+				 const std::size_t round = &choices == &foodChoices ? foodRound : gatherRound;
+				 return choices.size() >= round || (choices.size() == 1 && headingFor == choices[0].sourceKey);
 			};
 			const auto mealChoice = [&](const SourceCandidate& source, uint32_t left) {
 				SourceChoice choice = choiceOf(source);
@@ -2567,7 +2610,7 @@ namespace ecs {
 					memory, capability, position.value,
 					[&](uint64_t key, const KnownWorldEntity& known) { return !hasVerdict(key, known.position); }, sourceScratch
 				);
-				nearestAdmitted(sourceScratch, m_chosenScratch, admitSource, kNearestOfCount, headingFor);
+				nearestAdmitted(sourceScratch, m_chosenScratch, admitSource, roundSize(needChoiceSlot(needType, false)), headingFor);
 				for (const SourceCandidate& source : m_chosenScratch) {
 					choices.push(choiceOf(source));
 				}
@@ -2754,17 +2797,35 @@ namespace ecs {
 		// recovery at the top of update().)
 		const bool canNavigate = (m_navSystem == nullptr) || haveMesh;
 		if (canNavigate) {
-			// Only offer a wander point on meshed ground connected to him, within the wander radius by straight
-			// line. Probe a few random points; if none is -- a colonist hemmed in by water/obstacles where
-			// every point lands somewhere he has no known way to -- emit no idle option at all. The no-option
-			// hold then makes it stand and look around instead of committing to a point it would thrash on.
-			// A moving wander decides every frame, so each probe is a label check, never a search.
-			const auto connectedPoint = [&](const glm::vec2& target) { return !haveMesh || m_navSystem->connected(position.value, target); };
-			glm::vec2  wanderTarget	  = generateWanderTarget(position.value);
-			bool	   foundReachable = connectedPoint(wanderTarget);
+			// Only offer a wander point on meshed ground connected to him that his disc fits on, within the
+			// wander radius by straight line. Probe a few random points; if none is -- a colonist hemmed in by
+			// water/obstacles where every point lands somewhere he has no known way to -- emit no idle option
+			// at all. The no-option hold then makes it stand and look around instead of committing to a point
+			// it would thrash on. A wander already going somewhere keeps its point and probes none: a moving
+			// wander decides every frame, and that decision keeps the wander whatever point it rolls.
+			const auto standable = [&](const glm::vec2& target) {
+				if (!haveMesh) {
+					return true;
+				}
+				if (!connectedTo(target)) {
+					return false;
+				}
+				// His disc's rim, every 45 degrees.
+				constexpr float kDiagonal = 0.70710678F;
+				for (const glm::vec2 rim : {glm::vec2{1.0F, 0.0F}, glm::vec2{-1.0F, 0.0F}, glm::vec2{0.0F, 1.0F}, glm::vec2{0.0F, -1.0F},
+											glm::vec2{kDiagonal, kDiagonal}, glm::vec2{-kDiagonal, kDiagonal}, glm::vec2{kDiagonal, -kDiagonal},
+											glm::vec2{-kDiagonal, -kDiagonal}}) {
+					if (!m_navSystem->isValidPosition(target + rim * agentRadius)) {
+						return false;
+					}
+				}
+				return true;
+			};
+			glm::vec2 wanderTarget	 = wanderUnderway ? currentTask.targetPosition : generateWanderTarget(position.value);
+			bool	  foundReachable = wanderUnderway || standable(wanderTarget);
 			for (int attempt = 0; !foundReachable && attempt < 5; ++attempt) {
 				const glm::vec2 candidate = generateWanderTarget(position.value);
-				if (connectedPoint(candidate)) {
+				if (standable(candidate)) {
 					wanderTarget   = candidate;
 					foundReachable = true;
 				}
@@ -3018,7 +3079,7 @@ namespace ecs {
 			const glm::vec2				   target = task.targetPosition;
 			const std::optional<glm::vec2> stand  = standPointFor(target, position.value, radius, false);
 			if (!stand.has_value()) {
-				failRoute(entity, task, memory, movementTarget);
+				failRoute(entity, task, memory, movementTarget, RouteFailure::NoStandPoint);
 				return;
 			}
 			if (*stand != target) {
@@ -3072,8 +3133,20 @@ namespace ecs {
 		auto* navPath = world->getComponent<NavPath>(entity);
 		switch (answer->outcome) {
 			case nav::RouteOutcome::Routed: {
-				// Of several sources, the one the route reached is the choice: it ends there.
+				// Of several sources, the one the route reached is the choice: it ends there. One another
+				// colonist claimed while the request was out, and holds against him, is not taken: he decides
+				// again at once, and that decision passes over it.
 				if (!task.sourceChoices.empty()) {
+					if (answer->goalIndex > 0 && answer->goalIndex < static_cast<std::int32_t>(task.sourceChoices.size()) &&
+						sourceHeldAgainst(entity, task, task.sourceChoices[static_cast<std::uint8_t>(answer->goalIndex)])) {
+						if (navPath != nullptr) {
+							navPath->valid = false;
+						}
+						movementTarget.active = false;
+						m_claims.retire(task.instanceId);
+						task.clear();
+						return;
+					}
 					if (answer->goalIndex > 0 && answer->goalIndex < static_cast<std::int32_t>(task.sourceChoices.size())) {
 						takeSourceChoice(task, static_cast<std::uint8_t>(answer->goalIndex));
 						movementTarget.target = task.targetPosition;
@@ -3101,8 +3174,12 @@ namespace ecs {
 				} else {
 					world->addComponent<NavPath>(entity, std::move(route));
 				}
-				movementTarget.active  = true;
-				task.snapWaitDecisions = 0;
+				movementTarget.active	 = true;
+				task.snapWaitDecisions	 = 0;
+				task.routeFailureDecided = false;
+				if (auto* memo = world->getComponent<SourceReachMemo>(entity); memo != nullptr && task.type == TaskType::FulfillNeed) {
+					memo->roundWidening[needSlotOf(task)] = 0;
+				}
 				setNavState(entity, task, NavState::Traveling);
 				return;
 			}
@@ -3131,8 +3208,7 @@ namespace ecs {
 			setNavState(entity, task, NavState::AwaitingRoute);
 			return;
 		}
-		failRoute(entity, task, memory, movementTarget,
-				  SourceReachMemo::Key{.connectivityEpoch = answer->labelEpoch, .beliefVersion = task.routeBeliefVersion});
+		failRoute(entity, task, memory, movementTarget, RouteFailure::NoKnownWay);
 	}
 
 	std::optional<glm::vec2> AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
@@ -3147,6 +3223,41 @@ namespace ecs {
 		return m_navSystem->standPointBeside(target, from, radius);
 	}
 
+	bool AIDecisionSystem::sourceHeldAgainst(EntityID entity, const Task& task, const SourceChoice& choice) {
+		const auto* needs = world->getComponent<NeedsComponent>(entity);
+		if (task.needToFulfill != NeedType::Hunger || needs == nullptr) {
+			return false;
+		}
+		ensureClaimIndex();
+		const ClaimExclusion self		= ClaimExclusion::of(task);
+		const int			 hungerTier = needTier(needs->get(NeedType::Hunger), m_baseTiers);
+		const auto			 eats		= [hungerTier](const ClaimHolder& holder) {
+			  return holder.taskType == TaskType::FulfillNeed && holder.tier < kTierIdle && holder.tier <= hungerTier;
+		};
+		if (choice.itemDefNameId == 0) {
+			const ClaimTarget bush{.kind = TargetKind::WorldKey, .key = choice.sourceKey};
+			return choice.quantity == 0 ? m_claims.useHolder(bush, self).has_value() : m_claims.useHolderWhere(bush, self, eats).has_value();
+		}
+		// A pile or box: held when what eaters at least as urgent leave of it is short of his meal.
+		const ClaimTarget target = choice.storageId != 0 ? ClaimTarget{.kind = TargetKind::Entity, .key = choice.storageId}
+														 : ClaimTarget{.kind = TargetKind::WorldKey, .key = choice.sourceKey};
+		const auto		  eaten	 = m_claims.sourceClaimedWhere(target, choice.itemDefNameId, self, eats);
+		if (!eaten.holder.has_value()) {
+			return false;
+		}
+		std::optional<uint32_t> live;
+		if (choice.storageId != 0) {
+			if (const auto* store = world->getComponent<Inventory>(static_cast<EntityID>(choice.storageId))) {
+				live = store->getQuantity(m_registry.getDefName(choice.itemDefNameId));
+			}
+		} else if (const EntityID pile = m_loosePiles != nullptr ? m_loosePiles->find(*world, choice.itemDefNameId, choice.target) : kInvalidEntity;
+				   pile != kInvalidEntity) {
+			live = world->getComponent<ResourceStack>(pile)->quantity;
+		}
+		const uint32_t have = live.value_or(0U);
+		return have < eaten.quantity + choice.quantity;
+	}
+
 	void AIDecisionSystem::takeSourceChoice(Task& task, std::uint8_t index) {
 		const SourceChoice& choice = task.sourceChoices[index];
 		task.targetPosition		   = choice.goal;
@@ -3157,25 +3268,32 @@ namespace ecs {
 		task.needSourceStorageId   = choice.storageId;
 	}
 
-	void AIDecisionSystem::failRoute(EntityID entity, Task& task, const Memory& memory, MovementTarget& movementTarget,
-									 std::optional<SourceReachMemo::Key> foundUnder) {
+	void AIDecisionSystem::failRoute(EntityID entity, Task& task, const Memory& memory, MovementTarget& movementTarget, RouteFailure why) {
 		if (auto* navPath = world->getComponent<NavPath>(entity)) {
 			navPath->valid = false;
 		}
 		movementTarget.active = false;
 		task.awaitingSnap	  = false;
-		// A verdict on every target the route was asked for, so none is asked about again until the
-		// connectivity epoch or his belief moves. A wander point is random: nothing to remember.
-		const SourceReachMemo::Key now{.connectivityEpoch = m_navSystem->connectivityEpoch(), .beliefVersion = memory.beliefVersion};
-		auto*					   memo = world->getComponent<SourceReachMemo>(entity);
-		if (memo != nullptr && task.type != TaskType::Wander) {
-			const SourceReachMemo::Key found = foundUnder.value_or(now);
+		// A verdict on every target the route was asked for, so none is asked about again until it may no
+		// longer hold (SourceReachMemo::keep). Recorded under the epoch as it stands now, however long the
+		// search took: the epoch moving during it says nothing of these targets for him. An answer asked
+		// under a belief he has since left says nothing of them as he believes now. A wander point is
+		// random: nothing to remember.
+		auto*	   memo	   = world->getComponent<SourceReachMemo>(entity);
+		const bool verdict = memo != nullptr && task.type != TaskType::Wander &&
+							 (why == RouteFailure::NoStandPoint || (why == RouteFailure::NoKnownWay && task.routeBeliefVersion == memory.beliefVersion));
+		if (verdict) {
+			const SourceReachMemo::Key now{.connectivityEpoch = m_navSystem->connectivityEpoch(), .beliefVersion = memory.beliefVersion};
 			if (task.sourceChoices.empty()) {
-				memo->recordVerdict(verdictKeyOf(task), found, now);
+				memo->recordVerdict(verdictKeyOf(task), now, m_tick);
 			}
 			for (const SourceChoice& choice : task.sourceChoices) {
-				memo->recordVerdict(verdictKey(choice.sourceKey, choice.target), found, now);
+				memo->recordVerdict(verdictKey(choice.sourceKey, choice.target), now, m_tick);
 			}
+		}
+		if (memo != nullptr && why == RouteFailure::NoKnownWay && task.type == TaskType::FulfillNeed) {
+			std::uint8_t& widening = memo->roundWidening[needSlotOf(task)];
+			widening			   = std::min<std::uint8_t>(static_cast<std::uint8_t>(widening + 1), kMaxRoundWidening);
 		}
 		task.sourceChoices.clear();
 		setNavState(entity, task, NavState::CantFindWayTo);

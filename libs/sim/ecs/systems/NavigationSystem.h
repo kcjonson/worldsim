@@ -233,6 +233,10 @@ class NavigationSystem : public ISystem {
 	// stand to reach it: standPointBeside, or nearestPathablePoint.
 	// Two locates and a compare; reads the nav mesh's labels as of the last joined patch job.
 	[[nodiscard]] bool connected(glm::vec2 aMeters, glm::vec2 bMeters) const;
+	// The component label of the ground at `meters`, as connected compares them: geometry::nav::kNoComponent
+	// off meshed ground, in water, or inside a placed obstacle in the mesh. One locate. Two points with the
+	// same label other than kNoComponent are connected.
+	[[nodiscard]] geometry::nav::ComponentLabel componentAt(glm::vec2 meters) const;
 	// The nav mesh's label epoch. It moves whenever a way may have opened (ground arriving, a placed
 	// obstacle leaving, a wall or door removed or added, water re-derived) and when labels split or
 	// merge; a placed obstacle landing in open ground leaves it. A "no known way" (from connected or a
@@ -375,8 +379,8 @@ class NavigationSystem : public ISystem {
 	// applied, and of them the ground, water, and wall patches (those that move generation(), with
 	// door edits, which are not patches).
 	struct NavQueryStats {
-		std::uint64_t navPatches		= 0;
-		std::uint64_t structuralPatches = 0;
+		std::uint64_t navPatches			 = 0;
+		std::uint64_t groundWaterWallPatches = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }

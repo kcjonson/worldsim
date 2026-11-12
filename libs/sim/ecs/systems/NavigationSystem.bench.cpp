@@ -712,6 +712,72 @@ namespace {
 		}
 	}
 
+	// One need decision as AIDecisionSystem makes it, over the colony's meshed forest: a thirsty colonist at
+	// the colony remembering range(0) water sources within 100 m, a third of them across the river (a
+	// different component), deciding every tick. Times the AI system's update, which is that one decision
+	// (the whole trace: the source filter, the option filter, the wander probe), and counts the route
+	// requests it makes; nav runs between decisions so routes are answered.
+	void BM_NeedDecision(benchmark::State& state) {
+		const int sources = static_cast<int>(state.range(0));
+		for (auto _ : state) {
+			Rig					   rig(0);
+			ecs::AIDecisionSystem& ai = rig.world.registerSystem<ecs::AIDecisionSystem>(assets::AssetRegistry::Get(), assets::RecipeRegistry::Get(), 1234U);
+			ai.setNavigationSystem(&rig.nav);
+			colony(rig);
+			const ecs::EntityID e = rig.world.createEntity();
+			rig.world.addComponent<ecs::Position>(e, ecs::Position{kColony});
+			rig.world.addComponent<ecs::Velocity>(e, ecs::Velocity{{0.0F, 0.0F}});
+			rig.world.addComponent<ecs::MovementTarget>(e, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+			ecs::NeedsComponent needs = ecs::NeedsComponent::createDefault();
+			for (const ecs::NeedType need : {ecs::NeedType::Hunger, ecs::NeedType::Energy, ecs::NeedType::Bladder, ecs::NeedType::Digestion}) {
+				needs.get(need).value = 100.0F;
+			}
+			needs.get(ecs::NeedType::Thirst).value = 30.0F;
+			rig.world.addComponent<ecs::NeedsComponent>(e, needs);
+			ecs::Memory	  memory;
+			std::uint32_t seed = 23;
+			const auto	  unit = [&seed] {
+				   seed = hashU32(seed + 0x9e3779b9U);
+				   return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
+			};
+			const auto drinkable = static_cast<std::uint16_t>(1U << static_cast<std::size_t>(assets::CapabilityType::Drinkable));
+			for (int i = 0; i < sources; ++i) {
+				const float x = kColony.x + (unit() - 0.5F) * 200.0F;
+				const float y = i % 3 == 2 ? riverY(x) + 10.0F + unit() * 50.0F : riverY(x) - 10.0F - unit() * 80.0F;
+				memory.rememberWorldEntity({x, y}, 7, drinkable);
+			}
+			rig.world.addComponent<ecs::Memory>(e, std::move(memory));
+			rig.world.addComponent<ecs::Inventory>(e, ecs::Inventory::createForColonist());
+			rig.world.addComponent<ecs::Task>(e, ecs::Task{});
+			rig.world.addComponent<ecs::DecisionTrace>(e, ecs::DecisionTrace{});
+			rig.world.addComponent<ecs::SourceReachMemo>(e, ecs::SourceReachMemo{});
+			rig.world.addComponent<ecs::Colonist>(e, ecs::Colonist{"Drinker"});
+			rig.world.addComponent<ecs::AgentRadius>(e, ecs::AgentRadius{kAgentRadius, 1.0F});
+			rig.settle();
+			TickStats warmup;
+			rig.ticks(warmup, 4);
+			rig.settle();
+
+			constexpr int		kDecisions = 200;
+			std::vector<double> decisionUs;
+			const std::uint64_t asked = rig.nav.routeStats().requests;
+			for (int i = 0; i < kDecisions; ++i) {
+				rig.world.getComponent<ecs::Position>(e)->value = kColony;
+				ecs::requestDecision(*rig.world.getComponent<ecs::Task>(e));
+				const Clock::time_point start = Clock::now();
+				ai.update(kTickSeconds);
+				decisionUs.push_back(std::chrono::duration<double, std::micro>(Clock::now() - start).count());
+				rig.nav.update(kTickSeconds);
+				rig.nav.endTick();
+			}
+			state.counters["sources"]			= sources;
+			state.counters["decisionMeanUs"]	= meanOf(decisionUs);
+			state.counters["decisionP99Us"]		= atPercentile(decisionUs, 0.99);
+			state.counters["decisionMaxUs"]		= atPercentile(decisionUs, 1.0);
+			state.counters["routeRequests"]		= static_cast<double>(rig.nav.routeStats().requests - asked);
+		}
+	}
+
 	// The build tool's per-frame cursor checks in the forest: isAreaWalkable over a 4 m square
 	// footprint and isPolylineWalkable over a 20 m wall line, each sampled every 0.5 m, at 200 spots
 	// round the colony. Reports one frame's pair of checks.
@@ -1435,6 +1501,7 @@ BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMil
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanWalk)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RouteSlice)->Arg(1)->Arg(20)->Arg(200)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_CursorCheck)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
