@@ -3542,8 +3542,6 @@ namespace ecs::test {
 			ai->setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();
 			world->registerSystem<PhysicsSystem>();
-			nav->finishPendingBuilds();
-			ASSERT_TRUE(nav->hasMesh());
 		}
 
 		void TearDown() override {
@@ -3603,6 +3601,8 @@ namespace ecs::test {
 			makeLoosePile(*world, pile, item, pilePos, count);
 			const EntityID hauler = createColonist({-7.0F, 0.0F});
 			remember(hauler, pilePos, name, assets::CapabilityType::Carryable);
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh()) << "the hauler meshed nothing";
 			for (int tick = 0; tick < 200 && carried(hauler, name.c_str()) < count; ++tick) {
 				world->update(kTick);
 			}
@@ -3635,7 +3635,10 @@ namespace ecs::test {
 			EXPECT_LE(failedUpdates, 1) << "the failed delivery outlived his next decision";
 		}
 
-		static constexpr float		  kTick = 0.1F;
+		static constexpr float kTick = 0.1F;
+		// Taking a wall down moves the mesh's connectivity epoch, not his belief, so his no-known-way
+		// verdict stands until it is kVerdictMinTicks AI updates old; then 30 s to walk round and deliver.
+		static constexpr int			kTicksForTheWayToOpen = static_cast<int>(SourceReachMemo::kVerdictMinTicks) + 300;
 		construction::ConstructionWorld construction;
 		NavigationSystem*				nav = nullptr;
 	};
@@ -3643,7 +3646,7 @@ namespace ecs::test {
 	// A hauler past his pickup is walled off from the station mid-walk by walls he knows. His next decision
 	// lets the delivery go: it is not offered while he believes he cannot reach the station, his claims
 	// toward the root are released, and the stones stay in his pack as uncommitted goods. Once a wall comes
-	// down the verdict is forgotten, he is offered the delivery again, and delivers exactly what the
+	// down and the verdict ages out, he is offered the delivery again, and delivers exactly what the
 	// station wants. Every AI update's validator passes throughout (it aborts on a violation).
 	TEST_F(ClaimsOnRealRoutesTest, AWalledOffHaulerLetsTheDeliveryGoAndTakesItUpOnceTheWayOpens) {
 		const glm::vec2 stationPos{8.0F, 0.0F};
@@ -3670,7 +3673,7 @@ namespace ecs::test {
 		for (const auto id : west) {
 			ASSERT_TRUE(construction.removeSegment(id));
 		}
-		for (int tick = 0; tick < 300 && world->getComponent<Inventory>(station)->getQuantity("Stone") < 3; ++tick) {
+		for (int tick = 0; tick < kTicksForTheWayToOpen && world->getComponent<Inventory>(station)->getQuantity("Stone") < 3; ++tick) {
 			world->update(kTick);
 		}
 		EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stone"), 3U) << "he never delivered once the wall was down";
@@ -3714,7 +3717,7 @@ namespace ecs::test {
 		for (const auto id : west) {
 			ASSERT_TRUE(construction.removeSegment(id));
 		}
-		for (int tick = 0; tick < 300; ++tick) {
+		for (int tick = 0; tick < kTicksForTheWayToOpen; ++tick) {
 			world->update(kTick);
 			ASSERT_LE(stationStone(), 3U) << "tick " << tick;
 			ASSERT_FALSE(delivering(hauler, station)) << "tick " << tick;

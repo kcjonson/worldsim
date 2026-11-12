@@ -4771,8 +4771,6 @@ namespace ecs::test {
 		void SetUp() override {
 			AIDecisionFirstMeshTest::SetUp();
 			world->registerSystem<ActionSystem>(kTestRngSeed);
-			nav->finishPendingBuilds();
-			ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		}
 
 		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return slidePondChunks(); }
@@ -4781,6 +4779,8 @@ namespace ecs::test {
 			const auto colonist = createColonist(position);
 			world->addComponent<Action>(colonist, Action{});
 			satisfyAllNeeds(*getNeeds(colonist));
+			nav->finishPendingBuilds();
+			EXPECT_TRUE(nav->hasMesh()) << "navmesh never built";
 			return colonist;
 		}
 
@@ -4858,8 +4858,8 @@ namespace ecs::test {
 	// re-decides; still sliding, it goes straight back in. The sleep must hold one decision throughout.
 	TEST_F(NeedActionInPlaceTest, CriticalSleeperDoesNotReDecideEveryTick) {
 		const glm::vec2 shore{28.0F, 40.0F}; // land, a couple of metres west of the pond
-		ASSERT_TRUE(nav->isOnMesh(shore));
 		const auto colonist = createActingColonist(shore);
+		ASSERT_TRUE(nav->isOnMesh(shore));
 		world->getComponent<Velocity>(colonist)->value = {2.0F, 0.0F}; // mid-stride, heading for the water
 
 		getNeeds(colonist)->get(NeedType::Energy).value = 5.0F;
