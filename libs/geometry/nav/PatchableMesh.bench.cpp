@@ -21,9 +21,11 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <limits>
 #include <random>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 

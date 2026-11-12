@@ -43,6 +43,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -3368,7 +3369,7 @@ TEST_F(NavigationSystemTest, ShorePointRingedByTrunksHasNoKnownWay) {
 				if (glm::distance(p, pond) < rim + 1.5F || glm::distance(p, shoreA) < 2.0F || glm::distance(p, shoreB) < 2.0F) {
 					continue;
 				}
-				trees.emplace_back(p, std::uint8_t{h % 100 < 15 ? 0U : h % 100 < 75 ? 1U : 2U});
+				trees.emplace_back(p, static_cast<std::uint8_t>(h % 100 < 15 ? 0U : h % 100 < 75 ? 1U : 2U));
 			}
 		}
 

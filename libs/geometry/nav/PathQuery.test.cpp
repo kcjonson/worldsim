@@ -4,6 +4,7 @@
 #include "NavMesh.h"
 #include "PatchableMesh.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
