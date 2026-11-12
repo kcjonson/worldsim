@@ -481,7 +481,7 @@ namespace geometry::nav {
 		return locateScaled(p, 1);
 	}
 
-	template <typename Visit> void PatchableMesh::forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const {
+	template <typename Visit> void PatchableMesh::forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) {
 		// A triangle sits in up to four cells; the stamp visits it once. Callers only
 		// gather into sets, so the order (the grid's) does not reach any result.
 		assert(!boxQueryOpen && "PatchableMesh: nested box query");

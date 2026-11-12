@@ -1,5 +1,6 @@
 #include "PathQuery.h"
 
+#include "../core/IncrementalHashMap.h"
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
 #include "NavMesh.h"
@@ -11,7 +12,10 @@
 #include <cmath>
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <queue>
+#include <span>
+#include <utility>
 #include <vector>
 
 namespace geometry::nav {
@@ -109,11 +113,38 @@ namespace geometry::nav {
 			return {static_cast<std::int64_t>(std::llround(p.x)), static_cast<std::int64_t>(std::llround(p.y))};
 		}
 
+		// A belief's questions, asked of either form: the caller's sets (reachFrom,
+		// reaches) or a search's own sorted copies.
+		inline bool knowsAll(const BeliefFilter& belief) {
+			return belief.knownSegments == nullptr;
+		}
+		inline bool knowsSegment(const BeliefFilter& belief, std::uint64_t segment) {
+			return belief.knownSegments->count(segment) != 0;
+		}
+		inline bool knowsOpening(const BeliefFilter& belief, std::uint64_t opening) {
+			return belief.knownOpenings != nullptr && belief.knownOpenings->count(opening) != 0;
+		}
+		inline std::span<const TagPrice> pricesOf(const BeliefFilter& belief) {
+			return belief.prices;
+		}
+		inline bool knowsAll(const SearchBelief& belief) {
+			return belief.truth;
+		}
+		inline bool knowsSegment(const SearchBelief& belief, std::uint64_t segment) {
+			return std::binary_search(belief.knownSegments.begin(), belief.knownSegments.end(), segment);
+		}
+		inline bool knowsOpening(const SearchBelief& belief, std::uint64_t opening) {
+			return std::binary_search(belief.knownOpenings.begin(), belief.knownOpenings.end(), opening);
+		}
+		inline std::span<const TagPrice> pricesOf(const SearchBelief& belief) {
+			return belief.prices;
+		}
+
 		// Is triangle `t` crossable for this belief? The truth-vs-belief predicate from
 		// pathfinding-architecture section 5; the door-span trick (a pathable door's
 		// footprint is a blocked face carrying faceOpening) is what makes a truth query
 		// reproduce v1: solid wall blocks, door passes.
-		inline bool freelyTraversable(const NavTriangle& t, const BeliefFilter& belief) {
+		template <typename Belief> inline bool freelyTraversable(const NavTriangle& t, const Belief& belief) {
 			if (isFloorFace(t)) {
 				return true; // real floor
 			}
@@ -124,28 +155,27 @@ namespace geometry::nav {
 			// faceBlocker > 0: a wall segment id (a junction tagged with an incident wall
 			// lands here too, so it is belief-gated like that wall).
 			const std::uint64_t segment = static_cast<std::uint64_t>(t.faceBlocker);
-			if (belief.knownSegments == nullptr) {
+			if (knowsAll(belief)) {
 				// TRUTH: the wall is known solid unless this face is a door span.
 				return t.faceOpening != kNoOpening;
 			}
 			// BELIEF: an unseen wall is absent (walkable); a seen wall blocks unless the
 			// agent also knows a door through it on this very face.
-			if (belief.knownSegments->count(segment) == 0) {
+			if (!knowsSegment(belief, segment)) {
 				return true;
 			}
-			return t.faceOpening != kNoOpening && belief.knownOpenings != nullptr &&
-				   belief.knownOpenings->count(static_cast<std::uint64_t>(t.faceOpening)) != 0;
+			return t.faceOpening != kNoOpening && knowsOpening(belief, static_cast<std::uint64_t>(t.faceOpening));
 		}
 
 		// What walking a length inside triangle t costs per mm for this query: 1 on ground
 		// it crosses freely, its tag's multiplier (above 1) for a face this filter would
 		// block but prices, 0 for a face it may not cross at all.
-		inline double stepMultiplier(const NavView& mesh, std::int32_t t, const BeliefFilter& belief) {
+		template <typename Belief> inline double stepMultiplier(const NavView& mesh, std::int32_t t, const Belief& belief) {
 			const NavTriangle& tri = mesh.triangle(t);
 			if (freelyTraversable(tri, belief)) {
 				return 1.0;
 			}
-			for (const TagPrice& price : belief.prices) {
+			for (const TagPrice& price : pricesOf(belief)) {
 				if (price.tag == tri.faceBlocker) {
 					return price.multiplier;
 				}
@@ -153,7 +183,7 @@ namespace geometry::nav {
 			return 0.0;
 		}
 
-		inline bool traversable(const NavView& mesh, std::int32_t t, const BeliefFilter& belief) {
+		template <typename Belief> inline bool traversable(const NavView& mesh, std::int32_t t, const Belief& belief) {
 			return stepMultiplier(mesh, t, belief) > 0.0;
 		}
 
@@ -161,8 +191,8 @@ namespace geometry::nav {
 		// agent knows everything, else terrain (the sound reject for every belief). A
 		// belief query never uses the truth forest, because an agent optimistically
 		// routing through unseen walls can reach triangles the truth forest walls off.
-		const ReachabilityForest* forestFor(const NavView& mesh, const BeliefFilter& belief) {
-			return mesh.forest(belief.knownSegments == nullptr);
+		template <typename Belief> const ReachabilityForest* forestFor(const NavView& mesh, const Belief& belief) {
+			return mesh.forest(knowsAll(belief));
 		}
 
 		// The triangle a walker stands in at p, located as `tri`: tri itself when this
@@ -171,8 +201,13 @@ namespace geometry::nav {
 		// at a price, then tri. Point location settles a shared edge or corner by geometry
 		// alone, so a start on an obstacle's or wall's edge would otherwise land in the blocked
 		// face and find no path, or in the priced face and be charged for standing beside
-		// it: only a point strictly inside a priced face stands on it.
-		std::int32_t standOn(const NavView& mesh, std::int32_t tri, const Vec2i64& p, const BeliefFilter& belief) {
+		// it: only a point strictly inside a priced face stands on it. `touch` is told
+		// every triangle read.
+		template <typename Belief, typename Touch>
+		std::int32_t standOn(const NavView& mesh, std::int32_t tri, const Vec2i64& p, const Belief& belief, Touch&& touch) {
+			if (tri >= 0) {
+				touch(tri);
+			}
 			if (tri < 0 || stepMultiplier(mesh, tri, belief) == 1.0) {
 				return tri;
 			}
@@ -183,6 +218,7 @@ namespace geometry::nav {
 				  if (u < 0) {
 					  return;
 				  }
+				  touch(u);
 				  const double m = stepMultiplier(mesh, u, belief);
 				  if (m <= 0.0) {
 					  return;
@@ -211,6 +247,7 @@ namespace geometry::nav {
 						if (nb < 0 || nb == tri) {
 							break;
 						}
+						touch(nb);
 						const NavTriangle& next = mesh.triangle(nb);
 						li						= next.v[0] == t.v[e] ? 0 : (next.v[1] == t.v[e] ? 1 : 2);
 						cur						= nb;
@@ -222,6 +259,7 @@ namespace geometry::nav {
 						if (nb < 0 || nb == tri) {
 							break;
 						}
+						touch(nb);
 						const NavTriangle& next = mesh.triangle(nb);
 						li						= next.v[0] == t.v[e] ? 0 : (next.v[1] == t.v[e] ? 1 : 2);
 						cur						= nb;
@@ -243,7 +281,7 @@ namespace geometry::nav {
 		// different component (any diameter), or the path bottleneck < the diameter.
 		bool reachabilityRejects(
 			const NavView& mesh, std::int32_t startTri, std::int32_t goalTri, std::int64_t diameterMm,
-			const BeliefFilter& belief) {
+			const SearchBelief& belief) {
 			const ReachabilityForest* forest = forestFor(mesh, belief);
 			return forest != nullptr && !inForestSubtree(*forest, reachRootInForest(*forest, startTri, diameterMm), goalTri);
 		}
@@ -277,7 +315,7 @@ namespace geometry::nav {
 		// split vertex, a free diagonal's end) is no obstacle, and pulling a portal in from it
 		// would bend paths at nothing. With `hardOnly`, priced faces do not count: a disc
 		// walking through priced ground keeps clear only of what it cannot cross.
-		bool isCorner(const NavView& mesh, std::int32_t t, int i, const BeliefFilter& belief, bool hardOnly) {
+		bool isCorner(const NavView& mesh, std::int32_t t, int i, const SearchBelief& belief, bool hardOnly) {
 			std::int32_t cur = t;
 			int			 li	 = i;
 			for (int guard = 0; guard < 256; ++guard) {
@@ -369,36 +407,20 @@ namespace geometry::nav {
 			return out;
 		}
 
-		// Each vertex's Star, walked once per mesh state and kept between queries on
-		// this thread. A mesh state is known by its owner and its epoch, which no other
-		// state in the process has had (nextMeshGeneration), so a mesh rebuilt where an
-		// old one stood never reads the old one's stars. A new state costs a stamp, not a
-		// pass over the vertices: a star is this state's when its stamp is.
-		struct CornerMemo {
+		// Each vertex's Star, walked once per mesh state and kept between searches on
+		// this thread: no belief enters it, so searches interleaved on one thread share it.
+		// A mesh state is known by its owner and its epoch, which no other state in the
+		// process has had (nextMeshGeneration), so a mesh rebuilt where an old one stood
+		// never reads the old one's stars. A new state costs a stamp, not a pass over the
+		// vertices: a star is this state's when its stamp is.
+		struct StarMemo {
 			const void*				   owner = nullptr;
 			std::uint64_t			   epoch = 0;
 			ScratchArray<StarInfo>		star;
 			ScratchArray<std::uint32_t> starStamp;
 			std::uint32_t			   state = 0;
-			// Round walls a corner depends on the query's belief, and whether one is hard
-			// (a corner without its priced faces) on its prices, so those answers last one
-			// query: stamped with the query, 1 a corner, 0 not.
-			ScratchArray<std::uint32_t> queryStamp;
-			ScratchArray<char>			queryCorner;
-			ScratchArray<std::uint32_t> hardStamp;
-			ScratchArray<char>			queryHard;
-			std::uint32_t			   query = 0;
 
 			void begin(const NavView& mesh) {
-				queryStamp.growTo(mesh.vertices.size());
-				queryCorner.growTo(mesh.vertices.size());
-				hardStamp.growTo(mesh.vertices.size());
-				queryHard.growTo(mesh.vertices.size());
-				if (++query == 0) {
-					queryStamp.zero();
-					hardStamp.zero();
-					query = 1;
-				}
 				star.growTo(mesh.vertices.size());
 				starStamp.growTo(mesh.vertices.size());
 				if (owner != mesh.owner || epoch != mesh.epoch()) {
@@ -421,24 +443,77 @@ namespace geometry::nav {
 				}
 				return star[v];
 			}
+		};
 
-			bool at(const NavView& mesh, std::int32_t t, int i, const BeliefFilter& belief) {
-				const std::uint32_t v = mesh.triangle(t).v[i];
-				const Star			s = starAt(mesh, t, i).star;
+		// Memos for two mesh states, so a thread that alternates two meshes (the game's
+		// structural and nav meshes) keeps both: the state asked for, else the one used
+		// longer ago gives way.
+		struct StarMemos {
+			std::array<StarMemo, 2>		 slots;
+			std::array<std::uint64_t, 2> used{};
+			std::uint64_t				 clock = 0;
+
+			StarMemo& begin(const NavView& mesh) {
+				std::size_t pick = slots[1].holds(mesh) ? 1 : 0;
+				if (!slots[pick].holds(mesh)) {
+					pick = used[0] <= used[1] ? 0 : 1;
+				}
+				used[pick] = ++clock;
+				slots[pick].begin(mesh);
+				return slots[pick];
+			}
+		};
+
+		StarMemo& starMemo(const NavView& mesh) {
+			thread_local StarMemos memos;
+			return memos.begin(mesh);
+		}
+
+		struct IdHash {
+			std::uint64_t operator()(std::uint64_t id) const {
+				id ^= id >> 31;
+				id *= 0xBF58476D1CE4E5B9ULL;
+				return id ^ (id >> 29);
+			}
+		};
+
+		// Whether a vertex is a corner for one search: from its star alone, except round
+		// walls (a corner or not by the belief) and, for hard corners, where its star keeps
+		// too few tags to say (by the prices); those are walked once and kept here.
+		struct CornerAnswers {
+			static constexpr std::uint8_t kCornerKnown = 1;
+			static constexpr std::uint8_t kCorner	   = 2;
+			static constexpr std::uint8_t kHardKnown   = 4;
+			static constexpr std::uint8_t kHard		   = 8;
+
+			IncrementalHashMap<std::uint32_t, std::uint8_t, IdHash> known; // by vertex
+
+			template <typename Walk> bool answer(std::uint32_t v, std::uint8_t knownBit, std::uint8_t valueBit, Walk&& walk) {
+				std::uint8_t* bits = known.find(v);
+				if (bits != nullptr && (*bits & knownBit) != 0) {
+					return (*bits & valueBit) != 0;
+				}
+				const bool corner = walk();
+				const std::uint8_t add = static_cast<std::uint8_t>(knownBit | (corner ? valueBit : 0));
+				if (bits != nullptr) {
+					*bits = static_cast<std::uint8_t>(*bits | add);
+				} else {
+					known.insert(v, add);
+				}
+				return corner;
+			}
+
+			bool at(const NavView& mesh, StarMemo& stars, std::int32_t t, int i, const SearchBelief& belief) {
+				const Star s = stars.starAt(mesh, t, i).star;
 				if (s != Star::Walls) {
 					return s != Star::Open;
 				}
-				if (queryStamp[v] != query) {
-					queryStamp[v]  = query;
-					queryCorner[v] = isCorner(mesh, t, i, belief, false) ? 1 : 0;
-				}
-				return queryCorner[v] != 0;
+				return answer(mesh.triangle(t).v[i], kCornerKnown, kCorner, [&] { return isCorner(mesh, t, i, belief, false); });
 			}
 
-			bool hardAt(const NavView& mesh, std::int32_t t, int i, const BeliefFilter& belief) {
-				const std::uint32_t v	 = mesh.triangle(t).v[i];
-				const StarInfo&		info = starAt(mesh, t, i);
-				const Star			s	 = info.star;
+			bool hardAt(const NavView& mesh, StarMemo& stars, std::int32_t t, int i, const SearchBelief& belief) {
+				const StarInfo& info = stars.starAt(mesh, t, i);
+				const Star		s	 = info.star;
 				if (s == Star::Open || s == Star::Boundary) {
 					return s == Star::Boundary;
 				}
@@ -451,30 +526,7 @@ namespace geometry::nav {
 					}
 					return false;
 				}
-				if (hardStamp[v] != query) {
-					hardStamp[v] = query;
-					queryHard[v] = isCorner(mesh, t, i, belief, true) ? 1 : 0;
-				}
-				return queryHard[v] != 0;
-			}
-		};
-
-		// Memos for two mesh states, so a thread that alternates two meshes (the game's
-		// structural and nav meshes) keeps both: the state asked for, else the one used
-		// longer ago gives way.
-		struct CornerMemos {
-			std::array<CornerMemo, 2>	 slots;
-			std::array<std::uint64_t, 2> used{};
-			std::uint64_t				 clock = 0;
-
-			CornerMemo& begin(const NavView& mesh) {
-				std::size_t pick = slots[1].holds(mesh) ? 1 : 0;
-				if (!slots[pick].holds(mesh)) {
-					pick = used[0] <= used[1] ? 0 : 1;
-				}
-				used[pick] = ++clock;
-				slots[pick].begin(mesh);
-				return slots[pick];
+				return answer(mesh.triangle(t).v[i], kHardKnown, kHard, [&] { return isCorner(mesh, t, i, belief, true); });
 			}
 		};
 
@@ -484,7 +536,9 @@ namespace geometry::nav {
 		// whole edge, so a short edge from a corner still keeps the disc its radius away.
 		// A portal into or out of priced ground keeps clear only of hard corners: the disc is
 		// walking through that ground, so its own corners are no obstacle to it.
-		inline PortalSpan portalSpan(const NavView& mesh, std::int32_t t, int e, double radius, const BeliefFilter& belief, CornerMemo& corners) {
+		// cornerAt(i, hardOnly) says whether corner i of t is one.
+		template <typename CornerAt>
+		inline PortalSpan portalSpan(const NavView& mesh, std::int32_t t, int e, double radius, const SearchBelief& belief, CornerAt&& cornerAt) {
 			const NavTriangle& tri = mesh.triangle(t);
 			PortalSpan		   span{toD(mesh.vertex(tri.v[e])), toD(mesh.vertex(tri.v[(e + 1) % 3]))};
 			if (radius <= 0.0) {
@@ -497,9 +551,8 @@ namespace geometry::nav {
 			}
 			const Vec2d	 unit	   = dir * (1.0 / len);
 			const bool	 throughPriced = stepMultiplier(mesh, t, belief) > 1.0 || stepMultiplier(mesh, tri.neighbor[e], belief) > 1.0;
-			auto		 cornerAt	   = [&](int i) { return throughPriced ? corners.hardAt(mesh, t, i, belief) : corners.at(mesh, t, i, belief); };
-			const bool	 leftEnd	   = cornerAt(e);
-			const bool	 rightEnd	   = cornerAt((e + 1) % 3);
+			const bool	 leftEnd	   = cornerAt(e, throughPriced);
+			const bool	 rightEnd	   = cornerAt((e + 1) % 3, throughPriced);
 			const double off	   = std::min(radius, leftEnd && rightEnd ? len * 0.5 : len);
 			const Vec2d	 tail	   = span.left;
 			if (leftEnd) {
@@ -723,7 +776,8 @@ namespace geometry::nav {
 			std::int32_t state	  = -1;
 			std::int32_t cameFrom = -1;
 			bool		 closed	  = false;
-			bool		 exact	  = false; // best is the corridor's taut length (or cost) to the goal
+			bool		 exact	  = false; // best is the corridor's taut length (or cost) to goal `goal`
+			std::int32_t goal	  = -1;
 			bool		 priced	  = false; // the corridor crosses a face walked at a price
 			double		 squeeze  = 0.0;   // what the squeeze of the step into this label's triangle costs (see the width gate)
 			// A lower bound on what priced faces add to the corridor's cost: the runs it has
@@ -746,41 +800,6 @@ namespace geometry::nav {
 			std::array<std::int32_t, kLabelsPerState> ids{};
 			int										  count = 0;
 		};
-
-		// Labels and the states holding them, kept between queries on this thread so a
-		// query costs what it expands, not the mesh's size. A state's entry is this
-		// query's when its stamp is the current one.
-		struct SearchScratch {
-			std::vector<Label>		   labels;
-			ScratchArray<StateLabels>	states;
-			ScratchArray<std::uint32_t> stamp;
-			std::uint32_t			   current = 0;
-			std::vector<Portal>		   replay;
-			std::vector<std::int32_t>  corridor; // a winning corridor's triangles
-			std::vector<Vec2i64>	   points;	 // a candidate corridor's string-pull
-			CornerMemos				   corners;
-
-			StateLabels& held(std::int32_t state) {
-				const std::size_t s = static_cast<std::size_t>(state);
-				if (stamp[s] != current) {
-					stamp[s]		= current;
-					states[s].count = 0;
-				}
-				return states[s];
-			}
-		};
-
-		SearchScratch& searchScratch(std::size_t stateCount) {
-			thread_local SearchScratch scratch;
-			scratch.labels.clear();
-			scratch.stamp.growTo(stateCount);
-			scratch.states.growTo(stateCount);
-			if (++scratch.current == 0) {
-				scratch.stamp.zero();
-				scratch.current = 1;
-			}
-			return scratch;
-		}
 
 		// A funnel's lengths to the sample points of a portal: its ends and middle.
 		// The corridor's taut length to p, a point of the portal it was last pulled
@@ -822,6 +841,667 @@ namespace geometry::nav {
 				return 0.0;
 			}
 			return std::min({distanceToSegment(p, a, b), distanceToSegment(q, a, b), distanceToSegment(a, p, q), distanceToSegment(b, p, q)});
+		}
+
+		// Triangle ids a search has read, each once, in the order first read.
+		struct Touched {
+			IncrementalHashMap<std::int32_t, std::uint8_t, IdHash> seen;
+			std::vector<std::int32_t>							   ids;
+
+			void add(std::int32_t t) {
+				if (seen.find(t) == nullptr) {
+					seen.insert(t, 1);
+					ids.push_back(t);
+				}
+			}
+			bool has(std::int32_t t) const { return seen.find(t) != nullptr; }
+		};
+
+		// Open-set node: score, then a key mixed from geometry (the triangle's corners,
+		// the entry edge's ends, the apex), so equal scores resolve the same way whatever
+		// slots the triangles sit in. std::priority_queue is a max-heap, hence the
+		// reversed comparisons.
+		struct Node {
+			double		  f;
+			double		  near; // distance on from the entry portal's middle to the nearest goal: nearer first
+			std::uint64_t tie;
+			std::int32_t  label;
+		};
+		struct NodeWorse {
+			bool operator()(const Node& a, const Node& b) const {
+				if (a.f != b.f) {
+					return a.f > b.f;
+				}
+				if (a.near != b.near) {
+					return a.near > b.near;
+				}
+				return a.tie > b.tie;
+			}
+		};
+
+		// Where one A* runs from and to: points, and the triangles they stand on.
+		struct Ends {
+			Vec2i64					  start;
+			std::int32_t			  startTri = -1;
+			std::vector<Vec2i64>	  goals;
+			std::vector<std::int32_t> goalTris;
+		};
+
+		// One A* from a start toward its goals, run a slice at a time (see SearchState).
+		//
+		// Search state is (triangle, entry-edge): the squeeze the agent must clear to
+		// LEAVE a triangle depends on which edge it ENTERED by (Demyen edge-pair width
+		// keyed by the apex shared by the entry and exit edges), so the same triangle is
+		// distinct per entry edge. entry == 3 is the start triangle (no entry edge, no
+		// squeeze). At most 4 states per triangle.
+		//
+		// A label is one corridor reaching a state, carrying the corridor's funnel (see
+		// Funnel), scored by the funnel's length on to the nearest goal: what the corridor's
+		// taut path would be if the rest were open ground, and never more than it. A
+		// corridor's score depends on where its walls and corners are, not on how its open
+		// ground is cut into triangles, so seams and free diagonals do not steer the search.
+		// A state keeps up to kLabelsPerState labels (see there). A label popped in a goal's
+		// triangle is pulled exactly to that goal and pushed again at that length (or cost);
+		// the first to pop at its exact length is the corridor the search returns. Where
+		// other goals lie in other triangles, the corridor also goes on, and its exact walk
+		// waits in the open set as a label of its own.
+		//
+		// Labels and states live in the sweep, the states in a hash map, so a sweep costs
+		// what it touches, not the mesh's size.
+		class Sweep {
+		  public:
+			Sweep(const NavView& mesh, Ends endsIn, std::int64_t agentRadiusMm, const SearchBelief& beliefIn, double maxCost, Touched& touchedIn)
+				: ends(std::move(endsIn)), belief(beliefIn), touched(touchedIn) {
+				diameterMm = discDiameterMm(agentRadiusMm);
+				radius	   = static_cast<double>(agentRadiusMm);
+				// Scores are bounds on unrounded walks and a cost is the rounded walk's, so the
+				// cap takes a millimetre's slack: a walk costing the cap to within rounding is kept.
+				costCap = maxCost + 1.0;
+				// A squeeze past detail-class faces (a gate the full width fails and the
+				// structural width passes) costs the dearest detail price, when the query prices
+				// every detail tag; with any left unpriced, detail is hard and such a gap stays shut.
+				// The least price a query sets: a priced run costs at least that over the disc's
+				// diameter, whichever tags it holds (see walkCorridor), which the search's bound
+				// counts as soon as a run starts.
+				double leastPrice = 0.0;
+				for (const TagPrice& p : belief.prices) {
+					leastPrice = leastPrice > 0.0 ? std::min(leastPrice, p.multiplier) : p.multiplier;
+				}
+				runFloor = leastPrice > 0.0 ? (leastPrice - 1.0) * static_cast<double>(diameterMm) : 0.0;
+				if (!belief.prices.empty() && mesh.detailTags != nullptr) {
+					for (const std::int64_t tag : *mesh.detailTags) {
+						const auto it = std::find_if(belief.prices.begin(), belief.prices.end(), [&](const TagPrice& p) { return p.tag == tag; });
+						if (it == belief.prices.end()) {
+							squeezePrice = 0.0;
+							break;
+						}
+						squeezePrice = std::max(squeezePrice, it->multiplier);
+					}
+				}
+				startD = toD(ends.start);
+				for (const Vec2i64& g : ends.goals) {
+					goalsD.push_back(toD(g));
+				}
+				goalsShareTriangle = std::all_of(ends.goalTris.begin(), ends.goalTris.end(), [&](std::int32_t t) { return t == ends.goalTris.front(); });
+
+				const std::int32_t startState = stateId(ends.startTri, kStartEntry);
+				Label			   first;
+				first.funnel = funnelAt(startD, 0);
+				first.entry	 = {startD, startD, 0};
+				first.best	 = score(first.funnel, first.entry);
+				first.state	 = startState;
+				first.priced = stepMultiplier(mesh, ends.startTri, belief) > 1.0;
+				labels.push_back(first);
+				StateLabels held;
+				held.ids[0] = 0;
+				held.count	= 1;
+				heldMap.insert(startState * 2 + (first.priced ? 1 : 0), held);
+				open.push({first.best, nearest(startD), tieOf(mesh, mesh.triangle(ends.startTri), ends.start + ends.start, startD), 0});
+				peakOpenSet = static_cast<std::int64_t>(open.size());
+			}
+
+			// At most n expansions, then Running; a pop that expands nothing (a goal tried at
+			// its exact walk) is still made at the count, so the same labels pop in the same
+			// order however the work is sliced.
+			SearchProgress step(const NavView& mesh, StarMemo& stars, std::uint32_t n);
+
+			// The answer's walk (Found): its points into `out`, and its cost.
+			double answer(const NavView& mesh, std::vector<Vec2i64>& out) {
+				return walkCorridor(mesh, goalLabel, labels[static_cast<std::size_t>(goalLabel)].goal, out);
+			}
+			std::int32_t answerGoal() const { return labels[static_cast<std::size_t>(goalLabel)].goal; }
+
+			std::int64_t nodesExpanded = 0; // labels popped and closed (each expanded once)
+			std::int64_t peakOpenSet   = 0;
+			bool		 limited	   = false; // a corridor was left untried for the cost cap
+			bool		 crossesPriced = false;
+
+		  private:
+			static constexpr int kStartEntry = 3;
+			static std::int32_t	 stateId(std::int32_t tri, int entry) { return tri * 4 + entry; }
+
+			std::uint64_t tieOf(const NavView& mesh, const NavTriangle& t, const Vec2i64& entry, const Vec2d& apex) const {
+				const Vec2i64 corners = cornerSum(mesh, t);
+				std::uint64_t key	  = mixKey(static_cast<std::uint64_t>(corners.x), static_cast<std::uint64_t>(corners.y));
+				key					  = mixKey(mixKey(key, static_cast<std::uint64_t>(entry.x)), static_cast<std::uint64_t>(entry.y));
+				return mixKey(mixKey(key, std::bit_cast<std::uint64_t>(apex.x)), std::bit_cast<std::uint64_t>(apex.y));
+			}
+
+			double score(const Funnel& f, const Portal& portal) const {
+				double best = walkVia(f, portal, goalsD[0]);
+				for (std::size_t k = 1; k < goalsD.size(); ++k) {
+					best = std::min(best, walkVia(f, portal, goalsD[k]));
+				}
+				return best;
+			}
+
+			double nearest(const Vec2d& p) const {
+				double best = distanceD(p, goalsD[0]);
+				for (std::size_t k = 1; k < goalsD.size(); ++k) {
+					best = std::min(best, distanceD(p, goalsD[k]));
+				}
+				return best;
+			}
+
+			bool holdsGoal(std::int32_t tri) const { return std::find(ends.goalTris.begin(), ends.goalTris.end(), tri) != ends.goalTris.end(); }
+
+			// Expands no neighbour when popped: a goal's walk already pulled exactly, or a
+			// corridor in the triangle every goal is in.
+			bool expandsNothing(const Label& label, std::int32_t tri) const { return label.exact || (goalsShareTriangle && holdsGoal(tri)); }
+
+			const StateLabels* heldAt(std::int32_t key) const { return heldMap.find(key); }
+
+			// Every triangle round corner i of t, once per vertex for the sweep: what the
+			// corner's star and walls answer depends on.
+			void touchFan(const NavView& mesh, std::int32_t t, int i) {
+				const std::uint32_t v = mesh.triangle(t).v[i];
+				if (fanTouched.find(v) != nullptr) {
+					return;
+				}
+				fanTouched.insert(v, 1);
+				std::int32_t cur = t;
+				int			 li	 = i;
+				bool		 boundary = false;
+				for (int guard = 0; guard < 256; ++guard) {
+					touched.add(cur);
+					const std::int32_t nb = mesh.triangle(cur).neighbor[(li + 2) % 3];
+					if (nb < 0) {
+						boundary = true;
+						break;
+					}
+					if (nb == t) {
+						break;
+					}
+					const NavTriangle& next = mesh.triangle(nb);
+					li						= next.v[0] == v ? 0 : (next.v[1] == v ? 1 : 2);
+					cur						= nb;
+				}
+				cur = t;
+				li	= i;
+				for (int guard = 0; boundary && guard < 256; ++guard) {
+					const std::int32_t nb = mesh.triangle(cur).neighbor[li];
+					if (nb < 0 || nb == t) {
+						break;
+					}
+					touched.add(nb);
+					const NavTriangle& next = mesh.triangle(nb);
+					li						= next.v[0] == v ? 0 : (next.v[1] == v ? 1 : 2);
+					cur						= nb;
+				}
+			}
+
+			void advance(std::int32_t li, Funnel& funnel, const Portal& step, const Vec2d& a, const Vec2d& b);
+			double walkCorridor(const NavView& mesh, std::int32_t li, std::int32_t goal, std::vector<Vec2i64>& points);
+			void   closeRun();
+			void   addPiece(const NavView& mesh, std::int32_t t, double piece);
+
+			Ends				 ends;
+			const SearchBelief&	 belief;
+			Touched&			 touched;
+			std::int64_t		 diameterMm	  = 0;
+			double				 radius		  = 0.0;
+			double				 costCap	  = 0.0;
+			double				 squeezePrice = 0.0;
+			double				 runFloor	  = 0.0;
+			Vec2d				 startD;
+			std::vector<Vec2d>	 goalsD;
+			bool				 goalsShareTriangle = true;
+			std::int32_t		 goalLabel			= -1;
+
+			std::vector<Label>												 labels;
+			std::priority_queue<Node, std::vector<Node>, NodeWorse>			 open;
+			// A state's labels, keyed state * 2 + 1 for corridors that cross priced faces (kept
+			// apart, so a cheap-looking way through never crowds out a free way round).
+			IncrementalHashMap<std::int32_t, StateLabels, IdHash>  heldMap;
+			IncrementalHashMap<std::uint32_t, std::uint8_t, IdHash> fanTouched;
+			CornerAnswers										   corners;
+			std::vector<Portal>									   replay;
+			std::vector<std::int32_t>							   corridor; // a corridor's triangles
+			std::vector<Vec2i64>								   points;	 // a candidate corridor's string-pull
+
+			// walkCorridor's running cost (see there).
+			double cost		  = 0.0;
+			double runSurplus = 0.0;
+			double runLeast	  = 0.0; // the least multiplier of the priced run the walk is in, 0 outside one
+		};
+
+		// Pull one more portal into the funnel of label li's corridor. When the path bends at
+		// a bound, the bound becomes the apex and the funnel restarts there with this portal
+		// alone: looser than the string-pull's, which would resume with every portal after
+		// the one that set the bound, so its scores stay lower bounds while every walk
+		// through this portal must round the bound, which holds while the bound and the
+		// apex lie on this portal's near side (left of its edge (a, b), the side of the
+		// triangle the step leaves). Wrapping a wall's end the portals turn past half a
+		// turn, and either can lie beyond the portal's line, where the restart over-scores:
+		// then the pull resumes as the string-pull does, with the portals since the bound,
+		// found back along the corridor's labels. Sides are read against the edge, not the
+		// portal: one pulled in from both ends can shrink to a point.
+		void Sweep::advance(std::int32_t li, Funnel& funnel, const Portal& step, const Vec2d& a, const Vec2d& b) {
+			if (narrow(funnel, step)) {
+				return;
+			}
+			// The bound the string-pull bends at: the left one when the step's right end
+			// crosses it; else the right one, which is the step's own right end when that end
+			// tightened the cone before the left end crossed it.
+			const bool		   rightTightens	= area2(funnel.apex, funnel.right, step.right) <= 0.0;
+			const bool		   rightCrossesLeft = rightTightens && !same(funnel.apex, funnel.right) && area2(funnel.apex, funnel.left, step.right) <= 0.0;
+			const Vec2d		   bound			= rightCrossesLeft ? funnel.left : (rightTightens ? step.right : funnel.right);
+			const std::int32_t from				= rightCrossesLeft ? funnel.leftFrom : (rightTightens ? step.label : funnel.rightFrom);
+			replay.assign(1, step);
+			if (area2(a, b, bound) >= 0.0 && area2(a, b, funnel.apex) >= 0.0) {
+				pull(funnel, replay, nullptr);
+				return;
+			}
+			// Bending at the step's own end leaves no portal after it to resume with.
+			replay.clear();
+			if (from != step.label) {
+				for (std::int32_t at = li; at > 0 && at != from; at = labels[static_cast<std::size_t>(at)].cameFrom) {
+					replay.push_back(labels[static_cast<std::size_t>(at)].entry);
+				}
+				std::reverse(replay.begin(), replay.end());
+				replay.push_back(step);
+			}
+			funnel.length += distanceD(funnel.apex, bound);
+			funnel.apex		 = bound;
+			funnel.left		 = bound;
+			funnel.right	 = bound;
+			funnel.apexFrom	 = from;
+			funnel.leftFrom	 = from;
+			funnel.rightFrom = from;
+			pull(funnel, replay, nullptr);
+		}
+
+		void Sweep::closeRun() {
+			if (runLeast > 0.0) {
+				const double surplus = std::max(runSurplus, (runLeast - 1.0) * static_cast<double>(diameterMm));
+				cost += surplus;
+				crossesPriced = crossesPriced || surplus > 0.0;
+			}
+			runSurplus = 0.0;
+			runLeast   = 0.0;
+		}
+
+		void Sweep::addPiece(const NavView& mesh, std::int32_t t, double piece) {
+			const double m = stepMultiplier(mesh, t, belief);
+			cost += piece;
+			if (m > 1.0) {
+				runSurplus += (m - 1.0) * piece;
+				runLeast = runLeast > 0.0 ? std::min(runLeast, m) : m;
+			} else {
+				closeRun();
+			}
+		}
+
+		// The string-pull of label li's corridor to goal `goal`, every portal from the start:
+		// its points into `points`, and its cost, which is its length unless the corridor
+		// crosses a face walked at a price. Then each piece inside a priced triangle is
+		// weighted by its multiplier, but a run of priced triangles costs at least its least
+		// multiplier over the disc's diameter: a disc entering priced ground overlaps it that
+		// far however little of the centreline is inside (a corner shaved through the face's
+		// own triangle has none). Each squeeze adds what the width gate charged for it.
+		double Sweep::walkCorridor(const NavView& mesh, std::int32_t li, std::int32_t goal, std::vector<Vec2i64>& out) {
+			const Vec2d goalD = goalsD[static_cast<std::size_t>(goal)];
+			std::vector<std::int32_t>& tris = corridor;
+			replay.clear();
+			tris.clear();
+			double squeezes = 0.0;
+			for (std::int32_t at = li; at >= 0; at = labels[static_cast<std::size_t>(at)].cameFrom) {
+				const Label& label = labels[static_cast<std::size_t>(at)];
+				tris.push_back(label.state / 4);
+				squeezes += label.squeeze;
+				if (label.cameFrom >= 0) {
+					replay.push_back(label.entry);
+				}
+			}
+			std::reverse(replay.begin(), replay.end());
+			std::reverse(tris.begin(), tris.end());
+			replay.push_back({goalD, goalD, -1});
+			out.assign(1, ends.start);
+			Funnel taut = funnelAt(startD, -1);
+			pull(taut, replay, &out);
+			appendTaut(out, ends.goals[static_cast<std::size_t>(goal)]);
+			crossesPriced = false;
+			if (!labels[static_cast<std::size_t>(li)].priced) {
+				return lengthTo(taut, goalD);
+			}
+			// Walk the path through the corridor: triangle k ends where the path crosses
+			// to the far side of the edge it shares with triangle k + 1.
+			cost			  = squeezes;
+			crossesPriced	  = squeezes > 0.0;
+			runSurplus		  = 0.0;
+			runLeast		  = 0.0;
+			double		piece = 0.0;
+			std::size_t s	  = 0;
+			Vec2d		at	  = toD(out[0]);
+			for (std::size_t k = 0; k + 1 < tris.size(); ++k) {
+				const NavTriangle& tri = mesh.triangle(tris[k]);
+				const int		   e   = sharedEdgeIndex(tri, tris[k + 1]);
+				const Vec2d		   a   = toD(mesh.vertex(tri.v[e]));
+				const Vec2d		   b   = toD(mesh.vertex(tri.v[(e + 1) % 3]));
+				const double	   len = std::max(distanceD(a, b), 1e-9);
+				auto			   side = [&](const Vec2d& p) { return area2(a, b, p) / len; }; // mm, positive inside tri
+				while (s + 1 < out.size()) {
+					const Vec2d	 q	= toD(out[s + 1]);
+					const double sq = side(q);
+					if (sq > 0.5) {
+						piece += distanceD(at, q);
+						at = q;
+						++s;
+						continue;
+					}
+					const double sa	   = side(at);
+					const double t	   = sa > sq ? std::clamp(sa / (sa - sq), 0.0, 1.0) : 0.0;
+					const Vec2d	 cross = at + (q - at) * t;
+					piece += distanceD(at, cross);
+					at = cross;
+					break;
+				}
+				addPiece(mesh, tris[k], piece);
+				piece = 0.0;
+			}
+			while (s + 1 < out.size()) {
+				const Vec2d q = toD(out[s + 1]);
+				piece += distanceD(at, q);
+				at = q;
+				++s;
+			}
+			addPiece(mesh, tris.back(), piece);
+			closeRun();
+			return cost;
+		}
+
+		SearchProgress Sweep::step(const NavView& mesh, StarMemo& stars, std::uint32_t n) {
+			const std::int64_t before = nodesExpanded;
+			while (!open.empty()) {
+				const Node		   cur = open.top();
+				const std::int32_t li  = cur.label;
+				if (labels[static_cast<std::size_t>(li)].closed || cur.f != labels[static_cast<std::size_t>(li)].best) {
+					open.pop();
+					continue; // stale entry (we push duplicates instead of decrease-key)
+				}
+				const std::int32_t s	 = labels[static_cast<std::size_t>(li)].state;
+				const std::int32_t ti	 = s / 4;
+				const int		   entry = s % 4;
+				if (nodesExpanded - before >= static_cast<std::int64_t>(n) && !expandsNothing(labels[static_cast<std::size_t>(li)], ti)) {
+					return SearchProgress::Running;
+				}
+				open.pop();
+				// Scores pop in order and bound costs from below: past the cap nothing open can
+				// cost the cap or less.
+				if (cur.f > costCap) {
+					limited = true;
+					return SearchProgress::Exhausted;
+				}
+				labels[static_cast<std::size_t>(li)].closed = true;
+				++nodesExpanded; // a label closed exactly once: one real expansion
+				if (holdsGoal(ti)) {
+					// The score is a bound; the corridor's taut length to a goal is exact. Only a
+					// label whose exact length is still the least in the open set is accepted.
+					if (labels[static_cast<std::size_t>(li)].exact) {
+						goalLabel = li;
+						return SearchProgress::Found;
+					}
+					std::int32_t pick	= -1;
+					double		 length = 0.0;
+					for (std::size_t k = 0; k < ends.goalTris.size(); ++k) {
+						if (ends.goalTris[k] == ti) {
+							const double walk = walkCorridor(mesh, li, static_cast<std::int32_t>(k), points);
+							if (pick < 0 || walk < length) {
+								pick   = static_cast<std::int32_t>(k);
+								length = walk;
+							}
+						}
+					}
+					if (goalsShareTriangle) {
+						Label& at = labels[static_cast<std::size_t>(li)];
+						at.exact  = true;
+						at.closed = false;
+						at.goal	  = pick;
+						if (length > at.best) {
+							at.best = length;
+							open.push({length, cur.near, cur.tie, li});
+							--nodesExpanded;
+							continue;
+						}
+						goalLabel = li;
+						return SearchProgress::Found;
+					}
+					// Goals lie elsewhere too: the walk to this one waits as a label of its own
+					// while the corridor goes on.
+					Label walk	= labels[static_cast<std::size_t>(li)];
+					walk.exact	= true;
+					walk.closed = false;
+					walk.goal	= pick;
+					walk.best	= std::max(length, walk.best);
+					const std::int32_t id = static_cast<std::int32_t>(labels.size());
+					labels.push_back(walk);
+					if (length <= cur.f) {
+						labels[static_cast<std::size_t>(id)].closed = true;
+						goalLabel									  = id;
+						return SearchProgress::Found;
+					}
+					open.push({walk.best, cur.near, cur.tie, id});
+					peakOpenSet = std::max(peakOpenSet, static_cast<std::int64_t>(open.size()));
+				}
+
+				const NavTriangle& tri	  = mesh.triangle(ti);
+				const Funnel	   funnel = labels[static_cast<std::size_t>(li)].funnel;
+				auto			   cornerAt = [&](int i, bool hardOnly) {
+					touchFan(mesh, ti, i);
+					return hardOnly ? corners.hardAt(mesh, stars, ti, i, belief) : corners.at(mesh, stars, ti, i, belief);
+				};
+				for (int e = 0; e < 3; ++e) {
+					if (e == entry) {
+						continue; // U-turn back through the entry edge: never on a taut path
+					}
+					const std::int32_t nb = tri.neighbor[e];
+					if (nb < 0) {
+						continue;
+					}
+					touched.add(nb);
+					// Belief gate: skip a neighbor this agent may not cross. The only place
+					// truth/belief changes routing; the funnel below is untouched.
+					const double nbMultiplier = stepMultiplier(mesh, nb, belief);
+					if (nbMultiplier <= 0.0) {
+						continue;
+					}
+					// Width gate (intra-triangle squeeze): to leave `ti` via edge e having
+					// entered by `entry`, the disc must clear the Demyen width of the edge
+					// pair meeting at their shared apex. The start state has no entry edge,
+					// so nothing to clear inside the start triangle.
+					// A gap too narrow for the disc that only detail narrows (its structural width
+					// admits the disc) is squeezed through at squeezePrice; anything else stays shut.
+					// The disc overlaps what narrows the gap at least over the chord it cuts from a
+					// circle of its radius at the gap's half-width (w / 2 from the narrowing), so
+					// the squeeze costs its surplus price over that chord: a cost the walk's length
+					// cannot shrink, which the corridor's score counts from this step on. Beside a
+					// priced face the corridor walks into, came out of, or is in, the overlap is
+					// that crossing, already paid: only a dearer narrowing is charged.
+					double squeeze = 0.0;
+					if (entry != kStartEntry && !widthAdmits(tri, apexVertexOfEdgePair(entry, e), diameterMm)) {
+						if (squeezePrice <= 0.0 || tri.structuralWidthMm[apexVertexOfEdgePair(entry, e)] < diameterMm) {
+							continue;
+						}
+						const std::int32_t from	  = labels[static_cast<std::size_t>(li)].cameFrom;
+						const double	   before = from >= 0 ? stepMultiplier(mesh, labels[static_cast<std::size_t>(from)].state / 4, belief) : 1.0;
+						const double	   here	  = stepMultiplier(mesh, ti, belief);
+						if (squeezePrice > std::max({nbMultiplier, before, here})) {
+							const double halfGap = 0.5 * static_cast<double>(tri.edgePairWidthMm[apexVertexOfEdgePair(entry, e)]);
+							squeeze				 = (squeezePrice - here) * 2.0 * std::sqrt(std::max(0.0, radius * radius - halfGap * halfGap));
+						}
+					}
+					// Width gate (door portal): a door edge is gated by its clear width.
+					if (tri.edgeOpening[e] != kNoOpening && tri.edgeClearWidthMm[e] < diameterMm) {
+						continue;
+					}
+
+					// The edge of `nb` that faces `ti` is nb's entry edge for this step.
+					const int back = sharedEdgeIndex(mesh.triangle(nb), ti);
+					if (back < 0) {
+						continue; // adjacency inconsistency; skip safely
+					}
+					const std::int32_t ns		   = stateId(nb, back);
+					const bool		   freshPriced = labels[static_cast<std::size_t>(li)].priced || nbMultiplier > 1.0 || squeeze > 0.0;
+					const std::int32_t heldKey	   = ns * 2 + (freshPriced ? 1 : 0);
+					const StateLabels  none;
+					const StateLabels* heldFound = heldAt(heldKey);
+					const StateLabels& held		 = heldFound != nullptr ? *heldFound : none;
+					if (held.count == kLabelsPerState) {
+						bool anyOpen = false;
+						for (int k = 0; k < held.count; ++k) {
+							anyOpen = anyOpen || !labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])].closed;
+						}
+						if (!anyOpen) {
+							continue; // full of expanded corridors: nothing this one could take over
+						}
+					}
+					const std::int32_t label = static_cast<std::int32_t>(labels.size()); // the label a new one would take
+					const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, cornerAt);
+					const Portal	   step{span.left, span.right, label};
+					Funnel			   next = funnel;
+					advance(li, next, step, toD(mesh.vertex(tri.v[e])), toD(mesh.vertex(tri.v[(e + 1) % 3])));
+					// What priced faces add, as a bound: a run of them is entered, carried on, or
+					// left (charged then for the distance across it, or its least price over the
+					// disc's diameter, as walkCorridor does) by this step.
+					const Label& parent	  = labels[static_cast<std::size_t>(li)];
+					double		 extra	  = parent.extra + squeeze;
+					double		 runPrice = 0.0;
+					Portal		 runEntry = step;
+					if (parent.runPrice > 0.0) {
+						const double across = (parent.runPrice - 1.0) * segmentToSegment(parent.runEntry.left, parent.runEntry.right, step.left, step.right);
+						if (nbMultiplier > 1.0) {
+							runPrice = std::min(parent.runPrice, nbMultiplier);
+							runEntry = parent.runEntry;
+						} else {
+							extra += std::max(across, (parent.runPrice - 1.0) * static_cast<double>(diameterMm));
+						}
+					} else if (nbMultiplier > 1.0) {
+						runPrice = nbMultiplier;
+					}
+					const double inRun = runPrice > 0.0 ? std::max((runPrice - 1.0) * segmentToSegment(runEntry.left, runEntry.right, step.left, step.right), runFloor) : 0.0;
+					const double score = this->score(next, step) + extra + inRun;
+					if (score > costCap) {
+						limited = true;
+						continue;
+					}
+					std::int32_t slot	= -1; // the label this corridor takes over, if any
+					bool		 beaten = false;
+					// A corridor that crosses priced faces is also beaten by a free one at this state
+					// that is no longer: their futures are the same, and the free one's past costs
+					// its length while this one's costs at least its length and its bound.
+					const StateLabels*	  freeHeld = freshPriced ? heldAt(ns * 2) : nullptr;
+					std::array<double, 3> reach	   = held.count > 0 || (freeHeld != nullptr && freeHeld->count > 0) ? reachOf(next, step) : std::array<double, 3>{};
+					for (double& r : reach) {
+						r += extra + inRun;
+					}
+					for (int k = 0; freeHeld != nullptr && k < freeHeld->count && !beaten; ++k) {
+						const Label& other = labels[static_cast<std::size_t>(freeHeld->ids[static_cast<std::size_t>(k)])];
+						beaten			   = other.exact ? score >= other.best : noLonger(reachOf(other.funnel, step), reach);
+					}
+					for (int k = 0; k < held.count && !beaten; ++k) {
+						Label&				  other		 = labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])];
+						std::array<double, 3> otherReach = reachOf(other.funnel, step);
+						const double		  otherExtra = other.extra + (other.runPrice > 0.0 ? std::max((other.runPrice - 1.0) * segmentToSegment(other.runEntry.left, other.runEntry.right, step.left, step.right), runFloor) : 0.0);
+						for (double& r : otherReach) {
+							r += otherExtra;
+						}
+						// A goal label pulled exactly is known by its walk, not its funnel (whose
+						// reach is a bound from a restarted cone): it beats only a corridor whose own
+						// bound is no better.
+						if (other.exact ? score >= other.best : noLonger(otherReach, reach)) {
+							beaten = true;
+						} else if (!other.closed && !other.exact && noLonger(reach, otherReach)) {
+							if (slot < 0) {
+								slot = held.ids[static_cast<std::size_t>(k)];
+							} else {
+								other.closed = true; // dominated twice over: retire it
+							}
+						}
+					}
+					if (beaten) {
+						continue;
+					}
+					if (slot < 0 && held.count == kLabelsPerState) {
+						// Full: take over the worst-scoring open corridor if this one scores better.
+						// A goal label already pulled exactly is never taken over: its score is its
+						// walk, and a newcomer's is only a bound that can come out longer.
+						for (int k = 0; k < held.count; ++k) {
+							const std::int32_t id	 = held.ids[static_cast<std::size_t>(k)];
+							const Label&	   other = labels[static_cast<std::size_t>(id)];
+							if (!other.closed && !other.exact && other.best > score && (slot < 0 || other.best > labels[static_cast<std::size_t>(slot)].best)) {
+								slot = id;
+							}
+						}
+						if (slot < 0) {
+							continue;
+						}
+					}
+					Label fresh;
+					fresh.funnel   = next;
+					fresh.entry	   = step;
+					fresh.best	   = score;
+					fresh.state	   = ns;
+					fresh.cameFrom = li;
+					fresh.priced   = freshPriced;
+					fresh.squeeze  = squeeze;
+					fresh.extra	   = extra;
+					fresh.runEntry = runEntry;
+					fresh.runPrice = runPrice;
+					if (slot < 0) {
+						slot = label;
+						if (heldFound != nullptr) {
+							StateLabels& grow = *const_cast<StateLabels*>(heldFound);
+							grow.ids[static_cast<std::size_t>(grow.count++)] = label;
+						} else {
+							StateLabels first;
+							first.ids[0] = label;
+							first.count	 = 1;
+							heldMap.insert(heldKey, first);
+						}
+						labels.push_back(fresh);
+					} else {
+						// The new corridor takes over an open label; the portal it records as
+						// its own must name the label it now is.
+						fresh.entry.label = slot;
+						if (fresh.funnel.leftFrom == label) {
+							fresh.funnel.leftFrom = slot;
+						}
+						if (fresh.funnel.rightFrom == label) {
+							fresh.funnel.rightFrom = slot;
+						}
+						if (fresh.funnel.apexFrom == label) {
+							fresh.funnel.apexFrom = slot;
+						}
+						labels[static_cast<std::size_t>(slot)] = fresh;
+					}
+					open.push({score, nearest((step.left + step.right) * 0.5), tieOf(mesh, mesh.triangle(nb), edgeSum(mesh, tri, e), next.apex), slot});
+					const std::int64_t sz = static_cast<std::int64_t>(open.size());
+					if (sz > peakOpenSet) {
+						peakOpenSet = sz;
+					}
+				}
+			}
+			return SearchProgress::Exhausted;
 		}
 
 	} // namespace
@@ -882,7 +1562,7 @@ namespace geometry::nav {
 		if (forestFor(mesh, belief) == nullptr) {
 			return from; // reaches() answers "maybe" without forests
 		}
-		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief);
+		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief, [](std::int32_t) {});
 		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
 		// endpoint gate (e.g. start inside a wall the agent knows blocks).
 		if (startTri < 0 || !traversable(mesh, startTri, belief)) {
@@ -902,7 +1582,7 @@ namespace geometry::nav {
 		if (from.startTri < 0) {
 			return false; // off-mesh or untraversable start
 		}
-		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief);
+		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief, [](std::int32_t) {});
 		if (goalTri < 0 || !traversable(mesh, goalTri, belief)) {
 			return false;
 		}
@@ -913,552 +1593,255 @@ namespace geometry::nav {
 		return inForestSubtree(*forestFor(mesh, belief), from.root, goalTri);
 	}
 
-	PathResult pathThrough(const NavView& meshIn, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
-						   const BeliefFilter& belief, const PathLimits& limits) {
-		const NavView mesh = meshIn.resolved();
-		PathResult	  result;
-		// Scores are bounds on unrounded walks and a cost is the rounded walk's, so the cap
-		// takes a millimetre's slack: a walk costing the cap to within rounding is kept.
-		const double costCap = limits.maxCost + 1.0;
-		assert(mesh.widthsCurrent() && "pathThrough: corridor widths lag behind a patch");
-		if (!mesh.widthsCurrent()) {
-			return result; // stale widths could route a disc through a gap it does not fit
-		}
-		for (std::size_t i = 0; i < belief.prices.size(); ++i) {
-			assert(belief.prices[i].multiplier > 1.0 && std::isfinite(belief.prices[i].multiplier) && "pathThrough: a price is above 1");
-			for (std::size_t j = 0; j < i; ++j) {
-				assert(belief.prices[j].tag != belief.prices[i].tag && "pathThrough: a tag priced twice");
+	SearchBelief copyBelief(const BeliefFilter& belief) {
+		SearchBelief out;
+		out.truth = belief.knownSegments == nullptr;
+		if (!out.truth) {
+			out.knownSegments.assign(belief.knownSegments->begin(), belief.knownSegments->end());
+			std::sort(out.knownSegments.begin(), out.knownSegments.end());
+			if (belief.knownOpenings != nullptr) {
+				out.knownOpenings.assign(belief.knownOpenings->begin(), belief.knownOpenings->end());
+				std::sort(out.knownOpenings.begin(), out.knownOpenings.end());
 			}
 		}
-
-		const std::int32_t startTri	   = standOn(mesh, mesh.locate(start), start, belief);
-		const std::int32_t locatedGoal = mesh.locate(goal);
-		const std::int32_t goalTri	   = standOn(mesh, locatedGoal, goal, belief);
-		if (startTri < 0 || goalTri < 0) {
-			return result; // off-mesh
-		}
-
-		// Reject a query whose endpoints sit on an untraversable face for this belief
-		// (e.g. start inside a wall the agent knows blocks): no path. Without this, A*
-		// could exit a blocked start through a floor neighbor and "escape" a wall.
-		if (!traversable(mesh, startTri, belief) || !traversable(mesh, goalTri, belief)) {
-			return result;
-		}
-
-		if (startTri == goalTri) {
-			const double m			  = stepMultiplier(mesh, startTri, belief);
-			const double length		  = distanceD(toD(start), toD(goal));
-			if (length * m > costCap) {
-				result.stop = PathStop::LimitReached;
-				return result;
-			}
-			result.stop				  = PathStop::Found;
-			result.reachable		  = true;
-			result.points			  = {start, goal};
-			result.cost				  = length * m;
-			result.crossesPricedFaces = m > 1.0 && length > 0.0;
-			return result;
-		}
-
-		// Disc diameter the width gates compare against. Computed once; both the
-		// reachability short-circuit and the A* width filter use this exact value, so
-		// they never disagree on the threshold.
-		const std::int64_t diameterMm = discDiameterMm(agentRadiusMm);
-
-		// Width-aware reachability short-circuit (P3.3): reject a provably-unreachable
-		// goal before paying for the search. Sound: a `true` from the forest is "maybe"
-		// and falls through to the A* (which decides for real); a reject is a proof no
-		// path admits this disc.
-		// Faces crossed at a price are walls to the forests, so they prove nothing then.
-		const bool priced = !belief.prices.empty();
-		if (!priced && reachabilityRejects(mesh, startTri, goalTri, diameterMm, belief)) {
-			return result; // empty PathResult: definitely unreachable
-		}
-
-		// --- Triangle A* over the dual graph, width-filtered -------------------
-		// Search state is (triangle, entry-edge): the squeeze the agent must clear to
-		// LEAVE a triangle depends on which edge it ENTERED by (Demyen edge-pair width
-		// keyed by the apex shared by the entry and exit edges), so the same triangle is
-		// distinct per entry edge. entry == 3 is the start triangle (no entry edge, no
-		// squeeze). At most 4 states per triangle.
-		//
-		// A label is one corridor reaching a state, carrying the corridor's funnel (see
-		// Funnel), scored by the funnel's length on to the goal: what the corridor's taut
-		// path would be if the rest were open ground, and never more than it. A corridor's
-		// score depends on where its walls and corners are, not on how its open ground is
-		// cut into triangles, so seams and free diagonals do not steer the search. A state
-		// keeps up to kLabelsPerState labels (see there). A label popped in the goal
-		// triangle is pulled exactly and pushed again at that length (or cost); the first
-		// to pop at its exact length is the corridor the search returns.
-		const int kStartEntry = 3;
-		auto	  stateId	  = [](std::int32_t tri, int entry) { return tri * 4 + entry; };
-
-		// A state keeps corridors that cross priced faces apart from those that do not, so
-		// a cheap-looking way through never crowds out a free way round.
-		SearchScratch& scratch = searchScratch(static_cast<std::size_t>(mesh.triangleSlots()) * 8);
-		CornerMemo& corners = scratch.corners.begin(mesh);
-		// A squeeze past detail-class faces (a gate the full width fails and the structural
-		// width passes) costs the dearest detail price, when the query prices every detail
-		// tag; with any left unpriced, detail is hard and such a gap stays shut.
-		double squeezePrice = 0.0;
-		// The least price a query sets: a priced run costs at least that over the disc's
-		// diameter, whichever tags it holds (see walkCorridor), which the search's bound
-		// counts as soon as a run starts.
-		double leastPrice = 0.0;
-		for (const TagPrice& p : belief.prices) {
-			leastPrice = leastPrice > 0.0 ? std::min(leastPrice, p.multiplier) : p.multiplier;
-		}
-		const double runFloor = leastPrice > 0.0 ? (leastPrice - 1.0) * static_cast<double>(diameterMm) : 0.0;
-		if (priced && mesh.detailTags != nullptr) {
-			for (const std::int64_t tag : *mesh.detailTags) {
-				const auto it = std::find_if(belief.prices.begin(), belief.prices.end(), [&](const TagPrice& p) { return p.tag == tag; });
-				if (it == belief.prices.end()) {
-					squeezePrice = 0.0;
-					break;
-				}
-				squeezePrice = std::max(squeezePrice, it->multiplier);
-			}
-		}
-
-		const Vec2d	 goalD	= toD(goal);
-		const double radius = static_cast<double>(agentRadiusMm);
-
-		auto scoreFrom = [&](const Funnel& f, const Portal& portal) { return walkVia(f, portal, goalD); };
-
-		// Open-set node: score, then a key mixed from geometry (the triangle's corners,
-		// the entry edge's ends, the apex), so equal scores resolve the same way whatever
-		// slots the triangles sit in. std::priority_queue is a max-heap, hence the
-		// reversed comparisons.
-		struct Node {
-			double		  f;
-			double		  near; // distance on from the entry portal's middle: nearer the goal first
-			std::uint64_t tie;
-			std::int32_t  label;
-		};
-		struct NodeWorse {
-			bool operator()(const Node& a, const Node& b) const {
-				if (a.f != b.f) {
-					return a.f > b.f;
-				}
-				if (a.near != b.near) {
-					return a.near > b.near;
-				}
-				return a.tie > b.tie;
-			}
-		};
-		std::priority_queue<Node, std::vector<Node>, NodeWorse> open;
-		auto tieOf = [&](const NavTriangle& t, const Vec2i64& entry, const Vec2d& apex) {
-			const Vec2i64 corners = cornerSum(mesh, t);
-			std::uint64_t key	  = mixKey(static_cast<std::uint64_t>(corners.x), static_cast<std::uint64_t>(corners.y));
-			key					  = mixKey(mixKey(key, static_cast<std::uint64_t>(entry.x)), static_cast<std::uint64_t>(entry.y));
-			return mixKey(mixKey(key, std::bit_cast<std::uint64_t>(apex.x)), std::bit_cast<std::uint64_t>(apex.y));
-		};
-
-		const std::int32_t startState = stateId(startTri, kStartEntry);
-		const Vec2d		   startD	  = toD(start);
-		{
-			Label first;
-			first.funnel = funnelAt(startD, 0);
-			first.entry	 = {startD, startD, 0};
-			first.best	 = scoreFrom(first.funnel, first.entry);
-			first.state	 = startState;
-			first.priced = stepMultiplier(mesh, startTri, belief) > 1.0;
-			scratch.labels.push_back(first);
-			StateLabels& held = scratch.held(startState * 2 + (first.priced ? 1 : 0));
-			held.ids[0]		  = 0;
-			held.count		  = 1;
-			open.push({first.best, distanceD(startD, goalD), tieOf(mesh.triangle(startTri), start + start, startD), 0});
-		}
-		result.peakOpenSet = static_cast<std::int64_t>(open.size());
-		std::vector<Portal>& replay = scratch.replay;
-
-		// Pull one more portal into the funnel of label li's corridor. When the path bends at
-		// a bound, the bound becomes the apex and the funnel restarts there with this portal
-		// alone: looser than the string-pull's, which would resume with every portal after
-		// the one that set the bound, so its scores stay lower bounds while every walk
-		// through this portal must round the bound, which holds while the bound and the
-		// apex lie on this portal's near side (left of its edge (a, b), the side of the
-		// triangle the step leaves). Wrapping a wall's end the portals turn past half a
-		// turn, and either can lie beyond the portal's line, where the restart over-scores:
-		// then the pull resumes as the string-pull does, with the portals since the bound,
-		// found back along the corridor's labels. Sides are read against the edge, not the
-		// portal: one pulled in from both ends can shrink to a point.
-		auto advance = [&](std::int32_t li, Funnel& funnel, const Portal& step, const Vec2d& a, const Vec2d& b) {
-			if (narrow(funnel, step)) {
-				return;
-			}
-			// The bound the string-pull bends at: the left one when the step's right end
-			// crosses it; else the right one, which is the step's own right end when that end
-			// tightened the cone before the left end crossed it.
-			const bool		   rightTightens	= area2(funnel.apex, funnel.right, step.right) <= 0.0;
-			const bool		   rightCrossesLeft = rightTightens && !same(funnel.apex, funnel.right) && area2(funnel.apex, funnel.left, step.right) <= 0.0;
-			const Vec2d		   bound			= rightCrossesLeft ? funnel.left : (rightTightens ? step.right : funnel.right);
-			const std::int32_t from				= rightCrossesLeft ? funnel.leftFrom : (rightTightens ? step.label : funnel.rightFrom);
-			replay.assign(1, step);
-			if (area2(a, b, bound) >= 0.0 && area2(a, b, funnel.apex) >= 0.0) {
-				pull(funnel, replay, nullptr);
-				return;
-			}
-			// Bending at the step's own end leaves no portal after it to resume with.
-			replay.clear();
-			if (from != step.label) {
-				for (std::int32_t at = li; at > 0 && at != from; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
-					replay.push_back(scratch.labels[static_cast<std::size_t>(at)].entry);
-				}
-				std::reverse(replay.begin(), replay.end());
-				replay.push_back(step);
-			}
-			funnel.length += distanceD(funnel.apex, bound);
-			funnel.apex		 = bound;
-			funnel.left		 = bound;
-			funnel.right	 = bound;
-			funnel.apexFrom	 = from;
-			funnel.leftFrom	 = from;
-			funnel.rightFrom = from;
-			pull(funnel, replay, nullptr);
-		};
-
-		// The string-pull of label li's corridor, every portal from the start: its points
-		// into `points`, and its cost, which is its length unless the corridor crosses a
-		// face walked at a price. Then each piece inside a priced triangle is weighted by
-		// its multiplier, but a run of priced triangles costs at least its least multiplier
-		// over the disc's diameter: a disc entering priced ground overlaps it that far
-		// however little of the centreline is inside (a corner shaved through the face's
-		// own triangle has none). Each squeeze adds what the width gate charged for it.
-		bool   crossesPriced = false;
-		double cost			 = 0.0;
-		double runSurplus	 = 0.0;
-		double runLeast		 = 0.0; // the least multiplier of the priced run the walk is in, 0 outside one
-		auto   closeRun		 = [&]() {
-			  if (runLeast > 0.0) {
-				  const double surplus = std::max(runSurplus, (runLeast - 1.0) * static_cast<double>(diameterMm));
-				  cost += surplus;
-				  crossesPriced = crossesPriced || surplus > 0.0;
-			  }
-			  runSurplus = 0.0;
-			  runLeast	 = 0.0;
-		};
-		auto addPiece = [&](std::int32_t t, double piece) {
-			const double m = stepMultiplier(mesh, t, belief);
-			cost += piece;
-			if (m > 1.0) {
-				runSurplus += (m - 1.0) * piece;
-				runLeast = runLeast > 0.0 ? std::min(runLeast, m) : m;
-			} else {
-				closeRun();
-			}
-		};
-		auto walkCorridor = [&](std::int32_t li, std::vector<Vec2i64>& points) {
-			std::vector<std::int32_t>& tris = scratch.corridor;
-			replay.clear();
-			tris.clear();
-			double squeezes = 0.0;
-			for (std::int32_t at = li; at >= 0; at = scratch.labels[static_cast<std::size_t>(at)].cameFrom) {
-				tris.push_back(scratch.labels[static_cast<std::size_t>(at)].state / 4);
-				squeezes += scratch.labels[static_cast<std::size_t>(at)].squeeze;
-				if (at > 0) {
-					replay.push_back(scratch.labels[static_cast<std::size_t>(at)].entry);
-				}
-			}
-			std::reverse(replay.begin(), replay.end());
-			std::reverse(tris.begin(), tris.end());
-			replay.push_back({goalD, goalD, -1});
-			points.assign(1, start);
-			Funnel taut = funnelAt(startD, -1);
-			pull(taut, replay, &points);
-			appendTaut(points, goal);
-			crossesPriced = false;
-			if (!scratch.labels[static_cast<std::size_t>(li)].priced) {
-				return lengthTo(taut, goalD);
-			}
-			// Walk the path through the corridor: triangle k ends where the path crosses
-			// to the far side of the edge it shares with triangle k + 1.
-			cost			  = squeezes;
-			crossesPriced	  = squeezes > 0.0;
-			runSurplus		  = 0.0;
-			runLeast		  = 0.0;
-			double		piece = 0.0;
-			std::size_t s	  = 0;
-			Vec2d		at	  = toD(points[0]);
-			for (std::size_t k = 0; k + 1 < tris.size(); ++k) {
-				const NavTriangle& tri = mesh.triangle(tris[k]);
-				const int		   e   = sharedEdgeIndex(tri, tris[k + 1]);
-				const Vec2d		   a   = toD(mesh.vertex(tri.v[e]));
-				const Vec2d		   b   = toD(mesh.vertex(tri.v[(e + 1) % 3]));
-				const double	   len = std::max(distanceD(a, b), 1e-9);
-				auto			   side = [&](const Vec2d& p) { return area2(a, b, p) / len; }; // mm, positive inside tri
-				while (s + 1 < points.size()) {
-					const Vec2d	 q	= toD(points[s + 1]);
-					const double sq = side(q);
-					if (sq > 0.5) {
-						piece += distanceD(at, q);
-						at = q;
-						++s;
-						continue;
-					}
-					const double sa	  = side(at);
-					const double t	  = sa > sq ? std::clamp(sa / (sa - sq), 0.0, 1.0) : 0.0;
-					const Vec2d	 cross = at + (q - at) * t;
-					piece += distanceD(at, cross);
-					at = cross;
-					break;
-				}
-				addPiece(tris[k], piece);
-				piece = 0.0;
-			}
-			while (s + 1 < points.size()) {
-				const Vec2d q = toD(points[s + 1]);
-				piece += distanceD(at, q);
-				at = q;
-				++s;
-			}
-			addPiece(tris.back(), piece);
-			closeRun();
-			return cost;
-		};
-
-		std::int32_t goalLabel = -1;
-		bool		 limited   = false; // a corridor was left untried for a limit
-		while (!open.empty()) {
-			const Node cur = open.top();
-			open.pop();
-			const std::int32_t li = cur.label;
-			if (scratch.labels[static_cast<std::size_t>(li)].closed || cur.f != scratch.labels[static_cast<std::size_t>(li)].best) {
-				continue; // stale entry (we push duplicates instead of decrease-key)
-			}
-			// Scores pop in order and bound costs from below: past the cap nothing open can
-			// cost the cap or less. The expansion count stops anything but the goal, which
-			// expands nothing: a goal popped at the count is still tried.
-			const std::int32_t s	 = scratch.labels[static_cast<std::size_t>(li)].state;
-			const std::int32_t ti	 = s / 4;
-			const int		   entry = s % 4;
-			if (cur.f > costCap ||
-				(ti != goalTri && limits.maxExpansions != 0 && result.nodesExpanded >= static_cast<std::int64_t>(limits.maxExpansions))) {
-				limited = true;
-				break;
-			}
-			scratch.labels[static_cast<std::size_t>(li)].closed = true;
-			++result.nodesExpanded; // a label closed exactly once: one real expansion
-			if (ti == goalTri) {
-				// The score is a bound; the corridor's taut length to the goal is exact. Only
-				// a label whose exact length is still the least in the open set is accepted.
-				Label& at = scratch.labels[static_cast<std::size_t>(li)];
-				if (!at.exact) {
-					at.exact			= true;
-					at.closed			= false;
-					const double length = walkCorridor(li, scratch.points);
-					if (length > at.best) {
-						at.best = length;
-						open.push({length, cur.near, cur.tie, li});
-						--result.nodesExpanded;
-						continue;
-					}
-				}
-				goalLabel = li;
-				break;
-			}
-
-			const NavTriangle& tri	  = mesh.triangle(ti);
-			const Funnel	   funnel = scratch.labels[static_cast<std::size_t>(li)].funnel;
-			for (int e = 0; e < 3; ++e) {
-				if (e == entry) {
-					continue; // U-turn back through the entry edge: never on a taut path
-				}
-				const std::int32_t nb = tri.neighbor[e];
-				if (nb < 0) {
-					continue;
-				}
-				// Belief gate: skip a neighbor this agent may not cross. The only place
-				// truth/belief changes routing; the funnel below is untouched.
-				const double nbMultiplier = stepMultiplier(mesh, nb, belief);
-				if (nbMultiplier <= 0.0) {
-					continue;
-				}
-				// Width gate (intra-triangle squeeze): to leave `ti` via edge e having
-				// entered by `entry`, the disc must clear the Demyen width of the edge
-				// pair meeting at their shared apex. The start state has no entry edge,
-				// so nothing to clear inside the start triangle.
-				// A gap too narrow for the disc that only detail narrows (its structural width
-				// admits the disc) is squeezed through at squeezePrice; anything else stays shut.
-				// The disc overlaps what narrows the gap at least over the chord it cuts from a
-				// circle of its radius at the gap's half-width (w / 2 from the narrowing), so
-				// the squeeze costs its surplus price over that chord: a cost the walk's length
-				// cannot shrink, which the corridor's score counts from this step on. Beside a
-				// priced face the corridor walks into, came out of, or is in, the overlap is
-				// that crossing, already paid: only a dearer narrowing is charged.
-				double squeeze = 0.0;
-				if (entry != kStartEntry && !widthAdmits(tri, apexVertexOfEdgePair(entry, e), diameterMm)) {
-					if (squeezePrice <= 0.0 || tri.structuralWidthMm[apexVertexOfEdgePair(entry, e)] < diameterMm) {
-						continue;
-					}
-					const std::int32_t from	  = scratch.labels[static_cast<std::size_t>(li)].cameFrom;
-					const double	   before = from >= 0 ? stepMultiplier(mesh, scratch.labels[static_cast<std::size_t>(from)].state / 4, belief) : 1.0;
-					const double	   here	  = stepMultiplier(mesh, ti, belief);
-					if (squeezePrice > std::max({nbMultiplier, before, here})) {
-						const double halfGap = 0.5 * static_cast<double>(tri.edgePairWidthMm[apexVertexOfEdgePair(entry, e)]);
-						squeeze				 = (squeezePrice - here) * 2.0 * std::sqrt(std::max(0.0, radius * radius - halfGap * halfGap));
-					}
-				}
-				// Width gate (door portal): a door edge is gated by its clear width.
-				if (tri.edgeOpening[e] != kNoOpening && tri.edgeClearWidthMm[e] < diameterMm) {
-					continue;
-				}
-
-				// The edge of `nb` that faces `ti` is nb's entry edge for this step.
-				const int back = sharedEdgeIndex(mesh.triangle(nb), ti);
-				if (back < 0) {
-					continue; // adjacency inconsistency; skip safely
-				}
-				const std::int32_t ns	 = stateId(nb, back);
-				const bool	 freshPriced = scratch.labels[static_cast<std::size_t>(li)].priced || nbMultiplier > 1.0 || squeeze > 0.0;
-				StateLabels& held		 = scratch.held(ns * 2 + (freshPriced ? 1 : 0));
-				if (held.count == kLabelsPerState) {
-					bool anyOpen = false;
-					for (int k = 0; k < held.count; ++k) {
-						anyOpen = anyOpen || !scratch.labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])].closed;
-					}
-					if (!anyOpen) {
-						continue; // full of expanded corridors: nothing this one could take over
-					}
-				}
-				const std::int32_t label = static_cast<std::int32_t>(scratch.labels.size()); // the label a new one would take
-				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, corners);
-				const Portal	   step{span.left, span.right, label};
-				Funnel			   next = funnel;
-				advance(li, next, step, toD(mesh.vertex(tri.v[e])), toD(mesh.vertex(tri.v[(e + 1) % 3])));
-				// What priced faces add, as a bound: a run of them is entered, carried on, or
-				// left (charged then for the distance across it, or its least price over the
-				// disc's diameter, as walkCorridor does) by this step.
-				const Label& parent	  = scratch.labels[static_cast<std::size_t>(li)];
-				double		 extra	  = parent.extra + squeeze;
-				double		 runPrice = 0.0;
-				Portal		 runEntry = step;
-				if (parent.runPrice > 0.0) {
-					const double across = (parent.runPrice - 1.0) * segmentToSegment(parent.runEntry.left, parent.runEntry.right, step.left, step.right);
-					if (nbMultiplier > 1.0) {
-						runPrice = std::min(parent.runPrice, nbMultiplier);
-						runEntry = parent.runEntry;
-					} else {
-						extra += std::max(across, (parent.runPrice - 1.0) * static_cast<double>(diameterMm));
-					}
-				} else if (nbMultiplier > 1.0) {
-					runPrice = nbMultiplier;
-				}
-				const double inRun = runPrice > 0.0 ? std::max((runPrice - 1.0) * segmentToSegment(runEntry.left, runEntry.right, step.left, step.right), runFloor) : 0.0;
-				const double score = scoreFrom(next, step) + extra + inRun;
-				if (score > costCap) {
-					limited = true;
-					continue;
-				}
-				std::int32_t slot = -1; // the label this corridor takes over, if any
-				bool		 beaten = false;
-				// A corridor that crosses priced faces is also beaten by a free one at this state
-				// that is no longer: their futures are the same, and the free one's past costs
-				// its length while this one's costs at least its length and its bound.
-				const StateLabels* freeHeld = freshPriced ? &scratch.held(ns * 2) : nullptr;
-				std::array<double, 3> reach = held.count > 0 || (freeHeld != nullptr && freeHeld->count > 0) ? reachOf(next, step) : std::array<double, 3>{};
-				for (double& r : reach) {
-					r += extra + inRun;
-				}
-				for (int k = 0; freeHeld != nullptr && k < freeHeld->count && !beaten; ++k) {
-					const Label& other = scratch.labels[static_cast<std::size_t>(freeHeld->ids[static_cast<std::size_t>(k)])];
-					beaten			   = other.exact ? score >= other.best : noLonger(reachOf(other.funnel, step), reach);
-				}
-				for (int k = 0; k < held.count && !beaten; ++k) {
-					Label&						other	   = scratch.labels[static_cast<std::size_t>(held.ids[static_cast<std::size_t>(k)])];
-					std::array<double, 3>		otherReach = reachOf(other.funnel, step);
-					const double				otherExtra = other.extra + (other.runPrice > 0.0 ? std::max((other.runPrice - 1.0) * segmentToSegment(other.runEntry.left, other.runEntry.right, step.left, step.right), runFloor) : 0.0);
-					for (double& r : otherReach) {
-						r += otherExtra;
-					}
-					// A goal label pulled exactly is known by its walk, not its funnel (whose
-					// reach is a bound from a restarted cone): it beats only a corridor whose own
-					// bound is no better.
-					if (other.exact ? score >= other.best : noLonger(otherReach, reach)) {
-						beaten = true;
-					} else if (!other.closed && !other.exact && noLonger(reach, otherReach)) {
-						if (slot < 0) {
-							slot = held.ids[static_cast<std::size_t>(k)];
-						} else {
-							other.closed = true; // dominated twice over: retire it
-						}
-					}
-				}
-				if (beaten) {
-					continue;
-				}
-				if (slot < 0 && held.count == kLabelsPerState) {
-					// Full: take over the worst-scoring open corridor if this one scores better.
-					// A goal label already pulled exactly is never taken over: its score is its
-					// walk, and a newcomer's is only a bound that can come out longer.
-					for (int k = 0; k < held.count; ++k) {
-						const std::int32_t id = held.ids[static_cast<std::size_t>(k)];
-						const Label&	   other = scratch.labels[static_cast<std::size_t>(id)];
-						if (!other.closed && !other.exact && other.best > score && (slot < 0 || other.best > scratch.labels[static_cast<std::size_t>(slot)].best)) {
-							slot = id;
-						}
-					}
-					if (slot < 0) {
-						continue;
-					}
-				}
-				Label fresh;
-				fresh.funnel   = next;
-				fresh.entry	   = step;
-				fresh.best	   = score;
-				fresh.state	   = ns;
-				fresh.cameFrom = li;
-				fresh.priced   = freshPriced;
-				fresh.squeeze  = squeeze;
-				fresh.extra	   = extra;
-				fresh.runEntry = runEntry;
-				fresh.runPrice = runPrice;
-				if (slot < 0) {
-					slot = label;
-					held.ids[static_cast<std::size_t>(held.count++)] = label;
-					scratch.labels.push_back(fresh);
-				} else {
-					// The new corridor takes over an open label; the portal it records as
-					// its own must name the label it now is.
-					fresh.entry.label = slot;
-					if (fresh.funnel.leftFrom == label) {
-						fresh.funnel.leftFrom = slot;
-					}
-					if (fresh.funnel.rightFrom == label) {
-						fresh.funnel.rightFrom = slot;
-					}
-					if (fresh.funnel.apexFrom == label) {
-						fresh.funnel.apexFrom = slot;
-					}
-					scratch.labels[static_cast<std::size_t>(slot)] = fresh;
-				}
-				open.push({score, distanceD((step.left + step.right) * 0.5, goalD), tieOf(mesh.triangle(nb), edgeSum(mesh, tri, e), next.apex), slot});
-				const std::int64_t sz = static_cast<std::int64_t>(open.size());
-				if (sz > result.peakOpenSet) {
-					result.peakOpenSet = sz;
-				}
-			}
-		}
-
-		result.expansions = static_cast<std::uint32_t>(result.nodesExpanded);
-		if (goalLabel < 0) {
-			// Disconnected (or every corridor too narrow for the agent), unless a limit
-			// left corridors untried.
-			result.stop = limited ? PathStop::LimitReached : PathStop::NoPath;
-			return result;
-		}
-		result.stop = PathStop::Found;
-
-		// --- The winning corridor's string-pull ----------------------------------
-		std::vector<Vec2i64> pts;
-		result.cost				  = walkCorridor(goalLabel, pts);
-		result.crossesPricedFaces = crossesPriced;
-
-		result.reachable = true;
-		result.points	 = std::move(pts);
-		return result;
+		out.prices.assign(belief.prices.begin(), belief.prices.end());
+		return out;
 	}
 
+	struct SearchState::Impl {
+		explicit Impl(SearchArgs argsIn) : args(std::move(argsIn)) {}
+
+		SearchArgs	   args;
+		SearchProgress progress = SearchProgress::Running;
+		bool		   begun	= false;
+		PathResult	   answer;
+		std::int32_t   goal = -1;
+		Touched		   touched;
+		// Where the ends stand: the start's triangle, and for each goal still in the search
+		// its index in args.goals and its triangle.
+		std::int32_t			  startTri = -1;
+		std::vector<std::int32_t> liveGoals;
+		std::vector<std::int32_t> goalTris;
+		// The goal-side phase while it runs, then the search from the start.
+		std::unique_ptr<Sweep> phase;
+		std::unique_ptr<Sweep> forward;
+		std::int64_t		   phaseExpanded = 0; // a phase given up
+		std::int64_t		   phasePeak	 = 0;
+
+		void end(SearchProgress how, PathStop stop) {
+			progress	= how;
+			answer.stop = stop;
+		}
+
+		Ends forwardEnds() const {
+			Ends ends{args.start, startTri, {}, goalTris};
+			for (const std::int32_t g : liveGoals) {
+				ends.goals.push_back(args.goals[static_cast<std::size_t>(g)]);
+			}
+			return ends;
+		}
+
+		void begin(const NavView& mesh) {
+			begun						= true;
+			const SearchBelief& belief	= args.belief;
+			auto				touch	= [&](std::int32_t t) { touched.add(t); };
+			for (std::size_t i = 0; i < belief.prices.size(); ++i) {
+				assert(belief.prices[i].multiplier > 1.0 && std::isfinite(belief.prices[i].multiplier) && "SearchState: a price is above 1");
+				for (std::size_t j = 0; j < i; ++j) {
+					assert(belief.prices[j].tag != belief.prices[i].tag && "SearchState: a tag priced twice");
+				}
+			}
+			// An end on a face this belief cannot cross (a start inside a wall the agent knows
+			// blocks) has no path: without this, A* could exit a blocked start through a floor
+			// neighbor and "escape" a wall.
+			startTri = standOn(mesh, mesh.locate(args.start), args.start, belief, touch);
+			for (std::size_t g = 0; g < args.goals.size(); ++g) {
+				const std::int32_t tri = standOn(mesh, mesh.locate(args.goals[g]), args.goals[g], belief, touch);
+				if (tri >= 0 && traversable(mesh, tri, belief)) {
+					liveGoals.push_back(static_cast<std::int32_t>(g));
+					goalTris.push_back(tri);
+				}
+			}
+			if (startTri < 0 || !traversable(mesh, startTri, belief) || liveGoals.empty()) {
+				end(SearchProgress::Exhausted, PathStop::NoPath);
+				return;
+			}
+			if (liveGoals.size() == 1 && goalTris[0] == startTri) {
+				const Vec2i64& to	  = args.goals[static_cast<std::size_t>(liveGoals[0])];
+				const double   m	  = stepMultiplier(mesh, startTri, belief);
+				const double   length = distanceD(toD(args.start), toD(to));
+				if (length * m > args.maxCost + 1.0) {
+					end(SearchProgress::Exhausted, PathStop::LimitReached);
+					return;
+				}
+				end(SearchProgress::Found, PathStop::Found);
+				goal					  = liveGoals[0];
+				answer.reachable		  = true;
+				answer.points			  = {args.start, to};
+				answer.cost				  = length * m;
+				answer.crossesPricedFaces = m > 1.0 && length > 0.0;
+				return;
+			}
+			// Width-aware reachability short-circuit (P3.3): drop a provably-unreachable goal
+			// before paying for the search. Sound: a `true` from the forest is "maybe" and
+			// leaves the goal to the A*; a reject is a proof no path admits this disc. Faces
+			// crossed at a price are walls to the forests, so they prove nothing then.
+			if (belief.prices.empty()) {
+				const std::int64_t diameterMm = discDiameterMm(args.agentRadiusMm);
+				std::size_t		   kept		  = 0;
+				for (std::size_t k = 0; k < liveGoals.size(); ++k) {
+					if (goalTris[k] == startTri || !reachabilityRejects(mesh, startTri, goalTris[k], diameterMm, belief)) {
+						liveGoals[kept] = liveGoals[k];
+						goalTris[kept]	= goalTris[k];
+						++kept;
+					}
+				}
+				liveGoals.resize(kept);
+				goalTris.resize(kept);
+				if (liveGoals.empty()) {
+					end(SearchProgress::Exhausted, PathStop::NoPath);
+					return;
+				}
+			}
+			if (liveGoals.size() == 1 && args.goalSidePhase > 0) {
+				Ends back{args.goals[static_cast<std::size_t>(liveGoals[0])], goalTris[0], {args.start}, {startTri}};
+				phase = std::make_unique<Sweep>(mesh, std::move(back), args.agentRadiusMm, belief, args.maxCost, touched);
+			} else {
+				forward = std::make_unique<Sweep>(mesh, forwardEnds(), args.agentRadiusMm, belief, args.maxCost, touched);
+			}
+		}
+
+		void finish(const NavView& mesh, Sweep& sweep, SearchProgress how, bool fromGoal) {
+			answer.nodesExpanded = phaseExpanded + sweep.nodesExpanded;
+			answer.expansions	 = static_cast<std::uint32_t>(answer.nodesExpanded);
+			answer.peakOpenSet	 = std::max(phasePeak, sweep.peakOpenSet);
+			if (how == SearchProgress::Found) {
+				end(how, PathStop::Found);
+				answer.cost				  = sweep.answer(mesh, answer.points);
+				answer.crossesPricedFaces = sweep.crossesPriced;
+				answer.reachable		  = true;
+				if (fromGoal) {
+					std::reverse(answer.points.begin(), answer.points.end());
+					goal = liveGoals[0];
+				} else {
+					goal = liveGoals[static_cast<std::size_t>(sweep.answerGoal())];
+				}
+			} else {
+				// Every corridor tried and none reaches, unless the cost cap left some untried.
+				end(how, sweep.limited ? PathStop::LimitReached : PathStop::NoPath);
+			}
+			phase.reset();
+			forward.reset();
+		}
+
+		SearchProgress step(const NavView& mesh, std::uint32_t n) {
+			if (progress != SearchProgress::Running) {
+				return progress;
+			}
+			assert(mesh.widthsCurrent() && "SearchState: corridor widths lag behind a patch");
+			if (!mesh.widthsCurrent()) {
+				return progress; // stale widths could route a disc through a gap it does not fit
+			}
+			if (!begun) {
+				begin(mesh);
+				if (progress != SearchProgress::Running) {
+					return progress;
+				}
+			}
+			StarMemo&	  stars = starMemo(mesh);
+			std::uint32_t left	= n;
+			if (phase != nullptr) {
+				const std::int64_t	before = phase->nodesExpanded;
+				const std::uint32_t room   = static_cast<std::uint32_t>(std::min<std::int64_t>(left, std::max<std::int64_t>(0, args.goalSidePhase - before)));
+				const SearchProgress how   = phase->step(mesh, stars, room);
+				if (how != SearchProgress::Running) {
+					finish(mesh, *phase, how, true);
+					return progress;
+				}
+				left -= static_cast<std::uint32_t>(std::min<std::int64_t>(left, phase->nodesExpanded - before));
+				if (phase->nodesExpanded < static_cast<std::int64_t>(args.goalSidePhase)) {
+					return progress;
+				}
+				phaseExpanded = phase->nodesExpanded;
+				phasePeak	  = phase->peakOpenSet;
+				phase.reset();
+				forward = std::make_unique<Sweep>(mesh, forwardEnds(), args.agentRadiusMm, args.belief, args.maxCost, touched);
+			}
+			const SearchProgress how = forward->step(mesh, stars, left);
+			if (how != SearchProgress::Running) {
+				finish(mesh, *forward, how, false);
+			}
+			return progress;
+		}
+
+		std::int64_t expanded() const {
+			if (progress != SearchProgress::Running) {
+				return answer.nodesExpanded;
+			}
+			return phaseExpanded + (phase != nullptr ? phase->nodesExpanded : 0) + (forward != nullptr ? forward->nodesExpanded : 0);
+		}
+	};
+
+	SearchState::SearchState(SearchArgs args) : impl(std::make_unique<Impl>(std::move(args))) {}
+	SearchState::SearchState(SearchState&&) noexcept			= default;
+	SearchState& SearchState::operator=(SearchState&&) noexcept = default;
+	SearchState::~SearchState()									= default;
+
+	SearchProgress SearchState::step(const NavView& mesh, std::uint32_t expansions) {
+		return impl->step(mesh.resolved(), expansions);
+	}
+
+	SearchProgress SearchState::progress() const {
+		return impl->progress;
+	}
+
+	PathResult SearchState::result() const {
+		if (impl->progress != SearchProgress::Running) {
+			return impl->answer;
+		}
+		PathResult stopped;
+		stopped.stop		  = PathStop::LimitReached;
+		stopped.nodesExpanded = impl->expanded();
+		stopped.expansions	  = static_cast<std::uint32_t>(stopped.nodesExpanded);
+		stopped.peakOpenSet	  = std::max({impl->phasePeak, impl->phase != nullptr ? impl->phase->peakOpenSet : 0, impl->forward != nullptr ? impl->forward->peakOpenSet : 0});
+		return stopped;
+	}
+
+	std::int32_t SearchState::goalIndex() const {
+		return impl->progress == SearchProgress::Found ? impl->goal : -1;
+	}
+
+	std::int64_t SearchState::expansions() const {
+		return impl->expanded();
+	}
+
+	std::span<const std::int32_t> SearchState::touchedTriangles() const {
+		return impl->touched.ids;
+	}
+
+	bool SearchState::touches(std::int32_t triangle) const {
+		return impl->touched.has(triangle);
+	}
+
+	void SearchState::restart() {
+		impl = std::make_unique<Impl>(std::move(impl->args));
+	}
+
+	const SearchArgs& SearchState::args() const {
+		return impl->args;
+	}
+
+	PathResult pathThrough(const NavView& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
+						   const BeliefFilter& belief, const PathLimits& limits) {
+		const NavView view = mesh.resolved();
+		assert(view.widthsCurrent() && "pathThrough: corridor widths lag behind a patch");
+		if (!view.widthsCurrent()) {
+			return {}; // stale widths could route a disc through a gap it does not fit
+		}
+		SearchState search({start, {goal}, agentRadiusMm, copyBelief(belief), limits.maxCost, 0});
+		search.step(view, limits.maxExpansions == 0 ? kRunToEnd : limits.maxExpansions);
+		return search.result();
+	}
 	ReachFrom reachFrom(const NavMesh& mesh, const Vec2i64& start, std::int64_t agentRadiusMm, BeliefFilter belief) {
 		return reachFrom(navView(mesh), start, agentRadiusMm, belief);
 	}

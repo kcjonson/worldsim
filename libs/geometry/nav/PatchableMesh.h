@@ -262,7 +262,7 @@ namespace geometry::nav {
 		};
 
 		std::int32_t locateScaled(const Vec2i64& p, std::int64_t scale) const;
-		template <typename Visit> void forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const;
+		template <typename Visit> void forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit);
 		template <typename Visit> void forEachAroundVertex(std::uint32_t v, std::int32_t seed, Visit visit) const;
 		void triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const;
 		std::vector<RingId> ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const;
@@ -312,9 +312,11 @@ namespace geometry::nav {
 		std::vector<FaceTags>				 coverTags; // per cover id
 
 
-		mutable ScratchArray<std::uint32_t> visitStamp; // per triangle, for box queries
-		mutable std::uint32_t			   stamp		= 0;
-		mutable bool					   boxQueryOpen = false;
+		// A patch's box queries. No read of the mesh writes anything, so readers on
+		// several threads may share it while no patch runs.
+		ScratchArray<std::uint32_t> visitStamp; // per triangle
+		std::uint32_t			   stamp		= 0;
+		bool					   boxQueryOpen = false;
 
 		BoxGrid					grid;		 // live triangles
 		BoxGrid					ringGrid;	 // live rings, by outline box
