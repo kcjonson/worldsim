@@ -2299,9 +2299,13 @@ namespace ecs {
 		};
 
 		// A need targets the nearest remembered source the colonist can reach, so known sources across
-		// a river don't hide a reachable one farther off.
+		// a river don't hide a reachable one farther off. The source he is heading for is kept unless
+		// another is clearly nearer (kKeepSourceMargin).
+		const std::optional<std::uint64_t> headingFor =
+			currentTask.needSourceKey != 0 ? std::optional<std::uint64_t>(currentTask.needSourceKey) : std::nullopt;
 		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
-			return findNearestReachableWithCapability(memory, capability, position.value, accept, walkToSource, reachable, sourceScratch);
+			return findNearestReachableWithCapability(memory, capability, position.value, accept, walkToSource, reachable, sourceScratch,
+													  headingFor);
 		};
 
 		// With an empty pack, one search finds both what the Hunger option eats from and the bush the
@@ -2485,7 +2489,7 @@ namespace ecs {
 				}
 				foodSource = FoodChoice{source, left};
 				return answered();
-			}).has_value();
+			}, headingFor).has_value();
 			if (seeksFood && !foodSource.has_value()) {
 				foodSource = heldFood;
 			}

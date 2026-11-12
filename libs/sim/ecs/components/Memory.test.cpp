@@ -253,6 +253,31 @@ TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
 	EXPECT_EQ(b->position, expected);
 }
 
+// The source the colonist is heading for is kept unless another is more than kKeepSourceMargin nearer by
+// walk: a metre's difference is within what the per-cell walk memo can be off by.
+TEST(MemoryQueries, HeadedForSourceIsKeptUnlessAnotherIsClearlyNearer) {
+	const glm::vec2 near{30.0F, 0.0F};
+	const glm::vec2 besideIt{30.0F, 1.0F};
+	const glm::vec2 farther{30.0F + ecs::kKeepSourceMargin + 1.0F, 0.0F};
+	const auto		anywhere = [](uint64_t, const glm::vec2&) { return true; };
+	const auto		walk	 = [](uint64_t, const glm::vec2& p, float maxWalk) {
+		 return glm::length(p) <= maxWalk ? std::optional<float>(glm::length(p)) : std::nullopt;
+	};
+	std::vector<ecs::SourceCandidate> scratch;
+	const auto pick = [&](const glm::vec2 other, std::optional<uint64_t> keep) {
+		ecs::Memory memory;
+		EXPECT_TRUE(memory.rememberWorldEntity(near, kDefId, kSourceMask));
+		EXPECT_TRUE(memory.rememberWorldEntity(other, kDefId, kSourceMask));
+		const auto found = ecs::findNearestReachableWithCapability(memory, kSourceCapability, {0.0F, 0.0F}, anySource, walk, anywhere, scratch, keep);
+		return found.has_value() ? std::optional<glm::vec2>(found->position) : std::nullopt;
+	};
+
+	EXPECT_EQ(pick(besideIt, std::nullopt), std::optional<glm::vec2>(near));
+	EXPECT_EQ(pick(besideIt, ecs::hashWorldEntity(besideIt, kDefId)), std::optional<glm::vec2>(besideIt));
+	EXPECT_EQ(pick(farther, ecs::hashWorldEntity(farther, kDefId)), std::optional<glm::vec2>(near));
+	EXPECT_EQ(pick(besideIt, ecs::hashWorldEntity(near, kDefId)), std::optional<glm::vec2>(near));
+}
+
 // No cap on how far down the list the walk goes: with every nearer source unreachable, the farthest
 // reachable one is still found, and nothing reachable is nullopt.
 TEST(MemoryQueries, NearestReachableSourceWalksEveryCandidate) {

@@ -3593,7 +3593,6 @@ namespace ecs::test {
 			nav = &world->registerSystem<NavigationSystem>();
 			nav->setChunkManager(openLand());
 			nav->setConstructionWorld(&construction);
-			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
 			ai->setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();
 			world->registerSystem<PhysicsSystem>();

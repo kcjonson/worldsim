@@ -52,8 +52,16 @@ struct SourceCandidate {
 /// walk found by then) when it comes off again.
 inline constexpr float kWalkStretch = 2.0F;
 
+/// How much nearer by walk another source must be to take over from the one the colonist is heading for.
+/// A walk is held for a whole reach cell (SourceReachMemo::Key, NavigationSystem::kReachCellMm, 2 m), so
+/// two walks compared in one decision can start up to the cell's diagonal apart; within that, which is
+/// nearer is noise, and a colonist walking toward one of two sources a metre apart would flip between
+/// them at every decision.
+inline constexpr float kKeepSourceMargin = 2.9F;
+
 /// Pop `scratch`'s candidates nearest by walk first, ties broken by key and then item (every item in one
-/// box shares the box's key) so the pick is deterministic, until `reachable(candidate)` admits one.
+/// box shares the box's key) so the pick is deterministic, until `reachable(candidate)` admits one. A
+/// candidate keyed `keepKey` (the source the colonist is heading for) counts kKeepSourceMargin nearer.
 /// `walk(candidate, maxWalk)` measures the walk to a candidate, nullopt when it is unreachable or longer
 /// than maxWalk. A straight line is never longer than the walk, so candidates come off nearest by straight
 /// line, each is walked and goes back keyed by its walk, and one that comes off walked is the nearest walk
@@ -65,11 +73,23 @@ inline constexpr float kWalkStretch = 2.0F;
 /// nothing is known of their walks.
 template <typename Walk, typename Reachable>
 [[nodiscard]] std::optional<SourceCandidate>
-nearestReachable(std::vector<SourceCandidate>& scratch, Walk&& walk, Reachable&& reachable) {
+nearestReachable(std::vector<SourceCandidate>& scratch, Walk&& walk, Reachable&& reachable, std::optional<uint64_t> keepKey = std::nullopt) {
 	const auto farther = [](const SourceCandidate& a, const SourceCandidate& b) {
 		return std::tie(a.distSq, a.key, a.item) > std::tie(b.distSq, b.key, b.item);
 	};
 	constexpr float				 kAnyWalk = std::numeric_limits<float>::infinity();
+	// distSq is the heap key: the kept candidate's distance less the margin, squared; a bound read from
+	// the heap is in the same terms, so the kept candidate's walk is asked the margin longer.
+	const auto margin = [&](const SourceCandidate& c) { return keepKey == c.key ? kKeepSourceMargin : 0.0F; };
+	const auto keyed  = [&](const SourceCandidate& c, float metres) {
+		 const float m = std::max(0.0F, metres - margin(c));
+		 return m * m;
+	};
+	if (keepKey.has_value()) {
+		for (SourceCandidate& candidate : scratch) {
+			candidate.distSq = keyed(candidate, std::sqrt(candidate.distSq));
+		}
+	}
 	std::vector<SourceCandidate> farAway;
 	std::make_heap(scratch.begin(), scratch.end(), farther);
 	while (!scratch.empty()) {
@@ -87,14 +107,14 @@ nearestReachable(std::vector<SourceCandidate>& scratch, Walk&& walk, Reachable&&
 			// first time, and in full the next.
 			const bool				   firstWalk = best == kAnyWalk && !nearest.stretched;
 			const float				   bound	 = best != kAnyWalk ? std::sqrt(best) : (firstWalk ? kWalkStretch * std::sqrt(nearest.distSq) : kAnyWalk);
-			const WalkAnswer		   answer	 = walk(nearest, bound);
+			const WalkAnswer		   answer	 = walk(nearest, bound + margin(nearest));
 			const std::optional<float> measured	 = answer.walk;
 			if (answer.far) {
 				farAway.push_back(nearest);
 				continue;
 			}
 			if (measured.has_value()) {
-				nearest.distSq = *measured * *measured;
+				nearest.distSq = keyed(nearest, *measured);
 				nearest.walked = true;
 				scratch.push_back(nearest);
 				std::push_heap(scratch.begin(), scratch.end(), farther);
@@ -157,7 +177,7 @@ findNearestWithCapability(const Memory& memory, assets::CapabilityType capabilit
 /// walk there in metres, nullopt when unreachable or longer than maxWalk. One pass over Memory's capability
 /// index collects the accepted candidates into `scratch` (caller-owned and reused, so no allocation once
 /// it has grown to fit), then nearestReachable takes them nearest by walk, ties broken by memory key so
-/// the pick is deterministic.
+/// the pick is deterministic, the source keyed `keepKey` kept within kKeepSourceMargin.
 template <typename Accept, typename Walk, typename Reachable>
 [[nodiscard]] std::optional<KnownWorldEntity> findNearestReachableWithCapability(
 	const Memory&				  memory,
@@ -166,7 +186,8 @@ template <typename Accept, typename Walk, typename Reachable>
 	Accept&&					  accept,
 	Walk&&						  walk,
 	Reachable&&					  reachable,
-	std::vector<SourceCandidate>& scratch) {
+	std::vector<SourceCandidate>& scratch,
+	std::optional<uint64_t>		  keepKey = std::nullopt) {
 	scratch.clear();
 	for (uint64_t key : memory.getEntitiesWithCapability(capability)) {
 		const auto* entity = memory.getWorldEntity(key);
@@ -178,7 +199,7 @@ template <typename Accept, typename Walk, typename Reachable>
 	}
 	const auto found = nearestReachable(
 		scratch, [&](const SourceCandidate& candidate, float maxWalk) { return walk(candidate.key, candidate.position, maxWalk); },
-		[&](const SourceCandidate& candidate) { return reachable(candidate.key, candidate.position); });
+		[&](const SourceCandidate& candidate) { return reachable(candidate.key, candidate.position); }, keepKey);
 	return found.has_value() ? std::optional<KnownWorldEntity>{*found->entity} : std::nullopt;
 }
 

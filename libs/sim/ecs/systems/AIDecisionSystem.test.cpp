@@ -4370,10 +4370,11 @@ namespace ecs::test {
 
 	// The running game's first decision can happen before its chunks are ready, so before any ground
 	// is meshed. This wires a real NavigationSystem (all-land chunks unless a fixture picks another
-	// shared region, a viewport region at the origin, an empty construction world) plus MovementSystem
-	// and PhysicsSystem, so a test can hold the chunks back (withholdChunks) to let the AI decide with
-	// no mesh, then hand them over and settle the NavigationSystem alone (finishPendingBuilds: no sim
-	// time passes, and the AI sees the mesh on the next tick), and then check the colonist walks a route.
+	// shared region, an empty construction world) plus MovementSystem and PhysicsSystem, so a test can
+	// hold the chunks back (withholdChunks) to let the AI decide with no mesh, then hand them over and
+	// settle the NavigationSystem alone (finishPendingBuilds: no sim time passes, and the AI sees the mesh
+	// on the next tick), and then check the colonist walks a route. Only movers mesh, so a test creates
+	// its colonists before it settles.
 	class AIDecisionFirstMeshTest : public AIDecisionSystemTest {
 	  protected:
 		void SetUp() override {
@@ -4382,7 +4383,6 @@ namespace ecs::test {
 			nav = &world->registerSystem<NavigationSystem>();
 			nav->setChunkManager(chunkRegion());
 			nav->setConstructionWorld(&construction);
-			nav->setViewportRect({0.0F, 0.0F}, {60.0F, 60.0F});
 			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();
 			world->registerSystem<PhysicsSystem>();
@@ -4399,6 +4399,15 @@ namespace ecs::test {
 		void settleWithChunks() {
 			nav->setChunkManager(chunkRegion());
 			nav->finishPendingBuilds();
+		}
+
+		// A mover standing at `at` that is not a colonist: nothing but nav acts on it, and its disc meshes
+		// the ground and placed obstacles there.
+		EntityID addLookout(glm::vec2 at) {
+			const EntityID e = world->createEntity();
+			world->addComponent<Position>(e, Position{at});
+			world->addComponent<AgentRadius>(e, AgentRadius{});
+			return e;
 		}
 
 		[[nodiscard]] bool followingRoute(EntityID colonist) {
@@ -4514,12 +4523,12 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionFirstMeshTest, ControlledColonistWalksToMoveOrder) {
-		nav->finishPendingBuilds();
-		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		const glm::vec2 start{0.0F, 0.0F};
 		const glm::vec2 goal{8.0F, 3.0F};
 		const auto		colonist = createColonist(start);
 		satisfyAllNeeds(*getNeeds(colonist));
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 
 		auto& ai = world->getSystem<AIDecisionSystem>();
 		ai.enterControl(colonist);
@@ -4533,10 +4542,10 @@ namespace ecs::test {
 	}
 
 	TEST_F(AIDecisionFirstMeshTest, TakingControlOfWalkingColonistStopsIt) {
-		nav->finishPendingBuilds();
-		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		const auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist));
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
 		ASSERT_TRUE(walkUntilMoving(colonist)) << "the colonist never set off on its wander";
 
 		world->getSystem<AIDecisionSystem>().enterControl(colonist);
@@ -5052,9 +5061,8 @@ namespace ecs::test {
 		}
 	} // namespace
 
-	// A hungry colonist picks its bush by the walk, whatever the camera does: a bush across a river is
-	// as near as the way round its end, and one whose way round is too long for the search to settle
-	// is far, taken only when no bush has a walk.
+	// A hungry colonist picks its bush by the walk: a bush across a river is as near as the way round its
+	// end, over ground a mover has meshed.
 	template <int kFordX> class AIDecisionFordTest : public AIDecisionFirstMeshTest {
 	  protected:
 		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return fordChunks<kFordX>(); }
@@ -5091,13 +5099,15 @@ namespace ecs::test {
 	using AIDecisionNearFordTest  = AIDecisionFordTest<30>;	 // about 70 m round
 	using AIDecisionCloseFordTest = AIDecisionFordTest<8>;	 // about 30 m round
 
-	// The way round is 1.2 km: the bush behind is taken, and the same with the camera over the ford
-	// (its ground meshed and a player's route round it there), since the camera changes no reach.
-	TEST_F(AIDecisionFarFordTest, BushBehindWinsWhateverTheCamera) {
+	// The ford is 600 m off, past the ground the colonist's disc meshes: the bush across has no known way
+	// and the bush behind is taken. A mover at the ford meshes the way round (1.2 km), and the bush behind
+	// is still taken.
+	TEST_F(AIDecisionFarFordTest, BushBehindWinsBeforeAndAfterTheWayRoundIsMeshed) {
 		const auto colonist = hungryColonistKnowing({kAcross, kBehind});
+		ASSERT_FALSE(nav->inSimArea({600.0F, kFordRiverY})) << "no mover has been near the ford";
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBehind));
 
-		nav->setViewportRect({600.0F, kFordRiverY}, {60.0F, 60.0F});
+		addLookout({600.0F, kFordRiverY});
 		nav->finishPendingBuilds();
 		ASSERT_TRUE(nav->inSimArea({600.0F, kFordRiverY}));
 		ASSERT_TRUE(nav->requestPath(kStart, {620.0F, 20.0F}, 0.3F).route.has_value()) << "a player's route round the ford";
@@ -5127,27 +5137,21 @@ namespace ecs::test {
 
 	class AIDecisionNarrowRiverTest : public AIDecisionFirstMeshTest {
 	  protected:
-		// Unbounded, the walk to the far bank takes about 800 steps; a wander point's capped walk, a few.
-		static constexpr std::uint32_t kWanderBudget = 64;
-
 		[[nodiscard]] world::ChunkManager* chunkRegion() const override {
 			static const std::unique_ptr<world::ChunkManager> chunks = generateOriginChunks(std::make_unique<NarrowRiverSampler>());
 			return chunks.get();
 		}
 	};
 
-	// A colonist wandering on the bank of a long narrow river never asks about a point across it, with
-	// search budgets small enough that the far bank reads far: a wander point is a short walk, capped by
-	// cost, so no reach search runs out of steps and no far route is asked for, and he keeps to his own
-	// bank.
+	// A colonist wandering on the bank of a long narrow river, whose far bank a mover at the river's end has
+	// joined to his by meshed ground 1.2 km round, keeps to his own bank: a wander point is a short walk.
 	TEST_F(AIDecisionNarrowRiverTest, WanderBesideARiverNeverAsksAcrossIt) {
 		constexpr glm::vec2 kStart{0.0F, 1.5F};
-		nav->setReachBudgets(kWanderBudget, kWanderBudget, 4 * kWanderBudget);
-		const auto colonist = createColonist(kStart);
+		const auto			colonist = createColonist(kStart);
 		satisfyAllNeeds(*getNeeds(colonist));
+		addLookout({600.0F, 4.0F});
 		nav->finishPendingBuilds();
-		ASSERT_TRUE(nav->walk(nav->reachFrom(kStart, 0.3F), {0.0F, 7.0F}).far) << "the far bank should read far unbounded";
-		nav->resetNavQueryStats();
+		ASSERT_TRUE(nav->requestPath(kStart, {0.0F, 7.0F}, 0.3F).route.has_value()) << "the far bank is joined round the river's end";
 
 		float farthest = 0.0F;
 		for (int i = 0; i < 300; ++i) {
@@ -5156,8 +5160,6 @@ namespace ecs::test {
 			ASSERT_LT(at.y, 4.0F) << "crossed the river at update " << i;
 			farthest = std::max(farthest, glm::distance(at, kStart));
 		}
-		EXPECT_EQ(nav->navQueryStats().farWalks, 0U) << "a wander point was walked to far";
-		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 0U);
 		EXPECT_GT(farthest, 2.0F) << "he never wandered";
 	}
 
@@ -5198,11 +5200,12 @@ namespace ecs::test {
 		EXPECT_GT(east, 300.0F) << "it went round the ford";
 	}
 
-	// The only food is 10 m across the river and 1.5 km round its end, inside the real search budgets:
-	// the colonist sets off, goes round the river's end and arrives, and the trace never says "no
-	// source" or that the search gave up.
+	// The only food is 10 m across the river and 1.5 km round its end, where a mover stands and has meshed
+	// the ground: the colonist sets off, goes round the river's end and arrives, and the trace never says
+	// "no source" or that the search gave up.
 	using AIDecisionLongFordTest = AIDecisionFordTest<750>;
 	TEST_F(AIDecisionLongFordTest, OnlyFoodRoundALongRiverIsReached) {
+		addLookout({750.0F, kFordRiverY});
 		const auto		 colonist = hungryColonistKnowing({kAcross});
 		const glm::vec2& at		  = world->getComponent<Position>(colonist)->value;
 		bool			 noRoute  = false;
@@ -5227,8 +5230,7 @@ namespace ecs::test {
 
 	// A goal-driven harvest, end to end with the real AI, MovementSystem and ActionSystem: the colonist
 	// walks to the stand point beside the tree's collider (read from the placement data), the harvest
-	// starts there and completes. A wide tree and a narrow one, on camera and off, from the west and from
-	// the north.
+	// starts there and completes. A wide tree and a narrow one, from the west and from the north.
 	class AIDecisionHarvestStandTest : public AIDecisionFirstMeshTest {
 	  protected:
 		void SetUp() override {
@@ -5281,20 +5283,12 @@ namespace ecs::test {
 			nav->setPlacementData(&trees, &processed);
 		}
 
-		// One harvest of the tree at `tree` by a colonist starting at `from`, with the view over the tree
-		// or far away. Checks where it stood when the harvest started and that it completed.
+		// One harvest of the tree at `tree` by a colonist starting at `from`, whose disc meshes the tree.
+		// Checks where it stood when the harvest started and that it completed.
 		// clearSpot: the stand point is clear of every collider; false for a tree in a thicket, whose stand
 		// point is inside a neighbour and which the harvest starts within reach of (ActionSystem, 0.4 m).
-		void harvestFrom(const std::string& defName, float halfExtent, glm::vec2 tree, glm::vec2 from, bool onCamera, bool clearSpot = true) {
-			SCOPED_TRACE(defName + (onCamera ? " on camera" : " off camera") + " from (" + std::to_string(from.x) + ", " +
-						 std::to_string(from.y) + ")");
-			nav->setViewportRect(onCamera ? tree : glm::vec2{-600.0F, -600.0F}, {30.0F, 30.0F});
-			for (int i = 0; i < 3; ++i) {
-				world->update(kTick);
-			}
-			nav->finishPendingBuilds();
-			ASSERT_FALSE(nav->isValidPosition(tree)) << "the tree's collider is placed";
-
+		void harvestFrom(const std::string& defName, float halfExtent, glm::vec2 tree, glm::vec2 from, bool clearSpot = true) {
+			SCOPED_TRACE(defName + " from (" + std::to_string(from.x) + ", " + std::to_string(from.y) + ")");
 			GoalTaskRegistry::Get().clear();
 			const EntityID station = world->createEntity();
 			world->addComponent<Position>(station, Position{from});
@@ -5320,6 +5314,8 @@ namespace ecs::test {
 			world->addComponent<Action>(colonist, Action{});
 			satisfyAllNeeds(*getNeeds(colonist));
 			addKnownEntity(colonist, tree, assets::AssetRegistry::Get().getDefNameId(defName), assets::CapabilityType::Harvestable);
+			nav->finishPendingBuilds();
+			ASSERT_FALSE(nav->isValidPosition(tree)) << "the tree's collider is placed";
 
 			std::optional<glm::vec2> startedAt;
 			bool					 harvested = false;
@@ -5358,10 +5354,10 @@ namespace ecs::test {
 		const glm::vec2	  c{20.0F, 60.0F};
 		const glm::vec2	  d{60.0F, 60.0F};
 		placeTrees({{tree, a}, {tree, b}, {tree, c}, {tree, d}});
-		harvestFrom(tree, 1.0F, a, a + glm::vec2{-12.0F, 0.0F}, true);
-		harvestFrom(tree, 1.0F, b, b + glm::vec2{0.0F, 12.0F}, true);
-		harvestFrom(tree, 1.0F, c, c + glm::vec2{-12.0F, 0.0F}, false);
-		harvestFrom(tree, 1.0F, d, d + glm::vec2{0.0F, 12.0F}, false);
+		harvestFrom(tree, 1.0F, a, a + glm::vec2{-12.0F, 0.0F});
+		harvestFrom(tree, 1.0F, b, b + glm::vec2{0.0F, 12.0F});
+		harvestFrom(tree, 1.0F, c, c + glm::vec2{-12.0F, 0.0F});
+		harvestFrom(tree, 1.0F, d, d + glm::vec2{0.0F, 12.0F});
 	}
 
 	TEST_F(AIDecisionHarvestStandTest, NarrowTreeIsHarvestedFromItsStandPoint) {
@@ -5371,14 +5367,14 @@ namespace ecs::test {
 		const glm::vec2	  c{20.0F, 60.0F};
 		const glm::vec2	  d{60.0F, 60.0F};
 		placeTrees({{tree, a}, {tree, b}, {tree, c}, {tree, d}});
-		harvestFrom(tree, 0.2F, a, a + glm::vec2{-12.0F, 0.0F}, true);
-		harvestFrom(tree, 0.2F, b, b + glm::vec2{0.0F, 12.0F}, true);
-		harvestFrom(tree, 0.2F, c, c + glm::vec2{-12.0F, 0.0F}, false);
-		harvestFrom(tree, 0.2F, d, d + glm::vec2{0.0F, 12.0F}, false);
+		harvestFrom(tree, 0.2F, a, a + glm::vec2{-12.0F, 0.0F});
+		harvestFrom(tree, 0.2F, b, b + glm::vec2{0.0F, 12.0F});
+		harvestFrom(tree, 0.2F, c, c + glm::vec2{-12.0F, 0.0F});
+		harvestFrom(tree, 0.2F, d, d + glm::vec2{0.0F, 12.0F});
 	}
 
 	// A tree ringed by other trunks, so every spot just outside its collider is inside a neighbour's: it
-	// is still harvested, from a spot inside a neighbour, on camera and off.
+	// is still harvested, from a spot inside a neighbour.
 	TEST_F(AIDecisionHarvestStandTest, TreeInAThicketIsStillHarvested) {
 		const std::string tree = registerTree(0.2F);
 		assets::AssetDefinition neighbour;
@@ -5395,8 +5391,8 @@ namespace ecs::test {
 			}
 		}
 		placeTrees(placed);
-		harvestFrom(tree, 0.2F, a, a + glm::vec2{-12.0F, 0.0F}, true, false);
-		harvestFrom(tree, 0.2F, b, b + glm::vec2{-12.0F, 0.0F}, false, false);
+		harvestFrom(tree, 0.2F, a, a + glm::vec2{-12.0F, 0.0F}, false);
+		harvestFrom(tree, 0.2F, b, b + glm::vec2{-12.0F, 0.0F}, false);
 	}
 
 	// The harvest it is on keeps its stand point: carried round to the far side of the tree mid-walk, the
@@ -5406,8 +5402,6 @@ namespace ecs::test {
 		const std::string tree = registerTree(1.0F);
 		const glm::vec2	  at{20.0F, 20.0F};
 		placeTrees({{tree, at}});
-		nav->setViewportRect(at, {30.0F, 30.0F});
-		nav->finishPendingBuilds();
 
 		GoalTaskRegistry::Get().clear();
 		const EntityID station = world->createEntity();
@@ -5434,6 +5428,7 @@ namespace ecs::test {
 		world->addComponent<Action>(colonist, Action{});
 		satisfyAllNeeds(*getNeeds(colonist));
 		addKnownEntity(colonist, at, assets::AssetRegistry::Get().getDefNameId(tree), assets::CapabilityType::Harvestable);
+		nav->finishPendingBuilds();
 		for (int i = 0; i < 20 && getTask(colonist)->type != TaskType::Harvest; ++i) {
 			world->update(kTick);
 		}
@@ -5506,11 +5501,6 @@ namespace ecs::test {
 			nav->setPlacementData(&trees, &processed);
 		}
 		ASSERT_GE(inFootprint.size(), 4U);
-		nav->setViewportRect(centre, {30.0F, 30.0F});
-		for (int i = 0; i < 4; ++i) {
-			world->update(kTick);
-		}
-		nav->finishPendingBuilds();
 
 		GoalTaskRegistry::Get().clear();
 		GoalTask clear;
@@ -5527,6 +5517,7 @@ namespace ecs::test {
 		for (const glm::vec2 p : inFootprint) {
 			addKnownEntity(colonist, p, oakId, assets::CapabilityType::Harvestable);
 		}
+		nav->finishPendingBuilds();
 
 		std::set<uint64_t> harvestTasks;
 		int				   harvestsStarted = 0;
@@ -5853,43 +5844,62 @@ namespace ecs::test {
 																		   << static_cast<int>(getTask(colonist)->navState);
 	}
 
-	// Two water points a metre apart, ground landing elsewhere every few ticks (the camera wandering,
-	// which moves the walks' key each time): the colonist picks one and keeps it. Same position, same
-	// mesh near him, same pick.
-	TEST_F(AIDecisionArrivingGroundTest, TargetHoldsWhileGroundLandsElsewhere) {
-		world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>(kTestRngSeed);
-		assets::AssetDefinition water;
-		water.defName = "Water";
-		water.label	  = "Water";
-		assets::AssetRegistry::Get().registerTestDefinition(water);
-		const uint32_t waterId	= assets::AssetRegistry::Get().getDefNameId("Water");
-		const auto	   colonist = createColonist(kAt);
-		world->addComponent<Action>(colonist, Action{});
-		satisfyAllNeeds(*getNeeds(colonist));
-		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-		setNeedValue(colonist, NeedType::Thirst, 20.0F);
-		addKnownEntity(colonist, kAt + glm::vec2{-30.0F, 0.0F}, waterId, assets::CapabilityType::Drinkable);
-		addKnownEntity(colonist, kAt + glm::vec2{-30.0F, 1.0F}, waterId, assets::CapabilityType::Drinkable);
-		stream({256.0F, 256.0F});
-		nav->finishPendingBuilds();
+	// Two water points a metre apart: the colonist picks one and keeps it while he walks there and drinks.
+	// With ground landing elsewhere every few ticks (another mover travelling far off) every walk is
+	// measured afresh at each decision; with none, walks are held per reach cell and so start up to a
+	// cell apart, which is what kKeepSourceMargin covers. Returns the times his thirst target changed.
+	class AIDecisionTwoWatersTest : public AIDecisionArrivingGroundTest {
+	  protected:
+		int targetChangesWalkingToWater(bool groundLandsElsewhere) {
+			world->registerSystem<TimeSystem>();
+			world->registerSystem<ActionSystem>(kTestRngSeed);
+			assets::AssetDefinition water;
+			water.defName = "Water";
+			water.label	  = "Water";
+			assets::AssetRegistry::Get().registerTestDefinition(water);
+			const uint32_t waterId	= assets::AssetRegistry::Get().getDefNameId("Water");
+			const auto	   colonist = createColonist(kAt);
+			world->addComponent<Action>(colonist, Action{});
+			satisfyAllNeeds(*getNeeds(colonist));
+			world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+			setNeedValue(colonist, NeedType::Thirst, 20.0F);
+			addKnownEntity(colonist, kAt + glm::vec2{-30.0F, 0.0F}, waterId, assets::CapabilityType::Drinkable);
+			addKnownEntity(colonist, kAt + glm::vec2{-30.0F, 1.0F}, waterId, assets::CapabilityType::Drinkable);
+			stream({256.0F, 256.0F});
+			nav->finishPendingBuilds();
+			const EntityID traveller = groundLandsElsewhere ? addLookout({256.0F + 512.0F * 3.0F, 256.0F}) : kInvalidEntity;
 
-		int						 changes = 0;
-		std::optional<glm::vec2> last;
-		for (int i = 0; i < 600 && getNeeds(colonist)->get(NeedType::Thirst).value < 50.0F; ++i) {
-			if (i % 5 == 0) {
-				stream({256.0F + 512.0F * static_cast<float>(3 + i / 5), 256.0F}); // a far chunk's ground lands
+			int						 changes  = 0;
+			std::uint64_t			 landings = 0;
+			std::optional<glm::vec2> last;
+			for (int i = 0; i < 600 && getNeeds(colonist)->get(NeedType::Thirst).value < 50.0F; ++i) {
+				if (groundLandsElsewhere && i % 5 == 0) {
+					// He moves on to a far chunk no mover has been in, and its ground lands.
+					world->getComponent<Position>(traveller)->value = {256.0F + 512.0F * static_cast<float>(3 + i / 5), 256.0F};
+					stream({256.0F, 256.0F});
+				}
+				const std::uint64_t before = nav->navQueryStats().structuralPatches;
+				world->update(kTick);
+				landings += nav->navQueryStats().structuralPatches > before ? 1 : 0;
+				const Task& task = *getTask(colonist);
+				if (task.type == TaskType::FulfillNeed && task.needToFulfill == NeedType::Thirst &&
+					(!last.has_value() || glm::distance(*last, task.targetPosition) > 0.01F)) {
+					++changes;
+					last = task.targetPosition;
+				}
 			}
-			world->update(kTick);
-			const Task& task = *getTask(colonist);
-			if (task.type == TaskType::FulfillNeed && task.needToFulfill == NeedType::Thirst &&
-				(!last.has_value() || glm::distance(*last, task.targetPosition) > 0.01F)) {
-				++changes;
-				last = task.targetPosition;
-			}
+			EXPECT_EQ(landings > 1, groundLandsElsewhere) << "ground landed elsewhere, or did not";
+			EXPECT_GT(getNeeds(colonist)->get(NeedType::Thirst).value, 50.0F) << "never drank";
+			return changes;
 		}
-		EXPECT_EQ(changes, 1) << "it flipped between the two water points";
-		EXPECT_GT(getNeeds(colonist)->get(NeedType::Thirst).value, 50.0F);
+	};
+
+	TEST_F(AIDecisionTwoWatersTest, TargetHoldsWhileGroundLandsElsewhere) {
+		EXPECT_EQ(targetChangesWalkingToWater(true), 1) << "it flipped between the two water points";
+	}
+
+	TEST_F(AIDecisionTwoWatersTest, TargetHoldsWithNothingLandingElsewhere) {
+		EXPECT_EQ(targetChangesWalkingToWater(false), 1) << "it flipped between the two water points";
 	}
 
 	// Hauls with the real AI, MovementSystem and ActionSystem: stone from piles to stations. A haul is
@@ -6235,9 +6245,9 @@ namespace ecs::test {
 		EXPECT_EQ(thirst->status, OptionStatus::SearchGaveUp);
 	}
 
-	// A failed route to water 600 m off, far past the ground the anchor's stamp covers, is forgotten once
-	// a wall beside the water goes: the stamp of the ground between the colonist and the water moved. A
-	// wall built well off that ground changes nothing.
+	// A failed route to water 600 m off, on ground a mover beside it has meshed and far past the ground
+	// the anchor's stamp covers, is forgotten once a wall beside the water goes: the stamp of the ground
+	// between the colonist and the water moved. A wall built well off that ground changes nothing.
 	TEST_F(AIDecisionWallTest, FailedRouteToAFarTargetClearsWhenAWallBesideItGoes) {
 		constexpr glm::vec2 kSpot{0.0F, 0.0F};
 		constexpr glm::vec2 kWater{600.0F, 0.0F};
@@ -6250,6 +6260,7 @@ namespace ecs::test {
 			   return commit.createdSegments;
 		};
 		const auto besideWater = buildWallAt({604000, -3000}, {604000, 3000});
+		addLookout(kWater + glm::vec2{-4.0F, 0.0F});
 
 		const auto colonist = createColonist(kSpot);
 		satisfyAllNeeds(*getNeeds(colonist));
@@ -6380,8 +6391,8 @@ namespace ecs::test {
 			}
 		}
 
-		// A tree placed far from the colonist with the view over it, so its flora enters the nav mesh: a
-		// nav-mesh patch that leaves the structural mesh alone.
+		// A tree placed far from the colonist with a mover beside it, so it enters the nav mesh: a nav-mesh
+		// patch that leaves the structural mesh alone.
 		void patchFloraFarAway() {
 			assets::AssetDefinition tree;
 			tree.defName					 = "Test_FarTree";
@@ -6396,12 +6407,12 @@ namespace ecs::test {
 			farProcessed.insert(placed.coord);
 			farFlora.storeChunkResult(std::move(placed));
 			nav->setPlacementData(&farFlora, &farProcessed);
-			nav->setViewportRect(kFarTree, {30.0F, 30.0F});
+			addLookout(kFarTree + glm::vec2{3.0F, 0.0F});
 		}
 
-		// Ground arriving in chunks only the camera loads, far from the colonist: the chunk region
-		// widened by a ring the colonist's anchor doesn't reach.
-		void meshCameraOnlyGround() {
+		// Chunks only the camera loads, far from the colonist: the chunk region widened by a ring the
+		// colonist's anchor doesn't reach, settled as the game would.
+		void loadCameraOnlyChunks() {
 			wider = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
 			wider->setLoadRadius(3);
 			wider->setUnloadRadius(5);
@@ -6538,20 +6549,17 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->type, TaskType::Harvest);
 	}
 
-	// Ground arriving in chunks only the camera holds, far from the colonist, re-requests nobody (the
-	// route generation stays) and leaves a failed route's anchor where it was; its walks are asked again
-	// (any structural job moves their key) and find the same: the room closed, the water outside.
-	TEST_F(AIDecisionWalledWaterTest, CameraOnlyGroundKeepsTheVerdicts) {
+	// Chunks only the camera loads, far from the colonist, mesh nothing: the route generation stays and
+	// the colonist decides as before, the room closed, the water outside.
+	TEST_F(AIDecisionWalledWaterTest, CameraLoadedGroundChangesNoChoice) {
 		const auto colonist = makeThirstyColonistWithWalledWater();
 		world->update(kTick);
 		ASSERT_EQ(getTask(colonist)->targetPosition, kOutside);
-		const glm::vec2		here	   = world->getComponent<Position>(colonist)->value;
-		const std::uint64_t anchor	   = nav->verdictStamp(here);
 		const std::uint64_t generation = nav->generation();
 
-		meshCameraOnlyGround();
-		ASSERT_TRUE(nav->inSimArea({1700.0F, 0.0F})) << "the camera's ring is meshed";
-		EXPECT_EQ(nav->verdictStamp(here), anchor) << "the failed-route anchor moved";
+		loadCameraOnlyChunks();
+		ASSERT_NE(wider->getChunk(world::worldToChunk({1700.0F, 0.0F})), nullptr) << "the camera's ring is loaded";
+		EXPECT_FALSE(nav->inSimArea({1700.0F, 0.0F})) << "no mover has been on the camera's ring";
 		EXPECT_EQ(nav->generation(), generation) << "the route generation moved";
 
 		int choseRoom = 0;
@@ -6561,7 +6569,7 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(colonist)->targetPosition, kOutside);
 	}
 
-	// Flora entering the nav mesh far away (under the camera as it pans) changes nothing this
+	// Flora entering the nav mesh far away (round another mover) changes nothing this
 	// colonist's verdicts depend on, since reach reads the structural mesh and flora landing leaves the
 	// route generation where it is: it keeps to the water outside.
 	TEST_F(AIDecisionWalledWaterTest, FloraPatchFarAwayKeepsTheVerdicts) {

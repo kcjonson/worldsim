@@ -111,9 +111,6 @@ class NavigationSystem : public ISystem {
 
 	void setChunkManager(world::ChunkManager* manager) { chunkManager = manager; }
 
-	// Does nothing; goes when its last callers do.
-	void setViewportRect(glm::vec2 /*centerMeters*/, glm::vec2 /*halfExtentMeters*/) {}
-
 	// The buffer added to a mover's sight distance to make its range R: one detail cell, so the
 	// placed obstacles ahead of a walking mover land before he reaches them.
 	static constexpr float kSightBufferMeters = 16.0F;
