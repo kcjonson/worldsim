@@ -18,7 +18,7 @@
 namespace ecs {
 
 	/// What a colonist has found about the targets it remembers (NavigationSystem::Reach), by Memory
-	/// key, kept two ways.
+	/// key, kept three ways.
 	///
 	/// A walk, its length, "none" (within a bound, or at any length) or "far" (the search gave up), is a
 	/// function of where the colonist stands, the structural mesh and its belief, so it is held under a
@@ -33,6 +33,14 @@ namespace ecs {
 	/// target again. Each failed route also keeps the stamp of the ground between the anchor and its
 	/// target (NavigationSystem::spanStamp), and the caller forgets it once that moves
 	/// (forgetFailedRoutes), so a change near a far target clears it too.
+	///
+	/// A route whose search gave up (NavigationSystem::PathAnswer::gaveUp) is a question about a far
+	/// target, whose answer doesn't change when the colonist takes ten steps, so it isn't held under
+	/// the anchor: it keeps where the search started, the target and the stamp of the ground between
+	/// them, and holds until that stamp or the belief moves or the colonist is more than
+	/// kGaveUpMoveFraction of the way from there to the target away from where it started
+	/// (forgetGaveUpRoutes). So a colonist that knows only far targets with no way to them tries each
+	/// once, not once per anchor.
 	struct SourceReachMemo {
 		struct Key {
 			std::int64_t  startCell = 0;		// NavigationSystem::Reach::startCell
@@ -58,8 +66,8 @@ namespace ecs {
 			}
 		};
 
-		/// Forget the walks when the key changes and the failed routes when the anchor does, or either
-		/// once it passes maxVerdicts (forgotten sources' included).
+		/// Forget the walks when the key changes and the failed routes when the anchor does, or any of the
+		/// three once it passes maxVerdicts (forgotten sources' included).
 		void keep(const Key& nextKey, const Anchor& nextAnchor, std::size_t maxVerdicts) {
 			if (key != nextKey || walks.size() > maxVerdicts) {
 				walks.clear();
@@ -69,7 +77,15 @@ namespace ecs {
 				failedRoutes.clear();
 				anchor = nextAnchor;
 			}
+			if (gaveUpRoutes.size() > maxVerdicts) {
+				gaveUpRoutes.clear();
+			}
 		}
+
+		/// The reach stamp a route failure gets while ground within the anchor load range of the colonist
+		/// is still to mesh (NavigationSystem::Reach::settled): never recorded, and the next decision
+		/// picks afresh. NavigationSystem wakes a mover whose failure carries it once that ground lands.
+		static constexpr std::uint64_t kUnsettledStamp = std::numeric_limits<std::uint64_t>::max();
 
 		/// Where the failed routes were found, until the first keep().
 		[[nodiscard]] const std::optional<Anchor>& heldAnchor() const { return anchor; }
@@ -77,7 +93,7 @@ namespace ecs {
 		/// A source already found unreachable, by a walk under the current key or a route under the
 		/// current anchor, so a query can drop it up front. Far is not unreachable.
 		[[nodiscard]] bool knownUnreachable(std::uint64_t sourceKey) const {
-			if (failedRoutes.contains(sourceKey)) {
+			if (failedRoutes.contains(sourceKey) || gaveUpRoutes.contains(sourceKey)) {
 				return true;
 			}
 			const auto it = walks.find(sourceKey);
@@ -91,33 +107,59 @@ namespace ecs {
 		}
 
 		/// A route to this source failed under the current anchor: it's unreachable whatever a walk says.
-		/// `target` and `spanStamp` say where and over what ground; `gaveUp` that the search gave up
-		/// rather than finding no way.
+		/// `target` and `spanStamp` (NavigationSystem::spanStamp from the anchor) say where and over what
+		/// ground.
 		struct FailedRoute {
 			glm::vec2	  target{0.0F, 0.0F};
 			std::uint64_t spanStamp = 0;
-			bool		  gaveUp	= false;
 		};
 		void recordFailedRoute(std::uint64_t sourceKey, const FailedRoute& route) { failedRoutes[sourceKey] = route; }
-		[[nodiscard]] const FailedRoute* failedRoute(std::uint64_t sourceKey) const {
-			const auto it = failedRoutes.find(sourceKey);
-			return it != failedRoutes.end() ? &it->second : nullptr;
-		}
-		/// Forget the failed routes `stale(route)` says no longer hold, once per structural epoch (no span
-		/// stamp moves without it).
-		template <typename Stale> void forgetFailedRoutes(std::uint64_t structuralEpoch, Stale&& stale) {
+
+		/// A route to this source whose search gave up, from `from`: unreachable until it is forgotten.
+		struct GaveUpRoute {
+			glm::vec2	  from{0.0F, 0.0F};
+			glm::vec2	  target{0.0F, 0.0F};
+			std::uint64_t spanStamp		= 0; // NavigationSystem::spanStamp(from, target)
+			std::uint64_t beliefVersion = 0; // Memory::beliefVersion
+		};
+		void recordGaveUpRoute(std::uint64_t sourceKey, const GaveUpRoute& route) { gaveUpRoutes[sourceKey] = route; }
+		[[nodiscard]] bool searchGaveUpOn(std::uint64_t sourceKey) const { return gaveUpRoutes.contains(sourceKey); }
+
+		/// How far the colonist moves from where a search gave up, as a fraction of the straight line from
+		/// there to the target, before the target is asked about again.
+		static constexpr float kGaveUpMoveFraction = 0.25F;
+
+		/// Forget the failed and gave-up routes whose span stamp moved: `spanStamp(from, target)` is the
+		/// stamp now, read once per structural epoch (no span stamp moves without it). A failed route's
+		/// span starts at the anchor.
+		template <typename SpanStamp> void forgetFailedRoutes(std::uint64_t structuralEpoch, SpanStamp&& spanStamp) {
 			if (spanEpoch == structuralEpoch) {
 				return;
 			}
 			spanEpoch = structuralEpoch;
-			std::erase_if(failedRoutes, [&](const auto& entry) { return stale(entry.second); });
+			if (anchor.has_value()) {
+				std::erase_if(failedRoutes, [&](const auto& entry) { return spanStamp(anchor->at, entry.second.target) != entry.second.spanStamp; });
+			}
+			std::erase_if(gaveUpRoutes, [&](const auto& entry) { return spanStamp(entry.second.from, entry.second.target) != entry.second.spanStamp; });
+		}
+
+		/// Forget the gave-up routes the colonist, at `here` with belief `beliefVersion`, has moved or
+		/// learned its way out of (kGaveUpMoveFraction).
+		void forgetGaveUpRoutes(const glm::vec2& here, std::uint64_t beliefVersion) {
+			std::erase_if(gaveUpRoutes, [&](const auto& entry) {
+				const GaveUpRoute& route = entry.second;
+				const glm::vec2	   moved = here - route.from;
+				const glm::vec2	   span	 = route.target - route.from;
+				const float		   limit = kGaveUpMoveFraction * kGaveUpMoveFraction * (span.x * span.x + span.y * span.y);
+				return route.beliefVersion != beliefVersion || moved.x * moved.x + moved.y * moved.y > limit;
+			});
 		}
 
 		/// The walk to a source no longer than maxWalk, running probe(position, maxWalk) when what is
 		/// held doesn't answer it. A far answer is held like the others.
 		template <typename Probe>
 		[[nodiscard]] WalkAnswer walk(std::uint64_t sourceKey, const glm::vec2& position, float maxWalk, Probe&& probe) {
-			if (failedRoutes.contains(sourceKey)) {
+			if (failedRoutes.contains(sourceKey) || gaveUpRoutes.contains(sourceKey)) {
 				return {};
 			}
 			const auto it = walks.find(sourceKey);
@@ -171,6 +213,7 @@ namespace ecs {
 		std::unordered_map<std::uint64_t, Verdict> walks;
 		std::optional<Anchor>						anchor;
 		std::unordered_map<std::uint64_t, FailedRoute>	failedRoutes;
+		std::unordered_map<std::uint64_t, GaveUpRoute>	gaveUpRoutes;
 		std::optional<std::uint64_t>					spanEpoch;
 	};
 

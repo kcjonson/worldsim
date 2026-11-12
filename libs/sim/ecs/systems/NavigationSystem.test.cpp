@@ -475,6 +475,46 @@ TEST_F(NavigationSystemTest, KnownWalledRoomIsADefiniteNoFromTheGoalSide) {
 	EXPECT_EQ(sys.navQueryStats().forwardSearches, 0U);
 }
 
+// With budgets small enough that the walk into a room whose walls are known (its door isn't) is far,
+// the request asks the goal-side search, the start-side search and the far nav search, each to its
+// budget and no further, and says it gave up. A goal outside the room with the same budgets is far
+// too, and the far nav search routes it.
+TEST_F(NavigationSystemTest, FarRequestSpendsAtMostItsThreeBudgets) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	constexpr std::uint32_t kProbe	= 1;
+	constexpr std::uint32_t kStart	= 3;
+	constexpr std::uint32_t kFarNav = 10;
+	sys.setReachBudgets(kProbe, kStart, kFarNav);
+
+	const std::unordered_set<std::uint64_t> knownWalls = allSegmentIds(cw);
+	const std::unordered_set<std::uint64_t> noOpenings;
+	const geometry::nav::BeliefFilter		walledBelief{&knownWalls, &noOpenings};
+	ASSERT_TRUE(sys.walk(sys.reachFrom(kOutside, kAgentRadius, walledBelief), kInside).far);
+	sys.resetNavQueryStats();
+	const NavigationSystem::PathAnswer path = sys.requestPath(kOutside, kInside, kAgentRadius, walledBelief);
+	EXPECT_FALSE(path.route.has_value());
+	EXPECT_TRUE(path.gaveUp);
+	const auto& stats = sys.navQueryStats();
+	// A search may expand one past its cap (it still tries a goal popped at the cap).
+	EXPECT_LE(stats.probeExpansions, kProbe + 1);
+	EXPECT_LE(stats.forwardExpansions, kStart + 1);
+	EXPECT_LE(stats.totalNodesExpanded, kFarNav + 1);
+	EXPECT_LE(stats.probeExpansions + stats.forwardExpansions + stats.totalNodesExpanded, kProbe + kStart + kFarNav + 3);
+
+	sys.setReachBudgets(kProbe, kStart, NavigationSystem::kFarNavExpansions);
+	const glm::vec2 away{30.0F, 20.0F};
+	ASSERT_TRUE(sys.walk(sys.reachFrom(kOutside, kAgentRadius), away).far);
+	const NavigationSystem::PathAnswer routed = sys.requestPath(kOutside, away, kAgentRadius);
+	EXPECT_TRUE(routed.route.has_value());
+	EXPECT_FALSE(routed.gaveUp);
+}
+
 // The walk found by the search from the goal is the walk: its length is the search from the start's,
 // and the same both ways, round the room and through its door.
 TEST_F(NavigationSystemTest, WalkLengthIsTheSameBothWays) {
@@ -1203,6 +1243,63 @@ namespace {
 		return meshed;
 	}
 } // namespace
+
+// A mover whose route failed while ground in its reach box was still to come (stamped
+// SourceReachMemo::kUnsettledStamp) is told to decide again on the update that lands that ground, and
+// on no other: not before it, not the mover whose stamp is unsettled but whose box was already settled,
+// not the mover whose failure was settled. Chunk 1 loads three updates after the failure.
+TEST_F(NavigationSystemTest, GroundSettlingAnUnsettledFailureWakesItsMover) {
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setConstructionWorld(&cw);
+	walk.stand(0);
+	settle(sys);
+	step(world, sys); // chunk 0's landing is behind every mover below
+
+	const auto mover = [&](glm::vec2 at, std::uint64_t stamp) {
+		const EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{at});
+		Task task;
+		task.blockedReachStamp = stamp;
+		world.addComponent<Task>(e, task);
+		return e;
+	};
+	const glm::vec2 byChunkOne = ChunkWalk::centre(0) + glm::vec2{200.0F, 0.0F}; // its box reaches into chunk 1
+	const EntityID	waiting	   = mover(byChunkOne, SourceReachMemo::kUnsettledStamp);
+	const EntityID	settled	   = mover(ChunkWalk::centre(0), SourceReachMemo::kUnsettledStamp);
+	const EntityID	blocked	   = mover(byChunkOne, 42);
+	ASSERT_FALSE(sys.reachFrom(byChunkOne, kAgentRadius).settled);
+	ASSERT_TRUE(sys.reachFrom(ChunkWalk::centre(0), kAgentRadius).settled);
+	const auto woken = [&](EntityID e) { return world.getComponent<Task>(e)->timeSinceEvaluation == std::numeric_limits<float>::max(); };
+
+	for (int i = 0; i < 3; ++i) {
+		step(world, sys);
+		ASSERT_FALSE(woken(waiting)) << "woken before its ground came, update " << i;
+	}
+	std::vector<world::WorldPosition> anchors;
+	sys.appendAnchors(anchors);
+	walk.chunks->update({ChunkWalk::centre(0).x, ChunkWalk::centre(0).y}, anchors);
+	walk.chunks->finishPendingGeneration();
+	// Bare updates, as the game runs them: a query between them would join the job early.
+	int landedAt = -1;
+	for (int i = 0; i < 20 && landedAt < 0; ++i) {
+		const std::uint64_t patches = sys.navQueryStats().structuralPatches;
+		world.update(0.016F);
+		if (sys.navQueryStats().structuralPatches > patches) {
+			landedAt = i;
+			EXPECT_TRUE(woken(waiting)) << "not woken on the update its ground landed";
+		} else {
+			EXPECT_FALSE(woken(waiting)) << "woken before its ground landed, update " << i;
+		}
+	}
+	ASSERT_GE(landedAt, 0) << "chunk 1's ground never landed";
+	EXPECT_TRUE(sys.reachFrom(byChunkOne, kAgentRadius).settled);
+	EXPECT_FALSE(woken(settled)) << "its box was settled already";
+	EXPECT_FALSE(woken(blocked)) << "its failure had nothing to do with missing ground";
+}
 
 // Ground stays meshed for at most kCameraOnlyUnloadedChunks unloaded chunks; past that the ones unloaded
 // longest ago lose it.

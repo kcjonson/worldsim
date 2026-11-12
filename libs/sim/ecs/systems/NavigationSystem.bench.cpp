@@ -807,10 +807,10 @@ namespace {
 	}
 
 	// Reach against route (nav-mesh-variable-resolution.md section 10): over random pairs in the
-	// colony's reach square, the structural walk's verdict (walkDistance) against the confined route's
+	// colony's reach square, the structural walk's verdict (walk) against the confined route's
 	// (requestPath), under the same belief. range(0): 0 no belief, 1 a belief knowing a doorless room's
 	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, and times one
-	// walkDistance call (mean and worst) and the failing belief route into the room.
+	// walk call (mean and worst) and the failing belief route into the room.
 	void BM_ReachAgainstRoute(benchmark::State& state) {
 		const bool						  room = state.range(0) != 0;
 		std::unordered_set<std::uint64_t> knownSegments;
@@ -864,7 +864,7 @@ namespace {
 				}
 				++pairs;
 				const Clock::time_point start = Clock::now();
-				const bool				walk  = rig.nav.walkDistance(rig.nav.reachFrom(a, kAgentRadius, belief), b).has_value();
+				const bool				walk  = rig.nav.walk(rig.nav.reachFrom(a, kAgentRadius, belief), b).reachable();
 				const double			us	  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 				walkUs += us;
 				walkMaxUs = std::max(walkMaxUs, us);
@@ -903,10 +903,10 @@ namespace {
 	}
 
 	// One need decision's pick of a source, as AIDecisionSystem makes it (findNearestReachableWithCapability
-	// through the colonist's SourceReachMemo onto walkDistance), among range(0) remembered sources
+	// through the colonist's SourceReachMemo onto walk), among range(0) remembered sources
 	// scattered within 100 m of the colony, the river among them. Cold: a fresh memo each decision, as
 	// after the colonist moves 2 m or the mesh near it changes. Warm: the memo kept, as between
-	// decisions standing still. Times one whole pick and counts the walkDistance calls it makes.
+	// decisions standing still. Times one whole pick and counts the walk calls it makes.
 	void BM_NeedDecision(benchmark::State& state) {
 		const int sources = static_cast<int>(state.range(0));
 		for (auto _ : state) {
@@ -938,7 +938,7 @@ namespace {
 					  [&](uint64_t sourceKey, const glm::vec2& at, float maxWalk) {
 						  return memo.walk(sourceKey, at, maxWalk, [&](const glm::vec2& p, float bound) {
 							  ++walks;
-							  return rig.nav.walkDistance(reach, p, bound);
+							  return rig.nav.walk(reach, p, bound);
 						  });
 					  },
 					  [&](uint64_t sourceKey, const glm::vec2&) { return !memo.knownUnreachable(sourceKey); }, scratch

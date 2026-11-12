@@ -5143,17 +5143,17 @@ namespace ecs::test {
 		EXPECT_GT(east, 300.0F) << "it went round the ford";
 	}
 
-	// The only food is 10 m across the river and 1.5 km round its end. The colonist sets off and arrives,
-	// or, where that is past what the searches spend, its trace says the search gave up: never "no source".
+	// The only food is 10 m across the river and 1.5 km round its end, inside the real search budgets:
+	// the colonist sets off, goes round the river's end and arrives, and the trace never says "no
+	// source" or that the search gave up.
 	using AIDecisionLongFordTest = AIDecisionFordTest<750>;
-	TEST_F(AIDecisionLongFordTest, OnlyFoodRoundALongRiverIsReachedOrTheSearchSaysItGaveUp) {
+	TEST_F(AIDecisionLongFordTest, OnlyFoodRoundALongRiverIsReached) {
 		const auto		 colonist = hungryColonistKnowing({kAcross});
 		const glm::vec2& at		  = world->getComponent<Position>(colonist)->value;
-		bool			 noSource = false;
-		bool			 gaveUp	  = false;
+		bool			 noRoute  = false;
 		float			 east	  = 0.0F;
 		float			 lastDecision = -1.0F;
-		for (int i = 0; i < 20000 && glm::distance(at, kAcross) > 1.5F && !gaveUp; ++i) {
+		for (int i = 0; i < 20000 && glm::distance(at, kAcross) > 1.5F; ++i) {
 			world->update(kTick);
 			east = std::max(east, at.x);
 			const auto* trace = getTrace(colonist);
@@ -5163,14 +5163,11 @@ namespace ecs::test {
 			lastDecision		= trace->lastEvaluationTime;
 			const auto* hunger = findOption(*trace, isHungerNeedOption);
 			ASSERT_NE(hunger, nullptr);
-			noSource = noSource || hunger->status == OptionStatus::NoSource;
-			gaveUp	 = hunger->status == OptionStatus::SearchGaveUp;
+			noRoute = noRoute || hunger->status == OptionStatus::NoSource || hunger->status == OptionStatus::SearchGaveUp;
 		}
-		EXPECT_FALSE(noSource) << "the trace said no source";
-		EXPECT_TRUE(gaveUp || glm::distance(at, kAcross) <= 1.5F) << "neither arrived nor gave up; reached x " << east;
-		if (!gaveUp) {
-			EXPECT_GT(east, 750.0F) << "it went round the river's end";
-		}
+		EXPECT_FALSE(noRoute) << "the trace said no source, or that the search gave up";
+		EXPECT_LE(glm::distance(at, kAcross), 1.5F) << "never arrived; reached x " << east;
+		EXPECT_GT(east, 750.0F) << "it went round the river's end";
 	}
 
 	// A goal-driven harvest, end to end with the real AI, MovementSystem and ActionSystem: the colonist
@@ -5721,7 +5718,7 @@ namespace ecs::test {
 		addKnownEntity(colonist, near, waterId, assets::CapabilityType::Drinkable);
 		nav->finishPendingBuilds();
 		ASSERT_FALSE(nav->inSimArea(far));
-		EXPECT_FALSE(nav->walkDistance(nav->reachFrom(start, 0.3F), far).has_value()) << "reach said maybe";
+		EXPECT_FALSE(nav->walk(nav->reachFrom(start, 0.3F), far).reachable()) << "reach said maybe";
 
 		bool tookFar = false;
 		for (int i = 0; i < 600 && getNeeds(colonist)->get(NeedType::Thirst).value < 50.0F; ++i) {
@@ -5970,6 +5967,108 @@ namespace ecs::test {
 	// A failed route to water 600 m off, far past the ground the anchor's stamp covers, is forgotten once
 	// a wall beside the water goes: the stamp of the ground between the colonist and the water moved. A
 	// wall built well off that ground changes nothing.
+	// The far path end to end, with search budgets small enough that every walk here is far: water 60 m
+	// off, past a wall the colonist doesn't know (so the two ends are in different triangles), is far,
+	// chosen as the only candidate, and its route found by the far nav search; he walks there.
+	TEST_F(AIDecisionWallTest, FarWaterIsChosenRoutedAndReached) {
+		constexpr glm::vec2 kWater{60.0F, 0.0F};
+		const auto			commit = construction.commitSegment({30000, -10000}, {30000, 10000}, "Wood", "Standard", construction::kInvalidFoundation);
+		ASSERT_TRUE(commit.ok());
+		for (const auto id : commit.createdSegments) {
+			construction.setSegmentState(id, construction::FoundationState::Built);
+		}
+		nav->setReachBudgets(1, 1, NavigationSystem::kFarNavExpansions);
+		const auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 30.0F);
+		addKnownEntity(colonist, kWater, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->finishPendingBuilds();
+		nav->resetNavQueryStats();
+
+		world->update(kTick);
+		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+		});
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::Selected);
+		EXPECT_GT(nav->navQueryStats().farWalks, 0U) << "the walk wasn't far";
+		const NavPath* route = world->getComponent<NavPath>(colonist);
+		ASSERT_TRUE(route != nullptr && route->valid) << "the far nav search found no route";
+		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 0U);
+
+		const glm::vec2& at = world->getComponent<Position>(colonist)->value;
+		for (int i = 0; i < 1000 && glm::distance(at, kWater) > 1.0F; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_LE(glm::distance(at, kWater), 1.0F) << "never arrived";
+	}
+
+	// Three water sources in three rooms whose walls the colonist knows and whose doors it doesn't, with
+	// search budgets small enough that every walk is far and every far route search gives up. He tries
+	// each once (the trace then says the search gave up, not "no source"), and stops trying: not on
+	// later decisions, not after a few steps (less than kGaveUpMoveFraction of the way to them). A wall
+	// of one room coming down moves that span, and that one is tried once more.
+	TEST_F(AIDecisionWallTest, FarTargetsWithNoWayAreEachTriedOnce) {
+		std::array<std::vector<construction::SegmentId>, 3> rooms;
+		const std::array<glm::vec2, 3>						 waters{{{30.0F, 0.0F}, {0.0F, 30.0F}, {-30.0F, 0.0F}}};
+		for (std::size_t r = 0; r < waters.size(); ++r) {
+			const geometry::Vec2i64 c{std::llround(waters[r].x * 1000.0F), std::llround(waters[r].y * 1000.0F)};
+			const std::array<geometry::Vec2i64, 4> corners{{{c.x - 2000, c.y - 2000}, {c.x + 2000, c.y - 2000}, {c.x + 2000, c.y + 2000}, {c.x - 2000, c.y + 2000}}};
+			for (std::size_t i = 0; i < corners.size(); ++i) {
+				const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood", "Standard",
+															   construction::kInvalidFoundation);
+				ASSERT_TRUE(commit.ok());
+				for (const auto id : commit.createdSegments) {
+					construction.setSegmentState(id, construction::FoundationState::Built);
+					rooms[r].push_back(id);
+				}
+			}
+		}
+		nav->setReachBudgets(1, 1, 10);
+		const auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 30.0F);
+		auto* memory = world->getComponent<Memory>(colonist);
+		for (const auto& room : rooms) {
+			for (const auto id : room) {
+				memory->rememberSegment(static_cast<std::uint64_t>(id));
+			}
+		}
+		for (const glm::vec2 water : waters) {
+			addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
+		}
+		nav->finishPendingBuilds();
+		nav->resetNavQueryStats();
+
+		const auto thirstStatus = [&] {
+			const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+			});
+			return thirst != nullptr ? thirst->status : OptionStatus::Satisfied;
+		};
+		const auto runAt = [&](glm::vec2 here, int ticks) {
+			for (int i = 0; i < ticks; ++i) {
+				world->getComponent<Position>(colonist)->value = here;
+				world->update(kTick);
+			}
+		};
+		runAt({0.0F, 0.0F}, 60);
+		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 3U) << "each far target once";
+		EXPECT_EQ(thirstStatus(), OptionStatus::SearchGaveUp);
+
+		runAt({3.0F, -3.0F}, 60);
+		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 3U) << "a few steps had them tried again";
+
+		for (const auto id : rooms[1]) {
+			ASSERT_TRUE(construction.removeSegment(id));
+			break;
+		}
+		runAt({3.0F, -3.0F}, 60);
+		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 4U) << "the room whose wall came down wasn't tried again, or others were";
+	}
+
 	TEST_F(AIDecisionWallTest, FailedRouteToAFarTargetClearsWhenAWallBesideItGoes) {
 		constexpr glm::vec2 kSpot{0.0F, 0.0F};
 		constexpr glm::vec2 kWater{600.0F, 0.0F};

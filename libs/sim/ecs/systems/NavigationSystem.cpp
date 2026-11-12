@@ -688,11 +688,11 @@ namespace ecs {
 				return;
 			}
 			meshed = false;
-			// Every chunk the square meets is within the colonist's anchor load range, so its ground is
+			// Every chunk the box meets is within the colonist's anchor load range, so its ground is
 			// on the way; one the chunk manager hasn't loaded either is noted once, in case it never is.
 			const bool loaded = chunkManager != nullptr && std::as_const(*chunkManager).getChunk(coord) != nullptr;
 			if (!loaded && unmeshedReported.insert(coord).second) {
-				LOG_DEBUG(Engine, "[Nav] reach square meets chunk (%d, %d), not loaded yet: its colonists read unsettled until it is", coord.x, coord.y);
+				LOG_DEBUG(Engine, "[Nav] reach box meets chunk (%d, %d), not loaded yet: its colonists read unsettled until it is", coord.x, coord.y);
 			}
 		});
 		return meshed;
@@ -710,6 +710,7 @@ namespace ecs {
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
 		++tickCount;
+		wakeUnsettledFailures();
 		updateDetail();
 		forgetDroppedRoutes();
 		markCrossedRoutes();
@@ -786,6 +787,7 @@ namespace ecs {
 			for (const world::ChunkCoordinate coord : runningStructural.structuralChunks) {
 				++chunkStructuralVersion[coord];
 			}
+			groundLanded.insert(groundLanded.end(), runningStructural.groundChunks.begin(), runningStructural.groundChunks.end());
 			// Ground the camera alone holds changes no colonist's route or wait. Routes are restamped
 			// here, not on the next tick, since a query may join mid-frame and the AI reads them next.
 			if (runningStructural.anchored) {
@@ -1118,6 +1120,7 @@ namespace ecs {
 				const auto [lo, hi] = chunkBoxM(c.coord);
 				noteStructural(lo, hi, StructuralChange::GroundArrives);
 			}
+			gatheredStructural.groundChunks.push_back(c.coord);
 			gnav::PatchEdits navEdits;
 			navEdits.adds.push_back(nav::chunkSquare(c.coord));
 			navEdits.adds.insert(navEdits.adds.end(), water.begin(), water.end());
@@ -1589,6 +1592,39 @@ namespace ecs {
 		pricedRoutes = std::move(live);
 	}
 
+	namespace {
+		// AIDecisionSystem has no hook for "decide again now", so this writes the Task field its scheduler
+		// reads, as ActionSystem does after a landed cut: shouldReEvaluate's interval check passes at the
+		// next AI update. It belongs on the AI's side; replace it with that hook once there is one.
+		void decideAgainNow(Task& task) { task.timeSinceEvaluation = std::numeric_limits<float>::max(); }
+	} // namespace
+
+	void NavigationSystem::wakeUnsettledFailures() {
+		if (groundLanded.empty()) {
+			return;
+		}
+		std::vector<world::ChunkCoordinate> landed = std::move(groundLanded);
+		groundLanded.clear();
+		if (world == nullptr) {
+			return;
+		}
+		std::sort(landed.begin(), landed.end(), ChunkLess{});
+		for (auto [entity, position, task] : world->view<Position, Task>()) {
+			if (task.blockedReachStamp != SourceReachMemo::kUnsettledStamp) {
+				continue;
+			}
+			// The box Reach::settled reads: ground landing in it settles the reach once all of it is in.
+			const geometry::RectMm box	   = boxAround(nav::toMm(position.value), anchorLoadRangeMm());
+			bool				   touched = false;
+			forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
+				touched = touched || std::binary_search(landed.begin(), landed.end(), coord, ChunkLess{});
+			});
+			if (touched && groundMeshedThrough(box)) {
+				decideAgainNow(task);
+			}
+		}
+	}
+
 	void NavigationSystem::markCrossedRoutes() {
 		if (detailLanded.empty()) {
 			return;
@@ -2012,10 +2048,11 @@ namespace ecs {
 		// the route is the structural walk itself, through the detail at its price, as it would be off
 		// camera: so a route exists on camera exactly when it does off it. A far goal has no structural
 		// walk to fall back on: when the nav search gives up too, the search gave up.
-		const std::uint32_t cap	   = navExpansionFloor + navExpansionsPerStructural * structuralAnswer.expansions;
+		const std::uint32_t cap	   = structuralAnswer.far ? farNavExpansions : navExpansionFloor + navExpansionsPerStructural * structuralAnswer.expansions;
 		gnav::PathResult	result = gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
 		if (result.stop == gnav::PathStop::LimitReached && structuralAnswer.far) {
 			++navStats.routeSearchesGaveUp;
+			navStats.totalNodesExpanded += static_cast<std::uint64_t>(result.nodesExpanded);
 			LOG_DEBUG(Engine,
 					  "[Nav] path search gave up toward (%.2f, %.2f), %.0f m in a straight line from (%.2f, %.2f): structural %u expansions, nav %u",
 					  goalMeters.x, goalMeters.y, std::sqrt(dist2(startMeters, goalMeters)), startMeters.x, startMeters.y, structuralAnswer.expansions,
@@ -2060,19 +2097,19 @@ namespace ecs {
 		};
 		++navStats.structuralWalks;
 		StructuralWalk answer;
-		answer.walk = gnav::pathThrough(structural.view(), goalMm, startMm, radius, belief, {.maxCost = maxCost, .maxExpansions = kReachProbeExpansions});
+		answer.walk = gnav::pathThrough(structural.view(), goalMm, startMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachProbeExpansions});
 		answer.expansions = answer.walk.expansions;
 		navStats.probeExpansions += answer.walk.expansions;
-		if (!outOfSteps(answer.walk, kReachProbeExpansions)) {
+		if (!outOfSteps(answer.walk, reachProbeExpansions)) {
 			++navStats.probeAnswered;
 			std::reverse(answer.walk.points.begin(), answer.walk.points.end());
 			return answer;
 		}
 		++navStats.forwardSearches;
-		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = kReachExpansionCap});
+		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachExpansionCap});
 		answer.expansions += answer.walk.expansions;
 		navStats.forwardExpansions += answer.walk.expansions;
-		answer.far = outOfSteps(answer.walk, kReachExpansionCap);
+		answer.far = outOfSteps(answer.walk, reachExpansionCap);
 		navStats.farWalks += answer.far ? 1 : 0;
 		return answer;
 	}
@@ -2159,10 +2196,6 @@ namespace ecs {
 			return std::optional<float>{};
 		}
 		return std::optional<float>(static_cast<float>(found.walk.cost / static_cast<double>(geometry::kMillimetersPerMeter)));
-	}
-
-	std::optional<float> NavigationSystem::walkDistance(const Reach& reach, glm::vec2 goalMeters, float maxWalk) const {
-		return walk(reach, goalMeters, maxWalk).walk;
 	}
 
 	bool NavigationSystem::reaches(const Reach& reach, glm::vec2 goalMeters) const {
