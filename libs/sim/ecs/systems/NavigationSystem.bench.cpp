@@ -446,6 +446,19 @@ namespace {
 
 		void settle() { nav.finishPendingBuilds(); }
 
+		// The route by ticket, ticking the world (no gap) until it is answered; `ticks` counts them.
+		std::optional<ecs::NavigationSystem::RouteAnswer> route(glm::vec2 a, glm::vec2 b, const geometry::nav::BeliefFilter& belief, int& ticks) {
+			const nav::RouteTicket ticket = nav.requestRoute(a, std::array{b}, kAgentRadius, belief);
+			for (ticks = 0; ticks < 6000; ++ticks) {
+				if (std::optional<ecs::NavigationSystem::RouteAnswer> answer = nav.takeRouteAnswer(ticket)) {
+					return answer;
+				}
+				world.update(kTickSeconds);
+			}
+			nav.cancelRoute(ticket);
+			return std::nullopt;
+		}
+
 		void wall(glm::vec2 a, glm::vec2 b, bool door) {
 			const auto commit = construction.commitSegment({std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
 														   {std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)}, "Wood", "Standard",
@@ -654,120 +667,20 @@ namespace {
 			begin();
 			TickStats			stats;
 			std::vector<double> perTick;
-			rig.nav.resetNavQueryStats();
-			std::uint64_t last = 0;
+			const std::uint64_t first = rig.nav.routeStats().requests;
+			std::uint64_t		last  = first;
 			for (int i = 0; i < 600; ++i) {
 				rig.tick(stats);
-				const std::uint64_t queries = rig.nav.navQueryStats().totalQueries;
-				perTick.push_back(static_cast<double>(queries - last));
-				last = queries;
+				const std::uint64_t requests = rig.nav.routeStats().requests;
+				perTick.push_back(static_cast<double>(requests - last));
+				last = requests;
 			}
+			last -= first;
 			end();
 			stats.report(state);
 			state.counters["replans"]		 = static_cast<double>(last);
 			state.counters["replansPerTick"] = meanOf(perTick);
 			state.counters["replansMaxTick"] = atPercentile(perTick, 1.0);
-		}
-	}
-
-	// requestPath's work with no prices on flora: the structural walk, then the search over the nav
-	// mesh with flora walled.
-	std::optional<std::vector<glm::vec2>> unpricedPath(const ecs::NavigationSystem& nav, glm::vec2 a, glm::vec2 b) {
-		namespace gnav			   = geometry::nav;
-		const std::int64_t radius = std::llround(kAgentRadius * 1000.0F);
-		const geometry::Vec2i64 from{std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)};
-		const geometry::Vec2i64 to{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)};
-		if (gnav::pathThrough(nav.structuralMesh().view(), from, to, radius).stop != gnav::PathStop::Found) {
-			return std::nullopt;
-		}
-		const gnav::PathResult result = gnav::pathThrough(nav.navMesh().view(), from, to, radius);
-		if (!result.reachable) {
-			return std::nullopt;
-		}
-		std::vector<glm::vec2> points;
-		for (const geometry::Vec2i64& p : result.points) {
-			points.emplace_back(static_cast<float>(p.x) / 1000.0F, static_cast<float>(p.y) / 1000.0F);
-		}
-		return points;
-	}
-
-	// Fixed start/goal pairs round a colony, once settled. range(0): 0 the colony by the chunk
-	// side (the rows the old system has), 1 a colony in a chunk's middle. range(1): gap. range(2): 1
-	// queries as the game does (requestPath, flora priced), 0 the same pre-check and search with no
-	// prices, for the priced/unpriced ratio. Prints each pair's verdict and length so two builds can
-	// be compared pair by pair.
-	void BM_RequestPath(benchmark::State& state) {
-		const glm::vec2 at	   = state.range(0) == 0 ? kColony : kChunkCentreColony;
-		const bool		priced = state.range(2) != 0;
-		for (auto _ : state) {
-			Rig rig(state.range(1));
-			colony(rig, at);
-			rig.settle();
-			std::vector<std::pair<glm::vec2, glm::vec2>> pairs;
-			std::uint32_t								 seed = 5;
-			auto										 unit = [&seed] {
-				   seed = hashU32(seed + 0x9e3779b9U);
-				   return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
-			};
-			for (int i = 0; i < 64; ++i) {
-				const glm::vec2 a = at + glm::vec2{(unit() - 0.5F) * 70.0F, (unit() - 0.5F) * 40.0F};
-				const glm::vec2 b = at + glm::vec2{(unit() - 0.5F) * 70.0F, (unit() - 0.5F) * 40.0F};
-				pairs.emplace_back(a, b);
-			}
-			int			  ok		= 0;
-			double		  firstUs	= 0.0;
-			double		  warmUs	= 0.0;
-			double		  lengthSum = 0.0;
-			std::uint64_t firstNodes = 0;
-			rig.nav.resetNavQueryStats();
-			for (int round = 0; round < 11; ++round) {
-				const Clock::time_point start = Clock::now();
-				for (std::size_t i = 0; i < pairs.size(); ++i) {
-					const auto path = priced ? rig.nav.requestPath(pairs[i].first, pairs[i].second, kAgentRadius).route
-											 : unpricedPath(rig.nav, pairs[i].first, pairs[i].second);
-					if (round == 0) {
-						double len = 0.0;
-						if (path.has_value()) {
-							++ok;
-							for (std::size_t k = 1; k < path->size(); ++k) {
-								len += std::hypot((*path)[k].x - (*path)[k - 1].x, (*path)[k].y - (*path)[k - 1].y);
-							}
-							lengthSum += len;
-						}
-						std::printf("pair %d.%2zu %s %.3f m%s\n", static_cast<int>(state.range(0)), i, path.has_value() ? "ok  " : "fail", len,
-									priced ? "" : " unpriced");
-					}
-				}
-				const double us = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
-				(round == 0 ? firstUs : warmUs) += us;
-				if (round == 0) {
-					firstNodes = rig.nav.navQueryStats().totalNodesExpanded;
-				}
-			}
-			// What requestPath does around pathThrough, timed alone over the same pairs: the structural
-			// pre-check (a locate and a forest climb at each end) and one locate on the nav mesh.
-			const Clock::time_point checkStart = Clock::now();
-			int						reachable  = 0;
-			for (int round = 0; round < 10; ++round) {
-				for (const auto& [a, b] : pairs) {
-					reachable += rig.nav.reaches(rig.nav.reachFrom(a, kAgentRadius), b) ? 1 : 0;
-				}
-			}
-			state.counters["precheckRoundUs"] = std::chrono::duration<double, std::micro>(Clock::now() - checkStart).count() / 10.0;
-			const Clock::time_point locateStart = Clock::now();
-			for (int round = 0; round < 10; ++round) {
-				for (const auto& [a, b] : pairs) {
-					reachable += rig.nav.inSimArea(b) ? 0 : 1;
-				}
-			}
-			state.counters["locateRoundUs"] = std::chrono::duration<double, std::micro>(Clock::now() - locateStart).count() / 10.0;
-			benchmark::DoNotOptimize(reachable);
-			state.counters["pairs"]			  = static_cast<double>(pairs.size());
-			state.counters["ok"]			  = ok;
-			state.counters["firstRoundUs"]	  = firstUs;
-			state.counters["warmRoundUs"]	  = warmUs / 10.0;
-			state.counters["lengthSumM"]	  = lengthSum;
-			state.counters["nodesFirstRound"] = static_cast<double>(firstNodes);
 		}
 	}
 
@@ -832,9 +745,9 @@ namespace {
 
 	// Reach against route (nav-mesh-variable-resolution.md section 10): over random pairs in the
 	// colony's reach square, the structural walk's verdict (walk) against the confined route's
-	// (requestPath), under the same belief. range(0): 0 no belief, 1 a belief knowing a doorless room's
-	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, and times one
-	// walk call (mean and worst) and the failing belief route into the room.
+	// (by ticket), under the same belief. range(0): 0 no belief, 1 a belief knowing a doorless room's
+	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, times one walk
+	// call (mean and worst), and counts the ticks the belief route into the room takes to answer.
 	void BM_ReachAgainstRoute(benchmark::State& state) {
 		const bool						  room = state.range(0) != 0;
 		std::unordered_set<std::uint64_t> knownSegments;
@@ -896,7 +809,9 @@ namespace {
 					walkFailUs += us;
 					++walkFails;
 				}
-				const bool route = rig.nav.requestPath(a, b, kAgentRadius, belief).route.has_value();
+				int		   routeTicks = 0;
+				const auto answer	  = rig.route(a, b, belief, routeTicks);
+				const bool route	  = answer.has_value() && answer->outcome == nav::RouteOutcome::Routed;
 				bothYes += walk && route ? 1 : 0;
 				bothNo += !walk && !route ? 1 : 0;
 				reachOnly += walk && !route ? 1 : 0;
@@ -916,11 +831,11 @@ namespace {
 			state.counters["walkFailMeanUs"] = walkFailUs / std::max(walkFails, 1);
 
 			if (room) {
-				const glm::vec2			inside = (roomLo + roomHi) * 0.5F;
-				const Clock::time_point start  = Clock::now();
-				const bool				routed = rig.nav.requestPath(kColony, inside, kAgentRadius, belief).route.has_value();
-				state.counters["roomRouteUs"]  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
-				state.counters["roomRouted"]   = routed ? 1.0 : 0.0;
+				const glm::vec2 inside		   = (roomLo + roomHi) * 0.5F;
+				int				roomTicks	   = 0;
+				const auto		answer		   = rig.route(kColony, inside, belief, roomTicks);
+				state.counters["roomRouteTicks"] = roomTicks;
+				state.counters["roomRouted"]	   = answer.has_value() && answer->outcome == nav::RouteOutcome::Routed ? 1.0 : 0.0;
 			}
 
 		}
@@ -1188,10 +1103,10 @@ namespace {
 			rig.addMover(a);
 			rig.addMover(b);
 			rig.settle();
-			const Clock::time_point start = Clock::now();
-			const auto				path  = rig.nav.requestPath(a + glm::vec2{1.0F, 0.0F}, b + glm::vec2{1.0F, 0.0F}, kAgentRadius).route;
-			state.counters["pathUs"]	  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
-			state.counters["routes"]	  = path.has_value() ? 1.0 : 0.0;
+			int		   pathTicks		 = 0;
+			const auto answer			 = rig.route(a + glm::vec2{1.0F, 0.0F}, b + glm::vec2{1.0F, 0.0F}, {}, pathTicks);
+			state.counters["pathTicks"] = pathTicks;
+			state.counters["routes"]	 = answer.has_value() && answer->outcome == nav::RouteOutcome::Routed ? 1.0 : 0.0;
 			state.counters["reaches"] =
 				rig.nav.reaches(rig.nav.reachFrom(a + glm::vec2{1.0F, 0.0F}, kAgentRadius), b + glm::vec2{1.0F, 0.0F}) ? 1.0 : 0.0;
 		}
@@ -1871,7 +1786,6 @@ BENCHMARK(BM_WalkingMovers)->Args({20, 0})->Args({200, 0})->Iterations(1)->Unit(
 BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanWalk)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RouteSlice)->Arg(1)->Arg(20)->Arg(200)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);

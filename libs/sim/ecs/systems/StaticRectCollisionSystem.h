@@ -30,8 +30,8 @@
 // its route or leaves it where it stands; one the snap left inside (NavigationSystem::snapHolds) is
 // never pushed here, so it never goes back. This system keeps a mover that was outside from entering:
 // it pushes out of an obstacle only once the obstacle is in the nav mesh
-// (NavigationSystem::placedObstacleInNavMesh). A mover following a route that walks through detail at
-// its price (NavigationSystem::routeCrossesPricedFaces) is let through.
+// (NavigationSystem::placedObstacleInNavMesh). No route is let through: a route never crosses a placed
+// obstacle.
 //
 // The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op). Rects are
 // gathered LOCALLY per agent each frame from placement (no caching): query the chunks around the agent for rect-collision entities, keep

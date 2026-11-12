@@ -196,25 +196,14 @@ namespace ecs {
 			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
 		}
 
-		// The detail obstacle kinds, by the tag their rings carry: what walking a metre through one
-		// costs. Each is in the nav mesh only (the structural mesh never holds detail), only where a
-		// wanted rect brings it, and priced, never walled. One kind so far, every placed entity's
-		// collider whatever the entity is.
-		constexpr gnav::TagPrice kDetailKinds[] = {{.tag = nav::kProvenancePlaced, .multiplier = NavigationSystem::kDetailPassMultiplier}};
-
+		// The tag a placed obstacle's ring carries. Its faces are in the nav mesh only (the structural
+		// mesh never holds detail), and they block routes.
 		bool isDetailTag(std::int64_t tag) {
-			return std::any_of(std::begin(kDetailKinds), std::end(kDetailKinds), [tag](const gnav::TagPrice& kind) { return kind.tag == tag; });
+			return tag == nav::kProvenancePlaced;
 		}
 
-		std::vector<std::int64_t> detailTags() {
-			std::vector<std::int64_t> tags;
-			for (const gnav::TagPrice& kind : kDetailKinds) {
-				tags.push_back(kind.tag);
-			}
-			return tags;
-		}
-
-		// Ground a mover may stand on: terrain-walkable, or detail, which movement prices.
+		// Ground a mover may stand on: terrain-walkable, or inside a placed obstacle, which the snap
+		// moves it out of.
 		bool moverFace(const gnav::NavTriangle& t) {
 			return gnav::terrainTraversable(t) || isDetailTag(t.faceBlocker);
 		}
@@ -593,7 +582,7 @@ namespace ecs {
 	}
 
 	NavigationSystem::NavigationSystem()
-		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = detailTags()}),
+		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = {nav::kProvenancePlaced}}),
 		  structural({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
 		  structuralWorker(std::make_unique<Worker>()),
@@ -802,7 +791,6 @@ namespace ecs {
 		landedThisUpdate = std::move(groundLanded);
 		groundLanded.clear();
 		std::sort(landedThisUpdate.begin(), landedThisUpdate.end(), ChunkLess{});
-		forgetDroppedRoutes();
 		markCrossedRoutes();
 		markStrayedRoutes();
 		snapMovers();
@@ -836,6 +824,19 @@ namespace ecs {
 		}
 		routeReports.clear();
 		routes.admit();
+		++routeTick;
+		for (const nav::RouteTicket queued : routes.answeredTickets()) {
+			const auto ours = byQueueTicket.find(queued);
+			if (ours == byQueueTicket.end()) {
+				continue;
+			}
+			QueuedRoute& route = queuedRoutes.at(ours->second);
+			if (!route.takeable) {
+				route.takeable = true;
+				takeableSince.emplace_back(routeTick, ours->second);
+			}
+		}
+		dropUntakenAnswers();
 
 		if (routes.searchSpansTicks() && heldInARow < kMaxHeldAdditionTicks) {
 			holdingAdditions = true;
@@ -858,6 +859,27 @@ namespace ecs {
 			routes.runSlice(detailMesh.view(), epochs);
 			sliceMs = msSince(start);
 		});
+	}
+
+	void NavigationSystem::dropUntakenAnswers() {
+		while (!takeableSince.empty()) {
+			const auto [tick, ticket] = takeableSince.front();
+			const bool untaken		  = answeredAtOnce.contains(ticket) || queuedRoutes.contains(ticket);
+			if (untaken && routeTick - tick < kUntakenAnswerTicks) {
+				return;
+			}
+			takeableSince.pop_front();
+			if (untaken) {
+				LOG_DEBUG(Engine, "[Nav] route %llu answered %llu ticks ago and never taken: dropped", static_cast<unsigned long long>(ticket),
+						  static_cast<unsigned long long>(routeTick - tick));
+				cancelRoute(ticket);
+				++routeStatsTotal.dropped;
+			}
+		}
+	}
+
+	void NavigationSystem::countOutstandingRoutes() {
+		routeStatsTotal.outstanding = queuedRoutes.size() + answeredAtOnce.size();
 	}
 
 	void NavigationSystem::endTick() {
@@ -1493,56 +1515,6 @@ namespace ecs {
 		}
 	} // namespace
 
-	gnav::BeliefFilter NavigationSystem::pricedFor(gnav::BeliefFilter belief) {
-		belief.prices = kDetailKinds;
-		return belief;
-	}
-
-	std::uint64_t NavigationSystem::routeKey(const std::vector<glm::vec2>& waypoints) {
-		std::uint64_t hash = 1469598103934665603ULL ^ waypoints.size();
-		for (const glm::vec2 p : waypoints) {
-			for (const float v : {p.x, p.y}) {
-				hash = (hash ^ std::bit_cast<std::uint32_t>(v)) * 1099511628211ULL;
-			}
-		}
-		return hash;
-	}
-
-	bool NavigationSystem::holds(const RouteSet& routes, const std::vector<glm::vec2>& waypoints) {
-		const auto it = routes.find(routeKey(waypoints));
-		return it != routes.end() && it->second == waypoints;
-	}
-
-	void NavigationSystem::note(RouteSet& routes, const std::vector<glm::vec2>& waypoints, bool in) {
-		if (in) {
-			routes[routeKey(waypoints)] = waypoints;
-		} else if (holds(routes, waypoints)) {
-			routes.erase(routeKey(waypoints));
-		}
-	}
-
-	bool NavigationSystem::routeCrossesPricedFaces(const NavPath& path) const {
-		return path.valid && holds(pricedRoutes, path.waypoints);
-	}
-
-	void NavigationSystem::forgetDroppedRoutes() {
-		for (RouteSet* routes : {&pricedRoutes, &structuralRoutes}) {
-			if (routes->empty()) {
-				continue;
-			}
-			RouteSet live;
-			if (world != nullptr) {
-				for (auto [entity, path] : world->view<NavPath>()) {
-					(void)entity;
-					if (path.valid && holds(*routes, path.waypoints)) {
-						live.emplace(routeKey(path.waypoints), path.waypoints);
-					}
-				}
-			}
-			*routes = std::move(live);
-		}
-	}
-
 	bool NavigationSystem::reachSettledThisUpdate(glm::vec2 meters) const {
 		if (landedThisUpdate.empty()) {
 			return false;
@@ -1566,7 +1538,7 @@ namespace ecs {
 			return;
 		}
 		// A piece of route that comes within the mover's radius of a new obstacle's box crosses it:
-		// obstacles that were already there are no news to a route planned past or through them.
+		// obstacles that were already there are no news to a route planned past them.
 		const auto crosses = [&](glm::vec2 a, glm::vec2 b, float radius) {
 			return std::any_of(landed.begin(), landed.end(), [&](const std::pair<glm::vec2, glm::vec2>& box) {
 				return clipToRect(a, b, box.first - glm::vec2{radius}, box.second + glm::vec2{radius}).has_value();
@@ -1585,18 +1557,9 @@ namespace ecs {
 				crossed = crosses(from, path.waypoints[next], radius);
 				from	= path.waypoints[next];
 			}
-			if (!crossed) {
-				continue;
-			}
-			if (!holds(structuralRoutes, path.waypoints)) {
+			if (crossed) {
 				path.builtNavVersion = kStaleRoute;
-				continue;
 			}
-			std::vector<geometry::Vec2i64> rest{nav::toMm(position.value)};
-			for (std::size_t next = path.current; next < path.waypoints.size(); ++next) {
-				rest.push_back(nav::toMm(path.waypoints[next]));
-			}
-			note(pricedRoutes, path.waypoints, passesPlacedObstacle(rest, radiusMm(radius)));
 		}
 	}
 
@@ -1700,16 +1663,12 @@ namespace ecs {
 			return !gnav::truthTraversable(t) && !isDetailTag(t.faceBlocker);
 		};
 
-		// A mover whose route walks through detail on purpose, at its price, is left to it.
 		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
 			const std::int32_t tri = detailMesh.locate(nav::toMm(position.value));
 			if (tri < 0 || !isDetailTag(detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker)) {
 				continue;
 			}
-			NavPath* path = world->getComponent<NavPath>(entity);
-			if (path != nullptr && !path->done() && routeCrossesPricedFaces(*path)) {
-				continue;
-			}
+			NavPath*	path   = world->getComponent<NavPath>(entity);
 			const float radius = agent.radiusMeters;
 
 			// With a route: forward along what remains of it only, from where it stands to the
@@ -1940,7 +1899,6 @@ namespace ecs {
 		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
 		const std::int32_t		startTri = detailMesh.locate(startMm);
 		nav::RouteRequestArgs	args{.start = startMm, .agentRadiusMm = radiusMm(agentRadiusMeters), .belief = belief};
-		args.belief.prices = {};
 		std::vector<std::int32_t> goalIndices;
 		if (startTri >= 0) {
 			const gnav::MeshComponents& labels = detailMesh.components();
@@ -1958,17 +1916,23 @@ namespace ecs {
 			answeredAtOnce.emplace(ticket, RouteAnswer{.outcome	   = startTri < 0 ? nav::RouteOutcome::StartOffMesh : nav::RouteOutcome::NoKnownWay,
 													   .labelEpoch = detailMesh.components().epoch(),
 													   .patchEpoch = detailMesh.epoch()});
+			takeableSince.emplace_back(routeTick, ticket);
+			countOutstandingRoutes();
 			return ticket;
 		}
-		queuedRoutes.emplace(ticket, QueuedRoute{.queued = routes.request(args), .goalIndices = std::move(goalIndices)});
+		const nav::RouteTicket queued = routes.request(args);
+		queuedRoutes.emplace(ticket, QueuedRoute{.queued = queued, .goalIndices = std::move(goalIndices)});
+		byQueueTicket.emplace(queued, ticket);
+		countOutstandingRoutes();
 		return ticket;
 	}
 
 	std::optional<NavigationSystem::RouteAnswer> NavigationSystem::takeRouteAnswer(nav::RouteTicket ticket) {
 		if (const auto at = answeredAtOnce.find(ticket); at != answeredAtOnce.end()) {
-			RouteAnswer answer = at->second;
+			RouteAnswer answer = std::move(at->second);
 			answeredAtOnce.erase(at);
 			++routeStatsTotal.answered;
+			countOutstandingRoutes();
 			return answer;
 		}
 		const auto queued = queuedRoutes.find(ticket);
@@ -1998,9 +1962,11 @@ namespace ecs {
 			}
 			answer.lengthMeters = static_cast<float>(lengthMm / static_cast<double>(geometry::kMillimetersPerMeter));
 		}
+		byQueueTicket.erase(queued->second.queued);
 		queuedRoutes.erase(queued);
 		++routeStatsTotal.answered;
 		routeStatsTotal.restarts += answer.restarts;
+		countOutstandingRoutes();
 		return answer;
 	}
 
@@ -2008,97 +1974,14 @@ namespace ecs {
 		answeredAtOnce.erase(ticket);
 		if (const auto queued = queuedRoutes.find(ticket); queued != queuedRoutes.end()) {
 			routes.cancel(queued->second.queued);
+			byQueueTicket.erase(queued->second.queued);
 			queuedRoutes.erase(queued);
 		}
-	}
-
-	NavigationSystem::PathAnswer
-	NavigationSystem::requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters, gnav::BeliefFilter belief) const {
-		join();
-		if (detailMesh.liveTriangleCount() == 0) {
-			return {};
-		}
-		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
-		const geometry::Vec2i64 goalMm	= nav::toMm(goalMeters);
-		const std::int64_t		radius	= radiusMm(agentRadiusMeters);
-
-		// The structural mesh holds the nav mesh's ground without detail, so where it has no walk
-		// under this belief (its known walls block) the nav mesh has none either: no nav search.
-		const StructuralWalk structuralAnswer =
-			structuralWalk(startMm, goalMm, radius, belief, std::numeric_limits<double>::infinity(), farRouteExpansions);
-		const auto counted = [&](const gnav::PathResult& search) {
-			++navStats.totalQueries;
-			navStats.totalNodesExpanded += static_cast<std::uint64_t>(search.nodesExpanded);
-			navStats.lastNodesExpanded = search.nodesExpanded;
-			navStats.lastPeakOpenSet   = search.peakOpenSet;
-			LOG_DEBUG(Engine, "[Nav] path query expanded=%lld peakOpen=%lld (cumulative queries=%llu nodes=%llu)",
-					  static_cast<long long>(search.nodesExpanded), static_cast<long long>(search.peakOpenSet),
-					  static_cast<unsigned long long>(navStats.totalQueries), static_cast<unsigned long long>(navStats.totalNodesExpanded));
-		};
-		if (structuralAnswer.gaveUp) {
-			++navStats.farWalks;
-			counted(structuralAnswer.walk);
-			++navStats.routeSearchesGaveUp;
-			LOG_DEBUG(Engine, "[Nav] path search gave up toward (%.2f, %.2f), %.0f m in a straight line from (%.2f, %.2f) after %u expansions",
-					  goalMeters.x, goalMeters.y, std::sqrt(dist2(startMeters, goalMeters)), startMeters.x, startMeters.y, structuralAnswer.expansions);
-			return {.route = std::nullopt, .gaveUp = true};
-		}
-		if (structuralAnswer.walk.stop != gnav::PathStop::Found) {
-			return {};
-		}
-
-		gnav::PathResult result;
-		bool			 fromStructural = true;
-		if (!structuralAnswer.probeAnswered && structuralAnswer.walkExpansions > reachExpansionCap) {
-			// A far goal: the structural walk is the route, through the detail at its price, as the
-			// fallback below takes it. No nav search: scaled from a walk this long its budget would be
-			// unbounded, and with a fixed one it gave up on every far goal measured
-			// (nav-gate-result-2.md). The route is replanned as he goes.
-			++navStats.farWalks;
-			result = structuralAnswer.walk;
-			counted(result);
-		} else {
-			// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
-			// multiple of the structural search's expansions. Past that it is lost in priced ground, and
-			// the route is the structural walk itself, through the detail at its price.
-			const std::uint32_t cap = navExpansionCap(structuralAnswer.walkExpansions);
-			result					= gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
-			counted(result);
-			++navStats.navSearches;
-			navStats.navSearchExpansions += result.expansions;
-			if (result.stop == gnav::PathStop::LimitReached) {
-				++navStats.navSearchesCapped;
-				LOG_DEBUG(Engine, "[Nav] path query gave up after %u expansions (structural %u) from (%.2f, %.2f) to (%.2f, %.2f): walking the structural route",
-						  result.expansions, structuralAnswer.walkExpansions, startMeters.x, startMeters.y, goalMeters.x, goalMeters.y);
-				result = structuralAnswer.walk;
-			} else if (!result.reachable) {
-				return {};
-			} else {
-				fromStructural = false;
-			}
-		}
-		if (fromStructural) {
-			result.crossesPricedFaces = passesPlacedObstacle(result.points, radius);
-		}
-
-		std::vector<glm::vec2> waypoints;
-		waypoints.reserve(result.points.size());
-		for (const geometry::Vec2i64& p : result.points) {
-			waypoints.push_back(nav::toMeters(p));
-		}
-		note(pricedRoutes, waypoints, result.crossesPricedFaces);
-		note(structuralRoutes, waypoints, fromStructural);
-		return {.route = std::move(waypoints)};
-	}
-
-	std::uint32_t NavigationSystem::navExpansionCap(std::uint32_t walkSteps) const {
-		const std::uint64_t scaled = static_cast<std::uint64_t>(navExpansionFloor) + static_cast<std::uint64_t>(navExpansionsPerStructural) * walkSteps;
-		return static_cast<std::uint32_t>(std::min<std::uint64_t>(scaled, kNavExpansionCeiling));
+		countOutstandingRoutes();
 	}
 
 	NavigationSystem::StructuralWalk NavigationSystem::structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm,
-																	   std::int64_t radius, const gnav::BeliefFilter& belief, double maxCost,
-																	   std::uint32_t forwardCap) const {
+																	   std::int64_t radius, const gnav::BeliefFilter& belief, double maxCost) const {
 		// LimitReached is either limit: one under its expansion cap stopped at maxCost, which is a
 		// definite "no walk that short".
 		const auto outOfSteps = [](const gnav::PathResult& r, std::uint32_t cap) {
@@ -2107,21 +1990,17 @@ namespace ecs {
 		++navStats.structuralWalks;
 		StructuralWalk answer;
 		answer.walk = gnav::pathThrough(structural.view(), goalMm, startMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachProbeExpansions});
-		answer.expansions	  = answer.walk.expansions;
-		answer.walkExpansions = answer.walk.expansions;
+		answer.expansions = answer.walk.expansions;
 		navStats.probeExpansions += answer.walk.expansions;
 		if (!outOfSteps(answer.walk, reachProbeExpansions)) {
 			++navStats.probeAnswered;
-			answer.probeAnswered = true;
-			std::reverse(answer.walk.points.begin(), answer.walk.points.end());
 			return answer;
 		}
 		++navStats.forwardSearches;
-		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = forwardCap});
+		answer.walk = gnav::pathThrough(structural.view(), startMm, goalMm, radius, belief, {.maxCost = maxCost, .maxExpansions = reachExpansionCap});
 		answer.expansions += answer.walk.expansions;
-		answer.walkExpansions = answer.walk.expansions;
 		navStats.forwardExpansions += answer.walk.expansions;
-		answer.gaveUp = outOfSteps(answer.walk, forwardCap);
+		answer.gaveUp = outOfSteps(answer.walk, reachExpansionCap);
 		return answer;
 	}
 
@@ -2197,7 +2076,7 @@ namespace ecs {
 			return coming && straight <= maxWalk ? std::optional<float>(straight) : std::nullopt;
 		}
 		const StructuralWalk found = structuralWalk(reach.startMm, goal, reach.radiusMm, reach.belief,
-													static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter), reachExpansionCap);
+													static_cast<double>(maxWalk) * static_cast<double>(geometry::kMillimetersPerMeter));
 		if (found.gaveUp) {
 			++navStats.farWalks;
 			LOG_DEBUG(Engine, "[Nav] reach gave up after %u expansions toward (%.2f, %.2f), %.0f m in a straight line: far", found.expansions,
@@ -2272,73 +2151,6 @@ namespace ecs {
 		return nearest;
 	}
 
-	bool NavigationSystem::passesPlacedObstacle(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const {
-		if (placement == nullptr) {
-			return false;
-		}
-		// Each segment against the outline of every placed obstacle in the nav mesh near it: within the radius
-		// when it crosses an edge or starts inside, or an edge comes that close. Exact, so no obstacle
-		// however narrow is missed between samples.
-		using P						  = glm::dvec2;
-		const auto pointToSegment2	  = [](P p, P a, P b) {
-			   const P		d	 = b - a;
-			   const double len2 = glm::dot(d, d);
-			   const double t	 = len2 > 0.0 ? std::clamp(glm::dot(p - a, d) / len2, 0.0, 1.0) : 0.0;
-			   const P		q	 = a + d * t - p;
-			   return glm::dot(q, q);
-		};
-		const auto cross = [](P o, P a, P b) { return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x); };
-		const auto segmentsWithin = [&](P a, P b, P c, P d, double r2) {
-			const double d1 = cross(c, d, a);
-			const double d2 = cross(c, d, b);
-			const double d3 = cross(a, b, c);
-			const double d4 = cross(a, b, d);
-			if (((d1 > 0.0 && d2 < 0.0) || (d1 < 0.0 && d2 > 0.0)) && ((d3 > 0.0 && d4 < 0.0) || (d3 < 0.0 && d4 > 0.0))) {
-				return true;
-			}
-			return std::min({pointToSegment2(a, c, d), pointToSegment2(b, c, d), pointToSegment2(c, a, b), pointToSegment2(d, a, b)}) <= r2;
-		};
-		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-		const double				 r2		  = static_cast<double>(radius) * static_cast<double>(radius);
-		// Placed entities are found by their centre, so the box reaches past the largest collider.
-		constexpr float kColliderReach = 4.0F;
-		for (std::size_t k = 1; k < points.size(); ++k) {
-			const P			a{static_cast<double>(points[k - 1].x), static_cast<double>(points[k - 1].y)};
-			const P			b{static_cast<double>(points[k].x), static_cast<double>(points[k].y)};
-			const glm::vec2 lo = glm::min(nav::toMeters(points[k - 1]), nav::toMeters(points[k])) -
-								 glm::vec2{kColliderReach + static_cast<float>(radius) / 1000.0F};
-			const glm::vec2 hi = glm::max(nav::toMeters(points[k - 1]), nav::toMeters(points[k])) +
-								 glm::vec2{kColliderReach + static_cast<float>(radius) / 1000.0F};
-			const world::ChunkCoordinate cLo = world::worldToChunk({lo.x, lo.y});
-			const world::ChunkCoordinate cHi = world::worldToChunk({hi.x, hi.y});
-			for (std::int32_t cy = cLo.y; cy <= cHi.y; ++cy) {
-				for (std::int32_t cx = cLo.x; cx <= cHi.x; ++cx) {
-					const assets::SpatialIndex* index = placement->getChunkIndex({cx, cy});
-					if (index == nullptr) {
-						continue;
-					}
-					for (const assets::PlacedEntity* e : index->queryRect(lo.x, lo.y, hi.x, hi.y)) {
-						if (!placedObstacleInNavMesh({cx, cy}, *e) || !nav::placedObstacleOutline(*e, registry, colliderScratch)) {
-							continue;
-						}
-						if (geometry::pointInPolygon(points[k - 1], colliderScratch) != geometry::PointInPolygon::Outside) {
-							return true;
-						}
-						for (std::size_t v = 0; v < colliderScratch.size(); ++v) {
-							const geometry::Vec2i64& c = colliderScratch[v];
-							const geometry::Vec2i64& d = colliderScratch[(v + 1) % colliderScratch.size()];
-							if (segmentsWithin(a, b, {static_cast<double>(c.x), static_cast<double>(c.y)},
-											   {static_cast<double>(d.x), static_cast<double>(d.y)}, r2)) {
-								return true;
-							}
-						}
-					}
-				}
-			}
-		}
-		return false;
-	}
-
 	std::optional<glm::vec2> NavigationSystem::standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const {
 		join();
 		if (structural.locate(nav::toMm(target)) < 0) {
@@ -2354,8 +2166,8 @@ namespace ecs {
 			return nearestFaceOnMesh(structural, target, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
 		}
 		// Round the collider at the disc's radius out from it, nearest the colonist first: a spot clear
-		// of every collider, else (an obstacle among others) one that is at least ground a mover can cross,
-		// inside a neighbour's collider, which a route reaches through the detail at its price.
+		// of every collider, else (an obstacle among others) one that is at least walkable terrain,
+		// inside a neighbour's collider.
 		const float								 standOff = collider->extent + agentRadiusMeters + 0.05F;
 		constexpr int							 kSpots	  = 32;
 		std::array<std::pair<float, glm::vec2>, kSpots> spots;

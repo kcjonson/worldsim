@@ -4,7 +4,6 @@
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
-#include "../components/NavPath.h"
 #include "../components/Transform.h"
 
 #include <assets/AssetDefinition.h>
@@ -85,9 +84,6 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 	for (int iter = 0; iter < 2; ++iter) {
 		for (auto [entity, pos, radius] : world->view<Position, AgentRadius>()) {
 			glm::vec2 p = pos.value;
-			if (const NavPath* path = world->getComponent<NavPath>(entity); path != nullptr && !path->done() && detail->routeCrossesPricedFaces(*path)) {
-				continue; // walking through detail on purpose, at its price
-			}
 			if (detail->snapHolds(entity)) {
 				continue;
 			}

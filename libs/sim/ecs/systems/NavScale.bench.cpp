@@ -9,8 +9,7 @@
 // whole build's patch and forest-rebuild time, then on the built structural mesh: a wall edit's job
 // (its patch, its forest rebuild) and one more chunk's ground arriving (the same split); a failing
 // walk the forest rejects (a goal ringed by water) and one it can't (a goal behind walls the belief
-// knows), capped at NavigationSystem::kReachExpansionCap and uncapped as requestPath's pre-check
-// runs; and the farthest straight-line distance a capped walk still finds east of the start.
+// knows), capped at NavigationSystem::kReachExpansionCap and uncapped; and the farthest straight-line distance a capped walk still finds east of the start.
 //
 // BM_NavScaleDetail: one chunk fully covered by forest at the game's density (a tree every 3.54 m,
 // colliders by age class), patched into a nav mesh 16 m cell by cell as the view brings it: rings,
@@ -18,8 +17,7 @@
 //
 // BM_SearchReach, BM_SearchCases and BM_SearchDeadEnds: what one search step costs, how far a capped
 // search reaches, and how many steps real routes and real dead ends take, to choose the reach and
-// route budgets from (see "Choosing the search cap" below). BM_DefaultBudgets: what the shipped
-// budgets answer at each distance, and the uncapped structural search as the alternative for far goals.
+// budgets from (see "Choosing the search cap" below).
 
 #include "NavigationSystem.h"
 
@@ -367,7 +365,7 @@ namespace {
 	// Four grounds, each 1,024 chunks (16 km a side) of mesh: "open" (squares, no water), "real" (the
 	// Quick Start chunks round its landing, rivers and lakes; needs WORLDSIM_PLANET), "forest" (open
 	// ground with the chunk round the start covered by forest at the game's density in a nav mesh,
-	// searched with detail priced as movement queries price it) and "compound" (open ground with a
+	// its placed obstacles blocking) and "compound" (open ground with a
 	// 5 x 5 block of 10 m rooms round the start, a door gap in every wall, and a belief that knows
 	// every wall).
 
@@ -386,14 +384,11 @@ namespace {
 		return "";
 	}
 
-	constexpr gnav::TagPrice kDetailPrice{nav::kProvenancePlaced, ecs::NavigationSystem::kDetailPassMultiplier};
-
 	struct SearchGround {
 		gnav::PatchableMesh				  mesh;
 		glm::vec2						  centre{0.0F, 0.0F};
 		std::unordered_set<std::uint64_t> knownWalls;
 		std::unordered_set<std::uint64_t> knownOpenings;
-		bool							  priced = false;
 		bool							  belief = false;
 
 		explicit SearchGround(bool detail)
@@ -404,9 +399,6 @@ namespace {
 			if (belief) {
 				f.knownSegments = &knownWalls;
 				f.knownOpenings = &knownOpenings;
-			}
-			if (priced) {
-				f.prices = std::span<const gnav::TagPrice>(&kDetailPrice, 1);
 			}
 			return f;
 		}
@@ -473,7 +465,6 @@ namespace {
 		}
 		if (g == Ground::Forest) {
 			out->mesh.applyPatch({.adds = forestOver(world::worldToChunk({out->centre.x, out->centre.y}))});
-			out->priced = true;
 		}
 		if (g == Ground::Compound) {
 			out->mesh.applyPatch({.adds = compoundAt(out->centre, out->knownWalls)});
@@ -674,93 +665,6 @@ namespace {
 		}
 	}
 
-	// What the shipped budgets answer at each distance (requestPath's structural walk, replayed on these
-	// meshes with the default constants). range(0): ground; range(1): straight-line distance (m). From 8
-	// starts in 8 directions: how many goals come back with a walk within the reach budgets, "no", or
-	// far; of the far ones how many the search from the start, carried on to kFarRouteExpansions, routes,
-	// gives up on, or finds no way to; the steps each search used. For the ones it gave up on, the same
-	// search run to completion: its steps, time, and whether it finds a walk, the headroom the budget
-	// lacks. The forest's structural mesh is the open ground under it.
-	void BM_DefaultBudgets(benchmark::State& state) {
-		const auto				  g	  = static_cast<Ground>(state.range(0));
-		const auto				  d	  = static_cast<float>(state.range(1));
-		const SearchGround* const nav = searchGround(g);
-		const SearchGround* const structural = g == Ground::Forest ? searchGround(Ground::Open) : nav;
-		if (nav == nullptr || structural == nullptr) {
-			state.SkipWithMessage("no planet (WORLDSIM_PLANET)");
-			return;
-		}
-		constexpr std::uint32_t kProbe	 = ecs::NavigationSystem::kReachProbeExpansions;
-		constexpr std::uint32_t kForward = ecs::NavigationSystem::kReachExpansionCap;
-		constexpr std::uint32_t kFarRoute = ecs::NavigationSystem::kFarRouteExpansions;
-		const auto withinReach = [](const gnav::PathResult& r) { return r.expansions <= kForward; };
-		const auto outOfSteps = [](const gnav::PathResult& r, std::uint32_t cap) { return r.stop == gnav::PathStop::LimitReached && r.expansions >= cap; };
-		gnav::BeliefFilter structuralFilter = structural->filter();
-		structuralFilter.prices				= {};
-		for (auto _ : state) {
-			int					walk = 0, no = 0, farGoals = 0, farRouted = 0, farGaveUp = 0, farNoPath = 0, fullFound = 0;
-			std::vector<double> probeSteps, forwardSteps, fullSteps, fullMs, farRequestMs;
-			for (const glm::vec2 start : startsFor(g, *nav, 8)) {
-				for (int k = 0; k < 8; ++k) {
-					const float					   a	= 0.785398F * static_cast<float>(k) + 0.2F;
-					const std::optional<glm::vec2> goal = landNear(structural->mesh, start + d * glm::vec2{std::cos(a), std::sin(a)});
-					if (!goal.has_value()) {
-						continue;
-					}
-					const geometry::Vec2i64 s = nav::toMm(start);
-					const geometry::Vec2i64 t = nav::toMm(*goal);
-					const Clock::time_point requestStart = Clock::now();
-					const gnav::PathResult	probe = gnav::pathThrough(structural->mesh.view(), t, s, 300, structuralFilter, {.maxExpansions = kProbe});
-					probeSteps.push_back(probe.expansions);
-					if (!outOfSteps(probe, kProbe)) {
-						(probe.stop == gnav::PathStop::Found ? walk : no) += 1;
-						continue;
-					}
-					const gnav::PathResult forward = gnav::pathThrough(structural->mesh.view(), s, t, 300, structuralFilter, {.maxExpansions = kFarRoute});
-					forwardSteps.push_back(forward.expansions);
-					if (withinReach(forward)) {
-						(forward.stop == gnav::PathStop::Found ? walk : no) += 1;
-						continue;
-					}
-					++farGoals;
-					farRequestMs.push_back(msSince(requestStart));
-					if (forward.stop == gnav::PathStop::Found) {
-						++farRouted;
-						continue;
-					}
-					if (!outOfSteps(forward, kFarRoute)) {
-						++farNoPath;
-						continue;
-					}
-					++farGaveUp;
-					const Clock::time_point fullStart = Clock::now();
-					const gnav::PathResult	full	  = gnav::pathThrough(structural->mesh.view(), s, t, 300, structuralFilter, {});
-					fullMs.push_back(msSince(fullStart));
-					fullSteps.push_back(full.expansions);
-					fullFound += full.stop == gnav::PathStop::Found ? 1 : 0;
-				}
-			}
-			const auto worst = [](const std::vector<double>& v) { return v.empty() ? 0.0 : *std::max_element(v.begin(), v.end()); };
-			state.SetLabel(groundName(g));
-			state.counters["distanceM"]			= d;
-			state.counters["walk"]				= walk;
-			state.counters["no"]				= no;
-			state.counters["far"]				= farGoals;
-			state.counters["farRouted"]			= farRouted;
-			state.counters["farGaveUp"]			= farGaveUp;
-			state.counters["farNoPath"]			= farNoPath;
-			state.counters["probeStepsMean"]	= meanOf(probeSteps);
-			state.counters["forwardStepsMean"]	= meanOf(forwardSteps);
-			state.counters["farRequestMsMean"]	= meanOf(farRequestMs);
-			state.counters["farRequestMsWorst"] = worst(farRequestMs);
-			state.counters["fullFound"]			= fullFound;
-			state.counters["fullStepsMean"]		= meanOf(fullSteps);
-			state.counters["fullStepsWorst"]	= worst(fullSteps);
-			state.counters["fullMsMean"]		= meanOf(fullMs);
-			state.counters["fullMsWorst"]		= worst(fullMs);
-		}
-	}
-
 } // namespace
 
 BENCHMARK(BM_NavScaleGround)
@@ -784,7 +688,3 @@ BENCHMARK(BM_SearchCases)
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_SearchDeadEnds)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_DefaultBudgets)
-	->ArgsProduct({{0, 1, 2, 3}, {100, 250, 500, 1000, 2000, 5000, 10000}})
-	->Iterations(1)
-	->Unit(benchmark::kMillisecond);

@@ -49,11 +49,10 @@
 // for at most kMaxHeldAdditionTicks; removals from the world, walls, doors, and re-derived water
 // never are.
 //
-// Detail is priced, not walled, for movement (spec 4.4, 4.7): a placed obstacle in the nav mesh costs
-// kDetailPassMultiplier times its length to walk through, so a mover standing in
-// one is on valid ground and its route can take it out. Detail decides only what collision and the
-// forward snap do. Placement, spawning, drops and construction still treat a placed obstacle as blocked
-// (isValidPosition and the walkers built on it).
+// A placed obstacle in the nav mesh blocks routes: the route search is given no prices. It keeps its
+// interior triangles, so a mover standing in one reads on a placed-obstacle face (isOnMesh), which
+// the forward snap moves it out of. Placement, spawning, drops and construction treat a placed
+// obstacle as blocked (isValidPosition and the walkers built on it).
 //
 // Staleness (spec 4.6): generation() moves only when a structural job lands (ground in or out,
 // water re-derived, walls or doors), which can change any route. Detail landing instead marks
@@ -105,7 +104,6 @@ namespace world {
 
 namespace ecs {
 
-struct NavPath;
 
 /// Holds the nav mesh and its structural layer, patched from live world data, and serves path
 /// and placement queries.
@@ -150,53 +148,19 @@ class NavigationSystem : public ISystem {
 
 	// --- Queries (each waits for the patches in flight first) -------------------
 
-	// Taut polyline in world meters from start to goal for a disc agent of the given radius, or
-	// nullopt when either end is off meshed ground or no route exists.
-	//
-	// `belief` is applied at query time against the truth mesh: a default (empty) BeliefFilter
-	// routes over truth, a filter built from a colonist's known segments/openings routes over
-	// what that colonist REMEMBERS. The filter holds pointers into the caller's sets and is
-	// consumed synchronously.
-	//
-	// The route is planned over whatever ground is meshed, for anyone, at any distance. The structural
-	// walk under the same belief comes first, as a reach walk (walk()) asks it but with the search from
-	// the start carried on to kFarRouteExpansions: where it finds none, neither would the nav search, so
-	// there is none. A walk found within the reach budgets is near: the nav search runs (navExpansionCap),
-	// and when it gives up in priced ground the route is the structural walk, through the detail at its
-	// price. A walk found past them is far: there is no nav search, and that walk is the route, through
-	// the detail at its price like the fallback's. When the search runs out of steps there is no route
-	// and `gaveUp` says the search gave up, which is not "no route".
-	struct PathAnswer {
-		std::optional<std::vector<glm::vec2>> route;
-		bool								  gaveUp = false;
-	};
-	[[nodiscard]] PathAnswer requestPath(glm::vec2 startMeters, glm::vec2 goalMeters, float agentRadiusMeters,
-										 geometry::nav::BeliefFilter belief = {}) const;
-	// The nav search's expansion cap, kNavExpansionFloor and kNavExpansionsPerStructural by default
-	// (navExpansionCap); tests set a small one to make it give up.
-	void setNavExpansionCap(std::uint32_t floor, std::uint32_t perStructural) {
-		navExpansionFloor		   = floor;
-		navExpansionsPerStructural = perStructural;
-	}
-	// The nav search's cap behind a near structural walk whose search took `walkSteps` expansions:
-	// the floor plus the per-step allowance, never past kNavExpansionCeiling.
-	[[nodiscard]] std::uint32_t navExpansionCap(std::uint32_t walkSteps) const;
-	// The budgets of a far question: the goal-side and start-side structural searches and the start-side
-	// search a route request carries on, kReachProbeExpansions, kReachExpansionCap and kFarRouteExpansions
-	// by default; tests set small ones to make a goal far.
-	void setReachBudgets(std::uint32_t probe, std::uint32_t forward, std::uint32_t farRoute) {
+	// The budgets of a reach walk (walk()): the goal-side and start-side structural searches,
+	// kReachProbeExpansions and kReachExpansionCap by default; tests set small ones to make a goal far.
+	void setReachBudgets(std::uint32_t probe, std::uint32_t forward) {
 		reachProbeExpansions = probe;
 		reachExpansionCap	 = forward;
-		farRouteExpansions	 = farRoute;
 	}
 
-	// Routes under the time budget, asked for by ticket and answered on a later tick. They replace
-	// requestPath; both exist until the colonist AI has moved to these.
+	// Routes under the time budget, asked for by ticket and answered on a later tick.
 	//
 	// requestRoute asks for the shortest walk from `startMeters` to whichever of `goalsMeters` is
-	// nearest on foot, for a disc of `agentRadiusMeters` under `belief`. The belief's sets are
-	// copied at the call and its prices dropped: a placed obstacle blocks a route. Answered at
-	// once, with no search, when the start is off meshed ground or no goal stands on meshed ground
+	// nearest on foot, for a disc of `agentRadiusMeters` under `belief` (a default BeliefFilter routes
+	// over truth, one built from a colonist's known walls and openings over what he remembers). The
+	// belief's sets are copied at the call. A placed obstacle blocks a route. Answered at once, with no search, when the start is off meshed ground or no goal stands on meshed ground
 	// connected to the start's (component labels). Otherwise the search runs in the route slices,
 	// a fixed count of expansions a tick shared by every request, and nothing limits it: it ends
 	// by finding a goal or by exploring all the mover can reach.
@@ -225,11 +189,14 @@ class NavigationSystem : public ISystem {
 	};
 	[[nodiscard]] nav::RouteTicket requestRoute(glm::vec2 startMeters, std::span<const glm::vec2> goalsMeters, float agentRadiusMeters,
 												const geometry::nav::BeliefFilter& belief = {});
-	// The answer once takeable, removed by the take; nothing before then, or for a cancelled or
-	// unknown ticket.
+	// The answer once takeable, removed by the take; nothing before then, or for a cancelled, dropped
+	// or unknown ticket.
 	[[nodiscard]] std::optional<RouteAnswer> takeRouteAnswer(nav::RouteTicket ticket);
 	// Drops the request, its search, and its answer.
 	void cancelRoute(nav::RouteTicket ticket);
+	// An answer not taken this many ticks after it became takeable means the asker is gone (a mover
+	// destroyed with a ticket out): the request and its answer are dropped, as cancelRoute would.
+	static constexpr std::uint64_t kUntakenAnswerTicks = 600;
 	// While a search runs across ticks, additions to the nav mesh (new ground, newly meshed placed
 	// obstacles) wait, so its reads stay current and it does not restart; at most this many ticks
 	// in a row, then the backlog goes in for a tick before they wait again. From the buffer: a
@@ -237,11 +204,13 @@ class NavigationSystem : public ISystem {
 	// before a placed obstacle it has not meshed comes into its sight. 240 ticks is half that at 60
 	// ticks a second. A count, so the tick additions land on never depends on the machine.
 	static constexpr std::uint32_t kMaxHeldAdditionTicks = 240;
-	// Cumulative since construction.
+	// Cumulative since construction, but for outstanding.
 	struct RouteStats {
 		std::uint64_t requests		 = 0;
 		std::uint64_t answeredAtOnce = 0; // of the requests, answered with no search
 		std::uint64_t answered		 = 0; // answers handed out by takeRouteAnswer
+		std::uint64_t outstanding	 = 0; // tickets now requested and not yet taken, cancelled, or dropped
+		std::uint64_t dropped		 = 0; // answers not taken within kUntakenAnswerTicks
 		std::uint64_t restarts		 = 0; // over the answers handed out
 		std::uint64_t slices		 = 0;
 		std::uint64_t sliceExpansions	  = 0; // over every slice
@@ -316,18 +285,6 @@ class NavigationSystem : public ISystem {
 	// reach walk stays under 4 ms). Real ground reaches 1.1 km at the median within it; a goal past it
 	// is far, which a route request then settles.
 	static constexpr std::uint32_t kReachExpansionCap = 5000;
-	// A route request carries the search from the start on to this many: 19 ms, 34 ms at worst, once
-	// per far target. Every real far goal measured to 10 km needed at most 41,006.
-	static constexpr std::uint32_t kFarRouteExpansions = 60000;
-	// The nav search behind a near structural walk: the floor plus kNavExpansionsPerStructural for each
-	// step of the search that found the walk, up to the ceiling (navExpansionCap). A priced nav step in
-	// dense forest costs 0.45 us, 1.48 us at worst.
-	// Floor: the dense-forest worst (7,090 steps at 2 km, 5,938 at 500 m) with the far budget's 1.5x headroom.
-	static constexpr std::uint32_t kNavExpansionFloor = 11000;
-	// Ceiling: 34 ms (the accepted far stall) less both reach searches at worst (7,000 x 0.56 us = 3.9 ms)
-	// is 30 ms, 20,300 forest steps at 1.48 us.
-	static constexpr std::uint32_t kNavExpansionCeiling		   = 20000;
-	static constexpr std::uint32_t kNavExpansionsPerStructural = 16;
 	// A route's builtNavVersion once marked stale (detail landed across it, no clear point ahead): a
 	// value generation() never takes, so no re-stamp reads it as current.
 	static constexpr std::uint64_t kStaleRoute = std::numeric_limits<std::uint64_t>::max();
@@ -337,7 +294,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
 
 	// Ground a mover may stand on: a face of the nav mesh a route can cross, which is anything but
-	// water, placed obstacles included (they are priced, not walled); any wall face reads open
+	// water, placed obstacles included (a mover inside one stands on its face); any wall face reads open
 	// (terrain-optimistic). False off meshed ground. Lets a path failure tell a stranded colonist
 	// (recover by snapping back onto land) from one merely walled off.
 	[[nodiscard]] bool isOnMesh(glm::vec2 meters) const;
@@ -430,15 +387,6 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] std::optional<glm::vec2>
 	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
 
-	// True when `path` is a route requestPath gave that walks through detail at its price, on purpose:
-	// collision lets its mover through the obstacles and the forward snap leaves it alone while it
-	// follows it. Known for a route from the request that made it until its mover drops it.
-	[[nodiscard]] bool routeCrossesPricedFaces(const NavPath& path) const;
-	// The line comes within `radius` (mm) of a placed obstacle in the nav mesh (its outline, exactly): how a route
-	// that isn't the nav search's own (the structural walk it falls back to) learns whether it crosses
-	// detail.
-	[[nodiscard]] bool passesPlacedObstacle(const std::vector<geometry::Vec2i64>& points, std::int64_t radius) const;
-
 	// True when `entity`, placed in `chunk`, is a detail ring in the nav mesh queries see. Collision
 	// pushes out of a placed obstacle only then, so the forward snap has had its turn first and the
 	// push and the mesh never disagree about it. Read between update() and endTick().
@@ -467,28 +415,19 @@ class NavigationSystem : public ISystem {
 	// it; the routes they touch are marked stale one by one (see the file comment).
 	[[nodiscard]] std::uint64_t generation() const;
 
-	// Cumulative instrumentation since the last resetNavQueryStats(): the path searches, and the
-	// patches the joined jobs applied to each mesh.
+	// Cumulative instrumentation since the last resetNavQueryStats(): the patches the joined jobs
+	// applied to each mesh, and the reach walks.
 	struct NavQueryStats {
-		std::uint64_t totalQueries		 = 0;
-		std::uint64_t totalNodesExpanded = 0;
-		std::int64_t  lastNodesExpanded	 = 0;
-		std::int64_t  lastPeakOpenSet	 = 0;
-		std::uint64_t navPatches		 = 0;
-		std::uint64_t structuralPatches	 = 0;
-		// Structural walks (reach and requestPath's first step): those the goal-side search answered,
-		// those that went on to the start-side search, the expansions of each, and those that were far.
-		std::uint64_t structuralWalks	   = 0;
-		std::uint64_t probeAnswered		   = 0;
-		std::uint64_t forwardSearches	   = 0;
-		std::uint64_t probeExpansions	   = 0;
-		std::uint64_t forwardExpansions	   = 0;
-		std::uint64_t farWalks			   = 0;
-		std::uint64_t routeSearchesGaveUp  = 0;
-		// Nav searches behind near walks, their expansions, and those that hit their cap.
-		std::uint64_t navSearches		   = 0;
-		std::uint64_t navSearchExpansions  = 0;
-		std::uint64_t navSearchesCapped	   = 0;
+		std::uint64_t navPatches		= 0;
+		std::uint64_t structuralPatches = 0;
+		// Reach walks: those the goal-side search answered, those that went on to the start-side
+		// search, the expansions of each, and those that were far.
+		std::uint64_t structuralWalks	= 0;
+		std::uint64_t probeAnswered		= 0;
+		std::uint64_t forwardSearches	= 0;
+		std::uint64_t probeExpansions	= 0;
+		std::uint64_t forwardExpansions = 0;
+		std::uint64_t farWalks			= 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
@@ -530,10 +469,6 @@ class NavigationSystem : public ISystem {
 	// walking it: a teleport, a long shove) has its route marked stale, so it is replanned from
 	// where it stands rather than steered straight back at a waypoint through whatever lies between.
 	static constexpr std::int64_t kOffRouteMm = 2000;
-	// What walking a metre through a placed obstacle costs, in metres of open ground: 50
-	// makes a 0.6 m obstacle cost a 30 m detour, so a mover goes round one when it can and through
-	// one only when the way round is longer than that.
-	static constexpr double kDetailPassMultiplier = 50.0;
 	// Detail is wanted and scanned in square cells of this side, aligned to chunk squares; a cell is
 	// scanned once, ever.
 	static constexpr std::int64_t kDetailCellMm = 16000;
@@ -695,19 +630,16 @@ class NavigationSystem : public ISystem {
 	// The structural content of the chunks the box touches, and with withGround which of them have
 	// their ground meshed.
 	[[nodiscard]] std::uint64_t			  chunkStamp(const geometry::RectMm& box) const;
-	// The structural walk from start to goal, three ways (see Reach): the goal-side search, then the
-	// start-side one to `forwardCap`. `gaveUp` when both ran out of steps (to walk(), far); else
-	// `walk` holds the answer, its points from start to goal. `expansions` is both searches';
-	// `walkExpansions` is the one whose answer `walk` is.
+	// The structural walk from start to goal no dearer than maxCost, three ways (see Reach): the
+	// goal-side search, then the start-side one. `gaveUp` when both ran out of steps (far); else
+	// `walk` holds the answer. `expansions` is both searches'.
 	struct StructuralWalk {
 		geometry::nav::PathResult walk;
-		bool					  gaveUp		 = false;
-		bool					  probeAnswered	 = false;
-		std::uint32_t			  expansions	 = 0;
-		std::uint32_t			  walkExpansions = 0;
+		bool					  gaveUp	 = false;
+		std::uint32_t			  expansions = 0;
 	};
 	[[nodiscard]] StructuralWalk structuralWalk(const geometry::Vec2i64& startMm, const geometry::Vec2i64& goalMm, std::int64_t radius,
-												const geometry::nav::BeliefFilter& belief, double maxCost, std::uint32_t forwardCap) const;
+												const geometry::nav::BeliefFilter& belief, double maxCost) const;
 	[[nodiscard]] static geometry::RectMm boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm);
 	[[nodiscard]] std::int64_t			  anchorLoadRangeMm() const;
 	// The collider of the placed obstacle nearest `meters` that holds it, if any.
@@ -719,18 +651,14 @@ class NavigationSystem : public ISystem {
 		float	  extent = 0.0F;
 	};
 	[[nodiscard]] std::optional<PlacedObstacle> placedObstacleAt(glm::vec2 meters, float reachMeters = 0.0F) const;
-	// The BeliefFilter a movement query runs with: `belief` with detail priced (the one place).
-	[[nodiscard]] static geometry::nav::BeliefFilter pricedFor(geometry::nav::BeliefFilter belief);
 	// Marks stale the routes whose rest comes within the mover's radius of a placed obstacle that landed in
-	// the joined jobs; a route from a structural walk is re-priced instead (structuralRoutes).
+	// the joined jobs.
 	void markCrossedRoutes();
 	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
 	void markStrayedRoutes();
-	void forgetDroppedRoutes();
-	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
-	using RouteSet = std::unordered_map<std::uint64_t, std::vector<glm::vec2>>;
-	[[nodiscard]] static bool holds(const RouteSet& routes, const std::vector<glm::vec2>& waypoints);
-	static void				  note(RouteSet& routes, const std::vector<glm::vec2>& waypoints, bool in);
+	// Drops the requests whose answers have waited kUntakenAnswerTicks untaken.
+	void dropUntakenAnswers();
+	void countOutstandingRoutes();
 	// Every mover (Position + AgentRadius) standing on a placed obstacle in the mesh moves forward
 	// along its route to the first point walkable in truth, never past a wall or water on the way;
 	// with none, it stays, its route goes stale, and the snap holds it (snapHolds), so collision
@@ -819,11 +747,17 @@ class NavigationSystem : public ISystem {
 	struct QueuedRoute {
 		nav::RouteTicket		  queued = nav::kNoRouteTicket;
 		std::vector<std::int32_t> goalIndices;
+		bool					  takeable = false;
 	};
-	nav::RouteQueue											routes;
-	nav::RouteTicket										nextRouteTicket = 1;
-	std::unordered_map<nav::RouteTicket, QueuedRoute>		queuedRoutes;
-	std::unordered_map<nav::RouteTicket, RouteAnswer>		answeredAtOnce;
+	nav::RouteQueue										   routes;
+	nav::RouteTicket									   nextRouteTicket = 1;
+	std::unordered_map<nav::RouteTicket, QueuedRoute>	   queuedRoutes;
+	std::unordered_map<nav::RouteTicket, nav::RouteTicket> byQueueTicket; // the queue's ticket to ours
+	std::unordered_map<nav::RouteTicket, RouteAnswer>	   answeredAtOnce;
+	// Every answer in the order it became takeable, with that tick (routeTick), until it is taken,
+	// cancelled, or dropped; an entry whose ticket is gone by then is skipped.
+	std::deque<std::pair<std::uint64_t, nav::RouteTicket>> takeableSince;
+	std::uint64_t										   routeTick = 0; // updates so far
 	// The nav mesh's reports since the last slice, collected from its jobs.
 	std::vector<geometry::nav::PatchReport> routeReports;
 	bool									sliceStarted	 = false;
@@ -846,20 +780,8 @@ class NavigationSystem : public ISystem {
 	mutable std::set<world::ChunkCoordinate, ChunkLess>				 unmeshedReported; // logged once each (groundMeshedThrough)
 	mutable geometry::Ring												 colliderScratch;  // placedObstacleAt
 	std::set<world::ChunkCoordinate, ChunkLess>							 anchorChunks;
-	// Routes requestPath gave that cross priced faces, by routeKey, each kept whole so a key that two
-	// routes share never answers for the wrong one. The latest answer for a route stands, and each
-	// update() keeps only the routes some mover holds, so it never outgrows the movers and one
-	// tick's queries.
-	mutable RouteSet pricedRoutes;
-	// Routes requestPath took from a structural walk (a far route, or the walk a near search fell back
-	// to), kept as pricedRoutes are. The structural mesh holds no detail, so detail landing on one
-	// changes nothing a new request would find: it is re-priced where it stands, never marked stale.
-	mutable RouteSet structuralRoutes;
-	std::uint32_t									 navExpansionFloor			= kNavExpansionFloor;
-	std::uint32_t									 navExpansionsPerStructural = kNavExpansionsPerStructural;
-	std::uint32_t									 reachProbeExpansions		= kReachProbeExpansions;
-	std::uint32_t									 reachExpansionCap			= kReachExpansionCap;
-	std::uint32_t									 farRouteExpansions			= kFarRouteExpansions;
+	std::uint32_t reachProbeExpansions = kReachProbeExpansions;
+	std::uint32_t reachExpansionCap	   = kReachExpansionCap;
 	// The boxes of the placed obstacles that landed in the joined jobs, for markCrossedRoutes.
 	std::vector<std::pair<glm::vec2, glm::vec2>> detailLanded;
 
