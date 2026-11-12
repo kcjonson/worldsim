@@ -1,5 +1,8 @@
 # 2026-11-11 - Nav mesh: one mesh, variable resolution (steps 1 to 5 of WOR-702)
 
+The structural mesh, reach, pricing, the camera's part in meshing, and the step budgets described
+here were replaced on 2026-11-12: see [Nav correction](./2026-11-12-nav-correction.md).
+
 ## Summary
 
 Navigation no longer builds a separate mesh per region. There is one persistent nav mesh,
