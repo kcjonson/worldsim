@@ -14,6 +14,21 @@ reach check answers a walk length, a definite no, or "far", and far is never rea
 search that runs out of steps says "search gave up", never "no route". The search budgets come
 from measurements. Ground a mover has ever held stays meshed for the life of the world.
 
+The design was then settled (the spec's section 1, rules 22 to 30). Only movers generate mesh;
+the camera has no effect on it. A mover generates the full real mesh around it as it moves,
+every object movers cannot path through included, and such an object blocks. The mesh is patched
+in place and never unloads. A mover whose goal has no mesh heads that way and meshes as it goes.
+The meshed area is larger than the visible area, so "has mesh" never means the player can see or
+act there. All movers share one movement system, and nav code never names a kind of obstacle.
+
+The code does not match that yet, in three places (the spec's section 1.1). The camera loads
+chunks whose ground is meshed, is the only thing that brings placed obstacles into the mesh, and
+gates collision and the forward snap: WOR-796 (Nav: the camera must have no effect on the mesh).
+A mover brings in ground, water, walls and doors only: WOR-797 (Nav: movers generate the full real
+mesh around them, placed obstacles included). Placed obstacles are priced at 50, never
+impassable: WOR-798 (Nav: objects movers cannot path through block in the mesh instead of being
+priced). The "Detail" item below describes what is built.
+
 Steps 6 (the route system out of `AIDecisionSystem`) and 7 (mover footprints) are not built.
 
 ## Details
@@ -35,8 +50,8 @@ Steps 6 (the route system out of `AIDecisionSystem`) and 7 (mover footprints) ar
   by its taut length. An exact visibility-graph referee checks it: 0 of 2,297 pairs on 300
   wall-and-post layouts are longer than the shortest path, where the old search was longer on 633,
   the worst by 350%. Ties break on coordinates, so the same rings reached through different edit
-  orders give the same path. `PathLimits` caps a search by cost, by expansions, or to a box; the
-  box is no longer used by the game.
+  orders give the same path. `PathLimits` caps a search by cost or by expansions; the box limit
+  is deleted.
 - **Priced faces.** A query reads a table of obstacle kinds passable at a cost multiplier. A gap
   too narrow for the mover between priced obstacles is a squeeze, charged, and the result says it
   crosses priced ground.
@@ -56,28 +71,31 @@ Steps 6 (the route system out of `AIDecisionSystem`) and 7 (mover footprints) ar
 - **Reach and routes.** `walk()` searches the structural mesh under the colonist's belief over all
   meshed ground: from the goal first (2,000 steps), so a sealed pocket is a definite no at once,
   then from the start (5,000). When both run out the goal is far; a far candidate stays a
-  candidate and is taken when nothing with a known walk is. `requestPath` runs the same walk, then
-  the nav search with detail priced (falling back to the walk itself if that runs out). A far
-  goal gets the structural search from the start to 60,000 steps instead, its walk taken as the
-  route; past that the answer is "search gave up", which the decision trace and task list show as
-  its own status. The 128 m reach square of the first merge is gone.
+  candidate and is taken when nothing with a known walk is. `requestPath` runs the same walk once,
+  with the start-side search carried on to 60,000 steps. A near walk is followed by the nav search
+  with detail priced, capped at `min(11,000 + 16 x walk steps, 20,000)`, falling back to the walk
+  itself if that runs out; a far walk (past 5,000 start-side steps) is the route; past 60,000 the
+  answer is "search gave up", which the decision trace and task list show as its own status. A
+  route taken from the walk is re-priced in place when detail lands on it. The 128 m reach square
+  of the first merge is gone.
 - **Ground.** Ground lands under a per-tick vertex budget, a chunk with water alone, ground an
   anchor holds before the camera's. A chunk an anchor has ever held keeps its ground forever;
   only ground the camera alone held is shed, past 16 unloaded chunks, never one the construction
   world touches. Mesh existing is not ground being visible: player visibility is planned
   (WOR-754 (Player visibility: unexplored areas (visible, seen, unseen))), not built.
-- **Detail.** Placed obstacles enter the nav mesh only under the view, two 16 m cells a tick, capped
-  at 40,000 rings, whole cells leaving least recently wanted first. They are priced, not walled,
-  on camera and off, so a goal ringed by them is reached by walking through; this departs from the
-  spec's section 4.4 as first written (decision 50). Detail being on decides only what collision
-  and the forward snap do. A mover an obstacle lands on moves forward along its route and keeps
-  its task.
+- **Detail, as built (not the design; see the summary).** Placed obstacles enter the nav mesh
+  only under the view, two 16 m cells a tick, capped at 40,000 rings, whole cells leaving least
+  recently wanted first. They are priced, not walled, on camera and off, so a goal ringed by them
+  is reached by walking through (decision 50). Detail being on decides only what collision and
+  the forward snap do. A mover an obstacle lands on moves forward along its route and keeps its
+  task; that rule stays in the design.
 - **Naming.** Nav, mesh and collision code never name trees or flora: "placed obstacle" and
   "detail".
 - **Staleness is targeted.** The nav generation moves only on structural changes to ground an
   anchor holds, and routes the change doesn't close are re-stamped. Detail landing marks stale just
   the routes it crosses; a mover more than 2 m off its route is marked stale too. A colonist whose
-  route failed while ground near it was still arriving is told to decide when that ground lands.
+  route failed while ground near it was still arriving is woken by the AI when nav reports that
+  ground landed.
 - **`MovementSystem`** spends a tick's stride along the route past every corner it reaches.
 - A goal in ground that is neither loaded nor meshed reads unreachable, so a colonist takes its next
   choice instead of holding. Travelling toward it is deferred (WOR-776 (Nav: build a path toward a
@@ -120,10 +138,23 @@ GPU as busy)); ruled baselines by Kevin):
 ## Related Documentation
 
 - [Nav mesh: one mesh, variable resolution](../../technical/nav-mesh-variable-resolution.md): the
-  spec, with Kevin's rulings (section 1, rules 14 to 21), the decisions log (section 10, entries 1
-  to 89), and every number above in context.
+  spec, with the design (section 1, rules 22 to 30), where the code departs from it (section
+  1.1), the decisions log (section 10, entries 1 to 92), and every number above in context.
 
 ## Next Steps
+
+Bringing the code to the design:
+
+- WOR-796 (Nav: the camera must have no effect on the mesh).
+- WOR-797 (Nav: movers generate the full real mesh around them, placed obstacles included).
+- WOR-798 (Nav: objects movers cannot path through block in the mesh instead of being priced).
+- Symptoms filed with them: WOR-795 (A colonist on a far route walks straight through placed
+  obstacles on screen); WOR-794 (A colonist with a critical need and a known fix is left idle when
+  the route search to it gives up); WOR-791 (Nav: a goal on meshed ground cut off from the start
+  by unmeshed ground reads as a definite no).
+- WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)).
+
+Other follow-ups:
 
 - WOR-789 (Far route requests stall the main thread for 19 to 34 ms; run them on a worker).
 - WOR-722 (Reach forests are rebuilt whole on every structural change): per-chunk forests, so a
@@ -133,7 +164,6 @@ GPU as busy)); ruled baselines by Kevin):
 - WOR-725 (Priced path queries cost about twice unpriced ones).
 - WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet), and with it WOR-775
   (Exploring: a colonist blocked on the way to a remembered place looks for a way round).
-- Keep or delete `PathLimits::within`, which the game no longer uses.
 - WOR-709 (Step 6: Movers (route system out of AIDecisionSystem, a wandering deer)), and with it
   the removal of the region-era members of `NavigationSystem` that `AIDecisionSystem` still calls;
   WOR-710 (Step 7: Mover footprints in the mesh).

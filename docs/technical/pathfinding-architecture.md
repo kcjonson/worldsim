@@ -14,7 +14,7 @@ From the game, not from the literature:
 
 1. **Vector-native.** The entire world is vector geometry: terrain features, freeform polygon buildings, even moving entities. Navigation should consume exact geometry, not rasterize it away.
 2. **Agents take up space (hard requirement).** Colonists, animals, and raiders cannot overlap. Doorway congestion, queues at chokepoints, and crowd pressure should emerge from agents being physical.
-3. **Infinite world.** Chunks stream around the camera (512 m, load radius 2 today); nav data can only exist for loaded space. Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
+3. **Infinite world.** Chunks stream around the camera and around movers (512 m; in the game the camera loads 3 by 3 chunks and keeps 5 by 5). Nav mesh exists only where movers have generated it (the design; as built the camera's chunks are meshed too, WOR-796 (Nav: the camera must have no effect on the mesh)). Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
 4. **The raid scenario end-to-end:** route from anywhere on the planet → arrive near the settlement → coordinate an approach as a group → pick targets → navigate interiors through doors. Section 6 traces it through every tier.
 5. **Colony-sim scale.** Dozens to low hundreds of exact agents near the action; arbitrarily many abstract parties far away.
 6. **Plays well with the engine:** TimeSystem speed multipliers (up to 10x), determinism-friendly (multiplayer future), async-friendly (TaskPool exists), and the construction contract (walls publish exact band polygons, openings publish portals, shared clearance constant, nav version counter).
@@ -49,7 +49,7 @@ Tier 2  LOCAL       dynamic CDT navmesh per chunk          exact paths around bu
 Tier 3  MOVEMENT    collision circles + velocity steering  agents take up space, doorway congestion
 ```
 
-This is the "pathfinding resolution" intuition formalized, with one correction borrowed from X4's attention model: fidelity is anchored to **attention bubbles** (the settlement, the camera, active combat), not just the camera. A raid assaulting the colony runs at full fidelity even if the player is looking elsewhere.
+This is the "pathfinding resolution" intuition formalized, with one correction borrowed from X4's attention model: fidelity is anchored to **attention bubbles** (the settlement, the camera, active combat), not just the camera. A raid assaulting the colony runs at full fidelity even if the player is looking elsewhere. The nav mesh itself has no camera-driven fidelity: movers generate it in full and the camera has no effect on it ([nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md), rules 22 and 23).
 
 ### Tier 0 — Global: the planet hex graph
 
@@ -93,14 +93,19 @@ The hard requirement, decomposed:
 
 The multi-region sim area this section used to describe (a square region per colonist and one for
 the viewport, rebuilt whole) is gone. Its replacement is one persistent mesh patched in place,
-specified in [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md): ground loads and
-meshes around anchors (colonists, their routes and waiting goals) whatever the camera does, the
-camera only brings flora in, and a colonist's own reach and routing are confined to a square of
-half-side the anchor load range around it. That spec's section 10 is what was built.
+specified in [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md), whose section 1
+(rules 22 to 30) is the design: only movers generate mesh, each the full real mesh around it with
+every object movers cannot path through blocking in it, the camera has no effect on the mesh, no
+mesh unloads, and nav routes any place to any place. As built, the camera still loads chunks whose
+ground is meshed and is the only thing that brings placed obstacles in, and placed obstacles are
+priced rather than blocking; that spec's section 1.1 lists these with their tickets, WOR-796 (Nav:
+the camera must have no effect on the mesh), WOR-797 (Nav: movers generate the full real mesh
+around them, placed obstacles included) and WOR-798 (Nav: objects movers cannot path through
+block in the mesh instead of being priced). Its section 10 is what was built.
 
 **`isValidPosition`: the one runtime validity predicate.** A point is valid when it is meshed
-ground a mover may stand on, not water and not inside a tree's collider (read from the placement
-data, on camera or off). Every world-positioning path respects it (One Path Rule): dev spawn,
+ground a mover may stand on, not water and not inside a placed obstacle's collider (read from the
+placement data, on camera or off). Every world-positioning path respects it (One Path Rule): dev spawn,
 give-loose, colonist, teleport and the build-placement preview.
 
 **World-data-vs-runtime boundary (load-bearing).** The 3D world/planet data exists ONLY to spawn
@@ -181,7 +186,7 @@ out. The real inputs are regression fixtures in `libs/geometry/nav/NavMeshDumpRi
 The two classic failure points, with the standard solutions:
 
 - **Materialization.** When a Tier 0 party's route enters the attention/loaded boundary, spawn its members as ECS entities at the boundary on the route's approach bearing (the Mount & Blade / RimWorld caravan handoff). Reverse for de-materialization: surviving raiders that flee past the boundary collapse back into a record.
-- **Time consistency.** Abstract travel runs on the shared world clock through TimeSystem speeds, so arrivals are consistent no matter what the player watches. Colonists must not walk off the loaded world: destinations are validated against loaded space (Tier 1 query), and the chunk loader gains anchor points beyond the camera (settlement, active agents) — today it is camera-only, which is a latent bug independent of pathfinding.
+- **Time consistency.** Abstract travel runs on the shared world clock through TimeSystem speeds, so arrivals are consistent no matter what the player watches. Colonists must not walk off the loaded world: destinations are validated against loaded space (Tier 1 query), and the chunk loader gains anchor points beyond the camera (settlement, active agents). Built: movers, their live routes and their waiting goals anchor chunks (risk 3).
 
 ## 4. The Ray Marching Verdict
 
@@ -274,7 +279,7 @@ Each phase lands independently testable and useful.
 4. **Off-screen simulation LOD is bigger than pathfinding.** Needs/AI/vision currently tick for every entity everywhere. Tier 0 sidesteps it for raids (records, not entities), but a general entity-simulation LOD (and the restraint lesson from Kenshi: don't over-simulate the far world) deserves its own future spec.
 5. **Time-scale interactions.** 10x game speed multiplies avoidance substeps and replan rates; budget Tier 3 for worst-case speed, or clamp avoidance fidelity at high speeds (movement correctness over crowd aesthetics when fast-forwarding).
 6. **Memory/perf envelopes** for per-chunk meshes and component graphs need numbers during P2/P3; the perf tooling from the render overhaul applies.
-7. **Mesh-vs-agents contract:** dynamic agents are never navmesh obstacles (SC2 rule); they exist only in Tier 3. Violating this (e.g., "block this tile while crafting") gets modeled as occupancy cost, not geometry.
+7. **Mesh-vs-agents contract:** dynamic agents are never navmesh obstacles (SC2 rule); they exist only in Tier 3. Violating this (e.g., "block this tile while crafting") gets modeled as occupancy cost, not geometry. Reversed by [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md) (4.3.3, rule 11): mover footprints go in the mesh, patched as they move. Not built (step 7).
 8. **Belief readability.** A colonist confidently walking toward a wall they don't know about is *correct* behavior that looks like a pathfinding bug. Mitigation is designed: the colonist info panel's current-task line surfaces navigation states with status colors ("Going to" / "Re-routing" / "Searching for" as mild warning / "Can't find a way to" as blocked — vocabulary in the [Memory System](../design/game-systems/colonists/memory.md) UI section), so the movement layer must expose its state per agent. Plus the planned memory debug overlay. Replan churn under belief is bounded by vision events and self-extinguishing, but compounds with 10x speed; coalesce discovery events per agent per tick.
 9. **Wildlife belief policy.** Do animals get belief too, or path on truth? Full belief for a deer is over-modeling; truth-pathing animals are omniscient prey. Open design question for the wildlife work; the filter mechanism supports either, per agent class.
 
