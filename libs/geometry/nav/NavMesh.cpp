@@ -325,6 +325,29 @@ namespace geometry::nav {
 			   pointInPolygon(p3, r.ring3) == PointInPolygon::Inside;
 	}
 
+	bool boundsContainSample(const SampleRing& r, const Vec2i64& p3) {
+		if (p3.x < r.lo3.x || p3.x >= r.hi3.x || p3.y < r.lo3.y || p3.y >= r.hi3.y) {
+			return false;
+		}
+		// Crossing number of the ray from p + (e, e^2) along +x. An edge crosses the line
+		// y = p.y + e^2 when one end is above p.y and the other is not, and the crossing
+		// is right of p.x + e when it is strictly right of p.x.
+		bool			  inside = false;
+		const std::size_t n		 = r.ring3.size();
+		for (std::size_t i = 0; i < n; ++i) {
+			const Vec2i64& a = r.ring3[i];
+			const Vec2i64& b = r.ring3[(i + 1) % n];
+			if ((a.y > p3.y) == (b.y > p3.y)) {
+				continue;
+			}
+			const int side = cross(b - a, p3 - a).sign();
+			if ((b.y > a.y ? side > 0 : side < 0)) {
+				inside = !inside;
+			}
+		}
+		return inside;
+	}
+
 	FaceTags classifyCover(const std::vector<const SampleRing*>& containing) {
 		// Smallest area first; equal areas by content.
 		auto ranksBefore = [](const SampleRing& a, const SampleRing& b) {
@@ -361,6 +384,56 @@ namespace geometry::nav {
 		return {};
 	}
 
+	BoundsSeams findBoundsSeams(const std::vector<const NavInputPolygon*>& rings) {
+		struct Side {
+			Vec2i64		lo;
+			Vec2i64		hi;
+			RingEdgeRef ref;
+
+			bool operator<(const Side& other) const { return std::tie(lo, hi, ref) < std::tie(other.lo, other.hi, other.ref); }
+		};
+		BoundsSeams		  seams;
+		std::vector<Side> sides;
+		seams.partner.resize(rings.size());
+		for (std::size_t r = 0; r < rings.size(); ++r) {
+			const std::vector<Vec2i64>& ring = rings[r]->ring;
+			if (rings[r]->blocked || ring.size() < 3) {
+				continue;
+			}
+			seams.partner[r].assign(ring.size(), RingEdgeRef{});
+			for (std::size_t i = 0; i < ring.size(); ++i) {
+				const Vec2i64& a = ring[i];
+				const Vec2i64& b = ring[(i + 1) % ring.size()];
+				if (a != b) {
+					sides.push_back({std::min(a, b), std::max(a, b), {static_cast<std::int32_t>(r), static_cast<std::int32_t>(i)}});
+				}
+			}
+		}
+		std::sort(sides.begin(), sides.end());
+		std::map<Vec2i64, std::int32_t> pins;
+		for (std::size_t begin = 0; begin < sides.size();) {
+			std::size_t end = begin + 1;
+			while (end < sides.size() && sides[end].lo == sides[begin].lo && sides[end].hi == sides[begin].hi) {
+				++end;
+			}
+			for (std::size_t i = begin; i < end; ++i) {
+				for (std::size_t j = begin; j < end; ++j) {
+					if (sides[j].ref.ring != sides[i].ref.ring) {
+						seams.partner[static_cast<std::size_t>(sides[i].ref.ring)][static_cast<std::size_t>(sides[i].ref.edge)] = sides[j].ref;
+						if (sides[i].ref < sides[j].ref) {
+							++pins[sides[i].lo];
+							++pins[sides[i].hi];
+						}
+						break;
+					}
+				}
+			}
+			begin = end;
+		}
+		seams.pins.assign(pins.begin(), pins.end());
+		return seams;
+	}
+
 	NavMesh buildNavMesh(const NavMeshInput& input) {
 		NavMesh result;
 
@@ -385,17 +458,16 @@ namespace geometry::nav {
 		// provenanceId so extracted edges carry it back. The arrangement splits edges
 		// at every crossing and touch and merges overlaps, so its edges form a planar
 		// straight-line graph.
-		std::vector<InputSegment> segments;
+		std::vector<const NavInputPolygon*> rings;
 		for (const NavInputPolygon& poly : input.polygons) {
-			const std::size_t n = poly.ring.size();
-			if (n < 3) {
-				continue;
-			}
-			for (std::size_t i = 0; i < n; ++i) {
-				segments.push_back({poly.ring[i], poly.ring[(i + 1) % n], poly.provenanceId});
-			}
+			rings.push_back(&poly);
 		}
-		const Arrangement arrangement = buildArrangement(segments);
+		std::vector<InputSegment> segments;
+		std::vector<Vec2i64>	  pins;
+		ringsArrangementInput(
+			rings, findBoundsSeams(rings), [&](std::int32_t ring, std::int32_t) { return rings[static_cast<std::size_t>(ring)]->provenanceId; },
+			segments, pins);
+		const Arrangement arrangement = buildArrangement(segments, pins);
 		result.vertices				  = arrangement.vertices;
 
 		// 2. Triangulate the whole arrangement at once: a constrained Delaunay
@@ -462,7 +534,7 @@ namespace geometry::nav {
 			const CdtTriangle& s	   = cdt.triangles[static_cast<std::size_t>(face.sampleTri)];
 			const Vec2i64	   sample3 = cdt.vertices[s.v[0]] + cdt.vertices[s.v[1]] + cdt.vertices[s.v[2]];
 			for (const SampleRing& border : borderRings) {
-				if (ringContainsSample(border, sample3)) {
+				if (boundsContainSample(border, sample3)) {
 					face.inBounds = true;
 					break;
 				}

@@ -13,6 +13,7 @@
 #include <set>
 #include <span>
 #include <sstream>
+#include <tuple>
 #include <utility>
 
 namespace geometry::nav {
@@ -440,6 +441,11 @@ namespace geometry::nav {
 		return pieces[static_cast<std::size_t>(rings[static_cast<std::size_t>(s.ring)].edgeIds[static_cast<std::size_t>(s.edge)])];
 	}
 
+	EdgeSource PatchableMesh::partnerOf(const EdgeSource& s) const {
+		const std::vector<EdgeSource>& partners = rings[static_cast<std::size_t>(s.ring)].partners;
+		return partners.empty() ? EdgeSource{} : partners[static_cast<std::size_t>(s.edge)];
+	}
+
 	void PatchableMesh::triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const {
 		const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 		lo					   = verts[tri.v[0]];
@@ -482,6 +488,24 @@ namespace geometry::nav {
 
 	std::int32_t PatchableMesh::locate(const Vec2i64& p) const {
 		return locateScaled(p, 1);
+	}
+
+	std::int32_t PatchableMesh::locateSample(const Vec2i64& p3) const {
+		std::int32_t found = -1;
+		grid.forEachAtPoint(p3, 3, [&](std::int32_t t) {
+			const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+			for (int i = 0; i < 3; ++i) {
+				const Vec2i64	  a = verts[tri.v[static_cast<std::size_t>(i)]] * 3;
+				const Vec2i64	  b = verts[tri.v[static_cast<std::size_t>(next3(i))]] * 3;
+				const Orientation o = orientation(a, b, p3);
+				if (o == Orientation::Clockwise || (o == Orientation::Collinear && !(b.y != a.y ? b.y < a.y : b.x > a.x))) {
+					return false;
+				}
+			}
+			found = t;
+			return true;
+		});
+		return found;
 	}
 
 	template <typename Visit> void PatchableMesh::forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit) {
@@ -568,12 +592,13 @@ namespace geometry::nav {
 		});
 	}
 
-	// The mesh boundary runs along bounds edges, so a box clear of every bounds ring's
-	// edges is clear of it (the margin covers how far snap rounding bends them).
+	// The mesh boundary runs along bounds edges that are not dissolved, so a box clear of
+	// every such edge is clear of it (the margin covers how far snap rounding bends them).
 	bool PatchableMesh::nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const {
 		bool near = false;
 		edgeGrid.forEachInBox(lo, hi, 1, [&](std::int32_t id) {
-			near = near || !rings[static_cast<std::size_t>(edgeOf[static_cast<std::size_t>(id)].ring)].polygon.blocked;
+			const EdgeSource& z = edgeOf[static_cast<std::size_t>(id)];
+			near = near || (!rings[static_cast<std::size_t>(z.ring)].polygon.blocked && partnerOf(z).ring == kNoRing);
 		});
 		return near;
 	}
@@ -880,6 +905,22 @@ namespace geometry::nav {
 		std::vector<std::int32_t>  edgeIdsNear;
 		std::vector<RingId>		   ringsNear;
 
+		// A new bounds edge by its end points, lower first.
+		struct NewSide {
+			Vec2i64	   lo;
+			Vec2i64	   hi;
+			EdgeSource source;
+
+			bool operator<(const NewSide& other) const { return std::tie(lo, hi, source) < std::tie(other.lo, other.hi, other.source); }
+		};
+		// Partners after the patch where the patch changes them, ascending; an edge listed
+		// with kNoRing and a partner has the partner. A new outline edge not listed has none.
+		std::vector<std::pair<EdgeSource, EdgeSource>> partnerAfter;
+		std::vector<std::pair<EdgeSource, EdgeSource>> pairs;
+		std::vector<NewSide>						   newSides;
+		std::vector<std::pair<Vec2i64, std::int32_t>>  pinDelta; // ascending, merged
+		std::vector<Vec2i64>						   points;	 // pins this pass keeps as point sites
+
 		std::vector<Fixed>				  fixed;
 		std::vector<EdgeSource>			  fixedSources;
 		std::vector<LocalSegment>		  segments;
@@ -961,11 +1002,18 @@ namespace geometry::nav {
 		std::span<const std::int32_t> trisOf(const LocalFace& face) const;
 		std::vector<RingId>&		toggle(const std::vector<RingId>& cover, std::span<const EdgeSource> sources, std::vector<RingId>& out);
 
+		// Partners as they stand after the patch: an unchanged ring's edge, or a changed
+		// ring's new outline edge.
+		void	   findPartners();
+		EdgeSource partnerAfter(const EdgeSource& x) const;
+		bool	   pinAfter(const Vec2i64& p) const;
+
 		void addToS(const EdgeSource& z);
 		void addToHole(std::int32_t t);
 		void addToTest(RingId r);
 		void pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge, const std::vector<EdgeSource>* band = nullptr);
 		void pullAtVertex(std::uint32_t v, std::int32_t seed, std::span<const std::pair<EdgeSource, bool>> xs, bool takeStar);
+		void touchSegment(const Vec2i64& a, const Vec2i64& b, const EdgeSource& x);
 		void walkNewOutlines();
 		void closeS();
 		bool deriveOnce();
@@ -1091,6 +1139,135 @@ namespace geometry::nav {
 			queue.push_back(z);
 			addToTest(z.ring);
 		}
+	}
+
+	// Every pair a removed or moved ring was in ends, and the kept edge in it joins s to
+	// come back as a constraint; every new bounds edge pairs with a kept or new edge on
+	// its segment (sameSegment, the lowest other ring's, as findBoundsSeams picks).
+	void PatchableMesh::Patch::findPartners() {
+		std::vector<std::pair<EdgeSource, EdgeSource>>& after = work.partnerAfter;
+		std::vector<std::pair<EdgeSource, EdgeSource>>& pairs = work.pairs;
+		std::vector<std::pair<Vec2i64, std::int32_t>>&	delta = work.pinDelta;
+		after.clear();
+		delta.clear();
+		auto ordered = [](const EdgeSource& x, const EdgeSource& y) { return x < y ? std::make_pair(x, y) : std::make_pair(y, x); };
+		auto unique	 = [](std::vector<std::pair<EdgeSource, EdgeSource>>& list) {
+			 std::sort(list.begin(), list.end());
+			 list.erase(std::unique(list.begin(), list.end()), list.end());
+		};
+
+		pairs.clear();
+		for (const auto& [id, c] : changes) {
+			if (!c.hadOld) {
+				continue;
+			}
+			const std::vector<EdgeSource>& partners = m.rings[static_cast<std::size_t>(id)].partners;
+			for (std::int32_t e = 0; e < static_cast<std::int32_t>(partners.size()); ++e) {
+				const EdgeSource& p = partners[static_cast<std::size_t>(e)];
+				if (p.ring == kNoRing) {
+					continue;
+				}
+				pairs.push_back(ordered({id, e}, p));
+				if (!changed(p.ring)) {
+					after.push_back({p, {}});
+					addToS(p);
+				}
+			}
+		}
+		unique(pairs);
+		for (const auto& [x, y] : pairs) {
+			delta.push_back({edgeStart(oldOutline(x.ring), x.edge), -1});
+			delta.push_back({edgeEnd(oldOutline(x.ring), x.edge), -1});
+		}
+
+		std::vector<PatchScratch::NewSide>& sides = work.newSides;
+		sides.clear();
+		for (const auto& [id, c] : changes) {
+			if (!c.hasNew || c.polygon.blocked) {
+				continue;
+			}
+			for (std::int32_t e = 0; e < static_cast<std::int32_t>(c.polygon.ring.size()); ++e) {
+				const Vec2i64 a = edgeStart(c.polygon.ring, e);
+				const Vec2i64 b = edgeEnd(c.polygon.ring, e);
+				if (a != b) {
+					sides.push_back({std::min(a, b), std::max(a, b), {id, e}});
+				}
+			}
+		}
+		std::sort(sides.begin(), sides.end());
+		pairs.clear();
+		for (const PatchScratch::NewSide& side : sides) {
+			EdgeSource best;
+			auto	   take = [&](const EdgeSource& z) {
+				  if (z.ring != side.source.ring && (best.ring == kNoRing || z < best)) {
+					  best = z;
+				  }
+			};
+			const PatchScratch::NewSide key{side.lo, side.hi, {kNoRing, 0}};
+			for (auto it = std::lower_bound(sides.begin(), sides.end(), key); it != sides.end() && it->lo == side.lo && it->hi == side.hi; ++it) {
+				take(it->source);
+			}
+			m.ringEdgesInBox(side.lo, side.hi, work.edgeIdsNear, work.edgesNear);
+			for (const EdgeSource& z : work.edgesNear) {
+				const NavInputPolygon& poly = m.rings[static_cast<std::size_t>(z.ring)].polygon;
+				if (!changed(z.ring) && !poly.blocked && sameSegment(side.lo, side.hi, edgeStart(poly.ring, z.edge), edgeEnd(poly.ring, z.edge))) {
+					take(z);
+				}
+			}
+			if (best.ring != kNoRing) {
+				pairs.push_back(ordered(side.source, best));
+			}
+		}
+		unique(pairs);
+		for (const auto& [x, y] : pairs) {
+			after.push_back({x, y});
+			after.push_back({y, x});
+			for (const EdgeSource& z : {x, y}) {
+				if (!changed(z.ring)) {
+					addToS(z);
+				}
+			}
+			const std::vector<Vec2i64>& outline = newPolygon(x.ring).ring;
+			delta.push_back({edgeStart(outline, x.edge), 1});
+			delta.push_back({edgeEnd(outline, x.edge), 1});
+		}
+		std::sort(after.begin(), after.end());
+
+		std::sort(delta.begin(), delta.end());
+		std::size_t merged = 0;
+		for (std::size_t i = 0; i < delta.size(); ++i) {
+			if (merged > 0 && delta[merged - 1].first == delta[i].first) {
+				delta[merged - 1].second += delta[i].second;
+			} else {
+				delta[merged++] = delta[i];
+			}
+		}
+		delta.resize(merged);
+	}
+
+	EdgeSource PatchableMesh::Patch::partnerAfter(const EdgeSource& x) const {
+		const std::vector<std::pair<EdgeSource, EdgeSource>>& after = work.partnerAfter;
+		EdgeSource											  found;
+		bool												  listed = false;
+		for (auto it = std::lower_bound(after.begin(), after.end(), std::make_pair(x, EdgeSource{std::numeric_limits<RingId>::min(), 0})); it != after.end() && it->first == x;
+			 ++it) {
+			listed = true;
+			if (it->second.ring != kNoRing) {
+				found = it->second;
+			}
+		}
+		return listed || changed(x.ring) ? found : m.partnerOf(x);
+	}
+
+	bool PatchableMesh::Patch::pinAfter(const Vec2i64& p) const {
+		const std::int32_t* now	  = m.pins.find(p);
+		std::int32_t		count = now != nullptr ? *now : 0;
+		auto				it	  = std::lower_bound(work.pinDelta.begin(), work.pinDelta.end(), p,
+												 [](const std::pair<Vec2i64, std::int32_t>& d, const Vec2i64& q) { return d.first < q; });
+		if (it != work.pinDelta.end() && it->first == p) {
+			count += it->second;
+		}
+		return count > 0;
 	}
 
 	// The mesh shows every interaction on kept ground, but a segment that reaches off
@@ -1278,6 +1455,7 @@ namespace geometry::nav {
 				}
 			}
 		}
+		findPartners();
 	}
 
 	// Every ring edge on the mesh at vertex v joins s unless v is an original corner of
@@ -1306,6 +1484,44 @@ namespace geometry::nav {
 		});
 	}
 
+	// The triangles segment ab (ring edge x) touches join the hole, and every ring edge
+	// it crosses or touches joins s.
+	void PatchableMesh::Patch::touchSegment(const Vec2i64& a, const Vec2i64& b, const EdgeSource& x) {
+		Vec2i64 lo = a;
+		Vec2i64 hi = a;
+		growBox(lo, hi, b);
+		m.forEachLiveInBox(lo, hi, [&](std::int32_t t) {
+			const NavTriangle&			 tri = m.tris[static_cast<std::size_t>(t)];
+			const std::array<Vec2i64, 3> pts{m.verts[tri.v[0]], m.verts[tri.v[1]], m.verts[tri.v[2]]};
+			if (!segmentTouchesTriangle(a, b, pts)) {
+				return;
+			}
+			addToHole(t);
+			for (int k = 0; k < 3; ++k) {
+				const std::vector<EdgeSource>& sources = m.edgeSources(t, k);
+				if (sources.empty()) {
+					continue;
+				}
+				const Vec2i64&			  p = pts[static_cast<std::size_t>(k)];
+				const Vec2i64&			  q = pts[static_cast<std::size_t>(next3(k))];
+				const SegmentIntersection r = intersectSegments(a, b, p, q);
+				if (r.relation == SegmentRelation::Disjoint || (r.relation == SegmentRelation::EndpointTouch && (r.point == p || r.point == q))) {
+					continue;
+				}
+				for (const EdgeSource& z : sources) {
+					addToS(z);
+				}
+			}
+			for (int k = 0; k < 3; ++k) {
+				const Vec2i64& p = pts[static_cast<std::size_t>(k)];
+				if (onClosedSegment(p, a, b)) {
+					const std::pair<EdgeSource, bool> one{x, p == a || p == b};
+					pullAtVertex(tri.v[static_cast<std::size_t>(k)], t, {&one, 1}, false);
+				}
+			}
+		});
+	}
+
 	// The triangles a new outline overlaps join the hole, and every ring edge its
 	// segments cross or touch joins s.
 	void PatchableMesh::Patch::walkNewOutlines() {
@@ -1321,40 +1537,7 @@ namespace geometry::nav {
 					continue;
 				}
 				pullOffGround(a, b, !c.polygon.blocked, c.polygon.blocked ? nullptr : &c.band);
-				Vec2i64 lo = a;
-				Vec2i64 hi = a;
-				growBox(lo, hi, b);
-				m.forEachLiveInBox(lo, hi, [&](std::int32_t t) {
-					const NavTriangle&			 tri = m.tris[static_cast<std::size_t>(t)];
-					const std::array<Vec2i64, 3> pts{m.verts[tri.v[0]], m.verts[tri.v[1]], m.verts[tri.v[2]]};
-					if (!segmentTouchesTriangle(a, b, pts)) {
-						return;
-					}
-					addToHole(t);
-					for (int k = 0; k < 3; ++k) {
-						const std::vector<EdgeSource>& sources = m.edgeSources(t, k);
-						if (sources.empty()) {
-							continue;
-						}
-						const Vec2i64&			  p = pts[static_cast<std::size_t>(k)];
-						const Vec2i64&			  q = pts[static_cast<std::size_t>(next3(k))];
-						const SegmentIntersection r = intersectSegments(a, b, p, q);
-						if (r.relation == SegmentRelation::Disjoint ||
-							(r.relation == SegmentRelation::EndpointTouch && (r.point == p || r.point == q))) {
-							continue;
-						}
-						for (const EdgeSource& z : sources) {
-							addToS(z);
-						}
-					}
-					for (int k = 0; k < 3; ++k) {
-						const Vec2i64& p = pts[static_cast<std::size_t>(k)];
-						if (onClosedSegment(p, a, b)) {
-							const std::pair<EdgeSource, bool> x{{id, e}, p == a || p == b};
-							pullAtVertex(tri.v[static_cast<std::size_t>(k)], t, {&x, 1}, false);
-						}
-					}
-				});
+				touchSegment(a, b, {id, e});
 			}
 			// Bounds interiors never overlap, so the only old ground inside a new bounds ring
 			// and clear of its edges belongs to a bounds ring this patch moves or removes,
@@ -1419,6 +1602,12 @@ namespace geometry::nav {
 				pullOffGround(a, b, !m.rings[static_cast<std::size_t>(x.ring)].polygon.blocked);
 			}
 			const std::vector<std::int32_t>& under = m.piecesOf(x);
+			// A dissolved edge whose partner goes has no pieces to follow: ground runs across
+			// it, and the triangles on it rebuild it as a constraint.
+			if (under.empty() && a != b && !changed(x.ring) && !m.rings[static_cast<std::size_t>(x.ring)].polygon.blocked &&
+				partnerAfter(x).ring == kNoRing) {
+				touchSegment(a, b, x);
+			}
 			std::vector<std::pair<std::uint32_t, std::int32_t>>& ends = work.ends; // vertex, a triangle on it
 			ends.clear();
 			for (std::int32_t h : under) {
@@ -1486,6 +1675,18 @@ namespace geometry::nav {
 				fixed.push_back(f);
 			}
 		}
+		// A pin in the hole stays a vertex though no segment ends there.
+		work.points.clear();
+		if (m.pins.size() == 0 && work.pinDelta.empty()) {
+			return;
+		}
+		for (std::int32_t t : hole) {
+			for (std::uint32_t v : m.tris[static_cast<std::size_t>(t)].v) {
+				if (pinAfter(m.verts[v])) {
+					work.points.push_back(m.verts[v]);
+				}
+			}
+		}
 	}
 
 	// One re-derivation of the hole. False when the boundary did not hold and the hole
@@ -1503,13 +1704,17 @@ namespace geometry::nav {
 		return coversHeld();
 	}
 
-	// s's original edges (the new outline for a changed ring) and the fixed edges.
+	// s's original edges (the new outline for a changed ring) but the dissolved ones, the
+	// fixed edges, and the pins.
 	void PatchableMesh::Patch::arrange() {
 		segments.clear();
 		std::vector<InputSegment>& input = work.input;
 		input.clear();
+		std::vector<Vec2i64>& points = work.points;
 		work.sSorted.assign(work.sList.begin(), work.sList.end());
 		std::sort(work.sSorted.begin(), work.sSorted.end());
+		// A kept edge dissolved after the patch has its pieces, if any, in the hole, so its
+		// end points are hole vertices and collectFixed took them.
 		for (const EdgeSource& x : work.sSorted) {
 			if (changed(x.ring)) {
 				continue;
@@ -1517,7 +1722,7 @@ namespace geometry::nav {
 			const std::vector<Vec2i64>& outline = oldOutline(x.ring);
 			const Vec2i64				a		= edgeStart(outline, x.edge);
 			const Vec2i64				b		= edgeEnd(outline, x.edge);
-			if (a != b) {
+			if (a != b && partnerAfter(x).ring == kNoRing) {
 				input.push_back({a, b, static_cast<std::int64_t>(segments.size())});
 				segments.push_back({x, -1});
 			}
@@ -1529,10 +1734,16 @@ namespace geometry::nav {
 			for (std::int32_t e = 0; e < static_cast<std::int32_t>(c.polygon.ring.size()); ++e) {
 				const Vec2i64 a = edgeStart(c.polygon.ring, e);
 				const Vec2i64 b = edgeEnd(c.polygon.ring, e);
-				if (a != b) {
-					input.push_back({a, b, static_cast<std::int64_t>(segments.size())});
-					segments.push_back({{id, e}, -1});
+				if (a == b) {
+					continue;
 				}
+				if (!c.polygon.blocked && partnerAfter({id, e}).ring != kNoRing) {
+					points.push_back(a);
+					points.push_back(b);
+					continue;
+				}
+				input.push_back({a, b, static_cast<std::int64_t>(segments.size())});
+				segments.push_back({{id, e}, -1});
 			}
 		}
 		fixedStart = segments.size();
@@ -1540,7 +1751,9 @@ namespace geometry::nav {
 			input.push_back({m.verts[fixed[f].a], m.verts[fixed[f].b], static_cast<std::int64_t>(segments.size())});
 			segments.push_back({{}, static_cast<std::int32_t>(f)});
 		}
-		buildArrangement(input, work.arrangementWork, arrangement);
+		std::sort(points.begin(), points.end());
+		points.erase(std::unique(points.begin(), points.end()), points.end());
+		buildArrangement(input, work.arrangementWork, arrangement, points);
 	}
 
 	// Every fixed edge came out whole and alone, every re-derived edge stayed in the hole,
@@ -1719,7 +1932,9 @@ namespace geometry::nav {
 			}
 			const CdtTriangle& st	   = cdt.triangles[static_cast<std::size_t>(face.sampleTri)];
 			const Vec2i64	   sample3 = cdt.vertices[st.v[0]] + cdt.vertices[st.v[1]] + cdt.vertices[st.v[2]];
-			const std::int32_t old	   = m.locateScaled(sample3, 3);
+			// The sample can lie on an old mesh edge (a dissolved side, or a side about to
+			// be): the old triangle and every containment test take it moved the same way.
+			const std::int32_t old = m.locateSample(sample3);
 			if (old >= 0) {
 				face.kind	= work.inHole[static_cast<std::size_t>(old)] != 0 ? FaceKind::Hole : FaceKind::Discard;
 				face.oldTri = old;
@@ -1727,7 +1942,7 @@ namespace geometry::nav {
 			}
 			face.kind = FaceKind::Sink;
 			for (const SampleRing* bounds : newBounds) {
-				if (ringContainsSample(*bounds, sample3)) {
+				if (boundsContainSample(*bounds, sample3)) {
 					face.kind = FaceKind::NewGround;
 				}
 			}
@@ -1842,16 +2057,16 @@ namespace geometry::nav {
 				}
 			}
 			for (RingId r : work.testRings) {
-				const bool inNew = !removed(r) && ringContainsSample(newSample(r), sample3);
 				if (!isBounds(r)) {
-					if (inNew) {
+					if (!removed(r) && ringContainsSample(newSample(r), sample3)) {
 						start.push_back(r);
 					}
 					continue;
 				}
 				const Change* c		= changeOf(r);
 				const bool	  hadOld = c == nullptr || c->hadOld;
-				const bool	  inOld	 = sf.kind == FaceKind::Hole && hadOld && ringContainsSample(m.rings[static_cast<std::size_t>(r)].sample, sample3);
+				const bool	  inNew	 = !removed(r) && boundsContainSample(newSample(r), sample3);
+				const bool	  inOld	 = sf.kind == FaceKind::Hole && hadOld && boundsContainSample(m.rings[static_cast<std::size_t>(r)].sample, sample3);
 				ground				 = ground != (inOld != inNew);
 			}
 			if (ground) {
@@ -2032,7 +2247,26 @@ namespace geometry::nav {
 			reg.lo		= c.lo;
 			reg.hi		= c.hi;
 			reg.live	= true;
+			reg.partners.assign(reg.polygon.blocked ? 0 : reg.polygon.ring.size(), EdgeSource{});
 			m.indexRingEdges(id);
+		}
+		// Ascending, so a partner overwrites kNoRing listed for the same edge.
+		for (const auto& [x, p] : work.partnerAfter) {
+			m.rings[static_cast<std::size_t>(x.ring)].partners[static_cast<std::size_t>(x.edge)] = p;
+		}
+		for (const auto& [p, d] : work.pinDelta) {
+			std::int32_t* count = m.pins.find(p);
+			const std::int32_t now = (count != nullptr ? *count : 0) + d;
+			assert(now >= 0 && "PatchableMesh: a pin released more often than taken");
+			if (count == nullptr) {
+				if (now > 0) {
+					m.pins.insert(p, now);
+				}
+			} else if (now == 0) {
+				m.pins.erase(p);
+			} else {
+				*count = now;
+			}
 		}
 
 		// New triangles take the hole's ids first. A face's triangles share one cover and
@@ -2639,6 +2873,92 @@ namespace geometry::nav {
 
 	// --- Validator -------------------------------------------------------------------
 
+	namespace {
+
+		// Two live bounds rings whose interiors overlap, or kNoRing twice. The faces of the
+		// arrangement of every bounds edge, each sampled once: valid rings never cross, so
+		// nothing in it is rounded and the samples are exact.
+		std::pair<RingId, RingId> overlappingBounds(const PagedVector<RegisteredRing>& rings, const std::vector<RingId>& liveIds) {
+			std::vector<RingId> bounds;
+			for (RingId r : liveIds) {
+				if (!rings[static_cast<std::size_t>(r)].polygon.blocked) {
+					bounds.push_back(r);
+				}
+			}
+			bool boxesMeet = false;
+			for (std::size_t i = 0; i < bounds.size() && !boxesMeet; ++i) {
+				for (std::size_t j = i + 1; j < bounds.size() && !boxesMeet; ++j) {
+					const RegisteredRing& a = rings[static_cast<std::size_t>(bounds[i])];
+					const RegisteredRing& b = rings[static_cast<std::size_t>(bounds[j])];
+					boxesMeet				= boxesOverlap(a.lo, a.hi, b.lo, b.hi);
+				}
+			}
+			if (!boxesMeet) {
+				return {kNoRing, kNoRing};
+			}
+			std::vector<InputSegment> segments;
+			for (RingId r : bounds) {
+				const std::vector<Vec2i64>& outline = rings[static_cast<std::size_t>(r)].polygon.ring;
+				for (std::int32_t e = 0; e < static_cast<std::int32_t>(outline.size()); ++e) {
+					segments.push_back({edgeStart(outline, e), edgeEnd(outline, e), r});
+				}
+			}
+			const Arrangement						  arrangement = buildArrangement(segments);
+			std::vector<std::array<std::uint32_t, 2>> constraints;
+			for (const ArrangementEdge& ae : arrangement.edges) {
+				constraints.push_back({static_cast<std::uint32_t>(ae.from), static_cast<std::uint32_t>(ae.to)});
+			}
+			const ConstrainedDelaunay cdt	   = buildConstrainedDelaunay(arrangement.vertices, constraints);
+			const std::int32_t		  cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
+			std::vector<std::uint8_t> seen(static_cast<std::size_t>(cdtCount), 0);
+			std::vector<std::int32_t> fill;
+			for (std::int32_t seed = 0; seed < cdtCount; ++seed) {
+				if (seen[static_cast<std::size_t>(seed)] != 0) {
+					continue;
+				}
+				bool		 frame = false;
+				std::int32_t best  = seed;
+				Int128		 bestArea(0);
+				seen[static_cast<std::size_t>(seed)] = 1;
+				fill.assign(1, seed);
+				while (!fill.empty()) {
+					const std::int32_t t = fill.back();
+					fill.pop_back();
+					const CdtTriangle& tri	 = cdt.triangles[static_cast<std::size_t>(t)];
+					const Int128	   area2 = cross(cdt.vertices[tri.v[1]] - cdt.vertices[tri.v[0]], cdt.vertices[tri.v[2]] - cdt.vertices[tri.v[0]]);
+					if (bestArea < area2) {
+						best	 = t;
+						bestArea = area2;
+					}
+					for (int e = 0; e < 3; ++e) {
+						frame				   = frame || tri.v[static_cast<std::size_t>(e)] >= cdt.frameStart;
+						const std::int32_t nb = tri.neighbor[static_cast<std::size_t>(e)];
+						if (nb >= 0 && tri.constraint[static_cast<std::size_t>(e)] < 0 && seen[static_cast<std::size_t>(nb)] == 0) {
+							seen[static_cast<std::size_t>(nb)] = 1;
+							fill.push_back(nb);
+						}
+					}
+				}
+				if (frame) {
+					continue;
+				}
+				const CdtTriangle& st	   = cdt.triangles[static_cast<std::size_t>(best)];
+				const Vec2i64	   sample3 = cdt.vertices[st.v[0]] + cdt.vertices[st.v[1]] + cdt.vertices[st.v[2]];
+				RingId			   first   = kNoRing;
+				for (RingId r : bounds) {
+					if (ringContainsSample(rings[static_cast<std::size_t>(r)].sample, sample3)) {
+						if (first != kNoRing) {
+							return {first, r};
+						}
+						first = r;
+					}
+				}
+			}
+			return {kNoRing, kNoRing};
+		}
+
+	} // namespace
+
 	// The farthest any vertex of this ring's pieces on the mesh lies from the line of
 	// the original edge it is on, rounded up to a millimetre.
 	std::int64_t PatchableMesh::pieceDeviationMm(RingId ring) const {
@@ -2969,6 +3289,51 @@ namespace geometry::nav {
 			return "ring index holds a dead ring";
 		}
 
+		// Dissolved pairs and pins are the rule (findBoundsSeams) applied to the live rings,
+		// and every pin is a vertex.
+		std::vector<RingId>					liveIds;
+		std::vector<const NavInputPolygon*> livePolygons;
+		for (RingId r = 0; r < static_cast<RingId>(rings.size()); ++r) {
+			if (rings[static_cast<std::size_t>(r)].live) {
+				liveIds.push_back(r);
+				livePolygons.push_back(&rings[static_cast<std::size_t>(r)].polygon);
+			}
+		}
+		const BoundsSeams seams = findBoundsSeams(livePolygons);
+		for (std::size_t i = 0; i < liveIds.size(); ++i) {
+			const std::vector<EdgeSource>& have = rings[static_cast<std::size_t>(liveIds[i])].partners;
+			std::vector<EdgeSource>		   expected;
+			for (const RingEdgeRef& ref : seams.partner[i]) {
+				expected.push_back(ref.ring < 0 ? EdgeSource{} : EdgeSource{liveIds[static_cast<std::size_t>(ref.ring)], ref.edge});
+			}
+			if (have != expected) {
+				fail() << "ring " << liveIds[i] << " partners differ from the shared sides of the live rings";
+				return err.str();
+			}
+		}
+		if (pins.size() != seams.pins.size()) {
+			fail() << "pin table holds " << pins.size() << " points, the live rings have " << seams.pins.size();
+			return err.str();
+		}
+		for (const auto& [p, count] : seams.pins) {
+			const std::int32_t* have = pins.find(p);
+			if (have == nullptr || *have != count) {
+				fail() << "pin (" << p.x << ", " << p.y << ") counts " << (have == nullptr ? 0 : *have) << " pairs, the live rings " << count;
+				return err.str();
+			}
+			if (vertexAt.find(p) == nullptr) {
+				fail() << "pin (" << p.x << ", " << p.y << ") is not a vertex";
+				return err.str();
+			}
+		}
+		{
+			const std::pair<RingId, RingId> both = overlappingBounds(rings, liveIds);
+			if (both.first != kNoRing) {
+				fail() << "bounds rings " << both.first << " and " << both.second << " overlap";
+				return err.str();
+			}
+		}
+
 		// Each ring edge is a chain of pieces: no fork, and an end that is not an original
 		// corner is on the mesh boundary.
 		std::vector<std::uint8_t> onBoundary(verts.size(), 0);
@@ -2990,9 +3355,14 @@ namespace geometry::nav {
 				continue;
 			}
 			for (std::int32_t e = 0; e < static_cast<std::int32_t>(rings[static_cast<std::size_t>(r)].polygon.ring.size()); ++e) {
-				if (!piecesOf({r, e}).empty()) {
-					onMesh.push_back({r, e});
+				if (piecesOf({r, e}).empty()) {
+					continue;
 				}
+				if (partnerOf({r, e}).ring != kNoRing) {
+					fail() << "ring " << r << " edge " << e << " is dissolved but has pieces on the mesh";
+					return err.str();
+				}
+				onMesh.push_back({r, e});
 			}
 		}
 		for (const EdgeSource& z : onMesh) {
@@ -3039,7 +3409,7 @@ namespace geometry::nav {
 					continue;
 				}
 				for (const std::int32_t edge : {i, (i + n - 1) % n}) {
-					if (edgeStart(outline, edge) == edgeEnd(outline, edge)) {
+					if (edgeStart(outline, edge) == edgeEnd(outline, edge) || partnerOf({r, edge}).ring != kNoRing) {
 						continue;
 					}
 					bool present = false;
@@ -3137,11 +3507,11 @@ namespace geometry::nav {
 			bool				exactGround = false;
 			const Vec2i64		sampleLo{floorDiv(sample3.x, 3), floorDiv(sample3.y, 3)};
 			for (RingId r : ringsInBox(sampleLo, sampleLo + Vec2i64{1, 1})) {
-				const bool in = ringContainsSample(rings[static_cast<std::size_t>(r)].sample, sample3);
+				const SampleRing& sample = rings[static_cast<std::size_t>(r)].sample;
 				if (isBounds(r)) {
 					boundsNear.push_back(r);
-					exactGround = exactGround != in;
-				} else if (in) {
+					exactGround = exactGround != boundsContainSample(sample, sample3);
+				} else if (ringContainsSample(sample, sample3)) {
 					exact.push_back(r);
 				}
 			}
