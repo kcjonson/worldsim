@@ -3,8 +3,8 @@
 ## Summary
 
 Navigation no longer builds a separate mesh per region. There is one persistent nav mesh,
-patched where something changes, and a smaller structural mesh (ground, water, walls, doors)
-that answers reach. Regions, their clustering, and their async rebuilds are deleted. Two points
+patched where something changes, and, as built, a smaller structural mesh (ground, water, walls,
+doors) that answers reach; the design removes it (below). Regions, their clustering, and their async rebuilds are deleted. Two points
 on connected ground always route (WOR-644), and chunks stay loaded around every mover, so
 panning away no longer unloads the colony (WOR-645).
 
@@ -14,20 +14,30 @@ reach check answers a walk length, a definite no, or "far", and far is never rea
 search that runs out of steps says "search gave up", never "no route". The search budgets come
 from measurements. Ground a mover has ever held stays meshed for the life of the world.
 
-The design was then settled (the spec's section 1, rules 22 to 30). Only movers generate mesh;
-the camera has no effect on it. A mover generates the full real mesh around it as it moves,
-every object movers cannot path through included, and such an object blocks. The mesh is patched
-in place and never unloads. A mover whose goal has no mesh heads that way and meshes as it goes.
-The meshed area is larger than the visible area, so "has mesh" never means the player can see or
-act there. All movers share one movement system, and nav code never names a kind of obstacle.
+The design was then settled (the spec's section 1, rules 22 to 38). The nav mesh, the real mesh,
+is one mesh at full detail, with no coarse or structural layer and no resolution levels. Only
+movers generate it, each adding everything within its own sight distance plus a buffer, every
+object movers cannot path through included, and such an object blocks. It only grows: meshed
+ground never leaves it, and a chunk unloading does nothing to it. The camera has no effect on
+it. A mover whose goal has no mesh heads that way and meshes as it goes. The meshed area is
+larger than the visible area, so "has mesh" never means the player can see or act there, and
+placement needs no rule of its own. All movers share one movement system, and nav code never
+names a kind of obstacle. How reach and "is there a way" are answered on one mesh, the search
+budgets, the size of the buffer, and how a route is planned to a goal beyond meshed ground are
+open (rule 36). The separately planned geography mesh (the regional mesh) is much less detailed,
+the real mesh is a detail view of it, and the two must be aligned (rule 38); it is not built.
 
-The code does not match that yet, in three places (the spec's section 1.1). The camera loads
+The code does not match that yet, in four places (the spec's section 1.1). The camera loads
 chunks whose ground is meshed, is the only thing that brings placed obstacles into the mesh, and
 gates collision and the forward snap: WOR-796 (Nav: the camera must have no effect on the mesh).
-A mover brings in ground, water, walls and doors only: WOR-797 (Nav: movers generate the full real
-mesh around them, placed obstacles included). Placed obstacles are priced at 50, never
-impassable: WOR-798 (Nav: objects movers cannot path through block in the mesh instead of being
-priced). The "Detail" item below describes what is built.
+A mover brings in ground, water, walls and doors only, over a fixed 128 m, and mesh is removed
+(camera-only ground past 16 unloaded chunks, a chunk's placed obstacles on unload, and past a
+40,000 placed-obstacle cap): WOR-797 (Nav: movers generate the full real mesh around them,
+placed obstacles included). Placed obstacles are priced at 50, never impassable: WOR-798 (Nav:
+objects movers cannot path through block in the mesh instead of being priced). Reach, its
+forests, far routes and the search budgets are built on the structural mesh: WOR-799 (Nav: one
+full-detail mesh with no coarse layer). The "Reach and routes", "Ground" and "Detail" items
+below describe what is built.
 
 Steps 6 (the route system out of `AIDecisionSystem`) and 7 (mover footprints) are not built.
 
@@ -64,11 +74,11 @@ Steps 6 (the route system out of `AIDecisionSystem`) and 7 (mover footprints) ar
 - **Chunk anchors.** `ChunkManager::update` takes anchors: every mover the AI drives, the rest of
   every live route, and the goal of every task waiting for ground. An anchor loads chunks within
   128 m and keeps them within 256 m.
-- **`NavigationSystem`** holds the two meshes. Each tick's edits are gathered on the main thread,
+- **`NavigationSystem`** holds the two meshes (as built; WOR-799). Each tick's edits are gathered on the main thread,
   applied on two worker threads, one per mesh, after every system has run (a new
   `ISystem::endTick`), and joined by the next update or the first nav query, so a query always
   sees every edit gathered through the previous tick.
-- **Reach and routes.** `walk()` searches the structural mesh under the colonist's belief over all
+- **Reach and routes, as built.** `walk()` searches the structural mesh under the colonist's belief over all
   meshed ground: from the goal first (2,000 steps), so a sealed pocket is a definite no at once,
   then from the start (5,000). When both run out the goal is far; a far candidate stays a
   candidate and is taken when nothing with a known walk is. `requestPath` runs the same walk once,
@@ -78,7 +88,7 @@ Steps 6 (the route system out of `AIDecisionSystem`) and 7 (mover footprints) ar
   answer is "search gave up", which the decision trace and task list show as its own status. A
   route taken from the walk is re-priced in place when detail lands on it. The 128 m reach square
   of the first merge is gone.
-- **Ground.** Ground lands under a per-tick vertex budget, a chunk with water alone, ground an
+- **Ground, as built.** Ground lands under a per-tick vertex budget, a chunk with water alone, ground an
   anchor holds before the camera's. A chunk an anchor has ever held keeps its ground forever;
   only ground the camera alone held is shed, past 16 unloaded chunks, never one the construction
   world touches. Mesh existing is not ground being visible: player visibility is planned
@@ -129,6 +139,16 @@ GPU as busy)); ruled baselines by Kevin):
   structural search found all 18 in 25,000 to 41,000 steps. Every real far goal to 10 km routes
   within 60,000.
 - Detail costs about 6.4 KB a ring at main's density, so the 40,000-ring cap is about 250 MB.
+
+A third measurement, 2026-11-11 (`BM_PlacedObstacleBytes`, `BM_PlacedObstacleSystemBytes`,
+`BM_PlacedObstacleDensity` in `NavigationSystem.bench.cpp`; the spec's section 6 and entry 95):
+
+- On the real planet around the landing, placed obstacles run at 0.060 to 0.068 per square metre,
+  75 to 85% of the 0.0802 worst case.
+- A placed obstacle costs about 7.2 KB in the mesh as built, so meshed ground is about 435 to
+  490 MB per square kilometre with its placed obstacles, against about 1 MB for ground alone.
+  Mechanical changes to the records would bring it to about 1.25 KB, 75 to 85 MB per square
+  kilometre. Since the mesh only grows, that reduction is part of bringing the code to the design.
 - Both meshes over real ground: 29 MB at 121 chunks, 265 MB at 1,000.
 - A wall edit's structural job passes the 2 ms job budget past about 121 meshed real chunks (2.2 ms
   at 121, 14.7 at 1,000), all of it the forest rebuild.
@@ -138,8 +158,8 @@ GPU as busy)); ruled baselines by Kevin):
 ## Related Documentation
 
 - [Nav mesh: one mesh, variable resolution](../../technical/nav-mesh-variable-resolution.md): the
-  spec, with the design (section 1, rules 22 to 30), where the code departs from it (section
-  1.1), the decisions log (section 10, entries 1 to 92), and every number above in context.
+  spec, with the design (section 1, rules 22 to 38), where the code departs from it (section
+  1.1), the decisions log (section 10, entries 1 to 96), and every number above in context.
 
 ## Next Steps
 
@@ -148,6 +168,8 @@ Bringing the code to the design:
 - WOR-796 (Nav: the camera must have no effect on the mesh).
 - WOR-797 (Nav: movers generate the full real mesh around them, placed obstacles included).
 - WOR-798 (Nav: objects movers cannot path through block in the mesh instead of being priced).
+- WOR-799 (Nav: one full-detail mesh with no coarse layer), under which reach on one mesh, the
+  budgets, the buffer, and routes beyond meshed ground are being scoped.
 - Symptoms filed with them: WOR-795 (A colonist on a far route walks straight through placed
   obstacles on screen); WOR-794 (A colonist with a critical need and a known fix is left idle when
   the route search to it gives up); WOR-791 (Nav: a goal on meshed ground cut off from the start
@@ -168,3 +190,5 @@ Other follow-ups:
   the removal of the region-era members of `NavigationSystem` that `AIDecisionSystem` still calls;
   WOR-710 (Step 7: Mover footprints in the mesh).
 - Run the branch in the game; nothing since the reach rework has been.
+- Possibly later, not part of the design: WOR-800 (Nav: page unused parts of a very large mesh out
+  to disk (later, maybe)).

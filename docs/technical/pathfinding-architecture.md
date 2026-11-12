@@ -14,7 +14,7 @@ From the game, not from the literature:
 
 1. **Vector-native.** The entire world is vector geometry: terrain features, freeform polygon buildings, even moving entities. Navigation should consume exact geometry, not rasterize it away.
 2. **Agents take up space (hard requirement).** Colonists, animals, and raiders cannot overlap. Doorway congestion, queues at chokepoints, and crowd pressure should emerge from agents being physical.
-3. **Infinite world.** Chunks stream around the camera and around movers (512 m; in the game the camera loads 3 by 3 chunks and keeps 5 by 5). Nav mesh exists only where movers have generated it (the design; as built the camera's chunks are meshed too, WOR-796 (Nav: the camera must have no effect on the mesh)). Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
+3. **Infinite world.** Chunks stream around the camera and around movers (512 m; in the game the camera loads 3 by 3 chunks and keeps 5 by 5). Nav mesh exists only where movers have generated it, each within its sight distance plus a buffer, and it only grows (the design; as built the camera's chunks are meshed too, WOR-796 (Nav: the camera must have no effect on the mesh)). Yet agents must traverse unloaded space: the signature scenario is a raid party crossing the globe to the settlement.
 4. **The raid scenario end-to-end:** route from anywhere on the planet → arrive near the settlement → coordinate an approach as a group → pick targets → navigate interiors through doors. Section 6 traces it through every tier.
 5. **Colony-sim scale.** Dozens to low hundreds of exact agents near the action; arbitrarily many abstract parties far away.
 6. **Plays well with the engine:** TimeSystem speed multipliers (up to 10x), determinism-friendly (multiplayer future), async-friendly (TaskPool exists), and the construction contract (walls publish exact band polygons, openings publish portals, shared clearance constant, nav version counter).
@@ -49,7 +49,7 @@ Tier 2  LOCAL       dynamic CDT navmesh per chunk          exact paths around bu
 Tier 3  MOVEMENT    collision circles + velocity steering  agents take up space, doorway congestion
 ```
 
-This is the "pathfinding resolution" intuition formalized, with one correction borrowed from X4's attention model: fidelity is anchored to **attention bubbles** (the settlement, the camera, active combat), not just the camera. A raid assaulting the colony runs at full fidelity even if the player is looking elsewhere. The nav mesh itself has no camera-driven fidelity: movers generate it in full and the camera has no effect on it ([nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md), rules 22 and 23).
+This is the "pathfinding resolution" intuition formalized, with one correction borrowed from X4's attention model: fidelity is anchored to **attention bubbles** (the settlement, the camera, active combat), not just the camera. A raid assaulting the colony runs at full fidelity even if the player is looking elsewhere. The nav mesh itself has no camera-driven fidelity: movers generate it in full, it only grows, and the camera has no effect on it ([nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md), rules 22, 23 and 31 to 34).
 
 ### Tier 0 — Global: the planet hex graph
 
@@ -94,14 +94,27 @@ The hard requirement, decomposed:
 The multi-region sim area this section used to describe (a square region per colonist and one for
 the viewport, rebuilt whole) is gone. Its replacement is one persistent mesh patched in place,
 specified in [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md), whose section 1
-(rules 22 to 30) is the design: only movers generate mesh, each the full real mesh around it with
-every object movers cannot path through blocking in it, the camera has no effect on the mesh, no
-mesh unloads, and nav routes any place to any place. As built, the camera still loads chunks whose
-ground is meshed and is the only thing that brings placed obstacles in, and placed obstacles are
-priced rather than blocking; that spec's section 1.1 lists these with their tickets, WOR-796 (Nav:
-the camera must have no effect on the mesh), WOR-797 (Nav: movers generate the full real mesh
-around them, placed obstacles included) and WOR-798 (Nav: objects movers cannot path through
-block in the mesh instead of being priced). Its section 10 is what was built.
+(rules 22 to 38) is the design. The nav mesh (the real mesh) is one mesh at full detail, with no
+coarse or structural layer. Only movers generate it, each adding everything within its own sight
+distance plus a buffer, every object movers cannot path through included and blocking. It only
+grows: meshed ground never leaves it, and a chunk unloading does nothing to it. The camera has no effect on
+it, and nav routes any place to any place. How reach is answered on one mesh, and the search
+budgets, are open there (rule 36).
+
+The geography mesh (also called the regional mesh) is planned separately and not built. It is
+much less detailed than the real mesh, and the real mesh is a detail view of it, as game tiles
+are a detail view of world tiles. The two must be aligned; one is derived from the other and
+then filled in (rule 38). It is not the removed coarse layer.
+
+As built, the code departs from that in four places, listed in that spec's section 1.1: the
+camera loads chunks whose ground is meshed and is the only thing that brings placed obstacles in,
+WOR-796 (Nav: the camera must have no effect on the mesh); movers mesh a fixed range, without
+placed obstacles, and mesh is removed (camera-only ground shed, placed obstacles dropped on chunk
+unload and by a cap), WOR-797 (Nav: movers generate the full real mesh around them, placed
+obstacles included); placed obstacles are priced rather than blocking, WOR-798 (Nav: objects
+movers cannot path through block in the mesh instead of being priced); and a second, structural
+mesh carries reach, its forests, far routes and the search budgets, WOR-799 (Nav: one full-detail
+mesh with no coarse layer). Its section 10 is what was built.
 
 **`isValidPosition`: the one runtime validity predicate.** A point is valid when it is meshed
 ground a mover may stand on, not water and not inside a placed obstacle's collider (read from the
@@ -253,7 +266,7 @@ The signature scenario through every tier:
 5. **Assault (Tiers 2 + 3).** Raiders request exact paths through their believed layout: triangle A*, corridor-width filtered for each body size, funneled through door portals. Door slot queues form the siege crush at the breach; collision circles make the crowd physical; a colonist holding the doorway is actually holding a doorway. Surprises mid-assault (an interior wall they didn't know, a corridor the player just sealed) hit the same discovery-replan loop as everyone else.
 6. **Rout (handoff, reversed).** Survivors fleeing past the boundary collapse back into a Tier 0 record and route home.
 
-The AI/pathfinding interface this implies is thin: `reachFrom(from, radius, belief)` once per start, then `reaches(reach, to)` or `walk(reach, to)` per goal (a walk over the structural mesh, which the forest check rejects at once where it can; see [Nav mesh at variable resolution](./nav-mesh-variable-resolution.md)), `requestPath(...)` (a synchronous search on the main thread, answered in the call), `generation()` for replan triggers, and spatial target queries filtered by reachability. Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
+The AI/pathfinding interface this implies is thin: `reachFrom(from, radius, belief)` once per start, then `reaches(reach, to)` or `walk(reach, to)` per goal (as built, a walk over the structural mesh, which the forest check rejects at once where it can, and which WOR-799 (Nav: one full-detail mesh with no coarse layer) removes; see [Nav mesh at variable resolution](./nav-mesh-variable-resolution.md)), `requestPath(...)` (a synchronous search on the main thread, answered in the call), `generation()` for replan triggers, and spatial target queries filtered by reachability. Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
 
 ## 7. Phasing
 
