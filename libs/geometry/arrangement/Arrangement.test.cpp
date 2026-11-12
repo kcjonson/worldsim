@@ -596,6 +596,31 @@ TEST(Arrangement, PointSiteOnSplitCrossingEdgeSplitsItsPiece) {
 	EXPECT_EQ(arr.edges.size(), 5u);
 }
 
+// A point site exactly on a crossing, or on the point a crossing rounds to, is the
+// crossing's vertex and adds nothing.
+TEST(Arrangement, PointSiteAtACrossingAddsNothing) {
+	const std::vector<InputSegment> exact = {
+		{{0, 0}, {1000, 1000}, 0},
+		{{0, 1000}, {1000, 0}, 1},
+	};
+	EXPECT_EQ(canonical(buildArrangement(exact, {{500, 500}})), canonical(buildArrangement(exact)));
+	// These cross at (500, 333.5), off the lattice.
+	const std::vector<InputSegment> rounded = {
+		{{0, 0}, {1000, 667}, 0},
+		{{0, 667}, {1000, 0}, 1},
+	};
+	const Arrangement plain = buildArrangement(rounded);
+	ASSERT_EQ(plain.vertices.size(), 5u) << canonical(plain);
+	Vec2i64 crossing;
+	for (const Vec2i64& v : plain.vertices) {
+		if (v.x == 500) {
+			crossing = v;
+		}
+	}
+	ASSERT_EQ(crossing.x, 500) << canonical(plain);
+	EXPECT_EQ(canonical(buildArrangement(rounded, {crossing})), canonical(plain));
+}
+
 TEST(Arrangement, PointSiteAtVertexAddsNothing) {
 	EXPECT_EQ(canonical(buildArrangement(kUnitSquare, {{1000, 0}})), canonical(buildArrangement(kUnitSquare)));
 }
