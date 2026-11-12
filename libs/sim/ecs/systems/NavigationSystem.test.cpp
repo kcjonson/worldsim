@@ -502,17 +502,17 @@ TEST_F(NavigationSystemTest, GenerationBumpsOnPatch) {
 
 // --- Flora ---------------------------------------------------------------------
 
-// A mover meshes the 16 m cells within R (sight plus kSightBufferMeters) of the cell it stands in, so
-// a longer sight distance meshes a larger disc. From the cell [0, 16), R = 46 m reaches the cell
-// [48, 64) (a 32 m gap) and not [64, 80) (48 m); a sight of 70 m (R = 86 m) reaches [96, 112) (80 m)
-// and not [112, 128) (96 m).
+// A mover meshes the 16 m cells whose nearest point is within R (sight plus kSightBufferMeters) of
+// where it stands, so a longer sight distance meshes a larger disc. From x = 8, R = 46 m reaches the
+// cell [48, 64) (40 m) and not [64, 80) (56 m); a sight of 70 m (R = 86 m) reaches [80, 96) (72 m)
+// and not [96, 112) (88 m).
 TEST_F(NavigationSystemTest, MoverWithLongerSightMeshesALargerDisc) {
 	ASSERT_EQ(kDefaultSightRadius + NavigationSystem::kSightBufferMeters, 46.0F);
 	registerTree("Test_NavSightTree", 0.4F);
 	const glm::vec2 inDefault{52.0F, 8.0F};
 	const glm::vec2 pastDefault{68.0F, 8.0F};
-	const glm::vec2 inLong{104.0F, 8.0F};
-	const glm::vec2 pastLong{116.0F, 8.0F};
+	const glm::vec2 inLong{88.0F, 8.0F};
+	const glm::vec2 pastLong{100.0F, 8.0F};
 
 	auto meshedWithSight = [&](float sight) {
 		PlacementExecutor					executor(AssetRegistry::Get());
@@ -2314,10 +2314,13 @@ TEST_F(NavigationSystemTest, OverlappingDiscsAddEachCellOnce) {
 	const glm::vec2 a{8.0F, 8.0F};
 	const glm::vec2 b{30.0F, 12.0F};
 	const float		r = kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
-	// The gap between the mover's cell and the tree's, each axis.
-	const auto meets = [r](glm::vec2 centre, glm::vec2 tree) {
-		const auto gap = [](float a, float b) { return std::max(0.0F, std::abs(std::floor(a / 16.0F) - std::floor(b / 16.0F)) - 1.0F) * 16.0F; };
-		return std::hypot(gap(centre.x, tree.x), gap(centre.y, tree.y)) <= r;
+	// The gap between where the mover stands and the tree's cell, each axis.
+	const auto meets = [r](glm::vec2 at, glm::vec2 tree) {
+		const auto gap = [](float p, float t) {
+			const float lo = std::floor(t / 16.0F) * 16.0F;
+			return std::max({0.0F, lo - p, p - (lo + 16.0F)});
+		};
+		return std::hypot(gap(at.x, tree.x), gap(at.y, tree.y)) <= r;
 	};
 	const auto wantedCells = static_cast<std::uint64_t>(
 		std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return meets(a, t) || meets(b, t); }));
@@ -4221,10 +4224,10 @@ TEST_F(ForwardSnapTest, SnapAndCollisionNeverTakeAMoverBack) {
 
 // --- What a mover wants, and in what order ---------------------------------------------------------
 
-// A mover's disc is measured from the cell it stands in, not from where it entered it: a mover that
-// entered its cell at one corner and stands at the opposite one has every placed obstacle within R of
-// where it stands meshed. Each corner of the cell in turn.
-TEST_F(NavigationSystemTest, DiscCoversRWhereverTheMoverStandsInItsCell) {
+// A mover's disc is taken again where it stands once it has moved: a mover that appeared at one
+// corner of a cell and stands at the opposite one has every placed obstacle within R of where it
+// stands meshed. Each corner of the cell in turn.
+TEST_F(NavigationSystemTest, DiscCoversRWhereTheMoverStands) {
 	registerTree("Test_NavCornerTree", 0.3F);
 	const float					   r = kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
 	const glm::vec2				   lo{192.0F, 192.0F}; // the cell [192, 208) each way
@@ -4287,8 +4290,8 @@ namespace {
 		return at;
 	}
 
-	// A plain mover (R = 46 m) appears at (200, 200) with a tree in every cell of its disc: the tick
-	// each lands, in treePerCell order (its own cell in the middle).
+	// A plain mover (R = 46 m) appears at (200, 200) with a tree in every cell of the 7 x 7 block round
+	// its own: the tick each lands, in treePerCell order (its own cell in the middle).
 	std::vector<int> spawnedMoverLandings() {
 		registerTree("Test_NavNearTree", 0.3F);
 		const glm::vec2						at{200.0F, 200.0F};
@@ -4314,10 +4317,15 @@ namespace {
 TEST_F(NavigationSystemTest, SpawnedMoversOwnCellIsServedFirst) {
 	const std::vector<int> at	= spawnedMoverLandings();
 	constexpr std::size_t  kOwn = 24; // the middle of 7 x 7
-	ASSERT_EQ(std::count(at.begin(), at.end(), -1), 0) << "every tree landed";
+	// Of the 7 x 7, the four corners and the eight beside them lie past R (their nearest points 56.6
+	// and 46.2 m away); the rest land.
+	ASSERT_EQ(std::count(at.begin(), at.end(), -1), 12);
 	int touching = 0;
 	int rest	 = std::numeric_limits<int>::max();
 	for (std::size_t k = 0; k < at.size(); ++k) {
+		if (at[k] < 0) {
+			continue;
+		}
 		EXPECT_LE(at[kOwn], at[k]) << "tree " << k << " before the mover's own cell";
 		const int dx = static_cast<int>(k % 7) - 3;
 		const int dy = static_cast<int>(k / 7) - 3;
@@ -4334,6 +4342,123 @@ TEST_F(NavigationSystemTest, SpawnedMoversOwnCellIsServedFirst) {
 // The same appearance twice lands every tree on the same tick.
 TEST_F(NavigationSystemTest, NearestFirstOrderRepeatsExactly) {
 	EXPECT_EQ(spawnedMoverLandings(), spawnedMoverLandings());
+}
+
+namespace {
+	// Which of `trees` are in the mesh once a plain mover (R = 46 m) standing still at `at` settles.
+	std::vector<bool> meshedRoundStillMover(glm::vec2 at, const std::vector<glm::vec2>& trees) {
+		registerTree("Test_NavRoundTree", 0.3F);
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		placeTrees(executor, processed, "Test_NavRoundTree", trees);
+		ConstructionWorld cw;
+		World			  world;
+		NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+		sys.setChunkManager(landChunks());
+		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
+		const EntityID mover = world.createEntity();
+		world.addComponent<Position>(mover, Position{at});
+		world.addComponent<AgentRadius>(mover, AgentRadius{});
+		settle(sys);
+		std::vector<bool> in;
+		for (const glm::vec2 t : trees) {
+			in.push_back(!meshClear(sys, t));
+		}
+		return in;
+	}
+} // namespace
+
+// A still mover meshes a disc round where it stands: placed obstacles 40 m off along each axis and
+// along each diagonal are in, and those 45 m east or west and 45 m north or south (64 m off) are not.
+TEST_F(NavigationSystemTest, StillMoverMeshesADiscNotASquare) {
+	const glm::vec2		   at{200.0F, 200.0F};
+	const float			   d = 40.0F / std::sqrt(2.0F);
+	std::vector<glm::vec2> within{at + glm::vec2{40.0F, 0.0F}, at + glm::vec2{-40.0F, 0.0F}, at + glm::vec2{0.0F, 40.0F}, at + glm::vec2{0.0F, -40.0F},
+								  at + glm::vec2{d, d},		   at + glm::vec2{-d, d},		 at + glm::vec2{d, -d},		  at + glm::vec2{-d, -d}};
+	const std::vector<glm::vec2> corners{at + glm::vec2{45.0F, 45.0F}, at + glm::vec2{-45.0F, 45.0F}, at + glm::vec2{45.0F, -45.0F},
+										 at + glm::vec2{-45.0F, -45.0F}};
+	std::vector<glm::vec2> trees = within;
+	trees.insert(trees.end(), corners.begin(), corners.end());
+	const std::vector<bool> in = meshedRoundStillMover(at, trees);
+	for (std::size_t k = 0; k < trees.size(); ++k) {
+		EXPECT_EQ(in[k], k < within.size()) << "the tree at (" << trees[k].x << ", " << trees[k].y << ")";
+	}
+}
+
+// The cells meshed round a still mover taper: of the 7 x 7 block round its cell, the middle row is
+// meshed end to end and the top and bottom rows only their middle three.
+TEST_F(NavigationSystemTest, StillMoversMeshedCellsTaper) {
+	const glm::vec2				 at{200.0F, 200.0F};
+	const std::vector<glm::vec2> trees = treePerCell(at, 3);
+	const std::vector<bool>		 in	   = meshedRoundStillMover(at, trees);
+	auto						 row   = [&](int r) { return std::count(in.begin() + r * 7, in.begin() + r * 7 + 7, true); };
+	EXPECT_EQ(row(0), 3);
+	EXPECT_EQ(row(3), 7);
+	EXPECT_EQ(row(6), 3);
+}
+
+// A mover walking at 2 m/s through ground thick with placed obstacles, under the default budgets: each
+// one ahead of him is in the mesh before he comes within his sight (30 m) of it, every one within R
+// minus kDiscRetakeStepMm of his path is in, and none farther from it than R plus a cell's diagonal
+// plus kDiscRetakeStepMm.
+TEST_F(NavigationSystemTest, WalkingMoverMeshesAheadOfHisSight) {
+	registerTree("Test_NavWalkTree", 0.3F);
+	const float						kStep	  = static_cast<float>(NavigationSystem::kDiscRetakeStepMm) / 1000.0F;
+	const float						kR		  = kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
+	const float						kFarthest = kR + 16.0F * std::sqrt(2.0F) + kStep;
+	const glm::vec2					from{100.0F, 200.0F};
+	const glm::vec2					to{260.0F, 200.0F};
+	constexpr float					kSpeed = 2.0F;
+	constexpr float					kTick  = 0.016F;
+	std::vector<glm::vec2>			trees;
+	for (int i = 0; i <= 50; ++i) {
+		for (const float off : {4.0F, 12.0F, 28.0F, 44.0F, 60.0F, 76.0F}) {
+			trees.push_back({8.0F * static_cast<float>(i), from.y + off});
+			trees.push_back({8.0F * static_cast<float>(i), from.y - off});
+		}
+	}
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavWalkTree", trees);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	const EntityID mover = addColonist(world, from, "Walker");
+	settle(sys);
+
+	std::vector<bool> landed(trees.size(), false);
+	for (std::size_t k = 0; k < trees.size(); ++k) {
+		landed[k] = !meshClear(sys, trees[k]);
+	}
+	glm::vec2 p = from;
+	for (int tick = 0; p.x < to.x; ++tick) {
+		p.x = std::min(to.x, p.x + kSpeed * kTick);
+		world.getComponent<Position>(mover)->value = p;
+		world.update(kTick);
+		for (std::size_t k = 0; k < trees.size(); ++k) {
+			if (landed[k] || glm::distance(p, trees[k]) > kR) {
+				continue;
+			}
+			landed[k] = !meshClear(sys, trees[k]);
+			ASSERT_TRUE(landed[k] || glm::distance(p, trees[k]) > kDefaultSightRadius)
+				<< "the tree at (" << trees[k].x << ", " << trees[k].y << ") is in sight at x = " << p.x << " and not meshed";
+		}
+	}
+	settle(sys);
+	for (std::size_t k = 0; k < trees.size(); ++k) {
+		const glm::vec2 t		 = trees[k];
+		const float		fromPath = glm::distance(t, glm::vec2{std::clamp(t.x, from.x, to.x), from.y});
+		if (fromPath <= kR - kStep) {
+			EXPECT_FALSE(meshClear(sys, t)) << "the tree at (" << t.x << ", " << t.y << ") within R of the path";
+		}
+		if (fromPath > kFarthest) {
+			EXPECT_TRUE(meshClear(sys, t)) << "the tree at (" << t.x << ", " << t.y << ") " << fromPath << " m from the path";
+		}
+	}
 }
 
 // An ordinary mover appears a tick after one with a very large R, inside its disc: the ordinary

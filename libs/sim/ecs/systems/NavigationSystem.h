@@ -7,10 +7,10 @@
 // on it): ground and water, built walls and doors, and detail (placed obstacles). Routes,
 // connectivity (connected), and every position check (validity, buildability, stand points, the
 // landing) read it.
-// A mover (Position + AgentRadius) wants every kDetailCellMm cell within R of the cell it stands in
-// (R is its sight distance plus kSightBufferMeters), so wherever it stands in that cell everything
-// within R of it is wanted. The disc is taken when it enters a new cell or its R changes, nearest
-// cells first. A wanted cell stays wanted forever. Only a mover holding a chunk (within its anchor
+// A mover (Position + AgentRadius) wants every kDetailCellMm cell whose nearest point lies within R
+// of where it stands (R is its sight distance plus kSightBufferMeters), nearest cells first. The
+// disc is taken again when it has moved kDiscRetakeStepMm from where it was last taken or its R
+// changes. A wanted cell stays wanted forever. Only a mover holding a chunk (within its anchor
 // load range) gets that chunk's ground or cells served: a wanted chunk no mover holds stays queued
 // until one does, whatever else loads it. The mesh is never rebuilt, and nothing leaves it except
 // what leaves the world (a placed obstacle removed, a wall or door taken down, water
@@ -20,7 +20,7 @@
 //  1. Removed placed obstacles (PlacementExecutor::takeRemovals) are queued for removal.
 //  2. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
 //  3. Ground: the chunks of the wanted cells, whole, one patch per chunk: first the chunks
-//     of the cells round each mover that entered a new cell, then the rest in the order they became
+//     of the cells round each mover that took its disc or entered a new cell, then the rest in the order they became
 //     wanted. Open chunks share a tick up to kGroundVerticesPerTick ring vertices, a chunk with water
 //     goes alone. A chunk whose terrain changes while loaded has its water re-derived. A chunk that
 //     unloads keeps its ground and its detail, and reloading it patches nothing.
@@ -424,6 +424,9 @@ class NavigationSystem : public ISystem {
 	// Detail is wanted and scanned in square cells of this side, aligned to chunk squares; a cell is
 	// scanned once, ever.
 	static constexpr std::int64_t kDetailCellMm = 16000;
+	// A mover's disc is taken again once it is this far from where it was last taken, so everything
+	// within R minus this of where it stands is always wanted.
+	static constexpr std::int64_t kDiscRetakeStepMm = 4000;
 	// Chunk sides enter the mesh split to this (decision 8 in the spec): eight pieces a side,
 	// which is what an open chunk's ground costs to patch in and how many triangle slots it adds.
 	static constexpr std::int64_t kMaxBoundsEdgeMm = 64000;
@@ -483,6 +486,8 @@ class NavigationSystem : public ISystem {
 	};
 	// A mover's cell and range when its disc was last taken.
 	struct MoverDisc {
+		std::int64_t  xMm		  = 0; // where the disc was last taken
+		std::int64_t  yMm		  = 0;
 		std::int64_t  cell		  = 0;
 		float		  rangeMeters = 0.0F;
 		std::uint64_t seen		  = 0;
@@ -545,13 +550,13 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] float meshingRange(EntityID mover) const;
 	// The chunks the anchors hold this tick (within each one's load range).
 	void				collectAnchors();
-	// Takes the disc of every mover that has entered a new cell or changed its R since the last
-	// gather, and puts that cell and the eight touching it ahead of the rest: one compare a mover
-	// otherwise.
+	// Takes the disc of every mover that has moved kDiscRetakeStepMm or changed its R since its disc
+	// was last taken, and puts the cell it stands in and the eight touching it ahead of the rest when
+	// it takes its disc or enters a new cell: one distance and one cell compare a mover otherwise.
 	void trackMovers();
-	// Wants every cell within `rangeMeters` of cell `centre` (nearest gap between the two squares)
-	// that isn't wanted yet, nearest first, and its chunk's ground.
-	void wantDisc(std::int64_t centre, float rangeMeters);
+	// Wants every cell whose nearest point is within `rangeMeters` of (xMm, yMm) that isn't wanted
+	// yet, nearest first, and its chunk's ground.
+	void wantDisc(std::int64_t xMm, std::int64_t yMm, float rangeMeters);
 	// The cell and the eight touching it, those still to scan, go ahead of the first-in-first-out
 	// queue, and so does the ground of their chunks.
 	void wantNear(std::int64_t centre);

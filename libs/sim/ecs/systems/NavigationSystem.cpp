@@ -670,49 +670,59 @@ namespace ecs {
 		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
 			(void)agent;
 			const std::int64_t cell	 = cellOfEntity(position.value);
+			const std::int64_t xMm	 = radiusMm(position.value.x);
+			const std::int64_t yMm	 = radiusMm(position.value.y);
 			const float		   range = meshingRange(entity);
 			auto [it, fresh]		 = moverDiscs.try_emplace(entity);
 			MoverDisc& disc			 = it->second;
 			disc.seen				 = moverPass;
-			if (!fresh && disc.cell == cell && disc.rangeMeters == range) {
+			const std::int64_t dx	 = xMm - disc.xMm;
+			const std::int64_t dy	 = yMm - disc.yMm;
+			if (fresh || dx * dx + dy * dy >= kDiscRetakeStepMm * kDiscRetakeStepMm || disc.rangeMeters != range) {
+				disc.xMm		 = xMm;
+				disc.yMm		 = yMm;
+				disc.rangeMeters = range;
+				wantDisc(xMm, yMm, range);
+			} else if (disc.cell == cell) {
 				continue;
 			}
-			disc.cell		 = cell;
-			disc.rangeMeters = range;
-			wantDisc(cell, range);
+			disc.cell = cell;
 			wantNear(cell);
 		}
 		std::erase_if(moverDiscs, [this](const auto& entry) { return entry.second.seen != moverPass; });
 	}
 
-	void NavigationSystem::wantDisc(std::int64_t centre, float rangeMeters) {
-		// Measured from the centre cell's square, not a point in it, so wherever the mover stands in
-		// that cell everything within R of it is in a wanted cell.
-		const std::int64_t r	 = radiusMm(rangeMeters);
-		const std::int64_t reach = r / kDetailCellMm + 1;
-		const std::int64_t ox	 = cellX(centre);
-		const std::int64_t oy	 = cellY(centre);
-		const auto		   gapMm = [](std::int64_t d) { return std::max<std::int64_t>(0, std::abs(d) - 1) * kDetailCellMm; };
+	void NavigationSystem::wantDisc(std::int64_t xMm, std::int64_t yMm, float rangeMeters) {
+		const std::int64_t r = radiusMm(rangeMeters);
+		// Per axis, the gap from the point to the cell [c, c + 1) and from the point to its middle.
+		const auto gapMm = [](std::int64_t c, std::int64_t p) {
+			return std::max<std::int64_t>({0, c * kDetailCellMm - p, p - (c + 1) * kDetailCellMm});
+		};
+		const auto middleMm = [](std::int64_t c, std::int64_t p) { return c * kDetailCellMm + kDetailCellMm / 2 - p; };
 		struct Wanted {
 			std::int64_t gap2;
-			std::int64_t centre2;
-			std::int64_t dy;
-			std::int64_t dx;
+			std::int64_t middle2;
+			std::int64_t cy;
+			std::int64_t cx;
 		};
 		std::vector<Wanted> fresh;
-		for (std::int64_t dy = -reach; dy <= reach; ++dy) {
-			for (std::int64_t dx = -reach; dx <= reach; ++dx) {
-				const std::int64_t gap2 = gapMm(dx) * gapMm(dx) + gapMm(dy) * gapMm(dy);
-				if (gap2 <= r * r && !wantedCells.contains(cellKey(ox + dx, oy + dy))) {
-					fresh.push_back({gap2, dx * dx + dy * dy, dy, dx});
+		for (std::int64_t cy = geometry::floorDiv(yMm - r, kDetailCellMm); cy <= geometry::floorDiv(yMm + r, kDetailCellMm); ++cy) {
+			const std::int64_t gy = gapMm(cy, yMm);
+			const std::int64_t my = middleMm(cy, yMm);
+			for (std::int64_t cx = geometry::floorDiv(xMm - r, kDetailCellMm); cx <= geometry::floorDiv(xMm + r, kDetailCellMm); ++cx) {
+				const std::int64_t gx	= gapMm(cx, xMm);
+				const std::int64_t gap2 = gx * gx + gy * gy;
+				if (gap2 <= r * r && !wantedCells.contains(cellKey(cx, cy))) {
+					const std::int64_t mx = middleMm(cx, xMm);
+					fresh.push_back({gap2, mx * mx + my * my, cy, cx});
 				}
 			}
 		}
 		std::sort(fresh.begin(), fresh.end(), [](const Wanted& a, const Wanted& b) {
-			return std::tie(a.gap2, a.centre2, a.dy, a.dx) < std::tie(b.gap2, b.centre2, b.dy, b.dx);
+			return std::tie(a.gap2, a.middle2, a.cy, a.cx) < std::tie(b.gap2, b.middle2, b.cy, b.cx);
 		});
 		for (const Wanted& w : fresh) {
-			const std::int64_t cell = cellKey(ox + w.dx, oy + w.dy);
+			const std::int64_t cell = cellKey(w.cx, w.cy);
 			wantedCells.insert(cell);
 			pendingCells.insert(cell);
 			const world::ChunkCoordinate chunk = cellChunk(cell);
