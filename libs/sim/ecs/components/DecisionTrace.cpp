@@ -52,8 +52,6 @@ namespace ecs {
 				text += " (no known source)";
 			} else if (option.status == OptionStatus::Regrowing) {
 				text += " (source regrowing)";
-			} else if (option.status == OptionStatus::SearchGaveUp) {
-				text += std::format("{} (gave up searching for a way there)", option.needValue < 10.0F ? " (critical)" : "");
 			} else if (option.status == OptionStatus::Reserved) {
 				text += std::format("{} (reserved by {})", option.needValue < 10.0F ? " (critical)" : "", holderName(world, option));
 			} else if (option.needValue < 10.0F) {
@@ -117,9 +115,6 @@ namespace ecs {
 		if (option.status == OptionStatus::Reserved && !needNamesHolder) {
 			const std::string holder = holderName(world, option);
 			text += option.taskType == TaskType::Craft ? std::format(" (station in use by {})", holder) : std::format(" (reserved by {})", holder);
-		}
-		if (option.status == OptionStatus::SearchGaveUp && !needNamesHolder) {
-			text += " (gave up searching for a way there)";
 		}
 		return text;
 	}

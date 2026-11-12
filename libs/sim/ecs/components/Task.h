@@ -165,15 +165,16 @@ enum class TaskState : uint8_t {
 };
 
 /// Navigation belief state - what the colonist believes about its route.
-/// Drives the info panel vocabulary ("Going to", "Re-routing", "Can't find a way").
+/// Drives the info panel vocabulary ("Going to", "Re-routing", "Finding a way", "Can't find a way").
 /// SearchingLKP and LookingForWayIn are reserved for deferred search behaviors.
 enum class NavState : uint8_t {
 	Traveling,      // Route planned and being followed
 	Rerouting,      // Replanning because a new wall/opening was discovered
 	SearchingLKP,   // (reserved) searching last-known position
 	LookingForWayIn, // (reserved) searching for an entrance to a building
-	CantFindWayTo,  // Believed route denied; colonist is stopped
-	AwaitingMesh    // No built mesh covers the route yet; held until the nav generation moves
+	CantFindWayTo,  // Nav knows no way to the target; colonist is stopped
+	AwaitingMesh,   // He stands off the mesh; the route is asked for again once the nav generation moves
+	AwaitingRoute   // A route is asked for (routeTicket); he stands until it is answered
 };
 
 /// Task component - tracks a colonist's current activity
@@ -193,10 +194,18 @@ struct Task {
 	// believed route (navState CantFindWayTo). The next decision records needSourceKey unreachable only
 	// while its own anchor still stamps the same, so the verdict never outlives the structural mesh and
 	// belief it was found under, and a change outside the anchor's reach doesn't stop it being recorded.
-	// A route whose search gave up is recorded whatever the stamp.
 	std::uint64_t blockedReachStamp = 0;
-	// That route's search gave up (NavigationSystem::PathAnswer::gaveUp) rather than finding no way.
-	bool blockedSearchGaveUp = false;
+	// The route asked of NavigationSystem::requestRoute and not yet answered; 0 for none. Survives
+	// clear(): the AI cancels it (NavigationSystem::cancelRoute) once the task it was asked for ends.
+	std::uint64_t routeTicket = 0;
+	// Memory::beliefVersion the route was asked under, stamped on the route it answers with.
+	std::uint64_t routeBeliefVersion = 0;
+	// The route is asked again for a goal already routed to (a stale route): shown as "Re-routing" once routed.
+	bool rerouting = false;
+	// Ticks the colonist has stood awaiting his route. The panel says "Finding a way" from
+	// kFindingWayTicks on, so the usual two-tick wait doesn't flicker.
+	std::uint16_t routeWaitTicks = 0;
+	static constexpr std::uint16_t kFindingWayTicks = 10;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
@@ -304,7 +313,9 @@ struct Task {
 		navStateHold = 0;
 		deferredNavGeneration = 0;
 		blockedReachStamp = 0;
-		blockedSearchGaveUp = false;
+		routeBeliefVersion = 0;
+		rerouting = false;
+		routeWaitTicks = 0;
 		needSourceKey = 0;
 		targetPosition = glm::vec2{0.0F, 0.0F};
 		needToFulfill = NeedType::Count;

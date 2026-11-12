@@ -320,41 +320,38 @@ private:
 		const struct Position& position,
 		const struct Memory& memory);
 
-	/// Resolve a navmesh path to `goal` for `entity` and attach it as a NavPath, planning over
-	/// the colonist's structural belief (its known segments/openings). On success the NavPath is
-	/// stamped with the belief/nav versions so the replan loop can detect staleness.
+	/// Ask nav for a route from where the colonist stands to `goal` (NavigationSystem::requestRoute),
+	/// under his belief (known segments and openings), and keep the ticket on the task, cancelling any
+	/// still out. He stands (movement off, no route) awaiting it (NavState::AwaitingRoute) until
+	/// takeRouteAnswer applies the answer; one nav gives at once is applied here. `rerouting`: the
+	/// goal was already routed to and its route went stale.
 	///
-	/// MOVEMENT INVARIANT: a colonist moves ONLY by following a NavPath. There is no straight-line
-	/// "beeline" toward a goal without a route. When a path can't be produced, this STOPS the
-	/// colonist (clears movementTarget.active, which MovementSystem stops) rather than sliding it blind:
-	///   - no mesh yet (startup window): hold, deferred until a mesh build lands;
-	///   - endpoint outside the built sim area (beyond LOD0): hold, deferred the same way;
-	///   - mesh present but belief admits no route (a believed wall): stop, re-decide.
-	/// The ONE non-path exception is the off-mesh recovery snap at the top of update() (teleport to
-	/// nearest valid ground), which runs BEFORE any path request. The Unmeshed outcome exists only
-	/// for headless tests with no NavigationSystem wired; it never occurs in the running game.
-	/// Every caller records the outcome on its task through applyNavOutcome.
-	enum class NavRequestOutcome {
-		Routed,	  // a believed route was found and attached
-		Unmeshed, // no NavigationSystem wired at all (headless/tests only): direct move, not stuck
-		Waiting,  // no path possible right now (mesh not built, or endpoint off-area): held in place
-		Blocked,  // mesh exists but belief admits no route: colonist stopped
-	};
-	NavRequestOutcome requestNavPath(EntityID entity, const glm::vec2& goal, const struct Position& position,
-									 const struct Memory& memory, struct MovementTarget& movementTarget);
+	/// MOVEMENT INVARIANT: a colonist moves ONLY by following a NavPath. With no NavigationSystem
+	/// wired (headless tests only) there is no mesh, and MovementSystem steers straight at the target.
+	void requestRoute(EntityID entity, struct Task& task, const glm::vec2& goal, const struct Position& position,
+					  const struct Memory& memory, struct MovementTarget& movementTarget, bool rerouting);
 
-	/// Record a route request's outcome as the task's nav state. Only Blocked is "can't find a way".
-	/// Waiting defers the route (AwaitingMesh) and stamps the current nav generation, so update()
-	/// requests it again once the generation moves; Routed and Unmeshed are ordinary travel. Entering
-	/// or leaving the failed state re-files the task in this update's index: failed, it holds only the
-	/// goods it carries; routed again, all its claims.
-	void applyNavOutcome(EntityID entity, struct Task& task, NavRequestOutcome outcome);
+	/// Apply the answer to the task's route once nav has one; nothing while it is out. Routed: the
+	/// route is attached, stamped with the belief it was asked under and the current nav generation,
+	/// and he walks it. No known way: he stays stopped (NavState::CantFindWayTo), which his next
+	/// decision records (buildDecisionTrace) so he takes his next choice. Start off the mesh: not a
+	/// failure, he waits (AwaitingMesh) and asks again once the nav generation moves. No known way for
+	/// a colonist the snap holds inside a placed obstacle is "not now": asked again next update.
+	void takeRouteAnswer(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
+						 struct MovementTarget& movementTarget);
+
+	/// Cancel the task's route still out, if any.
+	void dropRoute(struct Task& task);
+
+	/// Set the task's nav state. Entering or leaving the failed state (CantFindWayTo) re-files the task
+	/// in this update's index: failed, it holds only the goods it carries; routed again, all its claims.
+	void setNavState(EntityID entity, struct Task& task, NavState navState);
 
 	/// A colonist whose task stands on a route failure stamped unsettled (CantFindWayTo,
 	/// SourceReachMemo::kUnsettledStamp) decides this update (requestDecision) when the ground nav
 	/// landed this frame settled his reach (NavigationSystem::reachSettledThisUpdate). Nothing to do on
-	/// a frame that landed none. A task waiting for its goal's ground needs no wake: that ground
-	/// landing moves generation(), and update() retries it on that.
+	/// a frame that landed none. A task waiting for the mesh under him (AwaitingMesh) needs no wake:
+	/// that ground landing moves generation(), and update() asks again on that.
 	void wakeSettledFailures();
 
 	/// About to wander or gather food holding a two-hand armful that no root it knows wants: put it down as

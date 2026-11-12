@@ -67,6 +67,25 @@
 
 namespace ecs::test {
 
+	namespace {
+		constexpr int kRouteAnswerTicks = 8;
+
+		// Whether nav finds a route from `from` to `to`, ticking nav alone so nobody moves meanwhile.
+		[[nodiscard]] bool routesTo(NavigationSystem& navSystem, glm::vec2 from, glm::vec2 to, const geometry::nav::BeliefFilter& belief = {}) {
+			const ::nav::RouteTicket ticket = navSystem.requestRoute(from, std::array{to}, 0.3F, belief);
+			for (int i = 0; i < kRouteAnswerTicks; ++i) {
+				if (const auto answer = navSystem.takeRouteAnswer(ticket)) {
+					return answer->outcome == ::nav::RouteOutcome::Routed;
+				}
+				navSystem.update(1.0F / 60.0F);
+				navSystem.endTick();
+			}
+			ADD_FAILURE() << "no answer in " << kRouteAnswerTicks << " ticks";
+			navSystem.cancelRoute(ticket);
+			return false;
+		}
+	} // namespace
+
 	// Test fixture for AIDecisionSystem tests
 	class AIDecisionSystemTest : public ::testing::Test {
 	  protected:
@@ -4298,7 +4317,7 @@ namespace ecs::test {
 		ASSERT_EQ(task->type, TaskType::Wander);
 		const glm::vec2 unreachable = task->targetPosition;
 
-		// What requestNavPath's Blocked outcome leaves on the task and its movement.
+		// What a "no known way" answer leaves on the task and its movement.
 		task->navState = NavState::CantFindWayTo;
 		getMovementTarget(colonist)->active = false;
 
@@ -4470,8 +4489,8 @@ namespace ecs::test {
 	}
 
 	// A colonist that knows an edible harvestable picks the gather-food option on its first decision,
-	// before any mesh exists (the chunks aren't ready yet), and requestNavPath holds that route. When
-	// the mesh lands the re-eval
+	// before any mesh exists (the chunks aren't ready yet), and its route waits: he stands off the mesh.
+	// When the mesh lands the re-eval
 	// re-selects the same option and keeps the task as it is, so the held route has to be requested
 	// again or the colonist never moves.
 	TEST_F(AIDecisionFirstMeshTest, HeldGatherFoodRouteRequestedOnceMeshLands) {
@@ -4498,6 +4517,12 @@ namespace ecs::test {
 		ASSERT_EQ(task->state, TaskState::Moving);
 		ASSERT_FALSE(getMovementTarget(colonist)->active) << "the route is held until a mesh exists";
 		EXPECT_EQ(task->navState, NavState::AwaitingMesh) << "the held route shows as waiting, not traveling";
+		const std::uint64_t asked = nav->routeStats().requests;
+		for (int i = 0; i < 10; ++i) {
+			world->update(kTick);
+			ASSERT_EQ(task->navState, NavState::AwaitingMesh) << "standing off the mesh is waited out, never a failure";
+		}
+		EXPECT_EQ(nav->routeStats().requests, asked) << "asked again with nothing landed";
 
 		settleWithChunks();
 		ASSERT_TRUE(nav->hasMesh()) << "navmesh never built";
@@ -4520,6 +4545,133 @@ namespace ecs::test {
 		}
 		const glm::vec2 now = world->getComponent<Position>(colonist)->value;
 		EXPECT_LT(glm::distance(now, bush), glm::distance(start, bush) - 0.5F) << "the colonist walks toward the bush";
+	}
+
+	// A thirsty colonist asks for his route and stands until it arrives, then walks it from where he
+	// stood to the water.
+	TEST_F(AIDecisionFirstMeshTest, ColonistStandsUntilHisRouteArrivesThenWalksIt) {
+		constexpr glm::vec2 kStart{0.0F, 0.0F};
+		constexpr glm::vec2 kWater{12.0F, 0.0F};
+		const auto			colonist = createColonist(kStart);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 30.0F);
+		addKnownEntity(colonist, kWater, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->finishPendingBuilds();
+
+		world->update(kTick);
+		const Task* task = getTask(colonist);
+		ASSERT_EQ(task->type, TaskType::FulfillNeed);
+		ASSERT_EQ(task->navState, NavState::AwaitingRoute);
+		EXPECT_NE(task->routeTicket, 0U);
+		EXPECT_FALSE(getMovementTarget(colonist)->active);
+		const glm::vec2& at = world->getComponent<Position>(colonist)->value;
+		for (int i = 0; i < kRouteAnswerTicks && task->navState == NavState::AwaitingRoute; ++i) {
+			EXPECT_LT(glm::distance(at, kStart), 0.01F) << "he walked before his route came";
+			world->update(kTick);
+		}
+		ASSERT_TRUE(followingRoute(colonist)) << "no route in " << kRouteAnswerTicks << " ticks";
+		EXPECT_EQ(task->routeTicket, 0U);
+		EXPECT_EQ(task->navState, NavState::Traveling);
+		const NavPath* route = world->getComponent<NavPath>(colonist);
+		EXPECT_LT(glm::distance(route->waypoints.front(), kStart), 0.01F) << "the route starts where he stood";
+
+		for (int i = 0; i < 200 && glm::distance(at, kWater) > 1.0F; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_LE(glm::distance(at, kWater), 1.0F) << "never arrived";
+	}
+
+	// A need turning critical while he awaits a wander's route cancels that route and decides: he takes
+	// the water, its route comes, and he arrives. The wander's ticket is never answered.
+	TEST_F(AIDecisionFirstMeshTest, CriticalNeedWhileAwaitingARouteCancelsItAndIsServed) {
+		constexpr glm::vec2 kWater{10.0F, 0.0F};
+		const auto			colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		addKnownEntity(colonist, kWater, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->finishPendingBuilds();
+
+		world->update(kTick);
+		const Task* task = getTask(colonist);
+		ASSERT_EQ(task->type, TaskType::Wander);
+		ASSERT_EQ(task->navState, NavState::AwaitingRoute);
+		const std::uint64_t wanderTicket = task->routeTicket;
+		ASSERT_NE(wanderTicket, 0U);
+
+		setNeedValue(colonist, NeedType::Thirst, 5.0F);
+		world->update(kTick);
+		ASSERT_EQ(task->type, TaskType::FulfillNeed) << "the critical need wasn't decided";
+		EXPECT_EQ(task->needToFulfill, NeedType::Thirst);
+		EXPECT_NE(task->routeTicket, wanderTicket);
+
+		const glm::vec2& at = world->getComponent<Position>(colonist)->value;
+		for (int i = 0; i < 200 && glm::distance(at, kWater) > 1.0F; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_LE(glm::distance(at, kWater), 1.0F) << "never reached the water";
+		EXPECT_FALSE(nav->takeRouteAnswer(wanderTicket).has_value()) << "the wander's ticket is still out";
+	}
+
+	// A move order replaced while its route is out cancels that route: of the two asked for, one is
+	// answered, the first is gone, and he walks the second.
+	TEST_F(AIDecisionFirstMeshTest, OrderReplacedWhileAwaitingLeavesNoTicketBehind) {
+		constexpr glm::vec2 kFirst{10.0F, 0.0F};
+		constexpr glm::vec2 kSecond{0.0F, 10.0F};
+		const auto			colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		nav->finishPendingBuilds();
+		auto& ai = world->getSystem<AIDecisionSystem>();
+		ai.enterControl(colonist);
+		world->update(kTick);
+		const NavigationSystem::RouteStats before = nav->routeStats();
+
+		ASSERT_EQ(ai.issuePlayerMoveOrder(colonist, kFirst), std::optional<glm::vec2>(kFirst));
+		const std::uint64_t first = getTask(colonist)->routeTicket;
+		ASSERT_NE(first, 0U);
+		ASSERT_EQ(ai.issuePlayerMoveOrder(colonist, kSecond), std::optional<glm::vec2>(kSecond));
+		ASSERT_NE(getTask(colonist)->routeTicket, first);
+
+		for (int i = 0; i < kRouteAnswerTicks && !followingRoute(colonist); ++i) {
+			world->update(kTick);
+		}
+		ASSERT_TRUE(followingRoute(colonist));
+		EXPECT_LT(glm::distance(world->getComponent<NavPath>(colonist)->waypoints.back(), kSecond), 0.01F);
+		EXPECT_EQ(nav->routeStats().requests - before.requests, 2U);
+		EXPECT_EQ(nav->routeStats().answered - before.answered, 1U) << "the replaced order was answered too";
+		EXPECT_FALSE(nav->takeRouteAnswer(first).has_value()) << "the replaced order's ticket is still out";
+	}
+
+	// Awaiting a route is no reason to decide: a wander whose search runs on (a ticket nav never answers)
+	// is decided on the interval, not every frame, keeps its task, and stands.
+	TEST_F(AIDecisionFirstMeshTest, AwaitingARouteDecidesOnTheIntervalNotEveryFrame) {
+		const auto colonist = createColonist({0.0F, 0.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		nav->finishPendingBuilds();
+
+		world->update(kTick);
+		const Task* task = getTask(colonist);
+		ASSERT_EQ(task->type, TaskType::Wander);
+		ASSERT_EQ(task->navState, NavState::AwaitingRoute);
+		const std::uint64_t ticket = task->routeTicket;
+		nav->cancelRoute(ticket);
+
+		constexpr int kTicks = 50; // 5 s
+		const glm::vec2 start = world->getComponent<Position>(colonist)->value;
+		float			lastDecision = getTrace(colonist)->lastEvaluationTime;
+		int				decisions = 0;
+		for (int i = 0; i < kTicks; ++i) {
+			world->update(kTick);
+			decisions += getTrace(colonist)->lastEvaluationTime != lastDecision ? 1 : 0;
+			lastDecision = getTrace(colonist)->lastEvaluationTime;
+		}
+		constexpr float kReEvalSeconds = 0.5F; // the re-decide interval
+		EXPECT_LE(decisions, static_cast<int>(kTicks * kTick / kReEvalSeconds) + 1) << "decided every frame";
+		EXPECT_EQ(task->type, TaskType::Wander);
+		EXPECT_EQ(task->navState, NavState::AwaitingRoute);
+		EXPECT_EQ(task->routeTicket, ticket) << "the same route still awaited";
+		EXPECT_LT(glm::distance(world->getComponent<Position>(colonist)->value, start), 0.01F) << "he walked with no route";
 	}
 
 	TEST_F(AIDecisionFirstMeshTest, ControlledColonistWalksToMoveOrder) {
@@ -4937,8 +5089,8 @@ namespace ecs::test {
 		addKnownEntity(colonist, farther, kWaterDefId, assets::CapabilityType::Drinkable);
 
 		nav->finishPendingBuilds();
-		ASSERT_TRUE(nav->requestPath(start, nearOther, 0.3F).route.has_value()) << "one mesh: a route to the other colonist's side";
-		ASSERT_TRUE(nav->requestPath(start, farther, 0.3F).route.has_value());
+		ASSERT_TRUE(routesTo(*nav, start, nearOther)) << "one mesh: a route to the other colonist's side";
+		ASSERT_TRUE(routesTo(*nav, start, farther));
 
 		world->update(kTick);
 
@@ -5110,7 +5262,7 @@ namespace ecs::test {
 		addLookout({600.0F, kFordRiverY});
 		nav->finishPendingBuilds();
 		ASSERT_TRUE(nav->inSimArea({600.0F, kFordRiverY}));
-		ASSERT_TRUE(nav->requestPath(kStart, {620.0F, 20.0F}, 0.3F).route.has_value()) << "a player's route round the ford";
+		ASSERT_TRUE(routesTo(*nav, kStart, {620.0F, 20.0F})) << "a player's route round the ford";
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBehind));
 	}
 
@@ -5151,7 +5303,7 @@ namespace ecs::test {
 		satisfyAllNeeds(*getNeeds(colonist));
 		addLookout({600.0F, 4.0F});
 		nav->finishPendingBuilds();
-		ASSERT_TRUE(nav->requestPath(kStart, {0.0F, 7.0F}, 0.3F).route.has_value()) << "the far bank is joined round the river's end";
+		ASSERT_TRUE(routesTo(*nav, kStart, {0.0F, 7.0F})) << "the far bank is joined round the river's end";
 
 		float farthest = 0.0F;
 		for (int i = 0; i < 300; ++i) {
@@ -5188,6 +5340,9 @@ namespace ecs::test {
 		auto& ai = world->getSystem<AIDecisionSystem>();
 		ai.enterControl(colonist);
 		ASSERT_EQ(ai.issuePlayerMoveOrder(colonist, kAcross), std::optional<glm::vec2>(kAcross));
+		for (int i = 0; i < kRouteAnswerTicks && getTask(colonist)->navState == NavState::AwaitingRoute; ++i) {
+			world->update(kTick);
+		}
 		const NavPath* route = world->getComponent<NavPath>(colonist);
 		ASSERT_TRUE(route != nullptr && route->valid) << "no route round the ford";
 		const glm::vec2& at = world->getComponent<Position>(colonist)->value;
@@ -5202,7 +5357,7 @@ namespace ecs::test {
 
 	// The only food is 10 m across the river and 1.5 km round its end, where a mover stands and has meshed
 	// the ground: the colonist sets off, goes round the river's end and arrives, and the trace never says
-	// "no source" or that the search gave up.
+	// "no source".
 	using AIDecisionLongFordTest = AIDecisionFordTest<750>;
 	TEST_F(AIDecisionLongFordTest, OnlyFoodRoundALongRiverIsReached) {
 		addLookout({750.0F, kFordRiverY});
@@ -5221,9 +5376,9 @@ namespace ecs::test {
 			lastDecision		= trace->lastEvaluationTime;
 			const auto* hunger = findOption(*trace, isHungerNeedOption);
 			ASSERT_NE(hunger, nullptr);
-			noRoute = noRoute || hunger->status == OptionStatus::NoSource || hunger->status == OptionStatus::SearchGaveUp;
+			noRoute = noRoute || hunger->status == OptionStatus::NoSource;
 		}
-		EXPECT_FALSE(noRoute) << "the trace said no source, or that the search gave up";
+		EXPECT_FALSE(noRoute) << "the trace said no source";
 		EXPECT_LE(glm::distance(at, kAcross), 1.5F) << "never arrived; reached x " << east;
 		EXPECT_GT(east, 750.0F) << "it went round the river's end";
 	}
@@ -5283,32 +5438,48 @@ namespace ecs::test {
 			nav->setPlacementData(&trees, &processed);
 		}
 
-		// One harvest of the tree at `tree` by a colonist starting at `from`, whose disc meshes the tree.
-		// Checks where it stood when the harvest started and that it completed.
-		// clearSpot: the stand point is clear of every collider; false for a tree in a thicket, whose stand
-		// point is inside a neighbour and which the harvest starts within reach of (ActionSystem, 0.4 m).
-		void harvestFrom(const std::string& defName, float halfExtent, glm::vec2 tree, glm::vec2 from, bool clearSpot = true) {
-			SCOPED_TRACE(defName + " from (" + std::to_string(from.x) + ", " + std::to_string(from.y) + ")");
+		// Twelve trunks 0.7 m round `centre`, touching: nothing a mover's disc fits through.
+		static void appendTrunkRing(std::vector<std::pair<std::string, glm::vec2>>& placed, glm::vec2 centre) {
+			assets::AssetDefinition trunk;
+			trunk.defName = "Test_ThicketTrunk";
+			trunk.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(trunk));
+			for (int k = 0; k < 12; ++k) {
+				const float angle = 6.2831853F * static_cast<float>(k) / 12.0F;
+				placed.emplace_back("Test_ThicketTrunk", centre + 0.7F * glm::vec2{std::cos(angle), std::sin(angle)});
+			}
+		}
+
+		// A station at `at` whose job needs berries, so a cut of a berry tree is wanted (tier 4).
+		EntityID addCutFor(glm::vec2 at) {
 			GoalTaskRegistry::Get().clear();
 			const EntityID station = world->createEntity();
-			world->addComponent<Position>(station, Position{from});
+			world->addComponent<Position>(station, Position{at});
 			world->addComponent<WorkQueue>(station).addJob("Recipe_BerryNeed", 1);
 			world->addComponent<Inventory>(station, Inventory::createForStorage());
 			GoalTask craft;
 			craft.type				  = TaskType::Craft;
 			craft.owner				  = GoalOwner::CraftingGoalSystem;
 			craft.destinationEntity	  = station;
-			craft.destinationPosition = from;
+			craft.destinationPosition = at;
 			craft.status			  = GoalStatus::Blocked;
 			GoalTask cut;
 			cut.type				= TaskType::Harvest;
 			cut.destinationEntity	= station;
-			cut.destinationPosition = from;
+			cut.destinationPosition = at;
 			cut.yieldDefNameId		= assets::AssetRegistry::Get().getDefNameId("Berry");
 			cut.status				= GoalStatus::Available;
 			cut.owner				= GoalOwner::CraftingGoalSystem;
 			cut.parentGoalId		= GoalTaskRegistry::Get().createGoal(std::move(craft));
 			GoalTaskRegistry::Get().createGoal(std::move(cut));
+			return station;
+		}
+
+		// One harvest of the tree at `tree` by a colonist starting at `from`, whose disc meshes the tree.
+		// Checks where it stood when the harvest started, clear of every collider, and that it completed.
+		void harvestFrom(const std::string& defName, float halfExtent, glm::vec2 tree, glm::vec2 from) {
+			SCOPED_TRACE(defName + " from (" + std::to_string(from.x) + ", " + std::to_string(from.y) + ")");
+			const EntityID station = addCutFor(from);
 
 			const EntityID colonist = createColonist(from);
 			world->addComponent<Action>(colonist, Action{});
@@ -5331,9 +5502,7 @@ namespace ecs::test {
 			}
 			ASSERT_TRUE(startedAt.has_value()) << "the harvest never started";
 			EXPECT_TRUE(harvested) << "the harvest never completed";
-			if (clearSpot) {
-				EXPECT_TRUE(nav->isValidPosition(*startedAt)) << "it stood inside a collider";
-			}
+			EXPECT_TRUE(nav->isValidPosition(*startedAt)) << "it stood inside a collider";
 			const glm::vec2 off = glm::abs(*startedAt - tree);
 			EXPECT_GT(std::max(off.x, off.y), halfExtent) << "it stood inside the collider";
 			EXPECT_LT(glm::distance(*startedAt, tree), halfExtent * 1.5F + 1.0F) << "it stood away from the tree";
@@ -5373,26 +5542,98 @@ namespace ecs::test {
 		harvestFrom(tree, 0.2F, d, d + glm::vec2{0.0F, 12.0F});
 	}
 
-	// A tree ringed by other trunks, so every spot just outside its collider is inside a neighbour's: it
-	// is still harvested, from a spot inside a neighbour.
-	TEST_F(AIDecisionHarvestStandTest, TreeInAThicketIsStillHarvested) {
+	// A tree ringed by other trunks, so every spot just outside its collider is inside a neighbour's: a
+	// placed obstacle blocks a route, so there is no known way to it. The colonist asks, is told so, and
+	// goes on to something else; the cut is never started, and he doesn't stand on the failure.
+	TEST_F(AIDecisionHarvestStandTest, TreeInAThicketHasNoKnownWay) {
 		const std::string tree = registerTree(0.2F);
-		assets::AssetDefinition neighbour;
-		neighbour.defName					  = "Test_ThicketTrunk";
-		neighbour.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.2F, 0.2F}});
-		assets::AssetRegistry::Get().registerTestDefinition(std::move(neighbour));
-		const glm::vec2								 a{20.0F, 20.0F};
-		const glm::vec2								 b{60.0F, 20.0F};
-		std::vector<std::pair<std::string, glm::vec2>> placed{{tree, a}, {tree, b}};
-		for (const glm::vec2 centre : {a, b}) {
-			for (int k = 0; k < 12; ++k) {
-				const float angle = 6.2831853F * static_cast<float>(k) / 12.0F;
-				placed.emplace_back("Test_ThicketTrunk", centre + 0.7F * glm::vec2{std::cos(angle), std::sin(angle)});
-			}
-		}
+		const glm::vec2	  a{20.0F, 20.0F};
+		std::vector<std::pair<std::string, glm::vec2>> placed{{tree, a}};
+		appendTrunkRing(placed, a);
 		placeTrees(placed);
-		harvestFrom(tree, 0.2F, a, a + glm::vec2{-12.0F, 0.0F}, false);
-		harvestFrom(tree, 0.2F, b, b + glm::vec2{-12.0F, 0.0F}, false);
+		addCutFor(a + glm::vec2{-12.0F, 0.0F});
+
+		const EntityID colonist = createColonist(a + glm::vec2{-12.0F, 0.0F});
+		world->addComponent<Action>(colonist, Action{});
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, a, assets::AssetRegistry::Get().getDefNameId(tree), assets::CapabilityType::Harvestable);
+		nav->finishPendingBuilds();
+
+		int	 failures = 0;
+		bool harvestStarted = false;
+		for (int i = 0; i < 300; ++i) {
+			const bool wasFailed = getTask(colonist)->navState == NavState::CantFindWayTo;
+			world->update(kTick);
+			const Task* task = getTask(colonist);
+			failures += !wasFailed && task->navState == NavState::CantFindWayTo && glm::distance(task->targetPosition, a) < 2.0F ? 1 : 0;
+			const Action& action = *world->getComponent<Action>(colonist);
+			harvestStarted		 = harvestStarted || (action.isActive() && action.type == ActionType::Harvest);
+		}
+		EXPECT_FALSE(harvestStarted);
+		EXPECT_GE(failures, 1) << "the tree was never asked for";
+		EXPECT_LE(failures, 2) << "the tree was asked for again and again";
+		EXPECT_NE(getTask(colonist)->navState, NavState::CantFindWayTo) << "he stands on the failure";
+	}
+
+	// The nearer water is ringed by trunks, which his reach (no placed obstacles) lets through and his
+	// route does not: no known way. He goes to the other water, asking for the ringed one once.
+	TEST_F(AIDecisionHarvestStandTest, NoKnownWaySendsHimToHisNextChoiceOnce) {
+		constexpr glm::vec2							 kRinged{20.0F, 20.0F};
+		constexpr glm::vec2							 kOpen{8.0F, 40.0F};
+		std::vector<std::pair<std::string, glm::vec2>> placed;
+		appendTrunkRing(placed, kRinged);
+		placeTrees(placed);
+		const auto colonist = createColonist({8.0F, 20.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 30.0F);
+		addKnownEntity(colonist, kRinged, kWaterDefId, assets::CapabilityType::Drinkable);
+		addKnownEntity(colonist, kOpen, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->finishPendingBuilds();
+
+		int	 failures = 0;
+		bool routedToOpen = false;
+		for (int i = 0; i < 100 && !routedToOpen; ++i) {
+			const bool wasFailed = getTask(colonist)->navState == NavState::CantFindWayTo;
+			world->update(kTick);
+			const Task* task = getTask(colonist);
+			failures += !wasFailed && task->navState == NavState::CantFindWayTo && task->targetPosition == kRinged ? 1 : 0;
+			routedToOpen = task->targetPosition == kOpen && followingRoute(colonist);
+		}
+		EXPECT_EQ(failures, 1) << "the ringed water was asked for more than once, or never";
+		EXPECT_TRUE(routedToOpen) << "he never went for the other water";
+	}
+
+	// A critical need whose only known fix has no known way is never left standing: he asks for it once,
+	// then goes on deciding (on the interval at least; a moving wander decides every frame).
+	TEST_F(AIDecisionHarvestStandTest, CriticalNeedWithNoKnownWayIsAskedOnceAndHeKeepsDeciding) {
+		constexpr glm::vec2							 kRinged{20.0F, 20.0F};
+		std::vector<std::pair<std::string, glm::vec2>> placed;
+		appendTrunkRing(placed, kRinged);
+		placeTrees(placed);
+		const auto colonist = createColonist({8.0F, 20.0F});
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 5.0F);
+		addKnownEntity(colonist, kRinged, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->finishPendingBuilds();
+
+		constexpr int kTicks = 50; // 5 s
+		int			  failures = 0;
+		int			  decisions = 0;
+		float		  lastDecision = -1.0F;
+		for (int i = 0; i < kTicks; ++i) {
+			const bool wasFailed = getTask(colonist)->navState == NavState::CantFindWayTo;
+			world->update(kTick);
+			const Task* task = getTask(colonist);
+			failures += !wasFailed && task->navState == NavState::CantFindWayTo && task->targetPosition == kRinged ? 1 : 0;
+			decisions += getTrace(colonist)->lastEvaluationTime != lastDecision ? 1 : 0;
+			lastDecision = getTrace(colonist)->lastEvaluationTime;
+		}
+		EXPECT_EQ(failures, 1);
+		constexpr float kReEvalSeconds = 0.5F; // the re-decide interval
+		EXPECT_GE(decisions, static_cast<int>(kTicks * kTick / kReEvalSeconds) - 1) << "he stopped deciding";
+		EXPECT_NE(getTask(colonist)->navState, NavState::CantFindWayTo) << "he stands on the failure";
 	}
 
 	// The harvest it is on keeps its stand point: carried round to the far side of the tree mid-walk, the
@@ -5560,27 +5801,7 @@ namespace ecs::test {
 		placeTrees({{tree, treeAt}});
 		nav->finishPendingBuilds();
 
-		GoalTaskRegistry::Get().clear();
-		const glm::vec2 stationAt{100.0F, 20.0F};
-		const EntityID	station = world->createEntity();
-		world->addComponent<Position>(station, Position{stationAt});
-		world->addComponent<WorkQueue>(station).addJob("Recipe_BerryNeed", 1);
-		world->addComponent<Inventory>(station, Inventory::createForStorage());
-		GoalTask craft;
-		craft.type				  = TaskType::Craft;
-		craft.owner				  = GoalOwner::CraftingGoalSystem;
-		craft.destinationEntity	  = station;
-		craft.destinationPosition = stationAt;
-		craft.status			  = GoalStatus::Blocked;
-		GoalTask cut;
-		cut.type				= TaskType::Harvest;
-		cut.destinationEntity	= station;
-		cut.destinationPosition = stationAt;
-		cut.yieldDefNameId		= assets::AssetRegistry::Get().getDefNameId("Berry");
-		cut.status				= GoalStatus::Available;
-		cut.owner				= GoalOwner::CraftingGoalSystem;
-		cut.parentGoalId		= GoalTaskRegistry::Get().createGoal(std::move(craft));
-		GoalTaskRegistry::Get().createGoal(std::move(cut));
+		const EntityID station = addCutFor({100.0F, 20.0F});
 
 		const EntityID colonist = createColonist({0.0F, 20.0F});
 		world->addComponent<Action>(colonist, Action{});
@@ -6030,12 +6251,10 @@ namespace ecs::test {
 		Task task;
 		task.navState			 = NavState::CantFindWayTo;
 		task.blockedReachStamp	 = SourceReachMemo::kUnsettledStamp;
-		task.blockedSearchGaveUp = true;
 		task.needSourceKey		 = 42;
 		task.clear();
 		EXPECT_EQ(task.navState, NavState::Traveling);
 		EXPECT_EQ(task.blockedReachStamp, 0U);
-		EXPECT_FALSE(task.blockedSearchGaveUp);
 		EXPECT_EQ(task.needSourceKey, 0U);
 	}
 
@@ -6107,7 +6326,7 @@ namespace ecs::test {
 
 	// The far path end to end, with search budgets small enough that every walk here is far: water 60 m
 	// off, past a wall the colonist doesn't know (so the two ends are in different triangles), is far,
-	// chosen as the only candidate, and its route found by the far route search; he walks there.
+	// chosen as the only candidate, and routed; he walks there.
 	TEST_F(AIDecisionWallTest, FarWaterIsChosenRoutedAndReached) {
 		constexpr glm::vec2 kWater{60.0F, 0.0F};
 		const auto			commit = construction.commitSegment({30000, -10000}, {30000, 10000}, "Wood", "Standard", construction::kInvalidFoundation);
@@ -6115,7 +6334,7 @@ namespace ecs::test {
 		for (const auto id : commit.createdSegments) {
 			construction.setSegmentState(id, construction::FoundationState::Built);
 		}
-		nav->setReachBudgets(1, 1, NavigationSystem::kFarRouteExpansions);
+		nav->setReachBudgets(1, 1);
 		const auto colonist = createColonist({0.0F, 0.0F});
 		satisfyAllNeeds(*getNeeds(colonist));
 		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
@@ -6131,118 +6350,17 @@ namespace ecs::test {
 		ASSERT_NE(thirst, nullptr);
 		EXPECT_EQ(thirst->status, OptionStatus::Selected);
 		EXPECT_GT(nav->navQueryStats().farWalks, 0U) << "the walk wasn't far";
+		for (int i = 0; i < kRouteAnswerTicks && getTask(colonist)->navState == NavState::AwaitingRoute; ++i) {
+			world->update(kTick);
+		}
 		const NavPath* route = world->getComponent<NavPath>(colonist);
-		ASSERT_TRUE(route != nullptr && route->valid) << "the far route search found no route";
-		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 0U);
+		ASSERT_TRUE(route != nullptr && route->valid) << "no route came";
 
 		const glm::vec2& at = world->getComponent<Position>(colonist)->value;
 		for (int i = 0; i < 1000 && glm::distance(at, kWater) > 1.0F; ++i) {
 			world->update(kTick);
 		}
 		EXPECT_LE(glm::distance(at, kWater), 1.0F) << "never arrived";
-	}
-
-	// Three water sources in three rooms whose walls the colonist knows and whose doors it doesn't, with
-	// search budgets small enough that every walk is far and every far route search gives up. He tries
-	// each once (the trace then says the search gave up, not "no source"), and stops trying: not on
-	// later decisions, not after a few steps (less than kGaveUpMoveFraction of the way to them). A wall
-	// of one room coming down moves that span, and that one is tried once more.
-	TEST_F(AIDecisionWallTest, FarTargetsWithNoWayAreEachTriedOnce) {
-		std::array<std::vector<construction::SegmentId>, 3> rooms;
-		const std::array<glm::vec2, 3>						 waters{{{30.0F, 0.0F}, {0.0F, 30.0F}, {-30.0F, 0.0F}}};
-		for (std::size_t r = 0; r < waters.size(); ++r) {
-			const geometry::Vec2i64 c{std::llround(waters[r].x * 1000.0F), std::llround(waters[r].y * 1000.0F)};
-			const std::array<geometry::Vec2i64, 4> corners{{{c.x - 2000, c.y - 2000}, {c.x + 2000, c.y - 2000}, {c.x + 2000, c.y + 2000}, {c.x - 2000, c.y + 2000}}};
-			for (std::size_t i = 0; i < corners.size(); ++i) {
-				const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood", "Standard",
-															   construction::kInvalidFoundation);
-				ASSERT_TRUE(commit.ok());
-				for (const auto id : commit.createdSegments) {
-					construction.setSegmentState(id, construction::FoundationState::Built);
-					rooms[r].push_back(id);
-				}
-			}
-		}
-		nav->setReachBudgets(1, 1, 10);
-		const auto colonist = createColonist({0.0F, 0.0F});
-		satisfyAllNeeds(*getNeeds(colonist));
-		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-		setNeedValue(colonist, NeedType::Thirst, 30.0F);
-		auto* memory = world->getComponent<Memory>(colonist);
-		for (const auto& room : rooms) {
-			for (const auto id : room) {
-				memory->rememberSegment(static_cast<std::uint64_t>(id));
-			}
-		}
-		for (const glm::vec2 water : waters) {
-			addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
-		}
-		nav->finishPendingBuilds();
-		nav->resetNavQueryStats();
-
-		const auto thirstStatus = [&] {
-			const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-				return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
-			});
-			return thirst != nullptr ? thirst->status : OptionStatus::Satisfied;
-		};
-		const auto runAt = [&](glm::vec2 here, int ticks) {
-			for (int i = 0; i < ticks; ++i) {
-				world->getComponent<Position>(colonist)->value = here;
-				world->update(kTick);
-			}
-		};
-		runAt({0.0F, 0.0F}, 60);
-		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 3U) << "each far target once";
-		EXPECT_EQ(thirstStatus(), OptionStatus::SearchGaveUp);
-
-		runAt({3.0F, -3.0F}, 60);
-		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 3U) << "a few steps had them tried again";
-
-		for (const auto id : rooms[1]) {
-			ASSERT_TRUE(construction.removeSegment(id));
-			break;
-		}
-		runAt({3.0F, -3.0F}, 60);
-		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 4U) << "the room whose wall came down wasn't tried again, or others were";
-	}
-
-	// A route search that gives up while ground near the colonist is still to come is recorded all the
-	// same: by the east edge of the loaded region, so his reach never settles, with water in a room whose
-	// walls he knows and budgets small enough that every search gives up, the water is asked for once,
-	// not at every decision.
-	TEST_F(AIDecisionWallTest, GaveUpRouteIsRecordedWhileGroundIsArriving) {
-		constexpr glm::vec2 kAt{1450.0F, 0.0F};
-		constexpr glm::vec2 kWater{1480.0F, 0.0F};
-		const auto			colonist = createColonist(kAt);
-		satisfyAllNeeds(*getNeeds(colonist));
-		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
-		setNeedValue(colonist, NeedType::Thirst, 30.0F);
-		const std::array<geometry::Vec2i64, 4> corners{{{1478000, -2000}, {1482000, -2000}, {1482000, 2000}, {1478000, 2000}}};
-		for (std::size_t i = 0; i < corners.size(); ++i) {
-			const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood", "Standard", construction::kInvalidFoundation);
-			ASSERT_TRUE(commit.ok());
-			for (const auto id : commit.createdSegments) {
-				construction.setSegmentState(id, construction::FoundationState::Built);
-				world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
-			}
-		}
-		addKnownEntity(colonist, kWater, kWaterDefId, assets::CapabilityType::Drinkable);
-		nav->setReachBudgets(1, 1, 10);
-		nav->finishPendingBuilds();
-		ASSERT_FALSE(nav->reachFrom(kAt, 0.3F).settled) << "the chunk east of him should never load";
-		nav->resetNavQueryStats();
-
-		for (int i = 0; i < 60; ++i) {
-			world->getComponent<Position>(colonist)->value = kAt;
-			world->update(kTick);
-		}
-		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 1U) << "the water was asked for again";
-		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
-			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
-		});
-		ASSERT_NE(thirst, nullptr);
-		EXPECT_EQ(thirst->status, OptionStatus::SearchGaveUp);
 	}
 
 	// A failed route to water 600 m off, on ground a mover beside it has meshed and far past the ground
@@ -6353,7 +6471,7 @@ namespace ecs::test {
 			EXPECT_TRUE(nav->hasMesh()) << "navmesh never built";
 			const geometry::nav::BeliefFilter belief{&memory->knownSegments, &memory->knownOpenings};
 			EXPECT_FALSE(isReachable(*nav, kStart, kInRoom, 0.3F, belief)) << "the known walls close the room";
-			EXPECT_FALSE(nav->requestPath(kStart, kInRoom, 0.3F, belief).route.has_value()) << "and the route agrees";
+			EXPECT_FALSE(routesTo(*nav, kStart, kInRoom, belief)) << "and the route agrees";
 			return colonist;
 		}
 

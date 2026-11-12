@@ -147,11 +147,7 @@ namespace ecs::test {
 		hunger.status = OptionStatus::NoSource;
 		hunger.targetPosition.reset();
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 40% (no known source)");
-		hunger.status = OptionStatus::SearchGaveUp;
-		hunger.targetPosition = glm::vec2{12.0F, 0.0F};
 		hunger.needValue = 5.0F;
-		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (gave up searching for a way there)") << "how urgent, and why";
-		hunger.targetPosition.reset();
 		hunger.status = OptionStatus::Selected;
 		hunger.reason = "from inventory";
 		EXPECT_EQ(describeOption(world, hunger), "Hunger at 5% (critical) (from inventory)");
