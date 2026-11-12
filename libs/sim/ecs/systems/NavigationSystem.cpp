@@ -136,7 +136,8 @@ namespace ecs {
 		}
 
 		// Visits the triangles of `mesh` nearest `p` first, from the one holding it outward over
-		// adjacency, so a search touches only the triangles nearer than its answer. `visit` returns
+		// adjacency, so a search touches only the triangles nearer than its answer. `visit` takes the
+		// triangle's id and corners and returns
 		// the squared distance the search has settled for so far, and the walk stops once every
 		// triangle left is farther. Off the mesh it visits nothing.
 		template <typename Visit> void nearestFirst(const gnav::PatchableMesh& mesh, glm::vec2 p, Visit visit) {
@@ -153,7 +154,7 @@ namespace ecs {
 				const std::int32_t t = open.top().second;
 				open.pop();
 				const gnav::NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
-				settled						 = std::min(settled, visit(tri, trianglePoints(mesh, tri)));
+				settled						 = std::min(settled, visit(t, trianglePoints(mesh, tri)));
 				for (const std::int32_t n : tri.neighbor) {
 					if (n >= 0 && seen.insert(n).second) {
 						open.push({triangleDist2(p, trianglePoints(mesh, mesh.triangles()[static_cast<std::size_t>(n)])), n});
@@ -162,15 +163,15 @@ namespace ecs {
 			}
 		}
 
-		// Nearest point on `mesh` to `meters` whose face passes `faceOk`, nudged a hair toward that
-		// face's centroid so it locates inside it, or nullopt when no face does.
+		// Nearest point on `mesh` to `meters` whose face passes `faceOk` (given the triangle id), nudged
+		// a hair toward that face's centroid so it locates inside it, or nullopt when no face does.
 		template <typename FaceOk>
 		std::optional<glm::vec2> nearestFaceOnMesh(const gnav::PatchableMesh& mesh, glm::vec2 meters, const FaceOk& faceOk) {
 			bool	  found	 = false;
 			float	  bestD2 = 0.0F;
 			glm::vec2 best{0.0F, 0.0F};
 			constexpr float kNone = std::numeric_limits<float>::infinity();
-			nearestFirst(mesh, meters, [&](const gnav::NavTriangle& t, const TriangleMeters& tri) {
+			nearestFirst(mesh, meters, [&](std::int32_t t, const TriangleMeters& tri) {
 				if (!faceOk(t)) {
 					return found ? bestD2 : kNone;
 				}
@@ -211,6 +212,37 @@ namespace ecs {
 		// Walkable in truth: a solid wall face blocks, a door's span passes.
 		bool truthWalkable(const gnav::PatchableMesh& mesh, glm::vec2 meters) {
 			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
+		}
+
+		// Triangle `tri`'s face with the placed obstacles over it taken away, classified from the rest
+		// of its cover as the mesh classifies it: the ground beneath, which building and the landing
+		// read (a placed obstacle is a clear task to them, not a blocker), water under it included.
+		gnav::NavTriangle groundBeneath(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			gnav::NavTriangle face = mesh.triangles()[static_cast<std::size_t>(tri)];
+			if (!isDetailTag(face.faceBlocker)) {
+				return face;
+			}
+			std::vector<const gnav::SampleRing*> containing;
+			for (const gnav::RingId r : mesh.cover(tri)) {
+				const gnav::RegisteredRing& ring = mesh.ring(r);
+				if (ring.polygon.blocked && !isDetailTag(ring.polygon.provenanceId)) {
+					containing.push_back(&ring.sample);
+				}
+			}
+			const gnav::FaceTags tags = gnav::classifyCover(containing);
+			face.faceBlocker		  = tags.blocker;
+			face.faceOpening		  = tags.opening;
+			return face;
+		}
+		bool buildableFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			return gnav::terrainTraversable(groundBeneath(mesh, tri));
+		}
+		bool landingFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			return gnav::truthTraversable(groundBeneath(mesh, tri));
+		}
+		template <typename Face> bool pointOnGround(const gnav::PatchableMesh& mesh, glm::vec2 meters, const Face& face) {
+			const std::int32_t tri = mesh.locate(nav::toMm(meters));
+			return tri >= 0 && face(mesh, tri);
 		}
 
 		// --- Built-wall collision-band clearance (recovery-snap side) ----------------
@@ -350,8 +382,8 @@ namespace ecs {
 					 found	= true;
 				 }
 			};
-			nearestFirst(mesh, meters, [&](const gnav::NavTriangle& t, const TriangleMeters& tri) {
-				if (gnav::terrainTraversable(t)) {
+			nearestFirst(mesh, meters, [&](std::int32_t t, const TriangleMeters& tri) {
+				if (gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(t)])) {
 					const glm::vec2 centroid = (tri.a + tri.b + tri.c) / 3.0F;
 					const glm::vec2 cand	 = closestPointOnTriangle(meters, tri.a, tri.b, tri.c).point;
 					consider(cand + (centroid - cand) * 0.34F);
@@ -1789,12 +1821,12 @@ namespace ecs {
 		settle();
 
 		auto clear = [this, clearanceMeters](glm::vec2 p) {
-			if (!truthWalkable(structural, p)) {
+			if (!pointOnGround(detailMesh, p, landingFace)) {
 				return false;
 			}
 			for (int k = 0; k < 8; ++k) {
 				const float angle = kTwoPi * static_cast<float>(k) / 8.0F;
-				if (!truthWalkable(structural, p + glm::vec2{std::cos(angle), std::sin(angle)} * clearanceMeters)) {
+				if (!pointOnGround(detailMesh, p + glm::vec2{std::cos(angle), std::sin(angle)} * clearanceMeters, landingFace)) {
 					return false;
 				}
 			}
@@ -2100,52 +2132,43 @@ namespace ecs {
 
 	bool NavigationSystem::isValidPosition(glm::vec2 meters) const {
 		join();
-		return pointOnFace(detailMesh, meters, moverFace) && !placedObstacleAt(meters).has_value();
+		return terrainWalkable(detailMesh, meters);
 	}
 
-	std::optional<NavigationSystem::PlacedObstacle> NavigationSystem::placedObstacleAt(glm::vec2 meters, float reachMeters) const {
-		if (placement == nullptr) {
+	std::optional<NavigationSystem::PlacedObstacle> NavigationSystem::placedObstacleAt(glm::vec2 meters) const {
+		const auto obstacleOf = [this](gnav::RingId id) {
+			const std::vector<geometry::Vec2i64>& outline = detailMesh.ring(id).polygon.ring;
+			glm::vec2							  centre{0.0F, 0.0F};
+			for (const geometry::Vec2i64& v : outline) {
+				centre += nav::toMeters(v);
+			}
+			centre /= static_cast<float>(outline.size());
+			float extent2 = 0.0F;
+			for (const geometry::Vec2i64& v : outline) {
+				extent2 = std::max(extent2, dist2(centre, nav::toMeters(v)));
+			}
+			return PlacedObstacle{centre, std::sqrt(extent2)};
+		};
+		// The entity standing exactly here: its key sorts first among the keys of its position.
+		const std::int64_t cell = cellOfEntity(meters);
+		const DetailKey	   at{cellChunk(cell), cell, std::bit_cast<std::uint32_t>(meters.x), std::bit_cast<std::uint32_t>(meters.y), {}};
+		if (const auto it = detailInMesh.lower_bound(at);
+			it != detailInMesh.end() && it->first.chunk == at.chunk && it->first.cell == at.cell && it->first.xBits == at.xBits && it->first.yBits == at.yBits &&
+			it->second.ring >= 0) {
+			return obstacleOf(it->second.ring);
+		}
+		const std::int32_t tri = detailMesh.locate(nav::toMm(meters));
+		if (tri < 0) {
 			return std::nullopt;
 		}
-		// Colliders are found by their entity's centre, so the box reaches past the largest one.
-		constexpr float				 kColliderReach = 4.0F;
-		const float					 reach			= kColliderReach + reachMeters;
-		const world::ChunkCoordinate lo				= world::worldToChunk({meters.x - reach, meters.y - reach});
-		const world::ChunkCoordinate hi				= world::worldToChunk({meters.x + reach, meters.y + reach});
-		const assets::AssetRegistry& registry		= assets::AssetRegistry::Get();
-		const geometry::Vec2i64		 p				= nav::toMm(meters);
-		std::optional<PlacedObstacle>	 nearest;
-		float						 nearestD2 = 0.0F;
-		for (std::int32_t cy = lo.y; cy <= hi.y; ++cy) {
-			for (std::int32_t cx = lo.x; cx <= hi.x; ++cx) {
-				const assets::SpatialIndex* index = placement->getChunkIndex({cx, cy});
-				if (index == nullptr) {
-					continue;
-				}
-				for (const assets::PlacedEntity* e : index->queryRect(meters.x - reach, meters.y - reach, meters.x + reach, meters.y + reach)) {
-					if (!nav::placedObstacleOutline(*e, registry, colliderScratch)) {
-						continue;
-					}
-					const bool holds = geometry::pointInPolygon(p, colliderScratch) != geometry::PointInPolygon::Outside;
-					if (reachMeters <= 0.0F && !holds) {
-						continue;
-					}
-					const float d2 = dist2(meters, e->position);
-					if (nearest.has_value() && d2 >= nearestD2) {
-						continue;
-					}
-					glm::vec2 centre{0.0F, 0.0F};
-					for (const geometry::Vec2i64& v : colliderScratch) {
-						centre += nav::toMeters(v);
-					}
-					centre /= static_cast<float>(colliderScratch.size());
-					float extent2 = 0.0F;
-					for (const geometry::Vec2i64& v : colliderScratch) {
-						extent2 = std::max(extent2, dist2(centre, nav::toMeters(v)));
-					}
-					nearest	  = PlacedObstacle{centre, std::sqrt(extent2)};
-					nearestD2 = d2;
-				}
+		std::optional<PlacedObstacle> nearest;
+		for (const gnav::RingId id : detailMesh.cover(tri)) {
+			if (!isDetailTag(detailMesh.ring(id).polygon.provenanceId)) {
+				continue;
+			}
+			const PlacedObstacle obstacle = obstacleOf(id);
+			if (!nearest.has_value() || dist2(meters, obstacle.centre) < dist2(meters, nearest->centre)) {
+				nearest = obstacle;
 			}
 		}
 		return nearest;
@@ -2153,21 +2176,20 @@ namespace ecs {
 
 	std::optional<glm::vec2> NavigationSystem::standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const {
 		join();
-		if (structural.locate(nav::toMm(target)) < 0) {
+		if (detailMesh.locate(nav::toMm(target)) < 0) {
 			return std::nullopt;
 		}
-		const auto walkable = [&](glm::vec2 p) { return truthWalkable(structural, p); };
-		const auto clear	= [&](glm::vec2 p) { return walkable(p) && !placedObstacleAt(p).has_value(); };
-		const std::optional<PlacedObstacle> collider = placedObstacleAt(target, 0.05F);
+		// Walkable in truth on the nav mesh, so in no placed obstacle it holds.
+		const auto standable = [&](glm::vec2 p) { return truthWalkable(detailMesh, p); };
+		const std::optional<PlacedObstacle> collider = placedObstacleAt(target);
 		if (!collider.has_value()) {
-			if (clear(target)) {
+			if (standable(target)) {
 				return target;
 			}
-			return nearestFaceOnMesh(structural, target, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
+			return nearestFaceOnMesh(detailMesh, target,
+									 [this](std::int32_t t) { return gnav::truthTraversable(detailMesh.triangles()[static_cast<std::size_t>(t)]); });
 		}
-		// Round the collider at the disc's radius out from it, nearest the colonist first: a spot clear
-		// of every collider, else (an obstacle among others) one that is at least walkable terrain,
-		// inside a neighbour's collider.
+		// Round the collider at the disc's radius out from it, nearest the colonist first.
 		const float								 standOff = collider->extent + agentRadiusMeters + 0.05F;
 		constexpr int							 kSpots	  = 32;
 		std::array<std::pair<float, glm::vec2>, kSpots> spots;
@@ -2178,12 +2200,7 @@ namespace ecs {
 		}
 		std::sort(spots.begin(), spots.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
 		for (const auto& [d2, spot] : spots) {
-			if (clear(spot)) {
-				return spot;
-			}
-		}
-		for (const auto& [d2, spot] : spots) {
-			if (walkable(spot)) {
+			if (standable(spot)) {
 				return spot;
 			}
 		}
@@ -2204,33 +2221,40 @@ namespace ecs {
 
 	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {
 		join();
-		return areaWalkableUnder([this](glm::vec2 p) { return terrainWalkable(structural, p); }, polygonMeters);
+		return areaWalkableUnder([this](glm::vec2 p) { return pointOnGround(detailMesh, p, buildableFace); }, polygonMeters);
 	}
 
 	bool NavigationSystem::isPointBuildable(glm::vec2 meters) const {
 		join();
-		return terrainWalkable(structural, meters);
+		return pointOnGround(detailMesh, meters, buildableFace);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestTerrainWalkablePoint(glm::vec2 meters) const {
 		join();
-		if (truthWalkable(structural, meters)) {
+		if (pointOnGround(detailMesh, meters, landingFace)) {
 			return meters;
 		}
-		return nearestFaceOnMesh(structural, meters, [](const gnav::NavTriangle& t) { return gnav::truthTraversable(t); });
+		return nearestFaceOnMesh(detailMesh, meters, [this](std::int32_t t) { return landingFace(detailMesh, t); });
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters) const {
 		join();
-		const std::optional<glm::vec2> nearest =
-			terrainWalkable(detailMesh, meters)
-				? std::optional<glm::vec2>(meters)
-				: nearestFaceOnMesh(detailMesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
-		// A placed obstacle the mesh doesn't hold is still in the way: step out of its collider.
-		if (!nearest.has_value() || !placedObstacleAt(*nearest).has_value()) {
-			return nearest;
+		if (terrainWalkable(detailMesh, meters)) {
+			return meters;
 		}
-		return standPointBeside(*nearest, meters, 0.0F);
+		return nearestFaceOnMesh(detailMesh, meters,
+								 [this](std::int32_t t) { return gnav::terrainTraversable(detailMesh.triangles()[static_cast<std::size_t>(t)]); });
+	}
+
+	bool NavigationSystem::connected(glm::vec2 aMeters, glm::vec2 bMeters) const {
+		join();
+		const std::int32_t a = detailMesh.locate(nav::toMm(aMeters));
+		return a >= 0 && detailMesh.components().sameComponent(a, detailMesh.locate(nav::toMm(bMeters)));
+	}
+
+	std::uint64_t NavigationSystem::connectivityEpoch() const {
+		join();
+		return detailMesh.components().epoch();
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const {

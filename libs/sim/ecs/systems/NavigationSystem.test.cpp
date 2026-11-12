@@ -23,6 +23,7 @@
 #include <assets/RecipeRegistry.h>
 
 #include "nav/NavCoords.h"
+#include "nav/NavInputBuilder.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
@@ -109,8 +110,8 @@ namespace {
 		return south;
 	}
 
-	// Ground the nav mesh holds clear: on it, and neither water nor a tree in it. Tests that watch flora
-	// come into and leave the mesh read it, where isValidPosition reads trees from the placement data.
+	// Ground the nav mesh holds clear: on it, and neither water nor a tree in it (what isValidPosition
+	// reads), straight from the mesh.
 	bool meshClear(const NavigationSystem& sys, glm::vec2 meters) {
 		const geometry::nav::PatchableMesh& mesh = sys.navMesh();
 		const std::int32_t					tri	 = mesh.locate(nav::toMm(meters));
@@ -788,7 +789,7 @@ TEST_F(NavigationSystemTest, LatePlacementBringsItsFloraIn) {
 	EXPECT_EQ(sys.generation(), before) << "flora landing marks routes one by one, never every route";
 }
 
-// A tree is not in the structural mesh, so a footprint over it is buildable while the nav mesh
+// A footprint over a tree is buildable (the tree is cleared, not built round) while the nav mesh
 // carves it.
 TEST_F(NavigationSystemTest, FootprintOverTreeIsBuildableButNotOnMesh) {
 	registerTree("Test_NavBuildableTree", 0.4F);
@@ -813,7 +814,7 @@ TEST_F(NavigationSystemTest, FootprintOverTreeIsBuildableButNotOnMesh) {
 		{treeAt.x - 0.3F, treeAt.y + 0.3F},
 	};
 	EXPECT_FALSE(sys.isAreaWalkable(footprint)) << "the nav mesh carves the tree";
-	EXPECT_TRUE(sys.isAreaBuildable(footprint)) << "structural: the tree is clearable, not a blocker";
+	EXPECT_TRUE(sys.isAreaBuildable(footprint)) << "the tree is clearable, not a blocker";
 	EXPECT_TRUE(sys.isPointBuildable(treeAt));
 }
 
@@ -3346,9 +3347,8 @@ TEST_F(NavigationSystemTest, StaleRouteStaysStaleThroughAnUnrelatedWallJob) {
 	EXPECT_FALSE(stale(world, sys, missed));
 }
 
-// The clear-ground test and the mesh read one outline (nav::placedObstacleOutline): a collider set off its
-// entity's centre and mirrored by a negative scale lands on the same side for both.
-TEST_F(NavigationSystemTest, ClearGroundAndTheMeshAgreeOnAMirroredCollider) {
+// A collider set off its entity's centre and mirrored by a negative scale is meshed on the mirrored side.
+TEST_F(NavigationSystemTest, MirroredColliderIsMeshedOnItsMirroredSide) {
 	AssetDefinition tree;
 	tree.defName					 = "Test_NavMirroredTree";
 	tree.setCollision(0, {.type = CollisionShapeType::Rect, .offsetMeters = {0.8F, 0.0F}, .halfExtentsMeters = {0.3F, 0.3F}});
@@ -3372,10 +3372,8 @@ TEST_F(NavigationSystemTest, ClearGroundAndTheMeshAgreeOnAMirroredCollider) {
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
-	for (const glm::vec2 p : {glm::vec2{19.2F, 20.0F}, glm::vec2{20.8F, 20.0F}}) {
-		EXPECT_EQ(sys.isValidPosition(p), meshClear(sys, p)) << "at (" << p.x << ", " << p.y << ")";
-	}
-	EXPECT_FALSE(meshClear(sys, {19.2F, 20.0F})) << "the mirrored collider is in the mesh";
+	EXPECT_FALSE(sys.isValidPosition({19.2F, 20.0F})) << "the mirrored collider is in the mesh";
+	EXPECT_TRUE(sys.isValidPosition({20.8F, 20.0F})) << "and not where the unmirrored one would be";
 }
 
 // A sapling 0.04 m across, 0.2 m off the straight line, is gone round however narrow: the route
@@ -4505,4 +4503,258 @@ TEST_F(NavigationSystemTest, GoalOffMeshedGroundIsMaybeOnlyInAWantedChunk) {
 	ASSERT_FALSE(sys.inSimArea(wantedUnloaded));
 	EXPECT_FALSE(sys.walk(sys.reachFrom({420.0F, 100.0F}, kAgentRadius), loadedUnwanted).reachable());
 	EXPECT_TRUE(sys.walk(sys.reachFrom({1500.0F, 100.0F}, kAgentRadius), wantedUnloaded).reachable());
+}
+
+// --- Connectivity (connected, connectivityEpoch) and position checks on the real mesh -------------
+
+namespace {
+	// One river along y = 256 m, 6 m wide, across every chunk: its banks meet nowhere.
+	class RiverAcrossSampler : public world::IWorldSampler {
+	  public:
+		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
+			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
+			r.riverSegments.push_back({.x0 = -4096.0, .y0 = 256.0, .x1 = 4096.0, .y1 = 256.0, .halfWidth0 = 3.0F, .halfWidth1 = 3.0F, .s0 = 0.0, .s1 = 8192.0});
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return kWorldSeed; }
+	};
+
+	world::ChunkManager* riverAcrossChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks = readyChunks(std::make_unique<RiverAcrossSampler>(), {256.0F, 256.0F}, 0);
+		return chunks.get();
+	}
+
+	// Trees on the sides of a square 6 m across round `centre`, one a metre; `gapAt` leaves out the
+	// east side's tree that many metres north of the centre (none when it is outside -2..2).
+	std::vector<glm::vec2> treeSquare(glm::vec2 centre, int gapAt = 99) {
+		std::vector<glm::vec2> trees;
+		for (int k = -3; k <= 3; ++k) {
+			const auto d = static_cast<float>(k);
+			trees.insert(trees.end(), {centre + glm::vec2{d, -3.0F}, centre + glm::vec2{d, 3.0F}});
+			if (k > -3 && k < 3) {
+				trees.push_back(centre + glm::vec2{-3.0F, d});
+				if (k != gapAt) {
+					trees.push_back(centre + glm::vec2{3.0F, d});
+				}
+			}
+		}
+		return trees;
+	}
+} // namespace
+
+// connected is "same label on meshed ground": true across open ground; false across water no meshed
+// ground crosses, into a pocket placed obstacles seal for zero width, into a placed obstacle, and to
+// a point off meshed ground.
+TEST_F(NavigationSystemTest, ConnectedIsTheSameLabelOnMeshedGround) {
+	registerTree("Test_NavConnectedTree", 0.6F);
+	const glm::vec2 pocket{100.0F, 100.0F};
+	WalkRig			rig(pocket);
+	const std::vector<glm::vec2> trees = treeSquare(pocket);
+	placeTrees(rig.executor, rig.processed, "Test_NavConnectedTree", trees);
+	settle(rig.nav);
+	ASSERT_TRUE(rig.nav.isValidPosition(pocket));
+	ASSERT_FALSE(rig.nav.isValidPosition(trees.front())) << "the square is in the mesh";
+	const glm::vec2 open{80.0F, 100.0F};
+	EXPECT_TRUE(rig.nav.connected(open, {120.0F, 90.0F}));
+	EXPECT_TRUE(rig.nav.connected(open, {400.0F, 400.0F})) << "the whole chunk's ground is meshed";
+	EXPECT_FALSE(rig.nav.connected(open, pocket)) << "the square seals the pocket";
+	EXPECT_FALSE(rig.nav.connected(pocket, open));
+	EXPECT_TRUE(rig.nav.connected(pocket, pocket + glm::vec2{1.0F, 1.0F}));
+	EXPECT_FALSE(rig.nav.connected(open, trees.front())) << "a point in a placed obstacle has no label";
+	EXPECT_FALSE(rig.nav.connected(open, kUnmeshed));
+	EXPECT_FALSE(rig.nav.connected(kUnmeshed, open));
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(riverAcrossChunks());
+	meshAround(world, {100.0F, 256.0F}, 30.0F);
+	settle(sys);
+	const glm::vec2 south{100.0F, 250.0F};
+	const glm::vec2 north{100.0F, 262.0F};
+	ASSERT_TRUE(sys.isValidPosition(south));
+	ASSERT_TRUE(sys.isValidPosition(north));
+	ASSERT_FALSE(sys.isValidPosition({100.0F, 256.0F})) << "the river is in";
+	EXPECT_FALSE(sys.connected(south, north)) << "no meshed ground crosses the river";
+	EXPECT_TRUE(sys.connected(south, {300.0F, 100.0F}));
+}
+
+// The pair that defines the contract: through a gap narrower than a colonist, connected is true (zero
+// width passes) and a colonist's route is no known way; a mover narrower than the gap routes.
+TEST_F(NavigationSystemTest, GapNarrowerThanAColonistIsConnectedButHasNoRoute) {
+	registerTree("Test_NavGapTree", 0.8F); // a metre apart, 0.4 m between the two beside the gap
+	const glm::vec2 pocket{100.0F, 100.0F};
+	WalkRig			rig(pocket);
+	placeTrees(rig.executor, rig.processed, "Test_NavGapTree", treeSquare(pocket, 0));
+	settle(rig.nav);
+	const glm::vec2 outside{110.0F, 100.0F};
+	ASSERT_TRUE(rig.nav.isValidPosition(pocket));
+	ASSERT_TRUE(rig.nav.isValidPosition(pocket + glm::vec2{3.0F, 0.0F})) << "the gap is open ground";
+	ASSERT_FALSE(rig.nav.isValidPosition(pocket + glm::vec2{3.0F, 0.3F})) << "0.4 m wide";
+	EXPECT_TRUE(rig.nav.connected(outside, pocket));
+	EXPECT_FALSE(routeBetween(rig.nav, outside, pocket).has_value()) << "a colonist got through the gap";
+	EXPECT_TRUE(routeBetween(rig.nav, outside, pocket, {}, 0.1F).has_value()) << "a mover 0.2 m wide fits it";
+}
+
+// Two patches of mesh that do not touch are not connected; on the tick the ground between lands they
+// are, and the epoch moves on that tick.
+TEST_F(NavigationSystemTest, ConnectedJoinsOnTheTickTheGapIsMeshed) {
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(8);
+	const glm::vec2 camera{256.0F, 256.0F};
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setConstructionWorld(&cw);
+	const glm::vec2 west{300.0F, 256.0F};
+	const glm::vec2 east{1300.0F, 256.0F};
+	const glm::vec2 between{768.0F, 256.0F};
+	const EntityID	walker = meshAround(world, west, 30.0F); // holds and wants (0, 0) only
+	meshAround(world, east, 30.0F);							 // and (2, 0)
+	loadFor(*chunks, sys, camera);
+	settle(sys);
+	ASSERT_TRUE(sys.inSimArea(west));
+	ASSERT_TRUE(sys.inSimArea(east));
+	ASSERT_FALSE(sys.inSimArea(between));
+	EXPECT_FALSE(sys.connected(west, east));
+
+	world.getComponent<Position>(walker)->value = between; // wants (1, 0)
+	std::uint64_t epoch	 = sys.connectivityEpoch();
+	bool		  joined = false;
+	for (int tick = 0; tick < 20 && !joined; ++tick) {
+		step(world, sys);
+		loadFor(*chunks, sys, camera);
+		joined = sys.connected(west, east);
+		EXPECT_EQ(joined, sys.inSimArea(between)) << "tick " << tick;
+		if (joined) {
+			EXPECT_NE(sys.connectivityEpoch(), epoch) << "the epoch stayed on the tick the ground joined";
+		}
+		epoch = sys.connectivityEpoch();
+	}
+	EXPECT_TRUE(joined);
+}
+
+// A placed obstacle landing in open ground only closes ground: the epoch stays.
+TEST_F(NavigationSystemTest, ObstacleLandingInOpenGroundLeavesTheEpoch) {
+	registerTree("Test_NavEpochTree", 0.4F);
+	const glm::vec2 treeAt{10.0F, 10.0F};
+	WalkRig			rig(treeAt);
+	settle(rig.nav);
+	ASSERT_TRUE(rig.nav.isValidPosition(treeAt));
+	const std::uint64_t before = rig.nav.connectivityEpoch();
+	placeTrees(rig.executor, rig.processed, "Test_NavEpochTree", {treeAt});
+	settle(rig.nav);
+	ASSERT_FALSE(rig.nav.isValidPosition(treeAt)) << "the tree is in";
+	EXPECT_EQ(rig.nav.connectivityEpoch(), before);
+}
+
+// Every position check answers from the mesh after a chunk and its placement data unload: the obstacle
+// still blocks, the stand point is beside it and standable, and building reads the ground beneath.
+TEST_F(NavigationSystemTest, PositionChecksHoldAfterTheChunkUnloads) {
+	registerTree("Test_NavUnloadedTree", 0.4F);
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(0);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{500.0F, 256.0F};
+	placeTrees(executor, processed, "Test_NavUnloadedTree", {treeAt});
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	const EntityID mover = addColonist(world, {490.0F, 256.0F}, "Walker");
+	loadFor(*chunks, sys, {256.0F, 256.0F});
+	settle(sys);
+	ASSERT_FALSE(sys.isValidPosition(treeAt)) << "the tree is in";
+
+	world.getComponent<Position>(mover)->value = {900.0F, 256.0F};
+	loadFor(*chunks, sys, {900.0F, 256.0F});
+	ASSERT_EQ(chunks->getChunk({0, 0}), nullptr);
+	executor.unloadChunk({0, 0});
+	processed.erase(ChunkCoordinate{0, 0});
+	settle(sys);
+
+	EXPECT_FALSE(sys.isValidPosition(treeAt)) << "the obstacle still blocks";
+	const glm::vec2				   from{480.0F, 256.0F};
+	const std::optional<glm::vec2> stand = sys.standPointBeside(treeAt, from, kAgentRadius);
+	ASSERT_TRUE(stand.has_value());
+	EXPECT_TRUE(sys.isValidPosition(*stand));
+	EXPECT_GT(glm::distance(*stand, treeAt), 0.4F * 1.414F) << "outside the obstacle";
+	EXPECT_LT(glm::distance(*stand, treeAt), 1.2F) << "beside it";
+	EXPECT_LT(stand->x, treeAt.x) << "on the side it is asked from";
+	EXPECT_TRUE(sys.connected(*stand, from)) << "asked from where a mover would stand";
+
+	const std::optional<glm::vec2> nearest = sys.nearestPathablePoint(treeAt);
+	ASSERT_TRUE(nearest.has_value());
+	EXPECT_TRUE(sys.isValidPosition(*nearest));
+	EXPECT_LT(glm::distance(*nearest, treeAt), 4.0F);
+	const std::optional<glm::vec2> placed = sys.findValidPositionNear(treeAt, 0.0F);
+	ASSERT_TRUE(placed.has_value());
+	EXPECT_TRUE(sys.isValidPosition(*placed));
+	EXPECT_TRUE(sys.isPointBuildable(treeAt)) << "a placed obstacle is cleared to build, not built round";
+}
+
+// Building and the landing read the ground beneath a placed obstacle: buildable on land, and water
+// still where the obstacle stands in water.
+TEST_F(NavigationSystemTest, BuildingReadsTheGroundBeneathAPlacedObstacle) {
+	registerTree("Test_NavWaterTree", 0.4F);
+	const glm::vec2 inWater{40.0F, 40.0F};
+	const glm::vec2 onLand{20.0F, 40.0F};
+	WalkRig			rig(inWater, waterPatchChunks());
+	placeTrees(rig.executor, rig.processed, "Test_NavWaterTree", {inWater, onLand});
+	settle(rig.nav);
+	ASSERT_FALSE(rig.nav.isValidPosition(onLand)) << "the tree is in";
+	const geometry::nav::PatchableMesh& mesh = rig.nav.navMesh();
+	ASSERT_EQ(mesh.triangles()[static_cast<std::size_t>(mesh.locate(nav::toMm(inWater)))].faceBlocker, nav::kProvenancePlaced)
+		<< "the tree's face, not the water's, is on top";
+	EXPECT_TRUE(rig.nav.isPointBuildable(onLand));
+	EXPECT_EQ(rig.nav.nearestTerrainWalkablePoint(onLand), std::optional<glm::vec2>(onLand));
+	EXPECT_FALSE(rig.nav.isPointBuildable(inWater)) << "water under a placed obstacle is still water";
+	EXPECT_NE(rig.nav.nearestTerrainWalkablePoint(inWater), std::optional<glm::vec2>(inWater));
+}
+
+// A target ringed by placed obstacles has nowhere to stand beside it: standPointBeside says so rather
+// than offer a point inside a neighbour. A lone one has a stand point.
+TEST_F(NavigationSystemTest, StandPointBesideARingedTargetIsNone) {
+	registerTree("Test_NavRingedTarget", 0.3F);
+	const glm::vec2		   target{20.0F, 20.0F};
+	const glm::vec2		   lone{30.0F, 20.0F};
+	WalkRig				   rig(target);
+	std::vector<glm::vec2> trees = treeRing(target, 0.9F);
+	trees.insert(trees.end(), {target, lone});
+	placeTrees(rig.executor, rig.processed, "Test_NavRingedTarget", trees);
+	settle(rig.nav);
+	ASSERT_FALSE(rig.nav.isValidPosition(target)) << "the target is in";
+	EXPECT_FALSE(rig.nav.standPointBeside(target, {10.0F, 20.0F}, kAgentRadius).has_value());
+	const std::optional<glm::vec2> beside = rig.nav.standPointBeside(lone, {10.0F, 20.0F}, kAgentRadius);
+	ASSERT_TRUE(beside.has_value());
+	EXPECT_TRUE(rig.nav.isValidPosition(*beside));
+}
+
+// Where no ground is meshed nothing is valid, before any mesh and off the meshed ground after.
+TEST_F(NavigationSystemTest, NoMeshedGroundIsNeverValid) {
+	WalkRig						 rig({10.0F, 10.0F});
+	const std::vector<glm::vec2> square{kUnmeshed, kUnmeshed + glm::vec2{1.0F, 0.0F}, kUnmeshed + glm::vec2{1.0F, 1.0F}, kUnmeshed + glm::vec2{0.0F, 1.0F}};
+	const auto					 nothingValid = [&](const NavigationSystem& nav) {
+		  EXPECT_FALSE(nav.isValidPosition(kUnmeshed));
+		  EXPECT_FALSE(nav.isPointBuildable(kUnmeshed));
+		  EXPECT_FALSE(nav.isAreaBuildable(square));
+		  EXPECT_FALSE(nav.standPointBeside(kUnmeshed, kUnmeshed, kAgentRadius).has_value());
+		  EXPECT_FALSE(nav.nearestPathablePoint(kUnmeshed).has_value());
+		  EXPECT_FALSE(nav.nearestPathablePoint(kUnmeshed, kAgentRadius).has_value());
+		  EXPECT_FALSE(nav.nearestTerrainWalkablePoint(kUnmeshed).has_value());
+		  EXPECT_FALSE(nav.findValidPositionNear(kUnmeshed).has_value());
+		  EXPECT_FALSE(nav.connected(kUnmeshed, kUnmeshed));
+	};
+	nothingValid(rig.nav);
+	settle(rig.nav);
+	ASSERT_TRUE(rig.nav.isValidPosition({10.0F, 10.0F}));
+	nothingValid(rig.nav);
 }
