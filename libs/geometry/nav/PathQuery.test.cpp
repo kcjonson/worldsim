@@ -1790,3 +1790,104 @@ TEST(PathQuerySearch,TouchedTrianglesAreAllItReads) {
 	}
 	EXPECT_GT(wrecked, 1000) << "the searches must leave most of the meshes unread for the test to bind";
 }
+
+namespace {
+
+	// A pen open only on the side away from the start, filled with posts: from a goal
+	// inside it by its closed side, a search must cross much of the pen to get out.
+	PatchableMesh postedPen() {
+		PatchableMesh mesh;
+		PatchEdits	  edits;
+		auto		  solid = [&](std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
+			 edits.adds.push_back({{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, kTreeTag});
+		};
+		edits.adds.push_back({{{0, 0}, {120000, 0}, {120000, 120000}, {0, 120000}}, false, 1});
+		solid(40000, 20000, 40500, 100000);
+		solid(40000, 20000, 100000, 20500);
+		solid(40000, 99500, 100000, 100000);
+		for (std::int64_t x = 42000; x < 98000; x += 1500) {
+			for (std::int64_t y = 22000; y < 98000; y += 1500) {
+				solid(x, y, x + 400, y + 400);
+			}
+		}
+		mesh.applyPatch(edits);
+		mesh.refreshWidths();
+		return mesh;
+	}
+
+} // namespace
+
+// At the default phase length, a goal whose side runs neither dry nor into the start
+// within it: the search switches to the start side and answers as a start-only search.
+TEST(PathQuerySearch,GoalSidePhaseSwitchesAtItsDefaultLength) {
+	const PatchableMesh mesh  = postedPen();
+	const NavView		view  = mesh.view();
+	const Vec2i64		start{5000, 60000};
+	const Vec2i64		goal{41500, 60000};
+	const SearchRun		phase = runInSlices(view, argsFor(start, {goal}, 300), kRunToEnd);
+	const SearchRun		ahead = runInSlices(view, argsFor(start, {goal}, 300, {}, 0), kRunToEnd);
+	ASSERT_EQ(phase.progress, SearchProgress::Found);
+	ASSERT_EQ(ahead.progress, SearchProgress::Found);
+	EXPECT_GT(phase.expansions, static_cast<std::int64_t>(kGoalSidePhase)) << "the goal side neither ran dry nor met the start";
+	EXPECT_EQ(phase.result.points.front(), start);
+	EXPECT_EQ(phase.result.points.back(), goal);
+	EXPECT_NEAR(walkLength(phase.result), walkLength(ahead.result), 2.0);
+	expectSameRun(runInSlices(view, argsFor(start, {goal}, 300), 7), phase, "pen in slices of 7");
+}
+
+// More triangles round one vertex than any fixed count: 300 floor slices meet at the
+// centre. Its star is open ground, so a disc passing within its radius walks straight
+// on, and the touched set holds the whole fan.
+TEST(PathQuerySearch,HighDegreeVertexWalksItsWholeFan) {
+	constexpr int		 kSlices = 300;
+	PatchableMesh		 mesh;
+	PatchEdits			 edits;
+	std::vector<Vec2i64> rim;
+	for (int k = 0; k < kSlices; ++k) {
+		const double turn = 2.0 * 3.14159265358979323846 * k / kSlices;
+		rim.push_back({std::llround(100000.0 * std::cos(turn)), std::llround(100000.0 * std::sin(turn))});
+	}
+	for (int k = 0; k < kSlices; ++k) {
+		edits.adds.push_back({{{0, 0}, rim[static_cast<std::size_t>(k)], rim[static_cast<std::size_t>((k + 1) % kSlices)]}, false, 1});
+	}
+	mesh.applyPatch(edits);
+	mesh.refreshWidths();
+	const NavView			  view = mesh.view();
+	std::vector<std::int32_t> fan;
+	for (std::int32_t t = 0; t < view.triangleSlots(); ++t) {
+		if (!view.isLive(t)) {
+			continue;
+		}
+		for (const std::uint32_t v : view.triangle(t).v) {
+			if (view.vertex(v) == Vec2i64{0, 0}) {
+				fan.push_back(t);
+			}
+		}
+	}
+	ASSERT_GT(fan.size(), 256U);
+	const Vec2i64	start{-50000, 200};
+	const Vec2i64	goal{50000, 200};
+	const SearchRun run = runInSlices(view, argsFor(start, {goal}, 300, {}, 0), kRunToEnd);
+	ASSERT_EQ(run.progress, SearchProgress::Found);
+	EXPECT_EQ(run.result.points, (std::vector<Vec2i64>{start, goal})) << "open ground at the centre is no corner";
+	const std::unordered_set<std::int32_t> touched(run.touched.begin(), run.touched.end());
+	for (const std::int32_t t : fan) {
+		EXPECT_EQ(touched.count(t), 1U) << "fan triangle " << t;
+	}
+}
+
+// A search never reads the reachability forests: they hold the whole mesh, not what the
+// search has read, so a goal they reject is still searched for (here two goals sealed in
+// a room under truth: the search explores and runs dry). pathThrough keeps the forests'
+// reject, before any search.
+TEST(PathQuerySearch,SearchNeverConsultsTheForests) {
+	const NavMesh m	   = buildNavMesh(buildBoxRoom(false));
+	const NavView view = navView(m);
+	ASSERT_NE(view.forest(true), nullptr);
+	const SearchRun run = runInSlices(view, argsFor(kOutside, {kInside, {1500, 1500}}, 0), kRunToEnd);
+	EXPECT_EQ(run.progress, SearchProgress::Exhausted);
+	EXPECT_GT(run.expansions, 10) << "the sealed goals were searched for, not dropped";
+	const PathResult once = pathThrough(view, kOutside, kInside, 0);
+	EXPECT_EQ(once.stop, PathStop::NoPath);
+	EXPECT_EQ(once.nodesExpanded, 0) << "pathThrough rejects on the forests before it searches";
+}

@@ -241,7 +241,7 @@ namespace geometry::nav {
 					// A corner: every triangle round it holds p.
 					std::int32_t cur = tri;
 					int			 li	 = e;
-					for (int guard = 0; guard < 256; ++guard) {
+					for (;;) {
 						consider(cur);
 						const std::int32_t nb = mesh.triangle(cur).neighbor[(li + 2) % 3];
 						if (nb < 0 || nb == tri) {
@@ -254,7 +254,7 @@ namespace geometry::nav {
 					}
 					cur = tri;
 					li	= e;
-					for (int guard = 0; guard < 256; ++guard) {
+					for (;;) {
 						const std::int32_t nb = mesh.triangle(cur).neighbor[li];
 						if (nb < 0 || nb == tri) {
 							break;
@@ -318,7 +318,7 @@ namespace geometry::nav {
 		bool isCorner(const NavView& mesh, std::int32_t t, int i, const SearchBelief& belief, bool hardOnly) {
 			std::int32_t cur = t;
 			int			 li	 = i;
-			for (int guard = 0; guard < 256; ++guard) {
+			for (;;) {
 				const double m = stepMultiplier(mesh, cur, belief);
 				if (hardOnly ? m <= 0.0 : m != 1.0) {
 					return true;
@@ -336,7 +336,6 @@ namespace geometry::nav {
 				li						= next.v[0] == v ? 0 : (next.v[1] == v ? 1 : 2);
 				cur						= nb;
 			}
-			return true;
 		}
 
 		// Edge e of triangle t as a portal, in the string-pull's terms: the edge runs
@@ -377,7 +376,7 @@ namespace geometry::nav {
 			int			 li		= i;
 			bool		 walls	= false;
 			StarInfo	 out;
-			for (int guard = 0; guard < 256; ++guard) {
+			for (;;) {
 				const NavTriangle& tri = mesh.triangle(cur);
 				if (isCommonKnowledgeTerrainFace(tri)) {
 					const bool seen = (out.tagCount > 0 && out.tags[0] == tri.faceBlocker) || (out.tagCount > 1 && out.tags[1] == tri.faceBlocker);
@@ -403,70 +402,6 @@ namespace geometry::nav {
 				li						= next.v[0] == v ? 0 : (next.v[1] == v ? 1 : 2);
 				cur						= nb;
 			}
-			out.star = Star::Boundary;
-			return out;
-		}
-
-		// Each vertex's Star, walked once per mesh state and kept between searches on
-		// this thread: no belief enters it, so searches interleaved on one thread share it.
-		// A mesh state is known by its owner and its epoch, which no other state in the
-		// process has had (nextMeshGeneration), so a mesh rebuilt where an old one stood
-		// never reads the old one's stars. A new state costs a stamp, not a pass over the
-		// vertices: a star is this state's when its stamp is.
-		struct StarMemo {
-			const void*				   owner = nullptr;
-			std::uint64_t			   epoch = 0;
-			ScratchArray<StarInfo>		star;
-			ScratchArray<std::uint32_t> starStamp;
-			std::uint32_t			   state = 0;
-
-			void begin(const NavView& mesh) {
-				star.growTo(mesh.vertices.size());
-				starStamp.growTo(mesh.vertices.size());
-				if (owner != mesh.owner || epoch != mesh.epoch()) {
-					owner = mesh.owner;
-					epoch = mesh.epoch();
-					if (++state == 0) {
-						starStamp.zero();
-						state = 1;
-					}
-				}
-			}
-
-			bool holds(const NavView& mesh) const { return owner == mesh.owner && epoch == mesh.epoch(); }
-
-			const StarInfo& starAt(const NavView& mesh, std::int32_t t, int i) {
-				const std::uint32_t v = mesh.triangle(t).v[i];
-				if (starStamp[v] != state) {
-					starStamp[v] = state;
-					star[v]		 = starOf(mesh, t, i);
-				}
-				return star[v];
-			}
-		};
-
-		// Memos for two mesh states, so a thread that alternates two meshes (the game's
-		// structural and nav meshes) keeps both: the state asked for, else the one used
-		// longer ago gives way.
-		struct StarMemos {
-			std::array<StarMemo, 2>		 slots;
-			std::array<std::uint64_t, 2> used{};
-			std::uint64_t				 clock = 0;
-
-			StarMemo& begin(const NavView& mesh) {
-				std::size_t pick = slots[1].holds(mesh) ? 1 : 0;
-				if (!slots[pick].holds(mesh)) {
-					pick = used[0] <= used[1] ? 0 : 1;
-				}
-				used[pick] = ++clock;
-				slots[pick].begin(mesh);
-				return slots[pick];
-			}
-		};
-
-		StarMemo& starMemo(const NavView& mesh) {
-			thread_local StarMemos memos;
-			return memos.begin(mesh);
 		}
 
 		struct IdHash {
@@ -474,6 +409,23 @@ namespace geometry::nav {
 				id ^= id >> 31;
 				id *= 0xBF58476D1CE4E5B9ULL;
 				return id ^ (id >> 29);
+			}
+		};
+
+		// Each vertex's Star, walked once per search and held by the search, so it costs
+		// what the search asks about and goes with it. No belief enters it: the goal-side
+		// phase and the search from the start share one.
+		struct StarMemo {
+			IncrementalHashMap<std::uint32_t, StarInfo, IdHash> star; // by vertex
+
+			StarInfo starAt(const NavView& mesh, std::int32_t t, int i) {
+				const std::uint32_t v = mesh.triangle(t).v[i];
+				if (const StarInfo* known = star.find(v)) {
+					return *known;
+				}
+				const StarInfo info = starOf(mesh, t, i);
+				star.insert(v, info);
+				return info;
 			}
 		};
 
@@ -512,7 +464,7 @@ namespace geometry::nav {
 			}
 
 			bool hardAt(const NavView& mesh, StarMemo& stars, std::int32_t t, int i, const SearchBelief& belief) {
-				const StarInfo& info = stars.starAt(mesh, t, i);
+				const StarInfo info = stars.starAt(mesh, t, i);
 				const Star		s	 = info.star;
 				if (s == Star::Open || s == Star::Boundary) {
 					return s == Star::Boundary;
@@ -1022,7 +974,7 @@ namespace geometry::nav {
 				std::int32_t cur = t;
 				int			 li	 = i;
 				bool		 boundary = false;
-				for (int guard = 0; guard < 256; ++guard) {
+				for (;;) {
 					touched.add(cur);
 					const std::int32_t nb = mesh.triangle(cur).neighbor[(li + 2) % 3];
 					if (nb < 0) {
@@ -1038,7 +990,7 @@ namespace geometry::nav {
 				}
 				cur = t;
 				li	= i;
-				for (int guard = 0; boundary && guard < 256; ++guard) {
+				while (boundary) {
 					const std::int32_t nb = mesh.triangle(cur).neighbor[li];
 					if (nb < 0 || nb == t) {
 						break;
@@ -1617,6 +1569,7 @@ namespace geometry::nav {
 		PathResult	   answer;
 		std::int32_t   goal = -1;
 		Touched		   touched;
+		StarMemo	   stars;
 		// Where the ends stand: the start's triangle, and for each goal still in the search
 		// its index in args.goals and its triangle.
 		std::int32_t			  startTri = -1;
@@ -1682,27 +1635,6 @@ namespace geometry::nav {
 				answer.crossesPricedFaces = m > 1.0 && length > 0.0;
 				return;
 			}
-			// Width-aware reachability short-circuit (P3.3): drop a provably-unreachable goal
-			// before paying for the search. Sound: a `true` from the forest is "maybe" and
-			// leaves the goal to the A*; a reject is a proof no path admits this disc. Faces
-			// crossed at a price are walls to the forests, so they prove nothing then.
-			if (belief.prices.empty()) {
-				const std::int64_t diameterMm = discDiameterMm(args.agentRadiusMm);
-				std::size_t		   kept		  = 0;
-				for (std::size_t k = 0; k < liveGoals.size(); ++k) {
-					if (goalTris[k] == startTri || !reachabilityRejects(mesh, startTri, goalTris[k], diameterMm, belief)) {
-						liveGoals[kept] = liveGoals[k];
-						goalTris[kept]	= goalTris[k];
-						++kept;
-					}
-				}
-				liveGoals.resize(kept);
-				goalTris.resize(kept);
-				if (liveGoals.empty()) {
-					end(SearchProgress::Exhausted, PathStop::NoPath);
-					return;
-				}
-			}
 			if (liveGoals.size() == 1 && args.goalSidePhase > 0) {
 				Ends back{args.goals[static_cast<std::size_t>(liveGoals[0])], goalTris[0], {args.start}, {startTri}};
 				phase = std::make_unique<Sweep>(mesh, std::move(back), args.agentRadiusMm, belief, args.maxCost, touched);
@@ -1748,8 +1680,7 @@ namespace geometry::nav {
 					return progress;
 				}
 			}
-			StarMemo&	  stars = starMemo(mesh);
-			std::uint32_t left	= n;
+			std::uint32_t left = n;
 			if (phase != nullptr) {
 				const std::int64_t	before = phase->nodesExpanded;
 				const std::uint32_t room   = static_cast<std::uint32_t>(std::min<std::int64_t>(left, std::max<std::int64_t>(0, args.goalSidePhase - before)));
@@ -1838,7 +1769,22 @@ namespace geometry::nav {
 		if (!view.widthsCurrent()) {
 			return {}; // stale widths could route a disc through a gap it does not fit
 		}
-		SearchState search({start, {goal}, agentRadiusMm, copyBelief(belief), limits.maxCost, 0});
+		SearchBelief held = copyBelief(belief);
+		// Width-aware reachability short-circuit (P3.3): a provably unreachable goal costs no
+		// search. Sound: a reject is a proof no path admits this disc, and anything else
+		// is left to the search. Faces crossed at a price are walls to the forests, so they
+		// prove nothing then. The forests describe the whole mesh, so this belongs to a
+		// call that answers at once, never to a SearchState that carries on across patches.
+		if (held.prices.empty() && forestFor(view, held) != nullptr) {
+			auto			   ignore	= [](std::int32_t) {};
+			const std::int32_t startTri = standOn(view, view.locate(start), start, held, ignore);
+			const std::int32_t goalTri	= standOn(view, view.locate(goal), goal, held, ignore);
+			if (startTri >= 0 && goalTri >= 0 && startTri != goalTri && traversable(view, startTri, held) && traversable(view, goalTri, held) &&
+				reachabilityRejects(view, startTri, goalTri, discDiameterMm(agentRadiusMm), held)) {
+				return {};
+			}
+		}
+		SearchState search({start, {goal}, agentRadiusMm, std::move(held), limits.maxCost, 0});
 		search.step(view, limits.maxExpansions == 0 ? kRunToEnd : limits.maxExpansions);
 		return search.result();
 	}

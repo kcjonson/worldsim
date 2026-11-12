@@ -166,7 +166,9 @@ namespace geometry::nav {
 	// Every step must be given the same mesh, unchanged since the search began or last
 	// restarted: ids it holds name that mesh's triangles. A caller that patches the mesh
 	// between steps checks the patch's triangle ids against touches() and restarts the
-	// search on a hit; a search no patch touched may carry on.
+	// search on a hit; a search no patch touched may carry on. So a search reads nothing
+	// outside its touched set: never the reachability forests, which describe the whole
+	// mesh and could drop a goal a later patch opened.
 	//
 	// A search's state is its own (belief included), so any number of searches, on any
 	// threads, may read one mesh at once while nothing writes it; one search is stepped by
@@ -204,7 +206,8 @@ namespace geometry::nav {
 	};
 
 	// Path for a disc of radius agentRadiusMm from start to goal: a SearchState from the
-	// start only, run to the end (or to limits.maxExpansions). A default (empty)
+	// start only, run to the end (or to limits.maxExpansions), unless the reachability
+	// forests prove the goal out of reach first (no expansions then). A default (empty)
 	// BeliefFilter is a truth query that routes exactly as v1 did.
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   const BeliefFilter& belief = {}, const PathLimits& limits = {});
