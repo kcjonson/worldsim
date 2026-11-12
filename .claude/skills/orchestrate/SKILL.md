@@ -99,7 +99,8 @@ Kevin refines requirements as defects show up, and he may contradict something h
 - When he says something new, update the list the same turn, move what it replaces to the superseded section, and correct memory, the spec, and every running agent's brief.
 - Call a contradiction out when it happens: quote the earlier statement with its date, say the new one replaces it, and name what it invalidates (docs, tickets, code built on it, costs that change). Then proceed on the newest. Ask once, as "which holds", only when the new statement looks like a slip.
 - Read history in order and track what each statement replaces. Never settle a point by searching for a sentence.
-- Silence is not agreement. Something an agent proposed and he did not object to is not a requirement, and an agent's own decisions log is not his.
+- Close the loop on every recommendation in the exchange where it is made. If he carries on as though it is agreed, say "taking that as decided" and put it on the list then. A recommendation left hanging gets built differently by someone else and is later remembered by him as a decision and by you as a suggestion.
+- Something an agent proposed to him and he did not answer is not a requirement, and an agent's own decisions log is not his. Bring those to him yourself before anything is built on them.
 - Where his words do not cover a point, the plan's answer is a choice: mark it as one, with its reason. Never present a choice as settled.
 - When a measurement overturns a number he decided on, tell him so, with the number he was given and the number measured.
 - Keep the spec true to the current list. A spec that still states a retired design is how the next agent builds the wrong thing and ten reviews pass it.
