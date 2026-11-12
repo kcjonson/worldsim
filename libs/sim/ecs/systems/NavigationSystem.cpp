@@ -1,7 +1,5 @@
 #include "NavigationSystem.h"
 
-#include "AIDecisionSystem.h"
-
 #include "../World.h"
 #include "../components/AgentRadius.h"
 #include "../components/Colonist.h"
@@ -712,7 +710,9 @@ namespace ecs {
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
 		++tickCount;
-		wakeUnsettledFailures();
+		landedThisUpdate = std::move(groundLanded);
+		groundLanded.clear();
+		std::sort(landedThisUpdate.begin(), landedThisUpdate.end(), ChunkLess{});
 		updateDetail();
 		forgetDroppedRoutes();
 		markCrossedRoutes();
@@ -1605,31 +1605,17 @@ namespace ecs {
 		}
 	}
 
-	void NavigationSystem::wakeUnsettledFailures() {
-		if (groundLanded.empty()) {
-			return;
+	bool NavigationSystem::reachSettledThisUpdate(glm::vec2 meters) const {
+		if (landedThisUpdate.empty()) {
+			return false;
 		}
-		std::vector<world::ChunkCoordinate> landed = std::move(groundLanded);
-		groundLanded.clear();
-		if (world == nullptr) {
-			return;
-		}
-		std::sort(landed.begin(), landed.end(), ChunkLess{});
-		for (auto [entity, position, task] : world->view<Position, Task>()) {
-			// Only a task still standing on the failure: its route failed and the stamp says unsettled.
-			if (task.navState != NavState::CantFindWayTo || task.blockedReachStamp != SourceReachMemo::kUnsettledStamp) {
-				continue;
-			}
-			// The box Reach::settled reads: ground landing in it settles the reach once all of it is in.
-			const geometry::RectMm box	   = boxAround(nav::toMm(position.value), anchorLoadRangeMm());
-			bool				   touched = false;
-			forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
-				touched = touched || std::binary_search(landed.begin(), landed.end(), coord, ChunkLess{});
-			});
-			if (touched && groundMeshedThrough(box)) {
-				requestDecision(task);
-			}
-		}
+		join();
+		const geometry::RectMm box	   = boxAround(nav::toMm(meters), anchorLoadRangeMm());
+		bool				   touched = false;
+		forChunksMeeting(box, [&](world::ChunkCoordinate coord) {
+			touched = touched || std::binary_search(landedThisUpdate.begin(), landedThisUpdate.end(), coord, ChunkLess{});
+		});
+		return touched && groundMeshedThrough(box);
 	}
 
 	void NavigationSystem::markCrossedRoutes() {

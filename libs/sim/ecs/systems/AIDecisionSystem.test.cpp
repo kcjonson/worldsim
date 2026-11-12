@@ -1541,8 +1541,8 @@ namespace ecs::test {
 	} // namespace
 
 	// Tier dominance: a tier-4 active-work-order option, even FAR away (low score), beats a tier-5
-	// actionable-need option that is RIGHT HERE (max score). This is the categorical guarantee the
-	// floors used to fake -- now it falls out of the key, no floor constant needed.
+	// actionable-need option that is RIGHT HERE (max score). The guarantee is the key's tier,
+	// compared first, with no floor constant.
 	TEST_F(AIDecisionSystemTest, TierDominanceWorkOrderBeatsNearerNeed) {
 		EvaluatedOption farWorkOrder;
 		farWorkOrder.taskType = TaskType::Build;
@@ -3123,8 +3123,8 @@ namespace ecs::test {
 	// ========================================================================
 
 	TEST_F(AIDecisionSystemTest, ChainHasNoScoreTermOnlyTierClassification) {
-		// The old +2000 chain SCORE bonus is GONE from arbitration. A mid-chain provisioning task is
-		// now a TIER-4 classification (servesActiveWorkOrder), not a score inflation. The
+		// A mid-chain provisioning task is a tier-4 classification (servesActiveWorkOrder), with no
+		// score term of its own. The
 		// AvailableWorkOrderHaulClassifiesTier4 / ...Tier6 integration tests below exercise that
 		// classification end-to-end through a real trace; this unit test pins the score side: the
 		// within-tier score is composed ONLY of distanceFactor + skill + age + hysteresis, with no
@@ -5048,9 +5048,9 @@ namespace ecs::test {
 		}
 	} // namespace
 
-	// A hungry colonist picks its bush by the walk, inside its own reach square, whatever the camera
-	// does: a bush across a river is as near as the way round its end, and a way round outside the
-	// square is no way at all.
+	// A hungry colonist picks its bush by the walk, whatever the camera does: a bush across a river is
+	// as near as the way round its end, and one whose way round is too long for the search to settle
+	// is far, taken only when no bush has a walk.
 	template <int kFordX> class AIDecisionFordTest : public AIDecisionFirstMeshTest {
 	  protected:
 		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return fordChunks<kFordX>(); }
@@ -5083,7 +5083,7 @@ namespace ecs::test {
 		static constexpr glm::vec2 kAcross{0.0F, 10.0F};
 		static constexpr glm::vec2 kBehind{0.0F, -40.0F};
 	};
-	using AIDecisionFarFordTest	  = AIDecisionFordTest<600>; // the way round is outside the square
+	using AIDecisionFarFordTest	  = AIDecisionFordTest<600>; // about 1.2 km round
 	using AIDecisionNearFordTest  = AIDecisionFordTest<30>;	 // about 70 m round
 	using AIDecisionCloseFordTest = AIDecisionFordTest<8>;	 // about 30 m round
 
@@ -5106,7 +5106,58 @@ namespace ecs::test {
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBehind));
 	}
 
-	// The only food is across, with a way round inside the square: it is taken.
+	namespace {
+		// A river 2 m wide along y = 4 m, ending 600 m east: a point on its far bank is a few metres off in
+		// a straight line and 1.2 km round.
+		class NarrowRiverSampler : public world::IWorldSampler {
+		  public:
+			[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
+				world::ChunkSampleResult r = world::makeUniformChunkSampleResult(world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
+				r.riverSegments.push_back({.x0 = -2048.0, .y0 = 4.0, .x1 = 600.0, .y1 = 4.0, .halfWidth0 = 1.0F, .halfWidth1 = 1.0F, .s0 = 0.0, .s1 = 2648.0});
+				return r;
+			}
+			[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
+			[[nodiscard]] uint64_t getWorldSeed() const override { return 7U; }
+		};
+	} // namespace
+
+	class AIDecisionNarrowRiverTest : public AIDecisionFirstMeshTest {
+	  protected:
+		// Unbounded, the walk to the far bank takes about 800 steps; a wander point's capped walk, a few.
+		static constexpr std::uint32_t kWanderBudget = 64;
+
+		[[nodiscard]] world::ChunkManager* chunkRegion() const override {
+			static const std::unique_ptr<world::ChunkManager> chunks = generateOriginChunks(std::make_unique<NarrowRiverSampler>());
+			return chunks.get();
+		}
+	};
+
+	// A colonist wandering on the bank of a long narrow river never asks about a point across it, with
+	// search budgets small enough that the far bank reads far: a wander point is a short walk, capped by
+	// cost, so no reach search runs out of steps and no far route is asked for, and he keeps to his own
+	// bank.
+	TEST_F(AIDecisionNarrowRiverTest, WanderBesideARiverNeverAsksAcrossIt) {
+		constexpr glm::vec2 kStart{0.0F, 1.5F};
+		nav->setReachBudgets(kWanderBudget, kWanderBudget, 4 * kWanderBudget);
+		const auto colonist = createColonist(kStart);
+		satisfyAllNeeds(*getNeeds(colonist));
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->walk(nav->reachFrom(kStart, 0.3F), {0.0F, 7.0F}).far) << "the far bank should read far unbounded";
+		nav->resetNavQueryStats();
+
+		float farthest = 0.0F;
+		for (int i = 0; i < 300; ++i) {
+			world->update(kTick);
+			const glm::vec2 at = world->getComponent<Position>(colonist)->value;
+			ASSERT_LT(at.y, 4.0F) << "crossed the river at update " << i;
+			farthest = std::max(farthest, glm::distance(at, kStart));
+		}
+		EXPECT_EQ(nav->navQueryStats().farWalks, 0U) << "a wander point was walked to far";
+		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 0U);
+		EXPECT_GT(farthest, 2.0F) << "he never wandered";
+	}
+
+	// The only food is across, about 70 m round: it is taken.
 	TEST_F(AIDecisionNearFordTest, OnlyFoodAcrossIsTakenTheWayRound) {
 		const auto colonist = hungryColonistKnowing({kAcross});
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kAcross));
@@ -5695,7 +5746,46 @@ namespace ecs::test {
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kBush));
 	}
 
-	// The old regions' hold, flipped: the nearest water the colonist knows is in a chunk nothing loads
+	// A colonist whose route failed while chunk (1, 0) was still arriving (stamped unsettled), and who
+	// has had his prompt decision on it, decides on the update that lands that ground, not before and
+	// not on the re-decide interval. The route request is real: a move order across the river, whose way
+	// round needs chunk (1, 0).
+	TEST_F(AIDecisionArrivingGroundTest, GroundSettlingAnUnsettledFailureWakesItsColonist) {
+		constexpr float kShortTick = 0.01F;
+		const auto		colonist   = createColonist(kAt);
+		satisfyAllNeeds(*getNeeds(colonist));
+		nav->finishPendingBuilds();
+		world->update(kShortTick);
+		stream({256.0F, 256.0F});
+		ASSERT_FALSE(nav->reachFrom(kAt, 0.3F).settled);
+		ASSERT_TRUE(world->getSystem<AIDecisionSystem>().issuePlayerMoveOrder(colonist, kBush).has_value());
+		Task& task = *getTask(colonist);
+		ASSERT_EQ(task.navState, NavState::CantFindWayTo);
+		ASSERT_EQ(task.blockedReachStamp, SourceReachMemo::kUnsettledStamp);
+		// He stands on the failure after the prompt decision, as a wander whose route failed does.
+		task.type				 = TaskType::Wander;
+		task.routeFailureDecided = true;
+		const float decided		 = getTrace(colonist)->lastEvaluationTime;
+
+		// Bare updates, as the game runs them: a query between them would join the job early.
+		int landedAt = -1;
+		for (int i = 0; i < 20 && landedAt < 0; ++i) {
+			const std::uint64_t patches = nav->navQueryStats().structuralPatches;
+			world->update(kShortTick);
+			const bool woken = getTrace(colonist)->lastEvaluationTime != decided;
+			if (nav->navQueryStats().structuralPatches > patches) {
+				landedAt = i;
+				EXPECT_TRUE(woken) << "no decision on the update its ground landed";
+			} else {
+				ASSERT_FALSE(woken) << "decided before its ground landed, update " << i;
+			}
+		}
+		ASSERT_GE(landedAt, 0) << "chunk (1, 0)'s ground never landed";
+		EXPECT_TRUE(nav->reachFrom(kAt, 0.3F).settled);
+	}
+
+
+	// The nearest water the colonist knows is in a chunk nothing loads
 	// (3 km off), the other on meshed ground 35 m off. Reach never says "maybe" for ground no pending
 	// work will mesh, so the far water is never chosen; he goes to the near water and drinks.
 	TEST_F(AIDecisionFirstMeshTest, WaterInGroundNothingLoadsIsNeverChosen) {
@@ -5879,8 +5969,8 @@ namespace ecs::test {
 		EntityID colonist = kInvalidEntity;
 	};
 
-	// Pile 100 m west, station 100 m east: both in the square round the colonist when it chose, the
-	// deposit 200 m from the pickup. The stone arrives and the delivery is done.
+	// Pile 100 m west, station 100 m east, the deposit 200 m from the pickup. The stone arrives and the
+	// delivery is done.
 	TEST_F(AIDecisionHaulLegTest, DepositTwoHundredMetresFromThePickupIsDelivered) {
 		pile({-100.0F, 0.0F}, 3);
 		const EntityID to = station({100.0F, 0.0F}, 3);
@@ -5890,8 +5980,8 @@ namespace ecs::test {
 		EXPECT_FALSE(delivering(to));
 	}
 
-	// Stone from two piles in one square to one station: it all arrives.
-	TEST_F(AIDecisionHaulLegTest, HaulFromTwoPilesInOneSquareIsDelivered) {
+	// Stone from two piles to one station: it all arrives.
+	TEST_F(AIDecisionHaulLegTest, HaulFromTwoPilesIsDelivered) {
 		pile({-60.0F, 0.0F}, 2);
 		pile({-80.0F, 10.0F}, 1);
 		const EntityID to = station({60.0F, 0.0F}, 3);
@@ -5899,9 +5989,6 @@ namespace ecs::test {
 		EXPECT_EQ(at(to), 3U);
 	}
 
-	// A route that failed is held as a verdict while the colonist stays in the square it failed in, so a
-	// colonist wandering about one spot never picks the failed target again: here, 40 decisions from
-	// points up to 50 m round the spot. Leaving the square drops the verdict, so it may pick it once more
 	// requestDecision has a colonist mid-interval, walking to water, decide at the AI's next update; without
 	// it the next update decides nothing.
 	TEST_F(AIDecisionFirstMeshTest, RequestDecisionDecidesAtTheNextUpdate) {
@@ -5924,7 +6011,25 @@ namespace ecs::test {
 		EXPECT_NE(getTrace(colonist)->lastEvaluationTime, decided) << "no decision at the next update";
 	}
 
-	// (at most once per anchor: after the next failure the verdict holds again).
+	// Clearing a task forgets its route failure and the source it was for.
+	TEST(TaskClear, ForgetsTheFailedRoute) {
+		Task task;
+		task.navState			 = NavState::CantFindWayTo;
+		task.blockedReachStamp	 = SourceReachMemo::kUnsettledStamp;
+		task.blockedSearchGaveUp = true;
+		task.needSourceKey		 = 42;
+		task.clear();
+		EXPECT_EQ(task.navState, NavState::Traveling);
+		EXPECT_EQ(task.blockedReachStamp, 0U);
+		EXPECT_FALSE(task.blockedSearchGaveUp);
+		EXPECT_EQ(task.needSourceKey, 0U);
+	}
+
+	// A route that failed is held as a verdict while the colonist stays within the anchor load range of
+	// where it failed, so a colonist wandering about one spot never picks the failed target again: here,
+	// 40 decisions from points up to 50 m round the spot. Leaving that range moves the anchor and drops
+	// the verdict, so it may pick it once more (at most once per anchor: after the next failure the
+	// verdict holds again).
 	TEST_F(AIDecisionFirstMeshTest, WanderingColonistDoesNotRepickAFailedRoute) {
 		constexpr glm::vec2 kSpot{0.0F, 0.0F};
 		constexpr glm::vec2 kNear{5.0F, 0.0F};
@@ -5979,16 +6084,13 @@ namespace ecs::test {
 		EXPECT_EQ(repicks, 0) << "wandering round the spot picked the failed route again";
 
 		getTask(colonist)->clear();
-		decideAt({200.0F, 0.0F}); // out of the anchor's square: the anchor moves here
+		decideAt({200.0F, 0.0F}); // past the anchor's range: the anchor moves here
 		getTask(colonist)->clear();
 		EXPECT_EQ(decideAt(kSpot), std::optional<glm::vec2>(kNear)) << "back, under a new anchor, it may try once more";
 		failRoute(kSpot);
 		EXPECT_EQ(decideAt(kSpot), std::optional<glm::vec2>(kFar));
 	}
 
-	// A failed route to water 600 m off, far past the ground the anchor's stamp covers, is forgotten once
-	// a wall beside the water goes: the stamp of the ground between the colonist and the water moved. A
-	// wall built well off that ground changes nothing.
 	// The far path end to end, with search budgets small enough that every walk here is far: water 60 m
 	// off, past a wall the colonist doesn't know (so the two ends are in different triangles), is far,
 	// chosen as the only candidate, and its route found by the far route search; he walks there.
@@ -6091,6 +6193,47 @@ namespace ecs::test {
 		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 4U) << "the room whose wall came down wasn't tried again, or others were";
 	}
 
+	// A route search that gives up while ground near the colonist is still to come is recorded all the
+	// same: by the east edge of the loaded region, so his reach never settles, with water in a room whose
+	// walls he knows and budgets small enough that every search gives up, the water is asked for once,
+	// not at every decision.
+	TEST_F(AIDecisionWallTest, GaveUpRouteIsRecordedWhileGroundIsArriving) {
+		constexpr glm::vec2 kAt{1450.0F, 0.0F};
+		constexpr glm::vec2 kWater{1480.0F, 0.0F};
+		const auto			colonist = createColonist(kAt);
+		satisfyAllNeeds(*getNeeds(colonist));
+		world->getComponent<Inventory>(colonist)->addItem("Berry", 1);
+		setNeedValue(colonist, NeedType::Thirst, 30.0F);
+		const std::array<geometry::Vec2i64, 4> corners{{{1478000, -2000}, {1482000, -2000}, {1482000, 2000}, {1478000, 2000}}};
+		for (std::size_t i = 0; i < corners.size(); ++i) {
+			const auto commit = construction.commitSegment(corners[i], corners[(i + 1) % corners.size()], "Wood", "Standard", construction::kInvalidFoundation);
+			ASSERT_TRUE(commit.ok());
+			for (const auto id : commit.createdSegments) {
+				construction.setSegmentState(id, construction::FoundationState::Built);
+				world->getComponent<Memory>(colonist)->rememberSegment(static_cast<std::uint64_t>(id));
+			}
+		}
+		addKnownEntity(colonist, kWater, kWaterDefId, assets::CapabilityType::Drinkable);
+		nav->setReachBudgets(1, 1, 10);
+		nav->finishPendingBuilds();
+		ASSERT_FALSE(nav->reachFrom(kAt, 0.3F).settled) << "the chunk east of him should never load";
+		nav->resetNavQueryStats();
+
+		for (int i = 0; i < 60; ++i) {
+			world->getComponent<Position>(colonist)->value = kAt;
+			world->update(kTick);
+		}
+		EXPECT_EQ(nav->navQueryStats().routeSearchesGaveUp, 1U) << "the water was asked for again";
+		const auto* thirst = findOption(*getTrace(colonist), [](const EvaluatedOption& o) {
+			return o.taskType == TaskType::FulfillNeed && o.needType == NeedType::Thirst;
+		});
+		ASSERT_NE(thirst, nullptr);
+		EXPECT_EQ(thirst->status, OptionStatus::SearchGaveUp);
+	}
+
+	// A failed route to water 600 m off, far past the ground the anchor's stamp covers, is forgotten once
+	// a wall beside the water goes: the stamp of the ground between the colonist and the water moved. A
+	// wall built well off that ground changes nothing.
 	TEST_F(AIDecisionWallTest, FailedRouteToAFarTargetClearsWhenAWallBesideItGoes) {
 		constexpr glm::vec2 kSpot{0.0F, 0.0F};
 		constexpr glm::vec2 kWater{600.0F, 0.0F};
@@ -6276,7 +6419,7 @@ namespace ecs::test {
 	};
 
 	// The walled-in water reads unreachable, so the colonist goes for the next water and never for that
-	// one, and a change to the mesh in its reach square asks the room again and finds it still closed.
+	// one, and a structural change asks the room again and finds it still closed.
 	TEST_F(AIDecisionWalledWaterTest, WalledWaterSendsTheNeedToTheNextSource) {
 		const auto colonist = makeThirstyColonistWithWalledWater();
 
@@ -6292,7 +6435,7 @@ namespace ecs::test {
 		rebuildRegionMesh();
 		const auto reachAfter = nav->reachFrom(here, 0.3F);
 		EXPECT_EQ(reachAfter.startCell, reachBefore.startCell);
-		EXPECT_NE(reachAfter.structuralEpoch, reachBefore.structuralEpoch) << "a wall in the square moves the key";
+		EXPECT_NE(reachAfter.structuralEpoch, reachBefore.structuralEpoch) << "a structural change moves the key";
 
 		choseRoom	 = 0;
 		choseOutside = 0;

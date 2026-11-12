@@ -42,7 +42,7 @@
 
 #include "../EntityID.h"
 #include "../ISystem.h"
-#include "../components/SourceReachMemo.h"
+#include "../components/WalkAnswer.h"
 
 #include <core/RectMm.h>
 #include <core/Vec2i64.h>
@@ -199,6 +199,11 @@ class NavigationSystem : public ISystem {
 		bool						settled = true;
 		geometry::nav::BeliefFilter belief;
 	};
+	// Ground landed at this update's join (reachSettledThisUpdate), cleared at the next update.
+	[[nodiscard]] bool groundLandedThisUpdate() const { return !landedThisUpdate.empty(); }
+	// The ground this update's join landed is what settled a reach from `meters` (Reach::settled):
+	// some of it is in a chunk the reach box meets, and every such chunk is meshed now.
+	[[nodiscard]] bool reachSettledThisUpdate(glm::vec2 meters) const;
 	[[nodiscard]] Reach reachFrom(glm::vec2 startMeters, float agentRadiusMeters, geometry::nav::BeliefFilter belief = {}) const;
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
 	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or none when it
@@ -650,13 +655,6 @@ class NavigationSystem : public ISystem {
 	void markCrossedRoutes();
 	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
 	void markStrayedRoutes();
-	// A mover whose task stands on a route failure stamped unsettled (navState CantFindWayTo,
-	// SourceReachMemo::kUnsettledStamp) decides again (requestDecision) on the update whose join lands
-	// the ground that settles its reach: ground in a chunk within
-	// the anchor load range of it, after which every such chunk is meshed. Run after the join, before
-	// the AI. Waiting goals need nothing here: their ground landing moves generation(), and the AI
-	// retries them on that.
-	void wakeUnsettledFailures();
 	void forgetDroppedRoutes();
 	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
 	using RouteSet = std::unordered_map<std::uint64_t, std::vector<glm::vec2>>;
@@ -734,8 +732,10 @@ class NavigationSystem : public ISystem {
 	mutable std::uint64_t structuralEpoch = 0;
 	// Structural changes per chunk, for the reach stamps, counted at the join.
 	mutable std::map<world::ChunkCoordinate, std::uint64_t, ChunkLess> chunkStructuralVersion;
-	// The chunks whose ground the joins since the last update landed (wakeUnsettledFailures).
+	// The chunks whose ground the joins since the last update landed, and those the last update took,
+	// sorted (reachSettledThisUpdate).
 	mutable std::vector<world::ChunkCoordinate> groundLanded;
+	std::vector<world::ChunkCoordinate>			landedThisUpdate;
 	mutable std::set<world::ChunkCoordinate, ChunkLess>				 unmeshedReported; // logged once each (groundMeshedThrough)
 	mutable geometry::Ring												 colliderScratch;  // placedObstacleAt
 	std::vector<glm::vec2>												 anchors;

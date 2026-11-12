@@ -350,6 +350,13 @@ private:
 	/// goods it carries; routed again, all its claims.
 	void applyNavOutcome(EntityID entity, struct Task& task, NavRequestOutcome outcome);
 
+	/// A colonist whose task stands on a route failure stamped unsettled (CantFindWayTo,
+	/// SourceReachMemo::kUnsettledStamp) decides this update (requestDecision) when the ground nav
+	/// landed this frame settled his reach (NavigationSystem::reachSettledThisUpdate). Nothing to do on
+	/// a frame that landed none. A task waiting for its goal's ground needs no wake: that ground
+	/// landing moves generation(), and update() retries it on that.
+	void wakeSettledFailures();
+
 	/// About to wander or gather food holding a two-hand armful that no root it knows wants: put it down as
 	/// a loose pile (the drop path, which merges it into a pile at the spot). A carried packaged item is
 	/// never one.
