@@ -143,6 +143,41 @@ struct SuspendedWork {
 	BasicClaimList<2> claims;
 };
 
+/// One source a need's route request names: where the source is, where a route to it ends (beside the
+/// placed obstacle it lies in, or the source itself), and what the task takes from it (the Task fields
+/// of the same names).
+struct SourceChoice {
+	glm::vec2	  target{0.0F, 0.0F};
+	glm::vec2	  goal{0.0F, 0.0F};
+	std::uint64_t sourceKey = 0;
+	std::uint64_t storageId = 0;
+	std::uint32_t itemDefNameId = 0;
+	std::uint32_t quantity = 0;
+};
+
+/// The sources a need's nearest-of route request names, nearest by straight line first; the route's
+/// answer picks one. Fixed capacity, so a task never needs the heap for them.
+class SourceChoices {
+  public:
+	static constexpr std::uint8_t kCapacity = 8;
+
+	void clear() { count = 0; }
+	void push(const SourceChoice& choice) {
+		if (count < kCapacity) {
+			items[count++] = choice;
+		}
+	}
+	[[nodiscard]] std::uint8_t		  size() const { return count; }
+	[[nodiscard]] bool				  empty() const { return count == 0; }
+	[[nodiscard]] const SourceChoice& operator[](std::uint8_t index) const { return items[index]; }
+	[[nodiscard]] const SourceChoice* begin() const { return items.data(); }
+	[[nodiscard]] const SourceChoice* end() const { return items.data() + count; }
+
+  private:
+	std::array<SourceChoice, kCapacity> items{};
+	std::uint8_t						count = 0;
+};
+
 /// Task types that colonists can perform. Arbitration tiers (assigned in priority-tuning.xml's
 /// <TaskTiers> + classifyTier promotions): see colonist-task-arbitration.md.
 enum class TaskType : uint8_t {
@@ -186,11 +221,6 @@ struct Task {
 	// is requested again once generation() moves off this value: a structural build has landed
 	// where the route was asked about.
 	std::uint64_t deferredNavGeneration = 0;
-	// SourceReachMemo::Anchor::stamp() of the colonist's verdicts when the route came back with no
-	// believed route (navState CantFindWayTo). The next decision records needSourceKey unreachable only
-	// while its own anchor still stamps the same, so the verdict never outlives the structural mesh and
-	// belief it was found under, and a change outside the anchor's reach doesn't stop it being recorded.
-	std::uint64_t blockedReachStamp = 0;
 	// The route asked of NavigationSystem::requestRoute and not yet answered; 0 for none. Survives
 	// clear(): the AI cancels it (NavigationSystem::cancelRoute) once the task it was asked for ends.
 	std::uint64_t routeTicket = 0;
@@ -214,6 +244,9 @@ struct Task {
 	// pile at a source's centre); nullopt when targetPosition is the target. Arrival is judged at
 	// targetPosition, the work done on this.
 	std::optional<glm::vec2> obstructedTarget;
+	// The sources a need's route was asked for at once, until its answer picks one (the task holds the
+	// first meanwhile); empty once routed, and for every task with one target.
+	SourceChoices sourceChoices;
 	// Memory key of the remembered source a FulfillNeed task is heading for; 0 for none (ground, pack).
 	// Copied from the selected EvaluatedOption::sourceKey, kept on the task so a failed route can name it.
 	std::uint64_t needSourceKey = 0;
@@ -332,7 +365,7 @@ struct Task {
 		state = TaskState::Pending;
 		navState = NavState::Traveling;
 		deferredNavGeneration = 0;
-		blockedReachStamp = 0;
+		sourceChoices.clear();
 		routeBeliefVersion = 0;
 		routeGoal = glm::vec2{0.0F, 0.0F};
 		routeWaitTicks = 0;

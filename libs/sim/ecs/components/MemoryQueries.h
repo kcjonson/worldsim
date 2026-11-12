@@ -5,7 +5,7 @@
 // See /docs/design/game-systems/colonists/memory.md for design details.
 
 #include "Memory.h"
-#include "WalkAnswer.h"
+#include "Task.h"
 
 #include "../EntityID.h"
 
@@ -14,9 +14,8 @@
 #include <glm/geometric.hpp>
 
 #include <algorithm>
-#include <cmath>
+#include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
 #include <tuple>
 #include <vector>
@@ -29,11 +28,15 @@ namespace ecs {
 /// @returns Vector of known entities with the capability
 [[nodiscard]] std::vector<KnownWorldEntity> findKnownWithCapability(const Memory& memory, assets::CapabilityType capability);
 
-/// A source and its squared distance, as nearestReachable orders them: the straight line until its walk
-/// has been measured (`walked`), the walk after. A remembered world entity has
-/// `entity`; a storage box the colony knows has `storage` instead, `key` its world key, `item` what it is
-/// a source of (also set for a loose pile, whose entity is the item itself), and `storageIndex` its place
-/// in the caller's list of boxes.
+/// How many sources one need decision asks a route for at once: its nearest-of request names this many
+/// goals, the nearest by straight line that pass its filter, and the task holds them (SourceChoices).
+inline constexpr std::size_t kNearestOfCount = SourceChoices::kCapacity;
+
+/// A source and its squared straight-line distance. A remembered world entity has `entity`; a storage
+/// box the colony knows has `storage` instead, `key` its world key, `item` what it is a source of (also
+/// set for a loose pile, whose entity is the item itself), and `storageIndex` its place in the caller's
+/// list of boxes. `goal` is where a route to it ends: the source itself, or the stand point beside the
+/// placed obstacle it lies in, set by whoever admits it.
 struct SourceCandidate {
 	float					distSq;
 	uint64_t				key;
@@ -42,118 +45,86 @@ struct SourceCandidate {
 	uint32_t				item = 0;
 	EntityID				storage = kInvalidEntity;
 	uint32_t				storageIndex = 0;
-	bool					walked		 = false;
-	bool					stretched	 = false; // walked once, to kWalkStretch times the straight line, and found longer
-	float					straightSq	 = 0.0F;  // the straight line, squared, whatever distSq has become
+	glm::vec2				goal{0.0F, 0.0F};
 };
 
-/// How far a candidate is first walked when no walk has been found yet: this many times its straight-line
-/// distance. One that winds farther goes back keyed at that bound, and is walked in full (or to the best
-/// walk found by then) when it comes off again.
-inline constexpr float kWalkStretch = 2.0F;
+/// A candidate at `position` seen from `fromPosition`.
+[[nodiscard]] inline SourceCandidate sourceCandidate(const glm::vec2& fromPosition, uint64_t key, const glm::vec2& position) {
+	const glm::vec2 diff = position - fromPosition;
+	return {.distSq = glm::dot(diff, diff), .key = key, .entity = nullptr, .position = position, .goal = position};
+}
 
-/// How much nearer by walk another source must be to take over from the one the colonist is heading for.
-/// A walk is held for a whole reach cell (SourceReachMemo::Key, NavigationSystem::kReachCellMm, 2 m), so
-/// two walks compared in one decision can start up to the cell's diagonal apart; within that, which is
-/// nearer is noise, and a colonist walking toward one of two sources a metre apart would flip between
-/// them at every decision.
-inline constexpr float kKeepSourceMargin = 2.9F;
+/// The candidate keyed `keepKey` (the source the colonist is heading for) comes off first, whatever its
+/// distance.
+inline void putKeptFirst(std::vector<SourceCandidate>& scratch, std::optional<uint64_t> keepKey) {
+	if (!keepKey.has_value()) {
+		return;
+	}
+	for (SourceCandidate& candidate : scratch) {
+		if (candidate.key == *keepKey) {
+			candidate.distSq = -1.0F;
+		}
+	}
+}
 
-/// Pop `scratch`'s candidates nearest by walk first, ties broken by key and then item (every item in one
-/// box shares the box's key) so the pick is deterministic, until `reachable(candidate)` admits one. A
-/// candidate keyed `keepKey` (the source the colonist is heading for) counts kKeepSourceMargin nearer.
-/// `walk(candidate, maxWalk)` measures the walk to a candidate, nullopt when it is unreachable or longer
-/// than maxWalk. A straight line is never longer than the walk, so candidates come off nearest by straight
-/// line, each is walked and goes back keyed by its walk, and one that comes off walked is the nearest walk
-/// left: a candidate that is no nearer in a straight line than the best walk found is never walked. A
-/// walk is asked no longer than the best one found, and one that is goes back keyed at that bound, to
-/// be walked in full if it comes off again. An unreachable candidate goes to `reachable` as it comes
-/// off, so the caller still sees it. A far candidate (the search gave up, WalkAnswer) is set aside: far
-/// candidates are taken only when no candidate with a walk is, nearest first by straight line, since
-/// nothing is known of their walks.
-template <typename Walk, typename Reachable>
-[[nodiscard]] std::optional<SourceCandidate>
-nearestReachable(std::vector<SourceCandidate>& scratch, Walk&& walk, Reachable&& reachable, std::optional<uint64_t> keepKey = std::nullopt) {
+/// Hand `scratch`'s candidates to `visit` nearest by straight line first, ties broken by key and then
+/// item (every item in one box shares the box's key) so the order is deterministic, until it returns
+/// false. Only the candidates handed over are ordered (a heap), and `scratch` is consumed. True when
+/// every candidate was handed over.
+template <typename Visit> bool visitNearestFirst(std::vector<SourceCandidate>& scratch, Visit&& visit) {
 	const auto farther = [](const SourceCandidate& a, const SourceCandidate& b) {
 		return std::tie(a.distSq, a.key, a.item) > std::tie(b.distSq, b.key, b.item);
 	};
-	constexpr float				 kAnyWalk = std::numeric_limits<float>::infinity();
-	// distSq is the heap key: the kept candidate's distance less the margin, squared; a bound read from
-	// the heap is in the same terms, so the kept candidate's walk is asked the margin longer.
-	const auto margin = [&](const SourceCandidate& c) { return keepKey == c.key ? kKeepSourceMargin : 0.0F; };
-	const auto keyed  = [&](const SourceCandidate& c, float metres) {
-		 const float m = std::max(0.0F, metres - margin(c));
-		 return m * m;
-	};
-	if (keepKey.has_value()) {
-		for (SourceCandidate& candidate : scratch) {
-			candidate.distSq = keyed(candidate, std::sqrt(candidate.distSq));
-		}
-	}
-	std::vector<SourceCandidate> farAway;
 	std::make_heap(scratch.begin(), scratch.end(), farther);
 	while (!scratch.empty()) {
 		std::pop_heap(scratch.begin(), scratch.end(), farther);
 		SourceCandidate nearest = scratch.back();
 		scratch.pop_back();
-		if (!nearest.walked) {
-			float best = kAnyWalk; // the nearest walk still to come off, squared
-			for (const SourceCandidate& other : scratch) {
-				if (other.walked) {
-					best = std::min(best, other.distSq);
-				}
-			}
-			// Bounded by the best walk found; with none yet, by kWalkStretch times the straight line the
-			// first time, and in full the next.
-			const bool				   firstWalk = best == kAnyWalk && !nearest.stretched;
-			const float				   bound	 = best != kAnyWalk ? std::sqrt(best) : (firstWalk ? kWalkStretch * std::sqrt(nearest.distSq) : kAnyWalk);
-			const WalkAnswer		   answer	 = walk(nearest, bound + margin(nearest));
-			const std::optional<float> measured	 = answer.walk;
-			if (answer.far) {
-				farAway.push_back(nearest);
-				continue;
-			}
-			if (measured.has_value()) {
-				nearest.distSq = keyed(nearest, *measured);
-				nearest.walked = true;
-				scratch.push_back(nearest);
-				std::push_heap(scratch.begin(), scratch.end(), farther);
-				continue;
-			}
-			if (bound != kAnyWalk) {
-				// Longer than the bound: keyed just past it, which no walk there can be shorter than, so it
-				// comes off again before any candidate whose walk is longer.
-				nearest.distSq	  = std::nextafter(bound * bound, kAnyWalk);
-				nearest.stretched = nearest.stretched || firstWalk;
-				scratch.push_back(nearest);
-				std::push_heap(scratch.begin(), scratch.end(), farther);
-				continue;
-			}
-		}
-		if (reachable(nearest)) {
-			return nearest;
+		if (!visit(nearest)) {
+			return scratch.empty();
 		}
 	}
-	std::sort(farAway.begin(), farAway.end(), [](const SourceCandidate& a, const SourceCandidate& b) {
-		return std::tie(a.straightSq, a.key, a.item) < std::tie(b.straightSq, b.key, b.item);
+	return true;
+}
+
+/// Into `chosen`, up to `limit` of `scratch`'s candidates that `admit(candidate)` takes (it may set the
+/// candidate's goal), nearest by straight line first. The candidate keyed `keepKey` is asked first, and
+/// when it is taken it is chosen alone: a colonist heading for a source keeps it while it stands.
+template <typename Admit>
+void nearestAdmitted(
+	std::vector<SourceCandidate>& scratch, std::vector<SourceCandidate>& chosen, Admit&& admit, std::size_t limit,
+	std::optional<uint64_t> keepKey = std::nullopt
+) {
+	chosen.clear();
+	putKeptFirst(scratch, keepKey);
+	visitNearestFirst(scratch, [&](SourceCandidate& candidate) {
+		if (!admit(candidate)) {
+			return true;
+		}
+		chosen.push_back(candidate);
+		return keepKey != candidate.key && chosen.size() < limit;
 	});
-	for (const SourceCandidate& candidate : farAway) {
-		if (reachable(candidate)) {
-			return candidate;
+}
+
+/// Every known world entity with `capability` that `accept(memoryKey, entity)` admits, as candidates seen
+/// from `fromPosition`, into `scratch` (caller-owned and reused, so no allocation once it has grown).
+template <typename Accept>
+void collectWithCapability(
+	const Memory& memory, assets::CapabilityType capability, const glm::vec2& fromPosition, Accept&& accept, std::vector<SourceCandidate>& scratch
+) {
+	scratch.clear();
+	for (uint64_t key : memory.getEntitiesWithCapability(capability)) {
+		const auto* entity = memory.getWorldEntity(key);
+		if (entity != nullptr && accept(key, *entity)) {
+			SourceCandidate candidate = sourceCandidate(fromPosition, key, entity->position);
+			candidate.entity = entity;
+			scratch.push_back(candidate);
 		}
 	}
-	return std::nullopt;
 }
 
-/// A candidate at `position` seen from `fromPosition`.
-[[nodiscard]] inline SourceCandidate sourceCandidate(const glm::vec2& fromPosition, uint64_t key, const glm::vec2& position) {
-	const glm::vec2 diff = position - fromPosition;
-	return {.distSq = glm::dot(diff, diff), .key = key, .entity = nullptr, .position = position, .straightSq = glm::dot(diff, diff)};
-}
-
-/// The nearest known world entity with `capability`, ties broken by memory key: what
-/// findNearestReachableWithCapability picks when it accepts and reaches every candidate, in one pass
-/// with no candidate list.
+/// The nearest known world entity with `capability` by straight line, ties broken by memory key, in one
+/// pass with no candidate list.
 [[nodiscard]] inline std::optional<KnownWorldEntity>
 findNearestWithCapability(const Memory& memory, assets::CapabilityType capability, const glm::vec2& fromPosition) {
 	const KnownWorldEntity* best = nullptr;
@@ -170,37 +141,6 @@ findNearestWithCapability(const Memory& memory, assets::CapabilityType capabilit
 		}
 	}
 	return best != nullptr ? std::optional<KnownWorldEntity>{*best} : std::nullopt;
-}
-
-/// Find the known world entity with `capability` that `accept(memoryKey, entity)` admits and
-/// `reachable(memoryKey, position)` confirms, nearest by walk: `walk(memoryKey, position, maxWalk)` is the
-/// walk there in metres, nullopt when unreachable or longer than maxWalk. One pass over Memory's capability
-/// index collects the accepted candidates into `scratch` (caller-owned and reused, so no allocation once
-/// it has grown to fit), then nearestReachable takes them nearest by walk, ties broken by memory key so
-/// the pick is deterministic, the source keyed `keepKey` kept within kKeepSourceMargin.
-template <typename Accept, typename Walk, typename Reachable>
-[[nodiscard]] std::optional<KnownWorldEntity> findNearestReachableWithCapability(
-	const Memory&				  memory,
-	assets::CapabilityType		  capability,
-	const glm::vec2&			  fromPosition,
-	Accept&&					  accept,
-	Walk&&						  walk,
-	Reachable&&					  reachable,
-	std::vector<SourceCandidate>& scratch,
-	std::optional<uint64_t>		  keepKey = std::nullopt) {
-	scratch.clear();
-	for (uint64_t key : memory.getEntitiesWithCapability(capability)) {
-		const auto* entity = memory.getWorldEntity(key);
-		if (entity != nullptr && accept(key, *entity)) {
-			SourceCandidate candidate = sourceCandidate(fromPosition, key, entity->position);
-			candidate.entity = entity;
-			scratch.push_back(candidate);
-		}
-	}
-	const auto found = nearestReachable(
-		scratch, [&](const SourceCandidate& candidate, float maxWalk) { return walk(candidate.key, candidate.position, maxWalk); },
-		[&](const SourceCandidate& candidate) { return reachable(candidate.key, candidate.position); }, keepKey);
-	return found.has_value() ? std::optional<KnownWorldEntity>{*found->entity} : std::nullopt;
 }
 
 } // namespace ecs

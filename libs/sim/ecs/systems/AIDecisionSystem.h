@@ -19,6 +19,7 @@
 #include "../ISystem.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
+#include "../components/SourceReachMemo.h"
 #include "../components/Task.h"
 #include "GoalSystemHelpers.h"
 #include "WorkSources.h"
@@ -298,7 +299,7 @@ private:
 	/// @param currentTask Current task (used to preserve target when already pursuing a need)
 	/// @param inventory Colonist inventory (for checking food availability)
 	/// @param skills Optional colonist skills (for skill bonus calculation)
-	/// @param sourceReach The colonist's remembered reach verdicts for its known sources
+	/// @param sourceReach The colonist's route verdicts (targets a route found no known way to)
 	void buildDecisionTrace(
 		EntityID entity,
 		const struct Position& position,
@@ -334,9 +335,10 @@ private:
 
 	/// Apply the answer to the task's route once nav has one; nothing while it is out, and a ticket nav no
 	/// longer holds is asked again. An answer for a goal the task has since left is dropped and the current
-	/// target asked for. Routed: the route is attached from where he now stands (joinRoute), stamped with
-	/// the belief it was asked under and the current nav generation, and he walks it. No known way: he
-	/// stops (NavState::CantFindWayTo, failRoute). Start off the mesh: not a failure, he waits
+	/// target asked for. Routed: a need asked for several sources (Task::sourceChoices) heads for the one
+	/// the route reached, its claim moved there; the route is attached from where he now stands
+	/// (joinRoute), stamped with the belief it was asked under and the current nav generation, and he
+	/// walks it. No known way: he stops (NavState::CantFindWayTo, failRoute), a verdict on every target. Start off the mesh: not a failure, he waits
 	/// (AwaitingMesh) and asks again once the nav generation moves. No known way for a colonist the snap
 	/// holds inside a placed obstacle is "not now": he stands (awaitingSnap) until the snap lets go.
 	void takeRouteAnswer(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
@@ -347,10 +349,20 @@ private:
 	/// placed thing (a harvest's source), always asked of standPointBeside. nullopt: nowhere to stand.
 	[[nodiscard]] std::optional<glm::vec2> standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const;
 
-	/// The route stands as failed: stopped, CantFindWayTo, stamped for the next decision to record
-	/// (buildDecisionTrace) so he takes his next choice.
-	void failRoute(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
-				   struct MovementTarget& movementTarget);
+	/// The route stands as failed: stopped, CantFindWayTo, and a verdict on every target it was asked for
+	/// (SourceReachMemo), found under `foundUnder` (a route answer's label epoch and the belief it was asked
+	/// under; nullopt, as things stand now), so the next decision takes his next choice.
+	void failRoute(EntityID entity, struct Task& task, const struct Memory& memory, struct MovementTarget& movementTarget,
+				   std::optional<SourceReachMemo::Key> foundUnder = std::nullopt);
+
+	/// The task heads for its `index`th source choice: its target, goal, and what it takes from it.
+	static void takeSourceChoice(struct Task& task, std::uint8_t index);
+
+	/// Where a need option's source choices are kept while the colonist decides: one slot per need, and
+	/// one for the gather-food option.
+	[[nodiscard]] static std::size_t needChoiceSlot(NeedType needType, bool gathersFood) {
+		return gathersFood ? static_cast<std::size_t>(NeedType::Count) : static_cast<std::size_t>(needType);
+	}
 
 	/// Cancel the task's route still out, if any.
 	void dropRoute(struct Task& task);
@@ -358,13 +370,6 @@ private:
 	/// Set the task's nav state. Entering or leaving the failed state (CantFindWayTo) re-files the task
 	/// in this update's index: failed, it holds only the goods it carries; routed again, all its claims.
 	void setNavState(EntityID entity, struct Task& task, NavState navState);
-
-	/// A colonist whose task stands on a route failure stamped unsettled (CantFindWayTo,
-	/// SourceReachMemo::kUnsettledStamp) decides this update (requestDecision) when the ground nav
-	/// landed this frame settled his reach (NavigationSystem::reachSettledThisUpdate). Nothing to do on
-	/// a frame that landed none. A task waiting for the mesh under him (AwaitingMesh) needs no wake:
-	/// that ground landing moves generation(), and update() asks again on that.
-	void wakeSettledFailures();
 
 	/// About to wander or gather food holding a two-hand armful that no root it knows wants: put it down as
 	/// a loose pile (the drop path, which merges it into a pile at the spot). A carried packaged item is
@@ -419,6 +424,10 @@ private:
 
 	/// Reused candidate storage for need-source queries, so a decision allocates nothing once it has grown
 	std::vector<SourceCandidate> sourceScratch;
+	std::vector<SourceCandidate> m_chosenScratch;
+
+	/// The deciding colonist's source choices per need option (needChoiceSlot), read by selectTaskFromTrace
+	std::array<SourceChoices, static_cast<std::size_t>(NeedType::Count) + 1> m_needChoices{};
 
 	/// The deciding colonist's remembered work sources, reused across colonists
 	WorkSources m_workSources;
@@ -471,9 +480,6 @@ private:
 	/// The base tiers as of PriorityConfig::generation() m_baseTiersGeneration, read again when it moves
 	BaseTiers m_baseTiers{};
 	uint64_t  m_baseTiersGeneration = 0;
-
-	/// SourceReachMemo::Anchor::stamp() of the colonist being decided this update (0 without a mesh)
-	std::uint64_t reachStamp = 0;
 
 	/// How often to re-evaluate tasks (seconds)
 	static constexpr float kReEvalInterval = 0.5F;

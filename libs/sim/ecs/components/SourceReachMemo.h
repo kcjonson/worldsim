@@ -1,164 +1,74 @@
 #pragma once
 
-// Per-colonist AI state: reach verdicts for the sources a colonist remembers, and the wait on its
-// regrowing food.
+// Per-colonist AI state: the targets a route found no known way to, and the wait on regrowing food.
 
 #include "Memory.h"
-#include "WalkAnswer.h"
 
 #include <glm/vec2.hpp>
 
 #include <algorithm>
-#include <bit>
-#include <cmath>
 #include <cstddef>
 #include <cstdint>
-#include <limits>
 #include <optional>
-#include <unordered_map>
+#include <vector>
 
 namespace ecs {
 
-	/// What a colonist has found about the targets it remembers (NavigationSystem::Reach), by Memory
-	/// key, kept three ways.
+	/// What a colonist's routes have found about the targets he picks, by target key (a Memory key, or a
+	/// point's own key for a spot with none).
 	///
-	/// A walk, its length, "none" (within a bound, or at any length) or "far" (the search gave up), is a
-	/// function of where the colonist stands, the structural mesh and its belief, so it is held under a
-	/// Key: the start to a NavigationSystem::kReachCellMm step, the structural mesh's epoch (any
-	/// structural job anywhere moves it) and the belief version.
-	///
-	/// A route that failed where the walk said yes is the rare disagreement, and picking that target
-	/// again would only fail again, so it is held under an Anchor: the spot it failed at, the stamp of
-	/// the structural content near it (NavigationSystem::verdictStamp) and the belief version. It holds
-	/// while the colonist stays near the anchor (NavigationSystem::nearAnchor) and neither changes, so
-	/// neither ground landing elsewhere nor a colonist wandering about one spot has it pick the failed
-	/// target again. Each failed route also keeps the stamp of the ground between the anchor and its
-	/// target (NavigationSystem::spanStamp), and the caller forgets it once that moves
-	/// (forgetFailedRoutes), so a change near a far target clears it too.
+	/// A route answer of "no known way" is the truth for this colonist (his width, the walls he believes
+	/// in), so the target it was for is a verdict: not asked about again while the mesh's connectivity
+	/// epoch (NavigationSystem::connectivityEpoch) and his belief (Memory::beliefVersion) stand as they
+	/// were when it was found. Either moving forgets every verdict at the next decision.
 	struct SourceReachMemo {
 		struct Key {
-			std::int64_t  startCell = 0;		// NavigationSystem::Reach::startCell
-			std::uint64_t structuralEpoch = 0; // NavigationSystem::Reach::structuralEpoch
-			std::uint64_t beliefVersion = 0;	// Memory::beliefVersion
+			std::uint64_t connectivityEpoch = 0;
+			std::uint64_t beliefVersion = 0;
 			bool		  operator==(const Key&) const = default;
 		};
 
-		struct Anchor {
-			glm::vec2	  at{0.0F, 0.0F};
-			std::uint64_t structural = 0;	 // NavigationSystem::verdictStamp(at)
-			std::uint64_t beliefVersion = 0; // Memory::beliefVersion
-			bool		  operator==(const Anchor&) const = default;
+		/// More verdicts than this under one key and they are forgotten, so the memo stays bounded however
+		/// many targets fail before the mesh or his belief moves.
+		static constexpr std::size_t kMaxVerdicts = 256;
 
-			/// A fingerprint, small enough to stamp on a task: equal anchors, equal stamps.
-			[[nodiscard]] std::uint64_t stamp() const {
-				std::uint64_t h = 1469598103934665603ULL;
-				for (const std::uint64_t v : {static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(at.x)),
-											  static_cast<std::uint64_t>(std::bit_cast<std::uint32_t>(at.y)), structural, beliefVersion}) {
-					h = (h ^ v) * 1099511628211ULL;
-				}
-				return h;
-			}
-		};
-
-		/// Forget the walks when the key changes and the failed routes when the anchor does, or either
-		/// once it passes maxVerdicts (forgotten sources' included).
-		void keep(const Key& nextKey, const Anchor& nextAnchor, std::size_t maxVerdicts) {
-			if (key != nextKey || walks.size() > maxVerdicts) {
-				walks.clear();
-				key = nextKey;
-			}
-			if (anchor != nextAnchor || failedRoutes.size() > maxVerdicts) {
-				failedRoutes.clear();
-				anchor = nextAnchor;
+		/// Forget the verdicts unless they were found under `now`.
+		void keep(const Key& now) {
+			if (key != now) {
+				verdicts.clear();
+				key = now;
 			}
 		}
 
-		/// The reach stamp a route failure gets while ground within the anchor load range of the colonist
-		/// is still to mesh (NavigationSystem::Reach::settled): not recorded, and the next decision picks
-		/// afresh. The AI wakes a colonist whose failure carries it once that
-		/// ground lands (AIDecisionSystem::wakeSettledFailures).
-		static constexpr std::uint64_t kUnsettledStamp = std::numeric_limits<std::uint64_t>::max();
-
-		/// Where the failed routes were found, until the first keep().
-		[[nodiscard]] const std::optional<Anchor>& heldAnchor() const { return anchor; }
-
-		/// A source already found unreachable, by a walk under the current key or a route under the
-		/// current anchor, so a query can drop it up front. Far is not unreachable.
-		[[nodiscard]] bool knownUnreachable(std::uint64_t sourceKey) const {
-			if (failedRoutes.contains(sourceKey)) {
-				return true;
-			}
-			const auto it = walks.find(sourceKey);
-			return it != walks.end() && !it->second.walk.has_value() && !it->second.far && it->second.bound == kAnyWalk;
-		}
-
-		/// A source already found reachable (or far) under the current key.
-		[[nodiscard]] bool knownReachable(std::uint64_t sourceKey) const {
-			const auto it = walks.find(sourceKey);
-			return it != walks.end() && (it->second.walk.has_value() || it->second.far);
-		}
-
-		/// A route to this source failed under the current anchor: it's unreachable whatever a walk says.
-		/// `target` and `spanStamp` (NavigationSystem::spanStamp from the anchor) say where and over what
-		/// ground.
-		struct FailedRoute {
-			glm::vec2	  target{0.0F, 0.0F};
-			std::uint64_t spanStamp = 0;
-		};
-		void recordFailedRoute(std::uint64_t sourceKey, const FailedRoute& route) { failedRoutes[sourceKey] = route; }
-
-		/// Forget the failed routes whose span stamp moved: `spanStamp(from, target)` is the stamp now,
-		/// read once per structural epoch (no span stamp moves without it). A failed route's span starts
-		/// at the anchor.
-		template <typename SpanStamp> void forgetFailedRoutes(std::uint64_t structuralEpoch, SpanStamp&& spanStamp) {
-			if (spanEpoch == structuralEpoch) {
+		/// No known way to `target`, found under `foundUnder`. Held only when that is `now`: one found
+		/// before the epoch or the belief moved says nothing of either as it stands.
+		void recordVerdict(std::uint64_t target, const Key& foundUnder, const Key& now) {
+			if (foundUnder != now) {
 				return;
 			}
-			spanEpoch = structuralEpoch;
-			if (anchor.has_value()) {
-				std::erase_if(failedRoutes, [&](const auto& entry) { return spanStamp(anchor->at, entry.second.target) != entry.second.spanStamp; });
+			keep(now);
+			if (verdicts.size() >= kMaxVerdicts) {
+				verdicts.clear();
+			}
+			const auto at = std::lower_bound(verdicts.begin(), verdicts.end(), target);
+			if (at == verdicts.end() || *at != target) {
+				verdicts.insert(at, target);
 			}
 		}
 
-		/// The walk to a source no longer than maxWalk, running probe(position, maxWalk) when what is
-		/// held doesn't answer it. A far answer is held like the others.
-		template <typename Probe>
-		[[nodiscard]] WalkAnswer walk(std::uint64_t sourceKey, const glm::vec2& position, float maxWalk, Probe&& probe) {
-			if (failedRoutes.contains(sourceKey)) {
-				return {};
-			}
-			const auto it = walks.find(sourceKey);
-			if (it != walks.end()) {
-				if (it->second.walk.has_value()) {
-					return *it->second.walk <= maxWalk ? it->second.walk : std::nullopt;
-				}
-				// The searches ran out of steps short of the bound, so a larger one runs out the same way.
-				if (it->second.far) {
-					return WalkAnswer::farAway();
-				}
-				if (it->second.bound >= maxWalk) {
-					return {};
-				}
-			}
-			const WalkAnswer found = probe(position, maxWalk);
-			walks[sourceKey]	   = {found.walk, maxWalk, found.far};
-			return found;
-		}
+		/// A route found no known way to `target` under the key last kept.
+		[[nodiscard]] bool hasVerdict(std::uint64_t target) const { return std::binary_search(verdicts.begin(), verdicts.end(), target); }
 
-		/// Whether a source can be walked to at all (far counts), as walk() with no bound.
-		template <typename Probe>
-		[[nodiscard]] bool reachable(std::uint64_t sourceKey, const glm::vec2& position, Probe&& probe) {
-			return walk(sourceKey, position, kAnyWalk, probe).reachable();
-		}
+		[[nodiscard]] std::size_t verdictCount() const { return verdicts.size(); }
 
 		/// Set when the last food search found every edible source the colonist remembers regrowing:
 		/// until the earliest of them is ready, or the colonist remembers or forgets a world entity, the
 		/// search would find the same, so it isn't run. Readiness doesn't depend on reach, and a search
-		/// that set this saw no source it skipped for reach, so nothing ready can hide behind it.
+		/// that set this saw no source it skipped for a verdict, so nothing ready can hide behind it.
 		struct FoodWait {
 			std::uint64_t					memoryVersion = 0; // Memory::worldEntityVersion when set
 			double							readyAt = 0.0;	   // earliest ready time, on the simulation clock
-			std::optional<KnownWorldEntity> nearest;		   // the nearest reachable regrowing source, for the trace
+			std::optional<KnownWorldEntity> nearest;		   // the nearest connected regrowing source, for the trace
 		};
 		std::optional<FoodWait> foodWait;
 
@@ -172,17 +82,8 @@ namespace ecs {
 		}
 
 	  private:
-		static constexpr float kAnyWalk = std::numeric_limits<float>::infinity();
-		struct Verdict {
-			std::optional<float> walk;			// metres, when one was found
-			float				 bound = 0.0F; // the longest walk asked about
-			bool				 far   = false; // the search gave up
-		};
-		std::optional<Key>							key;
-		std::unordered_map<std::uint64_t, Verdict> walks;
-		std::optional<Anchor>						anchor;
-		std::unordered_map<std::uint64_t, FailedRoute>	failedRoutes;
-		std::optional<std::uint64_t>					spanEpoch;
+		std::optional<Key>		   key;
+		std::vector<std::uint64_t> verdicts; // sorted
 	};
 
 } // namespace ecs

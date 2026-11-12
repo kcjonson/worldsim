@@ -168,36 +168,17 @@ namespace ecs {
 			return registry.yieldsEdible(defNameId) ? registry.harvestYieldId(defNameId) : 0U;
 		}
 
-		/// The memo key for a colonist's reach: what a remembered walk length depends on.
-		[[nodiscard]] SourceReachMemo::Key reachKey(const NavigationSystem::Reach& reach, const Memory& memory) {
-			return {.startCell = reach.startCell, .structuralEpoch = reach.structuralEpoch, .beliefVersion = memory.beliefVersion};
-		}
-
-		/// The reach stamp while ground within the anchor load range of the colonist is still to mesh
-		/// (Reach::settled): a route that found no way then is not recorded, and one stamped with it is a
-		/// fresh pick at the next decision. (0 is no mesh.)
-		constexpr std::uint64_t kUnsettledStamp = SourceReachMemo::kUnsettledStamp;
-
-		/// Where a colonist's unreachable verdicts, and a failed route, are held: the anchor they were
-		/// found at while it still answers for `here`, else `here`.
-		[[nodiscard]] SourceReachMemo::Anchor verdictAnchor(
-			const NavigationSystem& nav, const SourceReachMemo* memo, glm::vec2 here, const Memory& memory
-		) {
-			if (memo != nullptr && memo->heldAnchor().has_value()) {
-				const SourceReachMemo::Anchor& held = *memo->heldAnchor();
-				if (held.beliefVersion == memory.beliefVersion && nav.nearAnchor(held.at, here) &&
-					nav.verdictStamp(held.at) == held.structural) {
-					return held;
-				}
-			}
-			return {.at = here, .structural = nav.verdictStamp(here), .beliefVersion = memory.beliefVersion};
-		}
-
-		/// The key a failed route is remembered under in SourceReachMemo: the Memory key of a remembered
-		/// source, else the target point itself (a toilet spot, a work site's stand point), quantized
-		/// like Memory keys so the same point picked again maps to the same verdict.
-		[[nodiscard]] std::uint64_t routeTargetKey(std::uint64_t sourceKey, const glm::vec2& target) {
+		/// The key a route's verdict is held under in SourceReachMemo: a harvest's source by its Memory key,
+		/// any other remembered source by its own, else the target point itself (a pickup, a deposit, a
+		/// toilet spot, a work site), quantized like Memory keys so the same point picked again maps to the
+		/// same verdict.
+		[[nodiscard]] std::uint64_t verdictKey(std::uint64_t sourceKey, const glm::vec2& target) {
 			return sourceKey != 0 ? sourceKey : hashWorldEntity(target, 0);
+		}
+
+		/// The verdict key of what a task is heading for.
+		[[nodiscard]] std::uint64_t verdictKeyOf(const Task& task) {
+			return verdictKey(task.type == TaskType::Harvest ? task.harvestTargetKey : task.needSourceKey, task.workTarget());
 		}
 
 		/// A route found from where he asked, starting where he stands now: he may have walked on while it
@@ -662,20 +643,14 @@ namespace ecs {
 			std::optional<float>		 carriedKg;
 		};
 
-		/// What the colonist's reach verdicts already say of a remembered pile, asking no nav query: a pile
-		/// off meshed ground, or one selection has not tested under the current reach, is neither. With no
-		/// mesh nothing is provably unreachable, so every pile is known reachable.
+		/// What the colonist knows of the way to a remembered pile: a route found no known way to it (a
+		/// verdict, a lookup), or it is connected to him by meshed ground with none (a label check).
 		struct PileReach {
-			const NavigationSystem*		   nav = nullptr;
-			const NavigationSystem::Reach* reach = nullptr;
-			const SourceReachMemo*		   memo = nullptr;
+			const SourceReachMemo*				   memo = nullptr;
+			std::function<bool(glm::vec2)>		   connected;
 
-			[[nodiscard]] bool knownReachable(uint64_t key, glm::vec2 at) const {
-				return reach == nullptr || (memo->knownReachable(key) && nav->sharesStartRegion(*reach, at));
-			}
-			[[nodiscard]] bool knownUnreachable(uint64_t key, glm::vec2 at) const {
-				return reach != nullptr && memo->knownUnreachable(key) && nav->sharesStartRegion(*reach, at);
-			}
+			[[nodiscard]] bool knownUnreachable(glm::vec2 at) const { return memo->hasVerdict(verdictKey(0, at)); }
+			[[nodiscard]] bool reachable(glm::vec2 at) const { return !knownUnreachable(at) && connected(at); }
 		};
 
 		/// Evaluate haul options that go and get goods: loose piles and lower-priority boxes for a
@@ -754,9 +729,10 @@ namespace ecs {
 			// than he takes off it. A pile toward a root the
 			// colonist gathers for is a leg of that trip, taken up before another plant is cut, when he has
 			// room for the smaller of what it has left for him and what the root still wants (the top-up
-			// cut's rule) and it is not known unreachable; selection tests its reach as it tests any leg. Only a
-			// pile already known reachable holds a fresh cut for the same root and item back (offeredPiles),
-			// so a remembered pile across water, or one never tested, leaves cutting where distance puts it.
+			// cut's rule) and no route found no known way to it; selection tests its reach as it tests any leg.
+			// Only a pile connected to him holds a fresh cut for the same root and item back (offeredPiles), so
+			// a remembered pile across water leaves cutting where distance puts it. Piles are tested only until
+			// one is.
 			const auto pushPileHauls = [&](const GoalTask& goal, uint64_t rootId, uint32_t itemDefNameId, uint32_t quantity, bool craftFetch) {
 				const bool	   gathering = supply.gathersFor(rootId, itemDefNameId);
 				const uint32_t room = pickupRoom(itemDefNameId);
@@ -775,11 +751,11 @@ namespace ecs {
 						continue;
 					}
 					const uint32_t take = std::min(quantity, left);
-					if (gathering && (room < take || pileReach.knownUnreachable(source.key, at))) {
+					if (gathering && (room < take || pileReach.knownUnreachable(at))) {
 						continue;
 					}
 					reserved.offered(trip);
-					knownOffered = knownOffered || pileReach.knownReachable(source.key, at);
+					knownOffered = knownOffered || pileReach.reachable(at);
 					pushLooseHaul(goal, source, itemDefNameId, std::min(take, room), craftFetch, rank, kInvalidEntity);
 				}
 				if (knownOffered) {
@@ -1639,7 +1615,6 @@ namespace ecs {
 	void AIDecisionSystem::update(float deltaTime) {
 		// Advance this system's monotonic clock (used for lastEvaluationTime + within-tier task age).
 		m_elapsedTime += deltaTime;
-		wakeSettledFailures();
 		// Only the regrowth callback reports a regrowing source, so without it no food wait is set and
 		// the time goes unread; a world that wires it has a TimeSystem.
 		m_simulationNow = onSourceRegrowth ? simulationSeconds(*world) : 0.0;
@@ -1810,9 +1785,15 @@ namespace ecs {
 				continue;
 			}
 			task.criticalNeedsAtDecision = criticalNeedMask(needs);
-			// Held by the snap for this many decisions: the route fails, and this decision takes it as one.
-			if (task.awaitingSnap && task.routeTicket == 0 && ++task.snapWaitDecisions >= Task::kSnapWaitDecisions) {
-				failRoute(entity, task, position, memory, movementTarget);
+			// Held by the snap inside a placed obstacle he is connected to nothing, so a decision there could
+			// only drop his task: the interval passes as a wait on the snap instead. After this many the route
+			// fails, and this decision takes it as one.
+			if (task.awaitingSnap && task.routeTicket == 0) {
+				if (++task.snapWaitDecisions < Task::kSnapWaitDecisions) {
+					task.timeSinceEvaluation = 0.0F;
+					continue;
+				}
+				failRoute(entity, task, memory, movementTarget);
 			}
 			const bool decidingOnFailedRoute = task.navState == NavState::CantFindWayTo;
 
@@ -1880,12 +1861,11 @@ namespace ecs {
 							}
 						}
 
-						// A task whose route failed on a mesh or belief that has since changed is a fresh
-						// pick: keeping it would leave the colonist stopped with a stale failure and no new
-						// route request. So is one that failed, or is decided, while ground was arriving.
-						const bool failedOnStaleNav =
-							task.navState == NavState::CantFindWayTo && (task.blockedReachStamp != reachStamp || reachStamp == kUnsettledStamp);
-						isSameTask = sameType && sameTarget && samePlaceTarget && !failedOnStaleNav;
+						// A task whose route failed is always a fresh pick. Its target holds a verdict, so it is
+						// offered again only once the connectivity epoch or his belief has moved, and keeping
+						// it then would leave him stopped with a stale failure and no new route request.
+						const bool failed = task.navState == NavState::CantFindWayTo;
+						isSameTask = sameType && sameTarget && samePlaceTarget && !failed;
 					}
 				}
 
@@ -2045,19 +2025,6 @@ namespace ecs {
 			}
 		}
 #endif
-	}
-
-	void AIDecisionSystem::wakeSettledFailures() {
-		if (m_navSystem == nullptr || !m_navSystem->groundLandedThisUpdate()) {
-			return;
-		}
-		for (auto [entity, position, task] : world->view<Position, Task>()) {
-			(void)entity;
-			if (task.navState == NavState::CantFindWayTo && task.blockedReachStamp == kUnsettledStamp &&
-				m_navSystem->reachSettledThisUpdate(position.value)) {
-				requestDecision(task);
-			}
-		}
 	}
 
 	void AIDecisionSystem::ensureClaimIndex() {
@@ -2220,107 +2187,71 @@ namespace ecs {
 		const WorkSkills workSkills = WorkSkills::of(skills);
 		PickupRoom		 pickupRoom(inventory, m_registry);
 
-		// Agent footprint + belief for every reachability check below (need sources, reachable-wander
-		// generation and the option filter).
+		// Agent footprint for the stand points below (need sources and the option filter).
 		float agentRadius = 0.3F;
 		if (const auto* ar = world->getComponent<AgentRadius>(entity)) {
 			agentRadius = ar->radiusMeters;
 		}
-		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
-		const bool						  haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
+		const bool haveMesh = (m_navSystem != nullptr) && m_navSystem->hasMesh();
 
-		// What this colonist can reach on its own: a walk over the structural mesh under its belief, or
-		// far when the search runs out of steps first. No mesh: nothing is provably unreachable.
-		std::optional<NavigationSystem::Reach> reach;
+		// What he can get to, with no search in the decision. connected() (two locates and a label compare)
+		// is the filter: false is no known way, never stored. A route's "no known way" is the truth for him
+		// (his width, the walls he believes in): a verdict on its target (SourceReachMemo), held until the
+		// connectivity epoch or his belief moves, and a target with one is not asked about again. With no
+		// mesh nothing is known unreachable.
 		if (haveMesh) {
-			reach = m_navSystem->reachFrom(position.value, agentRadius, belief);
+			sourceReach.keep({.connectivityEpoch = m_navSystem->connectivityEpoch(), .beliefVersion = memory.beliefVersion});
 		}
-		const auto canReach = [&](const glm::vec2& target) {
-			return !reach.has_value() || m_navSystem->reaches(*reach, target);
+		const auto hasVerdict = [&](std::uint64_t sourceKey, const glm::vec2& target) {
+			return haveMesh && sourceReach.hasVerdict(verdictKey(sourceKey, target));
+		};
+		// Where a route to `target` ends when he is connected to it: the target, or the stand point beside
+		// the placed obstacle it lies in. nullopt: no known way, or nowhere to stand.
+		const auto routeEnd = [&](const glm::vec2& target) -> std::optional<glm::vec2> {
+			if (!haveMesh) {
+				return target;
+			}
+			const std::optional<glm::vec2> stand = standPointFor(target, position.value, agentRadius, false);
+			if (!stand.has_value() || !m_navSystem->connected(position.value, *stand)) {
+				return std::nullopt;
+			}
+			return stand;
+		};
+		const auto canGetTo = [&](const glm::vec2& target) { return routeEnd(target).has_value(); };
+		// A remembered source he may be sent to: no verdict, and connected to where a route to it ends,
+		// which becomes its goal.
+		const auto admitSource = [&](SourceCandidate& candidate) {
+			if (hasVerdict(candidate.key, candidate.position)) {
+				return false;
+			}
+			const std::optional<glm::vec2> end = routeEnd(candidate.position);
+			if (!end.has_value()) {
+				return false;
+			}
+			candidate.goal = *end;
+			return true;
 		};
 
-		// Verdicts for sources on meshed ground are remembered (SourceReachMemo), so one surrounded by
-		// unreachable sources doesn't test them all again every decision. While ground near the colonist
-		// is still to mesh (reach->settled false) a failed walk may only be waiting on it: nothing is
-		// remembered, that source is passed over for this decision only, and the stamp is
-		// kUnsettledStamp, so a route that found no way then is a fresh pick, not a recorded failure.
-		reachStamp = 0;
-		if (reach.has_value()) {
-			const SourceReachMemo::Anchor anchor = verdictAnchor(*m_navSystem, &sourceReach, position.value, memory);
-			reachStamp = reach->settled ? anchor.stamp() : kUnsettledStamp;
-			sourceReach.keep(reachKey(*reach, memory), anchor, 2 * Memory::kMaxWorldEntities);
-			// A failed route was true for the ground between where it was asked and its target: a change
-			// there (a wall gone by a far target) clears it, though the anchor holds.
-			sourceReach.forgetFailedRoutes(reach->structuralEpoch, [&](const glm::vec2& from, const glm::vec2& target) {
-				return m_navSystem->spanStamp(from, target);
-			});
-			// The route to the target this colonist was heading for (a need source, a toilet spot, a work
-			// site) came back with no known way, though its reach let it through (a squeeze between
-			// trees the structural mesh doesn't hold). Remember the failure so the next decision picks
-			// something else instead of asking for the same target again, but only under the anchor it
-			// failed under, or it would outlive what it was true for. Wherever the target is: an
-			// unrecorded failure would keep the task and its claims. A wander point is random, so
-			// there's nothing to remember.
-			if (currentTask.type != TaskType::Wander && currentTask.navState == NavState::CantFindWayTo &&
-				currentTask.blockedReachStamp == reachStamp && reachStamp != kUnsettledStamp) {
-				const glm::vec2 target = currentTask.workTarget();
-				sourceReach.recordFailedRoute(routeTargetKey(currentTask.needSourceKey, target),
-											  {.target = target, .spanStamp = m_navSystem->spanStamp(anchor.at, target)});
-			}
-		}
-		// A target whose route already failed under the current anchor; one off meshed ground is judged
-		// live.
-		const auto routeFailed = [&](std::uint64_t sourceKey, const glm::vec2& target) {
-			return reach.has_value() && sourceReach.knownUnreachable(routeTargetKey(sourceKey, target)) &&
-				   m_navSystem->sharesStartRegion(*reach, target);
-		};
-		// The walk to a target in metres, no longer than maxWalk, or far (NavigationSystem::walk); for a
-		// remembered source on meshed ground, held in the memo.
-		const auto walkTo = [&](const glm::vec2& target, float maxWalk) {
-			return reach.has_value() ? m_navSystem->walk(*reach, target, maxWalk) : WalkAnswer(glm::distance(position.value, target));
-		};
-		// A work site, deposit or placement spot: most are settled by a walk capped at kWalkStretch times
-		// the straight line, which stops in a few steps; only one with no walk that short is walked in
-		// full, so a target behind a long way round still passes. Far passes.
-		const auto canReachTarget = [&](const glm::vec2& target) {
-			return walkTo(target, kWalkStretch * glm::distance(position.value, target)).reachable() || canReach(target);
-		};
-		const auto walkToSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition, float maxWalk) {
-			return reach.has_value() && reach->settled && m_navSystem->sharesStartRegion(*reach, sourcePosition)
-					   ? sourceReach.walk(sourceKey, sourcePosition, maxWalk, walkTo)
-					   : walkTo(sourcePosition, maxWalk);
-		};
-		const auto canReachSource = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
-			if (!reach.has_value()) {
-				return true;
-			}
-			return reach->settled && m_navSystem->sharesStartRegion(*reach, sourcePosition)
-					   ? sourceReach.reachable(sourceKey, sourcePosition, walkTo)
-					   : canReach(sourcePosition);
-		};
-		// Drop a source already found unreachable before anything else looks at it.
-		const auto notKnownUnreachable = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
-			return !reach.has_value() || !sourceReach.knownUnreachable(sourceKey) ||
-				   !m_navSystem->sharesStartRegion(*reach, known.position);
-		};
-
-		// A need targets the nearest remembered source the colonist can reach, so known sources across
-		// a river don't hide a reachable one farther off. The source he is heading for is kept unless
-		// another is clearly nearer (kKeepSourceMargin).
+		// A need asks one route for the nearest kNearestOfCount sources by straight line he may be sent to,
+		// and the answer picks among them (requestRoute), so a sealed nearer source loses to the next in the
+		// same request. The source he is heading for is kept while he may still be sent to it.
 		const std::optional<std::uint64_t> headingFor =
 			currentTask.needSourceKey != 0 ? std::optional<std::uint64_t>(currentTask.needSourceKey) : std::nullopt;
-		const auto findNeedSource = [&](assets::CapabilityType capability, const auto& accept, const auto& reachable) {
-			return findNearestReachableWithCapability(memory, capability, position.value, accept, walkToSource, reachable, sourceScratch,
-													  headingFor);
+		for (SourceChoices& choices : m_needChoices) {
+			choices.clear();
+		}
+		const auto choiceOf = [](const SourceCandidate& source) {
+			return SourceChoice{.target = source.position, .goal = source.goal, .sourceKey = source.key};
 		};
 
 		// With an empty pack, one search finds both what the Hunger option eats from and the bush the
-		// gather-food option goes to, over every edible source the colonist knows, nearest reachable
+		// gather-food option goes to, over every edible source the colonist knows, nearest by straight line
 		// first: a ready harvestable whose yield is edible, a loose pile of an edible item it remembers,
 		// and a storage box the colony knows that holds one. Piles and boxes only feed a colonist that is
 		// hungry; the gather option, on offer whenever the pack is empty, takes bushes only. Candidates
-		// are asked nearest first, only until the answers are found; the nearest reachable bush passed
-		// over for regrowing is kept to show why the colonist waits. When every edible harvestable it
+		// are asked nearest first, only until each option has kNearestOfCount it may be sent to (its route
+		// request picks among them), or the one he is heading for; the nearest connected bush passed over
+		// for regrowing is kept to show why the colonist waits. When every edible harvestable it
 		// knows is regrowing, they aren't searched again until the first is ready or its memory of world
 		// entities changes (SourceReachMemo::FoodWait); piles and boxes are never part of that wait, so a
 		// box that gains berries while it waits is seen at the next decision.
@@ -2332,7 +2263,7 @@ namespace ecs {
 		// first to claim keeps it. Work claims (a cut for a goal, a haul, the idle gather) don't hold food
 		// against a hungry colonist: a need's claim is one meal it will eat, and nothing else may starve
 		// it. Still, a source nobody holds is preferred to one held by such a claim when one is known,
-		// reachable, and ready, so the search goes on past a held one and comes back to it only when
+		// connected, and ready, so the search goes on past a held one and comes back to it only when
 		// nothing free is left. The gather option is idle work and gives way to any holder: it takes the
 		// nearest free bush.
 		const ClaimExclusion self = ClaimExclusion::of(currentTask);
@@ -2375,7 +2306,7 @@ namespace ecs {
 				regrowingFood = wait->nearest;
 			} else {
 				// Only the defs whose yield is edible: the candidates, and so the heap's pick, are every
-				// remembered harvestable that is food, as a walk of all of them would find.
+				// remembered harvestable that is food.
 				const auto harvestable = static_cast<uint16_t>(1U << static_cast<size_t>(assets::CapabilityType::Harvestable));
 				for (uint32_t food : m_registry.edibleItemIds()) {
 					for (uint32_t bush : m_registry.harvestablesYielding(food)) {
@@ -2384,7 +2315,7 @@ namespace ecs {
 							if ((known->capabilityMask & harvestable) == 0) {
 								continue;
 							}
-							if (!notKnownUnreachable(key, *known)) {
+							if (hasVerdict(key, known->position)) {
 								everyBushRegrowing = false; // never asked, so it may be ready
 								continue;
 							}
@@ -2404,7 +2335,7 @@ namespace ecs {
 						if (known == nullptr || (known->capabilityMask & carryable) == 0) {
 							continue;
 						}
-						if (!notKnownUnreachable(key, *known)) {
+						if (hasVerdict(key, known->position)) {
 							continue;
 						}
 						SourceCandidate candidate = sourceCandidate(position.value, key, known->position);
@@ -2421,32 +2352,60 @@ namespace ecs {
 					sourceScratch.push_back(candidate);
 				}
 			}
-			const auto answered = [&] { return seeksFood ? foodSource.has_value() : gatherSource.has_value(); };
-			const auto walkToFood = [&](const SourceCandidate& source, float maxWalk) { return walkToSource(source.key, source.position, maxWalk); };
-			searchExhausted = !nearestReachable(sourceScratch, walkToFood, [&](const SourceCandidate& source) {
+			// The sources each option's route request names, nearest first: a meal for the Hunger option, a
+			// bush for the gather option. Either is complete at kNearestOfCount, or at the one he is heading
+			// for when it comes first (it comes off first when it is a candidate).
+			SourceChoices& foodChoices	 = m_needChoices[needChoiceSlot(NeedType::Hunger, false)];
+			SourceChoices& gatherChoices = m_needChoices[needChoiceSlot(NeedType::Hunger, true)];
+			const auto	   complete		 = [&](const SourceChoices& choices) {
+				return choices.size() >= kNearestOfCount || (choices.size() == 1 && headingFor == choices[0].sourceKey);
+			};
+			const auto mealChoice = [&](const SourceCandidate& source, uint32_t left) {
+				SourceChoice choice = choiceOf(source);
+				if (isBush(source)) {
+					choice.quantity = mealOf(edibleYieldOf(m_registry, source.entity->defNameId));
+				} else {
+					choice.itemDefNameId = source.item;
+					choice.quantity = std::min(mealOf(source.item), left);
+					choice.storageId = static_cast<uint64_t>(source.storage);
+				}
+				return choice;
+			};
+			const auto offerFood = [&](const SourceCandidate& source, uint32_t left) {
+				if (!foodSource.has_value()) {
+					foodSource = FoodChoice{source, left};
+				}
+				foodChoices.push(mealChoice(source, left));
+			};
+			const auto answered = [&] { return seeksFood ? complete(foodChoices) : complete(gatherChoices); };
+			putKeptFirst(sourceScratch, headingFor);
+			searchExhausted = visitNearestFirst(sourceScratch, [&](SourceCandidate& source) {
 				if (isBush(source)) {
 					if (const auto readyAt = sourceRegrowingUntil(source.entity->defNameId, source.position)) {
 						firstReadyAt = std::min(firstReadyAt, *readyAt);
-						if (!regrowingFood.has_value() && canReachSource(source.key, source.position)) {
+						if (!regrowingFood.has_value() && admitSource(source)) {
 							regrowingFood = *source.entity;
 						}
-						return false;
+						return true;
 					}
 					everyBushRegrowing = false;
 				}
-				if (!canReachSource(source.key, source.position)) {
-					return false;
+				if (!admitSource(source)) {
+					return true;
 				}
 				if (isBush(source)) {
 					const ClaimTarget bush{.kind = TargetKind::WorldKey, .key = source.key};
 					const auto		  holder = m_claims.useHolder(bush, self);
 					if (!holder.has_value()) {
 						gatherSource = gatherSource.value_or(source);
+						if (!complete(gatherChoices)) {
+							gatherChoices.push(choiceOf(source));
+						}
 					} else if (!heldBush.has_value()) {
 						heldBush = source;
 						heldBushHolder = holder->colonist;
 					}
-					if (seeksFood) {
+					if (seeksFood && !complete(foodChoices)) {
 						if (const auto eater = m_claims.useHolderWhere(bush, self, eats)) {
 							if (!reservedFood.has_value()) {
 								reservedFood = source;
@@ -2455,10 +2414,10 @@ namespace ecs {
 						} else if (holder.has_value()) {
 							heldFood = heldFood.value_or(FoodChoice{source});
 						} else {
-							foodSource = FoodChoice{source};
+							offerFood(source, 0);
 						}
 					}
-					return answered();
+					return !answered();
 				}
 				// A pile or a box: what it has left once eaters at least as urgent take theirs. A remembered
 				// pile the world can't find has no count; it is offered while no eater claims it, so the
@@ -2483,18 +2442,18 @@ namespace ecs {
 						reservedFood = source;
 						reservedFoodHolder = eaten.holder->colonist;
 					}
-					return false;
+					return true;
 				}
 				const uint32_t unclaimed = live.has_value() ? (have > claimed ? have - claimed : 0U) : (claimed > 0 ? 0U : meal);
 				if (unclaimed < std::min(meal, left)) {
 					heldFood = heldFood.value_or(FoodChoice{source, left});
-					return false;
+					return true;
 				}
-				foodSource = FoodChoice{source, left};
-				return answered();
-			}, headingFor).has_value();
-			if (seeksFood && !foodSource.has_value()) {
-				foodSource = heldFood;
+				offerFood(source, left);
+				return !answered();
+			});
+			if (seeksFood && !foodSource.has_value() && heldFood.has_value()) {
+				offerFood(heldFood->source, heldFood->left);
 			}
 			if (wait == nullptr) {
 				sourceReach.foodWait.reset();
@@ -2601,8 +2560,23 @@ namespace ecs {
 			auto capability = needToCapability(needType);
 			// A satisfied need only shows its nearest source (its row and its place among the idle options),
 			// so it spends no reachability tests and builds no candidate list.
-			const auto nearest = need.needsAttention() ? findNeedSource(capability, notKnownUnreachable, canReachSource)
-													   : findNearestWithCapability(memory, capability, position.value);
+			std::optional<KnownWorldEntity> nearest;
+			if (need.needsAttention()) {
+				SourceChoices& choices = m_needChoices[needChoiceSlot(needType, false)];
+				collectWithCapability(
+					memory, capability, position.value,
+					[&](uint64_t key, const KnownWorldEntity& known) { return !hasVerdict(key, known.position); }, sourceScratch
+				);
+				nearestAdmitted(sourceScratch, m_chosenScratch, admitSource, kNearestOfCount, headingFor);
+				for (const SourceCandidate& source : m_chosenScratch) {
+					choices.push(choiceOf(source));
+				}
+				if (!m_chosenScratch.empty()) {
+					nearest = *m_chosenScratch.front().entity;
+				}
+			} else {
+				nearest = findNearestWithCapability(memory, capability, position.value);
+			}
 
 			if (nearest.has_value()) {
 				option.targetPosition = nearest->position;
@@ -2623,7 +2597,7 @@ namespace ecs {
 					option.status = OptionStatus::Satisfied;
 					option.targetPosition = position.value;
 					option.distanceToTarget = 0.0F;
-				} else if (alreadyPursuingThisNeed && !routeFailed(0, currentTask.targetPosition)) {
+				} else if (alreadyPursuingThisNeed && !hasVerdict(0, currentTask.workTarget())) {
 					// Preserve existing target to avoid "chasing" a moving target
 					option.targetPosition = currentTask.targetPosition;
 					option.distanceToTarget = glm::distance(position.value, currentTask.targetPosition);
@@ -2640,7 +2614,7 @@ namespace ecs {
 							LOG_DEBUG(Engine, "[ToiletLocation] Entity %llu: found at (%.1f, %.1f)", static_cast<unsigned long long>(entity), location->x, location->y);
 						}
 					}
-					if (location.has_value() && !routeFailed(0, *location)) {
+					if (location.has_value() && !hasVerdict(0, *location)) {
 						option.targetPosition = *location;
 						option.distanceToTarget = glm::distance(position.value, *location);
 						option.status = OptionStatus::Available;
@@ -2752,7 +2726,7 @@ namespace ecs {
 		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles, m_boxRooms};
 		m_workSources.begin(memory, m_registry, inventory);
 		m_offeredPiles.clear();
-		const PileReach pileReach{.nav = m_navSystem, .reach = reach.has_value() ? &*reach : nullptr, .memo = &sourceReach};
+		const PileReach pileReach{.memo = &sourceReach, .connected = canGetTo};
 		evaluateHaulOptions(
 			world, m_registry, m_workSources, m_colonyStorage, m_sharedWork, supply, pickupRoom, inventory, position.value, pileReach, m_offeredPiles, trace
 		);
@@ -2770,7 +2744,7 @@ namespace ecs {
 
 		// Firm "can I actually navigate right now?" gate. An idle wander picks a random point;
 		// with no navmesh yet (the costly startup window) the colonist has no idea what's walkable,
-		// and the walk check can't help: with no reach it passes every point, so a wander offered then is
+		// and the connected check can't help: with no mesh it passes every point, so a wander offered then is
 		// one the colonist can't follow. So only OFFER the wander when navigation is possible: a mesh
 		// exists, or there's no nav system at all (headless/tests, direct movement). With a nav
 		// system but no mesh, emit no idle option; the colonist holds (see the no-option hold in
@@ -2780,18 +2754,17 @@ namespace ecs {
 		// recovery at the top of update().)
 		const bool canNavigate = (m_navSystem == nullptr) || haveMesh;
 		if (canNavigate) {
-			// Only offer a wander point a short walk away. Probe a few random points; if none is -- a
-			// colonist hemmed in by water/obstacles where every point lands somewhere it can't path to
-			// -- emit no idle option at all. The no-option hold then makes it stand and look around
-			// instead of committing to an unreachable point and thrashing on it. The walk is capped by
-			// cost, so a point across a river stops in a few steps and never reads far: a moving wander
-			// decides every frame, and a far point would cost a full reach search and a far route.
-			const auto shortWalk = [&](const glm::vec2& target) { return walkTo(target, kWalkStretch * kWanderRadius).walk.has_value(); };
+			// Only offer a wander point on meshed ground connected to him, within the wander radius by straight
+			// line. Probe a few random points; if none is -- a colonist hemmed in by water/obstacles where
+			// every point lands somewhere he has no known way to -- emit no idle option at all. The no-option
+			// hold then makes it stand and look around instead of committing to a point it would thrash on.
+			// A moving wander decides every frame, so each probe is a label check, never a search.
+			const auto connectedPoint = [&](const glm::vec2& target) { return !haveMesh || m_navSystem->connected(position.value, target); };
 			glm::vec2  wanderTarget	  = generateWanderTarget(position.value);
-			bool	   foundReachable = shortWalk(wanderTarget);
+			bool	   foundReachable = connectedPoint(wanderTarget);
 			for (int attempt = 0; !foundReachable && attempt < 5; ++attempt) {
 				const glm::vec2 candidate = generateWanderTarget(position.value);
-				if (shortWalk(candidate)) {
+				if (connectedPoint(candidate)) {
 					wanderTarget   = candidate;
 					foundReachable = true;
 				}
@@ -2823,15 +2796,14 @@ namespace ecs {
 		// encodes the full ordering.
 		std::sort(trace.options.begin(), trace.options.end(), EvaluatedOption::higherPriority);
 
-		// Select the first actionable option the colonist can actually REACH, scanning in priority
-		// order. The reach test is a sound, cheap pre-filter: false means DEFINITELY unreachable
-		// (off-mesh, or a disconnected component -- e.g. a reed or water across a river with no land
-		// bridge). Probing in priority order means we only test down to the best reachable option,
-		// not the whole list. An unreachable higher-priority option drops to NoSource so the colonist
-		// won't commit to it and freeze at the bank; Wander is never filtered, so there is always a
-		// fallback that keeps it moving and exploring for new sources. No mesh yet -> the reach test
-		// passes, so startup / outdoor beelining is unaffected. A need source the builder already
-		// chose as reachable (targetReachable) isn't tested again.
+		// Select the first actionable option the colonist may be sent to, scanning in priority order. The
+		// test is cheap, a verdict lookup and a label check: false means no known way (off meshed ground,
+		// or a different component -- e.g. a reed or water across a river with no land bridge, or a
+		// target a route already found sealed for him). Probing in priority order means we only test down
+		// to the best option, not the whole list. A higher-priority option with no known way drops to
+		// NoSource so the colonist won't commit to it and freeze at the bank; Wander is never filtered,
+		// so there is always a fallback that keeps it moving and exploring for new sources. No mesh yet
+		// -> the test passes, so startup / outdoor beelining is unaffected.
 		for (auto& option : trace.options) {
 			if (option.status != OptionStatus::Available) {
 				continue;
@@ -2859,11 +2831,6 @@ namespace ecs {
 			// (requestRoute); with no stand point there, it is no source.
 			const bool snapEligible = option.taskType == TaskType::Harvest ||
 									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
-			if (haveMesh && needsTarget && !snapEligible &&
-				!standPointFor(*option.targetPosition, position.value, agentRadius, false).has_value()) {
-				option.status = OptionStatus::NoSource;
-				continue;
-			}
 			if (haveMesh && needsTarget && snapEligible) {
 				// nullopt means the target is off meshed ground, or every spot round it is water or a
 				// wall: drop the option to NoSource so the colonist prefers a reachable nearby source and
@@ -2886,34 +2853,25 @@ namespace ecs {
 				option.targetPosition  = snapped;
 				option.targetReachable = false; // a moved target is tested where it now is
 			}
-			if (needsTarget) {
-				// A cut's or a pile's reach is remembered under its source like a need's, so the flagged legs
-				// sorted ahead of the carry-in are not tested afresh at every decision while the colonist
-				// gathers and deposits.
-				const glm::vec2 target = *option.targetPosition;
-				if (routeFailed(option.sourceKey, target)) {
-					// its route already failed under this anchor
-					option.status = OptionStatus::NoSource;
-					continue;
-				}
-				const bool reachable = option.targetReachable || (option.taskType == TaskType::Harvest ? canReachSource(option.harvestTargetKey, target)
-																  : option.haulSourceKey != 0		? canReachSource(option.haulSourceKey, target)
-																									: canReachTarget(target));
-				if (!reachable) {
-					option.status = OptionStatus::NoSource; // unreachable: skip it rather than freeze on it
-					continue;
-				}
-				// A haul from a pile is chosen only when its deposit leg can route too.
-				if (option.taskType == TaskType::Haul && option.haulSourceKey != 0 && option.haulTargetPosition.has_value() &&
-					!canReachTarget(*option.haulTargetPosition)) {
-					option.status = OptionStatus::NoSource;
-					continue;
-				}
+			// A target is offered when no route found no known way to it and he is connected to where a route
+			// to it ends (beside the placed obstacle it lies in, if it does); a need source the builder
+			// already admitted (targetReachable), and one where he stands, aren't tested again. The route
+			// asked for the chosen option settles the rest.
+			const auto canTake = [&](std::uint64_t sourceKey, const glm::vec2& target) { return !hasVerdict(sourceKey, target) && canGetTo(target); };
+			if (needsTarget && !option.targetReachable && *option.targetPosition != position.value &&
+				!canTake(option.taskType == TaskType::Harvest ? option.harvestTargetKey : option.sourceKey, *option.targetPosition)) {
+				option.status = OptionStatus::NoSource; // no known way: skip it rather than freeze on it
+				continue;
+			}
+			// A haul is chosen only when its deposit leg can route too.
+			if (option.taskType == TaskType::Haul && option.haulTargetPosition.has_value() && option.haulTargetPosition != option.targetPosition &&
+				!canTake(0, *option.haulTargetPosition)) {
+				option.status = OptionStatus::NoSource;
+				continue;
 			}
 			// Picking up furniture whose spot he can't reach would only carry it off and set it down again.
 			if (option.taskType == TaskType::PlacePackaged && option.placeTargetPosition.has_value() &&
-				option.placeTargetPosition != option.targetPosition &&
-				(routeFailed(0, *option.placeTargetPosition) || !canReachTarget(*option.placeTargetPosition))) {
+				option.placeTargetPosition != option.targetPosition && !canTake(0, *option.placeTargetPosition)) {
 				option.status = OptionStatus::NoSource;
 				continue;
 			}
@@ -2959,6 +2917,15 @@ namespace ecs {
 		task.needItemDefNameId = selected->needItemDefNameId;
 		task.needQuantity = selected->needQuantity;
 		task.needSourceStorageId = selected->needSourceStorageId;
+		// A need with several sources it may be sent to asks one route for all of them; the task holds the
+		// nearest by straight line until the answer picks one.
+		if (selected->taskType == TaskType::FulfillNeed) {
+			const SourceChoices& choices = m_needChoices[needChoiceSlot(selected->needType, selected->gathersFood)];
+			if (choices.size() > 1 && choices[0].target == task.targetPosition) {
+				task.sourceChoices = choices;
+				takeSourceChoice(task, 0);
+			}
+		}
 
 		// Copy crafting-specific fields for Craft tasks
 		if (selected->taskType == TaskType::Craft) {
@@ -3046,11 +3013,12 @@ namespace ecs {
 			radius = agentRadius->radiusMeters;
 		}
 		// A target lying in a placed obstacle is reached from beside it; nowhere to stand there is no way.
-		if (!task.obstructedTarget.has_value()) {
+		// Several sources' goals were found when they were chosen.
+		if (task.sourceChoices.empty() && !task.obstructedTarget.has_value()) {
 			const glm::vec2				   target = task.targetPosition;
 			const std::optional<glm::vec2> stand  = standPointFor(target, position.value, radius, false);
 			if (!stand.has_value()) {
-				failRoute(entity, task, position, memory, movementTarget);
+				failRoute(entity, task, memory, movementTarget);
 				return;
 			}
 			if (*stand != target) {
@@ -3061,10 +3029,18 @@ namespace ecs {
 		}
 		// Planned over what he remembers: unseen walls are absent, seen walls block, known doors pass.
 		// requestRoute copies the sets.
-		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
-		const glm::vec2					  goal = task.targetPosition;
-		task.routeTicket		= m_navSystem->requestRoute(position.value, std::span<const glm::vec2>(&goal, 1), radius, belief);
-		task.routeGoal			= goal;
+		// A need with several sources asks for all of them at once: the answer's goal is the choice.
+		const geometry::nav::BeliefFilter				   belief{&memory.knownSegments, &memory.knownOpenings};
+		std::array<glm::vec2, SourceChoices::kCapacity> goals{task.targetPosition};
+		std::size_t										   goalCount = 1;
+		if (!task.sourceChoices.empty()) {
+			goalCount = task.sourceChoices.size();
+			for (std::uint8_t index = 0; index < task.sourceChoices.size(); ++index) {
+				goals[index] = task.sourceChoices[index].goal;
+			}
+		}
+		task.routeTicket		= m_navSystem->requestRoute(position.value, std::span<const glm::vec2>(goals.data(), goalCount), radius, belief);
+		task.routeGoal			= task.targetPosition;
 		task.routeBeliefVersion = memory.beliefVersion;
 		task.routeWaitTicks		= 0;
 		if (!walking) {
@@ -3096,6 +3072,22 @@ namespace ecs {
 		auto* navPath = world->getComponent<NavPath>(entity);
 		switch (answer->outcome) {
 			case nav::RouteOutcome::Routed: {
+				// Of several sources, the one the route reached is the choice: it ends there.
+				if (!task.sourceChoices.empty()) {
+					if (answer->goalIndex > 0 && answer->goalIndex < static_cast<std::int32_t>(task.sourceChoices.size())) {
+						takeSourceChoice(task, static_cast<std::uint8_t>(answer->goalIndex));
+						movementTarget.target = task.targetPosition;
+						task.claims.clear();
+						auto* inventory = world->getComponent<Inventory>(entity);
+						if (inventory != nullptr) {
+							recordChainClaims(*world, m_needs, m_claims, m_registry, memory, *inventory, task);
+						}
+						if (m_claimsBuilt) {
+							m_claims.append(entity, task);
+						}
+					}
+					task.sourceChoices.clear();
+				}
 				NavPath route;
 				route.waypoints			 = joinRoute(std::move(answer->waypoints), position.value);
 				route.current			 = route.waypoints.size() >= 2 ? 1 : 0;
@@ -3139,7 +3131,8 @@ namespace ecs {
 			setNavState(entity, task, NavState::AwaitingRoute);
 			return;
 		}
-		failRoute(entity, task, position, memory, movementTarget);
+		failRoute(entity, task, memory, movementTarget,
+				  SourceReachMemo::Key{.connectivityEpoch = answer->labelEpoch, .beliefVersion = task.routeBeliefVersion});
 	}
 
 	std::optional<glm::vec2> AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
@@ -3154,23 +3147,37 @@ namespace ecs {
 		return m_navSystem->standPointBeside(target, from, radius);
 	}
 
-	void AIDecisionSystem::failRoute(EntityID entity, Task& task, const Position& position, const Memory& memory,
-									 MovementTarget& movementTarget) {
+	void AIDecisionSystem::takeSourceChoice(Task& task, std::uint8_t index) {
+		const SourceChoice& choice = task.sourceChoices[index];
+		task.targetPosition		   = choice.goal;
+		task.obstructedTarget	   = choice.goal != choice.target ? std::optional<glm::vec2>(choice.target) : std::nullopt;
+		task.needSourceKey		   = choice.sourceKey;
+		task.needItemDefNameId	   = choice.itemDefNameId;
+		task.needQuantity		   = choice.quantity;
+		task.needSourceStorageId   = choice.storageId;
+	}
+
+	void AIDecisionSystem::failRoute(EntityID entity, Task& task, const Memory& memory, MovementTarget& movementTarget,
+									 std::optional<SourceReachMemo::Key> foundUnder) {
 		if (auto* navPath = world->getComponent<NavPath>(entity)) {
 			navPath->valid = false;
 		}
 		movementTarget.active = false;
 		task.awaitingSnap	  = false;
-		// Stamped kUnsettledStamp while ground near him is still to mesh: a failure then may only be
-		// waiting on it, so it is not recorded and the next decision picks afresh (buildDecisionTrace).
-		float radius = 0.3F;
-		if (const auto* agentRadius = world->getComponent<AgentRadius>(entity)) {
-			radius = agentRadius->radiusMeters;
+		// A verdict on every target the route was asked for, so none is asked about again until the
+		// connectivity epoch or his belief moves. A wander point is random: nothing to remember.
+		const SourceReachMemo::Key now{.connectivityEpoch = m_navSystem->connectivityEpoch(), .beliefVersion = memory.beliefVersion};
+		auto*					   memo = world->getComponent<SourceReachMemo>(entity);
+		if (memo != nullptr && task.type != TaskType::Wander) {
+			const SourceReachMemo::Key found = foundUnder.value_or(now);
+			if (task.sourceChoices.empty()) {
+				memo->recordVerdict(verdictKeyOf(task), found, now);
+			}
+			for (const SourceChoice& choice : task.sourceChoices) {
+				memo->recordVerdict(verdictKey(choice.sourceKey, choice.target), found, now);
+			}
 		}
-		const geometry::nav::BeliefFilter belief{&memory.knownSegments, &memory.knownOpenings};
-		task.blockedReachStamp = m_navSystem->reachFrom(position.value, radius, belief).settled
-									 ? verdictAnchor(*m_navSystem, world->getComponent<SourceReachMemo>(entity), position.value, memory).stamp()
-									 : kUnsettledStamp;
+		task.sourceChoices.clear();
 		setNavState(entity, task, NavState::CantFindWayTo);
 		LOG_DEBUG(Engine, "[Nav] Entity %llu: no known way to (%.2f, %.2f), stopping", static_cast<unsigned long long>(entity),
 				  task.targetPosition.x, task.targetPosition.y);
