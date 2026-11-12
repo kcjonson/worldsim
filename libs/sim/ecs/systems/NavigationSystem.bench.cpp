@@ -1,7 +1,11 @@
 // NavigationSystem through its public API on a synthetic forest (nav-mesh-variable-resolution.md
-// section 6): 3x3 loaded chunks (1.5 km square), a tree every ~5.2 m (about 600 per 128 m square,
-// the game's density), a meandering 8 m river across the middle, and a colony 12 m from a chunk side
-// where the river runs about 30 m north. Every scenario has its own NavigationSystem and its own
+// section 6): 3x3 loaded chunks (1.5 km square), a meandering 8 m river across the middle, and a
+// colony 12 m from a chunk side where the river runs about 30 m north. The forest is the game's
+// since the forest-floor change (PR 365): a tree every ~3.5 m (about 80 per 1,000 m2, 1,300 per
+// 128 m square), each sapling, mature or veteran by the oak's weights (0.15, 0.6, 0.25) with that
+// class's trunk rect (half extents 0.125, 0.225, 0.36 m). WORLDSIM_BENCH_FOREST=sparse runs the
+// forest every number before that change was measured on: a tree every ~5.2 m (about 600 per 128 m
+// square), all with a 0.3 m half extent. Every scenario has its own NavigationSystem and its own
 // placement, so scenarios are independent of each other and of --benchmark_filter.
 //
 // Ticks go through World::update, which runs update() and then endTick(), where the tick's patches
@@ -81,7 +85,18 @@ namespace {
 	using Clock = std::chrono::steady_clock;
 
 	constexpr float	 kTickSeconds  = 1.0F / 60.0F;
-	constexpr double kTreeSpacingM = 5.22; // 128 m square / 600 trees
+	// The forest's layout, by WORLDSIM_BENCH_FOREST (see the file comment).
+	struct ForestLayout {
+		double spacingM;
+		bool   ageClasses; // the oak's three classes, else one 0.3 m rect
+	};
+	ForestLayout forestLayout() {
+		const char* which = std::getenv("WORLDSIM_BENCH_FOREST");
+		if (which != nullptr && std::strcmp(which, "sparse") == 0) {
+			return {.spacingM = 5.22, .ageClasses = false}; // 128 m square / 600 trees
+		}
+		return {.spacingM = 3.54, .ageClasses = true}; // 1,000 m2 / 80 trees
+	}
 	constexpr float	 kWorldMinM	   = 0.0F;
 	constexpr float	 kWorldMaxM	   = 1536.0F; // chunks 0..2 on each axis
 	constexpr float	 kAgentRadius  = 0.3F;
@@ -233,6 +248,7 @@ namespace {
 	struct Tree {
 		world::ChunkCoordinate coord;
 		glm::vec2			   position;
+		std::uint8_t		   ageClass = 0;
 	};
 
 	// The world every scenario shares: chunks, where the trees stand, and the registries.
@@ -245,9 +261,18 @@ namespace {
 			assets::ConstructionRegistry::Get().clear();
 			assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string());
 
+			const ForestLayout		layout = forestLayout();
 			assets::AssetDefinition tree;
-			tree.defName					 = kTreeDef;
-			tree.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
+			tree.defName = kTreeDef;
+			if (layout.ageClasses) {
+				tree.ageClasses = {{.name = "sapling", .weight = 0.15F}, {.name = "mature", .weight = 0.6F}, {.name = "veteran", .weight = 0.25F}};
+				const float halfExtents[] = {0.125F, 0.225F, 0.36F};
+				for (std::uint8_t a = 0; a < 3; ++a) {
+					tree.setCollision(a, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {halfExtents[a], halfExtents[a]}});
+				}
+			} else {
+				tree.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
+			}
 			assets::AssetRegistry::Get().registerTestDefinition(tree);
 
 			chunks = std::make_unique<world::ChunkManager>(std::make_unique<ForestRiverSampler>());
@@ -256,16 +281,18 @@ namespace {
 			chunks->update({768.0F, 768.0F});
 			chunks->finishPendingGeneration();
 
-			const int cells = static_cast<int>((kWorldMaxM - kWorldMinM) / kTreeSpacingM);
+			const int cells = static_cast<int>((kWorldMaxM - kWorldMinM) / layout.spacingM);
 			for (int j = 0; j < cells; ++j) {
 				for (int i = 0; i < cells; ++i) {
 					const std::uint32_t h  = hashU32(static_cast<std::uint32_t>(j * 4096 + i));
 					const float			jx = (static_cast<float>(h & 0xFFFFU) / 65535.0F - 0.5F) * 3.0F;
 					const float			jy = (static_cast<float>(h >> 16U) / 65535.0F - 0.5F) * 3.0F;
-					const glm::vec2		p{kWorldMinM + (static_cast<float>(i) + 0.5F) * static_cast<float>(kTreeSpacingM) + jx,
-										  kWorldMinM + (static_cast<float>(j) + 0.5F) * static_cast<float>(kTreeSpacingM) + jy};
+					const glm::vec2		p{kWorldMinM + (static_cast<float>(i) + 0.5F) * static_cast<float>(layout.spacingM) + jx,
+										  kWorldMinM + (static_cast<float>(j) + 0.5F) * static_cast<float>(layout.spacingM) + jy};
 					if (std::abs(p.y - riverY(p.x)) >= 6.0F) {
-						trees.push_back({world::worldToChunk({p.x, p.y}), p});
+						const float	  pick	   = static_cast<float>(hashU32(h) & 0xFFFFU) / 65535.0F;
+						const uint8_t ageClass = !layout.ageClasses ? 0 : pick < 0.15F ? 0 : pick < 0.75F ? 1 : 2;
+						trees.push_back({world::worldToChunk({p.x, p.y}), p, ageClass});
 					}
 				}
 			}
@@ -279,8 +306,9 @@ namespace {
 				assets::AsyncChunkPlacementResult& r = byChunk[t.coord];
 				r.coord								 = t.coord;
 				assets::PlacedEntity e;
-				e.defName  = kTreeDef;
-				e.position = t.position;
+				e.defName			= kTreeDef;
+				e.position			= t.position;
+				e.traits.ageClass	= t.ageClass;
 				r.spatialIndex.insert(e);
 			}
 			for (auto& [coord, result] : byChunk) {
@@ -730,7 +758,7 @@ namespace {
 			for (int round = 0; round < 11; ++round) {
 				const Clock::time_point start = Clock::now();
 				for (std::size_t i = 0; i < pairs.size(); ++i) {
-					const auto path = priced ? rig.nav.requestPath(pairs[i].first, pairs[i].second, kAgentRadius)
+					const auto path = priced ? rig.nav.requestPath(pairs[i].first, pairs[i].second, kAgentRadius).route
 											 : unpricedPath(rig.nav, pairs[i].first, pairs[i].second);
 					if (round == 0) {
 						double len = 0.0;
@@ -844,7 +872,7 @@ namespace {
 					walkFailUs += us;
 					++walkFails;
 				}
-				const bool route = rig.nav.requestPath(a, b, kAgentRadius, belief).has_value();
+				const bool route = rig.nav.requestPath(a, b, kAgentRadius, belief).route.has_value();
 				bothYes += walk && route ? 1 : 0;
 				bothNo += !walk && !route ? 1 : 0;
 				reachOnly += walk && !route ? 1 : 0;
@@ -866,7 +894,7 @@ namespace {
 			if (room) {
 				const glm::vec2			inside = (roomLo + roomHi) * 0.5F;
 				const Clock::time_point start  = Clock::now();
-				const bool				routed = rig.nav.requestPath(kColony, inside, kAgentRadius, belief).has_value();
+				const bool				routed = rig.nav.requestPath(kColony, inside, kAgentRadius, belief).route.has_value();
 				state.counters["roomRouteUs"]  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 				state.counters["roomRouted"]   = routed ? 1.0 : 0.0;
 			}
@@ -900,7 +928,7 @@ namespace {
 			const auto						   capability = static_cast<assets::CapabilityType>(0);
 			std::vector<ecs::SourceCandidate>  scratch;
 			const ecs::NavigationSystem::Reach reach = rig.nav.reachFrom(kColony, kAgentRadius);
-			const ecs::SourceReachMemo::Key	   key{.startCell = reach.startCell, .reachGeneration = reach.startRegionGeneration};
+			const ecs::SourceReachMemo::Key	   key{.startCell = reach.startCell, .structuralEpoch = reach.structuralEpoch};
 			const ecs::SourceReachMemo::Anchor anchor{.at = kColony, .structural = rig.nav.verdictStamp(kColony)};
 			int								   walks  = 0;
 			const auto						   decide = [&](ecs::SourceReachMemo& memo) {
@@ -940,6 +968,151 @@ namespace {
 			state.counters["decisionColdMeanUs"]   = coldUs / kDecisions;
 			state.counters["decisionColdMaxUs"]	   = coldMaxUs;
 			state.counters["decisionWarmMeanUs"] = std::chrono::duration<double, std::micro>(Clock::now() - warmStart).count() / kDecisions;
+		}
+	}
+
+	// The AI's reach code while structural jobs land elsewhere, as when the camera pans over new ground:
+	// 20 colonists standing still, each remembering 40 sources, and each deciding every 30 ticks
+	// (staggered) the way AIDecisionSystem does (its SourceReachMemo keyed by the Reach, then
+	// findNearestReachableWithCapability through memo.walk onto NavigationSystem::walk). range(0): 0 half
+	// the sources across the river (no crossing on the meshed ground), four in a room whose walls the
+	// colonists know and the rest on their side; 1 none on their side. A wall far off is built or pulled
+	// down every 5 ticks, so the structural epoch, and with it every memo's key, moves that often. Reports
+	// the reach code's main-thread time per tick, structural walks and start-side searches (floods) per
+	// decision, and the worst decision.
+	void BM_ReachWhileGroundLands(benchmark::State& state) {
+		const bool						  noneNear = state.range(0) != 0;
+		std::unordered_set<std::uint64_t> knownSegments;
+		std::unordered_set<std::uint64_t> knownOpenings;
+		const glm::vec2					  roomLo = kColony + glm::vec2{40.0F, -70.0F};
+		const glm::vec2					  roomHi = roomLo + glm::vec2{12.0F, 10.0F};
+		for (auto _ : state) {
+			Rig rig(0);
+			for (int i = 0; i < 20; ++i) {
+				rig.addMover(kColony + glm::vec2{static_cast<float>(i % 5) * 4.0F - 8.0F, static_cast<float>(i / 5) * 4.0F - 30.0F});
+			}
+			rig.nav.setViewportRect(kColony, kViewHalf);
+			const glm::vec2 corners[] = {roomLo, {roomHi.x, roomLo.y}, roomHi, {roomLo.x, roomHi.y}};
+			for (int k = 0; k < 4; ++k) {
+				const glm::vec2 a	   = corners[k];
+				const glm::vec2 b	   = corners[(k + 1) % 4];
+				const auto		commit = rig.construction.commitSegment({std::llround(a.x * 1000.0F), std::llround(a.y * 1000.0F)},
+																		{std::llround(b.x * 1000.0F), std::llround(b.y * 1000.0F)}, "Wood", "Standard",
+																		construction::kInvalidFoundation);
+				for (const auto id : commit.createdSegments) {
+					rig.construction.setSegmentState(id, construction::FoundationState::Built);
+					knownSegments.insert(static_cast<std::uint64_t>(id));
+				}
+			}
+			rig.settle();
+			TickStats warmup;
+			rig.ticks(warmup, 4);
+			rig.settle();
+			const geometry::nav::BeliefFilter belief{&knownSegments, &knownOpenings};
+
+			std::uint32_t seed = 41;
+			auto		  unit = [&seed] {
+				 seed = hashU32(seed + 0x9e3779b9U);
+				 return static_cast<float>(seed & 0xFFFFFFU) / static_cast<float>(0xFFFFFFU);
+			};
+			struct Colonist {
+				ecs::Memory			 memory;
+				ecs::SourceReachMemo memo;
+			};
+			std::vector<Colonist> colonists(rig.movers.size());
+			for (Colonist& c : colonists) {
+				for (int s = 0; s < 40; ++s) {
+					glm::vec2 at;
+					if (s < 4) {
+						at = roomLo + glm::vec2{1.0F + unit() * 10.0F, 1.0F + unit() * 8.0F};
+					} else if (s < 24 || noneNear) {
+						const float x = kColony.x + (unit() - 0.5F) * 600.0F;
+						at			  = {x, riverY(x) + 15.0F + unit() * 200.0F};
+					} else {
+						const float x = kColony.x + (unit() - 0.5F) * 300.0F;
+						at			  = {x, riverY(x) - 40.0F - unit() * 150.0F};
+					}
+					c.memory.rememberWorldEntity(at, 7, 1);
+				}
+			}
+			const auto					   capability = static_cast<assets::CapabilityType>(0);
+			std::vector<ecs::SourceCandidate> scratch;
+
+			std::vector<construction::SegmentId> farWall;
+			std::vector<double>					 tickUs;
+			std::vector<double>					 decisionUs;
+			std::vector<double>					 walksPerDecision;
+			std::vector<double>					 floodsPerDecision;
+			int									 found = 0;
+			int									 epochMoves = 0;
+			std::uint64_t						 lastEpoch = rig.nav.reachFrom(kColony, kAgentRadius).structuralEpoch;
+			TickStats							 stats;
+			rig.nav.resetNavQueryStats();
+			for (int tick = 0; tick < 600; ++tick) {
+				if (tick % 5 == 0) {
+					if (farWall.empty()) {
+						const auto commit = rig.construction.commitSegment({1300000, 200000}, {1304000, 200000}, "Wood", "Standard",
+																		   construction::kInvalidFoundation);
+						for (const auto id : commit.createdSegments) {
+							rig.construction.setSegmentState(id, construction::FoundationState::Built);
+							farWall.push_back(id);
+						}
+					} else {
+						for (const auto id : farWall) {
+							rig.construction.removeSegment(id);
+						}
+						farWall.clear();
+					}
+				}
+				rig.nav.setViewportRect(kColony + glm::vec2{150.0F * std::sin(static_cast<float>(tick) * 0.02F), 0.0F}, kViewHalf);
+				rig.tick(stats);
+				const std::uint64_t epoch = rig.nav.reachFrom(kColony, kAgentRadius).structuralEpoch;
+				epochMoves += epoch != lastEpoch ? 1 : 0;
+				lastEpoch = epoch;
+				double thisTickUs = 0.0;
+				for (std::size_t i = 0; i < colonists.size(); ++i) {
+					if ((tick + static_cast<int>(i) * 3) % 30 != 0) {
+						continue;
+					}
+					Colonist&		 c	= colonists[i];
+					const glm::vec2	 at = rig.world.getComponent<ecs::Position>(rig.movers[i])->value;
+					const auto		 before = rig.nav.navQueryStats();
+					const Clock::time_point start = Clock::now();
+					const ecs::NavigationSystem::Reach reach = rig.nav.reachFrom(at, kAgentRadius, belief);
+					c.memo.keep({.startCell = reach.startCell, .structuralEpoch = reach.structuralEpoch, .beliefVersion = 0},
+								{.at = at, .structural = rig.nav.verdictStamp(at)}, 2 * ecs::Memory::kMaxWorldEntities);
+					const auto probe = [&](const glm::vec2& p, float bound) { return rig.nav.walk(reach, p, bound); };
+					const auto pick	 = ecs::findNearestReachableWithCapability(
+						 c.memory, capability, at, [&](uint64_t key, const ecs::KnownWorldEntity&) { return !c.memo.knownUnreachable(key); },
+						 [&](uint64_t key, const glm::vec2& p, float maxWalk) { return c.memo.walk(key, p, maxWalk, probe); },
+						 [&](uint64_t key, const glm::vec2& p) { return c.memo.reachable(key, p, probe); }, scratch);
+					const double us = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
+					found += pick.has_value() ? 1 : 0;
+					thisTickUs += us;
+					decisionUs.push_back(us);
+					const auto& after = rig.nav.navQueryStats();
+					walksPerDecision.push_back(static_cast<double>(after.structuralWalks - before.structuralWalks));
+					floodsPerDecision.push_back(static_cast<double>(after.forwardSearches - before.forwardSearches));
+				}
+				tickUs.push_back(thisTickUs);
+			}
+			const auto& totals							= rig.nav.navQueryStats();
+			state.counters["decisions"]				= static_cast<double>(decisionUs.size());
+			state.counters["found"]					= found;
+			state.counters["reachTickMeanUs"]		= meanOf(tickUs);
+			state.counters["reachTickP99Us"]		= atPercentile(tickUs, 0.99);
+			state.counters["reachTickMaxUs"]		= atPercentile(tickUs, 1.0);
+			state.counters["decisionMeanUs"]		= meanOf(decisionUs);
+			state.counters["decisionMaxUs"]			= atPercentile(decisionUs, 1.0);
+			state.counters["walksPerDecision"]		= meanOf(walksPerDecision);
+			state.counters["walksMaxDecision"]		= atPercentile(walksPerDecision, 1.0);
+			state.counters["floodsPerDecision"]		= meanOf(floodsPerDecision);
+			state.counters["floodsMaxDecision"]		= atPercentile(floodsPerDecision, 1.0);
+			state.counters["probeAnsweredShare"]	= totals.structuralWalks > 0 ? static_cast<double>(totals.probeAnswered) / static_cast<double>(totals.structuralWalks) : 0.0;
+			state.counters["probeExpansionsMean"]	= totals.structuralWalks > 0 ? static_cast<double>(totals.probeExpansions) / static_cast<double>(totals.structuralWalks) : 0.0;
+			state.counters["forwardExpansionsMean"] = totals.forwardSearches > 0 ? static_cast<double>(totals.forwardExpansions) / static_cast<double>(totals.forwardSearches) : 0.0;
+			state.counters["farWalks"]				= static_cast<double>(totals.farWalks);
+			state.counters["epochMoves"]			= epochMoves;
 		}
 	}
 
@@ -988,7 +1161,7 @@ namespace {
 			rig.nav.setViewportRect({900.0F, 300.0F}, kViewHalf);
 			rig.settle();
 			const Clock::time_point start = Clock::now();
-			const auto				path  = rig.nav.requestPath(a + glm::vec2{1.0F, 0.0F}, b + glm::vec2{1.0F, 0.0F}, kAgentRadius);
+			const auto				path  = rig.nav.requestPath(a + glm::vec2{1.0F, 0.0F}, b + glm::vec2{1.0F, 0.0F}, kAgentRadius).route;
 			state.counters["pathUs"]	  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 			state.counters["routes"]	  = path.has_value() ? 1.0 : 0.0;
 			state.counters["reaches"] =
@@ -999,7 +1172,7 @@ namespace {
 	// A wall built once every loaded chunk's ground is meshed: its job carries the structural forest
 	// rebuild over all of it. range(0) is the chunk load radius around the forest's middle: 2 meshes
 	// 25 chunks, 5 meshes 121 (the most the system holds is the loaded chunks plus
-	// kKeptUnloadedChunks).
+	// kCameraOnlyUnloadedChunks).
 	void BM_WallEditMeshedChunks(benchmark::State& state) {
 		const auto radius = static_cast<std::int32_t>(state.range(0));
 		world::ChunkManager chunks(std::make_unique<ForestRiverSampler>());
@@ -1090,6 +1263,7 @@ BENCHMARK(BM_ReplanPan)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ReachWhileGroundLands)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_CursorCheck)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);

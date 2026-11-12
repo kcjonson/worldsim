@@ -6,7 +6,7 @@ Status: Active
 
 ## Overview
 
-The developer client is an external TypeScript/Vite web application that connects to the [developer server](./developer-server.md) via HTTP Server-Sent Events (SSE). It provides real-time visualization of metrics, logs, UI state, and profiler data.
+The developer client is an external TypeScript/Vite web application that connects to the [developer server](./developer-server.md) via HTTP Server-Sent Events (SSE). It shows metrics and logs as they stream, and its Dev Tools tab calls the game's dev routes and state views.
 
 **Key Principles:**
 - **External**: Runs in a separate browser window - cannot crash or interfere with the application
@@ -62,13 +62,13 @@ The developer client is an external TypeScript/Vite web application that connect
                   │ SSE Streams (EventSource)
                   │
 ┌─────────────────▼──────────────────────────┐
-│  Developer Server (C++ - Port 8080/8081)  │
-│  /stream/metrics, /stream/logs, etc.      │
+│  Dev server (salal, world-sim port 8081)  │
+│  /stream/metrics, /stream/logs            │
 └───────────────────────────────────────────┘
 ```
 
 **Data Flow:**
-1. Developer server streams JSON events via SSE at 10-20 Hz
+1. The dev server sends each stream's new data every 100 ms (metrics: the latest snapshot; logs: everything since the last send)
 2. ServerConnection service manages EventSource connections
 3. React components subscribe to data streams via callbacks
 4. State updates trigger React re-renders for live visualization
@@ -288,7 +288,7 @@ class ServerConnection {
 ```
 
 **Key behaviors:**
-- One EventSource per stream type (metrics, logs, UI, hover, etc.)
+- One EventSource per stream (the server has two: metrics and logs)
 - Track connection state per stream (for UI indicators)
 - EventSource **auto-reconnects** on error - no manual retry logic needed
 - JSON parsing happens in the service, components get typed data
@@ -400,7 +400,7 @@ function App() {
 - localStorage persistence: Survive page reload during long debugging sessions
 
 ### UIHierarchyTree (Planned)
-**Purpose:** Display scene graph structure from UI inspection stream
+**Purpose:** Display the ui tree from `/api/ui/tree` snapshots (the server has no ui stream)
 
 **Approach:**
 - Recursive tree component with expand/collapse
@@ -414,7 +414,7 @@ function App() {
 1. **Visual Stack**: Z-index ordered list of rendered layers
 2. **Component Hierarchy**: Parent → child component chain from root
 
-**Activated:** When F3 is pressed in application, `/stream/hover` becomes active
+**Blocked:** the dev server has no hover stream and the app no F3 inspector; this needs both first
 
 ## Build Integration
 

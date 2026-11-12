@@ -168,9 +168,12 @@ classification**: a provisioning haul or harvest that is mid-chain is classified
 
 An in-progress job is interrupted only by a strictly higher tier (survival, critical needs,
 forced orders). Same-tier swaps require the challenger's score to exceed the current
-option's score by a hysteresis margin, preventing thrashing. The existing ~0.5 s re-eval
-cadence (from [Priority Configuration System](../design/game-systems/colonists/priority-config.md)
-`reEvalInterval`) and event triggers are unchanged; only the preemption rule changes. The
+option's score by a hysteresis margin, preventing thrashing. When a colonist decides is a separate
+matter: the ~0.5 s re-eval cadence (from [Priority Configuration System](../design/game-systems/colonists/priority-config.md)
+`reEvalInterval`, `AIDecisionSystem::kReEvalInterval` in code) and the events that decide at once
+are described in [AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides).
+A need crossing into critical is one of those events; a need that stays critical, or a route that keeps
+failing, re-decides on the interval, not every frame. This section changes only the preemption rule. The
 `taskSwitchThreshold` from priority-config.md becomes the within-tier hysteresis margin.
 
 ### 7. Tiers as task-type data

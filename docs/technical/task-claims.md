@@ -451,8 +451,9 @@ back to its seek threshold at the item's nutrition, at least one unit (with Berr
 a seek threshold of 50%, one berry above 20% hunger, two below), capped by what a pile or box has left
 for this colonist; what the pack holds does not size it. It is sized again whenever the colonist
 re-decides and keeps the task, and its claim on a pile or box follows. A hunger task does not re-decide
-just because its need turned critical (that trigger is skipped while the colonist already serves a
-need); the periodic re-evaluation picks it up. Between two foods in one box at the same distance, the
+the moment its need turns critical (the crossing-into-critical trigger is skipped while the colonist
+already serves a critical need, and the hunger task he is on now is one); his next decision on the
+0.5 s interval re-sizes the meal. Between two foods in one box at the same distance, the
 lower item id is taken first. A bush is cut whole, because a cut gives what it gives; a pile or box
 gives the meal and no more, because stored food is the colony's and anything taken past the meal
 would become one colonist's provisions, out of everyone else's reach. The pickup or withdraw ends the
@@ -766,7 +767,7 @@ is evicted from memory while it travels keeps its claim (the claim is on the tas
 re-sees the target on arrival, within sight range. All of these log at debug level; they are expected.
 
 A colonist who believes he cannot reach his destination does not hold the work. When his route fails
-(`NavState::CantFindWayTo`) he decides again at once (the same update or the next), and that decision
+(`NavState::CantFindWayTo`) he decides again once, at once (see [AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides)), and that decision
 records the target unreachable in `SourceReachMemo` under the reach key the route failed under. The
 work is then not offered to him: its option reads NoSource, he takes something else, and the switch
 retires his claims toward that root. Another colonist who can reach the destination is offered the

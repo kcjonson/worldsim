@@ -1780,8 +1780,8 @@ namespace {
 					if (spawn.packaged) {
 						// Spawn AT the resolved target (when one is set) so the box never overlaps
 						// the station: the colonist walks over and installs it via PlacePackaged.
-						// targetPosition wired here -> BuildGoalSystem raises the place goal next
-						// frame. nullopt -> spawn in place, await the player's [Place] click.
+						// targetPosition wired here -> BuildGoalSystem raises the place goal at its
+						// next poll (every 30 frames). nullopt -> spawn in place, await the player's [Place] click.
 						const glm::vec2 spawnAt = spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
 						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
 						ecs::Packaged	packaged;
