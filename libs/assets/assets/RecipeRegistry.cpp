@@ -291,24 +291,29 @@ namespace assets {
 		m_byStation.clear();
 		m_innateRecipes.clear();
 
+		auto resolve = [&assetRegistry](const std::string& recipeName, const char* role, const std::string& defName) {
+			const uint32_t id = assetRegistry.getDefNameId(defName);
+			if (id == 0) {
+				LOG_ERROR(Engine, "Recipe %s names %s '%s', which is not a loaded definition", recipeName.c_str(), role, defName.c_str());
+			}
+			return id;
+		};
+
 		for (auto& [name, recipe] : m_recipes) {
-			// Populate input defNameIds
 			recipe.inputDefNameIds.clear();
 			for (auto& input : recipe.inputs) {
-				input.defNameId = assetRegistry.getDefNameId(input.defName);
+				input.defNameId = resolve(name, "input", input.defName);
 				if (input.defNameId != 0) {
 					recipe.inputDefNameIds.push_back(input.defNameId);
 				}
 			}
 
-			// Populate output defNameIds
 			for (auto& output : recipe.outputs) {
-				output.defNameId = assetRegistry.getDefNameId(output.defName);
+				output.defNameId = resolve(name, "output", output.defName);
 			}
 
-			// Populate station defNameId
 			if (!recipe.stationDefName.empty() && recipe.stationDefName != "none") {
-				recipe.stationDefNameId = assetRegistry.getDefNameId(recipe.stationDefName);
+				recipe.stationDefNameId = resolve(name, "station", recipe.stationDefName);
 			}
 
 			// Index by station

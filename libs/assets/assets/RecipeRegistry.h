@@ -30,7 +30,8 @@ class RecipeRegistry {
     bool loadRecipes(const std::string& xmlPath);
 
     /// Load all recipes from a folder recursively
-    /// Scans for all *.xml files in the folder and subfolders.
+    /// Scans for all *.xml files in the folder and subfolders. Call only once AssetRegistry
+    /// holds the definitions the recipes name (see initializeAssetSystem).
     /// @param folderPath Path to the recipes folder
     /// @return Number of recipes loaded
     size_t loadRecipesFromFolder(const std::string& folderPath);
@@ -84,7 +85,8 @@ class RecipeRegistry {
     /// Parse a single recipe from XML node
     bool parseRecipeFromNode(const void* node); // pugi::xml_node passed as void*
 
-    /// Populate cached defNameIds after loading
+    /// Resolve every recipe's def-name ids against AssetRegistry's index, which must already hold
+    /// the loaded definitions; a name it doesn't hold is logged as an error.
     void populateDefNameIds();
 
     // --- Storage ---

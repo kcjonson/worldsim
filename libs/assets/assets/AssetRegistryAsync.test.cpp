@@ -1,9 +1,12 @@
 // Tests for AssetRegistry asynchronous loading (beginLoadAsync).
 
+#include "assets/AssetBootstrap.h"
 #include "assets/AssetRegistry.h"
 #include "assets/AssetRegistry.test.h"
+#include "assets/RecipeRegistry.h"
 
 #include <gtest/gtest.h>
+#include <utils/ResourcePath.h>
 
 #include <algorithm>
 #include <filesystem>
@@ -23,19 +26,21 @@ namespace {
 
 } // namespace
 
-TEST(AssetRegistryAsyncTest, BeginLoadAsyncPopulatesRegistry) {
+// The game's normal start: initializeAssetSystem(async) loads definitions on the worker, and the
+// recipes it loads must name their items by the ids of the finished index.
+TEST(AssetRegistryAsyncTest, AsyncBootstrapLoadsDefinitionsThenRecipes) {
 	auto& reg = AssetRegistry::Get();
+	auto& recipes = RecipeRegistry::Get();
 	reg.clear();
+	recipes.clear();
 
-	const std::filesystem::path world = projectRoot() / "assets" / "world";
-	if (!std::filesystem::exists(world)) {
-		GTEST_SKIP() << "assets/world not found";
+	if (!std::filesystem::exists(projectRoot() / "assets" / "world") || !std::filesystem::exists(projectRoot() / "assets" / "recipes")) {
+		GTEST_SKIP() << "assets/world or assets/recipes not found";
 	}
-
-	reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
+	Foundation::setResourceRoots({projectRoot()});
 
 	EXPECT_FALSE(reg.loadProgress().started.load());
-	reg.beginLoadAsync(world.string());
+	initializeAssetSystem(true);
 	EXPECT_TRUE(reg.loadProgress().started.load());
 
 	waitForAsyncLoad(reg);
@@ -43,6 +48,25 @@ TEST(AssetRegistryAsyncTest, BeginLoadAsyncPopulatesRegistry) {
 	EXPECT_GT(reg.loadProgress().defsLoaded.load(), 0);
 	EXPECT_EQ(reg.getValidationReport().errorCount(), 0); // shipped library is clean
 
+	ASSERT_GT(recipes.size(), 0U);
+	for (const auto& [name, recipe] : recipes.allRecipes()) {
+		ASSERT_FALSE(recipe.inputs.empty() && recipe.outputs.empty()) << name;
+		for (const RecipeInput& input : recipe.inputs) {
+			EXPECT_NE(input.defNameId, 0U) << name << " input " << input.defName;
+			EXPECT_EQ(reg.getDefName(input.defNameId), input.defName) << name;
+		}
+		EXPECT_EQ(recipe.inputDefNameIds.size(), recipe.inputs.size()) << name;
+		for (const RecipeOutput& output : recipe.outputs) {
+			EXPECT_NE(output.defNameId, 0U) << name << " output " << output.defName;
+			EXPECT_EQ(reg.getDefName(output.defNameId), output.defName) << name;
+		}
+		if (!recipe.stationDefName.empty() && recipe.stationDefName != "none") {
+			EXPECT_EQ(reg.getDefName(recipe.stationDefNameId), recipe.stationDefName) << name;
+		}
+	}
+
+	Foundation::setResourceRoots({});
+	recipes.clear();
 	// clear() joins the worker and resets progress.
 	reg.clear();
 	EXPECT_FALSE(reg.loadProgress().started.load());
