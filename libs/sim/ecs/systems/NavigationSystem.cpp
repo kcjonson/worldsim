@@ -467,6 +467,44 @@ namespace ecs {
 			return a.openingId == b.openingId && a.a == b.a && a.b == b.b && a.clearWidthMm == b.clearWidthMm;
 		}
 
+		// A door edit retags the triangles on its edge (a, b) where that is a mesh edge, and makes no
+		// PatchReport of its own: this is one for them. The edge's midpoint locates to the lower id of
+		// the two, which has the edge; its neighbour across it is the other.
+		gnav::PatchReport doorEdgeReport(const gnav::PatchableMesh& mesh, const std::vector<gnav::DoorPortal>& portals) {
+			gnav::PatchReport report;
+			bool			  boxed = false;
+			const auto		  take	= [&](std::int32_t t) {
+				   report.changes.push_back({.id = t, .why = gnav::kTriangleBorder});
+				   for (const std::uint32_t v : mesh.triangles()[static_cast<std::size_t>(t)].v) {
+					   const geometry::Vec2i64& p = mesh.vertices()[v];
+					   report.lo				  = boxed ? geometry::Vec2i64{std::min(report.lo.x, p.x), std::min(report.lo.y, p.y)} : p;
+					   report.hi				  = boxed ? geometry::Vec2i64{std::max(report.hi.x, p.x), std::max(report.hi.y, p.y)} : p;
+					   boxed					  = true;
+				   }
+			};
+			for (const gnav::DoorPortal& portal : portals) {
+				const std::int32_t t = mesh.locate({(portal.a.x + portal.b.x) / 2, (portal.a.y + portal.b.y) / 2});
+				if (t < 0) {
+					continue;
+				}
+				const gnav::NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+				for (std::size_t e = 0; e < 3; ++e) {
+					const geometry::Vec2i64& p = mesh.vertices()[tri.v[e]];
+					const geometry::Vec2i64& q = mesh.vertices()[tri.v[(e + 1) % 3]];
+					if ((p == portal.a && q == portal.b) || (p == portal.b && q == portal.a)) {
+						take(t);
+						if (tri.neighbor[e] >= 0) {
+							take(tri.neighbor[e]);
+						}
+						break;
+					}
+				}
+			}
+			std::sort(report.changes.begin(), report.changes.end(), [](const gnav::ChangedTriangle& x, const gnav::ChangedTriangle& y) { return x.id < y.id; });
+			report.changes.erase(std::unique(report.changes.begin(), report.changes.end()), report.changes.end());
+			return report;
+		}
+
 	} // namespace
 
 	// A thread that runs one job at a time, handed over by start() and waited for by wait().
@@ -522,8 +560,12 @@ namespace ecs {
 		const Clock::time_point start = Clock::now();
 		for (const gnav::PatchEdits& edits : job.patches) {
 			const Clock::time_point patchStart = Clock::now();
-			job.added.push_back(mesh.applyPatch(edits).added);
+			gnav::PatchReport		report	   = mesh.applyPatch(edits);
+			job.added.push_back(std::move(report.added));
 			job.patchMs.push_back(msSince(patchStart));
+			if (!forests) {
+				job.reports.push_back(std::move(report));
+			}
 		}
 		for (const gnav::DoorId door : job.doorRemoves) {
 			mesh.removeDoor(door);
@@ -531,11 +573,14 @@ namespace ecs {
 		for (const gnav::DoorPortal& portal : job.doorAdds) {
 			job.doorsAdded.push_back(mesh.addDoor(portal));
 		}
+		if (!job.doorEdges.empty()) {
+			job.reports.push_back(doorEdgeReport(mesh, job.doorEdges));
+		}
 		const Clock::time_point finishStart = Clock::now();
 		if (forests) {
 			mesh.rebuildForests();
 		} else {
-			mesh.refreshWidths();
+			job.reports.push_back(mesh.refreshWidths());
 		}
 		job.finishMs = msSince(finishStart);
 		job.ms		 = msSince(start);
@@ -552,10 +597,12 @@ namespace ecs {
 		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = detailTags()}),
 		  structural({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
 		  navWorker(std::make_unique<Worker>()),
-		  structuralWorker(std::make_unique<Worker>()) {}
+		  structuralWorker(std::make_unique<Worker>()),
+		  routeWorker(std::make_unique<Worker>()) {}
 
 	NavigationSystem::~NavigationSystem() {
 		join();
+		routeWorker->wait();
 	}
 
 	void NavigationSystem::setPlacementData(assets::PlacementExecutor* executor, const std::unordered_set<world::ChunkCoordinate>* processed) {
@@ -715,6 +762,7 @@ namespace ecs {
 
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
+		startRouteSlice();
 		landedThisUpdate = std::move(groundLanded);
 		groundLanded.clear();
 		std::sort(landedThisUpdate.begin(), landedThisUpdate.end(), ChunkLess{});
@@ -723,8 +771,57 @@ namespace ecs {
 		markStrayedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
-			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kDetailCellsPerTick, kDetailScansPerTick, kGroundVerticesPerTick);
+			const std::size_t adds	 = holdingAdditions ? 0 : kDetailRingsPerTick;
+			const std::size_t ground = holdingAdditions ? 0 : kGroundVerticesPerTick;
+			gather(adds, kDetailRemovalsPerTick, kDetailCellsPerTick, kDetailScansPerTick, ground);
 		}
+	}
+
+	void NavigationSystem::startRouteSlice() {
+		// settle() waited for the nav mesh's job, which waited for the slice; with no job, the slice
+		// may still run.
+		routeWorker->wait();
+		if (sliceStarted) {
+			sliceStarted		= false;
+			std::uint32_t spent = 0;
+			for (const nav::RouteTurn& turn : routes.lastSlice()) {
+				spent += turn.spent;
+			}
+			RouteStats& s = routeStatsTotal;
+			++s.slices;
+			s.sliceExpansions += spent;
+			s.lastSliceExpansions = spent;
+			s.maxSliceExpansions  = std::max(s.maxSliceExpansions, spent);
+			s.lastSliceMs		  = sliceMs;
+			s.maxSliceMs		  = std::max(s.maxSliceMs, sliceMs);
+		}
+		for (const gnav::PatchReport& report : routeReports) {
+			routes.notePatches(report);
+		}
+		routeReports.clear();
+		routes.admit();
+
+		if (routes.searchSpansTicks() && heldInARow < kMaxHeldAdditionTicks) {
+			holdingAdditions = true;
+			++heldInARow;
+			++routeStatsTotal.ticksHeld;
+			routeStatsTotal.longestHold = std::max(routeStatsTotal.longestHold, heldInARow);
+		} else {
+			holdingAdditions = false;
+			heldInARow		 = 0;
+		}
+
+		const bool searching = std::any_of(queuedRoutes.begin(), queuedRoutes.end(), [this](const auto& entry) { return routes.waiting(entry.second.queued); });
+		if (!searching) {
+			return;
+		}
+		const nav::RouteMeshEpochs epochs{.labels = detailMesh.components().epoch(), .patches = detailMesh.epoch()};
+		sliceStarted = true;
+		routeWorker->start([this, epochs] {
+			const Clock::time_point start = Clock::now();
+			routes.runSlice(detailMesh.view(), epochs);
+			sliceMs = msSince(start);
+		});
 	}
 
 	void NavigationSystem::endTick() {
@@ -765,7 +862,11 @@ namespace ecs {
 		published		   = false;
 		collected		   = false;
 		if (!runningNav.empty()) {
-			navWorker->start([this] { runJob(detailMesh, runningNav, false); });
+			// The slice reads the nav mesh: it ends before the job writes.
+			navWorker->start([this] {
+				routeWorker->wait();
+				runJob(detailMesh, runningNav, false);
+			});
 		}
 		if (!runningStructural.empty()) {
 			structuralWorker->start([this] { runJob(structural, runningStructural, true); });
@@ -828,6 +929,8 @@ namespace ecs {
 		join();
 		collected = true;
 		detailLanded.insert(detailLanded.end(), runningNav.detailAddBoxes.begin(), runningNav.detailAddBoxes.end());
+		routeReports.insert(routeReports.end(), std::make_move_iterator(runningNav.reports.begin()), std::make_move_iterator(runningNav.reports.end()));
+		runningNav.reports.clear();
 		for (MeshJob* job : {&runningNav, &runningStructural}) {
 			for (std::size_t i = 0; i < job->onPatched.size(); ++i) {
 				job->onPatched[i](job->added[i], job->patchMs[i]);
@@ -942,6 +1045,7 @@ namespace ecs {
 				continue;
 			}
 			gatheredNav.doorRemoves.push_back(door.nav);
+			gatheredNav.doorEdges.push_back(door.portal);
 			gatheredStructural.doorRemoves.push_back(door.structural);
 			const auto [lo, hi] = portalBoxM(door.portal);
 			noteStructural(lo, hi, StructuralChange::Closes);
@@ -952,6 +1056,7 @@ namespace ecs {
 				continue;
 			}
 			gatheredNav.doorAdds.push_back(portals[i]);
+			gatheredNav.doorEdges.push_back(portals[i]);
 			gatheredStructural.doorAdds.push_back(portals[i]);
 			const auto [lo, hi] = portalBoxM(portals[i]);
 			noteStructural(lo, hi, StructuralChange::Opens);
@@ -1055,10 +1160,10 @@ namespace ecs {
 		rederiveChangedWater();
 		// Open chunks share a tick until their vertices would pass the budget; a chunk with water
 		// is the costliest kind of job there is, so it goes alone. Chunks not ready yet keep their
-		// place in the queue.
+		// place in the queue. A budget of 0 (additions held) takes none.
 		const bool	unlimited = vertexBudget == kUnlimited;
 		std::size_t taken	  = 0;
-		bool		full	  = false;
+		bool		full	  = vertexBudget == 0;
 		std::size_t kept	  = 0;
 		groundPending		  = 0;
 		for (const world::ChunkCoordinate coord : groundQueue) {
@@ -1736,6 +1841,86 @@ namespace ecs {
 	bool NavigationSystem::inSimArea(glm::vec2 meters) const {
 		join();
 		return detailMesh.locate(nav::toMm(meters)) >= 0;
+	}
+
+	nav::RouteTicket NavigationSystem::requestRoute(glm::vec2 startMeters, std::span<const glm::vec2> goalsMeters, float agentRadiusMeters,
+												   const gnav::BeliefFilter& belief) {
+		join();
+		const nav::RouteTicket ticket = nextRouteTicket++;
+		++routeStatsTotal.requests;
+		const geometry::Vec2i64 startMm = nav::toMm(startMeters);
+		const std::int32_t		startTri = detailMesh.locate(startMm);
+		nav::RouteRequestArgs	args{.start = startMm, .agentRadiusMm = radiusMm(agentRadiusMeters), .belief = belief};
+		args.belief.prices = {};
+		std::vector<std::int32_t> goalIndices;
+		if (startTri >= 0) {
+			const gnav::MeshComponents& labels = detailMesh.components();
+			for (std::size_t i = 0; i < goalsMeters.size(); ++i) {
+				const geometry::Vec2i64 goalMm	= nav::toMm(goalsMeters[i]);
+				const std::int32_t		goalTri = detailMesh.locate(goalMm);
+				if (goalTri >= 0 && labels.sameComponent(startTri, goalTri)) {
+					args.goals.push_back(goalMm);
+					goalIndices.push_back(static_cast<std::int32_t>(i));
+				}
+			}
+		}
+		if (args.goals.empty()) {
+			++routeStatsTotal.answeredAtOnce;
+			answeredAtOnce.emplace(ticket, RouteAnswer{.outcome	   = startTri < 0 ? nav::RouteOutcome::StartOffMesh : nav::RouteOutcome::NoKnownWay,
+													   .labelEpoch = detailMesh.components().epoch(),
+													   .patchEpoch = detailMesh.epoch()});
+			return ticket;
+		}
+		queuedRoutes.emplace(ticket, QueuedRoute{.queued = routes.request(args), .goalIndices = std::move(goalIndices)});
+		return ticket;
+	}
+
+	std::optional<NavigationSystem::RouteAnswer> NavigationSystem::takeRouteAnswer(nav::RouteTicket ticket) {
+		if (const auto at = answeredAtOnce.find(ticket); at != answeredAtOnce.end()) {
+			RouteAnswer answer = at->second;
+			answeredAtOnce.erase(at);
+			++routeStatsTotal.answered;
+			return answer;
+		}
+		const auto queued = queuedRoutes.find(ticket);
+		if (queued == queuedRoutes.end()) {
+			return std::nullopt;
+		}
+		std::optional<nav::RouteAnswer> found = routes.takeAnswer(queued->second.queued);
+		if (!found.has_value()) {
+			return std::nullopt;
+		}
+		RouteAnswer answer{.outcome	   = found->outcome,
+						   .labelEpoch = found->epochs.labels,
+						   .patchEpoch = found->epochs.patches,
+						   .restarts   = found->restarts,
+						   .expansions = found->path.nodesExpanded};
+		if (found->outcome == nav::RouteOutcome::Routed) {
+			answer.goalIndex = queued->second.goalIndices[static_cast<std::size_t>(found->goalIndex)];
+			answer.waypoints.reserve(found->path.points.size());
+			double lengthMm = 0.0;
+			for (std::size_t i = 0; i < found->path.points.size(); ++i) {
+				answer.waypoints.push_back(nav::toMeters(found->path.points[i]));
+				if (i > 0) {
+					const geometry::Vec2i64& a = found->path.points[i - 1];
+					const geometry::Vec2i64& b = found->path.points[i];
+					lengthMm += std::hypot(static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y));
+				}
+			}
+			answer.lengthMeters = static_cast<float>(lengthMm / static_cast<double>(geometry::kMillimetersPerMeter));
+		}
+		queuedRoutes.erase(queued);
+		++routeStatsTotal.answered;
+		routeStatsTotal.restarts += answer.restarts;
+		return answer;
+	}
+
+	void NavigationSystem::cancelRoute(nav::RouteTicket ticket) {
+		answeredAtOnce.erase(ticket);
+		if (const auto queued = queuedRoutes.find(ticket); queued != queuedRoutes.end()) {
+			routes.cancel(queued->second.queued);
+			queuedRoutes.erase(queued);
+		}
 	}
 
 	NavigationSystem::PathAnswer

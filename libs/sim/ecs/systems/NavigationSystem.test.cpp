@@ -44,6 +44,7 @@
 #include <cmath>
 #include <cstdint>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -3792,5 +3793,609 @@ TEST_F(NavigationSystemTest, ShorePointsRingedByTrunksAreReachedAndDrunkAt) {
 		EXPECT_GT(needs.get(NeedType::Thirst).value, 50.0F) << "never drank; it stands "
 														   << glm::distance(rig.world.getComponent<Position>(colonist)->value, shoreA) << " m from A";
 		EXPECT_EQ(targetChanges, 1) << "it switched between the shore points";
+	}
+}
+
+// --- Routes by ticket (requestRoute, takeRouteAnswer, cancelRoute) -------------------------------
+
+namespace {
+
+	using geometry::nav::SearchArgs;
+	using geometry::nav::SearchState;
+	using RouteAnswer = NavigationSystem::RouteAnswer;
+
+	constexpr float kTick = 0.016F;
+
+	// A field of trees 112 m square, a tree every 1.6 m, so a long search takes several slices.
+	constexpr float		  kFieldLo		 = 8.0F;
+	constexpr float		  kFieldPitch	 = 1.6F;
+	constexpr int		  kFieldCount	 = 70;
+	constexpr float		  kFieldTreeHalf = 0.25F;
+	constexpr const char* kFieldTree	 = "Test_NavRouteFieldTree";
+
+	// Between four trees, at least 1.1 m from each.
+	glm::vec2 gapPoint(int i, int j) {
+		return {kFieldLo + kFieldPitch * static_cast<float>(i), kFieldLo + kFieldPitch * static_cast<float>(j)};
+	}
+	glm::vec2 fieldTree(int i, int j) {
+		return gapPoint(i, j) + glm::vec2{0.5F * kFieldPitch};
+	}
+
+	// A built wall across the field along y = 64 m, from x = 20.8 m to 112 m: points either side
+	// of its middle are 3.2 m apart in a line and over 80 m apart on foot.
+	const glm::vec2 kBarWest{20.8F, 64.0F};
+	const glm::vec2 kBarEast{112.0F, 64.0F};
+	const glm::vec2 kBarStart = gapPoint(35, 34);
+	const glm::vec2 kBarGoal  = gapPoint(35, 36);
+	// A 4 x 3 m room of built walls in the field's north-east, no opening; trees kept clear of it.
+	const glm::vec2				 kRoomLo{96.0F, 96.0F};
+	const glm::vec2				 kRoomHi{100.0F, 99.0F};
+	const std::vector<glm::vec2> kInRoom{{97.0F, 97.5F}, {99.0F, 97.5F}};
+	// Ground no field mover meshes: chunk (1, 0).
+	const glm::vec2 kFarGround{700.0F, 64.0F};
+	// Trees in cells no field mover wants.
+	const glm::vec2 kLateTrees{300.0F, 300.0F};
+
+	Vec2i64 mm(glm::vec2 meters) {
+		return nav::toMm(meters);
+	}
+
+	struct RouteField {
+		PlacementExecutor					executor{AssetRegistry::Get()};
+		std::unordered_set<ChunkCoordinate> processed;
+		ConstructionWorld					cw;
+		World								world;
+		NavigationSystem&					sys;
+		SegmentId							roomSouth = 0;
+
+		RouteField()
+			: sys(world.registerSystem<NavigationSystem>()) {
+			registerTree(kFieldTree, kFieldTreeHalf);
+			std::vector<glm::vec2> trees;
+			for (int j = 0; j < kFieldCount; ++j) {
+				for (int i = 0; i < kFieldCount; ++i) {
+					const glm::vec2 p = fieldTree(i, j);
+					if (p.x > kRoomLo.x - 1.2F && p.x < kRoomHi.x + 1.2F && p.y > kRoomLo.y - 1.2F && p.y < kRoomHi.y + 1.2F) {
+						continue;
+					}
+					trees.push_back(p);
+				}
+			}
+			for (int k = 0; k < 5; ++k) {
+				trees.push_back(kLateTrees + glm::vec2{2.0F * static_cast<float>(k), 0.0F});
+			}
+			placeTrees(executor, processed, kFieldTree, trees);
+			buildWall(cw, mm(kBarWest), mm(kBarEast));
+			roomSouth = buildWall(cw, mm(kRoomLo), mm({kRoomHi.x, kRoomLo.y}));
+			buildWall(cw, mm({kRoomHi.x, kRoomLo.y}), mm(kRoomHi));
+			buildWall(cw, mm(kRoomHi), mm({kRoomLo.x, kRoomHi.y}));
+			buildWall(cw, mm({kRoomLo.x, kRoomHi.y}), mm(kRoomLo));
+			sys.setChunkManager(landChunks());
+			sys.setPlacementData(&executor, &processed);
+			sys.setConstructionWorld(&cw);
+			meshAround(world, {64.0F, 64.0F}, 64.0F);
+			sys.finishPendingBuilds();
+		}
+
+		void tick() { world.update(kTick); }
+
+		void fell(glm::vec2 tree) { ASSERT_TRUE(executor.removeEntity(world::worldToChunk({tree.x, tree.y}), tree, kFieldTree)); }
+
+		// Ticks until the answer is takeable, counting them.
+		std::optional<RouteAnswer> await(nav::RouteTicket ticket, int& ticks, int limit = 60) {
+			for (int i = 0; i < limit; ++i) {
+				tick();
+				++ticks;
+				if (std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket)) {
+					return answer;
+				}
+			}
+			return std::nullopt;
+		}
+	};
+
+	// The search the route queue runs for a request, run alone to its end on the mesh as it is now.
+	SearchState searchAlone(const NavigationSystem& sys, glm::vec2 start, const std::vector<glm::vec2>& goals) {
+		SearchArgs args{.start = mm(start), .agentRadiusMm = 300, .belief = geometry::nav::copyBelief({})};
+		for (const glm::vec2 g : goals) {
+			args.goals.push_back(mm(g));
+		}
+		SearchState search(std::move(args));
+		search.step(sys.navMesh().view(), geometry::nav::kRunToEnd);
+		return search;
+	}
+
+	std::vector<Vec2i64> pointsOf(const RouteAnswer& answer) {
+		std::vector<Vec2i64> out;
+		for (const glm::vec2 p : answer.waypoints) {
+			out.push_back(mm(p));
+		}
+		return out;
+	}
+
+	bool wallAt(const NavigationSystem& sys, glm::vec2 meters) {
+		const geometry::nav::PatchableMesh& mesh = sys.navMesh();
+		const std::int32_t					tri	 = mesh.locate(mm(meters));
+		return tri >= 0 && mesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker > 0;
+	}
+
+	// What one answer said, without the epochs (process-wide counters, so two runs never share them).
+	struct TakenAnswer {
+		int					 tick	= 0;
+		nav::RouteTicket	 ticket = 0;
+		nav::RouteOutcome	 outcome{};
+		std::int32_t		 goalIndex	= -1;
+		std::vector<Vec2i64> points;
+		std::uint32_t		 restarts	= 0;
+		std::int64_t		 expansions = 0;
+		bool				 operator==(const TakenAnswer&) const = default;
+	};
+
+	TakenAnswer taken(int tick, nav::RouteTicket ticket, const RouteAnswer& a) {
+		return {tick, ticket, a.outcome, a.goalIndex, pointsOf(a), a.restarts, a.expansions};
+	}
+
+} // namespace
+
+// A route by ticket on ground with no placed obstacles is the walk requestPath gives: through a
+// door, the same length end to end.
+TEST_F(NavigationSystemTest, RouteByTicketIsTheWalkRequestPathGives) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	const auto synchronous = sys.requestPath(kOutside, kInside, kAgentRadius).route;
+	ASSERT_TRUE(synchronous.has_value());
+	const nav::RouteTicket	   ticket = sys.requestRoute(kOutside, std::array{kInside}, kAgentRadius);
+	std::optional<RouteAnswer> answer;
+	for (int i = 0; i < 4 && !answer.has_value(); ++i) {
+		world.update(kTick);
+		answer = sys.takeRouteAnswer(ticket);
+	}
+	ASSERT_TRUE(answer.has_value());
+	ASSERT_EQ(answer->outcome, nav::RouteOutcome::Routed);
+	EXPECT_EQ(answer->goalIndex, 0);
+	EXPECT_EQ(mm(answer->waypoints.front()), mm(synchronous->front()));
+	EXPECT_EQ(mm(answer->waypoints.back()), mm(synchronous->back()));
+	EXPECT_NEAR(answer->lengthMeters, lengthOf(*synchronous), 0.002F);
+	EXPECT_NEAR(answer->lengthMeters, lengthOf(answer->waypoints), 0.002F);
+	EXPECT_EQ(answer->restarts, 0U);
+}
+
+// A short search requested between ticks is takeable after the second update, not before.
+TEST_F(NavigationSystemTest, ShortRouteIsTakeableTwoTicksAfterTheRequest) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	settle(sys);
+
+	const nav::RouteTicket ticket = sys.requestRoute({10.0F, 10.0F}, std::array{glm::vec2{40.0F, 25.0F}}, kAgentRadius);
+	EXPECT_FALSE(sys.takeRouteAnswer(ticket).has_value()) << "nothing before the first slice";
+	world.update(kTick);
+	EXPECT_FALSE(sys.takeRouteAnswer(ticket).has_value()) << "searched in this tick's slice, delivered at the next update";
+	world.update(kTick);
+	const std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket);
+	ASSERT_TRUE(answer.has_value());
+	EXPECT_EQ(answer->outcome, nav::RouteOutcome::Routed);
+	EXPECT_FALSE(sys.takeRouteAnswer(ticket).has_value()) << "taken once";
+	EXPECT_EQ(sys.routeStats().slices, 1U);
+	EXPECT_EQ(sys.routeStats().answered, 1U);
+}
+
+// A placed obstacle blocks a route: it goes round, never through it. The funnel turns a corner on
+// points a radius off it, so a leg between two of them may pass a little under a radius from the
+// corner (at most by a radius times 1 - cos 45 degrees).
+TEST_F(NavigationSystemTest, RouteByTicketGoesRoundAPlacedObstacle) {
+	registerTree("Test_NavRouteRoundTree", 1.0F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{20.0F, 20.0F};
+	placeTrees(executor, processed, "Test_NavRouteRoundTree", {treeAt});
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setPlacementData(&executor, &processed);
+	settle(sys);
+	ASSERT_FALSE(meshClear(sys, treeAt));
+
+	const glm::vec2		   from{15.0F, 20.0F};
+	const glm::vec2		   to{25.0F, 20.0F};
+	const nav::RouteTicket ticket = sys.requestRoute(from, std::array{to}, kAgentRadius);
+	world.update(kTick);
+	world.update(kTick);
+	const std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket);
+	ASSERT_TRUE(answer.has_value());
+	ASSERT_EQ(answer->outcome, nav::RouteOutcome::Routed);
+	EXPECT_GT(answer->lengthMeters, 10.05F) << "bent round the obstacle";
+	for (std::size_t i = 1; i < answer->waypoints.size(); ++i) {
+		for (int k = 0; k <= 100; ++k) {
+			const glm::vec2 p	  = glm::mix(answer->waypoints[i - 1], answer->waypoints[i], static_cast<float>(k) / 100.0F);
+			const glm::vec2 apart = glm::max(glm::abs(p - treeAt) - glm::vec2{1.0F}, glm::vec2{0.0F});
+			EXPECT_GE(glm::length(apart), kAgentRadius * 0.7F) << "the disc enters the obstacle at (" << p.x << ", " << p.y << ")";
+		}
+	}
+}
+
+// Of several goals the answer is the nearest on foot: one 1.5 m away in a line but round a room's
+// walls to its door loses to one 4.5 m away in the open.
+TEST_F(NavigationSystemTest, NearestOfRouteIsTheNearestOnFoot) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	const glm::vec2				 from{2.0F, 4.0F};
+	const std::vector<glm::vec2> goals{{2.0F, 2.5F}, {6.5F, 4.0F}};
+	const nav::RouteTicket		 ticket = sys.requestRoute(from, goals, kAgentRadius);
+	world.update(kTick);
+	world.update(kTick);
+	const std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket);
+	ASSERT_TRUE(answer.has_value());
+	ASSERT_EQ(answer->outcome, nav::RouteOutcome::Routed);
+	EXPECT_EQ(answer->goalIndex, 1);
+	EXPECT_EQ(mm(answer->waypoints.back()), mm(goals[1]));
+}
+
+// A search longer than a slice carries on over ticks and answers what it would run alone.
+TEST_F(NavigationSystemTest, LongRouteSpansTicksAndAnswers) {
+	RouteField						 field;
+	const nav::RouteTicket			 ticket = field.sys.requestRoute(kBarStart, std::array{kBarGoal}, kAgentRadius);
+	int								 ticks	= 0;
+	const std::optional<RouteAnswer> answer = field.await(ticket, ticks);
+	ASSERT_TRUE(answer.has_value());
+	ASSERT_EQ(answer->outcome, nav::RouteOutcome::Routed);
+	EXPECT_GT(answer->expansions, static_cast<std::int64_t>(nav::kRouteWorkPerSlice));
+	EXPECT_GT(ticks, 2) << "more than one slice";
+	EXPECT_GT(answer->lengthMeters, 80.0F) << "round the bar";
+	EXPECT_EQ(answer->restarts, 0U);
+	const SearchState alone = searchAlone(field.sys, kBarStart, {kBarGoal});
+	EXPECT_EQ(pointsOf(*answer), alone.result().points);
+	EXPECT_EQ(answer->expansions, alone.expansions());
+}
+
+// While a search spans ticks, new ground and newly meshed placed obstacles wait; a felled obstacle and
+// a wall go in at once. Once it has answered, what waited goes in.
+TEST_F(NavigationSystemTest, AdditionsWaitWhileARouteSpansTicksRemovalsAndWallsDoNot) {
+	RouteField			   field;
+	NavigationSystem&	   sys	  = field.sys;
+	const nav::RouteTicket ticket = sys.requestRoute(kBarStart, std::array{kBarGoal}, kAgentRadius);
+	field.tick();
+	ASSERT_EQ(sys.routeStats().ticksHeld, 0U) << "nothing has run across a tick yet";
+
+	meshAround(field.world, kFarGround, 10.0F);
+	meshAround(field.world, kLateTrees + glm::vec2{4.0F, 3.0F}, 8.0F);
+	const glm::vec2 felled = fieldTree(30, 30);
+	ASSERT_FALSE(meshClear(sys, felled));
+	field.fell(felled);
+	const glm::vec2 wallMid{132.0F, 60.0F};
+	buildWall(field.cw, mm({130.0F, 60.0F}), mm({134.0F, 60.0F}));
+	field.tick();
+	ASSERT_EQ(sys.routeStats().ticksHeld, 1U) << "the search ran in the last slice and goes on";
+	EXPECT_TRUE(meshClear(sys, felled)) << "the felled obstacle is out at once";
+	EXPECT_TRUE(wallAt(sys, wallMid)) << "the wall is in at once";
+	EXPECT_FALSE(sys.inSimArea(kFarGround)) << "new ground waits";
+	EXPECT_TRUE(meshClear(sys, kLateTrees)) << "new placed obstacles wait";
+
+	std::optional<RouteAnswer> answer;
+	for (int ticks = 0; ticks < 60 && !answer.has_value(); ++ticks) {
+		field.tick();
+		answer = sys.takeRouteAnswer(ticket);
+		if (!answer.has_value()) {
+			EXPECT_FALSE(sys.inSimArea(kFarGround)) << "tick " << ticks;
+		}
+	}
+	ASSERT_TRUE(answer.has_value());
+	EXPECT_EQ(answer->outcome, nav::RouteOutcome::Routed);
+	for (int i = 0; i < 4; ++i) {
+		field.tick();
+	}
+	EXPECT_TRUE(sys.inSimArea(kFarGround)) << "the held ground went in";
+	EXPECT_FALSE(meshClear(sys, kLateTrees)) << "the held obstacles went in";
+}
+
+// Additions wait at most kMaxHeldAdditionTicks in a row: then the backlog goes in for a tick, and
+// they wait again.
+TEST_F(NavigationSystemTest, HeldAdditionsGoInAfterTheLimit) {
+	RouteField					  field;
+	NavigationSystem&			  sys = field.sys;
+	// Long searches, one more a tick while fewer than four are out, so they finish on different
+	// ticks and one is always running across a tick.
+	std::vector<nav::RouteTicket> outstanding;
+	int							  asked = 0;
+	const auto					  topUp = [&] {
+		 std::erase_if(outstanding, [&](nav::RouteTicket t) { return sys.takeRouteAnswer(t).has_value(); });
+		 if (outstanding.size() < 4) {
+			 outstanding.push_back(++asked % 2 == 0 ? sys.requestRoute(kBarStart, std::array{kBarGoal}, kAgentRadius)
+													: sys.requestRoute(gapPoint(2, 2), kInRoom, kAgentRadius));
+		 }
+	};
+	const auto release = static_cast<int>(NavigationSystem::kMaxHeldAdditionTicks) + 2;
+	for (int update = 1; update <= release + 1; ++update) {
+		topUp();
+		if (update == 3) {
+			meshAround(field.world, kFarGround, 10.0F);
+		}
+		field.tick();
+		if (update >= 3 && update < release) {
+			ASSERT_FALSE(sys.inSimArea(kFarGround)) << "update " << update;
+		}
+		if (update == release) {
+			EXPECT_TRUE(sys.inSimArea(kFarGround)) << "released at update " << update;
+		}
+	}
+	EXPECT_EQ(sys.routeStats().longestHold, NavigationSystem::kMaxHeldAdditionTicks);
+	EXPECT_EQ(sys.routeStats().ticksHeld, NavigationSystem::kMaxHeldAdditionTicks + 1) << "held again the tick after the release";
+	for (const nav::RouteTicket t : outstanding) {
+		sys.cancelRoute(t);
+	}
+}
+
+// A patch that changes a triangle a running search has read restarts it, and the answer is the
+// one for the mesh as it now stands.
+TEST_F(NavigationSystemTest, PatchUnderARunningRouteRestartsIt) {
+	RouteField			   field;
+	NavigationSystem&	   sys	  = field.sys;
+	const nav::RouteTicket ticket = sys.requestRoute(kBarStart, std::array{kBarGoal}, kAgentRadius);
+	field.tick();
+	field.fell(fieldTree(34, 33));
+	field.fell(fieldTree(35, 33));
+	int								 ticks	= 1;
+	const std::optional<RouteAnswer> answer = field.await(ticket, ticks);
+	ASSERT_TRUE(answer.has_value());
+	ASSERT_EQ(answer->outcome, nav::RouteOutcome::Routed);
+	EXPECT_GE(answer->restarts, 1U);
+	EXPECT_EQ(sys.routeStats().restarts, answer->restarts);
+	const SearchState alone = searchAlone(sys, kBarStart, {kBarGoal});
+	EXPECT_EQ(pointsOf(*answer), alone.result().points);
+	EXPECT_EQ(answer->expansions, alone.expansions());
+}
+
+// A door that opens the sealed room while a search for the room runs is seen by it: the room is
+// routed to, through the door.
+TEST_F(NavigationSystemTest, DoorAddedWhileARouteRunsIsSeen) {
+	RouteField			   field;
+	NavigationSystem&	   sys	  = field.sys;
+	const nav::RouteTicket ticket = sys.requestRoute(gapPoint(2, 2), kInRoom, kAgentRadius);
+	field.tick();
+	const OpeningId door = field.cw.addOpening(field.roomSouth, 0.5F, "Door", "Wood");
+	ASSERT_NE(door, kInvalidOpening);
+	ASSERT_TRUE(field.cw.setOpeningState(door, FoundationState::Built));
+	int								 ticks	= 1;
+	const std::optional<RouteAnswer> answer = field.await(ticket, ticks);
+	ASSERT_TRUE(answer.has_value());
+	ASSERT_EQ(answer->outcome, nav::RouteOutcome::Routed) << "the door is in the answer";
+	EXPECT_GE(answer->restarts, 1U);
+	const glm::vec2 end = answer->waypoints.back();
+	EXPECT_TRUE(end.x > kRoomLo.x && end.x < kRoomHi.x && end.y > kRoomLo.y && end.y < kRoomHi.y);
+}
+
+// The same room with no door: the search explores all the start can reach and answers no known way.
+TEST_F(NavigationSystemTest, SealedRoomRouteExploresAndAnswersNoKnownWay) {
+	RouteField						 field;
+	const nav::RouteTicket			 ticket = field.sys.requestRoute(gapPoint(2, 2), kInRoom, kAgentRadius);
+	int								 ticks	= 0;
+	const std::optional<RouteAnswer> answer = field.await(ticket, ticks);
+	ASSERT_TRUE(answer.has_value());
+	EXPECT_EQ(answer->outcome, nav::RouteOutcome::NoKnownWay);
+	EXPECT_GT(answer->expansions, static_cast<std::int64_t>(nav::kRouteWorkPerSlice));
+	EXPECT_EQ(answer->goalIndex, -1);
+	EXPECT_TRUE(answer->waypoints.empty());
+}
+
+// A cancelled request is never answered, before or during its search, and its search stops.
+TEST_F(NavigationSystemTest, CancelledRouteIsNeverAnswered) {
+	RouteField		  field;
+	NavigationSystem& sys = field.sys;
+
+	const nav::RouteTicket before = sys.requestRoute(kBarStart, std::array{kBarGoal}, kAgentRadius);
+	sys.cancelRoute(before);
+	const nav::RouteTicket during = sys.requestRoute(kBarStart, std::array{kBarGoal}, kAgentRadius);
+	field.tick();
+	sys.cancelRoute(during);
+	const std::uint64_t slices = sys.routeStats().slices;
+	for (int i = 0; i < 10; ++i) {
+		field.tick();
+		EXPECT_FALSE(sys.takeRouteAnswer(before).has_value());
+		EXPECT_FALSE(sys.takeRouteAnswer(during).has_value());
+	}
+	EXPECT_EQ(sys.routeStats().slices, slices + 1) << "no slice after the one the cancel found running";
+
+	const nav::RouteTicket atOnce = sys.requestRoute(kUnmeshed, std::array{kBarGoal}, kAgentRadius);
+	sys.cancelRoute(atOnce);
+	EXPECT_FALSE(sys.takeRouteAnswer(atOnce).has_value());
+	EXPECT_EQ(sys.routeStats().answered, 0U);
+}
+
+// A start on no meshed ground has its own answer, at once, with no search.
+TEST_F(NavigationSystemTest, RouteFromOffTheMeshSaysSo) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	settle(sys);
+	const nav::RouteTicket			 ticket = sys.requestRoute(kUnmeshed, std::array{glm::vec2{10.0F, 10.0F}}, kAgentRadius);
+	const std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket);
+	ASSERT_TRUE(answer.has_value()) << "answered at once";
+	EXPECT_EQ(answer->outcome, nav::RouteOutcome::StartOffMesh);
+	EXPECT_EQ(answer->expansions, 0);
+	EXPECT_EQ(answer->patchEpoch, sys.navMesh().epoch());
+}
+
+// A goal in a pocket of meshed ground sealed by placed obstacles, or off meshed ground, is no known
+// way at once: no search, no slice.
+TEST_F(NavigationSystemTest, RouteToAnotherComponentIsNoKnownWayAtOnce) {
+	registerTree("Test_NavPocketTree", 0.6F);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						pocket{200.0F, 20.0F};
+	std::vector<glm::vec2>				ring;
+	for (int k = -3; k <= 3; ++k) {
+		const auto d = static_cast<float>(k);
+		ring.insert(ring.end(), {pocket + glm::vec2{d, -3.0F}, pocket + glm::vec2{d, 3.0F}});
+		if (k > -3 && k < 3) {
+			ring.insert(ring.end(), {pocket + glm::vec2{-3.0F, d}, pocket + glm::vec2{3.0F, d}});
+		}
+	}
+	placeTrees(executor, processed, "Test_NavPocketTree", ring);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setPlacementData(&executor, &processed);
+	settle(sys);
+	ASSERT_TRUE(meshClear(sys, pocket)) << "the pocket is meshed ground";
+
+	for (const glm::vec2 goal : {pocket, kUnmeshed}) {
+		const nav::RouteTicket			 ticket = sys.requestRoute({180.0F, 20.0F}, std::array{goal}, kAgentRadius);
+		const std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket);
+		ASSERT_TRUE(answer.has_value()) << "answered at once";
+		EXPECT_EQ(answer->outcome, nav::RouteOutcome::NoKnownWay);
+		EXPECT_EQ(answer->expansions, 0);
+		EXPECT_EQ(answer->labelEpoch, sys.navMesh().components().epoch());
+	}
+	world.update(kTick);
+	world.update(kTick);
+	EXPECT_EQ(sys.routeStats().slices, 0U);
+	EXPECT_EQ(sys.routeStats().answeredAtOnce, 2U);
+}
+
+namespace {
+
+	// A scripted run on the route field: requests, a cancel, a felled tree, a wall, and a door on
+	// fixed ticks; every answer with the tick it was taken on.
+	std::vector<TakenAnswer> scriptedRouteRun() {
+		RouteField					  field;
+		NavigationSystem&			  sys = field.sys;
+		std::vector<nav::RouteTicket> tickets;
+		std::vector<TakenAnswer>	  answers;
+		for (int t = 0; t < 40; ++t) {
+			switch (t) {
+				case 0:
+					tickets.push_back(sys.requestRoute(kBarStart, std::array{kBarGoal}, kAgentRadius));
+					tickets.push_back(sys.requestRoute(gapPoint(5, 5), std::array{gapPoint(12, 9)}, kAgentRadius));
+					tickets.push_back(sys.requestRoute(gapPoint(2, 2), kInRoom, kAgentRadius));
+					tickets.push_back(sys.requestRoute(gapPoint(60, 10), std::array{gapPoint(10, 60)}, kAgentRadius));
+					break;
+				case 1:
+					sys.cancelRoute(tickets[3]);
+					field.fell(fieldTree(33, 33));
+					break;
+				case 2: buildWall(field.cw, mm({40.0F, 30.0F}), mm({40.0F, 34.0F})); break;
+				case 3: {
+					const OpeningId door = field.cw.addOpening(field.roomSouth, 0.5F, "Door", "Wood");
+					field.cw.setOpeningState(door, FoundationState::Built);
+					tickets.push_back(sys.requestRoute(gapPoint(64, 64), std::array{gapPoint(3, 50), gapPoint(50, 3)}, kAgentRadius));
+					break;
+				}
+				default: break;
+			}
+			field.tick();
+			for (const nav::RouteTicket ticket : tickets) {
+				if (std::optional<RouteAnswer> a = sys.takeRouteAnswer(ticket)) {
+					answers.push_back(taken(t, ticket, *a));
+				}
+			}
+		}
+		return answers;
+	}
+
+} // namespace
+
+// The same requests and world changes on the same ticks give the same answers on the same ticks,
+// whatever the threads did.
+TEST_F(NavigationSystemTest, SameRouteScriptSameAnswersOnTheSameTicks) {
+	const std::vector<TakenAnswer> first  = scriptedRouteRun();
+	const std::vector<TakenAnswer> second = scriptedRouteRun();
+	EXPECT_EQ(first.size(), 4U) << "every request but the cancelled one answered";
+	EXPECT_TRUE(first == second);
+}
+
+namespace {
+
+	struct Lcg {
+		std::uint32_t state;
+		std::uint32_t next(std::uint32_t below) {
+			state = state * 1664525U + 1013904223U;
+			return (state >> 8U) % below;
+		}
+	};
+
+	// Requests, cancels, felled trees, and walls landing every tick, then a drain until every request
+	// still standing is answered. Each routed answer starts at its start and ends at its goal.
+	std::vector<TakenAnswer> stressRouteRun() {
+		RouteField		  field;
+		NavigationSystem& sys = field.sys;
+		Lcg				  rng{12345U};
+		struct Asked {
+			glm::vec2			   start;
+			std::vector<glm::vec2> goals;
+		};
+		std::map<nav::RouteTicket, Asked> open;
+		std::vector<TakenAnswer>		  answers;
+		const auto						  takeAll = [&](int t) {
+			   for (auto it = open.begin(); it != open.end();) {
+				   std::optional<RouteAnswer> a = sys.takeRouteAnswer(it->first);
+				   if (!a.has_value()) {
+					   ++it;
+					   continue;
+				   }
+				   if (a->outcome == nav::RouteOutcome::Routed) {
+					   EXPECT_EQ(mm(a->waypoints.front()), mm(it->second.start));
+					   EXPECT_EQ(mm(a->waypoints.back()), mm(it->second.goals[static_cast<std::size_t>(a->goalIndex)]));
+				   }
+				   answers.push_back(taken(t, it->first, *a));
+				   it = open.erase(it);
+			   }
+		};
+		for (int t = 0; t < 40; ++t) {
+			for (int k = 0; k < 6; ++k) {
+				Asked				asked{gapPoint(1 + static_cast<int>(rng.next(68)), 1 + static_cast<int>(rng.next(68))), {}};
+				const std::uint32_t goals = 1 + rng.next(3);
+				for (std::uint32_t g = 0; g < goals; ++g) {
+					asked.goals.push_back(gapPoint(1 + static_cast<int>(rng.next(68)), 1 + static_cast<int>(rng.next(68))));
+				}
+				const nav::RouteTicket ticket = sys.requestRoute(asked.start, asked.goals, kAgentRadius);
+				open.emplace(ticket, std::move(asked));
+			}
+			if (rng.next(2) == 0) {
+				auto it = open.begin();
+				std::advance(it, rng.next(static_cast<std::uint32_t>(open.size())));
+				sys.cancelRoute(it->first);
+				open.erase(it);
+			}
+			const glm::vec2 tree = fieldTree(static_cast<int>(rng.next(kFieldCount)), static_cast<int>(rng.next(kFieldCount)));
+			if (!meshClear(sys, tree)) {
+				field.fell(tree);
+			}
+			if (t % 5 == 4) {
+				const glm::vec2 at = gapPoint(2 + static_cast<int>(rng.next(60)), 2 + static_cast<int>(rng.next(60)));
+				buildWall(field.cw, mm(at), mm(at + glm::vec2{3.2F, 0.0F}));
+			}
+			field.tick();
+			takeAll(t);
+		}
+		for (int t = 40; t < 400 && !open.empty(); ++t) {
+			field.tick();
+			takeAll(t);
+		}
+		EXPECT_TRUE(open.empty()) << open.size() << " requests never answered";
+		return answers;
+	}
+
+} // namespace
+
+// Many requests and patches every tick with the slice on its worker, run three times: the same
+// answers on the same ticks each time. A data race would most likely show here as a difference or a
+// crash; passing is not proof there is none.
+TEST_F(NavigationSystemTest, RouteStressRunsRepeatExactly) {
+	const std::vector<TakenAnswer> first = stressRouteRun();
+	EXPECT_GT(first.size(), 150U);
+	for (int run = 0; run < 2; ++run) {
+		EXPECT_TRUE(stressRouteRun() == first) << "run " << run + 2;
 	}
 }

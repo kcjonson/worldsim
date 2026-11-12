@@ -31,6 +31,19 @@
 // tick, however long the workers took, and nothing reads a mesh while it is patched. Points on
 // meshed ground route to each other wherever they are.
 //
+// Route requests (requestRoute) are searched by a third worker, one slice of nav::RouteQueue a
+// tick, reading the nav mesh while the main thread goes on with its frame. A tick:
+//  1. update() waits for the nav mesh's patch job, which itself waited for the last slice, and for
+//     that slice when no job followed it. Every PatchReport since that slice (each patch's, the
+//     width refresh's, and one for the door edits) goes to RouteQueue::notePatches, then admit
+//     delivers the answers and takes in the requests made since, then the next slice starts.
+//  2. The rest of update(), the other systems, and every query read the nav mesh alongside the
+//     slice; all of it is const reads (the mesh keeps no lazily built state).
+//  3. endTick() starts the patch jobs; the nav mesh's job waits for the slice before it writes.
+// While a search runs across ticks, additions (new ground, newly meshed placed obstacles) are held
+// for at most kMaxHeldAdditionTicks; removals from the world, walls, doors, and re-derived water
+// never are.
+//
 // Detail is priced, not walled, for movement (spec 4.4, 4.7): a placed obstacle in the nav mesh costs
 // kDetailPassMultiplier times its length to walk through, so a mover standing in
 // one is on valid ground and its route can take it out. Detail decides only what collision and the
@@ -52,6 +65,7 @@
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
+#include <nav/RouteQueue.h>
 
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
@@ -65,6 +79,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <span>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -169,6 +184,70 @@ class NavigationSystem : public ISystem {
 		reachExpansionCap	 = forward;
 		farRouteExpansions	 = farRoute;
 	}
+
+	// Routes under the time budget, asked for by ticket and answered on a later tick. They replace
+	// requestPath; both exist until the colonist AI has moved to these.
+	//
+	// requestRoute asks for the shortest walk from `startMeters` to whichever of `goalsMeters` is
+	// nearest on foot, for a disc of `agentRadiusMeters` under `belief`. The belief's sets are
+	// copied at the call and its prices dropped: a placed obstacle blocks a route. Answered at
+	// once, with no search, when the start is off meshed ground or no goal stands on meshed ground
+	// connected to the start's (component labels). Otherwise the search runs in the route slices,
+	// a fixed count of expansions a tick shared by every request, and nothing limits it: it ends
+	// by finding a goal or by exploring all the mover can reach.
+	//
+	// When an answer is takeable, in ticks: answered at once, from the call on; otherwise a request
+	// made during tick t (or between ticks t and t + 1) is searched from tick t + 1's slice, and an
+	// answer found in slice s is takeable from tick s + 1's update on, unless a patch that landed
+	// after slice s changed a triangle the search read, which sends it back to search. So a short
+	// search made during tick t is takeable from tick t + 2's update. Which tick depends only on
+	// the requests, cancels, and world changes, never on thread timing.
+	//
+	// "No known way" means the goals are not connected to the start by meshed ground, or there is
+	// no way for this mover and belief on meshed ground. It is never a statement about the world:
+	// unmeshed ground, or ground the mover has not seen, may hold a way.
+	struct RouteAnswer {
+		nav::RouteOutcome	   outcome	 = nav::RouteOutcome::NoKnownWay;
+		std::int32_t		   goalIndex = -1; // into the request's goals; -1 unless Routed
+		std::vector<glm::vec2> waypoints;	   // start to goal, metres; empty unless Routed
+		float				   lengthMeters = 0.0F;
+		// The mesh the answer holds for: its component labels' epoch and its patch epoch when the
+		// search last read it (at the call, for an answer given at once).
+		std::uint64_t labelEpoch = 0;
+		std::uint64_t patchEpoch = 0;
+		std::uint32_t restarts	 = 0; // patches that changed what the search had read
+		std::int64_t  expansions = 0; // of the search that answered, since its last restart
+	};
+	[[nodiscard]] nav::RouteTicket requestRoute(glm::vec2 startMeters, std::span<const glm::vec2> goalsMeters, float agentRadiusMeters,
+												const geometry::nav::BeliefFilter& belief = {});
+	// The answer once takeable, removed by the take; nothing before then, or for a cancelled or
+	// unknown ticket.
+	[[nodiscard]] std::optional<RouteAnswer> takeRouteAnswer(nav::RouteTicket ticket);
+	// Drops the request, its search, and its answer.
+	void cancelRoute(nav::RouteTicket ticket);
+	// While a search runs across ticks, additions to the nav mesh (new ground, newly meshed placed
+	// obstacles) wait, so its reads stay current and it does not restart; at most this many ticks
+	// in a row, then the backlog goes in for a tick before they wait again. From the buffer: a
+	// mover meshes kSightBufferMeters (16 m) past what it sees, so walking at 2 m/s it is about 8 s
+	// before a placed obstacle it has not meshed comes into its sight. 240 ticks is half that at 60
+	// ticks a second. A count, so the tick additions land on never depends on the machine.
+	static constexpr std::uint32_t kMaxHeldAdditionTicks = 240;
+	// Cumulative since construction.
+	struct RouteStats {
+		std::uint64_t requests		 = 0;
+		std::uint64_t answeredAtOnce = 0; // of the requests, answered with no search
+		std::uint64_t answered		 = 0; // answers handed out by takeRouteAnswer
+		std::uint64_t restarts		 = 0; // over the answers handed out
+		std::uint64_t slices		 = 0;
+		std::uint64_t sliceExpansions	  = 0; // over every slice
+		std::uint32_t lastSliceExpansions = 0;
+		std::uint32_t maxSliceExpansions  = 0;
+		double		  lastSliceMs		  = 0.0; // on the route worker
+		double		  maxSliceMs		  = 0.0;
+		std::uint64_t ticksHeld			  = 0; // ticks additions waited
+		std::uint32_t longestHold		  = 0; // the most in a row
+	};
+	[[nodiscard]] const RouteStats& routeStats() const { return routeStatsTotal; }
 
 	// What a colonist can reach, and how far it walks there: a walk on the structural mesh (no
 	// detail, so the camera changes nothing) under the colonist's belief, over all meshed ground,
@@ -530,6 +609,8 @@ class NavigationSystem : public ISystem {
 		std::vector<std::function<void(const std::vector<RingId>&, double)>> onPatched;
 		std::vector<geometry::nav::DoorPortal>								 doorAdds;
 		std::vector<DoorId>													 doorRemoves;
+		// Nav only: the portals of doorAdds and doorRemoves, whose edges' triangles a door edit retags.
+		std::vector<geometry::nav::DoorPortal>								 doorEdges;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
 		std::vector<std::pair<glm::vec2, glm::vec2>>						 detailAddBoxes; // each added obstacle's box, metres
 		// Structural only: the chunks the job changes, those whose ground arrives, the boxes where it
@@ -540,6 +621,8 @@ class NavigationSystem : public ISystem {
 		bool												  anchored = false;
 
 		std::vector<std::vector<RingId>> added;
+		// Nav only: what each patch, the door edits, and the width refresh changed, for the route queue.
+		std::vector<geometry::nav::PatchReport> reports;
 		std::vector<double>				 patchMs;
 		std::vector<DoorId>				 doorsAdded;
 		double							 ms		  = 0.0; // the whole job
@@ -551,6 +634,10 @@ class NavigationSystem : public ISystem {
 	class Worker;
 
 	static void runJob(geometry::nav::PatchableMesh& mesh, MeshJob& job, bool forests);
+
+	// After the last slice and the patches that followed it: their reports to the route queue,
+	// admit, the hold on additions for this tick, and the next slice on the route worker.
+	void startRouteSlice();
 
 	// One tick's patches with the given budgets into the gathered jobs; finishPendingBuilds runs
 	// it unbudgeted.
@@ -697,6 +784,27 @@ class NavigationSystem : public ISystem {
 
 	std::unique_ptr<Worker> navWorker;
 	std::unique_ptr<Worker> structuralWorker;
+
+	// Route requests. A request answered at once never enters the queue; the rest map to their
+	// queue ticket and to the caller's index of each goal passed on (goals apart from the start
+	// by labels are not).
+	struct QueuedRoute {
+		nav::RouteTicket		  queued = nav::kNoRouteTicket;
+		std::vector<std::int32_t> goalIndices;
+	};
+	nav::RouteQueue											routes;
+	nav::RouteTicket										nextRouteTicket = 1;
+	std::unordered_map<nav::RouteTicket, QueuedRoute>		queuedRoutes;
+	std::unordered_map<nav::RouteTicket, RouteAnswer>		answeredAtOnce;
+	// The nav mesh's reports since the last slice, collected from its jobs.
+	std::vector<geometry::nav::PatchReport> routeReports;
+	bool									sliceStarted	 = false;
+	double									sliceMs			 = 0.0; // written by the route worker
+	bool									holdingAdditions = false;
+	std::uint32_t							heldInARow		 = 0;
+	RouteStats								routeStatsTotal;
+	// Declared after the mesh and the queue, so it stops before what a slice reads is destroyed.
+	std::unique_ptr<Worker> routeWorker;
 
 	mutable std::uint64_t structuralGeneration = 0;
 	// Every structural job joined, wherever it lands: what a walk can find may have changed (Reach).

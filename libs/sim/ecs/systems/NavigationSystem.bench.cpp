@@ -70,6 +70,7 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <cstdint>
@@ -767,6 +768,65 @@ namespace {
 			state.counters["warmRoundUs"]	  = warmUs / 10.0;
 			state.counters["lengthSumM"]	  = lengthSum;
 			state.counters["nodesFirstRound"] = static_cast<double>(firstNodes);
+		}
+	}
+
+	// M1, the route slice: range(0) requests kept pending round the colony (each answered one is
+	// replaced by a new one between random points within 35 m of it), 600 ticks back to back. Reports
+	// each slice's time on the route worker and its expansions, the main thread's time making the
+	// requests (the belief copy and the label check), and the tick as the other scenarios do.
+	void BM_RouteSlice(benchmark::State& state) {
+		const auto pending = static_cast<std::size_t>(state.range(0));
+		for (auto _ : state) {
+			Rig rig(0);
+			colony(rig);
+			rig.settle();
+			std::uint32_t seed = 9;
+			const auto	  roundColony = [&seed] {
+				   seed = hashU32(seed + 0x9e3779b9U);
+				   return kColony + glm::vec2{(static_cast<float>(seed & 0xFFFFU) / 65535.0F - 0.5F) * 70.0F,
+											  (static_cast<float>(seed >> 16U) / 65535.0F - 0.5F) * 70.0F};
+			};
+			std::vector<nav::RouteTicket> open;
+			std::vector<double>			  requestUs;
+			std::vector<double>			  sliceMs;
+			std::vector<double>			  sliceExpansions;
+			begin();
+			TickStats stats;
+			for (int t = 0; t < 600; ++t) {
+				std::erase_if(open, [&](nav::RouteTicket ticket) { return rig.nav.takeRouteAnswer(ticket).has_value(); });
+				const Clock::time_point start = Clock::now();
+				while (open.size() < pending) {
+					const glm::vec2 a = roundColony();
+					open.push_back(rig.nav.requestRoute(a, std::array{roundColony()}, kAgentRadius));
+				}
+				requestUs.push_back(std::chrono::duration<double, std::micro>(Clock::now() - start).count());
+				const std::uint64_t slicesBefore = rig.nav.routeStats().slices;
+				rig.tick(stats);
+				if (rig.nav.routeStats().slices != slicesBefore) {
+					sliceMs.push_back(rig.nav.routeStats().lastSliceMs);
+					sliceExpansions.push_back(static_cast<double>(rig.nav.routeStats().lastSliceExpansions));
+				}
+			}
+			end();
+			stats.report(state);
+			const ecs::NavigationSystem::RouteStats& routes = rig.nav.routeStats();
+			state.counters["pending"]		  = static_cast<double>(pending);
+			state.counters["slices"]		  = static_cast<double>(routes.slices);
+			state.counters["sliceMeanMs"]	  = meanOf(sliceMs);
+			state.counters["sliceP99Ms"]	  = atPercentile(sliceMs, 0.99);
+			state.counters["sliceMaxMs"]	  = routes.maxSliceMs;
+			state.counters["sliceExpMean"]	  = meanOf(sliceExpansions);
+			state.counters["sliceExpMax"]	  = static_cast<double>(routes.maxSliceExpansions);
+			state.counters["answered"]		  = static_cast<double>(routes.answered);
+			state.counters["answeredAtOnce"] = static_cast<double>(routes.answeredAtOnce);
+			state.counters["restarts"]		  = static_cast<double>(routes.restarts);
+			state.counters["ticksHeld"]		  = static_cast<double>(routes.ticksHeld);
+			state.counters["requestUsMean"]  = meanOf(requestUs);
+			state.counters["requestUsMax"]	  = atPercentile(requestUs, 1.0);
+			for (const nav::RouteTicket ticket : open) {
+				rig.nav.cancelRoute(ticket);
+			}
 		}
 	}
 
@@ -1812,6 +1872,7 @@ BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMil
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanWalk)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_RouteSlice)->Arg(1)->Arg(20)->Arg(200)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReachWhileGroundLands)->Args({0, 0})->Args({1, 0})->Args({0, 1})->Args({1, 1})->Iterations(1)->Unit(benchmark::kMillisecond);
