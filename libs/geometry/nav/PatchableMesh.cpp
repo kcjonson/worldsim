@@ -146,12 +146,15 @@ namespace geometry::nav {
 			return outline[(static_cast<std::size_t>(edge) + 1) % outline.size()];
 		}
 
-		// out = cover xor the rings the sources name an odd number of times; ascending.
-		// flips is scratch.
-		void toggledInto(const std::vector<RingId>& cover, std::span<const EdgeSource> sources, std::vector<RingId>& flips, std::vector<RingId>& out) {
+		// out = cover xor the cover entries the sources name an odd number of times, every
+		// bounds ring counting as kGroundToken; ascending. isBounds(ring) says whether a
+		// ring is a bounds ring; flips is scratch.
+		template <typename IsBounds>
+		void toggledInto(const std::vector<RingId>& cover, std::span<const EdgeSource> sources, IsBounds isBounds, std::vector<RingId>& flips,
+						 std::vector<RingId>& out) {
 			flips.clear();
 			for (const EdgeSource& s : sources) {
-				flips.push_back(s.ring);
+				flips.push_back(isBounds(s.ring) ? kGroundToken : s.ring);
 			}
 			std::sort(flips.begin(), flips.end());
 			std::size_t odd = 0;
@@ -652,9 +655,8 @@ namespace geometry::nav {
 			}
 			std::vector<const SampleRing*> containing;
 			for (RingId r : ringSet) {
-				const RegisteredRing& reg = rings[static_cast<std::size_t>(r)];
-				if (reg.polygon.blocked) {
-					containing.push_back(&reg.sample);
+				if (r != kGroundToken) {
+					containing.push_back(&rings[static_cast<std::size_t>(r)].sample);
 				}
 			}
 			coverTags[static_cast<std::size_t>(id)] = classifyCover(containing);
@@ -952,6 +954,8 @@ namespace geometry::nav {
 		const NavInputPolygon&		newPolygon(RingId r) const;
 		const SampleRing&			newSample(RingId r) const;
 		bool						removed(RingId r) const;
+		// A bounds ring, by its new polygon, or its old one when the patch removes it.
+		bool						isBounds(RingId r) const;
 		bool						inS(const EdgeSource& z) const;
 		std::span<const EdgeSource> sourcesOf(const Fixed& f) const;
 		std::span<const std::int32_t> trisOf(const LocalFace& face) const;
@@ -1049,8 +1053,13 @@ namespace geometry::nav {
 	}
 
 	std::vector<RingId>& PatchableMesh::Patch::toggle(const std::vector<RingId>& cover, std::span<const EdgeSource> sources, std::vector<RingId>& out) {
-		toggledInto(cover, sources, work.flips, out);
+		toggledInto(cover, sources, [&](RingId r) { return isBounds(r); }, work.flips, out);
 		return out;
+	}
+
+	bool PatchableMesh::Patch::isBounds(RingId r) const {
+		const Change* c = changeOf(r);
+		return !(c != nullptr && c->hasNew ? c->polygon : m.rings[static_cast<std::size_t>(r)].polygon).blocked;
 	}
 
 	void PatchableMesh::Patch::addToHole(std::int32_t t) {
@@ -1365,9 +1374,33 @@ namespace geometry::nav {
 				continue;
 			}
 			const RegisteredRing& reg = m.rings[static_cast<std::size_t>(id)];
+			if (reg.polygon.blocked) {
+				m.forEachLiveInBox(reg.lo, reg.hi, [&](std::int32_t t) {
+					const std::vector<RingId>& cov = m.cover(t);
+					if (std::binary_search(cov.begin(), cov.end(), id)) {
+						addToHole(t);
+					}
+				});
+				continue;
+			}
+			// A cover does not name bounds rings: ground whose centroid the old outline
+			// contains, or lies as near its outline as snap rounding bent its pieces (the
+			// containment test then does not decide; a neighbour's triangle taken too only
+			// widens the hole).
+			const std::int64_t			stray = m.pieceDeviationMm(id);
+			const std::vector<Vec2i64>& ring3 = reg.sample.ring3;
 			m.forEachLiveInBox(reg.lo, reg.hi, [&](std::int32_t t) {
 				const std::vector<RingId>& cov = m.cover(t);
-				if (std::binary_search(cov.begin(), cov.end(), id)) {
+				if (cov.empty() || cov.front() != kGroundToken) {
+					return;
+				}
+				const NavTriangle& tri	   = m.tris[static_cast<std::size_t>(t)];
+				const Vec2i64	   sample3 = m.verts[tri.v[0]] + m.verts[tri.v[1]] + m.verts[tri.v[2]];
+				bool			   inside  = ringContainsSample(reg.sample, sample3);
+				for (std::size_t i = 0; i < ring3.size() && !inside; ++i) {
+					inside = withinDistanceOfSegment(sample3, ring3[i], ring3[(i + 1) % ring3.size()], 3 * stray);
+				}
+				if (inside) {
 					addToHole(t);
 				}
 			});
@@ -1796,17 +1829,33 @@ namespace geometry::nav {
 			const Vec2i64		sample3 = cdt.vertices[st.v[0]] + cdt.vertices[st.v[1]] + cdt.vertices[st.v[2]];
 			std::vector<RingId>& start = work.start;
 			start.clear();
+			// Ground parity: the old cover's, with each tested bounds ring's old containment
+			// taken out and its new one put in.
+			bool ground = false;
 			if (sf.kind == FaceKind::Hole) {
 				for (RingId r : m.cover(sf.oldTri)) {
-					if (work.inTest[static_cast<std::size_t>(r)] == 0 && !removed(r)) {
+					if (r == kGroundToken) {
+						ground = true;
+					} else if (work.inTest[static_cast<std::size_t>(r)] == 0 && !removed(r)) {
 						start.push_back(r);
 					}
 				}
 			}
 			for (RingId r : work.testRings) {
-				if (!removed(r) && ringContainsSample(newSample(r), sample3)) {
-					start.push_back(r);
+				const bool inNew = !removed(r) && ringContainsSample(newSample(r), sample3);
+				if (!isBounds(r)) {
+					if (inNew) {
+						start.push_back(r);
+					}
+					continue;
 				}
+				const Change* c		= changeOf(r);
+				const bool	  hadOld = c == nullptr || c->hadOld;
+				const bool	  inOld	 = sf.kind == FaceKind::Hole && hadOld && ringContainsSample(m.rings[static_cast<std::size_t>(r)].sample, sample3);
+				ground				 = ground != (inOld != inNew);
+			}
+			if (ground) {
+				start.push_back(kGroundToken);
 			}
 			std::sort(start.begin(), start.end());
 			flood(seed, start);
@@ -1872,12 +1921,7 @@ namespace geometry::nav {
 			if (!face.assigned || face.kind == FaceKind::Frame || face.kind == FaceKind::Discard) {
 				return false;
 			}
-			for (RingId r : face.cover) {
-				if (!newPolygon(r).blocked) {
-					return true;
-				}
-			}
-			return false;
+			return !face.cover.empty() && face.cover.front() == kGroundToken;
 		};
 		const std::int32_t		  cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
 		std::vector<std::uint8_t>& kept	  = work.kept;
@@ -2692,6 +2736,7 @@ namespace geometry::nav {
 
 		// Per triangle: shape, links, ring edges, Delaunay, cover, tags, locate.
 		std::vector<std::int32_t> coverRefs(static_cast<std::size_t>(covers.slots()), 0);
+		auto isBounds = [&](RingId r) { return !rings[static_cast<std::size_t>(r)].polygon.blocked; };
 		std::vector<std::int32_t> sourceRefs(static_cast<std::size_t>(sourceLists.slots()), 0);
 		std::size_t				  halfEdgeCount = 0;
 		std::vector<RingId>		  flips;
@@ -2715,24 +2760,24 @@ namespace geometry::nav {
 			}
 			++coverRefs[static_cast<std::size_t>(coverId)];
 			const std::vector<RingId>&	   ringSet = covers.get(coverId);
+			if (ringSet.empty() || ringSet.front() != kGroundToken) {
+				fail() << "triangle " << t << " is not ground";
+				break;
+			}
 			std::vector<const SampleRing*> containing;
-			int							   boundsCount = 0;
-			for (RingId r : ringSet) {
+			for (std::size_t i = 1; i < ringSet.size(); ++i) {
+				const RingId r = ringSet[i];
 				if (r < 0 || r >= static_cast<RingId>(rings.size()) || !rings[static_cast<std::size_t>(r)].live) {
 					fail() << "triangle " << t << " covered by dead ring " << r;
 					break;
 				}
-				if (rings[static_cast<std::size_t>(r)].polygon.blocked) {
-					containing.push_back(&rings[static_cast<std::size_t>(r)].sample);
-				} else {
-					++boundsCount;
+				if (!rings[static_cast<std::size_t>(r)].polygon.blocked) {
+					fail() << "triangle " << t << " cover names bounds ring " << r;
+					break;
 				}
+				containing.push_back(&rings[static_cast<std::size_t>(r)].sample);
 			}
 			if (failed()) {
-				break;
-			}
-			if (boundsCount != 1) {
-				fail() << "triangle " << t << " lies in " << boundsCount << " bounds rings";
 				break;
 			}
 			const FaceTags tags = classifyCover(containing);
@@ -2829,7 +2874,7 @@ namespace geometry::nav {
 						fail() << "edge " << e << " of triangle " << t << " is not locally Delaunay";
 						break;
 					}
-				} else if (toggledInto(ringSet, sourceLists.get(sourceId), flips, across), across != other) {
+				} else if (toggledInto(ringSet, sourceLists.get(sourceId), isBounds, flips, across), across != other) {
 					fail() << "covers of " << t << " and " << u << " do not differ by the rings on their edge (" << p.x << ", " << p.y << ")-(" << q.x
 						   << ", " << q.y << ")";
 					break;
@@ -3074,26 +3119,43 @@ namespace geometry::nav {
 			}
 			const NavTriangle&	tri		= tris[static_cast<std::size_t>(best)];
 			const Vec2i64		sample3 = verts[tri.v[0]] + verts[tri.v[1]] + verts[tri.v[2]];
-			std::vector<RingId> exact;
-			const Vec2i64		sampleLo{floorDiv(sample3.x, 3), floorDiv(sample3.y, 3)};
-			for (RingId r : ringsInBox(sampleLo, sampleLo + Vec2i64{1, 1})) {
-				if (ringContainsSample(rings[static_cast<std::size_t>(r)].sample, sample3)) {
-					exact.push_back(r);
-				}
-			}
-			std::vector<RingId> differ;
-			std::set_symmetric_difference(exact.begin(), exact.end(), cover(best).begin(), cover(best).end(), std::back_inserter(differ));
-			for (RingId r : differ) {
-				// Snap rounding bends a ring's edges off its original lines, so a face can
-				// straddle one; within as far as this ring's pieces stray from its outline,
-				// the original outline does not decide.
-				const std::vector<Vec2i64>& ring3  = rings[static_cast<std::size_t>(r)].sample.ring3;
-				const std::int64_t			stray  = pieceDeviationMm(r);
-				bool						near   = false;
+			// Snap rounding bends a ring's edges off its original lines, so a face can
+			// straddle one; within as far as the ring's pieces stray from its outline, the
+			// original outline does not decide.
+			auto nearOutline = [&](RingId r) {
+				const std::vector<Vec2i64>& ring3 = rings[static_cast<std::size_t>(r)].sample.ring3;
+				const std::int64_t			stray = pieceDeviationMm(r);
+				bool						near  = false;
 				for (std::size_t i = 0; i < ring3.size() && !near; ++i) {
 					near = withinDistanceOfSegment(sample3, ring3[i], ring3[(i + 1) % ring3.size()], 3 * stray);
 				}
-				if (!near) {
+				return near;
+			};
+			// Bounds rings count by parity, as kGroundToken.
+			std::vector<RingId> exact;
+			std::vector<RingId> boundsNear;
+			bool				exactGround = false;
+			const Vec2i64		sampleLo{floorDiv(sample3.x, 3), floorDiv(sample3.y, 3)};
+			for (RingId r : ringsInBox(sampleLo, sampleLo + Vec2i64{1, 1})) {
+				const bool in = ringContainsSample(rings[static_cast<std::size_t>(r)].sample, sample3);
+				if (isBounds(r)) {
+					boundsNear.push_back(r);
+					exactGround = exactGround != in;
+				} else if (in) {
+					exact.push_back(r);
+				}
+			}
+			const std::vector<RingId>& have		  = cover(best);
+			const bool				   haveGround = !have.empty() && have.front() == kGroundToken;
+			if (haveGround != exactGround &&
+				std::none_of(boundsNear.begin(), boundsNear.end(), [&](RingId r) { return nearOutline(r); })) {
+				fail() << "face of triangle " << best << ": ground disagrees with exact containment of its sample in the bounds rings";
+				return err.str();
+			}
+			std::vector<RingId> differ;
+			std::set_symmetric_difference(exact.begin(), exact.end(), have.begin() + (haveGround ? 1 : 0), have.end(), std::back_inserter(differ));
+			for (RingId r : differ) {
+				if (!nearOutline(r)) {
 					fail() << "face of triangle " << best << ": cover disagrees with exact containment of its sample in ring " << r;
 					return err.str();
 				}

@@ -113,10 +113,11 @@ namespace {
 		}
 	};
 
-	std::vector<RingId> toggledBy(const std::vector<RingId>& cover, const std::vector<std::int64_t>& provenance) {
+	std::vector<RingId> toggledBy(const std::vector<RingId>& cover, const std::vector<std::int64_t>& provenance, const Model& model) {
 		std::map<RingId, int> count;
 		for (std::int64_t p : provenance) {
-			++count[decode(p).ring];
+			const RingId r = decode(p).ring;
+			++count[model.at(r).blocked ? r : kGroundToken];
 		}
 		std::set<RingId> out(cover.begin(), cover.end());
 		for (const auto& [r, n] : count) {
@@ -161,7 +162,7 @@ namespace {
 				const std::int32_t	c	   = tri.constraint[static_cast<std::size_t>(e)];
 				std::vector<RingId> across = c < 0 ? topo.cover[static_cast<std::size_t>(t)]
 												   : toggledBy(topo.cover[static_cast<std::size_t>(t)],
-															   arrangement.edges[static_cast<std::size_t>(c)].provenance);
+															   arrangement.edges[static_cast<std::size_t>(c)].provenance, model);
 				if (reached[static_cast<std::size_t>(nb)] == 0) {
 					reached[static_cast<std::size_t>(nb)]	 = 1;
 					topo.cover[static_cast<std::size_t>(nb)] = std::move(across);
@@ -183,11 +184,7 @@ namespace {
 		topo.rows  = (3 * (hi.y - lo.y)) / topo.cell3 + 1;
 		topo.buckets.assign(static_cast<std::size_t>(topo.cols * topo.rows), {});
 		for (std::size_t t = 0; t < n; ++t) {
-			bool ground = false;
-			for (RingId r : topo.cover[t]) {
-				ground = ground || !model.at(r).blocked;
-			}
-			if (!ground) {
+			if (topo.cover[t].empty() || topo.cover[t].front() != kGroundToken) {
 				continue;
 			}
 			const geometry::CdtTriangle& tri = topo.cdt.triangles[t];
@@ -805,6 +802,51 @@ TEST(PatchableMesh, HangingRingCompletedByNeighbourBounds) {
 		h.apply(leave);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "first square unloaded";
 	}
+}
+
+// Covers do not name chunk squares, so ground on both sides of a shared side has one
+// cover; the side itself stays a constrained edge carrying both squares' edges.
+TEST(PatchableMesh, AdjacentSquaresShareOneGroundCover) {
+	for (const bool westFirst : {true, false}) {
+		Harness		 h;
+		const RingId first	= h.add(bounds(westFirst ? rect(0, 0, 10000, 10000) : rect(10000, 0, 20000, 10000)));
+		const RingId second = h.add(bounds(westFirst ? rect(10000, 0, 20000, 10000) : rect(0, 0, 10000, 10000)));
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+		int sharedEdges = 0;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+			if (!h.mesh.triangleLive(t)) {
+				continue;
+			}
+			EXPECT_EQ(h.mesh.cover(t), std::vector<RingId>{kGroundToken});
+			for (int e = 0; e < 3; ++e) {
+				const std::vector<EdgeSource>& sources = h.mesh.edgeSources(t, e);
+				const bool fromFirst  = std::any_of(sources.begin(), sources.end(), [&](const EdgeSource& s) { return s.ring == first; });
+				const bool fromSecond = std::any_of(sources.begin(), sources.end(), [&](const EdgeSource& s) { return s.ring == second; });
+				if (!fromFirst || !fromSecond) {
+					continue;
+				}
+				++sharedEdges;
+				const std::int32_t across = h.mesh.triangles()[static_cast<std::size_t>(t)].neighbor[static_cast<std::size_t>(e)];
+				ASSERT_GE(across, 0) << "the shared side is a mesh boundary";
+				EXPECT_EQ(h.mesh.cover(across), h.mesh.cover(t));
+			}
+		}
+		EXPECT_EQ(sharedEdges, 2) << "the shared side, seen from each side";
+	}
+}
+
+TEST(PatchableMesh, ObstacleInsideASquareShowsInItsCover) {
+	Harness		 h;
+	h.add(bounds(rect(0, 0, 10000, 10000)));
+	h.add(bounds(rect(10000, 0, 20000, 10000)));
+	const RingId tree = h.add(blocked(rect(4000, 4000, 5000, 5000)));
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	const std::int32_t inside = h.mesh.locate({4500, 4500});
+	ASSERT_GE(inside, 0);
+	EXPECT_EQ(h.mesh.cover(inside), (std::vector<RingId>{kGroundToken, tree}));
+	const std::int32_t outside = h.mesh.locate({15000, 5000});
+	ASSERT_GE(outside, 0);
+	EXPECT_EQ(h.mesh.cover(outside), std::vector<RingId>{kGroundToken});
 }
 
 TEST(PatchableMesh, WaterIslandAndPondParity) {

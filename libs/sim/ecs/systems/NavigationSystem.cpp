@@ -223,8 +223,11 @@ namespace ecs {
 			}
 			std::vector<const gnav::SampleRing*> containing;
 			for (const gnav::RingId r : mesh.cover(tri)) {
+				if (r == gnav::kGroundToken) {
+					continue;
+				}
 				const gnav::RegisteredRing& ring = mesh.ring(r);
-				if (ring.polygon.blocked && !isDetailTag(ring.polygon.provenanceId)) {
+				if (!isDetailTag(ring.polygon.provenanceId)) {
 					containing.push_back(&ring.sample);
 				}
 			}
@@ -1936,7 +1939,7 @@ namespace ecs {
 		}
 		std::optional<PlacedObstacle> nearest;
 		for (const gnav::RingId id : detailMesh.cover(tri)) {
-			if (!isDetailTag(detailMesh.ring(id).polygon.provenanceId)) {
+			if (id == gnav::kGroundToken || !isDetailTag(detailMesh.ring(id).polygon.provenanceId)) {
 				continue;
 			}
 			const PlacedObstacle obstacle = obstacleOf(id);

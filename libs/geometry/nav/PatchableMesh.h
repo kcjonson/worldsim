@@ -23,7 +23,7 @@
 //
 // Triangle and vertex ids are stable: a patch frees some slots and reuses them, and
 // every id it did not touch still means what it meant. Ground exists only where a
-// triangle's cover set holds a bounds ring (blocked == false); elsewhere there are no
+// triangle's cover set holds kGroundToken (inside a bounds ring); elsewhere there are no
 // triangles. Bounds rings may share edges and vertices but their interiors must not
 // overlap.
 //
@@ -36,6 +36,10 @@ namespace geometry::nav {
 
 	using RingId		   = std::int32_t;
 	constexpr RingId kNoRing = -1;
+	// Stands in a cover for every bounds ring (blocked == false): the cover holds it when
+	// an odd number of bounds rings contain the triangle, so the two sides of an edge two
+	// bounds rings share have the same cover. Sorts before every ring id.
+	constexpr RingId kGroundToken = -2;
 
 	// Original edge `edge` of a ring: outline[edge] -> outline[(edge + 1) % n].
 	struct EdgeSource {
@@ -131,7 +135,8 @@ namespace geometry::nav {
 
 		// The ring edges a triangle edge lies on; empty when the edge is unconstrained.
 		const std::vector<EdgeSource>& edgeSources(std::int32_t tri, int edge) const;
-		// The rings the triangle lies inside, ascending.
+		// The blocked rings the triangle lies inside, and kGroundToken when it is ground;
+		// ascending.
 		const std::vector<RingId>& cover(std::int32_t tri) const;
 
 		const RegisteredRing& ring(RingId id) const { return rings[static_cast<std::size_t>(id)]; }
