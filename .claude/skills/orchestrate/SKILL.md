@@ -33,16 +33,17 @@ A brief is the agent's whole context. If you can't write a clear one, you don't 
 
 - At each report, read what the agent touched (its diff or file list), not only what it says it did. Correct scope the first time it leaves its area.
 - When an agent reports a follow-up or a tangent, you decide who fixes it and when. The reporter doesn't fix it because it is convenient.
-- Don't hand an agent work outside its task to save a merge round. That is how a nav session ends up rewriting the task system.
+- Don't hand an agent work outside its task to avoid another test run. Plan the test runs instead (see below); the wait before a merge is the suite, not the merge.
 - A fix that grows out of one area into another stops at the boundary. The owner of the other side does the rest.
 - File the follow-ups you aren't doing now on the board, with enough detail to pick up cold.
 
 ## Managing context
 
-Long-running agents get slow and produce worse results. Don't let one run all day.
+Context size is what makes an agent slow and its results worse, not how long it has been running. Know how much work a piece is before handing it out, and cut it into chunks that each fit comfortably in one context.
 
 - Give sessions and agents bounded tasks with an end, not "keep going until it's done".
-- Watch message counts and how many times an agent has been resumed. A long-lived session driving its own long-lived subagent is the pattern to avoid.
+- Size the chunk by what the agent must read and hold to do it: the files, the spec, the build and test output. If that is too much for one context, split the piece before starting, not after the agent degrades.
+- Message counts and how many times an agent has been resumed are the signs to watch. A large session driving its own large subagent is the pattern to avoid.
 - At a natural boundary (a merged step, a finished review round, a handed-over head), have the agent write a hand-off file and replace it with a fresh one.
 - Close a session as soon as its original focused task is done. Follow-ups go to new sessions or agents, as many as the work needs.
 - Prefer a fresh agent with a tight brief over resuming a large one for "one more thing".
@@ -58,11 +59,12 @@ A hand-off file is written for a reader with none of the writer's context: head 
 
 ## Builds, tests, and merges
 
-Every push to a branch someone else merges from costs them a merge, a build, and a suite run.
+The wait before a merge is the build and the suite, so optimize for total time spent testing. Plan the test runs when you plan the work.
 
-- Batch your pushes. One push with everything beats three small ones.
-- Run the full suite once at integration, not after every round on every branch.
-- Don't re-run what an agent just ran. Read its result, check the tree it ran on, and move on.
+- Decide up front which pieces go through the suite together in one run at integration, and which need a run of their own: a piece others build on, or one whose failure would be hard to pin down in a combined run.
+- Pieces that will be tested together don't each get a full run first. An agent runs the tests for the files it touched; the full suite runs once on the combined tree.
+- Never run the same suite twice on the same tree. Read the result an agent already has, check the tree it ran on, and move on.
+- Every push to a branch someone else merges from costs them a build and a suite run. Batch your pushes; one push with everything beats three small ones.
 - Take another agent's conflict resolution when it already has one. Never resolve the same conflict twice.
 - Don't build or measure on the machine while another agent is measuring. Follow the perf rules in `docs/testing/README.md`.
 - Timing a change against `main` with `perf.mjs capture` and `compare` stays as that doc says. What is optional is extra work on the old side: don't build a second harness to re-measure the old implementation on a new fixture unless the new numbers look bad and the cause is in question.
