@@ -6,9 +6,13 @@
 
 #include <gtest/gtest.h>
 
+#include "predicates/Predicates.h"
+
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <random>
 #include <set>
 #include <sstream>
@@ -59,19 +63,19 @@ namespace {
 		return edits;
 	}
 
-	// The labels against a from-scratch flood of the live passable triangles: the same
-	// partition, every size right, and no label on a dead or blocked slot.
-	::testing::AssertionResult matchesFlood(const PatchableMesh& mesh) {
+	// Each slot's component by a from-scratch flood of the live passable triangles across
+	// shared edges; -1 for a dead or blocked slot.
+	std::vector<std::int32_t> floodComponents(const PatchableMesh& mesh) {
 		const NavView		  view	= mesh.view();
 		const MeshComponents& comps = mesh.components();
 		const std::int32_t	  slots = view.triangleSlots();
 		std::vector<std::int32_t> flood(static_cast<std::size_t>(slots), -1);
-		std::vector<std::int32_t> floodSize;
+		std::int32_t			  count = 0;
 		for (std::int32_t s = 0; s < slots; ++s) {
 			if (!view.isLive(s) || !comps.passable(view.triangle(s)) || flood[static_cast<std::size_t>(s)] >= 0) {
 				continue;
 			}
-			const std::int32_t		  id = static_cast<std::int32_t>(floodSize.size());
+			const std::int32_t		  id = count++;
 			std::vector<std::int32_t> queue{s};
 			flood[static_cast<std::size_t>(s)] = id;
 			for (std::size_t head = 0; head < queue.size(); ++head) {
@@ -82,7 +86,21 @@ namespace {
 					}
 				}
 			}
-			floodSize.push_back(static_cast<std::int32_t>(queue.size()));
+		}
+		return flood;
+	}
+
+	// The labels against a from-scratch flood of the live passable triangles: the same
+	// partition, every size right, and no label on a dead or blocked slot.
+	::testing::AssertionResult matchesFlood(const PatchableMesh& mesh, const std::vector<std::int32_t>& flood) {
+		const MeshComponents&	  comps = mesh.components();
+		const std::int32_t		  slots = mesh.view().triangleSlots();
+		std::vector<std::int32_t> floodSize;
+		for (const std::int32_t f : flood) {
+			if (f >= 0) {
+				floodSize.resize(std::max(floodSize.size(), static_cast<std::size_t>(f) + 1), 0);
+				++floodSize[static_cast<std::size_t>(f)];
+			}
 		}
 		std::map<std::int32_t, ComponentLabel> ours;
 		std::map<ComponentLabel, std::int32_t> theirs;
@@ -112,9 +130,14 @@ namespace {
 		return ::testing::AssertionSuccess();
 	}
 
+	::testing::AssertionResult matchesFlood(const PatchableMesh& mesh) {
+		return matchesFlood(mesh, floodComponents(mesh));
+	}
+
 	struct Snapshot {
 		std::vector<NavTriangle>  tris;
 		std::vector<std::uint8_t> live;
+		std::vector<Vec2i64>	  verts;
 	};
 
 	Snapshot snapshot(const PatchableMesh& mesh) {
@@ -123,7 +146,112 @@ namespace {
 			s.tris.push_back(mesh.triangles()[static_cast<std::size_t>(t)]);
 			s.live.push_back(mesh.triangleLive(t) ? 1 : 0);
 		}
+		for (std::size_t v = 0; v < mesh.vertices().size(); ++v) {
+			s.verts.push_back(mesh.vertices()[v]);
+		}
 		return s;
+	}
+
+	std::array<Vec2i64, 3> cornersOf(const Snapshot& s, std::int32_t t) {
+		const NavTriangle& tri = s.tris[static_cast<std::size_t>(t)];
+		return {s.verts[tri.v[0]], s.verts[tri.v[1]], s.verts[tri.v[2]]};
+	}
+
+	// The corners' mean, rounded, when that lands strictly inside the (counterclockwise)
+	// triangle; a sliver may have no such point.
+	std::optional<Vec2i64> innerPoint(const std::array<Vec2i64, 3>& c) {
+		auto third = [](std::int64_t s) { return s >= 0 ? (s + 1) / 3 : -((-s + 1) / 3); };
+		const Vec2i64 sum = c[0] + c[1] + c[2];
+		const Vec2i64 p{third(sum.x), third(sum.y)};
+		for (int e = 0; e < 3; ++e) {
+			if (geometry::orientation(c[static_cast<std::size_t>(e)], c[static_cast<std::size_t>((e + 1) % 3)], p) != geometry::Orientation::CounterClockwise) {
+				return std::nullopt;
+			}
+		}
+		return p;
+	}
+
+	bool contains(const std::array<Vec2i64, 3>& c, const Vec2i64& p) {
+		for (int e = 0; e < 3; ++e) {
+			if (geometry::orientation(c[static_cast<std::size_t>(e)], c[static_cast<std::size_t>((e + 1) % 3)], p) == geometry::Orientation::Clockwise) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// By floods alone, independent of how the labels are kept: did the patch connect two
+	// places that were not connected before? Places are triangles: a kept one is the same
+	// place after; a freed one's inner point is located after; a new one's inner point is
+	// located among the freed triangles before. Two places of different components before,
+	// now in one component, or a place off the ground before and on passable ground now
+	// (new ground), are such a pair. A place blocked before is skipped: only a removal or
+	// move frees one.
+	bool wayOpened(const Snapshot& before, const std::vector<std::int32_t>& beforeFlood, const Snapshot& now, const PatchableMesh& after,
+				   const std::vector<std::int32_t>& afterFlood, const PatchReport& report) {
+		std::map<std::int32_t, std::int32_t> wasOf; // after component -> a before component in it
+		auto joins = [&](std::int32_t at, std::int32_t was) {
+			if (at < 0 || afterFlood[static_cast<std::size_t>(at)] < 0) {
+				return false;
+			}
+			const auto [it, fresh] = wasOf.emplace(afterFlood[static_cast<std::size_t>(at)], was);
+			return !fresh && it->second != was;
+		};
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(before.tris.size()); ++t) {
+			const std::int32_t was = before.live[static_cast<std::size_t>(t)] != 0 ? beforeFlood[static_cast<std::size_t>(t)] : -1;
+			if (was < 0) {
+				continue;
+			}
+			if (!std::binary_search(report.freedTriangles.begin(), report.freedTriangles.end(), t)) {
+				if (joins(t, was)) {
+					return true;
+				}
+			} else if (const std::optional<Vec2i64> p = innerPoint(cornersOf(before, t)); p && joins(after.locate(*p), was)) {
+				return true;
+			}
+		}
+		// A new triangle's inner point lies where the patch re-derived the mesh: on ground the
+		// freed triangles covered, or off the ground before. So the freed triangles, bucketed
+		// by the cells of side kCell their boxes overlap, are all a point is looked up in.
+		constexpr std::int64_t									kCell = 20 * kUnit;
+		std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::int32_t>> cells;
+		auto cellOf = [](std::int64_t v) { return v >= 0 ? v / kCell : -((-v + kCell - 1) / kCell); };
+		for (const std::int32_t t : report.freedTriangles) {
+			if (static_cast<std::size_t>(t) >= before.tris.size() || before.live[static_cast<std::size_t>(t)] == 0) {
+				continue; // a triangle this patch made, then flipped
+			}
+			const std::array<Vec2i64, 3> c = cornersOf(before, t);
+			for (std::int64_t x = cellOf(std::min({c[0].x, c[1].x, c[2].x})); x <= cellOf(std::max({c[0].x, c[1].x, c[2].x})); ++x) {
+				for (std::int64_t y = cellOf(std::min({c[0].y, c[1].y, c[2].y})); y <= cellOf(std::max({c[0].y, c[1].y, c[2].y})); ++y) {
+					cells[{x, y}].push_back(t);
+				}
+			}
+		}
+		for (const ChangedTriangle& c : report.changes) {
+			if ((c.why & kTriangleCreated) == 0 || afterFlood[static_cast<std::size_t>(c.id)] < 0) {
+				continue;
+			}
+			const std::optional<Vec2i64> p = innerPoint(cornersOf(now, c.id));
+			if (!p) {
+				continue;
+			}
+			std::int32_t holder = -1;
+			if (const auto cell = cells.find({cellOf(p->x), cellOf(p->y)}); cell != cells.end()) {
+				for (const std::int32_t t : cell->second) {
+					if (contains(cornersOf(before, t), *p)) {
+						holder = t;
+						break;
+					}
+				}
+			}
+			if (holder < 0) {
+				return true;
+			}
+			if (beforeFlood[static_cast<std::size_t>(holder)] >= 0 && joins(c.id, beforeFlood[static_cast<std::size_t>(holder)])) {
+				return true;
+			}
+		}
+		return false;
 	}
 
 	std::uint8_t whyOf(const PatchReport& r, std::int32_t t) {
@@ -236,6 +364,7 @@ namespace {
 		std::int64_t fresh	 = 0;
 		std::int64_t emptied = 0;
 		std::int64_t visited = 0;
+		std::int64_t opened	 = 0; // patches the floods say connected places that were apart
 
 		void add(const ComponentUpkeep& u) {
 			++patches;
@@ -261,6 +390,7 @@ namespace {
 		base.push_back(west);
 		mesh.applyPatch(adding(base));
 		mesh.refreshWidths();
+		std::vector<std::int32_t>		   flood  = floodComponents(mesh);
 		RingId							   second = kNoRing;
 		std::map<RingId, NavInputPolygon> placed;
 		for (int step = 0; step < steps; ++step) {
@@ -292,7 +422,7 @@ namespace {
 				it->second.ring = translated(it->second.ring, {between(rng, -12, 12), between(rng, -12, 12)});
 				edits.moves.push_back({it->first, it->second.ring});
 			}
-			const Snapshot		 before	 = snapshot(mesh);
+			const Snapshot					before		= snapshot(mesh);
 			const std::uint64_t	 epoch	 = mesh.components().epoch();
 			const PatchReport	 report	 = mesh.applyPatch(edits);
 			const ComponentUpkeep upkeep = mesh.components().lastUpkeep();
@@ -306,10 +436,15 @@ namespace {
 					placed[report.added[i]] = edits.adds[i];
 				}
 			}
-			ASSERT_TRUE(matchesFlood(mesh)) << "seed " << seed << " step " << step;
+			std::vector<std::int32_t> afterFlood = floodComponents(mesh);
+			ASSERT_TRUE(matchesFlood(mesh, afterFlood)) << "seed " << seed << " step " << step;
 			ASSERT_TRUE(reportsCover(before, mesh, report, patched, refresh)) << "seed " << seed << " step " << step;
-			const bool shouldMove = report.opens || upkeep.splits > 0 || upkeep.merges > 0 || upkeep.fresh > 0;
-			ASSERT_EQ(mesh.components().epoch() != epoch, shouldMove) << "seed " << seed << " step " << step;
+			const bool opened = wayOpened(before, flood, patched, mesh, afterFlood, report);
+			flood			  = std::move(afterFlood);
+			if (opened) {
+				++totals.opened;
+				ASSERT_NE(mesh.components().epoch(), epoch) << "seed " << seed << " step " << step << ": places unconnected before are connected now";
+			}
 		}
 	}
 
@@ -334,6 +469,8 @@ TEST(MeshComponents, LabelsEqualAFloodAfterEveryPatch) {
 	EXPECT_GT(totals.merges, 20);
 	EXPECT_GT(totals.fresh, 20);
 	EXPECT_GT(totals.emptied, 0);
+	EXPECT_GT(totals.opened, 100) << "the epoch check binds only on patches that connect places";
+	RecordProperty("PatchesThatOpened", static_cast<int>(totals.opened));
 	std::ostringstream visitedPerPatch;
 	visitedPerPatch << static_cast<double>(totals.visited) / static_cast<double>(totals.patches) << " over " << totals.patches << " patches, " << totals.splits
 					<< " splits, " << totals.merges << " merges, " << totals.fresh << " fresh, " << totals.emptied << " emptied";
@@ -468,4 +605,19 @@ TEST(MeshComponents, OffMeshOrBlockedIsNeverSame) {
 	EXPECT_FALSE(comps.sameComponent(tree, tree));
 	EXPECT_FALSE(comps.sameComponent(floor, -1));
 	EXPECT_FALSE(comps.sameComponent(-1, -1));
+}
+
+// A door added may open a way for some belief inside a component, though no label
+// changes: the epoch moves. Taking it out only closes: the epoch stays.
+TEST(MeshComponents, AddingADoorMovesTheEpoch) {
+	PatchableMesh mesh = postedStrip();
+	mesh.applyPatch(adding({blocked(rect(99, 0, 102, 40), kWall)}));
+	const MeshComponents& comps	 = mesh.components();
+	const std::uint64_t	  before = comps.epoch();
+	const DoorId		  door	 = mesh.addDoor(DoorPortal{9, at(99, 18), at(99, 22), 400});
+	EXPECT_NE(comps.epoch(), before);
+	const std::uint64_t opened = comps.epoch();
+	mesh.removeDoor(door);
+	EXPECT_EQ(comps.epoch(), opened);
+	EXPECT_TRUE(matchesFlood(mesh));
 }

@@ -807,11 +807,6 @@ namespace {
 	// meshed flora, with the trees unpriced (blocks) or priced (the game's flora price).
 	enum class Pricing { None, Trees };
 
-	// What the thread did between two of the timed queries: nothing, a query on one other
-	// mesh (the game's reach pre-check on its structural mesh), or queries on two others,
-	// which leaves nothing of the timed mesh in the per-thread memos.
-	enum class Between { Nothing, OtherMesh, TwoOtherMeshes };
-
 	struct RequestShape {
 		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000, .detailTags = {kProvenancePlaced}}};
 		std::vector<Vec2i64>				 goals;
@@ -898,20 +893,13 @@ namespace {
 	// The game's flora price: trees cost 50 times their length; anything else stays blocked.
 	constexpr TagPrice kTreePrices[] = {{kProvenancePlaced, 50.0}};
 
-	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p, Between between, Colony colony = Colony::Anywhere) {
+	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p, Colony colony = Colony::Anywhere) {
 		RequestShape s;
 		loadRequestShape(s, f, colony);
 		BeliefFilter belief;
 		if (p == Pricing::Trees) {
 			belief.prices = kTreePrices;
 		}
-		std::array<PatchableMesh, 2> others;
-		for (std::size_t i = 0; i < others.size(); ++i) {
-			const std::int64_t side = 20000 + 4000 * static_cast<std::int64_t>(i);
-			untimedPatch(others[i], adding({NavInputPolygon{rect(0, 0, side, side), false, kProvenanceBorder},
-											NavInputPolygon{rect(side / 3, side / 3, side / 2, side / 2), true, kProvenancePlaced}}));
-		}
-		const int otherQueries = between == Between::Nothing ? 0 : (between == Between::OtherMesh ? 1 : 2);
 		std::int64_t nodes	   = 0;
 		std::int64_t priced	   = 0;
 		for (auto _ : state) {
@@ -919,9 +907,6 @@ namespace {
 			priced		 = 0;
 			double total = 0.0;
 			for (const auto& [start, gi] : s.starts) {
-				for (int i = 0; i < otherQueries; ++i) {
-					benchmark::DoNotOptimize(pathThrough(others[static_cast<std::size_t>(i)].view(), {1000, 1000}, {19000, 19000}, 300, belief));
-				}
 				PathResult r;
 				total += secondsOf([&] { r = pathThrough(s.detail.view(), start, s.goals[static_cast<std::size_t>(gi)], 300, belief); });
 				nodes += r.nodesExpanded;
@@ -1309,6 +1294,47 @@ namespace {
 		state.counters["splits"]  = splits / std::max(1.0, patches);
 	}
 
+	// Label upkeep when an obstacle closes a gap in a long barrier whose two sides still
+	// join round the barrier's far end, and when it leaves again. Closing, the split check
+	// floods both sides in lockstep until they meet round the end: no split, and the flood
+	// covers both sides of the barrier. Posts every 2.5 m keep the ground at game density;
+	// the barrier runs `state.range(0)` metres.
+	void BM_LabelUpkeepRoundBarrier(benchmark::State& state) {
+		const std::int64_t			 lengthMm = state.range(0) * 1000;
+		const std::int64_t			 widthMm  = lengthMm + 20000;
+		auto						 rect	  = [](std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
+			  return std::vector<Vec2i64>{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}};
+		};
+		std::vector<NavInputPolygon> rings{{rect(0, 0, widthMm, 40000), false, kProvenanceBorder}};
+		rings.push_back({rect(0, 19500, 10000, 20500), true, kProvenancePlaced});
+		rings.push_back({rect(11000, 19500, lengthMm, 20500), true, kProvenancePlaced});
+		for (std::int64_t x = 1250; x < widthMm; x += 2500) {
+			for (std::int64_t y = 1250; y < 40000; y += 2500) {
+				if (y < 18000 || y > 21500) {
+					rings.push_back({rect(x, y, x + 300, y + 300), true, kProvenancePlaced});
+				}
+			}
+		}
+		PatchableMesh	mesh;
+		MeshComponents	labels;
+		labels.update(mesh.view(), mesh.applyPatch(adding(rings)));
+		const NavInputPolygon plug{rect(10000, 19500, 11000, 20500), true, kProvenancePlaced};
+		double				  visited = 0;
+		double				  patches = 0;
+		for (auto _ : state) {
+			const PatchReport in	= mesh.applyPatch(adding({plug}));
+			double			  spent = secondsOf([&] { labels.update(mesh.view(), in); });
+			visited += static_cast<double>(labels.lastUpkeep().visited);
+			const PatchReport out = mesh.applyPatch(removing(in.added.front()));
+			spent += secondsOf([&] { labels.update(mesh.view(), out); });
+			visited += static_cast<double>(labels.lastUpkeep().visited);
+			patches += 2;
+			state.SetIterationTime(spent / 2);
+		}
+		state.counters["visited"] = visited / std::max(1.0, patches);
+		state.counters["tris"]	  = static_cast<double>(mesh.liveTriangleCount());
+	}
+
 } // namespace
 
 #define PATCH_ROWS(name, fn, ...)                                                                                              \
@@ -1329,6 +1355,7 @@ PATCH_ROWS(_remove, BM_PatchShorelineTree, false);
 BENCHMARK_CAPTURE(BM_LabelUpkeep, manyTrees, Fixture::ManyTrees)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LabelUpkeep, control, Fixture::Control)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LabelUpkeep, realRings, Fixture::RealRings)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_LabelUpkeepRoundBarrier)->Arg(100)->Arg(400)->UseManualTime()->Unit(benchmark::kMicrosecond);
 #define BOUNDS_ROWS(name, ...)                                                                                                         	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, manyTrees##name, Fixture::ManyTrees, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, control##name, Fixture::Control, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);     	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, realRings##name, Fixture::RealRings, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond)
 
 BOUNDS_ROWS(_border128_add, 0, 0);
@@ -1377,12 +1404,14 @@ BENCHMARK_CAPTURE(BM_PathPatchable, realRings, Fixture::RealRings)->Unit(benchma
 BENCHMARK_CAPTURE(BM_PathBuilt, manyTrees, Fixture::ManyTrees)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, control, Fixture::Control)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, realRings, Fixture::RealRings)->Unit(benchmark::kMillisecond);
-#define REQUEST_ROWS(name, fixture)                                                                                                          	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None, Between::Nothing)->UseManualTime()->Unit(benchmark::kMicrosecond);  	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees, Between::Nothing)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced_otherMesh, fixture, Pricing::None, Between::OtherMesh)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced_otherMesh, fixture, Pricing::Trees, Between::OtherMesh)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced_cold, fixture, Pricing::None, Between::TwoOtherMeshes)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced_cold, fixture, Pricing::Trees, Between::TwoOtherMeshes)->UseManualTime()->Unit(benchmark::kMicrosecond)
+#define REQUEST_ROWS(name, fixture)                                                                                               \
+	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None)->UseManualTime()->Unit(benchmark::kMicrosecond); \
+	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees)->UseManualTime()->Unit(benchmark::kMicrosecond)
 REQUEST_ROWS(control, Fixture::Control);
 REQUEST_ROWS(realRings, Fixture::RealRings);
 #define COLONY_ROWS(name, fixture, colony)                                                                                                                       \
-	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None, Between::Nothing, colony)->UseManualTime()->Unit(benchmark::kMicrosecond); \
-	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees, Between::Nothing, colony)->UseManualTime()->Unit(benchmark::kMicrosecond)
+	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None, colony)->UseManualTime()->Unit(benchmark::kMicrosecond); \
+	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees, colony)->UseManualTime()->Unit(benchmark::kMicrosecond)
 COLONY_ROWS(control_middle, Fixture::Control, Colony::Middle);
 COLONY_ROWS(control_side12, Fixture::Control, Colony::NearSide);
 COLONY_ROWS(realRings_middle, Fixture::RealRings, Colony::Middle);

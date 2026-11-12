@@ -56,8 +56,12 @@ namespace geometry::nav {
 		// Moves when labels join, split, or are taken for new ground, and on any patch that
 		// may open a way for some mover and belief inside a label (PatchReport::opens). A
 		// patch that only closes ground and splits nothing leaves it, unless it re-derived a
-		// whole component (that takes a fresh label). Values never repeat (nextMeshGeneration).
+		// whole component (that takes a fresh label or empties one). Values never repeat
+		// (nextMeshGeneration).
 		std::uint64_t epoch() const { return connectivityEpoch; }
+		// A way may have opened for some belief with no patch (a door added): the epoch
+		// moves, the labels stay.
+		void noteOpening() { connectivityEpoch = nextMeshGeneration(); }
 
 		const ComponentUpkeep& lastUpkeep() const { return upkeep; }
 

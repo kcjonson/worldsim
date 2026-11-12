@@ -2,6 +2,7 @@
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
 #include "NavMesh.h"
+#include "PatchableMesh.h"
 
 #include <array>
 #include <cmath>
@@ -9,6 +10,8 @@
 #include <limits>
 #include <random>
 #include <span>
+#include <string>
+#include <thread>
 #include <unordered_set>
 #include <utility>
 #include <vector>
@@ -1515,4 +1518,376 @@ TEST(PathQuery, MaxExpansionsStopsDeterministically) {
 	EXPECT_EQ(atGoal.stop, PathStop::Found);
 	EXPECT_EQ(atGoal.points, full.points);
 	EXPECT_EQ(atGoal.expansions, full.expansions);
+}
+
+// --- Searches run a slice at a time -----------------------------------------------
+
+namespace {
+
+	struct SearchRun {
+		SearchProgress			  progress = SearchProgress::Running;
+		PathResult				  result;
+		std::int32_t			  goal		 = -1;
+		std::int64_t			  expansions = 0;
+		std::vector<std::int32_t> touched;
+	};
+
+	// The search run to its end in slices of `slice` expansions; each call may do one
+	// more, the goal it accepts.
+	SearchRun runInSlices(const NavView& view, const SearchArgs& args, std::uint32_t slice) {
+		SearchState	   search(args);
+		SearchProgress progress = SearchProgress::Running;
+		do {
+			const std::int64_t before = search.expansions();
+			progress				  = search.step(view, slice);
+			EXPECT_LE(search.expansions() - before, static_cast<std::int64_t>(slice) + 1);
+		} while (progress == SearchProgress::Running);
+		const std::span<const std::int32_t> touched = search.touchedTriangles();
+		return {progress, search.result(), search.goalIndex(), search.expansions(), {touched.begin(), touched.end()}};
+	}
+
+	void expectSameRun(const SearchRun& a, const SearchRun& b, const std::string& what) {
+		EXPECT_EQ(a.progress, b.progress) << what;
+		EXPECT_EQ(a.result.stop, b.result.stop) << what;
+		EXPECT_EQ(a.result.points, b.result.points) << what;
+		EXPECT_EQ(a.result.cost, b.result.cost) << what;
+		EXPECT_EQ(a.result.nodesExpanded, b.result.nodesExpanded) << what;
+		EXPECT_EQ(a.result.peakOpenSet, b.result.peakOpenSet) << what;
+		EXPECT_EQ(a.goal, b.goal) << what;
+		EXPECT_EQ(a.expansions, b.expansions) << what;
+		EXPECT_EQ(a.touched, b.touched) << what;
+	}
+
+	SearchArgs argsFor(const Vec2i64& start, std::vector<Vec2i64> goals, std::int64_t radius, const BeliefFilter& belief = {},
+					   std::uint32_t goalSidePhase = kGoalSidePhase, double maxCost = std::numeric_limits<double>::infinity()) {
+		return {start, std::move(goals), radius, copyBelief(belief), maxCost, goalSidePhase};
+	}
+
+	struct SearchCase {
+		const NavMesh* mesh;
+		SearchArgs	   args;
+		std::string	   name;
+	};
+
+	// Searches over the fixtures above: found and exhausted, from the start only, from the
+	// goal first, switching between them, nearest-of, priced, belief-gated, cost-capped.
+	std::vector<SearchCase> searchCases(const NavMesh& referee, const NavMesh& hedge, const NavMesh& sealedRoom, const NavMesh& doorRoom) {
+		static const std::unordered_set<std::uint64_t> walls{kSegS, kSegN, kSegW, kSegE};
+		static const std::unordered_set<std::uint64_t> door{kDoorOp};
+		static const std::unordered_set<std::uint64_t> noDoors;
+		static const TagPrice							trees[] = {{kTreeTag, 2.0}};
+		std::vector<SearchCase>							out;
+		const std::vector<Vec2i64>						points = refereePoints(24);
+		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
+			for (const std::uint32_t phase : {0U, 5U, kGoalSidePhase}) {
+				for (const std::int64_t radius : {0, 300}) {
+					out.push_back({&referee, argsFor(points[i], {points[i + 1]}, radius, {}, phase),
+								   "referee pair " + std::to_string(i) + " phase " + std::to_string(phase) + " radius " + std::to_string(radius)});
+				}
+			}
+			out.push_back({&referee, argsFor(points[i], {points[i + 1], {2600, 200}, {5400, 3000}, {300, 3700}}, 300), "nearest-of " + std::to_string(i)});
+		}
+		for (const std::uint32_t phase : {0U, 5U, kGoalSidePhase}) {
+			out.push_back({&hedge, argsFor({10100, 4000}, {{10100, 8000}}, 300, pricedBy(trees), phase), "priced hedge phase " + std::to_string(phase)});
+			out.push_back({&sealedRoom, argsFor(kOutside, {kInside}, 0, BeliefFilter{&walls, &noDoors}, phase), "sealed room phase " + std::to_string(phase)});
+			out.push_back({&doorRoom, argsFor(kOutside, {kInside}, 150, BeliefFilter{&walls, &door}, phase), "door room phase " + std::to_string(phase)});
+			out.push_back({&hedge, argsFor({10100, 4000}, {{10100, 8000}}, 300, pricedBy(trees), phase, 100.0), "capped hedge phase " + std::to_string(phase)});
+		}
+		return out;
+	}
+
+} // namespace
+
+// A search run in slices of any size expands the same labels in the same order and
+// answers the same, node for node, as one run to the end; with no goal-side phase that
+// answer is pathThrough's.
+TEST(PathQuerySearch,SlicesOfAnySizeGiveTheOneShotAnswer) {
+	const NavMesh referee	 = buildRefereeMesh(refereeRects());
+	const NavMesh hedge		 = hedgeMesh(200);
+	const NavMesh sealedRoom = buildNavMesh(buildBoxRoom(false));
+	const NavMesh doorRoom	 = buildNavMesh(buildBoxRoom(true));
+	int			  switched	 = 0;
+	for (const SearchCase& c : searchCases(referee, hedge, sealedRoom, doorRoom)) {
+		const NavView	view = navView(*c.mesh);
+		const SearchRun whole = runInSlices(view, c.args, kRunToEnd);
+		for (const std::uint32_t slice : {1U, 7U, 1000U}) {
+			expectSameRun(runInSlices(view, c.args, slice), whole, c.name + " in slices of " + std::to_string(slice));
+		}
+		if (c.args.goalSidePhase == 0 && c.args.goals.size() == 1) {
+			const PathResult once = pathThrough(view, c.args.start, c.args.goals[0], c.args.agentRadiusMm, {}, {.maxCost = c.args.maxCost});
+			if (c.args.belief.truth && c.args.belief.prices.empty()) {
+				EXPECT_EQ(once.points, whole.result.points) << c.name;
+				EXPECT_EQ(once.nodesExpanded, whole.result.nodesExpanded) << c.name;
+			}
+		}
+		switched += c.args.goalSidePhase == 5 && whole.expansions > 5 ? 1 : 0;
+		// Restarted, it answers again as it did.
+		SearchState search(c.args);
+		search.step(view, 3);
+		search.restart();
+		search.step(view, kRunToEnd);
+		EXPECT_EQ(search.result().points, whole.result.points) << c.name;
+		EXPECT_EQ(search.expansions(), whole.expansions) << c.name;
+	}
+	EXPECT_GT(switched, 5) << "some searches must outrun the goal-side phase and switch to the start";
+}
+
+// A goal sealed in a room the belief knows: from the goal the search runs dry at once;
+// from the start alone it floods everything outside first.
+TEST(PathQuerySearch,GoalSidePhaseFindsASealedGoalCheaply) {
+	const NavMesh							m = buildNavMesh(buildBoxRoom(false));
+	const std::unordered_set<std::uint64_t> walls{kSegS, kSegN, kSegW, kSegE};
+	const std::unordered_set<std::uint64_t> noDoors;
+	const NavView							view = navView(m);
+	const SearchRun phase = runInSlices(view, argsFor(kOutside, {kInside}, 0, BeliefFilter{&walls, &noDoors}), kRunToEnd);
+	const SearchRun ahead = runInSlices(view, argsFor(kOutside, {kInside}, 0, BeliefFilter{&walls, &noDoors}, 0), kRunToEnd);
+	EXPECT_EQ(phase.progress, SearchProgress::Exhausted);
+	EXPECT_EQ(phase.result.stop, PathStop::NoPath);
+	EXPECT_EQ(ahead.progress, SearchProgress::Exhausted);
+	EXPECT_LT(phase.expansions * 4, ahead.expansions);
+	// Found from the goal side, the walk still runs from the start.
+	const std::unordered_set<std::uint64_t> door{kDoorOp};
+	const NavMesh							withDoor = buildNavMesh(buildBoxRoom(true));
+	const SearchRun							in = runInSlices(navView(withDoor), argsFor(kOutside, {kInside}, 0, BeliefFilter{&walls, &door}), kRunToEnd);
+	ASSERT_EQ(in.progress, SearchProgress::Found);
+	EXPECT_EQ(in.result.points.front(), kOutside);
+	EXPECT_EQ(in.result.points.back(), kInside);
+	EXPECT_EQ(in.goal, 0);
+}
+
+// Nearest-of: the answer is the goal with the shortest walk, against the exact referee,
+// not the one nearest in a straight line. Goals no walk reaches drop out.
+TEST(PathQuerySearch,NearestOfReturnsTheGoalWithTheShortestWalk) {
+	const NavMesh m	   = buildRefereeMesh(refereeRects());
+	const NavView view = navView(m);
+	// Under the slab: the goal just over it is nearer in a line, the one further down is
+	// nearer on foot.
+	const SearchRun slab = runInSlices(view, argsFor({2600, 1200}, {{2600, 1800}, {2600, 200}}, 0), kRunToEnd);
+	ASSERT_EQ(slab.progress, SearchProgress::Found);
+	EXPECT_EQ(slab.goal, 1);
+	EXPECT_EQ(slab.result.points.back(), (Vec2i64{2600, 200}));
+
+	const std::vector<Vec2i64> points = refereePoints(120);
+	int						   checked = 0;
+	for (std::size_t i = 0; i + 5 < points.size(); i += 6) {
+		const std::vector<Vec2i64> goals(points.begin() + static_cast<std::ptrdiff_t>(i + 1), points.begin() + static_cast<std::ptrdiff_t>(i + 6));
+		std::vector<double>		   exact;
+		for (const Vec2i64& g : goals) {
+			exact.push_back(refereeLength(refereeRects(), points[i], g));
+		}
+		const double	shortest = *std::min_element(exact.begin(), exact.end());
+		const SearchRun run		 = runInSlices(view, argsFor(points[i], goals, 0), 7);
+		ASSERT_EQ(run.progress, SearchProgress::Found) << "start " << i;
+		ASSERT_GE(run.goal, 0);
+		EXPECT_EQ(run.result.points.back(), goals[static_cast<std::size_t>(run.goal)]);
+		EXPECT_NEAR(walkLength(run.result), shortest, 4.0) << "start " << i;
+		EXPECT_LE(exact[static_cast<std::size_t>(run.goal)], shortest + 8.0) << "start " << i;
+		++checked;
+	}
+	EXPECT_EQ(checked, 20);
+
+	// A goal inside a post stands on no ground: it drops out, and the other answers.
+	const SearchRun dropped = runInSlices(view, argsFor({200, 200}, {{1400, 2600}, {5800, 200}}, 0), kRunToEnd);
+	ASSERT_EQ(dropped.progress, SearchProgress::Found);
+	EXPECT_EQ(dropped.goal, 1);
+	const SearchRun none = runInSlices(view, argsFor({200, 200}, {{1400, 2600}, {2400, 3000}}, 0), kRunToEnd);
+	EXPECT_EQ(none.progress, SearchProgress::Exhausted);
+	EXPECT_EQ(none.goal, -1);
+}
+
+namespace {
+
+	// Posts on a 20 x 12 m field, as one patched mesh.
+	PatchableMesh postField() {
+		PatchableMesh mesh;
+		PatchEdits	  edits;
+		edits.adds.push_back({{{0, 0}, {20000, 0}, {20000, 12000}, {0, 12000}}, false, 1});
+		for (std::int64_t x = 1500; x < 19000; x += 1700) {
+			for (std::int64_t y = 1200; y < 11000; y += 1500) {
+				const std::int64_t s = 300 + (x * 7 + y * 3) % 500;
+				edits.adds.push_back({{{x, y}, {x + s, y}, {x + s, y + s}, {x, y + s}}, true, kTreeTag});
+			}
+		}
+		mesh.applyPatch(edits);
+		mesh.refreshWidths();
+		mesh.rebuildForests();
+		return mesh;
+	}
+
+} // namespace
+
+// Two searches on one mesh at once, interleaved a few expansions at a time on one thread
+// and run side by side on two, answer as each does alone: a search's state is its own.
+TEST(PathQuerySearch,ReadersSharingOneMeshAnswerAsAlone) {
+	const PatchableMesh mesh = postField();
+	const NavView		view = mesh.view();
+	const TagPrice		posts[] = {{kTreeTag, 3.0}};
+	const SearchArgs	a		= argsFor({500, 500}, {{19500, 11500}}, 300);
+	const SearchArgs	b		= argsFor({19000, 600}, {{1000, 11000}, {10000, 6000}}, 150, pricedBy(posts));
+	const SearchRun		aloneA	= runInSlices(view, a, kRunToEnd);
+	const SearchRun		aloneB	= runInSlices(view, b, kRunToEnd);
+	ASSERT_EQ(aloneA.progress, SearchProgress::Found);
+	ASSERT_EQ(aloneB.progress, SearchProgress::Found);
+
+	SearchState first(a);
+	SearchState second(b);
+	while (first.progress() == SearchProgress::Running || second.progress() == SearchProgress::Running) {
+		first.step(view, 3);
+		second.step(view, 5);
+	}
+	EXPECT_EQ(first.result().points, aloneA.result.points);
+	EXPECT_EQ(first.expansions(), aloneA.expansions);
+	EXPECT_EQ(std::vector<std::int32_t>(first.touchedTriangles().begin(), first.touchedTriangles().end()), aloneA.touched);
+	EXPECT_EQ(second.result().points, aloneB.result.points);
+	EXPECT_EQ(second.result().cost, aloneB.result.cost);
+	EXPECT_EQ(second.goalIndex(), aloneB.goal);
+	EXPECT_EQ(std::vector<std::int32_t>(second.touchedTriangles().begin(), second.touchedTriangles().end()), aloneB.touched);
+
+	std::array<std::vector<SearchRun>, 2> side;
+	std::thread							  other([&] {
+		  for (int i = 0; i < 20; ++i) {
+			  side[1].push_back(runInSlices(view, b, 11));
+		  }
+	  });
+	for (int i = 0; i < 20; ++i) {
+		side[0].push_back(runInSlices(view, a, 13));
+	}
+	other.join();
+	for (int i = 0; i < 20; ++i) {
+		expectSameRun(side[0][static_cast<std::size_t>(i)], aloneA, "thread 0 run " + std::to_string(i));
+		expectSameRun(side[1][static_cast<std::size_t>(i)], aloneB, "thread 1 run " + std::to_string(i));
+	}
+}
+
+// The touched set holds every triangle the search read: wreck every triangle outside it
+// (tags and widths) and the search answers exactly as before.
+TEST(PathQuerySearch,TouchedTrianglesAreAllItReads) {
+	const NavMesh referee	 = buildRefereeMesh(refereeRects());
+	const NavMesh hedge		 = hedgeMesh(200);
+	const NavMesh sealedRoom = buildNavMesh(buildBoxRoom(false));
+	const NavMesh doorRoom	 = buildNavMesh(buildBoxRoom(true));
+	int			  wrecked	 = 0;
+	for (const SearchCase& c : searchCases(referee, hedge, sealedRoom, doorRoom)) {
+		const SearchRun run = runInSlices(navView(*c.mesh), c.args, kRunToEnd);
+		const std::unordered_set<std::int32_t> touched(run.touched.begin(), run.touched.end());
+		EXPECT_EQ(touched.size(), run.touched.size()) << c.name << ": each id once";
+		NavMesh wreck	 = *c.mesh;
+		wreck.generation = nextMeshGeneration();
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(wreck.triangles.size()); ++t) {
+			if (touched.count(t) != 0) {
+				continue;
+			}
+			NavTriangle& tri	  = wreck.triangles[static_cast<std::size_t>(t)];
+			tri.faceBlocker		  = -77;
+			tri.faceOpening		  = kNoOpening;
+			tri.edgePairWidthMm	  = {0, 0, 0};
+			tri.structuralWidthMm = {0, 0, 0};
+			tri.edgeOpening		  = {kNoOpening, kNoOpening, kNoOpening};
+			tri.edgeClearWidthMm  = {0, 0, 0};
+			++wrecked;
+		}
+		expectSameRun(runInSlices(navView(wreck), c.args, 7), run, c.name);
+	}
+	EXPECT_GT(wrecked, 1000) << "the searches must leave most of the meshes unread for the test to bind";
+}
+
+namespace {
+
+	// A pen open only on the side away from the start, filled with posts: from a goal
+	// inside it by its closed side, a search must cross much of the pen to get out.
+	PatchableMesh postedPen() {
+		PatchableMesh mesh;
+		PatchEdits	  edits;
+		auto		  solid = [&](std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
+			 edits.adds.push_back({{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, kTreeTag});
+		};
+		edits.adds.push_back({{{0, 0}, {120000, 0}, {120000, 120000}, {0, 120000}}, false, 1});
+		solid(40000, 20000, 40500, 100000);
+		solid(40000, 20000, 100000, 20500);
+		solid(40000, 99500, 100000, 100000);
+		for (std::int64_t x = 42000; x < 98000; x += 1500) {
+			for (std::int64_t y = 22000; y < 98000; y += 1500) {
+				solid(x, y, x + 400, y + 400);
+			}
+		}
+		mesh.applyPatch(edits);
+		mesh.refreshWidths();
+		return mesh;
+	}
+
+} // namespace
+
+// At the default phase length, a goal whose side runs neither dry nor into the start
+// within it: the search switches to the start side and answers as a start-only search.
+TEST(PathQuerySearch,GoalSidePhaseSwitchesAtItsDefaultLength) {
+	const PatchableMesh mesh  = postedPen();
+	const NavView		view  = mesh.view();
+	const Vec2i64		start{5000, 60000};
+	const Vec2i64		goal{41500, 60000};
+	const SearchRun		phase = runInSlices(view, argsFor(start, {goal}, 300), kRunToEnd);
+	const SearchRun		ahead = runInSlices(view, argsFor(start, {goal}, 300, {}, 0), kRunToEnd);
+	ASSERT_EQ(phase.progress, SearchProgress::Found);
+	ASSERT_EQ(ahead.progress, SearchProgress::Found);
+	EXPECT_GT(phase.expansions, static_cast<std::int64_t>(kGoalSidePhase)) << "the goal side neither ran dry nor met the start";
+	EXPECT_EQ(phase.result.points.front(), start);
+	EXPECT_EQ(phase.result.points.back(), goal);
+	EXPECT_NEAR(walkLength(phase.result), walkLength(ahead.result), 2.0);
+	expectSameRun(runInSlices(view, argsFor(start, {goal}, 300), 7), phase, "pen in slices of 7");
+}
+
+// More triangles round one vertex than any fixed count: 300 floor slices meet at the
+// centre. Its star is open ground, so a disc passing within its radius walks straight
+// on, and the touched set holds the whole fan.
+TEST(PathQuerySearch,HighDegreeVertexWalksItsWholeFan) {
+	constexpr int		 kSlices = 300;
+	PatchableMesh		 mesh;
+	PatchEdits			 edits;
+	std::vector<Vec2i64> rim;
+	for (int k = 0; k < kSlices; ++k) {
+		const double turn = 2.0 * 3.14159265358979323846 * k / kSlices;
+		rim.push_back({std::llround(100000.0 * std::cos(turn)), std::llround(100000.0 * std::sin(turn))});
+	}
+	for (int k = 0; k < kSlices; ++k) {
+		edits.adds.push_back({{{0, 0}, rim[static_cast<std::size_t>(k)], rim[static_cast<std::size_t>((k + 1) % kSlices)]}, false, 1});
+	}
+	mesh.applyPatch(edits);
+	mesh.refreshWidths();
+	const NavView			  view = mesh.view();
+	std::vector<std::int32_t> fan;
+	for (std::int32_t t = 0; t < view.triangleSlots(); ++t) {
+		if (!view.isLive(t)) {
+			continue;
+		}
+		for (const std::uint32_t v : view.triangle(t).v) {
+			if (view.vertex(v) == Vec2i64{0, 0}) {
+				fan.push_back(t);
+			}
+		}
+	}
+	ASSERT_GT(fan.size(), 256U);
+	const Vec2i64	start{-50000, 200};
+	const Vec2i64	goal{50000, 200};
+	const SearchRun run = runInSlices(view, argsFor(start, {goal}, 300, {}, 0), kRunToEnd);
+	ASSERT_EQ(run.progress, SearchProgress::Found);
+	EXPECT_EQ(run.result.points, (std::vector<Vec2i64>{start, goal})) << "open ground at the centre is no corner";
+	const std::unordered_set<std::int32_t> touched(run.touched.begin(), run.touched.end());
+	for (const std::int32_t t : fan) {
+		EXPECT_EQ(touched.count(t), 1U) << "fan triangle " << t;
+	}
+}
+
+// A search never reads the reachability forests: they hold the whole mesh, not what the
+// search has read, so a goal they reject is still searched for (here two goals sealed in
+// a room under truth: the search explores and runs dry). pathThrough keeps the forests'
+// reject, before any search.
+TEST(PathQuerySearch,SearchNeverConsultsTheForests) {
+	const NavMesh m	   = buildNavMesh(buildBoxRoom(false));
+	const NavView view = navView(m);
+	ASSERT_NE(view.forest(true), nullptr);
+	const SearchRun run = runInSlices(view, argsFor(kOutside, {kInside, {1500, 1500}}, 0), kRunToEnd);
+	EXPECT_EQ(run.progress, SearchProgress::Exhausted);
+	EXPECT_GT(run.expansions, 10) << "the sealed goals were searched for, not dropped";
+	const PathResult once = pathThrough(view, kOutside, kInside, 0);
+	EXPECT_EQ(once.stop, PathStop::NoPath);
+	EXPECT_EQ(once.nodesExpanded, 0) << "pathThrough rejects on the forests before it searches";
 }

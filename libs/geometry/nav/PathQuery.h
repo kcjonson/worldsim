@@ -5,6 +5,7 @@
 
 #include <cstdint>
 #include <limits>
+#include <memory>
 #include <span>
 #include <unordered_set>
 #include <vector>
@@ -111,20 +112,103 @@ namespace geometry::nav {
 		std::span<const TagPrice>				 prices;
 	};
 
+	// A belief as a search holds it: its own copies, so a search that runs on another
+	// thread or across ticks reads nothing the mover's owner goes on changing, and keeps
+	// one belief from start to finish. Same meaning as BeliefFilter.
+	struct SearchBelief {
+		bool					   truth = true;   // knows every wall; the lists are not read
+		std::vector<std::uint64_t> knownSegments;  // ascending, each once
+		std::vector<std::uint64_t> knownOpenings;  // ascending, each once
+		std::vector<TagPrice>	   prices;
+	};
+	SearchBelief copyBelief(const BeliefFilter& belief);
+
 	// Triangle containing p (CCW point-in-triangle, on-edge counts as inside);
 	// -1 if p is outside every triangle. Linear scan (walking-locate is a later
 	// optimization behind the same signature).
 	std::int32_t locateTriangle(const NavMesh& mesh, const Vec2i64& p);
 
-	// Path for a disc of radius agentRadiusMm from start to goal. Triangle A* over
-	// the dual graph, then a funnel (string-pulling) shrunk by the agent radius. The
-	// A* expansion (and the start/goal triangles) are gated by `belief`: a default
-	// (empty) BeliefFilter is a truth query that routes exactly as v1 did.
+	// Expansions a single-goal search spends searching from the goal before it searches
+	// from the start. A goal sealed in a pocket the belief knows runs dry within it.
+	constexpr std::uint32_t kGoalSidePhase = 2000;
+	// step()'s count for "until the search ends".
+	constexpr std::uint32_t kRunToEnd = std::numeric_limits<std::uint32_t>::max();
+
+	struct SearchArgs {
+		Vec2i64				 start;
+		std::vector<Vec2i64> goals; // the answer is the one with the shortest walk (or cost)
+		std::int64_t		 agentRadiusMm = 0;
+		SearchBelief		 belief;
+		// PathLimits::maxCost.
+		double maxCost = std::numeric_limits<double>::infinity();
+		// With one goal, the search runs from the goal first for up to this many
+		// expansions: running dry there, or meeting the start, answers; otherwise it
+		// searches from the start. 0 searches from the start only.
+		std::uint32_t goalSidePhase = kGoalSidePhase;
+	};
+
+	enum class SearchProgress { Running, Found, Exhausted };
+
+	// A path search that runs a slice at a time: step(mesh, n) does at most n expansions
+	// and stops, and the next call carries on where it stopped, so a search run in slices
+	// of any size expands the same labels in the same order and answers the same as one
+	// run to the end. It ends Found (a goal reached) or Exhausted (no goal reachable on
+	// this mesh for this disc and belief, or, when the result's stop says LimitReached,
+	// none within maxCost). There is no limit on the search itself.
 	//
-	// The search scores each corridor by a lower bound on its walk (its funnel so far,
-	// then the best way on through the portal it last crossed) and accepts a goal only
-	// at its exact string-pulled length (or cost), so it returns the shortest walk of the
-	// corridors it keeps (see PathQuery.cpp's label cap).
+	// Triangle A* over the dual graph, then a funnel (string-pulling) shrunk by the agent
+	// radius. Expansion and the start and goal triangles are gated by the belief. Each
+	// corridor is scored by a lower bound on its walk to the nearest goal (its funnel so
+	// far, then the best way on through the portal it last crossed), and a goal is
+	// accepted only at its exact string-pulled length (or cost), so the search returns the
+	// shortest walk of the corridors it keeps (see PathQuery.cpp's label cap).
+	//
+	// Every step must be given the same mesh, unchanged since the search began or last
+	// restarted: ids it holds name that mesh's triangles. A caller that patches the mesh
+	// between steps checks the patch's triangle ids against touches() and restarts the
+	// search on a hit; a search no patch touched may carry on. So a search reads nothing
+	// outside its touched set: never the reachability forests, which describe the whole
+	// mesh and could drop a goal a later patch opened.
+	//
+	// A search's state is its own (belief included), so any number of searches, on any
+	// threads, may read one mesh at once while nothing writes it; one search is stepped by
+	// one thread at a time.
+	class SearchState {
+	  public:
+		explicit SearchState(SearchArgs args);
+		SearchState(SearchState&&) noexcept;
+		SearchState& operator=(SearchState&&) noexcept;
+		~SearchState();
+
+		// Reads the mesh; the corridor widths must be current (a mesh whose widths lag
+		// does no work and stays Running).
+		SearchProgress step(const NavView& mesh, std::uint32_t expansions);
+		SearchProgress progress() const;
+
+		// Running: stop LimitReached, nothing reachable. Counts are of all the work done.
+		PathResult result() const;
+		// The index in args().goals of the goal answered; -1 unless Found.
+		std::int32_t goalIndex() const;
+		// Expansions so far, the goal-side phase included.
+		std::int64_t expansions() const;
+
+		// Every triangle id the search has read, in the order first read.
+		std::span<const std::int32_t> touchedTriangles() const;
+		bool						  touches(std::int32_t triangle) const;
+
+		// Back to before the first step, the arguments kept.
+		void			  restart();
+		const SearchArgs& args() const;
+
+	  private:
+		struct Impl;
+		std::unique_ptr<Impl> impl;
+	};
+
+	// Path for a disc of radius agentRadiusMm from start to goal: a SearchState from the
+	// start only, run to the end (or to limits.maxExpansions), unless the reachability
+	// forests prove the goal out of reach first (no expansions then). A default (empty)
+	// BeliefFilter is a truth query that routes exactly as v1 did.
 	PathResult pathThrough(const NavMesh& mesh, const Vec2i64& start, const Vec2i64& goal, std::int64_t agentRadiusMm,
 						   const BeliefFilter& belief = {}, const PathLimits& limits = {});
 	// Any mesh through its view (see NavView). Without forests in the view the
