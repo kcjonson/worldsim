@@ -929,14 +929,9 @@ namespace geometry::nav {
 
 	class PatchableMesh::Patch {
 	  public:
-		enum class Use { Apply, Predict };
-
-		// Predict leaves the ring registry as it is: added rings take ids past it.
-		Patch(PatchableMesh& owner, const PatchEdits& edits, Use useIn) : m(owner), work(*owner.patchScratch.scratch), use(useIn) { begin(edits); }
+		Patch(PatchableMesh& owner, const PatchEdits& edits) : m(owner), work(*owner.patchScratch.scratch) { begin(edits); }
 
 		PatchReport run();
-		// The first pass's hole, ascending.
-		std::vector<std::int32_t> firstHole();
 
 	  private:
 		using Change	   = PatchScratch::Change;
@@ -980,8 +975,6 @@ namespace geometry::nav {
 		PatchableMesh& m;
 		PatchScratch&  work;
 		PatchReport	   out;
-		Use			   use;
-		RingId		   provisionalRings = 0;
 
 		std::vector<std::pair<RingId, Change>>& changes		= work.changes;
 		std::vector<EdgeSource>&				queue		= work.queue;
@@ -997,9 +990,6 @@ namespace geometry::nav {
 	};
 
 	RingId PatchableMesh::Patch::allocateRing() {
-		if (use == Use::Predict) {
-			return static_cast<RingId>(m.rings.size()) + provisionalRings++;
-		}
 		if (!m.freeRings.empty()) {
 			const RingId id = m.freeRings.back();
 			m.freeRings.pop_back();
@@ -1866,16 +1856,7 @@ namespace geometry::nav {
 		return list;
 	}
 
-	std::vector<std::int32_t> PatchableMesh::Patch::firstHole() {
-		walkNewOutlines();
-		closeS();
-		std::vector<std::int32_t> ids = hole;
-		std::sort(ids.begin(), ids.end());
-		return ids;
-	}
-
 	PatchReport PatchableMesh::Patch::run() {
-		assert(use == Use::Apply && "PatchableMesh: applying a predicted patch");
 		walkNewOutlines();
 		closeS();
 		while (!deriveOnce()) {
@@ -2249,17 +2230,13 @@ namespace geometry::nav {
 	} // namespace
 
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
-		Patch patch(*this, edits, Patch::Use::Apply);
+		Patch patch(*this, edits);
 		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
 		PatchReport report = patch.run();
 		report.opens	   = !edits.removes.empty() || !edits.moves.empty() || !std::all_of(edits.adds.begin(), edits.adds.end(), onlyCloses);
 		labels.update(view(), report);
 		return report;
-	}
-
-	std::vector<std::int32_t> PatchableMesh::holeOf(const PatchEdits& edits) {
-		return Patch(*this, edits, Patch::Use::Predict).firstHole();
 	}
 
 	// --- Doors, widths, forests, and the view ---------------------------------------

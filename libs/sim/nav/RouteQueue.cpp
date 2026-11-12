@@ -19,8 +19,6 @@ namespace nav {
 
 	} // namespace
 
-	RouteQueue::RouteQueue(const RouteQueueArgs& args) : deferralMarginMm(args.deferralMarginMm) {}
-
 	RouteTicket RouteQueue::request(const RouteRequestArgs& args) {
 		const RouteTicket ticket = nextTicket++;
 		SearchArgs		  search{.start = args.start, .goals = args.goals, .agentRadiusMm = args.agentRadiusMm, .belief = geometry::nav::copyBelief(args.belief)};
@@ -65,58 +63,67 @@ namespace nav {
 		return outstanding.count(ticket) != 0;
 	}
 
+	bool RouteQueue::hits(Route& route, const PatchReport& report) {
+		// A changed triangle the search read lies in its touched box, or borders one that
+		// does, so a touched box clear of the report's box holds none of the changes.
+		if (!route.hasBox || !boxesMeet(route.lo, route.hi, report.lo, report.hi)) {
+			return false;
+		}
+		return std::any_of(report.changes.begin(), report.changes.end(), [&](const geometry::nav::ChangedTriangle& c) { return route.search.touches(c.id); });
+	}
+
+	void RouteQueue::restart(Route& route) {
+		route.search.restart();
+		++route.restarts;
+		route.boxed	 = 0;
+		route.hasBox = false;
+	}
+
 	void RouteQueue::notePatches(const PatchReport& report) {
 		if (report.changes.empty()) {
 			return;
 		}
-		// A changed triangle the search read lies in its touched box, or borders one that
-		// does, so a touched box clear of the report's box holds none of the changes.
 		for (Route& route : running) {
-			if (!route.hasBox || !boxesMeet(route.lo, route.hi, report.lo, report.hi)) {
+			if (hits(route, report)) {
+				restart(route);
+			}
+		}
+		for (auto it = finished.begin(); it != finished.end();) {
+			if (!hits(it->route, report)) {
+				++it;
 				continue;
 			}
-			const bool hit = std::any_of(report.changes.begin(), report.changes.end(),
-										 [&](const geometry::nav::ChangedTriangle& c) { return route.search.touches(c.id); });
-			if (!hit) {
-				continue;
-			}
-			assert(route.restarts == 0 && "RouteQueue: a patch landed inside a deferral box");
-			route.search.restart();
-			++route.restarts;
-			route.boxed	 = 0;
-			route.hasBox = false;
+			Route& route = it->route;
+			restart(route);
+			const auto at = std::lower_bound(running.begin(), running.end(), route.ticket, [](const Route& r, RouteTicket t) { return r.ticket < t; });
+			running.insert(at, std::move(route));
+			it = finished.erase(it);
 		}
 	}
 
 	void RouteQueue::admit() {
-		for (auto& [ticket, answer] : finished) {
-			if (outstanding.erase(ticket) != 0) {
-				delivered.emplace(ticket, std::move(answer));
+		for (Finished& done : finished) {
+			if (outstanding.erase(done.route.ticket) != 0) {
+				delivered.emplace(done.route.ticket, std::move(done.answer));
 			}
 		}
 		finished.clear();
 		if (!cancels.empty()) {
 			std::sort(cancels.begin(), cancels.end());
-			std::erase_if(running, [&](const Route& r) { return std::binary_search(cancels.begin(), cancels.end(), r.ticket); });
+			const auto cancelled = [&](RouteTicket t) { return std::binary_search(cancels.begin(), cancels.end(), t); };
+			std::erase_if(running, [&](const Route& r) { return cancelled(r.ticket); });
+			std::erase_if(newcomers, cancelled);
 			cancels.clear();
 		}
 		for (Route& route : inbox) {
+			newcomers.push_back(route.ticket);
 			running.push_back(std::move(route));
 		}
 		inbox.clear();
 	}
 
-	std::vector<RouteDeferral> RouteQueue::deferrals() const {
-		std::vector<RouteDeferral> out;
-		for (const Route& route : running) {
-			if (route.restarts == 0 || !route.hasBox) {
-				continue;
-			}
-			out.push_back({.ticket = route.ticket,
-						   .lo	   = {route.lo.x - deferralMarginMm, route.lo.y - deferralMarginMm},
-						   .hi	   = {route.hi.x + deferralMarginMm, route.hi.y + deferralMarginMm}});
-		}
-		return out;
+	bool RouteQueue::searchSpansTicks() const {
+		return std::any_of(running.begin(), running.end(), [](const Route& r) { return r.hadTurn; });
 	}
 
 	void RouteQueue::growBox(Route& route, const NavView& mesh) {
@@ -137,17 +144,46 @@ namespace nav {
 		}
 	}
 
-	void RouteQueue::finish(Route& route) {
+	void RouteQueue::finish(std::size_t at, const NavView& mesh, const RouteMeshEpochs& epochs) {
+		Route&		route = running[at];
 		RouteAnswer answer;
-		answer.path		 = route.search.result();
-		answer.outcome	 = route.search.progress() == SearchProgress::Found ? RouteOutcome::Routed : RouteOutcome::NoKnownWay;
+		answer.path = route.search.result();
+		if (route.search.progress() == SearchProgress::Found) {
+			answer.outcome = RouteOutcome::Routed;
+		} else if (mesh.locate(route.search.args().start) < 0) {
+			answer.outcome = RouteOutcome::StartOffMesh;
+		} else {
+			answer.outcome = RouteOutcome::NoKnownWay;
+		}
 		answer.goalIndex = route.search.goalIndex();
 		answer.restarts	 = route.restarts;
 		answer.slice	 = sliceCount;
-		finished.emplace_back(route.ticket, std::move(answer));
+		answer.epochs	 = epochs;
+		finished.push_back({.route = std::move(route), .answer = std::move(answer)});
+		running.erase(running.begin() + static_cast<std::ptrdiff_t>(at));
 	}
 
-	void RouteQueue::runSlice(const NavView& meshIn) {
+	// One turn for running[at]; true when it ended the request (and removed it from running).
+	bool RouteQueue::turn(std::size_t at, std::uint32_t& left, const NavView& mesh, const RouteMeshEpochs& epochs) {
+		Route&				 route	 = running[at];
+		const std::uint32_t	 granted = std::min(kRouteQuantum, left) - 1;
+		const std::int64_t	 before	 = route.search.expansions();
+		const SearchProgress how	 = route.search.step(mesh, granted);
+		const auto			 spent	 = static_cast<std::uint32_t>(route.search.expansions() - before);
+		assert(spent <= granted + 1 && "RouteQueue: a turn closed more than its grant and the goal");
+		assert((spent > 0 || how != SearchProgress::Running) && "RouteQueue: a turn did no work");
+		left -= spent;
+		route.hadTurn	 = true;
+		const bool ended = how != SearchProgress::Running;
+		turns.push_back({.ticket = route.ticket, .granted = granted, .spent = spent, .ended = ended});
+		growBox(route, mesh);
+		if (ended) {
+			finish(at, mesh, epochs);
+		}
+		return ended;
+	}
+
+	void RouteQueue::runSlice(const NavView& meshIn, const RouteMeshEpochs& epochs) {
 		++sliceCount;
 		turns.clear();
 		const NavView mesh = meshIn.resolved();
@@ -155,31 +191,25 @@ namespace nav {
 		if (running.empty() || !mesh.widthsCurrent()) {
 			return;
 		}
-		std::uint32_t left = kRouteWorkPerSlice;
-		std::size_t	  at   = static_cast<std::size_t>(
-			  std::lower_bound(running.begin(), running.end(), nextTurn, [](const Route& r, RouteTicket t) { return r.ticket < t; }) - running.begin());
+		const auto indexOf = [&](RouteTicket t) {
+			return static_cast<std::size_t>(std::lower_bound(running.begin(), running.end(), t, [](const Route& r, RouteTicket u) { return r.ticket < u; }) -
+											running.begin());
+		};
+		std::uint32_t left	 = kRouteWorkPerSlice;
+		std::size_t	  served = 0;
+		for (; served < newcomers.size() && left >= 2; ++served) {
+			turn(indexOf(newcomers[served]), left, mesh, epochs);
+		}
+		newcomers.erase(newcomers.begin(), newcomers.begin() + static_cast<std::ptrdiff_t>(served));
+
+		std::size_t at = indexOf(nextTurn);
 		while (left >= 2 && !running.empty()) {
 			if (at >= running.size()) {
 				at = 0;
 			}
-			Route&				route	= running[at];
-			const std::uint32_t granted = std::min(kRouteQuantum, left) - 1;
-			const std::int64_t	before	= route.search.expansions();
-			const SearchProgress how	= route.search.step(mesh, granted);
-			const auto			spent	= static_cast<std::uint32_t>(route.search.expansions() - before);
-			assert(spent <= granted + 1 && "RouteQueue: a turn closed more than its grant and the goal");
-			assert((spent > 0 || how != SearchProgress::Running) && "RouteQueue: a turn did no work");
-			left -= spent;
-			const bool ended = how != SearchProgress::Running;
-			turns.push_back({.ticket = route.ticket, .granted = granted, .spent = spent, .ended = ended});
-			if (ended) {
-				finish(route);
-				running.erase(running.begin() + static_cast<std::ptrdiff_t>(at));
-				nextTurn = at < running.size() ? running[at].ticket : kNoRouteTicket;
-				continue;
+			if (!turn(at, left, mesh, epochs)) {
+				++at;
 			}
-			growBox(route, mesh);
-			++at;
 			nextTurn = at < running.size() ? running[at].ticket : kNoRouteTicket;
 		}
 	}

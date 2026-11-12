@@ -108,7 +108,7 @@ namespace {
 			if (answers.size() == tickets.size()) {
 				return answers;
 			}
-			queue.runSlice(view);
+			queue.runSlice(view, {});
 		}
 		ADD_FAILURE() << "requests never all answered";
 		return answers;
@@ -165,8 +165,31 @@ namespace {
 		return report;
 	}
 
-	bool boxesMeet(const Vec2i64& aLo, const Vec2i64& aHi, const Vec2i64& bLo, const Vec2i64& bHi) {
-		return aLo.x <= bHi.x && bLo.x <= aHi.x && aLo.y <= bHi.y && bLo.y <= aHi.y;
+	// The bar field with two goals in walled pens: a nearest-of search for them from outside
+	// floods everything the start can reach before it answers.
+	const Vec2i64 kPens[] = {gapPoint(30, 20), gapPoint(70, 90)};
+
+	PatchableMesh buildPennedField() {
+		PatchableMesh mesh = barField();
+		PatchEdits	  pens;
+		for (const Vec2i64& c : kPens) {
+			pens.adds.push_back(solidBox({c.x - 1100, c.y - 1100}, {c.x + 1100, c.y - 900}, kObstacleTag));
+			pens.adds.push_back(solidBox({c.x - 1100, c.y + 900}, {c.x + 1100, c.y + 1100}, kObstacleTag));
+			pens.adds.push_back(solidBox({c.x - 1100, c.y - 900}, {c.x - 900, c.y + 900}, kObstacleTag));
+			pens.adds.push_back(solidBox({c.x + 900, c.y - 900}, {c.x + 1100, c.y + 900}, kObstacleTag));
+		}
+		mesh.applyPatch(pens);
+		mesh.refreshWidths();
+		return mesh;
+	}
+
+	const PatchableMesh& pennedField() {
+		static const PatchableMesh mesh = buildPennedField();
+		return mesh;
+	}
+
+	RouteRequestArgs floodArgs(const Vec2i64& start) {
+		return routeArgs(start, {kPens[0], kPens[1]});
 	}
 
 } // namespace
@@ -210,7 +233,7 @@ TEST(RouteQueue, WorkIsSharedAQuantumAtATimeInTicketOrder) {
 		tickets.push_back(queue.request(routeArgs(gapPoint(40 + 4 * i, 48), {gapPoint(40 + 4 * i, 50)})));
 	}
 	queue.admit();
-	queue.runSlice(view);
+	queue.runSlice(view, {});
 	const std::vector<RouteTurn> first(queue.lastSlice().begin(), queue.lastSlice().end());
 	expectSharingRule(first, tickets, tickets[0]);
 	EXPECT_LE(spentIn(first), kRouteWorkPerSlice);
@@ -236,7 +259,7 @@ TEST(RouteQueue, WorkIsSharedAQuantumAtATimeInTicketOrder) {
 		const auto	after = std::upper_bound(pending.begin(), pending.end(), last.ticket);
 		RouteTicket start = pending.empty() ? kNoRouteTicket : (after == pending.end() ? pending.front() : *after);
 		queue.admit();
-		queue.runSlice(view);
+		queue.runSlice(view, {});
 		++slices;
 		if (!pending.empty()) {
 			expectSharingRule(queue.lastSlice(), pending, start);
@@ -280,7 +303,7 @@ TEST(RouteQueue, AnswerSlicesRepeatAndFollowTheSharingRule) {
 			if (untilShort && run.answers.count(run.shortTicket) != 0) {
 				return run;
 			}
-			queue.runSlice(view);
+			queue.runSlice(view, {});
 			for (const RouteTurn& turn : queue.lastSlice()) {
 				run.firstTurn.emplace(turn.ticket, queue.slices());
 			}
@@ -310,9 +333,9 @@ TEST(RouteQueue, AnswerSlicesRepeatAndFollowTheSharingRule) {
 			EXPECT_EQ(run.answers.at(run.shortTicket).path.points, alone.path.points);
 		}
 	}
-	// Twelve long requests ahead fill the first slice: the short one answers in the slice of
-	// its first turn, which the rotation brings round.
-	EXPECT_GT(once.firstTurn.at(once.shortTicket), 1U);
+	// Twelve long requests admitted with it and ahead of it fill the first slice: it keeps
+	// its place at the head and answers in the second.
+	EXPECT_EQ(once.firstTurn.at(once.shortTicket), 2U);
 	EXPECT_EQ(once.answers.at(once.shortTicket).slice, once.firstTurn.at(once.shortTicket));
 }
 
@@ -321,20 +344,6 @@ TEST(RouteQueue, AnswerSlicesRepeatAndFollowTheSharingRule) {
 TEST(RouteQueue, LongSearchesSpanSlicesAndFinish) {
 	const PatchableMesh& mesh = barField();
 	const NavView		 view = mesh.view();
-	PatchableMesh		 sealed = mesh;
-	{
-		// Two goals in walled pens: nearest-of searches from the start alone and floods what
-		// the start can reach before it gives its answer.
-		PatchEdits pens;
-		for (const Vec2i64& c : {gapPoint(30, 20), gapPoint(70, 90)}) {
-			pens.adds.push_back(solidBox({c.x - 1100, c.y - 1100}, {c.x + 1100, c.y - 900}, kObstacleTag));
-			pens.adds.push_back(solidBox({c.x - 1100, c.y + 900}, {c.x + 1100, c.y + 1100}, kObstacleTag));
-			pens.adds.push_back(solidBox({c.x - 1100, c.y - 900}, {c.x - 900, c.y + 900}, kObstacleTag));
-			pens.adds.push_back(solidBox({c.x + 900, c.y - 900}, {c.x + 1100, c.y + 900}, kObstacleTag));
-		}
-		sealed.applyPatch(pens);
-		sealed.refreshWidths();
-	}
 
 	RouteQueue			   queue;
 	const RouteRequestArgs around = routeArgs(kBelowBar, {kAboveBar});
@@ -349,8 +358,8 @@ TEST(RouteQueue, LongSearchesSpanSlicesAndFinish) {
 	EXPECT_GT(walkLength(answer.path), 100000.0) << "the way runs round the bar";
 
 	RouteQueue			   floodQueue;
-	const NavView		   sealedView = sealed.view();
-	const RouteRequestArgs penned	  = routeArgs(gapPoint(50, 20), {gapPoint(30, 20), gapPoint(70, 90)});
+	const NavView		   sealedView = pennedField().view();
+	const RouteRequestArgs penned	  = floodArgs(gapPoint(50, 20));
 	const RouteTicket	   flood	  = floodQueue.request(penned);
 	const RouteAnswer	   none		  = runUntilAnswered(floodQueue, sealedView, {flood}).at(flood);
 	EXPECT_EQ(none.outcome, RouteOutcome::NoKnownWay);
@@ -360,74 +369,28 @@ TEST(RouteQueue, LongSearchesSpanSlicesAndFinish) {
 	EXPECT_EQ(none.path.nodesExpanded, searchAlone(sealedView, penned).expansions());
 }
 
-// A patch that changes a triangle a running search has read restarts it once, and its
-// answer is the one for the patched mesh.
-TEST(RouteQueue, PatchMeetingARunningSearchRestartsItOnce) {
+// Every patch that changes a triangle a running search has read restarts it, however many
+// times, and its answer is the one for the mesh as last patched.
+TEST(RouteQueue, EachPatchMeetingARunningSearchRestartsIt) {
 	PatchableMesh		   mesh = barField();
 	RouteQueue			   queue;
 	const RouteRequestArgs around = routeArgs(kBelowBar, {kAboveBar});
 	const RouteTicket	   ticket = queue.request(around);
-	queue.admit();
-	queue.runSlice(mesh.view());
-	ASSERT_TRUE(queue.answeredTickets().empty());
-	queue.admit();
-	ASSERT_TRUE(queue.waiting(ticket));
-
-	addPost(mesh, {kBelowBar.x - 700, kBelowBar.y}, 150, queue);
+	for (const std::int64_t side : {-700, 700}) {
+		queue.admit();
+		queue.runSlice(mesh.view(), {});
+		ASSERT_TRUE(queue.answeredTickets().empty());
+		queue.admit();
+		ASSERT_TRUE(queue.waiting(ticket));
+		addPost(mesh, {kBelowBar.x + side, kBelowBar.y}, 150, queue);
+	}
 	const RouteAnswer answer = runUntilAnswered(queue, mesh.view(), {ticket}).at(ticket);
 	const SearchState alone	 = searchAlone(mesh.view(), around);
-	EXPECT_EQ(answer.restarts, 1U);
+	EXPECT_EQ(answer.restarts, 2U);
 	ASSERT_EQ(answer.outcome, RouteOutcome::Routed);
 	EXPECT_EQ(answer.path.points, alone.result().points);
 	EXPECT_EQ(answer.path.nodesExpanded, alone.expansions());
 	EXPECT_EQ(answer.path.points, geometry::nav::pathThrough(mesh.view(), kBelowBar, kAboveBar, kRadius).points);
-}
-
-// Restarted once, a search reports where patches must wait. A patch meeting that box is
-// held until the search ends: no second restart, and the answer is the mesh's before it.
-TEST(RouteQueue, ARestartedSearchReportsADeferralBox) {
-	PatchableMesh		   mesh = barField();
-	RouteQueue			   queue;
-	const RouteRequestArgs around = routeArgs(kBelowBar, {kAboveBar});
-	const RouteTicket	   ticket = queue.request(around);
-	queue.admit();
-	queue.runSlice(mesh.view());
-	queue.admit();
-	EXPECT_TRUE(queue.deferrals().empty()) << "a search not yet restarted holds no patches back";
-
-	addPost(mesh, {kBelowBar.x - 700, kBelowBar.y}, 150, queue);
-	EXPECT_TRUE(queue.deferrals().empty()) << "restarted, it has read nothing a patch could change";
-	queue.admit();
-	queue.runSlice(mesh.view());
-	const std::vector<RouteDeferral> deferrals = queue.deferrals();
-	ASSERT_EQ(deferrals.size(), 1U);
-	EXPECT_EQ(deferrals[0].ticket, ticket);
-	EXPECT_LE(deferrals[0].lo.x, kBelowBar.x);
-	EXPECT_GE(deferrals[0].hi.x, kBelowBar.x);
-
-	// A second post by the start would restart it again: it meets the box, so it waits.
-	const Vec2i64 held{kBelowBar.x + 700, kBelowBar.y};
-	EXPECT_TRUE(boxesMeet({held.x - 150, held.y - 150}, {held.x + 150, held.y + 150}, deferrals[0].lo, deferrals[0].hi));
-	{
-		// Binding: applied now, it would change triangles the search has read.
-		PatchableMesh probe = mesh;
-		RouteQueue	  probeQueue;
-		const RouteTicket probeTicket = probeQueue.request(around);
-		probeQueue.admit();
-		probeQueue.runSlice(probe.view());
-		PatchEdits edits;
-		edits.adds.push_back(solidBox({held.x - 150, held.y - 150}, {held.x + 150, held.y + 150}, kObstacleTag));
-		probeQueue.notePatches(probe.applyPatch(edits));
-		probeQueue.notePatches(probe.refreshWidths());
-		EXPECT_EQ(runUntilAnswered(probeQueue, probe.view(), {probeTicket}).at(probeTicket).restarts, 1U);
-	}
-
-	const SearchState alone	 = searchAlone(mesh.view(), around);
-	const RouteAnswer answer = runUntilAnswered(queue, mesh.view(), {ticket}).at(ticket);
-	EXPECT_EQ(answer.restarts, 1U);
-	EXPECT_EQ(answer.path.points, alone.result().points);
-	EXPECT_TRUE(queue.deferrals().empty()) << "an ended search holds nothing back";
-	addPost(mesh, held, 150, queue);
 }
 
 // A patch that changes nothing the search reads leaves it running as if nothing happened.
@@ -440,7 +403,7 @@ TEST(RouteQueue, PatchAwayFromASearchDoesNotDisturbIt) {
 	RouteQueue		  queue;
 	const RouteTicket ticket = queue.request(around);
 	queue.admit();
-	queue.runSlice(mesh.view());
+	queue.runSlice(mesh.view(), {});
 	queue.admit();
 	ASSERT_TRUE(queue.waiting(ticket));
 	const Vec2i64	  far = gapPoint(95, 95);
@@ -467,13 +430,13 @@ TEST(RouteQueue, CancelRemovesARequestAndItsWork) {
 	queue.cancel(unjoined);
 	EXPECT_FALSE(queue.waiting(unjoined));
 	queue.admit();
-	queue.runSlice(view);
+	queue.runSlice(view, {});
 	queue.cancel(a);
 	EXPECT_FALSE(queue.waiting(a));
 	EXPECT_TRUE(queue.waiting(b));
 	for (int i = 0; i < 100 && queue.waiting(b); ++i) {
 		queue.admit();
-		queue.runSlice(view);
+		queue.runSlice(view, {});
 		for (const RouteTurn& turn : queue.lastSlice()) {
 			EXPECT_EQ(turn.ticket, b);
 		}
@@ -486,7 +449,7 @@ TEST(RouteQueue, CancelRemovesARequestAndItsWork) {
 	// Finished in a slice, cancelled before the admit that would deliver it.
 	const RouteTicket quick = queue.request(routeArgs(gapPoint(10, 10), {gapPoint(12, 12)}));
 	queue.admit();
-	queue.runSlice(view);
+	queue.runSlice(view, {});
 	ASSERT_TRUE(queue.lastSlice().back().ended);
 	queue.cancel(quick);
 	queue.admit();
@@ -495,7 +458,7 @@ TEST(RouteQueue, CancelRemovesARequestAndItsWork) {
 	// Delivered, then cancelled before it was taken.
 	const RouteTicket taken = queue.request(routeArgs(gapPoint(10, 10), {gapPoint(12, 12)}));
 	queue.admit();
-	queue.runSlice(view);
+	queue.runSlice(view, {});
 	queue.admit();
 	ASSERT_EQ(queue.answeredTickets(), std::vector<RouteTicket>{taken});
 	queue.cancel(taken);
@@ -579,10 +542,150 @@ TEST(RouteQueue, AnExhaustedSearchAnswersNoKnownWayAndIsNotRetried) {
 	EXPECT_FALSE(queue.waiting(ticket));
 	for (int i = 0; i < 3; ++i) {
 		queue.admit();
-		queue.runSlice(view);
+		queue.runSlice(view, {});
 		EXPECT_TRUE(queue.lastSlice().empty());
 	}
 	queue.admit();
 	EXPECT_FALSE(queue.takeAnswer(ticket).has_value());
 	EXPECT_TRUE(queue.answeredTickets().empty());
+}
+
+// A search that ended in a slice is checked against the patches that land before the admit
+// that would deliver it: one that changes what it read sends it back to run on the patched
+// mesh, and what is delivered is that mesh's answer.
+TEST(RouteQueue, PatchBeforeDeliveryRestartsAFinishedSearch) {
+	PatchableMesh		   mesh	 = barField();
+	const Vec2i64		   from	 = gapPoint(10, 10);
+	const Vec2i64		   to	 = gapPoint(10, 14);
+	const RouteRequestArgs args	 = routeArgs(from, {to});
+	const PathResult	   clear = searchAlone(mesh.view(), args).result();
+	ASSERT_EQ(clear.points.size(), 2U) << "the way runs straight up a clear lane";
+
+	RouteQueue		  queue;
+	const RouteTicket ticket = queue.request(args);
+	queue.admit();
+	queue.runSlice(mesh.view(), {});
+	ASSERT_TRUE(queue.lastSlice().back().ended);
+	addPost(mesh, gapPoint(10, 12), 100, queue);
+	queue.admit();
+	EXPECT_FALSE(queue.takeAnswer(ticket).has_value()) << "the finished answer was read before the post";
+	EXPECT_TRUE(queue.waiting(ticket));
+
+	const RouteAnswer answer = runUntilAnswered(queue, mesh.view(), {ticket}).at(ticket);
+	EXPECT_EQ(answer.restarts, 1U);
+	ASSERT_EQ(answer.outcome, RouteOutcome::Routed);
+	EXPECT_NE(answer.path.points, clear.points);
+	EXPECT_EQ(answer.path.points, searchAlone(mesh.view(), args).result().points);
+	EXPECT_EQ(answer.path.points, geometry::nav::pathThrough(mesh.view(), from, to, kRadius).points);
+}
+
+// searchSpansTicks is true only while a request that has had a turn is still running.
+TEST(RouteQueue, SearchSpansTicksOnlyPastAFirstSlice) {
+	const PatchableMesh& mesh = barField();
+	const NavView		 view = mesh.view();
+	RouteQueue			 queue;
+	EXPECT_FALSE(queue.searchSpansTicks());
+	queue.request(routeArgs(gapPoint(10, 10), {gapPoint(16, 14)}));
+	queue.request(routeArgs(gapPoint(30, 30), {gapPoint(33, 35)}));
+	queue.admit();
+	EXPECT_FALSE(queue.searchSpansTicks()) << "admitted, not yet run";
+	queue.runSlice(view, {});
+	ASSERT_EQ(queue.lastSlice().size(), 2U);
+	ASSERT_TRUE(queue.lastSlice()[0].ended && queue.lastSlice()[1].ended);
+	EXPECT_FALSE(queue.searchSpansTicks()) << "both finished in their first slice";
+	queue.admit();
+	EXPECT_FALSE(queue.searchSpansTicks());
+
+	const RouteTicket around = queue.request(routeArgs(kBelowBar, {kAboveBar}));
+	queue.admit();
+	EXPECT_FALSE(queue.searchSpansTicks());
+	queue.runSlice(view, {});
+	EXPECT_TRUE(queue.searchSpansTicks());
+	queue.admit();
+	EXPECT_TRUE(queue.searchSpansTicks());
+	runUntilAnswered(queue, view, {around});
+	EXPECT_FALSE(queue.searchSpansTicks());
+}
+
+// A request admitted while many long searches run has its first turn at the head of the
+// next slice, so a short one answers from that slice.
+TEST(RouteQueue, ANewRequestGoesFirstInTheNextSlice) {
+	const PatchableMesh& mesh = pennedField();
+	const NavView		 view = mesh.view();
+	RouteQueue			 queue;
+	std::vector<RouteTicket> floods;
+	for (std::int64_t i = 0; i < 40; ++i) {
+		floods.push_back(queue.request(floodArgs(gapPoint(40 + i % 20, 10 + 2 * (i / 20)))));
+	}
+	// Nine first turns fit a slice: run until every search has had one.
+	std::unordered_set<RouteTicket> turned;
+	for (int s = 0; s < 20 && turned.size() < floods.size(); ++s) {
+		queue.admit();
+		queue.runSlice(view, {});
+		for (const RouteTurn& turn : queue.lastSlice()) {
+			turned.insert(turn.ticket);
+		}
+	}
+	ASSERT_EQ(turned.size(), floods.size());
+	queue.admit();
+	ASSERT_TRUE(queue.answeredTickets().empty());
+	ASSERT_TRUE(queue.searchSpansTicks());
+
+	const RouteTicket shortTicket = queue.request(routeArgs(gapPoint(10, 10), {gapPoint(16, 14)}));
+	queue.admit();
+	queue.runSlice(view, {});
+	ASSERT_FALSE(queue.lastSlice().empty());
+	EXPECT_EQ(queue.lastSlice().front().ticket, shortTicket);
+	EXPECT_TRUE(queue.lastSlice().front().ended);
+	const std::uint64_t slice = queue.slices();
+	queue.admit();
+	const std::optional<RouteAnswer> answer = queue.takeAnswer(shortTicket);
+	ASSERT_TRUE(answer.has_value());
+	EXPECT_EQ(answer->outcome, RouteOutcome::Routed);
+	EXPECT_EQ(answer->slice, slice);
+	for (const RouteTicket t : floods) {
+		EXPECT_TRUE(queue.waiting(t));
+	}
+}
+
+// A start on no meshed ground is its own answer, never no known way; goals on no meshed
+// ground from a start on it are no known way.
+TEST(RouteQueue, AStartOffTheMeshIsNotNoKnownWay) {
+	const PatchableMesh mesh = wallRoom();
+	const NavView		view = mesh.view();
+	RouteQueue			queue;
+	const RouteTicket	off		 = queue.request(routeArgs({50000, 50000}, {{5000, 6000}}));
+	const RouteTicket	bothOff	 = queue.request(routeArgs({50000, 50000}, {{60000, 50000}}));
+	const RouteTicket	goalsOff = queue.request(routeArgs({5000, 6000}, {{60000, 50000}}));
+	const std::map<RouteTicket, RouteAnswer> answers = runUntilAnswered(queue, view, {off, bothOff, goalsOff});
+	EXPECT_EQ(answers.at(off).outcome, RouteOutcome::StartOffMesh);
+	EXPECT_EQ(answers.at(bothOff).outcome, RouteOutcome::StartOffMesh);
+	EXPECT_EQ(answers.at(goalsOff).outcome, RouteOutcome::NoKnownWay);
+	EXPECT_EQ(answers.at(off).goalIndex, -1);
+	EXPECT_TRUE(answers.at(off).path.points.empty());
+}
+
+// An answer carries the epochs passed to the slice it finished in.
+TEST(RouteQueue, AnAnswerCarriesTheEpochsOfItsSlice) {
+	const PatchableMesh& mesh = barField();
+	const NavView		 view = mesh.view();
+	RouteQueue			 queue;
+	const RouteTicket	 quick	= queue.request(routeArgs(gapPoint(10, 10), {gapPoint(16, 14)}));
+	const RouteTicket	 around = queue.request(routeArgs(kBelowBar, {kAboveBar}));
+	std::map<RouteTicket, RouteAnswer> answers;
+	for (std::uint64_t s = 1; s < 50 && answers.size() < 2; ++s) {
+		queue.admit();
+		for (const RouteTicket t : queue.answeredTickets()) {
+			answers.emplace(t, *queue.takeAnswer(t));
+		}
+		queue.runSlice(view, {.labels = 100 + s, .patches = 200 + s});
+	}
+	ASSERT_EQ(answers.size(), 2U);
+	for (const RouteTicket t : {quick, around}) {
+		const RouteAnswer& a = answers.at(t);
+		EXPECT_EQ(a.epochs.labels, 100 + a.slice) << t;
+		EXPECT_EQ(a.epochs.patches, 200 + a.slice) << t;
+	}
+	EXPECT_EQ(answers.at(quick).slice, 1U);
+	EXPECT_GT(answers.at(around).slice, 1U);
 }
