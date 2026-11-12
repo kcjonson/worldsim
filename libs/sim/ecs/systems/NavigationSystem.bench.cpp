@@ -807,10 +807,10 @@ namespace {
 	}
 
 	// Reach against route (nav-mesh-variable-resolution.md section 10): over random pairs in the
-	// colony's reach square, the structural walk's verdict (walkDistance) against the confined route's
+	// colony's reach square, the structural walk's verdict (walk) against the confined route's
 	// (requestPath), under the same belief. range(0): 0 no belief, 1 a belief knowing a doorless room's
 	// walls, with a quarter of the goals inside it. Counts both ways of disagreeing, and times one
-	// walkDistance call (mean and worst) and the failing belief route into the room.
+	// walk call (mean and worst) and the failing belief route into the room.
 	void BM_ReachAgainstRoute(benchmark::State& state) {
 		const bool						  room = state.range(0) != 0;
 		std::unordered_set<std::uint64_t> knownSegments;
@@ -864,7 +864,7 @@ namespace {
 				}
 				++pairs;
 				const Clock::time_point start = Clock::now();
-				const bool				walk  = rig.nav.walkDistance(rig.nav.reachFrom(a, kAgentRadius, belief), b).has_value();
+				const bool				walk  = rig.nav.walk(rig.nav.reachFrom(a, kAgentRadius, belief), b).reachable();
 				const double			us	  = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 				walkUs += us;
 				walkMaxUs = std::max(walkMaxUs, us);
@@ -903,10 +903,10 @@ namespace {
 	}
 
 	// One need decision's pick of a source, as AIDecisionSystem makes it (findNearestReachableWithCapability
-	// through the colonist's SourceReachMemo onto walkDistance), among range(0) remembered sources
+	// through the colonist's SourceReachMemo onto walk), among range(0) remembered sources
 	// scattered within 100 m of the colony, the river among them. Cold: a fresh memo each decision, as
 	// after the colonist moves 2 m or the mesh near it changes. Warm: the memo kept, as between
-	// decisions standing still. Times one whole pick and counts the walkDistance calls it makes.
+	// decisions standing still. Times one whole pick and counts the walk calls it makes.
 	void BM_NeedDecision(benchmark::State& state) {
 		const int sources = static_cast<int>(state.range(0));
 		for (auto _ : state) {
@@ -938,7 +938,7 @@ namespace {
 					  [&](uint64_t sourceKey, const glm::vec2& at, float maxWalk) {
 						  return memo.walk(sourceKey, at, maxWalk, [&](const glm::vec2& p, float bound) {
 							  ++walks;
-							  return rig.nav.walkDistance(reach, p, bound);
+							  return rig.nav.walk(reach, p, bound);
 						  });
 					  },
 					  [&](uint64_t sourceKey, const glm::vec2&) { return !memo.knownUnreachable(sourceKey); }, scratch
@@ -976,12 +976,14 @@ namespace {
 	// (staggered) the way AIDecisionSystem does (its SourceReachMemo keyed by the Reach, then
 	// findNearestReachableWithCapability through memo.walk onto NavigationSystem::walk). range(0): 0 half
 	// the sources across the river (no crossing on the meshed ground), four in a room whose walls the
-	// colonists know and the rest on their side; 1 none on their side. A wall far off is built or pulled
+	// colonists know and the rest on their side; 1 none on their side. range(1): 1 has every colonist walk
+	// east at 2 m/s, so its start cell changes every second as well. A wall far off is built or pulled
 	// down every 5 ticks, so the structural epoch, and with it every memo's key, moves that often. Reports
 	// the reach code's main-thread time per tick, structural walks and start-side searches (floods) per
 	// decision, and the worst decision.
 	void BM_ReachWhileGroundLands(benchmark::State& state) {
 		const bool						  noneNear = state.range(0) != 0;
+		const bool						  walking  = state.range(1) != 0;
 		std::unordered_set<std::uint64_t> knownSegments;
 		std::unordered_set<std::uint64_t> knownOpenings;
 		const glm::vec2					  roomLo = kColony + glm::vec2{40.0F, -70.0F};
@@ -1065,6 +1067,11 @@ namespace {
 					}
 				}
 				rig.nav.setViewportRect(kColony + glm::vec2{150.0F * std::sin(static_cast<float>(tick) * 0.02F), 0.0F}, kViewHalf);
+				if (walking) {
+					for (std::size_t m = 0; m < rig.movers.size(); ++m) {
+						rig.moveMover(m, {2.0F * kTickSeconds, 0.0F});
+					}
+				}
 				rig.tick(stats);
 				const std::uint64_t epoch = rig.nav.reachFrom(kColony, kAgentRadius).structuralEpoch;
 				epochMoves += epoch != lastEpoch ? 1 : 0;
@@ -1263,7 +1270,7 @@ BENCHMARK(BM_ReplanPan)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RequestPath)->Args({0, 0, 1})->Args({1, 0, 1})->Args({0, 0, 0})->Args({1, 0, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReachAgainstRoute)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_NeedDecision)->Arg(1)->Arg(5)->Arg(40)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ReachWhileGroundLands)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ReachWhileGroundLands)->Args({0, 0})->Args({1, 0})->Args({0, 1})->Args({1, 1})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_CursorCheck)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);

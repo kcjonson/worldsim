@@ -122,7 +122,7 @@ Clocks: **F** frame count; **R** real seconds (the frame delta, unscaled, still 
 
 ### When a colonist decides
 
-`AIDecisionSystem::shouldReEvaluate` is called once per colonist per AI update, after route upkeep, and not for a player-controlled colonist. While it returns false the colonist's `timeSinceEvaluation` grows by raw `deltaTime`; every path that evaluates resets it, and `ActionSystem` resets it when it clears a task, or sets it to the float maximum to ask for a decision on the next frame (after a landed cut, and after a pickup by a colonist already carrying goods from earlier legs of the gathering). [Colonist AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides) gives the player-facing version.
+`AIDecisionSystem::shouldReEvaluate` is called once per colonist per AI update, after route upkeep, and not for a player-controlled colonist. While it returns false the colonist's `timeSinceEvaluation` grows by raw `deltaTime`; every path that evaluates resets it, and `ActionSystem` resets it when it clears a task. Another system asks for a decision at the AI's next update through `requestDecision(Task&)` (`AIDecisionSystem.h`), which sets it to the float maximum so condition 4 passes: `ActionSystem` after a landed cut and after a pickup by a colonist already carrying goods from earlier legs of the gathering, and `NavigationSystem::wakeUnsettledFailures` when the ground a failed route waited on lands (see Other triggers). [Colonist AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides) gives the player-facing version.
 
 Conditions, in order:
 
@@ -147,6 +147,7 @@ The decision's readers: the `DecisionTrace` component, read the same frame by `T
 |---|---|---|---|
 | AI replan on discovery | edge on version | valid route, Moving, and the belief version or nav generation differs from the route's stamp | no: the new route is stamped with both; the nav generation moves once per joined structural job that touched ground an anchor holds (camera-only ground doesn't move it) |
 | AI deferred-route retry | edge on generation | Moving, `AwaitingMesh`, nav generation differs from `deferredNavGeneration` | no: once per generation move |
+| Settled-ground wake | edge, per join | `NavigationSystem::wakeUnsettledFailures` at priority 51, after the join: a colonist whose task stands on a route failure stamped unsettled (`CantFindWayTo`, `SourceReachMemo::kUnsettledStamp`), when this join landed ground in a chunk its reach box meets and the box is now meshed. It calls `requestDecision`, so the AI at 60 decides the same frame | no: a settled box takes no more ground, so once per settling, and only while the task still stands on that failure |
 | AI chain-leg route | level | Moving, movement active, no valid route | no: a request either routes or switches movement off |
 | Off-mesh recovery | level | on meshed ground and off the nav mesh's walkable faces | only if a collision push keeps moving the colonist off the mesh; the snap clears the wall band to stop the wall-trap loop |
 | Vision | frame count | counter reaches 5 | runs every 5th frame forever, paused or not |

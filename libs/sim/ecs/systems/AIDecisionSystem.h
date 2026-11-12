@@ -25,6 +25,7 @@
 
 #include <array>
 #include <functional>
+#include <limits>
 #include <glm/vec2.hpp>
 #include <optional>
 #include <random>
@@ -47,6 +48,12 @@ namespace ecs {
 struct EvaluatedOption;
 class LoosePileIndex;
 class NavigationSystem;
+
+/// The colonist whose task this is decides at the AI's next update: shouldReEvaluate's interval check
+/// passes. The one way another system asks for a decision now.
+inline void requestDecision(Task& task) {
+	task.timeSinceEvaluation = std::numeric_limits<float>::max();
+}
 
 /// One kind of goods a deciding colonist carries, read once per decision for the carry-in.
 struct CarriedKind {

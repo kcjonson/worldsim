@@ -399,6 +399,25 @@ TEST(MemoryQueries, SourceReachMemoTestsEachSourceOncePerKey) {
 	EXPECT_LE(probes - before, 2 * kSources + 1) << "the ones nearer than its walk once more, bounded by it";
 }
 
+// A search that gave up is asked again only once the colonist has moved a quarter of the way to its
+// target, and never for less than kGaveUpMoveFloorMeters: a target 4 m across a river holds through
+// 100 m of walking about, one 2 km off through 200 m.
+TEST(MemoryQueries, GaveUpRouteHoldsUntilTheColonistMovesFarEnough) {
+	ecs::SourceReachMemo memo;
+	constexpr uint64_t	 kNear = 1;
+	constexpr uint64_t	 kFar  = 2;
+	memo.recordGaveUpRoute(kNear, {.from = {0.0F, 0.0F}, .target = {4.0F, 0.0F}, .spanStamp = 1, .beliefVersion = 0});
+	memo.recordGaveUpRoute(kFar, {.from = {0.0F, 0.0F}, .target = {2000.0F, 0.0F}, .spanStamp = 1, .beliefVersion = 0});
+
+	memo.forgetGaveUpRoutes({100.0F, 0.0F}, 0);
+	EXPECT_TRUE(memo.searchGaveUpOn(kNear)) << "the near target was asked again within the floor";
+	memo.forgetGaveUpRoutes({0.0F, 200.0F}, 0);
+	EXPECT_FALSE(memo.searchGaveUpOn(kNear)) << "past the floor the near target is a new question";
+	EXPECT_TRUE(memo.searchGaveUpOn(kFar)) << "the far target was asked again within a quarter of its distance";
+	memo.forgetGaveUpRoutes({600.0F, 0.0F}, 0);
+	EXPECT_FALSE(memo.searchGaveUpOn(kFar));
+}
+
 // A failed route is held under the anchor, not the key: a step on (a new key, the anchor held) it
 // still reads unreachable and isn't walked; a new anchor forgets it.
 TEST(MemoryQueries, SourceReachMemoHoldsFailedRoutesUnderTheAnchor) {

@@ -319,7 +319,7 @@ namespace ecs {
 			headToDeposit(entity, task);
 			if (carriedBefore > 0) {
 				// A leg of a gathering: decided again at once, as after a cut (task-claims.md, Batching).
-				task.timeSinceEvaluation = std::numeric_limits<float>::max();
+				requestDecision(task);
 			}
 
 			action.clear();
@@ -496,7 +496,7 @@ namespace ecs {
 		headToDeposit(entity, task);
 		// Decided again at once rather than after a step toward the destination: a further cut may come
 		// first (task-claims.md, Batching).
-		task.timeSinceEvaluation = std::numeric_limits<float>::max();
+		requestDecision(task);
 		LOG_DEBUG(
 			Engine,
 			"[Action] Harvest landed %u x %s; carrying %u toward goal %llu",

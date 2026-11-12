@@ -176,7 +176,7 @@ namespace ecs {
 		/// The reach stamp while ground within the anchor load range of the colonist is still to mesh
 		/// (Reach::settled): a route failure then is never recorded, and one stamped with it is a fresh
 		/// pick at the next decision. (0 is no mesh.)
-		constexpr std::uint64_t kUnsettledStamp = std::numeric_limits<std::uint64_t>::max();
+		constexpr std::uint64_t kUnsettledStamp = SourceReachMemo::kUnsettledStamp;
 
 		/// Where a colonist's unreachable verdicts, and a failed route, are held: the anchor they were
 		/// found at while it still answers for `here`, else `here`.
@@ -2214,24 +2214,32 @@ namespace ecs {
 			const SourceReachMemo::Anchor anchor = verdictAnchor(*m_navSystem, &sourceReach, position.value, memory);
 			reachStamp = reach->settled ? anchor.stamp() : kUnsettledStamp;
 			sourceReach.keep(reachKey(*reach, memory), anchor, 2 * Memory::kMaxWorldEntities);
-			// A failed route was true for the ground between the anchor and its target: a change there
-			// (a wall gone by a far target) clears it, though the anchor holds.
-			sourceReach.forgetFailedRoutes(reach->structuralEpoch, [&](const SourceReachMemo::FailedRoute& route) {
-				return m_navSystem->spanStamp(anchor.at, route.target) != route.spanStamp;
+			// A failed route was true for the ground between where it was asked and its target: a change
+			// there (a wall gone by a far target) clears it, though the anchor holds.
+			sourceReach.forgetFailedRoutes(reach->structuralEpoch, [&](const glm::vec2& from, const glm::vec2& target) {
+				return m_navSystem->spanStamp(from, target);
 			});
+			sourceReach.forgetGaveUpRoutes(position.value, memory.beliefVersion);
 			// The route to the target this colonist was heading for (a need source, a toilet spot, a work
 			// site) just came back with no believed route, though its reach let it through (a squeeze
 			// between trees the structural mesh doesn't hold). Remember the failure so the next decision
 			// picks something else instead of re-deciding the same target every frame, but only under
 			// the anchor it failed under, or it would outlive what it was true for. Wherever the target
 			// is: an unrecorded failure would keep the task and its claims. A wander point is random, so
-			// there's nothing to remember. A search that gave up is recorded the same way, as such.
+			// there's nothing to remember. A search that gave up is held from where it was asked instead
+			// (SourceReachMemo::GaveUpRoute), so wandering out of the anchor doesn't have it asked again.
 			if (currentTask.type != TaskType::Wander && currentTask.navState == NavState::CantFindWayTo &&
 				currentTask.blockedReachStamp == reachStamp && reachStamp != kUnsettledStamp) {
-				sourceReach.recordFailedRoute(routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition),
-											  {.target	  = currentTask.targetPosition,
-											   .spanStamp = m_navSystem->spanStamp(anchor.at, currentTask.targetPosition),
-											   .gaveUp	  = currentTask.blockedSearchGaveUp});
+				const std::uint64_t targetKey = routeTargetKey(currentTask.needSourceKey, currentTask.targetPosition);
+				if (currentTask.blockedSearchGaveUp) {
+					sourceReach.recordGaveUpRoute(targetKey, {.from			 = position.value,
+															  .target		 = currentTask.targetPosition,
+															  .spanStamp	 = m_navSystem->spanStamp(position.value, currentTask.targetPosition),
+															  .beliefVersion = memory.beliefVersion});
+				} else {
+					sourceReach.recordFailedRoute(targetKey, {.target	 = currentTask.targetPosition,
+															  .spanStamp = m_navSystem->spanStamp(anchor.at, currentTask.targetPosition)});
+				}
 			}
 		}
 		// A target whose route already failed under the current anchor; one off meshed ground is judged
@@ -2240,10 +2248,9 @@ namespace ecs {
 			return reach.has_value() && sourceReach.knownUnreachable(routeTargetKey(sourceKey, target)) &&
 				   m_navSystem->sharesStartRegion(*reach, target);
 		};
-		// A target whose route search gave up under the current anchor: the trace says so, not "no source".
+		// A target whose route search gave up: the trace says so, not "no source".
 		const auto searchGaveUp = [&](std::uint64_t sourceKey, const glm::vec2& target) {
-			const SourceReachMemo::FailedRoute* failed = reach.has_value() ? sourceReach.failedRoute(routeTargetKey(sourceKey, target)) : nullptr;
-			return failed != nullptr && failed->gaveUp;
+			return reach.has_value() && sourceReach.searchGaveUpOn(routeTargetKey(sourceKey, target));
 		};
 		// The walk to a target in metres, no longer than maxWalk, or far (NavigationSystem::walk); for a
 		// remembered source on meshed ground, held in the memo.

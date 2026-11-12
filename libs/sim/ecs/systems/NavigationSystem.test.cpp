@@ -34,6 +34,9 @@
 
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
+#include <world/chunk/ChunkSampleResult.h>
+#include <world/BiomeWeights.h>
+#include <worldgen/sampling/RiverNetwork2D.h>
 #include <worldgen/sampling/PondNetwork2D.h>
 
 #include <algorithm>
@@ -473,6 +476,46 @@ TEST_F(NavigationSystemTest, KnownWalledRoomIsADefiniteNoFromTheGoalSide) {
 	EXPECT_FALSE(path.route.has_value());
 	EXPECT_FALSE(path.gaveUp);
 	EXPECT_EQ(sys.navQueryStats().forwardSearches, 0U);
+}
+
+// With budgets small enough that the walk into a room whose walls are known (its door isn't) is far,
+// the request asks the goal-side search, the start-side search and the far route search, each to its
+// budget and no further, and says it gave up. A goal outside the room with the same budgets is far
+// too, and the far route search routes it.
+TEST_F(NavigationSystemTest, FarRequestSpendsAtMostItsThreeBudgets) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+	constexpr std::uint32_t kProbe	= 1;
+	constexpr std::uint32_t kStart	= 3;
+	constexpr std::uint32_t kFarRoute = 10;
+	sys.setReachBudgets(kProbe, kStart, kFarRoute);
+
+	const std::unordered_set<std::uint64_t> knownWalls = allSegmentIds(cw);
+	const std::unordered_set<std::uint64_t> noOpenings;
+	const geometry::nav::BeliefFilter		walledBelief{&knownWalls, &noOpenings};
+	ASSERT_TRUE(sys.walk(sys.reachFrom(kOutside, kAgentRadius, walledBelief), kInside).far);
+	sys.resetNavQueryStats();
+	const NavigationSystem::PathAnswer path = sys.requestPath(kOutside, kInside, kAgentRadius, walledBelief);
+	EXPECT_FALSE(path.route.has_value());
+	EXPECT_TRUE(path.gaveUp);
+	const auto& stats = sys.navQueryStats();
+	// A search may expand one past its cap (it still tries a goal popped at the cap).
+	EXPECT_LE(stats.probeExpansions, kProbe + 1);
+	EXPECT_LE(stats.forwardExpansions, kStart + 1);
+	EXPECT_LE(stats.farRouteExpansions, kFarRoute + 1);
+	EXPECT_LE(stats.probeExpansions + stats.forwardExpansions + stats.farRouteExpansions, kProbe + kStart + kFarRoute + 3);
+
+	sys.setReachBudgets(kProbe, kStart, NavigationSystem::kFarRouteExpansions);
+	const glm::vec2 away{30.0F, 20.0F};
+	ASSERT_TRUE(sys.walk(sys.reachFrom(kOutside, kAgentRadius), away).far);
+	const NavigationSystem::PathAnswer routed = sys.requestPath(kOutside, away, kAgentRadius);
+	EXPECT_TRUE(routed.route.has_value());
+	EXPECT_FALSE(routed.gaveUp);
 }
 
 // The walk found by the search from the goal is the walk: its length is the search from the start's,
@@ -1203,6 +1246,181 @@ namespace {
 		return meshed;
 	}
 } // namespace
+
+// A mover whose route failed while ground in its reach box was still to come (stamped
+// SourceReachMemo::kUnsettledStamp) is told to decide again on the update that lands that ground, and
+// on no other: not before it, not the mover whose stamp is unsettled but whose box was already settled,
+// not the mover whose failure was settled. Chunk 1 loads three updates after the failure. Once he has
+// a new task whose route is fine, ground landing round him again doesn't wake him, whatever stamp the
+// old failure left.
+TEST_F(NavigationSystemTest, GroundSettlingAnUnsettledFailureWakesItsMover) {
+	ChunkWalk		  walk;
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(walk.chunks.get());
+	sys.setConstructionWorld(&cw);
+	walk.stand(0);
+	settle(sys);
+	step(world, sys); // chunk 0's landing is behind every mover below
+
+	const auto mover = [&](glm::vec2 at, std::uint64_t stamp) {
+		const EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{at});
+		Task task;
+		task.navState		   = NavState::CantFindWayTo;
+		task.blockedReachStamp = stamp;
+		world.addComponent<Task>(e, task);
+		return e;
+	};
+	const glm::vec2 byChunkOne = ChunkWalk::centre(0) + glm::vec2{200.0F, 0.0F}; // its box reaches into chunk 1
+	const EntityID	waiting	   = mover(byChunkOne, SourceReachMemo::kUnsettledStamp);
+	const EntityID	settled	   = mover(ChunkWalk::centre(0), SourceReachMemo::kUnsettledStamp);
+	const EntityID	blocked	   = mover(byChunkOne, 42);
+	ASSERT_FALSE(sys.reachFrom(byChunkOne, kAgentRadius).settled);
+	ASSERT_TRUE(sys.reachFrom(ChunkWalk::centre(0), kAgentRadius).settled);
+	const auto woken = [&](EntityID e) { return world.getComponent<Task>(e)->timeSinceEvaluation == std::numeric_limits<float>::max(); };
+
+	for (int i = 0; i < 3; ++i) {
+		step(world, sys);
+		ASSERT_FALSE(woken(waiting)) << "woken before its ground came, update " << i;
+	}
+	std::vector<world::WorldPosition> anchors;
+	sys.appendAnchors(anchors);
+	walk.chunks->update({ChunkWalk::centre(0).x, ChunkWalk::centre(0).y}, anchors);
+	walk.chunks->finishPendingGeneration();
+	// Bare updates, as the game runs them: a query between them would join the job early.
+	int landedAt = -1;
+	for (int i = 0; i < 20 && landedAt < 0; ++i) {
+		const std::uint64_t patches = sys.navQueryStats().structuralPatches;
+		world.update(0.016F);
+		if (sys.navQueryStats().structuralPatches > patches) {
+			landedAt = i;
+			EXPECT_TRUE(woken(waiting)) << "not woken on the update its ground landed";
+		} else {
+			EXPECT_FALSE(woken(waiting)) << "woken before its ground landed, update " << i;
+		}
+	}
+	ASSERT_GE(landedAt, 0) << "chunk 1's ground never landed";
+	EXPECT_TRUE(sys.reachFrom(byChunkOne, kAgentRadius).settled);
+	EXPECT_FALSE(woken(settled)) << "its box was settled already";
+	EXPECT_FALSE(woken(blocked)) << "its failure had nothing to do with missing ground";
+
+	// He decided and got a new task whose route is fine; walking on, he comes within reach of chunk 2.
+	Task& task				 = *world.getComponent<Task>(waiting);
+	task.navState			 = NavState::Traveling;
+	task.timeSinceEvaluation = 0.0F;
+	const glm::vec2 byChunkTwo = ChunkWalk::centre(1) + glm::vec2{200.0F, 0.0F};
+	world.getComponent<Position>(waiting)->value = byChunkTwo;
+	ASSERT_FALSE(sys.reachFrom(byChunkTwo, kAgentRadius).settled);
+	anchors.clear();
+	sys.appendAnchors(anchors);
+	walk.chunks->update({ChunkWalk::centre(0).x, ChunkWalk::centre(0).y}, anchors);
+	walk.chunks->finishPendingGeneration();
+	for (int i = 0; i < 20; ++i) {
+		world.update(0.016F);
+	}
+	ASSERT_TRUE(sys.reachFrom(byChunkTwo, kAgentRadius).settled) << "chunk 2's ground never landed";
+	EXPECT_FALSE(woken(waiting)) << "a task that didn't fail was woken by the old failure's stamp";
+
+	task.clear();
+	EXPECT_EQ(task.blockedReachStamp, 0U) << "the stamp outlived its task";
+}
+
+namespace {
+	// A river along y = 6 m from far west to kFordX metres east (its ford), on ground strewn with ponds:
+	// a 4 m pond every 10 m within kFordX + 40 m of the origin, so the structural mesh is fine
+	// everywhere a search to the far bank goes and the way round the ford takes thousands of steps.
+	template <int kFordX> class PondFieldSampler : public world::IWorldSampler {
+	  public:
+		PondFieldSampler() {
+			constexpr double kRiverY = 6.0;
+			segments.push_back({.x0 = -2048.0, .y0 = kRiverY, .x1 = static_cast<double>(kFordX), .y1 = kRiverY, .halfWidth0 = 3.0F, .halfWidth1 = 3.0F,
+								.s0 = 0.0, .s1 = 2048.0 + static_cast<double>(kFordX)});
+			const int reach = (kFordX + 40) / 10;
+			for (int j = -reach; j <= reach; ++j) {
+				for (int i = -reach; i <= reach; ++i) {
+					const double x = 10.0 * i + 5.0;
+					const double y = 10.0 * j + 5.0;
+					if (std::abs(y - kRiverY) < 8.0) {
+						continue;
+					}
+					segments.push_back({.x0 = x - 2.0, .y0 = y, .x1 = x + 2.0, .y1 = y, .halfWidth0 = 1.5F, .halfWidth1 = 1.5F, .s0 = 0.0, .s1 = 4.0});
+				}
+			}
+		}
+		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
+			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
+			r.riverSegments			   = segments;
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return kWorldSeed; }
+
+	  private:
+		std::vector<worldgen::RiverNetwork2D::Segment> segments;
+	};
+
+	template <int kFordX> world::ChunkManager* pondFieldChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks = readyChunks(std::make_unique<PondFieldSampler<kFordX>>());
+		return chunks.get();
+	}
+
+	const glm::vec2 kPondStart{0.0F, 0.0F};
+	const glm::vec2 kPondAcross{0.0F, 10.0F}; // across the river, 10 m in a straight line
+} // namespace
+
+// With the shipped budgets: the far bank of a river whose ford is 150 m east, among ponds, is about
+// 15,000 structural steps round, past the reach searches (2,000 from the goal, 5,000 from the start):
+// walk() says far. Inside the far route search's 60,000, requestPath routes it, round the ford, and
+// every leg of the route is clear of water.
+TEST_F(NavigationSystemTest, FarGoalWithinTheRouteBudgetIsRoutedRoundTheFord) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	ConstructionWorld cw;
+	sys.setChunkManager(pondFieldChunks<150>());
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	sys.resetNavQueryStats();
+	const WalkAnswer walk = sys.walk(sys.reachFrom(kPondStart, kAgentRadius), kPondAcross);
+	EXPECT_TRUE(walk.far) << "the reach searches found it within their budgets";
+	EXPECT_EQ(sys.navQueryStats().probeExpansions, NavigationSystem::kReachProbeExpansions);
+	EXPECT_EQ(sys.navQueryStats().forwardExpansions, NavigationSystem::kReachExpansionCap);
+
+	const NavigationSystem::PathAnswer path = sys.requestPath(kPondStart, kPondAcross, kAgentRadius);
+	ASSERT_TRUE(path.route.has_value()) << "the far route search found no route";
+	EXPECT_FALSE(path.gaveUp);
+	EXPECT_GT(sys.navQueryStats().farRouteExpansions, NavigationSystem::kReachExpansionCap);
+	EXPECT_LT(sys.navQueryStats().farRouteExpansions, NavigationSystem::kFarRouteExpansions);
+	const std::vector<glm::vec2>& route = *path.route;
+	EXPECT_LT(glm::distance(route.back(), kPondAcross), 0.01F);
+	EXPECT_GT(std::max_element(route.begin(), route.end(), [](glm::vec2 a, glm::vec2 b) { return a.x < b.x; })->x, 150.0F)
+		<< "the route doesn't go round the ford";
+	for (std::size_t i = 1; i < route.size(); ++i) {
+		EXPECT_TRUE(sys.isSegmentWalkable(route[i - 1], route[i])) << "leg " << i << " crosses water";
+	}
+}
+
+// With the shipped budgets: the ford 400 m east is about 800 m round through the ponds, past the far
+// route search's 60,000 steps too. The request gives up and says so, which is not "no route", after
+// at most the three budgets.
+TEST_F(NavigationSystemTest, FarGoalPastTheRouteBudgetGivesUpAndSaysSo) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	ConstructionWorld cw;
+	sys.setChunkManager(pondFieldChunks<400>());
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	EXPECT_TRUE(sys.walk(sys.reachFrom(kPondStart, kAgentRadius), kPondAcross).far);
+	sys.resetNavQueryStats();
+	const NavigationSystem::PathAnswer path = sys.requestPath(kPondStart, kPondAcross, kAgentRadius);
+	EXPECT_FALSE(path.route.has_value());
+	EXPECT_TRUE(path.gaveUp) << "a search that ran out read as no route";
+	EXPECT_EQ(sys.navQueryStats().routeSearchesGaveUp, 1U);
+	EXPECT_LE(sys.navQueryStats().farRouteExpansions, NavigationSystem::kFarRouteExpansions + 1);
+}
 
 // Ground stays meshed for at most kCameraOnlyUnloadedChunks unloaded chunks; past that the ones unloaded
 // longest ago lose it.
@@ -3358,6 +3576,40 @@ TEST_F(NavigationSystemTest, GivenUpSearchWalksTheStructuralRouteThroughTheFores
 	const EntityID clearOfTrees = rig.walker({2.0F, 45.0F}, {38.0F, 45.0F});
 	ASSERT_TRUE(rig.world.getComponent<NavPath>(clearOfTrees)->valid);
 	EXPECT_FALSE(rig.pricedRoute(clearOfTrees)) << "a fallback route clear of the stand is marked as crossing flora";
+}
+
+// A far goal's route is the structural walk too, and is treated as the fallback is: with the reach
+// budgets shrunk so the goal past the stand is far, the route goes through the stand, is marked as
+// crossing flora (so collision lets the colonist through and the forward snap leaves it alone), and
+// he arrives. One clear of the stand isn't marked.
+TEST_F(NavigationSystemTest, FarRouteWalksTheStructuralRouteThroughTheForest) {
+	registerTree("Test_NavFarTree", 0.3F);
+	WalkRig				   rig({20.0F, 20.0F});
+	std::vector<glm::vec2> stand;
+	for (float x = 10.0F; x < 30.0F; x += 1.5F) {
+		for (float y = 2.0F; y < 38.0F; y += 1.5F) {
+			stand.emplace_back(x, y);
+		}
+	}
+	placeTrees(rig.executor, rig.processed, "Test_NavFarTree", stand);
+	rig.start();
+	ASSERT_FALSE(meshClear(rig.nav, stand[40])) << "the stand is in the mesh";
+	rig.nav.setReachBudgets(1, 1, NavigationSystem::kFarRouteExpansions);
+	rig.nav.resetNavQueryStats();
+	const glm::vec2 goal{70.0F, 20.5F}; // in another triangle of the structural mesh, so the walk searches
+	const EntityID	walker = rig.walker({2.0F, 20.5F}, goal);
+	ASSERT_GT(rig.nav.navQueryStats().farWalks, 0U) << "the goal wasn't far";
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(walker)->valid) << "the far route search left no route";
+	EXPECT_TRUE(rig.pricedRoute(walker)) << "the far route isn't marked as crossing flora";
+	const glm::vec2& at = rig.world.getComponent<Position>(walker)->value;
+	for (int i = 0; i < 4000 && glm::distance(at, goal) > 0.3F; ++i) {
+		rig.world.update(0.016F);
+	}
+	EXPECT_LT(glm::distance(at, goal), 0.3F) << "never arrived";
+
+	const EntityID clearOfTrees = rig.walker({2.0F, 45.0F}, {70.0F, 45.0F});
+	ASSERT_TRUE(rig.world.getComponent<NavPath>(clearOfTrees)->valid);
+	EXPECT_FALSE(rig.pricedRoute(clearOfTrees)) << "a far route clear of the stand is marked as crossing flora";
 }
 
 // --- A replan keeps its first confinement ------------------------------------------------------

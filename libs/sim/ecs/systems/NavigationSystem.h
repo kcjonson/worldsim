@@ -147,9 +147,10 @@ class NavigationSystem : public ISystem {
 	// walk under the same belief comes first, three ways as a reach walk (walk()): where it finds none,
 	// neither would the nav search, so there is none. When the nav search then gives up in priced
 	// ground (more expansions than the structural walk warrants, see kNavExpansionFloor), the route is
-	// the structural walk, through the detail at its price. When the structural walk gave up (far) and
-	// the nav search gives up too, there is no route and `gaveUp` says the search gave up, which is
-	// not "no route".
+	// the structural walk, through the detail at its price. When the structural walk gave up (far)
+	// there is no nav search: the structural search runs again from the start to kFarRouteExpansions,
+	// and its walk is the route, through the detail at its price like the fallback's. When it gives up
+	// too there is no route and `gaveUp` says the search gave up, which is not "no route".
 	struct PathAnswer {
 		std::optional<std::vector<glm::vec2>> route;
 		bool								  gaveUp = false;
@@ -162,11 +163,19 @@ class NavigationSystem : public ISystem {
 		navExpansionFloor		   = floor;
 		navExpansionsPerStructural = perStructural;
 	}
+	// The budgets of a far question: the goal-side and start-side structural searches and a far goal's
+	// route search, kReachProbeExpansions, kReachExpansionCap and kFarRouteExpansions by default; tests
+	// set small ones to make a goal far.
+	void setReachBudgets(std::uint32_t probe, std::uint32_t forward, std::uint32_t farRoute) {
+		reachProbeExpansions = probe;
+		reachExpansionCap	 = forward;
+		farRouteExpansions	 = farRoute;
+	}
 
 	// What a colonist can reach, and how far it walks there: a walk on the structural mesh (no
 	// detail, so the camera changes nothing) under the colonist's belief, over all meshed ground,
-	// bounded by the walk asked about. reachFrom notes the start once; reaches(), walk() and
-	// walkDistance() walk to one goal each.
+	// bounded by the walk asked about. reachFrom notes the start once; reaches() and walk() walk to
+	// one goal each.
 	//   A start off meshed ground: every goal "maybe" (true; the straight line).
 	//   A goal off meshed ground: "maybe" while its chunk is loaded (its ground is on the way, and a
 	//   route to it waits for it), unreachable otherwise.
@@ -192,9 +201,7 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool	reaches(const Reach& reach, glm::vec2 goalMeters) const;
 	// The walk from the reach's start to the goal in metres, no longer than maxWalk, or none when it
 	// is unreachable or every walk there is longer than maxWalk, or far when the searches gave up.
-	[[nodiscard]] WalkAnswer		   walk(const Reach& reach, glm::vec2 goalMeters, float maxWalk = std::numeric_limits<float>::infinity()) const;
-	[[nodiscard]] std::optional<float> walkDistance(const Reach& reach, glm::vec2 goalMeters,
-													float maxWalk = std::numeric_limits<float>::infinity()) const;
+	[[nodiscard]] WalkAnswer walk(const Reach& reach, glm::vec2 goalMeters, float maxWalk = std::numeric_limits<float>::infinity()) const;
 	// Both ends are on meshed ground: a walk between them is the colonist's to remember
 	// (SourceReachMemo).
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
@@ -213,12 +220,21 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] float anchorLoadRangeMeters() const;
 	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
 	static constexpr std::int64_t kReachCellMm = 2000;
-	// The search from the goal expands at most this many triangles: a walled room or an islet runs
-	// dry well inside it.
+	// The search budgets, chosen from measurements (nav-gate-result-2.md in the nav notes, 2026-11-11,
+	// NavScale.bench.cpp's BM_SearchReach, BM_SearchCases and BM_DefaultBudgets on the Quick Start
+	// planet's chunks): a structural step costs 0.29-0.32 us on the main thread, 0.56 us at worst.
+	// Change them from new measurements, not by feel.
+	//
+	// The search from the goal expands at most this many triangles: 0.6 ms, 1.1 ms at worst. Every
+	// dead end measured runs dry well inside it (a sealed room in 2, compound rooms in 67-482).
 	static constexpr std::uint32_t kReachProbeExpansions = 2000;
-	// The search from the start expands at most this many: about 70 chunks of open ground, so a walk
-	// that gives up costs a bounded few milliseconds at worst.
-	static constexpr std::uint32_t kReachExpansionCap = 20000;
+	// The search from the start expands at most this many: 1.6 ms, 2.8 ms at worst (with the probe a
+	// reach walk stays under 4 ms). Real ground reaches 1.1 km at the median within it; a goal past it
+	// is far, which a route request then settles.
+	static constexpr std::uint32_t kReachExpansionCap = 5000;
+	// A far goal's route search expands at most this many: 19 ms, 34 ms at worst, once per far target.
+	// Every real far goal measured to 10 km needed at most 41,006.
+	static constexpr std::uint32_t kFarRouteExpansions = 60000;
 	// The nav search behind a found structural walk may expand this many triangles plus this many
 	// for each the structural search expanded (see requestPath).
 	static constexpr std::uint32_t kNavExpansionFloor		   = 4000;
@@ -381,6 +397,7 @@ class NavigationSystem : public ISystem {
 		std::uint64_t probeExpansions	   = 0;
 		std::uint64_t forwardExpansions	   = 0;
 		std::uint64_t farWalks			   = 0;
+		std::uint64_t farRouteExpansions   = 0;
 		std::uint64_t routeSearchesGaveUp  = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
@@ -534,9 +551,10 @@ class NavigationSystem : public ISystem {
 		std::vector<DoorId>													 doorRemoves;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
 		std::vector<std::pair<glm::vec2, glm::vec2>>						 detailAddBoxes; // each added obstacle's box, metres
-		// Structural only: the chunks the job changes, the boxes where it closes ground (a wall, new
-		// water, ground leaving), and whether it touches a chunk an anchor holds.
+		// Structural only: the chunks the job changes, those whose ground arrives, the boxes where it
+		// closes ground (a wall, new water, ground leaving), and whether it touches a chunk an anchor holds.
 		std::vector<world::ChunkCoordinate>				  structuralChunks;
+		std::vector<world::ChunkCoordinate>				  groundChunks;
 		std::vector<std::pair<glm::vec2, glm::vec2>>		  blockingBoxes;
 		bool												  anchored = false;
 
@@ -621,6 +639,13 @@ class NavigationSystem : public ISystem {
 	void markCrossedRoutes();
 	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
 	void markStrayedRoutes();
+	// A mover whose task stands on a route failure stamped unsettled (navState CantFindWayTo,
+	// SourceReachMemo::kUnsettledStamp) decides again (requestDecision) on the update whose join lands
+	// the ground that settles its reach: ground in a chunk within
+	// the anchor load range of it, after which every such chunk is meshed. Run after the join, before
+	// the AI. Waiting goals need nothing here: their ground landing moves generation(), and the AI
+	// retries them on that.
+	void wakeUnsettledFailures();
 	void forgetDroppedRoutes();
 	[[nodiscard]] static std::uint64_t routeKey(const std::vector<glm::vec2>& waypoints);
 	// Spec 4.7: a mover inside detail moves forward along its route to the first point walkable in
@@ -695,6 +720,8 @@ class NavigationSystem : public ISystem {
 	mutable std::uint64_t structuralEpoch = 0;
 	// Structural changes per chunk, for the reach stamps, counted at the join.
 	mutable std::map<world::ChunkCoordinate, std::uint64_t, ChunkLess> chunkStructuralVersion;
+	// The chunks whose ground the joins since the last update landed (wakeUnsettledFailures).
+	mutable std::vector<world::ChunkCoordinate> groundLanded;
 	mutable std::set<world::ChunkCoordinate, ChunkLess>				 unmeshedReported; // logged once each (groundMeshedThrough)
 	mutable geometry::Ring												 colliderScratch;  // placedObstacleAt
 	std::vector<glm::vec2>												 anchors;
@@ -708,6 +735,9 @@ class NavigationSystem : public ISystem {
 	mutable std::unordered_map<std::uint64_t, std::vector<glm::vec2>> pricedRoutes;
 	std::uint32_t									 navExpansionFloor			= kNavExpansionFloor;
 	std::uint32_t									 navExpansionsPerStructural = kNavExpansionsPerStructural;
+	std::uint32_t									 reachProbeExpansions		= kReachProbeExpansions;
+	std::uint32_t									 reachExpansionCap			= kReachExpansionCap;
+	std::uint32_t									 farRouteExpansions			= kFarRouteExpansions;
 	// The boxes of the placed obstacles that landed in the joined jobs, for markCrossedRoutes.
 	std::vector<std::pair<glm::vec2, glm::vec2>> detailLanded;
 
