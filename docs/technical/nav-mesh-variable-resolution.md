@@ -1,6 +1,6 @@
 # Nav mesh: one mesh, variable resolution
 
-**Status:** In progress. Steps 1 to 5 built 2026-11-11 (section 10, entries 1 to 78); steps 6 and 7 not started. Where an entry in section 10 differs from the design text above it, the entry is what was built.
+**Status:** In progress. Steps 1 to 5 built 2026-11-11 (section 10, entries 1 to 89); steps 6 and 7 not started. Where an entry in section 10 differs from the design text above it, the entry is what was built.
 **Epic:** WOR-702 (Nav mesh: one mesh, variable resolution)
 **Created:** 2026-11-10
 **Replaces, once built:** the "As built: multi-region sim area" section of [pathfinding-architecture.md](./pathfinding-architecture.md), and its rule that agents are never mesh obstacles (risk 7)
@@ -36,19 +36,30 @@ Kevin's rules for this system, 2026-11-10. Everything below is judged against th
 12. The static geography mesh (Phase 2 in the pathfinding doc) is a separate thing and stays planned. It is not the nav mesh.
 13. Nav is expected to be the most expensive thing the game computes. Every step is measured against main.
 
+Kevin's rulings, 2026-11-11, which narrow the rules above (section 10, entries 79 to 89):
+
+14. Nav's job is to build a path to given coordinates: any place to any place, with no distance limit. Nav does not know who asks or why.
+15. There is no colony ground and no owned area.
+16. Mesh is made for movers (under them, along their routes, at their goals) and under the camera (for placement validity and other player interaction). It is small, and mesh a mover has caused is never unloaded.
+17. Mesh existing is not ground being visible. Some movers mesh ground without revealing it, so "has mesh" never stands for "the player can see or act here". Player visibility (unexplored areas hidden from the player, revealed only by what colonists see) is planned and not built: WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)).
+18. Compute sets limits, and some places cannot be reached, but running out of search budget means "didn't finish", never "can't reach". Budgets come from measurements.
+19. A far route may stall the main thread for 19 to 34 ms once per far target, for now. Moving far requests to a worker is WOR-789 (Far route requests stall the main thread for 19 to 34 ms; run them on a worker).
+20. Nav and mesh code never names trees or flora. Obstacle kinds are data: "placed obstacle" (a placed entity's collider) and "detail" (the class the view brings in and the search prices). The "After" column in section 2 and sections 4.1, 4.2, 4.4 to 4.6, 4.8 and 4.10, rewritten on 2026-11-11, follow the same rule; older text, the measurements, and log entries 1 to 78 still say "tree" and "flora".
+21. Travelling toward a goal whose ground is not meshed is deferred: WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet).
+
 ## 2. Current state
 
 | Area | Today | After |
 |---|---|---|
-| Storage | A list of rectangles: a 60 m square per colonist, one for the viewport, overlapping ones merged, re-squared, clamped to 128 m. Each has its own complete mesh | One persistent mesh over every chunk that has been loaded. Unloading a chunk lowers its resolution and keeps its mesh |
+| Storage | A list of rectangles: a 60 m square per colonist, one for the viewport, overlapping ones merged, re-squared, clamped to 128 m. Each has its own complete mesh | One persistent mesh, and a structural mesh beside it, over the chunks movers and the camera have loaded. Unloading a chunk drops its detail and keeps its ground; only ground the camera alone held is ever shed |
 | Change | Any trigger rebuilds a whole rectangle. A wall edit or a felled tree anywhere rebuilds every rectangle (global counters) | The triangles around a changed obstacle are patched, nothing else |
 | Repeated work | Built rectangles overlap; a recenter re-meshes mostly unchanged ground; the placement mesh is a third copy | An obstacle enters the mesh once and leaves it once |
 | Connectivity | A path needs both ends in one rectangle. Another rectangle reads unreachable, no rectangle holds | Paths cross all meshed ground |
-| Detail | Every tree, everywhere a rectangle exists | Flora enters the mesh the first time an area needs it, and blocks only where detail is on |
-| Camera | Drives a rectangle like a colonist does, so it reshapes and can stall colonist coverage | Turns detail on and off. Nothing else |
+| Detail | Every tree, everywhere a rectangle exists | Placed obstacles enter the nav mesh under the view and stay until a memory cap trims them. They are priced, not walled, wherever they are; detail being on decides only collision and the forward snap |
+| Camera | Drives a rectangle like a colonist does, so it reshapes and can stall colonist coverage | Turns detail on and off, and brings ground into the mesh for placement and other player interaction. Routes and reach use that ground like any other (4.5) |
 | Movers | Colonists only, and not in the mesh | Anything with a position and a clearance, each with a footprint in the mesh |
 | Chunks | Loaded 1 chunk around the camera, unloaded at 2 | Also held and loaded around active simulation |
-| Threads | Input gathered on the main thread in the frame, mesh on one `std::async` thread per build | Patches on the main thread inside a per-tick budget; a chunk's first mesh on its generation worker |
+| Threads | Input gathered on the main thread in the frame, mesh on one `std::async` thread per build | Edits gathered on the main thread under per-tick count budgets, applied on two worker threads (one per mesh) after every system has run, and joined at the next update or the first nav query |
 
 ### 2.1 Measured: what a build costs
 
@@ -170,26 +181,31 @@ involved are within about 2^30 mm of each other, and a planet is bigger than tha
 borders in the mesh no triangle is larger than a chunk, so every test is local however far
 apart two meshed areas are.
 
-**Unloading a chunk lowers its resolution; it does not remove its mesh.** A chunk that unloads
-gives back its tiles and its placed entities, so its flora and footprints come out of the
-mesh. Its structural triangles stay: shoreline, walls, doors. The mesh therefore covers every
-chunk that has ever been loaded, at full resolution where something is simulating or looking
-and at structural resolution everywhere else, and it stays one connected thing as the camera
-and the colony move apart. A chunk that reloads does not get its structural mesh built again.
+**Unloading a chunk drops its detail; it does not remove its ground.** A chunk that unloads
+gives back its tiles and its placed entities, so its placed obstacles come out of the nav mesh.
+Its ground stays in both meshes: the square, its water, its walls and doors. A chunk that
+reloads does not get its ground meshed again.
 
-Structural triangles are reclaimed only under a memory budget, starting with chunks that hold
-no built structures and were loaded longest ago. Open ground costs two triangles a chunk, so
-the budget is about chunks with a lot of shoreline; what they cost is measured in step 4.
-Ground that has never been loaded has no triangles.
+**Ground a mover has held is never dropped.** A chunk any anchor has ever held (a mover, the rest
+of a live route, or the goal of a task waiting for ground, each holding the chunks within the
+anchor load range of 128 m) keeps its ground for the life of the world. Mesh is small (rule 16),
+and the ground under past movers, routes and goals is where they are likely to go again. Only
+ground the camera alone ever held is shed: up to `kCameraOnlyUnloadedChunks` (16) such chunks
+stay meshed after they unload, and past that the one unloaded longest ago that holds no
+construction loses its ground, one chunk a tick, on a tick no ground arrives. Measured on the
+Quick Start planet's chunks, real ground costs 100 to 150 KB a chunk on each mesh: both meshes
+together are 29 MB at 121 chunks and 265 MB at 1,000 (entry 88). Ground that has never been
+loaded has no triangles.
 
 ### 4.2 Obstacle classes and the structural layer
 
 Every obstacle belongs to a class.
 
 - **Structural:** terrain polygons (water), walls, doors, and what joins them later: fences, barriers, large mobile objects.
-- **Detail:** flora colliders, mover footprints, and other small things.
+- **Detail:** placed obstacles (the colliders of placed entities) and, once step 7 is built, mover footprints.
 
-Structural obstacles always block. Detail obstacles block only where detail is on (4.4).
+Structural obstacles always block. Detail obstacles are priced for movement wherever they are in
+the nav mesh, and block placement, spawns and drops (4.4).
 
 Reachability has to be something the camera cannot touch, and something a walking colonist's
 footprint cannot touch either. So each chunk also keeps its **structural layer**: the
@@ -215,12 +231,12 @@ anything outside its hole.
 
 | Event | Operation |
 |---|---|
-| A tree is felled, a node depleted, a wall or door removed | Remove (4.3.1) |
-| A wall or door is built, flora first enters an area, flora gains a collider | Add (4.3.2) |
+| A placed entity with a collider goes away, a wall or door is removed | Remove (4.3.1) |
+| A wall or door is built, placed obstacles first enter an area, a placed entity gains a collider | Add (4.3.2) |
 | A mover's footprint or a large object moves | Move (4.3.3) |
-| A chunk loads | Its square and terrain rings are added; on its generation worker for the structural layer |
-| A chunk unloads | Its detail obstacles are removed (4.3.1). Its structural triangles stay |
-| The mesh passes its memory budget | The oldest unloaded chunks without structures lose their triangles |
+| A chunk's ground is wanted | Its square and water rings are added to both meshes, through the same patch workers as every other edit |
+| A chunk unloads | Its detail obstacles are removed (4.3.1). Its ground stays |
+| More than 16 unloaded chunks hold ground only the camera ever held | The one unloaded longest ago without construction loses its ground (4.1) |
 
 A structural change applies the same operation to the structural layer.
 
@@ -371,52 +387,73 @@ crowd behaviour (P5 there) still stand, and still do the work between patches.
 
 ### 4.4 Detail is a filter
 
-Detail obstacles are in the mesh as tagged faces, the way wall interiors already are. Whether
-one blocks is decided by the path query, per area: where detail is on, flora and footprints
-block; where it is off, movers go straight through them. Turning detail on or off for an area
-flips flags. It does no mesh work at all.
+Detail obstacles are in the nav mesh as tagged faces, the way wall interiors already are, and
+only in the nav mesh; the structural mesh never holds them. For movement they are priced, not
+walled (entries 45 and 50): a path query reads each detail kind's price from one table, and
+walking a metre through a placed obstacle costs `kDetailPassMultiplier` (50) metres of open
+ground, on camera or off. So a mover goes round one when it can and through one when the way
+round is longer, a mover standing inside one is on valid ground, and detail never makes a goal
+unreachable. Placement, spawns, drops and construction still treat a placed obstacle as blocked
+(`isValidPosition`), reading colliders from placement data, not from the mesh.
 
-- **Entering the mesh.** Flora is added to an area the first time detail is wanted there (4.3.2), and then stays. Scrolling away and back costs nothing.
-- **Leaving the mesh.** Flora is removed from ground that has had no detail for a long time, oldest first, when the mesh passes a memory budget. That is the only way the camera's history shows up, and it changes cost, never answers.
-- **Who asks for detail.** The viewport rect, with today's margin, is the first requester. Gameplay requesters (combat) are added one at a time as they exist, each decided with Kevin; none is built in this epic.
-- **Two rects.** A smaller one turns detail on and a larger one keeps it, so a view edge resting on a boundary doesn't flip it back and forth.
-- **Pending.** Between a request and the adds finishing, detail in that area is still off. The view margin exists so that happens off screen.
+Detail being on decides only what collision and the forward snap do (4.7). Turning it on or off
+for an area flips flags and does no mesh work.
 
-Off camera, in ground that was once viewed, a path search crosses more triangles than it would
-on bare terrain, all of them passable. That is a query cost to measure in step 5, not a
-behaviour difference.
+- **Entering the mesh.** Placed obstacles are added to a 16 m cell (`kDetailCellMm`) the first time the view wants it (4.3.2), at most two cells and 32 rings a tick, and then stay. Scrolling away and back costs nothing.
+- **Leaving the mesh.** Past `kDetailRingBudget` (40,000 rings) whole cells leave, longest out of the view first, down to 7/8 of the cap, never one where detail is on or inside the keep rect. At main's placement density a ring costs about 6.4 KB, so the cap is about 250 MB, about half a square kilometre of dense cover (entry 88). Because the price is constant, leaving changes path shape and never whether a goal can be reached: off camera a mover routes round the obstacles still in the mesh and straight where there are none.
+- **Who asks for detail.** The viewport rect, with its margin, is the only requester (entry 77). Gameplay requesters (combat) are added one at a time as they exist, each decided with Kevin; none is built in this epic.
+- **Two rects.** Detail turns on within `kDetailOnMarginMm` (8 m) of the view rect and stays on until the view is `kDetailKeepMarginMm` (32 m) farther away, so a view edge resting on a boundary doesn't flip it back and forth.
+- **Pending.** Between a request and the adds finishing, those obstacles are not in the mesh. The view margin exists so that happens off screen.
+- **A route through detail on purpose.** A route that crosses priced faces is exempt from collision and the forward snap until it ends (entry 58).
 
 ### 4.5 Coverage and chunks
 
-The mesh covers every chunk that has been loaded and not reclaimed (4.1). A route can be
-planned across unloaded ground that is still meshed; the chunks along it load as the mover's
-anchor reaches them. A chunk's structural layer depends only on its terrain
-polygons, which are already built on the chunk's generation worker, so it is built there too
-and arrives with the chunk. This is the one place a whole chunk's rings go through the
-arrangement at once, which is why the quadratic loop still has to go (step 1).
+Both meshes cover every chunk whose ground has been meshed and not shed (4.1). There is no
+colony ground and no owned area (rule 15): ground is meshed for movers and for the camera, and
+a route or a reach walk uses all of it, whoever caused it. A route can be planned across
+unloaded ground that is still meshed; the chunks along it load as the anchors on the route reach
+them.
 
-`ChunkManager` gets anchors. The camera is one. Every active mover is one. A chunk inside any
-anchor's keep range is never unloaded, and a chunk inside any anchor's load range is loaded.
-That is the unloader enhancement in rule 9, and it fixes WOR-645 (Chunk streaming follows the
-camera, so panning away unloads the colony's chunks). Placement runs for anchored chunks the
-same as for camera chunks, because colonists harvest off camera.
+A chunk's ground is gathered on the main thread and patched in by the two workers (4.8):
+ground an anchor holds first, nearest an anchor, then the camera's, nearest the view, so panning
+never holds a mover's ground back. Open chunks share a tick up to `kGroundVerticesPerTick` (256)
+square vertices, and a chunk with water goes alone. Ground is not built on the chunk's
+generation worker; entry 38 records why that alone would not help.
 
-So a mover always has mesh under it and around it, and "off area, holding" stops existing
-inside meshed ground. Two groups of movers are joined by mesh when the ground between them has
-been loaded at some point. Where it never has, they are not joined in this epic; see 4.10.
+`ChunkManager` gets anchors. In the game the camera loads the chunks within one chunk of its own
+and keeps those within two (3 by 3 and 5 by 5 chunks of 512 m). Every anchor loads the chunks
+within 128 m of it and keeps those within 256 m. The
+anchors are every mover the AI drives, the rest of every live route (points no more than half
+the load range apart along it), and the goal of every task waiting for ground. That is the
+unloader enhancement in rule 9, and it fixes WOR-645 (Chunk streaming follows the camera, so
+panning away unloads the colony's chunks). Placement runs for anchored chunks the same as for
+camera chunks, because colonists harvest off camera.
+
+So a mover always has mesh under it and around it, and its ground stays meshed after it leaves.
+Two groups of movers are joined by mesh when the ground between them has been meshed. Where it
+never has, they are not joined in this epic; see 4.10.
+
+**Mesh is not visibility (rule 17).** Ground the camera meshes joins the mesh like any other, so
+a walk or a route can use a way the camera brought in. That is sound once player visibility
+(WOR-754 (Player visibility: unexplored areas (visible, seen, unseen))) bounds the camera to
+ground colonists have seen; until it is built, the camera can mesh ground no colonist has seen.
+Nothing may read "has mesh" as "the player can see or act here".
 
 ### 4.6 Queries
 
-- **Path.** Triangle A* over the nav mesh scored by taut corridor length (decision 40), with the per-agent filter deciding which tagged faces block and which are passable at a price: belief for walls, a price for flora (decisions 45 and 50), ownership for the agent's own footprint.
-- **Reachability.** The existing width-aware forests (truth and terrain), on the structural layer of all meshed chunks. They change when a chunk is first meshed or reclaimed, or a structural obstacle changes. Rebuild cost is measured in step 4. If it is over budget, or once a large mobile object exists, the forests are kept per chunk with a portal graph across chunk borders (the FFF-317 shape), so a change repairs one chunk.
+- **Path.** Triangle A* over the nav mesh scored by taut corridor length (decision 40), with the per-agent filter deciding which tagged faces block and which are passable at a price: belief for walls, one price per detail kind (decisions 45, 50 and 54), and later ownership for the agent's own footprint.
+- **Reach.** `walk()` gives one of three answers: a walk length, a definite no, or far. It searches the structural mesh under the mover's belief (known walls block) over all meshed ground, so detail and the view change nothing. A search from the goal toward the start goes first, to `kReachProbeExpansions` (2,000): a goal sealed in a pocket runs it dry at once, a definite no, and one that finds the start has the walk. Then a search from the start, to `kReachExpansionCap` (5,000). A search that stops on the caller's bound on length is a definite "no walk that short". When both run out of steps the goal is far, and far is never read as no (rule 18): a far candidate stays a candidate and is taken when no candidate with a known walk is, nearest first in a straight line. A start off meshed ground answers the straight line. A goal off meshed ground answers the straight line while its chunk is loaded, since its ground is on the way, and unreachable otherwise (rule 21).
+- **Routes.** `requestPath` plans between any two points on meshed ground, for anyone, at any distance (rule 14). It runs the same walk first, and where the walk is a definite no there is no route. Where it found a walk, the nav search runs with detail priced, capped at `kNavExpansionFloor` (4,000) plus `kNavExpansionsPerStructural` (16) for each expansion the walk took; if it runs out, the walk itself is the route, through detail at its price, as it would be off camera. Where the walk is far there is no nav search: the structural search runs again from the start to `kFarRouteExpansions` (60,000), and its walk is the route. If that runs out too the answer is "search gave up" (`PathAnswer::gaveUp`), never "no route"; the decision trace and the task list show it as its own status.
+- **Budgets.** Set from measurement (entry 81); each constant in `NavigationSystem.h` states its main-thread time and where the number came from. A far route request is the one that can cost 19 to 34 ms on the main thread, once per far target, accepted for now (rule 19).
+- **Reachability forests.** The width-aware forests (truth and terrain) on the structural mesh. A path query uses them to reject a goal in another component before any search (an islet costs no steps). They are rebuilt whole on the structural worker on every structural job, which passes the 2 ms job budget on real ground past about 121 meshed chunks; WOR-722 (Reach forests are rebuilt whole on every structural change) is the per-chunk repair (the FFF-317 shape).
 - **Heuristic.** None beyond the search's own score. The reverse-search heuristic was removed (decision 44); a detour bound from the structural layer is a follow-up.
-- **Detail that seals.** Structural-reachable must mean reachable, so detail cannot be a hard wall where there is no way around. Open question 1 in section 8.
+- **Detail that seals.** Structural-reachable must mean reachable, so detail is never a hard wall for movement. It is priced (4.4), which settles open question 1.
 - **Locate.** A spatial index over triangles, updated by each patch for its hole.
-- **Widths.** Capped at a maximum clearance and invalidated within that distance of a patch.
-- **Staleness.** A patch that adds blocking ground tells the movers whose remaining route crosses its hole to replan. A patch that only opens ground tells nobody. The global generation counter and "any swap replans everyone" go away.
-- **Validity.** `isValidPosition` stays the one predicate: a point is valid if it is on a walkable face for the asking agent.
+- **Widths.** Capped at a maximum clearance; refreshed on the worker outward from the edges a patch changed. Each corner stores two: the full width, and one with detail read as open.
+- **Staleness.** `generation()` moves only when a structural job lands on ground an anchor holds; routes that the change does not close ground across are re-stamped current at the join. Camera-only ground moves nothing. Detail landing marks stale only the routes whose rest comes within the mover's radius of a new obstacle; detail leaving marks nobody. A mover more than `kOffRouteMm` (2 m) off the leg of its route it is on has its route marked stale.
+- **Validity.** Two predicates. `isOnMesh`: ground a mover may stand on, anything but water, placed obstacles included, since they are priced. `isValidPosition`, the one predicate for spawns, drops, placement and teleports: that and clear of every placed obstacle's collider, read from placement data whether or not it is in the mesh. Both read every wall face as open.
 - **Placement.** `isAreaBuildable` reads the structural layer. The separate cached terrain-only mesh is deleted.
-- **Work targets.** The stand point beside a tree comes from the tree's collider, not from the mesh, so it is the same point on and off camera.
+- **Work targets.** The stand point beside a placed obstacle comes from its collider, not from the mesh, so it is the same point on and off camera.
 
 ### 4.7 Snap forward
 
@@ -441,11 +478,20 @@ nearest-edge push can't undo a forward snap.
 
 ### 4.8 Threads, determinism, and correctness
 
-Patches run on the main thread, in a fixed order, inside a per-tick time budget. There are no
-nav futures and no landing-time variance: a patch requested on a tick is applied on that tick
-or queued in order behind the budget. The only nav work on another thread is a chunk's first
-structural mesh, on the chunk's own generation worker, and rule 9 keeps chunk arrival away from
-movers. Whether the budget is comfortable is the first thing step 3 measures.
+Each tick's edits are gathered on the main thread in `NavigationSystem::update`, in a fixed
+order and under per-tick count budgets, never a time budget, so which tick an obstacle enters
+doesn't depend on frame time (entry 18). After every system has run, the end-of-tick hook
+(`ISystem::endTick`) hands them to two worker threads, one per mesh; the nav worker then
+refreshes its widths and the structural worker rebuilds its forests. The next `update` or the
+first nav query, whichever comes first, waits for both. So a query always sees exactly the
+patches gathered through the previous tick, however long the workers took, and nothing reads a
+mesh while it is patched. There is no second copy of either mesh. The main thread pays only when
+a job outlasts the rest of the frame: up to 4.3 ms with a 2 ms gap between ticks when a
+shoreline chunk's ground arrives (entry 67); WOR-721 (Shoreline chunk arrival can make the main
+thread wait on the nav patch job) tracks it.
+
+Queries themselves run on the main thread. A far route request (4.6) is the longest, 19 to
+34 ms once per far target (rule 19).
 
 The camera is real time and detail follows it, so exact paths and arrival times are not
 reproducible across runs with different camera movement. Rule 6 is the bar: large-scale
@@ -455,12 +501,13 @@ input); that is out of scope and noted so nobody is surprised.
 A mesh that is never rebuilt has nothing to wash a bad patch out, so correctness is carried by
 three things:
 
-- **The oracle.** For any sequence of adds, removes, and moves, the mesh's constraints and tagged faces equal those of a mesh built from scratch from the same obstacles. Tested on every real fixture with obstacles added and removed one at a time in several orders, including overlapping trunks, trunks on waterlines, and trunks on chunk borders. It is a face-level comparison because of the co-circular diagonals.
-- **The validator.** In development builds every patch is followed by a check of the hole and its ring of neighbours: adjacency symmetric, orientation positive, every constrained edge still present, tags consistent across unconstrained edges.
+- **The oracle.** For any sequence of adds, removes, and moves, the mesh's constraints and tagged faces equal those of a mesh built from scratch from the same obstacles. Tested on every real fixture with obstacles added and removed one at a time in several orders, including overlapping obstacles, obstacles on waterlines, and obstacles on chunk borders. It is a face-level comparison because of the co-circular diagonals.
+- **The validator.** `PatchableMesh::validate()` checks the whole mesh: free lists and counts, and per triangle its shape, links, ring edges, the Delaunay property, cover sets, tags and the locate index. The geometry and sim tests run it after their patches; the game does not.
 - **Exact arithmetic throughout.** No epsilons enter. The one place new coordinates are made is the arrangement, which is the code that already handles it.
 
-`finishPendingBuilds` stays as the blocking settle for tests; it drains the patch queue and
-waits on chunk workers.
+`finishPendingBuilds` is the blocking settle for tests and the headless sim: it gathers every
+queue with no budget, applies it and waits, until nothing is left. It reads only chunks that are
+ready, so its caller settles chunk generation and placement first.
 
 ### 4.9 All movers
 
@@ -472,10 +519,14 @@ second client and the test that nothing colonist-shaped leaked in.
 
 ### 4.10 World scale
 
-The nav mesh covers ground that has been loaded. Beyond it, two things are planned and neither is this epic:
+The nav mesh covers ground that has been meshed. A goal off it waits while its chunk is loaded and
+reads unreachable otherwise (4.6). Travelling toward a goal whose ground is not meshed, so that
+the mover's own anchors bring the ground in as it goes, is deferred: WOR-776 (Nav: build a path
+toward a goal whose ground is not meshed yet). Beyond the mesh, two things are planned and neither
+is this epic:
 
 - The static geography mesh, unchanged from the pathfinding doc.
-- A landmass check so nothing ever tries to path off an island: flood the planet's land hexes from the colony's hex once at load and keep the set. The single-hex-island test case falls out of it. At the quickstart resolution the planet has about 42 million hexes, so this is a bounded flood from the colony, not a table for the whole planet. It has no consumer until goals can lie outside loaded ground, so it is filed as a follow-up and built with that consumer.
+- A landmass check so nothing ever tries to path off an island: flood the planet's land hexes from the landing site's hex once at load and keep the set. The single-hex-island test case falls out of it. At the quickstart resolution the planet has about 42 million hexes, so this is a bounded flood from the colony, not a table for the whole planet. It has no consumer until goals can lie outside loaded ground, so it is filed as a follow-up and built with that consumer.
 
 ## 5. What gets deleted
 
@@ -529,8 +580,9 @@ larger figure.
 Ten loaded chunks, three with rivers, forest biome: about 10 MB when only the screen has
 detail, about 40 MB once the player has looked over two chunks' worth of forest, about 180 MB
 if every chunk is dense forest and all of it has been viewed. Tile data for the same ten
-chunks is about 20 MB. Flora is nearly all of it, so the flora budget in section 4.4 is the
-control: 64 MB holds about 40,000 trees. `NavTriangle` is mostly 64-bit fields holding a
+chunks is about 20 MB. Flora is nearly all of it, so the detail cap in section 4.4 is the
+control. This estimate put 40,000 rings at 64 MB; measured at main's density a ring is about
+6.4 KB, so the cap is about 250 MB (entry 88). `NavTriangle` is mostly 64-bit fields holding a
 sentinel, and packing it could halve the figure; measure before making that a step.
 
 **Launch budget:** one for the baseline, one after step 5 to confirm the saving off camera,
@@ -573,7 +625,9 @@ game depends on it.
 ## 10. Decisions log
 
 Calls made without Kevin while he was away, for him to check. Newest last. Each says what was
-decided, why, and how to undo it.
+decided, why, and how to undo it. An entry is left as written once a later one changes it; the
+later entry names what it reverses. Entries 79 to 89 record Kevin's rulings of 2026-11-11
+(section 1, rules 14 to 21) and what was built under them.
 
 **2026-11-10**
 
@@ -666,6 +720,24 @@ decided, why, and how to undo it.
 76. **The nav generation moves only for ground an anchor holds, and anchors include live routes.** Camera-only ground moves nothing and re-requests nobody. When the generation does move, routes the change does not cross are re-stamped in place. Every live route's waypoints and every waiting goal hold their chunks like a mover does, so ground is never unloaded or dropped under one.
 77. **Only the viewport brings flora into the mesh** (open question 4, as the spec said; step 4 had colonists requesting it too). With entry 50 this is most of "trees do not matter off camera": off camera a tree matters only in ground the camera has shown and the cap has not yet trimmed. Clear-ground checks read tree colliders from placement data, not from the mesh, and the harvest stand point comes from the tree's collider, so both are the same on camera and off.
 78. **Costs of entries 73 and 74** (headless, under load): one walking-distance check 4 us on average and 26 us at worst with no known walls, 27 us on average and 149 us at worst when the colonist knows a doorless room; one need decision 2 to 5 us cold and under 1 us with the memo warm, one walk per cold decision. Path requests now pay for the structural walk first: 64 repeat requests take 1.7 ms in a chunk's middle and 3.0 ms beside a chunk side with flora priced, where entry 67 had 1.2 and 2.2 and the old system 0.5.
+79. **The reach square is removed (Kevin's rulings, rules 14 and 15). This reverses entry 73 and the square in entries 75 and 78.** Nav builds a path between any two points on meshed ground, for anyone, at any distance, and there is no colony ground or owned area. The 128 m square around a colonist that bounded its reach, its walks and its routes is gone, with the route square fixed at a task's first plan and the route kinds; a colonist's own choice and a player's move order are the same request. What stays from entry 73: reach is a walk on the structural mesh under the colonist's belief, sources are visited nearest first in a straight line, and the shortest walk wins, so a bush across a river loses to any nearer walk. What replaces the square's bound is the step budget of entries 80 and 81. Ground the camera meshed is used like any other (entry 85). `PathLimits::within`, the box the path search clipped at, stays in the geometry with its tests and is no longer used by the game; whether to keep it is open. Entry 72's count of camera-loaded ground was the `ChunkManager` default; the game loads 3 by 3 chunks round the camera and keeps 5 by 5.
+80. **Reach has three answers: a walk, a definite no, or far (rule 18). This replaces entry 73's "not walkable inside the square" and the cache keys of entry 75.** Before this a search that ran out of steps read as unreachable, so a reachable target past the cap was skipped at every decision with nothing shown. Now a search from the goal toward the start runs first and a search from the start second (4.6); a goal sealed in a pocket (a room whose walls the belief knows) is a definite no at the cost of the pocket, a stop on the caller's bound on length is a definite "no walk that short", and only a stop on the step cap is far. Far is never no: a far candidate stays a candidate, is remembered like any other answer, and is taken when no candidate with a known walk is, nearest first in a straight line. A walk (a length, none, or far) is remembered per 2 m start cell (`kReachCellMm`), under the structural mesh's epoch, which moves with every structural job anywhere, and the belief's version. A route that failed where the walk said yes is still held under its anchor; the anchor's stamp reads the structural content of the chunks within twice the anchor load range of it, and each failed route also keeps the stamp of the ground between the anchor and its target, so a wall removed beside a far target clears it.
+81. **The search budgets come from measurements: 2,000, 5,000 and 60,000 steps.** Measured on commit 7e68a0e2 (entry 88) with `NavScale.bench.cpp`'s `BM_SearchReach`, `BM_SearchCases`, `BM_SearchDeadEnds` and `BM_DefaultBudgets` on grounds of 1,024 chunks: open land, the Quick Start planet's chunks round its landing (rivers and lakes), open land with its middle chunk under dense placed obstacles at main's density (searched on the nav mesh, priced), and a 5 by 5 block of 10 m rooms whose walls the belief knows. A structural step costs 0.29 to 0.32 us on the main thread, 0.56 us at worst; a priced nav step in dense cover 0.45 us, 1.48 us at worst. Open land costs almost nothing in steps (a 10 km walk is 190). The limits chosen: a reach walk at most 4 ms at worst, since several can run in one decision and must not hitch a 16.7 ms frame, and a far route request at most 35 ms at worst, since it runs once per far target.
+    - The goal-side probe, `kReachProbeExpansions`, stays at 2,000: 0.6 ms, 1.1 ms at worst. Every dead end measured answers inside it: a sealed room in 2 steps, the rooms of the block in 67 to 482, an islet in none (the reach forest rejects it before any search).
+    - The start-side search, `kReachExpansionCap`, drops from 20,000 to 5,000: 1.6 ms, 2.8 ms at worst, and 2.2 / 3.9 ms with the probe. On real ground it still reaches 1.1 km at the median; a goal past it is far, and the route request settles it. The worst start on real ground reaches only 110 m, a goal across water with a long way round. Dense cover never needed a budget of its own: priced searches stayed under 7,100 steps to 10 km.
+    - A far goal's route, `kFarRouteExpansions`: 60,000 structural steps, 19 ms, 34 ms at worst. Every real far goal measured to 10 km needed 25,000 to 41,006, so about 1.5 times headroom. A far goal with no way at all costs the whole 60,000 once per target.
+82. **A far goal is routed by the structural walk.** An earlier version gave a far goal its own nav search of 20,000 steps after the reach walk gave up. On the real Quick Start ground it routed none of 18 goals between 1 and 10 km, where the structural search run to completion found a walk for all 18 in 25,000 to 41,000 steps and 8 to 17 ms. With those budgets about 3% of real goals at 1 km, 9% at 2 km, 13% at 5 km and 20% at 10 km read "search gave up" though a walk existed. So a far goal gets no nav search: the structural search runs from the start to 60,000 steps and its walk is the route, through detail at its price, replanned as the mover goes. Where reach found a walk, entry 74 stands: the nav search is capped at 4,000 plus 16 for each step the walk took, and past that the walk is the route. The far request runs on the main thread, 19 to 34 ms once per far target; Kevin accepted that for now (rule 19), and WOR-789 (Far route requests stall the main thread for 19 to 34 ms; run them on a worker) is the follow-up.
+83. **"Search gave up" is its own status (rule 18).** When the far route search also runs out of steps, `requestPath` answers `gaveUp`, never "no route", and the decision trace ("gave up searching for a way there") and the task list show it apart from "no source". The colonist keeps a record of it per target: where the search started, the target, the stamp of the structural content in the box spanning them (grown by the anchor load range), and the belief's version. While it holds the target is not tried again. It clears when that stamp or the belief changes, or when the colonist has moved the larger of a quarter of the straight line to the target and 128 m (`kGaveUpMoveFloorMeters`) from where the search started, so a colonist that knows only far targets with no way to them tries each once, not once a step. Known limit, recorded on `GaveUpRoute`: a way that opens outside the box, or ground that only arrives, doesn't clear it.
+84. **Ground a mover has ever held is never dropped; only ground the camera alone held is shed (rule 16). This reverses entry 39, removes the limit entry 48 recorded, and widens entry 76.** Every chunk an anchor has held (a mover, the rest of a live route, the goal of a task waiting for ground) keeps its ground in both meshes for the life of the world. Of unloaded chunks whose ground only the camera ever held, 16 (`kCameraOnlyUnloadedChunks`) stay meshed; past that the one unloaded longest ago that holds no construction loses its ground, one a tick, on a tick no ground arrives. Measured cost (entry 88): real ground is 100 to 152 KB a chunk on the structural mesh and 87 to 130 KB on the nav mesh, both together 4.7 MB at 25 chunks, 29 MB at 121, 130 MB at 500 and 265 MB at 1,000; open ground is about 40 and 30 KB. WOR-728 (Kept nav ground ignores crafting stations, storage and loose piles) now applies only to ground the camera alone held.
+85. **Mesh existing is not ground being visible (rule 17).** Ground the camera meshes, for placement and other player interaction, joins the mesh like any other, so a walk or a route can take a way the camera brought in, and some movers mesh ground without revealing it. Nothing may read "has mesh" as "the player can see or act here". Camera-meshed ground is safe to route over once player visibility, WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)), bounds the camera to ground colonists have seen. It is planned, not built, so until then the camera can mesh ground no colonist has seen.
+86. **Nav, mesh and collision code name obstacles by role, not by kind (rule 20; commit c3388b05).** An obstacle from a placed entity's collider is a placed obstacle; the class the view brings in and the search prices is detail. `FloraCollider.h` became `PlacedObstacle.h`, and the single price became a table of detail kinds with one row (placed obstacles at `kDetailPassMultiplier`, 50), which the mesh's detail list, the price table and every "is this detail" check read. No behaviour change.
+87. **A mover whose route failed while ground near it was still arriving is woken when the ground lands.** Entry 75 stands: while any chunk within the anchor load range of a colonist is without ground, a failure is not remembered and carries the unsettled stamp. Instead of the colonist retrying on its decision interval, the update whose join lands ground in such a chunk, once every one of them is meshed, asks it to decide (`requestDecision`, the one way to make a colonist decide at the AI's next update). Only a task still standing on that failure is woken, and `Task::clear` resets the stamp and the gave-up flag, so a stale stamp cannot keep waking it. A task waiting for its goal's ground needs no wake: that ground landing moves the generation, and the AI retries on that.
+88. **The second measurement run** (2026-11-11, commit 7e68a0e2, RelWithDebInfo, headless, `sim-benchmarks` with main's placement density on the Quick Start planet's chunks; one iteration a row). No game, build or asset-manager ran and the CPU read 2 to 5%. The load script read the GPU, idling at its lowest clock, as busy, which is WOR-790 (machine-load.mjs reads an idle GPU as busy); Kevin ruled these numbers baselines. Entry 81 has the search costs. The rest:
+    - Detail memory: a dense chunk fully viewed is 21,025 rings and 128 MB of nav mesh, about 6.4 KB a ring, a 792 ms patch done cell by cell with the worst cell 1.37 ms. So `kDetailRingBudget` (40,000 rings) is about 250 MB, about half a square kilometre, not the 64 MB entry 47 estimated.
+    - The structural job breaks the 2 ms job budget on real ground past about 121 meshed chunks: a wall edit's forest rebuild is 0.78 ms at 25 chunks, 2.2 at 121, 8.9 at 500 and 14.7 at 1,000; a chunk's ground arriving costs 2.1 ms in forests at 121 chunks and 15 ms at 1,000. That is WOR-722 (Reach forests are rebuilt whole on every structural change).
+    - Main's placement density doubles job and path cost against the density entry 67 measured, and every job still runs: job mean 1.4 to 2.9 ms against 0.8 to 1.6, worst 4.6 to 6.3 ms against 1.1 to 4.3; a priced `requestPath` 133 us against 40, with 2.1 times the nodes. Detail is fully in 20 ticks after a cold nine-chunk start, against 15.
+    - Reach while ground lands (`BM_ReachWhileGroundLands`: 20 colonists with 40 sources each, deciding every 30 ticks, a far wall toggling every 5): with sources on both sides of a river and in walled rooms, 4 us a tick at the mean and 21 us at p99; with none reachable, 61 and 278 us. Every walk was answered from the goal side, and walking colonists cost the same as still ones. These supersede entry 78's costs.
+89. **What is left open.** Steps 6 and 7 are not built: WOR-709 (Step 6: Movers (route system out of AIDecisionSystem, a wandering deer)) and WOR-710 (Step 7: Mover footprints in the mesh). Travelling toward a goal whose ground is not meshed is deferred by Kevin (rule 21): WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet); today such a goal waits while its chunk is loaded and reads unreachable otherwise. When the way is blocked with no known way round, WOR-775 (Exploring: a colonist blocked on the way to a remembered place looks for a way round) takes over. Far requests on a worker are WOR-789. Nothing from entries 79 to 88 has been run in the game.
 
 **Defaults for the open questions in section 8**, applied when the step that needs each is
 reached, each isolated as one constant or one function so it can be changed in one place:
