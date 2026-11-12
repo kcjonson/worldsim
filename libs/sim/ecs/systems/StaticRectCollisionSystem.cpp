@@ -85,9 +85,6 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 	for (int iter = 0; iter < 2; ++iter) {
 		for (auto [entity, pos, radius] : world->view<Position, AgentRadius>()) {
 			glm::vec2 p = pos.value;
-			if (!detail->detailOnAt(p)) {
-				continue;
-			}
 			if (const NavPath* path = world->getComponent<NavPath>(entity); path != nullptr && !path->done() && detail->routeCrossesPricedFaces(*path)) {
 				continue; // walking through detail on purpose, at its price
 			}

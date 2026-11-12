@@ -351,10 +351,6 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] std::optional<glm::vec2>
 	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
 
-	// True everywhere: collision and the forward snap act wherever a placed obstacle is in the nav
-	// mesh, which each of them checks itself. Goes when its last callers do.
-	[[nodiscard]] bool detailOnAt(glm::vec2 meters) const;
-
 	// True when `path` is a route requestPath gave that walks through detail at its price, on purpose:
 	// collision lets its mover through the obstacles and the forward snap leaves it alone while it
 	// follows it. Known for a route from the request that made it until its mover drops it.
@@ -637,10 +633,11 @@ class NavigationSystem : public ISystem {
 	using RouteSet = std::unordered_map<std::uint64_t, std::vector<glm::vec2>>;
 	[[nodiscard]] static bool holds(const RouteSet& routes, const std::vector<glm::vec2>& waypoints);
 	static void				  note(RouteSet& routes, const std::vector<glm::vec2>& waypoints, bool in);
-	// Spec 4.7: a mover inside detail moves forward along its route to the first point walkable in
-	// truth, never past a wall or water on the way; with none, it stays and its route goes stale.
-	// Without a route it steps out to the nearest spot within 4 m, ring by ring, where its disc is
-	// clear and the straight step there crosses no wall or water; with none, it stays.
+	// Every mover (Position + AgentRadius) standing on a placed obstacle in the mesh moves forward
+	// along its route to the first point walkable in truth, never past a wall or water on the way;
+	// with none, it stays and its route goes stale. Without a route it steps out to the nearest spot
+	// within 4 m, ring by ring, where its disc is clear, the straight step there crosses no wall or
+	// water, and, while it has a velocity, the spot is not behind it; with none, it stays.
 	void snapMovers();
 	void			   queueRemovedDetail();
 	// The chunk's placement is in and finished, so its cells can be scanned.

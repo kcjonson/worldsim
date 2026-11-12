@@ -2299,6 +2299,38 @@ TEST_F(ForwardSnapTest, InsideTreeWithoutRouteTakesNearestWalkable) {
 	EXPECT_LT(glm::distance(now, at), 1.5F) << "the nearest walkable point, not a far one";
 }
 
+// Any mover is snapped, not only a colonist: an entity with a position and a radius and nothing
+// else, inside the tree on a route, moves forward along it like a colonist does.
+TEST_F(ForwardSnapTest, MoverThatIsNotAColonistMovesForward) {
+	const glm::vec2 at{9.7F, 10.0F};
+	const EntityID	mover = world.createEntity();
+	world.addComponent<Position>(mover, Position{at});
+	world.addComponent<AgentRadius>(mover, AgentRadius{});
+	NavPath path;
+	path.waypoints = {{6.0F, 10.0F}, {14.0F, 10.0F}};
+	path.current   = 1;
+	path.valid	   = true;
+	world.addComponent<NavPath>(mover, std::move(path));
+	step(world, *sys);
+	const glm::vec2 now = world.getComponent<Position>(mover)->value;
+	EXPECT_TRUE(meshClear(*sys, now));
+	EXPECT_FLOAT_EQ(now.y, 10.0F) << "on the route";
+	EXPECT_GT(now.x, kTree.x + 0.8F + kAgentRadius) << "past the tree, ahead";
+}
+
+// Inside a tree with no route but moving east, it steps out ahead of itself, though the nearest
+// clear ground is west, behind it.
+TEST_F(ForwardSnapTest, MovingWithoutRouteNeverStepsBehind) {
+	const glm::vec2 at{9.7F, 10.0F};
+	const EntityID	colonist = routedColonist(world, at, {});
+	world.addComponent<Velocity>(colonist, Velocity{{2.0F, 0.0F}});
+	step(world, *sys);
+	const glm::vec2 now = world.getComponent<Position>(colonist)->value;
+	EXPECT_NE(now, at) << "snapped out of the tree";
+	EXPECT_TRUE(meshClear(*sys, now));
+	EXPECT_GT(now.x, at.x - 1e-3F) << "behind it";
+}
+
 // A colonist walking a move order has a tree land on it: its chunk's placement arrives as it walks,
 // and its own disc brings the tree into the mesh. It is moved forward along its route, keeps the
 // order, never steps back and gets there; collision leaves it alone until the mesh has the tree and
@@ -2716,7 +2748,6 @@ TEST_F(NavigationSystemTest, GoalRingedByTreesIsReachedThrough) {
 		 if (!collision) {
 			 rig.world.getSystem<StaticRectCollisionSystem>().setDetailSource(nullptr);
 		 }
-		 EXPECT_TRUE(rig.nav.detailOnAt(goal));
 		 const EntityID colonist = rig.walker({10.0F, 20.0F}, goal);
 		 EXPECT_TRUE(rig.pricedRoute(colonist)) << "the route goes through the ring";
 		 std::vector<glm::vec2> steps;

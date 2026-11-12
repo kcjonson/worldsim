@@ -2,8 +2,8 @@
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
-#include "../components/Colonist.h"
 #include "../components/Memory.h"
+#include "../components/Movement.h"
 #include "../components/NavPath.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
@@ -1319,10 +1319,6 @@ namespace ecs {
 		}
 	} // namespace
 
-	bool NavigationSystem::detailOnAt(glm::vec2 /*meters*/) const {
-		return true;
-	}
-
 	gnav::BeliefFilter NavigationSystem::pricedFor(gnav::BeliefFilter belief) {
 		belief.prices = kDetailKinds;
 		return belief;
@@ -1524,14 +1520,8 @@ namespace ecs {
 			return !gnav::truthTraversable(t) && !isDetailTag(t.faceBlocker);
 		};
 
-		// Only where detail is on is a mover pushed out of a placed obstacle, and so snapped out of one.
 		// A mover whose route walks through detail on purpose, at its price, is left to it.
-		const std::uint64_t current = generation();
-		for (auto [entity, position, colonist] : world->view<Position, Colonist>()) {
-			(void)colonist;
-			if (!detailOnAt(position.value)) {
-				continue;
-			}
+		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
 			const std::int32_t tri = detailMesh.locate(nav::toMm(position.value));
 			if (tri < 0 || !isDetailTag(detailMesh.triangles()[static_cast<std::size_t>(tri)].faceBlocker)) {
 				continue;
@@ -1540,8 +1530,7 @@ namespace ecs {
 			if (path != nullptr && !path->done() && routeCrossesPricedFaces(*path)) {
 				continue;
 			}
-			const AgentRadius* agent  = world->getComponent<AgentRadius>(entity);
-			const float		   radius = agent != nullptr ? agent->radiusMeters : AgentRadius{}.radiusMeters;
+			const float radius = agent.radiusMeters;
 
 			// With a route: forward along what remains of it only, from where it stands to the
 			// waypoint it is steering for, then on through the rest. Points behind it are never
@@ -1549,8 +1538,14 @@ namespace ecs {
 			if (path == nullptr || path->done()) {
 				// Without a route: the nearest point, out in rings of the snap step, that the route case
 				// would take: walkable in truth with its clearance, reached in a straight line that
-				// crosses no wall or water, so it stays on its own side of a wall.
-				const auto reachable = [&](glm::vec2 to) {
+				// crosses no wall or water, so it stays on its own side of a wall. A mover still moving
+				// (a heading with no route) is never taken behind it.
+				const Velocity* velocity = world->getComponent<Velocity>(entity);
+				const glm::vec2 heading	 = velocity != nullptr ? velocity->value : glm::vec2{0.0F, 0.0F};
+				const auto		reachable = [&](glm::vec2 to) {
+					if (glm::dot(to - position.value, heading) < 0.0F) {
+						return false;
+					}
 					const int steps = std::max(1, static_cast<int>(std::ceil(std::sqrt(dist2(position.value, to)) / step)));
 					for (int i = 1; i <= steps; ++i) {
 						if (stopsTheWalk(position.value + (to - position.value) * (static_cast<float>(i) / static_cast<float>(steps)))) {

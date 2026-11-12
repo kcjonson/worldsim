@@ -25,12 +25,11 @@
 // Velocity stays PhysicsSystem's. A position-only correction is enough for a
 // safety net and avoids fighting the mover.
 //
-// DETAIL GATE (nav-mesh-variable-resolution 4.7): a mover is pushed out of a placed obstacle only where
-// NavigationSystem::detailOnAt says detail is on, and only once that obstacle is in the nav mesh
-// (NavigationSystem::placedObstacleInNavMesh): the forward snap moves a mover out of an obstacle it finds itself in
-// before this system ever sees it, so the two never disagree about one. A mover following a route
-// that walks through detail at its price (NavigationSystem::routeCrossesPricedFaces) is let through.
-// Off camera, movers walk through placed obstacles; the camera decides detail, never outcomes.
+// MESH GATE: every mover is pushed out of a placed obstacle wherever that obstacle is in the nav mesh
+// (NavigationSystem::placedObstacleInNavMesh), and not before: the forward snap moves a mover out of an
+// obstacle it finds itself in before this system ever sees it, so the two never disagree about one. A
+// mover following a route that walks through detail at its price (NavigationSystem::routeCrossesPricedFaces)
+// is let through.
 //
 // The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op). Rects are
 // gathered LOCALLY per agent each frame from placement (no caching): query the chunks around the agent for rect-collision entities, keep
