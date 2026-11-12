@@ -25,11 +25,13 @@
 // Velocity stays PhysicsSystem's. A position-only correction is enough for a
 // safety net and avoids fighting the mover.
 //
-// MESH GATE: every mover is pushed out of a placed obstacle wherever that obstacle is in the nav mesh
-// (NavigationSystem::placedObstacleInNavMesh), and not before: the forward snap moves a mover out of an
-// obstacle it finds itself in before this system ever sees it, so the two never disagree about one. A
-// mover following a route that walks through detail at its price (NavigationSystem::routeCrossesPricedFaces)
-// is let through.
+// ONE RULE WITH THE SNAP: a mover whose centre is inside a placed obstacle in the nav mesh at the start
+// of the tick belongs to the forward snap (NavigationSystem::snapMovers), which moves it forward along
+// its route or leaves it where it stands; one the snap left inside (NavigationSystem::snapHolds) is
+// never pushed here, so it never goes back. This system keeps a mover that was outside from entering:
+// it pushes out of an obstacle only once the obstacle is in the nav mesh
+// (NavigationSystem::placedObstacleInNavMesh). A mover following a route that walks through detail at
+// its price (NavigationSystem::routeCrossesPricedFaces) is let through.
 //
 // The PlacementExecutor and the NavigationSystem are injected by the caller (either null => no-op). Rects are
 // gathered LOCALLY per agent each frame from placement (no caching): query the chunks around the agent for rect-collision entities, keep

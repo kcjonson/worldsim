@@ -9,22 +9,27 @@
 //    and walkability, recovery snaps and nearby placement read it.
 //  - structural: the same without detail. Reachability (its forests), placement buildability and
 //    the landing search read it, so a removed placed obstacle doesn't change what is reachable.
-// A mover (Position + AgentRadius) wants every kDetailCellMm cell its disc of radius R meets (R is
-// its sight distance plus kSightBufferMeters), taken at the tick it enters a new cell or its R
-// changes. A wanted cell stays wanted forever. Neither mesh is ever rebuilt, and nothing leaves
-// either except what leaves the world (a placed obstacle removed, a wall or door taken down, water
+// A mover (Position + AgentRadius) wants every kDetailCellMm cell within R of the cell it stands in
+// (R is its sight distance plus kSightBufferMeters), so wherever it stands in that cell everything
+// within R of it is wanted. The disc is taken when it enters a new cell or its R changes, nearest
+// cells first. A wanted cell stays wanted forever. Only a mover holding a chunk (within its anchor
+// load range) gets that chunk's ground or cells served: a wanted chunk no mover holds stays queued
+// until one does, whatever else loads it. Neither mesh is ever rebuilt, and nothing leaves either
+// except what leaves the world (a placed obstacle removed, a wall or door taken down, water
 // re-derived): no unload, cap or trim. Each update() gathers patches in a fixed order, under per-tick
 // count and vertex budgets (never a time budget, so which tick a ring enters doesn't depend on frame
 // time):
 //  1. Removed placed obstacles (PlacementExecutor::takeRemovals) are queued for removal.
 //  2. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
-//  3. Ground: the chunks of the wanted cells, whole, in the order they became wanted, one patch per
-//     chunk per mesh: open chunks share a tick up to kGroundVerticesPerTick ring vertices, a chunk
-//     with water goes alone. A chunk whose terrain changes while loaded has its water re-derived. A
-//     chunk that unloads keeps its ground and its detail, and reloading it patches nothing.
-//  4. Detail: wanted cells in the order they became wanted (a cell whose chunk has no ground or
-//     placement yet waits for it), each scanned once for colliders; up to kDetailRemovalsPerTick
-//     removals and kDetailRingsPerTick adds in kDetailCellsPerTick cells, one patch per cell.
+//  3. Ground: the chunks of the wanted cells, whole, one patch per chunk per mesh: first the chunks
+//     of the cells round each mover that entered a new cell, then the rest in the order they became
+//     wanted. Open chunks share a tick up to kGroundVerticesPerTick ring vertices, a chunk with water
+//     goes alone. A chunk whose terrain changes while loaded has its water re-derived. A chunk that
+//     unloads keeps its ground and its detail, and reloading it patches nothing.
+//  4. Detail: each wanted cell scanned once for colliders, first the cell a mover entered and the
+//     eight touching it, then the rest in the order they became wanted (a cell whose chunk has no
+//     ground or placement yet, or no mover holding it, waits); up to kDetailRemovalsPerTick removals
+//     and kDetailRingsPerTick adds in kDetailCellsPerTick cells, one patch per cell.
 // endTick() hands the tick's patches to two worker threads, one per mesh, after every system has
 // run; each also refreshes its widths or rebuilds its forests. The next update() or the first
 // query waits for them, so a query always sees exactly the patches gathered through the previous
@@ -250,12 +255,11 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] const RouteStats& routeStats() const { return routeStatsTotal; }
 
 	// What a colonist can reach, and how far it walks there: a walk on the structural mesh (no
-	// detail, so the camera changes nothing) under the colonist's belief, over all meshed ground,
-	// bounded by the walk asked about. reachFrom notes the start once; reaches() and walk() walk to
-	// one goal each.
+	// placed obstacles) under the colonist's belief, over all meshed ground, bounded by the walk asked
+	// about. reachFrom notes the start once; reaches() and walk() walk to one goal each.
 	//   A start off meshed ground: every goal "maybe" (true; the straight line).
-	//   A goal off meshed ground: "maybe" while its chunk is loaded (its ground is on the way, and a
-	//   route to it waits for it), unreachable otherwise.
+	//   A goal off meshed ground: "maybe" while a mover wants its chunk (its ground is queued), and
+	//   unreachable otherwise.
 	//   Otherwise three answers: a length, "no", or far. A search from the goal toward the start
 	//   (kReachProbeExpansions) answers first: a goal sealed in a pocket runs it dry at once, a definite
 	//   no, and one that finds the start has the walk. Only then the search from the start
@@ -288,8 +292,7 @@ class NavigationSystem : public ISystem {
 	// (SourceReachMemo).
 	[[nodiscard]] bool sharesStartRegion(const Reach& reach, glm::vec2 goalMeters) const;
 	// The stamp behind a route that failed at `anchor`: the structural content (walls, doors, water)
-	// of the chunks within twice the anchor load range of it. Ground arriving or leaving doesn't move
-	// it, so nothing the camera loads or drops does.
+	// of the chunks within twice the anchor load range of it. Ground arriving doesn't move it.
 	[[nodiscard]] std::uint64_t verdictStamp(glm::vec2 anchor) const;
 	// The structural content of the chunks in the box spanning `from` and `to`, grown by the anchor
 	// load range for a route that bends out of it: what a failed route to a far target was true for.
@@ -440,6 +443,10 @@ class NavigationSystem : public ISystem {
 	// pushes out of a placed obstacle only then, so the forward snap has had its turn first and the
 	// push and the mesh never disagree about it. Read between update() and endTick().
 	[[nodiscard]] bool placedObstacleInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const;
+	// The forward snap found `mover` standing in a placed obstacle in the mesh this tick and left it
+	// there (nothing clear ahead): it is the snap's, and collision does not push it. Read between
+	// update() and endTick().
+	[[nodiscard]] bool snapHolds(EntityID mover) const;
 
 	// True once any ground is meshed.
 	[[nodiscard]] bool hasMesh() const;
@@ -657,11 +664,18 @@ class NavigationSystem : public ISystem {
 	// The chunks the anchors hold this tick (within each one's load range).
 	void				collectAnchors();
 	// Takes the disc of every mover that has entered a new cell or changed its R since the last
-	// gather: one compare a mover otherwise.
+	// gather, and puts that cell and the eight touching it ahead of the rest: one compare a mover
+	// otherwise.
 	void trackMovers();
-	// Wants every cell the disc meets that isn't wanted yet, and its chunk's ground.
-	void wantDisc(glm::vec2 centerMeters, float rangeMeters);
-	[[nodiscard]] bool				anchorHolds(world::ChunkCoordinate coord) const;
+	// Wants every cell within `rangeMeters` of cell `centre` (nearest gap between the two squares)
+	// that isn't wanted yet, nearest first, and its chunk's ground.
+	void wantDisc(std::int64_t centre, float rangeMeters);
+	// The cell and the eight touching it, those still to scan, go ahead of the first-in-first-out
+	// queue, and so does the ground of their chunks.
+	void wantNear(std::int64_t centre);
+	// The cell's chunk has its ground and placement and a mover holds it: it can be scanned now.
+	[[nodiscard]] bool cellServable(std::int64_t cell) const;
+	[[nodiscard]] bool anchorHolds(world::ChunkCoordinate coord) const;
 	// A structural change in the chunks meeting [lo, hi] (metres). Every one moves generation() when
 	// an anchor holds one of those chunks, and one that closes ground leaves the routes it crosses
 	// stale (restampRoutes). A change of content (a wall, a door, a chunk's water) is counted against
@@ -719,9 +733,12 @@ class NavigationSystem : public ISystem {
 	static void				  note(RouteSet& routes, const std::vector<glm::vec2>& waypoints, bool in);
 	// Every mover (Position + AgentRadius) standing on a placed obstacle in the mesh moves forward
 	// along its route to the first point walkable in truth, never past a wall or water on the way;
-	// with none, it stays and its route goes stale. Without a route it steps out to the nearest spot
-	// within 4 m, ring by ring, where its disc is clear, the straight step there crosses no wall or
-	// water, and, while it has a velocity, the spot is not behind it; with none, it stays.
+	// with none, it stays, its route goes stale, and the snap holds it (snapHolds), so collision
+	// leaves it be and the next route starts where it stands. Without a route, or with one still stale
+	// from an earlier tick (no new route came), it steps out to the nearest spot within 4 m, ring by
+	// ring, where its disc is clear, the straight step there crosses no wall or water, and the spot is
+	// not behind its heading (the leg it steers along, else its velocity); with none, the snap holds
+	// it, and walking on (collision does not push it back) takes it out ahead.
 	void snapMovers();
 	void			   queueRemovedDetail();
 	// The chunk's placement is in and finished, so its cells can be scanned.
@@ -730,13 +747,15 @@ class NavigationSystem : public ISystem {
 	// Water re-derived for each loaded chunk whose terrain changed under its ground; a chunk that
 	// became ready since the last call (generated or reloaded) is taken as it is.
 	void rederiveChangedWater();
-	// The wanted chunks' ground, in the order they became wanted, within `vertexBudget`.
+	// The wanted chunks' ground a mover holds, those round movers that entered a new cell first, the
+	// rest in the order they became wanted, within `vertexBudget`.
 	void gatherGround(std::size_t vertexBudget);
 	// The landing's ground: every ready chunk meeting `within`, at once.
 	void gatherGroundWithin(const Rect& within);
 	void meshGround(world::ChunkCoordinate coord, std::vector<geometry::nav::NavInputPolygon> water, std::uint32_t terrainVersion);
 	[[nodiscard]] bool chunkGroundMeshed(world::ChunkCoordinate coord) const;
-	// Wanted cells whose chunk now has ground and placement move to readyCells.
+	// Wanted cells whose chunk now has ground and placement and a mover holding it move to nearReady
+	// or readyCells.
 	void			   releaseAwaitingCells();
 	[[nodiscard]] ScannedCell scanCell(std::int64_t cell) const;
 	void gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget);
@@ -766,11 +785,20 @@ class NavigationSystem : public ISystem {
 	std::unordered_set<world::ChunkCoordinate> wantedChunks;
 	// Wanted cells waiting for their chunk's ground and placement, by chunk, each in wanted order.
 	std::map<world::ChunkCoordinate, std::vector<std::int64_t>, ChunkLess> cellsAwaitingChunk;
-	// Wanted cells ready to scan, first in, first out, and the one being added.
+	// Wanted cells not scanned yet, and those of them round a mover (wantNear). A queue may hold a cell
+	// twice or after its scan; only a cell still in pendingCells is scanned.
+	std::unordered_set<std::int64_t> pendingCells;
+	std::unordered_set<std::int64_t> nearCells;
+	// Cells ready to scan, first in, first out: nearReady before readyCells. And the one being added.
+	std::deque<std::int64_t>   nearReady;
 	std::deque<std::int64_t>   readyCells;
 	std::optional<ScannedCell> addingCell;
+	// The chunks of nearCells whose ground isn't gathered, served ahead of groundQueue.
+	std::vector<world::ChunkCoordinate>		nearGround;
 	std::unordered_map<EntityID, MoverDisc> moverDiscs;
 	std::uint64_t							moverPass = 0;
+	// The movers snapMovers left standing in a placed obstacle this tick, sorted.
+	std::vector<EntityID> snapHeld;
 
 	// The patches gathered and not yet handed to the workers, and the ones they are running or
 	// have finished but not yet been collected.

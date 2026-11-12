@@ -718,16 +718,17 @@ TEST_F(NavigationSystemTest, NavQueryStatsPopulatedOnPath) {
 
 // --- Flora ---------------------------------------------------------------------
 
-// A mover meshes the 16 m cells its disc of radius R (sight plus kSightBufferMeters) meets, so a
-// longer sight distance meshes a larger disc. From (8, 8), R = 46 m reaches the cell [48, 64) and not
-// [64, 80); a sight of 70 m (R = 86 m) reaches [80, 96) and not [96, 112).
+// A mover meshes the 16 m cells within R (sight plus kSightBufferMeters) of the cell it stands in, so
+// a longer sight distance meshes a larger disc. From the cell [0, 16), R = 46 m reaches the cell
+// [48, 64) (a 32 m gap) and not [64, 80) (48 m); a sight of 70 m (R = 86 m) reaches [96, 112) (80 m)
+// and not [112, 128) (96 m).
 TEST_F(NavigationSystemTest, MoverWithLongerSightMeshesALargerDisc) {
 	ASSERT_EQ(kDefaultSightRadius + NavigationSystem::kSightBufferMeters, 46.0F);
 	registerTree("Test_NavSightTree", 0.4F);
 	const glm::vec2 inDefault{52.0F, 8.0F};
 	const glm::vec2 pastDefault{68.0F, 8.0F};
-	const glm::vec2 inLong{90.0F, 8.0F};
-	const glm::vec2 pastLong{100.0F, 8.0F};
+	const glm::vec2 inLong{104.0F, 8.0F};
+	const glm::vec2 pastLong{116.0F, 8.0F};
 
 	auto meshedWithSight = [&](float sight) {
 		PlacementExecutor					executor(AssetRegistry::Get());
@@ -1135,32 +1136,88 @@ TEST_F(NavigationSystemTest, CameraMoveWithNoMoverNearbyMeshesNothing) {
 	EXPECT_EQ(sys.generation(), generation);
 }
 
-// A chunk arriving next to meshed ground joins it: a path crosses the border.
+namespace {
+	// The camera's chunks and the anchors' together, loaded, as GameScene loads them each frame.
+	void loadFor(world::ChunkManager& chunks, const NavigationSystem& sys, glm::vec2 camera) {
+		std::vector<world::ChunkAnchor> anchors;
+		sys.appendAnchors(anchors);
+		chunks.update({camera.x, camera.y}, anchors);
+		chunks.finishPendingGeneration();
+	}
+} // namespace
+
+// A chunk arriving next to meshed ground joins it: a path crosses the border. The chunk comes because
+// a mover walked up to it, with the camera still.
 TEST_F(NavigationSystemTest, ArrivingChunkJoinsItsNeighbour) {
 	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
 	chunks->setLoadRadius(0);
 	chunks->setUnloadRadius(8);
-	chunks->update({256.0F, 256.0F});
-	chunks->finishPendingGeneration();
+	const glm::vec2 camera{256.0F, 256.0F};
 
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
 	sys.setConstructionWorld(&cw);
-	meshAround(world, {512.0F, 100.0F}, 30.0F); // wants (1, 0), which isn't loaded yet
+	const EntityID mover = meshAround(world, {300.0F, 100.0F}, 30.0F); // holds and wants (0, 0) only
+	loadFor(*chunks, sys, camera);
 	settle(sys);
 	const glm::vec2 west{500.0F, 100.0F};
 	const glm::vec2 east{530.0F, 100.0F};
 	ASSERT_TRUE(sys.inSimArea(west));
 	ASSERT_FALSE(sys.inSimArea(east));
+	ASSERT_EQ(chunks->getChunk({1, 0}), nullptr);
 	EXPECT_FALSE(sys.requestPath(west, east, kAgentRadius).route.has_value());
 
-	chunks->update({768.0F, 256.0F});
-	chunks->finishPendingGeneration();
+	world.getComponent<Position>(mover)->value = {512.0F, 100.0F};
+	step(world, sys); // wants (1, 0)
+	loadFor(*chunks, sys, camera);
 	settle(sys);
 	EXPECT_TRUE(sys.requestPath(west, east, kAgentRadius).route.has_value()) << "the path crosses x = 512 m";
 	EXPECT_TRUE(isReachable(sys, west, east, kAgentRadius));
+}
+
+// A wanted chunk whose mover left before it loaded is not meshed when only the camera loads it; it is
+// when a mover comes back for it.
+TEST_F(NavigationSystemTest, WantedChunkTheCameraLoadsWaitsForAMover) {
+	registerTree("Test_NavWaitingTree", 0.4F);
+	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
+	chunks->setLoadRadius(0);
+	chunks->setUnloadRadius(8);
+	chunks->update({256.0F, 256.0F});
+	chunks->finishPendingGeneration();
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						treeAt{525.0F, 100.0F}; // chunk (1, 0)
+	placeTrees(executor, processed, "Test_NavWaitingTree", {treeAt});
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(chunks.get());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	const EntityID mover = meshAround(world, {500.0F, 100.0F}, 30.0F); // wants (1, 0), which isn't loaded
+	settle(sys);
+	ASSERT_FALSE(sys.inSimArea({530.0F, 100.0F}));
+
+	world.getComponent<Position>(mover)->value = {100.0F, 100.0F}; // holds (0, 0) only
+	step(world, sys);
+	chunks->update({768.0F, 256.0F}); // the camera alone loads (1, 0)
+	chunks->finishPendingGeneration();
+	ASSERT_NE(chunks->getChunk({1, 0}), nullptr);
+	sys.resetNavQueryStats();
+	for (int i = 0; i < 4; ++i) {
+		step(world, sys);
+	}
+	settle(sys);
+	EXPECT_FALSE(sys.inSimArea({530.0F, 100.0F})) << "the camera meshed its ground";
+	EXPECT_EQ(sys.navQueryStats().navPatches, 0u) << "the camera patched the nav mesh";
+
+	world.getComponent<Position>(mover)->value = {500.0F, 100.0F};
+	settle(sys);
+	EXPECT_TRUE(sys.inSimArea({530.0F, 100.0F})) << "the mover came back and its ground came in";
+	EXPECT_FALSE(meshClear(sys, treeAt)) << "and the tree in it";
 }
 
 // A chunk that unloads keeps its ground and its placed obstacles: still meshed and routable round
@@ -1430,19 +1487,21 @@ TEST_F(NavigationSystemTest, ReachKeyMovesOncePerStructuralJob) {
 	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
 	chunks->setLoadRadius(0);
 	chunks->setUnloadRadius(8);
-	chunks->update({256.0F, 256.0F});
-	chunks->finishPendingGeneration();
+	const glm::vec2	  camera{256.0F, 256.0F};
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
 	sys.setConstructionWorld(&cw);
-	meshAround(world, {512.0F, 256.0F}, 300.0F); // wants (1, 0), which isn't loaded yet
+	const EntityID mover = meshAround(world, {256.0F, 256.0F}, 30.0F); // holds and wants (0, 0) only
+	loadFor(*chunks, sys, camera);
 	settle(sys);
+	ASSERT_FALSE(sys.inSimArea({768.0F, 256.0F}));
 	const std::uint64_t key = sys.reachFrom({256.0F, 256.0F}, kAgentRadius).structuralEpoch;
 
-	chunks->update({768.0F, 256.0F});
-	chunks->finishPendingGeneration();
+	// The mover walks into (1, 0), which loads round it.
+	world.getComponent<Position>(mover)->value = {768.0F, 256.0F};
+	loadFor(*chunks, sys, camera);
 	step(world, sys);
 	ASSERT_TRUE(sys.inSimArea({768.0F, 256.0F})) << "the new chunk came in";
 	const std::uint64_t grounded = sys.reachFrom({256.0F, 256.0F}, kAgentRadius).structuralEpoch;
@@ -2502,10 +2561,10 @@ TEST_F(NavigationSystemTest, OverlappingDiscsAddEachCellOnce) {
 	const glm::vec2 a{8.0F, 8.0F};
 	const glm::vec2 b{30.0F, 12.0F};
 	const float		r = kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
-	const auto		meets = [r](glm::vec2 centre, glm::vec2 tree) {
-		 const glm::vec2 lo{std::floor(tree.x / 16.0F) * 16.0F, std::floor(tree.y / 16.0F) * 16.0F};
-		 const glm::vec2 nearest = glm::clamp(centre, lo, lo + glm::vec2{16.0F});
-		 return glm::distance(centre, nearest) <= r;
+	// The gap between the mover's cell and the tree's, each axis.
+	const auto meets = [r](glm::vec2 centre, glm::vec2 tree) {
+		const auto gap = [](float a, float b) { return std::max(0.0F, std::abs(std::floor(a / 16.0F) - std::floor(b / 16.0F)) - 1.0F) * 16.0F; };
+		return std::hypot(gap(centre.x, tree.x), gap(centre.y, tree.y)) <= r;
 	};
 	const auto wantedCells = static_cast<std::uint64_t>(
 		std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return meets(a, t) || meets(b, t); }));
@@ -3143,14 +3202,14 @@ TEST_F(NavigationSystemTest, WaterInGroundThatIsntComingIsSkipped) {
 	EXPECT_NE(thirst->status, OptionStatus::Selected) << "no reachable source";
 }
 
-// Knowing that nearer water and a farther source on meshed ground, both in its reach square, the
-// colonist takes the farther.
+// Knowing nearer water in ground no mover wants (so it isn't coming) and a farther source on meshed
+// ground, the colonist takes the farther.
 TEST_F(NavigationSystemTest, FartherReachableWaterBeatsNearerWaterInGroundThatIsntComing) {
-	WalkRig rig({1500.0F, 0.0F});
+	WalkRig rig({1300.0F, 0.0F});
 	rig.start();
-	const glm::vec2 at{1530.0F, 10.0F};
-	const glm::vec2 gone{1560.0F, 10.0F};	// chunk (3, 0), beyond the loaded radius, 30 m off
-	const glm::vec2 meshed{1450.0F, 10.0F}; // chunk (2, 0), 80 m off
+	const glm::vec2 at{1450.0F, 10.0F};
+	const glm::vec2 gone{1540.0F, 10.0F};	// chunk (3, 0), beyond the loaded radius and every disc, 90 m off
+	const glm::vec2 meshed{1350.0F, 10.0F}; // chunk (2, 0), 100 m off
 	ASSERT_EQ(landChunks()->getChunk(world::worldToChunk({gone.x, gone.y})), nullptr);
 	ASSERT_TRUE(rig.nav.inSimArea(meshed));
 
@@ -4398,4 +4457,223 @@ TEST_F(NavigationSystemTest, RouteStressRunsRepeatExactly) {
 	for (int run = 0; run < 2; ++run) {
 		EXPECT_TRUE(stressRouteRun() == first) << "run " << run + 2;
 	}
+}
+
+// --- The snap and collision, one rule ------------------------------------------------------------
+
+// Nav's snap and the collision system run together on three movers: one on a route a tree lands on,
+// one whose route ends inside a tree (nothing clear ahead), one with no route and a velocity whose
+// tree lands on it. None ends a tick further back along its route or heading than it started it; the
+// one with nothing clear ahead stays, is held (collision doesn't push it), and steps out, not behind
+// its leg, once no new route has come.
+TEST_F(ForwardSnapTest, SnapAndCollisionNeverTakeAMoverBack) {
+	auto& collision = world.registerSystem<StaticRectCollisionSystem>();
+	collision.setPlacementData(&executor);
+	collision.setDetailSource(sys);
+	const glm::vec2 onRouteTree{-10.0F, 20.0F}; // chunk (-1, 0), placed now
+	const glm::vec2 movingTree{20.0F, -20.0F};	// chunk (0, -1), placed now
+	const EntityID	onRoute	  = routedColonist(world, onRouteTree + glm::vec2{-0.3F, 0.0F}, {{-14.0F, 20.0F}, {-6.0F, 20.0F}});
+	const EntityID	noneAhead = routedColonist(world, kTree + glm::vec2{-0.3F, 0.0F}, {{6.0F, 10.0F}, {9.9F, 10.0F}});
+	const EntityID	moving	  = routedColonist(world, movingTree + glm::vec2{-0.3F, 0.0F}, {});
+	world.addComponent<Velocity>(moving, Velocity{{2.0F, 0.0F}});
+	placeTrees(executor, processed, "Test_NavSnapTree", {onRouteTree, movingTree});
+
+	const std::array<EntityID, 3> movers{onRoute, noneAhead, moving};
+	std::array<float, 3>		  was{};
+	for (std::size_t k = 0; k < movers.size(); ++k) {
+		was[k] = world.getComponent<Position>(movers[k])->value.x; // every route and heading runs +x
+	}
+	const glm::vec2 stuckAt = world.getComponent<Position>(noneAhead)->value;
+	bool			held	= false;
+	for (int tick = 0; tick < 6; ++tick) {
+		step(world, *sys);
+		held = held || sys->snapHolds(noneAhead);
+		for (std::size_t k = 0; k < movers.size(); ++k) {
+			const float x = world.getComponent<Position>(movers[k])->value.x;
+			EXPECT_GE(x, was[k] - 1e-4F) << "mover " << k << " went back on tick " << tick;
+			was[k] = x;
+		}
+	}
+	ASSERT_FALSE(meshClear(*sys, onRouteTree)) << "the trees landed";
+	ASSERT_FALSE(meshClear(*sys, movingTree));
+	EXPECT_TRUE(held) << "the snap held the mover with nothing clear ahead";
+	EXPECT_EQ(world.getComponent<NavPath>(noneAhead)->builtNavVersion, NavigationSystem::kStaleRoute);
+	for (const EntityID mover : movers) {
+		EXPECT_TRUE(meshClear(*sys, world.getComponent<Position>(mover)->value)) << "still inside a tree";
+	}
+	EXPECT_LT(glm::distance(world.getComponent<Position>(noneAhead)->value, stuckAt), 1.5F) << "the nearest spot not behind it";
+}
+
+// --- What a mover wants, and in what order ---------------------------------------------------------
+
+// A mover's disc is measured from the cell it stands in, not from where it entered it: a mover that
+// entered its cell at one corner and stands at the opposite one has every placed obstacle within R of
+// where it stands meshed. Each corner of the cell in turn.
+TEST_F(NavigationSystemTest, DiscCoversRWhereverTheMoverStandsInItsCell) {
+	registerTree("Test_NavCornerTree", 0.3F);
+	const float					   r = kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
+	const glm::vec2				   lo{192.0F, 192.0F}; // the cell [192, 208) each way
+	const std::array<glm::vec2, 4> corners{glm::vec2{lo.x + 0.01F, lo.y + 0.01F}, glm::vec2{lo.x + 15.99F, lo.y + 0.01F},
+										   glm::vec2{lo.x + 15.99F, lo.y + 15.99F}, glm::vec2{lo.x + 0.01F, lo.y + 15.99F}};
+	for (std::size_t k = 0; k < corners.size(); ++k) {
+		const glm::vec2		   entered	= corners[k];
+		const glm::vec2		   standing = corners[(k + 2) % corners.size()];
+		std::vector<glm::vec2> trees; // round where it stands, 1 m inside R
+		for (int i = 0; i < 32; ++i) {
+			const float angle = 6.2831853F * static_cast<float>(i) / 32.0F;
+			trees.push_back(standing + (r - 1.0F) * glm::vec2{std::cos(angle), std::sin(angle)});
+		}
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		placeTrees(executor, processed, "Test_NavCornerTree", trees);
+		ConstructionWorld cw;
+		World			  world;
+		NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+		sys.setChunkManager(landChunks());
+		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
+		const EntityID mover = world.createEntity(); // R = 46 m
+		world.addComponent<Position>(mover, Position{entered});
+		world.addComponent<AgentRadius>(mover, AgentRadius{});
+		settle(sys);
+		world.getComponent<Position>(mover)->value = standing;
+		settle(sys);
+		for (const glm::vec2 t : trees) {
+			EXPECT_FALSE(meshClear(sys, t)) << "entered at corner " << k << ": the tree at (" << t.x << ", " << t.y << ")";
+		}
+	}
+}
+
+namespace {
+	// One tree 4 m off the middle of each cell within `out` cells of the cell holding `at`, row by row.
+	std::vector<glm::vec2> treePerCell(glm::vec2 at, int out) {
+		const glm::vec2		   middle{std::floor(at.x / 16.0F) * 16.0F + 8.0F, std::floor(at.y / 16.0F) * 16.0F + 8.0F};
+		std::vector<glm::vec2> trees;
+		for (int dy = -out; dy <= out; ++dy) {
+			for (int dx = -out; dx <= out; ++dx) {
+				trees.push_back(middle + glm::vec2{16.0F * static_cast<float>(dx) - 4.0F, 16.0F * static_cast<float>(dy) - 4.0F});
+			}
+		}
+		return trees;
+	}
+
+	// The tick each tree entered the nav mesh, ticking the world under its budgets; -1 for one that
+	// hadn't by `ticks`.
+	std::vector<int> landingTicks(World& world, NavigationSystem& sys, const std::vector<glm::vec2>& trees, int ticks) {
+		std::vector<int> at(trees.size(), -1);
+		for (int tick = 0; tick < ticks && std::count(at.begin(), at.end(), -1) > 0; ++tick) {
+			step(world, sys);
+			for (std::size_t k = 0; k < trees.size(); ++k) {
+				if (at[k] < 0 && !meshClear(sys, trees[k])) {
+					at[k] = tick;
+				}
+			}
+		}
+		return at;
+	}
+
+	// A plain mover (R = 46 m) appears at (200, 200) with a tree in every cell of its disc: the tick
+	// each lands, in treePerCell order (its own cell in the middle).
+	std::vector<int> spawnedMoverLandings() {
+		registerTree("Test_NavNearTree", 0.3F);
+		const glm::vec2						at{200.0F, 200.0F};
+		const std::vector<glm::vec2>		trees = treePerCell(at, 3);
+		PlacementExecutor					executor(AssetRegistry::Get());
+		std::unordered_set<ChunkCoordinate> processed;
+		placeTrees(executor, processed, "Test_NavNearTree", trees);
+		ConstructionWorld cw;
+		World			  world;
+		NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+		sys.setChunkManager(landChunks());
+		sys.setPlacementData(&executor, &processed);
+		sys.setConstructionWorld(&cw);
+		const EntityID mover = world.createEntity();
+		world.addComponent<Position>(mover, Position{at});
+		world.addComponent<AgentRadius>(mover, AgentRadius{});
+		return landingTicks(world, sys, trees, 200);
+	}
+} // namespace
+
+// A mover that appears has its own cell meshed first, then the eight touching it, then the rest of
+// its disc.
+TEST_F(NavigationSystemTest, SpawnedMoversOwnCellIsServedFirst) {
+	const std::vector<int> at	= spawnedMoverLandings();
+	constexpr std::size_t  kOwn = 24; // the middle of 7 x 7
+	ASSERT_EQ(std::count(at.begin(), at.end(), -1), 0) << "every tree landed";
+	int touching = 0;
+	int rest	 = std::numeric_limits<int>::max();
+	for (std::size_t k = 0; k < at.size(); ++k) {
+		EXPECT_LE(at[kOwn], at[k]) << "tree " << k << " before the mover's own cell";
+		const int dx = static_cast<int>(k % 7) - 3;
+		const int dy = static_cast<int>(k / 7) - 3;
+		if (std::abs(dx) <= 1 && std::abs(dy) <= 1) {
+			touching = std::max(touching, at[k]);
+		} else {
+			rest = std::min(rest, at[k]);
+		}
+	}
+	EXPECT_LE(touching, rest) << "a far cell before one touching the mover's";
+	EXPECT_LT(at[kOwn], rest);
+}
+
+// The same appearance twice lands every tree on the same tick.
+TEST_F(NavigationSystemTest, NearestFirstOrderRepeatsExactly) {
+	EXPECT_EQ(spawnedMoverLandings(), spawnedMoverLandings());
+}
+
+// An ordinary mover appears a tick after one with a very large R, inside its disc: the ordinary
+// mover's own cell and those touching it are meshed within a few ticks, not behind the large disc's
+// thousands of cells queued before them.
+TEST_F(NavigationSystemTest, LargeDiscDoesNotDelayANearbyMover) {
+	registerTree("Test_NavCrowdTree", 0.3F);
+	const glm::vec2						at{350.0F, 350.0F}; // 495 m out, behind some 700 of the large disc's cells in chunk (0, 0)
+	const std::vector<glm::vec2>		trees = treePerCell(at, 1);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavCrowdTree", trees);
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	const EntityID large = world.createEntity();
+	world.addComponent<Position>(large, Position{{0.0F, 0.0F}});
+	world.addComponent<AgentRadius>(large, AgentRadius{});
+	Memory memory;
+	memory.sightRadius = 500.0F; // R = 516 m, about 3,300 cells
+	world.addComponent<Memory>(large, std::move(memory));
+	step(world, sys); // the large disc is queued first
+	const EntityID ordinary = world.createEntity();
+	world.addComponent<Position>(ordinary, Position{at});
+	world.addComponent<AgentRadius>(ordinary, AgentRadius{});
+
+	const std::vector<int> landed = landingTicks(world, sys, trees, 40);
+	for (std::size_t k = 0; k < trees.size(); ++k) {
+		EXPECT_GE(landed[k], 0) << "tree " << k << " waited behind the large disc";
+		EXPECT_LE(landed[k], 12) << "tree " << k;
+	}
+}
+
+// --- Reach answers while ground arrives ------------------------------------------------------------
+
+// A goal off meshed ground is "maybe" only in a chunk a mover wants: loaded but wanted by nobody, it
+// is unreachable (nothing will mesh it); wanted but not loaded yet, it is "maybe".
+TEST_F(NavigationSystemTest, GoalOffMeshedGroundIsMaybeOnlyInAWantedChunk) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setConstructionWorld(&cw);
+	addColonist(world, {420.0F, 100.0F}, "West");  // wants chunk (0, 0) only
+	addColonist(world, {1500.0F, 100.0F}, "East"); // wants (2, 0) and (3, 0), past the loaded chunks
+	settle(sys);
+	const glm::vec2 loadedUnwanted{600.0F, 100.0F};
+	const glm::vec2 wantedUnloaded{1600.0F, 100.0F};
+	ASSERT_NE(landChunks()->getChunk(world::worldToChunk({loadedUnwanted.x, loadedUnwanted.y})), nullptr);
+	ASSERT_EQ(landChunks()->getChunk(world::worldToChunk({wantedUnloaded.x, wantedUnloaded.y})), nullptr);
+	ASSERT_FALSE(sys.inSimArea(loadedUnwanted));
+	ASSERT_FALSE(sys.inSimArea(wantedUnloaded));
+	EXPECT_FALSE(sys.walk(sys.reachFrom({420.0F, 100.0F}, kAgentRadius), loadedUnwanted).reachable());
+	EXPECT_TRUE(sys.walk(sys.reachFrom({1500.0F, 100.0F}, kAgentRadius), wantedUnloaded).reachable());
 }

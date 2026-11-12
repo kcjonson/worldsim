@@ -5,7 +5,6 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/NavPath.h"
-#include "../components/Task.h"
 #include "../components/Transform.h"
 
 #include "nav/NavCoords.h"
@@ -668,37 +667,75 @@ namespace ecs {
 			}
 			disc.cell		 = cell;
 			disc.rangeMeters = range;
-			wantDisc(position.value, range);
+			wantDisc(cell, range);
+			wantNear(cell);
 		}
 		std::erase_if(moverDiscs, [this](const auto& entry) { return entry.second.seen != moverPass; });
 	}
 
-	void NavigationSystem::wantDisc(glm::vec2 centerMeters, float rangeMeters) {
-		const geometry::Vec2i64 c = nav::toMm(centerMeters);
-		const std::int64_t		r = radiusMm(rangeMeters);
-		for (std::int64_t cy = geometry::floorDiv(c.y - r, kDetailCellMm); cy <= geometry::floorDiv(c.y + r, kDetailCellMm); ++cy) {
-			for (std::int64_t cx = geometry::floorDiv(c.x - r, kDetailCellMm); cx <= geometry::floorDiv(c.x + r, kDetailCellMm); ++cx) {
-				const std::int64_t dx = c.x - std::clamp(c.x, cx * kDetailCellMm, (cx + 1) * kDetailCellMm);
-				const std::int64_t dy = c.y - std::clamp(c.y, cy * kDetailCellMm, (cy + 1) * kDetailCellMm);
-				if (dx * dx + dy * dy > r * r) {
-					continue;
-				}
-				const std::int64_t cell = cellKey(cx, cy);
-				if (!wantedCells.insert(cell).second) {
-					continue;
-				}
-				const world::ChunkCoordinate chunk = cellChunk(cell);
-				if (wantedChunks.insert(chunk).second && !ground.contains(chunk)) {
-					groundQueue.push_back(chunk);
-				}
-				// Behind any of its chunk's cells still waiting, so a chunk's cells keep their order.
-				if (!cellsAwaitingChunk.contains(chunk) && chunkGroundMeshed(chunk) && placementReady(chunk)) {
-					readyCells.push_back(cell);
-				} else {
-					cellsAwaitingChunk[chunk].push_back(cell);
+	void NavigationSystem::wantDisc(std::int64_t centre, float rangeMeters) {
+		// Measured from the centre cell's square, not a point in it, so wherever the mover stands in
+		// that cell everything within R of it is in a wanted cell.
+		const std::int64_t r	 = radiusMm(rangeMeters);
+		const std::int64_t reach = r / kDetailCellMm + 1;
+		const std::int64_t ox	 = cellX(centre);
+		const std::int64_t oy	 = cellY(centre);
+		const auto		   gapMm = [](std::int64_t d) { return std::max<std::int64_t>(0, std::abs(d) - 1) * kDetailCellMm; };
+		struct Wanted {
+			std::int64_t gap2;
+			std::int64_t centre2;
+			std::int64_t dy;
+			std::int64_t dx;
+		};
+		std::vector<Wanted> fresh;
+		for (std::int64_t dy = -reach; dy <= reach; ++dy) {
+			for (std::int64_t dx = -reach; dx <= reach; ++dx) {
+				const std::int64_t gap2 = gapMm(dx) * gapMm(dx) + gapMm(dy) * gapMm(dy);
+				if (gap2 <= r * r && !wantedCells.contains(cellKey(ox + dx, oy + dy))) {
+					fresh.push_back({gap2, dx * dx + dy * dy, dy, dx});
 				}
 			}
 		}
+		std::sort(fresh.begin(), fresh.end(), [](const Wanted& a, const Wanted& b) {
+			return std::tie(a.gap2, a.centre2, a.dy, a.dx) < std::tie(b.gap2, b.centre2, b.dy, b.dx);
+		});
+		for (const Wanted& w : fresh) {
+			const std::int64_t cell = cellKey(ox + w.dx, oy + w.dy);
+			wantedCells.insert(cell);
+			pendingCells.insert(cell);
+			const world::ChunkCoordinate chunk = cellChunk(cell);
+			if (wantedChunks.insert(chunk).second && !ground.contains(chunk)) {
+				groundQueue.push_back(chunk);
+			}
+			// Behind any of its chunk's cells still waiting, so a chunk's cells keep their order.
+			if (!cellsAwaitingChunk.contains(chunk) && cellServable(cell)) {
+				readyCells.push_back(cell);
+			} else {
+				cellsAwaitingChunk[chunk].push_back(cell);
+			}
+		}
+	}
+
+	void NavigationSystem::wantNear(std::int64_t centre) {
+		static constexpr std::array<std::pair<std::int64_t, std::int64_t>, 9> kOwnThenTouching{
+			{{0, 0}, {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}}};
+		for (const auto [dx, dy] : kOwnThenTouching) {
+			const std::int64_t cell = cellKey(cellX(centre) + dx, cellY(centre) + dy);
+			if (!pendingCells.contains(cell) || !nearCells.insert(cell).second) {
+				continue;
+			}
+			// Not servable yet: it is popped back to its chunk's wait, which releases it to nearReady.
+			nearReady.push_back(cell);
+			const world::ChunkCoordinate chunk = cellChunk(cell);
+			if (!ground.contains(chunk) && std::find(nearGround.begin(), nearGround.end(), chunk) == nearGround.end()) {
+				nearGround.push_back(chunk);
+			}
+		}
+	}
+
+	bool NavigationSystem::cellServable(std::int64_t cell) const {
+		const world::ChunkCoordinate chunk = cellChunk(cell);
+		return chunkGroundMeshed(chunk) && placementReady(chunk) && anchorHolds(chunk);
 	}
 
 	bool NavigationSystem::anchorHolds(world::ChunkCoordinate coord) const {
@@ -748,8 +785,7 @@ namespace ecs {
 				return;
 			}
 			meshed = false;
-			// Every chunk the box meets is within the colonist's anchor load range, so its ground is
-			// on the way; one the chunk manager hasn't loaded either is noted once, in case it never is.
+			// One the chunk manager hasn't loaded either is noted once, in case it never is.
 			const bool loaded = chunkManager != nullptr && std::as_const(*chunkManager).getChunk(coord) != nullptr;
 			if (!loaded && unmeshedReported.insert(coord).second) {
 				LOG_DEBUG(Engine, "[Nav] reach box meets chunk (%d, %d), not loaded yet: its colonists read unsettled until it is", coord.x, coord.y);
@@ -1159,36 +1195,49 @@ namespace ecs {
 	void NavigationSystem::gatherGround(std::size_t vertexBudget) {
 		rederiveChangedWater();
 		// Open chunks share a tick until their vertices would pass the budget; a chunk with water
-		// is the costliest kind of job there is, so it goes alone. Chunks not ready yet keep their
-		// place in the queue. A budget of 0 (additions held) takes none.
+		// is the costliest kind of job there is, so it goes alone. Chunks not ready yet, or that no
+		// mover holds (whatever loaded them), keep their place in the queue. A budget of 0
+		// (additions held) takes none.
 		const bool	unlimited = vertexBudget == kUnlimited;
 		std::size_t taken	  = 0;
 		bool		full	  = vertexBudget == 0;
-		std::size_t kept	  = 0;
-		groundPending		  = 0;
-		for (const world::ChunkCoordinate coord : groundQueue) {
-			if (ground.contains(coord)) {
-				continue; // the landing meshed it
+		// True when it was meshed; `waiting` when it is held and ready but over the budget.
+		const auto serve = [&](world::ChunkCoordinate coord, bool& waiting) {
+			waiting					  = false;
+			const world::Chunk* chunk = anchorHolds(coord) ? chunkManager->getChunk(coord) : nullptr;
+			if (chunk == nullptr || !chunk->isReady()) {
+				return false;
 			}
-			const world::Chunk* chunk = chunkManager->getChunk(coord);
-			if (chunk == nullptr || !chunk->isReady() || full) {
-				groundPending += chunk != nullptr && chunk->isReady() ? 1 : 0;
-				groundQueue[kept++] = coord;
-				continue;
+			if (full) {
+				waiting = true;
+				return false;
 			}
 			std::vector<gnav::NavInputPolygon> water;
 			nav::appendChunkWater(chunk->terrainPolygons(), water);
 			const std::size_t cost = kSquareVertices + waterVertices(water);
 			if (taken > 0 && !unlimited && (!water.empty() || cost > vertexBudget)) {
-				full = true;
-				++groundPending;
-				groundQueue[kept++] = coord;
-				continue;
+				full	= true;
+				waiting = true;
+				return false;
 			}
 			vertexBudget -= std::min(cost, vertexBudget);
 			++taken;
 			full = !water.empty() && !unlimited;
 			meshGround(coord, std::move(water), chunk->terrainPolygons().version);
+			return true;
+		};
+		bool waiting = false;
+		std::erase_if(nearGround, [&](world::ChunkCoordinate coord) { return ground.contains(coord) || !anchorHolds(coord) || serve(coord, waiting); });
+		std::size_t kept = 0;
+		groundPending	 = 0;
+		for (const world::ChunkCoordinate coord : groundQueue) {
+			if (ground.contains(coord)) {
+				continue; // the landing or the near lane meshed it
+			}
+			if (!serve(coord, waiting)) {
+				groundPending += waiting ? 1 : 0;
+				groundQueue[kept++] = coord;
+			}
 		}
 		groundQueue.resize(kept);
 	}
@@ -1283,11 +1332,13 @@ namespace ecs {
 
 	void NavigationSystem::releaseAwaitingCells() {
 		for (auto it = cellsAwaitingChunk.begin(); it != cellsAwaitingChunk.end();) {
-			if (!chunkGroundMeshed(it->first) || !placementReady(it->first)) {
+			if (!chunkGroundMeshed(it->first) || !placementReady(it->first) || !anchorHolds(it->first)) {
 				++it;
 				continue;
 			}
-			readyCells.insert(readyCells.end(), it->second.begin(), it->second.end());
+			for (const std::int64_t cell : it->second) {
+				(nearCells.contains(cell) ? nearReady : readyCells).push_back(cell);
+			}
 			it = cellsAwaitingChunk.erase(it);
 		}
 	}
@@ -1341,25 +1392,43 @@ namespace ecs {
 		}
 		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
 
-		// Adds: the wanted cells first in, first out, one patch per cell a tick; a cell larger than
-		// what is left of the ring budget goes in over several ticks.
+		// Adds: the cells round movers first, then the wanted cells first in, first out, one patch per
+		// cell a tick; a cell larger than what is left of the ring budget goes in over several ticks.
+		// Only a scan counts against scanBudget: a cell already scanned is dropped, and one whose chunk
+		// unloaded or that no mover holds any more goes back to wait for its chunk.
+		const auto nextCell = [this]() -> std::optional<std::int64_t> {
+			for (std::deque<std::int64_t>* queue : {&nearReady, &readyCells}) {
+				while (!queue->empty()) {
+					const std::int64_t cell = queue->front();
+					queue->pop_front();
+					if (!pendingCells.contains(cell)) {
+						continue;
+					}
+					if (!cellServable(cell)) {
+						cellsAwaitingChunk[cellChunk(cell)].push_back(cell);
+						continue;
+					}
+					return cell;
+				}
+			}
+			return std::nullopt;
+		};
 		std::size_t rings = 0;
 		std::size_t cells = 0;
 		std::size_t scans = 0;
 		while (rings < addBudget && cells < cellBudget) {
 			if (!addingCell.has_value()) {
-				if (readyCells.empty() || scans == scanBudget) {
+				if (scans == scanBudget) {
 					break;
 				}
-				const std::int64_t cell = readyCells.front();
-				readyCells.pop_front();
-				++scans;
-				// Its chunk unloaded since the cell was ready: it waits for the chunk's placement again.
-				if (!placementReady(cellChunk(cell))) {
-					cellsAwaitingChunk[cellChunk(cell)].push_back(cell);
-					continue;
+				const std::optional<std::int64_t> cell = nextCell();
+				if (!cell.has_value()) {
+					break;
 				}
-				addingCell = scanCell(cell);
+				++scans;
+				pendingCells.erase(*cell);
+				nearCells.erase(*cell);
+				addingCell = scanCell(*cell);
 			}
 			ScannedCell&	  adding = *addingCell;
 			const std::size_t take	 = std::min(adding.rings.size() - adding.next, addBudget - rings);
@@ -1589,7 +1658,13 @@ namespace ecs {
 					 entity.defName});
 	}
 
+	bool NavigationSystem::snapHolds(EntityID mover) const {
+		return std::binary_search(snapHeld.begin(), snapHeld.end(), mover);
+	}
+
 	void NavigationSystem::snapMovers() {
+		const std::vector<EntityID> heldBefore = std::move(snapHeld);
+		snapHeld.clear();
 		if (world == nullptr || detailMesh.liveTriangleCount() == 0) {
 			return;
 		}
@@ -1639,15 +1714,24 @@ namespace ecs {
 
 			// With a route: forward along what remains of it only, from where it stands to the
 			// waypoint it is steering for, then on through the rest. Points behind it are never
-			// candidates; with none ahead it stays put and its route goes stale, so the AI replans.
-			if (path == nullptr || path->done()) {
+			// candidates; with none ahead it stays put and its route goes stale, so the AI replans
+			// from where it stands. Held last tick and its route still stale (no new one came), it has
+			// no route.
+			const bool stuck  = path != nullptr && path->builtNavVersion == kStaleRoute && std::binary_search(heldBefore.begin(), heldBefore.end(), entity);
+			const bool routed = path != nullptr && !path->done() && !stuck;
+			if (!routed) {
 				// Without a route: the nearest point, out in rings of the snap step, that the route case
 				// would take: walkable in truth with its clearance, reached in a straight line that
-				// crosses no wall or water, so it stays on its own side of a wall. A mover still moving
-				// (a heading with no route) is never taken behind it.
-				const Velocity* velocity = world->getComponent<Velocity>(entity);
-				const glm::vec2 heading	 = velocity != nullptr ? velocity->value : glm::vec2{0.0F, 0.0F};
-				const auto		reachable = [&](glm::vec2 to) {
+				// crosses no wall or water, so it stays on its own side of a wall. Never behind its
+				// heading: the leg of a stale route it steers along, else its velocity.
+				glm::vec2 heading{0.0F, 0.0F};
+				if (path != nullptr && !path->done()) {
+					const glm::vec2 to = path->waypoints[path->current];
+					heading			   = to - (path->current > 0 ? path->waypoints[path->current - 1] : position.value);
+				} else if (const Velocity* velocity = world->getComponent<Velocity>(entity); velocity != nullptr) {
+					heading = velocity->value;
+				}
+				const auto reachable = [&](glm::vec2 to) {
 					if (glm::dot(to - position.value, heading) < 0.0F) {
 						return false;
 					}
@@ -1672,6 +1756,9 @@ namespace ecs {
 						}
 					}
 				}
+				if (!snapped) {
+					snapHeld.push_back(entity);
+				}
 				continue;
 			}
 			bool	  moved	  = false;
@@ -1695,8 +1782,10 @@ namespace ecs {
 			}
 			if (!moved) {
 				path->builtNavVersion = kStaleRoute;
+				snapHeld.push_back(entity);
 			}
 		}
+		std::sort(snapHeld.begin(), snapHeld.end());
 	}
 
 	// --- Landing -------------------------------------------------------------------
@@ -1802,7 +1891,7 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !readyCells.empty() || addingCell.has_value() || !detailRemovals.empty() || !gatheredNav.empty() ||
+		return groundPending > 0 || !nearReady.empty() || !readyCells.empty() || addingCell.has_value() || !detailRemovals.empty() || !gatheredNav.empty() ||
 			   !gatheredStructural.empty();
 	}
 
@@ -1971,8 +2060,7 @@ namespace ecs {
 		} else {
 			// Detail only makes the nav search's corridors finer and its walk dearer, so it needs some
 			// multiple of the structural search's expansions. Past that it is lost in priced ground, and
-			// the route is the structural walk itself, through the detail at its price, as it would be off
-			// camera: so a route exists on camera exactly when it does off it.
+			// the route is the structural walk itself, through the detail at its price.
 			const std::uint32_t cap = navExpansionCap(structuralAnswer.walkExpansions);
 			result					= gnav::pathThrough(detailMesh.view(), startMm, goalMm, radius, pricedFor(belief), {.maxExpansions = cap});
 			counted(result);
@@ -2104,8 +2192,8 @@ namespace ecs {
 			return std::optional<float>(straight); // can't prove anything from off the ground
 		}
 		if (structural.locate(goal) < 0) {
-			// Off meshed ground: maybe, while its ground is on the way.
-			const bool coming = chunkManager == nullptr || std::as_const(*chunkManager).getChunk(world::worldToChunk({goalMeters.x, goalMeters.y})) != nullptr;
+			// Off meshed ground: maybe, while a mover wants its chunk, so its ground is queued.
+			const bool coming = wantedChunks.contains(world::worldToChunk({goalMeters.x, goalMeters.y}));
 			return coming && straight <= maxWalk ? std::optional<float>(straight) : std::nullopt;
 		}
 		const StructuralWalk found = structuralWalk(reach.startMm, goal, reach.radiusMm, reach.belief,

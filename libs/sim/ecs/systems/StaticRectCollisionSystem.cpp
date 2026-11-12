@@ -88,6 +88,9 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 			if (const NavPath* path = world->getComponent<NavPath>(entity); path != nullptr && !path->done() && detail->routeCrossesPricedFaces(*path)) {
 				continue; // walking through detail on purpose, at its price
 			}
+			if (detail->snapHolds(entity)) {
+				continue;
+			}
 
 			// --- Gather the nearby rects locally (position tiles == meters) ---
 			rects.clear();
