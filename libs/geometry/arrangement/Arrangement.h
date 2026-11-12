@@ -49,12 +49,16 @@ namespace geometry {
 		std::vector<ArrangementEdge> edges;
 	};
 
-	// Build the arrangement from a batch of segments. Zero-length inputs (a == b)
-	// are rejected and ignored. Resolution iterates splits through the exact
-	// intersection pipeline until stable, so rounded crossing points that land on
-	// a third segment, or two crossings that round together, are absorbed before
-	// the result is returned.
-	Arrangement buildArrangement(const std::vector<InputSegment>& segments);
+	// Build the arrangement from a batch of segments and point sites. Zero-length
+	// segments (a == b) are rejected and ignored. Resolution iterates splits through
+	// the exact intersection pipeline until stable, so rounded crossing points that
+	// land on a third segment, or two crossings that round together, are absorbed
+	// before the result is returned.
+	//
+	// Every point site is a vertex of the result: one on a segment's interior splits
+	// it there, one on an existing vertex adds nothing, and one in open space is a
+	// vertex no edge touches. Points do not move rounded crossings.
+	Arrangement buildArrangement(const std::vector<InputSegment>& segments, const std::vector<Vec2i64>& points = {});
 
 	// Working storage buildArrangement keeps between calls.
 	class ArrangementWorkspace {
@@ -73,6 +77,7 @@ namespace geometry {
 
 	// The same arrangement, written into out and built in the workspace, both reused so
 	// a caller that builds many allocates little.
-	void buildArrangement(const std::vector<InputSegment>& segments, ArrangementWorkspace& workspace, Arrangement& out);
+	void buildArrangement(const std::vector<InputSegment>& segments, ArrangementWorkspace& workspace, Arrangement& out,
+						  const std::vector<Vec2i64>& points = {});
 
 } // namespace geometry

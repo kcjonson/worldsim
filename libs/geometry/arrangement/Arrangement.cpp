@@ -212,14 +212,15 @@ namespace geometry {
 	ArrangementWorkspace::ArrangementWorkspace(ArrangementWorkspace&& other) noexcept			  = default;
 	ArrangementWorkspace& ArrangementWorkspace::operator=(ArrangementWorkspace&& other) noexcept = default;
 
-	Arrangement buildArrangement(const std::vector<InputSegment>& segments) {
+	Arrangement buildArrangement(const std::vector<InputSegment>& segments, const std::vector<Vec2i64>& points) {
 		ArrangementWorkspace workspace;
 		Arrangement			 out;
-		buildArrangement(segments, workspace, out);
+		buildArrangement(segments, workspace, out, points);
 		return out;
 	}
 
-	void buildArrangement(const std::vector<InputSegment>& segments, ArrangementWorkspace& workspace, Arrangement& out) {
+	void buildArrangement(const std::vector<InputSegment>& segments, ArrangementWorkspace& workspace, Arrangement& out,
+						  const std::vector<Vec2i64>& points) {
 		ArrangementWorkspace::Storage& ws	= workspace.storage();
 		std::vector<WorkSegment>&	   work = ws.work;
 		work.clear();
@@ -250,8 +251,12 @@ namespace geometry {
 			for (const WorkSegment& s : work) {
 				boxes.push_back(boxOf(s));
 			}
+			// Point sites share the grid as boxes of one point, indexed after the segments.
+			for (const Vec2i64& p : points) {
+				boxes.push_back({p, p});
+			}
 			buildSegmentGrid(boxes, grid, ws.fill);
-			lastSeen.assign(work.size(), SIZE_MAX);
+			lastSeen.assign(boxes.size(), SIZE_MAX);
 
 			for (std::size_t i = 0; i < work.size(); ++i) {
 				const WorkSegment& s = work[i];
@@ -267,7 +272,12 @@ namespace geometry {
 								continue;
 							}
 							lastSeen[j] = i;
-							if (boxesOverlap(boxes[i], boxes[j])) {
+							if (j >= work.size()) {
+								const Vec2i64& p = points[j - work.size()];
+								if (strictlyInterior(p, s.a, s.b)) {
+									cuts.push_back(p);
+								}
+							} else if (boxesOverlap(boxes[i], boxes[j])) {
 								interiorSplitPoints(s, work[j], cuts);
 							}
 						}
@@ -314,6 +324,7 @@ namespace geometry {
 			out.vertices.push_back(s.a);
 			out.vertices.push_back(s.b);
 		}
+		out.vertices.insert(out.vertices.end(), points.begin(), points.end());
 		std::sort(out.vertices.begin(), out.vertices.end());
 		out.vertices.erase(std::unique(out.vertices.begin(), out.vertices.end()), out.vertices.end());
 		auto indexOf = [&](const Vec2i64& p) {
