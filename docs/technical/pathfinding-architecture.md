@@ -44,7 +44,7 @@ Four resolutions, from planet to footstep. An agent uses the coarsest tier that 
 
 ```
 Tier 0  GLOBAL      planet hex graph (already in RAM)     abstract parties, hours of travel
-Tier 1  REGIONAL    chunk connectivity components          reachability, coarse routes, loaded-but-far movement
+Tier 1  REGIONAL    geography mesh: chunk connectivity components         reachability, coarse routes, loaded-but-far movement
 Tier 2  LOCAL       dynamic CDT navmesh per chunk          exact paths around buildings, through doors
 Tier 3  MOVEMENT    collision circles + velocity steering  agents take up space, doorway congestion
 ```
@@ -56,6 +56,8 @@ This is the "pathfinding resolution" intuition formalized, with one correction b
 A raid party crossing the globe is **a record, not entities**: `{ members, position (hex + progress), route, speed }`. Route = A* over `SphereGrid::neighbors()` with edge costs from per-hex data already resident (ocean impassable, mountains/biomes weighted). Advance on a coarse clock tick using the shared game clock (Dwarf Fortress moves armies every 100 ticks; same shape). No geometry, no nav data, no ECS entities. Arrival times survive fast-forward and chunk churn because the clock is the world clock.
 
 ### Tier 1 — Regional: chunk connectivity components
+
+Tier 1 is the geography mesh, also called the regional mesh. It is much less detailed than the real mesh (the nav mesh, Tier 2). The real mesh is a detail view of it, as game tiles are a detail view of world tiles. The two must be aligned; one is derived from the other and then filled in (rule 38 of [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md)).
 
 Per loaded chunk: walkable **connected components** with only perimeter connectivity stored, linked to neighbor chunks (the Factorio FFF-317 abstraction, which transfers directly to vector chunks; components fall out of the Tier 2 triangulation's faces nearly free). Components carry an ID per traversal class (collision radius × door permissions). Uses:
 
@@ -101,10 +103,13 @@ grows: meshed ground never leaves it, and a chunk unloading does nothing to it. 
 it, and nav routes any place to any place. How reach is answered on one mesh, and the search
 budgets, are open there (rule 36).
 
-The geography mesh (also called the regional mesh) is planned separately and not built. It is
-much less detailed than the real mesh, and the real mesh is a detail view of it, as game tiles
-are a detail view of world tiles. The two must be aligned; one is derived from the other and
-then filled in (rule 38). It is not the removed coarse layer.
+The geography mesh (also called the regional mesh) is Tier 1 above. Built today is only the
+reachability layer computed over the real mesh's triangles (`buildReachabilityForests` in
+`libs/geometry/nav/NavMesh.h`); a separate, much less detailed mesh that the real mesh is a
+detail view of does not exist yet. It is much less detailed than the real mesh, and the real
+mesh is a detail view of it, as game tiles are a detail view of world tiles. The two must be
+aligned; one is derived from the other and then filled in (rule 38). It is not the removed
+coarse layer.
 
 As built, the code departs from that in four places, listed in that spec's section 1.1: the
 camera loads chunks whose ground is meshed and is the only thing that brings placed obstacles in,
@@ -237,7 +242,7 @@ Believed reachability is optimistic by construction (unknown walls don't partiti
 
 ### Hard dependency: vision occlusion
 
-Belief is only as honest as vision. VisionSystem today is a radius query that sees through walls; under that model a raider strolling past the base learns the entire interior through the stone, and door discovery is trivial. Wall-occluded line of sight ships with belief filtering in P4, built on the same geometry substrate — specified in full in [Vision Architecture](./vision-architecture.md) (visibility polygons over the shared GeometryIndex, which also yields the fog of war). Two consequences worth designing on purpose: **windows pass sight while blocking movement** (window placement becomes a real security tradeoff, and interiors can be scouted through them), and **player-placed blueprints stay broadcast** (the memory design's existing decision — player directives are known to all colonists — so builders never have to "discover" their own work orders).
+Belief is only as honest as vision. VisionSystem today is a radius query that sees through walls; under that model a raider strolling past the base learns the entire interior through the stone, and door discovery is trivial. Wall-occluded line of sight ships with belief filtering in P4, built on the same geometry substrate — specified in full in [Vision Architecture](./vision-architecture.md) (visibility polygons over the shared GeometryIndex, which also yields the unexplored area). Two consequences worth designing on purpose: **windows pass sight while blocking movement** (window placement becomes a real security tradeoff, and interiors can be scouted through them), and **player-placed blueprints stay broadcast** (the memory design's existing decision — player directives are known to all colonists — so builders never have to "discover" their own work orders).
 
 ### Search behaviors
 
