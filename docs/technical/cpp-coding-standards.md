@@ -554,12 +554,7 @@ public:
 
 ### System Update Order
 
-Systems update in fixed order each frame:
-1. Input systems
-2. AI/logic systems
-3. Physics systems
-4. Animation systems (if/when we have them)
-5. Rendering systems (query data, don't modify)
+`World::update` runs systems in ascending `priority()` order, whatever order they were registered in. Input is not an ECS system: the scene handles it before the ECS update. The game's order is time, vision, needs, nav, the goal systems, construction, rooms, AI, movement, physics, three collision passes, actions, and render-data collection last; actions run after physics and collision. [Main Loop Timing](./main-loop-timing.md) lists every system with its priority and what reads what it writes. Pick a new system's priority from that table, after the systems whose output it reads and before the ones that read it.
 
 ## Modern C++20 Features
 

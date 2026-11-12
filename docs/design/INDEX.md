@@ -102,7 +102,7 @@ Discrete player-facing features.
 
 | Document | Description |
 |----------|-------------|
-| [Competitive Analysis](./research/competitive-analysis.md) | Analysis of similar games |
+| [Competitive Analysis](../research/competitive-analysis.md) | Analysis of similar games |
 
 ---
 

@@ -92,7 +92,7 @@ namespace ecs {
 
 	void VisionSystem::update(float /*deltaTime*/) {
 		// Throttle: only run every N frames to reduce CPU overhead
-		// Colonists move ~2-3 tiles/second, so 12 updates/sec is plenty
+		// Colonists walk 2 m/s, so a pass every 5 frames (12 a second at 60 fps, 24 at 120) is plenty
 		m_frameCounter++;
 		if (m_frameCounter < m_updateInterval) {
 			return;

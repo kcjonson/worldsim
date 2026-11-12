@@ -20,16 +20,18 @@ From the game, not from the literature:
 6. **Plays well with the engine:** TimeSystem speed multipliers (up to 10x), determinism-friendly (multiplayer future), async-friendly (TaskPool exists), and the construction contract (walls publish exact band polygons, openings publish portals, shared clearance constant, nav version counter).
 7. **No omniscience.** The memory system is a core differentiator: an agent cannot path to, or through, what it has never seen ([Memory System](../design/game-systems/colonists/memory.md)). Navigation runs against the agent's *believed* world: unknown doors don't exist for them, unknown walls don't block their plans until seen, remembered things may be gone on arrival, and raiders know the colony exists, not its floor plan. Section 5 is the mechanism.
 
-## 2. Current State (Baseline)
+## 2. Baseline at writing (2026-06-12)
+
+The state when this doc was written, kept as the starting point the tiers were planned from. Rows that have changed since say so; the others still hold.
 
 | Area | Fact | Source |
 |------|------|--------|
-| Movement | Straight-line beeline to `MovementTarget`; no obstacles, no collision; a colonist will happily walk into an unloaded chunk and keep going | `libs/sim/ecs/systems/MovementSystem.cpp`, `PhysicsSystem.cpp` |
-| Agent geometry | No radius/footprint component exists anywhere | ECS components |
-| Chunk streaming | 512 m chunks, load radius 2 (5×5 around camera), unload radius 4, async generation, ~4 MB tile data per chunk; **camera-anchored only**, nothing keeps chunks loaded around colonists | `libs/world/world/chunk/ChunkManager.{h,cpp}` |
+| Movement | At writing: a straight-line beeline to `MovementTarget`, no obstacles, no collision. Since: routes from the nav mesh followed waypoint by waypoint, and agents pushed apart and out of walls and placed obstacles by the collision systems | `libs/sim/ecs/systems/MovementSystem.cpp`, `PhysicsSystem.cpp`, `CollisionSystem.cpp` |
+| Agent geometry | At writing: no radius or footprint component. Since: `AgentRadius` | ECS components |
+| Chunk streaming | 512 m chunks, load radius 2 (5×5 around camera), unload radius 4, async generation, ~4 MB tile data per chunk. At writing camera-anchored only. Since: anchors (every mover, the rest of every live route, every goal waiting for its ground; `NavigationSystem::appendAnchors`) load the chunks within 128 m of them and keep those within 256 m | `libs/world/world/chunk/ChunkManager.{h,cpp}` |
 | Terrain data | Per-tile `Surface` (Grass/Dirt/Water/Rock/...) in flat arrays per chunk; no passability or move-cost concept yet | `libs/world/world/chunk/Chunk.h` |
 | Planet graph | **The whole generated planet is resident in RAM.** `SphereGrid::neighbors(TileId)` gives hex adjacency; `PlanetSampler::sampleAt(x,y)` gives biome/elevation/water/containing-hex for any world position, loaded or not. Hex width ~4.3 km at n=256 (≈100 chunks per hex) | `libs/worldgen/worldgen/grid/SphereGrid.h`, `sampling/PlanetSampler.h` |
-| Simulation LOD | None. Every system updates every entity every frame regardless of distance | ECS systems |
+| Simulation LOD | None by distance: nothing runs less often for being far from the camera. Rates are per system, not per entity: vision every 5 frames, goal polls every 30 or 60 frames, AI decisions gated per colonist (an event, else every 0.5 s); [Main loop timing](./main-loop-timing.md) has the full list | ECS systems |
 | Spatial index | Grid hash for **placed** entities only (trees etc.), per chunk; dynamic entities have no spatial index | `libs/assets/assets/placement/SpatialIndex.h` |
 | Async | `TaskPool` (deterministic ParallelFor) + per-chunk async generation precedent | `libs/foundation/threading/TaskPool.h` |
 | SDF/raycast | msdfgen is fonts only; no LOS code anywhere (vision is radius-based) | `VisionSystem.cpp` |
@@ -246,7 +248,7 @@ The signature scenario through every tier:
 5. **Assault (Tiers 2 + 3).** Raiders request exact paths through their believed layout: triangle A*, corridor-width filtered for each body size, funneled through door portals. Door slot queues form the siege crush at the breach; collision circles make the crowd physical; a colonist holding the doorway is actually holding a doorway. Surprises mid-assault (an interior wall they didn't know, a corridor the player just sealed) hit the same discovery-replan loop as everyone else.
 6. **Rout (handoff, reversed).** Survivors fleeing past the boundary collapse back into a Tier 0 record and route home.
 
-The AI/pathfinding interface this implies is thin: `reachFrom(from, radius, belief)` once per start, then `reaches(reach, to)` per goal (Tier 1, a locate plus an O(log n) forest check), `requestPath(...)` (async via TaskPool, answered in a frame or two), `navVersion()` for replan triggers, and spatial target queries filtered by reachability. Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
+The AI/pathfinding interface this implies is thin: `reachFrom(from, radius, belief)` once per start, then `reaches(reach, to)` or `walk(reach, to)` per goal (a walk over the structural mesh, which the forest check rejects at once where it can; see [Nav mesh at variable resolution](./nav-mesh-variable-resolution.md)), `requestPath(...)` (a synchronous search on the main thread, answered in the call), `generation()` for replan triggers, and spatial target queries filtered by reachability. Squad coordination lives in the AI on top of area assignment; pathfinding stays a service.
 
 ## 7. Phasing
 
@@ -268,7 +270,7 @@ Each phase lands independently testable and useful.
 
 1. **CDT robustness is the long pole.** Every implementer says so. Mitigations: shared integer-coordinate substrate with construction, constrained inputs (editor invariants, simplified terrain contours), exhaustive geometry tests, and a time-accelerated smoke-test rig before any content depends on it.
 2. **Velocity-obstacle deadlocks at doorways** are documented failure modes, not surprises. Mitigations adopted up front (substepping, cornering planes, door queues); FFF-316 same-faction relaxation pre-approved as the fallback.
-3. **Camera-only chunk loading** is a correctness hole today (colonists can walk into the void) and pathfinding makes it load-bearing. Chunk anchoring (settlement + active agents) is small but touches ChunkManager policy; schedule it with P2.
+3. **Camera-only chunk loading** was a correctness hole (colonists could walk into the void) that pathfinding made load-bearing. Resolved by chunk anchoring: movers, their live routes and their waiting goals keep the chunks around them loaded (`ChunkManager::update` with `NavigationSystem::appendAnchors`).
 4. **Off-screen simulation LOD is bigger than pathfinding.** Needs/AI/vision currently tick for every entity everywhere. Tier 0 sidesteps it for raids (records, not entities), but a general entity-simulation LOD (and the restraint lesson from Kenshi: don't over-simulate the far world) deserves its own future spec.
 5. **Time-scale interactions.** 10x game speed multiplies avoidance substeps and replan rates; budget Tier 3 for worst-case speed, or clamp avoidance fidelity at high speeds (movement correctness over crowd aesthetics when fast-forwarding).
 6. **Memory/perf envelopes** for per-chunk meshes and component graphs need numbers during P2/P3; the perf tooling from the render overhaul applies.
