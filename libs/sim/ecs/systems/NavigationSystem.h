@@ -47,7 +47,7 @@
 // from every mover wait; ground, the cells round movers, removals from the world, walls, doors, and
 // re-derived water never do.
 //
-// A placed obstacle in the mesh blocks routes: the route search is given no prices. It keeps its
+// A placed obstacle in the mesh blocks routes. It keeps its
 // interior triangles, so a mover standing in one reads on a placed-obstacle face (isOnMesh), which
 // the forward snap moves it out of. Placement, spawning, drops and construction treat a placed
 // obstacle in the mesh as blocked (isValidPosition and the walkers built on it). Position checks read

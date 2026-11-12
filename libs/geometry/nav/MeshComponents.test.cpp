@@ -189,6 +189,12 @@ namespace {
 	// move frees one.
 	bool wayOpened(const Snapshot& before, const std::vector<std::int32_t>& beforeFlood, const Snapshot& now, const PatchableMesh& after,
 				   const std::vector<std::int32_t>& afterFlood, const PatchReport& report) {
+		std::vector<std::int32_t> freed;
+		for (const ChangedTriangle& c : report.changes) {
+			if ((c.why & kTriangleFreed) != 0) {
+				freed.push_back(c.id);
+			}
+		}
 		std::map<std::int32_t, std::int32_t> wasOf; // after component -> a before component in it
 		auto joins = [&](std::int32_t at, std::int32_t was) {
 			if (at < 0 || afterFlood[static_cast<std::size_t>(at)] < 0) {
@@ -202,7 +208,7 @@ namespace {
 			if (was < 0) {
 				continue;
 			}
-			if (!std::binary_search(report.freedTriangles.begin(), report.freedTriangles.end(), t)) {
+			if (!std::binary_search(freed.begin(), freed.end(), t)) {
 				if (joins(t, was)) {
 					return true;
 				}
@@ -216,7 +222,7 @@ namespace {
 		constexpr std::int64_t									kCell = 20 * kUnit;
 		std::map<std::pair<std::int64_t, std::int64_t>, std::vector<std::int32_t>> cells;
 		auto cellOf = [](std::int64_t v) { return v >= 0 ? v / kCell : -((-v + kCell - 1) / kCell); };
-		for (const std::int32_t t : report.freedTriangles) {
+		for (const std::int32_t t : freed) {
 			if (static_cast<std::size_t>(t) >= before.tris.size() || before.live[static_cast<std::size_t>(t)] == 0) {
 				continue; // a triangle this patch made, then flipped
 			}
@@ -294,7 +300,7 @@ namespace {
 		std::size_t		  next = 0;
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
 			const std::size_t i		  = static_cast<std::size_t>(t);
-			const bool		  changed = tris[i].edgePairWidthMm != patched.tris[i].edgePairWidthMm || tris[i].structuralWidthMm != patched.tris[i].structuralWidthMm;
+			const bool		  changed = tris[i].edgePairWidthMm != patched.tris[i].edgePairWidthMm;
 			const bool		  listed  = next < refresh.changes.size() && refresh.changes[next].id == t;
 			if (changed != listed) {
 				return ::testing::AssertionFailure() << "triangle " << t << (changed ? "'s widths changed but are not reported" : " is reported with no width change");

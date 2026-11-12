@@ -15,7 +15,7 @@
 //     state and may be called while a slice runs;
 //   - notePatches, admit, searchSpansTicks, lastSlice, and slices read or write what the
 //     slice does and must not be called while one runs;
-//   - nothing may write the mesh (patch, refreshWidths, rebuildForests, door edits) while a
+//   - nothing may write the mesh (patch, refreshWidths, door edits) while a
 //     slice runs or between an admit and the slice after it, and every report from a write
 //     must reach notePatches before the next admit;
 //   - one slice runs at a time, and the queue is driven from one main thread.

@@ -386,6 +386,17 @@ namespace {
 		return ring;
 	}
 
+	// The ids a report lists with `why`, ascending.
+	std::vector<std::int32_t> idsWith(const PatchReport& report, std::uint8_t why) {
+		std::vector<std::int32_t> out;
+		for (const ChangedTriangle& c : report.changes) {
+			if ((c.why & why) != 0) {
+				out.push_back(c.id);
+			}
+		}
+		return out;
+	}
+
 	// Applies a patch to the mesh and the model together. The model takes each ring as
 	// registered, so a split bounds outline is what the from-scratch build sees too.
 	struct Harness {
@@ -630,8 +641,8 @@ TEST(PatchableMesh, FirstBoundsMeshesAnEmptyMesh) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	EXPECT_EQ(h.mesh.liveTriangleCount(), 2);
-	EXPECT_EQ(h.last.newTriangles.size(), 2U);
-	EXPECT_TRUE(h.last.freedTriangles.empty());
+	EXPECT_EQ(idsWith(h.last, kTriangleCreated).size(), 2U);
+	EXPECT_TRUE(idsWith(h.last, kTriangleFreed).empty());
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
@@ -640,7 +651,7 @@ TEST(PatchableMesh, RingOffGroundTouchesNothing) {
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	h.add(blocked(rect(2000, 2000, 2100, 2100)));
 	EXPECT_EQ(h.mesh.liveTriangleCount(), 2);
-	EXPECT_TRUE(h.last.newTriangles.empty());
+	EXPECT_TRUE(idsWith(h.last, kTriangleCreated).empty());
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
@@ -697,8 +708,7 @@ TEST(PatchableMesh, CopiedMeshPatchesLikeTheOriginal) {
 		const PatchReport got = mesh->applyPatch(edits);
 		EXPECT_EQ(mesh->validate(), "");
 		EXPECT_EQ(got.added, expected.added);
-		EXPECT_EQ(got.freedTriangles, expected.freedTriangles);
-		EXPECT_EQ(got.newTriangles, expected.newTriangles);
+		EXPECT_EQ(got.changes, expected.changes);
 		EXPECT_EQ(mesh->vertices(), original.vertices());
 		ASSERT_EQ(mesh->triangles().size(), original.triangles().size());
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(original.triangles().size()); ++t) {
@@ -723,9 +733,9 @@ TEST(PatchableMesh, StableIdsOutsideTheHole) {
 		liveBefore.push_back(h.mesh.triangleLive(t) ? 1 : 0);
 	}
 	h.add(blocked(rect(50000, 80000, 51000, 81000)));
-	const PatchReport report = h.last;
+	const std::vector<std::int32_t> freed = idsWith(h.last, kTriangleFreed);
 	for (std::int32_t t = 0; t < static_cast<std::int32_t>(before.size()); ++t) {
-		const bool touched = std::binary_search(report.freedTriangles.begin(), report.freedTriangles.end(), t);
+		const bool touched = std::binary_search(freed.begin(), freed.end(), t);
 		if (liveBefore[static_cast<std::size_t>(t)] == 0 || touched) {
 			continue;
 		}
@@ -943,14 +953,14 @@ TEST(PatchableMesh, HoleSizesOnRealRings) {
 		}());
 		h.model[report.added.front()] = poly;
 		if (!kind.empty()) {
-			sizes[kind].freed.push_back(report.freedTriangles.size());
-			sizes[kind].created.push_back(report.newTriangles.size());
+			sizes[kind].freed.push_back(idsWith(report, kTriangleFreed).size());
+			sizes[kind].created.push_back(idsWith(report, kTriangleCreated).size());
 			sizes[kind].passes.push_back(report.passes);
 		}
 	}
 	h.add(blocked(rect(-63300, 30000, -62700, 30600)));
-	sizes["border"].freed.push_back(h.last.freedTriangles.size());
-	sizes["border"].created.push_back(h.last.newTriangles.size());
+	sizes["border"].freed.push_back(idsWith(h.last, kTriangleFreed).size());
+	sizes["border"].created.push_back(idsWith(h.last, kTriangleCreated).size());
 	sizes["border"].passes.push_back(h.last.passes);
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
 
@@ -1017,7 +1027,7 @@ namespace {
 	}
 
 	// A mesh that reached `rings` through a random sequence: batches in, some taken out
-	// and put back, doors added early and some removed and re-added. Forests rebuilt.
+	// and put back, doors added early and some removed and re-added. Widths refreshed.
 	struct Reached {
 		Harness				h;
 		std::vector<DoorId> doorIds;
@@ -1055,7 +1065,7 @@ namespace {
 				r.doorIds[at] = r.h.mesh.addDoor(input.doors[at]);
 			}
 		}
-		r.h.mesh.rebuildForests();
+		r.h.mesh.refreshWidths();
 	}
 
 	NavMeshInput freshInput(const Reached& r, const WallsAndDoors& input) {
@@ -1142,7 +1152,7 @@ namespace {
 
 	// Same verdict and the same length to the millimetre for every pair and radius, the
 	// patched mesh through its view against buildNavMesh of the same rings and doors;
-	// and the forests' reach verdicts agree, in truth and for an optimistic belief.
+	// and the verdicts agree for an optimistic belief.
 	void expectQueriesMatch(const Reached& r, const NavMesh& fresh, const NavInputPolygon& border, std::uint32_t seed) {
 		const NavView				  view	 = r.h.mesh.view();
 		const std::vector<Vec2i64>	  points = samplePoints(border, 96, seed);
@@ -1163,10 +1173,8 @@ namespace {
 					EXPECT_EQ(pathLengthMm(patched), pathLengthMm(built)) << "pair " << i << " radius " << radius << " from (" << a.x << ", " << a.y
 																		 << ") to (" << b.x << ", " << b.y << ")";
 				}
-				for (const BeliefFilter& belief : {BeliefFilter{}, optimistic}) {
-					EXPECT_EQ(reaches(view, reachFrom(view, a, radius, belief), b, belief), reaches(fresh, reachFrom(fresh, a, radius, belief), b, belief))
-						<< "reach verdict, pair " << i << " radius " << radius;
-				}
+				EXPECT_EQ(pathThrough(view, a, b, radius, optimistic).reachable, pathThrough(fresh, a, b, radius, optimistic).reachable)
+					<< "optimistic verdict, pair " << i << " radius " << radius;
 			}
 		}
 		// The pairs exercise both answers: real paths compared, and some refused.
@@ -1247,24 +1255,10 @@ namespace {
 		edits.adds.insert(edits.adds.end(), rings.begin(), rings.end());
 		mesh.applyPatch(edits);
 		mesh.refreshWidths();
-		mesh.rebuildForests();
 	}
 
-	// The widest disc diameter some path between the truth-forest triangles holding a
-	// and b admits; -1 when either is no node or they are apart.
-	std::int64_t bottleneckMm(const NavView& view, const Vec2i64& a, const Vec2i64& b) {
-		const ReachabilityForest& forest = *view.forest(true);
-		const std::int32_t		  ta	 = view.locate(a);
-		const std::int32_t		  tb	 = view.locate(b);
-		if (ta < 0 || tb < 0 || forest.component[static_cast<std::size_t>(ta)] < 0 ||
-			forest.component[static_cast<std::size_t>(ta)] != forest.component[static_cast<std::size_t>(tb)]) {
-			return -1;
-		}
-		std::int32_t node = ta;
-		while (!inForestSubtree(forest, node, tb)) {
-			node = forest.up[0][static_cast<std::size_t>(node)];
-		}
-		return forest.nodeCap[static_cast<std::size_t>(node)];
+	bool sameComponentAt(const PatchableMesh& mesh, const Vec2i64& a, const Vec2i64& b) {
+		return mesh.components().sameComponent(mesh.locate(a), mesh.locate(b));
 	}
 
 	// How far apart two paths between the same points may be in length when only the
@@ -1296,26 +1290,14 @@ namespace {
 		return c;
 	}
 
-	// Trees priced at kOraclePrice: the game's flora, cheap enough that some walks go
-	// through and some round.
-	constexpr double   kOraclePrice		= 1.5;
-	constexpr TagPrice kOraclePrices[] = {{kTree, kOraclePrice}};
-	// Priced walks are compared for the movers' radii: a priced search skips the forest
-	// pre-check, so each pair it cannot reach costs a search of the whole mesh.
-	constexpr std::int64_t kOracleMaxPricedRadiusMm = 300;
-
 	// Internal bounds edges must not change an answer: the same rings under one bounds
-	// square and under a grid of adjacent squares give the same path verdicts, reach
-	// verdicts, and bottlenecks, path lengths that agree (lengthsAgree), and the same
-	// corridor width at every apex of a triangle both meshes have. With the trees priced,
-	// the same verdicts, costs that agree as lengths do (a radius of slack weighed at the
-	// price). A walk through and a way round whose costs agree that closely are a tie the
-	// tilings may settle either way, so whether a walk crosses priced faces is counted,
-	// not required to match.
+	// square and under a grid of adjacent squares give the same path verdicts and
+	// component verdicts, path lengths that agree (lengthsAgree), and the same
+	// corridor width at every apex of a triangle both meshes have.
 	void expectBoundsSplitInvisible(std::int64_t k, std::uint32_t seed) {
 		const TiledGround g = tiledRealRings(k);
-		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000, .detailTags = {kTree}});
-		PatchableMesh	  split({.maxBoundsEdgeMm = 16000, .detailTags = {kTree}});
+		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000});
+		PatchableMesh	  split({.maxBoundsEdgeMm = 16000});
 		loadGround(whole, {g.border}, g.rings);
 		loadGround(split, g.squares, g.rings);
 		ASSERT_TRUE(whole.validate().empty()) << whole.validate();
@@ -1324,25 +1306,17 @@ namespace {
 		const NavView						   wv = whole.view();
 		const NavView						   sv = split.view();
 		const std::vector<Vec2i64>			   points = samplePoints(g.border, 128, seed);
-		const std::unordered_set<std::uint64_t> noneKnown;
-		const BeliefFilter					   optimistic{&noneKnown, &noneKnown};
 		int									   lengths		  = 0;
 		int									   lengthDiffers  = 0;
 		int									   lengthsApart	  = 0;
 		std::int64_t						   worstDeltaMm	  = 0;
 		int									   verdictDiffers = 0;
-		int									   reachDiffers	  = 0;
-		int									   bottleneckDiffers = 0;
-		int									   pricedCompared	 = 0;
-		int									   pricedThrough	 = 0;
-		int									   flagsDiffer		 = 0;
-		BeliefFilter						   priced;
-		priced.prices = kOraclePrices;
+		int									   componentsDiffer = 0;
 		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
 			const Vec2i64& a = points[i];
 			const Vec2i64& b = points[i + 1];
-			if (bottleneckMm(wv, a, b) != bottleneckMm(sv, a, b)) {
-				++bottleneckDiffers;
+			if (sameComponentAt(whole, a, b) != sameComponentAt(split, a, b)) {
+				++componentsDiffer;
 			}
 			for (const std::int64_t radius : kRadii) {
 				const PathResult w = pathThrough(wv, a, b, radius);
@@ -1362,27 +1336,6 @@ namespace {
 									  << "): whole " << pathLengthMm(w) << " mm, split " << pathLengthMm(s) << " mm";
 					}
 				}
-				for (const BeliefFilter& belief : {BeliefFilter{}, optimistic}) {
-					if (reaches(wv, reachFrom(wv, a, radius, belief), b, belief) != reaches(sv, reachFrom(sv, a, radius, belief), b, belief)) {
-						++reachDiffers;
-					}
-				}
-				if (radius > kOracleMaxPricedRadiusMm) {
-					continue;
-				}
-				const PathResult pw = pathThrough(wv, a, b, radius, priced);
-				const PathResult ps = pathThrough(sv, a, b, radius, priced);
-				EXPECT_EQ(pw.reachable, ps.reachable) << "priced, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
-				if (pw.reachable && ps.reachable) {
-					++pricedCompared;
-					pricedThrough += pw.crossesPricedFaces ? 1 : 0;
-					const double longer	   = std::max(pw.cost, ps.cost);
-					const double tolerance = radius >= kWideDiscRadiusMm ? kWideDiscToleranceFraction * longer
-																		 : kPathLengthToleranceFraction * longer +
-																			   kPathLengthToleranceRadii * kOraclePrice * static_cast<double>(radius);
-					flagsDiffer += pw.crossesPricedFaces != ps.crossesPricedFaces ? 1 : 0;
-					EXPECT_NEAR(pw.cost, ps.cost, tolerance) << "priced, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
-				}
 			}
 		}
 		EXPECT_GT(lengths, 100);
@@ -1390,13 +1343,7 @@ namespace {
 		::testing::Test::RecordProperty("pathLengthsDiffering", lengthDiffers);
 		::testing::Test::RecordProperty("worstSplitMinusWholeMm", std::to_string(worstDeltaMm));
 		EXPECT_EQ(verdictDiffers, 0);
-		EXPECT_EQ(reachDiffers, 0);
-		EXPECT_EQ(bottleneckDiffers, 0);
-		EXPECT_GT(pricedCompared, 60);
-		EXPECT_GT(pricedThrough, 5) << "some priced walks must go through trees for the comparison to bind";
-		::testing::Test::RecordProperty("pricedFlagsDiffering", flagsDiffer);
-		::testing::Test::RecordProperty("pricedCompared", pricedCompared);
-		::testing::Test::RecordProperty("pricedThrough", pricedThrough);
+		EXPECT_EQ(componentsDiffer, 0);
 
 		std::map<Corners, std::int32_t> wholeTriangles;
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(whole.triangles().size()); ++t) {
@@ -1421,8 +1368,7 @@ namespace {
 				const Vec2i64& apex = split.vertices()[st.v[static_cast<std::size_t>(e)]];
 				for (int f = 0; f < 3; ++f) {
 					if (whole.vertices()[wt.v[static_cast<std::size_t>(f)]] == apex &&
-						(wt.edgePairWidthMm[static_cast<std::size_t>(f)] != st.edgePairWidthMm[static_cast<std::size_t>(e)] ||
-						 wt.structuralWidthMm[static_cast<std::size_t>(f)] != st.structuralWidthMm[static_cast<std::size_t>(e)])) {
+						wt.edgePairWidthMm[static_cast<std::size_t>(f)] != st.edgePairWidthMm[static_cast<std::size_t>(e)]) {
 						++widthsDiffer;
 					}
 				}
@@ -1581,7 +1527,6 @@ TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
 	edits.adds.push_back(blocked(rect(1000, 1000, 2000, 2000)));
 	mesh.applyPatch(edits);
 	mesh.refreshWidths();
-	mesh.rebuildForests();
 	const NavView view		  = mesh.view();
 	int			  onTreeFace = 0;
 	for (const Vec2i64& p : {Vec2i64{1500, 1000}, Vec2i64{2000, 1500}, Vec2i64{1500, 2000}, Vec2i64{1000, 1500}, Vec2i64{1000, 1000},
@@ -1589,7 +1534,6 @@ TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
 		onTreeFace += isFloorFace(mesh.triangles()[static_cast<std::size_t>(mesh.locate(p))]) ? 0 : 1;
 		EXPECT_TRUE(pathThrough(view, p, {3500, 3500}, 0).reachable) << "from (" << p.x << ", " << p.y << ")";
 		EXPECT_TRUE(pathThrough(view, {3500, 3500}, p, 0).reachable) << "to (" << p.x << ", " << p.y << ")";
-		EXPECT_TRUE(reaches(view, reachFrom(view, p, 0), {3500, 3500})) << "reach from (" << p.x << ", " << p.y << ")";
 	}
 	EXPECT_GT(onTreeFace, 0) << "some of these points must locate to the tree's face for the test to bind";
 }
@@ -1612,19 +1556,18 @@ TEST(PatchableMesh, DoorEditsChangeTagsOnly) {
 	reach(r, input, 9);
 	const PagedVector<NavTriangle> before = r.h.mesh.triangles();
 	r.h.mesh.removeDoor(r.doorIds[1]);
-	EXPECT_FALSE(r.h.mesh.hasForests());
 	EXPECT_TRUE(r.h.mesh.validate().empty()) << r.h.mesh.validate();
 	for (std::size_t t = 0; t < before.size(); ++t) {
 		EXPECT_EQ(before[t].v, r.h.mesh.triangles()[t].v);
 	}
 	r.doorIds[1] = r.h.mesh.addDoor(input.doors[1]);
 	EXPECT_TRUE(r.h.mesh.validate().empty()) << r.h.mesh.validate();
-	r.h.mesh.rebuildForests();
+	r.h.mesh.refreshWidths();
 	const NavMesh fresh = buildNavMesh(freshInput(r, input));
 	EXPECT_TRUE(tagsAndWidthsMatch(r.h.mesh, fresh, kDefaultMaxClearanceMm));
 }
 
-// A dead slot is never located, never a neighbour, never a forest node.
+// A dead slot is never located, never a neighbour, and carries no component label.
 TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
@@ -1632,7 +1575,7 @@ TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 	PatchEdits	 remove;
 	remove.removes.push_back(tree);
 	h.apply(remove);
-	h.mesh.rebuildForests();
+	h.mesh.refreshWidths();
 	const NavView view = h.mesh.view();
 	int			  dead = 0;
 	for (std::int32_t t = 0; t < view.triangleSlots(); ++t) {
@@ -1640,8 +1583,7 @@ TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 			continue;
 		}
 		++dead;
-		EXPECT_EQ(view.forest(true)->component[static_cast<std::size_t>(t)], -1);
-		EXPECT_EQ(view.forest(false)->component[static_cast<std::size_t>(t)], -1);
+		EXPECT_EQ(h.mesh.components().label(t), kNoComponent);
 	}
 	EXPECT_GT(dead, 0);
 	EXPECT_TRUE(pathThrough(view, {1000, 1000}, {9000, 9000}, 300).reachable);
@@ -1678,10 +1620,10 @@ TEST(PatchableMesh, OneRefreshServesManyPatches) {
 // change left pending at once: ground removed (its neighbours' far side gone, no fresh
 // triangle beside them), ground added, and patches that re-derive triangles an earlier
 // pending patch made. One refresh after all of them gives widths a fresh search agrees
-// with, detail tags included.
+// with.
 TEST(PatchableMesh, OneRefreshServesRemovedGroundAndReplacedTriangles) {
 	const Fixture fixture = realRingsFixture();
-	PatchableMesh mesh({.maxBoundsEdgeMm = 16000, .detailTags = {kTree}});
+	PatchableMesh mesh({.maxBoundsEdgeMm = 16000});
 	Vec2i64		  lo;
 	Vec2i64		  hi;
 	lo = hi = fixture.base.front().ring.front();
@@ -1761,8 +1703,8 @@ TEST(PatchableMesh, WidthStampWrapKeepsWidths) {
 	}
 }
 
-// A view taken before a patch reads the patched mesh: no forests until they are
-// rebuilt, no path while widths lag, then the same answers as a fresh view.
+// A view taken before a patch reads the patched mesh: no path while widths lag, then
+// the same answers as a fresh view.
 TEST(PatchableMesh, ViewTakenBeforePatch) {
 	const WallsAndDoors input = wallsAndDoors();
 	Reached				r;
@@ -1776,11 +1718,9 @@ TEST(PatchableMesh, ViewTakenBeforePatch) {
 	moreTrees.adds.push_back(blocked(rect(4000, 4000, 4600, 4500)));
 	r.h.mesh.applyPatch(moreTrees);
 	EXPECT_NE(early.epoch(), epoch);
-	EXPECT_EQ(early.forest(true), nullptr);
 	EXPECT_FALSE(early.widthsCurrent());
 	EXPECT_DEBUG_DEATH(EXPECT_FALSE(pathThrough(early, a, b, 300).reachable), "widths lag");
-	r.h.mesh.rebuildForests();
-	EXPECT_NE(early.forest(true), nullptr);
+	r.h.mesh.refreshWidths();
 	EXPECT_EQ(pathLengthMm(pathThrough(early, a, b, 300)), pathLengthMm(pathThrough(r.h.mesh.view(), a, b, 300)));
 }
 
@@ -1846,7 +1786,7 @@ TEST(PatchableMesh, EqualAreaTieBreakIgnoresHistory) {
 }
 
 // Misuse in release: a ring removed twice, or removed dead, is refused and leaves the
-// registry sound; reachability without forests answers "maybe" instead of crashing.
+// registry sound.
 TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
@@ -1870,43 +1810,14 @@ TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 	EXPECT_NE(a, b);
 	h.mesh.refreshWidths();
 	EXPECT_TRUE(h.mesh.validate().empty()) << h.mesh.validate();
-	ASSERT_FALSE(h.mesh.hasForests());
-	const NavView view = h.mesh.view();
-	EXPECT_DEBUG_DEATH(EXPECT_EQ(reachFrom(view, {100, 100}, 300).startTri, -1), "no reachability forests");
-	EXPECT_DEBUG_DEATH(EXPECT_TRUE(reaches(view, ReachFrom{}, {9000, 9000})), "no reachability forests");
 }
 
-// A long hedge on an open 512 m chunk, priced: going through costs far less than going
-// round its end, whatever the bounds sides are split into, and says so.
-TEST(PatchableMesh, PricedHedgeIsCrossedOnEveryTiling) {
-	constexpr TagPrice kTrees[] = {{kTree, 50.0}};
+// A goal ringed by trees (0.6 m trunks every 0.55 m round a 3 m circle) on an open chunk
+// is out of reach on every tiling.
+TEST(PatchableMesh, RingOfTreesSealsAGoalOnEveryTiling) {
+	const Vec2i64 goal{20000, 20000};
 	for (const std::int64_t split : {64000, 16000}) {
-		PatchableMesh mesh({.maxBoundsEdgeMm = split, .detailTags = {kTree}});
-		PatchEdits	  edits;
-		edits.adds.push_back(bounds(rect(0, 0, 512000, 512000)));
-		for (std::int64_t y = 2000; y <= 60000; y += 500) {
-			edits.adds.push_back(blocked(rect(39700, y - 300, 40300, y + 300)));
-		}
-		mesh.applyPatch(edits);
-		mesh.refreshWidths();
-		BeliefFilter belief;
-		belief.prices = kTrees;
-		const PathResult r = pathThrough(mesh.view(), {37000, 30000}, {43000, 30000}, 300, belief);
-		ASSERT_TRUE(r.reachable) << "split " << split;
-		EXPECT_TRUE(r.crossesPricedFaces) << "split " << split;
-		EXPECT_EQ(pathLengthMm(r), 6000) << "split " << split;
-		// 5.4 m of open ground and the 0.6 m hedge at 50 times.
-		EXPECT_NEAR(r.cost, 5400.0 + 50.0 * 600.0, 4.0) << "split " << split;
-	}
-}
-
-// A goal ringed by trees (0.6 m trunks every 0.55 m round a 3 m circle) on an open chunk:
-// the only way in is through a trunk, at its price, on every tiling.
-TEST(PatchableMesh, PricedRingIsEnteredOnEveryTiling) {
-	constexpr TagPrice kTrees[] = {{kTree, 50.0}};
-	const Vec2i64	   goal{20000, 20000};
-	for (const std::int64_t split : {64000, 16000}) {
-		PatchableMesh mesh({.maxBoundsEdgeMm = split, .detailTags = {kTree}});
+		PatchableMesh mesh({.maxBoundsEdgeMm = split});
 		PatchEdits	  edits;
 		edits.adds.push_back(bounds(rect(0, 0, 512000, 512000)));
 		const int count = static_cast<int>(std::ceil(6.2831853 * 3000.0 / 550.0));
@@ -1919,11 +1830,5 @@ TEST(PatchableMesh, PricedRingIsEnteredOnEveryTiling) {
 		mesh.applyPatch(edits);
 		mesh.refreshWidths();
 		EXPECT_FALSE(pathThrough(mesh.view(), {10000, 20000}, goal, 300).reachable) << "split " << split;
-		BeliefFilter belief;
-		belief.prices = kTrees;
-		const PathResult r = pathThrough(mesh.view(), {10000, 20000}, goal, 300, belief);
-		ASSERT_TRUE(r.reachable) << "split " << split;
-		EXPECT_TRUE(r.crossesPricedFaces) << "split " << split;
-		EXPECT_LT(pathLengthMm(r), 10500) << "split " << split;
 	}
 }

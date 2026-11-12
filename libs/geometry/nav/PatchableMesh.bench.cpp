@@ -122,8 +122,10 @@ namespace {
 		double patches = 0;
 
 		void add(const PatchReport& r) {
-			freed += static_cast<double>(r.freedTriangles.size());
-			created += static_cast<double>(r.newTriangles.size());
+			for (const ChangedTriangle& c : r.changes) {
+				freed += (c.why & kTriangleFreed) != 0 ? 1.0 : 0.0;
+				created += (c.why & kTriangleCreated) != 0 ? 1.0 : 0.0;
+			}
 			passes += r.passes;
 			patches += 1;
 		}
@@ -178,7 +180,7 @@ namespace {
 
 	// The fixture fully loaded, each tree under its current id.
 	struct Loaded {
-		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm, .detailTags = {kProvenancePlaced}}) {}
+		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm}) {}
 
 		Rings						 rings;
 		PatchableMesh				 mesh;
@@ -754,7 +756,7 @@ namespace {
 		state.counters["tris"] = static_cast<double>(l.mesh.liveTriangleCount());
 	}
 
-	// --- Path queries and forests ----------------------------------------------------
+	// --- Path queries ----------------------------------------------------------------
 
 	// Start/goal pairs from a fixed sequence; the same points on both meshes.
 	std::vector<std::pair<Vec2i64, Vec2i64>> queryPairs(const Rings& rings) {
@@ -790,7 +792,6 @@ namespace {
 	void BM_PathPatchable(benchmark::State& state, Fixture f) {
 		Loaded l;
 		load(l, fixtureRings(f));
-		l.mesh.rebuildForests();
 		runPaths(state, l.mesh.view(), queryPairs(l.rings));
 	}
 
@@ -804,11 +805,9 @@ namespace {
 	}
 
 	// The game's query shape: many movers walking 20 to 100 m to a few goals through
-	// meshed flora, with the trees unpriced (blocks) or priced (the game's flora price).
-	enum class Pricing { None, Trees };
-
+	// meshed flora, the trees blocking.
 	struct RequestShape {
-		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000, .detailTags = {kProvenancePlaced}}};
+		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000}};
 		std::vector<Vec2i64>				 goals;
 		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
 	};
@@ -831,7 +830,7 @@ namespace {
 		std::int64_t mid = (lo.x + hi.x) / 2;
 		const bool	 chunks = colony == Colony::ChunkMiddle || colony == Colony::ChunkSide;
 		if (colony != Colony::Anywhere) {
-			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
+			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000});
 		}
 		if (chunks) {
 			const std::int64_t tile = hi.x - lo.x;
@@ -854,7 +853,6 @@ namespace {
 			all.insert(all.begin() + 1, NavInputPolygon{rect(mid, lo.y, hi.x, hi.y), false, kProvenanceBorder});
 		}
 		untimedPatch(s.detail, adding(all));
-		s.detail.rebuildForests();
 		std::mt19937 rng(91);
 		auto		 walkable = [&](const Vec2i64& p) {
 			const std::int32_t t = s.detail.locate(p);
@@ -890,27 +888,17 @@ namespace {
 		}
 	}
 
-	// The game's flora price: trees cost 50 times their length; anything else stays blocked.
-	constexpr TagPrice kTreePrices[] = {{kProvenancePlaced, 50.0}};
-
-	void BM_RequestShape(benchmark::State& state, Fixture f, Pricing p, Colony colony = Colony::Anywhere) {
+	void BM_RequestShape(benchmark::State& state, Fixture f, Colony colony = Colony::Anywhere) {
 		RequestShape s;
 		loadRequestShape(s, f, colony);
-		BeliefFilter belief;
-		if (p == Pricing::Trees) {
-			belief.prices = kTreePrices;
-		}
-		std::int64_t nodes	   = 0;
-		std::int64_t priced	   = 0;
+		std::int64_t nodes = 0;
 		for (auto _ : state) {
 			nodes		 = 0;
-			priced		 = 0;
 			double total = 0.0;
 			for (const auto& [start, gi] : s.starts) {
 				PathResult r;
-				total += secondsOf([&] { r = pathThrough(s.detail.view(), start, s.goals[static_cast<std::size_t>(gi)], 300, belief); });
+				total += secondsOf([&] { r = pathThrough(s.detail.view(), start, s.goals[static_cast<std::size_t>(gi)], 300); });
 				nodes += r.nodesExpanded;
-				priced += r.crossesPricedFaces ? 1 : 0;
 				benchmark::DoNotOptimize(r);
 			}
 			state.SetIterationTime(total);
@@ -918,72 +906,6 @@ namespace {
 		state.counters["usPerQuery"] = benchmark::Counter(static_cast<double>(s.starts.size()) * static_cast<double>(state.iterations()),
 														  benchmark::Counter::kIsRate | benchmark::Counter::kInvert);
 		state.counters["nodes"]		 = static_cast<double>(nodes) / static_cast<double>(s.starts.size());
-		state.counters["through"]	 = static_cast<double>(priced);
-	}
-
-	// A goal ringed by trees, the rest of the control fixture round it, the trees priced:
-	// the only way in is through, which the search must find in bounded work.
-	void BM_SealedGoal(benchmark::State& state) {
-		Rings	rings = fixtureRings(Fixture::Control);
-		Vec2i64 lo;
-		Vec2i64 hi;
-		boxOf(rings.base.front().ring, lo, hi);
-		const Vec2i64 g{(lo.x + hi.x) / 2, (lo.y + hi.y) / 2};
-		for (const auto& r : {rect(g.x - 2000, g.y - 2000, g.x + 2000, g.y - 1600), rect(g.x - 2000, g.y + 1600, g.x + 2000, g.y + 2000),
-							  rect(g.x - 2000, g.y - 2000, g.x - 1600, g.y + 2000), rect(g.x + 1600, g.y - 2000, g.x + 2000, g.y + 2000)}) {
-			rings.trees.push_back(NavInputPolygon{r, true, kProvenancePlaced});
-		}
-		std::vector<NavInputPolygon> all = rings.base;
-		all.insert(all.end(), rings.trees.begin(), rings.trees.end());
-		PatchableMesh mesh({.detailTags = {kProvenancePlaced}});
-		untimedPatch(mesh, adding(all));
-		BeliefFilter belief;
-		belief.prices = kTreePrices;
-		PathResult	 r;
-		for (auto _ : state) {
-			r = pathThrough(mesh.view(), g + Vec2i64{20000, 20000}, g, 300, belief);
-			benchmark::DoNotOptimize(r);
-		}
-		state.counters["reachable"] = r.reachable ? 1.0 : 0.0;
-		state.counters["through"]	= r.crossesPricedFaces ? 1.0 : 0.0;
-		state.counters["nodes"]		= static_cast<double>(r.nodesExpanded);
-		state.counters["tris"]		= static_cast<double>(mesh.liveTriangleCount());
-	}
-
-	void runForestRebuild(benchmark::State& state, const Rings& rings, bool withTrees) {
-		PatchableMesh mesh;
-		PatchEdits	  edits = adding(rings.base);
-		if (withTrees) {
-			edits.adds.insert(edits.adds.end(), rings.trees.begin(), rings.trees.end());
-		}
-		untimedPatch(mesh, edits);
-		for (auto _ : state) {
-			mesh.rebuildForests();
-			benchmark::DoNotOptimize(mesh.hasForests());
-		}
-		state.counters["tris"] = static_cast<double>(mesh.liveTriangleCount());
-	}
-
-	void BM_ForestRebuild(benchmark::State& state, Fixture f, bool withTrees) {
-		runForestRebuild(state, fixtureRings(f), withTrees);
-	}
-
-	void BM_ForestRebuildTiledStructural(benchmark::State& state) {
-		runForestRebuild(state, tiledControl(state.range(0)), false);
-	}
-
-	// A structural mesh of state.range(0) x state.range(0) realRings water tiles under one
-	// bounds square: about 10k, 18k, and 40k triangle slots at 3, 4, and 6.
-	void BM_ForestRebuildWater(benchmark::State& state) {
-		PatchableMesh mesh({.maxBoundsEdgeMm = 16000});
-		untimedPatch(mesh, adding(chunkRings(0, 0, state.range(0), Fill::Water)));
-		for (auto _ : state) {
-			mesh.rebuildForests();
-			benchmark::DoNotOptimize(mesh.hasForests());
-		}
-		const double slots		  = static_cast<double>(mesh.triangles().size());
-		state.counters["slots"]	  = slots;
-		state.counters["timePerSlot"] = benchmark::Counter(slots, benchmark::Counter::kIsIterationInvariantRate | benchmark::Counter::kInvert);
 	}
 
 	// --- Flora cells entering a large mesh -------------------------------------------
@@ -1000,7 +922,7 @@ namespace {
 		Vec2i64			   lo;
 		Vec2i64			   hi;
 		boxOf(td::realBorderRing(), lo, hi);
-		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
+		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000});
 		std::vector<NavInputPolygon> ground{NavInputPolygon{rect(0, 0, tiles * kRealTileMm, tiles * kRealTileMm), false, kProvenanceBorder}};
 		std::vector<NavInputPolygon> moving;
 		for (std::int64_t b = 0; b < tiles; ++b) {
@@ -1086,7 +1008,7 @@ namespace {
 		double		total = 0.0;
 		std::size_t slots = 0;
 		for (auto _ : state) {
-			PatchableMesh mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
+			PatchableMesh mesh({.maxBoundsEdgeMm = 64000});
 			untimedPatch(mesh, adding(ground));
 			worst = 0.0;
 			total = 0.0;
@@ -1134,17 +1056,16 @@ namespace {
 	}
 
 	// A goal the belief knows is walled in: a 6 m room of four known wall segments in the
-	// middle of tiles x tiles of forested ground, trees priced as the game prices them, and
-	// starts 30 to 60 m off. The search can only fail: run dry, or with `capped` stop at
-	// maxExpansions 2000.
+	// middle of tiles x tiles of forested ground, and starts 30 to 60 m off. The search can
+	// only fail: run dry, or with `capped` stop at maxExpansions 2000.
 	void BM_WalledGoal(benchmark::State& state, bool capped) {
 		const std::int64_t tiles = state.range(0);
-		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
+		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000});
 		const std::int64_t side = tiles * kRealTileMm;
 		// The room's centre: open floor near the middle, found on a trial mesh of the tile.
 		Vec2i64			   g{side / 2, side / 2};
 		{
-			PatchableMesh trial({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
+			PatchableMesh trial({.maxBoundsEdgeMm = 64000});
 			loadTiledGround(trial, tiles, true);
 			std::mt19937 rng(5);
 			auto		 clear = [&](const Vec2i64& p) {
@@ -1170,11 +1091,9 @@ namespace {
 			NavInputPolygon{rect(g.x - kHalf, g.y - kHalf, g.x - kHalf + kWall, g.y + kHalf), true, 103},
 			NavInputPolygon{rect(g.x + kHalf - kWall, g.y - kHalf, g.x + kHalf, g.y + kHalf), true, 104}};
 		loadTiledGround(mesh, tiles, true, walls);
-		mesh.rebuildForests();
 		std::unordered_set<std::uint64_t> known{101, 102, 103, 104};
 		std::unordered_set<std::uint64_t> noDoors;
 		BeliefFilter					  belief{&known, &noDoors};
-		belief.prices = kTreePrices;
 		std::mt19937		 rng(17);
 		std::vector<Vec2i64> starts;
 		while (starts.size() < 8) {
@@ -1215,7 +1134,6 @@ namespace {
 		const std::int64_t tiles = 5;
 		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000});
 		loadTiledGround(mesh, tiles, false);
-		mesh.rebuildForests();
 		const std::int64_t side = tiles * kRealTileMm;
 		std::mt19937	   rng(29);
 		auto			   floor = [&](const Vec2i64& p) {
@@ -1404,30 +1322,15 @@ BENCHMARK_CAPTURE(BM_PathPatchable, realRings, Fixture::RealRings)->Unit(benchma
 BENCHMARK_CAPTURE(BM_PathBuilt, manyTrees, Fixture::ManyTrees)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, control, Fixture::Control)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_PathBuilt, realRings, Fixture::RealRings)->Unit(benchmark::kMillisecond);
-#define REQUEST_ROWS(name, fixture)                                                                                               \
-	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None)->UseManualTime()->Unit(benchmark::kMicrosecond); \
-	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees)->UseManualTime()->Unit(benchmark::kMicrosecond)
-REQUEST_ROWS(control, Fixture::Control);
-REQUEST_ROWS(realRings, Fixture::RealRings);
-#define COLONY_ROWS(name, fixture, colony)                                                                                                                       \
-	BENCHMARK_CAPTURE(BM_RequestShape, name##_unpriced, fixture, Pricing::None, colony)->UseManualTime()->Unit(benchmark::kMicrosecond); \
-	BENCHMARK_CAPTURE(BM_RequestShape, name##_treesPriced, fixture, Pricing::Trees, colony)->UseManualTime()->Unit(benchmark::kMicrosecond)
-COLONY_ROWS(control_middle, Fixture::Control, Colony::Middle);
-COLONY_ROWS(control_side12, Fixture::Control, Colony::NearSide);
-COLONY_ROWS(realRings_middle, Fixture::RealRings, Colony::Middle);
-COLONY_ROWS(realRings_side12, Fixture::RealRings, Colony::NearSide);
-COLONY_ROWS(realRings_chunkMiddle, Fixture::RealRings, Colony::ChunkMiddle);
-COLONY_ROWS(realRings_chunkSide12, Fixture::RealRings, Colony::ChunkSide);
-BENCHMARK(BM_SealedGoal)->Unit(benchmark::kMicrosecond);
-
-BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_structural, Fixture::ManyTrees, false)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, control_structural, Fixture::Control, false)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, realRings_structural, Fixture::RealRings, false)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, manyTrees_full, Fixture::ManyTrees, true)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, control_full, Fixture::Control, true)->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_ForestRebuild, realRings_full, Fixture::RealRings, true)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ForestRebuildTiledStructural)->Arg(2)->Arg(4)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ForestRebuildWater)->Arg(3)->Arg(4)->Arg(6)->Unit(benchmark::kMillisecond);
+#define REQUEST_ROW(name, ...) BENCHMARK_CAPTURE(BM_RequestShape, name, __VA_ARGS__)->UseManualTime()->Unit(benchmark::kMicrosecond)
+REQUEST_ROW(control, Fixture::Control);
+REQUEST_ROW(realRings, Fixture::RealRings);
+REQUEST_ROW(control_middle, Fixture::Control, Colony::Middle);
+REQUEST_ROW(control_side12, Fixture::Control, Colony::NearSide);
+REQUEST_ROW(realRings_middle, Fixture::RealRings, Colony::Middle);
+REQUEST_ROW(realRings_side12, Fixture::RealRings, Colony::NearSide);
+REQUEST_ROW(realRings_chunkMiddle, Fixture::RealRings, Colony::ChunkMiddle);
+REQUEST_ROW(realRings_chunkSide12, Fixture::RealRings, Colony::ChunkSide);
 
 BENCHMARK_CAPTURE(BM_LargeTree, tiled_lone_add, 0, false, true)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LargeTree, tiled_lone_remove, 0, false, false)->UseManualTime()->Unit(benchmark::kMicrosecond);

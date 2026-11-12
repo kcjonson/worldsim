@@ -90,9 +90,6 @@ namespace geometry::nav {
 	struct NavMeshInput {
 		std::vector<NavInputPolygon> polygons;
 		std::vector<DoorPortal>		 doors;
-		// The detail-class obstacle tags (placed obstacles, later movers' footprints): a path query may
-		// squeeze a disc past them at a price (NavTriangle::structuralWidthMm). Empty: none.
-		std::vector<std::int64_t> detailTags;
 	};
 
 	struct NavTriangle {
@@ -107,13 +104,6 @@ namespace geometry::nav {
 		// knowledge obstacles. kUnconstrainedWidth when no such obstacle pinches it.
 		std::array<std::int64_t, 3> edgePairWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth,
 													   kUnconstrainedWidth};
-		// The same width with detail-class faces (the mesh's detail tags) read as open
-		// ground: a gap that admits a disc here but not by edgePairWidthMm is narrowed by
-		// detail, and a query that prices detail may squeeze through it. Where detail
-		// alone made the apex an obstacle vertex, a disc centred on it counts too, since
-		// the wedge measure is too narrow at a free apex. Equal to edgePairWidthMm when the
-		// mesh has no detail tags; capped at the mesh's squeeze width (apexWidthsMm).
-		std::array<std::int64_t, 3> structuralWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth, kUnconstrainedWidth};
 		// Door clear width (mm) when edge i is a door portal, else kUnconstrainedWidth.
 		// Threaded from DoorPortal::clearWidthMm; the A* gates a door crossing by it.
 		std::array<std::int64_t, 3> edgeClearWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth,
@@ -221,47 +211,7 @@ namespace geometry::nav {
 		std::vector<std::int32_t> candidates;	// triangle indices, ascending within each cell
 	};
 
-	// Width-aware reachability over the triangle dual graph (P3.3). A Kruskal
-	// max-spanning-forest + reconstruction tree (a.k.a. min-max / merge tree) that
-	// answers two queries online: which component a triangle is in, and the
-	// bottleneck (the widest disc that any path between two triangles admits = the
-	// max over paths of the min edge capacity). Edge capacity is the floored mm
-	// disc DIAMETER a portal admits (see NavMesh.cpp step 10).
-	//
-	// The reconstruction tree has the mesh's triangles as leaves [0, triangleCount):
-	// each Kruskal union (processing portal edges in DESCENDING capacity) creates an
-	// internal node storing that edge's capacity, with the two merged subtree roots
-	// as children. Then bottleneck(a, b) = the capacity stored at LCA(a, b), because
-	// the union that first joined a and b used the smallest capacity on the widest
-	// path between them. "Different tree" (different root) => disconnected for every
-	// diameter. Triangles not traversable for this forest's predicate are not nodes;
-	// they get component == -1 and any bottleneck query touching them is unreachable.
-	//
-	// SOUNDNESS (the only direction we rely on): a disc of diameter D crossing a path
-	// uses, at each portal, an apex passage <= that portal's capacity, so D <=
-	// min-cap of the path <= bottleneck(a, b). Hence D > bottleneck(a, b) => no path
-	// admits the disc => unreachable. This is an UPPER bound; it can over-approximate
-	// (bottleneck high but the funnel still fails), never the reverse.
-	struct ReachabilityForest {
-		// Per leaf-triangle component id (root of its reconstruction tree), or -1 if
-		// the triangle is not traversable for this forest's predicate. Length ==
-		// triangleCount. Two traversable triangles are connected (ignoring width) iff
-		// they share a component id.
-		std::vector<std::int32_t> component;
-
-		// Reconstruction-tree node capacities. Leaf nodes [0, triangleCount) store
-		// kUnconstrainedWidth (a triangle is unconstrained with itself); internal
-		// nodes [triangleCount, nodeCount) store the merge capacity. Disconnected
-		// (non-node) leaves still occupy their slot but are never reached by a query.
-		std::vector<std::int64_t> nodeCap;
-
-		// Binary-lifting LCA tables over the reconstruction-tree forest. up[k][i] is
-		// the 2^k-th ancestor of node i (i when it runs past a root). depth[i] is the
-		// node's depth from its root. parent (up[0]) of a root is itself.
-		std::vector<std::int32_t>			   depth;
-		std::vector<std::vector<std::int32_t>> up; // up[level][node]
-		std::int32_t						   levels = 0; // number of lifting levels
-	};
+	class MeshComponents;
 
 	// A process-wide counter, never repeating: what a mesh state is known by (see
 	// NavView::epoch).
@@ -271,17 +221,6 @@ namespace geometry::nav {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
 		NavGrid					 grid;
-		// Two forests over the SAME geometric edge capacities, differing only in which
-		// triangles are nodes (the traversability predicate):
-		//   truthForest:   nodes = truth-traversable triangles (floor or a door span).
-		//                  Answers AI goal validity (truth reachability).
-		//   terrainForest: nodes = terrain-traversable triangles (floor or ANY wall
-		//                  face treated as OPEN; only common-knowledge terrain blocks).
-		//                  Answers the BELIEF reject -- sound for every possible belief,
-		//                  since the most optimistic belief routes through unseen walls.
-		ReachabilityForest truthForest;
-		ReachabilityForest terrainForest;
-		std::vector<std::int64_t> detailTags; // NavMeshInput::detailTags
 		// Taken when the mesh is made; a copy carries its source's along with its content.
 		// A caller that edits a built mesh in place takes a fresh one.
 		std::uint64_t generation = nextMeshGeneration();
@@ -291,15 +230,15 @@ namespace geometry::nav {
 	// no face is dropped, however its rings touch, pinch, or nest.
 	NavMesh buildNavMesh(const NavMeshInput& input);
 
-	// The triangles a path query, a corridor width, or a forest reads, and the means to
-	// locate a point among them. NavMesh and PatchableMesh each produce one, so each of
-	// those algorithms has one implementation. A slot `live` marks dead is never located,
-	// never a live triangle's neighbour, and never a forest node.
+	// The triangles a path query or a corridor width reads, and the means to locate a
+	// point among them. NavMesh and PatchableMesh each produce one, so each of those
+	// algorithms has one implementation. A slot `live` marks dead is never located and
+	// never a live triangle's neighbour.
 	//
-	// A view reads its owner as it is when used, never as it was when taken: forests,
-	// width currency, and the patch epoch come through the owner, and every function
-	// taking a view reads the slot tables through resolved(), so a view kept across a
-	// patch sees the patched mesh and its missing forests.
+	// A view reads its owner as it is when used, never as it was when taken: component
+	// labels, width currency, and the patch epoch come through the owner, and every
+	// function taking a view reads the slot tables through resolved(), so a view kept
+	// across a patch sees the patched mesh.
 	// One of a mesh's slot tables as a view reads it: a NavMesh's contiguous vector or a
 	// PatchableMesh's pages (PagedVector), as the owner held it when the view was taken
 	// or last resolved (NavView::resolved).
@@ -331,11 +270,10 @@ namespace geometry::nav {
 		ViewArray<std::uint8_t> live; // unset: every slot is live
 		const void*				owner = nullptr;
 		std::int32_t (*locateIn)(const void* owner, const Vec2i64& p)						= nullptr;
-		const ReachabilityForest* (*forestIn)(const void* owner, bool truth)				= nullptr;
+		const MeshComponents* (*componentsIn)(const void* owner)							= nullptr;
 		bool (*widthsCurrentIn)(const void* owner)											= nullptr;
 		std::uint64_t (*epochIn)(const void* owner)											= nullptr;
 		void (*resolveIn)(const void* owner, NavView& view)									= nullptr;
-		const std::vector<std::int64_t>* detailTags											= nullptr; // the owner's; null: none
 
 		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles.size()); }
 		bool			   isLive(std::int32_t t) const { return !live.set() || live[static_cast<std::size_t>(t)] != 0; }
@@ -348,9 +286,9 @@ namespace geometry::nav {
 			return view;
 		}
 		std::int32_t	   locate(const Vec2i64& p) const { return locateIn(owner, p); }
-		// The truth or terrain forest over the live triangles; null when the owner has
-		// none current, and then a path query skips its forest pre-check.
-		const ReachabilityForest* forest(bool truth) const { return forestIn(owner, truth); }
+		// The owner's connected-component labels, current with its triangles; null when it
+		// keeps none, and then a path query skips its component pre-check.
+		const MeshComponents* components() const { return componentsIn(owner); }
 		// False while corridor widths lag behind a patch; queries read widths.
 		bool widthsCurrent() const { return widthsCurrentIn(owner); }
 		// Changes whenever the triangles or their tags do, to a value no mesh state in the
@@ -360,48 +298,10 @@ namespace geometry::nav {
 
 	NavView navView(const NavMesh& mesh);
 
-	struct ReachabilityForests {
-		ReachabilityForest truth;
-		ReachabilityForest terrain;
-	};
-
-	// Working storage for a forest build, kept between builds so a rebuild allocates
-	// nothing once it has grown.
-	struct ForestScratch {
-		// A portal between two triangles with its sound disc-diameter capacity, owned
-		// by the lower triangle.
-		struct Portal {
-			std::int32_t triA = -1;
-			std::int32_t triB = -1;
-			std::int64_t cap  = kUnconstrainedWidth;
-		};
-		std::vector<Portal>		  portals;
-		std::vector<Portal>		  sorted;
-		std::vector<std::uint8_t> truthNode;
-		std::vector<std::uint8_t> terrainNode;
-		std::vector<std::int32_t> parent;
-		std::vector<std::int32_t> setNode;
-		std::vector<std::int32_t> nodeParent;
-		std::vector<std::int32_t> root;
-	};
-
-	// Both forests over the view's live triangles, from their corridor widths and door
-	// tags (see ReachabilityForest), built into `out` and reusing its storage.
-	void				buildReachabilityForests(const NavView& view, ForestScratch& scratch, ReachabilityForests& out);
-	ReachabilityForests buildReachabilityForests(const NavView& view);
-
 	// Scratch for corridor-width searches, reused across calls.
 	struct WidthSearch {
-		ScratchArray<std::uint32_t>				  visited; // visited[t] == stamp: seen by the current search
-		std::uint32_t							  stamp = 0;
-		std::vector<std::pair<std::int32_t, int>> star; // an apex's triangles and their corners on it
-		// Which vertices an obstacle edge meets, kept for one mesh state (owner and epoch):
-		// [0] with nothing read as open, [1] with the detail tags open.
-		const void*								  vertexOwner = nullptr;
-		std::uint64_t							  vertexEpoch = 0;
-		std::uint32_t							  vertexStamp = 0;
-		std::array<ScratchArray<std::uint32_t>, 2> vertexSeen;
-		std::array<ScratchArray<std::uint8_t>, 2>  vertexObstacle;
+		ScratchArray<std::uint32_t> visited; // visited[t] == stamp: seen by the current search
+		std::uint32_t				stamp = 0;
 	};
 
 	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)
@@ -410,27 +310,5 @@ namespace geometry::nav {
 	// search never looks farther than maxClearanceMm from the apex, so the width depends
 	// only on `tri` and the triangles that come within maxClearanceMm of the apex.
 	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
-
-	// An apex's two stored widths (NavTriangle::edgePairWidthMm and structuralWidthMm),
-	// the second with the view's detail tags read as open ground. The full width reads
-	// nothing farther than maxClearanceMm from the apex; the structural one, which only
-	// decides squeezes, nothing farther than maxSqueezeMm (where it is lower), and reads
-	// maxSqueezeMm when it is at least that: a squeeze opens for discs up to that wide.
-	struct ApexWidths {
-		std::int64_t full		= kUnconstrainedWidth;
-		std::int64_t structural = kUnconstrainedWidth;
-	};
-	ApexWidths apexWidthsMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm,
-							std::int64_t maxSqueezeMm);
-
-	// The reconstruction-tree node whose subtree is every triangle a disc of `diameterMm` can
-	// POSSIBLY reach from `tri`: tri's highest ancestor whose capacity admits the disc. A goal
-	// triangle is under it iff the widest disc any path from tri to it admits is >= diameterMm.
-	// -1 when tri is a non-node. O(log n).
-	std::int32_t reachRootInForest(const ReachabilityForest& forest, std::int32_t tri, std::int64_t diameterMm);
-
-	// Is triangle `tri` in the subtree of reconstruction-tree node `node`? False for a non-node
-	// triangle or node -1. O(log n).
-	bool inForestSubtree(const ReachabilityForest& forest, std::int32_t node, std::int32_t tri);
 
 } // namespace geometry::nav

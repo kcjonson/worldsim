@@ -915,6 +915,8 @@ namespace geometry::nav {
 		std::vector<std::pair<std::int32_t, int>> boundaryEdges;
 		std::vector<std::int32_t>				  flipped;
 		std::vector<std::int32_t>				  unlinked; // kept triangles whose edge on the hole now borders nothing
+		std::vector<std::int32_t>				  freed;	// ids whose old triangle is gone
+		std::vector<std::int32_t>				  created;	// ids holding a new triangle
 	};
 
 	PatchableMesh::PatchScratchSlot::PatchScratchSlot() : scratch(std::make_unique<PatchScratch>()) {}
@@ -1962,7 +1964,10 @@ namespace geometry::nav {
 			m.live[static_cast<std::size_t>(t)] = 0;
 			--m.liveTriangles;
 		}
-		out.freedTriangles = reuse;
+		std::vector<std::int32_t>& freed   = work.freed;
+		std::vector<std::int32_t>& created = work.created;
+		freed							   = reuse;
+		created.clear();
 
 		// Commit the registry; covers acquired below read the new tags. The hole is gone
 		// first: its pieces leave the edge index under the ring edge ids they came in with.
@@ -2038,7 +2043,7 @@ namespace geometry::nav {
 			for (std::uint32_t v : nt.v) {
 				++m.vertexUses[v];
 			}
-			out.newTriangles.push_back(id);
+			created.push_back(id);
 		}
 		for (std::size_t r = nextReuse; r < reuse.size(); ++r) {
 			m.freeTriangles.push_back(reuse[r]);
@@ -2115,7 +2120,7 @@ namespace geometry::nav {
 			}
 		}
 
-		for (std::int32_t id : out.newTriangles) {
+		for (std::int32_t id : created) {
 			Vec2i64 tLo;
 			Vec2i64 tHi;
 			m.triangleBox(id, tLo, tHi);
@@ -2128,9 +2133,9 @@ namespace geometry::nav {
 		for (std::int32_t t : flipped) {
 			reportBox(t);
 		}
-		out.freedTriangles.insert(out.freedTriangles.end(), flipped.begin(), flipped.end());
-		out.newTriangles.insert(out.newTriangles.end(), flipped.begin(), flipped.end());
-		for (std::vector<std::int32_t>* list : {&out.freedTriangles, &out.newTriangles}) {
+		freed.insert(freed.end(), flipped.begin(), flipped.end());
+		created.insert(created.end(), flipped.begin(), flipped.end());
+		for (std::vector<std::int32_t>* list : {&freed, &created}) {
 			std::sort(list->begin(), list->end());
 			list->erase(std::unique(list->begin(), list->end()), list->end());
 		}
@@ -2140,11 +2145,11 @@ namespace geometry::nav {
 		// Every touched id with why: kept triangles beside a new or flipped one, or whose
 		// edge on the hole now borders nothing, are the border.
 		std::vector<ChangedTriangle>& changes = out.changes;
-		auto isNew = [&](std::int32_t t) { return std::binary_search(out.newTriangles.begin(), out.newTriangles.end(), t); };
-		for (std::int32_t t : out.freedTriangles) {
+		auto isNew = [&](std::int32_t t) { return std::binary_search(created.begin(), created.end(), t); };
+		for (std::int32_t t : freed) {
 			changes.push_back({t, kTriangleFreed});
 		}
-		for (std::int32_t t : out.newTriangles) {
+		for (std::int32_t t : created) {
 			changes.push_back({t, kTriangleCreated});
 			for (const std::int32_t nb : m.tris[static_cast<std::size_t>(t)].neighbor) {
 				if (nb >= 0 && !isNew(nb)) {
@@ -2174,10 +2179,10 @@ namespace geometry::nav {
 		// A flip moves edges between triangles, so door tags are set afresh on every new
 		// and flipped triangle; their widths, and widths near what changed, wait for
 		// refreshWidths.
-		for (std::int32_t t : out.newTriangles) {
+		for (std::int32_t t : created) {
 			m.applyDoorTags(t);
 		}
-		m.freshWidthTriangles.insert(m.freshWidthTriangles.end(), out.newTriangles.begin(), out.newTriangles.end());
+		m.freshWidthTriangles.insert(m.freshWidthTriangles.end(), created.begin(), created.end());
 	}
 
 	// --- Public edits ---------------------------------------------------------------
@@ -2215,8 +2220,7 @@ namespace geometry::nav {
 	}
 
 	PatchableMesh::PatchableMesh(const PatchableMeshArgs& args)
-		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), maxSqueezeMm(args.maxSqueezeMm), detailTags(args.detailTags),
-		  labels({.openTags = args.componentOpenTags}) {}
+		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), labels({.openTags = args.componentOpenTags}) {}
 
 	namespace {
 
@@ -2231,7 +2235,6 @@ namespace geometry::nav {
 
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
-		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
 		PatchReport report = patch.run();
 		report.opens	   = !edits.removes.empty() || !edits.moves.empty() || !std::all_of(edits.adds.begin(), edits.adds.end(), onlyCloses);
@@ -2239,7 +2242,7 @@ namespace geometry::nav {
 		return report;
 	}
 
-	// --- Doors, widths, forests, and the view ---------------------------------------
+	// --- Doors, widths, and the view ------------------------------------------------
 
 	std::pair<Vec2i64, Vec2i64> PatchableMesh::edgeKey(Vec2i64 a, Vec2i64 b) {
 		if (b < a) {
@@ -2293,7 +2296,6 @@ namespace geometry::nav {
 		std::vector<DoorId>& onEdge = doorsAt[edgeKey(door.a, door.b)];
 		onEdge.insert(std::lower_bound(onEdge.begin(), onEdge.end(), id), id);
 		retagEdge(door.a, door.b);
-		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
 		labels.noteOpening();
 		return id;
@@ -2314,7 +2316,6 @@ namespace geometry::nav {
 		doorLive[static_cast<std::size_t>(id)] = 0;
 		freeDoors.push_back(id);
 		retagEdge(door.a, door.b);
-		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
 	}
 
@@ -2528,10 +2529,8 @@ namespace geometry::nav {
 			if (!isFresh(t)) {
 				for (int apex = 0; apex < 3; ++apex) {
 					const Vec2i64& c = verts[tri.v[static_cast<std::size_t>(apex)]];
-					// The stored widths are floored: the obstacle can lie up to a millimetre
-					// farther. The structural width is the wider, reading farther.
-					const double reachMm =
-						static_cast<double>(std::min(std::max(tri.edgePairWidthMm[static_cast<std::size_t>(apex)], tri.structuralWidthMm[static_cast<std::size_t>(apex)]), maxClearanceMm)) + 2.0;
+					// The stored width is floored: the obstacle can lie up to a millimetre farther.
+					const double reachMm = static_cast<double>(std::min(tri.edgePairWidthMm[static_cast<std::size_t>(apex)], maxClearanceMm)) + 2.0;
 					if (forSeedsNear(c, c, static_cast<std::int64_t>(reachMm) + 1, [&](const WidthSeed& s) { return pointToSegment(toD(c), toD(s.a), toD(s.b)) < reachMm; })) {
 						stale.push_back(3 * t + apex);
 					}
@@ -2550,15 +2549,12 @@ namespace geometry::nav {
 		const NavView meshView = view();
 		PatchReport	  report;
 		for (std::int32_t a : stale) {
-			const ApexWidths w	 = apexWidthsMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm, maxSqueezeMm);
-			NavTriangle&	 tri = tris[static_cast<std::size_t>(a / 3)];
-			std::int64_t&	 full		= tri.edgePairWidthMm[static_cast<std::size_t>(a % 3)];
-			std::int64_t&	 structural = tri.structuralWidthMm[static_cast<std::size_t>(a % 3)];
-			if (full == w.full && structural == w.structural) {
+			const std::int64_t w	 = corridorWidthMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm);
+			std::int64_t&	   width = tris[static_cast<std::size_t>(a / 3)].edgePairWidthMm[static_cast<std::size_t>(a % 3)];
+			if (width == w) {
 				continue;
 			}
-			full	   = w.full;
-			structural = w.structural;
+			width = w;
 			if (report.changes.empty() || report.changes.back().id != a / 3) {
 				Vec2i64 tLo;
 				Vec2i64 tHi;
@@ -2578,12 +2574,6 @@ namespace geometry::nav {
 		return report;
 	}
 
-	void PatchableMesh::rebuildForests() {
-		refreshWidths();
-		buildReachabilityForests(view(), forestScratch, forests);
-		forestsCurrent = true;
-	}
-
 	NavView PatchableMesh::view() const {
 		NavView v;
 		v.vertices.of(verts);
@@ -2591,16 +2581,9 @@ namespace geometry::nav {
 		v.live.of(live);
 		v.owner			  = this;
 		v.locateIn		  = [](const void* owner, const Vec2i64& p) { return static_cast<const PatchableMesh*>(owner)->locate(p); };
-		v.forestIn		  = [](const void* owner, bool truth) -> const ReachabilityForest* {
-			   const PatchableMesh& mesh = *static_cast<const PatchableMesh*>(owner);
-			   if (!mesh.forestsCurrent) {
-				   return nullptr;
-			   }
-			   return truth ? &mesh.forests.truth : &mesh.forests.terrain;
-		};
+		v.componentsIn	  = [](const void* owner) -> const MeshComponents* { return &static_cast<const PatchableMesh*>(owner)->labels; };
 		v.widthsCurrentIn = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->widthsCurrent(); };
 		v.epochIn		  = [](const void* owner) { return static_cast<const PatchableMesh*>(owner)->epoch(); };
-		v.detailTags	  = &detailTags;
 		v.resolveIn		  = [](const void* owner, NavView& view) {
 			const PatchableMesh& mesh = *static_cast<const PatchableMesh*>(owner);
 			view.vertices.of(mesh.verts);
@@ -3029,7 +3012,7 @@ namespace geometry::nav {
 		}
 
 		// Widths, once refreshed, are what a fresh search gives; door tags are what the door
-		// registry says; forests, when the mesh has them, are what a fresh build gives.
+		// registry says.
 		{
 			const NavView v = view();
 			WidthSearch	  search;
@@ -3040,8 +3023,7 @@ namespace geometry::nav {
 				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
 				for (int e = 0; e < 3; ++e) {
 					if (widthsCurrent()) {
-						const ApexWidths w = apexWidthsMm(v, search, t, e, maxClearanceMm, maxSqueezeMm);
-						if (tri.edgePairWidthMm[static_cast<std::size_t>(e)] != w.full || tri.structuralWidthMm[static_cast<std::size_t>(e)] != w.structural) {
+						if (tri.edgePairWidthMm[static_cast<std::size_t>(e)] != corridorWidthMm(v, search, t, e, maxClearanceMm)) {
 							fail() << "triangle " << t << " apex " << e << " has a stale corridor width";
 							return err.str();
 						}
@@ -3054,13 +3036,6 @@ namespace geometry::nav {
 						fail() << "triangle " << t << " edge " << e << " has stale door tags";
 						return err.str();
 					}
-				}
-			}
-			if (forestsCurrent) {
-				const ReachabilityForests fresh = buildReachabilityForests(v);
-				if (fresh.truth.component != forests.truth.component || fresh.truth.nodeCap != forests.truth.nodeCap ||
-					fresh.terrain.component != forests.terrain.component || fresh.terrain.nodeCap != forests.terrain.nodeCap) {
-					return "reachability forests differ from a fresh build";
 				}
 			}
 		}

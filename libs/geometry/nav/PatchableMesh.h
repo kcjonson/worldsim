@@ -29,9 +29,8 @@
 //
 // The mesh carries what path queries and reachability read: face tags from the rings,
 // door tags on door edges, corridor widths capped at a maximum clearance (brought up to
-// date by refreshWidths), both reachability forests (rebuilt by rebuildForests), and
-// connected-component labels (kept by every patch).
-// view() hands all of it to PathQuery and the forest builder, which serve NavMesh too.
+// date by refreshWidths), and connected-component labels (kept by every patch).
+// view() hands all of it to PathQuery, which serves NavMesh too.
 
 namespace geometry::nav {
 
@@ -85,8 +84,6 @@ namespace geometry::nav {
 	// holds triangle ids checks them against `changes`.
 	struct PatchReport {
 		std::vector<RingId>			 added;			 // ids of PatchEdits::adds, in order
-		std::vector<std::int32_t>	 freedTriangles; // ids whose old triangle is gone, sorted
-		std::vector<std::int32_t>	 newTriangles;	 // ids holding a new triangle, sorted
 		std::vector<ChangedTriangle> changes;		 // every id touched, ascending, each once
 		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
 		Vec2i64						 hi;			 // (nothing changed: unset)
@@ -107,7 +104,6 @@ namespace geometry::nav {
 
 	// Covers any agent the game could have: a 2 m radius, over six times the colonist's.
 	constexpr std::int64_t kDefaultMaxClearanceMm = 4000;
-	constexpr std::int64_t kDefaultMaxSqueezeMm	  = 2000;
 
 	struct PatchableMeshArgs {
 		// A bounds ring enters the mesh with its edges split to at most this
@@ -118,11 +114,6 @@ namespace geometry::nav {
 		// Corridor widths are exact below this and read kUnconstrainedWidth at or above
 		// it, so a patch refreshes only the widths within this distance of what it changed.
 		std::int64_t maxClearanceMm = kDefaultMaxClearanceMm;
-		// The detail-class obstacle tags (NavMeshInput::detailTags).
-		std::vector<std::int64_t> detailTags;
-		// A priced squeeze past detail opens for discs up to this wide (apexWidthsMm): the
-		// structural width reads no farther, which keeps its refresh local among dense obstacles.
-		std::int64_t maxSqueezeMm = kDefaultMaxSqueezeMm;
 		// The face tags component labels read as open ground (MeshComponents).
 		std::vector<std::int64_t> componentOpenTags;
 	};
@@ -155,20 +146,14 @@ namespace geometry::nav {
 		DoorId addDoor(const DoorPortal& door);
 		void   removeDoor(DoorId door);
 
-		// Corridor widths (NavTriangle::edgePairWidthMm and structuralWidthMm, capped at maxClearanceMm) lag
+		// Corridor widths (NavTriangle::edgePairWidthMm, capped at maxClearanceMm) lag
 		// behind patches: a patch only records where it changed the mesh, and this brings
 		// every width up to date, once for all the patches since the last call. The report
 		// lists the triangles whose widths changed, each kTriangleWidths.
 		PatchReport refreshWidths();
 		bool widthsCurrent() const { return freshWidthTriangles.empty() && pendingWidthSeeds.empty(); }
 
-		// Refreshes widths, then rebuilds both reachability forests from the live
-		// triangles. A patch or a door edit drops them, so the mesh has forests only when
-		// this ran after its last change.
-		void rebuildForests();
-		bool hasForests() const { return forestsCurrent; }
-
-		// What path queries and forest builds read (see NavView).
+		// What path queries read (see NavView).
 		NavView view() const;
 
 		// Moves on every patch and door edit, to a value no mesh state has had before
@@ -319,8 +304,6 @@ namespace geometry::nav {
 
 		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
-		std::int64_t				maxSqueezeMm	= kDefaultMaxSqueezeMm;
-		std::vector<std::int64_t>	detailTags;
 		PagedVector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;
 
@@ -381,11 +364,8 @@ namespace geometry::nav {
 		std::uint32_t										freshStamp = 0;
 		std::uint32_t										walkStamp  = 0;
 
-		ReachabilityForests forests;
-		ForestScratch		forestScratch;
-		bool				forestsCurrent = false;
-		std::uint64_t		patchEpoch	   = nextMeshGeneration();
-		MeshComponents		labels;
+		std::uint64_t  patchEpoch = nextMeshGeneration();
+		MeshComponents labels;
 	};
 
 } // namespace geometry::nav

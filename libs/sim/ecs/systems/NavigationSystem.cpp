@@ -607,7 +607,7 @@ namespace ecs {
 	}
 
 	NavigationSystem::NavigationSystem()
-		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = {nav::kProvenancePlaced}}),
+		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
 		  patchWorker(std::make_unique<Worker>()),
 		  routeWorker(std::make_unique<Worker>()) {}
 

@@ -1044,7 +1044,7 @@ namespace {
 	NAV_BENCH_LEAF(REdgeOf)
 	NAV_BENCH_TAG(RPieces, account(v, out); out.count += static_cast<double>(v.size()))
 	NAV_BENCH_LEAF(RCoverTags)
-	NAV_BENCH_TAG(RWidthSearch, out.block(v.visited); account(v.vertexSeen, out); account(v.vertexObstacle, out); out.vec(v.star))
+	NAV_BENCH_TAG(RWidthSearch, out.block(v.visited))
 	NAV_BENCH_LEAF(RFreeRings)
 	NAV_BENCH_LEAF(RFreeVertices)
 	NAV_BENCH_LEAF(RFreeTriangles)
@@ -1249,10 +1249,7 @@ namespace {
 	}
 
 	geometry::nav::PatchableMesh navMeshLikeTheSystems() {
-		geometry::nav::PatchableMeshArgs args;
-		args.maxBoundsEdgeMm = ecs::NavigationSystem::kMaxBoundsEdgeMm;
-		args.detailTags		 = {nav::kProvenancePlaced};
-		return geometry::nav::PatchableMesh(args);
+		return geometry::nav::PatchableMesh({.maxBoundsEdgeMm = ecs::NavigationSystem::kMaxBoundsEdgeMm});
 	}
 
 	std::int64_t cellOf(glm::vec2 p) {
