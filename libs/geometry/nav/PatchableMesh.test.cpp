@@ -437,6 +437,14 @@ namespace {
 		return lo + static_cast<std::int64_t>(pick(rng, static_cast<std::uint64_t>(hi - lo + 1)));
 	}
 
+	// std::shuffle's draws are the standard library's own, so a seed would give each
+	// toolchain a different history.
+	template <typename T> void shuffle(std::vector<T>& items, std::mt19937& rng) {
+		for (std::size_t i = items.size(); i > 1; --i) {
+			std::swap(items[i - 1], items[pick(rng, i)]);
+		}
+	}
+
 	// --- Game fixtures: border and water, then trees in random batches ------------------
 
 	struct Fixture {
@@ -474,7 +482,7 @@ namespace {
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "after the base rings";
 
 		std::vector<NavInputPolygon> pending = fixture.trees;
-		std::shuffle(pending.begin(), pending.end(), rng);
+		shuffle(pending, rng);
 		std::vector<RingId> placed;
 		int					step = 0;
 		while (!pending.empty()) {
@@ -513,7 +521,7 @@ namespace {
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "seed " << seed << " at the end";
 
 		// Remove every tree in a few batches: the mesh returns to border and water.
-		std::shuffle(placed.begin(), placed.end(), rng);
+		shuffle(placed, rng);
 		while (!placed.empty()) {
 			PatchEdits		  edits;
 			const std::size_t count = std::min<std::size_t>(placed.size(), 1 + pick(rng, 120));
@@ -1044,7 +1052,7 @@ namespace {
 			r.doorIds.push_back(r.h.mesh.addDoor(d));
 		}
 		std::vector<NavInputPolygon> pending = input.rings;
-		std::shuffle(pending.begin(), pending.end(), rng);
+		shuffle(pending, rng);
 		std::vector<RingId> placed;
 		while (!pending.empty()) {
 			PatchEdits		  edits;
@@ -1387,23 +1395,69 @@ TEST(PatchableMesh, BoundsSplitTwoByTwoChangesNoAnswer) {
 
 namespace {
 
-	// Square posts 1 m across, `pitch` apart, nudged by up to `jitter` mm. Unnudged, each
-	// post's corners are cocircular with its neighbours', so the ground between them has
-	// diagonals a patch may choose freely; nudged, the triangulation is unique.
-	std::vector<NavInputPolygon> posts(std::int64_t pitch, std::int64_t jitter, std::uint32_t seed) {
-		std::mt19937				 rng(seed);
+	// Square posts 1 m across on a lattice `pitch` apart. A square's corners are
+	// cocircular, and so are the corners around each gap between four posts, so the
+	// inside of every post and the ground between them have diagonals a patch may choose
+	// freely.
+	std::vector<NavInputPolygon> latticePosts(std::int64_t pitch) {
 		std::vector<NavInputPolygon> out;
 		for (std::int64_t j = 0; j < 6; ++j) {
 			for (std::int64_t i = 0; i < 6; ++i) {
-				const std::int64_t x = 2000 + i * pitch + (jitter > 0 ? between(rng, 0, jitter) : 0);
-				const std::int64_t y = 2000 + j * pitch + (jitter > 0 ? between(rng, 0, jitter) : 0);
+				const std::int64_t x = 2000 + i * pitch;
+				const std::int64_t y = 2000 + j * pitch;
 				out.push_back(blocked(rect(x, y, x + 1000, y + 1000)));
 			}
 		}
 		return out;
 	}
 
+	// Posts 1 m across, `pitch` apart, each nudged by up to `jitter` mm. A post is a
+	// right trapezoid, which is never cyclic, so its inside has one triangulation; the
+	// nudges break the lattice's cocircular gaps.
+	std::vector<NavInputPolygon> nudgedPosts(std::int64_t pitch, std::int64_t jitter, std::uint32_t seed) {
+		std::mt19937				 rng(seed);
+		std::vector<NavInputPolygon> out;
+		for (std::int64_t j = 0; j < 6; ++j) {
+			for (std::int64_t i = 0; i < 6; ++i) {
+				const std::int64_t x = 2000 + i * pitch + between(rng, 0, jitter);
+				const std::int64_t y = 2000 + j * pitch + between(rng, 0, jitter);
+				out.push_back(blocked({{x, y}, {x + 1000, y}, {x + 1000, y + 1000}, {x + 200, y + 1000}}));
+			}
+		}
+		return out;
+	}
+
+	// Unconstrained edges whose far apex is on the near triangle's circumcircle: each is
+	// a diagonal the triangulation may take either way.
+	int freeDiagonals(const PatchableMesh& mesh) {
+		int count = 0;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tt = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (std::size_t e = 0; e < 3; ++e) {
+				const std::int32_t u = tt.neighbor[e];
+				if (u < t || tt.edgeProvenance[e] != kNoProvenance) {
+					continue;
+				}
+				const NavTriangle& uu = mesh.triangles()[static_cast<std::size_t>(u)];
+				std::size_t		   j  = 0;
+				while (uu.neighbor[j] != t) {
+					++j;
+				}
+				const Vec2i64& apex = mesh.vertices()[uu.v[(j + 2) % 3]];
+				count += geometry::inCircle(mesh.vertices()[tt.v[0]], mesh.vertices()[tt.v[1]], mesh.vertices()[tt.v[2]], apex) ==
+								 geometry::InCircle::OnCircle
+							 ? 1
+							 : 0;
+			}
+		}
+		return count;
+	}
+
 	struct HistoryComparison {
+		int freeDiagonals  = 0; // in the triangulation built in one patch
 		int otherTriangles = 0; // triangles only one history has
 		int compared	   = 0;
 		int identical	   = 0;
@@ -1437,7 +1491,7 @@ namespace {
 			scaffold.push_back(winding.add(blocked(rect(x, y, x + 300, y + 300))));
 		}
 		std::vector<NavInputPolygon> pending = rings;
-		std::shuffle(pending.begin(), pending.end(), rng);
+		shuffle(pending, rng);
 		std::vector<RingId> placed;
 		while (!pending.empty()) {
 			PatchEdits		  edits;
@@ -1480,6 +1534,7 @@ namespace {
 		}
 		EXPECT_LT(sameSlots, static_cast<int>(directTriangles.size())) << "the histories must leave triangles in different slots";
 		HistoryComparison out;
+		out.freeDiagonals = freeDiagonals(direct.mesh);
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(winding.mesh.triangles().size()); ++t) {
 			if (winding.mesh.triangleLive(t) && directTriangles.count(cornersOf(winding.mesh, t)) == 0) {
 				++out.otherTriangles;
@@ -1510,13 +1565,12 @@ namespace {
 // Point location and search ties go by coordinates, and corridor scores by geometry, so
 // on one triangulation the edit history changes no path at all.
 TEST(PatchableMesh, PathsIgnoreEditHistory) {
-	const HistoryComparison r = compareHistories(posts(4000, 600, 5), 26000, 77);
-	EXPECT_EQ(r.otherTriangles, 0) << "nudged posts leave the triangulation no choice";
+	const HistoryComparison r = compareHistories(nudgedPosts(4000, 600, 5), 26000, 77);
+	ASSERT_EQ(r.freeDiagonals, 0) << "nudged posts must leave the triangulation no choice";
+	EXPECT_EQ(r.otherTriangles, 0);
 	EXPECT_EQ(r.identical, r.compared);
 }
 
-// Where the history picks different free diagonals, paths may differ, within the
-// tolerance the bounds-split oracle uses.
 // A start or goal exactly on a tree's edge or corner stands on the floor beside it:
 // point location settles a shared edge by geometry, which may name the tree's face, and
 // the query looks past it to a face it can cross.
@@ -1538,9 +1592,12 @@ TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
 	EXPECT_GT(onTreeFace, 0) << "some of these points must locate to the tree's face for the test to bind";
 }
 
+// Where the history picks different free diagonals, paths may differ, within the
+// tolerance the bounds-split oracle uses.
 TEST(PatchableMesh, PathsAcrossFreeDiagonalsAgree) {
-	const HistoryComparison r = compareHistories(posts(5000, 0, 0), 31000, 79);
-	EXPECT_GT(r.otherTriangles, 0) << "the lattice must leave diagonals to choose";
+	const HistoryComparison r = compareHistories(latticePosts(5000), 31000, 79);
+	EXPECT_GT(r.freeDiagonals, 0) << "the lattice must leave diagonals to choose";
+	EXPECT_GT(r.otherTriangles, 0) << "the histories must choose some of them differently";
 	::testing::Test::RecordProperty("trianglesOnlyInOneHistory", r.otherTriangles);
 	::testing::Test::RecordProperty("pathsCompared", r.compared);
 	::testing::Test::RecordProperty("pathsIdentical", r.identical);
