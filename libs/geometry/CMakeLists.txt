@@ -15,6 +15,7 @@ add_library(geometry
     silhouette/Silhouette.cpp
     triangulation/ConstrainedDelaunay.cpp
     visibility/Visibility.cpp
+    nav/MeshComponents.cpp
     nav/NavMesh.cpp
     nav/PathQuery.cpp
     nav/PatchableMesh.cpp

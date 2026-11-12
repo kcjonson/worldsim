@@ -914,6 +914,7 @@ namespace geometry::nav {
 		std::vector<std::uint8_t>				  linked;
 		std::vector<std::pair<std::int32_t, int>> boundaryEdges;
 		std::vector<std::int32_t>				  flipped;
+		std::vector<std::int32_t>				  unlinked; // kept triangles whose edge on the hole now borders nothing
 	};
 
 	PatchableMesh::PatchScratchSlot::PatchScratchSlot() : scratch(std::make_unique<PatchScratch>()) {}
@@ -2094,8 +2095,10 @@ namespace geometry::nav {
 				m.setEdgeSources(id, e, listId);
 			}
 		}
+		work.unlinked.clear();
 		for (std::size_t f = 0; f < fixed.size(); ++f) {
 			if (fixed[f].boundary && linked[f] == 0) {
+				work.unlinked.push_back(fixed[f].outside);
 				m.tris[static_cast<std::size_t>(fixed[f].outside)].neighbor[static_cast<std::size_t>(fixed[f].outsideEdge)] = -1;
 				// Ground beyond this edge is gone: widths near it change though no fresh
 				// triangle borders it.
@@ -2133,6 +2136,40 @@ namespace geometry::nav {
 		}
 		out.lo = lo;
 		out.hi = hi;
+
+		// Every touched id with why: kept triangles beside a new or flipped one, or whose
+		// edge on the hole now borders nothing, are the border.
+		std::vector<ChangedTriangle>& changes = out.changes;
+		auto isNew = [&](std::int32_t t) { return std::binary_search(out.newTriangles.begin(), out.newTriangles.end(), t); };
+		for (std::int32_t t : out.freedTriangles) {
+			changes.push_back({t, kTriangleFreed});
+		}
+		for (std::int32_t t : out.newTriangles) {
+			changes.push_back({t, kTriangleCreated});
+			for (const std::int32_t nb : m.tris[static_cast<std::size_t>(t)].neighbor) {
+				if (nb >= 0 && !isNew(nb)) {
+					changes.push_back({nb, kTriangleBorder});
+				}
+			}
+		}
+		for (std::int32_t t : flipped) {
+			changes.push_back({t, kTriangleFlipped});
+		}
+		for (std::int32_t t : work.unlinked) {
+			if (!isNew(t)) {
+				changes.push_back({t, kTriangleBorder});
+			}
+		}
+		std::sort(changes.begin(), changes.end(), [](const ChangedTriangle& a, const ChangedTriangle& b) { return a.id < b.id; });
+		std::size_t unique = 0;
+		for (std::size_t i = 0; i < changes.size(); ++i) {
+			if (unique > 0 && changes[unique - 1].id == changes[i].id) {
+				changes[unique - 1].why |= changes[i].why;
+			} else {
+				changes[unique++] = changes[i];
+			}
+		}
+		changes.resize(unique);
 
 		// A flip moves edges between triangles, so door tags are set afresh on every new
 		// and flipped triangle; their widths, and widths near what changed, wait for
@@ -2178,13 +2215,28 @@ namespace geometry::nav {
 	}
 
 	PatchableMesh::PatchableMesh(const PatchableMeshArgs& args)
-		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), maxSqueezeMm(args.maxSqueezeMm), detailTags(args.detailTags) {}
+		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), maxSqueezeMm(args.maxSqueezeMm), detailTags(args.detailTags),
+		  labels({.openTags = args.componentOpenTags}) {}
+
+	namespace {
+
+		// A solid ring with a water or obstacle tag can only close ground: whatever it
+		// covers it blocks, and the smallest solid ring decides a face, so a smaller one
+		// already inside keeps its faces.
+		bool onlyCloses(const NavInputPolygon& ring) {
+			return ring.blocked && !ring.holeCapable && ring.openingId == kNoOpening && ring.provenanceId < 0 && ring.provenanceId != kNoProvenance;
+		}
+
+	} // namespace
 
 	PatchReport PatchableMesh::applyPatch(const PatchEdits& edits) {
 		Patch patch(*this, edits);
 		forestsCurrent = false;
 		patchEpoch = nextMeshGeneration();
-		return patch.run();
+		PatchReport report = patch.run();
+		report.opens	   = !edits.removes.empty() || !edits.moves.empty() || !std::all_of(edits.adds.begin(), edits.adds.end(), onlyCloses);
+		labels.update(view(), report);
+		return report;
 	}
 
 	// --- Doors, widths, forests, and the view ---------------------------------------
@@ -2331,7 +2383,7 @@ namespace geometry::nav {
 	// the clearance cap of a seed edge, found by walking adjacency out from the seeds,
 	// hold every apex to search again: those within their own width of a seed edge. The
 	// walk covers what changed and its margin, whatever the size of the mesh.
-	void PatchableMesh::refreshWidths() {
+	PatchReport PatchableMesh::refreshWidths() {
 		std::vector<std::int32_t>& stale = staleApexes;
 		stale.clear();
 		freshMark.growTo(tris.size());
@@ -2495,13 +2547,34 @@ namespace geometry::nav {
 		std::sort(stale.begin(), stale.end());
 		stale.erase(std::unique(stale.begin(), stale.end()), stale.end());
 		const NavView meshView = view();
+		PatchReport	  report;
 		for (std::int32_t a : stale) {
-			const ApexWidths w														 = apexWidthsMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm, maxSqueezeMm);
-			tris[static_cast<std::size_t>(a / 3)].edgePairWidthMm[static_cast<std::size_t>(a % 3)]	 = w.full;
-			tris[static_cast<std::size_t>(a / 3)].structuralWidthMm[static_cast<std::size_t>(a % 3)] = w.structural;
+			const ApexWidths w	 = apexWidthsMm(meshView, widthSearch, a / 3, a % 3, maxClearanceMm, maxSqueezeMm);
+			NavTriangle&	 tri = tris[static_cast<std::size_t>(a / 3)];
+			std::int64_t&	 full		= tri.edgePairWidthMm[static_cast<std::size_t>(a % 3)];
+			std::int64_t&	 structural = tri.structuralWidthMm[static_cast<std::size_t>(a % 3)];
+			if (full == w.full && structural == w.structural) {
+				continue;
+			}
+			full	   = w.full;
+			structural = w.structural;
+			if (report.changes.empty() || report.changes.back().id != a / 3) {
+				Vec2i64 tLo;
+				Vec2i64 tHi;
+				triangleBox(a / 3, tLo, tHi);
+				if (report.changes.empty()) {
+					report.lo = tLo;
+					report.hi = tHi;
+				} else {
+					growBox(report.lo, report.hi, tLo);
+					growBox(report.lo, report.hi, tHi);
+				}
+				report.changes.push_back({a / 3, kTriangleWidths});
+			}
 		}
 		freshWidthTriangles.clear();
 		pendingWidthSeeds.clear();
+		return report;
 	}
 
 	void PatchableMesh::rebuildForests() {

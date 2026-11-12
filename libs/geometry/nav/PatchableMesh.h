@@ -3,6 +3,7 @@
 #include "../core/IncrementalHashMap.h"
 #include "../core/PagedVector.h"
 #include "../core/Vec2i64.h"
+#include "MeshComponents.h"
 #include "NavMesh.h"
 
 #include <array>
@@ -28,7 +29,8 @@
 //
 // The mesh carries what path queries and reachability read: face tags from the rings,
 // door tags on door edges, corridor widths capped at a maximum clearance (brought up to
-// date by refreshWidths), and both reachability forests (rebuilt by rebuildForests).
+// date by refreshWidths), both reachability forests (rebuilt by rebuildForests), and
+// connected-component labels (kept by every patch).
 // view() hands all of it to PathQuery and the forest builder, which serve NavMesh too.
 
 namespace geometry::nav {
@@ -65,13 +67,34 @@ namespace geometry::nav {
 		std::vector<RingMove>		 moves;
 	};
 
+	// Why a triangle id is in PatchReport::changes; one id can carry several.
+	constexpr std::uint8_t kTriangleFreed	= 1 << 0; // its old triangle is gone
+	constexpr std::uint8_t kTriangleCreated = 1 << 1; // it holds a triangle the patch made
+	constexpr std::uint8_t kTriangleFlipped = 1 << 2; // a flip at the hole's boundary remade it (freed and created too)
+	constexpr std::uint8_t kTriangleBorder	= 1 << 3; // kept, but what lies across one of its edges changed or went
+	constexpr std::uint8_t kTriangleWidths	= 1 << 4; // refreshWidths changed one of its corridor widths
+
+	struct ChangedTriangle {
+		std::int32_t id	 = -1;
+		std::uint8_t why = 0;
+
+		bool operator==(const ChangedTriangle&) const = default;
+	};
+
+	// What a patch (applyPatch) or a width refresh (refreshWidths) changed. Anything that
+	// holds triangle ids checks them against `changes`.
 	struct PatchReport {
-		std::vector<RingId>		  added;		  // ids of PatchEdits::adds, in order
-		std::vector<std::int32_t> freedTriangles; // ids whose old triangle is gone, sorted
-		std::vector<std::int32_t> newTriangles;	  // ids holding a new triangle, sorted
-		Vec2i64					  lo;			  // box of every freed and new triangle (both lists empty: unset)
-		Vec2i64					  hi;
-		std::int32_t			  passes = 0; // re-derivations until the boundary held
+		std::vector<RingId>			 added;			 // ids of PatchEdits::adds, in order
+		std::vector<std::int32_t>	 freedTriangles; // ids whose old triangle is gone, sorted
+		std::vector<std::int32_t>	 newTriangles;	 // ids holding a new triangle, sorted
+		std::vector<ChangedTriangle> changes;		 // every id touched, ascending, each once
+		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
+		Vec2i64						 hi;			 // (nothing changed: unset)
+		std::int32_t				 passes = 0;	 // re-derivations until the boundary held
+		// The patch may have opened a way for some mover and belief: it removed or moved a
+		// ring, or added ground, a door, a hole-capable ring, or a wall. Only solid water and
+		// obstacle rings arriving leave it false.
+		bool opens = false;
 	};
 
 	// The outline with every edge longer than maxEdgeMm cut into near-equal pieces at
@@ -100,6 +123,8 @@ namespace geometry::nav {
 		// A priced squeeze past detail opens for discs up to this wide (apexWidthsMm): the
 		// structural width reads no farther, which keeps its refresh local among dense obstacles.
 		std::int64_t maxSqueezeMm = kDefaultMaxSqueezeMm;
+		// The face tags component labels read as open ground (MeshComponents).
+		std::vector<std::int64_t> componentOpenTags;
 	};
 
 	class PatchableMesh {
@@ -132,8 +157,9 @@ namespace geometry::nav {
 
 		// Corridor widths (NavTriangle::edgePairWidthMm and structuralWidthMm, capped at maxClearanceMm) lag
 		// behind patches: a patch only records where it changed the mesh, and this brings
-		// every width up to date, once for all the patches since the last call.
-		void refreshWidths();
+		// every width up to date, once for all the patches since the last call. The report
+		// lists the triangles whose widths changed, each kTriangleWidths.
+		PatchReport refreshWidths();
 		bool widthsCurrent() const { return freshWidthTriangles.empty() && pendingWidthSeeds.empty(); }
 
 		// Refreshes widths, then rebuilds both reachability forests from the live
@@ -148,6 +174,9 @@ namespace geometry::nav {
 		// Moves on every patch and door edit, to a value no mesh state has had before
 		// (nextMeshGeneration): anything keyed by triangle id is stale once it moves.
 		std::uint64_t epoch() const { return patchEpoch; }
+
+		// Connected components, brought up to date by every patch.
+		const MeshComponents& components() const { return labels; }
 
 		// Full consistency check; the first violation found, or empty.
 		std::string validate() const;
@@ -356,6 +385,7 @@ namespace geometry::nav {
 		ForestScratch		forestScratch;
 		bool				forestsCurrent = false;
 		std::uint64_t		patchEpoch	   = nextMeshGeneration();
+		MeshComponents		labels;
 	};
 
 } // namespace geometry::nav
