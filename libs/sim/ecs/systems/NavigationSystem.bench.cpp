@@ -52,6 +52,7 @@
 #include <nav/NavCoords.h>
 #include <nav/NavInputBuilder.h>
 #include <nav/PatchableMesh.h>
+#include <nav/PathQuery.h>
 
 #include <utils/Log.h>
 
@@ -1269,22 +1270,29 @@ namespace {
 		mesh.refreshWidths();
 	}
 
+	// NavScale.bench.cpp's dense placement: a placed obstacle every spacingM from lo up to hi on each
+	// axis, nudged up to 1.4 m, half extents by the oak's age classes plus the 0.05 m pad.
+	std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> denseObstacles(glm::vec2 lo, glm::vec2 hi, float spacingM) {
+		std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> obstacles;
+		const float halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
+		for (float x = lo.x; x < hi.x; x += spacingM) {
+			for (float y = lo.y; y < hi.y; y += spacingM) {
+				const glm::vec2		p{x + std::fmod(y * 0.37F, 1.4F), y + std::fmod(x * 0.53F, 1.4F)};
+				const std::uint32_t h = static_cast<std::uint32_t>(p.x * 131.0F + p.y * 7.0F) % 100U;
+				const float			e = halfExtents[h < 15 ? 0 : h < 75 ? 1 : 2];
+				obstacles.push_back({p,
+									 {{nav::toMm(p - glm::vec2{e}), nav::toMm({p.x + e, p.y - e}), nav::toMm(p + glm::vec2{e}), nav::toMm({p.x - e, p.y + e})},
+									  true,
+									  nav::kProvenancePlaced}});
+			}
+		}
+		return obstacles;
+	}
+
 	// NavScale.bench.cpp's BM_NavScaleDetail chunk, bytes by container.
 	void BM_PlacedObstacleBytes(benchmark::State& state) {
 		for (auto _ : state) {
-			std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> obstacles;
-			const float halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
-			for (float x = 1.0F; x < 511.0F; x += 3.54F) {
-				for (float y = 1.0F; y < 511.0F; y += 3.54F) {
-					const glm::vec2		p{x + std::fmod(y * 0.37F, 1.4F), y + std::fmod(x * 0.53F, 1.4F)};
-					const std::uint32_t h = static_cast<std::uint32_t>(p.x * 131.0F + p.y * 7.0F) % 100U;
-					const float			e = halfExtents[h < 15 ? 0 : h < 75 ? 1 : 2];
-					obstacles.push_back({p,
-										 {{nav::toMm(p - glm::vec2{e}), nav::toMm({p.x + e, p.y - e}), nav::toMm(p + glm::vec2{e}), nav::toMm({p.x - e, p.y + e})},
-										  true,
-										  nav::kProvenancePlaced}});
-				}
-			}
+			const std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> obstacles = denseObstacles({1.0F, 1.0F}, {511.0F, 511.0F}, 3.54F);
 			geometry::nav::PatchableMesh mesh = navMeshLikeTheSystems();
 			mesh.applyPatch({.adds = {nav::chunkSquare({0, 0})}});
 			mesh.refreshWidths();
@@ -1486,6 +1494,282 @@ namespace {
 		}
 	}
 
+	// --- The seam between two chunks' ground ----------------------------------------------------
+	//
+	// BM_ChunkSeam: chunks (0, 0) and (1, 0), each square its own ground patch as the game adds them
+	// (Arg 0), or one bounds rectangle over both, the seam absent (Arg 1); then placed obstacles at
+	// 0.064 per m2 (the Quick Start chunks hold 0.060 to 0.068, BM_PlacedObstacleDensity) over x 384
+	// to 640 m and y 100 to 412 m, across the shared side x = 512 m, patched 16 m cell by cell. Two
+	// bands of one mesh, both over y 156 to 356 m: border, within 16 m of x = 512; interior, x 400 to
+	// 464 and 560 to 624 (48 m from the seam, 16 m inside the placed area, 156 m from every other
+	// side). Per band:
+	//   shape: floor triangles by centroid, their longest edge, aspect (longest edge over the
+	//   altitude on it, 1.15 for an equilateral), and how many have a longest edge over 32 m;
+	//   locate: 10,000 points (the border's within 8 m of the seam), PatchableMesh::locate and
+	//   standingTriangle per point, each timed over 16 repeats, and over the first 1,000 the
+	//   triangle boxes holding the point (the most the point grid tests);
+	//   route: 500 pairs 40 m apart (the border's one end each side), each the game's SearchState
+	//   for a 0.3 m colonist run to the end: expansions, time, and walk over straight line;
+	//   widths: a 16 m cell's placed obstacles removed and put back, 8 cells (the border's
+	//   touching the seam), the patches' and refreshWidths' ms per cell.
+
+	constexpr float kSeamXM		   = 512.0F;
+	constexpr float kSeamBandLoYM  = 156.0F;
+	constexpr float kSeamBandHiYM  = 356.0F;
+	constexpr float kSeamSpacingM  = 3.95F; // 0.064 per m2
+	constexpr int	kSeamPoints	   = 10000;
+	constexpr int	kSeamBoxPoints = 1000;
+	constexpr int	kSeamRoutes	   = 500;
+	constexpr int	kSeamCells	   = 8;
+
+	enum class SeamBand { Border, Interior };
+
+	bool inSeamBand(SeamBand band, glm::vec2 p) {
+		if (p.y < kSeamBandLoYM || p.y > kSeamBandHiYM) {
+			return false;
+		}
+		if (band == SeamBand::Border) {
+			return std::abs(p.x - kSeamXM) <= 16.0F;
+		}
+		return (p.x >= 400.0F && p.x <= 464.0F) || (p.x >= 560.0F && p.x <= 624.0F);
+	}
+
+	double seamUnit(std::uint32_t seed, std::uint32_t i) {
+		return static_cast<double>(hashU32(seed * 0x9E3779B9U ^ hashU32(i + 1U))) / 4294967296.0;
+	}
+
+	struct SeamBandStats {
+		double tris = 0.0, edgeMeanM = 0.0, edgeP99M = 0.0, edgeMaxM = 0.0, aspectMean = 0.0, aspectP99 = 0.0, aspectMax = 0.0, over32m = 0.0;
+		double locateNs = 0.0, locateP99Ns = 0.0, standNs = 0.0, standP99Ns = 0.0, boxesAtPoint = 0.0, boxesAtPointP99 = 0.0;
+		double expMean = 0.0, expP99 = 0.0, searchUs = 0.0, searchP99Us = 0.0, walkRatioMean = 0.0, walkRatioMax = 0.0, notFound = 0.0;
+		double patchMs = 0.0, widthsMs = 0.0;
+	};
+
+	glm::dvec2 seamMeters(const geometry::Vec2i64& mm) { return glm::dvec2(nav::toMeters(mm)); }
+
+	void seamShape(const geometry::nav::PatchableMesh& mesh, SeamBand band, SeamBandStats& out) {
+		std::vector<double> edges;
+		std::vector<double> aspects;
+		const auto&			tris  = mesh.triangles();
+		const auto&			verts = mesh.vertices();
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
+			if (!mesh.triangleLive(t) || !geometry::nav::isFloorFace(tris[static_cast<std::size_t>(t)])) {
+				continue;
+			}
+			const geometry::nav::NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+			const glm::dvec2				  a	  = seamMeters(verts[tri.v[0]]);
+			const glm::dvec2				  b	  = seamMeters(verts[tri.v[1]]);
+			const glm::dvec2				  c	  = seamMeters(verts[tri.v[2]]);
+			if (!inSeamBand(band, glm::vec2((a + b + c) / 3.0))) {
+				continue;
+			}
+			const double longest = std::max({glm::length(b - a), glm::length(c - b), glm::length(a - c)});
+			const double area2	 = std::abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
+			edges.push_back(longest);
+			aspects.push_back(longest * longest / area2);
+			out.over32m += longest > 32.0 ? 1.0 : 0.0;
+		}
+		out.tris	   = static_cast<double>(edges.size());
+		out.edgeMeanM  = meanOf(edges);
+		out.edgeP99M   = atPercentile(edges, 0.99);
+		out.edgeMaxM   = edges.empty() ? 0.0 : *std::max_element(edges.begin(), edges.end());
+		out.aspectMean = meanOf(aspects);
+		out.aspectP99  = atPercentile(aspects, 0.99);
+		out.aspectMax  = aspects.empty() ? 0.0 : *std::max_element(aspects.begin(), aspects.end());
+	}
+
+	void seamLocate(const geometry::nav::PatchableMesh& mesh, SeamBand band, SeamBandStats& out) {
+		constexpr int				   kRepeats = 16;
+		const geometry::nav::NavView   view		= mesh.view();
+		std::vector<geometry::Vec2i64> points;
+		for (std::uint32_t i = 0; points.size() < kSeamPoints; ++i) {
+			const double u = seamUnit(1U, i);
+			const double v = seamUnit(2U, i);
+			const double x = band == SeamBand::Border ? kSeamXM + (u * 2.0 - 1.0) * 8.0 : (u < 0.5 ? 400.0 + u * 128.0 : 560.0 + (u - 0.5) * 128.0);
+			points.push_back(nav::toMm({static_cast<float>(x), static_cast<float>(kSeamBandLoYM + v * (kSeamBandHiYM - kSeamBandLoYM))}));
+		}
+		std::vector<double> locateNs;
+		std::vector<double> standNs;
+		for (const geometry::Vec2i64& p : points) {
+			const auto t0 = Clock::now();
+			for (int r = 0; r < kRepeats; ++r) {
+				benchmark::DoNotOptimize(mesh.locate(p));
+			}
+			const auto t1 = Clock::now();
+			for (int r = 0; r < kRepeats; ++r) {
+				benchmark::DoNotOptimize(geometry::nav::standingTriangle(view, p));
+			}
+			const auto t2 = Clock::now();
+			locateNs.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count() / kRepeats);
+			standNs.push_back(std::chrono::duration<double, std::nano>(t2 - t1).count() / kRepeats);
+		}
+		std::vector<double> boxes;
+		const auto&			tris  = mesh.triangles();
+		const auto&			verts = mesh.vertices();
+		for (int i = 0; i < kSeamBoxPoints; ++i) {
+			const geometry::Vec2i64& p	   = points[static_cast<std::size_t>(i)];
+			int						 count = 0;
+			for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
+				if (!mesh.triangleLive(t)) {
+					continue;
+				}
+				const geometry::nav::NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+				const geometry::Vec2i64&		  a	  = verts[tri.v[0]];
+				const geometry::Vec2i64&		  b	  = verts[tri.v[1]];
+				const geometry::Vec2i64&		  c	  = verts[tri.v[2]];
+				if (std::min({a.x, b.x, c.x}) <= p.x && p.x <= std::max({a.x, b.x, c.x}) && std::min({a.y, b.y, c.y}) <= p.y && p.y <= std::max({a.y, b.y, c.y})) {
+					++count;
+				}
+			}
+			boxes.push_back(static_cast<double>(count));
+		}
+		out.locateNs		= meanOf(locateNs);
+		out.locateP99Ns		= atPercentile(locateNs, 0.99);
+		out.standNs			= meanOf(standNs);
+		out.standP99Ns		= atPercentile(standNs, 0.99);
+		out.boxesAtPoint	= meanOf(boxes);
+		out.boxesAtPointP99 = atPercentile(boxes, 0.99);
+	}
+
+	void seamRoutes(const geometry::nav::PatchableMesh& mesh, SeamBand band, SeamBandStats& out) {
+		constexpr double			 kHalfM	 = 20.0;
+		constexpr double			 kTwoPiD = 6.283185307179586;
+		const geometry::nav::NavView view	 = mesh.view();
+		std::vector<double>			 expansions;
+		std::vector<double>			 searchUs;
+		std::vector<double>			 ratios;
+		for (std::uint32_t i = 0; static_cast<int>(searchUs.size()) < kSeamRoutes; ++i) {
+			const double			centreX = band == SeamBand::Border ? kSeamXM : (seamUnit(3U, i) < 0.5 ? 432.0 : 592.0);
+			const double			cx		= centreX + (seamUnit(4U, i) - 0.5) * 8.0;
+			const double			cy		= 176.0 + seamUnit(5U, i) * 160.0;
+			const double			angle	= (seamUnit(6U, i) - 0.5) * kTwoPiD / 3.0 + (seamUnit(7U, i) < 0.5 ? kTwoPiD / 2.0 : 0.0);
+			const glm::vec2			a{static_cast<float>(cx - kHalfM * std::cos(angle)), static_cast<float>(cy - kHalfM * std::sin(angle))};
+			const glm::vec2			b{static_cast<float>(cx + kHalfM * std::cos(angle)), static_cast<float>(cy + kHalfM * std::sin(angle))};
+			const geometry::Vec2i64 aMm = nav::toMm(a);
+			const geometry::Vec2i64 bMm = nav::toMm(b);
+			if (geometry::nav::standingTriangle(view, aMm) < 0 || geometry::nav::standingTriangle(view, bMm) < 0) {
+				continue;
+			}
+			const auto							t0 = Clock::now();
+			geometry::nav::SearchState			search({.start = aMm, .goals = {bMm}, .agentRadiusMm = 300});
+			const geometry::nav::SearchProgress progress = search.step(view, geometry::nav::kRunToEnd);
+			const auto							t1		 = Clock::now();
+			searchUs.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
+			expansions.push_back(static_cast<double>(search.expansions()));
+			if (progress != geometry::nav::SearchProgress::Found) {
+				out.notFound += 1.0;
+				continue;
+			}
+			const geometry::nav::PathResult result = search.result();
+			double							walk   = 0.0;
+			for (std::size_t k = 1; k < result.points.size(); ++k) {
+				walk += glm::length(seamMeters(result.points[k]) - seamMeters(result.points[k - 1]));
+			}
+			ratios.push_back(walk / glm::length(glm::dvec2(b) - glm::dvec2(a)));
+		}
+		out.expMean		  = meanOf(expansions);
+		out.expP99		  = atPercentile(expansions, 0.99);
+		out.searchUs	  = meanOf(searchUs);
+		out.searchP99Us	  = atPercentile(searchUs, 0.99);
+		out.walkRatioMean = meanOf(ratios);
+		out.walkRatioMax  = ratios.empty() ? 0.0 : *std::max_element(ratios.begin(), ratios.end());
+	}
+
+	struct SeamCell {
+		std::vector<geometry::nav::NavInputPolygon> rings;
+		std::vector<geometry::nav::RingId>			ids;
+	};
+
+	void seamWidths(geometry::nav::PatchableMesh& mesh, std::map<std::int64_t, SeamCell>& cells, SeamBand band, SeamBandStats& out) {
+		const auto ms = [](Clock::time_point from, Clock::time_point to) { return std::chrono::duration<double, std::milli>(to - from).count(); };
+		for (int k = 0; k < kSeamCells; ++k) {
+			const std::int64_t cx	= band == SeamBand::Border ? (k % 2 == 0 ? 31 : 32) : (k % 2 == 0 ? 26 : 36);
+			const std::int64_t cy	= 10 + k;
+			SeamCell&		   cell = cells.at(cx * 1000003 + cy);
+			const auto		   t0	= Clock::now();
+			mesh.applyPatch({.removes = cell.ids});
+			const auto t1 = Clock::now();
+			mesh.refreshWidths();
+			const auto t2 = Clock::now();
+			cell.ids	  = mesh.applyPatch({.adds = cell.rings}).added;
+			const auto t3 = Clock::now();
+			mesh.refreshWidths();
+			const auto t4 = Clock::now();
+			out.patchMs += (ms(t0, t1) + ms(t2, t3)) / kSeamCells;
+			out.widthsMs += (ms(t1, t2) + ms(t3, t4)) / kSeamCells;
+		}
+	}
+
+	void BM_ChunkSeam(benchmark::State& state) {
+		const bool seamAbsent = state.range(0) != 0;
+		for (auto _ : state) {
+			geometry::nav::PatchableMesh mesh = navMeshLikeTheSystems();
+			const auto					 t0	  = Clock::now();
+			if (seamAbsent) {
+				mesh.applyPatch({.adds = {nav::borderRing({0, 0}, {2 * 512000, 512000})}});
+			} else {
+				mesh.applyPatch({.adds = {nav::chunkSquare({0, 0})}});
+				mesh.applyPatch({.adds = {nav::chunkSquare({1, 0})}});
+			}
+			std::map<std::int64_t, SeamCell> cells;
+			for (const auto& [at, ring] : denseObstacles({384.0F, 100.0F}, {640.0F, 412.0F}, kSeamSpacingM)) {
+				cells[cellOf(at)].rings.push_back(ring);
+			}
+			double obstacles = 0.0;
+			for (auto& [key, cell] : cells) {
+				cell.ids = mesh.applyPatch({.adds = cell.rings}).added;
+				obstacles += static_cast<double>(cell.rings.size());
+			}
+			mesh.refreshWidths();
+			const double buildMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
+
+			std::fprintf(stderr, "[seam] %s: %.0f placed obstacles (%.4f per m2), %d live triangles, built in %.0f ms\n",
+						 seamAbsent ? "one bounds rectangle" : "two chunk squares", obstacles, obstacles / (256.0 * 312.0), mesh.liveTriangleCount(), buildMs);
+			state.counters["obstacles"] = obstacles;
+			state.counters["liveTris"]	= mesh.liveTriangleCount();
+			state.counters["buildMs"]	= buildMs;
+			for (const SeamBand band : {SeamBand::Border, SeamBand::Interior}) {
+				SeamBandStats s;
+				seamShape(mesh, band, s);
+				seamLocate(mesh, band, s);
+				seamRoutes(mesh, band, s);
+				seamWidths(mesh, cells, band, s);
+				const std::string p = band == SeamBand::Border ? "border" : "interior";
+				std::fprintf(stderr,
+							 "[seam]   %-8s tris %5.0f; longest edge m mean %.2f p99 %.2f max %.2f; aspect mean %.2f p99 %.2f max %.1f; over 32 m %.0f\n"
+							 "[seam]            locate ns mean %.0f p99 %.0f; standing ns mean %.0f p99 %.0f; boxes at point mean %.1f p99 %.0f\n"
+							 "[seam]            route expansions mean %.0f p99 %.0f; us mean %.0f p99 %.0f; walk/line mean %.3f max %.3f; not found %.0f\n"
+							 "[seam]            cell remove+add patches %.3f ms, refreshWidths %.3f ms\n",
+							 p.c_str(), s.tris, s.edgeMeanM, s.edgeP99M, s.edgeMaxM, s.aspectMean, s.aspectP99, s.aspectMax, s.over32m, s.locateNs, s.locateP99Ns,
+							 s.standNs, s.standP99Ns, s.boxesAtPoint, s.boxesAtPointP99, s.expMean, s.expP99, s.searchUs, s.searchP99Us, s.walkRatioMean,
+							 s.walkRatioMax, s.notFound, s.patchMs, s.widthsMs);
+				state.counters[p + "Tris"]			  = s.tris;
+				state.counters[p + "EdgeMeanM"]		  = s.edgeMeanM;
+				state.counters[p + "EdgeP99M"]		  = s.edgeP99M;
+				state.counters[p + "EdgeMaxM"]		  = s.edgeMaxM;
+				state.counters[p + "AspectMean"]	  = s.aspectMean;
+				state.counters[p + "AspectP99"]		  = s.aspectP99;
+				state.counters[p + "AspectMax"]		  = s.aspectMax;
+				state.counters[p + "Over32m"]		  = s.over32m;
+				state.counters[p + "LocateNs"]		  = s.locateNs;
+				state.counters[p + "LocateP99Ns"]	  = s.locateP99Ns;
+				state.counters[p + "StandNs"]		  = s.standNs;
+				state.counters[p + "StandP99Ns"]	  = s.standP99Ns;
+				state.counters[p + "BoxesAtPoint"]	  = s.boxesAtPoint;
+				state.counters[p + "BoxesAtPointP99"] = s.boxesAtPointP99;
+				state.counters[p + "ExpMean"]		  = s.expMean;
+				state.counters[p + "ExpP99"]		  = s.expP99;
+				state.counters[p + "SearchUs"]		  = s.searchUs;
+				state.counters[p + "SearchP99Us"]	  = s.searchP99Us;
+				state.counters[p + "WalkRatioMean"]	  = s.walkRatioMean;
+				state.counters[p + "WalkRatioMax"]	  = s.walkRatioMax;
+				state.counters[p + "NotFound"]		  = s.notFound;
+				state.counters[p + "CellPatchMs"]	  = s.patchMs;
+				state.counters[p + "CellWidthsMs"]	  = s.widthsMs;
+			}
+		}
+	}
+
 } // namespace
 
 // The last argument of every row is the gap between ticks in ms.
@@ -1506,3 +1790,4 @@ BENCHMARK(BM_RealChunksGround)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::k
 BENCHMARK(BM_PlacedObstacleBytes)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PlacedObstacleSystemBytes)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PlacedObstacleDensity)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ChunkSeam)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);
