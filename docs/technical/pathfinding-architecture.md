@@ -44,7 +44,7 @@ Four resolutions, from planet to footstep. An agent uses the coarsest tier that 
 
 ```
 Tier 0  GLOBAL      planet hex graph (already in RAM)     abstract parties, hours of travel
-Tier 1  REGIONAL    geography mesh: chunk connectivity components         reachability, coarse routes, loaded-but-far movement
+Tier 1  REGIONAL    geography mesh, computed at load                       reachability, coarse routes, loaded-but-far movement
 Tier 2  LOCAL       dynamic CDT navmesh per chunk          exact paths around buildings, through doors
 Tier 3  MOVEMENT    collision circles + velocity steering  agents take up space, doorway congestion
 ```
@@ -57,7 +57,11 @@ A raid party crossing the globe is **a record, not entities**: `{ members, posit
 
 ### Tier 1 — Regional: chunk connectivity components
 
-Tier 1 is the geography mesh, also called the regional mesh. It is much less detailed than the real mesh (the nav mesh, Tier 2). The real mesh is a detail view of it, as game tiles are a detail view of world tiles. The two must be aligned; one is derived from the other and then filled in (rule 38 of [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md)).
+Tier 1 is the geography mesh, also called the regional mesh. It is much less detailed than the real mesh (the nav mesh, Tier 2). The real mesh is a detail view of it, as game tiles are a detail view of world tiles. The two must be aligned; one is derived from the other and then filled in (rule 38 of [nav-mesh-variable-resolution.md](./nav-mesh-variable-resolution.md)). It is computed when the world loads and always exists. What it is built from, its resolution, and how alignment works are to be designed under WOR-802 (Geography mesh (Tier 1): computed at load, always exists).
+
+The next two paragraphs do not match that description. The first is an earlier sketch, components that fall out of the real mesh's faces, built lazily for loaded chunks; the second is what was built. Neither is a mesh computed at load. WOR-802 replaces both.
+
+**Earlier sketch.**
 
 Per loaded chunk: walkable **connected components** with only perimeter connectivity stored, linked to neighbor chunks (the Factorio FFF-317 abstraction, which transfers directly to vector chunks; components fall out of the Tier 2 triangulation's faces nearly free). Components carry an ID per traversal class (collision radius × door permissions). Uses:
 
@@ -67,7 +71,7 @@ Per loaded chunk: walkable **connected components** with only perimeter connecti
 
 Built lazily for loaded chunks; invalidated locally by construction edits (the same dirty-section pattern construction already needs).
 
-**As built (P3, shipped 2026-06-23).** The navmesh landed as one merged loaded-area arrangement (P2's decision), not per-chunk meshes, so the regional layer is simpler than the FFF-317 sketch above: components are a flood-fill over the merged triangle adjacency, with no cross-chunk perimeter stitching. Two forests are built per mesh, a *truth* forest (floor plus door spans, for AI goal validity) and a *terrain* forest (walls open, only common-knowledge terrain blocks), whose disconnect is sound for every belief. Reachability is width-aware for *any* clearance, a continuous spread rather than fixed classes: a Kruskal max-spanning reconstruction tree answers `bottleneck(a,b)` (the widest disc a path admits) by LCA, and `diameter > bottleneck` (or a different component) is the sound O(log n) reject, short-circuited inside the path query so every caller skips a failed search. The RRA* heuristic runs on the terrain graph, width-unfiltered, so one resumable reverse search per goal serves every agent regardless of belief or size. Invalidation is a whole-mesh rebuild on change (ConstructionWorld exposes a single version counter), not local dirty-section patching; that refinement is deferred. See the dev log 2026-06-23-navigation-p3-regional-layer.md.
+**As built (P3, shipped 2026-06-23), not the geography mesh.** The navmesh landed as one merged loaded-area arrangement (P2's decision), not per-chunk meshes, so the regional layer is simpler than the FFF-317 sketch above: components are a flood-fill over the merged triangle adjacency, with no cross-chunk perimeter stitching. Two forests are built per mesh, a *truth* forest (floor plus door spans, for AI goal validity) and a *terrain* forest (walls open, only common-knowledge terrain blocks), whose disconnect is sound for every belief. Reachability is width-aware for *any* clearance, a continuous spread rather than fixed classes: a Kruskal max-spanning reconstruction tree answers `bottleneck(a,b)` (the widest disc a path admits) by LCA, and `diameter > bottleneck` (or a different component) is the sound O(log n) reject, short-circuited inside the path query so every caller skips a failed search. The RRA* heuristic runs on the terrain graph, width-unfiltered, so one resumable reverse search per goal serves every agent regardless of belief or size. Invalidation is a whole-mesh rebuild on change (ConstructionWorld exposes a single version counter), not local dirty-section patching; that refinement is deferred. See the dev log 2026-06-23-navigation-p3-regional-layer.md.
 
 ### Tier 2 — Local: dynamic constrained-Delaunay navmesh
 
@@ -101,25 +105,29 @@ coarse or structural layer. Only movers generate it, each adding everything with
 distance plus a buffer, every object movers cannot path through included and blocking. It only
 grows: meshed ground never leaves it, and a chunk unloading does nothing to it. The camera has no effect on
 it, and nav routes any place to any place. How reach is answered on one mesh, and the search
-budgets, are open there (rule 36).
+budgets, are open there (rule 36). For now a route search that reaches its step limit lists the
+target as impossible, an interim departure from its budget rule (rule 18), recorded in its
+section 1.1 as accepted for now and not part of the design.
 
-The geography mesh (also called the regional mesh) is Tier 1 above. Built today is only the
-reachability layer computed over the real mesh's triangles (`buildReachabilityForests` in
-`libs/geometry/nav/NavMesh.h`); a separate, much less detailed mesh that the real mesh is a
-detail view of does not exist yet. It is much less detailed than the real mesh, and the real
+The geography mesh (also called the regional mesh) is Tier 1 above. In the design it is computed
+when the world loads and always exists. It is much less detailed than the real mesh, and the real
 mesh is a detail view of it, as game tiles are a detail view of world tiles. The two must be
 aligned; one is derived from the other and then filled in (rule 38). It is not the removed
-coarse layer.
+coarse layer. As built it does not exist: WOR-802 (Geography mesh (Tier 1): computed at load,
+always exists). What is built is the reach forests (`buildReachabilityForests` in
+`libs/geometry/nav/NavMesh.h`), an index over a mesh's own triangles, which the game rebuilds
+only on the structural mesh.
 
-As built, the code departs from that in four places, listed in that spec's section 1.1: the
+As built, the code departs from that in five places, listed in that spec's section 1.1: the
 camera loads chunks whose ground is meshed and is the only thing that brings placed obstacles in,
 WOR-796 (Nav: the camera must have no effect on the mesh); movers mesh a fixed range, without
 placed obstacles, and mesh is removed (camera-only ground shed, placed obstacles dropped on chunk
 unload and by a cap), WOR-797 (Nav: movers generate the full real mesh around them, placed
 obstacles included); placed obstacles are priced rather than blocking, WOR-798 (Nav: objects
-movers cannot path through block in the mesh instead of being priced); and a second, structural
+movers cannot path through block in the mesh instead of being priced); a second, structural
 mesh carries reach, its forests, far routes and the search budgets, WOR-799 (Nav: one full-detail
-mesh with no coarse layer). Its section 10 is what was built.
+mesh with no coarse layer); and there is no geography mesh, WOR-802 (Geography mesh (Tier 1): computed at load, always
+exists). Its section 10 is what was built.
 
 **`isValidPosition`: the one runtime validity predicate.** A point is valid when it is meshed
 ground a mover may stand on, not water and not inside a placed obstacle's collider (read from the
