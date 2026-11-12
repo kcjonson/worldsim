@@ -117,12 +117,13 @@ class NavigationSystem : public ISystem {
 		haveViewport	= true;
 	}
 
-	// Append the anchors: every mover the AI drives (Position + Task), the rest of every live route (its
-	// remaining waypoints, with points added so no two are more than half the anchor load range
-	// apart), and the goal of every task waiting for a mesh. The scene hands them to
-	// ChunkManager::update, which keeps their chunks loaded, and their chunks' ground is meshed
-	// ahead of the camera's and never dropped.
-	void appendAnchors(std::vector<world::WorldPosition>& out) const;
+	// The buffer added to a mover's sight distance to make its range R.
+	static constexpr float kSightBufferMeters = 16.0F;
+	// Append the anchors: every mover (Position + AgentRadius) with its range R, its sight distance
+	// (Memory::sightRadius, kDefaultSightRadius without Memory) plus kSightBufferMeters. The scene
+	// hands them to ChunkManager::update, which keeps their chunks loaded, and their chunks' ground
+	// is meshed ahead of the camera's and never dropped.
+	void appendAnchors(std::vector<world::ChunkAnchor>& out) const;
 
 	// Detail comes from `executor`'s chunk indices, and only for chunks in `processed` (the
 	// chunks that have finished entity placement; null reads every indexed chunk as finished).
@@ -222,8 +223,7 @@ class NavigationSystem : public ISystem {
 	// `here` is within the anchor load range of `anchor`, per axis: where a failed route recorded at
 	// the anchor still holds.
 	[[nodiscard]] bool nearAnchor(glm::vec2 anchor, glm::vec2 here) const;
-	// The anchor load range of the chunk manager wired in (ChunkManager::kDefaultAnchorLoadRangeMeters
-	// with none).
+	// The least load range any anchor has (ChunkManager::kMinAnchorLoadRangeMeters).
 	[[nodiscard]] float anchorLoadRangeMeters() const;
 	// A reach's start to this step, for remembering verdicts while a colonist moves a little.
 	static constexpr std::int64_t kReachCellMm = 2000;
@@ -598,7 +598,7 @@ class NavigationSystem : public ISystem {
 	void settle();
 
 	[[nodiscard]] std::vector<Rect> wantedRects() const;
-	// The anchors as of this tick, and the chunks they hold (within the anchor load range).
+	// The anchors as of this tick, and the chunks they hold (within each one's load range).
 	void							collectAnchors();
 	[[nodiscard]] bool				anchorHolds(world::ChunkCoordinate coord) const;
 	// A structural change in the chunks meeting [lo, hi] (metres). Every one moves generation() when

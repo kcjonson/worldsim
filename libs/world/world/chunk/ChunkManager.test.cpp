@@ -44,9 +44,11 @@ TEST_F(ChunkManagerTest, DefaultUnloadRadius) {
 	EXPECT_EQ(manager->unloadRadius(), 4);
 }
 
-TEST_F(ChunkManagerTest, DefaultAnchorRanges) {
-	EXPECT_EQ(manager->anchorLoadRangeMeters(), ChunkManager::kDefaultAnchorLoadRangeMeters);
-	EXPECT_EQ(manager->anchorKeepRangeMeters(), ChunkManager::kDefaultAnchorKeepRangeMeters);
+TEST_F(ChunkManagerTest, AnchorRangesFollowTheAnchorsOwnRange) {
+	EXPECT_EQ(ChunkManager::anchorLoadRange(46.0F), 128.0F);
+	EXPECT_EQ(ChunkManager::anchorKeepRange(46.0F), 256.0F);
+	EXPECT_EQ(ChunkManager::anchorLoadRange(300.0F), 300.0F);
+	EXPECT_EQ(ChunkManager::anchorKeepRange(300.0F), 600.0F);
 }
 
 // ============================================================================
@@ -218,19 +220,13 @@ TEST_F(ChunkManagerTest, SetUnloadRadius) {
 	EXPECT_EQ(manager->unloadRadius(), 7);
 }
 
-TEST_F(ChunkManagerTest, SetAnchorRanges) {
-	manager->setAnchorLoadRange(64.0F);
-	manager->setAnchorKeepRange(200.0F);
-	EXPECT_EQ(manager->anchorLoadRangeMeters(), 64.0F);
-	EXPECT_EQ(manager->anchorKeepRangeMeters(), 200.0F);
-}
-
 // ============================================================================
 // Simulation Anchor Tests
 // ============================================================================
 //
 // The camera sits far away with load radius 0, so it holds exactly one chunk of its
-// own and every other loaded chunk is the anchors' doing.
+// own and every other loaded chunk is the anchors' doing. Anchors are colonists
+// (R = 30 m sight + 16 m buffer) unless a test says otherwise.
 
 class ChunkManagerAnchorTest : public ChunkManagerTest {
   protected:
@@ -240,8 +236,11 @@ class ChunkManagerAnchorTest : public ChunkManagerTest {
 		manager->setUnloadRadius(0);
 	}
 
-	void update(std::initializer_list<WorldPosition> anchors) {
-		const std::vector<WorldPosition> list(anchors);
+	void update(std::initializer_list<WorldPosition> anchors, float rangeMeters = kColonistRange) {
+		std::vector<ChunkAnchor> list;
+		for (const WorldPosition& p : anchors) {
+			list.push_back({p, rangeMeters});
+		}
 		manager->update(kFarCamera, list);
 	}
 
@@ -252,12 +251,13 @@ class ChunkManagerAnchorTest : public ChunkManagerTest {
 	[[nodiscard]] size_t anchorChunkCount() const { return manager->loadedChunkCount() - 1; }
 
 	inline static const WorldPosition kFarCamera{-100000.0F, -100000.0F};
+	static constexpr float			  kColonistRange = 46.0F;
 };
 
 TEST_F(ChunkManagerTest, AnchoredChunkSurvivesCameraLeaving) {
 	manager->setLoadRadius(1);
 	manager->setUnloadRadius(2);
-	const std::vector<WorldPosition> colony{WorldPosition(256.0F, 256.0F)};
+	const std::vector<ChunkAnchor> colony{{WorldPosition(256.0F, 256.0F), 46.0F}};
 
 	manager->update(WorldPosition(256.0F, 256.0F), colony);
 	manager->finishPendingGeneration();
@@ -281,6 +281,33 @@ TEST_F(ChunkManagerAnchorTest, ChunkLoadsOnlyWithinLoadRange) {
 	update({WorldPosition(385.0F, 256.0F)});
 	EXPECT_TRUE(loaded(1, 0));
 	EXPECT_EQ(anchorChunkCount(), 2U);
+}
+
+// A mover that sees farther than a colonist (R = 250 m) loads out to R and keeps out to 2R.
+TEST_F(ChunkManagerAnchorTest, LongSightedMoverHoldsChunksOutToItsRange) {
+	constexpr float kRange = 250.0F;
+	// 212 m short of the (0,0)/(1,0) border: past a colonist's 128 m, inside R
+	update({WorldPosition(300.0F, 256.0F)}, kColonistRange);
+	EXPECT_FALSE(loaded(1, 0));
+	update({WorldPosition(300.0F, 256.0F)}, kRange);
+	EXPECT_TRUE(loaded(1, 0));
+	EXPECT_FALSE(loaded(-1, 0)) << "300 m from the west border is outside R";
+	EXPECT_EQ(anchorChunkCount(), 2U);
+	manager->finishPendingGeneration();
+	const Chunk* east = manager->getChunk(ChunkCoordinate(1, 0));
+
+	// 412 m from the border: a colonist would drop it (keep 256 m), this mover keeps it (2R = 500 m)
+	update({WorldPosition(100.0F, 256.0F)}, kRange);
+	manager->finishPendingGeneration();
+	EXPECT_EQ(manager->getChunk(ChunkCoordinate(1, 0)), east);
+	update({WorldPosition(100.0F, 256.0F)}, kColonistRange);
+	EXPECT_FALSE(loaded(1, 0));
+
+	// 507 m: past 2R
+	update({WorldPosition(300.0F, 256.0F)}, kRange);
+	manager->finishPendingGeneration();
+	update({WorldPosition(5.0F, 256.0F)}, kRange);
+	EXPECT_FALSE(loaded(1, 0));
 }
 
 TEST_F(ChunkManagerAnchorTest, PacingAcrossLoadBoundaryDoesNotThrash) {
@@ -328,9 +355,9 @@ TEST_F(ChunkManagerAnchorTest, RemovingAnchorLetsChunkUnload) {
 
 TEST_F(ChunkManagerAnchorTest, ManyAnchorsInOneChunkCostOneChunk) {
 	// 1000 anchors spread over the middle of chunk (0,0), each over 128 m from every border
-	std::vector<WorldPosition> crowd;
+	std::vector<ChunkAnchor> crowd;
 	for (int i = 0; i < 1000; ++i) {
-		crowd.emplace_back(200.0F + static_cast<float>(i % 40) * 2.8F, 200.0F + static_cast<float>(i / 40) * 4.4F);
+		crowd.push_back({WorldPosition(200.0F + static_cast<float>(i % 40) * 2.8F, 200.0F + static_cast<float>(i / 40) * 4.4F), kColonistRange});
 	}
 	manager->update(kFarCamera, crowd);
 	EXPECT_TRUE(loaded(0, 0));

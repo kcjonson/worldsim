@@ -53,7 +53,7 @@ namespace world {
 		: sampler(std::move(worldSampler)),
 		  canopyCover(canopyCover) {}
 
-	void ChunkManager::update(WorldPosition cameraCenter, std::span<const WorldPosition> anchors) {
+	void ChunkManager::update(WorldPosition cameraCenter, std::span<const ChunkAnchor> anchors) {
 		// Integrate any chunks whose generation worker finished
 		pollGeneratedChunks();
 
@@ -80,26 +80,22 @@ namespace world {
 		unloadUnheldChunks();
 	}
 
-	void ChunkManager::gatherAnchorChunks(std::span<const WorldPosition> anchors) {
+	void ChunkManager::gatherAnchorChunks(std::span<const ChunkAnchor> anchors) {
 		anchorLoadChunks.clear();
 		anchorKeepChunks.clear();
-
-		// Keep at least what loads, so a keep range set below the load range can't
-		// unload a chunk the same update loaded.
-		const float keepRange = std::max(anchorKeepRange, anchorLoadRange);
 
 		// Movers cluster, so consecutive anchors mostly cover the same chunks; skipping
 		// a repeat of the previous span keeps the sort below at the size of the
 		// distinct chunks rather than the anchor count.
 		ChunkSpan lastLoad;
 		ChunkSpan lastKeep;
-		for (const WorldPosition& anchor : anchors) {
-			const ChunkSpan load = chunksWithin(anchor, anchorLoadRange);
+		for (const ChunkAnchor& anchor : anchors) {
+			const ChunkSpan load = chunksWithin(anchor.position, anchorLoadRange(anchor.rangeMeters));
 			if (load != lastLoad) {
 				appendSpan(load, anchorLoadChunks);
 				lastLoad = load;
 			}
-			const ChunkSpan keep = chunksWithin(anchor, keepRange);
+			const ChunkSpan keep = chunksWithin(anchor.position, anchorKeepRange(anchor.rangeMeters));
 			if (keep != lastKeep) {
 				appendSpan(keep, anchorKeepChunks);
 				lastKeep = keep;

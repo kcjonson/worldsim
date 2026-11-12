@@ -5662,7 +5662,7 @@ namespace ecs::test {
 		[[nodiscard]] world::ChunkManager* chunkRegion() const override { return chunks.get(); }
 
 		void stream(glm::vec2 camera) {
-			std::vector<world::WorldPosition> anchors;
+			std::vector<world::ChunkAnchor> anchors;
 			nav->appendAnchors(anchors);
 			chunks->update({camera.x, camera.y}, anchors);
 			chunks->finishPendingGeneration();

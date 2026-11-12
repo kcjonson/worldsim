@@ -253,6 +253,7 @@ namespace {
 		world.addComponent<Position>(e, Position{at});
 		world.addComponent<Colonist>(e, Colonist{name});
 		world.addComponent<Task>(e, Task{});
+		world.addComponent<AgentRadius>(e, AgentRadius{});
 		return e;
 	}
 
@@ -2971,6 +2972,7 @@ namespace {
 	EntityID routedMover(World& world, const NavigationSystem& nav, glm::vec2 from, glm::vec2 to) {
 		const EntityID e = world.createEntity();
 		world.addComponent<Position>(e, Position{from});
+		world.addComponent<AgentRadius>(e, AgentRadius{});
 		NavPath path	   = routeOf({from, to});
 		path.current	   = 1;
 		path.builtNavVersion = nav.generation();
@@ -3366,8 +3368,8 @@ TEST_F(NavigationSystemTest, StructuralChangesReRequestOnlyTheRoutesTheyCross) {
 // --- Anchored ground stays -----------------------------------------------------------------------
 
 // A player sends a colonist 700 m east over ground only the camera had loaded, then the camera pans
-// 3 km away and wanders over 20 chunks there. The route anchors its ground, so the chunk manager keeps
-// it loaded and the nav mesh keeps it meshed, and the colonist arrives.
+// 3 km away and wanders over 20 chunks there. The colonist anchors the ground within his own range as
+// he walks, so the chunk manager keeps it loaded and the nav mesh keeps it meshed, and he arrives.
 TEST_F(NavigationSystemTest, LongMoveOrderKeepsItsGroundWhileTheCameraWanders) {
 	auto chunks = std::make_unique<world::ChunkManager>(landSampler());
 	chunks->setLoadRadius(1);
@@ -3377,8 +3379,8 @@ TEST_F(NavigationSystemTest, LongMoveOrderKeepsItsGroundWhileTheCameraWanders) {
 	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
 	nav.setChunkManager(chunks.get());
 	nav.setConstructionWorld(&cw);
-	std::vector<world::WorldPosition> anchors;
-	glm::vec2						  camera{768.0F, 256.0F}; // chunk (1, 0): chunks 0 to 2 load
+	std::vector<world::ChunkAnchor> anchors;
+	glm::vec2						camera{768.0F, 256.0F}; // chunk (1, 0): chunks 0 to 2 load
 	const auto						  stream = [&]() {
 		 anchors.clear();
 		 nav.appendAnchors(anchors);
@@ -3440,7 +3442,7 @@ TEST_F(NavigationSystemTest, CameraGroundComingAndGoingLeavesTheVerdictStamp) {
 	const glm::vec2 at{340.0F, 256.0F};
 	const glm::vec2 colonistAt{220.0F, 256.0F};
 	addColonist(world, colonistAt, "Keeper");
-	std::vector<world::WorldPosition> anchors;
+	std::vector<world::ChunkAnchor> anchors;
 	const auto						  stand = [&](int i) {
 		 anchors.clear();
 		 sys.appendAnchors(anchors);
@@ -3714,7 +3716,7 @@ TEST_F(NavigationSystemTest, DetailLandingOnAFarRouteRepricesItWithoutASearch) {
 // --- Ground a mover has held stays ---------------------------------------------------------------
 
 namespace {
-	// A colonist (a Task makes it an anchor) walking chunk to chunk along row 0 while the camera loads
+	// A colonist (a mover, so an anchor) walking chunk to chunk along row 0 while the camera loads
 	// only the chunk it stands over; the anchors go to the chunk manager each step as GameScene does.
 	struct MoverWalk {
 		ChunkWalk		  walk;
@@ -3731,7 +3733,7 @@ namespace {
 		}
 
 		void step() {
-			std::vector<world::WorldPosition> anchors;
+			std::vector<world::ChunkAnchor> anchors;
 			sys.appendAnchors(anchors);
 			walk.chunks->update({cameraAt.x, cameraAt.y}, anchors);
 			walk.chunks->finishPendingGeneration();
@@ -3778,6 +3780,68 @@ TEST_F(NavigationSystemTest, GroundTheCameraMeshedAndAMoverThenHeldIsKept) {
 	}
 	EXPECT_TRUE(walk.sys.inSimArea(ChunkWalk::centre(5))) << "a chunk a mover held was dropped";
 	EXPECT_FALSE(walk.sys.inSimArea(ChunkWalk::centre(6))) << "the camera-only chunk unloaded longest ago kept its ground";
+}
+
+// --- Anchors are movers, each with its own range -------------------------------------------------
+
+// A mover is Position + AgentRadius. Its range is its sight distance plus the buffer: 30 m default
+// sight without Memory, its own with. A Position + Task without AgentRadius is no mover.
+TEST_F(NavigationSystemTest, AnchorsAreMoversWithSightPlusBuffer) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	const EntityID	  plain = world.createEntity();
+	world.addComponent<Position>(plain, Position{{10.0F, 0.0F}});
+	world.addComponent<AgentRadius>(plain, AgentRadius{});
+	const EntityID farSighted = addColonist(world, {20.0F, 0.0F}, "Lookout");
+	Memory		   memory;
+	memory.sightRadius = 200.0F;
+	world.addComponent<Memory>(farSighted, memory);
+	const EntityID notMover = world.createEntity();
+	world.addComponent<Position>(notMover, Position{{30.0F, 0.0F}});
+	world.addComponent<Task>(notMover, Task{});
+
+	std::vector<world::ChunkAnchor> anchors;
+	sys.appendAnchors(anchors);
+	ASSERT_EQ(anchors.size(), 2U);
+	std::sort(anchors.begin(), anchors.end(), [](const auto& a, const auto& b) { return a.position.x < b.position.x; });
+	EXPECT_EQ(anchors[0].position.x, 10.0F);
+	EXPECT_EQ(anchors[0].rangeMeters, kDefaultSightRadius + NavigationSystem::kSightBufferMeters);
+	EXPECT_EQ(anchors[0].rangeMeters, 46.0F);
+	EXPECT_EQ(anchors[1].position.x, 20.0F);
+	EXPECT_EQ(anchors[1].rangeMeters, 216.0F) << "R is never clamped";
+}
+
+// A colonist walking a long route whose goal waits for its ground: only the colonist anchors, so the
+// chunks under the route's rest and at the goal are not held by those alone.
+TEST_F(NavigationSystemTest, RouteRestAndWaitingGoalHoldNoChunk) {
+	World			  world;
+	NavigationSystem& sys	   = world.registerSystem<NavigationSystem>();
+	const glm::vec2	  at	   = {256.0F, 256.0F};
+	const glm::vec2	  goal	   = {5000.0F, 256.0F};
+	const EntityID	  colonist = addColonist(world, at, "Walker");
+	Task&			  task	   = *world.getComponent<Task>(colonist);
+	task.state				   = TaskState::Moving;
+	task.navState			   = NavState::AwaitingMesh;
+	task.targetPosition		   = goal;
+	NavPath path;
+	path.waypoints = {at, {2600.0F, 256.0F}, goal};
+	path.current   = 1;
+	path.valid	   = true;
+	world.addComponent<NavPath>(colonist, path);
+
+	std::vector<world::ChunkAnchor> anchors;
+	sys.appendAnchors(anchors);
+	ASSERT_EQ(anchors.size(), 1U);
+	EXPECT_EQ(anchors[0].position.x, at.x);
+
+	world::ChunkManager chunks(landSampler());
+	chunks.setLoadRadius(0);
+	chunks.setUnloadRadius(0);
+	chunks.update({-100000.0F, -100000.0F}, anchors);
+	EXPECT_NE(chunks.getChunk({0, 0}), nullptr);
+	EXPECT_EQ(chunks.getChunk({5, 0}), nullptr) << "the route's rest held a chunk";
+	EXPECT_EQ(chunks.getChunk({9, 0}), nullptr) << "the waiting goal held a chunk";
+	chunks.finishPendingGeneration();
 }
 
 // --- A shore point among trunks ------------------------------------------------------------------

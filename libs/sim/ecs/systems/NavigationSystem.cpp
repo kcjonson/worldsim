@@ -3,6 +3,7 @@
 #include "../World.h"
 #include "../components/AgentRadius.h"
 #include "../components/Colonist.h"
+#include "../components/Memory.h"
 #include "../components/NavPath.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
@@ -579,39 +580,16 @@ namespace ecs {
 		wallsVersion	  = UINT64_MAX;
 	}
 
-	void NavigationSystem::appendAnchors(std::vector<world::WorldPosition>& out) const {
+	void NavigationSystem::appendAnchors(std::vector<world::ChunkAnchor>& out) const {
 		// Null only in headless tests with no colonists.
 		if (world == nullptr) {
 			return;
 		}
-		// Every mover the AI drives (a colonist), and the goal of one waiting for a mesh: its ground
-		// has to come for the wait to end.
-		for (auto [entity, position, task] : world->view<Position, Task>()) {
-			(void)entity;
-			out.emplace_back(position.value.x, position.value.y);
-			if (task.state == TaskState::Moving && task.navState == NavState::AwaitingMesh) {
-				out.emplace_back(task.targetPosition.x, task.targetPosition.y);
-			}
-		}
-		// A route's rest, so the ground under it stays loaded and meshed: no two anchors along it
-		// farther apart than half the load range, so every chunk it crosses is held.
-		const float spacing = anchorLoadRangeMeters() / 2.0F;
-		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
-			(void)entity;
-			if (path.done()) {
-				continue;
-			}
-			glm::vec2 from = position.value;
-			for (std::size_t next = path.current; next < path.waypoints.size(); ++next) {
-				const glm::vec2 to	   = path.waypoints[next];
-				const float		length = std::sqrt(dist2(from, to));
-				const int		pieces = std::max(1, static_cast<int>(std::ceil(length / spacing)));
-				for (int i = 1; i <= pieces; ++i) {
-					const glm::vec2 p = from + (to - from) * (static_cast<float>(i) / static_cast<float>(pieces));
-					out.emplace_back(p.x, p.y);
-				}
-				from = to;
-			}
+		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
+			(void)agent;
+			const Memory* memory = world->getComponent<Memory>(entity);
+			const float	  sight	 = memory != nullptr ? memory->sightRadius : kDefaultSightRadius;
+			out.push_back({{position.value.x, position.value.y}, sight + kSightBufferMeters});
 		}
 	}
 
@@ -623,12 +601,13 @@ namespace ecs {
 	}
 
 	void NavigationSystem::collectAnchors() {
-		std::vector<world::WorldPosition> held;
+		std::vector<world::ChunkAnchor> held;
 		appendAnchors(held);
 		anchors.clear();
 		anchorChunks.clear();
-		const float range = anchorLoadRangeMeters();
-		for (const world::WorldPosition& p : held) {
+		for (const world::ChunkAnchor& anchor : held) {
+			const world::WorldPosition p	 = anchor.position;
+			const float				   range = world::ChunkManager::anchorLoadRange(anchor.rangeMeters);
 			anchors.emplace_back(p.x, p.y);
 			const world::ChunkCoordinate lo = world::worldToChunk({p.x - range, p.y - range});
 			const world::ChunkCoordinate hi = world::worldToChunk({p.x + range, p.y + range});
@@ -2144,7 +2123,7 @@ namespace ecs {
 	}
 
 	float NavigationSystem::anchorLoadRangeMeters() const {
-		return chunkManager != nullptr ? chunkManager->anchorLoadRangeMeters() : world::ChunkManager::kDefaultAnchorLoadRangeMeters;
+		return world::ChunkManager::kMinAnchorLoadRangeMeters;
 	}
 
 	geometry::RectMm NavigationSystem::boxAround(const geometry::Vec2i64& centerMm, std::int64_t halfMm) {

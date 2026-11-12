@@ -26,6 +26,7 @@
 
 namespace {
 
+	using world::ChunkAnchor;
 	using world::ChunkManager;
 	using world::WorldPosition;
 
@@ -38,25 +39,30 @@ namespace {
 		return static_cast<float>(state >> 8U) / static_cast<float>(1U << 24U);
 	}
 
-	std::vector<WorldPosition> clusteredAnchors(int64_t count) {
-		uint32_t				   state = 1;
-		std::vector<WorldPosition> anchors;
+	/// A colonist's range: 30 m sight plus the 16 m buffer.
+	constexpr float kColonistRange = 46.0F;
+
+	std::vector<ChunkAnchor> clusteredAnchors(int64_t count) {
+		uint32_t				 state = 1;
+		std::vector<ChunkAnchor> anchors;
 		for (int64_t i = 0; i < count; ++i) {
-			anchors.emplace_back(kColony.x - 40.0F + 80.0F * unitRandom(state), kColony.y - 40.0F + 80.0F * unitRandom(state));
+			anchors.push_back(
+				{WorldPosition(kColony.x - 40.0F + 80.0F * unitRandom(state), kColony.y - 40.0F + 80.0F * unitRandom(state)), kColonistRange}
+			);
 		}
 		return anchors;
 	}
 
-	std::vector<WorldPosition> scatteredAnchors(int64_t count) {
-		uint32_t				   state = 2;
-		std::vector<WorldPosition> anchors;
+	std::vector<ChunkAnchor> scatteredAnchors(int64_t count) {
+		uint32_t				 state = 2;
+		std::vector<ChunkAnchor> anchors;
 		for (int64_t i = 0; i < count; ++i) {
-			anchors.emplace_back(-512.0F + 1536.0F * unitRandom(state), -512.0F + 1536.0F * unitRandom(state));
+			anchors.push_back({WorldPosition(-512.0F + 1536.0F * unitRandom(state), -512.0F + 1536.0F * unitRandom(state)), kColonistRange});
 		}
 		return anchors;
 	}
 
-	void runSteadyUpdate(benchmark::State& state, const std::vector<WorldPosition>& anchors) {
+	void runSteadyUpdate(benchmark::State& state, const std::vector<ChunkAnchor>& anchors) {
 		ChunkManager manager(std::make_unique<world::MockWorldSampler>(kSeed));
 		manager.setLoadRadius(1);
 		manager.setUnloadRadius(2);

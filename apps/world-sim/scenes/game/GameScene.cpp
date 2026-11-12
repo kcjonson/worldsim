@@ -878,11 +878,10 @@ namespace {
 
 			m_camera->update(dt);
 
-			// Every mover, the rest of every live route and every goal waiting for its ground anchors
-			// the chunks around it, so panning away never unloads what a colonist is walking to.
-			anchorPositions.clear();
-			ecsWorld->getSystem<ecs::NavigationSystem>().appendAnchors(anchorPositions);
-			m_chunkManager->update(m_camera->position(), anchorPositions);
+			// Every mover holds the chunks within its own range, so panning away never unloads them.
+			anchors.clear();
+			ecsWorld->getSystem<ecs::NavigationSystem>().appendAnchors(anchors);
+			m_chunkManager->update(m_camera->position(), anchors);
 
 			// Feed the viewport rect to NavigationSystem as plain data: flora is brought into the
 			// mesh there and nowhere else, and detail follows it. The visible rect is expanded
@@ -2122,8 +2121,8 @@ namespace {
 		std::unique_ptr<world::ChunkManager>		 m_chunkManager;
 		std::unique_ptr<world::WorldCamera>			 m_camera;
 		glm::vec2									 m_spawnPosition{0.0F, 0.0F};
-		// The movers' positions handed to the chunk manager each frame; a member so the frame reuses its storage.
-		std::vector<world::WorldPosition> anchorPositions;
+		// The movers handed to the chunk manager each frame; a member so the frame reuses its storage.
+		std::vector<world::ChunkAnchor> anchors;
 
 		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
 		// by the player (0 = none); it is always the selected colonist (control is released when the
