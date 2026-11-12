@@ -1040,6 +1040,7 @@ namespace {
 		out.vec(r.polygon.ring);
 		out.vec(r.sample.ring3);
 		out.vec(r.edgeIds);
+		out.vec(r.partners);
 		out.count += r.live ? 1.0 : 0.0;
 	}))
 	NAV_BENCH_LEAF(REdgeOf)
@@ -1094,6 +1095,8 @@ namespace {
 
 	NAV_BENCH_MAP(RVertexMap, geometry::IncrementalHashMap<geometry::Vec2i64, std::uint32_t, PM::VertexHash>)
 	template struct Rob<&PM::vertexAt, RVertexMap>;
+	NAV_BENCH_MAP(RPinMap, geometry::IncrementalHashMap<geometry::Vec2i64, std::int32_t, PM::VertexHash>)
+	template struct Rob<&PM::pins, RPinMap>;
 
 	NAV_BENCH_MAP(RGridMap, geometry::IncrementalHashMap<PM::BoxGrid::CellKey, std::int32_t, PM::BoxGrid::CellHash>)
 	template struct Rob<&PM::BoxGrid::table, RGridMap>;
@@ -1187,9 +1190,10 @@ namespace {
 		t.add(visitAll<RVertexUses>(m));
 		out.lines.emplace_back("vertices and use counts", t);
 		out.lines.emplace_back("vertex hash", visitAll<RVertexMap>(m));
+		out.lines.emplace_back("pins (hash)", visitAll<RPinMap>(m));
 		out.lines.emplace_back("ring records (RegisteredRing)", visitAll<RRings>(m));
 		const Tally ringHeap = visitAll<RRingHeap>(m);
-		out.lines.emplace_back("ring outline, sample ring and edge ids (heap)", ringHeap);
+		out.lines.emplace_back("ring outline, sample ring, edge ids and partners (heap)", ringHeap);
 		const Tally pieces = visitAll<RPieces>(m);
 		Tally		edges  = visitAll<REdgeOf>(m);
 		edges.add(pieces);
