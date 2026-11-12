@@ -327,6 +327,7 @@ namespace geometry::nav {
 		IncrementalHashMap<Vec2i64, std::uint32_t, VertexHash> vertexAt;
 		// Pins: per end point of dissolved pairs, how many pairs end there.
 		IncrementalHashMap<Vec2i64, std::int32_t, VertexHash> pins;
+		PagedVector<std::uint8_t>							  vertexPinned; // per vertex: its point is in pins
 
 		PagedVector<NavTriangle>				 tris;
 		PagedVector<std::uint8_t>				 live;

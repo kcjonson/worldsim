@@ -1675,14 +1675,13 @@ namespace geometry::nav {
 				fixed.push_back(f);
 			}
 		}
-		// A pin in the hole stays a vertex though no segment ends there.
+		// A pin in the hole stays a vertex though no segment ends there. Unless this patch
+		// changes pins, a vertex's flag is the whole answer.
 		work.points.clear();
-		if (m.pins.size() == 0 && work.pinDelta.empty()) {
-			return;
-		}
+		const bool pinsChange = !work.pinDelta.empty();
 		for (std::int32_t t : hole) {
 			for (std::uint32_t v : m.tris[static_cast<std::size_t>(t)].v) {
-				if (pinAfter(m.verts[v])) {
+				if ((pinsChange || m.vertexPinned[v] != 0) && pinAfter(m.verts[v])) {
 					work.points.push_back(m.verts[v]);
 				}
 			}
@@ -2170,11 +2169,13 @@ namespace geometry::nav {
 				if (!m.freeVertices.empty()) {
 					id = m.freeVertices.back();
 					m.freeVertices.pop_back();
-					m.verts[id] = p;
+					m.verts[id]		   = p;
+					m.vertexPinned[id] = 0;
 				} else {
 					id = static_cast<std::uint32_t>(m.verts.size());
 					m.verts.push_back(p);
 					m.vertexUses.push_back(0);
+					m.vertexPinned.push_back(0);
 				}
 				m.vertexAt.insert(p, id);
 				meshVertex[lv] = id;
@@ -2266,6 +2267,9 @@ namespace geometry::nav {
 				m.pins.erase(p);
 			} else {
 				*count = now;
+			}
+			if (const std::uint32_t* v = m.vertexAt.find(p)) {
+				m.vertexPinned[*v] = now > 0 ? 1 : 0;
 			}
 		}
 
@@ -3324,6 +3328,41 @@ namespace geometry::nav {
 			if (vertexAt.find(p) == nullptr) {
 				fail() << "pin (" << p.x << ", " << p.y << ") is not a vertex";
 				return err.str();
+			}
+		}
+		// Every live vertex is a pin or an end of a constrained edge, and its pin flag
+		// says which.
+		{
+			if (vertexPinned.size() != verts.size()) {
+				fail() << "pin flags for " << vertexPinned.size() << " vertices, " << verts.size() << " vertices";
+				return err.str();
+			}
+			std::vector<std::uint8_t> constrainedEnd(verts.size(), 0);
+			for (std::int32_t t = 0; t < triCount; ++t) {
+				if (live[static_cast<std::size_t>(t)] == 0) {
+					continue;
+				}
+				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+				for (int e = 0; e < 3; ++e) {
+					if (edgeSourceIds[static_cast<std::size_t>(t)][static_cast<std::size_t>(e)] >= 0) {
+						constrainedEnd[tri.v[static_cast<std::size_t>(e)]]		  = 1;
+						constrainedEnd[tri.v[static_cast<std::size_t>(next3(e))]] = 1;
+					}
+				}
+			}
+			for (std::size_t v = 0; v < verts.size(); ++v) {
+				if (vertexUses[v] == 0) {
+					continue;
+				}
+				const bool pinned = pins.find(verts[v]) != nullptr;
+				if ((vertexPinned[v] != 0) != pinned) {
+					fail() << "vertex " << v << " pin flag " << int{vertexPinned[v]} << ", pin table " << pinned;
+					return err.str();
+				}
+				if (!pinned && constrainedEnd[v] == 0) {
+					fail() << "vertex " << v << " (" << verts[v].x << ", " << verts[v].y << ") is neither a pin nor on a constrained edge";
+					return err.str();
+				}
 			}
 		}
 		{
