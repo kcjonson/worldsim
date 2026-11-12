@@ -35,20 +35,10 @@
 
 namespace geometry::nav {
 
-	using RingId		   = std::int32_t;
-	constexpr RingId kNoRing = -1;
 	// Stands in a cover for every bounds ring (blocked == false): the cover holds it when
 	// an odd number of bounds rings contain the triangle, so the two sides of an edge two
 	// bounds rings share have the same cover. Sorts before every ring id.
 	constexpr RingId kGroundToken = -2;
-
-	// Original edge `edge` of a ring: outline[edge] -> outline[(edge + 1) % n].
-	struct EdgeSource {
-		RingId		 ring = kNoRing;
-		std::int32_t edge = 0;
-
-		auto operator<=>(const EdgeSource&) const = default;
-	};
 
 	struct RegisteredRing {
 		NavInputPolygon			  polygon; // original outline and tags

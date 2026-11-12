@@ -3310,7 +3310,7 @@ namespace geometry::nav {
 		for (std::size_t i = 0; i < liveIds.size(); ++i) {
 			const std::vector<EdgeSource>& have = rings[static_cast<std::size_t>(liveIds[i])].partners;
 			std::vector<EdgeSource>		   expected;
-			for (const RingEdgeRef& ref : seams.partner[i]) {
+			for (const EdgeSource& ref : seams.partner[i]) {
 				expected.push_back(ref.ring < 0 ? EdgeSource{} : EdgeSource{liveIds[static_cast<std::size_t>(ref.ring)], ref.edge});
 			}
 			if (have != expected) {

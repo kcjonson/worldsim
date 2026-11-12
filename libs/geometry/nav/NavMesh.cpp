@@ -388,7 +388,7 @@ namespace geometry::nav {
 		struct Side {
 			Vec2i64		lo;
 			Vec2i64		hi;
-			RingEdgeRef ref;
+			EdgeSource	ref;
 
 			bool operator<(const Side& other) const { return std::tie(lo, hi, ref) < std::tie(other.lo, other.hi, other.ref); }
 		};
@@ -400,7 +400,7 @@ namespace geometry::nav {
 			if (rings[r]->blocked || ring.size() < 3) {
 				continue;
 			}
-			seams.partner[r].assign(ring.size(), RingEdgeRef{});
+			seams.partner[r].assign(ring.size(), EdgeSource{});
 			for (std::size_t i = 0; i < ring.size(); ++i) {
 				const Vec2i64& a = ring[i];
 				const Vec2i64& b = ring[(i + 1) % ring.size()];
@@ -454,10 +454,10 @@ namespace geometry::nav {
 			return result; // no walkable bounds -> empty mesh
 		}
 
-		// 1. Arrange every ring edge, tagging each segment with its source polygon's
-		// provenanceId so extracted edges carry it back. The arrangement splits edges
-		// at every crossing and touch and merges overlaps, so its edges form a planar
-		// straight-line graph.
+		// 1. Arrange every ring edge but the dissolved ones, tagging each segment with its
+		// source polygon's provenanceId so extracted edges carry it back, and every pin as
+		// a point site. The arrangement splits edges at every crossing, touch, and pin and
+		// merges overlaps, so its edges form a planar straight-line graph.
 		std::vector<const NavInputPolygon*> rings;
 		for (const NavInputPolygon& poly : input.polygons) {
 			rings.push_back(&poly);
@@ -521,8 +521,11 @@ namespace geometry::nav {
 
 		// 4. Classify each face from one exact interior sample: its sample triangle's
 		// centroid in 3x space. The sample is strictly inside the triangle, so strictly
-		// inside the face and off every arrangement edge; containment reads Inside or
-		// Outside, never boundary. Faces outside every walkable bound are discarded.
+		// inside the face and off every arrangement edge: a blocked ring's containment
+		// reads Inside or Outside, never boundary. It can lie on a dissolved bounds edge,
+		// which is not arranged, so bounds containment is boundsContainSample, which puts
+		// it in exactly one of the two rings. Faces outside every walkable bound are
+		// discarded.
 		// In-bounds faces are KEPT whether or not they sit inside a blocked ring: the
 		// whole region is triangulated, wall interiors included, so a belief query can
 		// optimistically path through an unseen wall. classifyCover holds the rule.

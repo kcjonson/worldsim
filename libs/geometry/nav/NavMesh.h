@@ -242,11 +242,16 @@ namespace geometry::nav {
 	// dissolved pairs, pins, stay mesh vertices, so open ground across the side keeps the
 	// shape it has inside one ring. buildNavMesh and PatchableMesh apply this one rule.
 
-	struct RingEdgeRef {
-		std::int32_t ring = -1; // index into the rings given, -1 none
+	using RingId			 = std::int32_t;
+	constexpr RingId kNoRing = -1;
+
+	// Original edge `edge` of a ring: outline[edge] -> outline[(edge + 1) % n]. The ring
+	// is a PatchableMesh ring id, or for findBoundsSeams an index into the rings given.
+	struct EdgeSource {
+		RingId		 ring = kNoRing;
 		std::int32_t edge = 0;
 
-		auto operator<=>(const RingEdgeRef&) const = default;
+		auto operator<=>(const EdgeSource&) const = default;
 	};
 
 	inline bool sameSegment(const Vec2i64& a0, const Vec2i64& a1, const Vec2i64& b0, const Vec2i64& b1) {
@@ -256,13 +261,16 @@ namespace geometry::nav {
 	struct BoundsSeams {
 		// Per ring, per edge: its partner, or none. Empty for a blocked ring and for one
 		// under three vertices.
-		std::vector<std::vector<RingEdgeRef>> partner;
+		std::vector<std::vector<EdgeSource>> partner;
 		// Ascending by point: each end point of a dissolved pair, with how many pairs end
 		// there.
 		std::vector<std::pair<Vec2i64, std::int32_t>> pins;
 	};
 
-	// Of several edges on one segment, an edge takes the lowest other ring's.
+	// Two bounds ring edges on one segment are partners. Three or more on one segment
+	// means bounds interiors overlap, which is invalid input (PatchableMesh::validate
+	// reports it); each edge then takes the lowest other ring's, only so the answer is
+	// deterministic.
 	BoundsSeams findBoundsSeams(const std::vector<const NavInputPolygon*>& rings);
 
 	// The arrangement input of the rings: every edge that is not dissolved, as a segment
@@ -276,7 +284,7 @@ namespace geometry::nav {
 			if (ring.size() < 3) {
 				continue;
 			}
-			const std::vector<RingEdgeRef>& partner = seams.partner[r];
+			const std::vector<EdgeSource>& partner = seams.partner[r];
 			for (std::size_t i = 0; i < ring.size(); ++i) {
 				if (!partner.empty() && partner[i].ring >= 0) {
 					continue;
