@@ -1,7 +1,12 @@
 #include "TimeSystem.h"
 
+#include "../World.h"
+
+#include <utils/Log.h>
+
 #include <cassert>
 #include <cmath>
+#include <cstdlib>
 
 namespace ecs {
 
@@ -39,6 +44,9 @@ void TimeSystem::update(float deltaTime) {
 }
 
 void TimeSystem::advanceTime(float gameMinutes) {
+	// A game minute on the day clock is one scaled second of simulation (deltaTime * effectiveTimeScale).
+	elapsedSimulationSeconds += static_cast<double>(gameMinutes);
+
 	// Convert minutes to hours and add to time of day
 	float hoursToAdd = gameMinutes / 60.0F;
 	currentTimeOfDay += hoursToAdd;
@@ -113,6 +121,18 @@ GameTimeSnapshot TimeSystem::snapshot() const {
 		.speed = currentSpeed,
 		.isPaused = isPaused()
 	};
+}
+
+double simulationSeconds(World& world) {
+	const auto* timeSystem = world.tryGetSystem<TimeSystem>();
+	if (timeSystem == nullptr) {
+		LOG_ERROR(Engine, "simulationSeconds: the world has no TimeSystem, so a regrowth would never end");
+#ifdef DEVELOPMENT_BUILD
+		std::abort();
+#endif
+		return 0.0;
+	}
+	return timeSystem->simulationSeconds();
 }
 
 }  // namespace ecs

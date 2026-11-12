@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <vector>
 
 // Planar arrangement builder: take a batch of segments and produce a clean
@@ -54,5 +55,24 @@ namespace geometry {
 	// a third segment, or two crossings that round together, are absorbed before
 	// the result is returned.
 	Arrangement buildArrangement(const std::vector<InputSegment>& segments);
+
+	// Working storage buildArrangement keeps between calls.
+	class ArrangementWorkspace {
+	  public:
+		ArrangementWorkspace();
+		~ArrangementWorkspace();
+		ArrangementWorkspace(ArrangementWorkspace&& other) noexcept;
+		ArrangementWorkspace& operator=(ArrangementWorkspace&& other) noexcept;
+
+		struct Storage;
+		Storage& storage() { return *store; }
+
+	  private:
+		std::unique_ptr<Storage> store;
+	};
+
+	// The same arrangement, written into out and built in the workspace, both reused so
+	// a caller that builds many allocates little.
+	void buildArrangement(const std::vector<InputSegment>& segments, ArrangementWorkspace& workspace, Arrangement& out);
 
 } // namespace geometry

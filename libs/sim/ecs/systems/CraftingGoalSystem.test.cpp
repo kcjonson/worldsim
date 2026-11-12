@@ -326,17 +326,14 @@ TEST_F(MultiSystemGoalTest, PrestagedStoreMaterialsCreateNoChildGoalsAndUnblockC
 
 	const auto* craft = registry.getGoalByDestination(station);
 	ASSERT_NE(craft, nullptr);
-	EXPECT_EQ(craft->deliveredAmount, 2U) << "store contents pre-credit the craft goal";
-	EXPECT_EQ(craft->targetAmount, 2U);
+	EXPECT_EQ(registry.remainingNeed(*world, craft->id, assets::AssetRegistry::Get().getDefNameId("Stick"), NeedBasis::Stock), 0U)
+		<< "store contents count as landed";
 	EXPECT_EQ(craft->status, GoalStatus::Available) << "all inputs present -> craft is workable immediately";
 }
 
-// Regression: a multi-unit craft must not stall at 1/N. deliveredAmount on the Craft goal tracks
-// what the station store currently holds toward the NEXT unit; finishing a unit drains the store,
-// so the goal must re-read the live store each tick and rebuild provisioning for the next unit.
-// The old code treated deliveredAmount as a monotonic counter: after unit 1 the store emptied but
-// deliveredAmount stayed >= targetAmount, the Craft never re-blocked, no new Haul/Harvest children
-// were built, and the job hung forever at 1/N. Here we drive all 3 units by mirroring exactly what
+// Regression: a multi-unit craft must not stall at 1/N. The Craft root's remaining need is read
+// from the live store toward the NEXT unit; finishing a unit drains the store, so the need returns
+// and provisioning reopens for the next unit. A monotonic counter here once hung the job at 1/N. Here we drive all 3 units by mirroring exactly what
 // CraftActions does on unit completion (drain the recipe inputs from the store, bump job.completed)
 // and confirm the goal system re-provisions between units and the job runs to 3/3.
 TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAllN) {
@@ -377,9 +374,8 @@ TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAl
 
 		const auto* craft = registry.getGoalByDestination(station);
 		ASSERT_NE(craft, nullptr) << "Craft goal must persist across all units (unit " << unit << ")";
-		EXPECT_EQ(craft->targetAmount, 2U) << "material total per unit is constant";
-		EXPECT_EQ(craft->deliveredAmount, 2U)
-		    << "deliveredAmount recomputed from the live store, fully staged for this unit (unit " << unit << ")";
+		EXPECT_EQ(registry.remainingNeed(*world, craft->id, assets::AssetRegistry::Get().getDefNameId("Stick"), NeedBasis::Stock), 0U)
+		    << "fully staged for this unit (unit " << unit << ")";
 		EXPECT_EQ(craft->status, GoalStatus::Available)
 		    << "fully staged -> craft is workable for this unit (unit " << unit << ")";
 
@@ -387,15 +383,15 @@ TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAl
 		craftOneUnit();
 		++unitsCrafted;
 
-		// Goal system sees the drained store: deliveredAmount drops, craft re-blocks, and (because
-		// no provisioning children remain) the Haul hierarchy for the next unit is rebuilt -- unless
+		// Goal system sees the drained store: the need returns, the craft re-blocks, and a Haul
+		// reopens provisioning for the next unit -- unless
 		// this was the last unit, in which case the job is gone and the whole hierarchy is reaped.
 		runUpdates(60);
 		if (unit < 2) {
 			const auto* next = registry.getGoalByDestination(station);
 			ASSERT_NE(next, nullptr) << "Craft goal still present for remaining units";
-			EXPECT_EQ(next->deliveredAmount, 0U)
-			    << "store drained by the finished unit -> nothing staged for the next unit yet";
+			EXPECT_EQ(registry.remainingNeed(*world, next->id, assets::AssetRegistry::Get().getDefNameId("Stick"), NeedBasis::Stock), 2U)
+			    << "store drained by the finished unit -> the next unit needs both again";
 			EXPECT_EQ(next->status, GoalStatus::Blocked)
 			    << "craft re-blocked, waiting on the next unit's materials";
 			EXPECT_GE(registry.goalCount(TaskType::Haul), 1U)
@@ -408,9 +404,8 @@ TEST_F(MultiSystemGoalTest, MultiUnitCraftReprovisionsBetweenUnitsAndCompletesAl
 	EXPECT_EQ(registry.goalCount(TaskType::Craft), 0U) << "no pending work -> craft hierarchy reaped";
 }
 
-// A harvestable input (something a tree yields) creates only a Harvest goal up front. The Haul
-// that carries the cut material to the station is created lazily on harvest completion, so no
-// speculative haul shows in the task list before there is anything to haul.
+// A harvestable input (something a tree yields) creates only a Harvest goal. The cut itself carries
+// the material to the station, so no haul shows in the task list for it.
 TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
 	auto& assetReg = assets::AssetRegistry::Get();
 
@@ -422,7 +417,7 @@ TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
 	woodDef.itemProperties->stackSize = 40;
 	assetReg.registerTestDefinition(std::move(woodDef));
 
-	// A harvestable that yields Wood makes canItemBeHarvested("Wood") true.
+	// A harvestable that yields Wood makes Wood harvestable.
 	assets::AssetDefinition treeDef;
 	treeDef.defName = "TestTree";
 	treeDef.label = "Test Tree";
@@ -453,11 +448,11 @@ TEST_F(MultiSystemGoalTest, HarvestableInputCreatesHarvestNotHaul) {
 	EXPECT_EQ(registry.goalCount(TaskType::Craft), 1U) << "one craft goal for the station";
 	EXPECT_EQ(registry.goalCount(TaskType::Harvest), 1U) << "harvestable input gets a Harvest goal";
 	EXPECT_EQ(registry.goalCount(TaskType::Haul), 0U)
-	    << "no Haul exists until the cut completes (lazy haul)";
+	    << "no fetch Haul: the cut carries itself in";
 }
 
 // Regression: leftover material sitting in ANOTHER station's (or storage's) store must NOT count
-// as "carried stock". colonyCarriesStock once viewed every Inventory, so a stack stranded in a
+// as stock on its way. An earlier pack scan viewed every Inventory, so a stack stranded in a
 // second crafting station made the input resolve to a fetch Haul that can never source it (a
 // craft-material haul only delivers from a colonist's pack or a loose ground pile), stranding the
 // craft. It must still resolve to a Harvest of the known source.
@@ -712,9 +707,8 @@ TEST_F(MultiSystemGoalTest, RecipeSwapRebuildsChildHierarchy) {
 		EXPECT_NE(child->acceptedDefNameIds[0], stickId) << "Stale Stick children must be gone";
 	}
 
-	// Craft material total reflects recipe B (3), reset and Blocked again.
-	EXPECT_EQ(craftB->targetAmount, 3U);
-	EXPECT_EQ(craftB->deliveredAmount, 0U);
+	// The need is recipe B's (3 PlantFiber), and the craft is Blocked again.
+	EXPECT_EQ(registry.remainingNeed(*world, craftB->id, fiberId, NeedBasis::Stock), 3U);
 	EXPECT_EQ(craftB->status, GoalStatus::Blocked);
 }
 
@@ -829,10 +823,10 @@ TEST_F(MultiSystemGoalTest, SpecificItemMinAmountDrivesHarvestWhenSourceKnown) {
 	auto&		registry = GoalTaskRegistry::Get();
 	const auto* umbrella = registry.getGoalByDestination(storage);
 	ASSERT_NE(umbrella, nullptr);
-	EXPECT_EQ(umbrella->type, TaskType::Haul) << "storage umbrella is the slot-based Haul goal";
+	EXPECT_EQ(umbrella->type, TaskType::Haul) << "storage umbrella is its Haul goal";
 
-	// Exactly one stocking Harvest child for Wood, owned by StorageGoalSystem, chainId set so its
-	// carry-in haul is recognized as a stocking delivery.
+	// Exactly one stocking Harvest child for Wood, owned by StorageGoalSystem. It only marks that
+	// cutting is open; the umbrella's remaining need toward the minimum says how much.
 	auto children = registry.getChildGoals(umbrella->id);
 	int	 harvestChildren = 0;
 	for (const auto* c : children) {
@@ -840,11 +834,10 @@ TEST_F(MultiSystemGoalTest, SpecificItemMinAmountDrivesHarvestWhenSourceKnown) {
 			harvestChildren++;
 			EXPECT_EQ(c->owner, GoalOwner::StorageGoalSystem);
 			EXPECT_EQ(c->yieldDefNameId, assets::AssetRegistry::Get().getDefNameId("Wood"));
-			EXPECT_TRUE(c->chainId.has_value()) << "stocking harvest must carry a chainId";
-			EXPECT_GT(c->targetAmount, 0U);
 		}
 	}
 	EXPECT_EQ(harvestChildren, 1) << "one stocking Harvest for the Wood shortfall";
+	EXPECT_EQ(registry.remainingNeed(*world, umbrella->id, assets::AssetRegistry::Get().getDefNameId("Wood"), NeedBasis::Harvest), 10U);
 }
 
 // No harvestable source known -> no stocking Harvest. The box just waits for items to be hauled in
@@ -928,6 +921,39 @@ TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenBoxReachesMinimum) {
 
 // Retire (b): an existing stocking Harvest is REMOVED when no colony-known harvestable source for
 // its yield remains (the source vanished / was forgotten), and is not re-emitted.
+// A box that fills up keeps its umbrella: goods on their way toward it keep counting, and its id is the
+// same once room returns.
+TEST_F(MultiSystemGoalTest, AFullBoxKeepsItsUmbrella) {
+	auto& registry = GoalTaskRegistry::Get();
+	auto  box = world->createEntity();
+	world->addComponent<Position>(box, Position{{0.0F, 0.0F}});
+	auto store = Inventory::createForStorage();
+	store.maxCapacity = 1;
+	world->addComponent<Inventory>(box, std::move(store));
+	StorageConfiguration config;
+	config.addRule(StorageRule{.defName = "Stick", .category = assets::ItemCategory::RawMaterial});
+	world->addComponent<StorageConfiguration>(box, std::move(config));
+
+	runUpdates(60);
+	const GoalTask* umbrella = registry.getGoalByDestination(box);
+	ASSERT_NE(umbrella, nullptr);
+	const uint64_t umbrellaId = umbrella->id;
+
+	auto& inventory = *world->getComponent<Inventory>(box);
+	inventory.addItem("Stick", inventory.addableCount("Stick"));
+	ASSERT_EQ(inventory.addableCount("Stick"), 0U);
+	runUpdates(60);
+	ASSERT_NE(registry.getGoalByDestination(box), nullptr) << "full, it keeps its umbrella";
+	EXPECT_EQ(registry.getGoalByDestination(box)->id, umbrellaId);
+	EXPECT_EQ(registry.remainingNeed(*world, umbrellaId, assets::AssetRegistry::Get().getDefNameId("Stick"), NeedBasis::Stock), 0U)
+		<< "and wants nothing";
+
+	inventory.removeItem("Stick", 5);
+	runUpdates(60);
+	ASSERT_NE(registry.getGoalByDestination(box), nullptr);
+	EXPECT_EQ(registry.getGoalByDestination(box)->id, umbrellaId) << "the same root once room returns";
+}
+
 TEST_F(MultiSystemGoalTest, StockingHarvestRetiresWhenSourceVanishes) {
 	registerWoodAndTree();
 
@@ -983,7 +1009,6 @@ class GoalHierarchyTest : public ::testing::Test {
 		craft.type = TaskType::Craft;
 		craft.owner = GoalOwner::CraftingGoalSystem;
 		craft.destinationEntity = station;
-		craft.targetAmount = 1;
 		craft.status = GoalStatus::Blocked;
 		uint64_t craftId = registry.createGoal(std::move(craft));
 
@@ -991,7 +1016,6 @@ class GoalHierarchyTest : public ::testing::Test {
 		harvest.type = TaskType::Harvest;
 		harvest.owner = GoalOwner::CraftingGoalSystem;
 		harvest.destinationEntity = station;
-		harvest.targetAmount = 1;
 		harvest.parentGoalId = craftId;
 		harvest.status = GoalStatus::Available;
 		uint64_t harvestId = registry.createGoal(std::move(harvest));
@@ -1000,7 +1024,6 @@ class GoalHierarchyTest : public ::testing::Test {
 		haul.type = TaskType::Haul;
 		haul.owner = GoalOwner::CraftingGoalSystem;
 		haul.destinationEntity = station;
-		haul.targetAmount = 1;
 		haul.parentGoalId = craftId;
 		haul.status = GoalStatus::Available;
 		uint64_t haulId = registry.createGoal(std::move(haul));
@@ -1060,117 +1083,6 @@ TEST_F(CraftingGoalSystemTest, JobRemovedReapsChildGoals) {
 	EXPECT_EQ(registry.goalCount(), 0U) << "All goals reaped when job removed";
 
 	assets::AssetRegistry::Get().clearDefinitions();
-}
-
-// (c) Delivery completion: recordDelivery increments deliveredAmount and completes at target
-TEST_F(GoalHierarchyTest, RecordDeliveryCompletesGoal) {
-	auto& registry = GoalTaskRegistry::Get();
-
-	GoalTask haul;
-	haul.type = TaskType::Haul;
-	haul.owner = GoalOwner::StorageGoalSystem;
-	haul.destinationEntity = static_cast<EntityID>(99);
-	haul.targetAmount = 3;
-	uint64_t haulId = registry.createGoal(std::move(haul));
-
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 0U);
-	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 3U);
-	EXPECT_FALSE(registry.getGoal(haulId)->isComplete());
-
-	// recordDelivery now counts ITEMS, not actions: one haul moving 2 items records 2.
-	registry.recordDelivery(haulId, 2);
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 2U);
-	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 1U);
-	EXPECT_FALSE(registry.getGoal(haulId)->isComplete());
-
-	// A zero-amount delivery is a no-op.
-	registry.recordDelivery(haulId, 0);
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 2U);
-
-	registry.recordDelivery(haulId, 1);
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 3U);
-	EXPECT_EQ(registry.getGoal(haulId)->availableCapacity(), 0U);
-	EXPECT_TRUE(registry.getGoal(haulId)->isComplete());
-}
-
-// (c') Delivering to a child Haul also credits its parent Craft goal and unblocks it once the
-// materials are satisfied (single source of truth: child and parent advance together).
-TEST_F(GoalHierarchyTest, ChildHaulDeliveryCreditsParentCraftAndUnblocks) {
-	auto& registry = GoalTaskRegistry::Get();
-
-	GoalTask craft;
-	craft.type = TaskType::Craft;
-	craft.owner = GoalOwner::CraftingGoalSystem;
-	craft.destinationEntity = static_cast<EntityID>(123);
-	craft.targetAmount = 3;
-	craft.status = GoalStatus::Blocked;
-	uint64_t craftId = registry.createGoal(std::move(craft));
-
-	GoalTask haul;
-	haul.type = TaskType::Haul;
-	haul.owner = GoalOwner::CraftingGoalSystem;
-	haul.destinationEntity = static_cast<EntityID>(123);
-	haul.targetAmount = 3;
-	haul.parentGoalId = craftId;
-	haul.status = GoalStatus::Available;
-	uint64_t haulId = registry.createGoal(std::move(haul));
-
-	registry.recordDelivery(haulId, 2);
-	// Both child and parent advanced by the same amount, no double-count.
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 2U);
-	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 2U);
-	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Blocked)
-	    << "Craft stays Blocked until all materials delivered";
-
-	registry.recordDelivery(haulId, 1);
-	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 3U);
-	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
-	    << "Craft leaves Blocked once materials are satisfied";
-}
-
-// Lazy haul: completing a Harvest spawns the carrying Haul (Available, same parent Craft and chain
-// id), replacing the old pre-created WaitingForItems haul that got flipped to Available.
-TEST_F(GoalHierarchyTest, CreateHaulForCompletedHarvestSpawnsAvailableHaul) {
-	auto& registry = GoalTaskRegistry::Get();
-
-	GoalTask craft;
-	craft.type = TaskType::Craft;
-	craft.owner = GoalOwner::CraftingGoalSystem;
-	craft.destinationEntity = static_cast<EntityID>(55);
-	craft.targetAmount = 2;
-	craft.status = GoalStatus::Blocked;
-	uint64_t craftId = registry.createGoal(std::move(craft));
-
-	GoalTask harvest;
-	harvest.type = TaskType::Harvest;
-	harvest.owner = GoalOwner::CraftingGoalSystem;
-	harvest.destinationEntity = static_cast<EntityID>(55);
-	harvest.destinationPosition = {3.0F, 4.0F};
-	harvest.acceptedDefNameIds = {77};
-	harvest.targetAmount = 2;
-	harvest.parentGoalId = craftId;
-	harvest.status = GoalStatus::Available;
-	harvest.chainId = 999;
-	uint64_t harvestId = registry.createGoal(std::move(harvest));
-
-	uint64_t haulId = registry.createHaulForCompletedHarvest(harvestId);
-	ASSERT_NE(haulId, 0U);
-
-	const auto* haul = registry.getGoal(haulId);
-	ASSERT_NE(haul, nullptr);
-	EXPECT_EQ(haul->type, TaskType::Haul);
-	EXPECT_EQ(haul->status, GoalStatus::Available);
-	ASSERT_TRUE(haul->parentGoalId.has_value());
-	EXPECT_EQ(haul->parentGoalId.value(), craftId);
-	ASSERT_TRUE(haul->chainId.has_value());
-	EXPECT_EQ(haul->chainId.value(), 999U);
-	ASSERT_FALSE(haul->acceptedDefNameIds.empty());
-	EXPECT_EQ(haul->acceptedDefNameIds[0], 77U);
-	EXPECT_EQ(haul->destinationEntity, static_cast<EntityID>(55));
-	EXPECT_EQ(haul->targetAmount, 2U);
-
-	// A non-Harvest goal id is a no-op (returns 0).
-	EXPECT_EQ(registry.createHaulForCompletedHarvest(craftId), 0U);
 }
 
 } // namespace ecs::test

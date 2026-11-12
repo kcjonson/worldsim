@@ -37,7 +37,8 @@ namespace ecs {
 	}
 
 	uint32_t storeOrDrop(
-		World& world, const std::string& defName, uint32_t quantity, glm::vec2 position, const DropResourceCallback& drop
+		World& world, const std::string& defName, uint32_t quantity, glm::vec2 position, const DropResourceCallback& drop,
+		const std::function<void(EntityID box)>& stored
 	) {
 		if (quantity == 0) {
 			return 0;
@@ -87,17 +88,20 @@ namespace ecs {
 				if (remaining == 0) {
 					break;
 				}
-				const uint32_t stored = box.inventory->addItem(defName, std::min(remaining, box.room));
-				remaining -= stored;
+				const uint32_t added = box.inventory->addItem(defName, std::min(remaining, box.room));
+				remaining -= added;
+				if (added > 0 && stored) {
+					stored(box.entity);
+				}
 				LOG_DEBUG(
-					Engine, "[Action] Stored %u x %s in storage %llu within reach", stored, defName.c_str(), static_cast<unsigned long long>(box.entity)
+					Engine, "[Action] Stored %u x %s in storage %llu within reach", added, defName.c_str(), static_cast<unsigned long long>(box.entity)
 				);
 			}
 		}
 
 		if (remaining > 0) {
 			if (drop) {
-				drop(defName, position.x, position.y, remaining);
+				drop(defName, position.x, position.y, remaining, position);
 			} else {
 				LOG_WARNING(Engine, "[Action] Cannot drop %u x %s - drop callback not configured (lost)", remaining, defName.c_str());
 			}

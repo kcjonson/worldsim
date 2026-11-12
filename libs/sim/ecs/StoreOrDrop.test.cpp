@@ -64,7 +64,7 @@ TEST_F(StoreOrDropTest, SkipsCraftingStationInReach) {
 	const EntityID box = createBox({1.2F, 0.0F});
 
 	int		 dropCalls = 0;
-	uint32_t stored = storeOrDrop(world, "Wood", 5, {0.0F, 0.0F}, [&](const std::string&, float, float, uint32_t) { ++dropCalls; });
+	uint32_t stored = storeOrDrop(world, "Wood", 5, {0.0F, 0.0F}, [&](const std::string&, float, float, uint32_t, glm::vec2) { ++dropCalls; });
 
 	EXPECT_EQ(stored, 5U);
 	EXPECT_EQ(world.getComponent<Inventory>(station)->getQuantity("Wood"), 0U);

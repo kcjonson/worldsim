@@ -60,6 +60,7 @@ Applications:
 | [Monorepo Structure](./monorepo-structure.md) | Library organization and dependencies |
 | [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
+| [Main Loop Timing](./main-loop-timing.md) | One frame top to bottom, ECS order and priorities, periodic work and its clocks, decision triggers, cross-frame hand-offs, threads, hazards |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
 | [Include Graph](./include-graph.md) | Per-library #include matrix, layering violations, and the `tools/resolve-includes.mjs` resolver |
 
@@ -92,10 +93,11 @@ Applications:
 
 | Document | Description |
 |----------|-------------|
-| [Observability Overview](./observability/INDEX.md) | Complete system overview |
-| [Developer Server](./observability/developer-server.md) | HTTP/SSE streaming from applications |
+| [Observability Overview](./observability/INDEX.md) | The dev server (salal's), its endpoints and streams, and when in the frame each is served |
+| [Developer Server](./observability/developer-server.md) | What world-sim registers on salal's dev server: routes, controls, state views |
 | [Developer Client](./observability/developer-client.md) | External TypeScript/Vite web app |
-| [UI Inspection](./observability/ui-inspection.md) | UI hierarchy and hover inspection |
+| [UI Inspection](./observability/ui-inspection.md) | UI tree, layout lint, screenshots, synthetic input |
+| [sim-cli](./sim-cli.md) | Spec: headless colonist sim over a shared SimSession; command scripts, decision history, determinism, scenario ctests |
 
 ### Vector Graphics System
 
@@ -140,8 +142,10 @@ Applications:
 | [Terrain Polygons Architecture](./organic-terrain/terrain-polygons-architecture.md) | Design spec: per-chunk waterline/river/pond rings as the truth for nav, render, vision, mud; realism rules; mocks |
 | [Building & Construction Architecture](./building-construction-architecture.md) | Freeform structures: geometry lib, room detection, structure rendering |
 | [Crafting & Material Provisioning](./crafting-provisioning-architecture.md) | Craft-as-construction: station store, metered/no-leftover deposit, pickup-by-source, giveItemToColonist cascade |
+| [Task Claims](./task-claims.md) | Partly built: claims as data on colonist tasks with a derived index, chain claims, availability, need tasks; bumping and the craft binding planned |
+| [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md) | In progress: one persistent nav mesh patched in place (add, remove, move), structural layer for reachability, detail as a query filter, mover footprints, forward snap, chunk anchors; measured builder baseline and per-step perf gates |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
-| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery/witnessing, fog of war |
+| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing, player visibility (planned) |
 
 ### Graphics & Rendering
 

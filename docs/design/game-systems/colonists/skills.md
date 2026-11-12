@@ -150,16 +150,7 @@ struct Skills {
 
 From [Priority Config](./priority-config.md):
 
-```cpp
-int16_t calculateSkillBonus(float skillLevel, const SkillConfig& config) {
-    // config.multiplier = 10 (default)
-    // config.maxBonus = 100 (default)
-    return std::min(
-        static_cast<int16_t>(skillLevel * config.multiplier),
-        config.maxBonus
-    );
-}
-```
+The bonus is `min(skillLevel * 10, 100)`, fixed in AIDecisionSystem.
 
 **Examples:**
 - Level 0 (untrained): +0 priority

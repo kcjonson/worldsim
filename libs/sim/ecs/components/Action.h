@@ -20,6 +20,7 @@
 #include <glm/vec2.hpp>
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <variant>
 
@@ -147,6 +148,15 @@ namespace ecs {
 
 		/// If destroySource is false and this > 0, entity enters cooldown (regrowth)
 		float regrowthTime = 0.0F;
+
+		/// Construction footprint clear: the source is removed by this action whatever kind it is
+		/// (regrowing, pooled) and however much the colonist can carry; the uncarried yield drops
+		/// as a loose pile.
+		bool clearsSource = false;
+
+		/// Where the yield the colonist can't carry drops: beside the source when unset; a footprint
+		/// clear drops it just outside the footprint, off the ground the site will stand on.
+		std::optional<glm::vec2> dropAt;
 
 		/// Storage-to-storage pull only (ActionType::Withdraw): the SOURCE box entity to take items
 		/// FROM. When non-zero the collection removes `quantity` of `itemDefName` from that box's

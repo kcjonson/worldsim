@@ -41,7 +41,7 @@ namespace geometry {
 
 		// Sight-circle polygonalization. The circle has no exact integer form, so
 		// it is approximated as a regular N-gon (float trig + std::llround), the
-		// same policy as the flora octagon and the renderer's 64-gon. N is chosen
+		// same policy as the placed-obstacle octagon and the renderer's 64-gon. N is chosen
 		// so the chord-to-arc sagitta error stays well under ~1-2 mm even at large
 		// radii: sagitta = r * (1 - cos(pi/N)). At N=720, sagitta/r ~= 9.5e-6, so a
 		// 100 m (1e5 mm) radius errs under 1 mm; a 1 km radius under 10 mm. This is

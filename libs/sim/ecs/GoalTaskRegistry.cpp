@@ -1,6 +1,90 @@
 #include "GoalTaskRegistry.h"
 
+#include "StoreOrDrop.h"
+#include "World.h"
+#include "components/DecisionTrace.h"
+#include "components/Inventory.h"
+#include "components/Packaged.h"
+#include "components/StorageConfiguration.h"
+#include "components/StructureBlueprint.h"
+#include "components/WorkQueue.h"
+
+#include <assets/AssetRegistry.h>
+#include <assets/RecipeRegistry.h>
+
+#include <algorithm>
+
 namespace ecs {
+
+	namespace {
+
+		uint32_t storageNeed(World& world, EntityID box, uint32_t itemDefNameId, const std::string& item, NeedBasis basis) {
+			const auto* config = world.getComponent<StorageConfiguration>(box);
+			const auto* inventory = world.getComponent<Inventory>(box);
+			const auto* def = assets::AssetRegistry::Get().getDefinitionById(itemDefNameId);
+			// A packaged box is being moved: it takes nothing until it is placed again.
+			if (config == nullptr || inventory == nullptr || def == nullptr || world.hasComponent<Packaged>(box)) {
+				return 0;
+			}
+			if (basis == NeedBasis::Stock) {
+				return storageRoomFor(*config, *inventory, item, def->category);
+			}
+			const uint32_t minimum = config->getNamedMinAmountFor(item, def->category);
+			const uint32_t held = inventory->getQuantity(item);
+			return minimum > held ? std::min(minimum - held, inventory->addableCount(item)) : 0U;
+		}
+
+		uint64_t needHash(uint64_t root, uint32_t item, NeedBasis basis) {
+			const uint64_t hash = (root * 0x9E3779B97F4A7C15ULL) ^ (uint64_t{item} << 1) ^ static_cast<uint64_t>(basis);
+			return hash ^ (hash >> 29);
+		}
+
+	} // namespace
+
+	uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId) {
+		const auto*		   queue = world.getComponent<WorkQueue>(station);
+		const CraftingJob* job = queue != nullptr ? queue->getNextJob() : nullptr;
+		const auto*		   recipe = job != nullptr ? assets::RecipeRegistry::Get().getRecipe(job->recipeDefName) : nullptr;
+		if (recipe == nullptr) {
+			return 0;
+		}
+		for (const auto& input : recipe->inputs) {
+			if (input.defNameId == itemDefNameId) {
+				const auto*	   store = world.getComponent<Inventory>(station);
+				const uint32_t inStore = store != nullptr ? store->getQuantity(assets::AssetRegistry::Get().getDefName(itemDefNameId)) : 0U;
+				return input.count > inStore ? input.count - inStore : 0U;
+			}
+		}
+		return 0;
+	}
+
+	std::vector<uint64_t> goalsWithOfferedWork(World& world) {
+		std::vector<uint64_t> offered;
+		for (auto [colonist, trace] : world.view<DecisionTrace>()) {
+			(void)colonist;
+			for (const EvaluatedOption& option : trace.options) {
+				const bool live = option.status == OptionStatus::Selected || option.status == OptionStatus::Available ||
+								  option.status == OptionStatus::NoRoom || option.status == OptionStatus::Reserved;
+				const uint64_t goal = option.taskType == TaskType::Haul	   ? option.haulGoalId
+									  : option.taskType == TaskType::Harvest ? option.harvestGoalId
+																			 : 0U;
+				if (live && goal != 0) {
+					offered.push_back(goal);
+				}
+			}
+		}
+		std::sort(offered.begin(), offered.end());
+		offered.erase(std::unique(offered.begin(), offered.end()), offered.end());
+		return offered;
+	}
+
+	bool goalHasWork(const GoalTask& goal, std::span<const uint64_t> offered) {
+		return goal.owner != GoalOwner::StorageGoalSystem || std::binary_search(offered.begin(), offered.end(), goal.id);
+	}
+
+	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {
+		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(p);
+	}
 
 	GoalTaskRegistry& GoalTaskRegistry::Get() {
 		static GoalTaskRegistry instance;
@@ -14,6 +98,7 @@ namespace ecs {
 		ownerToGoals.clear();
 		parentToChildren.clear();
 		nextGoalId = 1;
+		nextClaimSeq = 1;
 	}
 
 	uint64_t GoalTaskRegistry::createGoal(GoalTask goal) {
@@ -87,33 +172,101 @@ namespace ecs {
 		}
 	}
 
-	void GoalTaskRegistry::recordDelivery(uint64_t goalId, uint32_t amount) {
-		if (amount == 0) {
-			return;
-		}
-
+	uint64_t GoalTaskRegistry::rootOf(uint64_t goalId) const {
 		auto it = goals.find(goalId);
 		if (it == goals.end()) {
-			return;
+			return 0;
 		}
-
-		it->second.deliveredAmount += amount;
-
-		// Credit the parent Craft goal too: its target is the total material count, and a
-		// material reaches the station only when a Haul child deposits it there. Harvest
-		// deliveries land in the colonist's inventory, not the station, so they must NOT
-		// credit the parent (that would double-count once the matching Haul completes).
-		// Once materials are satisfied, the Craft leaves Blocked so the crafting work
-		// itself can be picked up.
-		if (it->second.type == TaskType::Haul && it->second.parentGoalId.has_value()) {
-			auto parentIt = goals.find(it->second.parentGoalId.value());
-			if (parentIt != goals.end() && parentIt->second.type == TaskType::Craft) {
-				parentIt->second.deliveredAmount += amount;
-				if (parentIt->second.status == GoalStatus::Blocked &&
-					parentIt->second.deliveredAmount >= parentIt->second.targetAmount) {
-					parentIt->second.status = GoalStatus::Available;
-				}
+		while (it->second.parentGoalId.has_value()) {
+			const auto parent = goals.find(it->second.parentGoalId.value());
+			if (parent == goals.end()) {
+				break;
 			}
+			it = parent;
+		}
+		return it->first;
+	}
+
+	uint32_t GoalTaskRegistry::remainingNeed(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis) const {
+		const auto it = goals.find(rootGoalId);
+		if (it == goals.end() || it->second.parentGoalId.has_value() || itemDefNameId == 0) {
+			return 0;
+		}
+		const GoalTask&	   root = it->second;
+		const std::string& item = assets::AssetRegistry::Get().getDefName(itemDefNameId);
+		switch (root.owner) {
+			case GoalOwner::CraftingGoalSystem:
+				return root.type == TaskType::Craft ? craftStationNeed(world, root.destinationEntity, itemDefNameId) : 0U;
+			case GoalOwner::ConstructionGoalSystem: {
+				const auto& accepted = root.acceptedDefNameIds;
+				const auto* blueprint = world.getComponent<StructureBlueprint>(root.destinationEntity);
+				if (root.type != TaskType::Build || blueprint == nullptr ||
+					std::find(accepted.begin(), accepted.end(), itemDefNameId) == accepted.end()) {
+					return 0;
+				}
+				return blueprint->remaining(item);
+			}
+			case GoalOwner::StorageGoalSystem:
+				return storageNeed(world, root.destinationEntity, itemDefNameId, item, basis);
+			case GoalOwner::BuildGoalSystem:
+				return 0;
+		}
+		return 0;
+	}
+
+	void RemainingNeedCache::invalidate() {
+		if (++m_pass == 0) {
+			for (Slot& slot : m_slots) {
+				slot.pass = 0;
+			}
+			m_pass = 1;
+		}
+		m_used = 0;
+	}
+
+	uint32_t RemainingNeedCache::get(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis) {
+		if ((m_used + 1) * 2 > m_slots.size()) {
+			grow();
+		}
+		const size_t mask = m_slots.size() - 1;
+		size_t		 index = needHash(rootGoalId, itemDefNameId, basis) & mask;
+		for (; m_slots[index].pass == m_pass; index = (index + 1) & mask) {
+			const Slot& slot = m_slots[index];
+			if (slot.root == rootGoalId && slot.item == itemDefNameId && slot.basis == basis) {
+				return slot.value;
+			}
+		}
+#ifdef DEVELOPMENT_BUILD
+		++computed;
+#endif
+		const uint32_t value = GoalTaskRegistry::Get().remainingNeed(world, rootGoalId, itemDefNameId, basis);
+		m_slots[index] = {.root = rootGoalId, .item = itemDefNameId, .value = value, .pass = m_pass, .basis = basis};
+		++m_used;
+		return value;
+	}
+
+	void RemainingNeedCache::refresh(World& world, uint64_t rootGoalId) {
+		for (Slot& slot : m_slots) {
+			if (slot.pass == m_pass && slot.root == rootGoalId) {
+				slot.value = GoalTaskRegistry::Get().remainingNeed(world, slot.root, slot.item, slot.basis);
+			}
+		}
+	}
+
+	void RemainingNeedCache::grow() {
+		std::vector<Slot> old;
+		old.swap(m_slots);
+		m_slots.assign(std::max<size_t>(64, old.size() * 2), Slot{});
+		const size_t mask = m_slots.size() - 1;
+		for (const Slot& slot : old) {
+			if (slot.pass != m_pass) {
+				continue;
+			}
+			size_t index = needHash(slot.root, slot.item, slot.basis) & mask;
+			while (m_slots[index].pass == m_pass) {
+				index = (index + 1) & mask;
+			}
+			m_slots[index] = slot;
 		}
 	}
 
@@ -158,32 +311,6 @@ namespace ecs {
 		return result;
 	}
 
-	std::vector<const GoalTask*> GoalTaskRegistry::getGoalsMatching(const GoalFilter& filter) const {
-		std::vector<const GoalTask*> result;
-
-		for (const auto& [goalId, goal] : goals) {
-			if (filter(goal)) {
-				result.push_back(&goal);
-			}
-		}
-
-		return result;
-	}
-
-	std::vector<const GoalTask*> GoalTaskRegistry::getGoalsInRadius(const glm::vec2& center, float radius) const {
-		std::vector<const GoalTask*> result;
-		float						 radiusSq = radius * radius;
-
-		for (const auto& [goalId, goal] : goals) {
-			float dx = goal.destinationPosition.x - center.x;
-			float dy = goal.destinationPosition.y - center.y;
-			if (dx * dx + dy * dy <= radiusSq) {
-				result.push_back(&goal);
-			}
-		}
-
-		return result;
-	}
 
 	size_t GoalTaskRegistry::goalCount(TaskType type) const {
 		auto it = typeToGoals.find(type);
@@ -229,9 +356,7 @@ namespace ecs {
 		typeToGoals[goal.type].insert(goal.id);
 
 		// Owner index
-		if (goal.owner != GoalOwner::None) {
-			ownerToGoals[goal.owner].insert(goal.id);
-		}
+		ownerToGoals[goal.owner].insert(goal.id);
 
 		// Parent-child index
 		if (goal.parentGoalId.has_value()) {
@@ -255,13 +380,11 @@ namespace ecs {
 		}
 
 		// Owner index
-		if (goal.owner != GoalOwner::None) {
-			auto ownerIt = ownerToGoals.find(goal.owner);
-			if (ownerIt != ownerToGoals.end()) {
-				ownerIt->second.erase(goal.id);
-				if (ownerIt->second.empty()) {
-					ownerToGoals.erase(ownerIt);
-				}
+		auto ownerIt = ownerToGoals.find(goal.owner);
+		if (ownerIt != ownerToGoals.end()) {
+			ownerIt->second.erase(goal.id);
+			if (ownerIt->second.empty()) {
+				ownerToGoals.erase(ownerIt);
 			}
 		}
 
@@ -315,31 +438,6 @@ namespace ecs {
 		for (uint64_t id : toRemove) {
 			removeGoal(id);
 		}
-	}
-
-	uint64_t GoalTaskRegistry::createHaulForCompletedHarvest(uint64_t harvestGoalId) {
-		auto it = goals.find(harvestGoalId);
-		if (it == goals.end() || it->second.type != TaskType::Harvest) {
-			return 0;
-		}
-
-		const GoalTask& harvest = it->second;
-		GoalTask		haul;
-		haul.type = TaskType::Haul;
-		haul.owner = harvest.owner;
-		haul.destinationEntity = harvest.destinationEntity;
-		haul.destinationPosition = harvest.destinationPosition;
-		haul.destinationDefNameId = harvest.destinationDefNameId;
-		haul.acceptedDefNameIds = harvest.acceptedDefNameIds;
-		haul.acceptedCategory = harvest.acceptedCategory;
-		haul.targetAmount = harvest.targetAmount;
-		haul.deliveredAmount = 0;
-		haul.createdAt = harvest.createdAt;
-		haul.parentGoalId = harvest.parentGoalId;
-		haul.status = GoalStatus::Available;
-		haul.chainId = harvest.chainId;
-
-		return createGoal(std::move(haul));
 	}
 
 } // namespace ecs

@@ -20,6 +20,7 @@
 
 #include <ecs/InventoryMass.h>
 #include <ecs/World.h>
+#include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
@@ -83,12 +84,12 @@ namespace world_sim {
 		verb("walls", &DevCommandHandler::devWalls);
 		verb("opening", &DevCommandHandler::devOpening);
 		verb("craft", &DevCommandHandler::devCraft);
-		verb("storage", &DevCommandHandler::devStorage);
 		verb("tunable", &DevCommandHandler::devTunable);
 		registrations.push_back(server.route("foundation-edit", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
+		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
 
 		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
 			registrations.push_back(server.stateProvider(what, [this, serialize] {
@@ -487,9 +488,6 @@ namespace world_sim {
 		if (auto* target = m_ctx.world->getComponent<ecs::MovementTarget>(id)) {
 			target->active = false;
 		}
-		if (auto* vel = m_ctx.world->getComponent<ecs::Velocity>(id)) {
-			vel->value = {0.0F, 0.0F};
-		}
 		LOG_INFO(Game, "[DevAPI] teleport: #%llu -> (%.1f, %.1f)", static_cast<unsigned long long>(id), to.x, to.y);
 		m_ctx.ui->pushNotification("Dev", "Teleported", ui::ToastSeverity::Info);
 	}
@@ -524,7 +522,7 @@ namespace world_sim {
 		if (colonistSel != nullptr && colonistSel->entityId == id) {
 			m_ctx.selection->clearSelection();
 		}
-		m_ctx.world->destroyEntity(id);
+		ecs::destroyWorldEntity(*m_ctx.world, id);
 		LOG_INFO(Game, "[DevAPI] kill: removed #%llu", static_cast<unsigned long long>(id));
 		m_ctx.ui->pushNotification("Dev", "Colonist removed", ui::ToastSeverity::Info);
 	}
@@ -918,23 +916,25 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Queued " + std::to_string(qty) + " " + recipe, ui::ToastSeverity::Info);
 	}
 
-	void DevCommandHandler::devStorage(const app::DevRequest& cmd) {
+	app::DevResponse DevCommandHandler::devStorage(const app::DevRequest& cmd) {
+		const auto reject = [this](const std::string& message) {
+			LOG_WARNING(Game, "[DevAPI] storage: %s", message.c_str());
+			m_ctx.ui->pushNotification("Dev", "Storage: " + message, ui::ToastSeverity::Warning);
+			return app::DevResponse{.status = 400, .body = "{\"error\":\"storage: " + jsonEscape(message) + "\"}"};
+		};
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
 		const ecs::EntityID	   id = nearestStorageEntity(at);
 		if (id == ecs::kInvalidEntity) {
-			LOG_WARNING(Game, "[DevAPI] storage: no storage entity found near (%.1f, %.1f)", at.x, at.y);
-			m_ctx.ui->pushNotification("Dev", "No storage entity found", ui::ToastSeverity::Warning);
-			return;
+			return reject("no storage entity near the point");
 		}
 		auto* storageConfig = m_ctx.world->getComponent<ecs::StorageConfiguration>(id);
 		if (storageConfig == nullptr) {
-			LOG_WARNING(Game, "[DevAPI] storage: entity #%llu has no StorageConfiguration", static_cast<unsigned long long>(id));
-			m_ctx.ui->pushNotification("Dev", "Entity has no StorageConfiguration", ui::ToastSeverity::Warning);
-			return;
+			return reject("entity #" + std::to_string(id) + " has no StorageConfiguration");
 		}
 
+		const std::string	 defName = param(cmd, "item", "*");
+		const std::string	 categoryStr = param(cmd, "category");
 		assets::ItemCategory category = assets::ItemCategory::RawMaterial;
-		const std::string			 categoryStr = param(cmd, "category", "RawMaterial");
 		if (equalsIgnoreCase(categoryStr, "Food")) {
 			category = assets::ItemCategory::Food;
 		} else if (equalsIgnoreCase(categoryStr, "Tool")) {
@@ -943,6 +943,17 @@ namespace world_sim {
 			category = assets::ItemCategory::Furniture;
 		} else if (equalsIgnoreCase(categoryStr, "None")) {
 			category = assets::ItemCategory::None;
+		}
+		// A named item's rule is in the item's own category, or it never matches it.
+		if (defName != "*") {
+			const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+			if (def == nullptr) {
+				return reject("unknown item '" + defName + "'");
+			}
+			if (!categoryStr.empty() && category != def->category) {
+				return reject("item '" + defName + "' is not in category " + categoryStr);
+			}
+			category = def->category;
 		}
 
 		ecs::StoragePriority priority = ecs::StoragePriority::Medium;
@@ -955,9 +966,13 @@ namespace world_sim {
 			priority = ecs::StoragePriority::Critical;
 		}
 
-		const std::string defName = param(cmd, "item", "*");
-		const auto		  minAmount = static_cast<uint32_t>(std::strtol(param(cmd, "min", "0").c_str(), nullptr, 10));
-		const auto		  maxAmount = static_cast<uint32_t>(std::strtol(param(cmd, "max", "0").c_str(), nullptr, 10));
+		const auto minAmount = static_cast<uint32_t>(std::strtol(param(cmd, "min", "0").c_str(), nullptr, 10));
+		const auto maxAmount = static_cast<uint32_t>(std::strtol(param(cmd, "max", "0").c_str(), nullptr, 10));
+
+		// As the storage dialog does: a rule naming an item replaces its category's wildcard.
+		if (defName != "*") {
+			std::erase_if(storageConfig->rules, [&](const ecs::StorageRule& existing) { return existing.isWildcard() && existing.category == category; });
+		}
 
 		ecs::StorageRule rule;
 		rule.defName = defName;
@@ -969,15 +984,16 @@ namespace world_sim {
 
 		LOG_INFO(
 			Game,
-			"[DevAPI] storage: added rule to #%llu (item=%s, category=%s, priority=%s, min=%u, max=%u)",
+			"[DevAPI] storage: added rule to #%llu (item=%s, category=%u, priority=%s, min=%u, max=%u)",
 			static_cast<unsigned long long>(id),
 			defName.c_str(),
-			categoryStr.c_str(),
+			static_cast<unsigned>(category),
 			priorityStr.c_str(),
 			minAmount,
 			maxAmount
 		);
-		m_ctx.ui->pushNotification("Dev", "Added storage rule: " + defName + " (" + categoryStr + ")", ui::ToastSeverity::Info);
+		m_ctx.ui->pushNotification("Dev", "Added storage rule: " + defName, ui::ToastSeverity::Info);
+		return app::DevResponse{.body = R"({"status":"ok","verb":"storage"})"};
 	}
 
 	Foundation::Vec2 DevCommandHandler::parsePoint(const std::string& spec) {

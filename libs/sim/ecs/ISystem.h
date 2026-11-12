@@ -14,6 +14,10 @@ namespace ecs {
 		/// @param deltaTime Time elapsed since last frame in seconds
 		virtual void update(float deltaTime) = 0;
 
+		/// Called once per World::update after every system's update, for work that must not
+		/// start until nothing else in the tick can read what it changes.
+		virtual void endTick() {}
+
 		/// Get the priority of this system. Lower values run first.
 		/// Recommended ranges:
 		/// - 0-99: Input handling

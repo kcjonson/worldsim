@@ -6,7 +6,6 @@
 #include <ecs/components/Memory.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/WorkQueue.h>
-#include <ecs/systems/GoalSystemHelpers.h>
 
 #include <sstream>
 #include <utility>
@@ -104,7 +103,10 @@ std::unordered_set<uint32_t> collectObtainableMaterials(ecs::World& world) {
 	return obtainable;
 }
 
-bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::string& itemDefName) {
+bool isStorageSourceKnown(
+	ecs::World& world, const std::unordered_set<uint32_t>& memorySources, ecs::ColonyStorageKnowledge& storageKnowledge,
+	ecs::EntityID destBox, const std::string& itemDefName
+) {
 	auto&		   registry = assets::AssetRegistry::Get();
 	const uint32_t itemId = registry.getDefNameId(itemDefName);
 	if (itemId == 0) {
@@ -112,13 +114,13 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 	}
 
 	// A loose pile or a known harvestable's yield satisfies the pull straight from Memory.
-	if (collectMemorySources(world).count(itemId) > 0) {
+	if (memorySources.count(itemId) > 0) {
 		return true;
 	}
 
 	// Otherwise the engine pull only sources from a STRICTLY-lower-priority box the colony KNOWS.
 	// Mirror evaluateHaulOptions' source gate exactly: same item, strict-< getPriorityFor on the
-	// item's category, colonyKnowsStorageEntity. getPriorityFor falls back to Low for an
+	// item's category, ColonyStorageKnowledge. getPriorityFor falls back to Low for an
 	// unconfigured box, so an unknown-priority box holding the item is a valid lower source.
 	const auto* itemDef = registry.getDefinition(itemDefName);
 	if (itemDef == nullptr) {
@@ -154,7 +156,7 @@ bool isStorageSourceKnown(ecs::World& world, ecs::EntityID destBox, const std::s
 			if (inv.getQuantity(itemDefName) <= srcConfig->getMinAmountFor(itemDefName, category)) {
 				return false;
 			}
-			return ecs::colonyKnowsStorageEntity(&world, registry, source);
+			return storageKnowledge.knows(world, registry, source);
 		}
 	);
 	return known.count(itemId) > 0;

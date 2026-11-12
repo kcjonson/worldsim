@@ -17,14 +17,8 @@ namespace world_sim {
 		constexpr float kLine2Size = 10.0F;
 
 		ui::ColorToken statusColor(const adapters::GlobalTaskDisplayData& task) {
-			if (task.isMine) {
-				return tokens::color::data;
-			}
 			if (task.isBlocked || task.status == "Far" || task.status == "Waiting for harvest") {
 				return tokens::color::textDim;
-			}
-			if (task.isReserved) {
-				return tokens::color::statusWarn;
 			}
 			return tokens::color::statusOk;
 		}
@@ -32,8 +26,7 @@ namespace world_sim {
 	} // namespace
 
 	GlobalTaskRow::GlobalTaskRow(const Args& args)
-		: task(args.task),
-		  showKnownBy(args.showKnownBy) {}
+		: task(args.task) {}
 
 	void GlobalTaskRow::onMount() {
 		const ui::Theme& theme = getContext()->getTheme();
@@ -65,9 +58,6 @@ namespace world_sim {
 		std::string status = task.status;
 		if (!task.statusDetail.empty()) {
 			status += " - " + task.statusDetail;
-		}
-		if (showKnownBy && !task.knownBy.empty()) {
-			status += " - Known by: " + task.knownBy;
 		}
 		second->setText(status);
 		second->setStyle({.color = getContext()->getTheme().get(statusColor(task)), .fontSize = kLine2Size});

@@ -1390,7 +1390,7 @@ namespace assets {
 		return totalLoaded;
 	}
 
-	void AssetRegistry::beginLoadAsync(const std::string& folderPath) {
+	void AssetRegistry::beginLoadAsync(const std::string& folderPath, std::function<void()> afterDefinitions) {
 		if (m_loadThread.joinable()) {
 			m_loadThread.join();
 		}
@@ -1398,10 +1398,13 @@ namespace assets {
 		m_loadProgress.done.store(false);
 		m_loadProgress.started.store(true, std::memory_order_release);
 
-		m_loadThread = std::thread([this, folderPath]() {
+		m_loadThread = std::thread([this, folderPath, afterDefinitions = std::move(afterDefinitions)]() {
 			loadDefinitionsFromFolder(folderPath, [this](int loaded) { m_loadProgress.defsLoaded.store(loaded); });
-			// Release so a reader that observes done (acquire) sees all the writes
-			// the worker made to definitions, indices, and the validation report.
+			if (afterDefinitions) {
+				afterDefinitions();
+			}
+			// Release so a reader that observes done (acquire) sees all the writes the worker
+			// made to definitions, indices, the validation report, and afterDefinitions' loads.
 			m_loadProgress.done.store(true, std::memory_order_release);
 		});
 	}
@@ -1413,11 +1416,20 @@ namespace assets {
 	}
 
 	const AssetDefinition* AssetRegistry::getDefinition(const std::string& defName) const {
+#ifdef DEVELOPMENT_BUILD
+		if (m_countingNameLookups.load(std::memory_order_relaxed)) {
+			m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+		}
+#endif
 		auto it = definitions.find(defName);
 		if (it != definitions.end()) {
 			return &it->second;
 		}
 		return nullptr;
+	}
+
+	const AssetDefinition* AssetRegistry::getDefinitionById(uint32_t id) const {
+		return id < m_idToDefinition.size() ? m_idToDefinition[id] : nullptr;
 	}
 
 	namespace {
@@ -2226,7 +2238,12 @@ namespace assets {
 		// and capability lookups return stale mappings for now-destroyed defs until a reload.
 		m_defNameToId.clear();
 		m_idToDefName.clear();
+		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
+		m_edibleItemNames.clear();
+		m_edibleItemIds.clear();
+		m_harvestablesByYieldId.clear();
+		m_harvestYieldIds.clear();
 		m_validationReport.issues.clear();
 		m_loadProgress.started.store(false);
 		m_loadProgress.done.store(false);
@@ -2288,10 +2305,16 @@ namespace assets {
 	void AssetRegistry::buildDefNameIndex() {
 		m_defNameToId.clear();
 		m_idToDefName.clear();
+		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
+		m_edibleItemNames.clear();
+		m_edibleItemIds.clear();
+		m_harvestablesByYieldId.clear();
+		m_harvestYieldIds.clear();
 
 		// Reserve ID 0 as "invalid"
 		m_idToDefName.push_back("");
+		m_idToDefinition.push_back(nullptr);
 		m_capabilityMasks.push_back(0);
 
 		// Build ID mapping for all definitions
@@ -2299,14 +2322,72 @@ namespace assets {
 		for (const auto& [defName, def] : definitions) {
 			m_defNameToId[defName] = nextId;
 			m_idToDefName.push_back(defName);
+			m_idToDefinition.push_back(&def);
 			m_capabilityMasks.push_back(computeCapabilityMask(def));
+			if (def.isEdible()) {
+				m_edibleItemNames.push_back(defName);
+				m_edibleItemIds.push_back(nextId);
+			}
 			nextId++;
+		}
+		std::sort(m_edibleItemNames.begin(), m_edibleItemNames.end());
+		std::sort(m_edibleItemIds.begin(), m_edibleItemIds.end());
+		// Filed once every definition has its id, so a yield's id is its definition's.
+		for (const auto& [defName, def] : definitions) {
+			indexHarvestYield(def, m_defNameToId[defName]);
 		}
 
 		LOG_DEBUG(Engine, "Built defName index: %zu entries", m_idToDefName.size() - 1);
 	}
 
+	void AssetRegistry::indexHarvestYield(const AssetDefinition& def, uint32_t id) {
+		if (id < m_harvestYieldIds.size()) {
+			m_harvestYieldIds[id] = 0;
+		}
+		if (!def.capabilities.harvestable.has_value() || def.capabilities.harvestable->yieldDefName.empty()) {
+			return;
+		}
+		const uint32_t yieldId = internName(def.capabilities.harvestable->yieldDefName);
+		if (id >= m_harvestYieldIds.size()) {
+			m_harvestYieldIds.resize(id + 1, 0);
+		}
+		m_harvestYieldIds[id] = yieldId;
+		if (yieldId >= m_harvestablesByYieldId.size()) {
+			m_harvestablesByYieldId.resize(yieldId + 1);
+		}
+		auto&	   ids = m_harvestablesByYieldId[yieldId];
+		const auto at = std::lower_bound(ids.begin(), ids.end(), id);
+		if (at == ids.end() || *at != id) {
+			ids.insert(at, id);
+		}
+	}
+
+	uint32_t AssetRegistry::internName(const std::string& defName) {
+		if (const auto it = m_defNameToId.find(defName); it != m_defNameToId.end()) {
+			return it->second;
+		}
+		const auto id = static_cast<uint32_t>(m_idToDefName.size());
+		m_defNameToId[defName] = id;
+		m_idToDefName.push_back(defName);
+		m_idToDefinition.push_back(nullptr);
+		m_capabilityMasks.push_back(0);
+		return id;
+	}
+
+	const std::vector<uint32_t>& AssetRegistry::harvestablesYielding(uint32_t yieldDefNameId) const {
+		if (yieldDefNameId < m_harvestablesByYieldId.size()) {
+			return m_harvestablesByYieldId[yieldDefNameId];
+		}
+		static const std::vector<uint32_t> kNone;
+		return kNone;
+	}
+
 	uint32_t AssetRegistry::getDefNameId(const std::string& defName) const {
+#ifdef DEVELOPMENT_BUILD
+		if (m_countingNameLookups.load(std::memory_order_relaxed)) {
+			m_nameLookups.fetch_add(1, std::memory_order_relaxed);
+		}
+#endif
 		auto it = m_defNameToId.find(defName);
 		if (it != m_defNameToId.end()) {
 			return it->second;
@@ -2342,9 +2423,22 @@ namespace assets {
 		return 1.0F;
 	}
 
+	float AssetRegistry::itemMassKg(uint32_t id) const {
+		const auto* def = getDefinitionById(id);
+		return def != nullptr && def->itemProperties.has_value() ? def->itemProperties->massKg : 1.0F;
+	}
+
+	uint32_t AssetRegistry::harvestYieldId(uint32_t id) const {
+		return id < m_harvestYieldIds.size() ? m_harvestYieldIds[id] : 0U;
+	}
+
+	bool AssetRegistry::yieldsEdible(uint32_t id) const {
+		const auto* yield = getDefinitionById(harvestYieldId(id));
+		return yield != nullptr && yield->isEdible();
+	}
+
 	const std::string& AssetRegistry::getToolType(uint32_t id) const {
-		const auto& defName = getDefName(id);
-		const auto* def = getDefinition(defName);
+		const auto* def = getDefinitionById(id);
 		if (def != nullptr) {
 			return def->toolType;
 		}
@@ -2356,13 +2450,19 @@ namespace assets {
 		// Check if already registered
 		auto it = m_defNameToId.find(defName);
 		if (it != m_defNameToId.end()) {
-			return it->second; // Already registered, return existing ID
+			// A name first interned as an undefined harvest yield has an id but no definition and no
+			// capabilities; the synthetic definition gives it its capabilities. A real definition keeps its own.
+			if (m_idToDefinition[it->second] == nullptr) {
+				m_capabilityMasks[it->second] = capabilityMask;
+			}
+			return it->second;
 		}
 
 		// Assign new ID
 		auto newId = static_cast<uint32_t>(m_idToDefName.size());
 		m_defNameToId[defName] = newId;
 		m_idToDefName.push_back(defName);
+		m_idToDefinition.push_back(nullptr);
 		m_capabilityMasks.push_back(capabilityMask);
 
 		LOG_DEBUG(Engine, "Registered synthetic definition '%s' with ID %u, capabilities 0x%04X", defName.c_str(), newId, capabilityMask);
@@ -2377,7 +2477,23 @@ namespace assets {
 	void AssetRegistry::registerTestDefinition(AssetDefinition def) {
 		std::string defName = def.defName;
 		const uint16_t mask = computeCapabilityMask(def);
+		const bool edible = def.isEdible();
+		if (const auto previous = definitions.find(defName);
+			previous != definitions.end() && previous->second.capabilities.harvestable.has_value()) {
+			const uint32_t previousYieldId = getDefNameId(previous->second.capabilities.harvestable->yieldDefName);
+			if (previousYieldId < m_harvestablesByYieldId.size()) {
+				std::erase(m_harvestablesByYieldId[previousYieldId], getDefNameId(defName));
+			}
+		}
 		definitions[defName] = std::move(def);
+
+		const auto edibleAt = std::lower_bound(m_edibleItemNames.begin(), m_edibleItemNames.end(), defName);
+		const bool listed = edibleAt != m_edibleItemNames.end() && *edibleAt == defName;
+		if (edible && !listed) {
+			m_edibleItemNames.insert(edibleAt, defName);
+		} else if (!edible && listed) {
+			m_edibleItemNames.erase(edibleAt);
+		}
 
 		// Assign the interning id by APPENDING, never by rebuilding the whole index. A full rebuild
 		// iterates the unordered definitions map, so every prior id could be reshuffled when the map
@@ -2387,17 +2503,30 @@ namespace assets {
 		if (m_idToDefName.empty()) {
 			// First registration: seat the reserved invalid id 0 (mirrors buildDefNameIndex).
 			m_idToDefName.push_back("");
+			m_idToDefinition.push_back(nullptr);
 			m_capabilityMasks.push_back(0);
 		}
-		auto existing = m_defNameToId.find(defName);
+		const AssetDefinition& stored = definitions[defName];
+		auto				   existing = m_defNameToId.find(defName);
 		if (existing != m_defNameToId.end()) {
 			// Re-registration of the same name updates its mask in place; id is unchanged.
 			m_capabilityMasks[existing->second] = mask;
+			m_idToDefinition[existing->second] = &stored;
 		} else {
 			const auto newId = static_cast<uint32_t>(m_idToDefName.size());
 			m_defNameToId[defName] = newId;
 			m_idToDefName.push_back(defName);
+			m_idToDefinition.push_back(&stored);
 			m_capabilityMasks.push_back(mask);
+		}
+		const uint32_t id = m_defNameToId[defName];
+		indexHarvestYield(stored, id);
+		const auto edibleIdAt = std::lower_bound(m_edibleItemIds.begin(), m_edibleItemIds.end(), id);
+		const bool idListed = edibleIdAt != m_edibleItemIds.end() && *edibleIdAt == id;
+		if (edible && !idListed) {
+			m_edibleItemIds.insert(edibleIdAt, id);
+		} else if (!edible && idListed) {
+			m_edibleItemIds.erase(edibleIdAt);
 		}
 
 		LOG_DEBUG(Engine, "Registered test definition: %s", defName.c_str());
@@ -2426,7 +2555,12 @@ namespace assets {
 		groupIndex.clear();
 		m_defNameToId.clear();
 		m_idToDefName.clear();
+		m_idToDefinition.clear();
 		m_capabilityMasks.clear();
+		m_edibleItemNames.clear();
+		m_edibleItemIds.clear();
+		m_harvestablesByYieldId.clear();
+		m_harvestYieldIds.clear();
 		LOG_DEBUG(Engine, "Cleared all definitions");
 	}
 

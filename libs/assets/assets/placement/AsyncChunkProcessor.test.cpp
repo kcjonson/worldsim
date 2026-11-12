@@ -6,18 +6,15 @@
 
 #include <world/chunk/Chunk.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/ChunkSampleResult.h>
-#include <world/chunk/IWorldSampler.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <iterator>
 #include <memory>
 #include <string>
-#include <thread>
 #include <tuple>
 #include <unordered_set>
 #include <vector>
@@ -31,25 +28,10 @@ namespace {
 	constexpr uint64_t kQuickstartSeed = 424242;
 	constexpr uint64_t kOtherWorldSeed = 987654321;
 
-	// Every tile is grassland, so what a chunk grows is decided by the world seed alone.
-	class SeededGrasslandSampler : public world::IWorldSampler {
-	  public:
-		explicit SeededGrasslandSampler(uint64_t worldSeed)
-			: seed(worldSeed) {}
-
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate /*coord*/) const override {
-			return world::makeUniformChunkSampleResult(world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
-		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition /*pos*/) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return seed; }
-
-	  private:
-		uint64_t seed;
-	};
-
-	// One ready chunk at the origin of a world with the given seed.
+	// One ready chunk at the origin of an all-grassland world with the given seed, so what the chunk
+	// grows is decided by the world seed alone.
 	std::unique_ptr<world::ChunkManager> loadOriginChunk(uint64_t worldSeed) {
-		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<SeededGrasslandSampler>(worldSeed));
+		auto chunks = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(worldSeed, world::SyntheticMap{}));
 		chunks->setLoadRadius(0);
 		chunks->update({0.0F, 0.0F});
 		chunks->finishPendingGeneration();
@@ -116,18 +98,14 @@ namespace {
 		return layoutOf(executor.computeChunkEntities(ctx).entities);
 	}
 
-	// Launch the chunk and pump the processor the way the game loop does, until it is integrated.
-	// No deadline: a slow runner can't be told from a hang by the clock, so a task that never
-	// finishes is left to the assets-tests ctest TIMEOUT.
+	// Launch the chunk and block until it is integrated. No deadline: a slow runner can't be told
+	// from a hang by the clock, so a task that never finishes is left to the assets-tests ctest TIMEOUT.
 	::testing::AssertionResult placeAndWait(AsyncChunkProcessor& processor, const world::Chunk& chunk) {
 		processor.launchTask(&chunk);
 		if (!processor.isProcessing(chunk.coordinate())) {
 			return ::testing::AssertionFailure() << "launchTask did not start the chunk";
 		}
-		while (processor.hasPending()) {
-			processor.pollCompleted();
-			std::this_thread::sleep_for(std::chrono::milliseconds(2));
-		}
+		processor.waitAll();
 		return ::testing::AssertionSuccess();
 	}
 

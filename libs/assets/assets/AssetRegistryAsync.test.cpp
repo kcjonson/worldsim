@@ -1,11 +1,18 @@
 // Tests for AssetRegistry asynchronous loading (beginLoadAsync).
 
+#include "assets/AssetBootstrap.h"
 #include "assets/AssetRegistry.h"
 #include "assets/AssetRegistry.test.h"
+#include "assets/RecipeRegistry.h"
 
 #include <gtest/gtest.h>
+#include <utils/ResourcePath.h>
 
+#include <algorithm>
 #include <filesystem>
+#include <map>
+#include <string>
+#include <vector>
 
 using namespace assets;
 
@@ -19,19 +26,21 @@ namespace {
 
 } // namespace
 
-TEST(AssetRegistryAsyncTest, BeginLoadAsyncPopulatesRegistry) {
+// The game's normal start: initializeAssetSystem(async) loads definitions on the worker, and the
+// recipes it loads must name their items by the ids of the finished index.
+TEST(AssetRegistryAsyncTest, AsyncBootstrapLoadsDefinitionsThenRecipes) {
 	auto& reg = AssetRegistry::Get();
+	auto& recipes = RecipeRegistry::Get();
 	reg.clear();
+	recipes.clear();
 
-	const std::filesystem::path world = projectRoot() / "assets" / "world";
-	if (!std::filesystem::exists(world)) {
-		GTEST_SKIP() << "assets/world not found";
+	if (!std::filesystem::exists(projectRoot() / "assets" / "world") || !std::filesystem::exists(projectRoot() / "assets" / "recipes")) {
+		GTEST_SKIP() << "assets/world or assets/recipes not found";
 	}
-
-	reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
+	Foundation::setResourceRoots({projectRoot()});
 
 	EXPECT_FALSE(reg.loadProgress().started.load());
-	reg.beginLoadAsync(world.string());
+	initializeAssetSystem(true);
 	EXPECT_TRUE(reg.loadProgress().started.load());
 
 	waitForAsyncLoad(reg);
@@ -39,6 +48,25 @@ TEST(AssetRegistryAsyncTest, BeginLoadAsyncPopulatesRegistry) {
 	EXPECT_GT(reg.loadProgress().defsLoaded.load(), 0);
 	EXPECT_EQ(reg.getValidationReport().errorCount(), 0); // shipped library is clean
 
+	ASSERT_GT(recipes.size(), 0U);
+	for (const auto& [name, recipe] : recipes.allRecipes()) {
+		ASSERT_FALSE(recipe.inputs.empty() && recipe.outputs.empty()) << name;
+		for (const RecipeInput& input : recipe.inputs) {
+			EXPECT_NE(input.defNameId, 0U) << name << " input " << input.defName;
+			EXPECT_EQ(reg.getDefName(input.defNameId), input.defName) << name;
+		}
+		EXPECT_EQ(recipe.inputDefNameIds.size(), recipe.inputs.size()) << name;
+		for (const RecipeOutput& output : recipe.outputs) {
+			EXPECT_NE(output.defNameId, 0U) << name << " output " << output.defName;
+			EXPECT_EQ(reg.getDefName(output.defNameId), output.defName) << name;
+		}
+		if (!recipe.stationDefName.empty() && recipe.stationDefName != "none") {
+			EXPECT_EQ(reg.getDefName(recipe.stationDefNameId), recipe.stationDefName) << name;
+		}
+	}
+
+	Foundation::setResourceRoots({});
+	recipes.clear();
 	// clear() joins the worker and resets progress.
 	reg.clear();
 	EXPECT_FALSE(reg.loadProgress().started.load());
@@ -84,6 +112,122 @@ TEST(AssetRegistryCapabilityTest, MaskCoversStorageAndCraftableHighBits) {
 	EXPECT_NE(mask & craftableBit, 0) << "Craftable (bit 7) must survive in the widened mask";
 	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Storage)) << "hasCapability must see Storage at bit 8";
 	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Craftable)) << "hasCapability must see Craftable at bit 7";
+
+	reg.clearDefinitions();
+}
+
+namespace {
+
+	// The yield index, worked out the slow way: every definition, asked whether it is harvestable.
+	std::map<std::string, std::vector<uint32_t>> harvestablesByYieldScan(const AssetRegistry& reg) {
+		std::map<std::string, std::vector<uint32_t>> byYield;
+		for (const std::string& name : reg.getDefinitionNames()) {
+			const AssetDefinition* def = reg.getDefinition(name);
+			if (def != nullptr && def->capabilities.harvestable.has_value() && !def->capabilities.harvestable->yieldDefName.empty()) {
+				byYield[def->capabilities.harvestable->yieldDefName].push_back(reg.getDefNameId(name));
+			}
+		}
+		for (auto& [yield, ids] : byYield) {
+			std::ranges::sort(ids);
+		}
+		return byYield;
+	}
+
+	void expectYieldIndexMatchesScan(const AssetRegistry& reg) {
+		const auto byYield = harvestablesByYieldScan(reg);
+		ASSERT_FALSE(byYield.empty()) << "the shipped library has harvestables";
+		for (const auto& [yield, ids] : byYield) {
+			const uint32_t yieldId = reg.getDefNameId(yield);
+			if (yieldId != 0) {
+				EXPECT_EQ(reg.harvestablesYielding(yieldId), ids) << yield;
+			}
+		}
+		for (const std::string& name : reg.getDefinitionNames()) {
+			EXPECT_EQ(reg.getDefinitionById(reg.getDefNameId(name)), reg.getDefinition(name)) << name;
+		}
+	}
+
+} // namespace
+
+// The yield index after a folder load, after clear(), and after the asset manager's Reload (clear,
+// then load the folder again): each time it names exactly the harvestables yielding each item.
+TEST(AssetRegistryYieldIndexTest, MatchesDefinitionsAcrossReload) {
+	auto& reg = AssetRegistry::Get();
+	reg.clear();
+	const std::filesystem::path world = projectRoot() / "assets" / "world";
+	if (!std::filesystem::exists(world)) {
+		GTEST_SKIP() << "assets/world not found";
+	}
+	reg.setSharedScriptsPath(projectRoot() / "assets" / "shared" / "scripts");
+
+	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
+	expectYieldIndexMatchesScan(reg);
+	const uint32_t someYield = reg.getDefNameId(harvestablesByYieldScan(reg).begin()->first);
+
+	reg.clear();
+	EXPECT_TRUE(reg.harvestablesYielding(someYield).empty()) << "clear() empties the index";
+	EXPECT_EQ(reg.getDefinitionById(someYield), nullptr);
+
+	ASSERT_GT(reg.loadDefinitionsFromFolder(world.string()), 0U);
+	expectYieldIndexMatchesScan(reg);
+
+	reg.clear();
+}
+
+// A test definition registered again with another yield moves to that yield's list, and a yield
+// registered after its harvestable still finds it.
+TEST(AssetRegistryYieldIndexTest, ReregisteredDefinitionMovesToItsNewYield) {
+	auto& reg = AssetRegistry::Get();
+	reg.clearDefinitions();
+	const auto registerDef = [&](const std::string& name, const std::string& yield) {
+		AssetDefinition def;
+		def.defName = name;
+		if (!yield.empty()) {
+			def.capabilities.harvestable = HarvestableCapability{};
+			def.capabilities.harvestable->yieldDefName = yield;
+		}
+		reg.registerTestDefinition(std::move(def));
+	};
+
+	registerDef("Test_YieldA", "");
+	registerDef("Test_YieldBush", "Test_YieldA");
+	const uint32_t id = reg.getDefNameId("Test_YieldBush");
+	const uint32_t yieldA = reg.getDefNameId("Test_YieldA");
+	EXPECT_EQ(reg.harvestablesYielding(yieldA), std::vector<uint32_t>{id});
+	registerDef("Test_YieldBush", "Test_YieldB");
+	EXPECT_TRUE(reg.harvestablesYielding(yieldA).empty());
+	registerDef("Test_YieldB", "");
+	const uint32_t yieldB = reg.getDefNameId("Test_YieldB");
+	EXPECT_EQ(reg.harvestablesYielding(yieldB), std::vector<uint32_t>{id}) << "filed before the yield was defined";
+	EXPECT_EQ(reg.getDefinitionById(id), reg.getDefinition("Test_YieldBush"));
+
+	reg.clearDefinitions();
+	EXPECT_TRUE(reg.harvestablesYielding(yieldB).empty());
+}
+
+// A synthetic definition whose name was first interned as an undefined harvest yield keeps that id and
+// takes its capabilities; a real definition's capabilities are not replaced by a synthetic registration.
+TEST(AssetRegistryYieldIndexTest, ASyntheticDefinitionNamedAsAYieldTakesItsCapabilities) {
+	auto& reg = AssetRegistry::Get();
+	reg.clearDefinitions();
+	AssetDefinition spring;
+	spring.defName = "Test_Spring";
+	spring.capabilities.harvestable = HarvestableCapability{};
+	spring.capabilities.harvestable->yieldDefName = "Test_SynthWater";
+	reg.registerTestDefinition(std::move(spring));
+	const uint32_t interned = reg.getDefNameId("Test_SynthWater");
+	ASSERT_NE(interned, 0U);
+	ASSERT_EQ(reg.getCapabilityMask(interned), 0U);
+
+	const auto	   drinkable = static_cast<uint16_t>(1U << static_cast<uint8_t>(CapabilityType::Drinkable));
+	const uint32_t id = reg.registerSyntheticDefinition("Test_SynthWater", drinkable);
+	EXPECT_EQ(id, interned);
+	EXPECT_TRUE(reg.hasCapability(id, CapabilityType::Drinkable));
+
+	const uint32_t springId = reg.getDefNameId("Test_Spring");
+	const uint16_t springMask = reg.getCapabilityMask(springId);
+	EXPECT_EQ(reg.registerSyntheticDefinition("Test_Spring", drinkable), springId);
+	EXPECT_EQ(reg.getCapabilityMask(springId), springMask) << "a real definition keeps its own capabilities";
 
 	reg.clearDefinitions();
 }

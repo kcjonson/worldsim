@@ -6,12 +6,14 @@
 // output that doesn't fit) goes through storeOrDrop, so the rule lives in one place.
 
 #include "DropResourceCallback.h"
+#include "EntityID.h"
 
 #include "assets/AssetDefinition.h" // ItemCategory
 
 #include <glm/vec2.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <string>
 
 namespace ecs {
@@ -37,9 +39,11 @@ namespace ecs {
 	/// as much as fits into placed storage within kStoreWithinReachMeters (nearest first; not
 	/// Packaged, not a crafting station, not behind a built wall), then drop the rest through
 	/// `drop`. Safe inside a system's view loop: it only mutates existing Inventory components and
-	/// the drop callback enqueues. Returns units stored.
+	/// the drop callback enqueues. `stored`, when set, is told each box that took something. Returns
+	/// units stored.
 	uint32_t storeOrDrop(
-		World& world, const std::string& defName, uint32_t quantity, glm::vec2 position, const DropResourceCallback& drop
+		World& world, const std::string& defName, uint32_t quantity, glm::vec2 position, const DropResourceCallback& drop,
+		const std::function<void(EntityID box)>& stored = {}
 	);
 
 } // namespace ecs

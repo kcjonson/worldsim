@@ -19,6 +19,8 @@
 
 namespace ecs::test {
 
+	constexpr uint32_t kTestRngSeed = 42;
+
 	// =============================================================================
 	// constructionWorkRate (pure helper)
 	// =============================================================================
@@ -84,7 +86,7 @@ namespace ecs::test {
 	  protected:
 		void SetUp() override {
 			world = std::make_unique<World>();
-			actionSystem = &world->registerSystem<ActionSystem>();
+			actionSystem = &world->registerSystem<ActionSystem>(kTestRngSeed);
 		}
 
 		void TearDown() override { world.reset(); }

@@ -1,6 +1,11 @@
 #include "ActionSystem.h"
 
+#include "AIDecisionSystem.h"
+#include "../GoalTaskRegistry.h"
+#include "../InventoryMass.h"
 #include "../World.h"
+#include "ChainClaims.h"
+#include "NavigationSystem.h"
 #include "TimeSystem.h"
 #include "../components/Action.h"
 #include "../components/Appearance.h"
@@ -17,7 +22,23 @@
 
 #include <utils/Log.h>
 
+#include <glm/geometric.hpp>
+
+#include <limits>
+
 namespace ecs {
+
+	namespace {
+		// Within this of its task's target a colonist acts. Colonists bound for one point (a station, a shore
+		// point) push one another apart, so no more than one could ever reach the point itself. Inside the
+		// haul and placement legs' 0.5 m tolerance, so a leg that arrives this way is at its source or target.
+		constexpr float kActionReachMeters = 0.4F;
+
+		bool actsOnArrival(TaskType type) {
+			return type == TaskType::FulfillNeed || type == TaskType::Craft || type == TaskType::Haul || type == TaskType::PlacePackaged ||
+				   type == TaskType::Harvest || type == TaskType::Build || type == TaskType::Deconstruct;
+		}
+	} // namespace
 
 	void ActionSystem::update(float deltaTime) {
 		// Actions advance on game time, so fast-forward (3x/10x) speeds up work and pause
@@ -41,16 +62,22 @@ namespace ecs {
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 
-			// Only process entities that have arrived at their destination
+			if (task.state == TaskState::Moving && actsOnArrival(task.type) &&
+				glm::distance(position.value, task.targetPosition) <= kActionReachMeters) {
+				task.state = TaskState::Arrived;
+				if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
+					movementTarget->active = false;
+				}
+				if (auto* navPath = world->getComponent<NavPath>(entity)) {
+					navPath->valid = false;
+				}
+			}
+
 			if (task.state != TaskState::Arrived) {
 				continue;
 			}
 
-			// Only process actionable tasks (FulfillNeed, Craft, Haul, PlacePackaged,
-			// Harvest, Build, Deconstruct)
-			if (task.type != TaskType::FulfillNeed && task.type != TaskType::Craft &&
-				task.type != TaskType::Haul && task.type != TaskType::PlacePackaged && task.type != TaskType::Harvest &&
-				task.type != TaskType::Build && task.type != TaskType::Deconstruct) {
+			if (!actsOnArrival(task.type)) {
 				// For non-actionable tasks like Wander, just clear when arrived
 				task.clear();
 				task.timeSinceEvaluation = 0.0F;
@@ -91,16 +118,20 @@ namespace ecs {
 					);
 				}
 
-				// Start-time chain handoff: a start routine can decline to start an action and
-				// instead re-point the task to its next leg (state flipped back to Moving), e.g. a
-				// haul that arrives at the SOURCE already carrying the item redirects to the deposit
-				// leg. The task must then drive itself to the new target; there is no action to
-				// process or complete this tick. Bail before the process/complete block below, which
-				// would otherwise "complete" the inactive (None) action and clear the task -- the
-				// behavior the OTHER no-action paths (pickup target gone) intentionally rely on to
-				// recover a stuck task. Gate strictly on Moving so only a deliberate handoff skips;
-				// a stall leaves the task Arrived and still falls through to that recovery.
-				if (!action.isActive() && task.state == TaskState::Moving) {
+				// A start routine that starts nothing has either handed the task to its next leg (a haul
+				// arriving at its source already carrying the item heads to the deposit, state Moving), or
+				// found it cannot be done (the target gone from memory or no longer what it was, the tool
+				// missing, a box packaged). A handoff drives itself on; anything else ends the task, so the
+				// colonist decides again instead of standing on an Arrived task with no action.
+				if (!action.isActive()) {
+					if (task.state != TaskState::Moving) {
+						LOG_DEBUG(
+							Engine, "[Action] Entity %llu: nothing to start for its task (type %d) - ending it",
+							static_cast<unsigned long long>(entity), static_cast<int>(task.type)
+						);
+						task.clear();
+						task.timeSinceEvaluation = 0.0F;
+					}
 					continue;
 				}
 			}
@@ -111,7 +142,7 @@ namespace ecs {
 				advanceConstructionWork(scaledDt, action);
 			} else {
 				// Process the action
-				processAction(scaledDt, action, needs, task);
+				processAction(scaledDt, action);
 			}
 
 			// Update WorkQueue progress for craft actions (for UI progress bar)
@@ -128,6 +159,8 @@ namespace ecs {
 				float restoreAmount = 0.0F;
 				if (action.hasNeedEffect()) {
 					restoreAmount = action.needEffect().restoreAmount;
+				} else if (action.hasConsumptionEffect()) {
+					restoreAmount = action.consumptionEffect().restoreAmount;
 				}
 				LOG_INFO(
 					Engine,
@@ -148,7 +181,7 @@ namespace ecs {
 		const Position&		  position,
 		Memory&				  memory,
 		const NeedsComponent& needs,
-		const Inventory&	  inventory
+		Inventory&			  inventory
 	) {
 		// Handle Craft tasks separately
 		if (task.type == TaskType::Craft) {
@@ -170,7 +203,7 @@ namespace ecs {
 
 		// Handle Harvest tasks (goal-driven harvesting for crafting materials)
 		if (task.type == TaskType::Harvest) {
-			startHarvestAction(task, action, position, memory, inventory);
+			startHarvestAction(task, action, memory, inventory);
 			return;
 		}
 
@@ -178,10 +211,7 @@ namespace ecs {
 		startNeedAction(task, action, position, memory, needs, inventory);
 	}
 
-	void ActionSystem::processAction(float deltaTime, Action& action, NeedsComponent& needs, Task& task) {
-		(void)needs; // Not used during in-progress phase
-		(void)task;	 // Not used during in-progress phase
-
+	void ActionSystem::processAction(float deltaTime, Action& action) {
 		// Update elapsed time
 		action.elapsed += deltaTime;
 
@@ -205,6 +235,17 @@ namespace ecs {
 		Inventory&		inventory,
 		Memory&			memory
 	) {
+		// What a cut or a pickup lands is what its collection adds to the colonist; what it held of the
+		// item before is not this chain's.
+		const bool		   cutLands = task.type == TaskType::Harvest && action.type == ActionType::Harvest;
+		const bool		   haulLifts = task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw);
+		const std::string& yieldDefName = assets::AssetRegistry::Get().getDefName(cutLands ? task.harvestYieldDefNameId : 0U);
+		const uint32_t	   heldBefore = cutLands	? ecs::availableQuantity(inventory, yieldDefName)
+											: haulLifts ? ecs::availableQuantity(inventory, assets::AssetRegistry::Get().getDefName(task.haulItemDefNameId))
+														: 0U;
+		// Goods a pile pickup took over from earlier legs of a gathering ride along with what it lifts.
+		const uint32_t carriedBefore = haulLifts ? std::min(taskCargo(task), heldBefore) : 0U;
+
 		// Apply effects based on variant type
 		if (action.hasNeedEffect()) {
 			applyNeedEffect(action, needs);
@@ -212,7 +253,7 @@ namespace ecs {
 
 		// Handle collection effects (Pickup, Harvest)
 		if (action.hasCollectionEffect()) {
-			applyCollectionEffect(action, position.value, task, inventory, memory);
+			applyCollectionEffect(action, position.value, inventory, memory);
 		}
 
 		// Handle consumption effects (Eat action)
@@ -232,7 +273,7 @@ namespace ecs {
 
 		// Handle deposit effects (put items into storage)
 		if (action.hasDepositEffect()) {
-			applyDepositEffect(action, task, inventory);
+			applyDepositEffect(action, inventory);
 		}
 
 		// Handle construction progress effects (Build, Deconstruct).
@@ -247,25 +288,39 @@ namespace ecs {
 		// two-phase task (Pickup→Deposit), so after phase 1 we set up phase 2 and return.
 		// The action is cleared but the task persists. This differs from single-phase
 		// tasks that clear both action and task at the end of this function.
-		if (task.type == TaskType::Haul && (action.type == ActionType::Pickup || action.type == ActionType::Withdraw)) {
-			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull) - hand off to phase 2
-			// (Deposit). Re-point the task at the deposit goal and set it Moving; the colonist drives
-			// itself to the station. The deposit leg is the SAME haul task, so AIDecisionSystem keeps it
-			// (isSameTask) and never calls selectTaskFromTrace. Set MovementTarget to the deposit GOAL so
-			// the AI's per-tick chain-leg repath (a Moving task with an active target but no live route)
-			// requests a navmesh path for it -- the colonist follows that A* route, it does NOT slide
-			// straight at the bench. Invalidate the pickup-leg route, which still points at the source.
-			task.targetPosition = task.haulTargetPosition;
-			task.state = TaskState::Moving; // Must be Moving for MovementSystem to set Arrived
-			task.chainStep++; // Advance chain: step 0 (Pickup) → step 1 (Deposit)
-
-			auto* movementTarget = world->getComponent<MovementTarget>(entity);
-			if (movementTarget != nullptr) {
-				movementTarget->target = task.haulTargetPosition;
-				movementTarget->active = true;
+		if (haulLifts) {
+			// Of food, only what this pickup lifted is cargo; what the colonist already had is its own
+			// provisions. Anything else it holds of the item rides along.
+			const auto&	   registry = assets::AssetRegistry::Get();
+			const uint32_t held = ecs::availableQuantity(inventory, registry.getDefName(task.haulItemDefNameId));
+			const auto*	   itemDef = registry.getDefinitionById(task.haulItemDefNameId);
+			const uint32_t cargo =
+				itemDef != nullptr && itemDef->isEdible() ? (held > heldBefore ? held - heldBefore : 0U) + carriedBefore : held;
+			// Nothing came off the source (gone, emptied by another hauler, or no room to take it):
+			// there is nothing to deliver, so the haul ends here instead of walking to storage empty.
+			if (cargo == 0) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Haul pickup of %s at (%.1f, %.1f) collected nothing - ending the haul",
+					registry.getDefName(task.haulItemDefNameId).c_str(),
+					task.haulSourcePosition.x,
+					task.haulSourcePosition.y
+				);
+				action.clear();
+				task.clear();
+				task.timeSinceEvaluation = 0.0F;
+				return;
 			}
-			if (auto* navPath = world->getComponent<NavPath>(entity)) {
-				navPath->valid = false;
+
+			// The source claim is spent; the cargo is what the deposit leg commits.
+			claimsToDeliveryLeg(task, cargo);
+
+			// Phase 1 complete (Pickup, or Withdraw for a storage->storage pull): the same task carries on
+			// as its deposit leg, so AIDecisionSystem keeps it (isSameTask) and never reselects it.
+			headToDeposit(entity, task);
+			if (carriedBefore > 0) {
+				// A leg of a gathering: decided again at once, as after a cut (task-claims.md, Batching).
+				requestDecision(task);
 			}
 
 			action.clear();
@@ -284,6 +339,9 @@ namespace ecs {
 			// Phase 1 complete (PickupPackaged) - clear hands, pick up entity, then move to phase 2
 			// Hand clearing: stow items to backpack, drop if can't fit
 			clearHandsForTwoHandedPickup(inventory, action.targetPosition);
+
+			// The packaged item is possessed now; nobody else can take it.
+			claimsToDeliveryLeg(task, 0);
 
 			// Get the packaged entity from the effect
 			if (action.hasPlacePackagedEffect()) {
@@ -320,23 +378,9 @@ namespace ecs {
 				}
 			}
 
-			// Transition to phase 2 - walk to placement target. Re-point the task at the place
-			// GOAL and set it Moving; the AI's per-tick chain-leg repath (a Moving task with an
-			// active target but no live route) requests a navmesh path, and the colonist follows
-			// that A* route to the bench. Invalidate the pickup-leg route, which still points at
-			// the source, so the stale path can't carry the colonist the wrong way for a frame.
-			task.targetPosition = task.placeTargetPosition;
-			task.state = TaskState::Moving;  // Must be Moving for MovementSystem to set Arrived
+			// Transition to phase 2 - walk to placement target.
+			headTo(entity, task, task.placeTargetPosition);
 			task.chainStep++; // Advance chain: step 0 (PickupPackaged) → step 1 (Place)
-
-			auto* movementTarget = world->getComponent<MovementTarget>(entity);
-			if (movementTarget != nullptr) {
-				movementTarget->target = task.placeTargetPosition;
-				movementTarget->active = true;
-			}
-			if (auto* navPath = world->getComponent<NavPath>(entity)) {
-				navPath->valid = false;
-			}
 
 			action.clear();
 			LOG_DEBUG(
@@ -349,6 +393,14 @@ namespace ecs {
 			return;
 		}
 
+		if (cutLands) {
+			const uint32_t heldAfterCut = ecs::availableQuantity(inventory, yieldDefName);
+			if (carryHarvestIn(entity, position, task, inventory, heldAfterCut > heldBefore ? heldAfterCut - heldBefore : 0U)) {
+				action.clear();
+				return;
+			}
+		}
+
 		// Handle PlacePackaged completion (phase 2) - move entity to target and remove Packaged component
 		if (action.type == ActionType::PlacePackaged && action.hasPlacePackagedEffect()) {
 			applyPlacePackagedEffect(action, inventory);
@@ -358,6 +410,101 @@ namespace ecs {
 		action.clear();
 		task.clear();
 		task.timeSinceEvaluation = 0.0F;
+	}
+
+	void ActionSystem::headToDeposit(EntityID entity, Task& task) {
+		headTo(entity, task, task.haulTargetPosition);
+		task.chainStep = 1;
+	}
+
+	void ActionSystem::headTo(EntityID entity, Task& task, glm::vec2 target) {
+		// A route still out was asked for the leg just finished.
+		if (task.routeTicket != 0) {
+			if (auto* nav = world->tryGetSystem<NavigationSystem>()) {
+				nav->cancelRoute(task.routeTicket);
+			}
+			task.routeTicket = 0;
+		}
+		// Moving with an active target and no route: the AI asks for the route to the new target, so the
+		// colonist never slides straight at it, and the old leg's route can't carry him the wrong way.
+		task.targetPosition = target;
+		task.obstructedTarget.reset();
+		task.state			= TaskState::Moving;
+		if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
+			movementTarget->target = target;
+			movementTarget->active = true;
+		}
+		if (auto* navPath = world->getComponent<NavPath>(entity)) {
+			navPath->valid = false;
+		}
+	}
+
+	bool ActionSystem::carryHarvestIn(EntityID entity, const Position& position, Task& task, const Inventory& inventory, uint32_t landed) {
+		// The in-flight claim taken at acceptance names the root, which outlives the Harvest child the
+		// cut was picked through (a goal system may retire it while the colonist works).
+		uint64_t rootId = 0;
+		uint32_t accepted = 0;
+		for (const Claim& claim : task.claims) {
+			if (claim.kind() == ClaimKind::InFlight) {
+				rootId = claim.target();
+				accepted = claim.quantity();
+			}
+		}
+		const auto&		goals = GoalTaskRegistry::Get();
+		const GoalTask* root = goals.getGoal(rootId);
+		if (root == nullptr) {
+			return false;
+		}
+		auto&			   registry = assets::AssetRegistry::Get();
+		const uint32_t	   item = task.harvestYieldDefNameId;
+		const std::string& itemDefName = registry.getDefName(item);
+		// The cargo is what earlier cuts of this gathering carry plus what this one landed; anything else
+		// of the yield the colonist holds is not this task's to deliver.
+		const uint32_t cargo = std::min(cargoOnClaims(task.claims, rootId, item) + landed, ecs::availableQuantity(inventory, itemDefName));
+		if (cargo == 0) {
+			return false;
+		}
+		// The index is the one the AI last built, so this commits no more than this task's own in-flight
+		// there: another colonist converting a cut in this same update read that figure, and the two
+		// together never pass the need. The need itself is read now, past every deposit already landed.
+		static const ClaimIndex kNoClaims;
+		const auto*				ai = world->tryGetSystem<AIDecisionSystem>();
+		const uint32_t			quantity = std::min(
+			 {cargo, accepted,
+			  rootAvailable(goals.remainingNeed(*world, rootId, item, harvestBasis(*root)), ai != nullptr ? ai->claimIndex() : kNoClaims, rootId,
+							item, ClaimExclusion::of(task))}
+		 );
+		if (quantity == 0) {
+			return false;
+		}
+
+		task.type = TaskType::Haul;
+		task.haulItemDefNameId = item;
+		task.haulQuantity = quantity;
+		task.haulFromInventory = true;
+		task.haulSourceStorageId = 0;
+		task.haulSourcePosition = position.value;
+		task.haulDestinationId = static_cast<uint64_t>(root->destinationEntity);
+		task.haulTargetPosition = root->destinationPosition;
+		task.haulGoalId = rootId;
+		task.harvestTargetKey = 0;
+		task.harvestGoalId = 0;
+		task.harvestYieldDefNameId = 0;
+		task.reason = "Delivering " + itemDefName;
+		harvestToDeliveryLeg(task, rootId, root->destinationEntity, item, quantity);
+		headToDeposit(entity, task);
+		// Decided again at once rather than after a step toward the destination: a further cut may come
+		// first (task-claims.md, Batching).
+		requestDecision(task);
+		LOG_DEBUG(
+			Engine,
+			"[Action] Harvest landed %u x %s; carrying %u toward goal %llu",
+			landed,
+			itemDefName.c_str(),
+			quantity,
+			static_cast<unsigned long long>(rootId)
+		);
+		return true;
 	}
 
 } // namespace ecs

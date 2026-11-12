@@ -16,32 +16,78 @@
 
 #include <assets/AssetDefinition.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <optional>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
+namespace assets {
+	class AssetRegistry;
+}
+
 namespace ecs {
+
+	class World;
+
+	/// What a storage root's need is measured against: the stock colonists may haul in (the item's
+	/// configured max, or physical room when none is set), or what cutting stocks it toward (the
+	/// configured minimum). Craft and construction roots have one target and ignore it.
+	enum class NeedBasis : uint8_t { Stock, Harvest };
 
 	/// Goal status for task hierarchy and dependency tracking
 	enum class GoalStatus : uint8_t {
 		Available,		 // Can be worked on now
-		InProgress,		 // Colonist(s) actively working
 		Blocked,		 // Craft waiting for all materials to be delivered
-		NoSource,		 // Need known, but no source (stock or harvestable) is known yet
-		Complete		 // Done
+		NoSource		 // Need known, but no source (stock or harvestable) is known yet
 	};
 
 	/// Systems that can own/create goals
 	/// Used to track which system is responsible for a goal's lifecycle
 	enum class GoalOwner : uint8_t {
-		None = 0,			// Unowned (legacy compatibility)
 		StorageGoalSystem,	// Haul goals for storage containers
 		CraftingGoalSystem, // Craft + child Harvest/Haul goals
 		BuildGoalSystem,	// PlacePackaged goals
 		ConstructionGoalSystem, // Foundation lifecycle: clear Harvest, deliver Harvest/Haul, Build goals
+	};
+
+	/// A blueprint footprint's bounds in world meters. contains() is the same inclusive test
+	/// SpatialIndex::queryRect applies, so "inside the footprint" means one thing everywhere.
+	struct FootprintBounds {
+		glm::vec2 min{0.0F, 0.0F};
+		glm::vec2 max{0.0F, 0.0F};
+
+		[[nodiscard]] bool contains(glm::vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
+		[[nodiscard]] glm::vec2 center() const { return (min + max) * 0.5F; }
+		/// `p` itself when it lies outside; else `p` moved straight out past the nearest edge by `margin`.
+		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 p, float margin) const {
+			if (!contains(p)) {
+				return p;
+			}
+			const float toLeft = p.x - min.x;
+			const float toRight = max.x - p.x;
+			const float toBottom = p.y - min.y;
+			const float toTop = max.y - p.y;
+			const float nearest = std::min({toLeft, toRight, toBottom, toTop});
+			if (nearest == toLeft) {
+				return {min.x - margin, p.y};
+			}
+			if (nearest == toRight) {
+				return {max.x + margin, p.y};
+			}
+			if (nearest == toBottom) {
+				return {p.x, min.y - margin};
+			}
+			return {p.x, max.y + margin};
+		}
+
+		/// A thing of `defNameId` at `p` blocks the site: a harvestable inside the footprint. The clear
+		/// goal is served by exactly the blockers a colonist knows, and the build gate holds while any
+		/// blocker stands in the world, so a site is clear exactly when no clear work remains.
+		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const;
 	};
 
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")
@@ -64,13 +110,9 @@ namespace ecs {
 		std::vector<uint32_t>		 acceptedDefNameIds; // Specific items accepted
 		assets::ItemCategory acceptedCategory = assets::ItemCategory::None;
 
-		// Progress tracking
-		uint32_t targetAmount = 0;	  // How many items the goal wants
-		uint32_t deliveredAmount = 0; // How many have been delivered
-
 		// Metadata
 		float	  createdAt = 0.0F;
-		GoalOwner owner = GoalOwner::None; // Which system created/owns this goal
+		GoalOwner owner{}; // Which system created/owns this goal
 
 		// Parent-child hierarchy (for craft → harvest/haul relationships)
 		std::optional<uint64_t> parentGoalId;	 // Parent goal (e.g., Harvest/Haul → Craft)
@@ -79,29 +121,16 @@ namespace ecs {
 		// For Harvest goals: what item type is yielded when harvesting completes
 		uint32_t yieldDefNameId = 0; // e.g., Tree yields Wood
 
+		// Construction clear Harvest: any harvestable inside this footprint serves it, whatever it
+		// yields, and the harvest removes it (clearing removes what stands there, regrowing or not).
+		std::optional<FootprintBounds> clearFootprint;
+
 		// For Craft goals: identity of the recipe this goal's child hierarchy was built for.
 		// Hash of the recipe defName. When a station's next job switches to a different
 		// recipe, this changes and the child Harvest/Haul goals are rebuilt. 0 = not a Craft
 		// goal (or no recipe).
-		uint32_t recipeNameId = 0;
-
-		// Task chain ID for continuity bonus (cutter gets priority for linked haul)
-		std::optional<uint64_t> chainId;
-
-		// Check if goal is complete
-		[[nodiscard]] bool isComplete() const { return targetAmount > 0 && deliveredAmount >= targetAmount; }
-
-		// Get available capacity (target - delivered)
-		[[nodiscard]] uint32_t availableCapacity() const {
-			if (deliveredAmount >= targetAmount) {
-				return 0;
-			}
-			return targetAmount - deliveredAmount;
-		}
+		uint32_t recipeNameHash = 0;
 	};
-
-	/// Filter predicate for goal queries
-	using GoalFilter = std::function<bool(const GoalTask&)>;
 
 	/// Global registry of goal-level tasks
 	/// Singleton - access via GoalTaskRegistry::Get()
@@ -113,8 +142,13 @@ namespace ecs {
 		// Singleton access
 		static GoalTaskRegistry& Get();
 
-		// Clear all goals (for game restart)
+		// Clear all goals and restart the id counters (for game restart)
 		void clear();
+
+		/// The next claim sequence number, unique until the next clear(). A task takes one at acceptance as
+		/// both its claim instance id and its claim sequence (task-claims.md); 0 is never handed out. It
+		/// lives here because it is colony state a save must keep.
+		uint64_t allocateClaimSeq() { return nextClaimSeq++; }
 
 		// --- Goal Management (called by goal systems: StorageGoalSystem, CraftingGoalSystem, etc.) ---
 
@@ -125,8 +159,8 @@ namespace ecs {
 
 		/// Update an existing goal in place (e.g., capacity changed).
 		///
-		/// CONTRACT: the updater may only mutate amount/accepted-type fields
-		/// (targetAmount, deliveredAmount, acceptedDefNameIds, acceptedCategory, status, ...).
+		/// CONTRACT: the updater may only mutate accepted-type and status fields
+		/// (acceptedDefNameIds, acceptedCategory, status, ...).
 		/// It must NOT change indexed identity fields (type, owner, destinationEntity,
 		/// parentGoalId); only the type index is reconciled here. To change
 		/// identity, remove and recreate the goal.
@@ -140,20 +174,6 @@ namespace ecs {
 
 		/// Remove goal by destination entity (convenience for entity destruction)
 		void removeGoalByDestination(EntityID destinationEntity);
-
-		/// Record delivery of items to a goal (increments deliveredAmount by the amount
-		/// actually moved). Quantities count ITEMS, not actions: a harvest yielding 3 sticks
-		/// or a haul moving 5 wood records 3 or 5, never 1.
-		///
-		/// If the goal is a child of a Craft goal, the same amount is also credited to the
-		/// parent Craft (whose target is the total material count). The parent leaves
-		/// Blocked status once its materials are satisfied. This keeps a single source of
-		/// truth: child progress and parent progress advance together, never double-counted
-		/// against the same goal.
-		///
-		/// @param goalId The goal that received the items
-		/// @param amount Number of items actually delivered (0 is a no-op)
-		void recordDelivery(uint64_t goalId, uint32_t amount);
 
 		// --- Queries ---
 
@@ -169,11 +189,20 @@ namespace ecs {
 		/// Get all goals of a specific type
 		[[nodiscard]] std::vector<const GoalTask*> getGoalsOfType(TaskType type) const;
 
-		/// Get all goals matching a filter
-		[[nodiscard]] std::vector<const GoalTask*> getGoalsMatching(const GoalFilter& filter) const;
-
-		/// Get goals within radius of a position
-		[[nodiscard]] std::vector<const GoalTask*> getGoalsInRadius(const glm::vec2& center, float radius) const;
+		/// Call fn(const GoalTask&) for every goal of a type, in the order getGoalsOfType lists them,
+		/// without building a list.
+		template <typename Fn>
+		void forEachGoalOfType(TaskType type, Fn&& fn) const {
+			const auto it = typeToGoals.find(type);
+			if (it == typeToGoals.end()) {
+				return;
+			}
+			for (uint64_t goalId : it->second) {
+				if (const auto goalIt = goals.find(goalId); goalIt != goals.end()) {
+					fn(goalIt->second);
+				}
+			}
+		}
 
 		/// Get total count of goals
 		[[nodiscard]] size_t goalCount() const { return goals.size(); }
@@ -192,15 +221,21 @@ namespace ecs {
 		/// Get all child goals of a parent goal
 		[[nodiscard]] std::vector<const GoalTask*> getChildGoals(uint64_t parentId) const;
 
+		/// The root of `goalId`'s hierarchy (itself when it has no parent): the goal in-flight claims
+		/// count toward. 0 when `goalId` is not a goal.
+		[[nodiscard]] uint64_t rootOf(uint64_t goalId) const;
+
+		/// How many more of an item root goal `rootGoalId` needs, in items: its target minus what has
+		/// landed at its destination (task-claims.md, Remaining need). A craft's target is the bill of
+		/// materials of its station's next job against the station store; a construction umbrella's is
+		/// the blueprint manifest against delivered[], while the umbrella accepts the item; a storage
+		/// umbrella's is per `basis` against what the box holds, never past its physical room. Read
+		/// from the world on each call, so a deposit or a consumed input shows at once. In-flight is
+		/// not subtracted here (ClaimIndex::inFlight is). 0 for anything else.
+		[[nodiscard]] uint32_t remainingNeed(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis) const;
+
 		/// Remove a goal and all its children (cascade delete)
 		void removeGoalWithChildren(uint64_t goalId);
-
-		/// Spawn the Haul that carries a just-completed Harvest's yield to the station. The cut
-		/// material now sits in the colonist's inventory, so the Haul is created Available and
-		/// inherits the Harvest's destination, accepted items, parent Craft goal, and chain id.
-		/// Call before removing the Harvest goal. Returns the new Haul's id, or 0 if `harvestGoalId`
-		/// is not a Harvest goal.
-		uint64_t createHaulForCompletedHarvest(uint64_t harvestGoalId);
 
 	  private:
 		GoalTaskRegistry() = default;
@@ -223,9 +258,63 @@ namespace ecs {
 		// Next goal ID
 		uint64_t nextGoalId = 1;
 
+		uint64_t nextClaimSeq = 1;
+
 		// Internal helpers
 		void addToIndices(const GoalTask& goal);
 		void removeFromIndices(const GoalTask& goal);
+	};
+
+	/// How many more of an item a crafting station's next job needs: the recipe's count less what the
+	/// station store holds, 0 when the item is no input of it or nothing is queued. A craft root's
+	/// remaining need, and what a deposit into the station is metered to.
+	[[nodiscard]] uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId);
+
+	/// The goals some colonist's last decision offered work toward, sorted: an option for the goal that it
+	/// chose, could take, could not lift for now, or saw held by another colonist. Read from each
+	/// colonist's decision trace, as stale as that.
+	[[nodiscard]] std::vector<uint64_t> goalsWithOfferedWork(World& world);
+
+	/// Whether a goal has anything to do now, for the task panel, given goalsWithOfferedWork. A storage
+	/// umbrella stays while its box has rules, full or not, and a stocking cut until its goal system
+	/// retires it, so either has work only while some colonist is offered work toward it: a box that
+	/// wants wood when no loose wood is known has none. Every other goal exists only while it has work:
+	/// its goal system retires it.
+	[[nodiscard]] bool goalHasWork(const GoalTask& goal, std::span<const uint64_t> offered);
+
+	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
+	/// first time each is asked. A pass is one AI update. Deposits and consumed inputs land in
+	/// ActionSystem or a goal system, outside it; the one thing inside it that changes a need is a
+	/// colonist putting goods away in a box within reach as it drops a chain (storeOrDrop), and the AI
+	/// then refreshes that box's root. Callers outside the pass (the deposit leg, a deposit) ask
+	/// remainingNeed itself. The table keeps its storage across passes, so a warm pass allocates nothing.
+	class RemainingNeedCache {
+	  public:
+		void invalidate();
+
+		/// Work out again, from the world, every entry of this pass for `rootGoalId`.
+		void refresh(World& world, uint64_t rootGoalId);
+
+		[[nodiscard]] uint32_t get(World& world, uint64_t rootGoalId, uint32_t itemDefNameId, NeedBasis basis);
+
+#ifdef DEVELOPMENT_BUILD
+		/// Needs worked out since construction; tests read it to show each is worked out once per pass.
+		uint64_t computed = 0;
+#endif
+
+	  private:
+		struct Slot {
+			uint64_t  root = 0;
+			uint32_t  item = 0;
+			uint32_t  value = 0;
+			uint32_t  pass = 0;
+			NeedBasis basis = NeedBasis::Stock;
+		};
+		void grow();
+
+		std::vector<Slot> m_slots;
+		uint32_t		  m_pass = 1;
+		uint32_t		  m_used = 0;
 	};
 
 } // namespace ecs

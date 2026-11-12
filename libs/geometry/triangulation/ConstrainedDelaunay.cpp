@@ -26,9 +26,63 @@ namespace geometry {
 			return i == 0 ? 2 : i - 1;
 		}
 
+		// A cavity edge that stays: its outside neighbor and that neighbor's edge
+		// back into the cavity, so the new triangle can take its place.
+		struct BoundaryEdge {
+			std::uint32_t from		  = 0;
+			std::uint32_t to		  = 0;
+			std::int32_t  outside	  = kNone;
+			int			  outsideEdge = 0;
+			std::int32_t  constraint  = kNone;
+		};
+
+		// A pseudo-polygon still to triangulate: base (a, b) and chain[lo, hi), the
+		// chain running from a's end to b's end, strictly left of a->b.
+		struct PseudoPolygon {
+			std::uint32_t a;
+			std::uint32_t b;
+			std::size_t	  lo;
+			std::size_t	  hi;
+		};
+
+	} // namespace
+
+	struct CdtWorkspace::Storage {
+		std::vector<std::int32_t>				   vertexTri;
+		std::vector<std::pair<std::int32_t, int>>  stack;
+		std::vector<std::uint32_t>				   mark;
+		std::vector<std::int32_t>				   cavity;
+		std::vector<std::uint32_t>				   leftChain;
+		std::vector<std::uint32_t>				   rightChain;
+		std::vector<BoundaryEdge>				   boundary;
+		std::vector<BoundaryEdge>				   hanging;
+		std::vector<PseudoPolygon>				   pending;
+		std::vector<std::array<std::uint32_t, 3>> fresh;
+	};
+
+	CdtWorkspace::CdtWorkspace() : store(std::make_unique<Storage>()) {}
+	CdtWorkspace::~CdtWorkspace()									  = default;
+	CdtWorkspace::CdtWorkspace(CdtWorkspace&& other) noexcept			  = default;
+	CdtWorkspace& CdtWorkspace::operator=(CdtWorkspace&& other) noexcept = default;
+
+	namespace {
+
 		class CdtBuilder {
 		  public:
-			explicit CdtBuilder(const std::vector<Vec2i64>& input) : vertices(input) {
+			CdtBuilder(const std::vector<Vec2i64>& input, CdtWorkspace::Storage& s, ConstrainedDelaunay& out)
+				: vertices(out.vertices), tris(out.triangles), frameStart(out.frameStart), vertexTri(s.vertexTri), stack(s.stack),
+				  mark(s.mark), cavity(s.cavity), leftChain(s.leftChain), rightChain(s.rightChain), boundary(s.boundary),
+				  hanging(s.hanging), pending(s.pending), fresh(s.fresh) {
+				vertices.assign(input.begin(), input.end());
+				tris.clear();
+				stack.clear();
+				cavity.clear();
+				leftChain.clear();
+				rightChain.clear();
+				boundary.clear();
+				hanging.clear();
+				pending.clear();
+				fresh.clear();
 				frameStart		   = static_cast<std::uint32_t>(input.size());
 				Vec2i64 lo		   = input.front();
 				Vec2i64 hi		   = input.front();
@@ -101,34 +155,7 @@ namespace geometry {
 				}
 			}
 
-			ConstrainedDelaunay finish() {
-				ConstrainedDelaunay out;
-				out.vertices   = std::move(vertices);
-				out.triangles  = std::move(tris);
-				out.frameStart = frameStart;
-				return out;
-			}
-
 		  private:
-			// A cavity edge that stays: its outside neighbor and that neighbor's edge
-			// back into the cavity, so the new triangle can take its place.
-			struct BoundaryEdge {
-				std::uint32_t from		 = 0;
-				std::uint32_t to		 = 0;
-				std::int32_t  outside	 = kNone;
-				int			  outsideEdge = 0;
-				std::int32_t  constraint = kNone;
-			};
-
-			// A pseudo-polygon still to triangulate: base (a, b) and chain[lo, hi), the
-			// chain running from a's end to b's end, strictly left of a->b.
-			struct PseudoPolygon {
-				std::uint32_t a;
-				std::uint32_t b;
-				std::size_t	  lo;
-				std::size_t	  hi;
-			};
-
 			CdtTriangle& tri(std::int32_t t) {
 				return tris[static_cast<std::size_t>(t)];
 			}
@@ -512,30 +539,41 @@ namespace geometry {
 				}
 			}
 
-			std::vector<Vec2i64>					   vertices;
-			std::vector<CdtTriangle>				   tris;
-			std::uint32_t							   frameStart = 0;
-			std::vector<std::int32_t>				   vertexTri;
-			std::vector<std::pair<std::int32_t, int>>  stack;
-			std::vector<std::uint32_t>				   mark;
+			std::vector<Vec2i64>&					   vertices;
+			std::vector<CdtTriangle>&				   tris;
+			std::uint32_t&							   frameStart;
+			std::vector<std::int32_t>&				   vertexTri;
+			std::vector<std::pair<std::int32_t, int>>& stack;
+			std::vector<std::uint32_t>&				   mark;
 			std::uint32_t							   stamp = 0;
-			std::vector<std::int32_t>				   cavity;
-			std::vector<std::uint32_t>				   leftChain;
-			std::vector<std::uint32_t>				   rightChain;
-			std::vector<BoundaryEdge>				   boundary;
-			std::vector<BoundaryEdge>				   hanging;
-			std::vector<PseudoPolygon>				   pending;
-			std::vector<std::array<std::uint32_t, 3>> fresh;
+			std::vector<std::int32_t>&				   cavity;
+			std::vector<std::uint32_t>&				   leftChain;
+			std::vector<std::uint32_t>&				   rightChain;
+			std::vector<BoundaryEdge>&				   boundary;
+			std::vector<BoundaryEdge>&				   hanging;
+			std::vector<PseudoPolygon>&				   pending;
+			std::vector<std::array<std::uint32_t, 3>>& fresh;
 		};
 
 	} // namespace
 
 	ConstrainedDelaunay buildConstrainedDelaunay(
 		const std::vector<Vec2i64>& vertices, const std::vector<std::array<std::uint32_t, 2>>& constraints) {
+		CdtWorkspace		workspace;
+		ConstrainedDelaunay out;
+		buildConstrainedDelaunay(vertices, constraints, workspace, out);
+		return out;
+	}
+
+	void buildConstrainedDelaunay(const std::vector<Vec2i64>& vertices, const std::vector<std::array<std::uint32_t, 2>>& constraints,
+								  CdtWorkspace& workspace, ConstrainedDelaunay& out) {
 		if (vertices.empty()) {
-			return {};
+			out.vertices.clear();
+			out.triangles.clear();
+			out.frameStart = 0;
+			return;
 		}
-		CdtBuilder builder(vertices);
+		CdtBuilder builder(vertices, workspace.storage(), out);
 		builder.insertVertices();
 		for (std::size_t c = 0; c < constraints.size(); ++c) {
 			const auto [a, b] = constraints[c];
@@ -545,7 +583,6 @@ namespace geometry {
 			}
 		}
 		builder.restoreDelaunay();
-		return builder.finish();
 	}
 
 } // namespace geometry

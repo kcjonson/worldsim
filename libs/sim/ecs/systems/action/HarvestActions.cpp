@@ -4,7 +4,6 @@
 #include "../../InventoryMass.h"
 #include "../../World.h"
 #include "../../components/Action.h"
-#include "../../components/Appearance.h"
 #include "../../components/Inventory.h"
 #include "../../components/Memory.h"
 #include "../../components/ResourceStack.h"
@@ -22,6 +21,9 @@ namespace ecs {
 
 	namespace {
 
+		/// How far outside a footprint a clear's surplus drops: past the edge by about a pile's width.
+		constexpr float kClearDropMargin = 0.5F;
+
 		/// The loose pile found at a position: the matched entity plus the live ResourceStack
 		/// to mutate. `stack` is nullptr (and `entity` kInvalidEntity) when no pile is there.
 		struct LoosePile {
@@ -29,27 +31,19 @@ namespace ecs {
 			ResourceStack* stack = nullptr;
 		};
 
-		/// Find a loose ground pile of `defName` at `pos`: a world entity whose Appearance
-		/// defName matches and which carries a ResourceStack. Matches by position within the
-		/// same epsilon GameScene's remove-callback uses (~0.25 m). Returns the matched entity
-		/// id and its live ResourceStack, so a drained pile is removed by exact id rather than
-		/// re-scanned by position (two same-material piles inside the epsilon would alias).
-		[[nodiscard]] LoosePile findLoosePile(World* world, const std::string& defName, glm::vec2 pos) {
+		/// Find the loose ground pile of `defNameId` filed at `pos`'s world key (the key Memory
+		/// remembers it under). Returns the entity id and its live ResourceStack, so a drained pile
+		/// is removed by exact id.
+		[[nodiscard]] LoosePile findLoosePile(World* world, const LoosePileIndex& piles, uint32_t defNameId, glm::vec2 pos) {
 			if (world == nullptr) {
 				return {};
 			}
-			constexpr float kMatchEps = 0.25F;
-			for (auto [entity, entPos, appearance, stack] : world->view<Position, Appearance, ResourceStack>()) {
-				if (appearance.defName != defName) {
-					continue;
-				}
-				const float dx = entPos.value.x - pos.x;
-				const float dy = entPos.value.y - pos.y;
-				if (dx * dx + dy * dy <= kMatchEps * kMatchEps) {
-					return {entity, &stack};
-				}
+			const EntityID entity = piles.find(*world, defNameId, pos);
+			if (entity == kInvalidEntity) {
+				return {};
 			}
-			return {};
+			ResourceStack* stack = world->getComponent<ResourceStack>(entity);
+			return stack != nullptr ? LoosePile{entity, stack} : LoosePile{};
 		}
 
 		/// Does `sourceDefName` harvest from a finite resource pool (trees) rather than being
@@ -68,7 +62,6 @@ namespace ecs {
 	void ActionSystem::applyCollectionEffect(
 		const Action& action,
 		glm::vec2	  colonistPosition,
-		Task&		  task,
 		Inventory&	  inventory,
 		Memory&		  memory
 	) {
@@ -76,22 +69,56 @@ namespace ecs {
 
 		auto& harvestRegistry = assets::AssetRegistry::Get();
 
-		// Cap this withdrawal by what the colonist can actually take this action: the carry
-		// weight (tools are equipment and don't count) AND the backpack's stack/slot headroom.
-		// Clamping by both means the pool below is only debited by what truly lands in the
-		// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing
-		// and leave the source for the next trip rather than dropping items on the floor.
-		const uint32_t massFit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-		const uint32_t slotFit = inventory.addableCount(collEff.itemDefName);
-		const uint32_t wanted = std::min({collEff.quantity, massFit, slotFit});
+		// Cap this withdrawal by what the colonist can actually take this action: the carry weight
+		// (tools are equipment and don't count), and the pack's stack/slot headroom or, for a two-hand
+		// good, the armful's. Clamping by it means a pool is only debited by what truly lands in the
+		// inventory, so a tree's wood is conserved. At the limit `wanted` is 0: take nothing and leave
+		// the source for the next trip rather than dropping items on the floor.
+		const uint32_t room =
+			ecs::pickupUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName, ecs::carriedCargoMassKg(inventory, harvestRegistry));
+		const uint32_t wanted = std::min(collEff.quantity, room);
 
 		uint32_t added = 0;
+
+		// Take the source from the world and report what it was just before; a source that is gone,
+		// whoever took it, is forgotten so the colonist doesn't walk back to it.
+		const auto takeSource = [&](SourceTake take) {
+			const SourceState state =
+				m_onTakeSource
+					? m_onTakeSource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, take, collEff.regrowthTime)
+					: SourceState::Ready;
+			if (take == SourceTake::Remove || state == SourceState::Gone) {
+				memory.forgetWorldEntity(collEff.sourcePosition, harvestRegistry.getDefNameId(collEff.sourceDefName));
+			}
+			if (state != SourceState::Ready) {
+				LOG_DEBUG(
+					Engine,
+					"[Action] Source %s at (%.1f, %.1f) was %s at completion: no yield",
+					collEff.sourceDefName.c_str(),
+					collEff.sourcePosition.x,
+					collEff.sourcePosition.y,
+					state == SourceState::Gone ? "gone" : "regrowing"
+				);
+			}
+			return state;
+		};
+
+		// Yield the colonist couldn't carry off drops as one loose, haulable pile: beside the source, or
+		// for a footprint clear just outside the footprint.
+		const auto dropUncarried = [&](uint32_t quantity) {
+			if (quantity == 0 || !m_onDropResource) {
+				return;
+			}
+			const glm::vec2 at = collEff.dropAt.value_or(collEff.sourcePosition);
+			m_onDropResource(collEff.itemDefName, at.x, at.y, quantity, colonistPosition);
+			LOG_INFO(Engine, "[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)", quantity, collEff.itemDefName.c_str(), at.x, at.y);
+		};
 
 		// Storage-to-storage pull (ActionType::Withdraw): take the item OUT of the source box's
 		// Inventory, not a ground entity. removeItem clamps to the box's live quantity, so a concurrent
 		// second colonist that beat us to it just withdraws less and the AI re-evaluates next tick -- the
 		// same self-correcting race handling the loose pickup relies on. Add exactly what we removed to
-		// the colonist (sized by carry weight + slots via `wanted`). This intercepts before every ground
+		// the colonist (sized by pickupUnitsThatFit via `wanted`). This intercepts before every ground
 		// path; a Withdraw never touches a pile, pool, or single-shot source.
 		if (collEff.sourceStorageId != 0) {
 			const auto sourceBox = static_cast<EntityID>(collEff.sourceStorageId);
@@ -127,7 +154,7 @@ namespace ecs {
 				added,
 				collEff.itemDefName.c_str(),
 				static_cast<unsigned long long>(collEff.sourceStorageId),
-				inventory.getQuantity(collEff.itemDefName)
+				ecs::availableQuantity(inventory, collEff.itemDefName)
 			);
 			return; // a pull's harvest-goal credit is N/A; the deposit leg credits the umbrella
 		}
@@ -141,8 +168,10 @@ namespace ecs {
 		// Only a ground pickup (sourceDefName == itemDefName, e.g. "Wood" from "Wood") may take the
 		// loose-pile path. A tree-fell yields "Wood" from "Flora_Tree..."; its source differs, so it
 		// must NOT be diverted here -- otherwise a pile sitting on the fell spot would hijack the chop.
+		// A pickup whose pile has left the index goes on to the single-shot branch, where the world never
+		// answers for a pile: the source reads Gone, its memory entry is forgotten, and nothing is taken.
 		const LoosePile pile = (collEff.sourceDefName == collEff.itemDefName)
-								   ? findLoosePile(world, collEff.itemDefName, collEff.sourcePosition)
+								   ? findLoosePile(world, m_loosePiles, harvestRegistry.getDefNameId(collEff.itemDefName), collEff.sourcePosition)
 								   : LoosePile{};
 		if (pile.stack) {
 			// A pickup from a ground pile takes only what was REQUESTED (collEff.quantity, the
@@ -157,15 +186,14 @@ namespace ecs {
 				stowHeldToolsForArmful(inventory, colonistPosition);
 				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, requested);
 			} else {
-				const uint32_t fit = ecs::cargoUnitsThatFit(inventory, harvestRegistry, collEff.itemDefName);
-				added = inventory.addItem(collEff.itemDefName, std::min(requested, fit));
+				added = inventory.addItem(collEff.itemDefName, std::min(requested, room));
 			}
 
 			pile.stack->quantity -= added; // mutate the live component so the pile tracks what is left
 
 			if (pile.stack->quantity == 0) {
 				// Remove the exact entity we drained, not the first pile matching this position:
-				// two same-material piles within the match epsilon would otherwise alias.
+				// two same-material piles in one cell would otherwise alias.
 				if (m_onRemoveEntityById) {
 					m_onRemoveEntityById(pile.entity);
 				}
@@ -192,13 +220,23 @@ namespace ecs {
 			}
 			// Fall through to the shared harvest-goal credit at the end; skip pool/single-shot.
 		} else if (sourceHasResourcePool(harvestRegistry, collEff.sourceDefName) && m_onDecrementResource) {
-			if (wanted > 0) {
-				// Withdraw only what the colonist can carry; the pool clamps to its own
-				// contents and reports depletion. Items added == removed (we sized `wanted`
-				// to fit by both weight and slots), so the tree's wood is conserved.
+			// Withdraw only what the colonist can carry; the pool clamps to its own contents and
+			// reports depletion, so a bush's sticks are conserved across trips. A clear takes the
+			// whole pool in one pass and removes the bush: the pack takes all that fits (not one cut's
+			// yield) and the rest drops. The source must still stand before its pool pays, as for a
+			// single-shot source. Removing the source erases its pool, so the removal follows the draw.
+			const uint32_t	  request = collEff.clearsSource ? UINT32_MAX : wanted;
+			const uint32_t	  packRoom = collEff.clearsSource ? room : wanted;
+			const SourceState state = takeSource(SourceTake::Keep);
+			if (state != SourceState::Ready) {
+				if (state == SourceState::OnCooldown && collEff.clearsSource) {
+					takeSource(SourceTake::Remove); // a clear still removes a regrowing source, with no yield
+				}
+			} else if (request > 0) {
 				const ResourceDraw draw =
-					m_onDecrementResource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, wanted);
-				added = inventory.addItem(collEff.itemDefName, draw.removed);
+					m_onDecrementResource(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, request);
+				added = inventory.addItem(collEff.itemDefName, std::min(draw.removed, packRoom));
+				dropUncarried(draw.removed - added);
 				LOG_INFO(
 					Engine,
 					"[Action] Chopped %u x %s (now carrying %u)",
@@ -206,19 +244,8 @@ namespace ecs {
 					collEff.itemDefName.c_str(),
 					inventory.getQuantity(collEff.itemDefName)
 				);
-				if (draw.depleted) {
-					if (m_onRemoveEntity) {
-						m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
-					}
-					uint32_t defNameId = harvestRegistry.getDefNameId(collEff.sourceDefName);
-					memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, defNameId);
-					LOG_DEBUG(
-						Engine,
-						"[Action] Resource depleted - removed %s at (%.1f, %.1f)",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y
-					);
+				if (draw.depleted || collEff.clearsSource) {
+					takeSource(SourceTake::Remove);
 				}
 			} else {
 				LOG_DEBUG(
@@ -231,7 +258,8 @@ namespace ecs {
 			}
 		} else {
 			// Single-shot source: take what fits, then remove it (destructive) or start its
-			// regrowth cooldown.
+			// regrowth cooldown. The source is taken from the world first and pays only if it was
+			// still standing and not regrowing, so a later finisher on the same plant gets nothing.
 			//
 			// Two-hand bulk goods (a felled tree's wood) ride in the hands as a weight-limited
 			// armful, never the backpack. Felling is one destructive action: whatever the
@@ -239,33 +267,21 @@ namespace ecs {
 			// always falls -- even if the colonist's hands were already full (added == 0), the
 			// whole yield still drops and the source is removed, so no wood is lost and no stump
 			// lingers. Everything else (one-hand) stacks into the pack and only touches the
-			// source when something was actually collected.
+			// source when something fits, except a footprint clear, which removes it regardless
+			// and drops what doesn't fit, like a fell.
 			const bool isTwoHand = ecs::itemIsTwoHand(harvestRegistry, collEff.itemDefName);
 
-			bool destroySource = false;
-			bool regrowSource = false;
-
 			if (isTwoHand) {
-				// Felling yields a two-hand armful (wood) that needs both hands. If the colonist
-				// crafted/holds a one-hand axe, it sits in a hand and would block the lift; stow it
-				// (belt -> pack -> drop) first so the wood goes into the hands rather than dropping.
-				stowHeldToolsForArmful(inventory, colonistPosition);
-				added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
-
-				const uint32_t remainder = collEff.quantity - added;
-				if (remainder > 0 && m_onDropResource) {
-					m_onDropResource(collEff.itemDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, remainder);
-					LOG_INFO(
-						Engine,
-						"[Action] Dropped loose pile of %u x %s at (%.1f, %.1f)",
-						remainder,
-						collEff.itemDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y
-					);
+				// A fell completes regardless of how much lands in hands; bulk goods never regrow.
+				const bool fells = collEff.destroySource || collEff.clearsSource;
+				if (takeSource(fells ? SourceTake::Remove : SourceTake::Keep) == SourceState::Ready) {
+					// Felling yields a two-hand armful (wood) that needs both hands. If the colonist
+					// crafted/holds a one-hand axe, it sits in a hand and would block the lift; stow it
+					// (belt -> pack -> drop) first so the wood goes into the hands rather than dropping.
+					stowHeldToolsForArmful(inventory, colonistPosition);
+					added = ecs::addArmful(inventory, harvestRegistry, collEff.itemDefName, collEff.quantity);
+					dropUncarried(collEff.quantity - added);
 				}
-				// A fell completes regardless of how much landed in hands; bulk goods never regrow.
-				destroySource = collEff.destroySource;
 			} else {
 				// A loose-item fetch (source IS the material, e.g. picking up a SmallStone) yields
 				// only that one entity's carryable count -- never more than is physically there, even
@@ -279,87 +295,39 @@ namespace ecs {
 						take = std::min(take, srcDef->capabilities.carryable->quantity);
 					}
 				}
-				added = inventory.addItem(collEff.itemDefName, take);
-				destroySource = added > 0 && collEff.destroySource;
-				regrowSource = added > 0 && !collEff.destroySource && collEff.regrowthTime > 0.0F;
-			}
-
-			if (added < collEff.quantity) {
-				// Carry/slot-limited below the full yield -- expected, not an error.
-				LOG_INFO(
-					Engine, "[Action] Collected %u of %u x %s (carry-limited)", added, collEff.quantity, collEff.itemDefName.c_str()
-				);
-			} else {
-				LOG_INFO(Engine, "[Action] Collected %u x %s", added, collEff.itemDefName.c_str());
-			}
-
-			if (destroySource) {
-				if (m_onRemoveEntity) {
-					m_onRemoveEntity(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y);
+				SourceTake leaves = SourceTake::Keep;
+				if (collEff.clearsSource || collEff.destroySource) {
+					leaves = SourceTake::Remove;
+				} else if (collEff.regrowthTime > 0.0F) {
+					leaves = SourceTake::Regrow;
 				}
-				uint32_t defNameId = harvestRegistry.getDefNameId(collEff.sourceDefName);
-				memory.forgetWorldEntity({collEff.sourcePosition.x, collEff.sourcePosition.y}, defNameId);
-				LOG_DEBUG(
-					Engine,
-					"[Action] Removed source entity %s at (%.1f, %.1f)",
-					collEff.sourceDefName.c_str(),
-					collEff.sourcePosition.x,
-					collEff.sourcePosition.y
-				);
-			} else if (regrowSource) {
-				if (m_onSetCooldown) {
-					m_onSetCooldown(collEff.sourceDefName, collEff.sourcePosition.x, collEff.sourcePosition.y, collEff.regrowthTime);
-					LOG_DEBUG(
-						Engine,
-						"[Action] Set cooldown on %s at (%.1f, %.1f) for %.1fs",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y,
-						collEff.regrowthTime
-					);
-				} else {
-					LOG_WARNING(
-						Engine,
-						"[Action] No cooldown callback set - source entity %s at (%.1f, %.1f) cooldown NOT applied",
-						collEff.sourceDefName.c_str(),
-						collEff.sourcePosition.x,
-						collEff.sourcePosition.y
-					);
+				// A cut gives its whole yield: what the pack can't take drops beside the plant as a loose pile,
+				// as a fell's overflow does, rather than being lost. A loose-item fetch takes only its own item.
+				const bool cut = collEff.sourceDefName != collEff.itemDefName;
+				if ((take > 0 || collEff.clearsSource) && takeSource(leaves) == SourceState::Ready) {
+					added = inventory.addItem(collEff.itemDefName, take);
+					if (cut || collEff.clearsSource) {
+						dropUncarried(collEff.quantity - added);
+					}
 				}
 			}
-		}
 
-		// For goal-driven Harvest tasks, update the GoalTaskRegistry.
-		// Record only what actually landed in inventory (overflow is lost, above), so the
-		// harvest goal's progress reflects real items the colonist now carries.
-		if (task.type == TaskType::Harvest && task.harvestGoalId != 0 && added > 0) {
-			auto& goalRegistry = GoalTaskRegistry::Get();
-
-			goalRegistry.recordDelivery(task.harvestGoalId, added);
-
-			// Check if goal is now complete
-			const auto* goal = goalRegistry.getGoal(task.harvestGoalId);
-			if (goal != nullptr && goal->availableCapacity() == 0) {
-				// Harvest done: the material is in the colonist's inventory now, so the Haul that
-				// carries it to the station can be created here (not up front), then the goal is retired.
-				goalRegistry.createHaulForCompletedHarvest(task.harvestGoalId);
-				goalRegistry.removeGoal(task.harvestGoalId);
-			}
+			// Below the full yield when carry- or slot-limited, or the source was gone or regrowing.
+			LOG_INFO(Engine, "[Action] Collected %u of %u x %s", added, collEff.quantity, collEff.itemDefName.c_str());
 		}
 	}
 
-	void ActionSystem::startHarvestAction(Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
-		(void)position; // the harvest target is the remembered entity, not the colonist's stand point
+	void ActionSystem::startHarvestAction(Task& task, Action& action, Memory& memory, const Inventory& inventory) {
 		auto& registry = assets::AssetRegistry::Get();
 
 		// Goal-driven harvest: locate the harvestable DIRECTLY by the memory key the evaluator chose
-		// (harvestTargetEntityId == the knownWorldEntities key from evaluateHarvestOptions), NOT by a
+		// (harvestTargetKey == the knownWorldEntities key from evaluateHarvestOptions), NOT by a
 		// proximity search around task.targetPosition. The stand point is snapped to an adjacent
 		// reachable nav face (tree centers are navmesh holes), so it sits >0.5 m from the tree; a
 		// proximity scan finds nothing, forgets the (live) entry, and the AI re-selects -> the
 		// phantom-harvest loop. Keying on the id harvests the exact tree the evaluator picked,
 		// regardless of how far the stand point is from it.
-		auto it = memory.knownWorldEntities.find(task.harvestTargetEntityId);
+		auto it = memory.knownWorldEntities.find(task.harvestTargetKey);
 		if (it == memory.knownWorldEntities.end()) {
 			// The chosen entity is gone from memory (consumed, forgotten, evicted). Clear the action
 			// so the AI re-resolves to another source or retires -- never fall back to a proximity
@@ -367,7 +335,7 @@ namespace ecs {
 			LOG_DEBUG(
 				Engine,
 				"[Action] Harvest target %llu no longer in memory (goal %llu) - clearing for re-resolve",
-				static_cast<unsigned long long>(task.harvestTargetEntityId),
+				static_cast<unsigned long long>(task.harvestTargetKey),
 				static_cast<unsigned long long>(task.harvestGoalId)
 			);
 			action.clear();
@@ -447,6 +415,15 @@ namespace ecs {
 			harvestCap.destructive,
 			harvestCap.regrowthTime
 		);
+		// What he can't carry drops where he stands to work the source (task.targetPosition, the stand point
+		// beside its collider), not at its centre, which no route ends in while it stands.
+		action.collectionEffect().dropAt = task.targetPosition;
+		// A footprint clear removes its source whatever kind it is: regrowing, pooled, or single-shot.
+		const auto* goal = GoalTaskRegistry::Get().getGoal(task.harvestGoalId);
+		if (goal != nullptr && goal->clearFootprint.has_value()) {
+			action.collectionEffect().clearsSource = true;
+			action.collectionEffect().dropAt = goal->clearFootprint->nearestOutside(entity.position, kClearDropMargin);
+		}
 		LOG_DEBUG(
 			Engine,
 			"[Action] Starting goal-driven Harvest action for %s from %s at (%.1f, %.1f) (durability %.0f, goal %llu)",

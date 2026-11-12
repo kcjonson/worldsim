@@ -150,7 +150,11 @@ namespace world_sim {
 			// For moving tasks, prefer the nav-state vocabulary so the player understands
 			// belief-driven navigation ("Re-routing", "Can't find a way") as intent, not bug.
 			if (task->state == ecs::TaskState::Moving) {
-				switch (task->navState) {
+				const bool briefWait = task->navState == ecs::NavState::AwaitingRoute && task->routeWaitTicks < ecs::Task::kFindingWayTicks;
+				switch (briefWait ? ecs::NavState::Traveling : task->navState) {
+					case ecs::NavState::AwaitingRoute:
+						bioData.currentTask = "Finding a way";
+						break;
 					case ecs::NavState::Rerouting:
 						bioData.currentTask = "Re-routing";
 						break;
@@ -178,7 +182,7 @@ namespace world_sim {
 								dest = "crafting station";
 								break;
 							case ecs::TaskType::Haul:
-								dest = task->haulItemDefName.empty() ? "storage" : task->haulItemDefName;
+								dest = task->haulItemDefNameId == 0 ? "storage" : assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId);
 								break;
 							case ecs::TaskType::Build:
 								dest = "build site";
@@ -212,7 +216,7 @@ namespace world_sim {
 						bioData.currentTask = "Crafting " + task->craftRecipeDefName;
 						break;
 					case ecs::TaskType::Haul:
-						bioData.currentTask = "Hauling " + (task->haulItemDefName.empty() ? "item" : task->haulItemDefName);
+						bioData.currentTask = "Hauling " + (task->haulItemDefNameId == 0 ? std::string("item") : assets::AssetRegistry::Get().getDefName(task->haulItemDefNameId));
 						break;
 					case ecs::TaskType::Build:
 						bioData.currentTask = "Building";
@@ -431,7 +435,7 @@ namespace world_sim {
 		}
 
 		// Get tasks known by this colonist via the adapter.
-		tasksData.tasks = adapters::getTasksForColonist(colonistPosition);
+		tasksData.tasks = adapters::getGlobalTasks(world, colonistPosition);
 		adapters::sortTasksForDisplay(tasksData.tasks);
 		tasksData.totalCount = tasksData.tasks.size();
 

@@ -20,11 +20,13 @@
 //
 //   Clearing           -> emit Harvest goals for choppable entities sitting on
 //                         the footprint; advance to AwaitingMaterials once the
-//                         footprint is clear. (Foundations only.)
-//   AwaitingMaterials  -> emit a Harvest+Haul chain per outstanding material (Wood
-//                         from trees, hauled to the site where the deposit records it
+//                         footprint is known clear (every chunk under it placed).
+//                         (Foundations only.)
+//   AwaitingMaterials  -> accept and emit a Harvest per outstanding material (Wood
+//                         from trees, carried to the site where the deposit records it
 //                         directly onto the blueprint's delivered[] manifest); advance
-//                         to UnderConstruction once materialsComplete().
+//                         to UnderConstruction once materialsComplete(), after one more
+//                         footprint check (a blocker found then sends it back to Clearing).
 //   UnderConstruction  -> emit one Build goal; ActionSystem's Build action
 //                         advances workDone. Multiple colonists may build the
 //                         same blueprint concurrently.
@@ -37,10 +39,10 @@
 //
 // Goal-graph shape (mirrors CraftingGoalSystem): ONE top-level umbrella goal per
 // blueprint, keyed by destinationEntity, persists across every phase. The umbrella
-// is the Build goal. Every phase goal (clear-Harvest, per-material Harvest, per-
-// material Haul) is a CHILD of it (parentGoalId = umbrella id), which exempts the
+// is the Build goal and the root material deliveries count toward. Every phase goal
+// (clear-Harvest, per-material Harvest) is a CHILD of it (parentGoalId = umbrella id), which exempts the
 // children from the registry's single-top-level-goal-per-destination guard so a
-// multi-material site can carry several Harvest + Haul goals at once. The umbrella
+// multi-material site can carry several Harvest goals at once. The umbrella
 // is Blocked while clearing or awaiting materials and flips Available only at
 // UnderConstruction, exactly like a Craft goal. Goals are cleaned up via
 // removeGoalWithChildren when a blueprint entity disappears or completes.
@@ -57,6 +59,8 @@
 #include "../EntityID.h"
 #include "../ISystem.h"
 #include "../components/StructureBlueprint.h"
+
+#include <glm/vec2.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -83,6 +87,7 @@ namespace ecs {
 	class World;
 	struct Structure;				 // defined in components/Structure.h
 	enum class GoalStatus : uint8_t; // defined in GoalTaskRegistry.h
+	struct FootprintBounds;			 // defined in GoalTaskRegistry.h
 
 	/// Pure phase-decision result, independent of ECS/placement wiring so it can be
 	/// unit-tested directly. Tells the system what the blueprint's phase SHOULD be and
@@ -90,7 +95,7 @@ namespace ecs {
 	struct ConstructionDecision {
 		StructureBlueprint::BuildPhase nextPhase = StructureBlueprint::BuildPhase::Clearing;
 		bool						   emitClearGoals = false;	  // footprint not yet clear: emit Harvest for blockers
-		bool						   emitMaterialGoals = false; // clear, materials outstanding: emit Harvest+Haul chains
+		bool						   emitMaterialGoals = false; // clear, materials outstanding: accept materials, emit their Harvests
 		bool						   emitBuildGoal = false;	  // materials staged: emit a Build goal
 	};
 
@@ -103,22 +108,6 @@ namespace ecs {
 	/// would mis-decide it as a build.
 	[[nodiscard]] ConstructionDecision
 	decideConstructionPhase(const StructureBlueprint& blueprint, bool footprintClear, bool materialsComplete);
-
-	/// How much of a material to HARVEST for the NEXT delivery trip, given how much the
-	/// site still needs (`remaining`), how much is already carried toward it (`carried`,
-	/// summed across colonists), and how much a colonist can carry in one trip
-	/// (`carryCapacity`, the inventory stack size).
-	///
-	/// The demand that matters is "do I need MORE in hand to make a worthwhile delivery
-	/// trip", not "is the whole site satisfied". A colonist's stack caps at carryCapacity
-	/// (e.g. 99), so for a manifest larger than one stack `carried` can never reach
-	/// `remaining`; bounding by `remaining` alone would leave the Harvest goal Available
-	/// forever and the colonist would hoard at the stack cap instead of delivering. So the
-	/// per-trip target is min(remaining, carryCapacity): once carried reaches it, demand is
-	/// 0, the Harvest goal retires, and the Haul wins so the load gets delivered. Empty
-	/// hands with work outstanding gives demand > 0 again for the next trip.
-	/// Pure; unit-tested directly.
-	[[nodiscard]] uint32_t constructionHarvestDemand(uint32_t remaining, uint32_t carried, uint32_t carryCapacity);
 
 	/// ConstructionSystem - foundation lifecycle goal source (see file header).
 	class ConstructionSystem : public ISystem {
@@ -195,8 +184,26 @@ namespace ecs {
 		uint32_t creditMaterialToSites(const std::string& defName, uint32_t amount);
 
 	  private:
-		/// True if no Harvestable placed entity overlaps the foundation's footprint AABB.
-		/// v1 clearing rule (see header): only Harvestable blockers gate clearing.
+		/// The foundation's footprint AABB in world meters: the one definition of "inside the
+		/// footprint" for both the clear gate and the clear goal a colonist serves.
+		[[nodiscard]] FootprintBounds footprintBounds(uint64_t foundationId) const;
+
+		/// A runtime-spawned harvestable (an ECS entity, not in the placement index): a colonist
+		/// remembers it like placed flora, so it blocks a site and serves its clear goal the same way.
+		struct SpawnedHarvestable {
+			uint32_t  defNameId = 0;
+			glm::vec2 position{0.0F, 0.0F};
+		};
+
+		/// Collect every spawned harvestable into m_spawnedHarvestables, once per pass that has a
+		/// site to check (clearing, or entering UnderConstruction), so each site's check is a scan of
+		/// those few rather than of every entity.
+		void gatherSpawnedHarvestables();
+
+		/// True while nothing in the world blocks the footprint (FootprintBounds::blockedBy), placed
+		/// flora and spawned harvestables (m_spawnedHarvestables, gathered this pass) alike: the set
+		/// the clear goal is served by. A footprint over a chunk whose flora isn't placed yet is not known
+		/// clear and reads false.
 		[[nodiscard]] bool isFootprintClear(uint64_t foundationId) const;
 
 		/// True once the wall segment's host foundation is Built. Walls draw on a
@@ -251,27 +258,22 @@ namespace ecs {
 		/// True (ungated) when there is no ConstructionWorld wired (headless contexts).
 		[[nodiscard]] bool deconstructDependentsCleared(const Structure& structure) const;
 
-		/// Emit a clear-Harvest CHILD under the umbrella for Harvestable blockers on the
-		/// footprint. Reuses the Harvest goal shape (yield = whatever the blocker yields) so
-		/// chopping a tree both clears the site and produces Wood for the manifest.
+		/// Emit the blueprint's one clear-Harvest CHILD under the umbrella, unless it already has one.
+		/// Any Harvestable a colonist knows inside the footprint serves it; each served harvest
+		/// removes its blocker but records nothing, so the goal stands until the footprint is clear
+		/// and update() retires it then.
 		void emitClearGoals(EntityID blueprintEntity, uint64_t foundationId, uint64_t umbrellaGoalId);
 
-		/// Emit a Harvest+Haul CHILD chain per outstanding material under the umbrella
-		/// (CraftingGoalSystem's pattern): Harvest yields the material into a colonist's
-		/// inventory, the Haul carries it to the blueprint and the deposit records it onto
-		/// delivered[]. Both stay Available concurrently (no dependency gate) so each trip can deliver.
+		/// While materials are due, the umbrella accepts each material the site still lacks (any
+		/// colonist carrying it may deliver it), and one Harvest CHILD per such material marks that
+		/// cutting it is open. Each cut carries its yield to the blueprint, where the deposit records it
+		/// onto delivered[].
 		void emitMaterialGoals(EntityID blueprintEntity, const StructureBlueprint& blueprint, uint64_t umbrellaGoalId);
 
 		/// Retire any leftover child goals of a kind no longer relevant to the current phase
 		/// (e.g. the clear-Harvest child once the footprint is clear, or all material children
 		/// once materials are staged). The umbrella itself is left in place.
 		void retireChildGoals(EntityID blueprintEntity, uint64_t umbrellaGoalId, bool keepMaterialChildren);
-
-		/// Sum how much of a material colonists are currently carrying (a colonist is NeedsComponent +
-		/// Inventory; a build site has neither, so it never counts). Used to bound harvest demand so a
-		/// colonist that already carries enough delivers it instead of chopping more.
-		[[nodiscard]] uint32_t carriedAmount(const std::string& defName) const;
-
 		/// Shared by the free-build flag path and forceCompleteBlueprint: stage materials,
 		/// finish work, flip phase, fire the completion callback. `blueprint` and `structure`
 		/// belong to `entity`. The caller has already confirmed the blueprint is a non-Complete
@@ -300,6 +302,15 @@ namespace ecs {
 		std::unordered_set<EntityID> m_warnedNoDeconstructCallback;
 
 		size_t m_activeBlueprintCount = 0;
+
+		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
+		std::vector<SpawnedHarvestable> m_spawnedHarvestables;
+
+		/// Footprints of foundations that entered construction this pass: the loose piles on them are
+		/// dropped again just outside (movePilesOffSites), so nothing is built over
+		std::vector<FootprintBounds> m_sitesToClearOfPiles;
+		static constexpr float		 kPileMoveMargin = 0.5F;
+		void						 movePilesOffSites();
 
 		// Throttle like the other goal systems: lifecycle changes are slow relative to frames.
 		int					 m_frameCounter = 0;

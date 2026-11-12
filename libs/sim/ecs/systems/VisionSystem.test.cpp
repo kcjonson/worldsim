@@ -13,8 +13,7 @@
 #include <construction/ConstructionWorld.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
-#include <world/chunk/ChunkSampleResult.h>
-#include <world/chunk/IWorldSampler.h>
+#include <world/chunk/SyntheticWorldSampler.h>
 #include <world/chunk/TerrainPolygonQuery.h>
 
 #include <glm/geometric.hpp>
@@ -103,7 +102,8 @@ namespace {
 	// Did the observer's Memory record the target's def at `at`?
 	bool remembers(World& world, EntityID observer, glm::vec2 at) {
 		const Memory* mem = world.getComponent<Memory>(observer);
-		return mem != nullptr && mem->knowsWorldEntity(at, kTargetDefName);
+		const uint32_t id = assets::AssetRegistry::Get().getDefNameId(kTargetDefName);
+		return mem != nullptr && id != 0 && mem->knowsWorldEntity(at, id);
 	}
 
 	// A minimal pass-1 placement setup: a PlacementExecutor holding one chunk index
@@ -159,20 +159,12 @@ namespace {
 
 	// Grassland with a pond in chunk (0, 0), centred at (48, 52) with radius 20 m (its rim
 	// sinusoids put the south shore at y = 32 and the rest 13.7..26.3 m out).
-	class LakeSampler : public world::IWorldSampler {
-	  public:
-		[[nodiscard]] world::ChunkSampleResult sampleChunk(ChunkCoordinate coord) const override {
-			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(
-				world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F
-			);
-			if (coord.x >= -1 && coord.x <= 1 && coord.y >= -1 && coord.y <= 1) {
-				r.pondBlobs.push_back({.cx = 48.0, .cy = 52.0, .radius = 20.0F, .phaseA = 1.5708F, .phaseB = 1.5708F, .depth = 120});
-			}
-			return r;
-		}
-		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
-		[[nodiscard]] uint64_t getWorldSeed() const override { return 11u; }
-	};
+	std::unique_ptr<world::IWorldSampler> lakeSampler() {
+		return std::make_unique<world::SyntheticWorldSampler>(
+			11u,
+			world::SyntheticMap{.pond = worldgen::PondNetwork2D::Pond{.cx = 48.0, .cy = 52.0, .radius = 20.0F, .phaseA = 1.5708F, .phaseB = 1.5708F, .depth = 120}}
+		);
+	}
 
 } // namespace
 
@@ -501,9 +493,8 @@ TEST_F(VisionSystemTest, PresentEntityInViewIsKept) {
 	ASSERT_TRUE(remembers(world, observer, targetPos));
 
 	// Put it on cooldown: still in the index, just not harvestable -> must be kept.
-	const ChunkCoordinate coord = world::worldToChunk({targetPos.x, targetPos.y});
-	executor.setEntityCooldown(coord, targetPos, kTargetDefName, 30.0F);
-	ASSERT_TRUE(executor.isEntityOnCooldown(coord, targetPos, kTargetDefName));
+	executor.startRegrowth(targetPos, reg.getDefNameId(kTargetDefName), 0.0, 30.0);
+	ASSERT_TRUE(executor.regrowthReadyAt(targetPos, reg.getDefNameId(kTargetDefName), 0.0).has_value());
 
 	tick(sys);
 	EXPECT_TRUE(remembers(world, observer, targetPos)) << "a cooldowned (still-indexed) entity must not be forgotten";
@@ -616,11 +607,52 @@ TEST_F(VisionSystemTest, ShoreNeverReconciled) {
 	EXPECT_TRUE(mem->knowsWorldEntity(shorePos, shoreId)) << "the shore is terrain, never reconciled away";
 }
 
+// Piles and boxes live only in the ECS, never in the placement index. Seen by pass 2 each tick, they
+// stay remembered without a memory write: the set of remembered entities doesn't change, so
+// worldEntityVersion holds. One destroyed while in view is forgotten on the next tick.
+TEST_F(VisionSystemTest, EcsEntitiesInViewAreKeptWithoutChurn) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						placedPos{6.0F, 6.0F};
+	placeTarget(executor, processed, placedPos); // a live index for the chunk the pile and box stand in
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	const glm::vec2 pilePos{3.0F, 1.0F};
+	const glm::vec2 boxPos{1.0F, 3.0F};
+	const EntityID	pile = spawnTarget(world, pilePos);
+	spawnTarget(world, boxPos);
+	const EntityID observer = spawnObserver(world, {0.5F, 0.5F});
+	const Memory*  mem = world.getComponent<Memory>(observer);
+
+	tick(sys);
+	ASSERT_TRUE(remembers(world, observer, pilePos));
+	ASSERT_TRUE(remembers(world, observer, boxPos));
+	ASSERT_TRUE(remembers(world, observer, placedPos));
+	const std::uint64_t version = mem->worldEntityVersion;
+
+	for (int i = 0; i < 4; ++i) {
+		tick(sys);
+	}
+	EXPECT_EQ(mem->worldEntityVersion, version) << "an unchanged pile and box in view write nothing to memory";
+	EXPECT_TRUE(remembers(world, observer, pilePos));
+	EXPECT_TRUE(remembers(world, observer, boxPos));
+
+	world.destroyEntity(pile);
+	tick(sys);
+	EXPECT_FALSE(remembers(world, observer, pilePos)) << "a pile gone from in view is forgotten";
+	EXPECT_TRUE(remembers(world, observer, boxPos));
+	EXPECT_TRUE(remembers(world, observer, placedPos));
+}
+
 // Pass 3 (terrain polygons D11): every shore point of a loaded chunk within sight
 // is remembered as the drinkable Terrain_Shore, and none beyond it; each stands
 // on land at the water's edge.
 TEST_F(VisionSystemTest, ShorePointsInSightAreRemembered) {
-	world::ChunkManager chunks(std::make_unique<LakeSampler>());
+	world::ChunkManager chunks(lakeSampler());
 	chunks.setLoadRadius(0);
 	chunks.update({48.0F, 48.0F});
 	chunks.finishPendingGeneration();

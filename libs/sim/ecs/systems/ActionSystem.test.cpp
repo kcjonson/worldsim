@@ -8,6 +8,7 @@
 #include "../InventoryMass.h"
 #include "../StoreOrDrop.h"
 #include "../World.h"
+#include "../WorldSource.h"
 #include "TimeSystem.h"
 #include "VisionSystem.h"
 #include "../components/Action.h"
@@ -30,6 +31,7 @@
 #include "assets/ConstructionRegistry.h"
 #include "assets/RecipeDef.h"
 #include "assets/RecipeRegistry.h"
+#include "assets/placement/PlacementExecutor.h"
 
 #include <construction/ConstructionWorld.h>
 
@@ -38,6 +40,8 @@
 #include <gtest/gtest.h>
 
 namespace ecs::test {
+
+constexpr uint32_t kTestRngSeed = 42;
 
 // =============================================================================
 // harvestWorkRate (pure helper)
@@ -209,7 +213,7 @@ class ActionSystemTest : public ::testing::Test {
 		berryDef.itemProperties->edible = assets::EdibleCapability{0.3F, assets::CapabilityQuality::Normal, true};
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -292,6 +296,34 @@ TEST_F(ActionSystemTest, StartsEatActionOnArrival) {
 	auto* action = world->getComponent<Action>(colonist);
 	EXPECT_TRUE(action->isActive());
 	EXPECT_EQ(action->type, ActionType::Eat);
+}
+
+// With an empty pack, the colonist harvests the food source its decision named by Memory key, even
+// with another edible bush remembered on the same spot.
+TEST_F(ActionSystemTest, HungerHarvestsTheSourceTheDecisionNamed) {
+	auto& registry = assets::AssetRegistry::Get();
+	for (const char* name : {"Flora_TestBushA", "Flora_TestBushB"}) {
+		assets::AssetDefinition bush;
+		bush.defName = name;
+		bush.capabilities.harvestable = assets::HarvestableCapability{};
+		bush.capabilities.harvestable->yieldDefName = "Berry";
+		registry.registerTestDefinition(std::move(bush));
+	}
+	const glm::vec2 spot{5.0F, 5.0F};
+	auto			colonist = createColonist(spot);
+	setupArrivedForNeed(colonist, NeedType::Hunger, spot);
+	auto* memory = world->getComponent<Memory>(colonist);
+	for (const char* name : {"Flora_TestBushA", "Flora_TestBushB"}) {
+		const uint32_t id = registry.getDefNameId(name);
+		memory->rememberWorldEntity(spot, id, registry.getCapabilityMask(id));
+	}
+	world->getComponent<Task>(colonist)->needSourceKey = hashWorldEntity(spot, registry.getDefNameId("Flora_TestBushB"));
+
+	world->update(0.1F);
+
+	auto* action = world->getComponent<Action>(colonist);
+	ASSERT_EQ(action->type, ActionType::Harvest);
+	EXPECT_EQ(action->collectionEffect().sourceDefName, "Flora_TestBushB");
 }
 
 TEST_F(ActionSystemTest, StartsDrinkActionOnArrival) {
@@ -524,7 +556,7 @@ class ActionSystemGoalTest : public ::testing::Test {
 		GoalTaskRegistry::Get().clear();
 		assets::RecipeRegistry::Get().clear();
 		world = std::make_unique<World>();
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -550,17 +582,21 @@ class ActionSystemGoalTest : public ::testing::Test {
 	std::unique_ptr<World> world;
 };
 
-// A completed Harvest credits its harvest goal by the ACTUAL yield (not 1-per-action) and,
-// once satisfied, unblocks the dependent Haul. Then an inventory-sourced Haul delivering to
-// the crafting station MOVES the materials into the station's store (the colonist's pack
-// empties) and credits the parent Craft goal, unblocking it - mirroring construction, where
-// materials go onto the build site and the build consumes from there.
-TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblocksCraft) {
+// A cut toward a root becomes its own deposit leg the moment it lands: the Harvest task turns into a
+// carry-in Haul to the root's destination, its Use drops, and it brings what the root still needs
+// (In-flight and Inbound). No Haul goal is spawned and the yield never sits uncommitted in the pack.
+// The deposit then MOVES the materials into the station's store.
+TEST_F(ActionSystemGoalTest, HarvestBecomesItsDepositLegAndDeliversTheYield) {
 	auto& registry = GoalTaskRegistry::Get();
+	assets::AssetDefinition stick;
+	stick.defName = "Stick";
+	stick.label = "Stick";
+	stick.category = assets::ItemCategory::RawMaterial;
+	stick.itemProperties = assets::ItemProperties{};
+	stick.itemProperties->stackSize = 20;
+	assets::AssetRegistry::Get().registerTestDefinition(std::move(stick));
+	const uint32_t stickId = assets::AssetRegistry::Get().getDefNameId("Stick");
 
-	// The deposit is metered to the station's remaining recipe need, so the station must have a
-	// real queued recipe (2 Sticks) for the delivery to land. This mirrors the running game, where
-	// a craft station always has a recipe; the metering reads it.
 	assets::RecipeDef recipe;
 	recipe.defName = "Recipe_TwoStick";
 	recipe.label = "Two Stick";
@@ -575,96 +611,69 @@ TEST_F(ActionSystemGoalTest, HarvestThenInventoryHaulDeliversMaterialsAndUnblock
 	world->addComponent<WorkQueue>(station, std::move(stationQueue));
 	world->addComponent<Inventory>(station, Inventory::createForStorage());
 
-	// Craft goal needs 2 Sticks total, born Blocked.
 	GoalTask craft;
 	craft.type = TaskType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = {5.0F, 0.0F};
-	craft.targetAmount = 2;
 	craft.status = GoalStatus::Blocked;
-	uint64_t craftId = registry.createGoal(std::move(craft));
+	const uint64_t craftId = registry.createGoal(std::move(craft));
 
-	// Child Harvest (yields 2 Sticks) and child Haul (depends on the harvest).
 	GoalTask harvest;
 	harvest.type = TaskType::Harvest;
 	harvest.owner = GoalOwner::CraftingGoalSystem;
 	harvest.destinationEntity = station;
-	harvest.targetAmount = 2;
 	harvest.parentGoalId = craftId;
-	harvest.status = GoalStatus::Available;
-	uint64_t harvestId = registry.createGoal(std::move(harvest));
+	harvest.yieldDefNameId = stickId;
+	const uint64_t harvestId = registry.createGoal(std::move(harvest));
 
-	// No pre-made Haul: the carrying Haul is spawned lazily when the harvest below completes.
-	// haulId is bound from that goal in Phase 1.
-
-	// --- Phase 1: drive a Harvest action that yields 2 Sticks ---
-	auto colonist = createColonist({1.0F, 1.0F});
+	// The claims a selection records: Use on the bush and the cut's expected yield toward the root.
+	auto  colonist = createColonist({1.0F, 1.0F});
 	auto* task = world->getComponent<Task>(colonist);
 	task->type = TaskType::Harvest;
 	task->state = TaskState::Arrived;
 	task->harvestGoalId = harvestId;
+	task->harvestYieldDefNameId = stickId;
 	task->targetPosition = {1.0F, 1.0F};
+	task->instanceId = 7;
+	task->claimSeq = 7;
+	ASSERT_TRUE(task->claims.push(Claim::use(TargetKind::WorldKey, 99)));
+	ASSERT_TRUE(task->claims.push(Claim::inFlight(craftId, stickId, 3)));
 
 	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Harvest("Stick", 2, 4.0F, {1.0F, 1.0F}, "Flora_WoodyBush",
-							  /*destructive=*/false, /*regrowthTime=*/0.0F);
+	*action = Action::Harvest("Stick", 3, 4.0F, {1.0F, 1.0F}, "Flora_WoodyBush", /*destructive=*/false, /*regrowthTime=*/0.0F);
 
 	world->update(0.1F); // start
 	world->update(5.0F); // complete (duration 4s)
 
 	auto* inventory = world->getComponent<Inventory>(colonist);
-	EXPECT_EQ(inventory->getQuantity("Stick"), 2U) << "Harvest yield should be in inventory";
-	// Harvest goal credited by the real yield (2), so it completed and was removed; the carrying
-	// Haul was created lazily in its place.
-	EXPECT_EQ(registry.getGoal(harvestId), nullptr) << "Completed harvest goal removed";
-
-	// The lazily-created Haul is the only Haul child of the Craft: Available, targeting the yield.
-	const GoalTask* lazyHaul = nullptr;
-	for (const auto* child : registry.getChildGoals(craftId)) {
-		if (child->type == TaskType::Haul) {
-			lazyHaul = child;
-			break;
-		}
+	EXPECT_EQ(inventory->getQuantity("Stick"), 3U) << "the cut lands in the pack";
+	ASSERT_EQ(task->type, TaskType::Haul) << "the task carries on as its deposit leg";
+	EXPECT_TRUE(task->haulFromInventory);
+	EXPECT_EQ(task->haulGoalId, craftId);
+	EXPECT_EQ(task->haulDestinationId, static_cast<uint64_t>(station));
+	EXPECT_EQ(task->haulQuantity, 2U) << "capped at what the root still needs; the third stick is uncommitted";
+	EXPECT_EQ(task->state, TaskState::Moving);
+	EXPECT_EQ(task->targetPosition, glm::vec2(5.0F, 0.0F));
+	EXPECT_EQ(task->instanceId, 7U) << "the same task, so the same claims holder";
+	ASSERT_EQ(task->claims.size(), 2);
+	for (const Claim& claim : task->claims) {
+		EXPECT_NE(claim.kind(), ClaimKind::Use);
+		EXPECT_EQ(claim.quantity(), 2U);
 	}
-	ASSERT_NE(lazyHaul, nullptr) << "Completing the harvest creates the carrying Haul";
-	EXPECT_EQ(lazyHaul->status, GoalStatus::Available) << "Lazily-created Haul starts available";
-	EXPECT_EQ(lazyHaul->targetAmount, 2U);
-	uint64_t haulId = lazyHaul->id;
+	EXPECT_EQ(registry.getChildGoals(craftId).size(), 1U) << "no Haul goal is spawned for the yield";
 
-	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 0U)
-	    << "Harvest must NOT credit the Craft - materials are only in inventory, not at station";
-
-	// --- Phase 2: drive an inventory-sourced Haul delivering to the station ---
-	task->clear();
-	task->type = TaskType::Haul;
+	// Arrive and deposit: the store gets exactly the recipe's two, the colonist keeps the third.
+	world->getComponent<Position>(colonist)->value = {5.0F, 0.0F};
 	task->state = TaskState::Arrived;
-	task->haulGoalId = haulId;
-	task->haulItemDefName = "Stick";
-	task->haulQuantity = 2;
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
-	task->haulTargetPosition = {5.0F, 0.0F};
-	task->haulFromInventory = true;
-	task->targetPosition = {5.0F, 0.0F};
+	world->update(0.1F);
+	world->update(2.0F);
 
-	action->clear();
-
-	world->update(0.1F); // start the deliver-to-station deposit
-	world->update(2.0F); // complete (deposit duration 1s)
-
-	// Materials moved into the station's store; the colonist's pack emptied; the hierarchy advanced.
-	EXPECT_EQ(inventory->getQuantity("Stick"), 0U)
-	    << "Craft-station delivery moves items out of the colonist's pack";
-	auto* stationStore = world->getComponent<Inventory>(station);
-	ASSERT_NE(stationStore, nullptr);
-	EXPECT_EQ(stationStore->getQuantity("Stick"), 2U)
-	    << "Delivered materials now live in the station's store";
-	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "Completed haul goal removed";
-	ASSERT_NE(registry.getGoal(craftId), nullptr);
-	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 2U)
-	    << "Delivery to station credited the parent Craft goal";
-	EXPECT_EQ(registry.getGoal(craftId)->status, GoalStatus::Available)
-	    << "Craft leaves Blocked once all materials delivered";
+	EXPECT_EQ(world->getComponent<Inventory>(station)->getQuantity("Stick"), 2U);
+	EXPECT_EQ(inventory->getQuantity("Stick"), 1U);
+	EXPECT_FALSE(task->isActive());
+	EXPECT_TRUE(task->claims.empty());
+	EXPECT_EQ(registry.remainingNeed(*world, craftId, stickId, NeedBasis::Stock), 0U);
 }
 
 // Storage-to-storage pull (storage priority): the two-phase Withdraw->Deposit haul. Phase 1
@@ -699,14 +708,13 @@ TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) 
 	world->addComponent<Position>(destBox, Position{destPos});
 	world->addComponent<Inventory>(destBox, Inventory::createForStorage());
 
-	// The umbrella Haul goal (StorageGoalSystem, no chainId) wanting PlantFiber in the dest box.
+	// The umbrella Haul goal (StorageGoalSystem) wanting PlantFiber in the dest box.
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = destBox;
 	haul.destinationPosition = destPos;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId(item)};
-	haul.targetAmount = 10;
 	haul.status = GoalStatus::Available;
 	const uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -716,11 +724,11 @@ TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) 
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = item;
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId(item);
 	task->haulQuantity = 5;
 	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 	task->haulSourcePosition = srcPos;
-	task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+	task->haulDestinationId = static_cast<uint64_t>(destBox);
 	task->haulTargetPosition = destPos;
 	task->haulFromInventory = false;
 	task->targetPosition = srcPos;
@@ -758,10 +766,9 @@ TEST_F(ActionSystemGoalTest, WithdrawPullsFromSourceBoxThenDepositsIntoDestBox) 
 	ASSERT_NE(destStore, nullptr);
 	EXPECT_EQ(destStore->getQuantity(item), 5U) << "the withdrawn item landed in the destination box";
 	EXPECT_EQ(inventory->getQuantity(item), 0U) << "colonist's pack emptied on deposit";
-	// The umbrella goal (slot-counted, owner StorageGoalSystem, no chainId) stays live while the box
+	// The umbrella goal stays live while the box
 	// has free slots; it is NOT removed after a single stack.
 	ASSERT_NE(registry.getGoal(haulId), nullptr) << "umbrella goal persists while the dest box has room";
-	EXPECT_GT(registry.getGoal(haulId)->deliveredAmount, 0U) << "the deposit credited the umbrella goal";
 }
 
 // Storage-to-storage pull of a REAL two-hand good (Wood, handsRequired==2). Unlike the one-hand
@@ -800,14 +807,13 @@ TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDest
 	world->addComponent<Position>(destBox, Position{destPos});
 	world->addComponent<Inventory>(destBox, Inventory::createForStorage());
 
-	// The umbrella Haul goal (StorageGoalSystem, no chainId) wanting Wood in the dest box.
+	// The umbrella Haul goal (StorageGoalSystem) wanting Wood in the dest box.
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = destBox;
 	haul.destinationPosition = destPos;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId(item)};
-	haul.targetAmount = 10;
 	haul.status = GoalStatus::Available;
 	const uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -817,11 +823,11 @@ TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDest
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = item;
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId(item);
 	task->haulQuantity = 5;
 	task->haulSourceStorageId = static_cast<uint64_t>(srcBox);
 	task->haulSourcePosition = srcPos;
-	task->haulTargetStorageId = static_cast<uint64_t>(destBox);
+	task->haulDestinationId = static_cast<uint64_t>(destBox);
 	task->haulTargetPosition = destPos;
 	task->haulFromInventory = false;
 	task->targetPosition = srcPos;
@@ -864,7 +870,6 @@ TEST_F(ActionSystemGoalTest, WithdrawTwoHandWoodRidesInHandsThenDepositsIntoDest
 	EXPECT_EQ(destStore->getQuantity(item), 5U) << "the hand-carried two-hand Wood landed in the destination box";
 	EXPECT_EQ(ecs::handHeldQuantity(*inventory, item), 0U) << "colonist's hands emptied on deposit (removeFromHands)";
 	ASSERT_NE(registry.getGoal(haulId), nullptr) << "umbrella goal persists while the dest box has room";
-	EXPECT_GT(registry.getGoal(haulId)->deliveredAmount, 0U) << "the deposit credited the umbrella goal";
 }
 
 // The craft-station deposit is METERED to the recipe's remaining need: a colonist carrying more
@@ -903,7 +908,6 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = stationPos;
-	craft.targetAmount = 1;
 	craft.status = GoalStatus::Blocked;
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
@@ -913,7 +917,6 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	haul.destinationEntity = station;
 	haul.destinationPosition = stationPos;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId("PlantFiber")};
-	haul.targetAmount = 1;
 	haul.parentGoalId = craftId;
 	haul.status = GoalStatus::Available;
 	const uint64_t haulId = registry.createGoal(std::move(haul));
@@ -926,9 +929,9 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "PlantFiber";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("PlantFiber");
 	task->haulQuantity = 1;
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = true;
 	task->targetPosition = stationPos;
@@ -941,7 +944,6 @@ TEST_F(ActionSystemGoalTest, CraftDepositMetersToRecipeNeedAndKeepsSurplus) {
 	EXPECT_EQ(store->getQuantity("PlantFiber"), 1U) << "Station holds exactly the recipe need, no surplus";
 	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("PlantFiber"), 2U)
 	    << "The 2 surplus units stay on the colonist";
-	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Craft credited by exactly the metered deposit";
 }
 
 // A craft fetch from a multi-unit ground PILE takes only the remaining recipe need and leaves the
@@ -966,7 +968,6 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	GoalTask craft;
 	craft.type = TaskType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
-	craft.targetAmount = 2;
 	craft.status = GoalStatus::Blocked;
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
@@ -974,7 +975,6 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId("SmallStone")};
-	haul.targetAmount = 2; // recipe need
 	haul.parentGoalId = craftId;
 	haul.status = GoalStatus::Available;
 	const uint64_t haulId = registry.createGoal(std::move(haul));
@@ -983,7 +983,7 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	auto pile = world->createEntity();
 	world->addComponent<Position>(pile, Position{pilePos});
 	world->addComponent<Appearance>(pile, Appearance{"SmallStone", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-	world->addComponent<ResourceStack>(pile, ResourceStack{7});
+	makeLoosePile(*world, pile, assets::AssetRegistry::Get().getDefNameId("SmallStone"), pilePos, 7);
 
 	auto colonist = createColonist(pilePos);
 	auto* memory = world->getComponent<Memory>(colonist);
@@ -994,10 +994,10 @@ TEST_F(ActionSystemGoalTest, CraftFetchFromPileTakesOnlyRemainingNeedLeavesRest)
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 2;
 	task->haulSourcePosition = pilePos;
-	task->haulTargetStorageId = 0;
+	task->haulDestinationId = 0;
 	task->haulTargetPosition = {5.0F, 0.0F};
 	task->haulFromInventory = false;
 	task->targetPosition = pilePos;
@@ -1033,14 +1033,12 @@ TEST_F(ActionSystemGoalTest, HarvestTakesFullYieldEvenAboveRecipeNeed) {
 	GoalTask craft;
 	craft.type = TaskType::Craft;
 	craft.owner = GoalOwner::CraftingGoalSystem;
-	craft.targetAmount = 2;
 	craft.status = GoalStatus::Blocked;
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
 	GoalTask harvest;
 	harvest.type = TaskType::Harvest;
 	harvest.owner = GoalOwner::CraftingGoalSystem;
-	harvest.targetAmount = 2; // the craft only needs 2
 	harvest.parentGoalId = craftId;
 	harvest.status = GoalStatus::Available;
 	const uint64_t harvestId = registry.createGoal(std::move(harvest));
@@ -1115,7 +1113,6 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = stationPos;
-	craft.targetAmount = 2;
 	craft.status = GoalStatus::Blocked;
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
@@ -1125,7 +1122,6 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	haul.destinationEntity = station;
 	haul.destinationPosition = stationPos;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId("SmallStone")};
-	haul.targetAmount = 2;
 	haul.parentGoalId = craftId;
 	haul.status = GoalStatus::Available;
 	const uint64_t haulId = registry.createGoal(std::move(haul));
@@ -1145,14 +1141,13 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = sourcePos;
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = false;
 	task->targetPosition = sourcePos; // phase 1: at the source
-	task->chainId = 42;
 	task->chainStep = 0;
 
 	// --- Phase 1: Pickup the loose stone ---
@@ -1184,8 +1179,6 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	EXPECT_EQ(inventory->getQuantity("SmallStone"), 0U) << "Craft delivery moves the stone out of the pack";
 	EXPECT_EQ(stationStore->getQuantity("SmallStone"), 1U) << "The stone now lives in the station store";
 	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal still wants a 2nd stone, not yet retired";
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 1U) << "Exactly one stone credited";
-	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft credited once";
 
 	// --- No double-count: re-running a deliver-from-inventory deposit with an EMPTY pack stages
 	// nothing (the first stone already left for the station). The colonist must fetch a 2nd unit. ---
@@ -1193,10 +1186,10 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = stationPos; // already here, no pickup
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = true; // deliver-from-inventory deposit
 	task->targetPosition = stationPos;
@@ -1207,9 +1200,49 @@ TEST_F(ActionSystemGoalTest, LooseFetchHaulCommitsToDepositAndCreditsCraftStatio
 
 	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal must survive an empty-pack deposit attempt";
 	EXPECT_EQ(stationStore->getQuantity("SmallStone"), 1U) << "Empty-pack deposit adds nothing to the station";
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 1U)
-		<< "An empty-pack deposit credits nothing (no double-count)";
-	EXPECT_EQ(registry.getGoal(craftId)->deliveredAmount, 1U) << "Parent craft not double-credited either";
+}
+
+// A pickup whose source another colonist took first collects nothing, so the haul ends at the source
+// instead of walking to storage to deposit an empty pack.
+TEST_F(ActionSystemGoalTest, PickupFromAGoneSourceEndsTheHaul) {
+	assets::AssetDefinition stoneDef;
+	stoneDef.defName = "SmallStone";
+	stoneDef.label = "Small Stone";
+	stoneDef.handsRequired = 1;
+	stoneDef.category = assets::ItemCategory::RawMaterial;
+	stoneDef.capabilities.carryable = assets::CarryableCapability{1};
+	stoneDef.itemProperties = assets::ItemProperties{};
+	stoneDef.itemProperties->stackSize = 10;
+	stoneDef.itemProperties->massKg = 1.5F;
+	assets::AssetRegistry::Get().registerTestDefinition(std::move(stoneDef));
+	world->getSystem<ActionSystem>().setTakeSourceCallback(
+		[](const std::string& /*defName*/, float /*x*/, float /*y*/, ActionSystem::SourceTake /*take*/, float /*seconds*/) {
+			return ActionSystem::SourceState::Gone;
+		}
+	);
+
+	const glm::vec2 sourcePos{1.0F, 1.0F};
+	const glm::vec2 storagePos{5.0F, 0.0F};
+	auto			colonist = createColonist(sourcePos);
+	const uint32_t	stoneId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
+	world->getComponent<Memory>(colonist)->rememberWorldEntity(sourcePos, stoneId, assets::AssetRegistry::Get().getCapabilityMask(stoneId));
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
+	task->haulQuantity = 1;
+	task->haulSourcePosition = sourcePos;
+	task->haulTargetPosition = storagePos;
+	task->targetPosition = sourcePos;
+
+	world->update(0.1F); // start Pickup
+	ASSERT_EQ(world->getComponent<Action>(colonist)->type, ActionType::Pickup) << "precondition: the pickup started";
+	world->update(1.0F); // complete
+
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("SmallStone"), 0U);
+	EXPECT_FALSE(task->isActive()) << "the haul ends at the source";
+	EXPECT_FALSE(world->getComponent<MovementTarget>(colonist)->active) << "no walk to storage";
 }
 
 // Regression: a loose fetch where the source pile sits right beside the crafting station --
@@ -1247,7 +1280,6 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 	craft.owner = GoalOwner::CraftingGoalSystem;
 	craft.destinationEntity = station;
 	craft.destinationPosition = stationPos;
-	craft.targetAmount = 1;
 	craft.status = GoalStatus::Blocked;
 	const uint64_t craftId = registry.createGoal(std::move(craft));
 
@@ -1257,7 +1289,6 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 	haul.destinationEntity = station;
 	haul.destinationPosition = stationPos;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId("SmallStone")};
-	haul.targetAmount = 1;
 	haul.parentGoalId = craftId;
 	haul.status = GoalStatus::Available;
 	const uint64_t haulId = registry.createGoal(std::move(haul));
@@ -1277,10 +1308,10 @@ TEST_F(ActionSystemGoalTest, LooseFetchPicksUpWhenSourceOverlapsStation) {
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "SmallStone";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("SmallStone");
 	task->haulQuantity = 1;
 	task->haulSourcePosition = sourcePos;
-	task->haulTargetStorageId = static_cast<uint64_t>(station);
+	task->haulDestinationId = static_cast<uint64_t>(station);
 	task->haulTargetPosition = stationPos;
 	task->haulFromInventory = false;
 	task->targetPosition = sourcePos;
@@ -1330,14 +1361,13 @@ TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock
 	world->addComponent<Position>(box, Position{boxPos});
 	world->addComponent<Inventory>(box, Inventory::createForStorage());
 
-	// An ordinary storage Haul goal (StorageGoalSystem, no chainId) wanting Wood in the box.
+	// An ordinary storage Haul goal (StorageGoalSystem) wanting Wood in the box.
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = box;
 	haul.destinationPosition = boxPos;
 	haul.acceptedDefNameIds = {assets::AssetRegistry::Get().getDefNameId("Wood")};
-	haul.targetAmount = 10;
 	haul.status = GoalStatus::Available;
 	const uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -1359,10 +1389,10 @@ TEST_F(ActionSystemGoalTest, CarryingAtSourceRedirectsToDepositInsteadOfDeadlock
 	task->type = TaskType::Haul;
 	task->state = TaskState::Arrived;
 	task->haulGoalId = haulId;
-	task->haulItemDefName = "Wood";
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
 	task->haulQuantity = 10;
 	task->haulSourcePosition = sourcePos;
-	task->haulTargetStorageId = static_cast<uint64_t>(box);
+	task->haulDestinationId = static_cast<uint64_t>(box);
 	task->haulTargetPosition = boxPos;
 	task->haulFromInventory = false;
 	task->targetPosition = sourcePos; // arrived at the source while carrying
@@ -1542,18 +1572,23 @@ class FellingTest : public ::testing::Test {
 		woodDef.itemProperties->massKg = 2.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
-		auto& action = world->registerSystem<ActionSystem>();
+		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		action.setDropResourceCallback(
-			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity) {
+			[this](const std::string& defName, float /*x*/, float /*y*/, uint32_t quantity, glm::vec2) {
 				++dropCalls;
 				lastDropDef = defName;
 				lastDropQty = quantity;
 			}
 		);
-		action.setRemoveEntityCallback([this](const std::string& defName, float /*x*/, float /*y*/) {
-			++removeCalls;
-			lastRemoveDef = defName;
-		});
+		action.setTakeSourceCallback(
+			[this](const std::string& defName, float /*x*/, float /*y*/, ActionSystem::SourceTake take, float /*seconds*/) {
+				if (take == ActionSystem::SourceTake::Remove) {
+					++removeCalls;
+					lastRemoveDef = defName;
+				}
+				return ActionSystem::SourceState::Ready;
+			}
+		);
 	}
 
 	void TearDown() override {
@@ -1932,13 +1967,14 @@ class LoosePileHaulTest : public ::testing::Test {
 		woodDef.itemProperties->massKg = 2.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(woodDef));
 
-		auto& action = world->registerSystem<ActionSystem>();
+		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
 		// Mirror GameScene: a drained pile is removed by its exact entity id (not a position
-		// scan), so two same-material piles within the match epsilon can never alias.
+		// scan), so two same-material piles can never alias. The game queues it and its drain
+		// destroys it the same way, after the update.
 		action.setRemoveEntityByIdCallback([this](EntityID entity) {
 			++removeCalls;
 			lastRemovedEntity = entity;
-			world->destroyEntity(entity);
+			pendingRemoval.push_back(entity);
 		});
 	}
 
@@ -1966,7 +2002,7 @@ class LoosePileHaulTest : public ::testing::Test {
 		auto entity = world->createEntity();
 		world->addComponent<Position>(entity, Position{pos});
 		world->addComponent<Appearance>(entity, Appearance{"Wood", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
-		world->addComponent<ResourceStack>(entity, ResourceStack{count});
+		makeLoosePile(*world, entity, assets::AssetRegistry::Get().getDefNameId("Wood"), pos, count);
 		return entity;
 	}
 
@@ -1985,12 +2021,72 @@ class LoosePileHaulTest : public ::testing::Test {
 
 		world->update(0.1F); // start
 		world->update(1.0F); // complete (Pickup duration 0.5s)
+		drainRemovals();
+	}
+
+	/// The game's deferred removal drain.
+	void drainRemovals() {
+		for (EntityID entity : pendingRemoval) {
+			destroyWorldEntity(*world, entity);
+		}
+		pendingRemoval.clear();
 	}
 
 	std::unique_ptr<World> world;
 	int					   removeCalls = 0;
 	EntityID			   lastRemovedEntity = kInvalidEntity;
+	std::vector<EntityID>  pendingRemoval;
 };
+
+// A two-hand good rides in the hands, so a pack with every slot taken by other goods doesn't stop
+// it. With empty hands and a full pack, the no-room gate offers Wood, and the real Withdraw and the
+// real ground Pickup each lift the armful the gate promised (weight binds: 10 kg of pack leaves 25 kg,
+// 10 Wood). A Withdraw that took nothing here ended the haul and the AI offered it again forever.
+TEST_F(LoosePileHaulTest, FullPackStillTakesATwoHandArmful) {
+	auto&		   registry = assets::AssetRegistry::Get();
+	const auto fillPack = [](Inventory& inventory) {
+		for (uint32_t slot = 0; slot < inventory.maxCapacity; ++slot) {
+			ASSERT_EQ(inventory.addItem("PackFiller" + std::to_string(slot), 1), 1U); // unregistered: 1 kg each
+		}
+		ASSERT_EQ(inventory.getSlotCount(), inventory.maxCapacity);
+		ASSERT_EQ(inventory.addableCount("Wood"), 0U) << "precondition: no pack slot takes Wood";
+	};
+	constexpr uint32_t kArmful = 10; // (35 kg - 10 kg of filler) / 2.5 kg
+
+	// Box-to-box pull leg: the Withdraw.
+	const glm::vec2 boxPos{1.0F, 1.0F};
+	const EntityID	box = world->createEntity();
+	world->addComponent<Position>(box, Position{boxPos});
+	world->addComponent<Inventory>(box, Inventory::createForStorage());
+	world->getComponent<Inventory>(box)->addItem("Wood", 30);
+
+	const EntityID puller = createColonist(boxPos);
+	auto*		   pullerInventory = world->getComponent<Inventory>(puller);
+	fillPack(*pullerInventory);
+	EXPECT_EQ(pickupUnitsThatFit(*pullerInventory, registry, "Wood", carriedCargoMassKg(*pullerInventory, registry)), kArmful)
+		<< "the gate offers the pull";
+
+	auto* task = world->getComponent<Task>(puller);
+	task->type = TaskType::Harvest;
+	task->state = TaskState::Arrived;
+	task->targetPosition = boxPos;
+	*world->getComponent<Action>(puller) = Action::Withdraw("Wood", UINT32_MAX, static_cast<uint64_t>(box), boxPos);
+	world->update(0.1F);
+	world->update(1.0F);
+	EXPECT_EQ(handHeldQuantity(*pullerInventory, "Wood"), kArmful) << "the Withdraw lifts the armful the gate promised";
+	EXPECT_EQ(world->getComponent<Inventory>(box)->getQuantity("Wood"), 30U - kArmful) << "the box gives up exactly that";
+
+	// Loose-pile haul leg: the ground Pickup.
+	const glm::vec2 pilePos{8.0F, 8.0F};
+	const EntityID	pile = spawnPile(16, pilePos);
+	const EntityID	hauler = createColonist(pilePos);
+	auto*			haulerInventory = world->getComponent<Inventory>(hauler);
+	fillPack(*haulerInventory);
+	EXPECT_EQ(pickupUnitsThatFit(*haulerInventory, registry, "Wood", carriedCargoMassKg(*haulerInventory, registry)), kArmful);
+	pickUpPile(hauler, pilePos);
+	EXPECT_EQ(handHeldQuantity(*haulerInventory, "Wood"), kArmful) << "the Pickup lifts the armful the gate promised";
+	EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 16U - kArmful);
+}
 
 // A 16-unit pile, colonist cap 35: the first Pickup lifts 14 (floor(35/2.5)) into the hands and
 // the pile drops to 2 with the entity still present; a second Pickup lifts the last 2, the stack
@@ -2026,38 +2122,127 @@ TEST_F(LoosePileHaulTest, ArmfulDrainsPileAcrossTwoPickupsThenRemoves) {
 	EXPECT_FALSE(world->isAlive(pile)) << "Pile entity destroyed once drained to zero";
 }
 
-// Two same-material piles sit on top of each other (within the 0.25 m match epsilon). Draining
-// ONE to zero must destroy that exact entity and leave the other intact -- a position-keyed
-// removal could orphan the emptied pile or delete the still-loaded one. Both piles here hold a
-// small count (5) so whichever findLoosePile matches first drains fully in one pickup, and the
-// removal must target that exact entity id; the other pile's count stays untouched.
-TEST_F(LoosePileHaulTest, TwoPilesAtSamePositionRemovesOnlyTheDrainedEntity) {
+// Two Wood piles in one 0.1 m cell share the world key a colonist remembers that spot by. Both stay
+// filed: the first pickup drains one and removes exactly it, the second pickup finds the other, and
+// only then is the cell empty. An index that let the later pile replace the earlier lost it for good.
+TEST_F(LoosePileHaulTest, TwoPilesInOneCellDrainOneAfterTheOther) {
 	const glm::vec2 pilePos{1.0F, 1.0F};
-	// Both within epsilon of each other and the pickup position. 5 < the 14-unit armful cap, so a
-	// single pickup empties whichever pile is matched first (no need to know view order up front).
-	EntityID pileA = spawnPile(5, pilePos);
-	EntityID pileB = spawnPile(5, {pilePos.x + 0.1F, pilePos.y});
+	const EntityID	pileA = spawnPile(5, pilePos);
+	const EntityID	pileB = spawnPile(5, {pilePos.x + 0.04F, pilePos.y});
+	const uint32_t	woodId = assets::AssetRegistry::Get().getDefNameId("Wood");
+	const auto&		piles = world->getSystem<ActionSystem>().loosePiles();
+	ASSERT_EQ(hashWorldEntity(pilePos, woodId), hashWorldEntity({pilePos.x + 0.04F, pilePos.y}, woodId));
+	ASSERT_EQ(piles.size(), 2U);
 
-	auto colonist = createColonist(pilePos);
-
-	pickUpPile(colonist, pilePos);
-
+	auto  colonist = createColonist(pilePos);
 	auto* inventory = world->getComponent<Inventory>(colonist);
-	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U) << "The matched pile's 5 units were lifted in one armful";
 
-	// Exactly one pile drained to zero and was removed by id; the other is fully intact.
-	const bool aDrained = !world->isAlive(pileA);
-	const EntityID drained = aDrained ? pileA : pileB;
-	const EntityID survivor = aDrained ? pileB : pileA;
+	// 5 is under the 14-unit armful cap, so one pickup empties whichever pile the index gives first.
+	pickUpPile(colonist, pilePos);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U);
+	const EntityID drained = world->isAlive(pileA) ? pileB : pileA;
+	const EntityID survivor = drained == pileA ? pileB : pileA;
+	EXPECT_EQ(removeCalls, 1);
+	EXPECT_EQ(lastRemovedEntity, drained) << "the removal names the pile that drained";
+	EXPECT_FALSE(world->isAlive(drained));
+	ASSERT_TRUE(world->isAlive(survivor));
+	EXPECT_EQ(world->getComponent<ResourceStack>(survivor)->quantity, 5U) << "the other pile is untouched";
+	EXPECT_EQ(piles.find(*world, woodId, pilePos), survivor) << "and still filed under the cell";
 
-	EXPECT_EQ(removeCalls, 1) << "Exactly one pile was removed";
-	EXPECT_EQ(lastRemovedEntity, drained) << "The removed entity is the one that drained to zero";
-	EXPECT_FALSE(world->isAlive(drained)) << "Drained pile destroyed";
+	inventory->leftHand.reset();
+	inventory->rightHand.reset();
+	pickUpPile(colonist, pilePos);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U);
+	EXPECT_EQ(removeCalls, 2);
+	EXPECT_EQ(lastRemovedEntity, survivor);
+	EXPECT_FALSE(world->isAlive(survivor));
+	EXPECT_EQ(piles.size(), 0U);
+}
 
-	ASSERT_TRUE(world->isAlive(survivor)) << "The other pile survives - not aliased by position";
-	auto* survivorStack = world->getComponent<ResourceStack>(survivor);
-	ASSERT_NE(survivorStack, nullptr);
-	EXPECT_EQ(survivorStack->quantity, 5U) << "Survivor's count is untouched";
+// A pile drained earlier in the same update stays filed until the removal drain runs. A second pickup
+// on that cell before then lifts from the live pile beside it, not 0 from the drained one (which also
+// forgot the cell's memory entry while a live pile was still filed there).
+TEST_F(LoosePileHaulTest, DrainedPileAwaitingRemovalDoesNotHideALivePile) {
+	const glm::vec2 pilePos{1.0F, 1.0F};
+	const EntityID	drained = spawnPile(5, pilePos);
+	const EntityID	live = spawnPile(5, {pilePos.x + 0.04F, pilePos.y});
+	const uint32_t	woodId = assets::AssetRegistry::Get().getDefNameId("Wood");
+	world->getComponent<ResourceStack>(drained)->quantity = 0;
+
+	EXPECT_EQ(world->getSystem<ActionSystem>().loosePiles().find(*world, woodId, pilePos), live);
+
+	auto  colonist = createColonist(pilePos);
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	pickUpPile(colonist, pilePos);
+	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 5U) << "the live pile pays";
+	EXPECT_FALSE(world->isAlive(live));
+}
+
+// The game files a dropped pile and unfiles it in its deferred removal drain through the same two
+// functions this fixture uses, whatever queued the removal: a drained pile, a dev kill, or an
+// entity that was never a pile.
+TEST_F(LoosePileHaulTest, DropFilesAPileAndTheDrainUnfilesIt) {
+	const glm::vec2 pilePos{3.0F, 3.0F};
+	const uint32_t	woodId = assets::AssetRegistry::Get().getDefNameId("Wood");
+	const auto&		piles = world->getSystem<ActionSystem>().loosePiles();
+
+	const EntityID pile = spawnPile(7, pilePos);
+	EXPECT_EQ(piles.find(*world, woodId, pilePos), pile);
+	EXPECT_EQ(world->getComponent<ResourceStack>(pile)->quantity, 7U);
+
+	const EntityID other = world->createEntity();
+	pendingRemoval = {other, pile};
+	drainRemovals();
+	EXPECT_FALSE(world->isAlive(pile));
+	EXPECT_FALSE(world->isAlive(other));
+	EXPECT_EQ(piles.find(*world, woodId, pilePos), kInvalidEntity);
+	EXPECT_EQ(piles.size(), 0U);
+}
+
+// The remembered pile is gone (another hauler emptied it) and a second Wood pile stands 0.2 m away,
+// inside the reach the world's source lookup gives a spawned source. The pickup misses the pile index,
+// so it takes nothing: the neighbour is neither removed nor paid out, the stale memory entry is
+// forgotten, and the haul ends instead of walking to storage empty.
+TEST_F(LoosePileHaulTest, PileIndexMissTakesNothingFromANeighbour) {
+	auto&					registry = assets::AssetRegistry::Get();
+	assets::AssetDefinition wood = *registry.getDefinition("Wood");
+	wood.capabilities.carryable = assets::CarryableCapability{1};
+	registry.registerTestDefinition(std::move(wood));
+	const uint32_t woodId = registry.getDefNameId("Wood");
+
+	assets::PlacementExecutor executor{registry};
+	world->getSystem<ActionSystem>().setTakeSourceCallback(
+		[&](const std::string& defName, float x, float y, ActionSystem::SourceTake take, float seconds) {
+			return takeWorldSource(executor, *world, pendingRemoval, defName, {x, y}, take, seconds);
+		}
+	);
+
+	const glm::vec2 rememberedAt{1.0F, 1.0F};
+	const EntityID	neighbour = spawnPile(5, {1.2F, 1.0F});
+	const EntityID	colonist = createColonist(rememberedAt);
+	auto*			memory = world->getComponent<Memory>(colonist);
+	memory->rememberWorldEntity(rememberedAt, woodId, registry.getCapabilityMask(woodId));
+
+	auto* task = world->getComponent<Task>(colonist);
+	task->type = TaskType::Haul;
+	task->state = TaskState::Arrived;
+	task->haulItemDefNameId = assets::AssetRegistry::Get().getDefNameId("Wood");
+	task->haulQuantity = 5;
+	task->haulSourcePosition = rememberedAt;
+	task->haulTargetPosition = {5.0F, 0.0F};
+	task->haulFromInventory = false;
+	task->targetPosition = rememberedAt;
+	task->chainStep = 0;
+
+	world->update(0.1F); // start Pickup
+	world->update(1.0F); // complete
+
+	EXPECT_TRUE(pendingRemoval.empty()) << "nothing is queued for removal";
+	ASSERT_TRUE(world->isAlive(neighbour));
+	EXPECT_EQ(world->getComponent<ResourceStack>(neighbour)->quantity, 5U) << "the neighbour keeps every unit";
+	EXPECT_EQ(handHeldQuantity(*world->getComponent<Inventory>(colonist), "Wood"), 0U);
+	EXPECT_FALSE(memory->knowsWorldEntity(rememberedAt, woodId)) << "the stale entry is forgotten";
+	EXPECT_FALSE(task->isActive()) << "the haul ends at the source";
 }
 
 // =============================================================================
@@ -2097,7 +2282,7 @@ class HandMaterialActionTest : public ::testing::Test {
 		plankDef.itemProperties->massKg = 0.5F;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(plankDef));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2148,7 +2333,6 @@ TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBoth
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
 	haul.destinationEntity = storage;
-	haul.targetAmount = 14;
 	haul.status = GoalStatus::Available;
 	uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -2179,7 +2363,6 @@ TEST_F(HandMaterialActionTest, DepositFromHandsBouncesStorageFullRemainderToBoth
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 6U);
 	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "Two-hand Wood never bounces into the backpack";
 
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 8U) << "Goal credited only the 8 that landed";
 
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U - 8U) << "No wood lost: 8 landed + 6 held == the original 14";
 }
@@ -2195,7 +2378,6 @@ TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothH
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::CraftingGoalSystem;
-	haul.targetAmount = 14;
 	haul.status = GoalStatus::Available;
 	uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -2220,7 +2402,6 @@ TEST_F(HandMaterialActionTest, DepositFromHandsToMissingStorageReturnsAllToBothH
 	EXPECT_EQ(inventory->leftHand->quantity, 14U);
 	EXPECT_EQ(inventory->rightHand->quantity, 14U) << "All 14 return mirrored across both hands";
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "Nothing lost when storage is gone";
-	EXPECT_EQ(registry.getGoal(haulId)->deliveredAmount, 0U) << "Destroyed storage credits nothing";
 }
 
 // A build site holds NO Inventory: a deposit records straight onto the blueprint's delivered[]
@@ -2243,7 +2424,6 @@ TEST_F(HandMaterialActionTest, DepositToBuildSiteRecordsOnManifestAndBouncesOver
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::ConstructionGoalSystem;
 	haul.destinationEntity = buildSite;
-	haul.targetAmount = 14;
 	haul.status = GoalStatus::Available;
 	uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -2276,66 +2456,15 @@ TEST_F(HandMaterialActionTest, DepositToBuildSiteRecordsOnManifestAndBouncesOver
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 4U);
 	EXPECT_EQ(inventory->getQuantity("Wood"), 0U) << "no surplus spilled into the backpack";
 
-	// The haul goal is credited only the 10 recorded and SURVIVES with leftover capacity (target 14,
-	// 10 delivered): the deposit retires a build-site haul goal only at availableCapacity() == 0, so
-	// the over-delivered surplus the colonist still carries can land on another open site next trip.
-	const auto* survivingGoal = registry.getGoal(haulId);
-	ASSERT_NE(survivingGoal, nullptr) << "an over-delivered haul goal keeps its leftover capacity, not removed";
-	EXPECT_EQ(survivingGoal->deliveredAmount, 10U) << "goal credited only the 10 recorded";
-	EXPECT_EQ(survivingGoal->availableCapacity(), 4U) << "14 target - 10 recorded = 4 capacity still open";
-}
-
-// The mirror of the over-delivery case: an EXACT delivery (haul goal target == the site's
-// requirement) fills the manifest and drains the goal to availableCapacity() == 0, so the deposit
-// removes it. Confirms the build-site deposit retires a satisfied haul goal rather than leaking it.
-TEST_F(HandMaterialActionTest, DepositToBuildSiteRemovesHaulGoalOnExactDelivery) {
-	auto& registry = GoalTaskRegistry::Get();
-
-	auto buildSite = world->createEntity();
-	world->addComponent<Structure>(buildSite, Structure{StructureKind::Foundation, /*graphId=*/0});
-	StructureBlueprint bp;
-	bp.phase = StructureBlueprint::BuildPhase::AwaitingMaterials;
-	bp.required = {{"Wood", 10}};
-	bp.workTotal = 20.0F;
-	world->addComponent<StructureBlueprint>(buildSite, bp);
-
-	GoalTask haul;
-	haul.type = TaskType::Haul;
-	haul.owner = GoalOwner::ConstructionGoalSystem;
-	haul.destinationEntity = buildSite;
-	haul.targetAmount = 10; // exactly the requirement
-	haul.status = GoalStatus::Available;
-	uint64_t haulId = registry.createGoal(std::move(haul));
-
-	auto  colonist = createColonist({0.0F, 0.0F});
-	auto* inventory = world->getComponent<Inventory>(colonist);
-	seatArmful(*inventory, 10);
-
-	auto* task = world->getComponent<Task>(colonist);
-	task->type = TaskType::Haul;
-	task->state = TaskState::Arrived;
-	task->haulGoalId = haulId;
-	task->targetPosition = {0.0F, 0.0F};
-
-	auto* action = world->getComponent<Action>(colonist);
-	*action = Action::Deposit("Wood", 10, static_cast<uint64_t>(buildSite), {0.0F, 0.0F});
-
-	world->update(0.1F); // start
-	world->update(2.0F); // complete
-
-	const auto* recorded = world->getComponent<StructureBlueprint>(buildSite);
-	ASSERT_NE(recorded, nullptr);
-	EXPECT_TRUE(recorded->materialsComplete()) << "10 recorded == 10 required";
-	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 0U) << "the whole armful was deposited, no bounce";
-	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "an exactly-filled haul goal (capacity 0) is removed";
+	// A deposit never touches goals: the manifest is the record, and ConstructionSystem retires
+	// what it satisfies on its own poll.
+	EXPECT_NE(registry.getGoal(haulId), nullptr);
 }
 
 // A storage haul is item-sized, not slot-count-capped. A 5-slot storage accepting
 // RawMaterial gets a 50-Wood armful (Wood stackSize 40): all 50 land, spilling across two
-// slots (40 + 10), NOT a 5-item trickle. Three slots stay free, so the storage-owned goal
-// stays open (its slot-count targetAmount of 5 must not retire it after one stack). This is
-// the regression the slot model exposed: storage badly under-filled because targetAmount was
-// the slot count, and availableCapacity() retired the goal after a single deposit.
+// slots (40 + 10), NOT a 5-item trickle, and the deposit leaves the goal alone (storage need is
+// counted in items at the root; a slot count once retired the goal after a single stack).
 TEST_F(HandMaterialActionTest, StorageHaulFillsAcrossStacksAndGoalSurvivesWhileSlotsFree) {
 	auto& registry = GoalTaskRegistry::Get();
 
@@ -2344,13 +2473,11 @@ TEST_F(HandMaterialActionTest, StorageHaulFillsAcrossStacksAndGoalSurvivesWhileS
 	storageInv.maxCapacity = 5; // five slots, empty
 	world->addComponent<Inventory>(storage, storageInv);
 
-	// A storage-owned haul goal. Its targetAmount mirrors the free-slot count (5) -- the
-	// signal under test is that this slot count does NOT cap the deposit or retire the goal.
+	// A storage-owned haul goal.
 	GoalTask haul;
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = storage;
-	haul.targetAmount = 5;
 	haul.status = GoalStatus::Available;
 	uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -2377,10 +2504,10 @@ TEST_F(HandMaterialActionTest, StorageHaulFillsAcrossStacksAndGoalSurvivesWhileS
 	ASSERT_NE(registry.getGoal(haulId), nullptr) << "Goal stays open: three slots are still free";
 }
 
-// A genuinely full storage retires its haul goal and accepts nothing more. The last slot here
-// is filled to Wood's 40 cap (5 slots x 40 = 200 already stored), so addItem accepts 0, the
-// whole armful bounces back, and the storage-owned goal is removed (no free slot remains).
-TEST_F(HandMaterialActionTest, FullStorageRetiresHaulGoalAndAcceptsNothing) {
+// A genuinely full storage accepts nothing more. The last slot here is filled to Wood's 40 cap
+// (5 slots x 40 = 200 already stored), so addItem accepts 0 and the whole armful bounces back.
+// StorageGoalSystem, not the deposit, retires the box's goal.
+TEST_F(HandMaterialActionTest, FullStorageAcceptsNothing) {
 	auto& registry = GoalTaskRegistry::Get();
 
 	auto	  storage = world->createEntity();
@@ -2394,7 +2521,6 @@ TEST_F(HandMaterialActionTest, FullStorageRetiresHaulGoalAndAcceptsNothing) {
 	haul.type = TaskType::Haul;
 	haul.owner = GoalOwner::StorageGoalSystem;
 	haul.destinationEntity = storage;
-	haul.targetAmount = 5;
 	haul.status = GoalStatus::Available;
 	uint64_t haulId = registry.createGoal(std::move(haul));
 
@@ -2417,7 +2543,6 @@ TEST_F(HandMaterialActionTest, FullStorageRetiresHaulGoalAndAcceptsNothing) {
 	auto* storedInv = world->getComponent<Inventory>(storage);
 	EXPECT_EQ(storedInv->getQuantity("Wood"), 200U) << "Full storage took nothing";
 	EXPECT_EQ(handHeldQuantity(*inventory, "Wood"), 14U) << "The whole armful bounced back, nothing lost";
-	EXPECT_EQ(registry.getGoal(haulId), nullptr) << "A genuinely full storage's goal is retired";
 }
 
 // A craft consumes its inputs from the STATION's store (where provisioning hauled them), not
@@ -2611,7 +2736,7 @@ class ActionSystemTimeTest : public ::testing::Test {
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(berryDef));
 
 		timeSystem = &world->registerSystem<TimeSystem>();
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2767,7 +2892,7 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		tree.capabilities.harvestable = cap;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2794,7 +2919,8 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		world->addComponent<Skills>(entity, std::move(skills));
 
 		Memory memory;
-		memory.rememberWorldEntity(treePos, "Flora_TestTree"); // string overload interns + masks
+		const uint32_t treeId = assets::AssetRegistry::Get().getDefNameId("Flora_TestTree");
+		memory.rememberWorldEntity(treePos, treeId, assets::AssetRegistry::Get().getCapabilityMask(treeId));
 		world->addComponent<Memory>(entity, std::move(memory));
 
 		Task task;
@@ -2803,7 +2929,7 @@ class ActionSystemHarvestTimeTest : public ::testing::Test {
 		task.targetPosition = treePos;
 		// startHarvestAction now locates the harvestable by id (the memory key), not by proximity,
 		// so the task must carry the key the evaluator would have stored for this tree.
-		task.harvestTargetEntityId = ecs::hashWorldEntity(treePos, registry.getDefNameId("Flora_TestTree"));
+		task.harvestTargetKey = ecs::hashWorldEntity(treePos, registry.getDefNameId("Flora_TestTree"));
 		task.harvestYieldDefNameId = registry.getDefNameId("TestWood");
 		world->addComponent<Task>(entity, std::move(task));
 
@@ -2844,7 +2970,7 @@ TEST_F(ActionSystemHarvestTimeTest, ConvertsDurabilityToSecondsAtSkillTen) {
 // Harvest locate-by-entity-id (NOT 0.5 m proximity) -- the phantom-harvest-loop fix
 // =============================================================================
 //
-// startHarvestAction must locate the harvestable by task.harvestTargetEntityId (the
+// startHarvestAction must locate the harvestable by task.harvestTargetKey (the
 // knownWorldEntities key the evaluator chose), not by re-scanning memory for an entity within
 // 0.5 m of task.targetPosition. The stabilization PR snaps a harvest target to an ADJACENT
 // reachable nav point (tree centers are navmesh holes), so task.targetPosition is offset from
@@ -2876,7 +3002,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		tree.capabilities.harvestable = cap;
 		assets::AssetRegistry::Get().registerTestDefinition(std::move(tree));
 
-		world->registerSystem<ActionSystem>();
+		world->registerSystem<ActionSystem>(kTestRngSeed);
 	}
 
 	void TearDown() override {
@@ -2884,7 +3010,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		world.reset();
 	}
 
-	/// A colonist whose Harvest task is keyed to the tree at `treePos` by harvestTargetEntityId,
+	/// A colonist whose Harvest task is keyed to the tree at `treePos` by harvestTargetKey,
 	/// while its targetPosition is the SNAPPED stand point `standPos` (>0.5 m from the tree).
 	/// Seeds memory with the tree so the lookup resolves.
 	EntityID createHarvesterTargetingId(glm::vec2 treePos, glm::vec2 standPos) {
@@ -2912,7 +3038,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 		task.type = TaskType::Harvest;
 		task.state = TaskState::Arrived;
 		task.targetPosition = standPos; // the snapped stand point, NOT the tree
-		task.harvestTargetEntityId = ecs::hashWorldEntity(treePos, treeDefNameId); // the memory key
+		task.harvestTargetKey = ecs::hashWorldEntity(treePos, treeDefNameId); // the memory key
 		task.harvestYieldDefNameId = registry.getDefNameId("TestWood");
 		world->addComponent<Task>(entity, std::move(task));
 
@@ -2924,7 +3050,7 @@ class ActionSystemHarvestLocateTest : public ::testing::Test {
 
 // The keystone: the tree is 5 m from the snapped stand point (10x the old 0.5 m tolerance), yet
 // the harvest must still start, sourcing from the tree's position -- proving the locate keys on
-// harvestTargetEntityId, not proximity to targetPosition.
+// harvestTargetKey, not proximity to targetPosition.
 TEST_F(ActionSystemHarvestLocateTest, HarvestsByEntityIdWhenTargetPositionIsSnappedAway) {
 	const glm::vec2 treePos{20.0F, 20.0F};
 	const glm::vec2 standPos{25.0F, 20.0F}; // 5 m away -- far outside the old 0.5 m proximity window
@@ -2969,6 +3095,258 @@ TEST_F(ActionSystemHarvestLocateTest, VanishedTargetIdClearsActionWithoutGrabbin
 	auto* action = world->getComponent<Action>(harvester);
 	EXPECT_EQ(action->type, ActionType::None)
 	    << "vanished target id clears the action; the nearby decoy must NOT be chopped";
+}
+
+// =============================================================================
+// Construction clear harvest
+// =============================================================================
+// A construction clear Harvest of a regrowing bush (a berry bush inside a foundation footprint).
+class ClearHarvestTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		GoalTaskRegistry::Get().clear();
+		world = std::make_unique<World>();
+		auto& registry = assets::AssetRegistry::Get();
+
+		assets::AssetDefinition berry;
+		berry.defName = "TestBerry";
+		berry.label = "Test Berry";
+		berry.handsRequired = 1;
+		berry.capabilities.carryable = assets::CarryableCapability{1};
+		berry.itemProperties = assets::ItemProperties{};
+		berry.itemProperties->stackSize = 200;
+		berry.itemProperties->massKg = 0.15F;
+		registry.registerTestDefinition(std::move(berry));
+
+		assets::AssetDefinition bush;
+		bush.defName = "Flora_TestBerryBush";
+		bush.label = "Test Berry Bush";
+		assets::HarvestableCapability cap;
+		cap.yieldDefName = "TestBerry";
+		cap.amountMin = 3; // deterministic yield, no RNG
+		cap.amountMax = 3;
+		cap.durability = 10.0F;
+		cap.destructive = false;
+		cap.regrowthTime = 60.0F;
+		bush.capabilities.harvestable = cap;
+		registry.registerTestDefinition(std::move(bush));
+
+		// A pooled shrub (WoodyBush-style): non-destructive with a finite resource pool.
+		assets::AssetDefinition shrub;
+		shrub.defName = "Flora_TestPoolShrub";
+		shrub.label = "Test Pool Shrub";
+		cap.regrowthTime = 0.0F;
+		cap.totalResourceMin = 5;
+		cap.totalResourceMax = 5;
+		shrub.capabilities.harvestable = cap;
+		registry.registerTestDefinition(std::move(shrub));
+
+		auto& action = world->registerSystem<ActionSystem>(kTestRngSeed);
+		action.setDecrementResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t requested) {
+			const uint32_t removed = std::min(requested, pool);
+			pool -= removed;
+			return ActionSystem::ResourceDraw{removed, pool == 0};
+		});
+		// The bush as the world holds it: taking it changes what the next finisher finds.
+		action.setTakeSourceCallback(
+			[this](const std::string& /*defName*/, float /*x*/, float /*y*/, ActionSystem::SourceTake take, float /*seconds*/) {
+				const ActionSystem::SourceState was = sourceState;
+				if (was == ActionSystem::SourceState::Gone) {
+					return was;
+				}
+				if (take == ActionSystem::SourceTake::Remove) {
+					++removeCalls;
+					sourceState = ActionSystem::SourceState::Gone;
+				} else if (take == ActionSystem::SourceTake::Regrow && was == ActionSystem::SourceState::Ready) {
+					++cooldownCalls;
+					sourceState = ActionSystem::SourceState::OnCooldown;
+				}
+				return was;
+			}
+		);
+		action.setDropResourceCallback([this](const std::string& /*defName*/, float /*x*/, float /*y*/, uint32_t qty, glm::vec2) {
+			++dropCalls;
+			droppedQuantity += qty;
+		});
+	}
+
+	void TearDown() override {
+		GoalTaskRegistry::Get().clear();
+		assets::AssetRegistry::Get().clearDefinitions();
+		world.reset();
+	}
+
+	/// A colonist standing at the bush with a Harvest task serving the site's clear goal, as
+	/// ConstructionSystem::emitClearGoals emits it (child of the umbrella Build goal).
+	EntityID createClearingColonist(const char* sourceDefName = "Flora_TestBerryBush") {
+		auto& assetRegistry = assets::AssetRegistry::Get();
+		auto& goals = GoalTaskRegistry::Get();
+
+		site = world->createEntity();
+		GoalTask umbrella;
+		umbrella.type = TaskType::Build;
+		umbrella.owner = GoalOwner::ConstructionGoalSystem;
+		umbrella.destinationEntity = site;
+		umbrella.status = GoalStatus::Blocked;
+		const uint64_t umbrellaId = goals.createGoal(std::move(umbrella));
+
+		// Shaped as ConstructionSystem::emitClearGoals emits it: a footprint, no item.
+		const uint32_t berryId = assetRegistry.getDefNameId("TestBerry");
+		GoalTask	   clear;
+		clear.type = TaskType::Harvest;
+		clear.owner = GoalOwner::ConstructionGoalSystem;
+		clear.destinationEntity = site;
+		clear.clearFootprint = FootprintBounds{bushPos - glm::vec2{2.0F, 2.0F}, bushPos + glm::vec2{2.0F, 2.0F}};
+		clear.destinationPosition = clear.clearFootprint->center();
+		clear.parentGoalId = umbrellaId;
+		clear.status = GoalStatus::Available;
+		clearGoalId = goals.createGoal(std::move(clear));
+		return addHarvester(clearGoalId, sourceDefName);
+	}
+
+	/// A colonist standing at the bush with a Harvest task on `goalId`.
+	EntityID addHarvester(uint64_t goalId, const char* sourceDefName = "Flora_TestBerryBush") {
+		auto&		   assetRegistry = assets::AssetRegistry::Get();
+		const uint32_t berryId = assetRegistry.getDefNameId("TestBerry");
+		auto		   entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{bushPos + glm::vec2{1.0F, 0.0F}});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{{0.0F, 0.0F}, 2.0F, false});
+		world->addComponent<NeedsComponent>(entity, NeedsComponent::createDefault());
+		world->addComponent<Inventory>(entity, Inventory::createForColonist());
+		world->addComponent<Action>(entity, Action{});
+
+		const uint32_t bushId = assetRegistry.getDefNameId(sourceDefName);
+		Memory memory;
+		memory.rememberWorldEntity(bushPos, bushId, assetRegistry.getCapabilityMask(bushId));
+		world->addComponent<Memory>(entity, std::move(memory));
+
+		Task task;
+		task.type = TaskType::Harvest;
+		task.state = TaskState::Arrived;
+		task.targetPosition = bushPos + glm::vec2{1.0F, 0.0F};
+		task.harvestGoalId = goalId;
+		task.harvestTargetKey = hashWorldEntity(bushPos, bushId);
+		task.harvestYieldDefNameId = berryId;
+		world->addComponent<Task>(entity, std::move(task));
+		return entity;
+	}
+
+	void harvest() {
+		world->update(0.1F); // start
+		world->update(5.0F); // complete (durability 10 at the untrained rate)
+	}
+
+	const glm::vec2		   bushPos{10.0F, 10.0F};
+	std::unique_ptr<World> world;
+	EntityID			   site = kInvalidEntity;
+	uint64_t			   clearGoalId = 0;
+	int					   removeCalls = 0;
+	int					   cooldownCalls = 0;
+	int					   dropCalls = 0;
+	uint32_t			   droppedQuantity = 0;
+	uint32_t			   pool = 5;
+	ActionSystem::SourceState sourceState = ActionSystem::SourceState::Ready;
+};
+
+// Two colonists finish clearing the same bush in one update. The world pays the bush's yield once:
+// the first to complete takes it, the second finds it gone and gets nothing.
+TEST_F(ClearHarvestTest, TwoFinishersOnOneBushShareASingleYield) {
+	auto first = createClearingColonist();
+	auto second = addHarvester(clearGoalId);
+	harvest();
+
+	const uint32_t total = world->getComponent<Inventory>(first)->getQuantity("TestBerry") +
+						   world->getComponent<Inventory>(second)->getQuantity("TestBerry");
+	EXPECT_EQ(total, 3U) << "one yield between them";
+	EXPECT_EQ(removeCalls, 1);
+	EXPECT_EQ(dropCalls, 0) << "the late finisher drops nothing either";
+	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
+	EXPECT_FALSE(world->getComponent<Memory>(second)->knowsWorldEntity(bushPos, bushId)) << "the late finisher forgets it";
+}
+
+// A bush on its regrowth cooldown has nothing to give: cutting it pays nothing and leaves its timer
+// alone, and clearing it removes it, still with no yield.
+TEST_F(ClearHarvestTest, RegrowingBushPaysNoYield) {
+	GoalTask cut;
+	cut.type = TaskType::Harvest;
+	cut.destinationEntity = world->createEntity();
+	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
+	cut.status = GoalStatus::Available;
+	cut.owner = GoalOwner::CraftingGoalSystem;
+	auto cutter = addHarvester(GoalTaskRegistry::Get().createGoal(std::move(cut)));
+
+	sourceState = ActionSystem::SourceState::OnCooldown;
+	harvest();
+	EXPECT_EQ(world->getComponent<Inventory>(cutter)->getQuantity("TestBerry"), 0U) << "a cut of a regrowing bush";
+	EXPECT_EQ(cooldownCalls, 0) << "its regrowth timer is left alone";
+
+	auto clearer = createClearingColonist();
+	harvest();
+	EXPECT_EQ(removeCalls, 1) << "the clear still removes it";
+	EXPECT_EQ(world->getComponent<Inventory>(clearer)->getQuantity("TestBerry"), 0U) << "a clear of a regrowing bush";
+	EXPECT_EQ(dropCalls, 0) << "and nothing drops";
+}
+
+// Clearing a footprint removes what stands in it: a regrowing bush is removed (not put on a
+// regrowth cooldown it would survive), the colonist yields once, and nothing drops to the ground.
+TEST_F(ClearHarvestTest, ClearHarvestOfRegrowingBushRemovesItOnce) {
+	auto colonist = createClearingColonist();
+	harvest();
+
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 3U) << "one yield, into the pack";
+	EXPECT_EQ(removeCalls, 1) << "the bush is removed from the footprint";
+	EXPECT_EQ(cooldownCalls, 0) << "a removed bush gets no regrowth cooldown";
+	EXPECT_EQ(dropCalls, 0) << "a one-hand yield that fits drops nothing";
+	const uint32_t bushId = assets::AssetRegistry::Get().getDefNameId("Flora_TestBerryBush");
+	EXPECT_FALSE(world->getComponent<Memory>(colonist)->knowsWorldEntity(bushPos, bushId)) << "the harvester forgets it";
+	EXPECT_NE(GoalTaskRegistry::Get().getGoal(clearGoalId), nullptr) << "the clear goal stands until the footprint is clear";
+	EXPECT_TRUE(GoalTaskRegistry::Get().getGoalsOfType(TaskType::Haul).empty()) << "a clear spawns no Haul";
+}
+
+// A clear doesn't depend on carry room: with the pack full, the bush is still removed, the whole
+// yield drops as one pile.
+TEST_F(ClearHarvestTest, ClearWithFullPackRemovesBushAndDropsTheYield) {
+	auto  colonist = createClearingColonist();
+	auto* inventory = world->getComponent<Inventory>(colonist);
+	inventory->addItem("TestBerry", ecs::cargoUnitsThatFit(*inventory, assets::AssetRegistry::Get(), "TestBerry"));
+	ASSERT_EQ(ecs::cargoUnitsThatFit(*inventory, assets::AssetRegistry::Get(), "TestBerry"), 0U) << "precondition: pack full";
+	harvest();
+
+	EXPECT_EQ(removeCalls, 1) << "the bush is removed with nothing carried off";
+	EXPECT_EQ(dropCalls, 1);
+	EXPECT_EQ(droppedQuantity, 3U) << "the whole yield drops as one pile";
+}
+
+// A pooled shrub is cleared in one pass: the clear takes the whole pool and removes the shrub,
+// instead of one cut per pass until depleted. The pack takes all that fits, not one cut's yield (3
+// here), so an empty-handed colonist pockets the whole pool of 5 and nothing drops.
+TEST_F(ClearHarvestTest, PoolSourceClearRemovesShrubInOnePass) {
+	auto colonist = createClearingColonist("Flora_TestPoolShrub");
+	harvest();
+
+	EXPECT_EQ(removeCalls, 1) << "the shrub is removed on the first clear";
+	EXPECT_EQ(pool, 0U) << "the whole pool was taken";
+	EXPECT_EQ(world->getComponent<Inventory>(colonist)->getQuantity("TestBerry"), 5U) << "all of it fits in the pack";
+	EXPECT_EQ(dropCalls, 0) << "nothing drops when it all fits";
+}
+
+// A pool pays only while its shrub stands: one removed some other way (another colonist's clear)
+// gives a cut finishing on it nothing, and its pool is not drawn.
+TEST_F(ClearHarvestTest, PoolOfAGoneShrubPaysNothing) {
+	GoalTask cut;
+	cut.type = TaskType::Harvest;
+	cut.destinationEntity = world->createEntity();
+	cut.yieldDefNameId = assets::AssetRegistry::Get().getDefNameId("TestBerry");
+	cut.status = GoalStatus::Available;
+	cut.owner = GoalOwner::CraftingGoalSystem;
+	auto cutter = addHarvester(GoalTaskRegistry::Get().createGoal(std::move(cut)), "Flora_TestPoolShrub");
+
+	sourceState = ActionSystem::SourceState::Gone;
+	harvest();
+	EXPECT_EQ(world->getComponent<Inventory>(cutter)->getQuantity("TestBerry"), 0U);
+	EXPECT_EQ(pool, 5U) << "the pool is not drawn";
+	EXPECT_EQ(dropCalls, 0);
 }
 
 } // namespace ecs::test

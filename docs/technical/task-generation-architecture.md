@@ -2,7 +2,7 @@
 
 **Status:** Technical Design
 **Created:** 2025-01-02
-**Related:** [Task Registry System](../design/game-systems/colonists/task-registry.md), [Crafting & Material Provisioning](./crafting-provisioning-architecture.md)
+**Related:** [Task Registry System](../design/game-systems/colonists/task-registry.md), [Crafting & Material Provisioning](./crafting-provisioning-architecture.md), [Task Claims](./task-claims.md)
 
 ---
 
@@ -50,21 +50,14 @@ float getDisplayPriority(const GlobalTask& task, glm::vec2 referencePoint) {
 ### Colonist Selection Priority (AI)
 
 When a colonist picks their next task:
-1. **Filter:** Only tasks this colonist knows about + has enabled + has skill for
-2. **Score:** Base + distance + skill bonus + chain bonus + in-progress bonus
-3. **Select:** Highest scoring task
+1. **Filter:** Only goals this colonist knows a source for, has enabled, and has the skill for, with
+   quantity left after other colonists' claims ([Task Claims](./task-claims.md))
+2. **Score:** a lexicographic (tier, score) key: tier is categorical and compared first, score
+   (distance, skill, task age, in-progress hysteresis) orders options within a tier
+3. **Select:** The best key wins
 
-```cpp
-// AI ordering - full formula with all bonuses
-float getSelectionPriority(const GlobalTask& task, const Colonist& colonist) {
-    float base = getWorkTypeTierPriority(task.type);
-    float distanceBonus = calculateDistanceBonus(colonist.position, task.position);
-    float skillBonus = colonist.skills.getLevel(task.requiredSkill) * 10.0f;
-    float chainBonus = (colonist.currentChainId == task.chainId) ? 2000.0f : 0.0f;
-    float inProgressBonus = (colonist.currentTaskId == task.id) ? 200.0f : 0.0f;
-    return base + distanceBonus + skillBonus + chainBonus + inProgressBonus;
-}
-```
+The tier ladder, score factors, and why a mid-chain provisioning task is tier 4 rather than a
+score bonus are in [Colonist Task Arbitration](./colonist-task-arbitration.md).
 
 ---
 
@@ -91,7 +84,7 @@ A task requires BOTH:
 | Source | Goal systems (Storage, Needs, Crafting) | Task + reference point | Task + colonist state |
 | Changes when | Goal created/fulfilled | Reference point moves | Colonist moves/changes |
 | Includes colonist bonuses | N/A | No | Yes |
-| Update frequency | On goal events | 4-10 Hz | 0.5s per colonist |
+| Update frequency | Goal-system poll, every 30 or 60 frames | Global task list every 0.2 s of real time | On an event, else every 0.5 s of real time |
 
 ---
 
@@ -101,7 +94,7 @@ A task requires BOTH:
 
 **How it works:**
 ```cpp
-// Every 0.5s per colonist
+// Each time a colonist decides
 void buildDecisionTrace(EntityID colonist, ...) {
     for (auto& knownEntity : memory.getAll()) {
         if (hasWorkCapability(knownEntity)) {
@@ -120,7 +113,7 @@ void buildDecisionTrace(EntityID colonist, ...) {
 **Cons:**
 - **No global view:** Cannot show "all colony tasks" in UI
 - **Redundant work:** Multiple colonists scan same entities
-- **No reservation:** Two colonists might walk to same target
+- **No claims:** Two colonists might walk to same target
 
 **Verdict:** Good for per-colonist scoring, but insufficient for global visibility.
 
@@ -144,7 +137,7 @@ void TaskGenerationSystem::update() {
 **Pros:**
 - Global task list available for UI
 - Single source of truth
-- Easy reservation system
+- One place to look up who is working what
 
 **Cons:**
 - **Stale between scans:** 0.5s gaps noticeable
@@ -154,59 +147,43 @@ void TaskGenerationSystem::update() {
 
 ---
 
-### 3. Event-Driven Generation
-
-**How it works:**
-```cpp
-// Called when Memory changes
-void Memory::onEntityDiscovered(entity) {
-    TaskRegistry::Get().addTask(entity, ownerColonist);
-}
-```
-
-**Pros:**
-- **Always fresh:** Tasks update immediately
-- **No wasted work:** Only updates what changed
-- **Global list available:** For UI
-
-**Cons:**
-- **Event wiring complexity:** Every Memory change must notify registry
-
-**Verdict:** Best for existence tracking.
-
----
-
-### 4. Hybrid Architecture (Recommended)
+### 3. Hybrid Architecture (Recommended)
 
 **Core Insight:**
-- Event-driven for *existence*
+- Goal systems own *existence*, re-resolving against colony memory on a throttle
 - On-demand for *colonist selection priority*
 - Throttled for *UI display priority*
 
 ```
-Memory Events (discover/forget)
+Goal systems (Storage, Crafting, Construction, Build)
+  poll colony memory on a throttle
          │
-         ▼ [EVENT-DRIVEN]
+         ▼
 ┌─────────────────────────────────────┐
-│  Global Task Registry               │
-│  - What tasks EXIST                 │
-│  - Which colonists know each task   │
-│  - Reservation status               │
+│  GoalTaskRegistry                   │
+│  - What goals EXIST                 │
+│  - Accepted items, need, status     │
 │  - Base priority (work type tier)   │
 │  - NO colonist-specific bonuses     │
+│  - NO claims (those live on tasks)  │
 └─────────────────────────────────────┘
          │
          ├──────────────────────────────────┐
          │                                  │
-         ▼ [ON-DEMAND at selection]         ▼ [THROTTLED 4-10 Hz]
+         ▼ [ON-DEMAND at selection]         ▼ [EVERY 0.2 s, REAL TIME]
 ┌─────────────────────────────┐    ┌─────────────────────────────┐
 │  Colonist Selection         │    │  UI Display                 │
-│  - Filter by this colonist  │    │  - All tasks (any colonist) │
-│  - Full priority formula    │    │  - Simple ordering          │
-│  - Skill/chain/in-progress  │    │  - Distance from reference  │
+│  - Filter by this colonist  │    │  - All goals (any colonist) │
+│  - Subtract others' claims  │    │  - Simple ordering          │
+│  - (tier, score) key        │    │  - Distance from reference  │
 │  - When colonist needs task │    │  - No colonist bonuses      │
 └─────────────────────────────┘    └─────────────────────────────┘
 ```
+
+Memory never notifies the registry. An event-push design (Memory calling the registry on every
+discover and forget) was specified here earlier and never built; polling replaced it. Goal systems
+already scan bounded, capability-indexed memories on a throttle, and the cost of a stale goal is a
+`NoSource` status for one poll interval, so the event wiring buys nothing worth its coupling.
 
 ---
 
@@ -258,73 +235,32 @@ Player can choose:
 
 | Component | Update Trigger | Frequency |
 |-----------|----------------|-----------|
-| Task Registry (existence) | Memory events | Immediate |
-| Colonist Selection Priority | Task selection | 0.5s (kReEvalInterval) |
-| UI Display Priority | UI frame | 4-10 Hz (100-250ms) |
-| Reservations | Task claim/release | Immediate |
+| Goal existence and source resolution | Goal-system poll | Frame counts: storage and crafting every 60 frames, place goals and construction every 30 (1 s and 0.5 s at 60 fps, half that at 120) |
+| Colonist Selection Priority | Task selection | On an event, else every 0.5 s of real time (`kReEvalInterval`); see [When a colonist decides](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides) |
+| UI Display Priority | `GlobalTaskListModel::refresh` | Every 0.2 s of real time; the resources panel every 0.5 s, the selected colonist's task list on each of its decisions |
+| Claim index | Derived from tasks | Rebuilt at the first colonist decision of each AI update ([Task Claims](./task-claims.md)) |
 
 ---
 
-## Event Wiring Requirements
+## Goal Sources and Polling
 
 ### Goal Sources (What Creates Tasks)
 
 | Goal System | Task Type | Creates Task When | Removes Task When |
 |-------------|-----------|-------------------|-------------------|
-| StorageSystem | Haul | Storage has capacity | Storage filled completely |
-| CraftingSystem | Haul / Harvest | Recipe queued, needs materials (provisioned into the station store, lazy-haul + availability-resolved) | Recipe completed/cancelled |
+| StorageGoalSystem | Haul (+ stocking Harvest) | Storage has rules; a stocking Harvest per named rule whose minimum is unmet while a source is known | Stocking Harvest: its minimum met or no source known. Umbrella Haul: rules removed or storage gone (a full box keeps it) |
+| CraftingGoalSystem | Haul / Harvest | Recipe queued, needs materials (provisioned into the station store, lazy-haul + availability-resolved) | Recipe completed/cancelled |
 | NeedsSystem | FulfillNeed | Need below threshold | Need satisfied |
-| BuildSystem | Haul/Place | Build order placed, needs materials | Build completed/cancelled |
+| ConstructionSystem / BuildGoalSystem | Harvest / Haul / Build / PlacePackaged | Blueprint placed, needs clearing or materials, packaged item placed | Build completed/cancelled |
 
-### Events That Update Task Availability
+### What changes availability
 
-| Source System | Event | Registry Action |
-|---------------|-------|-----------------|
-| Memory | Entity discovered | Update task availability (more fulfillment options) |
-| Memory | Entity forgotten | Update task availability (fewer options) |
-| ActionSystem | Item reserved | Mark item unavailable for other colonists |
-| ActionSystem | Item delivered | Release reservation, update goal progress |
-| Goal system | Goal fulfilled | Remove task entirely |
-
-### Implementation Pattern
-
-```cpp
-// Goal systems CREATE tasks
-class StorageSystem {
-    void onStorageCapacityAvailable(EntityID storage, const std::vector<uint32_t>& acceptedTypes) {
-        // Storage wants items - create goal-level task
-        TaskRegistry::Get().createGoalTask(GoalTask{
-            .destination = storage,
-            .type = TaskType::Haul,
-            .acceptsDefNameIds = acceptedTypes
-        });
-    }
-
-    void onStorageFilled(EntityID storage) {
-        // Storage full - remove the task (goal achieved)
-        TaskRegistry::Get().removeGoalTask(storage, TaskType::Haul);
-    }
-};
-
-// Memory updates task AVAILABILITY (not existence)
-class Memory {
-    void addWorldEntity(uint64_t posHash, const DiscoveredEntity& entity) {
-        // Existing logic...
-        worldEntities[posHash].push_back(entity);
-
-        // Notify registry: colonist now knows about potential fulfillment option
-        // This does NOT create a task - it makes existing tasks more fulfillable
-        TaskRegistry::Get().onFulfillmentOptionDiscovered(ownerEntityId, entity);
-    }
-
-    void forgetEntity(uint64_t posHash, uint32_t defNameId) {
-        // Existing logic...
-
-        // Notify registry: colonist forgot about this fulfillment option
-        TaskRegistry::Get().onFulfillmentOptionForgotten(ownerEntityId, posHash, defNameId);
-    }
-};
-```
+| Change | Picked up by |
+|--------|--------------|
+| A colonist discovers or forgets a source | The owning goal system's next poll (NoSource goals re-resolve, stale ones retire) and the colonist's next evaluation |
+| A colonist accepts, advances, or abandons work | Claims on its task, read through the claim index |
+| Items land at a destination | `GoalTaskRegistry::remainingNeed`, reading the destination's live contents |
+| A goal is fulfilled or cancelled | The goal system removes it |
 
 ---
 
@@ -352,16 +288,16 @@ Compare to old discovery-driven model:
 |--------|-------------|-------|
 | Memory | Discovered entities | ~10,000 per colonist (LRU) |
 | Tasks | Active goals | ~200 (storage + crafting + needs) |
-| Reservations | Colonists actively working | ~50 (one per colonist max) |
+| Claims | Colonists actively working | a handful per working colonist, on its task |
 
 ### Per-Frame Costs
 
 | Operation | Frequency | Cost |
 |-----------|-----------|------|
-| Goal event processing | Per storage/craft/need change | O(1) |
-| Memory event processing | Per discovery | O(1) |
-| Per-colonist scoring | 0.5s per colonist | O(T_goals) — now ~200, not ~100,000 |
-| UI aggregation | 10 Hz | O(T_goals) sort — trivial at ~200 tasks |
+| Goal-system poll | Every 30 or 60 frames, per goal system | O(goals x matching sources, via capability index) |
+| Claim index rebuild | Per AI update with evaluations | O(colonists x claims per task) |
+| Per-colonist scoring | Each decision: every frame while the colonist acts, is idle, or walks a wander; else on an event or every 0.5 s | O(T_goals), about 200, not about 100,000 |
+| UI aggregation | Every 0.2 s of real time | O(T_goals) sort, small at about 200 tasks |
 
 ---
 
@@ -400,11 +336,12 @@ Alice also picks harvest (tier wins), but with less skill bonus.
 |----------|--------|
 | How do we know what tasks exist? | Goal systems create tasks (Storage, Crafting, Needs, Build) |
 | What role does Memory play? | Provides fulfillment options for goals (what items colonists know about) |
-| Where do we store task existence? | GlobalTaskRegistry (goal-level tasks) |
+| Where do we store task existence? | GoalTaskRegistry (goal-level tasks) |
+| How do colonists avoid duplicate work? | Claims on their own tasks, read through a derived index ([Task Claims](./task-claims.md)) |
 | How many tasks can exist? | ~200 (bounded by goals, not discovered entities) |
 | Does UI include colonist bonuses? | **No** — just base priority + distance |
-| When do we calculate colonist priority? | At selection time (0.5s interval) |
-| How does UI stay ordered? | Throttled refresh (4-10 Hz) by tier + distance |
+| When do we calculate colonist priority? | At selection time, each time the colonist decides ([When a colonist decides](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides)) |
+| How does UI stay ordered? | A refresh every 0.2 s of real time, by tier + distance |
 | How do we scale to infinite world? | Tasks bounded by goals; Memory bounded by LRU per colonist |
 
 ---

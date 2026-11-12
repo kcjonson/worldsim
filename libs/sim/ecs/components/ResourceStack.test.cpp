@@ -1,5 +1,7 @@
 #include "ResourceStack.h"
 
+#include "../GoalTaskRegistry.h"
+
 #include <gtest/gtest.h>
 
 #include <cstdint>
@@ -84,6 +86,18 @@ TEST(ResourcePileDropsTests, OverflowPilesOfWideItemNeverOverlap) {
 	const auto plan = resourcePileDrops(10, 200, {0.0F, 0.0F}, kWoodRadius, {}); // 20 piles -> rings 0,1,2
 	ASSERT_EQ(plan.spawns.size(), 20U);
 	EXPECT_EQ(sumQty(plan), 200U);
+	expectSpawnsClear(plan, kWoodRadius);
+}
+
+// Ground a site will be built on is never used, whatever ring it falls on: a drop inside a footprint
+// lands just past its edge.
+TEST(ResourcePileDropsTests, NeverDropsOnKeptGround) {
+	const auto onSite = [](glm::vec2 p) { return p.x >= -2.0F && p.x <= 2.0F && p.y >= -2.0F && p.y <= 2.0F; };
+	const auto plan	  = resourcePileDrops(10, 60, {0.0F, 0.0F}, kWoodRadius, {}, {}, onSite);
+	EXPECT_EQ(sumQty(plan), 60U);
+	for (const auto& [pos, qty] : plan.spawns) {
+		EXPECT_FALSE(onSite(pos)) << "a pile at (" << pos.x << ", " << pos.y << ")";
+	}
 	expectSpawnsClear(plan, kWoodRadius);
 }
 
@@ -173,13 +187,23 @@ TEST(ResourcePileDropsTests, RingTopUpsFillNearestFirst) {
 	EXPECT_EQ(plan.topUps[1].second, 10U);
 }
 
-// With no ground anywhere the search still ends, on the first ring past the walkable search.
-TEST(ResourcePileDropsTests, NoGroundAnywhereStillLandsPastWalkableSearch) {
-	const auto plan = resourcePileDrops(40, 10, {0.0F, 0.0F}, kWoodRadius, {}, [](glm::vec2) { return false; });
+// With no ground anywhere the search still ends: the goods land where they came from.
+TEST(ResourcePileDropsTests, NoGroundAnywhereLandsAtTheFallback) {
+	const auto plan =
+		resourcePileDrops(40, 10, {0.0F, 0.0F}, kWoodRadius, {}, [](glm::vec2) { return false; }, {}, glm::vec2{6.0F, -2.0F});
 	ASSERT_EQ(plan.spawns.size(), 1U);
 	EXPECT_EQ(plan.spawns[0].second, 10U);
-	const float step = 2.0F * kWoodRadius + kGroundClearanceGap;
-	EXPECT_NEAR(dist(plan.spawns[0].first, {0.0F, 0.0F}), static_cast<float>(kWalkableSearchRings) * step, 1e-3F);
+	EXPECT_FLOAT_EQ(plan.spawns[0].first.x, 6.0F);
+	EXPECT_FLOAT_EQ(plan.spawns[0].first.y, -2.0F);
+}
+
+// No ground near the origin: the search moves to where the goods came from and finds ground there.
+TEST(ResourcePileDropsTests, NoGroundNearOriginSearchesAroundTheFallback) {
+	const glm::vec2 from{40.0F, 0.0F};
+	const auto		isGround = [from](glm::vec2 p) { return p.x > from.x + 1.0F && p.x < from.x + 2.0F; };
+	const auto		plan = resourcePileDrops(40, 10, {0.0F, 0.0F}, kWoodRadius, {}, isGround, {}, from);
+	ASSERT_EQ(plan.spawns.size(), 1U);
+	EXPECT_TRUE(isGround(plan.spawns[0].first)) << "a pile at (" << plan.spawns[0].first.x << ", " << plan.spawns[0].first.y << ")";
 }
 
 // A spot off walkable ground is skipped while the walkable search lasts.
@@ -187,4 +211,49 @@ TEST(ResourcePileDropsTests, SkipsSpotsOffGround) {
 	const auto plan = resourcePileDrops(40, 10, {0.0F, 0.0F}, kWoodRadius, {}, [](glm::vec2 p) { return p.x > 0.5F; });
 	ASSERT_EQ(plan.spawns.size(), 1U);
 	EXPECT_GT(plan.spawns[0].first.x, 0.5F);
+}
+
+namespace {
+
+// An 8 m square site about to be built at the origin, and the drop a pile on it gets: just past
+// its nearest edge, falling back to the pile's old spot.
+const FootprintBounds kSite{{0.0F, 0.0F}, {8.0F, 8.0F}};
+
+void expectOnGroundOffSites(
+	const PileDropPlan& plan, const std::function<bool(glm::vec2)>& isGround, const std::function<bool(glm::vec2)>& onSite
+) {
+	ASSERT_FALSE(plan.spawns.empty());
+	for (const auto& [pos, qty] : plan.spawns) {
+		EXPECT_TRUE(isGround(pos)) << "a pile off the ground at (" << pos.x << ", " << pos.y << ")";
+		EXPECT_FALSE(onSite(pos)) << "a pile on a site at (" << pos.x << ", " << pos.y << ")";
+	}
+}
+
+} // namespace
+
+// A river runs along the site's east edge: the nearest point outside is in the water, so the pile
+// goes to the nearest dry ground off the site instead.
+TEST(ResourcePileDropsTests, SiteBesideWaterDropsOnDryGroundOffTheSite) {
+	const glm::vec2 oldSpot{7.5F, 4.0F};
+	const glm::vec2 origin = kSite.nearestOutside(oldSpot, 0.5F);
+	const auto		isGround = [](glm::vec2 p) { return p.x <= 8.0F || p.x >= 14.0F; };
+	const auto		onSite = [](glm::vec2 p) { return kSite.contains(p); };
+	ASSERT_FALSE(isGround(origin)) << "the nearest point outside is in the river";
+	const auto plan = resourcePileDrops(40, 60, origin, kWoodRadius, {}, isGround, onSite, oldSpot);
+	EXPECT_EQ(sumQty(plan), 60U);
+	expectOnGroundOffSites(plan, isGround, onSite);
+}
+
+// A built room adjoins the site's east edge, its wall band off the mesh, and a second site waits to
+// the north: the pile lands on ground clear of the wall and of both sites.
+TEST(ResourcePileDropsTests, SiteBesideWallDropsOnGroundOffEverySite) {
+	const FootprintBounds northSite{{0.0F, 8.2F}, {8.0F, 16.0F}};
+	const glm::vec2		  oldSpot{7.8F, 4.0F};
+	const glm::vec2		  origin = kSite.nearestOutside(oldSpot, 0.5F);
+	const auto			  isGround = [](glm::vec2 p) { return p.x < 8.1F || p.x > 8.6F || p.y > 16.0F || p.y < 0.0F; };
+	const auto			  onSite = [northSite](glm::vec2 p) { return kSite.contains(p) || northSite.contains(p); };
+	ASSERT_FALSE(isGround(origin)) << "the nearest point outside is in the wall";
+	const auto plan = resourcePileDrops(40, 60, origin, kWoodRadius, {}, isGround, onSite, oldSpot);
+	EXPECT_EQ(sumQty(plan), 60U);
+	expectOnGroundOffSites(plan, isGround, onSite);
 }

@@ -28,8 +28,10 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 # -> colonists[0].x, colonists[0].y  (note as BX, BY)
 ```
 
-Choose a ~3x3 area on valid land that has at least one or two trees standing on it (the natural
-forest usually provides this). Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
+Choose a ~3x3 area on valid land that has at least one or two trees and a berry bush
+(`Flora_BerryBush`) standing on it (the forest around the Quick Start landing usually provides
+this). A tree or bush placed with `/api/dev/spawn` blocks the footprint and is cleared the same way
+as world-generated ones. Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
 
 Blueprint the foundation (built=0 queues the colonist to build it):
 
@@ -63,7 +65,16 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> wait until phase != "Clearing"
 ```
 
-2. Phase moves to `AwaitingMaterials`. Bob chops nearby trees and provisions wood:
+2. The berry bush on the footprint is cleared too: it disappears after one harvest (it doesn't
+   regrow in place), even when Bob's arms are already full of wood, and no berries are delivered
+   to the site:
+
+```
+curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
+# -> foundations[0].delivered never has a "Berry" key
+```
+
+3. Phase moves to `AwaitingMaterials`. Bob chops nearby trees and provisions wood:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
@@ -71,7 +82,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].delivered.Wood increases over time
 ```
 
-3. Phase moves to `UnderConstruction` once materials are delivered. Bob builds:
+4. Watch a fell during `AwaitingMaterials` that leaves a heap of logs at the stump: Bob's next trip is to that heap, not to another tree, and he carries it to the site (`delivered.Wood` rises) before he cuts again.
+
+5. Phase moves to `UnderConstruction` once materials are delivered. Bob builds:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
@@ -79,7 +92,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].progress increases toward 1.0
 ```
 
-4. Keep Bob's needs up every ~2 real minutes:
+6. Keep Bob's needs up every ~2 real minutes:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Hunger&value=95"
@@ -87,13 +100,15 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Thirst&val
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Energy&value=95"
 ```
 
-5. Poll until foundation is `Built` at `progress == 1.0`:
+7. Poll until foundation is `Built` at `progress == 1.0`:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].state == "Built"
 # -> foundations[0].progress == 1.0
 ```
+
+8. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
 
 ---
 

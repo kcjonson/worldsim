@@ -80,6 +80,10 @@ namespace assets {
 		/// @return Pointer to definition, or nullptr if not found
 		const AssetDefinition* getDefinition(const std::string& defName) const;
 
+		/// The definition an interned id names, or nullptr (an invalid id, or a synthetic definition).
+		/// One vector read, for loops that hold ids.
+		[[nodiscard]] const AssetDefinition* getDefinitionById(uint32_t id) const;
+
 		/// The template id of a def's mesh for an instance with `traits`, building the template the
 		/// first time. One template per (def, age class, variant): a simple (SVG) asset is one
 		/// drawing, and groundcover renders its variants itself, so both map every traits value to
@@ -277,8 +281,10 @@ namespace assets {
 
 		/// Load the asset folder on a background worker thread. Definitions are not
 		/// safe to read until isLoadComplete() returns true. Only one async load may
-		/// run at a time; a prior one is joined first.
-		void beginLoadAsync(const std::string& folderPath);
+		/// run at a time; a prior one is joined first. `afterDefinitions` runs on the worker once the
+		/// definitions and their id index are in, before isLoadComplete() turns true, so whatever it
+		/// loads is read under the same completion guarantee.
+		void beginLoadAsync(const std::string& folderPath, std::function<void()> afterDefinitions = {});
 
 		/// Progress of the most recent beginLoadAsync (atomics; safe to poll).
 		[[nodiscard]] const LoadProgress& loadProgress() const { return m_loadProgress; }
@@ -328,9 +334,30 @@ namespace assets {
 		/// Check if a defName ID has a specific capability
 		[[nodiscard]] bool hasCapability(uint32_t id, CapabilityType capability) const;
 
+		/// Every item that is edible in an inventory, sorted by name so a scan over it picks the same
+		/// item on every platform. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<std::string>& edibleItemNames() const { return m_edibleItemNames; }
+
+		/// The ids of edibleItemNames(), ascending. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<uint32_t>& edibleItemIds() const { return m_edibleItemIds; }
+
+		/// Ids of the harvestable definitions whose harvest yields the item `yieldDefNameId`, ascending;
+		/// empty when none does. Kept with the definitions: cleared and rebuilt with them.
+		[[nodiscard]] const std::vector<uint32_t>& harvestablesYielding(uint32_t yieldDefNameId) const;
+
 		/// Mass of one unit of an item, in kilograms. Returns 1.0 for unknown/non-item defs
 		/// so carry-weight math always has a sane positive divisor.
 		[[nodiscard]] float getItemMassKg(const std::string& defName) const;
+
+		/// getItemMassKg by interned id: one vector read.
+		[[nodiscard]] float itemMassKg(uint32_t id) const;
+
+		/// The id of the item a harvestable definition yields; 0 when it yields nothing. Kept with the
+		/// definitions: cleared and rebuilt with them.
+		[[nodiscard]] uint32_t harvestYieldId(uint32_t id) const;
+
+		/// Does harvesting this definition yield an item that is edible in an inventory?
+		[[nodiscard]] bool yieldsEdible(uint32_t id) const;
 
 		/// Tool type an item provides (e.g. "Axe"), or empty if it is not a tool.
 		[[nodiscard]] const std::string& getToolType(uint32_t id) const;
@@ -344,6 +371,13 @@ namespace assets {
 
 		/// Get the total number of capability types (Edible..Storage)
 		static constexpr size_t kCapabilityTypeCount = 9;
+
+#ifdef DEVELOPMENT_BUILD
+		/// Lookups keyed by a definition name (getDefinition, getDefNameId) while counting is on. Tests
+		/// switch it on to show a decision's name lookups don't grow with what the colonist remembers.
+		[[nodiscard]] uint64_t nameLookups() const { return m_nameLookups.load(std::memory_order_relaxed); }
+		void				   countNameLookups(bool on) { m_countingNameLookups.store(on, std::memory_order_relaxed); }
+#endif
 
 		// --- Testing API ---
 
@@ -439,6 +473,26 @@ namespace assets {
 		// Pre-computed capability masks by ID (for O(1) capability checks). 16-bit: 9 capability types.
 		std::vector<uint16_t> m_capabilityMasks;
 
+		// Sorted names of the inventory-edible definitions; see edibleItemNames().
+		std::vector<std::string> m_edibleItemNames;
+		std::vector<uint32_t>	 m_edibleItemIds;
+
+		// Definition by interned id, beside m_idToDefName; nullptr for id 0 and synthetic definitions.
+		// Node addresses in `definitions` are stable, so these stay valid until a definition is erased.
+		std::vector<const AssetDefinition*> m_idToDefinition;
+
+		// Yield id -> ascending ids of the harvestables that yield it. A yield not yet defined is given
+		// its id when the first harvestable naming it is filed, and keeps it once it is defined.
+		std::vector<std::vector<uint32_t>> m_harvestablesByYieldId;
+
+		// Harvestable id -> the id of its yield, 0 for anything else; see harvestYieldId().
+		std::vector<uint32_t> m_harvestYieldIds;
+
+		/// File `id` under its harvest yield (if any), keeping the list ascending.
+		void indexHarvestYield(const AssetDefinition& def, uint32_t id);
+		/// The id interned for `defName`, interning it (no definition, no capabilities) when it has none.
+		uint32_t internName(const std::string& defName);
+
 		// Path to shared scripts folder (for @shared/ prefix resolution)
 		std::filesystem::path m_sharedScriptsPath;
 
@@ -448,6 +502,13 @@ namespace assets {
 		// Asynchronous load worker + its progress
 		LoadProgress m_loadProgress;
 		std::thread	 m_loadThread;
+
+#ifdef DEVELOPMENT_BUILD
+		// Chunk workers look names up from several threads. Off, each lookup only loads a flag nothing
+		// writes, so its cache line stays shared; the counter's line is written only while a test counts.
+		std::atomic<bool>			  m_countingNameLookups{false};
+		mutable std::atomic<uint64_t> m_nameLookups{0};
+#endif
 	};
 
 } // namespace assets

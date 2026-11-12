@@ -12,6 +12,8 @@ add_library(sim
     ecs/systems/action/HaulActions.cpp
     ecs/systems/action/BuildActions.cpp
     ecs/systems/StorageGoalSystem.cpp
+    ecs/systems/WorkSources.cpp
+    ecs/systems/ChainClaims.cpp
     ecs/systems/CraftingGoalSystem.cpp
     ecs/systems/BuildGoalSystem.cpp
     ecs/systems/ConstructionSystem.cpp
@@ -21,8 +23,11 @@ add_library(sim
     ecs/systems/StaticRectCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
+    ecs/ClaimIndex.cpp
     ecs/GoalTaskRegistry.cpp
     ecs/StoreOrDrop.cpp
+    ecs/WorldSource.cpp
+    ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
     construction/ConstructionWorld.cpp
@@ -32,6 +37,7 @@ add_library(sim
     construction/RoomHitTest.cpp
     construction/SnapEngine.cpp
     nav/NavInputBuilder.cpp
+    nav/RouteQueue.cpp
     vision/GeometryIndex.cpp
 )
 
@@ -59,6 +65,26 @@ if(BUILD_TESTING)
         "${CMAKE_CURRENT_SOURCE_DIR}/*.test.cpp"
     )
 
+    file(GLOB_RECURSE SIM_BENCHMARK_SOURCES CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/*.bench.cpp"
+    )
+
+    if(SIM_BENCHMARK_SOURCES)
+        find_package(benchmark CONFIG REQUIRED)
+        add_executable(sim-benchmarks ${SIM_BENCHMARK_SOURCES})
+        target_link_libraries(sim-benchmarks
+            PRIVATE
+                sim
+                benchmark::benchmark
+                benchmark::benchmark_main
+        )
+        # MSVC: per-config defaults (/O2 in Release); forcing /O2 collides with
+        # Debug's /RTC1 (D8016).
+        if(NOT MSVC)
+            target_compile_options(sim-benchmarks PRIVATE -O3)
+        endif()
+    endif()
+
     if(SIM_TEST_SOURCES)
         find_package(GTest CONFIG REQUIRED)
         add_executable(sim-tests ${SIM_TEST_SOURCES})
@@ -75,8 +101,9 @@ if(BUILD_TESTING)
         endif()
         add_test(NAME sim-tests COMMAND sim-tests)
         worldsim_test_data(sim-tests assets/config)
-        # TIMEOUT is the only hang guard: the navigation waits pump until their build
-        # lands, with no frame or wall-clock budget (NavigationSystem.test.h).
+        # TIMEOUT is the only hang guard: the navigation waits block in
+        # NavigationSystem::finishPendingBuilds until every build lands, with no
+        # wall-clock budget of their own.
         # Calibration (2026-11, CI Debug, ctest -j4): 179-384 s across Linux and
         # Windows runners, which differ about 2x run to run. 1200 s is 3x the
         # slowest; keep it at least 2x the slow-runner worst case.

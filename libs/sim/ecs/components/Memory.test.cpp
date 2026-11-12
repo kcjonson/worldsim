@@ -9,9 +9,12 @@
 // crashed the game whenever a second colonist spawned.
 
 #include "Memory.h"
+#include "MemoryQueries.h"
+#include "SourceReachMemo.h"
 
 #include <gtest/gtest.h>
 
+#include <limits>
 #include <utility>
 #include <vector>
 
@@ -159,3 +162,206 @@ TEST(MemoryComponent, ClearResetsLru) {
 	}
 	EXPECT_EQ(m.worldEntityCount(), 32U);
 }
+
+namespace {
+
+	/// Every remembered key sits in its def's list at its defSlot, and the lists hold nothing else.
+	void expectDefListsMatch(const ecs::Memory& m) {
+		size_t listed = 0;
+		for (const auto& [defNameId, keys] : m.worldEntitiesByDef) {
+			listed += keys.size();
+			for (size_t slot = 0; slot < keys.size(); ++slot) {
+				const ecs::KnownWorldEntity* entity = m.getWorldEntity(keys[slot]);
+				ASSERT_NE(entity, nullptr) << "def " << defNameId << " lists a forgotten key";
+				EXPECT_EQ(entity->defNameId, defNameId);
+				EXPECT_EQ(entity->defSlot, slot);
+			}
+		}
+		EXPECT_EQ(listed, m.worldEntityCount());
+	}
+
+} // namespace
+
+// The per-def key lists follow every remember, forget, eviction, copy, and clear.
+TEST(MemoryComponent, DefListsFollowRememberForgetAndEvict) {
+	constexpr uint32_t kOtherDefId = 8;
+	ecs::Memory		   m;
+	for (size_t i = 0; i < 20; ++i) {
+		m.rememberWorldEntity(posFor(i), i % 2 == 0 ? kDefId : kOtherDefId, kMask);
+	}
+	EXPECT_EQ(m.worldEntitiesOfDef(kDefId).size(), 10U);
+	EXPECT_EQ(m.worldEntitiesOfDef(kOtherDefId).size(), 10U);
+	EXPECT_TRUE(m.worldEntitiesOfDef(99).empty());
+
+	// Forget the first, a middle, and the last of one def: each swap-removal re-slots the moved key.
+	m.forgetWorldEntity(posFor(0), kDefId);
+	m.forgetWorldEntity(posFor(10), kDefId);
+	m.forgetWorldEntity(posFor(18), kDefId);
+	EXPECT_EQ(m.worldEntitiesOfDef(kDefId).size(), 7U);
+	expectDefListsMatch(m);
+
+	ecs::Memory copy = m;
+	copy.forgetWorldEntity(posFor(1), kOtherDefId);
+	expectDefListsMatch(copy);
+	expectDefListsMatch(m);
+
+	// Fill to capacity and overflow: evictions leave the lists in step.
+	for (size_t i = 100; m.worldEntityCount() < ecs::Memory::kMaxWorldEntities; ++i) {
+		m.rememberWorldEntity(posFor(i), kOtherDefId, kMask);
+	}
+	m.rememberWorldEntity({-10.0F, 0.0F}, kDefId, kMask);
+	m.rememberWorldEntity({-20.0F, 0.0F}, kDefId, kMask);
+	EXPECT_EQ(m.worldEntityCount(), ecs::Memory::kMaxWorldEntities);
+	expectDefListsMatch(m);
+
+	m.clear();
+	EXPECT_TRUE(m.worldEntitiesOfDef(kDefId).empty());
+	expectDefListsMatch(m);
+}
+
+namespace {
+
+	constexpr auto	   kSourceCapability = assets::CapabilityType::Harvestable;
+	constexpr uint16_t kSourceMask = 1U << static_cast<unsigned>(kSourceCapability);
+
+	const auto anySource = [](uint64_t, const ecs::KnownWorldEntity&) { return true; };
+
+} // namespace
+
+// Two sources at the same distance resolve by memory key, whichever was remembered first, so every
+// machine picks the same one.
+TEST(MemoryQueries, NearestSourceTieBreaksOnKeyNotInsertionOrder) {
+	const glm::vec2 east{3.0F, 0.0F};
+	const glm::vec2 north{0.0F, 3.0F};
+	const glm::vec2 expected = ecs::hashWorldEntity(east, kDefId) < ecs::hashWorldEntity(north, kDefId) ? east : north;
+	const auto		anywhere = [](ecs::SourceCandidate&) { return true; };
+	std::vector<ecs::SourceCandidate> scratch;
+	std::vector<ecs::SourceCandidate> chosen;
+
+	ecs::Memory eastFirst;
+	ASSERT_TRUE(eastFirst.rememberWorldEntity(east, kDefId, kSourceMask));
+	ASSERT_TRUE(eastFirst.rememberWorldEntity(north, kDefId, kSourceMask));
+	ecs::Memory northFirst;
+	ASSERT_TRUE(northFirst.rememberWorldEntity(north, kDefId, kSourceMask));
+	ASSERT_TRUE(northFirst.rememberWorldEntity(east, kDefId, kSourceMask));
+
+	for (const ecs::Memory* memory : {&eastFirst, &northFirst}) {
+		ecs::collectWithCapability(*memory, kSourceCapability, {0.0F, 0.0F}, anySource, scratch);
+		ecs::nearestAdmitted(scratch, chosen, anywhere, ecs::kNearestOfCount);
+		ASSERT_EQ(chosen.size(), 2U);
+		EXPECT_EQ(chosen.front().position, expected);
+		EXPECT_EQ(ecs::findNearestWithCapability(*memory, kSourceCapability, {0.0F, 0.0F})->position, expected);
+	}
+}
+
+// A need's route request names the nearest kNearestOfCount sources by straight line that pass its
+// filter, nearest first. Only the candidates down to the last one kept are asked about, and with fewer
+// than that many passing, all of them are, in order.
+TEST(MemoryQueries, NearestAdmittedKeepsTheNearestFewThatPass) {
+	ecs::Memory memory;
+	constexpr size_t kSources = 20;
+	for (size_t i = 0; i < kSources; ++i) {
+		ASSERT_TRUE(memory.rememberWorldEntity(posFor(kSources - i), kDefId, kSourceMask));
+	}
+	std::vector<ecs::SourceCandidate> scratch;
+	std::vector<ecs::SourceCandidate> chosen;
+	std::vector<glm::vec2>			  asked;
+	// Every third source is sealed.
+	const auto admit = [&](ecs::SourceCandidate& candidate) {
+		asked.push_back(candidate.position);
+		return asked.size() % 3 != 1;
+	};
+	ecs::collectWithCapability(memory, kSourceCapability, {0.0F, 0.0F}, anySource, scratch);
+	ecs::nearestAdmitted(scratch, chosen, admit, ecs::kNearestOfCount);
+	ASSERT_EQ(chosen.size(), ecs::kNearestOfCount);
+	EXPECT_EQ(asked.size(), 12U) << "asked only down to the eighth that passed";
+	for (size_t i = 0; i < asked.size(); ++i) {
+		EXPECT_EQ(asked[i], posFor(i + 1)) << "nearest first";
+	}
+	for (size_t i = 1; i < chosen.size(); ++i) {
+		EXPECT_LT(chosen[i - 1].distSq, chosen[i].distSq);
+	}
+
+	asked.clear();
+	ecs::collectWithCapability(memory, kSourceCapability, {0.0F, 0.0F}, anySource, scratch);
+	ecs::nearestAdmitted(scratch, chosen, [&](ecs::SourceCandidate& c) { return admit(c) && c.position.x > 8.0F; }, ecs::kNearestOfCount);
+	EXPECT_EQ(asked.size(), kSources) << "every candidate asked when too few pass";
+	EXPECT_EQ(chosen.size(), 3U) << "the four past 8 m, but the sealed one";
+}
+
+// The source the colonist is heading for is asked first and, while it passes, chosen alone, however many
+// are nearer; once it fails, the nearest that pass are chosen as usual.
+TEST(MemoryQueries, HeadedForSourceIsKeptWhileItPasses) {
+	ecs::Memory memory;
+	for (size_t i = 1; i <= 10; ++i) {
+		ASSERT_TRUE(memory.rememberWorldEntity(posFor(i), kDefId, kSourceMask));
+	}
+	const uint64_t					  farthest = ecs::hashWorldEntity(posFor(10), kDefId);
+	std::vector<ecs::SourceCandidate> scratch;
+	std::vector<ecs::SourceCandidate> chosen;
+	bool							  farthestPasses = true;
+	const auto admit = [&](ecs::SourceCandidate& candidate) { return candidate.key != farthest || farthestPasses; };
+
+	ecs::collectWithCapability(memory, kSourceCapability, {0.0F, 0.0F}, anySource, scratch);
+	ecs::nearestAdmitted(scratch, chosen, admit, ecs::kNearestOfCount, farthest);
+	ASSERT_EQ(chosen.size(), 1U);
+	EXPECT_EQ(chosen.front().key, farthest);
+
+	farthestPasses = false;
+	ecs::collectWithCapability(memory, kSourceCapability, {0.0F, 0.0F}, anySource, scratch);
+	ecs::nearestAdmitted(scratch, chosen, admit, ecs::kNearestOfCount, farthest);
+	ASSERT_EQ(chosen.size(), ecs::kNearestOfCount);
+	EXPECT_EQ(chosen.front().position, posFor(1));
+}
+
+// A verdict holds while nothing moves. His belief moving forgets every verdict at once; the connectivity
+// epoch moving forgets only those at least kVerdictMinTicks old, however often it moves meanwhile, and one
+// recorded after it last moved is held.
+TEST(MemoryQueries, SourceReachMemoHoldsVerdictsUntilTheyMayNoLongerHold) {
+	ecs::SourceReachMemo			memo;
+	constexpr uint64_t				kSource = 77;
+	constexpr uint64_t				kOther	= 78;
+	constexpr uint64_t				kAge	= ecs::SourceReachMemo::kVerdictMinTicks;
+	ecs::SourceReachMemo::Key		now{.connectivityEpoch = 3, .beliefVersion = 5};
+	const ecs::SourceReachMemo::Key beliefMoved{.connectivityEpoch = 100, .beliefVersion = 6};
+
+	memo.keep(now, 0);
+	memo.recordVerdict(kSource, now, 0);
+	EXPECT_TRUE(memo.hasVerdict(kSource));
+	EXPECT_FALSE(memo.hasVerdict(kOther));
+	memo.keep(now, 10 * kAge);
+	EXPECT_TRUE(memo.hasVerdict(kSource)) << "held while nothing moves, however old";
+
+	// Recorded at tick 0 and again at 10 * kAge (refreshed); the epoch moves every tick from there on.
+	memo.recordVerdict(kSource, now, 10 * kAge);
+	for (uint64_t tick = 10 * kAge + 1; tick < 11 * kAge; ++tick) {
+		++now.connectivityEpoch;
+		memo.keep(now, tick);
+		ASSERT_TRUE(memo.hasVerdict(kSource)) << "forgotten young at tick " << tick;
+		if (tick == 10 * kAge + 5) {
+			memo.recordVerdict(kOther, now, tick);
+		}
+	}
+	memo.keep(now, 11 * kAge);
+	EXPECT_FALSE(memo.hasVerdict(kSource)) << "the epoch moved and it is old enough, though the epoch stands now";
+	EXPECT_TRUE(memo.hasVerdict(kOther)) << "younger than kVerdictMinTicks";
+	memo.keep(now, 11 * kAge + 5);
+	EXPECT_FALSE(memo.hasVerdict(kOther)) << "the epoch moved after it was recorded, and it is old enough";
+
+	memo.recordVerdict(kOther, now, 12 * kAge);
+	memo.keep(now, 20 * kAge);
+	EXPECT_TRUE(memo.hasVerdict(kOther)) << "recorded after the epoch last moved";
+	memo.keep(beliefMoved, 20 * kAge + 1);
+	EXPECT_FALSE(memo.hasVerdict(kOther)) << "his belief moved";
+	EXPECT_EQ(memo.verdictCount(), 0U);
+}
+
+TEST(MemoryQueries, SourceReachMemoStaysBounded) {
+	ecs::SourceReachMemo			memo;
+	const ecs::SourceReachMemo::Key now{.connectivityEpoch = 1, .beliefVersion = 1};
+	for (uint64_t target = 0; target < 3 * ecs::SourceReachMemo::kMaxVerdicts; ++target) {
+		memo.recordVerdict(target, now, target);
+		ASSERT_LE(memo.verdictCount(), ecs::SourceReachMemo::kMaxVerdicts);
+	}
+}
+

@@ -81,7 +81,7 @@ world-AABB fast path.
 
 - **Navigation.** `NavInputBuilder` (`libs/sim/nav/`) carves the rect into the
   viewport-anchored simulation-area navmesh as an obstacle ring, inflated outward
-  by the flora pad `kFloraColliderPadMm` (0.05 m) so a routed agent clears the
+  by the placed-obstacle pad `kPlacedObstaclePadMm` (0.05 m) so a routed agent clears the
   trunk. Polygon and rect both transform through the same scale/rotate/translate.
   Agents route around the obstacle.
 

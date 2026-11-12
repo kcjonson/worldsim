@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstdint>
+#include <span>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -29,8 +30,10 @@ namespace ecs {
 	/// A known world entity (static PlacedEntity from SpatialIndex)
 	/// Optimized: uses defNameId instead of string (~28 bytes saved per entity)
 	struct KnownWorldEntity {
-		uint32_t  defNameId; // Asset definition ID from AssetRegistry::getDefNameId()
-		glm::vec2 position;	 // World position in meters
+		uint32_t  defNameId;		  // Asset definition ID from AssetRegistry::getDefNameId()
+		glm::vec2 position;			  // World position in meters
+		uint32_t  defSlot = 0;		  // Index of this entity's key in Memory::worldEntitiesByDef[defNameId]
+		uint16_t  capabilityMask = 0; // The capabilities it was remembered with (its capability-index sets)
 	};
 
 	/// A known dynamic entity (ECS entity like other colonists, animals)
@@ -75,6 +78,10 @@ namespace ecs {
 		/// Key: hash of position + defNameId
 		std::unordered_map<uint64_t, KnownWorldEntity> knownWorldEntities;
 
+		/// Bumped whenever a world entity is remembered for the first time or forgotten, so a decision can
+		/// tell by one compare that the set of remembered sources hasn't changed since it last looked.
+		std::uint64_t worldEntityVersion = 0;
+
 		/// Known dynamic ECS entities (colonists, animals, etc.)
 		/// Key: EntityID
 		std::unordered_map<EntityID, KnownDynamicEntity> knownDynamicEntities;
@@ -84,6 +91,11 @@ namespace ecs {
 		/// Per-capability sets of entity keys
 		/// capabilityIndex[capabilityType] contains all entity keys with that capability
 		std::array<std::unordered_set<uint64_t>, kCapabilityTypeCount> capabilityIndex;
+
+		/// The keys of every remembered world entity, by def, in no order. Kept beside the capability
+		/// index (same remember/forget points) so a question about one item visits only that item's
+		/// entries. Swap-removed: KnownWorldEntity::defSlot is each key's index in its list.
+		std::unordered_map<uint32_t, std::vector<uint64_t>> worldEntitiesByDef;
 
 		// --- LRU Eviction ---
 		//
@@ -166,18 +178,6 @@ namespace ecs {
 			return knownWorldEntities.find(key) != knownWorldEntities.end();
 		}
 
-		/// Check if a world entity at position with defName is known (string version)
-		/// @deprecated Use the defNameId version for better performance
-		[[nodiscard]] bool knowsWorldEntity(const glm::vec2& position, const std::string& defName) const {
-			// Convert to defNameId to use the same hash as rememberWorldEntity
-			auto&	 registry = assets::AssetRegistry::Get();
-			uint32_t defNameId = registry.getDefNameId(defName);
-			if (defNameId == 0) {
-				return false; // Unknown defName
-			}
-			return knowsWorldEntity(position, defNameId);
-		}
-
 		/// Check if a dynamic entity is known
 		[[nodiscard]] bool knowsDynamicEntity(EntityID entityId) const {
 			return knownDynamicEntities.find(entityId) != knownDynamicEntities.end();
@@ -212,7 +212,10 @@ namespace ecs {
 			}
 
 			// Add to primary storage
-			knownWorldEntities[key] = KnownWorldEntity{defNameId, position};
+			auto& ofDef = worldEntitiesByDef[defNameId];
+			knownWorldEntities[key] = KnownWorldEntity{defNameId, position, static_cast<uint32_t>(ofDef.size()), capabilityMask};
+			ofDef.push_back(key);
+			++worldEntityVersion;
 
 			// Add to capability indices
 			for (size_t cap = 0; cap < kCapabilityTypeCount; ++cap) {
@@ -224,18 +227,6 @@ namespace ecs {
 			// Add to LRU list (tail = newest)
 			lru.map[key] = lruLinkTail(key);
 			return true; // New discovery
-		}
-
-		/// Add a world entity to memory (string version, converts to ID)
-		/// @deprecated Use the defNameId version for better performance
-		void rememberWorldEntity(const glm::vec2& position, const std::string& defName) {
-			auto&	 registry = assets::AssetRegistry::Get();
-			uint32_t defNameId = registry.getDefNameId(defName);
-			if (defNameId == 0) {
-				return; // Unknown defName
-			}
-			uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
-			rememberWorldEntity(position, defNameId, capabilityMask);
 		}
 
 		/// Add or update a dynamic entity in memory
@@ -251,10 +242,12 @@ namespace ecs {
 		/// Clear all memory
 		void clear() {
 			knownWorldEntities.clear();
+			++worldEntityVersion;
 			knownDynamicEntities.clear();
 			for (auto& index : capabilityIndex) {
 				index.clear();
 			}
+			worldEntitiesByDef.clear();
 			lru.reset();
 			knownSegments.clear();
 			knownOpenings.clear();
@@ -276,6 +269,12 @@ namespace ecs {
 				return empty;
 			}
 			return capabilityIndex[idx];
+		}
+
+		/// The keys of the remembered world entities of one def, in no order.
+		[[nodiscard]] std::span<const uint64_t> worldEntitiesOfDef(uint32_t defNameId) const {
+			const auto it = worldEntitiesByDef.find(defNameId);
+			return it != worldEntitiesByDef.end() ? std::span<const uint64_t>(it->second) : std::span<const uint64_t>();
 		}
 
 		/// Get the KnownWorldEntity for a given key
@@ -442,7 +441,16 @@ namespace ecs {
 				for (auto& index : capabilityIndex) {
 					index.erase(key);
 				}
+				auto&		   ofDef = worldEntitiesByDef[it->second.defNameId];
+				const uint32_t slot = it->second.defSlot;
+				const uint64_t moved = ofDef.back();
+				ofDef[slot] = moved;
+				ofDef.pop_back();
+				if (moved != key) {
+					knownWorldEntities.find(moved)->second.defSlot = slot;
+				}
 				knownWorldEntities.erase(it);
+				++worldEntityVersion;
 			}
 
 			// Remove from LRU tracking (recycle the node slot)

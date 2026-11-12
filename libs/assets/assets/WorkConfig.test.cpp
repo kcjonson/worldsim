@@ -1,11 +1,13 @@
 // Unit tests for Work Configuration System
 // Tests ActionTypeRegistry, TaskChainRegistry, WorkTypeRegistry,
-// PriorityConfig, and ConfigValidator.
+// PriorityConfig, ConfigValidator, and loadWorkConfig.
 
 #include "assets/ActionTypeRegistry.h"
 #include "assets/ConfigValidator.h"
+#include "assets/ConstructionRegistry.h"
 #include "assets/PriorityConfig.h"
 #include "assets/TaskChainRegistry.h"
+#include "assets/WorkConfig.h"
 #include "assets/WorkTypeRegistry.h"
 
 #include <gtest/gtest.h>
@@ -31,6 +33,7 @@ class WorkConfigTest : public ::testing::Test {
         TaskChainRegistry::Get().clear();
         WorkTypeRegistry::Get().clear();
         PriorityConfig::Get().clear();
+        ConstructionRegistry::Get().clear();
         ConfigValidator::clearErrors();
     }
 
@@ -307,20 +310,10 @@ TEST_F(WorkConfigTest, WorkTypeRegistry_CategoriesSortedByTier) {
 TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
     std::string xml = R"(<?xml version="1.0"?>
 <PriorityTuning>
-  <Bands>
-    <Band name="Critical" base="30000"/>
-    <Band name="WorkHigh" base="5000"/>
-  </Bands>
   <Bonuses>
-    <Distance>
-      <optimalDistance>5.0</optimalDistance>
-      <maxPenaltyDistance>50.0</maxPenaltyDistance>
-      <maxBonus>50</maxBonus>
-      <maxPenalty>50</maxPenalty>
-    </Distance>
-    <ChainContinuation>
-      <bonus>2000</bonus>
-    </ChainContinuation>
+    <InProgress>
+      <bonus>40</bonus>
+    </InProgress>
   </Bonuses>
 </PriorityTuning>)";
 
@@ -328,76 +321,7 @@ TEST_F(WorkConfigTest, PriorityConfig_LoadValidXML) {
     bool loaded = PriorityConfig::Get().loadFromFile(path);
 
     EXPECT_TRUE(loaded);
-    EXPECT_EQ(PriorityConfig::Get().getBandBase("Critical"), 30000);
-    EXPECT_EQ(PriorityConfig::Get().getBandBase("WorkHigh"), 5000);
-}
-
-TEST_F(WorkConfigTest, PriorityConfig_DistanceBonus) {
-    std::string xml = R"(<?xml version="1.0"?>
-<PriorityTuning>
-  <Bonuses>
-    <Distance>
-      <optimalDistance>5.0</optimalDistance>
-      <maxPenaltyDistance>50.0</maxPenaltyDistance>
-      <maxBonus>50</maxBonus>
-      <maxPenalty>50</maxPenalty>
-    </Distance>
-  </Bonuses>
-</PriorityTuning>)";
-
-    std::string path = writeTempFile(xml, ".xml");
-    PriorityConfig::Get().loadFromFile(path);
-
-    // At optimal distance, should get max bonus
-    EXPECT_EQ(PriorityConfig::Get().calculateDistanceBonus(3.0F), 50);
-
-    // At max penalty distance, should get max penalty
-    EXPECT_EQ(PriorityConfig::Get().calculateDistanceBonus(50.0F), -50);
-
-    // Midpoint should be around 0
-    int16_t midBonus = PriorityConfig::Get().calculateDistanceBonus(27.5F);
-    EXPECT_GE(midBonus, -10);
-    EXPECT_LE(midBonus, 10);
-}
-
-TEST_F(WorkConfigTest, PriorityConfig_UserPriorityMapping) {
-    // Use defaults
-    PriorityConfig::Get().clear();
-
-    // Priority 1 should be in WorkHigh band (5000+)
-    int16_t p1 = PriorityConfig::Get().userPriorityToBase(1);
-    EXPECT_GE(p1, 5000);
-    EXPECT_LT(p1, 6000);
-
-    // Priority 5 should be in WorkMedium band (3000+)
-    int16_t p5 = PriorityConfig::Get().userPriorityToBase(5);
-    EXPECT_GE(p5, 3000);
-    EXPECT_LT(p5, 4000);
-
-    // Priority 9 should be in WorkLow band (1000+)
-    int16_t p9 = PriorityConfig::Get().userPriorityToBase(9);
-    EXPECT_GE(p9, 1000);
-    EXPECT_LT(p9, 2000);
-
-    // Higher priority number = lower base value
-    EXPECT_GT(p1, p5);
-    EXPECT_GT(p5, p9);
-}
-
-TEST_F(WorkConfigTest, PriorityConfig_ChainBonus) {
-    std::string xml = R"(<?xml version="1.0"?>
-<PriorityTuning>
-  <Bonuses>
-    <ChainContinuation>
-      <bonus>2000</bonus>
-    </ChainContinuation>
-  </Bonuses>
-</PriorityTuning>)";
-
-    std::string path = writeTempFile(xml, ".xml");
-    PriorityConfig::Get().loadFromFile(path);
-
-    EXPECT_EQ(PriorityConfig::Get().getChainBonus(), 2000);
+    EXPECT_EQ(PriorityConfig::Get().getInProgressBonus(), 40);
 }
 
 // ============================================================================
@@ -571,9 +495,6 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
     <Category name="Farming" tier="3"/>
     <Category name="Hauling" tier="6"/>
   </WorkCategoryOrder>
-  <Bonuses>
-    <ChainContinuation><bonus>2000</bonus></ChainContinuation>
-  </Bonuses>
 </PriorityTuning>)";
     std::string priorityPath = writeTempFile(priorityXml, "_priority.xml");
     ASSERT_TRUE(PriorityConfig::Get().loadFromFile(priorityPath));
@@ -584,5 +505,30 @@ TEST_F(WorkConfigTest, Integration_FullConfigLoad) {
     EXPECT_EQ(TaskChainRegistry::Get().size(), 1);
     EXPECT_EQ(WorkTypeRegistry::Get().categoryCount(), 2);
     EXPECT_EQ(WorkTypeRegistry::Get().workTypeCount(), 2);
-    EXPECT_EQ(PriorityConfig::Get().getChainBonus(), 2000);
+}
+
+// ============================================================================
+// loadWorkConfig
+// ============================================================================
+
+namespace {
+    std::filesystem::path shippedConfigRoot() {
+        // <root>/libs/assets/assets/WorkConfig.test.cpp -> <root>/assets/config
+        return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" /
+               "config";
+    }
+} // namespace
+
+TEST_F(WorkConfigTest, LoadWorkConfig_ShippedConfigLoadsClean) {
+    for (const auto& error : loadWorkConfig(shippedConfigRoot())) {
+        ADD_FAILURE() << error;
+    }
+    EXPECT_GT(ActionTypeRegistry::Get().size(), 0);
+    EXPECT_GT(TaskChainRegistry::Get().size(), 0);
+    EXPECT_GT(WorkTypeRegistry::Get().workTypeCount(), 0);
+    EXPECT_TRUE(ConstructionRegistry::Get().materialsLoaded());
+}
+
+TEST_F(WorkConfigTest, LoadWorkConfig_MissingFolderReportsError) {
+    EXPECT_FALSE(loadWorkConfig(std::filesystem::temp_directory_path() / "no-such-work-config").empty());
 }

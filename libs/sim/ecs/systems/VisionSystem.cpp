@@ -19,6 +19,7 @@
 
 #include <utils/Log.h>
 
+#include <algorithm>
 #include <cmath>
 
 namespace ecs {
@@ -91,7 +92,7 @@ namespace ecs {
 
 	void VisionSystem::update(float /*deltaTime*/) {
 		// Throttle: only run every N frames to reduce CPU overhead
-		// Colonists move ~2-3 tiles/second, so 12 updates/sec is plenty
+		// Colonists walk 2 m/s, so a pass every 5 frames (12 a second at 60 fps, 24 at 120) is plenty
 		m_frameCounter++;
 		if (m_frameCounter < m_updateInterval) {
 			return;
@@ -238,10 +239,10 @@ namespace ecs {
 					   != geometry::PointInPolygon::Outside;
 			};
 
-			// Reconciliation (vision-architecture D4): a remembered placed entity whose
-			// position the observer can see RIGHT NOW, but which is no longer in the
-			// placement index, is stale -- forget it so tasks fail gracefully and belief
-			// replans trigger. This is the continuous, look-and-correct corrector for
+			// Reconciliation (vision-architecture D4): a remembered entity whose position
+			// the observer can see RIGHT NOW, but which is neither in the placement index
+			// nor among the ECS entities pass 2 sees this tick, is stale -- forget it so
+			// tasks fail gracefully and belief replans trigger. This is the continuous, look-and-correct corrector for
 			// targets the colonist is away from; ActionSystem keeps its at-target
 			// forgets (the synchronous backstop that closes the 0-5 frame throttle
 			// window where AIDecision could re-select a just-failed phantom).
@@ -255,18 +256,21 @@ namespace ecs {
 			// separate cooldown map flips -> keep). Shore entries are synthetic
 			// terrain, not placement entities; they never disappear, so skip them.
 			//
-			// Collect-then-forget: mutating knownWorldEntities while iterating it would
-			// invalidate the iterator. Forgetting a SET of keys is order-independent
-			// (no LRU/capability state read here depends on order), so this stays
-			// deterministic regardless of unordered_map traversal order.
+			// Entries absent from the index are only candidates: piles, boxes, stations and
+			// spawned flora live in the ECS alone, so pass 2 strikes off each one it sees,
+			// and what is left after it is forgotten. An unchanged pile in view then costs
+			// no memory write. Forgetting a SET of keys is order-independent (no LRU/
+			// capability state read here depends on order), so this stays deterministic
+			// regardless of unordered_map traversal order.
 			//
 			// Null placement data -> can't verify -> forget nothing (same guard as
 			// pass 1). Cost: one pass over knownWorldEntities per observer per tick
 			// (throttled to every m_updateInterval frames); a colonist's remembered
 			// set is realistically dozens-to-hundreds, and most entries fail the cheap
 			// radius/visible gate before ever touching the index.
+			std::vector<StaleCandidate>& stale = m_staleScratch;
+			stale.clear();
 			if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
-				std::vector<std::pair<glm::vec2, uint32_t>> stale;
 				for (const auto& [key, known] : memory.knownWorldEntities) {
 					// Shore points are terrain, not placement entities -- never reconcile.
 					if (known.defNameId == m_shoreDefNameId) {
@@ -305,12 +309,10 @@ namespace ecs {
 					// hasNearby is the allocation-free presence check (queryRadius would
 					// build a vector just to test emptiness).
 					if (!chunkIndex->hasNearby(known.position, kPresenceEpsilon, defName)) {
-						stale.emplace_back(known.position, known.defNameId); // gone -> forget
+						stale.push_back({key, known.position, known.defNameId, false});
 					}
 				}
-				for (const auto& [stalePos, defNameId] : stale) {
-					memory.forgetWorldEntity(stalePos, defNameId);
-				}
+				std::ranges::sort(stale, {}, &StaleCandidate::key);
 			}
 
 			// Pass 1: placed entities from world generation (needs placement data wired).
@@ -383,6 +385,14 @@ namespace ecs {
 					// Get defNameId and capability mask from registry
 					uint32_t defNameId = registry.getDefNameId(appearance.defName);
 					if (defNameId != 0) {
+						if (!stale.empty()) {
+							const uint64_t key = hashWorldEntity(otherPos.value, defNameId);
+							const auto	   it = std::ranges::lower_bound(stale, key, {}, &StaleCandidate::key);
+							if (it != stale.end() && it->key == key) {
+								it->seen = true; // here in the ECS, so not gone
+							}
+						}
+
 						uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
 
 						// Remember in colonist's memory (returns true only for NEW discoveries)
@@ -397,6 +407,12 @@ namespace ecs {
 							}
 						}
 					}
+				}
+			}
+
+			for (const StaleCandidate& candidate : stale) {
+				if (!candidate.seen) {
+					memory.forgetWorldEntity(candidate.position, candidate.defNameId);
 				}
 			}
 

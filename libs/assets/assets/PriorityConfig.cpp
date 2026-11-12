@@ -25,7 +25,7 @@ namespace assets {
 		/// <TaskTiers> block overrides these so designers can retune without a code change; these
 		/// defaults are the same values, kept in sync as the validation/tuning source of truth.
 		void installDefaultTaskTiers(std::unordered_map<std::string, int>& tiers) {
-			tiers["FulfillNeed"] = 5; // base = actionable need; promoted to 2 (critical) or 7 (gather-food sentinel)
+			tiers["FulfillNeed"] = 5; // base = actionable need; promoted to 2 (critical) or 7 (gathering food)
 			tiers["Craft"] = 4;
 			tiers["Build"] = 4;
 			tiers["Deconstruct"] = 4;
@@ -37,15 +37,6 @@ namespace assets {
 	} // namespace
 
 	PriorityConfig::PriorityConfig() {
-		// Initialize default bands (work-type display priority)
-		bands["Critical"] = 30000;
-		bands["PlayerDraft"] = 20000;
-		bands["Needs"] = 10000;
-		bands["WorkHigh"] = 5000;
-		bands["WorkMedium"] = 3000;
-		bands["WorkLow"] = 1000;
-		bands["Idle"] = 0;
-
 		installDefaultTaskTiers(taskTiers);
 	}
 
@@ -70,20 +61,11 @@ namespace assets {
 		// falling back to a C++ default. A default-constructed PriorityConfig (unit tests that never
 		// load XML) keeps the constructor's defaults; only this file-load path is authoritative.
 		taskTiers.clear();
+		++m_generation;
 
 		// Parse sections
-		if (auto bandsNode = root.child("Bands")) {
-			parseBands(&bandsNode);
-		}
-
 		if (auto tiersNode = root.child("TaskTiers")) {
 			parseTaskTiers(&tiersNode);
-		}
-
-		if (auto userPriorityNode = root.child("UserPriorityMapping")) {
-			if (auto stepNode = userPriorityNode.child("stepSize")) {
-				userPriorityStep = static_cast<int16_t>(stepNode.text().as_int(100));
-			}
 		}
 
 		if (auto bonusesNode = root.child("Bonuses")) {
@@ -107,30 +89,17 @@ namespace assets {
 	}
 
 	void PriorityConfig::clear() {
-		bands.clear();
-		bands["Critical"] = 30000;
-		bands["PlayerDraft"] = 20000;
-		bands["Needs"] = 10000;
-		bands["WorkHigh"] = 5000;
-		bands["WorkMedium"] = 3000;
-		bands["WorkLow"] = 1000;
-		bands["Idle"] = 0;
-
+		++m_generation;
 		taskTiers.clear();
 		installDefaultTaskTiers(taskTiers);
 
-		userPriorityStep = 100;
-		distanceConfig = DistanceBonusConfig{};
 		distanceFactorConfig = DistanceFactorConfig{};
-		skillConfig = SkillBonusConfig{};
-		chainConfig = ChainBonusConfig{};
 		inProgressConfig = InProgressBonusConfig{};
 		storagePriorityConfig = StoragePriorityConfig{};
 		taskAgeConfig = TaskAgeBonusConfig{};
 		haulingConfig = HaulingTuningConfig{};
 		timingConfig = TimingConfig{};
 		categoryOrder.clear();
-		categoryTiers.clear();
 	}
 
 	int PriorityConfig::getTaskTier(const std::string& taskTypeName) const {
@@ -155,57 +124,6 @@ namespace assets {
 		return missingOut.empty();
 	}
 
-	int16_t PriorityConfig::getBandBase(const std::string& bandName) const {
-		auto it = bands.find(bandName);
-		if (it != bands.end()) {
-			return it->second;
-		}
-		return 0;
-	}
-
-	int16_t PriorityConfig::userPriorityToBase(uint8_t userPriority) const {
-		// User priority 1-3 → WorkHigh, 4-6 → WorkMedium, 7-9 → WorkLow
-		// Within each band, higher priority = higher value
-		if (userPriority < 1)
-			userPriority = 1;
-		if (userPriority > 9)
-			userPriority = 9;
-
-		int16_t bandBase;
-		int16_t offset;
-
-		if (userPriority <= 3) {
-			bandBase = getBandBase("WorkHigh");
-			offset = static_cast<int16_t>((4 - userPriority) * userPriorityStep);
-		} else if (userPriority <= 6) {
-			bandBase = getBandBase("WorkMedium");
-			offset = static_cast<int16_t>((7 - userPriority) * userPriorityStep);
-		} else {
-			bandBase = getBandBase("WorkLow");
-			offset = static_cast<int16_t>((10 - userPriority) * userPriorityStep);
-		}
-
-		return bandBase + offset;
-	}
-
-	int16_t PriorityConfig::calculateDistanceBonus(float distance) const {
-		if (distance <= distanceConfig.optimalDistance) {
-			return distanceConfig.maxBonus;
-		}
-
-		if (distance >= distanceConfig.maxPenaltyDistance) {
-			return -distanceConfig.maxPenalty;
-		}
-
-		// Linear interpolation
-		float range = distanceConfig.maxPenaltyDistance - distanceConfig.optimalDistance;
-		float normalized = (distance - distanceConfig.optimalDistance) / range;
-		float bonus =
-			static_cast<float>(distanceConfig.maxBonus) - normalized * static_cast<float>(distanceConfig.maxBonus + distanceConfig.maxPenalty);
-
-		return static_cast<int16_t>(std::round(bonus));
-	}
-
 	float PriorityConfig::calculateDistanceFactor(float distance) const {
 		if (distance <= 0.0F) {
 			return distanceFactorConfig.maxFactor;
@@ -214,15 +132,6 @@ namespace assets {
 			return 0.0F;
 		}
 		return distanceFactorConfig.maxFactor * (1.0F - distance / distanceFactorConfig.maxDistance);
-	}
-
-	int16_t PriorityConfig::calculateSkillBonus(float skillLevel) const {
-		int16_t bonus = static_cast<int16_t>(skillLevel * static_cast<float>(skillConfig.multiplier));
-		return std::min(bonus, skillConfig.maxBonus);
-	}
-
-	int16_t PriorityConfig::getChainBonus() const {
-		return chainConfig.bonus;
 	}
 
 	int16_t PriorityConfig::getInProgressBonus() const {
@@ -237,28 +146,6 @@ namespace assets {
 		float	minutes = taskAge / 60.0F;
 		int16_t bonus = static_cast<int16_t>(minutes * static_cast<float>(taskAgeConfig.bonusPerMinute));
 		return std::min(bonus, taskAgeConfig.maxBonus);
-	}
-
-	float PriorityConfig::getCategoryTier(const std::string& categoryName) const {
-		auto it = categoryTiers.find(categoryName);
-		if (it != categoryTiers.end()) {
-			return it->second;
-		}
-		return 999.0F; // Unknown categories go last
-	}
-
-	void PriorityConfig::parseBands(const void* nodePtr) {
-		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
-
-		for (pugi::xml_node bandNode : node.children("Band")) {
-			std::string name = bandNode.attribute("name").as_string();
-			int16_t		base = static_cast<int16_t>(bandNode.attribute("base").as_int(0));
-
-			if (!name.empty()) {
-				bands[name] = base;
-				LOG_DEBUG(Engine, "Priority band: %s = %d", name.c_str(), base);
-			}
-		}
 	}
 
 	void PriorityConfig::parseTaskTiers(const void* nodePtr) {
@@ -288,39 +175,6 @@ namespace assets {
 			}
 			if (auto n = dfNode.child("maxFactor")) {
 				distanceFactorConfig.maxFactor = n.text().as_float(300.0F);
-			}
-		}
-
-		// Distance
-		if (auto distNode = node.child("Distance")) {
-			if (auto n = distNode.child("optimalDistance")) {
-				distanceConfig.optimalDistance = n.text().as_float(5.0F);
-			}
-			if (auto n = distNode.child("maxPenaltyDistance")) {
-				distanceConfig.maxPenaltyDistance = n.text().as_float(50.0F);
-			}
-			if (auto n = distNode.child("maxBonus")) {
-				distanceConfig.maxBonus = static_cast<int16_t>(n.text().as_int(50));
-			}
-			if (auto n = distNode.child("maxPenalty")) {
-				distanceConfig.maxPenalty = static_cast<int16_t>(n.text().as_int(50));
-			}
-		}
-
-		// Skill
-		if (auto skillNode = node.child("Skill")) {
-			if (auto n = skillNode.child("multiplier")) {
-				skillConfig.multiplier = static_cast<int16_t>(n.text().as_int(10));
-			}
-			if (auto n = skillNode.child("maxBonus")) {
-				skillConfig.maxBonus = static_cast<int16_t>(n.text().as_int(100));
-			}
-		}
-
-		// Chain continuation
-		if (auto chainNode = node.child("ChainContinuation")) {
-			if (auto n = chainNode.child("bonus")) {
-				chainConfig.bonus = static_cast<int16_t>(n.text().as_int(2000));
 			}
 		}
 
@@ -359,9 +213,6 @@ namespace assets {
 		}
 		if (auto n = node.child("reEvalInterval")) {
 			timingConfig.reEvalInterval = n.text().as_float(0.5F);
-		}
-		if (auto n = node.child("reservationTimeout")) {
-			timingConfig.reservationTimeout = n.text().as_float(10.0F);
 		}
 	}
 
@@ -406,7 +257,6 @@ namespace assets {
 
 			if (!name.empty()) {
 				categories.push_back({name, tier});
-				categoryTiers[name] = tier;
 			}
 		}
 

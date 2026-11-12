@@ -29,32 +29,22 @@ struct GlobalTaskDisplayData {
 	std::string distance;			// "5m" or empty if no specific location
 	std::string status;				// "Available" / "Waiting for harvest" / "Blocked"
 	std::string statusDetail;		// "Alice working" / "0/3 materials"
-	std::string knownBy;			// "Bob, Alice" (empty for colonist-specific view)
 	float distanceValue = 0.0F;		// For sorting (meters)
 	uint8_t taskTypePriority = 255; // For sorting by type (lower = higher priority)
-	bool isReserved = false;		// For sorting (reserved first)
-	bool isMine = false;			// For colonist view: this colonist owns it
 	bool isBlocked = false;			// Goal is blocked (waiting for dependencies)
 	bool isUnassigned = false;		// Work pool entry (no colonist assigned yet)
 };
 
-/// Query all goals from GoalTaskRegistry (for colony-wide view)
+/// Query all goals from GoalTaskRegistry, for the colony-wide panel and the colonist details tab
 /// @param world ECS world, used to surface which colonist is working each goal + build progress
-/// @param cameraCenter Position to calculate distances from
+/// @param referencePosition Position to calculate distances from (the camera center, or the colonist)
 /// @return Vector of task display data, unsorted
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getGlobalTasks(
 	ecs::World&		 world,
-	const glm::vec2& cameraCenter
+	const glm::vec2& referencePosition
 );
 
-/// Query goals for the colonist details tab
-/// @param colonistPosition Position to calculate distances from
-/// @return Vector of task display data, unsorted
-[[nodiscard]] std::vector<GlobalTaskDisplayData> getTasksForColonist(
-	const glm::vec2& colonistPosition
-);
-
-/// Sort tasks for display (reserved first, then by type, then by distance)
+/// Sort tasks for display (by type, then by distance)
 void sortTasksForDisplay(std::vector<GlobalTaskDisplayData>& tasks);
 
 } // namespace world_sim::adapters

@@ -456,6 +456,17 @@ void LoadChunksAroundPlayer(WorldPosition playerPos) {
 }
 ```
 
+**Simulation anchors (as built)**: `ChunkManager::update(camera, anchors)` takes the camera and the
+positions of every active mover (the same Position + Colonist set that drives the nav regions,
+from `NavigationSystem::appendMoverPositions`). The camera keeps its chunk radii (the game uses
+load 1, unload 2). Each anchor loads every chunk within 128 m of it and keeps every chunk within
+256 m, measured per axis to the chunk's square, so a mover near a corner holds up to four chunks
+and one pacing across the load boundary doesn't thrash. A chunk unloads only when it is outside
+the camera's unload radius, outside every anchor's keep range, and not generating. Placement runs
+for every loaded chunk, so anchored chunks off camera get flora and resources the same as camera
+chunks. Anchors are reduced to a sorted set of chunk coordinates before any map lookup, so a
+thousand movers in one chunk cost one chunk.
+
 **Predictive Loading**:
 
 ```cpp

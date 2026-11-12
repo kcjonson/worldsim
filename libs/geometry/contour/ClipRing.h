@@ -1,17 +1,12 @@
 #pragma once
 
+#include "../core/RectMm.h"
 #include "../core/Vec2i64.h"
 #include "../polygon/Polygon.h"
 
 #include <vector>
 
 namespace geometry {
-
-	// Closed axis-aligned rectangle in integer mm, min < max on both axes.
-	struct RectMm {
-		Vec2i64 min;
-		Vec2i64 max;
-	};
 
 	// The intersection of ring and rect as simple rings in the ring's orientation: a CCW ring yields CCW
 	// pieces, a CW hole ring CW pieces (terrain-polygons D4, navRings). Crossings

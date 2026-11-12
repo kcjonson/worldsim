@@ -27,7 +27,7 @@ The Decision Trace system captures **why** a colonist chose their current task a
 
 ### Component: DecisionTrace
 
-Added to colonists alongside Task component. Updated each time AIDecisionSystem re-evaluates.
+Added to colonists alongside Task component. Updated each time AIDecisionSystem re-evaluates: at once on an event (no task, arrival, a need crossing into critical, a route failing) and otherwise every 0.5 s; see [AI Behavior](./ai-behavior.md#when-a-colonist-decides). `lastEvaluationTime` stamps each one.
 
 ```cpp
 struct EvaluatedOption {
@@ -41,6 +41,9 @@ struct EvaluatedOption {
         Selected,       // This is the current task
         Available,      // Could do this, but lower priority
         NoSource,       // Need exists but no known entity
+        Regrowing,      // Known source is regrowing: skipped now, chosen again once ready
+        NoRoom,         // Can't lift any of the item now (pack full, hands busy): not offered
+        Reserved,       // Another colonist's claim holds the source, station, or item (reservedBy)
         Satisfied       // Need above threshold, no action needed
     };
     Status status;
@@ -68,35 +71,14 @@ struct DecisionTrace {
 
 ### Priority Calculation
 
-Options are sorted by a priority score using the int16 priority band system (see [Priority Config](./priority-config.md)):
+Options are sorted by a lexicographic key (see [Priority Config](./priority-config.md)), `EvaluatedOption::higherPriority`:
 
-```cpp
-int16_t calculateOptionPriority(const EvaluatedOption& option) {
-    // Priority bands from priority-config.md
-    constexpr int16_t kCriticalBand = 30000;
-    constexpr int16_t kNeedsBand = 10000;
-    constexpr int16_t kIdleBand = 0;
+1. `tier`, lower first. The base tier per task type comes from `<TaskTiers>` in `priority-tuning.xml`; `classifyTier` promotes a need below 10% to tier 2 and provisioning that serves an active work order (or furniture already carried) to tier 4, and puts gathering food, a satisfied need, and Wander at tier 7.
+2. `gatheringRank`, higher first (a cut that continues a gathering trip).
+3. `score`, higher first, compared only within a tier: `distanceFactor + skillBonus + taskAgeBonus + hysteresisBonus + storagePriorityBias`.
+4. `tiebreakId`, lower first, so equal options resolve the same way on every machine.
 
-    // Critical needs (< 10%) get highest priority
-    if (option.needValue < 10.0f) {
-        return kCriticalBand + static_cast<int16_t>(10.0f - option.needValue);  // 30000-30010
-    }
-    // Actionable needs (below seek threshold)
-    else if (option.needValue < option.threshold) {
-        return kNeedsBand + static_cast<int16_t>(option.threshold - option.needValue);  // 10000-10050ish
-    }
-    // Wander (only if no needs require attention)
-    else if (option.taskType == TaskType::Wander) {
-        return kIdleBand;  // 0
-    }
-    // Satisfied needs
-    else {
-        return -1;  // Won't be selected
-    }
-}
-```
-
-**Note:** When work tasks are available, they use the WorkHigh/WorkMedium/WorkLow bands (5000/3000/1000). Needs above threshold don't compete with work.
+No score can lift an option across a tier boundary, so a hungry colonist (tier 5) finishes a work-order delivery (tier 4) before eating, and a critically hungry one (tier 2) stops for food.
 
 ---
 
@@ -147,7 +129,9 @@ void AIDecisionSystem::buildDecisionTrace(
 
         // Check memory for fulfillment source
         auto capability = needToCapability(needType);
-        auto nearest = findNearestWithCapability(memory, m_registry, capability, position.value);
+        // Nearest known source the colonist can reach (see Query Pattern below)
+        auto nearest = findNearestReachableWithCapability(
+            memory, capability, position.value, anySource, reachable, m_sourceScratch);
 
         if (nearest.has_value()) {
             option.targetPosition = nearest->position;
@@ -212,35 +196,49 @@ The DecisionTrace respects the memory constraint:
 | Berry bush in memory | "Eat at Berry Bush (12m away)" |
 | No food in memory | Status: `NoSource`, "No known food source" |
 | Food exists but not seen | Status: `NoSource` (colonist doesn't know) |
+| Only known food is regrowing | Status: `Regrowing`, "Hunger at 40% (source regrowing)" |
+| Haul with no room to carry | Status: `NoRoom`, "Hauling to storage (Wood: no room to carry it)" |
+| Only known food is another colonist's next meal | Status: `Reserved`, "Hunger at 40% (reserved by Alice)" |
+| Tree another colonist is cutting | Status: `Reserved`, "Cutting Oak Tree for Wood (reserved by Alice)" |
+| Station another crafter selected | Status: `Reserved`, "Crafting Stone Axe (station in use by Alice)" |
 
 **Key Point:** The trace only shows entities the colonist has observed. If a berry bush exists but the colonist hasn't seen it, it won't appear in the trace.
 
 ### Query Pattern
 
 ```cpp
-// Uses existing MemoryQueries functions
-auto nearest = findNearestWithCapability(
-    memory,           // Colonist's personal memory
-    m_registry,       // For capability lookup
-    capability,       // Edible, Drinkable, etc.
-    position.value    // Colonist position
+// A candidate is filtered by the nav mesh's component labels (are the two places joined by meshed ground);
+// the nearest few connected ones go to one nearest-of route request that answers for his width and belief.
+
+// Both tests take the source's Memory key, so a verdict can be remembered per source (SourceReachMemo)
+auto accept = [&](uint64_t sourceKey, const KnownWorldEntity& known) {
+    return notKnownUnreachable(sourceKey, known);  // Hunger also requires an edible yield
+};
+auto reachable = [&](uint64_t sourceKey, const glm::vec2& sourcePosition) {
+    return canReachSource(sourceKey, sourcePosition);  // remembered verdict, or asked of the route request the first time
+};
+
+std::optional<KnownWorldEntity> nearest = findNearestReachableWithCapability(
+    memory,          // Colonist's personal memory
+    capability,      // Harvestable, Drinkable, etc.
+    position.value,  // Colonist position
+    accept,          // A satisfied need passes always-true tests: it only shows its nearest
+    reachable,
+    sourceScratch    // Reused candidate storage (std::vector<SourceCandidate>)
 );
 ```
+
+A known source the colonist can't reach (across a river, say) is skipped for the next nearest, and every known source is tried before the option is `NoSource`, so a colonist goes without only when nothing it knows of is reachable. With no food in its pack, one nearest-first search answers both food options. The Hunger option takes the nearest reachable known source of any kind: a ready harvestable whose yield is edible, a loose pile of an edible item, or a storage box the colony knows that holds one (piles and boxes only while the colonist is hungry). The gather-food option takes the nearest free ready bush. A bush on its regrowth cooldown pays nothing, so it is passed over for the next nearest; when nothing else edible is known, both options read `Regrowing` and the colonist takes its next option (other work, a wander) until the bush is ready. Readiness is the live state of a source the colonist already remembers, the game time it is ready again (or none), asked through `AIDecisionSystem::setSourceRegrowthCallback` by interned def id only of candidates on their way to winning, nearest first. When the search finds nothing and every edible harvestable the colonist knows is regrowing, the harvestables are not searched again until the earliest of them is ready or the colonist remembers or forgets a world entity (`SourceReachMemo::FoodWait`), so an idle colonist waiting on food costs one compare a decision. A work Harvest is checked the same way when it comes up for selection; a construction clear is not, since it removes the bush whatever its state. A bed or toilet that can't be reached falls back to the ground, as when none is known.
+
+"Can't reach" means two things. The pre-check: the source is in a different component of the nav mesh than the colonist. And a route request that came back "no known way": the colonist remembers a verdict on that target until his belief moves, or the label epoch moves and the verdict is at least `kVerdictMinTicks` old, then tries it again; a target with a live verdict is not asked about again. The same holds for a toilet spot or a work target, remembered by its point rather than a Memory key; a toilet spot that failed gives way to the ground where the colonist stands.
 
 ---
 
 ## UI Display
 
-### Configuration
-
-```cpp
-// In DecisionTrace.h or a config header
-constexpr size_t kMaxDisplayedOptions = 10;  // Configurable for future expansion
-```
-
 ### Task Queue Panel
 
-The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
+The EntityInfoPanel displays the options from the trace:
 
 ```
 ┌─────────────────────────────────────┐
@@ -270,10 +268,18 @@ The EntityInfoPanel displays up to `kMaxDisplayedOptions` items from the trace:
 | 🟢 | Selected | Currently executing this task |
 | ⏳ | Available | Would do next if current completes |
 | 🔒 | NoSource | Need exists but no known entity |
+| 🌱 | Regrowing | Known source is regrowing; taken again once ready |
+| 🎒 | NoRoom | A haul, fetch, pull, cut, or food gathering the colonist can't lift any of right now (or, for a top-up cut, too little room left for another cut); offered again once it has room |
+| 👤 | Reserved | Another colonist's claim takes the source whole; at most one row per goal and item, naming the holder ([Task Claims](../../../technical/task-claims.md)) |
 | ✓ | Satisfied | Need above threshold |
 | 🚶 | Wander | Idle behavior |
 
 ### Reason Formatting
+
+An option keeps a fixed format literal in `reason` and the ids it names (item, source and yield,
+recipe); `describeOption` (`DecisionTrace.cpp`) composes the text only when the panel draws it or an
+option is accepted, so evaluating an option builds no string. The sketch below shows the need text's
+shape; the real function also adds "(source regrowing)" and "(reserved by Alice)".
 
 ```cpp
 std::string formatOptionReason(const EvaluatedOption& option) {
@@ -334,21 +340,15 @@ void selectTaskFromTrace(EntityID entity, Task& task, const DecisionTrace& trace
 }
 ```
 
-### Reservation System (Future)
+### Claims
 
-When reservation is implemented:
-
-```cpp
-enum class Status {
-    Selected,
-    Available,
-    NoSource,
-    Satisfied,
-    Reserved    // Added: Another colonist claimed this
-};
-```
-
-The trace will show "Berry Bush (reserved by Alice)" to explain why Bob didn't pick it.
+With [task claims](../../../technical/task-claims.md), `OptionStatus` has `Reserved`: another
+colonist's task holds this target. A source others' claims take whole is not offered; each goal and
+item shows at most one Reserved row, for the nearest such source, and only when no source offered is
+nearer. The row names the top holder from the claim index: "Cutting Oak Tree for Wood (reserved by
+Alice)", "Hunger at 40% (reserved by Alice)", or for a Craft option "(station in use by Alice)".
+Options are not deduplicated to the best source per goal and item before scoring; that is planned.
+Bumping is not built, so no trace shows a "bumped by" row.
 
 ---
 
@@ -384,5 +384,5 @@ The trace will show "Berry Bush (reserved by Alice)" to explain why Bob didn't p
 - [Memory System](./memory.md) — Constrains what colonists know about
 - [Needs System](./needs.md) — Need thresholds and decay
 - [MVP Scope](../../mvp-scope.md) — Task queue display requirements
-- [Priority Config](./priority-config.md) — int16 priority bands and bonus formulas
+- [Priority Config](./priority-config.md): tiers and the in-tier score terms
 - [Task Registry](./task-registry.md) — Global task list (future: GlobalTaskListView)

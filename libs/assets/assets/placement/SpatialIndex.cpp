@@ -6,6 +6,18 @@
 
 namespace assets {
 
+	namespace {
+
+		/// The one test for "this is the entity at that position": find(), and through it remove()
+		/// and contains(), use it.
+		[[nodiscard]] bool isEntityAt(const PlacedEntity& entity, glm::vec2 position, const std::string& defName) {
+			constexpr float kEpsilon = 0.001F;
+			const glm::vec2 diff = entity.position - position;
+			return entity.defName == defName && diff.x * diff.x + diff.y * diff.y < kEpsilon * kEpsilon;
+		}
+
+	} // namespace
+
 	SpatialIndex::SpatialIndex(float cellSize)
 		: m_cellSize(cellSize) {}
 
@@ -30,37 +42,35 @@ namespace assets {
 		m_version.value = nextVersion();
 	}
 
-	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
-		int64_t key = getCellKey(position);
-		auto	cellIt = m_cells.find(key);
+	const PlacedEntity* SpatialIndex::find(glm::vec2 position, const std::string& defName) const {
+		const auto cellIt = m_cells.find(getCellKey(position));
 		if (cellIt == m_cells.end()) {
+			return nullptr;
+		}
+		const auto it = std::ranges::find_if(cellIt->second, [&](const PlacedEntity& e) { return isEntityAt(e, position, defName); });
+		return it != cellIt->second.end() ? &*it : nullptr;
+	}
+
+	bool SpatialIndex::remove(glm::vec2 position, const std::string& defName) {
+		const PlacedEntity* found = find(position, defName);
+		if (found == nullptr) {
 			return false;
 		}
+		const auto cellIt	= m_cells.find(getCellKey(position));
+		auto&	   entities = cellIt->second;
+		entities.erase(entities.begin() + (found - entities.data()));
+		--m_entityCount;
+		m_version.value = nextVersion();
 
-		auto& entities = cellIt->second;
-		// Small tolerance for floating point comparison
-		constexpr float kEpsilon = 0.001F;
-
-		for (auto it = entities.begin(); it != entities.end(); ++it) {
-			// Match by defName and approximate position
-			if (it->defName == defName) {
-				glm::vec2 diff = it->position - position;
-				float	  distSq = diff.x * diff.x + diff.y * diff.y;
-				if (distSq < kEpsilon * kEpsilon) {
-					entities.erase(it);
-					--m_entityCount;
-					m_version.value = nextVersion();
-
-					// Remove empty cell to keep map clean
-					if (entities.empty()) {
-						m_cells.erase(cellIt);
-					}
-					return true;
-				}
-			}
+		// Remove empty cell to keep map clean
+		if (entities.empty()) {
+			m_cells.erase(cellIt);
 		}
+		return true;
+	}
 
-		return false;
+	bool SpatialIndex::contains(glm::vec2 position, const std::string& defName) const {
+		return find(position, defName) != nullptr;
 	}
 
 	void SpatialIndex::clear() {

@@ -1,9 +1,12 @@
 #pragma once
 
+#include "../core/PagedVector.h"
+#include "../core/ScratchArray.h"
 #include "../core/Vec2i64.h"
 
 #include <array>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 // Navmesh assembler: turn a set of tagged polygons (one or more walkable borders
@@ -34,7 +37,7 @@
 // (faceBlocker > 0). Those widths vary per agent belief and only bite oversized
 // agents in built corridors; construction guarantees walkable wall gaps >= 0.7 m,
 // so for the one shipped agent size (0.3 m radius, 0.6 m diameter) every wall
-// portal fits. Width filtering here covers common-knowledge terrain/flora and
+// portal fits. Width filtering here covers common-knowledge terrain/obstacles and
 // door gaps only.
 
 namespace geometry::nav {
@@ -70,7 +73,7 @@ namespace geometry::nav {
 		// land-island holes), all blocked. holeCapable marks those rings so face
 		// classification uses even-odd containment parity among them (a point inside
 		// an even number of nested hole-capable rings is land = floor; odd = water).
-		// Everything else (river channels, ponds, flora, walls, the border) leaves this
+		// Everything else (river channels, ponds, obstacles, walls, the border) leaves this
 		// false: solid containment, and any solid ring blocks whatever the parity.
 		bool				 holeCapable  = false;
 	};
@@ -111,7 +114,7 @@ namespace geometry::nav {
 		//   kNoBlocker (== INT64_MIN) -> real floor, always walkable.
 		//   > 0  -> a wall segment id; belief-gated (truth: walkable iff faceOpening
 		//           is set, i.e. a door passes and solid wall blocks).
-		//   < 0  -> a terrain/common-knowledge sentinel (water/tree); always blocks.
+		//   < 0  -> a terrain/common-knowledge sentinel (water/placed obstacle); always blocks.
 		std::int64_t faceBlocker = kNoBlocker;
 		// Pathable door's openingId when this triangle is inside that door's footprint
 		// (faceBlocker is then the hosting segment id); else kNoOpening.
@@ -128,7 +131,7 @@ namespace geometry::nav {
 	inline bool isFloorFace(const NavTriangle& t) {
 		return t.faceBlocker == kNoBlocker;
 	}
-	// Common-knowledge terrain sentinel (water/tree, or a junction with no incident
+	// Common-knowledge terrain sentinel (water/placed obstacle, or a junction with no incident
 	// wall id): always blocks, belief or not. (faceBlocker < 0 and != kNoBlocker.)
 	inline bool isCommonKnowledgeTerrainFace(const NavTriangle& t) {
 		return t.faceBlocker < 0 && t.faceBlocker != kNoBlocker;
@@ -154,6 +157,44 @@ namespace geometry::nav {
 		return !isCommonKnowledgeTerrainFace(t); // floor or any wall is open
 	}
 
+	// --- Face classification ------------------------------------------------------
+	// What ground a point is: the one rule buildNavMesh and PatchableMesh both tag
+	// faces by. A face is sampled at one exact interior point, its sample triangle's
+	// centroid, held as the integer point a+b+c in 3x space.
+
+	// An input ring as classification reads it: scaled by 3, with its box.
+	struct SampleRing {
+		std::vector<Vec2i64> ring3;
+		Vec2i64				 lo3;
+		Vec2i64				 hi3;
+		bool				 blocked		= false;
+		std::int64_t		 provenance		= kNoProvenance;
+		std::int64_t		 opening		= kNoOpening;
+		bool				 holeCapable	= false;
+		Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
+	};
+
+	SampleRing sampleRing(const NavInputPolygon& poly);
+
+	// Strictly inside: a sample on the ring's boundary is outside it.
+	bool ringContainsSample(const SampleRing& ring, const Vec2i64& sample3);
+
+	struct FaceTags {
+		std::int64_t blocker = kNoBlocker;
+		std::int64_t opening = kNoOpening;
+	};
+
+	// Tags of in-bounds ground inside exactly the blocked rings `containing`, in any
+	// order: equal areas tie-break on content (provenance, then opening, then outline),
+	// so the answer never depends on input order or edit history. SOLID rings (placed obstacles,
+	// walls) go by solid containment: the smallest-area one wins, so a door-span
+	// footprint beats the wall band around it. HOLE-CAPABLE rings (water) go by
+	// nesting parity: a water body arrives as a CCW outer boundary plus CW land-island
+	// holes, separate rings, so odd depth is water (open water 1, a pond on an island
+	// 3) and even depth is land; disjoint bodies never nest. A solid ring blocks even
+	// over water.
+	FaceTags classifyCover(const std::vector<const SampleRing*>& containing);
+
 	// Uniform-grid spatial index over the triangle set, built by buildNavMesh.
 	// Each cell stores the indices of candidate triangles whose AABBs overlap it,
 	// in ascending order so locateTriangle reproduces the linear scan's lowest-index
@@ -170,78 +211,104 @@ namespace geometry::nav {
 		std::vector<std::int32_t> candidates;	// triangle indices, ascending within each cell
 	};
 
-	// Width-aware reachability over the triangle dual graph (P3.3). A Kruskal
-	// max-spanning-forest + reconstruction tree (a.k.a. min-max / merge tree) that
-	// answers two queries online: which component a triangle is in, and the
-	// bottleneck (the widest disc that any path between two triangles admits = the
-	// max over paths of the min edge capacity). Edge capacity is the floored mm
-	// disc DIAMETER a portal admits (see NavMesh.cpp step 10).
-	//
-	// The reconstruction tree has the mesh's triangles as leaves [0, triangleCount):
-	// each Kruskal union (processing portal edges in DESCENDING capacity) creates an
-	// internal node storing that edge's capacity, with the two merged subtree roots
-	// as children. Then bottleneck(a, b) = the capacity stored at LCA(a, b), because
-	// the union that first joined a and b used the smallest capacity on the widest
-	// path between them. "Different tree" (different root) => disconnected for every
-	// diameter. Triangles not traversable for this forest's predicate are not nodes;
-	// they get component == -1 and any bottleneck query touching them is unreachable.
-	//
-	// SOUNDNESS (the only direction we rely on): a disc of diameter D crossing a path
-	// uses, at each portal, an apex passage <= that portal's capacity, so D <=
-	// min-cap of the path <= bottleneck(a, b). Hence D > bottleneck(a, b) => no path
-	// admits the disc => unreachable. This is an UPPER bound; it can over-approximate
-	// (bottleneck high but the funnel still fails), never the reverse.
-	struct ReachabilityForest {
-		// Per leaf-triangle component id (root of its reconstruction tree), or -1 if
-		// the triangle is not traversable for this forest's predicate. Length ==
-		// triangleCount. Two traversable triangles are connected (ignoring width) iff
-		// they share a component id.
-		std::vector<std::int32_t> component;
+	class MeshComponents;
 
-		// Reconstruction-tree node capacities. Leaf nodes [0, triangleCount) store
-		// kUnconstrainedWidth (a triangle is unconstrained with itself); internal
-		// nodes [triangleCount, nodeCount) store the merge capacity. Disconnected
-		// (non-node) leaves still occupy their slot but are never reached by a query.
-		std::vector<std::int64_t> nodeCap;
-
-		// Binary-lifting LCA tables over the reconstruction-tree forest. up[k][i] is
-		// the 2^k-th ancestor of node i (i when it runs past a root). depth[i] is the
-		// node's depth from its root. parent (up[0]) of a root is itself.
-		std::vector<std::int32_t>			   depth;
-		std::vector<std::vector<std::int32_t>> up; // up[level][node]
-		std::int32_t						   levels = 0; // number of lifting levels
-	};
+	// A process-wide counter, never repeating: what a mesh state is known by (see
+	// NavView::epoch).
+	std::uint64_t nextMeshGeneration();
 
 	struct NavMesh {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
 		NavGrid					 grid;
-		// Two forests over the SAME geometric edge capacities, differing only in which
-		// triangles are nodes (the traversability predicate):
-		//   truthForest:   nodes = truth-traversable triangles (floor or a door span).
-		//                  Answers AI goal validity (truth reachability).
-		//   terrainForest: nodes = terrain-traversable triangles (floor or ANY wall
-		//                  face treated as OPEN; only common-knowledge terrain blocks).
-		//                  Answers the BELIEF reject -- sound for every possible belief,
-		//                  since the most optimistic belief routes through unseen walls.
-		ReachabilityForest truthForest;
-		ReachabilityForest terrainForest;
+		// Taken when the mesh is made; a copy carries its source's along with its content.
+		// A caller that edits a built mesh in place takes a fresh one.
+		std::uint64_t generation = nextMeshGeneration();
 	};
 
 	// Build the navmesh from tagged input. The triangles tile the walkable bounds:
 	// no face is dropped, however its rings touch, pinch, or nest.
 	NavMesh buildNavMesh(const NavMeshInput& input);
 
-	// Are triangles triA and triB in the same component of `forest` (connected
-	// ignoring width)? False if either index is out of range or is a non-node for
-	// the forest's predicate. O(1).
-	bool reachableInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
+	// The triangles a path query or a corridor width reads, and the means to locate a
+	// point among them. NavMesh and PatchableMesh each produce one, so each of those
+	// algorithms has one implementation. A slot `live` marks dead is never located and
+	// never a live triangle's neighbour.
+	//
+	// A view reads its owner as it is when used, never as it was when taken: component
+	// labels, width currency, and the patch epoch come through the owner, and every
+	// function taking a view reads the slot tables through resolved(), so a view kept
+	// across a patch sees the patched mesh.
+	// One of a mesh's slot tables as a view reads it: a NavMesh's contiguous vector or a
+	// PatchableMesh's pages (PagedVector), as the owner held it when the view was taken
+	// or last resolved (NavView::resolved).
+	template <typename T> struct ViewArray {
+		const T*		flat  = nullptr;
+		const T* const* pages = nullptr;
+		std::size_t		count = 0;
 
-	// The bottleneck between triA and triB in `forest`: the max over paths of the min
-	// edge capacity (the widest disc DIAMETER any path between them admits). Returns 0
-	// when disconnected (or an endpoint is a non-node), kUnconstrainedWidth when
-	// triA == triB. The sound reject is `diameter > bottleneck => unreachable`.
-	// O(log n) via binary-lifting LCA over the reconstruction tree.
-	std::int64_t bottleneckInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
+		bool		set() const { return flat != nullptr || pages != nullptr; }
+		std::size_t size() const { return count; }
+		const T&	operator[](std::size_t i) const {
+			   return pages != nullptr ? pages[i >> PagedVector<T>::kPageShift][i & PagedVector<T>::kPageMask] : flat[i];
+		}
+		void of(const std::vector<T>& table) {
+			flat  = table.data();
+			pages = nullptr;
+			count = table.size();
+		}
+		void of(const PagedVector<T>& table) {
+			flat  = nullptr;
+			pages = table.pageTable();
+			count = table.size();
+		}
+	};
+
+	struct NavView {
+		ViewArray<Vec2i64>		vertices;
+		ViewArray<NavTriangle>	triangles;
+		ViewArray<std::uint8_t> live; // unset: every slot is live
+		const void*				owner = nullptr;
+		std::int32_t (*locateIn)(const void* owner, const Vec2i64& p)						= nullptr;
+		const MeshComponents* (*componentsIn)(const void* owner)							= nullptr;
+		bool (*widthsCurrentIn)(const void* owner)											= nullptr;
+		std::uint64_t (*epochIn)(const void* owner)											= nullptr;
+		void (*resolveIn)(const void* owner, NavView& view)									= nullptr;
+
+		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles.size()); }
+		bool			   isLive(std::int32_t t) const { return !live.set() || live[static_cast<std::size_t>(t)] != 0; }
+		const NavTriangle& triangle(std::int32_t t) const { return triangles[static_cast<std::size_t>(t)]; }
+		const Vec2i64&	   vertex(std::uint32_t v) const { return vertices[v]; }
+		// This view with the owner's slot tables as they are now.
+		NavView resolved() const {
+			NavView view = *this;
+			resolveIn(owner, view);
+			return view;
+		}
+		std::int32_t	   locate(const Vec2i64& p) const { return locateIn(owner, p); }
+		// The owner's connected-component labels, current with its triangles; null when it
+		// keeps none, and then a path query skips its component pre-check.
+		const MeshComponents* components() const { return componentsIn(owner); }
+		// False while corridor widths lag behind a patch; queries read widths.
+		bool widthsCurrent() const { return widthsCurrentIn(owner); }
+		// Changes whenever the triangles or their tags do, to a value no mesh state in the
+		// process has had before (nextMeshGeneration).
+		std::uint64_t epoch() const { return epochIn(owner); }
+	};
+
+	NavView navView(const NavMesh& mesh);
+
+	// Scratch for corridor-width searches, reused across calls.
+	struct WidthSearch {
+		ScratchArray<std::uint32_t> visited; // visited[t] == stamp: seen by the current search
+		std::uint32_t				stamp = 0;
+	};
+
+	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)
+	// that passes between the two edges meeting there, against common-knowledge
+	// obstacles. A width at or above maxClearanceMm reads kUnconstrainedWidth, and the
+	// search never looks farther than maxClearanceMm from the apex, so the width depends
+	// only on `tri` and the triangles that come within maxClearanceMm of the apex.
+	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
 
 } // namespace geometry::nav

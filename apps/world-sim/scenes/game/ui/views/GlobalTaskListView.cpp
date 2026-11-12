@@ -88,7 +88,7 @@ namespace world_sim {
 			tasks,
 			[](const adapters::GlobalTaskDisplayData& task) { return std::to_string(task.id); },
 			[column](const adapters::GlobalTaskDisplayData& task) -> ui::Ref<ui::Component> {
-				return column->addChild<GlobalTaskRow>({.id = std::format("task_row_{}", task.id), .task = task, .showKnownBy = true});
+				return column->addChild<GlobalTaskRow>({.id = std::format("task_row_{}", task.id), .task = task});
 			},
 			[](ui::Component& shown, const adapters::GlobalTaskDisplayData& task) { static_cast<GlobalTaskRow&>(shown).setTaskData(task); }
 		);

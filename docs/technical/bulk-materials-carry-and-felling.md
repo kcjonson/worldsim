@@ -152,10 +152,15 @@ first). Not code — engine touch-points are named so the work is concrete.
   20-30), and set `durability` to the whole-fell work (≈ the old multi-chop total; ~3× the
   current per-chop value so a fell stays ~15 s at base rate — see PR #216).
 - Harvest completion (`ActionSystem::completeAction`, collection branch): trees route through the
-  single-shot path; take the weight-limited armful into hands, **drop the remainder** as a loose
-  stack (§6), then destroy via `m_onRemoveEntity`. The pool branch (`m_onDecrementResource`) is
-  no longer used by trees; keep it only if another pooled source remains, else remove it (no dead
-  paths).
+  single-shot path. The tree is taken from the world first via `m_onTakeSource`, and pays only if it
+  was still standing (another colonist may have felled it); then the weight-limited armful goes into
+  the hands and the remainder **drops** as a loose stack (§6). The pool branch
+  (`m_onDecrementResource`) is no longer used by trees but still serves pooled bushes (sticks). It
+  follows the same rule: `m_onTakeSource` with Keep confirms the bush stands, the pool is drawn
+  and paid, then the bush is removed once the pool is empty or a clear takes it. Removing a source
+  erases its pool and regrowth, so neither outlives it. A regrowing bush stores the game time it is
+  ready again (`TimeSystem::simulationSeconds`, which stops while paused and scales with speed); the
+  entry is erased the first time it is read past that time, so nothing ticks regrowth per frame.
 - Acceptance: one harvest action destroys the tree; the colonist carries an armful; leftover wood
   sits at the stump as a haulable stack; no wood is lost.
 
@@ -203,9 +208,12 @@ first). Not code — engine touch-points are named so the work is concrete.
   `worldview::pileFootprintRadius` in `PileLayout.h` (the circle around a FULL pile of the item,
   so top-ups never outgrow it) and `kPackagedFootprintRadius` in `PackagedLayout.h` (half the
   crate's diagonal, centered on the crate box). `GameScene::dropResourcePiles` gathers every pile
-  and crate. When the drop origin is on the mesh it passes the nav mesh's `isValidPosition` as
-  the ground test for the first `kWalkableSearchRings` rings, past which clearance alone decides
-  so a drop always lands; an off-mesh origin gets no ground test. `ResourceStack.h` holds only
+  and crate. It always passes the nav mesh's `isValidPosition` as the ground test and every
+  unbuilt footprint as ground to keep: the origin itself must pass (a river bank or a wall band
+  doesn't), the search runs `kWalkableSearchRings` rings around the origin, then as many around
+  the drop's fallback (where the goods came from: the worker for a harvest, a moved pile's old
+  spot), and only past both does clearance alone decide, from the fallback, so a drop where no
+  mesh is loaded still lands. `ResourceStack.h` holds only
   the merge radius, the gap, and the ring count; tuning is deferred. Deterministic, no RNG.
 - Visual: `worldview::pileLayout` (`libs/world-view/world/rendering/PileLayout.h`) draws a pile
   as 1 sprite for a single unit, otherwise ceil(fill x 5) sprites clamped to 2..5 (one per unit

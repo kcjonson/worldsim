@@ -8,6 +8,7 @@
 #include "scenes/game/dev/DevCommandHandler.h"
 #include "scenes/game/dev/GpuHold.h"
 #include "scenes/game/ui/GameUI.h"
+#include "scenes/game/world/DeferredEditsSystem.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/nav/NavOverlay.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
@@ -56,7 +57,12 @@
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS
+#include <construction/ConstructionWorld.h>
+#include <core/Vec2i64.h>
+#include <ecs/GoalTaskRegistry.h>
+#include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
+#include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/AnimationState.h>
@@ -75,6 +81,7 @@
 #include <ecs/components/ResourceStack.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
+#include <ecs/components/SourceReachMemo.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
@@ -184,8 +191,8 @@ namespace {
 				m_placementExecutor->initialize();
 				LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", m_placementExecutor->getSpawnOrder().size());
 
-				// Initial chunk load (entity placement happens async in update())
-				m_chunkManager->update(m_camera->position());
+				// Initial chunk load (entity placement happens async in update()); no movers exist yet
+				m_chunkManager->update(m_camera->position(), {});
 
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
@@ -275,8 +282,7 @@ namespace {
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
 				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
-					auto coord = world::worldToChunk({position.x, position.y});
-					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
+					return m_placementExecutor->getResourceCount({position.x, position.y}, defName);
 				},
 				.onStructureSelected =
 					[this](const std::string& structure) {
@@ -456,8 +462,8 @@ namespace {
 				// which mutator; a wall surfaces its openings' entities too) and DEFER the entity
 				// destruction. This callback fires from inside ActionSystem::update's live view
 				// iteration; destroying here would swap-and-pop the shared component pools and corrupt
-				// that iteration, so entities go on the queue drained after ecsWorld->update() (see
-				// update()). This is the SINGLE removal path: the demolish buttons only mark
+				// that iteration, so entities go on the queue drainDeferredEdits empties (see
+				// DeferredEditsSystem). This is the SINGLE removal path: the demolish buttons only mark
 				// structures; the work-driven deconstruct lands here. The SAME lambda is wired to
 				// ConstructionSystem for the no-work edge case (a marked blueprint with workDone <= 0
 				// is removed immediately through here). Material return splits by path: a built teardown
@@ -465,8 +471,8 @@ namespace {
 				// dumps 100% at order-time inside ConstructionSystem and clears delivered[] (so the salvage
 				// below reads empty for it).
 				auto structureDeconstructed = [this](ecs::EntityID blueprintEntity) {
-					// Salvage refundPercent% of a BUILT structure's delivered[] manifest as loose piles HERE,
-					// at tear-down completion (the structure is gone), not at the demolish-order tick when it
+					// Salvage refundPercent% of a BUILT structure's delivered[] manifest as loose piles queued
+					// HERE, at tear-down completion (the structure is gone), not at the demolish-order tick when it
 					// was still standing. The entity is still alive (destruction is deferred to the queue), so
 					// delivered[] and Position read fine. A no-work cancel already dumped 100% and cleared
 					// delivered[] at order-time in ConstructionSystem, so this reads empty for it and drops
@@ -479,7 +485,7 @@ namespace {
 						for (const auto& [defName, qty] : blueprint->delivered) {
 							const auto salvageQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
 							if (salvageQty > 0) {
-								dropResourcePiles(defName, dropPos.x, dropPos.y, salvageQty);
+								m_pendingSpawns.push_back({defName, dropPos.x, dropPos.y, salvageQty, /*packaged=*/false, std::nullopt, dropPos});
 							}
 						}
 					}
@@ -588,7 +594,7 @@ namespace {
 				.landingLonDeg = m_landingLonDeg,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
 				.dropLoose = [this](const std::string& defName, float x, float y, uint32_t quantity) {
-					dropResourcePiles(defName, x, y, quantity);
+					dropResourcePiles(defName, {x, y}, {x, y}, quantity);
 				},
 			});
 			m_devRegistrations = m_devHandler->registerWith(owner->devServer());
@@ -871,25 +877,11 @@ namespace {
 			auto updateStart = Clock::now();
 
 			m_camera->update(dt);
-			m_chunkManager->update(m_camera->position());
 
-			// Feed the viewport rect to NavigationSystem as PLAIN DATA -- the scene no
-			// longer drives the navmesh. NavigationSystem owns the sim area: it tracks the
-			// colonists plus this viewport, clusters them into regions, and self-gates the
-			// rebuilds off the render clock. The visible rect (expanded by kViewportMargin
-			// for scroll/zoom headroom) is the camera's contribution; the system clamps the
-			// half-extents and decides internally when a region needs (re)building.
-			{
-				int vpW = 0;
-				int vpH = 0;
-				Renderer::Primitives::getLogicalViewport(vpW, vpH);
-				Foundation::Rect vis = m_camera->getVisibleRect(vpW, vpH, kPixelsPerMeter);
-				const glm::vec2	 halfExtentMeters{
-					 0.5F * vis.width * ecs::NavigationSystem::kViewportMargin, 0.5F * vis.height * ecs::NavigationSystem::kViewportMargin
-				 };
-				const world::WorldPosition pos = m_camera->position();
-				ecsWorld->getSystem<ecs::NavigationSystem>().setViewportRect(glm::vec2{pos.x, pos.y}, halfExtentMeters);
-			}
+			// Every mover holds the chunks within its own range, so panning away never unloads them.
+			anchors.clear();
+			ecsWorld->getSystem<ecs::NavigationSystem>().appendAnchors(anchors);
+			m_chunkManager->update(m_camera->position(), anchors);
 
 			// Process newly loaded chunks for entity placement
 			processNewChunks();
@@ -899,54 +891,6 @@ namespace {
 
 			// Update ECS world (movement, physics, render system)
 			ecsWorld->update(dt);
-
-			// Drain deferred entity removals AFTER the ECS update. Systems (e.g.
-			// ActionSystem on a completed Deconstruct) and input handlers queue
-			// destroys here instead of calling destroyEntity mid-iteration, which
-			// would swap-and-pop the component pools out from under a live view.
-			if (!m_pendingEntityRemoval.empty()) {
-				for (ecs::EntityID entity : m_pendingEntityRemoval) {
-					// Drop control if the controlled colonist is being destroyed, so a recycled
-					// entity index can't later resolve m_controlledColonist to a different live entity.
-					if (entity == m_controlledColonist) {
-						m_controlledColonist = 0;
-						m_moveMarkerTtl = 0.0F;
-					}
-					ecsWorld->destroyEntity(entity);
-				}
-				m_pendingEntityRemoval.clear();
-			}
-
-			// Drain deferred drops AFTER the ECS update, for the same reason as the removals above:
-			// spawnEntity grows the component pools and a synchronous spawn from inside a system's
-			// view loop (a colonist freeing its hands, a fell's uncarried remainder) would reallocate
-			// and dangle that view's bound refs. Crafted furniture spawns one entity with a Packaged
-			// tag; a loose drop routes through dropResourcePiles (merge, then stack-capped split).
-			if (!m_pendingSpawns.empty()) {
-				for (const PendingSpawn& spawn : m_pendingSpawns) {
-					if (spawn.packaged) {
-						// Spawn AT the resolved target (when one is set) so the box never overlaps
-						// the station: the colonist walks over and installs it via PlacePackaged.
-						// targetPosition wired here -> BuildGoalSystem raises the place goal next
-						// frame. nullopt -> spawn in place, await the player's [Place] click.
-						const glm::vec2 spawnAt = spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
-						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
-						ecs::Packaged	packaged;
-						packaged.targetPosition = spawn.targetPosition;
-						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
-						if (spawn.targetPosition.has_value()) {
-							LOG_INFO(
-								Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(), spawnAt.x, spawnAt.y
-							);
-						} else {
-							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
-						}
-					} else {
-						dropResourcePiles(spawn.defName, spawn.x, spawn.y, spawn.quantity);
-					}
-				}
-				m_pendingSpawns.clear();
-			}
 
 			// A selected pile drains away as colonists haul from it; when it's gone, the
 			// selection goes with it (isAlive first: a recycled index could carry another
@@ -1245,6 +1189,11 @@ namespace {
 
 			ecsWorld = std::make_unique<ecs::World>();
 
+			std::random_device entropy;
+			const uint64_t	   sessionSeed = (uint64_t{entropy()} << 32) | entropy();
+			const auto		   systemSeeds = ecs::deriveSystemSeeds(sessionSeed);
+			LOG_INFO(Game, "Session seed: %llu", static_cast<unsigned long long>(sessionSeed));
+
 			// Register systems in priority order (lower = runs first)
 			auto& assetRegistry = assets::AssetRegistry::Get();
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
@@ -1257,13 +1206,15 @@ namespace {
 			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
 			ecsWorld->registerSystem<ecs::NavigationSystem>();								// Priority 51 - cached navmesh + path queries
-			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
+			// Priority 60
+			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, systemSeeds.aiDecision);
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
 			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
 			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
 			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>(); // Priority 270 - flora-rect safety-net after wall collision
-			ecsWorld->registerSystem<ecs::ActionSystem>();				// Priority 350
+			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
+			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
 			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
 
 			// Wire up VisionSystem with placement data for entity queries
@@ -1279,9 +1230,8 @@ namespace {
 
 			// Wire NavigationSystem resources (same data VisionSystem consumes). The
 			// ConstructionWorld pointer is wired after DrawingSystem is created, back in
-			// initialize(), exactly like ConstructionSystem. The simulation area itself
-			// is pushed per-frame in update() via setSimulationArea (GameScene owns the
-			// camera and viewport dimensions needed to compute it).
+			// initialize(), exactly like ConstructionSystem. The mesh follows the movers;
+			// the camera has no say in it.
 			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
@@ -1289,6 +1239,7 @@ namespace {
 			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
 			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
 			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
+			staticRectCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
@@ -1311,23 +1262,6 @@ namespace {
 				gameUI->pushNotification("Crafted", itemLabel, ui::ToastSeverity::Info);
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
 			});
-
-			// Every ground drop -- a felled tree's uncarried remainder, craft overflow, a stowed
-			// tool, a cancelled build site's salvage -- lands on a walkable nav point. An origin
-			// already on the mesh is kept as is: findValidPositionNear always lands at least its
-			// min distance away, which would push a drop off the colonist's feet and possibly
-			// across a wall. Only an off-mesh origin (a tree felled on a river bank) is searched
-			// for solid ground. The snap lives here, at the two drop funnels (loose pile, packaged
-			// item), so no upstream drop site needs its own nav check (One-Path). The search is
-			// deterministic (no RNG, canonical +X bias) and returns nullopt only when no mesh
-			// covers the origin -- then we keep the raw origin so a drop never hard-fails.
-			auto snapDropToGround = [&navSystem](float x, float y) -> glm::vec2 {
-				const glm::vec2 origin{x, y};
-				if (navSystem.isValidPosition(origin)) {
-					return origin;
-				}
-				return navSystem.findValidPositionNear(origin, 1.0F).value_or(origin);
-			};
 
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
 			// station via the existing PlacePackaged flow (it must not seat in the colonist's
@@ -1353,63 +1287,38 @@ namespace {
 			// Every loose drop (felling remainder, hand overflow, a stowed tool, a chain-interrupted
 			// carry, a cancelled build site's staged materials) lands as a ResourceStack pile, not
 			// Packaged. The callbacks fire from inside their system's view loop, so they ENQUEUE; the
-			// drain runs dropResourcePiles (the single loose-drop path) after ecsWorld->update().
-			auto enqueueResourceDrop = [this, snapDropToGround](const std::string& defName, float x, float y, uint32_t quantity) {
-				const glm::vec2 at = snapDropToGround(x, y);
-				m_pendingSpawns.push_back({defName, at.x, at.y, quantity, /*packaged=*/false});
+			// drain runs dropResourcePiles (the single loose-drop path) in drainDeferredEdits.
+			auto enqueueResourceDrop = [this](const std::string& defName, float x, float y, uint32_t quantity, glm::vec2 fallback) {
+				m_pendingSpawns.push_back({defName, x, y, quantity, /*packaged=*/false, std::nullopt, fallback});
 			};
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
-
-			// Wire up ActionSystem to remove harvested entities (destructive harvest)
-			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
-				auto coord = world::worldToChunk({x, y});
-				bool removedFromIndex = m_placementExecutor->removeEntity(coord, {x, y}, defName);
-
-				// World-gen flora live only in the placement index (above). Runtime-spawned
-				// harvestables (dev spawns, future saplings) are ECS entities that VisionSystem
-				// Pass 2 sees by Appearance; the index removal misses them, so a depleted one
-				// would linger and get re-discovered forever. Find the matching ECS entity and
-				// queue it for the deferred drain (never destroy mid-view-iteration).
-				bool			queuedEcs = false;
-				constexpr float kMatchEps = 0.25F;
-				for (auto [ent, entPos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
-					if (appearance.defName != defName) {
-						continue;
-					}
-					const float ddx = entPos.value.x - x;
-					const float ddy = entPos.value.y - y;
-					if (ddx * ddx + ddy * ddy <= kMatchEps * kMatchEps) {
-						m_pendingEntityRemoval.push_back(ent);
-						queuedEcs = true;
-						break;
-					}
-				}
-
-				if (!removedFromIndex && !queuedEcs) {
-					LOG_WARNING(Game, "Failed to remove harvested entity %s at (%.1f, %.1f)", defName.c_str(), x, y);
-				}
+			aiDecisionSystem.setSetDownSpotCallback([this](glm::vec2 at) { return packageSetDownSpot(at); });
+			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at, double now) {
+				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, defNameId, at, now);
 			});
+
+			// Wire up ActionSystem to take a harvested or picked-up source from the world as the action
+			// completes, reporting what it was just before: gone, standing, or regrowing.
+			actionSystem.setTakeSourceCallback(
+				[this](const std::string& defName, float x, float y, ecs::ActionSystem::SourceTake take, float regrowthSeconds) {
+					return ecs::takeWorldSource(*m_placementExecutor, *ecsWorld, m_pendingEntityRemoval, defName, {x, y}, take, regrowthSeconds);
+				}
+			);
 
 			// Wire up ActionSystem to remove a specific entity by id (a loose pile drained to
 			// zero). The system already holds the exact entity, so there is no position scan to
 			// alias between two same-material piles. Queue for the deferred drain like the others.
 			actionSystem.setRemoveEntityByIdCallback([this](ecs::EntityID entity) { m_pendingEntityRemoval.push_back(entity); });
 
-			// Wire up ActionSystem to set cooldown on harvested entities (regrowth)
-			actionSystem.setEntityCooldownCallback([this](const std::string& defName, float x, float y, float cooldownSeconds) {
-				auto coord = world::worldToChunk({x, y});
-				m_placementExecutor->setEntityCooldown(coord, {x, y}, defName, cooldownSeconds);
-			});
 
 			// Wire up ActionSystem to withdraw from harvestable resource pools. Returns how much
 			// was actually taken plus whether the pool is now empty (so the tree gets removed).
 			actionSystem.setDecrementResourceCallback(
 				[this](const std::string& defName, float x, float y, uint32_t requested) -> ecs::ActionSystem::ResourceDraw {
-					auto		   coord = world::worldToChunk({x, y});
-					const uint32_t removed = m_placementExecutor->decrementResourceCount(coord, {x, y}, defName, requested);
-					const bool	   depleted = !m_placementExecutor->getResourceCount(coord, {x, y}, defName).has_value();
+					const uint32_t removed = m_placementExecutor->decrementResourceCount({x, y}, defName, requested);
+					const bool	   depleted = !m_placementExecutor->getResourceCount({x, y}, defName).has_value();
 					return {removed, depleted};
 				}
 			);
@@ -1477,16 +1386,16 @@ namespace {
 		static constexpr float kSpawnClearance = 0.3F;
 
 		/// Turn the raw drop point into guaranteed-clear, on-mesh spawns for a crew of `crewSize`:
-		///  1. pick the points on the terrain-only nav mesh (the chunks' water rings, no entities):
+		///  1. pick the points on the ground nav mesh (the chunks' water rings, no entities):
 		///     the clearing center is the nearest spot to the drop whose whole party ring stands on
 		///     clear ground, so the ring never straddles a shore, and each member's point is clear
 		///     ground of its own, kPartyMinSeparation from the others;
 		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius of every point so
 		///     nothing is triangulated as an obstacle on top of a colonist.
-		/// Runs at ECS init, BEFORE the first sim-region build, so the removed obstacles never enter
-		/// the mesh input and the crew drops onto open ground.
+		/// Runs at ECS init, before any flora enters the nav mesh, so the removed obstacles never
+		/// do and the crew drops onto open ground.
 		[[nodiscard]] ecs::NavigationSystem::GroupSpawn
-		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, const ecs::NavigationSystem& navSystem) {
+		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, ecs::NavigationSystem& navSystem) {
 			ecs::NavigationSystem::GroupSpawn landing =
 				navSystem.groupSpawnPoints(rawSpawn, crewSize, kPartyRingRadius, kPartyMinSeparation, kSpawnClearance);
 			if (landing.center != rawSpawn) {
@@ -1592,6 +1501,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{.owner = entity});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
+			ecsWorld->addComponent<ecs::SourceReachMemo>(entity, ecs::SourceReachMemo{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
 			ecsWorld->addComponent<ecs::AgentRadius>(entity, ecs::AgentRadius{});
 
@@ -1762,17 +1672,22 @@ namespace {
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
-		/// Lay `quantity` x `defName` on the ground at (x, y) as loose, haulable ResourceStack piles
-		/// (not Packaged). Same-def piles near the spot are topped up to the item's stackSize first,
-		/// then the rest spawns as new stack-capped piles on walkable spots clear of every pile and
-		/// packaged crate around (footprints from the shared layouts, so spacing matches what's
-		/// drawn). No def / no itemProperties means unbounded -> one pile. The SINGLE loose-drop
-		/// path: every sim drop callback, the cancelled site's salvage, and the dev `give
-		/// where=loose` route through it.
-		void dropResourcePiles(const std::string& defName, float x, float y, uint32_t quantity) {
-			auto&		   registry = assets::AssetRegistry::Get();
-			const auto*	   def = registry.getDefinition(defName);
-			const uint32_t cap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+		/// What a ground drop keeps off and spaces around: every unbuilt footprint, and every pile and
+		/// set-down crate (footprints from the shared layouts, so spacing matches what's drawn). Only
+		/// a pile of `dropDef` off the sites can take a top-up; an empty `dropDef` tops up nothing.
+		struct GroundSurvey {
+			std::vector<ecs::FootprintBounds> sites;
+			std::vector<ecs::GroundOccupant>  occupants;
+			std::vector<ecs::ResourceStack*>  stacks; // the piles' stacks, in occupants' order
+			float							  dropRadius = 0.0F; // `dropDef`'s full-pile footprint at scale 1
+
+			[[nodiscard]] bool onSite(glm::vec2 p) const {
+				return std::any_of(sites.begin(), sites.end(), [p](const ecs::FootprintBounds& site) { return site.contains(p); });
+			}
+		};
+
+		GroundSurvey surveyGround(const std::string& dropDef) {
+			auto& registry = assets::AssetRegistry::Get();
 
 			// Computed at each pile's own scale: the dynamic transform re-centers by the unscaled bbox
 			// center, so the footprint isn't linear in scale and a scale-1 radius can't be multiplied.
@@ -1792,44 +1707,130 @@ namespace {
 				return worldview::pileFootprintRadius(it->second.first, scale, it->second.second);
 			};
 
+			GroundSurvey survey;
+			if (m_drawingSystem) {
+				const auto& topology = m_drawingSystem->world();
+				for (const auto& foundation : topology.foundations()) {
+					if (foundation.state != construction::FoundationState::Built) {
+						const auto aabb = topology.footprintAabb(foundation.id);
+						survey.sites.push_back({geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)});
+					}
+				}
+			}
+
 			// Every pile and crate, not a radius around the drop: the spiral has no fixed reach, so
 			// any cutoff could leave out something a crowded drop ends up next to.
-			std::vector<ecs::GroundOccupant> nearby;
-			std::vector<ecs::ResourceStack*> nearbyStacks;
 			for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
-				nearby.push_back({pos.value, pileRadius(appearance.defName, appearance.scale), stack.quantity, appearance.defName == defName});
-				nearbyStacks.push_back(&stack);
+				const bool topUpTarget = !dropDef.empty() && appearance.defName == dropDef && !survey.onSite(pos.value);
+				survey.occupants.push_back({pos.value, pileRadius(appearance.defName, appearance.scale), stack.quantity, topUpTarget});
+				survey.stacks.push_back(&stack);
 			}
 			for (auto [entity, pos, packaged] : ecsWorld->view<ecs::Position, ecs::Packaged>()) {
 				if (packaged.beingCarried) {
 					continue;
 				}
-				nearby.push_back({worldview::packagedFootprintCenter(pos.value), worldview::kPackagedFootprintRadius, 0, false});
+				survey.occupants.push_back({worldview::packagedFootprintCenter(pos.value), worldview::kPackagedFootprintRadius, 0, false});
+			}
+			if (!dropDef.empty()) {
+				survey.dropRadius = pileRadius(dropDef, 1.0F);
+			}
+			return survey;
+		}
+
+		/// Destroy the queued entities, then land the queued drops. Systems and input handlers queue both
+		/// rather than destroy or spawn mid-iteration, which would swap-and-pop or reallocate the component
+		/// pools under a live view. DeferredEditsSystem calls this inside the tick, after NavigationSystem has
+		/// joined its patch job and before endTick starts the next, so a drop's nav probes never wait for one.
+		/// Removals go first: a pile drained this tick must be gone before a drop could top it up.
+		void drainDeferredEdits() {
+			if (!m_pendingEntityRemoval.empty()) {
+				for (ecs::EntityID entity : m_pendingEntityRemoval) {
+					// Drop control if the controlled colonist is being destroyed, so a recycled
+					// entity index can't later resolve m_controlledColonist to a different live entity.
+					if (entity == m_controlledColonist) {
+						m_controlledColonist = 0;
+						m_moveMarkerTtl = 0.0F;
+					}
+					ecs::destroyWorldEntity(*ecsWorld, entity);
+				}
+				m_pendingEntityRemoval.clear();
 			}
 
-			const auto& nav = ecsWorld->getSystem<ecs::NavigationSystem>();
-			std::function<bool(glm::vec2)> isGround;
-			if (nav.isValidPosition({x, y})) {
-				isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
+			// Crafted furniture spawns one entity with a Packaged tag; a loose drop routes through
+			// dropResourcePiles (merge, then stack-capped split).
+			if (!m_pendingSpawns.empty()) {
+				for (const PendingSpawn& spawn : m_pendingSpawns) {
+					if (spawn.packaged) {
+						// Spawn AT the resolved target (when one is set) so the box never overlaps
+						// the station: the colonist walks over and installs it via PlacePackaged.
+						// targetPosition wired here -> BuildGoalSystem raises the place goal at its
+						// next poll (every 30 frames). nullopt -> spawn in place, await the player's [Place] click.
+						const glm::vec2 spawnAt = spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
+						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
+						ecs::Packaged	packaged;
+						packaged.targetPosition = spawn.targetPosition;
+						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
+						if (spawn.targetPosition.has_value()) {
+							LOG_INFO(
+								Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(), spawnAt.x, spawnAt.y
+							);
+						} else {
+							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
+						}
+					} else {
+						dropResourcePiles(spawn.defName, {spawn.x, spawn.y}, spawn.fallback, spawn.quantity);
+					}
+				}
+				m_pendingSpawns.clear();
 			}
-			const auto plan = ecs::resourcePileDrops(cap, quantity, {x, y}, pileRadius(defName, 1.0F), nearby, isGround);
+		}
+
+		/// Lay `quantity` x `defName` on the ground at `at` as loose, haulable ResourceStack piles
+		/// (not Packaged). Same-def piles near the spot are topped up to the item's stackSize first,
+		/// then the rest spawns as new stack-capped piles on walkable spots (isValidPosition) off every
+		/// unbuilt footprint and clear of every pile and packaged crate around, searched outward from
+		/// `at`, then from `fallback` (resourcePileDrops). No def / no itemProperties means unbounded
+		/// -> one pile. The SINGLE loose-drop path: every sim drop callback, the cancelled site's
+		/// salvage, and the dev `give where=loose` route through it.
+		void dropResourcePiles(const std::string& defName, glm::vec2 at, glm::vec2 fallback, uint32_t quantity) {
+			auto&		   registry = assets::AssetRegistry::Get();
+			const auto*	   def = registry.getDefinition(defName);
+			const uint32_t cap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+
+			const GroundSurvey survey = surveyGround(defName);
+			const auto		   onSite = [&survey](glm::vec2 p) { return survey.onSite(p); };
+			const auto&		   nav = ecsWorld->getSystem<ecs::NavigationSystem>();
+			const auto		   isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
+			const auto plan = ecs::resourcePileDrops(cap, quantity, at, survey.dropRadius, survey.occupants, isGround, onSite, fallback);
 			for (const auto& [index, added] : plan.topUps) {
-				nearbyStacks[index]->quantity += added;
+				survey.stacks[index]->quantity += added;
 			}
+			const uint32_t defNameId = registry.getDefNameId(defName);
 			for (const auto& [pos, qty] : plan.spawns) {
-				auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
-				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
+				ecs::makeLoosePile(*ecsWorld, m_placementSystem->spawnEntity(defName, {pos.x, pos.y}), defNameId, pos, qty);
 			}
 			LOG_INFO(
 				Game,
 				"Dropped %u x '%s' at (%.1f, %.1f): topped up %zu piles, spawned %zu",
 				quantity,
 				defName.c_str(),
-				x,
-				y,
+				at.x,
+				at.y,
 				plan.topUps.size(),
 				plan.spawns.size()
 			);
+		}
+
+		/// Where a packaged item a colonist sets down at his feet (`at`) goes: by the loose-drop rule,
+		/// its crate's footprint on walkable ground off every unbuilt footprint, clear of what lies around.
+		glm::vec2 packageSetDownSpot(glm::vec2 at) {
+			const GroundSurvey survey = surveyGround({});
+			const auto		   onSite = [&survey](glm::vec2 p) { return survey.onSite(p); };
+			const auto&		   nav = ecsWorld->getSystem<ecs::NavigationSystem>();
+			const auto		   isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
+			const glm::vec2	   center = worldview::packagedFootprintCenter(at);
+			const auto		   plan = ecs::resourcePileDrops(1, 1, center, worldview::kPackagedFootprintRadius, survey.occupants, isGround, onSite);
+			return at + (plan.spawns.front().first - center);
 		}
 
 		/// Mark a structure's ECS blueprint for deconstruction. ConstructionSystem then emits a
@@ -2104,6 +2105,8 @@ namespace {
 		std::unique_ptr<world::ChunkManager>		 m_chunkManager;
 		std::unique_ptr<world::WorldCamera>			 m_camera;
 		glm::vec2									 m_spawnPosition{0.0F, 0.0F};
+		// The movers handed to the chunk manager each frame; a member so the frame reuses its storage.
+		std::vector<world::ChunkAnchor> anchors;
 
 		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
 		// by the player (0 = none); it is always the selected colonist (control is released when the
@@ -2179,7 +2182,7 @@ namespace {
 		std::unique_ptr<world_sim::DevCommandHandler> m_devHandler;
 		std::vector<app::DevServer::Registration>	  m_devRegistrations;
 
-		// Entities queued for destruction, drained after ecsWorld->update() so we
+		// Entities queued for destruction, drained by drainDeferredEdits so we
 		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).
 		std::vector<ecs::EntityID> m_pendingEntityRemoval;
 
@@ -2187,7 +2190,7 @@ namespace {
 		// its hands, a fell drops its uncarried remainder, crafted furniture comes off a station).
 		// spawnEntity grows the component pools, which would reallocate and dangle the live view's
 		// bound refs -- so the callbacks ENQUEUE here and the real spawn happens at the drain,
-		// after ecsWorld->update(), next to the removal drain. `packaged` is crafted furniture
+		// in drainDeferredEdits, after the removal drain. `packaged` is crafted furniture
 		// only (one entity with a Packaged tag); loose drops route through dropResourcePiles.
 		struct PendingSpawn {
 			std::string defName;
@@ -2200,6 +2203,8 @@ namespace {
 			// raises the place goal immediately (no manual [Place]). nullopt -> the player-driven
 			// path (spawn in place, await a [Place] click) when no nav mesh covers the station.
 			std::optional<glm::vec2> targetPosition;
+			// A loose drop's fallback: where the goods came from (DropResourceCallback).
+			glm::vec2 fallback{0.0F, 0.0F};
 		};
 		std::vector<PendingSpawn> m_pendingSpawns;
 

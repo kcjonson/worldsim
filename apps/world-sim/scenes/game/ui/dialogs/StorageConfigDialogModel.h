@@ -15,6 +15,7 @@
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 #include <ecs/components/StorageConfiguration.h>
+#include <ecs/systems/GoalSystemHelpers.h>
 
 #include <string>
 #include <unordered_map>
@@ -200,6 +201,9 @@ class StorageConfigDialogModel {
 	// Per-refresh cache of defName -> hasKnownSource for every configured specific-item rule, so the
 	// right-column DisplayRule build reuses the world scan refresh() already paid for.
 	std::unordered_map<std::string, bool> knownSourceByDefName;
+
+	// Which boxes the colony knows, shared by every item updateKnownSources asks about in one refresh.
+	ecs::ColonyStorageKnowledge storageKnowledge;
 
 	// Pending rule settings (center column form state)
 	ecs::StoragePriority pendingPriority = ecs::StoragePriority::Medium;

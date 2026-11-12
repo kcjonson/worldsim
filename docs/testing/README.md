@@ -230,6 +230,8 @@ spec, and the `/perf-nightly` skill runs it.
 | 09 | Ground tiles | [scenarios/09-ground-tiles.md](./scenarios/09-ground-tiles.md) |
 | 10 | World creator coasts | [scenarios/10-world-creator-coasts.md](./scenarios/10-world-creator-coasts.md) |
 | 11 | Trees by zoom | [scenarios/11-trees-by-zoom.md](./scenarios/11-trees-by-zoom.md) |
+| 12 | Colonists eat | [scenarios/12-colonists-eat.md](./scenarios/12-colonists-eat.md) |
+| 13 | Colonists walk round obstacles | [scenarios/13-colonists-walk-round-obstacles.md](./scenarios/13-colonists-walk-round-obstacles.md) |
 
 **Run each scenario in isolation** from a fresh launch, or use `give` / `need` dev verbs to
 set preconditions from a running instance. The fully-combined four-scenario flow now runs
@@ -316,7 +318,7 @@ game scene registers them: elsewhere, or for a verb it doesn't have, the request
 | `kill` | `colonist=<id>` | Removes a colonist. |
 | `complete` | `id=<entity>` | Instantly completes a task/entity. |
 | `craft` | `recipe=<Recipe_*>&n=1&at=x,y` | Queues a recipe at the nearest crafting station. |
-| `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Adds a StorageRule to the nearest container. |
+| `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Adds a StorageRule to the nearest container. A named item's category comes from its definition (`category` is only for `item=*`, RawMaterial by default); an unknown item, or a `category` that isn't the item's, answers 400. |
 | `foundation` | `pts=x0,y0;x1,y1;...&material=Wood&built=0\|1` | `built=0` = blueprint the colonist builds. Refuses if any part of the footprint is off the nav mesh or over water. |
 | `foundation-edit` | `id=<foundationId>&mode=add\|subtract&pts=x0,y0;x1,y1;...` | Foundation Add / Subtract through the tool's own validate + apply path. Answers `{status:"ok"\|"rejected", reason, target, extension, entity, area}`: an editable blueprint is reshaped in place (`extension` 0), an Add onto a built foundation returns the extension blueprint's id (it merges once built, e.g. with `freebuild?on=1`). |
 | `flora` | `rect=x0,y0,x1,y1` (world metres; default the camera's view) | Reads, changes nothing. The trees in the rect (tall occluders whose def is in the `trees` placement group), as `{rect, rectAreaM2, measuredAreaM2, cellSizeM, trees, treesPer1000m2, canopyCover, woodPer1000m2, defs:[{def, count, per1000m2, woodPerTree, woodPer1000m2, ageClasses:[{name, count, per1000m2}]}], otherTallOccluders:[{def, count, per1000m2}]}`. `ageClasses` lists every age class of a def that has `<ageClasses>`, in its order, and is empty otherwise. The other tall occluders (reeds, big rocks) are listed apart and are in neither the totals nor the cover. `measuredAreaM2` is the part of the rect in loaded chunks, and densities and cover are over it. Cover is the union of each tree's own silhouette (its variant's, shadows left out) at 0.1 m cells; wood is each def's yield midpoint. A route, not a state view, because a view takes no parameters. A rect with a side over 500 m, a side of zero or less, or more than 25 million 0.1 m cells is a 400, as is any coordinate beyond 16777216 m (2^24) from the origin. |
@@ -398,6 +400,7 @@ These are **open bugs**, not test failures. Do not flag them as regressions.
   colonist now completes end-to-end.
 - **Crafted box placement.** A freshly crafted `BasicBox` lands on the crafting station
   (cosmetic; the box is still usable). `findValidPositionNear` follow-up in flight.
-- **Box won't fill to full minimum unaided.** Once the colonist exhausts the trees he's
-  discovered, the storage box stalls below its minimum, the system needs to re-arm harvest
-  goals when new trees are discovered. Discovery-gating follow-up in flight.
+- **A box below its minimum waits for a known tree.** The box's stocking cut is open only while
+  some colonist knows a tree that yields its item; the storage goal system checks that on every
+  poll, so cutting resumes as soon as a colonist discovers another tree. While nobody knows one, the box
+  waits; that is discovery gating, not a stall.

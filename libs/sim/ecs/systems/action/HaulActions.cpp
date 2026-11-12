@@ -11,13 +11,14 @@
 #include "../../components/Movement.h"
 #include "../../components/NavPath.h"
 #include "../../components/Packaged.h"
+#include "../../components/StorageConfiguration.h"
 #include "../../components/StructureBlueprint.h"
 #include "../../components/Task.h"
 #include "../../components/Transform.h"
 #include "../../components/WorkQueue.h"
+#include "../ChainClaims.h"
 
 #include "assets/AssetRegistry.h"
-#include "assets/RecipeRegistry.h"
 
 #include <utils/Log.h>
 
@@ -27,37 +28,7 @@
 
 namespace ecs {
 
-	namespace {
-		// Remaining units of `itemDefName` a crafting station still needs for its current recipe:
-		// the recipe's required count minus what its store already holds (0 if already satisfied or
-		// the item isn't a recipe input). This is the crafting-station analogue of
-		// StructureBlueprint::remaining() -- both express "how much more does this destination need",
-		// the single concept the metered deposit below caps every delivery to so neither a build site
-		// nor a station ever banks surplus beyond its bill of materials.
-		uint32_t craftStationRemaining(World* world, EntityID station, const Inventory& store, const std::string& itemDefName) {
-			const auto* workQueue = world->getComponent<WorkQueue>(station);
-			if (workQueue == nullptr) {
-				return 0;
-			}
-			const CraftingJob* job = workQueue->getNextJob();
-			if (job == nullptr) {
-				return 0;
-			}
-			const auto* recipe = assets::RecipeRegistry::Get().getRecipe(job->recipeDefName);
-			if (recipe == nullptr) {
-				return 0;
-			}
-			for (const auto& input : recipe->inputs) {
-				if (input.defName == itemDefName) {
-					const uint32_t inStore = store.getQuantity(itemDefName);
-					return input.count > inStore ? input.count - inStore : 0U;
-				}
-			}
-			return 0;
-		}
-	} // namespace
-
-	void ActionSystem::applyDepositEffect(const Action& action, Task& task, Inventory& inventory) {
+	void ActionSystem::applyDepositEffect(const Action& action, Inventory& inventory) {
 		const auto& depEff = action.depositEffect();
 
 		auto&	   registry = assets::AssetRegistry::Get();
@@ -66,9 +37,9 @@ namespace ecs {
 		// Craft-material delivery, mirroring the build-site path: the material is MOVED from the
 		// colonist's pack/hands into the crafting station's own Inventory store. The colonist's
 		// pack empties; the station holds the staged materials, and the Craft action later
-		// consumes them from the station (not from the colonist). Crediting the Haul goal by what
-		// physically landed in the station lifts the parent Craft goal out of Blocked once every
-		// input is present, exactly as construction gates on materialsComplete().
+		// consumes them from the station (not from the colonist). What lands in the store is what the
+		// Craft root's remaining need reads, so once every input is present the goal system lifts the
+		// Craft goal out of Blocked, exactly as construction gates on materialsComplete().
 		if (depEff.deliverToCraftStation) {
 			const auto stationEntity = static_cast<EntityID>(depEff.storageEntityId);
 			auto*	   stationInv = world->getComponent<Inventory>(stationEntity);
@@ -89,7 +60,8 @@ namespace ecs {
 			// shortfall and keeps the rest on himself. Banking the excess would masquerade as
 			// available stock for later crafts and mis-route their provisioning.
 			const uint32_t carried = ecs::availableQuantity(inventory, depEff.itemDefName);
-			const uint32_t toDeposit = std::min(carried, craftStationRemaining(world, stationEntity, *stationInv, depEff.itemDefName));
+			const uint32_t toDeposit =
+				std::min({depEff.quantity, carried, craftStationNeed(*world, stationEntity, registry.getDefNameId(depEff.itemDefName))});
 			if (toDeposit == 0) {
 				// Station already holds the full requirement for this input; keep the surplus carried.
 				LOG_DEBUG(Engine, "[Action] Craft deposit skipped: station %llu already has enough %s",
@@ -124,16 +96,6 @@ namespace ecs {
 				depEff.itemDefName.c_str(),
 				static_cast<unsigned long long>(depEff.storageEntityId)
 			);
-
-			if (added > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
-				auto& goalRegistry = GoalTaskRegistry::Get();
-				goalRegistry.recordDelivery(task.haulGoalId, added);
-
-				const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-				if (goal != nullptr && goal->availableCapacity() == 0) {
-					goalRegistry.removeGoal(task.haulGoalId);
-				}
-			}
 		} else {
 
 		// Remove item from the colonist: two-hand goods come out of the hands, the rest the pack.
@@ -164,27 +126,26 @@ namespace ecs {
 					depEff.itemDefName.c_str(),
 					static_cast<unsigned long long>(depEff.storageEntityId)
 				);
-
-				if (recorded > 0 && task.type == TaskType::Haul && task.haulGoalId != 0) {
-					auto& goalRegistry = GoalTaskRegistry::Get();
-					goalRegistry.recordDelivery(task.haulGoalId, recorded);
-
-					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-					if (goal != nullptr && goal->availableCapacity() == 0) {
-						goalRegistry.removeGoal(task.haulGoalId);
-					}
-				}
 			} else if (auto* storageInv = world->getComponent<Inventory>(storageEntity)) {
-				uint32_t added = storageInv->addItem(depEff.itemDefName, removed);
+				// A box takes what its configuration still wants, never past an item's configured max, and
+				// what fits; the colonist keeps the rest.
+				uint32_t takes = removed;
+				if (const auto* config = world->getComponent<StorageConfiguration>(storageEntity)) {
+					const auto* itemDef = registry.getDefinition(depEff.itemDefName);
+					takes = std::min(
+						removed,
+						storageRoomFor(*config, *storageInv, depEff.itemDefName, itemDef != nullptr ? itemDef->category : assets::ItemCategory::None)
+					);
+				}
+				uint32_t added = storageInv->addItem(depEff.itemDefName, takes);
 				if (added < removed) {
-					// Storage full - put remaining back in colonist inventory
 					uint32_t leftover = removed - added;
 					if (twoHand) {
 						ecs::addArmful(inventory, registry, depEff.itemDefName, leftover);
 					} else {
 						inventory.addItem(depEff.itemDefName, leftover);
 					}
-					LOG_WARNING(Engine, "[Action] Storage full: deposited %u of %u x %s", added, removed, depEff.itemDefName.c_str());
+					LOG_DEBUG(Engine, "[Action] Storage took %u of %u x %s; the rest stays carried", added, removed, depEff.itemDefName.c_str());
 				} else {
 					LOG_INFO(
 						Engine,
@@ -193,41 +154,6 @@ namespace ecs {
 						depEff.itemDefName.c_str(),
 						static_cast<unsigned long long>(depEff.storageEntityId)
 					);
-				}
-
-				if (task.type == TaskType::Haul && task.haulGoalId != 0) {
-					auto& goalRegistry = GoalTaskRegistry::Get();
-					// Credit only what actually landed. A full storage (partial or zero add) credits
-					// nothing more.
-					if (added > 0) {
-						goalRegistry.recordDelivery(task.haulGoalId, added);
-					}
-
-					const auto* goal = goalRegistry.getGoal(task.haulGoalId);
-					// Retire signal depends on the goal kind:
-					//  - A stocking carry-in (StorageGoalSystem haul WITH a chainId) is a one-shot
-					//    delivery of a single chopped armful: done once it actually deposits (added > 0),
-					//    like a craft/construction inventory haul. If the box bounced the whole load
-					//    (added == 0, a race against another deposit filling it), the goal stays live and
-					//    re-drives to the box rather than stranding the wood in hand. StorageGoalSystem
-					//    re-emits a fresh Harvest next tick if the box still wants more.
-					//  - A normal storage haul's targetAmount is a slot count and its deliveredAmount
-					//    sums across item types, so availableCapacity() is the wrong "done" signal -- it
-					//    would retire after a single stack. Retire it on the storage's LIVE state
-					//    instead: done once no free slot remains.
-					//  - Other (craft/construction) goals that deposit into a storage Inventory keep
-					//    using their counter.
-					bool done = false;
-					if (goal != nullptr) {
-						if (goal->owner == GoalOwner::StorageGoalSystem) {
-							done = goal->chainId.has_value() ? (added > 0) : !storageInv->hasSpace();
-						} else {
-							done = goal->availableCapacity() == 0;
-						}
-					}
-					if (done) {
-						goalRegistry.removeGoal(task.haulGoalId);
-					}
 				}
 			} else {
 				// Target is neither a build site nor a storage container (destroyed/gone) - put
@@ -302,23 +228,24 @@ namespace ecs {
 	}
 
 	void ActionSystem::startHaulAction(EntityID entity, Task& task, Action& action, const Position& position, Memory& memory, const Inventory& inventory) {
-		auto& registry = assets::AssetRegistry::Get();
+		auto&			   registry = assets::AssetRegistry::Get();
+		const std::string& haulItem = registry.getDefName(task.haulItemDefNameId);
 
 		constexpr float kPositionTolerance = 0.5F;
 
 		// Inventory-source haul: the colonist already carries the harvested items, so there is
 		// no ground pickup. It walks to the destination and deposits. Single-phase. The deposit
 		// mode depends on the destination: a build site (blueprint) records the material onto its
-		// manifest; a crafting station (WorkQueue) moves it into the station's own store and
-		// credits the parent Craft goal. The station is identified by its WorkQueue, since it now
-		// also carries an Inventory store just like a plain storage container does.
+		// manifest; a crafting station (WorkQueue) moves it into the station's own store. The station
+		// is identified by its WorkQueue, since it also carries an Inventory store just like a plain
+		// storage container does.
 		if (task.haulFromInventory) {
-			const auto targetEntity = static_cast<EntityID>(task.haulTargetStorageId);
+			const auto targetEntity = static_cast<EntityID>(task.haulDestinationId);
 			const bool targetIsCraftStation = world->hasComponent<WorkQueue>(targetEntity);
 			action = Action::Deposit(
-				task.haulItemDefName,
+				haulItem,
 				task.haulQuantity,
-				task.haulTargetStorageId,
+				task.haulDestinationId,
 				task.haulTargetPosition,
 				/*deliverToCraftStation=*/targetIsCraftStation
 			);
@@ -326,9 +253,11 @@ namespace ecs {
 				Engine,
 				"[Action] Haul-from-inventory: deliver %u x %s to %s %llu",
 				task.haulQuantity,
-				task.haulItemDefName.c_str(),
-				targetIsCraftStation ? "crafting station" : "build site",
-				static_cast<unsigned long long>(task.haulTargetStorageId)
+				haulItem.c_str(),
+				targetIsCraftStation													? "crafting station"
+				: world->hasComponent<StructureBlueprint>(targetEntity) ? "build site"
+																		: "storage box",
+				static_cast<unsigned long long>(task.haulDestinationId)
 			);
 			return;
 		}
@@ -344,15 +273,19 @@ namespace ecs {
 		// and a position-only check would Deposit an empty pack, fail, and re-issue the same
 		// fetch every tick -- an infinite "deposit nothing -> refetch" loop that strands the
 		// craft half-provisioned.
-		const bool carryingHaulItem = ecs::availableQuantity(inventory, task.haulItemDefName) > 0;
+		const auto*	   haulItemDef = registry.getDefinitionById(task.haulItemDefNameId);
+		const uint32_t cargoHeld = cargoToward(task, GoalTaskRegistry::Get().rootOf(task.haulGoalId), task.haulItemDefNameId,
+											   ecs::availableQuantity(inventory, haulItem), haulItemDef != nullptr && haulItemDef->isEdible());
+		// A pile pickup that took a gathering over still lifts its own share beside the goods its claims
+		// already carry; only goods beyond those mean the pickup is skipped.
+		const auto sourceClaim = std::find_if(task.claims.begin(), task.claims.end(), [](const Claim& claim) {
+			return claim.kind() == ClaimKind::SourceQuantity;
+		});
+		const bool pickupPending = sourceClaim != task.claims.end();
+		const bool carryingHaulItem = cargoHeld > (pickupPending ? taskCargo(task) : 0U);
 
-		glm::vec2 diffToSource = position.value - task.haulSourcePosition;
-		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
-		bool	  atSource = distSqToSource <= kPositionTolerance * kPositionTolerance;
-
-		glm::vec2 diffToTarget = position.value - task.haulTargetPosition;
-		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
-		bool	  atTarget = distSqToTarget <= kPositionTolerance * kPositionTolerance;
+		const bool atSource = task.standsAt(task.haulSourcePosition, position.value, kPositionTolerance);
+		const bool atTarget = task.standsAt(task.haulTargetPosition, position.value, kPositionTolerance);
 
 		// Not carrying yet: this is the pickup leg, regardless of also being in range of the
 		// destination. Pick up at the source.
@@ -374,12 +307,12 @@ namespace ecs {
 					action.clear();
 					return;
 				}
-				action = Action::Withdraw(task.haulItemDefName, task.haulQuantity, task.haulSourceStorageId, task.haulSourcePosition);
+				action = Action::Withdraw(haulItem, task.haulQuantity, task.haulSourceStorageId, task.haulSourcePosition);
 				LOG_DEBUG(
 					Engine,
 					"[Action] Haul phase 1: Withdraw %u x %s from box %llu at (%.1f, %.1f)",
 					task.haulQuantity,
-					task.haulItemDefName.c_str(),
+					haulItem.c_str(),
 					static_cast<unsigned long long>(task.haulSourceStorageId),
 					task.haulSourcePosition.x,
 					task.haulSourcePosition.y
@@ -387,64 +320,33 @@ namespace ecs {
 				return;
 			}
 
-			// Phase 1: At source - do Pickup
-			// Look for a carryable entity at the source position matching the item we want to haul
+			// Phase 1: At source - do Pickup. The decision chose the remembered pile it set as the source,
+			// so it is found by its Memory key (the source position and the item), not by a memory scan.
 			std::optional<std::pair<glm::vec2, uint32_t>> staleAtSource;
-			for (const auto& [key, entity] : memory.knownWorldEntities) {
-				// Check if entity is at the source position
-				glm::vec2 diff = entity.position - task.haulSourcePosition;
-				float	  distSq = diff.x * diff.x + diff.y * diff.y;
-				if (distSq > kPositionTolerance * kPositionTolerance) {
-					continue;
-				}
-
-				const auto& defName = registry.getDefName(entity.defNameId);
-
-				// Check if this is the item we want to haul
-				if (defName != task.haulItemDefName) {
-					continue;
-				}
-
-				const auto* def = registry.getDefinition(defName);
+			if (const KnownWorldEntity* entity =
+					memory.getWorldEntity(hashWorldEntity(task.haulSourcePosition, task.haulItemDefNameId))) {
+				const auto& defName = haulItem;
+				const auto* def = registry.getDefinitionById(task.haulItemDefNameId);
 				if (def != nullptr && def->capabilities.carryable.has_value()) {
-					const auto& carryableCap = def->capabilities.carryable.value();
-					// A pickup from a ground source takes only what's needed, never more than is
-					// there. For a craft-material fetch the request is the EXACT remaining recipe need
-					// (target minus delivered minus already carried): a multi-unit ResourceStack pile
-					// then yields exactly that and leaves the surplus in the pile (clamped in
-					// applyCollectionEffect) -- a 7-unit pile for a recipe needing 2 leaves 5 behind;
-					// a single loose item is capped to its own carryable count there, so a pickup
-					// never mints more than is present. A non-craft haul keeps the asset default. This
-					// contrasts with a HARVEST, which takes all it can carry so freshly cut resources
-					// aren't stranded at a far harvest spot.
-					uint32_t	pickupQty = carryableCap.quantity;
-					const auto* goal = task.haulGoalId != 0 ? GoalTaskRegistry::Get().getGoal(task.haulGoalId) : nullptr;
-					if (goal != nullptr && goal->owner == GoalOwner::CraftingGoalSystem && goal->targetAmount > 0) {
-						// targetAmount is an item count for a craft haul, so the remaining need is exact.
-						const uint32_t carried = ecs::availableQuantity(inventory, task.haulItemDefName);
-						const uint32_t accountedFor = goal->deliveredAmount + carried;
-						pickupQty = goal->targetAmount > accountedFor ? goal->targetAmount - accountedFor : 0U;
-						if (pickupQty == 0) {
-							// Already delivered/carrying enough for the goal: nothing more to pick up.
-							// Clear so the AI re-evaluates (on to the deposit).
-							action.clear();
-							return;
-						}
-					}
-					action = Action::Pickup(defName, pickupQty, entity.position, defName);
+					// A pickup takes what its claim was sized to (the root's need net of in-flight, the
+					// carry), never more than is there: a pile yields that and keeps the rest, a single
+					// loose item is capped to its own carryable count (applyCollectionEffect). A harvest
+					// instead takes all it can carry, so freshly cut goods aren't stranded at a far tree.
+					const uint32_t pickupQty = pickupPending ? sourceClaim->quantity() : task.haulQuantity;
+					action = Action::Pickup(defName, pickupQty, entity->position, defName);
 					LOG_DEBUG(
 						Engine,
 						"[Action] Haul phase 1: Pickup %u x %s at (%.1f, %.1f)",
 						pickupQty,
 						defName.c_str(),
-						entity.position.x,
-						entity.position.y
+						entity->position.x,
+						entity->position.y
 					);
 					return;
 				}
 
-				// Matches by name but isn't actually carryable anymore - stale memory entry
-				staleAtSource = std::make_pair(entity.position, entity.defNameId);
+				// Remembered but isn't actually carryable anymore - stale memory entry
+				staleAtSource = std::make_pair(entity->position, entity->defNameId);
 			}
 
 			// Pickup target gone - forget the stale entry so AIDecision stops re-selecting it.
@@ -455,7 +357,7 @@ namespace ecs {
 			LOG_WARNING(
 				Engine,
 				"[Action] Haul failed: item %s not found at (%.1f, %.1f)%s",
-				task.haulItemDefName.c_str(),
+				haulItem.c_str(),
 				task.haulSourcePosition.x,
 				task.haulSourcePosition.y,
 				staleAtSource.has_value() ? " - forgot stale entry" : ""
@@ -464,26 +366,27 @@ namespace ecs {
 		} else if (carryingHaulItem && atTarget) {
 			// Phase 2: carrying the item and at the destination - do Deposit.
 			// First validate storage is still valid (not packaged/being moved)
-			auto storageEntity = static_cast<EntityID>(task.haulTargetStorageId);
+			auto storageEntity = static_cast<EntityID>(task.haulDestinationId);
 			if (world->hasComponent<Packaged>(storageEntity)) {
 				LOG_WARNING(
 					Engine,
 					"[Action] Haul aborted: storage %llu is packaged (being moved)",
-					static_cast<unsigned long long>(task.haulTargetStorageId)
+					static_cast<unsigned long long>(task.haulDestinationId)
 				);
 				task.clear();
 				action.clear();
 				return;
 			}
 
-			// A crafting station (WorkQueue) takes the goods into its own store and credits the
-			// parent Craft goal; a build site or plain storage container takes them as before.
-			// The station carries an Inventory too, so the WorkQueue is what distinguishes it.
+			// Arriving with the goods in hand skips the pickup: the source claim is spent and the deposit
+			// commits what is held. A crafting station (WorkQueue) takes the goods into its own store; a
+			// build site or plain storage container takes them as before.
+			claimsToDeliveryLeg(task, cargoHeld);
 			const bool toCraftStation = world->hasComponent<WorkQueue>(storageEntity);
 			action = Action::Deposit(
-				task.haulItemDefName,
+				haulItem,
 				task.haulQuantity,
-				task.haulTargetStorageId,
+				task.haulDestinationId,
 				task.haulTargetPosition,
 				/*deliverToCraftStation=*/toCraftStation
 			);
@@ -491,8 +394,8 @@ namespace ecs {
 				Engine,
 				"[Action] Haul phase 2: Deposit %u x %s into storage %llu",
 				task.haulQuantity,
-				task.haulItemDefName.c_str(),
-				static_cast<unsigned long long>(task.haulTargetStorageId)
+				haulItem.c_str(),
+				static_cast<unsigned long long>(task.haulDestinationId)
 			);
 		} else if (carryingHaulItem) {
 			// Carrying the haul item but standing somewhere other than the destination -- the
@@ -506,27 +409,15 @@ namespace ecs {
 			// Redirect to the deposit leg, reading the colonist's ACTUAL carry state HERE at action
 			// time -- not at option-build time, where an over-cap two-hand armful is momentarily
 			// dropped and re-picked each tick (availableQuantity reads 0) and any "am I carrying?"
-			// test on the option is unreliable. Mirror completeAction's Pickup->Deposit handoff:
-			// re-point the task at the destination, set it Moving, advance the chain step, re-point
-			// MovementTarget at the goal, and drop the stale pickup-leg route so the AI's per-tick
-			// chain-leg repath plans a fresh A* path. The colonist walks to the box and deposits.
-			task.targetPosition = task.haulTargetPosition;
-			task.state = TaskState::Moving; // Must be Moving for MovementSystem to re-arrive at the destination
-			++task.chainStep;
-
-			if (auto* movementTarget = world->getComponent<MovementTarget>(entity)) {
-				movementTarget->target = task.haulTargetPosition;
-				movementTarget->active = true;
-			}
-			if (auto* navPath = world->getComponent<NavPath>(entity)) {
-				navPath->valid = false;
-			}
+			// test on the option is unreliable. The colonist walks to the box and deposits.
+			claimsToDeliveryLeg(task, cargoHeld);
+			headToDeposit(entity, task);
 
 			action.clear();
 			LOG_DEBUG(
 				Engine,
 				"[Action] Haul: carrying %s at source, redirecting to deposit at (%.1f, %.1f)",
-				task.haulItemDefName.c_str(),
+				haulItem.c_str(),
 				task.haulTargetPosition.x,
 				task.haulTargetPosition.y
 			);
@@ -551,13 +442,8 @@ namespace ecs {
 
 		constexpr float kPlacementPositionTolerance = 0.5F;
 
-		glm::vec2 diffToSource = position.value - task.placeSourcePosition;
-		float	  distSqToSource = diffToSource.x * diffToSource.x + diffToSource.y * diffToSource.y;
-		bool	  atSource = distSqToSource <= kPlacementPositionTolerance * kPlacementPositionTolerance;
-
-		glm::vec2 diffToTarget = position.value - task.placeTargetPosition;
-		float	  distSqToTarget = diffToTarget.x * diffToTarget.x + diffToTarget.y * diffToTarget.y;
-		bool	  atTarget = distSqToTarget <= kPlacementPositionTolerance * kPlacementPositionTolerance;
+		const bool atSource = task.standsAt(task.placeSourcePosition, position.value, kPlacementPositionTolerance);
+		const bool atTarget = task.standsAt(task.placeTargetPosition, position.value, kPlacementPositionTolerance);
 
 		// Check inventory to determine if we're already carrying the item (phase 2)
 		bool alreadyCarrying = inventory.carryingPackagedEntity.has_value() &&

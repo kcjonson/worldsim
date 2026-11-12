@@ -15,13 +15,8 @@
 #include <theme/Theme.h>
 
 #include <application/App.h>
-#include <assets/ActionTypeRegistry.h>
 #include <assets/AssetRegistry.h>
-#include <assets/ConfigValidator.h>
-#include <assets/ConstructionRegistry.h>
-#include <assets/PriorityConfig.h>
-#include <assets/TaskChainRegistry.h>
-#include <assets/WorkTypeRegistry.h>
+#include <assets/WorkConfig.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
@@ -327,12 +322,18 @@ namespace {
 		void initializeWorldSystems() {
 			LOG_INFO(Game, "GameLoadingScene - Initializing world systems");
 
-			// Load work configuration first
+			// Load work configuration first. Goals are process-wide too; a new game starts with none.
 			updateStatusText("Loading configuration...");
-			if (!loadWorkConfigs()) {
+			ecs::GoalTaskRegistry::Get().clear();
+			const auto configErrors = assets::loadWorkConfig("assets/config");
+			if (!configErrors.empty()) {
+				for (const auto& error : configErrors) {
+					LOG_ERROR(Game, "%s", error.c_str());
+				}
 				phase = LoadingPhase::ConfigError;
 				return;
 			}
+			LOG_INFO(Game, "Configuration loaded successfully");
 
 			// Create world sampler and chunk manager from the generated planet;
 			// the landing site maps to the 2D world origin
@@ -388,8 +389,9 @@ namespace {
 		/// Phase 2: Load chunks (generation runs on workers; keep polling until ready)
 		void loadChunks() {
 			// ChunkManager::update() starts loads for the grid around the camera
-			// and integrates finished generation workers each call
-			worldState->chunkManager->update(worldState->camera->position());
+			// and integrates finished generation workers each call. No movers exist
+			// yet; the camera sits on the spawn, so the colony's chunk loads here.
+			worldState->chunkManager->update(worldState->camera->position(), {});
 
 			// Count chunks whose tile generation has completed
 			chunksLoaded = 0;
@@ -423,7 +425,7 @@ namespace {
 		/// Phase 3: Place entities asynchronously for responsive UI
 		void placeEntities() {
 			// Chunks that finished generating after phase 2 still need placement
-			worldState->chunkManager->update(worldState->camera->position());
+			worldState->chunkManager->update(worldState->camera->position(), {});
 			for (auto* chunk : worldState->chunkManager->getLoadedChunks()) {
 				asyncProcessor->launchTask(chunk);
 			}
@@ -483,79 +485,9 @@ namespace {
 
 		void updateStatusText(const std::string& text) { statusMessage = text; }
 
-		/// Load work configuration files (actions, chains, work types, priority tuning)
-		/// Returns false if any config fails to load or validate
-		bool loadWorkConfigs() {
-			using namespace assets;
-
-			// Clear any previous state (supports menu → new game cycle)
-			ActionTypeRegistry::Get().clear();
-			TaskChainRegistry::Get().clear();
-			WorkTypeRegistry::Get().clear();
-			PriorityConfig::Get().clear();
-			ConstructionRegistry::Get().clear();
-			ConfigValidator::clearErrors();
-			ecs::GoalTaskRegistry::Get().clear();
-
-			// Load in dependency order
-			std::string basePath = "assets/config/";
-
-			if (!ActionTypeRegistry::Get().loadFromFile(basePath + "actions/action-types.xml")) {
-				LOG_ERROR(Game, "Failed to load action-types.xml");
-				return false;
-			}
-
-			if (!TaskChainRegistry::Get().loadFromFile(basePath + "work/task-chains.xml")) {
-				LOG_ERROR(Game, "Failed to load task-chains.xml");
-				return false;
-			}
-
-			if (!WorkTypeRegistry::Get().loadFromFile(basePath + "work/work-types.xml")) {
-				LOG_ERROR(Game, "Failed to load work-types.xml");
-				return false;
-			}
-
-			if (!PriorityConfig::Get().loadFromFile(basePath + "work/priority-tuning.xml")) {
-				LOG_ERROR(Game, "Failed to load priority-tuning.xml");
-				return false;
-			}
-
-			// Every task type the AI can evaluate must have an explicit arbitration tier in
-			// priority-tuning.xml's <TaskTiers> block, or the (tier, score) ordering would default a
-			// new type to an unintended tier. Fail loud at load rather than mis-rank silently.
-			{
-				static const std::vector<std::string> kRequiredTaskTiers = {
-					"FulfillNeed", "Harvest", "Craft", "Haul", "PlacePackaged", "Build", "Deconstruct", "Wander"
-				};
-				std::vector<std::string> missingTiers;
-				if (!PriorityConfig::Get().validateTaskTiers(kRequiredTaskTiers, missingTiers)) {
-					std::string joined;
-					for (const auto& name : missingTiers) {
-						joined += (joined.empty() ? "" : ", ") + name;
-					}
-					LOG_ERROR(Game, "priority-tuning.xml is missing an arbitration tier for task type(s): %s", joined.c_str());
-					return false;
-				}
-			}
-
-			if (!ConstructionRegistry::Get().load(basePath + "construction")) {
-				LOG_ERROR(Game, "Failed to load construction config");
-				return false;
-			}
-
-			// Validate cross-references between configs
-			if (!ConfigValidator::validateAll()) {
-				LOG_ERROR(Game, "Config validation failed");
-				return false;
-			}
-
-			LOG_INFO(Game, "Configuration loaded successfully");
-			return true;
-		}
-
 		/// Handle config error state - show error and wait for ESC
 		void handleConfigError() {
-			// Only update UI once (errors are already logged by ConfigValidator::validateAll)
+			// Only update UI once (errors are already logged by initializeWorldSystems)
 			if (!configErrorLogged) {
 				configErrorLogged = true;
 				updateStatusText("Loading failed - Press ESC to return to menu");

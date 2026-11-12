@@ -9,9 +9,11 @@
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "../LoosePileIndex.h"
 
 #include <glm/vec2.hpp>
 
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <random>
@@ -21,9 +23,8 @@ namespace ecs {
 
 class ActionSystem : public ISystem {
 public:
-	/// Construct ActionSystem with optional RNG seed (for deterministic testing)
-	explicit ActionSystem(std::optional<uint32_t> rngSeed = std::nullopt)
-		: m_rng(rngSeed.value_or(std::random_device{}())) {}
+	explicit ActionSystem(uint32_t rngSeed)
+		: m_rng(rngSeed) {}
 
 	void update(float deltaTime) override;
 
@@ -51,22 +52,41 @@ public:
 	/// stowed-tool drop).
 	void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
-	/// Set callback for removing harvested entities from the world
-	/// Called when a destructive harvest completes (entity should be removed)
-	using RemoveEntityCallback = std::function<void(const std::string& defName, float x, float y)>;
-	void setRemoveEntityCallback(RemoveEntityCallback callback) { m_onRemoveEntity = std::move(callback); }
+	/// What a harvest or pickup found its source to be at the moment it completed.
+	enum class SourceState : uint8_t {
+		Gone,		// already removed (another colonist's cut or clear, a fell): yields nothing
+		Ready,		// standing and harvestable: yields
+		OnCooldown, // standing but regrowing from an earlier cut: yields nothing
+	};
+
+	/// How a completing harvest or pickup leaves its source.
+	enum class SourceTake : uint8_t {
+		Remove, // felled, picked up, or cleared
+		Regrow, // cut: starts its regrowth cooldown, unless it is already on one
+		Keep,	// left as it is
+	};
+
+	/// Set callback that takes a harvested or picked-up source from the world as the action completes,
+	/// returning the state it was in just before. The world is the truth at completion: a source
+	/// already gone or regrowing pays nothing, whatever the task expected when it set out, so two
+	/// colonists finishing on one plant never both get its yield. A single-shot source is taken before
+	/// it pays; a pooled one is checked with Keep before its pool is drawn, then removed (its pool with
+	/// it) once the draw empties the pool or a clear takes it. `regrowthSeconds` is read for Regrow.
+	/// Unwired (unit contexts with no world behind them), every source reads Ready.
+	using TakeSourceCallback =
+		std::function<SourceState(const std::string& defName, float x, float y, SourceTake take, float regrowthSeconds)>;
+	void setTakeSourceCallback(TakeSourceCallback callback) { m_onTakeSource = std::move(callback); }
 
 	/// Set callback for removing a specific world entity by id.
 	/// Used when the system already holds the exact entity to remove (a drained loose pile),
 	/// so the app removes that entity directly instead of re-scanning by position - two
-	/// same-material piles within the match epsilon would otherwise alias each other.
+	/// same-material piles in one cell would otherwise alias each other.
 	using RemoveEntityByIdCallback = std::function<void(EntityID entity)>;
 	void setRemoveEntityByIdCallback(RemoveEntityByIdCallback callback) { m_onRemoveEntityById = std::move(callback); }
 
-	/// Set callback for setting harvest cooldown on entities
-	/// Called when a non-destructive harvest completes (entity enters regrowth)
-	using SetCooldownCallback = std::function<void(const std::string& defName, float x, float y, float cooldownSeconds)>;
-	void setEntityCooldownCallback(SetCooldownCallback callback) { m_onSetCooldown = std::move(callback); }
+	/// The loose ground piles a pickup draws from, filed by makeLoosePile and unfiled by
+	/// destroyWorldEntity.
+	[[nodiscard]] LoosePileIndex& loosePiles() { return m_loosePiles; }
 
 	/// Result of withdrawing from a harvestable's resource pool.
 	struct ResourceDraw {
@@ -75,9 +95,10 @@ public:
 	};
 
 	/// Set callback for withdrawing from an entity's resource pool.
-	/// Called when harvesting an entity with a resource pool. `requested` is how many yield
-	/// units the colonist wants this chop; the callback removes up to that from the pool and
-	/// reports how many it actually took plus whether the pool is now empty.
+	/// Called when harvesting an entity with a resource pool, only once the take-source callback has
+	/// found the source still standing. `requested` is how many yield units the colonist wants this
+	/// chop; the callback removes up to that from the pool and reports how many it actually took plus
+	/// whether the pool is now empty.
 	using DecrementResourceCallback = std::function<ResourceDraw(const std::string& defName, float x, float y, uint32_t requested)>;
 	void setDecrementResourceCallback(DecrementResourceCallback callback) { m_onDecrementResource = std::move(callback); }
 
@@ -108,7 +129,7 @@ private:
 		const struct Position& position,
 		struct Memory& memory,
 		const struct NeedsComponent& needs,
-		const struct Inventory& inventory
+		struct Inventory& inventory
 	);
 
 	/// Start a need-fulfillment action (Hunger/Thirst/Energy/Bladder/Digestion).
@@ -120,16 +141,19 @@ private:
 		const struct Position& position,
 		struct Memory& memory,
 		const struct NeedsComponent& needs,
-		const struct Inventory& inventory
+		struct Inventory& inventory
 	);
 
+	/// A hungry colonist about to take `meal` units of `food` from a bush, pile, or box makes room for
+	/// them, freeing only what limits it and no more than the meal needs. A slot: the pack's last stack
+	/// that is neither a tool nor food goes whole, or failing that a pack tool moves to the belt or a
+	/// free hand. Weight: just enough units of such goods, pack (last stack first) then hands. Goods its
+	/// suspended record carries go only once nothing else can. What goes is put away by the store-or-drop
+	/// rule; tools never go.
+	void makeRoomToEat(struct Inventory& inventory, const struct Task& task, const std::string& food, uint32_t meal, glm::vec2 position);
+
 	/// Process an in-progress action
-	void processAction(
-		float deltaTime,
-		struct Action& action,
-		struct NeedsComponent& needs,
-		struct Task& task
-	);
+	void processAction(float deltaTime, struct Action& action);
 
 	/// Complete an action and apply effects
 	void completeAction(
@@ -142,16 +166,30 @@ private:
 		struct Memory& memory
 	);
 
+	/// Hand a haul over to its deposit leg: point the task, its MovementTarget, and a fresh route at the
+	/// destination. The one handoff every way into the deposit leg takes; claims are rewritten by the caller.
+	void headToDeposit(EntityID entity, struct Task& task);
+
+	/// Point the task at its next leg's target, Moving, for the AI to route: its MovementTarget follows,
+	/// and the old leg's route and any route still out for it are dropped. Every change of a task's
+	/// target in action code goes through here.
+	void headTo(EntityID entity, struct Task& task, glm::vec2 target);
+
+	/// A goal's cut has landed `landed` units: turn the Harvest task into the deposit leg that carries its
+	/// cargo (what earlier cuts of the gathering carry, plus this cut) to its root's destination,
+	/// committing what the root still needs that no other task is bringing. False (the task ends) when
+	/// the cut brings nothing toward a root: a clear, nothing carried, or no need.
+	bool carryHarvestIn(EntityID entity, const struct Position& position, struct Task& task, const struct Inventory& inventory, uint32_t landed);
+
 	/// Apply a completed action's need-restoration effect (primary + side effect).
 	void applyNeedEffect(const struct Action& action, struct NeedsComponent& needs);
 
 	/// Apply a completed collection effect (Pickup/Harvest): pool-withdraw vs single-shot,
-	/// source removal/cooldown, and harvest-goal delivery recording. `colonistPosition` is where
+	/// source removal/cooldown. `colonistPosition` is where
 	/// a tool stowed to free the hands is put away or dropped from (reach starts at the colonist).
 	void applyCollectionEffect(
 		const struct Action& action,
 		glm::vec2 colonistPosition,
-		struct Task& task,
 		struct Inventory& inventory,
 		struct Memory& memory
 	);
@@ -166,7 +204,7 @@ private:
 	void applyCraftingEffect(const struct Action& action, struct Inventory& inventory);
 
 	/// Apply a completed deposit effect (storage deposit or deliver-to-craft-station).
-	void applyDepositEffect(const struct Action& action, struct Task& task, struct Inventory& inventory);
+	void applyDepositEffect(const struct Action& action, struct Inventory& inventory);
 
 	/// Apply a completed construction progress effect (Build/Deconstruct completion signal).
 	void applyProgressEffect(const struct Action& action);
@@ -197,13 +235,7 @@ private:
 	/// Start a harvest action for goal-driven harvesting (crafting materials)
 	/// Finds harvestable at target position that yields the required item type.
 	/// Memory is mutable so a vanished target can be forgotten (prevents re-selection).
-	void startHarvestAction(
-		struct Task& task,
-		struct Action& action,
-		const struct Position& position,
-		struct Memory& memory,
-		const struct Inventory& inventory
-	);
+	void startHarvestAction(struct Task& task, struct Action& action, struct Memory& memory, const struct Inventory& inventory);
 
 	/// Start a haul action (pickup from source, then deposit to storage)
 	/// Memory is mutable so a vanished pickup target can be forgotten.
@@ -273,14 +305,14 @@ private:
 	/// Callback for dropping loose units as a ground pile
 	DropResourceCallback m_onDropResource = nullptr;
 
-	/// Callback for removing harvested entities from world
-	RemoveEntityCallback m_onRemoveEntity = nullptr;
+	/// Callback taking a harvested or picked-up source from the world
+	TakeSourceCallback m_onTakeSource = nullptr;
 
 	/// Callback for removing a specific world entity by id (drained loose pile)
 	RemoveEntityByIdCallback m_onRemoveEntityById = nullptr;
 
-	/// Callback for setting harvest cooldown on entities
-	SetCooldownCallback m_onSetCooldown = nullptr;
+	/// Every loose ground pile by world key
+	LoosePileIndex m_loosePiles;
 
 	/// Callback for decrementing entity resource count
 	DecrementResourceCallback m_onDecrementResource = nullptr;

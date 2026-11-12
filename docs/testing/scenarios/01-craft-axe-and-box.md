@@ -1,7 +1,7 @@
 # Scenario 01: Craft axe and box
 
 **Status:** ready  
-**Last verified:** 2026-11-02
+**Last verified:** 2026-11-12
 
 Verifies the full gather-and-craft loop: a colonist harvests raw materials from nearby world
 entities (no freebies) and produces both a `Recipe_AxePrimitive` and a `Recipe_BasicBox` at a
@@ -81,7 +81,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=stations"
    station store should fill to the **exact** BOM quantities — no excess. Bob is the one doing
    the work; materials are not given for free.
 
-4. Keep Bob's needs up every ~2 real minutes:
+4. Once the axe is crafted and the box's inputs are wanted, poll `what=stations` between trips: at least once `store.Stick` (or `store.PlantFiber`) rises by more than 1 in one jump, because Bob cuts several bushes or reeds before walking to the station; no jump takes it past the BOM (8 Stick, 3 PlantFiber).
+
+5. Keep Bob's needs up every ~2 real minutes:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Hunger&value=95"
@@ -89,22 +91,22 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Thirst&val
 curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Energy&value=95"
 ```
 
-5. Poll colonist inventory until the axe appears:
+6. Poll colonist inventory until the axe appears:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 # -> colonists[0].inventory.AxePrimitive >= 1
 ```
 
-6. Poll storage until a `BasicBox` appears (the crafted box is a container entity):
+7. Poll storage until a `BasicBox` appears (the crafted box is a container entity):
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=storage"
 # -> at least one entry with defName=BasicBox
 ```
 
-7. Before Bob installs the new box, look at it beside the station: the box sits inside a side-view open wooden crate, its top showing above the low front slats.
-8. Click the crated box: one gold outline traces the crate, not separate outlines for crate and box.
+8. Before Bob installs the new box, look at it beside the station: the box sits inside a side-view open wooden crate, its top showing above the low front slats.
+9. Click the crated box: one gold outline traces the crate, not separate outlines for crate and box.
 
 ---
 
@@ -138,8 +140,9 @@ field); or if after ~5 real minutes at speed 3 neither recipe completes.
 
 ## Notes
 
-The station store fills to BOM-exact quantities. If you see the store exceed the BOM for one
-recipe before the next is picked up, that's expected behavior between recipe completions.
+The station store fills to BOM-exact quantities for the job at the head of its queue, and never past
+them: deposits are metered to what that job still needs, and the colonist keeps any surplus. A store
+holding more than the current job's BOM is a failure.
 
 Crafted `BasicBox` currently lands on the crafting station (cosmetic). The box is still
 functional. See [../README.md#known-open-caveats](../README.md#known-open-caveats).
