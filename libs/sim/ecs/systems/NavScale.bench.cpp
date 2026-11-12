@@ -149,13 +149,8 @@ namespace {
 		return &region;
 	}
 
-	gnav::PatchableMesh makeMesh(bool detail) {
-		gnav::PatchableMeshArgs args;
-		args.maxBoundsEdgeMm = ecs::NavigationSystem::kMaxBoundsEdgeMm;
-		if (detail) {
-			args.detailTags = {nav::kProvenancePlaced};
-		}
-		return gnav::PatchableMesh(args);
+	gnav::PatchableMesh makeMesh() {
+		return gnav::PatchableMesh({.maxBoundsEdgeMm = ecs::NavigationSystem::kMaxBoundsEdgeMm});
 	}
 
 	gnav::NavInputPolygon box(glm::vec2 lo, glm::vec2 hi, bool blocked, std::int64_t provenance) {
@@ -191,7 +186,7 @@ namespace {
 		for (auto _ : state) {
 			std::size_t				waterVertices = 0;
 			const std::int64_t		before		  = privateBytes();
-			gnav::PatchableMesh		mesh		  = makeMesh(true);
+			gnav::PatchableMesh		mesh		  = makeMesh();
 			const Clock::time_point patchStart	  = Clock::now();
 			for (std::size_t c = 0; c < n; ++c) {
 				mesh.applyPatch({.adds = region->chunks[c].rings});
@@ -237,7 +232,7 @@ namespace {
 	// One chunk fully covered by forest at the game's density, patched into a nav mesh cell by cell.
 	void BM_NavScaleDetail(benchmark::State& state) {
 		for (auto _ : state) {
-			gnav::PatchableMesh nav = makeMesh(true);
+			gnav::PatchableMesh nav = makeMesh();
 			nav.applyPatch({.adds = {nav::chunkSquare({0, 0})}});
 			nav.refreshWidths();
 			const float					   halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
@@ -301,11 +296,8 @@ namespace {
 	}
 
 	struct SearchGround {
-		gnav::PatchableMesh mesh;
+		gnav::PatchableMesh mesh = makeMesh();
 		glm::vec2			centre{0.0F, 0.0F};
-
-		explicit SearchGround(bool detail)
-			: mesh(makeMesh(detail)) {}
 	};
 
 	// The forest of BM_NavScaleDetail over the chunk holding `centre`.
@@ -334,7 +326,7 @@ namespace {
 		if (region == nullptr) {
 			return nullptr;
 		}
-		auto out	= std::make_unique<SearchGround>(g == Ground::Forest);
+		auto out	= std::make_unique<SearchGround>();
 		out->centre = region->start;
 		for (const ChunkRings& c : region->chunks) {
 			out->mesh.applyPatch({.adds = c.rings});

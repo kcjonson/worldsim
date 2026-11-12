@@ -59,18 +59,8 @@ namespace geometry::nav {
 		std::int64_t nodesExpanded = 0;
 		std::int64_t peakOpenSet   = 0;
 
-		// What the walk costs: its length, with each piece through a priced face weighted
-		// by its multiplier, each run of priced faces at least its least multiplier over
-		// the disc's diameter (a disc that enters priced ground overlaps it that far), and a
-		// squeeze past detail charged its price over the chord the disc cuts at the gap's
-		// half-width, the least it overlaps what narrows the gap. Equal to the length when
-		// nothing priced is crossed. It is the cost of the returned path, the corridor's
-		// taut walk; inside a corridor the path does not bend away from priced faces to
-		// save cost.
+		// The returned walk's length: what PathLimits::maxCost caps.
 		double cost = 0.0;
-		// The walk runs through a face crossed at a price (detail it pushes through, a
-		// waiting mover's footprint): the caller acts on it before the mover sets off.
-		bool crossesPricedFaces = false;
 	};
 
 	// Per-agent belief overlay on the shared truth mesh (see pathfinding-architecture
@@ -86,30 +76,9 @@ namespace geometry::nav {
 	// A negative faceBlocker is a common-knowledge terrain sentinel (water/placed obstacle, or a
 	// junction with no incident-wall id) and always blocks, filter or not. A junction
 	// tagged with a positive incident-wall segment id is belief-gated like that wall.
-	//
-	// `prices` (optional) makes faces this filter would block crossable at a price: a
-	// face whose faceBlocker is a listed tag costs that tag's multiplier per mm walked
-	// inside it, the same everywhere in the mesh for the query. A tag not listed blocks as
-	// it would without prices. A priced face is still an obstacle a disc keeps its radius
-	// from while it walks free ground; walking into, through, or out of priced ground it
-	// keeps clear only of what it cannot cross. The search takes the cheapest walk: round
-	// by free ground while that is less than the way through at its price, through
-	// otherwise. A gap too narrow for the disc is squeezed through only when the mesh's
-	// structural width admits it (NavTriangle::structuralWidthMm: detail-class faces read
-	// as open ground) and the query prices every detail tag, at the dearest detail price,
-	// free beside the priced face the walk crosses anyway at that price; a gap anything
-	// else narrows stays shut, and with a detail tag left unpriced every such gap does.
-	// Component labels treat priced faces as walls, so the component pre-check is
-	// skipped while prices are set.
-	struct TagPrice {
-		std::int64_t tag		= 0;   // a NavTriangle::faceBlocker value; each listed once
-		double		 multiplier = 2.0; // cost per mm walked inside, finite and above 1
-	};
-
 	struct BeliefFilter {
 		const std::unordered_set<std::uint64_t>* knownSegments = nullptr;
 		const std::unordered_set<std::uint64_t>* knownOpenings = nullptr;
-		std::span<const TagPrice>				 prices;
 	};
 
 	// A belief as a search holds it: its own copies, so a search that runs on another
@@ -119,7 +88,6 @@ namespace geometry::nav {
 		bool					   truth = true;   // knows every wall; the lists are not read
 		std::vector<std::uint64_t> knownSegments;  // ascending, each once
 		std::vector<std::uint64_t> knownOpenings;  // ascending, each once
-		std::vector<TagPrice>	   prices;
 	};
 	SearchBelief copyBelief(const BeliefFilter& belief);
 
@@ -141,7 +109,7 @@ namespace geometry::nav {
 
 	struct SearchArgs {
 		Vec2i64				 start;
-		std::vector<Vec2i64> goals; // the answer is the one with the shortest walk (or cost)
+		std::vector<Vec2i64> goals; // the answer is the one with the shortest walk
 		std::int64_t		 agentRadiusMm = 0;
 		SearchBelief		 belief;
 		// PathLimits::maxCost.
@@ -165,7 +133,7 @@ namespace geometry::nav {
 	// radius. Expansion and the start and goal triangles are gated by the belief. Each
 	// corridor is scored by a lower bound on its walk to the nearest goal (its funnel so
 	// far, then the best way on through the portal it last crossed), and a goal is
-	// accepted only at its exact string-pulled length (or cost), so the search returns the
+	// accepted only at its exact string-pulled length, so the search returns the
 	// shortest walk of the corridors it keeps (see PathQuery.cpp's label cap).
 	//
 	// Every step must be given the same mesh, unchanged since the search began or last

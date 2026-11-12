@@ -294,7 +294,7 @@ namespace {
 		std::size_t		  next = 0;
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
 			const std::size_t i		  = static_cast<std::size_t>(t);
-			const bool		  changed = tris[i].edgePairWidthMm != patched.tris[i].edgePairWidthMm || tris[i].structuralWidthMm != patched.tris[i].structuralWidthMm;
+			const bool		  changed = tris[i].edgePairWidthMm != patched.tris[i].edgePairWidthMm;
 			const bool		  listed  = next < refresh.changes.size() && refresh.changes[next].id == t;
 			if (changed != listed) {
 				return ::testing::AssertionFailure() << "triangle " << t << (changed ? "'s widths changed but are not reported" : " is reported with no width change");

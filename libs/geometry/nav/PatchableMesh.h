@@ -106,7 +106,6 @@ namespace geometry::nav {
 
 	// Covers any agent the game could have: a 2 m radius, over six times the colonist's.
 	constexpr std::int64_t kDefaultMaxClearanceMm = 4000;
-	constexpr std::int64_t kDefaultMaxSqueezeMm	  = 2000;
 
 	struct PatchableMeshArgs {
 		// A bounds ring enters the mesh with its edges split to at most this
@@ -117,11 +116,6 @@ namespace geometry::nav {
 		// Corridor widths are exact below this and read kUnconstrainedWidth at or above
 		// it, so a patch refreshes only the widths within this distance of what it changed.
 		std::int64_t maxClearanceMm = kDefaultMaxClearanceMm;
-		// The detail-class obstacle tags (NavMeshInput::detailTags).
-		std::vector<std::int64_t> detailTags;
-		// A priced squeeze past detail opens for discs up to this wide (apexWidthsMm): the
-		// structural width reads no farther, which keeps its refresh local among dense obstacles.
-		std::int64_t maxSqueezeMm = kDefaultMaxSqueezeMm;
 		// The face tags component labels read as open ground (MeshComponents).
 		std::vector<std::int64_t> componentOpenTags;
 	};
@@ -154,7 +148,7 @@ namespace geometry::nav {
 		DoorId addDoor(const DoorPortal& door);
 		void   removeDoor(DoorId door);
 
-		// Corridor widths (NavTriangle::edgePairWidthMm and structuralWidthMm, capped at maxClearanceMm) lag
+		// Corridor widths (NavTriangle::edgePairWidthMm, capped at maxClearanceMm) lag
 		// behind patches: a patch only records where it changed the mesh, and this brings
 		// every width up to date, once for all the patches since the last call. The report
 		// lists the triangles whose widths changed, each kTriangleWidths.
@@ -312,8 +306,6 @@ namespace geometry::nav {
 
 		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
-		std::int64_t				maxSqueezeMm	= kDefaultMaxSqueezeMm;
-		std::vector<std::int64_t>	detailTags;
 		PagedVector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;
 

@@ -90,9 +90,6 @@ namespace geometry::nav {
 	struct NavMeshInput {
 		std::vector<NavInputPolygon> polygons;
 		std::vector<DoorPortal>		 doors;
-		// The detail-class obstacle tags (placed obstacles, later movers' footprints): a path query may
-		// squeeze a disc past them at a price (NavTriangle::structuralWidthMm). Empty: none.
-		std::vector<std::int64_t> detailTags;
 	};
 
 	struct NavTriangle {
@@ -107,13 +104,6 @@ namespace geometry::nav {
 		// knowledge obstacles. kUnconstrainedWidth when no such obstacle pinches it.
 		std::array<std::int64_t, 3> edgePairWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth,
 													   kUnconstrainedWidth};
-		// The same width with detail-class faces (the mesh's detail tags) read as open
-		// ground: a gap that admits a disc here but not by edgePairWidthMm is narrowed by
-		// detail, and a query that prices detail may squeeze through it. Where detail
-		// alone made the apex an obstacle vertex, a disc centred on it counts too, since
-		// the wedge measure is too narrow at a free apex. Equal to edgePairWidthMm when the
-		// mesh has no detail tags; capped at the mesh's squeeze width (apexWidthsMm).
-		std::array<std::int64_t, 3> structuralWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth, kUnconstrainedWidth};
 		// Door clear width (mm) when edge i is a door portal, else kUnconstrainedWidth.
 		// Threaded from DoorPortal::clearWidthMm; the A* gates a door crossing by it.
 		std::array<std::int64_t, 3> edgeClearWidthMm = {kUnconstrainedWidth, kUnconstrainedWidth,
@@ -231,7 +221,6 @@ namespace geometry::nav {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
 		NavGrid					 grid;
-		std::vector<std::int64_t> detailTags; // NavMeshInput::detailTags
 		// Taken when the mesh is made; a copy carries its source's along with its content.
 		// A caller that edits a built mesh in place takes a fresh one.
 		std::uint64_t generation = nextMeshGeneration();
@@ -285,7 +274,6 @@ namespace geometry::nav {
 		bool (*widthsCurrentIn)(const void* owner)											= nullptr;
 		std::uint64_t (*epochIn)(const void* owner)											= nullptr;
 		void (*resolveIn)(const void* owner, NavView& view)									= nullptr;
-		const std::vector<std::int64_t>* detailTags											= nullptr; // the owner's; null: none
 
 		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles.size()); }
 		bool			   isLive(std::int32_t t) const { return !live.set() || live[static_cast<std::size_t>(t)] != 0; }
@@ -312,16 +300,8 @@ namespace geometry::nav {
 
 	// Scratch for corridor-width searches, reused across calls.
 	struct WidthSearch {
-		ScratchArray<std::uint32_t>				  visited; // visited[t] == stamp: seen by the current search
-		std::uint32_t							  stamp = 0;
-		std::vector<std::pair<std::int32_t, int>> star; // an apex's triangles and their corners on it
-		// Which vertices an obstacle edge meets, kept for one mesh state (owner and epoch):
-		// [0] with nothing read as open, [1] with the detail tags open.
-		const void*								  vertexOwner = nullptr;
-		std::uint64_t							  vertexEpoch = 0;
-		std::uint32_t							  vertexStamp = 0;
-		std::array<ScratchArray<std::uint32_t>, 2> vertexSeen;
-		std::array<ScratchArray<std::uint8_t>, 2>  vertexObstacle;
+		ScratchArray<std::uint32_t> visited; // visited[t] == stamp: seen by the current search
+		std::uint32_t				stamp = 0;
 	};
 
 	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)
@@ -330,17 +310,5 @@ namespace geometry::nav {
 	// search never looks farther than maxClearanceMm from the apex, so the width depends
 	// only on `tri` and the triangles that come within maxClearanceMm of the apex.
 	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
-
-	// An apex's two stored widths (NavTriangle::edgePairWidthMm and structuralWidthMm),
-	// the second with the view's detail tags read as open ground. The full width reads
-	// nothing farther than maxClearanceMm from the apex; the structural one, which only
-	// decides squeezes, nothing farther than maxSqueezeMm (where it is lower), and reads
-	// maxSqueezeMm when it is at least that: a squeeze opens for discs up to that wide.
-	struct ApexWidths {
-		std::int64_t full		= kUnconstrainedWidth;
-		std::int64_t structural = kUnconstrainedWidth;
-	};
-	ApexWidths apexWidthsMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm,
-							std::int64_t maxSqueezeMm);
 
 } // namespace geometry::nav
