@@ -1336,10 +1336,6 @@ namespace {
 		int									   pricedCompared	 = 0;
 		int									   pricedThrough	 = 0;
 		int									   flagsDiffer		 = 0;
-		int									   boxedCompared	 = 0;
-		int									   boxBinds		 = 0;
-		int									   boxShuts		 = 0;
-		int									   hullCompared	 = 0;
 		BeliefFilter						   priced;
 		priced.prices = kOraclePrices;
 		for (std::size_t i = 0; i + 1 < points.size(); i += 2) {
@@ -1374,47 +1370,6 @@ namespace {
 				if (radius > kOracleMaxPricedRadiusMm) {
 					continue;
 				}
-				// Confined to a box round the pair, a little past it, whose sides cut the
-				// whole mesh's big triangles where the split mesh has its square sides: the
-				// same verdict, lengths that agree, and every point inside the box.
-				const std::int64_t margin = 2000 + static_cast<std::int64_t>((i / 2) % 4) * 4567;
-				const geometry::RectMm box{{std::min(a.x, b.x) - margin, std::min(a.y, b.y) - margin}, {std::max(a.x, b.x) + margin, std::max(a.y, b.y) + margin}};
-				const PathResult   bw = pathThrough(wv, a, b, radius, {}, {.within = &box});
-				const PathResult   bs = pathThrough(sv, a, b, radius, {}, {.within = &box});
-				EXPECT_EQ(bw.stop, bs.stop) << "boxed, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
-				for (const PathResult* r : {&bw, &bs}) {
-					for (const Vec2i64& p : r->points) {
-						EXPECT_TRUE(p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y)
-							<< "(" << p.x << ", " << p.y << ") outside the box, radius " << radius;
-					}
-				}
-				if (bw.reachable && bs.reachable) {
-					++boxedCompared;
-					boxBinds += pathLengthMm(bw) != pathLengthMm(w) ? 1 : 0;
-					EXPECT_TRUE(lengthsAgree(pathLengthMm(bs), pathLengthMm(bw), radius))
-						<< "boxed, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << "): whole "
-						<< pathLengthMm(bw) << " mm, split " << pathLengthMm(bs) << " mm";
-				} else {
-					boxShuts += w.reachable ? 1 : 0;
-				}
-				// A box just round the walk found without one shuts nothing that walk needs. Its
-				// margin is the radius: each tiling rounds a corner along its own portals, a
-				// little inside the radius either way (PathQuery's clearance caveat).
-				if (w.reachable) {
-					const std::int64_t grow = radius + 1;
-					geometry::RectMm   hull{w.points.front(), w.points.front()};
-					for (const Vec2i64& p : w.points) {
-						hull.min = {std::min(hull.min.x, p.x - grow), std::min(hull.min.y, p.y - grow)};
-						hull.max = {std::max(hull.max.x, p.x + grow), std::max(hull.max.y, p.y + grow)};
-					}
-					const PathResult hw = pathThrough(wv, a, b, radius, {}, {.within = &hull});
-					const PathResult hs = pathThrough(sv, a, b, radius, {}, {.within = &hull});
-					EXPECT_EQ(hw.stop, PathStop::Found) << "hull-boxed, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
-					EXPECT_EQ(hs.stop, PathStop::Found) << "hull-boxed, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
-					EXPECT_TRUE(lengthsAgree(pathLengthMm(hw), pathLengthMm(w), radius));
-					EXPECT_TRUE(lengthsAgree(pathLengthMm(hs), pathLengthMm(w), radius));
-					++hullCompared;
-				}
 				const PathResult pw = pathThrough(wv, a, b, radius, priced);
 				const PathResult ps = pathThrough(sv, a, b, radius, priced);
 				EXPECT_EQ(pw.reachable, ps.reachable) << "priced, radius " << radius << " from (" << a.x << ", " << a.y << ") to (" << b.x << ", " << b.y << ")";
@@ -1439,13 +1394,6 @@ namespace {
 		EXPECT_EQ(bottleneckDiffers, 0);
 		EXPECT_GT(pricedCompared, 60);
 		EXPECT_GT(pricedThrough, 5) << "some priced walks must go through trees for the comparison to bind";
-		EXPECT_GT(boxedCompared, 30);
-		EXPECT_GT(hullCompared, 60);
-		EXPECT_GT(boxBinds + boxShuts, 5) << "some boxes must change an answer for the comparison to bind";
-		::testing::Test::RecordProperty("boxedCompared", boxedCompared);
-		::testing::Test::RecordProperty("boxBinds", boxBinds);
-		::testing::Test::RecordProperty("boxShuts", boxShuts);
-		::testing::Test::RecordProperty("hullCompared", hullCompared);
 		::testing::Test::RecordProperty("pricedFlagsDiffering", flagsDiffer);
 		::testing::Test::RecordProperty("pricedCompared", pricedCompared);
 		::testing::Test::RecordProperty("pricedThrough", pricedThrough);
@@ -1489,54 +1437,6 @@ namespace {
 
 TEST(PatchableMesh, BoundsSplitTwoByTwoChangesNoAnswer) {
 	expectBoundsSplitInvisible(2, 61);
-}
-
-// A box that binds, on two tilings of one 128 m field: a wall whose near end lies outside
-// the box, so the only way round inside it passes the far end, 4 m from the box's side at
-// x = 64 m. That side cuts the one-square tiling's big triangles and runs along the 2x2
-// tiling's square sides. Both answer Found with lengths that agree and every point inside;
-// without the box the walk leaves it. A goal or start on that side, which lies on the 2x2
-// tiling's mesh edges, stands in the triangle inside the box.
-TEST(PatchableMesh, BoxedWalksRoundNearTheSideAgreeAcrossTilings) {
-	const NavInputPolygon wall = blocked(rect(68000, 60000, 118000, 60500), kWater);
-	PatchableMesh		  whole;
-	PatchableMesh		  split;
-	loadGround(whole, {bounds(rect(0, 0, 128000, 128000))}, {wall});
-	loadGround(split,
-			   {bounds(rect(0, 0, 64000, 64000)), bounds(rect(64000, 0, 128000, 64000)), bounds(rect(0, 64000, 64000, 128000)),
-				bounds(rect(64000, 64000, 128000, 128000))},
-			   {wall});
-	const geometry::RectMm box{{64000, 30000}, {114000, 100000}};
-	auto				   inside = [&](const PathResult& r) {
-		  return std::all_of(r.points.begin(), r.points.end(), [&](const Vec2i64& p) {
-			  return p.x >= box.min.x && p.x <= box.max.x && p.y >= box.min.y && p.y <= box.max.y;
-		  });
-	};
-	// Point location settles the side by sorted corners, so it names the triangle outside.
-	ASSERT_LE(cornersOf(split, split.locate({64000, 70000}))[2].x, 64000);
-	std::mt19937										rng(83);
-	std::vector<std::pair<Vec2i64, Vec2i64>> pairs{{{64000, 50000}, {64000, 70000}}, {{98000, 70000}, {64000, 70000}}, {{64000, 45000}, {90000, 80000}}};
-	while (pairs.size() < 11) {
-		pairs.push_back({{80000 + static_cast<std::int64_t>(rng() % 32000), 32000 + static_cast<std::int64_t>(rng() % 26000)},
-						 {66000 + static_cast<std::int64_t>(rng() % 46000), 63000 + static_cast<std::int64_t>(rng() % 35000)}});
-	}
-	int leaves = 0;
-	for (const auto& [a, b] : pairs) {
-		for (const std::int64_t radius : {0, 300}) {
-			const PathResult open = pathThrough(whole.view(), a, b, radius);
-			leaves += open.reachable && !inside(open) ? 1 : 0;
-			const PathResult bw = pathThrough(whole.view(), a, b, radius, {}, {.within = &box});
-			const PathResult bs = pathThrough(split.view(), a, b, radius, {}, {.within = &box});
-			const std::string at = "radius " + std::to_string(radius) + " from (" + std::to_string(a.x) + ", " + std::to_string(a.y) + ") to (" +
-								   std::to_string(b.x) + ", " + std::to_string(b.y) + ")";
-			ASSERT_EQ(bw.stop, PathStop::Found) << at;
-			ASSERT_EQ(bs.stop, PathStop::Found) << at;
-			EXPECT_TRUE(inside(bw)) << at;
-			EXPECT_TRUE(inside(bs)) << at;
-			EXPECT_TRUE(lengthsAgree(pathLengthMm(bw), pathLengthMm(bs), radius)) << at << ": whole " << pathLengthMm(bw) << " mm, split " << pathLengthMm(bs) << " mm";
-		}
-	}
-	EXPECT_GE(leaves, 10) << "the box must bind: most walks without it go round the wall's near end";
 }
 
 namespace {

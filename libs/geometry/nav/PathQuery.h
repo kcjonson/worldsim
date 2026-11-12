@@ -1,6 +1,5 @@
 #pragma once
 
-#include "../core/RectMm.h"
 #include "../core/Vec2i64.h"
 #include "NavMesh.h"
 
@@ -28,8 +27,7 @@
 namespace geometry::nav {
 
 	// How a path query ended: a path found; no path at all (off-mesh, an endpoint on
-	// ground this belief cannot stand on or outside PathLimits::within, or every corridor
-	// tried and none reaches); or a limit reached with corridors still untried, so a path
+	// ground this belief cannot stand on, or every corridor tried and none reaches); or a limit reached with corridors still untried, so a path
 	// may exist past the limit.
 	enum class PathStop { Found, NoPath, LimitReached };
 
@@ -41,12 +39,6 @@ namespace geometry::nav {
 		// a millimetre, since scores bound the unrounded walk and the cost is the rounded
 		// one's.
 		double maxCost = std::numeric_limits<double>::infinity();
-		// Confine the walk to this closed rectangle, whatever the triangulation: a path is
-		// found exactly when one exists on the ground the rectangle's interior covers (as
-		// on the mesh cut to it), and every point of the walk lies in the rectangle. It
-		// bounds the disc's centre, not the disc: the rectangle's sides are no obstacle to
-		// keep the radius from. A start or goal outside it is NoPath.
-		const RectMm* within = nullptr;
 		// Give up after this many expansions (PathResult::expansions); 0 is no limit. A
 		// goal popped once the count is reached is still tried, so a path accepted there
 		// is Found, with one expansion over the count.

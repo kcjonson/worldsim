@@ -27,7 +27,6 @@
 
 namespace {
 
-	using geometry::RectMm;
 	using geometry::Vec2i64;
 	using namespace geometry::nav;
 
@@ -1149,9 +1148,9 @@ namespace {
 
 	// A goal the belief knows is walled in: a 6 m room of four known wall segments in the
 	// middle of tiles x tiles of forested ground, trees priced as the game prices them, and
-	// starts 30 to 60 m off. The search can only fail. Limit: 0 none, 1 maxExpansions 2000,
-	// 2 within a 256 m square round the start.
-	void BM_WalledGoal(benchmark::State& state, int limit) {
+	// starts 30 to 60 m off. The search can only fail: run dry, or with `capped` stop at
+	// maxExpansions 2000.
+	void BM_WalledGoal(benchmark::State& state, bool capped) {
 		const std::int64_t tiles = state.range(0);
 		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000, .detailTags = {kProvenancePlaced}});
 		const std::int64_t side = tiles * kRealTileMm;
@@ -1207,15 +1206,8 @@ namespace {
 			expansions	 = 0.0;
 			limited		 = 0;
 			for (const Vec2i64& s : starts) {
-				const RectMm box{s - Vec2i64{128000, 128000}, s + Vec2i64{128000, 128000}};
-				PathLimits	 limits;
-				if (limit == 1) {
-					limits.maxExpansions = 2000;
-				} else if (limit == 2) {
-					limits.within = &box;
-				}
 				PathResult r;
-				total += secondsOf([&] { r = pathThrough(mesh.view(), s, g, 300, belief, limits); });
+				total += secondsOf([&] { r = pathThrough(mesh.view(), s, g, 300, belief, {.maxExpansions = capped ? 2000U : 0U}); });
 				expansions += r.expansions;
 				limited += r.stop == PathStop::LimitReached ? 1 : 0;
 				benchmark::DoNotOptimize(r);
@@ -1230,11 +1222,9 @@ namespace {
 	}
 
 	// The game's walking-distance question on its structural mesh (water, no trees, 64 m
-	// sides): pairs 10 to 120 m apart, confined to a square round the start (256 m, or 64 m
-	// to make the square bind), the cost
-	// capped at `capTimes` the straight line. Time per query by how it ended: found, stopped
-	// on the cap, or no path inside the square.
-	void BM_WalkingDistance(benchmark::State& state, double capTimes, std::int64_t boxHalfMm) {
+	// sides): pairs 10 to 120 m apart, the cost capped at `capTimes` the straight line. Time
+	// per query by how it ended: found, stopped on the cap, or no path.
+	void BM_WalkingDistance(benchmark::State& state, double capTimes) {
 		const std::int64_t tiles = 5;
 		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000});
 		loadTiledGround(mesh, tiles, false);
@@ -1263,10 +1253,9 @@ namespace {
 			count	= {};
 			double total = 0.0;
 			for (const auto& [a, b] : pairs) {
-				const RectMm box{a - Vec2i64{boxHalfMm, boxHalfMm}, a + Vec2i64{boxHalfMm, boxHalfMm}};
 				const double straight = std::hypot(static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y));
 				PathResult	 r;
-				const double took = secondsOf([&] { r = pathThrough(mesh.view(), a, b, 300, {}, {.maxCost = capTimes * straight, .within = &box}); });
+				const double took = secondsOf([&] { r = pathThrough(mesh.view(), a, b, 300, {}, {.maxCost = capTimes * straight}); });
 				const int	 kind = r.stop == PathStop::Found ? 0 : (r.stop == PathStop::LimitReached ? 1 : 2);
 				seconds[static_cast<std::size_t>(kind)] += took;
 				++count[static_cast<std::size_t>(kind)];
@@ -1275,7 +1264,7 @@ namespace {
 			}
 			state.SetIterationTime(total);
 		}
-		const char* names[] = {"found", "cap", "box"};
+		const char* names[] = {"found", "cap", "noPath"};
 		for (std::size_t k = 0; k < 3; ++k) {
 			state.counters[std::string(names[k]) + "N"]	   = count[k];
 			state.counters[std::string(names[k]) + "UsEach"] = count[k] > 0 ? 1e6 * seconds[k] / count[k] : 0.0;
@@ -1381,13 +1370,11 @@ BENCHMARK_CAPTURE(BM_LargeTree, squares_shoreline_add, 1, true, true)->UseManual
 BENCHMARK_CAPTURE(BM_LargeBoundsTree, tiled_border, 0)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LargeBoundsTree, squares_shared_side, 1)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_MeshGrowsWorstPatch)->Arg(10)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_WalledGoal, unlimited, 0)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_WalledGoal, maxExpansions2000, 1)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_WalledGoal, within256m, 2)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
-BENCHMARK_CAPTURE(BM_WalkingDistance, cap1x, 1.0, 128000)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_WalkingDistance, cap2x, 2.0, 128000)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_WalkingDistance, cap4x, 4.0, 128000)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_WalkingDistance, cap4x_box64m, 4.0, 32000)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_WalledGoal, unlimited, false)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_WalledGoal, maxExpansions2000, true)->Arg(3)->Arg(6)->Arg(9)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_WalkingDistance, cap1x, 1.0)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_WalkingDistance, cap2x, 2.0)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_WalkingDistance, cap4x, 4.0)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells, 2, false)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells_openTile, 2, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, loneTree_openTile, 0, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);

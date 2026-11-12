@@ -165,45 +165,15 @@ namespace geometry::nav {
 			return mesh.forest(belief.knownSegments == nullptr);
 		}
 
-		inline bool inRect(const RectMm& rect, const Vec2i64& p) {
-			return p.x >= rect.min.x && p.x <= rect.max.x && p.y >= rect.min.y && p.y <= rect.max.y;
-		}
-
-		// Does triangle t's interior meet the rectangle's? Convex shapes whose interiors
-		// miss are parted by an axis of one of them, touching allowed: the rectangle's
-		// two, or a triangle edge with every rectangle corner on its outer side or on it.
-		bool interiorMeetsRect(const NavView& mesh, std::int32_t t, const RectMm& rect) {
-			const NavTriangle&			 tri = mesh.triangle(t);
-			const std::array<Vec2i64, 3> p{mesh.vertex(tri.v[0]), mesh.vertex(tri.v[1]), mesh.vertex(tri.v[2])};
-			if (std::max({p[0].x, p[1].x, p[2].x}) <= rect.min.x || std::min({p[0].x, p[1].x, p[2].x}) >= rect.max.x ||
-				std::max({p[0].y, p[1].y, p[2].y}) <= rect.min.y || std::min({p[0].y, p[1].y, p[2].y}) >= rect.max.y) {
-				return false;
-			}
-			const std::array<Vec2i64, 4> corners{rect.min, Vec2i64{rect.max.x, rect.min.y}, rect.max, Vec2i64{rect.min.x, rect.max.y}};
-			for (int k = 0; k < 3; ++k) {
-				bool outside = true;
-				for (const Vec2i64& c : corners) {
-					outside = outside && orientation(p[static_cast<std::size_t>(k)], p[static_cast<std::size_t>((k + 1) % 3)], c) != Orientation::CounterClockwise;
-				}
-				if (outside) {
-					return false;
-				}
-			}
-			return true;
-		}
-
 		// The triangle a walker stands in at p, located as `tri`: tri itself when this
 		// belief crosses it freely, else, for a p on an edge or corner of tri, the triangle
 		// holding p it crosses freely whose sorted corners come first, then one it crosses
 		// at a price, then tri. Point location settles a shared edge or corner by geometry
 		// alone, so a start on an obstacle's or wall's edge would otherwise land in the blocked
 		// face and find no path, or in the priced face and be charged for standing beside
-		// it: only a point strictly inside a priced face stands on it. Within a rectangle,
-		// only a triangle whose interior meets it counts (the search enters no other), so a
-		// point on a side of the rectangle that runs along a mesh edge stands inside it.
-		std::int32_t standOn(const NavView& mesh, std::int32_t tri, const Vec2i64& p, const BeliefFilter& belief, const RectMm* within) {
-			const bool triInside = tri >= 0 && (within == nullptr || interiorMeetsRect(mesh, tri, *within));
-			if (tri < 0 || (triInside && stepMultiplier(mesh, tri, belief) == 1.0)) {
+		// it: only a point strictly inside a priced face stands on it.
+		std::int32_t standOn(const NavView& mesh, std::int32_t tri, const Vec2i64& p, const BeliefFilter& belief) {
+			if (tri < 0 || stepMultiplier(mesh, tri, belief) == 1.0) {
 				return tri;
 			}
 			std::int32_t		   best		= -1;
@@ -214,7 +184,7 @@ namespace geometry::nav {
 					  return;
 				  }
 				  const double m = stepMultiplier(mesh, u, belief);
-				  if (m <= 0.0 || (within != nullptr && !interiorMeetsRect(mesh, u, *within))) {
+				  if (m <= 0.0) {
 					  return;
 				  }
 				  const NavTriangle&	 t = mesh.triangle(u);
@@ -261,7 +231,7 @@ namespace geometry::nav {
 					consider(t.neighbor[e]);
 				}
 			}
-			if (best >= 0 && (bestFree || !triInside || !traversable(mesh, tri, belief))) {
+			if (best >= 0 && (bestFree || !traversable(mesh, tri, belief))) {
 				return best;
 			}
 			return tri;
@@ -539,47 +509,6 @@ namespace geometry::nav {
 				span.right = span.right - unit * off;
 			}
 			return span;
-		}
-
-		// A portal cut to the part of it inside the closed rectangle, the ends kept in its
-		// order along the edge; false when none of it is inside. A walk between points of
-		// the rectangle stays in it (it is convex), so a corridor of cut portals keeps the
-		// whole walk inside. Touching to within rounding counts as meeting.
-		bool clipToRect(PortalSpan& span, const RectMm& rect) {
-			const double minX = static_cast<double>(rect.min.x);
-			const double minY = static_cast<double>(rect.min.y);
-			const double maxX = static_cast<double>(rect.max.x);
-			const double maxY = static_cast<double>(rect.max.y);
-			auto		 inside = [&](const Vec2d& p) { return p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY; };
-			if (inside(span.left) && inside(span.right)) {
-				return true;
-			}
-			const Vec2d d  = span.right - span.left;
-			double		lo = 0.0;
-			double		hi = 1.0;
-			// Keep the parameters t where low <= p + dp * t <= high.
-			auto slab = [&](double p, double dp, double low, double high) {
-				if (dp == 0.0) {
-					return p >= low && p <= high;
-				}
-				double t0 = (low - p) / dp;
-				double t1 = (high - p) / dp;
-				if (dp < 0.0) {
-					std::swap(t0, t1);
-				}
-				lo = std::max(lo, t0);
-				hi = std::min(hi, t1);
-				return true;
-			};
-			if (!slab(span.left.x, d.x, minX, maxX) || !slab(span.left.y, d.y, minY, maxY) || lo > hi + 1e-12) {
-				return false;
-			}
-			hi			= std::max(lo, hi);
-			auto clamp	= [&](const Vec2d& p) { return Vec2d{std::clamp(p.x, minX, maxX), std::clamp(p.y, minY, maxY)}; };
-			const Vec2d left = span.left;
-			span.left		 = clamp(left + d * lo);
-			span.right		 = clamp(left + d * hi);
-			return true;
 		}
 
 		// A portal as the string-pull reads it, with the search label that enters
@@ -953,7 +882,7 @@ namespace geometry::nav {
 		if (forestFor(mesh, belief) == nullptr) {
 			return from; // reaches() answers "maybe" without forests
 		}
-		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief, nullptr);
+		const std::int32_t startTri = standOn(mesh, mesh.locate(start), start, belief);
 		// A start on a face this belief cannot stand on reaches nothing, same as pathThrough's
 		// endpoint gate (e.g. start inside a wall the agent knows blocks).
 		if (startTri < 0 || !traversable(mesh, startTri, belief)) {
@@ -973,7 +902,7 @@ namespace geometry::nav {
 		if (from.startTri < 0) {
 			return false; // off-mesh or untraversable start
 		}
-		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief, nullptr);
+		const std::int32_t goalTri = standOn(mesh, mesh.locate(goal), goal, belief);
 		if (goalTri < 0 || !traversable(mesh, goalTri, belief)) {
 			return false;
 		}
@@ -991,9 +920,6 @@ namespace geometry::nav {
 		// Scores are bounds on unrounded walks and a cost is the rounded walk's, so the cap
 		// takes a millimetre's slack: a walk costing the cap to within rounding is kept.
 		const double costCap = limits.maxCost + 1.0;
-		if (limits.within != nullptr && (!inRect(*limits.within, start) || !inRect(*limits.within, goal))) {
-			return result;
-		}
 		assert(mesh.widthsCurrent() && "pathThrough: corridor widths lag behind a patch");
 		if (!mesh.widthsCurrent()) {
 			return result; // stale widths could route a disc through a gap it does not fit
@@ -1005,9 +931,9 @@ namespace geometry::nav {
 			}
 		}
 
-		const std::int32_t startTri	   = standOn(mesh, mesh.locate(start), start, belief, limits.within);
+		const std::int32_t startTri	   = standOn(mesh, mesh.locate(start), start, belief);
 		const std::int32_t locatedGoal = mesh.locate(goal);
-		const std::int32_t goalTri	   = standOn(mesh, locatedGoal, goal, belief, limits.within);
+		const std::int32_t goalTri	   = standOn(mesh, locatedGoal, goal, belief);
 		if (startTri < 0 || goalTri < 0) {
 			return result; // off-mesh
 		}
@@ -1338,11 +1264,8 @@ namespace geometry::nav {
 				if (e == entry) {
 					continue; // U-turn back through the entry edge: never on a taut path
 				}
-				// Within a rectangle, a triangle is entered only where its interior meets the
-				// rectangle's (a sliver along a side is ground the cut mesh would not have), and
-				// only through the part of the portal inside it (clipToRect, below).
 				const std::int32_t nb = tri.neighbor[e];
-				if (nb < 0 || (limits.within != nullptr && !interiorMeetsRect(mesh, nb, *limits.within))) {
+				if (nb < 0) {
 					continue;
 				}
 				// Belief gate: skip a neighbor this agent may not cross. The only place
@@ -1399,10 +1322,7 @@ namespace geometry::nav {
 					}
 				}
 				const std::int32_t label = static_cast<std::int32_t>(scratch.labels.size()); // the label a new one would take
-				PortalSpan		   span	 = portalSpan(mesh, ti, e, radius, belief, corners);
-				if (limits.within != nullptr && !clipToRect(span, *limits.within)) {
-					continue; // the edge lies wholly outside the rectangle: this step is shut
-				}
+				const PortalSpan   span	 = portalSpan(mesh, ti, e, radius, belief, corners);
 				const Portal	   step{span.left, span.right, label};
 				Funnel			   next = funnel;
 				advance(li, next, step, toD(mesh.vertex(tri.v[e])), toD(mesh.vertex(tri.v[(e + 1) % 3])));
