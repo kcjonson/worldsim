@@ -122,8 +122,10 @@ namespace {
 		double patches = 0;
 
 		void add(const PatchReport& r) {
-			freed += static_cast<double>(r.freedTriangles.size());
-			created += static_cast<double>(r.newTriangles.size());
+			for (const ChangedTriangle& c : r.changes) {
+				freed += (c.why & kTriangleFreed) != 0 ? 1.0 : 0.0;
+				created += (c.why & kTriangleCreated) != 0 ? 1.0 : 0.0;
+			}
 			passes += r.passes;
 			patches += 1;
 		}

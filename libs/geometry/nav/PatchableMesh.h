@@ -84,8 +84,6 @@ namespace geometry::nav {
 	// holds triangle ids checks them against `changes`.
 	struct PatchReport {
 		std::vector<RingId>			 added;			 // ids of PatchEdits::adds, in order
-		std::vector<std::int32_t>	 freedTriangles; // ids whose old triangle is gone, sorted
-		std::vector<std::int32_t>	 newTriangles;	 // ids holding a new triangle, sorted
 		std::vector<ChangedTriangle> changes;		 // every id touched, ascending, each once
 		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
 		Vec2i64						 hi;			 // (nothing changed: unset)

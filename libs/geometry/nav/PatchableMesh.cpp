@@ -915,6 +915,8 @@ namespace geometry::nav {
 		std::vector<std::pair<std::int32_t, int>> boundaryEdges;
 		std::vector<std::int32_t>				  flipped;
 		std::vector<std::int32_t>				  unlinked; // kept triangles whose edge on the hole now borders nothing
+		std::vector<std::int32_t>				  freed;	// ids whose old triangle is gone
+		std::vector<std::int32_t>				  created;	// ids holding a new triangle
 	};
 
 	PatchableMesh::PatchScratchSlot::PatchScratchSlot() : scratch(std::make_unique<PatchScratch>()) {}
@@ -1962,7 +1964,10 @@ namespace geometry::nav {
 			m.live[static_cast<std::size_t>(t)] = 0;
 			--m.liveTriangles;
 		}
-		out.freedTriangles = reuse;
+		std::vector<std::int32_t>& freed   = work.freed;
+		std::vector<std::int32_t>& created = work.created;
+		freed							   = reuse;
+		created.clear();
 
 		// Commit the registry; covers acquired below read the new tags. The hole is gone
 		// first: its pieces leave the edge index under the ring edge ids they came in with.
@@ -2038,7 +2043,7 @@ namespace geometry::nav {
 			for (std::uint32_t v : nt.v) {
 				++m.vertexUses[v];
 			}
-			out.newTriangles.push_back(id);
+			created.push_back(id);
 		}
 		for (std::size_t r = nextReuse; r < reuse.size(); ++r) {
 			m.freeTriangles.push_back(reuse[r]);
@@ -2115,7 +2120,7 @@ namespace geometry::nav {
 			}
 		}
 
-		for (std::int32_t id : out.newTriangles) {
+		for (std::int32_t id : created) {
 			Vec2i64 tLo;
 			Vec2i64 tHi;
 			m.triangleBox(id, tLo, tHi);
@@ -2128,9 +2133,9 @@ namespace geometry::nav {
 		for (std::int32_t t : flipped) {
 			reportBox(t);
 		}
-		out.freedTriangles.insert(out.freedTriangles.end(), flipped.begin(), flipped.end());
-		out.newTriangles.insert(out.newTriangles.end(), flipped.begin(), flipped.end());
-		for (std::vector<std::int32_t>* list : {&out.freedTriangles, &out.newTriangles}) {
+		freed.insert(freed.end(), flipped.begin(), flipped.end());
+		created.insert(created.end(), flipped.begin(), flipped.end());
+		for (std::vector<std::int32_t>* list : {&freed, &created}) {
 			std::sort(list->begin(), list->end());
 			list->erase(std::unique(list->begin(), list->end()), list->end());
 		}
@@ -2140,11 +2145,11 @@ namespace geometry::nav {
 		// Every touched id with why: kept triangles beside a new or flipped one, or whose
 		// edge on the hole now borders nothing, are the border.
 		std::vector<ChangedTriangle>& changes = out.changes;
-		auto isNew = [&](std::int32_t t) { return std::binary_search(out.newTriangles.begin(), out.newTriangles.end(), t); };
-		for (std::int32_t t : out.freedTriangles) {
+		auto isNew = [&](std::int32_t t) { return std::binary_search(created.begin(), created.end(), t); };
+		for (std::int32_t t : freed) {
 			changes.push_back({t, kTriangleFreed});
 		}
-		for (std::int32_t t : out.newTriangles) {
+		for (std::int32_t t : created) {
 			changes.push_back({t, kTriangleCreated});
 			for (const std::int32_t nb : m.tris[static_cast<std::size_t>(t)].neighbor) {
 				if (nb >= 0 && !isNew(nb)) {
@@ -2174,10 +2179,10 @@ namespace geometry::nav {
 		// A flip moves edges between triangles, so door tags are set afresh on every new
 		// and flipped triangle; their widths, and widths near what changed, wait for
 		// refreshWidths.
-		for (std::int32_t t : out.newTriangles) {
+		for (std::int32_t t : created) {
 			m.applyDoorTags(t);
 		}
-		m.freshWidthTriangles.insert(m.freshWidthTriangles.end(), out.newTriangles.begin(), out.newTriangles.end());
+		m.freshWidthTriangles.insert(m.freshWidthTriangles.end(), created.begin(), created.end());
 	}
 
 	// --- Public edits ---------------------------------------------------------------

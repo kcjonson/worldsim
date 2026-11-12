@@ -245,10 +245,13 @@ namespace geometry::nav {
 		lost.resize(sizes.size(), 0);
 		lostLabels.clear();
 
-		for (const std::int32_t f : report.freedTriangles) {
-			const ComponentLabel l = labels[static_cast<std::size_t>(f)];
+		for (const ChangedTriangle& c : report.changes) {
+			if ((c.why & kTriangleFreed) == 0) {
+				continue;
+			}
+			const ComponentLabel l = labels[static_cast<std::size_t>(c.id)];
 			if (l != kNoComponent) {
-				labels[static_cast<std::size_t>(f)] = kNoComponent;
+				labels[static_cast<std::size_t>(c.id)] = kNoComponent;
 				dropTriangles(l, 1);
 			}
 		}
@@ -261,16 +264,20 @@ namespace geometry::nav {
 		groupBegin.clear();
 		groupParent.clear();
 		attachments.clear();
-		const std::vector<std::int32_t>& created   = report.newTriangles;
-		auto							 isCreated = [&](std::int32_t t) { return std::binary_search(created.begin(), created.end(), t); };
-		auto							 newGroup  = [&] {
+		const std::vector<ChangedTriangle>& changes	  = report.changes;
+		auto								isCreated = [&](std::int32_t t) {
+			   const auto it = std::lower_bound(changes.begin(), changes.end(), t, [](const ChangedTriangle& c, std::int32_t id) { return c.id < id; });
+			   return it != changes.end() && it->id == t && (it->why & kTriangleCreated) != 0;
+		};
+		auto newGroup = [&] {
 			  const std::int32_t g = static_cast<std::int32_t>(groupBegin.size());
 			  groupBegin.push_back(static_cast<std::int32_t>(groupTris.size()));
 			  groupParent.push_back(g);
 			  return g;
 		};
-		for (const std::int32_t t : created) {
-			if (!passableAt(view, t) || markOf(t) >= 0) {
+		for (const ChangedTriangle& c : changes) {
+			const std::int32_t t = c.id;
+			if ((c.why & kTriangleCreated) == 0 || !passableAt(view, t) || markOf(t) >= 0) {
 				continue;
 			}
 			const std::int32_t g = newGroup();

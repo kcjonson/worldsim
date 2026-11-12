@@ -386,6 +386,17 @@ namespace {
 		return ring;
 	}
 
+	// The ids a report lists with `why`, ascending.
+	std::vector<std::int32_t> idsWith(const PatchReport& report, std::uint8_t why) {
+		std::vector<std::int32_t> out;
+		for (const ChangedTriangle& c : report.changes) {
+			if ((c.why & why) != 0) {
+				out.push_back(c.id);
+			}
+		}
+		return out;
+	}
+
 	// Applies a patch to the mesh and the model together. The model takes each ring as
 	// registered, so a split bounds outline is what the from-scratch build sees too.
 	struct Harness {
@@ -630,8 +641,8 @@ TEST(PatchableMesh, FirstBoundsMeshesAnEmptyMesh) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	EXPECT_EQ(h.mesh.liveTriangleCount(), 2);
-	EXPECT_EQ(h.last.newTriangles.size(), 2U);
-	EXPECT_TRUE(h.last.freedTriangles.empty());
+	EXPECT_EQ(idsWith(h.last, kTriangleCreated).size(), 2U);
+	EXPECT_TRUE(idsWith(h.last, kTriangleFreed).empty());
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
@@ -640,7 +651,7 @@ TEST(PatchableMesh, RingOffGroundTouchesNothing) {
 	h.add(bounds(rect(0, 0, 1000, 1000)));
 	h.add(blocked(rect(2000, 2000, 2100, 2100)));
 	EXPECT_EQ(h.mesh.liveTriangleCount(), 2);
-	EXPECT_TRUE(h.last.newTriangles.empty());
+	EXPECT_TRUE(idsWith(h.last, kTriangleCreated).empty());
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
@@ -697,8 +708,7 @@ TEST(PatchableMesh, CopiedMeshPatchesLikeTheOriginal) {
 		const PatchReport got = mesh->applyPatch(edits);
 		EXPECT_EQ(mesh->validate(), "");
 		EXPECT_EQ(got.added, expected.added);
-		EXPECT_EQ(got.freedTriangles, expected.freedTriangles);
-		EXPECT_EQ(got.newTriangles, expected.newTriangles);
+		EXPECT_EQ(got.changes, expected.changes);
 		EXPECT_EQ(mesh->vertices(), original.vertices());
 		ASSERT_EQ(mesh->triangles().size(), original.triangles().size());
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(original.triangles().size()); ++t) {
@@ -723,9 +733,9 @@ TEST(PatchableMesh, StableIdsOutsideTheHole) {
 		liveBefore.push_back(h.mesh.triangleLive(t) ? 1 : 0);
 	}
 	h.add(blocked(rect(50000, 80000, 51000, 81000)));
-	const PatchReport report = h.last;
+	const std::vector<std::int32_t> freed = idsWith(h.last, kTriangleFreed);
 	for (std::int32_t t = 0; t < static_cast<std::int32_t>(before.size()); ++t) {
-		const bool touched = std::binary_search(report.freedTriangles.begin(), report.freedTriangles.end(), t);
+		const bool touched = std::binary_search(freed.begin(), freed.end(), t);
 		if (liveBefore[static_cast<std::size_t>(t)] == 0 || touched) {
 			continue;
 		}
@@ -943,14 +953,14 @@ TEST(PatchableMesh, HoleSizesOnRealRings) {
 		}());
 		h.model[report.added.front()] = poly;
 		if (!kind.empty()) {
-			sizes[kind].freed.push_back(report.freedTriangles.size());
-			sizes[kind].created.push_back(report.newTriangles.size());
+			sizes[kind].freed.push_back(idsWith(report, kTriangleFreed).size());
+			sizes[kind].created.push_back(idsWith(report, kTriangleCreated).size());
 			sizes[kind].passes.push_back(report.passes);
 		}
 	}
 	h.add(blocked(rect(-63300, 30000, -62700, 30600)));
-	sizes["border"].freed.push_back(h.last.freedTriangles.size());
-	sizes["border"].created.push_back(h.last.newTriangles.size());
+	sizes["border"].freed.push_back(idsWith(h.last, kTriangleFreed).size());
+	sizes["border"].created.push_back(idsWith(h.last, kTriangleCreated).size());
 	sizes["border"].passes.push_back(h.last.passes);
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
 
