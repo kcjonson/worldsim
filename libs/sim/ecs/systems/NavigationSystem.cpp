@@ -197,8 +197,7 @@ namespace ecs {
 			return pointOnFace(mesh, meters, [](const gnav::NavTriangle& t) { return gnav::terrainTraversable(t); });
 		}
 
-		// The tag a placed obstacle's ring carries. Its faces are in the nav mesh only (the structural
-		// mesh never holds detail), and they block routes.
+		// The tag a placed obstacle's ring carries. Its faces block routes.
 		bool isDetailTag(std::int64_t tag) {
 			return tag == nav::kProvenancePlaced;
 		}
@@ -575,17 +574,15 @@ namespace ecs {
 		std::jthread				thread; // last: it starts running the loop over the members above
 	};
 
-	// One mesh's share of a tick, on that mesh's worker.
-	void NavigationSystem::runJob(gnav::PatchableMesh& mesh, MeshJob& job, bool forests) {
+	// A tick's patch job, on the patch worker.
+	void NavigationSystem::runJob(gnav::PatchableMesh& mesh, MeshJob& job) {
 		const Clock::time_point start = Clock::now();
 		for (const gnav::PatchEdits& edits : job.patches) {
 			const Clock::time_point patchStart = Clock::now();
 			gnav::PatchReport		report	   = mesh.applyPatch(edits);
 			job.added.push_back(std::move(report.added));
 			job.patchMs.push_back(msSince(patchStart));
-			if (!forests) {
-				job.reports.push_back(std::move(report));
-			}
+			job.reports.push_back(std::move(report));
 		}
 		for (const gnav::DoorId door : job.doorRemoves) {
 			mesh.removeDoor(door);
@@ -596,13 +593,9 @@ namespace ecs {
 		if (!job.doorEdges.empty()) {
 			job.reports.push_back(doorEdgeReport(mesh, job.doorEdges));
 		}
-		const Clock::time_point finishStart = Clock::now();
-		if (forests) {
-			mesh.rebuildForests();
-		} else {
-			job.reports.push_back(mesh.refreshWidths());
-		}
-		job.finishMs = msSince(finishStart);
+		const Clock::time_point widthsStart = Clock::now();
+		job.reports.push_back(mesh.refreshWidths());
+		job.widthsMs = msSince(widthsStart);
 		job.ms		 = msSince(start);
 	}
 
@@ -615,9 +608,7 @@ namespace ecs {
 
 	NavigationSystem::NavigationSystem()
 		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm, .detailTags = {nav::kProvenancePlaced}}),
-		  structural({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
-		  navWorker(std::make_unique<Worker>()),
-		  structuralWorker(std::make_unique<Worker>()),
+		  patchWorker(std::make_unique<Worker>()),
 		  routeWorker(std::make_unique<Worker>()) {}
 
 	NavigationSystem::~NavigationSystem() {
@@ -763,19 +754,6 @@ namespace ecs {
 		return anchorChunks.contains(coord);
 	}
 
-	void NavigationSystem::noteStructural(glm::vec2 lo, glm::vec2 hi, StructuralChange change) {
-		const world::ChunkCoordinate a = world::worldToChunk({lo.x, lo.y});
-		const world::ChunkCoordinate b = world::worldToChunk({hi.x, hi.y});
-		for (std::int32_t cy = a.y; cy <= b.y; ++cy) {
-			for (std::int32_t cx = a.x; cx <= b.x; ++cx) {
-				gatheredStructural.anchored = gatheredStructural.anchored || anchorHolds({cx, cy});
-			}
-		}
-		if (change == StructuralChange::Closes) {
-			gatheredStructural.blockingBoxes.emplace_back(lo, hi);
-		}
-	}
-
 	// --- Ticks, jobs and the join -------------------------------------------------
 
 	void NavigationSystem::update(float /*deltaTime*/) {
@@ -916,35 +894,27 @@ namespace ecs {
 	}
 
 	void NavigationSystem::submit() {
-		if (gatheredNav.empty() && gatheredStructural.empty()) {
+		if (gatheredJob.empty()) {
 			return;
 		}
 		collect();
-		runningNav		   = std::move(gatheredNav);
-		runningStructural  = std::move(gatheredStructural);
-		gatheredNav		   = {};
-		gatheredStructural = {};
-		running			   = true;
-		published		   = false;
-		collected		   = false;
-		if (!runningNav.empty()) {
-			// The slice reads the nav mesh: it ends before the job writes.
-			navWorker->start([this] {
-				routeWorker->wait();
-				runJob(detailMesh, runningNav, false);
-			});
-		}
-		if (!runningStructural.empty()) {
-			structuralWorker->start([this] { runJob(structural, runningStructural, true); });
-		}
+		runningJob	= std::move(gatheredJob);
+		gatheredJob = {};
+		running		= true;
+		published	= false;
+		collected	= false;
+		// The slice reads the mesh: it ends before the job writes.
+		patchWorker->start([this] {
+			routeWorker->wait();
+			runJob(detailMesh, runningJob);
+		});
 	}
 
 	void NavigationSystem::join() const {
 		double waitMs = 0.0;
 		if (running) {
 			const Clock::time_point start = Clock::now();
-			navWorker->wait();
-			structuralWorker->wait();
+			patchWorker->wait();
 			waitMs	= msSince(start);
 			running = false;
 		}
@@ -952,31 +922,24 @@ namespace ecs {
 			return;
 		}
 		published = true;
-		navStats.navPatches += runningNav.patches.size();
-		navStats.structuralPatches += runningStructural.patches.size();
-		// Ground no anchor holds changes no colonist's route or wait. Routes are restamped here, not
-		// on the next tick, since a query may join mid-frame and the AI reads them next.
-		if (runningStructural.anchored) {
-			++structuralGeneration;
-			restampRoutes(runningStructural.blockingBoxes);
+		navStats.navPatches += runningJob.patches.size();
+		navStats.structuralPatches += runningJob.routePatches;
+		// Routes are restamped here, not on the next tick, since a query may join mid-frame and the
+		// AI reads them next.
+		if (runningJob.movesRoutes()) {
+			++routeGeneration;
+			restampRoutes(runningJob.blockingBoxes);
 		}
-		const double longest = std::max(runningNav.ms, runningStructural.ms);
-		// Permanent nav-mesh work diagnostic: one tick's job on each mesh's worker (of which the
-		// width refresh and the forest rebuild), how long the main thread waited for it, the meshes'
-		// triangle slots then, and how many patches each job ran. DEBUG, dev-tools log server.
-		LOG_DEBUG(Engine,
-				  "[NavBuild] job nav %.3f ms structural %.3f ms (widths %.3f ms forests %.3f ms) wait %.3f ms slots %zu structuralSlots %zu "
-				  "patches %zu structuralPatches %zu%s",
-				  runningNav.ms, runningStructural.ms, runningNav.finishMs, runningStructural.finishMs, waitMs, detailMesh.triangles().size(),
-				  structural.triangles().size(), runningNav.patches.size(), runningStructural.patches.size(),
-				  longest > kJobBudgetMs ? " over budget" : "");
+		// Permanent nav-mesh work diagnostic: one tick's job on the patch worker (of which the width
+		// refresh), how long the main thread waited for it, the mesh's triangle slots then, and how
+		// many patches the job ran. DEBUG, dev-tools log server.
+		LOG_DEBUG(Engine, "[NavBuild] job %.3f ms (widths %.3f ms) wait %.3f ms slots %zu patches %zu%s", runningJob.ms, runningJob.widthsMs, waitMs,
+				  detailMesh.triangles().size(), runningJob.patches.size(), runningJob.ms > kJobBudgetMs ? " over budget" : "");
 		// Permanent diagnostic for a job over budget: what each of its patches was and took.
-		if (longest > kJobBudgetMs) {
-			for (const auto& [mesh, job] : {std::pair{"nav", &runningNav}, std::pair{"structural", &runningStructural}}) {
-				for (std::size_t i = 0; i < job->patches.size(); ++i) {
-					LOG_DEBUG(Engine, "[NavBuild] patch %s %zu adds %zu removes %zu %.3f ms", mesh, i, job->patches[i].adds.size(),
-							  job->patches[i].removes.size(), job->patchMs[i]);
-				}
+		if (runningJob.ms > kJobBudgetMs) {
+			for (std::size_t i = 0; i < runningJob.patches.size(); ++i) {
+				LOG_DEBUG(Engine, "[NavBuild] patch %zu adds %zu removes %zu %.3f ms", i, runningJob.patches[i].adds.size(), runningJob.patches[i].removes.size(),
+						  runningJob.patchMs[i]);
 			}
 		}
 	}
@@ -987,16 +950,14 @@ namespace ecs {
 		}
 		join();
 		collected = true;
-		detailLanded.insert(detailLanded.end(), runningNav.detailAddBoxes.begin(), runningNav.detailAddBoxes.end());
-		routeReports.insert(routeReports.end(), std::make_move_iterator(runningNav.reports.begin()), std::make_move_iterator(runningNav.reports.end()));
-		runningNav.reports.clear();
-		for (MeshJob* job : {&runningNav, &runningStructural}) {
-			for (std::size_t i = 0; i < job->onPatched.size(); ++i) {
-				job->onPatched[i](job->added[i], job->patchMs[i]);
-			}
-			if (job->onDoorsAdded) {
-				job->onDoorsAdded(job->doorsAdded);
-			}
+		detailLanded.insert(detailLanded.end(), runningJob.detailAddBoxes.begin(), runningJob.detailAddBoxes.end());
+		routeReports.insert(routeReports.end(), std::make_move_iterator(runningJob.reports.begin()), std::make_move_iterator(runningJob.reports.end()));
+		runningJob.reports.clear();
+		for (std::size_t i = 0; i < runningJob.onPatched.size(); ++i) {
+			runningJob.onPatched[i](runningJob.added[i], runningJob.patchMs[i]);
+		}
+		if (runningJob.onDoorsAdded) {
+			runningJob.onDoorsAdded(runningJob.doorsAdded);
 		}
 	}
 
@@ -1042,8 +1003,7 @@ namespace ecs {
 		for (std::size_t i = polys.size(); i-- > 0;) {
 			fresh[polygonKey(polys[i])].push_back(i);
 		}
-		gnav::PatchEdits	  navEdits;
-		gnav::PatchEdits	  structuralEdits;
+		gnav::PatchEdits	  edits;
 		std::vector<WallRing> next;
 		for (WallRing& wall : walls) {
 			auto it = fresh.find(polygonKey(wall.polygon));
@@ -1052,10 +1012,7 @@ namespace ecs {
 				next.push_back(std::move(wall));
 				continue;
 			}
-			navEdits.removes.push_back(wall.ids.nav);
-			structuralEdits.removes.push_back(wall.ids.structural);
-			const auto [lo, hi] = ringBoxM(wall.polygon);
-			noteStructural(lo, hi, StructuralChange::Opens);
+			edits.removes.push_back(wall.ring);
 		}
 		const std::size_t firstAdded = next.size();
 		for (std::size_t i = 0; i < polys.size(); ++i) {
@@ -1064,27 +1021,20 @@ namespace ecs {
 				continue;
 			}
 			unused.pop_back();
-			navEdits.adds.push_back(polys[i]);
-			structuralEdits.adds.push_back(polys[i]);
-			next.push_back({std::move(polys[i]), {}});
+			edits.adds.push_back(polys[i]);
+			next.push_back({std::move(polys[i]), gnav::kNoRing});
 		}
 		walls = std::move(next);
 
 		for (std::size_t k = firstAdded; k < walls.size(); ++k) {
-			const auto [lo, hi] = ringBoxM(walls[k].polygon);
-			noteStructural(lo, hi, StructuralChange::Closes);
+			gatheredJob.blockingBoxes.push_back(ringBoxM(walls[k].polygon));
 		}
-		if (!navEdits.adds.empty() || !navEdits.removes.empty()) {
-			gatheredNav.patches.push_back(std::move(navEdits));
-			gatheredNav.onPatched.emplace_back([this, firstAdded](const std::vector<RingId>& added, double) {
+		if (!edits.adds.empty() || !edits.removes.empty()) {
+			gatheredJob.patches.push_back(std::move(edits));
+			++gatheredJob.routePatches;
+			gatheredJob.onPatched.emplace_back([this, firstAdded](const std::vector<RingId>& added, double) {
 				for (std::size_t k = 0; k < added.size(); ++k) {
-					walls[firstAdded + k].ids.nav = added[k];
-				}
-			});
-			gatheredStructural.patches.push_back(std::move(structuralEdits));
-			gatheredStructural.onPatched.emplace_back([this, firstAdded](const std::vector<RingId>& added, double) {
-				for (std::size_t k = 0; k < added.size(); ++k) {
-					walls[firstAdded + k].ids.structural = added[k];
+					walls[firstAdded + k].ring = added[k];
 				}
 			});
 		}
@@ -1103,34 +1053,24 @@ namespace ecs {
 				nextDoors.push_back(door);
 				continue;
 			}
-			gatheredNav.doorRemoves.push_back(door.nav);
-			gatheredNav.doorEdges.push_back(door.portal);
-			gatheredStructural.doorRemoves.push_back(door.structural);
-			const auto [lo, hi] = portalBoxM(door.portal);
-			noteStructural(lo, hi, StructuralChange::Closes);
+			gatheredJob.doorRemoves.push_back(door.door);
+			gatheredJob.doorEdges.push_back(door.portal);
+			gatheredJob.blockingBoxes.push_back(portalBoxM(door.portal));
 		}
 		const std::size_t firstDoor = nextDoors.size();
 		for (std::size_t i = 0; i < portals.size(); ++i) {
 			if (portalKept[i]) {
 				continue;
 			}
-			gatheredNav.doorAdds.push_back(portals[i]);
-			gatheredNav.doorEdges.push_back(portals[i]);
-			gatheredStructural.doorAdds.push_back(portals[i]);
-			const auto [lo, hi] = portalBoxM(portals[i]);
-			noteStructural(lo, hi, StructuralChange::Opens);
-			nextDoors.push_back({portals[i], -1, -1});
+			gatheredJob.doorAdds.push_back(portals[i]);
+			gatheredJob.doorEdges.push_back(portals[i]);
+			nextDoors.push_back({portals[i], -1});
 		}
 		doors = std::move(nextDoors);
 		if (firstDoor < doors.size()) {
-			gatheredNav.onDoorsAdded = [this, firstDoor](const std::vector<DoorId>& added) {
+			gatheredJob.onDoorsAdded = [this, firstDoor](const std::vector<DoorId>& added) {
 				for (std::size_t k = 0; k < added.size(); ++k) {
-					doors[firstDoor + k].nav = added[k];
-				}
-			};
-			gatheredStructural.onDoorsAdded = [this, firstDoor](const std::vector<DoorId>& added) {
-				for (std::size_t k = 0; k < added.size(); ++k) {
-					doors[firstDoor + k].structural = added[k];
+					doors[firstDoor + k].door = added[k];
 				}
 			};
 		}
@@ -1149,7 +1089,7 @@ namespace ecs {
 			return {nav::toMeters(lo), nav::toMeters({lo.x + kChunkMm - 1, lo.y + kChunkMm - 1})};
 		}
 
-		// A chunk's square enters the meshes with its sides cut to kMaxBoundsEdgeMm, so that is how
+		// A chunk's square enters the mesh with its sides cut to kMaxBoundsEdgeMm, so that is how
 		// many vertices it brings.
 		constexpr std::size_t kSquareVertices = static_cast<std::size_t>(4 * kChunkMm / NavigationSystem::kMaxBoundsEdgeMm);
 
@@ -1184,31 +1124,18 @@ namespace ecs {
 			}
 
 			// Terrain changed under meshed ground: its old water comes out and the new water goes in,
-			// in one patch per mesh.
-			gnav::PatchEdits navEdits;
-			gnav::PatchEdits structuralEdits;
-			for (const RingPair& water : g.water) {
-				navEdits.removes.push_back(water.nav);
-				structuralEdits.removes.push_back(water.structural);
-			}
-			nav::appendChunkWater(polys, navEdits.adds);
-			structuralEdits.adds = navEdits.adds;
-			g.water.assign(navEdits.adds.size(), {kGatheredRing, kGatheredRing});
+			// in one patch.
+			gnav::PatchEdits edits;
+			edits.removes = g.water;
+			nav::appendChunkWater(polys, edits.adds);
+			g.water.assign(edits.adds.size(), kGatheredRing);
 			g.terrainVersion = polys.version;
-			{
-				const auto [lo, hi] = chunkBoxM(chunk->coordinate());
-				noteStructural(lo, hi, StructuralChange::Closes);
-			}
-			gatheredNav.patches.push_back(std::move(navEdits));
-			gatheredNav.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
+			gatheredJob.blockingBoxes.push_back(chunkBoxM(chunk->coordinate()));
+			gatheredJob.patches.push_back(std::move(edits));
+			++gatheredJob.routePatches;
+			gatheredJob.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
 				for (std::size_t k = 0; k < ids.size(); ++k) {
-					g.water[k].nav = ids[k];
-				}
-			});
-			gatheredStructural.patches.push_back(std::move(structuralEdits));
-			gatheredStructural.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
-				for (std::size_t k = 0; k < ids.size(); ++k) {
-					g.water[k].structural = ids[k];
+					g.water[k] = ids[k];
 				}
 			});
 		}
@@ -1282,46 +1209,29 @@ namespace ecs {
 	void NavigationSystem::meshGround(world::ChunkCoordinate coord, std::vector<gnav::NavInputPolygon> water, std::uint32_t terrainVersion) {
 		const std::size_t cost = kSquareVertices + waterVertices(water);
 		ChunkGround&	  g	   = ground[coord];
-		g.square			   = {kGatheredRing, kGatheredRing};
-		g.water.assign(water.size(), {kGatheredRing, kGatheredRing});
+		g.square			   = kGatheredRing;
+		g.water.assign(water.size(), kGatheredRing);
 		g.terrainVersion = terrainVersion;
-		{
-			const auto [lo, hi] = chunkBoxM(coord);
-			noteStructural(lo, hi, StructuralChange::GroundArrives);
-		}
-		gnav::PatchEdits navEdits;
-		navEdits.adds.push_back(nav::chunkSquare(coord));
-		navEdits.adds.insert(navEdits.adds.end(), std::make_move_iterator(water.begin()), std::make_move_iterator(water.end()));
-		gnav::PatchEdits  structuralEdits = navEdits;
-		const std::size_t rings			  = navEdits.adds.size();
-
-		// The nav mesh's time is held for the structural mesh's sink, which collects second and
-		// logs both.
-		auto navMs = std::make_shared<double>(0.0);
-		gatheredNav.patches.push_back(std::move(navEdits));
-		gatheredNav.onPatched.emplace_back([&g, navMs](const std::vector<RingId>& ids, double ms) {
-			g.square.nav = ids[0];
+		gnav::PatchEdits edits;
+		edits.adds.push_back(nav::chunkSquare(coord));
+		edits.adds.insert(edits.adds.end(), std::make_move_iterator(water.begin()), std::make_move_iterator(water.end()));
+		const std::size_t rings = edits.adds.size();
+		gatheredJob.patches.push_back(std::move(edits));
+		++gatheredJob.routePatches;
+		gatheredJob.onPatched.emplace_back([&g, coord, rings, cost](const std::vector<RingId>& ids, double ms) {
+			g.square = ids[0];
 			for (std::size_t k = 1; k < ids.size(); ++k) {
-				g.water[k - 1].nav = ids[k];
+				g.water[k - 1] = ids[k];
 			}
-			*navMs = ms;
-		});
-		gatheredStructural.patches.push_back(std::move(structuralEdits));
-		gatheredStructural.onPatched.emplace_back([&g, navMs, coord, rings, cost](const std::vector<RingId>& ids, double ms) {
-			g.square.structural = ids[0];
-			for (std::size_t k = 1; k < ids.size(); ++k) {
-				g.water[k - 1].structural = ids[k];
-			}
-			// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering
-			// both meshes. DEBUG, dev-tools log server.
-			LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) nav %.3f ms structural %.3f ms rings %zu vertices %zu", coord.x, coord.y, *navMs,
-					  ms, rings, cost);
+			// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering the
+			// mesh. DEBUG, dev-tools log server.
+			LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) %.3f ms rings %zu vertices %zu", coord.x, coord.y, ms, rings, cost);
 		});
 	}
 
 	bool NavigationSystem::chunkGroundMeshed(world::ChunkCoordinate coord) const {
 		const auto it = ground.find(coord);
-		return it != ground.end() && gathered(it->second.square.nav);
+		return it != ground.end() && gathered(it->second.square);
 	}
 
 	// --- Detail ---------------------------------------------------------------------
@@ -1412,8 +1322,8 @@ namespace ecs {
 			for (; last < removeCount && detailRemovals[last].cell == detailRemovals[first].cell; ++last) {
 				edits.removes.push_back(detailRemovals[last].ring);
 			}
-			gatheredNav.patches.push_back(std::move(edits));
-			gatheredNav.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
+			gatheredJob.patches.push_back(std::move(edits));
+			gatheredJob.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
 			first = last;
 		}
 		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
@@ -1476,12 +1386,12 @@ namespace ecs {
 						lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
 						hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
 					}
-					gatheredNav.detailAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
+					gatheredJob.detailAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
 					edits.adds.push_back(std::move(adding.rings[k].second));
 					keys.push_back(adding.rings[k].first);
 				}
-				gatheredNav.patches.push_back(std::move(edits));
-				gatheredNav.onPatched.emplace_back([this, keys = std::move(keys), cell = adding.cell](const std::vector<RingId>& added, double) {
+				gatheredJob.patches.push_back(std::move(edits));
+				gatheredJob.onPatched.emplace_back([this, keys = std::move(keys), cell = adding.cell](const std::vector<RingId>& added, double) {
 					for (std::size_t k = 0; k < keys.size(); ++k) {
 						detailInMesh.emplace(keys[k], DetailRing{added[k], cell});
 					}
@@ -1565,7 +1475,7 @@ namespace ecs {
 		if (world == nullptr) {
 			return;
 		}
-		const std::uint64_t previous = structuralGeneration - 1;
+		const std::uint64_t previous = routeGeneration - 1;
 		// A route current before the change stays current unless ground closed across its rest.
 		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
 			if (!path.valid || path.builtNavVersion != previous) {
@@ -1585,7 +1495,7 @@ namespace ecs {
 				from = path.waypoints[next];
 			}
 			if (!crossed) {
-				path.builtNavVersion = structuralGeneration;
+				path.builtNavVersion = routeGeneration;
 			}
 		}
 	}
@@ -1848,23 +1758,17 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !nearReady.empty() || !readyCells.empty() || addingNear.has_value() || addingFar.has_value() || !detailRemovals.empty() || !gatheredNav.empty() ||
-			   !gatheredStructural.empty();
+		return groundPending > 0 || !nearReady.empty() || !readyCells.empty() || addingNear.has_value() || addingFar.has_value() || !detailRemovals.empty() || !gatheredJob.empty();
 	}
 
 	std::uint64_t NavigationSystem::generation() const {
 		join();
-		return structuralGeneration;
+		return routeGeneration;
 	}
 
 	const geometry::nav::PatchableMesh& NavigationSystem::navMesh() const {
 		join();
 		return detailMesh;
-	}
-
-	const geometry::nav::PatchableMesh& NavigationSystem::structuralMesh() const {
-		join();
-		return structural;
 	}
 
 	std::vector<NavigationSystem::RegionView> NavigationSystem::builtRegions() const {

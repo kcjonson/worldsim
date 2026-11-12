@@ -14,10 +14,9 @@
 // what a headless run gives), 2 leaves the workers 2 ms before the next update.
 //
 // Per scenario: the main thread's time in World::update per tick without the wait for the workers
-// (main), that wait (wait), each job's duration (the longer of the two meshes' jobs), the ticks from
-// the change until isBuilding() is false, and the work the [NavBuild] debug lines report: both
-// meshes' job time, of it the structural forest rebuilds, the slowest chunk's ground patch, and the
-// meshes' triangle slots.
+// (main), that wait (wait), each patch job's duration, the ticks from the change until isBuilding()
+// is false, and the work the [NavBuild] debug lines report: the jobs' time, of it the width
+// refreshes, the slowest chunk's ground patch, and the mesh's triangle slots.
 //
 // BM_RealChunksGround loads the Quick Start planet (planets/quickstart.wsplanet, read only) and
 // meshes the 25 real chunks around its landing spawn, ground only (WORLDSIM_PLANET names another
@@ -180,24 +179,18 @@ namespace {
 	// What the [NavBuild] debug lines report, from any thread.
 	struct BuildLog {
 		std::mutex			mutex;
-		std::vector<double> jobMs; // per job, the longer of the two meshes' jobs
+		std::vector<double> jobMs; // per job
 		std::vector<double> groundMs;
-		std::vector<double> forestMs;
-		std::vector<double> forestSlots; // structural slots when each forest rebuild ran
-		double				navMs	   = 0.0;
-		double				structMs   = 0.0;
-		double				waitMs	   = 0.0; // since the last takeWait
-		long long			maxSlots   = 0;
-		long long			maxStructuralSlots = 0;
+		double				widthsMs = 0.0;
+		double				waitMs	 = 0.0; // since the last takeWait
+		long long			maxSlots = 0;
 
 		void reset() {
 			const std::lock_guard lock(mutex);
 			jobMs.clear();
 			groundMs.clear();
-			forestMs.clear();
-			forestSlots.clear();
-			navMs = structMs = waitMs = 0.0;
-			maxSlots = maxStructuralSlots = 0;
+			widthsMs = waitMs = 0.0;
+			maxSlots		  = 0;
 		}
 
 		double takeWait() {
@@ -223,34 +216,14 @@ namespace {
 				std::fprintf(stderr, "%s\n", m);
 			}
 			if (std::strstr(m, "[NavBuild] job ") != nullptr) {
-				const double nav = numberAfter(m, "job nav ");
-				const double st	 = numberAfter(m, "structural ");
-				self->navMs += nav;
-				self->structMs += st;
-				self->jobMs.push_back(std::max(nav, st));
+				self->jobMs.push_back(numberAfter(m, "job "));
+				self->widthsMs += numberAfter(m, "widths ");
 				self->waitMs += numberAfter(m, "wait ");
-				const double forests = numberAfter(m, "forests ");
-				const auto	 structuralSlots = static_cast<long long>(numberAfter(m, "structuralSlots "));
-				if (st > 0.0) {
-					self->forestMs.push_back(forests);
-					self->forestSlots.push_back(static_cast<double>(structuralSlots));
-				}
-				self->maxSlots			 = std::max(self->maxSlots, static_cast<long long>(numberAfter(m, "slots ")));
-				self->maxStructuralSlots = std::max(self->maxStructuralSlots, structuralSlots);
+				self->maxSlots = std::max(self->maxSlots, static_cast<long long>(numberAfter(m, "slots ")));
 			} else if (std::strstr(m, "[NavBuild] ground ") != nullptr) {
-				self->groundMs.push_back(numberAfter(m, " nav ") + numberAfter(m, "structural "));
+				const char* const close = std::strchr(m, ')');
+				self->groundMs.push_back(close != nullptr ? std::atof(close + 1) : 0.0);
 			}
-		}
-
-		// Forest rebuild time per thousand structural slots, least squares through the origin.
-		double forestUsPerKiloSlot() const {
-			double xy = 0.0;
-			double xx = 0.0;
-			for (std::size_t i = 0; i < forestMs.size(); ++i) {
-				xy += forestSlots[i] * forestMs[i];
-				xx += forestSlots[i] * forestSlots[i];
-			}
-			return xx > 0.0 ? 1e6 * xy / xx : 0.0;
 		}
 	};
 
@@ -366,14 +339,10 @@ namespace {
 			state.counters["jobMeanMs"]		  = meanOf(log.jobMs);
 			state.counters["jobP99Ms"]		  = atPercentile(log.jobMs, 0.99);
 			state.counters["jobMaxMs"]		  = atPercentile(log.jobMs, 1.0);
-			state.counters["meshMs"]		  = log.navMs + log.structMs;
-			state.counters["navMs"]			  = log.navMs;
-			state.counters["structMs"]		  = log.structMs;
-			state.counters["forestMsSum"]	  = meanOf(log.forestMs) * static_cast<double>(log.forestMs.size());
-			state.counters["forestUsPerKSlot"] = log.forestUsPerKiloSlot();
+			state.counters["meshMs"]		  = meanOf(log.jobMs) * static_cast<double>(log.jobMs.size());
+			state.counters["widthsMs"]		  = log.widthsMs;
 			state.counters["groundMaxMs"]	  = atPercentile(log.groundMs, 1.0);
 			state.counters["slots"]			  = static_cast<double>(log.maxSlots);
-			state.counters["structSlots"]	  = static_cast<double>(log.maxStructuralSlots);
 		}
 	};
 
@@ -794,7 +763,7 @@ namespace {
 	}
 
 	// A wall built once every loaded chunk's ground is meshed (one mover at the middle whose disc
-	// meets them all): its job carries the structural forest rebuild over all of it. range(0) is the
+	// meets them all): its patch job. range(0) is the
 	// chunk load radius around the forest's middle: 2 meshes 25 chunks, 5 meshes 121.
 	void BM_WallEditMeshedChunks(benchmark::State& state) {
 		const auto radius = static_cast<std::int32_t>(state.range(0));
@@ -887,7 +856,7 @@ namespace {
 	// BM_PlacedObstacleBytes: NavScale.bench.cpp's dense chunk (a placed obstacle every 3.54 m,
 	// half extents by age class) patched into a nav mesh 16 m cell by cell, its bytes split by the
 	// mesh's containers. BM_PlacedObstacleSystemBytes: the same density through NavigationSystem,
-	// whose own records per obstacle are what its heap grows by beyond its two meshes'.
+	// whose own records per obstacle are what its heap grows by beyond its mesh's.
 	// BM_PlacedObstacleDensity: the Quick Start chunks round the landing placed as the game places
 	// them, the placed obstacles counted per chunk, and the 3 x 3's patched onto its real ground.
 	//
@@ -1270,7 +1239,7 @@ namespace {
 	}
 
 	// The system at the bench forest's density: the colony settled, then its first mover walked 800 m
-	// east 40 m a settle at a time. What the heap grew by, less both meshes' container growth, is the
+	// east 40 m a settle at a time. What the heap grew by, less the mesh's container growth, is the
 	// system's own records (and its jobs' retained capacity), per placed obstacle that entered.
 	void BM_PlacedObstacleSystemBytes(benchmark::State& state) {
 		for (auto _ : state) {
@@ -1281,7 +1250,6 @@ namespace {
 			const auto		   detailCount	 = [&] { return visit<RDetailInMesh>(rig.nav).count; };
 			const double	   d0			 = detailCount();
 			const MeshBytes	   nav0			 = meshBytes(rig.nav.navMesh());
-			const MeshBytes	   structural0	 = meshBytes(rig.nav.structuralMesh());
 			const std::int64_t heapBefore	 = heapAllocated();
 			const std::int64_t privateBefore = privateBytes();
 			for (float dx = 40.0F; dx <= 800.0F; dx += 40.0F) {
@@ -1291,16 +1259,15 @@ namespace {
 			}
 			const double	   d1			= detailCount();
 			const MeshBytes	   nav1			= meshBytes(rig.nav.navMesh());
-			const MeshBytes	   structural1	= meshBytes(rig.nav.structuralMesh());
 			const double	   heapDelta	= static_cast<double>(heapAllocated() - heapBefore);
 			const double	   added		= d1 - d0;
 			reportBytes(state, "NavigationSystem nav mesh, bench forest", nav0, nav1, added, heapDelta, static_cast<double>(privateBytes() - privateBefore));
-			const double meshDelta = nav1.total().bytes - nav0.total().bytes + structural1.total().bytes - structural0.total().bytes;
+			const double meshDelta = nav1.total().bytes - nav0.total().bytes;
 			const Tally	 inMesh	   = visit<RDetailInMesh>(rig.nav);
 			std::fprintf(stderr,
-						 "  structural mesh growth %.0f B; heap growth beyond both meshes' containers %.1f B per obstacle\n"
+						 "  heap growth beyond the mesh's containers %.1f B per obstacle\n"
 						 "  detailInMesh %.0f entries of %.0f B each (a std::map node adds 4 pointers); wantedCells %.0f; wantedChunks %.0f\n",
-						 structural1.total().bytes - structural0.total().bytes, (heapDelta - meshDelta) / added, inMesh.count, inMesh.bytes / inMesh.count,
+						 (heapDelta - meshDelta) / added, inMesh.count, inMesh.bytes / inMesh.count,
 						 visit<RWantedCells>(rig.nav).count, visit<RWantedChunks>(rig.nav).count);
 			state.counters["systemBeyondMeshesBPerObst"] = (heapDelta - meshDelta) / added;
 		}

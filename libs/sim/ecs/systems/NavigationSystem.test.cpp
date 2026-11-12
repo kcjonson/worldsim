@@ -117,23 +117,22 @@ namespace {
 		return tri >= 0 && geometry::nav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]);
 	}
 
-	// Both meshes pass their full consistency check.
-	void expectMeshesValid(const NavigationSystem& sys) {
+	// The mesh passes its full consistency check.
+	void expectMeshValid(const NavigationSystem& sys) {
 		EXPECT_EQ(sys.navMesh().validate(), "") << "nav mesh";
-		EXPECT_EQ(sys.structuralMesh().validate(), "") << "structural mesh";
 	}
 
-	// Settle, then check both meshes.
+	// Settle, then check the mesh.
 	void settle(NavigationSystem& sys) {
 		sys.finishPendingBuilds();
-		expectMeshesValid(sys);
+		expectMeshValid(sys);
 	}
 
 	// One budgeted tick of the world (the update, then the job its endTick hands over), then check
 	// both meshes.
 	void step(World& world, const NavigationSystem& sys) {
 		world.update(0.016F);
-		expectMeshesValid(sys);
+		expectMeshValid(sys);
 	}
 
 	// Standard query endpoints: just outside the south wall, and room center.
@@ -826,7 +825,7 @@ TEST_F(NavigationSystemTest, QueriesSeePatchesFromEndTickOn) {
 	sys.endTick();
 	EXPECT_EQ(sys.generation(), generation + 1) << "applied once the tick ended";
 	EXPECT_FALSE(sys.isBuilding());
-	expectMeshesValid(sys);
+	expectMeshValid(sys);
 }
 
 // --- One mesh ------------------------------------------------------------------
@@ -894,7 +893,6 @@ TEST_F(NavigationSystemTest, CameraMoveWithNoMoverNearbyMeshesNothing) {
 	frame({10.0F, 10.0F});
 	settle(sys);
 	EXPECT_EQ(sys.navQueryStats().navPatches, 0u) << "panning patched nothing";
-	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u);
 	EXPECT_EQ(sys.navMesh().triangles().size(), slots);
 	EXPECT_EQ(sys.generation(), generation);
 }
@@ -1030,7 +1028,6 @@ TEST_F(NavigationSystemTest, UnloadedChunkKeepsItsGroundAndObstaclesAndReloadPat
 	EXPECT_TRUE(sys.inSimArea(treeAt)) << "the unloaded chunk's ground stays";
 	EXPECT_FALSE(meshClear(sys, treeAt)) << "and so do its obstacles";
 	EXPECT_EQ(sys.navQueryStats().navPatches, 0u) << "unloading patched the nav mesh";
-	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "unloading patched the structural mesh";
 	EXPECT_TRUE(routeBetween(sys, {100.0F, 100.0F}, {700.0F, 300.0F}).has_value()) << "an order routes across it";
 
 	// Back, with its placement placed again.
@@ -1041,14 +1038,13 @@ TEST_F(NavigationSystemTest, UnloadedChunkKeepsItsGroundAndObstaclesAndReloadPat
 	placeTrees(executor, processed, "Test_NavUnloadTree", {treeAt});
 	settle(sys);
 	EXPECT_EQ(sys.navQueryStats().navPatches, 0u) << "the reload patched the nav mesh";
-	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "the reload patched the structural mesh";
 	EXPECT_EQ(sys.generation(), before);
 	EXPECT_EQ(sys.navMesh().liveTriangleCount(), slots) << "nothing added twice";
 	EXPECT_FALSE(meshClear(sys, treeAt));
 }
 
-// The same scenario twice gives the same meshes, slot for slot, and the same paths.
-TEST_F(NavigationSystemTest, SameScenarioSameMeshesAndPaths) {
+// The same scenario twice gives the same mesh, slot for slot, and the same paths.
+TEST_F(NavigationSystemTest, SameScenarioSameMeshAndPaths) {
 	registerTree("Test_NavDeterminismTree", 0.35F);
 	struct Run {
 		world::ChunkManager*				 chunks = waterPatchChunks();
@@ -1083,32 +1079,32 @@ TEST_F(NavigationSystemTest, SameScenarioSameMeshesAndPaths) {
 			r.world.update(0.016F);
 		}
 		r.sys.finishPendingBuilds();
-		expectMeshesValid(r.sys);
+		expectMeshValid(r.sys);
 	};
 	Run first;
 	Run second;
 	play(first);
 	play(second);
 
-	for (const auto& [a, b] : {std::pair{&first.sys.navMesh(), &second.sys.navMesh()}, std::pair{&first.sys.structuralMesh(), &second.sys.structuralMesh()}}) {
-		ASSERT_EQ(a->triangles().size(), b->triangles().size());
-		ASSERT_EQ(a->liveTriangleCount(), b->liveTriangleCount());
-		for (std::int32_t t = 0; t < static_cast<std::int32_t>(a->triangles().size()); ++t) {
-			ASSERT_EQ(a->triangleLive(t), b->triangleLive(t)) << "slot " << t;
-			if (!a->triangleLive(t)) {
-				continue;
-			}
-			const geometry::nav::NavTriangle& ta = a->triangles()[static_cast<std::size_t>(t)];
-			const geometry::nav::NavTriangle& tb = b->triangles()[static_cast<std::size_t>(t)];
-			for (int i = 0; i < 3; ++i) {
-				EXPECT_EQ(a->vertices()[ta.v[i]], b->vertices()[tb.v[i]]) << "slot " << t;
-				EXPECT_EQ(ta.neighbor[i], tb.neighbor[i]) << "slot " << t;
-				EXPECT_EQ(ta.edgePairWidthMm[i], tb.edgePairWidthMm[i]) << "slot " << t;
-				EXPECT_EQ(ta.edgeOpening[i], tb.edgeOpening[i]) << "slot " << t;
-			}
-			EXPECT_EQ(ta.faceBlocker, tb.faceBlocker) << "slot " << t;
-			EXPECT_EQ(ta.faceOpening, tb.faceOpening) << "slot " << t;
+	const geometry::nav::PatchableMesh& a = first.sys.navMesh();
+	const geometry::nav::PatchableMesh& b = second.sys.navMesh();
+	ASSERT_EQ(a.triangles().size(), b.triangles().size());
+	ASSERT_EQ(a.liveTriangleCount(), b.liveTriangleCount());
+	for (std::int32_t t = 0; t < static_cast<std::int32_t>(a.triangles().size()); ++t) {
+		ASSERT_EQ(a.triangleLive(t), b.triangleLive(t)) << "slot " << t;
+		if (!a.triangleLive(t)) {
+			continue;
 		}
+		const geometry::nav::NavTriangle& ta = a.triangles()[static_cast<std::size_t>(t)];
+		const geometry::nav::NavTriangle& tb = b.triangles()[static_cast<std::size_t>(t)];
+		for (int i = 0; i < 3; ++i) {
+			EXPECT_EQ(a.vertices()[ta.v[i]], b.vertices()[tb.v[i]]) << "slot " << t;
+			EXPECT_EQ(ta.neighbor[i], tb.neighbor[i]) << "slot " << t;
+			EXPECT_EQ(ta.edgePairWidthMm[i], tb.edgePairWidthMm[i]) << "slot " << t;
+			EXPECT_EQ(ta.edgeOpening[i], tb.edgeOpening[i]) << "slot " << t;
+		}
+		EXPECT_EQ(ta.faceBlocker, tb.faceBlocker) << "slot " << t;
+		EXPECT_EQ(ta.faceOpening, tb.faceOpening) << "slot " << t;
 	}
 	for (const auto& [from, to] : pairs) {
 		const auto pa = routeBetween(first.sys, from, to);
@@ -1144,8 +1140,8 @@ namespace {
 
 namespace {
 	// A river along y = 6 m from far west to kFordX metres east (its ford), on ground strewn with ponds:
-	// a 4 m pond every 10 m within kFordX + 40 m of the origin, so the structural mesh is fine
-	// everywhere a search to the far bank goes and the way round the ford takes thousands of steps.
+	// a 4 m pond every 10 m within kFordX + 40 m of the origin, so the mesh is fine everywhere a
+	// search to the far bank goes and the way round the ford takes thousands of steps.
 	template <int kFordX> class PondFieldSampler : public world::IWorldSampler {
 	  public:
 		PondFieldSampler() {
@@ -1390,7 +1386,7 @@ TEST_F(NavigationSystemTest, WaterAcrossChunkBordersHasNoSeam) {
 	EXPECT_TRUE(routeBetween(sys, {-30.0F, 0.0F}, {30.0F, 0.0F}).has_value()) << "around the pond, across both borders";
 }
 
-// --- Landing and placement on the structural mesh -------------------------------
+// --- Landing and placement -------------------------------------------------------
 
 // Before any mover, nothing is meshed; once the ground is in, a drop point in the water
 // moves to the nearest shore, and a land point stays put.
@@ -1435,7 +1431,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	constexpr float	 kSeparation = 0.8F;
 	constexpr float	 kClearance	 = 0.3F;
 	const NavigationSystem::GroupSpawn spawn = sys.groupSpawnPoints(drop, kCrew, kRing, kSeparation, kClearance);
-	expectMeshesValid(sys);
+	expectMeshValid(sys);
 	ASSERT_EQ(spawn.points.size(), kCrew);
 	ASSERT_NE(sys.nearestTerrainWalkablePoint(drop), std::optional<glm::vec2>(drop)) << "the drop must be in the water";
 
@@ -1468,7 +1464,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	}
 }
 
-// nearestTerrainWalkablePoint reads truth on the structural mesh: a point dead-center in a solid
+// nearestTerrainWalkablePoint reads truth on the mesh: a point dead-center in a solid
 // wall span is pushed out past the half-thickness; a point in a pathable door stays.
 TEST_F(NavigationSystemTest, NearestTerrainWalkablePointStepsOutOfBuiltWallBand) {
 	constexpr float kWallHalfThickness = 0.10F; // Wood/Standard, from materials.xml
@@ -2206,7 +2202,7 @@ TEST_F(NavigationSystemTest, WalkerUnderLandingTreeKeepsItsTask) {
 
 		for (int i = 0; i < 100 && glm::distance(position.value, goal) > 0.3F; ++i) {
 			world.update(kTick);
-			expectMeshesValid(nav);
+			expectMeshValid(nav);
 			ASSERT_GE(position.value.x, lastX - 1e-4F) << "tick " << i << ": moved back";
 			ASSERT_EQ(task.targetPosition, goal) << "tick " << i << ": the move order was dropped";
 			lastX = position.value.x;
@@ -2363,9 +2359,8 @@ TEST_F(NavigationSystemTest, TerrainChangeOnMeshedChunkRederivesItsWater) {
 	const glm::vec2 land{20.0F, 20.0F};
 	ASSERT_FALSE(meshClear(sys, pond));
 	ASSERT_TRUE(meshClear(sys, land));
-	const std::int32_t	navTriangles		= sys.navMesh().liveTriangleCount();
-	const std::int32_t	structuralTriangles = sys.structuralMesh().liveTriangleCount();
-	const std::uint64_t generation			= sys.generation();
+	const std::int32_t	navTriangles = sys.navMesh().liveTriangleCount();
+	const std::uint64_t generation	 = sys.generation();
 
 	world::Chunk* chunk = chunks->getChunk({0, 0});
 	ASSERT_NE(chunk, nullptr);
@@ -2379,7 +2374,6 @@ TEST_F(NavigationSystemTest, TerrainChangeOnMeshedChunkRederivesItsWater) {
 	EXPECT_FALSE(meshClear(sys, pond)) << "the pond still blocks";
 	EXPECT_TRUE(meshClear(sys, land));
 	EXPECT_EQ(sys.navMesh().liveTriangleCount(), navTriangles);
-	EXPECT_EQ(sys.structuralMesh().liveTriangleCount(), structuralTriangles);
 }
 
 // Water past the tree: the pond's west shore is at x = 32 and the tree ends just short of it, too
@@ -2443,7 +2437,7 @@ TEST_F(NavigationSystemTest, RemovalsArePatchedPerCell) {
 	}
 	ASSERT_FALSE(sys.isBuilding());
 	EXPECT_EQ(sys.navQueryStats().navPatches, 3u);
-	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "flora is in the nav mesh only";
+	EXPECT_EQ(sys.navQueryStats().structuralPatches, 0u) << "a removal patched ground or walls";
 	EXPECT_TRUE(std::all_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return meshClear(sys, t); })) << "all removed";
 }
 

@@ -5,9 +5,9 @@
 // of chunks with no water. Memory is the process's committed private bytes before and after a build,
 // so it is coarse below a few hundred KB; per chunk it is read off the larger builds.
 //
-// BM_NavScaleGround: per-chunk bytes of the structural mesh and of the nav mesh (ground only), the
-// whole build's patch and forest-rebuild time, then on the built structural mesh: a wall edit's job
-// (its patch, its forest rebuild) and one more chunk's ground arriving (the same split).
+// BM_NavScaleGround: per-chunk bytes of the nav mesh (ground only), the whole build's patch and
+// width-refresh time, then on the built mesh: a wall edit's job (its patch, its width refresh) and
+// one more chunk's ground arriving (the same split).
 //
 // BM_NavScaleDetail: one chunk fully covered by forest at the game's density (a tree every 3.54 m,
 // colliders by age class), patched into a nav mesh 16 m cell by cell as the view brings it: rings,
@@ -172,7 +172,7 @@ namespace {
 				box({lo.x - thick, lo.y}, {lo.x, hi.y}, true, id(2)), box({hi.x, lo.y}, {hi.x + thick, hi.y}, true, id(3))};
 	}
 
-	// A land point near `p` (the structural mesh walkable there in truth).
+	// A land point near `p` (the mesh walkable there in truth).
 	std::optional<glm::vec2> landNear(const gnav::PatchableMesh& mesh, glm::vec2 p) {
 		for (int r = 0; r < 60; ++r) {
 			for (int k = 0; k < 8; ++k) {
@@ -199,62 +199,48 @@ namespace {
 			return;
 		}
 		for (auto _ : state) {
-			std::size_t waterVertices = 0;
-			// The nav mesh's ground first, measured and let go, then the structural mesh, kept.
-			std::int64_t navBytes = 0;
-			{
-				const std::int64_t	before = privateBytes();
-				gnav::PatchableMesh nav	   = makeMesh(true);
-				for (std::size_t c = 0; c < n; ++c) {
-					nav.applyPatch({.adds = region->chunks[c].rings});
-				}
-				nav.refreshWidths();
-				navBytes = privateBytes() - before;
-			}
-			const std::int64_t		before	  = privateBytes();
-			gnav::PatchableMesh		structural = makeMesh(false);
-			const Clock::time_point patchStart = Clock::now();
+			std::size_t				waterVertices = 0;
+			const std::int64_t		before		  = privateBytes();
+			gnav::PatchableMesh		mesh		  = makeMesh(true);
+			const Clock::time_point patchStart	  = Clock::now();
 			for (std::size_t c = 0; c < n; ++c) {
-				structural.applyPatch({.adds = region->chunks[c].rings});
+				mesh.applyPatch({.adds = region->chunks[c].rings});
 				waterVertices += region->chunks[c].waterVertices;
 			}
 			const double			patchMs		= msSince(patchStart);
-			const Clock::time_point forestStart = Clock::now();
-			structural.rebuildForests();
-			const double	   forestMs		   = msSince(forestStart);
-			const std::int64_t structuralBytes = privateBytes() - before;
+			const Clock::time_point widthsStart = Clock::now();
+			mesh.refreshWidths();
+			const double	   widthsMs = msSince(widthsStart);
+			const std::int64_t navBytes = privateBytes() - before;
 
-			const glm::vec2 start = *landNear(structural, region->start);
+			const glm::vec2 start = *landNear(mesh, region->start);
 
-			// A wall edit's structural job.
+			// A wall edit's job.
 			const Clock::time_point wallStart = Clock::now();
-			const gnav::PatchReport wallPatch =
-				structural.applyPatch({.adds = {box(start + glm::vec2{10.0F, 10.0F}, start + glm::vec2{18.0F, 10.2F}, true, 99)}});
-			const double			wallPatchMs	 = msSince(wallStart);
-			const Clock::time_point wallForest	 = Clock::now();
-			structural.rebuildForests();
-			const double wallForestMs = msSince(wallForest);
-			(void)wallPatch;
+			mesh.applyPatch({.adds = {box(start + glm::vec2{10.0F, 10.0F}, start + glm::vec2{18.0F, 10.2F}, true, 99)}});
+			const double			wallPatchMs = msSince(wallStart);
+			const Clock::time_point wallWidths	= Clock::now();
+			mesh.refreshWidths();
+			const double wallWidthsMs = msSince(wallWidths);
 
 			// One more chunk's ground arriving.
 			const Clock::time_point groundStart = Clock::now();
-			structural.applyPatch({.adds = region->chunks[n].rings});
+			mesh.applyPatch({.adds = region->chunks[n].rings});
 			const double			groundPatchMs = msSince(groundStart);
-			const Clock::time_point groundForest  = Clock::now();
-			structural.rebuildForests();
-			const double groundForestMs = msSince(groundForest);
+			const Clock::time_point groundWidths  = Clock::now();
+			mesh.refreshWidths();
+			const double groundWidthsMs = msSince(groundWidths);
 
-			state.counters["chunks"]				= static_cast<double>(n);
-			state.counters["waterVertsPerChunk"]	= static_cast<double>(waterVertices) / static_cast<double>(n);
-			state.counters["structKBPerChunk"]		= static_cast<double>(structuralBytes) / 1024.0 / static_cast<double>(n);
-			state.counters["navKBPerChunk"]			= static_cast<double>(navBytes) / 1024.0 / static_cast<double>(n);
-			state.counters["structSlots"]			= static_cast<double>(structural.triangles().size());
-			state.counters["buildPatchMs"]			= patchMs;
-			state.counters["buildForestMs"]			= forestMs;
-			state.counters["wallPatchMs"]			= wallPatchMs;
-			state.counters["wallForestMs"]			= wallForestMs;
-			state.counters["groundPatchMs"]			= groundPatchMs;
-			state.counters["groundForestMs"]		= groundForestMs;
+			state.counters["chunks"]			 = static_cast<double>(n);
+			state.counters["waterVertsPerChunk"] = static_cast<double>(waterVertices) / static_cast<double>(n);
+			state.counters["navKBPerChunk"]		 = static_cast<double>(navBytes) / 1024.0 / static_cast<double>(n);
+			state.counters["slots"]				 = static_cast<double>(mesh.triangles().size());
+			state.counters["buildPatchMs"]		 = patchMs;
+			state.counters["buildWidthsMs"]		 = widthsMs;
+			state.counters["wallPatchMs"]		 = wallPatchMs;
+			state.counters["wallWidthsMs"]		 = wallWidthsMs;
+			state.counters["groundPatchMs"]		 = groundPatchMs;
+			state.counters["groundWidthsMs"]	 = groundWidthsMs;
 		}
 	}
 
