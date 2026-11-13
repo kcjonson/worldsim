@@ -52,13 +52,10 @@ namespace ecs {
 
 		// Process all colonists with the required components.
 		//
-		// Action Interruption Policy: Once an action starts, it runs to completion.
-		// If a colonist's task changes mid-action (e.g., AIDecisionSystem assigns a
-		// higher-priority need), the action stops being processed but remains in an
-		// incomplete state until the colonist returns and the task state becomes
-		// Arrived again. This is intentional - colonists "commit" to actions rather
-		// than abandoning half-eaten food or interrupted sleep. Future work may add
-		// explicit action cancellation for emergencies (e.g., flee from danger).
+		// Action Interruption Policy: a non-interruptable action (every one but Sleep)
+		// runs to completion; AIDecisionSystem holds the task until it ends. When it
+		// switches away from an interruptable one, it clears the action with the task,
+		// and nothing resumes: an interrupted sleep pays out nothing.
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 

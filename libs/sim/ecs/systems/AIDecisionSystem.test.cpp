@@ -4939,6 +4939,38 @@ namespace ecs::test {
 			<< "the BioPile isn't under the colonist when it gets up";
 	}
 
+	// Sleep is interruptable: a critical need wakes a colonist sleeping off a non-critical one, and the
+	// Sleep action goes with the task it served. The toilet starts in place, so the Toilet action must
+	// start on the switch's own tick and run, not wait out a stale Sleep whose completion would clear
+	// the toilet task undone (WOR-820).
+	TEST_F(NeedActionInPlaceTest, WokenSleeperCarriesOutTheNewTask) {
+		const auto colonist = createActingColonist({0.0F, 0.0F});
+		getNeeds(colonist)->get(NeedType::Energy).value = 20.0F;
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Energy);
+		ASSERT_EQ(action->type, ActionType::Sleep);
+		world->update(kTick);
+		ASSERT_EQ(action->type, ActionType::Sleep);
+
+		getNeeds(colonist)->get(NeedType::Digestion).value = 5.0F;
+		world->update(kTick);
+		ASSERT_EQ(task->needToFulfill, NeedType::Digestion) << "the critical need did not wake the sleeper";
+		EXPECT_EQ(action->type, ActionType::Toilet) << "the Sleep action outlived the task it served";
+
+		const glm::vec2 squatSpot = task->targetPosition;
+		stepThroughAction(colonist, squatSpot);
+		EXPECT_FALSE(action->isActive()) << "the toilet action never finished";
+		EXPECT_GT(getNeeds(colonist)->get(NeedType::Digestion).value, 5.0F) << "the toilet task ended undone";
+		EXPECT_LT(getNeeds(colonist)->energy().value, 50.0F) << "the interrupted sleep still paid out in full";
+		bool bioPile = false;
+		for (auto [entity, appearance] : world->view<Appearance>()) {
+			bioPile = bioPile || appearance.defName == "Misc_BioPile";
+		}
+		EXPECT_TRUE(bioPile) << "no BioPile spawned";
+	}
+
 	// A critical sleeper that slides into water is snapped back ashore, which clears its task, so it
 	// re-decides; still sliding, it goes straight back in. The sleep must hold one decision throughout.
 	TEST_F(NeedActionInPlaceTest, CriticalSleeperDoesNotReDecideEveryTick) {

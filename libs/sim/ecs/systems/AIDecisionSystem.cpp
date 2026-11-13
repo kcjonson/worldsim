@@ -1852,16 +1852,12 @@ namespace ecs {
 					} else {
 						bool sameTarget = false;
 						if (selected->targetPosition.has_value()) {
+							// Within 0.5 m is the same target; a target moved to a stand point is the same as the
+							// target it stands beside. The world origin is a target like any other: a sleeper
+							// lying there must keep its Sleep, which a switch would clear.
 							const auto& selectedPos = selected->targetPosition.value();
-							// Check that at least one position is non-zero to avoid default (0,0) matches
-							const float selectedLen2 = glm::dot(selectedPos, selectedPos);
-							const float currentLen2 = glm::dot(task.targetPosition, task.targetPosition);
-							if (selectedLen2 > 0.0001F || currentLen2 > 0.0001F) {
-								// Use distance threshold for "same" position (within 0.5 meters); a target moved
-								// to a stand point is the same as the target it stands beside.
-								sameTarget = glm::distance(task.targetPosition, selectedPos) < 0.5F ||
-											 glm::distance(task.workTarget(), selectedPos) < 0.5F;
-							}
+							sameTarget = glm::distance(task.targetPosition, selectedPos) < 0.5F ||
+										 glm::distance(task.workTarget(), selectedPos) < 0.5F;
 						}
 						// For PlacePackaged tasks, check entity ID instead of position
 						// (position changes mid-task from source to target after phase 1)
@@ -1882,7 +1878,9 @@ namespace ecs {
 						// offered again only once the verdict is forgotten (SourceReachMemo::keep), and keeping
 						// it then would leave him stopped with a stale failure and no new route request.
 						const bool failed = task.navState == NavState::CantFindWayTo;
-						isSameTask = sameType && sameTarget && samePlaceTarget && !failed;
+						// Needs met in place share the colonist's spot as their target.
+						const bool sameNeed = task.type != TaskType::FulfillNeed || selected->needType == task.needToFulfill;
+						isSameTask = sameType && sameTarget && samePlaceTarget && sameNeed && !failed;
 					}
 				}
 
@@ -2005,7 +2003,13 @@ namespace ecs {
 						m_claims.retire(task.instanceId);
 					}
 
-					// Clear and assign new task
+					// The action goes with its task: ActionSystem starts one only when none is active, so a
+					// woken sleeper's Sleep would otherwise run on at the new target and its completion would
+					// clear the new task undone. Only an interruptable action, or a stale one whose task
+					// already ended, gets past the gate above.
+					if (action != nullptr) {
+						action->clear();
+					}
 					dropRoute(task);
 					task.clear();
 					task.timeSinceEvaluation = 0.0F;

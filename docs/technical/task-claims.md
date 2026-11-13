@@ -971,9 +971,6 @@ Behaviour the code has that no doc should promise otherwise, kept here until fix
 - The panel names one worker per row, so a row several colonists serve reads as one colonist's.
 - A colonist whose every pack slot, belt slot, and hand holds a tool can't make room to eat and picks
   the same source again.
-- Interrupting a sleeping colonist for a higher tier leaves the Sleep action active (the switch path
-  clears the task but not the Action, and ActionSystem starts a new action only when none is active).
-  Not covered by a test; it may run the rest of the sleep under the next task when it arrives.
 
 ---
 
