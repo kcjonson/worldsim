@@ -12,7 +12,7 @@ Two dimensional open world survival game. A group (or single) character starts i
 ### Overview
 
 - Infinite (or nearly) procedurally generated world
-- Sight lines / "Fog of war" (areas not visible to the character are hidden)
+- Sight lines and player visibility: the player sees only what the characters have seen, and unexplored areas are hidden ([Player Visibility](../technical/player-visibility.md))
 - Local mini map showing the extent of the explored area
 - Overview map pre-generated but only a very "high level" idea of what is on a tile; the scope of this depends on the backstory
 
@@ -109,7 +109,7 @@ Against common wisdom at the time you personally finance an expedition into the 
 ### Rimworld
 - Not infinite, base building area is very small
 - Hex tile world pre-generated
-- No fog of war; can see everywhere in the current world hex
+- No unexplored areas; the player can see everywhere in the current world hex
 - 2D top down isometric
 - Single height level
 - Tech tree
