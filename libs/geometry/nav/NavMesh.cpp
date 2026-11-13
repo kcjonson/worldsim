@@ -44,10 +44,9 @@ namespace geometry::nav {
 			return acc;
 		}
 
-		// Every operand groundBoundaries multiplies is a difference of two points no
-		// farther apart than this, so each product of two fits in an int64 and each
-		// comparison of two quotients (a product of two such products) in an Int128.
-		constexpr std::int64_t kMaxOperandMm = std::int64_t{1} << 31;
+		// Every operand groundBoundaries multiplies is a difference of two points of rings
+		// whose boxes meet, each narrower than kMaxGroundExtentMm.
+		constexpr std::int64_t kMaxOperandMm = 2 * kMaxGroundExtentMm;
 
 		bool smallOperand(const Vec2i64& v) {
 			return v.x > -kMaxOperandMm && v.x < kMaxOperandMm && v.y > -kMaxOperandMm && v.y < kMaxOperandMm;

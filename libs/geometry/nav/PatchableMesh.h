@@ -41,6 +41,13 @@ namespace geometry::nav {
 	// the same cover. Sorts before every ring id.
 	constexpr RingId kGroundToken = -2;
 
+	// How close two original edges must come for a patch to treat them as interacting.
+	// buildArrangement's rounding has no proven drift bound: each cascade level can move a
+	// piece another 0.71 mm, and the six segments in the arrangement test
+	// RepeatedRoundingDriftsPastTwoMillimetres drift 2.98 mm. Pulling too much into a patch
+	// is only slower; pulling too little loses exactness.
+	constexpr std::int64_t kOffGroundReachMm = 8;
+
 	struct RegisteredRing {
 		NavInputPolygon			  polygon; // original outline and tags
 		SampleRing				  sample;
@@ -79,7 +86,7 @@ namespace geometry::nav {
 	// What a patch (applyPatch) or a width refresh (refreshWidths) changed. Anything that
 	// holds triangle ids checks them against `changes`.
 	struct PatchReport {
-		std::vector<RingId>			 added;			 // ids of PatchEdits::adds, in order
+		std::vector<RingId>			 added;			 // ids of PatchEdits::adds, in order; kNoRing where refused
 		std::vector<ChangedTriangle> changes;		 // every id touched, ascending, each once
 		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
 		Vec2i64						 hi;			 // (nothing changed: unset)
@@ -88,6 +95,9 @@ namespace geometry::nav {
 		// point of it lies within the snap band of a ring this patch did not re-derive.
 		// Unsupported input; the mesh may disagree with a from-scratch build there.
 		std::int32_t unreadCovers = 0;
+		// Adds and moves refused because a bounds outline spans kMaxGroundExtentMm or more on
+		// an axis. Unsupported input; validate fails from then on.
+		std::int32_t refusedRings = 0;
 		// The patch may have opened a way for some mover and belief: it removed or moved a
 		// ring, or added ground, a door, a hole-capable ring, or a wall. Only solid water and
 		// obstacle rings arriving leave it false.
@@ -343,6 +353,7 @@ namespace geometry::nav {
 		std::vector<std::int32_t>				 freeTriangles;
 		std::int32_t							 liveTriangles = 0;
 		std::int32_t							 unreadCovers  = 0; // PatchReport::unreadCovers, summed
+		std::int32_t							 refusedRings  = 0; // PatchReport::refusedRings, summed
 
 		InternTable<std::vector<EdgeSource>> sourceLists;
 		InternTable<std::vector<RingId>>	 covers;

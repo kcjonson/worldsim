@@ -21,13 +21,6 @@ namespace geometry::nav {
 
 	namespace {
 
-		// How close two original edges must come for the off-ground pull to treat them as
-		// interacting. buildArrangement's rounding has no proven drift bound: each cascade
-		// level can move a piece another 0.71 mm, and the six segments in the arrangement
-		// test RepeatedRoundingDriftsPastTwoMillimetres drift 2.98 mm. Pulling too much
-		// into s is only slower; pulling too little loses exactness.
-		constexpr std::int64_t kOffGroundReachMm = 8;
-
 		// How many times as far as a ring's pieces stray from its outline a seed sample
 		// must lie from it, so the exact test and the bent pieces agree on its side.
 		constexpr std::int64_t kSeedClearance = 3;
@@ -1107,7 +1100,6 @@ namespace geometry::nav {
 		std::vector<const std::vector<Vec2i64>*>			 groundOutlines; // changed bounds rings' old and new outlines
 		std::vector<Vec2i64>								 runEnds;
 		std::vector<std::uint32_t>							 runEndList;
-		bool												 coversGrew = false; // the cover read added to s
 
 		std::vector<Fixed>				  fixed;
 		std::vector<EdgeSource>			  fixedSources;
@@ -1215,6 +1207,7 @@ namespace geometry::nav {
 		void pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge, const std::vector<EdgeSource>* band = nullptr);
 		void pullAtVertex(std::uint32_t v, std::int32_t seed, std::span<const std::pair<EdgeSource, bool>> xs, bool takeStar);
 		void touchSegment(const Vec2i64& a, const Vec2i64& b, const EdgeSource& x);
+		void pullInputContacts(const Vec2i64& a, const Vec2i64& b);
 		void walkNewOutlines();
 		void closeS();
 		bool deriveOnce();
@@ -1541,7 +1534,25 @@ namespace geometry::nav {
 			c.sample  = sampleRing(c.polygon);
 			outlineBox(c.polygon.ring, c.lo, c.hi);
 		};
+		// A bounds outline too wide for groundBoundaries' exact ordering is refused, and
+		// counted so validate fails.
+		auto fits = [&](const NavInputPolygon& polygon) {
+			Vec2i64 lo;
+			Vec2i64 hi;
+			outlineBox(polygon.ring, lo, hi);
+			const bool ok = polygon.blocked || (hi.x - lo.x < kMaxGroundExtentMm && hi.y - lo.y < kMaxGroundExtentMm);
+			assert(ok && "PatchableMesh: a bounds outline too wide for exact ordering");
+			if (!ok) {
+				++out.refusedRings;
+				++m.refusedRings;
+			}
+			return ok;
+		};
 		for (const NavInputPolygon& add : edits.adds) {
+			if (!fits(add)) {
+				out.added.push_back(kNoRing);
+				continue;
+			}
 			const RingId id = allocateRing();
 			out.added.push_back(id);
 			setNew(changeFor(id), add);
@@ -1563,10 +1574,13 @@ namespace geometry::nav {
 			if (!editable(move.ring)) {
 				continue;
 			}
-			Change& c	   = changeFor(move.ring);
-			c.hadOld	   = true;
 			NavInputPolygon moved = m.rings[static_cast<std::size_t>(move.ring)].polygon;
 			moved.ring			  = move.outline;
+			if (!fits(moved)) {
+				continue;
+			}
+			Change& c = changeFor(move.ring);
+			c.hadOld  = true;
 			setNew(c, std::move(moved));
 		}
 		// Every mark covers the registry as it now stands, so a copied mesh's empty scratch
@@ -1721,11 +1735,23 @@ namespace geometry::nav {
 				}
 			}
 		});
-		// The walk reads the pieces as rounded, but the arrangement meets the inputs as given:
-		// a piece can pass clear of ab where its input meets it. Every input lies in its
-		// edge's box, so the edge grids find each one that can. An unchanged bounds edge with
-		// no boundary intervals before the patch has none after it, unless the patch
-		// classified it, and then it is in s.
+		pullInputContacts(a, b);
+	}
+
+	// The walk reads the pieces as rounded, but the arrangement meets the inputs as given and
+	// re-runs their rounds, so ab can meet an edge's input, or a piece an earlier round made,
+	// where the final pieces pass clear of it. Every earlier piece runs between vertices of
+	// the final chain, so it lies in their hull, within kOffGroundReachMm of the input. An
+	// unchanged edge therefore joins s when its input meets ab, or when it passes within
+	// kOffGroundReachMm of ab and its chain leaves its input's line (on the line, the final
+	// pieces show every contact). A bounds edge's input is its boundary intervals; one with
+	// none before the patch has none after it, unless the patch classified it, and then it
+	// is in s.
+	void PatchableMesh::Patch::pullInputContacts(const Vec2i64& a, const Vec2i64& b) {
+		const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
+		Vec2i64		  lo = a;
+		Vec2i64		  hi = a;
+		growBox(lo, hi, b);
 		auto meets = [&](const Vec2i64& p, const Vec2i64& q) {
 			const SegmentIntersection r = intersectSegments(a, b, p, q);
 			if (r.relation == SegmentRelation::Disjoint) {
@@ -1733,7 +1759,16 @@ namespace geometry::nav {
 			}
 			return r.relation != SegmentRelation::EndpointTouch || !((r.point == a || r.point == b) && (r.point == p || r.point == q));
 		};
-		m.blockedEdgesInBox(lo, hi, work.edgeIdsMet, work.edgesMet);
+		auto chainOn = [&](const EdgeSource& z, auto onInput) {
+			for (const std::int32_t h : m.piecesOf(z)) {
+				const NavTriangle& tri = m.tris[static_cast<std::size_t>(h / 3)];
+				if (!onInput(m.verts[tri.v[static_cast<std::size_t>(h % 3)]]) || !onInput(m.verts[tri.v[static_cast<std::size_t>(next3(h % 3))]])) {
+					return false;
+				}
+			}
+			return true;
+		};
+		m.blockedEdgesInBox(lo - reach, hi + reach, work.edgeIdsMet, work.edgesMet);
 		for (const EdgeSource& z : work.edgesMet) {
 			if (changed(z.ring) || inS(z)) {
 				continue;
@@ -1741,29 +1776,44 @@ namespace geometry::nav {
 			const NavInputPolygon& polygon = m.rings[static_cast<std::size_t>(z.ring)].polygon;
 			const Vec2i64		   p	   = edgeStart(polygon.ring, z.edge);
 			const Vec2i64		   q	   = edgeEnd(polygon.ring, z.edge);
-			if (p != q && meets(p, q)) {
+			if (p == q) {
+				continue;
+			}
+			if (meets(p, q) ||
+				(segmentsWithin(a, b, p, q, kOffGroundReachMm) && !chainOn(z, [&](const Vec2i64& v) { return onClosedSegment(v, p, q); }))) {
 				addToS(z);
 			}
 		}
-		m.boundaryEdgesInBox(lo, hi, work.edgeIdsMet, work.edgesMet);
+		m.boundaryEdgesInBox(lo - reach, hi + reach, work.edgeIdsMet, work.edgesMet);
 		for (const EdgeSource& z : work.edgesMet) {
 			if (changed(z.ring) || inS(z)) {
 				continue;
 			}
 			const NavInputPolygon& polygon = m.rings[static_cast<std::size_t>(z.ring)].polygon;
-			const Vec2i64		   p	   = edgeStart(polygon.ring, z.edge);
-			const Vec2i64		   q	   = edgeEnd(polygon.ring, z.edge);
 			// A boundary interval's ends are rounded crossings, within a millimetre of the edge.
-			if (!segmentsWithin(a, b, p, q, kOffGroundReachMm)) {
+			if (!segmentsWithin(a, b, edgeStart(polygon.ring, z.edge), edgeEnd(polygon.ring, z.edge), kOffGroundReachMm)) {
 				continue;
 			}
-			const std::pair<std::uint32_t, std::uint32_t> run = intervalsAfter(z);
-			for (std::uint32_t i = run.first; i < run.second; ++i) {
+			const std::pair<std::uint32_t, std::uint32_t> run	 = intervalsAfter(z);
+			bool										  near	 = false;
+			bool										  joined = false;
+			for (std::uint32_t i = run.first; i < run.second && !joined; ++i) {
 				const GroundInterval iv = work.intervalPool[i];
-				if (meets(iv.from, iv.to)) {
-					addToS(z);
-					break;
-				}
+				joined					= meets(iv.from, iv.to);
+				near					= near || segmentsWithin(a, b, iv.from, iv.to, kOffGroundReachMm);
+			}
+			if (!joined && near) {
+				joined = !chainOn(z, [&](const Vec2i64& v) {
+					for (std::uint32_t i = run.first; i < run.second; ++i) {
+						if (onClosedSegment(v, work.intervalPool[i].from, work.intervalPool[i].to)) {
+							return true;
+						}
+					}
+					return false;
+				});
+			}
+			if (joined) {
+				addToS(z);
 			}
 		}
 	}
@@ -1867,6 +1917,9 @@ namespace geometry::nav {
 				}
 			} else if (a != b) {
 				pullOffGround(a, b, bounds);
+				if (!bounds && !changed(x.ring)) {
+					pullInputContacts(a, b);
+				}
 			}
 			const std::vector<std::int32_t>& under = m.piecesOf(x);
 			std::vector<std::pair<std::uint32_t, std::int32_t>>& ends = work.ends; // vertex, a triangle on it
@@ -1950,10 +2003,6 @@ namespace geometry::nav {
 		}
 		triangulate();
 		assignCovers();
-		if (work.coversGrew) {
-			closeS();
-			return false;
-		}
 		return coversHeld();
 	}
 
@@ -2214,7 +2263,6 @@ namespace geometry::nav {
 	void PatchableMesh::Patch::assignCovers() {
 		const std::int32_t cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
 		bool conflict = false;
-		work.coversGrew = false;
 		auto holdsGround = [](const std::vector<RingId>& cover) { return !cover.empty() && cover.front() == kGroundToken; };
 		std::vector<std::int32_t>& stack = work.stack;
 		auto flood = [&](std::int32_t seed, const std::vector<RingId>& seedCover) {
@@ -2407,11 +2455,12 @@ namespace geometry::nav {
 		// centroid lies clear of the band of reads as given. Otherwise a blocked edge, or a
 		// bounds edge's boundary intervals, read from their pieces: this pass's arrangement's
 		// for an edge it arranges (all it crosses is arranged with it), the mesh's for one the
-		// patch leaves alone when they run end to end; a blocked edge whose pieces do not
-		// (it hangs off ground) joins s instead, and the pass grows. A bounds edge's dissolved
-		// stretches are never rounded and read as given, joined to the rounded ends of its
-		// intervals by the short step each was rounded by. False when some edge can be read
-		// none of these ways.
+		// patch leaves alone when they run end to end (one hanging off ground near re-derived
+		// ground is in s already: new ground pulls a hanging edge that meets it, and a
+		// re-derived bounds segment every blocked edge within kOffGroundReachMm). A bounds
+		// edge's dissolved stretches are never rounded and read as given, joined to the
+		// rounded ends of its intervals by the short step each was rounded by. False when
+		// some edge can be read none of these ways.
 		std::vector<std::pair<EdgeSource, std::int32_t>>& arrangedPieces = work.arrangedPieces;
 		bool											  piecesListed	 = false;
 		auto roundedCover = [&](std::int32_t t, std::vector<RingId>& cover) {
@@ -2547,12 +2596,7 @@ namespace geometry::nav {
 						}
 						continue;
 					}
-					if (changed(r) || inS(x)) {
-						return false;
-					}
-					if (!m.piecesRunBetween(x, ends, meshPieces, chainEnds)) {
-						addToS(x);
-						work.coversGrew = true;
+					if (changed(r) || inS(x) || !m.piecesRunBetween(x, ends, meshPieces, chainEnds)) {
 						return false;
 					}
 					for (const auto& [u, v] : meshPieces) {
@@ -2622,13 +2666,10 @@ namespace geometry::nav {
 			}
 			// Every triangle lies in some ring's band: read the rings as rounded instead,
 			// largest triangle first (popped whole, so ascending).
-			for (auto it = bySize.rbegin(); it != bySize.rend() && from < 0 && !work.coversGrew; ++it) {
+			for (auto it = bySize.rbegin(); it != bySize.rend() && from < 0; ++it) {
 				if (roundedCover(-it->second, start)) {
 					from = -it->second;
 				}
-			}
-			if (work.coversGrew) {
-				return;
 			}
 			if (from < 0) {
 				assert(false && "PatchableMesh: no sample of a group reads its cover exactly");
@@ -3460,6 +3501,10 @@ namespace geometry::nav {
 			fail() << unreadCovers << " cover(s) seeded from a sample no exact test could read";
 			return err.str();
 		}
+		if (refusedRings > 0) {
+			fail() << refusedRings << " bounds outline(s) refused as too wide for exact ordering";
+			return err.str();
+		}
 
 		// Free lists and counts.
 		{
@@ -3927,7 +3972,7 @@ namespace geometry::nav {
 		// list. Every split, exact or rounded, is two segments meeting, and both keep pieces at
 		// it unless it is on the mesh boundary. So a vertex with just two constrained edges,
 		// one source list on both, blocked edges only, at no corner of theirs, and no two of
-		// them crossing within kOffGroundReachMm of it, is a split left over.
+		// them off one line and both within kOffGroundReachMm of it, is a split left over.
 		{
 			std::map<std::uint32_t, std::vector<std::int32_t>> constrainedAt; // source list ids
 			for (std::int32_t t = 0; t < triCount; ++t) {
@@ -3961,20 +4006,119 @@ namespace geometry::nav {
 					const RegisteredRing& reg = rings[static_cast<std::size_t>(z.ring)];
 					explained = explained || !reg.polygon.blocked || isOriginalEndpoint(reg.polygon.ring, z.edge, verts[v]);
 				}
-				// Two edges crossing there whose pieces rounding laid on one line either side.
+				// Two edges off one line that both pass near it: their pieces can meet there in a
+				// later round, as rounded, though their inputs never do, and rounding lay them on
+				// one line either side. Edges on one line are cut at the same points, so only a
+				// third segment splits them, and it keeps pieces of its own there.
 				for (std::size_t i = 0; i < sources.size() && !explained; ++i) {
-					const std::vector<Vec2i64>& a = rings[static_cast<std::size_t>(sources[i].ring)].polygon.ring;
+					const std::vector<Vec2i64>& a  = rings[static_cast<std::size_t>(sources[i].ring)].polygon.ring;
+					const Vec2i64				a0 = edgeStart(a, sources[i].edge);
+					const Vec2i64				a1 = edgeEnd(a, sources[i].edge);
+					if (!withinDistanceOfSegment(verts[v], a0, a1, kOffGroundReachMm)) {
+						continue;
+					}
 					for (std::size_t j = i + 1; j < sources.size() && !explained; ++j) {
-						const std::vector<Vec2i64>& b = rings[static_cast<std::size_t>(sources[j].ring)].polygon.ring;
-						const SegmentIntersection	r = intersectSegments(edgeStart(a, sources[i].edge), edgeEnd(a, sources[i].edge), edgeStart(b, sources[j].edge),
-																		  edgeEnd(b, sources[j].edge));
-						explained = (r.relation == SegmentRelation::ProperCrossing || r.relation == SegmentRelation::EndpointTouch) &&
-									std::abs(r.point.x - verts[v].x) <= kOffGroundReachMm && std::abs(r.point.y - verts[v].y) <= kOffGroundReachMm;
+						const std::vector<Vec2i64>& b  = rings[static_cast<std::size_t>(sources[j].ring)].polygon.ring;
+						const Vec2i64				b0 = edgeStart(b, sources[j].edge);
+						const Vec2i64				b1 = edgeEnd(b, sources[j].edge);
+						explained = (orientation(a0, a1, b0) != Orientation::Collinear || orientation(a0, a1, b1) != Orientation::Collinear) &&
+									withinDistanceOfSegment(verts[v], b0, b1, kOffGroundReachMm);
 					}
 				}
 				if (!explained) {
 					fail() << "vertex " << v << " (" << verts[v].x << ", " << verts[v].y << ") splits a blocked chain where nothing else meets it";
 					return err.str();
+				}
+			}
+		}
+		// The same for a bounds edge's chain, on the mesh boundary or off it: a vertex with just
+		// two constrained edges, both naming one bounds edge, is a split left over unless it is
+		// that edge's corner or one of its interval ends, a corner of any live ring, or near
+		// another segment that can bend the chain there without keeping pieces at it (a blocked
+		// edge or another bounds edge's boundary interval off the chain's line, within
+		// kOffGroundReachMm, which may meet it off ground).
+		{
+			std::map<std::uint32_t, std::vector<std::pair<std::uint32_t, std::int32_t>>> constrainedAt; // other end, source list id
+			for (std::int32_t t = 0; t < triCount; ++t) {
+				if (live[static_cast<std::size_t>(t)] == 0) {
+					continue;
+				}
+				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+				for (int e = 0; e < 3; ++e) {
+					const std::uint32_t a		 = tri.v[static_cast<std::size_t>(e)];
+					const std::uint32_t b		 = tri.v[static_cast<std::size_t>(next3(e))];
+					const std::int32_t	sourceId = edgeSourceIds[static_cast<std::size_t>(t)][static_cast<std::size_t>(e)];
+					if (sourceId < 0 || (a > b && tri.neighbor[static_cast<std::size_t>(e)] >= 0)) {
+						continue;
+					}
+					constrainedAt[a].push_back({b, sourceId});
+					constrainedAt[b].push_back({a, sourceId});
+				}
+			}
+			std::vector<GroundRing>		groundNear;
+			GroundBoundaryScratch		boundaryScratch;
+			std::vector<GroundInterval> intervals;
+			std::vector<std::int32_t>	ids;
+			std::vector<EdgeSource>		near;
+			const Vec2i64				reach{kOffGroundReachMm, kOffGroundReachMm};
+			for (const auto& [v, edges] : constrainedAt) {
+				if (edges.size() != 2) {
+					continue;
+				}
+				const Vec2i64&				   p	 = verts[v];
+				const std::vector<EdgeSource>& first = sourceLists.get(edges[0].second);
+				const std::vector<EdgeSource>& second = sourceLists.get(edges[1].second);
+				for (const EdgeSource& z : first) {
+					const RegisteredRing& reg = rings[static_cast<std::size_t>(z.ring)];
+					if (reg.polygon.blocked || std::find(second.begin(), second.end(), z) == second.end() || isOriginalEndpoint(reg.polygon.ring, z.edge, p)) {
+						continue;
+					}
+					const Vec2i64 za = edgeStart(reg.polygon.ring, z.edge);
+					const Vec2i64 zb = edgeEnd(reg.polygon.ring, z.edge);
+					Vec2i64		  lo = za;
+					Vec2i64		  hi = za;
+					growBox(lo, hi, zb);
+					groundRingsInBox(lo, hi, groundNear);
+					groundBoundaries({&reg.polygon.ring, reg.lo, reg.hi, reg.sample.counterClockwise, z.ring}, z.edge, groundNear, boundaryScratch, intervals);
+					bool explained = std::any_of(intervals.begin(), intervals.end(), [&](const GroundInterval& iv) { return iv.from == p || iv.to == p; });
+					for (const RingId r : explained ? std::vector<RingId>{} : ringsInBox(p, p)) {
+						const std::vector<Vec2i64>& outline = rings[static_cast<std::size_t>(r)].polygon.ring;
+						explained = explained || std::find(outline.begin(), outline.end(), p) != outline.end();
+					}
+					auto offLine = [&](const EdgeSource& y) {
+						const std::vector<Vec2i64>& outline = rings[static_cast<std::size_t>(y.ring)].polygon.ring;
+						return orientation(za, zb, edgeStart(outline, y.edge)) != Orientation::Collinear ||
+							   orientation(za, zb, edgeEnd(outline, y.edge)) != Orientation::Collinear;
+					};
+					if (!explained) {
+						blockedEdgesInBox(p - reach, p + reach, ids, near);
+						for (const EdgeSource& y : near) {
+							const std::vector<Vec2i64>& outline = rings[static_cast<std::size_t>(y.ring)].polygon.ring;
+							explained = explained || (offLine(y) && withinDistanceOfSegment(p, edgeStart(outline, y.edge), edgeEnd(outline, y.edge), kOffGroundReachMm));
+						}
+					}
+					if (!explained) {
+						boundaryEdgesInBox(p - reach, p + reach, ids, near);
+						for (const EdgeSource& y : near) {
+							if (y == z || explained || !offLine(y)) {
+								continue;
+							}
+							const RegisteredRing& other = rings[static_cast<std::size_t>(y.ring)];
+							Vec2i64				  yLo	= edgeStart(other.polygon.ring, y.edge);
+							Vec2i64				  yHi	= yLo;
+							growBox(yLo, yHi, edgeEnd(other.polygon.ring, y.edge));
+							groundRingsInBox(yLo, yHi, groundNear);
+							groundBoundaries({&other.polygon.ring, other.lo, other.hi, other.sample.counterClockwise, y.ring}, y.edge, groundNear, boundaryScratch,
+											 intervals);
+							explained = std::any_of(intervals.begin(), intervals.end(),
+													[&](const GroundInterval& iv) { return withinDistanceOfSegment(p, iv.from, iv.to, kOffGroundReachMm); });
+						}
+					}
+					if (!explained) {
+						fail() << "vertex " << v << " (" << p.x << ", " << p.y << ") splits ring " << z.ring << " edge " << z.edge
+							   << " where nothing else meets it";
+						return err.str();
+					}
 				}
 			}
 		}

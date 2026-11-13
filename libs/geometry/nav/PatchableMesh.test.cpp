@@ -364,6 +364,97 @@ namespace {
 		return ::testing::AssertionSuccess();
 	}
 
+	// Even-odd containment of a point that lies on no edge of the ring.
+	bool insideEvenOdd(const Vec2i64& p, const std::vector<Vec2i64>& ring) {
+		bool inside = false;
+		for (std::size_t i = 0; i < ring.size(); ++i) {
+			const Vec2i64& a = ring[i];
+			const Vec2i64& b = ring[(i + 1) % ring.size()];
+			if ((a.y > p.y) != (b.y > p.y)) {
+				const int side = cross(b - a, p - a).sign();
+				if (b.y > a.y ? side > 0 : side < 0) {
+					inside = !inside;
+				}
+			}
+		}
+		return inside;
+	}
+
+	// The mesh against the rings as given, by nothing the library builds them with: at
+	// sample points clear of every original edge by kOffGroundReachMm, the mesh is there
+	// exactly where some ground outline holds the point, and the cover's blocked rings are
+	// exactly those that hold it, each even-odd. Half the points fall anywhere in the rings'
+	// box, half in one ring's box, chosen by a hash of the rings, so a run is repeatable.
+	::testing::AssertionResult agreesWithTheRingsAsGiven(const PatchableMesh& mesh, const Model& model, int samples = 64) {
+		if (model.empty()) {
+			return ::testing::AssertionSuccess();
+		}
+		std::uint64_t		   hash = 0xCBF29CE484222325ULL;
+		std::vector<const NavInputPolygon*> rings;
+		Vec2i64				   lo = model.begin()->second.ring.front();
+		Vec2i64				   hi = lo;
+		for (const auto& [id, poly] : model) {
+			rings.push_back(&poly);
+			for (const Vec2i64& v : poly.ring) {
+				hash = (hash ^ static_cast<std::uint64_t>(v.x)) * 0x100000001B3ULL;
+				hash = (hash ^ static_cast<std::uint64_t>(v.y)) * 0x100000001B3ULL;
+				lo	 = {std::min(lo.x, v.x), std::min(lo.y, v.y)};
+				hi	 = {std::max(hi.x, v.x), std::max(hi.y, v.y)};
+			}
+		}
+		std::mt19937 rng(static_cast<std::uint32_t>(hash ^ (hash >> 32)));
+		auto		 draw = [&](std::int64_t from, std::int64_t to) {
+			return from + static_cast<std::int64_t>(static_cast<std::uint64_t>(rng()) % static_cast<std::uint64_t>(to - from + 1));
+		};
+		for (int i = 0; i < samples; ++i) {
+			Vec2i64 boxLo = lo;
+			Vec2i64 boxHi = hi;
+			if (i % 2 == 1) {
+				const std::vector<Vec2i64>& ring = rings[static_cast<std::size_t>(draw(0, static_cast<std::int64_t>(rings.size()) - 1))]->ring;
+				boxLo							 = ring.front();
+				boxHi							 = boxLo;
+				for (const Vec2i64& v : ring) {
+					boxLo = {std::min(boxLo.x, v.x), std::min(boxLo.y, v.y)};
+					boxHi = {std::max(boxHi.x, v.x), std::max(boxHi.y, v.y)};
+				}
+			}
+			const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
+			boxLo				= boxLo - reach;
+			boxHi				= boxHi + reach;
+			const Vec2i64 p{draw(boxLo.x, boxHi.x), draw(boxLo.y, boxHi.y)};
+			bool		  clear = true;
+			for (const NavInputPolygon* poly : rings) {
+				for (std::size_t k = 0; k < poly->ring.size() && clear; ++k) {
+					clear = !geometry::withinDistanceOfSegment(p, poly->ring[k], poly->ring[(k + 1) % poly->ring.size()], kOffGroundReachMm);
+				}
+			}
+			if (!clear) {
+				continue;
+			}
+			bool				ground = false;
+			std::vector<RingId> holding{kGroundToken};
+			for (const auto& [id, poly] : model) {
+				if (!insideEvenOdd(p, poly.ring)) {
+					continue;
+				}
+				if (poly.blocked) {
+					holding.push_back(id);
+				} else {
+					ground = true;
+				}
+			}
+			const std::int32_t t = mesh.locate(p);
+			if ((t >= 0) != ground) {
+				return ::testing::AssertionFailure() << "(" << p.x << ", " << p.y << ") is " << (ground ? "" : "not ") << "inside a ground outline but "
+													 << (t >= 0 ? "on" : "off") << " the mesh";
+			}
+			if (t >= 0 && mesh.cover(t) != holding) {
+				return ::testing::AssertionFailure() << "(" << p.x << ", " << p.y << ") lies in other blocked rings than its triangle's cover names";
+			}
+		}
+		return ::testing::AssertionSuccess();
+	}
+
 	NavInputPolygon blocked(std::vector<Vec2i64> ring, std::int64_t provenance = kTree, bool holeCapable = false) {
 		return NavInputPolygon{std::move(ring), true, provenance, kNoOpening, holeCapable};
 	}
@@ -381,6 +472,25 @@ namespace {
 			p = p + by;
 		}
 		return ring;
+	}
+
+	// The ring edges the live mesh edge pq lies on; empty when it is unconstrained or no
+	// live triangle has it.
+	std::vector<EdgeSource> sourcesBetween(const PatchableMesh& mesh, const Vec2i64& p, const Vec2i64& q) {
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& a = mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
+				const Vec2i64& b = mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
+				if ((a == p && b == q) || (a == q && b == p)) {
+					return mesh.edgeSources(t, e);
+				}
+			}
+		}
+		return {};
 	}
 
 	// The vertices live triangles use on the closed segment ab, ascending.
@@ -2334,6 +2444,28 @@ TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 	EXPECT_TRUE(h.mesh.validate().empty()) << h.mesh.validate();
 }
 
+// A bounds outline as wide as kMaxGroundExtentMm is refused, added or moved to, and the
+// mesh says so from then on.
+TEST(PatchableMesh, GroundOutlineTooWideForExactOrderingIsRefused) {
+	Harness		 h;
+	const RingId square = h.add(bounds(rect(0, 0, 10000, 10000)));
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	PatchEdits wide;
+	wide.adds.push_back(bounds(rect(0, 20000, kMaxGroundExtentMm, 30000)));
+	wide.moves.push_back({square, rect(0, 0, 10000, kMaxGroundExtentMm)});
+	EXPECT_DEBUG_DEATH(
+		{
+			const PatchReport report = h.mesh.applyPatch(wide);
+			EXPECT_EQ(report.added, std::vector<RingId>{kNoRing});
+			EXPECT_EQ(report.refusedRings, 2);
+			EXPECT_EQ(h.mesh.ring(square).polygon.ring, rect(0, 0, 10000, 10000));
+		},
+		"too wide for exact ordering");
+#ifdef NDEBUG
+	EXPECT_NE(h.mesh.validate().find("refused"), std::string::npos);
+#endif
+}
+
 // A goal ringed by trees (0.6 m trunks every 0.55 m round a 3 m circle) on an open chunk
 // is out of reach on every tiling.
 TEST(PatchableMesh, RingOfTreesSealsAGoalOnEveryTiling) {
@@ -2556,6 +2688,7 @@ namespace {
 				}
 			}
 			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "seed " << seed << " step " << step << describe(h.model);
+			ASSERT_TRUE(agreesWithTheRingsAsGiven(h.mesh, h.model)) << "seed " << seed << " step " << step << describe(h.model);
 		}
 	}
 
@@ -2585,6 +2718,247 @@ TEST(PatchableMesh, CornerUnderARoundedPieceSplitsTheEdge) {
 	h.add(blocked(rect(4650, 10316, corner.x, corner.y)));
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
 	EXPECT_EQ(liveVerticesOn(h.mesh, {3503, 13127}, corner), (std::vector<Vec2i64>{{3503, 13127}, corner}));
+}
+
+namespace {
+
+	// Where the arrangement's first round can split ab against cd, under either argument
+	// order's rounding: a vertex of ab's chain outside every such set came from a later
+	// round.
+	void firstRoundCuts(const Vec2i64& a, const Vec2i64& b, const Vec2i64& c, const Vec2i64& d, std::vector<Vec2i64>& out) {
+		auto onto = [&](const Vec2i64& p) {
+			return Vec2i64{std::clamp(p.x, std::min(a.x, b.x), std::max(a.x, b.x)), std::clamp(p.y, std::min(a.y, b.y), std::max(a.y, b.y))};
+		};
+		const geometry::SegmentIntersection r = geometry::intersectSegments(a, b, c, d);
+		switch (r.relation) {
+			case geometry::SegmentRelation::Disjoint:
+				return;
+			case geometry::SegmentRelation::ProperCrossing:
+				out.push_back(onto(r.point));
+				out.push_back(onto(geometry::intersectSegments(c, d, a, b).point));
+				return;
+			case geometry::SegmentRelation::EndpointTouch:
+				out.push_back(r.point);
+				return;
+			case geometry::SegmentRelation::CollinearOverlap:
+				out.push_back(r.overlapStart);
+				out.push_back(r.overlapEnd);
+				return;
+		}
+	}
+
+	// The smallest blocked ring along ab: a triangle whose third corner is b moved by a
+	// unit step not along ab, so its two long edges leave a side by side.
+	NavInputPolygon thinRing(const Vec2i64& a, const Vec2i64& b, const Vec2i64& step) {
+		const Vec2i64 c = b + step;
+		if (geometry::orientation(a, b, c) == geometry::Orientation::Clockwise) {
+			return blocked({a, c, b});
+		}
+		return blocked({a, b, c});
+	}
+
+	Vec2i64 unitStepOff(std::mt19937& rng, const Vec2i64& along) {
+		const std::array<Vec2i64, 4> steps{Vec2i64{1, 0}, Vec2i64{0, 1}, Vec2i64{-1, 0}, Vec2i64{0, -1}};
+		for (;;) {
+			const Vec2i64 s = steps[pick(rng, steps.size())];
+			if (cross(along, s).sign() != 0) {
+				return s;
+			}
+		}
+	}
+
+	// Lattice points within a millimetre both of a blocked edge as given and of its chain
+	// on the mesh, off the chain, for every edge whose chain holds a vertex no first-round
+	// cut of its input explains: the thin region between an edge's input, its earlier
+	// pieces, and its final ones, where a later round bent it.
+	std::vector<Vec2i64> laterRoundSlivers(const PatchableMesh& mesh, const Model& model) {
+		std::vector<std::array<Vec2i64, 2>> inputs;
+		for (const auto& [id, poly] : model) {
+			for (std::size_t i = 0; i < poly.ring.size(); ++i) {
+				inputs.push_back({poly.ring[i], poly.ring[(i + 1) % poly.ring.size()]});
+			}
+		}
+		std::set<Vec2i64> out;
+		for (const auto& [id, poly] : model) {
+			if (!poly.blocked) {
+				continue;
+			}
+			for (std::int32_t e = 0; e < static_cast<std::int32_t>(poly.ring.size()); ++e) {
+				const Vec2i64						a = poly.ring[static_cast<std::size_t>(e)];
+				const Vec2i64						b = poly.ring[(static_cast<std::size_t>(e) + 1) % poly.ring.size()];
+				std::vector<std::array<Vec2i64, 2>> chain;
+				std::set<Vec2i64>					chainVertices;
+				for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+					if (!mesh.triangleLive(t)) {
+						continue;
+					}
+					const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+					for (int k = 0; k < 3; ++k) {
+						const std::vector<EdgeSource>& sources = mesh.edgeSources(t, k);
+						if (std::find(sources.begin(), sources.end(), EdgeSource{id, e}) != sources.end()) {
+							const Vec2i64 p = mesh.vertices()[tri.v[static_cast<std::size_t>(k)]];
+							const Vec2i64 q = mesh.vertices()[tri.v[static_cast<std::size_t>((k + 1) % 3)]];
+							chain.push_back({p, q});
+							chainVertices.insert(p);
+							chainVertices.insert(q);
+						}
+					}
+				}
+				std::vector<Vec2i64> cuts{a, b};
+				for (const std::array<Vec2i64, 2>& other : inputs) {
+					if (!(other[0] == a && other[1] == b)) {
+						firstRoundCuts(a, b, other[0], other[1], cuts);
+					}
+				}
+				const bool later = std::any_of(chainVertices.begin(), chainVertices.end(),
+											   [&](const Vec2i64& v) { return std::find(cuts.begin(), cuts.end(), v) == cuts.end(); });
+				if (!later) {
+					continue;
+				}
+				for (std::int64_t y = std::min(a.y, b.y) - 1; y <= std::max(a.y, b.y) + 1; ++y) {
+					for (std::int64_t x = std::min(a.x, b.x) - 1; x <= std::max(a.x, b.x) + 1; ++x) {
+						const Vec2i64 p{x, y};
+						if (chainVertices.count(p) != 0 || !geometry::withinDistanceOfSegment(p, a, b, 1)) {
+							continue;
+						}
+						bool nearChain = false;
+						bool onChain   = false;
+						for (const std::array<Vec2i64, 2>& piece : chain) {
+							nearChain = nearChain || geometry::withinDistanceOfSegment(p, piece[0], piece[1], 1);
+							onChain	  = onChain || geometry::withinDistanceOfSegment(p, piece[0], piece[1], 0);
+						}
+						if (nearChain && !onChain) {
+							out.insert(p);
+						}
+					}
+				}
+			}
+		}
+		return {out.begin(), out.end()};
+	}
+
+	struct CascadeProbe {
+		std::int64_t side	   = 40;
+		int			 segments  = 3;
+		int			 farEnds   = 0; // per sliver point; 0 takes every lattice point of the box
+		std::int64_t bases	   = 0;
+		std::int64_t bentLater = 0; // bases with an edge a later round bent
+		std::int64_t cases	   = 0; // added segments, each checked added and removed again
+	};
+
+	// `segments` thin blocked rings at random over one ground square, in one patch, so the
+	// mesh is the from-scratch arrangement; then, for every lattice point in the thin region
+	// beside an edge a later arrangement round bent, a thin ring from it to far ends in the
+	// box, added and removed again, each state against a from-scratch build.
+	void probeCascade(std::uint32_t seed, CascadeProbe& probe) {
+		std::mt19937 rng(seed);
+		Harness		 base;
+		PatchEdits	 edits;
+		edits.adds.push_back(bounds(rect(0, 0, probe.side, probe.side)));
+		for (int i = 0; i < probe.segments; ++i) {
+			const Vec2i64 a{between(rng, 0, probe.side), between(rng, 0, probe.side)};
+			Vec2i64		  b = a;
+			while (b == a) {
+				b = {between(rng, 0, probe.side), between(rng, 0, probe.side)};
+			}
+			edits.adds.push_back(thinRing(a, b, unitStepOff(rng, b - a)));
+		}
+		base.apply(edits);
+		++probe.bases;
+		ASSERT_TRUE(matchesFresh(base.mesh, base.model)) << "seed " << seed << " base" << describe(base.model);
+		const std::vector<Vec2i64> slivers = laterRoundSlivers(base.mesh, base.model);
+		if (slivers.empty()) {
+			return;
+		}
+		++probe.bentLater;
+		auto tryFrom = [&](const Vec2i64& p, const Vec2i64& q) {
+			if (p == q) {
+				return;
+			}
+			const RingId added = base.add(thinRing(p, q, unitStepOff(rng, q - p)));
+			++probe.cases;
+			ASSERT_TRUE(matchesFresh(base.mesh, base.model)) << "seed " << seed << " added" << describe(base.model);
+			PatchEdits leave;
+			leave.removes.push_back(added);
+			base.apply(leave);
+			ASSERT_TRUE(matchesFresh(base.mesh, base.model)) << "seed " << seed << " removed again" << describe(base.model);
+		};
+		for (const Vec2i64& p : slivers) {
+			if (probe.farEnds == 0) {
+				for (std::int64_t y = 0; y <= probe.side && !::testing::Test::HasFatalFailure(); ++y) {
+					for (std::int64_t x = 0; x <= probe.side && !::testing::Test::HasFatalFailure(); ++x) {
+						tryFrom(p, {x, y});
+					}
+				}
+			} else {
+				for (int i = 0; i < probe.farEnds && !::testing::Test::HasFatalFailure(); ++i) {
+					tryFrom(p, {between(rng, 0, probe.side), between(rng, 0, probe.side)});
+				}
+			}
+			if (::testing::Test::HasFatalFailure()) {
+				return;
+			}
+		}
+	}
+
+} // namespace
+
+// Rounding cascades among a few thin blocked rings: a segment added with one end in the
+// sub-millimetre region between a bent edge's input and its pieces, where the from-scratch
+// build re-runs that edge's rounds from its input and the patch keeps its final pieces.
+// Raise the counts for a heavier sweep.
+TEST(PatchableMesh, SegmentEndingBesideALaterBendMatchesFreshBuild) {
+	constexpr std::uint32_t kSeeds	 = 20;
+	constexpr int			kFarEnds = 2;
+	for (const auto& [side, segments] : {std::pair{40, 4}, std::pair{60, 4}}) {
+		CascadeProbe probe;
+		probe.side	   = side;
+		probe.segments = segments;
+		probe.farEnds  = kFarEnds;
+		for (std::uint32_t seed = 1; seed <= kSeeds; ++seed) {
+			probeCascade(seed, probe);
+			if (HasFatalFailure()) {
+				return;
+			}
+		}
+		EXPECT_GT(probe.bentLater, 0) << side << " mm: no base had an edge a later round bent";
+	}
+}
+
+// A blocked edge bent in three rounds, (23, 4)-(23, 6)-(24, 6)-(25, 10)-(40, 56), its last
+// piece passing just left of (26, 13); a thin ring added from there crosses neither the
+// edge as given nor its final pieces, but a fresh build re-runs the edge's rounds and an
+// earlier piece of it meets the ring's edges, which it splits at (27, 14).
+TEST(PatchableMesh, SegmentFromBesideALaterBendMatchesFreshBuild) {
+	Harness	   h;
+	PatchEdits base;
+	base.adds = {bounds(rect(0, 0, 60, 60)), blocked({{21, 1}, {47, 48}, {47, 49}}), blocked({{40, 56}, {22, 4}, {23, 4}}),
+				 blocked({{11, 37}, {17, 43}, {16, 43}}), blocked({{12, 35}, {31, 32}, {32, 32}})};
+	h.apply(base);
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	ASSERT_EQ(liveVerticesOn(h.mesh, {25, 10}, {40, 56}), (std::vector<Vec2i64>{{25, 10}, {40, 56}})) << "the edge's last piece runs clear of (26, 13)";
+	const RingId added = h.add(blocked({{26, 13}, {41, 41}, {40, 41}}));
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	EXPECT_EQ(liveVerticesOn(h.mesh, {25, 10}, {27, 14}), (std::vector<Vec2i64>{{25, 10}, {27, 14}}));
+	PatchEdits leave;
+	leave.removes.push_back(added);
+	h.apply(leave);
+	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
+}
+
+// Two edges of one thin ring, meeting only at its corner (18, 21), that rounding lays on one
+// line through (28, 24) where their pieces met in a later round: a split with nothing else
+// there, which validate takes as two edges off one line both passing near it.
+TEST(PatchableMesh, NearlyParallelEdgesLaidOnOneLineKeepTheirSplit) {
+	Harness	   h;
+	PatchEdits all;
+	all.adds = {bounds(rect(0, 0, 40, 40)), blocked({{18, 21}, {40, 26}, {39, 26}}), blocked({{27, 25}, {24, 17}, {25, 17}}),
+				blocked({{40, 23}, {19, 10}, {19, 9}}), blocked({{29, 24}, {36, 20}, {36, 21}})};
+	const PatchReport report = h.apply(all);
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	const RingId thin = report.added[1];
+	EXPECT_EQ(sourcesBetween(h.mesh, {27, 23}, {28, 24}), (std::vector<EdgeSource>{{thin, 0}, {thin, 2}}));
+	EXPECT_EQ(sourcesBetween(h.mesh, {28, 24}, {29, 24}), (std::vector<EdgeSource>{{thin, 0}, {thin, 2}}));
 }
 
 // A shared side whose length is no multiple of the piece length is cut at the same
@@ -2995,12 +3369,34 @@ TEST(PatchableMesh, GroundArrivingInsideABlockedRingMatchesFreshBuild) {
 
 namespace {
 
-	// Every live vertex strictly inside the ground (not on the mesh boundary) is a corner of
-	// a blocked ring, a crossing of two blocked edges, or the end of a piece of ground edges
-	// that rounding laid inside the ground (two boundary intervals' pieces on one segment,
-	// whose ground toggles cancel): no dissolved stretch leaves a vertex where ground lies
-	// all round.
+	// Every live vertex off the ground's pieces is a corner of a blocked ring or a crossing of
+	// two blocked edges; one on a ground piece is a corner of a ring, the end of a boundary
+	// interval, or within 2 mm of two ring edges (a crossing, or two boundary intervals'
+	// pieces rounding laid on one segment): no dissolved stretch leaves a vertex.
 	::testing::AssertionResult noVertexInsideTheUnionBelongsToNothing(const PatchableMesh& mesh, const Model& model) {
+		std::vector<GroundRing> ground;
+		std::set<Vec2i64>		corners;
+		std::set<Vec2i64>		blockedCorners;
+		for (const auto& [id, poly] : model) {
+			corners.insert(poly.ring.begin(), poly.ring.end());
+			if (poly.blocked) {
+				blockedCorners.insert(poly.ring.begin(), poly.ring.end());
+			} else {
+				ground.push_back(groundRing(poly.ring, id));
+			}
+		}
+		std::set<Vec2i64>			intervalEnds;
+		GroundBoundaryScratch		scratch;
+		std::vector<GroundInterval> intervals;
+		for (const GroundRing& g : ground) {
+			for (std::int32_t e = 0; e < static_cast<std::int32_t>(g.outline->size()); ++e) {
+				groundBoundaries(g, e, ground, scratch, intervals);
+				for (const GroundInterval& iv : intervals) {
+					intervalEnds.insert(iv.from);
+					intervalEnds.insert(iv.to);
+				}
+			}
+		}
 		std::set<std::uint32_t> onGroundPiece; // the mesh boundary's pieces are all ground pieces
 		std::set<std::uint32_t> used;
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
@@ -3019,23 +3415,23 @@ namespace {
 			}
 		}
 		for (const std::uint32_t v : used) {
-			if (onGroundPiece.count(v) != 0) {
+			const Vec2i64& p		  = mesh.vertices()[v];
+			const bool	   groundPiece = onGroundPiece.count(v) != 0;
+			if ((groundPiece && intervalEnds.count(p) != 0) || (groundPiece ? corners : blockedCorners).count(p) != 0) {
 				continue;
 			}
-			const Vec2i64& p	   = mesh.vertices()[v];
-			int			   nearBy = 0;
-			bool		   corner = false;
+			int nearBy = 0;
 			for (const auto& [id, poly] : model) {
-				if (!poly.blocked) {
+				if (!groundPiece && !poly.blocked) {
 					continue;
 				}
-				for (std::size_t i = 0; i < poly.ring.size(); ++i) {
-					corner = corner || poly.ring[i] == p;
+				for (std::size_t i = 0; i < poly.ring.size() && nearBy < 2; ++i) {
 					nearBy += geometry::withinDistanceOfSegment(p, poly.ring[i], poly.ring[(i + 1) % poly.ring.size()], 2) ? 1 : 0;
 				}
 			}
-			if (!corner && nearBy < 2) {
-				return ::testing::AssertionFailure() << "vertex (" << p.x << ", " << p.y << ") inside the ground belongs to no blocked ring";
+			if (nearBy < 2) {
+				return ::testing::AssertionFailure() << "vertex (" << p.x << ", " << p.y << ") " << (groundPiece ? "on a ground piece" : "inside the ground")
+													 << " belongs to nothing";
 			}
 		}
 		return ::testing::AssertionSuccess();
@@ -3045,6 +3441,10 @@ namespace {
 		::testing::AssertionResult fresh = matchesFresh(mesh, model);
 		if (!fresh) {
 			return fresh;
+		}
+		::testing::AssertionResult given = agreesWithTheRingsAsGiven(mesh, model);
+		if (!given) {
+			return given;
 		}
 		return noVertexInsideTheUnionBelongsToNothing(mesh, model);
 	}
@@ -3299,25 +3699,6 @@ TEST(PatchableMesh, SliverBesideADissolvedSideMatchesFreshBuild) {
 }
 
 namespace {
-
-	// The ring edges the live mesh edge pq lies on; empty when it is unconstrained or no
-	// live triangle has it.
-	std::vector<EdgeSource> sourcesBetween(const PatchableMesh& mesh, const Vec2i64& p, const Vec2i64& q) {
-		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
-			if (!mesh.triangleLive(t)) {
-				continue;
-			}
-			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
-			for (int e = 0; e < 3; ++e) {
-				const Vec2i64& a = mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
-				const Vec2i64& b = mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
-				if ((a == p && b == q) || (a == q && b == p)) {
-					return mesh.edgeSources(t, e);
-				}
-			}
-		}
-		return {};
-	}
 
 	// How many of the outline's edges are each one constrained mesh edge.
 	int constrainedEdgesOf(const PatchableMesh& mesh, const std::vector<Vec2i64>& outline) {

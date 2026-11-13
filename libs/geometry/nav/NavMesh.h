@@ -308,6 +308,12 @@ namespace geometry::nav {
 		std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>> lines;
 	};
 
+	// groundBoundaries orders crossings exactly while every ground ring it reads spans less
+	// than this on each axis: two rings whose boxes meet are then closer than twice it at
+	// every pair of points, so each product of two differences fits in an int64 and each
+	// comparison of two quotients in an Int128.
+	constexpr std::int64_t kMaxGroundExtentMm = std::int64_t{1} << 30;
+
 	// The boundary intervals of edge `edge` of `ring`, in order along it, given every other
 	// ground ring whose box meets the edge's box (`near` may hold `ring` itself and rings
 	// that do not meet it). Where another ring's edge runs along this one with its inside
