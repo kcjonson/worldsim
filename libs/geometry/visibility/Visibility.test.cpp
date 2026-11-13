@@ -8,6 +8,7 @@
 #include <numbers>
 #include <optional>
 #include <random>
+#include <utility>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -287,6 +288,44 @@ TEST(Visibility, Deterministic) {
 	std::vector<OccluderSegment> reordered = {occ[1], occ[0]};
 	Ring c = computeVisibilityPolygon(observer, radiusMm, reordered);
 	EXPECT_EQ(a, c);
+}
+
+// The sight circle is built with std::cos and std::sin, which no standard requires to round
+// alike on every toolchain, and a vertex that moves moves the ring. Two doorway scenes, one
+// at the origin and one 41 km out, are pinned by their vertex count and a hash of their
+// vertices; CI runs this on MSVC and on clang.
+TEST(Visibility, DoorwaySceneIsTheSameOnEveryToolchain) {
+	struct Scene {
+		Vec2i64		  offset;
+		Vec2i64		  observer;
+		std::size_t	  vertices;
+		std::uint64_t hash;
+	};
+	const Scene scenes[] = {
+		{{0, 0}, {-1300, -2700}, 430, 9426521693672182098ULL},
+		{{37123456, -18456789}, {37122156, -18459489}, 430, 2517131459746069412ULL},
+	};
+	for (const Scene& scene : scenes) {
+		std::vector<OccluderSegment> walls;
+		for (const auto& [x0, x1] : {std::pair<std::int64_t, std::int64_t>{-20000, -500}, std::pair<std::int64_t, std::int64_t>{500, 20000}}) {
+			const Vec2i64 bottomStart = scene.offset + Vec2i64{x0, 0};
+			const Vec2i64 bottomEnd   = scene.offset + Vec2i64{x1, 0};
+			const Vec2i64 topEnd	   = scene.offset + Vec2i64{x1, 200};
+			const Vec2i64 topStart	   = scene.offset + Vec2i64{x0, 200};
+			walls.push_back({bottomStart, bottomEnd});
+			walls.push_back({bottomEnd, topEnd});
+			walls.push_back({topEnd, topStart});
+			walls.push_back({topStart, bottomStart});
+		}
+		const Ring	  ring = computeVisibilityPolygon(scene.observer, 30000, walls);
+		std::uint64_t hash = 0xCBF29CE484222325ULL;
+		for (const Vec2i64& vertex : ring) {
+			hash = (hash ^ static_cast<std::uint64_t>(vertex.x)) * 0x100000001B3ULL;
+			hash = (hash ^ static_cast<std::uint64_t>(vertex.y)) * 0x100000001B3ULL;
+		}
+		EXPECT_EQ(ring.size(), scene.vertices) << "observer (" << scene.observer.x << ", " << scene.observer.y << ")";
+		EXPECT_EQ(hash, scene.hash) << "observer (" << scene.observer.x << ", " << scene.observer.y << ")";
+	}
 }
 
 TEST(OracleSweep, RandomScenesMatchBruteForce) {
