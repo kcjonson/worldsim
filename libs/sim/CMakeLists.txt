@@ -22,6 +22,7 @@ add_library(sim
     ecs/systems/WallCollisionSystem.cpp
     ecs/systems/StaticRectCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
+    ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
     ecs/ClaimIndex.cpp
     ecs/GoalTaskRegistry.cpp
@@ -39,6 +40,7 @@ add_library(sim
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
     vision/GeometryIndex.cpp
+    vision/SeenArea.cpp
 )
 
 target_include_directories(sim

@@ -98,6 +98,7 @@
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/StaticRectCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
@@ -1199,6 +1200,7 @@ namespace {
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
+			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
 			ecsWorld->registerSystem<ecs::StorageGoalSystem>();								// Priority 55 - goals before AI
 			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
@@ -1333,6 +1335,9 @@ namespace {
 			const size_t							crewSize = std::max<size_t>(m_party.size(), 1);
 			const glm::vec2							drop = m_spawnPosition;
 			const ecs::NavigationSystem::GroupSpawn landing = prepareLandingClearing(drop, crewSize, navSystem);
+			// The landing area is seen before the crew exists (player-visibility rule 8), round the same drop and
+			// from the same radius as nav's landing limit.
+			ecsWorld->getSystem<ecs::PlayerVisibilitySystem>().revealLanding(drop, ecs::NavigationSystem::kLandingSightMeters);
 			m_spawnPosition = landing.center;
 
 			// The clearing center is the colony's home anchor. Store it once here, in the one
