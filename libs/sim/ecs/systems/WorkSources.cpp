@@ -72,7 +72,10 @@ namespace ecs {
 			for (uint64_t key : keys) {
 				const KnownWorldEntity* entity = m_memory->getWorldEntity(key);
 				if (rememberedAs(*entity, assets::CapabilityType::Carryable)) {
-					m_carry.push_back({key, entity, glm::distance(m_position, entity->position)});
+					CarrySource& source = m_carry.emplace_back();
+					source.key = key;
+					source.entity = entity;
+					source.distance = glm::distance(m_position, entity->position);
 				}
 			}
 		});

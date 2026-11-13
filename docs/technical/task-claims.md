@@ -1,7 +1,7 @@
 # Task claims
 
-Status: Partly built (integration/colonist-survival). [What is built](#what-is-built) draws the line;
-everything not built is marked Planned where it appears.
+Status: Partly built, on main. [What is built](#what-is-built) draws the line; everything not built is
+marked Planned where it appears.
 Created: 2026-11-09
 Epic: WOR-46 (goal-driven task generation), reservation phase
 
@@ -35,6 +35,8 @@ Built:
 - Suspended records across a need, with the sleep release.
 - The failed-route rule.
 - The evaluators reading claims, with `Reserved` and `NoRoom` rows in the decision trace.
+- One work option per goal, item, and source kind, its sources ranked off the trace and tried in rank
+  order ([Reserved rows, and option dedup](#reserved-rows-and-option-dedup)).
 - Hunger from the pack, bushes, loose piles, and storage boxes, with eater urgency and making room
   to eat.
 
@@ -47,9 +49,8 @@ Not built:
   task takes at selection, which goes with the Craft task when the crafter leaves to eat or sleep.
 - Player-facing output beyond naming a row's worker from that colonist's current task (and the trace's
   `Reserved` rows).
-- The collapse of options to the best source per goal and item before scoring.
 - sim-cli ([Sim CLI](./sim-cli.md)) and its scenarios.
-- The performance benchmarks under [Performance requirements](#performance-requirements).
+- Idle-machine readings of the benchmarks under [Performance requirements](#performance-requirements).
 
 ---
 
@@ -849,19 +850,29 @@ Which of two colonists wins a contested target depends on ECS view order and eac
 re-evaluation timer. Both are deterministic for a given world, spawn order, and command sequence,
 so a headless run repeats exactly. Tests assert that exactly one colonist wins, never which one.
 
-### Reserved rows, and option dedup (planned)
+### Reserved rows, and option dedup
 
-The haul and harvest evaluators emit one option per known matching source per goal, visiting only
-the remembered entries of the defs that give the goal's item (Memory's per-def lists). A source others'
-claims take whole is not offered; instead each (goal, item) shows at most one Reserved row, for the
-nearest such source, and only when no source offered is nearer. The row names the holder.
+The harvest and haul evaluators emit one option per (goal, item, kind), visiting only the remembered
+entries of the defs that give the goal's item (Memory's per-def lists). The kinds are a cut toward an
+item, a construction clear (its footprint's blockers, whatever they yield), the loose piles of an item
+(a haul to storage, a craft fetch, or a build-site fetch), and the lower-priority boxes a storage goal
+pulls an item from. Everything the arbitration compares except the trip and a cut's hysteresis is the
+same for every source of one group, so the sources are ranked off the trace (`WorkGroup`, a heap of
+`RankedSource`) by the score each would have as its own option, and the option shows the best one
+offered.
 
-Planned: before scoring, collapse equivalent available options to the best one per (root, item), the
-nearest available source by trip distance. ONI collapses equivalent undriven fetch chores to the best
-per type for the same reason; it would bound the trace by goals and items rather than by remembered
-sources. It is not built because the selection walks options in order and passes over unreachable
-ones, so collapsing to the nearest before reachability is known would lose the fallback to the next
-source.
+When the shown source fails a selection test that depends on it (regrowing, nowhere to stand, a
+verdict, not connected), the group's next source in rank order takes its place and the option moves
+to where that source ranks among the options not yet tested. The options are tried in the order one
+option per source would be, so a fallback that drops below another goal's source lets that source go
+first. A haul whose deposit leg has no known way fails for every source of its group alike and goes
+NoSource with none of the others tried. With no source left the option shows its first source, as
+Regrowing when one it tried was, else NoSource. Routing is unchanged: the chosen option asks one route
+to its one target, and a route that finds no known way leaves a verdict the next decision passes over.
+
+A source others' claims take whole is not offered; instead each group shows at most one Reserved row,
+for the first such source in rank order, and only when it ranks ahead of every source offered. The row
+names the holder. The trace no longer lists each passed-over source with its own status.
 
 ---
 
@@ -917,14 +928,18 @@ Planned:
 
 ## Performance requirements
 
-The figures below are targets. No benchmark measures them yet; the tests named here count work, not
-time.
+The figures below are targets. Two benchmarks in `libs/sim/ecs/systems/AIDecision.bench.cpp` time the
+parts a decision owns: `BM_ClaimIndexRebuild` rebuilds the claim index for 200 colonists across 300
+goals, each colonist holding a task with claims, and reports the rebuild's mean, p99, and maximum;
+`BM_WorkDecision` times AI updates for colonists that all remember the same trees (100 to 5,000), and
+reports the update's mean, p99, and maximum, the mean per colonist, and the trace's size. No reading
+from an idle machine is recorded yet. The tests named here count work, not time.
 
 - AI update cost (`AIDecisionSystem::update`, mean and p99) shows no regression against `main`
   beyond run-to-run noise in the desert perf view, and in a two-colonist run of scenario 02. Measured
   by the perf capture against `main` on the same machine, on an idle machine.
 - Target: index rebuild under 5% of `AIDecisionSystem::update` with 200 colonists and 300 goals, with
-  no heap allocation in steady state. No benchmark exists. `ClaimIndex` keeps its entries, groups, and
+  no heap allocation in steady state, timed by `BM_ClaimIndexRebuild`. `ClaimIndex` keeps its entries, groups, and
   table across rebuilds, so a warm rebuild allocates only when it grows.
 - No per-goal full-memory scans. Memory keeps each def's keys beside its capability index
   (`worldEntitiesOfDef`, one push per remember, one swap-remove per forget), so a goal visits only
@@ -956,8 +971,8 @@ time.
   slots) does not depend on who asks and is read from the world once per (box, item) per AI update
   (`BoxRoomCache`, stamped with the update, allocation-free when warm); each colonist takes its own
   claim exclusion out of the index on top.
-- Trace size per colonist is bounded today by roots times accepted items times remembered sources of
-  those items; the planned dedup would bound it by roots times accepted items.
+- Trace size per colonist is bounded by roots times accepted items (one option per goal, item, and
+  kind, and at most one Reserved row each), not by remembered sources.
 
 ---
 
@@ -1064,7 +1079,7 @@ Done, each deleted in the same change that replaced it, per the no-legacy rule:
 
 The need-option source selection bugs this spec once assumed fixed (WOR-605: the Hunger option picked
 the nearest harvestable of any kind; WOR-607: an unreachable nearest source gave NoSource instead of
-the next one) are fixed on this branch.
+the next one) are fixed on main.
 
 ---
 

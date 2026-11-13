@@ -1170,14 +1170,18 @@ namespace ecs::test {
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 
 		// The first to decide fetches a pile before it cuts; its fetch covers the box's minimum, so the
-		// second is offered no cut. One cut option stands for both trees.
+		// second is offered no cut. One haul option stands for the three piles and one cut option for both
+		// trees; the second also shows the first's pile, nearest, as the haul's Reserved row.
 		for (EntityID colonist : {lean, full}) {
 			const auto& options = getTrace(colonist)->options;
-			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; }), kPiles);
-			EXPECT_EQ(
-				std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }),
-				colonist == lean ? 1 : 0
-			);
+			const auto	count = [&](TaskType type, std::optional<OptionStatus> status = std::nullopt) {
+				 return std::count_if(options.begin(), options.end(), [&](const EvaluatedOption& o) {
+					 return o.taskType == type && (!status.has_value() || o.status == *status);
+				 });
+			};
+			EXPECT_EQ(count(TaskType::Haul), colonist == lean ? 1 : 2);
+			EXPECT_EQ(count(TaskType::Haul, OptionStatus::Reserved), colonist == lean ? 0 : 1);
+			EXPECT_EQ(count(TaskType::Harvest), colonist == lean ? 1 : 0);
 		}
 		EXPECT_EQ(getTask(lean)->type, TaskType::Haul);
 
@@ -3895,9 +3899,9 @@ namespace ecs::test {
 #endif
 	}
 
-	// A category goal takes every carryable of its category plus the items it names, each pile once
-	// however the goal names it (in its category, named too, or named twice), and visits no other
-	// item. A goal naming one item twice offers each pile of it once too.
+	// A category goal takes every carryable of its category plus the items it names, one option per item
+	// standing for each pile of it once however the goal names it (in its category, named too, or named
+	// twice), and visits no other item. A goal naming one item twice offers each pile of it once too.
 	TEST_F(AIDecisionSystemTest, HaulGoalsOfferEachPileOnce) {
 		auto&	   registry = assets::AssetRegistry::Get();
 		const auto registerItem = [&](const char* name, assets::ItemCategory category) {
@@ -3969,11 +3973,20 @@ namespace ecs::test {
 				 return o.taskType == TaskType::Haul && o.haulGoalId == goal && o.haulItemDefNameId == assets::AssetRegistry::Get().getDefNameId(item);
 			 });
 		};
-		EXPECT_EQ(offered(categoryGoal, "Pellet"), 2) << "in the category and named: each pile once";
+		EXPECT_EQ(offered(categoryGoal, "Pellet"), 1) << "in the category and named: one option";
 		EXPECT_EQ(offered(categoryGoal, "Bread"), 1) << "named twice: one option";
 		EXPECT_EQ(offered(categoryGoal, "Trinket"), 0) << "another category";
-		EXPECT_EQ(offered(namedGoal, "Pellet"), 2) << "named twice: each pile once";
+		EXPECT_EQ(offered(namedGoal, "Pellet"), 1) << "named twice: one option";
 		EXPECT_EQ(offered(namedGoal, "Bread"), 0);
+		const auto sorted = [](std::vector<uint64_t> keys) {
+			std::sort(keys.begin(), keys.end());
+			return keys;
+		};
+		const uint64_t pelletNear = hashWorldEntity({2.0F, 0.0F}, pelletId);
+		const uint64_t pelletFar = hashWorldEntity({3.0F, 0.0F}, pelletId);
+		EXPECT_EQ(sorted(workGroupKeys(categoryGoal)), sorted({pelletNear, pelletFar, hashWorldEntity({0.0F, 2.0F}, breadId)}))
+			<< "each pile once among the options' sources";
+		EXPECT_EQ(sorted(workGroupKeys(namedGoal)), sorted({pelletNear, pelletFar}));
 #ifdef DEVELOPMENT_BUILD
 		EXPECT_EQ(workSourceVisits() - visitsBefore, 2U + 1U) << "each item's piles once, however many goals ask; the trinkets never";
 #endif
@@ -5495,6 +5508,37 @@ namespace ecs::test {
 			EXPECT_EQ(chosen->taskType, TaskType::Harvest) << "decision " << decision;
 			EXPECT_EQ(chosen->harvestYieldDefNameId, registry.getDefNameId("Wood")) << "decision " << decision;
 		}
+	}
+
+	// Two piles for one box, the nearer with a verdict from a route that found no known way to it. The one
+	// haul option ranks the nearer first and, in one decision, falls back to the farther, which is chosen.
+	TEST_F(AIDecisionWallTest, HaulFallsBackPastAPileWithAVerdict) {
+		const uint32_t	stickId = registerHarvestableYielding(assets::AssetRegistry::Get(), "Flora_WallBush", "WallStick").yieldId;
+		const glm::vec2 boxAt{0.0F, -3.0F};
+		const glm::vec2 nearPile{2.0F, 0.0F};
+		const glm::vec2 farPile{-5.0F, 0.0F};
+		makeStockingHarvest(boxAt, "WallStick");
+		const auto colonist = createColonist(kStart);
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, nearPile, stickId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, farPile, stickId, assets::CapabilityType::Carryable);
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh());
+		auto* memory = world->getComponent<Memory>(colonist);
+		const SourceReachMemo::Key now{.connectivityEpoch = nav->connectivityEpoch(), .beliefVersion = memory->beliefVersion};
+		world->getComponent<SourceReachMemo>(colonist)->recordVerdict(hashWorldEntity(nearPile, 0), now, aiTick());
+
+		getTask(colonist)->clear();
+		world->update(kTick);
+
+		const auto& options = getTrace(colonist)->options;
+		EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; }), 1);
+		const auto* selected = getTrace(colonist)->getSelected();
+		ASSERT_NE(selected, nullptr);
+		ASSERT_EQ(selected->taskType, TaskType::Haul);
+		EXPECT_EQ(selected->haulSourceKey, hashWorldEntity(farPile, stickId)) << "the farther pile, in the decision the nearer failed";
+		EXPECT_EQ(workGroupKeys(selected->haulGoalId), (std::vector<uint64_t>{hashWorldEntity(nearPile, stickId), hashWorldEntity(farPile, stickId)}))
+			<< "the nearer pile ranks first";
 	}
 
 	namespace {

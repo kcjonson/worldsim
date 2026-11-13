@@ -41,11 +41,32 @@ namespace ecs {
 		std::optional<T> value;
 	};
 
+	/// What a remembered pile holds for the deciding colonist: the units other colonists' claims take
+	/// off it, and its live count, nullopt when the world can't find it (taken since it was seen, or a
+	/// world with no pile index).
+	struct PileStock {
+		uint32_t				claimed = 0;
+		std::optional<uint32_t> live;
+
+		/// Units it still offers a fetch wanting `wanted`. A pile with no count offers the wanted amount
+		/// while nobody else claims it, so one colonist goes to look and the stale memory is corrected on
+		/// arrival.
+		[[nodiscard]] uint32_t left(uint32_t wanted) const {
+			if (!live.has_value()) {
+				return claimed > 0 ? 0U : wanted;
+			}
+			return *live > claimed ? *live - claimed : 0U;
+		}
+	};
+
 	/// A remembered loose item the registry still calls Carryable.
 	struct CarrySource {
 		uint64_t				key = 0;
 		const KnownWorldEntity* entity = nullptr;
 		float					distance = 0.0F; // from the deciding colonist
+		Lazy<PileStock>			stock;
+		/// Connected to him by meshed ground, to where a route to it ends; verdicts are asked apart.
+		Lazy<bool> connected;
 	};
 
 	/// A remembered harvestable this colonist can cut now.
@@ -94,12 +115,14 @@ namespace ecs {
 		/// Filled on every ask; valid until the next query fills another.
 		[[nodiscard]] std::span<HarvestSource> clearableHarvestables(const FootprintBounds& footprint);
 
-		/// A harvest source by its index in this evaluation's storage: an index stays valid while later
+		/// A source by its index in this evaluation's storage of its kind: an index stays valid while later
 		/// queries fill more, a span does not.
 		[[nodiscard]] HarvestSource& harvest(uint32_t index) { return m_harvest[index]; }
+		[[nodiscard]] CarrySource&	 carry(uint32_t index) { return m_carry[index]; }
 		[[nodiscard]] uint32_t		 indexOf(const HarvestSource& source) const {
 			  return static_cast<uint32_t>(&source - m_harvest.data());
 		}
+		[[nodiscard]] uint32_t indexOf(const CarrySource& source) const { return static_cast<uint32_t>(&source - m_carry.data()); }
 
 #ifdef DEVELOPMENT_BUILD
 		/// Remembered entries placed in a source span since construction. Tests read it to show the

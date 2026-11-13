@@ -75,9 +75,10 @@ struct RootItem {
 	uint32_t item = 0;
 };
 
-/// How a work option's sources are told apart: a cut toward an item, or a construction clear's
-/// blockers, whatever they yield.
-enum class WorkKind : std::uint8_t { Cut, Clear };
+/// How a work option's sources are told apart: a cut toward an item, a construction clear's blockers
+/// (whatever they yield), the loose piles of an item a fetch takes up, or the lower-priority boxes a
+/// storage goal pulls an item from.
+enum class WorkKind : std::uint8_t { Cut, Clear, Pile, Pull };
 
 /// One remembered source of a work group, ranked as its own option would be within the group: its
 /// score, then the option's tiebreak, then its key, a total order.
@@ -85,7 +86,7 @@ struct RankedSource {
 	float	 score = 0.0F;
 	uint64_t tiebreakId = 0;
 	uint64_t key = 0;
-	uint32_t index = 0; // where the source is in WorkSources' harvest storage
+	uint32_t index = 0; // where the source is in its kind's storage: WorkSources' harvest or carry, SharedWork's pulls
 
 	/// `a` ranks below `b`: the heap's order, the best on top.
 	[[nodiscard]] static bool ranksBelow(const RankedSource& a, const RankedSource& b) {
@@ -99,20 +100,26 @@ struct RankedSource {
 	}
 };
 
-/// The sources one work option stands for (a goal's cut or clear), held off the trace. Its candidates
-/// are a heap in AIDecisionSystem's ranked storage, popped to the tail of their range in rank order:
-/// the option shows the best one offered, and the walk takes the next when it fails.
+/// The sources one work option stands for (a goal's cut or clear, or a fetch's piles or pulls of one
+/// item), held off the trace. Its candidates are a heap in AIDecisionSystem's ranked storage, popped to
+/// the tail of their range in rank order: the option shows the best one offered, and the walk takes the
+/// next when it fails.
 struct WorkGroup {
 	WorkKind  kind = WorkKind::Cut;
 	uint64_t  goalId = 0;
-	uint32_t  item = 0; // the cut's yield; 0 for a clear
+	uint32_t  item = 0; // the cut's yield or the fetch's item; 0 for a clear
 	glm::vec2 destination{0.0F, 0.0F};
 	uint32_t  begin = 0;	// its candidates: [begin, end)
 	uint32_t  end = 0;
-	uint32_t  unpopped = 0; // [begin, unpopped) is still the heap; [unpopped, end) popped, the first at end - 1
+	uint32_t  unpopped = 0; // [begin, unpopped) is still the heap; [unpopped, end) popped, the r-th ranked at end - 1 - r
 	uint32_t  first = 0;	// the first candidate offered
 	uint32_t  current = 0;	// the candidate the option shows
 	bool	  triedRegrowing = false;
+	// A fetch's: what the goal still wants (piles) or the box has room for (pulls), what one pickup
+	// lifts now, and whether the colonist gathers for the pile's root.
+	uint32_t quantity = 0;
+	uint32_t room = 0;
+	bool	 gathering = false;
 };
 
 /// What a storage box offers each item before inbound claims are taken out: the headroom in that
@@ -230,6 +237,9 @@ class SharedWork {
 		World& world, const assets::AssetRegistry& registry, ColonyStorageKnowledge& storageKnowledge, const GoalTask& goal, uint32_t item,
 		const assets::AssetDefinition& itemDef, StoragePriority destPriority
 	);
+	/// A pull source by its index in this update's storage, valid while later asks fill more.
+	[[nodiscard]] const PullSource& pullSource(uint32_t index) const { return pullList[index]; }
+	[[nodiscard]] uint32_t			indexOf(const PullSource& source) const { return static_cast<uint32_t>(&source - pullList.data()); }
 
   private:
 	std::vector<Station> stationList;
