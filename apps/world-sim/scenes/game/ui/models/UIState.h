@@ -8,7 +8,6 @@
 //
 // Future extensions:
 // - multiSelection: For box-select of multiple entities
-// - hoveredEntity: For tooltips and hover highlighting
 
 #include "scenes/game/world/selection/SelectionTypes.h"
 
@@ -25,9 +24,6 @@ namespace world_sim {
 		/// Multi-selection for future box-select feature
 		/// When populated, overrides single selection for batch operations
 		std::set<ecs::EntityID> multiSelection;
-
-		/// Currently hovered entity (for tooltips, highlighting)
-		std::optional<ecs::EntityID> hoveredEntity;
 
 		// -------------------------------------------------------------------------
 		// Convenience accessors
