@@ -100,6 +100,22 @@ showing their backs. The side-view SVGs also had their hair on the facing side.
 
 ---
 
+### Cleared bush stays drawn
+
+- [ ] On a fresh Quick Start, give Bob an `AxePrimitive` and blueprint
+  `foundation?pts=20.5,0.5;23.5,0.5;23.5,3.5;20.5,3.5&material=Wood&built=0` (two generated berry
+  bushes stand in it, near (21.5, 1.8) and (22.0, 1.5)). Once `?what=construction` shows the phase
+  past `Clearing`, screenshot at `control?action=camera&x=22&y=2&zoom=8`:
+  - Neither bush is drawn.
+  - After `give?material=Wood&n=18&where=site` and the build, the foundation has no bush on it.
+
+**Why this matters:** bushes and other flora under 1 m are drawn from a per-chunk baked mesh, not
+from the placement index each frame. The clear removed the bush from the index (so nav, vision
+and the site all saw it gone) and the mesh kept drawing it, on top of the finished foundation.
+Systems: `PlacementExecutor::bakeRevisions`, `BakedChunkRenderer`.
+
+---
+
 ## Adding a new regression
 
 When a bug is fixed, add a minimal repro here before closing the ticket:

@@ -114,6 +114,7 @@ namespace assets {
 		// Create or get spatial index for this chunk
 		auto& chunkIndex = m_chunkIndices[context.coord];
 		chunkIndex.clear();
+		m_bakeRevisions.erase(context.coord);
 
 		// Create deterministic RNG from chunk coordinate and world seed
 		uint64_t chunkSeed = context.worldSeed;
@@ -647,6 +648,12 @@ namespace assets {
 
 	void PlacementExecutor::unloadChunk(world::ChunkCoordinate coord) {
 		m_chunkIndices.erase(coord);
+		m_bakeRevisions.erase(coord);
+	}
+
+	const PlacementExecutor::BakeRevisions* PlacementExecutor::bakeRevisions(world::ChunkCoordinate coord) const {
+		const auto it = m_bakeRevisions.find(coord);
+		return it != m_bakeRevisions.end() ? &it->second : nullptr;
 	}
 
 	AsyncChunkPlacementResult
@@ -700,13 +707,16 @@ namespace assets {
 			}
 		}
 
+		// A new index arrives with a bake of its own, so the chunk's bakes start level with it.
 		m_chunkIndices[result.coord] = std::move(result.spatialIndex);
+		m_bakeRevisions.erase(result.coord);
 	}
 
 	void PlacementExecutor::clear() {
 		m_dependencyGraph.clear();
 		m_spawnOrder.clear();
 		m_chunkIndices.clear();
+		m_bakeRevisions.clear();
 		m_regrowthReadyAt.clear();
 		m_regrowthSweepSize = kMinRegrowthSweepSize;
 		m_resourceCounts.clear();
@@ -735,6 +745,9 @@ namespace assets {
 		// The log records the stored position: the match allows 1 mm of slack, and the entry is
 		// how the nav mesh finds the entity's ring.
 		const glm::vec2 stored = found->position;
+		if (!found->isTallOccluder) {
+			++m_bakeRevisions[coord][static_cast<size_t>(subChunkIndexOf(coord, stored))];
+		}
 		it->second.remove(stored, defName);
 		forgetEntityState(stored, defName);
 		m_removals.push_back({coord, stored, defName});

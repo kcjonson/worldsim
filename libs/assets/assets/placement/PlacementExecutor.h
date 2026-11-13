@@ -42,6 +42,7 @@
 // - /docs/technical/procedural-generation.md (algorithm details)
 // - AssetDefinition.h for PlacementRelationship struct
 
+#include "BakedEntityMesh.h"
 #include "DecimeterGrid.h"
 #include "DependencyGraph.h"
 #include "PlacementTypes.h"
@@ -54,6 +55,7 @@
 
 #include <glm/vec2.hpp>
 
+#include <array>
 #include <cstdint>
 #include <functional>
 #include <memory>
@@ -216,6 +218,15 @@ namespace assets {
 		/// show an in-chunk removal. Its one reader takes them every tick, which bounds the list.
 		[[nodiscard]] std::vector<RemovedEntity> takeRemovals() { return std::exchange(m_removals, {}); }
 
+		/// How many baked statics removeEntity has taken out of each bake sub-region of a chunk since
+		/// its index was stored, by sub-region index (subChunkIndexOf). A baked mesh made at another
+		/// count still draws what was removed, so its renderer bakes that sub-region again. Tall
+		/// occluders are drawn live, never baked, and don't count: felling a tree re-bakes nothing.
+		using BakeRevisions = std::array<uint32_t, kSubChunkCount>;
+
+		/// The chunk's bake revisions; null while nothing baked has been removed from it.
+		[[nodiscard]] const BakeRevisions* bakeRevisions(world::ChunkCoordinate coord) const;
+
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
 
@@ -235,6 +246,8 @@ namespace assets {
 		std::unordered_map<world::ChunkCoordinate, SpatialIndex> m_chunkIndices;
 
 		std::vector<RemovedEntity> m_removals;
+
+		std::unordered_map<world::ChunkCoordinate, BakeRevisions> m_bakeRevisions;
 
 		/// One entity's identity for its cooldown and resource pool: its placed position on the 0.1 m
 		/// grid colonist Memory keys it by, and its interned def id. Two bushes of one def in the same tile

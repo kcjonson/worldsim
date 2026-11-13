@@ -648,6 +648,59 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 	EXPECT_FALSE(executor.getResourceCount(neighbour, "BerryBush").has_value());
 }
 
+// A short static is drawn from its chunk's baked mesh, so the renderer has to hear of its removal:
+// the bake revision of its sub-region moves, and that sub-region baked again no longer holds it. A
+// tall occluder is drawn live, so felling one moves nothing.
+TEST(PlacementExecutorTests, RemovingABakedStaticCallsForItsSubRegionToBeBakedAgain) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	const world::ChunkCoordinate coord{0, 0};
+	const glm::vec2				 bush{70.0F, 10.0F};
+	const glm::vec2				 neighbour{100.0F, 20.0F};
+	const glm::vec2				 tree{10.0F, 10.0F};
+	PlacedEntity				 oak{"Oak", tree};
+	oak.isTallOccluder = true;
+	AsyncChunkPlacementResult chunk;
+	chunk.coord = coord;
+	chunk.spatialIndex.insert({"BerryBush", bush});
+	chunk.spatialIndex.insert({"BerryBush", neighbour});
+	chunk.spatialIndex.insert(oak);
+	executor.storeChunkResult(std::move(chunk));
+	EXPECT_EQ(executor.bakeRevisions(coord), nullptr) << "a chunk as stored is level with its bake";
+
+	renderer::TessellatedMesh triangle;
+	triangle.vertices = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}};
+	triangle.indices = {0, 1, 2};
+	const TemplateLookup lookup = [&](const PlacedEntity&) { return &triangle; };
+	const int			 bushRegion = subChunkIndexOf(coord, bush);
+	ASSERT_EQ(subChunkIndexOf(coord, neighbour), bushRegion);
+	ASSERT_NE(subChunkIndexOf(coord, tree), bushRegion);
+	EXPECT_EQ(bakeSubChunkEntities(*executor.getChunkIndex(coord), coord, bushRegion, lookup).floraMesh.entityCount, 2U);
+
+	ASSERT_TRUE(executor.removeEntity(coord, tree, "Oak"));
+	EXPECT_EQ(executor.bakeRevisions(coord), nullptr) << "a felled tree was never in the bake";
+
+	ASSERT_TRUE(executor.removeEntity(coord, bush, "BerryBush"));
+	const PlacementExecutor::BakeRevisions* revisions = executor.bakeRevisions(coord);
+	ASSERT_NE(revisions, nullptr);
+	for (int region = 0; region < kSubChunkCount; ++region) {
+		EXPECT_EQ((*revisions)[static_cast<size_t>(region)], region == bushRegion ? 1U : 0U) << "sub-region " << region;
+	}
+
+	const BakedSubChunkCPUData rebaked = bakeSubChunkEntities(*executor.getChunkIndex(coord), coord, bushRegion, lookup);
+	EXPECT_EQ(rebaked.floraMesh.entityCount, 1U) << "only the neighbour is left to draw";
+	ASSERT_EQ(rebaked.floraMesh.vertices.size(), 3U);
+	EXPECT_FLOAT_EQ(rebaked.floraMesh.vertices[0].position.x, neighbour.x);
+	EXPECT_FLOAT_EQ(rebaked.floraMesh.vertices[0].position.y, neighbour.y);
+
+	executor.unloadChunk(coord);
+	EXPECT_EQ(executor.bakeRevisions(coord), nullptr) << "a reloaded chunk starts level with its new bake";
+}
+
 // ============================================================================
 // Placement golden
 // ============================================================================

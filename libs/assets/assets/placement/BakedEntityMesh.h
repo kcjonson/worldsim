@@ -14,6 +14,7 @@
 #include <math/Types.h>
 #include <vector/Tessellator.h>
 
+#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -78,10 +79,27 @@ struct BakedChunkCPUData {
 /// leave it out of the bake. Must be safe to call from the thread running the bake.
 using TemplateLookup = std::function<const renderer::TessellatedMesh*(const assets::PlacedEntity&)>;
 
+/// The sub-region of chunk `coord` a static at `position` is baked into.
+[[nodiscard]] inline int subChunkIndexOf(world::ChunkCoordinate coord, glm::vec2 position) {
+	const world::WorldPosition origin = coord.origin();
+	const int subX = std::clamp(static_cast<int>((position.x - origin.x) / kSubChunkWorldSize), 0, kSubChunkGridSize - 1);
+	const int subY = std::clamp(static_cast<int>((position.y - origin.y) / kSubChunkWorldSize), 0, kSubChunkGridSize - 1);
+	return subY * kSubChunkGridSize + subX;
+}
+
 /// Transform placed entities into world-space sub-chunk vertex arrays.
 [[nodiscard]] BakedChunkCPUData bakeChunkEntities(
 	const std::vector<const assets::PlacedEntity*>& entities,
 	world::ChunkCoordinate coord,
+	const TemplateLookup& getTemplate
+);
+
+/// One sub-region of a chunk baked again from what its index holds now: the re-bake after a
+/// static in it was removed (PlacementExecutor::bakeRevisions), a sixty-fourth of the chunk's.
+[[nodiscard]] BakedSubChunkCPUData bakeSubChunkEntities(
+	const assets::SpatialIndex& index,
+	world::ChunkCoordinate coord,
+	int subIndex,
 	const TemplateLookup& getTemplate
 );
 

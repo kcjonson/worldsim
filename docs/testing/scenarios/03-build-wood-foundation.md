@@ -67,7 +67,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 2. The berry bush on the footprint is cleared too: it disappears after one harvest (it doesn't
    regrow in place), even when Bob's arms are already full of wood, and no berries are delivered
-   to the site:
+   to the site. Use a bush the world generated, not a spawned one, and look at the screen
+   (`control?action=camera&x=<bush x>&y=<bush y>&zoom=8`, then a screenshot): the bush is no
+   longer drawn once the phase leaves `Clearing`, and none is drawn on the built foundation:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"

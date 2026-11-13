@@ -26,13 +26,54 @@ namespace worldview {
 			chunkOrigin.x, chunkOrigin.y, chunkOrigin.x + world::kChunkWorldSize, chunkOrigin.y + world::kChunkWorldSize
 		);
 
-		auto cpuData = assets::bakeChunkEntities(entities, coord, [this](const assets::PlacedEntity& entity) -> const renderer::TessellatedMesh* {
+		auto cpuData = assets::bakeChunkEntities(entities, coord, templateLookup());
+		uploadBakedChunk(coord, std::move(cpuData), frameCounter);
+
+		// Baked from the index as it stands, so level with every removal so far
+		if (const auto* revisions = executor.bakeRevisions(coord)) {
+			auto& subChunks = m_bakedChunkCache[coord].subChunks;
+			for (int subIndex = 0; subIndex < assets::kSubChunkCount; ++subIndex) {
+				subChunks[subIndex].revision = (*revisions)[subIndex];
+			}
+		}
+	}
+
+	assets::TemplateLookup BakedChunkRenderer::templateLookup() {
+		return [this](const assets::PlacedEntity& entity) -> const renderer::TessellatedMesh* {
 			if (assets::isGroundcoverDef(entity.defName)) {
 				return nullptr; // groundcover renders via the instanced path, not baking
 			}
 			return m_templateCache.get(entity.templateId);
-		});
-		uploadBakedChunk(coord, std::move(cpuData), frameCounter);
+		};
+	}
+
+	void BakedChunkRenderer::rebakeEditedSubChunks(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord) {
+		const auto* revisions = executor.bakeRevisions(coord);
+		if (revisions == nullptr) {
+			return;
+		}
+		const auto	cacheIt = m_bakedChunkCache.find(coord);
+		const auto* index = executor.getChunkIndex(coord);
+		if (cacheIt == m_bakedChunkCache.end() || index == nullptr) {
+			return;
+		}
+		// A worker bake still uploading would overwrite a sub-region baked again now: wait for it
+		if (std::ranges::any_of(m_pendingUploads, [&](const PendingUpload& pending) { return pending.coord == coord; })) {
+			return;
+		}
+
+		auto& cache = cacheIt->second;
+		for (int subIndex = 0; subIndex < assets::kSubChunkCount; ++subIndex) {
+			auto& subChunk = cache.subChunks[subIndex];
+			if (subChunk.revision == (*revisions)[subIndex]) {
+				continue;
+			}
+			auto cpu = assets::bakeSubChunkEntities(*index, coord, subIndex, templateLookup());
+			cache.totalEntityCount = cache.totalEntityCount - subChunk.floraMesh.entityCount + cpu.floraMesh.entityCount;
+			subChunk.floraMesh = {}; // a sub-region left empty keeps no buffers
+			uploadSubChunk(cache, cpu, subIndex);
+			subChunk.revision = (*revisions)[subIndex];
+		}
 	}
 
 	size_t BakedChunkRenderer::uploadSubChunk(BakedChunkData& bakedData, assets::BakedSubChunkCPUData& cpu, int subIndex) {

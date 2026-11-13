@@ -49,11 +49,13 @@ namespace worldview {
 		// Integrate baked meshes: budgeted upload of worker-baked chunks (capped
 		// bytes per frame), then a synchronous re-bake only for processed chunks
 		// whose baked mesh was LRU-evicted and later revisited (new chunks arrive
-		// via the queue).
+		// via the queue), and of the sub-regions a baked static was removed from.
 		baked.processPendingUploads();
 		for (const auto& coord : processedChunks) {
 			if (baked.needsBake(coord)) {
 				baked.buildBakedChunkMesh(executor, coord, frameCounter);
+			} else {
+				baked.rebakeEditedSubChunks(executor, coord);
 			}
 		}
 

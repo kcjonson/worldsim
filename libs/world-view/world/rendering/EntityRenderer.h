@@ -42,10 +42,6 @@ class EntityRenderer {
 	EntityRenderer(EntityRenderer&&) = delete;
 	EntityRenderer& operator=(EntityRenderer&&) = delete;
 
-	/// Release a chunk's baked render mesh so it re-bakes (e.g. after entities
-	/// were removed from the placement index). Delegates to the baked sub-renderer.
-	void releaseBakedChunkCache(const world::ChunkCoordinate& coord) { baked.releaseBakedChunkCache(coord); }
-
 	/// Render entities from processed chunks
 	/// @param executor PlacementExecutor containing entity data
 	/// @param processedChunks Set of chunk coordinates that have been processed
