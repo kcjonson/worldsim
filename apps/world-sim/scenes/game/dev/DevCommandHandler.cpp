@@ -43,8 +43,11 @@
 
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
+#include <world/chunk/TerrainPolygonQuery.h>
 
 #include <primitives/Primitives.h>
+
+#include <predicates/Predicates.h>
 
 #include <worldgen/data/Biome.h>
 #include <worldgen/data/GeneratedWorld.h>
@@ -89,6 +92,7 @@ namespace world_sim {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
+		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
 
 		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
@@ -634,6 +638,65 @@ namespace world_sim {
 			 << ",\"extension\":" << outcome.extension << ",\"entity\":" << outcome.entity
 			 << ",\"area\":" << outcome.areaSquareMeters << "}";
 		return json.str();
+	}
+
+	app::DevResponse DevCommandHandler::devGround(const app::DevRequest& cmd) {
+		// Shore farther than this is reported as none: the probe is for points at a bank.
+		constexpr double kShoreSearchMm = 32000.0;
+		const auto kindName = [](world::TerrainRingKind kind) {
+			switch (kind) {
+				case world::TerrainRingKind::Waterline:
+					return "Waterline";
+				case world::TerrainRingKind::Channel:
+					return "Channel";
+				case world::TerrainRingKind::Pond:
+					return "Pond";
+			}
+			return "Unknown";
+		};
+
+		std::ostringstream out;
+		out << "{\"points\":[";
+		bool first = true;
+		for (const Foundation::Vec2& p : parsePointList(param(cmd, "pts"))) {
+			const glm::vec2 meters{p.x, p.y};
+			out << (first ? "" : ",") << "{\"x\":" << p.x << ",\"y\":" << p.y;
+			first = false;
+			if (m_ctx.navigation != nullptr) {
+				out << ",\"onMesh\":" << (m_ctx.navigation->isOnMesh(meters) ? "true" : "false") << ",\"valid\":"
+					<< (m_ctx.navigation->isValidPosition(meters) ? "true" : "false") << ",\"buildable\":"
+					<< (m_ctx.navigation->isPointBuildable(meters) ? "true" : "false");
+			}
+			const world::Chunk* chunk = m_ctx.chunks != nullptr ? m_ctx.chunks->getChunk(world::worldToChunk({p.x, p.y})) : nullptr;
+			if (chunk == nullptr || !chunk->isReady()) {
+				out << ",\"chunk\":false}";
+				continue;
+			}
+			const geometry::Vec2i64			   mm{static_cast<std::int64_t>(std::llround(static_cast<double>(p.x) * 1000.0)),
+										  static_cast<std::int64_t>(std::llround(static_cast<double>(p.y) * 1000.0))};
+			const world::ChunkTerrainPolygons& polygons = chunk->terrainPolygons();
+			const world::TerrainPolygonQuery   query(polygons);
+			const double					   toWaterMm = query.distanceToWaterMm(mm, kShoreSearchMm);
+			out << ",\"chunk\":true,\"inWater\":" << (query.isInsideWater(mm) ? "true" : "false") << ",\"toWaterM\":";
+			if (std::isfinite(toWaterMm)) {
+				out << toWaterMm / 1000.0;
+			} else {
+				out << "null";
+			}
+			out << ",\"rings\":[";
+			bool firstRing = true;
+			for (const world::TerrainRing& ring : polygons.rings) {
+				if (geometry::pointInPolygon(mm, ring.ring) == geometry::PointInPolygon::Outside) {
+					continue;
+				}
+				out << (firstRing ? "" : ",") << "{\"kind\":\"" << kindName(ring.kind) << "\",\"blocksMovement\":"
+					<< (ring.blocksMovement ? "true" : "false") << ",\"meanHalfWidthM\":" << ring.meanHalfWidthM << "}";
+				firstRing = false;
+			}
+			out << "]}";
+		}
+		out << "]}";
+		return app::DevResponse{.body = out.str()};
 	}
 
 	app::DevResponse DevCommandHandler::devFlora(const app::DevRequest& cmd) {
