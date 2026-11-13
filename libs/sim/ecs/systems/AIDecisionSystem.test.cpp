@@ -204,6 +204,23 @@ namespace ecs::test {
 			return world->getSystem<AIDecisionSystem>().m_colonyOrigin;
 		}
 
+		/// The keys of the sources goal `goalId`'s work option stands for, best ranked first, as the last
+		/// colonist to decide left them.
+		std::vector<uint64_t> workGroupKeys(uint64_t goalId) {
+			const auto& ai = world->getSystem<AIDecisionSystem>();
+			std::vector<uint64_t> keys;
+			for (const WorkGroup& group : ai.m_workGroups) {
+				if (group.goalId == goalId) {
+					std::vector<RankedSource> ranked(ai.m_ranked.begin() + group.begin, ai.m_ranked.begin() + group.end);
+					std::sort(ranked.begin(), ranked.end(), [](const RankedSource& a, const RankedSource& b) { return RankedSource::ranksBelow(b, a); });
+					for (const RankedSource& source : ranked) {
+						keys.push_back(source.key);
+					}
+				}
+			}
+			return keys;
+		}
+
 		/// The AI update count verdicts age on, as failRoute stamps them.
 		std::uint64_t aiTick() { return world->getSystem<AIDecisionSystem>().m_tick; }
 
@@ -1153,13 +1170,13 @@ namespace ecs::test {
 		EXPECT_EQ(task->type, TaskType::FulfillNeed);
 
 		// The first to decide fetches a pile before it cuts; its fetch covers the box's minimum, so the
-		// second is offered no cut.
+		// second is offered no cut. One cut option stands for both trees.
 		for (EntityID colonist : {lean, full}) {
 			const auto& options = getTrace(colonist)->options;
 			EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; }), kPiles);
 			EXPECT_EQ(
 				std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }),
-				colonist == lean ? kTrees : 0
+				colonist == lean ? 1 : 0
 			);
 		}
 		EXPECT_EQ(getTask(lean)->type, TaskType::Haul);
@@ -2686,8 +2703,7 @@ namespace ecs::test {
 	}
 
 	// A remembered bush on its regrowth cooldown has nothing to give. A hungry colonist passes it over
-	// for a ready bush farther off, and a work order's Harvest does the same, showing the skipped
-	// source as regrowing on the trace.
+	// for a ready bush farther off, and a work order's Harvest does the same.
 	TEST_F(AIDecisionSystemTest, RegrowingSourceIsPassedOverForAReadyOne) {
 		auto&			registry = assets::AssetRegistry::Get();
 		const uint32_t	berryBushId = registerBerryBush(registry);
@@ -2740,11 +2756,6 @@ namespace ecs::test {
 		EXPECT_EQ(*hunger->targetPosition, readyBerries) << "hunger passes over the nearer, regrowing bush";
 		EXPECT_EQ(hunger->status, OptionStatus::Available);
 
-		const auto* skipped = findOption(*trace, [&](const EvaluatedOption& o) {
-			return o.taskType == TaskType::Harvest && o.targetPosition == regrowingSticks;
-		});
-		ASSERT_NE(skipped, nullptr);
-		EXPECT_EQ(skipped->status, OptionStatus::Regrowing) << "the trace says why the nearer bush was skipped";
 		const auto* selected = trace->getSelected();
 		ASSERT_NE(selected, nullptr);
 		EXPECT_EQ(selected->taskType, TaskType::Harvest);
@@ -3804,7 +3815,7 @@ namespace ecs::test {
 		clear.destinationPosition = {20.0F, 0.0F};
 		clear.clearFootprint = FootprintBounds{{16.0F, -4.0F}, {24.0F, 4.0F}};
 		clear.status = GoalStatus::Available;
-		GoalTaskRegistry::Get().createGoal(std::move(clear));
+		const uint64_t clearGoal = GoalTaskRegistry::Get().createGoal(std::move(clear));
 
 		world->update(0.016F);
 
@@ -3812,12 +3823,10 @@ namespace ecs::test {
 		ASSERT_NE(task, nullptr);
 		ASSERT_EQ(task->type, TaskType::Harvest);
 		EXPECT_EQ(task->harvestTargetKey, hashWorldEntity(inside, bushId)) << "only a blocker inside the footprint serves a clear";
-		std::vector<uint64_t> offered;
-		for (const auto& option : getTrace(colonist)->options) {
-			if (option.taskType == TaskType::Harvest) {
-				offered.push_back(option.harvestTargetKey);
-			}
-		}
+		const auto& options = getTrace(colonist)->options;
+		EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Harvest; }), 1)
+			<< "one option stands for the clear";
+		std::vector<uint64_t> offered = workGroupKeys(clearGoal);
 		std::sort(offered.begin(), offered.end());
 		std::vector<uint64_t> expected{hashWorldEntity(inside, bushId), hashWorldEntity(treeInside, treeId)};
 		std::sort(expected.begin(), expected.end());
@@ -3859,22 +3868,26 @@ namespace ecs::test {
 			addKnownEntity(colonist, {-3.0F - static_cast<float>(i), 0.0F}, bushId, assets::CapabilityType::Harvestable);
 		}
 
-		makeStockingHarvest({0.0F, 0.0F}, "Wood");
+		const uint64_t woodGoal = makeStockingHarvest({0.0F, 0.0F}, "Wood");
 
 #ifdef DEVELOPMENT_BUILD
 		const uint64_t visitsBefore = workSourceVisits();
 #endif
 		world->update(0.016F);
 
-		std::vector<uint32_t> cut;
+		int cuts = 0;
 		for (const auto& option : getTrace(colonist)->options) {
 			if (option.taskType == TaskType::Harvest) {
 				EXPECT_EQ(option.harvestYieldDefNameId, woodId);
-				cut.push_back(*option.targetDefNameId);
+				++cuts;
 			}
 		}
+		EXPECT_EQ(cuts, 1) << "one option stands for every source of the goal";
+		std::vector<uint64_t> cut = workGroupKeys(woodGoal);
 		std::sort(cut.begin(), cut.end());
-		std::vector<uint32_t> expected{oakId, pineId, pineId};
+		std::vector<uint64_t> expected{
+			hashWorldEntity({3.0F, 0.0F}, oakId), hashWorldEntity({0.0F, 3.0F}, pineId), hashWorldEntity({0.0F, -3.0F}, pineId)
+		};
 		std::sort(expected.begin(), expected.end());
 		EXPECT_EQ(cut, expected) << "the oak and both pines, no bush";
 #ifdef DEVELOPMENT_BUILD
@@ -5203,6 +5216,51 @@ namespace ecs::test {
 		const auto* gather = gatherFoodOption(*trace);
 		ASSERT_NE(gather, nullptr);
 		EXPECT_EQ(gather->status, OptionStatus::NoSource);
+	}
+
+	// One cut's nearest tree is across the river and its next is on his side, farther than the one tree of
+	// another cut in the same tier. One decision passes the first cut over the far bank to its near tree,
+	// which now ranks below the other cut's tree: that tree is chosen, and the first cut shows its near
+	// tree, not NoSource. Without the other cut's tree the same decision takes the near tree.
+	TEST_F(AIDecisionRiverTest, CutFallsBackPastAnUnreachableTreeInOneDecision) {
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t oakId = registerHarvestableYielding(registry, "Flora_RiverOak", "RiverWood").harvestableId;
+		const uint32_t bushId = registerHarvestableYielding(registry, "Flora_RiverBush", "RiverStick").harvestableId;
+		// Both boxes where he stands, so each trip is twice the tree's distance: 48, 50, and 56 m.
+		const uint64_t	woodGoal = makeStockingHarvest(kStart, "RiverWood");
+		const uint64_t	stickGoal = makeStockingHarvest(kStart, "RiverStick");
+		const glm::vec2 across = northBank(0.0F);
+		const glm::vec2 stickBush{25.0F, 0.0F};
+		const glm::vec2 nearOak{-28.0F, 0.0F};
+		const auto		colonist = makeColonistBetweenRivers();
+		addKnownEntity(colonist, across, oakId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, nearOak, oakId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, stickBush, bushId, assets::CapabilityType::Harvestable);
+
+		world->update(kTick);
+
+		EXPECT_EQ(workGroupKeys(woodGoal), (std::vector<uint64_t>{hashWorldEntity(across, oakId), hashWorldEntity(nearOak, oakId)}))
+			<< "the far bank ranks first";
+		const auto* selected = getTrace(colonist)->getSelected();
+		ASSERT_NE(selected, nullptr);
+		EXPECT_EQ(selected->harvestGoalId, stickGoal);
+		EXPECT_EQ(selected->harvestTargetKey, hashWorldEntity(stickBush, bushId)) << "the other cut's tree outranks the near oak";
+		const auto* wood = findOption(*getTrace(colonist), [&](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Harvest && o.harvestGoalId == woodGoal;
+		});
+		ASSERT_NE(wood, nullptr);
+		EXPECT_EQ(wood->status, OptionStatus::Available);
+		EXPECT_EQ(wood->harvestTargetKey, hashWorldEntity(nearOak, oakId)) << "the cut fell back past the far bank";
+
+		world->getComponent<Memory>(colonist)->forgetWorldEntity(stickBush, bushId);
+		getTask(colonist)->clear();
+		world->getComponent<Position>(colonist)->value = kStart;
+		world->update(kTick);
+
+		selected = getTrace(colonist)->getSelected();
+		ASSERT_NE(selected, nullptr);
+		EXPECT_EQ(selected->harvestGoalId, woodGoal);
+		EXPECT_EQ(selected->harvestTargetKey, hashWorldEntity(nearOak, oakId)) << "the near oak, in the same decision as the far bank failed";
 	}
 
 	// A berry bush standing in a wall the colonist knows is out of reach (a known wall blocks unless the

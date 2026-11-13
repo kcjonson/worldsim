@@ -75,6 +75,46 @@ struct RootItem {
 	uint32_t item = 0;
 };
 
+/// How a work option's sources are told apart: a cut toward an item, or a construction clear's
+/// blockers, whatever they yield.
+enum class WorkKind : std::uint8_t { Cut, Clear };
+
+/// One remembered source of a work group, ranked as its own option would be within the group: its
+/// score, then the option's tiebreak, then its key, a total order.
+struct RankedSource {
+	float	 score = 0.0F;
+	uint64_t tiebreakId = 0;
+	uint64_t key = 0;
+	uint32_t index = 0; // where the source is in WorkSources' harvest storage
+
+	/// `a` ranks below `b`: the heap's order, the best on top.
+	[[nodiscard]] static bool ranksBelow(const RankedSource& a, const RankedSource& b) {
+		if (a.score != b.score) {
+			return a.score < b.score;
+		}
+		if (a.tiebreakId != b.tiebreakId) {
+			return a.tiebreakId > b.tiebreakId;
+		}
+		return a.key > b.key;
+	}
+};
+
+/// The sources one work option stands for (a goal's cut or clear), held off the trace. Its candidates
+/// are a heap in AIDecisionSystem's ranked storage, popped to the tail of their range in rank order:
+/// the option shows the best one offered, and the walk takes the next when it fails.
+struct WorkGroup {
+	WorkKind  kind = WorkKind::Cut;
+	uint64_t  goalId = 0;
+	uint32_t  item = 0; // the cut's yield; 0 for a clear
+	glm::vec2 destination{0.0F, 0.0F};
+	uint32_t  begin = 0;	// its candidates: [begin, end)
+	uint32_t  end = 0;
+	uint32_t  unpopped = 0; // [begin, unpopped) is still the heap; [unpopped, end) popped, the first at end - 1
+	uint32_t  first = 0;	// the first candidate offered
+	uint32_t  current = 0;	// the candidate the option shows
+	bool	  triedRegrowing = false;
+};
+
 /// What a storage box offers each item before inbound claims are taken out: the headroom in that
 /// item's partial stacks, its stack size, and the box's free slots. None of it depends on who asks, so
 /// each (box, item) is read from the world once per update; every colonist then takes its own claim
@@ -472,6 +512,14 @@ private:
 
 	/// The deciding colonist's remembered work sources, reused across colonists
 	WorkSources m_workSources;
+
+	/// The deciding colonist's work groups and their ranked candidates, reused across colonists
+	std::vector<WorkGroup>	  m_workGroups;
+	std::vector<RankedSource> m_ranked;
+
+	/// The group a work option stands for; nullptr for an option that stands for one source. A linear
+	/// look over the decision's groups.
+	[[nodiscard]] WorkGroup* workGroupOf(const EvaluatedOption& option);
 
 	/// The storage boxes the colony knows, worked out at most once per update
 	ColonyStorageKnowledge m_colonyStorage;

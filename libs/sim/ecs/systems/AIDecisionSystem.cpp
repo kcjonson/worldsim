@@ -352,6 +352,11 @@ namespace ecs {
 			}
 		}
 
+		/// The in-progress margin of an option that matches the current task, else 0.
+		[[nodiscard]] int16_t hysteresisBonusOf(const EvaluatedOption& option, const Task& currentTask, uint32_t currentHaulItemId) {
+			return isOptionCurrentTask(option, currentTask, currentHaulItemId) ? assets::PriorityConfig::Get().getInProgressBonus() : int16_t{0};
+		}
+
 		/// Within a tier, where an option stands in a gathering trip (EvaluatedOption::gatheringRank).
 		constexpr int8_t kRankDemotedCut = -1; // a fresh cut for a root and item a known pile also serves
 		constexpr int8_t kRankFurtherCut = 1;  // a cut toward the root the colonist gathers for
@@ -423,7 +428,7 @@ namespace ecs {
 			// Hysteresis margin: stick the in-progress option so a same-tier challenger must beat it
 			// by more than this to win (prevents thrashing). Only matters within a tier. Assigned, not
 			// only set: an option the walk moves to another source loses it.
-			option.hysteresisBonus = isOptionCurrentTask(option, currentTask, currentHaulItemId) ? priorityConfig.getInProgressBonus() : int16_t{0};
+			option.hysteresisBonus = hysteresisBonusOf(option, currentTask, currentHaulItemId);
 
 			// Storage-priority within-tier bias: a storage-stocking option (a loose haul, a pull from a
 			// lower-priority box, a stocking carry-in, or a stocking cut) is ordered within tier 6 by its
@@ -464,6 +469,82 @@ namespace ecs {
 
 			// Compose the within-tier score from the breakdown fields (kept for the UI display).
 			option.score = option.computeScore();
+		}
+
+		/// populatePriorityBonuses with one deciding colonist's context.
+		struct OptionPriority {
+			World&							   world;
+			BoxRoomCache&					   boxes;
+			const assets::AssetRegistry&	   registry;
+			const Task&						   currentTask;
+			uint32_t						   currentHaulItemId = 0;
+			float							   currentTime = 0.0F;
+			const AIDecisionSystem::BaseTiers& baseTiers;
+
+			void operator()(EvaluatedOption& option) const {
+				populatePriorityBonuses(world, boxes, registry, option, currentTask, currentHaulItemId, currentTime, baseTiers);
+			}
+			[[nodiscard]] int16_t hysteresisOf(const EvaluatedOption& option) const {
+				return hysteresisBonusOf(option, currentTask, currentHaulItemId);
+			}
+		};
+
+		/// The trip a cut makes: to its source, then on with the yield to where the goal wants it. Scored by
+		/// the whole trip, so the source nearest where the yield is needed wins, as a fetch's source does;
+		/// otherwise a colonist chops the tree nearest itself even when one sits beside the station.
+		[[nodiscard]] float cutTrip(const HarvestSource& source, const WorkGroup& group) {
+			return source.distance + glm::distance(source.entity->position, group.destination);
+		}
+
+		/// Two equidistant sources of one goal resolve by (goal, source), not by memory's hash order.
+		[[nodiscard]] uint64_t cutTiebreak(const WorkGroup& group, uint64_t key) {
+			return group.goalId ^ (key << 1);
+		}
+
+		/// A cut option's source fields, from one of its group's candidates.
+		void fillCut(EvaluatedOption& option, const HarvestSource& source, const WorkGroup& group) {
+			option.targetPosition = source.entity->position;
+			option.targetDefNameId = source.entity->defNameId;
+			option.distanceToTarget = cutTrip(source, group);
+			option.targetReachable = false;
+			option.harvestTargetKey = source.key; // the Memory key, not an ECS id
+			option.harvestYieldDefNameId = source.yieldDefNameId;
+			option.tiebreakId = cutTiebreak(group, source.key);
+		}
+
+		/// The colonist whose Use claim holds the source: Use is exclusive, so two colonists never cut one plant.
+		[[nodiscard]] EntityID holderOf(HarvestSource& source, const ClaimIndex& claims, ClaimExclusion self) {
+			return source.holder.get([&] {
+				const auto held = claims.useHolder({.kind = TargetKind::WorldKey, .key = source.key}, self);
+				return held.has_value() ? held->colonist : kInvalidEntity;
+			});
+		}
+
+		/// A candidate passed over because another colonist's claim holds it.
+		struct HeldCandidate {
+			uint32_t at = 0; // its place in the ranked storage
+			EntityID holder = kInvalidEntity;
+		};
+
+		/// Pop the group's next candidate no other colonist's claim holds, passing over those one does; the
+		/// first passed over is kept in `firstHeld` when it is asked for and holds none yet. The candidate's
+		/// place in `ranked`, or nullopt when none is left.
+		[[nodiscard]] std::optional<uint32_t> popOffered(
+			WorkGroup& group, std::vector<RankedSource>& ranked, WorkSources& sources, const ClaimIndex& claims, ClaimExclusion self,
+			std::optional<HeldCandidate>* firstHeld = nullptr
+		) {
+			while (group.unpopped > group.begin) {
+				std::pop_heap(ranked.begin() + group.begin, ranked.begin() + group.unpopped, RankedSource::ranksBelow);
+				const uint32_t at = --group.unpopped;
+				const EntityID holder = holderOf(sources.harvest(ranked[at].index), claims, self);
+				if (holder == kInvalidEntity) {
+					return at;
+				}
+				if (firstHeld != nullptr && !firstHeld->has_value()) {
+					*firstHeld = HeldCandidate{.at = at, .holder = holder};
+				}
+			}
+			return std::nullopt;
 		}
 
 		/// How much a root still wants, as seen by one deciding colonist: the root's remaining need net
@@ -1053,16 +1134,20 @@ namespace ecs {
 		/// @param sources The colonist's remembered harvestables, by yield
 		/// @param supply What each root still wants, for this colonist
 		/// @param pickupRoom What a pickup of the yield would lift now
-		/// @param position Colonist position
 		/// @param skills The colonist's skill bonuses
+		/// @param priority The colonist's arbitration key, which ranks a goal's sources
+		/// @param groups Each option's group of sources, held off the trace
+		/// @param ranked The groups' candidates
 		/// @param trace Output decision trace
 		void evaluateHarvestOptions(
 			WorkSources&				 sources,
 			const RootSupply&			 supply,
 			PickupRoom&					 pickupRoom,
-			const glm::vec2&			 position,
 			const WorkSkills&			 skills,
 			std::span<const RootItem>	 offeredPiles,
+			const OptionPriority&		 priority,
+			std::vector<WorkGroup>&		 groups,
+			std::vector<RankedSource>&	 ranked,
 			DecisionTrace&				 trace
 		) {
 			auto& goalRegistry = GoalTaskRegistry::Get();
@@ -1148,58 +1233,39 @@ namespace ecs {
 				});
 				const int8_t rank = gathering ? kRankFurtherCut : pileServes ? kRankDemotedCut : int8_t{0};
 
-				// A clear is served by what blocks its footprint, the same test the build gate applies; any
-				// other goal by the harvestables that yield its item.
-				// Score by the full provisioning round-trip (colonist -> harvestable -> destination), not just
-				// colonist -> harvestable, so the source nearest where the yield is needed (the crafting
-				// station / storage box) wins. Matches the haul-fetch source scoring above; without it a
-				// colonist chops the tree nearest itself even when one sits beside the station it provisions.
-				const auto tripOf = [&](const HarvestSource& source) {
-					return source.distance + glm::distance(source.entity->position, goal->destinationPosition);
-				};
-				const auto pushHarvest = [&](const HarvestSource& source, EntityID reservedBy) {
-					const KnownWorldEntity& knownEntity = *source.entity;
-					const uint64_t			key = source.key;
-					const uint32_t			yieldDefNameId = source.yieldDefNameId;
-					const float				tripDistance = tripOf(source);
+				// One option stands for the goal's sources (a clear's blockers inside its footprint, the same
+				// test the build gate applies, or the harvestables that yield its item), ranked as each would
+				// rank as its own option: everything the arbitration compares but the trip and the hysteresis
+				// is the goal's, worked out once on the option itself.
+				EvaluatedOption cut;
+				cut.taskType = TaskType::Harvest;
+				cut.needType = NeedType::Count;
+				cut.needValue = 100.0F;
+				cut.threshold = 0.0F;
+				cut.harvestGoalId = goal->id;
+				cut.harvestYieldDefNameId = goal->yieldDefNameId;
+				cut.servesActiveWorkOrder = servesWorkOrder;
+				cut.servesStorageStocking = servesStocking;
+				cut.gatheringRank = rank;
+				cut.status = OptionStatus::Available;
+				applySkill(cut, skills.farming);
+				cut.reason = clearing ? "Clearing {} from build site" : "Cutting {} for {}";
+				priority(cut);
 
-					EvaluatedOption harvestOption;
-					harvestOption.taskType = TaskType::Harvest;
-					harvestOption.needType = NeedType::Count;
-					harvestOption.needValue = 100.0F;
-					harvestOption.threshold = 0.0F;
-					harvestOption.targetPosition = knownEntity.position;
-					harvestOption.targetDefNameId = knownEntity.defNameId;
-					harvestOption.distanceToTarget = tripDistance;
-					harvestOption.harvestTargetKey = key; // the Memory key, not an ECS id
-					harvestOption.harvestGoalId = goal->id;
-					harvestOption.harvestYieldDefNameId = yieldDefNameId;
-					// Tiebreak on (goal, target) so two equidistant harvestables feeding the same
-					// goal still resolve deterministically, not by memory's hash order.
-					harvestOption.tiebreakId = goal->id ^ (key << 1);
-					harvestOption.servesActiveWorkOrder = servesWorkOrder;
-					harvestOption.servesStorageStocking = servesStocking;
-					harvestOption.gatheringRank = rank;
-					harvestOption.status = reservedBy == kInvalidEntity ? OptionStatus::Available : OptionStatus::Reserved;
-					harvestOption.reservedBy = reservedBy;
+				WorkGroup group;
+				group.kind = clearing ? WorkKind::Clear : WorkKind::Cut;
+				group.goalId = goal->id;
+				group.item = clearing ? 0U : goal->yieldDefNameId;
+				group.destination = goal->destinationPosition;
+				group.begin = static_cast<uint32_t>(ranked.size());
 
-					// Harvesting uses Farming skill
-					applySkill(harvestOption, skills.farming);
-
-					harvestOption.reason = clearing ? "Clearing {} from build site" : "Cutting {} for {}";
-
-					trace.options.push_back(harvestOption);
-				};
-
-				// A source another colonist is cutting is its alone: Use is exclusive, so two colonists never
-				// cut one plant. Several may still clear one site, each its own plant.
 				// A top-up cut lands only what still fits: one is cut only while the room left takes the most
 				// the source gives, or all the root still wants beyond what is carried, so no yield is lost to
 				// a trip with too little room for it. A cut for a box, the first of a trip included, also needs
 				// that much room in the box, or the surplus would only be carried about.
-				NearestReserved<HarvestSource> reserved;
-				bool						   tooLittleRoom = false;
-				bool						   tooLittleBoxRoom = false;
+				const auto& priorityConfig = assets::PriorityConfig::Get();
+				bool		tooLittleRoom = false;
+				bool		tooLittleBoxRoom = false;
 				for (HarvestSource& source : candidates) {
 					const uint32_t fullCut = std::min(source.def->capabilities.harvestable->amountMax, want);
 					if (gathering && room < fullCut) {
@@ -1210,28 +1276,48 @@ namespace ecs {
 						tooLittleBoxRoom = true;
 						continue;
 					}
-					const float	   trip = tripOf(source);
-					const EntityID holder = source.holder.get([&] {
-						const auto held = supply.claims.useHolder({.kind = TargetKind::WorldKey, .key = source.key}, supply.self);
-						return held.has_value() ? held->colonist : kInvalidEntity;
-					});
-					if (holder != kInvalidEntity) {
-						reserved.reserved(trip, source, holder);
-						continue;
-					}
-					reserved.offered(trip);
-					pushHarvest(source, kInvalidEntity);
+					cut.harvestTargetKey = source.key;
+					ranked.push_back(
+						{.score = EvaluatedOption::scoreOf(
+							 priorityConfig.calculateDistanceFactor(cutTrip(source, group)), cut.skillBonus, cut.taskAgeBonus,
+							 priority.hysteresisOf(cut), cut.storagePriorityBias
+						 ),
+						 .tiebreakId = cutTiebreak(group, source.key),
+						 .key = source.key,
+						 .index = sources.indexOf(source)}
+					);
 				}
-				if (reserved.shown()) {
-					pushHarvest(*reserved.source, reserved.holder);
-				}
-				if (!std::isfinite(reserved.offeredTrip) && !reserved.source.has_value()) {
+				group.end = static_cast<uint32_t>(ranked.size());
+				group.unpopped = group.end;
+				if (group.begin == group.end) {
 					if (tooLittleRoom) {
 						pushNoRoom("Cutting for {1} (too little room left for another cut)");
 					} else if (tooLittleBoxRoom) {
 						pushNoRoom("Cutting for {1} (too little room in the box for another cut)");
 					}
+					return;
 				}
+				std::make_heap(ranked.begin() + group.begin, ranked.begin() + group.end, RankedSource::ranksBelow);
+
+				// A source another colonist is cutting is its alone: Use is exclusive, so two colonists never
+				// cut one plant. Several may still clear one site, each its own plant. One held ahead of
+				// every source offered is shown as the goal's Reserved row.
+				std::optional<HeldCandidate>  held;
+				const std::optional<uint32_t> offered = popOffered(group, ranked, sources, supply.claims, supply.self, &held);
+				if (held.has_value()) {
+					EvaluatedOption reserved = cut;
+					fillCut(reserved, sources.harvest(ranked[held->at].index), group);
+					reserved.status = OptionStatus::Reserved;
+					reserved.reservedBy = held->holder;
+					trace.options.push_back(std::move(reserved));
+				}
+				if (offered.has_value()) {
+					group.first = *offered;
+					group.current = *offered;
+					fillCut(cut, sources.harvest(ranked[*offered].index), group);
+					trace.options.push_back(std::move(cut));
+				}
+				groups.push_back(group);
 			});
 		}
 
@@ -2245,6 +2331,22 @@ namespace ecs {
 		// the placed obstacle it lies in. nullopt: no known way, or nowhere to stand. Ground with a label is
 		// clear, so the target is its own end; a target with none is in water, off meshed ground, or in a
 		// placed obstacle, and only the last is asked for a stand point. Each target once a decision.
+		// A work group's candidate keeps its answer on its own entry (HarvestSource), so it asks the core;
+		// every other target is kept in m_routeEnds.
+		const auto routeEndOf = [&](const glm::vec2& target) -> std::optional<glm::vec2> {
+			if (!haveMesh) {
+				return target;
+			}
+			const geometry::nav::ComponentLabel label = m_navSystem->componentAt(target);
+			if (label != geometry::nav::kNoComponent) {
+				return label == hisLabel ? std::optional<glm::vec2>(target) : std::nullopt;
+			}
+			if (hisLabel != geometry::nav::kNoComponent && m_navSystem->isOnMesh(target)) {
+				const std::optional<glm::vec2> stand = m_navSystem->standPointBeside(target, position.value, agentRadius);
+				return stand.has_value() && connectedTo(*stand) ? stand : std::nullopt;
+			}
+			return std::nullopt;
+		};
 		m_routeEnds.clear();
 		const auto routeEnd = [&](const glm::vec2& target) -> std::optional<glm::vec2> {
 			if (!haveMesh) {
@@ -2255,14 +2357,7 @@ namespace ecs {
 					return end;
 				}
 			}
-			std::optional<glm::vec2>				end;
-			const geometry::nav::ComponentLabel label = m_navSystem->componentAt(target);
-			if (label != geometry::nav::kNoComponent) {
-				end = label == hisLabel ? std::optional<glm::vec2>(target) : std::nullopt;
-			} else if (hisLabel != geometry::nav::kNoComponent && m_navSystem->isOnMesh(target)) {
-				const std::optional<glm::vec2> stand = m_navSystem->standPointBeside(target, position.value, agentRadius);
-				end = stand.has_value() && connectedTo(*stand) ? stand : std::nullopt;
-			}
+			const std::optional<glm::vec2> end = routeEndOf(target);
 			m_routeEnds.emplace_back(target, end);
 			return end;
 		};
@@ -2779,14 +2874,27 @@ namespace ecs {
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
 		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles, m_boxRooms};
+		// Goal createdAt is always 0, so a goal's age is m_elapsedTime, monotonic, which is all the
+		// within-tier age term needs.
+		const OptionPriority priority{
+			.world = *world,
+			.boxes = m_boxRooms,
+			.registry = m_registry,
+			.currentTask = currentTask,
+			.currentHaulItemId = currentTask.type == TaskType::Haul ? currentTask.haulItemDefNameId : 0U,
+			.currentTime = m_elapsedTime,
+			.baseTiers = m_baseTiers,
+		};
 		m_workSources.begin(memory, m_registry, inventory, position.value);
+		m_workGroups.clear();
+		m_ranked.clear();
 		m_offeredPiles.clear();
 		const PileReach pileReach{.memo = &sourceReach, .connected = canGetTo};
 		evaluateHaulOptions(
 			world, m_registry, m_workSources, m_colonyStorage, m_sharedWork, supply, pickupRoom, inventory, position.value, pileReach, m_offeredPiles, trace
 		);
 		evaluateCarryInOptions(supply, m_carried, position.value, trace);
-		evaluateHarvestOptions(m_workSources, supply, pickupRoom, position.value, workSkills, m_offeredPiles, trace);
+		evaluateHarvestOptions(m_workSources, supply, pickupRoom, workSkills, m_offeredPiles, priority, m_workGroups, m_ranked, trace);
 
 		// Build staged construction blueprints (goal-driven)
 		evaluateBuildOptions(m_sharedWork.buildSites(*world), position.value, workSkills, trace);
@@ -2854,11 +2962,9 @@ namespace ecs {
 		}
 
 		// Populate the (tier, score) key for all options: classify tier, compute the within-tier
-		// score (distance factor, skill, age, hysteresis). Goal createdAt is always 0, so a goal's age is
-		// m_elapsedTime, monotonic, which is all the within-tier age term needs.
-		const uint32_t currentHaulItemId = currentTask.type == TaskType::Haul ? currentTask.haulItemDefNameId : 0U;
+		// score (distance factor, skill, age, hysteresis).
 		for (auto& option : trace.options) {
-			populatePriorityBonuses(*world, m_boxRooms, m_registry, option, currentTask, currentHaulItemId, m_elapsedTime, m_baseTiers);
+			priority(option);
 		}
 
 		// Sort by the lexicographic (tier asc, score desc, tiebreakId asc) key. Tier is categorical
@@ -2869,6 +2975,28 @@ namespace ecs {
 		// encodes the full ordering.
 		std::sort(trace.options.begin(), trace.options.end(), EvaluatedOption::higherPriority);
 
+		// A work option stands for its group's sources (WorkGroup). When one fails a test that depends on
+		// the source, the group's next source no other colonist holds takes its place, the option moves to
+		// where that source ranks among the options not yet tested, and the same index is tested again: the
+		// options are tried in the order one option per source would be. With none left, the option shows
+		// its first source, Regrowing when any it tried was, else NoSource. True when there is a next source.
+		const auto advanceWorkOption = [&](WorkGroup& group, std::size_t at) {
+			EvaluatedOption&			  option = trace.options[at];
+			const std::optional<uint32_t> next = popOffered(group, m_ranked, m_workSources, m_claims, self);
+			fillCut(option, m_workSources.harvest(m_ranked[next.value_or(group.first)].index), group);
+			if (!next.has_value()) {
+				option.status = group.triedRegrowing ? OptionStatus::Regrowing : OptionStatus::NoSource;
+				priority(option);
+				return false;
+			}
+			group.current = *next;
+			priority(option);
+			const auto untested = trace.options.begin() + static_cast<std::ptrdiff_t>(at) + 1;
+			const auto ranksAt = std::upper_bound(untested, trace.options.end(), option, EvaluatedOption::higherPriority);
+			std::rotate(trace.options.begin() + static_cast<std::ptrdiff_t>(at), untested, ranksAt);
+			return true;
+		};
+
 		// Select the first actionable option the colonist may be sent to, scanning in priority order. The
 		// test is cheap, a verdict lookup and a label check: false means no known way (off meshed ground,
 		// or a different component -- e.g. a reed or water across a river with no land bridge, or a
@@ -2876,80 +3004,99 @@ namespace ecs {
 		// to the best option, not the whole list. A higher-priority option with no known way drops to
 		// NoSource so the colonist won't commit to it and freeze at the bank; Wander is never filtered,
 		// so there is always a fallback that keeps it moving and exploring for new sources. No mesh yet
-		// -> the test passes, so startup / outdoor beelining is unaffected.
-		for (auto& option : trace.options) {
+		// -> the test passes, so startup / outdoor beelining is unaffected. A cut's source answers each
+		// test once a decision, whichever group asks.
+		const auto canTake = [&](std::uint64_t sourceKey, const glm::vec2& target) { return !hasVerdict(sourceKey, target) && canGetTo(target); };
+		std::size_t at = 0;
+		while (at < trace.options.size()) {
+			EvaluatedOption& option = trace.options[at];
 			if (option.status != OptionStatus::Available) {
+				++at;
 				continue;
 			}
-			const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
-			// A harvest of a regrowing source would pay nothing at completion: pass it over for the next
-			// option, and it is chosen again once ready. A clear removes its source whatever its state.
-			// Asked before the snap moves the target off the source's own position.
-			if (option.taskType == TaskType::Harvest && needsTarget && option.targetDefNameId.has_value() &&
-				sourceRegrowingUntil(*option.targetDefNameId, *option.targetPosition).has_value()) {
-				const auto* goal = GoalTaskRegistry::Get().getGoal(option.harvestGoalId);
-				if (goal == nullptr || !goal->clearFootprint.has_value()) {
-					option.status = OptionStatus::Regrowing;
-					continue;
+			WorkGroup* const	 group = workGroupOf(option);
+			HarvestSource* const cut = group != nullptr ? &m_workSources.harvest(m_ranked[group->current].index) : nullptr;
+			const OptionStatus	 tested = [&] {
+				const bool needsTarget = option.taskType != TaskType::Wander && option.targetPosition.has_value();
+				// A harvest of a regrowing source would pay nothing at completion: pass it over for the next
+				// source, and it is chosen again once ready. A clear removes its source whatever its state.
+				// Asked before the snap moves the target off the source's own position.
+				if (cut != nullptr && group->kind == WorkKind::Cut && cut->regrowing.get([&] {
+						return sourceRegrowingUntil(cut->entity->defNameId, cut->entity->position).has_value();
+					})) {
+					return OptionStatus::Regrowing;
 				}
-			}
-			// Snap only the task types whose action looks its target up by entity/footprint and so
-			// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
-			// Deconstruct. Their stored target is a CENTER that can sit inside a tree's collider or a
-			// wall, which no route ends in. A harvest stands just outside the target's collider on
-			// the colonist's side, read from the placement data so it is the same spot on camera and
-			// off; Build and Deconstruct take the nearest walkable point. Any other target (a pile, a
-			// need source, a box, a station) keeps its own position on the option and the task, and is
-			// moved to a stand point beside the placed obstacle it lies in when its route is asked
-			// (requestRoute); with no stand point there, it is no source.
-			const bool snapEligible = option.taskType == TaskType::Harvest ||
-									  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
-			if (haveMesh && needsTarget && snapEligible) {
-				// nullopt means the target is off meshed ground, or every spot round it is water or a
-				// wall: drop the option to NoSource so the colonist prefers a reachable nearby source and
-				// never commits to a target it would hold on forever. Harvest finds its tree by the
-				// memory key, not by where it stands.
-				// The harvest he is on keeps the stand point it chose: worked out again from where he stands
-				// as he rounds an obstacle, it would move and read as another task. One decided before any
-				// mesh holds the centre itself, which no route ends in once the collider is meshed.
-				const glm::vec2 centre	   = option.targetPosition.value();
-				const bool		sameHarvest = option.taskType == TaskType::Harvest && currentTask.type == TaskType::Harvest &&
-										  currentTask.harvestTargetKey != 0 && currentTask.harvestTargetKey == option.harvestTargetKey &&
-										  currentTask.targetPosition != centre;
-				const auto snapped = sameHarvest							  ? std::optional<glm::vec2>(currentTask.targetPosition)
-									 : option.taskType == TaskType::Harvest ? standPointFor(centre, position.value, agentRadius, true)
-																			: m_navSystem->nearestPathablePoint(centre);
-				if (!snapped.has_value()) {
-					option.status = OptionStatus::NoSource; // nowhere to stand: don't commit
-					continue;
+				// Snap only the task types whose action looks its target up by entity/footprint and so
+				// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
+				// Deconstruct. Their stored target is a CENTER that can sit inside a tree's collider or a
+				// wall, which no route ends in. A harvest stands just outside the target's collider on
+				// the colonist's side, read from the placement data so it is the same spot on camera and
+				// off; Build and Deconstruct take the nearest walkable point. Any other target (a pile, a
+				// need source, a box, a station) keeps its own position on the option and the task, and is
+				// moved to a stand point beside the placed obstacle it lies in when its route is asked
+				// (requestRoute); with no stand point there, it is no source.
+				const bool snapEligible = option.taskType == TaskType::Harvest ||
+										  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
+				if (haveMesh && needsTarget && snapEligible) {
+					// nullopt means the target is off meshed ground, or every spot round it is water or a
+					// wall: the colonist prefers a reachable nearby source and never commits to a target it
+					// would hold on forever. Harvest finds its tree by the memory key, not by where it stands.
+					// The harvest he is on keeps the stand point it chose: worked out again from where he stands
+					// as he rounds an obstacle, it would move and read as another task. One decided before any
+					// mesh holds the centre itself, which no route ends in once the collider is meshed.
+					const glm::vec2 centre = option.targetPosition.value();
+					const auto		snapped = cut != nullptr ? cut->standPoint.get([&] {
+						 const bool sameHarvest = currentTask.type == TaskType::Harvest && currentTask.harvestTargetKey != 0 &&
+												  currentTask.harvestTargetKey == cut->key && currentTask.targetPosition != centre;
+						 return sameHarvest ? std::optional<glm::vec2>(currentTask.targetPosition)
+											: standPointFor(centre, position.value, agentRadius, true);
+					 })
+															 : m_navSystem->nearestPathablePoint(centre);
+					if (!snapped.has_value()) {
+						return OptionStatus::NoSource; // nowhere to stand: don't commit
+					}
+					option.targetPosition  = snapped;
+					option.targetReachable = false; // a moved target is tested where it now is
 				}
-				option.targetPosition  = snapped;
-				option.targetReachable = false; // a moved target is tested where it now is
+				// A target is offered when no route found no known way to it and he is connected to where a route
+				// to it ends (beside the placed obstacle it lies in, if it does); a need source the builder
+				// already admitted (targetReachable), and one where he stands, aren't tested again. The route
+				// asked for the chosen option settles the rest.
+				if (needsTarget && !option.targetReachable && *option.targetPosition != position.value) {
+					const glm::vec2 target = *option.targetPosition;
+					const bool		takes = cut != nullptr ? cut->reachable.get([&] {
+						  return !hasVerdict(cut->key, target) && routeEndOf(target).has_value();
+					  })
+													   : canTake(option.sourceKey, target);
+					if (!takes) {
+						return OptionStatus::NoSource; // no known way: skip it rather than freeze on it
+					}
+				}
+				// A haul is chosen only when its deposit leg can route too.
+				if (option.taskType == TaskType::Haul && option.haulTargetPosition.has_value() && option.haulTargetPosition != option.targetPosition &&
+					!canTake(0, *option.haulTargetPosition)) {
+					return OptionStatus::NoSource;
+				}
+				// Picking up furniture whose spot he can't reach would only carry it off and set it down again.
+				if (option.taskType == TaskType::PlacePackaged && option.placeTargetPosition.has_value() &&
+					option.placeTargetPosition != option.targetPosition && !canTake(0, *option.placeTargetPosition)) {
+					return OptionStatus::NoSource;
+				}
+				return OptionStatus::Selected;
+			}();
+			if (tested == OptionStatus::Selected) {
+				option.status = OptionStatus::Selected;
+				break;
 			}
-			// A target is offered when no route found no known way to it and he is connected to where a route
-			// to it ends (beside the placed obstacle it lies in, if it does); a need source the builder
-			// already admitted (targetReachable), and one where he stands, aren't tested again. The route
-			// asked for the chosen option settles the rest.
-			const auto canTake = [&](std::uint64_t sourceKey, const glm::vec2& target) { return !hasVerdict(sourceKey, target) && canGetTo(target); };
-			if (needsTarget && !option.targetReachable && *option.targetPosition != position.value &&
-				!canTake(option.taskType == TaskType::Harvest ? option.harvestTargetKey : option.sourceKey, *option.targetPosition)) {
-				option.status = OptionStatus::NoSource; // no known way: skip it rather than freeze on it
+			if (group == nullptr) {
+				option.status = tested;
+				++at;
 				continue;
 			}
-			// A haul is chosen only when its deposit leg can route too.
-			if (option.taskType == TaskType::Haul && option.haulTargetPosition.has_value() && option.haulTargetPosition != option.targetPosition &&
-				!canTake(0, *option.haulTargetPosition)) {
-				option.status = OptionStatus::NoSource;
-				continue;
+			group->triedRegrowing = group->triedRegrowing || tested == OptionStatus::Regrowing;
+			if (!advanceWorkOption(*group, at)) {
+				++at;
 			}
-			// Picking up furniture whose spot he can't reach would only carry it off and set it down again.
-			if (option.taskType == TaskType::PlacePackaged && option.placeTargetPosition.has_value() &&
-				option.placeTargetPosition != option.targetPosition && !canTake(0, *option.placeTargetPosition)) {
-				option.status = OptionStatus::NoSource;
-				continue;
-			}
-			option.status = OptionStatus::Selected;
-			break;
 		}
 
 		// Stamp the evaluation time so the inspector can detect a changed trace: any monotonic stamp
@@ -3334,6 +3481,19 @@ namespace ecs {
 		if (m_claimsBuilt && failed != wasFailed) {
 			m_claims.append(entity, task);
 		}
+	}
+
+	WorkGroup* AIDecisionSystem::workGroupOf(const EvaluatedOption& option) {
+		// A Harvest goal has one group, its cut or its clear, so its id names it.
+		if (option.taskType != TaskType::Harvest) {
+			return nullptr;
+		}
+		for (WorkGroup& group : m_workGroups) {
+			if (group.goalId == option.harvestGoalId) {
+				return &group;
+			}
+		}
+		return nullptr;
 	}
 
 	std::optional<double> AIDecisionSystem::sourceRegrowingUntil(uint32_t defNameId, glm::vec2 position) const {

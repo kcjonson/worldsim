@@ -58,6 +58,12 @@ namespace ecs {
 		float						   distance = 0.0F; // from the deciding colonist
 		/// The other colonist whose Use claim holds it (ClaimIndex::useHolder), kInvalidEntity for none.
 		Lazy<EntityID> holder;
+		/// Regrowing from an earlier cut, with nothing to give now.
+		Lazy<bool> regrowing;
+		/// Where he stands to cut it; nullopt: nowhere.
+		Lazy<std::optional<glm::vec2>> standPoint;
+		/// He may be sent to its stand point: no verdict, and connected to it.
+		Lazy<bool> reachable;
 	};
 
 	class WorkSources {
@@ -87,6 +93,13 @@ namespace ecs {
 		/// removes its blocker and drops what the pack can't take, so a full pack never stalls a site.
 		/// Filled on every ask; valid until the next query fills another.
 		[[nodiscard]] std::span<HarvestSource> clearableHarvestables(const FootprintBounds& footprint);
+
+		/// A harvest source by its index in this evaluation's storage: an index stays valid while later
+		/// queries fill more, a span does not.
+		[[nodiscard]] HarvestSource& harvest(uint32_t index) { return m_harvest[index]; }
+		[[nodiscard]] uint32_t		 indexOf(const HarvestSource& source) const {
+			  return static_cast<uint32_t>(&source - m_harvest.data());
+		}
 
 #ifdef DEVELOPMENT_BUILD
 		/// Remembered entries placed in a source span since construction. Tests read it to show the
