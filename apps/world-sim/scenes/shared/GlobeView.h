@@ -15,6 +15,7 @@
 #include <planet-view/PlanetRenderer.h>
 #include <worldgen/data/GeneratedWorld.h>
 
+#include <CoordinateSystem/CoordinateSystem.h>
 #include <graphics/Rect.h>
 #include <math/Types.h>
 #include <threading/TaskPool.h>
@@ -60,9 +61,10 @@ class GlobeView {
 	void panCamera(float dYaw, float dPitch) { camera.nudge(dYaw, dPitch); }
 
 	// Render the globe into `rect` (logical UI coordinates, top-left origin;
-	// may extend past the viewport — the framebuffer clips). `alpha` fades the
-	// disc; around it the blit is transparent, so the scene backdrop shows.
-	void render(const Foundation::Rect& rect, float logicalW, float logicalH, float alpha = 1.0F);
+	// may extend past the viewport — the framebuffer clips) on the window
+	// `window`. `alpha` fades the disc; around it the blit is transparent, so
+	// the scene backdrop shows.
+	void render(const Foundation::Rect& rect, const Renderer::Viewport& window, float alpha = 1.0F);
 
 	// Orbit drag / wheel zoom within rect, from a ui pointer event at its screen
 	// position. Right-click cycles color mode when cycleOnRightClick. Returns

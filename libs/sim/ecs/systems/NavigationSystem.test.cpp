@@ -5591,6 +5591,43 @@ namespace {
 		return chunks.get();
 	}
 
+	// One creek along y = `alongY`, across every chunk, narrower than
+	// TerrainPolygonBuilder::kFordableWidthM, so fordable along its whole length.
+	class CreekAcrossSampler : public world::IWorldSampler {
+	  public:
+		CreekAcrossSampler(double alongY, float halfWidthMeters) : alongY(alongY), halfWidthMeters(halfWidthMeters) {}
+
+		[[nodiscard]] world::ChunkSampleResult sampleChunk(world::ChunkCoordinate) const override {
+			world::ChunkSampleResult r = world::makeUniformChunkSampleResult(world::BiomeWeights::single(world::Biome::TemperateGrassland), 1.0F);
+			r.riverSegments.push_back(
+				{.x0 = -4096.0, .y0 = alongY, .x1 = 4096.0, .y1 = alongY, .halfWidth0 = halfWidthMeters, .halfWidth1 = halfWidthMeters, .s0 = 0.0, .s1 = 8192.0}
+			);
+			return r;
+		}
+		[[nodiscard]] float	   sampleElevation(world::WorldPosition) const override { return 1.0F; }
+		[[nodiscard]] uint64_t getWorldSeed() const override { return kWorldSeed; }
+
+	  private:
+		double alongY;
+		float  halfWidthMeters;
+	};
+
+	// A creek 0.8 m wide along y = 256 m.
+	world::ChunkManager* creekAcrossChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks =
+			readyChunks(std::make_unique<CreekAcrossSampler>(256.0, 0.4F), {256.0F, 256.0F}, 0);
+		return chunks.get();
+	}
+
+	// A creek 0.2 m wide along y = 256.25 m: narrower than kFootprintSampleStepMm, and between the
+	// half-metre lines a footprint with whole-metre corners would be probed along.
+	constexpr float kThinCreekY = 256.25F;
+	world::ChunkManager* thinCreekChunks() {
+		static const std::unique_ptr<world::ChunkManager> chunks =
+			readyChunks(std::make_unique<CreekAcrossSampler>(static_cast<double>(kThinCreekY), 0.1F), {256.0F, 256.0F}, 0);
+		return chunks.get();
+	}
+
 	// Obstacles on the sides of a square 6 m across round `centre`, one a metre; `gapAt` leaves out the
 	// east side's obstacle that many metres north of the centre (none when it is outside -2..2).
 	std::vector<glm::vec2> obstacleSquare(glm::vec2 centre, int gapAt = 99) {
@@ -5647,6 +5684,61 @@ TEST_F(NavigationSystemTest, ConnectedIsTheSameLabelOnMeshedGround) {
 	ASSERT_FALSE(sys.isValidPosition({100.0F, 256.0F})) << "the river is in";
 	EXPECT_FALSE(sys.connected(south, north)) << "no meshed ground crosses the river";
 	EXPECT_TRUE(sys.connected(south, {300.0F, 100.0F}));
+}
+
+// A fordable creek is water a mover wades across and nothing is built on: it is in the mesh without
+// blocking, and the footprint check refuses a footprint that touches it.
+TEST_F(NavigationSystemTest, FordableCreekIsWalkableAndNotBuildable) {
+	registerObstacle("Test_NavFordObstacle", 0.2F);
+	const glm::vec2 inCreek{100.0F, 256.0F};
+	const glm::vec2 underObstacle{110.0F, 256.0F};
+	WalkRig			rig(inCreek, creekAcrossChunks());
+	placeObstacles(rig.executor, rig.processed, "Test_NavFordObstacle", {underObstacle});
+	settle(rig.nav);
+	const glm::vec2 south{100.0F, 250.0F};
+	const glm::vec2 north{100.0F, 262.0F};
+
+	EXPECT_TRUE(rig.nav.isValidPosition(inCreek)) << "a mover stands in the creek";
+	EXPECT_TRUE(rig.nav.connected(south, north));
+	const std::optional<std::vector<glm::vec2>> route = routeBetween(rig.nav, south, north);
+	ASSERT_TRUE(route.has_value());
+	float length = 0.0F;
+	for (std::size_t k = 1; k < route->size(); ++k) {
+		length += glm::distance((*route)[k - 1], (*route)[k]);
+	}
+	EXPECT_LT(length, 12.5F) << "wading straight across, not around";
+
+	const std::vector<glm::vec2> across{{98.0F, 254.0F}, {102.0F, 254.0F}, {102.0F, 258.0F}, {98.0F, 258.0F}};
+	const std::vector<glm::vec2> beside{{98.0F, 244.0F}, {102.0F, 244.0F}, {102.0F, 248.0F}, {98.0F, 248.0F}};
+	EXPECT_TRUE(rig.nav.isAreaWalkable(across)) << "walkable all the way over";
+	EXPECT_FALSE(rig.nav.isAreaBuildable(across)) << "a footprint across the creek is refused";
+	EXPECT_FALSE(rig.nav.isPointBuildable(inCreek));
+	EXPECT_TRUE(rig.nav.isAreaBuildable(beside));
+	EXPECT_TRUE(rig.nav.isPointBuildable(south));
+
+	ASSERT_FALSE(rig.nav.isValidPosition(underObstacle)) << "the obstacle is in";
+	EXPECT_FALSE(rig.nav.isPointBuildable(underObstacle)) << "a creek under a placed obstacle is still a creek";
+}
+
+// The footprint check reads the mesh exactly, so a creek too narrow for any sampling pitch to be sure
+// of still refuses a footprint it crosses, wherever it crosses it.
+TEST_F(NavigationSystemTest, FootprintAcrossACreekNarrowerThanTheSampleStepIsRefused) {
+	const glm::vec2 inCreek{100.0F, kThinCreekY};
+	WalkRig			rig(inCreek, thinCreekChunks());
+	settle(rig.nav);
+	ASSERT_TRUE(rig.nav.isValidPosition(inCreek));
+	ASSERT_FALSE(rig.nav.isPointBuildable(inCreek)) << "the creek is in the mesh";
+	for (const float half : {0.0F, 0.25F, 0.5F, 0.75F}) {
+		for (const glm::vec2 corner : {glm::vec2{98.0F, 254.0F + half}, glm::vec2{98.0F + half, 254.0F}}) {
+			const std::vector<glm::vec2> across{corner, corner + glm::vec2{4.0F, 0.0F}, corner + glm::vec2{4.0F, 4.0F}, corner + glm::vec2{0.0F, 4.0F}};
+			EXPECT_FALSE(rig.nav.isAreaBuildable(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
+			EXPECT_TRUE(rig.nav.isAreaWalkable(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
+		}
+	}
+	const std::vector<glm::vec2> beside{{98.0F, 250.0F}, {102.0F, 250.0F}, {102.0F, 254.0F}, {98.0F, 254.0F}};
+	EXPECT_TRUE(rig.nav.isAreaBuildable(beside));
+	const std::vector<glm::vec2> diagonal{{100.0F, 253.0F}, {103.0F, 256.0F}, {100.0F, 259.0F}, {97.0F, 256.0F}};
+	EXPECT_FALSE(rig.nav.isAreaBuildable(diagonal)) << "a footprint turned 45 degrees";
 }
 
 // The pair that defines the contract: through a gap narrower than a colonist, connected is true (zero

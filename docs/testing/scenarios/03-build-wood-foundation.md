@@ -146,5 +146,5 @@ value at the time of freeze. Cross-check against the harvest-reachability regres
 The footprint need not be a perfect rectangle; the `pts` param accepts any polygon as
 semicolon-separated `x,y` pairs. A simple `FX0,FY0;FX1,FY0;FX1,FY1;FX0,FY1` rectangle works.
 
-On-water footprints (or footprints that straddle water) are refused. See the on-water placement
-regression in [../regressions.md](../regressions.md).
+On-water footprints (or footprints that straddle water, a narrow stream included) are refused.
+See the on-water placement regression in [../regressions.md](../regressions.md).

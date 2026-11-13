@@ -1031,11 +1031,8 @@ namespace {
 			// Render placement ghost preview (if in placing mode)
 			m_placementSystem->render(w, h);
 
-			// World/UI draw-order barrier: flush all world-space drawing before the
-			// UI submits. Batched groups only z-sort within one flush, so this keeps
-			// the world zIndex space (previews ~900, overlays) and the UI zIndex
-			// space (panels 0, dialogs 500, menus 1000) independent — no world
-			// primitive can ever sort above the UI.
+			// Submit the world's batched draws now so the scene's GPU timer span ends after them;
+			// the ui's draw order comes from SceneStack's sort barrier, not from this flush.
 			Renderer::Primitives::flush();
 
 			m_gpuTimer.end();

@@ -44,8 +44,12 @@
 
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/ChunkManager.h>
+#include <world/chunk/TerrainPolygonQuery.h>
 
 #include <primitives/Primitives.h>
+
+#include <polygon/Polygon.h>
+#include <predicates/Predicates.h>
 
 #include <worldgen/data/Biome.h>
 #include <worldgen/data/GeneratedWorld.h>
@@ -91,6 +95,7 @@ namespace world_sim {
 			return app::DevResponse{.body = devFoundationEdit(cmd)};
 		}));
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
+		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
 		registrations.push_back(server.route("visibility", [this](const app::DevRequest& cmd) {
 			return app::DevResponse{.body = visibilityJson(cmd)};
@@ -648,6 +653,85 @@ namespace world_sim {
 			 << ",\"extension\":" << outcome.extension << ",\"entity\":" << outcome.entity
 			 << ",\"area\":" << outcome.areaSquareMeters << "}";
 		return json.str();
+	}
+
+	app::DevResponse DevCommandHandler::devGround(const app::DevRequest& cmd) {
+		// Shore farther than this from a point is not looked for: toWaterM is then null.
+		constexpr double kShoreSearchMm = 32000.0;
+		// Far past any world this game makes, and small enough that a point in mm fits an int64.
+		constexpr float kMaxCoordinateMeters = 1.0e9F;
+		const auto		reject = [](const std::string& message) {
+			 LOG_WARNING(Game, "[DevAPI] ground: %s", message.c_str());
+			 return app::DevResponse{.status = 400, .body = "{\"error\":\"ground: " + jsonEscape(message) + "\"}"};
+		};
+		const auto kindName = [](world::TerrainRingKind kind) {
+			switch (kind) {
+				case world::TerrainRingKind::Waterline:
+					return "Waterline";
+				case world::TerrainRingKind::Channel:
+					return "Channel";
+				case world::TerrainRingKind::Pond:
+					return "Pond";
+			}
+			return "Unknown";
+		};
+		const auto flag = [](bool value) { return value ? "true" : "false"; };
+
+		if (m_ctx.navigation == nullptr || m_ctx.chunks == nullptr) {
+			return reject("no nav system or chunk manager is wired");
+		}
+		const std::vector<Foundation::Vec2> points = parsePointList(param(cmd, "pts"));
+		if (points.empty()) {
+			return reject("pts needs at least one 'x,y' pair");
+		}
+		for (const Foundation::Vec2& point : points) {
+			if (!std::isfinite(point.x) || !std::isfinite(point.y) || std::abs(point.x) > kMaxCoordinateMeters ||
+				std::abs(point.y) > kMaxCoordinateMeters) {
+				return reject("a point is not finite or is out of range");
+			}
+		}
+
+		std::ostringstream out;
+		out << std::setprecision(std::numeric_limits<float>::max_digits10) << "{\"points\":[";
+		bool first = true;
+		for (const Foundation::Vec2& point : points) {
+			const glm::vec2 meters{point.x, point.y};
+			out << (first ? "" : ",") << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"onMesh\":" << flag(m_ctx.navigation->isOnMesh(meters))
+				<< ",\"valid\":" << flag(m_ctx.navigation->isValidPosition(meters)) << ",\"buildable\":"
+				<< flag(m_ctx.navigation->isPointBuildable(meters));
+			first = false;
+			const world::Chunk* chunk = m_ctx.chunks->getChunk(world::worldToChunk({point.x, point.y}));
+			if (chunk == nullptr || !chunk->isReady()) {
+				out << ",\"chunk\":false}";
+				continue;
+			}
+			const geometry::Vec2i64			   mm{static_cast<std::int64_t>(std::llround(static_cast<double>(point.x) * 1000.0)),
+										  static_cast<std::int64_t>(std::llround(static_cast<double>(point.y) * 1000.0))};
+			const world::ChunkTerrainPolygons& polygons = chunk->terrainPolygons();
+			const world::TerrainPolygonQuery   query(polygons);
+			const double					   toWaterMm = query.distanceToWaterMm(mm, kShoreSearchMm);
+			out << ",\"chunk\":true,\"inWater\":" << flag(query.isInsideWater(mm)) << ",\"toWaterM\":";
+			if (std::isfinite(toWaterMm)) {
+				out << toWaterMm / 1000.0;
+			} else {
+				out << "null";
+			}
+			out << ",\"rings\":[";
+			bool firstRing = true;
+			for (const world::TerrainRing& ring : polygons.rings) {
+				if (geometry::pointInPolygon(mm, ring.ring) == geometry::PointInPolygon::Outside) {
+					continue;
+				}
+				// A clockwise Waterline ring is an island in its water body: land.
+				const bool hole = geometry::windingOrder(ring.ring) == geometry::Winding::Clockwise;
+				out << (firstRing ? "" : ",") << "{\"kind\":\"" << kindName(ring.kind) << "\",\"hole\":" << flag(hole) << ",\"blocksMovement\":"
+					<< flag(ring.blocksMovement) << ",\"meanHalfWidthM\":" << ring.meanHalfWidthM << "}";
+				firstRing = false;
+			}
+			out << "]}";
+		}
+		out << "],\"meshTriangles\":" << m_ctx.navigation->navMesh().liveTriangleCount() << "}";
+		return app::DevResponse{.body = out.str()};
 	}
 
 	app::DevResponse DevCommandHandler::devFlora(const app::DevRequest& cmd) {

@@ -1,6 +1,6 @@
 # Multi-colonist crafting (follow-up spec)
 
-**Status:** Partly answered. Section 1 is answered and built by [Task Claims](../technical/task-claims.md); section 2's station binding is designed there but not built; the edge cases below still need a planning round. Related: [known-issues-and-followups.md](../known-issues-and-followups.md).
+**Status:** Partly answered. Section 1 is answered and built by [Task Claims](../technical/task-claims.md); section 2 is specified in [Interruptable Crafts](../technical/interruptable-crafts.md) and not built; its edge cases are answered there. Related: [known-issues-and-followups.md](../known-issues-and-followups.md).
 
 ## Context
 Single-colonist crafting (one colonist provisions a bill of materials into a station, then crafts) was made reliable first (PR #240). Two or more colonists sharing work orders and stations raises coordination questions this spec must answer before implementation. The decisions below are the owner's; the open questions need a planning round.
@@ -22,9 +22,11 @@ Only one colonist performs the craft of a given work order. The model for an in-
 - c) **UI status.** The crafting UI shows the taken / in-progress / assigned-to state.
 - d) **World visual state.** The workstation asset gets a distinct in-use visual (for example, the crafting bench shows work-in-progress sitting on it), so the state reads in the world, not just in the UI.
 
-### Edge cases to resolve (planning round)
-The release path and claim timing are specified as the craft binding in [Task Claims](../technical/task-claims.md#craft-binding-planned): bound at the first craft action, released on job completion or cancellation, crafter death, incapacitation, direct player control, or a craft started elsewhere. The binding is not built. Today a crafter holds the station only through the Slot claim its Craft task takes at selection; when it leaves to eat or sleep before the craft starts, the slot goes with the task and another colonist may take the station.
-- What, if anything, outranks the high finish-priority (immediate danger, mental break, starvation)? An in-progress craft should yield to genuine emergencies but otherwise win.
+Refined 2026-11-13 ([Interruptable Crafts](../technical/interruptable-crafts.md)): the hold is on one unit at a time, from the crafter's first work on it until it is done, so a work order of several units is not one colonist's for its whole length; the craft's progress is saved on the job; and if the hold is released (direct player control, the crafter gone) the next crafter continues from the saved work.
+
+### Edge cases (answered 2026-11-13)
+The release path and timing are specified in [Interruptable Crafts](../technical/interruptable-crafts.md): the crafter holds the station from its first work on a unit until that unit is done, and the hold is released by direct player control, work started at another station, the crafter ceasing to exist, or the job being cancelled. Not built. Today a crafter holds the station only through the Slot claim its Craft task takes at selection; when it leaves to eat or sleep before the craft starts, the slot goes with the task and another colonist may take the station.
+- What outranks the high finish-priority: danger, critical needs, player orders, and urgent needs ("very hungry", a threshold between seek and critical). A slightly hungry crafter stays on its craft. Other work never outranks it.
 
 ## Out of scope
-Single-colonist behavior (PR #240, landed). The binding, UI status, and in-use visual remain for a later pass (WOR-383).
+Single-colonist behavior (PR #240, landed). The hold, its UI status, and the bench's work-in-progress look are in the interruptable crafts epic (WOR-822); station policy and the wider multi-colonist UI remain for a later pass (WOR-383).

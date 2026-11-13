@@ -178,7 +178,6 @@ namespace world_sim {
 			.id = "top_bar_alert_count",
 			.visible = false,
 			.layout = {.position = ui::Position::Absolute, .inset = {.top = 0.0F, .right = 0.0F}},
-			.zIndex = 1,
 			.pointerEvents = ui::PointerEvents::None,
 			.tone = ui::Tone::Danger,
 		});

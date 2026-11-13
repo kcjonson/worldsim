@@ -319,8 +319,9 @@ TEST(NavInputBuilder, Water_ConfluenceAndMouthOverlaps_NeverWalkable) {
 	EXPECT_TRUE(walkableAt(mesh, meters(230, 170)));
 }
 
-// A river narrows below kFordableWidthM: the wide piece blocks, the fordable piece is not
-// emitted, and the two share a straight butt cut. A colonist wades straight across the creek.
+// A river narrows below kFordableWidthM: the wide piece blocks, the fordable piece is a
+// cover-only ring, and the two share a straight butt cut. A colonist wades straight across
+// the creek, and the creek bed's cover names the ford.
 TEST(NavInputBuilder, Water_FordableCreek_WalkableAcrossBlockingPieceBlocks) {
 	FakeTerrain			  terrain;
 	ChunkTerrainPolygons& c = terrain.at({0, 0});
@@ -331,13 +332,20 @@ TEST(NavInputBuilder, Water_FordableCreek_WalkableAcrossBlockingPieceBlocks) {
 
 	std::vector<NavInputPolygon> water;
 	appendChunkWater(c, water);
-	ASSERT_EQ(water.size(), 1u) << "only the blocking piece reaches nav";
+	ASSERT_EQ(water.size(), 2u);
+	EXPECT_EQ(water[0].provenanceId, kProvenanceWater);
+	EXPECT_FALSE(water[0].coverOnly);
+	EXPECT_EQ(water[1].provenanceId, kProvenanceFord);
+	EXPECT_TRUE(water[1].coverOnly) << "the fordable piece tags no face";
 
 	const geometry::nav::PatchableMesh mesh = meshFor(terrain);
 	EXPECT_FALSE(walkableAt(mesh, meters(140, 100))) << "the wide river blocks";
 	EXPECT_FALSE(walkableAt(mesh, meters(149.9, 100)));
 	EXPECT_TRUE(walkableAt(mesh, meters(150.1, 100))) << "just past the butt cut is walkable";
 	EXPECT_TRUE(walkableAt(mesh, meters(170, 100))) << "the creek bed is walkable";
+	EXPECT_TRUE(faceInFord(mesh, mesh.locate(meters(170, 100)))) << "the creek bed is told from its banks";
+	EXPECT_FALSE(faceInFord(mesh, mesh.locate(meters(170, 102))));
+	EXPECT_FALSE(faceInFord(mesh, mesh.locate(meters(140, 100)))) << "the blocking piece is water, not a ford";
 
 	const geometry::nav::PathResult across = pathOn(mesh, meters(175, 94), meters(175, 106));
 	ASSERT_TRUE(across.reachable);

@@ -181,8 +181,6 @@ namespace {
 			int vpW = 0;
 			int vpH = 0;
 			Renderer::Primitives::getLogicalViewport(vpW, vpH);
-			const auto viewportW = static_cast<float>(vpW);
-			const auto viewportH = static_cast<float>(vpH);
 
 			world_sim::renderStarfield(theme, vpW, vpH, 5U, true);
 
@@ -198,7 +196,7 @@ namespace {
 			// the starfield beneath the blit.
 			const Foundation::Rect rect = stageRect();
 			Renderer::Primitives::flush();
-			globe.render(rect, viewportW, viewportH);
+			globe.render(rect, owner->viewport());
 			renderMarker(rect, theme);
 		}
 
