@@ -89,6 +89,8 @@ Colonists share knowledge during casual conversation.
 
 Colonists know whatever is within their sight range at spawn. No pre-loaded knowledge, no "briefing" system.
 
+**The landing crew is the one exception (decided 2026-11-13, not built).** They saw the ground as they came down, so each of them starts knowing what is within the landing area, 150 m round the drop, the same as if they had seen it. It is the area the player starts with as seen ([Player Visibility](/docs/technical/player-visibility.md)).
+
 ### New Arrivals
 
 Newcomers to an established colony see their surroundings immediately. They don't know about the farm on the other side of camp until they walk there or someone tells them.

@@ -55,7 +55,7 @@ These are the decisions the stub does not make yet; they map to the epic's three
 ## Out of scope (v1)
 
 - Gameplay effects of season beyond visual snow and display, unless a question above promotes one.
-- Fog of war, and any change to worldgen.
+- Player visibility, and any change to worldgen.
 
 ## References
 
