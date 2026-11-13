@@ -27,6 +27,10 @@ namespace geometry::nav {
 		// into s is only slower; pulling too little loses exactness.
 		constexpr std::int64_t kOffGroundReachMm = 8;
 
+		// How many times as far as a ring's pieces stray from its outline a seed sample
+		// must lie from it, so the exact test and the bent pieces agree on its side.
+		constexpr std::int64_t kSeedClearance = 3;
+
 		int next3(int i) {
 			return i == 2 ? 0 : i + 1;
 		}
@@ -879,7 +883,6 @@ namespace geometry::nav {
 			FaceKind			kind	  = FaceKind::Frame;
 			std::int32_t		sampleTri = -1;
 			Int128				area2	  = Int128(0);
-			std::int32_t		oldTri	  = -1;
 			std::uint32_t		trisBegin = 0;
 			std::uint32_t		trisEnd	  = 0;
 			bool				assigned  = false;
@@ -896,14 +899,12 @@ namespace geometry::nav {
 		std::vector<EdgeSource>	   sList;
 		std::vector<EdgeSource>	   sSorted;
 		std::vector<EdgeSource>	   queue;
-		std::vector<std::uint8_t>  inTest; // per ring id
-		std::vector<RingId>		   testRings;
 		std::vector<std::uint8_t>  inHole; // per triangle slot
 		std::vector<std::int32_t>  hole;
 		std::vector<std::pair<std::uint32_t, std::int32_t>> ends;
 		std::vector<EdgeSource>	   edgesNear;
 		std::vector<std::int32_t>  edgeIdsNear;
-		std::vector<RingId>		   ringsNear;
+		std::vector<RingId>		   ringsNear; // live after the patch, around a seed sample
 
 		// A new bounds edge by its end points, lower first.
 		struct NewSide {
@@ -945,6 +946,11 @@ namespace geometry::nav {
 		std::vector<RingId>				  start;
 		std::vector<std::int32_t>		  order;
 		std::vector<std::int32_t>		  stack;
+		std::vector<std::uint8_t>		  inGroup; // per face
+		std::vector<std::int32_t>		  group;   // faces
+		std::vector<std::pair<Int128, std::int32_t>> bySize;	// area, -triangle
+		std::vector<std::pair<RingId, std::int64_t>> deviation; // ascending by ring, this pass
+		std::vector<std::pair<RingId, std::int64_t>> strays;
 
 		std::vector<std::uint8_t>				  kept;
 		std::vector<std::uint8_t>				  faceKept;
@@ -1010,7 +1016,6 @@ namespace geometry::nav {
 
 		void addToS(const EdgeSource& z);
 		void addToHole(std::int32_t t);
-		void addToTest(RingId r);
 		void pullOffGround(const Vec2i64& a, const Vec2i64& b, bool boundsEdge, const std::vector<EdgeSource>* band = nullptr);
 		void pullAtVertex(std::uint32_t v, std::int32_t seed, std::span<const std::pair<EdgeSource, bool>> xs, bool takeStar);
 		void touchSegment(const Vec2i64& a, const Vec2i64& b, const EdgeSource& x);
@@ -1020,7 +1025,7 @@ namespace geometry::nav {
 		void arrange();
 		bool arrangementHeld();
 		void triangulate();
-		void assignCovers();
+		bool assignCovers();
 		bool coversHeld();
 		const std::vector<EdgeSource>& sourcesOf(std::int32_t constraint);
 		void collectFixed();
@@ -1117,16 +1122,6 @@ namespace geometry::nav {
 		}
 	}
 
-	void PatchableMesh::Patch::addToTest(RingId r) {
-		if (static_cast<std::size_t>(r) >= work.inTest.size()) {
-			work.inTest.resize(static_cast<std::size_t>(r) + 1, 0);
-		}
-		if (work.inTest[static_cast<std::size_t>(r)] == 0) {
-			work.inTest[static_cast<std::size_t>(r)] = 1;
-			work.testRings.push_back(r);
-		}
-	}
-
 	void PatchableMesh::Patch::addToS(const EdgeSource& z) {
 		const std::int32_t id = m.rings[static_cast<std::size_t>(z.ring)].edgeIds[static_cast<std::size_t>(z.edge)];
 		if (static_cast<std::size_t>(id) >= work.inS.size()) {
@@ -1137,7 +1132,6 @@ namespace geometry::nav {
 			work.sIds.push_back(id);
 			work.sList.push_back(z);
 			queue.push_back(z);
-			addToTest(z.ring);
 		}
 	}
 
@@ -1343,9 +1337,6 @@ namespace geometry::nav {
 		for (std::int32_t id : work.sIds) {
 			work.inS[static_cast<std::size_t>(id)] = 0;
 		}
-		for (RingId r : work.testRings) {
-			work.inTest[static_cast<std::size_t>(r)] = 0;
-		}
 		for (const auto& [id, c] : changes) {
 			work.changeSlot[static_cast<std::size_t>(id)] = -1;
 		}
@@ -1354,7 +1345,6 @@ namespace geometry::nav {
 		}
 		work.sIds.clear();
 		work.sList.clear();
-		work.testRings.clear();
 		changes.clear();
 		queue.clear();
 		hole.clear();
@@ -1402,7 +1392,6 @@ namespace geometry::nav {
 		}
 		// Every mark covers the registry as it now stands, so a copied mesh's empty scratch
 		// is read in bounds too.
-		work.inTest.resize(std::max(work.inTest.size(), m.rings.size()), 0);
 		work.changeSlot.resize(std::max(work.changeSlot.size(), m.rings.size()), -1);
 		work.inS.resize(std::max(work.inS.size(), m.edgeOf.size()), 0);
 		std::sort(changes.begin(), changes.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
@@ -1411,11 +1400,7 @@ namespace geometry::nav {
 		}
 
 		for (const auto& [id, c] : changes) {
-			if (c.hasNew) {
-				addToTest(id);
-			}
 			if (c.hadOld) {
-				addToTest(id);
 				const std::int32_t n = static_cast<std::int32_t>(oldOutline(id).size());
 				for (std::int32_t e = 0; e < n; ++e) {
 					addToS({id, e});
@@ -1424,18 +1409,13 @@ namespace geometry::nav {
 		}
 
 		// New ground completes every ring hanging over it: its edges over the new bounds
-		// re-derive there, and a ring around the whole new bounds still gets tested.
+		// re-derive there (a ring around the whole new bounds is found by the seeding).
 		// The same query, reaching kOffGroundReachMm further, gives the blocked edges just
 		// outside the new bounds that the off-ground pull of its edges reads (the rest of
 		// what that pull could find is in s already), so those edges skip the registry.
 		for (auto& [id, c] : changes) {
 			if (!c.hasNew || c.polygon.blocked) {
 				continue;
-			}
-			for (RingId r : m.ringsInBox(c.lo, c.hi)) {
-				if (!changed(r)) {
-					addToTest(r);
-				}
 			}
 			const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
 			m.ringEdgesInBox(c.lo - reach, c.hi + reach, work.edgeIdsNear, work.edgesNear);
@@ -1699,8 +1679,7 @@ namespace geometry::nav {
 			return false;
 		}
 		triangulate();
-		assignCovers();
-		return coversHeld();
+		return assignCovers() && coversHeld();
 	}
 
 	// s's original edges (the new outline for a changed ring) but the dissolved ones, the
@@ -1899,7 +1878,6 @@ namespace geometry::nav {
 			face.kind		= FaceKind::Frame;
 			face.sampleTri	= -1;
 			face.area2		= Int128(0);
-			face.oldTri		= -1;
 			face.trisBegin	= static_cast<std::uint32_t>(work.faceTris.size());
 			face.assigned	= false;
 			face.cover.clear();
@@ -1935,8 +1913,7 @@ namespace geometry::nav {
 			// be): the old triangle and every containment test take it moved the same way.
 			const std::int32_t old = m.locateSample(sample3);
 			if (old >= 0) {
-				face.kind	= work.inHole[static_cast<std::size_t>(old)] != 0 ? FaceKind::Hole : FaceKind::Discard;
-				face.oldTri = old;
+				face.kind = work.inHole[static_cast<std::size_t>(old)] != 0 ? FaceKind::Hole : FaceKind::Discard;
 				continue;
 			}
 			face.kind = FaceKind::Sink;
@@ -1950,8 +1927,8 @@ namespace geometry::nav {
 
 	// Covers: one exact seed per component, then toggle across each ring edge by the
 	// rings on it. A sink (off the old mesh, outside every new bounds ring) takes a cover
-	// but passes none on.
-	void PatchableMesh::Patch::assignCovers() {
+	// but passes none on. False when the hole grew.
+	bool PatchableMesh::Patch::assignCovers() {
 		const std::int32_t cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
 		bool conflict = false;
 		std::vector<std::int32_t>& stack = work.stack;
@@ -1994,10 +1971,10 @@ namespace geometry::nav {
 		};
 
 		// Seeds, best first. Across the fixed boundary the kept triangle's cover carries
-		// in exactly, with no sample. A component that touches no boundary (new ground,
-		// or ground whose every triangle is in the hole) takes its largest triangle's
-		// centroid: the old cover there for rings the patch leaves alone, and the exact
-		// test for every ring it touches.
+		// in exactly, with no sample. A group that reaches no boundary (new ground, or
+		// ground whose every triangle is in the hole) takes its cover from the input rings
+		// at one sample, the centroid of its largest triangle clear of the band every ring
+		// near it was bent within; ground is any ground ring holding it.
 		for (std::int32_t t = 0; t < cdtCount; ++t) {
 			const CdtTriangle& tri	= cdt.triangles[static_cast<std::size_t>(t)];
 			const std::int32_t f	= faceOf[static_cast<std::size_t>(t)];
@@ -2034,47 +2011,184 @@ namespace geometry::nav {
 			}
 			return a < b;
 		});
-		for (std::int32_t seed : order) {
-			const LocalFace& sf = faces[static_cast<std::size_t>(seed)];
-			if (sf.assigned) {
-				continue;
+		// How far each ring's pieces in this pass stray from its outline, ascending by ring.
+		std::vector<std::pair<RingId, std::int64_t>>& deviation = work.deviation;
+		auto measureDeviation = [&]() {
+			deviation.clear();
+			auto measure = [&](const EdgeSource& x, const Vec2i64& p, const Vec2i64& q) {
+				const std::vector<Vec2i64>& outline = newPolygon(x.ring).ring;
+				const Vec2i64				a		= edgeStart(outline, x.edge);
+				const Vec2i64				dir		= edgeEnd(outline, x.edge) - a;
+				const Int128				len2	= dot(dir, dir);
+				std::int64_t				worst	= 0;
+				for (const Vec2i64& v : {p, q}) {
+					const Int128 off = cross(dir, v - a);
+					while (Int128::compareSquareToProduct(off, Int128::product(worst, worst), len2) > 0) {
+						++worst;
+					}
+				}
+				deviation.push_back({x.ring, worst});
+			};
+			for (const ArrangementEdge& ae : arrangement.edges) {
+				const Vec2i64& p = arrangement.vertices[ae.from];
+				const Vec2i64& q = arrangement.vertices[ae.to];
+				for (std::int64_t local : ae.provenance) {
+					const LocalSegment& seg = segments[static_cast<std::size_t>(local)];
+					if (seg.fixed < 0) {
+						measure(seg.source, p, q);
+						continue;
+					}
+					for (const EdgeSource& x : sourcesOf(fixed[static_cast<std::size_t>(seg.fixed)])) {
+						measure(x, p, q);
+					}
+				}
 			}
-			const CdtTriangle&	st		= cdt.triangles[static_cast<std::size_t>(sf.sampleTri)];
-			const Vec2i64		sample3 = cdt.vertices[st.v[0]] + cdt.vertices[st.v[1]] + cdt.vertices[st.v[2]];
-			std::vector<RingId>& start = work.start;
-			start.clear();
-			// Ground parity: the old cover's, with each tested bounds ring's old containment
-			// taken out and its new one put in.
+			std::sort(deviation.begin(), deviation.end(), [](const auto& a, const auto& b) { return a.first != b.first ? a.first < b.first : a.second > b.second; });
+			deviation.erase(std::unique(deviation.begin(), deviation.end(), [](const auto& a, const auto& b) { return a.first == b.first; }), deviation.end());
+		};
+		// A ring's stray: this pass's pieces, and the kept pieces of a ring the patch leaves.
+		std::vector<std::pair<RingId, std::int64_t>>& strays = work.strays;
+		strays.clear();
+		auto strayOf = [&](RingId r) {
+			for (const auto& [ring, stray] : strays) {
+				if (ring == r) {
+					return stray;
+				}
+			}
+			auto		 it	   = std::lower_bound(deviation.begin(), deviation.end(), r, [](const auto& d, RingId key) { return d.first < key; });
+			std::int64_t stray = it != deviation.end() && it->first == r ? it->second : 0;
+			if (!changed(r)) {
+				stray = std::max(stray, m.pieceDeviationMm(r));
+			}
+			strays.push_back({r, stray});
+			return stray;
+		};
+		// The cover of triangle t's centroid read from the rings live after the patch, or
+		// false when the centroid lies within kSeedClearance strays of a ring near it (all
+		// of a ring's pieces lie within its stray of its outline, and so does every point
+		// whose parity the bend could flip). A ring's box can miss the bend by its stray, so
+		// the query reaches kOffGroundReachMm past the centroid.
+		auto exactCover = [&](std::int32_t t, std::vector<RingId>& cover, bool anywhere) {
+			const CdtTriangle& tri	   = cdt.triangles[static_cast<std::size_t>(t)];
+			const Vec2i64	   sample3 = cdt.vertices[tri.v[0]] + cdt.vertices[tri.v[1]] + cdt.vertices[tri.v[2]];
+			const Vec2i64	   p{floorDiv(sample3.x, 3), floorDiv(sample3.y, 3)};
+			const Vec2i64	   lo = p - Vec2i64{kOffGroundReachMm, kOffGroundReachMm};
+			const Vec2i64	   hi = p + Vec2i64{kOffGroundReachMm + 1, kOffGroundReachMm + 1};
+			std::vector<RingId>& near = work.ringsNear;
+			near.clear();
+			m.ringGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) {
+				if (!changed(r)) {
+					near.push_back(r);
+				}
+			});
+			for (const auto& [id, c] : changes) {
+				if (c.hasNew && boxesOverlap(c.lo, c.hi, lo, hi)) {
+					near.push_back(id);
+				}
+			}
+			std::sort(near.begin(), near.end());
+			near.erase(std::unique(near.begin(), near.end()), near.end());
+			for (std::size_t i = 0; i < near.size() && !anywhere; ++i) {
+				const std::vector<Vec2i64>& ring3 = newSample(near[i]).ring3;
+				const std::int64_t			reach = 3 * kSeedClearance * strayOf(near[i]);
+				for (std::size_t k = 0; k < ring3.size(); ++k) {
+					if (withinDistanceOfSegment(sample3, ring3[k], ring3[(k + 1) % ring3.size()], reach)) {
+						return false;
+					}
+				}
+			}
+			cover.clear();
 			bool ground = false;
-			if (sf.kind == FaceKind::Hole) {
-				for (RingId r : m.cover(sf.oldTri)) {
-					if (r == kGroundToken) {
-						ground = true;
-					} else if (work.inTest[static_cast<std::size_t>(r)] == 0 && !removed(r)) {
-						start.push_back(r);
-					}
+			for (RingId r : near) {
+				if (isBounds(r)) {
+					ground = ground || boundsContainSample(newSample(r), sample3);
+				} else if (ringContainsSample(newSample(r), sample3)) {
+					cover.push_back(r);
 				}
-			}
-			for (RingId r : work.testRings) {
-				if (!isBounds(r)) {
-					if (!removed(r) && ringContainsSample(newSample(r), sample3)) {
-						start.push_back(r);
-					}
-					continue;
-				}
-				const Change* c		= changeOf(r);
-				const bool	  hadOld = c == nullptr || c->hadOld;
-				const bool	  inNew	 = !removed(r) && boundsContainSample(newSample(r), sample3);
-				const bool	  inOld	 = sf.kind == FaceKind::Hole && hadOld && boundsContainSample(m.rings[static_cast<std::size_t>(r)].sample, sample3);
-				ground				 = ground != (inOld != inNew);
 			}
 			if (ground) {
-				start.push_back(kGroundToken);
+				cover.push_back(kGroundToken);
 			}
-			std::sort(start.begin(), start.end());
-			flood(seed, start);
+			std::sort(cover.begin(), cover.end());
+			return true;
+		};
+
+		std::vector<std::uint8_t>& inGroup = work.inGroup;
+		inGroup.assign(work.faceCount, 0);
+		bool measured = false;
+		bool grew	  = false;
+		for (std::int32_t seed : order) {
+			if (faces[static_cast<std::size_t>(seed)].assigned || inGroup[static_cast<std::size_t>(seed)] != 0) {
+				continue;
+			}
+			// The faces a flood from this one would reach, and their triangles, largest first.
+			std::vector<std::int32_t>& group = work.group;
+			group.assign(1, seed);
+			inGroup[static_cast<std::size_t>(seed)] = 1;
+			std::vector<std::pair<Int128, std::int32_t>>& bySize = work.bySize;
+			bySize.clear();
+			for (std::size_t i = 0; i < group.size(); ++i) {
+				for (std::int32_t t : trisOf(faces[static_cast<std::size_t>(group[i])])) {
+					const CdtTriangle& tri = cdt.triangles[static_cast<std::size_t>(t)];
+					bySize.push_back({cross(cdt.vertices[tri.v[1]] - cdt.vertices[tri.v[0]], cdt.vertices[tri.v[2]] - cdt.vertices[tri.v[0]]), -t});
+					for (int e = 0; e < 3; ++e) {
+						const std::int32_t c  = tri.constraint[static_cast<std::size_t>(e)];
+						const std::int32_t nb = tri.neighbor[static_cast<std::size_t>(e)];
+						if (c < 0 || nb < 0) {
+							continue;
+						}
+						const std::int32_t g	= faceOf[static_cast<std::size_t>(nb)];
+						const FaceKind	   kind = faces[static_cast<std::size_t>(g)].kind;
+						if (inGroup[static_cast<std::size_t>(g)] == 0 && (kind == FaceKind::Hole || kind == FaceKind::NewGround)) {
+							inGroup[static_cast<std::size_t>(g)] = 1;
+							group.push_back(g);
+						}
+					}
+				}
+			}
+			std::make_heap(bySize.begin(), bySize.end());
+			std::vector<RingId>& start = work.start;
+			std::int32_t		 from  = -1;
+			for (auto end = bySize.end(); end != bySize.begin() && from < 0; --end) {
+				std::pop_heap(bySize.begin(), end);
+				const std::int32_t t = -(end - 1)->second;
+				if (!measured) {
+					measureDeviation();
+					measured = true;
+				}
+				if (exactCover(t, start, false)) {
+					from = t;
+				}
+			}
+			if (from < 0) {
+				// Every triangle lies in the band: the hole grows until a fixed edge reaches the
+				// group. New ground over no old mesh cannot grow; its largest triangle decides.
+				bool grows = false;
+				for (std::int32_t f : group) {
+					for (std::int32_t t : trisOf(faces[static_cast<std::size_t>(f)])) {
+						for (std::uint32_t v : cdt.triangles[static_cast<std::size_t>(t)].v) {
+							const std::uint32_t* old = m.vertexAt.find(cdt.vertices[v]);
+							if (old == nullptr) {
+								continue;
+							}
+							m.forEachAroundVertex(*old, -1, [&](std::int32_t u, int) {
+								grows = grows || work.inHole[static_cast<std::size_t>(u)] == 0;
+								addToHole(u);
+							});
+						}
+					}
+				}
+				if (grows) {
+					grew = true;
+					continue;
+				}
+				from = -bySize.back().second; // popped whole, so ascending
+				exactCover(from, start, true);
+			}
+			flood(faceOf[static_cast<std::size_t>(from)], start);
 		}
 		assert(!conflict && "PatchableMesh: ring parity disagrees around a face");
+		return !grew;
 	}
 
 	// The boundary held only if every hole face on it agrees with the kept triangle
