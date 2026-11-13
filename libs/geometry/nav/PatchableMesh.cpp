@@ -508,6 +508,54 @@ namespace geometry::nav {
 		});
 	}
 
+	// The union is unchanged by the outline exactly when no live ground edge's intervals
+	// change and the outline has none: an edge of it outside the union would be boundary,
+	// and a gap in the union under it would dissolve the edges around the gap, which meet
+	// its area.
+	bool PatchableMesh::groundCovers(const std::vector<Vec2i64>& outline) const {
+		assert(outline.size() >= 3 && "PatchableMesh: an outline needs three vertices");
+		// Past every live ring, so a stretch it shares with a live edge stays that edge's.
+		const GroundRing			probe = groundRing(outline, static_cast<RingId>(rings.size()));
+		std::vector<GroundRing>		near;
+		GroundBoundaryScratch		scratch;
+		std::vector<GroundInterval> before;
+		std::vector<GroundInterval> after;
+		for (std::int32_t e = 0; e < static_cast<std::int32_t>(outline.size()); ++e) {
+			Vec2i64 lo = edgeStart(outline, e);
+			Vec2i64 hi = lo;
+			growBox(lo, hi, edgeEnd(outline, e));
+			groundRingsInBox(lo, hi, near);
+			near.push_back(probe);
+			groundBoundaries(probe, e, near, scratch, after);
+			if (!after.empty()) {
+				return false;
+			}
+		}
+		std::vector<std::int32_t> ids;
+		std::vector<EdgeSource>	  edges;
+		ringEdgesInBox(probe.lo, probe.hi, ids, edges);
+		for (const EdgeSource& z : edges) {
+			const RegisteredRing& reg = rings[static_cast<std::size_t>(z.ring)];
+			const Vec2i64		  p	  = edgeStart(reg.polygon.ring, z.edge);
+			const Vec2i64		  q	  = edgeEnd(reg.polygon.ring, z.edge);
+			if (reg.polygon.blocked || p == q || !segmentMeetsArea(p, q, outline)) {
+				continue;
+			}
+			Vec2i64 lo = p;
+			Vec2i64 hi = p;
+			growBox(lo, hi, q);
+			groundRingsInBox(lo, hi, near);
+			const GroundRing self{&reg.polygon.ring, reg.lo, reg.hi, reg.sample.counterClockwise, z.ring};
+			groundBoundaries(self, z.edge, near, scratch, before);
+			near.push_back(probe);
+			groundBoundaries(self, z.edge, near, scratch, after);
+			if (before != after) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	bool PatchableMesh::piecesRunBetween(const EdgeSource& s, const std::vector<Vec2i64>& ends, std::vector<std::pair<std::uint32_t, std::uint32_t>>& pieceList,
 										 std::vector<std::uint32_t>& endList) const {
 		pieceList.clear();

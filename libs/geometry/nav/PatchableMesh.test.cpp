@@ -3282,3 +3282,203 @@ TEST(PatchableMesh, ObstaclesAcrossOverlappingGround) {
 TEST(PatchableMesh, SliverBesideADissolvedSideMatchesFreshBuild) {
 	addInEveryOrder({bounds({{0, 0}, {2, 0}, {0, 1}}), bounds({{0, 0}, {0, 1}, {-2, 0}}), blocked({{-10, -10}, {20, -10}, {20, 1}, {-10, 0}})});
 }
+
+namespace {
+
+	// The ring edges the live mesh edge pq lies on; empty when it is unconstrained or no
+	// live triangle has it.
+	std::vector<EdgeSource> sourcesBetween(const PatchableMesh& mesh, const Vec2i64& p, const Vec2i64& q) {
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& a = mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
+				const Vec2i64& b = mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
+				if ((a == p && b == q) || (a == q && b == p)) {
+					return mesh.edgeSources(t, e);
+				}
+			}
+		}
+		return {};
+	}
+
+	// How many of the outline's edges are each one constrained mesh edge.
+	int constrainedEdgesOf(const PatchableMesh& mesh, const std::vector<Vec2i64>& outline) {
+		int count = 0;
+		for (std::size_t i = 0; i < outline.size(); ++i) {
+			count += sourcesBetween(mesh, outline[i], outline[(i + 1) % outline.size()]).empty() ? 0 : 1;
+		}
+		return count;
+	}
+
+} // namespace
+
+// The middle of three outlines in a row taken out: the stretches of its neighbours it had
+// dissolved are constraints again; put back, they dissolve again.
+TEST(PatchableMesh, RemovingAnOutlineBringsItsNeighboursEdgesBack) {
+	const std::vector<Vec2i64> west	  = sixteenGon({0, 0}, 5000);
+	const std::vector<Vec2i64> middle = sixteenGon({7000, 600}, 5000);
+	const std::vector<Vec2i64> east	  = sixteenGon({14000, 0}, 5000);
+	Harness					   h;
+	h.add(bounds(west));
+	RingId mid = h.add(bounds(middle));
+	h.add(bounds(east));
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	const int westKept = constrainedEdgesOf(h.mesh, west);
+	const int eastKept = constrainedEdgesOf(h.mesh, east);
+	ASSERT_LT(westKept, 16);
+	ASSERT_LT(eastKept, 16);
+	PatchEdits leave;
+	leave.removes.push_back(mid);
+	h.apply(leave);
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, west), 16);
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, east), 16);
+	mid = h.add(bounds(middle));
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, west), westKept);
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, east), eastKept);
+}
+
+// An outline moved within the union, partly out of it, wholly out of it, and back, with and
+// without a placed obstacle across the ground it leaves.
+TEST(PatchableMesh, MovedOutlineMatchesFreshBuild) {
+	for (const bool withObstacle : {false, true}) {
+		Harness h;
+		h.add(bounds(sixteenGon({0, 0}, 9000)));
+		if (withObstacle) {
+			h.add(blocked({{2000, -500}, {9500, 300}, {9300, 900}, {1900, 400}}));
+		}
+		const RingId moving = h.add(bounds(sixteenGon({3000, 1000}, 3000)));
+		ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+		for (const Vec2i64& centre : {Vec2i64{4000, -1500}, Vec2i64{8000, 2000}, Vec2i64{20000, 3000}, Vec2i64{9500, 0}, Vec2i64{1000, 1000}}) {
+			PatchEdits move;
+			move.moves.push_back({moving, sixteenGon(centre, 3000)});
+			h.apply(move);
+			ASSERT_TRUE(overlapHolds(h.mesh, h.model)) << "centre (" << centre.x << ", " << centre.y << ")" << (withObstacle ? " with the obstacle" : "");
+		}
+	}
+}
+
+// Two outlines sharing a stretch of one line, both inside above it: the lower ring owns the
+// stretch. Taking out the owner passes the stretch to the other, and putting it back takes
+// it again; taking out the other leaves the owner's side whole.
+TEST(PatchableMesh, RemovingTheOwnerOfASharedStretchPassesItOn) {
+	const std::vector<Vec2i64> hexagon{{0, 0}, {4000, 0}, {6000, 3000}, {4000, 6000}, {0, 6000}, {-2000, 3000}};
+	const std::vector<Vec2i64> shifted = translated(hexagon, {2000, 0});
+	using Sources					   = std::vector<EdgeSource>;
+	Harness h;
+	RingId	owner = h.add(bounds(hexagon));
+	RingId	other = h.add(bounds(shifted));
+	ASSERT_LT(owner, other);
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(sourcesBetween(h.mesh, {0, 0}, {4000, 0}), (Sources{{owner, 0}}));
+	EXPECT_EQ(sourcesBetween(h.mesh, {4000, 0}, {6000, 0}), (Sources{{other, 0}}));
+	EXPECT_EQ(liveVerticesOn(h.mesh, {0, 0}, {6000, 0}), (std::vector<Vec2i64>{{0, 0}, {4000, 0}, {6000, 0}})) << "the shared stretch is kept once";
+
+	PatchEdits leave;
+	leave.removes.push_back(owner);
+	h.apply(leave);
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(sourcesBetween(h.mesh, {2000, 0}, {6000, 0}), (Sources{{other, 0}}));
+	owner = h.add(bounds(hexagon));
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	if (owner < other) {
+		EXPECT_EQ(sourcesBetween(h.mesh, {0, 0}, {4000, 0}), (Sources{{owner, 0}}));
+		EXPECT_EQ(sourcesBetween(h.mesh, {4000, 0}, {6000, 0}), (Sources{{other, 0}}));
+	} else {
+		EXPECT_EQ(sourcesBetween(h.mesh, {0, 0}, {2000, 0}), (Sources{{owner, 0}}));
+		EXPECT_EQ(sourcesBetween(h.mesh, {2000, 0}, {6000, 0}), (Sources{{other, 0}}));
+	}
+
+	PatchEdits leaveOther;
+	leaveOther.removes.push_back(other);
+	h.apply(leaveOther);
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(sourcesBetween(h.mesh, {0, 0}, {4000, 0}), (Sources{{owner, 0}}));
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, hexagon), 6);
+}
+
+// An outline around another taken out: the inner one's sides are constraints again, and
+// the ground is the inner outline alone; put back, they dissolve again.
+TEST(PatchableMesh, RemovingAnOutlineAroundAnotherBringsTheInnerEdgesBack) {
+	const std::vector<Vec2i64> outer = sixteenGon({0, 0}, 9000);
+	const std::vector<Vec2i64> inner = sixteenGon({1000, -700}, 3000);
+	Harness					   h;
+	RingId					   around = h.add(bounds(outer));
+	h.add(bounds(inner));
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, inner), 0);
+	PatchEdits leave;
+	leave.removes.push_back(around);
+	h.apply(leave);
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, inner), 16);
+	Harness alone;
+	alone.add(bounds(inner));
+	EXPECT_EQ(liveArea2(h.mesh), liveArea2(alone.mesh));
+	around = h.add(bounds(outer));
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, inner), 0);
+	EXPECT_EQ(constrainedEdgesOf(h.mesh, outer), 16);
+}
+
+// The last ground under a blocked ring taken out: the ring hangs over nothing and the mesh
+// is empty; ground put back completes the ring again. Both for a ring straddling the
+// ground's edge and one wholly inside it.
+TEST(PatchableMesh, RemovingTheLastGroundUnderAHangingRingLeavesNothing) {
+	for (const std::vector<Vec2i64>& lake : {rect(6000, 3000, 16000, 7000), rect(3000, 3000, 7000, 7000)}) {
+		Harness h;
+		RingId	ground = h.add(bounds(rect(0, 0, 10000, 10000)));
+		h.add(blocked(lake, kWater, true));
+		ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+		PatchEdits leave;
+		leave.removes.push_back(ground);
+		h.apply(leave);
+		EXPECT_EQ(h.mesh.liveTriangleCount(), 0);
+		ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+		ground = h.add(bounds(rect(0, 0, 10000, 10000)));
+		ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	}
+}
+
+// groundCovers holds exactly when adding the outline as ground changes nothing: inside the
+// union, over water inside it, touching its edge from inside, or a copy of a live outline;
+// not when it pokes out by a millimetre, lies outside, or spans a gap in the union.
+TEST(PatchableMesh, LimitInsideUnionAddsNothing) {
+	Harness h;
+	EXPECT_FALSE(h.mesh.groundCovers(rect(0, 0, 1000, 1000))) << "no ground";
+	h.add(bounds(rect(0, 0, 10000, 10000)));
+	h.add(bounds(sixteenGon({12000, 5000}, 5500)));
+	h.add(blocked(rect(3000, 3000, 6000, 6000), kWater, true));
+	for (const std::vector<Vec2i64>& frame : {rect(20000, 0, 30000, 3000), rect(20000, 7000, 30000, 10000), rect(20000, 0, 23000, 10000), rect(27000, 0, 30000, 10000)}) {
+		h.add(bounds(frame));
+	}
+	ASSERT_TRUE(overlapHolds(h.mesh, h.model));
+	struct Case {
+		const char*			 what;
+		std::vector<Vec2i64> outline;
+		bool				 covered;
+	};
+	const std::vector<Case> cases{
+		{"inside", sixteenGon({4000, 5000}, 3000), true},
+		{"over water inside ground", rect(2500, 2500, 6500, 6500), true},
+		{"across the overlap", sixteenGon({9000, 5000}, 2000), true},
+		{"touching the edge from inside", rect(1000, 1000, 9000, 10000), true},
+		{"a copy of a live outline", rect(0, 0, 10000, 10000), true},
+		{"poking out by a millimetre", rect(1000, 1000, 9000, 10001), false},
+		{"outside", sixteenGon({40000, 5000}, 3000), false},
+		{"over a gap in the union", rect(21000, 1000, 29000, 9000), false},
+		{"over a gap, sides on its edges", rect(20000, 0, 30000, 10000), false},
+	};
+	for (const Case& c : cases) {
+		EXPECT_EQ(h.mesh.groundCovers(c.outline), c.covered) << c.what;
+		Harness				with = h;
+		const std::int64_t area = liveArea2(with.mesh);
+		with.add(bounds(c.outline));
+		ASSERT_TRUE(overlapHolds(with.mesh, with.model)) << c.what;
+		EXPECT_EQ(liveArea2(with.mesh) == area, c.covered) << c.what << ": the union's area";
+	}
+}

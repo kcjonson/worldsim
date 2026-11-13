@@ -141,6 +141,12 @@ namespace geometry::nav {
 		// a tie; -1 off the mesh.
 		std::int32_t locate(const Vec2i64& p) const;
 
+		// Whether the closed area of a simple outline lies wholly in the union of the live
+		// ground outlines (blocked rings inside it do not matter), so adding it as ground
+		// would change nothing: it would arrange no boundary interval of its own, taking
+		// none of a stretch it shares with another edge, and change no live ground edge's.
+		bool groundCovers(const std::vector<Vec2i64>& outline) const;
+
 		// A door tags the triangle edge (a, b) with its opening and clear width wherever
 		// that edge exists, through every later patch; where two doors name one edge, the
 		// lower id tags it. Tags only: no geometry changes.
