@@ -197,12 +197,12 @@ namespace geometry::nav {
 
 		// Edge e of triangle ti is an obstacle edge iff exactly one of the two faces it
 		// separates is common-knowledge-blocked (the boundary of a water/obstacle region).
-		// A mesh-boundary edge (neighbor == -1) has no obstacle face outside it, so a
-		// floor border is not an obstacle edge (scope: terrain/obstacles only).
+		// Outside the mesh (neighbor == -1) is impassable, so it reads as blocked: the mesh
+		// edge narrows corridors beside it like any obstacle.
 		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e) {
 			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker);
 			const std::int32_t nb	 = view.triangle(ti).neighbor[static_cast<std::size_t>(e)];
-			const bool		   other = nb < 0 ? false : isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker);
+			const bool		   other = nb < 0 || isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker);
 			return self != other;
 		}
 
@@ -331,7 +331,7 @@ namespace geometry::nav {
 			// Unconstrained: recurse into the opposite triangle's two other edges.
 			const std::int32_t nb = tri.neighbor[e];
 			if (nb < 0) {
-				return bound; // no opposite triangle (mesh boundary), nothing to cross
+				return bound; // a blocked face's mesh-boundary edge: impassable on both sides
 			}
 			if (scratch.visited[nb] == scratch.stamp) {
 				return bound; // already explored from this apex (loop guard)

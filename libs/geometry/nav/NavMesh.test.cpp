@@ -512,11 +512,12 @@ namespace {
 	}
 
 	// Is edge e of triangle ti an obstacle edge (one incident face common-knowledge
-	// blocked, the other not)? Mirrors NavMesh.cpp's isObstacleEdge.
+	// blocked, the other not, outside the mesh counting as blocked)? Mirrors NavMesh.cpp's
+	// isObstacleEdge.
 	bool obstacleEdge(const NavMesh& m, std::int32_t ti, int e) {
 		bool		 self  = isCkBlocked(m.triangles[ti].faceBlocker);
 		std::int32_t nb	   = m.triangles[ti].neighbor[e];
-		bool		 other = nb < 0 ? false : isCkBlocked(m.triangles[nb].faceBlocker);
+		bool		 other = nb < 0 || isCkBlocked(m.triangles[nb].faceBlocker);
 		return self != other;
 	}
 
@@ -565,22 +566,19 @@ TEST(NavMesh, CorridorWidthMatchesGapDistance) {
 	ASSERT_FALSE(m.triangles.empty());
 	EXPECT_EQ(minTraversableWidth(m), 400) << "tightest traversable corridor width must equal the 400 mm gap";
 
-	// A wide-open floor triangle far from both obstacles stays unconstrained.
-	bool sawUnconstrained = false;
-	for (const NavTriangle& t : m.triangles) {
-		if (t.faceBlocker != kNoBlocker) {
+	// Open floor below the band, bounded by the mesh edge and the band, has no squeeze
+	// tighter than the gap however long its triangles' edges.
+	for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(m.triangles.size()); ++ti) {
+		const NavTriangle& t = m.triangles[static_cast<std::size_t>(ti)];
+		if (t.faceBlocker != kNoBlocker || centroid(m.vertices, t.v).y >= 400) {
 			continue;
 		}
-		Vec2i64 c = centroid(m.vertices, t.v);
-		if (c.y < 400) { // well below the band
-			for (int a = 0; a < 3; ++a) {
-				if (t.edgePairWidthMm[a] == kUnconstrainedWidth) {
-					sawUnconstrained = true;
-				}
+		for (int a = 0; a < 3; ++a) {
+			if (!obstacleEdge(m, ti, a) && !obstacleEdge(m, ti, (a + 2) % 3)) {
+				EXPECT_GT(t.edgePairWidthMm[static_cast<std::size_t>(a)], 400) << "triangle " << ti << " apex " << a;
 			}
 		}
 	}
-	EXPECT_TRUE(sawUnconstrained) << "open floor away from obstacles must be unconstrained";
 }
 
 TEST(NavMesh, CorridorWidthPerpendicularChannel) {
@@ -639,21 +637,22 @@ TEST(NavMesh, CorridorWidthObtuseSqueeze) {
 	EXPECT_TRUE(found1941) << "obtuse squeeze to the nub corner must be floor(sqrt(1900^2+400^2))=1941";
 }
 
-TEST(NavMesh, SliverInOpenFloorIsUnconstrained) {
-	// A long thin open strip: the CDT emits high-aspect sliver triangles with no
-	// incident obstacle edge. Their tiny altitude must NOT register as a narrow
-	// corridor; every edge-pair width must be unconstrained.
+TEST(NavMesh, SliverInAStripReadsTheStripWidth) {
+	// A long thin strip between mesh edges: the CDT emits high-aspect sliver triangles.
+	// The narrowest crossing is the strip's 40 mm, measured to the far mesh edge, and no
+	// width reads less.
 	NavMeshInput in;
 	in.polygons.push_back(border({{0, 0}, {6000, 0}, {6000, 40}, {0, 40}}));
 
 	NavMesh m = buildNavMesh(in);
 	ASSERT_FALSE(m.triangles.empty());
+	std::int64_t narrowest = kUnconstrainedWidth;
 	for (const NavTriangle& t : m.triangles) {
 		for (int a = 0; a < 3; ++a) {
-			EXPECT_EQ(t.edgePairWidthMm[a], kUnconstrainedWidth)
-				<< "an open-floor sliver has no obstacle, so it must be unconstrained";
+			narrowest = std::min(narrowest, t.edgePairWidthMm[static_cast<std::size_t>(a)]);
 		}
 	}
+	EXPECT_EQ(narrowest, 40);
 }
 
 TEST(NavMesh, DoorClearWidthThreadedOntoPortalEdge) {
