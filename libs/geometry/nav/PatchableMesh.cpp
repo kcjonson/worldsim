@@ -2321,7 +2321,8 @@ namespace geometry::nav {
 			for (auto it = bySize.rbegin(); it != bySize.rend() && from < 0; ++it) {
 				if (roundedCover(-it->second, start)) {
 					from = -it->second;
-				}			}
+				}
+			}
 			if (from < 0) {
 				assert(false && "PatchableMesh: no sample of a group reads its cover exactly");
 				out.unreadCovers += 1;
