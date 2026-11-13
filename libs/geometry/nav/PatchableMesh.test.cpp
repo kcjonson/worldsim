@@ -1082,6 +1082,43 @@ TEST(PatchableMesh, ObstacleInsideASquareShowsInItsCover) {
 	EXPECT_EQ(h.mesh.cover(outside), std::vector<RingId>{kGroundToken});
 }
 
+// A cover-only ring is in the mesh and in the cover of the ground inside it, and tags
+// nothing: that ground is floor, a disc wider than the ring crosses it straight, and an
+// obstacle over it still blocks. Removed, it leaves the cover.
+TEST(PatchableMesh, CoverOnlyRingMarksGroundAndBlocksNothing) {
+	Harness			h;
+	h.add(bounds(rect(0, 0, 20000, 10000)));
+	NavInputPolygon strip = blocked(rect(9000, 1000, 10000, 9000), kWater);
+	strip.coverOnly		  = true;
+	const RingId marked	  = h.add(strip);
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+
+	const Vec2i64	   inStrip{9500, 5000};
+	const std::int32_t inside = h.mesh.locate(inStrip);
+	ASSERT_GE(inside, 0);
+	EXPECT_EQ(h.mesh.cover(inside), (std::vector<RingId>{kGroundToken, marked}));
+	EXPECT_TRUE(isFloorFace(h.mesh.triangles()[static_cast<std::size_t>(inside)]));
+
+	h.mesh.refreshWidths();
+	const PathResult across = pathThrough(h.mesh.view(), {2000, 4000}, {18000, 6000}, 600);
+	ASSERT_TRUE(across.reachable) << "the strip's sides pinch no corridor";
+	EXPECT_NEAR(across.cost, std::hypot(16000.0, 2000.0), 1.0) << "straight across the strip";
+
+	const RingId obstacle = h.add(blocked(rect(9200, 4000, 9800, 6000)));
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	const std::int32_t under = h.mesh.locate(inStrip);
+	ASSERT_GE(under, 0);
+	EXPECT_EQ(h.mesh.cover(under), (std::vector<RingId>{kGroundToken, marked, obstacle}));
+	EXPECT_EQ(h.mesh.triangles()[static_cast<std::size_t>(under)].faceBlocker, kObstacle);
+
+	PatchEdits leave;
+	leave.removes.push_back(marked);
+	h.apply(leave);
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	EXPECT_EQ(h.mesh.cover(h.mesh.locate(inStrip)), (std::vector<RingId>{kGroundToken, obstacle}));
+	EXPECT_EQ(h.mesh.cover(h.mesh.locate({9500, 2000})), std::vector<RingId>{kGroundToken});
+}
+
 // Water clipped at the shared side arrives as one ring per square: its stretch of the
 // side stays constrained by the water rings alone, and the open stretches either side
 // dissolve.

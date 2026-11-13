@@ -20,6 +20,7 @@
 #include <construction/ConstructionWorld.h>
 
 #include <nav/NavMesh.h>
+#include <nav/PatchableMesh.h>
 
 #include "PlacedObstacle.h"
 
@@ -36,6 +37,9 @@ namespace nav {
 	constexpr std::int64_t kProvenancePlaced	   = -2;
 	constexpr std::int64_t kProvenanceBorder   = -3;
 	constexpr std::int64_t kProvenanceJunction = -4;
+	// A fordable channel: water a mover wades through. Its ring is cover-only, so it blocks no
+	// movement, and a face's cover says the ground there is a stream bed, which building refuses.
+	constexpr std::int64_t kProvenanceFord	   = -5;
 
 	// --- Ground ------------------------------------------------------------------
 	//
@@ -49,10 +53,16 @@ namespace nav {
 	// same ring on every machine.
 	[[nodiscard]] geometry::nav::NavInputPolygon visibilityLimit(const geometry::Vec2i64& centreMm, std::int64_t rangeMm);
 
-	// Appends every navRing with blocksMovement as a blocked ring with kProvenanceWater and
-	// the ring's holeCapable, orientation kept (a Waterline island stays a CW hole), in
-	// stored order. Fordable channel pieces (blocksMovement false) are skipped.
+	// Appends every navRing in stored order, orientation kept (a Waterline island stays a CW
+	// hole): one with blocksMovement as a blocked ring with kProvenanceWater and the ring's
+	// holeCapable, a fordable channel piece (blocksMovement false) as a cover-only ring with
+	// kProvenanceFord.
 	void appendChunkWater(const world::ChunkTerrainPolygons& polygons, std::vector<geometry::nav::NavInputPolygon>& out);
+
+	// Whether triangle `tri` lies in a fordable channel: ground a mover wades across and nothing
+	// is built on. Read from the triangle's cover, so a placed obstacle or a wall over it changes
+	// nothing.
+	[[nodiscard]] bool faceInFord(const geometry::nav::PatchableMesh& mesh, std::int32_t tri);
 
 	// --- Placed obstacles --------------------------------------------------------
 
