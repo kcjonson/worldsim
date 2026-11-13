@@ -587,45 +587,118 @@ TEST_F(NavigationSystemTest, MoverWithLongerSightMeshesALargerDisc) {
 	EXPECT_EQ(meshedWithSight(70.0F), (std::vector<bool>{true, true, true, false}));
 }
 
-// Flora enters at most kDetailRingsPerTick rings a tick, hanging over unseen ground, and the limit's
-// ground goes in with the last of them: never ahead of its obstacles.
+namespace {
+	// How much a still mover's sight may grow and leave his next limit short of urgent: what he sees
+	// stays a step inside his served limit.
+	constexpr float kSightGrowthShortOfUrgent =
+		NavigationSystem::kSightBufferMeters - 2.0F * static_cast<float>(NavigationSystem::kLimitRetakeStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+} // namespace
+
+// The placed obstacles of a limit that is not urgent (a still mover's sight grows) enter at most
+// kDetailRingsPerTick a tick, hanging over unseen ground, and the limit's ground goes in with the last
+// of them: never ahead of its obstacles.
 TEST_F(NavigationSystemTest, FloraEntersWithinTheBudget) {
 	registerTree("Test_NavBudgetTree", 0.3F);
+	const glm::vec2	   at{0.0F, 0.0F};
+	const float		   ringRadius = kColonistRange + 0.5F * kSightGrowthShortOfUrgent;
+	constexpr int	   kTrees	  = 100;
+	std::vector<glm::vec2> trees;
+	for (int k = 0; k < kTrees; ++k) {
+		const float angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(k) / static_cast<float>(kTrees);
+		trees.push_back(at + ringRadius * glm::vec2{std::cos(angle), std::sin(angle)});
+	}
+	const glm::vec2 groundPast = at + glm::vec2{ringRadius + 0.25F * kSightGrowthShortOfUrgent, 0.0F};
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
-	std::vector<glm::vec2>				trees;
-	for (int i = 0; i < 10; ++i) {
-		for (int j = 0; j < 10; ++j) {
-			trees.push_back({1.5F + 3.0F * static_cast<float>(i), 1.5F + 3.0F * static_cast<float>(j)});
-		}
-	}
 	placeTrees(executor, processed, "Test_NavBudgetTree", trees);
 
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
-	addColonist(world, {15.0F, 15.0F}, "Walker");
+	const EntityID mover = addColonist(world, at, "Lookout");
+	Memory		   memory;
+	memory.sightRadius = kDefaultSightRadius;
+	world.addComponent<Memory>(mover, std::move(memory));
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
-
+	settle(sys);
 	auto inMesh = [&] {
 		return static_cast<std::size_t>(std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return obstacleMeshed(sys, t); }));
 	};
+	ASSERT_TRUE(sys.inSimArea(at));
+	ASSERT_EQ(inMesh(), 0U) << "the ring lies past his first limit";
+	ASSERT_FALSE(sys.inSimArea(groundPast));
+
+	world.getComponent<Memory>(mover)->sightRadius += kSightGrowthShortOfUrgent;
+	sys.resetNavQueryStats();
 	const std::size_t ticks = (trees.size() + NavigationSystem::kDetailRingsPerTick - 1) / NavigationSystem::kDetailRingsPerTick;
 	ASSERT_GT(ticks, 1u);
 	for (std::size_t tick = 1; tick < ticks; ++tick) {
 		step(world, sys);
-		EXPECT_FALSE(sys.inSimArea({15.0F, 15.0F})) << "tick " << tick << ": the ground waits for its obstacles";
+		EXPECT_FALSE(sys.inSimArea(groundPast)) << "tick " << tick << ": the ground waits for its obstacles";
+		EXPECT_LE(inMesh(), tick * NavigationSystem::kDetailRingsPerTick) << "tick " << tick;
 		EXPECT_TRUE(sys.isBuilding());
 	}
 	step(world, sys);
-	EXPECT_TRUE(sys.inSimArea({15.0F, 15.0F}));
+	EXPECT_TRUE(sys.inSimArea(groundPast));
 	EXPECT_EQ(inMesh(), trees.size()) << "the ground lands with every obstacle on it";
+	EXPECT_EQ(sys.navQueryStats().urgentLimits, 0U);
 
 	settle(sys);
 	EXPECT_FALSE(sys.isBuilding());
 	EXPECT_EQ(inMesh(), trees.size());
+}
+
+// A mover that appears on unseen ground (a dev spawn) has his limit urgent: its ground and every placed
+// obstacle in it are in the mesh after the tick he appears in, outside the budgets, and he walks none
+// of his route before it.
+TEST_F(NavigationSystemTest, FreshMoverOnUnseenGroundStandsUntilHisFirstLimitLands) {
+	registerTree("Test_NavFreshMoverObstacle", 0.3F);
+	const glm::vec2		   at{200.0F, 200.0F};
+	std::vector<glm::vec2> trees;
+	for (int i = -5; i <= 5; ++i) {
+		for (int j = -5; j <= 5; ++j) {
+			if (i != 0 || j != 0) {
+				trees.push_back(at + 3.0F * glm::vec2{static_cast<float>(i), static_cast<float>(j)});
+			}
+		}
+	}
+	ASSERT_GT(trees.size(), NavigationSystem::kDetailRingsPerTick);
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavFreshMoverObstacle", trees);
+
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+	world.registerSystem<MovementSystem>();
+	world.registerSystem<PhysicsSystem>();
+	const EntityID mover = world.createEntity();
+	world.addComponent<Position>(mover, Position{at});
+	world.addComponent<AgentRadius>(mover, AgentRadius{});
+	world.addComponent<Velocity>(mover, Velocity{{0.0F, 0.0F}});
+	world.addComponent<MovementTarget>(mover, MovementTarget{at + glm::vec2{1.5F, 0.0F}, 2.0F, true});
+	NavPath route;
+	route.waypoints = {at, at + glm::vec2{1.5F, 0.0F}};
+	route.current	= 1;
+	route.valid		= true;
+	world.addComponent<NavPath>(mover, std::move(route));
+	ASSERT_FALSE(sys.inSimArea(at));
+
+	step(world, sys);
+	EXPECT_EQ(world.getComponent<Position>(mover)->value, at) << "he walked before his ground was in";
+	EXPECT_TRUE(sightMeshed(sys, at, kDefaultSightRadius));
+	for (const glm::vec2 t : trees) {
+		EXPECT_TRUE(obstacleMeshed(sys, t)) << "(" << t.x << ", " << t.y << ") is not in with his ground";
+	}
+	EXPECT_EQ(sys.navQueryStats().urgentLimits, 1U);
+
+	step(world, sys);
+	EXPECT_NE(world.getComponent<Position>(mover)->value, at) << "he stands once his ground is in";
 }
 
 // Placement finishing late never leaves seen ground without its obstacles: a limit whose chunks have
@@ -770,17 +843,25 @@ TEST_F(NavigationSystemTest, GenerationIgnoresFloraPatches) {
 }
 
 // Many placed obstacles leaving the world at once (felled) queue for removal. That backlog drains
-// under its own budget and never holds back the obstacles entering around a mover that arrives.
+// under its own budget and never holds back the obstacles entering a limit that is not urgent.
 TEST_F(NavigationSystemTest, FelledBacklogDoesntHoldBackAdds) {
 	registerTree("Test_NavLostTree", 0.3F);
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
 	std::vector<glm::vec2>				lost;
 	std::vector<glm::vec2>				ahead;
+	const glm::vec2						aheadAt{-228.0F, 214.0F};
 	for (int i = 0; i < 20; ++i) {
 		for (int j = 0; j < 10; ++j) {
 			lost.push_back({200.0F + 3.0F * static_cast<float>(i), 200.0F + 3.0F * static_cast<float>(j)});
-			ahead.push_back({-200.0F - 3.0F * static_cast<float>(i), 200.0F + 3.0F * static_cast<float>(j)});
+		}
+	}
+	// Two rings past the other mover's first limit, inside the one his grown sight takes.
+	for (const float band : {0.4F, 0.8F}) {
+		const float radius = kColonistRange + band * kSightGrowthShortOfUrgent;
+		for (std::size_t k = 0; k < lost.size() / 2; ++k) {
+			const float angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(k) / static_cast<float>(lost.size() / 2);
+			ahead.push_back(aheadAt + radius * glm::vec2{std::cos(angle), std::sin(angle)});
 		}
 	}
 	ASSERT_GT(lost.size(), NavigationSystem::kDetailRemovalsPerTick);
@@ -794,20 +875,21 @@ TEST_F(NavigationSystemTest, FelledBacklogDoesntHoldBackAdds) {
 	sys.setPlacementData(&executor, &processed);
 	sys.setConstructionWorld(&cw);
 	meshAround(world, {228.0F, 214.0F}, 40.0F);
+	const EntityID other = meshDisc(world, aheadAt, kColonistRange);
 	settle(sys);
 	auto inMesh = [&](const std::vector<glm::vec2>& trees) {
 		return static_cast<std::size_t>(
 			std::count_if(trees.begin(), trees.end(), [&](glm::vec2 t) { return sys.inSimArea(t) && !meshClear(sys, t); }));
 	};
 	ASSERT_EQ(inMesh(lost), lost.size());
-	ASSERT_EQ(inMesh(ahead), 0u) << "no disc meets the other trees yet";
+	ASSERT_EQ(inMesh(ahead), 0u) << "no limit meets the other trees yet";
 
-	// Every tree round the mover is felled as another mover appears by the other trees: his first
-	// limit, not urgent, under the budgets.
+	// Every tree round the mover is felled as the other mover's sight grows over the other trees: a
+	// limit not urgent, under the budgets.
 	for (const glm::vec2 t : lost) {
 		ASSERT_TRUE(executor.removeEntity(world::worldToChunk({t.x, t.y}), t, "Test_NavLostTree"));
 	}
-	meshAround(world, {-228.0F, 214.0F}, 40.0F);
+	world.getComponent<Memory>(other)->sightRadius += kSightGrowthShortOfUrgent;
 	sys.resetNavQueryStats();
 	// The new limit's obstacles go in ahead of its ground, hanging over unseen ground.
 	auto gathered = [&](const std::vector<glm::vec2>& trees) {
@@ -1599,6 +1681,62 @@ TEST_F(NavigationSystemTest, LandingMeshesOnlyTheDropLimit) {
 	}
 	EXPECT_TRUE(obstacleMeshed(sys, seen)) << "the obstacle in the landing limit came in with it";
 	EXPECT_FALSE(sys.inSimArea(unseen));
+}
+
+// The placed obstacles the landing clears round the crew's points are out of the mesh when
+// groupSpawnPoints returns: every member stands on clear ground, and the first tick moves nobody.
+TEST_F(NavigationSystemTest, LandingClearingLeavesTheCrewOnClearGround) {
+	registerTree("Test_NavLandingCleared", 0.4F);
+	const glm::vec2		  drop{100.0F, 100.0F};
+	constexpr std::size_t kCrew		  = 3;
+	constexpr float		  kRing		  = 1.5F;
+	constexpr float		  kClearRadius = 4.5F;
+	std::vector<glm::vec2> trees{drop};
+	for (std::size_t i = 0; i < kCrew; ++i) {
+		const float angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(i) / static_cast<float>(kCrew);
+		trees.push_back(drop + kRing * glm::vec2{std::cos(angle), std::sin(angle)});
+	}
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavLandingCleared", trees);
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	world.registerSystem<MovementSystem>();
+	world.registerSystem<PhysicsSystem>();
+
+	const auto clearRound = [&executor](const NavigationSystem::GroupSpawn& spawn) {
+		std::vector<glm::vec2> round{spawn.center};
+		round.insert(round.end(), spawn.points.begin(), spawn.points.end());
+		for (const glm::vec2 at : round) {
+			const ChunkCoordinate coord = world::worldToChunk({at.x, at.y});
+			std::vector<std::pair<std::string, glm::vec2>> victims;
+			for (const PlacedEntity* e : executor.getChunkIndex(coord)->queryRadius(at, kClearRadius)) {
+				victims.emplace_back(e->defName, e->position);
+			}
+			for (const auto& [defName, position] : victims) {
+				executor.removeEntity(coord, position, defName);
+			}
+		}
+	};
+	const NavigationSystem::GroupSpawn spawn = sys.groupSpawnPoints(drop, kCrew, kRing, 0.0F, kAgentRadius, clearRound);
+	ASSERT_EQ(spawn.points.size(), kCrew);
+	expectMeshValid(sys);
+
+	std::vector<EntityID> crew;
+	for (const glm::vec2 p : spawn.points) {
+		EXPECT_TRUE(meshClear(sys, p)) << "(" << p.x << ", " << p.y << ") stands in a placed obstacle";
+		const EntityID member = world.createEntity();
+		world.addComponent<Position>(member, Position{p});
+		world.addComponent<AgentRadius>(member, AgentRadius{});
+		world.addComponent<Velocity>(member, Velocity{{0.0F, 0.0F}});
+		crew.push_back(member);
+	}
+	step(world, sys);
+	for (std::size_t k = 0; k < crew.size(); ++k) {
+		EXPECT_EQ(world.getComponent<Position>(crew[k])->value, spawn.points[k]) << "member " << k << " moved on the first tick";
+	}
 }
 
 TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOffMesh) {
@@ -2774,7 +2912,9 @@ TEST_F(NavigationSystemTest, RemovalsInATickArePatchedOnce) {
 TEST_F(NavigationSystemTest, FelledWhileItsLimitWaitsNeverEnters) {
 	registerTree("Test_NavWaitFellTree", 0.4F);
 	const std::array<glm::vec2, 2> movers{glm::vec2{-200.0F, 100.0F}, glm::vec2{200.0F, 100.0F}};
-	const std::array<glm::vec2, 2> trees{movers[0] + glm::vec2{10.0F, 0.0F}, movers[1] + glm::vec2{10.0F, 0.0F}};
+	const glm::vec2				   band{kColonistRange + 0.5F * kSightGrowthShortOfUrgent, 0.0F};
+	const std::array<glm::vec2, 2> trees{movers[0] + band, movers[1] + band};
+	const std::array<glm::vec2, 2> past{movers[0] - band, movers[1] - band};
 	PlacementExecutor				executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
 	placeTrees(executor, processed, "Test_NavWaitFellTree", std::vector<glm::vec2>(trees.begin(), trees.end()));
@@ -2783,19 +2923,27 @@ TEST_F(NavigationSystemTest, FelledWhileItsLimitWaitsNeverEnters) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
 	sys.setPlacementData(&executor, &processed);
+	std::vector<EntityID> lookouts;
 	for (const glm::vec2 at : movers) {
-		addColonist(world, at, "Mover");
+		lookouts.push_back(meshDisc(world, at, kColonistRange));
+	}
+	settle(sys);
+	ASSERT_FALSE(sys.inSimArea(trees[0]));
+	ASSERT_FALSE(sys.inSimArea(trees[1]));
+	// Their sight grows: two limits, neither urgent, one a tick.
+	for (const EntityID lookout : lookouts) {
+		world.getComponent<Memory>(lookout)->sightRadius += kSightGrowthShortOfUrgent;
 	}
 	ASSERT_EQ(NavigationSystem::kLimitsPerTick, 1U);
 	step(world, sys);
-	ASSERT_NE(sys.inSimArea(movers[0]), sys.inSimArea(movers[1])) << "one limit a tick";
-	const std::size_t waiting = sys.inSimArea(movers[0]) ? 1 : 0;
+	ASSERT_NE(sys.inSimArea(past[0]), sys.inSimArea(past[1])) << "one limit a tick";
+	const std::size_t waiting = sys.inSimArea(past[0]) ? 1 : 0;
 	ASSERT_TRUE(sys.isBuilding());
 	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({trees[waiting].x, trees[waiting].y}), trees[waiting], "Test_NavWaitFellTree"));
 
 	sys.resetNavQueryStats();
 	step(world, sys);
-	EXPECT_TRUE(sys.inSimArea(movers[waiting])) << "the waiting limit went in";
+	EXPECT_TRUE(sys.inSimArea(past[waiting])) << "the waiting limit went in";
 	EXPECT_EQ(sys.navQueryStats().navPatches, 1U) << "its limit, and no removal";
 	EXPECT_TRUE(meshClear(sys, trees[waiting])) << "the felled obstacle entered";
 	EXPECT_FALSE(sys.placedObstacleInNavMesh(world::worldToChunk({trees[waiting].x, trees[waiting].y}),
@@ -4550,17 +4698,23 @@ TEST_F(NavigationSystemTest, GoalInQueuedLimitAwaitsMesh) {
 // and is dropped, and awaitedGroundEpoch moves with no ground landing, so the waiter asks again and
 // reads no known way. Nothing waits for ground that is not coming.
 TEST_F(NavigationSystemTest, DroppedLimitReleasesItsWaiters) {
+	const glm::vec2						home{0.0F, 0.0F};
+	const glm::vec2						away{600.0F, 0.0F};
+	const glm::vec2						awayAgain{-600.0F, 0.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeNothingElsewhere(executor, &processed);
+	// The walker's limits wait for their chunks' placement.
+	processed.erase(world::worldToChunk({away.x, away.y}));
+	processed.erase(world::worldToChunk({awayAgain.x, awayAgain.y}));
+
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
-	const glm::vec2 home{0.0F, 0.0F};
+	sys.setPlacementData(&executor, &processed);
 	meshDisc(world, home, kColonistRange);
 	settle(sys);
 
-	for (std::size_t i = 0; i < NavigationSystem::kLimitsPerTick; ++i) { // this tick's limit budget
-		meshDisc(world, {kColonistRange, kColonistRange * static_cast<float>(i)}, kColonistRange);
-	}
-	const glm::vec2 away{600.0F, 0.0F};
 	const EntityID	walker = meshDisc(world, away, kColonistRange);
 	const glm::vec2 goal   = away + glm::vec2{kColonistRange * 0.5F, 0.0F};
 	sys.update(0.016F);
@@ -4569,7 +4723,7 @@ TEST_F(NavigationSystemTest, DroppedLimitReleasesItsWaiters) {
 	const std::uint64_t epoch	   = sys.awaitedGroundEpoch();
 	ASSERT_EQ(outcomeAtOnce(sys, home, goal), nav::RouteOutcome::AwaitingMesh) << "the walker's limit is still queued";
 
-	world.getComponent<Position>(walker)->value = {-600.0F, 0.0F};
+	world.getComponent<Position>(walker)->value = awayAgain;
 	sys.update(0.016F);
 	EXPECT_EQ(sys.generation(), generation) << "no ground went in";
 	EXPECT_NE(sys.awaitedGroundEpoch(), epoch) << "the dropped limit released nobody";
@@ -5286,25 +5440,37 @@ TEST_F(NavigationSystemTest, MoverInsideGroundOthersMeshedIsNeitherUrgentNorStop
 	EXPECT_EQ(sys.navQueryStats().urgentLimits, 0U);
 }
 
-// Limits that are not urgent go in kLimitsPerTick a tick, first in, first out.
+// Limits that are not urgent (still movers whose sight grows) go in kLimitsPerTick a tick, first in,
+// first out.
 TEST_F(NavigationSystemTest, LimitsThatAreNotUrgentGoInUnderTheirBudget) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
-	const float			   apart = 4.0F * (kDefaultSightRadius + NavigationSystem::kSightBufferMeters);
-	std::vector<glm::vec2> at;
+	const float			   apart = 4.0F * kColonistRange;
+	std::vector<EntityID>  movers;
+	std::vector<glm::vec2> past;
 	for (int k = 0; k < 4; ++k) {
-		at.push_back({apart * static_cast<float>(k), 0.0F});
-		meshDisc(world, at.back(), kDefaultSightRadius + NavigationSystem::kSightBufferMeters);
+		const glm::vec2 at{apart * static_cast<float>(k), 0.0F};
+		movers.push_back(meshDisc(world, at, kColonistRange));
+		past.push_back(at + glm::vec2{kColonistRange + 0.5F * kSightGrowthShortOfUrgent, 0.0F});
 	}
-	for (std::size_t tick = 1; tick <= at.size(); ++tick) {
+	settle(sys);
+	for (const EntityID mover : movers) {
+		world.getComponent<Memory>(mover)->sightRadius += kSightGrowthShortOfUrgent;
+	}
+	for (const glm::vec2 p : past) {
+		ASSERT_FALSE(sys.inSimArea(p));
+	}
+	sys.resetNavQueryStats();
+	for (std::size_t tick = 1; tick <= past.size(); ++tick) {
 		step(world, sys);
-		const std::size_t landed = static_cast<std::size_t>(std::count_if(at.begin(), at.end(), [&](glm::vec2 p) { return sys.inSimArea(p); }));
-		EXPECT_EQ(landed, std::min(at.size(), tick * NavigationSystem::kLimitsPerTick)) << "tick " << tick;
+		const std::size_t landed = static_cast<std::size_t>(std::count_if(past.begin(), past.end(), [&](glm::vec2 p) { return sys.inSimArea(p); }));
+		EXPECT_EQ(landed, std::min(past.size(), tick * NavigationSystem::kLimitsPerTick)) << "tick " << tick;
 		for (std::size_t k = 0; k < landed; ++k) {
-			EXPECT_TRUE(sys.inSimArea(at[k])) << "out of order at tick " << tick;
+			EXPECT_TRUE(sys.inSimArea(past[k])) << "out of order at tick " << tick;
 		}
 	}
+	EXPECT_EQ(sys.navQueryStats().urgentLimits, 0U);
 }
 
 // A limit that can never go in (its mover moved on and nothing holds its chunk) is dropped: it holds
@@ -5506,30 +5672,36 @@ TEST_F(NavigationSystemTest, ConnectedJoinsOnTheTickTheGapIsMeshed) {
 	EXPECT_TRUE(joined);
 }
 
-// A limit with more placed obstacles than a tick's budget brings them in over several ticks ahead of
-// its ground, hanging over unseen ground: they close nothing anyone can reach, so the epoch stays
-// until the ground comes.
+// A limit that is not urgent (a still mover's sight grows) with more placed obstacles than a tick's
+// budget brings them in over several ticks ahead of its ground, hanging over unseen ground: they close
+// nothing anyone can reach, so the epoch stays until the ground comes.
 TEST_F(NavigationSystemTest, ObstaclesAheadOfTheirGroundLeaveTheEpoch) {
 	registerTree("Test_NavEpochObstacle", 0.4F);
 	WalkRig rig({10.0F, 10.0F});
-	settle(rig.nav);
 	const glm::vec2		   far{200.0F, 10.0F};
-	std::vector<glm::vec2> obstacles; // nine to a row, 1.2 m apart
-	for (std::size_t k = 0; k <= 2 * NavigationSystem::kDetailRingsPerTick; ++k) {
-		obstacles.push_back(far + glm::vec2{1.2F * static_cast<float>(k % 9) - 4.8F, 1.2F * static_cast<float>(k / 9) - 4.8F});
+	const float			   ringRadius = NavigationSystem::kSightBufferMeters + 0.5F * kSightGrowthShortOfUrgent;
+	const std::size_t	   count	  = 2 * NavigationSystem::kDetailRingsPerTick + 1;
+	std::vector<glm::vec2> obstacles; // on a circle past the mover's first limit
+	for (std::size_t k = 0; k < count; ++k) {
+		const float angle = 2.0F * std::numbers::pi_v<float> * static_cast<float>(k) / static_cast<float>(count);
+		obstacles.push_back(far + ringRadius * glm::vec2{std::cos(angle), std::sin(angle)});
 	}
+	const glm::vec2 groundPast = far + glm::vec2{ringRadius + 0.25F * kSightGrowthShortOfUrgent, 0.0F};
 	placeTrees(rig.executor, rig.processed, "Test_NavEpochObstacle", obstacles);
+	const EntityID mover = meshDisc(rig.world, far, NavigationSystem::kSightBufferMeters);
+	settle(rig.nav);
+	ASSERT_FALSE(rig.nav.inSimArea(groundPast));
 	const std::uint64_t before = rig.nav.connectivityEpoch();
-	meshDisc(rig.world, far, NavigationSystem::kSightBufferMeters);
+	rig.world.getComponent<Memory>(mover)->sightRadius += kSightGrowthShortOfUrgent;
 	int hanging = 0;
-	for (int tick = 0; tick < 10 && !rig.nav.inSimArea(far); ++tick) {
+	for (int tick = 0; tick < 10 && !rig.nav.inSimArea(groundPast); ++tick) {
 		step(rig.world, rig.nav);
-		if (!rig.nav.inSimArea(far)) {
+		if (!rig.nav.inSimArea(groundPast)) {
 			++hanging;
 			EXPECT_EQ(rig.nav.connectivityEpoch(), before) << "tick " << tick;
 		}
 	}
-	ASSERT_TRUE(rig.nav.inSimArea(far));
+	ASSERT_TRUE(rig.nav.inSimArea(groundPast));
 	EXPECT_GE(hanging, 2) << "the obstacles came in over ticks ahead of the ground";
 	for (const glm::vec2 t : obstacles) {
 		EXPECT_TRUE(obstacleMeshed(rig.nav, t)) << "the obstacle at (" << t.x << ", " << t.y << ")";

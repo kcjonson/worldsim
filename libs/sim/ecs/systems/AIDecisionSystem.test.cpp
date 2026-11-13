@@ -66,6 +66,8 @@
 #include <filesystem>
 #include <memory>
 #include <optional>
+#include <unordered_set>
+#include <vector>
 
 namespace ecs::test {
 
@@ -4409,6 +4411,8 @@ namespace ecs::test {
 
 			nav = &world->registerSystem<NavigationSystem>();
 			nav->setChunkManager(chunkRegion());
+			placeNothingElsewhere(placement, &placed);
+			nav->setPlacementData(&placement, &placed);
 			nav->setConstructionWorld(&construction);
 			world->getSystem<AIDecisionSystem>().setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();
@@ -4473,6 +4477,9 @@ namespace ecs::test {
 		// The base TearDown resets the world, and its NavigationSystem waits out any patches in
 		// flight, before this member goes away.
 		construction::ConstructionWorld		 construction;
+		// Every fixture chunk placed with nothing; a test may withhold a chunk's placement (`placed`).
+		assets::PlacementExecutor				 placement{assets::AssetRegistry::Get()};
+		std::unordered_set<world::ChunkCoordinate> placed;
 		NavigationSystem*							 nav = nullptr;
 		// Never generated: withholdChunks wires it.
 		std::unique_ptr<world::ChunkManager> pendingChunks;
@@ -4512,9 +4519,10 @@ namespace ecs::test {
 							 << "\")";
 	}
 
-	// A colonist standing in ground that waits behind others' limits (taken first) while those land one
-	// or more a tick: each landing may be news to him, but he asks again no more than once every
-	// kReEvalInterval, and once ground is in under him he routes.
+	// A colonist standing in ground on its way in (his chunk's placement is late) while others' limits
+	// land one a tick (lookouts whose sight grows, short of urgent): each landing may be news to him,
+	// but he asks again no more than once every kReEvalInterval, and once ground is in under him he
+	// routes.
 	TEST_F(AIDecisionFirstMeshTest, AwaitingMeshAsksAtMostOnceAReEvalInterval) {
 		auto&					registry = assets::AssetRegistry::Get();
 		assets::AssetDefinition berryBush;
@@ -4524,27 +4532,37 @@ namespace ecs::test {
 		registry.registerTestDefinition(std::move(berryBush));
 
 		withholdChunks();
-		// Lookouts over the ready chunks, each limit's obstacle query inside them, taken before his.
-		constexpr float kSpacing = 40.0F;
-		for (float x = -60.0F; x <= 100.0F; x += kSpacing) {
-			for (float y = -60.0F; y <= 100.0F; y += kSpacing) {
-				if (x != 20.0F || y != 20.0F) {
-					addLookout({x, y});
-				}
-			}
+		const glm::vec2				 start{-100.0F, 20.0F};
+		const world::ChunkCoordinate late = world::worldToChunk({start.x, start.y});
+		placed.erase(late);
+		// Lookouts in a row whose limits' obstacle queries stay clear of his chunk.
+		constexpr float		  kSpacing = 40.0F;
+		constexpr int		  kLookouts = 12;
+		std::vector<EntityID> lookouts;
+		for (int k = 0; k < kLookouts; ++k) {
+			lookouts.push_back(addLookout({100.0F + kSpacing * static_cast<float>(k), 20.0F}, kDefaultSightRadius));
 		}
-		const glm::vec2 start{20.0F, 20.0F};
-		const auto		colonist = createColonist(start);
+		const auto colonist = createColonist(start);
 		satisfyAllNeeds(*getNeeds(colonist));
 		addKnownEntity(colonist, start + glm::vec2{6.0F, 2.0F}, registry.getDefNameId("Flora_BerryBush"), assets::CapabilityType::Harvestable);
 		world->update(kTick);
 		const Task& task = *getTask(colonist);
 		ASSERT_EQ(task.navState, NavState::AwaitingMesh);
 
-		nav->setChunkManager(chunkRegion());
 		const std::uint64_t asked	   = nav->routeStats().requests;
 		const std::uint64_t generation = nav->generation();
-		int					ticks	   = 0;
+		int					ticks	   = 1;
+		nav->setChunkManager(chunkRegion());
+		world->update(kTick);
+		const float growth = NavigationSystem::kSightBufferMeters -
+							 2.0F * static_cast<float>(NavigationSystem::kLimitRetakeStepMm) / static_cast<float>(geometry::kMillimetersPerMeter);
+		for (const EntityID lookout : lookouts) {
+			world->getComponent<Memory>(lookout)->sightRadius += growth;
+		}
+		for (; ticks <= kLookouts; ++ticks) {
+			world->update(kTick);
+		}
+		placed.insert(late);
 		for (; ticks < 200 && task.navState != NavState::Traveling; ++ticks) {
 			world->update(kTick);
 		}

@@ -710,7 +710,7 @@ namespace ecs {
 	glm::vec2 NavigationSystem::stepWithinSight(EntityID mover, glm::vec2 from, glm::vec2 to) const {
 		const auto disc = moverDiscs.find(mover);
 		if (disc == moverDiscs.end() || !disc->second.served.has_value()) {
-			return to;
+			return from;
 		}
 		const glm::vec2 centre = nav::toMeters(disc->second.served->centre);
 		const float		reach  = static_cast<float>(std::max<std::int64_t>(0, disc->second.served->rangeMm - disc->second.sightMm)) /
@@ -783,7 +783,7 @@ namespace ecs {
 					limitQueue.push_back(std::move(limit));
 				}
 			}
-			disc.urgent = false;
+			disc.urgent = true;
 			if (disc.served.has_value()) {
 				const std::int64_t margin = disc.served->rangeMm - disc.sightMm - kLimitRetakeStepMm;
 				const std::int64_t sx	  = xMm - disc.served->centre.x;
@@ -1736,7 +1736,8 @@ namespace ecs {
 	// --- Landing -------------------------------------------------------------------
 
 	NavigationSystem::GroupSpawn NavigationSystem::groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters,
-																	float minSeparationMeters, float clearanceMeters) {
+																	float minSeparationMeters, float clearanceMeters,
+																	const std::function<void(const GroupSpawn&)>& clearLanding) {
 		// Candidate search around a seed: the seed, then rings kSearchStepM apart, kSearchAngles
 		// points each, out to kSearchRings -- nearest first, a fixed order so a landing is
 		// deterministic.
@@ -1824,6 +1825,12 @@ namespace ecs {
 				return clear(p);
 			};
 			out.points.push_back(firstAround(seed, spaced).value_or(nearestTerrainWalkablePoint(seed).value_or(seed)));
+		}
+		if (clearLanding) {
+			clearLanding(out);
+			queueRemovedDetail();
+			gatherRemovals(kUnlimited);
+			settle();
 		}
 		return out;
 	}

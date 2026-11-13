@@ -1390,14 +1390,25 @@ namespace {
 		///     the clearing center is the nearest spot to the drop whose whole party ring stands on
 		///     clear ground, so the ring never straddles a shore, and each member's point is clear
 		///     ground of its own, kPartyMinSeparation from the others;
-		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius of every point so
-		///     nothing is triangulated as an obstacle on top of a colonist.
-		/// Runs at ECS init, before any flora enters the nav mesh, so the removed obstacles never
-		/// do and the crew drops onto open ground.
+		///  2. clear the placed entities within kLandingClearRadius of every point, which the nav mesh
+		///     takes out before groupSpawnPoints returns, so the crew drops onto open ground.
 		[[nodiscard]] ecs::NavigationSystem::GroupSpawn
 		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, ecs::NavigationSystem& navSystem) {
-			ecs::NavigationSystem::GroupSpawn landing =
-				navSystem.groupSpawnPoints(rawSpawn, crewSize, kPartyRingRadius, kPartyMinSeparation, kSpawnClearance);
+			ecs::NavigationSystem::GroupSpawn landing = navSystem.groupSpawnPoints(
+				rawSpawn,
+				crewSize,
+				kPartyRingRadius,
+				kPartyMinSeparation,
+				kSpawnClearance,
+				[this](const ecs::NavigationSystem::GroupSpawn& spawn) {
+					clearLandingArea(spawn.center, kLandingClearRadius);
+					for (const glm::vec2& p : spawn.points) {
+						if (glm::length(p - spawn.center) > kLandingClearRadius - kSpawnClearance) {
+							clearLandingArea(p, kLandingClearRadius);
+						}
+					}
+				}
+			);
 			if (landing.center != rawSpawn) {
 				LOG_INFO(
 					Game,
@@ -1407,13 +1418,6 @@ namespace {
 					landing.center.x,
 					landing.center.y
 				);
-			}
-
-			clearLandingArea(landing.center, kLandingClearRadius);
-			for (const glm::vec2& p : landing.points) {
-				if (glm::length(p - landing.center) > kLandingClearRadius - kSpawnClearance) {
-					clearLandingArea(p, kLandingClearRadius);
-				}
 			}
 			return landing;
 		}

@@ -24,9 +24,9 @@
 //  3. Removed placed obstacles (PlacementExecutor::takeRemovals), each looked up by its key, up to
 //     kDetailRemovalsPerTick, in one patch. One not in the mesh is no change: a limit still waiting
 //     never finds it, and ground no limit reached has nothing to take out.
-//  4. Urgent limits, with their placed obstacles and water, outside every budget: a mover's newest
-//     limit once he stands kSightBufferMeters minus kLimitRetakeStepMm short of the edge of what he
-//     sees staying meshed (see MoverDisc). Then the rest, first in, first out: kLimitsPerTick a tick,
+//  4. Urgent limits, with their placed obstacles and water, outside every budget: a mover's first
+//     limit, and his newest once he stands kSightBufferMeters minus kLimitRetakeStepMm short of the
+//     edge of what he sees staying meshed (see MoverDisc). Then the rest, first in, first out: kLimitsPerTick a tick,
 //     and kDetailRingsPerTick placed obstacles; a limit with more obstacles than that brings them in
 //     over several ticks, hanging over unseen ground, and its ground goes in with the last of them.
 //     A queued limit the meshed ground now holds, or with a chunk no mover holds, is dropped; one
@@ -161,7 +161,8 @@ class NavigationSystem : public ISystem {
 	// The farthest point along `from` -> `to` that `mover` may walk to with what he sees (his sight
 	// distance round him) still inside the last limit of his in the mesh: `to` when all of it is,
 	// the point where the step leaves it, or, already past it, `to` only when that comes no farther
-	// out. `to` for a mover with no limit in the mesh yet. Movement takes each stride through it.
+	// out. `from` for a mover with no limit in the mesh yet: he stands until his first one lands.
+	// Movement takes each stride through it.
 	[[nodiscard]] glm::vec2 stepWithinSight(EntityID mover, glm::vec2 from, glm::vec2 to) const;
 
 	// Detail comes from `executor`'s chunk indices, and only for chunks in `processed` (the
@@ -338,10 +339,12 @@ class NavigationSystem : public ISystem {
 	// ground, so the ring never straddles a shore. Clear means walkable at the point and at
 	// `clearanceMeters` around it. Every member then stands on its ring point when that point is
 	// clear and at least `minSeparationMeters` from the members already placed, else on the
-	// nearest spot around it that is. With no chunks wired, the center is `drop` and the points
+	// nearest spot around it that is. Then `clearLanding`, when given, takes placed entities out of
+	// the world round the points, and their removal is applied and waited for, so the crew stands on
+	// open ground before the first tick. With no chunks wired, the center is `drop` and the points
 	// are the raw ring.
 	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters, float minSeparationMeters,
-											  float clearanceMeters);
+											  float clearanceMeters, const std::function<void(const GroupSpawn&)>& clearLanding = {});
 
 	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
 	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
@@ -520,8 +523,8 @@ class NavigationSystem : public ISystem {
 		std::int64_t			   sightMm	   = 0;
 		std::uint64_t			   taken	   = 0;
 		std::optional<ServedLimit> served;
-		// He stands kSightBufferMeters minus kLimitRetakeStepMm (his served R minus sight minus the
-		// step) or farther from `served`'s centre: his newest limit is urgent.
+		// He has no `served` limit yet, or stands kSightBufferMeters minus kLimitRetakeStepMm (his
+		// served R minus sight minus the step) or farther from its centre: his newest limit is urgent.
 		bool		  urgent = false;
 		std::uint64_t seen	 = 0;
 	};
