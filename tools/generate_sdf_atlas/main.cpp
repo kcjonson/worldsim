@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <msdfgen-ext.h>
@@ -12,7 +13,6 @@
 #include <vector>
 
 struct GlyphData {
-	char character;
 	msdfgen::unicode_t unicode;
 	double advance;
 	msdfgen::Shape shape;
@@ -49,13 +49,22 @@ struct AtlasConfig {
 	double pixelRange = 4.0;  // Distance field range in pixels
 	int glyphSize = 32;        // Size of each glyph in atlas (pixels)
 
-	// Character set to include (ASCII printable)
+	// Character set to include: ASCII printable, then the Latin-1 Supplement (U+00A0 to U+00FF).
+	// The Latin-1 range goes after the ASCII so the ASCII glyphs keep their cells.
 	const char* charset =
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 		"0123456789 !@#$%^&*()_+-=[]{}|;':\",./<>?`~\\";
+	static constexpr msdfgen::unicode_t kLatin1First = 0xA0;
+	static constexpr msdfgen::unicode_t kLatin1Last = 0xFF;
 };
 
 namespace {
+
+	std::string label(msdfgen::unicode_t unicode) {
+		char buffer[16];
+		std::snprintf(buffer, sizeof(buffer), "U+%04X", static_cast<unsigned>(unicode));
+		return buffer;
+	}
 
 	constexpr double kSide = 1e-9; // em either side of an edge, to tell which side the fill is on
 
@@ -412,15 +421,20 @@ int main(int argc, char** argv) {
 	std::vector<GlyphData> glyphs;
 	int glyphCount = 0;
 
-	// The characters whose overlapping contours were resolved, for the summary
-	std::string resolvedGlyphs;
+	// The characters whose overlapping contours were resolved, and those the font lacks, for the summary
+	std::vector<msdfgen::unicode_t> resolvedGlyphs;
+	std::vector<msdfgen::unicode_t> missingGlyphs;
 
+	std::vector<msdfgen::unicode_t> codePoints;
 	for (const char* p = config.charset; *p; ++p) {
-		char c = *p;
-		msdfgen::unicode_t unicode = static_cast<msdfgen::unicode_t>(c);
+		codePoints.push_back(static_cast<msdfgen::unicode_t>(*p));
+	}
+	for (msdfgen::unicode_t unicode = AtlasConfig::kLatin1First; unicode <= AtlasConfig::kLatin1Last; ++unicode) {
+		codePoints.push_back(unicode);
+	}
 
+	for (const msdfgen::unicode_t unicode : codePoints) {
 		GlyphData glyph;
-		glyph.character = c;
 		glyph.unicode = unicode;
 
 		// Load glyph shape
@@ -437,7 +451,7 @@ int main(int argc, char** argv) {
 			// Skip whitespace glyphs (they have no shape)
 			if (glyph.shape.contours.empty()) {
 				// Still add whitespace characters for metadata (like space)
-				if (c == ' ' || c == '\t') {
+				if (unicode == ' ' || unicode == 0xA0) {
 					glyphs.push_back(glyph);
 				}
 				continue;
@@ -446,9 +460,9 @@ int main(int argc, char** argv) {
 			// A glyph that does not resolve keeps the font's contours, and its specks with them.
 			std::string error;
 			if (resolveOverlaps(glyph.shape, error)) {
-				resolvedGlyphs += c;
+				resolvedGlyphs.push_back(unicode);
 			} else if (!error.empty()) {
-				std::cerr << "WARNING: " << config.fontPath << ": could not resolve the overlapping contours of '" << c << "' (" << error
+				std::cerr << "WARNING: " << config.fontPath << ": could not resolve the overlapping contours of " << label(unicode) << " (" << error
 						  << "), so it keeps the font's\n";
 			}
 
@@ -457,12 +471,25 @@ int main(int argc, char** argv) {
 
 			glyphs.push_back(glyph);
 			glyphCount++;
+		} else {
+			missingGlyphs.push_back(unicode);
 		}
 	}
 
 	std::cout << "Loaded " << glyphCount << " glyphs\n";
 	if (!resolvedGlyphs.empty()) {
-		std::cout << "Overlapping contours resolved in " << resolvedGlyphs.size() << ": " << resolvedGlyphs << "\n";
+		std::cout << "Overlapping contours resolved in " << resolvedGlyphs.size() << ":";
+		for (const msdfgen::unicode_t unicode : resolvedGlyphs) {
+			std::cout << " " << label(unicode);
+		}
+		std::cout << "\n";
+	}
+	if (!missingGlyphs.empty()) {
+		std::cout << "Not in the font (" << missingGlyphs.size() << "):";
+		for (const msdfgen::unicode_t unicode : missingGlyphs) {
+			std::cout << " " << label(unicode);
+		}
+		std::cout << "\n";
 	}
 
 	if (glyphs.empty()) {
@@ -532,7 +559,14 @@ int main(int argc, char** argv) {
 		currentX += cell;
 		shelfHeight = std::max(shelfHeight, cell);
 	}
-	if (currentY + shelfHeight > config.atlasHeight) {
+
+	// Height grows past the requested one, to the next power of two, when the glyphs need it: the width, and so
+	// every cell's place on the grid, stays as it was.
+	const int requiredHeight = currentY + shelfHeight;
+	while (config.atlasHeight < requiredHeight && config.atlasHeight < 4096) {
+		config.atlasHeight *= 2;
+	}
+	if (requiredHeight > config.atlasHeight) {
 		std::cerr << "ERROR: Atlas too small for all glyphs\n";
 		msdfgen::destroyFont(font);
 		msdfgen::deinitializeFreetype(ft);
