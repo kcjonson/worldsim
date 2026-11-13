@@ -105,8 +105,8 @@ that section stands: a slightly hungry colonist still finishes its work order fi
 
 One figure given during the question round was wrong. Option 4 was offered as leaving "roughly 15
 game-minutes" between very hungry and critical; at the real decay rates (hunger 0.08 per
-game-minute) it is about three game-hours, and about two for thirst. The thresholds are config, and
-the choice is recorded as made.
+game-minute) it is about three game-hours, and about two for thirst. Shown the corrected figures,
+the owner kept the values: "Keep 25 and 20". They are config.
 
 Choices made in writing this spec, not put to the owner: the curve's shape (a power of the fraction
 slept, exponent 2); the "very" thresholds for needs with no action yet (hygiene and temperature 25,
