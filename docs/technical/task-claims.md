@@ -857,8 +857,8 @@ The harvest and haul evaluators emit one option per (goal, item, kind), visiting
 entries of the defs that give the goal's item (Memory's per-def lists). The kinds are a cut toward an
 item, a construction clear (its footprint's blockers, whatever they yield), the loose piles of an item
 (a haul to storage, a craft fetch, or a build-site fetch), and the lower-priority boxes a storage goal
-pulls an item from. Everything the arbitration compares except the trip and a cut's hysteresis is the
-same for every source of one group, so the sources are ranked off the trace (`WorkGroup`, a heap of
+pulls an item from. Everything the arbitration compares except the trip, a cut's hysteresis, and the
+tiebreak id (the goal's id mixed with the source's key) is the same for every source of one group, so the sources are ranked off the trace (`WorkGroup`, a heap of
 `RankedSource`) by the score each would have as its own option, and the option shows the best one
 offered.
 
@@ -867,8 +867,8 @@ verdict, not connected), the group's next source in rank order takes its place a
 to where that source ranks among the options not yet tested. The options are tried in the order one
 option per source would be, so a fallback that drops below another goal's source lets that source go
 first. A haul whose deposit leg has no known way fails for every source of its group alike and goes
-NoSource with none of the others tried. With no source left the option shows its first source, as
-Regrowing when one it tried was, else NoSource. Routing is unchanged: the chosen option asks one route
+NoSource with none of the others tried. With no source left the option shows the best-ranked source
+it tried that was regrowing, as Regrowing, else its first source, as NoSource. Routing is unchanged: the chosen option asks one route
 to its one target, and a route that finds no known way leaves a verdict the next decision passes over.
 
 A source others' claims take whole is not offered; instead each group shows at most one Reserved row,

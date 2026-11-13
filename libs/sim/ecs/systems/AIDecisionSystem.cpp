@@ -3085,13 +3085,14 @@ namespace ecs {
 		// the source, the group's next source no other colonist holds takes its place, the option moves to
 		// where that source ranks among the options not yet tested, and the same index is tested again: the
 		// options are tried in the order one option per source would be. With none left, the option shows
-		// its first source, Regrowing when any it tried was, else NoSource. True when there is a next source.
+		// the best-ranked source it tried that was regrowing, as Regrowing, else its first source, as
+		// NoSource. True when there is a next source.
 		const auto advanceWorkOption = [&](WorkGroup& group, std::size_t at) {
 			EvaluatedOption&			  option = trace.options[at];
 			const std::optional<uint32_t> next = candidates.nextOffered(group, group.current);
-			candidates.fill(option, group, next.value_or(group.first));
+			candidates.fill(option, group, next.value_or(group.regrowing.value_or(group.first)));
 			if (!next.has_value()) {
-				option.status = group.triedRegrowing ? OptionStatus::Regrowing : OptionStatus::NoSource;
+				option.status = group.regrowing.has_value() ? OptionStatus::Regrowing : OptionStatus::NoSource;
 				priority(option);
 				return false;
 			}
@@ -3205,7 +3206,9 @@ namespace ecs {
 				++at;
 				continue;
 			}
-			group->triedRegrowing = group->triedRegrowing || tested == OptionStatus::Regrowing;
+			if (tested == OptionStatus::Regrowing && !group->regrowing.has_value()) {
+				group->regrowing = group->current;
+			}
 			if (!advanceWorkOption(*group, at)) {
 				++at;
 			}
@@ -3777,7 +3780,7 @@ namespace ecs {
 			task->timeSinceEvaluation = 0.0F;
 		}
 		// He decides nothing while controlled, so his last trace would keep offering its work to the
-		// task panel (goalsWithOfferedWork) until release.
+		// task panel (ColonyGoalWork) until release.
 		if (auto* trace = world->getComponent<DecisionTrace>(entity)) {
 			trace->clear();
 		}

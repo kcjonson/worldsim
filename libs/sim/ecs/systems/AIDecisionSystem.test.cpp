@@ -5276,6 +5276,97 @@ namespace ecs::test {
 		EXPECT_EQ(selected->harvestTargetKey, hashWorldEntity(nearOak, oakId)) << "the near oak, in the same decision as the far bank failed";
 	}
 
+	// A cut's best-ranked tree is across the river and its only other tree is regrowing. The option runs
+	// out of trees and reads Regrowing, naming the regrowing tree, not the one across.
+	TEST_F(AIDecisionRiverTest, ExhaustedCutNamesItsRegrowingTree) {
+		const uint32_t oakId = registerHarvestableYielding(assets::AssetRegistry::Get(), "Flora_RegrowOak", "RegrowWood").harvestableId;
+		const uint64_t woodGoal = makeStockingHarvest(kStart, "RegrowWood");
+		const glm::vec2 across = northBank(0.0F);
+		const glm::vec2 regrowingOak{-28.0F, 0.0F};
+		world->registerSystem<TimeSystem>();
+		world->getSystem<AIDecisionSystem>().setSourceRegrowthCallback([&](uint32_t /*defNameId*/, glm::vec2 at, double /*now*/) {
+			return at == regrowingOak ? std::optional<double>{1000.0} : std::nullopt;
+		});
+		const auto colonist = makeColonistBetweenRivers();
+		addKnownEntity(colonist, across, oakId, assets::CapabilityType::Harvestable);
+		addKnownEntity(colonist, regrowingOak, oakId, assets::CapabilityType::Harvestable);
+
+		world->update(kTick);
+
+		EXPECT_EQ(workGroupKeys(woodGoal), (std::vector<uint64_t>{hashWorldEntity(across, oakId), hashWorldEntity(regrowingOak, oakId)}))
+			<< "the far bank ranks first";
+		const auto* wood = findOption(*getTrace(colonist), [&](const EvaluatedOption& o) {
+			return o.taskType == TaskType::Harvest && o.harvestGoalId == woodGoal;
+		});
+		ASSERT_NE(wood, nullptr);
+		EXPECT_EQ(wood->status, OptionStatus::Regrowing);
+		EXPECT_EQ(wood->harvestTargetKey, hashWorldEntity(regrowingOak, oakId)) << "the row names the tree it waits on";
+	}
+
+	// A high box pulls from two low boxes, the better-ranked one across the river. The one pull option
+	// falls back to the box on his side, which is chosen in the same decision.
+	TEST_F(AIDecisionRiverTest, PullFallsBackPastAnUnreachableBoxInOneDecision) {
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t woodId = registerPullItem(registry, "Wood");
+		registerStorageDef(registry, "Box");
+		const uint32_t	boxDefId = registry.getDefNameId("Box");
+		const glm::vec2 across = northBank(0.0F);
+		const EntityID	acrossBox = makeStorageBox(across, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID	nearBox = makeStorageBox(kReachable, "Box", "Wood", ecs::StoragePriority::Low, /*qty=*/10);
+		const EntityID	highBox = makeStorageBox(kStart, "Box", "Wood", ecs::StoragePriority::High);
+		const uint64_t	goalId = makeUmbrellaGoal(highBox, kStart, woodId);
+		const auto		colonist = makeColonistBetweenRivers();
+		addKnownEntity(colonist, across, boxDefId, assets::CapabilityType::Storage);
+		addKnownEntity(colonist, kReachable, boxDefId, assets::CapabilityType::Storage);
+		addKnownEntity(colonist, kStart, boxDefId, assets::CapabilityType::Storage);
+
+		world->update(kTick);
+
+		EXPECT_EQ(workGroupKeys(goalId), (std::vector<uint64_t>{static_cast<uint64_t>(acrossBox), static_cast<uint64_t>(nearBox)}))
+			<< "the box across ranks first";
+		const auto& options = getTrace(colonist)->options;
+		EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.haulSourceStorageId != 0; }), 1);
+		const auto* selected = getTrace(colonist)->getSelected();
+		ASSERT_NE(selected, nullptr);
+		ASSERT_EQ(selected->taskType, TaskType::Haul);
+		EXPECT_EQ(selected->haulSourceStorageId, static_cast<uint64_t>(nearBox)) << "the box on his side, in the decision the far one failed";
+	}
+
+	// A fetch's best-ranked pile is across the river and a later one is on his side. The pile he can get to
+	// holds a fresh cut for the same box back; with only the pile across, the cut is not held back.
+	TEST_F(AIDecisionRiverTest, AConnectedPileRankedLaterStillHoldsTheCutBack) {
+		const auto [bushId, stickId] = registerHarvestableYielding(assets::AssetRegistry::Get(), "Flora_PileBush", "PileStick");
+		const uint64_t	cutGoal = makeStockingHarvest(kStart, "PileStick");
+		const glm::vec2 across = northBank(0.0F);
+		const glm::vec2 nearPile{30.0F, 0.0F};
+		const auto		colonist = makeColonistBetweenRivers();
+		addKnownEntity(colonist, across, stickId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, nearPile, stickId, assets::CapabilityType::Carryable);
+		addKnownEntity(colonist, {-10.0F, 0.0F}, bushId, assets::CapabilityType::Harvestable);
+		const auto cutRank = [&] {
+			const auto* cut = findOption(*getTrace(colonist), [&](const EvaluatedOption& o) {
+				return o.taskType == TaskType::Harvest && o.harvestGoalId == cutGoal;
+			});
+			EXPECT_NE(cut, nullptr);
+			return cut != nullptr ? cut->gatheringRank : int8_t{0};
+		};
+
+		world->update(kTick);
+
+		const auto* haul = findOption(*getTrace(colonist), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; });
+		ASSERT_NE(haul, nullptr);
+		EXPECT_EQ(workGroupKeys(haul->haulGoalId), (std::vector<uint64_t>{hashWorldEntity(across, stickId), hashWorldEntity(nearPile, stickId)}))
+			<< "the pile across ranks first";
+		EXPECT_LT(cutRank(), 0) << "the pile on his side demotes the cut";
+
+		world->getComponent<Memory>(colonist)->forgetWorldEntity(nearPile, stickId);
+		getTask(colonist)->clear();
+		world->getComponent<Position>(colonist)->value = kStart;
+		world->update(kTick);
+
+		EXPECT_EQ(cutRank(), 0) << "a pile across the river holds no cut back";
+	}
+
 	// A berry bush standing in a wall the colonist knows is out of reach (a known wall blocks unless the
 	// colonist also knows a door through it), so the memo holds "unreachable" for it. These pin the two
 	// ways that verdict has to be dropped, or the colonist goes without food it could now reach: its
@@ -7337,13 +7428,16 @@ namespace ecs::test {
 		EXPECT_FALSE(delivering(to));
 	}
 
-	// A pile beside him whose deposit (a station 3 km off, on ground no mover has meshed) is not connected
-	// to him: the haul is never picked and no route is asked for it, and he goes on deciding.
+	// Two piles beside him whose deposit (a station 3 km off, on ground no mover has meshed) is not
+	// connected to him: the one haul option reads NoSource with neither pile picked, no route is asked
+	// for it, and he goes on deciding.
 	TEST_F(AIDecisionHaulLegTest, HaulWhoseDepositIsNotConnectedIsNotPicked) {
 		pile({10.0F, 0.0F}, 3);
+		pile({-10.0F, 0.0F}, 3);
 		const EntityID to = station({3000.0F, 0.0F}, 3);
 		nav->finishPendingBuilds();
 		ASSERT_TRUE(nav->connected({0.0F, 0.0F}, {10.0F, 0.0F}));
+		ASSERT_TRUE(nav->connected({0.0F, 0.0F}, {-10.0F, 0.0F}));
 		ASSERT_FALSE(nav->connected({0.0F, 0.0F}, {3000.0F, 0.0F}));
 		const std::uint64_t refused		 = nav->routeStats().answeredAtOnce;
 		float				lastDecision = getTrace(colonist)->lastEvaluationTime;
@@ -7354,6 +7448,8 @@ namespace ecs::test {
 			decisions += getTrace(colonist)->lastEvaluationTime != lastDecision ? 1 : 0;
 			lastDecision = getTrace(colonist)->lastEvaluationTime;
 		}
+		const auto& options = getTrace(colonist)->options;
+		EXPECT_EQ(std::count_if(options.begin(), options.end(), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; }), 1);
 		const EvaluatedOption* haul = findOption(*getTrace(colonist), [](const EvaluatedOption& o) { return o.taskType == TaskType::Haul; });
 		ASSERT_NE(haul, nullptr) << "no haul was offered";
 		EXPECT_EQ(haul->status, OptionStatus::NoSource);

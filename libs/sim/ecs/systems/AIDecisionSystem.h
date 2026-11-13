@@ -114,7 +114,7 @@ struct WorkGroup {
 	uint32_t  unpopped = 0; // [begin, unpopped) is still the heap; [unpopped, end) popped, the r-th ranked at end - 1 - r
 	uint32_t  first = 0;	// the first candidate offered
 	uint32_t  current = 0;	// the candidate the option shows
-	bool	  triedRegrowing = false;
+	std::optional<uint32_t> regrowing; // the best-ranked candidate tried and found regrowing
 	// A fetch's: what the goal still wants (piles) or the box has room for (pulls), what one pickup
 	// lifts now, and whether the colonist gathers for the pile's root.
 	uint32_t quantity = 0;
