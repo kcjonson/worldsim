@@ -1926,8 +1926,10 @@ namespace geometry::nav {
 	}
 
 	// Covers: one exact seed per component, then toggle across each ring edge by the
-	// rings on it. A sink (off the old mesh, outside every new bounds ring) takes a cover
-	// but passes none on. False when the hole grew.
+	// rings on it. A sink (its sample off the old mesh and outside every new bounds ring)
+	// takes a cover but passes none on, since rings over no ground have no edges here;
+	// one whose cover is ground (a sliver its sample misread beside a bent edge) passes
+	// it on, every ring edge around ground being arranged. False when the hole grew.
 	bool PatchableMesh::Patch::assignCovers() {
 		const std::int32_t cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
 		bool conflict = false;
@@ -1941,7 +1943,7 @@ namespace geometry::nav {
 				const std::int32_t f = stack.back();
 				stack.pop_back();
 				const LocalFace& face = faces[static_cast<std::size_t>(f)];
-				if (face.kind == FaceKind::Sink) {
+				if (face.kind == FaceKind::Sink && (face.cover.empty() || face.cover.front() != kGroundToken)) {
 					continue;
 				}
 				for (std::int32_t t : trisOf(face)) {

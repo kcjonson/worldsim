@@ -2623,6 +2623,50 @@ namespace {
 		return {bounds({{0, 0}, {12000, 0}, {14000, 12000}, {0, 12000}}), bounds({{12000, 0}, {24000, 0}, {24000, 12000}, {14000, 12000}})};
 	}
 
+	// 2 x 2 sheared squares: corner (i, j) at (12000 i + 3000 j, 1000 i + 12000 j), so no
+	// side is axis-aligned. Their sides cut to 4 m land on lattice points.
+	std::vector<NavInputPolygon> shearedSquares() {
+		auto corner = [](std::int64_t i, std::int64_t j) { return Vec2i64{12000 * i + 3000 * j, 1000 * i + 12000 * j}; };
+		std::vector<NavInputPolygon> out;
+		for (std::int64_t j = 0; j < 2; ++j) {
+			for (std::int64_t i = 0; i < 2; ++i) {
+				out.push_back(bounds({corner(i, j), corner(i + 1, j), corner(i + 1, j + 1), corner(i, j + 1)}));
+			}
+		}
+		return out;
+	}
+
+	// A thin quadrilateral lying along a random side of `squares` at a slope of 0.009 to
+	// 0.14 (about 0.5 to 8 degrees) to it, so its long edges cross the side at a shallow
+	// angle; otherwise a box obstacle. Only correctly rounded operations, so every
+	// toolchain draws the same.
+	NavInputPolygon shallowObstacle(std::mt19937& rng, const std::vector<NavInputPolygon>& squares) {
+		if (pick(rng, 4) == 0) {
+			return boxObstacle(rng);
+		}
+		const std::vector<Vec2i64>& ring   = squares[pick(rng, squares.size())].ring;
+		const std::size_t			e	   = pick(rng, ring.size());
+		const Vec2i64				p	   = ring[e];
+		const Vec2i64				q	   = ring[(e + 1) % ring.size()];
+		const double				t	   = static_cast<double>(between(rng, 50, 950)) / 1000.0;
+		const double				dx	   = static_cast<double>(q.x - p.x);
+		const double				dy	   = static_cast<double>(q.y - p.y);
+		const double				slope  = static_cast<double>(between(rng, 9, 140)) / 1000.0 * (pick(rng, 2) == 0 ? -1.0 : 1.0);
+		const double				rx	   = dx - dy * slope;
+		const double				ry	   = dy + dx * slope;
+		const double				norm   = std::sqrt(rx * rx + ry * ry);
+		const double				ux	   = rx / norm;
+		const double				uy	   = ry / norm;
+		const double				half   = static_cast<double>(between(rng, 500, 3000));
+		const double				width  = static_cast<double>(between(rng, 60, 600));
+		const double				offset = static_cast<double>(between(rng, -400, 400));
+		const double				cx	   = static_cast<double>(p.x) + dx * t - uy * offset;
+		const double				cy	   = static_cast<double>(p.y) + dy * t + ux * offset;
+		auto at = [](double x, double y) { return Vec2i64{static_cast<std::int64_t>(std::llround(x)), static_cast<std::int64_t>(std::llround(y))}; };
+		return blocked({at(cx - ux * half, cy - uy * half), at(cx + ux * half, cy + uy * half), at(cx + ux * half - uy * width, cy + uy * half + ux * width),
+						at(cx - ux * half - uy * width, cy - uy * half + ux * width)});
+	}
+
 } // namespace
 
 // The slanted shared side: every point inside the pair's outline, the side and its ends
@@ -2684,4 +2728,26 @@ TEST(PatchableMesh, SlantedSharedSideMatchesFreshBuild) {
 		h.apply(replace);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "replaced";
 	}
+}
+
+// Sheared squares (no side axis-aligned) arriving among thin obstacles that cross their
+// sides at shallow angles, so snap rounding bends the sides near the crossings; every
+// state equals a from-scratch build. Raise kSeeds for a heavier sweep (400 seeds of 40
+// steps held).
+TEST(PatchableMesh, ShallowCrossingsOfSlantedSidesMatchFreshBuild) {
+	constexpr std::uint32_t			   kSeeds  = 16;
+	const std::vector<NavInputPolygon> squares = shearedSquares();
+	for (std::uint32_t seed = 1; seed <= kSeeds; ++seed) {
+		runSquaresAmongObstacles(seed, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
+		if (HasFatalFailure()) {
+			return;
+		}
+	}
+}
+
+// The history of one seed of the sweep above, in which a ground sliver beside a bent side
+// is reached only through another whose sample reads off ground.
+TEST(PatchableMesh, SliverReachedThroughAMisreadSliverMatchesFreshBuild) {
+	const std::vector<NavInputPolygon> squares = shearedSquares();
+	runSquaresAmongObstacles(89, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
 }
