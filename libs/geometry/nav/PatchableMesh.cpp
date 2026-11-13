@@ -534,7 +534,7 @@ namespace geometry::nav {
 		}
 		std::vector<std::int32_t> ids;
 		std::vector<EdgeSource>	  edges;
-		ringEdgesInBox(probe.lo, probe.hi, ids, edges);
+		boundaryEdgesInBox(probe.lo, probe.hi, ids, edges);
 		for (const EdgeSource& z : edges) {
 			const RegisteredRing& reg = rings[static_cast<std::size_t>(z.ring)];
 			const Vec2i64		  p	  = edgeStart(reg.polygon.ring, z.edge);
@@ -741,25 +741,59 @@ namespace geometry::nav {
 	// them).
 	bool PatchableMesh::nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const {
 		bool near = false;
-		edgeGrid.forEachInBox(lo, hi, 1, [&](std::int32_t id) {
-			const EdgeSource& z = edgeOf[static_cast<std::size_t>(id)];
-			near = near || (!rings[static_cast<std::size_t>(z.ring)].polygon.blocked && !pieces[static_cast<std::size_t>(id)].empty());
-		});
+		groundEdgeGrid.forEachInBox(lo, hi, 1, [&](std::int32_t id) { near = near || !pieces[static_cast<std::size_t>(id)].empty(); });
 		return near;
 	}
 
-	void PatchableMesh::ringEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const {
+	namespace {
+		void edgesOfIds(std::vector<std::int32_t>& ids, const PagedVector<EdgeSource>& edgeOf, std::vector<EdgeSource>& found) {
+			std::sort(ids.begin(), ids.end());
+			ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
+			found.clear();
+			for (std::int32_t id : ids) {
+				found.push_back(edgeOf[static_cast<std::size_t>(id)]);
+			}
+			std::sort(found.begin(), found.end());
+		}
+	} // namespace
+
+	void PatchableMesh::blockedEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const {
 		ids.clear();
 		edgeGrid.forEachInBox(lo, hi, 1, [&](std::int32_t id) { ids.push_back(id); });
-		std::sort(ids.begin(), ids.end());
-		ids.erase(std::unique(ids.begin(), ids.end()), ids.end());
-		found.clear();
-		for (std::int32_t id : ids) {
-			found.push_back(edgeOf[static_cast<std::size_t>(id)]);
-		}
-		std::sort(found.begin(), found.end());
+		edgesOfIds(ids, edgeOf, found);
 	}
 
+	void PatchableMesh::boundaryEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const {
+		ids.clear();
+		groundEdgeGrid.forEachInBox(lo, hi, 1, [&](std::int32_t id) { ids.push_back(id); });
+		edgesOfIds(ids, edgeOf, found);
+	}
+
+	void PatchableMesh::edgeBox(std::int32_t edgeId, Vec2i64& lo, Vec2i64& hi) const {
+		const EdgeSource&			z		= edgeOf[static_cast<std::size_t>(edgeId)];
+		const std::vector<Vec2i64>& outline = rings[static_cast<std::size_t>(z.ring)].polygon.ring;
+		lo									= edgeStart(outline, z.edge);
+		hi									= lo;
+		growBox(lo, hi, edgeEnd(outline, z.edge));
+	}
+
+	void PatchableMesh::setBoundary(std::int32_t edgeId, bool isBoundary) {
+		std::uint8_t& flag = boundary[static_cast<std::size_t>(edgeId)];
+		if ((flag != 0) == isBoundary) {
+			return;
+		}
+		Vec2i64 lo;
+		Vec2i64 hi;
+		edgeBox(edgeId, lo, hi);
+		if (isBoundary) {
+			groundEdgeGrid.insert(edgeId, lo, hi);
+		} else {
+			groundEdgeGrid.erase(edgeId, lo, hi);
+		}
+		flag = isBoundary ? 1 : 0;
+	}
+
+	// A bounds edge enters with no boundary intervals; the patch that registers it sets them.
 	void PatchableMesh::indexRingEdges(RingId ring) {
 		RegisteredRing&				reg		= rings[static_cast<std::size_t>(ring)];
 		const std::vector<Vec2i64>& outline = reg.polygon.ring;
@@ -774,26 +808,31 @@ namespace geometry::nav {
 				id = static_cast<std::int32_t>(edgeOf.size());
 				edgeOf.push_back({ring, e});
 				pieces.emplace_back();
+				boundary.push_back(0);
 			}
-			Vec2i64 lo = edgeStart(outline, e);
-			Vec2i64 hi = lo;
-			growBox(lo, hi, edgeEnd(outline, e));
-			edgeGrid.insert(id, lo, hi);
 			reg.edgeIds.push_back(id);
+			if (reg.polygon.blocked) {
+				Vec2i64 lo;
+				Vec2i64 hi;
+				edgeBox(id, lo, hi);
+				edgeGrid.insert(id, lo, hi);
+			}
 		}
 	}
 
 	void PatchableMesh::unindexRingEdges(RingId ring) {
-		RegisteredRing&				reg		= rings[static_cast<std::size_t>(ring)];
-		const std::vector<Vec2i64>& outline = reg.polygon.ring;
-		for (std::int32_t e = 0; e < static_cast<std::int32_t>(outline.size()); ++e) {
-			Vec2i64 lo = edgeStart(outline, e);
-			Vec2i64 hi = lo;
-			growBox(lo, hi, edgeEnd(outline, e));
-			edgeGrid.erase(reg.edgeIds[static_cast<std::size_t>(e)], lo, hi);
-			assert(pieces[static_cast<std::size_t>(reg.edgeIds[static_cast<std::size_t>(e)])].empty() &&
-				   "PatchableMesh: a ring edge leaves the index with pieces on the mesh");
-			freeEdgeIds.push_back(reg.edgeIds[static_cast<std::size_t>(e)]);
+		RegisteredRing& reg = rings[static_cast<std::size_t>(ring)];
+		for (const std::int32_t id : reg.edgeIds) {
+			if (reg.polygon.blocked) {
+				Vec2i64 lo;
+				Vec2i64 hi;
+				edgeBox(id, lo, hi);
+				edgeGrid.erase(id, lo, hi);
+			} else {
+				setBoundary(id, false);
+			}
+			assert(pieces[static_cast<std::size_t>(id)].empty() && "PatchableMesh: a ring edge leaves the index with pieces on the mesh");
+			freeEdgeIds.push_back(id);
 		}
 		reg.edgeIds.clear();
 	}
@@ -1065,6 +1104,7 @@ namespace geometry::nav {
 		std::vector<GroundInterval>							 intervalsBefore;
 		std::vector<std::uint8_t>							 classified; // per edge index id, this patch
 		std::vector<std::int32_t>							 classifiedIds;
+		std::vector<GroundRing>								 ringsToClassify;
 		std::vector<Vec2i64>								 runEnds;
 		std::vector<std::uint32_t>							 runEndList;
 		bool												 coversGrew = false; // the cover read added to s
@@ -1166,7 +1206,9 @@ namespace geometry::nav {
 		std::span<const GroundInterval>			intervalRun(const std::pair<std::uint32_t, std::uint32_t>& run) const {
 			return std::span<const GroundInterval>(work.intervalPool).subspan(run.first, run.second - run.first);
 		}
-		void classifyGroundEdges(const Vec2i64& lo, const Vec2i64& hi);
+		// everyEdge: the box is ground leaving, so an edge with no boundary intervals may gain
+		// some; otherwise ground only arrives there, which takes intervals and never gives any.
+		void classifyGroundEdges(const Vec2i64& lo, const Vec2i64& hi, bool everyEdge);
 
 		void addToS(const EdgeSource& z);
 		void addToHole(std::int32_t t);
@@ -1340,8 +1382,23 @@ namespace geometry::nav {
 	// Every unchanged bounds edge whose segment box meets the box, and whose boundary
 	// intervals the patch changes, joins s: its pieces go, and closeS touches its intervals
 	// after the patch.
-	void PatchableMesh::Patch::classifyGroundEdges(const Vec2i64& lo, const Vec2i64& hi) {
-		m.ringEdgesInBox(lo, hi, work.edgeIdsNear, work.edgesNear);
+	void PatchableMesh::Patch::classifyGroundEdges(const Vec2i64& lo, const Vec2i64& hi, bool everyEdge) {
+		if (everyEdge) {
+			m.groundRingsInBox(lo, hi, work.ringsToClassify);
+			work.edgesNear.clear();
+			for (const GroundRing& g : work.ringsToClassify) {
+				for (std::int32_t e = 0; e < static_cast<std::int32_t>(g.outline->size()); ++e) {
+					Vec2i64 eLo = edgeStart(*g.outline, e);
+					Vec2i64 eHi = eLo;
+					growBox(eLo, eHi, edgeEnd(*g.outline, e));
+					if (boxesOverlap(lo, hi, eLo, eHi)) {
+						work.edgesNear.push_back({g.id, e});
+					}
+				}
+			}
+		} else {
+			m.boundaryEdgesInBox(lo, hi, work.edgeIdsNear, work.edgesNear);
+		}
 		if (work.classified.size() < m.edgeOf.size()) {
 			work.classified.resize(m.edgeOf.size(), 0);
 		}
@@ -1423,7 +1480,7 @@ namespace geometry::nav {
 				}
 			}
 		} else {
-			m.ringEdgesInBox(lo, hi, work.edgeIdsNear, work.edgesNear);
+			m.blockedEdgesInBox(lo, hi, work.edgeIdsNear, work.edgesNear);
 		}
 		for (const EdgeSource& z : work.edgesNear) {
 			const RegisteredRing& reg = m.rings[static_cast<std::size_t>(z.ring)];
@@ -1546,10 +1603,10 @@ namespace geometry::nav {
 		// bounds edges whose boxes meet its own.
 		for (const auto& [id, c] : changes) {
 			if (c.hadOld && !m.rings[static_cast<std::size_t>(id)].polygon.blocked) {
-				classifyGroundEdges(m.rings[static_cast<std::size_t>(id)].lo, m.rings[static_cast<std::size_t>(id)].hi);
+				classifyGroundEdges(m.rings[static_cast<std::size_t>(id)].lo, m.rings[static_cast<std::size_t>(id)].hi, true);
 			}
 			if (c.hasNew && !c.polygon.blocked) {
-				classifyGroundEdges(c.lo, c.hi);
+				classifyGroundEdges(c.lo, c.hi, false);
 			}
 		}
 
@@ -1563,7 +1620,7 @@ namespace geometry::nav {
 				continue;
 			}
 			const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
-			m.ringEdgesInBox(c.lo - reach, c.hi + reach, work.edgeIdsNear, work.edgesNear);
+			m.blockedEdgesInBox(c.lo - reach, c.hi + reach, work.edgeIdsNear, work.edgesNear);
 			c.band.clear();
 			for (const EdgeSource& z : work.edgesNear) {
 				const RegisteredRing& reg = m.rings[static_cast<std::size_t>(z.ring)];
@@ -1650,7 +1707,9 @@ namespace geometry::nav {
 		});
 		// The walk reads the pieces as rounded, but the arrangement meets the inputs as given:
 		// a piece can pass clear of ab where its input meets it. Every input lies in its
-		// edge's box, so the edge grid finds each one that can.
+		// edge's box, so the edge grids find each one that can. An unchanged bounds edge with
+		// no boundary intervals before the patch has none after it, unless the patch
+		// classified it, and then it is in s.
 		auto meets = [&](const Vec2i64& p, const Vec2i64& q) {
 			const SegmentIntersection r = intersectSegments(a, b, p, q);
 			if (r.relation == SegmentRelation::Disjoint) {
@@ -1658,7 +1717,7 @@ namespace geometry::nav {
 			}
 			return r.relation != SegmentRelation::EndpointTouch || !((r.point == a || r.point == b) && (r.point == p || r.point == q));
 		};
-		m.ringEdgesInBox(lo, hi, work.edgeIdsMet, work.edgesMet);
+		m.blockedEdgesInBox(lo, hi, work.edgeIdsMet, work.edgesMet);
 		for (const EdgeSource& z : work.edgesMet) {
 			if (changed(z.ring) || inS(z)) {
 				continue;
@@ -1666,15 +1725,18 @@ namespace geometry::nav {
 			const NavInputPolygon& polygon = m.rings[static_cast<std::size_t>(z.ring)].polygon;
 			const Vec2i64		   p	   = edgeStart(polygon.ring, z.edge);
 			const Vec2i64		   q	   = edgeEnd(polygon.ring, z.edge);
-			if (p == q) {
+			if (p != q && meets(p, q)) {
+				addToS(z);
+			}
+		}
+		m.boundaryEdgesInBox(lo, hi, work.edgeIdsMet, work.edgesMet);
+		for (const EdgeSource& z : work.edgesMet) {
+			if (changed(z.ring) || inS(z)) {
 				continue;
 			}
-			if (polygon.blocked) {
-				if (meets(p, q)) {
-					addToS(z);
-				}
-				continue;
-			}
+			const NavInputPolygon& polygon = m.rings[static_cast<std::size_t>(z.ring)].polygon;
+			const Vec2i64		   p	   = edgeStart(polygon.ring, z.edge);
+			const Vec2i64		   q	   = edgeEnd(polygon.ring, z.edge);
 			// A boundary interval's ends are rounded crossings, within a millimetre of the edge.
 			if (!segmentsWithin(a, b, p, q, kOffGroundReachMm)) {
 				continue;
@@ -2732,6 +2794,15 @@ namespace geometry::nav {
 			reg.hi		= c.hi;
 			reg.live	= true;
 			m.indexRingEdges(id);
+			if (!reg.polygon.blocked) {
+				for (std::size_t e = 0; e < c.intervals.size(); ++e) {
+					m.setBoundary(reg.edgeIds[e], c.intervals[e].first != c.intervals[e].second);
+				}
+			}
+		}
+		for (const std::int32_t id : work.classifiedIds) {
+			const std::pair<std::uint32_t, std::uint32_t> run = work.afterRange[static_cast<std::size_t>(id)];
+			m.setBoundary(id, run.first != run.second);
 		}
 
 		// New triangles take the hole's ids first. A face's triangles share one cover and
@@ -3640,28 +3711,34 @@ namespace geometry::nav {
 				Vec2i64 lo = edgeStart(reg.polygon.ring, e);
 				Vec2i64 hi = lo;
 				growBox(lo, hi, edgeEnd(reg.polygon.ring, e));
-				ringEdgesInBox(lo, hi, ids, near);
-				if (!std::binary_search(near.begin(), near.end(), EdgeSource{r, e})) {
-					fail() << "edge index misses ring " << r << " edge " << e;
+				if (reg.polygon.blocked) {
+					blockedEdgesInBox(lo, hi, ids, near);
+				} else {
+					boundaryEdgesInBox(lo, hi, ids, near);
+				}
+				const bool indexed = reg.polygon.blocked || boundary[static_cast<std::size_t>(id)] != 0;
+				if (std::binary_search(near.begin(), near.end(), EdgeSource{r, e}) != indexed) {
+					fail() << "edge index " << (indexed ? "misses" : "holds") << " ring " << r << " edge " << e;
 					return err.str();
 				}
 			}
 		}
 		std::vector<std::uint8_t> edgeFree(edgeOf.size(), 0);
 		for (std::int32_t id : freeEdgeIds) {
-			if (id < 0 || static_cast<std::size_t>(id) >= edgeOf.size() || edgeFree[static_cast<std::size_t>(id)] != 0) {
-				return "free edge id list holds a bad or repeated id";
+			if (id < 0 || static_cast<std::size_t>(id) >= edgeOf.size() || edgeFree[static_cast<std::size_t>(id)] != 0 || boundary[static_cast<std::size_t>(id)] != 0) {
+				return "free edge id list holds a bad or repeated id, or one in the boundary edge index";
 			}
 			edgeFree[static_cast<std::size_t>(id)] = 1;
 		}
-		std::size_t indexedEdges = 0;
-		bool		deadEdge	 = false;
-		edgeGrid.forEachEntry([&](std::int32_t id) {
-			++indexedEdges;
-			deadEdge = deadEdge || id < 0 || static_cast<std::size_t>(id) >= edgeOf.size() || edgeFree[static_cast<std::size_t>(id)] != 0;
-		});
-		if (deadEdge || indexedEdges + freeEdgeIds.size() < edgeOf.size()) {
-			return "edge index holds a freed edge id, or misses one";
+		bool deadEdge = false;
+		auto liveEdge = [&](std::int32_t id, bool blocked) {
+			deadEdge = deadEdge || id < 0 || static_cast<std::size_t>(id) >= edgeOf.size() || edgeFree[static_cast<std::size_t>(id)] != 0 ||
+					   rings[static_cast<std::size_t>(edgeOf[static_cast<std::size_t>(id)].ring)].polygon.blocked != blocked;
+		};
+		edgeGrid.forEachEntry([&](std::int32_t id) { liveEdge(id, true); });
+		groundEdgeGrid.forEachEntry([&](std::int32_t id) { liveEdge(id, false); });
+		if (deadEdge) {
+			return "an edge index holds a freed edge id, or one of the other kind";
 		}
 		std::size_t indexedRings = 0;
 		bool		deadRing	 = false;
@@ -3710,6 +3787,11 @@ namespace geometry::nav {
 					growBox(lo, hi, edgeEnd(reg.polygon.ring, e));
 					groundRingsInBox(lo, hi, groundNear);
 					groundBoundaries({&reg.polygon.ring, reg.lo, reg.hi, reg.sample.counterClockwise, r}, e, groundNear, boundaryScratch, intervals);
+					if ((boundary[static_cast<std::size_t>(reg.edgeIds[static_cast<std::size_t>(e)])] != 0) == intervals.empty()) {
+						fail() << "ring " << r << " edge " << e << " is " << (intervals.empty() ? "" : "not ") << "in the boundary edge index, against its "
+							   << intervals.size() << " boundary intervals";
+						return err.str();
+					}
 					if (intervals.empty()) {
 						if (!piecesOf({r, e}).empty()) {
 							fail() << "ring " << r << " edge " << e << " has pieces outside its boundary intervals";

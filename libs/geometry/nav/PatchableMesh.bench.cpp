@@ -1894,21 +1894,26 @@ namespace {
 		}
 	}
 
-	// PatchableMesh's private box query over its ring edge index, reached through an explicit
-	// instantiation, which the language exempts from access checking. Nothing here writes.
+	// PatchableMesh's private box queries over its ring edge indexes, reached through explicit
+	// instantiations, which the language exempts from access checking. Nothing here writes.
 	using EdgesInBox = void (PatchableMesh::*)(const Vec2i64&, const Vec2i64&, std::vector<std::int32_t>&, std::vector<EdgeSource>&) const;
-	struct EdgesInBoxKey {
-		friend EdgesInBox edgesInBoxOf(EdgesInBoxKey);
+	struct BlockedEdgesKey {
+		friend EdgesInBox edgesInBoxOf(BlockedEdgesKey);
 	};
-	template <EdgesInBox Member> struct EdgesInBoxReach {
-		friend EdgesInBox edgesInBoxOf(EdgesInBoxKey) { return Member; }
+	struct BoundaryEdgesKey {
+		friend EdgesInBox edgesInBoxOf(BoundaryEdgesKey);
 	};
-	template struct EdgesInBoxReach<&PatchableMesh::ringEdgesInBox>;
+	template <typename Key, EdgesInBox Member> struct EdgesInBoxReach {
+		friend EdgesInBox edgesInBoxOf(Key) { return Member; }
+	};
+	template struct EdgesInBoxReach<BlockedEdgesKey, &PatchableMesh::blockedEdgesInBox>;
+	template struct EdgesInBoxReach<BoundaryEdgesKey, &PatchableMesh::boundaryEdgesInBox>;
 
-	// Plan M3: a 6 m box query over the ring edge index (what touchSegment and every placed
-	// obstacle's patch ask) in the walked dense band, against the same placed obstacles under
-	// one ground rectangle with no limits; and a 0.55 m placed obstacle added at clear points of
-	// the band's middle third, timed with its width refresh, in each.
+	// Plan M3: the 6 m box queries over the ring edge indexes that touchSegment makes (blocked
+	// edges, then bounds edges with boundary intervals; placed obstacles' patches ask the
+	// first), in the walked dense band, against the same placed obstacles under one ground
+	// rectangle with no limits; and a 0.55 m placed obstacle added at clear points of the band's
+	// middle third, timed with its width refresh, in each.
 	void BM_EdgeIndexQuery(benchmark::State& state) {
 		for (auto _ : state) {
 			LimitWalker w;
@@ -1933,7 +1938,8 @@ namespace {
 			}
 			untimedPatch(field, adding(rings));
 
-			const EdgesInBox		  query = edgesInBoxOf(EdgesInBoxKey{});
+			const EdgesInBox		  blocked	  = edgesInBoxOf(BlockedEdgesKey{});
+			const EdgesInBox		  boundaries = edgesInBoxOf(BoundaryEdgesKey{});
 			std::mt19937			  rng(31);
 			std::vector<Vec2i64>	  centres;
 			while (centres.size() < 10000) {
@@ -1946,14 +1952,18 @@ namespace {
 			auto					  run = [&](const PatchableMesh& m, double& ns, double& edges) {
 				 edges = 0.0;
 				 for (const Vec2i64& c : centres) {
-					 (m.*query)(c - half, c + half, ids, found);
-					 edges += static_cast<double>(found.size());
+					 for (const EdgesInBox query : {blocked, boundaries}) {
+						 (m.*query)(c - half, c + half, ids, found);
+						 edges += static_cast<double>(found.size());
+					 }
 				 }
 				 ns = 1e9 * secondsOf([&] {
 					 for (int r = 0; r < 4; ++r) {
 						 for (const Vec2i64& c : centres) {
-							 (m.*query)(c - half, c + half, ids, found);
-							 benchmark::DoNotOptimize(found.data());
+							 for (const EdgesInBox query : {blocked, boundaries}) {
+								 (m.*query)(c - half, c + half, ids, found);
+								 benchmark::DoNotOptimize(found.data());
+							 }
 						 }
 					 }
 				 }) / (4.0 * static_cast<double>(centres.size()));

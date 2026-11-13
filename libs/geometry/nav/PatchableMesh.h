@@ -290,12 +290,18 @@ namespace geometry::nav {
 		template <typename Visit> void forEachAroundVertex(std::uint32_t v, std::int32_t seed, Visit visit) const;
 		void triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const;
 		std::vector<RingId> ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const;
-		// found = every registered ring edge whose segment box overlaps the box, each once,
-		// ascending. ids is scratch.
-		void ringEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const;
-		void					indexRingEdges(RingId ring);
-		void					unindexRingEdges(RingId ring);
-		bool				nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const;
+		// found = every blocked ring edge (edgeGrid), or every bounds edge with boundary
+		// intervals (groundEdgeGrid), whose segment box overlaps the box, each once, ascending.
+		// ids is scratch.
+		void blockedEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const;
+		void boundaryEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const;
+		void indexRingEdges(RingId ring);
+		void unindexRingEdges(RingId ring);
+		// A bounds edge enters groundEdgeGrid when it gains boundary intervals and leaves when
+		// it loses them.
+		void setBoundary(std::int32_t edgeId, bool boundary);
+		void edgeBox(std::int32_t edgeId, Vec2i64& lo, Vec2i64& hi) const;
+		bool nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const;
 
 		std::int32_t acquireCover(const std::vector<RingId>& ringSet);
 		void		 setEdgeSources(std::int32_t t, int e, std::int32_t sourceId);
@@ -351,8 +357,12 @@ namespace geometry::nav {
 
 		BoxGrid					grid;		 // live triangles
 		BoxGrid					ringGrid;	 // live rings, by outline box
-		BoxGrid					edgeGrid;	 // live rings' edges, by segment box
+		BoxGrid					edgeGrid;	 // live blocked rings' edges, by segment box
+		// Live bounds edges with boundary intervals, by segment box: most of a bounds edge
+		// inside the union is dissolved, and an edge with none can touch nothing.
+		BoxGrid					groundEdgeGrid;
 		PagedVector<EdgeSource> edgeOf;		 // edge index id -> ring edge
+		PagedVector<std::uint8_t> boundary;	 // per edge index id: a bounds edge in groundEdgeGrid
 		PagedVector<std::vector<std::int32_t>> pieces; // per edge index id: half-edges t * 3 + e
 		std::vector<std::int32_t> freeEdgeIds;
 		PatchScratchSlot		patchScratch;

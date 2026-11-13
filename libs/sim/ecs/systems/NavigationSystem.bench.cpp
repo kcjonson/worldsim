@@ -1112,9 +1112,13 @@ namespace {
 	NAV_BENCH_TAG(RGrid, RBoxGrid::visit(v, out))
 	NAV_BENCH_TAG(RRingGrid, RBoxGrid::visit(v, out))
 	NAV_BENCH_TAG(REdgeGrid, RBoxGrid::visit(v, out))
+	NAV_BENCH_TAG(RGroundEdgeGrid, RBoxGrid::visit(v, out))
+	NAV_BENCH_LEAF(RBoundary)
 	template struct Rob<&PM::grid, RGrid>;
 	template struct Rob<&PM::ringGrid, RRingGrid>;
 	template struct Rob<&PM::edgeGrid, REdgeGrid>;
+	template struct Rob<&PM::groundEdgeGrid, RGroundEdgeGrid>;
+	template struct Rob<&PM::boundary, RBoundary>;
 
 	// InternTable: values (each a vector), per-id hash, ref count and chain, free ids, and the map
 	// from hash to first id; count is the id slots.
@@ -1192,9 +1196,9 @@ namespace {
 		const Tally ringHeap = visitAll<RRingHeap>(m);
 		out.lines.emplace_back("ring outline, sample ring and edge ids (heap)", ringHeap);
 		const Tally pieces = visitAll<RPieces>(m);
-		Tally		edges  = visitAll<REdgeOf>(m);
+		Tally		edges  = visitAll<REdgeOf, RBoundary>(m);
 		edges.add(pieces);
-		out.lines.emplace_back("ring edge index (edge of, pieces)", edges);
+		out.lines.emplace_back("ring edge index (edge of, boundary flag, pieces)", edges);
 		const Tally sources = visitAll<RSourceLists>(m);
 		out.lines.emplace_back("edge source lists (interned)", sources);
 		Tally covers = visitAll<RCovers>(m);
@@ -1202,10 +1206,12 @@ namespace {
 		out.lines.emplace_back("covers (interned) and cover tags", covers);
 		const Tally grid	 = visitAll<RGrid>(m);
 		const Tally ringGrid = visitAll<RRingGrid>(m);
-		const Tally edgeGrid = visitAll<REdgeGrid>(m);
+		const Tally edgeGrid	   = visitAll<REdgeGrid>(m);
+		const Tally groundEdgeGrid = visitAll<RGroundEdgeGrid>(m);
 		out.lines.emplace_back("triangle box grid", grid);
 		out.lines.emplace_back("ring box grid", ringGrid);
-		out.lines.emplace_back("ring edge box grid", edgeGrid);
+		out.lines.emplace_back("blocked ring edge box grid", edgeGrid);
+		out.lines.emplace_back("boundary bounds edge box grid", groundEdgeGrid);
 		out.lines.emplace_back("free lists and width refresh queues",
 							   visitAll<RFreeRings, RFreeVertices, RFreeTriangles, RFreeEdgeIds, RFreshWidthTriangles, RPendingWidthSeeds, RStaleApexes,
 										RWidthSeeds, RSeedBuckets, RSeedCellRuns, RSeedCellTable, RWidthWalk>(m));
@@ -1219,7 +1225,7 @@ namespace {
 		out.counts["cover ids"]			= covers.count;
 		out.counts["tri grid entries"]	= grid.count;
 		out.counts["ring grid entries"] = ringGrid.count;
-		out.counts["edge grid entries"] = edgeGrid.count;
+		out.counts["edge grid entries"] = edgeGrid.count + groundEdgeGrid.count;
 		return out;
 	}
 
