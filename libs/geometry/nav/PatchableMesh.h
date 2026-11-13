@@ -147,6 +147,12 @@ namespace geometry::nav {
 		// none of a stretch it shares with another edge, and change no live ground edge's.
 		bool groundCovers(const std::vector<Vec2i64>& outline) const;
 
+		// The mesh's edge near a box: every live triangle edge with no triangle across it that
+		// meets the box, and some near it, each once, as (start, end) with the triangle on the
+		// left. Read from the index of bounds edges with boundary intervals, which the mesh edge
+		// runs along. edgeIds is scratch.
+		void meshEdgesNear(const Vec2i64& boxLow, const Vec2i64& boxHigh, std::vector<std::int32_t>& edgeIds, std::vector<std::pair<Vec2i64, Vec2i64>>& out) const;
+
 		// A door tags the triangle edge (a, b) with its opening and clear width wherever
 		// that edge exists, through every later patch; where two doors name one edge, the
 		// lower id tags it. Tags only: no geometry changes.
