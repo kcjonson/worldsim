@@ -205,6 +205,9 @@ namespace ecs::test {
 		/// The AI update count verdicts age on, as failRoute stamps them.
 		std::uint64_t aiTick() { return world->getSystem<AIDecisionSystem>().m_tick; }
 
+		/// The AI's re-decide period, which a deferred route's re-ask also waits out.
+		static constexpr float reEvalInterval() { return AIDecisionSystem::kReEvalInterval; }
+
 		/// Get the movement target for an entity
 		MovementTarget* getMovementTarget(EntityID entity) { return world->getComponent<MovementTarget>(entity); }
 
@@ -4416,8 +4419,12 @@ namespace ecs::test {
 		// world returns that sampler's shared region.
 		[[nodiscard]] virtual world::ChunkManager* chunkRegion() const { return openLandChunks(); }
 
-		// The chunks aren't ready yet: nothing can be meshed until settleWithChunks hands them over.
-		void withholdChunks() { nav->setChunkManager(nullptr); }
+		// The chunks aren't ready yet: movers take their limits, which wait, and nothing is meshed until
+		// settleWithChunks hands the ready chunks over.
+		void withholdChunks() {
+			pendingChunks = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{}));
+			nav->setChunkManager(pendingChunks.get());
+		}
 
 		// The chunks are ready: hand them to the NavigationSystem and settle it.
 		void settleWithChunks() {
@@ -4467,6 +4474,8 @@ namespace ecs::test {
 		// flight, before this member goes away.
 		construction::ConstructionWorld		 construction;
 		NavigationSystem*							 nav = nullptr;
+		// Never generated: withholdChunks wires it.
+		std::unique_ptr<world::ChunkManager> pendingChunks;
 	};
 
 	// With no mesh (the chunks aren't ready yet) an idle colonist (needs met, no known sources) has
@@ -4503,8 +4512,53 @@ namespace ecs::test {
 							 << "\")";
 	}
 
+	// A colonist standing in ground that waits behind others' limits (taken first) while those land one
+	// or more a tick: each landing may be news to him, but he asks again no more than once every
+	// kReEvalInterval, and once ground is in under him he routes.
+	TEST_F(AIDecisionFirstMeshTest, AwaitingMeshAsksAtMostOnceAReEvalInterval) {
+		auto&					registry = assets::AssetRegistry::Get();
+		assets::AssetDefinition berryBush;
+		berryBush.defName						= "Flora_BerryBush";
+		berryBush.capabilities.harvestable		= assets::HarvestableCapability{};
+		berryBush.capabilities.harvestable->yieldDefName = "Berry";
+		registry.registerTestDefinition(std::move(berryBush));
+
+		withholdChunks();
+		// Lookouts over the ready chunks, each limit's obstacle query inside them, taken before his.
+		constexpr float kSpacing = 40.0F;
+		for (float x = -60.0F; x <= 100.0F; x += kSpacing) {
+			for (float y = -60.0F; y <= 100.0F; y += kSpacing) {
+				if (x != 20.0F || y != 20.0F) {
+					addLookout({x, y});
+				}
+			}
+		}
+		const glm::vec2 start{20.0F, 20.0F};
+		const auto		colonist = createColonist(start);
+		satisfyAllNeeds(*getNeeds(colonist));
+		addKnownEntity(colonist, start + glm::vec2{6.0F, 2.0F}, registry.getDefNameId("Flora_BerryBush"), assets::CapabilityType::Harvestable);
+		world->update(kTick);
+		const Task& task = *getTask(colonist);
+		ASSERT_EQ(task.navState, NavState::AwaitingMesh);
+
+		nav->setChunkManager(chunkRegion());
+		const std::uint64_t asked	   = nav->routeStats().requests;
+		const std::uint64_t generation = nav->generation();
+		int					ticks	   = 0;
+		for (; ticks < 200 && task.navState != NavState::Traveling; ++ticks) {
+			world->update(kTick);
+		}
+		ASSERT_EQ(task.navState, NavState::Traveling) << "never routed once his ground was in";
+		const std::uint64_t landings = nav->generation() - generation;
+		const std::uint64_t requests = nav->routeStats().requests - asked;
+		const auto			bound	 = static_cast<std::uint64_t>(std::ceil(static_cast<float>(ticks) * kTick / reEvalInterval())) + 1;
+		EXPECT_LE(requests, bound) << ticks << " ticks";
+		EXPECT_LT(requests, landings) << "too few landings to tell a floor from asking on each";
+	}
+
 	// A colonist that knows an edible harvestable picks the gather-food option on its first decision,
-	// before any mesh exists (the chunks aren't ready yet), and its route waits: he stands off the mesh.
+	// before any mesh exists (the chunks aren't ready yet), and its route waits: he stands in his own
+	// limit, queued until the chunks are ready.
 	// When the mesh lands the re-eval
 	// re-selects the same option and keeps the task as it is, so the held route has to be requested
 	// again or the colonist never moves.
@@ -5370,6 +5424,23 @@ namespace ecs::test {
 		// way round.
 		void walkTheWayRound() { meshBand(*world, {kStart, {static_cast<float>(kFordX), kStart.y}}); }
 
+		// With the way round never walked, the only food across has no known way: over several decisions
+		// the hunger option is never Selected, he never sets off for it, and he never waits for ground
+		// (none is coming).
+		void expectFoodAcrossUnreached(EntityID colonist) {
+			ASSERT_TRUE(nav->inSimArea(kAcross)) << "the far bank is ground he has seen";
+			ASSERT_FALSE(nav->connected(kStart, kAcross));
+			for (int i = 0; i < kTicksAfterMesh; ++i) {
+				world->update(kTick);
+				const Task& task = *getTask(colonist);
+				ASSERT_NE(task.navState, NavState::AwaitingMesh) << "tick " << i;
+				ASSERT_FALSE(task.type == TaskType::FulfillNeed && task.needToFulfill == NeedType::Hunger) << "tick " << i << ": set off for the food";
+				const auto* hunger = findOption(*getTrace(colonist), isHungerNeedOption);
+				ASSERT_NE(hunger, nullptr);
+				ASSERT_NE(hunger->status, OptionStatus::Selected) << "tick " << i;
+			}
+		}
+
 		static constexpr glm::vec2 kStart{0.0F, 0.0F};
 		static constexpr glm::vec2 kAcross{0.0F, 10.0F};
 		static constexpr glm::vec2 kBehind{0.0F, -40.0F};
@@ -5519,6 +5590,23 @@ namespace ecs::test {
 		EXPECT_GT(east, 300.0F) << "it went round the ford";
 	}
 
+	// The twins with the way round never walked: the food across is not taken, and a player's order
+	// across reads no known way, never a wait for ground.
+	TEST_F(AIDecisionMidFordTest, OnlyFoodAcrossIsNotTakenWithTheWayRoundUnwalked) {
+		expectFoodAcrossUnreached(hungryColonistKnowing({kAcross}));
+	}
+
+	TEST_F(AIDecisionMidFordTest, PlayerOrderAcrossTheUnwalkedRiverIsNoKnownWay) {
+		const auto colonist = hungryColonistKnowing({kAcross});
+		auto&	   ai		= world->getSystem<AIDecisionSystem>();
+		ai.enterControl(colonist);
+		ASSERT_EQ(ai.issuePlayerMoveOrder(colonist, kAcross), std::optional<glm::vec2>(kAcross));
+		for (int i = 0; i < kRouteAnswerTicks && getTask(colonist)->navState == NavState::AwaitingRoute; ++i) {
+			world->update(kTick);
+		}
+		EXPECT_EQ(getTask(colonist)->navState, NavState::CantFindWayTo);
+	}
+
 	// The only food is 10 m across the river and 1.5 km round its end, over a bank walked to the end: the
 	// colonist sets off, goes round the river's end and arrives, and the trace never says "no source".
 	using AIDecisionLongFordTest = AIDecisionFordTest<750>;
@@ -5544,6 +5632,11 @@ namespace ecs::test {
 		EXPECT_FALSE(noRoute) << "the trace said no source";
 		EXPECT_LE(glm::distance(at, kAcross), 1.5F) << "never arrived; reached x " << east;
 		EXPECT_GT(east, 750.0F) << "it went round the river's end";
+	}
+
+	// The twin with the bank never walked: the only food is not taken.
+	TEST_F(AIDecisionLongFordTest, OnlyFoodRoundAnUnwalkedLongRiverIsNotTaken) {
+		expectFoodAcrossUnreached(hungryColonistKnowing({kAcross}));
 	}
 
 	// A goal-driven harvest, end to end with the real AI, MovementSystem and ActionSystem: the colonist

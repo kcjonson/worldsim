@@ -179,7 +179,10 @@ class NavigationSystem : public ISystem {
 	// over truth, one built from a colonist's known walls and openings over what he remembers). The
 	// belief's sets are copied at the call. A placed obstacle blocks a route. Answered at once, with no search, when the start is off meshed ground or no goal stands on meshed ground
 	// connected to the start's (component labels, read where the search stands each end: a point on
-	// the edge of a placed obstacle or a wall stands on the free triangle beside it). Otherwise the search runs in the route slices,
+	// the edge of a placed obstacle or a wall stands on the free triangle beside it): AwaitingMesh when
+	// the start, or a goal, is off meshed ground inside a limit still on its way in (queued, or gathered
+	// and not yet joined), else no known way. A search that finds no goal while another goal waits so is
+	// AwaitingMesh too. Otherwise the search runs in the route slices,
 	// a fixed count of expansions a tick shared by every request, and nothing limits it: it ends
 	// by finding a goal or by exploring all the mover can reach.
 	//
@@ -356,12 +359,12 @@ class NavigationSystem : public ISystem {
 	// point inside a placed obstacle.
 	[[nodiscard]] std::optional<glm::vec2> standPointBeside(glm::vec2 target, glm::vec2 from, float agentRadiusMeters) const;
 
-	// Like nearestPathablePoint (clear ground), but the returned point also clears the BUILT-wall
-	// collision bands for an agent of radius `agentRadiusMeters` (the halfThickness + radius
-	// clearance WallCollisionSystem enforces), so the two systems never push a snapped colonist back
-	// and forth (the colonist-wall-trap bug). Falls back to the nearest band-clear triangle interior
-	// when the closest pocket is too thin to hold the agent. Snaps a stranded colonist, and a move
-	// order clicked on water or a placed obstacle.
+	// The nearest point where a mover of radius `agentRadiusMeters` stands: his whole disc on ground a
+	// route crosses, clear of water, placed obstacles and the mesh's edge, and of the BUILT-wall
+	// collision bands (the halfThickness + radius clearance WallCollisionSystem enforces, so the two
+	// systems never push a snapped colonist back and forth). `meters` itself when it is such a point.
+	// nullopt off meshed ground, or when nowhere on the mesh holds the disc. Snaps a stranded colonist,
+	// and a move order clicked on water or a placed obstacle.
 	[[nodiscard]] std::optional<glm::vec2> nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const;
 
 	// A clear point (isValidPosition) at least `minDistMeters` away from `origin`, used to place a thing a short
@@ -400,6 +403,10 @@ class NavigationSystem : public ISystem {
 	// time so the replan loop sees "the mesh changed under me", and a deferred route waits on it.
 	// Placed obstacles landing or leaving don't move it (see the file comment).
 	[[nodiscard]] std::uint64_t generation() const;
+	// Moves when ground an AwaitingMesh answer waits for may have changed: generation() moved, or a
+	// queued limit was dropped and will never go in. An answer that waited asks again only once this
+	// moves, so a waiter is never held for ground that is not coming. Values never repeat.
+	[[nodiscard]] std::uint64_t awaitedGroundEpoch() const;
 
 	// Cumulative instrumentation since the last resetNavQueryStats(): the patches the joined jobs
 	// applied, and of them the ground, water, and wall patches (those that move generation(), with
@@ -520,8 +527,9 @@ class NavigationSystem : public ISystem {
 	// main thread, run on the patch worker, read back on the main thread after the join.
 	struct MeshJob {
 		std::vector<geometry::nav::PatchEdits>				  patches;
-		// Per patch, on the main thread after the join: the ids of its added rings and its time.
-		std::vector<std::function<void(const std::vector<RingId>&, double)>> onPatched;
+		// Per patch, on the main thread after the join: its report (the ids of its added rings among it)
+		// and its time.
+		std::vector<std::function<void(const geometry::nav::PatchReport&, double)>> onPatched;
 		std::vector<geometry::nav::DoorPortal>								 doorAdds;
 		std::vector<DoorId>													 doorRemoves;
 		// The portals of doorAdds and doorRemoves, whose edges' triangles a door edit retags.
@@ -531,8 +539,9 @@ class NavigationSystem : public ISystem {
 		// ground (a wall, new water, a door taken out).
 		std::size_t									 routePatches = 0;
 		std::vector<std::pair<glm::vec2, glm::vec2>> blockingBoxes;
+		// The outlines of the limits whose ground is among `patches`.
+		std::vector<std::vector<geometry::Vec2i64>> groundOutlines;
 
-		std::vector<std::vector<RingId>> added;
 		// What each patch, the door edits, and the width refresh changed, for the route queue.
 		std::vector<geometry::nav::PatchReport> reports;
 		std::vector<double>				 patchMs;
@@ -585,6 +594,10 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] bool limitServable(const SeenLimit& limit) const;
 	// Some chunk the mover's limit needs is held by no anchor: it can never go in.
 	[[nodiscard]] bool limitStranded(const SeenLimit& limit) const;
+	// `pointMm` is inside a limit on its way in: the landing's, one queued and not stranded, or one
+	// whose ground is gathered and not yet handed to the patch worker. Off meshed ground, that is
+	// ground on its way; anywhere else is not, until a mover takes a limit there.
+	[[nodiscard]] bool groundComing(geometry::Vec2i64 pointMm) const;
 	// The limit is its mover's newest, and he is urgent (MoverDisc::urgent).
 	[[nodiscard]] bool limitUrgent(const SeenLimit& limit) const;
 	// A search's hold keeps the limit waiting: its mover has a limit in the mesh and it is not urgent.
@@ -656,6 +669,8 @@ class NavigationSystem : public ISystem {
 	std::optional<SeenLimit> landingLimit;
 	// Queued limits that could have gone in at the last gather but for a budget or a hold.
 	std::size_t								limitsPending = 0;
+	// Queued limits dropped as stranded: they never go in (awaitedGroundEpoch).
+	std::uint64_t							limitsDropped = 0;
 	// Defs whose footprint was found reaching past kFootprintReachMeters, each logged once.
 	std::set<std::string> overreachingDefs;
 	std::unordered_map<EntityID, MoverDisc> moverDiscs;
@@ -679,7 +694,9 @@ class NavigationSystem : public ISystem {
 	struct QueuedRoute {
 		nav::RouteTicket		  queued = nav::kNoRouteTicket;
 		std::vector<std::int32_t> goalIndices;
-		bool					  takeable = false;
+		// A goal not passed on is off meshed ground in a limit on its way: no goal found is AwaitingMesh.
+		bool					  goalComing = false;
+		bool					  takeable	 = false;
 		// The routeTick it was first still running after a slice; 0 until then. Its hold window.
 		std::uint64_t holdFrom = 0;
 	};

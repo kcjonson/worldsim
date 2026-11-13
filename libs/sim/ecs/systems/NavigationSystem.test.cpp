@@ -175,6 +175,8 @@ namespace {
 	const glm::vec2 kOutside{2.0F, -1.0F};
 	const glm::vec2 kInside{2.0F, 1.5F};
 	constexpr float kAgentRadius = 0.3F; // 0.3 m radius fits the 0.9 m door
+	// A colonist's R: his limit holds the disc of this round where he stands.
+	constexpr float kColonistRange = kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
 
 	// Far beyond every chunk the fixtures load (radius 2 around the origin: -1024..1536 m).
 	const glm::vec2 kUnmeshed{5000.0F, 5000.0F};
@@ -3053,18 +3055,39 @@ TEST_F(NavigationSystemTest, WallLandingMarksOnlyTheRoutesItCrosses) {
 	EXPECT_FALSE(stale(world, sys, offTheEnd)) << "a wall 6 m off the route marked it";
 }
 
-// A move order clicked on a tree snaps its goal to clear ground beside the trunk: the walker goes
-// round on a route that crosses no tree, stops beside it and stays there.
-TEST_F(NavigationSystemTest, MoveOrderOntoATreeEndsBesideIt) {
-	registerTree("Test_NavOrderTree", 0.4F);
-	const glm::vec2 treeAt{10.0F, 5.0F};
-	WalkRig			rig(treeAt);
-	placeTrees(rig.executor, rig.processed, "Test_NavOrderTree", {treeAt});
+namespace {
+	// The disc of `r` round `p` is clear ground: `p`, and points round two rims (half `r` and `r`), each
+	// pass isValidPosition, so it is in no water or placed obstacle and inside the mesh's edge.
+	bool discClear(const NavigationSystem& sys, glm::vec2 p, float r) {
+		constexpr int kRimPoints = 32;
+		if (!sys.isValidPosition(p)) {
+			return false;
+		}
+		for (const float f : {0.5F, 1.0F}) {
+			for (int k = 0; k < kRimPoints; ++k) {
+				const float angle = 6.2831853F * static_cast<float>(k) / static_cast<float>(kRimPoints);
+				if (!sys.isValidPosition(p + f * r * glm::vec2{std::cos(angle), std::sin(angle)})) {
+					return false;
+				}
+			}
+		}
+		return true;
+	}
+} // namespace
+
+// A move order clicked on a placed obstacle snaps its goal to ground beside it where the mover's whole
+// disc stands clear: the walker goes round on a route that crosses no placed obstacle, stops beside it
+// and stays there.
+TEST_F(NavigationSystemTest, MoveOrderOntoAPlacedObstacleEndsBesideIt) {
+	registerTree("Test_NavOrderObstacle", 0.4F);
+	const glm::vec2 obstacleAt{10.0F, 5.0F};
+	WalkRig			rig(obstacleAt);
+	placeTrees(rig.executor, rig.processed, "Test_NavOrderObstacle", {obstacleAt});
 	rig.start();
-	const EntityID	colonist = rig.walker({2.0F, 5.0F}, treeAt);
+	const EntityID	colonist = rig.walker({2.0F, 5.0F}, obstacleAt);
 	const glm::vec2 goal	 = rig.world.getComponent<Task>(colonist)->targetPosition;
-	EXPECT_TRUE(rig.nav.isValidPosition(goal)) << "the goal is clear ground";
-	EXPECT_LT(glm::distance(goal, treeAt), 1.0F) << "beside the trunk";
+	EXPECT_TRUE(discClear(rig.nav, goal, kAgentRadius)) << "the mover's disc at the goal overlaps the placed obstacle";
+	EXPECT_LT(glm::distance(goal, obstacleAt), 1.0F) << "beside it";
 
 	const Position&		   position = *rig.world.getComponent<Position>(colonist);
 	std::vector<glm::vec2> settled;
@@ -3078,6 +3101,28 @@ TEST_F(NavigationSystemTest, MoveOrderOntoATreeEndsBesideIt) {
 		EXPECT_EQ(p, settled.front()) << "still moving";
 	}
 	EXPECT_LT(glm::distance(position.value, goal), 0.1F) << "stopped on its goal";
+}
+
+// A point inside the mesh's edge by less than a mover's radius snaps to where his disc stands inside
+// it; a point off the mesh has nowhere to snap to.
+TEST_F(NavigationSystemTest, NearestPathablePointStandsClearOfTheMeshEdge) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	meshDisc(world, {0.0F, 0.0F}, kColonistRange);
+	settle(sys);
+	// Through the middle of an edge of the limit's polygon, which lies kColonistRange out.
+	const float		angle = 3.14159265F / static_cast<float>(geometry::nav::kLimitSides);
+	const glm::vec2 out{std::cos(angle), std::sin(angle)};
+	const glm::vec2 nearEdge = out * (kColonistRange - kAgentRadius * 0.5F);
+	ASSERT_TRUE(sys.isValidPosition(nearEdge));
+	ASSERT_FALSE(discClear(sys, nearEdge, kAgentRadius)) << "the point's disc already stands inside";
+
+	const std::optional<glm::vec2> stand = sys.nearestPathablePoint(nearEdge, kAgentRadius);
+	ASSERT_TRUE(stand.has_value());
+	EXPECT_TRUE(discClear(sys, *stand, kAgentRadius));
+	EXPECT_LT(glm::distance(*stand, nearEdge), kAgentRadius) << "not the nearest such point";
+	EXPECT_FALSE(sys.nearestPathablePoint(out * (kColonistRange + kAgentRadius * 4.0F), kAgentRadius).has_value()) << "off the mesh";
 }
 
 // A route through a wall that was already there isn't news when another wall is built off the
@@ -3172,6 +3217,35 @@ TEST_F(NavigationSystemTest, FarColonistReachesWaterItKnows) {
 	EXPECT_LT(nearest, 0.5F) << "never got to the water";
 }
 
+// The twin with nothing walked out from Home: the water 90 m on lies in no limit, so no known way
+// joins him to it. The thirst option is not Selected, he never sets off for it, and he never waits
+// for ground there (none is coming).
+TEST_F(NavigationSystemTest, FarColonistDoesNotHoldForWaterNobodyWalkedTo) {
+	WalkRig			rig({0.0F, 0.0F});
+	const glm::vec2 water{200.0F, 0.0F};
+	addColonist(rig.world, {0.0F, 0.0F}, "Home");
+	rig.start();
+
+	const EntityID colonist = needyColonist(rig, {110.0F, 0.0F}, NeedType::Thirst, 10.0F);
+	rig.world.getComponent<Memory>(colonist)->rememberWorldEntity(
+		water, kTestWaterDefId, static_cast<std::uint16_t>(1U << static_cast<std::size_t>(assets::CapabilityType::Drinkable)));
+	const Task& task = *rig.world.getComponent<Task>(colonist);
+	for (int i = 0; i < 40; ++i) {
+		rig.world.update(0.1F);
+		ASSERT_NE(task.navState, NavState::AwaitingMesh) << "tick " << i << ": held for ground that is not coming";
+		ASSERT_NE(task.targetPosition, water) << "tick " << i << ": set off for water it has no known way to";
+	}
+	ASSERT_FALSE(rig.nav.inSimArea(water));
+	const EvaluatedOption* thirst = nullptr;
+	for (const EvaluatedOption& option : rig.world.getComponent<DecisionTrace>(colonist)->options) {
+		if (option.taskType == TaskType::FulfillNeed && option.needType == NeedType::Thirst) {
+			thirst = &option;
+		}
+	}
+	ASSERT_NE(thirst, nullptr);
+	EXPECT_NE(thirst->status, OptionStatus::Selected);
+}
+
 // A colonist walking a move order is moved 60 m (a dev teleport sets Position and nothing else). Its
 // route is marked stale and replanned from where it now stands, so it walks to its goal instead of
 // steering straight back at its old waypoint; with a wall it knows between the two it goes round.
@@ -3204,6 +3278,44 @@ TEST_F(NavigationSystemTest, ColonistMovedOffItsRouteReplansFromWhereItIs) {
 		EXPECT_EQ(task.targetPosition, goal) << where << ": the order was dropped";
 		EXPECT_LT(glm::distance(position.value, goal), 0.3F) << where << ": never got back to its goal";
 	}
+}
+
+// A colonist put on ground no mover has seen (what the dev teleport does) has it meshed under him on
+// the next tick: his limit there is urgent, so it goes in outside every budget.
+TEST_F(NavigationSystemTest, TeleportOntoUnseenGroundMeshesOnArrival) {
+	WalkRig rig({0.0F, 0.0F});
+	rig.start();
+	const EntityID colonist = needyColonist(rig, {0.0F, 0.0F}, NeedType::Thirst, 100.0F);
+	rig.world.update(0.1F);
+	const glm::vec2 unseen{300.0F, 300.0F};
+	ASSERT_FALSE(rig.nav.inSimArea(unseen));
+	rig.world.getComponent<Position>(colonist)->value = unseen;
+	rig.world.update(0.1F);
+	const glm::vec2 at = rig.world.getComponent<Position>(colonist)->value;
+	EXPECT_TRUE(rig.nav.isValidPosition(at)) << "not meshed a tick after the teleport";
+	EXPECT_TRUE(rig.nav.inSimArea(at + glm::vec2{kDefaultSightRadius, 0.0F})) << "what he sees is not meshed";
+}
+
+// A walker's route is restamped as ground lands round it, never asked for again: his own limits go
+// in as he walks past what the lookout meshed, and a lookout's far off, and the order is his only
+// request.
+TEST_F(NavigationSystemTest, WalkingRouteIsNotAskedAgainAsLimitsLand) {
+	WalkRig				rig({0.0F, 0.0F});
+	rig.start();
+	const std::uint64_t asked	   = rig.nav.routeStats().requests;
+	const std::uint64_t generation = rig.nav.generation();
+	const glm::vec2		goal{20.0F, 0.0F};
+	const EntityID		colonist = rig.walker({-20.0F, 0.0F}, goal);
+	const auto			at		 = [&rig, colonist] { return rig.world.getComponent<Position>(colonist)->value; };
+	for (int i = 0; i < 600 && glm::distance(at(), goal) > 0.3F; ++i) {
+		if (i == 10) {
+			meshDisc(rig.world, {0.0F, 300.0F}, kColonistRange);
+		}
+		rig.world.update(0.1F);
+	}
+	EXPECT_LT(glm::distance(at(), goal), 0.3F) << "never arrived";
+	EXPECT_GE(rig.nav.generation() - generation, 3U) << "too little ground landed during the walk to tell";
+	EXPECT_EQ(rig.nav.routeStats().requests - asked, 1U) << "his route was asked for again as ground landed";
 }
 
 // --- Goals in ground that isn't coming ------------------------------------------------------
@@ -4278,8 +4390,9 @@ TEST_F(NavigationSystemTest, AnswerNotTakenWithinItsTicksIsDropped) {
 	EXPECT_EQ(sys.routeStats().answered, 0U);
 }
 
-// A start on no meshed ground has its own answer, at once, with no search.
-TEST_F(NavigationSystemTest, RouteFromOffTheMeshSaysSo) {
+// A start on no meshed ground and in no limit on its way is no known way, at once, with no search:
+// nothing says ground is coming there, so nothing waits for it.
+TEST_F(NavigationSystemTest, RouteFromGroundNotComingIsNoKnownWay) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	wireArea(world, sys);
@@ -4287,9 +4400,86 @@ TEST_F(NavigationSystemTest, RouteFromOffTheMeshSaysSo) {
 	const nav::RouteTicket			 ticket = sys.requestRoute(kUnmeshed, std::array{glm::vec2{10.0F, 10.0F}}, kAgentRadius);
 	const std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket);
 	ASSERT_TRUE(answer.has_value()) << "answered at once";
-	EXPECT_EQ(answer->outcome, nav::RouteOutcome::StartOffMesh);
+	EXPECT_EQ(answer->outcome, nav::RouteOutcome::NoKnownWay);
 	EXPECT_EQ(answer->expansions, 0);
 	EXPECT_EQ(answer->patchEpoch, sys.navMesh().epoch());
+}
+
+namespace {
+	// The outcome of a route asked between ticks, answered at once.
+	nav::RouteOutcome outcomeAtOnce(NavigationSystem& sys, glm::vec2 from, glm::vec2 to) {
+		const nav::RouteTicket			 ticket = sys.requestRoute(from, std::array{to}, kAgentRadius);
+		const std::optional<RouteAnswer> answer = sys.takeRouteAnswer(ticket);
+		EXPECT_TRUE(answer.has_value()) << "not answered at once";
+		return answer.has_value() ? answer->outcome : nav::RouteOutcome::Routed;
+	}
+} // namespace
+
+// A start or goal off meshed ground inside a limit on its way in (gathered this tick, or queued behind
+// the per-tick budget) waits for it (AwaitingMesh); one in no limit is no known way. Once the limits
+// land, the same goals route.
+TEST_F(NavigationSystemTest, GoalInQueuedLimitAwaitsMesh) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	const glm::vec2 home{0.0F, 0.0F};
+	meshDisc(world, home, kColonistRange);
+	settle(sys);
+
+	const glm::vec2 east{kColonistRange, 0.0F};
+	const glm::vec2 north{0.0F, kColonistRange};
+	meshDisc(world, east, kColonistRange);
+	meshDisc(world, north, kColonistRange);
+	const glm::vec2 eastGoal  = east + glm::vec2{kColonistRange * 0.75F, 0.0F};
+	const glm::vec2 northGoal = north + glm::vec2{0.0F, kColonistRange * 0.75F};
+	const glm::vec2 nowhere{-2.0F * kColonistRange, -2.0F * kColonistRange};
+	for (const glm::vec2 p : {eastGoal, northGoal, nowhere}) {
+		ASSERT_FALSE(sys.inSimArea(p)) << p.x << ", " << p.y;
+	}
+
+	sys.update(0.016F);
+	EXPECT_EQ(outcomeAtOnce(sys, home, eastGoal), nav::RouteOutcome::AwaitingMesh);
+	EXPECT_EQ(outcomeAtOnce(sys, home, northGoal), nav::RouteOutcome::AwaitingMesh);
+	EXPECT_EQ(outcomeAtOnce(sys, eastGoal, home), nav::RouteOutcome::AwaitingMesh) << "a start in ground on its way";
+	EXPECT_EQ(outcomeAtOnce(sys, home, nowhere), nav::RouteOutcome::NoKnownWay) << "a goal in no limit";
+	EXPECT_EQ(outcomeAtOnce(sys, nowhere, home), nav::RouteOutcome::NoKnownWay) << "a start in no limit";
+	sys.endTick();
+
+	settle(sys);
+	EXPECT_TRUE(routeBetween(sys, home, eastGoal).has_value());
+	EXPECT_TRUE(routeBetween(sys, home, northGoal).has_value());
+	EXPECT_EQ(outcomeAtOnce(sys, home, nowhere), nav::RouteOutcome::NoKnownWay);
+}
+
+// A goal waiting in a queued limit whose mover walks off before it goes in: the limit can never go in
+// and is dropped, and awaitedGroundEpoch moves with no ground landing, so the waiter asks again and
+// reads no known way. Nothing waits for ground that is not coming.
+TEST_F(NavigationSystemTest, DroppedLimitReleasesItsWaiters) {
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	const glm::vec2 home{0.0F, 0.0F};
+	meshDisc(world, home, kColonistRange);
+	settle(sys);
+
+	for (std::size_t i = 0; i < NavigationSystem::kLimitsPerTick; ++i) { // this tick's limit budget
+		meshDisc(world, {kColonistRange, kColonistRange * static_cast<float>(i)}, kColonistRange);
+	}
+	const glm::vec2 away{600.0F, 0.0F};
+	const EntityID	walker = meshDisc(world, away, kColonistRange);
+	const glm::vec2 goal   = away + glm::vec2{kColonistRange * 0.5F, 0.0F};
+	sys.update(0.016F);
+	sys.endTick();
+	const std::uint64_t generation = sys.generation();
+	const std::uint64_t epoch	   = sys.awaitedGroundEpoch();
+	ASSERT_EQ(outcomeAtOnce(sys, home, goal), nav::RouteOutcome::AwaitingMesh) << "the walker's limit is still queued";
+
+	world.getComponent<Position>(walker)->value = {-600.0F, 0.0F};
+	sys.update(0.016F);
+	EXPECT_EQ(sys.generation(), generation) << "no ground went in";
+	EXPECT_NE(sys.awaitedGroundEpoch(), epoch) << "the dropped limit released nobody";
+	EXPECT_EQ(outcomeAtOnce(sys, home, goal), nav::RouteOutcome::NoKnownWay);
+	sys.endTick();
 }
 
 // A goal in a pocket of meshed ground sealed by placed obstacles, or off meshed ground, is no known

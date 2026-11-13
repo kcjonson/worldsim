@@ -1733,8 +1733,7 @@ namespace ecs {
 			if (auto* navPath = world->getComponent<NavPath>(entity);
 				task.state == TaskState::Moving && task.routeTicket == 0 && (navPath == nullptr || !navPath->valid) &&
 				(task.navState == NavState::AwaitingRoute || movementTarget.active) &&
-				(!task.awaitingSnap || m_navSystem == nullptr || !m_navSystem->snapHolds(entity) ||
-				 m_navSystem->generation() != task.deferredNavGeneration)) {
+				(!task.awaitingSnap || m_navSystem == nullptr || !m_navSystem->snapHolds(entity) || awaitedGroundDue(task))) {
 				requestRoute(entity, task, position, memory, movementTarget, false);
 			}
 
@@ -1757,10 +1756,8 @@ namespace ecs {
 				}
 			}
 
-			// Standing off the mesh (AwaitingMesh): nothing else asks again. Keyed on the generation,
-			// which moves when ground lands, so it costs one request per landing, not one per frame.
-			if (task.state == TaskState::Moving && task.navState == NavState::AwaitingMesh && m_navSystem != nullptr &&
-				m_navSystem->generation() != task.deferredNavGeneration) {
+			// Waiting for ground on its way (AwaitingMesh): nothing else asks again.
+			if (task.state == TaskState::Moving && task.navState == NavState::AwaitingMesh && m_navSystem != nullptr && awaitedGroundDue(task)) {
 				requestRoute(entity, task, position, memory, movementTarget, false);
 			}
 
@@ -3105,6 +3102,7 @@ namespace ecs {
 		task.routeGoal			= task.targetPosition;
 		task.routeBeliefVersion = memory.beliefVersion;
 		task.routeWaitTicks		= 0;
+		task.routeAskedAt		= m_elapsedTime;
 		if (!walking) {
 			movementTarget.active = false;
 			setNavState(entity, task, NavState::AwaitingRoute);
@@ -3184,14 +3182,14 @@ namespace ecs {
 				setNavState(entity, task, NavState::Traveling);
 				return;
 			}
-			case nav::RouteOutcome::StartOffMesh:
+			case nav::RouteOutcome::AwaitingMesh:
 				if (navPath != nullptr) {
 					navPath->valid = false;
 				}
 				movementTarget.active = false;
 				setNavState(entity, task, NavState::AwaitingMesh);
-				task.deferredNavGeneration = m_navSystem->generation();
-				LOG_DEBUG(Engine, "[Nav] Entity %llu: standing off the mesh, waiting for it", static_cast<unsigned long long>(entity));
+				task.deferredGroundEpoch = m_navSystem->awaitedGroundEpoch();
+				LOG_DEBUG(Engine, "[Nav] Entity %llu: his route's ground is on its way, waiting for it", static_cast<unsigned long long>(entity));
 				return;
 			case nav::RouteOutcome::NoKnownWay:
 				break;
@@ -3204,12 +3202,16 @@ namespace ecs {
 				navPath->valid = false;
 			}
 			movementTarget.active	   = false;
-			task.awaitingSnap		   = true;
-			task.deferredNavGeneration = m_navSystem->generation();
+			task.awaitingSnap		 = true;
+			task.deferredGroundEpoch = m_navSystem->awaitedGroundEpoch();
 			setNavState(entity, task, NavState::AwaitingRoute);
 			return;
 		}
 		failRoute(entity, task, memory, movementTarget, RouteFailure::NoKnownWay);
+	}
+
+	bool AIDecisionSystem::awaitedGroundDue(const Task& task) const {
+		return m_navSystem->awaitedGroundEpoch() != task.deferredGroundEpoch && m_elapsedTime - task.routeAskedAt >= kReEvalInterval;
 	}
 
 	std::optional<glm::vec2> AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
@@ -3566,7 +3568,7 @@ namespace ecs {
 		if (const Memory* memory = world->getComponent<Memory>(entity)) {
 			// The answer is applied by update() ahead of the control gate, like any AI route. No known
 			// way shows "can't get there" and waits for the player to re-click (the control gate skips
-			// re-eval); a start off the mesh waits and asks again once the mesh lands.
+			// re-eval); a start in ground on its way waits and asks again once it lands.
 			requestRoute(entity, *task, *position, *memory, *movementTarget, false);
 		}
 		return goal;

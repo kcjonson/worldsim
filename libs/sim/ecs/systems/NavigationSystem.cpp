@@ -150,10 +150,11 @@ namespace ecs {
 			}
 		}
 
-		// The first nudge from a face's edge toward its centroid that locates in the face: a long face
-		// is not walked a fixed share of its size away from where it was asked.
-		constexpr float kIntoFaceMeters = 0.01F;
-		glm::vec2		intoFace(const gnav::PatchableMesh& mesh, std::int32_t t, glm::vec2 onEdge, glm::vec2 centroid) {
+		// The first nudge from a face's edge toward its centroid that locates in the face, else the
+		// centroid when it does: a long face is not walked a fixed share of its size away from where it
+		// was asked. nullopt when neither locates there (a face under the nudge's size across).
+		constexpr float			 kIntoFaceMeters = 0.01F;
+		std::optional<glm::vec2> intoFace(const gnav::PatchableMesh& mesh, std::int32_t t, glm::vec2 onEdge, glm::vec2 centroid) {
 			const glm::vec2 inward = centroid - onEdge;
 			const float		length = std::sqrt(inward.x * inward.x + inward.y * inward.y);
 			for (float step = kIntoFaceMeters; step < length; step *= 2.0F) {
@@ -162,32 +163,31 @@ namespace ecs {
 					return p;
 				}
 			}
-			return centroid;
+			return mesh.locate(nav::toMm(centroid)) == t ? std::optional<glm::vec2>(centroid) : std::nullopt;
 		}
 
 		// Nearest point on `mesh` to `meters` whose face passes `faceOk` (given the triangle id), moved
-		// just inside that face so it locates there, or nullopt when no face does.
+		// just inside that face so it locates there, or nullopt when no face does. A face no point
+		// locates in is passed over for the next.
 		template <typename FaceOk>
 		std::optional<glm::vec2> nearestFaceOnMesh(const gnav::PatchableMesh& mesh, glm::vec2 meters, const FaceOk& faceOk) {
-			std::int32_t   bestT  = -1;
-			float		   bestD2 = 0.0F;
-			glm::vec2	   best{0.0F, 0.0F};
-			glm::vec2	   bestCentroid{0.0F, 0.0F};
-			constexpr float kNone = std::numeric_limits<float>::infinity();
+			std::optional<glm::vec2> best;
+			float					 bestD2 = 0.0F;
+			constexpr float			 kNone	= std::numeric_limits<float>::infinity();
 			nearestFirst(mesh, meters, [&](std::int32_t t, const TriangleMeters& tri) {
 				if (!faceOk(t)) {
-					return bestT >= 0 ? bestD2 : kNone;
+					return best.has_value() ? bestD2 : kNone;
 				}
 				const ClosestPoint cp = closestPointOnTriangle(meters, tri.a, tri.b, tri.c);
-				if (bestT < 0 || cp.dist2 < bestD2) {
-					bestT		 = t;
-					best		 = cp.point;
-					bestCentroid = (tri.a + tri.b + tri.c) / 3.0F;
-					bestD2		 = cp.dist2;
+				if (!best.has_value() || cp.dist2 < bestD2) {
+					if (const std::optional<glm::vec2> in = intoFace(mesh, t, cp.point, (tri.a + tri.b + tri.c) / 3.0F)) {
+						best   = in;
+						bestD2 = cp.dist2;
+					}
 				}
-				return bestD2;
+				return best.has_value() ? bestD2 : kNone;
 			});
-			return bestT >= 0 ? std::optional<glm::vec2>(intoFace(mesh, bestT, best, bestCentroid)) : std::nullopt;
+			return best;
 		}
 
 		template <typename FaceOk> bool pointOnFace(const gnav::PatchableMesh& mesh, glm::vec2 meters, const FaceOk& faceOk) {
@@ -255,7 +255,7 @@ namespace ecs {
 		// or the two oscillate. These mirror WallCollisionSystem's band model exactly (centerline
 		// endpoints in meters, halfThickness + r clearance, pathable door-gap spans exempt).
 
-		constexpr float kBandClearMarginMeters = 0.02F; // 2 cm past clearance so a re-locate isn't borderline
+		constexpr float kClearMarginMeters = 0.02F; // 2 cm past clearance so a re-locate isn't borderline
 
 		struct WallBandM {
 			glm::vec2							 v0;
@@ -349,7 +349,7 @@ namespace ecs {
 					const glm::vec2 c = band.v0 + (band.v1 - band.v0) * t;
 					const glm::vec2 toA{p.x - c.x, p.y - c.y};
 					const float		dist	  = std::sqrt(toA.x * toA.x + toA.y * toA.y);
-					const float		clearance = band.halfThicknessMeters + r + kBandClearMarginMeters;
+					const float		clearance = band.halfThicknessMeters + r + kClearMarginMeters;
 					if (dist >= clearance || inDoorSpan(band, t)) {
 						continue;
 					}
@@ -367,36 +367,97 @@ namespace ecs {
 			return p;
 		}
 
-		// Nearest point to `meters` on a walkable face that clears every built band: per walkable
-		// triangle, the closest point biased a third toward the centroid, and the centroid itself,
-		// so a sub-clearance sliver gives way to the nearest roomy face.
-		template <typename OnMeshFn>
-		std::optional<glm::vec2> nearestClearOnMesh(const gnav::PatchableMesh& mesh, glm::vec2 meters, float r,
-													const std::vector<WallBandM>& bands, const OnMeshFn& isOnMeshFn) {
-			bool	  found	 = false;
-			float	  bestD2 = 0.0F;
-			glm::vec2 best{0.0F, 0.0F};
-			auto	  consider = [&](glm::vec2 p) {
-				 if (!clearOfBands(p, r, bands) || !isOnMeshFn(p)) {
-					 return;
-				 }
-				 const float d2 = dist2(meters, p);
-				 if (!found || d2 < bestD2) {
-					 best	= p;
-					 bestD2 = d2;
-					 found	= true;
-				 }
+		bool crossableFace(const gnav::PatchableMesh& mesh, std::int32_t t) {
+			return t >= 0 && gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(t)]);
+		}
+
+		// The nearest point closer than `r` to `p` on an edge between a face a route crosses (water and
+		// placed obstacles block, walls read open) and one that blocks or no face at all (the mesh's
+		// edge), walked to over crossable faces from p's; nullopt when there is none. `p` itself when it
+		// stands on no crossable face.
+		std::optional<glm::vec2> blockedWithin(const gnav::PatchableMesh& mesh, glm::vec2 p, float r) {
+			const std::int32_t start = mesh.locate(nav::toMm(p));
+			if (!crossableFace(mesh, start)) {
+				return p;
+			}
+			std::vector<std::int32_t>		 open{start};
+			std::unordered_set<std::int32_t> seen{start};
+			std::optional<glm::vec2>		 nearest;
+			float							 nearestD2 = r * r;
+			while (!open.empty()) {
+				const std::int32_t t = open.back();
+				open.pop_back();
+				const gnav::NavTriangle&	   tri = mesh.triangles()[static_cast<std::size_t>(t)];
+				const TriangleMeters		   m   = trianglePoints(mesh, tri);
+				const std::array<glm::vec2, 3> corner{m.a, m.b, m.c};
+				for (std::size_t e = 0; e < 3; ++e) {
+					const glm::vec2 q  = closestOnSegment(p, corner[e], corner[(e + 1) % 3]);
+					const float		d2 = dist2(p, q);
+					if (d2 >= r * r) {
+						continue;
+					}
+					const std::int32_t across = tri.neighbor[e];
+					if (!crossableFace(mesh, across)) {
+						if (d2 < nearestD2) {
+							nearest	  = q;
+							nearestD2 = d2;
+						}
+					} else if (seen.insert(across).second) {
+						open.push_back(across);
+					}
+				}
+			}
+			return nearest;
+		}
+
+		// `p` moved until a disc of `r` round it is clear of every blocked edge (blockedWithin) and every
+		// built band, each push straight away from the nearest thing it overlaps; nullopt when a few
+		// pushes don't clear it (a pocket narrower than the disc) or it leaves crossable ground.
+		constexpr int			 kClearPushes = 4;
+		std::optional<glm::vec2> pushedClear(const gnav::PatchableMesh& mesh, glm::vec2 p, float r, const std::vector<WallBandM>& bands) {
+			for (int push = 0; push < kClearPushes; ++push) {
+				p									 = ejectFromBands(p, r, bands);
+				const std::optional<glm::vec2> block = blockedWithin(mesh, p, r);
+				if (!block.has_value()) {
+					return clearOfBands(p, r, bands) ? std::optional<glm::vec2>(p) : std::nullopt;
+				}
+				const glm::vec2 away = p - *block;
+				const float		d	 = std::sqrt(dist2(p, *block));
+				if (d <= 0.0F) {
+					return std::nullopt;
+				}
+				p = *block + away * ((r + kClearMarginMeters) / d);
+			}
+			return std::nullopt;
+		}
+
+		// Nearest point to `meters` where a disc of `r` stands clear (pushedClear): per crossable face,
+		// `meters` itself when it lies there, else its nearest point nudged into the face, and the
+		// face's centroid, each pushed clear.
+		std::optional<glm::vec2> nearestStandable(const gnav::PatchableMesh& mesh, glm::vec2 meters, float r, const std::vector<WallBandM>& bands) {
+			std::optional<glm::vec2> best;
+			float					 bestD2	  = 0.0F;
+			const auto				 consider = [&](std::optional<glm::vec2> p) {
+				  if (!p.has_value()) {
+					  return;
+				  }
+				  const std::optional<glm::vec2> clear = pushedClear(mesh, *p, r, bands);
+				  if (clear.has_value() && (!best.has_value() || dist2(meters, *clear) < bestD2)) {
+					  best	 = clear;
+					  bestD2 = dist2(meters, *clear);
+				  }
 			};
 			nearestFirst(mesh, meters, [&](std::int32_t t, const TriangleMeters& tri) {
-				if (gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(t)])) {
+				if (crossableFace(mesh, t)) {
 					const glm::vec2 centroid = (tri.a + tri.b + tri.c) / 3.0F;
-					const glm::vec2 cand	 = closestPointOnTriangle(meters, tri.a, tri.b, tri.c).point;
-					consider(cand + (centroid - cand) * 0.34F);
-					consider(centroid);
+					consider(mesh.locate(nav::toMm(meters)) == t
+								 ? std::optional<glm::vec2>(meters)
+								 : intoFace(mesh, t, closestPointOnTriangle(meters, tri.a, tri.b, tri.c).point, centroid));
+					consider(intoFace(mesh, t, centroid, centroid));
 				}
-				return found ? bestD2 : std::numeric_limits<float>::infinity();
+				return best.has_value() ? bestD2 : std::numeric_limits<float>::infinity();
 			});
-			return found ? std::optional<glm::vec2>(best) : std::nullopt;
+			return best;
 		}
 
 		// Whole-segment walkability under a per-point predicate: both endpoints plus every interior
@@ -585,10 +646,8 @@ namespace ecs {
 		const Clock::time_point start = Clock::now();
 		for (const gnav::PatchEdits& edits : job.patches) {
 			const Clock::time_point patchStart = Clock::now();
-			gnav::PatchReport		report	   = mesh.applyPatch(edits);
-			job.added.push_back(std::move(report.added));
+			job.reports.push_back(mesh.applyPatch(edits));
 			job.patchMs.push_back(msSince(patchStart));
-			job.reports.push_back(std::move(report));
 		}
 		for (const gnav::DoorId door : job.doorRemoves) {
 			mesh.removeDoor(door);
@@ -790,6 +849,23 @@ namespace ecs {
 	bool NavigationSystem::limitStranded(const SeenLimit& limit) const {
 		return limit.mover != kInvalidEntity &&
 			   !everyChunkIn(limit.query.lo, limit.query.hi, [this](world::ChunkCoordinate coord) { return anchorHolds(coord); });
+	}
+
+	bool NavigationSystem::groundComing(geometry::Vec2i64 pointMm) const {
+		const auto holds = [&pointMm](const std::vector<geometry::Vec2i64>& outline) {
+			return geometry::pointInPolygon(pointMm, outline) != geometry::PointInPolygon::Outside;
+		};
+		const auto queuedHolds = [&](const SeenLimit& limit) {
+			return pointMm.x >= limit.query.lo.x && pointMm.x <= limit.query.hi.x && pointMm.y >= limit.query.lo.y && pointMm.y <= limit.query.hi.y &&
+				   holds(limit.outline);
+		};
+		if (landingLimit.has_value() && queuedHolds(*landingLimit)) {
+			return true;
+		}
+		if (std::any_of(limitQueue.begin(), limitQueue.end(), [&](const SeenLimit& limit) { return !limitStranded(limit) && queuedHolds(limit); })) {
+			return true;
+		}
+		return std::any_of(gatheredJob.groundOutlines.begin(), gatheredJob.groundOutlines.end(), holds);
 	}
 
 	bool NavigationSystem::limitUrgent(const SeenLimit& limit) const {
@@ -996,11 +1072,11 @@ namespace ecs {
 		}
 		join();
 		collected = true;
+		for (std::size_t i = 0; i < runningJob.onPatched.size(); ++i) {
+			runningJob.onPatched[i](runningJob.reports[i], runningJob.patchMs[i]);
+		}
 		routeReports.insert(routeReports.end(), std::make_move_iterator(runningJob.reports.begin()), std::make_move_iterator(runningJob.reports.end()));
 		runningJob.reports.clear();
-		for (std::size_t i = 0; i < runningJob.onPatched.size(); ++i) {
-			runningJob.onPatched[i](runningJob.added[i], runningJob.patchMs[i]);
-		}
 		if (runningJob.onDoorsAdded) {
 			runningJob.onDoorsAdded(runningJob.doorsAdded);
 		}
@@ -1025,6 +1101,30 @@ namespace ecs {
 		std::pair<glm::vec2, glm::vec2> portalBoxM(const gnav::DoorPortal& portal) {
 			return {nav::toMeters({std::min(portal.a.x, portal.b.x), std::min(portal.a.y, portal.b.y)}),
 					nav::toMeters({std::max(portal.a.x, portal.b.x), std::max(portal.a.y, portal.b.y)})};
+		}
+
+		std::string pointName(glm::vec2 meters) {
+			return "(" + std::to_string(meters.x) + ", " + std::to_string(meters.y) + ")";
+		}
+
+		std::string chunkName(world::ChunkCoordinate coord) {
+			return "chunk (" + std::to_string(coord.x) + ", " + std::to_string(coord.y) + ")";
+		}
+
+		// A patch the mesh could not take as given (PatchReport::unreadCovers, refusedRings) is unsupported
+		// input, so the mesh may be wrong there: an error, logged once as its job is collected, naming the
+		// patch (`what()`) and each refused add (`describe(k)`, k its index among the patch's adds).
+		template <typename What, typename Describe> void logUnsupported(const gnav::PatchReport& report, const What& what, const Describe& describe) {
+			if (report.unreadCovers == 0 && report.refusedRings == 0) {
+				return;
+			}
+			LOG_ERROR(Engine, "[Nav] patch of %s, changing %s to %s: %d covers read no sample, %d rings refused", what().c_str(),
+					  pointName(nav::toMeters(report.lo)).c_str(), pointName(nav::toMeters(report.hi)).c_str(), report.unreadCovers, report.refusedRings);
+			for (std::size_t k = 0; k < report.added.size(); ++k) {
+				if (report.added[k] == gnav::kNoRing) {
+					LOG_ERROR(Engine, "[Nav] refused: %s", describe(k).c_str());
+				}
+			}
 		}
 	} // namespace
 
@@ -1077,10 +1177,13 @@ namespace ecs {
 		if (!edits.adds.empty() || !edits.removes.empty()) {
 			gatheredJob.patches.push_back(std::move(edits));
 			++gatheredJob.routePatches;
-			gatheredJob.onPatched.emplace_back([this, firstAdded](const std::vector<RingId>& added, double) {
-				for (std::size_t k = 0; k < added.size(); ++k) {
-					walls[firstAdded + k].ring = added[k];
+			gatheredJob.onPatched.emplace_back([this, firstAdded](const gnav::PatchReport& report, double) {
+				for (std::size_t k = 0; k < report.added.size(); ++k) {
+					walls[firstAdded + k].ring = report.added[k];
 				}
+				logUnsupported(
+					report, [] { return std::string("walls"); },
+					[this, firstAdded](std::size_t k) { return "wall ring at " + pointName(nav::toMeters(walls[firstAdded + k].polygon.ring.front())); });
 			});
 		}
 
@@ -1166,10 +1269,12 @@ namespace ecs {
 			gatheredJob.blockingBoxes.push_back(chunkBoxM(chunk->coordinate()));
 			gatheredJob.patches.push_back(std::move(edits));
 			++gatheredJob.routePatches;
-			gatheredJob.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
-				for (std::size_t k = 0; k < ids.size(); ++k) {
-					g.rings[k] = ids[k];
+			gatheredJob.onPatched.emplace_back([&g, coord = chunk->coordinate()](const gnav::PatchReport& report, double) {
+				for (std::size_t k = 0; k < report.added.size(); ++k) {
+					g.rings[k] = report.added[k];
 				}
+				const auto what = [coord] { return "water re-derived in " + chunkName(coord); };
+				logUnsupported(report, what, [&what](std::size_t) { return what(); });
 			});
 		}
 		readyLastCall = std::move(ready);
@@ -1207,7 +1312,10 @@ namespace ecs {
 		gnav::PatchEdits edits;
 		edits.removes.assign(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
 		gatheredJob.patches.push_back(std::move(edits));
-		gatheredJob.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
+		gatheredJob.onPatched.emplace_back([count](const gnav::PatchReport& report, double) {
+			const auto what = [count] { return std::to_string(count) + " placed obstacles removed"; };
+			logUnsupported(report, what, [&what](std::size_t) { return what(); });
+		});
 		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
 	}
 
@@ -1219,6 +1327,7 @@ namespace ecs {
 		std::size_t served = 0;
 		for (auto it = limitQueue.begin(); it != limitQueue.end();) {
 			if (limitStranded(*it)) {
+				++limitsDropped;
 				it = limitQueue.erase(it);
 				continue;
 			}
@@ -1333,6 +1442,7 @@ namespace ecs {
 			});
 			edits.adds.push_back({limit.outline, false, nav::kProvenanceBorder});
 			++gatheredJob.routePatches;
+			gatheredJob.groundOutlines.push_back(limit.outline);
 		}
 		if (edits.adds.empty()) {
 			return withGround;
@@ -1345,7 +1455,9 @@ namespace ecs {
 			ground = SeenLimit{.mover = limit.mover, .centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
 		}
 		gatheredJob.onPatched.emplace_back([this, keys = std::move(keys), waterChunks = std::move(waterChunks), waterRings = std::move(waterRings),
-											ground = std::move(ground), withGround, rings](const std::vector<RingId>& added, double ms) {
+											ground = std::move(ground), withGround, rings, mover = limit.mover, centre = limit.centre,
+											rangeMm = limit.rangeMm](const gnav::PatchReport& report, double ms) {
+			const std::vector<RingId>& added = report.added;
 			if (ground.has_value()) {
 				noteServed(*ground);
 			}
@@ -1359,6 +1471,27 @@ namespace ecs {
 					ids[r] = added[k++];
 				}
 			}
+			const auto what = [&] {
+				return std::string(withGround ? "the visibility limit" : "placed obstacles of the visibility limit") + " of mover " +
+					   std::to_string(static_cast<unsigned long long>(mover)) + " round " + pointName(nav::toMeters(centre)) + " R " + std::to_string(rangeMm) +
+					   " mm";
+			};
+			const auto describe = [&](std::size_t i) {
+				if (i < keys.size()) {
+					const ObstacleKey& key = keys[i];
+					return "placed obstacle " + key.defName + " at " +
+						   pointName({std::bit_cast<float>(key.xBits), std::bit_cast<float>(key.yBits)}) + " in " + chunkName(key.chunk);
+				}
+				std::size_t at = keys.size();
+				for (std::size_t c = 0; c < waterChunks.size(); ++c) {
+					if (i < at + waterRings[c]) {
+						return "water of " + chunkName(waterChunks[c]);
+					}
+					at += waterRings[c];
+				}
+				return what();
+			};
+			logUnsupported(report, what, describe);
 			// Permanent nav-mesh work diagnostic: a limit's placed obstacles, and its water and ground
 			// once they go. DEBUG, dev-tools log server.
 			LOG_DEBUG(Engine, "[NavBuild] limit %s %.3f ms rings %zu obstacles %zu", withGround ? "ground" : "obstacles", ms, rings, keys.size());
@@ -1692,6 +1825,11 @@ namespace ecs {
 		return routeGeneration;
 	}
 
+	std::uint64_t NavigationSystem::awaitedGroundEpoch() const {
+		join();
+		return routeGeneration + limitsDropped;
+	}
+
 	const geometry::nav::PatchableMesh& NavigationSystem::navMesh() const {
 		join();
 		return detailMesh;
@@ -1713,8 +1851,9 @@ namespace ecs {
 		const bool				startOnMesh = detailMesh.locate(startMm) >= 0;
 		nav::RouteRequestArgs	args{.start = startMm, .agentRadiusMm = radiusMm(agentRadiusMeters), .belief = belief};
 		std::vector<std::int32_t> goalIndices;
-		const gnav::NavView		  view	   = detailMesh.view();
-		const std::int32_t		  startTri = startOnMesh ? gnav::standingTriangle(view, startMm, belief) : -1;
+		bool					  goalComing = false;
+		const gnav::NavView		  view		 = detailMesh.view();
+		const std::int32_t		  startTri	 = startOnMesh ? gnav::standingTriangle(view, startMm, belief) : -1;
 		if (startTri >= 0) {
 			const gnav::MeshComponents& labels = detailMesh.components();
 			for (std::size_t i = 0; i < goalsMeters.size(); ++i) {
@@ -1723,12 +1862,15 @@ namespace ecs {
 				if (goalTri >= 0 && labels.sameComponent(startTri, goalTri)) {
 					args.goals.push_back(goalMm);
 					goalIndices.push_back(static_cast<std::int32_t>(i));
+				} else if (!goalComing && detailMesh.locate(goalMm) < 0) {
+					goalComing = groundComing(goalMm);
 				}
 			}
 		}
 		if (args.goals.empty()) {
+			const bool waits = startOnMesh ? goalComing : groundComing(startMm);
 			++routeStatsTotal.answeredAtOnce;
-			answeredAtOnce.emplace(ticket, RouteAnswer{.outcome	   = startOnMesh ? nav::RouteOutcome::NoKnownWay : nav::RouteOutcome::StartOffMesh,
+			answeredAtOnce.emplace(ticket, RouteAnswer{.outcome	   = waits ? nav::RouteOutcome::AwaitingMesh : nav::RouteOutcome::NoKnownWay,
 													   .labelEpoch = detailMesh.components().epoch(),
 													   .patchEpoch = detailMesh.epoch()});
 			takeableSince.emplace_back(routeTick, ticket);
@@ -1736,7 +1878,7 @@ namespace ecs {
 			return ticket;
 		}
 		const nav::RouteTicket queued = routes.request(args);
-		queuedRoutes.emplace(ticket, QueuedRoute{.queued = queued, .goalIndices = std::move(goalIndices)});
+		queuedRoutes.emplace(ticket, QueuedRoute{.queued = queued, .goalIndices = std::move(goalIndices), .goalComing = goalComing});
 		byQueueTicket.emplace(queued, ticket);
 		countOutstandingRoutes();
 		return ticket;
@@ -1758,7 +1900,8 @@ namespace ecs {
 		if (!found.has_value()) {
 			return std::nullopt;
 		}
-		RouteAnswer answer{.outcome	   = found->outcome,
+		const bool	waits = found->outcome == nav::RouteOutcome::NoKnownWay && queued->second.goalComing;
+		RouteAnswer answer{.outcome	   = waits ? nav::RouteOutcome::AwaitingMesh : found->outcome,
 						   .labelEpoch = found->epochs.labels,
 						   .patchEpoch = found->epochs.patches,
 						   .restarts   = found->restarts,
@@ -1935,27 +2078,12 @@ namespace ecs {
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestPathablePoint(glm::vec2 meters, float agentRadiusMeters) const {
-		const std::optional<glm::vec2> bare	 = nearestPathablePoint(meters);
-		const std::vector<WallBandM>   bands = resolveBuiltBands(constructionWorld);
-		if (!bare.has_value() || bands.empty()) {
-			return bare;
+		join();
+		if (detailMesh.locate(nav::toMm(meters)) < 0) {
+			return std::nullopt;
 		}
-		auto onMesh = [this](glm::vec2 p) { return isValidPosition(p); };
-
-		// Fast path: push the bare nearest-walkable point out of the bands; in the common case (a
-		// roomy face beside the wall) it stays on that face and clears the band.
-		const glm::vec2 ejected = ejectFromBands(*bare, agentRadiusMeters, bands);
-		if (onMesh(ejected) && clearOfBands(ejected, agentRadiusMeters, bands)) {
-			return ejected;
-		}
-		// The closest pocket is too thin to hold the agent clear of the wall: take the nearest
-		// walkable face that has room, typically the wall's open side.
-		if (const std::optional<glm::vec2> clear = nearestClearOnMesh(detailMesh, meters, agentRadiusMeters, bands, onMesh)) {
-			return clear;
-		}
-		// Every walkable face is inside some band: the bare point still moves the colonist onto the
-		// mesh, and the AI's recovery falls through to the colony-origin teleport if that fails.
-		return bare;
+		const std::vector<WallBandM> bands = resolveBuiltBands(constructionWorld);
+		return nearestStandable(detailMesh, meters, agentRadiusMeters, bands);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::findValidPositionNear(glm::vec2 origin, float minDistMeters, glm::vec2 preferredDir) const {

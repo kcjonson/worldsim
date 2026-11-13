@@ -349,11 +349,16 @@ private:
 	/// (joinRoute), stamped with the belief it was asked under and the current nav generation, and he
 	/// walks it; a source another colonist has claimed since the request went out (and holds against him)
 	/// is not taken, and he decides again at once. No known way: he stops (NavState::CantFindWayTo,
-	/// failRoute), a verdict on every target. Start off the mesh: not a failure, he waits (AwaitingMesh)
-	/// and asks again once the nav generation moves. No known way for a colonist the snap holds inside a
+	/// failRoute), a verdict on every target. Ground on its way: not a failure, he waits (AwaitingMesh)
+	/// and asks again once awaitedGroundDue. No known way for a colonist the snap holds inside a
 	/// placed obstacle is "not now": he stands (awaitingSnap) until the snap lets go.
 	void takeRouteAnswer(EntityID entity, struct Task& task, const struct Position& position, const struct Memory& memory,
 						 struct MovementTarget& movementTarget);
+
+	/// A deferred route (AwaitingMesh, awaitingSnap) is asked for again: the ground it waits on may have
+	/// changed (NavigationSystem::awaitedGroundEpoch moved off Task::deferredGroundEpoch) and
+	/// kReEvalInterval has passed since it was last asked.
+	[[nodiscard]] bool awaitedGroundDue(const struct Task& task) const;
 
 	/// Another colonist holds `choice` of this need task against him by the rules the decision offers food
 	/// by: an eater at least as urgent holds a bush or a meal's share of a pile or box against a hungry

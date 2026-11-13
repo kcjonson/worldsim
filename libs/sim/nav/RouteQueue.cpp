@@ -144,17 +144,11 @@ namespace nav {
 		}
 	}
 
-	void RouteQueue::finish(std::size_t at, const NavView& mesh, const RouteMeshEpochs& epochs) {
+	void RouteQueue::finish(std::size_t at, const RouteMeshEpochs& epochs) {
 		Route&		route = running[at];
 		RouteAnswer answer;
-		answer.path = route.search.result();
-		if (route.search.progress() == SearchProgress::Found) {
-			answer.outcome = RouteOutcome::Routed;
-		} else if (mesh.locate(route.search.args().start) < 0) {
-			answer.outcome = RouteOutcome::StartOffMesh;
-		} else {
-			answer.outcome = RouteOutcome::NoKnownWay;
-		}
+		answer.path		 = route.search.result();
+		answer.outcome	 = route.search.progress() == SearchProgress::Found ? RouteOutcome::Routed : RouteOutcome::NoKnownWay;
 		answer.goalIndex = route.search.goalIndex();
 		answer.restarts	 = route.restarts;
 		answer.slice	 = sliceCount;
@@ -178,7 +172,7 @@ namespace nav {
 		turns.push_back({.ticket = route.ticket, .granted = granted, .spent = spent, .ended = ended});
 		growBox(route, mesh);
 		if (ended) {
-			finish(at, mesh, epochs);
+			finish(at, epochs);
 		}
 		return ended;
 	}

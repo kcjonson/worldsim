@@ -209,7 +209,7 @@ enum class NavState : uint8_t {
 	SearchingLKP,   // (reserved) searching last-known position
 	LookingForWayIn, // (reserved) searching for an entrance to a building
 	CantFindWayTo,  // Nav knows no way to the target; colonist is stopped
-	AwaitingMesh,   // He stands off the mesh; the route is asked for again once the nav generation moves
+	AwaitingMesh,   // His start or goal is off the mesh in ground on its way; asked again once it may have landed
 	AwaitingRoute   // He has no route to walk: one is asked for (routeTicket), or the snap holds him (awaitingSnap)
 };
 
@@ -218,10 +218,13 @@ struct Task {
 	TaskType  type = TaskType::None;
 	TaskState state = TaskState::Pending;
 	NavState  navState = NavState::Traveling;
-	// NavigationSystem::generation() when the route was deferred (navState AwaitingMesh). The route
-	// is requested again once generation() moves off this value: a structural build has landed
-	// where the route was asked about.
-	std::uint64_t deferredNavGeneration = 0;
+	// NavigationSystem::awaitedGroundEpoch() when the route was deferred (navState AwaitingMesh, or
+	// awaitingSnap). The route is asked for again once it moves off this value, and no sooner than
+	// AIDecisionSystem::kReEvalInterval after routeAskedAt, so ground landing every tick is not a
+	// request every tick.
+	std::uint64_t deferredGroundEpoch = 0;
+	// AIDecisionSystem's clock when the route was last asked for.
+	float routeAskedAt = 0.0F;
 	// The route asked of NavigationSystem::requestRoute and not yet answered; 0 for none. Survives
 	// clear(): the AI cancels it (NavigationSystem::cancelRoute) once the task it was asked for ends.
 	std::uint64_t routeTicket = 0;
@@ -236,7 +239,7 @@ struct Task {
 	std::uint16_t routeWaitTicks = 0;
 	static constexpr std::uint16_t kFindingWayTicks = 10;
 	// No known way from where the snap holds him inside a placed obstacle: he asks again once the snap lets
-	// go or the nav generation moves (deferredNavGeneration), and after kSnapWaitDecisions interval
+	// go or the ground he waits on may have changed (deferredGroundEpoch), and after kSnapWaitDecisions interval
 	// decisions still held, his route fails.
 	bool awaitingSnap = false;
 	// Interval decisions the snap has held him for in a row: a decision while it holds him is put off
@@ -368,7 +371,8 @@ struct Task {
 		type = TaskType::None;
 		state = TaskState::Pending;
 		navState = NavState::Traveling;
-		deferredNavGeneration = 0;
+		deferredGroundEpoch = 0;
+		routeAskedAt = 0.0F;
 		sourceChoices.clear();
 		routeBeliefVersion = 0;
 		routeGoal = glm::vec2{0.0F, 0.0F};
