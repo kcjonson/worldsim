@@ -396,7 +396,7 @@ namespace {
 	// is checked against a flood and its report against the mesh it changed.
 	void runSequence(std::uint32_t seed, int steps, Totals& totals) {
 		std::mt19937		rng(seed);
-		PatchableMesh		mesh({.maxBoundsEdgeMm = seed % 2 == 0 ? 50 * kUnit : 0, .componentOpenTags = {kFootprint}});
+		PatchableMesh		mesh({.componentOpenTags = {kFootprint}});
 		const NavInputPolygon west = bounds(rect(0, 0, kSquare, kSquare));
 		const NavInputPolygon east = bounds(rect(kSquare, 0, 2 * kSquare, kSquare));
 		std::vector<NavInputPolygon> base = posts(rng, 0);
@@ -533,7 +533,7 @@ TEST(MeshComponents, RealRingsTreesInAndOut) {
 namespace {
 
 	PatchableMesh postedStrip(std::vector<std::int64_t> componentOpenTags = {}) {
-		PatchableMesh				 mesh({.maxBoundsEdgeMm = 10 * kUnit, .componentOpenTags = std::move(componentOpenTags)});
+		PatchableMesh				 mesh({.componentOpenTags = std::move(componentOpenTags)});
 		std::vector<NavInputPolygon> rings{bounds(rect(0, 0, 200, 40))};
 		for (std::int64_t y = 5; y < 40; y += 10) {
 			for (std::int64_t x = 5; x < 200; x += 10) {
@@ -597,8 +597,15 @@ TEST(MeshComponents, EpochMovesOnlyWhenAWayMayOpen) {
 	EXPECT_FALSE(tree.opens);
 	EXPECT_EQ(comps.epoch(), before);
 
+	// Posted like the strip, so joining keeps ground on both sides and merges labels.
+	std::vector<NavInputPolygon> east{bounds(rect(300, 0, 400, 40))};
+	for (std::int64_t y = 5; y < 40; y += 10) {
+		for (std::int64_t x = 305; x < 400; x += 10) {
+			east.push_back(blocked(rect(x, y, x + 2, y + 2)));
+		}
+	}
 	before = comps.epoch();
-	mesh.applyPatch(adding({bounds(rect(300, 0, 400, 40))}));
+	mesh.applyPatch(adding(east));
 	EXPECT_NE(comps.epoch(), before);
 	EXPECT_EQ(comps.lastUpkeep().fresh, 1);
 	EXPECT_FALSE(comps.sameComponent(mesh.locate(at(10, 20)), mesh.locate(at(350, 20))));

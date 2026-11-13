@@ -520,11 +520,8 @@ namespace {
 		return out;
 	}
 
-	// Applies a patch to the mesh and the model together. The model takes each ring as
-	// registered, so a split bounds outline is what the from-scratch build sees too.
+	// Applies a patch to the mesh and the model together.
 	struct Harness {
-		explicit Harness(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm}) {}
-
 		PatchableMesh mesh;
 		Model		  model;
 		PatchReport	  last;
@@ -594,9 +591,9 @@ namespace {
 		return f;
 	}
 
-	void runFixtureSequence(const Fixture& fixture, std::uint32_t seed, int checkEvery, std::int64_t maxBoundsEdgeMm = 0) {
+	void runFixtureSequence(const Fixture& fixture, std::uint32_t seed, int checkEvery) {
 		std::mt19937 rng(seed);
-		Harness		 h(maxBoundsEdgeMm);
+		Harness		 h;
 		{
 			PatchEdits edits;
 			edits.adds = fixture.base;
@@ -708,7 +705,7 @@ namespace {
 	// Every patched state is checked against a from-scratch build.
 	void runSoup(std::uint32_t seed, int steps) {
 		std::mt19937 rng(seed);
-		Harness		 h(seed % 2 == 0 ? 7 : 0); // even seeds split the 20 and 40 mm sides
+		Harness		 h;
 		// Two chunk squares sharing x = 20; the second arrives part way through, and
 		// sometimes leaves and comes back.
 		const NavInputPolygon west		= bounds(rect(0, 0, 20, 40));
@@ -987,7 +984,7 @@ TEST(PatchableMesh, AdjacentSquaresShareOneGroundCover) {
 	const NavInputPolygon west = bounds(rect(0, 0, 12000, 12000));
 	const NavInputPolygon east = bounds(rect(12000, 0, 24000, 12000));
 	for (int order = 0; order < 3; ++order) {
-		Harness h(4000);
+		Harness h;
 		if (order == 2) {
 			PatchEdits both;
 			both.adds = {west, east};
@@ -1046,7 +1043,7 @@ TEST(PatchableMesh, LoneSquareKeepsFourBoundarySides) {
 		}
 		EXPECT_EQ(boundaryLength, 4 * 12000) << when;
 	};
-	Harness		 h(4000);
+	Harness		 h;
 	const RingId west = h.add(bounds(rect(0, 0, 12000, 12000)));
 	expectFourSides(h.mesh, "alone");
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
@@ -1089,7 +1086,7 @@ TEST(PatchableMesh, ObstacleInsideASquareShowsInItsCover) {
 // dissolve.
 TEST(PatchableMesh, WaterAcrossTheSharedSideStaysConstrained) {
 	for (const bool westFirst : {true, false}) {
-		Harness				  h(4000);
+		Harness				  h;
 		const NavInputPolygon west		= bounds(rect(0, 0, 12000, 12000));
 		const NavInputPolygon east		= bounds(rect(12000, 0, 24000, 12000));
 		const NavInputPolygon westWater = blocked(rect(9000, 4000, 12000, 8000), kWater, true);
@@ -1137,7 +1134,7 @@ TEST(PatchableMesh, WaterAcrossTheSharedSideStaysConstrained) {
 // obstacle comes before or after the second square.
 TEST(PatchableMesh, ObstacleEdgeAcrossADissolvedSideIsWhole) {
 	for (const bool obstacleFirst : {true, false}) {
-		Harness				  h(4000);
+		Harness				  h;
 		const NavInputPolygon obstacle = blocked({{11000, 3000}, {13000, 5000}, {12000, 6000}});
 		h.add(bounds(rect(0, 0, 12000, 12000)));
 		if (obstacleFirst) {
@@ -1233,7 +1230,7 @@ namespace {
 // Two chunk squares with posts crowding their shared side: the triangles over the side
 // are shaped like those over a line of the same posts inside one square.
 TEST(PatchableMesh, SharedSideMeshesLikeTheInterior) {
-	Harness h(16000);
+	Harness h;
 	h.add(bounds(rect(0, 0, 64000, 64000)));
 	PatchEdits posts;
 	posts.adds = postsBesideLines(17);
@@ -1370,25 +1367,6 @@ TEST(PatchableMesh, FixtureControlMatchesFreshBuild) {
 
 TEST(PatchableMesh, FixtureRealRingsMatchesFreshBuild) {
 	runFixtureSequence(realRingsFixture(), 37, 6);
-}
-
-TEST(PatchableMesh, FixtureRealRingsWithSplitBoundsMatchesFreshBuild) {
-	runFixtureSequence(realRingsFixture(), 41, 8, 16000);
-}
-
-TEST(PatchableMesh, SplitLongEdgesCutsOnTheEdge) {
-	EXPECT_EQ(splitLongEdges(rect(0, 0, 10, 4), 0), rect(0, 0, 10, 4));
-	EXPECT_EQ(splitLongEdges(rect(0, 0, 10, 4), 4),
-			  (std::vector<Vec2i64>{{0, 0}, {3, 0}, {6, 0}, {10, 0}, {10, 4}, {6, 4}, {3, 4}, {0, 4}}));
-	// Either direction, the same cuts.
-	EXPECT_EQ(splitLongEdges({{10, 4}, {0, 4}, {0, 0}}, 4), (std::vector<Vec2i64>{{10, 4}, {6, 4}, {3, 4}, {0, 4}, {0, 0}, {5, 2}}));
-	// A diagonal edge cuts only at its lattice points: (0, 0)-(9, 6) has them every (3, 2).
-	const std::vector<Vec2i64> diagonal = splitLongEdges({{0, 0}, {9, 6}, {0, 6}}, 4);
-	EXPECT_EQ(diagonal, (std::vector<Vec2i64>{{0, 0}, {3, 2}, {6, 4}, {9, 6}, {6, 6}, {3, 6}, {0, 6}, {0, 3}}));
-	Harness h(4);
-	const RingId bounds = h.add(NavInputPolygon{rect(0, 0, 10, 4), false, kBorder});
-	EXPECT_EQ(h.mesh.ring(bounds).polygon.ring.size(), 8U);
-	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
 // Tiny coordinates, so rings overlap, share edges, touch at corners, nest, and hang off
@@ -1743,7 +1721,7 @@ TEST(PatchableMesh, FixtureQueriesMatchBuildNavMesh) {
 namespace {
 
 	// realRings tiled k x k, under one bounds square over the whole tiling or under k x k
-	// adjacent squares, one per tile; bounds sides split to 16 m, as in the game.
+	// adjacent squares, one per tile.
 	struct TiledGround {
 		NavInputPolygon				 border; // the whole tiling's outline
 		std::vector<NavInputPolygon> squares;
@@ -1873,13 +1851,13 @@ namespace {
 
 	// Internal bounds edges must not change an answer: the same rings under one bounds
 	// square and under a grid of adjacent squares give the same constraints apart from
-	// the vertices bounds splits add on the outline, the same path verdicts and component
-	// verdicts, path lengths that agree (lengthsAgree), and the same corridor width at
-	// every apex of a triangle both meshes have.
+	// the vertices the squares' corners add on the outline, the same path verdicts and
+	// component verdicts, path lengths that agree (lengthsAgree), and the same corridor
+	// width at every apex of a triangle both meshes have.
 	void expectBoundsSplitInvisible(std::int64_t k, std::uint32_t seed) {
 		const TiledGround g = tiledRealRings(k);
-		PatchableMesh	  whole({.maxBoundsEdgeMm = 16000});
-		PatchableMesh	  split({.maxBoundsEdgeMm = 16000});
+		PatchableMesh	  whole;
+		PatchableMesh	  split;
 		loadGround(whole, {g.border}, g.rings);
 		loadGround(split, g.squares, g.rings);
 		ASSERT_TRUE(whole.validate().empty()) << whole.validate();
@@ -2255,7 +2233,7 @@ TEST(PatchableMesh, OneRefreshServesManyPatches) {
 // with.
 TEST(PatchableMesh, OneRefreshServesRemovedGroundAndReplacedTriangles) {
 	const Fixture fixture = realRingsFixture();
-	PatchableMesh mesh({.maxBoundsEdgeMm = 16000});
+	PatchableMesh mesh;
 	Vec2i64		  lo;
 	Vec2i64		  hi;
 	lo = hi = fixture.base.front().ring.front();
@@ -2466,30 +2444,28 @@ TEST(PatchableMesh, GroundOutlineTooWideForExactOrderingIsRefused) {
 #endif
 }
 
-// A goal ringed by trees (0.6 m trunks every 0.55 m round a 3 m circle) on an open chunk
-// is out of reach on every tiling.
-TEST(PatchableMesh, RingOfTreesSealsAGoalOnEveryTiling) {
+// A goal ringed by placed obstacles (0.6 m squares every 0.55 m round a 3 m circle) in
+// wide open ground is out of reach.
+TEST(PatchableMesh, RingOfPlacedObstaclesSealsAGoal) {
 	const Vec2i64 goal{20000, 20000};
-	for (const std::int64_t split : {64000, 16000}) {
-		PatchableMesh mesh({.maxBoundsEdgeMm = split});
-		PatchEdits	  edits;
-		edits.adds.push_back(bounds(rect(0, 0, 512000, 512000)));
-		const int count = static_cast<int>(std::ceil(6.2831853 * 3000.0 / 550.0));
-		for (int i = 0; i < count; ++i) {
-			const double	   angle = 6.2831853 * i / count;
-			const std::int64_t x	 = goal.x + std::llround(3000.0 * std::cos(angle));
-			const std::int64_t y	 = goal.y + std::llround(3000.0 * std::sin(angle));
-			edits.adds.push_back(blocked(rect(x - 300, y - 300, x + 300, y + 300)));
-		}
-		mesh.applyPatch(edits);
-		mesh.refreshWidths();
-		EXPECT_FALSE(pathThrough(mesh.view(), {10000, 20000}, goal, 300).reachable) << "split " << split;
+	PatchableMesh mesh;
+	PatchEdits	  edits;
+	edits.adds.push_back(bounds(rect(0, 0, 512000, 512000)));
+	const int count = static_cast<int>(std::ceil(6.2831853 * 3000.0 / 550.0));
+	for (int i = 0; i < count; ++i) {
+		const double	   angle = 6.2831853 * i / count;
+		const std::int64_t x	 = goal.x + std::llround(3000.0 * std::cos(angle));
+		const std::int64_t y	 = goal.y + std::llround(3000.0 * std::sin(angle));
+		edits.adds.push_back(blocked(rect(x - 300, y - 300, x + 300, y + 300)));
 	}
+	mesh.applyPatch(edits);
+	mesh.refreshWidths();
+	EXPECT_FALSE(pathThrough(mesh.view(), {10000, 20000}, goal, 300).reachable);
 }
 
 namespace {
 
-	// 2 x 2 squares 12 m across, sides split to 4 m.
+	// 2 x 2 squares 12 m across.
 	std::vector<NavInputPolygon> twoByTwoSquares() {
 		std::vector<NavInputPolygon> out;
 		for (std::int64_t j = 0; j < 2; ++j) {
@@ -2570,7 +2546,7 @@ TEST(PatchableMesh, SquaresInAnyOrderMeshAlike) {
 			postOrder[i] = static_cast<int>(i);
 		}
 		shuffle(postOrder, rng);
-		Harness				h(4000);
+		Harness				h;
 		std::map<RingId, int> nameOf;
 		std::size_t			nextPost = 0;
 		for (std::size_t k = 0; k < order.size(); ++k) {
@@ -2629,7 +2605,7 @@ namespace {
 	void runSquaresAmongObstacles(std::uint32_t seed, int steps, const std::vector<NavInputPolygon>& squares, MakeObstacle obstacle,
 								  std::uint64_t* fingerprint = nullptr) {
 		std::mt19937		rng(seed);
-		Harness				h(4000);
+		Harness				h;
 		std::vector<RingId> squareIds(squares.size(), kNoRing);
 		std::vector<int>	arrival(squares.size());
 		for (int& step : arrival) {
@@ -2712,7 +2688,7 @@ TEST(PatchableMesh, SquaresArriveAmongObstaclesMatchFreshBuild) {
 // given crosses the obstacle there, so a fresh build splits it at the corner, though the
 // piece passes clear of every new side.
 TEST(PatchableMesh, CornerUnderARoundedPieceSplitsTheEdge) {
-	Harness h(4000);
+	Harness h;
 	PatchEdits first;
 	first.adds = {bounds(rect(0, 0, 12000, 24000)), blocked(rect(4999, 11316, 6846, 14288)), blocked({{3503, 13127}, {5164, 12335}, {3679, 14963}})};
 	h.apply(first);
@@ -2966,37 +2942,6 @@ TEST(PatchableMesh, NearlyParallelEdgesLaidOnOneLineKeepTheirSplit) {
 	EXPECT_EQ(sourcesBetween(h.mesh, {28, 24}, {29, 24}), (std::vector<EdgeSource>{{thin, 0}, {thin, 2}}));
 }
 
-// A shared side whose length is no multiple of the piece length is cut at the same
-// points from both squares, so it dissolves.
-TEST(PatchableMesh, UnevenlyCutSharedSideDissolves) {
-	const NavInputPolygon west = bounds(rect(0, 0, 10000, 10000));
-	const NavInputPolygon east = bounds(rect(10000, 0, 20000, 10000));
-	for (const bool westFirst : {true, false}) {
-		Harness		 h(4000);
-		h.add(westFirst ? west : east);
-		const RingId second = h.add(westFirst ? east : west);
-		ASSERT_TRUE(matchesFresh(h.mesh, h.model));
-		int sidePieces = 0;
-		for (const Vec2i64& p : h.mesh.ring(second).polygon.ring) {
-			sidePieces += p.x == 10000 ? 1 : 0;
-		}
-		EXPECT_EQ(sidePieces, 4) << "the side is cut in three";
-		int constrainedOnSide = 0;
-		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
-			if (!h.mesh.triangleLive(t)) {
-				continue;
-			}
-			const NavTriangle& tri = h.mesh.triangles()[static_cast<std::size_t>(t)];
-			for (int e = 0; e < 3; ++e) {
-				const Vec2i64& a = h.mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
-				const Vec2i64& b = h.mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
-				constrainedOnSide += a.x == 10000 && b.x == 10000 && !h.mesh.edgeSources(t, e).empty() ? 1 : 0;
-			}
-		}
-		EXPECT_EQ(constrainedOnSide, 0);
-		EXPECT_EQ(liveVerticesOn(h.mesh, {10000, 0}, {10000, 10000}), (std::vector<Vec2i64>{{10000, 0}, {10000, 10000}})) << "no cut point stays";
-	}
-}
 
 namespace {
 
@@ -3018,7 +2963,7 @@ namespace {
 // and form again, and the mesh is the from-scratch build's.
 TEST(PatchableMesh, SquareReplacedInOnePatchMatchesFreshBuild) {
 	for (const bool withObstacles : {false, true}) {
-		Harness								h(4000);
+		Harness								h;
 		const std::vector<NavInputPolygon> squares = twoByTwoSquares();
 		std::vector<RingId>					ids;
 		for (const NavInputPolygon& square : squares) {
@@ -3046,7 +2991,7 @@ TEST(PatchableMesh, SquareReplacedInOnePatchMatchesFreshBuild) {
 TEST(PatchableMesh, TwoSquaresLeaveBesideASharedCorner) {
 	for (const bool fourth : {false, true}) {
 		for (const bool withObstacles : {false, true}) {
-			Harness								h(4000);
+			Harness								h;
 			const std::vector<NavInputPolygon> squares = twoByTwoSquares();
 			std::vector<RingId>					ids;
 			for (std::size_t s = 0; s < (fourth ? 4U : 3U); ++s) {
@@ -3084,7 +3029,7 @@ TEST(PatchableMesh, FourWayCornerIsAVertexOnlyWhileASquareIsMissing) {
 	};
 	std::vector<int> order{0, 1, 2, 3};
 	do {
-		Harness				h(4000);
+		Harness				h;
 		std::vector<RingId> ids(squares.size(), kNoRing);
 		std::string			when	= "order";
 		std::size_t			present = 0;
@@ -3107,7 +3052,7 @@ TEST(PatchableMesh, FourWayCornerIsAVertexOnlyWhileASquareIsMissing) {
 			expectOpenCross(h, when + ", square " + std::to_string(s) + " back");
 		}
 	} while (std::next_permutation(order.begin(), order.end()));
-	Harness	   h(4000);
+	Harness	   h;
 	PatchEdits together;
 	together.adds = squares;
 	h.apply(together);
@@ -3123,7 +3068,7 @@ TEST(PatchableMesh, ObstacleCornerOnAFourWayCorner) {
 	const std::vector<NavInputPolygon> squares	 = twoByTwoSquares();
 	const std::vector<NavInputPolygon> obstacles = obstaclesAtCorners();
 	for (std::size_t obstaclesAfter = 0; obstaclesAfter <= squares.size(); ++obstaclesAfter) {
-		Harness				h(4000);
+		Harness				h;
 		std::vector<RingId> placed;
 		for (std::size_t s = 0; s <= squares.size(); ++s) {
 			if (s == obstaclesAfter) {
@@ -3259,7 +3204,7 @@ TEST(PatchableMesh, SlantedSharedSideMatchesFreshBuild) {
 		blocked({{12500, 3000}, {13200, 3100}, {12600, 3600}}),
 	};
 	for (const bool firstOrder : {true, false}) {
-		Harness		 h(4000);
+		Harness		 h;
 		h.add(pair[firstOrder ? 0 : 1]);
 		PatchEdits edits;
 		edits.adds = obstacles;

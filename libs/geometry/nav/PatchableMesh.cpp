@@ -9,7 +9,6 @@
 #include <cmath>
 #include <iterator>
 #include <limits>
-#include <numeric>
 #include <optional>
 #include <set>
 #include <span>
@@ -1526,9 +1525,6 @@ namespace geometry::nav {
 
 		auto setNew = [&](Change& c, NavInputPolygon polygon) {
 			assert(polygon.ring.size() >= 3 && "PatchableMesh: a ring needs three vertices");
-			if (!polygon.blocked) {
-				polygon.ring = splitLongEdges(polygon.ring, m.maxBoundsEdgeMm);
-			}
 			c.hasNew  = true;
 			c.polygon = std::move(polygon);
 			c.sample  = sampleRing(c.polygon);
@@ -3060,43 +3056,8 @@ namespace geometry::nav {
 
 	// --- Public edits ---------------------------------------------------------------
 
-	std::vector<Vec2i64> splitLongEdges(const std::vector<Vec2i64>& outline, std::int64_t maxEdgeMm) {
-		if (maxEdgeMm <= 0) {
-			return outline;
-		}
-		std::vector<Vec2i64> out;
-		for (std::size_t i = 0; i < outline.size(); ++i) {
-			const Vec2i64& a = outline[i];
-			const Vec2i64& b = outline[(i + 1) % outline.size()];
-			out.push_back(a);
-			const Vec2i64 d = b - a;
-			const Int128  length2 = dot(d, d);
-			std::int64_t  pieces  = 1;
-			while (Int128::product(pieces * maxEdgeMm, pieces * maxEdgeMm) < length2) {
-				++pieces;
-			}
-			const std::int64_t steps = std::gcd(d.x < 0 ? -d.x : d.x, d.y < 0 ? -d.y : d.y);
-			if (steps == 0) {
-				continue;
-			}
-			// Cuts are measured from the lower end, so a side two rings walk in opposite
-			// directions is cut at the same points.
-			const bool	  fromA = a < b;
-			const Vec2i64 step{d.x / steps, d.y / steps};
-			std::int64_t  previous = 0;
-			for (std::int64_t k = 1; k < pieces; ++k) {
-				const std::int64_t at = fromA ? k * steps / pieces : steps - (pieces - k) * steps / pieces;
-				if (at > previous && at < steps) {
-					out.push_back(a + step * at);
-					previous = at;
-				}
-			}
-		}
-		return out;
-	}
-
 	PatchableMesh::PatchableMesh(const PatchableMeshArgs& args)
-		: maxBoundsEdgeMm(args.maxBoundsEdgeMm), maxClearanceMm(args.maxClearanceMm), labels({.openTags = args.componentOpenTags}) {}
+		: maxClearanceMm(args.maxClearanceMm), labels({.openTags = args.componentOpenTags}) {}
 
 	namespace {
 

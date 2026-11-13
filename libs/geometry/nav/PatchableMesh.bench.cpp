@@ -184,9 +184,7 @@ namespace {
 
 	// The fixture fully loaded, each tree under its current id.
 	struct Loaded {
-		explicit Loaded(std::int64_t maxBoundsEdgeMm = 0) : mesh({.maxBoundsEdgeMm = maxBoundsEdgeMm}) {}
-
-		Rings						 rings;
+		Rings					 rings;
 		PatchableMesh				 mesh;
 		std::vector<RingId>			 treeIds;
 		std::vector<NavInputPolygon> all;
@@ -394,10 +392,9 @@ namespace {
 	}
 
 	// what: 0 add a straddling tree, 1 remove it, 2 a footprint walking across, 3 add an
-	// 8 m wall across the side. Bounds edges are split to state.range(0) mm when it is not
-	// 0. Without trees the mesh is what the structural layer holds.
+	// 8 m wall across the side. Without trees the mesh is what the structural layer holds.
 	void BM_PatchAcrossBounds(benchmark::State& state, Fixture f, std::int64_t side, int what, bool withTrees = true) {
-		Loaded l(state.range(0));
+		Loaded l;
 		Rings  rings = borderRings(f, side);
 		if (!withTrees) {
 			rings.trees.clear();
@@ -432,12 +429,6 @@ namespace {
 		}
 		tally.report(state);
 		state.counters["trees"] = static_cast<double>(l.rings.trees.size());
-	}
-
-	void boundsSplits(benchmark::internal::Benchmark* b) {
-		for (const std::int64_t maxEdge : {0, 64000, 32000, 16000, 8000}) {
-			b->Arg(maxEdge);
-		}
 	}
 
 	// --- Detail entering an area, and first builds ---------------------------------
@@ -518,8 +509,7 @@ namespace {
 		runFirstBuild(state, tiledControl(state.range(0)));
 	}
 
-	// A chunk's ground as the game adds it: one 512 m bounds square, sides split to 16 m,
-	// with realRings' water tiled 4 x 4 over it, in one patch (structural only, no trees).
+	// One 512 m bounds square with realRings' water tiled 4 x 4 over it, in one patch (structural only, no trees).
 	void BM_PatchChunkGround(benchmark::State& state) {
 		namespace td = geometry::nav::testdata;
 		Vec2i64 lo;
@@ -537,7 +527,7 @@ namespace {
 		const PatchEdits edits = adding(ground);
 		std::size_t		 tris  = 0;
 		for (auto _ : state) {
-			PatchableMesh mesh({.maxBoundsEdgeMm = 16000});
+			PatchableMesh mesh;
 			timedPatch(state, mesh, edits);
 			tris = static_cast<std::size_t>(mesh.liveTriangleCount());
 		}
@@ -599,11 +589,10 @@ namespace {
 		return {};
 	}
 
-	// The new chunk's rings added in one timed patch, then taken out untimed. Bounds
-	// edges split to state.range(0) mm (0: whole). "slots" is the live triangles the chunk
-	// brings.
+	// The new chunk's rings added in one timed patch, then taken out untimed. "slots" is
+	// the live triangles the chunk brings.
 	void BM_ChunkEnters(benchmark::State& state, Beside beside, Fill besideFill, Fill fill, std::int64_t tiles) {
-		PatchableMesh				 mesh({.maxBoundsEdgeMm = state.range(0)});
+		PatchableMesh				 mesh;
 		std::vector<NavInputPolygon> loaded;
 		for (const auto& [i, j] : besideCells(beside)) {
 			const std::vector<NavInputPolygon> rings = chunkRings(i, j, tiles, besideFill);
@@ -626,12 +615,6 @@ namespace {
 		}
 		tally.report(state);
 		state.counters["slots"] = static_cast<double>(slots);
-	}
-
-	void chunkSplits(benchmark::internal::Benchmark* b) {
-		for (const std::int64_t maxEdge : {16000, 64000, 0}) {
-			b->Arg(maxEdge);
-		}
 	}
 
 	// --- Point location -------------------------------------------------------------
@@ -681,7 +664,7 @@ namespace {
 	// --- Large meshes: per-patch work must not grow with the mesh ----------------------
 
 	// kind 0: control tiled 4x4 under one 512 m border. kind 1: four adjacent 512 m bounds
-	// squares, each holding that tiling. Bounds edges are split to 16 m, as in the game.
+	// squares, each holding that tiling.
 	Rings largeRings(int kind) {
 		const Rings tile = tiledControl(4);
 		if (kind == 0) {
@@ -735,7 +718,7 @@ namespace {
 	}
 
 	void BM_LargeTree(benchmark::State& state, int kind, bool shoreline, bool add) {
-		Loaded l(16000);
+		Loaded l;
 		load(l, largeRings(kind));
 		cycleTrees(state, l, firstTileTrees(l, shoreline), add, Refresh::Untimed);
 		state.counters["tris"] = static_cast<double>(l.mesh.liveTriangleCount());
@@ -744,7 +727,7 @@ namespace {
 	// A 0.6 m tree across the first square's west side (kind 0) or the side two squares
 	// share (kind 1), added and taken out again.
 	void BM_LargeBoundsTree(benchmark::State& state, int kind) {
-		Loaded l(16000);
+		Loaded l;
 		load(l, largeRings(kind));
 		Vec2i64 lo;
 		Vec2i64 hi;
@@ -811,15 +794,13 @@ namespace {
 	// The game's query shape: many movers walking 20 to 100 m to a few goals through
 	// meshed flora, the trees blocking.
 	struct RequestShape {
-		PatchableMesh						 detail{{.maxBoundsEdgeMm = 16000}};
+		PatchableMesh						 detail;
 		std::vector<Vec2i64>				 goals;
 		std::vector<std::pair<Vec2i64, int>> starts; // start, goal index
 	};
 
-	// Where the goals sit: anywhere in one bounds square split every 16 m; or, with the
-	// square cut in two down its middle and the sides split every 64 m (the game's chunk
-	// sides), 32 m from that shared side or 12 m from it, where open ground beside the
-	// side is a fan of long thin triangles from its far-apart vertices. The Chunk
+	// Where the goals sit: anywhere in one bounds square; or, with the square cut in two
+	// down its middle, 32 m from that shared side or 12 m from it. The Chunk
 	// placements do the same on two of the game's 512 m chunks side by side, each 4 x 4
 	// tiles of the fixture's water and trees: in a chunk's middle, or 12 m from the side.
 	enum class Colony { Anywhere, Middle, NearSide, ChunkMiddle, ChunkSide };
@@ -833,9 +814,6 @@ namespace {
 		boxOf(rings.base.front().ring, lo, hi);
 		std::int64_t mid = (lo.x + hi.x) / 2;
 		const bool	 chunks = colony == Colony::ChunkMiddle || colony == Colony::ChunkSide;
-		if (colony != Colony::Anywhere) {
-			s.detail = PatchableMesh({.maxBoundsEdgeMm = 64000});
-		}
 		if (chunks) {
 			const std::int64_t tile = hi.x - lo.x;
 			const std::int64_t side = 4 * tile;
@@ -926,7 +904,7 @@ namespace {
 		Vec2i64			   lo;
 		Vec2i64			   hi;
 		boxOf(td::realBorderRing(), lo, hi);
-		PatchableMesh				 mesh({.maxBoundsEdgeMm = 64000});
+		PatchableMesh				 mesh;
 		std::vector<NavInputPolygon> ground{NavInputPolygon{rect(0, 0, tiles * kRealTileMm, tiles * kRealTileMm), false, kProvenanceBorder}};
 		std::vector<NavInputPolygon> moving;
 		for (std::int64_t b = 0; b < tiles; ++b) {
@@ -1012,7 +990,7 @@ namespace {
 		double		total = 0.0;
 		std::size_t slots = 0;
 		for (auto _ : state) {
-			PatchableMesh mesh({.maxBoundsEdgeMm = 64000});
+			PatchableMesh mesh;
 			untimedPatch(mesh, adding(ground));
 			worst = 0.0;
 			total = 0.0;
@@ -1037,7 +1015,7 @@ namespace {
 	// --- Limits on a query -------------------------------------------------------------
 
 	// tiles x tiles of realRings' 128 m tile (water, and trees unless `trees` is false)
-	// under one bounds square split every 64 m, trees detail-class: the game's ground.
+	// under one bounds square, trees detail-class.
 	void loadTiledGround(PatchableMesh& mesh, std::int64_t tiles, bool trees, std::vector<NavInputPolygon> extra = {}) {
 		namespace td = geometry::nav::testdata;
 		Vec2i64		 lo;
@@ -1064,12 +1042,12 @@ namespace {
 	// only fail: run dry, or with `capped` stop at maxExpansions 2000.
 	void BM_WalledGoal(benchmark::State& state, bool capped) {
 		const std::int64_t tiles = state.range(0);
-		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000});
+		PatchableMesh	   mesh;
 		const std::int64_t side = tiles * kRealTileMm;
 		// The room's centre: open floor near the middle, found on a trial mesh of the tile.
 		Vec2i64			   g{side / 2, side / 2};
 		{
-			PatchableMesh trial({.maxBoundsEdgeMm = 64000});
+			PatchableMesh trial;
 			loadTiledGround(trial, tiles, true);
 			std::mt19937 rng(5);
 			auto		 clear = [&](const Vec2i64& p) {
@@ -1131,12 +1109,11 @@ namespace {
 		state.counters["limited"]	  = limited;
 	}
 
-	// The game's walking-distance question on its structural mesh (water, no trees, 64 m
-	// sides): pairs 10 to 120 m apart, the cost capped at `capTimes` the straight line. Time
+	// The game's walking-distance question on its structural mesh (water, no trees): pairs 10 to 120 m apart, the cost capped at `capTimes` the straight line. Time
 	// per query by how it ended: found, stopped on the cap, or no path.
 	void BM_WalkingDistance(benchmark::State& state, double capTimes) {
 		const std::int64_t tiles = 5;
-		PatchableMesh	   mesh({.maxBoundsEdgeMm = 64000});
+		PatchableMesh	   mesh;
 		loadTiledGround(mesh, tiles, false);
 		const std::int64_t side = tiles * kRealTileMm;
 		std::mt19937	   rng(29);
@@ -2040,16 +2017,16 @@ BENCHMARK_CAPTURE(BM_LabelUpkeep, manyTrees, Fixture::ManyTrees)->UseManualTime(
 BENCHMARK_CAPTURE(BM_LabelUpkeep, control, Fixture::Control)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_LabelUpkeep, realRings, Fixture::RealRings)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_LabelUpkeepRoundBarrier)->Arg(100)->Arg(400)->UseManualTime()->Unit(benchmark::kMicrosecond);
-#define BOUNDS_ROWS(name, ...)                                                                                                         	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, manyTrees##name, Fixture::ManyTrees, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, control##name, Fixture::Control, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);     	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, realRings##name, Fixture::RealRings, __VA_ARGS__)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond)
+#define BOUNDS_ROWS(name, ...)                                                                                                         	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, manyTrees##name, Fixture::ManyTrees, __VA_ARGS__)->UseManualTime()->Unit(benchmark::kMicrosecond); 	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, control##name, Fixture::Control, __VA_ARGS__)->UseManualTime()->Unit(benchmark::kMicrosecond);     	BENCHMARK_CAPTURE(BM_PatchAcrossBounds, realRings##name, Fixture::RealRings, __VA_ARGS__)->UseManualTime()->Unit(benchmark::kMicrosecond)
 
 BOUNDS_ROWS(_border128_add, 0, 0);
 BOUNDS_ROWS(_border128_remove, 0, 1);
 BOUNDS_ROWS(_border128_footprint, 0, 2);
-BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_add, Fixture::Control, 512000, 0)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_remove, Fixture::Control, 512000, 1)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_footprint, Fixture::Control, 512000, 2)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_wall_add, Fixture::Control, 512000, 3)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_structural_wall_add, Fixture::Control, 512000, 3, false)->Apply(boundsSplits)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_add, Fixture::Control, 512000, 0)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_remove, Fixture::Control, 512000, 1)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_footprint, Fixture::Control, 512000, 2)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_wall_add, Fixture::Control, 512000, 3)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_PatchAcrossBounds, shared512_structural_wall_add, Fixture::Control, 512000, 3, false)->UseManualTime()->Unit(benchmark::kMicrosecond);
 PATCH_ROWS(_allAtOnce, BM_PatchTreesEnter, std::size_t{0}, Refresh::Untimed);
 PATCH_ROWS(_allAtOnce_refreshed, BM_PatchTreesEnter, std::size_t{0}, Refresh::Timed);
 PATCH_ROWS(_batch64, BM_PatchTreesEnter, std::size_t{64}, Refresh::Untimed);
@@ -2061,7 +2038,7 @@ BENCHMARK_CAPTURE(BM_PatchFirstBuild, realRings, Fixture::RealRings)->UseManualT
 BENCHMARK(BM_PatchFirstBuildTiled)->Arg(2)->Arg(4)->UseManualTime()->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PatchChunkGround)->UseManualTime()->Unit(benchmark::kMillisecond);
 
-#define CHUNK_ROW(name, ...) BENCHMARK_CAPTURE(BM_ChunkEnters, name, __VA_ARGS__)->Apply(chunkSplits)->UseManualTime()->Unit(benchmark::kMicrosecond)
+#define CHUNK_ROW(name, ...) BENCHMARK_CAPTURE(BM_ChunkEnters, name, __VA_ARGS__)->UseManualTime()->Unit(benchmark::kMicrosecond)
 CHUNK_ROW(open512_alone, Beside::Nothing, Fill::Open, Fill::Open, 4);
 CHUNK_ROW(open512_side, Beside::Side, Fill::Open, Fill::Open, 4);
 CHUNK_ROW(open512_twoSides, Beside::TwoSides, Fill::Open, Fill::Open, 4);
