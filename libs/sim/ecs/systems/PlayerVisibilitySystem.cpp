@@ -169,6 +169,11 @@ namespace ecs {
 		seen.update();
 	}
 
+	const PlayerVisibilitySystem* PlayerVisibilitySystem::gate(World& world) {
+		const PlayerVisibilitySystem* visibility = world.tryGetSystem<PlayerVisibilitySystem>();
+		return visibility != nullptr && !visibility->revealed() ? visibility : nullptr;
+	}
+
 	bool PlayerVisibilitySystem::isSeen(glm::vec2 meters) const { return seen.isSeen(nav::toMm(meters)); }
 
 	bool PlayerVisibilitySystem::isVisible(glm::vec2 meters) const {

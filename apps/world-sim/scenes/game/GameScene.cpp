@@ -11,6 +11,7 @@
 #include "scenes/game/world/DeferredEditsSystem.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/nav/NavOverlay.h"
+#include "scenes/game/world/MoveOrderGoal.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
@@ -761,7 +762,11 @@ namespace {
 			if (event.mouseButton == foundation::MouseButton::Right && m_controlledColonist != 0) {
 				const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
 				auto&	   ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
-				if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, glm::vec2{worldPt.x, worldPt.y})) {
+				const auto ordered = world_sim::moveOrderGoal(*ecsWorld, m_controlledColonist, glm::vec2{worldPt.x, worldPt.y});
+				if (!ordered.has_value()) {
+					return true;
+				}
+				if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, *ordered)) {
 					m_moveMarkerWorld = *goal;
 					m_moveMarkerTtl = 1.0F;
 				}

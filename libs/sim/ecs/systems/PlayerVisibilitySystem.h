@@ -23,6 +23,8 @@
 
 namespace ecs {
 
+	class World;
+
 	class PlayerVisibilitySystem : public ISystem {
 	  public:
 		void update(float deltaTime) override;
@@ -54,6 +56,10 @@ namespace ecs {
 		// the cover is not drawn. The record keeps growing either way.
 		void			   setRevealed(bool on) { revealedFlag = on; }
 		[[nodiscard]] bool revealed() const { return revealedFlag; }
+
+		// The system when the player's input and sight rules apply: null when none is registered or reveal
+		// is on, so a caller gates exactly when it is handed one.
+		[[nodiscard]] static const PlayerVisibilitySystem* gate(World& world);
 
 	  private:
 		// A leg's held positions, kept as what bounds the leg's end: the directions from its start

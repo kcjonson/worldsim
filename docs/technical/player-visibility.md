@@ -184,13 +184,13 @@ One existing bug touches this: a placed thing felled or harvested out comes back
 
 | Action | Rule | Where |
 |---|---|---|
-| Place a thing | Valid only where the nav check passes and the footprint is seen (`covers`) | `PlacementSystem::handleMouseMove`, `PlacementMode::tryPlace` |
-| Draw a foundation, wall, or opening | Every point and the whole shape seen; the refusal toast says the area is unexplored | `DrawingSystem`: `pointOnMesh`, `footprintBuildable`, `requirePlaceable` |
+| Place a thing | Valid only where the nav check passes and the footprint is seen (`covers`, the def's collision shape, or the point when it has none) | `PlacementSystem::placeable`, run on mouse move and again on click |
+| Draw a foundation, wall, or opening | Every point and the whole shape seen; the refusal toast says the area is unexplored | `DrawingSystem`: `pointOnMesh`, `requirePlaceable`, `commitFoundationEdit`, the opening move and click. `footprintBuildable` stays nav-only because the dev verbs share it |
 | Move order, seen goal | As today | `GameScene` right-click, `AIDecisionSystem::issuePlayerMoveOrder` |
-| Move order, unseen goal | The goal becomes `lastSeenToward(colonist, click)` and is then ordered as any seen goal; the move marker shows at the goal ordered | `GameScene` right-click |
+| Move order, unseen goal | The goal becomes `lastSeenToward(colonist, click)` and is then ordered as any seen goal; the move marker shows at the goal ordered | `GameScene` right-click, through `moveOrderGoal` |
 | Select | Colonists always. Another mover only while visible. Anything else only where its position is seen | `SelectionSystem::gatherCandidates` |
 
-Ground on the mesh but not seen (the 16 m past sight, a room nobody has looked into) is unseen for every row.
+Ground on the mesh but not seen (the 16 m past sight, a room nobody has looked into) is unseen for every row. A wall chain is seen when its points and a thin strip along each segment are; an opening when the span it would cover is. A foundation, wall, or opening is selected where the click is seen. With reveal on none of these rules apply, and the dev verbs never apply them.
 
 The move order to the seen edge is one order to one point. The colonist stops there, his sight opens the ground beyond, and the player orders again. Carrying on toward the click as ground opens is route planning past meshed ground, "Nav: build a path toward a goal whose ground is not meshed yet" on Specboard, and not part of this. This settles "A move order onto unseen ground does nothing and tells the player nothing".
 

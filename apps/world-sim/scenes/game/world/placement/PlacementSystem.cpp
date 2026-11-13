@@ -11,6 +11,7 @@
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 
@@ -119,10 +120,36 @@ namespace world_sim {
 		}
 
 		auto worldPos = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
+		placementMode.updateGhostPosition({worldPos.x, worldPos.y}, placeable({worldPos.x, worldPos.y}));
+	}
+
+	bool PlacementSystem::placeable(Foundation::Vec2 worldPos) const {
 		// Valid IFF the spot is on an active walkable nav face. The nav mesh owns runtime
 		// walkability; no terrain/world-source read here. No nav system => nothing placeable.
-		const bool valid = navigation != nullptr && navigation->isValidPosition({worldPos.x, worldPos.y});
-		placementMode.updateGhostPosition({worldPos.x, worldPos.y}, valid);
+		if (navigation == nullptr || !navigation->isValidPosition({worldPos.x, worldPos.y})) {
+			return false;
+		}
+		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
+		if (visibility == nullptr) {
+			return true;
+		}
+		std::vector<glm::vec2> outline;
+		if (const auto* def = assets::AssetRegistry::Get().getDefinition(placementMode.selectedDefName()); def != nullptr) {
+			const assets::CollisionShape& footprint = def->collisionFor(0);
+			if (footprint.type == assets::CollisionShapeType::Rect) {
+				for (const glm::vec2 corner : footprint.rectCornersLocal()) {
+					outline.push_back(corner + glm::vec2{worldPos.x, worldPos.y});
+				}
+			} else if (footprint.type == assets::CollisionShapeType::Polygon) {
+				for (const glm::vec2 point : footprint.pointsMeters) {
+					outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
+				}
+			}
+		}
+		if (outline.empty()) {
+			outline.push_back({worldPos.x, worldPos.y});
+		}
+		return visibility->covers(outline);
 	}
 
 	bool PlacementSystem::handleClick() {
@@ -130,6 +157,8 @@ namespace world_sim {
 			return false;
 		}
 
+		// The record can have moved since the last mouse move; refuse on what is seen now.
+		placementMode.updateGhostPosition(placementMode.ghostPosition(), placeable(placementMode.ghostPosition()));
 		if (placementMode.tryPlace()) {
 			// Successfully placed - update UI state
 			if (callbacks.onBuildMenuVisibility) {
