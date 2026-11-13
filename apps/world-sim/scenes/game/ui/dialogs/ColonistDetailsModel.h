@@ -13,6 +13,7 @@
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
 
+#include <ecs/ClaimIndex.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 #include <ecs/components/Task.h>
@@ -100,6 +101,8 @@ namespace world_sim {
 		float				 prevCurrentProgress = -1.0F;
 		float				 timeSinceTasksRefresh = 0.0F;
 		bool				 tasksStale = true;
+		// Rebuilt on every Known work refresh; held so the rebuild reuses its storage
+		ecs::ClaimIndex		 claimIndex;
 	};
 
 } // namespace world_sim

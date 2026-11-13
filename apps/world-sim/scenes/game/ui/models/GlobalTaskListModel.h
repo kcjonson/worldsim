@@ -17,6 +17,7 @@
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
+#include <ecs/ClaimIndex.h>
 #include <glm/vec2.hpp>
 
 #include <vector>
@@ -49,6 +50,9 @@ class GlobalTaskListModel {
   private:
 	/// Compare new data with cached data
 	[[nodiscard]] bool hasChanged(const std::vector<TaskData>& newData) const;
+
+	/// Rebuilt on every refresh; held so the rebuild reuses its storage
+	ecs::ClaimIndex claimIndex;
 
 	/// Cached task data from last refresh (sorted)
 	std::vector<TaskData> tasksData;

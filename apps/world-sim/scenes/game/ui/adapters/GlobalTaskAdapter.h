@@ -17,6 +17,7 @@
 #include <vector>
 
 namespace ecs {
+	class ClaimIndex;
 	class World;
 }
 
@@ -37,9 +38,10 @@ struct GlobalTaskDisplayData {
 };
 
 /// Every goal with something to do, for the colony-wide panel, unsorted, distances from
-/// `referencePosition` (the camera center).
+/// `referencePosition` (the camera center). `claims` is the caller's index, rebuilt here.
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getGlobalTasks(
 	ecs::World&		 world,
+	ecs::ClaimIndex& claims,
 	const glm::vec2& referencePosition
 );
 
@@ -47,6 +49,7 @@ struct GlobalTaskDisplayData {
 /// offered work toward, unsorted, distances from `referencePosition` (the colonist).
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getKnownTasks(
 	ecs::World&		 world,
+	ecs::ClaimIndex& claims,
 	ecs::EntityID	 colonist,
 	const glm::vec2& referencePosition
 );

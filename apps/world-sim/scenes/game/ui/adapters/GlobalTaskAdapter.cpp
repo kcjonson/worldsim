@@ -269,11 +269,9 @@ namespace world_sim::adapters {
 		/// and is left out until some colonist is offered work toward it. With `knownTo`, only the goals
 		/// that colonist works or its last decision offered work toward.
 		std::vector<GlobalTaskDisplayData>
-		goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition, std::optional<ecs::EntityID> knownTo) {
+		goalsForDisplay(ecs::World& world, ecs::ClaimIndex& claims, const glm::vec2& referencePosition, std::optional<ecs::EntityID> knownTo) {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
 			std::vector<GlobalTaskDisplayData> result;
-			// Kept across refreshes so a rebuild reuses its storage; the panel runs on the main thread only.
-			static ecs::ClaimIndex			   claims;
 			const ecs::ColonyGoalWork		   work(world, claims);
 			for (ecs::TaskType type :
 				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
@@ -295,12 +293,13 @@ namespace world_sim::adapters {
 
 	} // anonymous namespace
 
-	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, const glm::vec2& referencePosition) {
-		return goalsForDisplay(world, referencePosition, std::nullopt);
+	std::vector<GlobalTaskDisplayData> getGlobalTasks(ecs::World& world, ecs::ClaimIndex& claims, const glm::vec2& referencePosition) {
+		return goalsForDisplay(world, claims, referencePosition, std::nullopt);
 	}
 
-	std::vector<GlobalTaskDisplayData> getKnownTasks(ecs::World& world, ecs::EntityID colonist, const glm::vec2& referencePosition) {
-		return goalsForDisplay(world, referencePosition, colonist);
+	std::vector<GlobalTaskDisplayData>
+	getKnownTasks(ecs::World& world, ecs::ClaimIndex& claims, ecs::EntityID colonist, const glm::vec2& referencePosition) {
+		return goalsForDisplay(world, claims, referencePosition, colonist);
 	}
 
 	void sortTasksForDisplay(std::vector<GlobalTaskDisplayData>& tasks) {

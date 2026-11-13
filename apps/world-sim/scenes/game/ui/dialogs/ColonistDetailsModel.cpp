@@ -447,7 +447,7 @@ namespace world_sim {
 			colonistPosition = position->value;
 		}
 
-		std::vector<adapters::GlobalTaskDisplayData> rows = adapters::getKnownTasks(world, colonistId, colonistPosition);
+		std::vector<adapters::GlobalTaskDisplayData> rows = adapters::getKnownTasks(world, claimIndex, colonistId, colonistPosition);
 		adapters::sortTasksForDisplay(rows);
 		const bool changed = !std::ranges::equal(rows, tasksData.tasks, [](const auto& now, const auto& before) {
 			return now.id == before.id && now.status == before.status && now.statusDetail == before.statusDetail;

@@ -329,7 +329,7 @@ public:
 	[[nodiscard]] std::optional<glm::vec2> issuePlayerMoveOrder(EntityID entity, glm::vec2 worldGoal);
 
 	/// Every colonist's claims, as of the last update in which a colonist decided. Readers outside
-	/// this system (the task panel) see it that stale.
+	/// this system (ActionSystem) see it that stale.
 	[[nodiscard]] const ClaimIndex& claimIndex() const { return m_claims; }
 
 	[[nodiscard]] int priority() const override { return 60; }
