@@ -16,7 +16,7 @@
 // Per scenario: the main thread's time in World::update per tick without the wait for the workers
 // (main), that wait (wait), each patch job's duration, the ticks from the change until isBuilding()
 // is false, and the work the [NavBuild] debug lines report: the jobs' time, of it the width
-// refreshes, the slowest chunk's ground patch, and the mesh's triangle slots.
+// refreshes, the slowest visibility limit's patch, and the mesh's triangle slots.
 //
 // BM_RealChunksGround loads the Quick Start planet (planets/quickstart.wsplanet, read only) and
 // meshes the 25 real chunks around its landing spawn, ground only (WORLDSIM_PLANET names another
@@ -54,6 +54,7 @@
 #include <nav/NavInputBuilder.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
+#include <predicates/Predicates.h>
 
 #include <utils/Log.h>
 
@@ -85,6 +86,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -101,15 +103,14 @@ namespace {
 
 	using Clock = std::chrono::steady_clock;
 
-	// A visibility limit holding the whole chunk: ground as the game adds it, sized so the chunk's
-	// water and obstacles all stand on it.
-	geometry::nav::NavInputPolygon chunkGround(world::ChunkCoordinate coord) {
-		const std::int64_t		side = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
-		const geometry::Vec2i64 lo	 = nav::chunkOriginMm(coord);
-		return nav::visibilityLimit({lo.x + side / 2, lo.y + side / 2}, side * 3 / 4);
+	constexpr float	 kTickSeconds  = 1.0F / 60.0F;
+
+	// The range R of a mover with the default sight: the radius his visibility limit holds.
+	std::int64_t defaultRangeMm() {
+		return static_cast<std::int64_t>(
+			std::llround(static_cast<double>(ecs::kDefaultSightRadius + ecs::NavigationSystem::kSightBufferMeters) * static_cast<double>(geometry::kMillimetersPerMeter)));
 	}
 
-	constexpr float	 kTickSeconds  = 1.0F / 60.0F;
 	// The forest's layout, by WORLDSIM_BENCH_FOREST (see the file comment).
 	struct ForestLayout {
 		double spacingM;
@@ -126,7 +127,6 @@ namespace {
 	constexpr float	 kWorldMaxM	   = 1536.0F; // chunks 0..2 on each axis
 	constexpr float	 kAgentRadius  = 0.3F;
 	const glm::vec2	 kColony{500.0F, 555.0F};		// 12 m from the x = 512 chunk side; the river is ~30 m north
-	const glm::vec2	 kChunkCentreColony{256.0F, 256.0F}; // the middle of chunk (0, 0), far from every seam
 	const char*		kTreeDef = "Bench_NavTree";
 
 	std::filesystem::path projectRoot() {
@@ -189,18 +189,21 @@ namespace {
 	// What the [NavBuild] debug lines report, from any thread.
 	struct BuildLog {
 		std::mutex			mutex;
-		std::vector<double> jobMs; // per job
-		std::vector<double> groundMs;
-		double				widthsMs = 0.0;
-		double				waitMs	 = 0.0; // since the last takeWait
-		long long			maxSlots = 0;
+		std::vector<double> jobMs;	 // per job
+		std::vector<double> limitMs; // per visibility limit whose ground went in
+		double				widthsMs	   = 0.0;
+		double				waitMs		   = 0.0; // since the last takeWait
+		long long			maxSlots	   = 0;
+		long long			limitObstacles = 0; // placed obstacles the limits brought in
+		long long			limitRings	   = 0; // every ring the limits brought in
 
 		void reset() {
 			const std::lock_guard lock(mutex);
 			jobMs.clear();
-			groundMs.clear();
+			limitMs.clear();
 			widthsMs = waitMs = 0.0;
 			maxSlots		  = 0;
+			limitObstacles = limitRings = 0;
 		}
 
 		double takeWait() {
@@ -230,9 +233,16 @@ namespace {
 				self->widthsMs += numberAfter(m, "widths ");
 				self->waitMs += numberAfter(m, "wait ");
 				self->maxSlots = std::max(self->maxSlots, static_cast<long long>(numberAfter(m, "slots ")));
-			} else if (std::strstr(m, "[NavBuild] ground ") != nullptr) {
-				const char* const close = std::strchr(m, ')');
-				self->groundMs.push_back(close != nullptr ? std::atof(close + 1) : 0.0);
+			} else if (std::strstr(m, "[NavBuild] limit ") != nullptr) {
+				if (std::strstr(m, "[NavBuild] limit ground ") != nullptr) {
+					self->limitMs.push_back(numberAfter(m, "limit ground "));
+				}
+				// "rings N obstacles K" ends the line; a line for obstacles alone also opens with the word.
+				const char* const rings = std::strstr(m, " rings ");
+				if (rings != nullptr) {
+					self->limitRings += static_cast<long long>(numberAfter(rings, " rings "));
+					self->limitObstacles += static_cast<long long>(numberAfter(rings, " obstacles "));
+				}
 			}
 		}
 	};
@@ -351,7 +361,7 @@ namespace {
 			state.counters["jobMaxMs"]		  = atPercentile(log.jobMs, 1.0);
 			state.counters["meshMs"]		  = meanOf(log.jobMs) * static_cast<double>(log.jobMs.size());
 			state.counters["widthsMs"]		  = log.widthsMs;
-			state.counters["groundMaxMs"]	  = atPercentile(log.groundMs, 1.0);
+			state.counters["limitMaxMs"]	  = atPercentile(log.limitMs, 1.0);
 			state.counters["slots"]			  = static_cast<double>(log.maxSlots);
 		}
 	};
@@ -471,8 +481,8 @@ namespace {
 
 	void end() { foundation::Logger::setSink(nullptr, nullptr); }
 
-	// The colony's discs, ground and placed obstacles, from nothing.
-	void BM_ColdSettleNineChunks(benchmark::State& state) {
+	// The colony's visibility limits, ground and placed obstacles, from nothing.
+	void BM_ColdSettle(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(state.range(0));
 			colony(rig);
@@ -527,32 +537,185 @@ namespace {
 		}
 	}
 
-	// range(0) movers on a grid 100 m apart over the forest, their discs settled, then every one walking
-	// east at 2 m/s for 1,800 ticks (60 m), its disc's leading edge in dense ground no disc has met
-	// for most of it. Reports the main thread's tick (mover tracking, ground and detail gathering),
-	// the wait, the patch jobs, and the nav patches the walk took. range(1): gap.
+	// M5: range(0) movers on a grid 100 m apart over the forest, their first limits settled, then every
+	// one walking 60 m east at 2 m/s and range(1) times game speed (a tick moves him that many times as
+	// far), into dense ground no limit has met. Each tick runs as a frame does: update(), every
+	// mover's stride through stepWithinSight as MovementSystem takes it, endTick(). Per tick, nav's
+	// main-thread time is update() and endTick(), the wait for the patch worker included (nav*), split
+	// as the other rows split it (main*, wait*); navMaxUs is the worst stall. Limits served per real
+	// second, urgent (navQueryStats) and the rest under the budget; the share of the patch worker's
+	// time busy; strides stepWithinSight cut short. range(2): gap.
 	void BM_WalkingMovers(benchmark::State& state) {
-		const auto count = static_cast<int>(state.range(0));
+		constexpr float kWalkSpeed	= 2.0F;
+		constexpr float kWalkMeters = 60.0F;
+		const auto		count		= static_cast<int>(state.range(0));
+		const auto		speed		= static_cast<float>(state.range(1));
+		const float		stride		= kWalkSpeed * kTickSeconds * speed;
+		const int		tickCount	= static_cast<int>(std::ceil(kWalkMeters / stride));
 		for (auto _ : state) {
-			Rig		  rig(state.range(1));
+			Rig		  rig(state.range(2));
 			const int side = static_cast<int>(std::ceil(std::sqrt(static_cast<double>(count))));
 			for (int i = 0; i < count; ++i) {
-				rig.addMover({60.0F + static_cast<float>(i % side) * 100.0F, 40.0F + static_cast<float>(i / side) * 100.0F});
+				rig.addMover({60.0F + static_cast<float>(i % side) * 100.0F, 60.0F + static_cast<float>(i / side) * 100.0F});
 			}
 			rig.settle();
-			const std::uint64_t patchesBefore = rig.nav.navQueryStats().navPatches;
+			rig.nav.resetNavQueryStats();
 			begin();
-			TickStats stats;
-			for (int t = 0; t < 1800; ++t) {
-				for (std::size_t m = 0; m < rig.movers.size(); ++m) {
-					rig.moveMover(m, {2.0F * kTickSeconds, 0.0F});
+			TickStats			stats;
+			std::vector<double> navUs;
+			std::uint64_t		strides = 0;
+			std::uint64_t		stopped = 0;
+			for (int t = 0; t < tickCount; ++t) {
+				const Clock::time_point updateStart = Clock::now();
+				rig.nav.update(kTickSeconds * speed);
+				const double updateUs = std::chrono::duration<double, std::micro>(Clock::now() - updateStart).count();
+				for (const ecs::EntityID mover : rig.movers) {
+					glm::vec2&		at		= rig.world.getComponent<ecs::Position>(mover)->value;
+					const glm::vec2 to		= at + glm::vec2{stride, 0.0F};
+					const glm::vec2 reached = rig.nav.stepWithinSight(mover, at, to);
+					++strides;
+					stopped += reached != to ? 1U : 0U;
+					at = reached;
 				}
-				rig.tick(stats);
+				const Clock::time_point endStart = Clock::now();
+				rig.nav.endTick();
+				const double totalUs = updateUs + std::chrono::duration<double, std::micro>(Clock::now() - endStart).count();
+				const double waitUs	 = 1000.0 * buildLog().takeWait();
+				navUs.push_back(totalUs);
+				stats.mainUs.push_back(totalUs - waitUs);
+				stats.waitUs.push_back(waitUs);
+				const Clock::time_point until = Clock::now() + rig.gap;
+				while (Clock::now() < until) {
+					std::this_thread::yield();
+				}
 			}
+			// Joins the last tick's job, so its limits are logged.
+			static_cast<void>(rig.nav.isBuilding());
 			end();
 			stats.report(state);
-			state.counters["movers"]	  = static_cast<double>(count);
-			state.counters["navPatches"] = static_cast<double>(rig.nav.navQueryStats().navPatches - patchesBefore);
+			const double realSeconds = static_cast<double>(tickCount) * static_cast<double>(kTickSeconds);
+			double		 served		 = 0.0;
+			double		 workerMs	 = 0.0;
+			{
+				BuildLog&			  log = buildLog();
+				const std::lock_guard lock(log.mutex);
+				served = static_cast<double>(log.limitMs.size());
+				for (const double ms : log.jobMs) {
+					workerMs += ms;
+				}
+			}
+			const auto urgent			   = static_cast<double>(rig.nav.navQueryStats().urgentLimits);
+			state.counters["movers"]	   = static_cast<double>(count);
+			state.counters["speed"]		   = static_cast<double>(speed);
+			state.counters["navMeanUs"]	   = meanOf(navUs);
+			state.counters["navP99Us"]	   = atPercentile(navUs, 0.99);
+			state.counters["navMaxUs"]	   = atPercentile(navUs, 1.0);
+			state.counters["limits"]	   = served;
+			state.counters["urgentPerS"]   = urgent / realSeconds;
+			state.counters["budgetedPerS"] = (served - urgent) / realSeconds;
+			state.counters["workerBusy"]   = workerMs / (1000.0 * realSeconds);
+			state.counters["stopped"]	   = static_cast<double>(stopped);
+			state.counters["stoppedShare"] = static_cast<double>(stopped) / static_cast<double>(strides);
+		}
+	}
+
+	// The landing at load: the kLandingSightMeters limit round the colony meshed with its water and
+	// placed obstacles in one patch, once. The call's time (it waits for the job), the job's and of it
+	// the width refresh's, and how many placed obstacles and rings went in.
+	void BM_Landing(benchmark::State& state) {
+		for (auto _ : state) {
+			Rig rig(0);
+			begin();
+			const Clock::time_point					start = Clock::now();
+			const ecs::NavigationSystem::GroupSpawn spawn = rig.nav.groupSpawnPoints(kColony, 1, 0.0F, 0.0F, kAgentRadius);
+			const double							callMs = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+			end();
+			benchmark::DoNotOptimize(spawn.center);
+			BuildLog&			  log = buildLog();
+			const std::lock_guard lock(log.mutex);
+			double				  jobMs = 0.0;
+			for (const double ms : log.jobMs) {
+				jobMs += ms;
+			}
+			state.counters["callMs"]	= callMs;
+			state.counters["jobMs"]		= jobMs;
+			state.counters["widthsMs"]	= log.widthsMs;
+			state.counters["patchMs"]	= meanOf(log.limitMs) * static_cast<double>(log.limitMs.size());
+			state.counters["obstacles"] = static_cast<double>(log.limitObstacles);
+			state.counters["rings"]		= static_cast<double>(log.limitRings);
+			state.counters["liveTris"]	= rig.nav.navMesh().liveTriangleCount();
+		}
+	}
+
+	// M6: a mover with the default sight walks east across a lake that hangs past the meshed ground,
+	// with islands, taking a limit every kLimitRetakeStepMm; the lake and its islands went in with his
+	// first limit, as a chunk's water does, reaching far past it. Each retake's limit patch and
+	// refreshWidths, by where the limit's centre stands (in the lake: inside; else beside), against the
+	// same walk with no water. Open ground, so the water's share is not hidden under placed obstacles.
+	void BM_HangingWater(benchmark::State& state) {
+		using geometry::Vec2i64;
+		const std::int64_t rangeMm = defaultRangeMm();
+		const std::int64_t step	  = ecs::NavigationSystem::kLimitRetakeStepMm;
+		const Vec2i64	   lakeAt{2 * rangeMm, 0};
+		const auto		   ring	  = [](Vec2i64 centre, double radiusMm, int vertices, bool counterClockwise, double wobble) {
+			  constexpr double	   kTwoPiD = 6.283185307179586;
+			  std::vector<Vec2i64> out;
+			  for (int k = 0; k < vertices; ++k) {
+				  const double angle = (counterClockwise ? 1.0 : -1.0) * kTwoPiD * static_cast<double>(k) / static_cast<double>(vertices);
+				  const double r	 = radiusMm * (1.0 + wobble * std::sin(5.0 * angle));
+				  out.push_back({centre.x + static_cast<std::int64_t>(std::llround(r * std::cos(angle))),
+								 centre.y + static_cast<std::int64_t>(std::llround(r * std::sin(angle)))});
+			  }
+			  return out;
+		};
+		const auto range = static_cast<double>(rangeMm);
+		std::vector<geometry::nav::NavInputPolygon> water{{ring(lakeAt, 1.2 * range, 96, true, 0.06), true, nav::kProvenanceWater, geometry::nav::kNoOpening, true}};
+		const std::vector<Vec2i64> lake = water.front().ring;
+		for (const Vec2i64 island : {Vec2i64{lakeAt.x - rangeMm / 2, rangeMm / 4}, Vec2i64{lakeAt.x, -rangeMm / 3}, Vec2i64{lakeAt.x + rangeMm / 2, rangeMm / 5}}) {
+			water.push_back({ring(island, range / 8.0, 24, false, 0.1), true, nav::kProvenanceWater, geometry::nav::kNoOpening, true});
+		}
+		const std::int64_t walkMm = lakeAt.x + 2 * rangeMm;
+
+		struct Walk {
+			std::vector<double> beside;
+			std::vector<double> inside;
+		};
+		const auto walk = [&](bool wet) {
+			geometry::nav::PatchableMesh mesh;
+			geometry::nav::PatchEdits	 first;
+			if (wet) {
+				first.adds = water;
+			}
+			first.adds.push_back(nav::visibilityLimit({0, 0}, rangeMm));
+			mesh.applyPatch(first);
+			mesh.refreshWidths();
+			Walk out;
+			for (std::int64_t x = step; x <= walkMm; x += step) {
+				const Clock::time_point start = Clock::now();
+				mesh.applyPatch({.adds = {nav::visibilityLimit({x, 0}, rangeMm)}});
+				mesh.refreshWidths();
+				const double ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
+				(geometry::pointInPolygon({x, 0}, lake) == geometry::PointInPolygon::Inside ? out.inside : out.beside).push_back(ms);
+			}
+			return out;
+		};
+		for (auto _ : state) {
+			const Walk wet = walk(true);
+			const Walk dry = walk(false);
+			std::fprintf(stderr, "\n[hanging water] lake %zu vertices, %zu islands; per retake ms (patch + refreshWidths), wet against dry\n",
+						 lake.size(), water.size() - 1);
+			for (const auto& [name, w, d] : {std::tuple{"beside", &wet.beside, &dry.beside}, std::tuple{"inside", &wet.inside, &dry.inside}}) {
+				std::fprintf(stderr, "  %-6s %3zu retakes: wet mean %.3f p99 %.3f max %.3f; dry mean %.3f p99 %.3f max %.3f; ratio %.2f, extra p99 %.3f\n", name,
+							 w->size(), meanOf(*w), atPercentile(*w, 0.99), atPercentile(*w, 1.0), meanOf(*d), atPercentile(*d, 0.99), atPercentile(*d, 1.0),
+							 meanOf(*w) / meanOf(*d), atPercentile(*w, 0.99) - atPercentile(*d, 0.99));
+				const std::string p = name;
+				state.counters[p + "WetMeanMs"] = meanOf(*w);
+				state.counters[p + "WetP99Ms"]	= atPercentile(*w, 0.99);
+				state.counters[p + "DryMeanMs"] = meanOf(*d);
+				state.counters[p + "DryP99Ms"]	= atPercentile(*d, 0.99);
+				state.counters[p + "Ratio"]		= meanOf(*w) / meanOf(*d);
+				state.counters[p + "ExtraP99Ms"] = atPercentile(*w, 0.99) - atPercentile(*d, 0.99);
+			}
 		}
 	}
 
@@ -929,12 +1092,11 @@ namespace {
 
 	// --- What a placed obstacle costs in memory, and how many there are -------------------------
 	//
-	// BM_PlacedObstacleBytes: NavScale.bench.cpp's dense chunk (a placed obstacle every 3.54 m,
-	// half extents by age class) patched into a nav mesh 16 m cell by cell, its bytes split by the
-	// mesh's containers. BM_PlacedObstacleSystemBytes: the same density through NavigationSystem,
-	// whose own records per obstacle are what its heap grows by beyond its mesh's.
-	// BM_PlacedObstacleDensity: the Quick Start chunks round the landing placed as the game places
-	// them, the placed obstacles counted per chunk, and the 3 x 3's patched onto its real ground.
+	// BM_LimitWalkBytes: what the mesh holds per km one mover walks, by container.
+	// BM_PlacedObstacleSystemBytes: the bench forest through NavigationSystem, the mesh's bytes per
+	// placed obstacle by container, and the system's own records per obstacle, what its heap grows by
+	// beyond its mesh's. BM_PlacedObstacleDensity: the Quick Start chunks round the landing placed as
+	// the game places them, the placed obstacles counted per chunk.
 	//
 	// Container bytes are capacities times element sizes, the allocator's own headers excluded (the
 	// allocation count is reported beside them); "heap" is the CRT heap's allocated bytes, "private"
@@ -1266,23 +1428,6 @@ namespace {
 		return geometry::nav::PatchableMesh{};
 	}
 
-	std::int64_t cellOf(glm::vec2 p) {
-		const auto c = [](float v) { return static_cast<std::int64_t>(std::floor(v / 16.0F)); };
-		return c(p.x) * 1000003 + c(p.y);
-	}
-
-	// Patches `obstacles` into `mesh` one 16 m cell at a time, as the game does, then refreshes widths.
-	void patchByCell(geometry::nav::PatchableMesh& mesh, const std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>>& obstacles) {
-		std::map<std::int64_t, geometry::nav::PatchEdits> cells;
-		for (const auto& [at, ring] : obstacles) {
-			cells[cellOf(at)].adds.push_back(ring);
-		}
-		for (const auto& [cell, edits] : cells) {
-			mesh.applyPatch(edits);
-		}
-		mesh.refreshWidths();
-	}
-
 	// NavScale.bench.cpp's dense placement: a placed obstacle every spacingM from lo up to hi on each
 	// axis, nudged up to 1.4 m, half extents by the oak's age classes plus the 0.05 m pad.
 	std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> denseObstacles(glm::vec2 lo, glm::vec2 hi, float spacingM) {
@@ -1302,34 +1447,15 @@ namespace {
 		return obstacles;
 	}
 
-	// NavScale.bench.cpp's BM_NavScaleDetail chunk, bytes by container.
-	void BM_PlacedObstacleBytes(benchmark::State& state) {
-		for (auto _ : state) {
-			const std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> obstacles = denseObstacles({1.0F, 1.0F}, {511.0F, 511.0F}, 3.54F);
-			geometry::nav::PatchableMesh mesh = navMeshLikeTheSystems();
-			mesh.applyPatch({.adds = {chunkGround({0, 0})}});
-			mesh.refreshWidths();
-			const MeshBytes	   before		 = meshBytes(mesh);
-			const std::int64_t heapBefore	 = heapAllocated();
-			const std::int64_t privateBefore = privateBytes();
-			patchByCell(mesh, obstacles);
-			const std::int64_t heapAfter	= heapAllocated();
-			const std::int64_t privateAfter = privateBytes();
-			reportBytes(state, "dense synthetic chunk", before, meshBytes(mesh), static_cast<double>(obstacles.size()),
-						static_cast<double>(heapAfter - heapBefore), static_cast<double>(privateAfter - privateBefore));
-			std::fprintf(stderr, "  sizeof NavTriangle %zu, RegisteredRing %zu, NavInputPolygon %zu, SampleRing %zu\n", sizeof(geometry::nav::NavTriangle),
-						 sizeof(geometry::nav::RegisteredRing), sizeof(geometry::nav::NavInputPolygon), sizeof(geometry::nav::SampleRing));
-		}
-	}
-
-	// What the mesh holds per km one mover walks: a visibility limit (16 sides, each kWalkRangeMm
-	// from him) every state.range(0) mm along a 1 km straight walk, over open ground (Arg 1 0) or
-	// with BM_ChunkSeam's placed obstacles at 0.064 per m2 (Arg 1 1), those meeting each new
+	// What the mesh holds per km one mover walks: a visibility limit (kWalkRangeMm from him, his
+	// default sight plus the buffer) every state.range(0) mm along a 1 km straight walk, over open
+	// ground (Arg 1 0) or with placed obstacles at 0.064 per m2, the density the Quick Start chunks
+	// hold (BM_PlacedObstacleDensity) (Arg 1 1), those meeting each new
 	// limit's circumscribed disc patched in before its ground. Bytes by container per km, from
 	// after the first limit to the end. The patch scratch is not reachable from here; it grows by
 	// 14 bytes per edge index id (its per-id marks: in s, classified, interval stamp and range).
 	void BM_LimitWalkBytes(benchmark::State& state) {
-		constexpr std::int64_t kWalkRangeMm = 46000;
+		const std::int64_t	   kWalkRangeMm = defaultRangeMm();
 		constexpr std::int64_t kWalkMm		= 1000000;
 		constexpr float		   kWalkSpacingM = 3.95F; // 0.064 per m2
 		const std::int64_t	   step			= state.range(0);
@@ -1422,7 +1548,7 @@ namespace {
 	// The 5 x 5 chunks round the landing placed by PlacementExecutor exactly as AsyncChunkProcessor's
 	// task does (nearest the landing first, each stored before the next so cross-chunk rules see it),
 	// with the real asset definitions. Per chunk: placed obstacles (entities with a blocking collision
-	// ring, nav::placedObstacleRing), water share on a 2 m grid, and its 16 m cells holding none.
+	// ring, nav::placedObstacleRing) and water share on a 2 m grid.
 	void BM_PlacedObstacleDensity(benchmark::State& state) {
 		const Landing* landing = quickstartLanding();
 		if (landing == nullptr) {
@@ -1443,17 +1569,12 @@ namespace {
 			const world::ChunkCoordinate home = world::worldToChunk({landing->at.x, landing->at.y});
 
 			struct Counted {
-				int	   ring			  = 0; // Chebyshev distance from the landing chunk
-				int	   obstacles	  = 0;
-				int	   entities		  = 0;
-				double waterShare	  = 0.0;
-				int	   emptyCells	  = 0; // of 1,024
-				int	   waterCells	  = 0; // all water
-				int	   emptyLandCells = 0; // no obstacle, not all water
+				int	   ring		  = 0; // Chebyshev distance from the landing chunk
+				int	   obstacles  = 0;
+				int	   entities	  = 0;
+				double waterShare = 0.0;
 			};
-			std::vector<Counted>															  counted;
-			std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>>				  nearObstacles; // the 3 x 3's
-			std::vector<geometry::nav::NavInputPolygon>										  nearGround;
+			std::vector<Counted> counted;
 			for (int r = 0; r <= 2; ++r) {
 				for (int dy = -r; dy <= r; ++dy) {
 					for (int dx = -r; dx <= r; ++dx) {
@@ -1479,55 +1600,32 @@ namespace {
 						};
 						assets::AsyncChunkPlacementResult result = placement.computeChunkEntities(ctx, &placement);
 
-						const glm::vec2		origin{static_cast<float>(coord.x) * 512.0F, static_cast<float>(coord.y) * 512.0F};
-						std::vector<int>	perCell(1024, 0);
-						std::vector<int>	waterPerCell(1024, 0);
-						Counted				c;
+						const glm::vec2 origin{static_cast<float>(coord.x) * 512.0F, static_cast<float>(coord.y) * 512.0F};
+						Counted			c;
 						c.ring	   = r;
 						c.entities = static_cast<int>(result.entities.size());
 						for (const assets::PlacedEntity& e : result.entities) {
-							std::optional<geometry::nav::NavInputPolygon> ring = nav::placedObstacleRing(e, registry);
-							if (!ring.has_value()) {
-								continue;
-							}
-							++c.obstacles;
-							const int cx = std::clamp(static_cast<int>((e.position.x - origin.x) / 16.0F), 0, 31);
-							const int cy = std::clamp(static_cast<int>((e.position.y - origin.y) / 16.0F), 0, 31);
-							++perCell[static_cast<std::size_t>(cy * 32 + cx)];
-							if (r <= 1) {
-								nearObstacles.emplace_back(e.position, std::move(*ring));
-							}
+							c.obstacles += nav::placedObstacleRing(e, registry).has_value() ? 1 : 0;
 						}
 						int waterSamples = 0;
 						for (int j = 0; j < 256; ++j) {
 							for (int i = 0; i < 256; ++i) {
 								if (water.isInsideWater(geometry::quantize(origin + glm::vec2{static_cast<float>(i) * 2.0F + 1.0F, static_cast<float>(j) * 2.0F + 1.0F}))) {
 									++waterSamples;
-									++waterPerCell[static_cast<std::size_t>((j / 8) * 32 + i / 8)];
 								}
 							}
 						}
 						c.waterShare = static_cast<double>(waterSamples) / 65536.0;
-						for (std::size_t k = 0; k < 1024; ++k) {
-							c.emptyCells += perCell[k] == 0 ? 1 : 0;
-							c.waterCells += waterPerCell[k] == 64 ? 1 : 0;
-							c.emptyLandCells += perCell[k] == 0 && waterPerCell[k] < 64 ? 1 : 0;
-						}
-						std::fprintf(stderr, "[density] chunk %+d %+d: %d placed obstacles (%d entities), water %.1f%%, %.4f per m2 (%.4f per land m2), "
-											 "cells: %d empty, %d all water, %d land with none\n",
-									 dx, dy, c.obstacles, c.entities, 100.0 * c.waterShare, c.obstacles / 262144.0,
-									 c.waterShare < 1.0 ? c.obstacles / (262144.0 * (1.0 - c.waterShare)) : 0.0, c.emptyCells, c.waterCells, c.emptyLandCells);
+						std::fprintf(stderr, "[density] chunk %+d %+d: %d placed obstacles (%d entities), water %.1f%%, %.4f per m2 (%.4f per land m2)\n", dx, dy,
+									 c.obstacles, c.entities, 100.0 * c.waterShare, c.obstacles / 262144.0,
+									 c.waterShare < 1.0 ? c.obstacles / (262144.0 * (1.0 - c.waterShare)) : 0.0);
 						counted.push_back(c);
-						if (r <= 1) {
-							nearGround.push_back(chunkGround(coord));
-							nav::appendChunkWater(chunk->terrainPolygons(), nearGround);
-						}
 						placement.storeChunkResult(std::move(result));
 					}
 				}
 			}
 			for (int r = 0; r <= 2; ++r) {
-				double n = 0.0, obstacles = 0.0, water = 0.0, empty = 0.0, emptyLand = 0.0, waterCells = 0.0;
+				double n = 0.0, obstacles = 0.0, water = 0.0;
 				double lo = 1e9, hi = 0.0;
 				for (const Counted& c : counted) {
 					if (c.ring > r) {
@@ -1536,311 +1634,17 @@ namespace {
 					n += 1.0;
 					obstacles += c.obstacles;
 					water += c.waterShare;
-					empty += c.emptyCells;
-					emptyLand += c.emptyLandCells;
-					waterCells += c.waterCells;
 					lo = std::min(lo, c.obstacles / 262144.0);
 					hi = std::max(hi, c.obstacles / 262144.0);
 				}
 				const int side = 2 * r + 1;
-				std::fprintf(stderr, "[density] %dx%d: %.0f placed obstacles, %.4f per m2 (chunk min %.4f, max %.4f), %.4f per land m2; water %.1f%%; "
-									 "cells with none %.1f%% (all water %.1f%%, land %.1f%%)\n",
-							 side, side, obstacles, obstacles / (n * 262144.0), lo, hi, obstacles / (262144.0 * (n - water)), 100.0 * water / n,
-							 100.0 * empty / (n * 1024.0), 100.0 * waterCells / (n * 1024.0), 100.0 * emptyLand / (n * 1024.0));
+				std::fprintf(stderr, "[density] %dx%d: %.0f placed obstacles, %.4f per m2 (chunk min %.4f, max %.4f), %.4f per land m2; water %.1f%%\n", side,
+							 side, obstacles, obstacles / (n * 262144.0), lo, hi, obstacles / (262144.0 * (n - water)), 100.0 * water / n);
 				const std::string key = std::to_string(side) + "x" + std::to_string(side);
 				state.counters[key + "PerM2"]		= obstacles / (n * 262144.0);
 				state.counters[key + "MinPerM2"]	= lo;
 				state.counters[key + "MaxPerM2"]	= hi;
 				state.counters[key + "WaterShare"]	= water / n;
-			}
-
-			// The 3 x 3's placed obstacles on their real ground, as the game patches them.
-			geometry::nav::PatchableMesh mesh = navMeshLikeTheSystems();
-			mesh.applyPatch({.adds = nearGround});
-			mesh.refreshWidths();
-			const MeshBytes	   before		 = meshBytes(mesh);
-			const std::int64_t heapBefore	 = heapAllocated();
-			const std::int64_t privateBefore = privateBytes();
-			patchByCell(mesh, nearObstacles);
-			const std::int64_t heapAfter	= heapAllocated();
-			const std::int64_t privateAfter = privateBytes();
-			reportBytes(state, "Quick Start 3x3, real ground and placement", before, meshBytes(mesh), static_cast<double>(nearObstacles.size()),
-						static_cast<double>(heapAfter - heapBefore), static_cast<double>(privateAfter - privateBefore));
-		}
-	}
-
-	// --- The seam between two chunks' ground ----------------------------------------------------
-	//
-	// BM_ChunkSeam: chunks (0, 0) and (1, 0), each square its own ground patch as the game adds them
-	// (Arg 0), or one bounds rectangle over both, the seam absent (Arg 1); then placed obstacles at
-	// 0.064 per m2 (the Quick Start chunks hold 0.060 to 0.068, BM_PlacedObstacleDensity) over x 384
-	// to 640 m and y 100 to 412 m, across the shared side x = 512 m, patched 16 m cell by cell. Two
-	// bands of one mesh, both over y 156 to 356 m: border, within 16 m of x = 512; interior, x 400 to
-	// 464 and 560 to 624 (48 m from the seam, 16 m inside the placed area, 156 m from every other
-	// side). Per band:
-	//   shape: floor triangles by centroid, their longest edge, aspect (longest edge over the
-	//   altitude on it, 1.15 for an equilateral), and how many have a longest edge over 32 m;
-	//   locate: 10,000 points (the border's within 8 m of the seam), PatchableMesh::locate and
-	//   standingTriangle per point, each timed over 16 repeats, and over the first 1,000 the
-	//   triangle boxes holding the point (the most the point grid tests);
-	//   route: 500 pairs 40 m apart (the border's one end each side), each the game's SearchState
-	//   for a 0.3 m colonist run to the end: expansions, time, and walk over straight line;
-	//   widths: a 16 m cell's placed obstacles removed and put back, 8 cells (the border's
-	//   touching the seam), the patches' and refreshWidths' ms per cell.
-
-	constexpr float kSeamXM		   = 512.0F;
-	constexpr float kSeamBandLoYM  = 156.0F;
-	constexpr float kSeamBandHiYM  = 356.0F;
-	constexpr float kSeamSpacingM  = 3.95F; // 0.064 per m2
-	constexpr int	kSeamPoints	   = 10000;
-	constexpr int	kSeamBoxPoints = 1000;
-	constexpr int	kSeamRoutes	   = 500;
-	constexpr int	kSeamCells	   = 8;
-
-	enum class SeamBand { Border, Interior };
-
-	bool inSeamBand(SeamBand band, glm::vec2 p) {
-		if (p.y < kSeamBandLoYM || p.y > kSeamBandHiYM) {
-			return false;
-		}
-		if (band == SeamBand::Border) {
-			return std::abs(p.x - kSeamXM) <= 16.0F;
-		}
-		return (p.x >= 400.0F && p.x <= 464.0F) || (p.x >= 560.0F && p.x <= 624.0F);
-	}
-
-	double seamUnit(std::uint32_t seed, std::uint32_t i) {
-		return static_cast<double>(hashU32(seed * 0x9E3779B9U ^ hashU32(i + 1U))) / 4294967296.0;
-	}
-
-	struct SeamBandStats {
-		double tris = 0.0, edgeMeanM = 0.0, edgeP99M = 0.0, edgeMaxM = 0.0, aspectMean = 0.0, aspectP99 = 0.0, aspectMax = 0.0, over32m = 0.0;
-		double locateNs = 0.0, locateP99Ns = 0.0, standNs = 0.0, standP99Ns = 0.0, boxesAtPoint = 0.0, boxesAtPointP99 = 0.0;
-		double expMean = 0.0, expP99 = 0.0, searchUs = 0.0, searchP99Us = 0.0, walkRatioMean = 0.0, walkRatioMax = 0.0, notFound = 0.0;
-		double patchMs = 0.0, widthsMs = 0.0;
-	};
-
-	glm::dvec2 seamMeters(const geometry::Vec2i64& mm) { return glm::dvec2(nav::toMeters(mm)); }
-
-	void seamShape(const geometry::nav::PatchableMesh& mesh, SeamBand band, SeamBandStats& out) {
-		std::vector<double> edges;
-		std::vector<double> aspects;
-		const auto&			tris  = mesh.triangles();
-		const auto&			verts = mesh.vertices();
-		for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
-			if (!mesh.triangleLive(t) || !geometry::nav::isFloorFace(tris[static_cast<std::size_t>(t)])) {
-				continue;
-			}
-			const geometry::nav::NavTriangle& tri = tris[static_cast<std::size_t>(t)];
-			const glm::dvec2				  a	  = seamMeters(verts[tri.v[0]]);
-			const glm::dvec2				  b	  = seamMeters(verts[tri.v[1]]);
-			const glm::dvec2				  c	  = seamMeters(verts[tri.v[2]]);
-			if (!inSeamBand(band, glm::vec2((a + b + c) / 3.0))) {
-				continue;
-			}
-			const double longest = std::max({glm::length(b - a), glm::length(c - b), glm::length(a - c)});
-			const double area2	 = std::abs((b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x));
-			edges.push_back(longest);
-			aspects.push_back(longest * longest / area2);
-			out.over32m += longest > 32.0 ? 1.0 : 0.0;
-		}
-		out.tris	   = static_cast<double>(edges.size());
-		out.edgeMeanM  = meanOf(edges);
-		out.edgeP99M   = atPercentile(edges, 0.99);
-		out.edgeMaxM   = edges.empty() ? 0.0 : *std::max_element(edges.begin(), edges.end());
-		out.aspectMean = meanOf(aspects);
-		out.aspectP99  = atPercentile(aspects, 0.99);
-		out.aspectMax  = aspects.empty() ? 0.0 : *std::max_element(aspects.begin(), aspects.end());
-	}
-
-	void seamLocate(const geometry::nav::PatchableMesh& mesh, SeamBand band, SeamBandStats& out) {
-		constexpr int				   kRepeats = 16;
-		const geometry::nav::NavView   view		= mesh.view();
-		std::vector<geometry::Vec2i64> points;
-		for (std::uint32_t i = 0; points.size() < kSeamPoints; ++i) {
-			const double u = seamUnit(1U, i);
-			const double v = seamUnit(2U, i);
-			const double x = band == SeamBand::Border ? kSeamXM + (u * 2.0 - 1.0) * 8.0 : (u < 0.5 ? 400.0 + u * 128.0 : 560.0 + (u - 0.5) * 128.0);
-			points.push_back(nav::toMm({static_cast<float>(x), static_cast<float>(kSeamBandLoYM + v * (kSeamBandHiYM - kSeamBandLoYM))}));
-		}
-		std::vector<double> locateNs;
-		std::vector<double> standNs;
-		for (const geometry::Vec2i64& p : points) {
-			const auto t0 = Clock::now();
-			for (int r = 0; r < kRepeats; ++r) {
-				benchmark::DoNotOptimize(mesh.locate(p));
-			}
-			const auto t1 = Clock::now();
-			for (int r = 0; r < kRepeats; ++r) {
-				benchmark::DoNotOptimize(geometry::nav::standingTriangle(view, p));
-			}
-			const auto t2 = Clock::now();
-			locateNs.push_back(std::chrono::duration<double, std::nano>(t1 - t0).count() / kRepeats);
-			standNs.push_back(std::chrono::duration<double, std::nano>(t2 - t1).count() / kRepeats);
-		}
-		std::vector<double> boxes;
-		const auto&			tris  = mesh.triangles();
-		const auto&			verts = mesh.vertices();
-		for (int i = 0; i < kSeamBoxPoints; ++i) {
-			const geometry::Vec2i64& p	   = points[static_cast<std::size_t>(i)];
-			int						 count = 0;
-			for (std::int32_t t = 0; t < static_cast<std::int32_t>(tris.size()); ++t) {
-				if (!mesh.triangleLive(t)) {
-					continue;
-				}
-				const geometry::nav::NavTriangle& tri = tris[static_cast<std::size_t>(t)];
-				const geometry::Vec2i64&		  a	  = verts[tri.v[0]];
-				const geometry::Vec2i64&		  b	  = verts[tri.v[1]];
-				const geometry::Vec2i64&		  c	  = verts[tri.v[2]];
-				if (std::min({a.x, b.x, c.x}) <= p.x && p.x <= std::max({a.x, b.x, c.x}) && std::min({a.y, b.y, c.y}) <= p.y && p.y <= std::max({a.y, b.y, c.y})) {
-					++count;
-				}
-			}
-			boxes.push_back(static_cast<double>(count));
-		}
-		out.locateNs		= meanOf(locateNs);
-		out.locateP99Ns		= atPercentile(locateNs, 0.99);
-		out.standNs			= meanOf(standNs);
-		out.standP99Ns		= atPercentile(standNs, 0.99);
-		out.boxesAtPoint	= meanOf(boxes);
-		out.boxesAtPointP99 = atPercentile(boxes, 0.99);
-	}
-
-	void seamRoutes(const geometry::nav::PatchableMesh& mesh, SeamBand band, SeamBandStats& out) {
-		constexpr double			 kHalfM	 = 20.0;
-		constexpr double			 kTwoPiD = 6.283185307179586;
-		const geometry::nav::NavView view	 = mesh.view();
-		std::vector<double>			 expansions;
-		std::vector<double>			 searchUs;
-		std::vector<double>			 ratios;
-		for (std::uint32_t i = 0; static_cast<int>(searchUs.size()) < kSeamRoutes; ++i) {
-			const double			centreX = band == SeamBand::Border ? kSeamXM : (seamUnit(3U, i) < 0.5 ? 432.0 : 592.0);
-			const double			cx		= centreX + (seamUnit(4U, i) - 0.5) * 8.0;
-			const double			cy		= 176.0 + seamUnit(5U, i) * 160.0;
-			const double			angle	= (seamUnit(6U, i) - 0.5) * kTwoPiD / 3.0 + (seamUnit(7U, i) < 0.5 ? kTwoPiD / 2.0 : 0.0);
-			const glm::vec2			a{static_cast<float>(cx - kHalfM * std::cos(angle)), static_cast<float>(cy - kHalfM * std::sin(angle))};
-			const glm::vec2			b{static_cast<float>(cx + kHalfM * std::cos(angle)), static_cast<float>(cy + kHalfM * std::sin(angle))};
-			const geometry::Vec2i64 aMm = nav::toMm(a);
-			const geometry::Vec2i64 bMm = nav::toMm(b);
-			if (geometry::nav::standingTriangle(view, aMm) < 0 || geometry::nav::standingTriangle(view, bMm) < 0) {
-				continue;
-			}
-			const auto							t0 = Clock::now();
-			geometry::nav::SearchState			search({.start = aMm, .goals = {bMm}, .agentRadiusMm = 300});
-			const geometry::nav::SearchProgress progress = search.step(view, geometry::nav::kRunToEnd);
-			const auto							t1		 = Clock::now();
-			searchUs.push_back(std::chrono::duration<double, std::micro>(t1 - t0).count());
-			expansions.push_back(static_cast<double>(search.expansions()));
-			if (progress != geometry::nav::SearchProgress::Found) {
-				out.notFound += 1.0;
-				continue;
-			}
-			const geometry::nav::PathResult result = search.result();
-			double							walk   = 0.0;
-			for (std::size_t k = 1; k < result.points.size(); ++k) {
-				walk += glm::length(seamMeters(result.points[k]) - seamMeters(result.points[k - 1]));
-			}
-			ratios.push_back(walk / glm::length(glm::dvec2(b) - glm::dvec2(a)));
-		}
-		out.expMean		  = meanOf(expansions);
-		out.expP99		  = atPercentile(expansions, 0.99);
-		out.searchUs	  = meanOf(searchUs);
-		out.searchP99Us	  = atPercentile(searchUs, 0.99);
-		out.walkRatioMean = meanOf(ratios);
-		out.walkRatioMax  = ratios.empty() ? 0.0 : *std::max_element(ratios.begin(), ratios.end());
-	}
-
-	struct SeamCell {
-		std::vector<geometry::nav::NavInputPolygon> rings;
-		std::vector<geometry::nav::RingId>			ids;
-	};
-
-	void seamWidths(geometry::nav::PatchableMesh& mesh, std::map<std::int64_t, SeamCell>& cells, SeamBand band, SeamBandStats& out) {
-		const auto ms = [](Clock::time_point from, Clock::time_point to) { return std::chrono::duration<double, std::milli>(to - from).count(); };
-		for (int k = 0; k < kSeamCells; ++k) {
-			const std::int64_t cx	= band == SeamBand::Border ? (k % 2 == 0 ? 31 : 32) : (k % 2 == 0 ? 26 : 36);
-			const std::int64_t cy	= 10 + k;
-			SeamCell&		   cell = cells.at(cx * 1000003 + cy);
-			const auto		   t0	= Clock::now();
-			mesh.applyPatch({.removes = cell.ids});
-			const auto t1 = Clock::now();
-			mesh.refreshWidths();
-			const auto t2 = Clock::now();
-			cell.ids	  = mesh.applyPatch({.adds = cell.rings}).added;
-			const auto t3 = Clock::now();
-			mesh.refreshWidths();
-			const auto t4 = Clock::now();
-			out.patchMs += (ms(t0, t1) + ms(t2, t3)) / kSeamCells;
-			out.widthsMs += (ms(t1, t2) + ms(t3, t4)) / kSeamCells;
-		}
-	}
-
-	void BM_ChunkSeam(benchmark::State& state) {
-		const bool seamAbsent = state.range(0) != 0;
-		for (auto _ : state) {
-			geometry::nav::PatchableMesh mesh = navMeshLikeTheSystems();
-			const auto					 t0	  = Clock::now();
-			if (seamAbsent) {
-				mesh.applyPatch({.adds = {nav::borderRing({0, 0}, {2 * 512000, 512000})}});
-			} else {
-				mesh.applyPatch({.adds = {chunkGround({0, 0})}});
-				mesh.applyPatch({.adds = {chunkGround({1, 0})}});
-			}
-			std::map<std::int64_t, SeamCell> cells;
-			for (const auto& [at, ring] : denseObstacles({384.0F, 100.0F}, {640.0F, 412.0F}, kSeamSpacingM)) {
-				cells[cellOf(at)].rings.push_back(ring);
-			}
-			double obstacles = 0.0;
-			for (auto& [key, cell] : cells) {
-				cell.ids = mesh.applyPatch({.adds = cell.rings}).added;
-				obstacles += static_cast<double>(cell.rings.size());
-			}
-			mesh.refreshWidths();
-			const double buildMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
-
-			std::fprintf(stderr, "[seam] %s: %.0f placed obstacles (%.4f per m2), %d live triangles, built in %.0f ms\n",
-						 seamAbsent ? "one bounds rectangle" : "two chunk squares", obstacles, obstacles / (256.0 * 312.0), mesh.liveTriangleCount(), buildMs);
-			state.counters["obstacles"] = obstacles;
-			state.counters["liveTris"]	= mesh.liveTriangleCount();
-			state.counters["buildMs"]	= buildMs;
-			for (const SeamBand band : {SeamBand::Border, SeamBand::Interior}) {
-				SeamBandStats s;
-				seamShape(mesh, band, s);
-				seamLocate(mesh, band, s);
-				seamRoutes(mesh, band, s);
-				seamWidths(mesh, cells, band, s);
-				const std::string p = band == SeamBand::Border ? "border" : "interior";
-				std::fprintf(stderr,
-							 "[seam]   %-8s tris %5.0f; longest edge m mean %.2f p99 %.2f max %.2f; aspect mean %.2f p99 %.2f max %.1f; over 32 m %.0f\n"
-							 "[seam]            locate ns mean %.0f p99 %.0f; standing ns mean %.0f p99 %.0f; boxes at point mean %.1f p99 %.0f\n"
-							 "[seam]            route expansions mean %.0f p99 %.0f; us mean %.0f p99 %.0f; walk/line mean %.3f max %.3f; not found %.0f\n"
-							 "[seam]            cell remove+add patches %.3f ms, refreshWidths %.3f ms\n",
-							 p.c_str(), s.tris, s.edgeMeanM, s.edgeP99M, s.edgeMaxM, s.aspectMean, s.aspectP99, s.aspectMax, s.over32m, s.locateNs, s.locateP99Ns,
-							 s.standNs, s.standP99Ns, s.boxesAtPoint, s.boxesAtPointP99, s.expMean, s.expP99, s.searchUs, s.searchP99Us, s.walkRatioMean,
-							 s.walkRatioMax, s.notFound, s.patchMs, s.widthsMs);
-				state.counters[p + "Tris"]			  = s.tris;
-				state.counters[p + "EdgeMeanM"]		  = s.edgeMeanM;
-				state.counters[p + "EdgeP99M"]		  = s.edgeP99M;
-				state.counters[p + "EdgeMaxM"]		  = s.edgeMaxM;
-				state.counters[p + "AspectMean"]	  = s.aspectMean;
-				state.counters[p + "AspectP99"]		  = s.aspectP99;
-				state.counters[p + "AspectMax"]		  = s.aspectMax;
-				state.counters[p + "Over32m"]		  = s.over32m;
-				state.counters[p + "LocateNs"]		  = s.locateNs;
-				state.counters[p + "LocateP99Ns"]	  = s.locateP99Ns;
-				state.counters[p + "StandNs"]		  = s.standNs;
-				state.counters[p + "StandP99Ns"]	  = s.standP99Ns;
-				state.counters[p + "BoxesAtPoint"]	  = s.boxesAtPoint;
-				state.counters[p + "BoxesAtPointP99"] = s.boxesAtPointP99;
-				state.counters[p + "ExpMean"]		  = s.expMean;
-				state.counters[p + "ExpP99"]		  = s.expP99;
-				state.counters[p + "SearchUs"]		  = s.searchUs;
-				state.counters[p + "SearchP99Us"]	  = s.searchP99Us;
-				state.counters[p + "WalkRatioMean"]	  = s.walkRatioMean;
-				state.counters[p + "WalkRatioMax"]	  = s.walkRatioMax;
-				state.counters[p + "NotFound"]		  = s.notFound;
-				state.counters[p + "CellPatchMs"]	  = s.patchMs;
-				state.counters[p + "CellWidthsMs"]	  = s.widthsMs;
 			}
 		}
 	}
@@ -1848,11 +1652,17 @@ namespace {
 } // namespace
 
 // The last argument of every row is the gap between ticks in ms.
-BENCHMARK(BM_ColdSettleNineChunks)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ColdSettle)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Steady)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_FellTree)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_BuildWall)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_WalkingMovers)->Args({20, 0})->Args({200, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
+// BM_WalkingMovers: movers, game speed, gap.
+BENCHMARK(BM_WalkingMovers)
+	->ArgsProduct({{1, 10, 50, 100}, {1, 10}, {0, 2}})
+	->Iterations(1)
+	->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_Landing)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_HangingWater)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ColonistsWalk)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Crowd20)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ReplanWalk)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
@@ -1862,8 +1672,6 @@ BENCHMARK(BM_CursorCheck)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RealChunksGround)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_PlacedObstacleBytes)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_LimitWalkBytes)->Args({4000, 0})->Args({16000, 0})->Args({4000, 1})->Args({16000, 1})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PlacedObstacleSystemBytes)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PlacedObstacleDensity)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_ChunkSeam)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);

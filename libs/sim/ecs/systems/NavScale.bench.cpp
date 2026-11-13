@@ -9,10 +9,6 @@
 // width-refresh time, then on the built mesh: a wall edit's job (its patch, its width refresh) and
 // one more chunk's ground arriving (the same split).
 //
-// BM_NavScaleDetail: one chunk fully covered by forest at the game's density (a tree every 3.54 m,
-// colliders by age class), patched into a nav mesh 16 m cell by cell as the view brings it: rings,
-// bytes and time.
-//
 // BM_SearchCases: how many steps real routes take (see "Choosing the search cap" below).
 
 #include "NavigationSystem.h"
@@ -39,7 +35,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <utility>
 #include <memory>
 #include <optional>
@@ -235,44 +230,6 @@ namespace {
 		}
 	}
 
-	// One chunk fully covered by forest at the game's density, patched into a nav mesh cell by cell.
-	void BM_NavScaleDetail(benchmark::State& state) {
-		for (auto _ : state) {
-			gnav::PatchableMesh nav = makeMesh();
-			nav.applyPatch({.adds = {chunkGround({0, 0})}});
-			nav.refreshWidths();
-			const float					   halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
-			std::map<std::int64_t, gnav::PatchEdits> cells;
-			std::size_t					   rings = 0;
-			for (float x = 1.0F; x < 511.0F; x += 3.54F) {
-				for (float y = 1.0F; y < 511.0F; y += 3.54F) {
-					const glm::vec2		p{x + std::fmod(y * 0.37F, 1.4F), y + std::fmod(x * 0.53F, 1.4F)};
-					const std::uint32_t h	  = static_cast<std::uint32_t>(p.x * 131.0F + p.y * 7.0F) % 100U;
-					const float			e	  = halfExtents[h < 15 ? 0 : h < 75 ? 1 : 2];
-					const std::int64_t	cell = static_cast<std::int64_t>(p.x / 16.0F) * 64 + static_cast<std::int64_t>(p.y / 16.0F);
-					cells[cell].adds.push_back(box(p - glm::vec2{e}, p + glm::vec2{e}, true, nav::kProvenancePlaced));
-					++rings;
-				}
-			}
-			const std::int64_t		before = privateBytes();
-			const Clock::time_point start  = Clock::now();
-			double					worstCellMs = 0.0;
-			for (const auto& [cell, edits] : cells) {
-				const Clock::time_point t = Clock::now();
-				nav.applyPatch(edits);
-				worstCellMs = std::max(worstCellMs, msSince(t));
-			}
-			nav.refreshWidths();
-			state.counters["rings"]			  = static_cast<double>(rings);
-			state.counters["cells"]			  = static_cast<double>(cells.size());
-			state.counters["patchMs"]		  = msSince(start);
-			state.counters["worstCellMs"]	  = worstCellMs;
-			state.counters["detailKBPerChunk"] = static_cast<double>(privateBytes() - before) / 1024.0;
-			state.counters["bytesPerRing"]	  = static_cast<double>(privateBytes() - before) / static_cast<double>(rings);
-			state.counters["slots"]			  = static_cast<double>(nav.triangles().size());
-		}
-	}
-
 	double meanOf(const std::vector<double>& v) {
 		double sum = 0.0;
 		for (const double x : v) {
@@ -436,7 +393,6 @@ BENCHMARK(BM_NavScaleGround)
 	->Args({1000, 0})
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_NavScaleDetail)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_SearchCases)
 	->ArgsProduct({{0, 1, 2}, {100, 500, 2000, 10000}})
 	->Iterations(1)
