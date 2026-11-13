@@ -21,8 +21,9 @@
 // counts (never a time budget, so which tick a ring enters doesn't depend on frame time):
 //  1. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
 //  2. Water re-derived for each meshed chunk whose terrain changed while loaded.
-//  3. Removed placed obstacles (PlacementExecutor::takeRemovals), up to kDetailRemovalsPerTick, in
-//     one patch.
+//  3. Removed placed obstacles (PlacementExecutor::takeRemovals), each looked up by its key, up to
+//     kDetailRemovalsPerTick, in one patch. One not in the mesh is no change: a limit still waiting
+//     never finds it, and ground no limit reached has nothing to take out.
 //  4. Urgent limits, with their placed obstacles and water, outside every budget: a mover's newest
 //     limit once he stands kSightBufferMeters minus kLimitRetakeStepMm short of the edge of what he
 //     sees staying meshed (see MoverDisc). Then the rest, first in, first out: kLimitsPerTick a tick,

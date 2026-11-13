@@ -2767,6 +2767,74 @@ TEST_F(NavigationSystemTest, RemovalsInATickArePatchedOnce) {
 	EXPECT_TRUE(std::all_of(trees.begin(), trees.end(), [&](glm::vec2 t) { return meshClear(sys, t); })) << "all removed";
 }
 
+// A placed obstacle felled while the limit it stands in waits its turn never enters the mesh: the
+// limit lands without it, and its ground there is walkable.
+TEST_F(NavigationSystemTest, FelledWhileItsLimitWaitsNeverEnters) {
+	registerTree("Test_NavWaitFellTree", 0.4F);
+	const std::array<glm::vec2, 2> movers{glm::vec2{-200.0F, 100.0F}, glm::vec2{200.0F, 100.0F}};
+	const std::array<glm::vec2, 2> trees{movers[0] + glm::vec2{10.0F, 0.0F}, movers[1] + glm::vec2{10.0F, 0.0F}};
+	PlacementExecutor				executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavWaitFellTree", std::vector<glm::vec2>(trees.begin(), trees.end()));
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	for (const glm::vec2 at : movers) {
+		addColonist(world, at, "Mover");
+	}
+	ASSERT_EQ(NavigationSystem::kLimitsPerTick, 1U);
+	step(world, sys);
+	ASSERT_NE(sys.inSimArea(movers[0]), sys.inSimArea(movers[1])) << "one limit a tick";
+	const std::size_t waiting = sys.inSimArea(movers[0]) ? 1 : 0;
+	ASSERT_TRUE(sys.isBuilding());
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({trees[waiting].x, trees[waiting].y}), trees[waiting], "Test_NavWaitFellTree"));
+
+	sys.resetNavQueryStats();
+	step(world, sys);
+	EXPECT_TRUE(sys.inSimArea(movers[waiting])) << "the waiting limit went in";
+	EXPECT_EQ(sys.navQueryStats().navPatches, 1U) << "its limit, and no removal";
+	EXPECT_TRUE(meshClear(sys, trees[waiting])) << "the felled obstacle entered";
+	EXPECT_FALSE(sys.placedObstacleInNavMesh(world::worldToChunk({trees[waiting].x, trees[waiting].y}),
+											 PlacedEntity{.defName = "Test_NavWaitFellTree", .position = trees[waiting]}));
+	EXPECT_TRUE(obstacleMeshed(sys, trees[1 - waiting])) << "the other stays";
+	EXPECT_FALSE(sys.isBuilding());
+}
+
+// A placed obstacle felled where no limit has reached changes nothing: no patch, nothing left waiting,
+// and a mover arriving later meshes the ground without it.
+TEST_F(NavigationSystemTest, FelledOutsideSeenGroundChangesNothing) {
+	registerTree("Test_NavUnseenFellTree", 0.4F);
+	const glm::vec2						seenTree{10.0F, 10.0F};
+	const glm::vec2						unseenTree{800.0F, 100.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavUnseenFellTree", {seenTree, unseenTree});
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	addColonist(world, {0.0F, 0.0F}, "Here");
+	settle(sys);
+	ASSERT_TRUE(obstacleMeshed(sys, seenTree));
+	ASSERT_FALSE(sys.inSimArea(unseenTree));
+	const std::uint64_t epoch = sys.navMesh().epoch();
+
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({unseenTree.x, unseenTree.y}), unseenTree, "Test_NavUnseenFellTree"));
+	sys.resetNavQueryStats();
+	step(world, sys);
+	EXPECT_EQ(sys.navQueryStats().navPatches, 0U);
+	EXPECT_EQ(sys.navMesh().epoch(), epoch);
+	EXPECT_FALSE(sys.isBuilding()) << "an entry was left behind";
+
+	addColonist(world, unseenTree - glm::vec2{10.0F, 0.0F}, "There");
+	settle(sys);
+	EXPECT_TRUE(meshClear(sys, unseenTree)) << "the felled obstacle came in with the ground";
+	EXPECT_TRUE(obstacleMeshed(sys, seenTree));
+}
+
 // Swapping the ConstructionWorld for another at the same version still re-reads the walls: the old
 // world's wall leaves the mesh and the new one's comes in.
 TEST_F(NavigationSystemTest, ConstructionWorldSwapRereadsWalls) {
