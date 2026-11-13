@@ -84,6 +84,7 @@ Leaning Fix A: it puts the correction where the disagreement is (the snap), resp
 ### IMPLEMENTATION (files)
 - `libs/sim/ecs/systems/NavigationSystem.h`: new overload `nearestPathablePoint(meters, agentRadiusMeters)`.
 - `libs/sim/ecs/systems/NavigationSystem.cpp`: anon-namespace band helpers (`resolveBuiltBands`, `clearOfBands`, `ejectFromBands`, `nearestClearOnMesh`) mirroring WallCollisionSystem's band model exactly (Built-only, halfThickness+r clearance, pathable door-gap exemption, 2-iteration relaxation, +2cm margin); the new overload: eject the bare nearest point out of the bands (fast path), else scan walkable triangles for the nearest band-clear interior/centroid point (slow path -- frees a colonist sealed in a sub-clearance sliver to the wall's open side), else fall back to the bare point.
+  - Note, 2026-11-13: `nearestClearOnMesh` has since been deleted; the radius overload of `nearestPathablePoint` now stands the whole disc clear of the bands, water, placed obstacles and the mesh edge, or returns nullopt (nav-mesh-variable-resolution.md 4.6).
 - `libs/sim/ecs/systems/AIDecisionSystem.cpp` (~:859): recovery snap now passes the colonist's AgentRadius to the band-aware overload.
 - TEST: `libs/sim/ecs/systems/NavigationSystem.test.cpp` `RecoverySnapClearsWallCollisionBand` -- a built wall, a query point inside its band, asserts the radius overload returns an on-mesh point >= halfThickness+r from the centerline.
 

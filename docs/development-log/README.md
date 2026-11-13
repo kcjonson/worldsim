@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-13 - Nav mesh ends at the seen area](./entries/2026-11-13-nav-mesh-ends-at-seen-area.md)
 - [2026-11-12 - Chunk borders dissolve: no more slivers along the shared side](./entries/2026-11-12-chunk-border-dissolve.md)
 - [2026-11-12 - Nav correction: movers mesh, obstacles block, routes by ticket](./entries/2026-11-12-nav-correction.md)
 - [2026-11-11 - Nav mesh: one mesh, variable resolution (steps 1 to 5 of WOR-702)](./entries/2026-11-11-nav-mesh-one-mesh.md)
