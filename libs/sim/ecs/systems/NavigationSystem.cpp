@@ -643,8 +643,35 @@ namespace ecs {
 			(void)agent;
 			const float circumradius = static_cast<float>(gnav::limitCircumradius(radiusMm(meshingRange(entity)))) /
 									   static_cast<float>(geometry::kMillimetersPerMeter);
-			out.push_back({{position.value.x, position.value.y}, circumradius + kFootprintReachMeters});
+			out.push_back({{position.value.x, position.value.y},
+						   circumradius + kFootprintReachMeters + static_cast<float>(kLimitRetakeStepMm) / static_cast<float>(geometry::kMillimetersPerMeter)});
 		}
+	}
+
+	glm::vec2 NavigationSystem::stepWithinSight(EntityID mover, glm::vec2 from, glm::vec2 to) const {
+		const auto disc = moverDiscs.find(mover);
+		if (disc == moverDiscs.end() || !disc->second.served.has_value()) {
+			return to;
+		}
+		const glm::vec2 centre = nav::toMeters(disc->second.served->centre);
+		const float		reach  = static_cast<float>(std::max<std::int64_t>(0, disc->second.served->rangeMm - disc->second.sightMm)) /
+							static_cast<float>(geometry::kMillimetersPerMeter);
+		const glm::vec2 out	 = to - centre;
+		const float		outD = glm::dot(out, out);
+		if (outD <= reach * reach) {
+			return to;
+		}
+		const glm::vec2 in	= from - centre;
+		const float		inD = glm::dot(in, in);
+		if (inD >= reach * reach) {
+			return outD <= inD ? to : from;
+		}
+		// Where from + t (to - from) meets the circle, t in (0, 1).
+		const glm::vec2 d	 = to - from;
+		const float		a	 = glm::dot(d, d);
+		const float		half = glm::dot(in, d);
+		const float		t	 = (-half + std::sqrt(half * half - a * (inD - reach * reach))) / a;
+		return from + d * t;
 	}
 
 	float NavigationSystem::meshingRange(EntityID mover) const {
@@ -682,24 +709,49 @@ namespace ecs {
 			auto [it, fresh]		 = moverDiscs.try_emplace(entity);
 			MoverDisc& disc			 = it->second;
 			disc.seen				 = moverPass;
+			disc.sightMm			 = radiusMm(range - kSightBufferMeters);
 			const std::int64_t dx	 = xMm - disc.xMm;
 			const std::int64_t dy	 = yMm - disc.yMm;
-			if (!fresh && dx * dx + dy * dy < kLimitRetakeStepMm * kLimitRetakeStepMm && disc.rangeMeters == range) {
-				continue;
+			if (fresh || dx * dx + dy * dy >= kLimitRetakeStepMm * kLimitRetakeStepMm || disc.rangeMeters != range) {
+				disc.xMm		 = xMm;
+				disc.yMm		 = yMm;
+				disc.rangeMeters = range;
+				SeenLimit limit	 = makeLimit(entity, {xMm, yMm}, range);
+				limit.taken		 = ++disc.taken;
+				if (detailMesh.groundCovers(limit.outline)) {
+					noteServed(disc, limit);
+				} else {
+					limitQueue.push_back(std::move(limit));
+				}
 			}
-			disc.xMm		 = xMm;
-			disc.yMm		 = yMm;
-			disc.rangeMeters = range;
-			SeenLimit limit	 = makeLimit(entity, {xMm, yMm}, range);
-			if (!detailMesh.groundCovers(limit.outline)) {
-				limitQueue.push_back(std::move(limit));
+			disc.urgent = false;
+			if (disc.served.has_value()) {
+				const std::int64_t margin = disc.served->rangeMm - disc.sightMm - kLimitRetakeStepMm;
+				const std::int64_t sx	  = xMm - disc.served->centre.x;
+				const std::int64_t sy	  = yMm - disc.served->centre.y;
+				disc.urgent				  = margin <= 0 || sx * sx + sy * sy >= margin * margin;
 			}
 		}
 		std::erase_if(moverDiscs, [this](const auto& entry) { return entry.second.seen != moverPass; });
 	}
 
+	void NavigationSystem::noteServed(MoverDisc& disc, const SeenLimit& limit) {
+		if (!disc.served.has_value() || limit.taken > disc.served->taken) {
+			disc.served = ServedLimit{.centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
+		}
+	}
+
+	void NavigationSystem::noteServed(const SeenLimit& limit) {
+		if (const auto disc = moverDiscs.find(limit.mover); disc != moverDiscs.end()) {
+			noteServed(disc->second, limit);
+		}
+	}
+
 	NavigationSystem::SeenLimit NavigationSystem::makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const {
-		SeenLimit limit{.mover = mover, .centre = centre, .circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
+		SeenLimit limit{.mover			= mover,
+						.centre			= centre,
+						.rangeMm		= radiusMm(rangeMeters),
+						.circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
 		limit.outline			= nav::visibilityLimit(centre, radiusMm(rangeMeters)).ring;
 		const std::int64_t reach = limit.circumradiusMm + radiusMm(kFootprintReachMeters);
 		limit.query				= {{centre.x - reach, centre.y - reach}, {centre.x + reach, centre.y + reach}};
@@ -740,20 +792,14 @@ namespace ecs {
 			   !everyChunkIn(limit.query.lo, limit.query.hi, [this](world::ChunkCoordinate coord) { return anchorHolds(coord); });
 	}
 
+	bool NavigationSystem::limitUrgent(const SeenLimit& limit) const {
+		const auto disc = moverDiscs.find(limit.mover);
+		return disc != moverDiscs.end() && disc->second.urgent && limit.taken == disc->second.taken;
+	}
+
 	bool NavigationSystem::limitHoldable(const SeenLimit& limit) const {
 		const auto disc = moverDiscs.find(limit.mover);
-		if (disc == moverDiscs.end() || !disc->second.served.has_value()) {
-			return false;
-		}
-		const Position* position = world->getComponent<Position>(limit.mover);
-		if (position == nullptr) {
-			return false;
-		}
-		const geometry::Vec2i64 at		  = nav::toMm(position->value);
-		const std::int64_t		dx		  = at.x - disc->second.served->x;
-		const std::int64_t		dy		  = at.y - disc->second.served->y;
-		const std::int64_t		reachable = radiusMm(kSightBufferMeters) - kLimitRetakeStepMm;
-		return dx * dx + dy * dy < reachable * reachable;
+		return disc != moverDiscs.end() && disc->second.served.has_value() && !limitUrgent(limit);
 	}
 
 	// --- Ticks, jobs and the join -------------------------------------------------
@@ -1176,17 +1222,28 @@ namespace ecs {
 				it = limitQueue.erase(it);
 				continue;
 			}
+			if (it->coverChecked != detailMesh.epoch()) {
+				it->coverChecked = detailMesh.epoch();
+				if (detailMesh.groundCovers(it->outline)) {
+					noteServed(*it);
+					it = limitQueue.erase(it);
+					continue;
+				}
+			}
 			if (!limitServable(*it)) {
 				++it;
+				continue;
+			}
+			if (limitUrgent(*it)) {
+				std::size_t whole = kUnlimited;
+				serveLimit(*it, whole);
+				++navStats.urgentLimits;
+				it = limitQueue.erase(it);
 				continue;
 			}
 			if (served == limitBudget || addBudget == 0 || (holdLimits && limitHoldable(*it))) {
 				++limitsPending;
 				++it;
-				continue;
-			}
-			if (detailMesh.groundCovers(it->outline)) {
-				it = limitQueue.erase(it);
 				continue;
 			}
 			if (!serveLimit(*it, addBudget)) {
@@ -1276,17 +1333,22 @@ namespace ecs {
 			});
 			edits.adds.push_back({limit.outline, false, nav::kProvenanceBorder});
 			++gatheredJob.routePatches;
-			if (const auto disc = moverDiscs.find(limit.mover); disc != moverDiscs.end()) {
-				disc->second.served = limit.centre;
-			}
 		}
 		if (edits.adds.empty()) {
 			return withGround;
 		}
 		const std::size_t rings = edits.adds.size();
 		gatheredJob.patches.push_back(std::move(edits));
+		// Its mover's served limit only once joined: until then what he sees is bounded by the last.
+		std::optional<SeenLimit> ground;
+		if (withGround) {
+			ground = SeenLimit{.mover = limit.mover, .centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
+		}
 		gatheredJob.onPatched.emplace_back([this, keys = std::move(keys), waterChunks = std::move(waterChunks), waterRings = std::move(waterRings),
-											withGround, rings](const std::vector<RingId>& added, double ms) {
+											ground = std::move(ground), withGround, rings](const std::vector<RingId>& added, double ms) {
+			if (ground.has_value()) {
+				noteServed(*ground);
+			}
 			std::size_t k = 0;
 			for (; k < keys.size(); ++k) {
 				obstacleInMesh.at(keys[k]) = added[k];

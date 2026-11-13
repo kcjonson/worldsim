@@ -6,6 +6,7 @@
 #include "../components/NavPath.h"
 #include "../components/Task.h"
 #include "../components/Transform.h"
+#include "NavigationSystem.h"
 #include "TimeSystem.h"
 
 #include <numbers>
@@ -45,6 +46,7 @@ void MovementSystem::update(float deltaTime) {
     }
     const float scaledDt = deltaTime * timeScale;
     const bool  fastForward = scaledDt > deltaTime;
+    const NavigationSystem* nav = world->tryGetSystem<NavigationSystem>();
 
     // Final-waypoint arrival threshold - stop when close enough. The same value gates arrival
     // whether the colonist is following a NavPath (the in-game route) or moving directly (only
@@ -98,17 +100,26 @@ void MovementSystem::update(float deltaTime) {
 
             // This frame's stride is spent along the route, through every corner it reaches, so
             // corners closer together than a stride (a route threading trees) are walked, never
-            // overshot and stepped back to; the stride ends on the final waypoint, not past it.
+            // overshot and stepped back to; the stride ends on the final waypoint, not past it. Each
+            // leg of it stops where he would see past meshed ground, and a corner he stops short of
+            // is not rounded.
+            const auto within = [&](glm::vec2 from, glm::vec2 to) { return nav != nullptr ? nav->stepWithinSight(entity, from, to) : to; };
             float     left = target.speed * scaledDt;
             glm::vec2 at = pos.value;
             while (!isFinal() && glm::distance(at, waypoints[navPath->current]) <= left) {
-                left -= glm::distance(at, waypoints[navPath->current]);
-                at = waypoints[navPath->current];
+                const glm::vec2 corner = within(at, waypoints[navPath->current]);
+                if (corner != waypoints[navPath->current]) {
+                    at = corner;
+                    left = 0.0f;
+                    break;
+                }
+                left -= glm::distance(at, corner);
+                at = corner;
                 ++navPath->current;
             }
             const glm::vec2 toWaypoint = waypoints[navPath->current] - at;
             const float     distance = glm::length(toWaypoint);
-            const glm::vec2 end = distance > 0.0001f ? at + toWaypoint * (std::min(left, distance) / distance) : at;
+            const glm::vec2 end = within(at, distance > 0.0001f ? at + toWaypoint * (std::min(left, distance) / distance) : at);
             if (scaledDt > 0.0f) {
                 vel.value = (end - pos.value) / scaledDt;
             } else {

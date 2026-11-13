@@ -23,9 +23,15 @@
 //  2. Water re-derived for each meshed chunk whose terrain changed while loaded.
 //  3. Removed placed obstacles (PlacementExecutor::takeRemovals), up to kDetailRemovalsPerTick, in
 //     one patch.
-//  4. Limits, first in, first out: kLimitsPerTick a tick, and kDetailRingsPerTick placed obstacles;
-//     a limit with more obstacles than that brings them in over several ticks, hanging over unseen
-//     ground, and its ground goes in with the last of them.
+//  4. Urgent limits, with their placed obstacles and water, outside every budget: a mover's newest
+//     limit once he stands kSightBufferMeters minus kLimitRetakeStepMm short of the edge of what he
+//     sees staying meshed (see MoverDisc). Then the rest, first in, first out: kLimitsPerTick a tick,
+//     and kDetailRingsPerTick placed obstacles; a limit with more obstacles than that brings them in
+//     over several ticks, hanging over unseen ground, and its ground goes in with the last of them.
+//     A queued limit the meshed ground now holds, or with a chunk no mover holds, is dropped; one
+//     whose chunks or placement are not ready waits without holding back those behind it.
+// A mover never walks to where he would see past meshed ground (stepWithinSight): one whose urgent
+// limit cannot go in yet stands at that edge, his route and task kept, and walks on once it lands.
 // endTick() hands the tick's patches to the patch worker after every system has run, as one job:
 // the patches in order, the door edits, then one width refresh. The next update() or the first
 // query waits for it, so a query always sees exactly the patches gathered through the previous
@@ -41,10 +47,9 @@
 //  2. The rest of update(), the other systems, and every query read the mesh alongside the slice;
 //     all of it is const reads (the mesh keeps no lazily built state).
 //  3. endTick() starts the patch job, which waits for the slice before it writes.
-// While a search is inside its hold window (kMaxHeldAdditionTicks), the limits of movers still well
-// inside the ground they have had served (less than kSightBufferMeters minus kLimitRetakeStepMm from
-// it) wait; a mover's first limit, one nearer the edge, the landing, removals from the world, walls,
-// doors, and re-derived water never do.
+// While a search is inside its hold window (kMaxHeldAdditionTicks), the limits that are not urgent
+// wait; a mover's first limit, urgent limits, the landing, removals from the world, walls, doors, and
+// re-derived water never do.
 //
 // A placed obstacle in the mesh blocks routes. It keeps its
 // interior triangles, so a mover standing in one reads on a placed-obstacle face (isOnMesh), which
@@ -126,11 +131,16 @@ class NavigationSystem : public ISystem {
 
 	void setChunkManager(world::ChunkManager* manager) { chunkManager = manager; }
 
-	// The buffer added to a mover's sight distance to make its range R. It covers the retake step,
-	// so what a walking mover sees stays inside the limits he has taken.
-	static constexpr float kSightBufferMeters = 16.0F;
 	// A mover takes a new limit once it is this far from where it last took one.
 	static constexpr std::int64_t kLimitRetakeStepMm = 4000;
+	// The buffer added to a mover's sight distance to make its range R. What he sees stays inside his
+	// last served limit while he is within it of that limit's centre, so it must cover: the step to
+	// his next limit; a step more, the margin that limit has to land in once urgent; and his travel
+	// during one landing (a tick, at the fastest game speed), which must stay under that step. The
+	// polygon's overshoot (its corners reach past R) only adds to the margin, so it needs no share.
+	static constexpr float kSightBufferMeters = 16.0F;
+	static_assert(static_cast<std::int64_t>(kSightBufferMeters * 1000.0F) > 2 * kLimitRetakeStepMm,
+				  "a mover's next limit must be taken before it is urgent");
 	// The radius of ground the landing meshes round the drop: the crew saw it as they came down.
 	static constexpr float kLandingSightMeters = 150.0F;
 	// How far a placed obstacle's footprint may reach from its entity's position. A limit's obstacles
@@ -139,10 +149,17 @@ class NavigationSystem : public ISystem {
 	static constexpr float kFootprintReachMeters = 8.0F;
 	// Append the anchors: every mover (Position + AgentRadius) with the reach of its limit's
 	// obstacle query (the limit's circumradius for its range R, its sight distance -- Memory::sightRadius,
-	// kDefaultSightRadius without Memory -- plus kSightBufferMeters, and kFootprintReachMeters). The
+	// kDefaultSightRadius without Memory -- plus kSightBufferMeters, and kFootprintReachMeters), and
+	// kLimitRetakeStepMm, since his newest limit was taken up to that far from where he stands. The
 	// scene hands them to ChunkManager::update, which keeps their chunks loaded, so every chunk a
-	// mover's limit needs is held: past anchorLoadRange's floor once R passes about 117 m.
+	// mover's newest limit needs is held: past anchorLoadRange's floor once R passes about 114 m.
 	void appendAnchors(std::vector<world::ChunkAnchor>& out) const;
+
+	// The farthest point along `from` -> `to` that `mover` may walk to with what he sees (his sight
+	// distance round him) still inside the last limit of his in the mesh: `to` when all of it is,
+	// the point where the step leaves it, or, already past it, `to` only when that comes no farther
+	// out. `to` for a mover with no limit in the mesh yet. Movement takes each stride through it.
+	[[nodiscard]] glm::vec2 stepWithinSight(EntityID mover, glm::vec2 from, glm::vec2 to) const;
 
 	// Detail comes from `executor`'s chunk indices, and only for chunks in `processed` (the
 	// chunks that have finished entity placement; null reads every indexed chunk as finished).
@@ -201,14 +218,13 @@ class NavigationSystem : public ISystem {
 	// An answer not taken this many ticks after it became takeable means the asker is gone (a mover
 	// destroyed with a ticket out): the request and its answer are dropped, as cancelRoute would.
 	static constexpr std::uint64_t kUntakenAnswerTicks = 600;
-	// A search that spans ticks holds back the limits of movers still well inside their served
-	// ground (see the file comment), so its reads stay current and it does not restart; for this
-	// many ticks over its whole life, counted from the first tick it is still running after a slice,
-	// and a restart does not count again. A search past its window holds nothing; with no search
-	// inside one, the held limits go in at the normal budget, tick after tick, until none wait. A
-	// mover is held only while it is less than kSightBufferMeters minus kLimitRetakeStepMm from the
-	// centre of its served limit, so what it sees stays meshed through a hold at a walk. A count, so
-	// the tick additions land on never depends on the machine.
+	// A search that spans ticks holds back the limits that are not urgent (see the file comment), so
+	// its reads stay current and it does not restart; for this many ticks over its whole life,
+	// counted from the first tick it is still running after a slice, and a restart does not count
+	// again. A search past its window holds nothing; with no search inside one, the held limits go in
+	// at the normal budget, tick after tick, until none wait. An urgent limit goes in through a hold,
+	// so what a mover sees stays meshed whatever is held. A count, so the tick additions land on
+	// never depends on the machine.
 	static constexpr std::uint32_t kMaxHeldAdditionTicks = 240;
 	// Cumulative since construction, but for outstanding.
 	struct RouteStats {
@@ -224,7 +240,7 @@ class NavigationSystem : public ISystem {
 		std::uint32_t maxSliceExpansions  = 0;
 		double		  lastSliceMs		  = 0.0; // on the route worker
 		double		  maxSliceMs		  = 0.0;
-		std::uint64_t ticksHeld			  = 0; // ticks the limits of movers well inside their ground waited
+		std::uint64_t ticksHeld			  = 0; // ticks the limits that are not urgent waited
 		std::uint32_t longestHold		  = 0; // the most in a row
 	};
 	[[nodiscard]] const RouteStats& routeStats() const { return routeStatsTotal; }
@@ -386,10 +402,11 @@ class NavigationSystem : public ISystem {
 
 	// Cumulative instrumentation since the last resetNavQueryStats(): the patches the joined jobs
 	// applied, and of them the ground, water, and wall patches (those that move generation(), with
-	// door edits, which are not patches).
+	// door edits, which are not patches); and the urgent limits gathered.
 	struct NavQueryStats {
 		std::uint64_t navPatches			 = 0;
 		std::uint64_t groundWaterWallPatches = 0;
+		std::uint64_t urgentLimits			 = 0;
 	};
 	[[nodiscard]] const NavQueryStats& navQueryStats() const { return navStats; }
 	void							   resetNavQueryStats() { navStats = {}; }
@@ -461,17 +478,41 @@ class NavigationSystem : public ISystem {
 	struct SeenLimit {
 		EntityID						mover = kInvalidEntity;
 		geometry::Vec2i64				centre{0, 0};
+		std::int64_t					rangeMm		   = 0; // R: the disc its outline holds
 		std::int64_t					circumradiusMm = 0;
 		std::vector<geometry::Vec2i64> outline;
 		Rect							query{};
+		std::uint64_t					taken = 0; // its mover's count of limits taken, this one included
+		// The mesh epoch it was last found not held by meshed ground at.
+		std::uint64_t coverChecked = std::numeric_limits<std::uint64_t>::max();
 	};
-	// Where a mover last took a limit and with what range, and the centre of its last limit that went in.
+	// A limit of a mover's that is in the mesh: its centre, its R, and which of his it was.
+	struct ServedLimit {
+		geometry::Vec2i64 centre{0, 0};
+		std::int64_t	  rangeMm = 0;
+		std::uint64_t	  taken	  = 0;
+	};
+	// Where a mover last took a limit and with what range, his sight distance, and his newest limit in
+	// the mesh.
+	//
+	// `served` is his newest limit known to be in the union: one whose ground patch was joined, or one
+	// the meshed ground already held when he took it or when it came up in the queue. Ground never
+	// leaves, so its whole disc of R stays meshed, whoever meshed it, and what he sees stays inside
+	// the union while he is within R minus his sight of its centre. A mover walking inside ground
+	// others meshed takes covered limits a step apart, so `served` follows him and he is neither
+	// urgent nor stopped; one whose range reaches past the union's edge has a `served` that stays
+	// behind him until his own limit there lands, and that limit goes urgent before he sees past it.
 	struct MoverDisc {
-		std::int64_t					 xMm		 = 0;
-		std::int64_t					 yMm		 = 0;
-		float							 rangeMeters = 0.0F;
-		std::optional<geometry::Vec2i64> served;
-		std::uint64_t					 seen = 0;
+		std::int64_t			   xMm		   = 0;
+		std::int64_t			   yMm		   = 0;
+		float					   rangeMeters = 0.0F;
+		std::int64_t			   sightMm	   = 0;
+		std::uint64_t			   taken	   = 0;
+		std::optional<ServedLimit> served;
+		// He stands kSightBufferMeters minus kLimitRetakeStepMm (his served R minus sight minus the
+		// step) or farther from `served`'s centre: his newest limit is urgent.
+		bool		  urgent = false;
+		std::uint64_t seen	 = 0;
 	};
 
 	// A tick's patch job: its patches in order, door tag edits, then the width refresh. Filled on the
@@ -512,7 +553,7 @@ class NavigationSystem : public ISystem {
 	void startRouteSlice();
 
 	// One tick's patches with the given budgets into the gathered jobs; finishPendingBuilds runs
-	// it unbudgeted. `holdLimits` keeps the limits of movers well inside their ground waiting.
+	// it unbudgeted. `holdLimits` keeps the limits that are not urgent waiting.
 	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t limitBudget, bool holdLimits);
 	// Hand `gathered` to the workers. No-op when it is empty.
 	void submit();
@@ -529,18 +570,23 @@ class NavigationSystem : public ISystem {
 	// The chunks the anchors hold this tick (within each one's load range).
 	void				collectAnchors();
 	// Queues a limit for every mover that is new, has moved kLimitRetakeStepMm, or changed its R
-	// since it last took one, unless the meshed ground holds it: one distance compare a mover
+	// since it last took one, unless the meshed ground holds it (then it is his served limit at
+	// once), and marks the movers whose newest limit is urgent: two distance compares a mover
 	// otherwise.
 	void trackMovers();
 	[[nodiscard]] SeenLimit makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const;
-	[[nodiscard]] bool		anchorHolds(world::ChunkCoordinate coord) const;
+	// The limit is in the mesh: its mover's served limit, unless he has a newer one there.
+	static void noteServed(MoverDisc& disc, const SeenLimit& limit);
+	void		noteServed(const SeenLimit& limit);
+	[[nodiscard]] bool anchorHolds(world::ChunkCoordinate coord) const;
 	// Every chunk the limit's query box meets is loaded and ready and has its placement, and, for
 	// a mover's limit, an anchor holds it.
 	[[nodiscard]] bool limitServable(const SeenLimit& limit) const;
 	// Some chunk the mover's limit needs is held by no anchor: it can never go in.
 	[[nodiscard]] bool limitStranded(const SeenLimit& limit) const;
-	// The limit's mover stands less than kSightBufferMeters minus kLimitRetakeStepMm from the centre
-	// of its last served limit.
+	// The limit is its mover's newest, and he is urgent (MoverDisc::urgent).
+	[[nodiscard]] bool limitUrgent(const SeenLimit& limit) const;
+	// A search's hold keeps the limit waiting: its mover has a limit in the mesh and it is not urgent.
 	[[nodiscard]] bool limitHoldable(const SeenLimit& limit) const;
 	// As a join moves generation(), the routes current before it that no closing box crosses are
 	// stamped current; a route a closing box crosses goes stale.
@@ -578,8 +624,10 @@ class NavigationSystem : public ISystem {
 	// became ready since the last call (generated or reloaded) is taken as it is.
 	void rederiveChangedWater();
 	void gatherRemovals(std::size_t removeBudget);
-	// Queued limits in order, kLimitsPerTick within `limitBudget` and their placed obstacles within
-	// `addBudget`; with `holdLimits`, those limitHoldable reads true wait. The landing first.
+	// Queued limits in order: urgent ones whole, outside every budget; the rest kLimitsPerTick within
+	// `limitBudget` and their placed obstacles within `addBudget`, and with `holdLimits`, those
+	// limitHoldable reads true wait. Those the meshed ground holds, and stranded ones, are dropped.
+	// The landing first.
 	void gatherLimits(std::size_t addBudget, std::size_t limitBudget, bool holdLimits);
 	// The limit's placed obstacles not yet gathered, in key order, at most `budget` of them, then,
 	// once none is left, its chunks' water not yet gathered and its ground. True when the ground went.
