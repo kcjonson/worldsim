@@ -293,7 +293,8 @@ namespace ecs {
 
 		/// Colonists whose last decision offered work toward the goal, in view order: an option for it
 		/// chosen, available, blocked only by the colonist's own carry (NoRoom), or held by another
-		/// colonist (Reserved).
+		/// colonist (Reserved). A cut or a haul is for the goal it was picked through; a build, a
+		/// teardown, a craft, or a placement is for the goal of that type whose destination it works.
 		[[nodiscard]] std::span<const EntityID> offeredTo(uint64_t goalId) const;
 
 		/// Some colonist's last decision found the goal's source held by another (Reserved), and none had

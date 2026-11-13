@@ -391,4 +391,31 @@ namespace ecs::test {
 		EXPECT_FALSE(ColonyGoalWork(world).allSourcesClaimed(goal)) << "one colonist can take a source";
 	}
 
+	// A craft or a build works an entity, not a goal: it is an offer toward the goal that entity is the
+	// destination of, the root and not its fetch child.
+	TEST_F(ColonyGoalWorkTest, ACraftOrBuildOptionIsAnOfferTowardItsEntitysGoal) {
+		const EntityID station = world.createEntity();
+		const EntityID site = world.createEntity();
+		const uint64_t craft = make(TaskType::Craft, GoalOwner::CraftingGoalSystem, station);
+		const uint64_t fetch = make(TaskType::Haul, GoalOwner::CraftingGoalSystem, station, craft);
+		const uint64_t build = make(TaskType::Build, GoalOwner::ConstructionGoalSystem, site);
+		const auto	   entityOption = [](TaskType type, EntityID entity, OptionStatus status) {
+			EvaluatedOption option;
+			option.taskType = type;
+			option.stationEntityId = type == TaskType::Craft ? static_cast<uint64_t>(entity) : 0U;
+			option.buildBlueprintEntityId = type == TaskType::Build ? static_cast<uint64_t>(entity) : 0U;
+			option.status = status;
+			return option;
+		};
+		const EntityID crafter = colonist(Task{}, {entityOption(TaskType::Craft, station, OptionStatus::Selected)});
+		const EntityID builder = colonist(Task{}, {entityOption(TaskType::Build, site, OptionStatus::Reserved)});
+		colonist(Task{}, {entityOption(TaskType::Craft, station, OptionStatus::NoSource)});
+
+		const ColonyGoalWork work(world);
+		EXPECT_EQ(listed(work.offeredTo(craft)), (std::vector<EntityID>{crafter})) << "awaiting materials is no offer";
+		EXPECT_TRUE(work.offeredTo(fetch).empty());
+		EXPECT_EQ(listed(work.offeredTo(build)), (std::vector<EntityID>{builder}));
+		EXPECT_TRUE(work.allSourcesClaimed(build));
+	}
+
 } // namespace ecs::test

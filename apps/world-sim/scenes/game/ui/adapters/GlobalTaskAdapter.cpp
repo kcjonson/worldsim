@@ -306,7 +306,7 @@ namespace world_sim::adapters {
 		/// Craft/PlacePackaged rounding it out. Build is the umbrella (the destination holder), so a site
 		/// shows its build step, not just its material children. A box keeps its umbrella while it has rules
 		/// and is left out until some colonist is offered work toward it. With `knownTo`, only the goals
-		/// that colonist's last decision offered work toward.
+		/// that colonist works or its last decision offered work toward.
 		std::vector<GlobalTaskDisplayData>
 		goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition, std::optional<ecs::EntityID> knownTo) {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
@@ -315,11 +315,13 @@ namespace world_sim::adapters {
 			for (ecs::TaskType type :
 				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
-					if (!work.hasWork(*goal)) {
+					const auto workers = work.workersOf(*goal);
+					const bool works = knownTo.has_value() && std::ranges::find(workers, *knownTo) != workers.end();
+					if (!works && !work.hasWork(*goal)) {
 						continue;
 					}
 					const auto offered = work.offeredTo(goal->id);
-					if (knownTo.has_value() && std::ranges::find(offered, *knownTo) == offered.end()) {
+					if (knownTo.has_value() && !works && std::ranges::find(offered, *knownTo) == offered.end()) {
 						continue;
 					}
 					result.push_back(goalToDisplayData(world, registry, work, *goal, referencePosition));

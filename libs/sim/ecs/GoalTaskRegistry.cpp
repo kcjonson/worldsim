@@ -70,6 +70,12 @@ namespace ecs {
 				}
 			}
 		};
+		// An option that works an entity (a station, a site, a package) is an offer toward the goal whose
+		// destination it is, the goal workersOf names its workers for.
+		const auto goalWorking = [](uint64_t entity, TaskType type) -> uint64_t {
+			const GoalTask* goal = GoalTaskRegistry::Get().getGoalByDestination(static_cast<EntityID>(entity));
+			return goal != nullptr && goal->type == type ? goal->id : 0U;
+		};
 		for (auto [colonist, task] : world.view<Task>()) {
 			switch (task.type) {
 				case TaskType::Harvest:
@@ -105,10 +111,33 @@ namespace ecs {
 			for (const EvaluatedOption& option : trace->options) {
 				const bool open = option.status == OptionStatus::Selected || option.status == OptionStatus::Available;
 				const bool live = open || option.status == OptionStatus::NoRoom || option.status == OptionStatus::Reserved;
-				const uint64_t goal = option.taskType == TaskType::Haul	   ? option.haulGoalId
-									  : option.taskType == TaskType::Harvest ? option.harvestGoalId
-																			 : 0U;
-				if (!live || goal == 0) {
+				if (!live) {
+					continue;
+				}
+				uint64_t goal = 0;
+				switch (option.taskType) {
+					case TaskType::Haul:
+						goal = option.haulGoalId;
+						break;
+					case TaskType::Harvest:
+						goal = option.harvestGoalId;
+						break;
+					case TaskType::Build:
+					case TaskType::Deconstruct:
+						goal = goalWorking(option.buildBlueprintEntityId, option.taskType);
+						break;
+					case TaskType::Craft:
+						goal = goalWorking(option.stationEntityId, TaskType::Craft);
+						break;
+					case TaskType::PlacePackaged:
+						goal = goalWorking(option.placePackagedEntityId, TaskType::PlacePackaged);
+						break;
+					case TaskType::FulfillNeed:
+					case TaskType::Wander:
+					case TaskType::None:
+						break;
+				}
+				if (goal == 0) {
 					continue;
 				}
 				Offers& toGoal = offers[goal];

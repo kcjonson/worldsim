@@ -913,7 +913,9 @@ is then a few lookups, and `GlobalTaskAdapter` only formats them.
   have no one item and show none.
 - Known to: a row nobody works names the colonists whose last decision offered work toward it, "known
   to Alice, Bob", by the same two-then-"+N" rule. Offered means an option for the goal chosen,
-  available, held by another colonist, or blocked only by the colonist's own carry.
+  available, held by another colonist, or blocked only by the colonist's own carry. A cut or a haul is
+  for the goal it was picked through; a build, teardown, craft, or placement is for the goal of its
+  type whose destination it works, the goal the Working status names it under.
 - The panel lists only goals with something to do (`ColonyGoalWork::hasWork`): a storage umbrella or
   stocking cut shows only while some colonist was offered work toward it. A full box, a box that wants
   an item nobody knows a loose source of, a box with room for a category nobody has any of, and a
@@ -923,7 +925,7 @@ is then a few lookups, and `GlobalTaskAdapter` only formats them.
   landed/required materials for a craft), "Waiting (no source found)", "Needs materials", "Building",
   and "Ready to build" for a site, "Working", "Available" (detail "far"), and "Unassigned".
 - Per-colonist task list: the dossier's Known work tab shows the panel's rows for the goals that
-  colonist's last decision offered work toward, measured from the colonist.
+  colonist works or its last decision offered work toward, measured from the colonist.
 - Decision trace: a Reserved option status naming the holder, "(reserved by Alice)", or for a Craft
   option "(station in use by Alice)", from the index's top-holder lookups.
 

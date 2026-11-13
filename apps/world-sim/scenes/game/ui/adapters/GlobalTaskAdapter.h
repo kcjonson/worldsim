@@ -43,8 +43,8 @@ struct GlobalTaskDisplayData {
 	const glm::vec2& referencePosition
 );
 
-/// The same rows, for the colonist details tab: only the goals the colonist's last decision offered
-/// work toward, unsorted, distances from `referencePosition` (the colonist).
+/// The same rows, for the colonist details tab: only the goals the colonist works or its last decision
+/// offered work toward, unsorted, distances from `referencePosition` (the colonist).
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getKnownTasks(
 	ecs::World&		 world,
 	ecs::EntityID	 colonist,
