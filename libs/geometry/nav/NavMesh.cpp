@@ -464,6 +464,7 @@ namespace geometry::nav {
 		r.provenance	 = poly.provenanceId;
 		r.opening		 = poly.openingId;
 		r.holeCapable	   = poly.holeCapable;
+		r.coverOnly		   = poly.coverOnly;
 		const Int128 area2 = signedAreaDoubled(poly.ring);
 		r.areaDoubledAbs   = area2.sign() < 0 ? -area2 : area2;
 		r.counterClockwise = area2.sign() > 0;
@@ -510,6 +511,9 @@ namespace geometry::nav {
 		const SampleRing* water		 = nullptr;
 		int				  waterDepth = 0;
 		for (const SampleRing* br : containing) {
+			if (br->coverOnly) {
+				continue;
+			}
 			if (br->holeCapable) {
 				++waterDepth;
 				if (water == nullptr || ranksBefore(*br, *water)) {

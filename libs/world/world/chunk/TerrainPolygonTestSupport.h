@@ -242,7 +242,7 @@ inline SeamSide seamChunk(const Chunk& chunk) {
 
 // The nav mesh NavInputBuilder would build over these chunks: one unblocked
 // border over their bounding rectangle, then every blocking navRing as a
-// blocked water polygon (D9).
+// blocked water polygon and every fordable one as a cover-only ring (D9).
 inline geometry::nav::NavMesh buildSeamMesh(const std::vector<SeamSide>& sides) {
 	Vec2i64 lo = sides.front().min;
 	Vec2i64 hi = sides.front().max;
@@ -256,6 +256,8 @@ inline geometry::nav::NavMesh buildSeamMesh(const std::vector<SeamSide>& sides) 
 		for (const TerrainRing& ring : s.polys->navRings) {
 			if (ring.blocksMovement) {
 				input.polygons.push_back({ring.ring, true, -1, geometry::nav::kNoOpening, ring.holeCapable});
+			} else {
+				input.polygons.push_back({.ring = ring.ring, .blocked = true, .provenanceId = -5, .coverOnly = true});
 			}
 		}
 	}

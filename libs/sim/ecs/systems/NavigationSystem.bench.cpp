@@ -969,8 +969,8 @@ namespace {
 	}
 
 	// The build tool's per-frame cursor checks among obstacles: isAreaWalkable over a 4 m square
-	// footprint and isPolylineWalkable over a 20 m wall line, each sampled every 0.5 m, at 200 spots
-	// round the colony. Reports one frame's pair of checks.
+	// footprint, read from every mesh triangle it meets, and isPolylineWalkable over a 20 m wall line
+	// sampled every 0.5 m, at 200 spots round the colony. Reports one frame's pair of checks.
 	void BM_CursorCheck(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(0);
@@ -1088,8 +1088,8 @@ namespace {
 		std::size_t waterVerts = 0;
 		for (const world::Chunk* chunk : chunks.getLoadedChunks()) {
 			for (const world::TerrainRing& ring : chunk->terrainPolygons().navRings) {
-				waterRings += ring.blocksMovement ? 1 : 0;
-				waterVerts += ring.blocksMovement ? ring.ring.size() : 0;
+				waterRings += 1;
+				waterVerts += ring.ring.size();
 			}
 		}
 		for (auto _ : state) {

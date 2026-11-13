@@ -16,7 +16,7 @@ namespace world_sim {
 		constexpr Foundation::Color kRingEdge{0.2F, 0.9F, 0.95F, 0.85F};	  // cyan
 		constexpr Foundation::Color kSyntheticEdge{0.95F, 0.2F, 0.9F, 0.85F}; // magenta: apron closure, not a real shore (D4)
 		constexpr Foundation::Color kFordableCutEdge{1.0F, 0.55F, 0.1F, 0.9F}; // orange: butt edge between channel pieces (D7)
-		constexpr float				kFordableAlphaScale = 0.4F;				   // a fordable ring nav skips, drawn dimmer
+		constexpr float				kFordableAlphaScale = 0.4F;				   // a fordable ring, which blocks no movement, drawn dimmer
 		constexpr Foundation::Color kNavRingEdge{1.0F, 0.9F, 0.15F, 0.8F};	  // yellow
 		constexpr Foundation::Color kChunkOutline{1.0F, 1.0F, 1.0F, 0.18F};	  // faint white
 
