@@ -158,7 +158,7 @@ namespace {
 			const float planetSize = std::max(kPlanetMinSize, screenH * 0.55F);
 			const float overhang = planetSize * 0.25F;
 			planet.render(
-				{screenW - (planetSize - overhang), (screenH - planetSize) * 0.5F, planetSize, planetSize}, screenW, screenH, backdrop
+				{screenW - (planetSize - overhang), (screenH - planetSize) * 0.5F, planetSize, planetSize}, owner->viewport(), backdrop
 			);
 		}
 

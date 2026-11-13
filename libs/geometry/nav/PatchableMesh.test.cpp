@@ -8,6 +8,7 @@
 #include "nav/PathQuery.h"
 #include "predicates/Predicates.h"
 #include "triangulation/ConstrainedDelaunay.h"
+#include "visibility/Visibility.h"
 
 #include <gtest/gtest.h>
 
@@ -3992,4 +3993,141 @@ TEST(PatchableMesh, OverlappingSlantedOutlinesMatchFreshBuild) {
 			return;
 		}
 	}
+}
+
+// --- Player visibility's seen record: sight outlines as ground rings -------------------
+
+namespace {
+
+	// Whether no two edges of the ring meet, except neighbours at their shared vertex.
+	bool simpleRing(const std::vector<Vec2i64>& ring) {
+		const std::size_t count = ring.size();
+		for (std::size_t i = 0; i < count; ++i) {
+			const Vec2i64& start = ring[i];
+			const Vec2i64& end	 = ring[(i + 1) % count];
+			for (std::size_t j = i + 1; j < count; ++j) {
+				const Vec2i64& otherStart = ring[j];
+				const Vec2i64& otherEnd	  = ring[(j + 1) % count];
+				if (std::max(start.x, end.x) < std::min(otherStart.x, otherEnd.x) || std::max(otherStart.x, otherEnd.x) < std::min(start.x, end.x) ||
+					std::max(start.y, end.y) < std::min(otherStart.y, otherEnd.y) || std::max(otherStart.y, otherEnd.y) < std::min(start.y, end.y)) {
+					continue;
+				}
+				const geometry::SegmentRelation relation = geometry::intersectSegments(start, end, otherStart, otherEnd).relation;
+				const bool						adjacent = j == i + 1 || (i == 0 && j == count - 1);
+				if (relation == geometry::SegmentRelation::Disjoint || (adjacent && relation == geometry::SegmentRelation::EndpointTouch)) {
+					continue;
+				}
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// A 0.2 m wall along y = 0, 40 m long, with a 1 m doorway at x in [-500, 500]: each
+	// half's four faces.
+	std::vector<geometry::OccluderSegment> doorwayWalls() {
+		std::vector<geometry::OccluderSegment> out;
+		for (const auto& [x0, x1] : {std::pair<std::int64_t, std::int64_t>{-20000, -500}, std::pair<std::int64_t, std::int64_t>{500, 20000}}) {
+			out.push_back({{x0, 0}, {x1, 0}});
+			out.push_back({{x1, 0}, {x1, 200}});
+			out.push_back({{x1, 200}, {x0, 200}});
+			out.push_back({{x0, 200}, {x0, 0}});
+		}
+		return out;
+	}
+
+	std::int64_t cross3(const Vec2i64& origin, const Vec2i64& first, const Vec2i64& second) {
+		return (first.x - origin.x) * (second.y - origin.y) - (first.y - origin.y) * (second.x - origin.x);
+	}
+
+	// The hull of the limit polygons of `circumradius` at a leg's two ends, counter-clockwise.
+	std::vector<Vec2i64> capsule(const Vec2i64& start, const Vec2i64& end, std::int64_t circumradius) {
+		std::vector<Vec2i64>	   points = limitPolygonOfCircumradius(start, circumradius);
+		const std::vector<Vec2i64> atEnd  = limitPolygonOfCircumradius(end, circumradius);
+		points.insert(points.end(), atEnd.begin(), atEnd.end());
+		std::sort(points.begin(), points.end());
+		points.erase(std::unique(points.begin(), points.end()), points.end());
+		std::vector<Vec2i64> hull(2 * points.size());
+		std::size_t			 size = 0;
+		for (const Vec2i64& point : points) {
+			while (size >= 2 && cross3(hull[size - 2], hull[size - 1], point) <= 0) {
+				--size;
+			}
+			hull[size++] = point;
+		}
+		const std::size_t lower = size + 1;
+		for (std::size_t i = points.size() - 1; i-- > 0;) {
+			while (size >= lower && cross3(hull[size - 2], hull[size - 1], points[i]) <= 0) {
+				--size;
+			}
+			hull[size++] = points[i];
+		}
+		hull.resize(size - 1);
+		return hull;
+	}
+
+} // namespace
+
+// Visibility polygons from viewpoints 0.5 m apart as an observer walks past a doorway, along
+// the line of one jamb's face, and through it twice, each added as ground where groundCovers
+// says it extends the union: rays grazing the jambs, and nearly parallel edges from
+// viewpoints a step apart.
+TEST(PatchableMesh, DoorwayVisibilityPolygonsMatchFreshBuild) {
+	const std::vector<geometry::OccluderSegment> walls = doorwayWalls();
+	std::vector<Vec2i64>						 viewpoints;
+	for (std::int64_t x = -3000; x <= 3000; x += 500) {
+		viewpoints.push_back({x, -3000});
+	}
+	for (std::int64_t y = -4000; y <= -500; y += 500) {
+		viewpoints.push_back({500, y});
+	}
+	for (std::int64_t y = -4000; y <= 4000; y += 500) {
+		viewpoints.push_back({0, y});
+	}
+	for (std::int64_t k = -6; k <= 6; ++k) {
+		viewpoints.push_back({k * 350, k * 350 + 100});
+	}
+	Harness harness;
+	int		added = 0;
+	for (const Vec2i64& viewpoint : viewpoints) {
+		const geometry::Ring ring = geometry::computeVisibilityPolygon(viewpoint, 30000, walls);
+		ASSERT_GE(ring.size(), 3U);
+		ASSERT_TRUE(simpleRing(ring)) << "the polygon from (" << viewpoint.x << ", " << viewpoint.y << ") is not simple";
+		if (harness.mesh.groundCovers(ring)) {
+			continue;
+		}
+		harness.add(bounds(ring));
+		++added;
+		ASSERT_EQ(harness.last.unreadCovers, 0) << "from (" << viewpoint.x << ", " << viewpoint.y << ")";
+		ASSERT_EQ(harness.mesh.validate(), "") << "from (" << viewpoint.x << ", " << viewpoint.y << ")";
+	}
+	EXPECT_GT(added, 10);
+	EXPECT_TRUE(matchesFresh(harness.mesh, harness.model));
+	EXPECT_TRUE(agreesWithTheRingsAsGiven(harness.mesh, harness.model));
+}
+
+// A leg's capsule walked again 1 to 40 mm to either side, each re-walk's far end 3 mm
+// further over than its near end: edges nearly coincident and nearly parallel with the
+// union's, at a slant and far from the origin.
+TEST(PatchableMesh, RewalkedLegsMatchFreshBuild) {
+	const Vec2i64	   origin{37123456, -18456789};
+	const Vec2i64	   along{95424, 29737}; // 100 m at 17.3 degrees
+	const std::int64_t length = 99950;		// |along|, rounded
+	Harness			   harness;
+	harness.add(bounds(capsule(origin, origin + along, 30000)));
+	for (const std::int64_t unit : {std::int64_t{1}, std::int64_t{10}}) {
+		for (std::int64_t i = 1; i <= 4; ++i) {
+			const std::int64_t offset = (i % 2 == 0 ? 1 : -1) * i * unit;
+			const Vec2i64	   start{origin.x + roundedAway(-along.y * offset, length), origin.y + roundedAway(along.x * offset, length)};
+			const Vec2i64	   end{origin.x + along.x + roundedAway(-along.y * (offset + 3), length), origin.y + along.y + roundedAway(along.x * (offset + 3), length)};
+			const std::vector<Vec2i64> ring = capsule(start, end, 30000);
+			if (harness.mesh.groundCovers(ring)) {
+				continue;
+			}
+			harness.add(bounds(ring));
+			ASSERT_EQ(harness.last.unreadCovers, 0) << "offset " << offset;
+			ASSERT_EQ(harness.mesh.validate(), "") << "offset " << offset;
+		}
+	}
+	EXPECT_TRUE(matchesFresh(harness.mesh, harness.model));
 }

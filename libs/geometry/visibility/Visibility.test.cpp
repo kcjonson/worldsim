@@ -1,13 +1,17 @@
 #include "Visibility.h"
+#include "SightPolygon.h"
+#include "Buildings.test.h"
 #include "../core/Vec2i64.h"
 #include "../polygon/Polygon.h"
 #include "../predicates/Predicates.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
 #include <numbers>
 #include <optional>
 #include <random>
+#include <utility>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -94,23 +98,52 @@ namespace {
 
 } // namespace
 
-TEST(Visibility, NoOccludersIsSightCircle) {
-	const Vec2i64 observer{0, 0};
-	const std::int64_t radiusMm = 1000;
-	Ring poly = computeVisibilityPolygon(observer, radiusMm, {});
-
-	ASSERT_GE(poly.size(), 3u);
-	EXPECT_TRUE(isCcw(poly));
-
-	// Every vertex sits on the sight circle (within a couple mm of the radius).
-	for (const Vec2i64& v : poly) {
-		EXPECT_NEAR(radius(observer, v), static_cast<double>(radiusMm), 2.0);
+TEST(Visibility, NoOccludersIsTheSightPolygon) {
+	for (const Vec2i64 observer : {Vec2i64{0, 0}, Vec2i64{37123456, -18456789}}) {
+		for (const std::int64_t radiusMm : {std::int64_t{1000}, std::int64_t{30000}}) {
+			const Ring poly = computeVisibilityPolygon(observer, radiusMm, {});
+			EXPECT_EQ(poly, sightPolygon(observer, radiusMm));
+			EXPECT_TRUE(isCcw(poly));
+			EXPECT_TRUE(simpleAround(poly, observer));
+		}
 	}
+}
 
-	// Area ~= pi r^2. The N-gon under-covers slightly; allow 1% for chord loss.
-	const double area = std::abs(signedAreaDoubled(poly).toDouble()) * 0.5;
-	const double expected = std::numbers::pi * static_cast<double>(radiusMm) * static_cast<double>(radiusMm);
-	EXPECT_NEAR(area, expected, expected * 0.01);
+// Where a wall runs out past the rim, the polygon turns at the crossing instead of cutting
+// across to the next rim vertex: the wall face is seen to within a millimetre of the rim.
+TEST(Visibility, WallFaceIsSeenOutToTheRim) {
+	const Vec2i64					   observer{0, 0};
+	const std::vector<OccluderSegment> occ{{{1000, -40000}, {1000, 40000}}};
+	const Ring						   poly = computeVisibilityPolygon(observer, 30000, occ);
+	const Ring						   rim	= sightPolygon(observer, 30000);
+	// Where the rim side from vertex 15 to vertex 16 (84.4 to 90 degrees) crosses x = 1000.
+	const Vec2i64&	   from	   = rim[15];
+	const Vec2i64&	   to	   = rim[16];
+	const std::int64_t rimAtFace = from.y + (to.y - from.y) * (1000 - from.x) / (to.x - from.x);
+	EXPECT_NE(pointInPolygon(Vec2i64{999, rimAtFace - 5}, poly), PointInPolygon::Outside);
+	EXPECT_NE(pointInPolygon(Vec2i64{999, -(rimAtFace - 5)}, poly), PointInPolygon::Outside);
+	EXPECT_EQ(pointInPolygon(Vec2i64{1001, 0}, poly), PointInPolygon::Outside);
+	EXPECT_TRUE(simpleAround(poly, observer));
+}
+
+TEST(Visibility, SimpleAroundRejectsBadRings) {
+	const Ring square{{-10, -10}, {10, -10}, {10, 10}, {-10, 10}};
+	EXPECT_TRUE(simpleAround(square, {0, 0}));
+	EXPECT_TRUE(simpleAround(square, {9, 9}));
+	EXPECT_FALSE(simpleAround(square, {10, 0})) << "centre on an edge";
+	EXPECT_FALSE(simpleAround(square, {20, 0})) << "centre outside";
+	EXPECT_FALSE(simpleAround(Ring{{-10, 10}, {10, 10}, {10, -10}, {-10, -10}}, {0, 0})) << "clockwise";
+	EXPECT_FALSE(simpleAround(Ring{{-10, -10}, {10, -10}, {-10, 10}, {10, 10}}, {0, 0})) << "a bow tie";
+	EXPECT_FALSE(simpleAround(Ring{{-10, -10}, {10, -10}, {10, 10}, {-10, 10}, {-10, -10}, {10, -10}, {10, 10}, {-10, 10}}, {0, 0})) << "twice round";
+	// A shadow edge: a radial step from a near corner out to the far field is allowed once.
+	EXPECT_TRUE(simpleAround(Ring{{-10, -10}, {10, -10}, {10, 5}, {20, 10}, {-10, 10}}, {0, 0}));
+	EXPECT_TRUE(simpleAround(Ring{{-10, -10}, {10, -10}, {4, 2}, {10, 5}, {-10, 10}}, {0, 0}));
+	// A vertex a step behind its neighbour's angle, as a snapped hit can fall: still simple.
+	EXPECT_TRUE(simpleAround(Ring{{-10, -10}, {10, -10}, {10, 4}, {20, 2}, {-10, 10}}, {0, 0}));
+	// The same step back far enough that the next edge crosses an earlier one.
+	EXPECT_FALSE(simpleAround(Ring{{-10, -10}, {10, -10}, {10, 4}, {20, -2}, {-10, 10}}, {0, 0}));
+	// Simple but touching itself at a vertex.
+	EXPECT_FALSE(simpleAround(Ring{{-10, -10}, {10, -10}, {0, 5}, {10, 10}, {-10, 10}, {0, 5}}, {0, -5}));
 }
 
 TEST(Visibility, SingleWallCastsShadow) {
@@ -289,6 +322,44 @@ TEST(Visibility, Deterministic) {
 	EXPECT_EQ(a, c);
 }
 
+// The ring is built from a compile-time table and integer predicates, so it is the same on
+// every toolchain by construction; this pins it so a change to the construction is seen. Two
+// doorway scenes, one at the origin and one 41 km out, are pinned by their vertex count and a
+// hash of their vertices; CI runs this on MSVC and on clang.
+TEST(Visibility, DoorwaySceneIsTheSameOnEveryToolchain) {
+	struct Scene {
+		Vec2i64		  offset;
+		Vec2i64		  observer;
+		std::size_t	  vertices;
+		std::uint64_t hash;
+	};
+	const Scene scenes[] = {
+		{{0, 0}, {-1300, -2700}, 47, 10607929458999170820ULL},
+		{{37123456, -18456789}, {37122156, -18459489}, 47, 6333417564983028845ULL},
+	};
+	for (const Scene& scene : scenes) {
+		std::vector<OccluderSegment> walls;
+		for (const auto& [x0, x1] : {std::pair<std::int64_t, std::int64_t>{-20000, -500}, std::pair<std::int64_t, std::int64_t>{500, 20000}}) {
+			const Vec2i64 bottomStart = scene.offset + Vec2i64{x0, 0};
+			const Vec2i64 bottomEnd   = scene.offset + Vec2i64{x1, 0};
+			const Vec2i64 topEnd	   = scene.offset + Vec2i64{x1, 200};
+			const Vec2i64 topStart	   = scene.offset + Vec2i64{x0, 200};
+			walls.push_back({bottomStart, bottomEnd});
+			walls.push_back({bottomEnd, topEnd});
+			walls.push_back({topEnd, topStart});
+			walls.push_back({topStart, bottomStart});
+		}
+		const Ring	  ring = computeVisibilityPolygon(scene.observer, 30000, walls);
+		std::uint64_t hash = 0xCBF29CE484222325ULL;
+		for (const Vec2i64& vertex : ring) {
+			hash = (hash ^ static_cast<std::uint64_t>(vertex.x)) * 0x100000001B3ULL;
+			hash = (hash ^ static_cast<std::uint64_t>(vertex.y)) * 0x100000001B3ULL;
+		}
+		EXPECT_EQ(ring.size(), scene.vertices) << "observer (" << scene.observer.x << ", " << scene.observer.y << ")";
+		EXPECT_EQ(hash, scene.hash) << "observer (" << scene.observer.x << ", " << scene.observer.y << ")";
+	}
+}
+
 TEST(OracleSweep, RandomScenesMatchBruteForce) {
 	// The correctness guarantee. For hundreds of random scenes (observer + a small
 	// set of occluder segments at small integer coords), compare the computed
@@ -405,4 +476,34 @@ TEST(OracleSweep, RandomScenesMatchBruteForce) {
 
 	EXPECT_GT(scenes, 100);		  // a meaningful number of random scenes actually ran
 	EXPECT_GT(samples, 40000);	  // and a deep sweep of rays per scene was checked
+}
+
+// Observers in and round random buildings: on open floor, a few millimetres off wall corners,
+// and in doorways. simpleAround never passes a ring an exact pairwise test finds not simple;
+// the count it turns away is printed (the bench runs the same fuzz at scale).
+TEST(Visibility, StarCheckIsSoundOnBuildings) {
+	std::mt19937 rng(0xD00Du);
+	int			 polygons = 0;
+	int			 rejected = 0;
+	int			 notSimple = 0;
+	for (int scene = 0; scene < 6; ++scene) {
+		const buildings::Building building = buildings::randomBuilding(rng);
+		for (const Vec2i64& observer : buildings::observersFor(building, rng, 25)) {
+			const Ring ring = computeVisibilityPolygon(observer, 30000, building.walls);
+			++polygons;
+			bool simple = ring.size() >= 3;
+			for (std::size_t i = 0; i < ring.size() && simple; ++i) {
+				for (std::size_t j = i + 1; j < ring.size() && simple; ++j) {
+					const SegmentRelation relation = intersectSegments(ring[i], ring[(i + 1) % ring.size()], ring[j], ring[(j + 1) % ring.size()]).relation;
+					const bool			  adjacent = j == i + 1 || (i == 0 && j == ring.size() - 1);
+					simple = relation == SegmentRelation::Disjoint || (adjacent && relation == SegmentRelation::EndpointTouch);
+				}
+			}
+			notSimple += simple ? 0 : 1;
+			rejected += simpleAround(ring, observer) ? 0 : 1;
+			EXPECT_EQ(simpleAround(ring, observer), simple) << "observer (" << observer.x << ", " << observer.y << ")";
+		}
+	}
+	std::printf("[visibility simple check] %d polygons: %d turned away by simpleAround, %d not simple by every pair\n", polygons, rejected, notSimple);
+	EXPECT_GE(polygons, 140);
 }

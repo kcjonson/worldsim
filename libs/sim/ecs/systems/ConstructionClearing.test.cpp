@@ -465,4 +465,55 @@ namespace ecs::test {
 		EXPECT_EQ(drops.front().fallback, glm::vec2(5.0F, 4.0F)) << "with no ground past the edge, the search restarts from the old spot";
 	}
 
+	// A foundation is built on bare ground. Grass is not harvestable, so it never holds the site in
+	// Clearing; as building starts it is gone from the footprint, a placed thing to carry is dropped
+	// again just outside as a pile is, and what grows outside the footprint is left alone.
+	TEST_F(FootprintClearingTest, TheFootprintIsBaredWhenBuildingStarts) {
+		constexpr const char*	kGrass = "Groundcover_ClearTestGrass";
+		assets::AssetDefinition grass;
+		grass.defName = kGrass;
+		grass.label = "Clear Test Grass";
+		grass.role = assets::AssetRole::Groundcover;
+		assets::AssetRegistry::Get().registerTestDefinition(std::move(grass));
+
+		std::vector<glm::vec2> drops;
+		construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t quantity, glm::vec2) {
+			EXPECT_EQ(defName, "Berry");
+			EXPECT_EQ(quantity, 1U);
+			drops.emplace_back(x, y);
+		});
+
+		const glm::vec2				 tuft{3.0F, 3.0F};
+		const glm::vec2				 berry{5.0F, 4.0F};
+		const glm::vec2				 outside{9.0F, 3.0F};
+		const world::ChunkCoordinate coord = world::worldToChunk({4.0F, 4.0F});
+		assets::AsyncChunkPlacementResult chunk;
+		chunk.coord = coord;
+		chunk.spatialIndex.insert({kGrass, tuft});
+		chunk.spatialIndex.insert({"Berry", berry});
+		chunk.spatialIndex.insert({kGrass, outside});
+		executor.storeChunkResult(std::move(chunk));
+		processed.insert(coord);
+		world->getComponent<StructureBlueprint>(site)->delivered = {{"Wood", 10}};
+
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::UnderConstruction; }, 300)) << "grass does not block the site";
+		const assets::SpatialIndex* index = executor.getChunkIndex(coord);
+		EXPECT_FALSE(index->contains(tuft, kGrass)) << "no grass is built over";
+		EXPECT_FALSE(index->contains(berry, "Berry"));
+		EXPECT_TRUE(index->contains(outside, kGrass)) << "grass beside the site still grows";
+		ASSERT_EQ(drops.size(), 1U) << "the berry is dropped again, not lost";
+		EXPECT_GT(drops.front().x, 8.0F) << "out past the nearest edge";
+	}
+
+	// A foundation the dev tools complete at once skips the clear and the start of building. Its ground
+	// is bared all the same, the tree standing on it included.
+	TEST_F(FootprintClearingTest, AFoundationCompletedAtOnceIsBaredToo) {
+		const glm::vec2 tree{2.0F, 2.0F};
+		plantTrees({tree});
+
+		ASSERT_TRUE(construction->forceCompleteBlueprint(site));
+		runUntil([] { return false; }, 60);
+		EXPECT_FALSE(treeStands(tree));
+	}
+
 } // namespace ecs::test

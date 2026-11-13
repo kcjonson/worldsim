@@ -6,6 +6,7 @@
 
 #include <primitives/Primitives.h>
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -29,6 +30,10 @@ namespace world_sim {
 
 		// All geometry is stored in integer millimeters; render space is meters.
 		constexpr float kMmToMeters = 0.001F;
+
+		// Outdoor sight is drawn as a regular polygon this many edges around.
+		constexpr int kCircleSegments = 64;
+		constexpr float kTwoPi = 6.2831853F;
 	} // namespace
 
 	VisionOverlay::VisionOverlay(const Args& args)
@@ -69,29 +74,38 @@ namespace world_sim {
 
 		// --- Per-observer visibility polygons ---
 		for (auto [entity, pos, memory] : ecsWorld->view<ecs::Position, ecs::Memory>()) {
+			(void)pos;    // the shape carries its own centre
 			(void)memory; // view filters by Memory; value not read here
-			const geometry::Ring* ring = vision->visibilityPolygon(entity);
-			if (ring == nullptr || ring->size() < 3) {
+			const auto shape = vision->sightShape(entity);
+			if (!shape.has_value()) {
 				continue;
 			}
 
-			const std::size_t n = ring->size();
-			const std::string idBase = "vis_poly_" + std::to_string(static_cast<unsigned long long>(entity));
-
-			// Observer screen position (meters).
-			const float ox = pos.value.x;
-			const float oy = pos.value.y;
-			const auto	os = camera->worldToScreen(ox, oy, viewportW, viewportH, kPixelsPerMeter);
-
-			// Project the whole ring once; reuse for both fan and outline.
+			// Outdoors there is no polygon and sight is the plain circle at the radius vision used.
 			std::vector<Foundation::Vec2> screenRing;
-			screenRing.reserve(n);
-			for (const auto& v : *ring) {
-				const float wx = static_cast<float>(v.x) * kMmToMeters;
-				const float wy = static_cast<float>(v.y) * kMmToMeters;
-				const auto	s = camera->worldToScreen(wx, wy, viewportW, viewportH, kPixelsPerMeter);
-				screenRing.push_back(Foundation::Vec2{s.x, s.y});
+			if (shape->polygon != nullptr) {
+				for (const auto& vertex : *shape->polygon) {
+					const float worldX = static_cast<float>(vertex.x) * kMmToMeters;
+					const float worldY = static_cast<float>(vertex.y) * kMmToMeters;
+					const auto	screen = camera->worldToScreen(worldX, worldY, viewportW, viewportH, kPixelsPerMeter);
+					screenRing.push_back(Foundation::Vec2{screen.x, screen.y});
+				}
+			} else {
+				screenRing.reserve(kCircleSegments);
+				for (int segment = 0; segment < kCircleSegments; ++segment) {
+					const float angle = kTwoPi * static_cast<float>(segment) / static_cast<float>(kCircleSegments);
+					const float worldX = shape->center.x + shape->radius * std::cos(angle);
+					const float worldY = shape->center.y + shape->radius * std::sin(angle);
+					const auto	screen = camera->worldToScreen(worldX, worldY, viewportW, viewportH, kPixelsPerMeter);
+					screenRing.push_back(Foundation::Vec2{screen.x, screen.y});
+				}
 			}
+			const std::size_t n = screenRing.size();
+			if (n < 3) {
+				continue;
+			}
+			const std::string idBase = "vis_poly_" + std::to_string(static_cast<unsigned long long>(entity));
+			const auto	os = camera->worldToScreen(shape->center.x, shape->center.y, viewportW, viewportH, kPixelsPerMeter);
 
 			// Triangle fan fill: observer at center, each consecutive edge on the ring.
 			// n triangles, 3n indices, n+1 vertices (observer + ring verts).

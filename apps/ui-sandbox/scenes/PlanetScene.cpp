@@ -14,6 +14,7 @@
 
 #include <threading/TaskPool.h>
 
+#include <application/App.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
@@ -36,7 +37,8 @@ namespace {
 
 	class PlanetScene : public app::Scene {
 	  public:
-		void onEnter(app::App& /*app*/) override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			timeSinceEnter = 0.0F;
 			LOG_INFO(World, "PlanetScene: starting planet generation (n=%u)", kSubdivision);
 			statusText = "Generating planet...";
@@ -103,13 +105,19 @@ namespace {
 			glClear(GL_COLOR_BUFFER_BIT);
 
 			if (meshBuilt && renderer.isReady() && colorizer.isReady()) {
-				GLint vp[4] = {};
-				glGetIntegerv(GL_VIEWPORT, vp);
-				int fbW = vp[2], fbH = vp[3];
+				const Renderer::Viewport& window = owner->viewport();
 
 				colorizer.uploadPending();
-				renderer.render(mesh, colorizer, kSubdivision, camera, fbW, fbH);
-				renderer.blitToScreen(fbW, fbH);
+				renderer.render(
+					mesh,
+					colorizer,
+					kSubdivision,
+					camera,
+					{.width = window.framebufferWidth,
+					 .height = window.framebufferHeight,
+					 .windowWidth = window.framebufferWidth,
+					 .windowHeight = window.framebufferHeight}
+				);
 
 				if (markerVisible) {
 					float aspect = (vpH > 0) ? (static_cast<float>(vpW) / static_cast<float>(vpH)) : 1.0F;
@@ -237,6 +245,7 @@ namespace {
 		std::unique_ptr<worldgen::PlanetGenerator>		generator;
 		std::shared_ptr<const worldgen::GeneratedWorld> lastSnapshot;
 		uint32_t										lastValidFields{0};
+		app::App*										owner = nullptr;
 		bool											worldReady{false};
 		bool											meshBuilt{false};
 		std::string										statusText;

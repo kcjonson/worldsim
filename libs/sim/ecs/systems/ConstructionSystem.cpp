@@ -149,10 +149,10 @@ namespace ecs {
 			// Advance the phase (idempotent). ActionSystem flips Complete itself on the last
 			// Build tick, so we never downgrade out of Complete here.
 			if (blueprint.phase != StructureBlueprint::BuildPhase::Complete) {
-				// A foundation about to be built over moves the loose piles on its footprint off it.
+				// A foundation is built on bare ground: what is left on its footprint goes as building starts.
 				if (isFoundation && m_constructionWorld != nullptr && blueprint.phase != StructureBlueprint::BuildPhase::UnderConstruction &&
 					decision.nextPhase == StructureBlueprint::BuildPhase::UnderConstruction) {
-					m_sitesToClearOfPiles.push_back(footprintBounds(graphId));
+					m_sitesEnteringConstruction.push_back(footprintBounds(graphId));
 				}
 				blueprint.phase = decision.nextPhase;
 			}
@@ -189,13 +189,63 @@ namespace ecs {
 			resetBlueprintGoals(stale);
 		}
 
+		bareSites();
+	}
+
+	void ConstructionSystem::bareSites() {
+		if (m_sitesEnteringConstruction.empty()) {
+			return;
+		}
+		removeStaticsFromSites();
 		movePilesOffSites();
+		m_sitesEnteringConstruction.clear();
+	}
+
+	void ConstructionSystem::removeStaticsFromSites() {
+		if (m_placementExecutor == nullptr) {
+			return;
+		}
+		struct Standing {
+			std::string defName;
+			glm::vec2	position;
+		};
+		const auto&			  assetRegistry = assets::AssetRegistry::Get();
+		std::vector<Standing> standing;
+		for (const FootprintBounds& site : m_sitesEnteringConstruction) {
+			const world::ChunkCoordinate first = world::worldToChunk({site.min.x, site.min.y});
+			const world::ChunkCoordinate last = world::worldToChunk({site.max.x, site.max.y});
+			for (int32_t cy = first.y; cy <= last.y; ++cy) {
+				for (int32_t cx = first.x; cx <= last.x; ++cx) {
+					const world::ChunkCoordinate coord{cx, cy};
+					const auto*					 chunkIndex = m_placementExecutor->getChunkIndex(coord);
+					if (chunkIndex == nullptr) {
+						continue;
+					}
+					// Copied out first: a removal moves the entities the query points at.
+					standing.clear();
+					for (const auto* placed : chunkIndex->queryRect(site.min.x, site.min.y, site.max.x, site.max.y)) {
+						standing.push_back({placed->defName, placed->position});
+					}
+					for (const Standing& gone : standing) {
+						const auto* def = assetRegistry.getDefinition(gone.defName);
+						const bool	carried = def != nullptr && def->capabilities.carryable.has_value();
+						if (carried && !m_onDropResource) {
+							continue;
+						}
+						m_placementExecutor->removeEntity(coord, gone.position, gone.defName);
+						if (carried) {
+							const glm::vec2 to = site.nearestOutside(gone.position, kPileMoveMargin);
+							m_onDropResource(gone.defName, to.x, to.y, def->capabilities.carryable->quantity, gone.position);
+						}
+					}
+				}
+			}
+		}
 	}
 
 	void ConstructionSystem::movePilesOffSites() {
 		// With nowhere to drop them (no drop path wired), the piles stay where they are.
-		if (m_sitesToClearOfPiles.empty() || !m_onDropResource) {
-			m_sitesToClearOfPiles.clear();
+		if (!m_onDropResource) {
 			return;
 		}
 		struct Moved {
@@ -207,7 +257,7 @@ namespace ecs {
 		};
 		std::vector<Moved> moved;
 		for (auto [pile, stack, position, appearance] : world->view<ResourceStack, Position, Appearance>()) {
-			for (const FootprintBounds& site : m_sitesToClearOfPiles) {
+			for (const FootprintBounds& site : m_sitesEnteringConstruction) {
 				if (stack.quantity > 0 && site.contains(position.value)) {
 					moved.push_back(
 						{pile, appearance.defName, stack.quantity, site.nearestOutside(position.value, kPileMoveMargin), position.value}
@@ -216,7 +266,6 @@ namespace ecs {
 				}
 			}
 		}
-		m_sitesToClearOfPiles.clear();
 		for (const Moved& move : moved) {
 			destroyWorldEntity(*world, move.pile);
 			// The old spot is on the site, so the drop never lands there: it is where the search for
@@ -610,6 +659,13 @@ namespace ecs {
 
 		// Retire every goal this blueprint owns (umbrella + children) so no Build goal lingers.
 		resetBlueprintGoals(entity);
+
+		// It skipped the clear and the start of building, so its ground is bared on the pass this
+		// ends (or the next, from the dev endpoint): whatever stands there, trees included, with no yield.
+		const auto* structure = world->getComponent<Structure>(entity);
+		if (m_constructionWorld != nullptr && structure != nullptr && structure->kind == StructureKind::Foundation) {
+			m_sitesEnteringConstruction.push_back(footprintBounds(structure->graphId));
+		}
 
 		// Fire the SAME completion callback a real build uses (GameScene wires it to the same
 		// lambda it gives ActionSystem), flipping ConstructionWorld state to Built and toasting.

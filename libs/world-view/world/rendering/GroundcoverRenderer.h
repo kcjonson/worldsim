@@ -31,6 +31,10 @@ class GroundcoverRenderer {
 	/// per-chunk InstanceData cache does not grow unbounded over a long pan/play session.
 	void evictLRU(const std::unordered_set<world::ChunkCoordinate>& processedChunks);
 
+	/// Drop a chunk's buckets: its statics were placed again (a reload), so what was built from
+	/// the index it had before no longer describes it. They are built again when it is next drawn.
+	void forgetChunk(const world::ChunkCoordinate& coord) { m_groundcoverChunkCache.erase(coord); }
+
   private:
 	// LRU bound: keep recently-visible chunks' instance buckets; evict oldest beyond the cap.
 	static constexpr size_t kMaxCachedChunks = 64;
@@ -43,6 +47,8 @@ class GroundcoverRenderer {
 		float	 minX = 0, minY = 0, maxX = 0, maxY = 0; // world bounds for culling
 		uint64_t lastAccessFrame = 0;
 		bool	 built = false;
+		/// The chunk's groundcover removal counts (PlacementExecutor::staticRemovals) these buckets match
+		assets::PlacementExecutor::SubRegionCounts removals{};
 	};
 	std::unordered_map<world::ChunkCoordinate, GroundcoverChunkCache> m_groundcoverChunkCache;
 
@@ -56,6 +62,11 @@ class GroundcoverRenderer {
 
 	/// Build one chunk's groundcover instance buckets from the spatial index.
 	void buildGroundcoverChunk(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, GroundcoverChunkCache& cache);
+
+	/// Take out of a built chunk's buckets the tufts removed from the index since they were built
+	/// (ground bared for a foundation, the landing clearing), in the sub-regions whose removal
+	/// count moved. The tufts left keep their order, so nothing else changes on screen.
+	void dropRemovedGroundcover(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, GroundcoverChunkCache& cache);
 };
 
 }  // namespace worldview

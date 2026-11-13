@@ -758,6 +758,26 @@ namespace geometry::nav {
 		edgesOfIds(ids, edgeOf, found);
 	}
 
+	void PatchableMesh::meshEdgesNear(const Vec2i64& boxLow, const Vec2i64& boxHigh, std::vector<std::int32_t>& edgeIds, std::vector<std::pair<Vec2i64, Vec2i64>>& out) const {
+		const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
+		edgeIds.clear();
+		groundEdgeGrid.forEachInBox(boxLow - reach, boxHigh + reach, 1, [&](std::int32_t id) {
+			for (const std::int32_t halfEdge : pieces[static_cast<std::size_t>(id)]) {
+				const std::int32_t triangle = halfEdge / 3;
+				if (live[static_cast<std::size_t>(triangle)] != 0 && tris[static_cast<std::size_t>(triangle)].neighbor[static_cast<std::size_t>(halfEdge % 3)] < 0) {
+					edgeIds.push_back(halfEdge);
+				}
+			}
+		});
+		std::sort(edgeIds.begin(), edgeIds.end());
+		edgeIds.erase(std::unique(edgeIds.begin(), edgeIds.end()), edgeIds.end());
+		out.clear();
+		for (const std::int32_t halfEdge : edgeIds) {
+			const NavTriangle& tri = tris[static_cast<std::size_t>(halfEdge / 3)];
+			out.emplace_back(verts[tri.v[static_cast<std::size_t>(halfEdge % 3)]], verts[tri.v[static_cast<std::size_t>(next3(halfEdge % 3))]]);
+		}
+	}
+
 	void PatchableMesh::edgeBox(std::int32_t edgeId, Vec2i64& lo, Vec2i64& hi) const {
 		const EdgeSource&			z		= edgeOf[static_cast<std::size_t>(edgeId)];
 		const std::vector<Vec2i64>& outline = rings[static_cast<std::size_t>(z.ring)].polygon.ring;

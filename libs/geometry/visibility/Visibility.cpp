@@ -2,13 +2,13 @@
 
 #include "../offset/WallOffset.h" // simplifyRing
 #include "../predicates/Predicates.h"
+#include "SightPolygon.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
-#include <numbers>
 
 // Design: angular sweep over candidate directions. The naive endpoint ray-cast
 // (cast a ray straight at each endpoint plus a nudge a hair to each side) is the
@@ -17,61 +17,36 @@
 // near corner and the far-field continuation past it collapse to one angle, and
 // the polygon zigzags across its own interior. We avoid the nudge entirely.
 //
-// The candidate ray directions are every occluder endpoint direction (exact
-// integer vector from the observer) plus the sight-circle's N-gon directions,
-// sorted CCW with the exact angleLess comparator and deduplicated by angle so
-// exactly one ray is cast per distinct direction. Along each ray we take the
-// nearest blocker hit (an occluder edge, or the sight circle when none is nearer)
-// and emit it as a boundary vertex. Because the directions are unique by angle,
-// the near/far transition at a grazed endpoint is split across adjacent
-// directions (the endpoint ray gives the near corner; the neighbouring circle or
-// endpoint ray gives the far field), so no two vertices share an angle and the
-// CCW walk is a clean star polygon. The dense circle directions also bound every
-// unoccluded arc to the circle.
+// The sight disc is the sight polygon (SightPolygon.h), so the result is the part
+// of that polygon the observer sees. The candidate ray directions are its vertices,
+// every occluder endpoint inside the sight circle, every point where an occluder
+// crosses the polygon's rim, and every crossing of two occluders, sorted CCW with
+// the exact angleLess comparator and deduplicated by angle so exactly one ray is
+// cast per distinct direction. Along each ray we take the nearest blocker hit (an occluder edge, or
+// the rim when none is nearer) and emit it as a boundary vertex. Because the
+// directions are unique by angle, the near/far transition at a grazed endpoint is
+// split across adjacent directions (the endpoint ray gives the near corner; the
+// neighbouring rim or endpoint ray gives the far field), so the CCW walk is a star
+// polygon, up to the millimetre snapping of the hits (simpleAround checks it).
 //
-// Exactness: the nearest-blocker pick and the emitted points are exact integer
-// (Int128 squared-distance comparison; intersectSegments for the snapped point).
-// The only float steps are the sight-circle polygonalization and the float
-// direction handed to circlePoint; neither affects the exactness of an occluder
-// hit, which comes straight from intersectSegments.
+// Exactness: the nearest-blocker pick is exact integer (Int128 squared-distance
+// comparison); the emitted points are hits snapped to the millimetre by
+// intersectSegments, or the rim's own vertices. No trigonometry runs: the rim comes
+// from a compile-time table, so every toolchain builds the same ring.
 
 namespace geometry {
 
 	namespace {
-
-		// Sight-circle polygonalization. The circle has no exact integer form, so
-		// it is approximated as a regular N-gon (float trig + std::llround), the
-		// same policy as the placed-obstacle octagon and the renderer's 64-gon. N is chosen
-		// so the chord-to-arc sagitta error stays well under ~1-2 mm even at large
-		// radii: sagitta = r * (1 - cos(pi/N)). At N=720, sagitta/r ~= 9.5e-6, so a
-		// 100 m (1e5 mm) radius errs under 1 mm; a 1 km radius under 10 mm. This is
-		// the ONE inexact construction step in the module.
-		constexpr int kCircleSegments = 720;
 
 		Int128 distSq(const Vec2i64& observer, const Vec2i64& p) {
 			const Vec2i64 d = p - observer;
 			return dot(d, d);
 		}
 
-		// A far point along direction (dirX, dirY), at the sight radius (float-snapped
-		// to mm). Used as the second endpoint of a finite ray segment passed to
-		// intersectSegments, and as the boundary point when no occluder is nearer.
-		Vec2i64 circlePoint(const Vec2i64& observer, double dirX, double dirY, std::int64_t radiusMm) {
-			const double len = std::sqrt(dirX * dirX + dirY * dirY);
-			if (len == 0.0) {
-				return observer;
-			}
-			const double r = static_cast<double>(radiusMm);
-			return {
-				observer.x + std::llround(dirX / len * r),
-				observer.y + std::llround(dirY / len * r),
-			};
-		}
-
 		// The nearest visible point along the ray from `observer` in direction `dir`,
-		// out to the sight circle (`far`), evaluated on one angular SIDE of the ray:
-		// side = +1 takes the ray as rotated an infinitesimal CCW, side = -1 as
-		// rotated CW, side = 0 takes the ray exactly. This is the heart of the sweep.
+		// out to the rim (`rimPoint`, where the ray leaves the sight polygon),
+		// evaluated on one angular SIDE of the ray: side = +1 takes the ray as rotated
+		// an infinitesimal CCW, side = -1 as rotated CW. This is the heart of the sweep.
 		// At a grazed endpoint the near corner is visible on one side and the view
 		// opens past it on the other; evaluating both sides at the endpoint direction
 		// yields the two distinct boundary vertices (near corner + far field) that a
@@ -90,14 +65,11 @@ namespace geometry {
 		//    sides.
 		//  - CollinearOverlap: the ray runs along the edge; the nearer overlap end is
 		//    the first opaque point, counted on both sides.
-		Vec2i64 castSide(const Vec2i64& observer, const Vec2i64& dir, const Vec2i64& farExact,
-						 const Vec2i64& circleAtDir, std::int64_t radiusMm, int side,
+		Vec2i64 castSide(const Vec2i64& observer, const Vec2i64& dir, const Vec2i64& farExact, const Vec2i64& rimPoint, int side,
 						 const std::vector<OccluderSegment>& occluders) {
-			// Default boundary is the sight circle in this direction. Occluder hits
-			// nearer than the circle override it; hits past the circle are ignored
-			// (clamped to the circle). bestSq tracks the circle distance as the cap.
-			Vec2i64 best   = circleAtDir;
-			Int128	bestSq = Int128::product(radiusMm, radiusMm);
+			// Occluder hits nearer than the rim override it; hits past it are ignored.
+			Vec2i64 best   = rimPoint;
+			Int128	bestSq = distSq(observer, rimPoint);
 
 			auto consider = [&](const Vec2i64& hit) {
 				const Int128 sq = distSq(observer, hit);
@@ -109,9 +81,8 @@ namespace geometry {
 
 			for (const OccluderSegment& occ : occluders) {
 				// The ray is the finite segment observer->farExact, which lies EXACTLY
-				// on `dir` (an integer multiple of it) and extends past the circle, so
-				// it passes precisely through endpoints in this direction. Snapping it
-				// to the circle (a float point off the exact ray) would miss them.
+				// on `dir` (an integer multiple of it) and extends past the rim, so
+				// it passes precisely through endpoints in this direction.
 				const SegmentIntersection si = intersectSegments(observer, farExact, occ.a, occ.b);
 				switch (si.relation) {
 					case SegmentRelation::ProperCrossing:
@@ -125,10 +96,10 @@ namespace geometry {
 						// graze), or a point in the edge interior the ray crosses? If
 						// the touched point equals an edge endpoint, classify the side
 						// the edge lies on by the orientation of its OTHER endpoint
-						// about the ray direction. side 0 keeps the touch (exact ray).
+						// about the ray direction.
 						const bool atA = (si.point == occ.a);
 						const bool atB = (si.point == occ.b);
-						if (side != 0 && (atA || atB)) {
+						if (atA || atB) {
 							const Vec2i64 other = atA ? occ.b : occ.a;
 							const int	  s		= cross(dir, other - observer).sign();
 							// s > 0: other end is CCW of the ray, edge on the +side.
@@ -175,50 +146,76 @@ namespace geometry {
 
 	} // namespace
 
-	Ring computeVisibilityPolygon(const Vec2i64& observer, std::int64_t sightRadiusMm,
-								   const std::vector<OccluderSegment>& occluders) {
+	Ring computeVisibilityPolygon(const Vec2i64& observer, std::int64_t sightRadiusMm, const std::vector<OccluderSegment>& occluders) {
 		Ring result;
 		if (sightRadiusMm <= 0) {
 			return result;
 		}
 
-		// Candidate sweep directions: each occluder endpoint direction (exact
-		// integer vector from the observer) plus the sight-circle N-gon directions
-		// (float-snapped). The endpoint directions are where the nearest blocker can
-		// change; the circle directions bound the unoccluded arcs to the circle.
-		std::vector<Vec2i64> dirs;
-		dirs.reserve(static_cast<std::size_t>(kCircleSegments) + occluders.size() * 2);
-
-		constexpr double kTwoPi = 2.0 * std::numbers::pi;
-		for (int i = 0; i < kCircleSegments; ++i) {
-			const double ang = static_cast<double>(i) * (kTwoPi / static_cast<double>(kCircleSegments));
-			// Snap the circle direction to an integer vector at the sight radius so
-			// it lives in the same exact space as the endpoint directions.
-			const Vec2i64 p = circlePoint(observer, std::cos(ang), std::sin(ang), sightRadiusMm);
-			if (p != observer) {
-				dirs.push_back(p - observer);
-			}
+		Ring rim = sightPolygon(observer, sightRadiusMm);
+		rim.erase(std::unique(rim.begin(), rim.end()), rim.end());
+		if (rim.size() >= 2 && rim.front() == rim.back()) {
+			rim.pop_back();
 		}
+		if (rim.size() < 3) {
+			return result;
+		}
+		// The rim's directions from the observer, ascending by angleLess: vertex 0 lies
+		// along +x, where angleLess starts.
+		std::vector<Vec2i64> rimDirs;
+		rimDirs.reserve(rim.size());
+		for (const Vec2i64& vertex : rim) {
+			rimDirs.push_back(vertex - observer);
+		}
+
+		// Candidate sweep directions: the rim's vertices; every occluder endpoint inside
+		// the sight circle (one outside it changes nothing the observer sees); every
+		// point where an occluder crosses the rim, where the nearest blocker turns from
+		// the occluder to the rim; and every crossing of two occluders inside the circle.
+		std::vector<Vec2i64> dirs = rimDirs;
+		dirs.reserve(rim.size() + occluders.size() * 2);
+		const Int128	   radiusSq	  = Int128::product(sightRadiusMm, sightRadiusMm);
+		const std::int64_t inradius	  = sightInradius(sightRadiusMm);
+		const Int128	   inradiusSq = Int128::product(std::max<std::int64_t>(inradius, 0), std::max<std::int64_t>(inradius, 0));
 		for (const OccluderSegment& occ : occluders) {
-			if (occ.a != observer) {
+			const Int128 firstSq  = distSq(observer, occ.a);
+			const Int128 secondSq = distSq(observer, occ.b);
+			if (occ.a != observer && firstSq <= radiusSq) {
 				dirs.push_back(occ.a - observer);
 			}
-			if (occ.b != observer) {
+			if (occ.b != observer && secondSq <= radiusSq) {
 				dirs.push_back(occ.b - observer);
+			}
+			if (firstSq < inradiusSq && secondSq < inradiusSq) {
+				continue;
+			}
+			for (std::size_t k = 0; k < rim.size(); ++k) {
+				const SegmentIntersection crossing = intersectSegments(occ.a, occ.b, rim[k], rim[(k + 1) % rim.size()]);
+				if (crossing.relation == SegmentRelation::ProperCrossing && crossing.point != observer) {
+					dirs.push_back(crossing.point - observer);
+				}
+			}
+		}
+		// Where two occluders cross, the nearer of them changes.
+		for (std::size_t i = 0; i < occluders.size(); ++i) {
+			const OccluderSegment& first = occluders[i];
+			for (std::size_t j = i + 1; j < occluders.size(); ++j) {
+				const OccluderSegment& second = occluders[j];
+				if (std::max(first.a.x, first.b.x) < std::min(second.a.x, second.b.x) || std::max(second.a.x, second.b.x) < std::min(first.a.x, first.b.x) ||
+					std::max(first.a.y, first.b.y) < std::min(second.a.y, second.b.y) || std::max(second.a.y, second.b.y) < std::min(first.a.y, first.b.y)) {
+					continue;
+				}
+				const SegmentIntersection crossing = intersectSegments(first.a, first.b, second.a, second.b);
+				if (crossing.relation == SegmentRelation::ProperCrossing && crossing.point != observer && distSq(observer, crossing.point) <= radiusSq) {
+					dirs.push_back(crossing.point - observer);
+				}
 			}
 		}
 
 		const DirLess less;
 		std::sort(dirs.begin(), dirs.end(), less);
 		// Collapse exactly-coincident directions (same ray); keep one per angle.
-		dirs.erase(std::unique(dirs.begin(), dirs.end(),
-							   [&](const Vec2i64& a, const Vec2i64& b) { return less.sameAngle(a, b); }),
-				   dirs.end());
-
-		const std::size_t n = dirs.size();
-		if (n < 3) {
-			return result;
-		}
+		dirs.erase(std::unique(dirs.begin(), dirs.end(), [&](const Vec2i64& a, const Vec2i64& b) { return less.sameAngle(a, b); }), dirs.end());
 
 		// Two boundary vertices per distinct direction, evaluated on each angular
 		// side: the CW-side hit (the trailing boundary of the sector ending at this
@@ -228,17 +225,14 @@ namespace geometry {
 		// far field arriving into the corner and the CCW side gives the near corner
 		// departing it (or vice versa), so the near/far transition is two adjacent
 		// vertices, not two vertices fighting over one angle.
-		result.reserve(n * 2);
+		result.reserve(dirs.size() * 2);
 		for (const Vec2i64& dir : dirs) {
 			// Exact far point: an integer multiple of `dir` whose length exceeds the
 			// sight radius, so the ray segment observer->farExact lies precisely on
-			// the ray and reaches past the circle. The multiplier is an integer count
+			// the ray and reaches past the rim. The multiplier is an integer count
 			// (the only float here, and it cannot move the ray off `dir`).
 			const double dirLen = std::sqrt(static_cast<double>(dir.x) * dir.x + static_cast<double>(dir.y) * dir.y);
-			if (dirLen == 0.0) {
-				continue;
-			}
-			std::int64_t scale = static_cast<std::int64_t>(static_cast<double>(sightRadiusMm) / dirLen) + 2;
+			std::int64_t scale	= static_cast<std::int64_t>(static_cast<double>(sightRadiusMm) / dirLen) + 2;
 			// Cap the multiplier so dir*scale (and observer+dir*scale) stay within
 			// int64 -- Vec2i64::operator* is unchecked. In practice scale ~
 			// radius/|dir| keeps the product near the radius; this only guards
@@ -247,13 +241,19 @@ namespace geometry {
 			const std::int64_t maxComp = std::max<std::int64_t>(1, std::max(std::llabs(dir.x), std::llabs(dir.y)));
 			scale					   = std::max<std::int64_t>(1, std::min(scale, kSafe / maxComp));
 			const Vec2i64 farExact	   = observer + dir * scale;
-			// Circle clamp point in this exact direction (float-snapped, the one
-			// inexact step; used only for unoccluded arcs).
-			const Vec2i64 circleAtDir =
-				circlePoint(observer, static_cast<double>(dir.x), static_cast<double>(dir.y), sightRadiusMm);
 
-			const Vec2i64 cw  = castSide(observer, dir, farExact, circleAtDir, sightRadiusMm, -1, occluders);
-			const Vec2i64 ccw = castSide(observer, dir, farExact, circleAtDir, sightRadiusMm, +1, occluders);
+			// Where the ray leaves the sight polygon: the rim vertex in this exact
+			// direction, or the snapped crossing with the rim side whose angular span
+			// holds it.
+			const auto		  after	   = std::upper_bound(rimDirs.begin(), rimDirs.end(), dir, [](const Vec2i64& l, const Vec2i64& r) { return angleLess(l, r); });
+			const std::size_t rimSide  = static_cast<std::size_t>(after - rimDirs.begin()) - 1;
+			Vec2i64			  rimPoint = rim[rimSide];
+			if (!less.sameAngle(rimDirs[rimSide], dir)) {
+				rimPoint = intersectSegments(observer, farExact, rim[rimSide], rim[(rimSide + 1) % rim.size()]).point;
+			}
+
+			const Vec2i64 cw  = castSide(observer, dir, farExact, rimPoint, -1, occluders);
+			const Vec2i64 ccw = castSide(observer, dir, farExact, rimPoint, +1, occluders);
 			if (cw != observer) {
 				result.push_back(cw);
 			}
@@ -280,15 +280,128 @@ namespace geometry {
 		}
 
 		// Collapse exactly-collinear triples. Adjacent directions along one flat
-		// blocker face (or one circle chord) emit a run of vertices that are
-		// world-collinear and so add no shape; simplifyRing with epsilon 0 drops
-		// only those exact-collinear middles, leaving the minimal star polygon.
+		// blocker face emit a run of vertices that are world-collinear and so add no
+		// shape; simplifyRing with epsilon 0 drops only those exact-collinear middles,
+		// leaving the minimal star polygon.
 		simplifyRing(deduped, 0);
 		return deduped;
 	}
 
-	bool hasLineOfSight(const Vec2i64& observer, const Vec2i64& target, std::int64_t sightRadiusMm,
-						const std::vector<OccluderSegment>& occluders) {
+	bool angleBefore(const UnwrappedAngle& first, const UnwrappedAngle& second) {
+		if (first.turns != second.turns) {
+			return first.turns < second.turns;
+		}
+		return angleLess(first.direction, second.direction);
+	}
+
+	bool unwrapAngles(const Ring& ring, const Vec2i64& centre, std::vector<UnwrappedAngle>& out) {
+		out.clear();
+		if (ring.empty()) {
+			return false;
+		}
+		Vec2i64 previous = ring.front() - centre;
+		if (previous == Vec2i64{0, 0}) {
+			return false;
+		}
+		std::int64_t turns = 0;
+		out.push_back({turns, previous});
+		for (std::size_t i = 1; i <= ring.size(); ++i) {
+			const Vec2i64 next = ring[i % ring.size()] - centre;
+			if (next == Vec2i64{0, 0}) {
+				return false;
+			}
+			const int turn = cross(previous, next).sign();
+			if (turn == 0 && dot(previous, next).sign() < 0) {
+				return false;
+			}
+			if (turn > 0 && angleLess(next, previous)) {
+				++turns;
+			} else if (turn < 0 && angleLess(previous, next)) {
+				--turns;
+			}
+			out.push_back({turns, next});
+			previous = next;
+		}
+		return true;
+	}
+
+	bool simpleAround(const Ring& ring, const Vec2i64& centre) {
+		const std::size_t count = ring.size();
+		if (count < 3) {
+			return false;
+		}
+		for (std::size_t i = 0; i < count; ++i) {
+			if (ring[i] == ring[(i + 1) % count]) {
+				return false;
+			}
+		}
+		std::vector<UnwrappedAngle> angles;
+		if (!unwrapAngles(ring, centre, angles) || angles.back().turns != 1) {
+			return false;
+		}
+		UnwrappedAngle lowest	= angles.front();
+		UnwrappedAngle highest = angles.front();
+		for (const UnwrappedAngle& angle : angles) {
+			lowest  = angleBefore(angle, lowest) ? angle : lowest;
+			highest = angleBefore(highest, angle) ? angle : highest;
+		}
+		// Under two turns from lowest to highest, a pair of spans meets round the circle only
+		// as they are or with one of them a turn on.
+		if (!angleBefore(highest, UnwrappedAngle{lowest.turns + 2, lowest.direction})) {
+			return false;
+		}
+
+		struct Span {
+			UnwrappedAngle low;
+			UnwrappedAngle high;
+			std::size_t	   edge = 0;
+		};
+		std::vector<Span> spans;
+		spans.reserve(2 * count);
+		for (std::size_t i = 0; i < count; ++i) {
+			const bool			  forward = !angleBefore(angles[i + 1], angles[i]);
+			const UnwrappedAngle& low	= forward ? angles[i] : angles[i + 1];
+			const UnwrappedAngle& high	= forward ? angles[i + 1] : angles[i];
+			spans.push_back({low, high, i});
+		}
+		for (std::size_t i = 0; i < count; ++i) {
+			const Span& span = spans[i];
+			spans.push_back({{span.low.turns + 1, span.low.direction}, {span.high.turns + 1, span.high.direction}, span.edge});
+		}
+		// The spans arrive nearly in order (they are out of it only where the ring steps back), so
+		// an insertion sort is close to one pass.
+		for (std::size_t i = 1; i < spans.size(); ++i) {
+			const Span	moving = spans[i];
+			std::size_t at	   = i;
+			for (; at > 0 && angleBefore(moving.low, spans[at - 1].low); --at) {
+				spans[at] = spans[at - 1];
+			}
+			spans[at] = moving;
+		}
+
+		// Adjacent edges may share their common vertex and nothing more; others nothing at all.
+		auto breaksSimplicity = [&](std::size_t first, std::size_t second) {
+			if (first == second) {
+				return false;
+			}
+			const SegmentRelation relation = intersectSegments(ring[first], ring[(first + 1) % count], ring[second], ring[(second + 1) % count]).relation;
+			const bool			  adjacent = (first + 1) % count == second || (second + 1) % count == first;
+			return relation != SegmentRelation::Disjoint && !(adjacent && relation == SegmentRelation::EndpointTouch);
+		};
+		std::vector<const Span*> open;
+		for (const Span& span : spans) {
+			open.erase(std::remove_if(open.begin(), open.end(), [&](const Span* other) { return angleBefore(other->high, span.low); }), open.end());
+			for (const Span* other : open) {
+				if (breaksSimplicity(span.edge, other->edge)) {
+					return false;
+				}
+			}
+			open.push_back(&span);
+		}
+		return true;
+	}
+
+	bool hasLineOfSight(const Vec2i64& observer, const Vec2i64& target, std::int64_t sightRadiusMm, const std::vector<OccluderSegment>& occluders) {
 		if (sightRadiusMm <= 0) {
 			return false; // non-positive sight radius sees nothing (mirrors computeVisibilityPolygon)
 		}

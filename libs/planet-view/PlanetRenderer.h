@@ -10,16 +10,31 @@ class PlanetMesh;
 class PlanetColorizer;
 class OrbitCamera;
 
+// Where render() composites the planet: a rectangle of the window's framebuffer
+// in pixels, origin bottom-left as GL's, and the window framebuffer's size.
+struct ScreenArea {
+    int x{0};
+    int y{0};
+    int width{0};
+    int height{0};
+    int windowWidth{0};
+    int windowHeight{0};
+};
+
 // Owns the offscreen FBO (RGBA8 colour + DEPTH24 renderbuffer), planet shader,
-// and a blit shader for compositing the FBO onto the default framebuffer.
+// and a blit shader for compositing the FBO onto the window's framebuffer.
 //
 // Compositing strategy: render() draws the planet into the FBO over an alpha-0
-// clear, then blitToScreen() alpha-composites that texture onto the backbuffer
-// via a full-screen triangle BEFORE Primitives draws 2D UI — the planet disc
-// lands on whatever the scene painted first (e.g. a starfield) and 2D UI still
-// batches on top.
+// clear, then alpha-composites that texture onto the window via a full-screen
+// triangle BEFORE Primitives draws 2D UI: the planet disc lands on whatever the
+// scene painted first (e.g. a starfield) and 2D UI still batches on top, so
+// flush anything that must sit beneath the planet first.
 //
-// All touched GL state is saved and restored around each pass.
+// GL state follows salal's renderer contract: every renderer draw makes its own
+// bindings, and Primitives::invalidateState() puts back its fixed state (depth
+// test, culling and scissor off). render() sets what its passes need and puts
+// back by hand only what the renderer never rebinds on its own: the window's
+// framebuffer and its viewport. Call it with no RenderTarget begun.
 class PlanetRenderer {
   public:
     PlanetRenderer() = default;
@@ -32,24 +47,13 @@ class PlanetRenderer {
     // shaderDir: directory that contains planet.vert / planet.frag / blit.vert / blit.frag.
     bool init(const char* shaderDir, int widthPx, int heightPx);
 
-    // Resize the FBO when the window changes.
-    void resize(int widthPx, int heightPx);
-
-    // Draw the planet into the offscreen FBO. `subdivision` is the grid n,
-    // which drives the shader's per-pixel hex assignment (cell fill, AA edges,
-    // and outline).
+    // Draw the planet offscreen at area's size and composite it onto the window
+    // over `area`. `subdivision` is the grid n, which drives the shader's per-pixel
+    // hex assignment (cell fill, AA edges, and outline). `alpha` scales the whole
+    // disc (for fade-in); pixels outside the disc leave the window untouched.
     void render(const PlanetMesh& mesh, const PlanetColorizer& colorizer,
-                uint32_t subdivision,
-                const OrbitCamera& camera, int widthPx, int heightPx);
-
-    // Alpha-composite the FBO colour texture onto the currently bound default
-    // framebuffer. Call this BEFORE 2D UI rendering so the planet is below the
-    // UI. `alpha` scales the whole disc (for fade-in); pixels outside the disc
-    // are transparent and leave the backbuffer untouched.
-    void blitToScreen(int widthPx, int heightPx, float alpha = 1.0F);
-
-    // Expose colour texture for custom compositing if needed.
-    GLuint colorTexture() const { return colorTex; }
+                uint32_t subdivision, const OrbitCamera& camera,
+                const ScreenArea& area, float alpha = 1.0F);
 
     bool isReady() const { return planetShader != 0 && blitShader != 0 && fbo != 0; }
 
@@ -83,6 +87,10 @@ class PlanetRenderer {
         GLint alpha{-1};
     } blitUniforms;
 
+    void drawPlanet(const PlanetMesh& mesh, const PlanetColorizer& colorizer,
+                    uint32_t subdivision, const OrbitCamera& camera);
+    void composite(const ScreenArea& area, float alpha);
+    void resize(int widthPx, int heightPx);
     void destroyFbo();
     bool createFbo(int w, int h);
     void cacheUniforms();
