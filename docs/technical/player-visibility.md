@@ -195,7 +195,7 @@ There is no game save to put the record in. When one exists the record saves as 
 | `kSightSides` | 64 | Sides of a sight polygon. At 30 m a 64-gon's flat sits 36 mm inside the circle. More sides add vertices to the seen edge |
 | `kSeenSlackMm` | 50 mm | How far a path may wobble from a leg's straight line before the leg ends. Smaller means more rings; larger shrinks the drawn disc (by twice this) |
 | `kSeenJumpMeters` | 2 m | A step longer than this in one frame ends the leg without bridging it. Above a frame's travel at the fastest game speed, far below any teleport |
-| `kSeenRingsPerTick` | 4 | Rings tested and committed a tick. Set from step 1's numbers |
+| `kSeenRingsPerTick` | 4 | Rings tested and committed a tick. Step 1 (6.1): 50 walkers at 10x make about 2 legs a frame, and 4 covered tests by the union's edge cost about 0.08 ms mean |
 | `kSeenDimAlpha` | 0.5 | How dark seen ground is |
 | `kUnseenColor` | black | The colour of unseen ground |
 | `kLandingSightMeters` | 150 m | Shared with nav; one constant for both |
@@ -226,6 +226,73 @@ To measure:
 - **The record (step 1, benches).** Covered-test time against the number of rings over a spot; rings registered and bytes per kilometre walked, straight and wandering; patch time for a leg that extends the union in a seen area several kilometres across; `locate` there; nav upkeep per patch, or the saving from turning it off; indoor polygons from viewpoints 0.5 m apart at a doorway (the nearly parallel edges `PatchableMesh.h` warns of), with `validate()` clean and the result equal to a fresh build; whether `computeVisibilityPolygon`, which builds its circle with float trigonometry, gives the same ring on MSVC, Clang, and GCC.
 - **The cover (step 4, capture).** GPU time of the pass near the landing at each zoom with reveal off, with the crew, 10, and 50 colonists; the upload when the record changes.
 - **The tick (step 3).** `PlayerVisibilitySystem` main-thread time with 1, 10, 50 colonists walking, at 1x and 10x.
+
+### 6.1 Measured: the seen record (step 1)
+
+"Step 1: Prove a second PatchableMesh works as the seen record (benches, go/no-go)" on Specboard. Benches are `libs/geometry/nav/SeenRecord.bench.cpp` (`geometry-benchmarks --benchmark_filter=BM_Seen`), one RelWithDebInfo run each, headless, on the dev machine. Machine load: `busy` before the final run (CPU 6%, GPU 37% from another session, no builders) and `mostly-idle` after (CPU 5%, GPU 28%). Two earlier full runs, `busy` before and after (CPU 3 to 8%, GPU 36 to 38%), gave the same figures within 15%. These are single-threaded CPU benches and the busy verdicts came from the GPU, but by the rule in [testing](../testing/README.md) none of this is a baseline.
+
+Shapes as 3.3 has them: a sight polygon is a 64-gon inscribed in its circle, and a leg is the hull of the 64-gons of radius 29.95 m at its two ends (66 vertices). Each shape is tested with `groundCovers` and patched in only when it is not covered. K is the number of registered rings whose boxes meet the shape's box. Patch times are `applyPatch` alone, with no width refresh, except where stated.
+
+**Exploration**, legs walked eastward, each turning up to 30 degrees from the last, so almost every leg reaches new ground and every one registers:
+
+| Legs | Walk | Rings | Registry | Triangles | Patch ms (mean / p99 / max) | `groundCovers` us (mean) | Live triangles / vertices | `locate` ns (mean / p99) |
+|---|---|---|---|---|---|---|---|---|
+| 20 m | 10 km | 500 | 246 KB/km | 37 KB/km | 0.19 / 0.25 / 0.94 | 24 | 2,203 / 2,205 | 123 / 262 |
+| 50 m | 10 km | 200 | 98 KB/km | 15 KB/km | 0.17 / 0.23 / 0.92 | 14 | 910 / 912 | 109 / 156 |
+| 100 m | 10 km | 100 | 49 KB/km | 8 KB/km | 0.18 / 0.23 / 0.87 | 9 | 491 / 493 | 98 / 138 |
+| 200 m | 10 km | 50 | 25 KB/km | 5 KB/km | 0.17 / 0.69 / 0.69 | 8 | 282 / 284 | 96 / 131 |
+| 20 m | 50 km | 2,500 | 246 KB/km | 37 KB/km | 0.19 / 0.26 / 0.75 | 18 | 11,021 / 11,023 | 121 / 206 |
+| 50 m | 50 km | 1,000 | 98 KB/km | 15 KB/km | 0.18 / 0.24 / 0.78 | 12 | 4,383 / 4,385 | 108 / 162 |
+| 100 m | 50 km | 500 | 49 KB/km | 7 KB/km | 0.19 / 0.25 / 0.84 | 10 | 2,203 / 2,205 | 101 / 144 |
+| 200 m | 50 km | 250 | 25 KB/km | 4 KB/km | 0.18 / 0.26 / 0.66 | 9 | 1,146 / 1,148 | 99 / 131 |
+
+The registry is about 4.9 KB a ring (outline, its 3x sample, edge ids, and the edge index) and is 6 to 7 times the triangles. Grids, hash tables, and interned lists are left out of both columns. Patch time does not grow with the walk's length. Every run validated clean, with one pass a patch and no unread covers.
+
+**Covered test against K.** K legs of 500 m run out from one hub, all registered, all overlapping there; 1,000 short legs within 5 m of the hub are then tested, every one covered (K = 4: 852 covered).
+
+| K | `groundCovers` us (mean / p99) | Boundary-edge test us (mean / p99) |
+|---|---|---|
+| 1 | 2.6 / 18 (none covered) | 0.8 / 4.9 |
+| 4 | 74 / 96 | 12 / 56 |
+| 16 | 515 / 616 | 9.8 / 12 |
+| 64 | 1,159 / 1,794 | 12 / 21 |
+| 256 | 5,021 / 7,360 | 15 / 25 |
+
+`groundCovers` costs 18 to 32 us for every ring over the spot, because it runs each of the outline's 66 edges against every nearby ring's 66. That is the weak spot 3.3 named, and it is real. The boundary-edge test (below) does not grow with K.
+
+**Wandering inside seen ground.** A region about 300 m across seen by a sweep (13 rings), then 5,000 legs of 2 to 15 m at random headings inside it. 4,966 were covered and 34 registered (13, 26, 32, 39, 47 rings after each 1,000 legs). `groundCovers` was 71 us mean, 247 us p99, rising with K: 40 us at K 2 to 3, 59 us at 4 to 7, 107 us at 8 to 15, 167 us at 16 to 25. Registered legs patched in 0.26 ms mean.
+
+**A camp.** The landing polygon, then walkers at 2 m/s wandering legs of 2 to 15 m, turned back at 150 m from the drop, for one simulated hour:
+
+| Walkers | Legs | Registered | Per walker-hour | By minute 10 / 30 / 60 | K (mean / max) | `groundCovers` us (mean / p99 / max) | Boundary-edge test us (mean / p99 / max) | Patch ms (mean / p99) | Registry |
+|---|---|---|---|---|---|---|---|---|---|
+| 10 | 8,843 | 273 | 27.3 | 27 / 150 / 273 | 27 / 80 | 215 / 706 / 1,033 | 21 / 313 / 839 | 0.41 / 0.79 | 1.3 MB |
+| 50 | 44,085 | 562 | 11.2 | 226 / 434 / 562 | 54 / 159 | 403 / 1,145 / 1,779 | 20 / 65 / 1,591 | 0.63 / 1.43 | 2.7 MB |
+
+Registration slows as the ring 150 to 180 m out fills in (50 walkers: 226 in the first 10 minutes, 42 in the last), but K keeps climbing, because every sliver that extended the edge stays in the registry and overlaps the next.
+
+**Re-walks.** A 100 m leg at 17.3 degrees, 37 km from the origin, walked again 40 times offset alternately left and right by 1 to 40 mm (and by 1 to 40 cm), each re-walk's far end 3 mm further over: all 41 registered, patch 1.24 / 2.70 ms (mean / max) at millimetres and 1.80 / 4.22 ms at centimetres, validate clean, no unread covers. The millimetre case takes a second pass on 61% of patches.
+
+**Indoors: a doorway.** `computeVisibilityPolygon` at 30 m from viewpoints 0.5 m apart, walking past a 1 m doorway in a 0.2 m wall, along one jamb's face, and through it straight and on a diagonal (125 viewpoints):
+
+| | Mean | p99 | Max |
+|---|---|---|---|
+| Polygon vertices | 440 | | 638 |
+| `computeVisibilityPolygon` us | 348 | 570 | 590 |
+| `groundCovers` us | 12,030 | 65,439 | 73,549 |
+| Patch ms | 43.0 | 84.9 | 89.5 |
+
+95 polygons registered and 30 were covered; K reached 94. The mesh validated clean with no unread covers, and the unit test `PatchableMesh.DoorwayVisibilityPolygonsMatchFreshBuild` (51 of these viewpoints) equals a fresh build. Every polygon in the test was a simple ring. `computeVisibilityPolygon` does not promise that: its vertices are hits snapped to the millimetre and walked in angular order, so a snapped hit can in principle fall behind its neighbour's angle, and `NavInputPolygon` requires a simple ring. The indoor numbers come from the polygon's size: its sight circle is a 720-gon, so a mostly unoccluded view has hundreds of vertices, and patch and covered test both scale with vertices times K.
+
+**Whether the toolchains agree.** `Visibility.DoorwaySceneIsTheSameOnEveryToolchain` pins two doorway scenes (at the origin and 41 km out) by vertex count and a hash of the vertices, as MSVC produces them. CI runs it on clang. From the code: the only float steps are `std::cos` and `std::sin` for the 720 circle directions, then `std::llround`; `sqrt` and division round the same everywhere. A last-bit difference in `cos` or `sin` moves a vertex only if the scaled value lies within about 1e-11 mm of a half, so the rings are expected to agree, but nothing guarantees it. A compile-time table, as `LimitPolygon.h` uses, would.
+
+**Nav upkeep.** The 10 km walk in 20 m legs, 500 patches of 0.18 ms mean. Per patch, the component labels' update is 1.9 us mean (2.9 p99) and door tags with no doors 0.9 us (1.2 p99): 1.5% of the patch together. Widths never refreshed hold 19,860 triangle ids after 10 km, 79 KB, growing without bound at about 8 KB/km; one refresh then catches up in 2.2 ms. `refreshWidths` after every patch costs 0.021 ms mean (0.033 p99), 12% of the patch.
+
+**Walking the union's edge.** One pass over the triangle slots collecting every edge with nothing across it: 1 us at 282 live triangles, 8 us at 2,203, 17 us at 4,383, 83 us at 11,021, about 7.5 ns a live triangle.
+
+**A covered test that reads the edge, not the rings.** Prototyped in the bench with the public API only: the outline is covered when every vertex `locate`s on the mesh and no boundary edge meets its closed area; a boundary edge that comes near answers "unsure" and falls back to `groundCovers`. The boundary edges sit in a grid of 16 m cells, updated from each patch's report (3.7 to 39 us mean per patch). Over 64,000 shapes it never disagreed with `groundCovers`. Its time, fallback included, is in the tables above: 3 to 4 us while exploring, 13 us wandering, 20 us at the 50-walker camp. Where shapes share an edge with the union's boundary it always falls back; the doorway's covered polygons share wall faces, so indoors it saved nothing.
+
+**Verdict: go, with conditions.** A second `PatchableMesh` is a sound basis for the record. It stayed exact through every run (validate clean, no unread covers, the doorway equal to a fresh build), patches of a leg cost 0.2 to 0.6 ms mean whatever the walk's length, `locate` stays near 100 ns, and memory is about 5 KB a registered ring. Use a wrapper, not an upkeep-off option on `PatchableMesh`: labels and door tags are 1.5% of a patch, and the wrapper refreshes widths after each patch (0.02 ms) so their list does not grow. Three conditions: the record's covered test reads the union's boundary edges and keeps `groundCovers` as the fallback, because `groundCovers` grows by about 20 us for every ring over the spot and the camp drives K to 159; indoor shapes must be far smaller than vision's polygons before they go in (built on the record's own 64-gon circle, or clipped to the leg's capsule), because at 440 vertices a patch is 43 ms mean and 90 ms worst, which no main thread can take, and that needs measuring again in step 3; and `computeVisibilityPolygon`'s output is checked or made simple before it reaches the mesh. `kSeenRingsPerTick` stays at 4: 50 walkers at 10x make 122 legs a second, 2 a frame at 60 frames a second, and with the edge test 4 tests cost about 0.08 ms mean; registrations are rare (at most 23 a minute at 50 walkers), so their patch time does not decide the budget.
 
 ## 7. Build steps
 
