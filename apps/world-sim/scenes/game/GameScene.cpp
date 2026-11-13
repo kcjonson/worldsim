@@ -1380,17 +1380,12 @@ namespace {
 			for (const ecs::EntityID member : crew) {
 				visionSystem.rememberArea(member, drop, ecs::NavigationSystem::kLandingSightMeters);
 				if (const auto* memory = ecsWorld->getComponent<ecs::Memory>(member)) {
-					float farthest = 0.0F;
-					for (const auto& [key, known] : memory->knownWorldEntities) {
-						farthest = std::max(farthest, glm::length(known.position - drop));
-					}
 					LOG_DEBUG(
 						Game,
-						"Landing memory: entity %llu knows %zu thing(s) of cap %zu, farthest %.1f m from the drop",
+						"Landing memory: entity %llu knows %zu thing(s) of cap %zu",
 						static_cast<unsigned long long>(member),
 						memory->worldEntityCount(),
-						ecs::Memory::kMaxWorldEntities,
-						farthest
+						ecs::Memory::kMaxWorldEntities
 					);
 				}
 			}
