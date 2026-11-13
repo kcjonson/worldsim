@@ -317,6 +317,19 @@ namespace {
 		int										 frontierCovered = 0; // uncovered shapes whose frontier was empty
 		int										 wholeShapes	 = 0;
 		int										 wholeOnRecord	 = 0; // whole though the centre was on the record
+		// The slowest patch: its time, K, vertices, area, whether its shape had walls in sight, how
+		// many pieces the shape gave, the live triangles after it, and the patch's passes.
+		struct SlowestPatch {
+			double		ms		  = 0.0;
+			double		k		  = 0.0;
+			double		vertices  = 0.0;
+			double		areaM2	  = 0.0;
+			bool		walls	  = false;
+			std::size_t pieces	  = 0;
+			int			triangles = 0;
+			int			passes	  = 0;
+		};
+		SlowestPatch slowest;
 		PatchReport								 last;
 		int										 dropped = 0;
 		std::int64_t							 unread	 = 0;
@@ -386,6 +399,9 @@ namespace {
 				PatchEdits edits;
 				edits.adds.push_back(NavInputPolygon{piece, false, kSeenProvenance});
 				patchMs.push_back(secondsOf([&] { last = mesh.applyPatch(edits); }) * 1e3);
+				if (patchMs.back() > slowest.ms) {
+					slowest = {patchMs.back(), ringK.back(), static_cast<double>(piece.size()), ringArea.back(), walls, pieces.size(), mesh.liveTriangleCount(), last.passes};
+				}
 				passes.push_back(last.passes);
 				unread += last.unreadCovers;
 				boxes.push_back({pieceLow, pieceHigh});
@@ -1013,6 +1029,43 @@ namespace {
 					legsCovered += covered ? 1 : 0;
 				}
 			};
+
+			// Each wall piece a polygon bounds or crosses joins the record, whole, once (spec rule 22):
+			// what VisionSystem's structure pass and PlayerVisibilitySystem do with nav's wall rings.
+			std::vector<std::uint8_t> pieceEntered(building.pieces.size(), 0);
+			std::vector<double>		  footprintCoveredUs;
+			std::vector<double>		  footprintPatchMs;
+			int						  footprints = 0;
+			auto enterTouchedPieces = [&](const std::vector<Vec2i64>& polygon) {
+				for (std::size_t piece = 0; piece < building.pieces.size(); ++piece) {
+					if (pieceEntered[piece] != 0) {
+						continue;
+					}
+					const std::array<Vec2i64, 4>& corners = building.pieces[piece];
+					bool						  touched = false;
+					for (std::size_t corner = 0; corner < 4 && !touched; ++corner) {
+						touched = geometry::pointInPolygon(corners[corner], polygon) != geometry::PointInPolygon::Outside;
+						for (std::size_t edge = 0; edge < polygon.size() && !touched; ++edge) {
+							touched = geometry::intersectSegments(corners[corner], corners[(corner + 1) % 4], polygon[edge], polygon[(edge + 1) % polygon.size()]).relation !=
+									  geometry::SegmentRelation::Disjoint;
+						}
+					}
+					if (!touched) {
+						continue;
+					}
+					pieceEntered[piece] = 1;
+					const std::vector<Vec2i64> ring(corners.begin(), corners.end());
+					const Vec2i64			   centre{(corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4, (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4};
+					const std::size_t		   before = rec.patchMs.size();
+					rec.commit(ring, centre, false);
+					footprintCoveredUs.push_back(rec.coveredUs.back());
+					for (std::size_t patch = before; patch < rec.patchMs.size(); ++patch) {
+						footprintPatchMs.push_back(rec.patchMs[patch]);
+						registeredK.push_back(rec.ringK[patch]);
+					}
+					++footprints;
+				}
+			};
 			auto closeLeg = [&](Walker& walker, const Vec2i64& end) {
 				if (walker.legOpen && end != walker.legStart) {
 					commitShape(legRing(walker.legStart, end), walker.legStart, false);
@@ -1099,6 +1152,7 @@ namespace {
 								continue;
 							}
 							commitShape(ring, walker.position, true);
+							enterTouchedPieces(ring);
 							continue;
 						}
 						walker.hasPolygon = false;
@@ -1180,8 +1234,9 @@ namespace {
 			const RecordReach reach		= recordReach(rec, reachRng, 20000);
 			const double	  unionArea = reach.unionM2;
 			const double	  seconds	= static_cast<double>(periodSeconds) * periodsRun;
-			const double	  recordMs	= (sumOf(simpleUs) + sumOf(polygonCoveredUs) + sumOf(legCoveredUs) + sumOf(rec.skirtUs) + sumOf(rec.frontierUs)) / 1e3 +
-									  sumOf(polygonPatchMs) + sumOf(legPatchMs);
+			const double	  recordMs	= (sumOf(simpleUs) + sumOf(polygonCoveredUs) + sumOf(legCoveredUs) + sumOf(rec.skirtUs) + sumOf(rec.frontierUs) +
+									   sumOf(footprintCoveredUs)) / 1e3 +
+									  sumOf(polygonPatchMs) + sumOf(legPatchMs) + sumOf(footprintPatchMs);
 			std::fprintf(stderr,
 						 "[seen base] %zu colonists, %s, skirt %lld mm, %d rooms, %zu outer doors, %.0f min: %d polygons (%d covered, %.1f%%), %d legs (%d covered), "
 						 "%d not simple; %zu rings registered; %d live triangles; unreadCovers %lld; validate %s\n",
@@ -1198,6 +1253,12 @@ namespace {
 			printTimes("patch per ring, from polygons", polygonPatchMs, "ms");
 			printTimes("patch per ring, from legs", legPatchMs, "ms");
 			printTimes("patch per sliver ring (under 0.01 m2)", sliverPatchMs, "ms");
+			std::fprintf(stderr, "  wall footprints: %d of %zu pieces entered\n", footprints, building.pieces.size());
+			printTimes("covered test, footprints", footprintCoveredUs, "us");
+			printTimes("patch per ring, from footprints", footprintPatchMs, "ms");
+			std::fprintf(stderr, "  slowest patch %.2f ms: K %.0f, %.0f vertices, %.2f m2, %s, one of %zu pieces, %d live triangles after, %d passes\n", rec.slowest.ms,
+						 rec.slowest.k, rec.slowest.vertices, rec.slowest.areaM2, rec.slowest.walls ? "a skirted sight polygon" : "a leg, the landing or a footprint",
+						 rec.slowest.pieces, rec.slowest.triangles, rec.slowest.passes);
 			std::fprintf(stderr, "  K where registered mean %.0f max %.0f; ring areas: under 0.01 m2 %d, 0.01 to 0.1 %d, 0.1 to 1 %d, 1 to 10 %d, over 10 %d; union %.0f m2\n",
 						 meanOf(registeredK), maxOf(registeredK), gainBuckets[0], gainBuckets[1], gainBuckets[2], gainBuckets[3], gainBuckets[4], unionArea);
 			std::fprintf(stderr, "  oracle: %d points deeper than the tolerance in %zu polygons, %d off the record\n", oracleSamples, sampled.size(), oracleMissing);
@@ -1215,9 +1276,9 @@ namespace {
 				std::fprintf(stderr, " %d", triangles);
 			}
 			std::fprintf(stderr,
-						 "\n  record's main-thread cost %.3f ms per simulated second (simple check, covered test, skirt, frontier, patches); vision's polygons %.3f ms "
-						 "per second\n",
-						 recordMs / seconds, sumOf(buildUs) / 1e3 / seconds);
+						 "\n  record's main-thread cost %.3f ms per simulated second, %.3f ms a tick at 60 (simple check, covered test, skirt, frontier, patches, "
+						 "footprints); vision's polygons %.3f ms per second\n",
+						 recordMs / seconds, recordMs / seconds / 60.0, sumOf(buildUs) / 1e3 / seconds);
 			state.SetIterationTime(recordMs / 1e3);
 			state.counters["polygons"]		   = polygons;
 			state.counters["coveredShare"]	   = static_cast<double>(polygonsCovered) / std::max(1, polygons);
