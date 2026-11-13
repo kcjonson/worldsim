@@ -23,6 +23,7 @@
 
 #include <glm/vec2.hpp>
 
+#include <cmath>
 #include <filesystem>
 #include <string>
 
@@ -245,6 +246,31 @@ TEST_F(VisionSystemTest, TargetOnSameSideIsVisible) {
 	tick(sys);
 
 	EXPECT_TRUE(remembers(world, observer, targetPos));
+}
+
+// Indoors the sight shape is the visibility polygon, whose rim is the 64-sided sight polygon
+// inscribed in the sight circle: midway between two rim vertices it stands 36 mm inside 30 m.
+// A target past that flat, though within the radius, is not seen; one short of it is.
+TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightPolygon) {
+	// West, half a side past rim vertex 32 (which lies along -x).
+	const float		angle = 3.14159265F * (1.0F + 1.0F / 64.0F);
+	const glm::vec2 heading{std::cos(angle), std::sin(angle)};
+	auto seenAt = [&](float distance) {
+		ConstructionWorld construction;
+		buildWall(construction, {1500, 0}, {1500, 3000});
+		World		  world;
+		VisionSystem& vision = world.registerSystem<VisionSystem>();
+		vision.setConstructionWorld(&construction);
+		const glm::vec2 observerPos{0.5F, 1.5F};
+		const EntityID  observer = spawnObserver(world, observerPos);
+		const glm::vec2 targetPos = observerPos + heading * distance;
+		spawnTarget(world, targetPos);
+		tick(vision);
+		EXPECT_GT(vision.polygonBuildCount(), 0u);
+		return remembers(world, observer, targetPos);
+	};
+	EXPECT_TRUE(seenAt(29.94F));
+	EXPECT_FALSE(seenAt(29.985F)) << "beyond the rim's flat, inside the 30 m circle";
 }
 
 // Demolishing the wall (demote to Blueprint) bumps the version: the next tick

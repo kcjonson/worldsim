@@ -19,6 +19,7 @@ add_library(geometry
     nav/NavMesh.cpp
     nav/PathQuery.cpp
     nav/PatchableMesh.cpp
+    nav/SightCover.cpp
 )
 
 target_include_directories(geometry
