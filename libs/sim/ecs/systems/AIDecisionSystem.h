@@ -356,7 +356,7 @@ private:
 						 struct MovementTarget& movementTarget);
 
 	/// A deferred route (AwaitingMesh, awaitingSnap) is asked for again: the ground it waits on may have
-	/// changed (NavigationSystem::awaitedGroundEpoch moved off Task::deferredGroundEpoch) and
+	/// changed since it was asked (NavigationSystem::awaitedGroundEpoch moved off Task::routeAskedGroundEpoch) and
 	/// kReEvalInterval has passed since it was last asked.
 	[[nodiscard]] bool awaitedGroundDue(const struct Task& task) const;
 

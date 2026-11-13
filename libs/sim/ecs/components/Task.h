@@ -218,11 +218,12 @@ struct Task {
 	TaskType  type = TaskType::None;
 	TaskState state = TaskState::Pending;
 	NavState  navState = NavState::Traveling;
-	// NavigationSystem::awaitedGroundEpoch() when the route was deferred (navState AwaitingMesh, or
-	// awaitingSnap). The route is asked for again once it moves off this value, and no sooner than
+	// NavigationSystem::awaitedGroundEpoch() when the route was last asked for. A deferred route
+	// (navState AwaitingMesh, or awaitingSnap) is asked for again once it moves off this value, so
+	// ground landing between the ask and the answer counts, and no sooner than
 	// AIDecisionSystem::kReEvalInterval after routeAskedAt, so ground landing every tick is not a
 	// request every tick.
-	std::uint64_t deferredGroundEpoch = 0;
+	std::uint64_t routeAskedGroundEpoch = 0;
 	// AIDecisionSystem's clock when the route was last asked for.
 	float routeAskedAt = 0.0F;
 	// The route asked of NavigationSystem::requestRoute and not yet answered; 0 for none. Survives
@@ -239,7 +240,7 @@ struct Task {
 	std::uint16_t routeWaitTicks = 0;
 	static constexpr std::uint16_t kFindingWayTicks = 10;
 	// No known way from where the snap holds him inside a placed obstacle: he asks again once the snap lets
-	// go or the ground he waits on may have changed (deferredGroundEpoch), and after kSnapWaitDecisions interval
+	// go or the ground he waits on may have changed (routeAskedGroundEpoch), and after kSnapWaitDecisions interval
 	// decisions still held, his route fails.
 	bool awaitingSnap = false;
 	// Interval decisions the snap has held him for in a row: a decision while it holds him is put off
@@ -371,7 +372,7 @@ struct Task {
 		type = TaskType::None;
 		state = TaskState::Pending;
 		navState = NavState::Traveling;
-		deferredGroundEpoch = 0;
+		routeAskedGroundEpoch = 0;
 		routeAskedAt = 0.0F;
 		sourceChoices.clear();
 		routeBeliefVersion = 0;

@@ -3103,6 +3103,7 @@ namespace ecs {
 		task.routeBeliefVersion = memory.beliefVersion;
 		task.routeWaitTicks		= 0;
 		task.routeAskedAt		= m_elapsedTime;
+		task.routeAskedGroundEpoch = m_navSystem->awaitedGroundEpoch();
 		if (!walking) {
 			movementTarget.active = false;
 			setNavState(entity, task, NavState::AwaitingRoute);
@@ -3188,7 +3189,6 @@ namespace ecs {
 				}
 				movementTarget.active = false;
 				setNavState(entity, task, NavState::AwaitingMesh);
-				task.deferredGroundEpoch = m_navSystem->awaitedGroundEpoch();
 				LOG_DEBUG(Engine, "[Nav] Entity %llu: his route's ground is on its way, waiting for it", static_cast<unsigned long long>(entity));
 				return;
 			case nav::RouteOutcome::NoKnownWay:
@@ -3203,7 +3203,6 @@ namespace ecs {
 			}
 			movementTarget.active	   = false;
 			task.awaitingSnap		 = true;
-			task.deferredGroundEpoch = m_navSystem->awaitedGroundEpoch();
 			setNavState(entity, task, NavState::AwaitingRoute);
 			return;
 		}
@@ -3211,7 +3210,7 @@ namespace ecs {
 	}
 
 	bool AIDecisionSystem::awaitedGroundDue(const Task& task) const {
-		return m_navSystem->awaitedGroundEpoch() != task.deferredGroundEpoch && m_elapsedTime - task.routeAskedAt >= kReEvalInterval;
+		return m_navSystem->awaitedGroundEpoch() != task.routeAskedGroundEpoch && m_elapsedTime - task.routeAskedAt >= kReEvalInterval;
 	}
 
 	std::optional<glm::vec2> AIDecisionSystem::standPointFor(glm::vec2 target, glm::vec2 from, float radius, bool placedTarget) const {
