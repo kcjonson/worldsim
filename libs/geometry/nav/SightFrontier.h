@@ -80,6 +80,7 @@ namespace geometry::nav {
 		std::vector<Vec2i64>					 piece;
 		std::vector<std::uint8_t>				 pinned;
 		std::vector<Vec2i64>					 inner;
+		std::vector<Vec2i64>					 fan;
 	};
 
 	// Fan `shape` from `centre` into one triangle per side. A counter-clockwise triangle's core is
@@ -102,12 +103,13 @@ namespace geometry::nav {
 	// chain stands kSeenPieceOverlapMm back from every record edge point near it, so the piece
 	// overlaps the record on every side rather than abutting it. Inner points nearer the centre
 	// than the overlap become the centre, and a run under the overlap wide is fanned from the
-	// centre. Every piece is a simple ring inside the shape; the record and the pieces together
-	// hold the shape, but for the tolerance strips above.
+	// centre. A piece that would not be a simple ring is replaced by its run's fan: the outer chain
+	// and the centre, which lies on the record. Every piece is a simple ring inside the shape; the
+	// record and the pieces together hold the shape, but for the tolerance strips above.
 	//
 	// Whole: the centre is off the record, an edge of the record passes through it, every core is
-	// met, a run's rays do not meet the boundary in order, or a piece would not be a simple ring;
-	// `pieces` holds the shape.
+	// met, a run's rays do not meet the boundary in order, or a run's fan would not be a simple ring
+	// either; `pieces` holds the shape.
 	//
 	// `shape` must be simple and wind once round `centre` (simpleAround). `pieces` is cleared first.
 	SightFrontier sightShapeFrontier(const PatchableMesh& record, const std::vector<Vec2i64>& shape, const Vec2i64& centre, SightFrontierScratch& scratch,

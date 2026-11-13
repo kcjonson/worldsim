@@ -30,8 +30,9 @@ namespace vision {
 	constexpr std::int64_t kSeenSlackMm = 50;
 	// A step longer than this in one frame ends the leg without bridging it.
 	constexpr double kSeenJumpMeters = 2.0;
-	// Shapes tested a tick, first in, first out.
-	constexpr std::size_t kSeenRingsPerTick = 4;
+	// Shapes tested a tick, first in, first out: above the 10 a tick that 50 colonists indoors at 10x
+	// make, at about 15 us a test (player-visibility.md 6.6).
+	constexpr std::size_t kSeenRingsPerTick = 16;
 	// Of those, at most this many registered a tick: a registering shape pays the skirt, its
 	// frontier and a patch, about 100 covered tests' worth (player-visibility.md 6.6).
 	constexpr std::size_t kSeenShapesRegisteredPerTick = 1;

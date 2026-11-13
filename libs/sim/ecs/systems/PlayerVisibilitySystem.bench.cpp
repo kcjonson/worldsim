@@ -1,5 +1,6 @@
-// PlayerVisibilitySystem's main-thread time a tick (player-visibility.md 6, step 3): colonists walking
-// in open ground from the landing, at 1x and 10x. Each run is 36,000 ticks, ten minutes of frames at
+// PlayerVisibilitySystem's main-thread time a tick (player-visibility.md 6.5, 6.6): colonists walking
+// in open ground from the landing, and in a base beyond it (BM_PlayerVisibilityBase, below), at 1x
+// and 10x. Each walk run is 36,000 ticks, ten minutes of frames at
 // 60 a second: the landing polygon goes in first, then every colonist walks at 2 m/s (20 m/s at 10x)
 // on headings that change by up to 60 degrees every 2 to 15 s, turned back toward the drop past
 // 400 m from it. Vision runs every 5th tick as in the game; only PlayerVisibilitySystem::update is
@@ -266,6 +267,14 @@ namespace {
 			std::vector<double> tickMs;
 			tickMs.reserve(kTicks);
 			std::size_t mostPending = 0;
+			// The slowest tick: its time, which tick, and what it registered and queued.
+			struct SlowestTick {
+				double		ms		   = 0.0;
+				int			tick	   = 0;
+				std::size_t rings	   = 0;
+				std::size_t footprints = 0;
+			};
+			SlowestTick slowest;
 			for (int tick = 0; tick < kTicks; ++tick) {
 				for (Resident& resident : residents) {
 					glm::vec2& at		 = world.getComponent<Position>(resident.colonist)->value;
@@ -287,19 +296,24 @@ namespace {
 					}
 				}
 				vision.update(kTick);
-				const auto start = std::chrono::steady_clock::now();
+				const std::size_t ringsBefore	   = visibility.seenArea().ringsRegistered();
+				const std::size_t footprintsBefore = visibility.footprintsEntered();
+				const auto		  start			   = std::chrono::steady_clock::now();
 				visibility.update(kTick);
 				tickMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
 				mostPending = std::max(mostPending, visibility.seenArea().shapesPending());
+				if (tickMs.back() > slowest.ms) {
+					slowest = {tickMs.back(), tick, visibility.seenArea().ringsRegistered() - ringsBefore, visibility.footprintsEntered() - footprintsBefore};
+				}
 			}
 
 			const TickTimes times = timesOf(tickMs);
 			std::fprintf(stderr,
-						 "[PlayerVisibility base] %d colonists at %.0fx: tick ms mean %.4f p99 %.4f max %.3f; rings %zu, dropped %zu, skipped %zu, footprints %zu, "
-						 "pending at most %zu and %zu at the end, seen %.0f m2\n",
-						 colonists, static_cast<double>(speed), times.mean, times.p99, times.most, visibility.seenArea().ringsRegistered(),
-						 visibility.seenArea().shapesDropped(), visibility.seenArea().shapesSkipped(), visibility.footprintsEntered(), mostPending,
-						 visibility.seenArea().shapesPending(), visibility.seenArea().committedSquareMeters());
+						 "[PlayerVisibility base] %d colonists at %.0fx: tick ms mean %.4f p99 %.4f max %.3f (tick %d: %zu rings registered, %zu footprints "
+						 "queued); rings %zu, dropped %zu, skipped %zu, footprints %zu, pending at most %zu and %zu at the end, seen %.0f m2\n",
+						 colonists, static_cast<double>(speed), times.mean, times.p99, times.most, slowest.tick, slowest.rings, slowest.footprints,
+						 visibility.seenArea().ringsRegistered(), visibility.seenArea().shapesDropped(), visibility.seenArea().shapesSkipped(),
+						 visibility.footprintsEntered(), mostPending, visibility.seenArea().shapesPending(), visibility.seenArea().committedSquareMeters());
 			state.counters["meanMs"]  = times.mean;
 			state.counters["p99Ms"]	  = times.p99;
 			state.counters["maxMs"]	  = times.most;

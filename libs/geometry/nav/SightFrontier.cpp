@@ -460,6 +460,11 @@ namespace geometry::nav {
 				piece.push_back(outerEnd);
 				pinned.push_back(0);
 			}
+			// The run's fan from the centre, its outer chain and the centre, stands in for a piece
+			// that would not be simple.
+			std::vector<Vec2i64>& fan = scratch.fan;
+			fan.assign(piece.begin(), piece.end());
+			fan.push_back(centre);
 
 			// The inner chain stands the overlap back from every contact point near it, along the run's
 			// rays and the two turned ones: where the record's edge runs nearly along the rays, a pull
@@ -568,8 +573,13 @@ namespace geometry::nav {
 				}
 			}
 			if (piece.size() < 3 || !isSimple(piece).pass) {
-				pieces.clear();
-				return whole();
+				if (fan.size() < 4 || !isSimple(fan).pass) {
+					pieces.clear();
+					return whole();
+				}
+				pieces.push_back(fan);
+				done += runLength;
+				continue;
 			}
 			pieces.push_back(piece);
 			done += runLength;
