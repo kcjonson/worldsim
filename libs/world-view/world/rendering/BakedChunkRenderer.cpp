@@ -30,10 +30,10 @@ namespace worldview {
 		uploadBakedChunk(coord, std::move(cpuData), frameCounter);
 
 		// Baked from the index as it stands, so level with every removal so far
-		if (const auto* revisions = executor.bakeRevisions(coord)) {
+		if (const auto* removals = executor.shortStaticRemovals(coord)) {
 			auto& subChunks = m_bakedChunkCache[coord].subChunks;
 			for (int subIndex = 0; subIndex < assets::kSubChunkCount; ++subIndex) {
-				subChunks[subIndex].revision = (*revisions)[subIndex];
+				subChunks[subIndex].removals = (*removals)[subIndex];
 			}
 		}
 	}
@@ -48,8 +48,8 @@ namespace worldview {
 	}
 
 	void BakedChunkRenderer::rebakeEditedSubChunks(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord) {
-		const auto* revisions = executor.bakeRevisions(coord);
-		if (revisions == nullptr) {
+		const auto* removals = executor.shortStaticRemovals(coord);
+		if (removals == nullptr) {
 			return;
 		}
 		const auto	cacheIt = m_bakedChunkCache.find(coord);
@@ -65,14 +65,14 @@ namespace worldview {
 		auto& cache = cacheIt->second;
 		for (int subIndex = 0; subIndex < assets::kSubChunkCount; ++subIndex) {
 			auto& subChunk = cache.subChunks[subIndex];
-			if (subChunk.revision == (*revisions)[subIndex]) {
+			if (subChunk.removals == (*removals)[subIndex]) {
 				continue;
 			}
 			auto cpu = assets::bakeSubChunkEntities(*index, coord, subIndex, templateLookup());
 			cache.totalEntityCount = cache.totalEntityCount - subChunk.floraMesh.entityCount + cpu.floraMesh.entityCount;
 			subChunk.floraMesh = {}; // a sub-region left empty keeps no buffers
 			uploadSubChunk(cache, cpu, subIndex);
-			subChunk.revision = (*revisions)[subIndex];
+			subChunk.removals = (*removals)[subIndex];
 		}
 	}
 

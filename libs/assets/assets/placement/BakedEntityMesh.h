@@ -95,7 +95,7 @@ using TemplateLookup = std::function<const renderer::TessellatedMesh*(const asse
 );
 
 /// One sub-region of a chunk baked again from what its index holds now: the re-bake after a
-/// static in it was removed (PlacementExecutor::bakeRevisions), a sixty-fourth of the chunk's.
+/// short static in it was removed (PlacementExecutor::shortStaticRemovals), a sixty-fourth of the chunk's.
 [[nodiscard]] BakedSubChunkCPUData bakeSubChunkEntities(
 	const assets::SpatialIndex& index,
 	world::ChunkCoordinate coord,

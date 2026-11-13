@@ -431,6 +431,12 @@ footprint of a foundation not yet built. A loose pile already on a footprint doe
 Clearing (only harvestables do); as the foundation enters construction, `ConstructionSystem` drops it
 again just outside, so nothing is built over.
 
+A foundation is built on bare ground. As it enters construction (`ConstructionSystem::bareSites`),
+every placed static still on its footprint leaves the placement index: one a colonist could carry (a
+stone) is dropped just outside as a loose pile, the way a pile is, and the rest (the freestanding
+grass, a rock) is removed with nothing to show for it. None of that is work for a colonist and none of
+it holds the site back.
+
 ### Build and Deconstruct
 
 No claims; any number of colonists may work an UnderConstruction blueprint. Planned: builder slots

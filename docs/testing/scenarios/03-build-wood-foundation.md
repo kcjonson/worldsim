@@ -110,6 +110,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].progress == 1.0
 ```
 
+   Screenshot the built foundation: it sits on bare ground, with no bush, grass tuft or stone
+   drawn on it.
+
 8. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
 
 ---

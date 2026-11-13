@@ -43,6 +43,8 @@ class GroundcoverRenderer {
 		float	 minX = 0, minY = 0, maxX = 0, maxY = 0; // world bounds for culling
 		uint64_t lastAccessFrame = 0;
 		bool	 built = false;
+		/// The chunk's removal counts (PlacementExecutor::shortStaticRemovals) these buckets match
+		assets::PlacementExecutor::SubRegionRemovals removals{};
 	};
 	std::unordered_map<world::ChunkCoordinate, GroundcoverChunkCache> m_groundcoverChunkCache;
 
@@ -56,6 +58,11 @@ class GroundcoverRenderer {
 
 	/// Build one chunk's groundcover instance buckets from the spatial index.
 	void buildGroundcoverChunk(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, GroundcoverChunkCache& cache);
+
+	/// Take out of a built chunk's buckets the tufts removed from the index since they were built
+	/// (ground bared for a foundation, the landing clearing), in the sub-regions whose removal
+	/// count moved. The tufts left keep their order, so nothing else changes on screen.
+	void dropRemovedGroundcover(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, GroundcoverChunkCache& cache);
 };
 
 }  // namespace worldview

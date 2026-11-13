@@ -5,6 +5,7 @@
 #include "world/rendering/GroundcoverUniforms.h"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <primitives/Primitives.h>
 #include <utility>
@@ -83,6 +84,9 @@ void GroundcoverRenderer::buildGroundcoverChunk(
 	if (index == nullptr) {
 		return;
 	}
+	// Built from the index as it stands, so level with every removal so far
+	const auto* removals = executor.shortStaticRemovals(coord);
+	cache.removals = removals != nullptr ? *removals : assets::PlacementExecutor::SubRegionRemovals{};
 
 	auto& registry = assets::AssetRegistry::Get();
 	auto  entities = index->queryRect(cache.minX, cache.minY, cache.maxX, cache.maxY);
@@ -104,6 +108,32 @@ void GroundcoverRenderer::buildGroundcoverChunk(
 			Foundation::Vec2(e->position.x, e->position.y), e->rotation, e->scale, Foundation::Color(e->colorTint)
 		);
 	}
+}
+
+void GroundcoverRenderer::dropRemovedGroundcover(
+	const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, GroundcoverChunkCache& cache
+) {
+	const auto* removals = executor.shortStaticRemovals(coord);
+	if (removals == nullptr || *removals == cache.removals) {
+		return;
+	}
+	const auto* index = executor.getChunkIndex(coord);
+	if (index == nullptr) {
+		return;
+	}
+	std::array<bool, assets::kSubChunkCount> edited{};
+	for (size_t subIndex = 0; subIndex < edited.size(); ++subIndex) {
+		edited[subIndex] = (*removals)[subIndex] != cache.removals[subIndex];
+	}
+	for (auto& [defName, buckets] : cache.byDef) {
+		for (auto& instances : buckets) {
+			std::erase_if(instances, [&](const Renderer::InstanceData& instance) {
+				const glm::vec2 position{instance.worldPosition.x, instance.worldPosition.y};
+				return edited[static_cast<size_t>(assets::subChunkIndexOf(coord, position))] && !index->contains(position, defName);
+			});
+		}
+	}
+	cache.removals = *removals;
 }
 
 void GroundcoverRenderer::render(const assets::RenderContext& ctx, RenderStats& stats) {
@@ -132,6 +162,8 @@ void GroundcoverRenderer::render(const assets::RenderContext& ctx, RenderStats& 
 		cache.lastAccessFrame = ctx.frameCounter;
 		if (!cache.built) {
 			buildGroundcoverChunk(ctx.executor, coord, cache);
+		} else {
+			dropRemovedGroundcover(ctx.executor, coord, cache);
 		}
 		if (cache.maxX < vis.minX || cache.minX > vis.maxX || cache.maxY < vis.minY || cache.minY > vis.maxY) {
 			continue;

@@ -35,8 +35,8 @@ class BakedChunkRenderer {
 	/// chunks arrive pre-baked via uploadBakedChunk.
 	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, uint64_t frameCounter);
 
-	/// Bake again each sub-region of a cached chunk that has lost a baked static since its mesh
-	/// was made (PlacementExecutor::bakeRevisions), so a cleared or harvested-out bush stops
+	/// Bake again each sub-region of a cached chunk that has lost a short static since its mesh
+	/// was made (PlacementExecutor::shortStaticRemovals), so a cleared or harvested-out bush stops
 	/// being drawn. One hash lookup for a chunk nothing was removed from.
 	void rebakeEditedSubChunks(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord);
 
@@ -92,7 +92,7 @@ class BakedChunkRenderer {
 		BakedMeshGPU floraMesh;          // Baked short flora for this sub-region
 		float minX = 0, minY = 0;        // World-space bounds for culling
 		float maxX = 0, maxY = 0;
-		uint32_t revision = 0;           // The sub-region's bake revision this mesh was made at
+		uint32_t removals = 0;           // The sub-region's removal count this mesh was made at
 	};
 
 	/// GPU resources for a chunk, subdivided into sub-regions.

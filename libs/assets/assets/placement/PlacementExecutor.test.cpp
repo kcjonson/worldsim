@@ -649,7 +649,7 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 }
 
 // A short static is drawn from its chunk's baked mesh, so the renderer has to hear of its removal:
-// the bake revision of its sub-region moves, and that sub-region baked again no longer holds it. A
+// the removal count of its sub-region moves, and that sub-region baked again no longer holds it. A
 // tall occluder is drawn live, so felling one moves nothing.
 TEST(PlacementExecutorTests, RemovingABakedStaticCallsForItsSubRegionToBeBakedAgain) {
 	auto& registry = AssetRegistry::Get();
@@ -670,7 +670,7 @@ TEST(PlacementExecutorTests, RemovingABakedStaticCallsForItsSubRegionToBeBakedAg
 	chunk.spatialIndex.insert({"BerryBush", neighbour});
 	chunk.spatialIndex.insert(oak);
 	executor.storeChunkResult(std::move(chunk));
-	EXPECT_EQ(executor.bakeRevisions(coord), nullptr) << "a chunk as stored is level with its bake";
+	EXPECT_EQ(executor.shortStaticRemovals(coord), nullptr) << "a chunk as stored is level with its bake";
 
 	renderer::TessellatedMesh triangle;
 	triangle.vertices = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}};
@@ -682,13 +682,13 @@ TEST(PlacementExecutorTests, RemovingABakedStaticCallsForItsSubRegionToBeBakedAg
 	EXPECT_EQ(bakeSubChunkEntities(*executor.getChunkIndex(coord), coord, bushRegion, lookup).floraMesh.entityCount, 2U);
 
 	ASSERT_TRUE(executor.removeEntity(coord, tree, "Oak"));
-	EXPECT_EQ(executor.bakeRevisions(coord), nullptr) << "a felled tree was never in the bake";
+	EXPECT_EQ(executor.shortStaticRemovals(coord), nullptr) << "a felled tree was never in the bake";
 
 	ASSERT_TRUE(executor.removeEntity(coord, bush, "BerryBush"));
-	const PlacementExecutor::BakeRevisions* revisions = executor.bakeRevisions(coord);
-	ASSERT_NE(revisions, nullptr);
+	const PlacementExecutor::SubRegionRemovals* removals = executor.shortStaticRemovals(coord);
+	ASSERT_NE(removals, nullptr);
 	for (int region = 0; region < kSubChunkCount; ++region) {
-		EXPECT_EQ((*revisions)[static_cast<size_t>(region)], region == bushRegion ? 1U : 0U) << "sub-region " << region;
+		EXPECT_EQ((*removals)[static_cast<size_t>(region)], region == bushRegion ? 1U : 0U) << "sub-region " << region;
 	}
 
 	const BakedSubChunkCPUData rebaked = bakeSubChunkEntities(*executor.getChunkIndex(coord), coord, bushRegion, lookup);
@@ -698,7 +698,7 @@ TEST(PlacementExecutorTests, RemovingABakedStaticCallsForItsSubRegionToBeBakedAg
 	EXPECT_FLOAT_EQ(rebaked.floraMesh.vertices[0].position.y, neighbour.y);
 
 	executor.unloadChunk(coord);
-	EXPECT_EQ(executor.bakeRevisions(coord), nullptr) << "a reloaded chunk starts level with its new bake";
+	EXPECT_EQ(executor.shortStaticRemovals(coord), nullptr) << "a reloaded chunk starts level with its new bake";
 }
 
 // ============================================================================
