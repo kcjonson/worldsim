@@ -2,6 +2,7 @@
 
 #include "scenes/game/ui/adapters/ColonistAdapter.h"
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
+#include "scenes/game/ui/models/GlobalTaskListModel.h"
 
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Inventory.h>
@@ -13,11 +14,13 @@
 
 #include <ecs/InventoryMass.h>
 
+#include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace world_sim {
 
-	ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world, ecs::EntityID colonistId) {
+	ColonistDetailsModel::UpdateType ColonistDetailsModel::refresh(ecs::World& world, ecs::EntityID colonistId, float deltaTime) {
 		// Check if colonist changed
 		bool colonistChanged = (colonistId != currentColonistId);
 		currentColonistId = colonistId;
@@ -37,7 +40,7 @@ namespace world_sim {
 		extractSocialData();
 		extractGearData(world, colonistId);
 		extractMemoryData(world, colonistId);
-		extractTasksData(world, colonistId);
+		const bool tasksChanged = extractTasksData(world, colonistId, deltaTime, colonistChanged);
 
 		// Gear signature: hands, belt, and pack contents. Catches quantity-only
 		// changes (a growing armful) that a stack-count diff would miss.
@@ -61,7 +64,6 @@ namespace world_sim {
 			prevMood = needsData.mood;
 			prevGearSig = std::move(gearSig);
 			prevMemoryCount = memoryData.totalKnown;
-			prevTaskCount = tasksData.totalCount;
 			prevBioTask = bioData.currentTask;
 			prevCurrentProgress = tasksData.currentProgress;
 			return UpdateType::Structure;
@@ -93,8 +95,8 @@ namespace world_sim {
 			valuesChanged = true;
 		}
 
-		// Check task count
-		if (tasksData.totalCount != prevTaskCount) {
+		// Check the Known work rows
+		if (tasksChanged) {
 			valuesChanged = true;
 		}
 
@@ -114,7 +116,6 @@ namespace world_sim {
 		prevMood = needsData.mood;
 		prevGearSig = std::move(gearSig);
 		prevMemoryCount = memoryData.totalKnown;
-		prevTaskCount = tasksData.totalCount;
 		prevBioTask = bioData.currentTask;
 		prevCurrentProgress = tasksData.currentProgress;
 
@@ -426,7 +427,19 @@ namespace world_sim {
 		return "Miserable";
 	}
 
-	void ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID colonistId) {
+	bool ColonistDetailsModel::extractTasksData(ecs::World& world, ecs::EntityID colonistId, float deltaTime, bool force) {
+		// The "Currently" panel mirrors the bio task line (extractBioData ran first) and
+		// adds the running action's progress for the meter.
+		tasksData.currentTask = bioData.currentTask;
+		tasksData.currentProgress = adapters::getColonistActivity(world, colonistId).progress;
+
+		timeSinceTasksRefresh += deltaTime;
+		if (!force && !tasksStale && timeSinceTasksRefresh < GlobalTaskListModel::kRefreshInterval) {
+			return false;
+		}
+		timeSinceTasksRefresh = 0.0F;
+		tasksStale = false;
+
 		// Get colonist position for distance calculations
 		glm::vec2	colonistPosition{0.0F, 0.0F};
 		const auto* position = world.getComponent<ecs::Position>(colonistId);
@@ -434,14 +447,14 @@ namespace world_sim {
 			colonistPosition = position->value;
 		}
 
-		tasksData.tasks = adapters::getKnownTasks(world, colonistId, colonistPosition);
-		adapters::sortTasksForDisplay(tasksData.tasks);
+		std::vector<adapters::GlobalTaskDisplayData> rows = adapters::getKnownTasks(world, colonistId, colonistPosition);
+		adapters::sortTasksForDisplay(rows);
+		const bool changed = !std::ranges::equal(rows, tasksData.tasks, [](const auto& now, const auto& before) {
+			return now.id == before.id && now.status == before.status && now.statusDetail == before.statusDetail;
+		});
+		tasksData.tasks = std::move(rows);
 		tasksData.totalCount = tasksData.tasks.size();
-
-		// The "Currently" panel mirrors the bio task line (extractBioData ran first) and
-		// adds the running action's progress for the meter.
-		tasksData.currentTask = bioData.currentTask;
-		tasksData.currentProgress = adapters::getColonistActivity(world, colonistId).progress;
+		return changed;
 	}
 
 } // namespace world_sim

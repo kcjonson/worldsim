@@ -86,9 +86,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 
 3. While Bob chops a tree, spawn Ann next to that tree (`/api/dev/colonist?at=<tree x+1>,<tree y>&name=Ann`), give her an axe (`/api/dev/give?material=AxePrimitive&n=1&where=colonist&slot=hands&at=<tree x+1>,<tree y>`), and select her (`/api/dev/select?colonist=<ANN_ID>`): her task list shows a "Cutting ... for Wood (reserved by Bob)" row for Bob's tree, and she cuts a different tree; the two never cut the same tree.
 
-4. Open the Tasks panel while both cut: the "Cut for Wood" row reads "Working - Bob, Ann" (one name while only one of them cuts), and its detail goes on "needs N", with "M on the way" added while either carries wood toward the box.
+4. Open the Tasks panel while both cut: the "Cut for Wood" row reads "Working - Bob, Ann" (one name while only one of them cuts), and its detail goes on "needs N, M on the way": M appears as soon as a cutter starts toward his tree (a cut counts its expected wood as on the way from the moment he picks it), and N is the box's minimum less what it holds less M.
 
-5. Open Ann's details and its Tasks tab: Known work lists the box's wood rows, and no row the panel shows that Ann was never offered.
+5. Open Ann's details and its Tasks tab: Known work lists the "Cut for Wood" row (the one her current task, shown under Currently, serves), and each of its rows matches the Tasks panel's row of the same name in status and detail, changing when the panel's does (except Available and Unassigned, which go by distance: from the camera on the panel, from Ann on the tab). It lists no row the panel doesn't.
 
 6. Look at the stump after the fell: the remainder is one compact heap of logs lying bare, no crate under it.
 

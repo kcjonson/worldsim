@@ -19,12 +19,10 @@
 #include <algorithm>
 #include <cstdint>
 #include <functional>
-#include <map>
 #include <optional>
 #include <span>
 #include <unordered_map>
 #include <unordered_set>
-#include <utility>
 #include <vector>
 
 namespace assets {
@@ -271,63 +269,6 @@ namespace ecs {
 	/// station store holds, 0 when the item is no input of it or nothing is queued. A craft root's
 	/// remaining need, and what a deposit into the station is metered to.
 	[[nodiscard]] uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId);
-
-	/// What a goal's root still needs of the goal's one item, and how much of it is on its way.
-	struct GoalItemCount {
-		uint32_t needed = 0;
-		uint32_t onTheWay = 0;
-	};
-
-	/// The colonists behind the task panel's goal rows, read in one pass over every colonist's current
-	/// task and last decision trace, so each row is a few lookups. Offers are as stale as the traces.
-	class ColonyGoalWork {
-	  public:
-		explicit ColonyGoalWork(World& world);
-
-		/// Colonists whose current task serves the goal, in view order. A cut or a haul serves the goal it
-		/// was picked through (a carry-in and a cut's deposit leg name their root); a build, a craft, or a
-		/// placement serves the goal whose destination it works, and a Build, Craft, or PlacePackaged goal
-		/// is served by those first, else by whoever delivers toward it. A suspended record is not current
-		/// work, so a colonist seeing to a need serves nothing.
-		[[nodiscard]] std::span<const EntityID> workersOf(const GoalTask& goal) const;
-
-		/// Colonists whose last decision offered work toward the goal, in view order: an option for it
-		/// chosen, available, blocked only by the colonist's own carry (NoRoom), or held by another
-		/// colonist (Reserved). A cut or a haul is for the goal it was picked through; a build, a
-		/// teardown, a craft, or a placement is for the goal of that type whose destination it works.
-		[[nodiscard]] std::span<const EntityID> offeredTo(uint64_t goalId) const;
-
-		/// Some colonist's last decision found the goal's source held by another (Reserved), and none had
-		/// one it chose or could take.
-		[[nodiscard]] bool allSourcesClaimed(uint64_t goalId) const;
-
-		/// Whether a goal has anything to do now. A storage umbrella stays while its box has rules, full
-		/// or not, and a stocking cut until its goal system retires it, so either has work only while some
-		/// colonist is offered work toward it: a box that wants wood when no loose wood is known has none.
-		/// Every other goal exists only while it has work: its goal system retires it.
-		[[nodiscard]] bool hasWork(const GoalTask& goal) const;
-
-		/// Units of an item on their way toward a root: the InFlight claims of every colonist's task and
-		/// suspended record.
-		[[nodiscard]] uint32_t inFlight(uint64_t rootGoalId, uint32_t itemDefNameId) const;
-
-		/// For a cut or a haul toward one item: its root's remaining need of it (the basis its cuts and
-		/// hauls count against) and its in-flight. Nothing for a goal with no one item: a build umbrella,
-		/// a clear, a craft, a placement, or a box taking several items or a category.
-		[[nodiscard]] std::optional<GoalItemCount> itemCount(World& world, const GoalTask& goal) const;
-
-	  private:
-		struct Offers {
-			std::vector<EntityID> colonists;
-			bool				  open = false;
-			bool				  reserved = false;
-		};
-
-		std::unordered_map<uint64_t, std::vector<EntityID>> workersByGoal;
-		std::unordered_map<uint64_t, std::vector<EntityID>> workersByEntity;
-		std::unordered_map<uint64_t, Offers>				offers;
-		std::map<std::pair<uint64_t, uint32_t>, uint32_t>	inFlightByRootItem;
-	};
 
 	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
 	/// first time each is asked. A pass is one AI update. Deposits and consumed inputs land in

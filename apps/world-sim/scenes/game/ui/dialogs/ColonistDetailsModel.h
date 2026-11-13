@@ -35,8 +35,12 @@ namespace world_sim {
 		/// Refresh model with current colonist data
 		/// @param world ECS world (non-const for task queries via GoalTaskRegistry)
 		/// @param colonistId Entity ID of the colonist
+		/// @param deltaTime Time since last frame (seconds), for the Known work rows' refresh interval
 		/// @return Type of update needed
-		[[nodiscard]] UpdateType refresh(ecs::World& world, ecs::EntityID colonistId);
+		[[nodiscard]] UpdateType refresh(ecs::World& world, ecs::EntityID colonistId, float deltaTime);
+
+		/// Read the Known work rows on the next refresh, whatever the interval (the dialog reopening).
+		void invalidateTasks() { tasksStale = true; }
 
 		/// Check if model has valid data
 		[[nodiscard]] bool isValid() const { return valid; }
@@ -65,8 +69,10 @@ namespace world_sim {
 		/// Extract Memory tab data
 		void extractMemoryData(const ecs::World& world, ecs::EntityID colonistId);
 
-		/// Extract Tasks tab data
-		void extractTasksData(ecs::World& world, ecs::EntityID colonistId);
+		/// Extract Tasks tab data: the Currently panel every frame, the Known work rows on the global task
+		/// panel's refresh interval (a full pass over the colony's goals) or when `force`d. True when
+		/// the rows changed.
+		[[nodiscard]] bool extractTasksData(ecs::World& world, ecs::EntityID colonistId, float deltaTime, bool force);
 
 		/// Get mood label from mood value
 		[[nodiscard]] static std::string getMoodLabel(float mood);
@@ -88,11 +94,12 @@ namespace world_sim {
 		float				 prevMood = 0.0F;
 		std::string			 prevGearSig;
 		size_t				 prevMemoryCount = 0;
-		size_t				 prevTaskCount = 0;
 		// The bio "Current:" line is derived from task type + state + navState + labels;
 		// diffing the rendered string catches every change to it without enumerating inputs.
 		std::string			 prevBioTask;
 		float				 prevCurrentProgress = -1.0F;
+		float				 timeSinceTasksRefresh = 0.0F;
+		bool				 tasksStale = true;
 	};
 
 } // namespace world_sim

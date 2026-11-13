@@ -27,6 +27,9 @@ class GlobalTaskListModel {
   public:
 	using TaskData = adapters::GlobalTaskDisplayData;
 
+	/// Refresh interval in seconds (5Hz = 0.2s); the dossier's Known work tab refreshes on it too.
+	static constexpr float kRefreshInterval = 0.2F;
+
 	/// Refresh data from GoalTaskRegistry (throttled to 5Hz)
 	/// @param world ECS world (for per-goal assignment + build progress)
 	/// @param cameraCenter Camera position for distance calculations
@@ -52,9 +55,6 @@ class GlobalTaskListModel {
 
 	/// Throttle timer (accumulates until kRefreshInterval)
 	float timeSinceRefresh = 0.0F;
-
-	/// Refresh interval in seconds (5Hz = 0.2s)
-	static constexpr float kRefreshInterval = 0.2F;
 
 	/// Track first refresh (always return true)
 	bool isFirstRefresh = true;

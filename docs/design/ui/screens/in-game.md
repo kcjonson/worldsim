@@ -190,17 +190,17 @@ Each row is two lines, both wrapping to the row's width:
 - `Working` — someone's current task serves it; the detail names them.
 - `Unassigned` — nobody works it, within 50m of the camera.
 - `Available` — nobody works it, further than that; the detail starts "far".
-- `Waiting (all known sources claimed)` — a colonist knows a source, but another colonist holds every one known.
+- `Waiting (all known sources claimed)` — a colonist knows a source, but another colonist holds every one known; not shown while any colonist found one free (even if his own load keeps him from it) or regrowing.
 - `Waiting (no source found)` — the need is known, no source is.
 - `Blocked` — a craft waiting on its materials; the detail reads "2/5 materials".
 - A build site reads `Needs materials` (the detail names whoever delivers), `Building` ("Mara (40%)"), or `Ready to build` ("40%").
 
 **Detail**, its parts joined with "; ":
 - The workers: one or two names, more as the first two then "+N" ("Mara, Idris +2").
-- For a cut or haul of one item, what its box, craft, or site still needs and what is on its way: "needs 12, 4 on the way", either part left out at zero.
+- For a cut or haul of one item, what is on its way (what the colonists' claims count as coming) and what its box, craft, or site still needs beyond that: 12 short with 4 coming reads "needs 8, 4 on the way", either part left out at zero. A haul into a box shows only "4 on the way", since a box's free room is no shortfall.
 - While nobody works it, the colonists whose last decision offered them work toward it: "known to Rin, Joon".
 
-So a row can read "Haul Wood / Working - Idris; needs 12, 4 on the way" or "Cut for Wood / Unassigned - needs 30; known to Rin".
+So a row can read "Haul Wood / Working - Idris; 4 on the way" or "Cut for Wood / Unassigned - needs 30; known to Rin".
 
 ---
 

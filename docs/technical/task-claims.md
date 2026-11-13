@@ -896,9 +896,10 @@ data.
 
 Built:
 
-Every row's colonist data comes from `ColonyGoalWork` (`GoalTaskRegistry.h`), built once per panel
-refresh by one pass over every colonist's task, suspended record, and last decision trace; each row
-is then a few lookups, and `GlobalTaskAdapter` only formats them.
+Every row's colonist data comes from `ColonyGoalWork` (`systems/ColonyGoalWork.h`), built once per
+panel refresh by one pass over every colonist's task and last decision trace, plus a rebuild of a
+claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter` gathers them and
+`TaskRowText` turns them into the status and detail, a pure function of plain facts.
 
 - Workers: the task panel's "Working" status names every colonist whose current task serves the row,
   in view order, one or two names joined with ", " and more as the first two then "+N" ("Alice, Bob
@@ -906,11 +907,15 @@ is then a few lookups, and `GlobalTaskAdapter` only formats them.
   their root); a build, craft, or placement serves the entity it works, so the Build umbrella names its
   builders, a Craft row its crafter, and a clear row its clearers. A suspended record is not current
   work.
-- Quantities: a cut or haul row toward one item adds what its root still needs of the item
-  (`remainingNeed`, on the basis its work counts against) and what is on its way (the InFlight claims
-  toward the root and item, from tasks and suspended records alike): "needs 12, 4 on the way", a part
-  left out at zero. A build umbrella, a clear, a craft, and a box taking several items or a category
-  have no one item and show none.
+- Quantities: a cut or haul row toward one item adds what is on its way toward its root and what the
+  root still needs beyond that. On the way is the claim index's in-flight for the root and item
+  (`ClaimIndex::inFlight`, excluding no one), so it is what the AI counts as coming: a sleeping
+  colonist's record and the uncarried part of a task whose route failed are not on the way. Needs is
+  `remainingNeed` (on the basis its work counts against) less that: with 12 remaining and 4 in flight
+  the row reads "needs 8, 4 on the way", a part left out at zero. A storage haul's need is the box's
+  free room, not a shortfall (a box with no maximum would read "needs 1987"), so it shows only "4 on
+  the way"; a stocking cut, a craft's children, and a site's children show both. A build umbrella, a
+  clear, a craft, and a box taking several items or a category have no one item and show none.
 - Known to: a row nobody works names the colonists whose last decision offered work toward it, "known
   to Alice, Bob", by the same two-then-"+N" rule. Offered means an option for the goal chosen,
   available, held by another colonist, or blocked only by the colonist's own carry. A cut or a haul is
@@ -921,11 +926,14 @@ is then a few lookups, and `GlobalTaskAdapter` only formats them.
   an item nobody knows a loose source of, a box with room for a category nobody has any of, and a
   stocking cut whose minimum is met all drop out while their goals stay.
 - "Waiting (all known sources claimed)": some colonist's last decision held a Reserved option for the
-  goal and none held a chosen or available one. The other statuses are "Blocked" (with
+  goal, and none held a Selected, Available, NoRoom (a free source exists, his own load is in the
+  way), or Regrowing (the wait is regrowth) one. It comes after "Blocked", "Waiting (no source found)",
+  and "Working", and before "Available" and "Unassigned". The other statuses are "Blocked" (with
   landed/required materials for a craft), "Waiting (no source found)", "Needs materials", "Building",
   and "Ready to build" for a site, "Working", "Available" (detail "far"), and "Unassigned".
 - Per-colonist task list: the dossier's Known work tab shows the panel's rows for the goals that
-  colonist works or its last decision offered work toward, measured from the colonist.
+  colonist works or its last decision offered work toward, measured from the colonist, refreshed on the
+  panel's interval (5 Hz) and redrawn when a row's status or detail changes.
 - Decision trace: a Reserved option status naming the holder, "(reserved by Alice)", or for a Craft
   option "(station in use by Alice)", from the index's top-holder lookups.
 

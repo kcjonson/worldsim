@@ -9,6 +9,7 @@
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/Task.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/ColonyGoalWork.h>
 
 #include <algorithm>
 #include <cmath>
@@ -182,9 +183,9 @@ namespace world_sim::adapters {
 			return joinNames(names);
 		}
 
-		/// A Craft goal's materials as {landed, required} for its station's next job: the recipe's total
-		/// inputs, and how many of them the root no longer needs.
-		std::pair<uint32_t, uint32_t> craftMaterials(ecs::World& world, const ecs::GoalTask& goal) {
+		/// A Craft goal's materials for its station's next job: the recipe's total inputs, and how many of
+		/// them the root no longer needs.
+		CraftMaterials craftMaterials(ecs::World& world, const ecs::GoalTask& goal) {
 			const auto*				 queue = world.getComponent<ecs::WorkQueue>(goal.destinationEntity);
 			const ecs::CraftingJob* job = queue != nullptr ? queue->getNextJob() : nullptr;
 			const auto*				 recipe = job != nullptr ? assets::RecipeRegistry::Get().getRecipe(job->recipeDefName) : nullptr;
@@ -200,7 +201,7 @@ namespace world_sim::adapters {
 					world, goal.id, assets::AssetRegistry::Get().getDefNameId(input.defName), ecs::NeedBasis::Stock
 				);
 			}
-			return {required - std::min(missing, required), required};
+			return {.landed = required - std::min(missing, required), .required = required};
 		}
 
 		/// Convert goal to display data
@@ -228,74 +229,34 @@ namespace world_sim::adapters {
 			data.distanceValue = std::sqrt(dx * dx + dy * dy);
 			data.distance = std::format("{}m", static_cast<int>(data.distanceValue));
 
-			// Who, if anyone, is working this goal right now.
-			const std::string workers = colonistNames(world, work.workersOf(goal));
-
-			// The status's own detail, then what the root still needs of the item, then who knows of work
-			// toward it when nobody works it; the parts are joined with "; ".
-			std::string detail;
-			// Build umbrella: its progress lives on the blueprint's workDone. Surface that plus the workers.
-			if (goal.type == ecs::TaskType::Build) {
-				int	 pct = 0;
-				bool underConstruction = false;
-				if (const auto* bp = world.getComponent<ecs::StructureBlueprint>(goal.destinationEntity)) {
-					pct = static_cast<int>(bp->progress() * 100.0F);
-					underConstruction = (bp->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction);
-				}
-				if (!underConstruction) {
-					data.status = "Needs materials";
-					detail = workers; // whoever is delivering to the site
-					data.isBlocked = true;
-				} else if (!workers.empty()) {
-					data.status = "Building";
-					detail = std::format("{} ({}%)", workers, pct);
-				} else {
-					data.status = "Ready to build";
-					detail = std::format("{}%", pct);
-				}
+			TaskRowFacts facts{
+				.buildSite = goal.type == ecs::TaskType::Build,
+				.blocked = goal.status == ecs::GoalStatus::Blocked,
+				.noSource = goal.status == ecs::GoalStatus::NoSource,
+				.allSourcesClaimed = work.allSourcesClaimed(goal.id),
+				.distance = data.distanceValue,
+				.workers = colonistNames(world, work.workersOf(goal)),
+			};
+			if (facts.workers.empty()) {
+				facts.knownTo = colonistNames(world, work.offeredTo(goal.id));
 			}
-			// Status based on GoalStatus. A goal exists only while there is work toward it.
-			else if (goal.status == ecs::GoalStatus::Blocked) {
-				data.status = "Blocked";
-				if (goal.type == ecs::TaskType::Craft) {
-					const auto [landed, required] = craftMaterials(world, goal);
-					detail = std::format("{}/{} materials", landed, required);
-				}
-				data.isBlocked = true;
-			} else if (goal.status == ecs::GoalStatus::NoSource) {
-				data.status = "Waiting (no source found)";
-				data.isBlocked = true;
-			} else if (!workers.empty()) {
-				data.status = "Working";
-				detail = workers;
-			} else if (work.allSourcesClaimed(goal.id)) {
-				data.status = "Waiting (all known sources claimed)";
-				data.isBlocked = true;
-			} else if (data.distanceValue > 50.0F) {
-				data.status = "Available";
-				detail = "far";
-			} else {
-				data.status = "Unassigned";
-				data.isUnassigned = true;
+			// Build umbrella: its progress lives on the blueprint's workDone.
+			if (const auto* bp = world.getComponent<ecs::StructureBlueprint>(goal.destinationEntity); facts.buildSite && bp != nullptr) {
+				facts.buildPercent = static_cast<int>(bp->progress() * 100.0F);
+				facts.underConstruction = bp->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction;
 			}
-
-			std::vector<std::string> parts;
-			if (!detail.empty()) {
-				parts.push_back(std::move(detail));
+			if (facts.blocked && goal.type == ecs::TaskType::Craft) {
+				facts.materials = craftMaterials(world, goal);
 			}
 			if (const auto count = work.itemCount(world, goal)) {
-				if (std::string quantity = quantityText(count->needed, count->onTheWay); !quantity.empty()) {
-					parts.push_back(std::move(quantity));
-				}
+				facts.needed = count->needed;
+				facts.onTheWay = count->onTheWay;
 			}
-			if (workers.empty()) {
-				if (const std::string known = colonistNames(world, work.offeredTo(goal.id)); !known.empty()) {
-					parts.push_back("known to " + known);
-				}
-			}
-			for (const std::string& part : parts) {
-				data.statusDetail += data.statusDetail.empty() ? part : "; " + part;
-			}
+			TaskRowText row = taskRowText(facts);
+			data.status = std::move(row.status);
+			data.statusDetail = std::move(row.detail);
+			data.isBlocked = row.blocked;
+			data.isUnassigned = row.unassigned;
 
 			data.taskTypePriority = getTaskTypePriority(goal.type);
 
@@ -311,7 +272,9 @@ namespace world_sim::adapters {
 		goalsForDisplay(ecs::World& world, const glm::vec2& referencePosition, std::optional<ecs::EntityID> knownTo) {
 			auto&							   registry = ecs::GoalTaskRegistry::Get();
 			std::vector<GlobalTaskDisplayData> result;
-			const ecs::ColonyGoalWork		   work(world);
+			// Kept across refreshes so a rebuild reuses its storage; the panel runs on the main thread only.
+			static ecs::ClaimIndex			   claims;
+			const ecs::ColonyGoalWork		   work(world, claims);
 			for (ecs::TaskType type :
 				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
