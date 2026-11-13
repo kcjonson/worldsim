@@ -1035,7 +1035,6 @@ namespace {
 	NAV_BENCH_LEAF(RFreshMark)
 	NAV_BENCH_LEAF(RWalkMark)
 	NAV_BENCH_LEAF(RVertexUses)
-	NAV_BENCH_LEAF(RVertexPinned)
 	NAV_BENCH_LEAF(RRings)
 	NAV_BENCH_TAG(RRingHeap, v.forEach([&](const geometry::nav::RegisteredRing& r) {
 		out.vec(r.polygon.ring);
@@ -1067,7 +1066,6 @@ namespace {
 	template struct Rob<&PM::freshMark, RFreshMark>;
 	template struct Rob<&PM::walkMark, RWalkMark>;
 	template struct Rob<&PM::vertexUses, RVertexUses>;
-	template struct Rob<&PM::vertexPinned, RVertexPinned>;
 	template struct Rob<&PM::rings, RRings>;
 	template struct Rob<&PM::rings, RRingHeap>;
 	template struct Rob<&PM::edgeOf, REdgeOf>;
@@ -1097,8 +1095,6 @@ namespace {
 
 	NAV_BENCH_MAP(RVertexMap, geometry::IncrementalHashMap<geometry::Vec2i64, std::uint32_t, PM::VertexHash>)
 	template struct Rob<&PM::vertexAt, RVertexMap>;
-	NAV_BENCH_MAP(RPinMap, geometry::IncrementalHashMap<geometry::Vec2i64, std::int32_t, PM::VertexHash>)
-	template struct Rob<&PM::pins, RPinMap>;
 
 	NAV_BENCH_MAP(RGridMap, geometry::IncrementalHashMap<PM::BoxGrid::CellKey, std::int32_t, PM::BoxGrid::CellHash>)
 	template struct Rob<&PM::BoxGrid::table, RGridMap>;
@@ -1189,10 +1185,9 @@ namespace {
 		out.lines.emplace_back("per-triangle stamps (visit, fresh, walk) and width search", (stamps.add(width), stamps));
 		t = {};
 		t.paged(m.vertices());
-		t.add(visitAll<RVertexUses, RVertexPinned>(m));
-		out.lines.emplace_back("vertices, use counts, and pin flags", t);
+		t.add(visitAll<RVertexUses>(m));
+		out.lines.emplace_back("vertices and use counts", t);
 		out.lines.emplace_back("vertex hash", visitAll<RVertexMap>(m));
-		out.lines.emplace_back("pins (hash)", visitAll<RPinMap>(m));
 		out.lines.emplace_back("ring records (RegisteredRing)", visitAll<RRings>(m));
 		const Tally ringHeap = visitAll<RRingHeap>(m);
 		out.lines.emplace_back("ring outline, sample ring, edge ids and partners (heap)", ringHeap);

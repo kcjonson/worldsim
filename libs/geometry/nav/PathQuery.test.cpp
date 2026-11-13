@@ -1536,21 +1536,22 @@ TEST(PathQuerySearch,GoalSidePhaseSwitchesAtItsDefaultLength) {
 	expectSameRun(runInSlices(view, argsFor(start, {goal}, 300), 7), phase, "pen in slices of 7");
 }
 
-// More triangles round one vertex than any fixed count: 300 floor slices meet at the
-// centre. Its star is open ground, so a disc passing within its radius walks straight
-// on, and the touched set holds the whole fan.
+// More triangles round one vertex than any fixed count: a disc of ground with a narrow
+// notch cut down to its centre, so the centre is a corner of the outline that every rim
+// point meets. A disc passing above the notch walks straight on, and the touched set
+// holds the whole fan.
 TEST(PathQuerySearch,HighDegreeVertexWalksItsWholeFan) {
 	constexpr int		 kSlices = 300;
+	constexpr int		 kNotch	 = kSlices * 3 / 4; // the rim point straight below the centre
 	PatchableMesh		 mesh;
 	PatchEdits			 edits;
-	std::vector<Vec2i64> rim;
-	for (int k = 0; k < kSlices; ++k) {
+	std::vector<Vec2i64> outline{{0, 0}};
+	for (int step = 1; step < kSlices; ++step) {
+		const int	 k	  = (kNotch + step) % kSlices;
 		const double turn = 2.0 * 3.14159265358979323846 * k / kSlices;
-		rim.push_back({std::llround(100000.0 * std::cos(turn)), std::llround(100000.0 * std::sin(turn))});
+		outline.push_back({std::llround(100000.0 * std::cos(turn)), std::llround(100000.0 * std::sin(turn))});
 	}
-	for (int k = 0; k < kSlices; ++k) {
-		edits.adds.push_back({{{0, 0}, rim[static_cast<std::size_t>(k)], rim[static_cast<std::size_t>((k + 1) % kSlices)]}, false, 1});
-	}
+	edits.adds.push_back({outline, false, 1});
 	mesh.applyPatch(edits);
 	mesh.refreshWidths();
 	const NavView			  view = mesh.view();
@@ -1566,11 +1567,11 @@ TEST(PathQuerySearch,HighDegreeVertexWalksItsWholeFan) {
 		}
 	}
 	ASSERT_GT(fan.size(), 256U);
-	const Vec2i64	start{-50000, 200};
-	const Vec2i64	goal{50000, 200};
+	const Vec2i64	start{-50000, 400};
+	const Vec2i64	goal{50000, 400};
 	const SearchRun run = runInSlices(view, argsFor(start, {goal}, 300, {}, 0), kRunToEnd);
 	ASSERT_EQ(run.progress, SearchProgress::Found);
-	EXPECT_EQ(run.result.points, (std::vector<Vec2i64>{start, goal})) << "open ground at the centre is no corner";
+	EXPECT_EQ(run.result.points, (std::vector<Vec2i64>{start, goal})) << "the notch's corner is below the disc's way";
 	const std::unordered_set<std::int32_t> touched(run.touched.begin(), run.touched.end());
 	for (const std::int32_t t : fan) {
 		EXPECT_EQ(touched.count(t), 1U) << "fan triangle " << t;

@@ -222,11 +222,10 @@ namespace {
 			rings.push_back(&poly);
 		}
 		std::vector<InputSegment> segments;
-		std::vector<Vec2i64>	  pins;
 		ringsArrangementInput(
 			rings, findBoundsSeams(rings), [&](std::int32_t ring, std::int32_t edge) { return encode(ids[static_cast<std::size_t>(ring)], edge); },
-			segments, pins);
-		const Arrangement arrangement = buildArrangement(segments, pins);
+			segments);
+		const Arrangement arrangement = buildArrangement(segments);
 		const NavMesh	  fresh		  = buildNavMesh(input);
 
 		std::set<Vec2i64> freshVertices;
@@ -378,6 +377,24 @@ namespace {
 			p = p + by;
 		}
 		return ring;
+	}
+
+	// The vertices live triangles use on the closed segment ab, ascending.
+	std::vector<Vec2i64> liveVerticesOn(const PatchableMesh& mesh, const Vec2i64& a, const Vec2i64& b) {
+		std::set<Vec2i64> on;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			for (const std::uint32_t v : mesh.triangles()[static_cast<std::size_t>(t)].v) {
+				const Vec2i64& p = mesh.vertices()[v];
+				if (cross(b - a, p - a).sign() == 0 && std::min(a.x, b.x) <= p.x && p.x <= std::max(a.x, b.x) && std::min(a.y, b.y) <= p.y &&
+					p.y <= std::max(a.y, b.y)) {
+					on.insert(p);
+				}
+			}
+		}
+		return {on.begin(), on.end()};
 	}
 
 	// The ids a report lists with `why`, ascending.
@@ -846,7 +863,7 @@ TEST(PatchableMesh, HangingRingCompletedByNeighbourBounds) {
 
 // Two squares sharing a side, in both arrival orders and in one patch: ground on both
 // sides has one cover, and the side's pieces are dissolved, so no constrained edge lies
-// on it and its piece ends (pins) stay vertices.
+// on it and only its two ends, which end the outer sides, are vertices on it.
 TEST(PatchableMesh, AdjacentSquaresShareOneGroundCover) {
 	const NavInputPolygon west = bounds(rect(0, 0, 12000, 12000));
 	const NavInputPolygon east = bounds(rect(12000, 0, 24000, 12000));
@@ -880,14 +897,7 @@ TEST(PatchableMesh, AdjacentSquaresShareOneGroundCover) {
 				EXPECT_FALSE(onSeam && !sources.empty()) << "a constrained edge on the shared side, order " << order;
 			}
 		}
-		for (const std::int64_t y : {0, 4000, 8000, 12000}) {
-			EXPECT_GE(h.mesh.locate({12000, y}), 0);
-			bool vertex = false;
-			for (std::size_t v = 0; v < h.mesh.vertices().size(); ++v) {
-				vertex = vertex || h.mesh.vertices()[v] == Vec2i64{12000, y};
-			}
-			EXPECT_TRUE(vertex) << "the pin at y " << y;
-		}
+		EXPECT_EQ(liveVerticesOn(h.mesh, {12000, 0}, {12000, 12000}), (std::vector<Vec2i64>{{12000, 0}, {12000, 12000}})) << "order " << order;
 	}
 }
 
@@ -995,12 +1005,15 @@ TEST(PatchableMesh, WaterAcrossTheSharedSideStaysConstrained) {
 			}
 		}
 		EXPECT_EQ(waterSide, 2 * 4000) << "the water stretch, seen from each side";
+		EXPECT_EQ(liveVerticesOn(h.mesh, {12000, 0}, {12000, 12000}), (std::vector<Vec2i64>{{12000, 0}, {12000, 4000}, {12000, 8000}, {12000, 12000}}))
+			<< "the side's ends and the water's cut points";
 	}
 }
 
-// An obstacle edge passing exactly through a pin is split there, so the pin stays a
-// vertex, whether the obstacle comes before or after the second square.
-TEST(PatchableMesh, ObstacleEdgeThroughAPinIsSplitThere) {
+// An obstacle edge crossing a dissolved side, exactly at a cut point of the side, is one
+// mesh edge: only the obstacle's own corner on the side is a vertex there, whether the
+// obstacle comes before or after the second square.
+TEST(PatchableMesh, ObstacleEdgeAcrossADissolvedSideIsWhole) {
 	for (const bool obstacleFirst : {true, false}) {
 		Harness				  h(4000);
 		const NavInputPolygon obstacle = blocked({{11000, 3000}, {13000, 5000}, {12000, 6000}});
@@ -1013,7 +1026,9 @@ TEST(PatchableMesh, ObstacleEdgeThroughAPinIsSplitThere) {
 			h.add(obstacle);
 		}
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model));
-		int piecesAtPin = 0;
+		EXPECT_EQ(liveVerticesOn(h.mesh, {12000, 0}, {12000, 12000}), (std::vector<Vec2i64>{{12000, 0}, {12000, 6000}, {12000, 12000}}))
+			<< "obstacle first " << obstacleFirst;
+		int wholeEdge = 0;
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
 			if (!h.mesh.triangleLive(t)) {
 				continue;
@@ -1022,12 +1037,12 @@ TEST(PatchableMesh, ObstacleEdgeThroughAPinIsSplitThere) {
 			for (int e = 0; e < 3; ++e) {
 				const Vec2i64& a = h.mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
 				const Vec2i64& b = h.mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
-				if ((a == Vec2i64{12000, 4000} || b == Vec2i64{12000, 4000}) && !h.mesh.edgeSources(t, e).empty()) {
-					++piecesAtPin;
+				if (std::minmax(a, b) == std::minmax(Vec2i64{11000, 3000}, Vec2i64{13000, 5000})) {
+					++wholeEdge;
 				}
 			}
 		}
-		EXPECT_EQ(piecesAtPin, 4) << "the obstacle edge's two pieces at the pin, seen from each side";
+		EXPECT_EQ(wholeEdge, 2) << "the obstacle edge, seen from each side";
 	}
 }
 
@@ -1693,7 +1708,7 @@ namespace {
 
 	// Internal bounds edges must not change an answer: the same rings under one bounds
 	// square and under a grid of adjacent squares give the same constraints apart from
-	// the vertices pins and bounds splits add, the same path verdicts and component
+	// the vertices bounds splits add on the outline, the same path verdicts and component
 	// verdicts, path lengths that agree (lengthsAgree), and the same corridor width at
 	// every apex of a triangle both meshes have.
 	void expectBoundsSplitInvisible(std::int64_t k, std::uint32_t seed) {
@@ -2504,13 +2519,14 @@ TEST(PatchableMesh, UnevenlyCutSharedSideDissolves) {
 			}
 		}
 		EXPECT_EQ(constrainedOnSide, 0);
+		EXPECT_EQ(liveVerticesOn(h.mesh, {10000, 0}, {10000, 10000}), (std::vector<Vec2i64>{{10000, 0}, {10000, 10000}})) << "no cut point stays";
 	}
 }
 
 namespace {
 
 	// Obstacles over the 2 x 2 squares, some crossing a shared side, some with a corner on
-	// the middle corner or on a pin.
+	// the middle corner or on a point where the side is cut.
 	std::vector<NavInputPolygon> obstaclesAtCorners() {
 		return {
 			blocked({{12000, 12000}, {13000, 12500}, {12500, 13000}}),
@@ -2523,8 +2539,8 @@ namespace {
 
 } // namespace
 
-// A square taken out and an identical one added in the same patch: its pins are
-// released and taken again, and the mesh is the from-scratch build's.
+// A square taken out and an identical one added in the same patch: its sides' pairs end
+// and form again, and the mesh is the from-scratch build's.
 TEST(PatchableMesh, SquareReplacedInOnePatchMatchesFreshBuild) {
 	for (const bool withObstacles : {false, true}) {
 		Harness								h(4000);
@@ -2550,8 +2566,9 @@ TEST(PatchableMesh, SquareReplacedInOnePatchMatchesFreshBuild) {
 }
 
 // Two adjacent squares taken out in one patch while a third, and with it the fourth or
-// not, shares the corner pin between them.
-TEST(PatchableMesh, TwoSquaresLeaveBesideACornerPin) {
+// not, shares the corner between them: what stays ends its sides there, so the corner
+// is a vertex again.
+TEST(PatchableMesh, TwoSquaresLeaveBesideASharedCorner) {
 	for (const bool fourth : {false, true}) {
 		for (const bool withObstacles : {false, true}) {
 			Harness								h(4000);
@@ -2570,15 +2587,7 @@ TEST(PatchableMesh, TwoSquaresLeaveBesideACornerPin) {
 			leave.removes = {ids[0], ids[1]};
 			h.apply(leave);
 			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (fourth ? "four" : "three") << (withObstacles ? " among obstacles" : "");
-			bool centreIsVertex = false;
-			for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
-				if (h.mesh.triangleLive(t)) {
-					for (std::uint32_t v : h.mesh.triangles()[static_cast<std::size_t>(t)].v) {
-						centreIsVertex = centreIsVertex || h.mesh.vertices()[v] == Vec2i64{12000, 12000};
-					}
-				}
-			}
-			EXPECT_TRUE(centreIsVertex);
+			EXPECT_EQ(liveVerticesOn(h.mesh, {12000, 12000}, {12000, 12000}).size(), 1U);
 			PatchEdits back;
 			back.adds = {squares[0], squares[1]};
 			h.apply(back);
@@ -2587,8 +2596,54 @@ TEST(PatchableMesh, TwoSquaresLeaveBesideACornerPin) {
 	}
 }
 
-// Obstacles with a corner exactly on the four-way corner or on a pin, arriving before,
-// between, and after the squares, then leaving.
+// The corner the 2 x 2 squares share is a vertex while any square is missing (it ends a
+// side of what is there) and not once all four are, in every arrival order and with all
+// four arriving in one patch; it comes back when any one square leaves. Nor are the
+// points the shared sides are cut at.
+TEST(PatchableMesh, FourWayCornerIsAVertexOnlyWhileASquareIsMissing) {
+	const std::vector<NavInputPolygon> squares = twoByTwoSquares();
+	const Vec2i64					   centre{12000, 12000};
+	auto expectOpenCross = [&](const Harness& h, const std::string& when) {
+		EXPECT_EQ(liveVerticesOn(h.mesh, {12000, 0}, {12000, 24000}), (std::vector<Vec2i64>{{12000, 0}, {12000, 24000}})) << when;
+		EXPECT_EQ(liveVerticesOn(h.mesh, {0, 12000}, {24000, 12000}), (std::vector<Vec2i64>{{0, 12000}, {24000, 12000}})) << when;
+	};
+	std::vector<int> order{0, 1, 2, 3};
+	do {
+		Harness				h(4000);
+		std::vector<RingId> ids(squares.size(), kNoRing);
+		std::string			when	= "order";
+		std::size_t			present = 0;
+		for (const int s : order) {
+			when += " " + std::to_string(s);
+			ids[static_cast<std::size_t>(s)] = h.add(squares[static_cast<std::size_t>(s)]);
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << when;
+			++present;
+			EXPECT_EQ(liveVerticesOn(h.mesh, centre, centre).size(), present == squares.size() ? 0U : 1U) << when;
+		}
+		expectOpenCross(h, when);
+		for (std::size_t s = 0; s < squares.size(); ++s) {
+			PatchEdits leave;
+			leave.removes.push_back(ids[s]);
+			h.apply(leave);
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << when << ", square " << s << " left";
+			EXPECT_EQ(liveVerticesOn(h.mesh, centre, centre).size(), 1U) << when << ", square " << s << " left";
+			ids[s] = h.add(squares[s]);
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << when << ", square " << s << " back";
+			expectOpenCross(h, when + ", square " + std::to_string(s) + " back");
+		}
+	} while (std::next_permutation(order.begin(), order.end()));
+	Harness	   h(4000);
+	PatchEdits together;
+	together.adds = squares;
+	h.apply(together);
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "one patch";
+	expectOpenCross(h, "one patch");
+}
+
+// Obstacles with a corner exactly on the four-way corner or on a point where a shared
+// side is cut, arriving before, between, and after the squares, then leaving. Those
+// corners are vertices because they are the obstacles'; the obstacles' edges cross the
+// dissolved sides without a vertex, and once they leave the shared sides hold none.
 TEST(PatchableMesh, ObstacleCornerOnAFourWayCorner) {
 	const std::vector<NavInputPolygon> squares	 = twoByTwoSquares();
 	const std::vector<NavInputPolygon> obstacles = obstaclesAtCorners();
@@ -2607,12 +2662,20 @@ TEST(PatchableMesh, ObstacleCornerOnAFourWayCorner) {
 				ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "square " << s << ", obstacles after " << obstaclesAfter;
 			}
 		}
+		EXPECT_EQ(liveVerticesOn(h.mesh, {12000, 0}, {12000, 24000}),
+				  (std::vector<Vec2i64>{{12000, 0}, {12000, 4000}, {12000, 12000}, {12000, 24000}}))
+			<< "obstacles after " << obstaclesAfter;
+		EXPECT_EQ(liveVerticesOn(h.mesh, {0, 12000}, {24000, 12000}),
+				  (std::vector<Vec2i64>{{0, 12000}, {6000, 12000}, {12000, 12000}, {24000, 12000}}))
+			<< "obstacles after " << obstaclesAfter;
 		for (const RingId r : placed) {
 			PatchEdits leave;
 			leave.removes.push_back(r);
 			h.apply(leave);
 			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "obstacle " << r << " left, obstacles after " << obstaclesAfter;
 		}
+		EXPECT_EQ(liveVerticesOn(h.mesh, {12000, 0}, {12000, 24000}), (std::vector<Vec2i64>{{12000, 0}, {12000, 24000}}))
+			<< "obstacles after " << obstaclesAfter;
 	}
 }
 

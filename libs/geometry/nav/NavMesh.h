@@ -238,9 +238,9 @@ namespace geometry::nav {
 	// --- Shared sides of bounds rings ---------------------------------------------
 	// Where two bounds rings each have an edge on the same segment (the same two end
 	// points), there is ground on both sides of it, so neither edge is a constraint or a
-	// mesh edge: the pair is dissolved, each edge the other's partner. The end points of
-	// dissolved pairs, pins, stay mesh vertices, so open ground across the side keeps the
-	// shape it has inside one ring. buildNavMesh and PatchableMesh apply this one rule.
+	// mesh edge: the pair is dissolved, each edge the other's partner. Its end points are
+	// vertices only where another edge ends there. buildNavMesh and PatchableMesh apply
+	// this one rule.
 
 	using RingId			 = std::int32_t;
 	constexpr RingId kNoRing = -1;
@@ -262,9 +262,6 @@ namespace geometry::nav {
 		// Per ring, per edge: its partner, or none. Empty for a blocked ring and for one
 		// under three vertices.
 		std::vector<std::vector<EdgeSource>> partner;
-		// Ascending by point: each end point of a dissolved pair, with how many pairs end
-		// there.
-		std::vector<std::pair<Vec2i64, std::int32_t>> pins;
 	};
 
 	// Two bounds ring edges on one segment are partners. Three or more on one segment
@@ -274,11 +271,10 @@ namespace geometry::nav {
 	BoundsSeams findBoundsSeams(const std::vector<const NavInputPolygon*>& rings);
 
 	// The arrangement input of the rings: every edge that is not dissolved, as a segment
-	// with index tag(ring, edge), and every pin as a point site. Rings under three
-	// vertices add nothing.
+	// with index tag(ring, edge). Rings under three vertices add nothing.
 	template <typename Tag>
 	void ringsArrangementInput(const std::vector<const NavInputPolygon*>& rings, const BoundsSeams& seams, Tag tag,
-							   std::vector<InputSegment>& segments, std::vector<Vec2i64>& points) {
+							   std::vector<InputSegment>& segments) {
 		for (std::size_t r = 0; r < rings.size(); ++r) {
 			const std::vector<Vec2i64>& ring = rings[r]->ring;
 			if (ring.size() < 3) {
@@ -291,9 +287,6 @@ namespace geometry::nav {
 				}
 				segments.push_back({ring[i], ring[(i + 1) % ring.size()], tag(static_cast<std::int32_t>(r), static_cast<std::int32_t>(i))});
 			}
-		}
-		for (const auto& [p, count] : seams.pins) {
-			points.push_back(p);
 		}
 	}
 

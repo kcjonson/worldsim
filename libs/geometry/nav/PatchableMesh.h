@@ -26,7 +26,7 @@
 // triangle's cover set holds kGroundToken (inside a bounds ring); elsewhere there are no
 // triangles. Bounds rings may share edges and vertices but their interiors must not
 // overlap. Two bounds rings' edges on the same segment are dissolved (findBoundsSeams):
-// ground runs across them with no mesh edge there, and their end points stay vertices.
+// ground runs across them with no mesh edge there. Every vertex ends a constrained edge.
 //
 // The mesh carries what path queries and reachability read: face tags from the rings,
 // door tags on door edges, corridor widths capped at a maximum clearance (brought up to
@@ -315,9 +315,6 @@ namespace geometry::nav {
 		PagedVector<std::int32_t>						vertexUses; // live triangle corners on the vertex
 		std::vector<std::uint32_t>						freeVertices;
 		IncrementalHashMap<Vec2i64, std::uint32_t, VertexHash> vertexAt;
-		// Pins: per end point of dissolved pairs, how many pairs end there.
-		IncrementalHashMap<Vec2i64, std::int32_t, VertexHash> pins;
-		PagedVector<std::uint8_t>							  vertexPinned; // per vertex: its point is in pins
 
 		PagedVector<NavTriangle>				 tris;
 		PagedVector<std::uint8_t>				 live;

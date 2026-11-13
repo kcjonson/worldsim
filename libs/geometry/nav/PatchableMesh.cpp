@@ -919,8 +919,6 @@ namespace geometry::nav {
 		std::vector<std::pair<EdgeSource, EdgeSource>> partnerAfter;
 		std::vector<std::pair<EdgeSource, EdgeSource>> pairs;
 		std::vector<NewSide>						   newSides;
-		std::vector<std::pair<Vec2i64, std::int32_t>>  pinDelta; // ascending, merged
-		std::vector<Vec2i64>						   points;	 // pins this pass keeps as point sites
 
 		std::vector<Fixed>				  fixed;
 		std::vector<EdgeSource>			  fixedSources;
@@ -1012,7 +1010,6 @@ namespace geometry::nav {
 		// ring's new outline edge.
 		void	   findPartners();
 		EdgeSource partnerAfter(const EdgeSource& x) const;
-		bool	   pinAfter(const Vec2i64& p) const;
 
 		void addToS(const EdgeSource& z);
 		void addToHole(std::int32_t t);
@@ -1141,16 +1138,9 @@ namespace geometry::nav {
 	void PatchableMesh::Patch::findPartners() {
 		std::vector<std::pair<EdgeSource, EdgeSource>>& after = work.partnerAfter;
 		std::vector<std::pair<EdgeSource, EdgeSource>>& pairs = work.pairs;
-		std::vector<std::pair<Vec2i64, std::int32_t>>&	delta = work.pinDelta;
 		after.clear();
-		delta.clear();
 		auto ordered = [](const EdgeSource& x, const EdgeSource& y) { return x < y ? std::make_pair(x, y) : std::make_pair(y, x); };
-		auto unique	 = [](std::vector<std::pair<EdgeSource, EdgeSource>>& list) {
-			 std::sort(list.begin(), list.end());
-			 list.erase(std::unique(list.begin(), list.end()), list.end());
-		};
 
-		pairs.clear();
 		for (const auto& [id, c] : changes) {
 			if (!c.hadOld) {
 				continue;
@@ -1158,20 +1148,11 @@ namespace geometry::nav {
 			const std::vector<EdgeSource>& partners = m.rings[static_cast<std::size_t>(id)].partners;
 			for (std::int32_t e = 0; e < static_cast<std::int32_t>(partners.size()); ++e) {
 				const EdgeSource& p = partners[static_cast<std::size_t>(e)];
-				if (p.ring == kNoRing) {
-					continue;
-				}
-				pairs.push_back(ordered({id, e}, p));
-				if (!changed(p.ring)) {
+				if (p.ring != kNoRing && !changed(p.ring)) {
 					after.push_back({p, {}});
 					addToS(p);
 				}
 			}
-		}
-		unique(pairs);
-		for (const auto& [x, y] : pairs) {
-			delta.push_back({edgeStart(oldOutline(x.ring), x.edge), -1});
-			delta.push_back({edgeEnd(oldOutline(x.ring), x.edge), -1});
 		}
 
 		std::vector<PatchScratch::NewSide>& sides = work.newSides;
@@ -1212,7 +1193,8 @@ namespace geometry::nav {
 				pairs.push_back(ordered(side.source, best));
 			}
 		}
-		unique(pairs);
+		std::sort(pairs.begin(), pairs.end());
+		pairs.erase(std::unique(pairs.begin(), pairs.end()), pairs.end());
 		for (const auto& [x, y] : pairs) {
 			after.push_back({x, y});
 			after.push_back({y, x});
@@ -1221,22 +1203,8 @@ namespace geometry::nav {
 					addToS(z);
 				}
 			}
-			const std::vector<Vec2i64>& outline = newPolygon(x.ring).ring;
-			delta.push_back({edgeStart(outline, x.edge), 1});
-			delta.push_back({edgeEnd(outline, x.edge), 1});
 		}
 		std::sort(after.begin(), after.end());
-
-		std::sort(delta.begin(), delta.end());
-		std::size_t merged = 0;
-		for (std::size_t i = 0; i < delta.size(); ++i) {
-			if (merged > 0 && delta[merged - 1].first == delta[i].first) {
-				delta[merged - 1].second += delta[i].second;
-			} else {
-				delta[merged++] = delta[i];
-			}
-		}
-		delta.resize(merged);
 	}
 
 	EdgeSource PatchableMesh::Patch::partnerAfter(const EdgeSource& x) const {
@@ -1251,17 +1219,6 @@ namespace geometry::nav {
 			}
 		}
 		return listed || changed(x.ring) ? found : m.partnerOf(x);
-	}
-
-	bool PatchableMesh::Patch::pinAfter(const Vec2i64& p) const {
-		const std::int32_t* now	  = m.pins.find(p);
-		std::int32_t		count = now != nullptr ? *now : 0;
-		auto				it	  = std::lower_bound(work.pinDelta.begin(), work.pinDelta.end(), p,
-												 [](const std::pair<Vec2i64, std::int32_t>& d, const Vec2i64& q) { return d.first < q; });
-		if (it != work.pinDelta.end() && it->first == p) {
-			count += it->second;
-		}
-		return count > 0;
 	}
 
 	// The mesh shows every interaction on kept ground, but a segment that reaches off
@@ -1655,17 +1612,6 @@ namespace geometry::nav {
 				fixed.push_back(f);
 			}
 		}
-		// A pin in the hole stays a vertex though no segment ends there. Unless this patch
-		// changes pins, a vertex's flag is the whole answer.
-		work.points.clear();
-		const bool pinsChange = !work.pinDelta.empty();
-		for (std::int32_t t : hole) {
-			for (std::uint32_t v : m.tris[static_cast<std::size_t>(t)].v) {
-				if ((pinsChange || m.vertexPinned[v] != 0) && pinAfter(m.verts[v])) {
-					work.points.push_back(m.verts[v]);
-				}
-			}
-		}
 	}
 
 	// One re-derivation of the hole. False when the boundary did not hold and the hole
@@ -1682,17 +1628,16 @@ namespace geometry::nav {
 		return assignCovers() && coversHeld();
 	}
 
-	// s's original edges (the new outline for a changed ring) but the dissolved ones, the
-	// fixed edges, and the pins.
+	// s's original edges (the new outline for a changed ring) but the dissolved ones, and
+	// the fixed edges.
 	void PatchableMesh::Patch::arrange() {
 		segments.clear();
 		std::vector<InputSegment>& input = work.input;
 		input.clear();
-		std::vector<Vec2i64>& points = work.points;
 		work.sSorted.assign(work.sList.begin(), work.sList.end());
 		std::sort(work.sSorted.begin(), work.sSorted.end());
-		// A kept edge dissolved after the patch has its pieces, if any, in the hole, so its
-		// end points are hole vertices and collectFixed took them.
+		// A kept edge dissolved after the patch has its pieces, if any, in the hole with the
+		// whole star of each piece end (closeS), so an end no other edge keeps goes.
 		for (const EdgeSource& x : work.sSorted) {
 			if (changed(x.ring)) {
 				continue;
@@ -1712,12 +1657,7 @@ namespace geometry::nav {
 			for (std::int32_t e = 0; e < static_cast<std::int32_t>(c.polygon.ring.size()); ++e) {
 				const Vec2i64 a = edgeStart(c.polygon.ring, e);
 				const Vec2i64 b = edgeEnd(c.polygon.ring, e);
-				if (a == b) {
-					continue;
-				}
-				if (!c.polygon.blocked && partnerAfter({id, e}).ring != kNoRing) {
-					points.push_back(a);
-					points.push_back(b);
+				if (a == b || (!c.polygon.blocked && partnerAfter({id, e}).ring != kNoRing)) {
 					continue;
 				}
 				input.push_back({a, b, static_cast<std::int64_t>(segments.size())});
@@ -1729,9 +1669,7 @@ namespace geometry::nav {
 			input.push_back({m.verts[fixed[f].a], m.verts[fixed[f].b], static_cast<std::int64_t>(segments.size())});
 			segments.push_back({{}, static_cast<std::int32_t>(f)});
 		}
-		std::sort(points.begin(), points.end());
-		points.erase(std::unique(points.begin(), points.end()), points.end());
-		buildArrangement(input, work.arrangementWork, arrangement, points);
+		buildArrangement(input, work.arrangementWork, arrangement);
 	}
 
 	// Every fixed edge came out whole and alone, every re-derived edge stayed in the hole,
@@ -2285,13 +2223,11 @@ namespace geometry::nav {
 				if (!m.freeVertices.empty()) {
 					id = m.freeVertices.back();
 					m.freeVertices.pop_back();
-					m.verts[id]		   = p;
-					m.vertexPinned[id] = 0;
+					m.verts[id] = p;
 				} else {
 					id = static_cast<std::uint32_t>(m.verts.size());
 					m.verts.push_back(p);
 					m.vertexUses.push_back(0);
-					m.vertexPinned.push_back(0);
 				}
 				m.vertexAt.insert(p, id);
 				meshVertex[lv] = id;
@@ -2370,23 +2306,6 @@ namespace geometry::nav {
 		// Ascending, so a partner overwrites kNoRing listed for the same edge.
 		for (const auto& [x, p] : work.partnerAfter) {
 			m.rings[static_cast<std::size_t>(x.ring)].partners[static_cast<std::size_t>(x.edge)] = p;
-		}
-		for (const auto& [p, d] : work.pinDelta) {
-			std::int32_t* count = m.pins.find(p);
-			const std::int32_t now = (count != nullptr ? *count : 0) + d;
-			assert(now >= 0 && "PatchableMesh: a pin released more often than taken");
-			if (count == nullptr) {
-				if (now > 0) {
-					m.pins.insert(p, now);
-				}
-			} else if (now == 0) {
-				m.pins.erase(p);
-			} else {
-				*count = now;
-			}
-			if (const std::uint32_t* v = m.vertexAt.find(p)) {
-				m.vertexPinned[*v] = now > 0 ? 1 : 0;
-			}
 		}
 
 		// New triangles take the hole's ids first. A face's triangles share one cover and
@@ -3412,8 +3331,7 @@ namespace geometry::nav {
 			return "ring index holds a dead ring";
 		}
 
-		// Dissolved pairs and pins are the rule (findBoundsSeams) applied to the live rings,
-		// and every pin is a vertex.
+		// Dissolved pairs are the rule (findBoundsSeams) applied to the live rings.
 		std::vector<RingId>					liveIds;
 		std::vector<const NavInputPolygon*> livePolygons;
 		for (RingId r = 0; r < static_cast<RingId>(rings.size()); ++r) {
@@ -3434,28 +3352,8 @@ namespace geometry::nav {
 				return err.str();
 			}
 		}
-		if (pins.size() != seams.pins.size()) {
-			fail() << "pin table holds " << pins.size() << " points, the live rings have " << seams.pins.size();
-			return err.str();
-		}
-		for (const auto& [p, count] : seams.pins) {
-			const std::int32_t* have = pins.find(p);
-			if (have == nullptr || *have != count) {
-				fail() << "pin (" << p.x << ", " << p.y << ") counts " << (have == nullptr ? 0 : *have) << " pairs, the live rings " << count;
-				return err.str();
-			}
-			if (vertexAt.find(p) == nullptr) {
-				fail() << "pin (" << p.x << ", " << p.y << ") is not a vertex";
-				return err.str();
-			}
-		}
-		// Every live vertex is a pin or an end of a constrained edge, and its pin flag
-		// says which.
+		// Every live vertex ends a constrained edge.
 		{
-			if (vertexPinned.size() != verts.size()) {
-				fail() << "pin flags for " << vertexPinned.size() << " vertices, " << verts.size() << " vertices";
-				return err.str();
-			}
 			std::vector<std::uint8_t> constrainedEnd(verts.size(), 0);
 			for (std::int32_t t = 0; t < triCount; ++t) {
 				if (live[static_cast<std::size_t>(t)] == 0) {
@@ -3473,13 +3371,8 @@ namespace geometry::nav {
 				if (vertexUses[v] == 0) {
 					continue;
 				}
-				const bool pinned = pins.find(verts[v]) != nullptr;
-				if ((vertexPinned[v] != 0) != pinned) {
-					fail() << "vertex " << v << " pin flag " << int{vertexPinned[v]} << ", pin table " << pinned;
-					return err.str();
-				}
-				if (!pinned && constrainedEnd[v] == 0) {
-					fail() << "vertex " << v << " (" << verts[v].x << ", " << verts[v].y << ") is neither a pin nor on a constrained edge";
+				if (constrainedEnd[v] == 0) {
+					fail() << "vertex " << v << " (" << verts[v].x << ", " << verts[v].y << ") ends no constrained edge";
 					return err.str();
 				}
 			}
@@ -3545,7 +3438,8 @@ namespace geometry::nav {
 				}
 			}
 		}
-		// An original corner over kept ground is a vertex with both its edges on it.
+		// An original corner over kept ground is a vertex with both its edges on it, unless
+		// both are dissolved.
 		for (RingId r = 0; r < static_cast<RingId>(rings.size()); ++r) {
 			const RegisteredRing& reg = rings[static_cast<std::size_t>(r)];
 			if (!reg.live) {
@@ -3558,6 +3452,10 @@ namespace geometry::nav {
 				if (locate(p) < 0) {
 					continue;
 				}
+				const std::int32_t before = (i + n - 1) % n;
+				if (partnerOf({r, i}).ring != kNoRing && partnerOf({r, before}).ring != kNoRing) {
+					continue;
+				}
 				const std::uint32_t* at = vertexAt.find(p);
 				if (at == nullptr) {
 					fail() << "corner " << i << " of ring " << r << " is over ground but not a vertex";
@@ -3566,7 +3464,7 @@ namespace geometry::nav {
 				if (onBoundary[*at] != 0) {
 					continue;
 				}
-				for (const std::int32_t edge : {i, (i + n - 1) % n}) {
+				for (const std::int32_t edge : {i, before}) {
 					if (edgeStart(outline, edge) == edgeEnd(outline, edge) || partnerOf({r, edge}).ring != kNoRing) {
 						continue;
 					}
