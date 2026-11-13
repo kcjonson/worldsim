@@ -14,23 +14,23 @@ The decision cost at large memories fell by an order of magnitude and the trace 
 
 ### Audit and ticket outcomes
 
-- "Phase 3: Two-Level Task/Reservation Model" (WOR-186) and "Phase 4: Memory Integration" (WOR-187): built or superseded by the claim index and the memory per-def lists. Closed on the board with evidence from the code.
+- "Phase 3: Two-Level Task/Reservation Model" (WOR-186) and "Phase 4: Memory Integration" (WOR-187): the first is built, as claims on tasks and the claim index rather than a reservation table; the second was superseded by the goal systems' throttled poll of colony memory, with the AI building options from each colonist's own memory. Closed on the board with evidence from the code.
 - Bumping (WOR-632): parked by the owner. Nothing in the game can trigger a bump, so it stays out of the epic until something can.
 - Craft station binding (WOR-633): moved to a new epic for interruptable crafts (WOR-822). The owner ruled that crafts must be interruptable, since large crafts may last days, and by ordinary needs as well as critical ones. The ladder today ranks queued crafts (tier 4) above ordinary needs (tier 5), so this changes arbitration, not only the Craft action; it needs saved progress on the job, a change to where a long craft sits against ordinary needs, and the binding. That is a crafting design with its own spec, not a claims step.
 - The sim-cli scenarios (WOR-635): moved under the sim-cli epic (WOR-603), blocked on its step 10 (WOR-623), because `apps/sim-cli` does not exist yet.
 
 ### The stale Sleep action (WOR-820)
 
-Sleep is the one interruptable action. When a critical need woke a colonist sleeping off a non-critical one, `AIDecisionSystem` switched the task but left the `Action` alone. `ActionSystem` starts an action only when none is active, so the stale Sleep ran on under the new task, and its completion cleared the new task undone (a toilet task ended with nothing done, a walk to water was cut short).
+Sleep is the one interruptable action. When a critical need or a queued craft or build woke a colonist sleeping off a non-critical need, `AIDecisionSystem` switched the task but left the `Action` alone. `ActionSystem` starts an action only when none is active, so the stale Sleep ran on under the new task, and its completion cleared the new task undone (an in-place toilet task ended with nothing done; a colonist sent to water slept on when he got there and never drank).
 
 The fix clears the `Action` with the task on the switch path. It needed two more changes in how `isSameTask` tells tasks apart, both found by the test:
 
 - A `FulfillNeed` task now compares the need being met. Needs met in place share the colonist's own spot as their target, so a sleeper taking an in-place toilet looked like the same task and kept its Sleep.
-- The world origin is a target like any other. The old check skipped the comparison when both positions were near (0,0), so a colonist asleep at the origin never matched its own selection and restarted its sleep every tick.
+- The world origin is a target like any other. The old check skipped the comparison when both positions were near (0,0), so a colonist asleep at the origin never matched its own selection. That was harmless while a stale action survived the switch; with the fix it restarted the sleep every tick.
 
 The off-mesh snap (the colonist set back onto the nav mesh, which clears its task) had the same gap and now clears the action too, in both of its branches. The interruption-policy comment in `ActionSystem.cpp` and the note in `docs/technical/task-claims.md` were corrected to say what happens: non-interruptable actions run to completion, a switch clears the interruptable one, and an interrupted sleep pays out nothing.
 
-Tests (`NeedActionInPlaceTest`): `WokenSleeperCarriesOutTheNewTask` (toilet in place, the action starts on the switch's own tick and finishes, a BioPile spawns, the sleep paid out nothing) and `WokenSleeperWalksToDistantNeedAndDrinks` (the Sleep is cleared, never comes back during the walk, and the drink on arrival is the new task's own). Both start away from the origin; the first version sat at (0,0), which hid the origin case.
+Tests (`NeedActionInPlaceTest`): `WokenSleeperCarriesOutTheNewTask` (toilet in place, the action starts on the switch's own tick and finishes, a BioPile spawns, the sleep paid out nothing) and `WokenSleeperWalksToDistantNeedAndDrinks` (the Sleep is cleared, never comes back during the walk, and the drink on arrival is the new task's own). Both start away from the origin; the first version of the test sat at (0,0) and so leaned on the origin rule. Both were confirmed failing with the clear removed.
 
 ### Benchmarks
 
@@ -57,7 +57,7 @@ Ranking is off the trace. Each group ranks its candidates in a heap (`WorkGroup`
 
 The walk's advance and reinsertion. When the shown source fails a test that depends on it (regrowing, nowhere to stand, a verdict, not connected), the group pops its next offered candidate, the option's source fields are rewritten and its bonuses recomputed, and the option moves to where it now ranks among the untested options (`upper_bound` over the sorted tail, then `rotate`); the loop tests the same index again. That is the per-source walk exactly: a fallback that drops below another goal's source lets that source go first, so selection is unchanged and only the trace's shape and the cost differ. The behaviour tests passed untouched, and the tests that pinned the per-source shape were rewritten (`FindsANeedSourceInALargeMemory`, `HarvestGoalSeesEveryDefThatYieldsItsItem`, `ClearHarvestOffersOnlyHarvestablesInsideItsFootprint`, `HaulGoalsOfferEachPileOnce`, `RegrowingSourceIsPassedOverForAReadyOne`). Two new tests pin the fallback and reinsertion order, `AIDecisionRiverTest.CutFallsBackPastAnUnreachableTreeInOneDecision` and `AIDecisionWallTest.HaulFallsBackPastAPileWithAVerdict`.
 
-Routing stayed single-target plus a verdict. A nearest-of request for work would pick among one group's candidates by path, which can take one that ranks below another option, and adopting it means generalising the source choice, the claim re-record, and the held-against check to three task shapes. That changes which source wins. The route-failure path already records a verdict that the next decision passes over, so the open ticket's "retried forever" no longer held (it stopped holding with the nav entry 110 work). A livelock would need more than about ten sealed-but-connected sources nearer than the first open one under a constantly moving belief epoch, a dense grove for example; if that shows, a group's next few admitted candidates are the natural route choices for it, as a separate change.
+Routing stayed single-target plus a verdict. A nearest-of request for work would pick among one group's candidates by path, which can take one that ranks below another option, and adopting it means generalising the source choice, the claim re-record, and the held-against check to three task shapes. That changes which source wins. The route-failure path already records a verdict that the next decision passes over, so the open ticket "Work targets that pass the reachability check but fail pathing are retried forever" (WOR-642) no longer describes the code (it stopped holding with the nav entry 110 work). A livelock would need more than about ten sealed-but-connected sources nearer than the first open one under a constantly moving belief epoch, a dense grove for example; if that shows, a group's next few admitted candidates are the natural route choices for it, as a separate change.
 
 The deposit-leg rule: a haul whose deposit leg has no known way fails the same way for every source in its group, so the option goes NoSource at once and none of the alternates is tried.
 
@@ -72,10 +72,10 @@ Independent review, over the whole range, found no parity or claims bug. It foun
 Left as it is, deliberately:
 
 - Three parity decisions kept for now, each a possible change of its own: the trace no longer summarises passed-over sources; beyond 60 m of trip the distance factor is 0, so the tie falls to the tiebreak id and the nearest far source is not the one chosen; a haul's hysteresis still ignores which pile.
-- `workGroupOf` finds a group by a linear search. It runs on a failure and for tested Harvest options, over a few dozen groups.
+- `workGroupOf` finds a group by a linear search. It runs once per work option the walk tests and again after each advance, over a few dozen groups.
 - Reserved rows carry the age bonus and are chosen by rank, not trip. They are trace only and never selected, and the spec says so.
 
-Measured under load (the machine-load check read `busy` on both sides): with one colonist the option and harvest counts were as designed at every tree count, the decision cost fell by about an order of magnitude at large memories, and nothing regressed. The plan guessed 6 harvest options and 14 options per colonist for eight colonists; the benchmark gave 3 to 5 and 11 to 13, so those guesses were off, not the design.
+Measured on a shared machine (the machine-load check read `busy` or `mostly-idle` around each run, never `idle`): with one colonist the option and harvest counts were as designed at every tree count, the decision cost fell by about an order of magnitude at large memories, and nothing regressed. The plan guessed 6 harvest options and 14 options per colonist for eight colonists; the benchmark gave 3 to 5 and 11 to 13, so those guesses were off, not the design.
 
 ### The task panel (WOR-634)
 
