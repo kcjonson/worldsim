@@ -135,8 +135,13 @@ actionable need (eat, sleep) never preempts tier 4; only a need that goes critic
 ~10%) does, and the colonist then returns to their active work order if it is still the best option.
 The station reservation half is not built: a crafter holds its station only through the Slot claim
 its Craft task takes at selection, which goes with the task when it leaves for the need, so another
-colonist may take the station meanwhile. The craft binding that would keep it is planned in
-[Task Claims](./task-claims.md#craft-binding-planned).
+colonist may take the station meanwhile. The crafter's hold that would keep it is specified in
+[Interruptable Crafts](./interruptable-crafts.md).
+
+Planned change (owner's ruling, 2026-11-13): ordinary needs split in two. A need past a new urgent
+threshold ("very hungry") interrupts active work; a need only past its seek threshold ("slightly
+hungry") still waits for it, as locked above. [Interruptable Crafts](./interruptable-crafts.md#the-ladder)
+has the nine-tier ladder that results. Until it is built, the ladder in this document is what runs.
 
 This resolves the apparent tension with `ai-behavior.md`'s "Actionable Needs above Gather Food"
 ordering: that document's tier-6 "Gather Food / work" slot is what this spec calls

@@ -43,8 +43,9 @@ Not built:
 - Bumping of any kind. The one thing that exists in its place: a more urgent eater does not count a
   less urgent eater's food claim as an eater's, so it treats that food as held (used last) rather than
   taken.
-- The craft binding and job ids. A crafter holds its station only through the Slot claim its Craft
-  task takes at selection, which goes with the Craft task when the crafter leaves to eat or sleep.
+- The crafter's hold on a part-done craft, specified in
+  [Interruptable Crafts](./interruptable-crafts.md). A crafter holds its station only through the
+  Slot claim its Craft task takes at selection, which goes with the Craft task.
 - Player-facing output beyond naming a row's worker from that colonist's current task (and the trace's
   `Reserved` rows).
 - The collapse of options to the best source per goal and item before scoring.
@@ -101,7 +102,7 @@ from it is claimed with a source quantity claim.
 current activity. A `GoalTask` in `GoalTaskRegistry` is not a task in this sense. Goals never own
 claims; they are what in-flight claims count toward. Claims are owned by the colonist's `Task`
 and by its suspended work record (see interruption below), each under its own task instance id.
-Planned: a craft binding on a station's work order would be a second owner (see
+Planned: a crafting job's crafter would hold its station's slot without a task (see
 [Craft binding](#craft-binding-planned)).
 
 Every claim is keyed by the task instance that holds it, never by the colonist. RimWorld's later
@@ -414,8 +415,9 @@ colonist that selects the Craft step itself records Slot(station) at selection, 
 not walk to one station: a second colonist sees the Craft option as Reserved, "station in use by
 Alice". The slot lives as long as the Craft task: if the crafter switches to a need before the craft
 starts, the slot goes with the task and the station is free to anyone. (The Craft action itself is
-not interruptable once it starts.) Planned: the craft binding (below) keeps the station for its
-crafter across that interruption. The optional output deposit is a carry-in from possession. The
+not interruptable once it starts.) Planned: crafts become interruptable and a crafter keeps the
+station for a unit it has started ([Interruptable Crafts](./interruptable-crafts.md)). The optional
+output deposit is a carry-in from possession. The
 chain's `Gather` step has no runtime path; the claims follow what the code runs.
 
 ### Chain_Rescue (planned)
@@ -723,38 +725,17 @@ its Action, NavPath, and MovementTarget as `enterControl` does, keep what it car
 
 ### Craft binding (planned)
 
-Not built; no `CraftBinding`, and `CraftingJob` has no id. What runs today is the Craft task's Slot
-claim (above), which dies with the task.
+Not built. What runs today is the Craft task's Slot claim (above), which dies with the task.
 
-The decision it would implement is already made in
-[Multi-colonist Crafting](../design/multi-colonist-crafting.md) section 2b: a crafter interrupted by
-its own needs keeps the station and comes back to finish. A `Task` does not survive that interruption,
-so the station slot would be owned by a craft binding stored on the station's work order:
+The design is in [Interruptable Crafts](./interruptable-crafts.md), which replaces the draft that
+stood here (a `CraftBinding` beside the work queue, with job ids). In short: a craft's work is saved
+on its job, the job names the crafter of its part-done unit, and the claim index answers that
+crafter as the station's slot holder ahead of any Slot claim. The hold starts with the first work on
+a unit, lasts for that unit only, survives the crafter's own needs, and is released by direct player
+control, by work started at another station, and by the crafter ceasing to exist. Provisioning never
+touches it.
 
-```cpp
-struct CraftBinding {      // on WorkQueue
-    EntityID crafter;
-    uint64_t jobId;
-};
-```
-
-- Jobs would get ids. `WorkQueue::addJob` merges a repeat recipe into the existing job; a merge would
-  keep the existing job's id, a new job would get a fresh one.
-- Bound at the crafter's first Craft action on the job, not when provisioning starts. Between Craft
-  selection and that action, the crafter's Slot(station) claim holds the station, as it does today.
-- Ties: a binding would beat any other task's Slot claim on its station. Between two Slot claims with
-  no binding, the earlier `claimSeq` would win. The loser would find out at selection (the index shows
-  the slot held, as today) or at action start and re-plan.
-- Held while the crafter does anything that is not other work: eating, sleeping, a critical need.
-  Tier-4 stickiness brings the crafter back.
-- Released when the job completes, when the job is cancelled or removed, when the player takes
-  direct control of the crafter, when it starts a craft on a different station (one binding per
-  colonist), and, once they exist, when it dies or is incapacitated.
-- Release would be derived the same way as task claims: the index would treat a binding whose crafter
-  is gone, player-controlled, or bound elsewhere, or whose job id is no longer queued, as free, and
-  `CraftingGoalSystem` would clear such bindings on its existing throttled poll. No event wiring.
-
-Everything else about multi-colonist stations (UI, visuals, policy) stays in WOR-383.
+Everything else about multi-colonist stations (station policy, the wider UI) stays in WOR-383.
 
 ---
 
@@ -882,7 +863,7 @@ source.
 Claims are not saved separately. What is saved (when save lands) is the data they derive from: each
 colonist's `Task` with its claim list, instance id, sequence number, tier, and suspended record; and
 the claim sequence counter (kept on `GoalTaskRegistry`, the colony state a save will hold). Planned:
-each station's craft binding and job ids, once they exist. On load the index is rebuilt and the
+each crafting job's saved work and crafter ([Interruptable Crafts](./interruptable-crafts.md)). On load the index is rebuilt and the
 validator runs once in development builds. There is nothing to purge, because there is no separate
 store to disagree with.
 
@@ -977,8 +958,8 @@ time.
 
 Behaviour the code has that no doc should promise otherwise, kept here until fixed:
 
-- A crafter that leaves for a need before its Craft action starts loses the station (the binding is
-  planned, not built).
+- A crafter that leaves for a need before its Craft action starts loses the station, and nothing can
+  interrupt a craft once it starts ([Interruptable Crafts](./interruptable-crafts.md), not built).
 - The panel names one worker per row, so a row several colonists serve reads as one colonist's.
 - A colonist whose every pack slot, belt slot, and hand holds a tool can't make room to eat and picks
   the same source again.
@@ -995,7 +976,7 @@ The multi-colonist regression pass is the unit and flow tests in `libs/sim`; the
 groundwork steps 1 to 5 are done; `apps/sim-cli` does not exist). Planned sim-cli scenarios for this
 spec: two colonists and one tree; the last ingredient unit; three haulers, one free slot, three items;
 a starving colonist taking the last berries from a hauler; a crafter who sleeps mid-craft and returns
-to its bound station. The last needs the binding. Scenarios 01 to 04 and 11 under
+to the station it holds. The last needs [Interruptable Crafts](./interruptable-crafts.md). Scenarios 01 to 04 and 11 under
 `docs/testing/scenarios/` are the in-game pass.
 
 Unit and flow tests by behavior live in `AIDecisionSystem.test.cpp`, `ActionSystem.test.cpp`,
@@ -1018,11 +999,10 @@ the goal-system suites. Check for an existing test of the same path before addin
 - Hunger from the pack, bushes, piles, and boxes; eater urgency; making room; stale food.
 - Storage remaining need is item-counted and matches the box's per-item room.
 
-Planned with bumping and the binding: critical hunger bumping a storage hauler (its Action cleared, it
-re-plans and keeps its cargo), two critically hungry colonists never bumping each other, ordinary work
-never bumping ordinary work, and two colonists selecting Craft at one station with the binding
-surviving the crafter eating and releasing on job cancel, completion, control, destruction, and a craft
-elsewhere.
+Planned with bumping: critical hunger bumping a storage hauler (its Action cleared, it re-plans and
+keeps its cargo), two critically hungry colonists never bumping each other, and ordinary work never
+bumping ordinary work. The tests for the crafter's hold are listed in
+[Interruptable Crafts](./interruptable-crafts.md#testing).
 
 The validator (`ClaimIndex::findViolation`) runs at the end of every AI update that built the index, in
 development builds (`DEVELOPMENT_BUILD`), so every test that runs the AI runs it, and aborts on a
@@ -1032,7 +1012,7 @@ entries compare by holder instance, kind, target, item, and slot with quantities
 which `isSameTask` may change within the update; every Inbound has a matching In-flight of the same item
 on the same task or record; no inactive task holds claims, and no claim lacks an instance id. It does
 not check over-subscription (a hungry colonist's Use legitimately shares a bush with a work claim).
-Planned with the binding: every binding names a live crafter bound nowhere else and a queued job id.
+Planned with the crafter's hold: the assertions in [Interruptable Crafts](./interruptable-crafts.md#data).
 In-flight is not checked against remaining need: the need can drop under goods already on their way by
 means no claim controls (a player lowers a box's max, a dev give fills a site), and the deposit then
 keeps the surplus, so the check would abort on legitimate play. Its working storage lives on the
@@ -1092,6 +1072,8 @@ the next one) are fixed on this branch.
 - [Crafting & Material Provisioning](./crafting-provisioning-architecture.md): station store and
   metered deposits.
 - [Multi-colonist Crafting](../design/multi-colonist-crafting.md): station ownership during a craft.
+- [Interruptable Crafts](./interruptable-crafts.md): saved craft progress, the crafter's hold on the
+  station, urgent needs, and the ladder that follows.
 - [Building & Construction Architecture](./building-construction-architecture.md): blueprint
   manifests and builder slots.
 - [Task Chains](../design/game-systems/colonists/task-chains.md): stow-or-drop on interruption.
