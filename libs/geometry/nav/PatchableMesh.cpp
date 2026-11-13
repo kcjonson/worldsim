@@ -999,6 +999,8 @@ namespace geometry::nav {
 		std::vector<std::pair<std::uint32_t, std::int32_t>> ends;
 		std::vector<EdgeSource>	   edgesNear;
 		std::vector<std::int32_t>  edgeIdsNear;
+		std::vector<EdgeSource>	   edgesMet; // touchSegment's own, so its callers' lists stand
+		std::vector<std::int32_t>  edgeIdsMet;
 		std::vector<RingId>		   ringsNear; // live after the patch, around a seed sample
 
 		// Boundary intervals after the patch: a new bounds edge's in its Change, an unchanged
@@ -1319,9 +1321,9 @@ namespace geometry::nav {
 		}
 	}
 
-	// The mesh shows every interaction on kept ground, but a segment that reaches off
-	// ground can meet a hanging ring there, and the rounded crossing can still land on
-	// ground. Off ground and near its edge the registry stands in: every blocked ring
+	// On kept ground the mesh and touchSegment's input test show every interaction, but a
+	// segment that reaches off ground can come near a hanging ring there without meeting
+	// it, and a rounded crossing can still land on ground. Off ground and near its edge the registry stands in: every blocked ring
 	// edge whose original comes within kOffGroundReachMm joins s. A bounds edge runs along
 	// the boundary, so it always asks the registry, but it never pulls the boundary
 	// pieces beside it: those are bounds edges too, which the mesh shows whole, and
@@ -1562,7 +1564,7 @@ namespace geometry::nav {
 	}
 
 	// The triangles segment ab (ring edge x) touches join the hole, and every ring edge
-	// it crosses or touches joins s.
+	// it crosses or touches, as pieces or as input, joins s.
 	void PatchableMesh::Patch::touchSegment(const Vec2i64& a, const Vec2i64& b, const EdgeSource& x) {
 		Vec2i64 lo = a;
 		Vec2i64 hi = a;
@@ -1597,6 +1599,46 @@ namespace geometry::nav {
 				}
 			}
 		});
+		// The walk reads the pieces as rounded, but the arrangement meets the inputs as given:
+		// a piece can pass clear of ab where its input meets it. Every input lies in its
+		// edge's box, so the edge grid finds each one that can.
+		auto meets = [&](const Vec2i64& p, const Vec2i64& q) {
+			const SegmentIntersection r = intersectSegments(a, b, p, q);
+			if (r.relation == SegmentRelation::Disjoint) {
+				return false;
+			}
+			return r.relation != SegmentRelation::EndpointTouch || !((r.point == a || r.point == b) && (r.point == p || r.point == q));
+		};
+		m.ringEdgesInBox(lo, hi, work.edgeIdsMet, work.edgesMet);
+		for (const EdgeSource& z : work.edgesMet) {
+			if (changed(z.ring) || inS(z)) {
+				continue;
+			}
+			const NavInputPolygon& polygon = m.rings[static_cast<std::size_t>(z.ring)].polygon;
+			const Vec2i64		   p	   = edgeStart(polygon.ring, z.edge);
+			const Vec2i64		   q	   = edgeEnd(polygon.ring, z.edge);
+			if (p == q) {
+				continue;
+			}
+			if (polygon.blocked) {
+				if (meets(p, q)) {
+					addToS(z);
+				}
+				continue;
+			}
+			// A boundary interval's ends are rounded crossings, within a millimetre of the edge.
+			if (!segmentsWithin(a, b, p, q, kOffGroundReachMm)) {
+				continue;
+			}
+			const std::pair<std::uint32_t, std::uint32_t> run = intervalsAfter(z);
+			for (std::uint32_t i = run.first; i < run.second; ++i) {
+				const GroundInterval iv = work.intervalPool[i];
+				if (meets(iv.from, iv.to)) {
+					addToS(z);
+					break;
+				}
+			}
+		}
 	}
 
 	// The triangles a new outline overlaps join the hole, and every ring edge its
@@ -1609,7 +1651,10 @@ namespace geometry::nav {
 			const std::vector<Vec2i64>& outline = c.polygon.ring;
 			for (std::int32_t e = 0; e < static_cast<std::int32_t>(outline.size()); ++e) {
 				if (!c.polygon.blocked) {
-					for (const GroundInterval& iv : intervalRun(c.intervals[static_cast<std::size_t>(e)])) {
+					// touchSegment can grow the interval pool, so each interval is copied out.
+					const std::pair<std::uint32_t, std::uint32_t> run = c.intervals[static_cast<std::size_t>(e)];
+					for (std::uint32_t i = run.first; i < run.second; ++i) {
+						const GroundInterval iv = work.intervalPool[i];
 						pullOffGround(iv.from, iv.to, true, &c.band);
 						touchSegment(iv.from, iv.to, {id, e});
 					}

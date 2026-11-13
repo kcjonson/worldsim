@@ -2530,6 +2530,23 @@ TEST(PatchableMesh, SquaresArriveAmongObstaclesMatchFreshBuild) {
 	}
 }
 
+// A placed obstacle's corner lies just under a blocked edge's rounded piece: the edge as
+// given crosses the obstacle there, so a fresh build splits it at the corner, though the
+// piece passes clear of every new side.
+TEST(PatchableMesh, CornerUnderARoundedPieceSplitsTheEdge) {
+	Harness h(4000);
+	PatchEdits first;
+	first.adds = {bounds(rect(0, 0, 12000, 24000)), blocked(rect(4999, 11316, 6846, 14288)), blocked({{3503, 13127}, {5164, 12335}, {3679, 14963}})};
+	h.apply(first);
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	const Vec2i64 corner{4858, 12481};
+	ASSERT_EQ(liveVerticesOn(h.mesh, {3503, 13127}, {4999, 12414}), (std::vector<Vec2i64>{{3503, 13127}, {4999, 12414}}))
+		<< "the edge is bent where it crosses the rectangle, so its piece runs above the corner";
+	h.add(blocked(rect(4650, 10316, corner.x, corner.y)));
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	EXPECT_EQ(liveVerticesOn(h.mesh, {3503, 13127}, corner), (std::vector<Vec2i64>{{3503, 13127}, corner}));
+}
+
 // A shared side whose length is no multiple of the piece length is cut at the same
 // points from both squares, so it dissolves.
 TEST(PatchableMesh, UnevenlyCutSharedSideDissolves) {
