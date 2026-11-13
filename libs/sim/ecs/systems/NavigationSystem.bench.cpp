@@ -50,6 +50,7 @@
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 #include <nav/NavCoords.h>
+#include <nav/LimitPolygon.test.h>
 #include <nav/NavInputBuilder.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
@@ -1309,6 +1310,69 @@ namespace {
 		}
 	}
 
+	// What the mesh holds per km one mover walks: a visibility limit (16 sides, each kWalkRangeMm
+	// from him) every state.range(0) mm along a 1 km straight walk, over open ground (Arg 1 0) or
+	// with BM_ChunkSeam's placed obstacles at 0.064 per m2 (Arg 1 1), those meeting each new
+	// limit's circumscribed disc patched in before its ground. Bytes by container per km, from
+	// after the first limit to the end. The patch scratch is not reachable from here; it grows by
+	// 14 bytes per edge index id (its per-id marks: in s, classified, interval stamp and range).
+	void BM_LimitWalkBytes(benchmark::State& state) {
+		constexpr std::int64_t kWalkRangeMm = 46000;
+		constexpr std::int64_t kWalkMm		= 1000000;
+		constexpr float		   kWalkSpacingM = 3.95F; // 0.064 per m2
+		const std::int64_t	   step			= state.range(0);
+		const bool			   dense		= state.range(1) != 0;
+		const std::int64_t	   reach		= geometry::nav::testdata::limitCircumradius(kWalkRangeMm);
+		for (auto _ : state) {
+			std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> obstacles;
+			if (dense) {
+				const float r = static_cast<float>(reach) / 1000.0F + 1.0F;
+				obstacles	  = denseObstacles({-r, -r}, {static_cast<float>(kWalkMm) / 1000.0F + r, r}, kWalkSpacingM);
+			}
+			std::vector<std::uint8_t>	 added(obstacles.size(), 0);
+			geometry::nav::PatchableMesh mesh = navMeshLikeTheSystems();
+			auto						 take = [&](std::int64_t x) {
+				 geometry::nav::PatchEdits edits;
+				 for (std::size_t i = 0; i < obstacles.size(); ++i) {
+					 const geometry::Vec2i64 at = nav::toMm(obstacles[i].first);
+					 if (added[i] == 0 && (at.x - x) * (at.x - x) + at.y * at.y <= (reach + 1000) * (reach + 1000)) {
+						 edits.adds.push_back(obstacles[i].second);
+						 added[i] = 1;
+					 }
+				 }
+				 if (!edits.adds.empty()) {
+					 mesh.applyPatch(edits);
+				 }
+				 mesh.applyPatch({.adds = {{geometry::nav::testdata::limitPolygon({x, 0}, kWalkRangeMm), false, nav::kProvenanceBorder}}});
+				 mesh.refreshWidths();
+			};
+			take(0);
+			const MeshBytes before = meshBytes(mesh);
+			for (std::int64_t x = step; x <= kWalkMm; x += step) {
+				take(x);
+			}
+			const MeshBytes after = meshBytes(mesh);
+			const double	km	  = static_cast<double>(kWalkMm) / 1e6;
+			std::fprintf(stderr, "\n[limit walk bytes] %s, step %lld m: bytes per km walked by container (allocations per km)\n", dense ? "dense" : "open",
+						 static_cast<long long>(step / 1000));
+			for (std::size_t i = 0; i < after.lines.size(); ++i) {
+				std::fprintf(stderr, "  %-58s %10.0f  (%.0f)\n", after.lines[i].first, (after.lines[i].second.bytes - before.lines[i].second.bytes) / km,
+							 (after.lines[i].second.allocs - before.lines[i].second.allocs) / km);
+			}
+			const double edgeIds = after.counts.at("edge index ids") - before.counts.at("edge index ids");
+			const double total	 = (after.total().bytes - before.total().bytes) / km;
+			std::fprintf(stderr, "  %-58s %10.0f\n  %-58s %10.0f\n  counts per km:", "accounted", total, "patch scratch per edge index id (estimate)",
+						 14.0 * edgeIds / km);
+			for (const auto& [name, value] : after.counts) {
+				std::fprintf(stderr, " %s %.0f;", name.c_str(), (value - before.counts.at(name)) / km);
+			}
+			std::fprintf(stderr, "\n");
+			state.counters["bytesPerKm"]	   = total + 14.0 * edgeIds / km;
+			state.counters["edgeIdsPerKm"]	   = edgeIds / km;
+			state.counters["liveTrisPerKm"]	   = (after.counts.at("live triangles") - before.counts.at("live triangles")) / km;
+		}
+	}
+
 	// The system at the bench forest's density: the colony settled, then its first mover walked 800 m
 	// east 40 m a settle at a time. What the heap grew by, less the mesh's container growth, is the
 	// system's own records (and its jobs' retained capacity), per placed obstacle that entered.
@@ -1788,6 +1852,7 @@ BENCHMARK(BM_TwoGroupsApart)->Arg(0)->Iterations(1)->Unit(benchmark::kMillisecon
 BENCHMARK(BM_WallEditMeshedChunks)->Args({2, 0})->Args({5, 0})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_RealChunksGround)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PlacedObstacleBytes)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_LimitWalkBytes)->Args({4000, 0})->Args({16000, 0})->Args({4000, 1})->Args({16000, 1})->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PlacedObstacleSystemBytes)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_PlacedObstacleDensity)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_ChunkSeam)->Arg(0)->Arg(1)->Iterations(1)->Unit(benchmark::kMillisecond);

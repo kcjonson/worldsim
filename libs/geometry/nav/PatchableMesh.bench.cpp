@@ -8,6 +8,7 @@
 // patches (taking a tree out before timing its add, building the mesh) never reaches
 // the reported time.
 
+#include "nav/LimitPolygon.test.h"
 #include "nav/MeshComponents.h"
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
@@ -23,6 +24,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 #include <limits>
 #include <random>
 #include <unordered_set>
@@ -1255,6 +1257,758 @@ namespace {
 		state.counters["tris"]	  = static_cast<double>(mesh.liveTriangleCount());
 	}
 
+	// --- Visibility limits: the seen area as a union of ground outlines ---------------------
+	//
+	// A mover's visibility limit is a 16-gon whose sides lie kLimitRangeMm from where he stands,
+	// retaken every `step` he walks; the seen area is the union of every limit taken. Placed
+	// obstacles whose boxes meet a new limit's circumscribed disc and are not yet in the mesh go
+	// in first, as one patch over whatever ground is there; then the limit's ground, skipped
+	// where groundCovers says the union already holds it. Every row runs once and reports per
+	// patch on stderr and as counters.
+
+	namespace td = geometry::nav::testdata;
+
+	constexpr std::int64_t kLimitRangeMm	= 46000; // a colonist's sight plus the buffer
+	constexpr std::int64_t kWalkLengthMm	= 300000;
+	constexpr std::int64_t kDenseSpacingMm	= 3953;	 // one placed obstacle per lattice cell: 0.064 per m2
+	constexpr std::int64_t kSparseSpacingMm = 14142; // 0.005 per m2
+
+	double meanOf(const std::vector<double>& v) {
+		double sum = 0.0;
+		for (const double x : v) {
+			sum += x;
+		}
+		return v.empty() ? 0.0 : sum / static_cast<double>(v.size());
+	}
+
+	double percentileOf(std::vector<double> v, double q) {
+		if (v.empty()) {
+			return 0.0;
+		}
+		std::sort(v.begin(), v.end());
+		return v[std::min(v.size() - 1, static_cast<std::size_t>(q * static_cast<double>(v.size() - 1) + 0.5))];
+	}
+
+	double maxOf(const std::vector<double>& v) { return v.empty() ? 0.0 : *std::max_element(v.begin(), v.end()); }
+
+	std::uint64_t mixBits(std::uint64_t x) {
+		x += 0x9E3779B97F4A7C15ULL;
+		x = (x ^ (x >> 30)) * 0xBF58476D1CE4E5B9ULL;
+		x = (x ^ (x >> 27)) * 0x94D049BB133111EBULL;
+		return x ^ (x >> 31);
+	}
+
+	// Square placed obstacles, one per lattice cell of side `spacing` over [lo, hi), nudged up
+	// to 1.4 m, half extents 0.175, 0.275 or 0.41 m (an oak's age classes and the pad) in
+	// 15 / 60 / 25 shares. None overlap at either spacing used here.
+	std::vector<NavInputPolygon> obstacleField(const Vec2i64& lo, const Vec2i64& hi, std::int64_t spacing) {
+		std::vector<NavInputPolygon> out;
+		for (std::int64_t x = lo.x; x < hi.x; x += spacing) {
+			for (std::int64_t y = lo.y; y < hi.y; y += spacing) {
+				const std::uint64_t h = mixBits(static_cast<std::uint64_t>(x) * 0x9E3779B97F4A7C15ULL ^ static_cast<std::uint64_t>(y));
+				const Vec2i64		c{x + static_cast<std::int64_t>(h % 1401), y + static_cast<std::int64_t>((h >> 16) % 1401)};
+				const std::uint64_t k = (h >> 32) % 100;
+				const std::int64_t	e = k < 15 ? 175 : (k < 75 ? 275 : 410);
+				out.push_back(NavInputPolygon{rect(c.x - e, c.y - e, c.x + e, c.y + e), true, kProvenancePlaced});
+			}
+		}
+		return out;
+	}
+
+	enum class Ground { Open, Sparse, Dense };
+	enum class Walk { Straight, Ell };
+
+	std::int64_t spacingOf(Ground g) { return g == Ground::Dense ? kDenseSpacingMm : kSparseSpacingMm; }
+
+	// Where the mover stands at each retake: every `step` along a walk of `length`, east, or
+	// east for half of it and then north.
+	std::vector<Vec2i64> walkCentres(Walk walk, std::int64_t length, std::int64_t step) {
+		std::vector<Vec2i64> out;
+		for (std::int64_t d = 0; d <= length; d += step) {
+			if (walk == Walk::Straight || d <= length / 2) {
+				out.push_back({d, 0});
+			} else {
+				out.push_back({length / 2, d - length / 2});
+			}
+		}
+		return out;
+	}
+
+	// A sweep of the square [0, side]^2 in rows kSweepRowMm apart (less than a limit's
+	// diameter, so the union has no gaps), every row and turn walked at `step`.
+	constexpr std::int64_t kSweepRowMm = 80000;
+
+	std::vector<Vec2i64> sweepCentres(std::int64_t side, std::int64_t step) {
+		std::vector<Vec2i64> out;
+		bool				 east = true;
+		for (std::int64_t y = 0; y <= side; y += kSweepRowMm) {
+			for (std::int64_t d = 0; d <= side; d += step) {
+				out.push_back({east ? d : side - d, y});
+			}
+			for (std::int64_t d = step; d < kSweepRowMm && y + kSweepRowMm <= side; d += step) {
+				out.push_back({east ? side : 0, y + d});
+			}
+			east = !east;
+		}
+		return out;
+	}
+
+	struct RetakeStats {
+		std::vector<double> limitMs;
+		std::vector<double> refreshMs;
+		std::vector<double> limitRefreshMs;
+		std::vector<double> obstacleMs; // the retake's obstacle patch and its width refresh
+		std::vector<double> coversUs;
+		std::vector<double> obstacles;
+		std::vector<double> freed;
+		std::vector<double> created;
+		std::vector<double> flipped;
+		std::vector<double> passes;
+		std::vector<double> boxM2;
+		int					covered = 0;
+
+		void patch(const PatchReport& r, double ms, double refreshMsTaken) {
+			double f = 0;
+			double c = 0;
+			double l = 0;
+			for (const ChangedTriangle& ch : r.changes) {
+				f += (ch.why & kTriangleFreed) != 0 ? 1.0 : 0.0;
+				c += (ch.why & kTriangleCreated) != 0 ? 1.0 : 0.0;
+				l += (ch.why & kTriangleFlipped) != 0 ? 1.0 : 0.0;
+			}
+			limitMs.push_back(ms);
+			refreshMs.push_back(refreshMsTaken);
+			limitRefreshMs.push_back(ms + refreshMsTaken);
+			freed.push_back(f);
+			created.push_back(c);
+			flipped.push_back(l);
+			passes.push_back(r.passes);
+			boxM2.push_back(r.changes.empty() ? 0.0 : static_cast<double>(r.hi.x - r.lo.x) * static_cast<double>(r.hi.y - r.lo.y) / 1e6);
+		}
+
+		void print(const char* label) const {
+			std::fprintf(stderr,
+						 "[%s] %zu limits (%d skipped as covered)\n"
+						 "  limit patch ms mean %.3f p99 %.3f max %.3f; refreshWidths ms mean %.3f p99 %.3f max %.3f; both mean %.3f p99 %.3f max %.3f\n"
+						 "  obstacles per retake mean %.1f max %.0f; their patch+refresh ms mean %.3f p99 %.3f max %.3f; groundCovers us mean %.1f max %.1f\n"
+						 "  hole (freed) mean %.0f max %.0f; created mean %.0f; flipped mean %.1f; passes mean %.2f max %.0f; report box m2 mean %.0f max %.0f\n",
+						 label, limitMs.size(), covered, meanOf(limitMs), percentileOf(limitMs, 0.99), maxOf(limitMs), meanOf(refreshMs),
+						 percentileOf(refreshMs, 0.99), maxOf(refreshMs), meanOf(limitRefreshMs), percentileOf(limitRefreshMs, 0.99), maxOf(limitRefreshMs),
+						 meanOf(obstacles), maxOf(obstacles), meanOf(obstacleMs), percentileOf(obstacleMs, 0.99), maxOf(obstacleMs), meanOf(coversUs),
+						 maxOf(coversUs), meanOf(freed), maxOf(freed), meanOf(created), meanOf(flipped), meanOf(passes), maxOf(passes), meanOf(boxM2),
+						 maxOf(boxM2));
+		}
+
+		void count(benchmark::State& state) const {
+			state.counters["limits"]		  = static_cast<double>(limitMs.size());
+			state.counters["covered"]		  = covered;
+			state.counters["limitMeanMs"]	  = meanOf(limitMs);
+			state.counters["limitP99Ms"]	  = percentileOf(limitMs, 0.99);
+			state.counters["limitMaxMs"]	  = maxOf(limitMs);
+			state.counters["refreshMeanMs"]	  = meanOf(refreshMs);
+			state.counters["bothP99Ms"]		  = percentileOf(limitRefreshMs, 0.99);
+			state.counters["obstacleMeanMs"]  = meanOf(obstacleMs);
+			state.counters["obstacleP99Ms"]	  = percentileOf(obstacleMs, 0.99);
+			state.counters["holeMean"]		  = meanOf(freed);
+			state.counters["passesMean"]	  = meanOf(passes);
+		}
+	};
+
+	double msOf(double seconds) { return seconds * 1e3; }
+
+	// A mesh the limits of one walk go into, over a field of placed obstacles not yet in it.
+	struct LimitWalker {
+		PatchableMesh				 mesh;
+		std::vector<NavInputPolygon> field;
+		std::vector<Vec2i64>		 fieldLo;
+		std::vector<Vec2i64>		 fieldHi;
+		std::vector<std::uint8_t>	 inMesh;
+		std::vector<RingId>			 fieldIds;
+
+		void setField(std::vector<NavInputPolygon> obstacles) {
+			field = std::move(obstacles);
+			fieldLo.resize(field.size());
+			fieldHi.resize(field.size());
+			for (std::size_t i = 0; i < field.size(); ++i) {
+				boxOf(field[i].ring, fieldLo[i], fieldHi[i]);
+			}
+			inMesh.assign(field.size(), 0);
+			fieldIds.assign(field.size(), kNoRing);
+		}
+
+		// The limit round c: its new obstacles, then its ground unless the union covers it.
+		void retake(const Vec2i64& c, RetakeStats* stats) {
+			const std::int64_t		 reach = td::limitCircumradius(kLimitRangeMm);
+			PatchEdits				 obstacles;
+			std::vector<std::size_t> which;
+			for (std::size_t i = 0; i < field.size(); ++i) {
+				const std::int64_t dx = std::max({fieldLo[i].x - c.x, std::int64_t{0}, c.x - fieldHi[i].x});
+				const std::int64_t dy = std::max({fieldLo[i].y - c.y, std::int64_t{0}, c.y - fieldHi[i].y});
+				if (inMesh[i] == 0 && dx * dx + dy * dy <= reach * reach) {
+					obstacles.adds.push_back(field[i]);
+					which.push_back(i);
+					inMesh[i] = 1;
+				}
+			}
+			double obstacleSeconds = 0.0;
+			if (!obstacles.adds.empty()) {
+				PatchReport r;
+				obstacleSeconds = secondsOf([&] {
+					r = mesh.applyPatch(obstacles);
+					mesh.refreshWidths();
+				});
+				for (std::size_t k = 0; k < which.size(); ++k) {
+					fieldIds[which[k]] = r.added[k];
+				}
+			}
+			const std::vector<Vec2i64> outline = td::limitPolygon(c, kLimitRangeMm);
+			bool					   covers  = false;
+			const double			   coversS = secondsOf([&] { covers = mesh.groundCovers(outline); });
+			if (stats != nullptr) {
+				stats->obstacleMs.push_back(msOf(obstacleSeconds));
+				stats->obstacles.push_back(static_cast<double>(obstacles.adds.size()));
+				stats->coversUs.push_back(coversS * 1e6);
+			}
+			if (covers) {
+				if (stats != nullptr) {
+					++stats->covered;
+				}
+				return;
+			}
+			PatchReport	 r;
+			const double patchS	  = secondsOf([&] { r = mesh.applyPatch(adding({NavInputPolygon{outline, false, kProvenanceBorder}})); });
+			const double refreshS = secondsOf([&] { mesh.refreshWidths(); });
+			if (stats != nullptr) {
+				stats->patch(r, msOf(patchS), msOf(refreshS));
+			}
+		}
+	};
+
+	// The field of `ground` over every box a limit of the walk can reach.
+	std::vector<NavInputPolygon> fieldFor(const std::vector<Vec2i64>& centres, Ground ground) {
+		if (ground == Ground::Open) {
+			return {};
+		}
+		Vec2i64 lo;
+		Vec2i64 hi;
+		boxOf(centres, lo, hi);
+		const Vec2i64 reach{td::limitCircumradius(kLimitRangeMm) + 1000, td::limitCircumradius(kLimitRangeMm) + 1000};
+		return obstacleField(lo - reach, hi + reach, spacingOf(ground));
+	}
+
+	// The walk's limits in turn; the first (a fresh mover's) is reported apart.
+	void walkLimits(LimitWalker& w, const std::vector<Vec2i64>& centres, RetakeStats& stats, RetakeStats& first) {
+		w.retake(centres.front(), &first);
+		for (std::size_t i = 1; i < centres.size(); ++i) {
+			w.retake(centres[i], &stats);
+		}
+	}
+
+	void BM_LimitWalk(benchmark::State& state, Walk walk, Ground ground) {
+		const std::int64_t			step	= state.range(0);
+		const std::vector<Vec2i64>	centres = walkCentres(walk, kWalkLengthMm, step);
+		for (auto _ : state) {
+			LimitWalker w;
+			w.setField(fieldFor(centres, ground));
+			RetakeStats stats;
+			RetakeStats first;
+			walkLimits(w, centres, stats, first);
+			state.SetIterationTime(meanOf(stats.limitMs) * static_cast<double>(stats.limitMs.size()) / 1e3);
+			char label[96];
+			std::snprintf(label, sizeof(label), "limit walk %s %s step %lld m", walk == Walk::Straight ? "straight" : "L",
+						  ground == Ground::Open ? "open" : (ground == Ground::Sparse ? "sparse" : "dense"), static_cast<long long>(step / 1000));
+			stats.print(label);
+			std::fprintf(stderr, "  first limit: %.0f obstacles in %.3f ms, ground %.3f ms + refresh %.3f ms; mesh %d live triangles at the end\n",
+						 first.obstacles.front(), first.obstacleMs.front(), first.limitMs.front(), first.refreshMs.front(), w.mesh.liveTriangleCount());
+			stats.count(state);
+			state.counters["tris"] = w.mesh.liveTriangleCount();
+		}
+	}
+
+	// --- Open ground: a seen area with no interior vertices ----------------------------
+
+	struct MeshShape {
+		double tris		  = 0.0;
+		double longestM	  = 0.0;
+		double edgeMeanM  = 0.0;
+		double edgeP99M	  = 0.0;
+		double aspectMean = 0.0;
+		double aspectP99  = 0.0;
+		double aspectMax  = 0.0;
+		double over23m	  = 0.0;
+	};
+
+	double lengthM(const Vec2i64& a, const Vec2i64& b) {
+		return std::hypot(static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y)) / 1000.0;
+	}
+
+	// Live triangles `keep` accepts by centroid: their longest edge and aspect (longest edge
+	// squared over twice the area, 1.15 for an equilateral).
+	template <typename Keep> MeshShape shapeOf(const PatchableMesh& mesh, Keep keep) {
+		std::vector<double> edges;
+		std::vector<double> aspects;
+		MeshShape			out;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			const Vec2i64&	   a   = mesh.vertices()[tri.v[0]];
+			const Vec2i64&	   b   = mesh.vertices()[tri.v[1]];
+			const Vec2i64&	   c   = mesh.vertices()[tri.v[2]];
+			if (!keep(Vec2i64{(a.x + b.x + c.x) / 3, (a.y + b.y + c.y) / 3})) {
+				continue;
+			}
+			const double longest = std::max({lengthM(a, b), lengthM(b, c), lengthM(c, a)});
+			const double area2	 = std::abs(static_cast<double>(b.x - a.x) * static_cast<double>(c.y - a.y) - static_cast<double>(b.y - a.y) * static_cast<double>(c.x - a.x)) / 1e6;
+			edges.push_back(longest);
+			aspects.push_back(area2 > 0.0 ? longest * longest / area2 : std::numeric_limits<double>::infinity());
+			out.over23m += longest > 23.0 ? 1.0 : 0.0;
+		}
+		out.tris	   = static_cast<double>(edges.size());
+		out.longestM   = maxOf(edges);
+		out.edgeMeanM  = meanOf(edges);
+		out.edgeP99M   = percentileOf(edges, 0.99);
+		out.aspectMean = meanOf(aspects);
+		out.aspectP99  = percentileOf(aspects, 0.99);
+		out.aspectMax  = maxOf(aspects);
+		return out;
+	}
+
+	struct LocateCost {
+		double meanNs	 = 0.0;
+		double p99Ns	 = 0.0;
+		double boxesMean = 0.0;
+		double boxesP99	 = 0.0;
+		double offMesh	 = 0.0;
+	};
+
+	// Each point located 16 times over; over the first 1,000, how many live triangles' boxes
+	// hold the point (what the point grid can test, at most).
+	LocateCost locateCost(const PatchableMesh& mesh, const std::vector<Vec2i64>& points) {
+		constexpr int		kRepeats = 16;
+		std::vector<double> ns;
+		LocateCost			out;
+		for (const Vec2i64& p : points) {
+			std::int32_t t	= -1;
+			const double s	= secondsOf([&] {
+				 for (int r = 0; r < kRepeats; ++r) {
+					 t = mesh.locate(p);
+					 benchmark::DoNotOptimize(t);
+				 }
+			 });
+			out.offMesh += t < 0 ? 1.0 : 0.0;
+			ns.push_back(s * 1e9 / kRepeats);
+		}
+		std::vector<double> boxes;
+		for (std::size_t i = 0; i < std::min<std::size_t>(points.size(), 1000); ++i) {
+			const Vec2i64& p	 = points[i];
+			int			   count = 0;
+			for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+				if (!mesh.triangleLive(t)) {
+					continue;
+				}
+				const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+				const Vec2i64&	   a   = mesh.vertices()[tri.v[0]];
+				const Vec2i64&	   b   = mesh.vertices()[tri.v[1]];
+				const Vec2i64&	   c   = mesh.vertices()[tri.v[2]];
+				count += std::min({a.x, b.x, c.x}) <= p.x && p.x <= std::max({a.x, b.x, c.x}) && std::min({a.y, b.y, c.y}) <= p.y &&
+								 p.y <= std::max({a.y, b.y, c.y})
+							 ? 1
+							 : 0;
+			}
+			boxes.push_back(count);
+		}
+		out.meanNs	  = meanOf(ns);
+		out.p99Ns	  = percentileOf(ns, 0.99);
+		out.boxesMean = meanOf(boxes);
+		out.boxesP99  = percentileOf(boxes, 0.99);
+		return out;
+	}
+
+	struct RouteCost {
+		double expMean	= 0.0;
+		double expP99	= 0.0;
+		double usMean	= 0.0;
+		double usP99	= 0.0;
+		double notFound = 0.0;
+	};
+
+	RouteCost routeCost(const PatchableMesh& mesh, const std::vector<std::pair<Vec2i64, Vec2i64>>& pairs) {
+		const NavView		view = mesh.view();
+		std::vector<double> expansions;
+		std::vector<double> us;
+		RouteCost			out;
+		for (const auto& [a, b] : pairs) {
+			PathResult	 r;
+			const double s = secondsOf([&] { r = pathThrough(view, a, b, 300); });
+			us.push_back(s * 1e6);
+			expansions.push_back(static_cast<double>(r.nodesExpanded));
+			out.notFound += r.reachable ? 0.0 : 1.0;
+		}
+		out.expMean = meanOf(expansions);
+		out.expP99	= percentileOf(expansions, 0.99);
+		out.usMean	= meanOf(us);
+		out.usP99	= percentileOf(us, 0.99);
+		return out;
+	}
+
+	bool onFloor(const PatchableMesh& mesh, const Vec2i64& p) {
+		const std::int32_t t = mesh.locate(p);
+		return t >= 0 && isFloorFace(mesh.triangles()[static_cast<std::size_t>(t)]);
+	}
+
+	// Pairs `apart` from each other, both on floor inside [lo, hi].
+	std::vector<std::pair<Vec2i64, Vec2i64>> pairsApart(const PatchableMesh& mesh, std::mt19937& rng, const Vec2i64& lo, const Vec2i64& hi, double apartMm,
+														std::size_t n) {
+		std::vector<std::pair<Vec2i64, Vec2i64>> out;
+		auto within = [&](const Vec2i64& p) { return p.x >= lo.x && p.y >= lo.y && p.x <= hi.x && p.y <= hi.y; };
+		while (out.size() < n) {
+			const Vec2i64 a{lo.x + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.x - lo.x)),
+							lo.y + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(hi.y - lo.y))};
+			const double  angle = static_cast<double>(rng() % 6283) / 1000.0;
+			const Vec2i64 b{a.x + static_cast<std::int64_t>(apartMm * std::cos(angle)), a.y + static_cast<std::int64_t>(apartMm * std::sin(angle))};
+			if (within(b) && onFloor(mesh, a) && onFloor(mesh, b)) {
+				out.push_back({a, b});
+			}
+		}
+		return out;
+	}
+
+	void printShape(const char* label, const MeshShape& s) {
+		std::fprintf(stderr, "  %s: %.0f triangles; longest edge m mean %.2f p99 %.2f max %.2f; over 23 m %.0f; aspect mean %.1f p99 %.1f max %.0f\n", label,
+					 s.tris, s.edgeMeanM, s.edgeP99M, s.longestM, s.over23m, s.aspectMean, s.aspectP99, s.aspectMax);
+	}
+
+	void printLocate(const char* label, const LocateCost& l) {
+		std::fprintf(stderr, "  %s locate ns mean %.0f p99 %.0f; triangle boxes holding a point mean %.1f p99 %.0f; off mesh %.0f\n", label, l.meanNs, l.p99Ns,
+					 l.boxesMean, l.boxesP99, l.offMesh);
+	}
+
+	void printRoutes(const char* label, const RouteCost& r) {
+		std::fprintf(stderr, "  %s routes: expansions mean %.0f p99 %.0f; us mean %.0f p99 %.0f; not found %.0f\n", label, r.expMean, r.expP99, r.usMean, r.usP99,
+					 r.notFound);
+	}
+
+	// A mover sweeps a square of side state.range(0) m at the retake step with no placed
+	// obstacles, so the seen area ends as one open region with vertices only on its outer edge.
+	// Then 200 placed obstacles land one at a time at random interior points, and one more
+	// limit reaches past the edge.
+	void BM_OpenGroundGrowth(benchmark::State& state) {
+		const std::int64_t side = state.range(0) * 1000;
+		const std::int64_t step = 4000;
+		for (auto _ : state) {
+			LimitWalker				   w;
+			const std::vector<Vec2i64> centres = sweepCentres(side, step);
+			RetakeStats				   all;
+			std::vector<RetakeStats>   rows(static_cast<std::size_t>(side / kSweepRowMm + 1));
+			for (const Vec2i64& c : centres) {
+				RetakeStats one;
+				w.retake(c, &one);
+				RetakeStats& row = rows[static_cast<std::size_t>(c.y / kSweepRowMm)];
+				row.covered += one.covered;
+				all.covered += one.covered;
+				for (RetakeStats* s : {&row, &all}) {
+					for (std::size_t k = 0; k < one.limitMs.size(); ++k) {
+						s->limitMs.push_back(one.limitMs[k]);
+						s->refreshMs.push_back(one.refreshMs[k]);
+						s->limitRefreshMs.push_back(one.limitRefreshMs[k]);
+						s->freed.push_back(one.freed[k]);
+						s->created.push_back(one.created[k]);
+						s->flipped.push_back(one.flipped[k]);
+						s->passes.push_back(one.passes[k]);
+						s->boxM2.push_back(one.boxM2[k]);
+					}
+					s->coversUs.insert(s->coversUs.end(), one.coversUs.begin(), one.coversUs.end());
+				}
+			}
+			char label[96];
+			std::snprintf(label, sizeof(label), "open sweep %lld m", static_cast<long long>(side / 1000));
+			all.print(label);
+			for (std::size_t r = 0; r < rows.size(); ++r) {
+				std::fprintf(stderr, "  row %zu: %zu limits, patch ms mean %.3f max %.3f, refresh ms mean %.3f, hole mean %.0f max %.0f, box m2 mean %.0f max %.0f\n", r,
+							 rows[r].limitMs.size(), meanOf(rows[r].limitMs), maxOf(rows[r].limitMs), meanOf(rows[r].refreshMs), meanOf(rows[r].freed),
+							 maxOf(rows[r].freed), meanOf(rows[r].boxM2), maxOf(rows[r].boxM2));
+			}
+			const MeshShape shape = shapeOf(w.mesh, [](const Vec2i64&) { return true; });
+			printShape("whole mesh", shape);
+
+			std::mt19937		 rng(13);
+			std::vector<Vec2i64> points;
+			while (points.size() < 10000) {
+				points.push_back({static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(side)), static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(side))});
+			}
+			const LocateCost locate = locateCost(w.mesh, points);
+			printLocate("interior", locate);
+			const RouteCost near = routeCost(w.mesh, pairsApart(w.mesh, rng, {0, 0}, {side, side}, 40000.0, 200));
+			const RouteCost far	 = routeCost(w.mesh, pairsApart(w.mesh, rng, {0, 0}, {side, side}, 400000.0, 100));
+			printRoutes("40 m", near);
+			printRoutes("400 m", far);
+
+			RetakeStats drops;
+			for (int i = 0; i < 200; ++i) {
+				const Vec2i64	   c{20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(side - 40000)),
+								 20000 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(side - 40000))};
+				const std::int64_t e = 275;
+				PatchReport		   r;
+				const double	   patchS	= secondsOf([&] { r = w.mesh.applyPatch(adding({NavInputPolygon{rect(c.x - e, c.y - e, c.x + e, c.y + e), true, kProvenancePlaced}})); });
+				const double	   refreshS = secondsOf([&] { w.mesh.refreshWidths(); });
+				drops.patch(r, msOf(patchS), msOf(refreshS));
+			}
+			std::snprintf(label, sizeof(label), "open sweep %lld m: placed obstacles dropped one at a time", static_cast<long long>(side / 1000));
+			drops.print(label);
+			RetakeStats edge;
+			w.retake({side + 40000, side / 2}, &edge);
+			std::snprintf(label, sizeof(label), "open sweep %lld m: one more limit past the edge", static_cast<long long>(side / 1000));
+			edge.print(label);
+			printShape("whole mesh after", shapeOf(w.mesh, [](const Vec2i64&) { return true; }));
+
+			state.SetIterationTime(meanOf(all.limitMs) * static_cast<double>(all.limitMs.size()) / 1e3);
+			all.count(state);
+			state.counters["tris"]			 = shape.tris;
+			state.counters["longestM"]		 = shape.longestM;
+			state.counters["locateNs"]		 = locate.meanNs;
+			state.counters["locateP99Ns"]	 = locate.p99Ns;
+			state.counters["boxesAtPoint"]	 = locate.boxesMean;
+			state.counters["route40Exp"]	 = near.expMean;
+			state.counters["route400Exp"]	 = far.expMean;
+			state.counters["dropBothP99Ms"]	 = percentileOf(drops.limitRefreshMs, 0.99);
+			state.counters["dropBothMaxMs"]	 = maxOf(drops.limitRefreshMs);
+			state.counters["edgeLimitMs"]	 = edge.limitMs.empty() ? 0.0 : edge.limitMs.front();
+		}
+	}
+
+	// --- A walked band's edge, and the edge index under it --------------------------------
+
+	// A 300 m straight walk at the retake step through dense placed obstacles.
+	void walkDenseBand(LimitWalker& w) {
+		const std::vector<Vec2i64> centres = walkCentres(Walk::Straight, kWalkLengthMm, 4000);
+		w.setField(fieldFor(centres, Ground::Dense));
+		RetakeStats stats;
+		RetakeStats first;
+		walkLimits(w, centres, stats, first);
+	}
+
+	// Where the band's middle third lies: clear of the walk's two ends.
+	constexpr std::int64_t kBandFromMm = 100000;
+	constexpr std::int64_t kBandToMm   = 200000;
+
+	// The mesh boundary (the union's edge, every edge with nothing across it) beside the
+	// band's middle third.
+	std::vector<std::pair<Vec2i64, Vec2i64>> boundaryBeside(const PatchableMesh& mesh) {
+		std::vector<std::pair<Vec2i64, Vec2i64>> out;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& p = mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
+				const Vec2i64& q = mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
+				if (tri.neighbor[static_cast<std::size_t>(e)] < 0 && std::max(p.x, q.x) >= kBandFromMm - 10000 && std::min(p.x, q.x) <= kBandToMm + 10000) {
+					out.push_back({p, q});
+				}
+			}
+		}
+		return out;
+	}
+
+	double distanceToMm(const Vec2i64& p, const std::vector<std::pair<Vec2i64, Vec2i64>>& segments) {
+		double best = std::numeric_limits<double>::infinity();
+		for (const auto& [a, b] : segments) {
+			const double dx = static_cast<double>(b.x - a.x);
+			const double dy = static_cast<double>(b.y - a.y);
+			const double px = static_cast<double>(p.x - a.x);
+			const double py = static_cast<double>(p.y - a.y);
+			const double t	= std::clamp((px * dx + py * dy) / std::max(1.0, dx * dx + dy * dy), 0.0, 1.0);
+			best			= std::min(best, std::hypot(px - t * dx, py - t * dy));
+		}
+		return best;
+	}
+
+	constexpr double kEdgeBandMm = 4000.0;
+
+	// Plan M2: triangles within 4 m of the band's side against its interior (within 20 m of
+	// the walk), over the band's middle third.
+	void BM_MeshEdge(benchmark::State& state) {
+		for (auto _ : state) {
+			LimitWalker w;
+			walkDenseBand(w);
+			const std::vector<std::pair<Vec2i64, Vec2i64>> boundary = boundaryBeside(w.mesh);
+			auto inThird = [](const Vec2i64& p) { return p.x >= kBandFromMm && p.x <= kBandToMm; };
+			auto atEdge	 = [&](const Vec2i64& p) { return inThird(p) && distanceToMm(p, boundary) <= kEdgeBandMm; };
+			auto inside	 = [&](const Vec2i64& p) { return inThird(p) && std::abs(p.y) <= 20000; };
+			const MeshShape edgeShape	= shapeOf(w.mesh, atEdge);
+			const MeshShape innerShape	= shapeOf(w.mesh, inside);
+			const MeshShape wholeShape	= shapeOf(w.mesh, [](const Vec2i64&) { return true; });
+
+			std::mt19937		 rng(21);
+			std::vector<Vec2i64> edgePoints;
+			std::vector<Vec2i64> innerPoints;
+			const std::int64_t	 rc = td::limitCircumradius(kLimitRangeMm);
+			while (edgePoints.size() < 10000) {
+				const std::int64_t y = kLimitRangeMm - static_cast<std::int64_t>(kEdgeBandMm) + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(rc - kLimitRangeMm + static_cast<std::int64_t>(kEdgeBandMm)));
+				const Vec2i64	   p{kBandFromMm + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(kBandToMm - kBandFromMm)), (rng() % 2 == 0) ? y : -y};
+				if (w.mesh.locate(p) >= 0 && distanceToMm(p, boundary) <= kEdgeBandMm) {
+					edgePoints.push_back(p);
+				}
+			}
+			while (innerPoints.size() < 10000) {
+				innerPoints.push_back({kBandFromMm + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(kBandToMm - kBandFromMm)),
+									   static_cast<std::int64_t>(rng() % 40001) - 20000});
+			}
+			const LocateCost edgeLocate	 = locateCost(w.mesh, edgePoints);
+			const LocateCost innerLocate = locateCost(w.mesh, innerPoints);
+
+			// 40 m along the side, 2 m in from where every limit's side lies, and 40 m pairs in
+			// any direction inside.
+			std::vector<std::pair<Vec2i64, Vec2i64>> edgePairs;
+			while (edgePairs.size() < 500) {
+				const std::int64_t y = (rng() % 2 == 0 ? 1 : -1) * (kLimitRangeMm - 2000);
+				const Vec2i64	   a{kBandFromMm + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(kBandToMm - kBandFromMm - 40000)), y};
+				const Vec2i64	   b{a.x + 40000, y};
+				if (onFloor(w.mesh, a) && onFloor(w.mesh, b)) {
+					edgePairs.push_back({a, b});
+				}
+			}
+			const RouteCost edgeRoutes	= routeCost(w.mesh, edgePairs);
+			const RouteCost innerRoutes = routeCost(w.mesh, pairsApart(w.mesh, rng, {kBandFromMm, -20000}, {kBandToMm, 20000}, 40000.0, 500));
+
+			std::fprintf(stderr, "[mesh edge] dense straight band, step 4 m; %zu boundary segments beside the middle third\n", boundary.size());
+			printShape("side (within 4 m)", edgeShape);
+			printShape("interior", innerShape);
+			printShape("whole mesh", wholeShape);
+			printLocate("side", edgeLocate);
+			printLocate("interior", innerLocate);
+			printRoutes("side 40 m", edgeRoutes);
+			printRoutes("interior 40 m", innerRoutes);
+			state.SetIterationTime(1e-9 * edgeLocate.meanNs);
+			state.counters["sideLongestM"]	  = edgeShape.longestM;
+			state.counters["sideAspectP99"]	  = edgeShape.aspectP99;
+			state.counters["sideLocateNs"]	  = edgeLocate.meanNs;
+			state.counters["sideLocateP99Ns"] = edgeLocate.p99Ns;
+			state.counters["sideExpMean"]	  = edgeRoutes.expMean;
+			state.counters["innerLocateNs"]	  = innerLocate.meanNs;
+			state.counters["innerExpMean"]	  = innerRoutes.expMean;
+			state.counters["over23m"]		  = wholeShape.over23m;
+		}
+	}
+
+	// PatchableMesh's private box query over its ring edge index, reached through an explicit
+	// instantiation, which the language exempts from access checking. Nothing here writes.
+	using EdgesInBox = void (PatchableMesh::*)(const Vec2i64&, const Vec2i64&, std::vector<std::int32_t>&, std::vector<EdgeSource>&) const;
+	struct EdgesInBoxKey {
+		friend EdgesInBox edgesInBoxOf(EdgesInBoxKey);
+	};
+	template <EdgesInBox Member> struct EdgesInBoxReach {
+		friend EdgesInBox edgesInBoxOf(EdgesInBoxKey) { return Member; }
+	};
+	template struct EdgesInBoxReach<&PatchableMesh::ringEdgesInBox>;
+
+	// Plan M3: a 6 m box query over the ring edge index (what touchSegment and every placed
+	// obstacle's patch ask) in the walked dense band, against the same placed obstacles under
+	// one ground rectangle with no limits; and a 0.55 m placed obstacle added at clear points of
+	// the band's middle third, timed with its width refresh, in each.
+	void BM_EdgeIndexQuery(benchmark::State& state) {
+		for (auto _ : state) {
+			LimitWalker w;
+			walkDenseBand(w);
+			PatchableMesh				 field;
+			std::vector<NavInputPolygon> rings;
+			Vec2i64						 lo{std::numeric_limits<std::int64_t>::max(), std::numeric_limits<std::int64_t>::max()};
+			Vec2i64						 hi{std::numeric_limits<std::int64_t>::min(), std::numeric_limits<std::int64_t>::min()};
+			for (std::int32_t t = 0; t < static_cast<std::int32_t>(w.mesh.triangles().size()); ++t) {
+				if (w.mesh.triangleLive(t)) {
+					for (const std::uint32_t v : w.mesh.triangles()[static_cast<std::size_t>(t)].v) {
+						lo = {std::min(lo.x, w.mesh.vertices()[v].x), std::min(lo.y, w.mesh.vertices()[v].y)};
+						hi = {std::max(hi.x, w.mesh.vertices()[v].x), std::max(hi.y, w.mesh.vertices()[v].y)};
+					}
+				}
+			}
+			rings.push_back(NavInputPolygon{rect(lo.x, lo.y, hi.x, hi.y), false, kProvenanceBorder});
+			for (std::size_t i = 0; i < w.field.size(); ++i) {
+				if (w.inMesh[i] != 0) {
+					rings.push_back(w.field[i]);
+				}
+			}
+			untimedPatch(field, adding(rings));
+
+			const EdgesInBox		  query = edgesInBoxOf(EdgesInBoxKey{});
+			std::mt19937			  rng(31);
+			std::vector<Vec2i64>	  centres;
+			while (centres.size() < 10000) {
+				centres.push_back({kBandFromMm + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(kBandToMm - kBandFromMm)),
+								   static_cast<std::int64_t>(rng() % 80001) - 40000});
+			}
+			std::vector<std::int32_t> ids;
+			std::vector<EdgeSource>	  found;
+			const Vec2i64			  half{3000, 3000};
+			auto					  run = [&](const PatchableMesh& m, double& ns, double& edges) {
+				 edges = 0.0;
+				 for (const Vec2i64& c : centres) {
+					 (m.*query)(c - half, c + half, ids, found);
+					 edges += static_cast<double>(found.size());
+				 }
+				 ns = 1e9 * secondsOf([&] {
+					 for (int r = 0; r < 4; ++r) {
+						 for (const Vec2i64& c : centres) {
+							 (m.*query)(c - half, c + half, ids, found);
+							 benchmark::DoNotOptimize(found.data());
+						 }
+					 }
+				 }) / (4.0 * static_cast<double>(centres.size()));
+				 edges /= static_cast<double>(centres.size());
+			};
+			double bandNs	 = 0.0;
+			double bandEdges = 0.0;
+			double fieldNs	 = 0.0;
+			double fieldEdges = 0.0;
+			run(w.mesh, bandNs, bandEdges);
+			run(field, fieldNs, fieldEdges);
+
+			std::vector<Vec2i64> spots;
+			while (spots.size() < 200) {
+				const Vec2i64 c{kBandFromMm + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(kBandToMm - kBandFromMm)),
+								static_cast<std::int64_t>(rng() % 60001) - 30000};
+				bool clear = true;
+				for (std::size_t i = 0; i < w.field.size() && clear; ++i) {
+					clear = w.fieldHi[i].x < c.x - 1000 || w.fieldLo[i].x > c.x + 1000 || w.fieldHi[i].y < c.y - 1000 || w.fieldLo[i].y > c.y + 1000;
+				}
+				if (clear) {
+					spots.push_back(c);
+				}
+			}
+			auto drop = [&](PatchableMesh& m) {
+				std::vector<double> ms;
+				for (const Vec2i64& c : spots) {
+					PatchReport	 r;
+					const double s = secondsOf([&] {
+						r = m.applyPatch(adding({NavInputPolygon{rect(c.x - 275, c.y - 275, c.x + 275, c.y + 275), true, kProvenancePlaced}}));
+						m.refreshWidths();
+					});
+					ms.push_back(msOf(s));
+					untimedPatch(m, removing(r.added.front()));
+				}
+				return ms;
+			};
+			const std::vector<double> bandDrop	= drop(w.mesh);
+			const std::vector<double> fieldDrop = drop(field);
+			std::fprintf(stderr,
+						 "[edge index] 6 m box query: walked band %.0f ns, %.1f ring edges; one ground rectangle %.0f ns, %.1f ring edges; ratio %.2f\n"
+						 "  placed obstacle add+refresh ms: walked band mean %.3f p99 %.3f; one ground rectangle mean %.3f p99 %.3f\n",
+						 bandNs, bandEdges, fieldNs, fieldEdges, bandNs / fieldNs, meanOf(bandDrop), percentileOf(bandDrop, 0.99), meanOf(fieldDrop),
+						 percentileOf(fieldDrop, 0.99));
+			state.SetIterationTime(1e-9 * bandNs);
+			state.counters["bandNs"]		 = bandNs;
+			state.counters["fieldNs"]		 = fieldNs;
+			state.counters["ratio"]			 = bandNs / fieldNs;
+			state.counters["bandEdges"]		 = bandEdges;
+			state.counters["fieldEdges"]	 = fieldEdges;
+			state.counters["bandDropMs"]	 = meanOf(bandDrop);
+			state.counters["fieldDropMs"]	 = meanOf(fieldDrop);
+		}
+	}
+
 } // namespace
 
 #define PATCH_ROWS(name, fn, ...)                                                                                              \
@@ -1351,3 +2105,16 @@ BENCHMARK_CAPTURE(BM_WalkingDistance, cap4x, 4.0)->UseManualTime()->Unit(benchma
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells, 2, false)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, twoCells_openTile, 2, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK_CAPTURE(BM_FloraCellsEnter, loneTree_openTile, 0, true)->Arg(1)->Arg(3)->Arg(9)->UseManualTime()->Unit(benchmark::kMicrosecond);
+
+// The argument of every limit walk row is the retake step in mm; of the sweep, its side in m.
+#define LIMIT_WALK_ROW(name, ...) \
+	BENCHMARK_CAPTURE(BM_LimitWalk, name, __VA_ARGS__)->Arg(4000)->Arg(16000)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond)
+LIMIT_WALK_ROW(straight_open, Walk::Straight, Ground::Open);
+LIMIT_WALK_ROW(straight_sparse, Walk::Straight, Ground::Sparse);
+LIMIT_WALK_ROW(straight_dense, Walk::Straight, Ground::Dense);
+LIMIT_WALK_ROW(ell_open, Walk::Ell, Ground::Open);
+LIMIT_WALK_ROW(ell_sparse, Walk::Ell, Ground::Sparse);
+LIMIT_WALK_ROW(ell_dense, Walk::Ell, Ground::Dense);
+BENCHMARK(BM_OpenGroundGrowth)->Arg(500)->Arg(1000)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_MeshEdge)->Iterations(1)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_EdgeIndexQuery)->Iterations(1)->UseManualTime()->Unit(benchmark::kMicrosecond);
