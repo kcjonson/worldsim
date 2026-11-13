@@ -158,6 +158,9 @@ namespace world_sim {
 		void serializeTime(std::ostringstream& out);
 		void serializeLanding(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
+		// The seen record's totals, and with x and y given, whether that point is seen and visible
+		// (/api/state?what=visibility takes no parameters; /api/dev/visibility?x=&y= answers the point).
+		std::string visibilityJson(const app::DevRequest& cmd);
 
 		// --- pure parsing helpers ---
 		static std::string					 param(const app::DevRequest& cmd, const std::string& key, const std::string& fallback = "");

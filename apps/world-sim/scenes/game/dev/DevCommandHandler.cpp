@@ -35,6 +35,7 @@
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -90,6 +91,9 @@ namespace world_sim {
 		}));
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
+		registrations.push_back(server.route("visibility", [this](const app::DevRequest& cmd) {
+			return app::DevResponse{.body = visibilityJson(cmd)};
+		}));
 
 		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
 			registrations.push_back(server.stateProvider(what, [this, serialize] {
@@ -105,6 +109,7 @@ namespace world_sim {
 		view("time", &DevCommandHandler::serializeTime);
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
+		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
 		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
 		return registrations;
 	}
@@ -1321,6 +1326,22 @@ namespace world_sim {
 		}
 
 		out << "}";
+	}
+
+	std::string DevCommandHandler::visibilityJson(const app::DevRequest& cmd) {
+		const ecs::PlayerVisibilitySystem& visibility = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>();
+		const vision::SeenArea&			   seen		  = visibility.seenArea();
+		std::ostringstream				   out;
+		out << "{\"seenSquareMeters\":" << std::fixed << std::setprecision(1) << seen.committedSquareMeters()
+		    << ",\"ringsRegistered\":" << seen.ringsRegistered() << ",\"shapesPending\":" << seen.shapesPending()
+		    << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"epoch\":" << seen.epoch();
+		if (hasParam(cmd, "x") && hasParam(cmd, "y")) {
+			const glm::vec2 point{std::strtof(param(cmd, "x").c_str(), nullptr), std::strtof(param(cmd, "y").c_str(), nullptr)};
+			out << ",\"x\":" << point.x << ",\"y\":" << point.y << ",\"seen\":" << (visibility.isSeen(point) ? "true" : "false")
+			    << ",\"visible\":" << (visibility.isVisible(point) ? "true" : "false");
+		}
+		out << "}";
+		return out.str();
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {

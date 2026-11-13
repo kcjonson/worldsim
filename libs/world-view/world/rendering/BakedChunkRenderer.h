@@ -35,9 +35,10 @@ class BakedChunkRenderer {
 	/// chunks arrive pre-baked via uploadBakedChunk.
 	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, uint64_t frameCounter);
 
-	/// Release a chunk's baked mesh GPU resources so it re-bakes on next render
-	/// (used when the placement index changed, e.g. entities were cleared).
-	void releaseBakedChunkCache(const world::ChunkCoordinate& coord);
+	/// Bake again each sub-region of a cached chunk that has lost a short static since its mesh
+	/// was made (PlacementExecutor::staticRemovals), so a cleared or harvested-out bush stops
+	/// being drawn. One hash lookup for a chunk nothing was removed from.
+	void rebakeEditedSubChunks(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord);
 
 	/// Upload a CPU-baked chunk mesh (from a worker thread bake) to the GPU.
 	/// Call on the render thread; replaces any existing baked data for the chunk.
@@ -91,6 +92,7 @@ class BakedChunkRenderer {
 		BakedMeshGPU floraMesh;          // Baked short flora for this sub-region
 		float minX = 0, minY = 0;        // World-space bounds for culling
 		float maxX = 0, maxY = 0;
+		uint32_t removals = 0;           // The sub-region's removal count this mesh was made at
 	};
 
 	/// GPU resources for a chunk, subdivided into sub-regions.
@@ -118,6 +120,13 @@ class BakedChunkRenderer {
 	/// Upload a single sub-chunk's buffers into an existing cache entry.
 	/// @return Bytes of vertex+index data uploaded
 	size_t uploadSubChunk(BakedChunkData& bakedData, assets::BakedSubChunkCPUData& cpu, int subIndex);
+
+	/// Drop a chunk's baked mesh and its GPU resources; a processed chunk without one is baked
+	/// again from its index on the next render.
+	void releaseBakedChunkCache(const world::ChunkCoordinate& coord);
+
+	/// The template each static bakes from; null leaves it out (groundcover is instanced)
+	[[nodiscard]] assets::TemplateLookup templateLookup();
 };
 
 }  // namespace worldview

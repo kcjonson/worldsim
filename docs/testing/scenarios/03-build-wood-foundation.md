@@ -67,7 +67,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 2. The berry bush on the footprint is cleared too: it disappears after one harvest (it doesn't
    regrow in place), even when Bob's arms are already full of wood, and no berries are delivered
-   to the site:
+   to the site. Use a bush the world generated, not a spawned one, and look at the screen
+   (`control?action=camera&x=<bush x>&y=<bush y>&zoom=8`, then a screenshot): the bush is no
+   longer drawn once the phase leaves `Clearing`, and none is drawn on the built foundation:
 
 ```
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
@@ -107,6 +109,9 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> foundations[0].state == "Built"
 # -> foundations[0].progress == 1.0
 ```
+
+   Screenshot the built foundation: it sits on bare ground, with no bush, grass tuft or stone
+   drawn on it.
 
 8. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
 

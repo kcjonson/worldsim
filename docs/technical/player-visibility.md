@@ -41,7 +41,7 @@ Each rule is Kevin's, with the date it was given. A later rule replaces an earli
 
 What the code does on `main` after the nav stack merged (PRs #369 to #373), read on 2026-11-13.
 
-- **Vision.** `VisionSystem` runs every 5 frames for every entity with `Position` and `Memory`, which today is colonists only. Outdoors (no wall within sight) sight is a circle of `Memory::sightRadius`, 30 m by default, and no shape is built. With walls near it builds a wall-clipped polygon (`geometry::computeVisibilityPolygon`), cached per observer and rebuilt after 0.5 m of travel or a change to the walls. `visibilityPolygon(entity)` returns that polygon indoors and null outdoors. There is no one call that gives an observer's sight shape in both cases. Sleeping colonists observe like any other.
+- **Vision.** `VisionSystem` runs every 5 frames for every entity with `Position` and `Memory`, which today is colonists only. Outdoors (no wall within sight) sight is a circle of `Memory::sightRadius`, 30 m by default, and no shape is built. With walls near it builds a wall-clipped polygon (`geometry::computeVisibilityPolygon`), cached per observer and rebuilt after 0.5 m of travel or a change to the walls. `sightShape(entity)` gives an observer's shape in both cases since step 2: the centre, the radius, the polygon when there is one, and a revision that changes when the polygon is rebuilt. Sleeping colonists observe like any other.
 - **No area is recorded.** `Memory` holds remembered things per colonist (placed things, wall segments, openings), capped at 10,000 entries, and skips things with no capability. Nothing records ground, and nothing is colony-wide.
 - **The meshed area.** Every mover (an entity with `Position` and `AgentRadius`, today colonists only) adds a 16-sided limit holding the disc of sight plus `kSightBufferMeters` (16 m) to the nav mesh every 4 m of travel. The landing adds one of `kLandingSightMeters` (150 m). The mesh ends at the union's edge, never shrinks, and ignores walls. `NavigationSystem::inSimArea` answers whether a point is on it.
 - **Who is who.** There is no faction or owner. A colonist is an entity with the `Colonist` tag. There are no animals or other movers.
@@ -71,7 +71,7 @@ The last containment is what makes rule 6 true: every seen point is on the mesh,
 
 An entity reveals when it has the `Colonist` tag and `Memory`. The rule is written by the tag so that an animal given `Memory` later observes for itself and reveals nothing. One colony is assumed; a second player faction is out of scope.
 
-`VisionSystem` gains one accessor for an observer's sight shape, replacing the polygon-only one: the centre, the radius, the wall-clipped polygon when one exists, and a counter that changes when the polygon is rebuilt. `VisionOverlay` moves to it and so draws outdoor sight too. Player visibility adds no sight computation of its own: what it calls visible is what vision used.
+`VisionSystem::sightShape(observer)` is the one accessor for an observer's sight shape (built in step 2, replacing the polygon-only one): the centre, the radius, the wall-clipped polygon when one exists, and a revision that changes when the polygon is rebuilt. `VisionOverlay` uses it and so draws outdoor sight too. Player visibility adds no sight computation of its own: what it calls visible is what vision used.
 
 A sleeping colonist still sees, because vision does not skip one. Whether sleep should close a colonist's eyes is a vision question (section 9).
 
@@ -88,17 +88,20 @@ That choice is gated on measurement (step 1, section 7). The known weak spot is 
 **Outdoors: legs.** A colonist walking in the open does not stamp a disc per step. He holds a **leg**: the straight segment from where the leg began to where he stands. The ground the leg has seen is its capsule, the hull of the sight polygons at its two ends, one ring of `kSightSides` + 2 vertices however long the leg is. A leg ends, and its ring is committed to the record, when:
 
 - some position he has held since the leg began lies farther than `kSeenSlackMm` from the straight line (he turned), or
+- some position he has held lies more than `kSeenSlackMm` farther from the leg's start than he now stands (he turned back), or
 - he steps farther than `kSeenJumpMeters` in one frame (a teleport or a forward snap; no capsule bridges the jump), or
 - he goes indoors, or is destroyed.
+
+The held positions are not kept. What bounds the leg's end is kept instead: the wedge of directions from the start whose line passes within the slack of every held position (each position farther out than the slack narrows it by its two tangent directions, found with a square root and no trigonometry), and the farthest any lay from the start. A leg's position is the colonist's `Position` each frame; whether he is indoors is vision's last pass, so a leg can run on up to four frames after a wall comes into sight, by under 0.15 m at 1x. Below a sight radius of `kSeenLeastRadiusMm` no leg is held: the capsule is built in one pass over the sight polygon's sides, each staying at the start or moving to the end by whether it faces back along the leg, which needs the polygon convex, and a sight polygon under about half a metre can be pulled concave by its vertices' truncation.
 
 A straight walk of any length is one ring. A ring the record already covers (the covered test below, with the leg's start as its centre) is dropped without being registered, so colonists moving about ground the colony knows add nothing.
 
 **Radii.** Two tunables keep the containments of 3.1 exact while a leg stands in for a path that wobbled by up to the slack:
 
 - a committed capsule has radius sight minus `kSeenSlackMm`, so it lies inside what was truly seen from the path;
-- the visible disc is drawn with radius sight minus twice `kSeenSlackMm`, so every disc drawn along the path lies inside the capsule that gets committed.
+- the visible disc is drawn with radius `drawnVisibleRadiusMm(sight)`, so every disc drawn along the path lies inside the capsule that gets committed. A held position lies within the slack of the leg's line and no more than the slack past its end, so within the slack times the square root of 2 of the segment, and the capsule reaches at least `sightInradius(sight - kSeenSlackMm)` from every point of the segment; the drawn radius is that inradius less 71 mm.
 
-With 50 mm of slack the drawn disc is 29.9 m for a 30 m sight. Ground never goes from bright to black behind a colonist.
+With 50 mm of slack the drawn disc is 29.84 m for a 30 m sight. Ground never goes from bright to black behind a colonist.
 
 **Indoors: polygons.** With a wall in sight there is no hull to take. Each visibility polygon vision builds is tested as its own shape, with the colonist's position as its centre, covered ones dropped as above. Its rim is the 64-gon, so a polygon has as many vertices as the walls in sight call for and no more: 47 at the step 1 doorway against 440 before, 184 in an eight-room base (6.2). The visible shape drawn is that same cached polygon, so visible and seen agree by identity. The polygon is up to 0.5 m stale, which with hard edges shows as the lit area stepping while a colonist walks past a doorway; it is a known limit of the first build (section 8).
 
@@ -112,7 +115,9 @@ What the skirt costs: seen ground can reach up to `kSeenSkirtMm` past true sight
 
 The tolerance is for walls. A new polygon's side along a wall and the record's edge along the same wall are both hits snapped to the millimetre from different rays, so they lie within about a millimetre of each other and cross; an exact test would call every such polygon uncovered and register a sliver for each step. What the record can then lack of a covered shape lies within 5 mm of one of its sides' lines, inside that side's triangle, plus the wedges a snapped shadow edge steps back over, which are under a millimetre wide. Nothing deeper is accepted. Shadow edges are the exception the tolerance does not take: they run along rays from the centre, and where the record's edge runs along the same ray (an earlier observer in line with the same corner) the mesh's snapping can put it a millimetre inside. Where the record's edge meets a core only within the tolerance of a ray, the answer is `groundCovers`', exact and costlier: once in 125 polygons at the doorway, never in a base inside seen ground, and in 5% of polygons in a base beyond it (6.2); with the skirt, never at the doorway and 0 to 2 times in 3,266 to 77,649 polygons in a base beyond it (6.4). `groundCovers` stays for nav.
 
-**Pending shapes count as seen.** A colonist's open leg, and any ring waiting its turn, sit in a pending list. Queries and the cover read the record and the pending list together, so the tick a ring is committed on changes nothing the player sees or can click.
+**Pending shapes count as seen.** A colonist's open leg, and any ring waiting its turn, sit in a pending list. Queries and the cover read the record and the pending list together, so the tick a ring is committed on changes nothing the player sees or can click. `covers` asks the record (`groundCovers`) first, then a convex pending shape holding every vertex of the outline, and only then builds a scratch mesh of the record's triangles and the pending shapes near the outline and asks it.
+
+**The interface.** `SeenArea` names no mesh type: it takes shapes (`commitNow` for the landing, `queue`, `setOpenLeg` and `closeLeg`), runs the budget (`update`), answers the queries below in millimetres, and hands the renderer the committed triangles, the pending shapes, and `epoch()`, which moves with the committed record only (pending shapes change every frame and are drawn on their own). `PlayerVisibilitySystem` holds the legs, gives the queries in metres, and adds `isVisible`, which reads vision.
 
 **Budget.** At most `kSeenRingsPerTick` rings are tested and committed a tick, first in, first out, on the main thread. It is a count and never a time, so the result does not depend on the machine. If step 1's numbers call for a worker, the pending rule above already makes that invisible.
 
@@ -127,7 +132,7 @@ The tolerance is for walls. A new polygon's side along a wall and the record's e
 | `isSeen(point)` | The point is in the record or a pending shape |
 | `isVisible(point)` | The point is in a player colonist's sight now, by vision's own test (the true radius or polygon) |
 | `covers(outline)` | The whole outline is seen |
-| `lastSeenToward(from, to)` | The seen point on the segment nearest `to`; `to` itself when it is seen |
+| `lastSeenToward(from, to)` | The seen point on the segment nearest `to`; `to` itself when it is seen; none when nothing on it is. The segment is cut where it meets the record's edge (`meshEdgesNear`) and the pending shapes' sides, the last piece whose middle is seen ends the answer, and its end is stepped back a millimetre at a time until it rounds onto seen ground |
 | `epoch()` | Changes when the record does |
 
 ### 3.4 Drawing the cover
@@ -198,7 +203,7 @@ The move order to the seen edge is one order to one point. The colonist stops th
 
 At landing every colonist of the crew is given what vision would have given him had he looked over the whole landing area: the placed things, ECS things, and shore points within `kLandingSightMeters` of the drop, through the same passes `VisionSystem` runs each tick, run once with that centre and radius. Without it the player sees a berry bush 100 m off, tinted and selectable, that no colonist will walk to unprompted.
 
-The same rules apply as for sight: a thing with no capability is not remembered, and the 10,000-entry cap holds. A dense landing held 5,622 placed obstacles when measured for nav, so the cap is near enough to check (step 7). A colonist who joins later was not in the crash and starts with his own sight, as the memory design says.
+The same rules apply as for sight: a thing with no capability is not remembered, and the 10,000-entry cap holds. On the quickstart landing a crew member knows 6,984 things right after it, 70% of the cap, with nothing evicted. Once his walking fills the rest, the least recently seen entries go first, as for any memory. A colonist who joins later was not in the crash and starts with his own sight, as the memory design says.
 
 ### 3.9 Camera and minimap
 
@@ -207,7 +212,7 @@ The camera is not clamped (rule 14). It still loads the chunks round it; over un
 ### 3.10 Dev tools and tests
 
 - `/api/dev/reveal?on=1|0`, on the pattern of `freebuild`: with reveal on the cover is not drawn, the mover filter passes everything, and the input rules of 3.7 are off. The record keeps growing underneath, so turning reveal off shows the true state.
-- `/api/state?what=visibility`: the reveal flag, the seen area in square metres, rings registered, shapes pending, and with `x` and `y` given, whether that point is seen and whether it is visible.
+- `/api/state?what=visibility`: the reveal flag, the seen area in square metres, rings registered, shapes pending and dropped, and the epoch. salal's state views take no parameters, so the point query is `/api/dev/visibility?x=&y=`: the same totals, and whether that point is seen and whether it is visible.
 - Dev verbs that take a position (`spawn`, `colonist`, `teleport`) ignore player visibility, as they ignore the player.
 - `scripts/perf` turns reveal on before a capture, so existing views (two of them 70 km and 131 km from any colonist) and their numbers stay comparable. One new capture near the landing with reveal off measures the cover.
 - Scenarios 09, 11, and 13 gain a reveal step where they look away from colonists. A new scenario, `14-player-visibility.md`, covers the feature itself: land and see bright ground round the crew and tinted ground out to 150 m, black beyond; fail to place on black ground; order a move into the black and watch the colonist stop at the edge and the ground open; select a tree on tinted ground.
@@ -224,7 +229,8 @@ There is no game save to put the record in. When one exists the record saves as 
 | `kSightSides` | 64 | Sides of a sight polygon (`geometry::kSightSides`, built). At 30 m a 64-gon's flat sits 36 mm inside the circle. More sides add vertices to the seen edge and to every indoor polygon |
 | `kSeenCoverToleranceMm` | 5 mm | How far the record's edge may reach into a shape that is still called covered (`geometry::nav`, built). Above the millimetre two snapped hits on one wall face differ by; the record can lack strips this wide along a covered shape's sides |
 | `kSeenSkirtMm` | 50 mm | How far a shape with walls in sight is grown, off its rim, before it enters the record (`geometry::kSeenSkirtMm`, built). Slivers and pinholes thinner than it cannot form; seen ground can reach this far past true sight. 25 and 100 mm measured the same on rings and cost (6.4) |
-| `kSeenSlackMm` | 50 mm | How far a path may wobble from a leg's straight line before the leg ends. Smaller means more rings; larger shrinks the drawn disc (by twice this) |
+| `kSeenSlackMm` | 50 mm | How far a path may wobble from a leg's straight line, or turn back from its farthest reach, before the leg ends. Smaller means more rings; larger shrinks the drawn disc (by this times 1 plus the square root of 2) |
+| `kSeenLeastRadiusMm` | 1 m | The least leg radius; a colonist whose sight gives a smaller one holds no leg. A sight polygon under about half a metre can be concave |
 | `kSeenJumpMeters` | 2 m | A step longer than this in one frame ends the leg without bridging it. Above a frame's travel at the fastest game speed, far below any teleport |
 | `kSeenRingsPerTick` | 4 | Rings tested and committed a tick. Step 1 (6.1): 50 walkers at 10x make about 2 legs a frame, and 4 covered tests by the union's edge cost about 0.08 ms mean |
 | `kSeenDimAlpha` | 0.5 | How dark seen ground is |
@@ -481,6 +487,19 @@ After the first minute the per-minute curves are the same at all three sizes (at
 **Other rows.** The landed base (20 and 50 colonists, both policies): every polygon covered, nothing registered, 62 live triangles, covered test 11 to 12 us mean, the record's cost 1.8 and 4.3 to 4.6 ms per simulated second, as in 6.2. The doorway: whole polygons register 95 with the skirt as without, patches 1.81 ms mean (1.40 without); pieces register 162 (180 without), 0.48 ms mean (0.44); all four equal a fresh build, and the covered test falls from 32 to 35 us mean to 19 to 20 with no fallback (1 to 3 without). Open ground (explore, covered against K, wander, re-walks, camp) has no walls, is never skirted, and repeats 6.2 under whole polygons and 6.3 under pieces within noise. The fuzz of 10,000 polygons from 400 random buildings: `skirtedSightShape` 494 us mean, 1,537 us p99, 3,118 us at most; 149 vertices mean against 128 true; 7 of 9,995 skipped as not simple. The unit tests (`SightSkirt.*`) check on 96 polygons from random buildings that the skirted ring holds every vertex and sampled deep point of the true shape, keeps its rim vertices, is simple, and reaches no farther than the skirt (50.13 mm at most, the sample points snapped to the millimetre).
 
 **Verdict: go on the skirt, with frontier pieces.** The skirt does what it was for: no ring under 0.01 m2 anywhere, K where rings register falls from 453 and 2,165 to 57 and 45, registrations level off at 2, 20 and 50 colonists, and what still registers is new ground. Whole polygons lose: the skirt removes their slivers but not their size, each still overlaps every ring in the base, and patches stay over 200 ms. Against what the game needs, two things are still over. The record's cost at 50 colonists is 63 to 80 ms per simulated second, 1.05 to 1.33 ms a tick at 60 ticks a second, and 85 to 90% of it is the covered test: 440 to 740 us a polygon in a base beyond the landing area against 11 to 12 us inside it, because the record's edge now runs round every wall of the building (walls are never seen inside, so each is a hole in the record) and every polygon reads all of it in its 60 m box. And one patch per run, in the first minute, reaches 13 to 15 ms against a few. Neither comes from rings. The skirt construction itself costs 0.5 to 1.1 ms a shape it grows, paid only on registration. `frontierOf` is still the bench prototype; `SeenArea` needs it moved into the library before it can register pieces.
+
+### 6.5 Measured: the tick (step 3)
+
+`sim-benchmarks --benchmark_filter=BM_PlayerVisibilityWalk` (`libs/sim/ecs/systems/PlayerVisibilitySystem.bench.cpp`), one RelWithDebInfo run, headless: the landing polygon, then colonists walking in open ground from the drop at 2 m/s on headings that turn up to 60 degrees every 2 to 15 s, turned back past 400 m; vision every 5th tick as in the game; 36,000 ticks; only `PlayerVisibilitySystem::update` timed. Machine load `busy` before (CPU 3%, GPU 36%, another session) and `mostly-idle` after (CPU 2%, GPU 29%), so the times are not a baseline.
+
+| Colonists, speed | Tick ms (mean / p99 / max) | Rings registered | Shapes dropped as covered | Seen at the end |
+|---|---|---|---|---|
+| 1, 1x | 0.002 / 0.003 / 0.44 | 37 | 31 | 0.09 km2 |
+| 10, 1x | 0.021 / 0.29 / 0.66 | 407 | 272 | 0.35 km2 |
+| 50, 1x | 0.100 / 0.51 / 1.15 | 1,126 | 2,366 | 0.56 km2 |
+| 1, 10x | 0.006 / 0.26 / 0.62 | 447 | 230 | 0.36 km2 |
+| 10, 10x | 0.031 / 0.43 / 1.30 | 1,184 | 5,743 | 0.61 km2 |
+| 50, 10x | 0.113 / 0.65 / 1.80 | 1,522 | 33,156 | 0.63 km2 |
 
 ## 7. Build steps
 

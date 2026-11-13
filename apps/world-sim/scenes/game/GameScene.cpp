@@ -98,6 +98,7 @@
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/StaticRectCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
@@ -1199,6 +1200,7 @@ namespace {
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
+			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
 			ecsWorld->registerSystem<ecs::StorageGoalSystem>();								// Priority 55 - goals before AI
 			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
@@ -1331,7 +1333,11 @@ namespace {
 			// remove the placed entities around them so there is an open clearing, and
 			// return those points with the clearing center.
 			const size_t							crewSize = std::max<size_t>(m_party.size(), 1);
-			const ecs::NavigationSystem::GroupSpawn landing = prepareLandingClearing(m_spawnPosition, crewSize, navSystem);
+			const glm::vec2							drop = m_spawnPosition;
+			const ecs::NavigationSystem::GroupSpawn landing = prepareLandingClearing(drop, crewSize, navSystem);
+			// The landing area is seen before the crew exists (player-visibility rule 8), round the same drop and
+			// from the same radius as nav's landing limit.
+			ecsWorld->getSystem<ecs::PlayerVisibilitySystem>().revealLanding(drop, ecs::NavigationSystem::kLandingSightMeters);
 			m_spawnPosition = landing.center;
 
 			// The clearing center is the colony's home anchor. Store it once here, in the one
@@ -1356,11 +1362,13 @@ namespace {
 			// Spawn the crew on the points the landing picked: each on clear ground of its
 			// own, spread apart so members don't stack. An empty party (Quick Start, direct
 			// scene jumps) spawns the single default colonist.
+			std::vector<ecs::EntityID> crew;
 			if (m_party.empty()) {
-				spawnColonist(landing.points.front(), "Bob");
+				crew.push_back(spawnColonist(landing.points.front(), "Bob"));
 			} else {
 				for (size_t i = 0; i < m_party.size(); ++i) {
 					const auto entity = spawnColonist(landing.points[i], m_party[i].name);
+					crew.push_back(entity);
 					// Replace the default starting skills with the member's rolled set.
 					if (auto* skills = ecsWorld->getComponent<ecs::Skills>(entity)) {
 						skills->clear();
@@ -1368,6 +1376,22 @@ namespace {
 							skills->setLevel(skillName, level);
 						}
 					}
+				}
+			}
+
+			// The crew saw the landing area as they came down (player-visibility rule 17): each knows
+			// what is within the nav landing limit's radius of the drop. groupSpawnPoints has already
+			// waited for that area's chunks and cleared round the crew, so nothing cleared is remembered.
+			for (const ecs::EntityID member : crew) {
+				visionSystem.rememberArea(member, drop, ecs::NavigationSystem::kLandingSightMeters);
+				if (const auto* memory = ecsWorld->getComponent<ecs::Memory>(member)) {
+					LOG_DEBUG(
+						Game,
+						"Landing memory: entity %llu knows %zu thing(s) of cap %zu",
+						static_cast<unsigned long long>(member),
+						memory->worldEntityCount(),
+						ecs::Memory::kMaxWorldEntities
+					);
 				}
 			}
 
@@ -1424,14 +1448,14 @@ namespace {
 
 		/// Remove every placed entity (trees, rocks, ...) within `radius` of `center` so the spawn
 		/// drops into an open clearing. Entities near the radius can straddle a chunk boundary, so we
-		/// gather from every chunk the clearing circle overlaps, not just the spawn chunk. After
-		/// removing from the placement index (the same source the navmesh and renderer read), release
-		/// each touched chunk's baked render mesh so it re-bakes WITHOUT the removed entities.
+		/// gather from every chunk the clearing circle overlaps, not just the spawn chunk. They leave
+		/// the placement index, the one source the navmesh and the renderer read: the renderer bakes
+		/// the sub-regions that lost a static again by itself.
 		void clearLandingArea(glm::vec2 center, float radius) {
 			// Tile/meter are 1:1 (kTileSize == 1), so the spatial-index radius is the meter radius.
-			std::unordered_set<world::ChunkCoordinate> touchedChunks;
-			const world::ChunkCoordinate			   cMin = world::worldToChunk({center.x - radius, center.y - radius});
-			const world::ChunkCoordinate			   cMax = world::worldToChunk({center.x + radius, center.y + radius});
+			size_t						 touchedChunks = 0;
+			const world::ChunkCoordinate cMin = world::worldToChunk({center.x - radius, center.y - radius});
+			const world::ChunkCoordinate cMax = world::worldToChunk({center.x + radius, center.y + radius});
 
 			size_t removed = 0;
 			for (int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
@@ -1453,15 +1477,9 @@ namespace {
 						}
 					}
 					if (!victims.empty()) {
-						touchedChunks.insert(coord);
+						++touchedChunks;
 					}
 				}
-			}
-
-			// Re-bake the touched chunks so the cleared entities also disappear visually. The
-			// renderer re-bakes any processed chunk missing from its cache on the next render.
-			for (const world::ChunkCoordinate& coord : touchedChunks) {
-				m_entityRenderer->releaseBakedChunkCache(coord);
 			}
 
 			LOG_INFO(
@@ -1471,7 +1489,7 @@ namespace {
 				radius,
 				center.x,
 				center.y,
-				touchedChunks.size()
+				touchedChunks
 			);
 		}
 

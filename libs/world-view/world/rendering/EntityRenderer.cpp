@@ -49,11 +49,13 @@ namespace worldview {
 		// Integrate baked meshes: budgeted upload of worker-baked chunks (capped
 		// bytes per frame), then a synchronous re-bake only for processed chunks
 		// whose baked mesh was LRU-evicted and later revisited (new chunks arrive
-		// via the queue).
+		// via the queue), and of the sub-regions a baked static was removed from.
 		baked.processPendingUploads();
 		for (const auto& coord : processedChunks) {
 			if (baked.needsBake(coord)) {
 				baked.buildBakedChunkMesh(executor, coord, frameCounter);
+			} else {
+				baked.rebakeEditedSubChunks(executor, coord);
 			}
 		}
 
@@ -85,12 +87,16 @@ namespace worldview {
 		m_lastUprightOverlapSplits = stats.uprightOverlapSplits;
 	}
 
+	// A worker bake arrives with each placement of a chunk, the first and every reload: the baked
+	// mesh is replaced by it, and the groundcover built from the index before it is dropped.
 	void EntityRenderer::uploadBakedChunk(const world::ChunkCoordinate& coord, assets::BakedChunkCPUData&& cpuData) {
 		baked.uploadBakedChunk(coord, std::move(cpuData), frameCounter);
+		groundcover.forgetChunk(coord);
 	}
 
 	void EntityRenderer::queueBakedChunk(const world::ChunkCoordinate& coord, assets::BakedChunkCPUData&& cpuData) {
 		baked.queueBakedChunk(coord, std::move(cpuData), frameCounter);
+		groundcover.forgetChunk(coord);
 	}
 
 } // namespace worldview
