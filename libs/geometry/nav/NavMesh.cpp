@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -44,17 +45,69 @@ namespace geometry::nav {
 		}
 
 		// A face of the arrangement: the triangles one flood fill reaches without
-		// crossing a constraint. Its largest triangle supplies the classification
-		// sample, well inside the face even when snap rounding moved an arrangement
-		// edge a fraction of a millimetre off its input ring.
+		// crossing a constraint. `blockedRings` are the indices of the blocked rings
+		// whose parity holds it, ascending.
 		struct MeshFace {
-			std::int32_t sampleTri	 = -1;
-			Int128		 sampleArea2 = Int128(0);
-			bool		 touchesFrame = false; // unbounded: outside every ring
-			bool		 inBounds	  = false;
-			std::int64_t blocker	  = kNoBlocker;
-			std::int64_t opening	  = kNoOpening;
+			bool					  touchesFrame = false; // unbounded: outside every ring
+			bool					  reached	   = false;
+			bool					  inBounds	   = false;
+			std::vector<std::int32_t> blockedRings;
+			std::int64_t			  blocker = kNoBlocker;
+			std::int64_t			  opening = kNoOpening;
 		};
+
+		// An arrangement segment's tag: its ring and edge, so coincident edges of two
+		// rings with one provenance stay two sources.
+		std::int64_t ringEdgeTag(std::int32_t ring, std::int32_t edge) {
+			return (static_cast<std::int64_t>(ring) << 32) | static_cast<std::int64_t>(edge);
+		}
+
+		std::int32_t tagRing(std::int64_t tag) {
+			return static_cast<std::int32_t>(tag >> 32);
+		}
+
+		// The cover across an arrangement edge: every blocked ring with an odd count of
+		// edges on it toggles, and ground toggles on an odd count of bounds edges.
+		// `sources` is ascending, so one ring's edges are adjacent.
+		void crossEdge(const MeshFace& from, const std::vector<std::int64_t>& sources, const std::vector<const NavInputPolygon*>& rings, MeshFace& into) {
+			into.inBounds	  = from.inBounds;
+			into.blockedRings = from.blockedRings;
+			int boundsCount	  = 0;
+			for (std::size_t i = 0; i < sources.size();) {
+				const std::int32_t ring = tagRing(sources[i]);
+				std::size_t		   end	= i + 1;
+				while (end < sources.size() && tagRing(sources[end]) == ring) {
+					++end;
+				}
+				const bool odd = (end - i) % 2 == 1;
+				i			   = end;
+				if (!rings[static_cast<std::size_t>(ring)]->blocked) {
+					boundsCount += odd ? 1 : 0;
+					continue;
+				}
+				if (!odd) {
+					continue;
+				}
+				auto at = std::lower_bound(into.blockedRings.begin(), into.blockedRings.end(), ring);
+				if (at != into.blockedRings.end() && *at == ring) {
+					into.blockedRings.erase(at);
+				} else {
+					into.blockedRings.insert(at, ring);
+				}
+			}
+			if (boundsCount % 2 == 1) {
+				into.inBounds = !into.inBounds;
+			}
+		}
+
+		// Whether crossing from `from` over an edge with these sources gives what `into`
+		// already holds.
+		[[maybe_unused]] bool agreesAcross(const MeshFace& from, const std::vector<std::int64_t>& sources, const std::vector<const NavInputPolygon*>& rings,
+										   const MeshFace& into) {
+			MeshFace across;
+			crossEdge(from, sources, rings, across);
+			return across.inBounds == into.inBounds && across.blockedRings == into.blockedRings;
+		}
 
 		// --- Demyen-Buro corridor width (exact integer) ------------------------------
 		// Grounded in Demyen 2006, "Efficient Triangulation-Based Pathfinding", sec. 4.1
@@ -437,36 +490,32 @@ namespace geometry::nav {
 	NavMesh buildNavMesh(const NavMeshInput& input) {
 		NavMesh result;
 
-		// Gather the walkable-bounds (unblocked) rings and the blocked rings. One
-		// border is the common case, but multiple disjoint walkable regions are
-		// supported: a face is in-bounds iff it lies inside ANY unblocked bound. Each
-		// blocked ring carries its belief tags (provenanceId/openingId) so a face
-		// landing inside it inherits them.
-		std::vector<SampleRing> borderRings;
-		std::vector<SampleRing> blockedRings;
+		// Blocked rings as classification reads them, by input index; each carries its
+		// belief tags (provenanceId/openingId) so a face inside it inherits them.
+		std::vector<const NavInputPolygon*> rings;
+		std::vector<SampleRing>				blockedRings(input.polygons.size());
+		bool								anyBounds = false;
 		for (const NavInputPolygon& poly : input.polygons) {
-			if (poly.ring.size() < 3) {
-				continue;
+			if (poly.ring.size() >= 3) {
+				if (poly.blocked) {
+					blockedRings[rings.size()] = sampleRing(poly);
+				} else {
+					anyBounds = true;
+				}
 			}
-			(poly.blocked ? blockedRings : borderRings).push_back(sampleRing(poly));
+			rings.push_back(&poly);
 		}
-		if (borderRings.empty()) {
+		if (!anyBounds) {
 			return result; // no walkable bounds -> empty mesh
 		}
 
 		// 1. Arrange every ring edge but the dissolved ones, tagging each segment with its
-		// source polygon's provenanceId so extracted edges carry it back, and every pin as
-		// a point site. The arrangement splits edges at every crossing, touch, and pin and
-		// merges overlaps, so its edges form a planar straight-line graph.
-		std::vector<const NavInputPolygon*> rings;
-		for (const NavInputPolygon& poly : input.polygons) {
-			rings.push_back(&poly);
-		}
+		// ring and edge, and every pin as a point site. The arrangement splits edges at
+		// every crossing, touch, and pin and merges overlaps, so its edges form a planar
+		// straight-line graph.
 		std::vector<InputSegment> segments;
 		std::vector<Vec2i64>	  pins;
-		ringsArrangementInput(
-			rings, findBoundsSeams(rings), [&](std::int32_t ring, std::int32_t) { return rings[static_cast<std::size_t>(ring)]->provenanceId; },
-			segments, pins);
+		ringsArrangementInput(rings, findBoundsSeams(rings), ringEdgeTag, segments, pins);
 		const Arrangement arrangement = buildArrangement(segments, pins);
 		result.vertices				  = arrangement.vertices;
 
@@ -500,13 +549,7 @@ namespace geometry::nav {
 			while (!fill.empty()) {
 				const std::int32_t t = fill.back();
 				fill.pop_back();
-				const CdtTriangle& tri	 = cdt.triangles[static_cast<std::size_t>(t)];
-				const Int128	   area2 = cross(cdt.vertices[tri.v[1]] - cdt.vertices[tri.v[0]],
-												 cdt.vertices[tri.v[2]] - cdt.vertices[tri.v[0]]);
-				if (face.sampleTri < 0 || face.sampleArea2 < area2 || (area2 == face.sampleArea2 && t < face.sampleTri)) {
-					face.sampleTri	 = t;
-					face.sampleArea2 = area2;
-				}
+				const CdtTriangle& tri = cdt.triangles[static_cast<std::size_t>(t)];
 				for (int e = 0; e < 3; ++e) {
 					face.touchesFrame = face.touchesFrame || tri.v[e] >= cdt.frameStart;
 					const std::int32_t nb = tri.neighbor[e];
@@ -519,37 +562,57 @@ namespace geometry::nav {
 			faces.push_back(face);
 		}
 
-		// 4. Classify each face from one exact interior sample: its sample triangle's
-		// centroid in 3x space. The sample is strictly inside the triangle, so strictly
-		// inside the face and off every arrangement edge: a blocked ring's containment
-		// reads Inside or Outside, never boundary. It can lie on a dissolved bounds edge,
-		// which is not arranged, so bounds containment is boundsContainSample, which puts
-		// it in exactly one of the two rings. Faces outside every walkable bound are
-		// discarded.
+		// 4. Classify each face by ring parity, flooded from the unbounded face: crossing
+		// an arrangement edge toggles each ring with an odd count of edges on it. This is
+		// the arrangement's own topology, so a face beside an edge that snap rounding bent
+		// off its input line is classified as the patched mesh classifies it, where an
+		// exact sample of the input rings would read the other side. Faces outside every
+		// walkable bound are discarded.
 		// In-bounds faces are KEPT whether or not they sit inside a blocked ring: the
 		// whole region is triangulated, wall interiors included, so a belief query can
 		// optimistically path through an unseen wall. classifyCover holds the rule.
-		std::vector<const SampleRing*> containing;
-		for (MeshFace& face : faces) {
+		std::vector<std::uint8_t> crossed(static_cast<std::size_t>(cdtCount), 0);
+		for (std::int32_t t = 0; t < cdtCount; ++t) {
+			MeshFace& face = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
 			if (face.touchesFrame) {
-				continue;
+				face.reached						   = true;
+				crossed[static_cast<std::size_t>(t)] = 1;
+				fill.push_back(t);
 			}
-			const CdtTriangle& s	   = cdt.triangles[static_cast<std::size_t>(face.sampleTri)];
-			const Vec2i64	   sample3 = cdt.vertices[s.v[0]] + cdt.vertices[s.v[1]] + cdt.vertices[s.v[2]];
-			for (const SampleRing& border : borderRings) {
-				if (boundsContainSample(border, sample3)) {
-					face.inBounds = true;
-					break;
+		}
+		while (!fill.empty()) {
+			const std::int32_t t = fill.back();
+			fill.pop_back();
+			const CdtTriangle& tri	= cdt.triangles[static_cast<std::size_t>(t)];
+			const MeshFace&	   from = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
+			for (int e = 0; e < 3; ++e) {
+				const std::int32_t nb = tri.neighbor[e];
+				if (nb < 0) {
+					continue;
+				}
+				MeshFace&		   into = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(nb)])];
+				const std::int32_t c	= tri.constraint[e];
+				if (!into.reached) {
+					into.reached = true;
+					crossEdge(from, arrangement.edges[static_cast<std::size_t>(c)].provenance, rings, into);
+				} else {
+					assert((c < 0 ? &into == &from : agreesAcross(from, arrangement.edges[static_cast<std::size_t>(c)].provenance, rings, into)) &&
+						   "buildNavMesh: ring parity disagrees around a face");
+				}
+				if (crossed[static_cast<std::size_t>(nb)] == 0) {
+					crossed[static_cast<std::size_t>(nb)] = 1;
+					fill.push_back(nb);
 				}
 			}
+		}
+		std::vector<const SampleRing*> containing;
+		for (MeshFace& face : faces) {
 			if (!face.inBounds) {
 				continue;
 			}
 			containing.clear();
-			for (const SampleRing& br : blockedRings) {
-				if (ringContainsSample(br, sample3)) {
-					containing.push_back(&br);
-				}
+			for (std::int32_t r : face.blockedRings) {
+				containing.push_back(&blockedRings[static_cast<std::size_t>(r)]);
 			}
 			const FaceTags tags = classifyCover(containing);
 			face.blocker		= tags.blocker;
@@ -581,9 +644,9 @@ namespace geometry::nav {
 		// edges and so stay linked -- that link is what lets a belief query traverse INTO
 		// an unseen wall. Truth/belief gating then happens in the path query, not the
 		// topology: the mesh is one connected graph, the filter decides which edges to
-		// cross. A constrained edge carries its arrangement edge's provenance (a single
-		// id per nav input ring; we take the first, since nav rings do not overlap
-		// coincidentally the way wall centerlines can).
+		// cross. A constrained edge carries the lowest provenanceId of the rings on it (a
+		// single id per nav input ring; nav rings rarely overlap coincidentally the way
+		// wall centerlines can).
 		for (std::int32_t t = 0; t < cdtCount; ++t) {
 			const std::int32_t kept = keptIndex[static_cast<std::size_t>(t)];
 			if (kept < 0) {
@@ -596,9 +659,10 @@ namespace geometry::nav {
 					nt.neighbor[e] = keptIndex[static_cast<std::size_t>(tri.neighbor[e])];
 				}
 				if (tri.constraint[e] >= 0) {
-					const std::vector<std::int64_t>& prov = arrangement.edges[static_cast<std::size_t>(tri.constraint[e])].provenance;
-					if (!prov.empty()) {
-						nt.edgeProvenance[e] = prov.front();
+					const std::vector<std::int64_t>& tags = arrangement.edges[static_cast<std::size_t>(tri.constraint[e])].provenance;
+					for (std::size_t i = 0; i < tags.size(); ++i) {
+						const std::int64_t id = rings[static_cast<std::size_t>(tagRing(tags[i]))]->provenanceId;
+						nt.edgeProvenance[e]  = i == 0 ? id : std::min(nt.edgeProvenance[e], id);
 					}
 				}
 			}

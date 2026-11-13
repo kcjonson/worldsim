@@ -206,9 +206,8 @@ namespace {
 	// The patched mesh against a from-scratch build of the same rings: (1) vertices and
 	// constrained edges with their rings, exactly, over kept ground; (2) every triangle's
 	// cover equals the arrangement's ring parity at its centroid and kept ground has equal
-	// area; its tags equal buildNavMesh's at the centroid, where a mismatch is counted
-	// into `builderMismatches` when given and fails otherwise; (3) validate().
-	::testing::AssertionResult matchesFresh(const PatchableMesh& mesh, const Model& model, int* builderMismatches = nullptr) {
+	// area; its tags equal buildNavMesh's at the centroid; (3) validate().
+	::testing::AssertionResult matchesFresh(const PatchableMesh& mesh, const Model& model) {
 		const std::string problem = mesh.validate();
 		if (!problem.empty()) {
 			return ::testing::AssertionFailure() << "validate: " << problem;
@@ -343,9 +342,6 @@ namespace {
 		scaled.grid.minPt	 = scaled.grid.minPt * 3;
 		scaled.grid.maxPt	 = scaled.grid.maxPt * 3;
 		scaled.grid.cellSize = scaled.grid.cellSize * 3;
-		if (builderMismatches != nullptr) {
-			*builderMismatches = 0;
-		}
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
 			if (!mesh.triangleLive(t)) {
 				continue;
@@ -357,14 +353,10 @@ namespace {
 				return ::testing::AssertionFailure() << "triangle " << t << " lies off the fresh mesh";
 			}
 			const NavTriangle& f = fresh.triangles[static_cast<std::size_t>(ft)];
-			if (f.faceBlocker == tri.faceBlocker && f.faceOpening == tri.faceOpening) {
-				continue;
-			}
-			if (builderMismatches == nullptr) {
+			if (f.faceBlocker != tri.faceBlocker || f.faceOpening != tri.faceOpening) {
 				return ::testing::AssertionFailure() << "triangle " << t << " at (" << a.x << ", " << a.y << ") tagged " << tri.faceBlocker
 													 << ", fresh build " << f.faceBlocker;
 			}
-			++*builderMismatches;
 		}
 		return ::testing::AssertionSuccess();
 	}
@@ -582,9 +574,8 @@ namespace {
 		return out;
 	}
 
-	// Every patched state is checked; a state where buildNavMesh's tags disagree with the
-	// arrangement's parity is counted into builderMismatchStates.
-	void runSoup(std::uint32_t seed, int steps, int& builderMismatchStates) {
+	// Every patched state is checked against a from-scratch build.
+	void runSoup(std::uint32_t seed, int steps) {
 		std::mt19937 rng(seed);
 		Harness		 h(seed % 2 == 0 ? 7 : 0); // even seeds split the 20 and 40 mm sides
 		// Two chunk squares sharing x = 20; the second arrives part way through, and
@@ -639,9 +630,7 @@ namespace {
 					placed.push_back(report.added[i]);
 				}
 			}
-			int mismatches = 0;
-			ASSERT_TRUE(matchesFresh(h.mesh, h.model, &mismatches)) << "seed " << seed << " step " << step << describe(h.model);
-			builderMismatchStates += mismatches > 0 ? 1 : 0;
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "seed " << seed << " step " << step << describe(h.model);
 		}
 	}
 
@@ -1226,24 +1215,21 @@ TEST(PatchableMesh, SplitLongEdgesCutsOnTheEdge) {
 // ground, and snap rounding bends nearly every crossing. Raise kSoupSeeds for a heavier
 // sweep (300 seeds of 40 steps held).
 TEST(PatchableMesh, AdversarialSoupsMatchFreshBuild) {
-	constexpr std::uint32_t kSoupSeeds			  = 8;
-	int						builderMismatchStates = 0;
+	constexpr std::uint32_t kSoupSeeds = 8;
 	for (std::uint32_t seed = 1; seed <= kSoupSeeds; ++seed) {
-		runSoup(seed, 40, builderMismatchStates);
+		runSoup(seed, 40);
 		if (HasFatalFailure()) {
 			return;
 		}
 	}
-	RecordProperty("builderMismatchStates", builderMismatchStates);
 }
 
-// buildNavMesh tags a face by the exact containment of one sample, its largest
-// triangle's centroid. Snap rounding can leave a face straddling the original line of a
-// ring, and then the tag depends on which triangle is largest: here a tree wholly off
-// ground, touching nothing on it, changes the build's triangulation enough to flip one
-// face's tag. The patched mesh takes covers from ring parity and matches the
-// arrangement either way.
-TEST(PatchableMesh, BuilderTagDependsOnItsSampleTriangle) {
+// Snap rounding leaves a face here straddling the original line of a ring, so one exact
+// sample of the face would read a side that depends on which of its triangles is
+// sampled; a tree wholly off ground, touching nothing on it, changes the triangulation
+// enough to move that sample. buildNavMesh classifies by ring parity, as the patched
+// mesh does, so the two agree with and without the tree.
+TEST(PatchableMesh, BuilderTagFollowsRingParity) {
 	const std::vector<NavInputPolygon> rings = {
 		bounds(rect(0, 0, 20, 40)),
 		blocked({{-4, 9}, {13, 9}, {13, 26}, {-4, 26}}, kWater, true),
@@ -1259,9 +1245,7 @@ TEST(PatchableMesh, BuilderTagDependsOnItsSampleTriangle) {
 			edits.adds.push_back(blocked({{-4, 42}, {-5, 41}, {2, 46}}));
 		}
 		h.apply(edits);
-		int mismatches = 0;
-		ASSERT_TRUE(matchesFresh(h.mesh, h.model, &mismatches));
-		EXPECT_EQ(mismatches > 0, withOffGround);
+		EXPECT_TRUE(matchesFresh(h.mesh, h.model)) << (withOffGround ? "with" : "without") << " the tree off ground";
 	}
 }
 
@@ -2416,30 +2400,32 @@ TEST(PatchableMesh, SquaresInAnyOrderMeshAlike) {
 
 namespace {
 
+	// A triangle, a water body, or a box over the 2 x 2 squares and just past them.
+	NavInputPolygon boxObstacle(std::mt19937& rng) {
+		const std::int64_t x = between(rng, -1000, 24000);
+		const std::int64_t y = between(rng, -1000, 24000);
+		if (pick(rng, 3) == 0) {
+			return blocked({{x, y}, {x + between(rng, 300, 3000), y + between(rng, -1500, 1500)}, {x + between(rng, -1500, 1500), y + between(rng, 300, 3000)}});
+		}
+		if (pick(rng, 10) == 0) {
+			return blocked(rect(x, y, x + between(rng, 1000, 5000), y + between(rng, 1000, 5000)), kWater, true);
+		}
+		return blocked(rect(x, y, x + between(rng, 200, 3000), y + between(rng, 200, 3000)));
+	}
+
 	// Squares arriving among obstacles, leaving, and coming back, the obstacles added,
 	// removed, and moved around them, many of them across a shared side; every state
 	// checked against a from-scratch build.
-	void runSquaresAmongObstacles(std::uint32_t seed, int steps) {
-		std::mt19937					   rng(seed);
-		Harness							   h(4000);
-		const std::vector<NavInputPolygon> squares = twoByTwoSquares();
-		std::vector<RingId>				   squareIds(squares.size(), kNoRing);
-		std::vector<int>				   arrival(squares.size());
+	template <typename MakeObstacle>
+	void runSquaresAmongObstacles(std::uint32_t seed, int steps, const std::vector<NavInputPolygon>& squares, MakeObstacle obstacle) {
+		std::mt19937		rng(seed);
+		Harness				h(4000);
+		std::vector<RingId> squareIds(squares.size(), kNoRing);
+		std::vector<int>	arrival(squares.size());
 		for (int& step : arrival) {
 			step = static_cast<int>(pick(rng, static_cast<std::uint64_t>(steps / 2)));
 		}
 		std::vector<RingId> placed;
-		auto				obstacle = [&]() {
-			   const std::int64_t x = between(rng, -1000, 24000);
-			   const std::int64_t y = between(rng, -1000, 24000);
-			   if (pick(rng, 3) == 0) {
-				   return blocked({{x, y}, {x + between(rng, 300, 3000), y + between(rng, -1500, 1500)}, {x + between(rng, -1500, 1500), y + between(rng, 300, 3000)}});
-			   }
-			   if (pick(rng, 10) == 0) {
-				   return blocked(rect(x, y, x + between(rng, 1000, 5000), y + between(rng, 1000, 5000)), kWater, true);
-			   }
-			   return blocked(rect(x, y, x + between(rng, 200, 3000), y + between(rng, 200, 3000)));
-		};
 		for (int step = 0; step < steps; ++step) {
 			PatchEdits		   edits;
 			std::vector<std::size_t> arriving;
@@ -2457,7 +2443,7 @@ namespace {
 			if (op < 6 || placed.size() < 4) {
 				const std::size_t count = 1 + pick(rng, 5);
 				for (std::size_t i = 0; i < count; ++i) {
-					edits.adds.push_back(obstacle());
+					edits.adds.push_back(obstacle(rng));
 				}
 			} else if (op < 8) {
 				const std::size_t at = pick(rng, placed.size());
@@ -2483,7 +2469,7 @@ namespace {
 
 TEST(PatchableMesh, SquaresArriveAmongObstaclesMatchFreshBuild) {
 	for (std::uint32_t seed = 1; seed <= 6; ++seed) {
-		runSquaresAmongObstacles(seed, 40);
+		runSquaresAmongObstacles(seed, 40, twoByTwoSquares(), boxObstacle);
 		if (HasFatalFailure()) {
 			return;
 		}
@@ -2637,6 +2623,67 @@ namespace {
 		return {bounds({{0, 0}, {12000, 0}, {14000, 12000}, {0, 12000}}), bounds({{12000, 0}, {24000, 0}, {24000, 12000}, {14000, 12000}})};
 	}
 
+	// 2 x 2 sheared squares: corner (i, j) at (12000 i + 3000 j, 1000 i + 12000 j), so no
+	// side is axis-aligned. Their sides cut to 4 m land on lattice points.
+	std::vector<NavInputPolygon> shearedSquares() {
+		auto corner = [](std::int64_t i, std::int64_t j) { return Vec2i64{12000 * i + 3000 * j, 1000 * i + 12000 * j}; };
+		std::vector<NavInputPolygon> out;
+		for (std::int64_t j = 0; j < 2; ++j) {
+			for (std::int64_t i = 0; i < 2; ++i) {
+				out.push_back(bounds({corner(i, j), corner(i + 1, j), corner(i + 1, j + 1), corner(i, j + 1)}));
+			}
+		}
+		return out;
+	}
+
+	// a / b rounded to the nearest integer, halves up; b > 0.
+	std::int64_t roundedDiv(std::int64_t a, std::int64_t b) {
+		const std::int64_t n = 2 * a + b;
+		const std::int64_t d = 2 * b;
+		return n / d - (n % d < 0 ? 1 : 0);
+	}
+
+	// The integer square root of n >= 0, rounded down.
+	std::int64_t floorSqrt(std::int64_t n) {
+		std::int64_t r = static_cast<std::int64_t>(std::sqrt(static_cast<double>(n)));
+		while (r > 0 && r * r > n) {
+			--r;
+		}
+		while ((r + 1) * (r + 1) <= n) {
+			++r;
+		}
+		return r;
+	}
+
+	// A thin quadrilateral lying along a random side of `squares` at a slope of 0.009 to
+	// 0.14 (about 0.5 to 8 degrees) to it, so its long edges cross the side at a shallow
+	// angle; otherwise a box obstacle. Integer arithmetic only, so every toolchain draws
+	// the same.
+	NavInputPolygon shallowObstacle(std::mt19937& rng, const std::vector<NavInputPolygon>& squares) {
+		if (pick(rng, 4) == 0) {
+			return boxObstacle(rng);
+		}
+		const std::vector<Vec2i64>& ring	  = squares[pick(rng, squares.size())].ring;
+		const std::size_t			e		  = pick(rng, ring.size());
+		const Vec2i64				p		  = ring[e];
+		const Vec2i64				d		  = ring[(e + 1) % ring.size()] - p;
+		const std::int64_t			alongSide = between(rng, 50, 950); // thousandths of the side
+		const std::int64_t			slope	  = between(rng, 9, 140);  // thousandths
+		const std::int64_t			sign	  = pick(rng, 2) == 0 ? -1 : 1;
+		const std::int64_t			half	  = between(rng, 500, 3000);
+		const std::int64_t			width	  = between(rng, 60, 600);
+		const std::int64_t			offset	  = between(rng, -400, 400);
+		// The obstacle's long axis, r / |r|, is the side turned by the slope.
+		const Vec2i64	   r{1000 * d.x - sign * slope * d.y, 1000 * d.y + sign * slope * d.x};
+		const std::int64_t norm = floorSqrt(r.x * r.x + r.y * r.y);
+		// The side's point at alongSide, then `along` up the axis and `across` off it.
+		auto at = [&](std::int64_t along, std::int64_t across) {
+			return Vec2i64{p.x + roundedDiv(d.x * alongSide * norm + 1000 * (r.x * along - r.y * (across + offset)), 1000 * norm),
+						   p.y + roundedDiv(d.y * alongSide * norm + 1000 * (r.y * along + r.x * (across + offset)), 1000 * norm)};
+		};
+		return blocked({at(-half, 0), at(half, 0), at(half, width), at(-half, width)});
+	}
+
 } // namespace
 
 // The slanted shared side: every point inside the pair's outline, the side and its ends
@@ -2697,5 +2744,72 @@ TEST(PatchableMesh, SlantedSharedSideMatchesFreshBuild) {
 		replace.adds.push_back(pair[firstOrder ? 1 : 0]);
 		h.apply(replace);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "replaced";
+	}
+}
+
+// Sheared squares (no side axis-aligned) arriving among thin obstacles that cross their
+// sides at shallow angles, so snap rounding bends the sides near the crossings; every
+// state equals a from-scratch build. Raise kSeeds for a heavier sweep (400 seeds of 40
+// steps held).
+TEST(PatchableMesh, ShallowCrossingsOfSlantedSidesMatchFreshBuild) {
+	constexpr std::uint32_t			   kSeeds  = 16;
+	const std::vector<NavInputPolygon> squares = shearedSquares();
+	for (std::uint32_t seed = 1; seed <= kSeeds; ++seed) {
+		runSquaresAmongObstacles(seed, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
+		if (HasFatalFailure()) {
+			return;
+		}
+	}
+}
+
+// The history of one seed of the sweep above, raised past its count, in which a ground
+// sliver beside a bent side is reached only through another whose sample reads off ground.
+TEST(PatchableMesh, SliverReachedThroughAMisreadSliverMatchesFreshBuild) {
+	const std::vector<NavInputPolygon> squares = shearedSquares();
+	runSquaresAmongObstacles(450, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
+}
+
+// Ground a millimetre across whose every point lies within the blocked ring's snap band:
+// the blocked edge rounds to the ground's base, so the rounded ground triangle is floor
+// though its centroid lies inside the blocked ring as given. In one patch, and in both
+// orders.
+TEST(PatchableMesh, GroundWhollyInTheSnapBandMatchesFreshBuild) {
+	const NavInputPolygon ground  = bounds({{0, 0}, {2, 0}, {0, 1}});
+	const NavInputPolygon blocker = blocked({{-10, -10}, {20, -10}, {20, 1}, {-10, 0}});
+	for (int order = 0; order < 3; ++order) {
+		Harness h;
+		if (order == 0) {
+			PatchEdits edits;
+			edits.adds = {ground, blocker};
+			h.apply(edits);
+		} else {
+			h.add(order == 1 ? ground : blocker);
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order << " first ring";
+			h.add(order == 1 ? blocker : ground);
+		}
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order;
+		EXPECT_EQ(h.mesh.liveTriangleCount(), 1) << "order " << order;
+	}
+}
+
+// Water hanging over unseen ground wholly round ground that arrives later, no edge of it
+// near the ground: the ground comes in under the water, in either order.
+TEST(PatchableMesh, GroundArrivingInsideABlockedRingMatchesFreshBuild) {
+	const NavInputPolygon water	 = blocked(rect(0, 0, 30000, 30000), kWater, true);
+	const NavInputPolygon ground = bounds(rect(9000, 9000, 21000, 21000));
+	for (const bool waterFirst : {true, false}) {
+		Harness		 h;
+		const RingId first = h.add(waterFirst ? water : ground);
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (waterFirst ? "water" : "ground") << " alone";
+		const RingId second	 = h.add(waterFirst ? ground : water);
+		const RingId waterId = waterFirst ? first : second;
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (waterFirst ? "water" : "ground") << " first";
+		ASSERT_GT(h.mesh.liveTriangleCount(), 0);
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+			if (h.mesh.triangleLive(t)) {
+				const std::vector<RingId>& cover = h.mesh.cover(t);
+				EXPECT_TRUE(std::find(cover.begin(), cover.end(), waterId) != cover.end()) << "triangle " << t;
+			}
+		}
 	}
 }

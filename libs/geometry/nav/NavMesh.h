@@ -160,9 +160,9 @@ namespace geometry::nav {
 	}
 
 	// --- Face classification ------------------------------------------------------
-	// What ground a point is: the one rule buildNavMesh and PatchableMesh both tag
-	// faces by. A face is sampled at one exact interior point, its sample triangle's
-	// centroid, held as the integer point a+b+c in 3x space.
+	// What ground a point is, read exactly from the input rings at one sample: a
+	// triangle's centroid, held as the integer point a+b+c in 3x space. classifyCover
+	// turns a cover into the tags buildNavMesh and PatchableMesh both give a face.
 
 	// An input ring as classification reads it: scaled by 3, with its box.
 	struct SampleRing {
