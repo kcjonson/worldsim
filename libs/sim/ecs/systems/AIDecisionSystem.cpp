@@ -421,10 +421,9 @@ namespace ecs {
 			option.distanceFactor = priorityConfig.calculateDistanceFactor(option.distanceToTarget);
 
 			// Hysteresis margin: stick the in-progress option so a same-tier challenger must beat it
-			// by more than this to win (prevents thrashing). Only matters within a tier.
-			if (isOptionCurrentTask(option, currentTask, currentHaulItemId)) {
-				option.hysteresisBonus = priorityConfig.getInProgressBonus();
-			}
+			// by more than this to win (prevents thrashing). Only matters within a tier. Assigned, not
+			// only set: an option the walk moves to another source loses it.
+			option.hysteresisBonus = isOptionCurrentTask(option, currentTask, currentHaulItemId) ? priorityConfig.getInProgressBonus() : int16_t{0};
 
 			// Storage-priority within-tier bias: a storage-stocking option (a loose haul, a pull from a
 			// lower-priority box, a stocking carry-in, or a stocking cut) is ordered within tier 6 by its
@@ -673,7 +672,7 @@ namespace ecs {
 				option.threshold = 0.0F;
 				option.targetPosition = looseItem.position;
 				option.targetDefNameId = looseItem.defNameId;
-				option.distanceToTarget = glm::distance(position, looseItem.position) + glm::distance(looseItem.position, goal.destinationPosition);
+				option.distanceToTarget = source.distance + glm::distance(looseItem.position, goal.destinationPosition);
 				option.haulItemDefNameId = itemDefNameId;
 				option.haulQuantity = quantity;
 				option.haulSourcePosition = looseItem.position;
@@ -717,7 +716,7 @@ namespace ecs {
 				bool						 knownOffered = false;
 				for (const CarrySource& source : sources.carryablesOf(itemDefNameId)) {
 					const glm::vec2 at = source.entity->position;
-					const float		trip = glm::distance(position, at) + glm::distance(at, goal.destinationPosition);
+					const float		trip = source.distance + glm::distance(at, goal.destinationPosition);
 					const uint32_t	left = supply.pileLeft(source.key, itemDefNameId, at, quantity);
 					if (left == 0) {
 						reserved.reserved(trip, source);
@@ -1096,7 +1095,7 @@ namespace ecs {
 				// need is asked to show why the cut is not taken.
 				const auto candidates = clearing		? sources.clearableHarvestables(*goal->clearFootprint)
 										: roomToCarry ? sources.harvestablesYielding(goal->yieldDefNameId)
-													  : std::span<const HarvestSource>{};
+													  : std::span<HarvestSource>{};
 				if (roomToCarry && candidates.empty()) {
 					return;
 				}
@@ -1155,14 +1154,14 @@ namespace ecs {
 				// colonist -> harvestable, so the source nearest where the yield is needed (the crafting
 				// station / storage box) wins. Matches the haul-fetch source scoring above; without it a
 				// colonist chops the tree nearest itself even when one sits beside the station it provisions.
-				const auto tripOf = [&](const KnownWorldEntity& known) {
-					return glm::distance(position, known.position) + glm::distance(known.position, goal->destinationPosition);
+				const auto tripOf = [&](const HarvestSource& source) {
+					return source.distance + glm::distance(source.entity->position, goal->destinationPosition);
 				};
 				const auto pushHarvest = [&](const HarvestSource& source, EntityID reservedBy) {
 					const KnownWorldEntity& knownEntity = *source.entity;
 					const uint64_t			key = source.key;
 					const uint32_t			yieldDefNameId = source.yieldDefNameId;
-					const float				tripDistance = tripOf(knownEntity);
+					const float				tripDistance = tripOf(source);
 
 					EvaluatedOption harvestOption;
 					harvestOption.taskType = TaskType::Harvest;
@@ -1201,7 +1200,7 @@ namespace ecs {
 				NearestReserved<HarvestSource> reserved;
 				bool						   tooLittleRoom = false;
 				bool						   tooLittleBoxRoom = false;
-				for (const HarvestSource& source : candidates) {
+				for (HarvestSource& source : candidates) {
 					const uint32_t fullCut = std::min(source.def->capabilities.harvestable->amountMax, want);
 					if (gathering && room < fullCut) {
 						tooLittleRoom = true;
@@ -1211,9 +1210,13 @@ namespace ecs {
 						tooLittleBoxRoom = true;
 						continue;
 					}
-					const float trip = tripOf(*source.entity);
-					if (const auto holder = supply.claims.useHolder({.kind = TargetKind::WorldKey, .key = source.key}, supply.self)) {
-						reserved.reserved(trip, source, holder->colonist);
+					const float	   trip = tripOf(source);
+					const EntityID holder = source.holder.get([&] {
+						const auto held = supply.claims.useHolder({.kind = TargetKind::WorldKey, .key = source.key}, supply.self);
+						return held.has_value() ? held->colonist : kInvalidEntity;
+					});
+					if (holder != kInvalidEntity) {
+						reserved.reserved(trip, source, holder);
 						continue;
 					}
 					reserved.offered(trip);
@@ -2776,7 +2779,7 @@ namespace ecs {
 		// Goal-driven work: fetch goods for storage and crafts, carry in what the colonist holds, cut
 		// for what a root still needs (tier 4 when serving an active work order, else tier 6).
 		const RootSupply supply{*world, m_needs, m_claims, self, currentTask, inventory, m_registry, m_loosePiles, m_boxRooms};
-		m_workSources.begin(memory, m_registry, inventory);
+		m_workSources.begin(memory, m_registry, inventory, position.value);
 		m_offeredPiles.clear();
 		const PileReach pileReach{.memo = &sourceReach, .connected = canGetTo};
 		evaluateHaulOptions(

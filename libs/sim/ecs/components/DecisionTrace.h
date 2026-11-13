@@ -156,6 +156,14 @@ namespace ecs {
 		/// tier only (tier is compared first), so it never needs to encode categorical priority.
 		/// distanceFactor dominates; skill and age refine; hysteresis sticks the in-progress option.
 		[[nodiscard]] float computeScore() const {
+			return scoreOf(distanceFactor, skillBonus, taskAgeBonus, hysteresisBonus, storagePriorityBias);
+		}
+
+		/// The within-tier score of those five terms. A work group ranks its sources by it before any of
+		/// them is an option, so the rank and the option's own score agree to the bit.
+		[[nodiscard]] static float scoreOf(
+			float distanceFactor, int16_t skillBonus, int16_t taskAgeBonus, int16_t hysteresisBonus, int16_t storagePriorityBias
+		) {
 			return distanceFactor + static_cast<float>(skillBonus) + static_cast<float>(taskAgeBonus) + static_cast<float>(hysteresisBonus) +
 				   static_cast<float>(storagePriorityBias);
 		}

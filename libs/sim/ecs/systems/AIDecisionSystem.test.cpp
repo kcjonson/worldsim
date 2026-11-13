@@ -3962,7 +3962,7 @@ namespace ecs::test {
 		EXPECT_EQ(offered(namedGoal, "Pellet"), 2) << "named twice: each pile once";
 		EXPECT_EQ(offered(namedGoal, "Bread"), 0);
 #ifdef DEVELOPMENT_BUILD
-		EXPECT_EQ(workSourceVisits() - visitsBefore, 2U + 1U + 2U) << "the trinkets are never visited";
+		EXPECT_EQ(workSourceVisits() - visitsBefore, 2U + 1U) << "each item's piles once, however many goals ask; the trinkets never";
 #endif
 	}
 
