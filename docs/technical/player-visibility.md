@@ -33,7 +33,7 @@ Each rule is Kevin's, with the date it was given. A later rule replaces an earli
 16. The seen area never shrinks. It is the colony's record, not one colonist's, and a colonist's death takes nothing from it. (2026-11-13.)
 17. Every colonist of the landing crew knows what is in the landing area, the same as if they had seen it. (2026-11-13.)
 18. A dev toggle turns player visibility off. Perf captures and tests that look away from colonists run with it off. (2026-11-13.)
-19. The cover is drawn with the stencil buffer, which salal gains for this. (2026-11-13.)
+19. The cover is drawn with the stencil buffer, behind a salal API that follows CSS: `mask` and `mask-composite` as a property of a draw. An API that exposed stencil writes and tests was rejected, and so was a push and pop scope, which CSS does not have. (2026-11-13.)
 20. The region minimap is not touched here. Showing the seen area on a map belongs to the Minimap epic. (2026-11-13.)
 
 ## 2. Current state
@@ -127,13 +127,29 @@ The tolerance is for walls. A new polygon's side along a wall and the record's e
 
 Three flat fills with hard edges: black on unseen ground, a dark tint on seen ground out of sight, nothing on visible ground. The cover is geometry the GPU fills. Nothing is rendered to a texture and nothing is blurred.
 
-Sight shapes overlap and move every frame, so "seen but not visible" is not a shape worth computing. The stencil buffer does it:
+Sight shapes overlap and move every frame, so "seen but not visible" is not a shape worth computing. Two masked fills over the view do it, each mask a rectangle minus a union (salal's `docs/masks.md`):
 
-1. Clear the stencil to 0.
-2. Draw the record's live triangles and the pending shapes, writing 1, colour off.
-3. Draw each player colonist's visible shape as a fan from where he stands (a disc outdoors, the cached polygon indoors), writing 2, colour off.
-4. Fill the view where the stencil is 0 with `kUnseenColor`, opaque.
-5. Fill the view where the stencil is 1 with black at `kSeenDimAlpha`.
+1. **The tint.** A fill of black at `kSeenDimAlpha` whose mask is the view minus every player colonist's visible shape (a disc outdoors, the cached polygon indoors, each a polygon layer). It darkens everything out of sight, unseen ground included.
+2. **The unseen fill.** A fill of `kUnseenColor`, opaque, drawn over the tint, whose mask is the view minus the record's mesh and the pending shapes.
+
+```cpp
+std::vector<MaskLayer> tintMask = {{.image = MaskImage::rect(view), .composite = MaskComposite::Subtract}};
+for (const SightShape& sight : sights) {
+    tintMask.push_back({.image = MaskImage::polygon(sight.screenPoints)});
+}
+Primitives::drawRect({.bounds = view, .style = {.fill = {0.0F, 0.0F, 0.0F, kSeenDimAlpha}}, .mask = tintMask, .key = coverKey});
+
+std::vector<MaskLayer> unseenMask = {
+    {.image = MaskImage::rect(view), .composite = MaskComposite::Subtract},
+    {.image = MaskImage::mesh(seenMesh, camera)},
+};
+for (const PendingShape& pending : pendingShapes) {
+    unseenMask.push_back({.image = MaskImage::polygon(pending.screenPoints)});
+}
+Primitives::drawRect({.bounds = view, .style = {.fill = kUnseenColor}, .mask = unseenMask, .key = coverKey + 1});
+```
+
+The order matters: the tint first, the opaque fill over it. It is correct because every visible shape lies inside seen ground (3.1) and the unseen fill hides the tint beneath it. Layers are CSS's: first on top, each composited with what is under it, `Subtract` being the layer where it falls outside those below. Rect and polygon layers are in screen space, as any batched draw is; the mesh layer is in world space under the camera.
 
 The outdoor disc is drawn at the colonist's position that frame, so it moves smoothly; the record catches up underneath through the pending leg.
 
@@ -143,9 +159,9 @@ The outdoor disc is drawn at the colonist's position that frame, so it moves smo
 
 **Consequences taken on purpose.** A tall thing that stands on seen ground and reaches over unseen ground is cut at the edge. A thing on unseen ground is still drawn underneath and then covered; skipping that work is a later step (section 8).
 
-### 3.5 What salal must gain
+### 3.5 What salal gained
 
-salal has no stencil today. The cover needs: stencil bits on the default framebuffer, a clear, a way to draw batched triangles and an uploaded world-space mesh writing a reference value with colour off, a way to draw with a test against a reference value, and off again. The API is salal's to design and lands as a tagged release before the cover's PR is marked ready. Lighting ("Lighting: light emitters occluded like visibility" on Specboard) will want the same facility.
+`RectArgs::mask`, a span of `MaskLayer`: each layer a `MaskImage` (a rect, a polygon filled by the nonzero rule, or an uploaded mesh under a camera) and a `MaskComposite` (`Add`, `Subtract`). Names, layer order, and operator meanings are CSS's `mask` and `mask-composite`; the stencil buffer underneath is named nowhere in the public API. Layers are read during the call; a mesh layer's mesh must live until the frame's flush, and releasing one mid-frame waits for it. Equal consecutive masks share one build. Not built until something asks: `Intersect`, `Exclude`, a circle image, nested masks, `mask-mode`, a mask on other draws, and the ui's version. It is merged to salal's main and ships as v0.41.0; the cover's PR moves worldsim's pin to that tag. Lighting ("Lighting: light emitters occluded like visibility" on Specboard) will want the same facility.
 
 ### 3.6 Things
 
@@ -370,7 +386,7 @@ Rings registered per minute with 2 colonists and an empty record: 237, 108, 51, 
 
 Nothing here starts before Kevin's go-ahead. Each step is its own PR with its own done line.
 
-0. **Stencil in salal.** As 3.5. Done: a tagged salal with a ui-sandbox demo of a masked fill; worldsim's pin moves to it.
+0. **Masks in salal.** As 3.5. Done: a tagged salal with a sandbox demo of the two masked fills; worldsim's pin moves to it.
 1. **Prove the basis.** Benches of a second `PatchableMesh` used as the record, as section 6 lists. Done: numbers in this document; a decision on wrapper against an upkeep-off option; a no-go sends the record's form back to Kevin before anything else is built.
 2. **One sight-shape accessor.** `VisionSystem` gives centre, radius, optional polygon, and rebuild counter in one call; `VisionOverlay` uses it and draws outdoor sight. Done: the old accessor is gone; the overlay shows discs outdoors.
 3. **The record.** `SeenArea` and `PlayerVisibilitySystem`: legs, indoor polygons, the landing, the budget, the queries. Done: unit tests for a straight walk (one ring), a turn, a jump (no bridge), a covered leg (nothing registered), a doorway, the landing; a sim test that after a long walk every seen point is on the mesh and the record never lost ground.
@@ -408,6 +424,8 @@ None blocks the build.
 5. 2026-11-13, round 2: last seen is the rule and is built later; free pan, chosen over a recommended clamp to the seen bounds; a move order into unseen ground walks to the seen edge, chosen over a recommended refusal cue; the minimap is left to its epic, chosen over drawing the seen area on it now. (Rules 13, 14, 15, 20.)
 6. 2026-11-13, round 3: the seen area never shrinks; the landing crew knows the landing area; a reveal toggle, with perf captures run revealed; the cover is drawn by stencil in salal. (Rules 16 to 19.)
 7. 2026-11-13, in writing this, the author proposed: legs in place of a disc per step, the two radii, pending shapes counting as seen, the one-order reading of rule 15, and the first build not waiting on the visual design or the attenuation prototype. Kevin, the same day: "They stand."
+8. 2026-11-13, the salal API. A first version exposed the stencil (`setMask` with write and test modes, a value, a compare). Kevin: "this API is awful. rejected. we follow css naming and best practices. propose how we can follow mask and mask-composite." A `pushMask` and `popMask` scope was next: "push/pop arn't in the css language". The third, `mask` as a property of a draw with layers of `mask-image` and `mask-composite`, went to two reviewers at his request, who checked it against the CSS Masking spec and salal's docs; their changes (the property on the draw's args, shapes named as an SVG mask's content, the two fills reordered so neither needs a nested mask, only what the cover uses built) are in what he approved: "Yes, build it". (Rule 19, 3.4, 3.5.)
+9. 2026-11-13, Kevin, on a `P::` namespace alias: "our guidelines should specifically say to always use human readable variable names". The rule is in both repos' standards; the code in this document follows it.
 
 ## Related documents
 
