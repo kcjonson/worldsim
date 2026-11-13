@@ -9,6 +9,7 @@
 #include "PhysicsSystem.h"
 #include "TimeSystem.h"
 #include "VisionSystem.h"
+#include "MeshBand.test.h"
 
 #include "../GoalTaskRegistry.h"
 #include "../InventoryMass.h"
@@ -5353,6 +5354,10 @@ namespace ecs::test {
 			return task.workTarget();
 		}
 
+		// The near bank walked from the start to the river's end, which sees the far bank and the
+		// way round.
+		void walkTheWayRound() { meshBand(*world, {kStart, {static_cast<float>(kFordX), kStart.y}}); }
+
 		static constexpr glm::vec2 kStart{0.0F, 0.0F};
 		static constexpr glm::vec2 kAcross{0.0F, 10.0F};
 		static constexpr glm::vec2 kBehind{0.0F, -40.0F};
@@ -5405,14 +5410,15 @@ namespace ecs::test {
 		}
 	};
 
-	// A colonist wandering on the bank of a long narrow river, whose far bank a mover at the river's end has
-	// joined to his by meshed ground 1.2 km round, does not cross in 30 s. A wander point across is
-	// connected and within the wander radius, so it may be picked; its route is the 1.2 km way round.
+	// A colonist wandering on the bank of a long narrow river, whose bank has been walked to the river's
+	// end so the far bank is joined to his by meshed ground 1.2 km round, does not cross in 30 s. A wander
+	// point across is connected and within the wander radius, so it may be picked; its route is the
+	// 1.2 km way round.
 	TEST_F(AIDecisionNarrowRiverTest, WanderBesideARiverNeverAsksAcrossIt) {
 		constexpr glm::vec2 kStart{0.0F, 1.5F};
 		const auto			colonist = createColonist(kStart);
 		satisfyAllNeeds(*getNeeds(colonist));
-		addLookout({600.0F, 4.0F});
+		meshBand(*world, {kStart, {600.0F, kStart.y}});
 		nav->finishPendingBuilds();
 		ASSERT_TRUE(routesTo(*nav, kStart, {0.0F, 7.0F})) << "the far bank is joined round the river's end";
 
@@ -5463,15 +5469,18 @@ namespace ecs::test {
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kAcross));
 	}
 
-	// The ford is 300 m off. The only food is across: the colonist takes it by the way round, however
-	// far. A player's order across routes round the ford the same way, and the colonist arrives.
+	// The ford is 300 m off and the way round has been walked. The only food is across: the colonist
+	// takes it by the way round, however far. A player's order across routes round the ford the same
+	// way, and the colonist arrives.
 	using AIDecisionMidFordTest = AIDecisionFordTest<300>;
 	TEST_F(AIDecisionMidFordTest, OnlyFoodAcrossIsTakenRoundAFarFord) {
+		walkTheWayRound();
 		const auto colonist = hungryColonistKnowing({kAcross});
 		EXPECT_EQ(hungerTarget(colonist), std::optional<glm::vec2>(kAcross));
 	}
 
 	TEST_F(AIDecisionMidFordTest, PlayerOrderAcrossTheRiverWalksRoundTheFord) {
+		walkTheWayRound();
 		const auto colonist = hungryColonistKnowing({kAcross});
 		auto& ai = world->getSystem<AIDecisionSystem>();
 		ai.enterControl(colonist);
@@ -5491,12 +5500,11 @@ namespace ecs::test {
 		EXPECT_GT(east, 300.0F) << "it went round the ford";
 	}
 
-	// The only food is 10 m across the river and 1.5 km round its end, where a mover stands and has meshed
-	// the ground: the colonist sets off, goes round the river's end and arrives, and the trace never says
-	// "no source".
+	// The only food is 10 m across the river and 1.5 km round its end, over a bank walked to the end: the
+	// colonist sets off, goes round the river's end and arrives, and the trace never says "no source".
 	using AIDecisionLongFordTest = AIDecisionFordTest<750>;
 	TEST_F(AIDecisionLongFordTest, OnlyFoodRoundALongRiverIsReached) {
-		addLookout({750.0F, kFordRiverY});
+		walkTheWayRound();
 		const auto		 colonist = hungryColonistKnowing({kAcross});
 		const glm::vec2& at		  = world->getComponent<Position>(colonist)->value;
 		bool			 noRoute  = false;

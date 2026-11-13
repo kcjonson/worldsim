@@ -4,6 +4,7 @@
 #include "ActionSystem.h"
 #include "MovementSystem.h"
 #include "PhysicsSystem.h"
+#include "MeshBand.test.h"
 #include "StaticRectCollisionSystem.h"
 #include "../World.h"
 #include "../components/Action.h"
@@ -1361,14 +1362,15 @@ namespace {
 	const glm::vec2 kPondAcross{0.0F, 10.0F}; // across the river, 10 m in a straight line
 } // namespace
 
-// The far bank of a river whose ford is 150 m east, among ponds, is about 15,000 steps round. The
-// route by ticket finds it, round the ford, and every leg of the route is clear of water.
+// The far bank of a river whose ford is 150 m east, among ponds, is about 15,000 steps round, over a
+// near bank walked to the ford. The route by ticket finds it, round the ford, and every leg of the
+// route is clear of water.
 TEST_F(NavigationSystemTest, FarGoalIsRoutedRoundTheFord) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	ConstructionWorld cw;
 	sys.setChunkManager(pondFieldChunks<150>());
-	meshAround(world, {0.0F, 0.0F}, 1536.0F);
+	meshBand(world, {kPondStart, {150.0F, kPondStart.y}});
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 
@@ -1383,14 +1385,15 @@ TEST_F(NavigationSystemTest, FarGoalIsRoutedRoundTheFord) {
 	}
 }
 
-// The ford 400 m east is about 800 m round through the ponds, more than one route slice of search: a
-// route search has no step limit, so it carries on over the ticks it needs and finds the way.
+// The ford 400 m east is about 800 m round through the ponds, over a near bank walked to it, more than
+// one route slice of search: a route search has no step limit, so it carries on over the ticks it
+// needs and finds the way.
 TEST_F(NavigationSystemTest, FordFarAroundIsRoutedOverSeveralSlices) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	ConstructionWorld cw;
 	sys.setChunkManager(pondFieldChunks<400>());
-	meshAround(world, {0.0F, 0.0F}, 1536.0F);
+	meshBand(world, {kPondStart, {400.0F, kPondStart.y}});
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 
@@ -3016,8 +3019,9 @@ namespace {
 } // namespace
 
 // A thirsty colonist 110 m from the others and the view, knowing water 90 m on across open ground
-// with trees in it: the mesh covers both ends wherever they are, so it gets a route and walks to the
-// water, and never holds for an off-area endpoint (the old regions' failure).
+// with placed obstacles in it, all of it walked out from Home: the mesh covers both ends wherever they
+// are, so it gets a route and walks to the water, and never holds for an off-area endpoint (the old
+// regions' failure).
 TEST_F(NavigationSystemTest, FarColonistReachesWaterItKnows) {
 	registerTree("Test_NavFarTree", 0.3F);
 	WalkRig rig({0.0F, 0.0F});
@@ -3026,10 +3030,12 @@ TEST_F(NavigationSystemTest, FarColonistReachesWaterItKnows) {
 		trees.push_back({x, -3.0F + std::fmod(x, 6.0F)});
 	}
 	placeTrees(rig.executor, rig.processed, "Test_NavFarTree", trees);
-	addColonist(rig.world, {0.0F, 0.0F}, "Home");
+	const glm::vec2 home{0.0F, 0.0F};
+	const glm::vec2 water{200.0F, 0.0F};
+	addColonist(rig.world, home, "Home");
+	meshBand(rig.world, {home, water});
 	rig.start();
 
-	const glm::vec2 water{200.0F, 0.0F};
 	const EntityID	colonist = needyColonist(rig, {110.0F, 0.0F}, NeedType::Thirst, 10.0F);
 	rig.world.getComponent<Memory>(colonist)->rememberWorldEntity(
 		water, kTestWaterDefId, static_cast<std::uint16_t>(1U << static_cast<std::size_t>(assets::CapabilityType::Drinkable)));
