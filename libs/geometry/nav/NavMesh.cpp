@@ -33,16 +33,75 @@ namespace geometry::nav {
 			return (static_cast<std::uint64_t>(a) << 32) | static_cast<std::uint64_t>(b);
 		}
 
-		// |2*area| of a polygon ring (shoelace), exact in 128-bit. Used only to rank
-		// containing blocked rings by size (smallest-containing wins); sign irrelevant.
-		Int128 signedAreaDoubledAbs(const std::vector<Vec2i64>& ring) {
+		// 2*area of a polygon ring (shoelace), exact in 128-bit: positive when it runs
+		// counterclockwise.
+		Int128 signedAreaDoubled(const std::vector<Vec2i64>& ring) {
 			Int128 acc(0);
 			const std::size_t n = ring.size();
 			for (std::size_t i = 0; i < n; ++i) {
 				acc = acc + cross(ring[i], ring[(i + 1) % n]);
 			}
-			return acc.sign() < 0 ? Int128(0) - acc : acc;
+			return acc;
 		}
+
+		// Every operand groundBoundaries multiplies is a difference of two points of rings
+		// whose boxes meet, each narrower than kMaxGroundExtentMm.
+		constexpr std::int64_t kMaxOperandMm = 2 * kMaxGroundExtentMm;
+
+		bool smallOperand(const Vec2i64& v) {
+			return v.x > -kMaxOperandMm && v.x < kMaxOperandMm && v.y > -kMaxOperandMm && v.y < kMaxOperandMm;
+		}
+
+		std::int64_t smallCross(const Vec2i64& u, const Vec2i64& v) {
+			assert(smallOperand(u) && smallOperand(v) && "groundBoundaries: points too far apart for exact ordering");
+			return u.x * v.y - u.y * v.x;
+		}
+
+		std::int64_t smallDot(const Vec2i64& u, const Vec2i64& v) {
+			assert(smallOperand(u) && smallOperand(v) && "groundBoundaries: points too far apart for exact ordering");
+			return u.x * v.x + u.y * v.y;
+		}
+
+		bool paramLess(const EdgeParam& p, const EdgeParam& q) {
+			return Int128::product(p.num, q.den) < Int128::product(q.num, p.den);
+		}
+
+		bool paramEqual(const EdgeParam& p, const EdgeParam& q) {
+			return Int128::product(p.num, q.den) == Int128::product(q.num, p.den);
+		}
+
+		// Where the line a + t dir meets the line through p and q (not parallel to it).
+		EdgeParam crossingParam(const Vec2i64& a, const Vec2i64& dir, const Vec2i64& p, const Vec2i64& q) {
+			std::int64_t num = smallCross(p - a, q - p);
+			std::int64_t den = smallCross(dir, q - p);
+			if (den < 0) {
+				num = -num;
+				den = -den;
+			}
+			return {num, den};
+		}
+
+		bool boxesMeet(const Vec2i64& aLo, const Vec2i64& aHi, const Vec2i64& bLo, const Vec2i64& bHi) {
+			return aLo.x <= bHi.x && bLo.x <= aHi.x && aLo.y <= bHi.y && bLo.y <= aHi.y;
+		}
+
+		// The crossing of two segments as the arrangement rounds it, whichever is given
+		// first, kept inside both segments' boxes so both can end there.
+		Vec2i64 roundedCrossing(const std::array<Vec2i64, 2>& s, const std::array<Vec2i64, 2>& t) {
+			std::array<Vec2i64, 2> p{std::min(s[0], s[1]), std::max(s[0], s[1])};
+			std::array<Vec2i64, 2> q{std::min(t[0], t[1]), std::max(t[0], t[1])};
+			if (q < p) {
+				std::swap(p, q);
+			}
+			const Vec2i64 x = intersectSegments(p[0], p[1], q[0], q[1]).point;
+			const Vec2i64 lo{std::max(std::min(p[0].x, p[1].x), std::min(q[0].x, q[1].x)), std::max(std::min(p[0].y, p[1].y), std::min(q[0].y, q[1].y))};
+			const Vec2i64 hi{std::min(std::max(p[0].x, p[1].x), std::max(q[0].x, q[1].x)), std::min(std::max(p[0].y, p[1].y), std::max(q[0].y, q[1].y))};
+			return {std::clamp(x.x, lo.x, hi.x), std::clamp(x.y, lo.y, hi.y)};
+		}
+
+		constexpr int kFlip			= 0;
+		constexpr int kExcludeStart = 1;
+		constexpr int kExcludeEnd	= 2;
 
 		// A face of the arrangement: the triangles one flood fill reaches without
 		// crossing a constraint. `blockedRings` are the indices of the blocked rings
@@ -67,7 +126,8 @@ namespace geometry::nav {
 		}
 
 		// The cover across an arrangement edge: every blocked ring with an odd count of
-		// edges on it toggles, and ground toggles on an odd count of bounds edges.
+		// edges on it toggles, and ground toggles on an odd count of ground edges (each
+		// ground piece is a boundary interval of one edge, so crossing it changes ground).
 		// `sources` is ascending, so one ring's edges are adjacent.
 		void crossEdge(const MeshFace& from, const std::vector<std::int64_t>& sources, const std::vector<const NavInputPolygon*>& rings, MeshFace& into) {
 			into.inBounds	  = from.inBounds;
@@ -368,8 +428,10 @@ namespace geometry::nav {
 		r.blocked		 = poly.blocked;
 		r.provenance	 = poly.provenanceId;
 		r.opening		 = poly.openingId;
-		r.holeCapable	 = poly.holeCapable;
-		r.areaDoubledAbs = signedAreaDoubledAbs(poly.ring);
+		r.holeCapable	   = poly.holeCapable;
+		const Int128 area2 = signedAreaDoubled(poly.ring);
+		r.areaDoubledAbs   = area2.sign() < 0 ? -area2 : area2;
+		r.counterClockwise = area2.sign() > 0;
 		return r;
 	}
 
@@ -437,48 +499,236 @@ namespace geometry::nav {
 		return {};
 	}
 
-	BoundsSeams findBoundsSeams(const std::vector<const NavInputPolygon*>& rings) {
-		struct Side {
-			Vec2i64		lo;
-			Vec2i64		hi;
-			EdgeSource	ref;
+	GroundRing groundRing(const std::vector<Vec2i64>& outline, RingId id) {
+		GroundRing g;
+		g.outline = &outline;
+		g.lo	  = outline.front();
+		g.hi	  = outline.front();
+		for (const Vec2i64& p : outline) {
+			g.lo = {std::min(g.lo.x, p.x), std::min(g.lo.y, p.y)};
+			g.hi = {std::max(g.hi.x, p.x), std::max(g.hi.y, p.y)};
+		}
+		g.counterClockwise = signedAreaDoubled(outline).sign() > 0;
+		g.id			   = id;
+		return g;
+	}
 
-			bool operator<(const Side& other) const { return std::tie(lo, hi, ref) < std::tie(other.lo, other.hi, other.ref); }
-		};
-		BoundsSeams		  seams;
-		std::vector<Side> sides;
-		seams.partner.resize(rings.size());
-		for (std::size_t r = 0; r < rings.size(); ++r) {
-			const std::vector<Vec2i64>& ring = rings[r]->ring;
-			if (rings[r]->blocked || ring.size() < 3) {
+	// Each other ring's inside flag is read at the point just off the edge's outer side:
+	// the edge's line moved outward by an infinitesimal d, walked from far behind its start.
+	// A ring edge crosses that line where one end lies strictly outward of the edge's line
+	// and the other does not (on the line counts as inward), at the place its own line meets
+	// the edge's; an end on the line is that place exactly. So a vertex of another outline
+	// on the edge with both its edges outward is two crossings at one place and changes
+	// nothing (a tangent touch), with one outward it is one crossing, and with neither none;
+	// an edge lying along the line crosses nothing. The flag at a stretch is the parity of
+	// the crossings before it, and every stretch between crossings is an open set, so no
+	// point an exact test could read differently (boundsContainSample decides only points
+	// on an outline) lies in one.
+	void groundBoundaries(const GroundRing& ring, std::int32_t edge, const std::vector<GroundRing>& near, GroundBoundaryScratch& scratch,
+						  std::vector<GroundInterval>& out) {
+		out.clear();
+		const std::vector<Vec2i64>& outline = *ring.outline;
+		const Vec2i64				a		= outline[static_cast<std::size_t>(edge)];
+		const Vec2i64				b		= outline[(static_cast<std::size_t>(edge) + 1) % outline.size()];
+		if (a == b) {
+			return;
+		}
+		const Vec2i64	   dir	 = b - a;
+		const int		   outer = ring.counterClockwise ? -1 : 1; // sign of cross(dir, p - a) outside the ring
+		const std::int64_t len2	 = smallDot(dir, dir);
+		const Vec2i64	   lo{std::min(a.x, b.x), std::min(a.y, b.y)};
+		const Vec2i64	   hi{std::max(a.x, b.x), std::max(a.y, b.y)};
+		const EdgeSource   self{ring.id, edge};
+		const EdgeParam	   zero{0, 1};
+		const EdgeParam	   one{1, 1};
+		auto			   onLine = [&](const Vec2i64& p) { return EdgeParam{smallDot(p - a, dir), len2}; };
+
+		std::vector<GroundBoundaryScratch::Event>&	   events	 = scratch.events;
+		std::vector<GroundBoundaryScratch::Collinear>& collinear = scratch.collinear;
+		std::vector<std::uint8_t>&					   inside	 = scratch.inside;
+		events.clear();
+		collinear.clear();
+		inside.assign(near.size(), 0);
+		int excluded = 0;
+		for (std::size_t k = 0; k < near.size(); ++k) {
+			const GroundRing& other = near[k];
+			if (other.id == ring.id || !boxesMeet(lo, hi, other.lo, other.hi) || other.outline->size() < 3) {
 				continue;
 			}
-			seams.partner[r].assign(ring.size(), EdgeSource{});
-			for (std::size_t i = 0; i < ring.size(); ++i) {
-				const Vec2i64& a = ring[i];
-				const Vec2i64& b = ring[(i + 1) % ring.size()];
-				if (a != b) {
-					sides.push_back({std::min(a, b), std::max(a, b), {static_cast<std::int32_t>(r), static_cast<std::int32_t>(i)}});
+			const std::vector<Vec2i64>& ring2 = *other.outline;
+			for (std::int32_t i = 0; i < static_cast<std::int32_t>(ring2.size()); ++i) {
+				const Vec2i64& p = ring2[static_cast<std::size_t>(i)];
+				const Vec2i64& q = ring2[(static_cast<std::size_t>(i) + 1) % ring2.size()];
+				if (p == q) {
+					continue;
+				}
+				const int dp = outer * cross(dir, p - a).sign();
+				const int dq = outer * cross(dir, q - a).sign();
+				if (dp == 0 && dq == 0) {
+					const EdgeParam	 tp = onLine(p);
+					const EdgeParam	 tq = onLine(q);
+					const bool		 pFirst = paramLess(tp, tq);
+					const EdgeParam	 from	= pFirst ? tp : tq;
+					const EdgeParam	 to		= pFirst ? tq : tp;
+					const EdgeSource source{other.id, i};
+					collinear.push_back({from, to, source, p, q});
+					// Inside on the same side: the stretch both run along is input once.
+					const int otherOuter = (other.counterClockwise ? -1 : 1) * (smallDot(q - p, dir) > 0 ? 1 : -1);
+					if (otherOuter == outer && source < self && paramLess(from, one) && paramLess(zero, to)) {
+						if (from.num <= 0) {
+							++excluded;
+						} else {
+							events.push_back({from, kExcludeStart, static_cast<std::int32_t>(k), i, true, pFirst ? p : q});
+						}
+						if (paramLess(to, one)) {
+							events.push_back({to, kExcludeEnd, static_cast<std::int32_t>(k), i, true, pFirst ? q : p});
+						}
+					}
+					continue;
+				}
+				if ((dp > 0) == (dq > 0)) {
+					continue;
+				}
+				GroundBoundaryScratch::Event ev;
+				ev.kind = kFlip;
+				ev.ring = static_cast<std::int32_t>(k);
+				ev.edge = i;
+				if (dp == 0 || dq == 0) {
+					ev.exact = true;
+					ev.point = dp == 0 ? p : q;
+					ev.at	 = onLine(ev.point);
+				} else {
+					ev.at = crossingParam(a, dir, p, q);
+				}
+				if (ev.at.num <= 0) {
+					inside[k] ^= 1;
+				} else if (ev.at.num < ev.at.den) {
+					events.push_back(ev);
 				}
 			}
 		}
-		std::sort(sides.begin(), sides.end());
-		for (std::size_t begin = 0; begin < sides.size();) {
-			std::size_t end = begin + 1;
-			while (end < sides.size() && sides[end].lo == sides[begin].lo && sides[end].hi == sides[begin].hi) {
-				++end;
+		int insideCount = 0;
+		for (std::uint8_t flag : inside) {
+			insideCount += flag;
+		}
+		std::sort(events.begin(), events.end(), [](const auto& x, const auto& y) { return paramLess(x.at, y.at); });
+
+		// The interval end at the events [begin, end), all at one place: the exact point if
+		// one is known, else the crossing of the two lowest lines through it (each line by
+		// the lowest ground edge on it), which every edge ending there picks alike.
+		auto endAt = [&](std::size_t begin, std::size_t end) {
+			for (std::size_t i = begin; i < end; ++i) {
+				if (events[i].exact) {
+					return events[i].point;
+				}
+			}
+			std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>>& lines = scratch.lines;
+			lines.clear();
+			lines.push_back({self, {a, b}});
+			for (const GroundBoundaryScratch::Collinear& c : collinear) {
+				if (!paramLess(events[begin].at, c.lo) && !paramLess(c.hi, events[begin].at) && c.source < lines.front().first) {
+					lines.front() = {c.source, {c.a, c.b}};
+				}
 			}
 			for (std::size_t i = begin; i < end; ++i) {
-				for (std::size_t j = begin; j < end; ++j) {
-					if (sides[j].ref.ring != sides[i].ref.ring) {
-						seams.partner[static_cast<std::size_t>(sides[i].ref.ring)][static_cast<std::size_t>(sides[i].ref.edge)] = sides[j].ref;
-						break;
+				const std::vector<Vec2i64>& ring2 = *near[static_cast<std::size_t>(events[i].ring)].outline;
+				const Vec2i64				p	  = ring2[static_cast<std::size_t>(events[i].edge)];
+				const Vec2i64				q	  = ring2[(static_cast<std::size_t>(events[i].edge) + 1) % ring2.size()];
+				const EdgeSource			source{near[static_cast<std::size_t>(events[i].ring)].id, events[i].edge};
+				bool						joined = false;
+				for (std::size_t l = 1; l < lines.size() && !joined; ++l) {
+					const std::array<Vec2i64, 2>& s = lines[l].second;
+					if (orientation(s[0], s[1], p) == Orientation::Collinear && orientation(s[0], s[1], q) == Orientation::Collinear) {
+						joined = true;
+						if (source < lines[l].first) {
+							lines[l] = {source, {p, q}};
+						}
 					}
 				}
+				if (!joined) {
+					lines.push_back({source, {p, q}});
+				}
 			}
-			begin = end;
+			std::sort(lines.begin(), lines.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+			assert(lines.size() >= 2 && "groundBoundaries: an interval ends where no other line crosses");
+			return roundedCrossing(lines[0].second, lines[1].second);
+		};
+
+		bool		   open = insideCount == 0 && excluded == 0;
+		GroundInterval current;
+		current.from   = a;
+		current.fromAt = zero;
+		for (std::size_t i = 0; i < events.size();) {
+			std::size_t j = i;
+			for (; j < events.size() && paramEqual(events[j].at, events[i].at); ++j) {
+				const GroundBoundaryScratch::Event& ev = events[j];
+				if (ev.kind == kFlip) {
+					std::uint8_t& flag = inside[static_cast<std::size_t>(ev.ring)];
+					insideCount += flag != 0 ? -1 : 1;
+					flag ^= 1;
+				} else {
+					excluded += ev.kind == kExcludeStart ? 1 : -1;
+				}
+			}
+			const bool now = insideCount == 0 && excluded == 0;
+			if (now != open) {
+				const Vec2i64 x = endAt(i, j);
+				if (open) {
+					current.to	 = x;
+					current.toAt = events[i].at;
+					if (current.from != current.to) {
+						out.push_back(current);
+					}
+				} else {
+					current.from   = x;
+					current.fromAt = events[i].at;
+				}
+				open = now;
+			}
+			i = j;
 		}
-		return seams;
+		if (open) {
+			current.to	 = b;
+			current.toAt = one;
+			if (current.from != current.to) {
+				out.push_back(current);
+			}
+		}
+	}
+
+	void ringSegments(const std::vector<const NavInputPolygon*>& rings, std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>>& out) {
+		out.clear();
+		std::vector<GroundRing> ground;
+		for (std::size_t r = 0; r < rings.size(); ++r) {
+			if (!rings[r]->blocked && rings[r]->ring.size() >= 3) {
+				ground.push_back(groundRing(rings[r]->ring, static_cast<RingId>(r)));
+			}
+		}
+		GroundBoundaryScratch		scratch;
+		std::vector<GroundInterval> intervals;
+		std::size_t					nextGround = 0;
+		for (std::size_t r = 0; r < rings.size(); ++r) {
+			const std::vector<Vec2i64>& ring = rings[r]->ring;
+			if (ring.size() < 3) {
+				continue;
+			}
+			const RingId id = static_cast<RingId>(r);
+			if (rings[r]->blocked) {
+				for (std::size_t i = 0; i < ring.size(); ++i) {
+					if (ring[i] != ring[(i + 1) % ring.size()]) {
+						out.push_back({{id, static_cast<std::int32_t>(i)}, {ring[i], ring[(i + 1) % ring.size()]}});
+					}
+				}
+				continue;
+			}
+			const GroundRing& self = ground[nextGround++];
+			for (std::int32_t i = 0; i < static_cast<std::int32_t>(ring.size()); ++i) {
+				groundBoundaries(self, i, ground, scratch, intervals);
+				for (const GroundInterval& iv : intervals) {
+					out.push_back({{id, i}, {iv.from, iv.to}});
+				}
+			}
+		}
 	}
 
 	NavMesh buildNavMesh(const NavMeshInput& input) {
@@ -503,11 +753,12 @@ namespace geometry::nav {
 			return result; // no walkable bounds -> empty mesh
 		}
 
-		// 1. Arrange every ring edge but the dissolved ones, tagging each segment with its
-		// ring and edge. The arrangement splits edges at every crossing and touch and
-		// merges overlaps, so its edges form a planar straight-line graph.
+		// 1. Arrange every blocked ring edge and every ground ring edge's boundary intervals,
+		// tagging each segment with its ring and edge. The arrangement splits edges at every
+		// crossing and touch and merges overlaps, so its edges form a planar straight-line
+		// graph, and every ground piece in it is the union of the ground rings' boundary.
 		std::vector<InputSegment> segments;
-		ringsArrangementInput(rings, findBoundsSeams(rings), ringEdgeTag, segments);
+		ringsArrangementInput(rings, ringEdgeTag, segments);
 		const Arrangement arrangement = buildArrangement(segments);
 		result.vertices				  = arrangement.vertices;
 
