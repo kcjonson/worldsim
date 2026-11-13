@@ -4944,7 +4944,7 @@ namespace ecs::test {
 	// start on the switch's own tick and run, not wait out a stale Sleep whose completion would clear
 	// the toilet task undone (WOR-820).
 	TEST_F(NeedActionInPlaceTest, WokenSleeperCarriesOutTheNewTask) {
-		const auto colonist = createActingColonist({0.0F, 0.0F});
+		const auto colonist = createActingColonist({-8.0F, 6.0F});
 		getNeeds(colonist)->get(NeedType::Energy).value = 20.0F;
 		world->update(kTick);
 		const Task*	  task = getTask(colonist);
@@ -4963,12 +4963,43 @@ namespace ecs::test {
 		stepThroughAction(colonist, squatSpot);
 		EXPECT_FALSE(action->isActive()) << "the toilet action never finished";
 		EXPECT_GT(getNeeds(colonist)->get(NeedType::Digestion).value, 5.0F) << "the toilet task ended undone";
-		EXPECT_LT(getNeeds(colonist)->energy().value, 50.0F) << "the interrupted sleep still paid out in full";
+		EXPECT_LT(getNeeds(colonist)->energy().value, 25.0F) << "the interrupted sleep paid out";
 		bool bioPile = false;
 		for (auto [entity, appearance] : world->view<Appearance>()) {
 			bioPile = bioPile || appearance.defName == "Misc_BioPile";
 		}
 		EXPECT_TRUE(bioPile) << "no BioPile spawned";
+	}
+
+	// The case WOR-820 bit: the new task is away from the sleeper, so it walks there with the Sleep
+	// cleared and the action that starts on arrival is the new task's own.
+	TEST_F(NeedActionInPlaceTest, WokenSleeperWalksToDistantNeedAndDrinks) {
+		const glm::vec2 water{2.0F, 6.0F};
+		const auto		colonist = createActingColonist({-8.0F, 6.0F});
+		getNeeds(colonist)->get(NeedType::Energy).value = 20.0F;
+		addKnownEntity(colonist, water, kWaterDefId, assets::CapabilityType::Drinkable);
+		world->update(kTick);
+		const Task*	  task = getTask(colonist);
+		const Action* action = world->getComponent<Action>(colonist);
+		ASSERT_EQ(task->needToFulfill, NeedType::Energy);
+		ASSERT_EQ(action->type, ActionType::Sleep);
+
+		getNeeds(colonist)->get(NeedType::Thirst).value = 5.0F;
+		world->update(kTick);
+		ASSERT_EQ(task->needToFulfill, NeedType::Thirst) << "the critical need did not wake the sleeper";
+		EXPECT_FALSE(action->isActive()) << "the Sleep action outlived the task it served";
+		EXPECT_EQ(task->state, TaskState::Moving);
+
+		for (int i = 0; i < 400 && action->type != ActionType::Drink; ++i) {
+			world->update(kTick);
+			EXPECT_NE(action->type, ActionType::Sleep) << "the Sleep came back";
+		}
+		ASSERT_EQ(action->type, ActionType::Drink) << "never began drinking on arrival";
+		for (int i = 0; i < 200 && action->isActive(); ++i) {
+			world->update(kTick);
+		}
+		EXPECT_GT(getNeeds(colonist)->get(NeedType::Thirst).value, 5.0F) << "the drink task ended undone";
+		EXPECT_LT(getNeeds(colonist)->energy().value, 25.0F) << "the interrupted sleep paid out";
 	}
 
 	// A critical sleeper that slides into water is snapped back ashore, which clears its task, so it

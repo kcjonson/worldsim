@@ -53,9 +53,11 @@ namespace ecs {
 		// Process all colonists with the required components.
 		//
 		// Action Interruption Policy: a non-interruptable action (every one but Sleep)
-		// runs to completion; AIDecisionSystem holds the task until it ends. When it
-		// switches away from an interruptable one, it clears the action with the task,
-		// and nothing resumes: an interrupted sleep pays out nothing.
+		// runs to completion; AIDecisionSystem holds the task until it ends, unless the
+		// colonist loses the task another way (direct control, or a snap back onto the
+		// nav mesh), which clears the action with it. When AIDecisionSystem switches away
+		// from an interruptable one, it clears the action with the task, and nothing
+		// resumes: an interrupted sleep pays out nothing.
 		for (auto [entity, position, task, action, needs, memory, inventory] :
 			 world->view<Position, Task, Action, NeedsComponent, Memory, Inventory>()) {
 

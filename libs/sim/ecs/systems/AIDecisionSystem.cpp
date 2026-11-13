@@ -1690,6 +1690,10 @@ namespace ecs {
 						}
 						m_claims.retire(task.instanceId); // later deciders this update see the work free
 						dropRoute(task);
+						// The action goes with its task.
+						if (auto* stale = world->getComponent<Action>(entity)) {
+							stale->clear();
+						}
 						task.clear();
 					} else if (m_colonyOrigin.has_value()) {
 						// Last-resort guarantee: the mesh has NO walkable face anywhere in range
@@ -1707,6 +1711,9 @@ namespace ecs {
 						}
 						m_claims.retire(task.instanceId);
 						dropRoute(task);
+						if (auto* stale = world->getComponent<Action>(entity)) {
+							stale->clear();
+						}
 						task.clear();
 					}
 				}

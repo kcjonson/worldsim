@@ -664,9 +664,8 @@ separate, explicit operation (`Task::discardSuspended`), called by the selection
 
 Two existing behaviors to keep in mind. Craft, harvest, pickup, withdraw, and deposit actions are not
 interruptable (`Action.h`), and the switch path's non-interruptable gate holds regardless of tier, so
-a critical need waits for the current action to finish. And the switch path leaves an interruptable
-action (sleep) active when it clears the task, while `ActionSystem::update` starts a new action only
-when none is active; see Known gaps.
+a critical need waits for the current action to finish. And the switch path clears an interruptable
+action (sleep) along with the task; nothing resumes it, and an interrupted sleep restores no energy.
 
 ### Death and direct player control
 
