@@ -5,6 +5,8 @@
 
 #include <assets/AssetRegistry.h>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 
 namespace ecs {
@@ -15,13 +17,31 @@ namespace ecs {
 		}
 	} // namespace
 
-	void WorkSources::begin(const Memory& memory, const assets::AssetRegistry& registry, const Inventory& inventory) {
+	void WorkSources::begin(const Memory& memory, const assets::AssetRegistry& registry, const Inventory& inventory, glm::vec2 position) {
 		m_memory = &memory;
 		m_registry = &registry;
 		m_inventory = &inventory;
+		m_position = position;
 		++m_evaluation;
 		m_carryDefsListed = false;
 		m_carriedKg.reset();
+		m_carry.clear();
+		m_harvest.clear();
+	}
+
+	template <typename Source, typename Fill>
+	std::span<Source> WorkSources::sourcesOf(std::vector<ItemSpan>& spans, std::vector<Source>& storage, uint32_t item, Fill&& fill) {
+		if (item >= spans.size()) {
+			spans.resize(item + 1);
+		}
+		ItemSpan& span = spans[item];
+		if (span.evaluation != m_evaluation) {
+			span.evaluation = m_evaluation;
+			span.begin = static_cast<uint32_t>(storage.size());
+			fill();
+			span.end = static_cast<uint32_t>(storage.size());
+		}
+		return {storage.data() + span.begin, span.end - span.begin};
 	}
 
 	const assets::AssetDefinition* WorkSources::knownCarryable(uint32_t defNameId) const {
@@ -40,22 +60,25 @@ namespace ecs {
 		return nullptr;
 	}
 
-	std::span<const CarrySource> WorkSources::carryablesOf(uint32_t defNameId) {
-		m_carry.clear();
-		if (knownCarryable(defNameId) == nullptr) {
-			return {};
-		}
-		const auto keys = m_memory->worldEntitiesOfDef(defNameId);
-#ifdef DEVELOPMENT_BUILD
-		visits += keys.size();
-#endif
-		for (uint64_t key : keys) {
-			const KnownWorldEntity* entity = m_memory->getWorldEntity(key);
-			if (rememberedAs(*entity, assets::CapabilityType::Carryable)) {
-				m_carry.push_back({key, entity});
+	std::span<CarrySource> WorkSources::carryablesOf(uint32_t defNameId) {
+		return sourcesOf(m_carrySpans, m_carry, defNameId, [&] {
+			if (knownCarryable(defNameId) == nullptr) {
+				return;
 			}
-		}
-		return m_carry;
+			const auto keys = m_memory->worldEntitiesOfDef(defNameId);
+#ifdef DEVELOPMENT_BUILD
+			visits += keys.size();
+#endif
+			for (uint64_t key : keys) {
+				const KnownWorldEntity* entity = m_memory->getWorldEntity(key);
+				if (rememberedAs(*entity, assets::CapabilityType::Carryable)) {
+					CarrySource& source = m_carry.emplace_back();
+					source.key = key;
+					source.entity = entity;
+					source.distance = glm::distance(m_position, entity->position);
+				}
+			}
+		});
 	}
 
 	std::span<const uint32_t> WorkSources::knownCarryableDefs() {
@@ -114,25 +137,31 @@ namespace ecs {
 			const KnownWorldEntity* entity = m_memory->getWorldEntity(key);
 			if (rememberedAs(*entity, assets::CapabilityType::Harvestable) &&
 				(inside == nullptr || inside->blockedBy(*m_registry, entity->defNameId, entity->position))) {
-				m_harvest.push_back({resolved.yieldDefNameId, key, entity, resolved.def, resolved.yieldDef});
+				HarvestSource& source = m_harvest.emplace_back();
+				source.yieldDefNameId = resolved.yieldDefNameId;
+				source.key = key;
+				source.entity = entity;
+				source.def = resolved.def;
+				source.yieldDef = resolved.yieldDef;
+				source.distance = glm::distance(m_position, entity->position);
 			}
 		}
 	}
 
-	std::span<const HarvestSource> WorkSources::harvestablesYielding(uint32_t yieldDefNameId) {
-		m_harvest.clear();
-		// The tool and carry gates are per def, so a colonist that can't cut a def visits none of it.
-		for (uint32_t defNameId : m_registry->harvestablesYielding(yieldDefNameId)) {
-			const HarvestDef& resolved = harvestDef(defNameId);
-			if (resolved.def != nullptr && resolved.holdsTool && resolved.yieldFits) {
-				appendHarvestables(defNameId, resolved);
+	std::span<HarvestSource> WorkSources::harvestablesYielding(uint32_t yieldDefNameId) {
+		return sourcesOf(m_harvestSpans, m_harvest, yieldDefNameId, [&] {
+			// The tool and carry gates are per def, so a colonist that can't cut a def visits none of it.
+			for (uint32_t defNameId : m_registry->harvestablesYielding(yieldDefNameId)) {
+				const HarvestDef& resolved = harvestDef(defNameId);
+				if (resolved.def != nullptr && resolved.holdsTool && resolved.yieldFits) {
+					appendHarvestables(defNameId, resolved);
+				}
 			}
-		}
-		return m_harvest;
+		});
 	}
 
-	std::span<const HarvestSource> WorkSources::clearableHarvestables(const FootprintBounds& footprint) {
-		m_harvest.clear();
+	std::span<HarvestSource> WorkSources::clearableHarvestables(const FootprintBounds& footprint) {
+		const auto begin = static_cast<uint32_t>(m_harvest.size());
 		for (const auto& [defNameId, keys] : m_memory->worldEntitiesByDef) {
 			if (keys.empty()) {
 				continue;
@@ -142,7 +171,7 @@ namespace ecs {
 				appendHarvestables(defNameId, resolved, &footprint);
 			}
 		}
-		return m_harvest;
+		return {m_harvest.data() + begin, m_harvest.size() - begin};
 	}
 
 } // namespace ecs
