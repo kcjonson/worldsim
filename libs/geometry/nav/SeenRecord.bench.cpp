@@ -1,8 +1,8 @@
 // Player visibility's seen record (player-visibility.md 3.3) as a second, standalone
 // PatchableMesh holding only sight outlines as ground rings: legs walked in the open, the
-// landing polygon, and visibility polygons near walls. Each shape goes through frontierOf, a
-// prototype below that registers only what a shape adds (step 3b), and its pieces are patched in.
-// The rows measure what that record costs: rings registered and bytes held, patch and covered-test
+// landing polygon, and visibility polygons near walls. Each shape goes through sightShapeCovered;
+// an uncovered one with walls in sight is grown by skirtedSightShape (step 3c), and what it adds is
+// cut by frontierOf, a prototype below (step 3b), and patched in. The rows measure what that record costs: rings registered and bytes held, patch and covered-test
 // time, point location, the nav upkeep every patch runs, a walk of the union's edge, a base of
 // rooms walked by colonists, and how often a visibility polygon is not a simple ring. Every row runs once and prints its figures on stderr;
 // the counters carry the headline numbers.
@@ -932,28 +932,16 @@ namespace {
 	}
 
 
-	// How a shape the covered test calls uncovered enters the record: whole (step 3a), or as the
-	// pieces frontierOf cuts from it (step 3b).
-	enum class Registration {
-		WholePolygons,
-		FrontierPieces,
-	};
-
-	Registration registrationOf(std::int64_t arg) { return arg == 0 ? Registration::WholePolygons : Registration::FrontierPieces; }
-
-	const char* nameOf(Registration registration) { return registration == Registration::WholePolygons ? "whole polygons" : "frontier pieces"; }
-
 	// The record: each shape tested with sightShapeCovered; an uncovered shape with walls in sight
-	// is grown by the skirt (skirtedSightShape, step 3c) when `skirtMm` is set, then registered
-	// whole or as frontier pieces, each in a patch of its own. K for a ring is the registered rings
+	// is grown by the skirt (skirtedSightShape, step 3c) when `skirtMm` is set, then cut into the
+	// pieces frontierOf gives, each registered in a patch of its own. K for a ring is the registered rings
 	// whose boxes meet its box: what groundCovers and the patch read there. Where `exact` is set,
 	// groundCovers runs beside it on every shape, timed, to count where the two differ: a shape the
 	// ground holds exactly must always be covered (exactNotCovered stays 0), and coveredNotExact
 	// counts the shapes the tolerance let through.
 	struct SeenRecord {
 		PatchableMesh							 mesh;
-		Registration							 registration = Registration::WholePolygons;
-		std::int64_t							 skirtMm	  = 0;
+		std::int64_t							 skirtMm = 0;
 		SightCoverScratch						 coverScratch;
 		FrontierScratch						 scratch;
 		std::vector<std::vector<Vec2i64>>		 pieces;
@@ -1028,22 +1016,17 @@ namespace {
 				skirtAddedM2 += (geometry::signedAreaDoubled(grown).toDouble() - geometry::signedAreaDoubled(ring).toDouble()) / 2e6;
 			}
 			const std::vector<Vec2i64>& entering = grown.empty() ? ring : grown;
-			if (registration == Registration::WholePolygons) {
-				pieces.assign(1, entering);
+			Frontier					frontier = Frontier::Covered;
+			frontierUs.push_back(secondsOf([&] { frontier = frontierOf(mesh, entering, centre, scratch, pieces); }) * 1e6);
+			if (frontier == Frontier::Covered) {
+				++frontierCovered;
+				return false;
+			}
+			if (frontier == Frontier::Whole) {
 				++wholeShapes;
+				wholeOnRecord += mesh.locate(centre) >= 0 ? 1 : 0;
 			} else {
-				Frontier frontier = Frontier::Covered;
-				frontierUs.push_back(secondsOf([&] { frontier = frontierOf(mesh, entering, centre, scratch, pieces); }) * 1e6);
-				if (frontier == Frontier::Covered) {
-					++frontierCovered;
-					return false;
-				}
-				if (frontier == Frontier::Whole) {
-					++wholeShapes;
-					wholeOnRecord += mesh.locate(centre) >= 0 ? 1 : 0;
-				} else {
-					piecesPerShape.push_back(static_cast<double>(pieces.size()));
-				}
+				piecesPerShape.push_back(static_cast<double>(pieces.size()));
 			}
 			if (keepTrue) {
 				registeredTrue.push_back(ring);
@@ -1143,7 +1126,7 @@ namespace {
 	}
 
 	void printCovered(const SeenRecord& rec) {
-		std::fprintf(stderr, "  registration: %s, skirt %lld mm\n", nameOf(rec.registration), static_cast<long long>(rec.skirtMm));
+		std::fprintf(stderr, "  skirt %lld mm\n", static_cast<long long>(rec.skirtMm));
 		printTimes("covered test", rec.coveredUs, "us");
 		std::fprintf(stderr, "  answered by groundCovers %d; skirt gave no simple ring %d; frontier empty though uncovered %d\n", rec.fallbacks, rec.skirtSkipped,
 					 rec.frontierCovered);
@@ -1265,7 +1248,6 @@ namespace {
 		for (auto _ : state) {
 			const std::vector<Vec2i64> path = exploreWalk(legMm, totalMm, 7);
 			SeenRecord				   rec;
-			rec.registration = registrationOf(state.range(2));
 			for (std::size_t i = 1; i < path.size(); ++i) {
 				rec.commit(legRing(path[i - 1], path[i]), path[i - 1], false);
 			}
@@ -1322,7 +1304,6 @@ namespace {
 		}
 		for (auto _ : state) {
 			SeenRecord rec;
-			rec.registration = registrationOf(state.range(1));
 			for (std::uint32_t i = 0; i < count; ++i) {
 				const double heading = 2.0 * kPi * static_cast<double>(bitReversed(i, bits)) / static_cast<double>(1U << bits);
 				rec.commit(legRing({0, 0}, stepFrom({0, 0}, heading, 500000.0)), {0, 0}, false);
@@ -1373,7 +1354,6 @@ namespace {
 		constexpr std::int64_t kHalf = 120000;
 		for (auto _ : state) {
 			SeenRecord			 rec;
-			rec.registration = registrationOf(state.range(0));
 			std::vector<Vec2i64> sweep;
 			bool				 east = true;
 			for (std::int64_t y = -kHalf; y <= kHalf; y += 40000) {
@@ -1437,7 +1417,6 @@ namespace {
 		const std::int64_t unit = state.range(0);
 		for (auto _ : state) {
 			SeenRecord	  rec;
-			rec.registration	  = registrationOf(state.range(1));
 			const double  heading = 17.3 * kPi / 180.0;
 			const Vec2i64 origin{37123456, -18456789};
 			const Vec2i64 end	  = stepFrom(origin, heading, 100000.0);
@@ -1496,8 +1475,7 @@ namespace {
 			SeenRecord rec;
 			rec.keepRings	 = true;
 			rec.keepTrue	 = true;
-			rec.registration = registrationOf(state.range(0));
-			rec.skirtMm		 = state.range(1);
+			rec.skirtMm  = state.range(0);
 			std::vector<double> buildUs;
 			std::vector<double> simpleUs;
 			std::vector<double> sizes;
@@ -1544,9 +1522,9 @@ namespace {
 	//
 	// state.range(1): 1 when the landing polygon, centred 40 m west of the building, goes in first,
 	// 0 for a record that starts empty (a base beyond the landing area). state.range(2) simulated
-	// seconds, reported every state.range(3). state.range(4): the registration, 0 whole polygons,
-	// 1 frontier pieces; state.range(5): the skirt in millimetres, 0 for none. A row stops at the
-	// end of the first period that finishes past kBaseDeadlineSeconds of wall time.
+	// seconds, reported every state.range(3). state.range(4): the skirt in millimetres, 0 for none.
+	// A row stops at the end of the first period that finishes past kBaseDeadlineSeconds of wall
+	// time.
 	//
 	// Rooms 4 to 8 m across in two rows, walls 0.2 m thick with a door in every inner wall and
 	// in some outer ones, turned 20 degrees and 41 km from the origin. Each colonist walks at
@@ -1624,8 +1602,7 @@ namespace {
 			SeenRecord rec;
 			rec.exact		 = false;
 			rec.keepTrue	 = true;
-			rec.registration = registrationOf(state.range(4));
-			rec.skirtMm		 = state.range(5);
+			rec.skirtMm  = state.range(4);
 			if (landed) {
 				const Vec2i64 drop = building.roomCentres.front() + Vec2i64{-40000, 0};
 				rec.commit(geometry::sightPolygon(drop, kLandingMm), drop, false);
@@ -1860,9 +1837,9 @@ namespace {
 			const double	  recordMs	= (sumOf(simpleUs) + sumOf(polygonCoveredUs) + sumOf(legCoveredUs) + sumOf(rec.skirtUs) + sumOf(rec.frontierUs)) / 1e3 +
 									  sumOf(polygonPatchMs) + sumOf(legPatchMs);
 			std::fprintf(stderr,
-						 "[seen base] %zu colonists, %s, %s, skirt %lld mm, %d rooms, %zu outer doors, %.0f min: %d polygons (%d covered, %.1f%%), %d legs (%d covered), "
+						 "[seen base] %zu colonists, %s, skirt %lld mm, %d rooms, %zu outer doors, %.0f min: %d polygons (%d covered, %.1f%%), %d legs (%d covered), "
 						 "%d not simple; %zu rings registered; %d live triangles; unreadCovers %lld; validate %s\n",
-						 walkers, landed ? "landed 40 m away" : "no landing", nameOf(rec.registration), static_cast<long long>(rec.skirtMm), static_cast<int>(rooms),
+						 walkers, landed ? "landed 40 m away" : "no landing", static_cast<long long>(rec.skirtMm), static_cast<int>(rooms),
 						 outerDoors.size(), seconds / 60.0, polygons, polygonsCovered, 100.0 * static_cast<double>(polygonsCovered) / std::max(1, polygons), legs,
 						 legsCovered, notSimple, (rec.registered() - landingRings), rec.mesh.liveTriangleCount(), static_cast<long long>(rec.unread),
 						 valid.empty() ? "clean" : valid.c_str());
@@ -1923,7 +1900,6 @@ namespace {
 		const auto walkers = static_cast<std::size_t>(state.range(0));
 		for (auto _ : state) {
 			SeenRecord rec;
-			rec.registration = registrationOf(state.range(1));
 			rec.commit(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0}, false);
 			std::mt19937		 rng(17);
 			std::vector<Vec2i64> positions(walkers);
@@ -2101,19 +2077,18 @@ namespace {
 
 } // namespace
 
-// The last argument of each row is the registration: 0 whole polygons, 1 frontier pieces.
-BENCHMARK(BM_SeenExplore)->ArgsProduct({{20, 50, 100, 200}, {10, 50}, {0, 1}})->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_SeenCoveredVsK)->ArgsProduct({{1, 4, 16, 64, 256}, {0, 1}})->Iterations(1)->UseManualTime()->Unit(benchmark::kMicrosecond);
-BENCHMARK(BM_SeenWander)->Arg(0)->Arg(1)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
-// Doorway and base: the registration, then the skirt in millimetres.
-BENCHMARK(BM_SeenDoorway)->ArgsProduct({{0, 1}, {0, 25, 50, 100}})->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_SeenExplore)->ArgsProduct({{20, 50, 100, 200}, {10, 50}})->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_SeenCoveredVsK)->Arg(1)->Arg(4)->Arg(16)->Arg(64)->Arg(256)->Iterations(1)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_SeenWander)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+// Doorway and base: the last argument is the skirt in millimetres.
+BENCHMARK(BM_SeenDoorway)->Arg(0)->Arg(50)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_SeenBase)
-	->ArgsProduct({{20, 50}, {1}, {600}, {60}, {0, 1}, {50}})
-	->ArgsProduct({{2, 20, 50}, {0}, {600}, {60}, {0, 1}, {25, 50, 100}})
+	->ArgsProduct({{20, 50}, {1}, {600}, {60}, {50}})
+	->ArgsProduct({{2, 20, 50}, {0}, {600}, {60}, {25, 50, 100}})
 	->Iterations(1)
 	->UseManualTime()
 	->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_SeenSimplicityFuzz)->Arg(400)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_SeenRewalk)->ArgsProduct({{1, 10}, {0, 1}})->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_SeenCamp)->ArgsProduct({{10, 50}, {0, 1}})->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_SeenRewalk)->Arg(1)->Arg(10)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_SeenCamp)->Arg(10)->Arg(50)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_SeenUpkeep)->Iterations(1)->UseManualTime()->Unit(benchmark::kMicrosecond);
