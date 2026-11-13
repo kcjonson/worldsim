@@ -129,6 +129,23 @@ Organize includes in this order (with blank lines between groups):
 
 ## Naming Conventions
 
+### Readable names
+
+Every name is whole words a reader can say: variables, parameters, members, functions, types, and namespace aliases alike. No one- or two-letter names and no cryptic abbreviations.
+
+```cpp
+// ❌ NEVER
+namespace P = Renderer::Primitives;
+P::drawRect(args);
+float d = distance(a, b);
+
+// ✅ CORRECT
+Renderer::Primitives::drawRect(args);
+float gap = distance(start, goal);
+```
+
+The exceptions are loop indices (`i`, `j`) and coordinates (`x`, `y`, `z`). Older code that breaks this rule is legacy to clean up when touched, not a pattern to copy.
+
 ### Classes and Structs
 
 **PascalCase** - capitalize first letter of each word:
