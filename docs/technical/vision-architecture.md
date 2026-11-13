@@ -12,7 +12,7 @@ How agents see: wall occlusion, windows, discovery, witnessing, and player visib
 
 1. **Belief's write path.** Memory is only ever written by observation ([Memory System](../design/game-systems/colonists/memory.md)); vision is where discovery, witnessing, and stale-memory reconciliation actually happen. Belief-filtered navigation is only as honest as this system.
 2. **Occlusion.** Walls block sight. Windows pass sight while blocking movement (the designed security tradeoff). Door openings pass sight in v1 (no open/close simulation yet, consistent with always-pathable doors).
-3. **Player visibility is a design goal.** "Areas not visible to the character are hidden" ([Game Overview](../design/game-overview.md)). The same data that feeds simulation must be renderable as the player's visibility mask (visible, seen, and unexplored areas) and the per-colonist memory debug overlay.
+3. **Player visibility is a design goal.** "Areas not visible to the character are hidden" ([Game Overview](../design/game-overview.md)). The same data that feeds simulation must be drawable as the player's visible, seen, and unseen areas ([Player Visibility](./player-visibility.md)) and the per-colonist memory debug overlay.
 4. **Scale.** Dozens of observers, hundreds of candidate entities in radius, already throttled to every 5 frames. The outdoor case (no occluders anywhere near) is the overwhelmingly common one and must stay as cheap as today's radius query.
 5. **Vector-native.** Occluders are exact segments from the construction graph; no raster visibility grid.
 6. **Many consumers.** Memory/belief discovery, player visibility rendering, technology discovery (proximity-triggered, already designed against VisionSystem), and one-off AI queries ("can this raider see that colonist?").
@@ -51,9 +51,9 @@ The visibility polygon is cached per observer and recomputed only when: the obse
 
 ### D5: Player visibility and overlays are the same polygons, rendered
 
-Player visibility (three states: unexplored, seen but not visible now (dimmed), visible now) renders from the union of the player faction's visibility polygons: triangulate each (they're star-shaped from the observer, so a fan), rasterize additively into a mask texture (`RenderTarget` exists), sample the mask in the terrain/entity passes. Seen-ever state accumulates into a persistent coarse mask. The per-colonist **memory debug overlay** (memory design doc) is the same render path scoped to one observer. The vision debug overlay (V in game, `VisionOverlay`) already draws the polygons and occluders.
+Player visibility (three areas: unseen, seen, and visible now) is specified in [Player Visibility](./player-visibility.md). It reads each player colonist's sight shape from this system, a disc outdoors and the wall-clipped polygon indoors, and computes no sight of its own. The area seen so far is an exact polygon union of those shapes, kept apart from the nav mesh, and the cover is drawn as hard-edged vector fills through the stencil buffer. No mask texture and no raster: the paragraph this one replaces proposed both (Historical Addendum). The per-colonist **memory debug overlay** (memory design doc) can draw from the same shapes scoped to one observer. The vision debug overlay (V in game, `VisionOverlay`) already draws the polygons and occluders.
 
-Simulation stays CPU-side and analytic; rendering consumes the polygon set. The player-facing design (what dimming looks like, whether structures stay visible once seen, minimap interaction) belongs to the Specboard epic "Player visibility: unexplored areas (visible, seen, unseen)"; this doc only establishes that the data comes for free.
+Simulation stays CPU-side and analytic; rendering consumes the shapes.
 
 ### D6: Sight model
 
@@ -97,7 +97,7 @@ Two separately planned pieces, deliberately:
 3. Discovery/witnessing/reconciliation rewired through the polygon
 4. Window transparency, structure-as-observable discovery
 
-**Player visibility (later, separate epic).** Rendering the player's visible, seen, and unexplored areas, and the memory debug overlay, ship on their own schedule under the Specboard epic "Player visibility: unexplored areas (visible, seen, unseen)". D5 establishes that the polygon data they need falls out of the vision epic for free; nothing in the near-term work should anticipate them beyond keeping the polygon set accessible per faction/observer.
+**Player visibility (later, separate epic).** Drawing the player's visible, seen, and unseen areas, and the memory debug overlay, ship on their own schedule under the Specboard epic "Player visibility: unexplored areas (visible, seen, unseen)", specified in [Player Visibility](./player-visibility.md). The sight shapes they need fall out of the vision epic; that spec adds one accessor here that gives an observer's shape outdoors and indoors alike.
 
 ## 7. Risks
 
@@ -114,3 +114,12 @@ Two separately planned pieces, deliberately:
 - [Building & Construction Architecture](./building-construction-architecture.md) — the structure publication (IDs, transparency) the GeometryIndex ingests
 - [Technology Discovery](../design/game-systems/colonists/technology-discovery.md) — proximity-triggered discovery riding this system
 - [Game Overview](../design/game-overview.md): player visibility as a design goal
+- [Player Visibility](./player-visibility.md): the seen record, the cover, and what the player can click
+
+## Historical Addendum
+
+D5 as written on 2026-06-12, replaced on 2026-11-13 by [Player Visibility](./player-visibility.md). Its mask texture and coarse explored mask were dropped: all data in this game is vector.
+
+> Player visibility (three states: unexplored, seen but not visible now (dimmed), visible now) renders from the union of the player faction's visibility polygons: triangulate each (they're star-shaped from the observer, so a fan), rasterize additively into a mask texture (`RenderTarget` exists), sample the mask in the terrain/entity passes. Seen-ever state accumulates into a persistent coarse mask.
+>
+> The player-facing design (what dimming looks like, whether structures stay visible once seen, minimap interaction) belongs to the Specboard epic "Player visibility: unexplored areas (visible, seen, unseen)"; this doc only establishes that the data comes for free.

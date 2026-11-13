@@ -434,7 +434,7 @@ ColonistKnowledge:
 PlayerKnowledge:
   knownDefs: Set<DefNameId>      # Union of all colonists' knownDefs
   craftableDefs: Set<DefNameId>  # At least one colonist can craft this
-  # Everything else is unknown/fog
+  # Everything else is unknown
 ```
 
 ### Mod Support
