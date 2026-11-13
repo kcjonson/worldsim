@@ -9,6 +9,7 @@
 #include <construction/ConstructionWorld.h>
 
 #include <core/Vec2i64.h>
+#include <nav/LimitPolygon.h>
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
@@ -101,7 +102,7 @@ namespace {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Ground: chunk squares and their water (terrain rings, D9)
+// Ground and water (terrain rings, D9)
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -139,12 +140,14 @@ namespace {
 		ChunkTerrainPolygons& at(world::ChunkCoordinate coord) { return chunks[{coord.x, coord.y}]; }
 	};
 
-	// Each chunk's ground (its square and water) in one mesh, as NavigationSystem adds it.
+	// Each chunk's water in one mesh over ground covering the chunk.
 	geometry::nav::PatchableMesh meshFor(const FakeTerrain& terrain) {
-		geometry::nav::PatchableMesh mesh({.maxBoundsEdgeMm = 64000});
+		geometry::nav::PatchableMesh mesh;
 		geometry::nav::PatchEdits	 edits;
 		for (const auto& [coord, polygons] : terrain.chunks) {
-			edits.adds.push_back(chunkSquare({coord.first, coord.second}));
+			const Vec2i64 lo = chunkOriginMm({coord.first, coord.second});
+			const Vec2i64 side{static_cast<std::int64_t>(world::kChunkSize) * 1000, static_cast<std::int64_t>(world::kChunkSize) * 1000};
+			edits.adds.push_back(borderRing(lo, lo + side));
 			appendChunkWater(polygons, edits.adds);
 		}
 		mesh.applyPatch(edits);
@@ -193,13 +196,12 @@ namespace {
 
 } // namespace
 
-TEST(NavInputBuilder, ChunkSquare_IsTheChunksBoundsUnblocked) {
-	const NavInputPolygon square = chunkSquare({1, -2});
-	EXPECT_FALSE(square.blocked);
-	EXPECT_EQ(square.provenanceId, kProvenanceBorder);
-	EXPECT_TRUE(isCcw(square.ring));
-	EXPECT_EQ(*std::min_element(square.ring.begin(), square.ring.end()), meters(512, -1024));
-	EXPECT_EQ(*std::max_element(square.ring.begin(), square.ring.end()), meters(1024, -512));
+TEST(NavInputBuilder, VisibilityLimit_IsTheLimitPolygonUnblocked) {
+	const NavInputPolygon limit = visibilityLimit(meters(512, -1024), 46000);
+	EXPECT_FALSE(limit.blocked);
+	EXPECT_EQ(limit.provenanceId, kProvenanceBorder);
+	EXPECT_TRUE(isCcw(limit.ring));
+	EXPECT_EQ(limit.ring, geometry::nav::limitPolygon(meters(512, -1024), 46000));
 }
 
 TEST(NavInputBuilder, Water_EmitsBlockingRingsWithProvenanceAndHoleCapability) {
@@ -251,8 +253,7 @@ TEST(NavInputBuilder, Water_LakeCoveringChunk_OnlyIslandWalkable) {
 }
 
 // Two chunks' navRings meet along x = 512 m with bit-identical border corners, each side
-// splitting the border edge at its own extra vertex, and each chunk's square splitting it every
-// 16 m. In one mesh the coincident edges merge: no floor inside the lake (no gap), and the
+// splitting the border edge at its own extra vertex. In one mesh the coincident edges merge: no floor inside the lake (no gap), and the
 // triangles tile both chunks exactly (no sliver, no overlap).
 TEST(NavInputBuilder, Water_LakeAcrossChunkBorder_NoGapNoSliver) {
 	FakeTerrain terrain;
@@ -358,12 +359,12 @@ TEST(NavInputBuilder, Water_MissingNeighbourHasNoGround) {
 }
 
 // ---------------------------------------------------------------------------
-// Flora
+// Placed obstacles
 // ---------------------------------------------------------------------------
 
-// Flora tests register into the global AssetRegistry singleton; clear it before
+// Placed obstacle tests register into the global AssetRegistry singleton; clear it before
 // and after each so they neither inherit nor leak definitions across the suite.
-class NavFloraTest : public ::testing::Test {
+class NavPlacedObstacleTest : public ::testing::Test {
   protected:
 	void SetUp() override { AssetRegistry::Get().clearDefinitions(); }
 	void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
@@ -382,16 +383,16 @@ namespace {
 	}
 } // namespace
 
-TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
+TEST_F(NavPlacedObstacleTest, RectEntity_EmitsPaddedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition tree;
-	tree.defName = "Test_NavTree";
-	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
-	reg.registerTestDefinition(tree);
+	AssetDefinition obstacle;
+	obstacle.defName = "Test_NavObstacle";
+	obstacle.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
+	reg.registerTestDefinition(obstacle);
 
 	SpatialIndex index(4.0F);
 	PlacedEntity e;
-	e.defName = "Test_NavTree";
+	e.defName = "Test_NavObstacle";
 	e.position = {10.0F, 20.0F};
 	e.scale = 1.0F;
 	index.insert(e);
@@ -424,16 +425,16 @@ TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 
 // A rotated entity turns the rect into an oriented quad (OBB): the 4 corners are
 // the rotated rect, not an axis-aligned box.
-TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
+TEST_F(NavPlacedObstacleTest, RectEntity_RotationProducesOrientedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition tree;
-	tree.defName = "Test_NavRotTree";
-	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.2F}}); // non-square so rotation is visible
-	reg.registerTestDefinition(tree);
+	AssetDefinition obstacle;
+	obstacle.defName = "Test_NavRotObstacle";
+	obstacle.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.2F}}); // non-square so rotation is visible
+	reg.registerTestDefinition(obstacle);
 
 	SpatialIndex index(4.0F);
 	PlacedEntity e;
-	e.defName  = "Test_NavRotTree";
+	e.defName  = "Test_NavRotObstacle";
 	e.position = {10.0F, 20.0F};
 	e.scale	   = 1.0F;
 	e.rotation = 3.14159265358979323846F / 4.0F; // 45 degrees
@@ -481,16 +482,16 @@ TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
 	}
 }
 
-TEST_F(NavFloraTest, NoCollision_EmitsNothing) {
+TEST_F(NavPlacedObstacleTest, NoCollision_EmitsNothing) {
 	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition bush;
-	bush.defName = "Test_NavBush";
+	AssetDefinition noCollision;
+	noCollision.defName = "Test_NavNoCollision";
 	// collision defaults to None.
-	reg.registerTestDefinition(bush);
+	reg.registerTestDefinition(noCollision);
 
 	SpatialIndex index(4.0F);
 	PlacedEntity e;
-	e.defName = "Test_NavBush";
+	e.defName = "Test_NavNoCollision";
 	e.position = {5.0F, 5.0F};
 	index.insert(e);
 

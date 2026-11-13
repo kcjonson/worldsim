@@ -9,10 +9,6 @@
 // width-refresh time, then on the built mesh: a wall edit's job (its patch, its width refresh) and
 // one more chunk's ground arriving (the same split).
 //
-// BM_NavScaleDetail: one chunk fully covered by forest at the game's density (a tree every 3.54 m,
-// colliders by age class), patched into a nav mesh 16 m cell by cell as the view brings it: rings,
-// bytes and time.
-//
 // BM_SearchCases: how many steps real routes take (see "Choosing the search cap" below).
 
 #include "NavigationSystem.h"
@@ -39,7 +35,6 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <map>
 #include <utility>
 #include <memory>
 #include <optional>
@@ -57,6 +52,14 @@
 namespace {
 	namespace gnav = geometry::nav;
 	using Clock	   = std::chrono::steady_clock;
+
+	// A visibility limit holding the whole chunk: ground as the game adds it, sized so the chunk's
+	// water and obstacles all stand on it.
+	gnav::NavInputPolygon chunkGround(world::ChunkCoordinate coord) {
+		const std::int64_t		side = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
+		const geometry::Vec2i64 lo	 = nav::chunkOriginMm(coord);
+		return nav::visibilityLimit({lo.x + side / 2, lo.y + side / 2}, side * 3 / 4);
+	}
 
 	double msSince(Clock::time_point start) { return std::chrono::duration<double, std::milli>(Clock::now() - start).count(); }
 
@@ -125,7 +128,7 @@ namespace {
 				if (chunk == nullptr) {
 					continue;
 				}
-				ChunkRings rings{coord, {nav::chunkSquare(coord)}, 0};
+				ChunkRings rings{coord, {chunkGround(coord)}, 0};
 				nav::appendChunkWater(chunk->terrainPolygons(), rings.rings);
 				for (std::size_t k = 1; k < rings.rings.size(); ++k) {
 					rings.waterVertices += rings.rings[k].ring.size();
@@ -142,16 +145,14 @@ namespace {
 			Region out;
 			out.start = {256.0F, 256.0F};
 			for (const world::ChunkCoordinate coord : spiral({0, 0}, 32)) {
-				out.chunks.push_back({coord, {nav::chunkSquare(coord)}, 0});
+				out.chunks.push_back({coord, {chunkGround(coord)}, 0});
 			}
 			return out;
 		}();
 		return &region;
 	}
 
-	gnav::PatchableMesh makeMesh() {
-		return gnav::PatchableMesh({.maxBoundsEdgeMm = ecs::NavigationSystem::kMaxBoundsEdgeMm});
-	}
+	gnav::PatchableMesh makeMesh() { return gnav::PatchableMesh{}; }
 
 	gnav::NavInputPolygon box(glm::vec2 lo, glm::vec2 hi, bool blocked, std::int64_t provenance) {
 		return {{nav::toMm(lo), nav::toMm({hi.x, lo.y}), nav::toMm(hi), nav::toMm({lo.x, hi.y})}, blocked, provenance};
@@ -229,44 +230,6 @@ namespace {
 		}
 	}
 
-	// One chunk fully covered by forest at the game's density, patched into a nav mesh cell by cell.
-	void BM_NavScaleDetail(benchmark::State& state) {
-		for (auto _ : state) {
-			gnav::PatchableMesh nav = makeMesh();
-			nav.applyPatch({.adds = {nav::chunkSquare({0, 0})}});
-			nav.refreshWidths();
-			const float					   halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
-			std::map<std::int64_t, gnav::PatchEdits> cells;
-			std::size_t					   rings = 0;
-			for (float x = 1.0F; x < 511.0F; x += 3.54F) {
-				for (float y = 1.0F; y < 511.0F; y += 3.54F) {
-					const glm::vec2		p{x + std::fmod(y * 0.37F, 1.4F), y + std::fmod(x * 0.53F, 1.4F)};
-					const std::uint32_t h	  = static_cast<std::uint32_t>(p.x * 131.0F + p.y * 7.0F) % 100U;
-					const float			e	  = halfExtents[h < 15 ? 0 : h < 75 ? 1 : 2];
-					const std::int64_t	cell = static_cast<std::int64_t>(p.x / 16.0F) * 64 + static_cast<std::int64_t>(p.y / 16.0F);
-					cells[cell].adds.push_back(box(p - glm::vec2{e}, p + glm::vec2{e}, true, nav::kProvenancePlaced));
-					++rings;
-				}
-			}
-			const std::int64_t		before = privateBytes();
-			const Clock::time_point start  = Clock::now();
-			double					worstCellMs = 0.0;
-			for (const auto& [cell, edits] : cells) {
-				const Clock::time_point t = Clock::now();
-				nav.applyPatch(edits);
-				worstCellMs = std::max(worstCellMs, msSince(t));
-			}
-			nav.refreshWidths();
-			state.counters["rings"]			  = static_cast<double>(rings);
-			state.counters["cells"]			  = static_cast<double>(cells.size());
-			state.counters["patchMs"]		  = msSince(start);
-			state.counters["worstCellMs"]	  = worstCellMs;
-			state.counters["detailKBPerChunk"] = static_cast<double>(privateBytes() - before) / 1024.0;
-			state.counters["bytesPerRing"]	  = static_cast<double>(privateBytes() - before) / static_cast<double>(rings);
-			state.counters["slots"]			  = static_cast<double>(nav.triangles().size());
-		}
-	}
-
 	double meanOf(const std::vector<double>& v) {
 		double sum = 0.0;
 		for (const double x : v) {
@@ -278,19 +241,19 @@ namespace {
 	// --- Choosing the search cap ----------------------------------------------------------------
 	//
 	// Three grounds, each 1,024 chunks (16 km a side) of mesh: "open" (squares, no water), "real" (the
-	// Quick Start chunks round its landing, rivers and lakes; needs WORLDSIM_PLANET) and "forest" (open
-	// ground with the chunk round the start covered by forest at the game's density in a nav mesh,
-	// its placed obstacles blocking).
+	// Quick Start chunks round its landing, rivers and lakes; needs WORLDSIM_PLANET) and "obstacles" (open
+	// ground with the chunk round the start covered by placed obstacles at the game's density,
+	// blocking in a nav mesh).
 
-	enum class Ground { Open, Real, Forest };
+	enum class Ground { Open, Real, Obstacles };
 	const char* groundName(Ground g) {
 		switch (g) {
 			case Ground::Open:
 				return "open";
 			case Ground::Real:
 				return "real";
-			case Ground::Forest:
-				return "forest";
+			case Ground::Obstacles:
+				return "obstacles";
 		}
 		return "";
 	}
@@ -300,20 +263,20 @@ namespace {
 		glm::vec2			centre{0.0F, 0.0F};
 	};
 
-	// The forest of BM_NavScaleDetail over the chunk holding `centre`.
-	std::vector<gnav::NavInputPolygon> forestOver(world::ChunkCoordinate chunk) {
+	// Placed obstacles at the game's density over the chunk holding `centre`.
+	std::vector<gnav::NavInputPolygon> obstaclesOver(world::ChunkCoordinate chunk) {
 		const float						   halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
 		const glm::vec2					   origin{static_cast<float>(chunk.x) * 512.0F, static_cast<float>(chunk.y) * 512.0F};
-		std::vector<gnav::NavInputPolygon> trees;
+		std::vector<gnav::NavInputPolygon> obstacles;
 		for (float x = 1.0F; x < 511.0F; x += 3.54F) {
 			for (float y = 1.0F; y < 511.0F; y += 3.54F) {
 				const glm::vec2		p = origin + glm::vec2{x + std::fmod(y * 0.37F, 1.4F), y + std::fmod(x * 0.53F, 1.4F)};
 				const std::uint32_t h = static_cast<std::uint32_t>(x * 131.0F + y * 7.0F) % 100U;
 				const float			e = halfExtents[h < 15 ? 0 : h < 75 ? 1 : 2];
-				trees.push_back(box(p - glm::vec2{e}, p + glm::vec2{e}, true, nav::kProvenancePlaced));
+				obstacles.push_back(box(p - glm::vec2{e}, p + glm::vec2{e}, true, nav::kProvenancePlaced));
 			}
 		}
-		return trees;
+		return obstacles;
 	}
 
 	const SearchGround* searchGround(Ground g) {
@@ -331,8 +294,8 @@ namespace {
 		for (const ChunkRings& c : region->chunks) {
 			out->mesh.applyPatch({.adds = c.rings});
 		}
-		if (g == Ground::Forest) {
-			out->mesh.applyPatch({.adds = forestOver(world::worldToChunk({out->centre.x, out->centre.y}))});
+		if (g == Ground::Obstacles) {
+			out->mesh.applyPatch({.adds = obstaclesOver(world::worldToChunk({out->centre.x, out->centre.y}))});
 		}
 		out->mesh.refreshWidths();
 		if (g == Ground::Real) {
@@ -355,7 +318,7 @@ namespace {
 		return out;
 	}
 
-	// Starts round the ground's centre: within 2 km on open and real ground, inside the forest chunk's
+	// Starts round the ground's centre: within 2 km on open and real ground, inside the obstacle chunk's
 	// middle 200 m.
 	std::vector<glm::vec2> startsFor(Ground g, const SearchGround& ground, int count) {
 		std::vector<glm::vec2> out;
@@ -364,11 +327,11 @@ namespace {
 			  seed = seed * 1664525U + 1013904223U;
 			  return static_cast<float>(seed >> 8) / static_cast<float>(1U << 24);
 		};
-		const float spread = g == Ground::Forest ? 200.0F : 4000.0F;
+		const float spread = g == Ground::Obstacles ? 200.0F : 4000.0F;
 		while (static_cast<int>(out.size()) < count) {
 			const glm::vec2 p = ground.centre + glm::vec2{(unit() - 0.5F) * spread, (unit() - 0.5F) * spread};
 			const std::optional<glm::vec2> land = landNear(ground.mesh, p);
-			if (land.has_value() && (g != Ground::Forest || ground.mesh.locate(nav::toMm(*land)) >= 0)) {
+			if (land.has_value() && (g != Ground::Obstacles || ground.mesh.locate(nav::toMm(*land)) >= 0)) {
 				out.push_back(*land);
 			}
 		}
@@ -430,7 +393,6 @@ BENCHMARK(BM_NavScaleGround)
 	->Args({1000, 0})
 	->Iterations(1)
 	->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_NavScaleDetail)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_SearchCases)
 	->ArgsProduct({{0, 1, 2}, {100, 500, 2000, 10000}})
 	->Iterations(1)

@@ -648,9 +648,9 @@ TEST(RouteQueue, ANewRequestGoesFirstInTheNextSlice) {
 	}
 }
 
-// A start on no meshed ground is its own answer, never no known way; goals on no meshed
-// ground from a start on it are no known way.
-TEST(RouteQueue, AStartOffTheMeshIsNotNoKnownWay) {
+// The queue knows no ground on its way in: a start or goals on no meshed ground are no known way,
+// with no path. Whether to wait for that ground is NavigationSystem's answer, given before it asks.
+TEST(RouteQueue, EndsOffTheMeshAreNoKnownWay) {
 	const PatchableMesh mesh = wallRoom();
 	const NavView		view = mesh.view();
 	RouteQueue			queue;
@@ -658,8 +658,8 @@ TEST(RouteQueue, AStartOffTheMeshIsNotNoKnownWay) {
 	const RouteTicket	bothOff	 = queue.request(routeArgs({50000, 50000}, {{60000, 50000}}));
 	const RouteTicket	goalsOff = queue.request(routeArgs({5000, 6000}, {{60000, 50000}}));
 	const std::map<RouteTicket, RouteAnswer> answers = runUntilAnswered(queue, view, {off, bothOff, goalsOff});
-	EXPECT_EQ(answers.at(off).outcome, RouteOutcome::StartOffMesh);
-	EXPECT_EQ(answers.at(bothOff).outcome, RouteOutcome::StartOffMesh);
+	EXPECT_EQ(answers.at(off).outcome, RouteOutcome::NoKnownWay);
+	EXPECT_EQ(answers.at(bothOff).outcome, RouteOutcome::NoKnownWay);
 	EXPECT_EQ(answers.at(goalsOff).outcome, RouteOutcome::NoKnownWay);
 	EXPECT_EQ(answers.at(off).goalIndex, -1);
 	EXPECT_TRUE(answers.at(off).path.points.empty());

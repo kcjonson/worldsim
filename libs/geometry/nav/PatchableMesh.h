@@ -105,23 +105,12 @@ namespace geometry::nav {
 		bool opens = false;
 	};
 
-	// The outline with every edge longer than maxEdgeMm cut into near-equal pieces at
-	// lattice points on it, so each piece is exactly on the original edge (on an axis-
-	// aligned side, every millimetre). An edge whose lattice is too coarse keeps fewer
-	// cuts. maxEdgeMm 0 returns the outline whole.
-	std::vector<Vec2i64> splitLongEdges(const std::vector<Vec2i64>& outline, std::int64_t maxEdgeMm);
-
 	using DoorId		   = std::int32_t;
 
 	// Covers any agent the game could have: a 2 m radius, over six times the colonist's.
 	constexpr std::int64_t kDefaultMaxClearanceMm = 4000;
 
 	struct PatchableMeshArgs {
-		// A bounds ring enters the mesh with its edges split to at most this
-		// (splitLongEdges), and ring() returns that outline; 0 keeps them whole. A patch
-		// re-derives a changed edge whole, so this bounds the cost of a ring crossing a
-		// long chunk side.
-		std::int64_t maxBoundsEdgeMm = 0;
 		// Corridor widths are exact below this and read kUnconstrainedWidth at or above
 		// it, so a patch refreshes only the widths within this distance of what it changed.
 		std::int64_t maxClearanceMm = kDefaultMaxClearanceMm;
@@ -338,7 +327,6 @@ namespace geometry::nav {
 		bool piecesRunBetween(const EdgeSource& s, const std::vector<Vec2i64>& ends, std::vector<std::pair<std::uint32_t, std::uint32_t>>& pieceList,
 							  std::vector<std::uint32_t>& endList) const;
 
-		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
 		PagedVector<RegisteredRing> rings;
 		std::vector<RingId>			freeRings;

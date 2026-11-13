@@ -68,7 +68,9 @@ namespace nav {
 	enum class RouteOutcome {
 		Routed,		  // a goal is reached
 		NoKnownWay,	  // explored everything this mover can reach on meshed ground, or no goal can be stood on
-		StartOffMesh, // the start is on no meshed ground yet: wait for it, never a failure
+		// The start, or a goal, is off the mesh inside a visibility limit still on its way in: ask
+		// again once it lands. Only NavigationSystem, which holds the limits, answers it.
+		AwaitingMesh,
 	};
 
 	// The mesh as a slice read it: the caller passes the mesh's epochs to runSlice.
@@ -154,7 +156,7 @@ namespace nav {
 		static void restart(Route& route);
 		static void growBox(Route& route, const geometry::nav::NavView& mesh);
 		bool		turn(std::size_t at, std::uint32_t& left, const geometry::nav::NavView& mesh, const RouteMeshEpochs& epochs);
-		void		finish(std::size_t at, const geometry::nav::NavView& mesh, const RouteMeshEpochs& epochs);
+		void		finish(std::size_t at, const RouteMeshEpochs& epochs);
 
 		// Main-thread state.
 		RouteTicket						  nextTicket = 1;

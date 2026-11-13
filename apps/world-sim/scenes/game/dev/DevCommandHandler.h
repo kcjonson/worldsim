@@ -120,10 +120,15 @@ namespace world_sim {
 		app::DevResponse devStorage(const app::DevRequest& cmd);
 		void		devTunable(const app::DevRequest& cmd);
 
-		// --- world-position validity (single gate for every placing/moving verb) ---
+		// --- world-position validity (the gates for every placing/moving verb) ---
 		// True when `at` is on an active walkable nav face. On false, logs+toasts the
-		// refusal in the standard rejection style and the caller creates/moves NOTHING.
+		// refusal, saying whether `at` is off the meshed ground or on water or a placed
+		// obstacle, and the caller creates/moves NOTHING.
 		bool requireValidPosition(Foundation::Vec2 at, const char* verb);
+
+		// Where a mover may be put: ground no mover has meshed yet (his own limit lands
+		// there at once, outside every budget), else requireValidPosition.
+		bool requireMoverPosition(Foundation::Vec2 at, const char* verb);
 
 		// True when the WHOLE foundation footprint (the closed polygon `pts`: vertices, edges, AND
 		// interior) is BUILDABLE -- NavigationSystem::isAreaBuildable, the same terrain-only predicate the

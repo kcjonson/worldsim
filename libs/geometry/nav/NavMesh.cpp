@@ -252,7 +252,7 @@ namespace geometry::nav {
 			std::int64_t lo = 0;
 			// hi = floor(sqrt(INT64_MAX)); k*k stays in int64 range as Int128. Safe because
 			// the only inputs are squared distances between mesh vertices, i.e. coordinate
-			// DELTAS bounded by the loaded-region span (a few chunks, a few million mm),
+			// DELTAS bounded by the meshed span (a few million mm),
 			// squared ~1e13, far under INT64_MAX -- not because coordinates are small (they
 			// are world-absolute mm). A navmesh spanning >~2,000 km would break this.
 			std::int64_t hi = 3037000499;

@@ -1,6 +1,6 @@
 # Nav mesh: one mesh, variable resolution
 
-**Status:** In progress. Steps 1 to 5 built 2026-11-11 (section 10, entries 1 to 98). The correction that brings the code to the design built 2026-11-12 (entries 99 to 113); its in-game pass has not run yet. Steps 6 and 7 (section 7) are not built. The design is section 1, rules 22 to 38; section 1.1 lists where the code still departs from it. Sections 2 and 4 describe the code as it stands; section 10 is the record of how it got there.
+**Status:** In progress. Steps 1 to 5 built 2026-11-11 (section 10, entries 1 to 98). The correction that brings the code to the design built 2026-11-12 (entries 99 to 113). The mesh as the union of movers' visibility limits, ending at its edge, built 2026-11-13 (entry 116; rules 39 to 42), on five stacked pull requests not yet merged. Steps 6 and 7 (section 7) are not built. The design is section 1, rules 22 to 42; section 1.1 lists where the code still departs from it. Sections 2 and 4 describe the code as it stands; section 10 is the record of how it got there.
 **Epic:** WOR-702 (Nav mesh: one mesh, variable resolution)
 **Created:** 2026-11-10
 **Replaces:** the "As built: multi-region sim area" section of [pathfinding-architecture.md](./pathfinding-architecture.md), and its rule that agents are never mesh obstacles (risk 7)
@@ -11,8 +11,10 @@ anything in it changed. This document replaces them with one persistent mesh at 
 that is never regenerated. An obstacle that appears, disappears, or moves patches the triangles
 around it and leaves the rest alone. Movers generate the mesh, in full, within their sight
 distance plus a buffer, and it only grows; the camera has no effect on it (section 1). The
-title is the epic's name: the mesh has no resolution levels (rule 31). Route searches run on a
-worker under a fixed amount of work per tick and carry on across ticks (4.6).
+title is the epic's name: the mesh has no resolution levels (rule 31). The mesh is the union of
+what movers have seen, each mover's visibility limit a polygon round where he stands, and it ends
+at that union's edge (rules 39 to 42, section 4.4). Route searches run on a worker under a fixed
+amount of work per tick and carry on across ticks (4.6).
 
 Numbers marked *measured* come from `geometry-benchmarks` or `sim-benchmarks` on this branch
 (RelWithDebInfo, the dev machine). Numbers marked *estimate* are gated on a measurement named
@@ -23,8 +25,8 @@ step budgets, the placed-obstacle cap) are marked *historical*.
 
 ## 1. Intent
 
-Rules 22 to 37 are the design, settled 2026-11-11 (rules 31 to 38 later that day), and
-everything below is judged against them. The earlier rules follow; each one a later rule
+Rules 22 to 38 are the design, settled 2026-11-11 (rules 31 to 38 later that day), with rules 39
+to 42 of 2026-11-12 on where the mesh ends, and everything below is judged against them. The earlier rules follow; each one a later rule
 replaces is marked, and the rest still stand.
 
 ### The design (rules 22 to 38)
@@ -39,7 +41,7 @@ replaces is marked, and the rest still stand.
 29. Mesh, nav, and collision code is generic. It never names one kind of obstacle.
 30. Rules 22 and 23 replace the earlier model, in which the camera decided detail, small placed obstacles were ignored off camera, and a forward snap handled detail arriving with the view. The snap rule itself stands wherever an obstacle lands on a mover: the mover moves forward along its route, and never stalls or loses progress.
 31. The nav mesh is one mesh at full detail. There is no coarse or structural layer, no second mesh, and no resolution levels.
-32. Each mover adds to the mesh everything within its own sight distance plus a buffer: ground, water, walls, doors, and every object movers cannot path through. The distance is per mover, taken from its sight distance; it is not a fixed constant. Ground is patched in a whole chunk at a time, as today, and that stays as it is for now; sight distance plus a buffer governs everything else a mover adds.
+32. Each mover adds to the mesh everything within its own sight distance plus a buffer: ground, water, walls, doors, and every object movers cannot path through. The distance is per mover, taken from its sight distance; it is not a fixed constant. Ground is patched in a whole chunk at a time, as today, and that stays as it is for now; sight distance plus a buffer governs everything else a mover adds. (The chunk-at-a-time half is replaced by rule 39: ground too is only what movers have seen.)
 33. The mesh only grows. Meshed ground never leaves it: a chunk unloading does nothing to the mesh, and there is no cap and no trim. The one thing that changes what is in it is a change in the world (an obstacle felled, built, or moved), which patches the mesh in place (rule 24).
 34. The camera has no effect on the mesh. (Restates rule 22.)
 35. Placement needs no rule of its own. The player can only place in the viewable area, which is smaller than the meshed area. (Restates rule 27 for placement. Its premise, that the player sees only ground a colonist has seen, holds once player visibility exists, WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)). Until then the player can pan to ground no mover has meshed, where a placement reads invalid and a move order does nothing; nothing is built for either.)
@@ -47,12 +49,19 @@ replaces is marked, and the rest still stand.
     - How reach and "is there a way" are answered on one mesh: component labels (`connected`) answer whether two places are joined by meshed ground, and only a route request answers for a given mover's width and belief (4.6).
     - How large the search time budget of rule 18 is and how a search is resumed: a fixed count of search work a tick, sized from a time target, shared by every request; a search carries on across ticks with no limit of its own, and restarts when a patch changes what it read (4.6).
     - Whether answers depend on the machine: no; given the same chunk arrival ticks every answer lands on the same tick (4.8).
-    - How large the buffer of rule 32 is: one 16 m cell (4.4).
+    - How large the buffer of rule 32 is: one 16 m cell (4.4). (Replaced by entry 116: `kSightBufferMeters` keeps its value, now set by what it must cover, 4.11; there are no cells.)
     - A target cut off from the start by ground no mover has meshed reads "no known way" until meshed ground joins them (4.10).
     - Mover footprints and labels: a footprint's tag reads open for labels, so a footprint never splits a component (WOR-710 (Step 7: Mover footprints in the mesh) builds the footprints).
     - Still open: how a route is planned to a goal beyond meshed ground. Rule 26 says the mover heads that way and meshes as it goes, not how the route is planned; WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet).
 37. Since the mesh only grows, its cost per object movers cannot path through is part of bringing the code to the design (section 6). Paging unused parts of a very large mesh out to disk is a possible later follow-up and not part of the design: WOR-800 (Nav: page unused parts of a very large mesh out to disk (later, maybe)). Mesh paged out would come back unchanged.
 38. The geography mesh (also called the regional mesh) is Tier 1 of [pathfinding-architecture.md](./pathfinding-architecture.md), a separate mesh from the nav mesh, here called the real mesh where the two are contrasted. It is computed when the world loads and always exists. It is much less detailed than the real mesh. The real mesh is a detail view of the geography mesh, as game tiles are a detail view of world tiles. The two must be aligned. One is derived from the other and then filled in. What it is built from, its resolution, which mesh is derived from which in implementation terms, how alignment works, and what the geography mesh answers are to be designed under WOR-802 (Geography mesh (Tier 1): computed at load, always exists). It is not the coarse layer that rule 31 removes. As built it does not exist (1.1). It is built later, as its own work under WOR-802, after the nav correction, because long-distance travel is not being done yet; until then the real mesh answers only for ground movers have meshed.
+
+### The seen area (rules 39 to 42, 2026-11-12)
+
+39. The mesh is the union of what movers have seen, terrain included, and it ends at that union's edge. Outside it is impassable: no triangles, no links to chunk edges or far points. (Replaces the chunk-at-a-time half of rule 32.)
+40. No arbitrary points. Every vertex comes from something in the game, of three kinds: a corner of a placed or built object (a placed obstacle, a wall, a door), a point of terrain (a water outline), or a corner of a visibility limit, plus the points where two such outlines cross. Chunk corners, chunk-side cut points, and kept loose points are gone.
+41. A mover's visibility limit is a node type of its own: a polygon round where he stands, holding the disc of his sight distance plus a buffer. The objects in it are found by entity, with no concept of a cell. The step between limits is one tunable constant. Known-world nodes (the geography mesh) come later (4.12).
+42. The landing meshes a large area round the drop before any colonist stands there, its radius one tunable constant: the crew saw it as they came down. It is the one exception to rule 22.
 
 ### Earlier rules
 
@@ -86,10 +95,10 @@ The rulings of the morning of 2026-11-11, which narrowed the rules above (sectio
 ### 1.1 Where the code does not match the design yet
 
 The correction of 2026-11-12 (section 10, entries 99 to 113) brought the code to rules 18 and 22
-to 34. As built now:
+to 34, and the seen-area work of 2026-11-13 (entry 116) to rules 39 to 42. As built now:
 
-- The camera has no effect on the mesh. It still loads chunks to draw them (3 by 3 around it in the game, kept to 5 by 5), but ground and placed obstacles are meshed only in chunks a mover holds, so a chunk only the camera loaded gets nothing (4.4). Collision and the forward snap act wherever a placed obstacle is in the mesh, on every mover.
-- Each mover meshes its sight distance plus a 16 m buffer (`kSightBufferMeters`) and holds chunks by its own range (4.4, 4.5).
+- The camera has no effect on the mesh. It still loads chunks to draw them (3 by 3 around it in the game, kept to 5 by 5), but only a mover's visibility limit (or the landing's) brings ground and placed obstacles in, so a chunk only the camera loaded gets nothing (4.4). Collision and the forward snap act wherever a placed obstacle is in the mesh, on every mover.
+- Ground is the union of visibility limits, each a polygon holding the disc of a mover's sight distance plus `kSightBufferMeters`, and the mesh ends at its edge. Placed obstacles are found by entity in each limit. Each mover holds chunks by the reach of his limit (4.4, 4.5).
 - Nothing leaves the mesh but what leaves the world: a placed obstacle removed, a wall or door taken down, water re-derived. No chunk unload, cap, or trim takes anything out (4.1).
 - Placed obstacles block. No search is given prices (4.2).
 - There is one mesh at full detail and one patch job, with no coarse or structural layer (4.1, 4.8).
@@ -103,16 +112,12 @@ is what remains before they close.
 
 Still open:
 
-- **Memory per placed obstacle.** WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB) is not done. A placed obstacle costs about 5.8 KB in the mesh now (`BM_PlacedObstacleBytes` 5,803 B; the 7.2 KB below was measured earlier, entry 95), so meshed dense ground is about 435 to 490 MB per square kilometre, and the mesh only grows (rule 37, section 6).
-- **Chunk-border slivers: done, with limits.** WOR-809 (chunk-border slivers) is built (entry 115): a border between two meshed open squares meshes like the interior. What remains:
-  - The one-sided band. A mover's obstacle cells can reach a chunk side before the chunk across is meshed; that side is still the constrained mesh boundary and long triangles bunch there until the neighbour arrives.
-  - Borders through water stay constrained edges.
-  - Open-ground fans inside chunks with few obstacles are unchanged.
-  - Slanted outlines in the library: slanted chunk-style outlines with obstacles crossing at shallow angles can differ from a from-scratch build by a millimetre sliver (WOR-812). The game's axis-aligned squares are not affected.
-  - A chunk arriving beside a neighbour measured 66 us against 58 us recorded earlier (entry 51), on another day; unconfirmed.
+- **Memory per placed obstacle.** WOR-801 (Nav: cut the mesh cost of a placed obstacle from about 7.2 KB to about 1.25 KB) is not done. A placed obstacle cost about 5.8 KB in the mesh when last measured (5,803 B, 2026-11-12, by `BM_PlacedObstacleBytes`, a bench since deleted; the 7.2 KB below was measured earlier, entry 95), so meshed dense ground is about 435 to 490 MB per square kilometre, and the mesh only grows (rule 37, section 6).
+- **The seen-area mesh: built, with known limits.** Chunk squares are gone, so chunk borders no longer exist in the mesh (entry 116). Its known limits are in 4.11: urgent work has no per-tick ceiling, a budgeted limit in dense ground is over the job budget, open ground with no placed objects has no interior vertices (an owner decision is open), water is still cut at chunk sides, walls do not clip a limit, and crafting stations and storage do not block movement.
+- **Path query start edge.** The path query does not gate the edge between the start and goal triangles when they are adjacent, so a disc slightly wider than a waist can cross it when it starts in the triangle beside it. Found on the way (entry 116), on main before this work, filed as a bug, not fixed.
 - **Bench fixes.** WOR-808 (bench fixes after the geometry clean-up) is not done.
 - **The geography mesh.** WOR-802 (Geography mesh (Tier 1): computed at load, always exists) comes later: long-distance travel is not being done yet. Until it exists the real mesh answers only for ground movers have meshed (rule 38).
-- **Goals beyond meshed ground.** WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet). A route to a goal off meshed ground, or cut off from the start by ground no mover has meshed, answers "no known way" at once (4.10).
+- **Goals beyond meshed ground.** WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet). A route to a goal off meshed ground, or cut off from the start by ground no mover has meshed, answers "no known way" at once, unless the goal lies in a limit on its way in, which answers `AwaitingMesh` (4.6, 4.10).
 - **Player visibility.** WOR-754 (Player visibility: unexplored areas (visible, seen, unseen)) is not built, so the player can still pan to and click ground no mover has meshed. Until it exists a move order there does nothing and a placement there reads invalid (rules 27 and 35). Nothing is built for either.
 - **Mover footprints.** WOR-710 (Step 7: Mover footprints in the mesh) is not built. Labels can already read a footprint tag as open (`MeshComponentsArgs::openTags`), so a mover in a doorway need never split a component; what a blocked mover does is question 2 (section 8).
 - **Queries outside the sim tick wait on the route slice.** A nav query made outside the tick (the build tool's cursor, placement, the nav overlay) joins the patch job, which waits for the tick's route slice, so it can wait up to a slice (about 8 ms) longer while a search runs. WOR-804 (queries outside the tick waiting on the route slice).
@@ -136,7 +141,7 @@ takes over.
 
 | Area | Before this epic | As built |
 |---|---|---|
-| Storage | A list of rectangles: a 60 m square per colonist, one for the viewport, overlapping ones merged, re-squared, clamped to 128 m. Each has its own complete mesh | One persistent mesh at full detail over the ground movers have meshed, each within its sight distance plus a buffer; it only grows (rules 31 to 33) |
+| Storage | A list of rectangles: a 60 m square per colonist, one for the viewport, overlapping ones merged, re-squared, clamped to 128 m. Each has its own complete mesh | One persistent mesh at full detail over the union of movers' visibility limits, ending at its edge; it only grows (rules 31 to 33, 39) |
 | Change | Any trigger rebuilds a whole rectangle. A wall edit or a felled tree anywhere rebuilds every rectangle (global counters) | The triangles around a changed obstacle are patched, nothing else |
 | Repeated work | Built rectangles overlap; a recenter re-meshes mostly unchanged ground; the placement mesh is a third copy | An obstacle enters the mesh once and leaves it once |
 | Connectivity | A path needs both ends in one rectangle. Another rectangle reads unreachable, no rectangle holds | Paths cross all meshed ground; component labels answer "is there a known way" with no search (4.6) |
@@ -152,7 +157,7 @@ takes over.
 
 | Input | Trees | Triangles | Build |
 |---|---|---|---|
-| manyTreesDump | 512 | 4,418 | 152 ms |
+| manyObstaclesDump | 512 | 4,418 | 152 ms |
 | controlDump | 639 | 5,434 | 234 ms |
 | realRings | 637 | 6,215 | 295 ms |
 | controlDump, trees removed | 0 | 310 | 1.7 ms |
@@ -186,7 +191,7 @@ three fixtures, the 2x2 tiling, and 340 random inputs). Median of 5, same machin
 
 | Input | Before | After |
 |---|---|---|
-| manyTreesDump | 152 ms | 11.7 ms |
+| manyObstaclesDump | 152 ms | 11.7 ms |
 | controlDump | 234 ms | 14.5 ms |
 | realRings | 295 ms | 17.3 ms |
 | controlDump, trees removed | 1.7 ms | 0.77 ms |
@@ -220,9 +225,9 @@ What was found, and what this design takes from each.
 |---|---|---|
 | Recast/Detour tile cache, Unreal, Unity, A* Pathfinding Project `NavmeshCut` ([Granberg](https://arongranberg.com/2013/08/navmesh-cutting/)) | Every shipping engine patches at tile granularity, and none documents a smaller patch. They rasterize to voxels, so a tile is the smallest thing they can re-derive | We depart from this. Our mesh is exact polygons in a triangulation, where the smallest unit is the hole around one obstacle |
 | Unity `NavMeshObstacle` carving (its Move Threshold, Time To Stationary, and Carve Only Stationary settings; from memory, not re-read for this document) | A moving obstacle carves the mesh only after it has moved past a threshold or been still for a set time; in between, agents avoid it by steering | The same rule for mover footprints (4.3.3) |
-| Unreal navigation invokers ([docs](https://dev.epicgames.com/documentation/unreal-engine/using-navigation-invokers-in-unreal-engine)) | Detail exists only around agents, with a generation radius and a larger removal radius | Detail around agents with a generation radius: a mover's disc (4.4). There is no removal radius; nothing leaves the mesh (rule 33). The view rects first built from this are deleted |
+| Unreal navigation invokers ([docs](https://dev.epicgames.com/documentation/unreal-engine/using-navigation-invokers-in-unreal-engine)) | Detail exists only around agents, with a generation radius and a larger removal radius | Detail around agents with a generation radius: a mover's visibility limit (4.4). There is no removal radius; nothing leaves the mesh (rule 33). The view rects first built from this are deleted |
 | Unreal per-area navmesh resolution ([docs](https://dev.epicgames.com/documentation/en-us/unreal-engine/navigation-mesh-resolutions-user-guide)) | Resolution there is voxel size, and low resolution can delete real paths | Not a precedent. Our detail is which obstacle classes block, never geometric precision |
-| Godot region connection ([docs](https://docs.godotengine.org/en/4.2/tutorials/navigation/navigation_connecting_navmesh.html)) | Regions join cleanly only when edge vertices coincide exactly; margin heuristics fail on partial overlaps | Chunk borders are exact shared integer vertices in one mesh |
+| Godot region connection ([docs](https://docs.godotengine.org/en/4.2/tutorials/navigation/navigation_connecting_navmesh.html)) | Regions join cleanly only when edge vertices coincide exactly; margin heuristics fail on partial overlaps | Overlapping visibility limits are one ground in one mesh: a shared stretch dissolves, and the union's boundary is exact integer vertices (4.3.3) |
 | Factorio FFF-317 ([post](https://cf-www.factorio.com/blog/post/fff-317)) | The reachability abstraction ignores entities, so placing buildings never touches it; only terrain changes do | First built as reachability on a structural layer, since deleted (4.2). Labels on the one mesh take the idea's other half: a placed obstacle landing in open ground moves no label and no epoch (4.6) |
 | Kallmann, dynamic CDT and Local Clearance Triangulations ([TOG 2014](http://graphics.ucmerced.edu/papers/14-tog-lct.pdf)) | Local insert and remove with a list of obstacle ids per constrained edge. Floating point with an epsilon. Repeated small moves pile up stray points unless removal is done fully | The patch model, with our exact integer predicates. A move re-derives its hole from rings, which removes strays |
 | Demyen and Buro ([AAAI 2006](https://cdn.aaai.org/AAAI/2006/AAAI06-148.pdf)); Kallmann on the same measure | A corridor width depends on the nearest obstacle in a wedge, which can sit outside the patched triangles. Kallmann reports the measure is wrong in some CDT cases | Width search is capped at a maximum clearance, and a patch invalidates widths within that distance of its hole |
@@ -239,7 +244,7 @@ has a forward-only rule. Section 4.7 is new.
 
 ## 4. Design
 
-Sections 4.1 to 4.10 describe the code as built after the correction of 2026-11-12.
+Sections 4.1 to 4.12 describe the code as built after the seen-area work of 2026-11-13.
 
 ### 4.1 One mesh
 
@@ -259,25 +264,24 @@ them to do. A patch is already smaller than any cell. An obstacle enters the mes
 there is nothing to key or cache. And a grid of cell borders would only add triangles, plus a
 seam problem where a detailed cell meets a plain one.
 
-**The chunk is the one partition, and it already exists.** Ground arrives a chunk at a time, so
-each chunk's square is a ring of constrained edges in the mesh. Vertices on a border between two
-chunks are shared, exactly, because it is one mesh, and paths and patches cross it like any other
-edge. Where two open squares meet, their shared side is dissolved: it is neither a constraint nor
-a mesh edge, so triangles run across it like anywhere else in open ground (entry 115). In that narrow sense the chunk is a cell: it is the unit ground arrives in and the unit its
-first mesh is built in. It is never the unit a change is applied in. Ground stays patched in a
-whole chunk at a time for now (rule 32).
+**The mesh has no partition.** Ground is the union of visibility limits (4.4): each limit is a
+ground outline, outlines may overlap, nest, touch or share sides, and only the union's boundary is
+kept. Chunks are not in the mesh. Every vertex is a corner of a placed or built object, a point of
+terrain, a corner of a visibility limit, or a point where two such outlines cross (rule 40); the
+one exception left is water, still cut at chunk sides (4.11).
 
-The borders do one more job. The triangulation's in-circle test is exact only while the points
-involved are within about 2^30 mm of each other, and a planet is bigger than that. With chunk
-borders in the mesh no triangle is larger than a chunk, so every test is local however far
-apart two meshed areas are.
+The triangulation's in-circle test is exact only while the points involved are within about
+2^30 mm of each other. Nothing in the mesh bounds a triangle but the seen area it lies in, and in
+open ground with no placed objects a triangle can span the whole open region (4.11). The library
+refuses any ground outline that spans `kMaxGroundExtentMm` (2^30 mm) or more on an axis
+(`PatchReport::refusedRings`, logged by the game; 4.8).
 
-**A chunk unloading does nothing to the mesh.** Its ground, water, walls, doors and placed
-obstacles stay with their ids, and so do the nav system's records of them (its ground per chunk,
-its placed obstacles in the mesh, its wanted cells). A chunk that reloads patches nothing, and its
-cells are not scanned again. Ground no mover has held has no triangles. Measured on the Quick
-Start planet's chunks, real ground costs 87 to 130 KB a chunk in the nav mesh (entry 84; that
-entry's structural-mesh figures are historical).
+**A chunk unloading does nothing to the mesh.** Its water, walls, doors, placed obstacles, and the
+seen ground over it stay with their ids, and so do the nav system's records of them (each chunk's
+water, the placed obstacles in the mesh by key). A chunk that reloads patches nothing by itself. A
+later limit over it adds any placed obstacle its placement data holds that the mesh lacks, which is
+how one that came back with its chunk (below) re-enters. Ground no limit has reached has no
+triangles.
 
 One gap sits outside nav: placement data does not keep removals across an unload, so a felled
 obstacle comes back in the placement data while the mesh rightly lacks it, WOR-717 (Felled trees
@@ -305,15 +309,14 @@ record what was built; entry 99 records its removal.
 
 ### 4.3 Patches
 
-Every change after a chunk's first mesh is one of three operations. None of them regenerates
-anything outside its hole.
+Every change is one of three operations. None of them regenerates anything outside its hole.
 
 | Event | Operation |
 |---|---|
 | A placed entity with a collider goes away, a wall or door is removed | Remove (4.3.1) |
 | A wall or door is built, placed obstacles first enter an area, a placed entity gains a collider | Add (4.3.2) |
 | A mover's footprint or a large object moves (not built: WOR-710 (Step 7: Mover footprints in the mesh)) | Move (4.3.3) |
-| A chunk's ground is wanted and a mover holds the chunk | Its square and water rings are added to the mesh, through the same patch job as every other edit (4.4) |
+| A mover's visibility limit can go in (4.4) | Its placed obstacles, then its chunks' water not yet in, then the limit itself as a ground outline, added through the same patch job as every other edit |
 | A loaded chunk's terrain changes | Its water is re-derived: the old water rings out, the new ones in |
 | A chunk unloads | Nothing happens to the mesh (rule 33, 4.1) |
 
@@ -332,8 +335,8 @@ The mesh keeps three things to make it possible:
 
 - **A ring registry.** Every ring in the mesh, under a stable id, with its original outline, its class, and its tags.
 - **Sources on each constrained edge.** The list of (ring, which edge of that ring) that put the edge there. A piece of edge two rings share lists both.
-- **A cover set on each triangle.** The set of rings the triangle lies inside, stored once and shared by every triangle with the same set. Floor, water, wall, tree, and door tags are computed from the set by the rule the builder uses today (the smallest solid ring wins; water goes by nesting parity), so that rule exists in one place. Open-ground rings (chunk squares) do not appear by name: the cover holds one ground entry (`kGroundToken`) when an odd number of them contain the triangle, with parity counted per entry. Blocked rings such as water keep their ids.
-- **A partner on each bounds ring edge.** The registered edge (already a 64 m piece) of another live open-ground ring that is the same segment, in either direction. A ring edge with a partner is dissolved: it adds no constraint and no mesh edge, and its end points stay as loose vertices (pins, reference-counted per point) so open ground keeps its shape. A side with ground on one side only has no partner and stays the constrained mesh boundary. Blocked rings never dissolve. The rule is a function of the live rings alone, so `buildNavMesh` applies the same one through a shared helper and a patched mesh equals a build from scratch.
+- **A cover set on each triangle.** The set of rings the triangle lies inside, stored once and shared by every triangle with the same set. Floor, water, wall, tree, and door tags are computed from the set by the rule the builder uses today (the smallest solid ring wins; water goes by nesting parity), so that rule exists in one place. Ground outlines (visibility limits) do not appear by name: the cover holds one ground entry (`kGroundToken`), flipped by parity at each kept ground piece. That is exact because the kept ground pieces are the union's boundary, each kept once. Blocked rings such as water keep their ids, so an island in a lake is ground, lake and island, and floor by parity.
+- **Boundary intervals on each ground edge.** A ground outline's edge is input only where ground differs across it: its boundary intervals, from `groundBoundaries` in `NavMesh.h`, which orders the edge's crossings with every nearby ground edge exactly (Int128) and reads each other outline's inside flag just off the edge's outer side. The rest of the edge is dissolved: no constraint, no mesh edge, no vertex. Where two ground edges run collinear the same way, the shared stretch is input once, owned by the lower `EdgeSource`, and passes to the other edge when its owner is removed; a shared side run the opposite way has ground on both sides and dissolves on both. An interval end is the crossing of two input segments rounded by the arrangement's own rounding, so the patch and a build from scratch make the same vertex. Blocked rings never dissolve. `buildNavMesh` and the patch path share this rule, so a patched mesh equals a build from scratch.
 
 The patch:
 
@@ -341,7 +344,7 @@ The patch:
 2. **Closure.** An original edge joins the set when an edge in the set crosses it, touches it, or shares a split point with it. Edges join whole, corner to corner, never as pieces.
 3. **The hole.** The triangles along the current pieces of every edge in the set, plus the triangles under a ring being added. The mesh edges around that set are the boundary, held fixed.
 4. **Re-derive.** The set's original edges, without the removed ring and with the new one, go through the arrangement and triangulation a first build uses, together with the fixed edges in and around the hole. If that splits a fixed edge, or an edge leaves the hole, the edge it hit joins the set, the hole grows, and this step repeats. The boundary is checked, never assumed.
-5. **Splice and tag.** New triangles take the freed ids. Cover sets flood in from one seed, changing at each constrained edge by the rings on that edge; the seed is one exact point-in-ring test.
+5. **Splice and tag.** New triangles take the freed ids. Cover sets flood in, changing at each constrained edge by the rings on that edge. A group of new triangles that reaches a fixed hole-boundary edge takes the kept cover across it. Otherwise it is seeded from a triangle farther than three times each nearby ring's rounding stray from that ring's edges: ground when any ground outline holds the sample, blocked rings by exact containment. When no triangle is that clear, each nearby ring's containment is read along a ray against its outline as rounded. When nothing can be read, the patch fails loudly (`PatchReport::unreadCovers`, 4.8).
 6. **Legalize.** Unconstrained edges on the hole's boundary are flipped until the mesh is constrained Delaunay again.
 7. **Tell the rest.** Corridor widths within the maximum clearance of the hole are invalidated, the locate index over the hole is refreshed, and movers whose remaining route crosses the hole replan (4.6).
 
@@ -374,7 +377,7 @@ Getting there found three things:
 
 - **A bug in the arrangement, on main today.** A segment's cut points were sorted by coordinate, and a rounded crossing sits off its line, so two cuts could come out in the wrong order along the segment. The edge then zigzagged and forked. Fixed, with a test; nav output on the game fixtures is unchanged.
 - **Rings can meet off loaded ground.** A new ring can cross a ring that hangs over the edge of the mesh, out where there are no triangles, and the rounded crossing can land back on the mesh. The mesh can't show that, so where a changed edge reaches off ground or near its edge the ring registry is asked instead.
-- **The builder's tags depend on which triangle it samples.** `buildNavMesh` tags a face by testing one point of its largest triangle against each ring's original outline. After rounding, a face can straddle an original outline by a fraction of a millimetre, so the tag can depend on the triangulation. It showed in a third of the adversarial states and in none of the game fixtures. The patched mesh doesn't have the problem: it gets tags by counting ring edges crossed, never by sampling. The builder is left as it is until step 4 decides what still uses it.
+- **The builder's tags depend on which triangle it samples.** `buildNavMesh` tags a face by testing one point of its largest triangle against each ring's original outline. After rounding, a face can straddle an original outline by a fraction of a millimetre, so the tag can depend on the triangulation. It showed in a third of the adversarial states and in none of the game fixtures. The patched mesh doesn't have the problem: it gets tags by counting ring edges crossed, never by sampling. The builder is left as it is until step 4 decides what still uses it. (Since fixed: `buildNavMesh` classifies faces by a parity flood from the frame face, as the patch does, entry 116.)
 
 One assumption is known to be false in the general case. The off-ground rule needs to know how
 far rounding can move a piece of an edge from its original line. The arrangement re-splits
@@ -420,14 +423,11 @@ the mesh was built or patched.
 - Historical: a reachability forest rebuild was about 0.13 us per triangle: 0.03 to 0.1 ms for a 128 m region's structural layer, 0.67 ms for a 512 m one. The structural layer and the forests are deleted (4.2); component labels answer whether two places are joined.
 
 **The cost of whole edges.** A long edge that many things cross pulls all of them into the
-hole. A chunk's side is 512 m. Measured in step 3: adding a tree across a 512 m shared side
-with trees along it takes about 1 ms and rebuilds about 200 triangles. So chunk squares enter
-the mesh with their sides divided into 16 m edges, which brings the same patch to about
-0.17 ms and 36 triangles. The split points are exact, since a chunk's side is axis-aligned. (The
-pieces are 64 m as built, `kMaxBoundsEdgeMm`, entry 51.) A long edge is cut from its
-lexicographically lower end point, so two squares walking the same side from opposite ends cut it
-at the same points and the pieces partner. Once a neighbour is live the shared pieces dissolve
-(entry 115), and a placed obstacle on the side costs what one inside a chunk costs.
+hole. Measured in step 3 on a 512 m chunk side: adding a placed obstacle across it with others
+along it took about 1 ms and rebuilt about 200 triangles (*historical*: chunk squares and the
+64 m pieces their sides were split into are gone, entry 116). A visibility limit's sides are a
+`kLimitSides`-th of its perimeter and go in whole; nothing in the library splits a long edge. Only
+an edge's boundary intervals are input at all, and a dissolved stretch pulls nothing into a hole.
 
 #### 4.3.3 What each operation adds
 
@@ -439,21 +439,21 @@ replan.
 **Add.** The start set is the new ring's edges, and the walk under them finds what they cross.
 For a tree that touches nothing the hole is the few triangles its rect overlaps and the
 arrangement has four segments in it. From the measured triangulation cost that is tens of
-microseconds (*estimate*, confirmed or not in step 3). Flora entering an area for the first
-time is many adds: adds whose holes overlap merge into one hole, and the batch is spread over
-ticks inside the patch budget, nearest the mover first (4.4).
+microseconds (*estimate*, confirmed or not in step 3). A limit's placed obstacles are many adds
+in one patch, spread over ticks inside the patch budget when it is not urgent (4.4).
 
 **Move.** One hole over the old footprint and the new one, re-derived with the object at its
 new position.
 
-**A chunk's square** is a ring like any other, of the class that makes ground exist: a triangle
-is kept only if its cover set holds the ground entry. Adding a square meshes new ground and joins
-it to its neighbours along their shared side, which dissolves (the piece of each square's side that
-the other has identically leaves the constraint set; its end points stay as pins). A point exactly
-on a shared side or corner belongs to exactly one square: containment tests move the sample by
-(e, e^2), a fixed perturbation. Removing or moving a square gives its partners' sides back their
-constraints; a ring that hung over the edge of loaded ground is
-completed then.
+**A visibility limit** is a ground outline, a ring of the class that makes ground exist: a
+triangle is kept only if its cover set holds the ground entry. Adding one meshes the new ground
+and joins it to the union: only its boundary intervals are arranged, every stretch of an older
+limit's edge that it now covers dissolves, and those edges are re-derived in the same patch. A
+limit wholly inside the union adds nothing; the game asks `groundCovers(outline)` first and skips
+it. A blocked ring whose part hangs over no ground (water or a wall past the seen edge, a placed
+obstacle straddling it) is registry only there, with no pieces and no triangles, and is completed
+when ground arrives under it. The library also removes and moves ground outlines, re-deriving
+the edges that get their constraint back; the game never does either.
 
 **Mover footprints** (not built: WOR-710 (Step 7: Mover footprints in the mesh)). Every mover has
 a footprint ring, sized from its clearance. It blocks every mover but its owner: the path query
@@ -485,57 +485,88 @@ crowd behaviour (P5 there) still stand, and still do the work between patches.
 chunks, and is snapped and collided with. The camera does none of these (rule 22).
 
 **Range.** A mover's range R is its sight distance (`Memory::sightRadius`, or
-`kDefaultSightRadius`, 30 m, without `Memory`) plus `kSightBufferMeters` (16 m, one cell),
-unclamped (`NavigationSystem::meshingRange`). R is 46 m for every colonist today. The buffer is
-there so the placed obstacles ahead of a walking mover land before he reaches them.
+`kDefaultSightRadius` without `Memory`) plus `kSightBufferMeters`, unclamped
+(`NavigationSystem::meshingRange`). What the buffer must cover is in 4.11.
 
-**The disc, by cell.** Placed obstacles are wanted in 16 m cells (`kDetailCellMm`). A mover
-wants every cell whose nearest point is within R of where he stands, true distance. The set is
-taken again every 4 m he moves (`kDiscRetakeStepMm`) or when R changes: every such cell not wanted
-yet becomes wanted, and so does the ground of the chunks those cells lie in (`trackMovers`,
-`wantDisc`). The reach to an obstacle's centre is at worst about R plus one cell diagonal. A
-wanted cell or chunk stays wanted forever, and a cell is scanned for colliders once, ever. A mover
-that has not moved 4 m costs one compare a tick.
+**The visibility limit.** A mover takes a limit when he first appears, when he has moved
+`kLimitRetakeStepMm` from where he last took one, or when his R changes (`trackMovers`). A limit
+is a `kLimitSides`-sided polygon round where he stands, rounded to the millimetre, circumscribed so
+the disc of R lies inside (`nav::visibilityLimit`, from `geometry::nav::limitPolygon` in
+`libs/geometry/nav/LimitPolygon.h`). Its directions come from a table made at compile time with
++ - x / alone and pinned by a test, so every toolchain draws the same polygon from the same centre
+and range. Vertex 0 points along +x and the winding is counter-clockwise. Its corners reach a
+little past R, so the seen area is that much larger than the disc. A limit the meshed ground
+already holds (`groundCovers`) is not queued: it is his served limit at once.
 
-Ground is terrain (land outline and water), immutable, and is meshed a whole 512 m chunk at a
-time for any chunk a mover's range touches. Placed obstacles are separate, can change, and are
-meshed only within the mover's range.
+**The seen area is the union, and the mesh ends there.** Each limit is a ground outline (4.3.3).
+Ground is wherever any limit reached, and nothing is ever taken out of it (rule 33). Outside it
+there are no triangles, so `locate` gives -1 and every position check and route fails there
+(4.6). The mesh edge counts as an obstacle for corridor widths, so a route keeps a mover's radius
+off it. A chunk's water rings (`nav::appendChunkWater`) go in with the first limit over that chunk,
+in the same patch as its ground, and hang over unseen ground, where they add nothing. Walls and
+doors are global (4.2) and hang the same way.
 
-**Order.** A disc's new cells join a first-in, first-out queue nearest first, behind the cells
-already waiting. A mover's own cell and the eight touching it go to a near lane served ahead of
-that queue, and so does the ground of their chunks (`wantNear`), so a mover that appears, or walks
-into fresh ground, gets the ground and obstacles round it first.
+**Placed obstacles by entity.** For a limit going in, each chunk its query box meets (the
+polygon's box grown by `kFootprintReachMeters`) is asked for its placed entities in that box
+(`SpatialIndex::queryRect`). An entity whose footprint box meets the disc the limit circumscribes,
+and that is not in the mesh already (`obstacleInMesh`, by `ObstacleKey`: chunk, position, def),
+goes in whole, in key order; its part outside the union is registry only. A footprint reaching
+past `kFootprintReachMeters` from its entity's position is logged as an error once per def, since
+where it pokes into a limit from outside the query box it is missed. A limit's placed obstacles go
+in ahead of its ground or in the same patch, so seen ground is never without what stands on it. A
+placed obstacle that lands over ground already meshed (one back in the world after it left the
+mesh, such as one felled that came back with its chunk) marks the routes it crosses, as a wall
+does (4.6).
 
-**Served only for a holder.** A wanted chunk's ground and a wanted cell's placed obstacles are
-gathered only while a mover holds that chunk (within its anchor load range, 4.5) and the chunk
-is generated and placed (`cellServable`, `anchorHolds`). A wanted chunk no mover holds stays
-queued, whatever else loaded it. The camera loads chunks, and nothing it loads is meshed for it.
+**When a limit can go in.** Every chunk its query box meets is loaded and ready, has its
+placement, and is held by a mover's anchor (4.5; `limitServable`). One whose chunks are not ready
+waits without holding back those behind it. A queued limit with a chunk no anchor holds is
+stranded and dropped, and so is one the meshed ground has come to hold; that check runs once per
+queued limit each time the mesh changes.
 
-**Budgets per tick**, counts and never a time, so the tick a ring lands on does not depend on
-frame time (entry 18):
+**Order and budgets**, counts and never a time, so the tick a ring lands on does not depend on
+frame time:
 
-- ground: open chunks share a tick up to `kGroundVerticesPerTick` (256) ring vertices; a chunk with water goes alone;
-- placed obstacles: up to `kDetailRingsPerTick` (32) adds in `kDetailCellsPerTick` (2) cells, one patch a cell; removals up to `kDetailRemovalsPerTick` (128) rings in 2 cells, a budget of their own so they never hold adds back;
-- `kDetailScansPerTick` (16) cell scans for colliders a tick on the main thread, counting only real scans.
+- the landing's limit first;
+- urgent limits whole, with all their placed obstacles and water, outside every budget and through any hold;
+- the rest first in, first out: `kLimitsPerTick` limits whose ground goes in a tick, and `kDetailRingsPerTick` placed obstacles; a limit with more obstacles than that brings them in over several ticks, hanging over unseen ground, and its ground goes with the last of them;
+- removals, up to `kDetailRemovalsPerTick` a tick, each looked up by its key, in one patch. A removal not in the mesh changes nothing: a limit still waiting never finds it.
 
-While a route search spans ticks, placed obstacles of cells outside the near lane can be held
-back (4.6). Ground, the near lane, removals, walls, doors, and re-derived water are never held.
+While a route search spans ticks, limits that are not urgent wait (4.6). A mover's first limit,
+urgent limits, the landing, removals, walls, doors and re-derived water never do.
 
-**The landing.** `groupSpawnPoints` meshes the ground at the drop before the landing party
-exists and waits for it.
+**Served, urgent, and stopping short.** A mover's served limit (`MoverDisc::served`) is his newest
+limit known to be in the union: one whose ground patch was joined, or one the meshed ground already
+held when he took it or when it came up in the queue. Ground never leaves, so what he sees stays
+inside the union while he is within his served R minus his sight of its centre. His newest limit
+is urgent when he has no served limit yet (a fresh mover's first limit), or when he stands
+`kSightBufferMeters` minus `kLimitRetakeStepMm` or farther from the served centre. That leaves
+exactly one retake step of margin, for any sight. A mover walking inside ground others meshed takes
+covered limits a step apart, so `served` follows him and he is neither urgent nor stopped.
 
-Known limits. For R above about 106 m, wanted cells can reach one cell diagonally past the anchor
-load box; they wait until a mover holds their chunk. No mover has such an R today. Movers spread
-over fresh dense ground saturate the cell budget at about 200 (estimate), and meshing then lags
-behind them; the snap covers a mover that reaches an obstacle first (4.7).
+Movement takes each stride through `stepWithinSight`, so a mover never walks to where he would see
+past his served limit. A mover with no served limit stands until his first one lands. One whose
+urgent limit cannot go in yet (a chunk or its placement not ready) stops at that edge, his route
+and task kept, and walks on when it lands, with no replan. A forward snap, a collision push, or a
+teleport can still put him past it; then he may only step inward or stay level until his limit
+lands.
+
+**The landing.** `groupSpawnPoints` adds one limit of `kLandingSightMeters` round the drop before
+the crew exists, and waits for it with its water and placed obstacles; it needs no anchor, and if
+its chunks are not ready it goes in on the first tick they are. The landing search then picks the
+crew's points, `clearLanding` takes placed entities out of the world round them, and their removal
+is applied and waited for, so the crew stands on open ground before the first tick.
 
 ### 4.5 Chunks
 
 `ChunkManager::update(cameraCenter, anchors)` takes one anchor per mover
-(`NavigationSystem::appendAnchors`), each with its own range. A mover loads every chunk within
-`anchorLoadRange(R)`, the larger of 128 m and R, and keeps every chunk within
-`anchorKeepRange(R)`, the larger of 256 m and 2R. A colonist (R = 46 m) loads 128 m and keeps
-256 m, as before the correction; a mover that sees farther holds farther. The camera loads the
+(`NavigationSystem::appendAnchors`), each with its own range: the reach of his limit's obstacle
+query (the limit's circumradius plus `kFootprintReachMeters`) plus `kLimitRetakeStepMm`, since his
+newest limit was taken up to that far from where he stands. A mover loads every chunk within
+`anchorLoadRange` of that range, the larger of 128 m and it, and keeps every chunk within
+`anchorKeepRange`, the larger of 256 m and twice it. A colonist loads 128 m and keeps 256 m, as
+before the correction; a mover that sees farther holds farther, so every chunk his newest limit
+needs is held. The camera loads the
 chunks within one chunk of its own and keeps those within two, to draw them. A chunk unloads when
 it is outside the camera's keep radius and every anchor's keep range and isn't generating, which
 does nothing to the mesh (4.1).
@@ -587,19 +618,20 @@ about a target that is a placed obstacle, ask from where a mover would stand to 
 **Routes by ticket.** `requestRoute(start, goals, radius, belief)` returns a ticket,
 `takeRouteAnswer(ticket)` returns the answer once it is takeable, and `cancelRoute(ticket)`
 drops the request, its search and its answer. An answer is `Routed` (the goal nearest by walk
-among those given, its index, the waypoints and the length), `NoKnownWay`, or `StartOffMesh`
-(the start is on no meshed ground yet: wait and ask again, never a failure). It carries the label
+among those given, its index, the waypoints and the length), `NoKnownWay`, or `AwaitingMesh`
+(the start, or a goal, is off the mesh inside a limit still on its way in: wait and ask again,
+never a failure). It carries the label
 epoch and the mesh's patch epoch it holds for, the restarts it took, and its expansions. Nav
 never learns who asks (rule 14).
 
-- *Answered at once.* The belief's sets are copied at the call. With no search, the request answers `StartOffMesh` when the start locates on no triangle, and `NoKnownWay` when no goal stands on a triangle with the start's label. Each end is judged where a search would stand it (`standingTriangle`): a point on the edge of a placed obstacle or a wall stands on the free triangle beside it, so a goal deep inside a placed obstacle, or a start standing on nothing it can cross, answers "no known way" at once. Only the goals that share the start's label are queued.
+- *Answered at once.* The belief's sets are copied at the call. With no search, the request answers `AwaitingMesh` when the start or a goal locates on no triangle but lies inside a limit on its way in (the landing's, one queued and not stranded, or one whose ground is gathered and not yet joined: `groundComing`), and `NoKnownWay` when an end is off the mesh with no such limit, or no goal stands on a triangle with the start's label. A search that finds no goal while another goal waits for ground answers `AwaitingMesh` too. An `AwaitingMesh` answer is asked again once `awaitedGroundEpoch()` moves (`generation()` moved, or a queued limit was dropped and will never go in, so a waiter is never held for ground that is not coming), and no sooner than the AI's `kReEvalInterval` after the last ask; the epoch is stamped when the route is asked for, so ground landing before the answer counts. Each end is judged where a search would stand it (`standingTriangle`): a point on the edge of a placed obstacle or a wall stands on the free triangle beside it, so a goal deep inside a placed obstacle, or a start standing on nothing it can cross, answers "no known way" at once. Only the goals that share the start's label are queued.
 - *The queue.* `nav::RouteQueue` runs the queued searches in slices, one a tick, on the route worker. A slice does up to `kRouteWorkPerSlice` (18,000) expansions shared by every running search. Requests admitted since the last slice take the first turns, in ticket order; then the running searches take turns in ticket order, cyclically, from where the last slice stopped. A turn grants at most `kRouteQuantum` (2,000), so a short request is never held behind a long one. A search has no limit of its own: it ends found, or exhausted when it has explored everything the mover can reach under its width and belief, which answers "no known way".
 - *The time budget (rule 18).* The two counts are derived from a time target: 8 ms of route worker a tick, half a 60 Hz frame, at an estimated 0.45 us an expansion on the real mesh (not yet measured, section 6). They are counts so the tick an answer lands on is the same on any machine; a search that needs more work than a slice carries on in the next.
 - *The search.* `geometry::nav::SearchState` is the path search made resumable: `step(n)` runs up to n expansions and returns Running, Found or Exhausted. With several goals the first goal reached is the nearest by walk; goals off the mesh or on ground the belief cannot cross are dropped. With one goal it first searches from the goal for up to `kGoalSidePhase` (2,000) expansions: a goal sealed in a pocket runs dry there, and meeting the start returns the walk. That is a phase length, never a limit on the answer. `pathThrough` is the same search run to the end with no goal-side phase.
 - *Tick order.* The nav update joins the patch job (which waited for the last slice), hands every patch report since that slice to the queue (each patch's, the width refresh's, and one for the door edits), admits (delivers finished answers, takes in new requests), and starts this tick's slice. The rest of the tick, every query included, reads the mesh alongside the slice. `endTick` starts the patch job, which waits for the slice before it writes.
 - *When an answer is takeable.* At once, from the call, for the answers above. Otherwise a request made during tick t is first searched in tick t + 1's slice, and an answer found in slice s is takeable from tick s + 1's update. A short search asked during tick t is takeable at tick t + 2; a long one takes as many slices as its work needs.
 - *Restarts.* A patch report that changes a triangle a search has read sends it back to its start, its work discarded and a restart counted. That includes a search that has finished and is not yet delivered, so no answer is delivered over a patch it did not see. Restarts are counted on the answer and never limited.
-- *The hold.* So that a search spanning ticks can finish, the placed obstacles of cells outside the near lane are held back while some search is inside its hold window. A search's window opens at the first update where it is still running after a slice it had a turn in, and lasts `kMaxHeldAdditionTicks` (240) updates over its whole life; a restart does not reopen it. With no search inside its window, held cells go in at the normal budget, tick after tick, until none wait. Ground, the near lane, removals, walls, doors and water are never held. The 240 comes from the buffer: a mover meshes 16 m past what it sees, so at 2 m/s it is about 8 s before an obstacle it has not meshed comes into sight, and 240 ticks is half that at 60 ticks a second.
+- *The hold.* So that a search spanning ticks can finish, limits that are not urgent are held back while some search is inside its hold window. A search's window opens at the first update where it is still running after a slice it had a turn in, and lasts `kMaxHeldAdditionTicks` (240) updates over its whole life; a restart does not reopen it. With no search inside its window, held limits go in at the normal budget, tick after tick, until none wait. A mover's first limit, urgent limits, the landing, removals, walls, doors and water are never held, so a hold never lets a mover see past the mesh (4.4).
 - *Untaken answers.* An answer not taken `kUntakenAnswerTicks` (600) ticks after it became takeable is dropped with its request, as a cancel would (a mover destroyed with a ticket out).
 - *`routeTicketLive(ticket)`.* True while nav is searching the ticket or its answer waits to be taken; false once taken, cancelled, dropped, or never issued. When `takeRouteAnswer` returns nothing, live means keep waiting and not live means ask again.
 - *Counts.* `routeStats()`: requests, answered at once, answered, outstanding, dropped, restarts, slices, expansions per slice, slice time, ticks held, and the longest hold.
@@ -611,14 +643,16 @@ nothing is valid.
 - `isOnMesh`: a face a route can cross, which is anything but water; a mover inside a placed obstacle stands on its face. Any wall face reads open.
 - `isValidPosition`, the one predicate for spawns, drops, placement and teleports: a face that is neither water nor a placed obstacle in the mesh. A placed obstacle no mover has meshed does not block it.
 - `isAreaBuildable` and `isPointBuildable`: placed obstacles do not block building (construction turns them into clear tasks); water under them does, and so does ground that is not meshed.
-- `nearestPathablePoint` (both forms), `findValidPositionNear`, and the landing search: searched outward over the mesh.
-- `standPointBeside(target, from, radius)`: where a mover stands to work a placed entity: the spot nearest `from`, on a circle the disc's radius out from the placed obstacle at the target, that is walkable in truth and in no placed obstacle; nullopt when there is none. Never a point inside a placed obstacle. A target whose cell no mover has scanned yet has no obstacle in the mesh, so its stand point is provisional.
+- `nearestPathablePoint` (both forms), `findValidPositionNear`, and the landing search: searched outward over the mesh. The form with a radius stands the mover's whole disc clear of water, placed obstacles, the mesh edge and built-wall collision bands, else nullopt; a stranded colonist with no such point goes to the colony-origin recovery.
+- `standPointBeside(target, from, radius)`: where a mover stands to work a placed entity: the spot nearest `from`, on a circle the disc's radius out from the placed obstacle at the target, that is walkable in truth and in no placed obstacle; nullopt when there is none, and off meshed ground. Never a point inside a placed obstacle.
 
 **Staleness.** `generation()` goes up by one at the join of any patch job in which ground arrived,
-water was re-derived, walls changed, or a door was added or removed. At that join, routes that
-no closing change crosses are re-stamped current and those one crosses go stale. Placed obstacles
-landing or leaving never move it: a newly meshed placed obstacle marks stale only the routes whose
-rest comes within the mover's radius of it (`markCrossedRoutes`), and one leaving marks nobody. A
+water was re-derived, walls changed, a door was added or removed, or a placed obstacle landed over
+ground already meshed. At that join, routes that no closing box crosses (a wall, new water, a door
+taken out, such a placed obstacle) are re-stamped current and those one crosses go stale. Ground
+arriving closes nothing, so routes being walked are re-stamped, not asked again. A placed obstacle
+that lands with or ahead of its ground closes no route, and one leaving only opens ground and
+marks nobody. A
 mover more than `kOffRouteMm` (2 m) off the leg of its route it is on has its route marked stale
 (`markStrayedRoutes`). The AI asks again, by ticket, for a stale route.
 
@@ -627,8 +661,11 @@ filter deciding which tagged faces block: belief for walls, and later ownership 
 own footprint. No heuristic beyond the score (entry 44). **Locate:** a spatial index over
 triangles, updated by each patch for its hole. **Widths:** capped at a maximum clearance and
 refreshed once per patch job, outward from the edges the job's patches changed (`refreshWidths`,
-whose report lists the triangles whose widths changed). Each corner still stores a second width
-with placed obstacles read open, which nothing reads (1.1).
+whose report lists the triangles whose widths changed). The mesh edge counts as an obstacle for
+widths (`isObstacleEdge` in `NavMesh.cpp` reads outside the mesh as blocked), so a gap between a
+placed obstacle and the edge of the seen area narrower than a mover's disc is shut to him. A
+corner counts as an obstacle when any edge of its fan is one, so a waist between two facing
+corners, of two limits or of two blocked rings, is its corner gap.
 
 **The AI's side** (in `AIDecisionSystem`, 1.1). A colonist asks for a route by
 ticket and stands in the awaiting-route state until it comes, or, replanning a route he is
@@ -644,8 +681,10 @@ the next decision asks the next few. "Not connected" is not remembered: it costs
 
 The rule (rule 30): wherever an obstacle lands on a mover, the mover moves forward along its
 route, and never stalls or loses progress. The trigger is any placed obstacle meshed onto a
-mover: a mover appearing (its disc lands over it), meshing that lags behind a mover, or a held
-cell going in. The snap and collision with placed obstacles are one rule.
+mover. Under visibility limits a placed obstacle lands with or ahead of its ground, so that is
+rare: a mover put on unseen ground (a dev teleport) whose first limit lands an obstacle over him, a
+placed obstacle back in the world over meshed ground, or a push that took him past his served
+limit. The snap and collision with placed obstacles are one rule.
 
 `snapMovers` runs in the nav update on every mover:
 
@@ -683,8 +722,9 @@ with two meshes and two workers, read up to 4.3 ms with a 2 ms gap between ticks
 chunk's ground arrives (entry 67); WOR-721 (Shoreline chunk arrival can make the main thread wait
 on the nav patch job) tracks it.
 
-**Determinism.** Patch budgets and route work are counts, never clocks. Wanted cells queue in a
-fixed order, labels follow patch order, searches break ties on coordinates, and route turns go in
+**Determinism.** Patch budgets and route work are counts, never clocks. Limits queue in the order
+taken, a limit's placed obstacles go in key order, the limit polygon is the same on every
+toolchain (4.4), labels follow patch order, searches break ties on coordinates, and route turns go in
 ticket order. Given the same chunk arrival ticks, every route answer and the tick it lands on are
 the same on any machine; thread scheduling changes only how long the main thread waits. Chunk
 arrival itself is not deterministic (chunks generate on `std::async` and are taken when polled
@@ -692,11 +732,12 @@ ready), which predates the correction, so tests use synchronous chunk fixtures. 
 an input.
 
 A mesh that is never rebuilt has nothing to wash a bad patch out, so correctness is carried by
-three things:
+four things:
 
-- **The oracle.** For any sequence of adds, removes, and moves, the mesh's constraints and tagged faces equal those of a mesh built from scratch from the same obstacles. Tested on every real fixture with obstacles added and removed one at a time in several orders, including overlapping obstacles, obstacles on waterlines, and obstacles on chunk borders. It is a face-level comparison because of the co-circular diagonals.
+- **The oracle.** For any sequence of adds, removes, and moves, the mesh's constraints and tagged faces equal those of a mesh built from scratch from the same obstacles. Tested on every real fixture with obstacles added and removed one at a time in several orders, including overlapping obstacles, obstacles on waterlines, overlapping and nested ground outlines, and slanted limit polygons crossed at shallow angles. It is a face-level comparison because of the co-circular diagonals. The builder, the test model and the patch share one rule (parity over the arrangement, `groundBoundaries`), so the fuzzes also check an independent even-odd test against the outlines as given. Order independence is shown by fuzz, not by argument.
 - **The validator.** `PatchableMesh::validate()` checks the whole mesh: free lists and counts, and per triangle its shape, links, ring edges, the Delaunay property, cover sets, tags and the locate index. The geometry and sim tests run it after their patches; the game does not.
 - **Exact arithmetic throughout.** No epsilons enter. The one place new coordinates are made is the arrangement, which is the code that already handles it.
+- **Loud failure.** Input the library cannot mesh exactly is never guessed at. A group of new triangles whose cover no sample can read counts in `PatchReport::unreadCovers`; a ground outline spanning `kMaxGroundExtentMm` or more is refused and counts in `PatchReport::refusedRings`, and validate fails from then on. The game logs either as an error once per patch, naming the outline, and keeps a refused placed obstacle out of its index. Neither was logged in the in-game runs of 2026-11-13, and no fuzz run has read a cover it could not.
 
 `finishPendingBuilds` is the blocking settle for tests and the headless sim: it gathers every
 queue with no budget, applies it and waits, until nothing is left. It reads only chunks that are
@@ -715,12 +756,99 @@ client and the test that nothing colonist-shaped leaked in.
 
 The nav mesh covers ground movers have meshed. In the design a mover whose goal has no mesh heads
 that way and meshes the ground as it goes (rule 26). As built, a goal off meshed ground, or cut off
-from the start by ground no mover has meshed, reads "no known way" at once and is not remembered;
+from the start by ground no mover has meshed, reads "no known way" at once (unless it lies in a
+limit on its way in, 4.6) and is not remembered;
 travelling toward it is WOR-776 (Nav: build a path toward a goal whose ground is not meshed yet).
 Beyond the mesh are two things, and neither is this epic:
 
 - The geography mesh (the regional mesh), Tier 1 of the pathfinding doc, much less detailed than the real mesh and aligned with it. The design has it computed when the world loads, so it always exists (rule 38); the code does not have it yet, WOR-802 (Geography mesh (Tier 1): computed at load, always exists).
 - A landmass check so nothing ever tries to path off an island: flood the planet's land hexes from the landing site's hex once at load and keep the set. The single-hex-island test case falls out of it. At the quickstart resolution the planet has about 42 million hexes, so this is a bounded flood from the colony, not a table for the whole planet. It has no consumer until goals can lie outside loaded ground, so it is filed as a follow-up and built with that consumer.
+
+### 4.11 Tunables, costs, and known limits
+
+| Name | Value | Where | What it must cover |
+|---|---|---|---|
+| `kLimitRetakeStepMm` | 4000 mm | `NavigationSystem.h` | How far a mover walks before he takes a new limit. It is also the margin an urgent limit has to land in, so a mover's travel during one landing (a tick at the fastest game speed, plus any stall) must stay under it. A 16 m step measured dearer per patch in dense ground, so the step stays short |
+| `kLimitSides` | 16 | `libs/geometry/nav/LimitPolygon.h` | The sides of a limit polygon. Fewer sides overshoot R farther at the corners; more add vertices to the seen edge |
+| `kSightBufferMeters` | 16 m | `NavigationSystem.h` | Added to sight to make R. It covers the step to a mover's next limit, a step more for that limit to land in once urgent, and his travel during one landing; a `static_assert` holds it above twice the step. The polygon's overshoot only adds margin |
+| `kLandingSightMeters` | 150 m | `NavigationSystem.h` | The radius of ground the landing meshes round the drop |
+| `kFootprintReachMeters` | 8 m | `NavigationSystem.h` | The farthest a placed obstacle's footprint reaches from its entity's position: a limit's obstacle query box is grown by it, and a def found past it is logged as an error |
+| `kLimitsPerTick` | 1 | `NavigationSystem.h` | Limits that are not urgent whose ground goes in a tick |
+| `kDetailRingsPerTick` | 32 | `NavigationSystem.h` | Placed obstacles of limits that are not urgent a tick |
+| `kDetailRemovalsPerTick` | 128 | `NavigationSystem.h` | Placed obstacles taken out a tick |
+| `kJobBudgetMs` | 2.0 ms | `NavigationSystem.h` | The worker time a tick's job is sized for; a target, not enforced |
+| `kMaxHeldAdditionTicks` | 240 | `NavigationSystem.h` | Ticks a search spanning ticks may hold limits that are not urgent, over its whole life |
+| `kOffGroundReachMm` | 8 mm | `libs/geometry/nav/PatchableMesh.h` | How far snap rounding can move a piece of an edge; asserted to cover three times every ring's stray |
+| `kMaxGroundExtentMm` | 2^30 mm | `libs/geometry/nav/NavMesh.h` | The widest a ground outline may be on an axis for crossings to order exactly in Int128; wider is refused |
+
+**Measured costs.** Each is one run, RelWithDebInfo, headless, on the dev machine with other work
+running, so none is a baseline. Dense ground is a field of 0.064 placed obstacles per square metre.
+
+Per retake (`BM_LimitWalk`, a 300 m walk retaking at `kLimitRetakeStepMm`, the limit's patch plus
+its width refresh, ms):
+
+| Ground | Mean | p99 | Max |
+|---|---|---|---|
+| Open | 0.13 | 0.14 | 0.15 |
+| Sparse | 0.41 | 0.48 | |
+| Dense | 2.48 | 2.86 | |
+
+In an earlier dense run (machine load 2 to 10%) the retake split as patch 1.50 / 1.87 and refresh
+0.85 / 0.94 (mean / p99), with about 24 new placed obstacles, a hole of about 144 triangles and
+about 330 created.
+
+Many movers (`BM_WalkingMovers`: movers walking 60 m at 2 m/s in the dense field):
+
+| Movers | Speed | Nav main thread, ms mean | p99 | Worst tick | Limits urgent / budgeted per s | Patch worker busy |
+|---|---|---|---|---|---|---|
+| 1 | 1x | 0.03 | 0.60 | 4.5 | 0 / 0.47 | 0.2% |
+| 10 | 1x | 0.34 | 5.2 | 6.6 | 0 / 4.6 | 2% |
+| 50 | 1x | 2.0 | 8.6 | 22.3 | 0 / 23 | 11% |
+| 100 | 1x | 4.4 | 9.9 | 24.2 | 0 / 46 | 24% |
+| 10 | 10x | 3.4 | 6.6 | 7.0 | 0 / 47 | 19% |
+| 50 | 10x | 12.0 | 76 | 159 | 77 / 54 | 63% |
+| 100 | 10x | 23.0 | 357 | 360 | 158 / 52 | 122% |
+
+No stride stopped short on any row.
+
+The landing (`BM_Landing`): 122.7 ms at load, of which the patch job is 118 (patch 88.9, widths
+29.2); 5,622 placed obstacles and 44,150 triangles.
+
+Hanging water (`BM_HangingWater`, per retake, mean / p99 ms, with water against without): beside a
+lake 0.33 / 0.53 against 0.11 / 0.16; inside it 0.52 / 0.77 against 0.14 / 0.15.
+
+Open ground with no placed objects (a swept square, machine load 2 to 10%): the limit patch is
+0.22 / 0.30 ms (mean / p99) at 500 m across and 0.26 / 0.36 / 0.48 ms (mean / p99 / max) at
+1 km, but what grows with the region is unbounded: the longest triangle edge is 552 m, then
+1,049 m; `locate` is 385 / 780 ns, then 550 / 1,256 ns (mean / p99); a patch's report box reaches
+the whole region, which takes the width refresh's p99 from 0.31 to 0.80 ms; a placed obstacle
+dropped into it costs 0.35 ms p99 at 500 m and 0.89 ms at 1 km with its refresh. Routes stay cheap:
+about 5 expansions for 40 m pairs and 26 to 33 for 400 m pairs.
+
+Along the seen edge in dense ground (within 4 m of it): longest triangle edge 4.66 m, `locate`
+114 / 162 ns, route expansions 78 mean. Registry memory per kilometre walked: 0.70 MB in open
+ground, about 36 MB in dense ground, nearly all of it the placed obstacles.
+
+**Known limits.**
+
+- Urgent work has no per-tick ceiling. Urgent limits, their placed obstacles, and their chunks' water all go in the tick they are urgent, and the next update waits for the patch worker, so many movers urgent at once stall the main thread: 159 ms worst at 50 movers and 360 ms at 100 at 10x, and 22 to 24 ms worst at 50 to 100 movers at 1x.
+- A budgeted limit in dense ground costs 4.4 to 6.6 ms on the worker against the 2 ms job budget, even with 1 to 10 movers.
+- Open ground with no placed objects has no interior vertices, so its triangles span the open region and `locate` and the width refresh grow with it (above). An owner decision is open: points on a coarse lattice inside open ground only, a maximum triangle edge enforced by the triangulation's own points, or accept the cost.
+- Water is still cut at chunk sides: a chunk's water rings end at its square, so each chunk line through water has cut points and a fixed edge across the water, until water outlines merge across chunks.
+- Walls do not clip a limit. A limit is a polygon round the mover whatever stands between, so ground behind a wall is meshed; walls still block movement.
+- Crafting stations and storage do not block movement: they are ECS entities that never reach the nav system. Built walls and doors do.
+- The seen area reaches a little past R at a limit's corners, since the polygon holds the disc.
+- A landing limit whose chunks unload before it lands is never dropped, so a goal inside it waits.
+- A player move order onto unseen ground does nothing, with no marker or reason, until player visibility exists.
+- The path query does not gate the edge between adjacent start and goal triangles (1.1).
+
+### 4.12 Geography mesh (not built)
+
+Kevin's idea: the known-world nodes of rule 41 would be the geography mesh's (rule 38, WOR-802
+(Geography mesh (Tier 1): computed at load, always exists)), and a coarse known-world mesh could
+later be what the seen-area mesh links out to at its edge, its join points geography nodes. His
+words: "that was my thought, but I don't think we need to act on it now." So nothing is built for
+it: the mesh ends at the seen edge with no links, and a goal past it reads "no known way" (4.10).
 
 ## 5. What gets deleted
 
@@ -744,6 +872,16 @@ ground; and the settled-ground wake. The geometry library's tag prices and squee
 width (`structuralWidthMm`, `detailTags`), the reachability forests and
 `PatchReport::freedTriangles` and `newTriangles` are deleted too. `pathThrough` rejects a query
 across components by their labels, and a path's cost is its length.
+
+The seen-area work deleted (entry 116): in the library, kept points (`pins`, `vertexPinned`, the
+Arrangement's point-site argument), partners (`RegisteredRing::partners`, `findPartners`,
+`BoundsSeams`, `findBoundsSeams`, `sameSegment`), the overlap check, and long-edge splitting
+(`splitLongEdges`, `maxBoundsEdgeMm`); in the sim, chunk squares and the ground lane
+(`nav::chunkSquare`, `kMaxBoundsEdgeMm`, `kGroundVerticesPerTick`), 16 m cells and their budgets
+(`kDetailCellMm`, `kDetailCellsPerTick`, `kDetailScansPerTick`, `wantDisc`, `wantNear`, the near
+lane), `markCrossedRoutes`, `builtRegions`, and `nearestClearOnMesh`. `RouteOutcome::StartOffMesh`
+became `AwaitingMesh`, and the AI's `deferredNavGeneration` became a stamp of
+`awaitedGroundEpoch()` taken when the route is asked for.
 
 ## 6. Performance plan
 
@@ -875,7 +1013,8 @@ departures they add, and the memory measurements behind rule 37. Entry 97 record
 on the geography mesh, ground extent, and the step limit. Entry 98 records the search time
 budget and the timing of the geography mesh. Entries 99 to 113 record the correction of
 2026-11-12 that brought the code to the design: what was built, each place it departed from its
-plan and why, and what four review rounds found.
+plan and why, and what four review rounds found. Entry 116 records the seen-area mesh of
+2026-11-13 (rules 39 to 42).
 
 **2026-11-10**
 
@@ -1057,3 +1196,7 @@ mesh).
 - **Load range around a mover (question 5):** the chunks within 128 m of it. Now the larger of 128 m and the mover's range (4.5).
 114. **The geometry clean-up and the disc rule landed after the correction.** The geometry library lost tag prices and the squeeze, the second corridor width (`structuralWidthMm`, `detailTags`), the reachability forests and `PatchReport::freedTriangles` and `newTriangles`. `pathThrough` rejects a query across components by their labels, and a path costs its length. `BM_SearchReach`, `BM_SearchDeadEnds`, `BM_ForestRebuild*` and `BM_SealedGoal` are deleted. A mover now wants every 16 m cell whose nearest point is within R of where he stands, retaken every 4 m (4.4); before, the distance was cell to cell over a 7 x 7 square of cells. Still open: record slimming (WOR-801), chunk-border slivers (WOR-809), bench fixes (WOR-808).
 115. **Chunk borders are dissolved where two open squares meet (WOR-809, chunk-border slivers; 2026-11-12).** Measured with `BM_ChunkSeam` on two squares with 5,135 placed obstacles: within 16 m of the shared side the longest edge had mean 4.43 m, p99 22.1 m and max 64.0 m against 4.5 and 4.7 m in the interior; aspect p99 was 358 against 10; 14 triangles had an edge over 32 m. The cause was entry 51's constrained, 64 m split side: every constrained edge is skipped by the flip pass, and a triangle's cover named its square, so a triangle across the side would have lain in neither. Fixed in two moves. Covers carry one ground entry for all open-ground rings, with parity counted per entry. A bounds ring edge whose identical segment belongs to another live open-ground ring is dissolved: no constraint, no mesh edge, its end points kept as loose vertices (pins) so empty ground keeps its shape. Blocked rings such as water keep their edges; a side with ground on one side only stays the constrained boundary. `buildNavMesh` applies the same rule through one helper, so a patched mesh still equals a build from scratch. Long edges are cut from their lower end point so both neighbours cut alike, and a point on a shared side or corner belongs to exactly one square by a fixed perturbation. Rejected: finer pieces (only shortens the slivers, and costs the ground budget, entry 51); refinement points (break vertex equality with a build from scratch). After: the border band equals the interior (longest edge 3.71 / 4.53 / 4.72 m mean / p99 / max, aspect p99 10.3, no edge over 32 m); locate 120 to 102 ns; a 40 m route across the border 77 to 66 expansions; a placed obstacle on a shared side 180 to 22.6 us; an interior placed obstacle unchanged at about 31 us to add and 28 us to remove (a per-vertex pin flag keeps the pin lookup off the interior path). Memory per placed obstacle is unchanged by it (`sizeof(RegisteredRing)` 248 B). What remains is under "Chunk-border slivers" in 1.1.
+
+**2026-11-12 and 2026-11-13**
+
+116. **The mesh is the union of what movers have seen, and it ends there (rules 39 to 42).** Kevin, on seeing the overlay of entry 115's build, 2026-11-12: "we don't really know whats out there, so the current mesh with those arbitrary points has created a low res mesh that is wrong. I can clearly see trees inside those triangles that reach out to the arbitrary points." Then: "we should assume that outside the area that has been meshed, that its impassible. the way its built now its within the mesh. so the mesh needs to just end, not link out to chunk edges or anything like that." On the kept points: "these are still arbitrary points that are not associated with any object in the game. the chunk edges as you say, are an irrelevant place to path to." On what a vertex is: "there might need to be three types of nodes 1) nodes of a collideable object (the tree) 2) nodes of the known world (the geography mesh + the loaded chunk edges) 3) nodes of the visibility limit of the mover", and for objects, "this would require no concept of a 'cell'"; on the step, "4 is fine for now, but make sure is a single constant that we can tune later." On the landing: "landing should mesh a large area, they saw it as they were crashing!", and on 150 m, "That's fine. Make sure it's a tunable constant". This replaces his earlier answer the same day on terrain arriving a chunk at a time ("Leave as is for now."). Built as five stacked pull requests, in order: #369, slanted outlines (`buildNavMesh` classifies faces by a parity flood; the patch seeds covers exactly, reads them along a ray when no sample is clear, and fails loudly when it cannot); #370, no kept points; #371, overlapping ground outlines (`groundBoundaries`, `groundCovers`, the ground edge and ring grids); #372, the mesh edge as a wall for corridor widths; #373, the game side (limits as ground, placed obstacles by entity, urgency and stopping short, removal by key, `AwaitingMesh`, the landing, and long-edge splitting deleted). Decided along the way, at the plan's defaults: cut points where a placed-obstacle or water outline crosses the seen edge are kept; water stays cut at chunk sides; a limit has 16 sides; a mover whose next limit cannot go in stops short; a mover's first limit is urgent; a placed obstacle added over meshed ground marks the routes it crosses; the landing's cleared placed obstacles are out of the mesh before the crew stands. Found and fixed on the way: a waist between two facing corners narrower than a disc let the disc through, because a corner counted as an obstacle only when one of the triangle's own edges at it was one (on main before this work); and a patch could miss an edge whose input, not its rounded pieces, a new segment meets (on main before this work too). Reverses: entry 51 (64 m pieces of chunk sides), entry 106 and 114's disc rule (cells), entry 109's `StartOffMesh` (now `AwaitingMesh`, for start or goal), and entry 115 (pins, partners, and the long-edge cut). Known limits and costs are in 4.11. Undo: revert the five pull requests, which brings back chunk squares and the arbitrary points Kevin ruled out.

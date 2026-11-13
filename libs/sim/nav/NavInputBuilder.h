@@ -1,6 +1,6 @@
 #pragma once
 
-// NavInputBuilder: turn live game data (a chunk's square and terrain water rings, a placed
+// NavInputBuilder: turn live game data (a mover's visibility limit, a chunk's terrain water rings, a placed
 // entity's collider, built walls and doors) into the tagged rings and door portals the
 // geometry layer's nav meshes take (geometry::nav::NavInputPolygon, DoorPortal). These are
 // PURE functions: they read game state and emit rings in integer millimeters, no ECS, no
@@ -39,13 +39,15 @@ namespace nav {
 
 	// --- Ground ------------------------------------------------------------------
 	//
-	// A chunk's ground is its square (the walkable bounds ring) and its water. Water is the
+	// Ground is the union of visibility limits; water hangs over it per chunk. Water is the
 	// chunk's terrain polygon navRings, never tiles (terrain-polygons D1, D9), already clipped
-	// to the chunk's 512 m square, so two neighbours' water meets along bit-identical border
+	// to the chunk's 512 m extent, so two neighbours' water meets along bit-identical border
 	// edges and never overlaps.
 
-	// The chunk's square: a CCW ring, blocked=false, provenance=kProvenanceBorder.
-	[[nodiscard]] geometry::nav::NavInputPolygon chunkSquare(world::ChunkCoordinate coord);
+	// A mover's visibility limit: geometry::nav::limitPolygon round `centreMm` holding the disc of
+	// `rangeMm`, blocked=false, provenance=kProvenanceBorder. The same centre and range give the
+	// same ring on every machine.
+	[[nodiscard]] geometry::nav::NavInputPolygon visibilityLimit(const geometry::Vec2i64& centreMm, std::int64_t rangeMm);
 
 	// Appends every navRing with blocksMovement as a blocked ring with kProvenanceWater and
 	// the ring's holeCapable, orientation kept (a Waterline island stays a CW hole), in
