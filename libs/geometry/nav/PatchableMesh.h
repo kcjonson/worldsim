@@ -31,7 +31,8 @@
 //
 // The mesh carries what path queries and reachability read: face tags from the rings,
 // door tags on door edges, corridor widths capped at a maximum clearance (brought up to
-// date by refreshWidths), and connected-component labels (kept by every patch).
+// date by refreshWidths; the mesh edge narrows them like an obstacle), and connected-
+// component labels (kept by every patch).
 // view() hands all of it to PathQuery, which serves NavMesh too.
 
 namespace geometry::nav {
@@ -163,8 +164,9 @@ namespace geometry::nav {
 		DoorId addDoor(const DoorPortal& door);
 		void   removeDoor(DoorId door);
 
-		// Corridor widths (NavTriangle::edgePairWidthMm, capped at maxClearanceMm) lag
-		// behind patches: a patch only records where it changed the mesh, and this brings
+		// Corridor widths (NavTriangle::edgePairWidthMm, capped at maxClearanceMm, against
+		// obstacles and the mesh edge alike) lag behind patches, so adding or removing ground
+		// moves them: a patch only records where it changed the mesh, and this brings
 		// every width up to date, once for all the patches since the last call. The report
 		// lists the triangles whose widths changed, each kTriangleWidths.
 		PatchReport refreshWidths();

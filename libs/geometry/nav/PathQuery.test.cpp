@@ -1,6 +1,7 @@
 #include "PathQuery.h"
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
+#include "LimitPolygon.test.h"
 #include "NavMesh.h"
 #include "PatchableMesh.h"
 
@@ -517,20 +518,31 @@ TEST(PathQuery, GapWidthThresholdIsExact) {
 	EXPECT_FALSE(pathThrough(m, below, above, 201).reachable) << "diameter 402 > gap 400 must fail";
 }
 
-TEST(PathQuery, SliverInOpenFloorDoesNotBlock) {
-	// A long thin open strip triangulates into high-aspect slivers with no obstacle
-	// edges. An agent must route end to end across them; the sliver altitude must not
-	// be mistaken for a narrow corridor.
+TEST(PathQuery, SliverStripPassesWhatFitsItsWidth) {
+	// A long thin strip with staggered corners along both sides triangulates into high-
+	// aspect slivers between its mesh edges, which bound widths like obstacles: the
+	// strip's 40 mm, never a sliver's altitude.
+	std::vector<Vec2i64> ring;
+	for (std::int64_t x = 0; x <= 6000; x += 500) {
+		ring.push_back({x, 0});
+	}
+	ring.push_back({6000, 40});
+	for (std::int64_t x = 5750; x > 0; x -= 500) {
+		ring.push_back({x, 40});
+	}
+	ring.push_back({0, 40});
 	NavMeshInput in;
-	in.polygons.push_back(border({{0, 0}, {6000, 0}, {6000, 40}, {0, 40}}));
+	in.polygons.push_back(border(std::move(ring)));
 	NavMesh m = buildNavMesh(in);
+	ASSERT_GT(m.triangles.size(), 20u);
 
 	const Vec2i64 a{200, 20};
 	const Vec2i64 b{5800, 20};
-	PathResult	  p = pathThrough(m, a, b, 15); // diameter 30, well inside the 40 mm strip
-	ASSERT_TRUE(p.reachable) << "open-floor slivers must not block an agent that fits the strip";
+	PathResult	  p = pathThrough(m, a, b, 15); // diameter 30, inside the 40 mm strip
+	ASSERT_TRUE(p.reachable) << "slivers must not block an agent that fits the strip";
 	EXPECT_EQ(p.points.front(), a);
 	EXPECT_EQ(p.points.back(), b);
+	EXPECT_FALSE(pathThrough(m, a, b, 21).reachable) << "diameter 42 is wider than the strip";
 }
 
 TEST(PathQuery, DoorRejectsAgentWiderThanClearWidth) {
@@ -608,6 +620,170 @@ TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
 
 	EXPECT_FALSE(pathThrough(m, below, above, 0, belief).reachable);
 	EXPECT_FALSE(pathThrough(m, below, above, 0).reachable);
+}
+
+namespace {
+
+	// A visibility limit of 10 m round the origin, and a placed obstacle rising from below it
+	// to a point about 1 m under its top corner: the only way from west to east passes
+	// between that point and the mesh edge.
+	struct EdgeGap {
+		std::vector<Vec2i64> limit = testdata::limitPolygon({0, 0}, 10000);
+		NavInputPolygon		 ground{limit, false, 1};
+		NavInputPolygon		 spike = blocked({{-500, -12000}, {500, -12000}, {0, limit[4].y - 1020}}, -2);
+		// The ground a second limit adds round the first's top, so its edge there dissolves.
+		NavInputPolygon above{testdata::limitPolygon({0, 8000}, 10000), false, 1};
+		Vec2i64			west{-5000, 0};
+		Vec2i64			east{5000, 0};
+	};
+
+	bool freshPasses(const std::vector<NavInputPolygon>& polygons, const EdgeGap& g, std::int64_t radius) {
+		NavMeshInput in;
+		in.polygons = polygons;
+		return pathThrough(buildNavMesh(in), g.west, g.east, radius).reachable;
+	}
+
+} // namespace
+
+// Outside the mesh is impassable, so its edge narrows corridors like an obstacle: the 1 m
+// gap between a placed obstacle and the mesh edge passes an 800 mm disc and shuts on a
+// 1.2 m one.
+TEST(PathQuery, MeshEdgeNarrowsCorridors) {
+	const EdgeGap g;
+	EXPECT_TRUE(freshPasses({g.ground, g.spike}, g, 400));
+	EXPECT_FALSE(freshPasses({g.ground, g.spike}, g, 600));
+	EXPECT_TRUE(freshPasses({g.ground}, g, 600)) << "without the obstacle the way is open";
+}
+
+// Ground added beside the edge dissolves it and the gap widens; removed again, the edge
+// returns and the gap narrows. The patched mesh's refreshed widths answer as a fresh build
+// of the same outlines does.
+TEST(PathQuery, DissolvedEdgeWidensAgain) {
+	const EdgeGap g;
+	PatchableMesh mesh;
+	PatchEdits	  first;
+	first.adds = {g.ground, g.spike};
+	mesh.applyPatch(first);
+	mesh.refreshWidths();
+	ASSERT_TRUE(mesh.validate().empty()) << mesh.validate();
+	EXPECT_FALSE(pathThrough(mesh.view(), g.west, g.east, 600).reachable);
+
+	PatchEdits widen;
+	widen.adds.push_back(g.above);
+	const RingId added = mesh.applyPatch(widen).added.front();
+	mesh.refreshWidths();
+	ASSERT_TRUE(mesh.validate().empty()) << mesh.validate();
+	EXPECT_TRUE(pathThrough(mesh.view(), g.west, g.east, 600).reachable) << "the edge beside the gap is dissolved";
+	EXPECT_TRUE(freshPasses({g.ground, g.spike, g.above}, g, 600));
+
+	PatchEdits narrow;
+	narrow.removes.push_back(added);
+	mesh.applyPatch(narrow);
+	mesh.refreshWidths();
+	ASSERT_TRUE(mesh.validate().empty()) << mesh.validate();
+	EXPECT_FALSE(pathThrough(mesh.view(), g.west, g.east, 600).reachable) << "the edge is back";
+	EXPECT_TRUE(pathThrough(mesh.view(), g.west, g.east, 400).reachable);
+}
+
+namespace {
+
+	// The floor triangles at vertex `at`, and how many of them have neither of their two
+	// edges at it on an obstacle (the mesh edge or a blocked face).
+	struct Fan {
+		int triangles = 0;
+		int clear	  = 0;
+	};
+
+	Fan floorFanAt(const NavMesh& m, const Vec2i64& at) {
+		Fan fan;
+		for (const NavTriangle& t : m.triangles) {
+			if (!isFloorFace(t)) {
+				continue;
+			}
+			for (int i = 0; i < 3; ++i) {
+				if (m.vertices[t.v[static_cast<std::size_t>(i)]] != at) {
+					continue;
+				}
+				++fan.triangles;
+				bool open = true;
+				for (const int e : {i, (i + 2) % 3}) {
+					const std::int32_t nb = t.neighbor[static_cast<std::size_t>(e)];
+					open = open && nb >= 0 && isFloorFace(m.triangles[static_cast<std::size_t>(nb)]);
+				}
+				fan.clear += open ? 1 : 0;
+			}
+		}
+		return fan;
+	}
+
+	std::int64_t floorDistance(const Vec2i64& a, const Vec2i64& b) {
+		const Vec2i64 d = b - a;
+		auto		  k = static_cast<std::int64_t>(std::sqrt(static_cast<double>(d.x * d.x + d.y * d.y)));
+		while (k * k > d.x * d.x + d.y * d.y) {
+			--k;
+		}
+		while ((k + 1) * (k + 1) <= d.x * d.x + d.y * d.y) {
+			++k;
+		}
+		return k;
+	}
+
+	// A disc fits the waist between corners p and q exactly when its diameter is at most
+	// |pq|: one 10 mm under passes and one 10 mm over is refused.
+	void expectWaist(const NavMesh& m, const Vec2i64& p, const Vec2i64& q, const Vec2i64& west, const Vec2i64& east, const std::string& what) {
+		const std::int64_t waist = floorDistance(p, q);
+		for (const Vec2i64& corner : {p, q}) {
+			const Fan fan = floorFanAt(m, corner);
+			EXPECT_GE(fan.triangles, 3) << what << ": the fan at (" << corner.x << ", " << corner.y << ")";
+			EXPECT_GE(fan.clear, 1) << what << ": a fan triangle at (" << corner.x << ", " << corner.y << ") with no obstacle edge there";
+		}
+		EXPECT_TRUE(pathThrough(m, west, east, (waist - 10) / 2).reachable) << what << ": waist " << waist;
+		EXPECT_FALSE(pathThrough(m, west, east, (waist + 10) / 2).reachable) << what << ": waist " << waist;
+	}
+
+} // namespace
+
+// Two overlapping limits meet at two reflex corners, the only way between them: the waist
+// between those corners admits a disc that fits it and refuses one that does not.
+TEST(PathQuery, WaistBetweenTwoLimitsIsItsCornerGap) {
+	const std::int64_t circumradius = testdata::limitCircumradius(10000);
+	for (const std::int64_t overlap : {150, 199, 260, 400}) {
+		for (const std::int64_t rise : {0, 120, 350}) {
+			const std::vector<Vec2i64> left	 = testdata::limitPolygon({0, 0}, 10000);
+			const std::vector<Vec2i64> right = testdata::limitPolygon({2 * circumradius - overlap, rise}, 10000);
+			NavMeshInput			   in;
+			in.polygons.push_back(border(left));
+			in.polygons.push_back(border(right));
+			const NavMesh m = buildNavMesh(in);
+
+			std::vector<Vec2i64> corners;
+			for (const Vec2i64& v : m.vertices) {
+				if (std::find(left.begin(), left.end(), v) == left.end() && std::find(right.begin(), right.end(), v) == right.end()) {
+					corners.push_back(v);
+				}
+			}
+			const std::string what = "overlap " + std::to_string(overlap) + " rise " + std::to_string(rise);
+			ASSERT_EQ(corners.size(), 2u) << what;
+			expectWaist(m, corners[0], corners[1], {-5000, 3000}, {2 * circumradius - overlap + 5000, rise - 3000}, what);
+		}
+	}
+}
+
+// The same waist between two placed obstacles whose corners face each other across open
+// ground, no edge of one parallel to an edge of the other.
+TEST(PathQuery, WaistBetweenFacingCornersIsTheirGap) {
+	for (const std::int64_t gap : {600, 1000, 1500}) {
+		for (const std::int64_t shift : {0, 250}) {
+			const Vec2i64 top{0, gap / 2};
+			const Vec2i64 bottom{shift, -(gap - gap / 2)};
+			NavMeshInput  in;
+			in.polygons.push_back(border({{-8000, -8000}, {8000, -8000}, {8000, 8000}, {-8000, 8000}}));
+			in.polygons.push_back(blocked({top, {1300, 8010}, {-1100, 8010}}, -2));
+			in.polygons.push_back(blocked({bottom, {shift - 1200, -8010}, {shift + 1000, -8010}}, -3));
+			const NavMesh m = buildNavMesh(in);
+			expectWaist(m, top, bottom, {-5000, 0}, {5000, 0}, "gap " + std::to_string(gap) + " shift " + std::to_string(shift));
+		}
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -1083,15 +1259,16 @@ TEST(PathQuery, ShortestWalksWrapWallEnds) {
 }
 
 // The same layouts for a disc of the colonists' radius, against the referee with every rect
-// grown by the radius: its walks keep the radius from each rect, rounding a corner on the
-// grown square's corner where the disc could cut the arc, so it is no shorter than the
-// disc's shortest walk. A walk longer than it by more than kDiscSlackMm took a longer
-// corridor than it needed.
+// grown by the radius and the box's edge, a wall like any rect, moved in by it: its walks
+// keep the radius from each, rounding a corner on the grown square's corner where the disc
+// could cut the arc, so it is no shorter than the disc's shortest walk. A walk longer than
+// it by more than kDiscSlackMm took a longer corridor than it needed.
 TEST(PathQuery, ShortestDiscWalksWrapWallEnds) {
 	constexpr std::int64_t kRadius		= 300;
 	constexpr double	   kDiscSlackMm = 4.0;
 	int					   checked		= 0;
 	int					   longer		= 0;
+	int					   refused		= 0; // the referee finds a way the walk does not
 	double				   worst		= 0.0;
 	double				   worstMm		= 0.0;
 	for (std::uint32_t seed = 0; seed < 600; ++seed) {
@@ -1108,7 +1285,7 @@ TEST(PathQuery, ShortestDiscWalksWrapWallEnds) {
 		if (touch) {
 			continue;
 		}
-		std::vector<Rect> grown;
+		std::vector<Rect> grown{{-1000, -1000, kRadius, 5000}, {6000 - kRadius, -1000, 7000, 5000}, {-1000, -1000, 7000, kRadius}, {-1000, 4000 - kRadius, 7000, 5000}};
 		for (const Rect& r : rects) {
 			grown.push_back({r.x0 - kRadius, r.y0 - kRadius, r.x1 + kRadius, r.y1 + kRadius});
 		}
@@ -1116,8 +1293,7 @@ TEST(PathQuery, ShortestDiscWalksWrapWallEnds) {
 		for (int pair = 0; pair < 20; ++pair) {
 			const Vec2i64 a{between(rng, 1, 5999), between(rng, 1, 3999)};
 			const Vec2i64 b{between(rng, 1, 5999), between(rng, 1, 3999)};
-			// Ends a radius clear of the box too: its corners keep a disc off as rect corners do.
-			bool inside = std::min({a.x, a.y, b.x, b.y}) < kRadius || std::max(a.x, b.x) > 6000 - kRadius || std::max(a.y, b.y) > 4000 - kRadius;
+			bool		  inside = false;
 			for (const Rect& r : grown) {
 				for (const Vec2i64& p : {a, b}) {
 					inside = inside || (p.x >= r.x0 && p.x <= r.x1 && p.y >= r.y0 && p.y <= r.y1);
@@ -1128,7 +1304,11 @@ TEST(PathQuery, ShortestDiscWalksWrapWallEnds) {
 			}
 			const PathResult walk  = pathThrough(m, a, b, kRadius);
 			const double	 bound = refereeLength(grown, a, b);
-			if (!walk.reachable || std::isinf(bound)) {
+			if (std::isinf(bound)) {
+				continue;
+			}
+			if (!walk.reachable) {
+				++refused;
 				continue;
 			}
 			++checked;
@@ -1140,6 +1320,7 @@ TEST(PathQuery, ShortestDiscWalksWrapWallEnds) {
 		}
 	}
 	EXPECT_GT(checked, 1000);
+	EXPECT_EQ(refused, 0);
 	::testing::Test::RecordProperty("pairs", checked);
 	::testing::Test::RecordProperty("longer", longer);
 	::testing::Test::RecordProperty("worstExcessPermille", std::to_string(1000.0 * worst));

@@ -178,15 +178,16 @@ namespace geometry::nav {
 		// Two deliberate departures from the paper, both forced by our merged-mesh model
 		// (floor + obstacle interiors triangulated as one graph, not "every vertex is an
 		// obstacle"):
-		//   1. A triangle vertex is an obstacle ONLY if it is an endpoint of a common-
-		//      knowledge obstacle edge; a bare floor/border vertex is not. So the width
-		//      is seeded UNCONSTRAINED, and the base vertices contribute a bound only
-		//      when they are obstacle vertices. This is what keeps an open-floor sliver
-		//      (no incident obstacle edges) unconstrained instead of falsely narrow.
-		//   2. "Constrained edge" in the paper == "common-knowledge obstacle edge" here:
-		//      a triangle edge whose two incident faces differ in common-knowledge-
-		//      blockedness (the boundary of a water/obstacle region). Belief-dependent walls
-		//      (faceBlocker > 0) are NOT obstacles for this pass (see NavMesh.h).
+		//   1. A triangle vertex is an obstacle ONLY if it ends an obstacle edge, any edge
+		//      of its fan, not only the triangle's own; a vertex inside floor is not. So
+		//      the width is seeded UNCONSTRAINED, and a vertex bounds it only when it is an
+		//      obstacle vertex: a sliver whose vertices touch no obstacle edge is
+		//      unconstrained, not falsely narrow.
+		//   2. "Constrained edge" in the paper == "obstacle edge" here: a triangle edge
+		//      with common-knowledge-blocked ground (water, a placed obstacle) on exactly
+		//      one side, the mesh edge included, since outside the mesh reads as blocked.
+		//      Belief-dependent walls (faceBlocker > 0) are NOT obstacles for this pass
+		//      (see NavMesh.h).
 		// All obstacles in our model are filled polygons, so every obstacle vertex has
 		// incident obstacle edges (no bare point obstacles); the paper's edge-based
 		// search therefore captures every obstacle the disc must round.
@@ -197,13 +198,42 @@ namespace geometry::nav {
 
 		// Edge e of triangle ti is an obstacle edge iff exactly one of the two faces it
 		// separates is common-knowledge-blocked (the boundary of a water/obstacle region).
-		// A mesh-boundary edge (neighbor == -1) has no obstacle face outside it, so a
-		// floor border is not an obstacle edge (scope: terrain/obstacles only).
+		// Outside the mesh (neighbor == -1) is impassable, so it reads as blocked: the mesh
+		// edge narrows corridors beside it like any obstacle.
 		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e) {
 			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker);
 			const std::int32_t nb	 = view.triangle(ti).neighbor[static_cast<std::size_t>(e)];
-			const bool		   other = nb < 0 ? false : isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker);
+			const bool		   other = nb < 0 || isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker);
 			return self != other;
+		}
+
+		// Whether vertex `vertex` of triangle ti ends an obstacle edge: a walk round its fan,
+		// one way and then, when that meets the mesh edge, the other.
+		bool endsObstacleEdge(const NavView& view, std::int32_t ti, std::uint32_t vertex) {
+			auto corner = [&](std::int32_t t) {
+				const NavTriangle& tri = view.triangle(t);
+				return tri.v[0] == vertex ? 0 : (tri.v[1] == vertex ? 1 : 2);
+			};
+			std::int32_t t = ti;
+			do {
+				const int e = corner(t);
+				if (isObstacleEdge(view, t, e)) {
+					return true;
+				}
+				t = view.triangle(t).neighbor[static_cast<std::size_t>(e)];
+			} while (t >= 0 && t != ti);
+			if (t == ti) {
+				return false;
+			}
+			t = ti;
+			do {
+				const int e = (corner(t) + 2) % 3;
+				if (isObstacleEdge(view, t, e)) {
+					return true;
+				}
+				t = view.triangle(t).neighbor[static_cast<std::size_t>(e)];
+			} while (t >= 0 && t != ti);
+			return false;
 		}
 
 		// Is the angle of triangle (C, U, V) at vertex U strictly obtuse? True iff the
@@ -316,9 +346,15 @@ namespace geometry::nav {
 			const Vec2i64&	   v   = view.vertex(tri.v[static_cast<std::size_t>((e + 1) % 3)]);
 
 			// Prune: if the foot of the perpendicular from C to line UV is outside the
-			// segment, no obstacle reachable across this edge is in the wedge (Demyen
-			// Fig. 4.13-4.14); the bound already reflects the nearer base vertex.
-			if (obtuseAt(c, u, v) || obtuseAt(c, v, u)) {
+			// segment, nothing across this edge is in the wedge (Demyen Fig. 4.13-4.14) but
+			// the nearer end, which bounds the width when it ends an obstacle edge.
+			const bool atU = obtuseAt(c, u, v);
+			if (atU || obtuseAt(c, v, u)) {
+				const std::uint32_t nearEnd = tri.v[static_cast<std::size_t>(atU ? e : (e + 1) % 3)];
+				const Vec2i64&		p		= view.vertex(nearEnd);
+				if (lengthBelow(p - c, bound) && endsObstacleEdge(view, ti, nearEnd)) {
+					return floorSqrtSquared(dot(p - c, p - c));
+				}
 				return bound;
 			}
 			// The foot is on the segment here, so its distance is the line distance.
@@ -331,7 +367,7 @@ namespace geometry::nav {
 			// Unconstrained: recurse into the opposite triangle's two other edges.
 			const std::int32_t nb = tri.neighbor[e];
 			if (nb < 0) {
-				return bound; // no opposite triangle (mesh boundary), nothing to cross
+				return bound; // a blocked face's mesh-boundary edge: impassable on both sides
 			}
 			if (scratch.visited[nb] == scratch.stamp) {
 				return bound; // already explored from this apex (loop guard)
@@ -357,9 +393,9 @@ namespace geometry::nav {
 
 	// Demyen Algorithm 3, CalculateWidth, for the edge pair meeting at apex v[apex]: edges
 	// apex (C, A) and (apex+2)%3 (B, C), opposite edge (apex+1)%3 (A, B). A base vertex
-	// bounds the width only when one of this triangle's edges meeting it is an obstacle
-	// edge, and an edge's obstacle status is read only when the edge is nearer than the
-	// bound, which keeps every read within maxClearanceMm of the apex.
+	// bounds the width only when it ends an obstacle edge, and an edge's or vertex's
+	// obstacle status is read only when it is nearer than the bound, which keeps every
+	// read to triangles that come within maxClearanceMm of the apex.
 	std::int64_t corridorWidthMm(const NavView& viewIn, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm) {
 		const NavView	   view	  = viewIn.resolved();
 		const NavTriangle& tri	  = view.triangle(ti);
@@ -370,12 +406,11 @@ namespace geometry::nav {
 		const Vec2i64&	   b	  = view.vertex(tri.v[static_cast<std::size_t>(bEdge)]);
 		auto			   capped = [&](std::int64_t d) { return d >= maxClearanceMm ? kUnconstrainedWidth : d; };
 
-		std::int64_t d				= maxClearanceMm;
-		auto		 obstacleVertex = [&](int edgeIn) { return isObstacleEdge(view, ti, cEdge) || isObstacleEdge(view, ti, edgeIn); };
-		if (lengthBelow(a - c, d) && obstacleVertex(apex)) {
+		std::int64_t d = maxClearanceMm;
+		if (lengthBelow(a - c, d) && endsObstacleEdge(view, ti, tri.v[static_cast<std::size_t>(cEdge)])) {
 			d = floorSqrtSquared(dot(a - c, a - c));
 		}
-		if (lengthBelow(b - c, d) && obstacleVertex(bEdge)) {
+		if (lengthBelow(b - c, d) && endsObstacleEdge(view, ti, tri.v[static_cast<std::size_t>(bEdge)])) {
 			d = floorSqrtSquared(dot(b - c, b - c));
 		}
 		// An obtuse base angle: the nearer base vertex is the closest obstacle in the

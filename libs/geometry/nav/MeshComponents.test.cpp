@@ -343,13 +343,23 @@ namespace {
 		const std::int64_t			  tag	  = kTags[pick(rng, 5)];
 		const std::int64_t			  x		  = between(rng, -10, 2 * kSquare - 40);
 		const std::int64_t			  y		  = between(rng, -10, kSquare - 40);
+		// Height is drawn before width: argument evaluation order is unspecified, and the pinned histories assume this one.
 		switch (pick(rng, 5)) {
-			case 0:
-				return {blocked(rect(x, y, x + between(rng, 30, 160), y + between(rng, 2, 6)), tag)};
-			case 1:
-				return {blocked(rect(x, y, x + between(rng, 2, 6), y + between(rng, 30, 160)), tag)};
-			case 2:
-				return {blocked(rect(x, y, x + between(rng, 4, 30), y + between(rng, 4, 30)), tag)};
+			case 0: {
+				const std::int64_t h = between(rng, 2, 6);
+				const std::int64_t w = between(rng, 30, 160);
+				return {blocked(rect(x, y, x + w, y + h), tag)};
+			}
+			case 1: {
+				const std::int64_t h = between(rng, 30, 160);
+				const std::int64_t w = between(rng, 2, 6);
+				return {blocked(rect(x, y, x + w, y + h), tag)};
+			}
+			case 2: {
+				const std::int64_t h = between(rng, 4, 30);
+				const std::int64_t w = between(rng, 4, 30);
+				return {blocked(rect(x, y, x + w, y + h), tag)};
+			}
 			case 3: {
 				const std::int64_t s = between(rng, 12, 40);
 				const std::int64_t t = between(rng, 2, 4);
