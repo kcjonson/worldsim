@@ -3055,6 +3055,101 @@ TEST_F(NavigationSystemTest, WallLandingMarksOnlyTheRoutesItCrosses) {
 	EXPECT_FALSE(stale(world, sys, offTheEnd)) << "a wall 6 m off the route marked it";
 }
 
+// A placed obstacle back in the world over ground already meshed (felled, then regenerated as its
+// chunk reloads) comes in with the next limit that reaches past the meshed ground over it, and marks
+// the routes it lands across as a wall does: one crossing it goes stale and is replanned round it from
+// where its mover stands; one clear of it stays current.
+TEST_F(NavigationSystemTest, ObstacleBackOverMeshedGroundMarksOnlyTheRoutesItCrosses) {
+	registerTree("Test_NavRegrownObstacle", 1.0F);
+	const glm::vec2						obstacleAt{10.0F, 0.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavRegrownObstacle", {obstacleAt});
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	constexpr float kMeshedRange = 2.0F * kColonistRange;
+	meshDisc(world, {0.0F, 0.0F}, kMeshedRange);
+	settle(sys);
+	ASSERT_TRUE(obstacleMeshed(sys, obstacleAt));
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({obstacleAt.x, obstacleAt.y}), obstacleAt, "Test_NavRegrownObstacle"));
+	settle(sys);
+	ASSERT_TRUE(meshClear(sys, obstacleAt));
+
+	const glm::vec2 crossFrom = obstacleAt - glm::vec2{0.0F, 6.0F};
+	const glm::vec2 crossTo	  = obstacleAt + glm::vec2{0.0F, 6.0F};
+	const EntityID	across	  = routedMover(world, sys, crossFrom, crossTo);
+	const EntityID	clear	  = routedMover(world, sys, crossFrom - glm::vec2{20.0F, 0.0F}, crossTo - glm::vec2{20.0F, 0.0F});
+	settle(sys);
+	ASSERT_FALSE(stale(world, sys, across)) << "their own limits lie in meshed ground";
+	ASSERT_FALSE(stale(world, sys, clear));
+
+	placeTrees(executor, processed, "Test_NavRegrownObstacle", {obstacleAt});
+	addColonist(world, obstacleAt + glm::vec2{0.9F * kColonistRange, 0.0F}, "Past the edge");
+	settle(sys);
+	ASSERT_TRUE(obstacleMeshed(sys, obstacleAt)) << "the next limit over it brought it in";
+	EXPECT_TRUE(stale(world, sys, across)) << "it landed across a route and left it current";
+	EXPECT_FALSE(stale(world, sys, clear)) << "it marked a route 20 m off";
+	const auto replanned = routeBetween(sys, crossFrom, crossTo);
+	ASSERT_TRUE(replanned.has_value());
+	EXPECT_GT(lengthOf(*replanned), glm::distance(crossFrom, crossTo)) << "the new route goes round it";
+}
+
+namespace {
+	// The placed obstacle rings whose cover holds the mesh's triangle at `meters`.
+	std::vector<geometry::nav::RingId> placedRingsAt(const NavigationSystem& sys, glm::vec2 meters) {
+		const geometry::nav::PatchableMesh& mesh = sys.navMesh();
+		const std::int32_t					tri	 = mesh.locate(nav::toMm(meters));
+		std::vector<geometry::nav::RingId>	rings;
+		if (tri < 0) {
+			return rings;
+		}
+		for (const geometry::nav::RingId r : mesh.cover(tri)) {
+			if (r != geometry::nav::kGroundToken && mesh.ring(r).polygon.provenanceId == nav::kProvenancePlaced) {
+				rings.push_back(r);
+			}
+		}
+		return rings;
+	}
+} // namespace
+
+// A placed obstacle whose footprint crosses the edge of the seen area blocks inside the union and adds
+// no triangle outside it; once a later limit covers the rest, the whole footprint blocks, under the one
+// ring it went in as.
+TEST_F(NavigationSystemTest, ObstacleStraddlingTheEdgeBlocksInsideOnly) {
+	registerTree("Test_NavStraddlingObstacle", 1.5F);
+	const glm::vec2				 lookout{0.0F, 0.0F};
+	const std::vector<Vec2i64> outline =
+		nav::visibilityLimit(nav::toMm(lookout), static_cast<std::int64_t>(kColonistRange * static_cast<float>(geometry::kMillimetersPerMeter))).ring;
+	const glm::vec2 edgeAt	= 0.5F * (nav::toMeters(outline[0]) + nav::toMeters(outline[1]));
+	const glm::vec2 outward = glm::normalize(edgeAt - lookout);
+	const glm::vec2 inside	= edgeAt - 0.75F * outward;
+	const glm::vec2 outside = edgeAt + 0.75F * outward;
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTrees(executor, processed, "Test_NavStraddlingObstacle", {edgeAt});
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	sys.setPlacementData(&executor, &processed);
+	addColonist(world, lookout, "Lookout");
+	settle(sys);
+	ASSERT_TRUE(sys.inSimArea(inside));
+	EXPECT_TRUE(obstacleMeshed(sys, inside)) << "it blocks inside the seen area";
+	EXPECT_FALSE(sys.inSimArea(outside)) << "it added mesh outside the seen area";
+	const std::vector<geometry::nav::RingId> ring = placedRingsAt(sys, inside);
+	ASSERT_EQ(ring.size(), 1U);
+
+	addColonist(world, lookout + kColonistRange * outward, "Beyond");
+	settle(sys);
+	EXPECT_TRUE(obstacleMeshed(sys, outside)) << "the rest of its footprint blocks once seen";
+	EXPECT_EQ(placedRingsAt(sys, inside), ring);
+	EXPECT_EQ(placedRingsAt(sys, outside), ring) << "it went in again";
+}
+
 namespace {
 	// The disc of `r` round `p` is clear ground: `p`, and points round two rims (half `r` and `r`), each
 	// pass isValidPosition, so it is in no water or placed obstacle and inside the mesh's edge.

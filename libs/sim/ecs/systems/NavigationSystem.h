@@ -60,10 +60,12 @@
 // unloads, and the placement data does not.
 //
 // Staleness (spec 4.6): generation() moves once for each joined patch job that brought ground in,
-// re-derived water, or changed walls or doors, which can change any route; of the routes current
-// before it, those a closing box crosses (a wall, new water, a door taken out) go stale. Placed
-// obstacles land only with or ahead of their ground, so never across a route; leaving, they only
-// open ground and mark nobody.
+// re-derived water, changed walls or doors, or added a placed obstacle over ground already meshed,
+// which can change any route; of the routes current before it, those a closing box crosses (a wall,
+// new water, a door taken out, such a placed obstacle) go stale. A placed obstacle lands with or
+// ahead of its ground, so over meshed ground only when it is back in the world after leaving the
+// mesh (felled, then regenerated where its chunk reloaded); leaving, it only opens ground and marks
+// nobody.
 
 #include "../EntityID.h"
 #include "../ISystem.h"
@@ -398,10 +400,11 @@ class NavigationSystem : public ISystem {
 	// headless sim, never the game.
 	void finishPendingBuilds();
 
-	// Monotonic count of joined patch jobs that brought ground in, re-derived a chunk's water, or
-	// changed walls or doors: the changes that can move any route. A stored NavPath stamps it at plan
-	// time so the replan loop sees "the mesh changed under me", and a deferred route waits on it.
-	// Placed obstacles landing or leaving don't move it (see the file comment).
+	// Monotonic count of joined patch jobs that brought ground in, re-derived a chunk's water, changed
+	// walls or doors, or added a placed obstacle over meshed ground: the changes that can move any
+	// route. A stored NavPath stamps it at plan time so the replan loop sees "the mesh changed under
+	// me", and a deferred route waits on it. Placed obstacles leaving don't move it (see the file
+	// comment).
 	[[nodiscard]] std::uint64_t generation() const;
 	// Moves when ground an AwaitingMesh answer waits for may have changed: generation() moved, or a
 	// queued limit was dropped and will never go in. An answer that waited asks again only once this
@@ -535,8 +538,9 @@ class NavigationSystem : public ISystem {
 		// The portals of doorAdds and doorRemoves, whose edges' triangles a door edit retags.
 		std::vector<geometry::nav::DoorPortal>								 doorEdges;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
-		// The ground, water, and wall patches among `patches`, and the boxes where the job closes
-		// ground (a wall, new water, a door taken out).
+		// The patches among `patches` that bring ground or water in, change walls, or add a placed
+		// obstacle over meshed ground, and the boxes where the job closes ground (a wall, new water, a
+		// door taken out, such a placed obstacle).
 		std::size_t									 routePatches = 0;
 		std::vector<std::pair<glm::vec2, glm::vec2>> blockingBoxes;
 		// The outlines of the limits whose ground is among `patches`.

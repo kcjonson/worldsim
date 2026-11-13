@@ -1369,6 +1369,8 @@ namespace ecs {
 		struct Found {
 			ObstacleKey			  key;
 			gnav::NavInputPolygon ring;
+			geometry::Vec2i64	  lo;
+			geometry::Vec2i64	  hi;
 		};
 		std::vector<Found> found;
 		if (placement != nullptr) {
@@ -1404,7 +1406,7 @@ namespace ecs {
 					const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
 					const std::int64_t gy = std::max<std::int64_t>({0, boxLo.y - limit.centre.y, limit.centre.y - boxHi.y});
 					if (gx * gx + gy * gy <= limit.circumradiusMm * limit.circumradiusMm) {
-						found.push_back({std::move(key), std::move(*ring)});
+						found.push_back({std::move(key), std::move(*ring), boxLo, boxHi});
 					}
 				}
 				return true;
@@ -1418,7 +1420,19 @@ namespace ecs {
 		const bool		  withGround = take == found.size();
 		gnav::PatchEdits  edits;
 		std::vector<ObstacleKey> keys;
+		// A placed obstacle over ground already meshed (one back in the world after it left the mesh)
+		// can land across a route: its box closes ground, as a wall's does.
+		const auto onMeshedGround = [this](const Found& f) {
+			const auto meshed = [this](geometry::Vec2i64 p) { return detailMesh.locate(p) >= 0; };
+			return meshed(f.lo) || meshed(f.hi) || meshed({f.lo.x, f.hi.y}) || meshed({f.hi.x, f.lo.y}) ||
+				   std::any_of(f.ring.ring.begin(), f.ring.ring.end(), meshed);
+		};
+		bool closesGround = false;
 		for (std::size_t k = 0; k < take; ++k) {
+			if (onMeshedGround(found[k])) {
+				gatheredJob.blockingBoxes.emplace_back(nav::toMeters(found[k].lo), nav::toMeters(found[k].hi));
+				closesGround = true;
+			}
 			edits.adds.push_back(std::move(found[k].ring));
 			obstacleInMesh.emplace(found[k].key, kGatheredRing);
 			keys.push_back(std::move(found[k].key));
@@ -1441,8 +1455,10 @@ namespace ecs {
 				return true;
 			});
 			edits.adds.push_back({limit.outline, false, nav::kProvenanceBorder});
-			++gatheredJob.routePatches;
 			gatheredJob.groundOutlines.push_back(limit.outline);
+		}
+		if (withGround || closesGround) {
+			++gatheredJob.routePatches;
 		}
 		if (edits.adds.empty()) {
 			return withGround;
@@ -1463,7 +1479,11 @@ namespace ecs {
 			}
 			std::size_t k = 0;
 			for (; k < keys.size(); ++k) {
-				obstacleInMesh.at(keys[k]) = added[k];
+				if (added[k] == gnav::kNoRing) {
+					obstacleInMesh.erase(keys[k]);
+				} else {
+					obstacleInMesh.at(keys[k]) = added[k];
+				}
 			}
 			for (std::size_t c = 0; c < waterChunks.size(); ++c) {
 				std::vector<RingId>& ids = water.at(waterChunks[c]).rings;
