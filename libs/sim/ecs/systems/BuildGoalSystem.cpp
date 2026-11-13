@@ -35,8 +35,11 @@ void BuildGoalSystem::update(float /*deltaTime*/) {
 		// Only create goals for items that have a target position set
 		if (!packaged.targetPosition.has_value()) {
 			// No target position - player hasn't placed it yet
-			// Remove goal if one exists
-			registry.removeGoalByDestination(entity);
+			// Remove our goal if one exists; another system's goal on the entity (a storage box's) is not ours
+			const auto* placementGoal = registry.getGoalByDestination(entity);
+			if (placementGoal != nullptr && placementGoal->type == TaskType::PlacePackaged) {
+				registry.removeGoalByDestination(entity);
+			}
 			packagesWithGoals.erase(entity);
 			continue;
 		}
@@ -48,10 +51,15 @@ void BuildGoalSystem::update(float /*deltaTime*/) {
 		// Check if goal already exists
 		const auto* existingGoal = registry.getGoalByDestination(entity);
 		if (existingGoal != nullptr) {
-			// Goal exists - verify it's still valid
-			packagesWithGoals.erase(entity);
-			activeGoalCount++;
-			continue;
+			if (existingGoal->type == TaskType::PlacePackaged) {
+				// Goal exists - verify it's still valid
+				packagesWithGoals.erase(entity);
+				activeGoalCount++;
+				continue;
+			}
+			// One goal per destination: a box that kept its storage goal while being moved gives it up
+			// for the placement goal, and StorageGoalSystem raises it again once the box is placed
+			registry.removeGoalWithChildren(existingGoal->id);
 		}
 
 		// Create new goal for this packaged item
