@@ -169,6 +169,7 @@ namespace geometry::nav {
 		// to a millimetre: the least w with w^2 len2 >= cross(dir, v - a)^2. A square root
 		// in doubles guesses it; exact comparisons settle it.
 		std::int64_t offLineMm(const Vec2i64& a, const Vec2i64& dir, const Int128& len2, const Vec2i64& v) {
+			assert(len2.sign() > 0 && "PatchableMesh: distance from the line of a zero-length edge");
 			const Int128 off   = cross(dir, v - a);
 			const double guess = std::ceil(std::fabs(off.toDouble()) / std::sqrt(len2.toDouble()));
 			std::int64_t w	   = guess < 0x1p62 ? static_cast<std::int64_t>(guess) : std::int64_t{1} << 62;
@@ -3813,6 +3814,63 @@ namespace geometry::nav {
 				}
 				if (nbs.size() == 1 && !isOriginalEndpoint(outline, z.edge, verts[v]) && onBoundary[v] == 0) {
 					fail() << "ring " << z.ring << " edge " << z.edge << " stops short at vertex " << v;
+					return err.str();
+				}
+			}
+		}
+		// A vertex inside the mesh splits a chain of blocked edges only where something else
+		// meets it: a corner of one of them, or another segment, which keeps pieces of its own
+		// there unless rounding laid them on the chain's either side, so it is in the source
+		// list. Every split, exact or rounded, is two segments meeting, and both keep pieces at
+		// it unless it is on the mesh boundary. So a vertex with just two constrained edges,
+		// one source list on both, blocked edges only, at no corner of theirs, and no two of
+		// them crossing within kOffGroundReachMm of it, is a split left over.
+		{
+			std::map<std::uint32_t, std::vector<std::int32_t>> constrainedAt; // source list ids
+			for (std::int32_t t = 0; t < triCount; ++t) {
+				if (live[static_cast<std::size_t>(t)] == 0) {
+					continue;
+				}
+				const NavTriangle& tri = tris[static_cast<std::size_t>(t)];
+				for (int e = 0; e < 3; ++e) {
+					const std::uint32_t a		 = tri.v[static_cast<std::size_t>(e)];
+					const std::uint32_t b		 = tri.v[static_cast<std::size_t>(next3(e))];
+					const std::int32_t	sourceId = edgeSourceIds[static_cast<std::size_t>(t)][static_cast<std::size_t>(e)];
+					// An edge at a vertex off the boundary has a triangle on each side, so it is
+					// seen twice; a < b takes it once.
+					if (sourceId < 0 || a > b) {
+						continue;
+					}
+					for (const std::uint32_t v : {a, b}) {
+						if (onBoundary[v] == 0) {
+							constrainedAt[v].push_back(sourceId);
+						}
+					}
+				}
+			}
+			for (const auto& [v, sourceIds] : constrainedAt) {
+				if (sourceIds.size() != 2 || sourceIds[0] != sourceIds[1]) {
+					continue;
+				}
+				const std::vector<EdgeSource>& sources	 = sourceLists.get(sourceIds[0]);
+				bool						   explained = false;
+				for (const EdgeSource& z : sources) {
+					const RegisteredRing& reg = rings[static_cast<std::size_t>(z.ring)];
+					explained = explained || !reg.polygon.blocked || isOriginalEndpoint(reg.polygon.ring, z.edge, verts[v]);
+				}
+				// Two edges crossing there whose pieces rounding laid on one line either side.
+				for (std::size_t i = 0; i < sources.size() && !explained; ++i) {
+					const std::vector<Vec2i64>& a = rings[static_cast<std::size_t>(sources[i].ring)].polygon.ring;
+					for (std::size_t j = i + 1; j < sources.size() && !explained; ++j) {
+						const std::vector<Vec2i64>& b = rings[static_cast<std::size_t>(sources[j].ring)].polygon.ring;
+						const SegmentIntersection	r = intersectSegments(edgeStart(a, sources[i].edge), edgeEnd(a, sources[i].edge), edgeStart(b, sources[j].edge),
+																		  edgeEnd(b, sources[j].edge));
+						explained = (r.relation == SegmentRelation::ProperCrossing || r.relation == SegmentRelation::EndpointTouch) &&
+									std::abs(r.point.x - verts[v].x) <= kOffGroundReachMm && std::abs(r.point.y - verts[v].y) <= kOffGroundReachMm;
+					}
+				}
+				if (!explained) {
+					fail() << "vertex " << v << " (" << verts[v].x << ", " << verts[v].y << ") splits a blocked chain where nothing else meets it";
 					return err.str();
 				}
 			}
