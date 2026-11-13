@@ -11,6 +11,7 @@
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
 #include "PhysicsSystem.h"
+#include "PlacedNothing.test.h"
 #include "StorageGoalSystem.h"
 #include "TimeSystem.h"
 #include "../GoalTaskRegistry.h"
@@ -3529,6 +3530,8 @@ namespace ecs::test {
 	// where the tests above set the nav state by hand.
 	class ClaimsOnRealRoutesTest : public ChainClaimsTest {
 	  protected:
+		EmptyPlacement emptyPlacement;
+
 		void SetUp() override {
 			assets::ConstructionRegistry::Get().clear();
 			const std::filesystem::path root =
@@ -3538,6 +3541,7 @@ namespace ecs::test {
 			world->registerSystem<TimeSystem>();
 			nav = &world->registerSystem<NavigationSystem>();
 			nav->setChunkManager(openLand());
+			nav->setPlacementData(&emptyPlacement.executor, &emptyPlacement.processed);
 			nav->setConstructionWorld(&construction);
 			ai->setNavigationSystem(nav);
 			world->registerSystem<MovementSystem>();

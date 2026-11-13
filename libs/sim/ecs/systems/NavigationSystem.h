@@ -167,7 +167,7 @@ class NavigationSystem : public ISystem {
 
 	// Detail comes from `executor`'s chunk indices, and only for chunks in `processed` (the
 	// chunks that have finished entity placement; null reads every indexed chunk as finished).
-	// Removals the executor made before this call are discarded.
+	// Removals the executor made before this call are discarded. Required once a chunk manager is set.
 	void setPlacementData(assets::PlacementExecutor* executor, const std::unordered_set<world::ChunkCoordinate>* processed);
 
 	// Walls are diffed against this world from the next update on.
@@ -637,8 +637,7 @@ class NavigationSystem : public ISystem {
 	// it, and walking on (collision does not push it back) takes it out ahead.
 	void snapMovers();
 	void			   queueRemovedDetail();
-	// The chunk's placement is in and finished, so its placed obstacles can be read. Always so with
-	// no placement data wired.
+	// The chunk's placement is in and finished, so its placed obstacles can be read.
 	[[nodiscard]] bool placementReady(world::ChunkCoordinate coord) const;
 	void			   gatherWalls();
 	// Water re-derived for each loaded chunk whose terrain changed under its water; a chunk that

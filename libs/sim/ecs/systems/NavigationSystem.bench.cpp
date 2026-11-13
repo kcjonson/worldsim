@@ -28,6 +28,7 @@
 #include "AIDecisionSystem.h"
 #include "MovementSystem.h"
 #include "PhysicsSystem.h"
+#include "PlacedNothing.test.h"
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
@@ -80,6 +81,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -383,6 +385,21 @@ namespace {
 			nav.setChunkManager(chunks);
 			nav.setPlacementData(placement.get(), &processed);
 			nav.setConstructionWorld(&construction);
+		}
+
+		// Swaps the forest's placement for placement holding nothing over the loaded chunks, for a
+		// scenario that measures ground alone.
+		void placeNothing(world::ChunkManager& chunks) {
+			world::ChunkCoordinate lo{std::numeric_limits<std::int32_t>::max(), std::numeric_limits<std::int32_t>::max()};
+			world::ChunkCoordinate hi{std::numeric_limits<std::int32_t>::min(), std::numeric_limits<std::int32_t>::min()};
+			for (const world::Chunk* chunk : chunks.getLoadedChunks()) {
+				lo = {std::min(lo.x, chunk->coordinate().x), std::min(lo.y, chunk->coordinate().y)};
+				hi = {std::max(hi.x, chunk->coordinate().x), std::max(hi.y, chunk->coordinate().y)};
+			}
+			placement = std::make_unique<assets::PlacementExecutor>(assets::AssetRegistry::Get());
+			processed.clear();
+			ecs::placeNothingElsewhere(*placement, &processed, lo, hi);
+			nav.setPlacementData(placement.get(), &processed);
 		}
 
 		// A mover meshes the disc of its sight distance plus the buffer around it.
@@ -1013,7 +1030,7 @@ namespace {
 		chunks.finishPendingGeneration();
 		for (auto _ : state) {
 			Rig rig(state.range(1), &chunks);
-			rig.nav.setPlacementData(nullptr, nullptr);
+			rig.placeNothing(chunks);
 			rig.addMover({768.0F, 768.0F}, sightCovering(radius));
 			rig.settle();
 			begin();
@@ -1077,7 +1094,7 @@ namespace {
 		}
 		for (auto _ : state) {
 			Rig rig(state.range(0), &chunks);
-			rig.nav.setPlacementData(nullptr, nullptr);
+			rig.placeNothing(chunks);
 			rig.addMover(at, sightCovering(2));
 			begin();
 			TickStats stats;

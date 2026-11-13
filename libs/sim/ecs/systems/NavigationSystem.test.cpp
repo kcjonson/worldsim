@@ -294,12 +294,25 @@ namespace {
 		}
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 
+		// Placement with no placed obstacles, for a test that meshes chunks and places nothing itself.
+		void wireEmptyPlacement(NavigationSystem& sys) { sys.setPlacementData(&emptyPlacement.executor, &emptyPlacement.processed); }
+
 		// The shared land chunks, nearly all of them meshed by one still mover in their middle, whose
 		// limit and its obstacle query stay inside them.
-		static void wireArea(World& world, NavigationSystem& sys) {
+		void wireArea(World& world, NavigationSystem& sys) {
 			sys.setChunkManager(landChunks());
+			wireEmptyPlacement(sys);
 			meshDisc(world, kAreaCentre, kAreaRangeMeters);
 		}
+
+		void wireWaterPatch(World& world, NavigationSystem& sys, ConstructionWorld& cw) {
+			sys.setChunkManager(waterPatchChunks());
+			wireEmptyPlacement(sys);
+			meshAround(world, {0.0F, 0.0F}, 60.0F);
+			sys.setConstructionWorld(&cw);
+		}
+
+		EmptyPlacement emptyPlacement;
 	};
 
 	EntityID addColonist(World& world, glm::vec2 at, const char* name) {
@@ -981,6 +994,7 @@ TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	const glm::vec2 a{10.0F, 10.0F};
 	const glm::vec2 b{150.0F, 20.0F};
@@ -1105,6 +1119,7 @@ TEST_F(NavigationSystemTest, ArrivingChunkJoinsItsNeighbour) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	constexpr float kRange = 40.0F;
 	const EntityID	mover  = meshDisc(world, {300.0F, 100.0F}, kRange);
@@ -1526,6 +1541,7 @@ TEST_F(NavigationSystemTest, FarGoalIsRoutedRoundTheFord) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	ConstructionWorld cw;
 	sys.setChunkManager(pondFieldChunks<150>());
+	wireEmptyPlacement(sys);
 	meshBand(world, {kPondStart, {150.0F, kPondStart.y}});
 	sys.setConstructionWorld(&cw);
 	settle(sys);
@@ -1549,6 +1565,7 @@ TEST_F(NavigationSystemTest, FordFarAroundIsRoutedOverSeveralSlices) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	ConstructionWorld cw;
 	sys.setChunkManager(pondFieldChunks<1000>());
+	wireEmptyPlacement(sys);
 	meshBand(world, {kPondStart, {1000.0F, kPondStart.y}});
 	sys.setConstructionWorld(&cw);
 	settle(sys);
@@ -1577,6 +1594,7 @@ TEST_F(NavigationSystemTest, GenerationMovesOncePerGroundOrWallJob) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	const EntityID mover = meshAround(world, {256.0F, 256.0F}, 30.0F); // holds and wants (0, 0) only
 	loadFor(*chunks, sys, camera);
@@ -1624,6 +1642,7 @@ TEST_F(NavigationSystemTest, InSimAreaIsTheUnionOfLimits) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	constexpr float kRange = 40.0F;
 	const glm::vec2 a{0.0F, 0.0F};
@@ -1745,6 +1764,7 @@ TEST_F(NavigationSystemTest, IsValidPositionTrueOnWalkableFaceFalseOnWaterAndOff
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(waterPatchChunks());
+	wireEmptyPlacement(sys);
 	meshAround(world, {0.0F, 0.0F}, 60.0F);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
@@ -1792,6 +1812,7 @@ TEST_F(NavigationSystemTest, LandAroundWaterPinchedAtAChunkCornerIsValid) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
+	wireEmptyPlacement(sys);
 	meshAround(world, {5.33F, 4.2F}, 64.0F);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
@@ -1813,6 +1834,7 @@ TEST_F(NavigationSystemTest, WaterAcrossChunkBordersHasNoSeam) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	meshAround(world, {0.0F, 0.0F}, 60.0F);
 	settle(sys);
@@ -1836,6 +1858,7 @@ TEST_F(NavigationSystemTest, WaterStretchOfABorderStaysConstrained) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	meshDisc(world, {-30.0F, 0.0F}, 50.0F);
 	meshDisc(world, {30.0F, 0.0F}, 50.0F);
@@ -1858,6 +1881,7 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointLeavesWater) {
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	EXPECT_FALSE(sys.nearestTerrainWalkablePoint({40.0F, 40.0F}).has_value()) << "no ground meshed";
 	sys.setChunkManager(waterPatchChunks());
+	wireEmptyPlacement(sys);
 	meshAround(world, {40.0F, 40.0F}, 40.0F);
 	settle(sys);
 
@@ -1885,6 +1909,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsFromWaterDropAllLandOnWalkableGroun
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(waterPatchChunks());
+	wireEmptyPlacement(sys);
 
 	// The pond's west shore is x = 32; (34, 40) is ~2 m in from it.
 	const glm::vec2	 drop{34.0F, 40.0F};
@@ -1940,6 +1965,7 @@ TEST_F(NavigationSystemTest, NearestTerrainWalkablePointStepsOutOfBuiltWallBand)
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	meshAround(world, {0.0F, 0.0F}, 30.0F);
 	settle(sys);
@@ -1966,6 +1992,7 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 
 	const glm::vec2	 drop{5.0F, 0.0F};
@@ -1993,14 +2020,6 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 // Vertex-only validity is insufficient: a footprint can have every corner on land yet span water,
 // or fully enclose a pond. All use waterPatchSampler()'s pond at (40,40), at most 10.5 m from its
 // center to any shore.
-
-namespace {
-	void wireWaterPatch(World& world, NavigationSystem& sys, ConstructionWorld& cw) {
-		sys.setChunkManager(waterPatchChunks());
-		meshAround(world, {0.0F, 0.0F}, 60.0F);
-		sys.setConstructionWorld(&cw);
-	}
-} // namespace
 
 TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	ConstructionWorld cw;
@@ -2202,6 +2221,7 @@ TEST_F(NavigationSystemTest, OffMeshColonistSnappedOntoMesh) {
 	World			  world;
 	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
 	nav.setChunkManager(waterPatchChunks());
+	wireEmptyPlacement(nav);
 	nav.setConstructionWorld(&cw);
 	meshAround(world, {40.0F, 40.0F}, 60.0F);
 	settle(nav);
@@ -2821,6 +2841,7 @@ TEST_F(NavigationSystemTest, TerrainChangeOnMeshedChunkRederivesItsWater) {
 	NavigationSystem&						   sys = world.registerSystem<NavigationSystem>();
 	addColonist(world, {20.0F, 20.0F}, "Anchor");
 	sys.setChunkManager(chunks.get());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	settle(sys);
 	const glm::vec2 pond{40.0F, 40.0F};
@@ -3352,6 +3373,7 @@ TEST_F(NavigationSystemTest, NearestPathablePointStandsClearOfTheMeshEdge) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	meshDisc(world, {0.0F, 0.0F}, kColonistRange);
 	settle(sys);
 	// Through the middle of an edge of the limit's polygon, which lies kColonistRange out.
@@ -3636,6 +3658,7 @@ TEST_F(NavigationSystemTest, StructuralChangesReRequestOnlyTheRoutesTheyCross) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	// Wider than the walker's own limit, so the ground he would take is meshed already.
 	meshDisc(world, {0.0F, 0.0F}, 2.0F * (kDefaultSightRadius + NavigationSystem::kSightBufferMeters));
@@ -3676,6 +3699,7 @@ TEST_F(NavigationSystemTest, LongMoveOrderKeepsItsGroundWhileTheCameraWanders) {
 	World			  world;
 	NavigationSystem& nav = world.registerSystem<NavigationSystem>();
 	nav.setChunkManager(chunks.get());
+	wireEmptyPlacement(nav);
 	nav.setConstructionWorld(&cw);
 	std::vector<world::ChunkAnchor> anchors;
 	glm::vec2						camera{768.0F, 256.0F}; // chunk (1, 0): chunks 0 to 2 load
@@ -3740,6 +3764,7 @@ TEST_F(NavigationSystemTest, CameraComingAndGoingLeavesTheGeneration) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	const glm::vec2 colonistAt{220.0F, 256.0F};
 	addColonist(world, colonistAt, "Keeper");
@@ -3856,9 +3881,13 @@ namespace {
 		NavigationSystem& sys	   = world.registerSystem<NavigationSystem>();
 		EntityID		  mover	   = kInvalidEntity;
 		glm::vec2		  cameraAt = ChunkWalk::centre(-40);
+		assets::PlacementExecutor					placement{AssetRegistry::Get()};
+		std::unordered_set<world::ChunkCoordinate> placed;
 
 		MoverWalk() {
+			placeNothingElsewhere(placement, &placed, {-50, 0}, {50, 0});
 			sys.setChunkManager(walk.chunks.get());
+			sys.setPlacementData(&placement, &placed);
 			sys.setConstructionWorld(&cw);
 			mover = addColonist(world, ChunkWalk::centre(-30), "Walker");
 		}
@@ -4665,6 +4694,7 @@ TEST_F(NavigationSystemTest, GoalInQueuedLimitAwaitsMesh) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	const glm::vec2 home{0.0F, 0.0F};
 	meshDisc(world, home, kColonistRange);
 	settle(sys);
@@ -5187,6 +5217,7 @@ TEST_F(NavigationSystemTest, StillMoverMeshIsHisLimit) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	const glm::vec2 at{200.0F, 200.0F};
 	addColonist(world, at, "Still");
@@ -5417,6 +5448,7 @@ TEST_F(NavigationSystemTest, MoverInsideGroundOthersMeshedIsNeitherUrgentNorStop
 	TimeSystem& time = world.registerSystem<TimeSystem>();
 	time.setSpeed(GameSpeed::VeryFast);
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	const float r = kDefaultSightRadius + NavigationSystem::kSightBufferMeters;
 	meshDisc(world, kAreaCentre, 6.0F * r);
 	settle(sys);
@@ -5446,6 +5478,7 @@ TEST_F(NavigationSystemTest, LimitsThatAreNotUrgentGoInUnderTheirBudget) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
 	const float			   apart = 4.0F * kColonistRange;
 	std::vector<EntityID>  movers;
 	std::vector<glm::vec2> past;
@@ -5600,6 +5633,7 @@ TEST_F(NavigationSystemTest, ConnectedIsTheSameLabelOnMeshedGround) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(riverAcrossChunks());
+	wireEmptyPlacement(sys);
 	meshAround(world, {100.0F, 256.0F}, 30.0F);
 	meshBand(world, {{100.0F, 240.0F}, {300.0F, 100.0F}});
 	settle(sys);
@@ -5641,6 +5675,7 @@ TEST_F(NavigationSystemTest, ConnectedJoinsOnTheTickTheGapIsMeshed) {
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(chunks.get());
+	wireEmptyPlacement(sys);
 	sys.setConstructionWorld(&cw);
 	// Limits three ranges apart, in chunks (0, 0) and (1, 0); the walker's limit from between overlaps both.
 	constexpr float kRange = 40.0F;

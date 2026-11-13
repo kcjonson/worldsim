@@ -1006,6 +1006,7 @@ namespace ecs {
 	}
 
 	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t limitBudget, bool holdLimits) {
+		assert(placement != nullptr);
 		collectAnchors();
 		trackMovers();
 		queueRemovedDetail();
@@ -1284,8 +1285,7 @@ namespace ecs {
 	// --- Detail ---------------------------------------------------------------------
 
 	bool NavigationSystem::placementReady(world::ChunkCoordinate coord) const {
-		return placement == nullptr ||
-			   (placement->getChunkIndex(coord) != nullptr && (processedChunks == nullptr || processedChunks->contains(coord)));
+		return placement->getChunkIndex(coord) != nullptr && (processedChunks == nullptr || processedChunks->contains(coord));
 	}
 
 	void NavigationSystem::queueRemovedDetail() {
@@ -1373,47 +1373,45 @@ namespace ecs {
 			geometry::Vec2i64	  hi;
 		};
 		std::vector<Found> found;
-		if (placement != nullptr) {
-			const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-			const glm::vec2				 lo		  = nav::toMeters(limit.query.lo);
-			const glm::vec2				 hi		  = nav::toMeters(limit.query.hi);
-			const std::int64_t			 reachMm  = radiusMm(kFootprintReachMeters);
-			everyChunkIn(limit.query.lo, limit.query.hi, [&](world::ChunkCoordinate coord) {
-				for (const assets::PlacedEntity* e : placement->getChunkIndex(coord)->queryRect(lo.x, lo.y, hi.x, hi.y)) {
-					ObstacleKey key{coord, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
-					if (obstacleInMesh.contains(key)) {
-						continue;
-					}
-					std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
-					if (!ring.has_value()) {
-						continue;
-					}
-					// The footprint's box against the disc the limit circumscribes.
-					const geometry::Vec2i64 at = nav::toMm(e->position);
-					geometry::Vec2i64		boxLo = ring->ring.front();
-					geometry::Vec2i64		boxHi = boxLo;
-					std::int64_t			reach = 0;
-					for (const geometry::Vec2i64& p : ring->ring) {
-						boxLo = {std::min(boxLo.x, p.x), std::min(boxLo.y, p.y)};
-						boxHi = {std::max(boxHi.x, p.x), std::max(boxHi.y, p.y)};
-						reach = std::max({reach, std::abs(p.x - at.x), std::abs(p.y - at.y)});
-					}
-					if (reach > reachMm && overreachingDefs.insert(e->defName).second) {
-						LOG_ERROR(Engine, "[Nav] %s's footprint reaches %lld mm from its position, past kFootprintReachMeters: where it pokes into a limit "
-										  "from outside the limit's query box, seen ground goes in without it",
-								  e->defName.c_str(), static_cast<long long>(reach));
-					}
-					const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
-					const std::int64_t gy = std::max<std::int64_t>({0, boxLo.y - limit.centre.y, limit.centre.y - boxHi.y});
-					if (gx * gx + gy * gy <= limit.circumradiusMm * limit.circumradiusMm) {
-						found.push_back({std::move(key), std::move(*ring), boxLo, boxHi});
-					}
+		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+		const glm::vec2				 lo		  = nav::toMeters(limit.query.lo);
+		const glm::vec2				 hi		  = nav::toMeters(limit.query.hi);
+		const std::int64_t			 reachMm  = radiusMm(kFootprintReachMeters);
+		everyChunkIn(limit.query.lo, limit.query.hi, [&](world::ChunkCoordinate coord) {
+			for (const assets::PlacedEntity* e : placement->getChunkIndex(coord)->queryRect(lo.x, lo.y, hi.x, hi.y)) {
+				ObstacleKey key{coord, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
+				if (obstacleInMesh.contains(key)) {
+					continue;
 				}
-				return true;
-			});
-			// Key order, so a limit's obstacles go in the same order however the index returns them.
-			std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.key < b.key; });
-		}
+				std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
+				if (!ring.has_value()) {
+					continue;
+				}
+				// The footprint's box against the disc the limit circumscribes.
+				const geometry::Vec2i64 at = nav::toMm(e->position);
+				geometry::Vec2i64		boxLo = ring->ring.front();
+				geometry::Vec2i64		boxHi = boxLo;
+				std::int64_t			reach = 0;
+				for (const geometry::Vec2i64& p : ring->ring) {
+					boxLo = {std::min(boxLo.x, p.x), std::min(boxLo.y, p.y)};
+					boxHi = {std::max(boxHi.x, p.x), std::max(boxHi.y, p.y)};
+					reach = std::max({reach, std::abs(p.x - at.x), std::abs(p.y - at.y)});
+				}
+				if (reach > reachMm && overreachingDefs.insert(e->defName).second) {
+					LOG_ERROR(Engine, "[Nav] %s's footprint reaches %lld mm from its position, past kFootprintReachMeters: where it pokes into a limit "
+									  "from outside the limit's query box, seen ground goes in without it",
+							  e->defName.c_str(), static_cast<long long>(reach));
+				}
+				const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
+				const std::int64_t gy = std::max<std::int64_t>({0, boxLo.y - limit.centre.y, limit.centre.y - boxHi.y});
+				if (gx * gx + gy * gy <= limit.circumradiusMm * limit.circumradiusMm) {
+					found.push_back({std::move(key), std::move(*ring), boxLo, boxHi});
+				}
+			}
+			return true;
+		});
+		// Key order, so a limit's obstacles go in the same order however the index returns them.
+		std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.key < b.key; });
 
 		const std::size_t take = std::min(found.size(), budget);
 		budget -= take;
