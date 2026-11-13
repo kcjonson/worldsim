@@ -50,6 +50,11 @@ namespace ecs {
 
 		[[nodiscard]] const vision::SeenArea& seenArea() const { return seen; }
 
+		// The dev toggle that turns player visibility off (player-visibility.md rule 18): with it on
+		// the cover is not drawn. The record keeps growing either way.
+		void			   setRevealed(bool on) { revealedFlag = on; }
+		[[nodiscard]] bool revealed() const { return revealedFlag; }
+
 	  private:
 		// A leg's held positions, kept as what bounds the leg's end: the directions from its start
 		// within kSeenSlackMm of every held position's line (a wedge, once one lies farther out than
@@ -81,6 +86,7 @@ namespace ecs {
 
 		vision::SeenArea			 seen;
 		std::map<EntityID, Observer> observers;
+		bool						 revealedFlag = false;
 	};
 
 } // namespace ecs

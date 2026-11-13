@@ -91,6 +91,8 @@ namespace world_sim {
 	  private:
 		// --- write verbs ---
 		void devFreeBuild(const app::DevRequest& cmd);
+		// reveal?on=1|0: player visibility off or on (player-visibility.md 3.10)
+		void devReveal(const app::DevRequest& cmd);
 		void devGive(const app::DevRequest& cmd);
 		void devSpawn(const app::DevRequest& cmd);
 		void devColonist(const app::DevRequest& cmd);

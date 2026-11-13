@@ -48,6 +48,7 @@
 #include <world/rendering/PackagedLayout.h> // crate footprint (drop spacing)
 #include <world/rendering/PileLayout.h>	   // pile footprint (drop spacing)
 #include <world/rendering/TemplateBounds.h>
+#include <world/rendering/VisibilityCoverRenderer.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/DetailLevels.h>
@@ -197,6 +198,7 @@ namespace {
 
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
+			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
 
 			// Create async processor for runtime chunk streaming
 			m_asyncProcessor = std::make_unique<assets::AsyncChunkProcessor>(*m_placementExecutor, m_processedChunks);
@@ -973,6 +975,10 @@ namespace {
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
+			// Player visibility: unseen ground black, seen ground out of sight tinted. Over everything the
+			// world draws, under every overlay, preview, marker and ghost drawn after it.
+			m_visibilityCover->render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter);
+
 			// In-progress drawing preview (rubber-band, snap guides, opening ghost)
 			// rides above the entities like the placement ghost; committed
 			// construction already went out in the ground sub-layer before the
@@ -1077,6 +1083,7 @@ namespace {
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
+			m_visibilityCover.reset();
 			m_entityRenderer.reset();
 			m_renderer.reset();
 		}
@@ -2151,6 +2158,7 @@ namespace {
 		std::vector<world_sim::PartyMember>				   m_party;
 		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
 		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
+		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;
 		std::unique_ptr<assets::PlacementExecutor>		   m_placementExecutor;
 		std::unique_ptr<world_sim::GameUI>				   gameUI;
 

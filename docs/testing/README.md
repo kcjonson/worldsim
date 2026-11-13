@@ -325,6 +325,7 @@ game scene registers them: elsewhere, or for a verb it doesn't have, the request
 | `flora` | `age=<name>&near=x,y&def=<defName>` (`def` optional) | Reads, changes nothing. The nearest trees of that age class within 200 m of `near` (a 400 m square), nearest first, at most 20: `{age, near, def, searchHalfSizeM, trees:[{def, x, y, ageClass, variant, distance}]}`. `x` and `y` print at full float precision, so a listed position names the same tree when read back. `age` without `near`, or the reverse, is a 400, as is a `near` coordinate beyond 16777216 m (2^24) from the origin. |
 | `walls` | `pts=...&material=Wood&thickness=Standard&host=<foundationId>&built=0\|1&close=1` | `built` **defaults to 1** — pass `built=0` for a blueprint. Same off-mesh/water refusal. |
 | `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. |
+| `reveal` | `on=1\|0` | Player visibility off (`1`) or back on (`0`): with it on the cover is not drawn, and `scripts/perf` captures run with it on. The seen record keeps growing either way; `/api/state?what=visibility` reads the flag as `revealed`. |
 
 ### Readback — `GET /api/state?what=<x>`
 

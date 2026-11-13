@@ -162,6 +162,8 @@ The outdoor disc is drawn at the colonist's position that frame, so it moves smo
 
 **Home.** A cover renderer in `libs/world-view`, which reads the record and the sight shapes from `sim`. The record's triangles are uploaded as a world-space mesh when `epoch()` changes; pending shapes and fans are a handful of triangles a frame.
 
+**As built (step 4).** `worldview::VisibilityCoverRenderer` (`libs/world-view/world/rendering/`), with `kSeenDimAlpha` and `kUnseenColor` beside it. salal's instanced meshes have 16-bit indices, so the record is uploaded as as many meshes as it needs, each at most 65,535 vertices (21,845 triangles, three unshared vertices each), one mesh layer apiece; the old meshes are released at the upload, which salal holds back until any draw naming them is flushed. A colonist's bright shape is vision's cached polygon with walls in sight, and outdoors the 64-gon of `drawnVisibleRadiusMm` round his `Position` that frame; a colonist whose sight is too small to hold a leg (`kSeenLeastRadiusMm`) draws none, since nothing records it. Sight and pending shapes whose screen bounds miss the view are left out of the masks. The cover flushes what is pending, then draws its fills at keys 30 and 31: the lowest key drawn after it in the same flush is the terrain polygon overlay's 40, then the rooms (56), vision (62), and nav (66) overlays, the selection indicator and move marker (100), the drawing preview (898 and up), and the placement ghost (1000). Both fills run 4 pixels past the view.
+
 **Consequences taken on purpose.** A tall thing that stands on seen ground and reaches over unseen ground is cut at the edge. A thing on unseen ground is still drawn underneath and then covered; skipping that work is a later step (section 8).
 
 ### 3.5 What salal gained
@@ -207,7 +209,7 @@ The camera is not clamped (rule 14). It still loads the chunks round it; over un
 - `/api/dev/reveal?on=1|0`, on the pattern of `freebuild`: with reveal on the cover is not drawn, the mover filter passes everything, and the input rules of 3.7 are off. The record keeps growing underneath, so turning reveal off shows the true state.
 - `/api/state?what=visibility`: the reveal flag, the seen area in square metres, rings registered, shapes pending and dropped, and the epoch. salal's state views take no parameters, so the point query is `/api/dev/visibility?x=&y=`: the same totals, and whether that point is seen and whether it is visible.
 - Dev verbs that take a position (`spawn`, `colonist`, `teleport`) ignore player visibility, as they ignore the player.
-- `scripts/perf` turns reveal on before a capture, so existing views (two of them 70 km and 131 km from any colonist) and their numbers stay comparable. One new capture near the landing with reveal off measures the cover.
+- `scripts/perf` turns reveal on before a capture, so existing views (two of them 70 km and 131 km from any colonist) and their numbers stay comparable, and off again after it; a build without the verb answers 404 and draws no cover, the same frame. `perf.mjs capture --no-reveal` keeps the cover, for the capture near the landing that measures it.
 - Scenarios 09, 11, and 13 gain a reveal step where they look away from colonists. A new scenario, `14-player-visibility.md`, covers the feature itself: land and see bright ground round the crew and tinted ground out to 150 m, black beyond; fail to place on black ground; order a move into the black and watch the colonist stop at the edge and the ground open; select a tree on tinted ground.
 - The dev overlay that prints the biome under the camera still does so over unseen ground. It is a dev overlay and stays.
 
@@ -443,11 +445,11 @@ Nothing here starts before Kevin's go-ahead. Each step is its own PR with its ow
 1. **Prove the basis.** Benches of a second `PatchableMesh` used as the record, as section 6 lists. Done: numbers in this document; a decision on wrapper against an upkeep-off option; a no-go sends the record's form back to Kevin before anything else is built.
 2. **One sight-shape accessor.** `VisionSystem` gives centre, radius, optional polygon, and rebuild counter in one call; `VisionOverlay` uses it and draws outdoor sight. Done: the old accessor is gone; the overlay shows discs outdoors.
 3. **The record.** `SeenArea` and `PlayerVisibilitySystem`: legs, indoor polygons, the landing, the budget, the queries. Done: unit tests for a straight walk (one ring), a turn, a jump (no bridge), a covered leg (nothing registered), a doorway, the landing; a sim test that after a long walk every seen point is on the mesh and the record never lost ground.
-4. **The cover.** The renderer of 3.4, the reveal verb, the state view. Needs steps 0 and 3. Done: the three areas show in the game; the capture of section 6; `Perf:` line in the PR.
+4. **The cover.** The renderer of 3.4, the reveal verb, the state view, and reveal in `scripts/perf`. Needs steps 0 and 3. Done: the three areas show in the game; the capture of section 6; `Perf:` line in the PR.
 5. **Input.** The rows of 3.7. Done: a unit test per row; a right-click into the black walks the colonist to the edge.
 6. **Movers shown only while visible.** The filter and the selection rule. Done: a test with a mover that is not a colonist, absent from the render data out of sight and present in it.
 7. **Landing memory.** As 3.8. Done: a test that a crew member knows a thing 100 m from the drop at tick 0, and a count of entries against the cap on a dense landing.
-8. **Tests and docs.** Reveal in `scripts/perf`; scenarios 09, 11, 13 updated; scenario 14 added and run; the nav document's notes on player visibility (1.1 and 4.11) brought up to date.
+8. **Tests and docs.** Scenarios 09, 11, 13 updated; scenario 14 added and run; the nav document's notes on player visibility (1.1 and 4.11) brought up to date.
 
 ## 8. Not in the first build
 

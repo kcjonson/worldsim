@@ -72,6 +72,7 @@ namespace world_sim {
 		};
 		verb("freebuild", &DevCommandHandler::devFreeBuild);
 		verb("construction", &DevCommandHandler::devFreeBuild);
+		verb("reveal", &DevCommandHandler::devReveal);
 		verb("give", &DevCommandHandler::devGive);
 		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
@@ -155,6 +156,14 @@ namespace world_sim {
 		m_ctx.world->getSystem<ecs::ConstructionSystem>().setFreeBuild(on);
 		LOG_INFO(Game, "[DevAPI] free-build %s", on ? "ON" : "OFF");
 		m_ctx.ui->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", ui::ToastSeverity::Info);
+	}
+
+	void DevCommandHandler::devReveal(const app::DevRequest& cmd) {
+		const std::string value = param(cmd, "on", "1");
+		const bool		  on = (value == "1" || value == "on" || value == "true" || value == "yes");
+		m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().setRevealed(on);
+		LOG_INFO(Game, "[DevAPI] reveal %s", on ? "ON" : "OFF");
+		m_ctx.ui->pushNotification("Dev", on ? "Reveal ON" : "Reveal OFF", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devGive(const app::DevRequest& cmd) {
@@ -1332,9 +1341,10 @@ namespace world_sim {
 		const ecs::PlayerVisibilitySystem& visibility = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>();
 		const vision::SeenArea&			   seen		  = visibility.seenArea();
 		std::ostringstream				   out;
-		out << "{\"seenSquareMeters\":" << std::fixed << std::setprecision(1) << seen.committedSquareMeters()
-		    << ",\"ringsRegistered\":" << seen.ringsRegistered() << ",\"shapesPending\":" << seen.shapesPending()
-		    << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"epoch\":" << seen.epoch();
+		out << "{\"revealed\":" << (visibility.revealed() ? "true" : "false") << ",\"seenSquareMeters\":" << std::fixed
+			<< std::setprecision(1) << seen.committedSquareMeters() << ",\"ringsRegistered\":" << seen.ringsRegistered()
+			<< ",\"shapesPending\":" << seen.shapesPending() << ",\"shapesDropped\":" << seen.shapesDropped()
+			<< ",\"epoch\":" << seen.epoch();
 		if (hasParam(cmd, "x") && hasParam(cmd, "y")) {
 			const glm::vec2 point{std::strtof(param(cmd, "x").c_str(), nullptr), std::strtof(param(cmd, "y").c_str(), nullptr)};
 			out << ",\"x\":" << point.x << ",\"y\":" << point.y << ",\"seen\":" << (visibility.isSeen(point) ? "true" : "false")
