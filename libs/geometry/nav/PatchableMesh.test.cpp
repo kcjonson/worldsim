@@ -2751,3 +2751,48 @@ TEST(PatchableMesh, SliverReachedThroughAMisreadSliverMatchesFreshBuild) {
 	const std::vector<NavInputPolygon> squares = shearedSquares();
 	runSquaresAmongObstacles(89, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
 }
+
+// Ground a millimetre across whose every point lies within the blocked ring's snap band:
+// the blocked edge rounds to the ground's base, so the rounded ground triangle is floor
+// though its centroid lies inside the blocked ring as given. In one patch, and in both
+// orders.
+TEST(PatchableMesh, GroundWhollyInTheSnapBandMatchesFreshBuild) {
+	const NavInputPolygon ground  = bounds({{0, 0}, {2, 0}, {0, 1}});
+	const NavInputPolygon blocker = blocked({{-10, -10}, {20, -10}, {20, 1}, {-10, 0}});
+	for (int order = 0; order < 3; ++order) {
+		Harness h;
+		if (order == 0) {
+			PatchEdits edits;
+			edits.adds = {ground, blocker};
+			h.apply(edits);
+		} else {
+			h.add(order == 1 ? ground : blocker);
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order << " first ring";
+			h.add(order == 1 ? blocker : ground);
+		}
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order;
+		EXPECT_EQ(h.mesh.liveTriangleCount(), 1) << "order " << order;
+	}
+}
+
+// Water hanging over unseen ground wholly round ground that arrives later, no edge of it
+// near the ground: the ground comes in under the water, in either order.
+TEST(PatchableMesh, GroundArrivingInsideABlockedRingMatchesFreshBuild) {
+	const NavInputPolygon water	 = blocked(rect(0, 0, 30000, 30000), kWater, true);
+	const NavInputPolygon ground = bounds(rect(9000, 9000, 21000, 21000));
+	for (const bool waterFirst : {true, false}) {
+		Harness		 h;
+		const RingId first = h.add(waterFirst ? water : ground);
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (waterFirst ? "water" : "ground") << " alone";
+		const RingId second	 = h.add(waterFirst ? ground : water);
+		const RingId waterId = waterFirst ? first : second;
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (waterFirst ? "water" : "ground") << " first";
+		ASSERT_GT(h.mesh.liveTriangleCount(), 0);
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+			if (h.mesh.triangleLive(t)) {
+				const std::vector<RingId>& cover = h.mesh.cover(t);
+				EXPECT_TRUE(std::find(cover.begin(), cover.end(), waterId) != cover.end()) << "triangle " << t;
+			}
+		}
+	}
+}
