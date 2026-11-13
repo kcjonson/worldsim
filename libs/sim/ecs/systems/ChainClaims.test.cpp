@@ -1017,7 +1017,7 @@ namespace ecs::test {
 		anyFurniture.acceptedCategory = assets::ItemCategory::Furniture;
 		const uint64_t furnitureUmbrella = GoalTaskRegistry::Get().createGoal(std::move(anyFurniture));
 		const auto	   hasWork = [&](uint64_t goal) {
-			return goalHasWork(*GoalTaskRegistry::Get().getGoal(goal), goalsWithOfferedWork(*world));
+			return ColonyGoalWork(*world).hasWork(*GoalTaskRegistry::Get().getGoal(goal));
 		};
 		const EntityID colonist = createColonist({0.0F, 0.0F});
 

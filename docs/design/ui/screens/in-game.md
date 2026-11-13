@@ -180,20 +180,27 @@ Mock resources: Wood 142, Stone 88, Food 36, Metal Scrap 21, Plant Fiber 54.
 
 ### Tasks panel
 
-Panel: title "Tasks," kicker "{N} queued" (e.g. "1,284 queued"), corners, compact. Collapse toggle in header actions.
+A collapsible header button, "Tasks (N)" with a chevron, N the number of rows. Expanded, a fixed-height box (320px with the header) under it whose rows scroll. One row per goal with something to do (a box to stock, a cut, a craft, a build site, a placement), sorted by kind (cut, craft, haul, build, place), then nearest the camera first.
 
-When open: a scrollable list (`max-height: 230px, overflow-y: auto`) of single-line task rows, plus a sticky footer showing the overflow count.
+Each row is two lines, both wrapping to the row's width:
+- Line 1: the goal ("Haul Wood", "Cut for Wood (for crafting)", "Build structure"), with its position and distance at the right (`(10, 15)  5m`).
+- Line 2: "status - detail", in `--status-ok`, or `--text-dim` while the goal is held up.
 
-Each task row: a 5×5px status dot, a main cell (task label + detail in same row, truncated), and an optional colonist name right-aligned.
+**Statuses:**
+- `Working` — someone's current task serves it; the detail names them.
+- `Unassigned` — nobody works it, within 50m of the camera.
+- `Available` — nobody works it, further than that; the detail starts "far".
+- `Waiting (all known sources claimed)` — a colonist knows a source, but another colonist holds every one known.
+- `Waiting (no source found)` — the need is known, no source is.
+- `Blocked` — a craft waiting on its materials; the detail reads "2/5 materials".
+- A build site reads `Needs materials` (the detail names whoever delivers), `Building` ("Mara (40%)"), or `Ready to build` ("40%").
 
-**Status dot colors:**
-- `active` — `--status-ok` with glow
-- `pending` — `--status-warn`, no glow
-- `blocked` — `--status-crit` with glow
+**Detail**, its parts joined with "; ":
+- The workers: one or two names, more as the first two then "+N" ("Mara, Idris +2").
+- For a cut or haul of one item, what its box, craft, or site still needs and what is on its way: "needs 12, 4 on the way", either part left out at zero.
+- While nobody works it, the colonists whose last decision offered them work toward it: "known to Rin, Joon".
 
-The task list shows only the top-priority tasks; the sticky overflow line reads "+{N} more · filter to refine." The `TASK_TOTAL` in the prototype is 1,284 (showing that this list must scale to thousands; the shown rows are a filtered window).
-
-Mock tasks (abbreviated): Build Foundation (active, Mara), Haul Wood ×6 (active, Idris), Harvest Reed (active, Rin), Cook Meals ×4 (blocked — needs Campfire), Mine Stone (pending), …
+So a row can read "Haul Wood / Working - Idris; needs 12, 4 on the way" or "Cut for Wood / Unassigned - needs 30; known to Rin".
 
 ---
 
@@ -328,7 +335,7 @@ Trailing muted note: memory is personal (not the colony's shared map) and goes s
 
 ![Tasks tab](../mocks/in-game-dossier-tasks.png)
 
-The colonist's work, drawn from the colony goal registry. A prominent **Currently** panel (amber left border) shows the active, self-assigned task: type (Chakra Petch), target, nav state + distance (mono), and a progress `Meter`. Below a "Known Work" `Divider`, a list of known goal-tasks — each row: icon, label + status detail (e.g. "0/2 metal"), distance, and a status `Badge`: Available (`ok`), In Progress (`data`), Blocked (`crit`), Waiting (`warn`).
+The colonist's work, drawn from the colony goal registry. A prominent **Currently** panel (amber left border) shows the active, self-assigned task: type (Chakra Petch), target, nav state + distance (mono), and a progress `Meter`. Below a "Known Work" `Divider`, the Tasks panel's rows for the goals the colonist's last decision offered work toward, distances measured from the colonist; "No known work nearby." when there are none, and a "+N more" line past 40. Each row: the goal over its detail (the panel's detail, e.g. "Idris; needs 12, 4 on the way"), the distance, and the status as a `Badge`: Working (`data`), Available (`ok`), Blocked (`crit`), either Waiting (`warn`), anything else plain.
 
 Trailing muted note: colonists pick the highest-priority job they know about on their own; per-colonist preferences live under Work Priorities (the planned control wired to the footer button).
 

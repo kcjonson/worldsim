@@ -47,8 +47,9 @@ Not built:
   taken.
 - The craft binding and job ids. A crafter holds its station only through the Slot claim its Craft
   task takes at selection, which goes with the Craft task when the crafter leaves to eat or sleep.
-- Player-facing output beyond naming a row's worker from that colonist's current task (and the trace's
-  `Reserved` rows).
+- Player-facing output beyond the task panel's workers, quantities, known-to colonists, and
+  all-claimed status, the dossier's per-colonist list, and the trace's `Reserved` rows (see
+  [Player-facing output](#player-facing-output)).
 - sim-cli ([Sim CLI](./sim-cli.md)) and its scenarios.
 - Idle-machine readings of the benchmarks under [Performance requirements](#performance-requirements).
 
@@ -895,34 +896,45 @@ data.
 
 Built:
 
-- Worker: the task panel's "Working" status names the colonist whose current task serves the row,
-  read once per panel refresh from each colonist's task (`GlobalTaskAdapter`, `workersFromTasks`). A
-  cut or a haul names the goal it was picked through (a carry-in and a cut's deposit leg name their
-  root); a build, craft, or placement names the entity it works, so the Build umbrella names its
-  builder, a Craft row its crafter, and a clear row its clearer. A row shows one name even when several
-  colonists serve it: the first colonist found in view order. A suspended record is not current work.
-- The panel lists only goals with something to do (`goalHasWork`): a storage umbrella or stocking cut
-  shows only while some colonist's last decision offered work toward it (`goalsWithOfferedWork`: an
-  option for it chosen, available, held by another colonist, or blocked only by the colonist's own
-  carry). A full box, a box that wants an item nobody knows a loose source of, a box with room for a
-  category nobody has any of, and a stocking cut whose minimum is met all drop out while their goals
-  stay.
+Every row's colonist data comes from `ColonyGoalWork` (`GoalTaskRegistry.h`), built once per panel
+refresh by one pass over every colonist's task, suspended record, and last decision trace; each row
+is then a few lookups, and `GlobalTaskAdapter` only formats them.
+
+- Workers: the task panel's "Working" status names every colonist whose current task serves the row,
+  in view order, one or two names joined with ", " and more as the first two then "+N" ("Alice, Bob
+  +2"). A cut or a haul serves the goal it was picked through (a carry-in and a cut's deposit leg name
+  their root); a build, craft, or placement serves the entity it works, so the Build umbrella names its
+  builders, a Craft row its crafter, and a clear row its clearers. A suspended record is not current
+  work.
+- Quantities: a cut or haul row toward one item adds what its root still needs of the item
+  (`remainingNeed`, on the basis its work counts against) and what is on its way (the InFlight claims
+  toward the root and item, from tasks and suspended records alike): "needs 12, 4 on the way", a part
+  left out at zero. A build umbrella, a clear, a craft, and a box taking several items or a category
+  have no one item and show none.
+- Known to: a row nobody works names the colonists whose last decision offered work toward it, "known
+  to Alice, Bob", by the same two-then-"+N" rule. Offered means an option for the goal chosen,
+  available, held by another colonist, or blocked only by the colonist's own carry.
+- The panel lists only goals with something to do (`ColonyGoalWork::hasWork`): a storage umbrella or
+  stocking cut shows only while some colonist was offered work toward it. A full box, a box that wants
+  an item nobody knows a loose source of, a box with room for a category nobody has any of, and a
+  stocking cut whose minimum is met all drop out while their goals stay.
+- "Waiting (all known sources claimed)": some colonist's last decision held a Reserved option for the
+  goal and none held a chosen or available one. The other statuses are "Blocked" (with
+  landed/required materials for a craft), "Waiting (no source found)", "Needs materials", "Building",
+  and "Ready to build" for a site, "Working", "Available" (detail "far"), and "Unassigned".
+- Per-colonist task list: the dossier's Known work tab shows the panel's rows for the goals that
+  colonist's last decision offered work toward, measured from the colonist.
 - Decision trace: a Reserved option status naming the holder, "(reserved by Alice)", or for a Craft
   option "(station in use by Alice)", from the index's top-holder lookups.
 
 Planned:
 
-- Task list availability per root and item: "N available (M in progress)". N would be the unclaimed
-  quantity of sources the colony knows about, capped at the root's remaining need; M in-flight.
-- `knownBy`: colonists whose memory holds at least one unclaimed source for the root, computed on
-  the panel's throttle through Memory's capability index.
-- Per-colonist task list: roots for which that colonist knows an unclaimed source. Today the colonist
-  view shows the same rows as the colony view, measured from the colonist.
-- Distinct blocked reasons: "no source known", "all known sources claimed", "destination full (M
-  inbound)", "needs materials", "station in use by Alice". Today the panel shows "Blocked" (with
-  landed/required materials for a craft), "Waiting (no source found)", "Needs materials" for a site,
-  "Working", "Available (far)", and "Unassigned".
+- A "station in use by Alice" reason on a craft row.
 - A bumped colonist's trace showing "bumped by Alice (critical hunger)" on its re-plan.
+
+A count of available sources per root ("N available") was dropped: Memory stores no yields, and
+counting sources would walk every colonist's memory on each refresh. A "destination full" reason is not
+planned either; a full box leaves the panel.
 
 ---
 
@@ -982,7 +994,6 @@ Behaviour the code has that no doc should promise otherwise, kept here until fix
 
 - A crafter that leaves for a need before its Craft action starts loses the station (the binding is
   planned, not built).
-- The panel names one worker per row, so a row several colonists serve reads as one colonist's.
 - A colonist whose every pack slot, belt slot, and hand holds a tool can't make room to eat and picks
   the same source again.
 

@@ -434,8 +434,7 @@ namespace world_sim {
 			colonistPosition = position->value;
 		}
 
-		// Get tasks known by this colonist via the adapter.
-		tasksData.tasks = adapters::getGlobalTasks(world, colonistPosition);
+		tasksData.tasks = adapters::getKnownTasks(world, colonistId, colonistPosition);
 		adapters::sortTasksForDisplay(tasksData.tasks);
 		tasksData.totalCount = tasksData.tasks.size();
 

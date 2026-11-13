@@ -1,6 +1,7 @@
 #include "GoalTaskRegistry.h"
 
 #include "World.h"
+#include "components/DecisionTrace.h"
 #include "components/Inventory.h"
 #include "components/Packaged.h"
 #include "components/StorageConfiguration.h"
@@ -316,6 +317,78 @@ namespace ecs::test {
 		registry.updateGoal(root, [&](GoalTask& goal) { goal.acceptedDefNameIds = {stone}; });
 		EXPECT_EQ(registry.remainingNeed(world, root, stone, NeedBasis::Stock), 4U);
 		EXPECT_EQ(registry.remainingNeed(world, root, stick, NeedBasis::Stock), 0U);
+	}
+
+	// The task panel's colonists per goal, from each colonist's task and last decision.
+	class ColonyGoalWorkTest : public RemainingNeedTest {
+	  protected:
+		EntityID colonist(const Task& task, std::vector<EvaluatedOption> options) {
+			const EntityID entity = world.createEntity();
+			world.addComponent<Task>(entity, task);
+			DecisionTrace trace;
+			trace.options = std::move(options);
+			world.addComponent<DecisionTrace>(entity, std::move(trace));
+			return entity;
+		}
+
+		static Task hauling(uint64_t goal, uint32_t item, uint32_t inFlight) {
+			Task task;
+			task.type = TaskType::Haul;
+			task.haulGoalId = goal;
+			task.haulItemDefNameId = item;
+			EXPECT_TRUE(task.claims.push(Claim::inFlight(goal, item, inFlight)));
+			return task;
+		}
+
+		static EvaluatedOption haulOption(uint64_t goal, OptionStatus status) {
+			EvaluatedOption option;
+			option.taskType = TaskType::Haul;
+			option.haulGoalId = goal;
+			option.status = status;
+			return option;
+		}
+
+		static std::vector<EntityID> listed(std::span<const EntityID> colonists) { return {colonists.begin(), colonists.end()}; }
+	};
+
+	TEST_F(ColonyGoalWorkTest, ListsEveryColonistOfferedAGoalAndSumsItsInFlight) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID box = world.createEntity();
+		world.addComponent<Inventory>(box, Inventory::createForStorage());
+		StorageConfiguration config;
+		config.addRule(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .maxAmount = 20});
+		world.addComponent<StorageConfiguration>(box, std::move(config));
+		const uint64_t root = make(TaskType::Haul, GoalOwner::StorageGoalSystem, box);
+		registry.updateGoal(root, [&](GoalTask& goal) { goal.acceptedDefNameIds = {stone}; });
+
+		const EntityID first = colonist(hauling(root, stone, 3), {haulOption(root, OptionStatus::Selected)});
+		const EntityID second =
+			colonist(hauling(root, stone, 4), {haulOption(root, OptionStatus::Selected), haulOption(root, OptionStatus::Available)});
+		const EntityID idle = colonist(Task{}, {haulOption(root, OptionStatus::NoRoom)});
+
+		const ColonyGoalWork work(world);
+		const GoalTask&		 goal = *registry.getGoal(root);
+		EXPECT_EQ(listed(work.offeredTo(root)), (std::vector<EntityID>{first, second, idle})) << "each once, in view order";
+		EXPECT_EQ(listed(work.workersOf(goal)), (std::vector<EntityID>{first, second}));
+		EXPECT_TRUE(work.hasWork(goal));
+		EXPECT_FALSE(work.allSourcesClaimed(root));
+		EXPECT_EQ(work.inFlight(root, stone), 7U) << "summed across both carriers";
+		const auto count = work.itemCount(world, goal);
+		ASSERT_TRUE(count.has_value());
+		EXPECT_EQ(count->needed, registry.remainingNeed(world, root, stone, NeedBasis::Stock));
+		EXPECT_EQ(count->onTheWay, 7U);
+	}
+
+	TEST_F(ColonyGoalWorkTest, AGoalWhoseOnlyOptionsAreReservedReadsAllClaimed) {
+		const uint64_t goal = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 1);
+		const uint64_t other = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 2);
+		colonist(Task{}, {haulOption(goal, OptionStatus::Reserved)});
+		colonist(Task{}, {haulOption(goal, OptionStatus::NoRoom), haulOption(other, OptionStatus::Available)});
+		EXPECT_TRUE(ColonyGoalWork(world).allSourcesClaimed(goal));
+		EXPECT_FALSE(ColonyGoalWork(world).allSourcesClaimed(other));
+
+		colonist(Task{}, {haulOption(goal, OptionStatus::Available)});
+		EXPECT_FALSE(ColonyGoalWork(world).allSourcesClaimed(goal)) << "one colonist can take a source";
 	}
 
 } // namespace ecs::test
