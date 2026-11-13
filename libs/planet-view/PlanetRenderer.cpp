@@ -5,6 +5,7 @@
 #include "PlanetMesh.h"
 
 #include <backend/gl/ShaderLoader.h>
+#include <primitives/Primitives.h>
 #include <utils/Log.h>
 
 #include <glm/glm.hpp>
@@ -114,49 +115,32 @@ void PlanetRenderer::destroyFbo() {
 }
 
 void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& colorizer,
-                            uint32_t subdivision,
-                            const OrbitCamera& camera, int widthPx, int heightPx) {
+                            uint32_t subdivision, const OrbitCamera& camera,
+                            const ScreenArea& area, float alpha) {
     if (!isReady() || !mesh.isBuilt() || !colorizer.isReady()) return;
+    if (area.width <= 0 || area.height <= 0) return;
 
-    resize(widthPx, heightPx);
+    resize(area.width, area.height);
+    drawPlanet(mesh, colorizer, subdivision, camera);
+    // Depth test and culling back off, as the renderer and the composite both draw.
+    Renderer::Primitives::invalidateState();
+    composite(area, alpha);
+}
 
-    // ── Save all GL state we'll touch ──
-    GLint prevFbo = 0;
-    glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
-    GLint prevViewport[4] = {};
-    glGetIntegerv(GL_VIEWPORT, prevViewport);
-    GLboolean prevDepthTest  = glIsEnabled(GL_DEPTH_TEST);
-    GLboolean prevCullFace   = glIsEnabled(GL_CULL_FACE);
-    GLboolean prevBlend      = glIsEnabled(GL_BLEND);
-    GLint prevDepthFunc      = 0;
-    glGetIntegerv(GL_DEPTH_FUNC, &prevDepthFunc);
-    GLint prevProgram        = 0;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
-    GLint prevVao            = 0;
-    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
-    GLint prevActiveTexture  = 0;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexture);
-    glActiveTexture(GL_TEXTURE0);
-    GLint prevTex0Binding    = 0;
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
-    GLboolean prevScissorTest = glIsEnabled(GL_SCISSOR_TEST);
-    GLint prevFrontFace      = 0;
-    glGetIntegerv(GL_FRONT_FACE, &prevFrontFace);
-
-    // ── Planet pass ──
+void PlanetRenderer::drawPlanet(const PlanetMesh& mesh, const PlanetColorizer& colorizer,
+                                uint32_t subdivision, const OrbitCamera& camera) {
     glBindFramebuffer(GL_FRAMEBUFFER, fbo);
     glViewport(0, 0, fboWidth, fboHeight);
 
     glEnable(GL_DEPTH_TEST);
     glDepthFunc(GL_LESS);
     glEnable(GL_CULL_FACE);
+    glFrontFace(GL_CCW); // mesh assumes CCW winding
     glDisable(GL_BLEND);
-    glDisable(GL_SCISSOR_TEST); // FBO is fullscreen; scissor would clip incorrectly
-    glFrontFace(GL_CCW);        // mesh assumes CCW winding
 
     // Use glClearBuffer* to avoid touching global clear-color state.
-    // Alpha 0: blitToScreen composites, so only the planet disc reaches the
-    // backbuffer and the scene's own backdrop shows around it.
+    // Alpha 0: composite() blends, so only the planet disc reaches the
+    // window and the scene's own backdrop shows around it.
     const GLfloat clearColor[] = {0.0F, 0.0F, 0.02F, 0.0F};
     glClearBufferfv(GL_COLOR, 0, clearColor);
     const GLfloat clearDepth = 1.0F;
@@ -195,74 +179,30 @@ void PlanetRenderer::render(const PlanetMesh& mesh, const PlanetColorizer& color
                        static_cast<GLsizei>(mesh.indexCount),
                        GL_UNSIGNED_INT, nullptr);
     }
-    glActiveTexture(GL_TEXTURE0);
+    // Unbound so later GL can't write into the rhombus VAOs or textures.
+    glBindVertexArray(0);
     glBindTexture(GL_TEXTURE_2D, 0);
-
-    // ── Restore state ──
-    glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
-    glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-    if (prevDepthTest)   glEnable(GL_DEPTH_TEST);   else glDisable(GL_DEPTH_TEST);
-    if (prevCullFace)    glEnable(GL_CULL_FACE);    else glDisable(GL_CULL_FACE);
-    if (prevBlend)       glEnable(GL_BLEND);         else glDisable(GL_BLEND);
-    if (prevScissorTest) glEnable(GL_SCISSOR_TEST);  else glDisable(GL_SCISSOR_TEST);
-    glDepthFunc(static_cast<GLenum>(prevDepthFunc));
-    glFrontFace(static_cast<GLenum>(prevFrontFace));
-    glUseProgram(static_cast<GLuint>(prevProgram));
-    glBindVertexArray(static_cast<GLuint>(prevVao));
-    // Restore unit-0 binding while unit 0 is active, then restore the active unit.
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
-    glActiveTexture(static_cast<GLenum>(prevActiveTexture));
 }
 
-void PlanetRenderer::blitToScreen(int widthPx, int heightPx, float alpha) {
-    if (!isReady() || !colorTex) return;
+void PlanetRenderer::composite(const ScreenArea& area, float alpha) {
+    // The renderer never rebinds the window or its viewport between its draws.
+    glBindFramebuffer(GL_FRAMEBUFFER, 0);
+    glViewport(area.x, area.y, area.width, area.height);
 
-    // Save relevant state.
-    GLboolean prevDepthTest     = glIsEnabled(GL_DEPTH_TEST);
-    GLboolean prevBlend         = glIsEnabled(GL_BLEND);
-    GLint prevBlendSrcRgb       = 0;
-    GLint prevBlendDstRgb       = 0;
-    GLint prevBlendSrcAlpha     = 0;
-    GLint prevBlendDstAlpha     = 0;
-    glGetIntegerv(GL_BLEND_SRC_RGB,   &prevBlendSrcRgb);
-    glGetIntegerv(GL_BLEND_DST_RGB,   &prevBlendDstRgb);
-    glGetIntegerv(GL_BLEND_SRC_ALPHA, &prevBlendSrcAlpha);
-    glGetIntegerv(GL_BLEND_DST_ALPHA, &prevBlendDstAlpha);
-    GLint prevProgram           = 0;
-    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProgram);
-    GLint prevVao               = 0;
-    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVao);
-    GLint prevActiveTexture     = 0;
-    glGetIntegerv(GL_ACTIVE_TEXTURE, &prevActiveTexture);
-    glActiveTexture(GL_TEXTURE0);
-    GLint prevTex0Binding       = 0;
-    glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTex0Binding);
-
-    glDisable(GL_DEPTH_TEST);
     glEnable(GL_BLEND);
     glBlendFuncSeparate(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
     glUseProgram(blitShader);
+    glActiveTexture(GL_TEXTURE0);
     glBindTexture(GL_TEXTURE_2D, colorTex);
     glUniform1i(blitUniforms.tex, 0);
     glUniform1f(blitUniforms.alpha, alpha);
 
     glBindVertexArray(blitVao);
     glDrawArrays(GL_TRIANGLES, 0, 3);
-    glBindVertexArray(static_cast<GLuint>(prevVao));
+    glBindVertexArray(0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 
-    // Restore state.
-    if (prevDepthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-    if (prevBlend)     glEnable(GL_BLEND);       else glDisable(GL_BLEND);
-    glBlendFuncSeparate(static_cast<GLenum>(prevBlendSrcRgb),  static_cast<GLenum>(prevBlendDstRgb),
-                        static_cast<GLenum>(prevBlendSrcAlpha), static_cast<GLenum>(prevBlendDstAlpha));
-    glUseProgram(static_cast<GLuint>(prevProgram));
-    // Restore unit-0 binding while unit 0 is active, then restore the active unit.
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTex0Binding));
-    glActiveTexture(static_cast<GLenum>(prevActiveTexture));
-
-    (void)widthPx; (void)heightPx; // viewport already set by caller
+    glViewport(0, 0, area.windowWidth, area.windowHeight);
 }
 
 } // namespace planetview

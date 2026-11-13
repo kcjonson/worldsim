@@ -21,7 +21,7 @@ class DecorativePlanet {
   public:
 	void update(float dt);
 	// `backdrop` is the scrim's colour, the scene's clear colour.
-	void render(const Foundation::Rect& rect, float logicalW, float logicalH, Foundation::Color backdrop);
+	void render(const Foundation::Rect& rect, const Renderer::Viewport& window, Foundation::Color backdrop);
 
   private:
 	GlobeView globe;
