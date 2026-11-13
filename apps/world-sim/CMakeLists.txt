@@ -31,6 +31,7 @@ add_executable(world-sim
     scenes/game/ui/adapters/GlobalTaskAdapter.cpp
     scenes/game/ui/adapters/ResourcesAdapter.cpp
     scenes/game/ui/adapters/SelectionAdapter.cpp
+    scenes/game/ui/adapters/TaskRowText.cpp
     scenes/game/ui/adapters/TimeAdapter.cpp
     # Game scene UI - models
     scenes/game/ui/models/ColonistListModel.cpp
@@ -162,6 +163,8 @@ if(BUILD_TESTING)
         scenes/game/dev/CameraCommand.test.cpp
         scenes/game/dev/GpuHoldCommand.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
+        scenes/game/ui/adapters/TaskRowText.cpp
+        scenes/game/ui/adapters/TaskRowText.test.cpp
     )
     target_include_directories(world-sim-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(world-sim-tests PRIVATE cxx_std_20)

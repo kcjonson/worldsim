@@ -1,7 +1,7 @@
 # Task claims
 
-Status: Partly built (integration/colonist-survival). [What is built](#what-is-built) draws the line;
-everything not built is marked Planned where it appears.
+Status: Partly built, on main. [What is built](#what-is-built) draws the line; everything not built is
+marked Planned where it appears.
 Created: 2026-11-09
 Epic: WOR-46 (goal-driven task generation), reservation phase
 
@@ -35,6 +35,8 @@ Built:
 - Suspended records across a need, with the sleep release.
 - The failed-route rule.
 - The evaluators reading claims, with `Reserved` and `NoRoom` rows in the decision trace.
+- One work option per goal, item, and source kind, its sources ranked off the trace and tried in rank
+  order ([Reserved rows, and option dedup](#reserved-rows-and-option-dedup)).
 - Hunger from the pack, bushes, loose piles, and storage boxes, with eater urgency and making room
   to eat.
 
@@ -46,11 +48,11 @@ Not built:
 - The crafter's hold on a part-done craft, specified in
   [Interruptable Crafts](./interruptable-crafts.md). A crafter holds its station only through the
   Slot claim its Craft task takes at selection, which goes with the Craft task.
-- Player-facing output beyond naming a row's worker from that colonist's current task (and the trace's
-  `Reserved` rows).
-- The collapse of options to the best source per goal and item before scoring.
+- Player-facing output beyond the task panel's workers, quantities, known-to colonists, and
+  all-claimed status, the dossier's per-colonist list, and the trace's `Reserved` rows (see
+  [Player-facing output](#player-facing-output)).
 - sim-cli ([Sim CLI](./sim-cli.md)) and its scenarios.
-- The performance benchmarks under [Performance requirements](#performance-requirements).
+- Idle-machine readings of the benchmarks under [Performance requirements](#performance-requirements).
 
 ---
 
@@ -677,9 +679,8 @@ separate, explicit operation (`Task::discardSuspended`), called by the selection
 
 Two existing behaviors to keep in mind. Craft, harvest, pickup, withdraw, and deposit actions are not
 interruptable (`Action.h`), and the switch path's non-interruptable gate holds regardless of tier, so
-a critical need waits for the current action to finish. And the switch path leaves an interruptable
-action (sleep) active when it clears the task, while `ActionSystem::update` starts a new action only
-when none is active; see Known gaps.
+a critical need waits for the current action to finish. And the switch path clears an interruptable
+action (sleep) along with the task; nothing resumes it, and an interrupted sleep restores no energy.
 
 ### Death and direct player control
 
@@ -842,19 +843,29 @@ Which of two colonists wins a contested target depends on ECS view order and eac
 re-evaluation timer. Both are deterministic for a given world, spawn order, and command sequence,
 so a headless run repeats exactly. Tests assert that exactly one colonist wins, never which one.
 
-### Reserved rows, and option dedup (planned)
+### Reserved rows, and option dedup
 
-The haul and harvest evaluators emit one option per known matching source per goal, visiting only
-the remembered entries of the defs that give the goal's item (Memory's per-def lists). A source others'
-claims take whole is not offered; instead each (goal, item) shows at most one Reserved row, for the
-nearest such source, and only when no source offered is nearer. The row names the holder.
+The harvest and haul evaluators emit one option per (goal, item, kind), visiting only the remembered
+entries of the defs that give the goal's item (Memory's per-def lists). The kinds are a cut toward an
+item, a construction clear (its footprint's blockers, whatever they yield), the loose piles of an item
+(a haul to storage, a craft fetch, or a build-site fetch), and the lower-priority boxes a storage goal
+pulls an item from. Everything the arbitration compares except the trip, a cut's hysteresis, and the
+tiebreak id (the goal's id mixed with the source's key) is the same for every source of one group, so the sources are ranked off the trace (`WorkGroup`, a heap of
+`RankedSource`) by the score each would have as its own option, and the option shows the best one
+offered.
 
-Planned: before scoring, collapse equivalent available options to the best one per (root, item), the
-nearest available source by trip distance. ONI collapses equivalent undriven fetch chores to the best
-per type for the same reason; it would bound the trace by goals and items rather than by remembered
-sources. It is not built because the selection walks options in order and passes over unreachable
-ones, so collapsing to the nearest before reachability is known would lose the fallback to the next
-source.
+When the shown source fails a selection test that depends on it (regrowing, nowhere to stand, a
+verdict, not connected), the group's next source in rank order takes its place and the option moves
+to where that source ranks among the options not yet tested. The options are tried in the order one
+option per source would be, so a fallback that drops below another goal's source lets that source go
+first. A haul whose deposit leg has no known way fails for every source of its group alike and goes
+NoSource with none of the others tried. With no source left the option shows the best-ranked source
+it tried that was regrowing, as Regrowing, else its first source, as NoSource. Routing is unchanged: the chosen option asks one route
+to its one target, and a route that finds no known way leaves a verdict the next decision passes over.
+
+A source others' claims take whole is not offered; instead each group shows at most one Reserved row,
+for the first such source in rank order, and only when it ranks ahead of every source offered. The row
+names the holder. The trace no longer lists each passed-over source with its own status.
 
 ---
 
@@ -877,47 +888,74 @@ data.
 
 Built:
 
-- Worker: the task panel's "Working" status names the colonist whose current task serves the row,
-  read once per panel refresh from each colonist's task (`GlobalTaskAdapter`, `workersFromTasks`). A
-  cut or a haul names the goal it was picked through (a carry-in and a cut's deposit leg name their
-  root); a build, craft, or placement names the entity it works, so the Build umbrella names its
-  builder, a Craft row its crafter, and a clear row its clearer. A row shows one name even when several
-  colonists serve it: the first colonist found in view order. A suspended record is not current work.
-- The panel lists only goals with something to do (`goalHasWork`): a storage umbrella or stocking cut
-  shows only while some colonist's last decision offered work toward it (`goalsWithOfferedWork`: an
-  option for it chosen, available, held by another colonist, or blocked only by the colonist's own
-  carry). A full box, a box that wants an item nobody knows a loose source of, a box with room for a
-  category nobody has any of, and a stocking cut whose minimum is met all drop out while their goals
-  stay.
+Every row's colonist data comes from `ColonyGoalWork` (`systems/ColonyGoalWork.h`), built once per
+panel refresh by one pass over every colonist's task and last decision trace, plus a rebuild of a
+claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter` gathers them and
+`TaskRowText` turns them into the status and detail, a pure function of plain facts.
+
+- Workers: the task panel's "Working" status names every colonist whose current task serves the row,
+  in view order, one or two names joined with ", " and more as the first two then "+N" ("Alice, Bob
+  +2"). A cut or a haul serves the goal it was picked through (a carry-in and a cut's deposit leg name
+  their root); a build, craft, or placement serves the entity it works, so the Build umbrella names its
+  builders, a Craft row its crafter, and a clear row its clearers. A suspended record is not current
+  work.
+- Quantities: a cut or haul row toward one item adds what is on its way toward its root and what the
+  root still needs beyond that. On the way is the claim index's in-flight for the root and item
+  (`ClaimIndex::inFlight`, excluding no one), so it is what the AI counts as coming: a sleeping
+  colonist's record and the uncarried part of a task whose route failed are not on the way. Needs is
+  `remainingNeed` (on the basis its work counts against) less that: with 12 remaining and 4 in flight
+  the row reads "needs 8, 4 on the way", a part left out at zero. A storage haul's need is the box's
+  free room, not a shortfall (a box with no maximum would read "needs 1987"), so it shows only "4 on
+  the way"; a stocking cut, a craft's children, and a site's children show both. A build umbrella, a
+  clear, a craft, and a box taking several items or a category have no one item and show none.
+- Known to: a row nobody works names the colonists whose last decision offered work toward it, "known
+  to Alice, Bob", by the same two-then-"+N" rule. Offered means an option for the goal chosen,
+  available, held by another colonist, or blocked only by the colonist's own carry. A cut or a haul is
+  for the goal it was picked through; a build, craft, or placement is for the goal of its type whose
+  destination it works, the goal the Working status names it under. A teardown is counted the same way
+  toward a Deconstruct goal, but the panel and the tab list only Harvest, Haul, Build, Craft, and
+  PlacePackaged goals, so a teardown shows on neither.
+- The panel lists only goals with something to do (`ColonyGoalWork::hasWork`): a storage umbrella or
+  stocking cut shows only while some colonist was offered work toward it or is working it. A full box, a box that wants
+  an item nobody knows a loose source of, a box with room for a category nobody has any of, and a
+  stocking cut whose minimum is met all drop out while their goals stay.
+- "Waiting (all known sources claimed)": some colonist's last decision held a Reserved option for the
+  goal, and none held a Selected, Available, NoRoom (a free source exists, his own load is in the
+  way), or Regrowing (the wait is regrowth) one. It comes after "Blocked", "Waiting (no source found)",
+  and "Working", and before "Available" and "Unassigned". The other statuses are "Blocked" (with
+  landed/required materials for a craft), "Waiting (no source found)", "Needs materials", "Building",
+  and "Ready to build" for a site, "Working", "Available" (detail "far"), and "Unassigned".
+- Per-colonist task list: the dossier's Known work tab shows the panel's rows for the goals that
+  colonist works or its last decision offered work toward, measured from the colonist, refreshed on the
+  panel's interval (5 Hz) and redrawn when a row's status or detail changes.
 - Decision trace: a Reserved option status naming the holder, "(reserved by Alice)", or for a Craft
   option "(station in use by Alice)", from the index's top-holder lookups.
 
 Planned:
 
-- Task list availability per root and item: "N available (M in progress)". N would be the unclaimed
-  quantity of sources the colony knows about, capped at the root's remaining need; M in-flight.
-- `knownBy`: colonists whose memory holds at least one unclaimed source for the root, computed on
-  the panel's throttle through Memory's capability index.
-- Per-colonist task list: roots for which that colonist knows an unclaimed source. Today the colonist
-  view shows the same rows as the colony view, measured from the colonist.
-- Distinct blocked reasons: "no source known", "all known sources claimed", "destination full (M
-  inbound)", "needs materials", "station in use by Alice". Today the panel shows "Blocked" (with
-  landed/required materials for a craft), "Waiting (no source found)", "Needs materials" for a site,
-  "Working", "Available (far)", and "Unassigned".
+- A "station in use by Alice" reason on a craft row.
 - A bumped colonist's trace showing "bumped by Alice (critical hunger)" on its re-plan.
+
+A count of available sources per root ("N available") was dropped: Memory stores no yields, and
+counting sources would walk every colonist's memory on each refresh. A "destination full" reason is not
+planned either; a full box leaves the panel.
 
 ---
 
 ## Performance requirements
 
-The figures below are targets. No benchmark measures them yet; the tests named here count work, not
-time.
+The figures below are targets. Two benchmarks in `libs/sim/ecs/systems/AIDecision.bench.cpp` time the
+parts a decision owns: `BM_ClaimIndexRebuild` rebuilds the claim index for 200 colonists across 300
+goals, each colonist holding a task with claims, and reports the rebuild's mean, p99, and maximum;
+`BM_WorkDecision` times AI updates for colonists that all remember the same trees (100 to 5,000), and
+reports the update's mean, p99, and maximum, the mean per colonist, and the trace's size. No reading
+from an idle machine is recorded yet. The tests named here count work, not time.
 
 - AI update cost (`AIDecisionSystem::update`, mean and p99) shows no regression against `main`
   beyond run-to-run noise in the desert perf view, and in a two-colonist run of scenario 02. Measured
   by the perf capture against `main` on the same machine, on an idle machine.
 - Target: index rebuild under 5% of `AIDecisionSystem::update` with 200 colonists and 300 goals, with
-  no heap allocation in steady state. No benchmark exists. `ClaimIndex` keeps its entries, groups, and
+  no heap allocation in steady state, timed by `BM_ClaimIndexRebuild`. `ClaimIndex` keeps its entries, groups, and
   table across rebuilds, so a warm rebuild allocates only when it grows.
 - No per-goal full-memory scans. Memory keeps each def's keys beside its capability index
   (`worldEntitiesOfDef`, one push per remember, one swap-remove per forget), so a goal visits only
@@ -949,8 +987,8 @@ time.
   slots) does not depend on who asks and is read from the world once per (box, item) per AI update
   (`BoxRoomCache`, stamped with the update, allocation-free when warm); each colonist takes its own
   claim exclusion out of the index on top.
-- Trace size per colonist is bounded today by roots times accepted items times remembered sources of
-  those items; the planned dedup would bound it by roots times accepted items.
+- Trace size per colonist is bounded by roots times accepted items (one option per goal, item, and
+  kind, and at most one Reserved row each), not by remembered sources.
 
 ---
 
@@ -960,12 +998,8 @@ Behaviour the code has that no doc should promise otherwise, kept here until fix
 
 - A crafter that leaves for a need before its Craft action starts loses the station, and nothing can
   interrupt a craft once it starts ([Interruptable Crafts](./interruptable-crafts.md), not built).
-- The panel names one worker per row, so a row several colonists serve reads as one colonist's.
 - A colonist whose every pack slot, belt slot, and hand holds a tool can't make room to eat and picks
   the same source again.
-- Interrupting a sleeping colonist for a higher tier leaves the Sleep action active (the switch path
-  clears the task but not the Action, and ActionSystem starts a new action only when none is active).
-  Not covered by a test; it may run the rest of the sleep under the next task when it arrives.
 
 ---
 
@@ -1059,7 +1093,7 @@ Done, each deleted in the same change that replaced it, per the no-legacy rule:
 
 The need-option source selection bugs this spec once assumed fixed (WOR-605: the Hunger option picked
 the nearest harvestable of any kind; WOR-607: an unreachable nearest source gave NoSource instead of
-the next one) are fixed on this branch.
+the next one) are fixed on main.
 
 ---
 

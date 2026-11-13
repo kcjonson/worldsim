@@ -1,8 +1,9 @@
 #pragma once
 
 // GlobalTaskRow - a task in the global task list: the description with its position and distance at
-// the end, then its status (coloured) with what holds it up and, in the global view, who knows of it.
-// Both wrap to the row's width. Display only.
+// the end, then its status (coloured) and its detail: who works it, what holds it up, what its root
+// still needs and has on the way, and, while nobody works it, who knows of work toward it. Both wrap to
+// the row's width. Display only.
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
