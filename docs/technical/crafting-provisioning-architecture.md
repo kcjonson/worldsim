@@ -154,7 +154,8 @@ Single-colonist crafting was made reliable by fixing the blockers that let a que
   colonists is coordinated by claims ([Task Claims](./task-claims.md)): several colonists may
   provision one order, each fetch and cut counted at the root, and a station selected for Craft is
   held by its crafter's slot claim only while that Craft task lives; a crafter who leaves to eat or
-  sleep before the craft starts loses it (the craft binding that would keep it is planned).
+  sleep before the craft starts loses it (the hold that would keep it is specified in
+  [Interruptable Crafts](./interruptable-crafts.md)).
 
 ## 7. Related Documents
 
