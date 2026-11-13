@@ -17,6 +17,10 @@ See [README.md](./README.md) for the environment setup and dev API reference.
 - [ ] Whole-footprint check: a footprint whose corners are on land but which spans water is also
   refused. Place corners on land, center over the river; same result expected.
 - [ ] Same refusal applies to `walls?...&built=0` on an off-mesh/over-water placement.
+- [ ] A footprint across a narrow stream is refused too. At the Quick Start landing,
+  `foundation?pts=6,6.5;9,6.5;9,9.5;6,9.5&built=0` lies across the creek east of the river and
+  creates nothing, while colonists still walk through that creek
+  (`/api/dev/ground?pts=7.9,8` reads `valid` true, `buildable` false).
 
 **Why this matters:** a silently accepted placement over water produces a construction site that
 can never be completed and may leave the colonist stuck.

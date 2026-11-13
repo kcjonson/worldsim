@@ -695,7 +695,11 @@ namespace world_sim {
 			}
 			out << "]}";
 		}
-		out << "]}";
+		out << "]";
+		if (m_ctx.navigation != nullptr) {
+			out << ",\"meshTriangles\":" << m_ctx.navigation->navMesh().liveTriangleCount();
+		}
+		out << "}";
 		return app::DevResponse{.body = out.str()};
 	}
 

@@ -319,8 +319,9 @@ TEST(NavInputBuilder, Water_ConfluenceAndMouthOverlaps_NeverWalkable) {
 	EXPECT_TRUE(walkableAt(mesh, meters(230, 170)));
 }
 
-// A river narrows below kFordableWidthM: the wide piece blocks, the fordable piece is not
-// emitted, and the two share a straight butt cut. A colonist wades straight across the creek.
+// A river narrows below kFordableWidthM: the wide piece blocks, the fordable piece is a
+// cover-only ring, and the two share a straight butt cut. A colonist wades straight across
+// the creek, and the creek bed's cover names the ford.
 TEST(NavInputBuilder, Water_FordableCreek_WalkableAcrossBlockingPieceBlocks) {
 	FakeTerrain			  terrain;
 	ChunkTerrainPolygons& c = terrain.at({0, 0});
@@ -331,13 +332,25 @@ TEST(NavInputBuilder, Water_FordableCreek_WalkableAcrossBlockingPieceBlocks) {
 
 	std::vector<NavInputPolygon> water;
 	appendChunkWater(c, water);
-	ASSERT_EQ(water.size(), 1u) << "only the blocking piece reaches nav";
+	ASSERT_EQ(water.size(), 2u);
+	EXPECT_EQ(water[0].provenanceId, kProvenanceWater);
+	EXPECT_FALSE(water[0].coverOnly);
+	EXPECT_EQ(water[1].provenanceId, kProvenanceFord);
+	EXPECT_TRUE(water[1].coverOnly) << "the fordable piece tags no face";
 
 	const geometry::nav::PatchableMesh mesh = meshFor(terrain);
 	EXPECT_FALSE(walkableAt(mesh, meters(140, 100))) << "the wide river blocks";
 	EXPECT_FALSE(walkableAt(mesh, meters(149.9, 100)));
 	EXPECT_TRUE(walkableAt(mesh, meters(150.1, 100))) << "just past the butt cut is walkable";
 	EXPECT_TRUE(walkableAt(mesh, meters(170, 100))) << "the creek bed is walkable";
+	const auto inFord = [&mesh](Vec2i64 p) {
+		const std::vector<geometry::nav::RingId>& cover = mesh.cover(mesh.locate(p));
+		return std::any_of(cover.begin(), cover.end(), [&mesh](geometry::nav::RingId r) {
+			return r != geometry::nav::kGroundToken && mesh.ring(r).polygon.provenanceId == kProvenanceFord;
+		});
+	};
+	EXPECT_TRUE(inFord(meters(170, 100))) << "the creek bed is told from its banks";
+	EXPECT_FALSE(inFord(meters(170, 102)));
 
 	const geometry::nav::PathResult across = pathOn(mesh, meters(175, 94), meters(175, 106));
 	ASSERT_TRUE(across.reachable);

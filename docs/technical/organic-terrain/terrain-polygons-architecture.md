@@ -321,7 +321,9 @@ Per river channel that intersects the extended region:
    the rest.
 5. Fordability: `blocksMovement = (2·hw >= kFordableWidthM = 1.2)`. A channel whose width
    crosses the threshold is split at the crossing into pieces so the flag is per ring. A
-   fordable ring is still drawn, still counts for vision and mud, and is skipped by nav.
+   fordable ring is still drawn, still counts for vision and mud, and blocks no movement.
+   Nothing is built on it: nav holds it as a ring that marks the creek bed without blocking
+   (D9), and the footprint check refuses it.
 6. Stroke each piece to a ring: left bank forward, right bank back. Round caps of radius hw
    only at the channel's true ends; at an internal fordable cut both pieces share a straight
    **butt** edge across the channel (the same two quantized vertices on each side), so
@@ -392,9 +394,15 @@ the rim.
 
 1. For each ready chunk whose region intersects the area rect plus the existing 1-tile margin,
    take `terrainPolygons().navRings` (the clipped set, D4).
-2. Skip rings with `blocksMovement == false`.
-3. Emit each as `NavInputPolygon { ring, blocked = true, provenanceId = kProvenanceWater,
-   holeCapable = ring.holeCapable }`.
+2. Emit each ring with `blocksMovement` as `NavInputPolygon { ring, blocked = true,
+   provenanceId = kProvenanceWater, holeCapable = ring.holeCapable }`.
+3. Emit each fordable ring (`blocksMovement == false`) as a cover-only ring:
+   `NavInputPolygon { ring, blocked = true, provenanceId = kProvenanceFord, coverOnly = true }`.
+   Its outline is in the mesh and it is in the cover of the creek bed, but it tags no face,
+   so the bed is floor to every movement query and a colonist wades across. Building reads
+   the cover: `NavigationSystem::isAreaBuildable` and `isPointBuildable` refuse a face in a
+   ford. Until 2026-11-13 fordable rings were skipped, which left a creek as buildable ground
+   (WOR-846, a foundation can be placed across a narrow stream).
 4. Not-ready or missing chunks contribute nothing (today they read as land; unchanged).
 
 Clipped rings from two chunks share their border edge exactly (D4). The CDT receives the same
@@ -420,10 +428,15 @@ for (const ChunkCoordinate& cc : chunksIntersecting(areaRectMm.expanded(kTileMm)
     const Chunk* chunk = chunks.getChunk(cc);
     if (!chunk || !chunk->isReady()) continue;                 // missing chunk reads as land
     for (const TerrainRing& tr : chunk->terrainPolygons().navRings) {
-        if (!tr.blocksMovement) continue;                      // fordable creek
-        input.polygons.push_back({.ring = tr.ring, .blocked = true,
-                                  .provenanceId = kProvenanceWater,
-                                  .holeCapable = tr.holeCapable});
+        if (tr.blocksMovement) {
+            input.polygons.push_back({.ring = tr.ring, .blocked = true,
+                                      .provenanceId = kProvenanceWater,
+                                      .holeCapable = tr.holeCapable});
+        } else {                                               // fordable creek: marked, not blocked
+            input.polygons.push_back({.ring = tr.ring, .blocked = true,
+                                      .provenanceId = kProvenanceFord,
+                                      .coverOnly = true});
+        }
     }
 }
 ```

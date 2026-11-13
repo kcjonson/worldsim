@@ -239,8 +239,16 @@ namespace ecs {
 			face.faceOpening		  = tags.opening;
 			return face;
 		}
+		// Whether triangle `tri` lies in a fordable channel: ground a mover wades across and
+		// nothing is built on.
+		bool inFord(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			const std::vector<gnav::RingId>& cover = mesh.cover(tri);
+			return std::any_of(cover.begin(), cover.end(), [&mesh](gnav::RingId r) {
+				return r != gnav::kGroundToken && mesh.ring(r).polygon.provenanceId == nav::kProvenanceFord;
+			});
+		}
 		bool buildableFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
-			return gnav::terrainTraversable(groundBeneath(mesh, tri));
+			return gnav::terrainTraversable(groundBeneath(mesh, tri)) && !inFord(mesh, tri);
 		}
 		bool landingFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::truthTraversable(groundBeneath(mesh, tri));

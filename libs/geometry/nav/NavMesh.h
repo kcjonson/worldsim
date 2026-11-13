@@ -79,6 +79,11 @@ namespace geometry::nav {
 		// Everything else (river channels, ponds, obstacles, walls, the border) leaves this
 		// false: solid containment, and any solid ring blocks whatever the parity.
 		bool				 holeCapable  = false;
+		// A blocked ring that tags no face: its outline is in the mesh and it is in the
+		// cover of the ground inside it, but classifyCover passes over it, so that ground
+		// keeps the tags of whatever else covers it and every query crosses it. For ground
+		// a reader of PatchableMesh::cover must tell apart from the ground around it.
+		bool				 coverOnly	  = false;
 	};
 
 	// A door portal: an open gap in a blocked band that agents may cross. (a, b)
@@ -174,6 +179,7 @@ namespace geometry::nav {
 		std::int64_t		 provenance		= kNoProvenance;
 		std::int64_t		 opening		= kNoOpening;
 		bool				 holeCapable	= false;
+		bool				 coverOnly		= false;
 		Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
 		bool				 counterClockwise = true;
 	};
@@ -203,7 +209,7 @@ namespace geometry::nav {
 	// nesting parity: a water body arrives as a CCW outer boundary plus CW land-island
 	// holes, separate rings, so odd depth is water (open water 1, a pond on an island
 	// 3) and even depth is land; disjoint bodies never nest. A solid ring blocks even
-	// over water.
+	// over water. COVER-ONLY rings tag nothing and are passed over.
 	FaceTags classifyCover(const std::vector<const SampleRing*>& containing);
 
 	// Uniform-grid spatial index over the triangle set, built by buildNavMesh.

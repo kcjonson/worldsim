@@ -312,8 +312,9 @@ class NavigationSystem : public ISystem {
 
 	// Whole-FOOTPRINT BUILDABILITY: isAreaWalkable's sampling against the nav mesh with its placed
 	// obstacles read as the ground beneath them (ConstructionSystem turns them into clear tasks) and
-	// every wall face open (wall conflicts are ConstructionValidator's job). Only water and ground
-	// that isn't meshed block. The placement gate for the build tool.
+	// every wall face open (wall conflicts are ConstructionValidator's job). Only water, a fordable
+	// channel a mover could wade included, and ground that isn't meshed block. The placement gate
+	// for the build tool.
 	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
 
 	// Single-point buildability, the per-vertex / live-cursor counterpart of isAreaBuildable.

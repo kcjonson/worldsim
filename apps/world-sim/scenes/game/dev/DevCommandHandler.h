@@ -113,7 +113,8 @@ namespace world_sim {
 		app::DevResponse devFlora(const app::DevRequest& cmd);
 		// ground?pts=x0,y0;x1,y1;... (world metres): what each point is to the nav mesh (on the mesh,
 		// clear to stand on, buildable) beside what the chunk's terrain polygons hold there (in water,
-		// distance to water, and every ring over it with its kind, width and blocksMovement). Read-only.
+		// distance to water, and every ring over it with its kind, width and blocksMovement), and the
+		// mesh's live triangle count. Read-only.
 		app::DevResponse devGround(const app::DevRequest& cmd);
 		void		devWalls(const app::DevRequest& cmd);
 		void		devOpening(const app::DevRequest& cmd);
