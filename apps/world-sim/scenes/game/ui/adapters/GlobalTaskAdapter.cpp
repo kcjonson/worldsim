@@ -278,7 +278,7 @@ namespace world_sim::adapters {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
 					const auto workers = work.workersOf(*goal);
 					const bool works = knownTo.has_value() && std::ranges::find(workers, *knownTo) != workers.end();
-					if (!works && !work.hasWork(*goal)) {
+					if (!work.hasWork(*goal)) {
 						continue;
 					}
 					const auto offered = work.offeredTo(goal->id);

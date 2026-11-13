@@ -117,7 +117,7 @@ namespace ecs {
 	}
 
 	bool ColonyGoalWork::hasWork(const GoalTask& goal) const {
-		return goal.owner != GoalOwner::StorageGoalSystem || !offeredTo(goal.id).empty();
+		return goal.owner != GoalOwner::StorageGoalSystem || !offeredTo(goal.id).empty() || !workersOf(goal).empty();
 	}
 
 	std::optional<GoalItemCount> ColonyGoalWork::itemCount(World& world, const GoalTask& goal) const {

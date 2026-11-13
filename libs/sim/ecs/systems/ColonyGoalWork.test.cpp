@@ -137,6 +137,15 @@ namespace ecs::test {
 		EXPECT_EQ(count->onTheWay, 8U);
 	}
 
+	// Right after a cut lands, the cutter hauls toward the box's root goal before his next decision offers it.
+	TEST_F(ColonyGoalWorkTest, AStorageGoalWithAWorkerHasWorkWithoutAnOffer) {
+		const uint64_t root = stoneBox(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial, .maxAmount = 20});
+		EXPECT_FALSE(ColonyGoalWork(world, claims).hasWork(*GoalTaskRegistry::Get().getGoal(root)));
+
+		colonist(hauling(root, stone, 2), {});
+		EXPECT_TRUE(ColonyGoalWork(world, claims).hasWork(*GoalTaskRegistry::Get().getGoal(root)));
+	}
+
 	// A box's room is no shortfall: a box with no maximum would read "needs 1987".
 	TEST_F(ColonyGoalWorkTest, AStorageHaulReportsNoNeed) {
 		const uint64_t root = stoneBox(StorageRule{.defName = "Stone", .category = assets::ItemCategory::RawMaterial});
@@ -197,7 +206,8 @@ namespace ecs::test {
 		const uint64_t regrowing = make(TaskType::Haul, GoalOwner::StorageGoalSystem, 4);
 		colonist(Task{}, {haulOption(goal, OptionStatus::Reserved), haulOption(loaded, OptionStatus::Reserved)});
 		colonist(Task{}, {haulOption(other, OptionStatus::Available), haulOption(loaded, OptionStatus::NoRoom)});
-		const EntityID waiting = colonist(Task{}, {haulOption(regrowing, OptionStatus::Reserved), haulOption(regrowing, OptionStatus::Regrowing)});
+		const EntityID waiting = colonist(Task{}, {haulOption(regrowing, OptionStatus::Reserved)});
+		colonist(Task{}, {haulOption(regrowing, OptionStatus::Regrowing)});
 		{
 			const ColonyGoalWork work(world, claims);
 			EXPECT_TRUE(work.allSourcesClaimed(goal));

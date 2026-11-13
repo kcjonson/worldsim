@@ -40,8 +40,9 @@ namespace ecs {
 
 		/// Colonists whose last decision offered work toward the goal, in view order: an option for it
 		/// chosen, available, blocked only by the colonist's own carry (NoRoom), or held by another
-		/// colonist (Reserved). A cut or a haul is for the goal it was picked through; a build, a
-		/// teardown, a craft, or a placement is for the goal of that type whose destination it works.
+		/// colonist (Reserved). A cut or a haul is for the goal it was picked through; a build, a craft, or a
+		/// placement is for the goal of that type whose destination it works. A teardown is counted toward
+		/// a Deconstruct goal, which the panel and the tab never list.
 		[[nodiscard]] std::span<const EntityID> offeredTo(uint64_t goalId) const;
 
 		/// Some colonist's last decision found the goal's source held by another (Reserved), and none had
@@ -51,7 +52,8 @@ namespace ecs {
 
 		/// Whether a goal has anything to do now. A storage umbrella stays while its box has rules, full
 		/// or not, and a stocking cut until its goal system retires it, so either has work only while some
-		/// colonist is offered work toward it: a box that wants wood when no loose wood is known has none.
+		/// colonist is offered work toward it or works it: a box that wants wood when no loose wood is known
+		/// has none.
 		/// Every other goal exists only while it has work: its goal system retires it.
 		[[nodiscard]] bool hasWork(const GoalTask& goal) const;
 

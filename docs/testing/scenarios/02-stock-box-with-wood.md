@@ -88,7 +88,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=colonists"
 
 4. Open the Tasks panel while both cut: the "Cut for Wood" row reads "Working - Bob, Ann" (one name while only one of them cuts), and its detail goes on "needs N, M on the way": M appears as soon as a cutter starts toward his tree (a cut counts its expected wood as on the way from the moment he picks it), and N is the box's minimum less what it holds less M.
 
-5. Open Ann's details and its Tasks tab: Known work lists the "Cut for Wood" row (the one her current task, shown under Currently, serves), and each of its rows matches the Tasks panel's row of the same name in status and detail, changing when the panel's does (except Available and Unassigned, which go by distance: from the camera on the panel, from Ann on the tab). It lists no row the panel doesn't.
+5. Open Ann's details and its Tasks tab: Known work lists the "Cut for Wood" row (the one her current task, shown under Currently, serves), and each of its rows matches the Tasks panel's row of the same name in status and detail, changing when the panel's does (except Available and Unassigned, which go by distance: from the camera on the panel, from Ann on the tab). It lists no row the panel doesn't (they refresh on separate 0.2 s timers, so a row can show on one a moment before the other; a mismatch that lasts is the failure).
 
 6. Look at the stump after the fell: the remainder is one compact heap of logs lying bare, no crate under it.
 

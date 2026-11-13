@@ -919,10 +919,12 @@ claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter`
 - Known to: a row nobody works names the colonists whose last decision offered work toward it, "known
   to Alice, Bob", by the same two-then-"+N" rule. Offered means an option for the goal chosen,
   available, held by another colonist, or blocked only by the colonist's own carry. A cut or a haul is
-  for the goal it was picked through; a build, teardown, craft, or placement is for the goal of its
-  type whose destination it works, the goal the Working status names it under.
+  for the goal it was picked through; a build, craft, or placement is for the goal of its type whose
+  destination it works, the goal the Working status names it under. A teardown is counted the same way
+  toward a Deconstruct goal, but the panel and the tab list only Harvest, Haul, Build, Craft, and
+  PlacePackaged goals, so a teardown shows on neither.
 - The panel lists only goals with something to do (`ColonyGoalWork::hasWork`): a storage umbrella or
-  stocking cut shows only while some colonist was offered work toward it. A full box, a box that wants
+  stocking cut shows only while some colonist was offered work toward it or is working it. A full box, a box that wants
   an item nobody knows a loose source of, a box with room for a category nobody has any of, and a
   stocking cut whose minimum is met all drop out while their goals stay.
 - "Waiting (all known sources claimed)": some colonist's last decision held a Reserved option for the
