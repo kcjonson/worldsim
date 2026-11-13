@@ -150,11 +150,18 @@ namespace ecs {
 			// existed. This is the common case and must stay as cheap as the (already
 			// cheap) occluder query. Only when a wall is nearby do we build/lookup a
 			// visibility polygon and gate candidates against it.
+			VisibilityCache& entry = m_visibilityCache[entity];
+			entry.seenThisTick = true;
 			VisibilityCache* cache = nullptr;
-			if (!outdoors) {
-				VisibilityCache& entry = m_visibilityCache[entity];
-				entry.seenThisTick = true;
-
+			if (outdoors) {
+				if (entry.hadOccluders) {
+					entry.polygon.clear();
+					entry.hadOccluders = false;
+					++entry.polygonRevision;
+				}
+				entry.builtPos = pos.value;
+				entry.radius = memory.sightRadius;
+			} else {
 				// Rebuild conditions (D3): no usable polygon yet, the wall set changed
 				// (GeometryIndex generation moved), or the observer moved more than ~0.5 m
 				// from where the polygon was built. A stationary indoor colonist hits none
@@ -170,6 +177,8 @@ namespace ecs {
 					entry.builtPos = pos.value;
 					entry.builtVersion = m_geometry.generation();
 					entry.hadOccluders = true;
+					entry.radius = memory.sightRadius;
+					++entry.polygonRevision;
 					++m_polygonBuildCount;
 				}
 				cache = &entry;
@@ -458,8 +467,8 @@ namespace ecs {
 			}
 		}
 
-		// Prune cache entries for observers not seen this tick (dead/despawned, or moved
-		// outdoors so no longer carry an entry). Mark-and-sweep keeps the map bounded.
+		// Prune cache entries for observers not seen this tick (dead/despawned).
+		// Mark-and-sweep keeps the map bounded.
 		for (auto it = m_visibilityCache.begin(); it != m_visibilityCache.end();) {
 			if (it->second.seenThisTick) {
 				it->second.seenThisTick = false; // reset for next tick
