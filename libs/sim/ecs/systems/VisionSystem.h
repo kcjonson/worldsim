@@ -31,6 +31,9 @@ namespace world {
 
 namespace ecs {
 
+struct Knowledge;
+struct Memory;
+
 /// Updates colonist Memory by observing nearby world entities and terrain features.
 /// Queries PlacementExecutor for PlacedEntities within each colonist's sight radius.
 /// Also scans chunks for shore points (land beside water) with Drinkable capability.
@@ -109,9 +112,23 @@ class VisionSystem : public ISystem {
 	/// Read-only access to the occluder geometry (walls) for overlay drawing.
 	[[nodiscard]] const GeometryIndex& geometry() const { return m_geometry; }
 
+	/// Give `observer` what a look over the disc of `radiusMeters` round `center` would give him,
+	/// through the same passes as his sight each tick. The landing crew's memory of the landing area
+	/// (player-visibility.md 3.8). Leaves his sight shape alone.
+	void rememberArea(EntityID observer, glm::vec2 center, float radiusMeters);
+
   private:
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
+
+	/// The walls and openings that bound or cross `polygon`, into memory (vision-architecture D4).
+	void rememberStructures(geometry::Vec2i64 centerMm, std::int64_t radiusMm, const geometry::Ring& polygon, Memory& memory);
+
+	/// What the disc of `radiusMeters` round `center` shows, inside `polygon` when walls clip it
+	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities, and shore.
+	void lookOver(
+		EntityID observer, glm::vec2 center, float radiusMeters, const geometry::Ring* polygon, Memory& memory, Knowledge* knowledge
+	);
 
 	assets::PlacementExecutor*							  m_placementExecutor = nullptr;
 	const std::unordered_set<world::ChunkCoordinate>*	  m_processedChunks = nullptr;

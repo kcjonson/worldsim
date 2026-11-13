@@ -1,5 +1,7 @@
 #include "VisionSystem.h"
 
+#include "NavigationSystem.h"
+
 #include "../World.h"
 #include "../components/Appearance.h"
 #include "../components/Memory.h"
@@ -19,7 +21,9 @@
 #include <glm/geometric.hpp>
 
 #include <memory>
+#include <unordered_map>
 #include <unordered_set>
+#include <vector>
 
 #include <glm/vec2.hpp>
 
@@ -106,29 +110,28 @@ namespace {
 		return mem != nullptr && id != 0 && mem->knowsWorldEntity(at, id);
 	}
 
-	// A minimal pass-1 placement setup: a PlacementExecutor holding one chunk index
-	// with a single placed `kTargetDefName` entity at `at`, plus the processed-chunks
-	// set VisionSystem gates on. Built without world-gen by stuffing a SpatialIndex
-	// into the executor via storeChunkResult (synthetic def => no resource init).
-	// Owns the executor; the set is returned alive in `outProcessed`.
-	void placeTarget(
-		PlacementExecutor&				 executor,
+	// A minimal pass-1 placement setup: a PlacementExecutor holding one index per chunk with a placed
+	// `kTargetDefName` entity at each of `positions`, plus the processed-chunks set VisionSystem gates on.
+	// Built without world-gen by stuffing a SpatialIndex into the executor via storeChunkResult
+	// (synthetic def => no resource init).
+	void placeTargets(
+		PlacementExecutor&					 executor,
 		std::unordered_set<ChunkCoordinate>& outProcessed,
-		glm::vec2						 at) {
-		const ChunkCoordinate coord = world::worldToChunk({at.x, at.y});
-
-		SpatialIndex index;
-		PlacedEntity pe;
-		pe.defName = kTargetDefName;
-		pe.position = at;
-		index.insert(pe);
-
-		assets::AsyncChunkPlacementResult result;
-		result.coord = coord;
-		result.spatialIndex = std::move(index);
-		executor.storeChunkResult(std::move(result));
-
-		outProcessed.insert(coord);
+		const std::vector<glm::vec2>&		 positions) {
+		std::unordered_map<ChunkCoordinate, assets::AsyncChunkPlacementResult> byChunk;
+		for (const glm::vec2 at : positions) {
+			const ChunkCoordinate coord = world::worldToChunk({at.x, at.y});
+			assets::AsyncChunkPlacementResult& result = byChunk[coord];
+			result.coord = coord;
+			PlacedEntity placed;
+			placed.defName = kTargetDefName;
+			placed.position = at;
+			result.spatialIndex.insert(placed);
+		}
+		for (auto& [coord, result] : byChunk) {
+			executor.storeChunkResult(std::move(result));
+			outProcessed.insert(coord);
+		}
 	}
 
 	class VisionSystemTest : public ::testing::Test {
@@ -518,7 +521,7 @@ TEST_F(VisionSystemTest, RemovedEntityInViewIsForgotten) {
 	std::unordered_set<ChunkCoordinate> processed;
 
 	const glm::vec2 targetPos{3.0F, 0.0F};
-	placeTarget(executor, processed, targetPos);
+	placeTargets(executor, processed, {targetPos});
 
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
@@ -545,7 +548,7 @@ TEST_F(VisionSystemTest, PresentEntityInViewIsKept) {
 	std::unordered_set<ChunkCoordinate> processed;
 
 	const glm::vec2 targetPos{3.0F, 0.0F};
-	placeTarget(executor, processed, targetPos);
+	placeTargets(executor, processed, {targetPos});
 
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
@@ -577,7 +580,7 @@ TEST_F(VisionSystemTest, RemovedButOccludedEntityIsKept) {
 
 	// Target east of the wall, directly behind it from the observer's view.
 	const glm::vec2 targetPos{2.5F, 1.5F};
-	placeTarget(executor, processed, targetPos);
+	placeTargets(executor, processed, {targetPos});
 
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
@@ -612,7 +615,7 @@ TEST_F(VisionSystemTest, RemovedButOutOfRadiusEntityIsKept) {
 
 	// Well beyond the default 30m sight radius.
 	const glm::vec2 targetPos{100.0F, 0.0F};
-	placeTarget(executor, processed, targetPos);
+	placeTargets(executor, processed, {targetPos});
 
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
@@ -679,7 +682,7 @@ TEST_F(VisionSystemTest, EcsEntitiesInViewAreKeptWithoutChurn) {
 	PlacementExecutor					executor(reg);
 	std::unordered_set<ChunkCoordinate> processed;
 	const glm::vec2						placedPos{6.0F, 6.0F};
-	placeTarget(executor, processed, placedPos); // a live index for the chunk the pile and box stand in
+	placeTargets(executor, processed, {placedPos}); // a live index for the chunk the pile and box stand in
 
 	World		  world;
 	VisionSystem& sys = world.registerSystem<VisionSystem>();
@@ -750,4 +753,62 @@ TEST_F(VisionSystemTest, ShorePointsInSightAreRemembered) {
 		EXPECT_LE(water.distanceToWaterMm(p), 301.0) << at.x << ", " << at.y;
 	}
 	EXPECT_GT(inSight, 20);
+}
+
+// --- Landing memory (player-visibility.md 3.8) --------------------------------
+
+// The landing crew knows the landing area at tick 0: placed and ECS things 100 m from the drop,
+// far past his own sight, and nothing past kLandingSightMeters. A thing the landing cleared from
+// round the crew before the call is not remembered.
+TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
+	const glm::vec2						drop{200.0F, 200.0F};
+	const glm::vec2						nearPlaced = drop + glm::vec2{100.0F, 0.0F};
+	const glm::vec2						farPlaced = drop + glm::vec2{160.0F, 0.0F};
+	const glm::vec2						cleared = drop + glm::vec2{2.0F, 0.0F};
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTargets(executor, processed, {nearPlaced, farPlaced, cleared});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+	const glm::vec2 nearEcs = drop + glm::vec2{0.0F, 100.0F};
+	const glm::vec2 farEcs = drop + glm::vec2{0.0F, -160.0F};
+	spawnTarget(world, nearEcs);
+	spawnTarget(world, farEcs);
+
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({cleared.x, cleared.y}), cleared, kTargetDefName));
+	const EntityID member = spawnObserver(world, drop + glm::vec2{0.5F, 0.0F});
+	sys.rememberArea(member, drop, NavigationSystem::kLandingSightMeters);
+
+	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "a placed thing 100 m from the drop";
+	EXPECT_TRUE(remembers(world, member, nearEcs)) << "an ECS thing 100 m from the drop";
+	EXPECT_FALSE(remembers(world, member, farPlaced)) << "160 m is past the landing area";
+	EXPECT_FALSE(remembers(world, member, farEcs)) << "160 m is past the landing area";
+	EXPECT_FALSE(remembers(world, member, cleared)) << "cleared before the crew remembered the area";
+	EXPECT_FALSE(sys.sightShape(member).has_value()) << "the landing is not his sight";
+}
+
+// A colonist who joins after the landing starts with his own sight only.
+TEST_F(VisionSystemTest, LaterColonistDoesNotKnowTheLandingArea) {
+	const glm::vec2						drop{200.0F, 200.0F};
+	const glm::vec2						nearPlaced = drop + glm::vec2{100.0F, 0.0F};
+	const glm::vec2						inSight = drop + glm::vec2{10.0F, 0.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTargets(executor, processed, {nearPlaced, inSight});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+	const EntityID member = spawnObserver(world, drop);
+	sys.rememberArea(member, drop, NavigationSystem::kLandingSightMeters);
+	tick(sys);
+
+	const EntityID arrival = spawnObserver(world, drop);
+	tick(sys);
+	EXPECT_TRUE(remembers(world, arrival, inSight));
+	EXPECT_FALSE(remembers(world, arrival, nearPlaced)) << "a later arrival was not in the crash";
+	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "the crew keeps the landing area past its first look";
 }

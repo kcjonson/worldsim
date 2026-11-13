@@ -1331,7 +1331,8 @@ namespace {
 			// remove the placed entities around them so there is an open clearing, and
 			// return those points with the clearing center.
 			const size_t							crewSize = std::max<size_t>(m_party.size(), 1);
-			const ecs::NavigationSystem::GroupSpawn landing = prepareLandingClearing(m_spawnPosition, crewSize, navSystem);
+			const glm::vec2							drop = m_spawnPosition;
+			const ecs::NavigationSystem::GroupSpawn landing = prepareLandingClearing(drop, crewSize, navSystem);
 			m_spawnPosition = landing.center;
 
 			// The clearing center is the colony's home anchor. Store it once here, in the one
@@ -1356,11 +1357,13 @@ namespace {
 			// Spawn the crew on the points the landing picked: each on clear ground of its
 			// own, spread apart so members don't stack. An empty party (Quick Start, direct
 			// scene jumps) spawns the single default colonist.
+			std::vector<ecs::EntityID> crew;
 			if (m_party.empty()) {
-				spawnColonist(landing.points.front(), "Bob");
+				crew.push_back(spawnColonist(landing.points.front(), "Bob"));
 			} else {
 				for (size_t i = 0; i < m_party.size(); ++i) {
 					const auto entity = spawnColonist(landing.points[i], m_party[i].name);
+					crew.push_back(entity);
 					// Replace the default starting skills with the member's rolled set.
 					if (auto* skills = ecsWorld->getComponent<ecs::Skills>(entity)) {
 						skills->clear();
@@ -1368,6 +1371,27 @@ namespace {
 							skills->setLevel(skillName, level);
 						}
 					}
+				}
+			}
+
+			// The crew saw the landing area as they came down (player-visibility rule 17): each knows
+			// what is within the nav landing limit's radius of the drop. groupSpawnPoints has already
+			// waited for that area's chunks and cleared round the crew, so nothing cleared is remembered.
+			for (const ecs::EntityID member : crew) {
+				visionSystem.rememberArea(member, drop, ecs::NavigationSystem::kLandingSightMeters);
+				if (const auto* memory = ecsWorld->getComponent<ecs::Memory>(member)) {
+					float farthest = 0.0F;
+					for (const auto& [key, known] : memory->knownWorldEntities) {
+						farthest = std::max(farthest, glm::length(known.position - drop));
+					}
+					LOG_DEBUG(
+						Game,
+						"Landing memory: entity %llu knows %zu thing(s) of cap %zu, farthest %.1f m from the drop",
+						static_cast<unsigned long long>(member),
+						memory->worldEntityCount(),
+						ecs::Memory::kMaxWorldEntities,
+						farthest
+					);
 				}
 			}
 
