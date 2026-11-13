@@ -566,8 +566,9 @@ TEST(NavMesh, CorridorWidthMatchesGapDistance) {
 	ASSERT_FALSE(m.triangles.empty());
 	EXPECT_EQ(minTraversableWidth(m), 400) << "tightest traversable corridor width must equal the 400 mm gap";
 
-	// Open floor below the band, bounded by the mesh edge and the band, has no squeeze
-	// tighter than the gap however long its triangles' edges.
+	// Open floor below the band, between the mesh edge at y = 0 and the band from y = 900,
+	// has no squeeze tighter than those 900 mm however long its triangles' edges.
+	int checked = 0;
 	for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(m.triangles.size()); ++ti) {
 		const NavTriangle& t = m.triangles[static_cast<std::size_t>(ti)];
 		if (t.faceBlocker != kNoBlocker || centroid(m.vertices, t.v).y >= 400) {
@@ -575,10 +576,12 @@ TEST(NavMesh, CorridorWidthMatchesGapDistance) {
 		}
 		for (int a = 0; a < 3; ++a) {
 			if (!obstacleEdge(m, ti, a) && !obstacleEdge(m, ti, (a + 2) % 3)) {
-				EXPECT_GT(t.edgePairWidthMm[static_cast<std::size_t>(a)], 400) << "triangle " << ti << " apex " << a;
+				EXPECT_GE(t.edgePairWidthMm[static_cast<std::size_t>(a)], 900) << "triangle " << ti << " apex " << a;
+				++checked;
 			}
 		}
 	}
+	EXPECT_GT(checked, 0);
 }
 
 TEST(NavMesh, CorridorWidthPerpendicularChannel) {

@@ -30,17 +30,18 @@
 // can reject a corridor too narrow for a given agent diameter. edgePairWidthMm[i]
 // is the widest disc DIAMETER that fits passing the two edges meeting at vertex
 // v[i] (the apex), measured as the exact distance from that apex to the nearest
-// COMMON-KNOWLEDGE obstacle feature in the wedge; edgeClearWidthMm[i] is a door
-// gap's clear width on a portal edge. See NavMesh.cpp for the exact-integer
-// adaptation (no bare point obstacles; clearance is distance-to-feature, never
-// edge length, so an open-floor sliver stays unconstrained).
+// COMMON-KNOWLEDGE obstacle feature in the wedge, the mesh edge included (outside
+// the mesh is impassable); edgeClearWidthMm[i] is a door gap's clear width on a
+// portal edge. See NavMesh.cpp for the exact-integer adaptation (no bare point
+// obstacles; clearance is distance-to-feature, never edge length, so a sliver
+// away from obstacles and the mesh edge stays unconstrained).
 //
 // DEFERRED (still not implemented): clearance against BELIEF-DEPENDENT walls
 // (faceBlocker > 0). Those widths vary per agent belief and only bite oversized
 // agents in built corridors; construction guarantees walkable wall gaps >= 0.7 m,
 // so for the one shipped agent size (0.3 m radius, 0.6 m diameter) every wall
-// portal fits. Width filtering here covers common-knowledge terrain/obstacles and
-// door gaps only.
+// portal fits. Width filtering here covers common-knowledge terrain/obstacles, the
+// mesh edge, and door gaps only.
 
 namespace geometry::nav {
 
