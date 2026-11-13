@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 // A persistent nav mesh that takes ring edits as patches (nav-mesh-variable-resolution
@@ -23,10 +24,10 @@
 //
 // Triangle and vertex ids are stable: a patch frees some slots and reuses them, and
 // every id it did not touch still means what it meant. Ground exists only where a
-// triangle's cover set holds kGroundToken (inside a bounds ring); elsewhere there are no
-// triangles. Bounds rings may share edges and vertices but their interiors must not
-// overlap. Two bounds rings' edges on the same segment are dissolved (findBoundsSeams):
-// ground runs across them with no mesh edge there. Every vertex ends a constrained edge.
+// triangle's cover set holds kGroundToken (inside any bounds ring); elsewhere there are no
+// triangles. Bounds rings may overlap, nest, touch, and share sides: a bounds edge is a
+// constraint only along its boundary intervals (groundBoundaries), and ground runs across
+// the rest of it with no mesh edge there. Every vertex ends a constrained edge.
 //
 // The mesh carries what path queries and reachability read: face tags from the rings,
 // door tags on door edges, corridor widths capped at a maximum clearance (brought up to
@@ -36,8 +37,8 @@
 namespace geometry::nav {
 
 	// Stands in a cover for every bounds ring (blocked == false): the cover holds it when
-	// an odd number of bounds rings contain the triangle, so the two sides of an edge two
-	// bounds rings share have the same cover. Sorts before every ring id.
+	// any bounds ring contains the triangle, so the two sides of a dissolved stretch have
+	// the same cover. Sorts before every ring id.
 	constexpr RingId kGroundToken = -2;
 
 	struct RegisteredRing {
@@ -46,10 +47,7 @@ namespace geometry::nav {
 		Vec2i64					  lo;
 		Vec2i64					  hi;
 		std::vector<std::int32_t> edgeIds; // per outline edge, its id in the edge index
-		// A bounds ring's, per outline edge: the live bounds ring edge on the same segment
-		// (the two are dissolved), ring kNoRing when none. Empty for a blocked ring.
-		std::vector<EdgeSource> partners;
-		bool					live = false;
+		bool					  live = false;
 	};
 
 	struct RingMove {
@@ -307,8 +305,14 @@ namespace geometry::nav {
 
 		// The half-edges a registered ring edge lies under.
 		const std::vector<std::int32_t>& piecesOf(const EdgeSource& s) const;
-		// The live edge dissolved with this one, ring kNoRing when none.
-		EdgeSource partnerOf(const EdgeSource& s) const;
+		// The live bounds rings whose boxes meet the box.
+		void groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const;
+		// Whether the edge's pieces on the mesh run end to end, from one of `ends` to another
+		// and through no other: every one of `ends` meets an odd number of pieces and every
+		// other point an even number. `ends` holds each end once; `pieceList` (the edge's
+		// pieces by vertex pair, ascending, after the call) and `endList` are scratch.
+		bool piecesRunBetween(const EdgeSource& s, const std::vector<Vec2i64>& ends, std::vector<std::pair<std::uint32_t, std::uint32_t>>& pieceList,
+							  std::vector<std::uint32_t>& endList) const;
 
 		std::int64_t				maxBoundsEdgeMm = 0;
 		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;

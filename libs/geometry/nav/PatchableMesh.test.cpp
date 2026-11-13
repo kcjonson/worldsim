@@ -223,8 +223,7 @@ namespace {
 		}
 		std::vector<InputSegment> segments;
 		ringsArrangementInput(
-			rings, findBoundsSeams(rings), [&](std::int32_t ring, std::int32_t edge) { return encode(ids[static_cast<std::size_t>(ring)], edge); },
-			segments);
+			rings, [&](std::int32_t ring, std::int32_t edge) { return encode(ids[static_cast<std::size_t>(ring)], edge); }, segments);
 		const Arrangement arrangement = buildArrangement(segments);
 		const NavMesh	  fresh		  = buildNavMesh(input);
 
@@ -852,9 +851,6 @@ TEST(PatchableMesh, HangingRingCompletedByNeighbourBounds) {
 		const SharedLine alone = onSharedLine(h.mesh, second);
 		EXPECT_EQ(alone.ownBoundary, 10000) << "the side, whole, is boundary carrying the second square's edge";
 		EXPECT_EQ(alone.length, 10000);
-		for (const EdgeSource& partner : h.mesh.ring(second).partners) {
-			EXPECT_EQ(partner.ring, kNoRing);
-		}
 		h.add(westFirst ? west : east);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "first square back";
 		EXPECT_EQ(onSharedLine(h.mesh, second).boundsEdges, 0) << "first square back";
@@ -1155,15 +1151,58 @@ TEST(PatchableMesh, BoundsContainSampleHoldsSharedOutlineOnce) {
 	}
 }
 
-// Bounds rings count by parity, so where two overlap there is no ground: validate says
-// so instead of leaving a silent hole.
-TEST(PatchableMesh, OverlappingBoundsFailValidate) {
-	PatchableMesh mesh;
-	PatchEdits	  edits;
-	edits.adds.push_back(bounds(rect(0, 0, 10000, 10000)));
-	edits.adds.push_back(bounds(rect(6000, 2000, 16000, 12000)));
-	mesh.applyPatch(edits);
-	EXPECT_NE(mesh.validate().find("overlap"), std::string::npos) << mesh.validate();
+// Two overlapping squares are one ground area, in one patch or either order, and equal a
+// from-scratch build; removing either leaves the other whole.
+TEST(PatchableMesh, OverlappingBoundsAreOneGround) {
+	const NavInputPolygon a = bounds(rect(0, 0, 10000, 10000));
+	const NavInputPolygon b = bounds(rect(6000, 2000, 16000, 12000));
+	for (int order = 0; order < 3; ++order) {
+		for (const bool removeFirst : {true, false}) {
+			Harness h;
+			RingId	first  = kNoRing;
+			RingId	second = kNoRing;
+			if (order == 2) {
+				PatchEdits both;
+				both.adds = {a, b};
+				const PatchReport report = h.apply(both);
+				first					 = report.added[0];
+				second					 = report.added[1];
+			} else {
+				first  = h.add(order == 0 ? a : b);
+				second = h.add(order == 0 ? b : a);
+			}
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order;
+			Int128 area(0);
+			for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+				if (h.mesh.triangleLive(t)) {
+					const NavTriangle& tri = h.mesh.triangles()[static_cast<std::size_t>(t)];
+					area				   = area + cross(h.mesh.vertices()[tri.v[1]] - h.mesh.vertices()[tri.v[0]], h.mesh.vertices()[tri.v[2]] - h.mesh.vertices()[tri.v[0]]);
+				}
+			}
+			EXPECT_EQ(area, Int128::product(2, 10000 * 10000 * 2 - 4000 * 8000)) << "the union's area, order " << order;
+			EXPECT_GE(h.mesh.locate({8000, 5000}), 0) << "the overlap is ground";
+			EXPECT_EQ(liveVerticesOn(h.mesh, {6000, 2000}, {6000, 2000}).size(), 0U) << "a corner inside the other square is no vertex";
+			PatchEdits leave;
+			const RingId gone = removeFirst ? first : second;
+			leave.removes.push_back(gone);
+			h.apply(leave);
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order << ", one left";
+			std::int64_t boundary = 0;
+			for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+				if (!h.mesh.triangleLive(t)) {
+					continue;
+				}
+				const NavTriangle& tri = h.mesh.triangles()[static_cast<std::size_t>(t)];
+				for (int e = 0; e < 3; ++e) {
+					if (tri.neighbor[static_cast<std::size_t>(e)] < 0) {
+						const Vec2i64 d = h.mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]] - h.mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
+						boundary += std::abs(d.x) + std::abs(d.y);
+					}
+				}
+			}
+			EXPECT_EQ(boundary, 4 * 10000) << "the square left is whole, order " << order;
+		}
+	}
 }
 
 TEST(PatchableMesh, WaterIslandAndPondParity) {
@@ -2498,14 +2537,14 @@ TEST(PatchableMesh, UnevenlyCutSharedSideDissolves) {
 	const NavInputPolygon east = bounds(rect(10000, 0, 20000, 10000));
 	for (const bool westFirst : {true, false}) {
 		Harness		 h(4000);
-		const RingId first	= h.add(westFirst ? west : east);
+		h.add(westFirst ? west : east);
 		const RingId second = h.add(westFirst ? east : west);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model));
-		int partnered = 0;
-		for (const EdgeSource& partner : h.mesh.ring(second).partners) {
-			partnered += partner.ring == first ? 1 : 0;
+		int sidePieces = 0;
+		for (const Vec2i64& p : h.mesh.ring(second).polygon.ring) {
+			sidePieces += p.x == 10000 ? 1 : 0;
 		}
-		EXPECT_EQ(partnered, 3) << "the side's three pieces";
+		EXPECT_EQ(sidePieces, 4) << "the side is cut in three";
 		int constrainedOnSide = 0;
 		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
 			if (!h.mesh.triangleLive(t)) {
@@ -2785,17 +2824,31 @@ TEST(PatchableMesh, SlantedSharedSideMatchesFreshBuild) {
 	};
 	for (const bool firstOrder : {true, false}) {
 		Harness		 h(4000);
-		const RingId first = h.add(pair[firstOrder ? 0 : 1]);
-		PatchEdits	 edits;
+		h.add(pair[firstOrder ? 0 : 1]);
+		PatchEdits edits;
 		edits.adds = obstacles;
 		h.apply(edits);
 		RingId second = h.add(pair[firstOrder ? 1 : 0]);
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "both";
-		int partnered = 0;
-		for (const EdgeSource& partner : h.mesh.ring(second).partners) {
-			partnered += partner.ring == first ? 1 : 0;
+		int boundsOnSide = 0;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+			if (!h.mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = h.mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				const Vec2i64& a = h.mesh.vertices()[tri.v[static_cast<std::size_t>(e)]];
+				const Vec2i64& b = h.mesh.vertices()[tri.v[static_cast<std::size_t>((e + 1) % 3)]];
+				if (cross(Vec2i64{2000, 12000}, a - Vec2i64{12000, 0}).sign() != 0 ||
+					cross(Vec2i64{2000, 12000}, b - Vec2i64{12000, 0}).sign() != 0) {
+					continue;
+				}
+				for (const EdgeSource& s : h.mesh.edgeSources(t, e)) {
+					boundsOnSide += h.model.at(s.ring).blocked ? 0 : 1;
+				}
+			}
 		}
-		EXPECT_EQ(partnered, 4) << "the slanted side's four pieces";
+		EXPECT_EQ(boundsOnSide, 0) << "the slanted side is dissolved";
 		PatchEdits leave;
 		leave.removes.push_back(second);
 		h.apply(leave);
@@ -2875,4 +2928,340 @@ TEST(PatchableMesh, GroundArrivingInsideABlockedRingMatchesFreshBuild) {
 			}
 		}
 	}
+}
+
+// --- Overlapping ground --------------------------------------------------------------
+
+namespace {
+
+	// A regular polygon with 16 sides of circumradius `radius` round `centre`, from cosines
+	// and sines in millionths, so every toolchain draws the same.
+	std::vector<Vec2i64> sixteenGon(const Vec2i64& centre, std::int64_t radius) {
+		constexpr std::array<std::array<std::int64_t, 2>, 16> kUnit{{{1000000, 0},
+																	 {923880, 382683},
+																	 {707107, 707107},
+																	 {382683, 923880},
+																	 {0, 1000000},
+																	 {-382683, 923880},
+																	 {-707107, 707107},
+																	 {-923880, 382683},
+																	 {-1000000, 0},
+																	 {-923880, -382683},
+																	 {-707107, -707107},
+																	 {-382683, -923880},
+																	 {0, -1000000},
+																	 {382683, -923880},
+																	 {707107, -707107},
+																	 {923880, -382683}}};
+		std::vector<Vec2i64> out;
+		for (const auto& [c, s] : kUnit) {
+			out.push_back({centre.x + roundedDiv(radius * c, 1000000), centre.y + roundedDiv(radius * s, 1000000)});
+		}
+		return out;
+	}
+
+	// Every live vertex strictly inside the ground (not on the mesh boundary) is a corner of
+	// a blocked ring or a crossing of two blocked edges: no ground outline leaves a vertex
+	// where ground lies all round.
+	::testing::AssertionResult noVertexInsideTheUnionBelongsToNothing(const PatchableMesh& mesh, const Model& model) {
+		std::set<std::uint32_t> onBoundary;
+		std::set<std::uint32_t> used;
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (int e = 0; e < 3; ++e) {
+				used.insert(tri.v[static_cast<std::size_t>(e)]);
+				if (tri.neighbor[static_cast<std::size_t>(e)] < 0) {
+					onBoundary.insert(tri.v[static_cast<std::size_t>(e)]);
+					onBoundary.insert(tri.v[static_cast<std::size_t>((e + 1) % 3)]);
+				}
+			}
+		}
+		for (const std::uint32_t v : used) {
+			if (onBoundary.count(v) != 0) {
+				continue;
+			}
+			const Vec2i64& p	   = mesh.vertices()[v];
+			int			   nearBy = 0;
+			bool		   corner = false;
+			for (const auto& [id, poly] : model) {
+				if (!poly.blocked) {
+					continue;
+				}
+				for (std::size_t i = 0; i < poly.ring.size(); ++i) {
+					corner = corner || poly.ring[i] == p;
+					nearBy += geometry::withinDistanceOfSegment(p, poly.ring[i], poly.ring[(i + 1) % poly.ring.size()], 2) ? 1 : 0;
+				}
+			}
+			if (!corner && nearBy < 2) {
+				return ::testing::AssertionFailure() << "vertex (" << p.x << ", " << p.y << ") inside the ground belongs to no blocked ring";
+			}
+		}
+		return ::testing::AssertionSuccess();
+	}
+
+	::testing::AssertionResult overlapHolds(const PatchableMesh& mesh, const Model& model) {
+		::testing::AssertionResult fresh = matchesFresh(mesh, model);
+		if (!fresh) {
+			return fresh;
+		}
+		return noVertexInsideTheUnionBelongsToNothing(mesh, model);
+	}
+
+	// The rings added one patch each in `order`, every state checked; then each removed and
+	// added back in turn.
+	void addInOrder(const std::vector<NavInputPolygon>& rings, const std::vector<std::size_t>& order) {
+		std::string when = "order";
+		for (const std::size_t i : order) {
+			when += " " + std::to_string(i);
+		}
+		Harness				h;
+		std::vector<RingId> ids(rings.size(), kNoRing);
+		for (const std::size_t i : order) {
+			ids[i] = h.add(rings[i]);
+			ASSERT_TRUE(overlapHolds(h.mesh, h.model)) << when << ", ring " << i << " added" << describe(h.model);
+		}
+		for (std::size_t i = 0; i < rings.size(); ++i) {
+			PatchEdits leave;
+			leave.removes.push_back(ids[i]);
+			h.apply(leave);
+			ASSERT_TRUE(overlapHolds(h.mesh, h.model)) << when << ", ring " << i << " removed" << describe(h.model);
+			ids[i] = h.add(rings[i]);
+			ASSERT_TRUE(overlapHolds(h.mesh, h.model)) << when << ", ring " << i << " back" << describe(h.model);
+		}
+	}
+
+	// Every arrival order (or, past four rings, the given ones), and all in one patch.
+	void addInEveryOrder(const std::vector<NavInputPolygon>& rings, std::vector<std::vector<std::size_t>> orders = {}) {
+		if (orders.empty()) {
+			std::vector<std::size_t> order(rings.size());
+			for (std::size_t i = 0; i < order.size(); ++i) {
+				order[i] = i;
+			}
+			do {
+				orders.push_back(order);
+			} while (std::next_permutation(order.begin(), order.end()));
+		}
+		for (const std::vector<std::size_t>& order : orders) {
+			addInOrder(rings, order);
+			if (::testing::Test::HasFatalFailure()) {
+				return;
+			}
+		}
+		Harness	   h;
+		PatchEdits together;
+		together.adds = rings;
+		h.apply(together);
+		ASSERT_TRUE(overlapHolds(h.mesh, h.model)) << "one patch" << describe(h.model);
+	}
+
+	std::int64_t liveArea2(const PatchableMesh& mesh) {
+		Int128 area(0);
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (mesh.triangleLive(t)) {
+				const NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+				area = area + cross(mesh.vertices()[tri.v[1]] - mesh.vertices()[tri.v[0]], mesh.vertices()[tri.v[2]] - mesh.vertices()[tri.v[0]]);
+			}
+		}
+		return static_cast<std::int64_t>(area.toDouble());
+	}
+
+	std::vector<GroundInterval> boundariesOf(const std::vector<std::vector<Vec2i64>>& outlines, std::size_t ring, std::int32_t edge) {
+		std::vector<GroundRing> ground;
+		for (std::size_t i = 0; i < outlines.size(); ++i) {
+			ground.push_back(groundRing(outlines[i], static_cast<RingId>(i)));
+		}
+		GroundBoundaryScratch		scratch;
+		std::vector<GroundInterval> out;
+		groundBoundaries(ground[ring], edge, ground, scratch, out);
+		return out;
+	}
+
+	std::vector<std::array<Vec2i64, 2>> endsOf(const std::vector<GroundInterval>& intervals) {
+		std::vector<std::array<Vec2i64, 2>> out;
+		for (const GroundInterval& iv : intervals) {
+			out.push_back({iv.from, iv.to});
+		}
+		return out;
+	}
+
+	using Ends = std::vector<std::array<Vec2i64, 2>>;
+
+} // namespace
+
+// The boundary intervals of the bottom side (0, 0)-(10, 0) of a square, against each kind
+// of contact another outline can make with it.
+TEST(PatchableMesh, GroundBoundariesHandleEveryContact) {
+	const std::vector<Vec2i64> square = rect(0, 0, 10, 10);
+	auto					   bottom = [&](const std::vector<Vec2i64>& other, bool otherFirst = false) {
+		  return endsOf(otherFirst ? boundariesOf({other, square}, 1, 0) : boundariesOf({square, other}, 0, 0));
+	};
+	EXPECT_EQ(bottom(rect(20, 20, 30, 30)), (Ends{{Vec2i64{0, 0}, Vec2i64{10, 0}}})) << "apart";
+	EXPECT_EQ(bottom(rect(4, -6, 6, 0)), (Ends{{Vec2i64{0, 0}, Vec2i64{4, 0}}, {Vec2i64{6, 0}, Vec2i64{10, 0}}})) << "sharing a stretch from outside";
+	EXPECT_EQ(bottom({{5, 0}, {3, -2}, {5, -4}, {7, -2}}), (Ends{{Vec2i64{0, 0}, Vec2i64{10, 0}}})) << "a corner touching from outside";
+	EXPECT_EQ(bottom({{5, 0}, {7, 2}, {5, 4}, {3, 2}}), (Ends{{Vec2i64{0, 0}, Vec2i64{10, 0}}})) << "a corner touching from inside";
+	EXPECT_EQ(bottom({{5, 0}, {8, -3}, {8, 3}}), (Ends{{Vec2i64{0, 0}, Vec2i64{5, 0}}, {Vec2i64{8, 0}, Vec2i64{10, 0}}})) << "a corner on the side, crossing it";
+	EXPECT_EQ(bottom(rect(-2, -2, 12, 12)), Ends{}) << "nested in another";
+	EXPECT_EQ(bottom(rect(-2, -4, 3, 4)), (Ends{{Vec2i64{3, 0}, Vec2i64{10, 0}}})) << "a crossing";
+	EXPECT_EQ(bottom({{4, 0}, {6, 4}, {2, 4}}), (Ends{{Vec2i64{0, 0}, Vec2i64{10, 0}}})) << "inside, a corner on the side";
+	// Two outlines crossing the side at one point: one leaves ground there as the other
+	// arrives.
+	EXPECT_EQ(endsOf(boundariesOf({square, {{5, 0}, {5, -4}, {1, -4}, {1, 2}}, {{5, 2}, {9, 2}, {9, -4}, {5, -4}}}, 0, 0)),
+			  (Ends{{Vec2i64{0, 0}, Vec2i64{1, 0}}, {Vec2i64{9, 0}, Vec2i64{10, 0}}}))
+		<< "two at one point";
+	// Running along the side with the inside on the same side: the lower edge takes the
+	// shared stretch.
+	EXPECT_EQ(bottom(rect(4, 0, 14, 6)), (Ends{{Vec2i64{0, 0}, Vec2i64{10, 0}}})) << "same way, this one lower";
+	EXPECT_EQ(bottom(rect(4, 0, 14, 6), true), (Ends{{Vec2i64{0, 0}, Vec2i64{4, 0}}})) << "same way, the other lower";
+	// A crossing off the lattice ends both outlines' intervals at one rounded point.
+	const std::vector<Vec2i64>	slant{{3, -3}, {6, 4}, {-2, 4}};
+	const std::vector<GroundInterval> mine	 = boundariesOf({square, slant}, 0, 0);
+	const std::vector<GroundInterval> theirs = boundariesOf({square, slant}, 1, 0);
+	ASSERT_EQ(mine.size(), 2U);
+	ASSERT_EQ(theirs.size(), 1U);
+	EXPECT_EQ(mine.back().from, theirs.front().to) << "the outlines meet where they cross";
+}
+
+// Ground from the parity flood over the arranged boundary intervals is "inside any ground
+// outline" at every triangle's centroid, read exactly as validate reads it, over outlines
+// that touch, nest, share sides either way, and cross only at lattice points (so nothing
+// is rounded): axis-aligned rectangles and diamonds on a coarse grid.
+TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
+	for (std::uint32_t seed = 1; seed <= 60; ++seed) {
+		std::mt19937 rng(seed);
+		Model		 model;
+		const int	 count = static_cast<int>(between(rng, 2, 6));
+		for (RingId i = 0; i < count; ++i) {
+			const std::int64_t x = 2 * between(rng, 0, 8);
+			const std::int64_t y = 2 * between(rng, 0, 8);
+			std::vector<Vec2i64> ring;
+			if (pick(rng, 3) == 0) {
+				const std::int64_t r = 2 * between(rng, 1, 4);
+				ring				 = {{x, y - r}, {x + r, y}, {x, y + r}, {x - r, y}};
+			} else {
+				ring = rect(x, y, x + 2 * between(rng, 1, 5), y + 2 * between(rng, 1, 5));
+			}
+			if (pick(rng, 2) == 0) {
+				std::reverse(ring.begin(), ring.end());
+			}
+			model[i] = bounds(ring);
+		}
+		std::vector<const NavInputPolygon*> rings;
+		for (const auto& [id, poly] : model) {
+			rings.push_back(&poly);
+		}
+		std::vector<InputSegment> segments;
+		ringsArrangementInput(rings, [](std::int32_t ring, std::int32_t edge) { return encode(ring, edge); }, segments);
+		const Topology topo = topology(buildArrangement(segments), model);
+		ASSERT_TRUE(topo.consistent) << "seed " << seed << describe(model);
+		std::vector<SampleRing> samples;
+		for (const auto& [id, poly] : model) {
+			samples.push_back(sampleRing(poly));
+		}
+		for (std::size_t t = 0; t < topo.cdt.triangles.size(); ++t) {
+			const geometry::CdtTriangle& tri   = topo.cdt.triangles[t];
+			bool						 frame = false;
+			for (const std::uint32_t v : tri.v) {
+				frame = frame || v >= topo.cdt.frameStart;
+			}
+			if (frame) {
+				continue;
+			}
+			const Vec2i64 sample3 = topo.cdt.vertices[tri.v[0]] + topo.cdt.vertices[tri.v[1]] + topo.cdt.vertices[tri.v[2]];
+			bool		  any	  = false;
+			for (const SampleRing& s : samples) {
+				any = any || boundsContainSample(s, sample3);
+			}
+			const bool flooded = !topo.cover[t].empty() && topo.cover[t].front() == kGroundToken;
+			ASSERT_EQ(flooded, any) << "seed " << seed << " sample (" << sample3.x << ", " << sample3.y << ") in 3x space" << describe(model);
+		}
+	}
+}
+
+TEST(PatchableMesh, OverlappingSquaresInEveryOrder) {
+	addInEveryOrder({bounds(rect(0, 0, 10000, 10000)), bounds(rect(6000, 3000, 16000, 13000))});
+}
+
+TEST(PatchableMesh, OverlappingSlantedPolygonsInEveryOrder) {
+	addInEveryOrder({bounds(sixteenGon({0, 0}, 5000)), bounds(sixteenGon({6100, 1300}, 4300))});
+}
+
+TEST(PatchableMesh, NestedOutlineAddsNoBoundary) {
+	const std::vector<NavInputPolygon> rings{bounds(sixteenGon({0, 0}, 9000)), bounds(sixteenGon({1000, -700}, 3000)), bounds(rect(-2000, 1000, 2500, 4000))};
+	addInEveryOrder(rings);
+	Harness h;
+	h.add(rings[0]);
+	const std::int64_t area = liveArea2(h.mesh);
+	PatchEdits		   inner;
+	inner.adds = {rings[1], rings[2]};
+	const PatchReport report = h.apply(inner);
+	EXPECT_EQ(liveArea2(h.mesh), area);
+	EXPECT_TRUE(idsWith(report, kTriangleFreed | kTriangleCreated).empty()) << "an outline inside ground re-derives nothing";
+}
+
+TEST(PatchableMesh, ThreeOutlinesWithACommonOverlap) {
+	addInEveryOrder({bounds(sixteenGon({0, 0}, 5000)), bounds(sixteenGon({5200, 600}, 4500)), bounds(sixteenGon({2300, 4700}, 4800))});
+}
+
+// A walked band: five outlines in a row, each overlapping the next, in several orders.
+TEST(PatchableMesh, BandOfFiveOverlappingPolygons) {
+	std::vector<NavInputPolygon> band;
+	for (std::int64_t i = 0; i < 5; ++i) {
+		band.push_back(bounds(sixteenGon({i * 3700, (i % 2) * 900}, 5000)));
+	}
+	std::vector<std::vector<std::size_t>> orders{{0, 1, 2, 3, 4}, {4, 3, 2, 1, 0}};
+	std::mt19937						  rng(5);
+	for (int k = 0; k < 4; ++k) {
+		std::vector<std::size_t> order{0, 1, 2, 3, 4};
+		shuffle(order, rng);
+		orders.push_back(order);
+	}
+	addInEveryOrder(band, orders);
+}
+
+TEST(PatchableMesh, PolygonBridgingTwoApart) {
+	addInEveryOrder({bounds(sixteenGon({0, 0}, 4000)), bounds(sixteenGon({11000, 500}, 4000)), bounds(rect(2500, -1500, 8800, 2100))});
+}
+
+TEST(PatchableMesh, OutlinesTouchingAtOneVertex) {
+	addInEveryOrder({bounds(sixteenGon({0, 0}, 5000)), bounds(sixteenGon({10000, 0}, 5000))});
+	addInEveryOrder({bounds(rect(0, 0, 6000, 6000)), bounds(rect(6000, 6000, 12000, 12000)), bounds({{6000, 6000}, {9000, 3000}, {12000, 6000}})});
+}
+
+// A polygon and its copy moved along one of its own edges: their edges on that line run the
+// same way, so the stretch they share is input once.
+TEST(PatchableMesh, CollinearSameWayEdges) {
+	const std::vector<Vec2i64> hexagon{{0, 0}, {4000, 0}, {6000, 3000}, {4000, 6000}, {0, 6000}, {-2000, 3000}};
+	addInEveryOrder({bounds(hexagon), bounds(translated(hexagon, {2000, 0}))});
+	addInEveryOrder({bounds(hexagon), bounds(translated(hexagon, {1000, 1500}))});
+}
+
+// A square against two half-length squares: the whole shared side dissolves, and only the
+// union's corners and the outer sides' meeting points stay on it.
+TEST(PatchableMesh, SquareAgainstTwoHalfSquaresDissolves) {
+	const std::vector<NavInputPolygon> rings{bounds(rect(0, 0, 10000, 10000)), bounds(rect(10000, 0, 20000, 5000)), bounds(rect(10000, 5000, 20000, 10000))};
+	addInEveryOrder(rings);
+	Harness	   h;
+	PatchEdits all;
+	all.adds = rings;
+	h.apply(all);
+	EXPECT_EQ(liveVerticesOn(h.mesh, {10000, 0}, {10000, 10000}), (std::vector<Vec2i64>{{10000, 0}, {10000, 10000}}));
+}
+
+TEST(PatchableMesh, ObstaclesAcrossOverlappingGround) {
+	const NavInputPolygon a = bounds(rect(0, 0, 10000, 10000));
+	const NavInputPolygon b = bounds(sixteenGon({12000, 5000}, 5500));
+	// Straddling the union's edge, lying across a dissolved stretch of the square's side, and
+	// water across the overlap.
+	addInEveryOrder({a, b, blocked({{15000, 9000}, {18500, 10500}, {16000, 12000}})});
+	addInEveryOrder({a, b, blocked({{9000, 4000}, {11500, 4600}, {11000, 5800}, {8800, 5000}})});
+	addInEveryOrder({a, b, blocked(rect(8000, 2000, 13000, 3500), kWater, true)});
+}
+
+// Ground a millimetre across beside a dissolved side, wholly in the snap band of a blocked
+// edge: the side has no pieces, so its stretch is read as given.
+TEST(PatchableMesh, SliverBesideADissolvedSideMatchesFreshBuild) {
+	addInEveryOrder({bounds({{0, 0}, {2, 0}, {0, 1}}), bounds({{0, 0}, {0, 1}, {-2, 0}}), blocked({{-10, -10}, {20, -10}, {20, 1}, {-10, 0}})});
 }

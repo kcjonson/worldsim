@@ -174,6 +174,7 @@ namespace geometry::nav {
 		std::int64_t		 opening		= kNoOpening;
 		bool				 holeCapable	= false;
 		Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
+		bool				 counterClockwise = true;
 	};
 
 	SampleRing sampleRing(const NavInputPolygon& poly);
@@ -235,18 +236,18 @@ namespace geometry::nav {
 		std::uint64_t generation = nextMeshGeneration();
 	};
 
-	// --- Shared sides of bounds rings ---------------------------------------------
-	// Where two bounds rings each have an edge on the same segment (the same two end
-	// points), there is ground on both sides of it, so neither edge is a constraint or a
-	// mesh edge: the pair is dissolved, each edge the other's partner. Its end points are
-	// vertices only where another edge ends there. buildNavMesh and PatchableMesh apply
-	// this one rule.
+	// --- Ground: the union of the ground rings -------------------------------------
+	// Ground rings (blocked == false) may overlap, nest, touch, or share sides; ground is
+	// wherever a point is inside any of them. A ground ring edge is arranged only along its
+	// boundary intervals, the stretches where ground differs across it; the rest of it is
+	// dissolved, with no constraint, mesh edge, or vertex. buildNavMesh and PatchableMesh
+	// apply this one rule.
 
 	using RingId			 = std::int32_t;
 	constexpr RingId kNoRing = -1;
 
 	// Original edge `edge` of a ring: outline[edge] -> outline[(edge + 1) % n]. The ring
-	// is a PatchableMesh ring id, or for findBoundsSeams an index into the rings given.
+	// is a PatchableMesh ring id, or for buildNavMesh an index into its input.
 	struct EdgeSource {
 		RingId		 ring = kNoRing;
 		std::int32_t edge = 0;
@@ -254,39 +255,78 @@ namespace geometry::nav {
 		auto operator<=>(const EdgeSource&) const = default;
 	};
 
-	inline bool sameSegment(const Vec2i64& a0, const Vec2i64& a1, const Vec2i64& b0, const Vec2i64& b1) {
-		return a0 != a1 && ((a0 == b1 && a1 == b0) || (a0 == b0 && a1 == b1));
-	}
-
-	struct BoundsSeams {
-		// Per ring, per edge: its partner, or none. Empty for a blocked ring and for one
-		// under three vertices.
-		std::vector<std::vector<EdgeSource>> partner;
+	// A ground ring as groundBoundaries reads it.
+	struct GroundRing {
+		const std::vector<Vec2i64>* outline = nullptr;
+		Vec2i64						lo;
+		Vec2i64						hi;
+		bool						counterClockwise = true;
+		RingId						id				 = kNoRing;
 	};
 
-	// Two bounds ring edges on one segment are partners. Three or more on one segment
-	// means bounds interiors overlap, which is invalid input (PatchableMesh::validate
-	// reports it); each edge then takes the lowest other ring's, only so the answer is
-	// deterministic.
-	BoundsSeams findBoundsSeams(const std::vector<const NavInputPolygon*>& rings);
+	GroundRing groundRing(const std::vector<Vec2i64>& outline, RingId id);
 
-	// The arrangement input of the rings: every edge that is not dissolved, as a segment
-	// with index tag(ring, edge). Rings under three vertices add nothing.
+	// The point a + (num / den)(b - a) of an edge a -> b, den > 0.
+	struct EdgeParam {
+		std::int64_t num = 0;
+		std::int64_t den = 1;
+	};
+
+	// A boundary interval of a ground edge: exactly the stretch [fromAt, toAt] of it, and
+	// the segment the arrangement takes, from -> to. An end on the edge's own corner or on
+	// another outline's vertex is that point; an end where another ground edge crosses is
+	// that crossing rounded as the arrangement rounds two crossing segments.
+	struct GroundInterval {
+		Vec2i64	  from;
+		Vec2i64	  to;
+		EdgeParam fromAt;
+		EdgeParam toAt;
+
+		bool operator==(const GroundInterval& other) const { return from == other.from && to == other.to; }
+	};
+
+	// Working storage for groundBoundaries, reused across calls.
+	struct GroundBoundaryScratch {
+		struct Event {
+			EdgeParam	 at;
+			int			 kind = 0;
+			std::int32_t ring = 0;	 // index into `near`
+			std::int32_t edge = 0;
+			bool		 exact = false; // `point` is the exact crossing
+			Vec2i64		 point;
+		};
+		struct Collinear {
+			EdgeParam  lo;
+			EdgeParam  hi;
+			EdgeSource source;
+			Vec2i64	   a;
+			Vec2i64	   b;
+		};
+		std::vector<Event>		   events;
+		std::vector<Collinear>	   collinear;
+		std::vector<std::uint8_t>  inside; // per near ring
+		std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>> lines;
+	};
+
+	// The boundary intervals of edge `edge` of `ring`, in order along it, given every other
+	// ground ring whose box meets the edge's box (`near` may hold `ring` itself and rings
+	// that do not meet it). Where another ring's edge runs along this one with its inside
+	// on the same side, the shared stretch is input once, by the lower EdgeSource.
+	void groundBoundaries(const GroundRing& ring, std::int32_t edge, const std::vector<GroundRing>& near, GroundBoundaryScratch& scratch,
+						  std::vector<GroundInterval>& out);
+
+	// The arrangement input of the rings, each segment with the ring index and edge it
+	// comes from: a blocked ring's every edge, and a ground ring's boundary intervals. Rings
+	// under three vertices add nothing.
+	void ringSegments(const std::vector<const NavInputPolygon*>& rings, std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>>& out);
+
+	// ringSegments as arrangement input, each segment's index tag(ring, edge).
 	template <typename Tag>
-	void ringsArrangementInput(const std::vector<const NavInputPolygon*>& rings, const BoundsSeams& seams, Tag tag,
-							   std::vector<InputSegment>& segments) {
-		for (std::size_t r = 0; r < rings.size(); ++r) {
-			const std::vector<Vec2i64>& ring = rings[r]->ring;
-			if (ring.size() < 3) {
-				continue;
-			}
-			const std::vector<EdgeSource>& partner = seams.partner[r];
-			for (std::size_t i = 0; i < ring.size(); ++i) {
-				if (!partner.empty() && partner[i].ring >= 0) {
-					continue;
-				}
-				segments.push_back({ring[i], ring[(i + 1) % ring.size()], tag(static_cast<std::int32_t>(r), static_cast<std::int32_t>(i))});
-			}
+	void ringsArrangementInput(const std::vector<const NavInputPolygon*>& rings, Tag tag, std::vector<InputSegment>& segments) {
+		std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>> pieces;
+		ringSegments(rings, pieces);
+		for (const auto& [source, ends] : pieces) {
+			segments.push_back({ends[0], ends[1], tag(source.ring, source.edge)});
 		}
 	}
 

@@ -1040,7 +1040,6 @@ namespace {
 		out.vec(r.polygon.ring);
 		out.vec(r.sample.ring3);
 		out.vec(r.edgeIds);
-		out.vec(r.partners);
 		out.count += r.live ? 1.0 : 0.0;
 	}))
 	NAV_BENCH_LEAF(REdgeOf)
@@ -1190,7 +1189,7 @@ namespace {
 		out.lines.emplace_back("vertex hash", visitAll<RVertexMap>(m));
 		out.lines.emplace_back("ring records (RegisteredRing)", visitAll<RRings>(m));
 		const Tally ringHeap = visitAll<RRingHeap>(m);
-		out.lines.emplace_back("ring outline, sample ring, edge ids and partners (heap)", ringHeap);
+		out.lines.emplace_back("ring outline, sample ring and edge ids (heap)", ringHeap);
 		const Tally pieces = visitAll<RPieces>(m);
 		Tally		edges  = visitAll<REdgeOf>(m);
 		edges.add(pieces);
