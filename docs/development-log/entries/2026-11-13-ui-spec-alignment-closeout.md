@@ -2,7 +2,7 @@
 
 ## Summary
 
-The epic "UI engine alignment with the layered UI rendering spec" was written on 2026-09-07 against `libs/ui` and `libs/renderer`. Both moved to salal, where the ui was rebuilt to the same specification for dual-deck-builder's C++ port and worldsim's conversion. Nobody had gone back to the epic, so its seven tasks still read as not started. An audit of each step against salal's code and tests at v0.40.0 (the tag this repo pins) found nearly all of it done there. What was left for worldsim was the spec's gap 26, synchronous GL state reads around the game's own GL passes, and a few leftovers of the old ui.
+The epic "UI engine alignment with the layered UI rendering spec" was written on 2026-09-07 against `libs/ui` and `libs/renderer`. Both moved to salal, where the ui was rebuilt to the same specification for dual-deck-builder's C++ port and worldsim's conversion. Nobody had gone back to the epic, so its seven tasks still read as not started. An audit of each step against salal's code and tests at v0.40.0 (the tag this repo pinned that morning; main moved to v0.41.0 during the work) found nearly all of it done there. What was left for worldsim was the spec's gap 26, synchronous GL state reads around the game's own GL passes, and a few leftovers of the old ui.
 
 ## Details
 
@@ -33,7 +33,7 @@ Left alone: `GpuHold` (a dev-only perf ballast that saves and restores its own s
 
 ### Verification
 
-`planet-view-tests`, `world-view-tests` and `world-sim-tests` pass. In a Debug build: the main menu's planet, the world creator's globe with its panels over it, the main menu again after leaving a game, the sandbox's planet scene followed by a ui scene, the game HUD, and the ground at four zooms all draw as before, with lint at 0 on the pre-game scenes. Scenarios 07 and 08 pass. No perf capture: the machine was busy.
+`planet-view-tests`, `world-view-tests` and `world-sim-tests` pass. In a Debug build: the main menu's planet, the world creator's globe with its panels over it, the main menu again after leaving a game, the sandbox's planet scene followed by a ui scene, the game HUD, and the ground at four zooms all draw as before, with lint at 0 on the pre-game scenes. Scenarios 07 and 08 pass. The tests and the planet, HUD and sandbox views were run again after the pin moved to v0.41.0, whose backend adds stencil and colour-write state to what a draw restores and what `invalidateState()` resets; nothing changed on screen. No perf capture: the machine was busy.
 
 The check also ran into the dry landing river on a freshly baked planet, already filed. Its cause is now on that bug: `TerrainChannelBuilder` drops the landing's channel rings as self-overlapping at the hairpin.
 
