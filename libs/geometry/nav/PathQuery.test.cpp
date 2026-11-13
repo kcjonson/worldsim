@@ -1,7 +1,7 @@
 #include "PathQuery.h"
 #include "../core/Vec2i64.h"
 #include "../predicates/Predicates.h"
-#include "LimitPolygon.test.h"
+#include "LimitPolygon.h"
 #include "NavMesh.h"
 #include "PatchableMesh.h"
 
@@ -628,11 +628,11 @@ namespace {
 	// to a point about 1 m under its top corner: the only way from west to east passes
 	// between that point and the mesh edge.
 	struct EdgeGap {
-		std::vector<Vec2i64> limit = testdata::limitPolygon({0, 0}, 10000);
+		std::vector<Vec2i64> limit = limitPolygon({0, 0}, 10000);
 		NavInputPolygon		 ground{limit, false, 1};
 		NavInputPolygon		 spike = blocked({{-500, -12000}, {500, -12000}, {0, limit[4].y - 1020}}, -2);
 		// The ground a second limit adds round the first's top, so its edge there dissolves.
-		NavInputPolygon above{testdata::limitPolygon({0, 8000}, 10000), false, 1};
+		NavInputPolygon above{limitPolygon({0, 8000}, 10000), false, 1};
 		Vec2i64			west{-5000, 0};
 		Vec2i64			east{5000, 0};
 	};
@@ -746,11 +746,11 @@ namespace {
 // Two overlapping limits meet at two reflex corners, the only way between them: the waist
 // between those corners admits a disc that fits it and refuses one that does not.
 TEST(PathQuery, WaistBetweenTwoLimitsIsItsCornerGap) {
-	const std::int64_t circumradius = testdata::limitCircumradius(10000);
+	const std::int64_t circumradius = limitCircumradius(10000);
 	for (const std::int64_t overlap : {150, 199, 260, 400}) {
 		for (const std::int64_t rise : {0, 120, 350}) {
-			const std::vector<Vec2i64> left	 = testdata::limitPolygon({0, 0}, 10000);
-			const std::vector<Vec2i64> right = testdata::limitPolygon({2 * circumradius - overlap, rise}, 10000);
+			const std::vector<Vec2i64> left	 = limitPolygon({0, 0}, 10000);
+			const std::vector<Vec2i64> right = limitPolygon({2 * circumradius - overlap, rise}, 10000);
 			NavMeshInput			   in;
 			in.polygons.push_back(border(left));
 			in.polygons.push_back(border(right));

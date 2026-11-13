@@ -8,7 +8,7 @@
 // patches (taking a tree out before timing its add, building the mesh) never reaches
 // the reported time.
 
-#include "nav/LimitPolygon.test.h"
+#include "nav/LimitPolygon.h"
 #include "nav/MeshComponents.h"
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
@@ -1438,7 +1438,7 @@ namespace {
 
 		// The limit round c: its new obstacles, then its ground unless the union covers it.
 		void retake(const Vec2i64& c, RetakeStats* stats) {
-			const std::int64_t		 reach = td::limitCircumradius(kLimitRangeMm);
+			const std::int64_t		 reach = limitCircumradius(kLimitRangeMm);
 			PatchEdits				 obstacles;
 			std::vector<std::size_t> which;
 			for (std::size_t i = 0; i < field.size(); ++i) {
@@ -1461,7 +1461,7 @@ namespace {
 					fieldIds[which[k]] = r.added[k];
 				}
 			}
-			const std::vector<Vec2i64> outline = td::limitPolygon(c, kLimitRangeMm);
+			const std::vector<Vec2i64> outline = limitPolygon(c, kLimitRangeMm);
 			bool					   covers  = false;
 			const double			   coversS = secondsOf([&] { covers = mesh.groundCovers(outline); });
 			if (stats != nullptr) {
@@ -1492,7 +1492,7 @@ namespace {
 		Vec2i64 lo;
 		Vec2i64 hi;
 		boxOf(centres, lo, hi);
-		const Vec2i64 reach{td::limitCircumradius(kLimitRangeMm) + 1000, td::limitCircumradius(kLimitRangeMm) + 1000};
+		const Vec2i64 reach{limitCircumradius(kLimitRangeMm) + 1000, limitCircumradius(kLimitRangeMm) + 1000};
 		return obstacleField(lo - reach, hi + reach, spacingOf(ground));
 	}
 
@@ -1845,7 +1845,7 @@ namespace {
 			std::mt19937		 rng(21);
 			std::vector<Vec2i64> edgePoints;
 			std::vector<Vec2i64> innerPoints;
-			const std::int64_t	 rc = td::limitCircumradius(kLimitRangeMm);
+			const std::int64_t	 rc = limitCircumradius(kLimitRangeMm);
 			while (edgePoints.size() < 10000) {
 				const std::int64_t y = kLimitRangeMm - static_cast<std::int64_t>(kEdgeBandMm) + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(rc - kLimitRangeMm + static_cast<std::int64_t>(kEdgeBandMm)));
 				const Vec2i64	   p{kBandFromMm + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(kBandToMm - kBandFromMm)), (rng() % 2 == 0) ? y : -y};

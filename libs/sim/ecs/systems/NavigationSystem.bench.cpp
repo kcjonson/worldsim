@@ -50,7 +50,7 @@
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
 #include <nav/NavCoords.h>
-#include <nav/LimitPolygon.test.h>
+#include <nav/LimitPolygon.h>
 #include <nav/NavInputBuilder.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
@@ -1330,7 +1330,7 @@ namespace {
 		constexpr float		   kWalkSpacingM = 3.95F; // 0.064 per m2
 		const std::int64_t	   step			= state.range(0);
 		const bool			   dense		= state.range(1) != 0;
-		const std::int64_t	   reach		= geometry::nav::testdata::limitCircumradius(kWalkRangeMm);
+		const std::int64_t	   reach		= geometry::nav::limitCircumradius(kWalkRangeMm);
 		for (auto _ : state) {
 			std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> obstacles;
 			if (dense) {
@@ -1351,7 +1351,7 @@ namespace {
 				 if (!edits.adds.empty()) {
 					 mesh.applyPatch(edits);
 				 }
-				 mesh.applyPatch({.adds = {{geometry::nav::testdata::limitPolygon({x, 0}, kWalkRangeMm), false, nav::kProvenanceBorder}}});
+				 mesh.applyPatch({.adds = {{geometry::nav::limitPolygon({x, 0}, kWalkRangeMm), false, nav::kProvenanceBorder}}});
 				 mesh.refreshWidths();
 			};
 			take(0);

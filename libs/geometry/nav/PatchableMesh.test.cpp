@@ -1,7 +1,7 @@
 #include "nav/PatchableMesh.h"
 
 #include "arrangement/Arrangement.h"
-#include "nav/LimitPolygon.test.h"
+#include "nav/LimitPolygon.h"
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
 #include "nav/NavMeshRealRings.test.h"
@@ -32,8 +32,6 @@ using geometry::Int128;
 using geometry::PagedVector;
 using geometry::Vec2i64;
 using namespace geometry::nav;
-using geometry::nav::testdata::limitPolygon;
-using geometry::nav::testdata::sixteenGon;
 
 namespace {
 
@@ -3633,11 +3631,11 @@ TEST(PatchableMesh, OverlappingSquaresInEveryOrder) {
 }
 
 TEST(PatchableMesh, OverlappingSlantedPolygonsInEveryOrder) {
-	addInEveryOrder({bounds(sixteenGon({0, 0}, 5000)), bounds(sixteenGon({6100, 1300}, 4300))});
+	addInEveryOrder({bounds(limitPolygonOfCircumradius({0, 0}, 5000)), bounds(limitPolygonOfCircumradius({6100, 1300}, 4300))});
 }
 
 TEST(PatchableMesh, NestedOutlineAddsNoBoundary) {
-	const std::vector<NavInputPolygon> rings{bounds(sixteenGon({0, 0}, 9000)), bounds(sixteenGon({1000, -700}, 3000)), bounds(rect(-2000, 1000, 2500, 4000))};
+	const std::vector<NavInputPolygon> rings{bounds(limitPolygonOfCircumradius({0, 0}, 9000)), bounds(limitPolygonOfCircumradius({1000, -700}, 3000)), bounds(rect(-2000, 1000, 2500, 4000))};
 	addInEveryOrder(rings);
 	Harness h;
 	h.add(rings[0]);
@@ -3650,7 +3648,7 @@ TEST(PatchableMesh, NestedOutlineAddsNoBoundary) {
 }
 
 TEST(PatchableMesh, ThreeOutlinesWithACommonOverlap) {
-	addInEveryOrder({bounds(sixteenGon({0, 0}, 5000)), bounds(sixteenGon({5200, 600}, 4500)), bounds(sixteenGon({2300, 4700}, 4800))});
+	addInEveryOrder({bounds(limitPolygonOfCircumradius({0, 0}, 5000)), bounds(limitPolygonOfCircumradius({5200, 600}, 4500)), bounds(limitPolygonOfCircumradius({2300, 4700}, 4800))});
 }
 
 // A walked band: five limits in a row, each overlapping the next, in all 120 orders.
@@ -3663,11 +3661,11 @@ TEST(PatchableMesh, LimitsInAnyOrderMatchFreshBuild) {
 }
 
 TEST(PatchableMesh, PolygonBridgingTwoApart) {
-	addInEveryOrder({bounds(sixteenGon({0, 0}, 4000)), bounds(sixteenGon({11000, 500}, 4000)), bounds(rect(2500, -1500, 8800, 2100))});
+	addInEveryOrder({bounds(limitPolygonOfCircumradius({0, 0}, 4000)), bounds(limitPolygonOfCircumradius({11000, 500}, 4000)), bounds(rect(2500, -1500, 8800, 2100))});
 }
 
 TEST(PatchableMesh, OutlinesTouchingAtOneVertex) {
-	addInEveryOrder({bounds(sixteenGon({0, 0}, 5000)), bounds(sixteenGon({10000, 0}, 5000))});
+	addInEveryOrder({bounds(limitPolygonOfCircumradius({0, 0}, 5000)), bounds(limitPolygonOfCircumradius({10000, 0}, 5000))});
 	addInEveryOrder({bounds(rect(0, 0, 6000, 6000)), bounds(rect(6000, 6000, 12000, 12000)), bounds({{6000, 6000}, {9000, 3000}, {12000, 6000}})});
 }
 
@@ -3693,7 +3691,7 @@ TEST(PatchableMesh, SquareAgainstTwoHalfSquaresDissolves) {
 
 TEST(PatchableMesh, ObstaclesAcrossOverlappingGround) {
 	const NavInputPolygon a = bounds(rect(0, 0, 10000, 10000));
-	const NavInputPolygon b = bounds(sixteenGon({12000, 5000}, 5500));
+	const NavInputPolygon b = bounds(limitPolygonOfCircumradius({12000, 5000}, 5500));
 	// Straddling the union's edge, lying across a dissolved stretch of the square's side, and
 	// water across the overlap.
 	addInEveryOrder({a, b, blocked({{15000, 9000}, {18500, 10500}, {16000, 12000}})});
@@ -3723,9 +3721,9 @@ namespace {
 // The middle of three outlines in a row taken out: the stretches of its neighbours it had
 // dissolved are constraints again; put back, they dissolve again.
 TEST(PatchableMesh, RemovingAnOutlineBringsItsNeighboursEdgesBack) {
-	const std::vector<Vec2i64> west	  = sixteenGon({0, 0}, 5000);
-	const std::vector<Vec2i64> middle = sixteenGon({7000, 600}, 5000);
-	const std::vector<Vec2i64> east	  = sixteenGon({14000, 0}, 5000);
+	const std::vector<Vec2i64> west	  = limitPolygonOfCircumradius({0, 0}, 5000);
+	const std::vector<Vec2i64> middle = limitPolygonOfCircumradius({7000, 600}, 5000);
+	const std::vector<Vec2i64> east	  = limitPolygonOfCircumradius({14000, 0}, 5000);
 	Harness					   h;
 	h.add(bounds(west));
 	RingId mid = h.add(bounds(middle));
@@ -3752,15 +3750,15 @@ TEST(PatchableMesh, RemovingAnOutlineBringsItsNeighboursEdgesBack) {
 TEST(PatchableMesh, MovedOutlineMatchesFreshBuild) {
 	for (const bool withObstacle : {false, true}) {
 		Harness h;
-		h.add(bounds(sixteenGon({0, 0}, 9000)));
+		h.add(bounds(limitPolygonOfCircumradius({0, 0}, 9000)));
 		if (withObstacle) {
 			h.add(blocked({{2000, -500}, {9500, 300}, {9300, 900}, {1900, 400}}));
 		}
-		const RingId moving = h.add(bounds(sixteenGon({3000, 1000}, 3000)));
+		const RingId moving = h.add(bounds(limitPolygonOfCircumradius({3000, 1000}, 3000)));
 		ASSERT_TRUE(overlapHolds(h.mesh, h.model));
 		for (const Vec2i64& centre : {Vec2i64{4000, -1500}, Vec2i64{8000, 2000}, Vec2i64{20000, 3000}, Vec2i64{9500, 0}, Vec2i64{1000, 1000}}) {
 			PatchEdits move;
-			move.moves.push_back({moving, sixteenGon(centre, 3000)});
+			move.moves.push_back({moving, limitPolygonOfCircumradius(centre, 3000)});
 			h.apply(move);
 			ASSERT_TRUE(overlapHolds(h.mesh, h.model)) << "centre (" << centre.x << ", " << centre.y << ")" << (withObstacle ? " with the obstacle" : "");
 		}
@@ -3809,8 +3807,8 @@ TEST(PatchableMesh, RemovingTheOwnerOfASharedStretchPassesItOn) {
 // An outline around another taken out: the inner one's sides are constraints again, and
 // the ground is the inner outline alone; put back, they dissolve again.
 TEST(PatchableMesh, RemovingAnOutlineAroundAnotherBringsTheInnerEdgesBack) {
-	const std::vector<Vec2i64> outer = sixteenGon({0, 0}, 9000);
-	const std::vector<Vec2i64> inner = sixteenGon({1000, -700}, 3000);
+	const std::vector<Vec2i64> outer = limitPolygonOfCircumradius({0, 0}, 9000);
+	const std::vector<Vec2i64> inner = limitPolygonOfCircumradius({1000, -700}, 3000);
 	Harness					   h;
 	RingId					   around = h.add(bounds(outer));
 	h.add(bounds(inner));
@@ -3856,7 +3854,7 @@ TEST(PatchableMesh, LimitInsideUnionAddsNothing) {
 	Harness h;
 	EXPECT_FALSE(h.mesh.groundCovers(rect(0, 0, 1000, 1000))) << "no ground";
 	h.add(bounds(rect(0, 0, 10000, 10000)));
-	h.add(bounds(sixteenGon({12000, 5000}, 5500)));
+	h.add(bounds(limitPolygonOfCircumradius({12000, 5000}, 5500)));
 	h.add(blocked(rect(3000, 3000, 6000, 6000), kWater, true));
 	for (const std::vector<Vec2i64>& frame : {rect(20000, 0, 30000, 3000), rect(20000, 7000, 30000, 10000), rect(20000, 0, 23000, 10000), rect(27000, 0, 30000, 10000)}) {
 		h.add(bounds(frame));
@@ -3868,13 +3866,13 @@ TEST(PatchableMesh, LimitInsideUnionAddsNothing) {
 		bool				 covered;
 	};
 	const std::vector<Case> cases{
-		{"inside", sixteenGon({4000, 5000}, 3000), true},
+		{"inside", limitPolygonOfCircumradius({4000, 5000}, 3000), true},
 		{"over water inside ground", rect(2500, 2500, 6500, 6500), true},
-		{"across the overlap", sixteenGon({9000, 5000}, 2000), true},
+		{"across the overlap", limitPolygonOfCircumradius({9000, 5000}, 2000), true},
 		{"touching the edge from inside", rect(1000, 1000, 9000, 10000), true},
 		{"a copy of a live outline", rect(0, 0, 10000, 10000), true},
 		{"poking out by a millimetre", rect(1000, 1000, 9000, 10001), false},
-		{"outside", sixteenGon({40000, 5000}, 3000), false},
+		{"outside", limitPolygonOfCircumradius({40000, 5000}, 3000), false},
 		{"over a gap in the union", rect(21000, 1000, 29000, 9000), false},
 		{"over a gap, sides on its edges", rect(20000, 0, 30000, 10000), false},
 	};
