@@ -27,6 +27,8 @@
 //                         directly onto the blueprint's delivered[] manifest); advance
 //                         to UnderConstruction once materialsComplete(), after one more
 //                         footprint check (a blocker found then sends it back to Clearing).
+//                         A foundation is built on bare ground: entering UnderConstruction,
+//                         what still lies or grows on its footprint leaves it (bareSites).
 //   UnderConstruction  -> emit one Build goal; ActionSystem's Build action
 //                         advances workDone. Multiple colonists may build the
 //                         same blueprint concurrently.
@@ -123,10 +125,7 @@ namespace ecs {
 		/// data used to detect footprint blockers. Called once from GameScene after both
 		/// the ConstructionWorld and PlacementExecutor exist.
 		void setConstructionWorld(construction::ConstructionWorld* constructionWorld) { m_constructionWorld = constructionWorld; }
-		void setPlacementData(
-			const assets::PlacementExecutor*				  placementExecutor,
-			const std::unordered_set<world::ChunkCoordinate>* processedChunks
-		) {
+		void setPlacementData(assets::PlacementExecutor* placementExecutor, const std::unordered_set<world::ChunkCoordinate>* processedChunks) {
 			m_placementExecutor = placementExecutor;
 			m_processedChunks = processedChunks;
 		}
@@ -281,7 +280,7 @@ namespace ecs {
 		void completeBlueprintNow(EntityID entity, StructureBlueprint& blueprint);
 
 		construction::ConstructionWorld*				  m_constructionWorld = nullptr;
-		const assets::PlacementExecutor*				  m_placementExecutor = nullptr;
+		assets::PlacementExecutor*						  m_placementExecutor = nullptr;
 		const std::unordered_set<world::ChunkCoordinate>* m_processedChunks = nullptr;
 
 		// DEV/TEST: instant-build flag and the completion callback it (and
@@ -306,11 +305,17 @@ namespace ecs {
 		// This pass's spawned harvestables, gathered by the first site still clearing (reused storage)
 		std::vector<SpawnedHarvestable> m_spawnedHarvestables;
 
-		/// Footprints of foundations that entered construction this pass: the loose piles on them are
-		/// dropped again just outside (movePilesOffSites), so nothing is built over
-		std::vector<FootprintBounds> m_sitesToClearOfPiles;
+		/// Footprints of foundations that entered construction this pass, bared by bareSites
+		std::vector<FootprintBounds> m_sitesEnteringConstruction;
 		static constexpr float		 kPileMoveMargin = 0.5F;
-		void						 movePilesOffSites();
+
+		/// Bare the ground of each site entering construction, so nothing is built over. Harvestables
+		/// are gone by then (they hold the site in Clearing). Something to carry, a loose pile or a
+		/// placed stone, is dropped again just outside; with no drop path wired it stays where it is.
+		/// Every other placed static (groundcover, a rock) is removed.
+		void bareSites();
+		void removeStaticsFromSites();
+		void movePilesOffSites();
 
 		// Throttle like the other goal systems: lifecycle changes are slow relative to frames.
 		int					 m_frameCounter = 0;

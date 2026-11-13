@@ -3,6 +3,7 @@
 #include "world/generation/GroveField.h"
 
 #include "assets/AssetRegistry.h"
+#include "assets/placement/BakedEntityMesh.h"
 #include "assets/placement/CanopyCover.h"
 
 #include <world/chunk/Chunk.h>
@@ -646,6 +647,70 @@ TEST(PlacementExecutorTests, EntityStateIsPerEntityNotPerTile) {
 	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({neighbour.x, neighbour.y}), neighbour, "BerryBush"));
 	EXPECT_FALSE(executor.regrowthReadyAt(neighbour, defId(registry, "BerryBush"), 0.0).has_value());
 	EXPECT_FALSE(executor.getResourceCount(neighbour, "BerryBush").has_value());
+}
+
+// A short static is drawn from its chunk's baked mesh, so the renderer has to hear of its removal:
+// the removal count of its sub-region moves, and that sub-region baked again no longer holds it. A
+// grass tuft is drawn by the groundcover pass and moves its own count, so neither rebuilds for the
+// other. A tall occluder is drawn live, so felling one moves nothing.
+TEST(PlacementExecutorTests, RemovingABakedStaticCallsForItsSubRegionToBeBakedAgain) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+
+	const world::ChunkCoordinate coord{0, 0};
+	const glm::vec2				 bush{70.0F, 10.0F};
+	const glm::vec2				 neighbour{100.0F, 20.0F};
+	const glm::vec2				 tree{10.0F, 10.0F};
+	const glm::vec2				 tuft{80.0F, 30.0F};
+	AssetDefinition				 grass;
+	grass.defName = "TestGrass";
+	grass.role = AssetRole::Groundcover;
+	registry.registerTestDefinition(std::move(grass));
+	PlacedEntity oak{"Oak", tree};
+	oak.isTallOccluder = true;
+	AsyncChunkPlacementResult chunk;
+	chunk.coord = coord;
+	chunk.spatialIndex.insert({"BerryBush", bush});
+	chunk.spatialIndex.insert({"BerryBush", neighbour});
+	chunk.spatialIndex.insert({"TestGrass", tuft});
+	chunk.spatialIndex.insert(oak);
+	executor.storeChunkResult(std::move(chunk));
+	EXPECT_EQ(executor.staticRemovals(coord), nullptr) << "a chunk as stored is level with its bake";
+
+	renderer::TessellatedMesh triangle;
+	triangle.vertices = {{0.0F, 0.0F}, {1.0F, 0.0F}, {0.0F, 1.0F}};
+	triangle.indices = {0, 1, 2};
+	const TemplateLookup lookup = [&](const PlacedEntity&) { return &triangle; };
+	const int			 bushRegion = subChunkIndexOf(coord, bush);
+	ASSERT_EQ(subChunkIndexOf(coord, neighbour), bushRegion);
+	ASSERT_NE(subChunkIndexOf(coord, tree), bushRegion);
+	EXPECT_EQ(bakeSubChunkEntities(*executor.getChunkIndex(coord), coord, bushRegion, lookup).floraMesh.entityCount, 3U);
+
+	ASSERT_TRUE(executor.removeEntity(coord, tree, "Oak"));
+	EXPECT_EQ(executor.staticRemovals(coord), nullptr) << "a felled tree was never in the bake";
+
+	ASSERT_TRUE(executor.removeEntity(coord, bush, "BerryBush"));
+	const PlacementExecutor::StaticRemovals* removals = executor.staticRemovals(coord);
+	ASSERT_NE(removals, nullptr);
+	for (int region = 0; region < kSubChunkCount; ++region) {
+		EXPECT_EQ(removals->baked[static_cast<size_t>(region)], region == bushRegion ? 1U : 0U) << "sub-region " << region;
+	}
+
+	ASSERT_TRUE(executor.removeEntity(coord, tuft, "TestGrass"));
+	EXPECT_EQ(removals->groundcover[static_cast<size_t>(bushRegion)], 1U);
+	EXPECT_EQ(removals->baked[static_cast<size_t>(bushRegion)], 1U) << "a tuft is not in the bake";
+
+	const BakedSubChunkCPUData rebaked = bakeSubChunkEntities(*executor.getChunkIndex(coord), coord, bushRegion, lookup);
+	EXPECT_EQ(rebaked.floraMesh.entityCount, 1U) << "only the neighbour is left to draw";
+	ASSERT_EQ(rebaked.floraMesh.vertices.size(), 3U);
+	EXPECT_FLOAT_EQ(rebaked.floraMesh.vertices[0].position.x, neighbour.x);
+	EXPECT_FLOAT_EQ(rebaked.floraMesh.vertices[0].position.y, neighbour.y);
+
+	executor.unloadChunk(coord);
+	EXPECT_EQ(executor.staticRemovals(coord), nullptr) << "a reloaded chunk starts level with its new bake";
 }
 
 // ============================================================================

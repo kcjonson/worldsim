@@ -2,12 +2,13 @@
 
 // CPU-side bake of placed entities into world-space sub-chunk vertex arrays.
 // Runs on worker threads (as a continuation of async chunk placement) or on the
-// render thread (re-bake of an evicted chunk); GL upload lives in
-// EntityRenderer::uploadBakedChunk. Touches no GL state.
+// render thread (re-bake of an evicted chunk, or of one sub-region a short static
+// was removed from); GL upload lives in BakedChunkRenderer. Touches no GL state.
 
 #include "assets/AssetRegistry.h"
 #include "assets/placement/FloraRouting.h"
 #include "assets/placement/SpatialIndex.h"
+#include "assets/placement/SubChunkGrid.h"
 #include "world/chunk/ChunkCoordinate.h"
 
 #include <graphics/Color.h>
@@ -21,13 +22,6 @@
 #include <vector>
 
 namespace assets {
-
-/// Sub-chunk grid: 8x8 = 64 sub-regions per chunk, 64x64 tiles each.
-/// Sub-regions are the granularity of view-frustum culling for baked entities.
-inline constexpr int kSubChunkGridSize = 8;
-inline constexpr int kSubChunkTileSize = world::kChunkSize / kSubChunkGridSize;
-inline constexpr float kSubChunkWorldSize = static_cast<float>(kSubChunkTileSize) * world::kTileSize;
-inline constexpr int kSubChunkCount = kSubChunkGridSize * kSubChunkGridSize;
 
 /// Only statics of a def that routes short (FloraRouting.h) are baked. They can stop
 /// rendering as geometry once blades shrink below ~kImpostorCutoffPx on screen; the
@@ -82,6 +76,15 @@ using TemplateLookup = std::function<const renderer::TessellatedMesh*(const asse
 [[nodiscard]] BakedChunkCPUData bakeChunkEntities(
 	const std::vector<const assets::PlacedEntity*>& entities,
 	world::ChunkCoordinate coord,
+	const TemplateLookup& getTemplate
+);
+
+/// One sub-region of a chunk baked again from what its index holds now: the re-bake after a
+/// short static in it was removed (PlacementExecutor::staticRemovals), a sixty-fourth of the chunk's.
+[[nodiscard]] BakedSubChunkCPUData bakeSubChunkEntities(
+	const assets::SpatialIndex& index,
+	world::ChunkCoordinate coord,
+	int subIndex,
 	const TemplateLookup& getTemplate
 );
 

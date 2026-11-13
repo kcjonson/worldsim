@@ -6,67 +6,55 @@
 
 namespace assets {
 
-	BakedChunkCPUData bakeChunkEntities(
-		const std::vector<const assets::PlacedEntity*>& entities,
-		world::ChunkCoordinate coord,
-		const TemplateLookup& getTemplate
-	) {
-		BakedChunkCPUData data;
-		world::WorldPosition	  chunkOrigin = coord.origin();
+	namespace {
 
-		// Sub-chunk bounds (set even for empty sub-chunks so culling data is valid)
-		for (int subY = 0; subY < kSubChunkGridSize; ++subY) {
-			for (int subX = 0; subX < kSubChunkGridSize; ++subX) {
-				auto& subChunk = data.subChunks[subY * kSubChunkGridSize + subX];
-				subChunk.minX = chunkOrigin.x + static_cast<float>(subX) * kSubChunkWorldSize;
-				subChunk.minY = chunkOrigin.y + static_cast<float>(subY) * kSubChunkWorldSize;
-				subChunk.maxX = subChunk.minX + kSubChunkWorldSize;
-				subChunk.maxY = subChunk.minY + kSubChunkWorldSize;
-			}
-		}
-
-		// Bin entities by sub-chunk
-		std::array<std::vector<const assets::PlacedEntity*>, kSubChunkCount> bins;
-		for (const auto* entity : entities) {
-			int subX = static_cast<int>((entity->position.x - chunkOrigin.x) / kSubChunkWorldSize);
-			int subY = static_cast<int>((entity->position.y - chunkOrigin.y) / kSubChunkWorldSize);
-			subX = std::clamp(subX, 0, kSubChunkGridSize - 1);
-			subY = std::clamp(subY, 0, kSubChunkGridSize - 1);
-			bins[subY * kSubChunkGridSize + subX].push_back(entity);
-		}
-
-		// Template mesh height cache (template Y extent, before entity scale)
-		std::unordered_map<const renderer::TessellatedMesh*, float> heightCache;
-		auto templateHeight = [&heightCache](const renderer::TessellatedMesh* mesh) {
-			auto it = heightCache.find(mesh);
-			if (it != heightCache.end()) {
-				return it->second;
-			}
-			float minY = 0.0F;
-			float maxY = 0.0F;
-			if (!mesh->vertices.empty()) {
-				minY = maxY = mesh->vertices[0].y;
-				for (const auto& v : mesh->vertices) {
-					minY = std::min(minY, v.y);
-					maxY = std::max(maxY, v.y);
+		/// Template Y extents (before entity scale), measured once per template over a bake
+		class TemplateHeights {
+		  public:
+			float of(const renderer::TessellatedMesh* mesh) {
+				auto it = m_heights.find(mesh);
+				if (it != m_heights.end()) {
+					return it->second;
 				}
+				float minY = 0.0F;
+				float maxY = 0.0F;
+				if (!mesh->vertices.empty()) {
+					minY = maxY = mesh->vertices[0].y;
+					for (const auto& v : mesh->vertices) {
+						minY = std::min(minY, v.y);
+						maxY = std::max(maxY, v.y);
+					}
+				}
+				const float height = maxY - minY;
+				m_heights.emplace(mesh, height);
+				return height;
 			}
-			float height = maxY - minY;
-			heightCache.emplace(mesh, height);
-			return height;
+
+		  private:
+			std::unordered_map<const renderer::TessellatedMesh*, float> m_heights;
 		};
 
-		// Transform each bin into world-space vertices, split by height bucket
-		for (int subIndex = 0; subIndex < kSubChunkCount; ++subIndex) {
-			const auto& bin = bins[subIndex];
-			if (bin.empty()) {
-				continue;
-			}
+		/// A sub-region with its culling bounds set and nothing baked into it yet
+		BakedSubChunkCPUData emptySubChunk(world::ChunkCoordinate coord, int subIndex) {
+			const world::WorldPosition chunkOrigin = coord.origin();
+			BakedSubChunkCPUData	   subChunk;
+			subChunk.minX = chunkOrigin.x + static_cast<float>(subIndex % kSubChunkGridSize) * kSubChunkWorldSize;
+			subChunk.minY = chunkOrigin.y + static_cast<float>(subIndex / kSubChunkGridSize) * kSubChunkWorldSize;
+			subChunk.maxX = subChunk.minX + kSubChunkWorldSize;
+			subChunk.maxY = subChunk.minY + kSubChunkWorldSize;
+			return subChunk;
+		}
 
-			auto&	 subChunk = data.subChunks[subIndex];
+		/// Transform one sub-region's entities into its world-space vertices
+		void bakeInto(
+			BakedMeshCPU&									bucket,
+			const std::vector<const assets::PlacedEntity*>& entities,
+			const TemplateLookup&							getTemplate,
+			TemplateHeights&								heights
+		) {
 			uint32_t vertexOffset = 0;
 
-			for (const auto* entity : bin) {
+			for (const auto* entity : entities) {
 				// Tall occluders draw live in the Y-sorted upright stream, not baked.
 				if (entity->isTallOccluder) {
 					continue;
@@ -77,8 +65,7 @@ namespace assets {
 				}
 
 				float entityScale = entity->scale;
-				float worldHeight = templateHeight(templateMesh) * entityScale;
-				auto& bucket = subChunk.floraMesh;
+				float worldHeight = heights.of(templateMesh) * entityScale;
 				bucket.maxEntityHeight = std::max(bucket.maxEntityHeight, worldHeight);
 
 				float posX = entity->position.x;
@@ -132,11 +119,53 @@ namespace assets {
 				vertexOffset += static_cast<uint32_t>(templateMesh->vertices.size());
 				bucket.entityCount++;
 			}
+		}
 
+	} // namespace
+
+	BakedChunkCPUData bakeChunkEntities(
+		const std::vector<const assets::PlacedEntity*>& entities,
+		world::ChunkCoordinate coord,
+		const TemplateLookup& getTemplate
+	) {
+		BakedChunkCPUData data;
+
+		// Sub-chunk bounds (set even for empty sub-chunks so culling data is valid)
+		for (int subIndex = 0; subIndex < kSubChunkCount; ++subIndex) {
+			data.subChunks[subIndex] = emptySubChunk(coord, subIndex);
+		}
+
+		// Bin entities by sub-chunk
+		std::array<std::vector<const assets::PlacedEntity*>, kSubChunkCount> bins;
+		for (const auto* entity : entities) {
+			bins[subChunkIndexOf(coord, entity->position)].push_back(entity);
+		}
+
+		TemplateHeights heights;
+		for (int subIndex = 0; subIndex < kSubChunkCount; ++subIndex) {
+			auto& subChunk = data.subChunks[subIndex];
+			bakeInto(subChunk.floraMesh, bins[subIndex], getTemplate, heights);
 			data.totalEntityCount += subChunk.floraMesh.entityCount;
 		}
 
 		return data;
+	}
+
+	BakedSubChunkCPUData bakeSubChunkEntities(
+		const assets::SpatialIndex& index,
+		world::ChunkCoordinate coord,
+		int subIndex,
+		const TemplateLookup& getTemplate
+	) {
+		BakedSubChunkCPUData subChunk = emptySubChunk(coord, subIndex);
+
+		// The rect query takes both edges; a static on a shared edge belongs to one sub-region only.
+		auto entities = index.queryRect(subChunk.minX, subChunk.minY, subChunk.maxX, subChunk.maxY);
+		std::erase_if(entities, [&](const assets::PlacedEntity* entity) { return subChunkIndexOf(coord, entity->position) != subIndex; });
+
+		TemplateHeights heights;
+		bakeInto(subChunk.floraMesh, entities, getTemplate, heights);
+		return subChunk;
 	}
 
 } // namespace assets

@@ -1443,14 +1443,14 @@ namespace {
 
 		/// Remove every placed entity (trees, rocks, ...) within `radius` of `center` so the spawn
 		/// drops into an open clearing. Entities near the radius can straddle a chunk boundary, so we
-		/// gather from every chunk the clearing circle overlaps, not just the spawn chunk. After
-		/// removing from the placement index (the same source the navmesh and renderer read), release
-		/// each touched chunk's baked render mesh so it re-bakes WITHOUT the removed entities.
+		/// gather from every chunk the clearing circle overlaps, not just the spawn chunk. They leave
+		/// the placement index, the one source the navmesh and the renderer read: the renderer bakes
+		/// the sub-regions that lost a static again by itself.
 		void clearLandingArea(glm::vec2 center, float radius) {
 			// Tile/meter are 1:1 (kTileSize == 1), so the spatial-index radius is the meter radius.
-			std::unordered_set<world::ChunkCoordinate> touchedChunks;
-			const world::ChunkCoordinate			   cMin = world::worldToChunk({center.x - radius, center.y - radius});
-			const world::ChunkCoordinate			   cMax = world::worldToChunk({center.x + radius, center.y + radius});
+			size_t						 touchedChunks = 0;
+			const world::ChunkCoordinate cMin = world::worldToChunk({center.x - radius, center.y - radius});
+			const world::ChunkCoordinate cMax = world::worldToChunk({center.x + radius, center.y + radius});
 
 			size_t removed = 0;
 			for (int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
@@ -1472,15 +1472,9 @@ namespace {
 						}
 					}
 					if (!victims.empty()) {
-						touchedChunks.insert(coord);
+						++touchedChunks;
 					}
 				}
-			}
-
-			// Re-bake the touched chunks so the cleared entities also disappear visually. The
-			// renderer re-bakes any processed chunk missing from its cache on the next render.
-			for (const world::ChunkCoordinate& coord : touchedChunks) {
-				m_entityRenderer->releaseBakedChunkCache(coord);
 			}
 
 			LOG_INFO(
@@ -1490,7 +1484,7 @@ namespace {
 				radius,
 				center.x,
 				center.y,
-				touchedChunks.size()
+				touchedChunks
 			);
 		}
 
