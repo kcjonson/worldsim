@@ -8,7 +8,9 @@
 #include "../components/Transform.h"
 
 #include "nav/NavCoords.h"
+#include "nav/NavInputBuilder.h"
 
+#include <assets/ConstructionRegistry.h>
 #include <predicates/Predicates.h>
 #include <visibility/SightPolygon.h>
 #include <visibility/Visibility.h>
@@ -122,13 +124,77 @@ namespace ecs {
 		leg.open = false;
 	}
 
-	// Each visibility polygon is queued whole, with the observer as its centre, unless it is not a
-	// simple ring round him (the next one, 0.5 m on, picks the ground up).
-	void PlayerVisibilitySystem::registerPolygon(const std::vector<Vec2i64>& polygon, const Vec2i64& observer) {
+	// Each visibility polygon is queued as it is, with the observer as its centre, unless it is not a
+	// simple ring round him (the next one, 0.5 m on, picks the ground up). The record tests it as it is
+	// and, where it adds ground, registers the frontier of it grown by the skirt.
+	void PlayerVisibilitySystem::registerPolygon(const std::vector<Vec2i64>& polygon, const Vec2i64& observer, std::int64_t sightRadiusMm) {
 		if (!geometry::simpleAround(polygon, observer)) {
 			return;
 		}
-		seen.queue(polygon, observer);
+		seen.queueSightPolygon(polygon, observer, sightRadiusMm);
+	}
+
+	void PlayerVisibilitySystem::refreshFootprints() {
+		if (constructionWorld == nullptr || constructionWorld->version() == footprintVersion) {
+			return;
+		}
+		footprintVersion = constructionWorld->version();
+		footprints.clear();
+		footprintsBySegment.clear();
+		footprintsByOpening.clear();
+		std::vector<geometry::nav::NavInputPolygon> rings;
+		std::vector<geometry::nav::DoorPortal>		portals;
+		nav::extractWalls(*constructionWorld, assets::ConstructionRegistry::Get(), rings, portals);
+		for (geometry::nav::NavInputPolygon& ring : rings) {
+			const std::size_t index = footprints.size();
+			if (ring.provenanceId > 0) {
+				footprintsBySegment[static_cast<construction::SegmentId>(ring.provenanceId)].push_back(index);
+			}
+			if (ring.openingId >= 0) {
+				footprintsByOpening[static_cast<construction::OpeningId>(ring.openingId)].push_back(index);
+			}
+			footprints.push_back(std::move(ring.ring));
+		}
+	}
+
+	// A footprint goes in once, as it is now: a wall rebuilt the same is not queued again, a changed
+	// one is. Its centre is the mean of its corners, round which a band or junction winds once.
+	void PlayerVisibilitySystem::enterFootprint(const std::vector<Vec2i64>& ring) {
+		if (ring.size() < 3 || !enteredFootprints.insert(ring).second) {
+			return;
+		}
+		Vec2i64 sum{0, 0};
+		for (const Vec2i64& corner : ring) {
+			sum = sum + corner;
+		}
+		const auto	  count = static_cast<std::int64_t>(ring.size());
+		const Vec2i64 centre{sum.x / count, sum.y / count};
+		if (geometry::simpleAround(ring, centre)) {
+			seen.queue(ring, centre);
+		}
+	}
+
+	void PlayerVisibilitySystem::enterStructures(const VisionSystem::SightShape& shape) {
+		if (shape.segmentsSeen == nullptr || (shape.segmentsSeen->empty() && shape.openingsSeen->empty())) {
+			return;
+		}
+		refreshFootprints();
+		for (const construction::SegmentId segment : *shape.segmentsSeen) {
+			const auto found = footprintsBySegment.find(segment);
+			if (found != footprintsBySegment.end()) {
+				for (const std::size_t index : found->second) {
+					enterFootprint(footprints[index]);
+				}
+			}
+		}
+		for (const construction::OpeningId opening : *shape.openingsSeen) {
+			const auto found = footprintsByOpening.find(opening);
+			if (found != footprintsByOpening.end()) {
+				for (const std::size_t index : found->second) {
+					enterFootprint(footprints[index]);
+				}
+			}
+		}
 	}
 
 	void PlayerVisibilitySystem::update(float /*deltaTime*/) {
@@ -145,7 +211,8 @@ namespace ecs {
 					closeLeg(entity, observer.leg);
 					if (shape->polygonRevision != observer.polygonRevision) {
 						observer.polygonRevision = shape->polygonRevision;
-						registerPolygon(*shape->polygon, nav::toMm(shape->center));
+						registerPolygon(*shape->polygon, nav::toMm(shape->center), std::llround(static_cast<double>(shape->radius) * 1000.0));
+						enterStructures(*shape);
 					}
 					continue;
 				}

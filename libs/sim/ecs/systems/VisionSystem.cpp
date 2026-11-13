@@ -136,6 +136,8 @@ namespace ecs {
 			if (outdoors) {
 				if (entry.hadOccluders) {
 					entry.polygon.clear();
+					entry.segmentsSeen.clear();
+					entry.openingsSeen.clear();
 					entry.hadOccluders = false;
 					++entry.polygonRevision;
 				}
@@ -165,7 +167,7 @@ namespace ecs {
 					// same structures, already in memory, so re-scanning every tick is wasted.
 					// New structures appear only via a geometry change, which bumps the
 					// generation and forces a rebuild here.
-					rememberStructures(observerMm, radiusMm, entry.polygon, memory);
+					rememberStructures(observerMm, radiusMm, entry.polygon, memory, entry.segmentsSeen, entry.openingsSeen);
 				}
 				polygon = &entry.polygon;
 			}
@@ -200,13 +202,23 @@ namespace ecs {
 		geometry::Ring polygon;
 		if (!occluders.empty()) {
 			polygon = geometry::computeVisibilityPolygon(centerMm, radiusMm, occluders);
-			rememberStructures(centerMm, radiusMm, polygon, *memory);
+			std::vector<construction::SegmentId> segments;
+			std::vector<construction::OpeningId> openings;
+			rememberStructures(centerMm, radiusMm, polygon, *memory, segments, openings);
 		}
 		lookOver(observer, center, radiusMeters, occluders.empty() ? nullptr : &polygon, *memory, world->getComponent<Knowledge>(observer));
 	}
 
-	void
-	VisionSystem::rememberStructures(geometry::Vec2i64 centerMm, std::int64_t radiusMm, const geometry::Ring& polygon, Memory& memory) {
+	void VisionSystem::rememberStructures(
+		geometry::Vec2i64					  centerMm,
+		std::int64_t						  radiusMm,
+		const geometry::Ring&				  polygon,
+		Memory&								  memory,
+		std::vector<construction::SegmentId>& segments,
+		std::vector<construction::OpeningId>& openings
+	) {
+		segments.clear();
+		openings.clear();
 		// Pass 0: structure-as-observable (vision-architecture D4). A wall or
 		// opening that bounds or intersects the visibility polygon is seen, and
 		// its stable construction id enters memory. Runs only for indoor
@@ -240,6 +252,7 @@ namespace ecs {
 			}
 			if (structureSeen(seg.a, seg.b)) {
 				memory.rememberSegment(seg.id);
+				segments.push_back(seg.id);
 			}
 		}
 
@@ -249,6 +262,7 @@ namespace ecs {
 			}
 			if (structureSeen(op.jambA, op.jambB)) {
 				memory.rememberOpening(op.openingId);
+				openings.push_back(op.openingId);
 			}
 		}
 	}

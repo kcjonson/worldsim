@@ -20,6 +20,7 @@
 namespace geometry::nav {
 	class PatchableMesh;
 	struct SightCoverScratch;
+	struct SightFrontierScratch;
 } // namespace geometry::nav
 
 namespace vision {
@@ -29,8 +30,11 @@ namespace vision {
 	constexpr std::int64_t kSeenSlackMm = 50;
 	// A step longer than this in one frame ends the leg without bridging it.
 	constexpr double kSeenJumpMeters = 2.0;
-	// Shapes tested and committed a tick, first in, first out.
+	// Shapes tested a tick, first in, first out.
 	constexpr std::size_t kSeenRingsPerTick = 4;
+	// Of those, at most this many registered a tick: a registering shape pays the skirt, its
+	// frontier and a patch, about 100 covered tests' worth (player-visibility.md 6.6).
+	constexpr std::size_t kSeenShapesRegisteredPerTick = 1;
 	// No leg is held below this sight radius: a sight polygon smaller than this can be non-convex
 	// once its vertices are pulled inside the circle, and a leg's capsule needs it convex.
 	constexpr std::int64_t kSeenLeastRadiusMm = 1000;
@@ -64,14 +68,21 @@ namespace vision {
 		// A shape waiting its turn. It must be simple and wind once round `centre`
 		// (geometry::simpleAround), which the covered test reads from.
 		void queue(std::vector<geometry::Vec2i64> shape, const geometry::Vec2i64& centre);
+		// A visibility polygon with walls in sight, of sight `sightRadiusMm` round `centre`, waiting its
+		// turn. It is pending and tested as it is; when not covered it enters grown by
+		// geometry::kSeenSkirtMm (geometry::skirtedSightShape), and is skipped when the grown ring is
+		// not simple. Same requirements as queue.
+		void queueSightPolygon(std::vector<geometry::Vec2i64> polygon, const geometry::Vec2i64& centre, std::int64_t sightRadiusMm);
 
 		// The open leg `leg` now runs from `start` to `end` with capsule radius `radiusMm`. Pending.
 		void setOpenLeg(LegId leg, const geometry::Vec2i64& start, const geometry::Vec2i64& end, std::int64_t radiusMm);
 		// Ends the open leg: its capsule is queued, with its start as the centre.
 		void closeLeg(LegId leg);
 
-		// Tests and commits up to kSeenRingsPerTick queued shapes, first in, first out. A shape the
-		// record already covers (geometry::nav::sightShapeCovered) is dropped.
+		// Tests up to kSeenRingsPerTick queued shapes, first in, first out, and stops after the
+		// kSeenShapesRegisteredPerTick-th that registers. A shape the record already covers
+		// (geometry::nav::sightShapeCovered) is dropped; one it does not is cut to what it adds
+		// (geometry::nav::sightShapeFrontier) and those pieces are registered, one ring each.
 		void update();
 
 		// The point is in the record or a pending shape.
@@ -95,6 +106,8 @@ namespace vision {
 		[[nodiscard]] const std::vector<geometry::Vec2i64>& registeredRing(std::size_t index) const;
 		[[nodiscard]] std::size_t	   shapesPending() const { return openLegs.size() + waiting.size(); }
 		[[nodiscard]] std::size_t	   shapesDropped() const { return dropped; }
+		// Sight polygons whose grown ring was not simple, so never entered.
+		[[nodiscard]] std::size_t shapesSkipped() const { return skipped; }
 
 	  private:
 		struct PendingShape {
@@ -104,15 +117,20 @@ namespace vision {
 			geometry::Vec2i64			   high;
 			bool						   convex = false;
 			geometry::Vec2i64			   legEnd; // an open leg's end and capsule radius
-			std::int64_t				   radius = 0;
+			std::int64_t				   radius		= 0;
+			std::int64_t				   sightRadius = 0; // a sight polygon's, for its skirt; 0 for any other shape
 		};
 
 		static PendingShape pendingOf(std::vector<geometry::Vec2i64> outline, const geometry::Vec2i64& centre);
-		void				commit(const PendingShape& shape);
+		// Whether the shape registered anything.
+		bool				commit(const PendingShape& shape);
 		template <typename Visit> void forEachPending(Visit visit) const;
 
-		std::unique_ptr<geometry::nav::PatchableMesh>	  mesh;
-		std::unique_ptr<geometry::nav::SightCoverScratch> scratch;
+		std::unique_ptr<geometry::nav::PatchableMesh>		 mesh;
+		std::unique_ptr<geometry::nav::SightCoverScratch>	 scratch;
+		std::unique_ptr<geometry::nav::SightFrontierScratch> frontierScratch;
+		std::vector<std::vector<geometry::Vec2i64>>			 pieces;
+		std::size_t											 skipped = 0;
 		std::map<LegId, PendingShape>					  openLegs;
 		std::deque<PendingShape>						  waiting;
 		std::vector<std::int32_t>						  registered; // ring ids, in the order they went in

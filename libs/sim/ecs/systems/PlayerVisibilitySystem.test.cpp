@@ -11,6 +11,7 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
+#include <predicates/Predicates.h>
 
 #include <glm/geometric.hpp>
 
@@ -159,9 +160,11 @@ TEST(PlayerVisibilitySystem, LandingAndACoveredLeg) {
 	EXPECT_EQ(colony.visibility.epoch(), epoch);
 }
 
-// With a wall in sight each new visibility polygon is queued whole, round where vision built it,
-// and the leg he walked up to it ends.
-TEST(PlayerVisibilitySystem, IndoorPolygonsAreQueuedWhole) {
+// With a wall in sight each new visibility polygon is queued, round where vision built it, and the
+// leg he walked up to it ends. What goes in is the polygon's frontier grown by the skirt: every
+// point deep in a polygon is seen, nothing past the skirt is, and the wall he saw is seen ground,
+// its footprint in once. Walking the same way again registers nothing.
+TEST(PlayerVisibilitySystem, IndoorPolygonsEnterSkirtedAndTheWallJoins) {
 	assets::ConstructionRegistry::Get().clear();
 	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
 	construction::ConstructionWorld walls;
@@ -169,6 +172,7 @@ TEST(PlayerVisibilitySystem, IndoorPolygonsAreQueuedWhole) {
 
 	Colony colony;
 	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
 	const EntityID colonist = colony.addColonist({-60.0F, 5.0F});
 	colony.walk(colonist, {-40.0F, 5.0F}, 0.05F);
 	EXPECT_EQ(colony.visibility.seenArea().shapesPending(), 1U) << "outdoors: one open leg";
@@ -185,15 +189,40 @@ TEST(PlayerVisibilitySystem, IndoorPolygonsAreQueuedWhole) {
 		}
 	}
 	ASSERT_GT(polygons.size(), 10U) << "the wall came into sight";
+	EXPECT_EQ(colony.visibility.footprintsEntered(), 1U) << "one wall, one band";
 	colony.remove(colonist);
 	const vision::SeenArea& seen = colony.visibility.seenArea();
-	ASSERT_GE(seen.ringsRegistered(), 2U) << "the leg, then polygons";
-	EXPECT_EQ(seen.ringsRegistered() + seen.shapesDropped(), 1U + polygons.size()) << "one leg and every polygon, each registered or dropped";
-	for (std::size_t ring = 1; ring < seen.ringsRegistered(); ++ring) {
-		EXPECT_NE(std::find(polygons.begin(), polygons.end(), seen.registeredRing(ring)), polygons.end()) << "ring " << ring << " is a polygon, whole";
-	}
+	ASSERT_GE(seen.ringsRegistered(), 3U) << "the leg, polygons, the wall";
+	EXPECT_EQ(seen.shapesSkipped(), 0U);
 	EXPECT_FALSE(colony.visibility.isSeen({2.0F, 5.0F})) << "behind the wall";
 	EXPECT_TRUE(colony.visibility.isSeen({-1.0F, 5.0F}));
+	EXPECT_TRUE(colony.visibility.isSeen({0.0F, 5.0F})) << "inside the wall's body: a seen wall is seen ground";
+	EXPECT_TRUE(colony.visibility.isSeen({0.09F, 5.0F})) << "to the far face";
+	EXPECT_FALSE(colony.visibility.isSeen({0.3F, 5.0F})) << "past the far face, never in sight";
+
+	std::mt19937 random(23);
+	for (const std::vector<Vec2i64>& polygon : polygons) {
+		for (int attempt = 0; attempt < 20; ++attempt) {
+			const glm::vec2 point{-35.0F + 70.0F * static_cast<float>(random() % 1000) / 1000.0F, -25.0F + 60.0F * static_cast<float>(random() % 1000) / 1000.0F};
+			const Vec2i64	millimetres = nav::toMm(point);
+			if (geometry::pointInPolygon(millimetres, polygon) == geometry::PointInPolygon::Inside) {
+				bool deep = true;
+				for (std::size_t i = 0; i < polygon.size() && deep; ++i) {
+					deep = !geometry::withinDistanceOfSegment(millimetres, polygon[i], polygon[(i + 1) % polygon.size()], 6);
+				}
+				EXPECT_TRUE(!deep || colony.visibility.isSeen(point)) << "(" << point.x << ", " << point.y << ") lost";
+			}
+		}
+	}
+
+	const std::size_t ringsBefore = seen.ringsRegistered();
+	const EntityID	  again		  = colony.addColonist({-40.0F, 5.0F});
+	for (int step = 1; step <= 400; ++step) {
+		colony.standAt(again, {-40.0F + 0.05F * static_cast<float>(step), 5.0F});
+	}
+	colony.remove(again);
+	EXPECT_EQ(seen.ringsRegistered(), ringsBefore) << "a re-walk registers nothing";
+	EXPECT_EQ(colony.visibility.footprintsEntered(), 1U);
 	assets::ConstructionRegistry::Get().clear();
 }
 
