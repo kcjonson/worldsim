@@ -2699,35 +2699,52 @@ namespace {
 		return out;
 	}
 
+	// a / b rounded to the nearest integer, halves up; b > 0.
+	std::int64_t roundedDiv(std::int64_t a, std::int64_t b) {
+		const std::int64_t n = 2 * a + b;
+		const std::int64_t d = 2 * b;
+		return n / d - (n % d < 0 ? 1 : 0);
+	}
+
+	// The integer square root of n >= 0, rounded down.
+	std::int64_t floorSqrt(std::int64_t n) {
+		std::int64_t r = static_cast<std::int64_t>(std::sqrt(static_cast<double>(n)));
+		while (r > 0 && r * r > n) {
+			--r;
+		}
+		while ((r + 1) * (r + 1) <= n) {
+			++r;
+		}
+		return r;
+	}
+
 	// A thin quadrilateral lying along a random side of `squares` at a slope of 0.009 to
 	// 0.14 (about 0.5 to 8 degrees) to it, so its long edges cross the side at a shallow
-	// angle; otherwise a box obstacle. Only correctly rounded operations, so every
-	// toolchain draws the same.
+	// angle; otherwise a box obstacle. Integer arithmetic only, so every toolchain draws
+	// the same.
 	NavInputPolygon shallowObstacle(std::mt19937& rng, const std::vector<NavInputPolygon>& squares) {
 		if (pick(rng, 4) == 0) {
 			return boxObstacle(rng);
 		}
-		const std::vector<Vec2i64>& ring   = squares[pick(rng, squares.size())].ring;
-		const std::size_t			e	   = pick(rng, ring.size());
-		const Vec2i64				p	   = ring[e];
-		const Vec2i64				q	   = ring[(e + 1) % ring.size()];
-		const double				t	   = static_cast<double>(between(rng, 50, 950)) / 1000.0;
-		const double				dx	   = static_cast<double>(q.x - p.x);
-		const double				dy	   = static_cast<double>(q.y - p.y);
-		const double				slope  = static_cast<double>(between(rng, 9, 140)) / 1000.0 * (pick(rng, 2) == 0 ? -1.0 : 1.0);
-		const double				rx	   = dx - dy * slope;
-		const double				ry	   = dy + dx * slope;
-		const double				norm   = std::sqrt(rx * rx + ry * ry);
-		const double				ux	   = rx / norm;
-		const double				uy	   = ry / norm;
-		const double				half   = static_cast<double>(between(rng, 500, 3000));
-		const double				width  = static_cast<double>(between(rng, 60, 600));
-		const double				offset = static_cast<double>(between(rng, -400, 400));
-		const double				cx	   = static_cast<double>(p.x) + dx * t - uy * offset;
-		const double				cy	   = static_cast<double>(p.y) + dy * t + ux * offset;
-		auto at = [](double x, double y) { return Vec2i64{static_cast<std::int64_t>(std::llround(x)), static_cast<std::int64_t>(std::llround(y))}; };
-		return blocked({at(cx - ux * half, cy - uy * half), at(cx + ux * half, cy + uy * half), at(cx + ux * half - uy * width, cy + uy * half + ux * width),
-						at(cx - ux * half - uy * width, cy - uy * half + ux * width)});
+		const std::vector<Vec2i64>& ring	  = squares[pick(rng, squares.size())].ring;
+		const std::size_t			e		  = pick(rng, ring.size());
+		const Vec2i64				p		  = ring[e];
+		const Vec2i64				d		  = ring[(e + 1) % ring.size()] - p;
+		const std::int64_t			alongSide = between(rng, 50, 950); // thousandths of the side
+		const std::int64_t			slope	  = between(rng, 9, 140);  // thousandths
+		const std::int64_t			sign	  = pick(rng, 2) == 0 ? -1 : 1;
+		const std::int64_t			half	  = between(rng, 500, 3000);
+		const std::int64_t			width	  = between(rng, 60, 600);
+		const std::int64_t			offset	  = between(rng, -400, 400);
+		// The obstacle's long axis, r / |r|, is the side turned by the slope.
+		const Vec2i64	   r{1000 * d.x - sign * slope * d.y, 1000 * d.y + sign * slope * d.x};
+		const std::int64_t norm = floorSqrt(r.x * r.x + r.y * r.y);
+		// The side's point at alongSide, then `along` up the axis and `across` off it.
+		auto at = [&](std::int64_t along, std::int64_t across) {
+			return Vec2i64{p.x + roundedDiv(d.x * alongSide * norm + 1000 * (r.x * along - r.y * (across + offset)), 1000 * norm),
+						   p.y + roundedDiv(d.y * alongSide * norm + 1000 * (r.y * along + r.x * (across + offset)), 1000 * norm)};
+		};
+		return blocked({at(-half, 0), at(half, 0), at(half, width), at(-half, width)});
 	}
 
 } // namespace
@@ -2808,9 +2825,54 @@ TEST(PatchableMesh, ShallowCrossingsOfSlantedSidesMatchFreshBuild) {
 	}
 }
 
-// The history of one seed of the sweep above, in which a ground sliver beside a bent side
-// is reached only through another whose sample reads off ground.
+// The history of one seed of the sweep above, raised past its count, in which a ground
+// sliver beside a bent side is reached only through another whose sample reads off ground.
 TEST(PatchableMesh, SliverReachedThroughAMisreadSliverMatchesFreshBuild) {
 	const std::vector<NavInputPolygon> squares = shearedSquares();
-	runSquaresAmongObstacles(89, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
+	runSquaresAmongObstacles(450, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
+}
+
+// Ground a millimetre across whose every point lies within the blocked ring's snap band:
+// the blocked edge rounds to the ground's base, so the rounded ground triangle is floor
+// though its centroid lies inside the blocked ring as given. In one patch, and in both
+// orders.
+TEST(PatchableMesh, GroundWhollyInTheSnapBandMatchesFreshBuild) {
+	const NavInputPolygon ground  = bounds({{0, 0}, {2, 0}, {0, 1}});
+	const NavInputPolygon blocker = blocked({{-10, -10}, {20, -10}, {20, 1}, {-10, 0}});
+	for (int order = 0; order < 3; ++order) {
+		Harness h;
+		if (order == 0) {
+			PatchEdits edits;
+			edits.adds = {ground, blocker};
+			h.apply(edits);
+		} else {
+			h.add(order == 1 ? ground : blocker);
+			ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order << " first ring";
+			h.add(order == 1 ? blocker : ground);
+		}
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "order " << order;
+		EXPECT_EQ(h.mesh.liveTriangleCount(), 1) << "order " << order;
+	}
+}
+
+// Water hanging over unseen ground wholly round ground that arrives later, no edge of it
+// near the ground: the ground comes in under the water, in either order.
+TEST(PatchableMesh, GroundArrivingInsideABlockedRingMatchesFreshBuild) {
+	const NavInputPolygon water	 = blocked(rect(0, 0, 30000, 30000), kWater, true);
+	const NavInputPolygon ground = bounds(rect(9000, 9000, 21000, 21000));
+	for (const bool waterFirst : {true, false}) {
+		Harness		 h;
+		const RingId first = h.add(waterFirst ? water : ground);
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (waterFirst ? "water" : "ground") << " alone";
+		const RingId second	 = h.add(waterFirst ? ground : water);
+		const RingId waterId = waterFirst ? first : second;
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << (waterFirst ? "water" : "ground") << " first";
+		ASSERT_GT(h.mesh.liveTriangleCount(), 0);
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(h.mesh.triangles().size()); ++t) {
+			if (h.mesh.triangleLive(t)) {
+				const std::vector<RingId>& cover = h.mesh.cover(t);
+				EXPECT_TRUE(std::find(cover.begin(), cover.end(), waterId) != cover.end()) << "triangle " << t;
+			}
+		}
+	}
 }

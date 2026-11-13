@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <map>
@@ -97,6 +98,15 @@ namespace geometry::nav {
 			if (boundsCount % 2 == 1) {
 				into.inBounds = !into.inBounds;
 			}
+		}
+
+		// Whether crossing from `from` over an edge with these sources gives what `into`
+		// already holds.
+		[[maybe_unused]] bool agreesAcross(const MeshFace& from, const std::vector<std::int64_t>& sources, const std::vector<const NavInputPolygon*>& rings,
+										   const MeshFace& into) {
+			MeshFace across;
+			crossEdge(from, sources, rings, across);
+			return across.inBounds == into.inBounds && across.blockedRings == into.blockedRings;
 		}
 
 		// --- Demyen-Buro corridor width (exact integer) ------------------------------
@@ -569,15 +579,21 @@ namespace geometry::nav {
 			const MeshFace&	   from = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
 			for (int e = 0; e < 3; ++e) {
 				const std::int32_t nb = tri.neighbor[e];
-				if (nb < 0 || crossed[static_cast<std::size_t>(nb)] != 0) {
+				if (nb < 0) {
 					continue;
 				}
-				crossed[static_cast<std::size_t>(nb)] = 1;
-				fill.push_back(nb);
-				MeshFace& into = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(nb)])];
+				MeshFace&		   into = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(nb)])];
+				const std::int32_t c	= tri.constraint[e];
 				if (!into.reached) {
 					into.reached = true;
-					crossEdge(from, arrangement.edges[static_cast<std::size_t>(tri.constraint[e])].provenance, rings, into);
+					crossEdge(from, arrangement.edges[static_cast<std::size_t>(c)].provenance, rings, into);
+				} else {
+					assert((c < 0 ? &into == &from : agreesAcross(from, arrangement.edges[static_cast<std::size_t>(c)].provenance, rings, into)) &&
+						   "buildNavMesh: ring parity disagrees around a face");
+				}
+				if (crossed[static_cast<std::size_t>(nb)] == 0) {
+					crossed[static_cast<std::size_t>(nb)] = 1;
+					fill.push_back(nb);
 				}
 			}
 		}

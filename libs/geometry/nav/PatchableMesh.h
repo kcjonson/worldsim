@@ -86,6 +86,10 @@ namespace geometry::nav {
 		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
 		Vec2i64						 hi;			 // (nothing changed: unset)
 		std::int32_t				 passes = 0;	 // re-derivations until the boundary held
+		// Covers seeded from a sample no exact test could read: ground so thin that every
+		// point of it lies within the snap band of a ring this patch did not re-derive.
+		// Unsupported input; the mesh may disagree with a from-scratch build there.
+		std::int32_t unreadCovers = 0;
 		// The patch may have opened a way for some mover and belief: it removed or moved a
 		// ring, or added ground, a door, a hole-capable ring, or a wall. Only solid water and
 		// obstacle rings arriving leave it false.
@@ -322,6 +326,7 @@ namespace geometry::nav {
 		PagedVector<std::int32_t>				 coverIds;
 		std::vector<std::int32_t>				 freeTriangles;
 		std::int32_t							 liveTriangles = 0;
+		std::int32_t							 unreadCovers  = 0; // PatchReport::unreadCovers, summed
 
 		InternTable<std::vector<EdgeSource>> sourceLists;
 		InternTable<std::vector<RingId>>	 covers;
