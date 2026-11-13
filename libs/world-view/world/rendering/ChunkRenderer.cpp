@@ -594,14 +594,10 @@ namespace worldview {
 		// Flush any pending batched geometry so draw order stays correct
 		Renderer::Primitives::flush();
 
-		// Save GL state before modifying
-		GLboolean blendEnabled = glIsEnabled(GL_BLEND);
-		GLboolean depthTestEnabled = glIsEnabled(GL_DEPTH_TEST);
-		GLboolean cullFaceEnabled = glIsEnabled(GL_CULL_FACE);
-
-		glDisable(GL_BLEND); // tiles are opaque and fill their quad
-		glDisable(GL_DEPTH_TEST);
-		glDisable(GL_CULL_FACE);
+		// Tiles are opaque and fill their quad. Blend is set per draw, not fixed state, so a flush that
+		// submitted nothing leaves it as the last GL left it; depth test and culling are the renderer's
+		// fixed state, already off.
+		glDisable(GL_BLEND);
 
 		shader.use();
 
@@ -669,23 +665,6 @@ namespace worldview {
 		glActiveTexture(GL_TEXTURE0);
 
 		evictStaleTextures();
-
-		// Restore GL state
-		if (blendEnabled == GL_TRUE) {
-			glEnable(GL_BLEND);
-		} else {
-			glDisable(GL_BLEND);
-		}
-		if (depthTestEnabled == GL_TRUE) {
-			glEnable(GL_DEPTH_TEST);
-		} else {
-			glDisable(GL_DEPTH_TEST);
-		}
-		if (cullFaceEnabled == GL_TRUE) {
-			glEnable(GL_CULL_FACE);
-		} else {
-			glDisable(GL_CULL_FACE);
-		}
 	}
 
 } // namespace worldview
