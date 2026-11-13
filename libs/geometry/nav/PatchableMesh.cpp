@@ -495,11 +495,8 @@ namespace geometry::nav {
 
 	void PatchableMesh::groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const {
 		out.clear();
-		ringGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) {
+		groundRingGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) {
 			const RegisteredRing& reg = rings[static_cast<std::size_t>(r)];
-			if (reg.polygon.blocked) {
-				return;
-			}
 			for (const GroundRing& g : out) {
 				if (g.id == r) {
 					return;
@@ -840,7 +837,9 @@ namespace geometry::nav {
 	// Live rings whose outline box overlaps the box, ascending.
 	std::vector<RingId> PatchableMesh::ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const {
 		std::vector<RingId> found;
-		ringGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) { found.push_back(r); });
+		for (const BoxGrid* g : {&ringGrid, &groundRingGrid}) {
+			g->forEachInBox(lo, hi, 1, [&](std::int32_t r) { found.push_back(r); });
+		}
 		std::sort(found.begin(), found.end());
 		found.erase(std::unique(found.begin(), found.end()), found.end());
 		return found;
@@ -1105,6 +1104,7 @@ namespace geometry::nav {
 		std::vector<std::uint8_t>							 classified; // per edge index id, this patch
 		std::vector<std::int32_t>							 classifiedIds;
 		std::vector<GroundRing>								 ringsToClassify;
+		std::vector<const std::vector<Vec2i64>*>			 groundOutlines; // changed bounds rings' old and new outlines
 		std::vector<Vec2i64>								 runEnds;
 		std::vector<std::uint32_t>							 runEndList;
 		bool												 coversGrew = false; // the cover read added to s
@@ -1333,9 +1333,9 @@ namespace geometry::nav {
 
 	void PatchableMesh::Patch::groundAfter(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const {
 		out.clear();
-		m.ringGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) {
+		m.groundRingGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) {
 			const RegisteredRing& reg = m.rings[static_cast<std::size_t>(r)];
-			if (changed(r) || reg.polygon.blocked) {
+			if (changed(r)) {
 				return;
 			}
 			for (const GroundRing& g : out) {
@@ -1402,6 +1402,15 @@ namespace geometry::nav {
 		if (work.classified.size() < m.edgeOf.size()) {
 			work.classified.resize(m.edgeOf.size(), 0);
 		}
+		work.groundOutlines.clear();
+		for (const auto& [id, c] : changes) {
+			if (c.hadOld && !m.rings[static_cast<std::size_t>(id)].polygon.blocked) {
+				work.groundOutlines.push_back(&oldOutline(id));
+			}
+			if (c.hasNew && !c.polygon.blocked) {
+				work.groundOutlines.push_back(&c.polygon.ring);
+			}
+		}
 		for (std::size_t i = 0; i < work.edgesNear.size(); ++i) {
 			const EdgeSource	  z	  = work.edgesNear[i];
 			const RegisteredRing& reg = m.rings[static_cast<std::size_t>(z.ring)];
@@ -1412,11 +1421,18 @@ namespace geometry::nav {
 			if (work.classified[static_cast<std::size_t>(id)] != 0) {
 				continue;
 			}
+			// An outline whose closed area misses the segment changes nothing along it.
+			const Vec2i64 p = edgeStart(reg.polygon.ring, z.edge);
+			const Vec2i64 q = edgeEnd(reg.polygon.ring, z.edge);
+			if (std::none_of(work.groundOutlines.begin(), work.groundOutlines.end(),
+							 [&](const std::vector<Vec2i64>* outline) { return segmentMeetsArea(p, q, *outline); })) {
+				continue;
+			}
 			work.classified[static_cast<std::size_t>(id)] = 1;
 			work.classifiedIds.push_back(id);
-			Vec2i64 zLo = edgeStart(reg.polygon.ring, z.edge);
-			Vec2i64 zHi = zLo;
-			growBox(zLo, zHi, edgeEnd(reg.polygon.ring, z.edge));
+			Vec2i64 zLo = p;
+			Vec2i64 zHi = p;
+			growBox(zLo, zHi, q);
 			m.groundRingsInBox(zLo, zHi, work.groundNear);
 			groundBoundaries({&reg.polygon.ring, reg.lo, reg.hi, reg.sample.counterClockwise, z.ring}, z.edge, work.groundNear, work.boundaryScratch,
 							 work.intervalsBefore);
@@ -2339,11 +2355,13 @@ namespace geometry::nav {
 			const Vec2i64		 hi = p + Vec2i64{kOffGroundReachMm + 1, kOffGroundReachMm + 1};
 			std::vector<RingId>& near = work.ringsNear;
 			near.clear();
-			m.ringGrid.forEachInBox(lo, hi, 1, [&](std::int32_t r) {
-				if (!changed(r)) {
-					near.push_back(r);
-				}
-			});
+			for (const BoxGrid* g : {&m.ringGrid, &m.groundRingGrid}) {
+				g->forEachInBox(lo, hi, 1, [&](std::int32_t r) {
+					if (!changed(r)) {
+						near.push_back(r);
+					}
+				});
+			}
 			for (const auto& [id, c] : changes) {
 				if (c.hasNew && boxesOverlap(c.lo, c.hi, lo, hi)) {
 					near.push_back(id);
@@ -2779,7 +2797,7 @@ namespace geometry::nav {
 		for (auto& [id, c] : changes) {
 			RegisteredRing& reg = m.rings[static_cast<std::size_t>(id)];
 			if (reg.live) {
-				m.ringGrid.erase(id, reg.lo, reg.hi);
+				m.ringGridOf(reg.polygon).erase(id, reg.lo, reg.hi);
 				m.unindexRingEdges(id);
 			}
 			if (!c.hasNew) {
@@ -2787,7 +2805,7 @@ namespace geometry::nav {
 				m.freeRings.push_back(id);
 				continue;
 			}
-			m.ringGrid.insert(id, c.lo, c.hi);
+			m.ringGridOf(c.polygon).insert(id, c.lo, c.hi);
 			reg.polygon = std::move(c.polygon);
 			reg.sample	= std::move(c.sample);
 			reg.lo		= c.lo;
@@ -3742,10 +3760,13 @@ namespace geometry::nav {
 		}
 		std::size_t indexedRings = 0;
 		bool		deadRing	 = false;
-		ringGrid.forEachEntry([&](std::int32_t r) {
-			++indexedRings;
-			deadRing = deadRing || r < 0 || r >= static_cast<RingId>(rings.size()) || !rings[static_cast<std::size_t>(r)].live;
-		});
+		for (const bool blocked : {true, false}) {
+			(blocked ? ringGrid : groundRingGrid).forEachEntry([&](std::int32_t r) {
+				++indexedRings;
+				deadRing = deadRing || r < 0 || r >= static_cast<RingId>(rings.size()) || !rings[static_cast<std::size_t>(r)].live ||
+						   rings[static_cast<std::size_t>(r)].polygon.blocked != blocked;
+			});
+		}
 		if (deadRing || indexedRings < liveRings) {
 			return "ring index holds a dead ring";
 		}

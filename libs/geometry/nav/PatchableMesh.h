@@ -356,7 +356,9 @@ namespace geometry::nav {
 		bool					   boxQueryOpen = false;
 
 		BoxGrid					grid;		 // live triangles
-		BoxGrid					ringGrid;	 // live rings, by outline box
+		BoxGrid					ringGrid;		// live blocked rings, by outline box
+		BoxGrid					groundRingGrid; // live bounds rings, by outline box
+		BoxGrid&				ringGridOf(const NavInputPolygon& p) { return p.blocked ? ringGrid : groundRingGrid; }
 		BoxGrid					edgeGrid;	 // live blocked rings' edges, by segment box
 		// Live bounds edges with boundary intervals, by segment box: most of a bounds edge
 		// inside the union is dissolved, and an edge with none can touch nothing.

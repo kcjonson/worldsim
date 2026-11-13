@@ -1113,7 +1113,9 @@ namespace {
 	NAV_BENCH_TAG(RRingGrid, RBoxGrid::visit(v, out))
 	NAV_BENCH_TAG(REdgeGrid, RBoxGrid::visit(v, out))
 	NAV_BENCH_TAG(RGroundEdgeGrid, RBoxGrid::visit(v, out))
+	NAV_BENCH_TAG(RGroundRingGrid, RBoxGrid::visit(v, out))
 	NAV_BENCH_LEAF(RBoundary)
+	template struct Rob<&PM::groundRingGrid, RGroundRingGrid>;
 	template struct Rob<&PM::grid, RGrid>;
 	template struct Rob<&PM::ringGrid, RRingGrid>;
 	template struct Rob<&PM::edgeGrid, REdgeGrid>;
@@ -1205,7 +1207,7 @@ namespace {
 		covers.add(visitAll<RCoverTags>(m));
 		out.lines.emplace_back("covers (interned) and cover tags", covers);
 		const Tally grid	 = visitAll<RGrid>(m);
-		const Tally ringGrid = visitAll<RRingGrid>(m);
+		const Tally ringGrid = visitAll<RRingGrid, RGroundRingGrid>(m);
 		const Tally edgeGrid	   = visitAll<REdgeGrid>(m);
 		const Tally groundEdgeGrid = visitAll<RGroundEdgeGrid>(m);
 		out.lines.emplace_back("triangle box grid", grid);
