@@ -22,7 +22,7 @@ namespace geometry::nav {
 		constexpr double kPi = 3.14159265358979323846;
 
 		// The Taylor series of cos (sine false) or sin (sine true) at |x| <= pi, summed until a term
-		// no longer changes the sum.
+		// stops changing the sum.
 		consteval double series(double x, bool sine) {
 			double term = sine ? x : 1.0;
 			double sum	= term;

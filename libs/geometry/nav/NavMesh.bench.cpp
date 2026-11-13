@@ -1,5 +1,5 @@
 // Cost of buildNavMesh on real game inputs: the dumped quickstart regions as they
-// are, the same regions with every tree removed, a tree-density sweep and an
+// are, the same regions with every placed obstacle removed, an obstacle-density sweep and an
 // area sweep over controlDump, and a split of the arrangement and constrained
 // Delaunay stages from the rest of the build.
 
@@ -32,7 +32,7 @@ namespace {
 	constexpr std::int64_t kProvenancePlaced	 = -2;
 	constexpr std::int64_t kProvenanceBorder = -3;
 
-	enum class Fixture { ManyTrees, Control, RealRings };
+	enum class Fixture { ManyObstacles, Control, RealRings };
 
 	NavMeshInput dumpInput(const std::vector<geometry::nav::testdata::DumpRing>& rings) {
 		NavMeshInput in;
@@ -47,16 +47,16 @@ namespace {
 		NavMeshInput in;
 		in.polygons.push_back(NavInputPolygon{td::realBorderRing(), false, kProvenanceBorder});
 		in.polygons.push_back(NavInputPolygon{td::realWaterRing(), true, kProvenanceWater, kNoOpening, true});
-		for (const std::vector<Vec2i64>& tree : td::realTreeRings()) {
-			in.polygons.push_back(NavInputPolygon{tree, true, kProvenancePlaced});
+		for (const std::vector<Vec2i64>& obstacle : td::realObstacleRings()) {
+			in.polygons.push_back(NavInputPolygon{obstacle, true, kProvenancePlaced});
 		}
 		return in;
 	}
 
 	NavMeshInput fixtureInput(Fixture f) {
 		switch (f) {
-			case Fixture::ManyTrees:
-				return dumpInput(geometry::nav::testdata::manyTreesDump());
+			case Fixture::ManyObstacles:
+				return dumpInput(geometry::nav::testdata::manyObstaclesDump());
 			case Fixture::Control:
 				return dumpInput(geometry::nav::testdata::controlDump());
 			case Fixture::RealRings:
@@ -65,14 +65,14 @@ namespace {
 		return {};
 	}
 
-	std::int64_t treeCount(const NavMeshInput& in) {
+	std::int64_t obstacleCount(const NavMeshInput& in) {
 		return std::count_if(in.polygons.begin(), in.polygons.end(), [](const NavInputPolygon& p) {
 			return p.provenanceId == kProvenancePlaced;
 		});
 	}
 
-	// Border and water kept, then only the first `keep` tree rings in input order.
-	NavMeshInput keepTrees(const NavMeshInput& in, std::int64_t keep) {
+	// Border and water kept, then only the first `keep` placed obstacle rings in input order.
+	NavMeshInput keepObstacles(const NavMeshInput& in, std::int64_t keep) {
 		NavMeshInput out;
 		std::int64_t kept = 0;
 		for (const NavInputPolygon& p : in.polygons) {
@@ -145,7 +145,7 @@ namespace {
 
 	void setInputCounters(benchmark::State& state, const NavMeshInput& in) {
 		state.counters["rings"] = static_cast<double>(in.polygons.size());
-		state.counters["trees"] = static_cast<double>(treeCount(in));
+		state.counters["obstacles"] = static_cast<double>(obstacleCount(in));
 	}
 
 	void runBuild(benchmark::State& state, const NavMeshInput& in) {
@@ -164,18 +164,18 @@ namespace {
 	}
 
 	void BM_BuildNavMeshTerrainOnly(benchmark::State& state, Fixture f) {
-		runBuild(state, keepTrees(fixtureInput(f), 0));
+		runBuild(state, keepObstacles(fixtureInput(f), 0));
 	}
 
-	void BM_ControlTreeDensity(benchmark::State& state) {
-		runBuild(state, keepTrees(fixtureInput(Fixture::Control), state.range(0)));
+	void BM_ControlObstacleDensity(benchmark::State& state) {
+		runBuild(state, keepObstacles(fixtureInput(Fixture::Control), state.range(0)));
 	}
 
 	void densityArgs(benchmark::internal::Benchmark* b) {
 		for (const std::int64_t n : {0, 64, 128, 256, 512}) {
 			b->Arg(n);
 		}
-		b->Arg(treeCount(fixtureInput(Fixture::Control)));
+		b->Arg(obstacleCount(fixtureInput(Fixture::Control)));
 	}
 
 	void BM_ControlAreaTiled(benchmark::State& state) {
@@ -183,7 +183,7 @@ namespace {
 	}
 
 	void BM_ControlStageArrangement(benchmark::State& state, bool terrainOnly) {
-		const NavMeshInput				in		 = keepTrees(fixtureInput(Fixture::Control), terrainOnly ? 0 : INT64_MAX);
+		const NavMeshInput				in		 = keepObstacles(fixtureInput(Fixture::Control), terrainOnly ? 0 : INT64_MAX);
 		const std::vector<InputSegment> segments = navSegments(in);
 		std::size_t						vertices = 0;
 		for (auto _ : state) {
@@ -196,7 +196,7 @@ namespace {
 	}
 
 	void BM_ControlStageArrangementCdt(benchmark::State& state, bool terrainOnly) {
-		const NavMeshInput				in		 = keepTrees(fixtureInput(Fixture::Control), terrainOnly ? 0 : INT64_MAX);
+		const NavMeshInput				in		 = keepObstacles(fixtureInput(Fixture::Control), terrainOnly ? 0 : INT64_MAX);
 		const std::vector<InputSegment> segments = navSegments(in);
 		std::size_t						triangles = 0;
 		for (auto _ : state) {
@@ -216,15 +216,15 @@ namespace {
 
 } // namespace
 
-BENCHMARK_CAPTURE(BM_BuildNavMesh, manyTrees, Fixture::ManyTrees)->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_BuildNavMesh, manyObstacles, Fixture::ManyObstacles)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_BuildNavMesh, control, Fixture::Control)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_BuildNavMesh, realRings, Fixture::RealRings)->Unit(benchmark::kMillisecond);
 
-BENCHMARK_CAPTURE(BM_BuildNavMeshTerrainOnly, manyTrees, Fixture::ManyTrees)->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_BuildNavMeshTerrainOnly, manyObstacles, Fixture::ManyObstacles)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_BuildNavMeshTerrainOnly, control, Fixture::Control)->Unit(benchmark::kMillisecond);
 BENCHMARK_CAPTURE(BM_BuildNavMeshTerrainOnly, realRings, Fixture::RealRings)->Unit(benchmark::kMillisecond);
 
-BENCHMARK(BM_ControlTreeDensity)->Apply(densityArgs)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_ControlObstacleDensity)->Apply(densityArgs)->Unit(benchmark::kMillisecond);
 
 BENCHMARK(BM_ControlAreaTiled)->DenseRange(1, 4)->Unit(benchmark::kMillisecond);
 

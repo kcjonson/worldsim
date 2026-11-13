@@ -493,9 +493,9 @@ TEST(MeshComponents, LabelsEqualAFloodAfterEveryPatch) {
 	RecordProperty("VisitedPerPatch", visitedPerPatch.str());
 }
 
-// Real game rings: trees in and out over a chunk with water. Labels stay a flood's, and the
-// per-patch flood work stays local.
-TEST(MeshComponents, RealRingsTreesInAndOut) {
+// Real game rings: placed obstacles in and out over ground with water. Labels stay a flood's,
+// and the per-patch flood work stays local.
+TEST(MeshComponents, RealRingsObstaclesInAndOut) {
 	namespace td = geometry::nav::testdata;
 	PatchableMesh mesh;
 	mesh.applyPatch(adding({bounds(td::realBorderRing()), blocked(td::realWaterRing(), kWater, true)}));
@@ -503,13 +503,13 @@ TEST(MeshComponents, RealRingsTreesInAndOut) {
 	std::mt19937		rng(5);
 	std::vector<RingId> placed;
 	Totals				totals;
-	const auto&			trees = td::realTreeRings();
-	for (std::size_t i = 0; i < trees.size(); ++i) {
-		const PatchReport r = mesh.applyPatch(adding({blocked(trees[i])}));
+	const auto&			obstacles = td::realObstacleRings();
+	for (std::size_t i = 0; i < obstacles.size(); ++i) {
+		const PatchReport r = mesh.applyPatch(adding({blocked(obstacles[i])}));
 		placed.push_back(r.added.front());
 		totals.add(mesh.components().lastUpkeep());
 		if (i % 25 == 0) {
-			ASSERT_TRUE(matchesFlood(mesh)) << "tree " << i;
+			ASSERT_TRUE(matchesFlood(mesh)) << "obstacle " << i;
 		}
 	}
 	ASSERT_TRUE(matchesFlood(mesh));
@@ -593,8 +593,8 @@ TEST(MeshComponents, EpochMovesOnlyWhenAWayMayOpen) {
 	const MeshComponents& comps = mesh.components();
 
 	std::uint64_t	  before = comps.epoch();
-	const PatchReport tree	 = mesh.applyPatch(adding({blocked(rect(10, 10, 13, 13))}));
-	EXPECT_FALSE(tree.opens);
+	const PatchReport obstacle = mesh.applyPatch(adding({blocked(rect(10, 10, 13, 13))}));
+	EXPECT_FALSE(obstacle.opens);
 	EXPECT_EQ(comps.epoch(), before);
 
 	// Posted like the strip, so joining keeps ground on both sides and merges labels.
@@ -623,9 +623,9 @@ TEST(MeshComponents, OffMeshOrBlockedIsNeverSame) {
 	mesh.applyPatch(adding({bounds(rect(0, 0, 100, 40)), blocked(rect(20, 10, 30, 20))}));
 	const MeshComponents& comps = mesh.components();
 	const std::int32_t	  floor = mesh.locate(at(5, 5));
-	const std::int32_t	  tree	= mesh.locate(at(25, 15));
+	const std::int32_t	  obstacle = mesh.locate(at(25, 15));
 	EXPECT_TRUE(comps.sameComponent(floor, floor));
-	EXPECT_FALSE(comps.sameComponent(tree, tree));
+	EXPECT_FALSE(comps.sameComponent(obstacle, obstacle));
 	EXPECT_FALSE(comps.sameComponent(floor, -1));
 	EXPECT_FALSE(comps.sameComponent(-1, -1));
 }

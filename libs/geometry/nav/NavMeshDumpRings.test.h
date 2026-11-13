@@ -1,53 +1,18 @@
 #pragma once
 
-// Navmesh inputs dumped from the running quickstart game while chasing WOR-493.
-// Each function returns one NavMeshInput's polygons exactly as
-// NavInputBuilder::buildInput handed them to buildNavMesh, in the same order:
-// the region border, then water, then tree colliders. World millimetres;
-// provenance ids match nav: water=-1, tree=-2, border=-3.
+// Nav mesh inputs captured from the running quickstart game. Each function returns one
+// capture's polygons in input order: the border, then water, then placed obstacle
+// colliders. World millimetres; provenance ids are water=-1, placed obstacle=-2, border=-3.
 //
-//   streamingPinchDump  navinput_5_r0, the region centred at (5330, 4200) mm with a
-//                       64 m half-extent, built while chunks (0,-1) and (-1,0) were
-//                       still generating. Only the two diagonal chunks' clipped river
-//                       pieces are present and they meet at exactly one point, the
-//                       chunk corner (0, 0). The per-face triangulator rejected the
-//                       land face's pinched hole cycle, so the region read unwalkable.
-//   manyTreesDump       navinput_8_r0, the same region once every chunk was ready: 4
-//                       water rings and 512 trees. Eberly hole bridging failed on the
-//                       land face with 305 tree holes and dropped it (walkable 1285 of
-//                       2481 triangles, the east half unwalkable).
-//   controlDump         navinput_0_r0, an earlier session's build of the same area
-//                       (639 trees) that the per-face triangulator handled.
-//   farRegionDump       navinput_4_r1, a region at x = 70 km, so absolute coordinates
-//                       near 7e7 mm: two hole-capable waterline rings sharing a
-//                       chunk-border edge, plus 10 trees.
-//
-// REGENERATING THESE FIXTURES
-// ---------------------------
-// 1. Dump every build's input in NavigationSystem::launchBuild, right after
-//    buildInput returns `input` (one file per build, numbered in build order):
-//
-//      static int seq = 0;
-//      const std::string name = "navinput_" + std::to_string(seq++) + "_r" + std::to_string(region.id) + ".txt";
-//      if (FILE* f = std::fopen(name.c_str(), "w")) {
-//          for (const gnav::NavInputPolygon& p : input.polygons) {
-//              std::fprintf(f, "RING prov=%lld blocked=%d hole=%d n=%zu:", (long long)p.provenanceId,
-//                           p.blocked ? 1 : 0, p.holeCapable ? 1 : 0, p.ring.size());
-//              for (const geometry::Vec2i64& v : p.ring)
-//                  std::fprintf(f, " %lld,%lld", (long long)v.x, (long long)v.y);
-//              std::fprintf(f, "\n");
-//          }
-//          std::fclose(f);
-//      }
-//
-// 2. Run the quickstart (apps/world-sim --scene=game, seed 424242). The first region
-//    builds several times while its chunks stream in; the pinch needs a build taken
-//    while only the diagonal chunks around (0, 0) are ready. Pan 70 km east for a
-//    far region.
-// 3. Rewrite each line `RING prov=P blocked=B hole=H n=N: x,y x,y ...` as the entry
-//    `{P, B, H, {{x, y}, {x, y}, ...}}` (B and H as bools) in the matching function
-//    below, and update the ring counts NavMesh.test.cpp asserts.
-// 4. Delete the dump.
+//   streamingPinchDump  A 64 m half-extent area centred at (5330, 4200) mm, with only the
+//                       two diagonal chunks' clipped river pieces present. They meet at
+//                       exactly one point, the chunk corner (0, 0), a pinched hole cycle.
+//   manyObstaclesDump   The same area with every chunk's water: 4 water rings and 512
+//                       placed obstacles, 305 of them holes in one land face.
+//   controlDump         The same area with 639 placed obstacles.
+//   farRegionDump       An area at x = 70 km, so absolute coordinates near 7e7 mm: two
+//                       hole-capable waterline rings sharing a chunk-border edge, plus 10
+//                       placed obstacles.
 
 #include "../core/Vec2i64.h"
 
@@ -75,8 +40,8 @@ namespace geometry::nav::testdata {
 		return rings;
 	}
 
-	// 1 border + 4 water rings + 512 trees.
-	inline const std::vector<DumpRing>& manyTreesDump() {
+	// 1 border + 4 water rings + 512 placed obstacles.
+	inline const std::vector<DumpRing>& manyObstaclesDump() {
 		static const std::vector<DumpRing> rings = {
 			{-3, false, false, {{-58670, -59800}, {69330, -59800}, {69330, 68200}, {-58670, 68200}}},
 			{-1, true, false, {{-8021, 0}, {-5352, -2632}, {-3300, -5454}, {-1913, -6898}, {-1473, -7796}, {0, -12317}, {0, 0}}},
@@ -620,7 +585,7 @@ namespace geometry::nav::testdata {
 		return rings;
 	}
 
-	// 1 border + 4 water rings + 639 trees.
+	// 1 border + 4 water rings + 639 placed obstacles.
 	inline const std::vector<DumpRing>& controlDump() {
 		static const std::vector<DumpRing> rings = {
 			{-3, false, false, {{-58670, -59797}, {69330, -59797}, {69330, 68203}, {-58670, 68203}}},
@@ -1292,7 +1257,7 @@ namespace geometry::nav::testdata {
 		return rings;
 	}
 
-	// 1 border + 2 hole-capable water rings + 10 trees.
+	// 1 border + 2 hole-capable water rings + 10 placed obstacles.
 	inline const std::vector<DumpRing>& farRegionDump() {
 		static const std::vector<DumpRing> rings = {
 			{-3, false, false, {{69966000, -64000}, {70094000, -64000}, {70094000, 64000}, {69966000, 64000}}},

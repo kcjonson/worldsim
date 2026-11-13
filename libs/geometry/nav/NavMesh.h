@@ -58,7 +58,7 @@ namespace geometry::nav {
 	constexpr std::int64_t kUnconstrainedWidth = INT64_MAX;
 
 	// One tagged input ring. One or more polygons in NavMeshInput have blocked=false:
-	// the walkable bounds (the chunk/region border, or several disjoint regions).
+	// the walkable bounds (a border, or several disjoint ones).
 	// All others are blocked obstacles. `ring` is a simple closed ring (no repeated
 	// closing vertex); winding is normalized internally, callers need not pre-orient
 	// it.

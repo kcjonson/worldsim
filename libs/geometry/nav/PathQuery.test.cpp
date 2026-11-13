@@ -604,7 +604,7 @@ TEST(PathQuery, ObtuseVertexPinchIsRespected) {
 }
 
 TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
-	// A terrain obstacle (negative provenance sentinel, like water/tree) always
+	// A terrain obstacle (negative provenance sentinel, like water) always
 	// blocks: belief does not apply to common-knowledge terrain. A full-width water
 	// band partitions the border; no route across under empty belief OR truth.
 	NavMeshInput in;
@@ -920,10 +920,10 @@ TEST(LocateGrid, OffMeshPointsReturnMinusOne) {
 
 namespace {
 
-	constexpr std::int64_t kTreeTag = -2;
+	constexpr std::int64_t kObstacleTag = -2;
 
-	NavInputPolygon treeRect(std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
-		return {{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, kTreeTag};
+	NavInputPolygon obstacleRect(std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
+		return {{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, kObstacleTag};
 	}
 
 	double polylineLength(const PathResult& p) {
@@ -938,32 +938,32 @@ namespace {
 		return {{{0, 0}, {20000, 0}, {20000, 12000}, {0, 12000}}, false, 1};
 	}
 
-	// A 20 x 12 m field split at y = 6 m by a hedge of tree squares from x = 2 m to x =
-	// 18 m, open at both ends, with `gap` mm between trunks.
-	NavMesh hedgeMesh(std::int64_t gap = 0) {
+	// A 20 x 12 m field split at y = 6 m by a row of obstacle squares from x = 2 m to x =
+	// 18 m, open at both ends, with `gap` mm between them.
+	NavMesh obstacleRowMesh(std::int64_t gap = 0) {
 		NavMeshInput in;
 		in.polygons.push_back(field());
 		for (std::int64_t x = 2000; x < 18000; x += 1000) {
-			in.polygons.push_back(treeRect(x, 5800, x + 1000 - gap, 6200));
+			in.polygons.push_back(obstacleRect(x, 5800, x + 1000 - gap, 6200));
 		}
 		return buildNavMesh(in);
 	}
 
 } // namespace
 
-// Placed obstacles block: a goal walled in by a ring of trees is no path, and trunks 200 mm
+// Placed obstacles block: a goal walled in by a ring of obstacles is no path, and obstacles 200 mm
 // apart stay shut to a 600 mm disc, which goes round an end, while a point walks through
 // the gap. A walk's cost is its length.
 TEST(PathQuery, PlacedObstaclesBlock) {
 	NavMeshInput in;
 	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
-	in.polygons.push_back(treeRect(3000, 3000, 7000, 3500));
-	in.polygons.push_back(treeRect(3000, 6500, 7000, 7000));
-	in.polygons.push_back(treeRect(3000, 3000, 3500, 7000));
-	in.polygons.push_back(treeRect(6500, 3000, 7000, 7000));
+	in.polygons.push_back(obstacleRect(3000, 3000, 7000, 3500));
+	in.polygons.push_back(obstacleRect(3000, 6500, 7000, 7000));
+	in.polygons.push_back(obstacleRect(3000, 3000, 3500, 7000));
+	in.polygons.push_back(obstacleRect(6500, 3000, 7000, 7000));
 	EXPECT_FALSE(pathThrough(buildNavMesh(in), {1000, 5000}, {5000, 5000}, 0).reachable);
 
-	const NavMesh m = hedgeMesh(200);
+	const NavMesh m = obstacleRowMesh(200);
 	const Vec2i64 start{10100, 4000};
 	const Vec2i64 goal{10100, 8000};
 	const PathResult point = pathThrough(m, start, goal, 0);
@@ -989,9 +989,9 @@ TEST(PathQuery, OneTriangleWalkCostsItsLength) {
 TEST(PathQuery, AnEndOnAnObstacleEdgeStandsOnTheFloor) {
 	NavMeshInput in;
 	in.polygons.push_back({{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}}, false, 1});
-	in.polygons.push_back(treeRect(4000, 4000, 6000, 6000));
+	in.polygons.push_back(obstacleRect(4000, 4000, 6000, 6000));
 	const NavMesh m = buildNavMesh(in);
-	// On the trunk's east edge, where the tree's faces' corners sort before the floor's.
+	// On the obstacle's east edge, where its faces' corners sort before the floor's.
 	for (const auto& [a, b] : std::vector<std::pair<Vec2i64, Vec2i64>>{{{6000, 5000}, {9000, 5000}}, {{9000, 5000}, {6000, 5000}}, {{6000, 6000}, {9000, 6000}}}) {
 		const PathResult r = pathThrough(m, a, b, 0);
 		ASSERT_TRUE(r.reachable) << "from (" << a.x << ", " << a.y << ")";
@@ -1000,7 +1000,7 @@ TEST(PathQuery, AnEndOnAnObstacleEdgeStandsOnTheFloor) {
 }
 
 // Corner classes are kept per mesh state. A mesh assigned another's content in place,
-// buffers and all, answers as that content does: a door span where a tree stood is no
+// buffers and all, answers as that content does: a door span where an obstacle stood is no
 // corner to keep clear of.
 TEST(PathQuery, AMeshRebuiltInPlaceForgetsItsCorners) {
 	auto build = [](NavInputPolygon square) {
@@ -1009,10 +1009,10 @@ TEST(PathQuery, AMeshRebuiltInPlaceForgetsItsCorners) {
 		in.polygons.push_back(std::move(square));
 		return buildNavMesh(in);
 	};
-	NavMesh		  m		= build(treeRect(4000, 4000, 6000, 6000));
+	NavMesh		  m		= build(obstacleRect(4000, 4000, 6000, 6000));
 	const NavMesh door	= build({{{4000, 4000}, {6000, 4000}, {6000, 6000}, {4000, 6000}}, true, 7, 3});
 	// 100 mm inside the square's south edge: straight through the door span, but past the
-	// tree only round its corners.
+	// obstacle only round its corners.
 	const Vec2i64	 start{1000, 4100};
 	const Vec2i64	 goal{9000, 4100};
 	const PathResult round = pathThrough(m, start, goal, 300);
@@ -1333,7 +1333,7 @@ TEST(PathQuery, ShortestDiscWalksWrapWallEnds) {
 // when everything that could reach it cost under the cap, LimitReached when the cap cut
 // corridors off first.
 TEST(PathQuery, MaxCostFindsPathsWithinItAndNoOthers) {
-	const NavMesh	 m = hedgeMesh(200);
+	const NavMesh	 m = obstacleRowMesh(200);
 	const Vec2i64	 start{10100, 4000};
 	const Vec2i64	 goal{10100, 8000};
 	const PathResult free = pathThrough(m, start, goal, 300);
@@ -1456,8 +1456,8 @@ namespace {
 	};
 
 	// Searches over the fixtures above: found and exhausted, from the start only, from the
-	// goal first, switching between them, nearest-of, round a hedge, belief-gated, cost-capped.
-	std::vector<SearchCase> searchCases(const NavMesh& referee, const NavMesh& hedge, const NavMesh& sealedRoom, const NavMesh& doorRoom) {
+	// goal first, switching between them, nearest-of, round a row of obstacles, belief-gated, cost-capped.
+	std::vector<SearchCase> searchCases(const NavMesh& referee, const NavMesh& obstacleRow, const NavMesh& sealedRoom, const NavMesh& doorRoom) {
 		static const std::unordered_set<std::uint64_t> walls{kSegS, kSegN, kSegW, kSegE};
 		static const std::unordered_set<std::uint64_t> door{kDoorOp};
 		static const std::unordered_set<std::uint64_t> noDoors;
@@ -1473,10 +1473,10 @@ namespace {
 			out.push_back({&referee, argsFor(points[i], {points[i + 1], {2600, 200}, {5400, 3000}, {300, 3700}}, 300), "nearest-of " + std::to_string(i)});
 		}
 		for (const std::uint32_t phase : {0U, 5U, kGoalSidePhase}) {
-			out.push_back({&hedge, argsFor({10100, 4000}, {{10100, 8000}}, 300, {}, phase), "hedge phase " + std::to_string(phase)});
+			out.push_back({&obstacleRow, argsFor({10100, 4000}, {{10100, 8000}}, 300, {}, phase), "row phase " + std::to_string(phase)});
 			out.push_back({&sealedRoom, argsFor(kOutside, {kInside}, 0, BeliefFilter{&walls, &noDoors}, phase), "sealed room phase " + std::to_string(phase)});
 			out.push_back({&doorRoom, argsFor(kOutside, {kInside}, 150, BeliefFilter{&walls, &door}, phase), "door room phase " + std::to_string(phase)});
-			out.push_back({&hedge, argsFor({10100, 4000}, {{10100, 8000}}, 300, {}, phase, 100.0), "capped hedge phase " + std::to_string(phase)});
+			out.push_back({&obstacleRow, argsFor({10100, 4000}, {{10100, 8000}}, 300, {}, phase, 100.0), "capped row phase " + std::to_string(phase)});
 		}
 		return out;
 	}
@@ -1488,11 +1488,11 @@ namespace {
 // answer is pathThrough's.
 TEST(PathQuerySearch,SlicesOfAnySizeGiveTheOneShotAnswer) {
 	const NavMesh referee	 = buildRefereeMesh(refereeRects());
-	const NavMesh hedge		 = hedgeMesh(200);
+	const NavMesh obstacleRow		 = obstacleRowMesh(200);
 	const NavMesh sealedRoom = buildNavMesh(buildBoxRoom(false));
 	const NavMesh doorRoom	 = buildNavMesh(buildBoxRoom(true));
 	int			  switched	 = 0;
-	for (const SearchCase& c : searchCases(referee, hedge, sealedRoom, doorRoom)) {
+	for (const SearchCase& c : searchCases(referee, obstacleRow, sealedRoom, doorRoom)) {
 		const NavView	view = navView(*c.mesh);
 		const SearchRun whole = runInSlices(view, c.args, kRunToEnd);
 		for (const std::uint32_t slice : {1U, 7U, 1000U}) {
@@ -1590,7 +1590,7 @@ namespace {
 		for (std::int64_t x = 1500; x < 19000; x += 1700) {
 			for (std::int64_t y = 1200; y < 11000; y += 1500) {
 				const std::int64_t s = 300 + (x * 7 + y * 3) % 500;
-				edits.adds.push_back({{{x, y}, {x + s, y}, {x + s, y + s}, {x, y + s}}, true, kTreeTag});
+				edits.adds.push_back({{{x, y}, {x + s, y}, {x + s, y + s}, {x, y + s}}, true, kObstacleTag});
 			}
 		}
 		mesh.applyPatch(edits);
@@ -1646,11 +1646,11 @@ TEST(PathQuerySearch,ReadersSharingOneMeshAnswerAsAlone) {
 // (tags and widths) and the search answers exactly as before.
 TEST(PathQuerySearch,TouchedTrianglesAreAllItReads) {
 	const NavMesh referee	 = buildRefereeMesh(refereeRects());
-	const NavMesh hedge		 = hedgeMesh(200);
+	const NavMesh obstacleRow		 = obstacleRowMesh(200);
 	const NavMesh sealedRoom = buildNavMesh(buildBoxRoom(false));
 	const NavMesh doorRoom	 = buildNavMesh(buildBoxRoom(true));
 	int			  wrecked	 = 0;
-	for (const SearchCase& c : searchCases(referee, hedge, sealedRoom, doorRoom)) {
+	for (const SearchCase& c : searchCases(referee, obstacleRow, sealedRoom, doorRoom)) {
 		const SearchRun run = runInSlices(navView(*c.mesh), c.args, kRunToEnd);
 		const std::unordered_set<std::int32_t> touched(run.touched.begin(), run.touched.end());
 		EXPECT_EQ(touched.size(), run.touched.size()) << c.name << ": each id once";
@@ -1681,7 +1681,7 @@ namespace {
 		PatchableMesh mesh;
 		PatchEdits	  edits;
 		auto		  solid = [&](std::int64_t x0, std::int64_t y0, std::int64_t x1, std::int64_t y1) {
-			 edits.adds.push_back({{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, kTreeTag});
+			 edits.adds.push_back({{{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, true, kObstacleTag});
 		};
 		edits.adds.push_back({{{0, 0}, {120000, 0}, {120000, 120000}, {0, 120000}}, false, 1});
 		solid(40000, 20000, 40500, 100000);

@@ -1,6 +1,6 @@
 #pragma once
 
-// NavInputBuilder: turn live game data (a chunk's square and terrain water rings, a placed
+// NavInputBuilder: turn live game data (a mover's visibility limit, a chunk's terrain water rings, a placed
 // entity's collider, built walls and doors) into the tagged rings and door portals the
 // geometry layer's nav meshes take (geometry::nav::NavInputPolygon, DoorPortal). These are
 // PURE functions: they read game state and emit rings in integer millimeters, no ECS, no
@@ -41,7 +41,7 @@ namespace nav {
 	//
 	// Ground is the union of visibility limits; water hangs over it per chunk. Water is the
 	// chunk's terrain polygon navRings, never tiles (terrain-polygons D1, D9), already clipped
-	// to the chunk's 512 m square, so two neighbours' water meets along bit-identical border
+	// to the chunk's 512 m extent, so two neighbours' water meets along bit-identical border
 	// edges and never overlaps.
 
 	// A mover's visibility limit: geometry::nav::limitPolygon round `centreMm` holding the disc of

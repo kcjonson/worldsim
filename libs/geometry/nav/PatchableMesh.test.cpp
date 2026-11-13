@@ -36,7 +36,7 @@ using namespace geometry::nav;
 namespace {
 
 	constexpr std::int64_t kWater  = -1;
-	constexpr std::int64_t kTree   = -2;
+	constexpr std::int64_t kObstacle   = -2;
 	constexpr std::int64_t kBorder = -3;
 
 	// What the mesh should hold: every live ring under its id.
@@ -453,7 +453,7 @@ namespace {
 		return ::testing::AssertionSuccess();
 	}
 
-	NavInputPolygon blocked(std::vector<Vec2i64> ring, std::int64_t provenance = kTree, bool holeCapable = false) {
+	NavInputPolygon blocked(std::vector<Vec2i64> ring, std::int64_t provenance = kObstacle, bool holeCapable = false) {
 		return NavInputPolygon{std::move(ring), true, provenance, kNoOpening, holeCapable};
 	}
 
@@ -565,18 +565,18 @@ namespace {
 		}
 	}
 
-	// --- Game fixtures: border and water, then trees in random batches ------------------
+	// --- Game fixtures: border and water, then obstacles in random batches ------------------
 
 	struct Fixture {
 		std::vector<NavInputPolygon> base;
-		std::vector<NavInputPolygon> trees;
+		std::vector<NavInputPolygon> obstacles;
 	};
 
 	Fixture dumpFixture(const std::vector<testdata::DumpRing>& rings) {
 		Fixture f;
 		for (const testdata::DumpRing& r : rings) {
 			NavInputPolygon poly{r.ring, r.blocked, r.provenanceId, kNoOpening, r.holeCapable};
-			(r.provenanceId == kTree ? f.trees : f.base).push_back(std::move(poly));
+			(r.provenanceId == kObstacle ? f.obstacles : f.base).push_back(std::move(poly));
 		}
 		return f;
 	}
@@ -585,8 +585,8 @@ namespace {
 		Fixture f;
 		f.base.push_back(bounds(testdata::realBorderRing()));
 		f.base.push_back(blocked(testdata::realWaterRing(), kWater, true));
-		for (const std::vector<Vec2i64>& tree : testdata::realTreeRings()) {
-			f.trees.push_back(blocked(tree));
+		for (const std::vector<Vec2i64>& obstacle : testdata::realObstacleRings()) {
+			f.obstacles.push_back(blocked(obstacle));
 		}
 		return f;
 	}
@@ -601,7 +601,7 @@ namespace {
 		}
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "after the base rings";
 
-		std::vector<NavInputPolygon> pending = fixture.trees;
+		std::vector<NavInputPolygon> pending = fixture.obstacles;
 		shuffle(pending, rng);
 		std::vector<RingId> placed;
 		int					step = 0;
@@ -640,7 +640,7 @@ namespace {
 		}
 		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "seed " << seed << " at the end";
 
-		// Remove every tree in a few batches: the mesh returns to border and water.
+		// Remove every obstacle in a few batches: the mesh returns to border and water.
 		shuffle(placed, rng);
 		while (!placed.empty()) {
 			PatchEdits		  edits;
@@ -649,7 +649,7 @@ namespace {
 			placed.resize(placed.size() - count);
 			h.apply(edits);
 		}
-		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "seed " << seed << " with every tree removed";
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "seed " << seed << " with every obstacle removed";
 	}
 
 	// --- Adversarial soups: tiny coordinates so rings overlap, share edges, touch, nest --
@@ -706,7 +706,7 @@ namespace {
 	void runSoup(std::uint32_t seed, int steps) {
 		std::mt19937 rng(seed);
 		Harness		 h;
-		// Two chunk squares sharing x = 20; the second arrives part way through, and
+		// Two ground squares sharing x = 20; the second arrives part way through, and
 		// sometimes leaves and comes back.
 		const NavInputPolygon west		= bounds(rect(0, 0, 20, 40));
 		const NavInputPolygon east		= bounds(rect(20, 0, 40, 40));
@@ -790,17 +790,17 @@ TEST(PatchableMesh, RingOffGroundTouchesNothing) {
 	EXPECT_TRUE(matchesFresh(slanted.mesh, slanted.model));
 }
 
-TEST(PatchableMesh, AddRemoveMoveTree) {
+TEST(PatchableMesh, AddRemoveMoveObstacle) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
-	const RingId tree = h.add(blocked(rect(4000, 4000, 4500, 4600)));
+	const RingId obstacle = h.add(blocked(rect(4000, 4000, 4500, 4600)));
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 	PatchEdits move;
-	move.moves.push_back({tree, rect(4300, 4100, 4800, 4700)});
+	move.moves.push_back({obstacle, rect(4300, 4100, 4800, 4700)});
 	h.apply(move);
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 	PatchEdits remove;
-	remove.removes.push_back(tree);
+	remove.removes.push_back(obstacle);
 	h.apply(remove);
 	EXPECT_EQ(h.mesh.liveTriangleCount(), 2);
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
@@ -813,10 +813,10 @@ TEST(PatchableMesh, SquaresMeetingAtACorner) {
 	h.add(bounds(rect(0, 0, 10000, 10000)));
 	h.add(bounds(rect(10000, 10000, 20000, 20000)));
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
-	const RingId tree = h.add(blocked(rect(9500, 9000, 10500, 10000)));
+	const RingId obstacle = h.add(blocked(rect(9500, 9000, 10500, 10000)));
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 	PatchEdits remove;
-	remove.removes.push_back(tree);
+	remove.removes.push_back(obstacle);
 	h.apply(remove);
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 	h.add(bounds(rect(10000, 0, 20000, 10000)));
@@ -914,7 +914,7 @@ TEST(PatchableMesh, LocateTieBreaksOnCorners) {
 	EXPECT_EQ(h.mesh.locate({1001, 500}), -1);
 }
 
-// Chunk squares sharing a side, in both orders, with a tree hanging off the first one's
+// Ground squares sharing a side, in both orders, with an obstacle hanging off the first one's
 // edge: its outside part has no triangles until the neighbour arrives and completes it.
 // When the first square leaves, the second's side is the mesh's constrained boundary again;
 // when it comes back, the side is dissolved again.
@@ -1071,11 +1071,11 @@ TEST(PatchableMesh, ObstacleInsideASquareShowsInItsCover) {
 	Harness		 h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
 	h.add(bounds(rect(10000, 0, 20000, 10000)));
-	const RingId tree = h.add(blocked(rect(4000, 4000, 5000, 5000)));
+	const RingId obstacle = h.add(blocked(rect(4000, 4000, 5000, 5000)));
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
 	const std::int32_t inside = h.mesh.locate({4500, 4500});
 	ASSERT_GE(inside, 0);
-	EXPECT_EQ(h.mesh.cover(inside), (std::vector<RingId>{kGroundToken, tree}));
+	EXPECT_EQ(h.mesh.cover(inside), (std::vector<RingId>{kGroundToken, obstacle}));
 	const std::int32_t outside = h.mesh.locate({15000, 5000});
 	ASSERT_GE(outside, 0);
 	EXPECT_EQ(h.mesh.cover(outside), std::vector<RingId>{kGroundToken});
@@ -1227,7 +1227,7 @@ namespace {
 
 } // namespace
 
-// Two chunk squares with posts crowding their shared side: the triangles over the side
+// Two ground squares with posts crowding their shared side: the triangles over the side
 // are shaped like those over a line of the same posts inside one square.
 TEST(PatchableMesh, SharedSideMeshesLikeTheInterior) {
 	Harness h;
@@ -1337,10 +1337,10 @@ TEST(PatchableMesh, WaterIslandAndPondParity) {
 	water.adds.push_back(blocked(rect(4000, 4000, 6000, 6000), kWater, true));
 	h.apply(water);
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
-	const RingId tree = h.add(blocked(rect(2500, 4500, 3500, 5500)));
+	const RingId obstacle = h.add(blocked(rect(2500, 4500, 3500, 5500)));
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
 	PatchEdits move;
-	move.moves.push_back({tree, rect(5500, 5500, 6500, 6500)});
+	move.moves.push_back({obstacle, rect(5500, 5500, 6500, 6500)});
 	h.apply(move);
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
 }
@@ -1357,8 +1357,8 @@ TEST(PatchableMesh, OverlappingAddsInOneBatchMerge) {
 	EXPECT_TRUE(matchesFresh(h.mesh, h.model));
 }
 
-TEST(PatchableMesh, FixtureManyTreesMatchesFreshBuild) {
-	runFixtureSequence(dumpFixture(testdata::manyTreesDump()), 11, 6);
+TEST(PatchableMesh, FixtureManyObstaclesMatchesFreshBuild) {
+	runFixtureSequence(dumpFixture(testdata::manyObstaclesDump()), 11, 6);
 }
 
 TEST(PatchableMesh, FixtureControlMatchesFreshBuild) {
@@ -1384,9 +1384,9 @@ TEST(PatchableMesh, AdversarialSoupsMatchFreshBuild) {
 
 // Snap rounding leaves a face here straddling the original line of a ring, so one exact
 // sample of the face would read a side that depends on which of its triangles is
-// sampled; a tree wholly off ground, touching nothing on it, changes the triangulation
+// sampled; an obstacle wholly off ground, touching nothing on it, changes the triangulation
 // enough to move that sample. buildNavMesh classifies by ring parity, as the patched
-// mesh does, so the two agree with and without the tree.
+// mesh does, so the two agree with and without the obstacle.
 TEST(PatchableMesh, BuilderTagFollowsRingParity) {
 	const std::vector<NavInputPolygon> rings = {
 		bounds(rect(0, 0, 20, 40)),
@@ -1403,12 +1403,12 @@ TEST(PatchableMesh, BuilderTagFollowsRingParity) {
 			edits.adds.push_back(blocked({{-4, 42}, {-5, 41}, {2, 46}}));
 		}
 		h.apply(edits);
-		EXPECT_TRUE(matchesFresh(h.mesh, h.model)) << (withOffGround ? "with" : "without") << " the tree off ground";
+		EXPECT_TRUE(matchesFresh(h.mesh, h.model)) << (withOffGround ? "with" : "without") << " the obstacle off ground";
 	}
 }
 
-// Hole sizes on the Y confluence with every tree in: each tree taken out and put back
-// alone, sorted by what it touches, plus a tree across the border. Recorded, not
+// Hole sizes on the Y confluence with every obstacle in: each obstacle taken out and put back
+// alone, sorted by what it touches, plus an obstacle across the border. Recorded, not
 // asserted: the design's cost depends on them.
 TEST(PatchableMesh, HoleSizesOnRealRings) {
 	const Fixture fixture = realRingsFixture();
@@ -1416,7 +1416,7 @@ TEST(PatchableMesh, HoleSizesOnRealRings) {
 	{
 		PatchEdits edits;
 		edits.adds = fixture.base;
-		edits.adds.insert(edits.adds.end(), fixture.trees.begin(), fixture.trees.end());
+		edits.adds.insert(edits.adds.end(), fixture.obstacles.begin(), fixture.obstacles.end());
 		h.apply(edits);
 	}
 	const NavInputPolygon& water = fixture.base[1];
@@ -1437,21 +1437,21 @@ TEST(PatchableMesh, HoleSizesOnRealRings) {
 		}
 		return false;
 	};
-	std::vector<RingId> trees;
+	std::vector<RingId> obstacles;
 	for (const auto& [id, poly] : h.model) {
-		if (poly.provenanceId == kTree) {
-			trees.push_back(id);
+		if (poly.provenanceId == kObstacle) {
+			obstacles.push_back(id);
 		}
 	}
-	for (RingId tree : trees) {
-		const NavInputPolygon poly = h.model[tree];
+	for (RingId obstacle : obstacles) {
+		const NavInputPolygon poly = h.model[obstacle];
 		bool				  alone = true;
 		for (const auto& [other, otherPoly] : h.model) {
-			alone = alone && (other == tree || !overlaps(poly, otherPoly));
+			alone = alone && (other == obstacle || !overlaps(poly, otherPoly));
 		}
 		const std::string kind = overlaps(poly, water) ? "shoreline" : (alone ? "lone" : "");
 		PatchEdits		  remove;
-		remove.removes.push_back(tree);
+		remove.removes.push_back(obstacle);
 		h.apply(remove);
 		const PatchReport report = h.mesh.applyPatch([&] {
 			PatchEdits add;
@@ -1489,10 +1489,10 @@ TEST(PatchableMesh, HoleSizesOnRealRings) {
 namespace {
 
 	// Rooms behind wall bands with door spans, door portals on the spans' faces, and
-	// trees scattered over walls and floor alike.
+	// obstacles scattered over walls and floor alike.
 	struct WallsAndDoors {
 		std::vector<NavInputPolygon> base;
-		std::vector<NavInputPolygon> rings; // walls, door spans, trees
+		std::vector<NavInputPolygon> rings; // walls, door spans, obstacles
 		std::vector<DoorPortal>		 doors;
 	};
 
@@ -1530,7 +1530,7 @@ namespace {
 	}
 
 	WallsAndDoors fixtureRings(const Fixture& f) {
-		return {f.base, f.trees, {}};
+		return {f.base, f.obstacles, {}};
 	}
 
 	// A mesh that reached `rings` through a random sequence: batches in, some taken out
@@ -1707,7 +1707,7 @@ TEST(PatchableMesh, WallsAndDoorsQueriesMatchBuildNavMesh) {
 }
 
 TEST(PatchableMesh, FixtureQueriesMatchBuildNavMesh) {
-	const std::array<Fixture, 3> fixtures = {dumpFixture(testdata::manyTreesDump()), dumpFixture(testdata::controlDump()), realRingsFixture()};
+	const std::array<Fixture, 3> fixtures = {dumpFixture(testdata::manyObstaclesDump()), dumpFixture(testdata::controlDump()), realRingsFixture()};
 	for (std::size_t f = 0; f < fixtures.size(); ++f) {
 		const WallsAndDoors input = fixtureRings(fixtures[f]);
 		Reached				r;
@@ -1747,8 +1747,8 @@ namespace {
 					g.rings.push_back(tile.base[b]);
 					g.rings.back().ring = translated(g.rings.back().ring, offset);
 				}
-				for (const NavInputPolygon& tree : tile.trees) {
-					g.rings.push_back(tree);
+				for (const NavInputPolygon& obstacle : tile.obstacles) {
+					g.rings.push_back(obstacle);
 					g.rings.back().ring = translated(g.rings.back().ring, offset);
 				}
 			}
@@ -2124,10 +2124,10 @@ TEST(PatchableMesh, PathsIgnoreEditHistory) {
 	EXPECT_EQ(r.identical, r.compared);
 }
 
-// A start or goal exactly on a tree's edge or corner stands on the floor beside it:
-// point location settles a shared edge by geometry, which may name the tree's face, and
+// A start or goal exactly on an obstacle's edge or corner stands on the floor beside it:
+// point location settles a shared edge by geometry, which may name the obstacle's face, and
 // the query looks past it to a face it can cross.
-TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
+TEST(PatchableMesh, EndpointsOnAnObstacleEdgeStandOnTheFloor) {
 	PatchableMesh mesh;
 	PatchEdits	  edits;
 	edits.adds.push_back(bounds(rect(0, 0, 4000, 4000)));
@@ -2135,14 +2135,14 @@ TEST(PatchableMesh, EndpointsOnATreeEdgeStandOnTheFloor) {
 	mesh.applyPatch(edits);
 	mesh.refreshWidths();
 	const NavView view		  = mesh.view();
-	int			  onTreeFace = 0;
+	int			  onObstacleFace = 0;
 	for (const Vec2i64& p : {Vec2i64{1500, 1000}, Vec2i64{2000, 1500}, Vec2i64{1500, 2000}, Vec2i64{1000, 1500}, Vec2i64{1000, 1000},
 							 Vec2i64{2000, 2000}, Vec2i64{2000, 1000}, Vec2i64{1000, 2000}}) {
-		onTreeFace += isFloorFace(mesh.triangles()[static_cast<std::size_t>(mesh.locate(p))]) ? 0 : 1;
+		onObstacleFace += isFloorFace(mesh.triangles()[static_cast<std::size_t>(mesh.locate(p))]) ? 0 : 1;
 		EXPECT_TRUE(pathThrough(view, p, {3500, 3500}, 0).reachable) << "from (" << p.x << ", " << p.y << ")";
 		EXPECT_TRUE(pathThrough(view, {3500, 3500}, p, 0).reachable) << "to (" << p.x << ", " << p.y << ")";
 	}
-	EXPECT_GT(onTreeFace, 0) << "some of these points must locate to the tree's face for the test to bind";
+	EXPECT_GT(onObstacleFace, 0) << "some of these points must locate to the obstacle's face for the test to bind";
 }
 
 // Where the history picks different free diagonals, paths may differ, within the
@@ -2181,9 +2181,9 @@ TEST(PatchableMesh, DoorEditsChangeTagsOnly) {
 TEST(PatchableMesh, DeadSlotsAreUnreachable) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
-	const RingId tree = h.add(blocked(rect(4000, 4000, 6000, 6000)));
+	const RingId obstacle = h.add(blocked(rect(4000, 4000, 6000, 6000)));
 	PatchEdits	 remove;
-	remove.removes.push_back(tree);
+	remove.removes.push_back(obstacle);
 	h.apply(remove);
 	h.mesh.refreshWidths();
 	const NavView view = h.mesh.view();
@@ -2210,9 +2210,9 @@ TEST(PatchableMesh, OneRefreshServesManyPatches) {
 	mesh.refreshWidths();
 	std::mt19937		rng(21);
 	std::vector<RingId> placed;
-	for (std::size_t i = 0; i < fixture.trees.size(); i += 37) {
+	for (std::size_t i = 0; i < fixture.obstacles.size(); i += 37) {
 		PatchEdits edits;
-		edits.adds.push_back(fixture.trees[i]);
+		edits.adds.push_back(fixture.obstacles[i]);
 		if (!placed.empty() && pick(rng, 3) == 0) {
 			edits.removes.push_back(placed.back());
 			placed.pop_back();
@@ -2244,25 +2244,25 @@ TEST(PatchableMesh, OneRefreshServesRemovedGroundAndReplacedTriangles) {
 	const std::int64_t side = hi.x - lo.x;
 	PatchEdits		   base;
 	base.adds = fixture.base;
-	base.adds.insert(base.adds.end(), fixture.trees.begin(), fixture.trees.end());
+	base.adds.insert(base.adds.end(), fixture.obstacles.begin(), fixture.obstacles.end());
 	base.adds.push_back(bounds(rect(hi.x, lo.y, hi.x + side, hi.y))); // a neighbour square
 	const PatchReport first = mesh.applyPatch(base);
 	mesh.refreshWidths();
 	ASSERT_TRUE(mesh.validate().empty()) << mesh.validate();
 	const RingId neighbour = first.added.back();
 
-	// A tree beside the shared side, then the same ground re-derived by two more patches.
-	PatchEdits addTree;
-	addTree.adds.push_back(blocked(rect(hi.x - 1500, (lo.y + hi.y) / 2, hi.x - 900, (lo.y + hi.y) / 2 + 600)));
-	const RingId tree = mesh.applyPatch(addTree).added.front();
+	// An obstacle beside the shared side, then the same ground re-derived by two more patches.
+	PatchEdits addObstacle;
+	addObstacle.adds.push_back(blocked(rect(hi.x - 1500, (lo.y + hi.y) / 2, hi.x - 900, (lo.y + hi.y) / 2 + 600)));
+	const RingId obstacle = mesh.applyPatch(addObstacle).added.front();
 	EXPECT_FALSE(mesh.widthsCurrent());
-	PatchEdits moveTree;
-	moveTree.moves.push_back({tree, rect(hi.x - 1200, (lo.y + hi.y) / 2 + 300, hi.x - 600, (lo.y + hi.y) / 2 + 900)});
-	mesh.applyPatch(moveTree);
-	PatchEdits removeTrees;
-	removeTrees.removes.push_back(first.added[fixture.base.size()]);
-	removeTrees.removes.push_back(first.added[fixture.base.size() + 1]);
-	mesh.applyPatch(removeTrees);
+	PatchEdits moveObstacle;
+	moveObstacle.moves.push_back({obstacle, rect(hi.x - 1200, (lo.y + hi.y) / 2 + 300, hi.x - 600, (lo.y + hi.y) / 2 + 900)});
+	mesh.applyPatch(moveObstacle);
+	PatchEdits removeObstacles;
+	removeObstacles.removes.push_back(first.added[fixture.base.size()]);
+	removeObstacles.removes.push_back(first.added[fixture.base.size() + 1]);
+	mesh.applyPatch(removeObstacles);
 	// The neighbour square goes: ground beside the shared side loses its far side.
 	PatchEdits removeGround;
 	removeGround.removes.push_back(neighbour);
@@ -2287,7 +2287,7 @@ TEST(PatchableMesh, WidthStampWrapKeepsWidths) {
 	Harness		  h;
 	PatchEdits	  edits;
 	edits.adds = fixture.base;
-	edits.adds.insert(edits.adds.end(), fixture.trees.begin(), fixture.trees.end());
+	edits.adds.insert(edits.adds.end(), fixture.obstacles.begin(), fixture.obstacles.end());
 	h.apply(edits);
 	const NavView			  view = h.mesh.view();
 	WidthSearch				  search;
@@ -2324,9 +2324,9 @@ TEST(PatchableMesh, ViewTakenBeforePatch) {
 	const Vec2i64		 a{1000, 1000};
 	const Vec2i64		 b{15000, 15000};
 	ASSERT_TRUE(pathThrough(early, a, b, 300).reachable);
-	PatchEdits moreTrees;
-	moreTrees.adds.push_back(blocked(rect(4000, 4000, 4600, 4500)));
-	r.h.mesh.applyPatch(moreTrees);
+	PatchEdits moreObstacles;
+	moreObstacles.adds.push_back(blocked(rect(4000, 4000, 4600, 4500)));
+	r.h.mesh.applyPatch(moreObstacles);
 	EXPECT_NE(early.epoch(), epoch);
 	EXPECT_FALSE(early.widthsCurrent());
 	EXPECT_DEBUG_DEATH(EXPECT_FALSE(pathThrough(early, a, b, 300).reachable), "widths lag");
@@ -2400,9 +2400,9 @@ TEST(PatchableMesh, EqualAreaTieBreakIgnoresHistory) {
 TEST(PatchableMesh, MisuseIsRefusedInRelease) {
 	Harness h;
 	h.add(bounds(rect(0, 0, 10000, 10000)));
-	const RingId tree = h.add(blocked(rect(4000, 4000, 4500, 4500)));
+	const RingId obstacle = h.add(blocked(rect(4000, 4000, 4500, 4500)));
 	PatchEdits	 twice;
-	twice.removes = {tree, tree};
+	twice.removes = {obstacle, obstacle};
 	EXPECT_DEBUG_DEATH(h.mesh.applyPatch(twice), "editing a dead ring");
 	EXPECT_DEBUG_DEATH(h.mesh.applyPatch(twice), "editing a dead ring");
 	h.mesh.refreshWidths();

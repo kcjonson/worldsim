@@ -102,7 +102,7 @@ namespace {
 } // namespace
 
 // ---------------------------------------------------------------------------
-// Ground: chunk squares and their water (terrain rings, D9)
+// Ground and water (terrain rings, D9)
 // ---------------------------------------------------------------------------
 
 namespace {
@@ -253,8 +253,7 @@ TEST(NavInputBuilder, Water_LakeCoveringChunk_OnlyIslandWalkable) {
 }
 
 // Two chunks' navRings meet along x = 512 m with bit-identical border corners, each side
-// splitting the border edge at its own extra vertex, and each chunk's square splitting it every
-// 16 m. In one mesh the coincident edges merge: no floor inside the lake (no gap), and the
+// splitting the border edge at its own extra vertex. In one mesh the coincident edges merge: no floor inside the lake (no gap), and the
 // triangles tile both chunks exactly (no sliver, no overlap).
 TEST(NavInputBuilder, Water_LakeAcrossChunkBorder_NoGapNoSliver) {
 	FakeTerrain terrain;
@@ -360,12 +359,12 @@ TEST(NavInputBuilder, Water_MissingNeighbourHasNoGround) {
 }
 
 // ---------------------------------------------------------------------------
-// Flora
+// Placed obstacles
 // ---------------------------------------------------------------------------
 
-// Flora tests register into the global AssetRegistry singleton; clear it before
+// Placed obstacle tests register into the global AssetRegistry singleton; clear it before
 // and after each so they neither inherit nor leak definitions across the suite.
-class NavFloraTest : public ::testing::Test {
+class NavPlacedObstacleTest : public ::testing::Test {
   protected:
 	void SetUp() override { AssetRegistry::Get().clearDefinitions(); }
 	void TearDown() override { AssetRegistry::Get().clearDefinitions(); }
@@ -384,16 +383,16 @@ namespace {
 	}
 } // namespace
 
-TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
+TEST_F(NavPlacedObstacleTest, RectEntity_EmitsPaddedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition tree;
-	tree.defName = "Test_NavTree";
-	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
-	reg.registerTestDefinition(tree);
+	AssetDefinition obstacle;
+	obstacle.defName = "Test_NavObstacle";
+	obstacle.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.1F, 0.1F}});
+	reg.registerTestDefinition(obstacle);
 
 	SpatialIndex index(4.0F);
 	PlacedEntity e;
-	e.defName = "Test_NavTree";
+	e.defName = "Test_NavObstacle";
 	e.position = {10.0F, 20.0F};
 	e.scale = 1.0F;
 	index.insert(e);
@@ -426,16 +425,16 @@ TEST_F(NavFloraTest, RectEntity_EmitsPaddedQuad) {
 
 // A rotated entity turns the rect into an oriented quad (OBB): the 4 corners are
 // the rotated rect, not an axis-aligned box.
-TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
+TEST_F(NavPlacedObstacleTest, RectEntity_RotationProducesOrientedQuad) {
 	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition tree;
-	tree.defName = "Test_NavRotTree";
-	tree.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.2F}}); // non-square so rotation is visible
-	reg.registerTestDefinition(tree);
+	AssetDefinition obstacle;
+	obstacle.defName = "Test_NavRotObstacle";
+	obstacle.setCollision(0, {.type = CollisionShapeType::Rect, .halfExtentsMeters = {0.5F, 0.2F}}); // non-square so rotation is visible
+	reg.registerTestDefinition(obstacle);
 
 	SpatialIndex index(4.0F);
 	PlacedEntity e;
-	e.defName  = "Test_NavRotTree";
+	e.defName  = "Test_NavRotObstacle";
 	e.position = {10.0F, 20.0F};
 	e.scale	   = 1.0F;
 	e.rotation = 3.14159265358979323846F / 4.0F; // 45 degrees
@@ -483,16 +482,16 @@ TEST_F(NavFloraTest, RectEntity_RotationProducesOrientedQuad) {
 	}
 }
 
-TEST_F(NavFloraTest, NoCollision_EmitsNothing) {
+TEST_F(NavPlacedObstacleTest, NoCollision_EmitsNothing) {
 	AssetRegistry& reg = AssetRegistry::Get();
-	AssetDefinition bush;
-	bush.defName = "Test_NavBush";
+	AssetDefinition noCollision;
+	noCollision.defName = "Test_NavNoCollision";
 	// collision defaults to None.
-	reg.registerTestDefinition(bush);
+	reg.registerTestDefinition(noCollision);
 
 	SpatialIndex index(4.0F);
 	PlacedEntity e;
-	e.defName = "Test_NavBush";
+	e.defName = "Test_NavNoCollision";
 	e.position = {5.0F, 5.0F};
 	index.insert(e);
 

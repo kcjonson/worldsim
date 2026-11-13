@@ -546,7 +546,7 @@ namespace {
 		return best;
 	}
 
-	// A CK terrain ring (water/flora): negative provenance, always blocks.
+	// A terrain ring (water): negative provenance, always blocks.
 	NavInputPolygon water(std::vector<Vec2i64> ring, std::int64_t id) {
 		return {std::move(ring), true, id};
 	}
@@ -886,7 +886,7 @@ TEST(NavMesh, DisjointWaterBodiesParity) {
 	}
 }
 
-// SOLID PRIORITY: a solid flora ring overlapping a water outer ring stays blocked.
+// SOLID PRIORITY: a solid placed obstacle ring overlapping a water outer ring stays blocked.
 // A point inside both the (even-depth-walkable) water region and a solid obstacle
 // must be tagged by the solid ring, never left as floor.
 TEST(NavMesh, SolidObstacleOverWaterStaysBlocked) {
@@ -902,22 +902,22 @@ TEST(NavMesh, SolidObstacleOverWaterStaysBlocked) {
 		NavInputPolygon{{{1000, 1000}, {9000, 1000}, {9000, 9000}, {1000, 9000}}, true, kProvenanceWater, kNoOpening, true});
 	in.polygons.push_back(
 		NavInputPolygon{{{3000, 3000}, {7000, 3000}, {7000, 7000}, {3000, 7000}}, true, kProvenanceWater, kNoOpening, true});
-	// Solid flora (NOT holeCapable) on the island.
+	// Solid placed obstacle (NOT holeCapable) on the island.
 	in.polygons.push_back(
 		NavInputPolygon{{{4500, 4500}, {5500, 4500}, {5500, 5500}, {4500, 5500}}, true, kProvenancePlaced});
 
 	NavMesh m = buildNavMesh(in);
 	ASSERT_FALSE(m.triangles.empty());
 
-	std::vector<Vec2i64> tree = {{4500, 4500}, {5500, 4500}, {5500, 5500}, {4500, 5500}};
-	int inTree = 0;
+	std::vector<Vec2i64> obstacle = {{4500, 4500}, {5500, 4500}, {5500, 5500}, {4500, 5500}};
+	int inObstacle = 0;
 	for (const NavTriangle& t : m.triangles) {
-		if (pointInPolygon(centroid(m.vertices, t.v), tree) == PointInPolygon::Inside) {
+		if (pointInPolygon(centroid(m.vertices, t.v), obstacle) == PointInPolygon::Inside) {
 			EXPECT_EQ(t.faceBlocker, kProvenancePlaced) << "a solid obstacle over walkable water-island land must stay blocked";
-			++inTree;
+			++inObstacle;
 		}
 	}
-	EXPECT_GT(inTree, 0) << "the solid obstacle interior must be triangulated and tagged";
+	EXPECT_GT(inObstacle, 0) << "the solid obstacle interior must be triangulated and tagged";
 }
 
 // COINCIDENT CONSTRAINT EDGES: two chunks' clipped water rings meet along a shared
@@ -1068,12 +1068,12 @@ TEST(NavMesh, RiverExitsArea_OuterWaterSurroundsBorder_LandHasFloor) {
 
 // THE REAL IN-GAME GEOMETRY. The quickstart area is a Y-shaped river confluence:
 // three branches meet in the middle and each exits the 128 m area at a different
-// edge. The old tile marcher emitted the whole water region as ONE CCW holeCapable
+// edge. The water region is ONE CCW holeCapable
 // ring (a thin, highly non-convex loop occupying ~6% of the area); the open grass
 // the colonist stands on, including the spawn at (1000, 4000), is the ~94% OUTSIDE
 // that ring. The border is the area rectangle. Captured from the in-game dump (see
-// NavMeshRealRings.test.h); trees are omitted as they do not bear on whether the
-// open grass between them is floor.
+// NavMeshRealRings.test.h); placed obstacles are omitted as they do not bear on whether
+// the open grass between them is floor.
 //
 // This reproduces the walkable=0 symptom: the land (depth 0, outside the single
 // water ring) must be floor, and only the thin water loop interior (depth 1) must
@@ -1086,19 +1086,19 @@ TEST(NavMesh, RealYConfluence_OpenGrassIsFloor) {
 	constexpr std::int64_t kProvenancePlaced = -2;
 
 	// Fixture-integrity guard: the captured rings have known sizes (border quad, 564-vertex
-	// water loop, 637 tree colliders). A truncated or partially-edited NavMeshRealRings.test.h
+	// water loop, 637 placed obstacle colliders). A truncated or partially-edited NavMeshRealRings.test.h
 	// would otherwise silently change what this regression test exercises; fail loudly instead.
 	ASSERT_EQ(testdata::realBorderRing().size(), 4u) << "border ring fixture corrupted";
 	ASSERT_EQ(testdata::realWaterRing().size(), 564u) << "water ring fixture corrupted (expected 564 verts)";
-	ASSERT_EQ(testdata::realTreeRings().size(), 637u) << "tree ring fixture corrupted (expected 637 rings)";
+	ASSERT_EQ(testdata::realObstacleRings().size(), 637u) << "obstacle ring fixture corrupted (expected 637 rings)";
 
 	NavMeshInput in;
 	in.polygons.push_back(NavInputPolygon{testdata::realBorderRing(), false, kProvenanceBorder});
 	in.polygons.push_back(
 		NavInputPolygon{testdata::realWaterRing(), true, kProvenanceWater, kNoOpening, true});
-	// The 637 scattered tree colliders on the open grass -- solid (not holeCapable).
-	for (const std::vector<Vec2i64>& tree : testdata::realTreeRings()) {
-		in.polygons.push_back(NavInputPolygon{tree, true, kProvenancePlaced});
+	// The 637 scattered placed obstacle colliders on the open grass -- solid (not holeCapable).
+	for (const std::vector<Vec2i64>& obstacle : testdata::realObstacleRings()) {
+		in.polygons.push_back(NavInputPolygon{obstacle, true, kProvenancePlaced});
 	}
 
 	NavMesh m = buildNavMesh(in);
@@ -1247,8 +1247,8 @@ namespace {
 		std::string examples;
 	};
 
-	// Samples a lattice over the borders' bounding box at `stepMm`, offset off the
-	// chunk and pin lines, keeping points strictly inside a border and clear of every
+	// Samples a lattice over the borders' bounding box at `stepMm` from its
+	// low corner (offset by half a step and a few mm), keeping points strictly inside a border and clear of every
 	// ring edge. Each must land on a triangle whose terrain tag matches the oracle.
 	OracleSweep sweepAgainstOracle(const NavMeshInput& in, const NavMesh& m, std::int64_t stepMm) {
 		static constexpr std::int64_t kClearMm = 2;
@@ -1317,7 +1317,7 @@ namespace {
 	}
 
 	// Probe points around the colonist's spawn: covered, and walkable unless the
-	// oracle says a tree or the river covers them.
+	// oracle says a placed obstacle or the river covers them.
 	void expectProbePointsMatchOracle(const NavMeshInput& in, const NavMesh& m) {
 		const RingOracle oracle(in);
 		const Vec2i64	 probes[] = {{10000, 10000}, {20000, 0},	   {0, 20000},		 {5330, 4200},
@@ -1337,7 +1337,7 @@ namespace {
 		return {std::move(ring), true, -1};
 	}
 
-	NavInputPolygon treeRing(std::vector<Vec2i64> ring) {
+	NavInputPolygon obstacleRing(std::vector<Vec2i64> ring) {
 		return {std::move(ring), true, -2};
 	}
 
@@ -1347,8 +1347,8 @@ namespace {
 
 } // namespace
 
-// Chunks (0,-1) and (-1,0) still generating: the two diagonal river pieces meet only
-// at the chunk corner (0,0), so the land face's hole boundary pinches there.
+// Two diagonal river pieces meet only
+// at the corner (0,0), so the land face's hole boundary pinches there.
 TEST(NavMesh, RealStreamingPinch_WholeRegionTriangulatedAndTagged) {
 	ASSERT_EQ(testdata::streamingPinchDump().size(), 3u) << "fixture corrupted";
 	const NavMeshInput in = dumpInput(testdata::streamingPinchDump());
@@ -1357,10 +1357,10 @@ TEST(NavMesh, RealStreamingPinch_WholeRegionTriangulatedAndTagged) {
 	expectProbePointsMatchOracle(in, m);
 }
 
-// 305 tree holes in one land face, the layout Eberly hole bridging failed on.
-TEST(NavMesh, RealManyTreeHoles_WholeRegionTriangulatedAndTagged) {
-	ASSERT_EQ(testdata::manyTreesDump().size(), 517u) << "fixture corrupted";
-	const NavMeshInput in = dumpInput(testdata::manyTreesDump());
+// 305 placed obstacle holes in one land face.
+TEST(NavMesh, RealManyObstacleHoles_WholeRegionTriangulatedAndTagged) {
+	ASSERT_EQ(testdata::manyObstaclesDump().size(), 517u) << "fixture corrupted";
+	const NavMeshInput in = dumpInput(testdata::manyObstaclesDump());
 	const NavMesh	   m  = buildNavMesh(in);
 	expectWholeBorderTriangulated(in, m, 1000);
 	expectProbePointsMatchOracle(in, m);
@@ -1384,7 +1384,7 @@ TEST(NavMesh, RealFarRegion_WholeRegionTriangulatedAndTagged) {
 // planar straight-line graph on real input: no crossings, no vertex inside an edge.
 TEST(NavMesh, RealDumps_ArrangementIsPlanarStraightLineGraph) {
 	for (const std::vector<testdata::DumpRing>* dump :
-		 {&testdata::streamingPinchDump(), &testdata::manyTreesDump(), &testdata::farRegionDump()}) {
+		 {&testdata::streamingPinchDump(), &testdata::manyObstaclesDump(), &testdata::farRegionDump()}) {
 		std::vector<InputSegment> segments;
 		for (const testdata::DumpRing& r : *dump) {
 			for (std::size_t i = 0; i < r.ring.size(); ++i) {
@@ -1444,18 +1444,18 @@ TEST(NavMesh, BlockedRingsTouchingBorderAtOneVertex) {
 	NavMeshInput in;
 	in.polygons.push_back(border(square(0, 0, 10000)));
 	in.polygons.push_back(waterRing({{5000, 0}, {7000, 2000}, {5000, 4000}, {3000, 2000}}));
-	in.polygons.push_back(treeRing({{10000, 10000}, {8000, 9500}, {7000, 7000}, {9500, 8000}}));
+	in.polygons.push_back(obstacleRing({{10000, 10000}, {8000, 9500}, {7000, 7000}, {9500, 8000}}));
 	expectWholeBorderTriangulated(in, buildNavMesh(in), 250);
 }
 
-// Tree colliders in a diagonal chain, each touching the next at one corner.
-TEST(NavMesh, TreeSquaresTouchingAtCorners) {
+// Placed obstacle colliders in a diagonal chain, each touching the next at one corner.
+TEST(NavMesh, ObstacleSquaresTouchingAtCorners) {
 	NavMeshInput in;
 	in.polygons.push_back(border(square(0, 0, 6000)));
-	in.polygons.push_back(treeRing(square(1000, 1000, 1000)));
-	in.polygons.push_back(treeRing(square(2000, 2000, 1000)));
-	in.polygons.push_back(treeRing(square(3000, 3000, 1000)));
-	in.polygons.push_back(treeRing(square(3000, 1000, 1000))); // touches the middle one's other corner
+	in.polygons.push_back(obstacleRing(square(1000, 1000, 1000)));
+	in.polygons.push_back(obstacleRing(square(2000, 2000, 1000)));
+	in.polygons.push_back(obstacleRing(square(3000, 3000, 1000)));
+	in.polygons.push_back(obstacleRing(square(3000, 1000, 1000))); // touches the middle one's other corner
 	expectWholeBorderTriangulated(in, buildNavMesh(in), 100);
 }
 
@@ -1466,13 +1466,13 @@ TEST(NavMesh, CollinearHoleGrid) {
 	in.polygons.push_back(border(square(0, 0, 11000)));
 	for (std::int64_t row = 0; row < 10; ++row) {
 		for (std::int64_t col = 0; col < 10; ++col) {
-			in.polygons.push_back(treeRing(square(1000 + col * 1000, 1000 + row * 1000, 300)));
+			in.polygons.push_back(obstacleRing(square(1000 + col * 1000, 1000 + row * 1000, 300)));
 		}
 	}
 	expectWholeBorderTriangulated(in, buildNavMesh(in), 100);
 }
 
-// Random scenes: rotated tree and water rectangles overlapping each other and the
+// Random scenes: rotated obstacle and water rectangles overlapping each other and the
 // border (crossings the arrangement snap-rounds), solid and hole-capable water, and
 // lattice squares that meet at corners and share edges. Some scenes sit 70 km out.
 TEST(NavMesh, RandomObstacleScenesMatchOracle) {

@@ -1,11 +1,11 @@
-// NavigationSystem through its public API on a synthetic forest (nav-mesh-variable-resolution.md
-// section 6): 3x3 loaded chunks (1.5 km square), a meandering 8 m river across the middle, and a
-// colony 12 m from a chunk side where the river runs about 30 m north. The forest is the game's
-// since the forest-floor change (PR 365): a tree every ~3.5 m (about 80 per 1,000 m2, 1,300 per
-// 128 m square), each sapling, mature or veteran by the oak's weights (0.15, 0.6, 0.25) with that
-// class's trunk rect (half extents 0.125, 0.225, 0.36 m). WORLDSIM_BENCH_FOREST=sparse runs the
-// forest every number before that change was measured on: a tree every ~5.2 m (about 600 per 128 m
-// square), all with a 0.3 m half extent. Every scenario has its own NavigationSystem and its own
+// NavigationSystem through its public API on a synthetic field of placed obstacles
+// (nav-mesh-variable-resolution.md section 6): 3x3 loaded chunks (1.5 km square), a meandering 8 m
+// river across the middle, and a colony 12 m from a chunk side where the river runs about 30 m
+// north. The obstacles stand at the game's density: one every ~3.5 m (about 80 per 1,000 m2, 1,300
+// per 128 m square), each sapling, mature or veteran by the oak's weights (0.15, 0.6, 0.25) with
+// that class's collision rect (half extents 0.125, 0.225, 0.36 m). WORLDSIM_BENCH_FOREST=sparse
+// runs a sparser field: one every ~5.2 m (about 600 per 128 m square), all with a 0.3 m half
+// extent. Every scenario has its own NavigationSystem and its own
 // placement, so scenarios are independent of each other and of --benchmark_filter.
 //
 // Ticks go through World::update, which runs update() and then endTick(), where the tick's patches
@@ -113,23 +113,23 @@ namespace {
 			std::llround(static_cast<double>(ecs::kDefaultSightRadius + ecs::NavigationSystem::kSightBufferMeters) * static_cast<double>(geometry::kMillimetersPerMeter)));
 	}
 
-	// The forest's layout, by WORLDSIM_BENCH_FOREST (see the file comment).
-	struct ForestLayout {
+	// The obstacle field's layout, by WORLDSIM_BENCH_FOREST (see the file comment).
+	struct ObstacleLayout {
 		double spacingM;
 		bool   ageClasses; // the oak's three classes, else one 0.3 m rect
 	};
-	ForestLayout forestLayout() {
+	ObstacleLayout obstacleLayout() {
 		const char* which = std::getenv("WORLDSIM_BENCH_FOREST");
 		if (which != nullptr && std::strcmp(which, "sparse") == 0) {
-			return {.spacingM = 5.22, .ageClasses = false}; // 128 m square / 600 trees
+			return {.spacingM = 5.22, .ageClasses = false}; // 128 m square / 600 obstacles
 		}
-		return {.spacingM = 3.54, .ageClasses = true}; // 1,000 m2 / 80 trees
+		return {.spacingM = 3.54, .ageClasses = true}; // 1,000 m2 / 80 obstacles
 	}
 	constexpr float	 kWorldMinM	   = 0.0F;
 	constexpr float	 kWorldMaxM	   = 1536.0F; // chunks 0..2 on each axis
 	constexpr float	 kAgentRadius  = 0.3F;
 	const glm::vec2	 kColony{500.0F, 555.0F};		// 12 m from the x = 512 chunk side; the river is ~30 m north
-	const char*		kTreeDef = "Bench_NavTree";
+	const char*		kObstacleDef = "Bench_NavObstacle";
 
 	std::filesystem::path projectRoot() {
 		std::filesystem::path p = __FILE__;
@@ -139,9 +139,9 @@ namespace {
 	float riverY(double x) { return static_cast<float>(600.0 + 22.0 * std::sin(x / 90.0)); }
 
 	// Grassland cut by one meandering river along y ~ 600 m, 8 m wide.
-	class ForestRiverSampler : public world::IWorldSampler {
+	class RiverSampler : public world::IWorldSampler {
 	  public:
-		ForestRiverSampler() {
+		RiverSampler() {
 			double s = 0.0;
 			for (double x = -600.0; x < 2200.0; x += 20.0) {
 				const double y0	 = riverY(x);
@@ -254,37 +254,37 @@ namespace {
 		return log;
 	}
 
-	struct Tree {
+	struct Obstacle {
 		world::ChunkCoordinate coord;
 		glm::vec2			   position;
 		std::uint8_t		   ageClass = 0;
 	};
 
-	// The world every scenario shares: chunks, where the trees stand, and the registries.
-	struct Forest {
+	// The world every scenario shares: chunks, where the obstacles stand, and the registries.
+	struct ObstacleField {
 		std::unique_ptr<world::ChunkManager> chunks;
-		std::vector<Tree>					 trees;
+		std::vector<Obstacle>					 obstacles;
 
-		Forest() {
+		ObstacleField() {
 			foundation::Logger::initialize();
 			assets::ConstructionRegistry::Get().clear();
 			assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string());
 
-			const ForestLayout		layout = forestLayout();
-			assets::AssetDefinition tree;
-			tree.defName = kTreeDef;
+			const ObstacleLayout		layout = obstacleLayout();
+			assets::AssetDefinition obstacle;
+			obstacle.defName = kObstacleDef;
 			if (layout.ageClasses) {
-				tree.ageClasses = {{.name = "sapling", .weight = 0.15F}, {.name = "mature", .weight = 0.6F}, {.name = "veteran", .weight = 0.25F}};
+				obstacle.ageClasses = {{.name = "sapling", .weight = 0.15F}, {.name = "mature", .weight = 0.6F}, {.name = "veteran", .weight = 0.25F}};
 				const float halfExtents[] = {0.125F, 0.225F, 0.36F};
 				for (std::uint8_t a = 0; a < 3; ++a) {
-					tree.setCollision(a, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {halfExtents[a], halfExtents[a]}});
+					obstacle.setCollision(a, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {halfExtents[a], halfExtents[a]}});
 				}
 			} else {
-				tree.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
+				obstacle.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {0.3F, 0.3F}});
 			}
-			assets::AssetRegistry::Get().registerTestDefinition(tree);
+			assets::AssetRegistry::Get().registerTestDefinition(obstacle);
 
-			chunks = std::make_unique<world::ChunkManager>(std::make_unique<ForestRiverSampler>());
+			chunks = std::make_unique<world::ChunkManager>(std::make_unique<RiverSampler>());
 			chunks->setLoadRadius(1);
 			chunks->setUnloadRadius(3);
 			chunks->update({768.0F, 768.0F});
@@ -301,21 +301,21 @@ namespace {
 					if (std::abs(p.y - riverY(p.x)) >= 6.0F) {
 						const float	  pick	   = static_cast<float>(hashU32(h) & 0xFFFFU) / 65535.0F;
 						const uint8_t ageClass = !layout.ageClasses ? 0 : pick < 0.15F ? 0 : pick < 0.75F ? 1 : 2;
-						trees.push_back({world::worldToChunk({p.x, p.y}), p, ageClass});
+						obstacles.push_back({world::worldToChunk({p.x, p.y}), p, ageClass});
 					}
 				}
 			}
 		}
 
-		// A placement holding every tree, each chunk marked processed.
+		// A placement holding every obstacle, each chunk marked processed.
 		std::unique_ptr<assets::PlacementExecutor> place(std::unordered_set<world::ChunkCoordinate>& processed) const {
 			auto placement = std::make_unique<assets::PlacementExecutor>(assets::AssetRegistry::Get());
 			std::unordered_map<world::ChunkCoordinate, assets::AsyncChunkPlacementResult> byChunk;
-			for (const Tree& t : trees) {
+			for (const Obstacle& t : obstacles) {
 				assets::AsyncChunkPlacementResult& r = byChunk[t.coord];
 				r.coord								 = t.coord;
 				assets::PlacedEntity e;
-				e.defName			= kTreeDef;
+				e.defName			= kObstacleDef;
 				e.position			= t.position;
 				e.traits.ageClass	= t.ageClass;
 				r.spatialIndex.insert(e);
@@ -327,8 +327,8 @@ namespace {
 			return placement;
 		}
 
-		const Tree& nearest(glm::vec2 p) const {
-			return *std::min_element(trees.begin(), trees.end(), [p](const Tree& a, const Tree& b) {
+		const Obstacle& nearest(glm::vec2 p) const {
+			return *std::min_element(obstacles.begin(), obstacles.end(), [p](const Obstacle& a, const Obstacle& b) {
 				const glm::vec2 da = a.position - p;
 				const glm::vec2 db = b.position - p;
 				return da.x * da.x + da.y * da.y < db.x * db.x + db.y * db.y;
@@ -336,8 +336,8 @@ namespace {
 		}
 	};
 
-	const Forest& forest() {
-		static const Forest f;
+	const ObstacleField& obstacleField() {
+		static const ObstacleField f;
 		return f;
 	}
 
@@ -378,8 +378,8 @@ namespace {
 		std::vector<ecs::EntityID>				   movers;
 		std::chrono::microseconds				   gap;
 
-		explicit Rig(std::int64_t gapMs, world::ChunkManager* chunks = forest().chunks.get())
-			: placement(forest().place(processed)),
+		explicit Rig(std::int64_t gapMs, world::ChunkManager* chunks = obstacleField().chunks.get())
+			: placement(obstacleField().place(processed)),
 			  nav(world.registerSystem<ecs::NavigationSystem>()),
 			  gap(std::chrono::microseconds(gapMs * 1000)) {
 			nav.setChunkManager(chunks);
@@ -387,7 +387,7 @@ namespace {
 			nav.setConstructionWorld(&construction);
 		}
 
-		// Swaps the forest's placement for placement holding nothing over the loaded chunks, for a
+		// Swaps the obstacle field's placement for placement holding nothing over the loaded chunks, for a
 		// scenario that measures ground alone.
 		void placeNothing(world::ChunkManager& chunks) {
 			world::ChunkCoordinate lo{std::numeric_limits<std::int32_t>::max(), std::numeric_limits<std::int32_t>::max()};
@@ -524,14 +524,14 @@ namespace {
 		}
 	}
 
-	void BM_FellTree(benchmark::State& state) {
+	void BM_FellObstacle(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(state.range(0));
 			colony(rig);
 			rig.settle();
 			begin();
-			const Tree& tree = forest().nearest(kColony + glm::vec2{5.0F, 5.0F});
-			rig.placement->removeEntity(tree.coord, tree.position, kTreeDef);
+			const Obstacle& obstacle =obstacleField().nearest(kColony + glm::vec2{5.0F, 5.0F});
+			rig.placement->removeEntity(obstacle.coord, obstacle.position, kObstacleDef);
 			TickStats stats;
 			rig.ticks(stats, 120);
 			end();
@@ -554,7 +554,7 @@ namespace {
 		}
 	}
 
-	// M5: range(0) movers on a grid 100 m apart over the forest, their first limits settled, then every
+	// M5: range(0) movers on a grid 100 m apart over the obstacle field, their first limits settled, then every
 	// one walking 60 m east at 2 m/s and range(1) times game speed (a tick moves him that many times as
 	// far), into dense ground no limit has met. Each tick runs as a frame does: update(), every
 	// mover's stride through stepWithinSight as MovementSystem takes it, endTick(). Per tick, nav's
@@ -902,7 +902,7 @@ namespace {
 		}
 	}
 
-	// One need decision as AIDecisionSystem makes it, over the colony's meshed forest: a thirsty colonist at
+	// One need decision as AIDecisionSystem makes it, over the colony's meshed obstacles: a thirsty colonist at
 	// the colony remembering range(0) water sources within 100 m, a third of them across the river (a
 	// different component), deciding every tick. Times the AI system's update, which is that one decision
 	// (the whole trace: the source filter, the option filter, the wander probe), and counts the route
@@ -968,7 +968,7 @@ namespace {
 		}
 	}
 
-	// The build tool's per-frame cursor checks in the forest: isAreaWalkable over a 4 m square
+	// The build tool's per-frame cursor checks among obstacles: isAreaWalkable over a 4 m square
 	// footprint and isPolylineWalkable over a 20 m wall line, each sampled every 0.5 m, at 200 spots
 	// round the colony. Reports one frame's pair of checks.
 	void BM_CursorCheck(benchmark::State& state) {
@@ -1020,10 +1020,10 @@ namespace {
 
 	// A wall built once every loaded chunk's ground is meshed (one mover at the middle whose disc
 	// meets them all): its patch job. range(0) is the
-	// chunk load radius around the forest's middle: 2 meshes 25 chunks, 5 meshes 121.
+	// chunk load radius around the obstacle field's middle: 2 meshes 25 chunks, 5 meshes 121.
 	void BM_WallEditMeshedChunks(benchmark::State& state) {
 		const auto radius = static_cast<std::int32_t>(state.range(0));
-		world::ChunkManager chunks(std::make_unique<ForestRiverSampler>());
+		world::ChunkManager chunks(std::make_unique<RiverSampler>());
 		chunks.setLoadRadius(radius);
 		chunks.setUnloadRadius(radius + 2);
 		chunks.update({768.0F, 768.0F});
@@ -1110,7 +1110,7 @@ namespace {
 	// --- What a placed obstacle costs in memory, and how many there are -------------------------
 	//
 	// BM_LimitWalkBytes: what the mesh holds per km one mover walks, by container.
-	// BM_PlacedObstacleSystemBytes: the bench forest through NavigationSystem, the mesh's bytes per
+	// BM_PlacedObstacleSystemBytes: the bench obstacle field through NavigationSystem, the mesh's bytes per
 	// placed obstacle by container, and the system's own records per obstacle, what its heap grows by
 	// beyond its mesh's. BM_PlacedObstacleDensity: the Quick Start chunks round the landing placed as
 	// the game places them, the placed obstacles counted per chunk.
@@ -1528,7 +1528,7 @@ namespace {
 		}
 	}
 
-	// The system at the bench forest's density: the colony settled, then its first mover walked 800 m
+	// The system at the bench obstacle field's density: the colony settled, then its first mover walked 800 m
 	// east 40 m a settle at a time. What the heap grew by, less the mesh's container growth, is the
 	// system's own records (and its jobs' retained capacity), per placed obstacle that entered.
 	void BM_PlacedObstacleSystemBytes(benchmark::State& state) {
@@ -1551,7 +1551,7 @@ namespace {
 			const MeshBytes	   nav1			= meshBytes(rig.nav.navMesh());
 			const double	   heapDelta	= static_cast<double>(heapAllocated() - heapBefore);
 			const double	   added		= d1 - d0;
-			reportBytes(state, "NavigationSystem nav mesh, bench forest", nav0, nav1, added, heapDelta, static_cast<double>(privateBytes() - privateBefore));
+			reportBytes(state, "NavigationSystem nav mesh, bench obstacle field", nav0, nav1, added, heapDelta, static_cast<double>(privateBytes() - privateBefore));
 			const double meshDelta = nav1.total().bytes - nav0.total().bytes;
 			const Tally	 inMesh	   = visit<RDetailInMesh>(rig.nav);
 			std::fprintf(stderr,
@@ -1671,7 +1671,7 @@ namespace {
 // The last argument of every row is the gap between ticks in ms.
 BENCHMARK(BM_ColdSettle)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_Steady)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
-BENCHMARK(BM_FellTree)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
+BENCHMARK(BM_FellObstacle)->Arg(0)->Arg(2)->Iterations(1)->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_BuildWall)->Args({0, 0})->Args({0, 2})->Args({1, 0})->Args({1, 2})->Iterations(1)->Unit(benchmark::kMillisecond);
 // BM_WalkingMovers: movers, game speed, gap.
 BENCHMARK(BM_WalkingMovers)

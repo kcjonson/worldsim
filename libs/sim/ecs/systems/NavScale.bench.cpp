@@ -241,19 +241,19 @@ namespace {
 	// --- Choosing the search cap ----------------------------------------------------------------
 	//
 	// Three grounds, each 1,024 chunks (16 km a side) of mesh: "open" (squares, no water), "real" (the
-	// Quick Start chunks round its landing, rivers and lakes; needs WORLDSIM_PLANET) and "forest" (open
-	// ground with the chunk round the start covered by forest at the game's density in a nav mesh,
-	// its placed obstacles blocking).
+	// Quick Start chunks round its landing, rivers and lakes; needs WORLDSIM_PLANET) and "obstacles" (open
+	// ground with the chunk round the start covered by placed obstacles at the game's density,
+	// blocking in a nav mesh).
 
-	enum class Ground { Open, Real, Forest };
+	enum class Ground { Open, Real, Obstacles };
 	const char* groundName(Ground g) {
 		switch (g) {
 			case Ground::Open:
 				return "open";
 			case Ground::Real:
 				return "real";
-			case Ground::Forest:
-				return "forest";
+			case Ground::Obstacles:
+				return "obstacles";
 		}
 		return "";
 	}
@@ -263,20 +263,20 @@ namespace {
 		glm::vec2			centre{0.0F, 0.0F};
 	};
 
-	// The forest of BM_NavScaleDetail over the chunk holding `centre`.
-	std::vector<gnav::NavInputPolygon> forestOver(world::ChunkCoordinate chunk) {
+	// Placed obstacles at the game's density over the chunk holding `centre`.
+	std::vector<gnav::NavInputPolygon> obstaclesOver(world::ChunkCoordinate chunk) {
 		const float						   halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
 		const glm::vec2					   origin{static_cast<float>(chunk.x) * 512.0F, static_cast<float>(chunk.y) * 512.0F};
-		std::vector<gnav::NavInputPolygon> trees;
+		std::vector<gnav::NavInputPolygon> obstacles;
 		for (float x = 1.0F; x < 511.0F; x += 3.54F) {
 			for (float y = 1.0F; y < 511.0F; y += 3.54F) {
 				const glm::vec2		p = origin + glm::vec2{x + std::fmod(y * 0.37F, 1.4F), y + std::fmod(x * 0.53F, 1.4F)};
 				const std::uint32_t h = static_cast<std::uint32_t>(x * 131.0F + y * 7.0F) % 100U;
 				const float			e = halfExtents[h < 15 ? 0 : h < 75 ? 1 : 2];
-				trees.push_back(box(p - glm::vec2{e}, p + glm::vec2{e}, true, nav::kProvenancePlaced));
+				obstacles.push_back(box(p - glm::vec2{e}, p + glm::vec2{e}, true, nav::kProvenancePlaced));
 			}
 		}
-		return trees;
+		return obstacles;
 	}
 
 	const SearchGround* searchGround(Ground g) {
@@ -294,8 +294,8 @@ namespace {
 		for (const ChunkRings& c : region->chunks) {
 			out->mesh.applyPatch({.adds = c.rings});
 		}
-		if (g == Ground::Forest) {
-			out->mesh.applyPatch({.adds = forestOver(world::worldToChunk({out->centre.x, out->centre.y}))});
+		if (g == Ground::Obstacles) {
+			out->mesh.applyPatch({.adds = obstaclesOver(world::worldToChunk({out->centre.x, out->centre.y}))});
 		}
 		out->mesh.refreshWidths();
 		if (g == Ground::Real) {
@@ -318,7 +318,7 @@ namespace {
 		return out;
 	}
 
-	// Starts round the ground's centre: within 2 km on open and real ground, inside the forest chunk's
+	// Starts round the ground's centre: within 2 km on open and real ground, inside the obstacle chunk's
 	// middle 200 m.
 	std::vector<glm::vec2> startsFor(Ground g, const SearchGround& ground, int count) {
 		std::vector<glm::vec2> out;
@@ -327,11 +327,11 @@ namespace {
 			  seed = seed * 1664525U + 1013904223U;
 			  return static_cast<float>(seed >> 8) / static_cast<float>(1U << 24);
 		};
-		const float spread = g == Ground::Forest ? 200.0F : 4000.0F;
+		const float spread = g == Ground::Obstacles ? 200.0F : 4000.0F;
 		while (static_cast<int>(out.size()) < count) {
 			const glm::vec2 p = ground.centre + glm::vec2{(unit() - 0.5F) * spread, (unit() - 0.5F) * spread};
 			const std::optional<glm::vec2> land = landNear(ground.mesh, p);
-			if (land.has_value() && (g != Ground::Forest || ground.mesh.locate(nav::toMm(*land)) >= 0)) {
+			if (land.has_value() && (g != Ground::Obstacles || ground.mesh.locate(nav::toMm(*land)) >= 0)) {
 				out.push_back(*land);
 			}
 		}

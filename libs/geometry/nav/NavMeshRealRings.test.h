@@ -1,43 +1,15 @@
 #pragma once
 
-// Real navmesh input rings captured from the in-game quickstart Y-shaped river
-// confluence (apps/world-sim, --scene=game). The simulation area is a 128 m
-// square (radius 64 m) centred at tile (1, 4); three river branches meet in the
-// middle and each EXITS the area at a different edge, with 637 scattered
-// trees on the open grass between them. This is the input that produced
-// walkable=0 / floor=0 / blocked=1848 in the [NavBuild] verdict, so the navmesh
-// tests reproduce the real failure without the engine.
+// Real nav mesh input rings captured from the in-game quickstart Y-shaped river
+// confluence (apps/world-sim, --scene=game). The area is a 128 m square (radius
+// 64 m) centred at tile (1, 4); three river branches meet in the middle and each
+// exits the area at a different edge, with 637 scattered placed obstacles on the
+// open grass between them.
 //
-// All coordinates are region-local millimetres. provenance ids match nav:
-// water=-1, tree=-2, border=-3. Expected sizes (asserted in NavMesh.test.cpp's
+// All coordinates are area-local millimetres. Provenance ids are water=-1,
+// placed obstacle=-2, border=-3. Expected sizes (asserted in NavMesh.test.cpp's
 // RealYConfluence_OpenGrassIsFloor so a truncated fixture fails loudly): border = 4
-// verts, water = 564 verts, trees = 637 rings.
-//
-// REGENERATING THIS FIXTURE
-// -------------------------
-// 1. Drop a one-shot dump at the end of nav::buildInput() (NavInputBuilder.cpp),
-//    right before it returns the assembled NavMeshInput `input`:
-//
-//      #include <cstdio>
-//      static bool dumped = false;
-//      if (!dumped) {
-//          dumped = true;
-//          for (const NavInputPolygon& p : input.polygons) {
-//              std::fprintf(stderr, "RING prov=%lld blocked=%d hole=%d:",
-//                  (long long)p.provenanceId, p.blocked ? 1 : 0, p.holeCapable ? 1 : 0);
-//              for (const geometry::Vec2i64& v : p.ring)
-//                  std::fprintf(stderr, " {%lld,%lld}", (long long)v.x, (long long)v.y);
-//              std::fprintf(stderr, "\n");
-//          }
-//      }
-//
-// 2. Run the quickstart so it builds the first region's nav input:
-//      apps/world-sim --scene=game        (quickstart default planet, seed 424242)
-//    The dump prints once on the first buildInput. Split the RING lines by provenance
-//    (border=-3 -> realBorderRing, water=-1 -> realWaterRing, tree=-2 -> realTreeRings)
-//    and paste the coordinates back into the three functions below.
-// 3. Delete the dump from NavInputBuilder.cpp. Update the asserted sizes above and in
-//    NavMesh.test.cpp if the capture's vertex/ring counts changed.
+// verts, water = 564 verts, obstacles = 637 rings.
 
 #include "../core/Vec2i64.h"
 
@@ -135,9 +107,9 @@ namespace geometry::nav::testdata {
 		return ring;
 	}
 
-	// The 637 tree collider rings (small CCW convex quads/polys) scattered
+	// The 637 placed obstacle rings (small CCW convex quads/polys) scattered
 	// on the open grass. Each is a solid (NOT holeCapable) blocked obstacle.
-	inline const std::vector<std::vector<Vec2i64>>& realTreeRings() {
+	inline const std::vector<std::vector<Vec2i64>>& realObstacleRings() {
 		static const std::vector<std::vector<Vec2i64>> rings = {
 		{{-62321, -16471}, {-61995, -16490}, {-61977, -16164}, {-62302, -16146}},
 		{{-61579, -28468}, {-61289, -28498}, {-61259, -28208}, {-61549, -28178}},
