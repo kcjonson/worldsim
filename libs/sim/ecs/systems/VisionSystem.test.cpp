@@ -348,6 +348,70 @@ TEST_F(VisionSystemTest, StationaryObserverReusesPolygon) {
 	EXPECT_GT(sys.polygonBuildCount(), afterFirst) << "a new wall must invalidate the cached polygon";
 }
 
+// An outdoor observer's sight shape is the plain circle at the position and radius vision
+// used, with no polygon. Moving it moves the centre without touching the revision.
+TEST_F(VisionSystemTest, OutdoorSightShapeIsCircle) {
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+
+	EntityID observer = spawnObserver(world, {4.0F, 7.0F});
+	world.getComponent<Memory>(observer)->sightRadius = 12.5F;
+	EXPECT_FALSE(sys.sightShape(observer).has_value()) << "not observed yet";
+
+	tick(sys);
+	auto shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	EXPECT_EQ(shape->center, (glm::vec2{4.0F, 7.0F}));
+	EXPECT_FLOAT_EQ(shape->radius, 12.5F);
+	EXPECT_EQ(shape->polygon, nullptr);
+	const std::uint64_t revision = shape->polygonRevision;
+
+	world.getComponent<Position>(observer)->value = {20.0F, 7.0F};
+	tick(sys);
+	shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	EXPECT_EQ(shape->center, (glm::vec2{20.0F, 7.0F}));
+	EXPECT_EQ(shape->polygonRevision, revision);
+}
+
+// An observer with a wall in sight gets the polygon. The revision changes when the polygon
+// is rebuilt (the observer moves past the threshold, or the walls change) and not otherwise.
+TEST_F(VisionSystemTest, SightShapePolygonRevisionTracksRebuilds) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+
+	tick(sys);
+	auto shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	ASSERT_NE(shape->polygon, nullptr);
+	EXPECT_GE(shape->polygon->size(), 3u);
+	EXPECT_EQ(shape->center, (glm::vec2{0.5F, 1.5F}));
+	EXPECT_FLOAT_EQ(shape->radius, world.getComponent<Memory>(observer)->sightRadius);
+	std::uint64_t revision = shape->polygonRevision;
+
+	tick(sys);
+	EXPECT_EQ(sys.sightShape(observer)->polygonRevision, revision) << "no rebuild, same revision";
+
+	world.getComponent<Position>(observer)->value = {0.7F, 1.5F};
+	tick(sys);
+	EXPECT_EQ(sys.sightShape(observer)->polygonRevision, revision) << "under the move threshold";
+
+	world.getComponent<Position>(observer)->value = {0.5F, 2.2F};
+	tick(sys);
+	EXPECT_NE(sys.sightShape(observer)->polygonRevision, revision) << "past the move threshold";
+	revision = sys.sightShape(observer)->polygonRevision;
+
+	buildWall(cw, {500, 2500}, {1000, 2500});
+	tick(sys);
+	EXPECT_NE(sys.sightShape(observer)->polygonRevision, revision) << "walls changed";
+}
+
 // --- Structure-as-observable (Pass 0) ----------------------------------------
 
 // A wall in front of the observer (bounding its visibility polygon) is recorded
