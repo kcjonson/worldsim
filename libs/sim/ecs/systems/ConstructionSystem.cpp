@@ -660,6 +660,13 @@ namespace ecs {
 		// Retire every goal this blueprint owns (umbrella + children) so no Build goal lingers.
 		resetBlueprintGoals(entity);
 
+		// It skipped the clear and the start of building, so its ground is bared on the pass this
+		// ends (or the next, from the dev endpoint): whatever stands there, trees included, with no yield.
+		const auto* structure = world->getComponent<Structure>(entity);
+		if (m_constructionWorld != nullptr && structure != nullptr && structure->kind == StructureKind::Foundation) {
+			m_sitesEnteringConstruction.push_back(footprintBounds(structure->graphId));
+		}
+
 		// Fire the SAME completion callback a real build uses (GameScene wires it to the same
 		// lambda it gives ActionSystem), flipping ConstructionWorld state to Built and toasting.
 		if (m_onStructureCompleted) {

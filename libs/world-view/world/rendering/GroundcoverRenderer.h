@@ -31,6 +31,10 @@ class GroundcoverRenderer {
 	/// per-chunk InstanceData cache does not grow unbounded over a long pan/play session.
 	void evictLRU(const std::unordered_set<world::ChunkCoordinate>& processedChunks);
 
+	/// Drop a chunk's buckets: its statics were placed again (a reload), so what was built from
+	/// the index it had before no longer describes it. They are built again when it is next drawn.
+	void forgetChunk(const world::ChunkCoordinate& coord) { m_groundcoverChunkCache.erase(coord); }
+
   private:
 	// LRU bound: keep recently-visible chunks' instance buckets; evict oldest beyond the cap.
 	static constexpr size_t kMaxCachedChunks = 64;
@@ -43,8 +47,8 @@ class GroundcoverRenderer {
 		float	 minX = 0, minY = 0, maxX = 0, maxY = 0; // world bounds for culling
 		uint64_t lastAccessFrame = 0;
 		bool	 built = false;
-		/// The chunk's removal counts (PlacementExecutor::shortStaticRemovals) these buckets match
-		assets::PlacementExecutor::SubRegionRemovals removals{};
+		/// The chunk's groundcover removal counts (PlacementExecutor::staticRemovals) these buckets match
+		assets::PlacementExecutor::SubRegionCounts removals{};
 	};
 	std::unordered_map<world::ChunkCoordinate, GroundcoverChunkCache> m_groundcoverChunkCache;
 

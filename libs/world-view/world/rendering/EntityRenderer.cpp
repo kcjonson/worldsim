@@ -87,12 +87,16 @@ namespace worldview {
 		m_lastUprightOverlapSplits = stats.uprightOverlapSplits;
 	}
 
+	// A worker bake arrives with each placement of a chunk, the first and every reload: the baked
+	// mesh is replaced by it, and the groundcover built from the index before it is dropped.
 	void EntityRenderer::uploadBakedChunk(const world::ChunkCoordinate& coord, assets::BakedChunkCPUData&& cpuData) {
 		baked.uploadBakedChunk(coord, std::move(cpuData), frameCounter);
+		groundcover.forgetChunk(coord);
 	}
 
 	void EntityRenderer::queueBakedChunk(const world::ChunkCoordinate& coord, assets::BakedChunkCPUData&& cpuData) {
 		baked.queueBakedChunk(coord, std::move(cpuData), frameCounter);
+		groundcover.forgetChunk(coord);
 	}
 
 } // namespace worldview

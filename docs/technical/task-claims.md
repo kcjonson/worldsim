@@ -435,7 +435,12 @@ A foundation is built on bare ground. As it enters construction (`ConstructionSy
 every placed static still on its footprint leaves the placement index: one a colonist could carry (a
 stone) is dropped just outside as a loose pile, the way a pile is, and the rest (the freestanding
 grass, a rock) is removed with nothing to show for it. None of that is work for a colonist and none of
-it holds the site back.
+it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
+and bushes included.
+
+The footprint here is the foundation's bounding box (`FootprintBounds`), as it is for the clear gate,
+the clear goal, and the pile move: for a foundation that is not a rectangle, the ground inside the box
+and outside the floor is cleared and bared too.
 
 ### Build and Deconstruct
 

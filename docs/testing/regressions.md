@@ -116,7 +116,7 @@ grass tufts from per-chunk instance buckets, not from the placement index each f
 removed the bush from the index (so nav, vision and the site all saw it gone) and the mesh kept
 drawing it, on top of the finished foundation; the grass was never removed at all. A foundation
 is built on bare ground. Systems: `ConstructionSystem::bareSites`,
-`PlacementExecutor::shortStaticRemovals`, `BakedChunkRenderer`, `GroundcoverRenderer`.
+`PlacementExecutor::staticRemovals`, `BakedChunkRenderer`, `GroundcoverRenderer`.
 
 ---
 

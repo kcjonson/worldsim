@@ -2,19 +2,19 @@
 
 // CPU-side bake of placed entities into world-space sub-chunk vertex arrays.
 // Runs on worker threads (as a continuation of async chunk placement) or on the
-// render thread (re-bake of an evicted chunk); GL upload lives in
-// EntityRenderer::uploadBakedChunk. Touches no GL state.
+// render thread (re-bake of an evicted chunk, or of one sub-region a short static
+// was removed from); GL upload lives in BakedChunkRenderer. Touches no GL state.
 
 #include "assets/AssetRegistry.h"
 #include "assets/placement/FloraRouting.h"
 #include "assets/placement/SpatialIndex.h"
+#include "assets/placement/SubChunkGrid.h"
 #include "world/chunk/ChunkCoordinate.h"
 
 #include <graphics/Color.h>
 #include <math/Types.h>
 #include <vector/Tessellator.h>
 
-#include <algorithm>
 #include <array>
 #include <cstdint>
 #include <functional>
@@ -22,13 +22,6 @@
 #include <vector>
 
 namespace assets {
-
-/// Sub-chunk grid: 8x8 = 64 sub-regions per chunk, 64x64 tiles each.
-/// Sub-regions are the granularity of view-frustum culling for baked entities.
-inline constexpr int kSubChunkGridSize = 8;
-inline constexpr int kSubChunkTileSize = world::kChunkSize / kSubChunkGridSize;
-inline constexpr float kSubChunkWorldSize = static_cast<float>(kSubChunkTileSize) * world::kTileSize;
-inline constexpr int kSubChunkCount = kSubChunkGridSize * kSubChunkGridSize;
 
 /// Only statics of a def that routes short (FloraRouting.h) are baked. They can stop
 /// rendering as geometry once blades shrink below ~kImpostorCutoffPx on screen; the
@@ -79,14 +72,6 @@ struct BakedChunkCPUData {
 /// leave it out of the bake. Must be safe to call from the thread running the bake.
 using TemplateLookup = std::function<const renderer::TessellatedMesh*(const assets::PlacedEntity&)>;
 
-/// The sub-region of chunk `coord` a static at `position` is baked into.
-[[nodiscard]] inline int subChunkIndexOf(world::ChunkCoordinate coord, glm::vec2 position) {
-	const world::WorldPosition origin = coord.origin();
-	const int subX = std::clamp(static_cast<int>((position.x - origin.x) / kSubChunkWorldSize), 0, kSubChunkGridSize - 1);
-	const int subY = std::clamp(static_cast<int>((position.y - origin.y) / kSubChunkWorldSize), 0, kSubChunkGridSize - 1);
-	return subY * kSubChunkGridSize + subX;
-}
-
 /// Transform placed entities into world-space sub-chunk vertex arrays.
 [[nodiscard]] BakedChunkCPUData bakeChunkEntities(
 	const std::vector<const assets::PlacedEntity*>& entities,
@@ -95,7 +80,7 @@ using TemplateLookup = std::function<const renderer::TessellatedMesh*(const asse
 );
 
 /// One sub-region of a chunk baked again from what its index holds now: the re-bake after a
-/// short static in it was removed (PlacementExecutor::shortStaticRemovals), a sixty-fourth of the chunk's.
+/// short static in it was removed (PlacementExecutor::staticRemovals), a sixty-fourth of the chunk's.
 [[nodiscard]] BakedSubChunkCPUData bakeSubChunkEntities(
 	const assets::SpatialIndex& index,
 	world::ChunkCoordinate coord,

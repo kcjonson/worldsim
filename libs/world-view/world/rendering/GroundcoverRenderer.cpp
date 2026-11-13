@@ -85,8 +85,8 @@ void GroundcoverRenderer::buildGroundcoverChunk(
 		return;
 	}
 	// Built from the index as it stands, so level with every removal so far
-	const auto* removals = executor.shortStaticRemovals(coord);
-	cache.removals = removals != nullptr ? *removals : assets::PlacementExecutor::SubRegionRemovals{};
+	const auto* removals = executor.staticRemovals(coord);
+	cache.removals = removals != nullptr ? removals->groundcover : assets::PlacementExecutor::SubRegionCounts{};
 
 	auto& registry = assets::AssetRegistry::Get();
 	auto  entities = index->queryRect(cache.minX, cache.minY, cache.maxX, cache.maxY);
@@ -113,8 +113,8 @@ void GroundcoverRenderer::buildGroundcoverChunk(
 void GroundcoverRenderer::dropRemovedGroundcover(
 	const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, GroundcoverChunkCache& cache
 ) {
-	const auto* removals = executor.shortStaticRemovals(coord);
-	if (removals == nullptr || *removals == cache.removals) {
+	const auto* removals = executor.staticRemovals(coord);
+	if (removals == nullptr || removals->groundcover == cache.removals) {
 		return;
 	}
 	const auto* index = executor.getChunkIndex(coord);
@@ -123,7 +123,7 @@ void GroundcoverRenderer::dropRemovedGroundcover(
 	}
 	std::array<bool, assets::kSubChunkCount> edited{};
 	for (size_t subIndex = 0; subIndex < edited.size(); ++subIndex) {
-		edited[subIndex] = (*removals)[subIndex] != cache.removals[subIndex];
+		edited[subIndex] = removals->groundcover[subIndex] != cache.removals[subIndex];
 	}
 	for (auto& [defName, buckets] : cache.byDef) {
 		for (auto& instances : buckets) {
@@ -133,7 +133,7 @@ void GroundcoverRenderer::dropRemovedGroundcover(
 			});
 		}
 	}
-	cache.removals = *removals;
+	cache.removals = removals->groundcover;
 }
 
 void GroundcoverRenderer::render(const assets::RenderContext& ctx, RenderStats& stats) {

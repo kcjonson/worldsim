@@ -36,7 +36,7 @@ class BakedChunkRenderer {
 	void buildBakedChunkMesh(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord, uint64_t frameCounter);
 
 	/// Bake again each sub-region of a cached chunk that has lost a short static since its mesh
-	/// was made (PlacementExecutor::shortStaticRemovals), so a cleared or harvested-out bush stops
+	/// was made (PlacementExecutor::staticRemovals), so a cleared or harvested-out bush stops
 	/// being drawn. One hash lookup for a chunk nothing was removed from.
 	void rebakeEditedSubChunks(const assets::PlacementExecutor& executor, const world::ChunkCoordinate& coord);
 

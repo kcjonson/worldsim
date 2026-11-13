@@ -42,11 +42,11 @@
 // - /docs/technical/procedural-generation.md (algorithm details)
 // - AssetDefinition.h for PlacementRelationship struct
 
-#include "BakedEntityMesh.h"
 #include "DecimeterGrid.h"
 #include "DependencyGraph.h"
 #include "PlacementTypes.h"
 #include "SpatialIndex.h"
+#include "SubChunkGrid.h"
 
 #include "assets/AssetDefinition.h"
 
@@ -218,15 +218,22 @@ namespace assets {
 		/// show an in-chunk removal. Its one reader takes them every tick, which bounds the list.
 		[[nodiscard]] std::vector<RemovedEntity> takeRemovals() { return std::exchange(m_removals, {}); }
 
+		using SubRegionCounts = std::array<uint32_t, kSubChunkCount>;
+
 		/// How many short statics removeEntity has taken out of each sub-region of a chunk since its
-		/// index was stored, by sub-region index (subChunkIndexOf). Short statics are drawn from what
-		/// a renderer built once for the chunk (the baked mesh, the groundcover instances), so one
-		/// built at another count still draws what was removed and brings that sub-region up to date.
-		/// Tall occluders are drawn live from the index and don't count: felling a tree rebuilds nothing.
-		using SubRegionRemovals = std::array<uint32_t, kSubChunkCount>;
+		/// index was stored, by sub-region index (subChunkIndexOf) and by what draws them: `baked`
+		/// for the short flora in the chunk's baked mesh, `groundcover` for the instanced tufts.
+		/// Each of those renderers builds a chunk once and keeps the counts it built at; where a
+		/// count has moved since, what it holds for that sub-region still shows something removed.
+		/// Tall occluders are drawn live from the index and counted nowhere: felling a tree
+		/// rebuilds nothing.
+		struct StaticRemovals {
+			SubRegionCounts baked{};
+			SubRegionCounts groundcover{};
+		};
 
 		/// The chunk's counts; null while no short static has been removed from it.
-		[[nodiscard]] const SubRegionRemovals* shortStaticRemovals(world::ChunkCoordinate coord) const;
+		[[nodiscard]] const StaticRemovals* staticRemovals(world::ChunkCoordinate coord) const;
 
 		/// Get spawn order (for debugging/testing)
 		[[nodiscard]] const std::vector<std::string>& getSpawnOrder() const { return m_spawnOrder; }
@@ -248,7 +255,7 @@ namespace assets {
 
 		std::vector<RemovedEntity> m_removals;
 
-		std::unordered_map<world::ChunkCoordinate, SubRegionRemovals> m_shortStaticRemovals;
+		std::unordered_map<world::ChunkCoordinate, StaticRemovals> m_staticRemovals;
 
 		/// One entity's identity for its cooldown and resource pool: its placed position on the 0.1 m
 		/// grid colonist Memory keys it by, and its interned def id. Two bushes of one def in the same tile

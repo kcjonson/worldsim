@@ -114,7 +114,7 @@ namespace assets {
 		// Create or get spatial index for this chunk
 		auto& chunkIndex = m_chunkIndices[context.coord];
 		chunkIndex.clear();
-		m_shortStaticRemovals.erase(context.coord);
+		m_staticRemovals.erase(context.coord);
 
 		// Create deterministic RNG from chunk coordinate and world seed
 		uint64_t chunkSeed = context.worldSeed;
@@ -648,12 +648,12 @@ namespace assets {
 
 	void PlacementExecutor::unloadChunk(world::ChunkCoordinate coord) {
 		m_chunkIndices.erase(coord);
-		m_shortStaticRemovals.erase(coord);
+		m_staticRemovals.erase(coord);
 	}
 
-	const PlacementExecutor::SubRegionRemovals* PlacementExecutor::shortStaticRemovals(world::ChunkCoordinate coord) const {
-		const auto it = m_shortStaticRemovals.find(coord);
-		return it != m_shortStaticRemovals.end() ? &it->second : nullptr;
+	const PlacementExecutor::StaticRemovals* PlacementExecutor::staticRemovals(world::ChunkCoordinate coord) const {
+		const auto it = m_staticRemovals.find(coord);
+		return it != m_staticRemovals.end() ? &it->second : nullptr;
 	}
 
 	AsyncChunkPlacementResult
@@ -709,14 +709,14 @@ namespace assets {
 
 		// A new index arrives with a bake of its own, so what is drawn of the chunk starts level with it.
 		m_chunkIndices[result.coord] = std::move(result.spatialIndex);
-		m_shortStaticRemovals.erase(result.coord);
+		m_staticRemovals.erase(result.coord);
 	}
 
 	void PlacementExecutor::clear() {
 		m_dependencyGraph.clear();
 		m_spawnOrder.clear();
 		m_chunkIndices.clear();
-		m_shortStaticRemovals.clear();
+		m_staticRemovals.clear();
 		m_regrowthReadyAt.clear();
 		m_regrowthSweepSize = kMinRegrowthSweepSize;
 		m_resourceCounts.clear();
@@ -746,7 +746,10 @@ namespace assets {
 		// how the nav mesh finds the entity's ring.
 		const glm::vec2 stored = found->position;
 		if (!found->isTallOccluder) {
-			++m_shortStaticRemovals[coord][static_cast<size_t>(subChunkIndexOf(coord, stored))];
+			const AssetDefinition* def = m_registry.getDefinition(defName);
+			StaticRemovals&		   removals = m_staticRemovals[coord];
+			SubRegionCounts&	   counts = def != nullptr && def->role == AssetRole::Groundcover ? removals.groundcover : removals.baked;
+			++counts[static_cast<size_t>(subChunkIndexOf(coord, stored))];
 		}
 		it->second.remove(stored, defName);
 		forgetEntityState(stored, defName);

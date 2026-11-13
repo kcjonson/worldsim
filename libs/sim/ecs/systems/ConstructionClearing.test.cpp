@@ -505,4 +505,15 @@ namespace ecs::test {
 		EXPECT_GT(drops.front().x, 8.0F) << "out past the nearest edge";
 	}
 
+	// A foundation the dev tools complete at once skips the clear and the start of building. Its ground
+	// is bared all the same, the tree standing on it included.
+	TEST_F(FootprintClearingTest, AFoundationCompletedAtOnceIsBaredToo) {
+		const glm::vec2 tree{2.0F, 2.0F};
+		plantTrees({tree});
+
+		ASSERT_TRUE(construction->forceCompleteBlueprint(site));
+		runUntil([] { return false; }, 60);
+		EXPECT_FALSE(treeStands(tree));
+	}
+
 } // namespace ecs::test
