@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-13 - Task claims close-out (WOR-820, WOR-811, WOR-634)](./entries/2026-11-13-task-claims-close-out.md)
 - [2026-11-13 - Nav mesh ends at the seen area](./entries/2026-11-13-nav-mesh-ends-at-seen-area.md)
 - [2026-11-12 - Chunk borders dissolve: no more slivers along the shared side](./entries/2026-11-12-chunk-border-dissolve.md)
 - [2026-11-12 - Nav correction: movers mesh, obstacles block, routes by ticket](./entries/2026-11-12-nav-correction.md)
