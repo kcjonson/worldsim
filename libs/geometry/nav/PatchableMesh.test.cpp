@@ -2636,35 +2636,52 @@ namespace {
 		return out;
 	}
 
+	// a / b rounded to the nearest integer, halves up; b > 0.
+	std::int64_t roundedDiv(std::int64_t a, std::int64_t b) {
+		const std::int64_t n = 2 * a + b;
+		const std::int64_t d = 2 * b;
+		return n / d - (n % d < 0 ? 1 : 0);
+	}
+
+	// The integer square root of n >= 0, rounded down.
+	std::int64_t floorSqrt(std::int64_t n) {
+		std::int64_t r = static_cast<std::int64_t>(std::sqrt(static_cast<double>(n)));
+		while (r > 0 && r * r > n) {
+			--r;
+		}
+		while ((r + 1) * (r + 1) <= n) {
+			++r;
+		}
+		return r;
+	}
+
 	// A thin quadrilateral lying along a random side of `squares` at a slope of 0.009 to
 	// 0.14 (about 0.5 to 8 degrees) to it, so its long edges cross the side at a shallow
-	// angle; otherwise a box obstacle. Only correctly rounded operations, so every
-	// toolchain draws the same.
+	// angle; otherwise a box obstacle. Integer arithmetic only, so every toolchain draws
+	// the same.
 	NavInputPolygon shallowObstacle(std::mt19937& rng, const std::vector<NavInputPolygon>& squares) {
 		if (pick(rng, 4) == 0) {
 			return boxObstacle(rng);
 		}
-		const std::vector<Vec2i64>& ring   = squares[pick(rng, squares.size())].ring;
-		const std::size_t			e	   = pick(rng, ring.size());
-		const Vec2i64				p	   = ring[e];
-		const Vec2i64				q	   = ring[(e + 1) % ring.size()];
-		const double				t	   = static_cast<double>(between(rng, 50, 950)) / 1000.0;
-		const double				dx	   = static_cast<double>(q.x - p.x);
-		const double				dy	   = static_cast<double>(q.y - p.y);
-		const double				slope  = static_cast<double>(between(rng, 9, 140)) / 1000.0 * (pick(rng, 2) == 0 ? -1.0 : 1.0);
-		const double				rx	   = dx - dy * slope;
-		const double				ry	   = dy + dx * slope;
-		const double				norm   = std::sqrt(rx * rx + ry * ry);
-		const double				ux	   = rx / norm;
-		const double				uy	   = ry / norm;
-		const double				half   = static_cast<double>(between(rng, 500, 3000));
-		const double				width  = static_cast<double>(between(rng, 60, 600));
-		const double				offset = static_cast<double>(between(rng, -400, 400));
-		const double				cx	   = static_cast<double>(p.x) + dx * t - uy * offset;
-		const double				cy	   = static_cast<double>(p.y) + dy * t + ux * offset;
-		auto at = [](double x, double y) { return Vec2i64{static_cast<std::int64_t>(std::llround(x)), static_cast<std::int64_t>(std::llround(y))}; };
-		return blocked({at(cx - ux * half, cy - uy * half), at(cx + ux * half, cy + uy * half), at(cx + ux * half - uy * width, cy + uy * half + ux * width),
-						at(cx - ux * half - uy * width, cy - uy * half + ux * width)});
+		const std::vector<Vec2i64>& ring	  = squares[pick(rng, squares.size())].ring;
+		const std::size_t			e		  = pick(rng, ring.size());
+		const Vec2i64				p		  = ring[e];
+		const Vec2i64				d		  = ring[(e + 1) % ring.size()] - p;
+		const std::int64_t			alongSide = between(rng, 50, 950); // thousandths of the side
+		const std::int64_t			slope	  = between(rng, 9, 140);  // thousandths
+		const std::int64_t			sign	  = pick(rng, 2) == 0 ? -1 : 1;
+		const std::int64_t			half	  = between(rng, 500, 3000);
+		const std::int64_t			width	  = between(rng, 60, 600);
+		const std::int64_t			offset	  = between(rng, -400, 400);
+		// The obstacle's long axis, r / |r|, is the side turned by the slope.
+		const Vec2i64	   r{1000 * d.x - sign * slope * d.y, 1000 * d.y + sign * slope * d.x};
+		const std::int64_t norm = floorSqrt(r.x * r.x + r.y * r.y);
+		// The side's point at alongSide, then `along` up the axis and `across` off it.
+		auto at = [&](std::int64_t along, std::int64_t across) {
+			return Vec2i64{p.x + roundedDiv(d.x * alongSide * norm + 1000 * (r.x * along - r.y * (across + offset)), 1000 * norm),
+						   p.y + roundedDiv(d.y * alongSide * norm + 1000 * (r.y * along + r.x * (across + offset)), 1000 * norm)};
+		};
+		return blocked({at(-half, 0), at(half, 0), at(half, width), at(-half, width)});
 	}
 
 } // namespace
@@ -2745,11 +2762,11 @@ TEST(PatchableMesh, ShallowCrossingsOfSlantedSidesMatchFreshBuild) {
 	}
 }
 
-// The history of one seed of the sweep above, in which a ground sliver beside a bent side
-// is reached only through another whose sample reads off ground.
+// The history of one seed of the sweep above, raised past its count, in which a ground
+// sliver beside a bent side is reached only through another whose sample reads off ground.
 TEST(PatchableMesh, SliverReachedThroughAMisreadSliverMatchesFreshBuild) {
 	const std::vector<NavInputPolygon> squares = shearedSquares();
-	runSquaresAmongObstacles(89, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
+	runSquaresAmongObstacles(450, 40, squares, [&](std::mt19937& rng) { return shallowObstacle(rng, squares); });
 }
 
 // Ground a millimetre across whose every point lies within the blocked ring's snap band:
