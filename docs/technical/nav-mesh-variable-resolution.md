@@ -157,7 +157,7 @@ takes over.
 
 | Input | Trees | Triangles | Build |
 |---|---|---|---|
-| manyTreesDump | 512 | 4,418 | 152 ms |
+| manyObstaclesDump | 512 | 4,418 | 152 ms |
 | controlDump | 639 | 5,434 | 234 ms |
 | realRings | 637 | 6,215 | 295 ms |
 | controlDump, trees removed | 0 | 310 | 1.7 ms |
@@ -191,7 +191,7 @@ three fixtures, the 2x2 tiling, and 340 random inputs). Median of 5, same machin
 
 | Input | Before | After |
 |---|---|---|
-| manyTreesDump | 152 ms | 11.7 ms |
+| manyObstaclesDump | 152 ms | 11.7 ms |
 | controlDump | 234 ms | 14.5 ms |
 | realRings | 295 ms | 17.3 ms |
 | controlDump, trees removed | 1.7 ms | 0.77 ms |
