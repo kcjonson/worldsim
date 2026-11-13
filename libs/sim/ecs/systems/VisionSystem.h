@@ -16,6 +16,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -30,6 +31,9 @@ namespace world {
 }
 
 namespace ecs {
+
+struct Knowledge;
+struct Memory;
 
 /// Updates colonist Memory by observing nearby world entities and terrain features.
 /// Queries PlacementExecutor for PlacedEntities within each colonist's sight radius.
@@ -78,22 +82,54 @@ class VisionSystem : public ISystem {
 	/// stationary indoor observer should not bump this every tick (cache reuse).
 	[[nodiscard]] uint64_t polygonBuildCount() const { return m_polygonBuildCount; }
 
-	/// Returns the cached visibility polygon for `observer`, or nullptr if the
-	/// entity has no cache entry or took the outdoor (no-occluder) fast path.
-	[[nodiscard]] const geometry::Ring* visibilityPolygon(EntityID observer) const {
+	/// An observer's sight as vision last built it. With no polygon the shape is the plain
+	/// circle; with one it is the wall-clipped star-shaped polygon (mm, same frame as the
+	/// occluders) inside that circle. polygonRevision changes whenever the observer's polygon is
+	/// rebuilt or dropped, so a consumer can tell a new polygon from the one it already used.
+	/// The polygon pointer is valid until the next update().
+	struct SightShape {
+		glm::vec2			   center{0.0F, 0.0F}; // world position (meters) the shape was built at
+		float				   radius = 0.0F;	   // meters
+		const geometry::Ring* polygon = nullptr;  // null when no wall is in sight
+		std::uint64_t		   polygonRevision = 0;
+	};
+
+	/// The sight shape vision used for `observer` on its last pass, outdoors or indoors. Empty
+	/// for an entity vision has not observed.
+	[[nodiscard]] std::optional<SightShape> sightShape(EntityID observer) const {
 		auto it = m_visibilityCache.find(observer);
-		if (it == m_visibilityCache.end() || !it->second.hadOccluders) {
-			return nullptr;
+		if (it == m_visibilityCache.end()) {
+			return std::nullopt;
 		}
-		return &it->second.polygon;
+		const VisibilityCache& entry = it->second;
+		return SightShape{
+			.center = entry.builtPos,
+			.radius = entry.radius,
+			.polygon = entry.hadOccluders ? &entry.polygon : nullptr,
+			.polygonRevision = entry.polygonRevision,
+		};
 	}
 
 	/// Read-only access to the occluder geometry (walls) for overlay drawing.
 	[[nodiscard]] const GeometryIndex& geometry() const { return m_geometry; }
 
+	/// Give `observer` what a look over the disc of `radiusMeters` round `center` would give him,
+	/// through the same passes as his sight each tick. The landing crew's memory of the landing area
+	/// (player-visibility.md 3.8). Leaves his sight shape alone.
+	void rememberArea(EntityID observer, glm::vec2 center, float radiusMeters);
+
   private:
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
+
+	/// The walls and openings that bound or cross `polygon`, into memory (vision-architecture D4).
+	void rememberStructures(geometry::Vec2i64 centerMm, std::int64_t radiusMm, const geometry::Ring& polygon, Memory& memory);
+
+	/// What the disc of `radiusMeters` round `center` shows, inside `polygon` when walls clip it
+	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities, and shore.
+	void lookOver(
+		EntityID observer, glm::vec2 center, float radiusMeters, const geometry::Ring* polygon, Memory& memory, Knowledge* knowledge
+	);
 
 	assets::PlacementExecutor*							  m_placementExecutor = nullptr;
 	const std::unordered_set<world::ChunkCoordinate>*	  m_processedChunks = nullptr;
@@ -114,14 +150,16 @@ class VisionSystem : public ISystem {
 	// top of each throttled tick.
 	GeometryIndex m_geometry;
 
-	// Per-observer visibility polygon cache. A stationary colonist indoors builds
+	// Per-observer sight cache, one entry per observer. A stationary colonist indoors builds
 	// its star-shaped sight polygon once, then reuses it every tick. The polygon is
 	// in integer mm (same frame as the occluders); builtPos is the observer's
-	// meters position the polygon was built from.
+	// meters position the polygon was built from (the current position outdoors).
 	struct VisibilityCache {
 		glm::vec2	   builtPos{0.0F, 0.0F};
+		float		   radius = 0.0F;		// meters, the sight radius of the last pass or build
+		std::uint64_t  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped
 		std::uint64_t  builtVersion = 0; // GeometryIndex generation the polygon was built against
-		geometry::Ring polygon;			 // empty when hadOccluders == false (fast path)
+		geometry::Ring polygon;			 // empty when hadOccluders == false (outdoors)
 		bool		   hadOccluders = false;
 		bool		   seenThisTick = false; // mark-and-sweep prune flag
 	};

@@ -40,7 +40,7 @@ Each rule is Kevin's, with the date it was given. A later rule replaces an earli
 
 What the code does on `main` after the nav stack merged (PRs #369 to #373), read on 2026-11-13.
 
-- **Vision.** `VisionSystem` runs every 5 frames for every entity with `Position` and `Memory`, which today is colonists only. Outdoors (no wall within sight) sight is a circle of `Memory::sightRadius`, 30 m by default, and no shape is built. With walls near it builds a wall-clipped polygon (`geometry::computeVisibilityPolygon`), cached per observer and rebuilt after 0.5 m of travel or a change to the walls. `visibilityPolygon(entity)` returns that polygon indoors and null outdoors. There is no one call that gives an observer's sight shape in both cases. Sleeping colonists observe like any other.
+- **Vision.** `VisionSystem` runs every 5 frames for every entity with `Position` and `Memory`, which today is colonists only. Outdoors (no wall within sight) sight is a circle of `Memory::sightRadius`, 30 m by default, and no shape is built. With walls near it builds a wall-clipped polygon (`geometry::computeVisibilityPolygon`), cached per observer and rebuilt after 0.5 m of travel or a change to the walls. `sightShape(entity)` gives an observer's shape in both cases since step 2: the centre, the radius, the polygon when there is one, and a revision that changes when the polygon is rebuilt. Sleeping colonists observe like any other.
 - **No area is recorded.** `Memory` holds remembered things per colonist (placed things, wall segments, openings), capped at 10,000 entries, and skips things with no capability. Nothing records ground, and nothing is colony-wide.
 - **The meshed area.** Every mover (an entity with `Position` and `AgentRadius`, today colonists only) adds a 16-sided limit holding the disc of sight plus `kSightBufferMeters` (16 m) to the nav mesh every 4 m of travel. The landing adds one of `kLandingSightMeters` (150 m). The mesh ends at the union's edge, never shrinks, and ignores walls. `NavigationSystem::inSimArea` answers whether a point is on it.
 - **Who is who.** There is no faction or owner. A colonist is an entity with the `Colonist` tag. There are no animals or other movers.
@@ -68,7 +68,7 @@ The last containment is what makes rule 6 true: every seen point is on the mesh,
 
 An entity reveals when it has the `Colonist` tag and `Memory`. The rule is written by the tag so that an animal given `Memory` later observes for itself and reveals nothing. One colony is assumed; a second player faction is out of scope.
 
-`VisionSystem` gains one accessor for an observer's sight shape, replacing the polygon-only one: the centre, the radius, the wall-clipped polygon when one exists, and a counter that changes when the polygon is rebuilt. `VisionOverlay` moves to it and so draws outdoor sight too. Player visibility adds no sight computation of its own: what it calls visible is what vision used.
+`VisionSystem::sightShape(observer)` is the one accessor for an observer's sight shape (built in step 2, replacing the polygon-only one): the centre, the radius, the wall-clipped polygon when one exists, and a revision that changes when the polygon is rebuilt. `VisionOverlay` uses it and so draws outdoor sight too. Player visibility adds no sight computation of its own: what it calls visible is what vision used.
 
 A sleeping colonist still sees, because vision does not skip one. Whether sleep should close a colonist's eyes is a vision question (section 9).
 
@@ -191,7 +191,7 @@ The move order to the seen edge is one order to one point. The colonist stops th
 
 At landing every colonist of the crew is given what vision would have given him had he looked over the whole landing area: the placed things, ECS things, and shore points within `kLandingSightMeters` of the drop, through the same passes `VisionSystem` runs each tick, run once with that centre and radius. Without it the player sees a berry bush 100 m off, tinted and selectable, that no colonist will walk to unprompted.
 
-The same rules apply as for sight: a thing with no capability is not remembered, and the 10,000-entry cap holds. A dense landing held 5,622 placed obstacles when measured for nav, so the cap is near enough to check (step 7). A colonist who joins later was not in the crash and starts with his own sight, as the memory design says.
+The same rules apply as for sight: a thing with no capability is not remembered, and the 10,000-entry cap holds. On the quickstart landing a crew member knows 6,984 things right after it, 70% of the cap, with nothing evicted. Once his walking fills the rest, the least recently seen entries go first, as for any memory. A colonist who joins later was not in the crash and starts with his own sight, as the memory design says.
 
 ### 3.9 Camera and minimap
 
