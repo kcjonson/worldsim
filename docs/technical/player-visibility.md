@@ -35,6 +35,7 @@ Each rule is Kevin's, with the date it was given. A later rule replaces an earli
 18. A dev toggle turns player visibility off. Perf captures and tests that look away from colonists run with it off. (2026-11-13.)
 19. The cover is drawn with the stencil buffer, behind a salal API that follows CSS: `mask` and `mask-composite` as a property of a draw. An API that exposed stencil writes and tests was rejected, and so was a push and pop scope, which CSS does not have. (2026-11-13.)
 20. The region minimap is not touched here. Showing the seen area on a map belongs to the Minimap epic. (2026-11-13.)
+21. A shape with walls in sight enters the record grown by a small skirt, while the covered test uses the true shape. Seen ground may reach up to the skirt past true sight. (2026-11-13.)
 
 ## 2. Current state
 
@@ -59,8 +60,10 @@ Four areas nest, each inside the next, and each containment is held by construct
 
 1. what is drawn as visible,
 2. the seen record,
-3. the ground sight actually swept,
+3. the ground sight actually swept, grown by `kSeenSkirtMm` where walls were in sight,
 4. the meshed area.
+
+The seen record lies inside the ground sight swept up to the skirt: a shape with walls in sight enters the record grown by up to `kSeenSkirtMm` (3.3), so seen ground can reach that far past true sight, into a wall or round a corner, and no farther. The mesh reaches 16 m past sight, so the last containment is untouched.
 
 The last containment is what makes rule 6 true: every seen point is on the mesh, so a move order to it can be routed.
 
@@ -78,7 +81,7 @@ A sleeping colonist still sees, because vision does not skip one. Whether sleep 
 
 **Form.** An exact union of polygons in the geometry library's integer millimetres. The basis is a second, independent `geometry::nav::PatchableMesh` that holds only sight outlines as ground rings: no obstacles, no water, no walls. It already keeps an exact, grow-only union of overlapping rings, with enclosed pockets, separate pieces, and point touches; `locate` answers a point, `groundCovers` answers a whole outline, its live triangles are the union ready to draw, and `epoch()` says when it changed. Where rings overlap, the edges inside the union dissolve and only the union's boundary keeps vertices, so the record's size follows the length of the seen edge and not the area.
 
-That choice is gated on measurement (step 1, section 7). The known weak spot is the ring registry: every ring that ever extended the union is kept, and a patch reads every registered ring over the spot (the covered test no longer does, 6.2). The design below is shaped to register few rings. Indoors it does not yet: a visibility polygon that extends the record is registered whole, and in a base beyond seen ground those rings all overlap, so patches grow past 300 ms (6.2). Registering only what a polygon adds was prototyped (6.3) and works for two colonists but not for twenty or fifty, so how the record holds indoor ground beyond the landing area is open; a record kept as boundary loops with no ring registry is the next candidate, and the choice is Kevin's. The mesh also runs nav upkeep the record has no use for (labels, door tags, width lists); step 1 decides between a wrapper that pays for it and an option on `PatchableMesh` that turns it off for an instance.
+That choice is gated on measurement (step 1, section 7). The known weak spot is the ring registry: every ring that ever extended the union is kept, and a patch reads every registered ring over the spot (the covered test no longer does, 6.2). The design below is shaped to register few rings. Indoors that takes two things together (6.4): a shape with walls in sight is grown by the skirt before it goes in, and only the pieces it adds are registered, cut by the frontier of 6.3. A whole polygon registered with the skirt still overlaps every ring in the base and patches pass 200 ms (6.4); pieces without the skirt chase slivers and run away at fifty colonists (6.3). With both, registrations fall to a few a minute at 2, 20 and 50 colonists. What remains over budget is the covered test in a base beyond the landing area, 0.4 to 0.7 ms a polygon (6.4). The mesh also runs nav upkeep the record has no use for (labels, door tags, width lists); step 1 decides between a wrapper that pays for it and an option on `PatchableMesh` that turns it off for an instance.
 
 **Sight polygons.** A sight disc is `geometry::sightPolygon` (`libs/geometry/visibility/SightPolygon.h`): a regular polygon of `kSightSides` sides inscribed in the circle, its directions from a table made at compile time with + - x / alone and pinned by a test, the table `geometry::nav::limitPolygon` uses for nav made from the same code (`core/DirectionTable.h`). Each vertex is truncated toward the centre and pulled in a millimetre at a time while it lies outside the circle, so the polygon never reaches past the disc it stands for. `computeVisibilityPolygon` takes its rim from the same function, so an observer's outdoor shape and indoor shape share their vertices on the circle, and no step of either uses trigonometry: the ring is the same on every toolchain by construction.
 
@@ -97,13 +100,17 @@ A straight walk of any length is one ring. A ring the record already covers (the
 
 With 50 mm of slack the drawn disc is 29.9 m for a 30 m sight. Ground never goes from bright to black behind a colonist.
 
-**Indoors: polygons.** With a wall in sight there is no hull to take. Each visibility polygon vision builds is committed as its own ring, with the colonist's position as its centre, covered ones dropped as above. Its rim is the 64-gon, so a polygon has as many vertices as the walls in sight call for and no more: 47 at the step 1 doorway against 440 before, 184 in an eight-room base (6.2). The visible shape drawn is that same cached polygon, so visible and seen agree by identity. The polygon is up to 0.5 m stale, which with hard edges shows as the lit area stepping while a colonist walks past a doorway; it is a known limit of the first build (section 8).
+**Indoors: polygons.** With a wall in sight there is no hull to take. Each visibility polygon vision builds is tested as its own shape, with the colonist's position as its centre, covered ones dropped as above. Its rim is the 64-gon, so a polygon has as many vertices as the walls in sight call for and no more: 47 at the step 1 doorway against 440 before, 184 in an eight-room base (6.2). The visible shape drawn is that same cached polygon, so visible and seen agree by identity. The polygon is up to 0.5 m stale, which with hard edges shows as the lit area stepping while a colonist walks past a doorway; it is a known limit of the first build (section 8).
+
+**The skirt: test tight, register loose.** A polygon the covered test calls uncovered does not go in as it is. Visibility polygons from many viewpoints are hits snapped to the millimetre whose edges nearly coincide, and an exact union of them fills with slivers and pinholes a millimetre wide, so new shapes keep reading as adding something (6.2, 6.3). So it enters the record grown outward by `kSeenSkirtMm` everywhere but along its rim, by `geometry::skirtedSightShape` (`libs/geometry/visibility/SightSkirt.h`), while the covered test keeps the true shape. Every side off the rim (wall faces and shadow edges) moves out along its normal by just under the skirt, the moved sides joined round each convex corner by a chord (two past 90 degrees of turn) and through the corner itself at each reflex one. That curve winds at least once round every point of the true shape and lies within the skirt of it. The true shape grown by a disc of the skirt is star-shaped round the observer, because a point's distance from a star-shaped shape never falls along a ray out from its centre, so the curve's farthest point along each ray bounds a star-shaped ring between the true shape and that disc-grown one; held to the sight polygon's rim, that ring is the result. It is found by the same kind of angular sweep `computeVisibilityPolygon` runs, taking the farthest hit instead of the nearest. A notch narrower than twice the skirt closes up to where it is that wide; slivers and pinholes thinner than the skirt cannot form, and a new shape whose true edge lies near an old one's is inside the record by a margin instead of crossing it by a hair. Its vertices are the true shape's own on the rim, the rim's, and the moved sides' ends and crossings snapped to the millimetre, about 15% more than the true shape's. It is integer but for the direction of each offset, a square root and a division of integers that round alike everywhere (a test pins its output). It is checked with `simpleAround`; when it is not simple, or a moved side passes through the observer, the polygon is skipped as a non-simple one is (7 in 9,995 in the fuzz of 6.4). The skirted ring is then cut into what it adds by the frontier of 6.3 (`frontierOf`, still a bench prototype), and each piece is registered. Legs and the landing are not skirted, so their rim vertices still match an indoor shape's.
+
+What the skirt costs: seen ground can reach up to `kSeenSkirtMm` past true sight, into a wall's face, round a corner, or across a shadow edge. In the bench base that is 10 to 12 m2 of 26,670 (0.04%), 44 to 48 mm at the most sampled.
 
 **Simple rings.** `computeVisibilityPolygon` is star-shaped about the observer only up to the millimetre snapping of its hits: a shadow edge's far end, snapped, can sit a hair behind its near end's angle. That alone leaves the ring simple, but nothing promises it, and `NavInputPolygon` needs a simple ring. `geometry::simpleAround(ring, centre)` is the exact check: the ring winds once round the centre, and every pair of edges whose angular spans round the centre meet (one pair a vertex on a near star-shaped ring) is tested with `intersectSegments`. A polygon that fails is skipped: it is not committed, the colonist's next polygon 0.5 m on picks the ground up, and the visible shape drawn that moment is still the polygon. The fuzz in 6.2 found 9 in 31,404 base polygons.
 
 **The covered test.** `geometry::nav::sightShapeCovered(record, shape, centre, scratch)` (`libs/geometry/nav/SightCover.h`) is one test for every shape: a leg (centre: its start), the landing, and an indoor polygon (centre: the observer). The shape is fanned from its centre into a triangle per side; a triangle's core is the part of it farther than `kSeenCoverToleranceMm` from its side's line, strictly inside its wedge. The shape is covered when the centre is on the record and no edge of the record (a live triangle edge with nothing across it) meets a core. The cores and the centre are one connected piece, so they then lie in the record. The edges come from the mesh's own index of bounds edges with boundary intervals, through `PatchableMesh::meshEdgesNear`, so the test reads the union's edge near the shape and never the rings registered there, and its cost does not grow with them.
 
-The tolerance is for walls. A new polygon's side along a wall and the record's edge along the same wall are both hits snapped to the millimetre from different rays, so they lie within about a millimetre of each other and cross; an exact test would call every such polygon uncovered and register a sliver for each step. What the record can then lack of a covered shape lies within 5 mm of one of its sides' lines, inside that side's triangle, plus the wedges a snapped shadow edge steps back over, which are under a millimetre wide. Nothing deeper is accepted. Shadow edges are the exception the tolerance does not take: they run along rays from the centre, and where the record's edge runs along the same ray (an earlier observer in line with the same corner) the mesh's snapping can put it a millimetre inside. Where the record's edge meets a core only within the tolerance of a ray, the answer is `groundCovers`', exact and costlier: once in 125 polygons at the doorway, never in a base inside seen ground, and in 5% of polygons in a base beyond it (6.2). `groundCovers` stays for nav.
+The tolerance is for walls. A new polygon's side along a wall and the record's edge along the same wall are both hits snapped to the millimetre from different rays, so they lie within about a millimetre of each other and cross; an exact test would call every such polygon uncovered and register a sliver for each step. What the record can then lack of a covered shape lies within 5 mm of one of its sides' lines, inside that side's triangle, plus the wedges a snapped shadow edge steps back over, which are under a millimetre wide. Nothing deeper is accepted. Shadow edges are the exception the tolerance does not take: they run along rays from the centre, and where the record's edge runs along the same ray (an earlier observer in line with the same corner) the mesh's snapping can put it a millimetre inside. Where the record's edge meets a core only within the tolerance of a ray, the answer is `groundCovers`', exact and costlier: once in 125 polygons at the doorway, never in a base inside seen ground, and in 5% of polygons in a base beyond it (6.2); with the skirt, never at the doorway and 0 to 2 times in 3,266 to 77,649 polygons in a base beyond it (6.4). `groundCovers` stays for nav.
 
 **Pending shapes count as seen.** A colonist's open leg, and any ring waiting its turn, sit in a pending list. Queries and the cover read the record and the pending list together, so the tick a ring is committed on changes nothing the player sees or can click.
 
@@ -216,6 +223,7 @@ There is no game save to put the record in. When one exists the record saves as 
 |---|---|---|
 | `kSightSides` | 64 | Sides of a sight polygon (`geometry::kSightSides`, built). At 30 m a 64-gon's flat sits 36 mm inside the circle. More sides add vertices to the seen edge and to every indoor polygon |
 | `kSeenCoverToleranceMm` | 5 mm | How far the record's edge may reach into a shape that is still called covered (`geometry::nav`, built). Above the millimetre two snapped hits on one wall face differ by; the record can lack strips this wide along a covered shape's sides |
+| `kSeenSkirtMm` | 50 mm | How far a shape with walls in sight is grown, off its rim, before it enters the record (`geometry::kSeenSkirtMm`, built). Slivers and pinholes thinner than it cannot form; seen ground can reach this far past true sight. 25 and 100 mm measured the same on rings and cost (6.4) |
 | `kSeenSlackMm` | 50 mm | How far a path may wobble from a leg's straight line before the leg ends. Smaller means more rings; larger shrinks the drawn disc (by twice this) |
 | `kSeenJumpMeters` | 2 m | A step longer than this in one frame ends the leg without bridging it. Above a frame's travel at the fastest game speed, far below any teleport |
 | `kSeenRingsPerTick` | 4 | Rings tested and committed a tick. Step 1 (6.1): 50 walkers at 10x make about 2 legs a frame, and 4 covered tests by the union's edge cost about 0.08 ms mean |
@@ -416,6 +424,64 @@ The open-ground rows with the prototype in place: exploration registers the same
 
 **Verdict: no-go on frontier pieces as built.** They solve the case 6.2 failed on with two colonists, but at 20 and 50 they do not level off, and at 50 they run away. The next candidate is a record with no ring registry: the union kept as its own boundary loops, each new piece merged into the loops it touches by a polygon union, and the triangles drawn from the loops. It would need a robust many-ring union with snapping (the geometry library's `RingBoolean` handles two rings to one; this needs a loop set with holes), an index over the loops' edges for the covered test (which `meshEdgesNear` gives now), a triangulation of the changed loops for drawing, and a plan for the cost of merging into a loop that rims the whole colony. The decision is Kevin's.
 
+### 6.4 Measured: the skirt (step 3c)
+
+Kevin's decision after 6.3 (decisions log, 10): test tight, register loose. A shape with walls in sight enters the record grown by `kSeenSkirtMm` (3.3, `geometry::skirtedSightShape`), the covered test keeps the true shape, and legs and the landing go in as before. The benches are the step 1 file with every shape tested by `sightShapeCovered`, then registered either whole (3a's policy) or as the frontier pieces of 6.3 cut from the skirted shape. One RelWithDebInfo run each, headless.
+
+Machine load. Run B (the base with an empty record at 50 mm, both policies as two processes side by side): `busy` before (CPU 5%, GPU 49%, another session's world-sim) and after (CPU 4%, GPU 36%). Runs C (pieces at 25 and 100 mm) and D (the landed base, open ground, doorway, fuzz) also ran side by side: `busy` before (CPU 4%, GPU 36%), `mostly-idle` after (CPU 4%, GPU 30%). None of it is a baseline. The conclusions on rings, curves, K, slivers and the oracles rest on counts, which do not depend on load; those on milliseconds are unconfirmed, and run B's times run about 20% above run C's for the same work.
+
+**The base with an empty record, 2 colonists**, 10 simulated minutes:
+
+| | Whole (3a) | Pieces (3b) | Skirt + whole | Skirt + pieces |
+|---|---|---|---|---|
+| Polygons covered | 77% | 78% | 82% | 82% |
+| Rings registered | 775 | 1,174 | 602 | 1,039 |
+| Per minute | 237, 108, 51, 85, 118, 57, 64, 33, 10, 12 | 630, 124, 60, 91, 110, 35, 58, 36, 17, 13 | 217, 92, 40, 66, 101, 19, 40, 25, 1, 1 | 635, 107, 43, 66, 102, 19, 40, 25, 1, 1 |
+| Rings under 0.01 m2 | 171 | 0 | 0 | 0 |
+| K where registered (mean / max) | 374 / 771 | 115 / 489 | 289 / 579 | 81 / 358 |
+| Patch per ring, ms (mean / p99 / max) | 314 / 1,056 / 1,477 | 1.19 / 5.2 / 16.8 | 227 / 532 / 694 | 0.79 / 2.8 / 3.6 |
+| Covered test per polygon, us (mean / p99) | 3,384 / 18,382 | 451 / 808 | 1,429 / 2,495 | 480 / 1,012 |
+| Answered by `groundCovers` | 171 | | 0 | 0 |
+| Registry at the end | not taken | 2,602 KB | 7,851 KB | 2,638 KB |
+| Record's main-thread cost per simulated second | 412 ms | 4.9 ms | 229 ms | 5.2 ms |
+
+**20 and 50 colonists**, against 3b (whole polygons with the skirt were not run here: at 2 colonists their patches were already 137 to 347 ms mean a minute):
+
+| | 20, pieces (3b) | 20, skirt + pieces | 50, pieces (3b) | 50, skirt + pieces |
+|---|---|---|---|---|
+| Polygons covered | 92% | 97.7% | 91% | 98.9% |
+| Rings registered | 2,977 | 1,042 | 8,750 | 1,161 |
+| Per minute | 1,071, 238, 166, 134, 261, 271, 200, 242, 214, 180 | 946, 49, 9, 13, 2, 1, 3, 8, 8, 3 | 1,390, 238, 256, 500, 847, 759, 1,011, 1,152, 1,150, 1,447 | 1,081, 28, 5, 18, 5, 3, 8, 2, 2, 9 |
+| K where registered (mean / max) | 453 / 1,829 | 57 / 233 | 2,165 / 7,685 | 45 / 169 |
+| Patch per ring, ms (mean / p99 / max) | 2.88 / 12.9 / 28.1 | 0.94 / 6.2 / 13.0 | 31.6 / 155 / 719 | 0.88 / 5.4 / 13.1 |
+| Covered test per polygon, us (mean / p99) | 583 / 1,075 | 737 / 1,182 | 653 / 1,335 | 557 / 1,078 |
+| Answered by `groundCovers` | | 2 | | 1 |
+| `skirtedSightShape` per shape grown, us (mean / p99) | | 1,091 / 1,901 | | 1,050 / 2,009 |
+| `frontierOf` per shape cut, us (mean) | | 608 | | 552 |
+| Skipped: skirt not simple / polygon not simple | | 1 / 9 | | 3 / 38 |
+| Registry at the end | 4,065 KB | 2,851 KB | 8,073 KB | 3,084 KB |
+| Union | 26,084 m2 | 26,095 m2 | 26,660 m2 | 26,670 m2 |
+| Record's main-thread cost per simulated second | 46 ms | 44 ms | 543 ms | 80 ms |
+| Oracle: deep points off the record | 0 of 114,202 | 0 of 113,880 | 0 of 189,403 | 0 of 189,403 |
+
+Every run ended `validate()` clean with no unread covers. The 13 ms patches are one each, in the first simulated minute; after it no patch passed 1.3 ms at 20 and 50 colonists.
+
+**What it costs in accuracy.** A second oracle samples 20,000 points on the record by area and checks each against the true shapes that registered: inside one, or how far from the nearest. With the skirt, 9 to 14 points in 20,000 lie in no true shape (0.04 to 0.07%, 10 to 15 m2 of the base's 20,783 to 26,670), none farther than the skirt plus a millimetre, the farthest 44 to 48 mm. The unions measure the same: 10 to 11 m2 above 3b's at 20 and 50 colonists. Summed shape by shape, the skirt adds 3.0 to 3.6 m2 to each shape it grows, almost all of it already in the record by the time the shape goes in.
+
+**Trend over the skirt**, skirt + pieces (run C, except 50 mm from run B):
+
+| Skirt | Rings at 2 / 20 / 50 | Cost per simulated second at 2 / 20 / 50 | Covered test at 50, us (mean) | Patch max at 50, ms | Area added per shape grown | Farthest reach sampled |
+|---|---|---|---|---|---|---|
+| 25 mm | 1,000 / 1,016 / 1,146 | 4.3 / 26 / 63 ms | 444 | 13.6 | 1.5 m2 | 9 to 19 mm |
+| 50 mm | 1,039 / 1,042 / 1,161 | 5.2 / 44 / 80 ms | 557 | 13.1 | 3.0 m2 | 44 to 48 mm |
+| 100 mm | 1,066 / 1,052 / 1,175 | 4.5 / 28 / 65 ms | 460 | 14.6 | 6.1 m2 | 87 to 92 mm |
+
+After the first minute the per-minute curves are the same at all three sizes (at 50 colonists 28, 5, 18, 5, 3, 8, 2, 2, 9): those are colonists walking out of the outer doors onto ground nobody has seen, 688 of 1,161 rings over 10 m2. The size of the skirt does not matter for rings or cost within this range, and the 50 mm row's higher times are its run's second process. The skirt stays at 50 mm.
+
+**Other rows.** The landed base (20 and 50 colonists, both policies): every polygon covered, nothing registered, 62 live triangles, covered test 11 to 12 us mean, the record's cost 1.8 and 4.3 to 4.6 ms per simulated second, as in 6.2. The doorway: whole polygons register 95 with the skirt as without, patches 1.81 ms mean (1.40 without); pieces register 162 (180 without), 0.48 ms mean (0.44); all four equal a fresh build, and the covered test falls from 32 to 35 us mean to 19 to 20 with no fallback (1 to 3 without). Open ground (explore, covered against K, wander, re-walks, camp) has no walls, is never skirted, and repeats 6.2 under whole polygons and 6.3 under pieces within noise. The fuzz of 10,000 polygons from 400 random buildings: `skirtedSightShape` 494 us mean, 1,537 us p99, 3,118 us at most; 149 vertices mean against 128 true; 7 of 9,995 skipped as not simple. The unit tests (`SightSkirt.*`) check on 96 polygons from random buildings that the skirted ring holds every vertex and sampled deep point of the true shape, keeps its rim vertices, is simple, and reaches no farther than the skirt (50.13 mm at most, the sample points snapped to the millimetre).
+
+**Verdict: go on the skirt, with frontier pieces.** The skirt does what it was for: no ring under 0.01 m2 anywhere, K where rings register falls from 453 and 2,165 to 57 and 45, registrations level off at 2, 20 and 50 colonists, and what still registers is new ground. Whole polygons lose: the skirt removes their slivers but not their size, each still overlaps every ring in the base, and patches stay over 200 ms. Against what the game needs, two things are still over. The record's cost at 50 colonists is 63 to 80 ms per simulated second, 1.05 to 1.33 ms a tick at 60 ticks a second, and 85 to 90% of it is the covered test: 440 to 740 us a polygon in a base beyond the landing area against 11 to 12 us inside it, because the record's edge now runs round every wall of the building (walls are never seen inside, so each is a hole in the record) and every polygon reads all of it in its 60 m box. And one patch per run, in the first minute, reaches 13 to 15 ms against a few. Neither comes from rings. The skirt construction itself costs 0.5 to 1.1 ms a shape it grows, paid only on registration. `frontierOf` is still the bench prototype; `SeenArea` needs it moved into the library before it can register pieces.
+
 ## 7. Build steps
 
 Nothing here starts before Kevin's go-ahead. Each step is its own PR with its own done line.
@@ -460,6 +526,7 @@ None blocks the build.
 7. 2026-11-13, in writing this, the author proposed: legs in place of a disc per step, the two radii, pending shapes counting as seen, the one-order reading of rule 15, and the first build not waiting on the visual design or the attenuation prototype. Kevin, the same day: "They stand."
 8. 2026-11-13, the salal API. A first version exposed the stencil (`setMask` with write and test modes, a value, a compare). Kevin: "this API is awful. rejected. we follow css naming and best practices. propose how we can follow mask and mask-composite." A `pushMask` and `popMask` scope was next: "push/pop arn't in the css language". The third, `mask` as a property of a draw with layers of `mask-image` and `mask-composite`, went to two reviewers at his request, who checked it against the CSS Masking spec and salal's docs; their changes (the property on the draw's args, shapes named as an SVG mask's content, the two fills reordered so neither needs a nested mask, only what the cover uses built) are in what he approved: "Yes, build it". (Rule 19, 3.4, 3.5.)
 9. 2026-11-13, Kevin, on a `P::` namespace alias: "our guidelines should specifically say to always use human readable variable names". The rule is in both repos' standards; the code in this document follows it.
+10. 2026-11-13, after two bench rounds on indoor shapes failed (6.2, 6.3), Kevin, offered a skirt, a union with no ring registry, or a coarser indoor rule: "Try the skirt." Outcome (6.4): with frontier pieces the skirt stops the ring runaway at 2, 20 and 50 colonists; with whole polygons it does not. (Rule 21.)
 
 ## Related documents
 
