@@ -664,7 +664,9 @@ namespace {
 			case 0: {
 				const std::int64_t x = between(rng, -4, 42);
 				const std::int64_t y = between(rng, -4, 42);
-				return rect(x, y, x + between(rng, 1, 12), y + between(rng, 1, 12));
+				const std::int64_t h = between(rng, 1, 12);
+				const std::int64_t w = between(rng, 1, 12);
+				return rect(x, y, x + w, y + h);
 			}
 			case 1: {
 				for (;;) {
@@ -2609,10 +2611,15 @@ namespace {
 		if (pick(rng, 3) == 0) {
 			return blocked({{x, y}, {x + between(rng, 300, 3000), y + between(rng, -1500, 1500)}, {x + between(rng, -1500, 1500), y + between(rng, 300, 3000)}});
 		}
+		// Height is drawn before width: argument evaluation order is unspecified, and the pinned histories assume this one.
 		if (pick(rng, 10) == 0) {
-			return blocked(rect(x, y, x + between(rng, 1000, 5000), y + between(rng, 1000, 5000)), kWater, true);
+			const std::int64_t h = between(rng, 1000, 5000);
+			const std::int64_t w = between(rng, 1000, 5000);
+			return blocked(rect(x, y, x + w, y + h), kWater, true);
 		}
-		return blocked(rect(x, y, x + between(rng, 200, 3000), y + between(rng, 200, 3000)));
+		const std::int64_t h = between(rng, 200, 3000);
+		const std::int64_t w = between(rng, 200, 3000);
+		return blocked(rect(x, y, x + w, y + h));
 	}
 
 	// Squares arriving among obstacles, leaving, and coming back, the obstacles added,
@@ -3580,7 +3587,9 @@ TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
 				const std::int64_t r = 2 * between(rng, 1, 4);
 				ring				 = {{x, y - r}, {x + r, y}, {x, y + r}, {x - r, y}};
 			} else {
-				ring = rect(x, y, x + 2 * between(rng, 1, 5), y + 2 * between(rng, 1, 5));
+				const std::int64_t h = 2 * between(rng, 1, 5);
+				const std::int64_t w = 2 * between(rng, 1, 5);
+				ring = rect(x, y, x + w, y + h);
 			}
 			if (pick(rng, 2) == 0) {
 				std::reverse(ring.begin(), ring.end());
