@@ -79,10 +79,11 @@ namespace geometry::nav {
 		// Everything else (river channels, ponds, obstacles, walls, the border) leaves this
 		// false: solid containment, and any solid ring blocks whatever the parity.
 		bool				 holeCapable  = false;
-		// A blocked ring that tags no face: its outline is in the mesh and it is in the
-		// cover of the ground inside it, but classifyCover passes over it, so that ground
-		// keeps the tags of whatever else covers it and every query crosses it. For ground
-		// a reader of PatchableMesh::cover must tell apart from the ground around it.
+		// Set on a blocked ring (blocked stays true: it is not a ground outline) to make it
+		// tag no face. Its outline is in the mesh and it is in the cover of the ground
+		// inside it, but classifyCover passes over it, so that ground keeps the tags of
+		// whatever else covers it and every query crosses it. Readers of
+		// PatchableMesh::cover use it to tell that ground from the ground around it.
 		bool				 coverOnly	  = false;
 	};
 

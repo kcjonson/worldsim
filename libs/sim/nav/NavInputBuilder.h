@@ -20,6 +20,7 @@
 #include <construction/ConstructionWorld.h>
 
 #include <nav/NavMesh.h>
+#include <nav/PatchableMesh.h>
 
 #include "PlacedObstacle.h"
 
@@ -57,6 +58,11 @@ namespace nav {
 	// holeCapable, a fordable channel piece (blocksMovement false) as a cover-only ring with
 	// kProvenanceFord.
 	void appendChunkWater(const world::ChunkTerrainPolygons& polygons, std::vector<geometry::nav::NavInputPolygon>& out);
+
+	// Whether triangle `tri` lies in a fordable channel: ground a mover wades across and nothing
+	// is built on. Read from the triangle's cover, so a placed obstacle or a wall over it changes
+	// nothing.
+	[[nodiscard]] bool faceInFord(const geometry::nav::PatchableMesh& mesh, std::int32_t tri);
 
 	// --- Placed obstacles --------------------------------------------------------
 

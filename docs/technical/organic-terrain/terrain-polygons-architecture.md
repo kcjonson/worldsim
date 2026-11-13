@@ -401,7 +401,8 @@ the rim.
    Its outline is in the mesh and it is in the cover of the creek bed, but it tags no face,
    so the bed is floor to every movement query and a colonist wades across. Building reads
    the cover: `NavigationSystem::isAreaBuildable` and `isPointBuildable` refuse a face in a
-   ford. Until 2026-11-13 fordable rings were skipped, which left a creek as buildable ground
+   ford, and the footprint check asks every mesh triangle the footprint meets, so a creek of
+   any width is found. Until 2026-11-13 fordable rings were skipped, which left a creek as buildable ground
    (WOR-846, a foundation can be placed across a narrow stream).
 4. Not-ready or missing chunks contribute nothing (today they read as land; unchanged).
 

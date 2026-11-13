@@ -239,16 +239,8 @@ namespace ecs {
 			face.faceOpening		  = tags.opening;
 			return face;
 		}
-		// Whether triangle `tri` lies in a fordable channel: ground a mover wades across and
-		// nothing is built on.
-		bool inFord(const gnav::PatchableMesh& mesh, std::int32_t tri) {
-			const std::vector<gnav::RingId>& cover = mesh.cover(tri);
-			return std::any_of(cover.begin(), cover.end(), [&mesh](gnav::RingId r) {
-				return r != gnav::kGroundToken && mesh.ring(r).polygon.provenanceId == nav::kProvenanceFord;
-			});
-		}
 		bool buildableFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
-			return gnav::terrainTraversable(groundBeneath(mesh, tri)) && !inFord(mesh, tri);
+			return gnav::terrainTraversable(groundBeneath(mesh, tri)) && !nav::faceInFord(mesh, tri);
 		}
 		bool landingFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::truthTraversable(groundBeneath(mesh, tri));
@@ -477,7 +469,7 @@ namespace ecs {
 			const double dx	   = static_cast<double>(b.x) - a.x;
 			const double dy	   = static_cast<double>(b.y) - a.y;
 			const double lenMm = std::sqrt(dx * dx + dy * dy) * static_cast<double>(geometry::kMillimetersPerMeter);
-			const auto	 steps = static_cast<std::int64_t>(lenMm / static_cast<double>(NavigationSystem::kFootprintSampleStepMm));
+			const auto	 steps = static_cast<std::int64_t>(std::ceil(lenMm / static_cast<double>(NavigationSystem::kFootprintSampleStepMm)));
 			for (std::int64_t i = 1; i < steps; ++i) {
 				const double	t = static_cast<double>(i) / static_cast<double>(steps);
 				const glm::vec2 p{static_cast<float>(a.x + dx * t), static_cast<float>(a.y + dy * t)};
@@ -503,51 +495,79 @@ namespace ecs {
 			return true;
 		}
 
-		// Whole-footprint walkability: every edge (closing edge included) plus the interior on a grid
-		// at the footprint pitch, which catches a hole wholly inside the ring (an enclosed pond).
-		template <typename OnMesh> bool areaWalkableUnder(const OnMesh& onMesh, const std::vector<glm::vec2>& poly) {
-			if (poly.size() < 3) {
-				return polylineWalkableUnder(onMesh, poly);
+		// Whether segment (a, b) and the closed polygon share a point.
+		bool segmentMeetsPolygon(const geometry::Vec2i64& a, const geometry::Vec2i64& b, const std::vector<geometry::Vec2i64>& polygon) {
+			// With `a` outside, `b` inside means the segment crosses an edge, so the edges settle it.
+			if (geometry::pointInPolygon(a, polygon) != geometry::PointInPolygon::Outside) {
+				return true;
 			}
-			const std::size_t n = poly.size();
-			for (std::size_t i = 0; i < n; ++i) {
-				if (!segmentWalkableUnder(onMesh, poly[i], poly[(i + 1) % n])) {
+			for (std::size_t i = 0; i < polygon.size(); ++i) {
+				if (geometry::intersectSegments(a, b, polygon[i], polygon[(i + 1) % polygon.size()]).relation != geometry::SegmentRelation::Disjoint) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		std::array<geometry::Vec2i64, 3> triangleCorners(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			const gnav::NavTriangle& t = mesh.triangles()[static_cast<std::size_t>(tri)];
+			return {mesh.vertices()[t.v[0]], mesh.vertices()[t.v[1]], mesh.vertices()[t.v[2]]};
+		}
+
+		// Whether the closed triangle (counter-clockwise, as the mesh holds them) and the closed
+		// polygon share a point.
+		bool triangleMeetsPolygon(const std::array<geometry::Vec2i64, 3>& corners, const std::vector<geometry::Vec2i64>& polygon) {
+			for (std::size_t e = 0; e < 3; ++e) {
+				if (segmentMeetsPolygon(corners[e], corners[(e + 1) % 3], polygon)) {
+					return true;
+				}
+			}
+			// No side of the triangle touches the polygon, so the polygon is wholly inside the triangle
+			// or wholly outside it, and one of its points tells which.
+			for (std::size_t e = 0; e < 3; ++e) {
+				if (geometry::orientation(corners[e], corners[(e + 1) % 3], polygon.front()) == geometry::Orientation::Clockwise) {
 					return false;
 				}
 			}
-			const double stepMeters =
-				static_cast<double>(NavigationSystem::kFootprintSampleStepMm) / static_cast<double>(geometry::kMillimetersPerMeter);
-			float minX = poly[0].x;
-			float maxX = poly[0].x;
-			float minY = poly[0].y;
-			float maxY = poly[0].y;
-			for (const auto& p : poly) {
-				minX = std::min(minX, p.x);
-				maxX = std::max(maxX, p.x);
-				minY = std::min(minY, p.y);
-				maxY = std::max(maxY, p.y);
+			return true;
+		}
+
+		// Whole-footprint validity, read exactly from the mesh: whether the closed polygon lies wholly
+		// on the mesh and `face` accepts every triangle it meets, a triangle it only touches included.
+		// The triangles are found by walking out from the one under a corner, so nothing narrower than
+		// a sampling pitch can pass between probes. A footprint that reaches the mesh's edge is off it.
+		// A ring of fewer than 3 points validates its points and the samples between them.
+		template <typename Face> bool areaOnFaces(const gnav::PatchableMesh& mesh, const std::vector<glm::vec2>& polygonMeters, const Face& face) {
+			if (polygonMeters.size() < 3) {
+				return polylineWalkableUnder([&](glm::vec2 p) { return pointOnGround(mesh, p, face); }, polygonMeters);
 			}
-			// The float even-odd test only picks which grid points to probe; each probe is the exact
-			// locate, and a point misclassified on an edge is covered by the edge pass above.
-			auto inside = [&](float px, float py) {
-				bool in = false;
-				for (std::size_t i = 0, j = n - 1; i < n; j = i++) {
-					const float xi = poly[i].x;
-					const float yi = poly[i].y;
-					const float xj = poly[j].x;
-					const float yj = poly[j].y;
-					if (((yi > py) != (yj > py)) && (px < (xj - xi) * (py - yi) / (yj - yi) + xi)) {
-						in = !in;
-					}
+			std::vector<geometry::Vec2i64> footprint;
+			footprint.reserve(polygonMeters.size());
+			for (const glm::vec2 p : polygonMeters) {
+				footprint.push_back(nav::toMm(p));
+			}
+			const std::int32_t first = mesh.locate(footprint.front());
+			if (first < 0) {
+				return false;
+			}
+			std::vector<std::int32_t>		 pending{first};
+			std::unordered_set<std::int32_t> reached{first};
+			while (!pending.empty()) {
+				const std::int32_t tri = pending.back();
+				pending.pop_back();
+				if (!face(mesh, tri)) {
+					return false;
 				}
-				return in;
-			};
-			for (double y = static_cast<double>(minY) + stepMeters; y < static_cast<double>(maxY); y += stepMeters) {
-				for (double x = static_cast<double>(minX) + stepMeters; x < static_cast<double>(maxX); x += stepMeters) {
-					const auto fx = static_cast<float>(x);
-					const auto fy = static_cast<float>(y);
-					if (inside(fx, fy) && !onMesh({fx, fy})) {
-						return false;
+				const gnav::NavTriangle&			   triangle = mesh.triangles()[static_cast<std::size_t>(tri)];
+				const std::array<geometry::Vec2i64, 3> corners	= triangleCorners(mesh, tri);
+				for (std::size_t e = 0; e < 3; ++e) {
+					const std::int32_t across = triangle.neighbor[e];
+					if (across < 0) {
+						if (segmentMeetsPolygon(corners[e], corners[(e + 1) % 3], footprint)) {
+							return false;
+						}
+					} else if (reached.insert(across).second && triangleMeetsPolygon(triangleCorners(mesh, across), footprint)) {
+						pending.push_back(across);
 					}
 				}
 			}
@@ -2064,12 +2084,15 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const {
-		return areaWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, polygonMeters);
+		join();
+		return areaOnFaces(detailMesh, polygonMeters, [](const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			return gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]);
+		});
 	}
 
 	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {
 		join();
-		return areaWalkableUnder([this](glm::vec2 p) { return pointOnGround(detailMesh, p, buildableFace); }, polygonMeters);
+		return areaOnFaces(detailMesh, polygonMeters, buildableFace);
 	}
 
 	bool NavigationSystem::isPointBuildable(glm::vec2 meters) const {

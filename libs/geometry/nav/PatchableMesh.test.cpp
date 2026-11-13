@@ -1083,8 +1083,8 @@ TEST(PatchableMesh, ObstacleInsideASquareShowsInItsCover) {
 }
 
 // A cover-only ring is in the mesh and in the cover of the ground inside it, and tags
-// nothing: that ground is floor, a path crosses it straight, and an obstacle over it
-// still blocks.
+// nothing: that ground is floor, a disc wider than the ring crosses it straight, and an
+// obstacle over it still blocks. Removed, it leaves the cover.
 TEST(PatchableMesh, CoverOnlyRingMarksGroundAndBlocksNothing) {
 	Harness			h;
 	h.add(bounds(rect(0, 0, 20000, 10000)));
@@ -1100,9 +1100,9 @@ TEST(PatchableMesh, CoverOnlyRingMarksGroundAndBlocksNothing) {
 	EXPECT_TRUE(isFloorFace(h.mesh.triangles()[static_cast<std::size_t>(inside)]));
 
 	h.mesh.refreshWidths();
-	const PathResult across = pathThrough(h.mesh.view(), {2000, 5000}, {18000, 5000}, 300);
-	ASSERT_TRUE(across.reachable);
-	EXPECT_DOUBLE_EQ(across.cost, 16000.0) << "straight across the strip";
+	const PathResult across = pathThrough(h.mesh.view(), {2000, 4000}, {18000, 6000}, 600);
+	ASSERT_TRUE(across.reachable) << "the strip's sides pinch no corridor";
+	EXPECT_NEAR(across.cost, std::hypot(16000.0, 2000.0), 1.0) << "straight across the strip";
 
 	const RingId obstacle = h.add(blocked(rect(9200, 4000, 9800, 6000)));
 	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
@@ -1110,6 +1110,13 @@ TEST(PatchableMesh, CoverOnlyRingMarksGroundAndBlocksNothing) {
 	ASSERT_GE(under, 0);
 	EXPECT_EQ(h.mesh.cover(under), (std::vector<RingId>{kGroundToken, marked, obstacle}));
 	EXPECT_EQ(h.mesh.triangles()[static_cast<std::size_t>(under)].faceBlocker, kObstacle);
+
+	PatchEdits leave;
+	leave.removes.push_back(marked);
+	h.apply(leave);
+	ASSERT_TRUE(matchesFresh(h.mesh, h.model));
+	EXPECT_EQ(h.mesh.cover(h.mesh.locate(inStrip)), (std::vector<RingId>{kGroundToken, obstacle}));
+	EXPECT_EQ(h.mesh.cover(h.mesh.locate({9500, 2000})), std::vector<RingId>{kGroundToken});
 }
 
 // Water clipped at the shared side arrives as one ring per square: its stretch of the

@@ -343,14 +343,9 @@ TEST(NavInputBuilder, Water_FordableCreek_WalkableAcrossBlockingPieceBlocks) {
 	EXPECT_FALSE(walkableAt(mesh, meters(149.9, 100)));
 	EXPECT_TRUE(walkableAt(mesh, meters(150.1, 100))) << "just past the butt cut is walkable";
 	EXPECT_TRUE(walkableAt(mesh, meters(170, 100))) << "the creek bed is walkable";
-	const auto inFord = [&mesh](Vec2i64 p) {
-		const std::vector<geometry::nav::RingId>& cover = mesh.cover(mesh.locate(p));
-		return std::any_of(cover.begin(), cover.end(), [&mesh](geometry::nav::RingId r) {
-			return r != geometry::nav::kGroundToken && mesh.ring(r).polygon.provenanceId == kProvenanceFord;
-		});
-	};
-	EXPECT_TRUE(inFord(meters(170, 100))) << "the creek bed is told from its banks";
-	EXPECT_FALSE(inFord(meters(170, 102)));
+	EXPECT_TRUE(faceInFord(mesh, mesh.locate(meters(170, 100)))) << "the creek bed is told from its banks";
+	EXPECT_FALSE(faceInFord(mesh, mesh.locate(meters(170, 102))));
+	EXPECT_FALSE(faceInFord(mesh, mesh.locate(meters(140, 100)))) << "the blocking piece is water, not a ford";
 
 	const geometry::nav::PathResult across = pathOn(mesh, meters(175, 94), meters(175, 106));
 	ASSERT_TRUE(across.reachable);

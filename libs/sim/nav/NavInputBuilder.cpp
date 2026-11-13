@@ -38,9 +38,16 @@ namespace nav {
 			if (terrain.blocksMovement) {
 				out.push_back({terrain.ring, true, kProvenanceWater, gnav::kNoOpening, terrain.holeCapable});
 			} else {
-				out.push_back({terrain.ring, true, kProvenanceFord, gnav::kNoOpening, false, true});
+				out.push_back({.ring = terrain.ring, .blocked = true, .provenanceId = kProvenanceFord, .coverOnly = true});
 			}
 		}
+	}
+
+	bool faceInFord(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+		const std::vector<gnav::RingId>& cover = mesh.cover(tri);
+		return std::any_of(cover.begin(), cover.end(), [&mesh](gnav::RingId ring) {
+			return ring != gnav::kGroundToken && mesh.ring(ring).polygon.provenanceId == kProvenanceFord;
+		});
 	}
 
 	std::optional<gnav::NavInputPolygon> placedObstacleRing(const assets::PlacedEntity& e, const assets::AssetRegistry& registry) {

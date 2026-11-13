@@ -111,10 +111,13 @@ namespace world_sim {
 		// instead (assets::nearestTreesOfAge). A route, not a state view, because a state
 		// provider is given no query parameters.
 		app::DevResponse devFlora(const app::DevRequest& cmd);
-		// ground?pts=x0,y0;x1,y1;... (world metres): what each point is to the nav mesh (on the mesh,
-		// clear to stand on, buildable) beside what the chunk's terrain polygons hold there (in water,
-		// distance to water, and every ring over it with its kind, width and blocksMovement), and the
-		// mesh's live triangle count. Read-only.
+		// ground?pts=x0,y0;x1,y1;... (world metres): what each point is to the nav mesh (onMesh, valid:
+		// clear to stand on, buildable) beside what its chunk's terrain polygons hold there, and the
+		// mesh's live triangle count. The terrain side reads the chunk's unclipped rings: inWater,
+		// toWaterM (null when no shore is within 32 m), and every ring the point is in or on, with its
+		// kind, hole (a clockwise ring, an island in its water body), blocksMovement and mean half
+		// width. chunk is false, with no terrain fields, when the point's chunk is not ready.
+		// Read-only. No pts, or a point that is not finite, is a 400.
 		app::DevResponse devGround(const app::DevRequest& cmd);
 		void		devWalls(const app::DevRequest& cmd);
 		void		devOpening(const app::DevRequest& cmd);
