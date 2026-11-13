@@ -169,7 +169,7 @@ The move order to the seen edge is one order to one point. The colonist stops th
 
 At landing every colonist of the crew is given what vision would have given him had he looked over the whole landing area: the placed things, ECS things, and shore points within `kLandingSightMeters` of the drop, through the same passes `VisionSystem` runs each tick, run once with that centre and radius. Without it the player sees a berry bush 100 m off, tinted and selectable, that no colonist will walk to unprompted.
 
-The same rules apply as for sight: a thing with no capability is not remembered, and the 10,000-entry cap holds. A dense landing held 5,622 placed obstacles when measured for nav, so the cap is near enough to check (step 7). A colonist who joins later was not in the crash and starts with his own sight, as the memory design says.
+The same rules apply as for sight: a thing with no capability is not remembered, and the 10,000-entry cap holds. On the quickstart landing a crew member knows 6,984 things right after it, 70% of the cap, with nothing evicted. Once his walking fills the rest, the least recently seen entries go first, as for any memory. A colonist who joins later was not in the crash and starts with his own sight, as the memory design says.
 
 ### 3.9 Camera and minimap
 

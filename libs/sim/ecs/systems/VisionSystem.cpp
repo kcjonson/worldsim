@@ -108,12 +108,6 @@ namespace ecs {
 		// Register terrain definitions on first update
 		ensureTerrainDefinitionsRegistered();
 
-		// Chunk size in world units (meters, since kTileSize = 1.0F)
-		constexpr float kChunkWorldSize = static_cast<float>(world::kChunkSize);
-
-		auto& registry = assets::AssetRegistry::Get();
-		auto& recipeRegistry = assets::RecipeRegistry::Get();
-
 		// Scratch reused across observers to avoid per-observer allocation.
 		std::vector<geometry::OccluderSegment> occluderScratch;
 
@@ -121,20 +115,6 @@ namespace ecs {
 		for (auto [entity, pos, memory] : world->view<Position, Memory>()) {
 			// Get optional Knowledge component for permanent discovery tracking
 			auto* knowledge = world->getComponent<Knowledge>(entity);
-
-			// Calculate bounding box of vision in world coordinates
-			float minX = pos.value.x - memory.sightRadius;
-			float maxX = pos.value.x + memory.sightRadius;
-			float minY = pos.value.y - memory.sightRadius;
-			float maxY = pos.value.y + memory.sightRadius;
-
-			// Convert to chunk coordinate range
-			int32_t chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
-			int32_t chunkMaxX = static_cast<int32_t>(std::floor(maxX / kChunkWorldSize));
-			int32_t chunkMinY = static_cast<int32_t>(std::floor(minY / kChunkWorldSize));
-			int32_t chunkMaxY = static_cast<int32_t>(std::floor(maxY / kChunkWorldSize));
-
-			float sightRadiusSq = memory.sightRadius * memory.sightRadius;
 
 			// --- Occlusion gate setup (per observer) ---
 			//
@@ -152,7 +132,7 @@ namespace ecs {
 			// visibility polygon and gate candidates against it.
 			VisibilityCache& entry = m_visibilityCache[entity];
 			entry.seenThisTick = true;
-			VisibilityCache* cache = nullptr;
+			const geometry::Ring* polygon = nullptr;
 			if (outdoors) {
 				if (entry.hadOccluders) {
 					entry.polygon.clear();
@@ -180,232 +160,248 @@ namespace ecs {
 					entry.radius = memory.sightRadius;
 					++entry.polygonRevision;
 					++m_polygonBuildCount;
+
+					// Only when the polygon was (re)built this tick: a reused polygon sees the
+					// same structures, already in memory, so re-scanning every tick is wasted.
+					// New structures appear only via a geometry change, which bumps the
+					// generation and forces a rebuild here.
+					rememberStructures(observerMm, radiusMm, entry.polygon, memory);
 				}
-				cache = &entry;
-
-				// Pass 0: structure-as-observable (vision-architecture D4). A wall or
-				// opening that bounds or intersects the visibility polygon is seen, and
-				// its stable construction id enters memory. Runs only for indoor
-				// observers (a polygon exists here), over built structures radius-culled
-				// to dozens; the per-edge crossing test is O(structures * ring edges) but
-				// both are small. Deterministic: set inserts are order-independent.
-				//
-				// Only when the polygon was (re)built this tick: a reused polygon sees the
-				// same structures, already in memory, so re-scanning every tick is wasted.
-				// New structures appear only via a geometry change, which bumps the
-				// generation and forces a rebuild here.
-				if (polygonRebuilt) {
-					const auto& ring = cache->polygon;
-
-					// A structure point [p0,p1] is seen if either endpoint lies in/on the
-					// polygon, or the span crosses a ring edge. The crossing fallback matters
-					// because a wall IS (part of) the polygon boundary: a long wall facing the
-					// observer can have both endpoints out of sight radius while its middle is
-					// the boundary seen along, which an endpoint-only test would miss.
-					auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
-						if (geometry::pointInPolygon(p0, ring) != geometry::PointInPolygon::Outside ||
-							geometry::pointInPolygon(p1, ring) != geometry::PointInPolygon::Outside) {
-							return true;
-						}
-						for (std::size_t i = 0; i < ring.size(); ++i) {
-							const geometry::Vec2i64& e0 = ring[i];
-							const geometry::Vec2i64& e1 = ring[(i + 1) % ring.size()];
-							if (geometry::intersectSegments(p0, p1, e0, e1).relation != geometry::SegmentRelation::Disjoint) {
-								return true;
-							}
-						}
-						return false;
-					};
-
-					for (const auto& seg : m_geometry.builtSegments()) {
-						if (!geometry::withinDistanceOfSegment(observerMm, seg.a, seg.b, radiusMm)) {
-							continue;
-						}
-						if (structureSeen(seg.a, seg.b)) {
-							memory.rememberSegment(seg.id);
-						}
-					}
-
-					for (const auto& op : m_geometry.builtOpenings()) {
-						if (!geometry::withinDistanceOfSegment(observerMm, op.jambA, op.jambB, radiusMm)) {
-							continue;
-						}
-						if (structureSeen(op.jambA, op.jambB)) {
-							memory.rememberOpening(op.openingId);
-						}
-					}
-				}
+				polygon = &entry.polygon;
 			}
 
-			// A candidate already inside the sight radius is visible iff it is not
-			// strictly outside the visibility polygon (Inside or OnBoundary count as
-			// seen). Outdoors there is no polygon, so everything in radius is visible.
-			auto visible = [&](const glm::vec2& candidatePos) -> bool {
-				if (cache == nullptr) {
+			lookOver(entity, pos.value, memory.sightRadius, polygon, memory, knowledge);
+		}
+
+		// Prune cache entries for observers not seen this tick (dead/despawned).
+		// Mark-and-sweep keeps the map bounded.
+		for (auto it = m_visibilityCache.begin(); it != m_visibilityCache.end();) {
+			if (it->second.seenThisTick) {
+				it->second.seenThisTick = false; // reset for next tick
+				++it;
+			} else {
+				it = m_visibilityCache.erase(it);
+			}
+		}
+	}
+
+	void VisionSystem::rememberArea(EntityID observer, glm::vec2 center, float radiusMeters) {
+		auto* memory = world->getComponent<Memory>(observer);
+		if (memory == nullptr) {
+			return;
+		}
+		m_geometry.rebuildIfStale();
+		ensureTerrainDefinitionsRegistered();
+
+		const std::int64_t					   radiusMm = std::llround(static_cast<double>(radiusMeters) * 1000.0);
+		const geometry::Vec2i64				   centerMm = nav::toMm(center);
+		std::vector<geometry::OccluderSegment> occluders;
+		m_geometry.queryOccluders(centerMm, radiusMm, occluders);
+		geometry::Ring polygon;
+		if (!occluders.empty()) {
+			polygon = geometry::computeVisibilityPolygon(centerMm, radiusMm, occluders);
+			rememberStructures(centerMm, radiusMm, polygon, *memory);
+		}
+		lookOver(observer, center, radiusMeters, occluders.empty() ? nullptr : &polygon, *memory, world->getComponent<Knowledge>(observer));
+	}
+
+	void
+	VisionSystem::rememberStructures(geometry::Vec2i64 centerMm, std::int64_t radiusMm, const geometry::Ring& polygon, Memory& memory) {
+		// Pass 0: structure-as-observable (vision-architecture D4). A wall or
+		// opening that bounds or intersects the visibility polygon is seen, and
+		// its stable construction id enters memory. Runs only for indoor
+		// observers (a polygon exists here), over built structures radius-culled
+		// to dozens; the per-edge crossing test is O(structures * ring edges) but
+		// both are small. Deterministic: set inserts are order-independent.
+		//
+		// A structure point [p0,p1] is seen if either endpoint lies in/on the
+		// polygon, or the span crosses a ring edge. The crossing fallback matters
+		// because a wall IS (part of) the polygon boundary: a long wall facing the
+		// observer can have both endpoints out of sight radius while its middle is
+		// the boundary seen along, which an endpoint-only test would miss.
+		auto structureSeen = [&](geometry::Vec2i64 p0, geometry::Vec2i64 p1) -> bool {
+			if (geometry::pointInPolygon(p0, polygon) != geometry::PointInPolygon::Outside ||
+				geometry::pointInPolygon(p1, polygon) != geometry::PointInPolygon::Outside) {
+				return true;
+			}
+			for (std::size_t i = 0; i < polygon.size(); ++i) {
+				const geometry::Vec2i64& e0 = polygon[i];
+				const geometry::Vec2i64& e1 = polygon[(i + 1) % polygon.size()];
+				if (geometry::intersectSegments(p0, p1, e0, e1).relation != geometry::SegmentRelation::Disjoint) {
 					return true;
 				}
-				return geometry::pointInPolygon(nav::toMm(candidatePos), cache->polygon)
-					   != geometry::PointInPolygon::Outside;
-			};
-
-			// Reconciliation (vision-architecture D4): a remembered entity whose position
-			// the observer can see RIGHT NOW, but which is neither in the placement index
-			// nor among the ECS entities pass 2 sees this tick, is stale -- forget it so
-			// tasks fail gracefully and belief replans trigger. This is the continuous, look-and-correct corrector for
-			// targets the colonist is away from; ActionSystem keeps its at-target
-			// forgets (the synchronous backstop that closes the 0-5 frame throttle
-			// window where AIDecision could re-select a just-failed phantom).
-			//
-			// Gate cheaply, in order: radius (squared distance, no sqrt) -> visible()
-			// (the polygon test, indoors only) -> the index query (the costly step).
-			// Only what's both in range AND not occluded gets verified: you can't
-			// notice a bush is gone through a wall. The index check distinguishes
-			// destructive harvest/pickup (removeEntity drops it from the index ->
-			// forget) from a regrowth cooldown (entity stays in the index, only a
-			// separate cooldown map flips -> keep). Shore entries are synthetic
-			// terrain, not placement entities; they never disappear, so skip them.
-			//
-			// Entries absent from the index are only candidates: piles, boxes, stations and
-			// spawned flora live in the ECS alone, so pass 2 strikes off each one it sees,
-			// and what is left after it is forgotten. An unchanged pile in view then costs
-			// no memory write. Forgetting a SET of keys is order-independent (no LRU/
-			// capability state read here depends on order), so this stays deterministic
-			// regardless of unordered_map traversal order.
-			//
-			// Null placement data -> can't verify -> forget nothing (same guard as
-			// pass 1). Cost: one pass over knownWorldEntities per observer per tick
-			// (throttled to every m_updateInterval frames); a colonist's remembered
-			// set is realistically dozens-to-hundreds, and most entries fail the cheap
-			// radius/visible gate before ever touching the index.
-			std::vector<StaleCandidate>& stale = m_staleScratch;
-			stale.clear();
-			if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
-				for (const auto& [key, known] : memory.knownWorldEntities) {
-					// Shore points are terrain, not placement entities -- never reconcile.
-					if (known.defNameId == m_shoreDefNameId) {
-						continue;
-					}
-
-					const float ddx = known.position.x - pos.value.x;
-					const float ddy = known.position.y - pos.value.y;
-					if (ddx * ddx + ddy * ddy > sightRadiusSq) {
-						continue; // out of sight radius
-					}
-					if (!visible(known.position)) {
-						continue; // occluded -- can't see whether it's gone
-					}
-
-					// Existence check: is a PlacedEntity of the same defName still in the
-					// index near the remembered position? Query a tiny radius (the position
-					// is the entity's own, quantized only by memory's 0.1m hash grid), then
-					// match by defName.
-					const std::string& defName = registry.getDefName(known.defNameId);
-					if (defName.empty()) {
-						continue; // unknown id -> can't verify -> keep
-					}
-
-					const world::ChunkCoordinate coord =
-						world::worldToChunk({known.position.x, known.position.y});
-					if (m_processedChunks->find(coord) == m_processedChunks->end()) {
-						continue; // chunk not placement-processed -> can't verify -> keep
-					}
-					const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
-					if (chunkIndex == nullptr) {
-						continue; // no index -> can't verify -> keep
-					}
-
-					constexpr float kPresenceEpsilon = 0.2F; // tiles; covers the 0.1m memory quantization
-					// hasNearby is the allocation-free presence check (queryRadius would
-					// build a vector just to test emptiness).
-					if (!chunkIndex->hasNearby(known.position, kPresenceEpsilon, defName)) {
-						stale.push_back({key, known.position, known.defNameId, false});
-					}
-				}
-				std::ranges::sort(stale, {}, &StaleCandidate::key);
 			}
+			return false;
+		};
 
-			// Pass 1: placed entities from world generation (needs placement data wired).
-			if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
-				// Query each potentially visible chunk for placed entities
-				for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
-					for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
-						world::ChunkCoordinate coord{cx, cy};
-
-						// Only query processed chunks for placed entities
-						if (m_processedChunks->find(coord) == m_processedChunks->end()) {
-							continue;
-						}
-
-						const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
-						if (chunkIndex == nullptr) {
-							continue;
-						}
-
-						// Query entities within sight radius from this chunk
-						auto nearbyEntities = chunkIndex->queryRadius(pos.value, memory.sightRadius);
-
-						// Remember each discovered entity
-						for (const auto* placedEntity : nearbyEntities) {
-							// Occlusion gate: skip entities a wall hides.
-							if (!visible(placedEntity->position)) {
-								continue;
-							}
-
-							// Get defNameId and capability mask for registry notification
-							uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
-							if (defNameId == 0) {
-								continue;
-							}
-							uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
-
-							// Remember in colonist's memory (returns true only for NEW discoveries)
-							bool isNewDiscovery = memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
-
-							// Update permanent knowledge if Knowledge component exists
-							if (isNewDiscovery && knowledge != nullptr && knowledge->learn(defNameId)) {
-								// New discovery - check for recipe unlocks
-								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
-								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-									m_onRecipeDiscovery(unlockedRecipe);
-								}
-							}
-						}
-					}
-				}
+		for (const auto& seg : m_geometry.builtSegments()) {
+			if (!geometry::withinDistanceOfSegment(centerMm, seg.a, seg.b, radiusMm)) {
+				continue;
 			}
+			if (structureSeen(seg.a, seg.b)) {
+				memory.rememberSegment(seg.id);
+			}
+		}
 
-			// Pass 2: ECS entities with Appearance (e.g., bio piles created by ActionSystem).
-			// These are runtime-spawned entities, as opposed to those placed during world generation.
-			for (auto [otherEntity, otherPos, appearance] : world->view<Position, Appearance>()) {
-				// Don't "see" yourself
-				if (otherEntity == entity) {
+		for (const auto& op : m_geometry.builtOpenings()) {
+			if (!geometry::withinDistanceOfSegment(centerMm, op.jambA, op.jambB, radiusMm)) {
+				continue;
+			}
+			if (structureSeen(op.jambA, op.jambB)) {
+				memory.rememberOpening(op.openingId);
+			}
+		}
+	}
+
+	void VisionSystem::lookOver(
+		EntityID			  observer,
+		glm::vec2			  center,
+		float				  radiusMeters,
+		const geometry::Ring* polygon,
+		Memory&				  memory,
+		Knowledge*			  knowledge
+	) {
+		// Chunk size in world units (meters, since kTileSize = 1.0F)
+		constexpr float kChunkWorldSize = static_cast<float>(world::kChunkSize);
+
+		auto& registry = assets::AssetRegistry::Get();
+		auto& recipeRegistry = assets::RecipeRegistry::Get();
+
+		// Calculate bounding box of vision in world coordinates
+		float minX = center.x - radiusMeters;
+		float maxX = center.x + radiusMeters;
+		float minY = center.y - radiusMeters;
+		float maxY = center.y + radiusMeters;
+
+		// Convert to chunk coordinate range
+		int32_t chunkMinX = static_cast<int32_t>(std::floor(minX / kChunkWorldSize));
+		int32_t chunkMaxX = static_cast<int32_t>(std::floor(maxX / kChunkWorldSize));
+		int32_t chunkMinY = static_cast<int32_t>(std::floor(minY / kChunkWorldSize));
+		int32_t chunkMaxY = static_cast<int32_t>(std::floor(maxY / kChunkWorldSize));
+
+		float sightRadiusSq = radiusMeters * radiusMeters;
+
+		// A candidate already inside the sight radius is visible iff it is not
+		// strictly outside the visibility polygon (Inside or OnBoundary count as
+		// seen). Outdoors there is no polygon, so everything in radius is visible.
+		auto visible = [&](const glm::vec2& candidatePos) -> bool {
+			if (polygon == nullptr) {
+				return true;
+			}
+			return geometry::pointInPolygon(nav::toMm(candidatePos), *polygon) != geometry::PointInPolygon::Outside;
+		};
+
+		// Reconciliation (vision-architecture D4): a remembered entity whose position
+		// the observer can see RIGHT NOW, but which is neither in the placement index
+		// nor among the ECS entities pass 2 sees this tick, is stale -- forget it so
+		// tasks fail gracefully and belief replans trigger. This is the continuous, look-and-correct corrector for
+		// targets the colonist is away from; ActionSystem keeps its at-target
+		// forgets (the synchronous backstop that closes the 0-5 frame throttle
+		// window where AIDecision could re-select a just-failed phantom).
+		//
+		// Gate cheaply, in order: radius (squared distance, no sqrt) -> visible()
+		// (the polygon test, indoors only) -> the index query (the costly step).
+		// Only what's both in range AND not occluded gets verified: you can't
+		// notice a bush is gone through a wall. The index check distinguishes
+		// destructive harvest/pickup (removeEntity drops it from the index ->
+		// forget) from a regrowth cooldown (entity stays in the index, only a
+		// separate cooldown map flips -> keep). Shore entries are synthetic
+		// terrain, not placement entities; they never disappear, so skip them.
+		//
+		// Entries absent from the index are only candidates: piles, boxes, stations and
+		// spawned flora live in the ECS alone, so pass 2 strikes off each one it sees,
+		// and what is left after it is forgotten. An unchanged pile in view then costs
+		// no memory write. Forgetting a SET of keys is order-independent (no LRU/
+		// capability state read here depends on order), so this stays deterministic
+		// regardless of unordered_map traversal order.
+		//
+		// Null placement data -> can't verify -> forget nothing (same guard as
+		// pass 1). Cost: one pass over knownWorldEntities per observer per tick
+		// (throttled to every m_updateInterval frames); a colonist's remembered
+		// set is realistically dozens-to-hundreds, and most entries fail the cheap
+		// radius/visible gate before ever touching the index.
+		std::vector<StaleCandidate>& stale = m_staleScratch;
+		stale.clear();
+		if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
+			for (const auto& [key, known] : memory.knownWorldEntities) {
+				// Shore points are terrain, not placement entities -- never reconcile.
+				if (known.defNameId == m_shoreDefNameId) {
 					continue;
 				}
 
-				// Check if within sight radius
-				float dx = otherPos.value.x - pos.value.x;
-				float dy = otherPos.value.y - pos.value.y;
-				if (dx * dx + dy * dy <= sightRadiusSq) {
-					// Occlusion gate: skip entities a wall hides.
-					if (!visible(otherPos.value)) {
+				const float ddx = known.position.x - center.x;
+				const float ddy = known.position.y - center.y;
+				if (ddx * ddx + ddy * ddy > sightRadiusSq) {
+					continue; // out of sight radius
+				}
+				if (!visible(known.position)) {
+					continue; // occluded -- can't see whether it's gone
+				}
+
+				// Existence check: is a PlacedEntity of the same defName still in the
+				// index near the remembered position? Query a tiny radius (the position
+				// is the entity's own, quantized only by memory's 0.1m hash grid), then
+				// match by defName.
+				const std::string& defName = registry.getDefName(known.defNameId);
+				if (defName.empty()) {
+					continue; // unknown id -> can't verify -> keep
+				}
+
+				const world::ChunkCoordinate coord = world::worldToChunk({known.position.x, known.position.y});
+				if (m_processedChunks->find(coord) == m_processedChunks->end()) {
+					continue; // chunk not placement-processed -> can't verify -> keep
+				}
+				const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
+				if (chunkIndex == nullptr) {
+					continue; // no index -> can't verify -> keep
+				}
+
+				constexpr float kPresenceEpsilon = 0.2F; // tiles; covers the 0.1m memory quantization
+				// hasNearby is the allocation-free presence check (queryRadius would
+				// build a vector just to test emptiness).
+				if (!chunkIndex->hasNearby(known.position, kPresenceEpsilon, defName)) {
+					stale.push_back({key, known.position, known.defNameId, false});
+				}
+			}
+			std::ranges::sort(stale, {}, &StaleCandidate::key);
+		}
+
+		// Pass 1: placed entities from world generation (needs placement data wired).
+		if (m_placementExecutor != nullptr && m_processedChunks != nullptr) {
+			// Query each potentially visible chunk for placed entities
+			for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
+				for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
+					world::ChunkCoordinate coord{cx, cy};
+
+					// Only query processed chunks for placed entities
+					if (m_processedChunks->find(coord) == m_processedChunks->end()) {
 						continue;
 					}
 
-					// Get defNameId and capability mask from registry
-					uint32_t defNameId = registry.getDefNameId(appearance.defName);
-					if (defNameId != 0) {
-						if (!stale.empty()) {
-							const uint64_t key = hashWorldEntity(otherPos.value, defNameId);
-							const auto	   it = std::ranges::lower_bound(stale, key, {}, &StaleCandidate::key);
-							if (it != stale.end() && it->key == key) {
-								it->seen = true; // here in the ECS, so not gone
-							}
+					const auto* chunkIndex = m_placementExecutor->getChunkIndex(coord);
+					if (chunkIndex == nullptr) {
+						continue;
+					}
+
+					// Query entities within sight radius from this chunk
+					auto nearbyEntities = chunkIndex->queryRadius(center, radiusMeters);
+
+					// Remember each discovered entity
+					for (const auto* placedEntity : nearbyEntities) {
+						// Occlusion gate: skip entities a wall hides.
+						if (!visible(placedEntity->position)) {
+							continue;
 						}
 
+						// Get defNameId and capability mask for registry notification
+						uint32_t defNameId = registry.getDefNameId(placedEntity->defName);
+						if (defNameId == 0) {
+							continue;
+						}
 						uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
 
 						// Remember in colonist's memory (returns true only for NEW discoveries)
-						bool isNewDiscovery = memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
+						bool isNewDiscovery = memory.rememberWorldEntity(placedEntity->position, defNameId, capabilityMask);
 
 						// Update permanent knowledge if Knowledge component exists
 						if (isNewDiscovery && knowledge != nullptr && knowledge->learn(defNameId)) {
@@ -418,63 +414,97 @@ namespace ecs {
 					}
 				}
 			}
+		}
 
-			for (const StaleCandidate& candidate : stale) {
-				if (!candidate.seen) {
-					memory.forgetWorldEntity(candidate.position, candidate.defNameId);
-				}
+		// Pass 2: ECS entities with Appearance (e.g., bio piles created by ActionSystem).
+		// These are runtime-spawned entities, as opposed to those placed during world generation.
+		for (auto [otherEntity, otherPos, appearance] : world->view<Position, Appearance>()) {
+			// Don't "see" yourself
+			if (otherEntity == observer) {
+				continue;
 			}
 
-			// Pass 3: shore points, sampled along each chunk's water rings when the
-			// chunk was generated (terrain polygons D11).
-			if (m_chunkManager != nullptr && m_shoreDefNameId != 0) {
-				for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
-					for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
-						world::ChunkCoordinate coord{cx, cy};
+			// Check if within sight radius
+			float dx = otherPos.value.x - center.x;
+			float dy = otherPos.value.y - center.y;
+			if (dx * dx + dy * dy <= sightRadiusSq) {
+				// Occlusion gate: skip entities a wall hides.
+				if (!visible(otherPos.value)) {
+					continue;
+				}
 
-						const auto* chunk = m_chunkManager->getChunk(coord);
-						if (chunk == nullptr || !chunk->isReady()) {
-							continue;
+				// Get defNameId and capability mask from registry
+				uint32_t defNameId = registry.getDefNameId(appearance.defName);
+				if (defNameId != 0) {
+					if (!stale.empty()) {
+						const uint64_t key = hashWorldEntity(otherPos.value, defNameId);
+						const auto	   it = std::ranges::lower_bound(stale, key, {}, &StaleCandidate::key);
+						if (it != stale.end() && it->key == key) {
+							it->seen = true; // here in the ECS, so not gone
 						}
+					}
 
-						for (const geometry::Vec2i64& shorePoint : chunk->terrainPolygons().shorePoints) {
-							const Foundation::Vec2 meters = geometry::dequantize(shorePoint);
-							const glm::vec2		   shoreWorldPos{meters.x, meters.y};
+					uint16_t capabilityMask = registry.getCapabilityMask(defNameId);
 
-							// Check if within sight radius
-							float dx = shoreWorldPos.x - pos.value.x;
-							float dy = shoreWorldPos.y - pos.value.y;
-							if (dx * dx + dy * dy <= sightRadiusSq) {
-								// Occlusion gate: skip shore a wall hides.
-								if (!visible(shoreWorldPos)) {
-									continue;
-								}
+					// Remember in colonist's memory (returns true only for NEW discoveries)
+					bool isNewDiscovery = memory.rememberWorldEntity(otherPos.value, defNameId, capabilityMask);
 
-								memory.rememberWorldEntity(shoreWorldPos, m_shoreDefNameId, m_shoreCapabilityMask);
-
-								// Update permanent knowledge for the shore
-								if (knowledge != nullptr && knowledge->learn(m_shoreDefNameId)) {
-									// New discovery - check for recipe unlocks (unlikely for the shore, but consistent)
-									std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreDefNameId, registry, recipeRegistry);
-									if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
-										m_onRecipeDiscovery(unlockedRecipe);
-									}
-								}
-							}
+					// Update permanent knowledge if Knowledge component exists
+					if (isNewDiscovery && knowledge != nullptr && knowledge->learn(defNameId)) {
+						// New discovery - check for recipe unlocks
+						std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, defNameId, registry, recipeRegistry);
+						if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+							m_onRecipeDiscovery(unlockedRecipe);
 						}
 					}
 				}
 			}
 		}
 
-		// Prune cache entries for observers not seen this tick (dead/despawned).
-		// Mark-and-sweep keeps the map bounded.
-		for (auto it = m_visibilityCache.begin(); it != m_visibilityCache.end();) {
-			if (it->second.seenThisTick) {
-				it->second.seenThisTick = false; // reset for next tick
-				++it;
-			} else {
-				it = m_visibilityCache.erase(it);
+		for (const StaleCandidate& candidate : stale) {
+			if (!candidate.seen) {
+				memory.forgetWorldEntity(candidate.position, candidate.defNameId);
+			}
+		}
+
+		// Pass 3: shore points, sampled along each chunk's water rings when the
+		// chunk was generated (terrain polygons D11).
+		if (m_chunkManager != nullptr && m_shoreDefNameId != 0) {
+			for (int32_t cy = chunkMinY; cy <= chunkMaxY; ++cy) {
+				for (int32_t cx = chunkMinX; cx <= chunkMaxX; ++cx) {
+					world::ChunkCoordinate coord{cx, cy};
+
+					const auto* chunk = m_chunkManager->getChunk(coord);
+					if (chunk == nullptr || !chunk->isReady()) {
+						continue;
+					}
+
+					for (const geometry::Vec2i64& shorePoint : chunk->terrainPolygons().shorePoints) {
+						const Foundation::Vec2 meters = geometry::dequantize(shorePoint);
+						const glm::vec2		   shoreWorldPos{meters.x, meters.y};
+
+						// Check if within sight radius
+						float dx = shoreWorldPos.x - center.x;
+						float dy = shoreWorldPos.y - center.y;
+						if (dx * dx + dy * dy <= sightRadiusSq) {
+							// Occlusion gate: skip shore a wall hides.
+							if (!visible(shoreWorldPos)) {
+								continue;
+							}
+
+							memory.rememberWorldEntity(shoreWorldPos, m_shoreDefNameId, m_shoreCapabilityMask);
+
+							// Update permanent knowledge for the shore
+							if (knowledge != nullptr && knowledge->learn(m_shoreDefNameId)) {
+								// New discovery - check for recipe unlocks (unlikely for the shore, but consistent)
+								std::string unlockedRecipe = checkForRecipeUnlock(*knowledge, m_shoreDefNameId, registry, recipeRegistry);
+								if (!unlockedRecipe.empty() && m_onRecipeDiscovery) {
+									m_onRecipeDiscovery(unlockedRecipe);
+								}
+							}
+						}
+					}
+				}
 			}
 		}
 	}
