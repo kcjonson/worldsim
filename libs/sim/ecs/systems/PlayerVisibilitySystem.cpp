@@ -144,10 +144,21 @@ namespace ecs {
 		footprintsByOpening.clear();
 		std::vector<geometry::nav::NavInputPolygon> rings;
 		std::vector<geometry::nav::DoorPortal>		portals;
-		nav::extractWalls(*constructionWorld, assets::ConstructionRegistry::Get(), rings, portals);
+		std::vector<nav::WallJunction>				junctions;
+		nav::extractWalls(*constructionWorld, assets::ConstructionRegistry::Get(), rings, portals, &junctions);
+		// A junction joins the record once any wall meeting at it is seen, not only the one it is tagged with.
+		std::unordered_map<std::size_t, const std::vector<construction::SegmentId>*> junctionWalls;
+		for (const nav::WallJunction& junction : junctions) {
+			junctionWalls[junction.polygon] = &junction.walls;
+		}
 		for (geometry::nav::NavInputPolygon& ring : rings) {
-			const std::size_t index = footprints.size();
-			if (ring.provenanceId > 0) {
+			const std::size_t index	   = footprints.size();
+			const auto		  junction = junctionWalls.find(index);
+			if (junction != junctionWalls.end()) {
+				for (const construction::SegmentId wall : *junction->second) {
+					footprintsBySegment[wall].push_back(index);
+				}
+			} else if (ring.provenanceId > 0) {
 				footprintsBySegment[static_cast<construction::SegmentId>(ring.provenanceId)].push_back(index);
 			}
 			if (ring.openingId >= 0) {

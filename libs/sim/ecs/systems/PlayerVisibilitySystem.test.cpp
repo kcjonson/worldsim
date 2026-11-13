@@ -226,6 +226,46 @@ TEST(PlayerVisibilitySystem, IndoorPolygonsEnterSkirtedAndTheWallJoins) {
 	assets::ConstructionRegistry::Get().clear();
 }
 
+// A corner's junction is tagged with its smaller wall's id, but joins the record when either wall is
+// seen: here he stands by the larger-id wall with the corner out of his sight, so only that wall is
+// seen, and the junction goes in with it.
+TEST(PlayerVisibilitySystem, CornerJunctionJoinsWithEitherWall) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	buildWall(walls, {0, 0}, {10000, 0});
+	buildWall(walls, {10000, 0}, {10000, 60000});
+	ASSERT_EQ(walls.segments().size(), 2U);
+	construction::SegmentId hiddenWall = construction::kInvalidSegment;
+	construction::SegmentId seenWall   = construction::kInvalidSegment;
+	for (const construction::WallSegment& segment : walls.segments()) {
+		const construction::Vertex* start = walls.getVertex(segment.v0);
+		const construction::Vertex* end	  = walls.getVertex(segment.v1);
+		if (start->pos.x == end->pos.x) {
+			seenWall = segment.id;
+		} else {
+			hiddenWall = segment.id;
+		}
+	}
+	ASSERT_GT(seenWall, hiddenWall) << "the wall he sees has the larger id";
+
+	Colony colony;
+	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
+	const EntityID colonist = colony.addColonist({15.0F, 40.0F});
+	colony.tick();
+	const std::optional<VisionSystem::SightShape> shape = colony.vision.sightShape(colonist);
+	ASSERT_TRUE(shape.has_value());
+	ASSERT_NE(shape->segmentsSeen, nullptr);
+	ASSERT_EQ(*shape->segmentsSeen, std::vector<construction::SegmentId>{seenWall}) << "only the larger-id wall is in sight";
+
+	colony.remove(colonist);
+	EXPECT_EQ(colony.visibility.footprintsEntered(), 2U) << "the seen wall's band and the junction";
+	EXPECT_TRUE(colony.visibility.isSeen({9.95F, 0.05F})) << "the junction";
+	EXPECT_FALSE(colony.visibility.isSeen({5.0F, 0.0F})) << "the hidden wall's body";
+	assets::ConstructionRegistry::Get().clear();
+}
+
 // The containments of player-visibility.md 3.1 on a path that curves and wobbles: the disc drawn as
 // visible round him lies in seen ground every frame, every seen point lies within sight of some
 // position he held, and no point once seen stops being seen.
