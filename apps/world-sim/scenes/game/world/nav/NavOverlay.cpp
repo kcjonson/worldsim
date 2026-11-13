@@ -42,8 +42,8 @@ namespace world_sim {
 
 		// Mesh wireframe: draw each on-screen live triangle's three edges. Edges are shared
 		// between neighbors, so this overdraws once per interior edge; fine for a debug layer.
-		// The mesh covers every chunk ever loaded, so triangles wholly off one side of the
-		// viewport are skipped.
+		// The mesh is every limit movers have meshed, out to its edge, so triangles wholly off one
+		// side of the viewport are skipped.
 		const geometry::nav::PatchableMesh& mesh = navigation->navMesh();
 		const auto&							tris = mesh.triangles();
 		const float							w	 = static_cast<float>(viewportW);

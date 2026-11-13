@@ -283,7 +283,7 @@ namespace world_sim {
 
 	void DevCommandHandler::devColonist(const app::DevRequest& cmd) {
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (!requireValidPosition(at, "colonist")) {
+		if (!requireMoverPosition(at, "colonist")) {
 			return;
 		}
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
@@ -306,11 +306,20 @@ namespace world_sim {
 		if (m_ctx.navigation != nullptr && m_ctx.navigation->isValidPosition({at.x, at.y})) {
 			return true;
 		}
-		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f not on an active walkable nav mesh, refused", verb, at.x, at.y);
+		const bool		  meshed = m_ctx.navigation != nullptr && m_ctx.navigation->inSimArea({at.x, at.y});
+		const char* const why	 = meshed ? "is water or a placed obstacle" : "is ground no mover has seen (off the nav mesh)";
+		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f %s, refused", verb, at.x, at.y, why);
 		m_ctx.ui->pushNotification(
-			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") not on walkable nav mesh", ui::ToastSeverity::Warning
+			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") " + why, ui::ToastSeverity::Warning
 		);
 		return false;
+	}
+
+	bool DevCommandHandler::requireMoverPosition(Foundation::Vec2 at, const char* verb) {
+		if (m_ctx.navigation != nullptr && !m_ctx.navigation->inSimArea({at.x, at.y})) {
+			return true;
+		}
+		return requireValidPosition(at, verb);
 	}
 
 	bool DevCommandHandler::requireBuildableArea(const std::vector<Foundation::Vec2>& pts, const char* verb) {
@@ -324,8 +333,8 @@ namespace world_sim {
 		if (m_ctx.navigation->isAreaBuildable(Foundation::toGlmVec2(pts))) {
 			return true;
 		}
-		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not on buildable ground (water or off-mesh), refused", verb);
-		m_ctx.ui->pushNotification("Dev", "Refused: footprint not on buildable ground", ui::ToastSeverity::Warning);
+		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not on buildable ground (water, or ground no mover has seen: off the nav mesh), refused", verb);
+		m_ctx.ui->pushNotification("Dev", "Refused: footprint on water or ground no mover has seen", ui::ToastSeverity::Warning);
 		return false;
 	}
 
@@ -481,7 +490,7 @@ namespace world_sim {
 			return;
 		}
 		const Foundation::Vec2 to = parsePoint(param(cmd, "to"));
-		if (!requireValidPosition(to, "teleport")) {
+		if (!requireMoverPosition(to, "teleport")) {
 			return;
 		}
 		pos->value = {to.x, to.y};
