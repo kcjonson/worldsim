@@ -101,6 +101,14 @@ namespace {
 
 	using Clock = std::chrono::steady_clock;
 
+	// A visibility limit holding the whole chunk: ground as the game adds it, sized so the chunk's
+	// water and obstacles all stand on it.
+	geometry::nav::NavInputPolygon chunkGround(world::ChunkCoordinate coord) {
+		const std::int64_t		side = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
+		const geometry::Vec2i64 lo	 = nav::chunkOriginMm(coord);
+		return nav::visibilityLimit({lo.x + side / 2, lo.y + side / 2}, side * 3 / 4);
+	}
+
 	constexpr float	 kTickSeconds  = 1.0F / 60.0F;
 	// The forest's layout, by WORLDSIM_BENCH_FOREST (see the file comment).
 	struct ForestLayout {
@@ -1150,11 +1158,7 @@ namespace {
 	NAV_BENCH_TAG(RSystemContainer, out.count += static_cast<double>(v.size());
 				  out.bytes += static_cast<double>(v.size() * sizeof(typename std::remove_cvref_t<decltype(v)>::value_type)))
 	NAV_BENCH_TAG(RDetailInMesh, RSystemContainer::visit(v, out))
-	NAV_BENCH_TAG(RWantedCells, RSystemContainer::visit(v, out))
-	NAV_BENCH_TAG(RWantedChunks, RSystemContainer::visit(v, out))
-	template struct Rob<&ecs::NavigationSystem::detailInMesh, RDetailInMesh>;
-	template struct Rob<&ecs::NavigationSystem::wantedCells, RWantedCells>;
-	template struct Rob<&ecs::NavigationSystem::wantedChunks, RWantedChunks>;
+	template struct Rob<&ecs::NavigationSystem::obstacleInMesh, RDetailInMesh>;
 #undef NAV_BENCH_INTERN
 #undef NAV_BENCH_MAP
 #undef NAV_BENCH_LEAF
@@ -1259,7 +1263,7 @@ namespace {
 	}
 
 	geometry::nav::PatchableMesh navMeshLikeTheSystems() {
-		return geometry::nav::PatchableMesh({.maxBoundsEdgeMm = ecs::NavigationSystem::kMaxBoundsEdgeMm});
+		return geometry::nav::PatchableMesh{};
 	}
 
 	std::int64_t cellOf(glm::vec2 p) {
@@ -1303,7 +1307,7 @@ namespace {
 		for (auto _ : state) {
 			const std::vector<std::pair<glm::vec2, geometry::nav::NavInputPolygon>> obstacles = denseObstacles({1.0F, 1.0F}, {511.0F, 511.0F}, 3.54F);
 			geometry::nav::PatchableMesh mesh = navMeshLikeTheSystems();
-			mesh.applyPatch({.adds = {nav::chunkSquare({0, 0})}});
+			mesh.applyPatch({.adds = {chunkGround({0, 0})}});
 			mesh.refreshWidths();
 			const MeshBytes	   before		 = meshBytes(mesh);
 			const std::int64_t heapBefore	 = heapAllocated();
@@ -1409,9 +1413,8 @@ namespace {
 			const Tally	 inMesh	   = visit<RDetailInMesh>(rig.nav);
 			std::fprintf(stderr,
 						 "  heap growth beyond the mesh's containers %.1f B per obstacle\n"
-						 "  detailInMesh %.0f entries of %.0f B each (a std::map node adds 4 pointers); wantedCells %.0f; wantedChunks %.0f\n",
-						 (heapDelta - meshDelta) / added, inMesh.count, inMesh.bytes / inMesh.count,
-						 visit<RWantedCells>(rig.nav).count, visit<RWantedChunks>(rig.nav).count);
+						 "  obstacleInMesh %.0f entries of %.0f B each (a std::map node adds 4 pointers)\n",
+						 (heapDelta - meshDelta) / added, inMesh.count, inMesh.bytes / inMesh.count);
 			state.counters["systemBeyondMeshesBPerObst"] = (heapDelta - meshDelta) / added;
 		}
 	}
@@ -1516,7 +1519,7 @@ namespace {
 									 c.waterShare < 1.0 ? c.obstacles / (262144.0 * (1.0 - c.waterShare)) : 0.0, c.emptyCells, c.waterCells, c.emptyLandCells);
 						counted.push_back(c);
 						if (r <= 1) {
-							nearGround.push_back(nav::chunkSquare(coord));
+							nearGround.push_back(chunkGround(coord));
 							nav::appendChunkWater(chunk->terrainPolygons(), nearGround);
 						}
 						placement.storeChunkResult(std::move(result));
@@ -1780,8 +1783,8 @@ namespace {
 			if (seamAbsent) {
 				mesh.applyPatch({.adds = {nav::borderRing({0, 0}, {2 * 512000, 512000})}});
 			} else {
-				mesh.applyPatch({.adds = {nav::chunkSquare({0, 0})}});
-				mesh.applyPatch({.adds = {nav::chunkSquare({1, 0})}});
+				mesh.applyPatch({.adds = {chunkGround({0, 0})}});
+				mesh.applyPatch({.adds = {chunkGround({1, 0})}});
 			}
 			std::map<std::int64_t, SeamCell> cells;
 			for (const auto& [at, ring] : denseObstacles({384.0F, 100.0F}, {640.0F, 412.0F}, kSeamSpacingM)) {

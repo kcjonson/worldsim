@@ -1,6 +1,7 @@
 #include "StaticRectCollisionSystem.h"
 
 #include "NavigationSystem.h"
+#include "PlacedNothing.test.h"
 
 #include "../World.h"
 #include "../components/AgentRadius.h"
@@ -146,11 +147,12 @@ namespace {
 			return e;
 		}
 
-		// Chunk (0, 0), all land, generated once for every test.
+		// Chunk (0, 0) and the eight round it, all land, generated once for every test: a mover's
+		// limit near the origin reaches into the chunks west and south of it.
 		static world::ChunkManager* landChunk() {
 			static const std::unique_ptr<world::ChunkManager> chunks = [] {
 				auto c = std::make_unique<world::ChunkManager>(std::make_unique<world::SyntheticWorldSampler>(7, world::SyntheticMap{}));
-				c->setLoadRadius(0);
+				c->setLoadRadius(1);
 				c->setUnloadRadius(2);
 				c->update({256.0F, 256.0F});
 				c->finishPendingGeneration();
@@ -165,6 +167,7 @@ namespace {
 		static StaticRectCollisionSystem& wire(World& world, PlacementExecutor& executor) {
 			auto& nav = world.registerSystem<NavigationSystem>();
 			nav.setChunkManager(landChunk());
+			placeNothingElsewhere(executor, nullptr);
 			nav.setPlacementData(&executor, nullptr);
 			nav.finishPendingBuilds();
 			auto& sys = world.registerSystem<StaticRectCollisionSystem>();

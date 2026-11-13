@@ -16,6 +16,7 @@
 #include <construction/ConstructionWorld.h>
 
 #include <core/IntegerDivision.h>
+#include <nav/LimitPolygon.h>
 #include <nav/PathQuery.h>
 #include <predicates/Predicates.h>
 
@@ -30,9 +31,12 @@
 #include <algorithm>
 #include <array>
 #include <bit>
+#include <cassert>
 #include <chrono>
 #include <cmath>
 #include <condition_variable>
+#include <cstdlib>
+#include <deque>
 #include <functional>
 #include <limits>
 #include <map>
@@ -53,30 +57,13 @@ namespace ecs {
 
 		using Clock = std::chrono::steady_clock;
 
-		constexpr std::size_t  kUnlimited	  = std::numeric_limits<std::size_t>::max();
-		constexpr std::int64_t kChunkMm		  = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
-		constexpr std::int64_t kCellsPerChunk = kChunkMm / NavigationSystem::kDetailCellMm;
-		static_assert(kCellsPerChunk * NavigationSystem::kDetailCellMm == kChunkMm, "detail cells tile a chunk");
+		constexpr std::size_t  kUnlimited = std::numeric_limits<std::size_t>::max();
+		constexpr std::int64_t kChunkMm	  = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
 
 		double msSince(Clock::time_point start) {
 			return std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 		}
 
-		std::int64_t cellKey(std::int64_t cx, std::int64_t cy) {
-			return static_cast<std::int64_t>((static_cast<std::uint64_t>(cx) << 32U) | static_cast<std::uint32_t>(cy));
-		}
-		std::int64_t cellX(std::int64_t key) { return key >> 32; }
-		std::int64_t cellY(std::int64_t key) { return static_cast<std::int32_t>(static_cast<std::uint32_t>(key & 0xFFFFFFFF)); }
-		world::ChunkCoordinate cellChunk(std::int64_t key) {
-			return {static_cast<std::int32_t>(geometry::floorDiv(cellX(key), kCellsPerChunk)),
-					static_cast<std::int32_t>(geometry::floorDiv(cellY(key), kCellsPerChunk))};
-		}
-		// The scan cell that owns a placed entity: [lo, lo + side) on each axis, as scanDetail tests
-		// it (the side is a power of two in metres, so the division is exact).
-		std::int64_t cellOfEntity(glm::vec2 position) {
-			constexpr float kSide = static_cast<float>(NavigationSystem::kDetailCellMm / geometry::kMillimetersPerMeter);
-			return cellKey(static_cast<std::int64_t>(std::floor(position.x / kSide)), static_cast<std::int64_t>(std::floor(position.y / kSide)));
-		}
 		std::int64_t radiusMm(float meters) { return static_cast<std::int64_t>(std::llround(static_cast<double>(meters) * 1000.0)); }
 
 		// Squared distance and closest-point-on-segment, in meters.
@@ -618,16 +605,15 @@ namespace ecs {
 		job.ms		 = msSince(start);
 	}
 
-	bool NavigationSystem::DetailKey::operator<(const DetailKey& o) const {
+	bool NavigationSystem::ObstacleKey::operator<(const ObstacleKey& o) const {
 		if (chunk.y != o.chunk.y || chunk.x != o.chunk.x) {
 			return ChunkLess{}(chunk, o.chunk);
 		}
-		return std::tie(cell, xBits, yBits, defName) < std::tie(o.cell, o.xBits, o.yBits, o.defName);
+		return std::tie(xBits, yBits, defName) < std::tie(o.xBits, o.yBits, o.defName);
 	}
 
 	NavigationSystem::NavigationSystem()
-		: detailMesh({.maxBoundsEdgeMm = kMaxBoundsEdgeMm}),
-		  patchWorker(std::make_unique<Worker>()),
+		: patchWorker(std::make_unique<Worker>()),
 		  routeWorker(std::make_unique<Worker>()) {}
 
 	NavigationSystem::~NavigationSystem() {
@@ -655,7 +641,9 @@ namespace ecs {
 		}
 		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
 			(void)agent;
-			out.push_back({{position.value.x, position.value.y}, meshingRange(entity)});
+			const float circumradius = static_cast<float>(gnav::limitCircumradius(radiusMm(meshingRange(entity)))) /
+									   static_cast<float>(geometry::kMillimetersPerMeter);
+			out.push_back({{position.value.x, position.value.y}, circumradius + kFootprintReachMeters});
 		}
 	}
 
@@ -688,7 +676,6 @@ namespace ecs {
 		++moverPass;
 		for (auto [entity, position, agent] : world->view<Position, AgentRadius>()) {
 			(void)agent;
-			const std::int64_t cell	 = cellOfEntity(position.value);
 			const std::int64_t xMm	 = radiusMm(position.value.x);
 			const std::int64_t yMm	 = radiusMm(position.value.y);
 			const float		   range = meshingRange(entity);
@@ -697,90 +684,76 @@ namespace ecs {
 			disc.seen				 = moverPass;
 			const std::int64_t dx	 = xMm - disc.xMm;
 			const std::int64_t dy	 = yMm - disc.yMm;
-			if (fresh || dx * dx + dy * dy >= kDiscRetakeStepMm * kDiscRetakeStepMm || disc.rangeMeters != range) {
-				disc.xMm		 = xMm;
-				disc.yMm		 = yMm;
-				disc.rangeMeters = range;
-				wantDisc(xMm, yMm, range);
-			} else if (disc.cell == cell) {
+			if (!fresh && dx * dx + dy * dy < kLimitRetakeStepMm * kLimitRetakeStepMm && disc.rangeMeters == range) {
 				continue;
 			}
-			disc.cell = cell;
-			wantNear(cell);
+			disc.xMm		 = xMm;
+			disc.yMm		 = yMm;
+			disc.rangeMeters = range;
+			SeenLimit limit	 = makeLimit(entity, {xMm, yMm}, range);
+			if (!detailMesh.groundCovers(limit.outline)) {
+				limitQueue.push_back(std::move(limit));
+			}
 		}
 		std::erase_if(moverDiscs, [this](const auto& entry) { return entry.second.seen != moverPass; });
 	}
 
-	void NavigationSystem::wantDisc(std::int64_t xMm, std::int64_t yMm, float rangeMeters) {
-		const std::int64_t r = radiusMm(rangeMeters);
-		// Per axis, the gap from the point to the cell [c, c + 1) and from the point to its middle.
-		const auto gapMm = [](std::int64_t c, std::int64_t p) {
-			return std::max<std::int64_t>({0, c * kDetailCellMm - p, p - (c + 1) * kDetailCellMm});
-		};
-		const auto middleMm = [](std::int64_t c, std::int64_t p) { return c * kDetailCellMm + kDetailCellMm / 2 - p; };
-		struct Wanted {
-			std::int64_t gap2;
-			std::int64_t middle2;
-			std::int64_t cy;
-			std::int64_t cx;
-		};
-		std::vector<Wanted> fresh;
-		for (std::int64_t cy = geometry::floorDiv(yMm - r, kDetailCellMm); cy <= geometry::floorDiv(yMm + r, kDetailCellMm); ++cy) {
-			const std::int64_t gy = gapMm(cy, yMm);
-			const std::int64_t my = middleMm(cy, yMm);
-			for (std::int64_t cx = geometry::floorDiv(xMm - r, kDetailCellMm); cx <= geometry::floorDiv(xMm + r, kDetailCellMm); ++cx) {
-				const std::int64_t gx	= gapMm(cx, xMm);
-				const std::int64_t gap2 = gx * gx + gy * gy;
-				if (gap2 <= r * r && !wantedCells.contains(cellKey(cx, cy))) {
-					const std::int64_t mx = middleMm(cx, xMm);
-					fresh.push_back({gap2, mx * mx + my * my, cy, cx});
-				}
-			}
-		}
-		std::sort(fresh.begin(), fresh.end(), [](const Wanted& a, const Wanted& b) {
-			return std::tie(a.gap2, a.middle2, a.cy, a.cx) < std::tie(b.gap2, b.middle2, b.cy, b.cx);
-		});
-		for (const Wanted& w : fresh) {
-			const std::int64_t cell = cellKey(w.cx, w.cy);
-			wantedCells.insert(cell);
-			pendingCells.insert(cell);
-			const world::ChunkCoordinate chunk = cellChunk(cell);
-			if (wantedChunks.insert(chunk).second && !ground.contains(chunk)) {
-				groundQueue.push_back(chunk);
-			}
-			// Behind any of its chunk's cells still waiting, so a chunk's cells keep their order.
-			if (!cellsAwaitingChunk.contains(chunk) && cellServable(cell)) {
-				readyCells.push_back(cell);
-			} else {
-				cellsAwaitingChunk[chunk].push_back(cell);
-			}
-		}
-	}
-
-	void NavigationSystem::wantNear(std::int64_t centre) {
-		static constexpr std::array<std::pair<std::int64_t, std::int64_t>, 9> kOwnThenTouching{
-			{{0, 0}, {-1, -1}, {0, -1}, {1, -1}, {-1, 0}, {1, 0}, {-1, 1}, {0, 1}, {1, 1}}};
-		for (const auto [dx, dy] : kOwnThenTouching) {
-			const std::int64_t cell = cellKey(cellX(centre) + dx, cellY(centre) + dy);
-			if (!pendingCells.contains(cell) || !nearCells.insert(cell).second) {
-				continue;
-			}
-			// Not servable yet: it is popped back to its chunk's wait, which releases it to nearReady.
-			nearReady.push_back(cell);
-			const world::ChunkCoordinate chunk = cellChunk(cell);
-			if (!ground.contains(chunk) && std::find(nearGround.begin(), nearGround.end(), chunk) == nearGround.end()) {
-				nearGround.push_back(chunk);
-			}
-		}
-	}
-
-	bool NavigationSystem::cellServable(std::int64_t cell) const {
-		const world::ChunkCoordinate chunk = cellChunk(cell);
-		return chunkGroundMeshed(chunk) && placementReady(chunk) && anchorHolds(chunk);
+	NavigationSystem::SeenLimit NavigationSystem::makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const {
+		SeenLimit limit{.mover = mover, .centre = centre, .circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
+		limit.outline			= nav::visibilityLimit(centre, radiusMm(rangeMeters)).ring;
+		const std::int64_t reach = limit.circumradiusMm + radiusMm(kFootprintReachMeters);
+		limit.query				= {{centre.x - reach, centre.y - reach}, {centre.x + reach, centre.y + reach}};
+		return limit;
 	}
 
 	bool NavigationSystem::anchorHolds(world::ChunkCoordinate coord) const {
 		return anchorChunks.contains(coord);
+	}
+
+	namespace {
+		// Calls `visit` for each chunk the box meets, row by row.
+		template <typename Visit> bool everyChunkIn(geometry::Vec2i64 lo, geometry::Vec2i64 hi, const Visit& visit) {
+			const std::int64_t x0 = geometry::floorDiv(lo.x, kChunkMm);
+			const std::int64_t x1 = geometry::floorDiv(hi.x, kChunkMm);
+			const std::int64_t y0 = geometry::floorDiv(lo.y, kChunkMm);
+			const std::int64_t y1 = geometry::floorDiv(hi.y, kChunkMm);
+			for (std::int64_t cy = y0; cy <= y1; ++cy) {
+				for (std::int64_t cx = x0; cx <= x1; ++cx) {
+					if (!visit(world::ChunkCoordinate{static_cast<std::int32_t>(cx), static_cast<std::int32_t>(cy)})) {
+						return false;
+					}
+				}
+			}
+			return true;
+		}
+	} // namespace
+
+	bool NavigationSystem::limitServable(const SeenLimit& limit) const {
+		return everyChunkIn(limit.query.lo, limit.query.hi, [this, &limit](world::ChunkCoordinate coord) {
+			const world::Chunk* chunk = chunkManager->getChunk(coord);
+			return chunk != nullptr && chunk->isReady() && placementReady(coord) && (limit.mover == kInvalidEntity || anchorHolds(coord));
+		});
+	}
+
+	bool NavigationSystem::limitStranded(const SeenLimit& limit) const {
+		return limit.mover != kInvalidEntity &&
+			   !everyChunkIn(limit.query.lo, limit.query.hi, [this](world::ChunkCoordinate coord) { return anchorHolds(coord); });
+	}
+
+	bool NavigationSystem::limitHoldable(const SeenLimit& limit) const {
+		const auto disc = moverDiscs.find(limit.mover);
+		if (disc == moverDiscs.end() || !disc->second.served.has_value()) {
+			return false;
+		}
+		const Position* position = world->getComponent<Position>(limit.mover);
+		if (position == nullptr) {
+			return false;
+		}
+		const geometry::Vec2i64 at		  = nav::toMm(position->value);
+		const std::int64_t		dx		  = at.x - disc->second.served->x;
+		const std::int64_t		dy		  = at.y - disc->second.served->y;
+		const std::int64_t		reachable = radiusMm(kSightBufferMeters) - kLimitRetakeStepMm;
+		return dx * dx + dy * dy < reachable * reachable;
 	}
 
 	// --- Ticks, jobs and the join -------------------------------------------------
@@ -788,11 +761,10 @@ namespace ecs {
 	void NavigationSystem::update(float /*deltaTime*/) {
 		settle();
 		startRouteSlice();
-		markCrossedRoutes();
 		markStrayedRoutes();
 		snapMovers();
 		if (chunkManager != nullptr) {
-			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kDetailCellsPerTick, kDetailScansPerTick, kGroundVerticesPerTick, holdingFar);
+			gather(kDetailRingsPerTick, kDetailRemovalsPerTick, kLimitsPerTick, holdingLimits);
 		}
 	}
 
@@ -849,15 +821,15 @@ namespace ecs {
 			}
 		}
 		bool searching = false;
-		holdingFar	   = false;
+		holdingLimits  = false;
 		for (const auto& [ticket, route] : queuedRoutes) {
 			if (!routes.waiting(route.queued)) {
 				continue;
 			}
-			searching  = true;
-			holdingFar = holdingFar || (route.holdFrom != 0 && routeTick - route.holdFrom < kMaxHeldAdditionTicks);
+			searching	  = true;
+			holdingLimits = holdingLimits || (route.holdFrom != 0 && routeTick - route.holdFrom < kMaxHeldAdditionTicks);
 		}
-		if (holdingFar) {
+		if (holdingLimits) {
 			++heldInARow;
 			++routeStatsTotal.ticksHeld;
 			routeStatsTotal.longestHold = std::max(routeStatsTotal.longestHold, heldInARow);
@@ -905,21 +877,20 @@ namespace ecs {
 		do {
 			settle();
 			if (chunkManager != nullptr) {
-				gather(kUnlimited, kUnlimited, kUnlimited, kUnlimited, kUnlimited, false);
+				gather(kUnlimited, kUnlimited, kUnlimited, false);
 			}
 			settle();
 		} while (chunkManager != nullptr && isBuilding());
 	}
 
-	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget,
-								  std::size_t groundVertexBudget, bool holdFar) {
+	void NavigationSystem::gather(std::size_t addBudget, std::size_t removeBudget, std::size_t limitBudget, bool holdLimits) {
 		collectAnchors();
 		trackMovers();
 		queueRemovedDetail();
 		gatherWalls();
-		gatherGround(groundVertexBudget);
-		releaseAwaitingCells();
-		gatherDetail(addBudget, removeBudget, cellBudget, scanBudget, holdFar);
+		rederiveChangedWater();
+		gatherRemovals(removeBudget);
+		gatherLimits(addBudget, limitBudget, holdLimits);
 	}
 
 	void NavigationSystem::submit() {
@@ -979,7 +950,6 @@ namespace ecs {
 		}
 		join();
 		collected = true;
-		detailLanded.insert(detailLanded.end(), runningJob.detailAddBoxes.begin(), runningJob.detailAddBoxes.end());
 		routeReports.insert(routeReports.end(), std::make_move_iterator(runningJob.reports.begin()), std::make_move_iterator(runningJob.reports.end()));
 		runningJob.reports.clear();
 		for (std::size_t i = 0; i < runningJob.onPatched.size(); ++i) {
@@ -1110,7 +1080,6 @@ namespace ecs {
 	namespace {
 		constexpr gnav::RingId kGatheredRing = -2; // in a gathered patch, its id not yet known
 
-		bool gathered(gnav::RingId id) { return id != gnav::kNoRing; }
 
 		std::pair<glm::vec2, glm::vec2> chunkBoxM(world::ChunkCoordinate coord) {
 			const geometry::Vec2i64 lo = nav::chunkOriginMm(coord);
@@ -1118,17 +1087,6 @@ namespace ecs {
 			return {nav::toMeters(lo), nav::toMeters({lo.x + kChunkMm - 1, lo.y + kChunkMm - 1})};
 		}
 
-		// A chunk's square enters the mesh with its sides cut to kMaxBoundsEdgeMm, so that is how
-		// many vertices it brings.
-		constexpr std::size_t kSquareVertices = static_cast<std::size_t>(4 * kChunkMm / NavigationSystem::kMaxBoundsEdgeMm);
-
-		std::size_t waterVertices(const std::vector<gnav::NavInputPolygon>& water) {
-			std::size_t vertices = 0;
-			for (const gnav::NavInputPolygon& ring : water) {
-				vertices += ring.ring.size();
-			}
-			return vertices;
-		}
 	} // namespace
 
 	void NavigationSystem::rederiveChangedWater() {
@@ -1138,12 +1096,12 @@ namespace ecs {
 				continue;
 			}
 			ready.insert(chunk->coordinate());
-			const auto it = ground.find(chunk->coordinate());
-			if (it == ground.end()) {
+			const auto it = water.find(chunk->coordinate());
+			if (it == water.end()) {
 				continue;
 			}
 			const world::ChunkTerrainPolygons& polys = chunk->terrainPolygons();
-			ChunkGround&					   g	 = it->second;
+			ChunkWater&						   g	 = it->second;
 			if (!readyLastCall.contains(chunk->coordinate())) {
 				g.terrainVersion = polys.version;
 				continue;
@@ -1152,121 +1110,31 @@ namespace ecs {
 				continue;
 			}
 
-			// Terrain changed under meshed ground: its old water comes out and the new water goes in,
+			// Terrain changed under meshed water: its old water comes out and the new water goes in,
 			// in one patch.
 			gnav::PatchEdits edits;
-			edits.removes = g.water;
+			edits.removes = g.rings;
 			nav::appendChunkWater(polys, edits.adds);
-			g.water.assign(edits.adds.size(), kGatheredRing);
+			g.rings.assign(edits.adds.size(), kGatheredRing);
 			g.terrainVersion = polys.version;
 			gatheredJob.blockingBoxes.push_back(chunkBoxM(chunk->coordinate()));
 			gatheredJob.patches.push_back(std::move(edits));
 			++gatheredJob.routePatches;
 			gatheredJob.onPatched.emplace_back([&g](const std::vector<RingId>& ids, double) {
 				for (std::size_t k = 0; k < ids.size(); ++k) {
-					g.water[k] = ids[k];
+					g.rings[k] = ids[k];
 				}
 			});
 		}
 		readyLastCall = std::move(ready);
 	}
 
-	void NavigationSystem::gatherGround(std::size_t vertexBudget) {
-		rederiveChangedWater();
-		// Open chunks share a tick until their vertices would pass the budget; a chunk with water
-		// is the costliest kind of job there is, so it goes alone. Chunks not ready yet, or that no
-		// mover holds (whatever loaded them), keep their place in the queue.
-		const bool	unlimited = vertexBudget == kUnlimited;
-		std::size_t taken	  = 0;
-		bool		full	  = false;
-		// True when it was meshed; `waiting` when it is held and ready but over the budget.
-		const auto serve = [&](world::ChunkCoordinate coord, bool& waiting) {
-			waiting					  = false;
-			const world::Chunk* chunk = anchorHolds(coord) ? chunkManager->getChunk(coord) : nullptr;
-			if (chunk == nullptr || !chunk->isReady()) {
-				return false;
-			}
-			if (full) {
-				waiting = true;
-				return false;
-			}
-			std::vector<gnav::NavInputPolygon> water;
-			nav::appendChunkWater(chunk->terrainPolygons(), water);
-			const std::size_t cost = kSquareVertices + waterVertices(water);
-			if (taken > 0 && !unlimited && (!water.empty() || cost > vertexBudget)) {
-				full	= true;
-				waiting = true;
-				return false;
-			}
-			vertexBudget -= std::min(cost, vertexBudget);
-			++taken;
-			full = !water.empty() && !unlimited;
-			meshGround(coord, std::move(water), chunk->terrainPolygons().version);
-			return true;
-		};
-		bool waiting = false;
-		std::erase_if(nearGround, [&](world::ChunkCoordinate coord) { return ground.contains(coord) || !anchorHolds(coord) || serve(coord, waiting); });
-		std::size_t kept = 0;
-		groundPending	 = 0;
-		for (const world::ChunkCoordinate coord : groundQueue) {
-			if (ground.contains(coord)) {
-				continue; // the landing or the near lane meshed it
-			}
-			if (!serve(coord, waiting)) {
-				groundPending += waiting ? 1 : 0;
-				groundQueue[kept++] = coord;
-			}
-		}
-		groundQueue.resize(kept);
-	}
-
-	void NavigationSystem::gatherGroundWithin(const Rect& within) {
-		for (const world::Chunk* chunk : std::as_const(*chunkManager).getLoadedChunks()) {
-			const world::ChunkCoordinate coord = chunk->coordinate();
-			const geometry::Vec2i64		 lo	   = nav::chunkOriginMm(coord);
-			const geometry::Vec2i64		 hi{lo.x + kChunkMm, lo.y + kChunkMm};
-			if (!chunk->isReady() || ground.contains(coord) || hi.x < within.lo.x || lo.x > within.hi.x || hi.y < within.lo.y ||
-				lo.y > within.hi.y) {
-				continue;
-			}
-			std::vector<gnav::NavInputPolygon> water;
-			nav::appendChunkWater(chunk->terrainPolygons(), water);
-			meshGround(coord, std::move(water), chunk->terrainPolygons().version);
-		}
-	}
-
-	void NavigationSystem::meshGround(world::ChunkCoordinate coord, std::vector<gnav::NavInputPolygon> water, std::uint32_t terrainVersion) {
-		const std::size_t cost = kSquareVertices + waterVertices(water);
-		ChunkGround&	  g	   = ground[coord];
-		g.square			   = kGatheredRing;
-		g.water.assign(water.size(), kGatheredRing);
-		g.terrainVersion = terrainVersion;
-		gnav::PatchEdits edits;
-		edits.adds.push_back(nav::chunkSquare(coord));
-		edits.adds.insert(edits.adds.end(), std::make_move_iterator(water.begin()), std::make_move_iterator(water.end()));
-		const std::size_t rings = edits.adds.size();
-		gatheredJob.patches.push_back(std::move(edits));
-		++gatheredJob.routePatches;
-		gatheredJob.onPatched.emplace_back([&g, coord, rings, cost](const std::vector<RingId>& ids, double ms) {
-			g.square = ids[0];
-			for (std::size_t k = 1; k < ids.size(); ++k) {
-				g.water[k - 1] = ids[k];
-			}
-			// Permanent nav-mesh work diagnostic: one chunk's ground (square and water) entering the
-			// mesh. DEBUG, dev-tools log server.
-			LOG_DEBUG(Engine, "[NavBuild] ground (%d, %d) %.3f ms rings %zu vertices %zu", coord.x, coord.y, ms, rings, cost);
-		});
-	}
-
-	bool NavigationSystem::chunkGroundMeshed(world::ChunkCoordinate coord) const {
-		const auto it = ground.find(coord);
-		return it != ground.end() && gathered(it->second.square);
-	}
 
 	// --- Detail ---------------------------------------------------------------------
 
 	bool NavigationSystem::placementReady(world::ChunkCoordinate coord) const {
-		return placement != nullptr && placement->getChunkIndex(coord) != nullptr && (processedChunks == nullptr || processedChunks->contains(coord));
+		return placement == nullptr ||
+			   (placement->getChunkIndex(coord) != nullptr && (processedChunks == nullptr || processedChunks->contains(coord)));
 	}
 
 	void NavigationSystem::queueRemovedDetail() {
@@ -1274,165 +1142,166 @@ namespace ecs {
 			return;
 		}
 		for (const assets::PlacementExecutor::RemovedEntity& entry : placement->takeRemovals()) {
-			const DetailKey key{entry.coord, cellOfEntity(entry.position), std::bit_cast<std::uint32_t>(entry.position.x),
-							   std::bit_cast<std::uint32_t>(entry.position.y), entry.defName};
-			if (const auto it = detailInMesh.find(key); it != detailInMesh.end()) {
+			const ObstacleKey key{entry.coord, std::bit_cast<std::uint32_t>(entry.position.x), std::bit_cast<std::uint32_t>(entry.position.y),
+								  entry.defName};
+			if (const auto it = obstacleInMesh.find(key); it != obstacleInMesh.end()) {
+				// Removals are taken after the joined jobs are collected, so every gathered ring has its id.
+				assert(it->second >= 0);
 				detailRemovals.push_back(it->second);
-				detailInMesh.erase(it);
-			} else {
-				for (std::optional<ScannedCell>* adding : {&addingNear, &addingFar}) {
-					if (!adding->has_value() || (*adding)->cell != key.cell) {
-						continue;
-					}
-					auto&	   rings   = (*adding)->rings;
-					const auto pending = std::find_if(rings.begin() + static_cast<std::ptrdiff_t>((*adding)->next), rings.end(),
-													  [&key](const auto& entry) { return !(entry.first < key) && !(key < entry.first); });
-					if (pending != rings.end()) {
-						rings.erase(pending);
-					}
-				}
+				obstacleInMesh.erase(it);
 			}
 		}
 	}
 
-	void NavigationSystem::releaseAwaitingCells() {
-		for (auto it = cellsAwaitingChunk.begin(); it != cellsAwaitingChunk.end();) {
-			if (!chunkGroundMeshed(it->first) || !placementReady(it->first) || !anchorHolds(it->first)) {
+	void NavigationSystem::gatherRemovals(std::size_t removeBudget) {
+		const std::size_t count = std::min(removeBudget, detailRemovals.size());
+		if (count == 0) {
+			return;
+		}
+		gnav::PatchEdits edits;
+		edits.removes.assign(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
+		gatheredJob.patches.push_back(std::move(edits));
+		gatheredJob.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
+		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(count));
+	}
+
+	void NavigationSystem::gatherLimits(std::size_t addBudget, std::size_t limitBudget, bool holdLimits) {
+		if (landingLimit.has_value() && limitServable(*landingLimit) && serveLimit(*landingLimit, addBudget)) {
+			landingLimit.reset();
+		}
+		limitsPending = landingLimit.has_value() && limitServable(*landingLimit) ? 1 : 0;
+		std::size_t served = 0;
+		for (auto it = limitQueue.begin(); it != limitQueue.end();) {
+			if (limitStranded(*it)) {
+				it = limitQueue.erase(it);
+				continue;
+			}
+			if (!limitServable(*it)) {
 				++it;
 				continue;
 			}
-			for (const std::int64_t cell : it->second) {
-				(nearCells.contains(cell) ? nearReady : readyCells).push_back(cell);
+			if (served == limitBudget || addBudget == 0 || (holdLimits && limitHoldable(*it))) {
+				++limitsPending;
+				++it;
+				continue;
 			}
-			it = cellsAwaitingChunk.erase(it);
+			if (detailMesh.groundCovers(it->outline)) {
+				it = limitQueue.erase(it);
+				continue;
+			}
+			if (!serveLimit(*it, addBudget)) {
+				++limitsPending;
+				++it;
+				continue;
+			}
+			++served;
+			it = limitQueue.erase(it);
 		}
 	}
 
-	NavigationSystem::ScannedCell NavigationSystem::scanCell(std::int64_t cell) const {
-		ScannedCell					 out{.cell = cell};
-		const world::ChunkCoordinate chunk	  = cellChunk(cell);
-		const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-		// One cell owns each entity, by its position in [lo, lo + cell).
-		const float lox	 = static_cast<float>(cellX(cell) * kDetailCellMm / geometry::kMillimetersPerMeter);
-		const float loy	 = static_cast<float>(cellY(cell) * kDetailCellMm / geometry::kMillimetersPerMeter);
-		const float side = static_cast<float>(kDetailCellMm / geometry::kMillimetersPerMeter);
-		for (const assets::PlacedEntity* e : placement->getChunkIndex(chunk)->queryRect(lox, loy, lox + side, loy + side)) {
-			if (e->position.x < lox || e->position.x >= lox + side || e->position.y < loy || e->position.y >= loy + side) {
-				continue;
-			}
-			DetailKey key{chunk, cell, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
-			if (detailInMesh.contains(key)) {
-				continue;
-			}
-			std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
-			if (ring.has_value()) {
-				out.rings.emplace_back(std::move(key), std::move(*ring));
+	bool NavigationSystem::serveLimit(const SeenLimit& limit, std::size_t& budget) {
+		struct Found {
+			ObstacleKey			  key;
+			gnav::NavInputPolygon ring;
+		};
+		std::vector<Found> found;
+		if (placement != nullptr) {
+			const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
+			const glm::vec2				 lo		  = nav::toMeters(limit.query.lo);
+			const glm::vec2				 hi		  = nav::toMeters(limit.query.hi);
+			const std::int64_t			 reachMm  = radiusMm(kFootprintReachMeters);
+			everyChunkIn(limit.query.lo, limit.query.hi, [&](world::ChunkCoordinate coord) {
+				for (const assets::PlacedEntity* e : placement->getChunkIndex(coord)->queryRect(lo.x, lo.y, hi.x, hi.y)) {
+					ObstacleKey key{coord, std::bit_cast<std::uint32_t>(e->position.x), std::bit_cast<std::uint32_t>(e->position.y), e->defName};
+					if (obstacleInMesh.contains(key)) {
+						continue;
+					}
+					std::optional<gnav::NavInputPolygon> ring = nav::placedObstacleRing(*e, registry);
+					if (!ring.has_value()) {
+						continue;
+					}
+					// The footprint's box against the disc the limit circumscribes.
+					const geometry::Vec2i64 at = nav::toMm(e->position);
+					geometry::Vec2i64		boxLo = ring->ring.front();
+					geometry::Vec2i64		boxHi = boxLo;
+					std::int64_t			reach = 0;
+					for (const geometry::Vec2i64& p : ring->ring) {
+						boxLo = {std::min(boxLo.x, p.x), std::min(boxLo.y, p.y)};
+						boxHi = {std::max(boxHi.x, p.x), std::max(boxHi.y, p.y)};
+						reach = std::max({reach, std::abs(p.x - at.x), std::abs(p.y - at.y)});
+					}
+					if (reach > reachMm && overreachingDefs.insert(e->defName).second) {
+						LOG_ERROR(Engine, "[Nav] %s's footprint reaches %lld mm from its position, past kFootprintReachMeters: where it pokes into a limit "
+										  "from outside the limit's query box, seen ground goes in without it",
+								  e->defName.c_str(), static_cast<long long>(reach));
+					}
+					const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
+					const std::int64_t gy = std::max<std::int64_t>({0, boxLo.y - limit.centre.y, limit.centre.y - boxHi.y});
+					if (gx * gx + gy * gy <= limit.circumradiusMm * limit.circumradiusMm) {
+						found.push_back({std::move(key), std::move(*ring)});
+					}
+				}
+				return true;
+			});
+			// Key order, so a limit's obstacles go in the same order however the index returns them.
+			std::sort(found.begin(), found.end(), [](const Found& a, const Found& b) { return a.key < b.key; });
+		}
+
+		const std::size_t take = std::min(found.size(), budget);
+		budget -= take;
+		const bool		  withGround = take == found.size();
+		gnav::PatchEdits  edits;
+		std::vector<ObstacleKey> keys;
+		for (std::size_t k = 0; k < take; ++k) {
+			edits.adds.push_back(std::move(found[k].ring));
+			obstacleInMesh.emplace(found[k].key, kGatheredRing);
+			keys.push_back(std::move(found[k].key));
+		}
+		std::vector<world::ChunkCoordinate> waterChunks;
+		std::vector<std::size_t>			waterRings; // per chunk in waterChunks, how many rings
+		if (withGround) {
+			everyChunkIn(limit.query.lo, limit.query.hi, [&](world::ChunkCoordinate coord) {
+				if (water.contains(coord)) {
+					return true;
+				}
+				const world::Chunk*	   chunk = chunkManager->getChunk(coord);
+				const std::size_t	   first = edits.adds.size();
+				nav::appendChunkWater(chunk->terrainPolygons(), edits.adds);
+				ChunkWater& w	  = water[coord];
+				w.terrainVersion = chunk->terrainPolygons().version;
+				w.rings.assign(edits.adds.size() - first, kGatheredRing);
+				waterChunks.push_back(coord);
+				waterRings.push_back(edits.adds.size() - first);
+				return true;
+			});
+			edits.adds.push_back({limit.outline, false, nav::kProvenanceBorder});
+			++gatheredJob.routePatches;
+			if (const auto disc = moverDiscs.find(limit.mover); disc != moverDiscs.end()) {
+				disc->second.served = limit.centre;
 			}
 		}
-		// Key order, so a cell's rings go in the same order however the index returns them.
-		std::sort(out.rings.begin(), out.rings.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
-		return out;
-	}
-
-	void NavigationSystem::gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget, bool holdFar) {
-		// Removals, oldest first, one patch per run of one cell: a patch's width refresh covers the
-		// box around everything it changed, so a patch spread over a chunk would refresh the chunk.
-		std::size_t removeCount = std::min(removeBudget, detailRemovals.size());
-		for (std::size_t i = 0, cells = 0; i < removeCount; ++i) {
-			if (i == 0 || detailRemovals[i].cell != detailRemovals[i - 1].cell) {
-				if (++cells > cellBudget) {
-					removeCount = i;
+		if (edits.adds.empty()) {
+			return withGround;
+		}
+		const std::size_t rings = edits.adds.size();
+		gatheredJob.patches.push_back(std::move(edits));
+		gatheredJob.onPatched.emplace_back([this, keys = std::move(keys), waterChunks = std::move(waterChunks), waterRings = std::move(waterRings),
+											withGround, rings](const std::vector<RingId>& added, double ms) {
+			std::size_t k = 0;
+			for (; k < keys.size(); ++k) {
+				obstacleInMesh.at(keys[k]) = added[k];
+			}
+			for (std::size_t c = 0; c < waterChunks.size(); ++c) {
+				std::vector<RingId>& ids = water.at(waterChunks[c]).rings;
+				for (std::size_t r = 0; r < waterRings[c]; ++r) {
+					ids[r] = added[k++];
 				}
 			}
-		}
-		for (std::size_t first = 0; first < removeCount;) {
-			std::size_t		 last = first;
-			gnav::PatchEdits edits;
-			for (; last < removeCount && detailRemovals[last].cell == detailRemovals[first].cell; ++last) {
-				edits.removes.push_back(detailRemovals[last].ring);
-			}
-			gatheredJob.patches.push_back(std::move(edits));
-			gatheredJob.onPatched.emplace_back([](const std::vector<RingId>&, double) {});
-			first = last;
-		}
-		detailRemovals.erase(detailRemovals.begin(), detailRemovals.begin() + static_cast<std::ptrdiff_t>(removeCount));
-
-		// Adds: the cells round movers first, then, unless `holdFar`, the wanted cells first in, first
-		// out, one patch per cell a tick; a cell larger than what is left of the ring budget goes in
-		// over several ticks. Only a scan counts against scanBudget: a cell already scanned is dropped,
-		// and one whose chunk unloaded or that no mover holds any more goes back to wait for its chunk.
-		std::size_t scans	 = 0;
-		const auto	nextCell = [this](std::deque<std::int64_t>& queue) -> std::optional<std::int64_t> {
-			 while (!queue.empty()) {
-				 const std::int64_t cell = queue.front();
-				 queue.pop_front();
-				 if (!pendingCells.contains(cell)) {
-					 continue;
-				 }
-				 if (!cellServable(cell)) {
-					 cellsAwaitingChunk[cellChunk(cell)].push_back(cell);
-					 continue;
-				 }
-				 return cell;
-			 }
-			 return std::nullopt;
-		};
-		const auto fill = [&](std::optional<ScannedCell>& slot, std::deque<std::int64_t>& queue) {
-			if (slot.has_value() || scans == scanBudget) {
-				return slot.has_value();
-			}
-			const std::optional<std::int64_t> cell = nextCell(queue);
-			if (!cell.has_value()) {
-				return false;
-			}
-			++scans;
-			pendingCells.erase(*cell);
-			nearCells.erase(*cell);
-			slot = scanCell(*cell);
-			return true;
-		};
-		std::size_t rings = 0;
-		std::size_t cells = 0;
-		while (rings < addBudget && cells < cellBudget) {
-			std::optional<ScannedCell>* slot = nullptr;
-			if (fill(addingNear, nearReady)) {
-				slot = &addingNear;
-			} else if (!holdFar && fill(addingFar, readyCells)) {
-				slot = &addingFar;
-			} else {
-				break;
-			}
-			ScannedCell&	  adding = **slot;
-			const std::size_t take	 = std::min(adding.rings.size() - adding.next, addBudget - rings);
-			if (take > 0) {
-				gnav::PatchEdits	   edits;
-				std::vector<DetailKey> keys;
-				for (std::size_t k = adding.next; k < adding.next + take; ++k) {
-					const std::vector<geometry::Vec2i64>& ring = adding.rings[k].second.ring;
-					geometry::Vec2i64					  lo   = ring.front();
-					geometry::Vec2i64					  hi   = ring.front();
-					for (const geometry::Vec2i64& p : ring) {
-						lo = {std::min(lo.x, p.x), std::min(lo.y, p.y)};
-						hi = {std::max(hi.x, p.x), std::max(hi.y, p.y)};
-					}
-					gatheredJob.detailAddBoxes.emplace_back(nav::toMeters(lo), nav::toMeters(hi));
-					edits.adds.push_back(std::move(adding.rings[k].second));
-					keys.push_back(adding.rings[k].first);
-				}
-				gatheredJob.patches.push_back(std::move(edits));
-				gatheredJob.onPatched.emplace_back([this, keys = std::move(keys), cell = adding.cell](const std::vector<RingId>& added, double) {
-					for (std::size_t k = 0; k < keys.size(); ++k) {
-						detailInMesh.emplace(keys[k], DetailRing{added[k], cell});
-					}
-				});
-				adding.next += take;
-				rings += take;
-				++cells;
-			}
-			if (adding.next == adding.rings.size()) {
-				slot->reset();
-			}
-		}
+			// Permanent nav-mesh work diagnostic: a limit's placed obstacles, and its water and ground
+			// once they go. DEBUG, dev-tools log server.
+			LOG_DEBUG(Engine, "[NavBuild] limit %s %.3f ms rings %zu obstacles %zu", withGround ? "ground" : "obstacles", ms, rings, keys.size());
+		});
+		return withGround;
 	}
 
 	// --- The forward snap -------------------------------------------------------------
@@ -1464,41 +1333,6 @@ namespace ecs {
 			return std::pair{t0, t1};
 		}
 	} // namespace
-
-	void NavigationSystem::markCrossedRoutes() {
-		if (detailLanded.empty()) {
-			return;
-		}
-		const std::vector<std::pair<glm::vec2, glm::vec2>> landed = std::move(detailLanded);
-		detailLanded.clear();
-		if (world == nullptr) {
-			return;
-		}
-		// A piece of route that comes within the mover's radius of a new obstacle's box crosses it:
-		// obstacles that were already there are no news to a route planned past them.
-		const auto crosses = [&](glm::vec2 a, glm::vec2 b, float radius) {
-			return std::any_of(landed.begin(), landed.end(), [&](const std::pair<glm::vec2, glm::vec2>& box) {
-				return clipToRect(a, b, box.first - glm::vec2{radius}, box.second + glm::vec2{radius}).has_value();
-			});
-		};
-		const std::uint64_t current = generation();
-		for (auto [entity, position, path] : world->view<Position, NavPath>()) {
-			if (path.done() || path.builtNavVersion != current) {
-				continue;
-			}
-			const AgentRadius* agent  = world->getComponent<AgentRadius>(entity);
-			const float		   radius = agent != nullptr ? agent->radiusMeters : AgentRadius{}.radiusMeters;
-			glm::vec2		   from	  = position.value;
-			bool			   crossed = false;
-			for (std::size_t next = path.current; next < path.waypoints.size() && !crossed; ++next) {
-				crossed = crosses(from, path.waypoints[next], radius);
-				from	= path.waypoints[next];
-			}
-			if (crossed) {
-				path.builtNavVersion = kStaleRoute;
-			}
-		}
-	}
 
 	void NavigationSystem::restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const {
 		if (world == nullptr) {
@@ -1553,9 +1387,9 @@ namespace ecs {
 	}
 
 	bool NavigationSystem::placedObstacleInNavMesh(world::ChunkCoordinate chunk, const assets::PlacedEntity& entity) const {
-		return detailInMesh.contains(
-			DetailKey{chunk, cellOfEntity(entity.position), std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y),
-					 entity.defName});
+		const auto it = obstacleInMesh.find(
+			ObstacleKey{chunk, std::bit_cast<std::uint32_t>(entity.position.x), std::bit_cast<std::uint32_t>(entity.position.y), entity.defName});
+		return it != obstacleInMesh.end() && it->second >= 0;
 	}
 
 	bool NavigationSystem::snapHolds(EntityID mover) const {
@@ -1716,13 +1550,14 @@ namespace ecs {
 			return out;
 		}
 
-		// The landing runs before the first update: bring in walls and the ground every point the
-		// searches can touch stands on, and wait for it.
-		const float padM = 2.0F * reachM + ringRadiusMeters + clearanceMeters + 1.0F;
-		const Rect	within{nav::toMm(drop - glm::vec2{padM, padM}), nav::toMm(drop + glm::vec2{padM, padM})};
+		// The landing runs before the first update: bring in walls and the landing limit, and wait for
+		// it. The searches below reach 2 x reachM + ringRadiusMeters + clearanceMeters from the drop,
+		// well inside it.
 		settle();
+		collectAnchors();
 		gatherWalls();
-		gatherGroundWithin(within);
+		landingLimit = makeLimit(kInvalidEntity, nav::toMm(drop), kLandingSightMeters);
+		gatherLimits(kUnlimited, 0, false);
 		settle();
 
 		auto clear = [this, clearanceMeters](glm::vec2 p) {
@@ -1787,7 +1622,7 @@ namespace ecs {
 
 	bool NavigationSystem::isBuilding() const {
 		join();
-		return groundPending > 0 || !nearReady.empty() || !readyCells.empty() || addingNear.has_value() || addingFar.has_value() || !detailRemovals.empty() || !gatheredJob.empty();
+		return limitsPending > 0 || !detailRemovals.empty() || !gatheredJob.empty();
 	}
 
 	std::uint64_t NavigationSystem::generation() const {
@@ -1798,21 +1633,6 @@ namespace ecs {
 	const geometry::nav::PatchableMesh& NavigationSystem::navMesh() const {
 		join();
 		return detailMesh;
-	}
-
-	std::vector<NavigationSystem::RegionView> NavigationSystem::builtRegions() const {
-		join();
-		if (ground.empty()) {
-			return {};
-		}
-		geometry::Vec2i64 lo = nav::chunkOriginMm(ground.begin()->first);
-		geometry::Vec2i64 hi = lo;
-		for (const auto& [coord, chunkGround] : ground) {
-			const geometry::Vec2i64 o = nav::chunkOriginMm(coord);
-			lo						  = {std::min(lo.x, o.x), std::min(lo.y, o.y)};
-			hi						  = {std::max(hi.x, o.x + kChunkMm), std::max(hi.y, o.y + kChunkMm)};
-		}
-		return {{{(lo.x + hi.x) / 2, (lo.y + hi.y) / 2}, std::max(hi.x - lo.x, hi.y - lo.y) / 2}};
 	}
 
 	// --- Queries -------------------------------------------------------------------
@@ -1942,12 +1762,10 @@ namespace ecs {
 			return PlacedObstacle{centre, std::sqrt(extent2)};
 		};
 		// The entity standing exactly here: its key sorts first among the keys of its position.
-		const std::int64_t cell = cellOfEntity(meters);
-		const DetailKey	   at{cellChunk(cell), cell, std::bit_cast<std::uint32_t>(meters.x), std::bit_cast<std::uint32_t>(meters.y), {}};
-		if (const auto it = detailInMesh.lower_bound(at);
-			it != detailInMesh.end() && it->first.chunk == at.chunk && it->first.cell == at.cell && it->first.xBits == at.xBits && it->first.yBits == at.yBits &&
-			it->second.ring >= 0) {
-			return obstacleOf(it->second.ring);
+		const ObstacleKey at{world::worldToChunk({meters.x, meters.y}), std::bit_cast<std::uint32_t>(meters.x), std::bit_cast<std::uint32_t>(meters.y), {}};
+		if (const auto it = obstacleInMesh.lower_bound(at); it != obstacleInMesh.end() && it->first.chunk == at.chunk && it->first.xBits == at.xBits &&
+															 it->first.yBits == at.yBits && it->second >= 0) {
+			return obstacleOf(it->second);
 		}
 		const std::int32_t tri = detailMesh.locate(nav::toMm(meters));
 		if (tri < 0) {

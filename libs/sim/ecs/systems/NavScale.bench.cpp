@@ -58,6 +58,14 @@ namespace {
 	namespace gnav = geometry::nav;
 	using Clock	   = std::chrono::steady_clock;
 
+	// A visibility limit holding the whole chunk: ground as the game adds it, sized so the chunk's
+	// water and obstacles all stand on it.
+	gnav::NavInputPolygon chunkGround(world::ChunkCoordinate coord) {
+		const std::int64_t		side = static_cast<std::int64_t>(world::kChunkSize) * geometry::kMillimetersPerMeter;
+		const geometry::Vec2i64 lo	 = nav::chunkOriginMm(coord);
+		return nav::visibilityLimit({lo.x + side / 2, lo.y + side / 2}, side * 3 / 4);
+	}
+
 	double msSince(Clock::time_point start) { return std::chrono::duration<double, std::milli>(Clock::now() - start).count(); }
 
 	std::int64_t privateBytes() {
@@ -125,7 +133,7 @@ namespace {
 				if (chunk == nullptr) {
 					continue;
 				}
-				ChunkRings rings{coord, {nav::chunkSquare(coord)}, 0};
+				ChunkRings rings{coord, {chunkGround(coord)}, 0};
 				nav::appendChunkWater(chunk->terrainPolygons(), rings.rings);
 				for (std::size_t k = 1; k < rings.rings.size(); ++k) {
 					rings.waterVertices += rings.rings[k].ring.size();
@@ -142,16 +150,14 @@ namespace {
 			Region out;
 			out.start = {256.0F, 256.0F};
 			for (const world::ChunkCoordinate coord : spiral({0, 0}, 32)) {
-				out.chunks.push_back({coord, {nav::chunkSquare(coord)}, 0});
+				out.chunks.push_back({coord, {chunkGround(coord)}, 0});
 			}
 			return out;
 		}();
 		return &region;
 	}
 
-	gnav::PatchableMesh makeMesh() {
-		return gnav::PatchableMesh({.maxBoundsEdgeMm = ecs::NavigationSystem::kMaxBoundsEdgeMm});
-	}
+	gnav::PatchableMesh makeMesh() { return gnav::PatchableMesh{}; }
 
 	gnav::NavInputPolygon box(glm::vec2 lo, glm::vec2 hi, bool blocked, std::int64_t provenance) {
 		return {{nav::toMm(lo), nav::toMm({hi.x, lo.y}), nav::toMm(hi), nav::toMm({lo.x, hi.y})}, blocked, provenance};
@@ -233,7 +239,7 @@ namespace {
 	void BM_NavScaleDetail(benchmark::State& state) {
 		for (auto _ : state) {
 			gnav::PatchableMesh nav = makeMesh();
-			nav.applyPatch({.adds = {nav::chunkSquare({0, 0})}});
+			nav.applyPatch({.adds = {chunkGround({0, 0})}});
 			nav.refreshWidths();
 			const float					   halfExtents[] = {0.125F + 0.05F, 0.225F + 0.05F, 0.36F + 0.05F};
 			std::map<std::int64_t, gnav::PatchEdits> cells;

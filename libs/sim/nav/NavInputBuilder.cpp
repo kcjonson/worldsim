@@ -5,6 +5,7 @@
 #include "construction/OpeningGeometry.h"
 
 #include <core/Vec2i64.h>
+#include <nav/LimitPolygon.h>
 #include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
 
@@ -21,14 +22,12 @@ namespace nav {
 
 		namespace gnav = geometry::nav;
 
-		constexpr std::int64_t kTileMm	= geometry::kMillimetersPerMeter; // 1 tile == 1 m == 1000 mm
-		constexpr std::int64_t kChunkMm = static_cast<std::int64_t>(world::kChunkSize) * kTileMm;
+		constexpr std::int64_t kTileMm = geometry::kMillimetersPerMeter; // 1 tile == 1 m == 1000 mm
 
 	} // namespace
 
-	gnav::NavInputPolygon chunkSquare(world::ChunkCoordinate coord) {
-		const geometry::Vec2i64 lo = chunkOriginMm(coord);
-		return borderRing(lo, {lo.x + kChunkMm, lo.y + kChunkMm});
+	gnav::NavInputPolygon visibilityLimit(const geometry::Vec2i64& centreMm, std::int64_t rangeMm) {
+		return {gnav::limitPolygon(centreMm, rangeMm), false, kProvenanceBorder};
 	}
 
 	void appendChunkWater(const world::ChunkTerrainPolygons& polygons, std::vector<gnav::NavInputPolygon>& out) {

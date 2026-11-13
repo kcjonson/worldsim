@@ -7,27 +7,25 @@
 // on it): ground and water, built walls and doors, and detail (placed obstacles). Routes,
 // connectivity (connected), and every position check (validity, buildability, stand points, the
 // landing) read it.
-// A mover (Position + AgentRadius) wants every kDetailCellMm cell whose nearest point lies within R
-// of where it stands (R is its sight distance plus kSightBufferMeters), nearest cells first. The
-// disc is taken again when it has moved kDiscRetakeStepMm from where it was last taken or its R
-// changes. A wanted cell stays wanted forever. Only a mover holding a chunk (within its anchor
-// load range) gets that chunk's ground or cells served: a wanted chunk no mover holds stays queued
-// until one does, whatever else loads it. The mesh is never rebuilt, and nothing leaves it except
-// what leaves the world (a placed obstacle removed, a wall or door taken down, water
+// Ground is the union of visibility limits, and the mesh ends at its edge. A mover (Position +
+// AgentRadius) takes a limit, a polygon round where it stands holding the disc of its range R (its
+// sight distance plus kSightBufferMeters), when it first appears, when it has moved
+// kLimitRetakeStepMm from where it last took one, or when its R changes; a limit the meshed ground
+// already holds is skipped. The landing adds one limit of kLandingSightMeters round the drop. A
+// limit goes in once every chunk its footprint query box meets is ready, has its placement, and is
+// held by a mover's anchor (a queued limit with a chunk no mover holds is dropped); before its
+// ground, or with it, go its chunks' water and every placed obstacle whose footprint meets it, so
+// ground is never ahead of what stands on it. The mesh is never rebuilt, and nothing leaves it
+// except what leaves the world (a placed obstacle removed, a wall or door taken down, water
 // re-derived): no unload, cap or trim. Each update() gathers patches in a fixed order, under per-tick
-// count and vertex budgets (never a time budget, so which tick a ring enters doesn't depend on frame
-// time):
-//  1. Removed placed obstacles (PlacementExecutor::takeRemovals) are queued for removal.
-//  2. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
-//  3. Ground: the chunks of the wanted cells, whole, one patch per chunk: first the chunks
-//     of the cells round each mover that took its disc or entered a new cell, then the rest in the order they became
-//     wanted. Open chunks share a tick up to kGroundVerticesPerTick ring vertices, a chunk with water
-//     goes alone. A chunk whose terrain changes while loaded has its water re-derived. A chunk that
-//     unloads keeps its ground and its detail, and reloading it patches nothing.
-//  4. Detail: each wanted cell scanned once for colliders, first the cell a mover entered and the
-//     eight touching it, then the rest in the order they became wanted (a cell whose chunk has no
-//     ground or placement yet, or no mover holding it, waits); up to kDetailRemovalsPerTick removals
-//     and kDetailRingsPerTick adds in kDetailCellsPerTick cells, one patch per cell.
+// counts (never a time budget, so which tick a ring enters doesn't depend on frame time):
+//  1. Walls and doors, diffed by content whenever ConstructionWorld::version moves, all at once.
+//  2. Water re-derived for each meshed chunk whose terrain changed while loaded.
+//  3. Removed placed obstacles (PlacementExecutor::takeRemovals), up to kDetailRemovalsPerTick, in
+//     one patch.
+//  4. Limits, first in, first out: kLimitsPerTick a tick, and kDetailRingsPerTick placed obstacles;
+//     a limit with more obstacles than that brings them in over several ticks, hanging over unseen
+//     ground, and its ground goes in with the last of them.
 // endTick() hands the tick's patches to the patch worker after every system has run, as one job:
 // the patches in order, the door edits, then one width refresh. The next update() or the first
 // query waits for it, so a query always sees exactly the patches gathered through the previous
@@ -43,9 +41,10 @@
 //  2. The rest of update(), the other systems, and every query read the mesh alongside the slice;
 //     all of it is const reads (the mesh keeps no lazily built state).
 //  3. endTick() starts the patch job, which waits for the slice before it writes.
-// While a search is inside its hold window (kMaxHeldAdditionTicks), placed obstacles of cells away
-// from every mover wait; ground, the cells round movers, removals from the world, walls, doors, and
-// re-derived water never do.
+// While a search is inside its hold window (kMaxHeldAdditionTicks), the limits of movers still well
+// inside the ground they have had served (less than kSightBufferMeters minus kLimitRetakeStepMm from
+// it) wait; a mover's first limit, one nearer the edge, the landing, removals from the world, walls,
+// doors, and re-derived water never do.
 //
 // A placed obstacle in the mesh blocks routes. It keeps its
 // interior triangles, so a mover standing in one reads on a placed-obstacle face (isOnMesh), which
@@ -55,9 +54,10 @@
 // unloads, and the placement data does not.
 //
 // Staleness (spec 4.6): generation() moves once for each joined patch job that brought ground in,
-// re-derived water, or changed walls or doors, which can change any route. Detail landing instead
-// marks stale just the routes whose rest crosses the new obstacles; detail leaving only opens ground
-// and marks nobody.
+// re-derived water, or changed walls or doors, which can change any route; of the routes current
+// before it, those a closing box crosses (a wall, new water, a door taken out) go stale. Placed
+// obstacles land only with or ahead of their ground, so never across a route; leaving, they only
+// open ground and mark nobody.
 
 #include "../EntityID.h"
 #include "../ISystem.h"
@@ -126,13 +126,22 @@ class NavigationSystem : public ISystem {
 
 	void setChunkManager(world::ChunkManager* manager) { chunkManager = manager; }
 
-	// The buffer added to a mover's sight distance to make its range R: one detail cell, so the
-	// placed obstacles ahead of a walking mover land before he reaches them.
+	// The buffer added to a mover's sight distance to make its range R. It covers the retake step,
+	// so what a walking mover sees stays inside the limits he has taken.
 	static constexpr float kSightBufferMeters = 16.0F;
-	// Append the anchors: every mover (Position + AgentRadius) with its range R, its sight distance
-	// (Memory::sightRadius, kDefaultSightRadius without Memory) plus kSightBufferMeters. The scene
-	// hands them to ChunkManager::update, which keeps their chunks loaded; the same R is the disc
-	// the mover meshes.
+	// A mover takes a new limit once it is this far from where it last took one.
+	static constexpr std::int64_t kLimitRetakeStepMm = 4000;
+	// The radius of ground the landing meshes round the drop: the crew saw it as they came down.
+	static constexpr float kLandingSightMeters = 150.0F;
+	// How far a placed obstacle's footprint may reach from its entity's position. A limit's obstacles
+	// are found by position in its box grown by this; a footprint reaching farther is logged, since
+	// it may be missed where it pokes into a limit from outside that box.
+	static constexpr float kFootprintReachMeters = 8.0F;
+	// Append the anchors: every mover (Position + AgentRadius) with the reach of its limit's
+	// obstacle query (the limit's circumradius for its range R, its sight distance -- Memory::sightRadius,
+	// kDefaultSightRadius without Memory -- plus kSightBufferMeters, and kFootprintReachMeters). The
+	// scene hands them to ChunkManager::update, which keeps their chunks loaded, so every chunk a
+	// mover's limit needs is held: past anchorLoadRange's floor once R passes about 117 m.
 	void appendAnchors(std::vector<world::ChunkAnchor>& out) const;
 
 	// Detail comes from `executor`'s chunk indices, and only for chunks in `processed` (the
@@ -192,15 +201,14 @@ class NavigationSystem : public ISystem {
 	// An answer not taken this many ticks after it became takeable means the asker is gone (a mover
 	// destroyed with a ticket out): the request and its answer are dropped, as cancelRoute would.
 	static constexpr std::uint64_t kUntakenAnswerTicks = 600;
-	// A search that spans ticks holds back the placed obstacles of cells away from every mover (not
-	// a mover's own cell or the eight touching it, and never ground), so its reads stay current and
-	// it does not restart; for this many ticks over its whole life, counted from the first tick it
-	// is still running after a slice, and a restart does not count again. A search past its window
-	// holds nothing; with no search inside one, the held cells go in at the normal budget, tick
-	// after tick, until none wait. From the buffer: a mover meshes kSightBufferMeters (16 m) past
-	// what it sees, so walking at 2 m/s it is about 8 s before a placed obstacle it has not meshed
-	// comes into its sight. 240 ticks is half that at 60 ticks a second. A count, so the tick
-	// additions land on never depends on the machine.
+	// A search that spans ticks holds back the limits of movers still well inside their served
+	// ground (see the file comment), so its reads stay current and it does not restart; for this
+	// many ticks over its whole life, counted from the first tick it is still running after a slice,
+	// and a restart does not count again. A search past its window holds nothing; with no search
+	// inside one, the held limits go in at the normal budget, tick after tick, until none wait. A
+	// mover is held only while it is less than kSightBufferMeters minus kLimitRetakeStepMm from the
+	// centre of its served limit, so what it sees stays meshed through a hold at a walk. A count, so
+	// the tick additions land on never depends on the machine.
 	static constexpr std::uint32_t kMaxHeldAdditionTicks = 240;
 	// Cumulative since construction, but for outstanding.
 	struct RouteStats {
@@ -216,7 +224,7 @@ class NavigationSystem : public ISystem {
 		std::uint32_t maxSliceExpansions  = 0;
 		double		  lastSliceMs		  = 0.0; // on the route worker
 		double		  maxSliceMs		  = 0.0;
-		std::uint64_t ticksHeld			  = 0; // ticks the cells away from movers waited
+		std::uint64_t ticksHeld			  = 0; // ticks the limits of movers well inside their ground waited
 		std::uint32_t longestHold		  = 0; // the most in a row
 	};
 	[[nodiscard]] const RouteStats& routeStats() const { return routeStatsTotal; }
@@ -243,11 +251,11 @@ class NavigationSystem : public ISystem {
 	// route answer's labelEpoch) holds while it has not moved. Values never repeat.
 	[[nodiscard]] std::uint64_t connectivityEpoch() const;
 
-	// A route's builtNavVersion once marked stale (detail landed across it, no clear point ahead): a
+	// A route's builtNavVersion once marked stale (the snap found no clear point ahead, or the mover strayed): a
 	// value generation() never takes, so no re-stamp reads it as current.
 	static constexpr std::uint64_t kStaleRoute = std::numeric_limits<std::uint64_t>::max();
 
-	// True when `meters` is on meshed ground (inside a ready chunk that has been meshed), water
+	// True when `meters` is on meshed ground (inside the union of the limits that went in), water
 	// and walls included.
 	[[nodiscard]] bool inSimArea(glm::vec2 meters) const;
 
@@ -299,8 +307,10 @@ class NavigationSystem : public ISystem {
 		glm::vec2			   center; // the group's anchor (clearing center, colony origin)
 		std::vector<glm::vec2> points; // one per member, in order
 	};
-	// First brings walls and the ground of the ready chunks the search can touch into the mesh
-	// (the landing runs before the first update), and waits for it. The center is the nearest
+	// First brings walls and the landing limit (kLandingSightMeters round `drop`, with its water and
+	// placed obstacles) into the mesh, when its chunks and their placement are ready, and waits for
+	// it (the landing runs before the first update); a landing limit not ready yet goes in on the
+	// first tick it is. The center is the nearest
 	// point to `drop` (searched outward in rings) whose whole member ring -- `count` points spaced
 	// evenly on a circle of `ringRadiusMeters`, or the center alone for one member -- is clear
 	// ground, so the ring never straddles a shore. Clear means walkable at the point and at
@@ -358,8 +368,8 @@ class NavigationSystem : public ISystem {
 	// True once any ground is meshed.
 	[[nodiscard]] bool hasMesh() const;
 
-	// True while anything that can go in now is queued, or gathered and not yet joined: ground of a
-	// ready chunk, wanted cells whose chunk is ready, detail removals, patches waiting for endTick.
+	// True while anything that can go in now is queued, or gathered and not yet joined: a limit
+	// whose chunks are ready, detail removals, patches waiting for endTick.
 	[[nodiscard]] bool isBuilding() const;
 
 	// Gathers every queue with no budget, applies it and waits, repeating until nothing is left:
@@ -371,8 +381,7 @@ class NavigationSystem : public ISystem {
 	// Monotonic count of joined patch jobs that brought ground in, re-derived a chunk's water, or
 	// changed walls or doors: the changes that can move any route. A stored NavPath stamps it at plan
 	// time so the replan loop sees "the mesh changed under me", and a deferred route waits on it.
-	// Placed obstacles landing or leaving don't move it; the routes they touch are marked stale one
-	// by one (see the file comment).
+	// Placed obstacles landing or leaving don't move it (see the file comment).
 	[[nodiscard]] std::uint64_t generation() const;
 
 	// Cumulative instrumentation since the last resetNavQueryStats(): the patches the joined jobs
@@ -390,30 +399,15 @@ class NavigationSystem : public ISystem {
 	// (PatchableMesh::triangleLive). A reference is good until the next update() or endTick().
 	[[nodiscard]] const geometry::nav::PatchableMesh& navMesh() const;
 
-	// The meshed ground as one square, or none before any ground is meshed.
-	struct RegionView {
-		geometry::Vec2i64 center;
-		std::int64_t	  halfExtent;
-	};
-	[[nodiscard]] std::vector<RegionView> builtRegions() const;
-
 	// Count budgets per tick, from sim-benchmarks (NavigationSystem.bench.cpp). Detail adds are
 	// held so a tick's detail job stays near kJobBudgetMs on the worker; removals are cheaper per
 	// ring, so they get their own, larger, budget and never hold adds back.
 	static constexpr double		 kJobBudgetMs		   = 2.0;
 	static constexpr std::size_t kDetailRingsPerTick	   = 32;
 	static constexpr std::size_t kDetailRemovalsPerTick = 128;
-	// And in cells (one patch each): a patch's width refresh covers its cell and around it, about
-	// a millisecond for a 16 m cell densely placed, which outweighs its rings. Adds and removals
-	// each touch at most this many cells a tick.
-	static constexpr std::size_t kDetailCellsPerTick = 2;
-	// Wanted cells scanned for colliders a tick on the main thread (a placement index query each),
-	// empty ones included, so a crowd appearing at once spreads its scans over ticks.
-	static constexpr std::size_t kDetailScansPerTick = 16;
-	// Open chunks (no water) share a tick until their squares' vertices would pass this; a chunk
-	// with water always goes alone. Eight open chunks (32 vertices each at kMaxBoundsEdgeMm): five
-	// measured 3.7 ms against 6.3 for the dearest shoreline chunk alone, so eight stay under it.
-	static constexpr std::size_t kGroundVerticesPerTick = 256;
+	// Limits whose ground goes in a tick: a limit patch in densely placed ground is most of
+	// kJobBudgetMs with its width refresh.
+	static constexpr std::size_t kLimitsPerTick = 1;
 	// A stranded mover is moved forward along its route to the first point this far apart that is
 	// walkable with its clearance.
 	static constexpr std::int64_t kSnapStepMm = 100;
@@ -421,15 +415,6 @@ class NavigationSystem : public ISystem {
 	// walking it: a teleport, a long shove) has its route marked stale, so it is replanned from
 	// where it stands rather than steered straight back at a waypoint through whatever lies between.
 	static constexpr std::int64_t kOffRouteMm = 2000;
-	// Detail is wanted and scanned in square cells of this side, aligned to chunk squares; a cell is
-	// scanned once, ever.
-	static constexpr std::int64_t kDetailCellMm = 16000;
-	// A mover's disc is taken again once it is this far from where it was last taken, so everything
-	// within R minus this of where it stands is always wanted.
-	static constexpr std::int64_t kDiscRetakeStepMm = 4000;
-	// Chunk sides enter the mesh split to this (decision 8 in the spec): eight pieces a side,
-	// which is what an open chunk's ground costs to patch in and how many triangle slots it adds.
-	static constexpr std::int64_t kMaxBoundsEdgeMm = 64000;
 
   private:
 	using RingId = geometry::nav::RingId;
@@ -446,10 +431,9 @@ class NavigationSystem : public ISystem {
 		geometry::Vec2i64 hi;
 	};
 
-	// A chunk whose ground is gathered, and its rings (kGatheredRing until joined).
-	struct ChunkGround {
-		RingId				square = geometry::nav::kNoRing;
-		std::vector<RingId> water;
+	// A chunk whose water is gathered: its rings (kGatheredRing until joined).
+	struct ChunkWater {
+		std::vector<RingId> rings;
 		std::uint32_t		terrainVersion = 0;
 	};
 
@@ -462,35 +446,32 @@ class NavigationSystem : public ISystem {
 		DoorId					  door = -1;
 	};
 
-	// A placed entity by the identity PlacementExecutor removes it by, with the scan cell its
-	// position falls in. Ordered chunk first, then cell, so one chunk's entries are a contiguous
-	// range and so are one cell's.
-	struct DetailKey {
+	// A placed entity by the identity PlacementExecutor removes it by. Ordered chunk first, then
+	// position, so the entries of one position are a contiguous range.
+	struct ObstacleKey {
 		world::ChunkCoordinate chunk;
-		std::int64_t		   cell	 = 0;
 		std::uint32_t		   xBits = 0;
 		std::uint32_t		   yBits = 0;
 		std::string			   defName;
-		bool				   operator<(const DetailKey& o) const;
+		bool				   operator<(const ObstacleKey& o) const;
 	};
-	// A detail ring in the nav mesh and the scan cell that holds its entity.
-	struct DetailRing {
-		RingId		 ring = geometry::nav::kNoRing;
-		std::int64_t cell = 0;
+	// A visibility limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
+	// and range, its outline, and the box its placed obstacles are looked for in (the outline's box
+	// grown by kFootprintReachMeters).
+	struct SeenLimit {
+		EntityID						mover = kInvalidEntity;
+		geometry::Vec2i64				centre{0, 0};
+		std::int64_t					circumradiusMm = 0;
+		std::vector<geometry::Vec2i64> outline;
+		Rect							query{};
 	};
-	// The cell being added, scanned and partly taken: its rings from `next` on are still to go in.
-	struct ScannedCell {
-		std::int64_t													 cell = 0;
-		std::vector<std::pair<DetailKey, geometry::nav::NavInputPolygon>> rings;
-		std::size_t														 next = 0;
-	};
-	// A mover's cell and range when its disc was last taken.
+	// Where a mover last took a limit and with what range, and the centre of its last limit that went in.
 	struct MoverDisc {
-		std::int64_t  xMm		  = 0; // where the disc was last taken
-		std::int64_t  yMm		  = 0;
-		std::int64_t  cell		  = 0;
-		float		  rangeMeters = 0.0F;
-		std::uint64_t seen		  = 0;
+		std::int64_t					 xMm		 = 0;
+		std::int64_t					 yMm		 = 0;
+		float							 rangeMeters = 0.0F;
+		std::optional<geometry::Vec2i64> served;
+		std::uint64_t					 seen = 0;
 	};
 
 	// A tick's patch job: its patches in order, door tag edits, then the width refresh. Filled on the
@@ -504,7 +485,6 @@ class NavigationSystem : public ISystem {
 		// The portals of doorAdds and doorRemoves, whose edges' triangles a door edit retags.
 		std::vector<geometry::nav::DoorPortal>								 doorEdges;
 		std::function<void(const std::vector<DoorId>&)>						 onDoorsAdded;
-		std::vector<std::pair<glm::vec2, glm::vec2>>						 detailAddBoxes; // each added obstacle's box, metres
 		// The ground, water, and wall patches among `patches`, and the boxes where the job closes
 		// ground (a wall, new water, a door taken out).
 		std::size_t									 routePatches = 0;
@@ -528,14 +508,12 @@ class NavigationSystem : public ISystem {
 	static void runJob(geometry::nav::PatchableMesh& mesh, MeshJob& job);
 
 	// After the last slice and the patches that followed it: their reports to the route queue,
-	// admit, the hold on cells away from movers for this tick, and the next slice on the route
-	// worker.
+	// admit, the hold on limits for this tick, and the next slice on the route worker.
 	void startRouteSlice();
 
 	// One tick's patches with the given budgets into the gathered jobs; finishPendingBuilds runs
-	// it unbudgeted. `holdFar` keeps the cells away from movers waiting.
-	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget, std::size_t groundVertexBudget,
-				bool holdFar);
+	// it unbudgeted. `holdLimits` keeps the limits of movers well inside their ground waiting.
+	void gather(std::size_t addBudget, std::size_t removeBudget, std::size_t limitBudget, bool holdLimits);
 	// Hand `gathered` to the workers. No-op when it is empty.
 	void submit();
 	// Wait for the workers and, once per job, publish what it changed (the generation counters).
@@ -550,19 +528,20 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] float meshingRange(EntityID mover) const;
 	// The chunks the anchors hold this tick (within each one's load range).
 	void				collectAnchors();
-	// Takes the disc of every mover that has moved kDiscRetakeStepMm or changed its R since its disc
-	// was last taken, and puts the cell it stands in and the eight touching it ahead of the rest when
-	// it takes its disc or enters a new cell: one distance and one cell compare a mover otherwise.
+	// Queues a limit for every mover that is new, has moved kLimitRetakeStepMm, or changed its R
+	// since it last took one, unless the meshed ground holds it: one distance compare a mover
+	// otherwise.
 	void trackMovers();
-	// Wants every cell whose nearest point is within `rangeMeters` of (xMm, yMm) that isn't wanted
-	// yet, nearest first, and its chunk's ground.
-	void wantDisc(std::int64_t xMm, std::int64_t yMm, float rangeMeters);
-	// The cell and the eight touching it, those still to scan, go ahead of the first-in-first-out
-	// queue, and so does the ground of their chunks.
-	void wantNear(std::int64_t centre);
-	// The cell's chunk has its ground and placement and a mover holds it: it can be scanned now.
-	[[nodiscard]] bool cellServable(std::int64_t cell) const;
-	[[nodiscard]] bool anchorHolds(world::ChunkCoordinate coord) const;
+	[[nodiscard]] SeenLimit makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const;
+	[[nodiscard]] bool		anchorHolds(world::ChunkCoordinate coord) const;
+	// Every chunk the limit's query box meets is loaded and ready and has its placement, and, for
+	// a mover's limit, an anchor holds it.
+	[[nodiscard]] bool limitServable(const SeenLimit& limit) const;
+	// Some chunk the mover's limit needs is held by no anchor: it can never go in.
+	[[nodiscard]] bool limitStranded(const SeenLimit& limit) const;
+	// The limit's mover stands less than kSightBufferMeters minus kLimitRetakeStepMm from the centre
+	// of its last served limit.
+	[[nodiscard]] bool limitHoldable(const SeenLimit& limit) const;
 	// As a join moves generation(), the routes current before it that no closing box crosses are
 	// stamped current; a route a closing box crosses goes stale.
 	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
@@ -576,9 +555,6 @@ class NavigationSystem : public ISystem {
 	// outline holds it (the nearest centre when several do), else none. Read from the mesh and its
 	// ring bookkeeping, so it holds after the chunk's placement data unloads.
 	[[nodiscard]] std::optional<PlacedObstacle> placedObstacleAt(glm::vec2 meters) const;
-	// Marks stale the routes whose rest comes within the mover's radius of a placed obstacle that landed in
-	// the joined jobs.
-	void markCrossedRoutes();
 	// Marks stale the routes whose movers stand more than kOffRouteMm off the leg they are on.
 	void markStrayedRoutes();
 	// Drops the requests whose answers have waited kUntakenAnswerTicks untaken.
@@ -594,24 +570,20 @@ class NavigationSystem : public ISystem {
 	// it, and walking on (collision does not push it back) takes it out ahead.
 	void snapMovers();
 	void			   queueRemovedDetail();
-	// The chunk's placement is in and finished, so its cells can be scanned.
+	// The chunk's placement is in and finished, so its placed obstacles can be read. Always so with
+	// no placement data wired.
 	[[nodiscard]] bool placementReady(world::ChunkCoordinate coord) const;
 	void			   gatherWalls();
-	// Water re-derived for each loaded chunk whose terrain changed under its ground; a chunk that
+	// Water re-derived for each loaded chunk whose terrain changed under its water; a chunk that
 	// became ready since the last call (generated or reloaded) is taken as it is.
 	void rederiveChangedWater();
-	// The wanted chunks' ground a mover holds, those round movers that entered a new cell first, the
-	// rest in the order they became wanted, within `vertexBudget`.
-	void gatherGround(std::size_t vertexBudget);
-	// The landing's ground: every ready chunk meeting `within`, at once.
-	void gatherGroundWithin(const Rect& within);
-	void meshGround(world::ChunkCoordinate coord, std::vector<geometry::nav::NavInputPolygon> water, std::uint32_t terrainVersion);
-	[[nodiscard]] bool chunkGroundMeshed(world::ChunkCoordinate coord) const;
-	// Wanted cells whose chunk now has ground and placement and a mover holding it move to nearReady
-	// or readyCells.
-	void			   releaseAwaitingCells();
-	[[nodiscard]] ScannedCell scanCell(std::int64_t cell) const;
-	void gatherDetail(std::size_t addBudget, std::size_t removeBudget, std::size_t cellBudget, std::size_t scanBudget, bool holdFar);
+	void gatherRemovals(std::size_t removeBudget);
+	// Queued limits in order, kLimitsPerTick within `limitBudget` and their placed obstacles within
+	// `addBudget`; with `holdLimits`, those limitHoldable reads true wait. The landing first.
+	void gatherLimits(std::size_t addBudget, std::size_t limitBudget, bool holdLimits);
+	// The limit's placed obstacles not yet gathered, in key order, at most `budget` of them, then,
+	// once none is left, its chunks' water not yet gathered and its ground. True when the ground went.
+	bool serveLimit(const SeenLimit& limit, std::size_t& budget);
 
 	world::ChunkManager*							  chunkManager		= nullptr;
 	assets::PlacementExecutor*						  placement			= nullptr;
@@ -620,35 +592,23 @@ class NavigationSystem : public ISystem {
 
 	geometry::nav::PatchableMesh detailMesh;
 
-	std::map<world::ChunkCoordinate, ChunkGround, ChunkLess> ground;
-	std::size_t												  groundPending = 0; // queued chunks that are ready and wait for budget
-	// Wanted chunks whose ground isn't gathered, in the order they became wanted.
-	std::vector<world::ChunkCoordinate>		   groundQueue;
-	std::unordered_set<world::ChunkCoordinate> readyLastCall; // rederiveChangedWater
+	std::map<world::ChunkCoordinate, ChunkWater, ChunkLess> water;
+	std::unordered_set<world::ChunkCoordinate>				readyLastCall; // rederiveChangedWater
 
 	std::uint64_t		  wallsVersion = UINT64_MAX;
 	std::vector<WallRing> walls;
 	std::vector<WallDoor> doors;
 
-	std::map<DetailKey, DetailRing> detailInMesh;
-	std::vector<DetailRing>			detailRemovals;
-	// Every cell and chunk ever wanted; neither set shrinks.
-	std::unordered_set<std::int64_t>		   wantedCells;
-	std::unordered_set<world::ChunkCoordinate> wantedChunks;
-	// Wanted cells waiting for their chunk's ground and placement, by chunk, each in wanted order.
-	std::map<world::ChunkCoordinate, std::vector<std::int64_t>, ChunkLess> cellsAwaitingChunk;
-	// Wanted cells not scanned yet, and those of them round a mover (wantNear). A queue may hold a cell
-	// twice or after its scan; only a cell still in pendingCells is scanned.
-	std::unordered_set<std::int64_t> pendingCells;
-	std::unordered_set<std::int64_t> nearCells;
-	// Cells ready to scan, first in, first out: nearReady before readyCells. And the one of each
-	// being added: a cell away from movers that is held part way in never stands in the near lane's way.
-	std::deque<std::int64_t>   nearReady;
-	std::deque<std::int64_t>   readyCells;
-	std::optional<ScannedCell> addingNear;
-	std::optional<ScannedCell> addingFar;
-	// The chunks of nearCells whose ground isn't gathered, served ahead of groundQueue.
-	std::vector<world::ChunkCoordinate>		nearGround;
+	// Every placed obstacle gathered, by key: its ring, kGatheredRing until its patch is joined.
+	std::map<ObstacleKey, RingId> obstacleInMesh;
+	std::vector<RingId>			  detailRemovals;
+	// Limits waiting to go in, in the order they were taken, and the landing's until it goes in.
+	std::deque<SeenLimit>	 limitQueue;
+	std::optional<SeenLimit> landingLimit;
+	// Queued limits that could have gone in at the last gather but for a budget or a hold.
+	std::size_t								limitsPending = 0;
+	// Defs whose footprint was found reaching past kFootprintReachMeters, each logged once.
+	std::set<std::string> overreachingDefs;
 	std::unordered_map<EntityID, MoverDisc> moverDiscs;
 	std::uint64_t							moverPass = 0;
 	// The movers snapMovers left standing in a placed obstacle this tick, sorted.
@@ -687,7 +647,7 @@ class NavigationSystem : public ISystem {
 	std::vector<geometry::nav::PatchReport> routeReports;
 	bool									sliceStarted	 = false;
 	double									sliceMs			 = 0.0; // written by the route worker
-	bool									holdingFar		 = false;
+	bool									holdingLimits	 = false;
 	std::uint32_t							heldInARow		 = 0;
 	RouteStats								routeStatsTotal;
 	// Declared after the mesh and the queue, so it stops before what a slice reads is destroyed.
@@ -695,8 +655,6 @@ class NavigationSystem : public ISystem {
 
 	mutable std::uint64_t routeGeneration = 0;
 	std::set<world::ChunkCoordinate, ChunkLess> anchorChunks;
-	// The boxes of the placed obstacles that landed in the joined jobs, for markCrossedRoutes.
-	std::vector<std::pair<glm::vec2, glm::vec2>> detailLanded;
 
 
 	mutable NavQueryStats navStats;

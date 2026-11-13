@@ -9,6 +9,7 @@
 #include <construction/ConstructionWorld.h>
 
 #include <core/Vec2i64.h>
+#include <nav/LimitPolygon.h>
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
@@ -139,12 +140,14 @@ namespace {
 		ChunkTerrainPolygons& at(world::ChunkCoordinate coord) { return chunks[{coord.x, coord.y}]; }
 	};
 
-	// Each chunk's ground (its square and water) in one mesh, as NavigationSystem adds it.
+	// Each chunk's water in one mesh over ground covering the chunk.
 	geometry::nav::PatchableMesh meshFor(const FakeTerrain& terrain) {
-		geometry::nav::PatchableMesh mesh({.maxBoundsEdgeMm = 64000});
+		geometry::nav::PatchableMesh mesh;
 		geometry::nav::PatchEdits	 edits;
 		for (const auto& [coord, polygons] : terrain.chunks) {
-			edits.adds.push_back(chunkSquare({coord.first, coord.second}));
+			const Vec2i64 lo = chunkOriginMm({coord.first, coord.second});
+			const Vec2i64 side{static_cast<std::int64_t>(world::kChunkSize) * 1000, static_cast<std::int64_t>(world::kChunkSize) * 1000};
+			edits.adds.push_back(borderRing(lo, lo + side));
 			appendChunkWater(polygons, edits.adds);
 		}
 		mesh.applyPatch(edits);
@@ -193,13 +196,12 @@ namespace {
 
 } // namespace
 
-TEST(NavInputBuilder, ChunkSquare_IsTheChunksBoundsUnblocked) {
-	const NavInputPolygon square = chunkSquare({1, -2});
-	EXPECT_FALSE(square.blocked);
-	EXPECT_EQ(square.provenanceId, kProvenanceBorder);
-	EXPECT_TRUE(isCcw(square.ring));
-	EXPECT_EQ(*std::min_element(square.ring.begin(), square.ring.end()), meters(512, -1024));
-	EXPECT_EQ(*std::max_element(square.ring.begin(), square.ring.end()), meters(1024, -512));
+TEST(NavInputBuilder, VisibilityLimit_IsTheLimitPolygonUnblocked) {
+	const NavInputPolygon limit = visibilityLimit(meters(512, -1024), 46000);
+	EXPECT_FALSE(limit.blocked);
+	EXPECT_EQ(limit.provenanceId, kProvenanceBorder);
+	EXPECT_TRUE(isCcw(limit.ring));
+	EXPECT_EQ(limit.ring, geometry::nav::limitPolygon(meters(512, -1024), 46000));
 }
 
 TEST(NavInputBuilder, Water_EmitsBlockingRingsWithProvenanceAndHoleCapability) {
