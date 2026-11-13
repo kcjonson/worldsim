@@ -2,12 +2,15 @@
 
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
+#include <predicates/Predicates.h>
 #include <visibility/SightPolygon.h>
+#include <visibility/SightSkirt.h>
 #include <visibility/Visibility.h>
 
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <random>
 #include <set>
 #include <utility>
 #include <vector>
@@ -74,6 +77,14 @@ namespace {
 
 	Vec2i64 metres(double x, double y) { return {std::llround(x * 1000.0), std::llround(y * 1000.0)}; }
 
+	double distanceToOutline(const Vec2i64& point, const std::vector<Vec2i64>& outline) {
+		double nearest = 1e300;
+		for (std::size_t i = 0; i < outline.size(); ++i) {
+			nearest = std::min(nearest, geometry::distanceToSegment(point, outline[i], outline[(i + 1) % outline.size()]));
+		}
+		return nearest;
+	}
+
 	// A square of `halfMetres` round (x, y) metres, counter-clockwise.
 	std::vector<Vec2i64> square(double x, double y, double halfMetres) {
 		return {metres(x - halfMetres, y - halfMetres), metres(x + halfMetres, y - halfMetres), metres(x + halfMetres, y + halfMetres),
@@ -99,8 +110,8 @@ TEST(SeenArea, LandingIsOneRingInscribedInItsCircle) {
 	}
 }
 
-// A queued shape is seen, and covers what it holds, before the budget commits it; the budget takes
-// kSeenRingsPerTick shapes a tick, first in, first out.
+// A queued shape is seen, and covers what it holds, before the budget commits it; the budget tests
+// up to kSeenRingsPerTick shapes a tick, first in, first out, and stops after the first that registers.
 TEST(SeenArea, PendingShapesAnswerBeforeTheyAreCommitted) {
 	SeenArea seen;
 	for (int i = 0; i < 6; ++i) {
@@ -115,8 +126,8 @@ TEST(SeenArea, PendingShapesAnswerBeforeTheyAreCommitted) {
 
 	const std::uint64_t before = seen.epoch();
 	seen.update();
-	EXPECT_EQ(seen.ringsRegistered(), vision::kSeenRingsPerTick);
-	EXPECT_EQ(seen.shapesPending(), 6U - vision::kSeenRingsPerTick);
+	EXPECT_EQ(seen.ringsRegistered(), vision::kSeenShapesRegisteredPerTick);
+	EXPECT_EQ(seen.shapesPending(), 6U - vision::kSeenShapesRegisteredPerTick);
 	EXPECT_NE(seen.epoch(), before);
 	EXPECT_EQ(seen.registeredRing(0).front(), geometry::sightPolygon(metres(0.0, 0.0), kSightMm).front()) << "first in, first out";
 	EXPECT_TRUE(seen.isSeen(metres(500.0, 20.0))) << "still pending, still seen";
@@ -197,9 +208,11 @@ TEST(SeenArea, LastSeenTowardTheGoal) {
 	EXPECT_TRUE(near(seen.lastSeenToward(west, metres(80.0, 0.0)), metres(50.0, 0.0))) << "the same once committed";
 }
 
-// Visibility polygons from viewpoints 0.5 m apart walking past and through a doorway, each committed
-// unless covered: the record equals a fresh build of the rings it registered.
-TEST(SeenArea, DoorwayPolygonsEqualAFreshBuild) {
+// Visibility polygons from viewpoints 0.5 m apart walking past and through a doorway, each queued as
+// a sight polygon: the record equals a fresh build of the rings it registered; it holds every point
+// of every polygon deeper than the cover tolerance, and nothing farther than the skirt from them;
+// and the same walk again registers nothing.
+TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 	const std::vector<geometry::OccluderSegment> walls = {
 		{metres(-20.0, 0.0), metres(-0.5, 0.0)},
 		{metres(0.5, 0.0), metres(20.0, 0.0)},
@@ -219,21 +232,56 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuild) {
 		viewpoints.push_back(metres(-4.0 + 0.5 * step, -4.0 + 0.5 * step));
 	}
 
-	SeenArea seen;
-	int		 notSimple = 0;
+	SeenArea						  seen;
+	int								  notSimple = 0;
+	std::vector<std::vector<Vec2i64>> polygons;
 	for (const Vec2i64& viewpoint : viewpoints) {
 		const geometry::Ring polygon = geometry::computeVisibilityPolygon(viewpoint, kSightMm, walls);
 		if (!geometry::simpleAround(polygon, viewpoint)) {
 			++notSimple;
 			continue;
 		}
-		seen.queue(polygon, viewpoint);
+		polygons.push_back(polygon);
+		seen.queueSightPolygon(polygon, viewpoint, kSightMm);
 		seen.update();
 	}
 	drain(seen);
 	EXPECT_EQ(notSimple, 0);
 	EXPECT_GT(seen.ringsRegistered(), 10U);
 	EXPECT_GT(seen.shapesDropped(), 0U);
+	EXPECT_EQ(seen.shapesSkipped(), 0U);
+
+	std::mt19937 random(5);
+	int			 deepSamples = 0;
+	for (const std::vector<Vec2i64>& polygon : polygons) {
+		for (int attempt = 0; attempt < 60; ++attempt) {
+			const std::int64_t x = static_cast<std::int64_t>(random() % 60001) - 30000;
+			const std::int64_t y = static_cast<std::int64_t>(random() % 60001) - 30000;
+			const Vec2i64	   point{x, y};
+			if (geometry::pointInPolygon(point, polygon) != geometry::PointInPolygon::Inside || distanceToOutline(point, polygon) <= 6.0) {
+				continue;
+			}
+			++deepSamples;
+			EXPECT_TRUE(seen.isSeen(point)) << "(" << point.x << ", " << point.y << ") lost";
+		}
+	}
+	EXPECT_GT(deepSamples, 1000);
+	for (const SeenArea::Triangle& triangle : trianglesOf(seen)) {
+		const Vec2i64 middle{(triangle.corners[0].x + triangle.corners[1].x + triangle.corners[2].x) / 3,
+							 (triangle.corners[0].y + triangle.corners[1].y + triangle.corners[2].y) / 3};
+		double nearest = 1e300;
+		for (const std::vector<Vec2i64>& polygon : polygons) {
+			nearest = geometry::pointInPolygon(middle, polygon) != geometry::PointInPolygon::Outside ? 0.0 : std::min(nearest, distanceToOutline(middle, polygon));
+		}
+		EXPECT_LE(nearest, static_cast<double>(geometry::kSeenSkirtMm + 1)) << "(" << middle.x << ", " << middle.y << ") seen past the skirt";
+	}
+
+	const std::size_t ringsBefore = seen.ringsRegistered();
+	for (const Vec2i64& viewpoint : viewpoints) {
+		seen.queueSightPolygon(geometry::computeVisibilityPolygon(viewpoint, kSightMm, walls), viewpoint, kSightMm);
+	}
+	drain(seen);
+	EXPECT_EQ(seen.ringsRegistered(), ringsBefore) << "the same walk again";
 
 	geometry::nav::PatchableMesh fresh;
 	geometry::nav::PatchEdits	 edits;

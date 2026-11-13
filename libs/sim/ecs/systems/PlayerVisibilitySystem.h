@@ -8,7 +8,9 @@
 
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "VisionSystem.h"
 
+#include <construction/ConstructionWorld.h>
 #include <vision/SeenArea.h>
 
 #include <core/Vec2i64.h>
@@ -16,9 +18,12 @@
 #include <glm/vec2.hpp>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
+#include <set>
+#include <unordered_map>
 #include <vector>
 
 namespace ecs {
@@ -61,6 +66,13 @@ namespace ecs {
 		// is on, so a caller gates exactly when it is handed one.
 		[[nodiscard]] static const PlayerVisibilitySystem* gate(World& world);
 
+		// The walls and openings whose footprints join the record once a colonist has seen them
+		// (player-visibility.md 3.3, rule 22). Null: no structures. Does not take ownership.
+		void setConstructionWorld(const construction::ConstructionWorld* world) { constructionWorld = world; }
+
+		// Wall and opening footprints queued so far, each once.
+		[[nodiscard]] std::size_t footprintsEntered() const { return enteredFootprints.size(); }
+
 	  private:
 		// A leg's held positions, kept as what bounds the leg's end: the directions from its start
 		// within kSeenSlackMm of every held position's line (a wedge, once one lies farther out than
@@ -87,12 +99,24 @@ namespace ecs {
 		void closeLeg(EntityID colonist, Leg& leg);
 		static bool holds(const Leg& leg, const geometry::Vec2i64& at);
 		static void hold(Leg& leg, const geometry::Vec2i64& at);
-		// The one place a visibility polygon enters the record (player-visibility.md 3.3, 6.2).
-		void registerPolygon(const std::vector<geometry::Vec2i64>& polygon, const geometry::Vec2i64& observer);
+		// The one place a visibility polygon enters the record (player-visibility.md 3.3, 6.4).
+		void registerPolygon(const std::vector<geometry::Vec2i64>& polygon, const geometry::Vec2i64& observer, std::int64_t sightRadiusMm);
+		// Queues the footprint of every structure the polygon of `shape` touched that has not gone in.
+		void enterStructures(const VisionSystem::SightShape& shape);
+		void enterFootprint(const std::vector<geometry::Vec2i64>& ring);
+		// Rebuilds the footprints by structure when the construction world has changed.
+		void refreshFootprints();
 
 		vision::SeenArea			 seen;
 		std::map<EntityID, Observer> observers;
 		bool						 revealedFlag = false;
+
+		const construction::ConstructionWorld*								 constructionWorld = nullptr;
+		std::uint64_t														 footprintVersion  = ~std::uint64_t{0};
+		std::vector<std::vector<geometry::Vec2i64>>							 footprints; // nav's wall and opening rings, as built
+		std::unordered_map<construction::SegmentId, std::vector<std::size_t>> footprintsBySegment;
+		std::unordered_map<construction::OpeningId, std::vector<std::size_t>> footprintsByOpening;
+		std::set<std::vector<geometry::Vec2i64>>							 enteredFootprints;
 	};
 
 } // namespace ecs

@@ -3,8 +3,10 @@
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
 #include <nav/SightCover.h>
+#include <nav/SightFrontier.h>
 #include <predicates/Predicates.h>
 #include <visibility/SightPolygon.h>
+#include <visibility/SightSkirt.h>
 
 #include <algorithm>
 #include <cassert>
@@ -151,7 +153,8 @@ namespace vision {
 
 	SeenArea::SeenArea()
 		: mesh(std::make_unique<geometry::nav::PatchableMesh>()),
-		  scratch(std::make_unique<geometry::nav::SightCoverScratch>()) {}
+		  scratch(std::make_unique<geometry::nav::SightCoverScratch>()),
+		  frontierScratch(std::make_unique<geometry::nav::SightFrontierScratch>()) {}
 
 	SeenArea::~SeenArea() = default;
 
@@ -164,23 +167,49 @@ namespace vision {
 		return shape;
 	}
 
-	void SeenArea::commit(const PendingShape& shape) {
+	// Test tight, register loose (player-visibility.md 3.3): the covered test reads the true shape; a
+	// sight polygon that adds ground enters grown by the skirt, and only what it adds is registered.
+	bool SeenArea::commit(const PendingShape& shape) {
 		if (geometry::nav::sightShapeCovered(*mesh, shape.outline, shape.centre, *scratch)) {
 			++dropped;
-			return;
+			return false;
+		}
+		std::vector<Vec2i64> grown;
+		if (shape.sightRadius > 0) {
+			grown = geometry::skirtedSightShape(shape.outline, shape.centre, shape.sightRadius, geometry::kSeenSkirtMm);
+			if (grown.empty()) {
+				++skipped;
+				return false;
+			}
+		}
+		const std::vector<Vec2i64>& entering = grown.empty() ? shape.outline : grown;
+		if (geometry::nav::sightShapeFrontier(*mesh, entering, shape.centre, *frontierScratch, pieces) == geometry::nav::SightFrontier::Covered) {
+			++dropped;
+			return false;
 		}
 		geometry::nav::PatchEdits edits;
-		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = shape.outline});
+		for (std::vector<Vec2i64>& piece : pieces) {
+			edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(piece)});
+		}
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
-		if (!report.added.empty() && report.added.front() != geometry::nav::kNoRing) {
-			registered.push_back(report.added.front());
+		for (const std::int32_t ring : report.added) {
+			if (ring != geometry::nav::kNoRing) {
+				registered.push_back(ring);
+			}
 		}
 		mesh->refreshWidths();
+		return true;
 	}
 
 	void SeenArea::commitNow(const std::vector<Vec2i64>& shape, const Vec2i64& centre) { commit(pendingOf(shape, centre)); }
 
 	void SeenArea::queue(std::vector<Vec2i64> shape, const Vec2i64& centre) { waiting.push_back(pendingOf(std::move(shape), centre)); }
+
+	void SeenArea::queueSightPolygon(std::vector<Vec2i64> polygon, const Vec2i64& centre, std::int64_t sightRadiusMm) {
+		PendingShape shape = pendingOf(std::move(polygon), centre);
+		shape.sightRadius  = sightRadiusMm;
+		waiting.push_back(std::move(shape));
+	}
 
 	void SeenArea::setOpenLeg(LegId leg, const Vec2i64& start, const Vec2i64& end, std::int64_t radiusMm) {
 		assert(radiusMm >= kSeenLeastRadiusMm);
@@ -204,8 +233,9 @@ namespace vision {
 	}
 
 	void SeenArea::update() {
-		for (std::size_t count = 0; count < kSeenRingsPerTick && !waiting.empty(); ++count) {
-			commit(waiting.front());
+		std::size_t registering = 0;
+		for (std::size_t count = 0; count < kSeenRingsPerTick && registering < kSeenShapesRegisteredPerTick && !waiting.empty(); ++count) {
+			registering += commit(waiting.front()) ? 1 : 0;
 			waiting.pop_front();
 		}
 	}

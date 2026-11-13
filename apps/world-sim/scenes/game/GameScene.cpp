@@ -399,6 +399,10 @@ namespace {
 				// discovery by a per-observer visibility polygon.
 				ecsWorld->getSystem<ecs::VisionSystem>().setConstructionWorld(&m_drawingSystem->world());
 
+				// PlayerVisibilitySystem reads it for the footprints of the walls colonists have
+				// seen, which join the seen record.
+				ecsWorld->getSystem<ecs::PlayerVisibilitySystem>().setConstructionWorld(&m_drawingSystem->world());
+
 				// WallCollisionSystem reads the same store for its built-wall safety net.
 				ecsWorld->getSystem<ecs::WallCollisionSystem>().setConstructionWorld(&m_drawingSystem->world());
 
