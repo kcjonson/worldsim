@@ -463,7 +463,6 @@ namespace geometry::nav {
 			}
 		}
 		std::sort(sides.begin(), sides.end());
-		std::map<Vec2i64, std::int32_t> pins;
 		for (std::size_t begin = 0; begin < sides.size();) {
 			std::size_t end = begin + 1;
 			while (end < sides.size() && sides[end].lo == sides[begin].lo && sides[end].hi == sides[begin].hi) {
@@ -473,17 +472,12 @@ namespace geometry::nav {
 				for (std::size_t j = begin; j < end; ++j) {
 					if (sides[j].ref.ring != sides[i].ref.ring) {
 						seams.partner[static_cast<std::size_t>(sides[i].ref.ring)][static_cast<std::size_t>(sides[i].ref.edge)] = sides[j].ref;
-						if (sides[i].ref < sides[j].ref) {
-							++pins[sides[i].lo];
-							++pins[sides[i].hi];
-						}
 						break;
 					}
 				}
 			}
 			begin = end;
 		}
-		seams.pins.assign(pins.begin(), pins.end());
 		return seams;
 	}
 
@@ -510,13 +504,11 @@ namespace geometry::nav {
 		}
 
 		// 1. Arrange every ring edge but the dissolved ones, tagging each segment with its
-		// ring and edge, and every pin as a point site. The arrangement splits edges at
-		// every crossing, touch, and pin and merges overlaps, so its edges form a planar
-		// straight-line graph.
+		// ring and edge. The arrangement splits edges at every crossing and touch and
+		// merges overlaps, so its edges form a planar straight-line graph.
 		std::vector<InputSegment> segments;
-		std::vector<Vec2i64>	  pins;
-		ringsArrangementInput(rings, findBoundsSeams(rings), ringEdgeTag, segments, pins);
-		const Arrangement arrangement = buildArrangement(segments, pins);
+		ringsArrangementInput(rings, findBoundsSeams(rings), ringEdgeTag, segments);
+		const Arrangement arrangement = buildArrangement(segments);
 		result.vertices				  = arrangement.vertices;
 
 		// 2. Triangulate the whole arrangement at once: a constrained Delaunay

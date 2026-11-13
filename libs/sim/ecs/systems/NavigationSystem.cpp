@@ -163,28 +163,44 @@ namespace ecs {
 			}
 		}
 
-		// Nearest point on `mesh` to `meters` whose face passes `faceOk` (given the triangle id), nudged
-		// a hair toward that face's centroid so it locates inside it, or nullopt when no face does.
+		// The first nudge from a face's edge toward its centroid that locates in the face: a long face
+		// is not walked a fixed share of its size away from where it was asked.
+		constexpr float kIntoFaceMeters = 0.01F;
+		glm::vec2		intoFace(const gnav::PatchableMesh& mesh, std::int32_t t, glm::vec2 onEdge, glm::vec2 centroid) {
+			const glm::vec2 inward = centroid - onEdge;
+			const float		length = std::sqrt(inward.x * inward.x + inward.y * inward.y);
+			for (float step = kIntoFaceMeters; step < length; step *= 2.0F) {
+				const glm::vec2 p = onEdge + inward * (step / length);
+				if (mesh.locate(nav::toMm(p)) == t) {
+					return p;
+				}
+			}
+			return centroid;
+		}
+
+		// Nearest point on `mesh` to `meters` whose face passes `faceOk` (given the triangle id), moved
+		// just inside that face so it locates there, or nullopt when no face does.
 		template <typename FaceOk>
 		std::optional<glm::vec2> nearestFaceOnMesh(const gnav::PatchableMesh& mesh, glm::vec2 meters, const FaceOk& faceOk) {
-			bool	  found	 = false;
-			float	  bestD2 = 0.0F;
-			glm::vec2 best{0.0F, 0.0F};
+			std::int32_t   bestT  = -1;
+			float		   bestD2 = 0.0F;
+			glm::vec2	   best{0.0F, 0.0F};
+			glm::vec2	   bestCentroid{0.0F, 0.0F};
 			constexpr float kNone = std::numeric_limits<float>::infinity();
 			nearestFirst(mesh, meters, [&](std::int32_t t, const TriangleMeters& tri) {
 				if (!faceOk(t)) {
-					return found ? bestD2 : kNone;
+					return bestT >= 0 ? bestD2 : kNone;
 				}
-				const ClosestPoint	 cp	 = closestPointOnTriangle(meters, tri.a, tri.b, tri.c);
-				if (!found || cp.dist2 < bestD2) {
-					const glm::vec2 centroid = (tri.a + tri.b + tri.c) / 3.0F;
-					best					 = cp.point + (centroid - cp.point) * 0.05F;
-					bestD2					 = cp.dist2;
-					found					 = true;
+				const ClosestPoint cp = closestPointOnTriangle(meters, tri.a, tri.b, tri.c);
+				if (bestT < 0 || cp.dist2 < bestD2) {
+					bestT		 = t;
+					best		 = cp.point;
+					bestCentroid = (tri.a + tri.b + tri.c) / 3.0F;
+					bestD2		 = cp.dist2;
 				}
 				return bestD2;
 			});
-			return found ? std::optional<glm::vec2>(best) : std::nullopt;
+			return bestT >= 0 ? std::optional<glm::vec2>(intoFace(mesh, bestT, best, bestCentroid)) : std::nullopt;
 		}
 
 		template <typename FaceOk> bool pointOnFace(const gnav::PatchableMesh& mesh, glm::vec2 meters, const FaceOk& faceOk) {
