@@ -9,6 +9,7 @@
 // - GlobalTaskListView (colony-wide panel)
 // - TasksTabView (colonist-specific dialog tab)
 
+#include <ecs/EntityID.h>
 #include <glm/vec2.hpp>
 
 #include <cstdint>
@@ -16,6 +17,7 @@
 #include <vector>
 
 namespace ecs {
+	class ClaimIndex;
 	class World;
 }
 
@@ -27,20 +29,28 @@ struct GlobalTaskDisplayData {
 	std::string description;		// "Cut Tree (for Axe)"
 	std::string position;			// "(10, 15)" or empty if no specific location
 	std::string distance;			// "5m" or empty if no specific location
-	std::string status;				// "Available" / "Waiting for harvest" / "Blocked"
-	std::string statusDetail;		// "Alice working" / "0/3 materials"
+	std::string status;				// "Working" / "Unassigned" / "Waiting (no source found)" / ...
+	std::string statusDetail;		// "Alice, Bob; needs 12, 4 on the way" / "far; known to Alice"
 	float distanceValue = 0.0F;		// For sorting (meters)
 	uint8_t taskTypePriority = 255; // For sorting by type (lower = higher priority)
 	bool isBlocked = false;			// Goal is blocked (waiting for dependencies)
 	bool isUnassigned = false;		// Work pool entry (no colonist assigned yet)
 };
 
-/// Query all goals from GoalTaskRegistry, for the colony-wide panel and the colonist details tab
-/// @param world ECS world, used to surface which colonist is working each goal + build progress
-/// @param referencePosition Position to calculate distances from (the camera center, or the colonist)
-/// @return Vector of task display data, unsorted
+/// Every goal with something to do, for the colony-wide panel, unsorted, distances from
+/// `referencePosition` (the camera center). `claims` is the caller's index, rebuilt here.
 [[nodiscard]] std::vector<GlobalTaskDisplayData> getGlobalTasks(
 	ecs::World&		 world,
+	ecs::ClaimIndex& claims,
+	const glm::vec2& referencePosition
+);
+
+/// The same rows, for the colonist details tab: only the goals the colonist works or its last decision
+/// offered work toward, unsorted, distances from `referencePosition` (the colonist).
+[[nodiscard]] std::vector<GlobalTaskDisplayData> getKnownTasks(
+	ecs::World&		 world,
+	ecs::ClaimIndex& claims,
+	ecs::EntityID	 colonist,
 	const glm::vec2& referencePosition
 );
 

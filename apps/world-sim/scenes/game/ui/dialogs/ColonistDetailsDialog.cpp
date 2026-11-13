@@ -35,6 +35,7 @@ namespace world_sim {
 	void ColonistDetailsDialog::open(ui::Component& opener, ecs::EntityID newColonistId, int player) {
 		colonistId = newColonistId;
 		fresh = true;
+		model.invalidateTasks();
 		if (dialog.get() == nullptr) {
 			dialog = ui::Dialog::open(
 				opener,
@@ -184,11 +185,11 @@ namespace world_sim {
 		}
 	}
 
-	void ColonistDetailsDialog::update(ecs::World& world) {
+	void ColonistDetailsDialog::update(ecs::World& world, float deltaTime) {
 		if (!isOpen()) {
 			return;
 		}
-		const ColonistDetailsModel::UpdateType change = model.refresh(world, colonistId);
+		const ColonistDetailsModel::UpdateType change = model.refresh(world, colonistId, deltaTime);
 		if (!model.isValid() || (!fresh && change == ColonistDetailsModel::UpdateType::None)) {
 			return;
 		}

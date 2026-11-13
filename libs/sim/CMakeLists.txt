@@ -14,6 +14,7 @@ add_library(sim
     ecs/systems/StorageGoalSystem.cpp
     ecs/systems/WorkSources.cpp
     ecs/systems/ChainClaims.cpp
+    ecs/systems/ColonyGoalWork.cpp
     ecs/systems/CraftingGoalSystem.cpp
     ecs/systems/BuildGoalSystem.cpp
     ecs/systems/ConstructionSystem.cpp
