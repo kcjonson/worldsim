@@ -2,7 +2,7 @@
 
 // GlobalTaskListView - the colony's tasks, collapsible, in the top-right stack under ResourcesPanel.
 // Collapsed, a "Tasks (N)" header with a down chevron; expanded, under it a fixed-height box whose rows
-// (GlobalTaskRow: what, where and how far, then its status and who knows of it) scroll. Display only.
+// (GlobalTaskRow: what, where and how far, then its status and detail) scroll. Display only.
 // kWidth wide unless its size says otherwise.
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"

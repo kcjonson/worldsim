@@ -2,7 +2,6 @@
 
 #include "StoreOrDrop.h"
 #include "World.h"
-#include "components/DecisionTrace.h"
 #include "components/Inventory.h"
 #include "components/Packaged.h"
 #include "components/StorageConfiguration.h"
@@ -56,30 +55,6 @@ namespace ecs {
 			}
 		}
 		return 0;
-	}
-
-	std::vector<uint64_t> goalsWithOfferedWork(World& world) {
-		std::vector<uint64_t> offered;
-		for (auto [colonist, trace] : world.view<DecisionTrace>()) {
-			(void)colonist;
-			for (const EvaluatedOption& option : trace.options) {
-				const bool live = option.status == OptionStatus::Selected || option.status == OptionStatus::Available ||
-								  option.status == OptionStatus::NoRoom || option.status == OptionStatus::Reserved;
-				const uint64_t goal = option.taskType == TaskType::Haul	   ? option.haulGoalId
-									  : option.taskType == TaskType::Harvest ? option.harvestGoalId
-																			 : 0U;
-				if (live && goal != 0) {
-					offered.push_back(goal);
-				}
-			}
-		}
-		std::sort(offered.begin(), offered.end());
-		offered.erase(std::unique(offered.begin(), offered.end()), offered.end());
-		return offered;
-	}
-
-	bool goalHasWork(const GoalTask& goal, std::span<const uint64_t> offered) {
-		return goal.owner != GoalOwner::StorageGoalSystem || std::binary_search(offered.begin(), offered.end(), goal.id);
 	}
 
 	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {

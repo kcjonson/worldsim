@@ -7,6 +7,7 @@
 #include "ActionSystem.h"
 #include "ChainClaims.h"
 #include "CollisionSystem.h"
+#include "ColonyGoalWork.h"
 #include "CraftingGoalSystem.h"
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
@@ -21,6 +22,7 @@
 #include "../components/Action.h"
 #include "../components/AgentRadius.h"
 #include "../components/Appearance.h"
+#include "../components/Colonist.h"
 #include "../components/DecisionTrace.h"
 #include "../components/Inventory.h"
 #include "../components/Memory.h"
@@ -1016,10 +1018,12 @@ namespace ecs::test {
 		anyFurniture.destinationPosition = {10.0F, 10.0F};
 		anyFurniture.acceptedCategory = assets::ItemCategory::Furniture;
 		const uint64_t furnitureUmbrella = GoalTaskRegistry::Get().createGoal(std::move(anyFurniture));
+		ClaimIndex	   claims;
 		const auto	   hasWork = [&](uint64_t goal) {
-			return goalHasWork(*GoalTaskRegistry::Get().getGoal(goal), goalsWithOfferedWork(*world));
+			return ColonyGoalWork(*world, claims).hasWork(*GoalTaskRegistry::Get().getGoal(goal));
 		};
 		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->addComponent<Colonist>(colonist, Colonist{.name = "Ann"}); // the panel reads colonists only
 
 		decide(colonist);
 		EXPECT_FALSE(hasWork(umbrella)) << "no stone is known";
