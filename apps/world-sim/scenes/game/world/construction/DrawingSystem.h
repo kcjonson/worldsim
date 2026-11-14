@@ -129,7 +129,7 @@ namespace world_sim {
 		struct Args {
 			ecs::World*					world;
 			world::WorldCamera*			camera;
-			ecs::NavigationSystem*		navigation; // world-position validity (isValidPosition); same predicate as the dev verbs
+			ecs::NavigationSystem*		navigation; // the ground gates (BuildableOnceCleared for foundations, BuildableNow for walls); the dev verbs' too
 			// The preview's colours where a shape can and can't go, from the scene's theme.
 			Foundation::Color validColor{};
 			Foundation::Color invalidColor{};
@@ -469,7 +469,7 @@ namespace world_sim {
 		bool willClose_ = false;
 
 		// True when the snapped cursor is at a NON-PLACEABLE point for the active tool (foundation:
-		// unbuildable -- water or off-mesh; wall: off the walkable mesh; or no active mesh). Recomputed
+		// water, a ford, or off-mesh; wall: those or a placed obstacle; or no active mesh). Recomputed
 		// every move for the foundation + wall tools; drives the red invalid preview so the player sees
 		// they can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
 		// this is feedback only.

@@ -402,7 +402,7 @@ namespace world_sim {
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = editing ? validator.validateEditPoint(points_, cursor_) : validator.validatePoint(points_, cursor_);
 
-		// Live nav feedback: is the snapped cursor itself off the walkable mesh? Drives the
+		// Live nav feedback: is the snapped cursor itself off buildable ground? Drives the
 		// red preview (see render). The commit gate re-checks the whole footprint regardless.
 		cursorOffMesh_ = !pointOnMesh(cursor_);
 
@@ -934,12 +934,12 @@ namespace world_sim {
 			return true;
 		}
 
-		// Nav gate: refuse a point that lands off the walkable mesh (on water) before it
+		// Nav gate: refuse a point that lands off buildable ground (water or a ford) before it
 		// enters the chain, with clear feedback. The whole-chain re-check on commit still
 		// catches a segment that bridges water between two on-mesh points.
 		if (cursorOffMesh_) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "wall: " + cursorGroundReason("walkable"));
+				callbacks_.onToast("Can't build here", "wall: " + cursorGroundReason("buildable"));
 			}
 			return true;
 		}
@@ -987,7 +987,7 @@ namespace world_sim {
 			return;
 		}
 
-		// The whole chain centerline must sit on walkable ground. One off-mesh segment
+		// The whole chain centerline must sit on buildable ground. One off-mesh segment
 		// (e.g. one that bridges water) refuses the WHOLE chain so nothing is stamped.
 		if (!requirePlaceable(points_, "wall")) {
 			points_.clear();
@@ -1144,7 +1144,7 @@ namespace world_sim {
 		const Foundation::Vec2 bestB = ec::outerFaceFlushCorner(ring, (bestEdge + 1) % n, preset->halfThicknessMm);
 
 		// Edge fill bypasses the chain-commit gate, so apply the same whole-centerline nav
-		// check here: the inset corners must lie on walkable ground (one shared predicate).
+		// check here: the inset corners must lie on buildable ground (one shared predicate).
 		if (!requirePlaceable({bestA, bestB}, "wall")) {
 			return false;
 		}
@@ -1526,7 +1526,7 @@ namespace world_sim {
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason("walkable") : ec::validationReason(lastValidation_.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(lastValidation_.code);
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
