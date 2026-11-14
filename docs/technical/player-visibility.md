@@ -563,6 +563,43 @@ Every base run queued all 51 footprints (bands, door flanks and junctions) and s
 
 **Verdict: the budget is met.** At 50 colonists the record costs 0.07 to 0.20 ms a tick on average in a base beyond the landing (0.10 ms in the geometry bench), against well under 1 ms, and its worst ticks are 2.4 to 4.7 ms (one tick a run reaches that, registering a piece), against a few. What is left near the edge of that: the skirt construction at up to 1.4 ms and a patch at up to 3 ms in the same tick. Vision's own polygon builds, 49 to 123 ms per simulated second at 20 to 50 colonists, are the larger cost near buildings and are not the record's.
 
+### 6.7 Measured: the sweep and the open leg cut
+
+"The seen area's edge is stepped near walls" on Specboard. What changed (3.2, 3.3, 3.4): vision's polygon is built 0.5 m past sight; each polygon goes in cut to sight; a polygon that opens ground near its rim is followed by the sweep, polygons 0.1 m apart back to the build before it; a leg ending away from a build gets a polygon where it ended; the open leg with walls in sight is the capsule cut to vision's polygon, recut every frame he moves. The geometry bench base does what `PlayerVisibilitySystem` does with the first three; the sim bench runs the real systems, the open leg included.
+
+Machine load: `busy` before, between and after every run here (CPU 4 to 6%, GPU 37 to 41% from another session's game, and another session's tests at the end). No time here is a baseline; counts do not depend on load.
+
+**The base with an empty record**, against 6.6:
+
+| | 2, 6.6 | 2, swept | 20, 6.6 | 20, swept | 50, 6.6 | 50, swept |
+|---|---|---|---|---|---|---|
+| Rings registered | 1,017 | 2,199 | 1,001 | 1,989 | 1,122 | 1,777 |
+| Per minute | 620, 103, 41, 66, 101, 19, 40, 25, 1, 1 | 1,446, 236, 42, 213, 104, 20, 109, 26, 1, 2 | 907, 47, 9, 13, 2, 1, 3, 8, 8, 3 | 1,894, 47, 10, 13, 2, 1, 3, 8, 8, 3 | 1,042, 28, 5, 18, 5, 3, 8, 2, 2, 9 | 1,697, 28, 5, 18, 5, 3, 8, 2, 2, 9 |
+| Sweep polygons built (ms each, mean) | | 3,068 (0.91) | | 3,876 (1.25) | | 4,589 (0.85) |
+| Covered test per polygon, us (mean) | 17 | 33 | 14 | 18 | 14 | 16 |
+| Patch per ring, ms (mean / p99 / max) | 0.60 / 1.7 / 3.0 | 0.96 / 7.9 / 11.7 | 0.39 / 1.4 / 2.4 | 0.54 / 2.3 / 10.1 | 0.36 / 1.2 / 2.4 | 0.37 / 1.5 / 3.5 |
+| K where registered (mean / max) | 78 / 342 | 169 / 706 | 55 / 214 | 116 / 577 | 43 / 163 | 73 / 403 |
+| Record's cost per simulated second | 1.9 ms | 10.5 ms | 3.3 ms | 15.5 ms | 6.2 ms | 16.3 ms |
+| Per tick at 60 ticks a second | 0.03 ms | 0.18 ms | 0.06 ms | 0.26 ms | 0.10 ms | 0.27 ms |
+| Record oracle: points on the record in no shape that went in | | 0 of 20,000 | | 0 of 20,000 | | 0 of 20,000 |
+
+Registrations still level off: after the first minute the per-minute counts at 20 and 50 colonists are those of 6.6, and at 2 colonists the same order, a little higher. The first minute about doubles; the sweep's polygons are most of the cost added, and the extra rings raise K where a ring registers, so the slowest patch is 10 to 12 ms at 2 and 20 colonists, once in a run. The landed base registers nothing and builds no sweep: 2.5 and 6.1 ms per simulated second at 20 and 50 colonists against 2.3 and 4.5, the difference the cut and simple check on each polygon (34 us).
+
+Vision's own polygon builds are the same in number (31,658 and 78,320) with the radius 0.5 m longer: 51 to 58 ms per simulated second at 20 colonists and 127 to 138 at 50 across these runs, against 49 and 123 in 6.6; worse under load, unconfirmed.
+
+**The sim bench**, `PlayerVisibilitySystem::update` alone, 36,000 ticks:
+
+| | Tick ms (mean / p99 / max), 6.6 | Tick ms, swept | Rings, 6.6 / swept | Pending at most, 6.6 / swept | Sweep polygons built, waiting at most |
+|---|---|---|---|---|---|
+| Base, 10, 1x | 0.024 / 0.56 / 2.4 | 0.170 / 1.31 / 12.4 | 847 / 1,766 | 60 / 70 | 2,315, 60 |
+| Base, 50, 1x | 0.073 / 0.78 / 3.8 | 0.637 / 2.22 / 12.2 | 994 / 1,724 | 182 / 237 | 3,021, 645 |
+| Base, 10, 10x | 0.041 / 0.45 / 3.8 | 0.310 / 1.37 / 8.7 | 657 / 1,366 | 112 / 166 | 4,363, 1,745 |
+| Base, 50, 10x | 0.201 / 0.97 / 22.4 | 1.501 / 4.92 / 21.2 | 953 / 1,756 | 1,021 / 1,640 | 6,719, 3,956 |
+
+Every run ended with nothing waiting. With the open leg's cut skipped (a measurement only), 50 colonists at 1x cost 0.10 ms a tick, so of the 0.64 ms about 0.42 ms is recutting each moving colonist's open leg every frame (about 8 us each) and the rest the sweep and the extra registrations.
+
+**Verdict: the edge is right, the cost is not settled.** At 50 colonists indoors the record's mean tick is 0.6 ms at 1x and 1.5 ms at 10x, against 0.07 and 0.20 ms before and a budget of well under 1 ms, measured under load. The open leg's per-frame cut and the sweep are the two costs; what would cut them (recutting the open leg only when the drawn rim would reach past it, and a cheaper sweep trigger) is a follow-up.
+
 ## 7. Build steps
 
 Each step was its own PR with its own done line. All are built: step 7 is PR 378, on main; steps 3 and 3a are PRs 386 and 392, step 4 is 388, step 5 is 389, step 6 is 390, and step 8 is 391, which carries those six.
