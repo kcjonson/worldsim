@@ -30,6 +30,8 @@
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
+#include <core/Vec2i64.h>
+#include <predicates/Predicates.h>
 #include <world/chunk/ChunkCoordinate.h>
 
 #include <gtest/gtest.h>
@@ -45,6 +47,24 @@ namespace ecs::test {
 		constexpr const char* kTree = "Flora_ClearTestTree";
 		constexpr const char* kBush = "Flora_ClearTestBush";
 		constexpr uint32_t	  kTestRngSeed = 42;
+		constexpr const char* kGrass = "Groundcover_ClearTestGrass";
+
+		/// An 8 m square with its north-east quarter notched out: the floor is x 0-8 by y 0-4 and x 0-4 by y 4-8.
+		geometry::Ring lShapedRing() {
+			return {{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}};
+		}
+
+		bool onRing(const geometry::Ring& ring, glm::vec2 p) {
+			return geometry::pointInPolygon(geometry::quantize({p.x, p.y}), ring) != geometry::PointInPolygon::Outside;
+		}
+
+		void registerGrass() {
+			assets::AssetDefinition grass;
+			grass.defName = kGrass;
+			grass.label = "Clear Test Grass";
+			grass.role = assets::AssetRole::Groundcover;
+			assets::AssetRegistry::Get().registerTestDefinition(std::move(grass));
+		}
 
 		class FootprintClearingTest : public ::testing::Test {
 		  protected:
@@ -221,6 +241,15 @@ namespace ecs::test {
 					}
 				}
 				return false;
+			}
+
+			/// Give the site a footprint of another shape, CCW in integer mm, in place of the 8 m square.
+			void reshapeSite(geometry::Ring ring) {
+				auto& structure = *world->getComponent<Structure>(site);
+				EXPECT_TRUE(topology.removeFoundation(structure.graphId));
+				const construction::CommitResult foundation = topology.commitFoundation(std::move(ring), "wood");
+				ASSERT_TRUE(foundation.ok());
+				structure.graphId = foundation.id;
 			}
 
 			StructureBlueprint::BuildPhase phase() { return world->getComponent<StructureBlueprint>(site)->phase; }
@@ -469,12 +498,7 @@ namespace ecs::test {
 	// Clearing; as building starts it is gone from the footprint, a placed thing to carry is dropped
 	// again just outside as a pile is, and what grows outside the footprint is left alone.
 	TEST_F(FootprintClearingTest, TheFootprintIsBaredWhenBuildingStarts) {
-		constexpr const char*	kGrass = "Groundcover_ClearTestGrass";
-		assets::AssetDefinition grass;
-		grass.defName = kGrass;
-		grass.label = "Clear Test Grass";
-		grass.role = assets::AssetRole::Groundcover;
-		assets::AssetRegistry::Get().registerTestDefinition(std::move(grass));
+		registerGrass();
 
 		std::vector<glm::vec2> drops;
 		construction->setDropResourceCallback([&](const std::string& defName, float x, float y, uint32_t quantity, glm::vec2) {
@@ -514,6 +538,87 @@ namespace ecs::test {
 		ASSERT_TRUE(construction->forceCompleteBlueprint(site));
 		runUntil([] { return false; }, 60);
 		EXPECT_FALSE(treeStands(tree));
+	}
+
+	// The footprint is the foundation's ring, not its bounding box. A tree in an L's notch neither holds
+	// the site in Clearing nor is felled; the one on the floor is, and what that clear can't carry drops
+	// just past the floor's nearest edge, which here opens onto the notch.
+	TEST_F(FootprintClearingTest, AnLShapedSiteClearsItsFloorAndLeavesItsNotch) {
+		reshapeSite(lShapedRing());
+		std::vector<glm::vec2> drops;
+		world->getSystem<ActionSystem>().setDropResourceCallback([&](const std::string&, float x, float y, uint32_t, glm::vec2) { drops.emplace_back(x, y); });
+		const glm::vec2 floor{3.0F, 6.5F};
+		const glm::vec2 notch{6.0F, 6.0F};
+		plantTrees({floor, notch});
+		createColonist({1.0F, 1.0F}, {floor, notch});
+
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; })) << "the notch's tree does not hold the site";
+		EXPECT_FALSE(treeStands(floor));
+		EXPECT_TRUE(treeStands(notch)) << "nothing is built in the notch, so its tree is left";
+		ASSERT_EQ(drops.size(), 1U) << "six of the twenty wood do not fit the arms";
+		EXPECT_FALSE(onRing(lShapedRing(), drops.front())) << "dropped at (" << drops.front().x << ", " << drops.front().y << ")";
+		EXPECT_NEAR(drops.front().x, 4.5F, 0.01F) << "past the inner edge a metre away, not the top edge a metre and a half away";
+		EXPECT_NEAR(drops.front().y, 6.5F, 0.01F);
+	}
+
+	// Baring follows the ring too: grass, a placed stone to carry, and a loose pile on the floor go, the
+	// same three in the notch stay, and what is carried off lands outside the ring.
+	TEST_F(FootprintClearingTest, AnLShapedSiteIsBaredOnlyWhereItsFloorGoes) {
+		registerGrass();
+		reshapeSite(lShapedRing());
+		std::vector<glm::vec2> drops;
+		construction->setDropResourceCallback([&](const std::string&, float x, float y, uint32_t, glm::vec2) { drops.emplace_back(x, y); });
+
+		const glm::vec2				 floorTuft{2.0F, 6.0F};
+		const glm::vec2				 notchTuft{6.0F, 6.0F};
+		const glm::vec2				 floorStone{6.0F, 3.0F};
+		const glm::vec2				 notchStone{7.0F, 5.0F};
+		const world::ChunkCoordinate coord = world::worldToChunk({4.0F, 4.0F});
+		assets::AsyncChunkPlacementResult chunk;
+		chunk.coord = coord;
+		chunk.spatialIndex.insert({kGrass, floorTuft});
+		chunk.spatialIndex.insert({kGrass, notchTuft});
+		chunk.spatialIndex.insert({"Berry", floorStone});
+		chunk.spatialIndex.insert({"Berry", notchStone});
+		executor.storeChunkResult(std::move(chunk));
+		processed.insert(coord);
+
+		const auto pileAt = [&](glm::vec2 at) {
+			const EntityID pile = world->createEntity();
+			world->addComponent<Position>(pile, Position{at});
+			world->addComponent<Appearance>(pile, Appearance{"Berry", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+			makeLoosePile(*world, pile, assets::AssetRegistry::Get().getDefNameId("Berry"), at, 4);
+			return pile;
+		};
+		const EntityID floorPile = pileAt({2.0F, 2.0F});
+		const EntityID notchPile = pileAt({6.0F, 7.0F});
+		world->getComponent<StructureBlueprint>(site)->delivered = {{"Wood", 10}};
+
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::UnderConstruction; }, 300));
+		const assets::SpatialIndex* index = executor.getChunkIndex(coord);
+		EXPECT_FALSE(index->contains(floorTuft, kGrass));
+		EXPECT_TRUE(index->contains(notchTuft, kGrass)) << "grass in the notch still grows";
+		EXPECT_FALSE(index->contains(floorStone, "Berry"));
+		EXPECT_TRUE(index->contains(notchStone, "Berry")) << "a stone in the notch is not carried off";
+		EXPECT_FALSE(world->isAlive(floorPile));
+		EXPECT_TRUE(world->isAlive(notchPile)) << "a pile in the notch is not moved";
+		ASSERT_EQ(drops.size(), 2U) << "the floor's stone and pile";
+		for (const glm::vec2& drop : drops) {
+			EXPECT_FALSE(onRing(lShapedRing(), drop)) << "dropped at (" << drop.x << ", " << drop.y << ")";
+		}
+	}
+
+	// A long diagonal strip's bounding box is many times its area: only what stands on the strip is cleared.
+	TEST_F(FootprintClearingTest, ADiagonalStripClearsOnlyTheStrip) {
+		reshapeSite({{0, 0}, {2000, 0}, {22000, 20000}, {20000, 20000}});
+		const glm::vec2 onStrip{11.0F, 10.0F};
+		const glm::vec2 offStrip{5.0F, 15.0F};
+		plantTrees({onStrip, offStrip});
+		createColonist({1.0F, 1.0F}, {onStrip, offStrip});
+
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::AwaitingMaterials; }));
+		EXPECT_FALSE(treeStands(onStrip));
+		EXPECT_TRUE(treeStands(offStrip)) << "inside the strip's bounding box but off the strip";
 	}
 
 } // namespace ecs::test

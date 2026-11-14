@@ -10,8 +10,12 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <core/Vec2d.h>
+#include <core/Vec2i64.h>
+#include <predicates/Predicates.h>
 
 #include <algorithm>
+#include <cmath>
 
 namespace ecs {
 
@@ -55,6 +59,88 @@ namespace ecs {
 			}
 		}
 		return 0;
+	}
+
+	FootprintBounds::FootprintBounds(geometry::Ring footprintRing)
+		: ring(std::move(footprintRing)) {
+		if (ring.empty()) {
+			return;
+		}
+		geometry::Vec2i64 lowest = ring.front();
+		geometry::Vec2i64 highest = ring.front();
+		for (const geometry::Vec2i64& corner : ring) {
+			lowest = {std::min(lowest.x, corner.x), std::min(lowest.y, corner.y)};
+			highest = {std::max(highest.x, corner.x), std::max(highest.y, corner.y)};
+		}
+		const auto lowestMeters = geometry::dequantize(lowest);
+		const auto highestMeters = geometry::dequantize(highest);
+		min = {lowestMeters.x, lowestMeters.y};
+		max = {highestMeters.x, highestMeters.y};
+	}
+
+	FootprintBounds FootprintBounds::rectangle(glm::vec2 min, glm::vec2 max) {
+		const geometry::Vec2i64 low = geometry::quantize({min.x, min.y});
+		const geometry::Vec2i64 high = geometry::quantize({max.x, max.y});
+		return FootprintBounds{geometry::Ring{low, {high.x, low.y}, high, {low.x, high.y}}};
+	}
+
+	bool FootprintBounds::contains(glm::vec2 p) const {
+		if (p.x < min.x || p.x > max.x || p.y < min.y || p.y > max.y) {
+			return false;
+		}
+		return geometry::pointInPolygon(geometry::quantize({p.x, p.y}), ring) != geometry::PointInPolygon::Outside;
+	}
+
+	glm::vec2 FootprintBounds::interiorPoint() const {
+		if (ring.size() < 3) {
+			return min;
+		}
+		const geometry::Vec2d inside = geometry::interiorPoint(ring);
+		const auto			  millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+		return {static_cast<float>(inside.x / millimetersPerMeter), static_cast<float>(inside.y / millimetersPerMeter)};
+	}
+
+	glm::vec2 FootprintBounds::nearestOutside(glm::vec2 p, float margin) const {
+		if (!contains(p)) {
+			return p;
+		}
+		const geometry::Vec2i64 point = geometry::quantize({p.x, p.y});
+		struct Edge {
+			double		distanceMm;
+			double		along;
+			std::size_t start;
+		};
+		std::vector<Edge> edges;
+		edges.reserve(ring.size());
+		for (std::size_t index = 0; index < ring.size(); ++index) {
+			const geometry::SegmentPoint nearest = geometry::closestOnSegment(point, ring[index], ring[(index + 1) % ring.size()]);
+			edges.push_back({nearest.distanceMm, nearest.t, index});
+		}
+		std::sort(edges.begin(), edges.end(), [](const Edge& nearer, const Edge& farther) {
+			return nearer.distanceMm != farther.distanceMm ? nearer.distanceMm < farther.distanceMm : nearer.start < farther.start;
+		});
+		const auto millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+		const auto pastEdge = [&](const Edge& edge) {
+			const geometry::Vec2i64& from = ring[edge.start];
+			const geometry::Vec2i64& to = ring[(edge.start + 1) % ring.size()];
+			const double			 alongX = static_cast<double>(to.x - from.x);
+			const double			 alongY = static_cast<double>(to.y - from.y);
+			const double			 length = std::sqrt(alongX * alongX + alongY * alongY);
+			// The ring is counter-clockwise, so its outside lies to the right of each edge.
+			const double outwardX = alongY / length;
+			const double outwardY = -alongX / length;
+			const double marginMm = static_cast<double>(margin) * millimetersPerMeter;
+			const double x = static_cast<double>(from.x) + alongX * edge.along + outwardX * marginMm;
+			const double y = static_cast<double>(from.y) + alongY * edge.along + outwardY * marginMm;
+			return glm::vec2{static_cast<float>(x / millimetersPerMeter), static_cast<float>(y / millimetersPerMeter)};
+		};
+		for (const Edge& edge : edges) {
+			const glm::vec2 out = pastEdge(edge);
+			if (!contains(out)) {
+				return out;
+			}
+		}
+		return pastEdge(edges.front());
 	}
 
 	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {

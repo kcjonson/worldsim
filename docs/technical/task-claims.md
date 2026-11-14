@@ -442,9 +442,13 @@ grass, a rock) is removed with nothing to show for it. None of that is work for 
 it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
 and bushes included.
 
-The footprint here is the foundation's bounding box (`FootprintBounds`), as it is for the clear gate,
-the clear goal, and the pile move: for a foundation that is not a rectangle, the ground inside the box
-and outside the floor is cleared and bared too.
+The footprint here is the foundation's ring (`FootprintBounds`), as it is for the clear gate, the
+clear goal, the pile move, and the drop planner: a thing is on the footprint when its position is
+inside the ring or on its edge, with the ring's bounding box as the broad phase. Nothing here has a
+body radius, so a tree whose centre stands just outside is left even if its canopy hangs over. For a
+foundation that is not a rectangle (an L, a diagonal strip), the ground inside its bounding box and
+outside the floor is neither cleared nor bared. "Just outside" is past the ring's nearest edge, which
+for an L can be the inner edge that opens onto the notch.
 
 ### Build and Deconstruct
 

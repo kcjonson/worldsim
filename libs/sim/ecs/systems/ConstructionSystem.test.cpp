@@ -97,6 +97,38 @@ TEST(ConstructionSystemTests, ClearingGateTakesPriorityOverMaterials) {
 	EXPECT_FALSE(decision.emitBuildGoal);
 }
 
+// An L's notch lies inside its bounding box but is not footprint; the ring's boundary is.
+TEST(FootprintBoundsTests, AnLsNotchIsOutsideItsFootprint) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	EXPECT_EQ(footprint.min, glm::vec2(0.0F, 0.0F));
+	EXPECT_EQ(footprint.max, glm::vec2(8.0F, 8.0F));
+	EXPECT_TRUE(footprint.contains({2.0F, 6.0F}));
+	EXPECT_TRUE(footprint.contains({6.0F, 2.0F}));
+	EXPECT_TRUE(footprint.contains({6.0F, 4.0F})) << "on the inner edge";
+	EXPECT_FALSE(footprint.contains({6.0F, 6.0F}));
+	EXPECT_TRUE(footprint.contains(footprint.interiorPoint()));
+	EXPECT_EQ(footprint.nearestOutside({6.0F, 6.0F}, 0.5F), glm::vec2(6.0F, 6.0F)) << "already outside";
+}
+
+// Out of a long diagonal strip, a point goes across the strip's near side, not to its bounding box's edge.
+TEST(FootprintBoundsTests, NearestOutsideADiagonalStripCrossesItsNearSide) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {2000, 0}, {22000, 20000}, {20000, 20000}}};
+	const glm::vec2		  inside{11.0F, 10.0F};
+	ASSERT_TRUE(footprint.contains(inside));
+	const glm::vec2 out = footprint.nearestOutside(inside, 0.5F);
+	EXPECT_FALSE(footprint.contains(out)) << "at (" << out.x << ", " << out.y << ")";
+	EXPECT_LT(glm::distance(out, inside), 1.3F) << "the strip is two metres wide across x, about 1.4 across its edges";
+}
+
+// A notch narrower than the margin: past the nearest edge is back on the floor, so the next edge is taken.
+TEST(FootprintBoundsTests, NearestOutsideSkipsAnEdgeWhoseSpotLandsBackInside) {
+	// A U whose slot is 0.4 m wide, between x 4 and 4.4, from y 2 to the top.
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8400, 0}, {8400, 8000}, {4400, 8000}, {4400, 2000}, {4000, 2000}, {4000, 8000}, {0, 8000}}};
+	const glm::vec2		  inside{3.9F, 5.0F};
+	const glm::vec2		  out = footprint.nearestOutside(inside, 1.0F);
+	EXPECT_FALSE(footprint.contains(out)) << "at (" << out.x << ", " << out.y << ")";
+}
+
 // ============================================================================
 // Goal-graph emission: drive the live update() path against a real
 // GoalTaskRegistry and assert the umbrella + per-material children coexist.

@@ -14,7 +14,6 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
-#include <core/Vec2i64.h>
 #include <world/chunk/ChunkCoordinate.h>
 
 #include <utils/Log.h>
@@ -224,7 +223,9 @@ namespace ecs {
 					// Copied out first: a removal moves the entities the query points at.
 					standing.clear();
 					for (const auto* placed : chunkIndex->queryRect(site.min.x, site.min.y, site.max.x, site.max.y)) {
-						standing.push_back({placed->defName, placed->position});
+						if (site.contains(placed->position)) {
+							standing.push_back({placed->defName, placed->position});
+						}
 					}
 					for (const Standing& gone : standing) {
 						const auto* def = assetRegistry.getDefinition(gone.defName);
@@ -288,8 +289,8 @@ namespace ecs {
 	}
 
 	FootprintBounds ConstructionSystem::footprintBounds(uint64_t foundationId) const {
-		const auto aabb = m_constructionWorld->footprintAabb(foundationId);
-		return {geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)};
+		const auto* foundation = m_constructionWorld->get(foundationId);
+		return FootprintBounds{foundation != nullptr ? foundation->ring : geometry::Ring{}};
 	}
 
 	void ConstructionSystem::gatherSpawnedHarvestables() {
@@ -411,7 +412,7 @@ namespace ecs {
 		clearGoal.type = TaskType::Harvest;
 		clearGoal.owner = GoalOwner::ConstructionGoalSystem;
 		clearGoal.destinationEntity = blueprintEntity;
-		clearGoal.destinationPosition = bounds.center();
+		clearGoal.destinationPosition = bounds.interiorPoint();
 		clearGoal.clearFootprint = bounds;
 		clearGoal.parentGoalId = umbrellaGoalId; // child of the umbrella: skips the destination guard
 		clearGoal.status = GoalStatus::Available;

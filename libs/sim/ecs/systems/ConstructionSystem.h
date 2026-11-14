@@ -183,8 +183,8 @@ namespace ecs {
 		uint32_t creditMaterialToSites(const std::string& defName, uint32_t amount);
 
 	  private:
-		/// The foundation's footprint AABB in world meters: the one definition of "inside the
-		/// footprint" for both the clear gate and the clear goal a colonist serves.
+		/// The foundation's footprint, its ring: the one definition of "inside the footprint" for the
+		/// clear gate, the clear goal a colonist serves, and baring the ground.
 		[[nodiscard]] FootprintBounds footprintBounds(uint64_t foundationId) const;
 
 		/// A runtime-spawned harvestable (an ECS entity, not in the placement index): a colonist

@@ -3196,8 +3196,8 @@ class ClearHarvestTest : public ::testing::Test {
 		clear.type = TaskType::Harvest;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site;
-		clear.clearFootprint = FootprintBounds{bushPos - glm::vec2{2.0F, 2.0F}, bushPos + glm::vec2{2.0F, 2.0F}};
-		clear.destinationPosition = clear.clearFootprint->center();
+		clear.clearFootprint = FootprintBounds::rectangle(bushPos - glm::vec2{2.0F, 2.0F}, bushPos + glm::vec2{2.0F, 2.0F});
+		clear.destinationPosition = clear.clearFootprint->interiorPoint();
 		clear.parentGoalId = umbrellaId;
 		clear.status = GoalStatus::Available;
 		clearGoalId = goals.createGoal(std::move(clear));

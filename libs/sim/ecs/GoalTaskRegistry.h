@@ -15,8 +15,8 @@
 #include <glm/vec2.hpp>
 
 #include <assets/AssetDefinition.h>
+#include <polygon/Polygon.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -54,35 +54,27 @@ namespace ecs {
 		ConstructionGoalSystem, // Foundation lifecycle: clear Harvest, deliver Harvest/Haul, Build goals
 	};
 
-	/// A blueprint footprint's bounds in world meters. contains() is the same inclusive test
-	/// SpatialIndex::queryRect applies, so "inside the footprint" means one thing everywhere.
+	/// A blueprint's footprint: the foundation's ring (CCW, integer mm, no holes) and its bounding box in
+	/// world meters. contains() is the one definition of "inside the footprint": the box, the same
+	/// inclusive test SpatialIndex::queryRect applies, then the ring, its boundary counted inside. A thing
+	/// is inside when its position is; nothing here has a body radius.
 	struct FootprintBounds {
-		glm::vec2 min{0.0F, 0.0F};
-		glm::vec2 max{0.0F, 0.0F};
+		explicit FootprintBounds(geometry::Ring footprintRing);
+		/// The rectangle from `min` to `max` as a footprint.
+		[[nodiscard]] static FootprintBounds rectangle(glm::vec2 min, glm::vec2 max);
 
-		[[nodiscard]] bool contains(glm::vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
-		[[nodiscard]] glm::vec2 center() const { return (min + max) * 0.5F; }
-		/// `p` itself when it lies outside; else `p` moved straight out past the nearest edge by `margin`.
-		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 p, float margin) const {
-			if (!contains(p)) {
-				return p;
-			}
-			const float toLeft = p.x - min.x;
-			const float toRight = max.x - p.x;
-			const float toBottom = p.y - min.y;
-			const float toTop = max.y - p.y;
-			const float nearest = std::min({toLeft, toRight, toBottom, toTop});
-			if (nearest == toLeft) {
-				return {min.x - margin, p.y};
-			}
-			if (nearest == toRight) {
-				return {max.x + margin, p.y};
-			}
-			if (nearest == toBottom) {
-				return {p.x, min.y - margin};
-			}
-			return {p.x, max.y + margin};
-		}
+		geometry::Ring ring;
+		glm::vec2	   min{0.0F, 0.0F};
+		glm::vec2	   max{0.0F, 0.0F};
+
+		[[nodiscard]] bool contains(glm::vec2 p) const;
+		/// A point strictly inside the ring (an L's box centre can lie in its notch).
+		[[nodiscard]] glm::vec2 interiorPoint() const;
+		/// `p` itself when it lies outside; else the point `margin` past the ring's nearest edge, straight
+		/// out from the spot on it nearest `p`. When that spot lands back inside (a notch narrower than the
+		/// margin), the next nearest edge is tried; when every one does, the nearest edge's spot is given
+		/// and the drop's own search for ground takes it from there.
+		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 p, float margin) const;
 
 		/// A thing of `defNameId` at `p` blocks the site: a harvestable inside the footprint. The clear
 		/// goal is served by exactly the blockers a colonist knows, and the build gate holds while any

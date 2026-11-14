@@ -1726,8 +1726,7 @@ namespace {
 				const auto& topology = m_drawingSystem->world();
 				for (const auto& foundation : topology.foundations()) {
 					if (foundation.state != construction::FoundationState::Built) {
-						const auto aabb = topology.footprintAabb(foundation.id);
-						survey.sites.push_back({geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)});
+						survey.sites.emplace_back(foundation.ring);
 					}
 				}
 			}
