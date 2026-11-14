@@ -263,16 +263,30 @@ namespace geometry::nav {
 		auto operator<=>(const EdgeSource&) const = default;
 	};
 
+	// Boxes over a ring's edges, so groundBoundaries reads only the edges near the line it
+	// walks: a leaf box over each run of kRingEdgeRun consecutive edges, then levels of boxes
+	// each over two of the level below, up to one over the whole ring. Level 0, the leaves,
+	// starts at boxes[0]; level k at boxes[levelStart[k]].
+	struct RingEdgeBoxes {
+		std::vector<std::array<Vec2i64, 2>> boxes; // low, high
+		std::vector<std::int32_t>			levelStart;
+	};
+
+	constexpr std::int32_t kRingEdgeRun = 16;
+
+	RingEdgeBoxes ringEdgeBoxes(const std::vector<Vec2i64>& outline);
+
 	// A ground ring as groundBoundaries reads it.
 	struct GroundRing {
-		const std::vector<Vec2i64>* outline = nullptr;
+		const std::vector<Vec2i64>* outline	  = nullptr;
+		const RingEdgeBoxes*		edgeBoxes = nullptr; // of outline
 		Vec2i64						lo;
 		Vec2i64						hi;
 		bool						counterClockwise = true;
 		RingId						id				 = kNoRing;
 	};
 
-	GroundRing groundRing(const std::vector<Vec2i64>& outline, RingId id);
+	GroundRing groundRing(const std::vector<Vec2i64>& outline, const RingEdgeBoxes& edgeBoxes, RingId id);
 
 	// The point a + (num / den)(b - a) of an edge a -> b, den > 0.
 	struct EdgeParam {
@@ -314,6 +328,7 @@ namespace geometry::nav {
 		std::vector<Collinear>	   collinear;
 		std::vector<std::uint8_t>  inside; // per near ring
 		std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>> lines;
+		std::vector<std::pair<std::int32_t, std::int32_t>>		   nodes; // RingEdgeBoxes level, index
 	};
 
 	// groundBoundaries orders crossings exactly while every ground ring it reads spans less

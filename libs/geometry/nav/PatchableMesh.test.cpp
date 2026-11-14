@@ -3362,7 +3362,9 @@ namespace {
 	// interval, or within 2 mm of two ring edges (a crossing, or two boundary intervals'
 	// pieces rounding laid on one segment): no dissolved stretch leaves a vertex.
 	::testing::AssertionResult noVertexInsideTheUnionBelongsToNothing(const PatchableMesh& mesh, const Model& model) {
-		std::vector<GroundRing> ground;
+		std::vector<GroundRing>	   ground;
+		std::vector<RingEdgeBoxes> edgeBoxes;
+		edgeBoxes.reserve(model.size());
 		std::set<Vec2i64>		corners;
 		std::set<Vec2i64>		blockedCorners;
 		for (const auto& [id, poly] : model) {
@@ -3370,7 +3372,8 @@ namespace {
 			if (poly.blocked) {
 				blockedCorners.insert(poly.ring.begin(), poly.ring.end());
 			} else {
-				ground.push_back(groundRing(poly.ring, id));
+				edgeBoxes.push_back(ringEdgeBoxes(poly.ring));
+				ground.push_back(groundRing(poly.ring, edgeBoxes.back(), id));
 			}
 		}
 		std::set<Vec2i64>			intervalEnds;
@@ -3496,9 +3499,12 @@ namespace {
 	}
 
 	std::vector<GroundInterval> boundariesOf(const std::vector<std::vector<Vec2i64>>& outlines, std::size_t ring, std::int32_t edge) {
-		std::vector<GroundRing> ground;
+		std::vector<GroundRing>	   ground;
+		std::vector<RingEdgeBoxes> edgeBoxes;
+		edgeBoxes.reserve(outlines.size());
 		for (std::size_t i = 0; i < outlines.size(); ++i) {
-			ground.push_back(groundRing(outlines[i], static_cast<RingId>(i)));
+			edgeBoxes.push_back(ringEdgeBoxes(outlines[i]));
+			ground.push_back(groundRing(outlines[i], edgeBoxes.back(), static_cast<RingId>(i)));
 		}
 		GroundBoundaryScratch		scratch;
 		std::vector<GroundInterval> out;

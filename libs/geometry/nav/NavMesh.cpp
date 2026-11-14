@@ -48,25 +48,27 @@ namespace geometry::nav {
 		// whose boxes meet, each narrower than kMaxGroundExtentMm.
 		constexpr std::int64_t kMaxOperandMm = 2 * kMaxGroundExtentMm;
 
-		bool smallOperand(const Vec2i64& v) {
+		// The helpers groundBoundaries runs per vertex are inline: MSVC's RelWithDebInfo (/Ob1)
+		// inlines nothing else.
+		inline bool smallOperand(const Vec2i64& v) {
 			return v.x > -kMaxOperandMm && v.x < kMaxOperandMm && v.y > -kMaxOperandMm && v.y < kMaxOperandMm;
 		}
 
-		std::int64_t smallCross(const Vec2i64& u, const Vec2i64& v) {
+		inline std::int64_t smallCross(const Vec2i64& u, const Vec2i64& v) {
 			assert(smallOperand(u) && smallOperand(v) && "groundBoundaries: points too far apart for exact ordering");
 			return u.x * v.y - u.y * v.x;
 		}
 
-		std::int64_t smallDot(const Vec2i64& u, const Vec2i64& v) {
+		inline std::int64_t smallDot(const Vec2i64& u, const Vec2i64& v) {
 			assert(smallOperand(u) && smallOperand(v) && "groundBoundaries: points too far apart for exact ordering");
 			return u.x * v.x + u.y * v.y;
 		}
 
-		bool paramLess(const EdgeParam& p, const EdgeParam& q) {
+		inline bool paramLess(const EdgeParam& p, const EdgeParam& q) {
 			return Int128::product(p.num, q.den) < Int128::product(q.num, p.den);
 		}
 
-		bool paramEqual(const EdgeParam& p, const EdgeParam& q) {
+		inline bool paramEqual(const EdgeParam& p, const EdgeParam& q) {
 			return Int128::product(p.num, q.den) == Int128::product(q.num, p.den);
 		}
 
@@ -81,7 +83,7 @@ namespace geometry::nav {
 			return {num, den};
 		}
 
-		bool boxesMeet(const Vec2i64& aLo, const Vec2i64& aHi, const Vec2i64& bLo, const Vec2i64& bHi) {
+		inline bool boxesMeet(const Vec2i64& aLo, const Vec2i64& aHi, const Vec2i64& bLo, const Vec2i64& bHi) {
 			return aLo.x <= bHi.x && bLo.x <= aHi.x && aLo.y <= bHi.y && bLo.y <= aHi.y;
 		}
 
@@ -538,11 +540,42 @@ namespace geometry::nav {
 		return {};
 	}
 
-	GroundRing groundRing(const std::vector<Vec2i64>& outline, RingId id) {
+	RingEdgeBoxes ringEdgeBoxes(const std::vector<Vec2i64>& outline) {
+		RingEdgeBoxes	  out;
+		const std::size_t corners = outline.size();
+		for (std::size_t first = 0; first < corners; first += kRingEdgeRun) {
+			std::array<Vec2i64, 2> box{outline[first], outline[first]};
+			const std::size_t	   last = std::min(first + kRingEdgeRun, corners);
+			for (std::size_t corner = first + 1; corner <= last; ++corner) {
+				const Vec2i64& p = outline[corner % corners];
+				box				 = {Vec2i64{std::min(box[0].x, p.x), std::min(box[0].y, p.y)}, Vec2i64{std::max(box[1].x, p.x), std::max(box[1].y, p.y)}};
+			}
+			out.boxes.push_back(box);
+		}
+		out.levelStart.push_back(0);
+		std::size_t below = out.boxes.size();
+		while (below > 1) {
+			const std::size_t from = static_cast<std::size_t>(out.levelStart.back());
+			out.levelStart.push_back(static_cast<std::int32_t>(out.boxes.size()));
+			for (std::size_t i = 0; i < below; i += 2) {
+				std::array<Vec2i64, 2> box = out.boxes[from + i];
+				if (i + 1 < below) {
+					const std::array<Vec2i64, 2> other = out.boxes[from + i + 1];
+					box = {Vec2i64{std::min(box[0].x, other[0].x), std::min(box[0].y, other[0].y)}, Vec2i64{std::max(box[1].x, other[1].x), std::max(box[1].y, other[1].y)}};
+				}
+				out.boxes.push_back(box);
+			}
+			below = (below + 1) / 2;
+		}
+		return out;
+	}
+
+	GroundRing groundRing(const std::vector<Vec2i64>& outline, const RingEdgeBoxes& edgeBoxes, RingId id) {
 		GroundRing g;
-		g.outline = &outline;
-		g.lo	  = outline.front();
-		g.hi	  = outline.front();
+		g.outline	= &outline;
+		g.edgeBoxes = &edgeBoxes;
+		g.lo		= outline.front();
+		g.hi		= outline.front();
 		for (const Vec2i64& p : outline) {
 			g.lo = {std::min(g.lo.x, p.x), std::min(g.lo.y, p.y)};
 			g.hi = {std::max(g.hi.x, p.x), std::max(g.hi.y, p.y)};
@@ -589,60 +622,107 @@ namespace geometry::nav {
 		collinear.clear();
 		inside.assign(near.size(), 0);
 		int excluded = 0;
+		// A ring edge's end lies outward of the line (1), on it (0), or inward (-1).
+		auto side = [&](const Vec2i64& point) {
+			const std::int64_t across = outer * smallCross(dir, point - a);
+			return across > 0 ? 1 : (across < 0 ? -1 : 0);
+		};
+		// Outward lies toward lower x where outwardLeft holds and toward higher y where outwardUp
+		// does, which picks the corners of a box lying farthest outward and farthest inward.
+		const bool outwardLeft = outer * dir.y > 0;
+		const bool outwardUp   = outer * dir.x > 0;
+
+		auto readEdge = [&](std::size_t nearIndex, const GroundRing& other, std::int32_t ringEdge, const Vec2i64& start, const Vec2i64& end, int startSide, int endSide) {
+			if (startSide == 0 && endSide == 0) {
+				const EdgeParam	 startAlong = onLine(start);
+				const EdgeParam	 endAlong	= onLine(end);
+				const bool		 startFirst = paramLess(startAlong, endAlong);
+				const EdgeParam	 from		= startFirst ? startAlong : endAlong;
+				const EdgeParam	 to			= startFirst ? endAlong : startAlong;
+				const EdgeSource source{other.id, ringEdge};
+				collinear.push_back({from, to, source, start, end});
+				// Inside on the same side: the stretch both run along is input once.
+				const int otherOuter = (other.counterClockwise ? -1 : 1) * (smallDot(end - start, dir) > 0 ? 1 : -1);
+				if (otherOuter == outer && source < self && paramLess(from, one) && paramLess(zero, to)) {
+					if (from.num <= 0) {
+						++excluded;
+					} else {
+						events.push_back({from, kExcludeStart, static_cast<std::int32_t>(nearIndex), ringEdge, true, startFirst ? start : end});
+					}
+					if (paramLess(to, one)) {
+						events.push_back({to, kExcludeEnd, static_cast<std::int32_t>(nearIndex), ringEdge, true, startFirst ? end : start});
+					}
+				}
+				return;
+			}
+			if ((startSide > 0) == (endSide > 0)) {
+				return;
+			}
+			GroundBoundaryScratch::Event event;
+			event.kind = kFlip;
+			event.ring = static_cast<std::int32_t>(nearIndex);
+			event.edge = ringEdge;
+			if (startSide == 0 || endSide == 0) {
+				event.exact = true;
+				event.point = startSide == 0 ? start : end;
+				event.at	= onLine(event.point);
+			} else {
+				event.at = crossingParam(a, dir, start, end);
+			}
+			if (event.at.num <= 0) {
+				inside[nearIndex] ^= 1;
+			} else if (event.at.num < event.at.den) {
+				events.push_back(event);
+			}
+		};
+		std::vector<std::pair<std::int32_t, std::int32_t>>& nodes = scratch.nodes;
 		for (std::size_t k = 0; k < near.size(); ++k) {
 			const GroundRing& other = near[k];
 			if (other.id == ring.id || !boxesMeet(lo, hi, other.lo, other.hi) || other.outline->size() < 3) {
 				continue;
 			}
-			const std::vector<Vec2i64>& ring2 = *other.outline;
-			for (std::int32_t i = 0; i < static_cast<std::int32_t>(ring2.size()); ++i) {
-				const Vec2i64& p = ring2[static_cast<std::size_t>(i)];
-				const Vec2i64& q = ring2[(static_cast<std::size_t>(i) + 1) % ring2.size()];
-				if (p == q) {
+			const std::vector<Vec2i64>& ring2	= *other.outline;
+			const std::size_t			corners = ring2.size();
+			const RingEdgeBoxes&		tree	= *other.edgeBoxes;
+			// A run of edges whose box lies wholly on one side of the line, or wholly at or past
+			// b along it, crosses nothing before b; one wholly at or behind a crosses the line
+			// only before a, as many times, mod 2, as its two ends differ in lying outward.
+			nodes.clear();
+			nodes.push_back({static_cast<std::int32_t>(tree.levelStart.size()) - 1, 0});
+			while (!nodes.empty()) {
+				const auto [level, index] = nodes.back();
+				nodes.pop_back();
+				const std::array<Vec2i64, 2>& box = tree.boxes[static_cast<std::size_t>(tree.levelStart[static_cast<std::size_t>(level)] + index)];
+				const Vec2i64				  farOut{outwardLeft ? box[0].x : box[1].x, outwardUp ? box[1].y : box[0].y};
+				const Vec2i64				  farIn{outwardLeft ? box[1].x : box[0].x, outwardUp ? box[0].y : box[1].y};
+				const Vec2i64				  farBack{dir.x > 0 ? box[0].x : box[1].x, dir.y > 0 ? box[0].y : box[1].y};
+				const Vec2i64				  farOn{dir.x > 0 ? box[1].x : box[0].x, dir.y > 0 ? box[1].y : box[0].y};
+				if (side(farIn) > 0 || side(farOut) < 0 || smallDot(farBack - a, dir) >= len2) {
 					continue;
 				}
-				const int dp = outer * cross(dir, p - a).sign();
-				const int dq = outer * cross(dir, q - a).sign();
-				if (dp == 0 && dq == 0) {
-					const EdgeParam	 tp = onLine(p);
-					const EdgeParam	 tq = onLine(q);
-					const bool		 pFirst = paramLess(tp, tq);
-					const EdgeParam	 from	= pFirst ? tp : tq;
-					const EdgeParam	 to		= pFirst ? tq : tp;
-					const EdgeSource source{other.id, i};
-					collinear.push_back({from, to, source, p, q});
-					// Inside on the same side: the stretch both run along is input once.
-					const int otherOuter = (other.counterClockwise ? -1 : 1) * (smallDot(q - p, dir) > 0 ? 1 : -1);
-					if (otherOuter == outer && source < self && paramLess(from, one) && paramLess(zero, to)) {
-						if (from.num <= 0) {
-							++excluded;
-						} else {
-							events.push_back({from, kExcludeStart, static_cast<std::int32_t>(k), i, true, pFirst ? p : q});
-						}
-						if (paramLess(to, one)) {
-							events.push_back({to, kExcludeEnd, static_cast<std::int32_t>(k), i, true, pFirst ? q : p});
-						}
+				const std::size_t firstEdge = (static_cast<std::size_t>(index) << level) * kRingEdgeRun;
+				const std::size_t lastEdge	= std::min((static_cast<std::size_t>(index + 1) << level) * kRingEdgeRun, corners);
+				if (smallDot(farOn - a, dir) <= 0) {
+					inside[k] ^= (side(ring2[firstEdge]) > 0) != (side(ring2[lastEdge % corners]) > 0) ? 1 : 0;
+					continue;
+				}
+				if (level > 0) {
+					const std::int32_t below = tree.levelStart[static_cast<std::size_t>(level)] - tree.levelStart[static_cast<std::size_t>(level - 1)];
+					if (2 * index + 1 < below) {
+						nodes.push_back({level - 1, 2 * index + 1});
 					}
+					nodes.push_back({level - 1, 2 * index});
 					continue;
 				}
-				if ((dp > 0) == (dq > 0)) {
-					continue;
-				}
-				GroundBoundaryScratch::Event ev;
-				ev.kind = kFlip;
-				ev.ring = static_cast<std::int32_t>(k);
-				ev.edge = i;
-				if (dp == 0 || dq == 0) {
-					ev.exact = true;
-					ev.point = dp == 0 ? p : q;
-					ev.at	 = onLine(ev.point);
-				} else {
-					ev.at = crossingParam(a, dir, p, q);
-				}
-				if (ev.at.num <= 0) {
-					inside[k] ^= 1;
-				} else if (ev.at.num < ev.at.den) {
-					events.push_back(ev);
+				int sideOfStart = side(ring2[firstEdge]);
+				for (std::size_t i = firstEdge; i < lastEdge; ++i) {
+					const Vec2i64& start	 = ring2[i];
+					const Vec2i64& end		 = ring2[(i + 1) % corners];
+					const int	   sideOfEnd = side(end);
+					if (start != end) {
+						readEdge(k, other, static_cast<std::int32_t>(i), start, end, sideOfStart, sideOfEnd);
+					}
+					sideOfStart = sideOfEnd;
 				}
 			}
 		}
@@ -737,10 +817,13 @@ namespace geometry::nav {
 
 	void ringSegments(const std::vector<const NavInputPolygon*>& rings, std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>>& out) {
 		out.clear();
-		std::vector<GroundRing> ground;
+		std::vector<GroundRing>	   ground;
+		std::vector<RingEdgeBoxes> edgeBoxes;
+		edgeBoxes.reserve(rings.size());
 		for (std::size_t r = 0; r < rings.size(); ++r) {
 			if (!rings[r]->blocked && rings[r]->ring.size() >= 3) {
-				ground.push_back(groundRing(rings[r]->ring, static_cast<RingId>(r)));
+				edgeBoxes.push_back(ringEdgeBoxes(rings[r]->ring));
+				ground.push_back(groundRing(rings[r]->ring, edgeBoxes.back(), static_cast<RingId>(r)));
 			}
 		}
 		GroundBoundaryScratch		scratch;
