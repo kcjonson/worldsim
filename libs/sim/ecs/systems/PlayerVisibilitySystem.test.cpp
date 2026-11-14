@@ -11,6 +11,7 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
+#include <nav/SightCover.h>
 #include <predicates/Predicates.h>
 #include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>
@@ -92,6 +93,12 @@ namespace {
 		}
 	}
 
+	// Inside the sight polygon round the build of the shape's visibility polygon, by the 64-gon's
+	// 36 mm sag and a margin: what of it the polygon holds is pending or in the record.
+	bool withinSightOfBuild(const VisionSystem::SightShape& shape, const Vec2i64& point) {
+		return shape.polygon == nullptr || geometry::withinDistanceOfSegment(point, nav::toMm(shape.center), nav::toMm(shape.center), std::llround(shape.radius * 1000.0F) - 50);
+	}
+
 } // namespace
 
 // A straight walk of any length is one ring, pending while he walks and committed when the leg ends.
@@ -164,11 +171,10 @@ TEST(PlayerVisibilitySystem, LandingAndACoveredLeg) {
 	EXPECT_EQ(colony.visibility.epoch(), epoch);
 }
 
-// With a wall in sight his leg is cut to vision's polygon, and each new polygon ends the leg the last
-// one cut and begins the next, round where vision built it. What goes in is the cut leg's frontier
-// grown by the skirt: every point deep in a polygon within the leg radius of its build is seen,
-// nothing past the skirt is, and the wall he saw is seen ground, its footprint in once. Walking the
-// same way again registers nothing.
+// With a wall in sight his leg ends, and each polygon vision builds goes in cut to sight round its
+// build, grown by the skirt: every point deep in a polygon within the leg radius of its build is
+// seen, nothing past the skirt is, and the wall he saw is seen ground, its footprint in once.
+// Walking the same way again registers nothing.
 TEST(PlayerVisibilitySystem, IndoorPolygonsEnterSkirtedAndTheWallJoins) {
 	assets::ConstructionRegistry::Get().clear();
 	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
@@ -198,7 +204,7 @@ TEST(PlayerVisibilitySystem, IndoorPolygonsEnterSkirtedAndTheWallJoins) {
 	EXPECT_EQ(colony.visibility.footprintsEntered(), 1U) << "one wall, one band";
 	colony.remove(colonist);
 	const vision::SeenArea& seen = colony.visibility.seenArea();
-	ASSERT_GE(seen.ringsRegistered(), 3U) << "the leg, cut legs, the wall";
+	ASSERT_GE(seen.ringsRegistered(), 3U) << "the leg, polygons, the wall";
 	EXPECT_EQ(seen.shapesSkipped(), 0U);
 	EXPECT_FALSE(colony.visibility.isSeen({2.0F, 5.0F})) << "behind the wall";
 	EXPECT_TRUE(colony.visibility.isSeen({-1.0F, 5.0F}));
@@ -327,8 +333,8 @@ TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptOnAWobblingPath) {
 	}
 }
 
-// A jump with walls in sight ends the cut leg and bridges nothing: the polygon built before it is
-// not used after it.
+// A jump with walls in sight bridges nothing: the polygon built before it is not used after it, and
+// no sweep crosses it.
 TEST(PlayerVisibilitySystem, JumpWithWallsInSightDoesNotBridge) {
 	assets::ConstructionRegistry::Get().clear();
 	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
@@ -351,7 +357,8 @@ TEST(PlayerVisibilitySystem, JumpWithWallsInSightDoesNotBridge) {
 
 // The containments of player-visibility.md 3.1 with walls in sight, walking past and through a
 // doorway on a wobbling path: the bright shape the cover draws (vision's polygon cut to the disc of
-// the drawn radius round where he stands) lies in seen ground every frame, every seen point lies
+// the drawn radius round where he stands) lies in seen ground every frame within sight of the
+// polygon's build (beyond it, ahead of him, the cover's unseen fill hides it), every seen point lies
 // within sight of some position he held (plus the skirt), and no point once seen stops being seen.
 TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 	assets::ConstructionRegistry::Get().clear();
@@ -393,13 +400,14 @@ TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 			const float	  alongX = unit(random);
 			const float	  alongY = unit(random);
 			const Vec2i64 point  = nav::toMm(at + glm::vec2{alongX, alongY} * kSight);
-			if (geometry::pointInPolygon(point, *drawn) != geometry::PointInPolygon::Inside) {
+			if (geometry::pointInPolygon(point, *drawn) != geometry::PointInPolygon::Inside || !withinSightOfBuild(*shape, point)) {
 				continue;
 			}
-			ASSERT_TRUE(colony.visibility.isSeen(nav::toMeters(point))) << "frame " << frame << ": drawn visible but not seen at (" << point.x << ", " << point.y << ")";
-		}
-		for (const Vec2i64& vertex : *drawn) {
-			ASSERT_TRUE(colony.visibility.seenArea().isSeen(vertex)) << "frame " << frame << ": drawn vertex (" << vertex.x << ", " << vertex.y << ") not seen";
+			bool deep = true;
+			for (std::size_t i = 0; i < drawn->size() && deep; ++i) {
+				deep = !geometry::withinDistanceOfSegment(point, (*drawn)[i], (*drawn)[(i + 1) % drawn->size()], geometry::nav::kSeenCoverToleranceMm + 1);
+			}
+			ASSERT_TRUE(!deep || colony.visibility.isSeen(nav::toMeters(point))) << "frame " << frame << ": drawn visible but not seen at (" << point.x << ", " << point.y << ")";
 		}
 		for (int sample = 0; sample < 12; ++sample) {
 			const float		offsetX = unit(random);
@@ -443,7 +451,7 @@ TEST(PlayerVisibilitySystem, DrawnVisibleOutdoorsIsTheDiscRoundWhereHeStands) {
 	EXPECT_FALSE(colony.visibility.drawnVisible(shortSighted).has_value());
 }
 
-// With walls in sight the bright shape is his open leg cut to the disc round where he stands, so
+// With walls in sight the bright shape is vision's polygon cut to the disc round where he stands, so
 // between vision's rebuilds its rim moves with him; the wall's face stays where it is.
 TEST(PlayerVisibilitySystem, DrawnVisibleWithWallsInSightMovesWithHim) {
 	assets::ConstructionRegistry::Get().clear();
@@ -529,5 +537,61 @@ TEST(PlayerVisibilitySystem, SeenEdgePastAShadowIsSweptNotStepped) {
 	}
 	EXPECT_GT(sweptPoints, 50);
 	EXPECT_EQ(missing, 0);
+	assets::ConstructionRegistry::Get().clear();
+}
+
+// Seen never shrinks (rule 16): walking toward the end of a wall, the shadow behind it widens as he
+// goes, so ground near the far rim past its edge leaves his sight. Every frame, every point sampled
+// near that rim that the record or a pending shape held is still held, and when he stops and is
+// removed everything pending is committed.
+TEST(PlayerVisibilitySystem, SeenNeverShrinksTowardAWideningShadow) {
+	assets::ConstructionRegistry::Get().clear();
+	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
+	construction::ConstructionWorld walls;
+	buildWall(walls, {0, 2000}, {0, 20000});
+
+	Colony		   colony;
+	colony.vision.setConstructionWorld(&walls);
+	colony.visibility.setConstructionWorld(&walls);
+	const EntityID colonist = colony.addColonist({-16.0F, 0.0F});
+	colony.tick();
+
+	// Points 0.2 m apart behind the wall, in the band his sight's rim crosses over the walk.
+	static constexpr float kStartX = -16.0F;
+	static constexpr float kEndX   = -6.0F;
+	std::vector<glm::vec2> samples;
+	for (float x = 0.3F; x <= kSight; x += 0.2F) {
+		for (float y = 2.0F; y <= kSight; y += 0.2F) {
+			const float fromStart = glm::distance(glm::vec2{x, y}, glm::vec2{kStartX, 0.0F});
+			const float fromEnd	  = glm::distance(glm::vec2{x, y}, glm::vec2{kEndX, 0.0F});
+			if (fromEnd < kSight + 0.6F && fromStart > kSight - 0.6F) {
+				samples.push_back({x, y});
+			}
+		}
+	}
+	ASSERT_GT(samples.size(), 1000U);
+	std::vector<bool> held(samples.size(), false);
+	int				  everHeld = 0;
+	auto			  check	   = [&](const char* when) {
+		 for (std::size_t i = 0; i < samples.size(); ++i) {
+			 const bool now = colony.visibility.isSeen(samples[i]);
+			 if (held[i]) {
+				 ASSERT_TRUE(now) << when << ": (" << samples[i].x << ", " << samples[i].y << ") was seen and is not";
+			 }
+			 everHeld += !held[i] && now ? 1 : 0;
+			 held[i] = held[i] || now;
+		 }
+	};
+	for (int step = 1; step <= 200; ++step) {
+		colony.standAt(colonist, {kStartX + (kEndX - kStartX) * static_cast<float>(step) / 200.0F, 0.0F});
+		check("walking");
+	}
+	for (int frame = 0; frame < 10; ++frame) {
+		colony.tick();
+		check("resting");
+	}
+	colony.remove(colonist);
+	check("committed");
+	EXPECT_GT(everHeld, 100);
 	assets::ConstructionRegistry::Get().clear();
 }

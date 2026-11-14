@@ -98,32 +98,19 @@ namespace ecs {
 		}
 	}
 
-	void PlayerVisibilitySystem::followLeg(EntityID colonist, Observer& observer, const Vec2i64& at, std::int64_t radiusMm) {
-		Leg& leg = observer.leg;
-		if (!leg.open || leg.radiusMm != radiusMm) {
+	void PlayerVisibilitySystem::followLeg(EntityID colonist, Leg& leg, const Vec2i64& at, std::int64_t radiusMm) {
+		if (!leg.open || leg.radiusMm != radiusMm || lengthOf(at - leg.end) > kSeenJumpMm) {
 			closeLeg(colonist, leg);
-			beginLeg(leg, at, radiusMm);
-		} else if (lengthOf(at - leg.end) > kSeenJumpMm) {
-			endCutLeg(observer);
-			closeLeg(colonist, leg);
-			// A polygon built before the jump says nothing about what the walls hide from here, and no
-			// sweep crosses the jump.
-			observer.lastBuild.reset();
-			if (observer.sight.has_value()) {
-				observer.sight.reset();
-				return;
-			}
 			beginLeg(leg, at, radiusMm);
 		} else if (!holds(leg, at)) {
 			const Vec2i64 turnedAt = leg.end;
-			endCutLeg(observer);
 			closeLeg(colonist, leg);
 			beginLeg(leg, turnedAt, radiusMm);
 			hold(leg, at);
 		} else {
 			hold(leg, at);
 		}
-		seen.setOpenLeg(colonist, leg.start, leg.end, leg.radiusMm, observer.sight.has_value() ? &*observer.sight : nullptr);
+		seen.setOpenLeg(colonist, leg.start, leg.end, leg.radiusMm);
 	}
 
 	void PlayerVisibilitySystem::closeLeg(EntityID colonist, Leg& leg) {
@@ -134,29 +121,51 @@ namespace ecs {
 		leg.open = false;
 	}
 
-	// A cut leg that ends anywhere but at vision's next build is dropped like any other, so the ground
-	// it reached past the last polygon goes in as a polygon built where it ended.
-	void PlayerVisibilitySystem::endCutLeg(Observer& observer) {
-		if (!observer.sight.has_value() || !observer.leg.open || observer.lastBuild == observer.leg.end) {
+	// The sweep runs along the walk, so it stays within the slack of where he went: a turn is a corner
+	// of the walk. A polygon built before a jump says nothing about what the walls hide from here, and
+	// no sweep crosses the jump.
+	void PlayerVisibilitySystem::followStretch(Observer& observer, const Vec2i64& at) {
+		Leg& stretch = observer.stretch;
+		if (lengthOf(at - stretch.end) > kSeenJumpMm) {
+			dropWallSight(observer);
 			return;
 		}
-		seen.queueSightAt(observer.leg.end, observer.sightMm, observer.lastBuild);
-		observer.lastBuild = observer.leg.end;
+		if (!holds(stretch, at)) {
+			const Vec2i64 turnedAt = stretch.end;
+			observer.walk.push_back(turnedAt);
+			beginLeg(stretch, turnedAt, stretch.radiusMm);
+		}
+		hold(stretch, at);
 	}
 
-	// Vision's polygon cut to his sight round its build goes into the record, with the build before it
-	// for the sweep; the polygon as built cuts his open leg until the next one.
+	void PlayerVisibilitySystem::dropWallSight(Observer& observer) {
+		observer.wallSight = false;
+		observer.walk.clear();
+	}
+
+	void PlayerVisibilitySystem::enterPolygonAt(Observer& observer, const Vec2i64& at) {
+		if (!observer.wallSight || observer.walk.empty() || observer.walk.front() == at) {
+			return;
+		}
+		seen.queueSightAt(at, observer.sightMm, std::move(observer.walk));
+		observer.walk.assign(1, at);
+		beginLeg(observer.stretch, at, 0);
+	}
+
+	// Vision's polygon cut to his sight round its build goes into the record, with his walk from the
+	// build before it for the sweep.
 	void PlayerVisibilitySystem::registerPolygon(Observer& observer, const VisionSystem::SightShape& shape) {
 		const Vec2i64	   build   = nav::toMm(shape.center);
 		const std::int64_t sightMm = std::llround(static_cast<double>(shape.radius) * 1000.0);
 		std::vector<Vec2i64> inSight = geometry::starClippedToConvex(*shape.polygon, build, geometry::sightPolygon(build, sightMm));
 		if (geometry::simpleAround(inSight, build)) {
-			seen.queueSightPolygon(std::move(inSight), build, sightMm, observer.lastBuild);
+			seen.queueSightPolygon(std::move(inSight), build, sightMm, std::move(observer.walk));
 		}
-		observer.lastBuild		 = build;
+		observer.walk.assign(1, build);
+		beginLeg(observer.stretch, build, 0);
 		observer.sightMm		 = sightMm;
+		observer.wallSight		 = true;
 		observer.polygonRevision = shape.polygonRevision;
-		observer.sight			 = vision::LegSight{.polygon = *shape.polygon, .centre = build, .revision = shape.polygonRevision};
 	}
 
 	void PlayerVisibilitySystem::refreshFootprints() {
@@ -253,36 +262,33 @@ namespace ecs {
 				}
 				const std::int64_t radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0) - vision::kSeenSlackMm;
 				if (radiusMm < vision::kSeenLeastRadiusMm) {
-					endCutLeg(observer);
 					closeLeg(entity, observer.leg);
-					observer.sight.reset();
-					observer.lastBuild.reset();
+					dropWallSight(observer);
 					continue;
 				}
 				const Vec2i64 at = nav::toMm(position.value);
-				// A new polygon, or none, ends the leg the last one cut, run on to here first.
-				const bool newPolygon = shape->polygon != nullptr && shape->polygonRevision != observer.polygonRevision;
-				if (newPolygon || (shape->polygon == nullptr && observer.sight.has_value())) {
-					if (observer.sight.has_value()) {
-						followLeg(entity, observer, at, radiusMm);
-					}
-					if (!newPolygon) {
-						endCutLeg(observer);
-					}
+				if (shape->polygon == nullptr) {
+					dropWallSight(observer);
+					followLeg(entity, observer.leg, at, radiusMm);
+					continue;
+				}
+				// Walls in sight end his open leg, run on to here first.
+				if (observer.leg.open) {
+					followLeg(entity, observer.leg, at, radiusMm);
 					closeLeg(entity, observer.leg);
-					observer.sight.reset();
+				}
+				const bool newPolygon = shape->polygonRevision != observer.polygonRevision;
+				if (observer.wallSight) {
+					const bool resting = at == observer.stretch.end;
+					followStretch(observer, at);
+					if (resting && !newPolygon) {
+						enterPolygonAt(observer, at);
+					}
 				}
 				if (newPolygon) {
 					registerPolygon(observer, *shape);
 					enterStructures(*shape);
 				}
-				if (shape->polygon == nullptr) {
-					observer.lastBuild.reset();
-				}
-				if (shape->polygon != nullptr && !observer.sight.has_value()) {
-					continue; // a jump dropped the polygon he had; no leg until vision builds the next
-				}
-				followLeg(entity, observer, at, radiusMm);
 			}
 		}
 		for (auto it = observers.begin(); it != observers.end();) {
@@ -290,7 +296,7 @@ namespace ecs {
 				it->second.present = false;
 				++it;
 			} else {
-				endCutLeg(it->second);
+				enterPolygonAt(it->second, it->second.stretch.end);
 				closeLeg(it->first, it->second.leg);
 				it = observers.erase(it);
 			}
@@ -332,7 +338,7 @@ namespace ecs {
 	}
 
 	// The disc lies in his open leg's capsule (vision::drawnVisibleRadiusMm), so outdoors it lies in
-	// the leg; with walls in sight it is cut to the leg's own shape, round the polygon's build.
+	// the leg; with walls in sight it is cut to vision's polygon, round the polygon's build.
 	std::optional<std::vector<Vec2i64>> PlayerVisibilitySystem::drawnVisible(EntityID colonist) const {
 		const VisionSystem* vision	 = world->tryGetSystem<VisionSystem>();
 		const Position*		position = world->getComponent<Position>(colonist);
@@ -351,11 +357,11 @@ namespace ecs {
 		if (shape->polygon == nullptr) {
 			return disc;
 		}
-		const std::optional<vision::SeenArea::OpenLeg> leg = seen.openLeg(colonist);
-		if (!leg.has_value() || !leg->cut) {
+		const auto observer = observers.find(colonist);
+		if (observer == observers.end() || !observer->second.wallSight || observer->second.polygonRevision != shape->polygonRevision) {
 			return std::nullopt;
 		}
-		std::vector<Vec2i64> cut = geometry::starClippedToConvex(*leg->outline, leg->centre, disc);
+		std::vector<Vec2i64> cut = geometry::starClippedToConvex(*shape->polygon, nav::toMm(shape->center), disc);
 		if (cut.empty()) {
 			return std::nullopt;
 		}

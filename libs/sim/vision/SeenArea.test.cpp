@@ -113,7 +113,8 @@ TEST(SeenArea, LandingIsOneRingInscribedInItsCircle) {
 }
 
 // A queued shape is seen, and covers what it holds, before the budget commits it; the budget tests
-// up to kSeenRingsPerTick shapes a tick, first in, first out, and stops after the first that registers.
+// up to kSeenRingsPerTick shapes a tick, first in, first out, stops at the first that adds anything,
+// and registers kSeenPiecesRegisteredPerTick of its pieces.
 TEST(SeenArea, PendingShapesAnswerBeforeTheyAreCommitted) {
 	SeenArea seen;
 	for (int i = 0; i < 6; ++i) {
@@ -128,8 +129,8 @@ TEST(SeenArea, PendingShapesAnswerBeforeTheyAreCommitted) {
 
 	const std::uint64_t before = seen.epoch();
 	seen.update();
-	EXPECT_EQ(seen.ringsRegistered(), vision::kSeenShapesRegisteredPerTick);
-	EXPECT_EQ(seen.shapesPending(), 6U - vision::kSeenShapesRegisteredPerTick);
+	EXPECT_EQ(seen.ringsRegistered(), vision::kSeenPiecesRegisteredPerTick);
+	EXPECT_EQ(seen.shapesPending(), 6U - vision::kSeenPiecesRegisteredPerTick);
 	EXPECT_NE(seen.epoch(), before);
 	EXPECT_EQ(seen.registeredRing(0).front(), geometry::sightPolygon(metres(0.0, 0.0), kSightMm).front()) << "first in, first out";
 	EXPECT_TRUE(seen.isSeen(metres(500.0, 20.0))) << "still pending, still seen";
@@ -157,7 +158,7 @@ TEST(SeenArea, CoversAcrossACommittedRingAndAPendingOne) {
 	const Vec2i64 west = metres(0.0, 0.0);
 	const Vec2i64 east = metres(40.0, 0.0);
 	seen.commitNow(geometry::sightPolygon(west, kSightMm), west);
-	seen.setOpenLeg(1, east, east, kSightMm, nullptr);
+	seen.setOpenLeg(1, east, east, kSightMm);
 	const std::vector<Vec2i64> across = square(20.0, 0.0, 10.0);
 	EXPECT_TRUE(seen.covers(across)) << "half in the record, half in the open leg";
 	EXPECT_FALSE(seen.covers(square(20.0, 25.0, 10.0))) << "reaches past both";
@@ -244,12 +245,12 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 	int	 notSimple = 0;
 	auto walkAll   = [&](bool keep) {
 		  for (const std::vector<Vec2i64>& walk : walks) {
-			  std::optional<Vec2i64> previous;
+			  std::vector<Vec2i64> previous;
 			  for (const Vec2i64& viewpoint : walk) {
 				  const geometry::Ring polygon = geometry::computeVisibilityPolygon(viewpoint, kSightMm, walls);
 				  if (!geometry::simpleAround(polygon, viewpoint)) {
 					  ++notSimple;
-					  previous.reset();
+					  previous.clear();
 					  continue;
 				  }
 				  if (keep) {
@@ -257,7 +258,7 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 				  }
 				  seen.queueSightPolygon(polygon, viewpoint, kSightMm, previous);
 				  seen.update();
-				  previous = viewpoint;
+				  previous.assign(1, viewpoint);
 			  }
 		  }
 		  drain(seen);
@@ -316,25 +317,9 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 	EXPECT_FALSE(seen.isSeen(metres(-25.0, 25.0))) << "north of the wall, beyond every viewpoint north of it and out of line through the door";
 }
 
-// An open leg cut to a sight is pending, and a sight whose build lies outside the leg's capsule gives
-// it no shape; a cut leg is dropped when it closes, since the polygons go in instead.
-TEST(SeenArea, CutLegIsPendingAndDroppedWhenItCloses) {
-	SeenArea			   seen;
-	const Vec2i64		   build = metres(0.0, 0.0);
-	const vision::LegSight sight{.polygon = geometry::computeVisibilityPolygon(build, kSightMm + 500, {}), .centre = build, .revision = 1};
-	seen.setOpenLeg(1, metres(40.0, 0.0), metres(41.0, 0.0), kSightMm - vision::kSeenSlackMm, &sight);
-	EXPECT_EQ(seen.shapesPending(), 0U) << "the build is 40 m off";
-	seen.setOpenLeg(1, build, metres(0.4, 0.0), kSightMm - vision::kSeenSlackMm, &sight);
-	EXPECT_EQ(seen.shapesPending(), 1U);
-	EXPECT_TRUE(seen.isSeen(metres(0.4 + kSightMm / 1000.0 - 0.1, 0.0))) << "the capsule's end, inside the long polygon";
-	EXPECT_FALSE(seen.isSeen(metres(-kSightMm / 1000.0, 0.0))) << "behind the start, past the leg radius";
-	seen.closeLeg(1);
-	EXPECT_EQ(seen.shapesPending(), 0U);
-}
-
-// A sight polygon that adds ground near its rim queues the sweep back to the build before it, points
-// kSeenSweepSpacingMm apart strictly between, built one a tick on ticks that register nothing; one
-// with no build before it, or a covered one, builds nothing.
+// A sight polygon that adds ground near its rim queues the sweep back along the walk from the build
+// before it, points kSeenSweepSpacingMm apart strictly between, built one a tick on ticks that
+// register nothing; one with no build before it, or a covered one, builds nothing.
 TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
 	const std::vector<geometry::OccluderSegment> walls = {{metres(3.0, -10.0), metres(3.0, 10.0)}};
 	SeenArea									 seen;
@@ -345,14 +330,18 @@ TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
 	});
 	const Vec2i64 first	 = metres(0.0, 0.0);
 	const Vec2i64 second = metres(0.5, 0.0);
-	seen.queueSightPolygon(geometry::computeVisibilityPolygon(first, kSightMm, walls), first, kSightMm, std::nullopt);
-	seen.update();
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(first, kSightMm, walls), first, kSightMm, {});
+	drain(seen);
 	EXPECT_EQ(seen.sweepsWaiting(), 0U) << "no build before it";
-	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, first);
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, {first});
 	seen.update();
+	EXPECT_EQ(seen.sweepsWaiting(), 4U) << "four points between the two builds";
+	for (int tick = 0; tick < 100 && seen.shapesPending() > 0; ++tick) {
+		seen.update();
+	}
 	EXPECT_GE(seen.ringsRegistered(), 2U);
 	EXPECT_EQ(seen.shapesPending(), 0U);
-	EXPECT_EQ(seen.sweepsWaiting(), 4U) << "four points between the two builds";
+	EXPECT_EQ(seen.sweepsBuilt(), 0U) << "pieces waiting come first";
 	seen.update();
 	EXPECT_EQ(seen.sweepsBuilt(), 1U) << "one built a tick";
 	drain(seen);
@@ -363,7 +352,7 @@ TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
 	}
 
 	const std::size_t ringsBefore = seen.ringsRegistered();
-	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, first);
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, {first});
 	drain(seen);
 	EXPECT_EQ(seen.ringsRegistered(), ringsBefore);
 	EXPECT_EQ(builtAt.size(), 4U) << "a covered polygon builds no sweep";

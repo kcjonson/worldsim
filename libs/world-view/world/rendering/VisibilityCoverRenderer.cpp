@@ -104,6 +104,15 @@ namespace worldview {
 		frameLayers.pendingOutlines.clear();
 
 		for (auto [entity, position, colonist, memory] : world.view<ecs::Position, ecs::Colonist, ecs::Memory>()) {
+			// A colonist whose sight misses the view draws nothing in it, so his shape is never cut.
+			const Foundation::Vec2 corner =
+				camera.worldToScreen(position.value.x - memory.sightRadius, position.value.y - memory.sightRadius, viewportWidth, viewportHeight, pixelsPerMeter);
+			const Foundation::Vec2 opposite =
+				camera.worldToScreen(position.value.x + memory.sightRadius, position.value.y + memory.sightRadius, viewportWidth, viewportHeight, pixelsPerMeter);
+			if (std::max(corner.x, opposite.x) < view.x || std::max(corner.y, opposite.y) < view.y || std::min(corner.x, opposite.x) > view.x + view.width ||
+				std::min(corner.y, opposite.y) > view.y + view.height) {
+				continue;
+			}
 			const std::optional<std::vector<geometry::Vec2i64>> outline = visibility.drawnVisible(entity);
 			if (!outline.has_value()) {
 				continue;

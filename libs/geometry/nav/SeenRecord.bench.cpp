@@ -385,10 +385,7 @@ namespace {
 			std::vector<Vec2i64> grown;
 			if (walls && skirtMm > 0) {
 				skirtUs.push_back(secondsOf([&] { grown = geometry::skirtedSightShape(ring, centre, *rim, skirtMm); }) * 1e6);
-				if (grown.empty()) {
-					++skirtSkipped;
-					return false;
-				}
+				skirtSkipped += grown.empty() ? 1 : 0;
 				trueVertices.push_back(static_cast<double>(ring.size()));
 				skirtedVertices.push_back(static_cast<double>(grown.size()));
 				skirtAddedM2 += (geometry::signedAreaDoubled(grown).toDouble() - geometry::signedAreaDoubled(ring).toDouble()) / 2e6;
@@ -1121,11 +1118,15 @@ namespace {
 				}
 				const Vec2i64	   along = build - *previous;
 				const std::int64_t steps = static_cast<std::int64_t>(std::ceil(std::sqrt(static_cast<double>(along.x * along.x + along.y * along.y)) / static_cast<double>(kSweepSpacingMm)));
+				const double length = std::sqrt(static_cast<double>(along.x * along.x + along.y * along.y));
 				for (std::int64_t step = 1; step < steps; ++step) {
+					// SeenArea::queueSweep: held in by how far the nearer build's polygon falls short of its own.
+					const double			   apart = length * static_cast<double>(std::min(step, steps - step)) / static_cast<double>(steps);
+					const std::int64_t		   reach = kSightMm - static_cast<std::int64_t>(std::ceil(kPi / static_cast<double>(geometry::kSightSides) * apart + apart * apart / (2.0 * static_cast<double>(kSightMm)))) - 1;
 					const Vec2i64		   point = *previous + Vec2i64{along.x * step / steps, along.y * step / steps};
-					const std::vector<Vec2i64> pointRim = geometry::sightPolygon(point, kSightMm);
+					const std::vector<Vec2i64> pointRim = geometry::sightPolygon(point, reach);
 					std::vector<Vec2i64>	   pointPolygon;
-					sweepBuildUs.push_back(secondsOf([&] { pointPolygon = geometry::computeVisibilityPolygon(point, kSightMm, building.walls); }) * 1e6);
+					sweepBuildUs.push_back(secondsOf([&] { pointPolygon = geometry::computeVisibilityPolygon(point, reach, building.walls); }) * 1e6);
 					if (geometry::simpleAround(pointPolygon, point)) {
 						commitShape(pointPolygon, point, &pointRim);
 					}
