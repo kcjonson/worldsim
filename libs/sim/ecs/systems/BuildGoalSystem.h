@@ -14,7 +14,10 @@ class World;
 /// Packaged entity with a targetPosition set. This system:
 /// 1. Scans for Packaged entities with targetPosition (awaiting placement)
 /// 2. Creates/updates PlacePackaged goals in GoalTaskRegistry
-/// 3. Removes goals when placement is complete (targetPosition cleared)
+/// 3. Removes goals when placement is complete or the target is cleared
+///
+/// It touches only goals it owns. A moved box's storage goal is StorageGoalSystem's to retire, and the
+/// placement goal waits for the destination to come free.
 ///
 /// Priority: 57 (after CraftingGoalSystem at 56)
 class BuildGoalSystem : public ISystem {

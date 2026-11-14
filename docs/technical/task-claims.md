@@ -578,8 +578,12 @@ keeps the surplus carried. A rule naming the item governs it alone: its max, min
 replace a category wildcard's for that item (`StorageConfiguration::forEachGoverningRule`), and the
 wildcard governs only the items no rule names. The configured max is summed over the governing rules,
 and one with no max makes the item unlimited. The storage dialog and the dev `storage` verb both remove
-a category's wildcard when a named rule for that category is added. A packaged box (being moved) needs nothing and is no pull source. A box keeps its
-umbrella, and so its root id, while it has rules, full or not: a full box simply needs nothing, and
+a category's wildcard when a named rule for that category is added. A packaged box (crafted and not
+yet placed, or being moved) needs nothing, is no pull source, and has no umbrella. Each goal system
+touches only the goals it owns: `StorageGoalSystem` retires a box's umbrella tree when the box is
+packaged, a packaged box with a spot holds only `BuildGoalSystem`'s PlacePackaged goal, and once the
+box is placed that goal goes and a new umbrella, under a new root id, follows. An installed box keeps
+its umbrella, and so its root id, while it has rules, full or not: a full box simply needs nothing, and
 goods on their way toward it, a suspended record's included, keep counting toward the same root when
 room returns. One helper, `GoalTaskRegistry::remainingNeed(world, root, item, basis)`, reads the
 target and what has landed from the world on every call (the station's next job and store, the
