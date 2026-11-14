@@ -153,6 +153,14 @@ TEST(FootprintBoundsTests, NearestOutsideFromOtherSpotsOnTheFloor) {
 	expectOutsideNear({1.0F, 1.0F}, 1.6F, "near the outer corner");
 }
 
+TEST(FootprintBoundsTests, NearestOutsideIsTheSameForAClockwiseRing) {
+	const FootprintBounds counterClockwise{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	const FootprintBounds clockwise{geometry::Ring{{0, 8000}, {4000, 8000}, {4000, 4000}, {8000, 4000}, {8000, 0}, {0, 0}}};
+	for (const glm::vec2 from : {glm::vec2{3.9F, 3.9F}, glm::vec2{1.0F, 1.0F}, glm::vec2{6.0F, 2.0F}}) {
+		EXPECT_EQ(clockwise.nearestOutside(from, 0.5F), counterClockwise.nearestOutside(from, 0.5F)) << from.x << ", " << from.y;
+	}
+}
+
 // ============================================================================
 // Goal-graph emission: drive the live update() path against a real
 // GoalTaskRegistry and assert the umbrella + per-material children coexist.

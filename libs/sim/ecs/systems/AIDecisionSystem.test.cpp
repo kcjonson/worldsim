@@ -9,6 +9,7 @@
 #include "PhysicsSystem.h"
 #include "TimeSystem.h"
 #include "VisionSystem.h"
+#include "FootprintRectangle.test.h"
 #include "MeshBand.test.h"
 #include "PlacedNothing.test.h"
 
@@ -3817,7 +3818,7 @@ namespace ecs::test {
 		clear.type = TaskType::Harvest;
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationPosition = {20.0F, 0.0F};
-		clear.clearFootprint = FootprintBounds::rectangle({16.0F, -4.0F}, {24.0F, 4.0F});
+		clear.clearFootprint = rectangleFootprint({16.0F, -4.0F}, {24.0F, 4.0F});
 		clear.status = GoalStatus::Available;
 		const uint64_t clearGoal = GoalTaskRegistry::Get().createGoal(std::move(clear));
 
@@ -6972,7 +6973,7 @@ namespace ecs::test {
 		clear.type				  = TaskType::Harvest;
 		clear.owner				  = GoalOwner::ConstructionGoalSystem;
 		clear.destinationPosition = centre;
-		clear.clearFootprint	  = FootprintBounds::rectangle(centre - glm::vec2{4.5F, 4.5F}, centre + glm::vec2{4.5F, 4.5F});
+		clear.clearFootprint	  = rectangleFootprint(centre - glm::vec2{4.5F, 4.5F}, centre + glm::vec2{4.5F, 4.5F});
 		clear.status			  = GoalStatus::Available;
 		GoalTaskRegistry::Get().createGoal(std::move(clear));
 

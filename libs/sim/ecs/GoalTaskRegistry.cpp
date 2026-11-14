@@ -66,6 +66,7 @@ namespace ecs {
 		if (ring.empty()) {
 			return;
 		}
+		geometry::ensureCounterClockwise(ring);
 		geometry::Vec2i64 lowest = ring.front();
 		geometry::Vec2i64 highest = ring.front();
 		for (const geometry::Vec2i64& corner : ring) {
@@ -76,12 +77,6 @@ namespace ecs {
 		const auto highestMeters = geometry::dequantize(highest);
 		min = {lowestMeters.x, lowestMeters.y};
 		max = {highestMeters.x, highestMeters.y};
-	}
-
-	FootprintBounds FootprintBounds::rectangle(glm::vec2 min, glm::vec2 max) {
-		const geometry::Vec2i64 low = geometry::quantize({min.x, min.y});
-		const geometry::Vec2i64 high = geometry::quantize({max.x, max.y});
-		return FootprintBounds{geometry::Ring{low, {high.x, low.y}, high, {low.x, high.y}}};
 	}
 
 	bool FootprintBounds::contains(glm::vec2 position) const {

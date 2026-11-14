@@ -60,8 +60,6 @@ namespace ecs {
 	/// is inside when its position is; nothing here has a body radius.
 	struct FootprintBounds {
 		explicit FootprintBounds(geometry::Ring footprintRing);
-		/// The rectangle from `min` to `max` as a footprint.
-		[[nodiscard]] static FootprintBounds rectangle(glm::vec2 min, glm::vec2 max);
 
 		geometry::Ring ring;
 		glm::vec2	   min{0.0F, 0.0F};
