@@ -165,7 +165,8 @@ export function voidReasons(scenarios, { gpu = true } = {}) {
 // a session timing its own change passes the zooms that change touches; the nightly batch passes neither.
 // `reveal` turns player visibility off for the capture (the views far from any colonist would time a
 // black frame otherwise); `reveal: false` measures the cover itself. A build from before the reveal
-// verb answers 404 and draws no cover, which is the same frame.
+// verb answers 404 and draws no cover, which is the same frame; the result's `revealVerb` says whether
+// the build had the verb, so a comparison can tell a cover capture of a build with no cover from one with it.
 export async function capture({
 	port, x, y, gamePid = null, gameImage = 'world-sim', zooms = kDefaultZooms, scroll = true,
 	settleMs = 1500, gpuHold = true, gpuHoldTarget = 0.8, reveal = true, log = console.log,
@@ -176,6 +177,7 @@ export async function capture({
 	const sampler = startLoadSampler(gamePid, gameImage);
 	const processWatch = startProcessWatch(gameImage);
 	const scenarios = [];
+	let revealVerb = false;
 
 	async function sampleScenario(name, count = 9, intervalMs = 600) {
 		const samples = [];
@@ -212,7 +214,7 @@ export async function capture({
 		// Vsync off so frame times show real cost (the 120 fps pacing cap still holds; gpuMs and
 		// tileGpuMs show the cost under it)
 		await control('vsync&value=0');
-		await getJsonIfPresent(`${base}/api/dev/reveal?on=${reveal ? 1 : 0}`);
+		revealVerb = (await getJsonIfPresent(`${base}/api/dev/reveal?on=${reveal ? 1 : 0}`)) !== null;
 		if (gpuHold) {
 			await control(`gpuhold&value=1&target=${gpuHoldTarget}`);
 			await sleep(2000); // the hold settles and the driver raises the clocks
@@ -252,5 +254,5 @@ export async function capture({
 	}
 
 	const reasons = voidReasons(scenarios);
-	return { x, y, gpuHold, reveal, when: new Date().toISOString(), void: reasons.length > 0, voidReasons: reasons, scenarios };
+	return { x, y, gpuHold, reveal, revealVerb, when: new Date().toISOString(), void: reasons.length > 0, voidReasons: reasons, scenarios };
 }
