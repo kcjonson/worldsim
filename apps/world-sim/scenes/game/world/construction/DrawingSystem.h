@@ -310,7 +310,7 @@ namespace world_sim {
 		/// vs walls verbs now use; validity stays owned by a nav mesh (no world/terrain/water reads).
 		/// When no nav system is wired (headless/test) validity is owned elsewhere; mirror the dev
 		/// verbs' permissive fallback and treat the point as placeable.
-		[[nodiscard]] bool pointOnMesh(Foundation::Vec2 p) const;
+		[[nodiscard]] bool pointOnBuildableGround(Foundation::Vec2 p) const;
 
 		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
 		/// area against footprintBuildable. A WALL validates its chain centerline against
@@ -473,7 +473,7 @@ namespace world_sim {
 		// every move for the foundation + wall tools; drives the red invalid preview so the player sees
 		// they can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
 		// this is feedback only.
-		bool cursorOffMesh_ = false;
+		bool cursorOffBuildableGround = false;
 
 		// True when the opening tool's snapped opening is not all on seen ground.
 		bool openingUnexplored_ = false;

@@ -226,7 +226,7 @@ namespace world_sim {
 		return pointSeen(cursor_) ? std::string("not on buildable ground") : std::string("the area is unexplored");
 	}
 
-	bool DrawingSystem::pointOnMesh(Foundation::Vec2 p) const {
+	bool DrawingSystem::pointOnBuildableGround(Foundation::Vec2 p) const {
 		if (!pointSeen(p)) {
 			return false;
 		}
@@ -282,7 +282,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -297,7 +297,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -313,7 +313,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -337,7 +337,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -356,7 +356,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -404,7 +404,7 @@ namespace world_sim {
 
 		// Live nav feedback: is the snapped cursor itself off buildable ground? Drives the
 		// red preview (see render). The commit gate re-checks the whole footprint regardless.
-		cursorOffMesh_ = !pointOnMesh(cursor_);
+		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
 		// "Snap not block": with a closeable shape, a click near the start that would
 		// otherwise be rejected closes instead of erroring -- but only when the closed
@@ -464,10 +464,10 @@ namespace world_sim {
 		}
 
 		// Nav gate: refuse a vertex that lands on genuinely unbuildable ground (water or off-mesh).
-		// A vertex over a clearable entity (tree/rock) is allowed -- pointOnMesh routes foundations
+		// A vertex over a clearable entity (tree/rock) is allowed -- pointOnBuildableGround routes foundations
 		// through the terrain-only buildability check. The whole-footprint re-check on commit
 		// (requirePlaceable) still catches an edge or interior that crosses water between two vertices.
-		if (cursorOffMesh_) {
+		if (cursorOffBuildableGround) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Can't build here", "foundation: " + cursorGroundReason());
 			}
@@ -544,7 +544,7 @@ namespace world_sim {
 		points_.pop_back();
 		lastValidation_ = {};
 		willClose_ = false;		// recomputed on the next move; don't leave a stale closing halo
-		cursorOffMesh_ = false; // recomputed on the next move
+		cursorOffBuildableGround = false; // recomputed on the next move
 		editPreviewActive_ = false;
 		if (points_.empty()) {
 			// The chain's host is determined by its first point; once empty, the next
@@ -898,7 +898,7 @@ namespace world_sim {
 
 		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
 		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
-		cursorOffMesh_ = !pointOnMesh(cursor_);
+		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
 		if (preset == nullptr) {
 			lastValidation_ = {};
@@ -937,7 +937,7 @@ namespace world_sim {
 		// Nav gate: refuse a point that lands off buildable ground (water or a ford) before it
 		// enters the chain, with clear feedback. The whole-chain re-check on commit still
 		// catches a segment that bridges water between two on-mesh points.
-		if (cursorOffMesh_) {
+		if (cursorOffBuildableGround) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Can't build here", "wall: " + cursorGroundReason());
 			}
@@ -1525,8 +1525,8 @@ namespace world_sim {
 
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
-			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
+			s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
@@ -1571,8 +1571,8 @@ namespace world_sim {
 				s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(editPreview_.outline)));
 				s.areaDeltaSquareMeters = s.areaSquareMeters - current;
 			}
-			s.valid = judged.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(judged.code);
+			s.valid = judged.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(judged.code);
 			return s;
 		}
 
@@ -1583,13 +1583,13 @@ namespace world_sim {
 			auto&					  registry = ConstructionRegistry::Get();
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 			const auto				  ring = validator.validateRing(points_);
-			s.valid = ring.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(ring.code);
+			s.valid = ring.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(points_))));
 		} else {
-			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
+			s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
 		}
 		return s;
 	}
@@ -1749,7 +1749,7 @@ namespace world_sim {
 		// own (willClose_) green halo treatment below. An edit also reads red while the
 		// outline it would produce is invalid.
 		const bool				editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
-		const bool				valid = lastValidation_.ok() && !cursorOffMesh_ && !editRejected;
+		const bool				valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 		const Foundation::Color lineColor = valid ? okColor : badColor;
@@ -1865,7 +1865,7 @@ namespace world_sim {
 		// Off-mesh cursor (on water): a red dot AT the cursor so the player sees the exact
 		// point that can't be placed. Distinct from the geometry-violation highlight above,
 		// which marks a placed vertex. Suppressed on a pending close (reads as "closing").
-		if (cursorOffMesh_ && !willClose_) {
+		if (cursorOffBuildableGround && !willClose_) {
 			Renderer::Primitives::drawCircle({
 				.center = toScreen(cursor_),
 				.radius = ps.invalidVertexRadiusPx,
@@ -2217,7 +2217,7 @@ namespace world_sim {
 
 		// Off-mesh cursor (on water) reads as invalid like a geometry violation: the
 		// rubber-band band + centerline turn red before the player commits.
-		const bool				valid = lastValidation_.ok() && !cursorOffMesh_;
+		const bool				valid = lastValidation_.ok() && !cursorOffBuildableGround;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 
