@@ -96,8 +96,9 @@ such a dir, or one first configured with the wrong compiler or vcpkg. Run
 ### Font atlas
 
 The build generates the SDF font atlas (`fonts/Roboto-SDF.png`) from `Roboto-Regular.ttf` via the
-`generate_sdf_atlas` tool whenever it is missing or the font changes. The PNG is a gitignored build
-artifact, so a fresh checkout produces it automatically with no manual step. The same step makes
+`generate_sdf_atlas` tool whenever it is missing, the font changes, or the generator itself changes.
+The PNG is a gitignored build artifact, so a fresh checkout produces it automatically with no manual
+step. The same step makes
 the other three atlases (Chakra Petch, Barlow, JetBrains Mono) and their committed JSON. Every
 atlas holds ASCII printable plus the Latin-1 Supplement (U+00A0 to U+00FF), one character set in
 `tools/generate_sdf_atlas/main.cpp`; the atlas grows in height, never width, when the glyphs need it.
