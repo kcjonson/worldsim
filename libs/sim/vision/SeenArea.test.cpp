@@ -357,3 +357,59 @@ TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
 	EXPECT_EQ(seen.ringsRegistered(), ringsBefore);
 	EXPECT_EQ(builtAt.size(), 4U) << "a covered polygon builds no sweep";
 }
+
+// The seen boxes hold every seen point: the landing's, cut at the cells it spans, a pending shape's
+// before it is committed and the committed one's after, across negative coordinates; a query that
+// meets a box returns it, one that meets none returns nothing.
+TEST(SeenArea, SeenBoxesHoldEverySeenPoint) {
+	SeenArea	  seen;
+	const Vec2i64 drop = metres(1234.5, -987.25);
+	seen.commitNow(geometry::sightPolygon(drop, 150000), drop);
+
+	const auto boxesIn = [&seen](const Vec2i64& low, const Vec2i64& high) {
+		std::vector<SeenArea::Box> boxes;
+		seen.appendSeenBoxes(low, high, boxes);
+		return boxes;
+	};
+	const auto held = [](const std::vector<SeenArea::Box>& boxes, const Vec2i64& point) {
+		return std::any_of(boxes.begin(), boxes.end(), [&point](const SeenArea::Box& box) {
+			return point.x >= box.low.x && point.x <= box.high.x && point.y >= box.low.y && point.y <= box.high.y;
+		});
+	};
+
+	// The landing spans the cells at y -1536..-1024 and -1024..-512 m, so it is two boxes, each cut to its cell.
+	const std::vector<SeenArea::Box> everywhere = boxesIn(metres(-10000.0, -10000.0), metres(10000.0, 10000.0));
+	ASSERT_EQ(everywhere.size(), 2U);
+	for (const SeenArea::Box& box : everywhere) {
+		EXPECT_GE(box.low.x, metres(1234.5 - 150.0, 0.0).x);
+		EXPECT_LE(box.high.x, metres(1234.5 + 150.0, 0.0).x);
+		EXPECT_TRUE(box.high.y <= -1024000 || box.low.y >= -1024000) << "cut to its cell";
+	}
+	std::mt19937 random(7);
+	std::uniform_real_distribution<double> offset(-160.0, 160.0);
+	for (int sample = 0; sample < 2000; ++sample) {
+		const double  x		= offset(random);
+		const double  y		= offset(random);
+		const Vec2i64 point = drop + metres(x, y);
+		if (seen.isSeen(point)) {
+			EXPECT_TRUE(held(everywhere, point)) << x << ", " << y;
+		}
+	}
+
+	// Half over the landing's east edge, the box comes back; wholly east of it, nothing does.
+	EXPECT_FALSE(boxesIn(metres(1300.0, -1000.0), metres(1600.0, -900.0)).empty());
+	EXPECT_TRUE(boxesIn(metres(1400.0, -1000.0), metres(1700.0, -900.0)).empty());
+
+	// A pending shape is held while it waits, and after it is committed.
+	const Vec2i64 far = metres(-3000.0, 2000.0);
+	seen.queue(geometry::sightPolygon(far, kSightMm), far);
+	const std::vector<SeenArea::Box> pending = boxesIn(far, far);
+	ASSERT_EQ(pending.size(), 1U);
+	EXPECT_TRUE(held(pending, far + metres(29.0, 0.0)));
+	drain(seen);
+	const std::vector<SeenArea::Box> committed = boxesIn(far - metres(40.0, 40.0), far + metres(40.0, 40.0));
+	ASSERT_EQ(committed.size(), 1U);
+	EXPECT_TRUE(held(committed, far + metres(29.0, 0.0)));
+	EXPECT_TRUE(held(committed, far - metres(29.0, 0.0)));
+	EXPECT_TRUE(boxesIn(metres(0.0, 0.0), metres(100.0, 100.0)).empty());
+}

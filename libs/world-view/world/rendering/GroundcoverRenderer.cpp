@@ -165,7 +165,8 @@ void GroundcoverRenderer::render(const assets::RenderContext& ctx, RenderStats& 
 		} else {
 			dropRemovedGroundcover(ctx.executor, coord, cache);
 		}
-		if (cache.maxX < vis.minX || cache.minX > vis.maxX || cache.maxY < vis.minY || cache.minY > vis.maxY) {
+		if (cache.maxX < vis.minX || cache.minX > vis.maxX || cache.maxY < vis.minY || cache.minY > vis.maxY ||
+			!ctx.drawBound.meets({cache.minX, cache.maxX, cache.minY, cache.maxY}, std::max(kGroundcoverReachM, assets::kMinCullMarginMeters))) {
 			continue;
 		}
 		for (auto& [defName, buckets] : cache.byDef) {

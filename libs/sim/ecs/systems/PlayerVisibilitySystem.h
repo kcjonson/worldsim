@@ -64,6 +64,17 @@ namespace ecs {
 		// Moves when the committed record does.
 		[[nodiscard]] std::uint64_t epoch() const { return seen.epoch(); }
 
+		// A box of ground in metres.
+		struct SeenBox {
+			glm::vec2 low;
+			glm::vec2 high;
+		};
+		// Boxes that together hold every point between `low` and `high` the cover leaves showing
+		// (player-visibility.md 3.4): the record's and the pending shapes' (SeenArea::appendSeenBoxes),
+		// and the sight box of each player colonist, which holds his bright shape. Drawing and the
+		// camera's chunk loads are bounded by them.
+		void appendSeenBoxes(glm::vec2 low, glm::vec2 high, std::vector<SeenBox>& out) const;
+
 		[[nodiscard]] const vision::SeenArea& seenArea() const { return seen; }
 
 		// The dev toggle that turns player visibility off (player-visibility.md rule 18): with it on

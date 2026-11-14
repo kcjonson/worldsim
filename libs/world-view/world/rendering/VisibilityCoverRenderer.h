@@ -7,6 +7,8 @@
 
 #include "world/camera/WorldCamera.h"
 
+#include "assets/placement/DrawBound.h"
+
 #include <vision/SeenArea.h>
 
 #include <core/Vec2i64.h>
@@ -43,8 +45,17 @@ namespace worldview {
 	constexpr std::int32_t kCoverTintKey = 30;
 	constexpr std::int32_t kCoverUnseenKey = 31;
 
+	// How far each box of the draw bound is grown, in screen pixels: past a pixel the record's edge
+	// crosses, and a thing's anti-aliased fringe.
+	constexpr float kDrawBoundMarginPixels = 2.0F;
+
 	// The committed record's triangles as meshes in world meters, each within kSeenMeshVertexLimit.
 	std::vector<renderer::TessellatedMesh> seenMeshes(const std::vector<vision::SeenArea::Triangle>& triangles);
+
+	// What this frame can show, for drawing to cull against: with the cover drawn, the seen boxes in
+	// view (PlayerVisibilitySystem::appendSeenBoxes), each grown by kDrawBoundMarginPixels, since
+	// everything else is under the opaque fill; with reveal on, or no player visibility, everywhere.
+	assets::DrawBound coverDrawBound(ecs::World& world, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float pixelsPerMeter);
 
 	class VisibilityCoverRenderer {
 	  public:

@@ -8,6 +8,7 @@
 // dedicated sub-renderer.
 
 #include "assets/placement/BakedEntityMesh.h"
+#include "assets/placement/DrawBound.h"
 #include "assets/placement/PlacementExecutor.h"
 #include "assets/placement/RenderContext.h"
 #include "assets/placement/WorldDepthSort.h"
@@ -42,28 +43,18 @@ class EntityRenderer {
 	EntityRenderer(EntityRenderer&&) = delete;
 	EntityRenderer& operator=(EntityRenderer&&) = delete;
 
-	/// Render entities from processed chunks
-	/// @param executor PlacementExecutor containing entity data
-	/// @param processedChunks Set of chunk coordinates that have been processed
-	/// @param camera Camera for coordinate transforms
-	/// @param viewportWidth Viewport width in pixels
-	/// @param viewportHeight Viewport height in pixels
-	void render(const assets::PlacementExecutor& executor,
-				const std::unordered_set<world::ChunkCoordinate>& processedChunks,
-				const world::WorldCamera& camera,
-				int viewportWidth,
-				int viewportHeight);
-
 	/// Render entities from processed chunks plus additional dynamic entities
 	/// @param executor PlacementExecutor containing entity data
 	/// @param processedChunks Set of chunk coordinates that have been processed
 	/// @param dynamicEntities Additional entities to render (e.g., from ECS)
+	/// @param drawBound What the frame can show; every path culls to it as to the view
 	/// @param camera Camera for coordinate transforms
 	/// @param viewportWidth Viewport width in pixels
 	/// @param viewportHeight Viewport height in pixels
 	void render(const assets::PlacementExecutor& executor,
 				const std::unordered_set<world::ChunkCoordinate>& processedChunks,
 				const std::vector<assets::PlacedEntity>& dynamicEntities,
+				const assets::DrawBound& drawBound,
 				const world::WorldCamera& camera,
 				int viewportWidth,
 				int viewportHeight);
@@ -119,16 +110,6 @@ class EntityRenderer {
 	// frame; m_sortedUprights is reused to keep its capacity across frames.
 	assets::WorldDepthGather		   uprightGather;
 	std::vector<assets::DepthSortItem> m_sortedUprights;
-
-	/// One frame: baked chunks, groundcover, then the depth-sorted upright stream
-	void renderFrame(
-		const assets::PlacementExecutor& executor,
-		const std::unordered_set<world::ChunkCoordinate>& processedChunks,
-		const std::vector<assets::PlacedEntity>* dynamicEntities,
-		const world::WorldCamera& camera,
-		int viewportWidth,
-		int viewportHeight
-	);
 };
 
 }  // namespace worldview

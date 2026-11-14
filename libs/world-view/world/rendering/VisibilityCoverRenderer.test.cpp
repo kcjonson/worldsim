@@ -24,6 +24,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -189,4 +190,43 @@ TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
 	EXPECT_TRUE(cover->layers().drawn);
 	EXPECT_EQ(cover->uploads(), 1U);
 	EXPECT_EQ(cover->layers().visibleOutlines.size(), 1U);
+}
+
+// The draw bound holds the seen ground in view and nothing well past it: a view over the landing's
+// edge meets it on the seen side only, a view over unseen ground meets nothing, a colonist standing
+// past the record holds his sight round him, and with reveal on it holds everything.
+TEST_F(VisibilityCoverTest, DrawBoundHoldsWhatTheCoverLeavesShowing) {
+	const auto boundAt = [this](glm::vec2 centre) {
+		camera.setPosition({centre.x, centre.y});
+		return worldview::coverDrawBound(world, camera, kViewportWidth, kViewportHeight, kPixelsPerMeter);
+	};
+	const auto region = [](float minX, float maxX) { return assets::VisibleBounds{minX, maxX, -5.0F, 5.0F}; };
+
+	const assets::DrawBound overLanding = boundAt({0.0F, 0.0F});
+	EXPECT_TRUE(overLanding.meets(region(-10.0F, 10.0F)));
+
+	const assets::DrawBound overEdge = boundAt({150.0F, 0.0F});
+	EXPECT_TRUE(overEdge.meets(region(140.0F, 145.0F)));
+	EXPECT_FALSE(overEdge.meets(region(152.0F, 190.0F))) << "the landing is 150 m round the drop";
+	const std::optional<assets::VisibleBounds> cut = overEdge.within(region(100.0F, 190.0F));
+	ASSERT_TRUE(cut.has_value());
+	EXPECT_LT(cut->maxX, 151.0F);
+
+	const assets::DrawBound overUnseen = boundAt({1000.0F, 0.0F});
+	EXPECT_FALSE(overUnseen.meets(region(900.0F, 1100.0F)));
+
+	// His bright disc can reach a little past the record, so his whole sight is held.
+	addColonist({1000.0F, 0.0F});
+	const assets::DrawBound overColonist = boundAt({1000.0F, 0.0F});
+	EXPECT_TRUE(overColonist.meets(region(1028.0F, 1029.0F)));
+	EXPECT_FALSE(overColonist.meets(region(1032.0F, 1100.0F)));
+
+	visibility.setRevealed(true);
+	const assets::DrawBound revealed = boundAt({5000.0F, 0.0F});
+	const std::optional<assets::VisibleBounds> whole = revealed.within(region(4900.0F, 5100.0F));
+	ASSERT_TRUE(whole.has_value());
+	EXPECT_EQ(whole->minX, 4900.0F);
+	EXPECT_EQ(whole->maxX, 5100.0F);
+	EXPECT_EQ(whole->minY, -5.0F);
+	EXPECT_EQ(whole->maxY, 5.0F);
 }
