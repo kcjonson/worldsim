@@ -1,6 +1,8 @@
 #include "DynamicEntityRenderSystem.h"
 
 #include <ecs/World.h>
+#include <ecs/components/AgentRadius.h>
+#include <ecs/components/Colonist.h>
 #include <ecs/components/AnimationState.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/FacingDirection.h>
@@ -8,6 +10,7 @@
 #include <ecs/components/Packaged.h>
 #include <ecs/components/ResourceStack.h>
 #include <ecs/components/Transform.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 
 #include "assets/AssetRegistry.h"
 #include "assets/MotionEval.h"
@@ -27,10 +30,18 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
     m_partXformStore.clear();
 
     auto& assetRegistry = assets::AssetRegistry::Get();
+    const ecs::PlayerVisibilitySystem* visibility = ecs::PlayerVisibilitySystem::gate(*world);
 
     // Collect all entities with position and appearance
     for (auto [entity, pos, rot, appearance] :
          world->view<ecs::Position, ecs::Rotation, ecs::Appearance>()) {
+        // A thing that moves by itself shows only while a colonist can see it (player-visibility.md 3.6);
+        // colonists always draw.
+        if (visibility != nullptr && world->getComponent<ecs::AgentRadius>(entity) != nullptr &&
+            world->getComponent<ecs::Colonist>(entity) == nullptr && !visibility->isVisible(pos.value)) {
+            continue;
+        }
+
         // Check if entity is packaged
         auto* packaged = world->getComponent<ecs::Packaged>(entity);
 

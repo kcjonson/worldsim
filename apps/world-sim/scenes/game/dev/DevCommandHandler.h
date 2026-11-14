@@ -91,6 +91,8 @@ namespace world_sim {
 	  private:
 		// --- write verbs ---
 		void devFreeBuild(const app::DevRequest& cmd);
+		// reveal?on=1|0: player visibility off or on (player-visibility.md 3.10)
+		void devReveal(const app::DevRequest& cmd);
 		void devGive(const app::DevRequest& cmd);
 		void devSpawn(const app::DevRequest& cmd);
 		void devColonist(const app::DevRequest& cmd);
@@ -166,6 +168,9 @@ namespace world_sim {
 		void serializeTime(std::ostringstream& out);
 		void serializeLanding(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
+		// The seen record's totals, and with x and y given, whether that point is seen and visible
+		// (/api/state?what=visibility takes no parameters; /api/dev/visibility?x=&y= answers the point).
+		std::string visibilityJson(const app::DevRequest& cmd);
 
 		// --- pure parsing helpers ---
 		static std::string					 param(const app::DevRequest& cmd, const std::string& key, const std::string& fallback = "");

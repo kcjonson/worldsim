@@ -56,6 +56,7 @@ namespace assets {
 
 namespace ecs {
 	class NavigationSystem;
+	class PlayerVisibilitySystem;
 	struct StructureBlueprint;
 } // namespace ecs
 
@@ -318,6 +319,17 @@ namespace world_sim {
 		/// false so the caller commits NOTHING -- no partial structure.
 		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
 
+		/// Player visibility (player-visibility.md 3.7): the tools build only on ground the colonists have
+		/// seen, and each of these is true when player visibility is off. A point; a closed shape's whole
+		/// area; an open chain's points and the strip along each segment; the snapped opening's span.
+		[[nodiscard]] bool pointSeen(Foundation::Vec2 p) const;
+		[[nodiscard]] bool areaSeen(const std::vector<Foundation::Vec2>& pts) const;
+		[[nodiscard]] bool chainSeen(const std::vector<Foundation::Vec2>& pts) const;
+		[[nodiscard]] bool openingSeen(float widthMeters) const;
+		[[nodiscard]] const ecs::PlayerVisibilitySystem* visibilityGate() const;
+		/// "not on <ground> ground", or "the area is unexplored" when the cursor is over ground nobody has seen.
+		[[nodiscard]] std::string cursorGroundReason(const char* ground) const;
+
 		/// NavigationSystem::isAreaBuildable over the polygon `pts`: a terrain-only mesh, so water and
 		/// off-mesh gaps block but clearable entities (trees/rocks) do NOT (placing over them spawns
 		/// clear tasks and the build waits for the footprint to clear). Wall conflicts are the
@@ -462,6 +474,9 @@ namespace world_sim {
 		// they can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
 		// this is feedback only.
 		bool cursorOffMesh_ = false;
+
+		// True when the opening tool's snapped opening is not all on seen ground.
+		bool openingUnexplored_ = false;
 
 		// Wall chain host: the foundation the first chain point landed on. Every
 		// segment of the chain hosts here; a later point leaving it is rejected.
