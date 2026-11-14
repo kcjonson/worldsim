@@ -3,7 +3,6 @@
 #include "../predicates/Predicates.h"
 
 #include <algorithm>
-#include <array>
 #include <cassert>
 #include <cmath>
 #include <cstddef>
@@ -73,18 +72,6 @@ namespace geometry {
 			return true;
 		}
 
-		// The band a->b cut back trimAtA mm from a and trimAtB mm from b, as its
-		// corners {a-left, b-left, b-right, a-right}.
-		std::array<Vec2i64, 4> bandCorners(const Vec2i64& a, const Vec2i64& b, std::int64_t halfThicknessMm, std::int64_t trimAtA,
-										   std::int64_t trimAtB) {
-			const Vec2i64 dir		 = b - a;
-			const double  half		 = static_cast<double>(halfThicknessMm);
-			const Vec2i64 trimmedA = advance(a, dir, static_cast<double>(trimAtA));
-			const Vec2i64 trimmedB = advance(b, -dir, static_cast<double>(trimAtB));
-			return {offsetPoint(trimmedA, dir, half), offsetPoint(trimmedB, dir, half), offsetPoint(trimmedB, dir, -half),
-					offsetPoint(trimmedA, dir, -half)};
-		}
-
 	} // namespace
 
 	Ring band(const Vec2i64& a, const Vec2i64& b, std::int64_t halfThicknessMm) {
@@ -115,8 +102,16 @@ namespace geometry {
 			return false; // cutbacks meet or cross: the band would vanish or invert
 		}
 
-		const std::array<Vec2i64, 4> corners = bandCorners(a, b, halfThicknessMm, trimAtA, trimAtB);
-		out.assign(corners.begin(), corners.end());
+		const Vec2i64 a2 = advance(a, dir, static_cast<double>(trimAtA));
+		const Vec2i64 b2 = advance(b, -dir, static_cast<double>(trimAtB));
+		const double  h	 = static_cast<double>(halfThicknessMm);
+
+		const Vec2i64 aLeft	 = offsetPoint(a2, dir, h);
+		const Vec2i64 bLeft	 = offsetPoint(b2, dir, h);
+		const Vec2i64 bRight = offsetPoint(b2, dir, -h);
+		const Vec2i64 aRight = offsetPoint(a2, dir, -h);
+
+		out = {aLeft, bLeft, bRight, aRight};
 		ensureCounterClockwise(out);
 		return true;
 	}
@@ -164,277 +159,223 @@ namespace geometry {
 			return l < r; // identical direction: deterministic tie-break by index
 		});
 
-		std::vector<Vec2i64> dirs(degree);
-		std::vector<double>	 halves(degree);
-		for (std::size_t k = 0; k < degree; ++k) {
-			dirs[k]	  = incidents[order[k]].direction - vertex;
-			halves[k] = static_cast<double>(incidents[order[k]].halfThicknessMm);
-		}
-		const double maxHalf = *std::max_element(halves.begin(), halves.end());
+		std::vector<std::int64_t> trimByLocal(degree, 0);
 
-		// Cutbacks by CCW position. A segment takes the largest any of its wedges
-		// asks for, so every wedge is cleared.
-		std::vector<std::int64_t> trims(degree, 0);
-
-		// side +1 is the left face, -1 the right.
-		auto cornerAt = [&](std::size_t k, std::int64_t trim, double side) {
-			return offsetPoint(advance(vertex, dirs[k], static_cast<double>(trim)), dirs[k], side * halves[k]);
+		// Per CCW-adjacent wedge (i -> i+1, wrapping), the apex is the intersection
+		// of segment i's LEFT band edge and segment (i+1)'s RIGHT band edge. The
+		// trim each segment needs is the projection of (apex - vertex) onto its own
+		// outgoing direction; a segment takes the max over its two wedges so both
+		// are cleared. Apexes are kept to weld into the junction polygon later.
+		struct WedgeApex {
+			Vec2i64 point;
+			bool	beveled = false; // miter exceeded the limit -> squared off
 		};
-		auto corner = [&](std::size_t k, double side) { return cornerAt(k, trims[k], side); };
-		// How far along `dir` from the vertex a point sits, rounded; 0 when behind.
-		auto reachAlong = [&](const Vec2i64& point, const Vec2i64& dir) -> std::int64_t {
-			const double len = length(dir);
-			if (len == 0.0) {
-				return 0;
-			}
-			const double proj = (static_cast<double>(point.x - vertex.x) * static_cast<double>(dir.x) +
-								 static_cast<double>(point.y - vertex.y) * static_cast<double>(dir.y)) /
-								len;
-			return proj > 0.0 ? std::llround(proj) : 0;
-		};
-
-		// One wedge per CCW-adjacent pair (k -> k+1, wrapping): segment k's LEFT face
-		// faces segment k+1's RIGHT face across it.
-		enum class WedgeJoin { Straight, Miter, Step };
-		struct Wedge {
-			WedgeJoin join			 = WedgeJoin::Straight;
-			bool	  convex		 = false; // the faces converge: wedge under 180 degrees
-			bool	  beveled		 = false; // outer miter past the limit, squared off
-			bool	  thickerOnRight = false; // Step: k+1 is the band whose cap the step runs along
-			Vec2i64	  point;				  // Miter: where the faces meet. Step: where the thinner face meets that cap
-		};
-		std::vector<Wedge> wedges(degree);
+		std::vector<WedgeApex> apex(degree);
+		std::vector<std::size_t> steps; // wedges joined as a near-straight step
 
 		for (std::size_t k = 0; k < degree; ++k) {
-			const std::size_t right = (k + 1) % degree;
-			Wedge&			  wedge = wedges[k];
-			const Vec2i64&	  dirL	= dirs[k];
-			const Vec2i64&	  dirR	= dirs[right];
-			const Int128	  turn	= cross(dirL, dirR);
+			const std::size_t li = order[k];
+			const std::size_t ri = order[(k + 1) % degree];
 
-			if (turn.sign() == 0) {
-				// Straight continuation: the faces are parallel. Equal halves abut; a
-				// thinner band steps out to a thicker one along its cap.
-				if (halves[k] != halves[right]) {
-					wedge.join			 = WedgeJoin::Step;
-					wedge.convex		 = true;
-					wedge.thickerOnRight = halves[right] > halves[k];
-				}
-				continue;
-			}
+			const IncidentSegment& segL = incidents[li];
+			const IncidentSegment& segR = incidents[ri];
+			const Vec2i64		   dirL = segL.direction - vertex;
+			const Vec2i64		   dirR = segR.direction - vertex;
+			const double		   hL	= static_cast<double>(segL.halfThicknessMm);
+			const double		   hR	= static_cast<double>(segR.halfThicknessMm);
 
-			// Where the faces meet, as the sign of the parameter along each face from
-			// its point beside the vertex (exact: both are 128-bit cross products).
-			wedge.convex			 = turn.sign() > 0;
-			const Vec2i64 faceL		 = offsetPoint(vertex, dirL, halves[k]);
-			const Vec2i64 faceR		 = offsetPoint(vertex, dirR, -halves[right]);
-			const Vec2i64 between	 = faceR - faceL;
-			const int	  alongLeft	 = cross(between, dirR).sign() * turn.sign();
-			const int	  alongRight = cross(between, dirL).sign() * turn.sign();
-
-			// Converging faces meet ahead of both bands (inner miter); diverging faces
-			// meet behind both (outer miter). Otherwise the bands differ in thickness
-			// and the faces only meet behind the thicker band's cap, as far off as the
-			// join is near straight: the thinner face stops at that cap instead.
-			const bool miter = wedge.convex ? (alongLeft >= 0 && alongRight >= 0) : (alongLeft <= 0 && alongRight <= 0);
-			if (!miter) {
-				wedge.join			 = WedgeJoin::Step;
-				wedge.thickerOnRight = wedge.convex ? (alongRight < 0) : (alongRight > 0);
-				continue;
-			}
+			// Left edge of segL: passes through vertex + leftOffset(dirL, hL).
+			// Right edge of segR: passes through vertex - leftOffset(dirR, hR).
+			const Vec2i64 pL = offsetPoint(vertex, dirL, hL);
+			const Vec2i64 pR = offsetPoint(vertex, dirR, -hR);
 
 			double tParam = 0.0;
-			lineIntersectParam(faceL, dirL, faceR, dirR, tParam);
-			wedge.join	= WedgeJoin::Miter;
-			wedge.point = roundVec(static_cast<double>(faceL.x) + tParam * static_cast<double>(dirL.x),
-								   static_cast<double>(faceL.y) + tParam * static_cast<double>(dirL.y));
-			if (wedge.convex) {
-				// The inner faces overlap up to the apex; each band cuts back to it.
-				trims[k]	 = std::max(trims[k], reachAlong(wedge.point, dirL));
-				trims[right] = std::max(trims[right], reachAlong(wedge.point, dirR));
+			Vec2i64 apexPoint;
+			bool	beveled = false;
+
+			if (lineIntersectParam(pL, dirL, pR, dirR, tParam)) {
+				apexPoint = roundVec(static_cast<double>(pL.x) + tParam * static_cast<double>(dirL.x),
+									 static_cast<double>(pL.y) + tParam * static_cast<double>(dirL.y));
+				// Miter length = distance from vertex to apex; cap it.
+				const double miterLen	= length(apexPoint - vertex);
+				const double maxHalf	= std::max(hL, hR);
+				const double miterBound = miterLimit * maxHalf;
+				if (maxHalf > 0.0 && miterLen > miterBound) {
+					beveled = true;
+				}
 			} else {
-				wedge.beveled = maxHalf > 0.0 && length(wedge.point - vertex) > miterLimit * maxHalf;
-			}
-		}
-
-		// A step's two bands: the thinner one, whose face meets the thicker one's cap
-		// line, and the side of each band that faces the wedge.
-		struct StepBands {
-			std::size_t thin	  = 0;
-			std::size_t thick	  = 0;
-			double		thinSide  = 1.0;
-			double		thickSide = -1.0;
-		};
-		auto stepBands = [&](std::size_t k) {
-			const bool thickerOnRight = wedges[k].thickerOnRight;
-			const std::size_t right	  = (k + 1) % degree;
-			return StepBands{thickerOnRight ? k : right, thickerOnRight ? right : k, thickerOnRight ? 1.0 : -1.0,
-							 thickerOnRight ? -1.0 : 1.0};
-		};
-
-		// Whether a point is clear of the thicker band: on or behind the line of its
-		// rounded cap corners, never a fraction of a mm into the band.
-		auto clearOfCap = [&](const Vec2i64& p, std::size_t thick) {
-			const Vec2i64 capRight = corner(thick, -1.0);
-			const Vec2i64 capEdge  = corner(thick, 1.0) - capRight;
-			return cross(capEdge, p - capRight).sign() != cross(capEdge, dirs[thick]).sign();
-		};
-
-		// The unrounded step point: the thinner face, crossing the thicker cap line.
-		struct RealPoint {
-			double x = 0.0;
-			double y = 0.0;
-		};
-		auto stepPoint = [&](std::size_t k) -> RealPoint {
-			const StepBands bands = stepBands(k);
-			const Vec2i64	face  = offsetPoint(vertex, dirs[bands.thin], bands.thinSide * halves[bands.thin]);
-			const Vec2i64	cap	  = advance(vertex, dirs[bands.thick], static_cast<double>(trims[bands.thick]));
-			double			tParam = 0.0;
-			if (!lineIntersectParam(face, dirs[bands.thin], cap, leftNormalUnscaled(dirs[bands.thick]), tParam)) {
-				const Vec2i64 thickCorner = corner(bands.thick, bands.thickSide);
-				return {static_cast<double>(thickCorner.x), static_cast<double>(thickCorner.y)};
-			}
-			return {static_cast<double>(face.x) + tParam * static_cast<double>(dirs[bands.thin].x),
-					static_cast<double>(face.y) + tParam * static_cast<double>(dirs[bands.thin].y)};
-		};
-
-		// The cutback a converging step asks of the thinner band: up to the step
-		// point, rounded up, and further while its rounded corner still pokes into
-		// the thicker band.
-		auto stepReach = [&](std::size_t k) -> std::int64_t {
-			const StepBands bands = stepBands(k);
-			const RealPoint point = stepPoint(k);
-			const Vec2i64&	dir	  = dirs[bands.thin];
-			const double	proj  = ((point.x - static_cast<double>(vertex.x)) * static_cast<double>(dir.x) +
-								 (point.y - static_cast<double>(vertex.y)) * static_cast<double>(dir.y)) /
-								length(dir);
-			std::int64_t reach = proj > 0.0 ? static_cast<std::int64_t>(std::ceil(proj)) : 0;
-			for (int nudge = 0; nudge < 2 && !clearOfCap(cornerAt(bands.thin, reach, bands.thinSide), bands.thick); ++nudge) {
-				++reach;
-			}
-			return reach;
-		};
-
-		// A converging step cuts the thinner band back to the thicker one's cap. The
-		// cap moves when the thicker band is cut by another wedge, so settle until
-		// no cutback grows (each pass can only grow one, at most degree passes).
-		for (std::size_t pass = 0; pass < degree; ++pass) {
-			bool grew = false;
-			for (std::size_t k = 0; k < degree; ++k) {
-				const Wedge& wedge = wedges[k];
-				if (wedge.join != WedgeJoin::Step || !wedge.convex) {
-					continue;
-				}
-				const std::size_t  thin	 = stepBands(k).thin;
-				const std::int64_t reach = stepReach(k);
-				if (reach > trims[thin]) {
-					trims[thin] = reach;
-					grew		= true;
-				}
-			}
-			if (!grew) {
-				break;
-			}
-		}
-
-		// Final step points against the settled cutbacks. Where the step set the
-		// thinner band's cutback, use that band's own corner so the two weld exactly;
-		// otherwise round to the neighbouring mm point clear of the thicker band.
-		for (std::size_t k = 0; k < degree; ++k) {
-			Wedge& wedge = wedges[k];
-			if (wedge.join != WedgeJoin::Step) {
+				// Parallel facing edges (straight 180-deg continuation): no apex.
+				// Leave apex at the band-corner level; trims stay 0 for this wedge.
+				beveled	  = false;
+				apexPoint = vertex; // sentinel; not used when both trims stay 0
+				apex[k]	  = {apexPoint, false};
 				continue;
 			}
-			const StepBands bands = stepBands(k);
-			if (wedge.convex && stepReach(k) == trims[bands.thin]) {
-				wedge.point = corner(bands.thin, bands.thinSide);
+
+			// A near-straight join of two thicknesses is a step, not a miter. Off
+			// straight by angle d the faces meet sqrt(hL^2 + hR^2 - 2 hL hR cos d) /
+			// sin d from the vertex: about h with equal halves, but with unequal ones
+			// it grows without bound as d shrinks, and the trims to that apex overrun
+			// the segments a few degrees off straight (exactly straight has no apex
+			// and is a step already). The cut is the miter bound itself, on the same
+			// rounded apex the bevel test uses: a wedge whose apex is inside it is
+			// mitered as before, one past it would put the trimmed corners past the
+			// bound every other junction vertex keeps. Bands pointing within 90
+			// degrees of each other never qualify. At legal corners (30 degrees and
+			// up) that leaves a near-straight pair of different thicknesses, within
+			// about 7.2 degrees of straight for halves 75/150, 4.8 for 100/150 and
+			// 3.6 for 75/100, and an equal pair a hair off straight, whose faces
+			// nearly coincide so that rounding their offsets throws the apex far off.
+			// Right at the cut the two wedges of a degree-2 join can decide
+			// differently; either way the shape is valid.
+			if (beveled && dot(dirL, dirR).sign() < 0) {
+				apex[k] = {vertex, false};
+				steps.push_back(k);
 				continue;
 			}
-			const RealPoint point		 = stepPoint(k);
-			double			bestDistance = -1.0;
-			wedge.point					 = roundVec(point.x, point.y);
-			for (const double x : {std::floor(point.x), std::ceil(point.x)}) {
-				for (const double y : {std::floor(point.y), std::ceil(point.y)}) {
-					const Vec2i64 candidate{static_cast<std::int64_t>(x), static_cast<std::int64_t>(y)};
-					const double  distance = (x - point.x) * (x - point.x) + (y - point.y) * (y - point.y);
-					if (clearOfCap(candidate, bands.thick) && (bestDistance < 0.0 || distance < bestDistance)) {
-						wedge.point	 = candidate;
-						bestDistance = distance;
-					}
+
+			apex[k] = {apexPoint, beveled};
+
+			// The cutback each segment needs is the projection of this wedge's apex
+			// onto its outgoing direction: that is how far the inner faces overlap,
+			// and it is the same whether the wedge is mitered or beveled. Beveling
+			// only changes the OUTER fill (the far apex is dropped and the two
+			// corners are joined by a straight edge), not the trim. A negative
+			// projection means the apex is on the far side of the vertex (the outer,
+			// reflex wedge) and contributes no trim.
+			auto projOnto = [&](const Vec2i64& dir) -> std::int64_t {
+				const double len = length(dir);
+				if (len == 0.0) {
+					return 0;
 				}
-			}
+				const double proj = (static_cast<double>(apexPoint.x - vertex.x) * static_cast<double>(dir.x) +
+									 static_cast<double>(apexPoint.y - vertex.y) * static_cast<double>(dir.y)) /
+									len;
+				return proj > 0.0 ? std::llround(proj) : 0;
+			};
+			trimByLocal[li] = std::max(trimByLocal[li], projOnto(dirL));
+			trimByLocal[ri] = std::max(trimByLocal[ri], projOnto(dirR));
 		}
 
-		// The polygon, walked CCW about the vertex: each band's trimmed cap (shared
-		// with the band, so a seam, not outline), then the wedge's join to the next
-		// band. A step stands in for the thicker band's corner on its side, so the
-		// polygon covers only the part of that cap the thinner band meets.
-		auto rightPoint = [&](std::size_t k) {
-			const Wedge& before = wedges[(k + degree - 1) % degree];
-			return (before.join == WedgeJoin::Step && before.thickerOnRight) ? before.point : corner(k, -1.0);
-		};
-		auto leftPoint = [&](std::size_t k) {
-			const Wedge& after = wedges[k];
-			return (after.join == WedgeJoin::Step && !after.thickerOnRight) ? after.point : corner(k, 1.0);
-		};
-		auto outlineEdge = [&](const Vec2i64& from, const Vec2i64& to, std::size_t k) {
-			if (from != to) {
-				result.outline.push_back({from, to, incidents[order[k]].index});
-			}
-		};
+		// A step has no apex and asks no trim of its own, like a parallel wedge. It
+		// leaves the thicker band's cap where the other wedges put it and cuts the
+		// thinner band (of an equal pair, the one whose right face borders the
+		// step) back only until its corner facing the step is strictly in
+		// front of that cap's line (exact side test on the rounded points, so the
+		// two never overlap, and the corner never sits on the polygon's edge along
+		// the cap). The polygon closes the step with a straight edge from that corner
+		// out to the thicker band's corner. The corner moves away from the thicker
+		// band as the trim grows, the two pointing more than 90 degrees apart, so
+		// the loop ends.
+		for (const std::size_t k : steps) {
+			const std::size_t left		 = order[k];
+			const std::size_t right		 = order[(k + 1) % degree];
+			const bool		  leftIsThin = incidents[left].halfThicknessMm < incidents[right].halfThicknessMm;
+			const std::size_t thin		 = leftIsThin ? left : right;
+			const std::size_t thick		 = leftIsThin ? right : left;
+			const double	  thinFace	 = static_cast<double>(incidents[thin].halfThicknessMm) * (leftIsThin ? 1.0 : -1.0);
+			const double	  thickHalf	 = static_cast<double>(incidents[thick].halfThicknessMm);
+			const Vec2i64	  thinDir	 = incidents[thin].direction - vertex;
+			const Vec2i64	  thickDir	 = incidents[thick].direction - vertex;
 
-		// A straight run of two has no area to fill: only its steps are outline.
-		const bool straightRun = degree == 2 && cross(dirs[0], dirs[1]).sign() == 0;
+			const Vec2i64 thickBase = advance(vertex, thickDir, static_cast<double>(trimByLocal[thick]));
+			const Vec2i64 capRight	= offsetPoint(thickBase, thickDir, -thickHalf);
+			const Vec2i64 capEdge	= offsetPoint(thickBase, thickDir, thickHalf) - capRight;
+			const int	  thickSide = cross(capEdge, thickDir).sign();
+			auto		  clearOfCap = [&](std::int64_t trim) {
+				 const Vec2i64 corner = offsetPoint(advance(vertex, thinDir, static_cast<double>(trim)), thinDir, thinFace);
+				 return cross(capEdge, corner - capRight).sign() == -thickSide;
+			};
 
-		Ring polygon;
-		auto append = [&](const Vec2i64& p) {
-			if (polygon.empty() || polygon.back() != p) {
-				polygon.push_back(p);
+			std::int64_t trim = trimByLocal[thin];
+			if (clearOfCap(trim)) {
+				continue;
 			}
-		};
+			double tParam = 0.0;
+			if (lineIntersectParam(offsetPoint(vertex, thinDir, thinFace), thinDir, capRight, capEdge, tParam)) {
+				trim = std::max(trim, static_cast<std::int64_t>(std::ceil(tParam * length(thinDir))));
+			}
+			while (!clearOfCap(trim)) {
+				++trim;
+			}
+			trimByLocal[thin] = trim;
+		}
+
+		// Degree-2 straight continuation: both trims zero and the single real wedge
+		// had no apex (parallel edges). No junction polygon needed; bands abut.
+		bool anyTrim = false;
+		for (std::int64_t t : trimByLocal) {
+			anyTrim = anyTrim || (t > 0);
+		}
+		if (degree == 2 && !anyTrim) {
+			for (std::size_t i = 0; i < degree; ++i) {
+				result.trims.push_back({incidents[i].index, 0});
+			}
+			return result; // empty polygon
+		}
+
+		// Build the junction polygon as a star polygon about `vertex`. The fill
+		// region is visible from the junction vertex (every band emanates from it),
+		// so its boundary points sorted by angle around the vertex form a simple
+		// ring. Boundary points are each segment's two EXACT trimmed near-corners
+		// (the same rounded points the trimmed bands use, so shared edges coincide
+		// verbatim) plus each non-beveled wedge apex (the outer/inner miter point).
+		// Beveled wedges contribute no apex: the straight edge between the two
+		// neighboring corners is the squared-off bevel.
+		std::vector<Vec2i64> pts;
+		pts.reserve(degree * 3);
 		for (std::size_t k = 0; k < degree; ++k) {
-			const std::size_t right = (k + 1) % degree;
-			const Wedge&	  wedge = wedges[k];
-			const Vec2i64	  from	= leftPoint(k);
-			const Vec2i64	  to	= rightPoint(right);
-			append(rightPoint(k));
-			append(from);
-			switch (wedge.join) {
-				case WedgeJoin::Straight:
-					if (!straightRun) {
-						outlineEdge(from, to, k);
-					}
-					break;
-				case WedgeJoin::Miter:
-					if (wedge.convex || !wedge.beveled) {
-						append(wedge.point);
-						outlineEdge(from, wedge.point, k);
-						outlineEdge(wedge.point, to, right);
-					} else {
-						outlineEdge(from, to, k);
-					}
-					break;
-				case WedgeJoin::Step: {
-					const std::size_t thin	= wedge.thickerOnRight ? k : right;
-					const std::size_t thick = wedge.thickerOnRight ? right : k;
-					append(wedge.point);
-					outlineEdge(from, to, thin);
-					outlineEdge(wedge.point, corner(thick, wedge.thickerOnRight ? -1.0 : 1.0), thick);
-					break;
-				}
+			const std::size_t	   localIdx = order[k];
+			const IncidentSegment& seg		= incidents[localIdx];
+			const Vec2i64		   dir		= seg.direction - vertex;
+			const double		   h		= static_cast<double>(seg.halfThicknessMm);
+			const std::int64_t	   trim		= trimByLocal[localIdx];
+
+			const Vec2i64 base	= advance(vertex, dir, static_cast<double>(trim));
+			pts.push_back(offsetPoint(base, dir, -h));
+			pts.push_back(offsetPoint(base, dir, h));
+
+			const WedgeApex& w = apex[k];
+			if (!w.beveled && !(w.point == vertex)) {
+				pts.push_back(w.point);
 			}
 		}
-		if (polygon.size() >= 2 && polygon.front() == polygon.back()) {
-			polygon.pop_back();
+
+		// Order boundary points CCW about the vertex with the exact angleLess
+		// comparator (no atan2, deterministic). Points sharing a ray from the
+		// vertex (equal angle) tie-break on exact squared distance then on the
+		// point itself, so the comparator is a strict total order: std::sort then
+		// never permutes collinear points unpredictably or yields a degenerate,
+		// self-touching star. Duplicate points compare equal and are collapsed by
+		// the dedup pass below.
+		std::sort(pts.begin(), pts.end(), [&](const Vec2i64& l, const Vec2i64& r) {
+			const Vec2i64 dl = l - vertex;
+			const Vec2i64 dr = r - vertex;
+			if (angleLess(dl, dr)) {
+				return true;
+			}
+			if (angleLess(dr, dl)) {
+				return false;
+			}
+			const Int128 distL = dot(dl, dl);
+			const Int128 distR = dot(dr, dr);
+			if (distL != distR) {
+				return distL < distR;
+			}
+			return l < r; // exact lexicographic final tiebreak
+		});
+		Ring poly;
+		poly.reserve(pts.size());
+		for (const Vec2i64& p : pts) {
+			if (poly.empty() || !(poly.back() == p)) {
+				poly.push_back(p);
+			}
 		}
-		if (!straightRun && polygon.size() >= 3 && signedAreaDoubled(polygon).sign() != 0) {
-			result.polygon = std::move(polygon);
+		if (poly.size() >= 2 && poly.front() == poly.back()) {
+			poly.pop_back();
 		}
 
-		std::vector<std::int64_t> trimByLocal(degree, 0);
-		for (std::size_t k = 0; k < degree; ++k) {
-			trimByLocal[order[k]] = trims[k];
-		}
+		result.polygon = poly;
 		for (std::size_t i = 0; i < degree; ++i) {
 			result.trims.push_back({incidents[i].index, trimByLocal[i]});
 		}
@@ -617,28 +558,281 @@ namespace geometry {
 			return OffsetStatus::Ok;
 		}
 
-		// The spans of a centerline of `segLength` mm left solid between `gaps`, as
-		// [from, to] mm from the segment's `a` end. Gaps may overlap or run past
-		// either end.
-		std::vector<std::pair<double, double>> openRuns(std::vector<WallGap> gaps, double segLength) {
-			std::sort(gaps.begin(), gaps.end(), [](const WallGap& l, const WallGap& r) { return l.fromMm < r.fromMm; });
-			std::vector<std::pair<double, double>> runs;
-			double								   solidFrom = 0.0;
+		// How far apart two rings meeting at a junction may put what is one point,
+		// or a point on the other's edge. Shared edges coincide exactly except where
+		// simplification dropped a band corner from a junction polygon (it stays
+		// within kDefaultSimplifyEpsMm of the kept edge), a thinner band's cap lies
+		// along a thicker one's, or the two band corners cut back to one miter apex
+		// each round about a millimetre from it, in different directions.
+		constexpr std::int64_t kSeamToleranceMm = 3;
+
+		// The shortest opening or run of wall between openings that is kept: twice
+		// the seam tolerance, so a slot or a stub is never close enough to its
+		// neighbour for the outline to fold it shut, and a few millimetres of
+		// either is not a wall feature anyway.
+		constexpr std::int64_t kMinPieceFeatureMm = 2 * kSeamToleranceMm;
+
+		// The cutbacks {at a, at b} of each solid run of a segment's trimmed band
+		// between its gaps, in order along the segment. A gap opening less than
+		// kMinPieceFeatureMm of the trimmed band is ignored, and a run shorter than
+		// that beside a gap is dropped. Worked from the segment's lexicographically
+		// smaller endpoint, with a distance from the other end taken as the rounded
+		// remainder of the length, so listing the segment either way round gives the
+		// same integer cutbacks and, through trimmedBand, the same corners.
+		std::vector<std::pair<std::int64_t, std::int64_t>> solidRuns(const WallSegment& segment, std::int64_t trimAtA,
+																	  std::int64_t trimAtB) {
+			const double segmentLength = length(segment.b - segment.a);
+			const bool	 fromA		   = !(segment.b < segment.a);
+			auto		 fromOtherEnd  = [&](std::int64_t distance) {
+				  return std::llround(segmentLength - static_cast<double>(distance));
+			};
+
+			std::vector<WallGap> gaps;
+			gaps.reserve(segment.gaps.size());
+			for (const WallGap& gap : segment.gaps) {
+				gaps.push_back(fromA ? gap : WallGap{fromOtherEnd(gap.toMm), fromOtherEnd(gap.fromMm)});
+			}
+			std::sort(gaps.begin(), gaps.end(), [](const WallGap& l, const WallGap& r) {
+				return l.fromMm != r.fromMm ? l.fromMm < r.fromMm : l.toMm < r.toMm;
+			});
+
+			const std::int64_t trimNear = fromA ? trimAtA : trimAtB;
+			const std::int64_t trimFar	= fromA ? trimAtB : trimAtA;
+			const double	   bandEnd	= segmentLength - static_cast<double>(trimFar);
+			const double	   minimum	= static_cast<double>(kMinPieceFeatureMm);
+			auto			   longEnough = [&](std::int64_t cutNear, std::int64_t cutFar) {
+				  return segmentLength - static_cast<double>(cutNear + cutFar) >= minimum;
+			};
+
+			std::vector<std::pair<std::int64_t, std::int64_t>> runs;
+			std::int64_t										solidFrom = trimNear;
 			for (const WallGap& gap : gaps) {
-				const double gapFrom = std::clamp(static_cast<double>(gap.fromMm), 0.0, segLength);
-				const double gapTo	 = std::clamp(static_cast<double>(gap.toMm), 0.0, segLength);
-				if (gapTo <= gapFrom) {
+				const double opening = std::min(static_cast<double>(gap.toMm), bandEnd) -
+									   static_cast<double>(std::max(gap.fromMm, trimNear));
+				if (opening < minimum) {
 					continue;
 				}
-				if (gapFrom > solidFrom) {
-					runs.emplace_back(solidFrom, gapFrom);
+				if (gap.fromMm > solidFrom) {
+					const std::int64_t cutFar = std::max(trimFar, fromOtherEnd(gap.fromMm));
+					if (longEnough(solidFrom, cutFar)) {
+						runs.emplace_back(solidFrom, cutFar);
+					}
 				}
-				solidFrom = std::max(solidFrom, gapTo);
+				solidFrom = std::max(solidFrom, gap.toMm);
 			}
-			if (solidFrom < segLength) {
-				runs.emplace_back(solidFrom, segLength);
+			if (solidFrom == trimNear || longEnough(solidFrom, trimFar)) {
+				runs.emplace_back(solidFrom, trimFar);
+			}
+			if (!fromA) {
+				for (auto& [cutNear, cutFar] : runs) {
+					std::swap(cutNear, cutFar);
+				}
 			}
 			return runs;
+		}
+
+		// A returned ring taking part in the outline: its vertices (snapped where
+		// rings meet), the segment each edge belongs to, and the vertices of
+		// neighbouring rings that lie on each edge.
+		struct OutlineTile {
+			Ring							  points;
+			std::vector<std::size_t>		  edgeSegment;
+			std::vector<std::vector<Vec2i64>> splits;
+		};
+
+		// Vertices of the rings meeting at one junction that lie within the
+		// tolerance of each other (chained) all move to the lowest of them, so a
+		// corner rounded a millimetre differently in two rings is one point.
+		void snapTogether(std::vector<OutlineTile>& tiles, const std::vector<std::size_t>& meeting) {
+			std::vector<std::pair<std::size_t, std::size_t>> corners;
+			std::vector<Vec2i64>							 points;
+			for (const std::size_t tile : meeting) {
+				for (std::size_t v = 0; v < tiles[tile].points.size(); ++v) {
+					corners.emplace_back(tile, v);
+					points.push_back(tiles[tile].points[v]);
+				}
+			}
+			std::vector<std::size_t> root(points.size());
+			for (std::size_t i = 0; i < root.size(); ++i) {
+				root[i] = i;
+			}
+			auto find = [&](std::size_t i) {
+				while (root[i] != i) {
+					root[i] = root[root[i]];
+					i		= root[i];
+				}
+				return i;
+			};
+			for (std::size_t i = 0; i < points.size(); ++i) {
+				for (std::size_t k = i + 1; k < points.size(); ++k) {
+					const Vec2i64 apart = points[k] - points[i];
+					if (!(Int128(kSeamToleranceMm * kSeamToleranceMm) < dot(apart, apart))) {
+						root[find(k)] = find(i);
+					}
+				}
+			}
+			std::map<std::size_t, Vec2i64> lowest;
+			for (std::size_t i = 0; i < points.size(); ++i) {
+				const auto [entry, added] = lowest.emplace(find(i), points[i]);
+				if (!added && points[i] < entry->second) {
+					entry->second = points[i];
+				}
+			}
+			for (std::size_t i = 0; i < points.size(); ++i) {
+				tiles[corners[i].first].points[corners[i].second] = lowest[find(i)];
+			}
+		}
+
+		void collectSplits(OutlineTile& tile, const Ring& other) {
+			const Ring&		  ring = tile.points;
+			const std::size_t n	   = ring.size();
+			for (std::size_t e = 0; e < n; ++e) {
+				const Vec2i64& from	 = ring[e];
+				const Vec2i64& to	 = ring[(e + 1) % n];
+				const Vec2i64  along = to - from;
+				for (const Vec2i64& point : other) {
+					if (from == to || point == from || point == to) {
+						continue;
+					}
+					const Int128 reach = dot(point - from, along);
+					if (reach.sign() <= 0 || !(reach < dot(along, along))) {
+						continue;
+					}
+					if (withinDistanceOfSegment(point, from, to, kSeamToleranceMm)) {
+						tile.splits[e].push_back(point);
+					}
+				}
+			}
+		}
+
+		// The incident segment a junction polygon edge belongs to: the one whose
+		// direction is nearest the edge's midpoint as seen from the vertex.
+		std::size_t nearestIncident(const Vec2i64& vertex, const Vec2i64& from, const Vec2i64& to,
+									const std::vector<std::pair<Vec2i64, std::size_t>>& directions) {
+			const Vec2i64 midpointTwice = from + to - vertex - vertex;
+			std::size_t	  best			= 0;
+			double		  bestScore		= 0.0;
+			for (std::size_t i = 0; i < directions.size(); ++i) {
+				const Vec2i64& direction = directions[i].first;
+				const double   score	 = dot(midpointTwice, direction).toDouble() / length(direction);
+				const bool	   better	 = i == 0 || score > bestScore ||
+									   (score == bestScore && angleLess(direction, directions[best].first));
+				if (better) {
+					best	  = i;
+					bestScore = score;
+				}
+			}
+			return directions[best].second;
+		}
+
+		// Clockwise turn in (0, 2 pi] from `back` (the incoming edge reversed) to
+		// `out`; a turn straight back counts as a full turn.
+		double clockwiseTurn(const Vec2i64& back, const Vec2i64& out) {
+			constexpr double kFullTurn		  = 6.283185307179586;
+			const double	 counterClockwise = std::atan2(cross(back, out).toDouble(), dot(back, out).toDouble());
+			const double	 turn			  = counterClockwise > 0.0 ? kFullTurn - counterClockwise : -counterClockwise;
+			return turn > 0.0 ? turn : kFullTurn;
+		}
+
+		// The boundary of the union of the tiles: every edge split at the vertices
+		// collected on it, edges snapped to nothing dropped, the edges two tiles
+		// share (one in each direction) cancelled, and the rest walked into closed
+		// loops. Each loop starts at the smallest remaining edge; where a loop passes
+		// a vertex twice it takes the sharpest clockwise turn, which keeps to the
+		// region on its left.
+		std::vector<OutlineEdge> outlineLoops(const std::vector<OutlineTile>& tiles, const std::vector<WallSegment>& segments) {
+			std::vector<OutlineEdge> edges;
+			for (const OutlineTile& tile : tiles) {
+				const Ring&		  ring = tile.points;
+				const std::size_t n	   = ring.size();
+				for (std::size_t e = 0; e < n; ++e) {
+					const Vec2i64& from	   = ring[e];
+					const Vec2i64  along   = ring[(e + 1) % n] - from;
+					if (along == Vec2i64{0, 0}) {
+						continue;
+					}
+					const std::size_t segment = tile.edgeSegment[e];
+					std::vector<Vec2i64> points = tile.splits[e];
+					std::sort(points.begin(), points.end(), [&](const Vec2i64& l, const Vec2i64& r) {
+						const Int128 reachL = dot(l - from, along);
+						const Int128 reachR = dot(r - from, along);
+						return reachL != reachR ? reachL < reachR : l < r;
+					});
+					points.erase(std::unique(points.begin(), points.end()), points.end());
+					points.push_back(ring[(e + 1) % n]);
+					Vec2i64 start = from;
+					for (const Vec2i64& point : points) {
+						edges.push_back({start, point, segment});
+						start = point;
+					}
+				}
+			}
+
+			auto byEnds = [](const OutlineEdge& l, const OutlineEdge& r) {
+				return l.from != r.from ? l.from < r.from : l.to < r.to;
+			};
+			// Where two edges coincide, which one cancels decides the segment the
+			// survivor belongs to; order them by their segments' endpoints, not by
+			// index, so that does not depend on how the segments were listed.
+			auto segmentEnds = [&](std::size_t index) {
+				const WallSegment& seg = segments[index];
+				return seg.a < seg.b ? std::pair{seg.a, seg.b} : std::pair{seg.b, seg.a};
+			};
+			std::sort(edges.begin(), edges.end(), [&](const OutlineEdge& l, const OutlineEdge& r) {
+				return byEnds(l, r) || (!byEnds(r, l) && segmentEnds(l.index) < segmentEnds(r.index));
+			});
+			std::vector<std::uint8_t> cancelled(edges.size(), 0);
+			for (std::size_t i = 0; i < edges.size(); ++i) {
+				if (cancelled[i] != 0) {
+					continue;
+				}
+				const OutlineEdge reverse{edges[i].to, edges[i].from};
+				for (auto match = std::lower_bound(edges.begin(), edges.end(), reverse, byEnds);
+					 match != edges.end() && match->from == reverse.from && match->to == reverse.to; ++match) {
+					const std::size_t j = static_cast<std::size_t>(match - edges.begin());
+					if (cancelled[j] == 0) {
+						cancelled[i] = 1;
+						cancelled[j] = 1;
+						break;
+					}
+				}
+			}
+			std::vector<OutlineEdge> remaining;
+			for (std::size_t i = 0; i < edges.size(); ++i) {
+				if (cancelled[i] == 0) {
+					remaining.push_back(edges[i]);
+				}
+			}
+
+			std::vector<OutlineEdge>  loops;
+			std::vector<std::uint8_t> used(remaining.size(), 0);
+			loops.reserve(remaining.size());
+			for (std::size_t start = 0; start < remaining.size(); ++start) {
+				std::size_t current = start;
+				while (used[current] == 0) {
+					used[current] = 1;
+					loops.push_back(remaining[current]);
+					const OutlineEdge& edge = remaining[current];
+					if (edge.to == remaining[start].from) {
+						break;
+					}
+					double bestTurn = 0.0;
+					const auto firstOut = std::lower_bound(remaining.begin(), remaining.end(), edge.to,
+														   [](const OutlineEdge& e, const Vec2i64& p) { return e.from < p; });
+					for (std::size_t next = static_cast<std::size_t>(firstOut - remaining.begin());
+						 next < remaining.size() && remaining[next].from == edge.to; ++next) {
+						if (used[next] != 0) {
+							continue;
+						}
+						const double turn = clockwiseTurn(edge.from - edge.to, remaining[next].to - edge.to);
+						if (bestTurn == 0.0 || turn < bestTurn) {
+							bestTurn = turn;
+							current	 = next;
+						}
+					}
+				}
+			}
+			return loops;
 		}
 
 	} // namespace
@@ -668,19 +862,14 @@ namespace geometry {
 			byVertex[segments[i].b].push_back({i, false});
 		}
 
-		// Per segment, the trim distance accumulated at each end, and whether that
-		// end is free (no other segment there), so its cap is outline.
+		// Per segment, the trim distance accumulated at each end.
 		std::vector<std::int64_t> trimA(segCount, 0);
 		std::vector<std::int64_t> trimB(segCount, 0);
-		std::vector<std::uint8_t> freeA(segCount, 0);
-		std::vector<std::uint8_t> freeB(segCount, 0);
+		std::map<Vec2i64, std::size_t> polygonAt; // junction vertex -> index in result.junctions
 
-		// Resolve each junction; collect its polygon and outline and fold trims into
-		// the per-segment per-end accumulators.
+		// Resolve each junction; collect its polygon and fold trims into the
+		// per-segment per-end accumulators.
 		for (const auto& [vertex, incidences] : byVertex) {
-			if (incidences.size() == 1) {
-				(incidences.front().atA ? freeA : freeB)[incidences.front().segIndex] = 1;
-			}
 			std::vector<IncidentSegment> incidents;
 			incidents.reserve(incidences.size());
 			for (std::size_t k = 0; k < incidences.size(); ++k) {
@@ -690,13 +879,13 @@ namespace geometry {
 				incidents.push_back({other, seg.halfThicknessMm, k});
 			}
 
-			const JunctionResolution jr = resolveJunction(vertex, incidents, miterLimit);
-			if (jr.status != OffsetStatus::Ok) {
-				result.status = jr.status;
+			const JunctionResolution resolution = resolveJunction(vertex, incidents, miterLimit);
+			if (resolution.status != OffsetStatus::Ok) {
+				result.status = resolution.status;
 				return result;
 			}
 
-			for (const JunctionTrim& t : jr.trims) {
+			for (const JunctionTrim& t : resolution.trims) {
 				const Incidence& inc = incidences[t.index];
 				if (inc.atA) {
 					trimA[inc.segIndex] = std::max(trimA[inc.segIndex], t.trimMm);
@@ -704,12 +893,9 @@ namespace geometry {
 					trimB[inc.segIndex] = std::max(trimB[inc.segIndex], t.trimMm);
 				}
 			}
-			for (const OutlineEdge& edge : jr.outline) {
-				result.outline.push_back({edge.from, edge.to, incidences[edge.index].segIndex});
-			}
 
-			if (!jr.polygon.empty()) {
-				Ring poly = jr.polygon;
+			if (!resolution.polygon.empty()) {
+				Ring poly = resolution.polygon;
 				simplifyRing(poly, kDefaultSimplifyEpsMm);
 				const OffsetStatus st = validateAndOrient(poly);
 				if (st != OffsetStatus::Ok) {
@@ -721,6 +907,7 @@ namespace geometry {
 				for (const Incidence& inc : incidences) {
 					incidentSegs.push_back(inc.segIndex);
 				}
+				polygonAt[vertex] = result.junctions.size();
 				result.junctions.push_back(std::move(poly));
 				result.junctionSegments.push_back(std::move(incidentSegs));
 			}
@@ -743,17 +930,16 @@ namespace geometry {
 			result.bands[i] = std::move(ring);
 		}
 
-		// Pieces: each band cut at its segment's gaps, with its outline. A piece's
-		// faces are always outline; an end is outline where it opens onto a gap or
-		// is a free end, and a seam where it meets a junction or another band.
+		// Pieces: each trimmed band less its gaps. A run that still makes no valid
+		// ring after rounding is dropped too.
+		constexpr std::size_t kNoTile = static_cast<std::size_t>(-1);
+		std::vector<std::size_t> endTileA(segCount, kNoTile);
+		std::vector<std::size_t> endTileB(segCount, kNoTile);
 		result.pieces.resize(segCount);
 		for (std::size_t i = 0; i < segCount; ++i) {
-			const WallSegment& seg		  = segments[i];
-			const double	   segLength = length(seg.b - seg.a);
-			for (const auto& [runFrom, runTo] : openRuns(seg.gaps, segLength)) {
-				const std::int64_t atA = std::max(trimA[i], std::llround(runFrom));
-				const std::int64_t atB = std::max(trimB[i], std::llround(segLength - runTo));
-				Ring			   ring;
+			const WallSegment& seg = segments[i];
+			for (const auto& [atA, atB] : solidRuns(seg, trimA[i], trimB[i])) {
+				Ring ring;
 				if (!trimmedBand(seg.a, seg.b, seg.halfThicknessMm, atA, atB, ring)) {
 					continue;
 				}
@@ -761,19 +947,68 @@ namespace geometry {
 				if (validateAndOrient(ring) != OffsetStatus::Ok) {
 					continue;
 				}
-				result.pieces[i].push_back(std::move(ring));
-
-				const auto [aLeft, bLeft, bRight, aRight] = bandCorners(seg.a, seg.b, seg.halfThicknessMm, atA, atB);
-				result.outline.push_back({aLeft, bLeft, i});
-				result.outline.push_back({bRight, aRight, i});
-				if (freeA[i] != 0 || atA > trimA[i]) {
-					result.outline.push_back({aRight, aLeft, i});
+				if (atA == trimA[i]) {
+					endTileA[i] = result.pieces[i].size();
 				}
-				if (freeB[i] != 0 || atB > trimB[i]) {
-					result.outline.push_back({bLeft, bRight, i});
+				if (atB == trimB[i]) {
+					endTileB[i] = result.pieces[i].size();
+				}
+				result.pieces[i].push_back(std::move(ring));
+			}
+		}
+
+		// Outline tiles: every piece, then every junction polygon.
+		std::vector<OutlineTile>			  tiles;
+		std::vector<std::vector<std::size_t>> pieceTile(segCount);
+		for (std::size_t i = 0; i < segCount; ++i) {
+			for (const Ring& piece : result.pieces[i]) {
+				pieceTile[i].push_back(tiles.size());
+				tiles.push_back({piece, std::vector<std::size_t>(piece.size(), i), std::vector<std::vector<Vec2i64>>(piece.size())});
+			}
+		}
+		std::vector<std::vector<std::size_t>> meetings;
+		for (const auto& [vertex, incidences] : byVertex) {
+			if (incidences.size() < 2) {
+				continue;
+			}
+			// The rings meeting here: the junction polygon, if any, and each incident
+			// segment's piece that reaches this end. Only these can share an edge.
+			std::vector<std::size_t> meeting;
+			const auto				 polygon = polygonAt.find(vertex);
+			if (polygon != polygonAt.end()) {
+				const Ring& ring = result.junctions[polygon->second];
+				std::vector<std::pair<Vec2i64, std::size_t>> directions;
+				for (const Incidence& inc : incidences) {
+					const WallSegment& seg = segments[inc.segIndex];
+					directions.emplace_back((inc.atA ? seg.b : seg.a) - vertex, inc.segIndex);
+				}
+				OutlineTile tile{ring, {}, std::vector<std::vector<Vec2i64>>(ring.size())};
+				for (std::size_t e = 0; e < ring.size(); ++e) {
+					tile.edgeSegment.push_back(nearestIncident(vertex, ring[e], ring[(e + 1) % ring.size()], directions));
+				}
+				meeting.push_back(tiles.size());
+				tiles.push_back(std::move(tile));
+			}
+			for (const Incidence& inc : incidences) {
+				const std::size_t end = inc.atA ? endTileA[inc.segIndex] : endTileB[inc.segIndex];
+				if (end != kNoTile) {
+					meeting.push_back(pieceTile[inc.segIndex][end]);
+				}
+			}
+			snapTogether(tiles, meeting);
+			meetings.push_back(std::move(meeting));
+		}
+		// A ring's own vertices split its edges too: a corner a step leaves within
+		// the tolerance of the polygon's edge along the thicker cap has to split that
+		// edge as it splits the band's cap, or the two would not cancel.
+		for (const std::vector<std::size_t>& meeting : meetings) {
+			for (const std::size_t tile : meeting) {
+				for (const std::size_t other : meeting) {
+					collectSplits(tiles[tile], tiles[other].points);
 				}
 			}
 		}
+		result.outline = outlineLoops(tiles, segments);
 
 		return result;
 	}
