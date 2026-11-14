@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 
 namespace world_sim {
 
@@ -81,51 +82,36 @@ namespace world_sim {
 			return out;
 		}
 
-		// Segment length in mm (its two vertex positions), or 0 if either vertex is
-		// missing. The opening's clear width maps to a centerline half-extent of
-		// (widthMm/2) / lengthMm, so a zero-length segment yields no intervals.
-		double segmentLengthMm(const ec::ConstructionWorld& world, const ec::WallSegment& seg) {
-			const ec::Vertex* v0 = world.getVertex(seg.v0);
-			const ec::Vertex* v1 = world.getVertex(seg.v1);
-			if (v0 == nullptr || v1 == nullptr) {
-				return 0.0;
-			}
-			const double dx = static_cast<double>(v1->pos.x - v0->pos.x);
-			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
-			return std::sqrt(dx * dx + dy * dy);
+		// Half the segment's thickness preset in mm, or 0 when the preset is unknown.
+		std::int64_t halfThicknessMm(const ec::WallSegment& seg) {
+			const auto* preset = ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
+			return preset != nullptr ? preset->halfThicknessMm : 0;
 		}
 
-		// The [t0,t1] centerline intervals of a segment's openings (t in [0,1]),
-		// sorted ascending and clamped to [0,1]. An opening at param t with clear
-		// width w on a segment of length L spans [t - (w/2)/L, t + (w/2)/L]. Stable
-		// order (openings() insertion order, then t) keeps the gap render deterministic.
-		std::vector<std::pair<float, float>> openingIntervalsForSegment(const ec::ConstructionWorld& world, ec::SegmentId segmentId) {
-			std::vector<std::pair<float, float>> intervals;
-			const ec::WallSegment*				 seg = world.getSegment(segmentId);
-			if (seg == nullptr) {
-				return intervals;
+		// The centerline spans a segment's openings leave open, in mm from its v0
+		// end: an opening at param t with clear width w on a segment of length L
+		// spans t*L -/+ w/2. The offsetter clamps and merges them.
+		std::vector<geometry::WallGap> openingGaps(const ec::ConstructionWorld& world, const ec::WallSegment& seg) {
+			std::vector<geometry::WallGap> gaps;
+			const ec::Vertex*			   v0 = world.getVertex(seg.v0);
+			const ec::Vertex*			   v1 = world.getVertex(seg.v1);
+			if (v0 == nullptr || v1 == nullptr) {
+				return gaps;
 			}
-			const double lengthMm = segmentLengthMm(world, *seg);
-			if (lengthMm <= 0.0) {
-				return intervals;
-			}
+			const double lengthMm = std::hypot(static_cast<double>(v1->pos.x - v0->pos.x), static_cast<double>(v1->pos.y - v0->pos.y));
 			for (const auto& op : world.openings()) {
-				if (op.segment != segmentId) {
+				if (op.segment != seg.id) {
 					continue;
 				}
 				const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
 				if (type == nullptr || type->widthMm <= 0) {
 					continue;
 				}
-				const float half = static_cast<float>((static_cast<double>(type->widthMm) * 0.5) / lengthMm);
-				const float t0 = std::clamp(op.t - half, 0.0F, 1.0F);
-				const float t1 = std::clamp(op.t + half, 0.0F, 1.0F);
-				if (t1 > t0) {
-					intervals.emplace_back(t0, t1);
-				}
+				const double center = static_cast<double>(op.t) * lengthMm;
+				const double half = static_cast<double>(type->widthMm) * 0.5;
+				gaps.push_back({std::llround(center - half), std::llround(center + half)});
 			}
-			std::sort(intervals.begin(), intervals.end());
-			return intervals;
+			return gaps;
 		}
 
 	} // namespace
@@ -155,10 +141,8 @@ namespace world_sim {
 	void CommittedGeometryCache::rebuild(const construction::ConstructionWorld& world) {
 		foundations_.clear();
 		walls_.clear();
-		junctions_.clear();
 		openings_.clear();
 		fallbackCenterlines_.clear();
-		bandsFailed_ = false;
 
 		const auto& style = ConstructionRegistry::Get().rendering();
 
@@ -212,153 +196,115 @@ namespace world_sim {
 			openings_.push_back(std::move(g));
 		}
 
-		// --- Walls: whole-graph band resolve ---------------------------------
+		// --- Walls: band resolve per connected wall graph ---------------------
 		// Shared integer vertices mean resolveWallBands derives every junction by
-		// exact-endpoint grouping. A malformed segment (missing vertex or
-		// unresolved thickness preset) is SKIPPED rather than fed as a zero-length
-		// placeholder, because resolveWallBands rejects any zero-length segment up
-		// front and would fail the whole graph. offsetToSeg maps offsetter indices
-		// (also used by junctionSegments) back to segments() indices.
-		const auto&						   segs = world.segments();
-		std::vector<geometry::WallSegment> offsetSegs;
-		std::vector<std::size_t>		   offsetToSeg;
-		offsetSegs.reserve(segs.size());
-		offsetToSeg.reserve(segs.size());
+		// exact-endpoint grouping. Each connected graph is resolved on its own, so
+		// a graph the offsetter rejects falls back to centerlines without taking
+		// every other wall in the world with it. A malformed segment (missing
+		// vertex or unresolved thickness preset) is SKIPPED rather than fed as a
+		// zero-length placeholder, which resolveWallBands would reject.
+		const auto&				 segs = world.segments();
+		std::vector<std::size_t> usable;
+		std::vector<std::size_t> graphOf(segs.size(), 0);
+		usable.reserve(segs.size());
 		for (std::size_t i = 0; i < segs.size(); ++i) {
 			const ec::WallSegment& wseg = segs[i];
-			const ec::Vertex*	   v0 = world.getVertex(wseg.v0);
-			const ec::Vertex*	   v1 = world.getVertex(wseg.v1);
-			std::int64_t		   halfThick = 0;
-			if (const auto* preset = ConstructionRegistry::Get().getThicknessPreset(wseg.material, wseg.thicknessPreset)) {
-				halfThick = preset->halfThicknessMm;
+			if (world.getVertex(wseg.v0) != nullptr && world.getVertex(wseg.v1) != nullptr &&
+				halfThicknessMm(wseg) > 0) {
+				graphOf[i] = i;
+				usable.push_back(i);
 			}
-			if (v0 == nullptr || v1 == nullptr || halfThick <= 0) {
-				continue;
+		}
+		auto graphRoot = [&](std::size_t i) {
+			while (graphOf[i] != i) {
+				graphOf[i] = graphOf[graphOf[i]];
+				i		   = graphOf[i];
 			}
-			offsetSegs.push_back({v0->pos, v1->pos, halfThick});
-			offsetToSeg.push_back(i);
+			return i;
+		};
+		std::map<geometry::Vec2i64, std::size_t> segmentAtPosition;
+		for (const std::size_t i : usable) {
+			for (const ec::VertexId vertexId : {segs[i].v0, segs[i].v1}) {
+				const auto [it, inserted] = segmentAtPosition.emplace(world.getVertex(vertexId)->pos, i);
+				if (!inserted) {
+					graphOf[graphRoot(i)] = graphRoot(it->second);
+				}
+			}
+		}
+		std::map<std::size_t, std::vector<std::size_t>> graphs;
+		for (const std::size_t i : usable) {
+			graphs[graphRoot(i)].push_back(i);
 		}
 
-		if (!offsetSegs.empty()) {
+		for (const auto& [root, members] : graphs) {
+			std::vector<geometry::WallSegment> offsetSegs;
+			offsetSegs.reserve(members.size());
+			for (const std::size_t i : members) {
+				const ec::WallSegment& wseg = segs[i];
+				offsetSegs.push_back(
+					{world.getVertex(wseg.v0)->pos, world.getVertex(wseg.v1)->pos, halfThicknessMm(wseg), openingGaps(world, wseg)}
+				);
+			}
+
 			const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
 			if (bands.status != geometry::OffsetStatus::Ok) {
 				// Reject-don't-repair: a degenerate offset means the topology fed it
-				// bad input; cache bare centerlines so the render still shows the
-				// walls exist, never garbage bands. Openings were already cached
-				// above; only the bands and junctions are skipped.
-				bandsFailed_ = true;
-				for (const auto& wseg : segs) {
-					const ec::Vertex* v0 = world.getVertex(wseg.v0);
-					const ec::Vertex* v1 = world.getVertex(wseg.v1);
-					if (v0 == nullptr || v1 == nullptr) {
-						continue;
-					}
-					fallbackCenterlines_.push_back({toWorld(v0->pos), toWorld(v1->pos)});
+				// bad input; show this graph as bare centerlines, never garbage bands.
+				LOG_WARNING(
+					Game,
+					"Wall graph of %zu segment(s) rejected by the band offsetter (status %d), drawn as centerlines",
+					members.size(),
+					static_cast<int>(bands.status)
+				);
+				for (const geometry::WallSegment& seg : offsetSegs) {
+					fallbackCenterlines_.push_back({toWorld(seg.a), toWorld(seg.b)});
 				}
-				return;
+				continue;
 			}
 
-			// Per-segment bands. bands[i] corresponds to offsetSegs[i], i.e.
-			// segs[offsetToSeg[i]].
-			for (std::size_t i = 0; i < bands.bands.size() && i < offsetToSeg.size(); ++i) {
-				const ec::WallSegment& wseg = segs[offsetToSeg[i]];
-				const geometry::Ring&  ring = bands.bands[i];
-				if (ring.size() < 3) {
-					continue;
-				}
-
-				WallBandGeom g;
+			// One geometry per segment: its pieces (the band cut at its openings),
+			// the junctions it owns, and its share of the outline. bands.pieces[k]
+			// and outline/junction indices k refer to members[k].
+			std::vector<WallBandGeom> graphWalls(members.size());
+			for (std::size_t k = 0; k < members.size(); ++k) {
+				const ec::WallSegment& wseg = segs[members[k]];
+				WallBandGeom&		   g = graphWalls[k];
 				g.matColor = materialColor(wseg.material, style.wall.fallbackColor);
 				g.built = (wseg.state == ec::FoundationState::Built);
 				g.entity = wseg.entity;
-
-				// A segment hosting openings can't use the single resolved band: it
-				// must show a gap where each opening sits. Replace the band with solid
-				// sub-bands over the centerline runs between the gaps, computed from
-				// the segment's own v0->v1 centerline. This drops the whole-graph
-				// junction trim on this one segment (square cuts at the gap edges, an
-				// accepted interim approximation); the junction polygons still fill
-				// the corners. Segments with no openings keep the trimmed band.
-				const auto intervals = openingIntervalsForSegment(world, wseg.id);
-				if (intervals.empty()) {
-					g.rings.push_back(dequantizeRing(ring));
-				} else {
-					const ec::Vertex* v0 = world.getVertex(wseg.v0);
-					const ec::Vertex* v1 = world.getVertex(wseg.v1);
-					std::int64_t	  halfThick = 0;
-					if (const auto* preset = ConstructionRegistry::Get().getThicknessPreset(wseg.material, wseg.thicknessPreset)) {
-						halfThick = preset->halfThicknessMm;
-					}
-					if (v0 == nullptr || v1 == nullptr || halfThick <= 0) {
-						continue;
-					}
-					auto lerpMm = [&](float t) -> geometry::Vec2i64 {
-						const double ax = static_cast<double>(v0->pos.x);
-						const double ay = static_cast<double>(v0->pos.y);
-						const double bx = static_cast<double>(v1->pos.x);
-						const double by = static_cast<double>(v1->pos.y);
-						return {
-							static_cast<std::int64_t>(std::llround(ax + (bx - ax) * t)),
-							static_cast<std::int64_t>(std::llround(ay + (by - ay) * t)),
-						};
-					};
-					float runStart = 0.0F;
-					auto  emitRun = [&](float a, float b) {
-						 if (b - a <= 1e-4F) {
-							 return;
-						 }
-						 const geometry::Ring sub = geometry::band(lerpMm(a), lerpMm(b), halfThick);
-						 if (sub.size() < 3) {
-							 return;
-						 }
-						 g.rings.push_back(dequantizeRing(sub));
-					};
-					for (const auto& iv : intervals) {
-						emitRun(runStart, iv.first);
-						runStart = iv.second;
-					}
-					emitRun(runStart, 1.0F);
+				for (const geometry::Ring& piece : bands.pieces[k]) {
+					g.rings.push_back(dequantizeRing(piece));
 				}
+			}
+			for (const geometry::OutlineEdge& edge : bands.outline) {
+				graphWalls[edge.index].outline.push_back({toWorld(edge.from), toWorld(edge.to)});
+			}
 
+			// A junction is filled as part of one incident segment, so it takes that
+			// segment's material and build progress and never a style of its own. A
+			// segment still being built owns it, so a corner reads finished only
+			// when every wall meeting there is.
+			for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
+				const std::vector<std::size_t>& incident = bands.junctionSegments[j];
+				if (incident.empty()) {
+					continue;
+				}
+				std::size_t owner = incident.front();
+				for (const std::size_t k : incident) {
+					if (segs[members[k]].state != ec::FoundationState::Built) {
+						owner = k;
+						break;
+					}
+				}
+				graphWalls[owner].rings.push_back(dequantizeRing(bands.junctions[j]));
+			}
+
+			for (WallBandGeom& g : graphWalls) {
 				if (g.rings.empty()) {
 					continue;
 				}
 				g.aabb = boundsOfRings(g.rings);
 				walls_.push_back(std::move(g));
-			}
-
-			// Junction polygons fill the corner gaps the trimmed bands leave. A
-			// junction reads as built only when it has incident segments and every
-			// one is built (state changes bump the version, so this is safe to bake);
-			// its material is the first incident segment's, so corners read as
-			// continuous material on a finished structure while a blueprint's
-			// corners stay blue.
-			for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
-				const geometry::Ring& ring = bands.junctions[j];
-				if (ring.size() < 3) {
-					continue;
-				}
-				JunctionGeom g;
-				g.ring = dequantizeRing(ring);
-				g.aabb = boundsOf(g.ring);
-				g.built = (j < bands.junctionSegments.size() && !bands.junctionSegments[j].empty());
-				std::string junctionMaterial;
-				if (j < bands.junctionSegments.size()) {
-					for (const std::size_t offIdx : bands.junctionSegments[j]) {
-						if (offIdx >= offsetToSeg.size()) {
-							continue;
-						}
-						const ec::WallSegment& iseg = segs[offsetToSeg[offIdx]];
-						if (junctionMaterial.empty()) {
-							junctionMaterial = iseg.material;
-						}
-						if (iseg.state != ec::FoundationState::Built) {
-							g.built = false;
-						}
-					}
-				}
-				g.matColor = materialColor(junctionMaterial, style.wall.fallbackColor);
-				junctions_.push_back(std::move(g));
 			}
 		}
 	}

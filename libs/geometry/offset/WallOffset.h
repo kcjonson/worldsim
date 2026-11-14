@@ -22,13 +22,31 @@
 
 namespace geometry {
 
+	// A span of a wall's centerline left open (a door or window), in mm from the
+	// segment's `a` end.
+	struct WallGap {
+		std::int64_t fromMm = 0;
+		std::int64_t toMm	= 0;
+	};
+
 	// A wall centerline segment with its per-segment half-thickness. Thickness is
 	// per segment (presets like 0.2 m / 0.4 m -> 100/200 mm half), so two segments
-	// at one junction may differ. `a` and `b` are the centerline endpoints.
+	// at one junction may differ. `a` and `b` are the centerline endpoints. `gaps`
+	// shape only WallBands::pieces and WallBands::outline; `bands` stays whole.
 	struct WallSegment {
-		Vec2i64		 a;
-		Vec2i64		 b;
-		std::int64_t halfThicknessMm = 0;
+		Vec2i64				 a;
+		Vec2i64				 b;
+		std::int64_t		 halfThicknessMm = 0;
+		std::vector<WallGap> gaps;
+	};
+
+	// One edge of the joined wall shape's boundary. `index` names the segment the
+	// edge belongs to (the caller index in a JunctionResolution, the segment index
+	// in WallBands), so a renderer can stroke it in that segment's style.
+	struct OutlineEdge {
+		Vec2i64		from;
+		Vec2i64		to;
+		std::size_t index = 0;
 	};
 
 	// Outcome of a band/junction build. `ok == false` means an input violated the
@@ -81,19 +99,26 @@ namespace geometry {
 		OffsetStatus			  status = OffsetStatus::Ok;
 		Ring					  polygon; // CCW; empty for degree 1 (free end) and degree 2 straight runs
 		std::vector<JunctionTrim> trims;
+		// The junction's share of the wall outline: the polygon's outer edges and
+		// any step along a thicker band's cap. The seams where bands meet the
+		// polygon are left out.
+		std::vector<OutlineEdge> outline;
 	};
 
 	// Resolve a junction. `vertex` is the shared point; `incidents` are its
 	// segments with directions pointing away from `vertex`. Degree handling:
 	//   1: free end, no polygon, no trim (flat cap is the band end itself).
-	//   2 straight (~180 deg): no polygon, no trim; the two bands abut cleanly.
-	//   2 corner: miter wedge within `miterLimit` x half-thickness, else a squared
-	//             bevel (Clipper2 concept, D2). Trims clear the wedge.
-	//   3+: bevel/fan polygon over the incident bands' trimmed corner points.
-	// `miterLimit` is the max miter length as a multiple of the larger half
-	// thickness; beyond it the join squares off. The 30 deg minimum corner angle
-	// (design spec) bounds the natural miter at ~3.9x, so the limit only bites for
-	// pathological-but-permitted inputs.
+	//   2 straight (180 deg): no polygon, no trim; the two bands abut, and a
+	//             thinner band steps out to a thicker one along its cap.
+	//   2+: per wedge between CCW-adjacent bands, the facing band faces meet in a
+	//       miter (a squared bevel on the outside past `miterLimit` x the larger
+	//       half thickness, Clipper2 concept, D2). Where the faces would only meet
+	//       behind a thicker band's cap (mixed thickness, near straight), the
+	//       thinner face stops at that cap instead and the join steps out along
+	//       it, so the step converges on the straight case rather than running
+	//       off to a far miter. Trims clear the inside of each wedge.
+	// The 30 deg minimum corner angle (design spec) bounds the natural miter at
+	// ~3.9x, so the limit only bites for pathological-but-permitted inputs.
 	JunctionResolution resolveJunction(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
 									   double miterLimit);
 
@@ -106,15 +131,24 @@ namespace geometry {
 		// with `junctions`. Lets a renderer style a junction from its own segments
 		// (e.g. built vs blueprint, material) instead of a graph-wide flag.
 		std::vector<std::vector<std::size_t>> junctionSegments;
+		// Per segment, its trimmed band cut at the segment's gaps: just the band
+		// when it has none, nothing when a gap covers it all.
+		std::vector<std::vector<Ring>> pieces;
+		// The boundary of the joined wall shape (pieces plus junctions): band faces,
+		// free-end and gap caps, junction outer edges and steps. No seam where a
+		// band meets a junction or another band.
+		std::vector<OutlineEdge> outline;
 	};
 
 	// Orchestrate band + junction resolution over a list of segments that share
 	// endpoint vertices. Junctions are derived by grouping segments with an equal
 	// endpoint (exact Vec2i64 ==, the whole point of integer quantization).
-	// Every output ring is validated: simple, CCW, non-zero area; any degenerate
-	// result sets a failing status and returns (reject-don't-repair, D4). After
+	// Every band and junction ring is validated: simple, CCW, non-zero area; any
+	// degenerate result sets a failing status and returns (reject-don't-repair,
+	// D4). A junction whose polygon has no area (a straight run) emits none. After
 	// validation each ring is simplified (collinear-vertex collapse, sub-mm
-	// sliver drop) per the Clipper2 post-op concept (D2).
+	// sliver drop) per the Clipper2 post-op concept (D2). A piece too short to
+	// keep between two gaps is dropped, not rejected.
 	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
 
 	// Simplification pass (Clipper2 concept, D2): drop collinear vertices and

@@ -614,6 +614,253 @@ TEST(Junction, IncidentOrderPermutationInvariant) {
 	} while (std::next_permutation(perm.begin(), perm.end()));
 }
 
+// --- mixed thickness through a straight or near-straight join ---------------
+
+namespace {
+
+	bool insideAnyRing(const std::vector<Ring>& rings, const Vec2i64& p) {
+		for (const Ring& r : rings) {
+			if (pointInPolygon(p, r) == PointInPolygon::Inside) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	std::vector<Ring> wallShape(const WallBands& wb) {
+		std::vector<Ring> all;
+		for (const std::vector<Ring>& pieces : wb.pieces) {
+			all.insert(all.end(), pieces.begin(), pieces.end());
+		}
+		all.insert(all.end(), wb.junctions.begin(), wb.junctions.end());
+		return all;
+	}
+
+	double outlineLength(const WallBands& wb) {
+		double total = 0.0;
+		for (const OutlineEdge& e : wb.outline) {
+			total += std::hypot(static_cast<double>(e.to.x - e.from.x), static_cast<double>(e.to.y - e.from.y));
+		}
+		return total;
+	}
+
+	// Every outline edge is on the boundary of the joined shape: a few mm to one
+	// side of its middle is wall, the other side is not. A seam between two
+	// pieces has wall on both sides and fails.
+	void expectOutlineOnBoundary(const WallBands& wb) {
+		const std::vector<Ring> shape = wallShape(wb);
+		for (const OutlineEdge& e : wb.outline) {
+			const double dx	 = static_cast<double>(e.to.x - e.from.x);
+			const double dy	 = static_cast<double>(e.to.y - e.from.y);
+			const double len = std::hypot(dx, dy);
+			ASSERT_GT(len, 0.0);
+			const double  midX = (static_cast<double>(e.from.x) + static_cast<double>(e.to.x)) * 0.5;
+			const double  midY = (static_cast<double>(e.from.y) + static_cast<double>(e.to.y)) * 0.5;
+			const Vec2i64 left{std::llround(midX - dy / len * 4.0), std::llround(midY + dx / len * 4.0)};
+			const Vec2i64 right{std::llround(midX + dy / len * 4.0), std::llround(midY - dx / len * 4.0)};
+			EXPECT_NE(insideAnyRing(shape, left), insideAnyRing(shape, right))
+				<< "edge (" << e.from.x << "," << e.from.y << ")->(" << e.to.x << "," << e.to.y << ") is a seam";
+		}
+	}
+
+} // namespace
+
+TEST(Junction, StraightMixedThicknessStepsWithoutSeam) {
+	// Light (half 75) meets Heavy (half 150) head on. The bands abut with no
+	// polygon and no trim; the outline steps out along the Heavy cap on both
+	// sides and never crosses the joint.
+	std::vector<WallSegment> segs = {
+		{{0, 0}, {1000, 0}, 75},
+		{{1000, 0}, {2000, 0}, 150},
+	};
+	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	EXPECT_TRUE(wb.junctions.empty());
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+	EXPECT_NEAR(totalAreaDoubled(wb.bands), 2.0 * (1000.0 * 150.0 + 1000.0 * 300.0), 1.0);
+	expectOutlineOnBoundary(wb);
+	// Perimeter of the stepped shape: faces 4 * 1000, free caps 150 + 300, two
+	// steps of 75.
+	EXPECT_NEAR(outlineLength(wb), 4000.0 + 450.0 + 150.0, 1.0);
+}
+
+TEST(Junction, NearStraightMixedThicknessStaysLocal) {
+	// A few degrees off straight, Light into Heavy. The facing faces would only
+	// meet metres away behind the Heavy cap; the join must step at the cap
+	// instead of trimming both bands back past their length (which rejected the
+	// whole wall graph).
+	std::vector<WallSegment> segs = {
+		{{0, 0}, {1000, 0}, 75},
+		{{1000, 0}, {2000, 50}, 150},
+	};
+	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok) << "status=" << static_cast<int>(wb.status);
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+	expectOutlineOnBoundary(wb);
+	// Both bands keep nearly all their length: any cutback is a few mm.
+	const double naive = 2.0 * (1000.0 * 150.0 + std::hypot(1000.0, 50.0) * 300.0);
+	const double total = totalAreaDoubled(wb.bands) + totalAreaDoubled(wb.junctions);
+	EXPECT_NEAR(total, naive, 0.01 * naive);
+	EXPECT_NEAR(totalAreaDoubled(wb.bands), naive, 0.01 * naive);
+
+	// The other way round (bending the other side) resolves the same.
+	std::vector<WallSegment> mirrored = {
+		{{0, 0}, {1000, 0}, 75},
+		{{1000, 0}, {2000, -50}, 150},
+	};
+	WallBands other = resolveWallBands(mirrored, kDefaultMiterLimit);
+	ASSERT_EQ(other.status, OffsetStatus::Ok);
+	expectAllRingsValid(other);
+	expectExactPairwiseDisjoint(other);
+	expectOutlineOnBoundary(other);
+}
+
+TEST(Junction, ObtuseMixedThicknessTiles) {
+	// 135 degree bend from Light into Heavy: the faces miss each other on both
+	// sides of the join, so both wedges step at the Heavy cap.
+	std::vector<WallSegment> segs = {
+		{{-1000, 0}, {0, 0}, 75},
+		{{0, 0}, {707, 707}, 150},
+	};
+	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.junctions.size(), 1u);
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+	expectOutlineOnBoundary(wb);
+}
+
+// --- outline of the joined shape ---------------------------------------------
+
+TEST(Outline, RightAngleCornerHasNoSeams) {
+	// The L of RightAngleCornerGolden: the outline is the L's own perimeter, with
+	// the outer corner stroked and no line across either band's end.
+	std::vector<WallSegment> segs = {
+		{{1000, 0}, {0, 0}, 100},
+		{{0, 0}, {0, 1000}, 100},
+	};
+	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(wb);
+	// 1100 + 1100 outer, 900 + 900 inner, two 200 free caps.
+	EXPECT_NEAR(outlineLength(wb), 4400.0, 1.0);
+}
+
+TEST(Outline, TeeCrossAndRoomHaveNoSeams) {
+	std::vector<WallSegment> tee = {
+		{{0, 0}, {1000, 0}, 100},
+		{{0, 0}, {-1000, 0}, 100},
+		{{0, 0}, {0, 1000}, 100},
+	};
+	WallBands teeBands = resolveWallBands(tee, kDefaultMiterLimit);
+	ASSERT_EQ(teeBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(teeBands);
+	// Flat side 2000, two inner runs of 900 each side of the stem, stem faces
+	// 2 * 900, three free caps of 200.
+	EXPECT_NEAR(outlineLength(teeBands), 2000.0 + 1800.0 + 1800.0 + 600.0, 1.0);
+
+	std::vector<WallSegment> cross = {
+		{{0, 0}, {1000, 0}, 120},
+		{{0, 0}, {-1000, 0}, 80},
+		{{0, 0}, {0, 1000}, 120},
+		{{0, 0}, {0, -1000}, 80},
+	};
+	WallBands crossBands = resolveWallBands(cross, kDefaultMiterLimit);
+	ASSERT_EQ(crossBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(crossBands);
+
+	std::vector<WallSegment> room = {
+		{{0, 0}, {1000, 0}, 100},
+		{{1000, 0}, {1000, 1000}, 100},
+		{{1000, 1000}, {0, 1000}, 100},
+		{{0, 1000}, {0, 0}, 100},
+	};
+	WallBands roomBands = resolveWallBands(room, kDefaultMiterLimit);
+	ASSERT_EQ(roomBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(roomBands);
+	// Outer square 4 * 1200 plus inner square 4 * 800.
+	EXPECT_NEAR(outlineLength(roomBands), 4800.0 + 3200.0, 1.0);
+}
+
+TEST(Outline, SharpAndMixedCornersHaveNoSeams) {
+	std::vector<WallSegment> sharp = {
+		{{1000, 0}, {0, 0}, 100},
+		{{0, 0}, {819, 574}, 100},
+	};
+	WallBands sharpBands = resolveWallBands(sharp, kDefaultMiterLimit);
+	ASSERT_EQ(sharpBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(sharpBands);
+
+	WallBands beveled = resolveWallBands(sharp, 2.0);
+	ASSERT_EQ(beveled.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(beveled);
+
+	std::vector<WallSegment> mixedCorner = {
+		{{1000, 0}, {0, 0}, 75},
+		{{0, 0}, {0, 1000}, 150},
+	};
+	WallBands mixedBands = resolveWallBands(mixedCorner, kDefaultMiterLimit);
+	ASSERT_EQ(mixedBands.status, OffsetStatus::Ok);
+	expectAllRingsValid(mixedBands);
+	expectExactPairwiseDisjoint(mixedBands);
+	expectOutlineOnBoundary(mixedBands);
+}
+
+TEST(Outline, FreeSegmentIsItsRectangle) {
+	std::vector<WallSegment> segs = {{{0, 0}, {1000, 0}, 100}};
+	WallBands				 wb	  = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.pieces.size(), 1u);
+	ASSERT_EQ(wb.pieces[0].size(), 1u);
+	EXPECT_EQ(wb.pieces[0][0], wb.bands[0]);
+	EXPECT_EQ(wb.outline.size(), 4u);
+	EXPECT_NEAR(outlineLength(wb), 2400.0, 1.0);
+}
+
+// --- gaps (doors and windows) ------------------------------------------------
+
+TEST(Gaps, OpeningBesideCornerKeepsTheCornerTrim) {
+	// A door gap 300..1200 mm along the first leg of an L, right beside the
+	// corner at (1500,0). The piece between the gap and the corner keeps the
+	// junction's cutback, so it meets the junction polygon instead of
+	// overlapping it, and the gap's edges are outline.
+	WallSegment door{{0, 0}, {1500, 0}, 100};
+	door.gaps.push_back({300, 1200});
+	std::vector<WallSegment> segs = {door, {{1500, 0}, {1500, 1500}, 100}};
+	WallBands				 wb	  = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.pieces[0].size(), 2u);
+	ASSERT_EQ(wb.pieces[1].size(), 1u);
+	ASSERT_EQ(wb.junctions.size(), 1u);
+
+	std::vector<Ring> shape = wallShape(wb);
+	for (std::size_t i = 0; i < shape.size(); ++i) {
+		for (std::size_t k = i + 1; k < shape.size(); ++k) {
+			EXPECT_TRUE(exactlyDisjointInteriors(shape[i], shape[k])) << "pieces " << i << " and " << k << " overlap";
+		}
+	}
+	expectOutlineOnBoundary(wb);
+	// Solid: 0..300 and 1200..1400 (trimmed 100 at the corner) on the first leg.
+	EXPECT_NEAR(totalAreaDoubled(wb.pieces[0]), 2.0 * (300.0 + 200.0) * 200.0, 1.0);
+	// Both gap edges are stroked: the L's perimeter less the gap's two faces,
+	// plus its two 200 caps.
+	EXPECT_NEAR(outlineLength(wb), (1600.0 + 1600.0 + 1400.0 + 1400.0 + 400.0) - 1800.0 + 400.0, 1.0);
+}
+
+TEST(Gaps, OverlappingAndOverhangingGapsMerge) {
+	WallSegment seg{{0, 0}, {2000, 0}, 100};
+	seg.gaps = {{1500, 2500}, {-100, 200}, {150, 400}};
+	std::vector<WallSegment> segs = {seg};
+	WallBands				 wb	  = resolveWallBands(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.pieces[0].size(), 1u);
+	EXPECT_NEAR(totalAreaDoubled(wb.pieces[0]), 2.0 * 1100.0 * 200.0, 1.0);
+	// The band itself stays whole for callers that ignore gaps.
+	EXPECT_NEAR(totalAreaDoubled(wb.bands), 2.0 * 2000.0 * 200.0, 1.0);
+}
+
 TEST(Junction, NearParallelLargeCoordinateDenominatorExact) {
 	// A real corner whose two outgoing directions are nearly collinear at large
 	// magnitude with messy low bits. The line-line denominator is the cross
