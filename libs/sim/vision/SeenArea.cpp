@@ -5,12 +5,15 @@
 #include <nav/SightCover.h>
 #include <nav/SightFrontier.h>
 #include <predicates/Predicates.h>
+#include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>
 #include <visibility/SightSkirt.h>
+#include <visibility/Visibility.h>
 
 #include <algorithm>
 #include <cassert>
 #include <cmath>
+#include <numbers>
 #include <utility>
 
 namespace vision {
@@ -105,6 +108,19 @@ namespace vision {
 			}
 		}
 
+		// Whether any vertex of `pieces` lies within kSeenSweepRimBandMm of the rim of sight
+		// `sightRadiusMm` round `centre`.
+		bool addsNearRim(const std::vector<std::vector<Vec2i64>>& pieces, const Vec2i64& centre, std::int64_t sightRadiusMm) {
+			for (const std::vector<Vec2i64>& piece : pieces) {
+				for (const Vec2i64& vertex : piece) {
+					if (!geometry::withinDistanceOfSegment(vertex, centre, centre, sightRadiusMm - kSeenSweepRimBandMm)) {
+						return true;
+					}
+				}
+			}
+			return false;
+		}
+
 		Vec2i64 pointAlong(const Vec2i64& from, const Vec2i64& direction, double along) {
 			return {from.x + std::llround(static_cast<double>(direction.x) * along), from.y + std::llround(static_cast<double>(direction.y) * along)};
 		}
@@ -168,29 +184,39 @@ namespace vision {
 	}
 
 	// Test tight, register loose (player-visibility.md 3.3): the covered test reads the true shape; a
-	// sight polygon that adds ground enters grown by the skirt, and only what it adds is registered.
-	bool SeenArea::commit(const PendingShape& shape) {
+	// sight polygon that adds ground enters grown by the skirt, and what it adds is cut into pieces
+	// that wait, pending, to be registered one a tick. A pending shape is entered whatever its skirt
+	// does, so nothing shown as seen is lost.
+	void SeenArea::test(const PendingShape& shape) {
 		if (geometry::nav::sightShapeCovered(*mesh, shape.outline, shape.centre, *scratch)) {
 			++dropped;
-			return false;
+			return;
 		}
+		enter(shape);
+	}
+
+	void SeenArea::enter(const PendingShape& shape) {
 		std::vector<Vec2i64> grown;
 		if (shape.sightRadius > 0) {
-			grown = geometry::skirtedSightShape(shape.outline, shape.centre, shape.sightRadius, geometry::kSeenSkirtMm);
-			if (grown.empty()) {
-				++skipped;
-				return false;
-			}
+			grown = geometry::skirtedSightShape(shape.outline, shape.centre, geometry::sightPolygon(shape.centre, shape.sightRadius), geometry::kSeenSkirtMm);
+			skipped += grown.empty() ? 1 : 0;
 		}
-		const std::vector<Vec2i64>& entering = grown.empty() ? shape.outline : grown;
-		if (geometry::nav::sightShapeFrontier(*mesh, entering, shape.centre, *frontierScratch, pieces) == geometry::nav::SightFrontier::Covered) {
+		if (geometry::nav::sightShapeFrontier(*mesh, grown.empty() ? shape.outline : grown, shape.centre, *frontierScratch, pieces) == geometry::nav::SightFrontier::Covered) {
 			++dropped;
-			return false;
+			return;
 		}
-		geometry::nav::PatchEdits edits;
+		if (!shape.sweepPath.empty() && sightBuilder && addsNearRim(pieces, shape.centre, shape.sightRadius)) {
+			queueSweep(shape.sweepPath, shape.centre, shape.sightRadius);
+		}
 		for (std::vector<Vec2i64>& piece : pieces) {
-			edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(piece)});
+			entering.push_back(pendingOf(std::move(piece), shape.centre));
 		}
+	}
+
+	void SeenArea::registerPiece() {
+		geometry::nav::PatchEdits edits;
+		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(entering.front().outline)});
+		entering.pop_front();
 		const geometry::nav::PatchReport report = mesh->applyPatch(edits);
 		for (const std::int32_t ring : report.added) {
 			if (ring != geometry::nav::kNoRing) {
@@ -198,26 +224,95 @@ namespace vision {
 			}
 		}
 		mesh->refreshWidths();
-		return true;
 	}
 
-	void SeenArea::commitNow(const std::vector<Vec2i64>& shape, const Vec2i64& centre) { commit(pendingOf(shape, centre)); }
+	// Points no farther apart than kSeenSweepSpacingMm along the walk from the build before to this
+	// one, its turns among them; the two builds had polygons of their own. Each point's sight is held
+	// in by how far the sight polygons of the nearer build reach short of its own along any ray: their
+	// vertices point the same ways, so a point `apart` from a build sees past that build's polygon by
+	// at most apart x pi / kSightSides plus apart squared over twice the sight, which would otherwise
+	// register a sliver beside every vertex.
+	void SeenArea::queueSweep(const std::vector<Vec2i64>& walk, const Vec2i64& to, std::int64_t sightRadiusMm) {
+		const double halfSideAngle = std::numbers::pi / static_cast<double>(geometry::kSightSides);
+		auto		 distance	   = [](const Vec2i64& first, const Vec2i64& second) {
+			  const Vec2i64 gap = first - second;
+			  return std::sqrt(geometry::dot(gap, gap).toDouble());
+		};
+		auto queuePoint = [&](const Vec2i64& point) {
+			const double apart = std::min(distance(point, walk.front()), distance(point, to));
+			const double inset = halfSideAngle * apart + apart * apart / (2.0 * static_cast<double>(sightRadiusMm));
+			PendingShape sweep;
+			sweep.centre	  = point;
+			sweep.sightRadius = sightRadiusMm - static_cast<std::int64_t>(std::ceil(inset)) - 1;
+			sweeps.push_back(std::move(sweep));
+		};
+		for (std::size_t corner = 0; corner < walk.size(); ++corner) {
+			const Vec2i64&	   from	 = walk[corner];
+			const Vec2i64&	   until = corner + 1 < walk.size() ? walk[corner + 1] : to;
+			const Vec2i64	   along = until - from;
+			const std::int64_t steps = static_cast<std::int64_t>(std::ceil(distance(until, from) / static_cast<double>(kSeenSweepSpacingMm)));
+			if (corner > 0) {
+				queuePoint(from);
+			}
+			for (std::int64_t step = 1; step < steps; ++step) {
+				queuePoint(from + Vec2i64{along.x * step / steps, along.y * step / steps});
+			}
+		}
+	}
+
+	// A sweep polygon was never pending, so the frontier alone decides whether it adds anything: the
+	// covered test's exact fallback reads every ring near a shadow edge, which is slow where the
+	// record is dense, and what it would settle lies within kSeenCoverToleranceMm of a ray.
+	void SeenArea::commitSweep(const PendingShape& point) {
+		++swept;
+		std::vector<Vec2i64> polygon = sightBuilder(point.centre, point.sightRadius);
+		if (!geometry::simpleAround(polygon, point.centre)) {
+			++skipped;
+			return;
+		}
+		if (geometry::nav::sightShapeFrontier(*mesh, polygon, point.centre, *frontierScratch, pieces) == geometry::nav::SightFrontier::Covered) {
+			++dropped;
+			return;
+		}
+		PendingShape shape = pendingOf(std::move(polygon), point.centre);
+		shape.sightRadius  = point.sightRadius;
+		enter(shape);
+	}
+
+	void SeenArea::commitNow(const std::vector<Vec2i64>& shape, const Vec2i64& centre) {
+		test(pendingOf(shape, centre));
+		while (!entering.empty()) {
+			registerPiece();
+		}
+	}
 
 	void SeenArea::queue(std::vector<Vec2i64> shape, const Vec2i64& centre) { waiting.push_back(pendingOf(std::move(shape), centre)); }
 
-	void SeenArea::queueSightPolygon(std::vector<Vec2i64> polygon, const Vec2i64& centre, std::int64_t sightRadiusMm) {
+	void SeenArea::queueSightPolygon(std::vector<Vec2i64> polygon, const Vec2i64& centre, std::int64_t sightRadiusMm, std::vector<Vec2i64> walk) {
 		PendingShape shape = pendingOf(std::move(polygon), centre);
 		shape.sightRadius  = sightRadiusMm;
+		shape.sweepPath	   = std::move(walk);
 		waiting.push_back(std::move(shape));
+	}
+
+	void SeenArea::queueSightAt(const Vec2i64& point, std::int64_t sightRadiusMm, std::vector<Vec2i64> walk) {
+		if (!sightBuilder) {
+			return;
+		}
+		std::vector<Vec2i64> polygon = sightBuilder(point, sightRadiusMm);
+		if (geometry::simpleAround(polygon, point)) {
+			queueSightPolygon(std::move(polygon), point, sightRadiusMm, std::move(walk));
+		}
 	}
 
 	void SeenArea::setOpenLeg(LegId leg, const Vec2i64& start, const Vec2i64& end, std::int64_t radiusMm) {
 		assert(radiusMm >= kSeenLeastRadiusMm);
 		auto found = openLegs.find(leg);
-		if (found != openLegs.end() && found->second.centre == start && found->second.legEnd == end && found->second.radius == radiusMm) {
+		if (found != openLegs.end() && found->second.legStart == start && found->second.legEnd == end && found->second.radius == radiusMm) {
 			return;
 		}
 		PendingShape shape = pendingOf(legCapsule(start, end, radiusMm), start);
+		shape.legStart	   = start;
 		shape.legEnd	   = end;
 		shape.radius	   = radiusMm;
 		openLegs.insert_or_assign(leg, std::move(shape));
@@ -233,10 +328,20 @@ namespace vision {
 	}
 
 	void SeenArea::update() {
-		std::size_t registering = 0;
-		for (std::size_t count = 0; count < kSeenRingsPerTick && registering < kSeenShapesRegisteredPerTick && !waiting.empty(); ++count) {
-			registering += commit(waiting.front()) ? 1 : 0;
+		for (std::size_t tested = 0; entering.empty() && tested < kSeenRingsPerTick && !waiting.empty(); ++tested) {
+			test(waiting.front());
 			waiting.pop_front();
+		}
+		if (!entering.empty()) {
+			for (std::size_t count = 0; count < kSeenPiecesRegisteredPerTick && !entering.empty(); ++count) {
+				registerPiece();
+			}
+			return;
+		}
+		if (!sweeps.empty()) {
+			const PendingShape point = std::move(sweeps.front());
+			sweeps.pop_front();
+			commitSweep(point);
 		}
 	}
 
@@ -246,6 +351,9 @@ namespace vision {
 		}
 		for (const PendingShape& shape : waiting) {
 			visit(shape);
+		}
+		for (const PendingShape& piece : entering) {
+			visit(piece);
 		}
 	}
 

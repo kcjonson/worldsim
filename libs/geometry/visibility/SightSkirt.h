@@ -13,9 +13,9 @@ namespace geometry {
 
 	constexpr std::int64_t kSeenSkirtMm = 50;
 
-	// `shape` (a visibility polygon round `centre`, from computeVisibilityPolygon with
-	// `sightRadiusMm`) grown outward by up to `skirtMm` everywhere but along the rim of
-	// sightPolygon(centre, sightRadiusMm).
+	// `shape` (a visibility polygon round `centre`, cut to `rim` by starClippedToConvex, or built by
+	// computeVisibilityPolygon with `rim` its sight polygon) grown outward by up to `skirtMm`
+	// everywhere but along `rim`, a convex ring counter-clockwise round `centre` that the shape lies in.
 	//
 	// Every side of the shape off the rim is moved out along its normal by just under the skirt,
 	// the moved sides joined round each convex corner by a chord (two above 90 degrees of turn)
@@ -31,6 +31,6 @@ namespace geometry {
 	// crossings, snapped to the millimetre. Empty when the snapped ring is not simple round
 	// `centre` (simpleAround), or when a moved side passes through `centre`, which needs `centre`
 	// within the skirt of the shape's edge.
-	Ring skirtedSightShape(const Ring& shape, const Vec2i64& centre, std::int64_t sightRadiusMm, std::int64_t skirtMm);
+	Ring skirtedSightShape(const Ring& shape, const Vec2i64& centre, const Ring& rim, std::int64_t skirtMm);
 
 } // namespace geometry

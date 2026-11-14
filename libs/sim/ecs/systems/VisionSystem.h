@@ -44,6 +44,11 @@ struct Memory;
 /// move fast enough to need per-frame vision updates.
 class VisionSystem : public ISystem {
   public:
+	/// How far an observer may move from where his visibility polygon was built before it is rebuilt.
+	/// The polygon is built this much past sight, so it holds his sight from anywhere in that stretch
+	/// (player-visibility.md 3.3); what vision decides with it is also held to his sight radius.
+	static constexpr float kSightRebuildStepMeters = 0.5F;
+
 	void update(float deltaTime) override;
 
 	[[nodiscard]] int priority() const override { return 45; }
@@ -83,17 +88,18 @@ class VisionSystem : public ISystem {
 	[[nodiscard]] uint64_t polygonBuildCount() const { return m_polygonBuildCount; }
 
 	/// An observer's sight as vision last built it. With no polygon the shape is the plain
-	/// circle; with one it is the wall-clipped star-shaped polygon (mm, same frame as the
-	/// occluders) inside that circle. polygonRevision changes whenever the observer's polygon is
-	/// rebuilt or dropped, so a consumer can tell a new polygon from the one it already used.
+	/// circle; with one, his sight is the circle of `radius` round where he stands now inside the
+	/// wall-clipped star-shaped polygon (mm, same frame as the occluders) built round `center` out to
+	/// `radius` plus kSightRebuildStepMeters. polygonRevision changes whenever the observer's polygon
+	/// is rebuilt or dropped, so a consumer can tell a new polygon from the one it already used.
 	/// The polygon pointer is valid until the next update().
 	struct SightShape {
 		glm::vec2			   center{0.0F, 0.0F}; // world position (meters) the shape was built at
 		float				   radius = 0.0F;	   // meters
 		const geometry::Ring* polygon = nullptr;  // null when no wall is in sight
 		std::uint64_t		   polygonRevision = 0;
-		// The built walls and openings the polygon bounds or crosses, as the structure pass found
-		// them when it was built (vision-architecture D4). Empty without a polygon.
+		// The built walls and openings the polygon bounds or crosses within `radius` of `center`, as the
+		// structure pass found them when it was built (vision-architecture D4). Empty without a polygon.
 		const std::vector<construction::SegmentId>* segmentsSeen = nullptr;
 		const std::vector<construction::OpeningId>* openingsSeen = nullptr;
 	};
@@ -128,12 +134,12 @@ class VisionSystem : public ISystem {
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
 
-	/// The walls and openings that bound or cross `polygon`, into memory (vision-architecture D4) and
-	/// into `segments` and `openings` (cleared first).
+	/// The walls and openings that bound or cross the part of `builtPolygon` within `radiusMm` of `centerMm`, into memory
+	/// (vision-architecture D4) and into `segments` and `openings` (cleared first).
 	void rememberStructures(
 		geometry::Vec2i64						 centerMm,
 		std::int64_t							 radiusMm,
-		const geometry::Ring&					 polygon,
+		const geometry::Ring&					 builtPolygon,
 		Memory&									 memory,
 		std::vector<construction::SegmentId>&	 segments,
 		std::vector<construction::OpeningId>&	 openings

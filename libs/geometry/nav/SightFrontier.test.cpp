@@ -61,7 +61,7 @@ TEST(SightFrontier, PiecesAndTheRecordHoldTheShape) {
 			if (!geometry::simpleAround(shape, observer) || sightShapeCovered(record, shape, observer, coverScratch)) {
 				continue;
 			}
-			const std::vector<Vec2i64> skirted = geometry::skirtedSightShape(shape, observer, kSightMm, geometry::kSeenSkirtMm);
+			const std::vector<Vec2i64> skirted = geometry::skirtedSightShape(shape, observer, geometry::sightPolygon(observer, kSightMm), geometry::kSeenSkirtMm);
 			if (skirted.empty()) {
 				continue;
 			}

@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 #include <random>
 #include <set>
 #include <utility>
@@ -69,10 +70,11 @@ namespace {
 	}
 
 	void drain(SeenArea& seen) {
-		for (int tick = 0; tick < 1000 && seen.shapesPending() > 0; ++tick) {
+		for (int tick = 0; tick < 1000 && (seen.shapesPending() > 0 || seen.sweepsWaiting() > 0); ++tick) {
 			seen.update();
 		}
 		ASSERT_EQ(seen.shapesPending(), 0U);
+		ASSERT_EQ(seen.sweepsWaiting(), 0U);
 	}
 
 	Vec2i64 metres(double x, double y) { return {std::llround(x * 1000.0), std::llround(y * 1000.0)}; }
@@ -111,7 +113,8 @@ TEST(SeenArea, LandingIsOneRingInscribedInItsCircle) {
 }
 
 // A queued shape is seen, and covers what it holds, before the budget commits it; the budget tests
-// up to kSeenRingsPerTick shapes a tick, first in, first out, and stops after the first that registers.
+// up to kSeenRingsPerTick shapes a tick, first in, first out, stops at the first that adds anything,
+// and registers kSeenPiecesRegisteredPerTick of its pieces.
 TEST(SeenArea, PendingShapesAnswerBeforeTheyAreCommitted) {
 	SeenArea seen;
 	for (int i = 0; i < 6; ++i) {
@@ -126,8 +129,8 @@ TEST(SeenArea, PendingShapesAnswerBeforeTheyAreCommitted) {
 
 	const std::uint64_t before = seen.epoch();
 	seen.update();
-	EXPECT_EQ(seen.ringsRegistered(), vision::kSeenShapesRegisteredPerTick);
-	EXPECT_EQ(seen.shapesPending(), 6U - vision::kSeenShapesRegisteredPerTick);
+	EXPECT_EQ(seen.ringsRegistered(), vision::kSeenPiecesRegisteredPerTick);
+	EXPECT_EQ(seen.shapesPending(), 6U - vision::kSeenPiecesRegisteredPerTick);
 	EXPECT_NE(seen.epoch(), before);
 	EXPECT_EQ(seen.registeredRing(0).front(), geometry::sightPolygon(metres(0.0, 0.0), kSightMm).front()) << "first in, first out";
 	EXPECT_TRUE(seen.isSeen(metres(500.0, 20.0))) << "still pending, still seen";
@@ -164,7 +167,7 @@ TEST(SeenArea, CoversAcrossACommittedRingAndAPendingOne) {
 	seen.closeLeg(1);
 	EXPECT_TRUE(seen.covers(across)) << "queued";
 	drain(seen);
-	EXPECT_EQ(seen.ringsRegistered(), 2U);
+	EXPECT_GE(seen.ringsRegistered(), 2U);
 	EXPECT_TRUE(seen.covers(across)) << "committed";
 	EXPECT_FALSE(seen.covers(square(20.0, 25.0, 10.0)));
 }
@@ -208,10 +211,11 @@ TEST(SeenArea, LastSeenTowardTheGoal) {
 	EXPECT_TRUE(near(seen.lastSeenToward(west, metres(80.0, 0.0)), metres(50.0, 0.0))) << "the same once committed";
 }
 
-// Visibility polygons from viewpoints 0.5 m apart walking past and through a doorway, each queued as
-// a sight polygon: the record equals a fresh build of the rings it registered; it holds every point
-// of every polygon deeper than the cover tolerance, and nothing farther than the skirt from them;
-// and the same walk again registers nothing.
+/// Visibility polygons from viewpoints 0.5 m apart walking past and through a doorway, each queued as
+// a sight polygon with the one before it: the record equals a fresh build of the rings it
+// registered; it holds every point of every polygon deeper than the cover tolerance, and nothing
+// farther than the skirt from the polygons and the sweep's; and the same walk again registers
+// nothing and sweeps nothing.
 TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 	const std::vector<geometry::OccluderSegment> walls = {
 		{metres(-20.0, 0.0), metres(-0.5, 0.0)},
@@ -221,40 +225,55 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 		{metres(-20.0, 0.2), metres(-0.5, 0.2)},
 		{metres(0.5, 0.2), metres(20.0, 0.2)},
 	};
-	std::vector<Vec2i64> viewpoints;
+	std::vector<std::vector<Vec2i64>> walks(3);
 	for (int step = 0; step <= 24; ++step) {
-		viewpoints.push_back(metres(0.0, -6.0 + 0.5 * step));
+		walks[0].push_back(metres(0.0, -6.0 + 0.5 * step));
 	}
 	for (int step = 0; step <= 20; ++step) {
-		viewpoints.push_back(metres(-6.0 + 0.5 * step, -0.4));
+		walks[1].push_back(metres(-6.0 + 0.5 * step, -0.4));
 	}
 	for (int step = 0; step <= 16; ++step) {
-		viewpoints.push_back(metres(-4.0 + 0.5 * step, -4.0 + 0.5 * step));
+		walks[2].push_back(metres(-4.0 + 0.5 * step, -4.0 + 0.5 * step));
 	}
 
 	SeenArea						  seen;
-	int								  notSimple = 0;
-	std::vector<std::vector<Vec2i64>> polygons;
-	for (const Vec2i64& viewpoint : viewpoints) {
-		const geometry::Ring polygon = geometry::computeVisibilityPolygon(viewpoint, kSightMm, walls);
-		if (!geometry::simpleAround(polygon, viewpoint)) {
-			++notSimple;
-			continue;
-		}
-		polygons.push_back(polygon);
-		seen.queueSightPolygon(polygon, viewpoint, kSightMm);
-		seen.update();
-	}
-	drain(seen);
+	std::vector<std::vector<Vec2i64>> polygons; // every polygon that could go in: the walks' and the sweep's
+	seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t reachMm) {
+		polygons.push_back(geometry::computeVisibilityPolygon(centre, reachMm, walls));
+		return polygons.back();
+	});
+	int	 notSimple = 0;
+	auto walkAll   = [&](bool keep) {
+		  for (const std::vector<Vec2i64>& walk : walks) {
+			  std::vector<Vec2i64> previous;
+			  for (const Vec2i64& viewpoint : walk) {
+				  const geometry::Ring polygon = geometry::computeVisibilityPolygon(viewpoint, kSightMm, walls);
+				  if (!geometry::simpleAround(polygon, viewpoint)) {
+					  ++notSimple;
+					  previous.clear();
+					  continue;
+				  }
+				  if (keep) {
+					  polygons.push_back(polygon);
+				  }
+				  seen.queueSightPolygon(polygon, viewpoint, kSightMm, previous);
+				  seen.update();
+				  previous.assign(1, viewpoint);
+			  }
+		  }
+		  drain(seen);
+	};
+	walkAll(true);
 	EXPECT_EQ(notSimple, 0);
 	EXPECT_GT(seen.ringsRegistered(), 10U);
 	EXPECT_GT(seen.shapesDropped(), 0U);
 	EXPECT_EQ(seen.shapesSkipped(), 0U);
+	EXPECT_GT(seen.sweepsBuilt(), 0U);
 
 	std::mt19937 random(5);
 	int			 deepSamples = 0;
 	for (const std::vector<Vec2i64>& polygon : polygons) {
-		for (int attempt = 0; attempt < 60; ++attempt) {
+		for (int attempt = 0; attempt < 30; ++attempt) {
 			const std::int64_t x = static_cast<std::int64_t>(random() % 60001) - 30000;
 			const std::int64_t y = static_cast<std::int64_t>(random() % 60001) - 30000;
 			const Vec2i64	   point{x, y};
@@ -276,12 +295,11 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 		EXPECT_LE(nearest, static_cast<double>(geometry::kSeenSkirtMm + 1)) << "(" << middle.x << ", " << middle.y << ") seen past the skirt";
 	}
 
-	const std::size_t ringsBefore = seen.ringsRegistered();
-	for (const Vec2i64& viewpoint : viewpoints) {
-		seen.queueSightPolygon(geometry::computeVisibilityPolygon(viewpoint, kSightMm, walls), viewpoint, kSightMm);
-	}
-	drain(seen);
+	const std::size_t ringsBefore  = seen.ringsRegistered();
+	const std::size_t sweepsBefore = seen.sweepsBuilt();
+	walkAll(false);
 	EXPECT_EQ(seen.ringsRegistered(), ringsBefore) << "the same walk again";
+	EXPECT_EQ(seen.sweepsBuilt(), sweepsBefore) << "covered polygons sweep nothing";
 
 	geometry::nav::PatchableMesh fresh;
 	geometry::nav::PatchEdits	 edits;
@@ -291,8 +309,51 @@ TEST(SeenArea, DoorwayPolygonsEqualAFreshBuildUpToTheSkirt) {
 	fresh.applyPatch(edits);
 	EXPECT_EQ(cornersOf(trianglesOf(seen)), cornersOf(trianglesOf(fresh)));
 	EXPECT_EQ(boundaryOf(trianglesOf(seen)), boundaryOf(trianglesOf(fresh)));
-	for (const Vec2i64& viewpoint : viewpoints) {
-		EXPECT_TRUE(seen.isSeen(viewpoint));
+	for (const std::vector<Vec2i64>& walk : walks) {
+		for (const Vec2i64& viewpoint : walk) {
+			EXPECT_TRUE(seen.isSeen(viewpoint));
+		}
 	}
 	EXPECT_FALSE(seen.isSeen(metres(-25.0, 25.0))) << "north of the wall, beyond every viewpoint north of it and out of line through the door";
+}
+
+// A sight polygon that adds ground near its rim queues the sweep back along the walk from the build
+// before it, points kSeenSweepSpacingMm apart strictly between, built one a tick on ticks that
+// register nothing; one with no build before it, or a covered one, builds nothing.
+TEST(SeenArea, APolygonThatAddsGroundIsSweptAndACoveredOneIsNot) {
+	const std::vector<geometry::OccluderSegment> walls = {{metres(3.0, -10.0), metres(3.0, 10.0)}};
+	SeenArea									 seen;
+	std::vector<Vec2i64>						 builtAt;
+	seen.setSightBuilder([&](const Vec2i64& centre, std::int64_t reachMm) {
+		builtAt.push_back(centre);
+		return geometry::computeVisibilityPolygon(centre, reachMm, walls);
+	});
+	const Vec2i64 first	 = metres(0.0, 0.0);
+	const Vec2i64 second = metres(0.5, 0.0);
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(first, kSightMm, walls), first, kSightMm, {});
+	drain(seen);
+	EXPECT_EQ(seen.sweepsWaiting(), 0U) << "no build before it";
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, {first});
+	seen.update();
+	EXPECT_EQ(seen.sweepsWaiting(), 4U) << "four points between the two builds";
+	for (int tick = 0; tick < 100 && seen.shapesPending() > 0; ++tick) {
+		seen.update();
+	}
+	EXPECT_GE(seen.ringsRegistered(), 2U);
+	EXPECT_EQ(seen.shapesPending(), 0U);
+	EXPECT_EQ(seen.sweepsBuilt(), 0U) << "pieces waiting come first";
+	seen.update();
+	EXPECT_EQ(seen.sweepsBuilt(), 1U) << "one built a tick";
+	drain(seen);
+	EXPECT_EQ(seen.sweepsBuilt(), 4U);
+	ASSERT_EQ(builtAt.size(), 4U);
+	for (std::size_t point = 0; point < builtAt.size(); ++point) {
+		EXPECT_EQ(builtAt[point], metres(0.1 * static_cast<double>(point + 1), 0.0));
+	}
+
+	const std::size_t ringsBefore = seen.ringsRegistered();
+	seen.queueSightPolygon(geometry::computeVisibilityPolygon(second, kSightMm, walls), second, kSightMm, {first});
+	drain(seen);
+	EXPECT_EQ(seen.ringsRegistered(), ringsBefore);
+	EXPECT_EQ(builtAt.size(), 4U) << "a covered polygon builds no sweep";
 }

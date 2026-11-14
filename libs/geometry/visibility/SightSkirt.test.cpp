@@ -99,14 +99,14 @@ namespace {
 TEST(SightSkirt, OpenGroundIsTheSightPolygon) {
 	const Vec2i64 centre{1234567, -7654321};
 	const Ring	  shape = computeVisibilityPolygon(centre, kSightMm, {});
-	EXPECT_EQ(skirtedSightShape(shape, centre, kSightMm, kSeenSkirtMm), shape);
+	EXPECT_EQ(skirtedSightShape(shape, centre, sightPolygon(centre, kSightMm), kSeenSkirtMm), shape);
 }
 
 TEST(SightSkirt, WallGrowsByTheSkirtAndTheRimStays) {
 	const Vec2i64					   centre{0, 0};
 	const std::vector<OccluderSegment> walls = wallPiece({-4000, 5000}, {3000, 5000}, 200);
 	const Ring						   shape = computeVisibilityPolygon(centre, kSightMm, walls);
-	const Ring						   skirted = skirtedSightShape(shape, centre, kSightMm, kSeenSkirtMm);
+	const Ring						   skirted = skirtedSightShape(shape, centre, sightPolygon(centre, kSightMm), kSeenSkirtMm);
 	ASSERT_FALSE(skirted.empty());
 	EXPECT_TRUE(simpleAround(skirted, centre));
 	std::mt19937	 rng(7);
@@ -128,7 +128,7 @@ TEST(SightSkirt, NotchNarrowerThanTwiceTheSkirtCloses) {
 	const Vec2i64					   centre{0, 0};
 	const std::vector<OccluderSegment> walls = wallPiece({-30, 3000}, {30, 3000}, 60);
 	const Ring						   shape = computeVisibilityPolygon(centre, kSightMm, walls);
-	const Ring						   skirted = skirtedSightShape(shape, centre, kSightMm, kSeenSkirtMm);
+	const Ring						   skirted = skirtedSightShape(shape, centre, sightPolygon(centre, kSightMm), kSeenSkirtMm);
 	ASSERT_FALSE(skirted.empty());
 	EXPECT_EQ(pointInPolygon({0, 3070}, shape), PointInPolygon::Outside);
 	EXPECT_EQ(pointInPolygon({0, 4000}, skirted), PointInPolygon::Inside);
@@ -145,7 +145,7 @@ TEST(SightSkirt, IsTheSameOnEveryToolchain) {
 	std::uint64_t					   hash	 = 0xCBF29CE484222325ULL;
 	std::size_t						   total = 0;
 	for (const Vec2i64& centre : building.roomCentres) {
-		const Ring skirted = skirtedSightShape(computeVisibilityPolygon(centre, kSightMm, building.walls), centre, kSightMm, kSeenSkirtMm);
+		const Ring skirted = skirtedSightShape(computeVisibilityPolygon(centre, kSightMm, building.walls), centre, sightPolygon(centre, kSightMm), kSeenSkirtMm);
 		total += skirted.size();
 		for (const Vec2i64& vertex : skirted) {
 			hash = (hash ^ static_cast<std::uint64_t>(vertex.x)) * 0x100000001B3ULL;
@@ -173,7 +173,7 @@ TEST(SightSkirt, HoldsItsPropertiesOnRandomBuildings) {
 				continue;
 			}
 			++polygons;
-			const Ring skirted = skirtedSightShape(shape, centre, kSightMm, kSeenSkirtMm);
+			const Ring skirted = skirtedSightShape(shape, centre, sightPolygon(centre, kSightMm), kSeenSkirtMm);
 			if (skirted.empty()) {
 				++skipped;
 				continue;
