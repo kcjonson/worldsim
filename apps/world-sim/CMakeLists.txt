@@ -170,6 +170,7 @@ if(BUILD_TESTING)
         scenes/game/world/MoveOrderGoal.cpp
         scenes/game/world/MoveOrderGoal.test.cpp
         scenes/game/world/construction/CommittedGeometryCache.cpp
+        scenes/game/world/construction/CommittedGeometryCache.test.cpp
         scenes/game/world/construction/DrawingSystem.cpp
         scenes/game/world/construction/DrawingSystem.test.cpp
         scenes/game/world/placement/GhostRenderer.cpp
