@@ -9,11 +9,16 @@
 #include <ecs/components/Transform.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlacedNothing.test.h>
+#include <nav/NavCoords.h>
+#include <nav/NavInputBuilder.h>
+#include <nav/PatchableMesh.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/IWorldSampler.h>
 
 #include <glm/vec2.hpp>
+#include <gtest/gtest.h>
 
+#include <cstdint>
 #include <memory>
 
 namespace world_sim::testing {
@@ -51,7 +56,9 @@ namespace world_sim::testing {
 		return chunks.get();
 	}
 
-	// Registers a nav system in `world` over the creek world and meshes it round a mover at the origin.
+	// Registers a nav system in `world` over the creek world and meshes it round a mover at the origin,
+	// then checks the creek came through the terrain and nav pipeline as a ford, so a test that leans
+	// on it fails when it has turned into plain ground or open water.
 	inline ecs::NavigationSystem& meshCreekWorld(ecs::World& world, ecs::EmptyPlacement& placement) {
 		auto& navigation = world.registerSystem<ecs::NavigationSystem>();
 		navigation.setChunkManager(creekChunks());
@@ -64,6 +71,14 @@ namespace world_sim::testing {
 		world.addComponent<ecs::Memory>(mesher, std::move(memory));
 		world.update(0.016F);
 		navigation.finishPendingBuilds();
+
+		const glm::vec2						inCreek{10.0F, kCreekY};
+		const geometry::nav::PatchableMesh& mesh = navigation.navMesh();
+		const std::int32_t					face = mesh.locate(nav::toMm(inCreek));
+		EXPECT_TRUE(navigation.isValidPosition(inCreek)) << "the creek fixture: a colonist wades the creek";
+		EXPECT_FALSE(navigation.isPointBuildableNow(inCreek)) << "the creek fixture: nothing is built in the creek";
+		EXPECT_FALSE(navigation.isPointBuildableOnceCleared(inCreek)) << "the creek fixture: no foundation goes in the creek";
+		EXPECT_TRUE(face >= 0 && nav::faceInFord(mesh, face)) << "the creek fixture: the creek is a ford in the mesh, not open water";
 		return navigation;
 	}
 

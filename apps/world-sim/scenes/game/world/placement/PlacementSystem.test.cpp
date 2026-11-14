@@ -6,6 +6,7 @@
 #include <assets/AssetRegistry.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/Memory.h>
+#include <ecs/components/Packaged.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlacedNothing.test.h>
@@ -137,6 +138,7 @@ namespace {
 			});
 			placement->selectBuildItem(kBox);
 		}
+		void TearDown() override { assets::AssetRegistry::Get().clearDefinitions(); }
 
 		void hover(glm::vec2 meters) {
 			const glm::vec2 screen = seen.screenOf(meters);
@@ -173,9 +175,26 @@ TEST_F(PlacementFordTest, TargetInTheCreekIsRefusedAndBesideItIsPlaced) {
 	EXPECT_TRUE(placement->handleClick());
 }
 
-TEST_F(PlacementFordTest, FootprintBuildableNowRefusesTheCreek) {
-	EXPECT_FALSE(placement->footprintBuildableNow(kBox, {10.0F, kCreekY}));
-	EXPECT_TRUE(placement->footprintBuildableNow(kBox, {10.0F, kCreekY - 2.0F}));
+// Moving an installed item re-packages it and picks its new spot with the same tool: a spot in the
+// creek is refused and leaves it without a target, one on the bank becomes its target.
+TEST_F(PlacementFordTest, MovingAnInstalledItemIntoTheCreekIsRefused) {
+	placement->cancel();
+	const ecs::EntityID item = seen.world.createEntity();
+	seen.world.addComponent<ecs::Position>(item, ecs::Position{{10.0F, kCreekY - 3.0F}});
+	seen.world.addComponent<ecs::Packaged>(item, ecs::Packaged{std::nullopt, false});
+	placement->beginRelocation(item, kBox);
+
+	hover({10.0F, kCreekY});
+	EXPECT_FALSE(placement->ghostValid());
+	EXPECT_FALSE(placement->handleClick());
+	EXPECT_FALSE(seen.world.getComponent<ecs::Packaged>(item)->targetPosition.has_value());
+
+	const glm::vec2 onTheBank{10.0F, kCreekY + 2.0F};
+	hover(onTheBank);
+	ASSERT_TRUE(placement->handleClick());
+	const std::optional<glm::vec2> target = seen.world.getComponent<ecs::Packaged>(item)->targetPosition;
+	ASSERT_TRUE(target.has_value());
+	EXPECT_LT(glm::distance(*target, onTheBank), 0.01F);
 }
 
 // A def with no declared outline is tested at its centre alone.
@@ -195,9 +214,7 @@ TEST_F(PlacementFordTest, ShippedBoxCentredInTheFordIsRefusedAndOnTheBankIsAccep
 		root = root.parent_path();
 	}
 	const std::filesystem::path boxXml = root / "assets" / "world" / "storage" / "BasicBox" / "BasicBox.xml";
-	if (!std::filesystem::exists(boxXml)) {
-		GTEST_SKIP() << "the shipped BasicBox is not at " << boxXml.string();
-	}
+	ASSERT_TRUE(std::filesystem::exists(boxXml)) << "the shipped BasicBox is not at " << boxXml.string();
 	auto& registry = assets::AssetRegistry::Get();
 	ASSERT_TRUE(registry.loadDefinitions(boxXml.string()));
 	ASSERT_FALSE(registry.getDefinition("BasicBox")->collisionFor(0).blocks()) << "the box declares an outline now; this test is moot";

@@ -7,6 +7,8 @@
 
 #include <gtest/gtest.h>
 
+#include <vector>
+
 namespace {
 
 	using world_sim::testing::kCreekY;
@@ -40,7 +42,17 @@ namespace {
 TEST_F(GroundRefusalTest, WallChainAcrossTheCreekIsRefused) {
 	ASSERT_TRUE(navigation.isValidPosition({10.0F, kCreekY})) << "a colonist wades the creek";
 	EXPECT_FALSE(world_sim::wallChainGroundRefusal(&navigation, {{10.0F, kCreekY - 3.0F}, {10.0F, kCreekY + 3.0F}}).empty());
+	EXPECT_TRUE(world_sim::wallChainGroundRefusal(&navigation, {{10.0F, kCreekY - 6.0F}, {10.0F, kCreekY - 2.0F}}).empty()) << "on the bank";
 	EXPECT_TRUE(world_sim::wallChainGroundRefusal(nullptr, {{10.0F, kCreekY - 3.0F}, {10.0F, kCreekY + 3.0F}}).empty()) << "headless takes anything";
+}
+
+// A foundation is not built across the creek either, and is on dry ground beside it.
+TEST_F(GroundRefusalTest, FoundationAcrossTheCreekIsRefusedAndBesideItIsTaken) {
+	const std::vector<Foundation::Vec2> across{{8.0F, kCreekY - 2.0F}, {12.0F, kCreekY - 2.0F}, {12.0F, kCreekY + 2.0F}, {8.0F, kCreekY + 2.0F}};
+	const std::vector<Foundation::Vec2> beside{{8.0F, kCreekY - 6.0F}, {12.0F, kCreekY - 6.0F}, {12.0F, kCreekY - 2.0F}, {8.0F, kCreekY - 2.0F}};
+	EXPECT_FALSE(world_sim::foundationGroundRefusal(&navigation, across).empty());
+	EXPECT_TRUE(world_sim::foundationGroundRefusal(&navigation, beside).empty());
+	EXPECT_TRUE(world_sim::foundationGroundRefusal(nullptr, across).empty()) << "headless takes anything";
 }
 
 // The spawn verb sets furniture up where the placement tool would, never in the creek.
