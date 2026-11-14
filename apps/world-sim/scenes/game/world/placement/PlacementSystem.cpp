@@ -14,6 +14,7 @@
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
+#include <vector/MeshBounds.h>
 
 #include <bit>
 #include <random>
@@ -124,10 +125,11 @@ namespace world_sim {
 	}
 
 	namespace {
-		// `defName`'s collision outline at `worldPos`, or just `worldPos` when it has no rect or polygon outline.
+		// `defName`'s footprint at `worldPos`, as footprintBuildableNow describes it.
 		std::vector<glm::vec2> footprintAt(const std::string& defName, Foundation::Vec2 worldPos) {
 			std::vector<glm::vec2> outline;
-			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
+			auto&				   registry = assets::AssetRegistry::Get();
+			if (const auto* def = registry.getDefinition(defName); def != nullptr) {
 				const assets::CollisionShape& footprint = def->collisionFor(0);
 				if (footprint.type == assets::CollisionShapeType::Rect) {
 					for (const glm::vec2 corner : footprint.rectCornersLocal()) {
@@ -137,6 +139,18 @@ namespace world_sim {
 					for (const glm::vec2 point : footprint.pointsMeters) {
 						outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
 					}
+				} else if (const renderer::TessellatedMesh* drawn = registry.getTemplate(defName, assets::TreeTraits{});
+						   drawn != nullptr && !drawn->vertices.empty()) {
+					// The ghost and the world both draw the template with its bounds centred on the position.
+					const Foundation::Rect bounds = renderer::computeBounds(*drawn);
+					const float			   halfWidth = bounds.width * 0.5F;
+					const float			   halfHeight = bounds.height * 0.5F;
+					outline = {
+						{worldPos.x - halfWidth, worldPos.y - halfHeight},
+						{worldPos.x + halfWidth, worldPos.y - halfHeight},
+						{worldPos.x + halfWidth, worldPos.y + halfHeight},
+						{worldPos.x - halfWidth, worldPos.y + halfHeight},
+					};
 				}
 			}
 			if (outline.empty()) {
@@ -148,6 +162,20 @@ namespace world_sim {
 
 	bool PlacementSystem::footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const {
 		return navigation != nullptr && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
+	}
+
+	std::optional<glm::vec2> PlacementSystem::installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const {
+		if (navigation == nullptr) {
+			return std::nullopt;
+		}
+		return navigation->findValidPositionNear(stationPos, 1.0F, aim, [&](glm::vec2 candidate) {
+			return footprintBuildableNow(defName, {candidate.x, candidate.y});
+		});
+	}
+
+	bool PlacementSystem::isFurniture(const std::string& defName) {
+		const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+		return def != nullptr && (def->capabilities.craftable.has_value() || def->capabilities.storage.has_value());
 	}
 
 	bool PlacementSystem::placeable(Foundation::Vec2 worldPos) const {

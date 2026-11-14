@@ -15,8 +15,11 @@
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
 
+#include <glm/vec2.hpp>
+
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -109,11 +112,22 @@ class PlacementSystem {
 	/// Used by placement workflow and by dropItemCallback for crafted items
 	ecs::EntityID spawnEntity(const std::string& defName, Foundation::Vec2 worldPos);
 
-	/// Whether `defName` may be set up at `worldPos`: its footprint (its collision outline there, or
-	/// just `worldPos` when it has no rect or polygon outline) is clear ground out of any ford
-	/// (NavigationSystem::isAreaBuildableNow). False with no nav system. The placement tool's ground
-	/// gate and the /api/dev/spawn verb's.
+	/// Whether `defName` may be set up at `worldPos`: its footprint is clear ground out of any ford
+	/// (NavigationSystem::isAreaBuildableNow). The footprint is its collision outline there; for a
+	/// def that declares none, the rectangle its drawn template covers centred there (what the ghost
+	/// and the world draw); else just `worldPos`. False with no nav system. The placement tool's
+	/// ground gate, the /api/dev/spawn verb's for furniture, and a crafted crate's install target's.
 	[[nodiscard]] bool footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const;
+
+	/// Where a freshly crafted `defName` crate is installed beside the station at `stationPos`: a
+	/// spot at least 1 m off it, tried first along `aim` (NavigationSystem::findValidPositionNear),
+	/// that footprintBuildableNow takes. nullopt when none does, so the crate waits for the player to
+	/// place it.
+	[[nodiscard]] std::optional<glm::vec2> installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const;
+
+	/// Whether `defName` is furniture that is built or installed where it stands: a crafting station
+	/// or a storage container, the two kinds spawnEntity sets up and the build menu places.
+	[[nodiscard]] static bool isFurniture(const std::string& defName);
 
   private:
 	ecs::World*						   ecsWorld = nullptr;

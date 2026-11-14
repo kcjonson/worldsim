@@ -10,11 +10,14 @@
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlacedNothing.test.h>
 #include <world/chunk/ChunkManager.h>
+#include <vector/MeshBounds.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
 
+#include <filesystem>
 #include <memory>
+#include <optional>
 
 namespace {
 
@@ -115,6 +118,8 @@ namespace {
 	using world_sim::testing::kCreekY;
 
 	constexpr const char* kBox = "Test_PlacementBox";
+	constexpr const char* kBareBox = "Test_PlacementBareBox";
+	constexpr const char* kWideBox = "Test_PlacementWideBox";
 	constexpr float		  kBoxHalfExtent = 0.4F;
 
 	// Nothing is set up in a stream a colonist could wade: the placement tool refuses a target whose
@@ -171,6 +176,63 @@ TEST_F(PlacementFordTest, TargetInTheCreekIsRefusedAndBesideItIsPlaced) {
 
 TEST_F(PlacementFordTest, FootprintBuildableNowRefusesTheCreek) {
 	EXPECT_FALSE(placement->footprintBuildableNow(kBox, {10.0F, kCreekY}));
-	EXPECT_FALSE(placement->footprintBuildableNow("Test_PlacementNoFootprint", {10.0F, kCreekY})) << "a def with no outline is its centre";
 	EXPECT_TRUE(placement->footprintBuildableNow(kBox, {10.0F, kCreekY - 2.0F}));
+}
+
+// A def with neither a declared outline nor a drawn template is tested at its centre alone.
+TEST_F(PlacementFordTest, DefWithNoOutlineOrArtIsTestedAtItsCentre) {
+	assets::AssetDefinition bare;
+	bare.defName = kBareBox;
+	assets::AssetRegistry::Get().registerTestDefinition(bare);
+	EXPECT_FALSE(placement->footprintBuildableNow(kBareBox, {10.0F, kCreekY}));
+	EXPECT_TRUE(placement->footprintBuildableNow(kBareBox, {10.0F, kCreekY + kCreekHalfWidthMeters + 0.1F}));
+}
+
+// A shipped box declares no outline, so its drawn template is its footprint: centred on the bank with
+// its body over the creek, it is refused.
+TEST_F(PlacementFordTest, ShippedBoxOverhangingTheCreekIsRefused) {
+	// <root>/apps/world-sim/scenes/game/world/placement/PlacementSystem.test.cpp -> <root>.
+	std::filesystem::path root = std::filesystem::path(__FILE__);
+	for (int up = 0; up < 7; ++up) {
+		root = root.parent_path();
+	}
+	const std::filesystem::path boxXml = root / "assets" / "world" / "storage" / "BasicBox" / "BasicBox.xml";
+	if (!std::filesystem::exists(boxXml)) {
+		GTEST_SKIP() << "the shipped BasicBox is not at " << boxXml.string();
+	}
+	auto& registry = assets::AssetRegistry::Get();
+	ASSERT_TRUE(registry.loadDefinitions(boxXml.string()));
+	ASSERT_FALSE(registry.getDefinition("BasicBox")->collisionFor(0).blocks()) << "the box declares an outline now; this test is moot";
+	const renderer::TessellatedMesh* drawn = registry.getTemplate("BasicBox", assets::TreeTraits{});
+	ASSERT_NE(drawn, nullptr);
+	const float halfHeight = renderer::computeBounds(*drawn).height * 0.5F;
+
+	const glm::vec2 overhanging{10.0F, kCreekY + kCreekHalfWidthMeters + halfHeight * 0.5F};
+	ASSERT_TRUE(navigation->isPointBuildableNow(overhanging)) << "the centre is on the bank";
+	EXPECT_FALSE(placement->footprintBuildableNow("BasicBox", overhanging));
+	EXPECT_TRUE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY + kCreekHalfWidthMeters + halfHeight + 0.5F}));
+}
+
+// A crafted crate is installed off the creek: beside a station on the bank, aimed into the creek, the
+// target is a spot its footprint takes.
+TEST_F(PlacementFordTest, InstallTargetBesideAStationOnTheBankIsOffTheCreek) {
+	const glm::vec2				   station{10.0F, kCreekY - kCreekHalfWidthMeters - 0.5F};
+	const glm::vec2				   intoTheCreek{0.0F, 1.0F};
+	const std::optional<glm::vec2> anyGround = navigation->findValidPositionNear(station, 1.0F, intoTheCreek);
+	ASSERT_TRUE(anyGround.has_value());
+	ASSERT_FALSE(navigation->isPointBuildableNow(*anyGround)) << "clear ground alone puts it in the creek";
+
+	const std::optional<glm::vec2> target = placement->installTargetNear(kBox, station, intoTheCreek);
+	ASSERT_TRUE(target.has_value());
+	EXPECT_TRUE(placement->footprintBuildableNow(kBox, {target->x, target->y}));
+	EXPECT_GE(glm::distance(*target, station), 0.99F);
+}
+
+// With no spot near the station that the footprint takes, the target is unset and the player places it.
+TEST_F(PlacementFordTest, InstallTargetIsUnsetWhenNoSpotTakesTheFootprint) {
+	assets::AssetDefinition wide;
+	wide.defName = kWideBox;
+	wide.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {3.0F, 3.0F}});
+	assets::AssetRegistry::Get().registerTestDefinition(wide);
+	EXPECT_FALSE(placement->installTargetNear(kWideBox, {10.0F, kCreekY - 1.0F}, {0.0F, 1.0F}).has_value());
 }
