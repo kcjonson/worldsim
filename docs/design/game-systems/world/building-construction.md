@@ -84,20 +84,20 @@ Pure freeform produces accidental 87° corners that read as mistakes, so snappin
 **Guides.** A guide is a thin line through a point along a direction, and every direction comes with its perpendicular, so a guide means "parallel to" or "perpendicular to" something. The guides are exactly these, in priority order:
 
 1. **The shape being drawn.** Its first edge's direction through every point placed so far. When the previous edge runs at another angle, also the previous edge's direction through the previous point.
-2. **Nearby buildings.** The edge directions of the buildings nearest the cursor (within 8 m, at most 4 distinct directions; axis-aligned buildings are left to the world guides). Each runs through the previous point, so the new segment can run parallel or perpendicular to that building, and through that building's own corners, so a new corner can line up with its faces.
+2. **Nearby buildings.** The edge directions of the buildings nearest the cursor (within 8 m, at most 4 distinct directions; axis-aligned buildings are left to the world guides). Each runs through the previous point, so the new segment can run parallel or perpendicular to that building, and through the corners of every building in range with an edge in that direction (within 1°, quarter turns equivalent), so a new corner can line up with any of their faces, even when two buildings share an angle and only one supplied it.
 3. **The world.** North-south and east-west, through every point placed so far and through the 16 nearest building corners within 8 m. This is today's alignment guide.
 
 The foundation tool reads corners and edges from foundations. The wall tool reads walls too, and takes each foundation corner at its outer-face-flush inset (where a perimeter wall's centerline turns), so a guide through a corner lines up with the walls there.
 
 When the cursor comes within 0.3 m of a guide it locks on and the guide draws. Guides of the shape through the previous point or the first point also catch by angle: seen from that point, a cursor within half an angle step (7.5°) of the guide locks on at any distance. So a right-angle turn is as easy to hit 10 m out as next to the corner, and so is the closing corner of a rectangle.
 
-**Crossings.** When the cursor is on two guides that cross at 15° or more, it snaps to the crossing and a dot marks it. This squares the last corner of a rectangle: the guide through the previous point parallel to the first edge crosses the guide through the first point perpendicular to it exactly at the fourth corner. A crossing more than 1 m from the cursor is ignored, and so is one that lands on a corner (placed or existing), so a corner never pulls the cursor back onto itself.
+**Crossings.** When the cursor is on two guides that cross at 15° or more, it snaps to the crossing and a dot marks it. This squares the last corner of a rectangle: the guide through the previous point parallel to the first edge crosses the guide through the first point perpendicular to it exactly at the fourth corner. A crossing more than 1 m from the cursor is ignored, and so is one of two guides through the same corner (placed or existing), so a corner never pulls the cursor back onto itself. A crossing of guides through different corners can land on a corner: the last corner of a rectangle may fall on a neighbour's corner and still snaps there.
 
 **Priority among guides.** Source first: the shape beats a nearby building, which beats the world, however close the lower-ranked guide is. Then a crossing beats a single guide, a guide through one of the shape's own points beats one through an existing corner, and the closest wins. Two near-parallel guides less than 0.3 m apart count as one, the higher-ranked. So an incidental line-up with the world axes never pulls a rotated shape off its own perpendicular.
 
 **Whole priority order, foundation tool** (first that applies wins):
 
-1. Close onto the first point (three or more points placed, cursor within the origin radius)
+1. Close onto the first point (three or more points placed, cursor within the origin radius; a guide result within the radius closes too, at step 4)
 2. A corner of an existing foundation
 3. An edge of an existing foundation; where a guide of the shape crosses that edge near the cursor, the point lands on the crossing
 4. Guides, ranked as above
