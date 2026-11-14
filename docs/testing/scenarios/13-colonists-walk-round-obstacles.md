@@ -4,7 +4,7 @@
 **Last verified:** 2026-11-12, steps 6 and 8 rewritten and run 2026-11-13
 
 A colonist walks into fresh dense ground and goes round the obstacles, and panning the camera away
-changes nothing. The nav mesh ends at what colonists have seen and grows as they walk. Spec: [nav-mesh-variable-resolution.md](../../technical/nav-mesh-variable-resolution.md)
+changes nothing. The nav mesh ends at the meshed area, the union of every mover's limit, and grows as they walk. Spec: [nav-mesh-variable-resolution.md](../../technical/nav-mesh-variable-resolution.md)
 (4.4 to 4.7).
 
 ---

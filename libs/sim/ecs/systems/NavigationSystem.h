@@ -28,7 +28,7 @@
 //     limit, and his newest once he stands kSightBufferMeters minus kLimitRetakeStepMm short of the
 //     edge of what he sees staying meshed (see MoverDisc). Then the rest, first in, first out: kLimitsPerTick a tick,
 //     and kDetailRingsPerTick placed obstacles; a limit with more obstacles than that brings them in
-//     over several ticks, hanging over unseen ground, and its ground goes in with the last of them.
+//     over several ticks, hanging over unmeshed ground, and its ground goes in with the last of them.
 //     A queued limit the meshed ground now holds, or with a chunk no mover holds, is dropped; one
 //     whose chunks or placement are not ready waits without holding back those behind it.
 // A mover never walks to where he would see past meshed ground (stepWithinSight): one whose urgent
@@ -491,7 +491,7 @@ class NavigationSystem : public ISystem {
 	// A visibility limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
 	// and range, its outline, and the box its placed obstacles are looked for in (the outline's box
 	// grown by kFootprintReachMeters).
-	struct SeenLimit {
+	struct MeshLimit {
 		EntityID						mover = kInvalidEntity;
 		geometry::Vec2i64				centre{0, 0};
 		std::int64_t					rangeMm		   = 0; // R: the disc its outline holds
@@ -593,24 +593,24 @@ class NavigationSystem : public ISystem {
 	// once), and marks the movers whose newest limit is urgent: two distance compares a mover
 	// otherwise.
 	void trackMovers();
-	[[nodiscard]] SeenLimit makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const;
+	[[nodiscard]] MeshLimit makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const;
 	// The limit is in the mesh: its mover's served limit, unless he has a newer one there.
-	static void noteServed(MoverDisc& disc, const SeenLimit& limit);
-	void		noteServed(const SeenLimit& limit);
+	static void noteServed(MoverDisc& disc, const MeshLimit& limit);
+	void		noteServed(const MeshLimit& limit);
 	[[nodiscard]] bool anchorHolds(world::ChunkCoordinate coord) const;
 	// Every chunk the limit's query box meets is loaded and ready and has its placement, and, for
 	// a mover's limit, an anchor holds it.
-	[[nodiscard]] bool limitServable(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitServable(const MeshLimit& limit) const;
 	// Some chunk the mover's limit needs is held by no anchor: it can never go in.
-	[[nodiscard]] bool limitStranded(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitStranded(const MeshLimit& limit) const;
 	// `pointMm` is inside a limit on its way in: the landing's, one queued and not stranded, or one
 	// whose ground is gathered and not yet handed to the patch worker. Off meshed ground, that is
 	// ground on its way; anywhere else is not, until a mover takes a limit there.
 	[[nodiscard]] bool groundComing(geometry::Vec2i64 pointMm) const;
 	// The limit is its mover's newest, and he is urgent (MoverDisc::urgent).
-	[[nodiscard]] bool limitUrgent(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitUrgent(const MeshLimit& limit) const;
 	// A search's hold keeps the limit waiting: its mover has a limit in the mesh and it is not urgent.
-	[[nodiscard]] bool limitHoldable(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitHoldable(const MeshLimit& limit) const;
 	// As a join moves generation(), the routes current before it that no closing box crosses are
 	// stamped current; a route a closing box crosses goes stale.
 	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
@@ -653,7 +653,7 @@ class NavigationSystem : public ISystem {
 	void gatherLimits(std::size_t addBudget, std::size_t limitBudget, bool holdLimits);
 	// The limit's placed obstacles not yet gathered, in key order, at most `budget` of them, then,
 	// once none is left, its chunks' water not yet gathered and its ground. True when the ground went.
-	bool serveLimit(const SeenLimit& limit, std::size_t& budget);
+	bool serveLimit(const MeshLimit& limit, std::size_t& budget);
 
 	world::ChunkManager*							  chunkManager		= nullptr;
 	assets::PlacementExecutor*						  placement			= nullptr;
@@ -673,8 +673,8 @@ class NavigationSystem : public ISystem {
 	std::map<ObstacleKey, RingId> obstacleInMesh;
 	std::vector<RingId>			  detailRemovals;
 	// Limits waiting to go in, in the order they were taken, and the landing's until it goes in.
-	std::deque<SeenLimit>	 limitQueue;
-	std::optional<SeenLimit> landingLimit;
+	std::deque<MeshLimit>	 limitQueue;
+	std::optional<MeshLimit> landingLimit;
 	// Queued limits that could have gone in at the last gather but for a budget or a hold.
 	std::size_t								limitsPending = 0;
 	// Queued limits dropped as stranded: they never go in (awaitedGroundEpoch).
