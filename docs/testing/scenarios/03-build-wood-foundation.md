@@ -1,7 +1,7 @@
 # Scenario 03: Build wood foundation over trees
 
 **Status:** ready  
-**Last verified:** 2026-06-28
+**Last verified:** 2026-11-13
 
 Verifies the full foundation construction lifecycle: a colonist clears on-footprint trees, chops
 for materials, and builds a `Wood` foundation to completion, unaided, without freezing.
@@ -36,7 +36,7 @@ as world-generated ones. Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
 Blueprint the foundation (built=0 queues the colonist to build it):
 
 ```
-curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY1>&material=Wood&built=0"
+curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=0"
 ```
 
 Note the foundation `id` from `?what=construction` for later assertions:

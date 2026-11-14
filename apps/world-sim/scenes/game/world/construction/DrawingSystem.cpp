@@ -10,6 +10,7 @@
 #include <ecs/components/Transform.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
@@ -137,6 +138,11 @@ namespace world_sim {
 			});
 		}
 
+		// Chains and openings are checked as a strip this wide along each segment, and a segment shorter
+		// than kChainSeenMinLengthMeters is its end points alone.
+		constexpr float kChainSeenHalfWidthMeters = 0.05F;
+		constexpr float kChainSeenMinLengthMeters = 0.001F;
+
 		// Add `from`'s quantities into `into`, per defName.
 		void addManifest(std::vector<std::pair<std::string, uint32_t>>& into, const std::vector<std::pair<std::string, uint32_t>>& from) {
 			for (const auto& [defName, qty] : from) {
@@ -159,7 +165,71 @@ namespace world_sim {
 		  navigation_(args.navigation),
 		  callbacks_(args.callbacks) {}
 
+	const ecs::PlayerVisibilitySystem* DrawingSystem::visibilityGate() const {
+		return ecsWorld_ != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld_) : nullptr;
+	}
+
+	bool DrawingSystem::pointSeen(Foundation::Vec2 p) const {
+		const ecs::PlayerVisibilitySystem* visibility = visibilityGate();
+		return visibility == nullptr || visibility->isSeen({p.x, p.y});
+	}
+
+	bool DrawingSystem::areaSeen(const std::vector<Foundation::Vec2>& pts) const {
+		const ecs::PlayerVisibilitySystem* visibility = visibilityGate();
+		return visibility == nullptr || visibility->covers(Foundation::toGlmVec2(pts));
+	}
+
+	bool DrawingSystem::chainSeen(const std::vector<Foundation::Vec2>& pts) const {
+		const ecs::PlayerVisibilitySystem* visibility = visibilityGate();
+		if (visibility == nullptr) {
+			return true;
+		}
+		for (const Foundation::Vec2 point : pts) {
+			if (!visibility->isSeen({point.x, point.y})) {
+				return false;
+			}
+		}
+		for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+			const glm::vec2 from{pts[i].x, pts[i].y};
+			const glm::vec2 to{pts[i + 1].x, pts[i + 1].y};
+			const float		length = glm::distance(from, to);
+			if (length < kChainSeenMinLengthMeters) {
+				continue;
+			}
+			const glm::vec2 side = glm::vec2{from.y - to.y, to.x - from.x} / length * kChainSeenHalfWidthMeters;
+			if (!visibility->covers({from + side, to + side, to - side, from - side})) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool DrawingSystem::openingSeen(float widthMeters) const {
+		const auto* segment = constructionWorld_.getSegment(openingSnap_.segment);
+		const auto* start = segment != nullptr ? constructionWorld_.getVertex(segment->v0) : nullptr;
+		const auto* end = segment != nullptr ? constructionWorld_.getVertex(segment->v1) : nullptr;
+		if (start == nullptr || end == nullptr) {
+			return true;
+		}
+		const Foundation::Vec2 from = geometry::dequantize(start->pos);
+		const Foundation::Vec2 to = geometry::dequantize(end->pos);
+		const float			   length = std::hypot(to.x - from.x, to.y - from.y);
+		if (length < kChainSeenMinLengthMeters) {
+			return pointSeen(cursor_);
+		}
+		const float alongX = (to.x - from.x) / length * widthMeters * 0.5F;
+		const float alongY = (to.y - from.y) / length * widthMeters * 0.5F;
+		return chainSeen({{cursor_.x - alongX, cursor_.y - alongY}, {cursor_.x + alongX, cursor_.y + alongY}});
+	}
+
+	std::string DrawingSystem::cursorGroundReason(const char* ground) const {
+		return pointSeen(cursor_) ? std::string("not on ") + ground + " ground" : std::string("the area is unexplored");
+	}
+
 	bool DrawingSystem::pointOnMesh(Foundation::Vec2 p) const {
+		if (!pointSeen(p)) {
+			return false;
+		}
 		// Per-vertex / cursor placeability for the ACTIVE tool. No nav system wired (headless/test) ->
 		// validity is owned elsewhere; mirror the dev verbs' permissive fallback. A FOUNDATION vertex
 		// may sit over a clearable entity (tree/rock) -- those become clear tasks -- so it uses the
@@ -193,16 +263,14 @@ namespace world_sim {
 		// BUILDABILITY (terrain + geometry, no flora). Walls have no footprint-clearing yet, so they
 		// still require clear on-mesh ground along the chain centerline. One blocked part refuses the
 		// whole placement (commit nothing).
-		if (navigation_ == nullptr) {
-			return true;
-		}
-		const bool ok =
-			(activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(Foundation::toGlmVec2(pts)) : footprintBuildable(pts);
+		const bool wall = activeTool_ == ToolKind::Wall;
+		const bool seen = wall ? chainSeen(pts) : areaSeen(pts);
+		const bool ok = seen && (navigation_ == nullptr || (wall ? navigation_->isPolylineWalkable(Foundation::toGlmVec2(pts)) : footprintBuildable(pts)));
 		if (ok) {
 			return true;
 		}
 		if (callbacks_.onToast) {
-			callbacks_.onToast("Can't build here", std::string(what) + ": not on buildable ground");
+			callbacks_.onToast("Can't build here", std::string(what) + ": " + (seen ? "not on buildable ground" : "the area is unexplored"));
 		}
 		return false;
 	}
@@ -401,7 +469,7 @@ namespace world_sim {
 		// (requirePlaceable) still catches an edge or interior that crosses water between two vertices.
 		if (cursorOffMesh_) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "foundation: not on buildable ground");
+				callbacks_.onToast("Can't build here", "foundation: " + cursorGroundReason("buildable"));
 			}
 			return true;
 		}
@@ -777,6 +845,12 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::commitFoundationEdit() {
+		if (!areaSeen(points_)) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't edit foundation", "the area is unexplored");
+			}
+			return;
+		}
 		const FoundationEditOutcome outcome = applyFoundationEdit(editTarget_, points_, editMode_);
 		if (!outcome.ok) {
 			if (callbacks_.onToast) {
@@ -865,7 +939,7 @@ namespace world_sim {
 		// catches a segment that bridges water between two on-mesh points.
 		if (cursorOffMesh_) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "wall: not on walkable ground");
+				callbacks_.onToast("Can't build here", "wall: " + cursorGroundReason("walkable"));
 			}
 			return true;
 		}
@@ -1259,6 +1333,7 @@ namespace world_sim {
 		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
 		openingSnap_ = snap.snapOpening(world, type->widthMeters);
 		cursor_ = openingSnap_.point;
+		openingUnexplored_ = openingSnap_.valid && !openingSeen(type->widthMeters);
 
 		if (openingSnap_.valid) {
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
@@ -1284,6 +1359,12 @@ namespace world_sim {
 		if (!openingSnap_.valid) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("No wall", "openings must sit on a built wall");
+			}
+			return true;
+		}
+		if (openingUnexplored_) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't build here", "opening: the area is unexplored");
 			}
 			return true;
 		}
@@ -1436,8 +1517,8 @@ namespace world_sim {
 				s.valid = false;
 				s.message = "no wall in range";
 			} else {
-				s.valid = openingValidation_.ok();
-				s.message = ec::validationReason(openingValidation_.code);
+				s.valid = openingValidation_.ok() && !openingUnexplored_;
+				s.message = openingUnexplored_ ? "the area is unexplored" : ec::validationReason(openingValidation_.code);
 			}
 			return s;
 		}
@@ -1445,7 +1526,7 @@ namespace world_sim {
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(lastValidation_.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason("walkable") : ec::validationReason(lastValidation_.code);
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
@@ -1491,7 +1572,7 @@ namespace world_sim {
 				s.areaDeltaSquareMeters = s.areaSquareMeters - current;
 			}
 			s.valid = judged.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(judged.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(judged.code);
 			return s;
 		}
 
@@ -1503,12 +1584,12 @@ namespace world_sim {
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 			const auto				  ring = validator.validateRing(points_);
 			s.valid = ring.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(ring.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(points_))));
 		} else {
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(lastValidation_.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(lastValidation_.code);
 		}
 		return s;
 	}
@@ -2069,7 +2150,7 @@ namespace world_sim {
 			return;
 		}
 
-		const bool				valid = openingValidation_.ok();
+		const bool				valid = openingValidation_.ok() && !openingUnexplored_;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 		const Foundation::Color tint = valid ? okColor : badColor;

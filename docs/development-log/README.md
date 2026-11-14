@@ -64,6 +64,7 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 #### November 2026
 
+- [2026-11-13 - Player visibility: unseen ground black, seen ground tinted](./entries/2026-11-13-player-visibility.md)
 - [2026-11-13 - Task claims close-out (WOR-820, WOR-811, WOR-634)](./entries/2026-11-13-task-claims-close-out.md)
 - [2026-11-13 - UI spec alignment: closed against salal, with the last GL state reads removed](./entries/2026-11-13-ui-spec-alignment-closeout.md)
 - [2026-11-13 - Nav mesh ends at the seen area](./entries/2026-11-13-nav-mesh-ends-at-seen-area.md)

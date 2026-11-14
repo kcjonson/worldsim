@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-06-28
+**Last verified:** 2026-11-13
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
@@ -14,7 +14,7 @@ unaided.
   first, or blueprint and instantly-complete one:
 
 ```
-curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY1>&material=Wood&built=1"
+curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=1"
 ```
 
 - Colonist has an `AxePrimitive` (needed to source wall materials):
@@ -34,7 +34,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> construction.foundations[0].id  (note as FOUND_ID)
 ```
 
-Use the same corner coordinates as the foundation (`FX0,FY0` and `FX1,FY1`). Blueprint walls as
+Use the same four corners as the foundation. Blueprint walls as
 a closed polygon (built=0, close=1):
 
 ```
