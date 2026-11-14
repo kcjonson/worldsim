@@ -278,7 +278,6 @@ namespace world_sim {
 			for (std::size_t memberIndex = 0; memberIndex < members.size(); ++memberIndex) {
 				const ec::WallSegment& wseg = segs[members[memberIndex]];
 				WallBandGeom&		   wall = graphWalls[memberIndex];
-				wall.segment = wseg.id;
 				wall.matColor = materialColor(wseg.material, style.wall.fallbackColor);
 				wall.built = (wseg.state == ec::FoundationState::Built);
 				wall.entity = wseg.entity;

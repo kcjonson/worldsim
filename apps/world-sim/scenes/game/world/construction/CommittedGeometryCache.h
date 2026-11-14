@@ -56,7 +56,6 @@ namespace world_sim {
 		Foundation::Color							 matColor;
 		bool										 built = false;
 		ecs::EntityID								 entity = ecs::kInvalidEntity;
-		construction::SegmentId						 segment = construction::kInvalidSegment;
 	};
 
 	struct OpeningGeom {

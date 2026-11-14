@@ -34,16 +34,21 @@ namespace {
 		}
 		void TearDown() override { assets::ConstructionRegistry::Get().clear(); }
 
+		// Each wall gets a stand-in ECS mirror entity, the handle the cache carries
+		// over, so the tests can tell its geometry apart.
+		static ecs::EntityID entityOf(SegmentId segment) { return 1000 + segment; }
+
 		SegmentId wall(Vec2i64 from, Vec2i64 to, FoundationState state) {
 			const construction::SegmentCommitResult result = world.commitSegment(from, to, "Wood", "Standard", construction::kInvalidFoundation);
 			EXPECT_TRUE(result.ok());
 			world.setSegmentState(result.id, state);
+			world.setSegmentEntity(result.id, entityOf(result.id));
 			return result.id;
 		}
 
 		const WallBandGeom* geometryOf(SegmentId segment) const {
 			for (const WallBandGeom& wallGeometry : cache.walls()) {
-				if (wallGeometry.segment == segment) {
+				if (wallGeometry.entity == entityOf(segment)) {
 					return &wallGeometry;
 				}
 			}
