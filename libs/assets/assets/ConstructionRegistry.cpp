@@ -388,15 +388,12 @@ namespace assets {
 			cfg.wall.blueprintFill = color(w, "blueprintFill", cfg.wall.blueprintFill);
 			cfg.wall.fallbackColor = color(w, "fallbackColor", cfg.wall.fallbackColor);
 			cfg.wall.outlineColor = color(w, "outlineColor", cfg.wall.outlineColor);
-			cfg.wall.junctionColor = color(w, "junctionColor", cfg.wall.junctionColor);
 			cfg.wall.progressAlphaMin = number(w, "progressAlphaMin", cfg.wall.progressAlphaMin);
 			cfg.wall.progressAlphaMax = number(w, "progressAlphaMax", cfg.wall.progressAlphaMax);
 			cfg.wall.outlineAlphaMin = number(w, "outlineAlphaMin", cfg.wall.outlineAlphaMin);
 			cfg.wall.outlineAlphaMax = number(w, "outlineAlphaMax", cfg.wall.outlineAlphaMax);
 			cfg.wall.outlineWidthBlueprint = number(w, "outlineWidthBlueprint", cfg.wall.outlineWidthBlueprint);
 			cfg.wall.outlineWidthBuilt = number(w, "outlineWidthBuilt", cfg.wall.outlineWidthBuilt);
-			cfg.wall.junctionAlphaBlueprint = number(w, "junctionAlphaBlueprint", cfg.wall.junctionAlphaBlueprint);
-			cfg.wall.junctionAlphaBuilt = number(w, "junctionAlphaBuilt", cfg.wall.junctionAlphaBuilt);
 			cfg.wall.builtEdgeDarken = number(w, "builtEdgeDarken", cfg.wall.builtEdgeDarken);
 		}
 		if (pugi::xml_node o = root.child("Opening")) {

@@ -37,15 +37,12 @@
     <blueprintFill>#80A6E638</blueprintFill>
     <fallbackColor>#80A6E6FF</fallbackColor>
     <outlineColor>#99C7FFFF</outlineColor>     <!-- blueprint edge; rgb only, alpha from the ramp -->
-    <junctionColor>#80A6E6FF</junctionColor>   <!-- blueprint junction; rgb only, alpha below -->
     <progressAlphaMin>0.2</progressAlphaMin>
     <progressAlphaMax>0.97</progressAlphaMax>  <!-- built fill: nearly opaque, reads solid -->
     <outlineAlphaMin>0.65</outlineAlphaMin>
     <outlineAlphaMax>1.0</outlineAlphaMax>
     <outlineWidthBlueprint>1.5</outlineWidthBlueprint>
     <outlineWidthBuilt>2.0</outlineWidthBuilt>
-    <junctionAlphaBlueprint>0.4</junctionAlphaBlueprint>
-    <junctionAlphaBuilt>0.97</junctionAlphaBuilt> <!-- match the built band so corners are seamless -->
     <builtEdgeDarken>0.5</builtEdgeDarken>      <!-- Built edge = material color * this -->
   </Wall>
 

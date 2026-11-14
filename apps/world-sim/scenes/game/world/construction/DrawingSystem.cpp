@@ -1878,8 +1878,7 @@ namespace world_sim {
 
 	namespace {
 
-		// Filled polygon plus an outline via Primitives. Screen-space points. Shared
-		// by band, junction, and opening draws.
+		// Filled polygon plus an outline via Primitives. Screen-space points.
 		void fillRing(
 			std::span<const Foundation::Vec2> screen,
 			Foundation::Color				  fill,
@@ -1915,78 +1914,56 @@ namespace world_sim {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
 
-		// Reject-don't-repair: resolveWallBands refused the graph at rebuild time;
+		// Reject-don't-repair: resolveWallBands refused these graphs at rebuild time;
 		// bare centerlines still show the walls exist, never garbage bands.
-		if (committedCache_.bandsFailed()) {
-			for (const auto& line : committedCache_.fallbackCenterlines()) {
-				Renderer::Primitives::drawLine({
-					.start = toScreen(line[0]),
-					.end = toScreen(line[1]),
-					.style = {.color = toColor(ws.outlineColor, 0.8F), .width = ws.outlineWidthBuilt},
-					.id = "committed_wall_fallback",
-					.key = 60,
-				});
-			}
-			return;
+		for (const auto& line : committedCache_.fallbackCenterlines()) {
+			Renderer::Primitives::drawLine({
+				.start = toScreen(line[0]),
+				.end = toScreen(line[1]),
+				.style = {.color = toColor(ws.outlineColor, 0.8F), .width = ws.outlineWidthBuilt},
+				.id = "committed_wall_fallback",
+				.key = 60,
+			});
 		}
 
-		// Per-segment bands, styled like the foundation render (z 60-62, above
-		// foundations at 50-52). A segment hosting openings is cached as solid
-		// sub-bands around each opening's gap instead of one trimmed band.
+		// Per-segment pieces and the junctions each owns, styled like the foundation
+		// render (z 60-62, above foundations at 50-52). The rings tile, so only the
+		// cached outline is stroked: no seam where a band meets its corner. A wall's
+		// bounds cover its outline edges as well as its rings.
 		std::vector<Foundation::Vec2> screen;
-		for (const auto& g : committedCache_.walls()) {
-			if (!g.aabb.intersects(visibleWorld)) {
+		for (const auto& wall : committedCache_.walls()) {
+			if (!wall.aabb.intersects(visibleWorld)) {
 				continue;
 			}
-			const float progress = blueprintProgress(g.built, g.entity);
+			const float progress = blueprintProgress(wall.built, wall.entity);
 
 			const float fillAlpha =
-				g.built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
+				wall.built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
 			// Built walls wear a darker shade of their own material; blueprints keep the
 			// cool outline so blue stays the "planned" signal.
 			const Foundation::Color outline =
-				g.built ? darken(g.matColor, ws.builtEdgeDarken)
-						: toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
+				wall.built ? darken(wall.matColor, ws.builtEdgeDarken)
+						   : toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
 
-			for (const auto& ring : g.rings) {
+			for (const auto& ring : wall.rings) {
 				screen.clear();
 				screen.reserve(ring.size());
 				for (const auto& v : ring) {
 					screen.push_back(toScreen(v));
 				}
 				// Blueprint base always; progress fill ramps with workDone/workTotal.
-				fillRing(screen, toColor(ws.blueprintFill), toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_base", "", 60, 60);
-				fillRing(
-					screen,
-					{g.matColor.r, g.matColor.g, g.matColor.b, fillAlpha},
-					outline,
-					g.built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint,
-					"committed_wall_progress",
-					"committed_wall_edge",
-					61,
-					62
-				);
+				fillPolygon(screen, toColor(ws.blueprintFill), "committed_wall_base", 60);
+				fillPolygon(screen, {wall.matColor.r, wall.matColor.g, wall.matColor.b, fillAlpha}, "committed_wall_progress", 61);
 			}
-		}
-
-		// Junction polygons fill the corner gaps the trimmed bands leave. A built
-		// junction (every incident segment built, resolved at rebuild) takes the
-		// wall material color so corners read as continuous material; otherwise it
-		// keeps the cool blueprint tint, so a blueprint's corners stay blue even
-		// while a finished structure elsewhere shows wood corners.
-		for (const auto& g : committedCache_.junctions()) {
-			if (!g.aabb.intersects(visibleWorld)) {
-				continue;
+			for (const auto& edge : wall.outline) {
+				Renderer::Primitives::drawLine({
+					.start = toScreen(edge[0]),
+					.end = toScreen(edge[1]),
+					.style = {.color = outline, .width = wall.built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint},
+					.id = "committed_wall_edge",
+					.key = 62,
+				});
 			}
-			const Foundation::Color junctionFill = g.built
-													   ? Foundation::Color{g.matColor.r, g.matColor.g, g.matColor.b, ws.junctionAlphaBuilt}
-													   : toColor(ws.junctionColor, ws.junctionAlphaBlueprint);
-			screen.clear();
-			screen.reserve(g.ring.size());
-			for (const auto& v : g.ring) {
-				screen.push_back(toScreen(v));
-			}
-			fillRing(screen, junctionFill, toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_junction", "", 61, 61);
 		}
 	}
 

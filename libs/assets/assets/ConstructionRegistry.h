@@ -239,22 +239,18 @@ namespace assets {
 
 	/// Committed-wall look. Same ramp model as foundations. A Built wall renders nearly
 	/// opaque with a darker-material edge (builtEdgeDarken), so it stands clearly proud
-	/// of the floor; a blueprint keeps the cool outlineColor. The junction-polygon fill
-	/// tiles the corners between trimmed bands: blueprint junctions use junctionColor
-	/// (blue), built junctions take the wall material color so corners read continuous.
+	/// of the floor; a blueprint keeps the cool outlineColor. A corner's junction polygon
+	/// is filled as part of one wall meeting there, so it wears that wall's style.
 	struct WallStyle {
 		StyleColor blueprintFill{0.5F, 0.65F, 0.9F, 0.22F};
 		StyleColor fallbackColor{0.5F, 0.65F, 0.9F, 1.0F};
-		StyleColor outlineColor{0.6F, 0.78F, 1.0F, 1.0F};  // blueprint edge; rgb only, alpha ramps
-		StyleColor junctionColor{0.5F, 0.65F, 0.9F, 1.0F}; // blueprint junction; rgb only, alpha below
+		StyleColor outlineColor{0.6F, 0.78F, 1.0F, 1.0F}; // blueprint edge; rgb only, alpha ramps
 		float	   progressAlphaMin = 0.2F;
 		float	   progressAlphaMax = 0.97F;
 		float	   outlineAlphaMin = 0.65F;
 		float	   outlineAlphaMax = 1.0F;
 		float	   outlineWidthBlueprint = 1.5F;
 		float	   outlineWidthBuilt = 2.0F;
-		float	   junctionAlphaBlueprint = 0.4F;
-		float	   junctionAlphaBuilt = 0.97F;
 		float	   builtEdgeDarken = 0.5F; // Built edge = material color * this
 	};
 
