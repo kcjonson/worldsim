@@ -440,10 +440,14 @@ every placed static still on its footprint leaves the placement index: one a col
 stone) is dropped just outside as a loose pile, the way a pile is, and the rest (the freestanding
 grass, a rock) is removed with nothing to show for it. A packaged item lying on the footprint is set
 down just outside by the rule a colonist setting one down uses (walkable ground off every unbuilt
-footprint), its placement, if it has one, unchanged. Three are left where they are: one a colonist
+footprint), its placement, if it has one, unchanged. The move decides "on the footprint" from the item's
+position, while the app's set-down rule tests the packaged footprint centre (the position less 0.375 m
+in y), so an item whose position lies up to 0.375 m outside an edge on the +y side is left in place.
+Three are left where they are: one a colonist
 carries (its position is where it was picked up), one a colonist's PlacePackaged task is on its way to
-fetch (moving it would leave his pickup at the old spot; he carries it off, or sets it down off the site
-if he drops the job), and one whose placement is on the footprint (it is installed there). None of that
+fetch (moving it would leave his pickup at the old spot; he carries it off, and once he is carrying it he
+sets it down off the site if he drops the job, but if he drops the job before picking it up it stays
+on the site and is built over), and one whose placement is on the footprint (it is installed there). None of that
 is work for a colonist and none of it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
 and bushes included.
 

@@ -287,7 +287,8 @@ namespace ecs {
 			return;
 		}
 		// One a colonist is on his way to fetch is left to him: moved, his pickup would land where it
-		// was. He carries it off to its placement, or sets it down off the site if he drops the job.
+		// was. He carries it off to its placement; once carrying it he sets it down off the site if he drops
+		// the job, but if he drops the job before picking it up it stays on the site and is built over.
 		std::unordered_set<uint64_t> fetched;
 		for (auto [colonist, task] : world->view<Task>()) {
 			(void)colonist;
