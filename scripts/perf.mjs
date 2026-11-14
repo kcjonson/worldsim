@@ -1,16 +1,19 @@
 // Perf tooling: the capture a session runs on its own change, and the steps of the nightly batch.
 // docs/testing/README.md ("Performance") is the rule; docs/testing/nightly-perf-batch.md the batch.
 //
-//   capture   --port 8081 (--view river|coast|desert | --x 0 --y 20) [--zooms 3,1.5] [--no-scroll]
+//   capture   --port 8081 (--view river|river-cover|coast|desert | --x 0 --y 20) [--zooms 3,1.5] [--no-scroll]
 //             [--no-gpu-hold] [--no-reveal] [--out file]      against a world-sim you started, in the game
-//             scene, with player visibility revealed unless --no-reveal (which times the cover)
+//             scene, with player visibility revealed unless --no-reveal (which times the cover);
+//             river-cover is the river with the cover drawn, at zooms 3, 1.5 and 0.75, no scroll
 //   compare   --base a.json[,b.json] --tip c.json[,d.json] [--md file]
 //             --night <dir> --base <sha> --tip <sha> [--views river,coast|none] [--bench world,assets]
 //             [--runs 2]   (a night's views, targets and runs are what measure and bench were given;
-//             fewer captures or runs than that is inconclusive)
+//             fewer captures or runs than that is inconclusive; river-cover is "unjudged" when only
+//             one of base and tip has the cover, and an unjudged cell never fails or reverts a night)
 //   idle-wait [--until 06:00] [--interval-seconds 300] [--max-minutes n]
 //   range                                       the perf-relevant merges since the last tested SHA
-//   measure   --refs <base>,<tip> [--views ...] [--runs 2] [--stop-at 07:00] [--night <dir>]
+//   measure   --refs <base>,<tip> [--views river,river-cover,coast,desert] [--runs 2] [--stop-at 07:00] [--night <dir>]
+//             --plan [--views ...] [--runs 2]     print the captures and launches a night would take, run nothing
 //   bench     --refs <base>,<tip> --targets world,assets,worldgen [--runs 2] [--stop-at 07:00] [--night <dir>]
 //             --exe <a *-benchmarks executable> [--out file]      one run of one you built
 //   state     [--set-tested <sha>] [--open-regression '<json>'] [--close-regression <pr>]
@@ -25,9 +28,22 @@ import { fileURLToPath } from 'node:url';
 import { readMachineLoad } from './machine-load.mjs';
 import { capture, kDefaultZooms } from './perf/capture.mjs';
 import { runBenchmarks } from './perf/bench.mjs';
-import { benchToMarkdown, compareBenchRuns, compareRuns, normalizeCapture, toMarkdown, worstVerdict } from './perf/compare.mjs';
+import { benchToMarkdown, compareBenchRuns, compareRuns, coverUnjudged, normalizeCapture, toMarkdown, unjudgedToMarkdown, worstVerdict } from './perf/compare.mjs';
 
-const kViews = { river: [0, 20], coast: [70030, 0], desert: [540, 131480] };
+// A view is a place plus capture options. `river-cover` is the river with the player visibility cover
+// drawn (reveal off), so the cover's cost reads in its own cell and the river's stays comparable with
+// history. Idle zooms only: the scroll scenarios walk off into black ground and mostly time chunk
+// generation, which the river cell already does, and the cover's fills cost the same at any zoom.
+const kViews = {
+	river: { at: [0, 20] },
+	'river-cover': { at: [0, 20], reveal: false, zooms: [3, 1.5, 0.75], scroll: false },
+	coast: { at: [70030, 0] },
+	desert: { at: [540, 131480] },
+};
+const viewCapture = (view) => {
+	const { at, ...own } = kViews[view];
+	return { x: at[0], y: at[1], ...own };
+};
 const kPerfPaths = [/^libs\/(world-view|world|sim|assets)\//, /^apps\/world-sim\//, /^assets\//];
 const kNeverPerf = [/\.test\.cpp$/, /\.bench\.cpp$/, /\.md$/];
 // Each library's Google Benchmark executable (<name>-benchmarks) and the source it times. `world`
@@ -397,11 +413,29 @@ async function takeInterleaved({ runs, stopAt, gate, force, night }, result, { b
 	}
 }
 
+function measureViews(options) {
+	const views = (typeof options.views === 'string' ? options.views : Object.keys(kViews).join(',')).split(',');
+	for (const view of views) if (!(view in kViews)) fail(`unknown view: ${view}`);
+	return views;
+}
+
+// What a night's measure would launch, without building or launching anything
+function measurePlan(options) {
+	const views = measureViews(options);
+	const runs = options.runs ? Number(options.runs) : 2;
+	const shas = typeof options.refs === 'string' ? options.refs.split(',').length : 2;
+	const captures = views.map((view) => {
+		const { zooms = kDefaultZooms, scroll = true, reveal = true } = viewCapture(view);
+		return { view, cover: !reveal, zooms, scenarios: zooms.length + (scroll ? 2 : 0) };
+	});
+	return { views: captures, runs, shas, launches: views.length * runs * shas, scenarioTakes: captures.reduce((total, capture) => total + capture.scenarios, 0) * runs * shas };
+}
+
 async function measure(options) {
+	if (options.plan) return measurePlan(options);
 	const run = nightRun(options, 'measure');
 	if (!fs.existsSync(kSharedPlanet)) fail(`no planet at ${kSharedPlanet}; bake it from the main checkout (CLAUDE.md, "Sharing the pre-generated world")`);
-	const views = (typeof options.views === 'string' ? options.views : 'river,coast,desert').split(',');
-	for (const view of views) if (!(view in kViews)) fail(`unknown view: ${view}`);
+	const views = measureViews(options);
 	const result = { night: run.night, views, runs: run.runs, refs: {}, taken: [], buildFailed: [], stopped: null };
 
 	const built = await buildRefs(run, result, (sha) => snapshot(sha, run.night, run.stopAt));
@@ -409,8 +443,8 @@ async function measure(options) {
 	await takeInterleaved(run, result, {
 		built, items: views, key: 'view', folder: 'captures',
 		take: (dir, view) => {
-			const [x, y] = kViews[view];
-			return withGame(dir, kBatchPort, (gamePid) => capture({ port: kBatchPort, x, y, gamePid, log: progress }));
+			const { x, y, ...own } = viewCapture(view);
+			return withGame(dir, kBatchPort, (gamePid) => capture({ port: kBatchPort, x, y, gamePid, log: progress, ...own }));
 		},
 	});
 	return result;
@@ -503,6 +537,16 @@ function compare(options) {
 			into[name] = { verdict: 'inconclusive', found: null, incomplete };
 			continue;
 		}
+		if (kind === 'view') {
+			// A capture that left the cover on timed it, in a night or in a session's own pair of files
+			const captures = [baseFiles, tipFiles].map((files) => files.map((file) => normalizeCapture(readJson(file))));
+			const reason = captures.flat().some((run) => run.reveal === false) ? coverUnjudged(...captures) : null;
+			if (reason) {
+				markdown.push(unjudgedToMarkdown(name, reason));
+				into[name] = { verdict: 'unjudged', found: null, reason, incomplete };
+				continue;
+			}
+		}
 		let result;
 		try {
 			result = kind === 'bench'
@@ -555,15 +599,14 @@ function onlyGamePid() {
 
 async function captureCommand(options) {
 	const port = options.port ? Number(options.port) : 8081;
-	const [x, y] = typeof options.view === 'string'
-		? kViews[options.view] ?? fail(`unknown view: ${options.view}`)
-		: [Number(options.x ?? 256), Number(options.y ?? 256)];
+	if (typeof options.view === 'string' && !(options.view in kViews)) fail(`unknown view: ${options.view}`);
+	const place = typeof options.view === 'string' ? viewCapture(options.view) : { x: Number(options.x ?? 256), y: Number(options.y ?? 256) };
 	const result = await capture({
-		port, x, y, gamePid: onlyGamePid(), log: progress,
-		zooms: typeof options.zooms === 'string' ? options.zooms.split(',').map(Number) : kDefaultZooms,
-		scroll: !options['no-scroll'],
+		port, gamePid: onlyGamePid(), log: progress, ...place,
+		zooms: typeof options.zooms === 'string' ? options.zooms.split(',').map(Number) : place.zooms ?? kDefaultZooms,
+		scroll: !options['no-scroll'] && (place.scroll ?? true),
 		gpuHold: !options['no-gpu-hold'],
-		reveal: !options['no-reveal'],
+		reveal: !options['no-reveal'] && (place.reveal ?? true),
 	});
 	const stamp = new Date().toISOString().slice(0, 19).replaceAll(':', '').replace('T', '-');
 	const out = path.resolve(typeof options.out === 'string' ? options.out : path.join('perf-results', `capture-${stamp}.json`));
