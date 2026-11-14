@@ -1280,21 +1280,22 @@ namespace {
 
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
 			// station via the existing PlacePackaged flow (it must not seat in the colonist's
-			// hands or stack on the station). Resolve a walkable spot >= 1 m away; the aim rotates
-			// by the golden angle each spawn so a queued run of boxes FANS OUT instead of stacking
-			// on one target. If no mesh covers the station (findValidPositionNear -> nullopt), fall
-			// back to the manual packaged drop (spawn beside the station, await a [Place] click) so
-			// crafting never hard-fails. ENQUEUE only -- fires from inside the ActionSystem view loop.
-			actionSystem.setSpawnPackagedAtCallback([this, &navSystem](const std::string& defName, glm::vec2 stationPos) {
+			// hands or stack on the station). Resolve a spot >= 1 m away that its footprint can be
+			// set up on (PlacementSystem::installTargetNear, never a ford); the aim rotates by the
+			// golden angle each spawn so a queued run of boxes FANS OUT instead of stacking on one
+			// target. With no such spot, fall back to the manual packaged drop (spawn beside the
+			// station, await a [Place] click) so crafting never hard-fails. ENQUEUE only -- fires
+			// from inside the ActionSystem view loop.
+			actionSystem.setSpawnPackagedAtCallback([this](const std::string& defName, glm::vec2 stationPos) {
 				constexpr float				   kGoldenAngle = 2.39996323F; // ~137.5 deg, spreads successive aims evenly
 				const float					   angle = static_cast<float>(m_packagedSpawnSeq++) * kGoldenAngle;
 				const glm::vec2				   aim{std::cos(angle), std::sin(angle)};
-				const std::optional<glm::vec2> target = navSystem.findValidPositionNear(stationPos, 1.0F, aim);
+				const std::optional<glm::vec2> target = m_placementSystem->installTargetNear(defName, stationPos, aim);
 				if (target.has_value()) {
 					m_pendingSpawns.push_back({defName, target->x, target->y, 0, /*packaged=*/true, target});
 				} else {
-					// No mesh at the station: fall back to the player-driven packaged drop, nudged
-					// ~2 m off the station (no mesh to snap to) so the box doesn't stack on it.
+					// No spot to install it: fall back to the player-driven packaged drop, nudged
+					// ~2 m off the station so the box doesn't stack on it.
 					m_pendingSpawns.push_back({defName, stationPos.x + 2.0F, stationPos.y, 0, /*packaged=*/true, std::nullopt});
 				}
 			});

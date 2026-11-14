@@ -129,7 +129,7 @@ namespace world_sim {
 		struct Args {
 			ecs::World*					world;
 			world::WorldCamera*			camera;
-			ecs::NavigationSystem*		navigation; // world-position validity (isValidPosition); same predicate as the dev verbs
+			ecs::NavigationSystem*		navigation; // the ground gates (BuildableOnceCleared for foundations, BuildableNow for walls); the dev verbs' too
 			// The preview's colours where a shape can and can't go, from the scene's theme.
 			Foundation::Color validColor{};
 			Foundation::Color invalidColor{};
@@ -256,7 +256,7 @@ namespace world_sim {
 		/// enclose rooms immediately. Reconciles segment entities once. Returns the
 		/// number of segments created.
 		/// Precondition: callers must nav-validate the chain first (the dev verb does
-		/// via requireWalkableChain); this bypasses the on-mesh check.
+		/// via wallChainGroundRefusal); this bypasses the on-mesh check.
 		int devCommitWalls(
 			const std::vector<Foundation::Vec2>& pts,
 			const std::string&					 material,
@@ -305,8 +305,8 @@ namespace world_sim {
 		// --- Nav-mesh placement validity (shared by foundation + wall + opening) ---
 
 		/// Whether `p` (world meters) is a placeable point for the ACTIVE tool: a FOUNDATION vertex is
-		/// placeable over clearable entities too (NavigationSystem::isPointBuildable, terrain-only), a
-		/// WALL vertex needs clear on-mesh ground (isValidPosition). Same split the /api/dev foundation
+		/// placeable over clearable entities too (NavigationSystem::isPointBuildableOnceCleared, terrain-only), a
+		/// WALL vertex needs clear on-mesh ground out of any ford (isPointBuildableNow). Same split the /api/dev foundation
 		/// vs walls verbs now use; validity stays owned by a nav mesh (no world/terrain/water reads).
 		/// When no nav system is wired (headless/test) validity is owned elsewhere; mirror the dev
 		/// verbs' permissive fallback and treat the point as placeable.
@@ -314,7 +314,7 @@ namespace world_sim {
 
 		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
 		/// area against footprintBuildable. A WALL validates its chain centerline against
-		/// isPolylineWalkable (no wall footprint-clearing yet, so it still needs clear ground). The SAME
+		/// isLineBuildableNow (no wall footprint-clearing yet, so it still needs clear ground). The SAME
 		/// shared predicates the /api/dev verbs use. On failure toasts "Can't build here" and returns
 		/// false so the caller commits NOTHING -- no partial structure.
 		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
@@ -327,10 +327,10 @@ namespace world_sim {
 		[[nodiscard]] bool chainSeen(const std::vector<Foundation::Vec2>& pts) const;
 		[[nodiscard]] bool openingSeen(float widthMeters) const;
 		[[nodiscard]] const ecs::PlayerVisibilitySystem* visibilityGate() const;
-		/// "not on <ground> ground", or "the area is unexplored" when the cursor is over ground nobody has seen.
-		[[nodiscard]] std::string cursorGroundReason(const char* ground) const;
+		/// "not on buildable ground", or "the area is unexplored" when the cursor is over ground nobody has seen.
+		[[nodiscard]] std::string cursorGroundReason() const;
 
-		/// NavigationSystem::isAreaBuildable over the polygon `pts`: a terrain-only mesh, so water and
+		/// NavigationSystem::isAreaBuildableOnceCleared over the polygon `pts`: a terrain-only mesh, so water and
 		/// off-mesh gaps block but clearable entities (trees/rocks) do NOT (placing over them spawns
 		/// clear tasks and the build waits for the footprint to clear). Wall conflicts are the
 		/// validator's job. True when no nav system is wired (headless/test).
@@ -469,7 +469,7 @@ namespace world_sim {
 		bool willClose_ = false;
 
 		// True when the snapped cursor is at a NON-PLACEABLE point for the active tool (foundation:
-		// unbuildable -- water or off-mesh; wall: off the walkable mesh; or no active mesh). Recomputed
+		// water, a ford, or off-mesh; wall: those or a placed obstacle; or no active mesh). Recomputed
 		// every move for the foundation + wall tools; drives the red invalid preview so the player sees
 		// they can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
 		// this is feedback only.

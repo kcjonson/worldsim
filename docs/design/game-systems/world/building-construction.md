@@ -100,7 +100,7 @@ All values live in the external construction config (see Config Surface), so tun
 | Minimum area | No micro-foundations | 4 m² |
 | Clearance to other foundations | Either snapped exactly edge-to-edge (zero gap) or at least pathing clearance apart. Never a sliver between buildings | 1.0 m |
 | Holes | Donut foundations not supported in v1 | — |
-| Terrain | Buildable ground only (no water, and that includes a stream narrow enough for colonists to wade across). Trees, rocks, and loose items don't block placement; they generate clear tasks | — |
+| Terrain | Buildable ground only (no water, and that includes a stream narrow enough for colonists to wade across: nothing is built in a stream, so walls, stations, and storage refuse it too). Trees, rocks, and loose items don't block placement; they generate clear tasks | — |
 
 Concave shapes are fine. L-shapes, U-shapes, long halls: all valid as long as the constraints hold.
 

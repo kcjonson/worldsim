@@ -968,9 +968,9 @@ namespace {
 		}
 	}
 
-	// The build tool's per-frame cursor checks among obstacles: isAreaWalkable over a 4 m square
-	// footprint, read from every mesh triangle it meets, and isPolylineWalkable over a 20 m wall line
-	// sampled every 0.5 m, at 200 spots round the colony. Reports one frame's pair of checks.
+	// The build tools' per-frame cursor checks among obstacles: isAreaBuildableNow over a 4 m square
+	// footprint and isLineBuildableNow over a 20 m wall line, each read from every mesh triangle it
+	// meets, at 200 spots round the colony. Reports one frame's pair of checks.
 	void BM_CursorCheck(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(0);
@@ -990,8 +990,8 @@ namespace {
 				const std::vector<glm::vec2> footprint{at, at + glm::vec2{4.0F, 0.0F}, at + glm::vec2{4.0F, 4.0F}, at + glm::vec2{0.0F, 4.0F}};
 				const std::vector<glm::vec2> wall{at, at + glm::vec2{20.0F, 0.0F}};
 				const Clock::time_point		 start = Clock::now();
-				clear += rig.nav.isAreaWalkable(footprint) ? 1 : 0;
-				clear += rig.nav.isPolylineWalkable(wall) ? 1 : 0;
+				clear += rig.nav.isAreaBuildableNow(footprint) ? 1 : 0;
+				clear += rig.nav.isLineBuildableNow(wall) ? 1 : 0;
 				const double us = std::chrono::duration<double, std::micro>(Clock::now() - start).count();
 				totalUs += us;
 				maxUs = std::max(maxUs, us);

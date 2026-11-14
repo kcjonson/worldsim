@@ -296,30 +296,38 @@ class NavigationSystem : public ISystem {
 	// checks elsewhere.
 	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const;
 
-	// Whole-FOOTPRINT validity for an area structure (a foundation polygon). True IFF EVERY part
-	// of the closed polygon -- vertices, edges, and interior -- is clear ground as isValidPosition
-	// reads it, exactly: every mesh triangle the polygon meets is checked, one it only touches
-	// included, and a polygon that reaches the mesh's edge is off it. A ring of fewer than 3 points
-	// validates its points and samples between them at <= kFootprintSampleStepMm.
-	[[nodiscard]] bool isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const;
+	// The BuildableNow family (walls and furniture) takes ground as it stands, so a placed obstacle
+	// refuses it; the BuildableOnceCleared family (foundations) reads a placed obstacle as the ground
+	// beneath it, because a foundation's site is cleared before it is built. Both refuse water, a
+	// fordable channel, and ground that isn't meshed.
+	//
+	// Ground something can be built on or set up on as it stands, with nothing cleared first: clear
+	// ground as isValidPosition reads it (water and placed obstacles block, any wall face reads open)
+	// that is outside every fordable channel, since nothing is built in a stream a mover could wade.
+	// False off meshed ground. The point is a wall vertex or the wall tool's cursor.
+	[[nodiscard]] bool isPointBuildableNow(glm::vec2 meters) const;
 
-	// Whole-CENTERLINE validity for a linear structure: both endpoints plus every sample along
-	// a->b at <= kFootprintSampleStepMm pass isValidPosition.
-	[[nodiscard]] bool isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const;
+	// isPointBuildableNow for every point of the open polyline, its vertices and every segment
+	// between them, read exactly: every mesh triangle a segment meets is checked, one it only touches
+	// included, and a line that reaches the mesh's edge is off it. One point validates just it; empty
+	// is trivially true. The gate for a wall chain (the wall tool and the /api/dev/walls verb).
+	[[nodiscard]] bool isLineBuildableNow(const std::vector<glm::vec2>& pointsMeters) const;
 
-	// Every consecutive (pts[i], pts[i+1]) edge passes isSegmentWalkable. One point validates
-	// just it; empty is trivially true. Used for the wall tool's chain and the /api/dev/walls verb.
-	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
+	// isPointBuildableNow for every part of the closed polygon, vertices, edges, and interior, read
+	// exactly as isLineBuildableNow reads a line. A ring of fewer than 3 points validates it as a
+	// line. The gate for furniture's footprint, a single point included (the placement tool and the
+	// /api/dev/spawn verb).
+	[[nodiscard]] bool isAreaBuildableNow(const std::vector<glm::vec2>& polygonMeters) const;
 
-	// Whole-FOOTPRINT BUILDABILITY: isAreaWalkable's exact check against the nav mesh with its placed
-	// obstacles read as the ground beneath them (ConstructionSystem turns them into clear tasks) and
-	// every wall face open (wall conflicts are ConstructionValidator's job). Only water, a fordable
-	// channel a mover could wade included, and ground that isn't meshed block. The placement gate
-	// for the build tool.
-	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
+	// Whole-footprint buildability once the site is cleared: isAreaBuildableNow's exact check with
+	// the mesh's placed obstacles read as the ground beneath them (ConstructionSystem turns them into
+	// clear tasks). Only water, a fordable channel a mover could wade included, and ground that isn't
+	// meshed block; wall conflicts are ConstructionValidator's job. The placement gate for the
+	// foundation tool.
+	[[nodiscard]] bool isAreaBuildableOnceCleared(const std::vector<glm::vec2>& polygonMeters) const;
 
-	// Single-point buildability, the per-vertex / live-cursor counterpart of isAreaBuildable.
-	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
+	// Single-point buildability, the per-vertex / live-cursor counterpart of isAreaBuildableOnceCleared.
+	[[nodiscard]] bool isPointBuildableOnceCleared(glm::vec2 meters) const;
 
 	// `meters` itself when it is walkable in truth on the nav mesh with its placed obstacles read as
 	// the ground beneath them (water and built walls block, placed obstacles don't), else the nearest
@@ -348,10 +356,6 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters, float minSeparationMeters,
 											  float clearanceMeters, const std::function<void(const GroupSpawn&)>& clearLanding = {});
 
-	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
-	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
-	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
-
 	// Nearest clear ground (isValidPosition) to `meters`, searched outward over the mesh from it,
 	// or nullopt when it is off meshed ground or no face is clear. Moves a work target off a collider
 	// to the ground beside it, and places things.
@@ -378,10 +382,14 @@ class NavigationSystem : public ISystem {
 	// distance OFF the spot that produced it. Deterministic: a single candidate at
 	// origin + minDist*dir, then a ring of fixed angles at that radius, then the nearest walkable
 	// point pushed out to minDist when that stays on mesh. `preferredDir` biases the first
-	// candidate; a zero vector falls back to {1,0}. nullopt only when `origin` is off meshed
-	// ground or no face is walkable.
-	[[nodiscard]] std::optional<glm::vec2>
-	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
+	// candidate; a zero vector falls back to {1,0}. `accept`, when given, must also pass every
+	// candidate, the last one included (a crafted crate's install target is one its footprint can be
+	// set up on); the nearest-point fallback then never answers a point closer than minDist, which
+	// would be `origin`'s own spot. nullopt when `origin` is off meshed ground, no face is walkable,
+	// or `accept` takes no candidate.
+	[[nodiscard]] std::optional<glm::vec2> findValidPositionNear(
+		glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}, const std::function<bool(glm::vec2)>& accept = {}
+	) const;
 
 	// True when `entity`, placed in `chunk`, is a detail ring in the nav mesh queries see. Collision
 	// pushes out of a placed obstacle only then, so the forward snap has had its turn first and the
