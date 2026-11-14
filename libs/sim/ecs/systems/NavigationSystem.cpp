@@ -242,6 +242,10 @@ namespace ecs {
 		bool buildableFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::terrainTraversable(groundBeneath(mesh, tri)) && !nav::faceInFord(mesh, tri);
 		}
+		// Buildable with nothing to clear first: a placed obstacle blocks, as it does a mover.
+		bool clearToBuildFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			return gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]) && !nav::faceInFord(mesh, tri);
+		}
 		bool landingFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::truthTraversable(groundBeneath(mesh, tri));
 		}
@@ -480,21 +484,6 @@ namespace ecs {
 			return true;
 		}
 
-		template <typename OnMesh> bool polylineWalkableUnder(const OnMesh& onMesh, const std::vector<glm::vec2>& pts) {
-			if (pts.empty()) {
-				return true;
-			}
-			if (pts.size() == 1) {
-				return onMesh(pts.front());
-			}
-			for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
-				if (!segmentWalkableUnder(onMesh, pts[i], pts[i + 1])) {
-					return false;
-				}
-			}
-			return true;
-		}
-
 		// Whether segment (a, b) and the closed polygon share a point.
 		bool segmentMeetsPolygon(const geometry::Vec2i64& a, const geometry::Vec2i64& b, const std::vector<geometry::Vec2i64>& polygon) {
 			// With `a` outside, `b` inside means the segment crosses an edge, so the edges settle it.
@@ -532,21 +521,31 @@ namespace ecs {
 			return true;
 		}
 
-		// Whole-footprint validity, read exactly from the mesh: whether the closed polygon lies wholly
-		// on the mesh and `face` accepts every triangle it meets, a triangle it only touches included.
-		// The triangles are found by walking out from the one under a corner, so nothing narrower than
-		// a sampling pitch can pass between probes. A footprint that reaches the mesh's edge is off it.
-		// A ring of fewer than 3 points validates its points and the samples between them.
-		template <typename Face> bool areaOnFaces(const gnav::PatchableMesh& mesh, const std::vector<glm::vec2>& polygonMeters, const Face& face) {
-			if (polygonMeters.size() < 3) {
-				return polylineWalkableUnder([&](glm::vec2 p) { return pointOnGround(mesh, p, face); }, polygonMeters);
+		// Whether the closed triangle and segment (p, q) share a point.
+		bool triangleMeetsSegment(const std::array<geometry::Vec2i64, 3>& corners, const geometry::Vec2i64& p, const geometry::Vec2i64& q) {
+			for (std::size_t e = 0; e < 3; ++e) {
+				if (geometry::intersectSegments(corners[e], corners[(e + 1) % 3], p, q).relation != geometry::SegmentRelation::Disjoint) {
+					return true;
+				}
 			}
-			std::vector<geometry::Vec2i64> footprint;
-			footprint.reserve(polygonMeters.size());
-			for (const glm::vec2 p : polygonMeters) {
-				footprint.push_back(nav::toMm(p));
+			// No side of the triangle touches the segment, so it is wholly inside or wholly outside.
+			for (std::size_t e = 0; e < 3; ++e) {
+				if (geometry::orientation(corners[e], corners[(e + 1) % 3], p) == geometry::Orientation::Clockwise) {
+					return false;
+				}
 			}
-			const std::int32_t first = mesh.locate(footprint.front());
+			return true;
+		}
+
+		// Whether a shape lies wholly on the mesh and `face` accepts every triangle it meets, a triangle
+		// it only touches included, read exactly from the mesh. The triangles are found by walking out
+		// from the one under `start`, a point of the shape, so nothing narrower than a sampling pitch can
+		// pass between probes. A shape that reaches the mesh's edge is off it. `meetsSegment` and
+		// `meetsTriangle` say whether the shape shares a point with a mesh edge or triangle.
+		template <typename MeetsSegment, typename MeetsTriangle, typename Face>
+		bool shapeOnFaces(const gnav::PatchableMesh& mesh, const geometry::Vec2i64& start, const MeetsSegment& meetsSegment, const MeetsTriangle& meetsTriangle,
+						  const Face& face) {
+			const std::int32_t first = mesh.locate(start);
 			if (first < 0) {
 				return false;
 			}
@@ -563,15 +562,58 @@ namespace ecs {
 				for (std::size_t e = 0; e < 3; ++e) {
 					const std::int32_t across = triangle.neighbor[e];
 					if (across < 0) {
-						if (segmentMeetsPolygon(corners[e], corners[(e + 1) % 3], footprint)) {
+						if (meetsSegment(corners[e], corners[(e + 1) % 3])) {
 							return false;
 						}
-					} else if (reached.insert(across).second && triangleMeetsPolygon(triangleCorners(mesh, across), footprint)) {
+					} else if (reached.insert(across).second && meetsTriangle(triangleCorners(mesh, across))) {
 						pending.push_back(across);
 					}
 				}
 			}
 			return true;
+		}
+
+		// Whole-line validity: every point of the open polyline, its vertices and every segment between
+		// them, on triangles `face` accepts (shapeOnFaces per segment). One point validates just it;
+		// empty is trivially true.
+		template <typename Face> bool lineOnFaces(const gnav::PatchableMesh& mesh, const std::vector<glm::vec2>& pointsMeters, const Face& face) {
+			if (pointsMeters.size() == 1) {
+				return pointOnGround(mesh, pointsMeters.front(), face);
+			}
+			for (std::size_t i = 0; i + 1 < pointsMeters.size(); ++i) {
+				const geometry::Vec2i64 p = nav::toMm(pointsMeters[i]);
+				const geometry::Vec2i64 q = nav::toMm(pointsMeters[i + 1]);
+				if (p == q) {
+					if (!pointOnGround(mesh, pointsMeters[i], face)) {
+						return false;
+					}
+					continue;
+				}
+				const auto meetsSegment = [&](const geometry::Vec2i64& a, const geometry::Vec2i64& b) {
+					return geometry::intersectSegments(a, b, p, q).relation != geometry::SegmentRelation::Disjoint;
+				};
+				const auto meetsTriangle = [&](const std::array<geometry::Vec2i64, 3>& corners) { return triangleMeetsSegment(corners, p, q); };
+				if (!shapeOnFaces(mesh, p, meetsSegment, meetsTriangle, face)) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// Whole-footprint validity: the closed polygon, its interior included, on triangles `face`
+		// accepts (shapeOnFaces). A ring of fewer than 3 points validates it as a line.
+		template <typename Face> bool areaOnFaces(const gnav::PatchableMesh& mesh, const std::vector<glm::vec2>& polygonMeters, const Face& face) {
+			if (polygonMeters.size() < 3) {
+				return lineOnFaces(mesh, polygonMeters, face);
+			}
+			std::vector<geometry::Vec2i64> footprint;
+			footprint.reserve(polygonMeters.size());
+			for (const glm::vec2 p : polygonMeters) {
+				footprint.push_back(nav::toMm(p));
+			}
+			const auto meetsSegment = [&](const geometry::Vec2i64& a, const geometry::Vec2i64& b) { return segmentMeetsPolygon(a, b, footprint); };
+			const auto meetsTriangle = [&](const std::array<geometry::Vec2i64, 3>& corners) { return triangleMeetsPolygon(corners, footprint); };
+			return shapeOnFaces(mesh, footprint.front(), meetsSegment, meetsTriangle, face);
 		}
 
 		using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, std::vector<geometry::Vec2i64>>;
@@ -2079,15 +2121,19 @@ namespace ecs {
 		return segmentWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, aMeters, bMeters);
 	}
 
-	bool NavigationSystem::isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const {
-		return polylineWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, ptsMeters);
+	bool NavigationSystem::isPointClearToBuild(glm::vec2 meters) const {
+		join();
+		return pointOnGround(detailMesh, meters, clearToBuildFace);
 	}
 
-	bool NavigationSystem::isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const {
+	bool NavigationSystem::isLineClearToBuild(const std::vector<glm::vec2>& pointsMeters) const {
 		join();
-		return areaOnFaces(detailMesh, polygonMeters, [](const gnav::PatchableMesh& mesh, std::int32_t tri) {
-			return gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]);
-		});
+		return lineOnFaces(detailMesh, pointsMeters, clearToBuildFace);
+	}
+
+	bool NavigationSystem::isAreaClearToBuild(const std::vector<glm::vec2>& polygonMeters) const {
+		join();
+		return areaOnFaces(detailMesh, polygonMeters, clearToBuildFace);
 	}
 
 	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {

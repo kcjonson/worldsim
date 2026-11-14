@@ -256,7 +256,7 @@ namespace world_sim {
 		/// enclose rooms immediately. Reconciles segment entities once. Returns the
 		/// number of segments created.
 		/// Precondition: callers must nav-validate the chain first (the dev verb does
-		/// via requireWalkableChain); this bypasses the on-mesh check.
+		/// via wallChainGroundRefusal); this bypasses the on-mesh check.
 		int devCommitWalls(
 			const std::vector<Foundation::Vec2>& pts,
 			const std::string&					 material,
@@ -306,7 +306,7 @@ namespace world_sim {
 
 		/// Whether `p` (world meters) is a placeable point for the ACTIVE tool: a FOUNDATION vertex is
 		/// placeable over clearable entities too (NavigationSystem::isPointBuildable, terrain-only), a
-		/// WALL vertex needs clear on-mesh ground (isValidPosition). Same split the /api/dev foundation
+		/// WALL vertex needs clear on-mesh ground out of any ford (isPointClearToBuild). Same split the /api/dev foundation
 		/// vs walls verbs now use; validity stays owned by a nav mesh (no world/terrain/water reads).
 		/// When no nav system is wired (headless/test) validity is owned elsewhere; mirror the dev
 		/// verbs' permissive fallback and treat the point as placeable.
@@ -314,7 +314,7 @@ namespace world_sim {
 
 		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
 		/// area against footprintBuildable. A WALL validates its chain centerline against
-		/// isPolylineWalkable (no wall footprint-clearing yet, so it still needs clear ground). The SAME
+		/// isLineClearToBuild (no wall footprint-clearing yet, so it still needs clear ground). The SAME
 		/// shared predicates the /api/dev verbs use. On failure toasts "Can't build here" and returns
 		/// false so the caller commits NOTHING -- no partial structure.
 		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);

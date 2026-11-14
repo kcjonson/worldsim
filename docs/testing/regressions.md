@@ -11,16 +11,20 @@ See [README.md](./README.md) for the environment setup and dev API reference.
 
 ### On-water placement refused
 
-- [ ] `foundation?pts=<coords that land over the river>&material=Wood&built=0` returns an error
-  (message like "not on an active walkable nav mesh") and `?what=construction` stays empty
-  (no foundations created).
+- [ ] `foundation?pts=<coords that land over the river>&material=Wood&built=0` answers 400
+  (`{"error":"foundation: footprint not on buildable ground ..."}`) and `?what=construction`
+  stays empty (no foundations created).
 - [ ] Whole-footprint check: a footprint whose corners are on land but which spans water is also
   refused. Place corners on land, center over the river; same result expected.
-- [ ] Same refusal applies to `walls?...&built=0` on an off-mesh/over-water placement.
+- [ ] Same refusal (a 400) applies to `walls?...&built=0` on an off-mesh/over-water placement.
 - [ ] A footprint across a narrow stream is refused too. At the Quick Start landing,
   `foundation?pts=6,6.5;9,6.5;9,9.5;6,9.5&built=0` lies across the creek east of the river and
   creates nothing, while colonists still walk through that creek
   (`/api/dev/ground?pts=7.9,8` reads `valid` true, `buildable` false).
+- [ ] Nothing else is built in that creek either: `walls?pts=7.9,5;7.9,11&host=0&close=0` and
+  `spawn?def=<a storage box>&at=7.9,8` answer 400, and with the build menu a storage box or a
+  crafting station held over the creek shows the invalid (red) ghost and a click places nothing.
+  Two metres onto the bank each is accepted.
 
 **Why this matters:** a silently accepted placement over water produces a construction site that
 can never be completed and may leave the colonist stuck.

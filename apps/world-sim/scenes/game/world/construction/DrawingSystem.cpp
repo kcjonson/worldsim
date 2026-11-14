@@ -234,7 +234,7 @@ namespace world_sim {
 		// validity is owned elsewhere; mirror the dev verbs' permissive fallback. A FOUNDATION vertex
 		// may sit over a clearable entity (tree/rock) -- those become clear tasks -- so it uses the
 		// terrain-only buildability check, agreeing with the commit gate (isAreaBuildable). A WALL
-		// vertex needs clear on-mesh ground (no wall footprint-clearing yet).
+		// vertex needs clear on-mesh ground out of any ford (no wall footprint-clearing yet).
 		if (navigation_ == nullptr) {
 			return true;
 		}
@@ -251,7 +251,7 @@ namespace world_sim {
 			}
 		}
 		return (activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationEdit) ? navigation_->isPointBuildable({p.x, p.y})
-																								: navigation_->isValidPosition({p.x, p.y});
+																								: navigation_->isPointClearToBuild({p.x, p.y});
 	}
 
 	bool DrawingSystem::footprintBuildable(const std::vector<Foundation::Vec2>& pts) const {
@@ -265,7 +265,7 @@ namespace world_sim {
 		// whole placement (commit nothing).
 		const bool wall = activeTool_ == ToolKind::Wall;
 		const bool seen = wall ? chainSeen(pts) : areaSeen(pts);
-		const bool ok = seen && (navigation_ == nullptr || (wall ? navigation_->isPolylineWalkable(Foundation::toGlmVec2(pts)) : footprintBuildable(pts)));
+		const bool ok = seen && (navigation_ == nullptr || (wall ? navigation_->isLineClearToBuild(Foundation::toGlmVec2(pts)) : footprintBuildable(pts)));
 		if (ok) {
 			return true;
 		}

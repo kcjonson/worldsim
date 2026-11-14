@@ -296,26 +296,32 @@ class NavigationSystem : public ISystem {
 	// checks elsewhere.
 	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const;
 
-	// Whole-FOOTPRINT validity for an area structure (a foundation polygon). True IFF EVERY part
-	// of the closed polygon -- vertices, edges, and interior -- is clear ground as isValidPosition
-	// reads it, exactly: every mesh triangle the polygon meets is checked, one it only touches
-	// included, and a polygon that reaches the mesh's edge is off it. A ring of fewer than 3 points
-	// validates its points and samples between them at <= kFootprintSampleStepMm.
-	[[nodiscard]] bool isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const;
-
-	// Whole-CENTERLINE validity for a linear structure: both endpoints plus every sample along
-	// a->b at <= kFootprintSampleStepMm pass isValidPosition.
+	// Whole-segment walkability: both endpoints plus every sample along a->b at
+	// <= kFootprintSampleStepMm pass isValidPosition.
 	[[nodiscard]] bool isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const;
 
-	// Every consecutive (pts[i], pts[i+1]) edge passes isSegmentWalkable. One point validates
-	// just it; empty is trivially true. Used for the wall tool's chain and the /api/dev/walls verb.
-	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
+	// Ground something can be built on or set up on as it stands, with nothing cleared first: clear
+	// ground as isValidPosition reads it (water and placed obstacles block, any wall face reads open)
+	// that is outside every fordable channel, since nothing is built in a stream a mover could wade.
+	// False off meshed ground. The point is a wall vertex or a single-point furniture footprint.
+	[[nodiscard]] bool isPointClearToBuild(glm::vec2 meters) const;
 
-	// Whole-FOOTPRINT BUILDABILITY: isAreaWalkable's exact check against the nav mesh with its placed
-	// obstacles read as the ground beneath them (ConstructionSystem turns them into clear tasks) and
-	// every wall face open (wall conflicts are ConstructionValidator's job). Only water, a fordable
-	// channel a mover could wade included, and ground that isn't meshed block. The placement gate
-	// for the build tool.
+	// isPointClearToBuild for every point of the open polyline, its vertices and every segment
+	// between them, read exactly: every mesh triangle a segment meets is checked, one it only touches
+	// included, and a line that reaches the mesh's edge is off it. One point validates just it; empty
+	// is trivially true. The gate for a wall chain (the wall tool and the /api/dev/walls verb).
+	[[nodiscard]] bool isLineClearToBuild(const std::vector<glm::vec2>& pointsMeters) const;
+
+	// isPointClearToBuild for every part of the closed polygon, vertices, edges, and interior, read
+	// exactly as isLineClearToBuild reads a line. A ring of fewer than 3 points validates it as a
+	// line. The gate for furniture's footprint (the placement tool and the /api/dev/spawn verb).
+	[[nodiscard]] bool isAreaClearToBuild(const std::vector<glm::vec2>& polygonMeters) const;
+
+	// Whole-FOOTPRINT BUILDABILITY: isAreaClearToBuild's exact check against the nav mesh with its
+	// placed obstacles read as the ground beneath them (ConstructionSystem turns them into clear
+	// tasks). Only water, a fordable channel a mover could wade included, and ground that isn't
+	// meshed block; wall conflicts are ConstructionValidator's job. The placement gate for the
+	// foundation tool.
 	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
 
 	// Single-point buildability, the per-vertex / live-cursor counterpart of isAreaBuildable.

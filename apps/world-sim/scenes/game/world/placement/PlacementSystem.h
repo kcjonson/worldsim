@@ -54,7 +54,7 @@ class PlacementSystem {
 		ecs::World*						 world;
 		world::WorldCamera*		 camera;
 		assets::PlacementExecutor* placementExecutor; // owns harvestable resource pools
-		ecs::NavigationSystem*			 navigation;		  // world-position validity (isValidPosition)
+		ecs::NavigationSystem*			 navigation;		  // where furniture may go (isAreaClearToBuild)
 		uint64_t						 worldSeed;		  // for the traits of a spawned entity (computeTreeTraits)
 		Callbacks						 callbacks;
 	};
@@ -109,6 +109,12 @@ class PlacementSystem {
 	/// Used by placement workflow and by dropItemCallback for crafted items
 	ecs::EntityID spawnEntity(const std::string& defName, Foundation::Vec2 worldPos);
 
+	/// Whether `defName` may be set up at `worldPos`: its footprint (its collision outline there, or
+	/// just `worldPos` when it has no rect or polygon outline) is clear ground out of any ford
+	/// (NavigationSystem::isAreaClearToBuild). False with no nav system. The placement tool's ground
+	/// gate and the /api/dev/spawn verb's.
+	[[nodiscard]] bool footprintClearToBuild(const std::string& defName, Foundation::Vec2 worldPos) const;
+
   private:
 	ecs::World*						   ecsWorld = nullptr;
 	world::WorldCamera*		   camera = nullptr;
@@ -123,8 +129,8 @@ class PlacementSystem {
 	/// Entity being relocated (0 = spawning new, non-zero = relocating)
 	ecs::EntityID relocatingEntityId{0};
 
-	/// Whether the held item can go at `worldPos`: on a walkable nav face, and with the footprint
-	/// seen when player visibility is on.
+	/// Whether the held item can go at `worldPos`: footprintClearToBuild, and with the footprint seen
+	/// when player visibility is on.
 	[[nodiscard]] bool placeable(Foundation::Vec2 worldPos) const;
 
 	static constexpr float kPixelsPerMeter = 8.0F;

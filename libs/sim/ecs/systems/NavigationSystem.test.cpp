@@ -767,7 +767,7 @@ TEST_F(NavigationSystemTest, FootprintOverObstacleIsBuildableButNotOnMesh) {
 		{obstacleAt.x + 0.3F, obstacleAt.y + 0.3F},
 		{obstacleAt.x - 0.3F, obstacleAt.y + 0.3F},
 	};
-	EXPECT_FALSE(sys.isAreaWalkable(footprint)) << "the nav mesh carves the obstacle";
+	EXPECT_FALSE(sys.isAreaClearToBuild(footprint)) << "the nav mesh carves the obstacle";
 	EXPECT_TRUE(sys.isAreaBuildable(footprint)) << "the obstacle is clearable, not a blocker";
 	EXPECT_TRUE(sys.isPointBuildable(obstacleAt));
 }
@@ -2018,13 +2018,13 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 	}
 }
 
-// --- Whole-footprint walkability: isAreaWalkable / isSegmentWalkable -------------
+// --- Whole-footprint clear ground: isAreaClearToBuild / isSegmentWalkable ---------
 //
 // Vertex-only validity is insufficient: a footprint can have every corner on land yet span water,
 // or fully enclose a pond. All use waterPatchSampler()'s pond at (40,40), at most 10.5 m from its
 // center to any shore.
 
-TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
+TEST_F(NavigationSystemTest, IsAreaClearToBuildTrueWhenWhollyOnLand) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
@@ -2035,10 +2035,10 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	for (const auto& v : onLand) {
 		ASSERT_TRUE(meshClear(sys, v));
 	}
-	EXPECT_TRUE(sys.isAreaWalkable(onLand)) << "a footprint wholly on land must be walkable";
+	EXPECT_TRUE(sys.isAreaClearToBuild(onLand)) << "a footprint wholly on land must be accepted";
 }
 
-TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
+TEST_F(NavigationSystemTest, IsAreaClearToBuildFalseWhenFootprintSpansWater) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
@@ -2049,10 +2049,10 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	ASSERT_TRUE(meshClear(sys, spanning[0]));
 	ASSERT_TRUE(meshClear(sys, spanning[1]));
 	ASSERT_FALSE(meshClear(sys, {40.0F, 40.0F}));
-	EXPECT_FALSE(sys.isAreaWalkable(spanning)) << "a footprint spanning water must be rejected";
+	EXPECT_FALSE(sys.isAreaClearToBuild(spanning)) << "a footprint spanning water must be rejected";
 }
 
-TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) {
+TEST_F(NavigationSystemTest, IsAreaClearToBuildFalseWhenFootprintEnclosesWaterPond) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
@@ -2064,7 +2064,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 		ASSERT_TRUE(meshClear(sys, v));
 	}
 	ASSERT_FALSE(meshClear(sys, {40.0F, 40.0F}));
-	EXPECT_FALSE(sys.isAreaWalkable(enclosing)) << "a footprint enclosing a water pond must be rejected";
+	EXPECT_FALSE(sys.isAreaClearToBuild(enclosing)) << "a footprint enclosing a water pond must be rejected";
 }
 
 // Water is geography, not a clearable entity, so it blocks buildability too.
@@ -2087,7 +2087,7 @@ TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeObstacles) {
 	EXPECT_FALSE(sys.isPointBuildable(kUnmeshed)) << "ground that isn't meshed is not buildable";
 }
 
-TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
+TEST_F(NavigationSystemTest, IsSegmentWalkableCatchesWaterCrossing) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
@@ -2096,10 +2096,6 @@ TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
 
 	EXPECT_TRUE(sys.isSegmentWalkable({4.0F, 4.0F}, {8.0F, 4.0F}));
 	EXPECT_FALSE(sys.isSegmentWalkable({28.0F, 40.0F}, {52.0F, 40.0F})) << "a segment crossing water must be rejected";
-	const std::vector<glm::vec2> chain{{4.0F, 4.0F}, {8.0F, 4.0F}, {28.0F, 40.0F}, {52.0F, 40.0F}};
-	EXPECT_FALSE(sys.isPolylineWalkable(chain));
-	const std::vector<glm::vec2> landChain{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}};
-	EXPECT_TRUE(sys.isPolylineWalkable(landChain));
 }
 
 TEST_F(NavigationSystemTest, IsValidPositionFalseBeforeAnyMesh) {
@@ -5710,8 +5706,8 @@ TEST_F(NavigationSystemTest, FordableCreekIsWalkableAndNotBuildable) {
 
 	const std::vector<glm::vec2> across{{98.0F, 254.0F}, {102.0F, 254.0F}, {102.0F, 258.0F}, {98.0F, 258.0F}};
 	const std::vector<glm::vec2> beside{{98.0F, 244.0F}, {102.0F, 244.0F}, {102.0F, 248.0F}, {98.0F, 248.0F}};
-	EXPECT_TRUE(rig.nav.isAreaWalkable(across)) << "walkable all the way over";
 	EXPECT_FALSE(rig.nav.isAreaBuildable(across)) << "a footprint across the creek is refused";
+	EXPECT_FALSE(rig.nav.isAreaClearToBuild(across));
 	EXPECT_FALSE(rig.nav.isPointBuildable(inCreek));
 	EXPECT_TRUE(rig.nav.isAreaBuildable(beside));
 	EXPECT_TRUE(rig.nav.isPointBuildable(south));
@@ -5732,13 +5728,50 @@ TEST_F(NavigationSystemTest, FootprintAcrossACreekNarrowerThanTheSampleStepIsRef
 		for (const glm::vec2 corner : {glm::vec2{98.0F, 254.0F + half}, glm::vec2{98.0F + half, 254.0F}}) {
 			const std::vector<glm::vec2> across{corner, corner + glm::vec2{4.0F, 0.0F}, corner + glm::vec2{4.0F, 4.0F}, corner + glm::vec2{0.0F, 4.0F}};
 			EXPECT_FALSE(rig.nav.isAreaBuildable(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
-			EXPECT_TRUE(rig.nav.isAreaWalkable(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
+			EXPECT_FALSE(rig.nav.isAreaClearToBuild(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
 		}
 	}
 	const std::vector<glm::vec2> beside{{98.0F, 250.0F}, {102.0F, 250.0F}, {102.0F, 254.0F}, {98.0F, 254.0F}};
 	EXPECT_TRUE(rig.nav.isAreaBuildable(beside));
+	EXPECT_TRUE(rig.nav.isAreaClearToBuild(beside));
 	const std::vector<glm::vec2> diagonal{{100.0F, 253.0F}, {103.0F, 256.0F}, {100.0F, 259.0F}, {97.0F, 256.0F}};
 	EXPECT_FALSE(rig.nav.isAreaBuildable(diagonal)) << "a footprint turned 45 degrees";
+}
+
+// A wall chain's gate reads every mesh triangle each segment meets, so a creek narrower than any
+// sampling pitch still refuses a line across it or ending in it, while the bank beside it is clear.
+// A placed obstacle, open water, and ground that isn't meshed refuse a line too.
+TEST_F(NavigationSystemTest, LineClearToBuildRefusesACreekWaterObstaclesAndUnmeshedGround) {
+	registerObstacle("Test_NavLineObstacle", 0.6F);
+	const glm::vec2 inCreek{100.0F, kThinCreekY};
+	const glm::vec2 obstacleAt{110.0F, 250.0F};
+	WalkRig			rig(inCreek, thinCreekChunks());
+	placeObstacles(rig.executor, rig.processed, "Test_NavLineObstacle", {obstacleAt});
+	settle(rig.nav);
+	ASSERT_TRUE(rig.nav.isValidPosition(inCreek)) << "a mover stands in the creek";
+	ASSERT_FALSE(rig.nav.isValidPosition(obstacleAt)) << "the obstacle is in";
+
+	EXPECT_FALSE(rig.nav.isPointClearToBuild(inCreek));
+	EXPECT_TRUE(rig.nav.isPointClearToBuild({100.0F, 250.0F}));
+	EXPECT_FALSE(rig.nav.isLineClearToBuild({{100.0F, 254.0F}, {100.0F, 258.0F}})) << "across the creek";
+	EXPECT_FALSE(rig.nav.isLineClearToBuild({{97.0F, 252.0F}, {100.0F, 252.0F}, inCreek})) << "ending in it";
+	EXPECT_TRUE(rig.nav.isLineClearToBuild({{96.0F, 255.9F}, {104.0F, 255.9F}, {104.0F, 252.0F}})) << "along its bank";
+	EXPECT_FALSE(rig.nav.isLineClearToBuild({{106.0F, 250.0F}, {114.0F, 250.0F}})) << "through the obstacle";
+	EXPECT_FALSE(rig.nav.isLineClearToBuild({{100.0F, 250.0F}, kUnmeshed})) << "off the mesh";
+	EXPECT_FALSE(rig.nav.isLineClearToBuild({kUnmeshed}));
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(riverAcrossChunks());
+	wireEmptyPlacement(sys);
+	meshAround(world, {100.0F, 256.0F}, 30.0F);
+	settle(sys);
+	const glm::vec2 south{100.0F, 250.0F};
+	const glm::vec2 north{100.0F, 262.0F};
+	ASSERT_TRUE(sys.isValidPosition(south));
+	ASSERT_TRUE(sys.isValidPosition(north));
+	EXPECT_FALSE(sys.isLineClearToBuild({south, north})) << "across open water";
+	EXPECT_TRUE(sys.isLineClearToBuild({south, south + glm::vec2{5.0F, 0.0F}}));
 }
 
 // The pair that defines the contract: through a gap narrower than a colonist, connected is true (zero
