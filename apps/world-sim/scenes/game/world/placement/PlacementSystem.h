@@ -113,10 +113,10 @@ class PlacementSystem {
 	ecs::EntityID spawnEntity(const std::string& defName, Foundation::Vec2 worldPos);
 
 	/// Whether `defName` may be set up at `worldPos`: its footprint is clear ground out of any ford
-	/// (NavigationSystem::isAreaBuildableNow). The footprint is its collision outline there; for a
-	/// def that declares none, the rectangle its drawn template covers centred there (what the ghost
-	/// and the world draw); else just `worldPos`. False with no nav system. The placement tool's
-	/// ground gate, the /api/dev/spawn verb's for furniture, and a crafted crate's install target's.
+	/// (NavigationSystem::isAreaBuildableNow). The footprint is its collision outline there, or just
+	/// `worldPos` when it declares no rect or polygon outline. False with no nav system. The
+	/// placement tool's ground gate, the /api/dev/spawn verb's for furniture, and a crafted crate's
+	/// install target's.
 	[[nodiscard]] bool footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const;
 
 	/// Where a freshly crafted `defName` crate is installed beside the station at `stationPos`: a

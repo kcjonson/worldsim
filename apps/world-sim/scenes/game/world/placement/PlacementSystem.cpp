@@ -14,7 +14,6 @@
 #include <ecs/systems/PlayerVisibilitySystem.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
-#include <vector/MeshBounds.h>
 
 #include <bit>
 #include <random>
@@ -125,11 +124,10 @@ namespace world_sim {
 	}
 
 	namespace {
-		// `defName`'s footprint at `worldPos`, as footprintBuildableNow describes it.
+		// `defName`'s collision outline at `worldPos`, or just `worldPos` when it has no rect or polygon outline.
 		std::vector<glm::vec2> footprintAt(const std::string& defName, Foundation::Vec2 worldPos) {
 			std::vector<glm::vec2> outline;
-			auto&				   registry = assets::AssetRegistry::Get();
-			if (const auto* def = registry.getDefinition(defName); def != nullptr) {
+			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
 				const assets::CollisionShape& footprint = def->collisionFor(0);
 				if (footprint.type == assets::CollisionShapeType::Rect) {
 					for (const glm::vec2 corner : footprint.rectCornersLocal()) {
@@ -139,18 +137,6 @@ namespace world_sim {
 					for (const glm::vec2 point : footprint.pointsMeters) {
 						outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
 					}
-				} else if (const renderer::TessellatedMesh* drawn = registry.getTemplate(defName, assets::TreeTraits{});
-						   drawn != nullptr && !drawn->vertices.empty()) {
-					// The ghost and the world both draw the template with its bounds centred on the position.
-					const Foundation::Rect bounds = renderer::computeBounds(*drawn);
-					const float			   halfWidth = bounds.width * 0.5F;
-					const float			   halfHeight = bounds.height * 0.5F;
-					outline = {
-						{worldPos.x - halfWidth, worldPos.y - halfHeight},
-						{worldPos.x + halfWidth, worldPos.y - halfHeight},
-						{worldPos.x + halfWidth, worldPos.y + halfHeight},
-						{worldPos.x - halfWidth, worldPos.y + halfHeight},
-					};
 				}
 			}
 			if (outline.empty()) {

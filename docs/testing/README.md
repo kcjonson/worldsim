@@ -316,7 +316,7 @@ nothing. Trees, reeds, and loose items still spawn in a ford: putting one there 
 
 | Verb | Key params | Notes |
 |------|-----------|-------|
-| `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else the rectangle its art covers) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. |
+| `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else its centre) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. |
 | `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. |
 | `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles or for a def that isn't an item (furniture, stations). |
 | `need` | `colonist=<id>&need=Hunger\|Thirst\|Energy\|...&value=0..100` | Sets a colonist's need to the given value. |

@@ -10,7 +10,6 @@
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/PlacedNothing.test.h>
 #include <world/chunk/ChunkManager.h>
-#include <vector/MeshBounds.h>
 #include <world/chunk/SyntheticWorldSampler.h>
 
 #include <gtest/gtest.h>
@@ -179,8 +178,8 @@ TEST_F(PlacementFordTest, FootprintBuildableNowRefusesTheCreek) {
 	EXPECT_TRUE(placement->footprintBuildableNow(kBox, {10.0F, kCreekY - 2.0F}));
 }
 
-// A def with neither a declared outline nor a drawn template is tested at its centre alone.
-TEST_F(PlacementFordTest, DefWithNoOutlineOrArtIsTestedAtItsCentre) {
+// A def with no declared outline is tested at its centre alone.
+TEST_F(PlacementFordTest, DefWithNoOutlineIsTestedAtItsCentre) {
 	assets::AssetDefinition bare;
 	bare.defName = kBareBox;
 	assets::AssetRegistry::Get().registerTestDefinition(bare);
@@ -188,9 +187,8 @@ TEST_F(PlacementFordTest, DefWithNoOutlineOrArtIsTestedAtItsCentre) {
 	EXPECT_TRUE(placement->footprintBuildableNow(kBareBox, {10.0F, kCreekY + kCreekHalfWidthMeters + 0.1F}));
 }
 
-// A shipped box declares no outline, so its drawn template is its footprint: centred on the bank with
-// its body over the creek, it is refused.
-TEST_F(PlacementFordTest, ShippedBoxOverhangingTheCreekIsRefused) {
+// A shipped box declares no outline, so it is tested at its centre: refused in the ford, accepted on the bank.
+TEST_F(PlacementFordTest, ShippedBoxCentredInTheFordIsRefusedAndOnTheBankIsAccepted) {
 	// <root>/apps/world-sim/scenes/game/world/placement/PlacementSystem.test.cpp -> <root>.
 	std::filesystem::path root = std::filesystem::path(__FILE__);
 	for (int up = 0; up < 7; ++up) {
@@ -203,14 +201,9 @@ TEST_F(PlacementFordTest, ShippedBoxOverhangingTheCreekIsRefused) {
 	auto& registry = assets::AssetRegistry::Get();
 	ASSERT_TRUE(registry.loadDefinitions(boxXml.string()));
 	ASSERT_FALSE(registry.getDefinition("BasicBox")->collisionFor(0).blocks()) << "the box declares an outline now; this test is moot";
-	const renderer::TessellatedMesh* drawn = registry.getTemplate("BasicBox", assets::TreeTraits{});
-	ASSERT_NE(drawn, nullptr);
-	const float halfHeight = renderer::computeBounds(*drawn).height * 0.5F;
 
-	const glm::vec2 overhanging{10.0F, kCreekY + kCreekHalfWidthMeters + halfHeight * 0.5F};
-	ASSERT_TRUE(navigation->isPointBuildableNow(overhanging)) << "the centre is on the bank";
-	EXPECT_FALSE(placement->footprintBuildableNow("BasicBox", overhanging));
-	EXPECT_TRUE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY + kCreekHalfWidthMeters + halfHeight + 0.5F}));
+	EXPECT_FALSE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY}));
+	EXPECT_TRUE(placement->footprintBuildableNow("BasicBox", {10.0F, kCreekY + kCreekHalfWidthMeters + 0.5F}));
 }
 
 // A crafted crate is installed off the creek: beside a station on the bank, aimed into the creek, the
