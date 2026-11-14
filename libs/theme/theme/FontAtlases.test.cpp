@@ -2,7 +2,9 @@
 // family has to load its own atlas (one that fails draws with the default, silently), and no glyph
 // may sit closer to its cell's edge than its quad reads, or it draws slivers of its neighbours:
 // salal's FontRenderer::crampedGlyphs, the check tools/generate_sdf_atlas leaves room for. The
-// atlases are the font-atlas target's output in fonts/, which theme-tests depends on.
+// atlases are the font-atlas target's output in fonts/, which theme-tests depends on. Each also holds the
+// Latin-1 glyphs the HUD draws (the "2" of "/m²", the degree sign, the multiplication sign): the text
+// engine lays out by code point, and a glyph the atlas lacks draws as "??".
 
 #include "BaseShader.h"
 #include "backend/NullBackend.h"
@@ -13,7 +15,10 @@
 #include <gtest/gtest.h>
 
 #include <filesystem>
+#include <fstream>
 #include <memory>
+#include <sstream>
+#include <string>
 #include <vector>
 
 namespace {
@@ -58,5 +63,13 @@ TEST_F(FontAtlasesTest, EveryFamilyLoadsItsOwnAtlasWithRoomAroundEveryGlyph) {
 				<< atlas.jsonPath << " didn't load; its family draws with the default";
 		}
 		EXPECT_EQ(fonts->crampedGlyphs(atlas.family), "") << atlas.jsonPath << ": these glyphs read past their cells";
+
+		std::ifstream jsonFile(projectRoot() / atlas.jsonPath);
+		std::stringstream json;
+		json << jsonFile.rdbuf();
+		for (const int codePoint : {0x00B0, 0x00B2, 0x00D7}) {
+			EXPECT_NE(json.str().find("\"unicode\":" + std::to_string(codePoint) + ","), std::string::npos)
+				<< atlas.jsonPath << " has no glyph for code point " << codePoint;
+		}
 	}
 }

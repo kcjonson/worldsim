@@ -32,41 +32,35 @@ void BuildGoalSystem::update(float /*deltaTime*/) {
 
 	// Query all entities with Packaged + Position
 	for (auto [entity, packaged, position] : world->view<Packaged, Position>()) {
-		// Only create goals for items that have a target position set
-		if (!packaged.targetPosition.has_value()) {
-			// No target position - player hasn't placed it yet
-			// Remove goal if one exists
-			registry.removeGoalByDestination(entity);
-			packagesWithGoals.erase(entity);
-			continue;
-		}
-
-		// Skip items currently being carried (they're already being handled)
-		// But we still keep the goal active for priority tracking
-		const glm::vec2& targetPos = *packaged.targetPosition;
-
-		// Check if goal already exists
+		// Another system's goal on the entity (a moved box's storage umbrella, which StorageGoalSystem
+		// retires at its next poll) is not ours to remove or overwrite: wait for the destination to come free
 		const auto* existingGoal = registry.getGoalByDestination(entity);
-		if (existingGoal != nullptr) {
-			// Goal exists - verify it's still valid
-			packagesWithGoals.erase(entity);
-			activeGoalCount++;
+		if (existingGoal != nullptr && existingGoal->owner != GoalOwner::BuildGoalSystem) {
 			continue;
 		}
 
-		// Create new goal for this packaged item
+		// No target position - player hasn't placed it yet
+		if (!packaged.targetPosition.has_value()) {
+			if (existingGoal != nullptr) {
+				registry.removeGoal(existingGoal->id);
+			}
+			packagesWithGoals.erase(entity);
+			continue;
+		}
+
+		packagesWithGoals.erase(entity);
+		activeGoalCount++;
+		if (existingGoal != nullptr) {
+			continue;
+		}
+
 		GoalTask goal;
 		goal.type = TaskType::PlacePackaged;
 		goal.owner = GoalOwner::BuildGoalSystem;
 		goal.destinationEntity = entity; // The packaged item entity
-		goal.destinationPosition = targetPos;
-		goal.destinationDefNameId = 0; // Could get from Appearance if available
-		goal.acceptedCategory = assets::ItemCategory::None;
-		goal.createdAt = 0.0F; // TODO: use actual game time
+		goal.destinationPosition = *packaged.targetPosition;
 
 		registry.createGoal(std::move(goal));
-		packagesWithGoals.erase(entity);
-		activeGoalCount++;
 	}
 
 	// Remove goals for packaged entities that no longer exist
