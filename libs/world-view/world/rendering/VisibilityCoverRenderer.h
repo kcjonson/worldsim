@@ -7,7 +7,6 @@
 
 #include "world/camera/WorldCamera.h"
 
-#include <ecs/systems/VisionSystem.h>
 #include <vision/SeenArea.h>
 
 #include <core/Vec2i64.h>
@@ -17,8 +16,6 @@
 #include <math/Types.h>
 #include <primitives/InstanceData.h>
 #include <vector/Types.h>
-
-#include <glm/vec2.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -48,11 +45,6 @@ namespace worldview {
 
 	// The committed record's triangles as meshes in world meters, each within kSeenMeshVertexLimit.
 	std::vector<renderer::TessellatedMesh> seenMeshes(const std::vector<vision::SeenArea::Triangle>& triangles);
-
-	// The ground a colonist's sight draws bright, in world millimetres: with a wall in sight vision's
-	// cached polygon; outdoors the sight polygon at the drawn radius round `position`, where he stands
-	// this frame. None when his sight is too small to hold a leg, since then nothing records it.
-	std::optional<std::vector<geometry::Vec2i64>> visibleOutline(const ecs::VisionSystem::SightShape& shape, glm::vec2 position);
 
 	class VisibilityCoverRenderer {
 	  public:

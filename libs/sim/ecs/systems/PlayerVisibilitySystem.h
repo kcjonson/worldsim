@@ -2,9 +2,11 @@
 
 // Player visibility (player-visibility.md 3.3): feeds the seen record from every player colonist's
 // sight each frame and answers what the player may see. A colonist is an entity with the Colonist
-// tag and Memory; his sight is what VisionSystem used on its last pass. Outdoors he holds a leg, the
-// straight segment from where it began to where he stands, pending until it ends; with walls in
-// sight each new visibility polygon is queued. Shapes go into the record kSeenRingsPerTick a tick.
+// tag and Memory; his sight is what VisionSystem used on its last pass. In the open he holds a leg,
+// the straight segment from where it began to where he stands, pending until it ends. With walls in
+// sight each new visibility polygon goes into the record, swept back along his walk to the one
+// before where it opens ground; nothing else of his is pending. Shapes go into the record
+// kSeenRingsPerTick a tick.
 
 #include "../EntityID.h"
 #include "../ISystem.h"
@@ -45,8 +47,15 @@ namespace ecs {
 		// In the seen record or a pending shape.
 		[[nodiscard]] bool isSeen(glm::vec2 meters) const;
 		// In a player colonist's sight now, by vision's own test: within his sight radius of where
-		// vision last looked from, or in his visibility polygon.
+		// vision last looked from, or within it of where he stands and in his visibility polygon.
 		[[nodiscard]] bool isVisible(glm::vec2 meters) const;
+		// The ground drawn bright for `colonist` this frame (player-visibility.md 3.4), in millimetres:
+		// the sight polygon of vision::drawnVisibleRadiusMm round where he stands, and with walls in
+		// sight vision's polygon cut to it. Outdoors it lies in his open leg; with walls in sight it can
+		// reach up to a rebuild step past seen ground ahead of him, where the cover's unseen fill hides
+		// it. None when his sight is too small to hold a leg, or walls are in sight and a jump dropped
+		// his polygon (until vision builds the next).
+		[[nodiscard]] std::optional<std::vector<geometry::Vec2i64>> drawnVisible(EntityID colonist) const;
 		// The whole outline is seen.
 		[[nodiscard]] bool covers(const std::vector<glm::vec2>& outlineMeters) const;
 		// The seen point on the segment from `from` to `to` nearest `to`; `to` when it is seen. None
@@ -88,19 +97,33 @@ namespace ecs {
 			double					farthestMm = 0.0;
 		};
 
+		// `leg` is his open leg in the open. With walls in sight `walk` is his path since the last
+		// polygon that went in, for the sweep: its build, then each turn, where `stretch` (a leg, not
+		// pending) ended. `wallSight` holds while vision's polygon of `polygonRevision` stands for
+		// him: a jump drops it until the next.
 		struct Observer {
-			Leg			  leg;
-			std::uint64_t polygonRevision = 0; // the last visibility polygon's revision that was handled
-			bool		  present		  = false;
+			Leg							   leg;
+			Leg							   stretch;
+			std::vector<geometry::Vec2i64> walk;
+			std::int64_t				   sightMm		   = 0; // his sight when the last polygon was built
+			bool						   wallSight	   = false;
+			std::uint64_t				   polygonRevision = 0; // the last visibility polygon's revision that was handled
+			bool						   present		   = false;
 		};
 
-		void beginLeg(Leg& leg, const geometry::Vec2i64& at, std::int64_t radiusMm);
-		void followLeg(EntityID colonist, Leg& leg, const geometry::Vec2i64& at, std::int64_t radiusMm);
-		void closeLeg(EntityID colonist, Leg& leg);
+		static void beginLeg(Leg& leg, const geometry::Vec2i64& at, std::int64_t radiusMm);
+		void		followLeg(EntityID colonist, Leg& leg, const geometry::Vec2i64& at, std::int64_t radiusMm);
+		void		closeLeg(EntityID colonist, Leg& leg);
+		// With walls in sight: a turn adds to his walk; a jump drops his polygon and walk.
+		static void followStretch(Observer& observer, const geometry::Vec2i64& at);
+		static void dropWallSight(Observer& observer);
+		// With walls in sight, where he rests or his walk ends away from vision's last build, a polygon
+		// built there goes in, so the ground he sees from there is not left to the next build.
+		void		enterPolygonAt(Observer& observer, const geometry::Vec2i64& at);
+		// The one place vision's polygon enters the record (player-visibility.md 3.3).
+		void		registerPolygon(Observer& observer, const VisionSystem::SightShape& shape);
 		static bool holds(const Leg& leg, const geometry::Vec2i64& at);
 		static void hold(Leg& leg, const geometry::Vec2i64& at);
-		// The one place a visibility polygon enters the record (player-visibility.md 3.3, 6.4).
-		void registerPolygon(const std::vector<geometry::Vec2i64>& polygon, const geometry::Vec2i64& observer, std::int64_t sightRadiusMm);
 		// Queues the footprint of every structure the polygon of `shape` touched that has not gone in.
 		void enterStructures(const VisionSystem::SightShape& shape);
 		void enterFootprint(const std::vector<geometry::Vec2i64>& ring);
@@ -108,6 +131,7 @@ namespace ecs {
 		void refreshFootprints();
 
 		vision::SeenArea			 seen;
+		const GeometryIndex*		 sweepWalls = nullptr; // the walls the record's sweeps build their polygons against
 		std::map<EntityID, Observer> observers;
 		bool						 revealedFlag = false;
 
