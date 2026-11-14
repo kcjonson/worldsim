@@ -100,11 +100,6 @@ namespace construction {
 		bool ok() const { return status == CommitStatus::Ok; }
 	};
 
-	struct Aabb {
-		geometry::Vec2i64 min;
-		geometry::Vec2i64 max;
-	};
-
 	// --- Wall topology (D4) -------------------------------------------------
 	//
 	// The wall graph: vertices (junctions and endpoints), segments (the unit of
@@ -258,10 +253,6 @@ namespace construction {
 		const Foundation* get(FoundationId id) const;
 
 		const std::vector<Foundation>& foundations() const { return foundations_; }
-
-		// Axis-aligned bounds of a foundation's ring in mm. Returns a zero-extent
-		// box at the origin for an unknown id.
-		Aabb footprintAabb(FoundationId id) const;
 
 		// Foundation area in square meters (geometry::signedAreaDoubled / 2,
 		// scaled out of mm^2). Zero for an unknown id.

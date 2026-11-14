@@ -837,24 +837,6 @@ namespace construction {
 		return find(id);
 	}
 
-	Aabb ConstructionWorld::footprintAabb(FoundationId id) const {
-		const Foundation* foundation = find(id);
-		if (foundation == nullptr || foundation->ring.empty()) {
-			return {};
-		}
-
-		const geometry::Ring& ring = foundation->ring;
-		geometry::Vec2i64	  min = ring.front();
-		geometry::Vec2i64	  max = ring.front();
-		for (const geometry::Vec2i64& v : ring) {
-			min.x = std::min(min.x, v.x);
-			min.y = std::min(min.y, v.y);
-			max.x = std::max(max.x, v.x);
-			max.y = std::max(max.y, v.y);
-		}
-		return {min, max};
-	}
-
 	float ConstructionWorld::areaSquareMeters(FoundationId id) const {
 		const Foundation* foundation = find(id);
 		if (foundation == nullptr) {

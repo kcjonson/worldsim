@@ -6,15 +6,16 @@
 #include "../World.h"
 #include "../WorldSource.h"
 #include "../components/Appearance.h"
+#include "../components/Packaged.h"
 #include "../components/ResourceStack.h"
 #include "../components/Structure.h"
+#include "../components/Task.h"
 #include "../components/Transform.h"
 
 #include <construction/ConstructionWorld.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
-#include <core/Vec2i64.h>
 #include <world/chunk/ChunkCoordinate.h>
 
 #include <utils/Log.h>
@@ -198,6 +199,7 @@ namespace ecs {
 		}
 		removeStaticsFromSites();
 		movePilesOffSites();
+		movePackagedOffSites();
 		m_sitesEnteringConstruction.clear();
 	}
 
@@ -224,7 +226,9 @@ namespace ecs {
 					// Copied out first: a removal moves the entities the query points at.
 					standing.clear();
 					for (const auto* placed : chunkIndex->queryRect(site.min.x, site.min.y, site.max.x, site.max.y)) {
-						standing.push_back({placed->defName, placed->position});
+						if (site.contains(placed->position)) {
+							standing.push_back({placed->defName, placed->position});
+						}
 					}
 					for (const Standing& gone : standing) {
 						const auto* def = assetRegistry.getDefinition(gone.defName);
@@ -278,6 +282,50 @@ namespace ecs {
 		}
 	}
 
+	void ConstructionSystem::movePackagedOffSites() {
+		if (!m_packagedSetDown) {
+			return;
+		}
+		// One a colonist is on his way to fetch is left to him: moved, his pickup would land where it
+		// was. He carries it off to its placement; once carrying it he sets it down off the site if he drops
+		// the job, but if he drops the job before picking it up it stays on the site and is built over.
+		std::unordered_set<uint64_t> fetched;
+		for (auto [colonist, task] : world->view<Task>()) {
+			(void)colonist;
+			if (task.type == TaskType::PlacePackaged) {
+				fetched.insert(task.placePackagedEntityId);
+			}
+		}
+		struct Lying {
+			EntityID  item;
+			glm::vec2 to;
+		};
+		std::vector<Lying> lying;
+		for (auto [item, packaged, position] : world->view<Packaged, Position>()) {
+			// A carried item's position is where it was picked up, not where it is.
+			if (packaged.beingCarried || fetched.contains(static_cast<uint64_t>(item))) {
+				continue;
+			}
+			for (const FootprintBounds& site : m_sitesEnteringConstruction) {
+				// One whose placement is on the footprint is installed there; moving it off gains nothing.
+				const bool placedOnSite = packaged.targetPosition.has_value() && site.contains(*packaged.targetPosition);
+				if (site.contains(position.value) && !placedOnSite) {
+					lying.push_back({item, site.nearestOutside(position.value, kPileMoveMargin)});
+					break;
+				}
+			}
+		}
+		// One at a time, so each set-down sees where the one before it went.
+		for (const Lying& move : lying) {
+			const glm::vec2 setDownAt = m_packagedSetDown(move.to);
+			world->getComponent<Position>(move.item)->value = setDownAt;
+			LOG_DEBUG(
+				Engine, "[Construction] Moved packaged entity %u off a site about to be built, to (%.1f, %.1f)",
+				static_cast<uint32_t>(move.item), setDownAt.x, setDownAt.y
+			);
+		}
+	}
+
 	void ConstructionSystem::resetBlueprintGoals(EntityID blueprintEntity) {
 		auto&		registry = GoalTaskRegistry::Get();
 		const auto* goal = registry.getGoalByDestination(blueprintEntity);
@@ -288,8 +336,8 @@ namespace ecs {
 	}
 
 	FootprintBounds ConstructionSystem::footprintBounds(uint64_t foundationId) const {
-		const auto aabb = m_constructionWorld->footprintAabb(foundationId);
-		return {geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)};
+		const auto* foundation = m_constructionWorld->get(foundationId);
+		return FootprintBounds{foundation != nullptr ? foundation->ring : geometry::Ring{}};
 	}
 
 	void ConstructionSystem::gatherSpawnedHarvestables() {
@@ -411,7 +459,7 @@ namespace ecs {
 		clearGoal.type = TaskType::Harvest;
 		clearGoal.owner = GoalOwner::ConstructionGoalSystem;
 		clearGoal.destinationEntity = blueprintEntity;
-		clearGoal.destinationPosition = bounds.center();
+		clearGoal.destinationPosition = bounds.interiorPoint();
 		clearGoal.clearFootprint = bounds;
 		clearGoal.parentGoalId = umbrellaGoalId; // child of the umbrella: skips the destination guard
 		clearGoal.status = GoalStatus::Available;

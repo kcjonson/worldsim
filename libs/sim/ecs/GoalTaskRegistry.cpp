@@ -10,8 +10,14 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <core/Vec2d.h>
+#include <core/Vec2i64.h>
+#include <predicates/Predicates.h>
+
+#include <glm/geometric.hpp>
 
 #include <algorithm>
+#include <cmath>
 
 namespace ecs {
 
@@ -57,8 +63,105 @@ namespace ecs {
 		return 0;
 	}
 
-	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {
-		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(p);
+	FootprintBounds::FootprintBounds(geometry::Ring footprintRing)
+		: ring(std::move(footprintRing)) {
+		if (ring.empty()) {
+			return;
+		}
+		geometry::ensureCounterClockwise(ring);
+		geometry::Vec2i64 lowest = ring.front();
+		geometry::Vec2i64 highest = ring.front();
+		for (const geometry::Vec2i64& corner : ring) {
+			lowest = {std::min(lowest.x, corner.x), std::min(lowest.y, corner.y)};
+			highest = {std::max(highest.x, corner.x), std::max(highest.y, corner.y)};
+		}
+		const auto lowestMeters = geometry::dequantize(lowest);
+		const auto highestMeters = geometry::dequantize(highest);
+		min = {lowestMeters.x, lowestMeters.y};
+		max = {highestMeters.x, highestMeters.y};
+	}
+
+	bool FootprintBounds::contains(glm::vec2 position) const {
+		if (position.x < min.x || position.x > max.x || position.y < min.y || position.y > max.y) {
+			return false;
+		}
+		return geometry::pointInPolygon(geometry::quantize({position.x, position.y}), ring) != geometry::PointInPolygon::Outside;
+	}
+
+	glm::vec2 FootprintBounds::interiorPoint() const {
+		if (ring.size() < 3) {
+			return min;
+		}
+		const geometry::Vec2d inside = geometry::interiorPoint(ring);
+		const auto			  millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+		return {static_cast<float>(inside.x / millimetersPerMeter), static_cast<float>(inside.y / millimetersPerMeter)};
+	}
+
+	glm::vec2 FootprintBounds::nearestOutside(glm::vec2 position, float margin) const {
+		if (!contains(position)) {
+			return position;
+		}
+		const geometry::Vec2i64 point = geometry::quantize({position.x, position.y});
+		struct Edge {
+			double		distanceMm;
+			double		along;
+			std::size_t start;
+		};
+		std::vector<Edge> edges;
+		edges.reserve(ring.size());
+		for (std::size_t index = 0; index < ring.size(); ++index) {
+			const geometry::SegmentPoint nearest = geometry::closestOnSegment(point, ring[index], ring[(index + 1) % ring.size()]);
+			edges.push_back({nearest.distanceMm, nearest.t, index});
+		}
+		std::sort(edges.begin(), edges.end(), [](const Edge& nearer, const Edge& farther) {
+			return nearer.distanceMm != farther.distanceMm ? nearer.distanceMm < farther.distanceMm : nearer.start < farther.start;
+		});
+		const auto millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+		const double marginMm = static_cast<double>(margin) * millimetersPerMeter;
+		// The ring is counter-clockwise, so the outside lies to the right of each edge.
+		const auto outwardNormal = [&](std::size_t start) {
+			const geometry::Vec2i64& from = ring[start];
+			const geometry::Vec2i64& to = ring[(start + 1) % ring.size()];
+			const double			 edgeX = static_cast<double>(to.x - from.x);
+			const double			 edgeY = static_cast<double>(to.y - from.y);
+			const double			 edgeLength = std::sqrt(edgeX * edgeX + edgeY * edgeY);
+			return glm::dvec2{edgeY / edgeLength, -edgeX / edgeLength};
+		};
+		const auto pastEdge = [&](const Edge& edge) {
+			const geometry::Vec2i64& from = ring[edge.start];
+			const geometry::Vec2i64& to = ring[(edge.start + 1) % ring.size()];
+			const double edgeX = static_cast<double>(to.x - from.x);
+			const double edgeY = static_cast<double>(to.y - from.y);
+			const double spotX = static_cast<double>(from.x) + edgeX * edge.along;
+			const double spotY = static_cast<double>(from.y) + edgeY * edge.along;
+			// The push is the boundary's outward direction at the spot: the edge's normal along its interior,
+			// and at a vertex the bisector of the two edges meeting there, which leaves a reflex corner into
+			// its notch and a convex one diagonally.
+			const double edgeLength = std::sqrt(edgeX * edgeX + edgeY * edgeY);
+			const double alongMm = edge.along * edgeLength;
+			glm::dvec2	 push = outwardNormal(edge.start);
+			if (alongMm <= 1.0 || edgeLength - alongMm <= 1.0) {
+				const std::size_t other = alongMm <= 1.0 ? (edge.start + ring.size() - 1) % ring.size() : (edge.start + 1) % ring.size();
+				const glm::dvec2  bisector = push + outwardNormal(other);
+				if (glm::length(bisector) > 1e-6) {
+					push = glm::normalize(bisector);
+				}
+			}
+			const double pastX = spotX + push.x * marginMm;
+			const double pastY = spotY + push.y * marginMm;
+			return glm::vec2{static_cast<float>(pastX / millimetersPerMeter), static_cast<float>(pastY / millimetersPerMeter)};
+		};
+		for (const Edge& edge : edges) {
+			const glm::vec2 out = pastEdge(edge);
+			if (!contains(out)) {
+				return out;
+			}
+		}
+		return pastEdge(edges.front());
+	}
+
+	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 position) const {
+		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(position);
 	}
 
 	GoalTaskRegistry& GoalTaskRegistry::Get() {

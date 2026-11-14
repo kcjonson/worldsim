@@ -1,6 +1,7 @@
 #include "ResourceStack.h"
 
 #include "../GoalTaskRegistry.h"
+#include "../systems/FootprintRectangle.test.h"
 
 #include <gtest/gtest.h>
 
@@ -217,7 +218,7 @@ namespace {
 
 // An 8 m square site about to be built at the origin, and the drop a pile on it gets: just past
 // its nearest edge, falling back to the pile's old spot.
-const FootprintBounds kSite{{0.0F, 0.0F}, {8.0F, 8.0F}};
+const FootprintBounds kSite = rectangleFootprint({0.0F, 0.0F}, {8.0F, 8.0F});
 
 void expectOnGroundOffSites(
 	const PileDropPlan& plan, const std::function<bool(glm::vec2)>& isGround, const std::function<bool(glm::vec2)>& onSite
@@ -247,7 +248,7 @@ TEST(ResourcePileDropsTests, SiteBesideWaterDropsOnDryGroundOffTheSite) {
 // A built room adjoins the site's east edge, its wall band off the mesh, and a second site waits to
 // the north: the pile lands on ground clear of the wall and of both sites.
 TEST(ResourcePileDropsTests, SiteBesideWallDropsOnGroundOffEverySite) {
-	const FootprintBounds northSite{{0.0F, 8.2F}, {8.0F, 16.0F}};
+	const FootprintBounds northSite = rectangleFootprint({0.0F, 8.2F}, {8.0F, 16.0F});
 	const glm::vec2		  oldSpot{7.8F, 4.0F};
 	const glm::vec2		  origin = kSite.nearestOutside(oldSpot, 0.5F);
 	const auto			  isGround = [](glm::vec2 p) { return p.x < 8.1F || p.x > 8.6F || p.y > 16.0F || p.y < 0.0F; };

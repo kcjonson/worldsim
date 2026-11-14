@@ -438,13 +438,26 @@ again just outside, so nothing is built over.
 A foundation is built on bare ground. As it enters construction (`ConstructionSystem::bareSites`),
 every placed static still on its footprint leaves the placement index: one a colonist could carry (a
 stone) is dropped just outside as a loose pile, the way a pile is, and the rest (the freestanding
-grass, a rock) is removed with nothing to show for it. None of that is work for a colonist and none of
-it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
+grass, a rock) is removed with nothing to show for it. A packaged item lying on the footprint is set
+down just outside by the rule a colonist setting one down uses (walkable ground off every unbuilt
+footprint), its placement, if it has one, unchanged. The move decides "on the footprint" from the item's
+position, while the app's set-down rule tests the packaged footprint centre (the position less 0.375 m
+in y), so an item whose position lies up to 0.375 m outside an edge on the +y side is left in place.
+Three are left where they are: one a colonist
+carries (its position is where it was picked up), one a colonist's PlacePackaged task is on its way to
+fetch (moving it would leave his pickup at the old spot; he carries it off, and once he is carrying it he
+sets it down off the site if he drops the job, but if he drops the job before picking it up it stays
+on the site and is built over), and one whose placement is on the footprint (it is installed there). None of that
+is work for a colonist and none of it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
 and bushes included.
 
-The footprint here is the foundation's bounding box (`FootprintBounds`), as it is for the clear gate,
-the clear goal, and the pile move: for a foundation that is not a rectangle, the ground inside the box
-and outside the floor is cleared and bared too.
+The footprint here is the foundation's ring (`FootprintBounds`), as it is for the clear gate, the
+clear goal, the pile move, and the drop planner: a thing is on the footprint when its position is
+inside the ring or on its edge, with the ring's bounding box as the broad phase. Nothing here has a
+body radius, so a tree whose centre stands just outside is left even if its canopy hangs over. For a
+foundation that is not a rectangle (an L, a diagonal strip), the ground inside its bounding box and
+outside the floor is neither cleared nor bared. "Just outside" is past the ring's nearest edge, which
+for an L can be the inner edge that opens onto the notch.
 
 ### Build and Deconstruct
 

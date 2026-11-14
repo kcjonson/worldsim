@@ -60,6 +60,7 @@
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "../SetDownSpotCallback.h"
 #include "../components/StructureBlueprint.h"
 
 #include <glm/vec2.hpp>
@@ -170,6 +171,10 @@ namespace ecs {
 		/// drop-resource callback, so there is one ground-pile spawn path.
 		void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
+		/// Set the callback that answers where a packaged item set down off a site goes. Wired to the same
+		/// rule GameScene gives AIDecisionSystem for a colonist setting one down.
+		void setPackagedSetDownCallback(SetDownSpotCallback callback) { m_packagedSetDown = std::move(callback); }
+
 		/// Drop every construction goal a blueprint owns (the umbrella and its phase
 		/// children). The next tick rebuilds the tree from the blueprint's current
 		/// footprint, manifest, and position; used when a foundation is reshaped in place.
@@ -183,8 +188,8 @@ namespace ecs {
 		uint32_t creditMaterialToSites(const std::string& defName, uint32_t amount);
 
 	  private:
-		/// The foundation's footprint AABB in world meters: the one definition of "inside the
-		/// footprint" for both the clear gate and the clear goal a colonist serves.
+		/// The foundation's footprint, its ring: the one definition of "inside the footprint" for the
+		/// clear gate, the clear goal a colonist serves, and baring the ground.
 		[[nodiscard]] FootprintBounds footprintBounds(uint64_t foundationId) const;
 
 		/// A runtime-spawned harvestable (an ECS entity, not in the placement index): a colonist
@@ -295,6 +300,9 @@ namespace ecs {
 		// contexts (the dump is then skipped; the manifest is cleared regardless).
 		DropResourceCallback m_onDropResource = nullptr;
 
+		// Where a packaged item moved off a site is set down. Null in headless contexts (it then stays).
+		SetDownSpotCallback m_packagedSetDown = nullptr;
+
 		// Entities already warned about a missing deconstructed callback. Without the callback the
 		// blueprint can't be removed, so it re-enters the no-work branch every tick; this throttles
 		// the warning to once per entity (headless/test contexts where no callback is wired).
@@ -312,10 +320,12 @@ namespace ecs {
 		/// Bare the ground of each site entering construction, so nothing is built over. Harvestables
 		/// are gone by then (they hold the site in Clearing). Something to carry, a loose pile or a
 		/// placed stone, is dropped again just outside; with no drop path wired it stays where it is.
-		/// Every other placed static (groundcover, a rock) is removed.
+		/// A packaged item lying there is set down just outside the same way. Every other placed static
+		/// (groundcover, a rock) is removed.
 		void bareSites();
 		void removeStaticsFromSites();
 		void movePilesOffSites();
+		void movePackagedOffSites();
 
 		// Throttle like the other goal systems: lifecycle changes are slow relative to frames.
 		int					 m_frameCounter = 0;

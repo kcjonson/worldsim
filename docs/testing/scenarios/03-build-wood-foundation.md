@@ -113,7 +113,14 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
    Screenshot the built foundation: it sits on bare ground, with no bush, grass tuft or stone
    drawn on it.
 
-8. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
+8. Blueprint an L-shaped foundation beside the first (six points: an 8 m square with its north-east
+   quarter cut away, `pts=X,Y;X+8,Y;X+8,Y+4;X+4,Y+4;X+4,Y+8;X,Y+8`), placed so a tree stands in the
+   notch (`X+6,Y+6`) and grass grows there. Bob does not clear the notch's tree (no "Clearing ...
+   from build site" for it), the site leaves `Clearing` with it standing (he may still cut it later
+   for Wood, as any tree), and once built the notch's grass is still drawn while the floor is bare. A packaged box (one not yet placed) lying on its floor before the blueprint was drawn sits
+   just outside the floor once building starts; one lying in the notch has not moved.
+
+9. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
 
 ---
 
