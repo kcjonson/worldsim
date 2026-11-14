@@ -18,6 +18,7 @@
 #include "../components/Memory.h"
 #include "../components/Movement.h"
 #include "../components/Needs.h"
+#include "../components/Packaged.h"
 #include "../components/SourceReachMemo.h"
 #include "../components/Structure.h"
 #include "../components/StructureBlueprint.h"
@@ -38,6 +39,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <unordered_set>
 #include <vector>
 
@@ -606,6 +608,52 @@ namespace ecs::test {
 		for (const glm::vec2& drop : drops) {
 			EXPECT_FALSE(onRing(lShapedRing(), drop)) << "dropped at (" << drop.x << ", " << drop.y << ")";
 		}
+	}
+
+	// A packaged item lying on the floor is set down off the site as building starts, through the game's
+	// set-down rule, as a pile is dropped off it. One in the notch stays, and so does one a colonist is
+	// carrying, one on its way to be fetched, and one whose placement is on the footprint itself.
+	TEST_F(FootprintClearingTest, APackagedItemOnTheFloorIsSetDownOffTheSiteWhenBuildingStarts) {
+		reshapeSite(lShapedRing());
+		placeBareChunk({4.0F, 4.0F});
+		std::vector<glm::vec2> asked;
+		construction->setPackagedSetDownCallback([&](glm::vec2 at) {
+			asked.push_back(at);
+			return at;
+		});
+		const auto packagedAt = [&](glm::vec2 at, std::optional<glm::vec2> target, bool carried) {
+			const EntityID item = world->createEntity();
+			world->addComponent<Position>(item, Position{at});
+			world->addComponent<Appearance>(item, Appearance{"Crate_ClearTest"});
+			world->addComponent<Packaged>(item, Packaged{target, carried});
+			return item;
+		};
+		const glm::vec2 awayTarget{20.0F, 20.0F};
+		const EntityID	waiting = packagedAt({2.0F, 6.0F}, std::nullopt, false);
+		const EntityID	bound = packagedAt({2.0F, 3.0F}, awayTarget, false);
+		const EntityID	inNotch = packagedAt({6.0F, 6.0F}, std::nullopt, false);
+		const EntityID	carried = packagedAt({2.0F, 2.0F}, awayTarget, true);
+		const EntityID	placedHere = packagedAt({6.0F, 2.0F}, glm::vec2{6.0F, 2.0F}, false);
+		const EntityID	fetched = packagedAt({3.0F, 1.0F}, awayTarget, false);
+		const EntityID	fetcher = world->createEntity();
+		Task			fetch;
+		fetch.type = TaskType::PlacePackaged;
+		fetch.placePackagedEntityId = fetched;
+		fetch.placeSourcePosition = {3.0F, 1.0F};
+		fetch.placeTargetPosition = awayTarget;
+		world->addComponent<Task>(fetcher, fetch);
+		world->getComponent<StructureBlueprint>(site)->delivered = {{"Wood", 10}};
+
+		ASSERT_TRUE(runUntil([&] { return phase() == StructureBlueprint::BuildPhase::UnderConstruction; }, 300)) << "packaged items do not hold the site";
+		const auto at = [&](EntityID item) { return world->getComponent<Position>(item)->value; };
+		EXPECT_FALSE(onRing(lShapedRing(), at(waiting))) << "at (" << at(waiting).x << ", " << at(waiting).y << ")";
+		EXPECT_FALSE(onRing(lShapedRing(), at(bound))) << "at (" << at(bound).x << ", " << at(bound).y << ")";
+		EXPECT_EQ(world->getComponent<Packaged>(bound)->targetPosition, awayTarget) << "its placement still stands";
+		EXPECT_EQ(asked.size(), 2U) << "the set-down rule is asked once for each item moved";
+		EXPECT_EQ(at(inNotch), glm::vec2(6.0F, 6.0F));
+		EXPECT_EQ(at(carried), glm::vec2(2.0F, 2.0F));
+		EXPECT_EQ(at(placedHere), glm::vec2(6.0F, 2.0F));
+		EXPECT_EQ(at(fetched), glm::vec2(3.0F, 1.0F));
 	}
 
 	// A long diagonal strip's bounding box is many times its area: only what stands on the strip is cleared.

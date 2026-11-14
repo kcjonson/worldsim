@@ -1292,6 +1292,7 @@ namespace {
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setSetDownSpotCallback([this](glm::vec2 at) { return packageSetDownSpot(at); });
+			constructionSystem.setPackagedSetDownCallback([this](glm::vec2 at) { return packageSetDownSpot(at); });
 			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at, double now) {
 				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, defNameId, at, now);
 			});

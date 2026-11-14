@@ -438,8 +438,13 @@ again just outside, so nothing is built over.
 A foundation is built on bare ground. As it enters construction (`ConstructionSystem::bareSites`),
 every placed static still on its footprint leaves the placement index: one a colonist could carry (a
 stone) is dropped just outside as a loose pile, the way a pile is, and the rest (the freestanding
-grass, a rock) is removed with nothing to show for it. None of that is work for a colonist and none of
-it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
+grass, a rock) is removed with nothing to show for it. A packaged item lying on the footprint is set
+down just outside by the rule a colonist setting one down uses (walkable ground off every unbuilt
+footprint), its placement, if it has one, unchanged. Three are left where they are: one a colonist
+carries (its position is where it was picked up), one a colonist's PlacePackaged task is on its way to
+fetch (moving it would leave his pickup at the old spot; he carries it off, or sets it down off the site
+if he drops the job), and one whose placement is on the footprint (it is installed there). None of that
+is work for a colonist and none of it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
 and bushes included.
 
 The footprint here is the foundation's ring (`FootprintBounds`), as it is for the clear gate, the
