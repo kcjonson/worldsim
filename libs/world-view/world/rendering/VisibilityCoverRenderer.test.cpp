@@ -45,12 +45,6 @@ namespace {
 		return triangles;
 	}
 
-	double distanceMm(const Vec2i64& first, const Vec2i64& second) {
-		const auto x = static_cast<double>(first.x - second.x);
-		const auto y = static_cast<double>(first.y - second.y);
-		return std::sqrt(x * x + y * y);
-	}
-
 	// A colony on the null backend: vision every frame, the landing round the origin, and the camera
 	// over it at the game's default zoom.
 	class VisibilityCoverTest : public ::testing::Test {
@@ -128,31 +122,6 @@ TEST(VisibilityCoverMeshes, SplitAtTheSixteenBitLimit) {
 	}
 	EXPECT_EQ(triangleIndex, triangles.size()) << "every triangle in exactly one mesh";
 	EXPECT_TRUE(worldview::seenMeshes({}).empty());
-}
-
-TEST(VisibilityCoverOutlines, OutdoorsTheDrawnDiscRoundWhereHeStands) {
-	const ecs::VisionSystem::SightShape shape{.center = {0.0F, 0.0F}, .radius = 30.0F};
-	const glm::vec2						position{4.0F, -2.0F};
-	const auto							outline = worldview::visibleOutline(shape, position);
-	ASSERT_TRUE(outline.has_value());
-	EXPECT_EQ(outline->size(), static_cast<std::size_t>(geometry::kSightSides));
-	const Vec2i64	   centre = nav::toMm(position);
-	const std::int64_t drawnMm = vision::drawnVisibleRadiusMm(30000);
-	for (const Vec2i64& vertex : *outline) {
-		EXPECT_LE(distanceMm(vertex, centre), static_cast<double>(drawnMm));
-		EXPECT_GT(distanceMm(vertex, centre), static_cast<double>(drawnMm) - 5.0);
-	}
-
-	const ecs::VisionSystem::SightShape tiny{.center = {0.0F, 0.0F}, .radius = 1.0F};
-	EXPECT_FALSE(worldview::visibleOutline(tiny, position).has_value()) << "too small to hold a leg, so nothing records it";
-}
-
-TEST(VisibilityCoverOutlines, WithWallsInSightVisionsPolygon) {
-	const geometry::Ring				polygon = {{0, 0}, {5000, 0}, {5000, 5000}, {0, 5000}};
-	const ecs::VisionSystem::SightShape shape{.center = {1.0F, 1.0F}, .radius = 30.0F, .polygon = &polygon, .polygonRevision = 3};
-	const auto							outline = worldview::visibleOutline(shape, {1.2F, 1.0F});
-	ASSERT_TRUE(outline.has_value());
-	EXPECT_EQ(*outline, polygon) << "the cached polygon as it is, not one round where he stands";
 }
 
 TEST_F(VisibilityCoverTest, UploadsOnlyWhenTheEpochMoves) {

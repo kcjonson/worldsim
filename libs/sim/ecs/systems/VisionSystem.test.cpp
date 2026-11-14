@@ -7,12 +7,15 @@
 #include "../components/Memory.h"
 #include "../components/Transform.h"
 
+#include "nav/NavCoords.h"
+
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <assets/placement/SpatialIndex.h>
 #include <construction/ConstructionWorld.h>
+#include <predicates/Predicates.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/chunk/ChunkManager.h>
 #include <world/chunk/SyntheticWorldSampler.h>
@@ -251,29 +254,58 @@ TEST_F(VisionSystemTest, TargetOnSameSideIsVisible) {
 	EXPECT_TRUE(remembers(world, observer, targetPos));
 }
 
-// Indoors the sight shape is the visibility polygon, whose rim is the 64-sided sight polygon
-// inscribed in the sight circle: midway between two rim vertices it stands 36 mm inside 30 m.
-// A target past that flat, though within the radius, is not seen; one short of it is.
-TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightPolygon) {
+// Indoors the polygon is built a rebuild step past sight, and what vision decides with it is held to
+// the sight circle round where the observer stands, as outdoors: a target just inside 30 m in a
+// direction between two of the polygon's rim vertices is seen, one 0.3 m past it is not though the
+// polygon covers it, and after a move short of the rebuild step the circle moves with him.
+TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightCircle) {
 	// West, half a side past rim vertex 32 (which lies along -x).
 	const float		angle = 3.14159265F * (1.0F + 1.0F / 64.0F);
 	const glm::vec2 heading{std::cos(angle), std::sin(angle)};
-	auto seenAt = [&](float distance) {
+	const glm::vec2 observerPos{0.5F, 1.5F};
+	auto seenAt = [&](float distance, glm::vec2 standAfter) {
 		ConstructionWorld construction;
 		buildWall(construction, {1500, 0}, {1500, 3000});
 		World		  world;
 		VisionSystem& vision = world.registerSystem<VisionSystem>();
 		vision.setConstructionWorld(&construction);
-		const glm::vec2 observerPos{0.5F, 1.5F};
 		const EntityID  observer = spawnObserver(world, observerPos);
+		tick(vision);
+		EXPECT_EQ(vision.polygonBuildCount(), 1u);
 		const glm::vec2 targetPos = observerPos + heading * distance;
+		EXPECT_NE(geometry::pointInPolygon(nav::toMm(targetPos), *vision.sightShape(observer)->polygon), geometry::PointInPolygon::Outside)
+			<< "the polygon reaches past sight";
+		world.getComponent<Position>(observer)->value = standAfter;
 		spawnTarget(world, targetPos);
 		tick(vision);
-		EXPECT_GT(vision.polygonBuildCount(), 0u);
+		EXPECT_EQ(vision.polygonBuildCount(), 1u) << "no rebuild";
 		return remembers(world, observer, targetPos);
 	};
-	EXPECT_TRUE(seenAt(29.94F));
-	EXPECT_FALSE(seenAt(29.985F)) << "beyond the rim's flat, inside the 30 m circle";
+	EXPECT_TRUE(seenAt(29.985F, observerPos)) << "inside the circle, past the 64-gon's flat";
+	EXPECT_FALSE(seenAt(30.3F, observerPos)) << "sight plus 0.3 m: in the polygon, out of sight";
+	EXPECT_TRUE(seenAt(30.3F, observerPos + heading * 0.4F)) << "0.4 m on, within sight of where he stands";
+	EXPECT_FALSE(seenAt(29.9F, observerPos - heading * 0.4F)) << "0.4 m back, out of sight of where he stands";
+}
+
+// A wall whose near end is in sight is seen; one reached only by the polygon's extra step is not.
+TEST_F(VisionSystemTest, WallPastSightIsNotSeenThoughThePolygonReachesIt) {
+	ConstructionWorld cw;
+	const SegmentId nearWall = buildWall(cw, {1500, 0}, {1500, 3000});
+	const SegmentId farWall  = buildWall(cw, {-30300, -2000}, {-30300, 2000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(nearWall));
+	EXPECT_FALSE(mem->knowsSegment(farWall)) << "0.3 m past sight";
+	const auto shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	EXPECT_EQ(*shape->segmentsSeen, std::vector<SegmentId>{nearWall});
 }
 
 // Demolishing the wall (demote to Blueprint) bumps the version: the next tick

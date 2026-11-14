@@ -1427,7 +1427,8 @@ namespace world_sim {
 		std::ostringstream				   out;
 		out << "{\"revealed\":" << (visibility.revealed() ? "true" : "false") << ",\"seenSquareMeters\":" << std::fixed
 			<< std::setprecision(1) << seen.committedSquareMeters() << ",\"ringsRegistered\":" << seen.ringsRegistered()
-			<< ",\"shapesPending\":" << seen.shapesPending() << ",\"shapesDropped\":" << seen.shapesDropped()
+			<< ",\"shapesPending\":" << seen.shapesPending() << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"shapesSkipped\":" << seen.shapesSkipped()
+			<< ",\"sweepsBuilt\":" << seen.sweepsBuilt() << ",\"sweepsWaiting\":" << seen.sweepsWaiting()
 			<< ",\"epoch\":" << seen.epoch();
 		if (hasParam(cmd, "x") && hasParam(cmd, "y")) {
 			const glm::vec2 point{std::strtof(param(cmd, "x").c_str(), nullptr), std::strtof(param(cmd, "y").c_str(), nullptr)};

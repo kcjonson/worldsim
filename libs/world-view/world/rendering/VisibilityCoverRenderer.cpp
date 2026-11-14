@@ -5,9 +5,6 @@
 #include <ecs/components/Memory.h>
 #include <ecs/components/Transform.h>
 #include <ecs/systems/PlayerVisibilitySystem.h>
-#include <nav/NavCoords.h>
-
-#include <visibility/SightPolygon.h>
 
 #include <primitives/MaskImage.h>
 #include <primitives/Primitives.h>
@@ -82,17 +79,6 @@ namespace worldview {
 		return meshes;
 	}
 
-	std::optional<std::vector<geometry::Vec2i64>> visibleOutline(const ecs::VisionSystem::SightShape& shape, glm::vec2 position) {
-		if (shape.polygon != nullptr) {
-			return *shape.polygon;
-		}
-		const std::int64_t sightMm = std::llround(static_cast<double>(shape.radius) * static_cast<double>(geometry::kMillimetersPerMeter));
-		if (sightMm - vision::kSeenSlackMm < vision::kSeenLeastRadiusMm) {
-			return std::nullopt;
-		}
-		return geometry::sightPolygon(nav::toMm(position), vision::drawnVisibleRadiusMm(sightMm));
-	}
-
 	void VisibilityCoverRenderer::upload(const vision::SeenArea& seen) {
 		triangles.clear();
 		seen.appendTriangles(triangles);
@@ -117,20 +103,14 @@ namespace worldview {
 		frameLayers.visibleOutlines.clear();
 		frameLayers.pendingOutlines.clear();
 
-		if (const ecs::VisionSystem* vision = world.tryGetSystem<ecs::VisionSystem>(); vision != nullptr) {
-			for (auto [entity, position, colonist, memory] : world.view<ecs::Position, ecs::Colonist, ecs::Memory>()) {
-				const std::optional<ecs::VisionSystem::SightShape> shape = vision->sightShape(entity);
-				if (!shape.has_value()) {
-					continue;
-				}
-				const std::optional<std::vector<geometry::Vec2i64>> outline = visibleOutline(*shape, position.value);
-				if (!outline.has_value()) {
-					continue;
-				}
-				std::vector<Foundation::Vec2> screen = onScreen(*outline, camera, viewportWidth, viewportHeight, pixelsPerMeter, view);
-				if (!screen.empty()) {
-					frameLayers.visibleOutlines.push_back(std::move(screen));
-				}
+		for (auto [entity, position, colonist, memory] : world.view<ecs::Position, ecs::Colonist, ecs::Memory>()) {
+			const std::optional<std::vector<geometry::Vec2i64>> outline = visibility.drawnVisible(entity);
+			if (!outline.has_value()) {
+				continue;
+			}
+			std::vector<Foundation::Vec2> screen = onScreen(*outline, camera, viewportWidth, viewportHeight, pixelsPerMeter, view);
+			if (!screen.empty()) {
+				frameLayers.visibleOutlines.push_back(std::move(screen));
 			}
 		}
 

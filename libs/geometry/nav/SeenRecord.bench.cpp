@@ -15,6 +15,7 @@
 #include "polygon/Polygon.h"
 #include "predicates/Predicates.h"
 #include "visibility/Buildings.test.h"
+#include "visibility/SightClip.h"
 #include "visibility/SightPolygon.h"
 #include "visibility/SightSkirt.h"
 #include "visibility/Visibility.h"
@@ -28,6 +29,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <optional>
 #include <random>
 #include <string>
 #include <utility>
@@ -42,6 +44,9 @@ namespace {
 	constexpr std::int64_t kSightMm		   = 30000;
 	constexpr std::int64_t kSlackMm		   = 50;
 	constexpr std::int64_t kLegRadiusMm	   = kSightMm - kSlackMm;
+	constexpr std::int64_t kRebuildStepMm	   = 500; // VisionSystem::kSightRebuildStepMeters
+	constexpr std::int64_t kSweepSpacingMm	   = 100; // vision::kSeenSweepSpacingMm
+	constexpr std::int64_t kSweepRimBandMm	   = 600; // vision::kSeenSweepRimBandMm
 	constexpr std::int64_t kLandingMm	   = 150000;
 	constexpr std::int64_t kSeenProvenance = -3;
 	constexpr double	   kPi			   = 3.14159265358979323846;
@@ -164,6 +169,19 @@ namespace {
 		const std::vector<Vec2i64> atEnd = geometry::sightPolygon(end, kLegRadiusMm);
 		pts.insert(pts.end(), atEnd.begin(), atEnd.end());
 		return hullOf(std::move(pts));
+	}
+
+	// SeenArea's test for a sweep: a vertex of what the polygon added lies within kSweepRimBandMm of
+	// its rim.
+	bool addsNearRim(const std::vector<std::vector<Vec2i64>>& pieces, const Vec2i64& centre) {
+		for (const std::vector<Vec2i64>& piece : pieces) {
+			for (const Vec2i64& vertex : piece) {
+				if (!geometry::withinDistanceOfSegment(vertex, centre, centre, kSightMm - kSweepRimBandMm)) {
+					return true;
+				}
+			}
+		}
+		return false;
 	}
 
 	Vec2i64 stepFrom(const Vec2i64& point, double heading, double lengthMm) {
@@ -342,8 +360,9 @@ namespace {
 			return count;
 		}
 
-		// `walls`: the shape is a visibility polygon with walls in sight, so it is grown by the skirt.
-		bool commit(const std::vector<Vec2i64>& ring, const Vec2i64& centre, bool walls) {
+		// `rim`: the shape has walls in sight, so it is grown by the skirt everywhere but along this outline.
+		bool commit(const std::vector<Vec2i64>& ring, const Vec2i64& centre, const std::vector<Vec2i64>* rim) {
+			const bool walls = rim != nullptr;
 			Vec2i64 low;
 			Vec2i64 high;
 			boxOf(ring, low, high);
@@ -365,7 +384,7 @@ namespace {
 			}
 			std::vector<Vec2i64> grown;
 			if (walls && skirtMm > 0) {
-				skirtUs.push_back(secondsOf([&] { grown = geometry::skirtedSightShape(ring, centre, kSightMm, skirtMm); }) * 1e6);
+				skirtUs.push_back(secondsOf([&] { grown = geometry::skirtedSightShape(ring, centre, *rim, skirtMm); }) * 1e6);
 				if (grown.empty()) {
 					++skirtSkipped;
 					return false;
@@ -611,7 +630,7 @@ namespace {
 			const std::vector<Vec2i64> path = exploreWalk(legMm, totalMm, 7);
 			SeenRecord				   rec;
 			for (std::size_t i = 1; i < path.size(); ++i) {
-				rec.commit(legRing(path[i - 1], path[i]), path[i - 1], false);
+				rec.commit(legRing(path[i - 1], path[i]), path[i - 1], nullptr);
 			}
 			const double	   kilometres = static_cast<double>(totalMm) / 1e6;
 			const Bytes		   bytes	  = bytesOf(rec.mesh);
@@ -668,7 +687,7 @@ namespace {
 			SeenRecord rec;
 			for (std::uint32_t i = 0; i < count; ++i) {
 				const double heading = 2.0 * kPi * static_cast<double>(bitReversed(i, bits)) / static_cast<double>(1U << bits);
-				rec.commit(legRing({0, 0}, stepFrom({0, 0}, heading, 500000.0)), {0, 0}, false);
+				rec.commit(legRing({0, 0}, stepFrom({0, 0}, heading, 500000.0)), {0, 0}, nullptr);
 			}
 			std::mt19937		rng(5);
 			std::vector<double> groundUs;
@@ -724,7 +743,7 @@ namespace {
 				east = !east;
 			}
 			for (std::size_t i = 1; i < sweep.size(); ++i) {
-				rec.commit(legRing(sweep[i - 1], sweep[i]), sweep[i - 1], false);
+				rec.commit(legRing(sweep[i - 1], sweep[i]), sweep[i - 1], nullptr);
 			}
 			const std::size_t seedRings = rec.registered();
 			rec.patchMs.clear();
@@ -744,7 +763,7 @@ namespace {
 				Vec2i64		 next	 = stepFrom(position, heading, length);
 				next.x				 = next.x > kHalf ? 2 * kHalf - next.x : (next.x < -kHalf ? -2 * kHalf - next.x : next.x);
 				next.y				 = next.y > kHalf ? 2 * kHalf - next.y : (next.y < -kHalf ? -2 * kHalf - next.y : next.y);
-				rec.commit(legRing(position, next), position, false);
+				rec.commit(legRing(position, next), position, nullptr);
 				position = next;
 				if ((i + 1) % 1000 == 0) {
 					registeredAt.push_back(rec.registered());
@@ -784,12 +803,12 @@ namespace {
 			const Vec2i64 end	  = stepFrom(origin, heading, 100000.0);
 			const double  normalX = -std::sin(heading);
 			const double  normalY = std::cos(heading);
-			rec.commit(legRing(origin, end), origin, false);
+			rec.commit(legRing(origin, end), origin, nullptr);
 			for (std::int64_t i = 1; i <= 40; ++i) {
 				const double  off = static_cast<double>((i % 2 == 0 ? 1 : -1) * i * unit);
 				const Vec2i64 first{origin.x + std::llround(normalX * off), origin.y + std::llround(normalY * off)};
 				const Vec2i64 second{end.x + std::llround(normalX * (off + 3.0)), end.y + std::llround(normalY * (off + 3.0))};
-				rec.commit(legRing(first, second), first, false);
+				rec.commit(legRing(first, second), first, nullptr);
 			}
 			const std::string valid = rec.mesh.validate();
 			std::fprintf(stderr, "[seen rewalk] offsets of %lld mm: %zu of 41 registered; %d live triangles; unreadCovers %lld; validate %s\n",
@@ -852,7 +871,8 @@ namespace {
 					++notSimple;
 					continue;
 				}
-				rec.commit(ring, point, true);
+				const std::vector<Vec2i64> rim = geometry::sightPolygon(point, kSightMm);
+				rec.commit(ring, point, &rim);
 			}
 			const std::string valid = rec.mesh.validate();
 			const bool		  fresh = rec.equalsFreshBuild();
@@ -892,10 +912,12 @@ namespace {
 	// in some outer ones, turned 20 degrees and 41 km from the origin. Each colonist walks at
 	// 2 m/s from room to room through the doors, and now and then out of an outer door to points
 	// 3 to 60 m out and back.
-	// Sight runs every 0.1 s. With any of the building within 30 m (vision's rule: a wall in
-	// sight) the colonist's visibility polygon is rebuilt after 0.5 m of travel and committed
-	// with him as its centre; farther out he walks legs (spec 3.3), each ended when a position
-	// held since it began strays more than kSlackMm off its line, committed as its capsule.
+	// Sight runs every 0.1 s. With any of the building within 30.5 m (vision's rule: a wall in
+	// sight of the polygon, built a rebuild step past sight) the colonist's visibility polygon is
+	// rebuilt after 0.5 m of travel and committed cut to sight round him, with him as its centre;
+	// one that adds ground near its rim is followed by the sweep back to the build before it. Farther
+	// out he walks legs (spec 3.3), each ended when a position held since it began strays more than
+	// kSlackMm off its line, committed as its capsule.
 
 	struct Walker {
 		Vec2i64				 position;
@@ -903,6 +925,7 @@ namespace {
 		std::size_t			 room		= 0;
 		bool				 hasPolygon = false;
 		Vec2i64				 builtAt;
+		std::vector<Vec2i64> sight; // the polygon built at builtAt, a rebuild step past sight
 		bool				 legOpen = false;
 		Vec2i64				 legStart;
 		std::vector<Vec2i64> held; // positions since the leg began
@@ -967,7 +990,7 @@ namespace {
 			rec.skirtMm  = state.range(4);
 			if (landed) {
 				const Vec2i64 drop = building.roomCentres.front() + Vec2i64{-40000, 0};
-				rec.commit(geometry::sightPolygon(drop, kLandingMm), drop, false);
+				rec.commit(geometry::sightPolygon(drop, kLandingMm), drop, nullptr);
 			}
 			const std::size_t landingRings = rec.registered();
 			rec.coveredUs.clear();
@@ -984,6 +1007,7 @@ namespace {
 			std::vector<double>		 polygonPatchMs;
 			std::vector<double>		 legPatchMs;
 			std::vector<double>		 buildUs;
+			std::vector<double>		 sweepBuildUs; // computeVisibilityPolygon for the sweep's pieces
 			std::vector<double>		 simpleUs;
 			std::vector<double>		 vertexCounts;
 			int						 polygons		  = 0;
@@ -1002,11 +1026,12 @@ namespace {
 			std::vector<double>				  registeredK;
 			std::vector<double>				  sliverPatchMs;
 			std::vector<std::vector<Vec2i64>> sampled;
-			auto commitShape = [&](const std::vector<Vec2i64>& shape, const Vec2i64& centre, bool polygon) {
+			auto commitShape = [&](const std::vector<Vec2i64>& shape, const Vec2i64& centre, const std::vector<Vec2i64>* rim) {
+				const bool		  polygon	   = rim != nullptr;
 				const std::size_t before	   = rec.patchMs.size();
 				const int		  droppedSoFar = rec.dropped;
 				const int		  skippedSoFar = rec.skirtSkipped;
-				rec.commit(shape, centre, polygon);
+				rec.commit(shape, centre, rim);
 				const bool covered = rec.dropped > droppedSoFar;
 				(polygon ? polygonCoveredUs : legCoveredUs).push_back(rec.coveredUs.back());
 				for (std::size_t ring = before; ring < rec.patchMs.size(); ++ring) {
@@ -1057,7 +1082,7 @@ namespace {
 					const std::vector<Vec2i64> ring(corners.begin(), corners.end());
 					const Vec2i64			   centre{(corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4, (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4};
 					const std::size_t		   before = rec.patchMs.size();
-					rec.commit(ring, centre, false);
+					rec.commit(ring, centre, nullptr);
 					footprintCoveredUs.push_back(rec.coveredUs.back());
 					for (std::size_t patch = before; patch < rec.patchMs.size(); ++patch) {
 						footprintPatchMs.push_back(rec.patchMs[patch]);
@@ -1068,10 +1093,43 @@ namespace {
 			};
 			auto closeLeg = [&](Walker& walker, const Vec2i64& end) {
 				if (walker.legOpen && end != walker.legStart) {
-					commitShape(legRing(walker.legStart, end), walker.legStart, false);
+					commitShape(legRing(walker.legStart, end), walker.legStart, nullptr);
 				}
 				walker.legOpen = false;
 				walker.held.clear();
+			};
+			// A build, as PlayerVisibilitySystem registers it: vision's polygon cut to sight round the build,
+			// then, when it added ground near its rim, the sweep back to the build before it.
+			auto registerBuild = [&](const Vec2i64& build, const std::vector<Vec2i64>& longPolygon, const std::optional<Vec2i64>& previous) {
+				const std::vector<Vec2i64> rim = geometry::sightPolygon(build, kSightMm);
+				std::vector<Vec2i64>	   inSight;
+				bool					   simple = false;
+				simpleUs.push_back(secondsOf([&] {
+									   inSight = geometry::starClippedToConvex(longPolygon, build, rim);
+									   simple  = geometry::simpleAround(inSight, build);
+								   }) *
+								   1e6);
+				if (!simple) {
+					++notSimple;
+					return;
+				}
+				const std::size_t patchesBefore = rec.patchMs.size();
+				commitShape(inSight, build, &rim);
+				enterTouchedPieces(inSight);
+				if (!previous.has_value() || rec.patchMs.size() == patchesBefore || !addsNearRim(rec.pieces, build)) {
+					return;
+				}
+				const Vec2i64	   along = build - *previous;
+				const std::int64_t steps = static_cast<std::int64_t>(std::ceil(std::sqrt(static_cast<double>(along.x * along.x + along.y * along.y)) / static_cast<double>(kSweepSpacingMm)));
+				for (std::int64_t step = 1; step < steps; ++step) {
+					const Vec2i64		   point = *previous + Vec2i64{along.x * step / steps, along.y * step / steps};
+					const std::vector<Vec2i64> pointRim = geometry::sightPolygon(point, kSightMm);
+					std::vector<Vec2i64>	   pointPolygon;
+					sweepBuildUs.push_back(secondsOf([&] { pointPolygon = geometry::computeVisibilityPolygon(point, kSightMm, building.walls); }) * 1e6);
+					if (geometry::simpleAround(pointPolygon, point)) {
+						commitShape(pointPolygon, point, &pointRim);
+					}
+				}
 			};
 			auto planNext = [&](Walker& walker) {
 				if (rng() % 4 == 0 && !outerDoors.empty()) {
@@ -1130,7 +1188,7 @@ namespace {
 								remaining		= 0.0;
 							}
 						}
-						const bool indoors = building.distanceTo(walker.position) <= static_cast<double>(kSightMm);
+						const bool indoors = building.distanceTo(walker.position) <= static_cast<double>(kSightMm + kRebuildStepMm);
 						if (indoors) {
 							if (walker.legOpen) {
 								closeLeg(walker, walker.held.empty() ? walker.position : walker.held.back());
@@ -1140,19 +1198,12 @@ namespace {
 							if (walker.hasPolygon && movedX * movedX + movedY * movedY <= 500.0 * 500.0) {
 								continue;
 							}
-							walker.hasPolygon = true;
-							walker.builtAt	  = walker.position;
-							geometry::Ring ring;
-							buildUs.push_back(secondsOf([&] { ring = geometry::computeVisibilityPolygon(walker.position, kSightMm, building.walls); }) * 1e6);
-							vertexCounts.push_back(static_cast<double>(ring.size()));
-							bool simple = false;
-							simpleUs.push_back(secondsOf([&] { simple = geometry::simpleAround(ring, walker.position); }) * 1e6);
-							if (!simple) {
-								++notSimple;
-								continue;
-							}
-							commitShape(ring, walker.position, true);
-							enterTouchedPieces(ring);
+							const std::optional<Vec2i64> previous = walker.hasPolygon ? std::optional<Vec2i64>(walker.builtAt) : std::nullopt;
+							walker.hasPolygon						  = true;
+							walker.builtAt								  = walker.position;
+							buildUs.push_back(secondsOf([&] { walker.sight = geometry::computeVisibilityPolygon(walker.position, kSightMm + kRebuildStepMm, building.walls); }) * 1e6);
+							vertexCounts.push_back(static_cast<double>(walker.sight.size()));
+							registerBuild(walker.position, walker.sight, previous);
 							continue;
 						}
 						walker.hasPolygon = false;
@@ -1235,7 +1286,7 @@ namespace {
 			const double	  unionArea = reach.unionM2;
 			const double	  seconds	= static_cast<double>(periodSeconds) * periodsRun;
 			const double	  recordMs	= (sumOf(simpleUs) + sumOf(polygonCoveredUs) + sumOf(legCoveredUs) + sumOf(rec.skirtUs) + sumOf(rec.frontierUs) +
-									   sumOf(footprintCoveredUs)) / 1e3 +
+									   sumOf(footprintCoveredUs) + sumOf(sweepBuildUs)) / 1e3 +
 									  sumOf(polygonPatchMs) + sumOf(legPatchMs) + sumOf(footprintPatchMs);
 			std::fprintf(stderr,
 						 "[seen base] %zu colonists, %s, skirt %lld mm, %d rooms, %zu outer doors, %.0f min: %d polygons (%d covered, %.1f%%), %d legs (%d covered), "
@@ -1247,6 +1298,7 @@ namespace {
 			std::fprintf(stderr, "  polygon vertices mean %.0f max %.0f\n", meanOf(vertexCounts), maxOf(vertexCounts));
 			printCovered(rec);
 			printTimes("computeVisibilityPolygon (vision's cost)", buildUs, "us");
+			printTimes("computeVisibilityPolygon (the sweep's pieces)", sweepBuildUs, "us");
 			printTimes("simpleAround", simpleUs, "us");
 			printTimes("covered test, polygons", polygonCoveredUs, "us");
 			printTimes("covered test, legs", legCoveredUs, "us");
@@ -1276,7 +1328,7 @@ namespace {
 				std::fprintf(stderr, " %d", triangles);
 			}
 			std::fprintf(stderr,
-						 "\n  record's main-thread cost %.3f ms per simulated second, %.3f ms a tick at 60 (simple check, covered test, skirt, frontier, patches, "
+						 "\n  record's main-thread cost %.3f ms per simulated second, %.3f ms a tick at 60 (simple check and cut, covered test, sweep polygons, skirt, frontier, patches, "
 						 "footprints); vision's polygons %.3f ms per second\n",
 						 recordMs / seconds, recordMs / seconds / 60.0, sumOf(buildUs) / 1e3 / seconds);
 			state.SetIterationTime(recordMs / 1e3);
@@ -1307,7 +1359,7 @@ namespace {
 		const auto walkers = static_cast<std::size_t>(state.range(0));
 		for (auto _ : state) {
 			SeenRecord rec;
-			rec.commit(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0}, false);
+			rec.commit(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0}, nullptr);
 			std::mt19937		 rng(17);
 			std::vector<Vec2i64> positions(walkers);
 			for (Vec2i64& point : positions) {
@@ -1328,7 +1380,7 @@ namespace {
 							heading = std::atan2(-static_cast<double>(point.y), -static_cast<double>(point.x));
 							next	= stepFrom(point, heading, length);
 						}
-						rec.commit(legRing(point, next), point, false);
+						rec.commit(legRing(point, next), point, nullptr);
 						point = next;
 						walked += length;
 					}
@@ -1398,7 +1450,7 @@ namespace {
 					disagree += accepted != simple ? 1 : 0;
 					if (accepted) {
 						geometry::Ring skirted;
-						skirtUs.push_back(secondsOf([&] { skirted = geometry::skirtedSightShape(ring, observer, kSightMm, geometry::kSeenSkirtMm); }) * 1e6);
+						skirtUs.push_back(secondsOf([&] { skirted = geometry::skirtedSightShape(ring, observer, geometry::sightPolygon(observer, kSightMm), geometry::kSeenSkirtMm); }) * 1e6);
 						skirtSkipped += skirted.empty() ? 1 : 0;
 						skirtedVertexCounts.push_back(static_cast<double>(skirted.size()));
 					}
@@ -1438,7 +1490,7 @@ namespace {
 			std::vector<double> doorUs;
 			const auto			doorTags = memberOf(DoorTagsKey{});
 			for (std::size_t i = 1; i < path.size(); ++i) {
-				if (!rec.commit(legRing(path[i - 1], path[i]), path[i - 1], false)) {
+				if (!rec.commit(legRing(path[i - 1], path[i]), path[i - 1], nullptr)) {
 					continue;
 				}
 				labelUs.push_back(secondsOf([&] { labels.update(rec.mesh.view(), rec.last); }) * 1e6);
@@ -1462,7 +1514,7 @@ namespace {
 			eager.exact = false;
 			std::vector<double> refreshMs;
 			for (std::size_t i = 1; i < path.size(); ++i) {
-				if (eager.commit(legRing(path[i - 1], path[i]), path[i - 1], false)) {
+				if (eager.commit(legRing(path[i - 1], path[i]), path[i - 1], nullptr)) {
 					refreshMs.push_back(secondsOf([&] { eager.mesh.refreshWidths(); }) * 1e3);
 				}
 			}
