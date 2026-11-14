@@ -2,8 +2,10 @@
 // Generates multi-channel signed distance field atlases for fonts
 
 #include <algorithm>
+#include <bit>
 #include <charconv>
 #include <cmath>
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <msdfgen-ext.h>
@@ -12,7 +14,6 @@
 #include <vector>
 
 struct GlyphData {
-	char character;
 	msdfgen::unicode_t unicode;
 	double advance;
 	msdfgen::Shape shape;
@@ -44,18 +45,31 @@ struct AtlasConfig {
 	const char* outputPath = "fonts/Roboto-SDF.png";
 	const char* metadataPath = "fonts/Roboto-SDF.json";
 
+	static constexpr int kMinAtlasSize = 64;
+	static constexpr int kMaxAtlasSize = 4096;
 	int atlasWidth = 512;
 	int atlasHeight = 512;
 	double pixelRange = 4.0;  // Distance field range in pixels
 	int glyphSize = 32;        // Size of each glyph in atlas (pixels)
 
-	// Character set to include (ASCII printable)
+	// Character set to include: ASCII printable, then the Latin-1 Supplement (U+00A0 to U+00FF).
+	// The Latin-1 range goes after the ASCII so the ASCII glyphs keep their cells.
 	const char* charset =
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 		"0123456789 !@#$%^&*()_+-=[]{}|;':\",./<>?`~\\";
+	static constexpr msdfgen::unicode_t kLatin1First = 0xA0;
+	static constexpr msdfgen::unicode_t kLatin1Last = 0xFF;
 };
 
 namespace {
+
+	constexpr msdfgen::unicode_t kNoBreakSpace = 0xA0;
+
+	std::string codePointLabel(msdfgen::unicode_t unicode) {
+		char buffer[16];
+		std::snprintf(buffer, sizeof(buffer), "U+%04X", static_cast<unsigned>(unicode));
+		return buffer;
+	}
 
 	constexpr double kSide = 1e-9; // em either side of an edge, to tell which side the fill is on
 
@@ -352,8 +366,9 @@ int main(int argc, char** argv) {
 		} else if (arg == "--size" && i + 1 < argc) {
 			try {
 				int size = std::stoi(argv[++i]);
-				if (size < 64 || size > 4096) {
-					std::cerr << "Error: Atlas size must be between 64 and 4096 pixels\n";
+				if (size < AtlasConfig::kMinAtlasSize || size > AtlasConfig::kMaxAtlasSize) {
+					std::cerr << "Error: Atlas size must be between " << AtlasConfig::kMinAtlasSize << " and " << AtlasConfig::kMaxAtlasSize
+							  << " pixels\n";
 					return 1;
 				}
 				config.atlasWidth = config.atlasHeight = size;
@@ -367,7 +382,7 @@ int main(int argc, char** argv) {
 			std::cout << "  --font <path>      Input font file (default: fonts/Roboto-Regular.ttf)\n";
 			std::cout << "  --output <path>    Output PNG file (default: fonts/Roboto-SDF.png)\n";
 			std::cout << "  --metadata <path>  Output JSON file (default: fonts/Roboto-SDF.json)\n";
-			std::cout << "  --size <pixels>    Atlas size (default: 512)\n";
+			std::cout << "  --size <pixels>    Atlas width and starting height (default: 512); the height grows to fit the glyphs\n";
 			std::cout << "  --help             Show this help\n";
 			return 0;
 		}
@@ -412,15 +427,20 @@ int main(int argc, char** argv) {
 	std::vector<GlyphData> glyphs;
 	int glyphCount = 0;
 
-	// The characters whose overlapping contours were resolved, for the summary
-	std::string resolvedGlyphs;
+	// The characters whose overlapping contours were resolved, and those the font lacks, for the summary
+	std::vector<msdfgen::unicode_t> resolvedGlyphs;
+	std::vector<msdfgen::unicode_t> missingGlyphs;
 
+	std::vector<msdfgen::unicode_t> codePoints;
 	for (const char* p = config.charset; *p; ++p) {
-		char c = *p;
-		msdfgen::unicode_t unicode = static_cast<msdfgen::unicode_t>(c);
+		codePoints.push_back(static_cast<msdfgen::unicode_t>(*p));
+	}
+	for (msdfgen::unicode_t unicode = AtlasConfig::kLatin1First; unicode <= AtlasConfig::kLatin1Last; ++unicode) {
+		codePoints.push_back(unicode);
+	}
 
+	for (const msdfgen::unicode_t unicode : codePoints) {
 		GlyphData glyph;
-		glyph.character = c;
 		glyph.unicode = unicode;
 
 		// Load glyph shape
@@ -437,7 +457,7 @@ int main(int argc, char** argv) {
 			// Skip whitespace glyphs (they have no shape)
 			if (glyph.shape.contours.empty()) {
 				// Still add whitespace characters for metadata (like space)
-				if (c == ' ' || c == '\t') {
+				if (unicode == ' ' || unicode == kNoBreakSpace) {
 					glyphs.push_back(glyph);
 				}
 				continue;
@@ -446,9 +466,9 @@ int main(int argc, char** argv) {
 			// A glyph that does not resolve keeps the font's contours, and its specks with them.
 			std::string error;
 			if (resolveOverlaps(glyph.shape, error)) {
-				resolvedGlyphs += c;
+				resolvedGlyphs.push_back(unicode);
 			} else if (!error.empty()) {
-				std::cerr << "WARNING: " << config.fontPath << ": could not resolve the overlapping contours of '" << c << "' (" << error
+				std::cerr << "WARNING: " << config.fontPath << ": could not resolve the overlapping contours of " << codePointLabel(unicode) << " (" << error
 						  << "), so it keeps the font's\n";
 			}
 
@@ -457,12 +477,25 @@ int main(int argc, char** argv) {
 
 			glyphs.push_back(glyph);
 			glyphCount++;
+		} else {
+			missingGlyphs.push_back(unicode);
 		}
 	}
 
 	std::cout << "Loaded " << glyphCount << " glyphs\n";
 	if (!resolvedGlyphs.empty()) {
-		std::cout << "Overlapping contours resolved in " << resolvedGlyphs.size() << ": " << resolvedGlyphs << "\n";
+		std::cout << "Overlapping contours resolved in " << resolvedGlyphs.size() << ":";
+		for (const msdfgen::unicode_t unicode : resolvedGlyphs) {
+			std::cout << " " << codePointLabel(unicode);
+		}
+		std::cout << "\n";
+	}
+	if (!missingGlyphs.empty()) {
+		std::cout << "Not in the font (" << missingGlyphs.size() << "):";
+		for (const msdfgen::unicode_t unicode : missingGlyphs) {
+			std::cout << " " << codePointLabel(unicode);
+		}
+		std::cout << "\n";
 	}
 
 	if (glyphs.empty()) {
@@ -532,7 +565,14 @@ int main(int argc, char** argv) {
 		currentX += cell;
 		shelfHeight = std::max(shelfHeight, cell);
 	}
-	if (currentY + shelfHeight > config.atlasHeight) {
+
+	// Height grows past the requested one, to the smallest power of two that fits, when the glyphs need it: the
+	// width, and so every cell's place on the grid, stays as it was.
+	const int requiredHeight = currentY + shelfHeight;
+	if (requiredHeight > config.atlasHeight) {
+		config.atlasHeight = static_cast<int>(std::bit_ceil(static_cast<unsigned>(requiredHeight)));
+	}
+	if (config.atlasHeight > AtlasConfig::kMaxAtlasSize) {
 		std::cerr << "ERROR: Atlas too small for all glyphs\n";
 		msdfgen::destroyFont(font);
 		msdfgen::deinitializeFreetype(ft);

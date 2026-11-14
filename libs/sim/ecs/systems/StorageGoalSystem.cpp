@@ -5,6 +5,7 @@
 #include "../GoalTaskRegistry.h"
 #include "../World.h"
 #include "../components/Inventory.h"
+#include "../components/Packaged.h"
 #include "../components/StorageConfiguration.h"
 #include "../components/Transform.h"
 
@@ -41,23 +42,27 @@ namespace ecs {
 
 		// Cascade-remove a storage's umbrella Haul goal AND its stocking Harvest children, which
 		// hang off the umbrella. A plain removeGoalByDestination drops only the top-level Haul and
-		// would orphan the children.
+		// would orphan the children. Another system's goal on the box (a placement goal) is not ours.
 		auto removeStorageGoalTree = [&registry](EntityID storage) {
-			const auto* g = registry.getGoalByDestination(storage);
-			if (g != nullptr) {
-				registry.removeGoalWithChildren(g->id);
+			const auto* goal = registry.getGoalByDestination(storage);
+			if (goal != nullptr && goal->owner == GoalOwner::StorageGoalSystem) {
+				registry.removeGoalWithChildren(goal->id);
 			}
 		};
 
 		// Query all entities with StorageConfiguration + Inventory + Position
 		for ([[maybe_unused]] auto [entity, config, inventory, position] :
 			 world->view<StorageConfiguration, Inventory, Position>()) {
-			// Only process storages with rules configured
-			if (!config.hasRules()) {
-				// No rules = storage not configured yet
-				// Remove any existing goal (and stocking children)
+			// A box with no rules, or a packaged one (being placed or moved, it wants nothing), has no storage goal
+			if (!config.hasRules() || world->hasComponent<Packaged>(entity)) {
 				removeStorageGoalTree(entity);
 				storagesWithGoals.erase(entity);
+				continue;
+			}
+
+			// The placement goal of a box just installed stays until BuildGoalSystem retires it at its next poll
+			const auto* existingGoal = registry.getGoalByDestination(entity);
+			if (existingGoal != nullptr && existingGoal->owner != GoalOwner::StorageGoalSystem) {
 				continue;
 			}
 
@@ -75,8 +80,7 @@ namespace ecs {
 				}
 			}
 
-			uint64_t	umbrellaId = 0;
-			const auto* existingGoal = registry.getGoalByDestination(entity);
+			uint64_t umbrellaId = 0;
 			if (existingGoal != nullptr) {
 				umbrellaId = existingGoal->id;
 				registry.updateGoal(existingGoal->id, [&](GoalTask& goal) {
