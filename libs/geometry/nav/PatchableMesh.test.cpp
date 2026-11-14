@@ -3694,6 +3694,28 @@ TEST(PatchableMesh, SliverBesideADissolvedSideMatchesFreshBuild) {
 	addInEveryOrder({bounds({{0, 0}, {2, 0}, {0, 1}}), bounds({{0, 0}, {0, 1}, {-2, 0}}), blocked({{-10, -10}, {20, -10}, {20, 1}, {-10, 0}})});
 }
 
+// Ground slivers some 30 m long whose tips lie millimetres from another outline's corner or
+// across its edge, as visibility pieces fan from an observer (WOR-850). Rounding moves the
+// crossings near a tip by up to a millimetre, so ground there lies in faces too thin for a
+// sample to read the outlines as given, some of them reached only through faces off ground.
+// Found by a seeded search over slivers beside limit and star outlines, then shrunk.
+TEST(PatchableMesh, SliverTipsMillimetresFromAnotherOutlineMatchFreshBuild) {
+	const std::vector<std::vector<NavInputPolygon>> cases = {
+		{bounds({{20506, -34978}, {-14193, -37829}, {-14134, -38468}}), bounds({{20504, -34978}, {-7137, -37523}, {-7128, -37615}})},
+		{bounds({{-28222, 46084}, {8457, 31976}, {8535, 32179}}), bounds({{-28225, 46084}, {140, 35257}, {390, 35917}})},
+		{bounds({{-1335, -17902}, {23762, -32803}, {5287, -19936}}), bounds({{16418, -27294}, {20621, -54299}, {20641, -54296}}),
+		 bounds({{16421, -27295}, {22174, -66017}, {22216, -66011}})},
+		{bounds({{-16794, 11037}, {-10100, 41210}, {-11028, 41399}}), bounds({{-11680, 34061}, {-22034, 635}, {-21967, 614}})},
+	};
+	for (std::size_t c = 0; c < cases.size(); ++c) {
+		SCOPED_TRACE("case " + std::to_string(c));
+		addInEveryOrder(cases[c]);
+		if (HasFatalFailure()) {
+			return;
+		}
+	}
+}
+
 namespace {
 
 	// How many of the outline's edges are each one constrained mesh edge.
