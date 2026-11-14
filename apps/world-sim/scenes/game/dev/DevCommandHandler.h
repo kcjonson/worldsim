@@ -96,7 +96,7 @@ namespace world_sim {
 		// reveal?on=1|0: player visibility off or on (player-visibility.md 3.10)
 		void devReveal(const app::DevRequest& cmd);
 		void devGive(const app::DevRequest& cmd);
-		// spawn?def=&at=x,y&n=&scatter=: the placement tool's ground gate (PlacementSystem::footprintClearToBuild)
+		// spawn?def=&at=x,y&n=&scatter=: the placement tool's ground gate (PlacementSystem::footprintBuildableNow)
 		// at the centre and at each scattered spot, which is skipped when refused.
 		std::string devSpawn(const app::DevRequest& cmd);
 		void devColonist(const app::DevRequest& cmd);

@@ -15,12 +15,12 @@ namespace ecs {
 namespace world_sim {
 
 	/// The foundation verb's: the whole closed footprint `pts`, interior included, is buildable
-	/// (NavigationSystem::isAreaBuildable: placed obstacles become clear tasks; water, a ford, and
+	/// (NavigationSystem::isAreaBuildableOnceCleared: placed obstacles become clear tasks; water, a ford, and
 	/// ground no mover has seen refuse), the same gate as the foundation tool.
 	std::string foundationGroundRefusal(const ecs::NavigationSystem* navigation, const std::vector<Foundation::Vec2>& pts);
 
 	/// The walls verb's: every segment of the chain `pts` is clear ground out of any ford
-	/// (NavigationSystem::isLineClearToBuild), the same gate as the wall tool, hosted or freestanding.
+	/// (NavigationSystem::isLineBuildableNow), the same gate as the wall tool, hosted or freestanding.
 	std::string wallChainGroundRefusal(const ecs::NavigationSystem* navigation, const std::vector<Foundation::Vec2>& pts);
 
 } // namespace world_sim

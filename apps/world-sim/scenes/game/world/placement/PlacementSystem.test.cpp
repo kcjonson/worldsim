@@ -150,7 +150,7 @@ namespace {
 TEST_F(PlacementFordTest, TargetInTheCreekIsRefusedAndBesideItIsPlaced) {
 	const glm::vec2 inCreek{10.0F, kCreekY};
 	ASSERT_TRUE(navigation->isValidPosition(inCreek)) << "a colonist wades the creek";
-	ASSERT_FALSE(navigation->isPointBuildable(inCreek)) << "the creek is a ford in the mesh";
+	ASSERT_FALSE(navigation->isPointBuildableOnceCleared(inCreek)) << "the creek is a ford in the mesh";
 
 	hover(inCreek);
 	EXPECT_FALSE(placement->ghostValid());
@@ -159,7 +159,7 @@ TEST_F(PlacementFordTest, TargetInTheCreekIsRefusedAndBesideItIsPlaced) {
 
 	// The centre is on the bank, the footprint reaches into the creek.
 	const glm::vec2 overhanging{10.0F, kCreekY + kCreekHalfWidthMeters + kBoxHalfExtent * 0.5F};
-	ASSERT_TRUE(navigation->isPointClearToBuild(overhanging));
+	ASSERT_TRUE(navigation->isPointBuildableNow(overhanging));
 	hover(overhanging);
 	EXPECT_FALSE(placement->ghostValid()) << "the footprint is tested, not only its centre";
 
@@ -169,8 +169,8 @@ TEST_F(PlacementFordTest, TargetInTheCreekIsRefusedAndBesideItIsPlaced) {
 	EXPECT_TRUE(placement->handleClick());
 }
 
-TEST_F(PlacementFordTest, FootprintClearToBuildRefusesTheCreek) {
-	EXPECT_FALSE(placement->footprintClearToBuild(kBox, {10.0F, kCreekY}));
-	EXPECT_FALSE(placement->footprintClearToBuild("Test_PlacementNoFootprint", {10.0F, kCreekY})) << "a def with no outline is its centre";
-	EXPECT_TRUE(placement->footprintClearToBuild(kBox, {10.0F, kCreekY - 2.0F}));
+TEST_F(PlacementFordTest, FootprintBuildableNowRefusesTheCreek) {
+	EXPECT_FALSE(placement->footprintBuildableNow(kBox, {10.0F, kCreekY}));
+	EXPECT_FALSE(placement->footprintBuildableNow("Test_PlacementNoFootprint", {10.0F, kCreekY})) << "a def with no outline is its centre";
+	EXPECT_TRUE(placement->footprintBuildableNow(kBox, {10.0F, kCreekY - 2.0F}));
 }

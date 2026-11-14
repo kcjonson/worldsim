@@ -288,7 +288,7 @@ namespace world_sim {
 		}
 		// The placement tool's ground gate: the footprint on clear ground out of any ford.
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (!m_ctx.placement->footprintClearToBuild(def, at)) {
+		if (!m_ctx.placement->footprintBuildableNow(def, at)) {
 			return refuse("spawn: " + def + " at (" + std::to_string(at.x) + ", " + std::to_string(at.y) +
 						  ") is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has seen)");
 		}
@@ -305,7 +305,7 @@ namespace world_sim {
 			const Foundation::Vec2 off = spreadOffset(i, n, scatter);
 			const glm::vec2		   raw{at.x + off.x, at.y + off.y};
 			const std::optional<glm::vec2> placed = m_ctx.navigation->findValidPositionNear(raw, 0.0F);
-			if (!placed.has_value() || !m_ctx.placement->footprintClearToBuild(def, {placed->x, placed->y})) {
+			if (!placed.has_value() || !m_ctx.placement->footprintBuildableNow(def, {placed->x, placed->y})) {
 				continue;
 			}
 			m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
@@ -688,7 +688,7 @@ namespace world_sim {
 			const glm::vec2 meters{point.x, point.y};
 			out << (first ? "" : ",") << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"onMesh\":" << flag(m_ctx.navigation->isOnMesh(meters))
 				<< ",\"valid\":" << flag(m_ctx.navigation->isValidPosition(meters)) << ",\"buildable\":"
-				<< flag(m_ctx.navigation->isPointBuildable(meters));
+				<< flag(m_ctx.navigation->isPointBuildableOnceCleared(meters));
 			first = false;
 			const world::Chunk* chunk = m_ctx.chunks->getChunk(world::worldToChunk({point.x, point.y}));
 			if (chunk == nullptr || !chunk->isReady()) {

@@ -146,13 +146,13 @@ namespace world_sim {
 		}
 	} // namespace
 
-	bool PlacementSystem::footprintClearToBuild(const std::string& defName, Foundation::Vec2 worldPos) const {
-		return navigation != nullptr && navigation->isAreaClearToBuild(footprintAt(defName, worldPos));
+	bool PlacementSystem::footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const {
+		return navigation != nullptr && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
 	}
 
 	bool PlacementSystem::placeable(Foundation::Vec2 worldPos) const {
 		const std::vector<glm::vec2> outline = footprintAt(placementMode.selectedDefName(), worldPos);
-		if (navigation == nullptr || !navigation->isAreaClearToBuild(outline)) {
+		if (navigation == nullptr || !navigation->isAreaBuildableNow(outline)) {
 			return false;
 		}
 		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;

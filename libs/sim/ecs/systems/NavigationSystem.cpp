@@ -239,11 +239,11 @@ namespace ecs {
 			face.faceOpening		  = tags.opening;
 			return face;
 		}
-		bool buildableFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+		bool buildableOnceClearedFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::terrainTraversable(groundBeneath(mesh, tri)) && !nav::faceInFord(mesh, tri);
 		}
 		// Buildable with nothing to clear first: a placed obstacle blocks, as it does a mover.
-		bool clearToBuildFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+		bool buildableNowFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]) && !nav::faceInFord(mesh, tri);
 		}
 		bool landingFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
@@ -2121,29 +2121,29 @@ namespace ecs {
 		return segmentWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, aMeters, bMeters);
 	}
 
-	bool NavigationSystem::isPointClearToBuild(glm::vec2 meters) const {
+	bool NavigationSystem::isPointBuildableNow(glm::vec2 meters) const {
 		join();
-		return pointOnGround(detailMesh, meters, clearToBuildFace);
+		return pointOnGround(detailMesh, meters, buildableNowFace);
 	}
 
-	bool NavigationSystem::isLineClearToBuild(const std::vector<glm::vec2>& pointsMeters) const {
+	bool NavigationSystem::isLineBuildableNow(const std::vector<glm::vec2>& pointsMeters) const {
 		join();
-		return lineOnFaces(detailMesh, pointsMeters, clearToBuildFace);
+		return lineOnFaces(detailMesh, pointsMeters, buildableNowFace);
 	}
 
-	bool NavigationSystem::isAreaClearToBuild(const std::vector<glm::vec2>& polygonMeters) const {
+	bool NavigationSystem::isAreaBuildableNow(const std::vector<glm::vec2>& polygonMeters) const {
 		join();
-		return areaOnFaces(detailMesh, polygonMeters, clearToBuildFace);
+		return areaOnFaces(detailMesh, polygonMeters, buildableNowFace);
 	}
 
-	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {
+	bool NavigationSystem::isAreaBuildableOnceCleared(const std::vector<glm::vec2>& polygonMeters) const {
 		join();
-		return areaOnFaces(detailMesh, polygonMeters, buildableFace);
+		return areaOnFaces(detailMesh, polygonMeters, buildableOnceClearedFace);
 	}
 
-	bool NavigationSystem::isPointBuildable(glm::vec2 meters) const {
+	bool NavigationSystem::isPointBuildableOnceCleared(glm::vec2 meters) const {
 		join();
-		return pointOnGround(detailMesh, meters, buildableFace);
+		return pointOnGround(detailMesh, meters, buildableOnceClearedFace);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestTerrainWalkablePoint(glm::vec2 meters) const {

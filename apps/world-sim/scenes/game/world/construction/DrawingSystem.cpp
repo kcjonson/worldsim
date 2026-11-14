@@ -233,7 +233,7 @@ namespace world_sim {
 		// Per-vertex / cursor placeability for the ACTIVE tool. No nav system wired (headless/test) ->
 		// validity is owned elsewhere; mirror the dev verbs' permissive fallback. A FOUNDATION vertex
 		// may sit over a clearable entity (tree/rock) -- those become clear tasks -- so it uses the
-		// terrain-only buildability check, agreeing with the commit gate (isAreaBuildable). A WALL
+		// terrain-only buildability check, agreeing with the commit gate (isAreaBuildableOnceCleared). A WALL
 		// vertex needs clear on-mesh ground out of any ford (no wall footprint-clearing yet).
 		if (navigation_ == nullptr) {
 			return true;
@@ -250,12 +250,12 @@ namespace world_sim {
 				return true;
 			}
 		}
-		return (activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationEdit) ? navigation_->isPointBuildable({p.x, p.y})
-																								: navigation_->isPointClearToBuild({p.x, p.y});
+		return (activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationEdit) ? navigation_->isPointBuildableOnceCleared({p.x, p.y})
+																								: navigation_->isPointBuildableNow({p.x, p.y});
 	}
 
 	bool DrawingSystem::footprintBuildable(const std::vector<Foundation::Vec2>& pts) const {
-		return navigation_ == nullptr || navigation_->isAreaBuildable(Foundation::toGlmVec2(pts));
+		return navigation_ == nullptr || navigation_->isAreaBuildableOnceCleared(Foundation::toGlmVec2(pts));
 	}
 
 	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
@@ -265,7 +265,7 @@ namespace world_sim {
 		// whole placement (commit nothing).
 		const bool wall = activeTool_ == ToolKind::Wall;
 		const bool seen = wall ? chainSeen(pts) : areaSeen(pts);
-		const bool ok = seen && (navigation_ == nullptr || (wall ? navigation_->isLineClearToBuild(Foundation::toGlmVec2(pts)) : footprintBuildable(pts)));
+		const bool ok = seen && (navigation_ == nullptr || (wall ? navigation_->isLineBuildableNow(Foundation::toGlmVec2(pts)) : footprintBuildable(pts)));
 		if (ok) {
 			return true;
 		}
