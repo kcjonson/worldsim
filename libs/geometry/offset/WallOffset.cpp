@@ -640,8 +640,8 @@ namespace geometry {
 																	  std::int64_t trimAtA, std::int64_t trimAtB) {
 			const double segmentLength = length(segment.b - segment.a);
 			const bool	 fromA		   = !(segment.b < segment.a);
-			auto		 fromOtherEnd  = [&](std::int64_t distance) {
-				  return std::llround(segmentLength - static_cast<double>(distance));
+			auto		 fromOtherEnd  = [&](std::int64_t distance) -> std::int64_t {
+				  return static_cast<std::int64_t>(std::llround(segmentLength - static_cast<double>(distance)));
 			};
 
 			std::vector<WallGap> gaps;
