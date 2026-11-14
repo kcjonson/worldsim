@@ -132,7 +132,7 @@ The tolerance is for walls. A new polygon's side along a wall and the record's e
 
 **The interface.** `SeenArea` names no mesh type: it takes shapes (`commitNow` for the landing, `queue`, `queueSightPolygon` with the walk before it, `queueSightAt`, `setOpenLeg`, and `closeLeg`), runs the budget (`update`), answers the queries below in millimetres, and hands the renderer the committed triangles, the pending shapes, and `epoch()`, which moves with the committed record only (pending shapes change every frame and are drawn on their own). `PlayerVisibilitySystem` holds the legs and walks, gives the queries in metres, and adds `isVisible`, which reads vision, and `drawnVisible`, each colonist's bright shape for the cover (3.4).
 
-**Budget.** Two counts, never times, so the result does not depend on the machine. While no pieces wait, a tick tests at most `kSeenRingsPerTick` (16) queued shapes, first in, first out, on the main thread, and stops at the first that adds anything; then it registers `kSeenPiecesRegisteredPerTick` (1) waiting piece. A covered test costs about 10 to 15 us, so 16 are about 0.25 ms; vision makes about 10 polygons a tick with 50 colonists indoors at 10x, and at 4 a tick the queue grew without end there (204,749 pending after 10 minutes, 6.6). A shape that adds ground pays the skirt (0.1 to 0.6 ms) and its frontier (0.04 ms mean) on the tick that tests it, and each piece one patch. A patch's cost grows with the rings registered where it lands, not with the piece: 0.3 to 0.7 ms mean in the bench base, up to about 6 ms in its densest spot (6.7), so one piece a tick, rather than one shape, keeps a shape of four pieces from paying four patches in one tick. Registrations come in the first minute a building is seen and a few a minute after, so the cap holds the queue back only briefly. If a worker is ever wanted, the pending rule above already makes it invisible.
+**Budget.** Two counts, never times, so the result does not depend on the machine. While no pieces wait, a tick tests at most `kSeenRingsPerTick` (16) queued shapes, first in, first out, on the main thread, and stops at the first that adds anything; then it registers `kSeenPiecesRegisteredPerTick` (1) waiting piece. A covered test costs about 10 to 15 us, so 16 are about 0.25 ms; vision makes about 10 polygons a tick with 50 colonists indoors at 10x, and at 4 a tick the queue grew without end there (204,749 pending after 10 minutes, 6.6). A shape that adds ground pays the skirt (0.1 to 0.6 ms) and its frontier (0.04 ms mean) on the tick that tests it, and each piece one patch. A patch's cost grows with the rings registered where it lands, not with the piece: 0.3 to 0.7 ms mean in the bench base, up to about 6 ms in its densest spot (6.7) and under 3 ms since its setup reads ring edges near it (6.9), so one piece a tick, rather than one shape, keeps a shape of four pieces from paying four patches in one tick. Registrations come in the first minute a building is seen and a few a minute after, so the cap holds the queue back only briefly. If a worker is ever wanted, the pending rule above already makes it invisible.
 
 **The landing.** One inscribed polygon of `kLandingSightMeters` round the drop is committed before the crew exists, from the same constant nav's landing limit uses. Inscribed in the circle that nav's limit circumscribes, it lies inside the meshed area.
 
@@ -633,6 +633,42 @@ The geometry bench's base with an empty record (no budget: every sweep polygon r
 Every run ended `validate()` clean, with no point deep in a registered polygon off the record and none on the record outside a true shape. The landed base registers nothing and builds no sweep: 2.4 and 6.2 ms per simulated second at 20 and 50 colonists, as before. The run was under heavier load than the one before it (vision's own builds measured 1.06 to 1.36 ms each against 0.95); the 13 and 15 ms patches had K 73 and 318 in the first minute, and the 50-colonist run's other maxima (a simple check of 67 ms, a vision build of 87 ms) say how much of its tail is the machine.
 
 **Verdict: the mean budget is met; the worst tick is a few milliseconds, not the 2.4 to 4.7 of 6.6.** At 50 colonists in the base the record costs 0.12 ms a tick at 1x and 0.33 ms at 10x, under load, against well under 1 ms, and at 10 colonists 0.06 and 0.09 ms. Rings are 20 to 40% above 6.6 instead of 70 to 115%. What remains of the worst tick is one piece's patch where many rings overlap, 5 to 7 ms at worst in the sim bench: a patch's setup reads every ring whose box meets each edge the piece touches, so a piece's cost follows how many registered rings cover its spot, which the sweep's beams through a gap raise. Bounding that further needs the patch to read fewer rings (an index finer than ring boxes, or long thin rings cut shorter), work in `PatchableMesh` outside this change.
+
+### 6.9 Measured: a patch where many rings overlap
+
+"PatchableMesh patch setup reads every ring over the spot" on Specboard (WOR-867). Split with temporary timers, the slowest patch of the 20-colonist base row (K 318, a 136-vertex piece) was 7.6 ms: 7.1 of it setup, of which 4.7 ms in `groundBoundaries` (342 calls reading 36,628 rings and 857,000 ring edges), 1.8 ms in `groundRingsInBox`'s duplicate scan (5.1 million comparisons) and 0.4 ms finding the rings; the patch proper (closure, arrangement, triangulation, splice) was 0.5 ms. Classifying an edge computed its boundary intervals twice, before and after, each against every edge of every ring whose box met it.
+
+What changed in `PatchableMesh`: the registry holds each ground edge's boundary intervals, so a patch computes only the after; `groundBoundaries` reads another ring through a tree of boxes over its runs of 16 edges, skipping runs clear of the line and counting the crossings of runs behind the edge's start by their ends; the ring grid hands each ring over once, in the order it did. The mesh is the same after every patch: 8,000 generated histories, 264,000 patches of limits, beams, rectangles, obstacles, water, removals and moves, gave the same full state (vertices, triangles, ids, sources, covers, labels, widths, epochs and query answers) as before, and `PatchableMeshHistory` pins those states by hash.
+
+Both machine-load checks read `idle` around each before-and-after pair below (CPU 2%, GPU 0%), so these are comparable, one run each.
+
+| Base, empty record | Patch per ring, ms (mean / p99 / max), before | After | Record's cost per simulated second, before / after |
+|---|---|---|---|
+| 2 colonists | 0.61 / 2.29 / 5.24 | 0.34 / 1.00 / 2.06 | 6.56 / 6.03 ms |
+| 20 colonists | 0.42 / 1.79 / 7.29 | 0.28 / 0.90 / 2.81 | 10.22 / 9.88 ms |
+| 50 colonists | 0.35 / 1.46 / 3.22 | 0.24 / 0.80 / 1.73 | 13.74 / 13.49 ms |
+
+Rings registered, live triangles and every other count are the same before and after, and every run validated clean. The slowest patch is now 1.7 to 2.8 ms. The record's cost per second barely moves because patches were a small part of it; the worst tick was what they set.
+
+The sim bench, `PlayerVisibilitySystem::update` alone, 36,000 ticks, same rings and pending counts before and after:
+
+| | Tick ms (mean / p99 / max), before | After |
+|---|---|---|
+| Base, 10, 1x | 0.058 / 0.85 / 6.5 | 0.049 / 0.65 / 2.6 |
+| Base, 50, 1x | 0.114 / 0.84 / 3.3 | 0.109 / 0.71 / 2.4 |
+| Base, 10, 10x | 0.082 / 0.56 / 6.5 | 0.080 / 0.49 / 3.1 |
+| Base, 50, 10x | 0.304 / 1.21 / 5.7 | 0.297 / 1.13 / 3.4 |
+
+`BM_PatchOverRings` (`PatchableMesh.bench.cpp`) puts K rings over one spot and patches a small ring where their union ends, at 16 places. Beams are thin wedges through a 1 m gap, every one of them passing the spot:
+
+| K | Rings over the patch | Patch ms, before (mean / max) | After | Adding the K rings, before / after |
+|---|---|---|---|---|
+| 16 | 10 | 0.48 / 0.75 | 0.42 / 0.65 | 7 / 6 ms |
+| 64 | 36 | 0.82 / 1.97 | 0.39 / 1.12 | 72 / 43 ms |
+| 256 | 107 | 7.2 / 18.0 | 1.17 / 4.83 | 3.6 / 1.3 s |
+| 1,024 | 375 | 257 / 581 | 7.2 / 36.1 | 276 / 55 s |
+
+The quadratic term is gone, but a beam patch's setup still grows with the rings over the spot, since every beam passes every edge near the gap and each classified edge reads each of them (about 50 to 100 ns a ring now); 16-sided limits round a walk grow far less (0.44 against 0.34 ms at K 1,024, 73 over the patch). Bounding it further needs fewer rings over a spot: registry compaction, dropping or merging rings the union no longer needs, which would change edge sources and so the mesh's provenance, and is not built.
 
 ## 7. Build steps
 
