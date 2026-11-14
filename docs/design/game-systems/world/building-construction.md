@@ -81,56 +81,67 @@ Pure freeform produces accidental 87° corners that read as mistakes, so snappin
 
 **Angle increments.** Segments soft-snap to **15°** steps (so 90°, 45°, 30° are all reachable) relative to the previous segment, or relative to the world east-west axis for the first segment.
 
-**Guides.** A guide is a thin line through a reference point (a placed corner of the shape, or a corner of a nearby building or wall) along a reference direction. Each reference direction comes with its perpendicular, so a guide always means "parallel to" or "perpendicular to" something. Three sources supply directions, in this priority order:
+**Guides.** A guide is a thin line through a point along a direction, and every direction comes with its perpendicular, so a guide means "parallel to" or "perpendicular to" something. The guides are exactly these, in priority order:
 
-1. **The shape being drawn.** Its first edge and its previous edge. The guides through the corners of the shape run parallel and perpendicular to those two edges.
-2. **Nearby buildings.** Edges of committed foundations and walls within 8 m of the cursor, the nearest few directions only (4 by default).
-3. **The world.** North-south and east-west.
+1. **The shape being drawn.** Its first edge's direction through every point placed so far. When the previous edge runs at another angle, also the previous edge's direction through the previous point.
+2. **Nearby buildings.** The edge directions of the buildings nearest the cursor (within 8 m, at most 4 distinct directions; axis-aligned buildings are left to the world guides). Each runs through the previous point, so the new segment can run parallel or perpendicular to that building, and through that building's own corners, so a new corner can line up with its faces.
+3. **The world.** North-south and east-west, through every point placed so far and through the 16 nearest building corners within 8 m. This is today's alignment guide.
 
-When the cursor comes within 0.3 m of a guide, it locks onto the guide and the guide draws. A guide through the previous corner (the one the rubber band starts from) that is parallel or perpendicular to the shape's own edges also catches the cursor by angle: within half an angle step (7.5°) of the guide's direction, at any distance. That keeps a perpendicular turn as easy to hit 10 m out as it is next to the corner.
+The foundation tool reads corners and edges from foundations. The wall tool reads walls too, and takes each foundation corner at its outer-face-flush inset (where a perimeter wall's centerline turns), so a guide through a corner lines up with the walls there.
 
-**Crossings.** When the cursor is near two guides with different directions, it snaps to the point where they cross and a dot marks the crossing. This is what squares the last corner of a rectangle: the guide perpendicular to the previous edge crosses the guide perpendicular to the first edge exactly where the fourth corner closes a true rectangle. A crossing more than 1 m from the cursor is ignored.
+When the cursor comes within 0.3 m of a guide it locks on and the guide draws. Guides of the shape through the previous point or the first point also catch by angle: seen from that point, a cursor within half an angle step (7.5°) of the guide locks on at any distance. So a right-angle turn is as easy to hit 10 m out as next to the corner, and so is the closing corner of a rectangle.
 
-**Priority among guides.** The source ranks first: a guide from the shape being drawn beats one from a nearby building, which beats a world guide, however close the lower-ranked guide is. Within the same source, a crossing beats a single guide, and a crossing whose second guide is higher-ranked beats one whose second guide is lower. Then the closest to the cursor wins. So an incidental line-up with a world axis never pulls a rotated shape off its own perpendicular.
+**Crossings.** When the cursor is on two guides that cross at 15° or more, it snaps to the crossing and a dot marks it. This squares the last corner of a rectangle: the guide through the previous point parallel to the first edge crosses the guide through the first point perpendicular to it exactly at the fourth corner. A crossing more than 1 m from the cursor is ignored, and so is one that lands on a corner (placed or existing), so a corner never pulls the cursor back onto itself.
+
+**Priority among guides.** Source first: the shape beats a nearby building, which beats the world, however close the lower-ranked guide is. Then a crossing beats a single guide, a guide through one of the shape's own points beats one through an existing corner, and the closest wins. Two near-parallel guides less than 0.3 m apart count as one, the higher-ranked. So an incidental line-up with the world axes never pulls a rotated shape off its own perpendicular.
 
 **Whole priority order, foundation tool** (first that applies wins):
 
 1. Close onto the first point (three or more points placed, cursor within the origin radius)
 2. A corner of an existing foundation
-3. An edge of an existing foundation
-4. Guides, ranked as above (crossings and single guides)
+3. An edge of an existing foundation; where a guide of the shape crosses that edge near the cursor, the point lands on the crossing
+4. Guides, ranked as above
 5. Angle increment off the previous segment
 6. The raw cursor
 
-Real geometry stays ahead of guides: a guide crossing that lands within snap range of an existing edge loses to the edge, since zero-gap adjacency is what the clearance rule depends on. The wall tool's order is in Walls > Drawing.
+An existing corner beating a guide is intended: landing on it is adjacency. Landing on an edge is adjacency too, and taking the shape's guide where it crosses the edge keeps the corner square; without it, a corner drawn 0.2 m short of a neighbour's edge along its perpendicular would slide to the foot on the edge and come out at 88°. The wall tool's order is in Walls > Drawing.
 
-**Look.** Every guide is the same thin, faint line the axis guides use today, drawn from its reference point to the snapped cursor. A perpendicular guide adds a small right-angle marker at the corner where it meets the edge it is perpendicular to. A crossing adds a small dot at the crossing point, and both guides draw. Colours and sizes are data in the construction rendering config.
+**Look.** Every guide is the thin, faint line today's axis guides use, drawn from its point to the snapped cursor. A guide perpendicular to an edge at its point (an edge of the shape, or of the building that corner belongs to) adds a small right-angle marker there. A crossing adds a small dot, and both guides draw. Colours and sizes are data in the construction rendering config.
 
-**Alt.** Holding **Alt** is true freeform: no angle increments and no guides of any source. Snaps to existing corners, edges, and walls stay on (they are adjacency, not style), and so does the close onto the first point. Distance and validity constraints still apply.
+**Alt.** Holding **Alt** is true freeform: no angle increments and no guides. Snaps to existing corners, edges, and walls stay on (they are adjacency, not style), and so does the close onto the first point. Distance and validity constraints still apply.
 
-This Alt rule is a call made while writing the spec, not one the owner has ruled on; it extends today's behaviour, where Alt already drops the axis guides.
-
-**Setting.** "Align to existing buildings" in Settings (today "Align to existing foundations") gates everything that comes from committed structures: the nearby-building directions, and guides through the corners of existing foundations and walls. With it off, the shape's own guides and the world guides still run through the shape's own corners.
+**Setting.** "Align to existing buildings" in Settings (today "Align to existing foundations") gates everything that comes from existing buildings: their directions and the guides through their corners. With it off, the shape's own guides and the world guides through the shape's own points remain.
 
 #### Worked example: a rectangle at 30°
 
-A 6 m by 4 m rectangle whose long side runs at 30° from east, starting at the origin. Corners land at (0, 0), (5.196, 3.000), (3.196, 6.464), and (-2.000, 3.464).
+A 6 m by 4 m rectangle whose long side runs at 30° from east, starting at the origin, with no buildings nearby. Corners land at (0, 0), (5.196, 3.000), (3.196, 6.464), and (-2.000, 3.464).
 
-1. **Point 1.** Click anywhere. No guides yet beyond nearby buildings and the world axes.
+1. **Point 1.** Click anywhere.
 2. **Point 2.** Move toward 30°. The angle increment catches the direction (30° is a 15° step from east) and the faint angle ray draws from point 1. Click at 6 m: (5.196, 3.000).
-3. **Point 3.** The first and previous edges are the same edge, so the shape gives one frame: 30° and 120°. Move the cursor up and left of point 2. Within 7.5° of 120° as seen from point 2, the cursor locks onto the guide through point 2 perpendicular to the first edge; the guide draws with a right-angle marker at point 2. Length is free. Click at 4 m: (3.196, 6.464). If the cursor also passes within 0.3 m of another guide (say level with a nearby building's corner), the point snaps to that crossing and a dot shows.
-4. **Point 4.** Two shape guides now matter: the guide through point 3 perpendicular to the previous edge (running at 210°, back parallel to the first edge) and the guide through point 1 perpendicular to the first edge (at 120°). Near (-2, 3.5) the cursor is on both, so it snaps to their crossing at (-2.000, 3.464): both guides draw, each with a right-angle marker (at point 3 and at point 1), and a dot sits on the crossing. Click.
-5. **Close.** Move to point 1; the origin halo lights and the cursor snaps onto it. Click to close. All four corners are right angles to within the 1 mm the committed geometry is rounded to.
+3. **Point 3.** The shape's direction is now 30°, with its perpendicular at 120°. Move the cursor up and left of point 2. Within 7.5° of 120° as seen from point 2, the cursor locks onto the guide through point 2 perpendicular to the first edge; it draws with a right-angle marker at point 2. Length is free; a cursor half a metre off the corner in any direction still lands on the guide. Click at 4 m: (3.196, 6.464). Had a building been nearby, a cursor also level with one of its corners would snap to that crossing, with a dot.
+4. **Point 4.** The guide through point 3 parallel to the first edge and the guide through point 1 perpendicular to it both catch by angle, so anywhere within about half a metre of the corner (at (-1.6, 3.8), say) the cursor snaps to their crossing at (-2.000, 3.464). Both guides draw, with right-angle markers at point 3 and point 1, and a dot sits on the crossing. Click.
+5. **Close.** Move to point 1; the origin halo lights and the cursor snaps onto it. Click to close. The corners are right angles to within the millimetre the committed geometry is rounded to.
 
-Walls draw the same rectangle the same way, with one difference today: a wall chain cannot end on its own first point (the closing segment touches the first one and is refused as self-intersecting), so a closed loop of walls is two chains, the second starting from the first chain's committed end.
+Walls square a rotated chain the same way, but a chain cannot yet end on its own first point: the closing segment touches the first segment and the validator refuses it as self-intersecting. A closed loop of walls is drawn today as two chains: the first runs point 1 to point 4 and ends (right-click), then a second chain of one segment starts on point 4 and ends on point 1, both caught by the wall-endpoint snap. Letting a chain close on its first point is a separate bug, not part of this spec.
+
+#### Reading of the request, and calls open to the owner
+
+The owner asked that the third point be offered "the perpendicular from the first point"; the spec reads that as the guide perpendicular to the first edge, which through point 2 places point 3 and through point 1 places point 4.
+
+Made while writing the spec, each open to his overrule:
+
+- Wall chains get the same guides, mid-floor chains included, and wall corners are guide points.
+- Alt drops every guide, not only the axis guides it drops today.
+- The setting is renamed "Align to existing buildings" and also gates nearby-building directions.
+- The shape's guides through the first point catch by angle, as well as those through the previous point; that is what makes the closing corner easy to hit.
+- No length matching (equal-length hints, "same length as that edge"); guides lock direction and position only.
 
 #### Not in this design
 
 - A rectangle mode (two clicks for a side, a third for depth). The polygon tool plus guides covers it.
-- Length matching (equal-length hints, "same length as that edge"). Guides lock direction and position only. (Left out by a call made while writing the spec; the owner may pull it in.)
 - Guides from arcs or curves (there are none in v1), tangent guides, midpoint guides, and equal-spacing guides.
 - Locking a guide with a key (SketchUp's Shift lock). Revisit if players fight the priority order.
-- Any guide from an edge of the shape other than its first and previous edges.
+- Guides from shape edges other than the first and the previous.
 
 ### Shape Constraints
 
@@ -227,17 +238,17 @@ On a shared edge between two snapped foundations there is no co-ownership. The w
 
 Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
 
-The same angle increments and guides apply as for foundations (Foundations > Snapping and guides): the chain's own first and previous segments, then nearby foundation edges and walls (the host foundation's edges included), then the world axes. This holds for every chain, whether it runs along the foundation edge or stands in the middle of the floor touching nothing; that a mid-floor chain gets the full guide set is a call made while writing the spec, open to the owner's overrule. Whole priority order, first that applies wins:
+The same angle increments and guides apply as for foundations (Foundations > Snapping and guides), for every chain, along the foundation edge or standing mid-floor; the wall tool also reads walls' corners and directions, and takes foundation corners at their outer-face-flush inset. Whole priority order, first that applies wins:
 
 1. Wall endpoints (continue or join a wall)
 2. Foundation vertices (inset so the wall sits outer-face-flush)
-3. Points along existing walls (T-junction anywhere along a wall's length)
-4. Foundation edges (slide along the edge, inset outer-face-flush)
-5. Guides, ranked by source as for foundations (crossings and single guides)
+3. Points along existing walls (T-junction anywhere along a wall's length); where a guide of the chain crosses that wall near the cursor, the point lands on the crossing
+4. Foundation edges (slide along the edge, inset outer-face-flush); likewise squared by a guide of the chain
+5. Guides, ranked as for foundations
 6. Angle increment off the previous chain point
 7. The raw cursor
 
-A guided point is not inset: it lines up with a reference point or edge direction, not a foundation face, so the wall's centerline lands on the guide. There is no close onto the first point; the chain is open.
+A guided point is not offset afterwards: the wall's centerline lands on the guide, which already runs through the inset corners. There is no close onto the first point; the chain is open (see the worked example for a closed loop).
 
 Snapping is generous but escapable (Alt), which drops guides and angle increments and keeps 1 to 4. Walls may be drawn anywhere on the foundation, not just at edges: a wall in the middle of a foundation touching nothing is valid, subject to clearance constraints.
 
@@ -455,7 +466,7 @@ In the spirit of everything else in the game, no magic numbers in code. Constrai
 | Wall thickness presets | per material: thickness values (meters) and their stat multipliers |
 | Pathing clearance | the root constant the distance constraints derive from |
 | Shape constraints | min corner angle, min point spacing, segment clearance, min/max area, max points |
-| Snap behavior | angle increment, snap radii, guide range, guide tolerance, crossing radius, nearby-direction count |
+| Snap behavior | angle increment, snap radii, guide range, guide tolerance, crossing radius, nearby-direction and corner counts |
 | Construction | refund percentage, max concurrent builders per size, work formulas' factors |
 | Opening types | widths (meters), margins, materials allowed |
 
