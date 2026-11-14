@@ -84,7 +84,7 @@ Transparency is a flag on the opening's construction definition, carried into th
 
 ## 5. Performance Model
 
-The work scales with occluder density around observers, not world size. Outdoors: zero occluders, fast path, the pre-occlusion cost. Indoors: polygon build over dozens of endpoints (microseconds), cached while stationary, shared across all candidates and the visibility mask. Witnessing is event-driven. The 5-frame throttle stays; structure-change invalidation piggybacks the existing version counter. Validate with the perf tooling during implementation; the budget hypothesis is that vision stays unmeasurable next to rendering.
+The work scales with occluder density around observers, not world size. Outdoors: zero occluders, fast path, the pre-occlusion cost. Indoors: a polygon build, cached while stationary, shared across all candidates and the visibility mask. A build sorts its candidate directions (rim vertices, occluder endpoints, rim and occluder crossings, about 200 in an eight-room base) and casts one ray per direction; each ray reads only the occluders whose angular cone holds it, nearest first, and stops once the rest lie past its hits, so it costs about 0.11 ms with some 150 wall faces in range, against 1.0 ms when every ray read every occluder ([Player Visibility](./player-visibility.md) 6.8). Witnessing is event-driven. The 5-frame throttle stays; structure-change invalidation piggybacks the existing version counter. Validate with the perf tooling during implementation; the budget hypothesis is that vision stays unmeasurable next to rendering.
 
 ## 6. Phasing
 

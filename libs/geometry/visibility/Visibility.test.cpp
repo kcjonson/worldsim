@@ -8,6 +8,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <iterator>
 #include <numbers>
 #include <optional>
 #include <random>
@@ -95,6 +96,118 @@ namespace {
 	}
 
 	bool isCcw(const Ring& ring) { return windingOrder(ring) == Winding::CounterClockwise; }
+
+	// A scene made from integers alone, so every toolchain makes the same one: a building of 2 to
+	// 4 by 1 to 3 rooms of 3 to 9 m, walls 0.2 m thick meeting at junctions with a 1 m gap in some,
+	// turned and moved up to 40 km out; loose segments that cross, share ends, run along each other
+	// and pass through the observer; the observer on open floor, on or by a wall corner, or in a gap;
+	// and a sight radius of 2 to 42 m.
+	struct PinnedScene {
+		std::vector<OccluderSegment> occluders;
+		Vec2i64						 observer;
+		std::int64_t				 radius = 0;
+	};
+
+	PinnedScene pinnedScene(std::mt19937& rng) {
+		PinnedScene		   scene;
+		const std::int64_t originX = static_cast<std::int64_t>(rng() % 80000001) - 40000000;
+		const std::int64_t originY = static_cast<std::int64_t>(rng() % 80000001) - 40000000;
+		const std::int64_t cosine  = static_cast<std::int64_t>(rng() % 2049) - 1024;
+		std::int64_t	   sine	   = 0;
+		while ((sine + 1) * (sine + 1) + cosine * cosine <= 1024 * 1024) {
+			++sine;
+		}
+		sine = rng() % 2 == 0 ? sine : -sine;
+		auto place = [&](std::int64_t x, std::int64_t y) { return Vec2i64{originX + (cosine * x - sine * y) / 1024, originY + (sine * x + cosine * y) / 1024}; };
+
+		std::vector<std::int64_t> columnAt{0};
+		std::vector<std::int64_t> rowAt{0};
+		const std::size_t		  columns = 2 + rng() % 3;
+		const std::size_t		  rows	  = 1 + rng() % 3;
+		for (std::size_t column = 0; column < columns; ++column) {
+			columnAt.push_back(columnAt.back() + 3000 + static_cast<std::int64_t>(rng() % 6001));
+		}
+		for (std::size_t row = 0; row < rows; ++row) {
+			rowAt.push_back(rowAt.back() + 3000 + static_cast<std::int64_t>(rng() % 6001));
+		}
+		std::vector<Vec2i64> corners;
+		std::vector<Vec2i64> gaps;
+		auto addPiece = [&](std::int64_t lowX, std::int64_t lowY, std::int64_t highX, std::int64_t highY) {
+			const Vec2i64 pieceCorners[] = {place(lowX, lowY), place(highX, lowY), place(highX, highY), place(lowX, highY)};
+			for (std::size_t i = 0; i < 4; ++i) {
+				scene.occluders.push_back({pieceCorners[i], pieceCorners[(i + 1) % 4]});
+				corners.push_back(pieceCorners[i]);
+			}
+		};
+		// A wall along x = `at` (or y = `at` when `across`) from `from` to `to`, with a 1 m gap one time
+		// in two.
+		auto addWall = [&](bool across, std::int64_t at, std::int64_t from, std::int64_t to) {
+			const bool		   gap	  = rng() % 2 == 0;
+			const std::int64_t middle = from + 600 + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(to - from - 1200));
+			auto piece = [&](std::int64_t start, std::int64_t end) {
+				if (across) {
+					addPiece(start, at - 100, end, at + 100);
+				} else {
+					addPiece(at - 100, start, at + 100, end);
+				}
+			};
+			if (!gap) {
+				piece(from - 100, to + 100);
+				return;
+			}
+			piece(from - 100, middle - 500);
+			piece(middle + 500, to + 100);
+			gaps.push_back(across ? place(middle, at) : place(at, middle));
+		};
+		for (std::size_t line = 0; line <= columns; ++line) {
+			for (std::size_t row = 0; row < rows; ++row) {
+				addWall(false, columnAt[line], rowAt[row], rowAt[row + 1]);
+			}
+		}
+		for (std::size_t line = 0; line <= rows; ++line) {
+			for (std::size_t column = 0; column < columns; ++column) {
+				addWall(true, rowAt[line], columnAt[column], columnAt[column + 1]);
+			}
+		}
+
+		const std::uint32_t kind = rng() % 4;
+		if (kind == 0) {
+			const std::int64_t x = static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(columnAt.back() + 20001)) - 10000;
+			const std::int64_t y = static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(rowAt.back() + 20001)) - 10000;
+			scene.observer		 = place(x, y);
+		} else if (kind == 1) {
+			scene.observer = corners[rng() % corners.size()];
+		} else if (kind == 2) {
+			const Vec2i64&	   corner = corners[rng() % corners.size()];
+			const std::int64_t x	  = static_cast<std::int64_t>(rng() % 601) - 300;
+			const std::int64_t y	  = static_cast<std::int64_t>(rng() % 601) - 300;
+			scene.observer			  = corner + Vec2i64{x, y};
+		} else {
+			scene.observer = gaps.empty() ? place(0, 0) : gaps[rng() % gaps.size()];
+		}
+
+		const std::size_t loose = rng() % 13;
+		for (std::size_t i = 0; i < loose; ++i) {
+			const std::uint32_t looseKind = rng() % 4;
+			const std::int64_t	x		  = static_cast<std::int64_t>(rng() % 12001) - 6000;
+			const std::int64_t	y		  = static_cast<std::int64_t>(rng() % 12001) - 6000;
+			const Vec2i64		start	  = scene.observer + Vec2i64{x, y};
+			if (looseKind == 0) {
+				scene.occluders.push_back({start, scene.observer + Vec2i64{-x, -y}});
+			} else if (looseKind == 1) {
+				scene.occluders.push_back({start, scene.occluders[rng() % scene.occluders.size()].b});
+			} else if (looseKind == 2) {
+				const OccluderSegment& along = scene.occluders[rng() % scene.occluders.size()];
+				scene.occluders.push_back({along.a, along.a + (along.b - along.a) * 2});
+			} else {
+				const std::int64_t endX = static_cast<std::int64_t>(rng() % 12001) - 6000;
+				const std::int64_t endY = static_cast<std::int64_t>(rng() % 12001) - 6000;
+				scene.occluders.push_back({start, scene.observer + Vec2i64{endX, endY}});
+			}
+		}
+		scene.radius = 2000 + static_cast<std::int64_t>(rng() % 40001);
+		return scene;
+	}
 
 } // namespace
 
@@ -357,6 +470,94 @@ TEST(Visibility, DoorwaySceneIsTheSameOnEveryToolchain) {
 		}
 		EXPECT_EQ(ring.size(), scene.vertices) << "observer (" << scene.observer.x << ", " << scene.observer.y << ")";
 		EXPECT_EQ(hash, scene.hash) << "observer (" << scene.observer.x << ", " << scene.observer.y << ")";
+	}
+}
+
+// The rings of 64 integer scenes (pinnedScene), pinned by vertex count and a hash of their
+// vertices as the construction gave them before it read only the occluders a ray can meet
+// (player-visibility.md 6.8): the cheaper construction gives the same rings, vertex for vertex.
+TEST(Visibility, PinnedScenesKeepTheirRings) {
+	struct Pin {
+		std::size_t	  vertices;
+		std::uint64_t hash;
+	};
+	const Pin pins[] = {
+		{241, 13631086932445771888ULL},
+		{123, 3708665231633123521ULL},
+		{139, 1090735646773467490ULL},
+		{109, 18263433503592362450ULL},
+		{113, 13528743472672024613ULL},
+		{174, 221463779720458841ULL},
+		{165, 5723680177161265206ULL},
+		{191, 4775356844391346868ULL},
+		{142, 16949482533480782901ULL},
+		{205, 10171609479135931951ULL},
+		{74, 9750883291138837760ULL},
+		{97, 17297999335735903400ULL},
+		{111, 148186311004549816ULL},
+		{104, 13531695761320440399ULL},
+		{232, 3521690141311948356ULL},
+		{173, 16396897520917093681ULL},
+		{104, 14251771751548344270ULL},
+		{130, 12314231805923909304ULL},
+		{145, 1557636115698853981ULL},
+		{129, 12757091429503954568ULL},
+		{142, 8334904414526905816ULL},
+		{136, 5654745975539213023ULL},
+		{107, 2299930250589128827ULL},
+		{158, 12558452668971398221ULL},
+		{71, 17462866498189416073ULL},
+		{69, 14474410487512572977ULL},
+		{83, 11878891070589718066ULL},
+		{111, 737211124792915998ULL},
+		{131, 14928224993666910385ULL},
+		{144, 5524364065757765962ULL},
+		{190, 11059126147831899115ULL},
+		{121, 13648960008430355664ULL},
+		{135, 18431692302742704218ULL},
+		{169, 12516637805617586254ULL},
+		{65, 14955638052394774488ULL},
+		{84, 13667381120194837796ULL},
+		{125, 13899488911971121318ULL},
+		{82, 7008901119070285867ULL},
+		{169, 11655088787184149473ULL},
+		{91, 9387644236641271013ULL},
+		{147, 4181742503229211889ULL},
+		{69, 4055284405286340694ULL},
+		{111, 13111217984858764082ULL},
+		{162, 5763959758659463511ULL},
+		{97, 15661718671368433642ULL},
+		{124, 8485352340819262523ULL},
+		{122, 4672347361065797162ULL},
+		{75, 3492194608616789320ULL},
+		{118, 11937416901194380713ULL},
+		{119, 5998880095165736254ULL},
+		{119, 15955541804769954870ULL},
+		{191, 1872746083837911356ULL},
+		{157, 10639505937207113196ULL},
+		{151, 14287611418616377925ULL},
+		{120, 12242759394057257181ULL},
+		{155, 13734247776890292415ULL},
+		{115, 4680439631142568605ULL},
+		{185, 14683903735811786061ULL},
+		{168, 17909174517024057809ULL},
+		{137, 12305483726743140464ULL},
+		{172, 17092601931932926793ULL},
+		{111, 1915787372665956169ULL},
+		{160, 11456612267387732509ULL},
+		{163, 13540172896637287516ULL},
+	};
+	std::mt19937 rng(0x862u);
+	for (std::size_t index = 0; index < std::size(pins); ++index) {
+		const PinnedScene scene = pinnedScene(rng);
+		const Ring		  ring	= computeVisibilityPolygon(scene.observer, scene.radius, scene.occluders);
+		std::uint64_t	  hash	= 0xCBF29CE484222325ULL;
+		for (const Vec2i64& vertex : ring) {
+			hash = (hash ^ static_cast<std::uint64_t>(vertex.x)) * 0x100000001B3ULL;
+			hash = (hash ^ static_cast<std::uint64_t>(vertex.y)) * 0x100000001B3ULL;
+		}
+		EXPECT_EQ(ring.size(), pins[index].vertices) << "scene " << index;
+		EXPECT_EQ(hash, pins[index].hash) << "scene " << index;
 	}
 }
 

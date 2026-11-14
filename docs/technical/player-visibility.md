@@ -634,6 +634,47 @@ Every run ended `validate()` clean, with no point deep in a registered polygon o
 
 **Verdict: the mean budget is met; the worst tick is a few milliseconds, not the 2.4 to 4.7 of 6.6.** At 50 colonists in the base the record costs 0.12 ms a tick at 1x and 0.33 ms at 10x, under load, against well under 1 ms, and at 10 colonists 0.06 and 0.09 ms. Rings are 20 to 40% above 6.6 instead of 70 to 115%. What remains of the worst tick is one piece's patch where many rings overlap, 5 to 7 ms at worst in the sim bench: a patch's setup reads every ring whose box meets each edge the piece touches, so a piece's cost follows how many registered rings cover its spot, which the sweep's beams through a gap raise. Bounding that further needs the patch to read fewer rings (an index finer than ring boxes, or long thin rings cut shorter), work in `PatchableMesh` outside this change.
 
+### 6.8 Measured: vision's polygon builds
+
+"Vision's polygon builds near buildings cost 49 to 174 ms per simulated second at 20 to 50 colonists" on Specboard (WOR-862). `computeVisibilityPolygon` cast every direction's ray, on each side, at every occluder in range. In the base's eight rooms (152 wall faces, about 149 in range, 209 directions a build) that was 62,000 segment tests and 90% of a build:
+
+| Part of a build, before | us |
+|---|---|
+| Gathering occluders (vision's index query, emulated) | 1.1 |
+| The rim, endpoints and rim crossings | 3.2 |
+| Occluder pairs' crossings | 30 |
+| Sorting the directions | 46 |
+| The casts | 883 |
+| Ring output (dedup, `simplifyRing`) | 22 |
+
+What changed, every part exact: each ray reads only the occluders whose angular cone from the observer holds it (any other is disjoint from the ray), each side's hit read from one segment test; each ray's list is nearest occluder first and stops once the rest lie 2 mm past both sides' hits so far, ties going to the occluder first in the input, as the full read gives; rim crossings are tested only on rim sides inside an occluder's cone, pairs only where their boxes meet in a sweep along x; and the directions are presorted by a rounded angle, the exact order asked only where the rounding could misplace two. Every segment test that still runs gets the same arguments as before, so every snapped point is the same. After: the casts 28 us, sorting 24, the lists 22, output 22, pairs 14, the rest 5.
+
+The rings are the same, vertex for vertex: a fuzz of the old construction against the new over 120,000 cases (random buildings out to 40 km, segment soups through and touching the observer, tiny grids where hits tie) found no difference, and the 3,000-viewpoint bench gives the same hash. `Visibility.PinnedScenesKeepTheirRings` pins 64 integer scenes as the old construction built them.
+
+Machine load: the bench pairs ran back to back, old then new. The viewpoint bench `busy` before (GPU 100%, another session's game) and `idle` after; the base at 20 colonists `idle` before, `busy` between and after; the base at 50 `busy` before, `idle` between and after; the sim bench `idle` before, between and after. Only the 50-colonist base's new run and the sim bench's runs had `idle` on both sides.
+
+| | Before | After |
+|---|---|---|
+| A build, 3,000 viewpoints in the base, us (mean / p99 / max) | 1,028 to 1,081 / 1,081 to 1,233 / 1,968 to 3,127 | 112 to 116 / 129 to 141 / 178 to 188 |
+| A build in the geometry base, 20 colonists (31,658 builds), us | 1,005 / 1,877 / 3,185 | 119 / 189 / 515 |
+| Vision's builds per simulated second, 20 colonists | 53.0 ms | 6.3 ms |
+| A build in the geometry base, 50 colonists (78,320 builds), us | 933 / 1,155 / 2,144 | 106 / 132 / 388 |
+| Vision's builds per simulated second, 50 colonists | 121.7 ms | 13.9 ms |
+| The record's cost per simulated second (its sweep polygons), 20 / 50 | 10.9 / 14.1 ms | 6.1 / 8.6 ms |
+
+The sim bench now times `VisionSystem::update` too (`BM_PlayerVisibilityBase`, 36,000 ticks; vision's whole pass, entities and structures included, not only its builds):
+
+| | Vision tick ms, before | After | Polygons built | Player visibility tick ms (mean), before / after |
+|---|---|---|---|---|
+| Base, 10, 1x | 0.086 | 0.032 | 19,291 | 0.060 / 0.053 |
+| Base, 50, 1x | 0.435 | 0.165 | 95,637 | 0.121 / 0.108 |
+| Base, 10, 10x | 0.293 | 0.107 | 68,903 | 0.083 / 0.069 |
+| Base, 50, 10x | 1.470 | 0.541 | 345,125 | 0.308 / 0.283 |
+
+Counts (rings, polygons, sweeps) are the same before and after in every row.
+
+**Verdict: about nine times cheaper per build, the same rings.** A build in the base is about 0.11 ms against 1.0, and vision's builds cost 6 and 14 ms per simulated second at 20 and 50 colonists against 53 and 122. What bounds going further: the 209 directions a build, each a ray with its own rim crossing, sort and output; `simplifyRing`, shared code, is a fifth of what is left; and the occluder pairs' crossings, which depend only on the walls, could be kept with the wall set (the index's generation) instead of found per build, saving about 14 us.
+
 ## 7. Build steps
 
 Each step was its own PR with its own done line. All are built: step 7 is PR 378, on main; steps 3 and 3a are PRs 386 and 392, step 4 is 388, step 5 is 389, step 6 is 390, and step 8 is 391, which carries those six.

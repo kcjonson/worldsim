@@ -130,7 +130,8 @@ namespace {
 	// outer walls of the end rooms, 250 m east of a landing of 150 m: the record starts with nothing
 	// of it. Colonists walk at 2 m/s (20 m/s at 10x) from room to room through the gaps, and one walk
 	// in four goes out of the west gap of the first room to a point 3 to 40 m out and back. Walls
-	// block sight and seen walls join the record, as in the game. Same timing as the walk.
+	// block sight and seen walls join the record, as in the game. Same timing as the walk, and
+	// VisionSystem::update timed on its own: its polygon builds near the walls (6.8).
 
 	constexpr std::array<float, 5> kColumnsAt{0.0F, 5.0F, 13.0F, 17.0F, 23.5F};
 	constexpr std::array<float, 3> kRowsAt{0.0F, 6.0F, 10.5F};
@@ -266,6 +267,7 @@ namespace {
 
 			std::vector<double> tickMs;
 			tickMs.reserve(kTicks);
+			double		visionMs	= 0.0;
 			std::size_t mostPending = 0;
 			std::size_t mostSweeps	= 0;
 			// The slowest tick: its time, which tick, and what it registered and queued.
@@ -296,7 +298,9 @@ namespace {
 						}
 					}
 				}
+				const auto visionStart = std::chrono::steady_clock::now();
 				vision.update(kTick);
+				visionMs += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - visionStart).count();
 				const std::size_t ringsBefore	   = visibility.seenArea().ringsRegistered();
 				const std::size_t footprintsBefore = visibility.footprintsEntered();
 				const auto		  start			   = std::chrono::steady_clock::now();
@@ -322,6 +326,10 @@ namespace {
 			state.counters["maxMs"]	  = times.most;
 			state.counters["rings"]	  = static_cast<double>(visibility.seenArea().ringsRegistered());
 			state.counters["pending"] = static_cast<double>(mostPending);
+			const double visionTickMs = visionMs / static_cast<double>(kTicks);
+			std::fprintf(stderr, "  vision: %llu polygons built, %.3f ms a tick, %.1f ms a second at 60 ticks\n", static_cast<unsigned long long>(vision.polygonBuildCount()), visionTickMs,
+						 visionTickMs * 60.0);
+			state.counters["visionTickMs"] = visionTickMs;
 			benchmark::DoNotOptimize(iteration);
 		}
 		assets::ConstructionRegistry::Get().clear();
