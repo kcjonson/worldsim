@@ -20,6 +20,6 @@ Build `world-sim` (RelWithDebInfo), launch it with no flags, click Enter Expedit
 7. Jump the camera 250 m out (all black), start Build > Crafting Spot again and `ev=move,x,y`: the ghost follows and reads invalid (a faint dark red). `ev=click,x,y`: nothing is placed (`what=stations` unchanged).
 8. Right-click on the black, well past the edge (zoom 1, about 100 m beyond it): a marker shows at the edge of seen ground, not at the click, and Bob walks there and stops.
 9. As he arrives, a new bright disc opens round him past the old edge, and `...api/state?what=visibility` shows `seenSquareMeters` larger than before. Right-click into the black again: he walks on to the new edge.
-10. `curl.exe "http://127.0.0.1:8081/api/dev/reveal?on=1"`, zoom 0.5 on the landing: every tile is drawn bright, no black, no tint; the right-click of step 8 now walks to where you click.
+10. `curl.exe "http://127.0.0.1:8081/api/dev/reveal?on=1"`, zoom 0.5 on the landing: every tile is drawn bright, no black, no tint; a right-click up to about 40 m past Bob's seen ground now walks to where you click (farther than the nav mesh reaches it does nothing, as it did before player visibility).
 11. `...reveal?on=0`: the black and the tint come back, with the ground Bob opened in step 9 still seen.
 12. Click Release in Bob's panel, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
