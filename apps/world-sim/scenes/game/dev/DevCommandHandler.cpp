@@ -900,6 +900,9 @@ namespace world_sim {
 			built ? 1 : 0,
 			static_cast<unsigned long long>(host)
 		);
+		if (n == 0) {
+			return refuse("walls: no wall segment was committed (every span was rejected, for example one that duplicates an existing wall)");
+		}
 		m_ctx.ui->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), ui::ToastSeverity::Info);
 		return {};
 	}

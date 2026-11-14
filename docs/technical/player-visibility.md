@@ -205,7 +205,7 @@ One existing bug touches this: a placed thing felled or harvested out comes back
 | Action | Rule | Where |
 |---|---|---|
 | Place a thing | Valid only where the nav check passes and the footprint is seen (`covers`, the def's collision shape, or the point when it has none) | `PlacementSystem::placeable`, run on mouse move and again on click |
-| Draw a foundation, wall, or opening | Every point and the whole shape seen; the refusal toast says the area is unexplored | `DrawingSystem`: `pointOnMesh`, `requirePlaceable`, `commitFoundationEdit`, the opening move and click. `footprintBuildable` stays nav-only because the dev verbs share it |
+| Draw a foundation, wall, or opening | Every point and the whole shape seen; the refusal toast says the area is unexplored | `DrawingSystem`: `pointOnBuildableGround` (seen ground a wall or foundation may be built on, a ford excluded), `requirePlaceable`, `commitFoundationEdit`, the opening move and click. `footprintBuildable` stays nav-only because the dev verbs share it |
 | Move order, seen goal | As today | `GameScene` right-click, `AIDecisionSystem::issuePlayerMoveOrder` |
 | Move order, unseen goal | The goal becomes `lastSeenToward(colonist, click)` and is then ordered as any seen goal; the move marker shows at the goal ordered | `GameScene` right-click, through `moveOrderGoal` |
 | Select | Colonists always. Another mover only while visible. Anything else only where its position is seen | `SelectionSystem::gatherCandidates` |

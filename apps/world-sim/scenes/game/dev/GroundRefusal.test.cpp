@@ -27,6 +27,7 @@ namespace {
 			stone.defName = kLooseStone;
 			assets::AssetRegistry::Get().registerTestDefinition(stone);
 		}
+		void TearDown() override { assets::AssetRegistry::Get().clearDefinitions(); }
 
 		ecs::World				world;
 		ecs::EmptyPlacement		emptyPlacement;
