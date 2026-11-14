@@ -302,8 +302,7 @@ namespace world_sim {
 		for (long i = 0; i < n; ++i) {
 			const Foundation::Vec2 off = spreadOffset(i, n, scatter);
 			const glm::vec2		   raw{at.x + off.x, at.y + off.y};
-			const std::optional<glm::vec2> placed =
-				(m_ctx.navigation != nullptr) ? m_ctx.navigation->findValidPositionNear(raw, 0.0F) : std::optional<glm::vec2>{raw};
+			const std::optional<glm::vec2> placed = m_ctx.navigation->findValidPositionNear(raw, 0.0F);
 			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}).empty()) {
 				continue;
 			}
