@@ -84,11 +84,11 @@ namespace ecs {
 		return FootprintBounds{geometry::Ring{low, {high.x, low.y}, high, {low.x, high.y}}};
 	}
 
-	bool FootprintBounds::contains(glm::vec2 p) const {
-		if (p.x < min.x || p.x > max.x || p.y < min.y || p.y > max.y) {
+	bool FootprintBounds::contains(glm::vec2 position) const {
+		if (position.x < min.x || position.x > max.x || position.y < min.y || position.y > max.y) {
 			return false;
 		}
-		return geometry::pointInPolygon(geometry::quantize({p.x, p.y}), ring) != geometry::PointInPolygon::Outside;
+		return geometry::pointInPolygon(geometry::quantize({position.x, position.y}), ring) != geometry::PointInPolygon::Outside;
 	}
 
 	glm::vec2 FootprintBounds::interiorPoint() const {
@@ -100,11 +100,11 @@ namespace ecs {
 		return {static_cast<float>(inside.x / millimetersPerMeter), static_cast<float>(inside.y / millimetersPerMeter)};
 	}
 
-	glm::vec2 FootprintBounds::nearestOutside(glm::vec2 p, float margin) const {
-		if (!contains(p)) {
-			return p;
+	glm::vec2 FootprintBounds::nearestOutside(glm::vec2 position, float margin) const {
+		if (!contains(position)) {
+			return position;
 		}
-		const geometry::Vec2i64 point = geometry::quantize({p.x, p.y});
+		const geometry::Vec2i64 point = geometry::quantize({position.x, position.y});
 		struct Edge {
 			double		distanceMm;
 			double		along;
@@ -120,19 +120,28 @@ namespace ecs {
 			return nearer.distanceMm != farther.distanceMm ? nearer.distanceMm < farther.distanceMm : nearer.start < farther.start;
 		});
 		const auto millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+		const double marginMm = static_cast<double>(margin) * millimetersPerMeter;
 		const auto pastEdge = [&](const Edge& edge) {
 			const geometry::Vec2i64& from = ring[edge.start];
 			const geometry::Vec2i64& to = ring[(edge.start + 1) % ring.size()];
-			const double			 alongX = static_cast<double>(to.x - from.x);
-			const double			 alongY = static_cast<double>(to.y - from.y);
-			const double			 length = std::sqrt(alongX * alongX + alongY * alongY);
-			// The ring is counter-clockwise, so its outside lies to the right of each edge.
-			const double outwardX = alongY / length;
-			const double outwardY = -alongX / length;
-			const double marginMm = static_cast<double>(margin) * millimetersPerMeter;
-			const double x = static_cast<double>(from.x) + alongX * edge.along + outwardX * marginMm;
-			const double y = static_cast<double>(from.y) + alongY * edge.along + outwardY * marginMm;
-			return glm::vec2{static_cast<float>(x / millimetersPerMeter), static_cast<float>(y / millimetersPerMeter)};
+			const double edgeX = static_cast<double>(to.x - from.x);
+			const double edgeY = static_cast<double>(to.y - from.y);
+			const double spotX = static_cast<double>(from.x) + edgeX * edge.along;
+			const double spotY = static_cast<double>(from.y) + edgeY * edge.along;
+			// Off the boundary the push runs from the point through the spot, so where two edges tie at a
+			// reflex corner it leaves by the corner instead of across the floor. On the boundary there is no
+			// such line; the push is the edge's normal, and the ring is counter-clockwise, so its outside
+			// lies to the right of each edge.
+			double pushX = edgeY;
+			double pushY = -edgeX;
+			if (edge.distanceMm > 0.0) {
+				pushX = spotX - static_cast<double>(point.x);
+				pushY = spotY - static_cast<double>(point.y);
+			}
+			const double pushLength = std::sqrt(pushX * pushX + pushY * pushY);
+			const double pastX = spotX + pushX / pushLength * marginMm;
+			const double pastY = spotY + pushY / pushLength * marginMm;
+			return glm::vec2{static_cast<float>(pastX / millimetersPerMeter), static_cast<float>(pastY / millimetersPerMeter)};
 		};
 		for (const Edge& edge : edges) {
 			const glm::vec2 out = pastEdge(edge);
@@ -143,8 +152,8 @@ namespace ecs {
 		return pastEdge(edges.front());
 	}
 
-	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const {
-		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(p);
+	bool FootprintBounds::blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 position) const {
+		return registry.hasCapability(defNameId, assets::CapabilityType::Harvestable) && contains(position);
 	}
 
 	GoalTaskRegistry& GoalTaskRegistry::Get() {

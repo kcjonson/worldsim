@@ -67,19 +67,20 @@ namespace ecs {
 		glm::vec2	   min{0.0F, 0.0F};
 		glm::vec2	   max{0.0F, 0.0F};
 
-		[[nodiscard]] bool contains(glm::vec2 p) const;
+		[[nodiscard]] bool contains(glm::vec2 position) const;
 		/// A point strictly inside the ring (an L's box centre can lie in its notch).
 		[[nodiscard]] glm::vec2 interiorPoint() const;
-		/// `p` itself when it lies outside; else the point `margin` past the ring's nearest edge, straight
-		/// out from the spot on it nearest `p`. When that spot lands back inside (a notch narrower than the
+		/// `position` itself when it lies outside; else the point `margin` past the ring's nearest edge, on the line
+		/// from `position` through the spot on it nearest `position` (the edge's normal when `position` is on
+		/// the boundary). When that spot lands back inside (a notch narrower than the
 		/// margin), the next nearest edge is tried; when every one does, the nearest edge's spot is given
 		/// and the drop's own search for ground takes it from there.
-		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 p, float margin) const;
+		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 position, float margin) const;
 
-		/// A thing of `defNameId` at `p` blocks the site: a harvestable inside the footprint. The clear
+		/// A thing of `defNameId` at `position` blocks the site: a harvestable inside the footprint. The clear
 		/// goal is served by exactly the blockers a colonist knows, and the build gate holds while any
 		/// blocker stands in the world, so a site is clear exactly when no clear work remains.
-		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const;
+		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 position) const;
 	};
 
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")

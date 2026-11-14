@@ -129,6 +129,30 @@ TEST(FootprintBoundsTests, NearestOutsideSkipsAnEdgeWhoseSpotLandsBackInside) {
 	EXPECT_FALSE(footprint.contains(out)) << "at (" << out.x << ", " << out.y << ")";
 }
 
+// Just inside an L's inner corner two edges tie as nearest; the drop leaves by the corner into the notch, not across the floor.
+TEST(FootprintBoundsTests, NearestOutsideNearAReflexCornerStaysNearTheCorner) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	const glm::vec2		  inside{3.9F, 3.9F};
+	ASSERT_TRUE(footprint.contains(inside));
+	const glm::vec2 out = footprint.nearestOutside(inside, 0.5F);
+	EXPECT_FALSE(footprint.contains(out)) << "at (" << out.x << ", " << out.y << ")";
+	EXPECT_LT(glm::distance(out, glm::vec2(4.0F, 4.0F)), 0.75F) << "at (" << out.x << ", " << out.y << ")";
+}
+
+TEST(FootprintBoundsTests, NearestOutsideFromOtherSpotsOnTheFloor) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	const auto			  expectOutsideNear = [&](glm::vec2 from, float within, const char* what) {
+		ASSERT_TRUE(footprint.contains(from)) << what;
+		const glm::vec2 out = footprint.nearestOutside(from, 0.5F);
+		EXPECT_FALSE(footprint.contains(out)) << what << " at (" << out.x << ", " << out.y << ")";
+		EXPECT_LT(glm::distance(out, from), within) << what << " at (" << out.x << ", " << out.y << ")";
+	};
+	expectOutsideNear({0.2F, 4.0F}, 1.0F, "near the west edge");
+	expectOutsideNear({6.0F, 4.0F}, 1.0F, "on the inner edge");
+	expectOutsideNear({8.0F, 0.0F}, 1.0F, "on a convex vertex");
+	expectOutsideNear({1.0F, 1.0F}, 1.6F, "near the outer corner");
+}
+
 // ============================================================================
 // Goal-graph emission: drive the live update() path against a real
 // GoalTaskRegistry and assert the umbrella + per-material children coexist.
