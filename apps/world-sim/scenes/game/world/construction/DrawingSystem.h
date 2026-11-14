@@ -327,8 +327,8 @@ namespace world_sim {
 		[[nodiscard]] bool chainSeen(const std::vector<Foundation::Vec2>& pts) const;
 		[[nodiscard]] bool openingSeen(float widthMeters) const;
 		[[nodiscard]] const ecs::PlayerVisibilitySystem* visibilityGate() const;
-		/// "not on <ground> ground", or "the area is unexplored" when the cursor is over ground nobody has seen.
-		[[nodiscard]] std::string cursorGroundReason(const char* ground) const;
+		/// "not on buildable ground", or "the area is unexplored" when the cursor is over ground nobody has seen.
+		[[nodiscard]] std::string cursorGroundReason() const;
 
 		/// NavigationSystem::isAreaBuildableOnceCleared over the polygon `pts`: a terrain-only mesh, so water and
 		/// off-mesh gaps block but clearable entities (trees/rocks) do NOT (placing over them spawns

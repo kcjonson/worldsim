@@ -222,8 +222,8 @@ namespace world_sim {
 		return chainSeen({{cursor_.x - alongX, cursor_.y - alongY}, {cursor_.x + alongX, cursor_.y + alongY}});
 	}
 
-	std::string DrawingSystem::cursorGroundReason(const char* ground) const {
-		return pointSeen(cursor_) ? std::string("not on ") + ground + " ground" : std::string("the area is unexplored");
+	std::string DrawingSystem::cursorGroundReason() const {
+		return pointSeen(cursor_) ? std::string("not on buildable ground") : std::string("the area is unexplored");
 	}
 
 	bool DrawingSystem::pointOnMesh(Foundation::Vec2 p) const {
@@ -469,7 +469,7 @@ namespace world_sim {
 		// (requirePlaceable) still catches an edge or interior that crosses water between two vertices.
 		if (cursorOffMesh_) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "foundation: " + cursorGroundReason("buildable"));
+				callbacks_.onToast("Can't build here", "foundation: " + cursorGroundReason());
 			}
 			return true;
 		}
@@ -939,7 +939,7 @@ namespace world_sim {
 		// catches a segment that bridges water between two on-mesh points.
 		if (cursorOffMesh_) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "wall: " + cursorGroundReason("buildable"));
+				callbacks_.onToast("Can't build here", "wall: " + cursorGroundReason());
 			}
 			return true;
 		}
@@ -1526,7 +1526,7 @@ namespace world_sim {
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(lastValidation_.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
@@ -1572,7 +1572,7 @@ namespace world_sim {
 				s.areaDeltaSquareMeters = s.areaSquareMeters - current;
 			}
 			s.valid = judged.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(judged.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(judged.code);
 			return s;
 		}
 
@@ -1584,12 +1584,12 @@ namespace world_sim {
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 			const auto				  ring = validator.validateRing(points_);
 			s.valid = ring.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(ring.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(points_))));
 		} else {
 			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? cursorGroundReason("buildable") : ec::validationReason(lastValidation_.code);
+			s.message = cursorOffMesh_ ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
 		}
 		return s;
 	}
