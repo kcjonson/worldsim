@@ -690,7 +690,8 @@ namespace world_sim {
 			const glm::vec2 meters{point.x, point.y};
 			out << (first ? "" : ",") << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"onMesh\":" << flag(m_ctx.navigation->isOnMesh(meters))
 				<< ",\"valid\":" << flag(m_ctx.navigation->isValidPosition(meters)) << ",\"buildable\":"
-				<< flag(m_ctx.navigation->isPointBuildableOnceCleared(meters));
+				<< flag(m_ctx.navigation->isPointBuildableOnceCleared(meters)) << ",\"buildableNow\":"
+				<< flag(m_ctx.navigation->isPointBuildableNow(meters));
 			first = false;
 			const world::Chunk* chunk = m_ctx.chunks->getChunk(world::worldToChunk({point.x, point.y}));
 			if (chunk == nullptr || !chunk->isReady()) {

@@ -123,8 +123,10 @@ namespace world_sim {
 		// instead (assets::nearestTreesOfAge). A route, not a state view, because a state
 		// provider is given no query parameters.
 		app::DevResponse devFlora(const app::DevRequest& cmd);
-		// ground?pts=x0,y0;x1,y1;... (world metres): what each point is to the nav mesh (onMesh, valid:
-		// clear to stand on, buildable) beside what its chunk's terrain polygons hold there, and the
+		// ground?pts=x0,y0;x1,y1;... (world metres): what each point is to the nav mesh (onMesh; valid:
+		// clear to stand on; buildable: a foundation may go there once a tree or rock on it is cleared,
+		// isPointBuildableOnceCleared; buildableNow: a wall or furniture may go there as the ground
+		// stands, isPointBuildableNow) beside what its chunk's terrain polygons hold there, and the
 		// mesh's live triangle count. The terrain side reads the chunk's unclipped rings: inWater,
 		// toWaterM (null when no shore is within 32 m), and every ring the point is in or on, with its
 		// kind, hole (a clockwise ring, an island in its water body), blocksMovement and mean half
