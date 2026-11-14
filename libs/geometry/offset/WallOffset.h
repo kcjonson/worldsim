@@ -115,8 +115,15 @@ namespace geometry {
 	// off the closer to straight they get (and an equal pair a hair off straight,
 	// whose rounded faces can meet anywhere). Such a wedge is a step instead: no
 	// apex, the thinner band cut back just clear of the thicker one's cap, and a
-	// short edge across from one to the other. Every polygon vertex stays within
-	// `miterLimit` x the larger half thickness of the vertex (plus rounding).
+	// short edge across from one to the other (from the thin face's point at the
+	// vertex where that is clear of the cap, and through the thick face's point
+	// at the vertex where another wedge has cut the thicker band back). Where
+	// every two neighbouring bands are at least 30 degrees apart, every polygon
+	// vertex stays within `miterLimit` x the larger half thickness of the vertex
+	// (plus rounding). A sharper corner, legal where a wall joins an existing
+	// vertex, still trims each band as far as the inner faces overlap, about
+	// h / sin(corner / 2) for equal halves h (576 mm for 100 at 20 degrees), so
+	// its corners can lie past that bound.
 	JunctionResolution resolveJunction(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
 									   double miterLimit);
 

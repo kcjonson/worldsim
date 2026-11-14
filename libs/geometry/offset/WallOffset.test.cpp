@@ -1002,7 +1002,9 @@ namespace {
 	}
 
 	// (b): rings valid; bands and junctions tile with no overlap and no gap at a
-	// seam beyond a millimetre; every junction vertex within the miter bound.
+	// seam beyond a millimetre; every junction vertex within the miter bound,
+	// which holds only with neighbouring arms 30 degrees or more apart, as every
+	// input here keeps them.
 	std::string checkTiles(const std::vector<WallSegment>& segments, const WallBands& wb, double miterLimit) {
 		if (wb.status != OffsetStatus::Ok) {
 			return "rejected, status " + std::to_string(static_cast<int>(wb.status));
@@ -1517,6 +1519,15 @@ TEST(WallProperties, NearStraightJoinsResolveLocally) {
 		{{1775, -921}, {0, 0}, 150}, {{1251, 1560}, {0, 0}, 75},
 	};
 	sweep.check(equalPair, {}, checkAll(equalPair, {}, rng));
+	// A straight run of two thicknesses whose thicker arm is cut back by a third:
+	// the thick face's point at the vertex and the thin band's corner round onto
+	// one ray from it.
+	const std::vector<WallSegment> oneRay = {
+		{polar(296.25, 2000.0), {0, 0}, 100},
+		{{0, 0}, polar(116.25, 500.0), 150},
+		{{0, 0}, polar(86.25, 2000.0), 75},
+	};
+	sweep.check(oneRay, {}, checkAll(oneRay, {}, rng));
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
 }
 

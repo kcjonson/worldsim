@@ -644,9 +644,10 @@ namespace {
 	// flat caps), plus at `joint` the hull of every band's cap there and, where two
 	// walls form a corner, the apex their outer faces meet at. Every point more
 	// than 2 mm inside a band must be covered, densely near the joint where a gap
-	// would open, and nothing nav blocks may lie more than `overreachMm` outside
-	// those shapes.
-	void expectObstaclesCoverFootprints(const std::vector<WallSpec>& walls, Vec2i64 joint, double overreachMm = 2.0) {
+	// would open (every millimetre within `millimetreReachMm` of it), and nothing
+	// nav blocks may lie more than `overreachMm` outside those shapes.
+	void expectObstaclesCoverFootprints(const std::vector<WallSpec>& walls, Vec2i64 joint, double overreachMm = 2.0,
+										std::int64_t millimetreReachMm = 0) {
 		static constexpr double kToleranceMm = 2.0;
 
 		ConstructionWorld cw;
@@ -780,6 +781,11 @@ namespace {
 				sample({x, y});
 			}
 		}
+		for (std::int64_t y = joint.y - millimetreReachMm; y <= joint.y + millimetreReachMm; ++y) {
+			for (std::int64_t x = joint.x - millimetreReachMm; x <= joint.x + millimetreReachMm; ++x) {
+				sample({x, y});
+			}
+		}
 		EXPECT_EQ(uncovered, 0) << "sample points inside a wall that nav leaves open";
 		EXPECT_EQ(overreach, 0) << "sample points nav blocks outside the walls";
 	}
@@ -803,9 +809,11 @@ TEST_F(NavWallTest, TJunction_CoversAllThreeFootprints) {
 
 TEST_F(NavWallTest, NearStraightLightIntoHeavy_CoversBothFootprints) {
 	// About 3 degrees off straight. The step cuts the Light band 5 mm short of the
-	// joint and runs its outer edge from there to the Heavy cap's corner, so a
-	// sliver up to about 4.5 mm wide lies past the Light wall's face.
-	expectObstaclesCoverFootprints({{{0, 0}, {2000, 0}, "Light"}, {{2000, 0}, {3997, 105}, "Heavy"}}, {2000, 0}, 5.0);
+	// joint; its outer edge runs from the Light face at the joint to the Heavy
+	// cap's corner, leaving a sliver about 1.4 mm deep outside both walls. The
+	// step lies within the Heavy half thickness of the joint, sampled there every
+	// millimetre so a sliver deeper than the tolerance cannot fall between samples.
+	expectObstaclesCoverFootprints({{{0, 0}, {2000, 0}, "Light"}, {{2000, 0}, {3997, 105}, "Heavy"}}, {2000, 0}, 2.0, 200);
 }
 
 TEST_F(NavWallTest, BlueprintSegment_EmitsNothing) {

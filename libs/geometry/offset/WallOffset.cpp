@@ -172,6 +172,18 @@ namespace geometry {
 		};
 		std::vector<WedgeApex> apex(degree);
 		std::vector<std::size_t> steps; // wedges joined as a near-straight step
+		// A face point at the vertex that a step's edge runs from or through, on
+		// the thin or the thick band's face toward the step.
+		struct StepPoint {
+			Vec2i64		point;
+			std::size_t thin;
+			std::size_t thick;
+			double		thinFace;
+			double		thickFace;
+			bool		onThick;
+			bool		thickIsLeft;
+		};
+		std::vector<StepPoint> stepPoints;
 
 		for (std::size_t k = 0; k < degree; ++k) {
 			const std::size_t li = order[k];
@@ -267,6 +279,16 @@ namespace geometry {
 		// out to the thicker band's corner. The corner moves away from the thicker
 		// band as the trim grows, the two pointing more than 90 degrees apart, so
 		// the loop ends.
+		//
+		// That edge alone can miss either way. Where another wedge has cut the
+		// thicker band back, its cap corner sits well along its face, and the edge
+		// from the thin corner cuts a triangle out of the thicker wall's footprint;
+		// the thicker face's point at the vertex goes into the polygon to cover it
+		// (at the cost of a little polygon outside the walls). Where the thicker
+		// band is uncut, the edge from the cut-back thin corner leaves a sliver past
+		// the thin face, so the edge starts from the thin face's point at the
+		// vertex instead, but only where that point is already clear of the cap: on
+		// the other side it would lie over the thicker band.
 		for (const std::size_t k : steps) {
 			const std::size_t left		 = order[k];
 			const std::size_t right		 = order[(k + 1) % degree];
@@ -286,6 +308,13 @@ namespace geometry {
 				 const Vec2i64 corner = offsetPoint(advance(vertex, thinDir, static_cast<double>(trim)), thinDir, thinFace);
 				 return cross(capEdge, corner - capRight).sign() == -thickSide;
 			};
+
+			const double thickFace = leftIsThin ? -thickHalf : thickHalf;
+			if (trimByLocal[thick] > 0) {
+				stepPoints.push_back({offsetPoint(vertex, thickDir, thickFace), thin, thick, thinFace, thickFace, true, !leftIsThin});
+			} else if (clearOfCap(0)) {
+				stepPoints.push_back({offsetPoint(vertex, thinDir, thinFace), thin, thick, thinFace, thickFace, false, !leftIsThin});
+			}
 
 			std::int64_t trim = trimByLocal[thin];
 			if (clearOfCap(trim)) {
@@ -340,6 +369,9 @@ namespace geometry {
 				pts.push_back(w.point);
 			}
 		}
+		for (const StepPoint& step : stepPoints) {
+			pts.push_back(step.point);
+		}
 
 		// Order boundary points CCW about the vertex with the exact angleLess
 		// comparator (no atan2, deterministic). Points sharing a ray from the
@@ -373,6 +405,31 @@ namespace geometry {
 		}
 		if (poly.size() >= 2 && poly.front() == poly.back()) {
 			poly.pop_back();
+		}
+
+		// A step's point on one band's face and the other band's corner beside it
+		// can round onto one ray from the vertex, where the sort puts the nearer
+		// first. Walking counter-clockwise the polygon has to reach the left
+		// band's side of the step first, or it doubles back through itself.
+		for (const StepPoint& step : stepPoints) {
+			auto cornerOf = [&](std::size_t local, double face) {
+				const Vec2i64 dir = incidents[local].direction - vertex;
+				return offsetPoint(advance(vertex, dir, static_cast<double>(trimByLocal[local])), dir, face);
+			};
+			const Vec2i64	  thickPoint = step.onThick ? step.point : cornerOf(step.thick, step.thickFace);
+			const Vec2i64	  thinPoint	 = step.onThick ? cornerOf(step.thin, step.thinFace) : step.point;
+			const auto		  thickAt	 = std::find(poly.begin(), poly.end(), thickPoint);
+			const auto		  thinAt	 = std::find(poly.begin(), poly.end(), thinPoint);
+			const std::size_t n			 = poly.size();
+			if (thickAt == poly.end() || thinAt == poly.end() || thickAt == thinAt ||
+				cross(thickPoint - vertex, thinPoint - vertex).sign() != 0 || dot(thickPoint - vertex, thinPoint - vertex).sign() <= 0) {
+				continue;
+			}
+			const std::size_t first	 = static_cast<std::size_t>((step.thickIsLeft ? thinAt : thickAt) - poly.begin());
+			const std::size_t second = static_cast<std::size_t>((step.thickIsLeft ? thickAt : thinAt) - poly.begin());
+			if ((first + 1) % n == second) {
+				std::swap(poly[first], poly[second]);
+			}
 		}
 
 		result.polygon = poly;
