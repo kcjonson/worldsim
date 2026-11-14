@@ -158,9 +158,10 @@ node scripts/perf.mjs capture --port <PORT> --view river --zooms 3,1.5 --no-scro
 node scripts/perf.mjs compare --base <main>.json --tip <branch>.json
 ```
 
-`--view` is `river`, `river-cover`, `coast` or `desert` (`river-cover` is the river with the player
-visibility cover drawn, at zooms 3, 1.5 and 0.75 with no scroll; the others run with the cover off) (or `--x` and `--y` in world meters); leave out `--zooms` and
-`--no-scroll` for every zoom and the two scroll scenarios. The capture also watches the machine
+`--view` is `river`, `coast` or `desert` (or `--x` and `--y` in world meters), all with the player
+visibility cover off, or `river-cover`: the river with the cover drawn, at zooms 3, 1.5 and 0.75
+with no scroll. Leave out `--zooms` and `--no-scroll` for every zoom and the two scroll scenarios.
+`compare` answers `unjudged` for a pair of cover captures when only one build has the cover. The capture also watches the machine
 while it runs: CPU and GPU use by everything that isn't the game, and other sessions' build, test
 and game processes. Past a threshold it marks itself void, and `compare` then answers
 `inconclusive` where a loaded capture can't settle it. Take the verdict from `compare`; don't read

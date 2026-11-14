@@ -509,7 +509,7 @@ function compare(options) {
 		const views = typeof options.views === 'string' ? options.views : Object.keys(kViews).join(',');
 		for (const view of views === 'none' ? [] : views.split(',')) {
 			if (!(view in kViews)) fail(`unknown view: ${view}`);
-			sets.push({ kind: 'view', name: view, cover: kViews[view].reveal === false, baseFiles: filesOf('captures', base, view), tipFiles: filesOf('captures', tip, view) });
+			sets.push({ kind: 'view', name: view, baseFiles: filesOf('captures', base, view), tipFiles: filesOf('captures', tip, view) });
 		}
 		for (const target of typeof options.bench === 'string' ? benchTargets(options.bench) : []) {
 			sets.push({ kind: 'bench', name: target, baseFiles: filesOf('bench', base, target), tipFiles: filesOf('bench', tip, target) });
@@ -527,7 +527,7 @@ function compare(options) {
 	const views = {};
 	const benchmarks = {};
 	const markdown = [];
-	for (const { kind, name, cover, baseFiles, tipFiles } of sets) {
+	for (const { kind, name, baseFiles, tipFiles } of sets) {
 		const into = kind === 'bench' ? benchmarks : views;
 		const incomplete = baseFiles.length < expectedRuns || tipFiles.length < expectedRuns
 			? `incomplete: base ${baseFiles.length} and tip ${tipFiles.length} of ${expectedRuns} runs`
@@ -537,9 +537,10 @@ function compare(options) {
 			into[name] = { verdict: 'inconclusive', found: null, incomplete };
 			continue;
 		}
-		if (cover) {
+		if (kind === 'view') {
+			// A capture that left the cover on timed it, in a night or in a session's own pair of files
 			const captures = [baseFiles, tipFiles].map((files) => files.map((file) => normalizeCapture(readJson(file))));
-			const reason = coverUnjudged(...captures);
+			const reason = captures.flat().some((run) => run.reveal === false) ? coverUnjudged(...captures) : null;
 			if (reason) {
 				markdown.push(unjudgedToMarkdown(name, reason));
 				into[name] = { verdict: 'unjudged', found: null, reason, incomplete };
