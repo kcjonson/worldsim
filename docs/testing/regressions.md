@@ -24,7 +24,13 @@ See [README.md](./README.md) for the environment setup and dev API reference.
 - [ ] Nothing else is built in that creek either: `walls?pts=7.9,5;7.9,11&host=0&close=0` and
   `spawn?def=<a storage box>&at=7.9,8` answer 400, and with the build menu a storage box or a
   crafting station held over the creek shows the invalid (red) ghost and a click places nothing.
-  Two metres onto the bank each is accepted.
+  Two metres onto the bank each is accepted. `spawn?def=Flora_Reed&at=7.9,8` and
+  `spawn?def=SmallStone&at=7.9,8` still succeed: putting those down builds nothing.
+- [ ] A crafting station on the bank within a metre of that creek installs every Basic Box crafted
+  at it off the creek: a crate spawns at its target, so each `BasicBox` in `?what=storage` reads
+  `buildable` true at its `x,y` on `/api/dev/ground`, or the crate has no target and waits for a
+  [Place] click; none is in the creek. (`spawn?def=CraftingSpot&at=7.2,8.6` is a station 0.8 m
+  from the ford.)
 
 **Why this matters:** a silently accepted placement over water produces a construction site that
 can never be completed and may leave the colonist stuck.
