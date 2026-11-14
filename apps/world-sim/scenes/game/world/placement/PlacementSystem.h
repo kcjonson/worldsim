@@ -101,6 +101,7 @@ class PlacementSystem {
 
 	[[nodiscard]] bool isActive() const { return placementMode.isActive(); }
 	[[nodiscard]] PlacementState state() const { return placementMode.state(); }
+	[[nodiscard]] bool ghostValid() const { return placementMode.isValidPlacement(); }
 
 	// --- Entity Spawning (public for ActionSystem callback) ---
 
@@ -121,6 +122,10 @@ class PlacementSystem {
 
 	/// Entity being relocated (0 = spawning new, non-zero = relocating)
 	ecs::EntityID relocatingEntityId{0};
+
+	/// Whether the held item can go at `worldPos`: on a walkable nav face, and with the footprint
+	/// seen when player visibility is on.
+	[[nodiscard]] bool placeable(Foundation::Vec2 worldPos) const;
 
 	static constexpr float kPixelsPerMeter = 8.0F;
 };

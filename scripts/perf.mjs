@@ -2,7 +2,8 @@
 // docs/testing/README.md ("Performance") is the rule; docs/testing/nightly-perf-batch.md the batch.
 //
 //   capture   --port 8081 (--view river|coast|desert | --x 0 --y 20) [--zooms 3,1.5] [--no-scroll]
-//             [--no-gpu-hold] [--out file]      against a world-sim you started, in the game scene
+//             [--no-gpu-hold] [--no-reveal] [--out file]      against a world-sim you started, in the game
+//             scene, with player visibility revealed unless --no-reveal (which times the cover)
 //   compare   --base a.json[,b.json] --tip c.json[,d.json] [--md file]
 //             --night <dir> --base <sha> --tip <sha> [--views river,coast|none] [--bench world,assets]
 //             [--runs 2]   (a night's views, targets and runs are what measure and bench were given;
@@ -562,6 +563,7 @@ async function captureCommand(options) {
 		zooms: typeof options.zooms === 'string' ? options.zooms.split(',').map(Number) : kDefaultZooms,
 		scroll: !options['no-scroll'],
 		gpuHold: !options['no-gpu-hold'],
+		reveal: !options['no-reveal'],
 	});
 	const stamp = new Date().toISOString().slice(0, 19).replaceAll(':', '').replace('T', '-');
 	const out = path.resolve(typeof options.out === 'string' ? options.out : path.join('perf-results', `capture-${stamp}.json`));

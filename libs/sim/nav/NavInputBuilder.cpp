@@ -112,7 +112,8 @@ namespace nav {
 	}
 
 	void extractWalls(const construction::ConstructionWorld& world, const assets::ConstructionRegistry& registry,
-					  std::vector<gnav::NavInputPolygon>& outPolys, std::vector<gnav::DoorPortal>& outDoors) {
+					  std::vector<gnav::NavInputPolygon>& outPolys, std::vector<gnav::DoorPortal>& outDoors,
+					  std::vector<WallJunction>* outJunctions) {
 		// Gather the BUILT segments and their geometry::WallSegment in a stable order.
 		// resolveWallBands returns one band per input segment in this same order, so
 		// we keep a parallel index back to each SegmentId for door-gap replacement
@@ -293,16 +294,21 @@ namespace nav {
 				if (j.size() < 3) {
 					continue;
 				}
-				std::int64_t prov = kProvenanceJunction; // fallback: always-block sentinel
+				std::int64_t						 prov = kProvenanceJunction; // fallback: always-block sentinel
+				std::vector<construction::SegmentId> incident;
 				if (ji < bands.junctionSegments.size()) {
 					for (std::size_t segIdx : bands.junctionSegments[ji]) {
 						if (segIdx < segmentIds.size()) {
+							incident.push_back(segmentIds[segIdx]);
 							const std::int64_t id = static_cast<std::int64_t>(segmentIds[segIdx]);
 							if (prov == kProvenanceJunction || id < prov) {
 								prov = id;
 							}
 						}
 					}
+				}
+				if (outJunctions != nullptr) {
+					outJunctions->push_back({outPolys.size(), std::move(incident)});
 				}
 				outPolys.push_back({j, true, prov, gnav::kNoOpening});
 			}

@@ -92,6 +92,10 @@ class VisionSystem : public ISystem {
 		float				   radius = 0.0F;	   // meters
 		const geometry::Ring* polygon = nullptr;  // null when no wall is in sight
 		std::uint64_t		   polygonRevision = 0;
+		// The built walls and openings the polygon bounds or crosses, as the structure pass found
+		// them when it was built (vision-architecture D4). Empty without a polygon.
+		const std::vector<construction::SegmentId>* segmentsSeen = nullptr;
+		const std::vector<construction::OpeningId>* openingsSeen = nullptr;
 	};
 
 	/// The sight shape vision used for `observer` on its last pass, outdoors or indoors. Empty
@@ -107,6 +111,8 @@ class VisionSystem : public ISystem {
 			.radius = entry.radius,
 			.polygon = entry.hadOccluders ? &entry.polygon : nullptr,
 			.polygonRevision = entry.polygonRevision,
+			.segmentsSeen = &entry.segmentsSeen,
+			.openingsSeen = &entry.openingsSeen,
 		};
 	}
 
@@ -122,8 +128,16 @@ class VisionSystem : public ISystem {
 	/// Ensure synthetic terrain definitions are registered (called once on first update)
 	void ensureTerrainDefinitionsRegistered();
 
-	/// The walls and openings that bound or cross `polygon`, into memory (vision-architecture D4).
-	void rememberStructures(geometry::Vec2i64 centerMm, std::int64_t radiusMm, const geometry::Ring& polygon, Memory& memory);
+	/// The walls and openings that bound or cross `polygon`, into memory (vision-architecture D4) and
+	/// into `segments` and `openings` (cleared first).
+	void rememberStructures(
+		geometry::Vec2i64						 centerMm,
+		std::int64_t							 radiusMm,
+		const geometry::Ring&					 polygon,
+		Memory&									 memory,
+		std::vector<construction::SegmentId>&	 segments,
+		std::vector<construction::OpeningId>&	 openings
+	);
 
 	/// What the disc of `radiusMeters` round `center` shows, inside `polygon` when walls clip it
 	/// (null outdoors), into memory: reconciliation, then placed entities, ECS entities, and shore.
@@ -160,6 +174,8 @@ class VisionSystem : public ISystem {
 		std::uint64_t  polygonRevision = 0; // bumps when the polygon is rebuilt or dropped
 		std::uint64_t  builtVersion = 0; // GeometryIndex generation the polygon was built against
 		geometry::Ring polygon;			 // empty when hadOccluders == false (outdoors)
+		std::vector<construction::SegmentId> segmentsSeen; // what the structure pass found for the polygon
+		std::vector<construction::OpeningId> openingsSeen;
 		bool		   hadOccluders = false;
 		bool		   seenThisTick = false; // mark-and-sweep prune flag
 	};

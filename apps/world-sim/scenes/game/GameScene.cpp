@@ -11,6 +11,7 @@
 #include "scenes/game/world/DeferredEditsSystem.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/nav/NavOverlay.h"
+#include "scenes/game/world/MoveOrderGoal.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
@@ -48,6 +49,7 @@
 #include <world/rendering/PackagedLayout.h> // crate footprint (drop spacing)
 #include <world/rendering/PileLayout.h>	   // pile footprint (drop spacing)
 #include <world/rendering/TemplateBounds.h>
+#include <world/rendering/VisibilityCoverRenderer.h>
 
 #include <assets/AssetRegistry.h>
 #include <assets/DetailLevels.h>
@@ -98,6 +100,7 @@
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/StaticRectCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
@@ -196,6 +199,7 @@ namespace {
 
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
+			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
 
 			// Create async processor for runtime chunk streaming
 			m_asyncProcessor = std::make_unique<assets::AsyncChunkProcessor>(*m_placementExecutor, m_processedChunks);
@@ -394,6 +398,10 @@ namespace {
 				// its GeometryIndex turns built walls into opaque occluders and gates
 				// discovery by a per-observer visibility polygon.
 				ecsWorld->getSystem<ecs::VisionSystem>().setConstructionWorld(&m_drawingSystem->world());
+
+				// PlayerVisibilitySystem reads it for the footprints of the walls colonists have
+				// seen, which join the seen record.
+				ecsWorld->getSystem<ecs::PlayerVisibilitySystem>().setConstructionWorld(&m_drawingSystem->world());
 
 				// WallCollisionSystem reads the same store for its built-wall safety net.
 				ecsWorld->getSystem<ecs::WallCollisionSystem>().setConstructionWorld(&m_drawingSystem->world());
@@ -758,7 +766,11 @@ namespace {
 			if (event.mouseButton == foundation::MouseButton::Right && m_controlledColonist != 0) {
 				const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
 				auto&	   ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
-				if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, glm::vec2{worldPt.x, worldPt.y})) {
+				const auto ordered = world_sim::moveOrderGoal(*ecsWorld, m_controlledColonist, glm::vec2{worldPt.x, worldPt.y});
+				if (!ordered.has_value()) {
+					return true;
+				}
+				if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, *ordered)) {
 					m_moveMarkerWorld = *goal;
 					m_moveMarkerTtl = 1.0F;
 				}
@@ -972,6 +984,10 @@ namespace {
 			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
+			// Player visibility: unseen ground black, seen ground out of sight tinted. Over everything the
+			// world draws, under every overlay, preview, marker and ghost drawn after it.
+			m_visibilityCover->render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter);
+
 			// In-progress drawing preview (rubber-band, snap guides, opening ghost)
 			// rides above the entities like the placement ghost; committed
 			// construction already went out in the ground sub-layer before the
@@ -1073,6 +1089,7 @@ namespace {
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
+			m_visibilityCover.reset();
 			m_entityRenderer.reset();
 			m_renderer.reset();
 		}
@@ -1196,6 +1213,7 @@ namespace {
 			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
+			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
 			ecsWorld->registerSystem<ecs::StorageGoalSystem>();								// Priority 55 - goals before AI
 			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
@@ -1331,6 +1349,9 @@ namespace {
 			const size_t							crewSize = std::max<size_t>(m_party.size(), 1);
 			const glm::vec2							drop = m_spawnPosition;
 			const ecs::NavigationSystem::GroupSpawn landing = prepareLandingClearing(drop, crewSize, navSystem);
+			// The landing area is seen before the crew exists (player-visibility rule 8), round the same drop and
+			// from the same radius as nav's landing limit.
+			ecsWorld->getSystem<ecs::PlayerVisibilitySystem>().revealLanding(drop, ecs::NavigationSystem::kLandingSightMeters);
 			m_spawnPosition = landing.center;
 
 			// The clearing center is the colony's home anchor. Store it once here, in the one
@@ -2143,6 +2164,7 @@ namespace {
 		std::vector<world_sim::PartyMember>				   m_party;
 		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
 		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
+		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;
 		std::unique_ptr<assets::PlacementExecutor>		   m_placementExecutor;
 		std::unique_ptr<world_sim::GameUI>				   gameUI;
 

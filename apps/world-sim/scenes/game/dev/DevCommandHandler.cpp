@@ -1,5 +1,6 @@
 #include "DevCommandHandler.h"
 
+#include "scenes/game/dev/PointList.h"
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
@@ -35,6 +36,7 @@
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -65,16 +67,27 @@
 
 namespace world_sim {
 
+	namespace {
+		constexpr std::size_t kFoundationLeastPoints = 3;
+		constexpr std::size_t kWallsLeastPoints = 2;
+	} // namespace
+
 	std::vector<app::DevServer::Registration> DevCommandHandler::registerWith(app::DevServer& server) {
 		std::vector<app::DevServer::Registration> registrations;
-		const auto								  verb = [&](const char* name, void (DevCommandHandler::*run)(const app::DevRequest&)) {
-			   registrations.push_back(server.route(name, [this, run](const app::DevRequest& cmd) {
+		const auto								  verb = [&](const char* name, void (DevCommandHandler::*run)(const app::DevRequest&), std::size_t leastPoints = 0) {
+			   registrations.push_back(server.route(name, [this, run, leastPoints](const app::DevRequest& cmd) {
+				   const std::string refusal = pointCountRefusal(cmd.name, leastPoints, parsePointList(param(cmd, "pts")).size());
+				   if (!refusal.empty()) {
+					   LOG_WARNING(Game, "[DevAPI] %s", refusal.c_str());
+					   return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refusal) + "\"}"};
+				   }
 				   (this->*run)(cmd);
 				   return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.name) + "\"}"};
 			   }));
 		};
 		verb("freebuild", &DevCommandHandler::devFreeBuild);
 		verb("construction", &DevCommandHandler::devFreeBuild);
+		verb("reveal", &DevCommandHandler::devReveal);
 		verb("give", &DevCommandHandler::devGive);
 		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
@@ -84,8 +97,8 @@ namespace world_sim {
 		verb("select", &DevCommandHandler::devSelect);
 		verb("kill", &DevCommandHandler::devKill);
 		verb("complete", &DevCommandHandler::devComplete);
-		verb("foundation", &DevCommandHandler::devFoundation);
-		verb("walls", &DevCommandHandler::devWalls);
+		verb("foundation", &DevCommandHandler::devFoundation, kFoundationLeastPoints);
+		verb("walls", &DevCommandHandler::devWalls, kWallsLeastPoints);
 		verb("opening", &DevCommandHandler::devOpening);
 		verb("craft", &DevCommandHandler::devCraft);
 		verb("tunable", &DevCommandHandler::devTunable);
@@ -95,6 +108,9 @@ namespace world_sim {
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
+		registrations.push_back(server.route("visibility", [this](const app::DevRequest& cmd) {
+			return app::DevResponse{.body = visibilityJson(cmd)};
+		}));
 
 		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
 			registrations.push_back(server.stateProvider(what, [this, serialize] {
@@ -110,6 +126,7 @@ namespace world_sim {
 		view("time", &DevCommandHandler::serializeTime);
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
+		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
 		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
 		return registrations;
 	}
@@ -155,6 +172,14 @@ namespace world_sim {
 		m_ctx.world->getSystem<ecs::ConstructionSystem>().setFreeBuild(on);
 		LOG_INFO(Game, "[DevAPI] free-build %s", on ? "ON" : "OFF");
 		m_ctx.ui->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", ui::ToastSeverity::Info);
+	}
+
+	void DevCommandHandler::devReveal(const app::DevRequest& cmd) {
+		const std::string value = param(cmd, "on", "1");
+		const bool		  on = (value == "1" || value == "on" || value == "true" || value == "yes");
+		m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().setRevealed(on);
+		LOG_INFO(Game, "[DevAPI] reveal %s", on ? "ON" : "OFF");
+		m_ctx.ui->pushNotification("Dev", on ? "Reveal ON" : "Reveal OFF", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devGive(const app::DevRequest& cmd) {
@@ -553,11 +578,7 @@ namespace world_sim {
 	}
 
 	void DevCommandHandler::devFoundation(const app::DevRequest& cmd) {
-		std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
-		if (pts.size() < 3) {
-			LOG_WARNING(Game, "[DevAPI] foundation: pts needs >= 3 'x,y' pairs (got %zu)", pts.size());
-			return;
-		}
+		const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
 		// The WHOLE footprint must sit on buildable land (vertices, edges, AND interior).
 		// A footprint that spans water between on-land corners, or clips a water hole,
 		// refuses the whole placement (stamp nothing), matching the real build tool's gate.
@@ -862,10 +883,6 @@ namespace world_sim {
 
 	void DevCommandHandler::devWalls(const app::DevRequest& cmd) {
 		std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
-		if (pts.size() < 2) {
-			LOG_WARNING(Game, "[DevAPI] walls: pts needs >= 2 'x,y' pairs (got %zu)", pts.size());
-			return;
-		}
 		const std::string material = param(cmd, "material", "Wood");
 		const std::string thickness = param(cmd, "thickness", "Standard");
 		// strtoull, not strtoul: FoundationId is 64-bit, and unsigned long is only 32-bit on Windows.
@@ -1102,31 +1119,6 @@ namespace world_sim {
 		const float r = radius * std::sqrt(t);
 		const float angle = static_cast<float>(i) * 2.399963229F; // golden angle (radians)
 		return {r * std::cos(angle), r * std::sin(angle)};
-	}
-
-	std::vector<Foundation::Vec2> DevCommandHandler::parsePointList(const std::string& spec) {
-		std::vector<Foundation::Vec2> pts;
-		std::stringstream			  ss(spec);
-		std::string					  pair;
-		while (std::getline(ss, pair, ';')) {
-			const auto comma = pair.find(',');
-			if (comma == std::string::npos) {
-				continue;
-			}
-			const std::string xs = pair.substr(0, comma);
-			const std::string ys = pair.substr(comma + 1);
-			char*			  endX = nullptr;
-			char*			  endY = nullptr;
-			const float		  x = std::strtof(xs.c_str(), &endX);
-			const float		  y = std::strtof(ys.c_str(), &endY);
-			// Skip the pair unless both parses consumed at least one character; strtof returns 0.0
-			// on a non-numeric string, which would otherwise silently inject a (0,0) vertex.
-			if (endX == xs.c_str() || endY == ys.c_str()) {
-				continue;
-			}
-			pts.emplace_back(x, y);
-		}
-		return pts;
 	}
 
 	// ===================================================================== STATE READBACK
@@ -1405,6 +1397,23 @@ namespace world_sim {
 		}
 
 		out << "}";
+	}
+
+	std::string DevCommandHandler::visibilityJson(const app::DevRequest& cmd) {
+		const ecs::PlayerVisibilitySystem& visibility = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>();
+		const vision::SeenArea&			   seen		  = visibility.seenArea();
+		std::ostringstream				   out;
+		out << "{\"revealed\":" << (visibility.revealed() ? "true" : "false") << ",\"seenSquareMeters\":" << std::fixed
+			<< std::setprecision(1) << seen.committedSquareMeters() << ",\"ringsRegistered\":" << seen.ringsRegistered()
+			<< ",\"shapesPending\":" << seen.shapesPending() << ",\"shapesDropped\":" << seen.shapesDropped()
+			<< ",\"epoch\":" << seen.epoch();
+		if (hasParam(cmd, "x") && hasParam(cmd, "y")) {
+			const glm::vec2 point{std::strtof(param(cmd, "x").c_str(), nullptr), std::strtof(param(cmd, "y").c_str(), nullptr)};
+			out << ",\"x\":" << point.x << ",\"y\":" << point.y << ",\"seen\":" << (visibility.isSeen(point) ? "true" : "false")
+			    << ",\"visible\":" << (visibility.isVisible(point) ? "true" : "false");
+		}
+		out << "}";
+		return out.str();
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {

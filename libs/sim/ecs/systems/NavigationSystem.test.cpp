@@ -4,10 +4,12 @@
 #include "ActionSystem.h"
 #include "MovementSystem.h"
 #include "PhysicsSystem.h"
+#include "PlayerVisibilitySystem.h"
 #include "MeshBand.test.h"
 #include "PlacedNothing.test.h"
 #include "StaticRectCollisionSystem.h"
 #include "TimeSystem.h"
+#include "VisionSystem.h"
 #include "../World.h"
 #include "../components/Action.h"
 #include "../components/AgentRadius.h"
@@ -54,6 +56,7 @@
 #include <memory>
 #include <numbers>
 #include <optional>
+#include <random>
 #include <set>
 #include <string>
 #include <unordered_map>
@@ -5941,4 +5944,74 @@ TEST_F(NavigationSystemTest, NoMeshedGroundIsNeverValid) {
 	settle(rig.nav);
 	ASSERT_TRUE(rig.nav.isValidPosition({10.0F, 10.0F}));
 	nothingValid(rig.nav);
+}
+
+// The seen record on a long walk with the real nav mesh under it (player-visibility.md 3.1): every
+// seen point sampled round the walker is on meshed ground, and no point once seen stops being seen.
+TEST_F(NavigationSystemTest, SeenRecordStaysOnTheMeshOverALongWalk) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(landChunks());
+	wireEmptyPlacement(sys);
+	sys.setConstructionWorld(&cw);
+	world.registerSystem<VisionSystem>();
+	PlayerVisibilitySystem& visibility = world.registerSystem<PlayerVisibilitySystem>();
+	world.registerSystem<MovementSystem>();
+	world.registerSystem<PhysicsSystem>();
+
+	const std::vector<glm::vec2> waypoints = {{200.0F, 200.0F}, {330.0F, 210.0F}, {350.0F, 320.0F}, {240.0F, 360.0F}, {260.0F, 480.0F}, {420.0F, 470.0F}};
+	const EntityID				 walker	   = addColonist(world, waypoints.front(), "Walker");
+	world.addComponent<Memory>(walker, Memory{});
+	world.addComponent<Velocity>(walker, Velocity{});
+	world.addComponent<MovementTarget>(walker, MovementTarget{waypoints.back(), 8.0F, true});
+	NavPath route;
+	route.waypoints = waypoints;
+	route.current	= 1;
+	route.valid		= true;
+	world.addComponent<NavPath>(walker, std::move(route));
+
+	std::mt19937						  random(23);
+	std::uniform_real_distribution<float> unit(-1.0F, 1.0F);
+	std::vector<glm::vec2>				  seenPoints;
+	int									  frame = 0;
+	for (; frame < 6000 && world.getComponent<MovementTarget>(walker)->active; ++frame) {
+		world.update(0.016F);
+		if (frame % 10 != 0) {
+			continue;
+		}
+		const glm::vec2 at = world.getComponent<Position>(walker)->value;
+		for (int sample = 0; sample < 24; ++sample) {
+			const float		offsetX = unit(random) * 40.0F;
+			const float		offsetY = unit(random) * 40.0F;
+			const glm::vec2 point	= at + glm::vec2{offsetX, offsetY};
+			if (visibility.isSeen(point)) {
+				ASSERT_TRUE(sys.inSimArea(point)) << "frame " << frame << ": (" << point.x << ", " << point.y << ") seen off the mesh";
+				seenPoints.push_back(point);
+			}
+		}
+		for (const glm::vec2 point : seenPoints) {
+			ASSERT_TRUE(visibility.isSeen(point)) << "frame " << frame << ": (" << point.x << ", " << point.y << ") lost";
+		}
+	}
+	ASSERT_FALSE(world.getComponent<MovementTarget>(walker)->active) << "he did not finish the walk in " << frame << " frames";
+	EXPECT_LT(glm::distance(world.getComponent<Position>(walker)->value, waypoints.back()), 1.0F);
+	world.destroyEntity(walker);
+	for (int tick = 0; tick < 100 && visibility.seenArea().shapesPending() > 0; ++tick) {
+		world.update(0.016F);
+	}
+	EXPECT_EQ(visibility.seenArea().shapesPending(), 0U);
+	EXPECT_GT(visibility.seenArea().ringsRegistered(), 4U) << "one leg at least for each straight stretch";
+	EXPECT_GT(seenPoints.size(), 1000U);
+	for (const glm::vec2 point : seenPoints) {
+		EXPECT_TRUE(visibility.isSeen(point)) << "(" << point.x << ", " << point.y << ") lost once committed";
+	}
+	for (float x = 150.0F; x <= 470.0F; x += 4.0F) {
+		for (float y = 150.0F; y <= 530.0F; y += 4.0F) {
+			if (visibility.isSeen({x, y})) {
+				EXPECT_TRUE(sys.inSimArea({x, y})) << "(" << x << ", " << y << ") seen off the mesh";
+			}
+		}
+	}
+	expectMeshValid(sys);
 }

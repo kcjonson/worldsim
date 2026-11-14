@@ -82,15 +82,23 @@ namespace nav {
 
 	// Over the BUILT wall segments: resolve band offsetting + junction trimming once
 	// (so corners tile), then append each band and junction ring to outPolys
-	// (band provenance = +segmentId, junction provenance = kProvenanceJunction).
+	// (band provenance = +segmentId, junction provenance = its smallest incident +segmentId).
 	// For each BUILT pathable opening (a door) the hosting segment's solid band is
 	// replaced by the two flanking rings around the door gap, and a DoorPortal is
 	// emitted with the gap's two jamb points and the opening's clear width. A
 	// non-pathable opening (a window) leaves its band solid and emits a DoorPortal
 	// with clearWidthMm == 0 so a later vision pass can still find it. Blueprints
 	// (state != Built) contribute nothing.
+	//
+	// A junction ring carries one of the walls meeting at it as its provenance; `outJunctions`, when
+	// given, gets each junction as its ring's index in outPolys and every wall that meets there.
+	struct WallJunction {
+		std::size_t							 polygon = 0;
+		std::vector<construction::SegmentId> walls;
+	};
 	void extractWalls(const construction::ConstructionWorld& world, const assets::ConstructionRegistry& registry,
-					  std::vector<geometry::nav::NavInputPolygon>& outPolys, std::vector<geometry::nav::DoorPortal>& outDoors);
+					  std::vector<geometry::nav::NavInputPolygon>& outPolys, std::vector<geometry::nav::DoorPortal>& outDoors,
+					  std::vector<WallJunction>* outJunctions = nullptr);
 
 	// --- Border ------------------------------------------------------------------
 

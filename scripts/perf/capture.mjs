@@ -163,9 +163,12 @@ export function voidReasons(scenarios, { gpu = true } = {}) {
 
 // Captures against a world-sim already in the game scene on `port`. `zooms` and `scroll` scope it:
 // a session timing its own change passes the zooms that change touches; the nightly batch passes neither.
+// `reveal` turns player visibility off for the capture (the views far from any colonist would time a
+// black frame otherwise); `reveal: false` measures the cover itself. A build from before the reveal
+// verb answers 404 and draws no cover, which is the same frame.
 export async function capture({
 	port, x, y, gamePid = null, gameImage = 'world-sim', zooms = kDefaultZooms, scroll = true,
-	settleMs = 1500, gpuHold = true, gpuHoldTarget = 0.8, log = console.log,
+	settleMs = 1500, gpuHold = true, gpuHoldTarget = 0.8, reveal = true, log = console.log,
 }) {
 	const base = `http://127.0.0.1:${port}`;
 	const control = (query) => getJson(`${base}/api/control?action=${query}`);
@@ -209,6 +212,7 @@ export async function capture({
 		// Vsync off so frame times show real cost (the 120 fps pacing cap still holds; gpuMs and
 		// tileGpuMs show the cost under it)
 		await control('vsync&value=0');
+		await getJsonIfPresent(`${base}/api/dev/reveal?on=${reveal ? 1 : 0}`);
 		if (gpuHold) {
 			await control(`gpuhold&value=1&target=${gpuHoldTarget}`);
 			await sleep(2000); // the hold settles and the driver raises the clocks
@@ -243,9 +247,10 @@ export async function capture({
 		processWatch.stop();
 		if (gpuHold) await control('gpuhold&value=0').catch(() => {});
 		await control('vsync&value=1').catch(() => {});
+		if (reveal) await getJsonIfPresent(`${base}/api/dev/reveal?on=0`).catch(() => {});
 		await camera(`x=${x}&y=${y}&zoom=3&panx=0&pany=0`).catch(() => {});
 	}
 
 	const reasons = voidReasons(scenarios);
-	return { x, y, gpuHold, when: new Date().toISOString(), void: reasons.length > 0, voidReasons: reasons, scenarios };
+	return { x, y, gpuHold, reveal, when: new Date().toISOString(), void: reasons.length > 0, voidReasons: reasons, scenarios };
 }
