@@ -968,9 +968,10 @@ namespace {
 		}
 	}
 
-	// The build tools' per-frame cursor checks among obstacles: isAreaBuildableNow over a 4 m square
-	// footprint and isLineBuildableNow over a 20 m wall line, each read from every mesh triangle it
-	// meets, at 200 spots round the colony. Reports one frame's pair of checks.
+	// The build tools' ground checks among obstacles: isAreaBuildableNow over a 4 m square footprint,
+	// which the placement tool runs on its cursor every frame, and isLineBuildableNow over a 20 m wall
+	// line, which the wall tool runs when a chain is committed, each read from every mesh triangle it
+	// meets, at 200 spots round the colony. Reports the pair's mean and worst time at a spot.
 	void BM_CursorCheck(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(0);

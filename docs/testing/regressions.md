@@ -20,7 +20,7 @@ See [README.md](./README.md) for the environment setup and dev API reference.
 - [ ] A footprint across a narrow stream is refused too. At the Quick Start landing,
   `foundation?pts=6,6.5;9,6.5;9,9.5;6,9.5&built=0` lies across the creek east of the river and
   creates nothing, while colonists still walk through that creek
-  (`/api/dev/ground?pts=7.9,8` reads `valid` true, `buildable` false).
+  (`/api/dev/ground?pts=7.9,8` reads `valid` true, `buildable` and `buildableNow` false).
 - [ ] Nothing else is built in that creek either: `walls?pts=7.9,5;7.9,11&host=0&close=0` and
   `spawn?def=<a storage box>&at=7.9,8` answer 400, and with the build menu a storage box or a
   crafting station held over the creek shows the invalid (red) ghost and a click places nothing.
@@ -28,8 +28,9 @@ See [README.md](./README.md) for the environment setup and dev API reference.
   `spawn?def=SmallStone&at=7.9,8` still succeed: putting those down builds nothing.
 - [ ] A crafting station on the bank within a metre of that creek installs every Basic Box crafted
   at it off the creek: a crate spawns at its target, so each `BasicBox` in `?what=storage` reads
-  `buildable` true at its `x,y` on `/api/dev/ground`, or the crate has no target and waits for a
-  [Place] click; none is in the creek. (`spawn?def=CraftingSpot&at=7.2,8.6` is a station 0.8 m
+  `buildableNow` true at its `x,y` on `/api/dev/ground`, or the crate has no target, is set down
+  by the station as a colonist would set one down, a "Couldn't set up" toast says it needs placing,
+  and it waits for a [Place] click; none is installed in the creek. (`spawn?def=CraftingSpot&at=7.2,8.6` is a station 0.8 m
   from the ford.)
 
 **Why this matters:** a silently accepted placement over water produces a construction site that
