@@ -640,17 +640,35 @@ namespace geometry {
 			std::vector<std::vector<Vec2i64>> splits;
 		};
 
-		// Vertices of the rings meeting at one junction that lie within the
-		// tolerance of each other (chained) all move to the lowest of them, so a
-		// corner rounded a millimetre differently in two rings is one point.
-		void snapTogether(std::vector<OutlineTile>& tiles, const std::vector<std::size_t>& meeting) {
-			std::vector<std::pair<std::size_t, std::size_t>> corners;
-			std::vector<Vec2i64>							 points;
-			for (const std::size_t tile : meeting) {
-				for (std::size_t v = 0; v < tiles[tile].points.size(); ++v) {
+		// The corners of `piece` (tile `tile`, as built, before any snapping) at
+		// the end it meets `vertex` with: those nearer that end than the far one
+		// along `direction` (from the vertex along the segment), exactly.
+		void addCornersAt(std::vector<std::pair<std::size_t, std::size_t>>& corners, const Ring& piece, std::size_t tile,
+						  const Vec2i64& vertex, const Vec2i64& direction) {
+			std::vector<Int128> reach;
+			reach.reserve(piece.size());
+			for (const Vec2i64& point : piece) {
+				reach.push_back(dot(point - vertex, direction));
+			}
+			const Int128 middleTwice = *std::min_element(reach.begin(), reach.end()) + *std::max_element(reach.begin(), reach.end());
+			for (std::size_t v = 0; v < piece.size(); ++v) {
+				if (reach[v] + reach[v] < middleTwice) {
 					corners.emplace_back(tile, v);
-					points.push_back(tiles[tile].points[v]);
 				}
+			}
+		}
+
+		// The given vertices of the rings meeting at one junction that lie within
+		// the tolerance of each other (chained) all move to the lowest of them, so
+		// a corner rounded a millimetre differently in two rings is one point. Only
+		// a piece's corners at this junction take part: its far end may be close
+		// enough to pass for one of them when the piece is a few millimetres long,
+		// and snapping it here would fold the piece across the wall.
+		void snapTogether(std::vector<OutlineTile>& tiles, const std::vector<std::pair<std::size_t, std::size_t>>& corners) {
+			std::vector<Vec2i64> points;
+			points.reserve(corners.size());
+			for (const auto& [tile, v] : corners) {
+				points.push_back(tiles[tile].points[v]);
 			}
 			std::vector<std::size_t> root(points.size());
 			for (std::size_t i = 0; i < root.size(); ++i) {
@@ -998,15 +1016,18 @@ namespace geometry {
 				tiles.push_back({piece, std::vector<std::size_t>(piece.size(), i), std::vector<std::vector<Vec2i64>>(piece.size())});
 			}
 		}
-		std::vector<std::vector<std::size_t>> meetings;
+		std::vector<std::vector<std::size_t>>							  meetings;
+		std::vector<std::vector<std::pair<std::size_t, std::size_t>>> meetingCorners;
+		std::map<Vec2i64, std::size_t>									  meetingAt;
 		for (const auto& [vertex, incidences] : byVertex) {
 			if (incidences.size() < 2) {
 				continue;
 			}
 			// The rings meeting here: the junction polygon, if any, and each incident
 			// segment's piece that reaches this end. Only these can share an edge.
-			std::vector<std::size_t> meeting;
-			const auto				 polygon = polygonAt.find(vertex);
+			std::vector<std::size_t>						 meeting;
+			std::vector<std::pair<std::size_t, std::size_t>> corners;
+			const auto										 polygon = polygonAt.find(vertex);
 			if (polygon != polygonAt.end()) {
 				const Ring& ring = bands.junctions[polygon->second];
 				std::vector<std::pair<Vec2i64, std::size_t>> directions;
@@ -1018,24 +1039,70 @@ namespace geometry {
 				for (std::size_t e = 0; e < ring.size(); ++e) {
 					tile.edgeSegment.push_back(nearestIncident(vertex, ring[e], ring[(e + 1) % ring.size()], directions));
 				}
+				for (std::size_t v = 0; v < ring.size(); ++v) {
+					corners.emplace_back(tiles.size(), v);
+				}
 				meeting.push_back(tiles.size());
 				tiles.push_back(std::move(tile));
 			}
 			for (const Incidence& inc : incidences) {
 				const std::size_t end = inc.atA ? endTileA[inc.segIndex] : endTileB[inc.segIndex];
 				if (end != kNoTile) {
+					const WallSegment& seg = segments[inc.segIndex];
+					addCornersAt(corners, result.pieces[inc.segIndex][end], pieceTile[inc.segIndex][end], vertex,
+								 (inc.atA ? seg.b : seg.a) - vertex);
 					meeting.push_back(pieceTile[inc.segIndex][end]);
 				}
 			}
-			snapTogether(tiles, meeting);
+			meetingAt[vertex] = meetings.size();
 			meetings.push_back(std::move(meeting));
+			meetingCorners.push_back(std::move(corners));
+		}
+		// A band shorter than twice the tolerance between two junctions can have
+		// its far corners within the tolerance of its near ones, so its two
+		// junctions snap as one meeting: either the band folds away whole, or it
+		// keeps its corners, never one end snapped across it and the other not.
+		std::vector<std::size_t> group(meetings.size());
+		for (std::size_t m = 0; m < group.size(); ++m) {
+			group[m] = m;
+		}
+		auto groupOf = [&](std::size_t m) {
+			while (group[m] != m) {
+				m = group[m] = group[group[m]];
+			}
+			return m;
+		};
+		for (std::size_t i = 0; i < segCount; ++i) {
+			const WallSegment& seg = segments[i];
+			const double	   left = length(seg.b - seg.a) - static_cast<double>(bands.trimAtA[i] + bands.trimAtB[i]);
+			const auto		   atA	= meetingAt.find(seg.a);
+			const auto		   atB	= meetingAt.find(seg.b);
+			if (endTileA[i] != kNoTile && endTileA[i] == endTileB[i] && left < static_cast<double>(2 * kSeamToleranceMm) &&
+				atA != meetingAt.end() && atB != meetingAt.end()) {
+				group[groupOf(atA->second)] = groupOf(atB->second);
+			}
+		}
+		std::map<std::size_t, std::vector<std::pair<std::size_t, std::size_t>>> groupCorners;
+		std::map<std::size_t, std::vector<std::size_t>>							groupTiles;
+		for (std::size_t m = 0; m < meetings.size(); ++m) {
+			std::vector<std::pair<std::size_t, std::size_t>>& corners = groupCorners[groupOf(m)];
+			corners.insert(corners.end(), meetingCorners[m].begin(), meetingCorners[m].end());
+			std::vector<std::size_t>& grouped = groupTiles[groupOf(m)];
+			for (const std::size_t tile : meetings[m]) {
+				if (std::find(grouped.begin(), grouped.end(), tile) == grouped.end()) {
+					grouped.push_back(tile);
+				}
+			}
+		}
+		for (const auto& entry : groupCorners) {
+			snapTogether(tiles, entry.second);
 		}
 		// A ring's own vertices split its edges too: a corner a step leaves within
 		// the tolerance of the polygon's edge along the thicker cap has to split that
 		// edge as it splits the band's cap, or the two would not cancel.
-		for (const std::vector<std::size_t>& meeting : meetings) {
-			for (const std::size_t tile : meeting) {
-				for (const std::size_t other : meeting) {
+		for (const auto& entry : groupTiles) {
+			for (const std::size_t tile : entry.second) {
+				for (const std::size_t other : entry.second) {
 					collectSplits(tiles[tile], tiles[other].points);
 				}
 			}

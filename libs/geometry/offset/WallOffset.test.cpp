@@ -1638,6 +1638,55 @@ TEST(WallProperties, ClosedRoomOutlinesOutsideAndInside) {
 	EXPECT_EQ(checkAll(room, {{{1500, 2400}}, {}, {}, {}}, rng), "");
 }
 
+TEST(WallProperties, ShortBandBetweenTwoCornersHasNoSeam) {
+	// Two corners that leave a band of a few millimetres between them: its far
+	// corners lie within the snap tolerance of the near ones, and the outline
+	// must still go round the wall, not across it.
+	const std::vector<WallSegment> segments = {
+		{{1554, 1259}, {0, 0}, 150},
+		{{0, 0}, {656, 0}, 75},
+		{{656, 0}, {-876, -1286}, 150},
+	};
+	std::mt19937 rng(13);
+	EXPECT_EQ(checkAll(segments, {}, rng), "");
+
+	// Z-shaped chains, the middle band leaving 1 to 12 mm between its trims. The
+	// trims depend only on the corners, not on the middle segment's length. A
+	// 1 mm band simplifies to a triangle whose vertices depend on which end of
+	// the segment is `a`, so at 1 mm the order and direction check is skipped.
+	auto checkShortBand = [&](const std::vector<WallSegment>& segments, std::int64_t left) {
+		if (left > 1) {
+			return checkAll(segments, {}, rng);
+		}
+		const Resolved wb	   = resolveDrawn(segments, kDefaultMiterLimit);
+		std::string	   problem = checkTiles(segments, wb, kDefaultMiterLimit);
+		return problem.empty() ? checkOutline(wb) : problem;
+	};
+	Sweep sweep;
+	for (int first = 30; first <= 75; first += 5) {
+		for (const int bend : {1, 2, 3, 5, 9}) {
+			for (const std::int64_t middleHalf : kHalves) {
+				for (const std::int64_t outerHalf : {std::int64_t{75}, std::int64_t{150}}) {
+					auto chain = [&](std::int64_t length) {
+						const Vec2i64 end{length, 0};
+						return std::vector<WallSegment>{{polar(first, 2000.0), {0, 0}, outerHalf},
+														{{0, 0}, end, middleHalf},
+														{end, end + polar(180.0 + first + bend, 2000.0), outerHalf}};
+					};
+					const WallBands probe = resolveWallBands(chain(2000), kDefaultMiterLimit);
+					ASSERT_EQ(probe.status, OffsetStatus::Ok);
+					const std::int64_t trims = probe.trimAtA[1] + probe.trimAtB[1];
+					for (std::int64_t left = 1; left <= 12; ++left) {
+						const std::vector<WallSegment> segments = chain(trims + left);
+						sweep.check(segments, {}, checkShortBand(segments, left));
+					}
+				}
+			}
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
 TEST(WallProperties, NearStraightMixedJoinIsAShortStep) {
 	// Three degrees off straight from half 75 into half 150: the thin band is cut
 	// back just clear of the thick band's cap (a few mm), the thick band keeps its
