@@ -59,7 +59,7 @@ namespace world_sim {
 		world_sim::SelectionSystem*	 selection = nullptr;
 		world_sim::GameUI*			 ui = nullptr;
 		world::ChunkManager* chunks = nullptr;
-		ecs::NavigationSystem*		 navigation = nullptr; // world-position validity (isValidPosition)
+		ecs::NavigationSystem*		 navigation = nullptr; // the ground gates (isValidPosition and the build predicates)
 		const assets::PlacementExecutor* placementIndex = nullptr; // placed statics, for the flora view
 		const world::WorldCamera*		 camera = nullptr;		   // the flora view's default rect
 		float							 pixelsPerMeter = 0.0F;	   // world-to-screen at zoom 1
@@ -74,6 +74,12 @@ namespace world_sim {
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
 		// GameScene::dropResourcePiles: the one loose-ground drop path (merge, then stack-capped piles).
 		std::function<void(const std::string& defName, float x, float y, uint32_t quantity)> dropLoose;
+	};
+
+	/// What a verb that can refuse returns: a message answers a 400 {"error":message}, and none
+	/// answers {"status":"ok","verb":...}.
+	struct DevRefusal {
+		std::string message;
 	};
 
 	/// The dev verbs and world-state views. Read+write surface for /api/dev/<verb> and
@@ -96,9 +102,9 @@ namespace world_sim {
 		// reveal?on=1|0: player visibility off or on (player-visibility.md 3.10)
 		void devReveal(const app::DevRequest& cmd);
 		void devGive(const app::DevRequest& cmd);
-		// spawn?def=&at=x,y&n=&scatter=: the placement tool's ground gate (PlacementSystem::footprintBuildableNow)
-		// at the centre and at each scattered spot, which is skipped when refused.
-		std::string devSpawn(const app::DevRequest& cmd);
+		// spawn?def=&at=x,y&n=&scatter=: spawnGroundRefusal at the centre and at each scattered spot, which is
+		// snapped off water and skipped when refused; a refusal when nothing is spawned.
+		DevRefusal devSpawn(const app::DevRequest& cmd);
 		void devColonist(const app::DevRequest& cmd);
 		void devNeed(const app::DevRequest& cmd);
 		void devTime(const app::DevRequest& cmd);
@@ -106,7 +112,7 @@ namespace world_sim {
 		void devSelect(const app::DevRequest& cmd);
 		void devKill(const app::DevRequest& cmd);
 		void devComplete(const app::DevRequest& cmd);
-		std::string devFoundation(const app::DevRequest& cmd);
+		DevRefusal devFoundation(const app::DevRequest& cmd);
 		// foundation-edit?id=<foundationId>&mode=add|subtract&pts=x0,y0;x1,y1;... runs the
 		// Add / Subtract tool's own validate + apply path; answers status ok|rejected,
 		// reason, target, extension (0 unless an Add onto a built foundation), entity, area.
@@ -125,7 +131,7 @@ namespace world_sim {
 		// width. chunk is false, with no terrain fields, when the point's chunk is not ready.
 		// Read-only. No pts, or a point that is not finite, is a 400.
 		app::DevResponse devGround(const app::DevRequest& cmd);
-		std::string devWalls(const app::DevRequest& cmd);
+		DevRefusal devWalls(const app::DevRequest& cmd);
 		void		devOpening(const app::DevRequest& cmd);
 		void		devCraft(const app::DevRequest& cmd);
 		// storage?at=x,y&item=<def>|*&category=&priority=&min=&max=: adds a rule to the nearest box. A
@@ -144,8 +150,8 @@ namespace world_sim {
 		// there at once, outside every budget), else requireValidPosition.
 		bool requireMoverPosition(Foundation::Vec2 at, const char* verb);
 
-		// Logs and toasts a verb's refusal, and returns it, when it is not empty.
-		std::string refuse(const std::string& refusal);
+		// Logs and toasts a verb's refusal message, when it is not empty, and returns it as the refusal.
+		DevRefusal refuse(const std::string& message);
 
 		// --- entity lookup helpers ---
 		ecs::EntityID	nearestColonist(Foundation::Vec2 at);

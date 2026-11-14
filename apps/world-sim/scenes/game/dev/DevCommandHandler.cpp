@@ -76,14 +76,14 @@ namespace world_sim {
 
 	std::vector<app::DevServer::Registration> DevCommandHandler::registerWith(app::DevServer& server) {
 		std::vector<app::DevServer::Registration> registrations;
-		// A verb that returns a string answers it as a 400's refusal when it is not empty.
+		// A verb that returns a DevRefusal answers its message as a 400.
 		const auto verb = [&](const char* name, auto run, std::size_t leastPoints = 0) {
 			registrations.push_back(server.route(name, [this, run, leastPoints](const app::DevRequest& cmd) {
 				std::string refusal = pointCountRefusal(cmd.name, leastPoints, parsePointList(param(cmd, "pts")).size());
 				if (!refusal.empty()) {
 					LOG_WARNING(Game, "[DevAPI] %s", refusal.c_str());
-				} else if constexpr (std::is_same_v<decltype(run), std::string (DevCommandHandler::*)(const app::DevRequest&)>) {
-					refusal = (this->*run)(cmd);
+				} else if constexpr (std::is_same_v<std::invoke_result_t<decltype(run), DevCommandHandler*, const app::DevRequest&>, DevRefusal>) {
+					refusal = (this->*run)(cmd).message;
 				} else {
 					(this->*run)(cmd);
 				}
@@ -278,7 +278,7 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Unknown where: " + where, ui::ToastSeverity::Warning);
 	}
 
-	std::string DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
 		const std::string def = param(cmd, "def");
 		if (def.empty()) {
 			return refuse("spawn: missing def=<assetName>");
@@ -286,11 +286,9 @@ namespace world_sim {
 		if (assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
 			return refuse("spawn: unknown asset '" + def + "'");
 		}
-		// The placement tool's ground gate: the footprint on clear ground out of any ford.
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (!m_ctx.placement->footprintBuildableNow(def, at)) {
-			return refuse("spawn: " + def + " at (" + std::to_string(at.x) + ", " + std::to_string(at.y) +
-						  ") is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has seen)");
+		if (DevRefusal refusal = refuse(spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at)); !refusal.message.empty()) {
+			return refusal;
 		}
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
@@ -298,18 +296,23 @@ namespace world_sim {
 
 		// The gate took the CENTER, but each scattered offset is its own point that can land in a
 		// river. Snap every scattered position onto walkable ground with the same primitive the
-		// colonist drops use (minDist 0 keeps a position that is already valid), then skip one whose
-		// footprint the gate would refuse, a ford included, or with no mesh anywhere near it.
+		// colonist drops use (minDist 0 keeps a position that is already valid), then skip one the
+		// gate refuses (furniture in a ford, say) or with no mesh anywhere near it.
 		long spawned = 0;
 		for (long i = 0; i < n; ++i) {
 			const Foundation::Vec2 off = spreadOffset(i, n, scatter);
 			const glm::vec2		   raw{at.x + off.x, at.y + off.y};
-			const std::optional<glm::vec2> placed = m_ctx.navigation->findValidPositionNear(raw, 0.0F);
-			if (!placed.has_value() || !m_ctx.placement->footprintBuildableNow(def, {placed->x, placed->y})) {
+			const std::optional<glm::vec2> placed =
+				(m_ctx.navigation != nullptr) ? m_ctx.navigation->findValidPositionNear(raw, 0.0F) : std::optional<glm::vec2>{raw};
+			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}).empty()) {
 				continue;
 			}
 			m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
 			++spawned;
+		}
+		if (spawned == 0) {
+			return refuse("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
+						  std::to_string(at.y) + ") takes " + def);
 		}
 		LOG_INFO(Game, "[DevAPI] spawn: %ld/%ld x '%s' near (%.1f, %.1f)", spawned, n, def.c_str(), at.x, at.y);
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned) + " " + def, ui::ToastSeverity::Info);
@@ -357,12 +360,12 @@ namespace world_sim {
 		return requireValidPosition(at, verb);
 	}
 
-	std::string DevCommandHandler::refuse(const std::string& refusal) {
-		if (!refusal.empty()) {
-			LOG_WARNING(Game, "[DevAPI] %s, refused", refusal.c_str());
-			m_ctx.ui->pushNotification("Dev", "Refused: " + refusal, ui::ToastSeverity::Warning);
+	DevRefusal DevCommandHandler::refuse(const std::string& message) {
+		if (!message.empty()) {
+			LOG_WARNING(Game, "[DevAPI] %s, refused", message.c_str());
+			m_ctx.ui->pushNotification("Dev", "Refused: " + message, ui::ToastSeverity::Warning);
 		}
-		return refusal;
+		return {message};
 	}
 
 	ecs::EntityID DevCommandHandler::nearestColonist(Foundation::Vec2 at) {
@@ -562,12 +565,12 @@ namespace world_sim {
 		}
 	}
 
-	std::string DevCommandHandler::devFoundation(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devFoundation(const app::DevRequest& cmd) {
 		const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
 		// The WHOLE footprint must sit on buildable land (vertices, edges, AND interior).
 		// A footprint that spans water between on-land corners, or clips a water hole,
 		// refuses the whole placement (stamp nothing), matching the real build tool's gate.
-		if (std::string refusal = refuse(foundationGroundRefusal(m_ctx.navigation, pts)); !refusal.empty()) {
+		if (DevRefusal refusal = refuse(foundationGroundRefusal(m_ctx.navigation, pts)); !refusal.message.empty()) {
 			return refusal;
 		}
 		const std::string material = param(cmd, "material", "Wood");
@@ -864,7 +867,7 @@ namespace world_sim {
 		return {.body = json.str()};
 	}
 
-	std::string DevCommandHandler::devWalls(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devWalls(const app::DevRequest& cmd) {
 		std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
 		const std::string material = param(cmd, "material", "Wood");
 		const std::string thickness = param(cmd, "thickness", "Standard");
@@ -883,7 +886,7 @@ namespace world_sim {
 		// that bridges water or a ford between two on-land points refuses the whole placement (stamp
 		// nothing). Checked AFTER the close-loop append so the closing segment (last->first) is
 		// validated too.
-		if (std::string refusal = refuse(wallChainGroundRefusal(m_ctx.navigation, pts)); !refusal.empty()) {
+		if (DevRefusal refusal = refuse(wallChainGroundRefusal(m_ctx.navigation, pts)); !refusal.message.empty()) {
 			return refusal;
 		}
 
