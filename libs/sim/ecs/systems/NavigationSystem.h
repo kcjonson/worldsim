@@ -384,8 +384,9 @@ class NavigationSystem : public ISystem {
 	// point pushed out to minDist when that stays on mesh. `preferredDir` biases the first
 	// candidate; a zero vector falls back to {1,0}. `accept`, when given, must also pass every
 	// candidate, the last one included (a crafted crate's install target is one its footprint can be
-	// set up on). nullopt when `origin` is off meshed ground, no face is walkable, or `accept` takes
-	// no candidate.
+	// set up on); the nearest-point fallback then never answers a point closer than minDist, which
+	// would be `origin`'s own spot. nullopt when `origin` is off meshed ground, no face is walkable,
+	// or `accept` takes no candidate.
 	[[nodiscard]] std::optional<glm::vec2> findValidPositionNear(
 		glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}, const std::function<bool(glm::vec2)>& accept = {}
 	) const;

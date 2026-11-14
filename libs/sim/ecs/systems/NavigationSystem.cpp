@@ -2211,7 +2211,12 @@ namespace ecs {
 				return pushed;
 			}
 		}
-		return (!accept || accept(*nearest)) ? nearest : std::nullopt;
+		if (!accept) {
+			return nearest;
+		}
+		// Closer than minDist it is the origin's own spot (a station is no nav obstacle), which the
+		// caller asked to stay off.
+		return (awayLen >= minDist && accept(*nearest)) ? nearest : std::nullopt;
 	}
 
 } // namespace ecs

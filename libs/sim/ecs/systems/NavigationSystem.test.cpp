@@ -2412,6 +2412,21 @@ TEST_F(NavigationSystemTest, FindValidPositionNearHonorsPreferredDirOnOpenGround
 	EXPECT_NEAR(result->y, origin.y, 0.001F);
 }
 
+// Every ring candidate refused and only the origin's own spot acceptable: no target, not the origin.
+TEST_F(NavigationSystemTest, FindValidPositionNearWithAcceptNeverAnswersTheOriginItself) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	const glm::vec2 origin{2.0F, 2.0F};
+	ASSERT_TRUE(meshClear(sys, origin));
+	const auto onlyTheOrigin = [&](glm::vec2 candidate) { return glm::distance(candidate, origin) < 0.5F; };
+	EXPECT_FALSE(sys.findValidPositionNear(origin, 1.0F, {1.0F, 0.0F}, onlyTheOrigin).has_value());
+}
+
 TEST_F(NavigationSystemTest, FindValidPositionNearOffMeshedGroundReturnsNullopt) {
 	ConstructionWorld cw;
 	World			  world;
