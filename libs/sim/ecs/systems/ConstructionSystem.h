@@ -60,6 +60,7 @@
 #include "../DropResourceCallback.h"
 #include "../EntityID.h"
 #include "../ISystem.h"
+#include "../SetDownSpotCallback.h"
 #include "../components/StructureBlueprint.h"
 
 #include <glm/vec2.hpp>
@@ -170,11 +171,9 @@ namespace ecs {
 		/// drop-resource callback, so there is one ground-pile spawn path.
 		void setDropResourceCallback(DropResourceCallback callback) { m_onDropResource = std::move(callback); }
 
-		/// Set the callback that answers where a packaged item set down at `at` goes: walkable ground off
-		/// every unbuilt footprint, clear of what lies around. Wired to the SAME rule GameScene gives
-		/// AIDecisionSystem for a colonist setting one down, so there is one set-down rule.
-		using PackagedSetDownCallback = std::function<glm::vec2(glm::vec2 at)>;
-		void setPackagedSetDownCallback(PackagedSetDownCallback callback) { m_packagedSetDown = std::move(callback); }
+		/// Set the callback that answers where a packaged item set down off a site goes. Wired to the same
+		/// rule GameScene gives AIDecisionSystem for a colonist setting one down.
+		void setPackagedSetDownCallback(SetDownSpotCallback callback) { m_packagedSetDown = std::move(callback); }
 
 		/// Drop every construction goal a blueprint owns (the umbrella and its phase
 		/// children). The next tick rebuilds the tree from the blueprint's current
@@ -302,7 +301,7 @@ namespace ecs {
 		DropResourceCallback m_onDropResource = nullptr;
 
 		// Where a packaged item moved off a site is set down. Null in headless contexts (it then stays).
-		PackagedSetDownCallback m_packagedSetDown = nullptr;
+		SetDownSpotCallback m_packagedSetDown = nullptr;
 
 		// Entities already warned about a missing deconstructed callback. Without the callback the
 		// blueprint can't be removed, so it re-enters the no-work branch every tick; this throttles
