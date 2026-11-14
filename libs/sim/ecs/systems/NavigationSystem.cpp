@@ -464,26 +464,6 @@ namespace ecs {
 			return best;
 		}
 
-		// Whole-segment walkability under a per-point predicate: both endpoints plus every interior
-		// sample at the footprint pitch.
-		template <typename OnMesh> bool segmentWalkableUnder(const OnMesh& onMesh, glm::vec2 a, glm::vec2 b) {
-			if (!onMesh(a) || !onMesh(b)) {
-				return false;
-			}
-			const double dx	   = static_cast<double>(b.x) - a.x;
-			const double dy	   = static_cast<double>(b.y) - a.y;
-			const double lenMm = std::sqrt(dx * dx + dy * dy) * static_cast<double>(geometry::kMillimetersPerMeter);
-			const auto	 steps = static_cast<std::int64_t>(std::ceil(lenMm / static_cast<double>(NavigationSystem::kFootprintSampleStepMm)));
-			for (std::int64_t i = 1; i < steps; ++i) {
-				const double	t = static_cast<double>(i) / static_cast<double>(steps);
-				const glm::vec2 p{static_cast<float>(a.x + dx * t), static_cast<float>(a.y + dy * t)};
-				if (!onMesh(p)) {
-					return false;
-				}
-			}
-			return true;
-		}
-
 		// Whether segment (a, b) and the closed polygon share a point.
 		bool segmentMeetsPolygon(const geometry::Vec2i64& a, const geometry::Vec2i64& b, const std::vector<geometry::Vec2i64>& polygon) {
 			// With `a` outside, `b` inside means the segment crosses an edge, so the edges settle it.
@@ -2117,10 +2097,6 @@ namespace ecs {
 		return std::nullopt;
 	}
 
-	bool NavigationSystem::isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const {
-		return segmentWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, aMeters, bMeters);
-	}
-
 	bool NavigationSystem::isPointBuildableNow(glm::vec2 meters) const {
 		join();
 		return pointOnGround(detailMesh, meters, buildableNowFace);
@@ -2188,11 +2164,14 @@ namespace ecs {
 		return nearestStandable(detailMesh, meters, agentRadiusMeters, bands);
 	}
 
-	std::optional<glm::vec2> NavigationSystem::findValidPositionNear(glm::vec2 origin, float minDistMeters, glm::vec2 preferredDir) const {
+	std::optional<glm::vec2> NavigationSystem::findValidPositionNear(
+		glm::vec2 origin, float minDistMeters, glm::vec2 preferredDir, const std::function<bool(glm::vec2)>& accept
+	) const {
 		if (!inSimArea(origin)) {
 			return std::nullopt;
 		}
 		const float minDist = std::max(minDistMeters, 0.0F);
+		const auto	takes = [&](glm::vec2 p) { return isValidPosition(p) && (!accept || accept(p)); };
 
 		// Canonical direction: the preferred bias if non-zero, else +X.
 		glm::vec2	dir{1.0F, 0.0F};
@@ -2203,7 +2182,7 @@ namespace ecs {
 
 		// The preferred candidate, then a fixed ring at the same radius starting at `dir`.
 		const glm::vec2 preferred = origin + dir * minDist;
-		if (isValidPosition(preferred)) {
+		if (takes(preferred)) {
 			return preferred;
 		}
 		constexpr int	kRingSamples = 32;
@@ -2212,7 +2191,7 @@ namespace ecs {
 		for (int i = 1; i < kRingSamples; ++i) {
 			const float		a = baseAngle + kTwoPi * (static_cast<float>(i) / static_cast<float>(kRingSamples));
 			const glm::vec2 cand{origin.x + minDist * std::cos(a), origin.y + minDist * std::sin(a)};
-			if (isValidPosition(cand)) {
+			if (takes(cand)) {
 				return cand;
 			}
 		}
@@ -2225,12 +2204,14 @@ namespace ecs {
 		}
 		const glm::vec2 away	= *nearest - origin;
 		const float		awayLen = std::sqrt(away.x * away.x + away.y * away.y);
-		if (awayLen >= minDist) {
-			return *nearest;
+		if (awayLen < minDist) {
+			const glm::vec2 outDir = (awayLen > 1e-6F) ? away / awayLen : dir;
+			const glm::vec2 pushed = origin + outDir * minDist;
+			if (takes(pushed)) {
+				return pushed;
+			}
 		}
-		const glm::vec2 outDir = (awayLen > 1e-6F) ? away / awayLen : dir;
-		const glm::vec2 pushed = origin + outDir * minDist;
-		return isValidPosition(pushed) ? pushed : *nearest;
+		return (!accept || accept(*nearest)) ? nearest : std::nullopt;
 	}
 
 } // namespace ecs

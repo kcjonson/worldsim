@@ -296,10 +296,6 @@ class NavigationSystem : public ISystem {
 	// checks elsewhere.
 	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const;
 
-	// Whole-segment walkability: both endpoints plus every sample along a->b at
-	// <= kFootprintSampleStepMm pass isValidPosition.
-	[[nodiscard]] bool isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const;
-
 	// The BuildableNow family (walls and furniture) takes ground as it stands, so a placed obstacle
 	// refuses it; the BuildableOnceCleared family (foundations) reads a placed obstacle as the ground
 	// beneath it, because a foundation's site is cleared before it is built. Both refuse water, a
@@ -360,10 +356,6 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters, float minSeparationMeters,
 											  float clearanceMeters, const std::function<void(const GroupSpawn&)>& clearLanding = {});
 
-	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
-	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
-	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
-
 	// Nearest clear ground (isValidPosition) to `meters`, searched outward over the mesh from it,
 	// or nullopt when it is off meshed ground or no face is clear. Moves a work target off a collider
 	// to the ground beside it, and places things.
@@ -390,10 +382,13 @@ class NavigationSystem : public ISystem {
 	// distance OFF the spot that produced it. Deterministic: a single candidate at
 	// origin + minDist*dir, then a ring of fixed angles at that radius, then the nearest walkable
 	// point pushed out to minDist when that stays on mesh. `preferredDir` biases the first
-	// candidate; a zero vector falls back to {1,0}. nullopt only when `origin` is off meshed
-	// ground or no face is walkable.
-	[[nodiscard]] std::optional<glm::vec2>
-	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
+	// candidate; a zero vector falls back to {1,0}. `accept`, when given, must also pass every
+	// candidate, the last one included (a crafted crate's install target is one its footprint can be
+	// set up on). nullopt when `origin` is off meshed ground, no face is walkable, or `accept` takes
+	// no candidate.
+	[[nodiscard]] std::optional<glm::vec2> findValidPositionNear(
+		glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}, const std::function<bool(glm::vec2)>& accept = {}
+	) const;
 
 	// True when `entity`, placed in `chunk`, is a detail ring in the nav mesh queries see. Collision
 	// pushes out of a placed obstacle only then, so the forward snap has had its turn first and the

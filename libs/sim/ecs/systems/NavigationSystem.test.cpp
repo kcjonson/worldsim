@@ -1555,8 +1555,13 @@ TEST_F(NavigationSystemTest, FarGoalIsRoutedRoundTheFord) {
 	EXPECT_LT(glm::distance(route.back(), kPondAcross), 0.01F);
 	EXPECT_GT(std::max_element(route.begin(), route.end(), [](glm::vec2 a, glm::vec2 b) { return a.x < b.x; })->x, 150.0F)
 		<< "the route doesn't go round the ford";
+	// A route crosses only faces isOnMesh accepts; probe each leg every 0.1 m, finer than any water here.
 	for (std::size_t i = 1; i < route.size(); ++i) {
-		EXPECT_TRUE(sys.isSegmentWalkable(route[i - 1], route[i])) << "leg " << i << " crosses water";
+		const int probes = std::max(1, static_cast<int>(std::ceil(glm::distance(route[i - 1], route[i]) / 0.1F)));
+		for (int probe = 0; probe <= probes; ++probe) {
+			const glm::vec2 at = glm::mix(route[i - 1], route[i], static_cast<float>(probe) / static_cast<float>(probes));
+			EXPECT_TRUE(sys.isOnMesh(at)) << "leg " << i << " crosses water at (" << at.x << ", " << at.y << ")";
+		}
 	}
 }
 
@@ -2018,11 +2023,11 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 	}
 }
 
-// --- Whole-footprint clear ground: isAreaBuildableNow / isSegmentWalkable ---------
+// --- Whole-footprint buildability: isAreaBuildableNow and isAreaBuildableOnceCleared ---------
 //
 // Vertex-only validity is insufficient: a footprint can have every corner on land yet span water,
 // or fully enclose a pond. All use waterPatchSampler()'s pond at (40,40), at most 10.5 m from its
-// center to any shore.
+// center to any shore. A line across water is LineBuildableNowRefusesACreekWaterObstaclesAndUnmeshedGround.
 
 TEST_F(NavigationSystemTest, IsAreaBuildableNowTrueWhenWhollyOnLand) {
 	ConstructionWorld cw;
@@ -2085,17 +2090,6 @@ TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeObstacles) {
 	EXPECT_TRUE(sys.isAreaBuildableOnceCleared(onLand));
 	EXPECT_TRUE(sys.isPointBuildableOnceCleared({6.0F, 6.0F}));
 	EXPECT_FALSE(sys.isPointBuildableOnceCleared(kUnmeshed)) << "ground that isn't meshed is not buildable";
-}
-
-TEST_F(NavigationSystemTest, IsSegmentWalkableCatchesWaterCrossing) {
-	ConstructionWorld cw;
-	World			  world;
-	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	wireWaterPatch(world, sys, cw);
-	settle(sys);
-
-	EXPECT_TRUE(sys.isSegmentWalkable({4.0F, 4.0F}, {8.0F, 4.0F}));
-	EXPECT_FALSE(sys.isSegmentWalkable({28.0F, 40.0F}, {52.0F, 40.0F})) << "a segment crossing water must be rejected";
 }
 
 TEST_F(NavigationSystemTest, IsValidPositionFalseBeforeAnyMesh) {
@@ -5615,8 +5609,8 @@ namespace {
 		return chunks.get();
 	}
 
-	// A creek 0.2 m wide along y = 256.25 m: narrower than kFootprintSampleStepMm, and between the
-	// half-metre lines a footprint with whole-metre corners would be probed along.
+	// A creek 0.2 m wide along y = 256.25 m: narrower than the 0.5 m pitch the footprint checks once
+	// sampled at, and between the half-metre lines a footprint with whole-metre corners was probed along.
 	constexpr float kThinCreekY = 256.25F;
 	world::ChunkManager* thinCreekChunks() {
 		static const std::unique_ptr<world::ChunkManager> chunks =
