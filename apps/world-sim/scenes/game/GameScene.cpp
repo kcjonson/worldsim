@@ -1310,6 +1310,7 @@ namespace {
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
 			aiDecisionSystem.setSetDownSpotCallback([this](glm::vec2 at) { return packageSetDownSpot(at); });
+			constructionSystem.setPackagedSetDownCallback([this](glm::vec2 at) { return packageSetDownSpot(at); });
 			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at, double now) {
 				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, defNameId, at, now);
 			});
@@ -1747,8 +1748,7 @@ namespace {
 				const auto& topology = m_drawingSystem->world();
 				for (const auto& foundation : topology.foundations()) {
 					if (foundation.state != construction::FoundationState::Built) {
-						const auto aabb = topology.footprintAabb(foundation.id);
-						survey.sites.push_back({geometry::dequantize(aabb.min), geometry::dequantize(aabb.max)});
+						survey.sites.emplace_back(foundation.ring);
 					}
 				}
 			}

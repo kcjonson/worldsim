@@ -9,6 +9,7 @@
 #include "CollisionSystem.h"
 #include "ColonyGoalWork.h"
 #include "CraftingGoalSystem.h"
+#include "FootprintRectangle.test.h"
 #include "MovementSystem.h"
 #include "NavigationSystem.h"
 #include "PhysicsSystem.h"
@@ -440,7 +441,7 @@ namespace ecs::test {
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site.blueprint;
 		clear.destinationPosition = sitePos;
-		clear.clearFootprint = FootprintBounds{.min = {3.0F, 3.0F}, .max = {6.0F, 6.0F}};
+		clear.clearFootprint = rectangleFootprint({3.0F, 3.0F}, {6.0F, 6.0F});
 		clear.parentGoalId = site.umbrella;
 		GoalTaskRegistry::Get().createGoal(std::move(clear));
 		const EntityID colonist = createColonist({0.0F, 0.0F});
@@ -577,7 +578,7 @@ namespace ecs::test {
 	// instead, by the loose-drop rule the world answers with.
 	TEST_F(ChainClaimsTest, FurnitureSetDownOnASiteGoesToGroundOffIt) {
 		registerItem("Shelf", 2, 12.0F);
-		const FootprintBounds site{{4.0F, 0.0F}, {7.0F, 3.0F}};
+		const FootprintBounds site = rectangleFootprint({4.0F, 0.0F}, {7.0F, 3.0F});
 		const auto			  onSite = [site](glm::vec2 p) { return site.contains(p); };
 		const auto			  isGround = [](glm::vec2 p) { return p.x < 9.0F; };
 		ai->setSetDownSpotCallback([&](glm::vec2 at) {
@@ -2235,7 +2236,7 @@ namespace ecs::test {
 		clear.owner = GoalOwner::ConstructionGoalSystem;
 		clear.destinationEntity = site.blueprint;
 		clear.destinationPosition = {0.0F, 30.0F};
-		clear.clearFootprint = FootprintBounds{.min = weed - 0.2F, .max = weed + 0.2F};
+		clear.clearFootprint = rectangleFootprint(weed - 0.2F, weed + 0.2F);
 		clear.parentGoalId = site.umbrella;
 		const uint64_t clearGoal = GoalTaskRegistry::Get().createGoal(std::move(clear));
 		remember(colonist, weed, "Thistle", assets::CapabilityType::Harvestable);

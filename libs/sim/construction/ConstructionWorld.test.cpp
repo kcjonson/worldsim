@@ -6,7 +6,6 @@
 #include <gtest/gtest.h>
 
 namespace cw = construction;
-using cw::Aabb;
 using cw::CommitResult;
 using cw::CommitStatus;
 using cw::ConstructionWorld;
@@ -242,20 +241,6 @@ TEST(ConstructionWorldTests, FoundationAtSharedEdgeTieBreaksToHighestId) {
 	EXPECT_EQ(world.foundationAt({4000, 2000}), second.id);
 }
 
-TEST(ConstructionWorldTests, FootprintAabb) {
-	ConstructionWorld world;
-	CommitResult	  base = world.commitFoundation(box(1000, 2000, 5000, 9000), "wood");
-	ASSERT_TRUE(base.ok());
-
-	Aabb aabb = world.footprintAabb(base.id);
-	EXPECT_EQ(aabb.min, Vec2i64(1000, 2000));
-	EXPECT_EQ(aabb.max, Vec2i64(5000, 9000));
-
-	Aabb empty = world.footprintAabb(12345);
-	EXPECT_EQ(empty.min, Vec2i64(0, 0));
-	EXPECT_EQ(empty.max, Vec2i64(0, 0));
-}
-
 // ============================================================================
 // Lifecycle / ECS wiring mutators
 // ============================================================================
@@ -295,7 +280,6 @@ TEST(ConstructionWorldTests, VersionBumpsOnMutationNotOnQuery) {
 
 	// Pure queries do not bump the version.
 	(void)world.foundationAt({2000, 2000});
-	(void)world.footprintAabb(base.id);
 	(void)world.areaSquareMeters(base.id);
 	(void)world.get(base.id);
 	(void)world.foundations();
