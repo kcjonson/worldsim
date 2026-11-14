@@ -25,6 +25,7 @@
 
 #include <array>
 #include <cstdint>
+#include <set>
 #include <vector>
 
 namespace world_sim {
@@ -51,10 +52,11 @@ namespace world_sim {
 		std::vector<std::vector<Foundation::Vec2>> rings;
 		// Its share of the joined wall shape's outline; seams are not in it.
 		std::vector<std::array<Foundation::Vec2, 2>> outline;
-		Foundation::Rect							 aabb;
+		Foundation::Rect							 aabb; // world meters, rings and outline together
 		Foundation::Color							 matColor;
 		bool										 built = false;
 		ecs::EntityID								 entity = ecs::kInvalidEntity;
+		construction::SegmentId						 segment = construction::kInvalidSegment;
 	};
 
 	struct OpeningGeom {
@@ -89,6 +91,9 @@ namespace world_sim {
 		std::vector<WallBandGeom>					 walls_;
 		std::vector<OpeningGeom>					 openings_;
 		std::vector<std::array<Foundation::Vec2, 2>> fallbackCenterlines_;
+		// Each rejected graph (its segment ids, endpoints, and half thicknesses)
+		// as of the last rebuild, so its warning logs once until it changes.
+		std::set<std::vector<std::int64_t>> loggedRejectedGraphs_;
 		// Never matches a real version (they start at 0), so the first refresh builds.
 		std::uint64_t builtVersion_ = ~0ULL;
 	};

@@ -1878,8 +1878,7 @@ namespace world_sim {
 
 	namespace {
 
-		// Filled polygon plus an outline via Primitives. Screen-space points. Used by
-		// the opening draws.
+		// Filled polygon plus an outline via Primitives. Screen-space points.
 		void fillRing(
 			std::span<const Foundation::Vec2> screen,
 			Foundation::Color				  fill,
@@ -1929,23 +1928,24 @@ namespace world_sim {
 
 		// Per-segment pieces and the junctions each owns, styled like the foundation
 		// render (z 60-62, above foundations at 50-52). The rings tile, so only the
-		// cached outline is stroked: no seam where a band meets its corner.
+		// cached outline is stroked: no seam where a band meets its corner. A wall's
+		// bounds cover its outline edges as well as its rings.
 		std::vector<Foundation::Vec2> screen;
-		for (const auto& g : committedCache_.walls()) {
-			if (!g.aabb.intersects(visibleWorld)) {
+		for (const auto& wall : committedCache_.walls()) {
+			if (!wall.aabb.intersects(visibleWorld)) {
 				continue;
 			}
-			const float progress = blueprintProgress(g.built, g.entity);
+			const float progress = blueprintProgress(wall.built, wall.entity);
 
 			const float fillAlpha =
-				g.built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
+				wall.built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
 			// Built walls wear a darker shade of their own material; blueprints keep the
 			// cool outline so blue stays the "planned" signal.
 			const Foundation::Color outline =
-				g.built ? darken(g.matColor, ws.builtEdgeDarken)
-						: toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
+				wall.built ? darken(wall.matColor, ws.builtEdgeDarken)
+						   : toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
 
-			for (const auto& ring : g.rings) {
+			for (const auto& ring : wall.rings) {
 				screen.clear();
 				screen.reserve(ring.size());
 				for (const auto& v : ring) {
@@ -1953,13 +1953,13 @@ namespace world_sim {
 				}
 				// Blueprint base always; progress fill ramps with workDone/workTotal.
 				fillPolygon(screen, toColor(ws.blueprintFill), "committed_wall_base", 60);
-				fillPolygon(screen, {g.matColor.r, g.matColor.g, g.matColor.b, fillAlpha}, "committed_wall_progress", 61);
+				fillPolygon(screen, {wall.matColor.r, wall.matColor.g, wall.matColor.b, fillAlpha}, "committed_wall_progress", 61);
 			}
-			for (const auto& edge : g.outline) {
+			for (const auto& edge : wall.outline) {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(edge[0]),
 					.end = toScreen(edge[1]),
-					.style = {.color = outline, .width = g.built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint},
+					.style = {.color = outline, .width = wall.built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint},
 					.id = "committed_wall_edge",
 					.key = 62,
 				});

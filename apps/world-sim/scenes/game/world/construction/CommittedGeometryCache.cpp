@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <map>
+#include <set>
 
 namespace world_sim {
 
@@ -54,23 +55,16 @@ namespace world_sim {
 			return {minX, minY, maxX - minX, maxY - minY};
 		}
 
-		Foundation::Rect boundsOfRings(const std::vector<std::vector<Foundation::Vec2>>& rings) {
-			Foundation::Rect r{0.0F, 0.0F, 0.0F, 0.0F};
-			bool			 first = true;
-			for (const auto& ring : rings) {
-				const Foundation::Rect b = boundsOf(ring);
-				if (first) {
-					r = b;
-					first = false;
-					continue;
-				}
-				const float minX = std::min(r.x, b.x);
-				const float minY = std::min(r.y, b.y);
-				const float maxX = std::max(r.x + r.width, b.x + b.width);
-				const float maxY = std::max(r.y + r.height, b.y + b.height);
-				r = {minX, minY, maxX - minX, maxY - minY};
+		// Bounds of a wall's rings and its outline edges together.
+		Foundation::Rect boundsOfWall(const WallBandGeom& wall) {
+			std::vector<Foundation::Vec2> points;
+			for (const auto& ring : wall.rings) {
+				points.insert(points.end(), ring.begin(), ring.end());
 			}
-			return r;
+			for (const auto& edge : wall.outline) {
+				points.insert(points.end(), edge.begin(), edge.end());
+			}
+			return boundsOf(points);
 		}
 
 		std::vector<Foundation::Vec2> dequantizeRing(const geometry::Ring& ring) {
@@ -236,6 +230,7 @@ namespace world_sim {
 			graphs[graphRoot(i)].push_back(i);
 		}
 
+		std::set<std::vector<std::int64_t>> rejectedGraphs;
 		for (const auto& [root, members] : graphs) {
 			std::vector<geometry::WallSegment>			offsetSegs;
 			std::vector<std::vector<geometry::WallGap>> offsetGaps;
@@ -251,12 +246,24 @@ namespace world_sim {
 			if (bands.status != geometry::OffsetStatus::Ok) {
 				// Reject-don't-repair: a degenerate offset means the topology fed it
 				// bad input; show this graph as bare centerlines, never garbage bands.
-				LOG_WARNING(
-					Game,
-					"Wall graph of %zu segment(s) rejected by the band offsetter (status %d), drawn as centerlines",
-					members.size(),
-					static_cast<int>(bands.status)
-				);
+				// Logged once, not on every rebuild the graph survives unchanged.
+				std::vector<std::int64_t> signature;
+				signature.reserve(members.size() * 6);
+				for (std::size_t memberIndex = 0; memberIndex < members.size(); ++memberIndex) {
+					const geometry::WallSegment& seg = offsetSegs[memberIndex];
+					signature.insert(signature.end(),
+									 {static_cast<std::int64_t>(segs[members[memberIndex]].id), seg.a.x, seg.a.y, seg.b.x, seg.b.y,
+									  seg.halfThicknessMm});
+				}
+				if (!loggedRejectedGraphs_.contains(signature)) {
+					LOG_WARNING(
+						Game,
+						"Wall graph of %zu segment(s) rejected by the band offsetter (status %d), drawn as centerlines",
+						members.size(),
+						static_cast<int>(bands.status)
+					);
+				}
+				rejectedGraphs.insert(std::move(signature));
 				for (const geometry::WallSegment& seg : offsetSegs) {
 					fallbackCenterlines_.push_back({toWorld(seg.a), toWorld(seg.b)});
 				}
@@ -265,17 +272,18 @@ namespace world_sim {
 			const geometry::WallPiecesAndOutline shape = geometry::wallPiecesAndOutline(offsetSegs, offsetGaps, bands);
 
 			// One geometry per segment: its pieces (the band cut at its openings),
-			// the junctions it owns, and its share of the outline. shape.pieces[k]
-			// and outline/junction indices k refer to members[k].
+			// the junctions it owns, and its share of the outline. shape.pieces and
+			// the outline and junction segment indices refer to members.
 			std::vector<WallBandGeom> graphWalls(members.size());
-			for (std::size_t k = 0; k < members.size(); ++k) {
-				const ec::WallSegment& wseg = segs[members[k]];
-				WallBandGeom&		   g = graphWalls[k];
-				g.matColor = materialColor(wseg.material, style.wall.fallbackColor);
-				g.built = (wseg.state == ec::FoundationState::Built);
-				g.entity = wseg.entity;
-				for (const geometry::Ring& piece : shape.pieces[k]) {
-					g.rings.push_back(dequantizeRing(piece));
+			for (std::size_t memberIndex = 0; memberIndex < members.size(); ++memberIndex) {
+				const ec::WallSegment& wseg = segs[members[memberIndex]];
+				WallBandGeom&		   wall = graphWalls[memberIndex];
+				wall.segment = wseg.id;
+				wall.matColor = materialColor(wseg.material, style.wall.fallbackColor);
+				wall.built = (wseg.state == ec::FoundationState::Built);
+				wall.entity = wseg.entity;
+				for (const geometry::Ring& piece : shape.pieces[memberIndex]) {
+					wall.rings.push_back(dequantizeRing(piece));
 				}
 			}
 			for (const geometry::OutlineEdge& edge : shape.outline) {
@@ -286,29 +294,34 @@ namespace world_sim {
 			// segment's material and build progress and never a style of its own. A
 			// segment still being built owns it, so a corner reads finished only
 			// when every wall meeting there is.
-			for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
-				const std::vector<std::size_t>& incident = bands.junctionSegments[j];
+			for (std::size_t junctionIndex = 0; junctionIndex < bands.junctions.size(); ++junctionIndex) {
+				const std::vector<std::size_t>& incident = bands.junctionSegments[junctionIndex];
 				if (incident.empty()) {
 					continue;
 				}
 				std::size_t owner = incident.front();
-				for (const std::size_t k : incident) {
-					if (segs[members[k]].state != ec::FoundationState::Built) {
-						owner = k;
+				for (const std::size_t memberIndex : incident) {
+					if (segs[members[memberIndex]].state != ec::FoundationState::Built) {
+						owner = memberIndex;
 						break;
 					}
 				}
-				graphWalls[owner].rings.push_back(dequantizeRing(bands.junctions[j]));
+				graphWalls[owner].rings.push_back(dequantizeRing(bands.junctions[junctionIndex]));
 			}
 
-			for (WallBandGeom& g : graphWalls) {
-				if (g.rings.empty()) {
+			// A segment that is all opening has no rings but can still carry outline
+			// (the junction's edge facing its gap), so it is kept for that. The
+			// bounds cover the outline too: an edge tagged to this segment can lie on
+			// a junction another segment fills.
+			for (WallBandGeom& wall : graphWalls) {
+				if (wall.rings.empty() && wall.outline.empty()) {
 					continue;
 				}
-				g.aabb = boundsOfRings(g.rings);
-				walls_.push_back(std::move(g));
+				wall.aabb = boundsOfWall(wall);
+				walls_.push_back(std::move(wall));
 			}
 		}
+		loggedRejectedGraphs_ = std::move(rejectedGraphs);
 	}
 
 } // namespace world_sim
