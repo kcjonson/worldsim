@@ -559,7 +559,9 @@ namespace ecs::test {
 		EXPECT_TRUE(treeStands(notch)) << "nothing is built in the notch, so its tree is left";
 		ASSERT_EQ(drops.size(), 1U) << "six of the twenty wood do not fit the arms";
 		EXPECT_FALSE(onRing(lShapedRing(), drops.front())) << "dropped at (" << drops.front().x << ", " << drops.front().y << ")";
-		EXPECT_LT(drops.front().x, 5.0F) << "out by the inner edge a metre away, not past the top edge a metre and a half away";
+		const glm::vec2 drop = drops.front();
+		EXPECT_TRUE(drop.x > 4.0F && drop.x < 5.0F && drop.y > 4.0F && drop.y < 8.0F)
+			<< "past the inner edge into the notch (x in 4-5, y in 4-8), not past the top or west edge, at (" << drop.x << ", " << drop.y << ")";
 	}
 
 	// Baring follows the ring too: grass, a placed stone to carry, and a loose pile on the floor go, the
@@ -606,6 +608,8 @@ namespace ecs::test {
 		ASSERT_EQ(drops.size(), 2U) << "the floor's stone and pile";
 		for (const glm::vec2& drop : drops) {
 			EXPECT_FALSE(onRing(lShapedRing(), drop)) << "dropped at (" << drop.x << ", " << drop.y << ")";
+			EXPECT_LT(std::min(glm::distance(drop, floorStone), glm::distance(drop, glm::vec2{2.0F, 2.0F})), 2.7F)
+				<< "set down beside the ring's nearest edge to the stone or pile it carried, not across the site, at (" << drop.x << ", " << drop.y << ")";
 		}
 	}
 
