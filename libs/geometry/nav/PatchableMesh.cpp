@@ -24,10 +24,6 @@ namespace geometry::nav {
 		// must lie from it, so the exact test and the bent pieces agree on its side.
 		constexpr std::int64_t kSeedClearance = 3;
 
-		// How many points past a pass's arrangement a rounded read tries to count ground from
-		// before giving up on every segment to one meeting a piece's end.
-		constexpr std::int64_t kReferenceTries = 8;
-
 		int next3(int i) {
 			return i == 2 ? 0 : i + 1;
 		}
@@ -2536,17 +2532,19 @@ namespace geometry::nav {
 			return true;
 		};
 		// Ground at triangle t's centroid as the boundary intervals leave it rounded: ground at a
-		// point past the arrangement and every new outline, toggled at each piece of an interval
-		// the segment between them crosses. That point is in no hole triangle and no new
-		// outline, so it is ground exactly when a triangle the patch keeps holds it. The
-		// intervals are the union's boundary, each kept once, so their parity is ground;
-		// reading each outline as given where its edge dissolved disagrees with them where
-		// rounding moved a crossing. The pieces are this pass's arrangement edges and the
+		// point past the arrangement, every new outline and every hole triangle, toggled at each
+		// piece of an interval the segment between them crosses. That point is in no hole
+		// triangle and no new outline, so it is ground exactly when a triangle the patch keeps
+		// holds it. The intervals are the union's boundary, each kept once, so their parity is
+		// ground; reading each outline as given where its edge dissolved disagrees with them
+		// where rounding moved a crossing. The pieces are this pass's arrangement edges and the
 		// mesh's pieces of every interval it does not arrange (none of whose triangles is in
-		// the hole). Empty when every segment tried meets a piece's end.
+		// the hole). Empty only when the centroid lies on a piece of the mesh's.
+		enum class Crossing { Counted, Grazed, OnPiece };
 		std::vector<std::uint8_t>& oddBoundsPieces = work.oddBoundsPieces; // per arrangement edge
 		bool					   piecesWeighed   = false;
-		auto groundCrossings = [&](const Vec2i64& from3, const Vec2i64& to3) -> std::optional<bool> {
+		bool					   crossedOdd	   = false;
+		auto groundCrossings = [&](const Vec2i64& from3, const Vec2i64& to3) -> Crossing {
 			if (!piecesWeighed) {
 				oddBoundsPieces.assign(arrangement.edges.size(), 0);
 				for (std::size_t ae = 0; ae < arrangement.edges.size(); ++ae) {
@@ -2556,15 +2554,22 @@ namespace geometry::nav {
 				}
 				piecesWeighed = true;
 			}
-			bool odd	 = false;
+			crossedOdd	 = false;
 			auto crosses = [&](const Vec2i64& p3, const Vec2i64& q3) {
 				const SegmentRelation relation = intersectSegments(from3, to3, p3, q3).relation;
-				odd							   = odd != (relation == SegmentRelation::ProperCrossing);
-				return relation == SegmentRelation::Disjoint || relation == SegmentRelation::ProperCrossing;
+				crossedOdd					   = crossedOdd != (relation == SegmentRelation::ProperCrossing);
+				if (relation == SegmentRelation::Disjoint || relation == SegmentRelation::ProperCrossing) {
+					return Crossing::Counted;
+				}
+				return onClosedSegment(from3, p3, q3) ? Crossing::OnPiece : Crossing::Grazed;
 			};
 			for (std::size_t ae = 0; ae < arrangement.edges.size(); ++ae) {
-				if (oddBoundsPieces[ae] != 0 && !crosses(arrangement.vertices[arrangement.edges[ae].from] * 3, arrangement.vertices[arrangement.edges[ae].to] * 3)) {
-					return std::nullopt;
+				if (oddBoundsPieces[ae] == 0) {
+					continue;
+				}
+				if (const Crossing c = crosses(arrangement.vertices[arrangement.edges[ae].from] * 3, arrangement.vertices[arrangement.edges[ae].to] * 3);
+					c != Crossing::Counted) {
+					return c;
 				}
 			}
 			const Vec2i64 lo{floorDiv(std::min(from3.x, to3.x), 3), floorDiv(std::min(from3.y, to3.y), 3)};
@@ -2589,14 +2594,17 @@ namespace geometry::nav {
 					for (; i < meshPieces.size() && std::get<0>(meshPieces[i]) == u && std::get<1>(meshPieces[i]) == v; ++i) {
 						arranged = arranged || std::get<2>(meshPieces[i]) != 0;
 					}
-					if (!arranged && !crosses(m.verts[u] * 3, m.verts[v] * 3)) {
-						return std::nullopt;
+					if (arranged) {
+						continue;
+					}
+					if (const Crossing c = crosses(m.verts[u] * 3, m.verts[v] * 3); c != Crossing::Counted) {
+						return c;
 					}
 				}
 			}
-			return odd;
+			return Crossing::Counted;
 		};
-		std::optional<std::int64_t> referenceX; // in 3x space, past the arrangement and every new outline
+		std::optional<std::int64_t> referenceX; // in 3x space, past the arrangement, the new outlines and the hole
 		auto						groundAt = [&](std::int32_t t) -> std::optional<bool> {
 			  if (!referenceX) {
 				  std::int64_t farthest = arrangement.vertices.front().x;
@@ -2608,20 +2616,27 @@ namespace geometry::nav {
 						  farthest = std::max(farthest, c.hi.x);
 					  }
 				  }
-				  referenceX = 3 * (farthest + kOffGroundReachMm + 1);
+				  for (const std::int32_t h : hole) {
+					  for (const std::uint32_t v : m.tris[static_cast<std::size_t>(h)].v) {
+						  farthest = std::max(farthest, m.verts[v].x);
+					  }
+				  }
+				  referenceX = 3 * (farthest + 1);
 			  }
 			  const Vec2i64 sample3 = centroid3(t);
-			  for (std::int64_t step = 1; step <= kReferenceTries; ++step) {
-				  const Vec2i64	 reference3{*referenceX, sample3.y + (step % 2 == 0 ? step / 2 : -(step + 1) / 2)};
-				  const std::int32_t old = m.locateSample(reference3);
-				  if (old >= 0 && work.inHole[static_cast<std::size_t>(old)] != 0) {
-					  continue;
+			  // A segment that meets a piece's end or runs along a piece is tried again a third of a
+			  // millimetre further along the far line; only finitely many directions from the
+			  // centroid do that, so the walk ends.
+			  for (std::int64_t step = 1;; ++step) {
+				  const Vec2i64 reference3{*referenceX, sample3.y + (step % 2 == 0 ? step / 2 : -(step + 1) / 2)};
+				  const Crossing crossing = groundCrossings(sample3, reference3);
+				  if (crossing == Crossing::OnPiece) {
+					  return std::nullopt;
 				  }
-				  if (const std::optional<bool> odd = groundCrossings(sample3, reference3)) {
-					  return (old >= 0) != *odd;
+				  if (crossing == Crossing::Counted) {
+					  return (m.locateSample(reference3) >= 0) != crossedOdd;
 				  }
 			  }
-			  return std::nullopt;
 		};
 		// The cover of triangle t's centroid as the patch leaves the rings rounded: ground by
 		// groundAt, and each near blocked ring even-odd along a ray as the flood toggles. An

@@ -32,3 +32,16 @@ TEST(PatchableMeshHistory, PinnedStatesOverGeneratedHistories) {
 		EXPECT_EQ(history.value, kPinned[seed - 1]) << "seed " << seed;
 	}
 }
+
+// Two histories whose removes leave hole triangles past the arrangement, where the rounded
+// ground read once took its reference point (WOR-850): every state validates.
+TEST(PatchableMeshHistory, RemovesBesideARoundedReadValidate) {
+	for (const auto& history : std::array<std::pair<std::uint32_t, int>, 2>{{{566, 29}, {7503, 25}}}) {
+		const std::uint32_t seed  = history.first;
+		int					patch = 0;
+		runHistory(seed, history.second, [&](std::uint64_t, const std::string& valid) {
+			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
+			++patch;
+		});
+	}
+}
