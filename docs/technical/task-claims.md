@@ -438,13 +438,26 @@ again just outside, so nothing is built over.
 A foundation is built on bare ground. As it enters construction (`ConstructionSystem::bareSites`),
 every placed static still on its footprint leaves the placement index: one a colonist could carry (a
 stone) is dropped just outside as a loose pile, the way a pile is, and the rest (the freestanding
-grass, a rock) is removed with nothing to show for it. None of that is work for a colonist and none of
-it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
+grass, a rock) is removed with nothing to show for it. A packaged item lying on the footprint is set
+down just outside by the rule a colonist setting one down uses (walkable ground off every unbuilt
+footprint), its placement, if it has one, unchanged. The move decides "on the footprint" from the item's
+position, while the app's set-down rule tests the packaged footprint centre (the position less 0.375 m
+in y), so an item whose position lies up to 0.375 m outside an edge on the +y side is left in place.
+Three are left where they are: one a colonist
+carries (its position is where it was picked up), one a colonist's PlacePackaged task is on its way to
+fetch (moving it would leave his pickup at the old spot; he carries it off, and once he is carrying it he
+sets it down off the site if he drops the job, but if he drops the job before picking it up it stays
+on the site and is built over), and one whose placement is on the footprint (it is installed there). None of that
+is work for a colonist and none of it holds the site back. A foundation the dev tools complete at once is bared the same way, trees
 and bushes included.
 
-The footprint here is the foundation's bounding box (`FootprintBounds`), as it is for the clear gate,
-the clear goal, and the pile move: for a foundation that is not a rectangle, the ground inside the box
-and outside the floor is cleared and bared too.
+The footprint here is the foundation's ring (`FootprintBounds`), as it is for the clear gate, the
+clear goal, the pile move, and the drop planner: a thing is on the footprint when its position is
+inside the ring or on its edge, with the ring's bounding box as the broad phase. Nothing here has a
+body radius, so a tree whose centre stands just outside is left even if its canopy hangs over. For a
+foundation that is not a rectangle (an L, a diagonal strip), the ground inside its bounding box and
+outside the floor is neither cleared nor bared. "Just outside" is past the ring's nearest edge, which
+for an L can be the inner edge that opens onto the notch.
 
 ### Build and Deconstruct
 
@@ -578,8 +591,12 @@ keeps the surplus carried. A rule naming the item governs it alone: its max, min
 replace a category wildcard's for that item (`StorageConfiguration::forEachGoverningRule`), and the
 wildcard governs only the items no rule names. The configured max is summed over the governing rules,
 and one with no max makes the item unlimited. The storage dialog and the dev `storage` verb both remove
-a category's wildcard when a named rule for that category is added. A packaged box (being moved) needs nothing and is no pull source. A box keeps its
-umbrella, and so its root id, while it has rules, full or not: a full box simply needs nothing, and
+a category's wildcard when a named rule for that category is added. A packaged box (crafted and not
+yet placed, or being moved) needs nothing, is no pull source, and has no umbrella. Each goal system
+touches only the goals it owns: `StorageGoalSystem` retires a box's umbrella tree when the box is
+packaged, a packaged box with a spot holds only `BuildGoalSystem`'s PlacePackaged goal, and once the
+box is placed that goal goes and a new umbrella, under a new root id, follows. An installed box keeps
+its umbrella, and so its root id, while it has rules, full or not: a full box simply needs nothing, and
 goods on their way toward it, a suspended record's included, keep counting toward the same root when
 room returns. One helper, `GoalTaskRegistry::remainingNeed(world, root, item, basis)`, reads the
 target and what has landed from the world on every call (the station's next job and store, the

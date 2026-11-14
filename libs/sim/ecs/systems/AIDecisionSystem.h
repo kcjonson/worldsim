@@ -17,6 +17,7 @@
 #include "../EntityID.h"
 #include "../GoalTaskRegistry.h"
 #include "../ISystem.h"
+#include "../SetDownSpotCallback.h"
 #include "../components/MemoryQueries.h"
 #include "../components/Needs.h"
 #include "../components/SourceReachMemo.h"
@@ -296,9 +297,8 @@ public:
 	/// Set callback for dropping loose units on the ground when a chain is interrupted.
 	void setDropResourceCallback(DropResourceCallback callback) { onDropResource = std::move(callback); }
 
-	/// Where packaged furniture a colonist sets down at his feet (`at`) lands: walkable ground off every
-	/// unbuilt footprint, by the loose-drop rule. Unwired (unit contexts with no world behind them), at his feet.
-	using SetDownSpotCallback = std::function<glm::vec2(glm::vec2 at)>;
+	/// Where packaged furniture a colonist sets down at his feet lands. Unwired (unit contexts with no world
+	/// behind them), at his feet.
 	void setSetDownSpotCallback(SetDownSpotCallback callback) { onSetDownSpot = std::move(callback); }
 
 	/// When a harvestable the colonist remembers is ready to give its yield again while it regrows from

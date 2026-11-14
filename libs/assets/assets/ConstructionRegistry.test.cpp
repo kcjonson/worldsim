@@ -104,7 +104,7 @@ TEST_F(ConstructionRegistryTest, Rendering_RealFileValues) {
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.9F);
 	EXPECT_FLOAT_EQ(r.foundation.outlineWidthBuilt, 2.0F);
 	EXPECT_FLOAT_EQ(r.foundation.builtEdgeDarken, 0.55F);
-	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.97F);
+	EXPECT_FLOAT_EQ(r.wall.progressAlphaMax, 0.97F);
 	EXPECT_FLOAT_EQ(r.wall.builtEdgeDarken, 0.5F);
 	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.11F);
 	EXPECT_FLOAT_EQ(r.opening.mullionSpacingMeters, 0.7F);
@@ -150,7 +150,7 @@ TEST_F(ConstructionRegistryTest, Rendering_ParsesOverridesKeepsOtherDefaults) {
 	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.20F);
 	// Unspecified fields keep their built-in defaults.
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.85F);
-	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.97F);
+	EXPECT_FLOAT_EQ(r.wall.progressAlphaMax, 0.97F);
 	EXPECT_FLOAT_EQ(r.preview.vertexRadiusPx, 4.0F);
 }
 

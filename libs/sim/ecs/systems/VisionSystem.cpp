@@ -16,6 +16,8 @@
 #include "nav/NavCoords.h"
 
 #include <predicates/Predicates.h>
+#include <visibility/SightClip.h>
+#include <visibility/SightPolygon.h>
 
 #include <utils/Log.h>
 
@@ -120,9 +122,11 @@ namespace ecs {
 			//
 			// Find the opaque wall occluders within this observer's sight radius. The
 			// meters->mm boundary is crossed here (and only here) via NavCoords.
+			// The polygon reaches a rebuild step past sight, so a wall that far out counts.
 			const std::int64_t	   radiusMm = std::llround(static_cast<double>(memory.sightRadius) * 1000.0);
+			const std::int64_t	   polygonRadiusMm = std::llround(static_cast<double>(memory.sightRadius + kSightRebuildStepMeters) * 1000.0);
 			const geometry::Vec2i64 observerMm = nav::toMm(pos.value);
-			m_geometry.queryOccluders(observerMm, radiusMm, occluderScratch);
+			m_geometry.queryOccluders(observerMm, polygonRadiusMm, occluderScratch);
 			const bool outdoors = occluderScratch.empty();
 
 			// Outdoor fast path: no occluder anywhere in range means no polygon and no
@@ -145,17 +149,16 @@ namespace ecs {
 				entry.radius = memory.sightRadius;
 			} else {
 				// Rebuild conditions (D3): no usable polygon yet, the wall set changed
-				// (GeometryIndex generation moved), or the observer moved more than ~0.5 m
-				// from where the polygon was built. A stationary indoor colonist hits none
+				// (GeometryIndex generation moved), or the observer moved more than the rebuild
+				// step from where the polygon was built. A stationary indoor colonist hits none
 				// of these and reuses last tick's polygon.
-				const float	  dxc = pos.value.x - entry.builtPos.x;
-				const float	  dyc = pos.value.y - entry.builtPos.y;
-				const bool	  moved = (dxc * dxc + dyc * dyc) > (0.5F * 0.5F);
-				const bool	  staleGen = entry.builtVersion != m_geometry.generation();
-				const bool	  noPolygon = !entry.hadOccluders;
-				const bool	  polygonRebuilt = moved || staleGen || noPolygon;
+				const glm::vec2 moved = pos.value - entry.builtPos;
+				const bool		farFromBuild = moved.x * moved.x + moved.y * moved.y > kSightRebuildStepMeters * kSightRebuildStepMeters;
+				const bool		staleGen = entry.builtVersion != m_geometry.generation();
+				const bool		noPolygon = !entry.hadOccluders;
+				const bool		polygonRebuilt = farFromBuild || staleGen || noPolygon;
 				if (polygonRebuilt) {
-					entry.polygon = geometry::computeVisibilityPolygon(observerMm, radiusMm, occluderScratch);
+					entry.polygon = geometry::computeVisibilityPolygon(observerMm, polygonRadiusMm, occluderScratch);
 					entry.builtPos = pos.value;
 					entry.builtVersion = m_geometry.generation();
 					entry.hadOccluders = true;
@@ -212,13 +215,15 @@ namespace ecs {
 	void VisionSystem::rememberStructures(
 		geometry::Vec2i64					  centerMm,
 		std::int64_t						  radiusMm,
-		const geometry::Ring&				  polygon,
+		const geometry::Ring&				  builtPolygon,
 		Memory&								  memory,
 		std::vector<construction::SegmentId>& segments,
 		std::vector<construction::OpeningId>& openings
 	) {
 		segments.clear();
 		openings.clear();
+		// The polygon may reach a rebuild step past sight; what is seen is the part within it.
+		const geometry::Ring polygon = geometry::starClippedToConvex(builtPolygon, centerMm, geometry::sightPolygon(centerMm, radiusMm));
 		// Pass 0: structure-as-observable (vision-architecture D4). A wall or
 		// opening that bounds or intersects the visibility polygon is seen, and
 		// its stable construction id enters memory. Runs only for indoor

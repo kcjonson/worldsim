@@ -2,7 +2,6 @@
 
 #include "../offset/WallOffset.h" // simplifyRing
 #include "../predicates/Predicates.h"
-#include "SightPolygon.h"
 #include "Visibility.h"
 
 #include <algorithm>
@@ -69,30 +68,52 @@ namespace geometry {
 
 	} // namespace
 
-	Ring skirtedSightShape(const Ring& shape, const Vec2i64& centre, std::int64_t sightRadiusMm, std::int64_t skirtMm) {
+	Ring skirtedSightShape(const Ring& shape, const Vec2i64& centre, const Ring& outline, std::int64_t skirtMm) {
 		const std::size_t count = shape.size();
-		if (count < 3 || skirtMm < 2 || sightRadiusMm <= 0) {
+		if (count < 3 || skirtMm < 2) {
 			return {};
 		}
-		Ring rim = sightPolygon(centre, sightRadiusMm);
+		Ring rim = outline;
 		rim.erase(std::unique(rim.begin(), rim.end()), rim.end());
 		if (rim.size() >= 2 && rim.front() == rim.back()) {
 			rim.pop_back();
 		}
+		if (rim.size() < 3) {
+			return {};
+		}
+		std::size_t startVertex = 0;
+		for (std::size_t k = 1; k < rim.size(); ++k) {
+			if (angleLess(rim[k] - centre, rim[startVertex] - centre)) {
+				startVertex = k;
+			}
+		}
+		std::rotate(rim.begin(), rim.begin() + static_cast<std::ptrdiff_t>(startVertex), rim.end());
 		const std::size_t	 sides = rim.size();
 		std::vector<Vec2i64> rimDirections;
 		rimDirections.reserve(sides);
+		Int128 farthestRim = Int128::product(0, 0);
 		for (const Vec2i64& vertex : rim) {
 			rimDirections.push_back(vertex - centre);
+			farthestRim = std::max(farthestRim, dot(vertex - centre, vertex - centre));
 		}
-		// The rim side whose angular span holds `direction`; vertex 0 lies along +x, where angleLess
-		// starts, so nothing comes before it.
+		// The least whole millimetres at or beyond the rim's farthest vertex.
+		std::int64_t rimReachMm = static_cast<std::int64_t>(std::sqrt(farthestRim.toDouble()));
+		while (Int128::product(rimReachMm, rimReachMm) < farthestRim) {
+			++rimReachMm;
+		}
+		while (rimReachMm > 0 && !(Int128::product(rimReachMm - 1, rimReachMm - 1) < farthestRim)) {
+			--rimReachMm;
+		}
+		// The rim side whose angular span holds `direction`: the rim starts at its vertex nearest +x
+		// counter-clockwise, so a direction before it is in the last side, which spans +x.
 		auto rimSideOf = [&](const Vec2i64& direction) {
 			const auto after = std::upper_bound(rimDirections.begin(), rimDirections.end(), direction,
 												[](const Vec2i64& first, const Vec2i64& second) { return angleLess(first, second); });
-			return static_cast<std::size_t>(after - rimDirections.begin()) - 1;
+			return after == rimDirections.begin() ? sides - 1 : static_cast<std::size_t>(after - rimDirections.begin()) - 1;
 		};
-		auto onRimSide = [&](const Vec2i64& point, std::size_t side) { return withinDistanceOfSegment(point, rim[side], rim[(side + 1) % sides], 1); };
+		// A shape cut to the rim by starClippedToConvex has its crossings stepped up to a millimetre off
+		// the rim's side.
+		auto onRimSide = [&](const Vec2i64& point, std::size_t side) { return withinDistanceOfSegment(point, rim[side], rim[(side + 1) % sides], 2); };
 
 		// Each side of the shape off the rim moves out along its right-hand normal (the shape is
 		// counter-clockwise) by just under the skirt, so a hit snapped to the millimetre beyond it
@@ -214,8 +235,8 @@ namespace geometry {
 		// Along each direction, just clockwise of it and just counter-clockwise, the boundary's
 		// farthest point, held to the rim: past the rim by more than a millimetre it becomes the
 		// rim's point there, or the shape's own side on the rim where that lies farther out.
-		const std::int64_t extent	= sightRadiusMm + skirtMm + 2;
-		const Int128	   rimSlack = Int128::product(2 * sightRadiusMm + 1, 1);
+		const std::int64_t extent	= rimReachMm + skirtMm + 2;
+		const Int128	   rimSlack = Int128::product(2 * rimReachMm + 1, 1);
 		std::vector<Placed> placed;
 		placed.reserve(directions.size() * 2);
 		for (const Vec2i64& direction : directions) {

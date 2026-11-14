@@ -7,7 +7,8 @@
 //
 // Design:
 // - Runs periodically (not every frame)
-// - One goal per storage container with available capacity
+// - One umbrella goal per installed storage container with rules, full or not; none while it is packaged
+// - Touches only goals it owns: a packaged box's placement goal is BuildGoalSystem's
 // - Goal specifies what items the storage accepts (from StorageConfiguration)
 // - Colonists query goals and find fulfillment items in their Memory
 

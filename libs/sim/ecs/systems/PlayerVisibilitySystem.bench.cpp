@@ -267,6 +267,7 @@ namespace {
 			std::vector<double> tickMs;
 			tickMs.reserve(kTicks);
 			std::size_t mostPending = 0;
+			std::size_t mostSweeps	= 0;
 			// The slowest tick: its time, which tick, and what it registered and queued.
 			struct SlowestTick {
 				double		ms		   = 0.0;
@@ -302,6 +303,7 @@ namespace {
 				visibility.update(kTick);
 				tickMs.push_back(std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count());
 				mostPending = std::max(mostPending, visibility.seenArea().shapesPending());
+				mostSweeps	= std::max(mostSweeps, visibility.seenArea().sweepsWaiting());
 				if (tickMs.back() > slowest.ms) {
 					slowest = {tickMs.back(), tick, visibility.seenArea().ringsRegistered() - ringsBefore, visibility.footprintsEntered() - footprintsBefore};
 				}
@@ -310,10 +312,11 @@ namespace {
 			const TickTimes times = timesOf(tickMs);
 			std::fprintf(stderr,
 						 "[PlayerVisibility base] %d colonists at %.0fx: tick ms mean %.4f p99 %.4f max %.3f (tick %d: %zu rings registered, %zu footprints "
-						 "queued); rings %zu, dropped %zu, skipped %zu, footprints %zu, pending at most %zu and %zu at the end, seen %.0f m2\n",
+						 "queued); rings %zu, dropped %zu, skipped %zu, footprints %zu, pending at most %zu and %zu at the end, sweeps built %zu, waiting at most %zu and %zu at the end, seen %.0f m2\n",
 						 colonists, static_cast<double>(speed), times.mean, times.p99, times.most, slowest.tick, slowest.rings, slowest.footprints,
 						 visibility.seenArea().ringsRegistered(), visibility.seenArea().shapesDropped(), visibility.seenArea().shapesSkipped(),
-						 visibility.footprintsEntered(), mostPending, visibility.seenArea().shapesPending(), visibility.seenArea().committedSquareMeters());
+						 visibility.footprintsEntered(), mostPending, visibility.seenArea().shapesPending(), visibility.seenArea().sweepsBuilt(), mostSweeps,
+						 visibility.seenArea().sweepsWaiting(), visibility.seenArea().committedSquareMeters());
 			state.counters["meanMs"]  = times.mean;
 			state.counters["p99Ms"]	  = times.p99;
 			state.counters["maxMs"]	  = times.most;
