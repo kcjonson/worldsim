@@ -579,8 +579,8 @@ namespace geometry {
 		// smaller endpoint, with a distance from the other end taken as the rounded
 		// remainder of the length, so listing the segment either way round gives the
 		// same integer cutbacks and, through trimmedBand, the same corners.
-		std::vector<std::pair<std::int64_t, std::int64_t>> solidRuns(const WallSegment& segment, std::int64_t trimAtA,
-																	  std::int64_t trimAtB) {
+		std::vector<std::pair<std::int64_t, std::int64_t>> solidRuns(const WallSegment& segment, const std::vector<WallGap>& segmentGaps,
+																	  std::int64_t trimAtA, std::int64_t trimAtB) {
 			const double segmentLength = length(segment.b - segment.a);
 			const bool	 fromA		   = !(segment.b < segment.a);
 			auto		 fromOtherEnd  = [&](std::int64_t distance) {
@@ -588,8 +588,8 @@ namespace geometry {
 			};
 
 			std::vector<WallGap> gaps;
-			gaps.reserve(segment.gaps.size());
-			for (const WallGap& gap : segment.gaps) {
+			gaps.reserve(segmentGaps.size());
+			for (const WallGap& gap : segmentGaps) {
 				gaps.push_back(fromA ? gap : WallGap{fromOtherEnd(gap.toMm), fromOtherEnd(gap.fromMm)});
 			}
 			std::sort(gaps.begin(), gaps.end(), [](const WallGap& l, const WallGap& r) {
@@ -865,7 +865,6 @@ namespace geometry {
 		// Per segment, the trim distance accumulated at each end.
 		std::vector<std::int64_t> trimA(segCount, 0);
 		std::vector<std::int64_t> trimB(segCount, 0);
-		std::map<Vec2i64, std::size_t> polygonAt; // junction vertex -> index in result.junctions
 
 		// Resolve each junction; collect its polygon and fold trims into the
 		// per-segment per-end accumulators.
@@ -907,7 +906,6 @@ namespace geometry {
 				for (const Incidence& inc : incidences) {
 					incidentSegs.push_back(inc.segIndex);
 				}
-				polygonAt[vertex] = result.junctions.size();
 				result.junctions.push_back(std::move(poly));
 				result.junctionSegments.push_back(std::move(incidentSegs));
 			}
@@ -930,6 +928,20 @@ namespace geometry {
 			result.bands[i] = std::move(ring);
 		}
 
+		result.trimAtA = std::move(trimA);
+		result.trimAtB = std::move(trimB);
+
+		return result;
+	}
+
+	WallPiecesAndOutline wallPiecesAndOutline(const std::vector<WallSegment>& segments,
+											  const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands) {
+		WallPiecesAndOutline result;
+		const std::size_t	 segCount = segments.size();
+		assert(bands.status == OffsetStatus::Ok && bands.bands.size() == segCount);
+		assert(gaps.empty() || gaps.size() == segCount);
+		const std::vector<WallGap> noGaps;
+
 		// Pieces: each trimmed band less its gaps. A run that still makes no valid
 		// ring after rounding is dropped too.
 		constexpr std::size_t kNoTile = static_cast<std::size_t>(-1);
@@ -937,8 +949,10 @@ namespace geometry {
 		std::vector<std::size_t> endTileB(segCount, kNoTile);
 		result.pieces.resize(segCount);
 		for (std::size_t i = 0; i < segCount; ++i) {
-			const WallSegment& seg = segments[i];
-			for (const auto& [atA, atB] : solidRuns(seg, trimA[i], trimB[i])) {
+			const WallSegment& seg		 = segments[i];
+			const std::int64_t trimAtA = bands.trimAtA[i];
+			const std::int64_t trimAtB = bands.trimAtB[i];
+			for (const auto& [atA, atB] : solidRuns(seg, gaps.empty() ? noGaps : gaps[i], trimAtA, trimAtB)) {
 				Ring ring;
 				if (!trimmedBand(seg.a, seg.b, seg.halfThicknessMm, atA, atB, ring)) {
 					continue;
@@ -947,14 +961,32 @@ namespace geometry {
 				if (validateAndOrient(ring) != OffsetStatus::Ok) {
 					continue;
 				}
-				if (atA == trimA[i]) {
+				if (atA == trimAtA) {
 					endTileA[i] = result.pieces[i].size();
 				}
-				if (atB == trimB[i]) {
+				if (atB == trimAtB) {
 					endTileB[i] = result.pieces[i].size();
 				}
 				result.pieces[i].push_back(std::move(ring));
 			}
+		}
+
+		// The junctions again, as resolveWallBands grouped them, and where each
+		// polygon sits.
+		struct Incidence {
+			std::size_t segIndex;
+			bool		atA;
+		};
+		std::map<Vec2i64, std::vector<Incidence>> byVertex;
+		for (std::size_t i = 0; i < segCount; ++i) {
+			byVertex[segments[i].a].push_back({i, true});
+			byVertex[segments[i].b].push_back({i, false});
+		}
+		std::map<Vec2i64, std::size_t> polygonAt;
+		for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
+			const WallSegment& first  = segments[bands.junctionSegments[j][0]];
+			const WallSegment& second = segments[bands.junctionSegments[j][1]];
+			polygonAt[(first.a == second.a || first.a == second.b) ? first.a : first.b] = j;
 		}
 
 		// Outline tiles: every piece, then every junction polygon.
@@ -976,7 +1008,7 @@ namespace geometry {
 			std::vector<std::size_t> meeting;
 			const auto				 polygon = polygonAt.find(vertex);
 			if (polygon != polygonAt.end()) {
-				const Ring& ring = result.junctions[polygon->second];
+				const Ring& ring = bands.junctions[polygon->second];
 				std::vector<std::pair<Vec2i64, std::size_t>> directions;
 				for (const Incidence& inc : incidences) {
 					const WallSegment& seg = segments[inc.segIndex];

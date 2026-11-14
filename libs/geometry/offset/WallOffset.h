@@ -23,7 +23,7 @@
 namespace geometry {
 
 	// A span of a wall's centerline left open (a door or window), in mm from the
-	// segment's `a` end. The same span on the segment listed b to a, length L, is
+	// segment's `a` end. Only wallPiecesAndOutline reads gaps. The same span on the segment listed b to a, length L, is
 	// {round(L - toMm), round(L - fromMm)}, and resolves identically.
 	struct WallGap {
 		std::int64_t fromMm = 0;
@@ -32,13 +32,11 @@ namespace geometry {
 
 	// A wall centerline segment with its per-segment half-thickness. Thickness is
 	// per segment (presets like 0.2 m / 0.4 m -> 100/200 mm half), so two segments
-	// at one junction may differ. `a` and `b` are the centerline endpoints. `gaps`
-	// shape only WallBands::pieces and WallBands::outline; `bands` stays whole.
+	// at one junction may differ. `a` and `b` are the centerline endpoints.
 	struct WallSegment {
-		Vec2i64				 a;
-		Vec2i64				 b;
-		std::int64_t		 halfThicknessMm = 0;
-		std::vector<WallGap> gaps;
+		Vec2i64		 a;
+		Vec2i64		 b;
+		std::int64_t halfThicknessMm = 0;
 	};
 
 	// One edge of the joined wall shape's boundary, with the wall on its left.
@@ -131,6 +129,26 @@ namespace geometry {
 		// with `junctions`. Lets a renderer style a junction from its own segments
 		// (e.g. built vs blueprint, material) instead of a graph-wide flag.
 		std::vector<std::vector<std::size_t>> junctionSegments;
+		// Per segment, how far its band is cut back from `a` and from `b`.
+		std::vector<std::int64_t> trimAtA;
+		std::vector<std::int64_t> trimAtB;
+	};
+
+	// Orchestrate band + junction resolution over a list of segments that share
+	// endpoint vertices. Junctions are derived by grouping segments with an equal
+	// endpoint (exact Vec2i64 ==, the whole point of integer quantization).
+	// Every band and junction ring is validated: simple, CCW, non-zero area; any
+	// degenerate result sets a failing status and returns (reject-don't-repair,
+	// D4). After validation each ring is simplified (collinear-vertex collapse,
+	// sub-mm sliver drop) per the Clipper2 post-op concept (D2). This is all nav
+	// needs; the drawn shape, cut at openings and outlined, is
+	// wallPiecesAndOutline's. Apart from segment indices and where a ring's vertex
+	// list starts, nothing in the result depends on segment order or on which end
+	// of a segment is `a`.
+	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
+
+	// The drawn shape of a resolved wall graph, cut at its openings.
+	struct WallPiecesAndOutline {
 		// Per segment, its trimmed band less the segment's gaps, in order along it.
 		// A gap is clamped to the trimmed band: the junction at a corner stays
 		// whole even when a gap reaches into its trim. Just the band when there are
@@ -138,7 +156,7 @@ namespace geometry {
 		// of the trimmed band is ignored, and a run under 6 mm beside a gap is
 		// dropped, not rejected.
 		std::vector<std::vector<Ring>> pieces;
-		// The boundary of the union of `pieces` and `junctions`, built from those
+		// The boundary of the union of `pieces` and the junctions, built from those
 		// same rings (where two rings meeting at a vertex round one corner up to
 		// 3 mm apart, it uses the lower of the two points), as closed loops listed
 		// one after another, each in walking order
@@ -153,17 +171,12 @@ namespace geometry {
 		std::vector<OutlineEdge> outline;
 	};
 
-	// Orchestrate band + junction resolution over a list of segments that share
-	// endpoint vertices. Junctions are derived by grouping segments with an equal
-	// endpoint (exact Vec2i64 ==, the whole point of integer quantization).
-	// Every band and junction ring is validated: simple, CCW, non-zero area; any
-	// degenerate result sets a failing status and returns (reject-don't-repair,
-	// D4). After validation each ring is simplified (collinear-vertex collapse,
-	// sub-mm sliver drop) per the Clipper2 post-op concept (D2). `bands` and
-	// `junctions` ignore gaps; `pieces` and `outline` honour them. Apart from
-	// segment indices and where a ring's vertex list starts, nothing in the result
-	// depends on segment order or on which end of a segment is `a`.
-	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
+	// Pieces and outline for `segments` as `bands` (their resolveWallBands result,
+	// status Ok) resolved them, cut at `gaps`: one list per segment in the same
+	// order, or no lists at all for no openings. Render only; nav does not call it.
+	// Like resolveWallBands it does not depend on segment order or direction.
+	WallPiecesAndOutline wallPiecesAndOutline(const std::vector<WallSegment>& segments,
+											  const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands);
 
 	// Simplification pass (Clipper2 concept, D2): drop collinear vertices and
 	// vertices within `epsilonMm` of the kept outline (sub-mm slivers from

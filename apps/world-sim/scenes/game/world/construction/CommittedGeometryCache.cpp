@@ -237,13 +237,14 @@ namespace world_sim {
 		}
 
 		for (const auto& [root, members] : graphs) {
-			std::vector<geometry::WallSegment> offsetSegs;
+			std::vector<geometry::WallSegment>			offsetSegs;
+			std::vector<std::vector<geometry::WallGap>> offsetGaps;
 			offsetSegs.reserve(members.size());
+			offsetGaps.reserve(members.size());
 			for (const std::size_t i : members) {
 				const ec::WallSegment& wseg = segs[i];
-				offsetSegs.push_back(
-					{world.getVertex(wseg.v0)->pos, world.getVertex(wseg.v1)->pos, halfThicknessMm(wseg), openingGaps(world, wseg)}
-				);
+				offsetSegs.push_back({world.getVertex(wseg.v0)->pos, world.getVertex(wseg.v1)->pos, halfThicknessMm(wseg)});
+				offsetGaps.push_back(openingGaps(world, wseg));
 			}
 
 			const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
@@ -261,9 +262,10 @@ namespace world_sim {
 				}
 				continue;
 			}
+			const geometry::WallPiecesAndOutline shape = geometry::wallPiecesAndOutline(offsetSegs, offsetGaps, bands);
 
 			// One geometry per segment: its pieces (the band cut at its openings),
-			// the junctions it owns, and its share of the outline. bands.pieces[k]
+			// the junctions it owns, and its share of the outline. shape.pieces[k]
 			// and outline/junction indices k refer to members[k].
 			std::vector<WallBandGeom> graphWalls(members.size());
 			for (std::size_t k = 0; k < members.size(); ++k) {
@@ -272,11 +274,11 @@ namespace world_sim {
 				g.matColor = materialColor(wseg.material, style.wall.fallbackColor);
 				g.built = (wseg.state == ec::FoundationState::Built);
 				g.entity = wseg.entity;
-				for (const geometry::Ring& piece : bands.pieces[k]) {
+				for (const geometry::Ring& piece : shape.pieces[k]) {
 					g.rings.push_back(dequantizeRing(piece));
 				}
 			}
-			for (const geometry::OutlineEdge& edge : bands.outline) {
+			for (const geometry::OutlineEdge& edge : shape.outline) {
 				graphWalls[edge.index].outline.push_back({toWorld(edge.from), toWorld(edge.to)});
 			}
 

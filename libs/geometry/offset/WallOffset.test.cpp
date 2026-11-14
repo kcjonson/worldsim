@@ -631,7 +631,26 @@ namespace {
 		return false;
 	}
 
-	std::vector<Ring> wallShape(const WallBands& wb) {
+	// resolveWallBands and then wallPiecesAndOutline, the way the renderer calls
+	// them.
+	struct Resolved : WallBands {
+		std::vector<std::vector<Ring>> pieces;
+		std::vector<OutlineEdge>	   outline;
+	};
+
+	Resolved resolveDrawn(const std::vector<WallSegment>& segments, double miterLimit,
+						  const std::vector<std::vector<WallGap>>& gaps = {}) {
+		Resolved resolved;
+		static_cast<WallBands&>(resolved) = resolveWallBands(segments, miterLimit);
+		if (resolved.status == OffsetStatus::Ok) {
+			WallPiecesAndOutline shape = wallPiecesAndOutline(segments, gaps, resolved);
+			resolved.pieces			   = std::move(shape.pieces);
+			resolved.outline		   = std::move(shape.outline);
+		}
+		return resolved;
+	}
+
+	std::vector<Ring> wallShape(const Resolved& wb) {
 		std::vector<Ring> all;
 		for (const std::vector<Ring>& pieces : wb.pieces) {
 			all.insert(all.end(), pieces.begin(), pieces.end());
@@ -640,7 +659,7 @@ namespace {
 		return all;
 	}
 
-	double outlineLength(const WallBands& wb) {
+	double outlineLength(const Resolved& wb) {
 		double total = 0.0;
 		for (const OutlineEdge& e : wb.outline) {
 			total += std::hypot(static_cast<double>(e.to.x - e.from.x), static_cast<double>(e.to.y - e.from.y));
@@ -652,7 +671,7 @@ namespace {
 	// its left: a few mm to the left of its middle is wall, to the right is not. A
 	// seam between two pieces has wall on both sides and fails. Edges of a few mm
 	// (where rounding left two rings' corners a mm apart) are too short to probe.
-	void expectOutlineOnBoundary(const WallBands& wb) {
+	void expectOutlineOnBoundary(const Resolved& wb) {
 		const std::vector<Ring> shape = wallShape(wb);
 		for (const OutlineEdge& e : wb.outline) {
 			const double dx	 = static_cast<double>(e.to.x - e.from.x);
@@ -682,7 +701,7 @@ TEST(Junction, StraightMixedThicknessStepsWithoutSeam) {
 		{{0, 0}, {1000, 0}, 75},
 		{{1000, 0}, {2000, 0}, 150},
 	};
-	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
 	ASSERT_EQ(wb.status, OffsetStatus::Ok);
 	EXPECT_TRUE(wb.junctions.empty());
 	expectAllRingsValid(wb);
@@ -703,7 +722,7 @@ TEST(Junction, NearStraightMixedThicknessStaysLocal) {
 		{{0, 0}, {1000, 0}, 75},
 		{{1000, 0}, {2000, 50}, 150},
 	};
-	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
 	ASSERT_EQ(wb.status, OffsetStatus::Ok) << "status=" << static_cast<int>(wb.status);
 	expectAllRingsValid(wb);
 	expectExactPairwiseDisjoint(wb);
@@ -719,7 +738,7 @@ TEST(Junction, NearStraightMixedThicknessStaysLocal) {
 		{{0, 0}, {1000, 0}, 75},
 		{{1000, 0}, {2000, -50}, 150},
 	};
-	WallBands other = resolveWallBands(mirrored, kDefaultMiterLimit);
+	Resolved other = resolveDrawn(mirrored, kDefaultMiterLimit);
 	ASSERT_EQ(other.status, OffsetStatus::Ok);
 	expectAllRingsValid(other);
 	expectExactPairwiseDisjoint(other);
@@ -733,7 +752,7 @@ TEST(Junction, ObtuseMixedThicknessTiles) {
 		{{-1000, 0}, {0, 0}, 75},
 		{{0, 0}, {707, 707}, 150},
 	};
-	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
 	ASSERT_EQ(wb.status, OffsetStatus::Ok);
 	ASSERT_EQ(wb.junctions.size(), 1u);
 	expectAllRingsValid(wb);
@@ -750,7 +769,7 @@ TEST(Outline, RightAngleCornerHasNoSeams) {
 		{{1000, 0}, {0, 0}, 100},
 		{{0, 0}, {0, 1000}, 100},
 	};
-	WallBands wb = resolveWallBands(segs, kDefaultMiterLimit);
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
 	ASSERT_EQ(wb.status, OffsetStatus::Ok);
 	expectOutlineOnBoundary(wb);
 	// 1100 + 1100 outer, 900 + 900 inner, two 200 free caps.
@@ -763,7 +782,7 @@ TEST(Outline, TeeCrossAndRoomHaveNoSeams) {
 		{{0, 0}, {-1000, 0}, 100},
 		{{0, 0}, {0, 1000}, 100},
 	};
-	WallBands teeBands = resolveWallBands(tee, kDefaultMiterLimit);
+	Resolved teeBands = resolveDrawn(tee, kDefaultMiterLimit);
 	ASSERT_EQ(teeBands.status, OffsetStatus::Ok);
 	expectOutlineOnBoundary(teeBands);
 	// Flat side 2000, two inner runs of 900 each side of the stem, stem faces
@@ -776,7 +795,7 @@ TEST(Outline, TeeCrossAndRoomHaveNoSeams) {
 		{{0, 0}, {0, 1000}, 120},
 		{{0, 0}, {0, -1000}, 80},
 	};
-	WallBands crossBands = resolveWallBands(cross, kDefaultMiterLimit);
+	Resolved crossBands = resolveDrawn(cross, kDefaultMiterLimit);
 	ASSERT_EQ(crossBands.status, OffsetStatus::Ok);
 	expectOutlineOnBoundary(crossBands);
 
@@ -786,7 +805,7 @@ TEST(Outline, TeeCrossAndRoomHaveNoSeams) {
 		{{1000, 1000}, {0, 1000}, 100},
 		{{0, 1000}, {0, 0}, 100},
 	};
-	WallBands roomBands = resolveWallBands(room, kDefaultMiterLimit);
+	Resolved roomBands = resolveDrawn(room, kDefaultMiterLimit);
 	ASSERT_EQ(roomBands.status, OffsetStatus::Ok);
 	expectOutlineOnBoundary(roomBands);
 	// Outer square 4 * 1200 plus inner square 4 * 800.
@@ -798,11 +817,11 @@ TEST(Outline, SharpAndMixedCornersHaveNoSeams) {
 		{{1000, 0}, {0, 0}, 100},
 		{{0, 0}, {819, 574}, 100},
 	};
-	WallBands sharpBands = resolveWallBands(sharp, kDefaultMiterLimit);
+	Resolved sharpBands = resolveDrawn(sharp, kDefaultMiterLimit);
 	ASSERT_EQ(sharpBands.status, OffsetStatus::Ok);
 	expectOutlineOnBoundary(sharpBands);
 
-	WallBands beveled = resolveWallBands(sharp, 2.0);
+	Resolved beveled = resolveDrawn(sharp, 2.0);
 	ASSERT_EQ(beveled.status, OffsetStatus::Ok);
 	expectOutlineOnBoundary(beveled);
 
@@ -810,7 +829,7 @@ TEST(Outline, SharpAndMixedCornersHaveNoSeams) {
 		{{1000, 0}, {0, 0}, 75},
 		{{0, 0}, {0, 1000}, 150},
 	};
-	WallBands mixedBands = resolveWallBands(mixedCorner, kDefaultMiterLimit);
+	Resolved mixedBands = resolveDrawn(mixedCorner, kDefaultMiterLimit);
 	ASSERT_EQ(mixedBands.status, OffsetStatus::Ok);
 	expectAllRingsValid(mixedBands);
 	expectExactPairwiseDisjoint(mixedBands);
@@ -819,7 +838,7 @@ TEST(Outline, SharpAndMixedCornersHaveNoSeams) {
 
 TEST(Outline, FreeSegmentIsItsRectangle) {
 	std::vector<WallSegment> segs = {{{0, 0}, {1000, 0}, 100}};
-	WallBands				 wb	  = resolveWallBands(segs, kDefaultMiterLimit);
+	Resolved				 wb	  = resolveDrawn(segs, kDefaultMiterLimit);
 	ASSERT_EQ(wb.status, OffsetStatus::Ok);
 	ASSERT_EQ(wb.pieces.size(), 1u);
 	ASSERT_EQ(wb.pieces[0].size(), 1u);
@@ -835,10 +854,8 @@ TEST(Gaps, OpeningBesideCornerKeepsTheCornerTrim) {
 	// corner at (1500,0). The piece between the gap and the corner keeps the
 	// junction's cutback, so it meets the junction polygon instead of
 	// overlapping it, and the gap's edges are outline.
-	WallSegment door{{0, 0}, {1500, 0}, 100};
-	door.gaps.push_back({300, 1200});
-	std::vector<WallSegment> segs = {door, {{1500, 0}, {1500, 1500}, 100}};
-	WallBands				 wb	  = resolveWallBands(segs, kDefaultMiterLimit);
+	std::vector<WallSegment> segs = {{{0, 0}, {1500, 0}, 100}, {{1500, 0}, {1500, 1500}, 100}};
+	Resolved				 wb	  = resolveDrawn(segs, kDefaultMiterLimit, {{{300, 1200}}, {}});
 	ASSERT_EQ(wb.status, OffsetStatus::Ok);
 	ASSERT_EQ(wb.pieces[0].size(), 2u);
 	ASSERT_EQ(wb.pieces[1].size(), 1u);
@@ -859,10 +876,8 @@ TEST(Gaps, OpeningBesideCornerKeepsTheCornerTrim) {
 }
 
 TEST(Gaps, OverlappingAndOverhangingGapsMerge) {
-	WallSegment seg{{0, 0}, {2000, 0}, 100};
-	seg.gaps = {{1500, 2500}, {-100, 200}, {150, 400}};
-	std::vector<WallSegment> segs = {seg};
-	WallBands				 wb	  = resolveWallBands(segs, kDefaultMiterLimit);
+	std::vector<WallSegment> segs = {{{0, 0}, {2000, 0}, 100}};
+	Resolved				 wb	  = resolveDrawn(segs, kDefaultMiterLimit, {{{1500, 2500}, {-100, 200}, {150, 400}}});
 	ASSERT_EQ(wb.status, OffsetStatus::Ok);
 	ASSERT_EQ(wb.pieces[0].size(), 1u);
 	EXPECT_NEAR(totalAreaDoubled(wb.pieces[0]), 2.0 * 1100.0 * 200.0, 1.0);
@@ -921,12 +936,21 @@ namespace {
 		return segments;
 	}
 
-	std::string describe(const std::vector<WallSegment>& segments) {
+	// One list of gaps per segment, or none at all.
+	using Gaps = std::vector<std::vector<WallGap>>;
+
+	const std::vector<WallGap>& gapsOf(const Gaps& gaps, std::size_t segment) {
+		static const std::vector<WallGap> kNone;
+		return gaps.empty() ? kNone : gaps[segment];
+	}
+
+	std::string describe(const std::vector<WallSegment>& segments, const Gaps& gaps) {
 		std::string text;
-		for (const WallSegment& s : segments) {
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			const WallSegment& s = segments[i];
 			text += "(" + std::to_string(s.a.x) + "," + std::to_string(s.a.y) + ")->(" + std::to_string(s.b.x) + "," +
 					std::to_string(s.b.y) + ") h" + std::to_string(s.halfThicknessMm);
-			for (const WallGap& gap : s.gaps) {
+			for (const WallGap& gap : gapsOf(gaps, i)) {
 				text += " gap " + std::to_string(gap.fromMm) + ".." + std::to_string(gap.toMm);
 			}
 			text += "; ";
@@ -1153,7 +1177,7 @@ namespace {
 	// (c): the outline is closed loops, one after another, each with the wall on
 	// its left; the loops' signed areas add up to the union's area and their
 	// length to its perimeter.
-	std::string checkOutline(const WallBands& wb) {
+	std::string checkOutline(const Resolved& wb) {
 		const std::vector<Ring> shape = wallShape(wb);
 		std::string				problem;
 		double					length = 0.0;
@@ -1206,7 +1230,7 @@ namespace {
 
 	// (d): each segment's pieces are its trimmed band less its gaps: inside the
 	// band, clear of every gap, apart from each other, and covering the rest.
-	std::string checkPieces(const std::vector<WallSegment>& segments, const WallBands& wb) {
+	std::string checkPieces(const std::vector<WallSegment>& segments, const Gaps& gaps, const Resolved& wb) {
 		for (std::size_t i = 0; i < segments.size(); ++i) {
 			const WallSegment& seg	  = segments[i];
 			const double	   length = distanceBetween(seg.a, seg.b);
@@ -1226,7 +1250,7 @@ namespace {
 			}
 
 			std::vector<std::pair<double, double>> open;
-			for (const WallGap& gap : seg.gaps) {
+			for (const WallGap& gap : gapsOf(gaps, i)) {
 				const double from = std::max(bandFrom, static_cast<double>(gap.fromMm));
 				const double to	  = std::min(bandTo, static_cast<double>(gap.toMm));
 				if (to - from >= 6.5) { // a smaller opening is ignored, give or take rounding
@@ -1277,7 +1301,7 @@ namespace {
 			const double actual	  = totalAreaDoubled(wb.pieces[i]) * 0.5;
 			// Each end within rounding, and each gap may have swallowed a run under
 			// 6 mm on either side or been ignored at the threshold.
-			const double slack = 2.0 * static_cast<double>(wb.pieces[i].size() + 1) + 14.0 * static_cast<double>(seg.gaps.size());
+			const double slack = 2.0 * static_cast<double>(wb.pieces[i].size() + 1) + 14.0 * static_cast<double>(gapsOf(gaps, i).size());
 			if (std::abs(actual - expected) > slack * width) {
 				return "segment " + std::to_string(i) + " pieces cover " + std::to_string(actual) + " mm2, expected " +
 					   std::to_string(expected);
@@ -1303,7 +1327,7 @@ namespace {
 		bool operator==(const Canonical&) const = default;
 	};
 
-	Canonical canonical(const WallBands& wb, const std::vector<std::size_t>& original) {
+	Canonical canonical(const Resolved& wb, const std::vector<std::size_t>& original) {
 		Canonical result;
 		result.bands.resize(wb.bands.size());
 		result.pieces.resize(wb.bands.size());
@@ -1330,35 +1354,40 @@ namespace {
 		return result;
 	}
 
-	WallSegment reversed(const WallSegment& seg) {
-		const double length = distanceBetween(seg.a, seg.b);
-		WallSegment	 flipped{seg.b, seg.a, seg.halfThicknessMm};
-		for (const WallGap& gap : seg.gaps) {
+	// A segment's gaps measured from its other end.
+	std::vector<WallGap> reversedGaps(const WallSegment& seg, const std::vector<WallGap>& gaps) {
+		const double		 length = distanceBetween(seg.a, seg.b);
+		std::vector<WallGap> flipped;
+		for (const WallGap& gap : gaps) {
 			const std::int64_t from = std::llround(length - static_cast<double>(gap.toMm));
 			const std::int64_t to	= std::llround(length - static_cast<double>(gap.fromMm));
-			flipped.gaps.push_back({from, to});
+			flipped.push_back({from, to});
 		}
 		return flipped;
 	}
 
 	// (e): reversing every segment and listing them in another order gives the
 	// same geometry, exactly.
-	std::string checkInvariance(const std::vector<WallSegment>& segments, const WallBands& wb, std::mt19937& rng) {
+	std::string checkInvariance(const std::vector<WallSegment>& segments, const Gaps& gaps, const Resolved& wb,
+								std::mt19937& rng) {
 		std::vector<std::size_t> original(segments.size());
 		for (std::size_t i = 0; i < original.size(); ++i) {
 			original[i] = i;
 		}
 		std::shuffle(original.begin(), original.end(), rng);
 		std::vector<WallSegment> shuffled;
+		Gaps					 shuffledGaps;
 		for (std::size_t i = 0; i < original.size(); ++i) {
-			const WallSegment& seg = segments[original[i]];
-			shuffled.push_back(i % 2 == 0 ? reversed(seg) : seg);
+			const WallSegment&			seg		  = segments[original[i]];
+			const std::vector<WallGap>& segGaps = gapsOf(gaps, original[i]);
+			shuffled.push_back(i % 2 == 0 ? WallSegment{seg.b, seg.a, seg.halfThicknessMm} : seg);
+			shuffledGaps.push_back(i % 2 == 0 ? reversedGaps(seg, segGaps) : segGaps);
 		}
 		std::vector<std::size_t> identity(segments.size());
 		for (std::size_t i = 0; i < identity.size(); ++i) {
 			identity[i] = i;
 		}
-		const WallBands other = resolveWallBands(shuffled, kDefaultMiterLimit);
+		const Resolved other = resolveDrawn(shuffled, kDefaultMiterLimit, shuffledGaps);
 		if (other.status != wb.status) {
 			return "reordered input resolves with another status";
 		}
@@ -1373,12 +1402,12 @@ namespace {
 		int						 failed = 0;
 		std::vector<std::string> examples;
 
-		void check(const std::vector<WallSegment>& segments, const std::string& problem) {
+		void check(const std::vector<WallSegment>& segments, const Gaps& gaps, const std::string& problem) {
 			++inputs;
 			if (!problem.empty()) {
 				++failed;
 				if (examples.size() < 5) {
-					examples.push_back(problem + " | " + describe(segments));
+					examples.push_back(problem + " | " + describe(segments, gaps));
 				}
 			}
 		}
@@ -1392,17 +1421,17 @@ namespace {
 		}
 	};
 
-	std::string checkAll(const std::vector<WallSegment>& segments, std::mt19937& rng) {
-		const WallBands wb = resolveWallBands(segments, kDefaultMiterLimit);
+	std::string checkAll(const std::vector<WallSegment>& segments, const Gaps& gaps, std::mt19937& rng) {
+		const Resolved wb = resolveDrawn(segments, kDefaultMiterLimit, gaps);
 		std::string		problem = checkTiles(segments, wb, kDefaultMiterLimit);
 		if (problem.empty()) {
-			problem = checkPieces(segments, wb);
+			problem = checkPieces(segments, gaps, wb);
 		}
 		if (problem.empty()) {
 			problem = checkOutline(wb);
 		}
 		if (problem.empty()) {
-			problem = checkInvariance(segments, wb, rng);
+			problem = checkInvariance(segments, gaps, wb, rng);
 		}
 		return problem;
 	}
@@ -1446,7 +1475,7 @@ TEST(WallProperties, DegreeTwoAcrossTheLegalRange) {
 				const bool	 flip = index % 2 == 1;
 				++index;
 				const std::vector<WallSegment> segments = star({{base, first, true}, {base + corner, second, !flip}});
-				sweep.check(segments, checkAll(segments, rng));
+				sweep.check(segments, {}, checkAll(segments, {}, rng));
 			}
 		}
 	}
@@ -1467,7 +1496,7 @@ TEST(WallProperties, NearStraightJoinsResolveLocally) {
 						for (const bool flip : {false, true}) {
 							const std::vector<WallSegment> segments =
 								star({{base, first, true}, {base + 180.0 + side * offset, second, !flip}});
-							sweep.check(segments, checkAll(segments, rng));
+							sweep.check(segments, {}, checkAll(segments, {}, rng));
 						}
 					}
 				}
@@ -1478,7 +1507,7 @@ TEST(WallProperties, NearStraightJoinsResolveLocally) {
 	for (const double offset : {-5.0, -1.0, -0.1, 0.1, 1.0, 5.0}) {
 		for (const double stem : {60.0, 90.0, 135.0, 270.0}) {
 			const std::vector<WallSegment> segments = star({{0.0, 75, true}, {180.0 + offset, 150, false}, {stem, 100, true}});
-			sweep.check(segments, checkAll(segments, rng));
+			sweep.check(segments, {}, checkAll(segments, {}, rng));
 		}
 	}
 	// Two arms of one thickness 0.03 degrees off straight in a junction of five:
@@ -1487,7 +1516,7 @@ TEST(WallProperties, NearStraightJoinsResolveLocally) {
 		{{826, -1821}, {0, 0}, 75},	  {{1954, 425}, {0, 0}, 150},	 {{0, 0}, {-1252, -1560}, 75},
 		{{1775, -921}, {0, 0}, 150}, {{1251, 1560}, {0, 0}, 75},
 	};
-	sweep.check(equalPair, checkAll(equalPair, rng));
+	sweep.check(equalPair, {}, checkAll(equalPair, {}, rng));
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
 }
 
@@ -1500,16 +1529,17 @@ TEST(WallProperties, HigherDegreeJunctions) {
 			if (static_cast<int>(arms.size()) < degree) {
 				continue;
 			}
-			std::vector<WallSegment> segments = star(arms);
-			sweep.check(segments, checkAll(segments, rng));
+			const std::vector<WallSegment> segments = star(arms);
+			sweep.check(segments, {}, checkAll(segments, {}, rng));
 			// The same junction with an opening somewhere along each arm, at times
 			// reaching into the junction's trim.
-			for (WallSegment& seg : segments) {
+			Gaps gaps;
+			for (std::size_t i = 0; i < segments.size(); ++i) {
 				const std::int64_t from	 = static_cast<std::int64_t>(rng() % 1600);
 				const std::int64_t width = 300 + static_cast<std::int64_t>(rng() % 600);
-				seg.gaps				 = {{from, from + width}};
+				gaps.push_back({{from, from + width}});
 			}
-			sweep.check(segments, checkAll(segments, rng));
+			sweep.check(segments, gaps, checkAll(segments, gaps, rng));
 		}
 	}
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
@@ -1537,7 +1567,7 @@ TEST(WallProperties, GapsCutPiecesAndKeepTheOutlineClosed) {
 	for (const std::vector<Arm>& arms : shapes) {
 		const std::vector<WallSegment> plain = star(arms);
 		const WallBands				   bands = resolveWallBands(plain, kDefaultMiterLimit);
-		ASSERT_EQ(bands.status, OffsetStatus::Ok) << describe(plain);
+		ASSERT_EQ(bands.status, OffsetStatus::Ok) << describe(plain, {});
 		// Where the first arm's band starts and ends, measured from its `a`.
 		const WallSegment& first  = plain[0];
 		const double	   length = distanceBetween(first.a, first.b);
@@ -1565,14 +1595,14 @@ TEST(WallProperties, GapsCutPiecesAndKeepTheOutlineClosed) {
 			{{start + 4, end - 4}},
 			{{-10, whole + 10}},
 		};
-		for (const std::vector<WallGap>& gaps : families) {
-			std::vector<WallSegment> segments = plain;
-			segments[0].gaps				  = gaps;
-			sweep.check(segments, checkAll(segments, rng));
-			for (std::size_t i = 1; i < segments.size(); ++i) {
-				segments[i].gaps = {{900, 1500}};
+		for (const std::vector<WallGap>& family : families) {
+			Gaps gaps(plain.size());
+			gaps[0] = family;
+			sweep.check(plain, gaps, checkAll(plain, gaps, rng));
+			for (std::size_t i = 1; i < plain.size(); ++i) {
+				gaps[i] = {{900, 1500}};
 			}
-			sweep.check(segments, checkAll(segments, rng));
+			sweep.check(plain, gaps, checkAll(plain, gaps, rng));
 		}
 	}
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
@@ -1581,15 +1611,15 @@ TEST(WallProperties, GapsCutPiecesAndKeepTheOutlineClosed) {
 TEST(WallProperties, ClosedRoomOutlinesOutsideAndInside) {
 	// A closed room is an annulus: one loop counter-clockwise round the outside,
 	// one clockwise round the inside, and a door makes it one loop again.
-	std::vector<WallSegment> room = {
+	const std::vector<WallSegment> room = {
 		{{0, 0}, {4000, 0}, 100},
 		{{4000, 0}, {4000, 3000}, 150},
 		{{4000, 3000}, {0, 3000}, 100},
 		{{0, 3000}, {0, 0}, 75},
 	};
 	std::mt19937 rng(3);
-	EXPECT_EQ(checkAll(room, rng), "");
-	const WallBands closed = resolveWallBands(room, kDefaultMiterLimit);
+	EXPECT_EQ(checkAll(room, {}, rng), "");
+	const Resolved closed = resolveDrawn(room, kDefaultMiterLimit);
 	ASSERT_EQ(closed.status, OffsetStatus::Ok);
 	std::string			problem;
 	std::vector<double> loopAreas;
@@ -1605,8 +1635,7 @@ TEST(WallProperties, ClosedRoomOutlinesOutsideAndInside) {
 	EXPECT_EQ(std::count_if(loopAreas.begin(), loopAreas.end(), [](double a) { return a > 0.0; }), 1);
 	EXPECT_EQ(std::count_if(loopAreas.begin(), loopAreas.end(), [](double a) { return a < 0.0; }), 1);
 
-	room[0].gaps = {{1500, 2400}};
-	EXPECT_EQ(checkAll(room, rng), "");
+	EXPECT_EQ(checkAll(room, {{{1500, 2400}}, {}, {}, {}}, rng), "");
 }
 
 TEST(WallProperties, NearStraightMixedJoinIsAShortStep) {
