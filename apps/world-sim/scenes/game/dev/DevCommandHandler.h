@@ -182,7 +182,6 @@ namespace world_sim {
 		static float						 parseDuration(const std::string& spec);
 		static Foundation::Vec2				 parsePoint(const std::string& spec);
 		static Foundation::Vec2				 spreadOffset(long i, long n, float radius);
-		static std::vector<Foundation::Vec2> parsePointList(const std::string& spec);
 		static std::string					 jsonEscape(const std::string& s);
 
 		DevCommandContext m_ctx;
