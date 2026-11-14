@@ -14,6 +14,8 @@
 #include <core/Vec2i64.h>
 #include <predicates/Predicates.h>
 
+#include <glm/geometric.hpp>
+
 #include <algorithm>
 #include <cmath>
 
@@ -116,6 +118,15 @@ namespace ecs {
 		});
 		const auto millimetersPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
 		const double marginMm = static_cast<double>(margin) * millimetersPerMeter;
+		// The ring is counter-clockwise, so the outside lies to the right of each edge.
+		const auto outwardNormal = [&](std::size_t start) {
+			const geometry::Vec2i64& from = ring[start];
+			const geometry::Vec2i64& to = ring[(start + 1) % ring.size()];
+			const double			 edgeX = static_cast<double>(to.x - from.x);
+			const double			 edgeY = static_cast<double>(to.y - from.y);
+			const double			 edgeLength = std::sqrt(edgeX * edgeX + edgeY * edgeY);
+			return glm::dvec2{edgeY / edgeLength, -edgeX / edgeLength};
+		};
 		const auto pastEdge = [&](const Edge& edge) {
 			const geometry::Vec2i64& from = ring[edge.start];
 			const geometry::Vec2i64& to = ring[(edge.start + 1) % ring.size()];
@@ -123,19 +134,21 @@ namespace ecs {
 			const double edgeY = static_cast<double>(to.y - from.y);
 			const double spotX = static_cast<double>(from.x) + edgeX * edge.along;
 			const double spotY = static_cast<double>(from.y) + edgeY * edge.along;
-			// Off the boundary the push runs from the point through the spot, so where two edges tie at a
-			// reflex corner it leaves by the corner instead of across the floor. On the boundary there is no
-			// such line; the push is the edge's normal, and the ring is counter-clockwise, so its outside
-			// lies to the right of each edge.
-			double pushX = edgeY;
-			double pushY = -edgeX;
-			if (edge.distanceMm > 0.0) {
-				pushX = spotX - static_cast<double>(point.x);
-				pushY = spotY - static_cast<double>(point.y);
+			// The push is the boundary's outward direction at the spot: the edge's normal along its interior,
+			// and at a vertex the bisector of the two edges meeting there, which leaves a reflex corner into
+			// its notch and a convex one diagonally.
+			const double edgeLength = std::sqrt(edgeX * edgeX + edgeY * edgeY);
+			const double alongMm = edge.along * edgeLength;
+			glm::dvec2	 push = outwardNormal(edge.start);
+			if (alongMm <= 1.0 || edgeLength - alongMm <= 1.0) {
+				const std::size_t other = alongMm <= 1.0 ? (edge.start + ring.size() - 1) % ring.size() : (edge.start + 1) % ring.size();
+				const glm::dvec2  bisector = push + outwardNormal(other);
+				if (glm::length(bisector) > 1e-6) {
+					push = glm::normalize(bisector);
+				}
 			}
-			const double pushLength = std::sqrt(pushX * pushX + pushY * pushY);
-			const double pastX = spotX + pushX / pushLength * marginMm;
-			const double pastY = spotY + pushY / pushLength * marginMm;
+			const double pastX = spotX + push.x * marginMm;
+			const double pastY = spotY + push.y * marginMm;
 			return glm::vec2{static_cast<float>(pastX / millimetersPerMeter), static_cast<float>(pastY / millimetersPerMeter)};
 		};
 		for (const Edge& edge : edges) {

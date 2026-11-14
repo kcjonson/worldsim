@@ -68,11 +68,11 @@ namespace ecs {
 		[[nodiscard]] bool contains(glm::vec2 position) const;
 		/// A point strictly inside the ring (an L's box centre can lie in its notch).
 		[[nodiscard]] glm::vec2 interiorPoint() const;
-		/// `position` itself when it lies outside; else the point `margin` past the ring's nearest edge, on the line
-		/// from `position` through the spot on it nearest `position` (the edge's normal when `position` is on
-		/// the boundary). When that spot lands back inside (a notch narrower than the
-		/// margin), the next nearest edge is tried; when every one does, the nearest edge's spot is given
-		/// and the drop's own search for ground takes it from there.
+		/// `position` itself when it lies outside; else the point `margin` past the ring's nearest edge, along the
+		/// boundary's outward direction at the spot on it nearest `position`: the edge's normal, or at a vertex
+		/// the bisector of the two edges meeting there. When that point lands back inside (a notch narrower
+		/// than the margin), the next nearest edge is tried; when every one does, the nearest edge's point is
+		/// given and the drop's own search for ground takes it from there.
 		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 position, float margin) const;
 
 		/// A thing of `defNameId` at `position` blocks the site: a harvestable inside the footprint. The clear
