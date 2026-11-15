@@ -25,7 +25,7 @@ TEST(PatchableMeshHistory, PinnedStatesOverGeneratedHistories) {
 	for (std::uint32_t seed = 1; seed <= kPinned.size(); ++seed) {
 		StateHash history;
 		int		  patch = 0;
-		runHistory(seed, kPatches, [&](std::uint64_t state, const std::string& valid) {
+		runHistory(seed, kPatches, [&](std::uint64_t state, const std::string& valid, const geometry::nav::PatchableMesh&, const std::vector<geometry::nav::RingId>&) {
 			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
 			history.add(static_cast<std::int64_t>(state));
 			++patch;

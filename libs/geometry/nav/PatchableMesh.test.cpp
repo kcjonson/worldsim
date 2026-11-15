@@ -5,6 +5,7 @@
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
 #include "nav/NavMeshRealRings.test.h"
+#include "nav/PatchableMeshHistory.test.h"
 #include "nav/PathQuery.h"
 #include "predicates/Predicates.h"
 #include "triangulation/ConstrainedDelaunay.h"
@@ -3754,6 +3755,26 @@ TEST(PatchableMesh, SliverTipsMillimetresFromAnotherOutlineMatchFreshBuild) {
 		if (HasFatalFailure()) {
 			return;
 		}
+	}
+}
+
+// Generated histories, run to the patch where reading each ground outline as given misread a
+// face too thin to sample (WOR-850): before the fix those states validated clean but missed
+// one or two vertices of the fresh build. Each state there equals a fresh build.
+TEST(PatchableMesh, GeneratedHistoriesMatchFreshBuildAtThinFaces) {
+	for (const auto& [seed, patches] : std::array<std::pair<std::uint32_t, int>, 3>{{{4474, 5}, {7648, 5}, {5463, 8}}}) {
+		int patch = 0;
+		geometry::nav::testdata::runHistory(seed, patches, [&, seed = seed, patches = patches](std::uint64_t, const std::string& valid, const PatchableMesh& mesh,
+																							  const std::vector<RingId>& live) {
+			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
+			if (++patch == patches) {
+				Model model;
+				for (const RingId ring : live) {
+					model[ring] = mesh.ring(ring).polygon;
+				}
+				EXPECT_TRUE(matchesFresh(mesh, model)) << "seed " << seed;
+			}
+		});
 	}
 }
 
