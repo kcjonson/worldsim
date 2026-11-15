@@ -146,8 +146,13 @@ namespace geometry {
 	// endpoint (exact Vec2i64 ==, the whole point of integer quantization).
 	// Every band and junction ring is validated: simple, CCW, non-zero area; any
 	// degenerate result sets a failing status and returns (reject-don't-repair,
-	// D4). After validation each ring is simplified (collinear-vertex collapse,
-	// sub-mm sliver drop) per the Clipper2 post-op concept (D2). This is all nav
+	// D4), with one exception: where a band fails, the near-straight miters
+	// beside it (just inside resolveJunction's step cut, whose trims can outrun a
+	// short wall) are joined as steps once more, and only what still fails is
+	// rejected. A graph whose bands all succeed never takes that path, so
+	// resolveJunction alone agrees with it there and only there. After
+	// validation each ring is simplified (collinear-vertex collapse, sub-mm
+	// sliver drop) per the Clipper2 post-op concept (D2). This is all nav
 	// needs; the drawn shape, cut at openings and outlined, is
 	// wallPiecesAndOutline's. Apart from segment indices and where a ring's vertex
 	// list starts, nothing in the result depends on segment order or on which end

@@ -6,6 +6,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <map>
 #include <utility>
 #include <vector>
@@ -116,8 +117,24 @@ namespace geometry {
 		return true;
 	}
 
-	JunctionResolution resolveJunction(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
-									   double miterLimit) {
+	namespace {
+
+		// An incident of a junction resolved again because a band failed: whether
+		// it is that band, and half its length.
+		struct RetryIncident {
+			bool   bandFailed = false;
+			double halfLength = 0.0;
+		};
+
+	} // namespace
+
+	// resolveJunction, where `retry` (one entry per incident, or empty for
+	// resolveJunction itself) joins as a step every wedge beside a failed band
+	// whose miter would take half of either of its bands or more, and both wedges
+	// of a degree-2 join beside one, wherever it could be one (bands pointing
+	// more than 90 degrees apart).
+	static JunctionResolution resolveJunctionStepping(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
+													  double miterLimit, const std::vector<RetryIncident>& retry) {
 		JunctionResolution result;
 
 		const std::size_t degree = incidents.size();
@@ -240,14 +257,7 @@ namespace geometry {
 			// nearly coincide so that rounding their offsets throws the apex far off.
 			// Right at the cut the two wedges of a degree-2 join can decide
 			// differently; either way the shape is valid.
-			if (beveled && dot(dirL, dirR).sign() < 0) {
-				apex[k] = {vertex, false};
-				steps.push_back(k);
-				continue;
-			}
-
-			apex[k] = {apexPoint, beveled};
-
+			//
 			// The cutback each segment needs is the projection of this wedge's apex
 			// onto its outgoing direction: that is how far the inner faces overlap,
 			// and it is the same whether the wedge is mitered or beveled. Beveling
@@ -265,8 +275,23 @@ namespace geometry {
 									len;
 				return proj > 0.0 ? std::llround(proj) : 0;
 			};
-			trimByLocal[li] = std::max(trimByLocal[li], projOnto(dirL));
-			trimByLocal[ri] = std::max(trimByLocal[ri], projOnto(dirR));
+			const std::int64_t trimL = projOnto(dirL);
+			const std::int64_t trimR = projOnto(dirR);
+
+			// Just inside the cut, the miter's trims can outrun a short wall;
+			// resolveWallBands then asks for the step in its place.
+			const bool stepAsked = !retry.empty() && (retry[li].bandFailed || retry[ri].bandFailed) &&
+								   (degree == 2 || static_cast<double>(trimL) >= retry[li].halfLength ||
+									static_cast<double>(trimR) >= retry[ri].halfLength);
+			if ((beveled || stepAsked) && dot(dirL, dirR).sign() < 0) {
+				apex[k] = {vertex, false};
+				steps.push_back(k);
+				continue;
+			}
+
+			apex[k]			= {apexPoint, beveled};
+			trimByLocal[li] = std::max(trimByLocal[li], trimL);
+			trimByLocal[ri] = std::max(trimByLocal[ri], trimR);
 		}
 
 		// A step has no apex and asks no trim of its own, like a parallel wedge. It
@@ -437,6 +462,11 @@ namespace geometry {
 			result.trims.push_back({incidents[i].index, trimByLocal[i]});
 		}
 		return result;
+	}
+
+	JunctionResolution resolveJunction(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
+									   double miterLimit) {
+		return resolveJunctionStepping(vertex, incidents, miterLimit, {});
 	}
 
 	void simplifyRing(Ring& ring, std::int64_t epsilonMm) {
@@ -910,103 +940,185 @@ namespace geometry {
 			return loops;
 		}
 
+		// A segment's endpoint at a junction: the segment, and whether the junction
+		// is its `a` end.
+		struct Incidence {
+			std::size_t segIndex;
+			bool		atA;
+		};
+
+		// Segment endpoints grouped by exact position: the junctions.
+		std::map<Vec2i64, std::vector<Incidence>> incidencesByVertex(const std::vector<WallSegment>& segments) {
+			std::map<Vec2i64, std::vector<Incidence>> byVertex;
+			for (std::size_t i = 0; i < segments.size(); ++i) {
+				byVertex[segments[i].a].push_back({i, true});
+				byVertex[segments[i].b].push_back({i, false});
+			}
+			return byVertex;
+		}
+
+		JunctionResolution resolveIncidences(const std::vector<WallSegment>& segments, const Vec2i64& vertex,
+											 const std::vector<Incidence>& incidences, double miterLimit,
+											 const std::vector<RetryIncident>& retry) {
+			std::vector<IncidentSegment> incidents;
+			incidents.reserve(incidences.size());
+			for (std::size_t k = 0; k < incidences.size(); ++k) {
+				const Incidence&   inc	 = incidences[k];
+				const WallSegment& seg	 = segments[inc.segIndex];
+				const Vec2i64	   other = inc.atA ? seg.b : seg.a;
+				incidents.push_back({other, seg.halfThicknessMm, k});
+			}
+			return resolveJunctionStepping(vertex, incidents, miterLimit, retry);
+		}
+
+		// The bands and junction polygons of resolved junctions (one per entry of
+		// `byVertex`, in its order). Every segment whose band cannot be built from
+		// its trims is flagged in `failedBands` (sized to the segments), and the
+		// result fails with the first such band's status.
+		WallBands assembleWallBands(const std::vector<WallSegment>& segments,
+									const std::map<Vec2i64, std::vector<Incidence>>& byVertex,
+									const std::vector<JunctionResolution>& resolutions, std::vector<std::uint8_t>& failedBands) {
+			WallBands		  result;
+			const std::size_t segCount = segments.size();
+			result.bands.resize(segCount);
+
+			std::vector<std::int64_t> trimA(segCount, 0);
+			std::vector<std::int64_t> trimB(segCount, 0);
+
+			std::size_t junction = 0;
+			for (const auto& [vertex, incidences] : byVertex) {
+				const JunctionResolution& resolution = resolutions[junction++];
+				for (const JunctionTrim& t : resolution.trims) {
+					const Incidence& inc = incidences[t.index];
+					if (inc.atA) {
+						trimA[inc.segIndex] = std::max(trimA[inc.segIndex], t.trimMm);
+					} else {
+						trimB[inc.segIndex] = std::max(trimB[inc.segIndex], t.trimMm);
+					}
+				}
+
+				if (!resolution.polygon.empty()) {
+					Ring poly = resolution.polygon;
+					simplifyRing(poly, kDefaultSimplifyEpsMm);
+					const OffsetStatus st = validateAndOrient(poly);
+					if (st != OffsetStatus::Ok) {
+						result.status = st;
+						return result;
+					}
+					std::vector<std::size_t> incidentSegs;
+					incidentSegs.reserve(incidences.size());
+					for (const Incidence& inc : incidences) {
+						incidentSegs.push_back(inc.segIndex);
+					}
+					result.junctions.push_back(std::move(poly));
+					result.junctionSegments.push_back(std::move(incidentSegs));
+				}
+			}
+
+			// Once a band fails, the rest are still built, only to flag every band
+			// that fails whatever the segments' order.
+			for (std::size_t i = 0; i < segCount; ++i) {
+				const WallSegment& seg = segments[i];
+				Ring			   ring;
+				OffsetStatus	   st = OffsetStatus::TrimOverrunsSegment;
+				if (trimmedBand(seg.a, seg.b, seg.halfThicknessMm, trimA[i], trimB[i], ring)) {
+					simplifyRing(ring, kDefaultSimplifyEpsMm);
+					st = validateAndOrient(ring);
+				}
+				failedBands[i] = st != OffsetStatus::Ok ? 1 : 0;
+				if (st != OffsetStatus::Ok) {
+					if (result.status == OffsetStatus::Ok) {
+						result.status = st;
+					}
+				} else if (result.status == OffsetStatus::Ok) {
+					result.bands[i] = std::move(ring);
+				}
+			}
+			if (result.status != OffsetStatus::Ok) {
+				return result;
+			}
+
+			result.trimAtA = std::move(trimA);
+			result.trimAtB = std::move(trimB);
+			return result;
+		}
+
+		bool sameResolution(const JunctionResolution& left, const JunctionResolution& right) {
+			if (left.status != right.status || left.polygon != right.polygon || left.trims.size() != right.trims.size()) {
+				return false;
+			}
+			for (std::size_t i = 0; i < left.trims.size(); ++i) {
+				if (left.trims[i].index != right.trims[i].index || left.trims[i].trimMm != right.trims[i].trimMm) {
+					return false;
+				}
+			}
+			return true;
+		}
+
 	} // namespace
 
 	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit) {
-		WallBands result;
-		const std::size_t segCount = segments.size();
-		result.bands.resize(segCount);
-
 		// Reject zero-length input up front (reject-don't-repair, D4).
 		for (const WallSegment& s : segments) {
 			if (s.a == s.b) {
+				WallBands result;
+				result.bands.resize(segments.size());
 				result.status = OffsetStatus::ZeroLengthSegment;
 				return result;
 			}
 		}
 
-		// Group segment endpoints by exact position to derive junctions. Each entry
-		// records (segment index, which endpoint, the other endpoint direction).
-		struct Incidence {
-			std::size_t segIndex;
-			bool		atA; // true if this junction is segment's `a` endpoint
-		};
-		std::map<Vec2i64, std::vector<Incidence>> byVertex;
-		for (std::size_t i = 0; i < segCount; ++i) {
-			byVertex[segments[i].a].push_back({i, true});
-			byVertex[segments[i].b].push_back({i, false});
-		}
-
-		// Per segment, the trim distance accumulated at each end.
-		std::vector<std::int64_t> trimA(segCount, 0);
-		std::vector<std::int64_t> trimB(segCount, 0);
-
-		// Resolve each junction; collect its polygon and fold trims into the
-		// per-segment per-end accumulators.
+		const std::map<Vec2i64, std::vector<Incidence>> byVertex = incidencesByVertex(segments);
+		std::vector<JunctionResolution>					resolutions;
+		resolutions.reserve(byVertex.size());
 		for (const auto& [vertex, incidences] : byVertex) {
-			std::vector<IncidentSegment> incidents;
-			incidents.reserve(incidences.size());
+			resolutions.push_back(resolveIncidences(segments, vertex, incidences, miterLimit, {}));
+			if (resolutions.back().status != OffsetStatus::Ok) {
+				WallBands result;
+				result.bands.resize(segments.size());
+				result.status = resolutions.back().status;
+				return result;
+			}
+		}
+
+		std::vector<std::uint8_t> failedBands(segments.size(), 0);
+		WallBands				  result = assembleWallBands(segments, byVertex, resolutions, failedBands);
+		if (result.status == OffsetStatus::Ok) {
+			return result;
+		}
+
+		// A near-straight join just inside the step cut is a miter whose trims run
+		// about as far as the miter bound, longer than a short wall (or leaving a
+		// sliver of it). Each junction at an end of a failed band is resolved again,
+		// once, with a step in place of each miter beside that band that alone
+		// would take half of one of its two bands or more (a band its trims overrun
+		// has an end asking that much); a degree-2 join steps both its wedges. A
+		// corner to a third wall beside the failed band keeps its miter. Whatever
+		// still fails (a short wall between two sharp corners) is rejected.
+		bool		changed	 = false;
+		std::size_t junction = 0;
+		for (const auto& [vertex, incidences] : byVertex) {
+			JunctionResolution&		   resolution = resolutions[junction++];
+			std::vector<RetryIncident> retry(incidences.size());
+			bool					   touched = false;
 			for (std::size_t k = 0; k < incidences.size(); ++k) {
-				const Incidence& inc = incidences[k];
-				const WallSegment& seg = segments[inc.segIndex];
-				const Vec2i64	   other = inc.atA ? seg.b : seg.a;
-				incidents.push_back({other, seg.halfThicknessMm, k});
+				const WallSegment& seg = segments[incidences[k].segIndex];
+				retry[k]			   = {failedBands[incidences[k].segIndex] != 0, length(seg.b - seg.a) / 2.0};
+				touched				   = touched || retry[k].bandFailed;
 			}
-
-			const JunctionResolution resolution = resolveJunction(vertex, incidents, miterLimit);
-			if (resolution.status != OffsetStatus::Ok) {
-				result.status = resolution.status;
-				return result;
+			if (!touched) {
+				continue;
 			}
-
-			for (const JunctionTrim& t : resolution.trims) {
-				const Incidence& inc = incidences[t.index];
-				if (inc.atA) {
-					trimA[inc.segIndex] = std::max(trimA[inc.segIndex], t.trimMm);
-				} else {
-					trimB[inc.segIndex] = std::max(trimB[inc.segIndex], t.trimMm);
-				}
-			}
-
-			if (!resolution.polygon.empty()) {
-				Ring poly = resolution.polygon;
-				simplifyRing(poly, kDefaultSimplifyEpsMm);
-				const OffsetStatus st = validateAndOrient(poly);
-				if (st != OffsetStatus::Ok) {
-					result.status = st;
-					return result;
-				}
-				std::vector<std::size_t> incidentSegs;
-				incidentSegs.reserve(incidences.size());
-				for (const Incidence& inc : incidences) {
-					incidentSegs.push_back(inc.segIndex);
-				}
-				result.junctions.push_back(std::move(poly));
-				result.junctionSegments.push_back(std::move(incidentSegs));
+			JunctionResolution stepped = resolveIncidences(segments, vertex, incidences, miterLimit, retry);
+			if (!sameResolution(stepped, resolution)) {
+				resolution = std::move(stepped);
+				changed	   = true;
 			}
 		}
-
-		// Apply accumulated trims to each band and validate.
-		for (std::size_t i = 0; i < segCount; ++i) {
-			const WallSegment& seg = segments[i];
-			Ring			   ring;
-			if (!trimmedBand(seg.a, seg.b, seg.halfThicknessMm, trimA[i], trimB[i], ring)) {
-				result.status = OffsetStatus::TrimOverrunsSegment;
-				return result;
-			}
-			simplifyRing(ring, kDefaultSimplifyEpsMm);
-			const OffsetStatus st = validateAndOrient(ring);
-			if (st != OffsetStatus::Ok) {
-				result.status = st;
-				return result;
-			}
-			result.bands[i] = std::move(ring);
+		if (!changed) {
+			return result;
 		}
-
-		result.trimAtA = std::move(trimA);
-		result.trimAtB = std::move(trimB);
-
-		return result;
+		return assembleWallBands(segments, byVertex, resolutions, failedBands);
 	}
 
 	WallPiecesAndOutline wallPiecesAndOutline(const std::vector<WallSegment>& segments,
@@ -1048,16 +1160,8 @@ namespace geometry {
 
 		// The junctions again, as resolveWallBands grouped them, and where each
 		// polygon sits.
-		struct Incidence {
-			std::size_t segIndex;
-			bool		atA;
-		};
-		std::map<Vec2i64, std::vector<Incidence>> byVertex;
-		for (std::size_t i = 0; i < segCount; ++i) {
-			byVertex[segments[i].a].push_back({i, true});
-			byVertex[segments[i].b].push_back({i, false});
-		}
-		std::map<Vec2i64, std::size_t> polygonAt;
+		const std::map<Vec2i64, std::vector<Incidence>> byVertex = incidencesByVertex(segments);
+		std::map<Vec2i64, std::size_t>					polygonAt;
 		for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
 			const WallSegment& first  = segments[bands.junctionSegments[j][0]];
 			const WallSegment& second = segments[bands.junctionSegments[j][1]];
