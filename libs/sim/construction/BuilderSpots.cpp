@@ -31,7 +31,9 @@ namespace construction {
 		constexpr double kVertexToleranceMm = 1.0;
 
 		/// The unit normal of `edge` pointing into the footprint, zero for an edge of no length.
-		geometry::Vec2d inwardNormal(const geometry::Ring& ring, const std::vector<double>& edgeLengths, std::size_t edge, double interiorSide) {
+		geometry::Vec2d inwardNormal(
+			const geometry::Ring& ring, const std::vector<double>& edgeLengths, std::size_t edge, double interiorSide
+		) {
 			if (edgeLengths[edge] == 0.0) {
 				return {0.0, 0.0};
 			}
@@ -42,9 +44,15 @@ namespace construction {
 		/// True when the inset from `onRing` to `inset` stays in the footprint: it ends strictly inside
 		/// the ring and passes through no edge but the one or two it leaves from.
 		bool insetStaysInside(
-			const geometry::Ring& ring, std::size_t fromEdge, std::size_t otherFromEdge, const geometry::Vec2d& onRing, const geometry::Vec2d& inset
+			const geometry::Ring&	ring,
+			std::size_t				fromEdge,
+			std::size_t				otherFromEdge,
+			const geometry::Vec2d&	onRing,
+			const geometry::Vec2d&	inset
 		) {
-			const geometry::Vec2i64 insetMm{static_cast<std::int64_t>(std::llround(inset.x)), static_cast<std::int64_t>(std::llround(inset.y))};
+			const geometry::Vec2i64 insetMm{
+				static_cast<std::int64_t>(std::llround(inset.x)), static_cast<std::int64_t>(std::llround(inset.y))
+			};
 			if (geometry::pointInPolygon(insetMm, ring) != geometry::PointInPolygon::Inside) {
 				return false;
 			}
@@ -91,7 +99,8 @@ namespace construction {
 		const double bySize = std::floor(std::abs(areaSquareMeters) * static_cast<double>(capPerSquareMeter) + kWholeSpotTolerance);
 		const double bySpacing = std::floor(std::max(perimeterMeters, 0.0) / static_cast<double>(minSpacingMeters) + kWholeSpotTolerance);
 		// fmin and fmax pass over a NaN (a zero perimeter over a zero spacing) instead of returning it.
-		const double count = std::fmin(std::fmin(static_cast<double>(capBase) + std::max(bySize, 0.0), bySpacing), static_cast<double>(kMaxBuilderSpots));
+		const double count =
+			std::fmin(std::fmin(static_cast<double>(capBase) + std::max(bySize, 0.0), bySpacing), static_cast<double>(kMaxBuilderSpots));
 		return static_cast<int>(std::fmax(count, 1.0));
 	}
 

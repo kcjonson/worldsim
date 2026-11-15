@@ -219,8 +219,9 @@ TEST(BuilderSpotsTests, ASpotOnACornerInsetsIntoTheFootprintOrStaysOnItsRingPoin
 				  return glm::length(meters(vertex) - arcPoint) < 1e-6;
 			  });
 			anyAtVertex = anyAtVertex || atVertex;
-			const bool inside = geometry::pointInPolygon(geometry::quantize({spots[spot].x, spots[spot].y}), ring) == geometry::PointInPolygon::Inside &&
-								metersToRing(ring, position) > 0.1;
+			const bool inside =
+				geometry::pointInPolygon(geometry::quantize({spots[spot].x, spots[spot].y}), ring) == geometry::PointInPolygon::Inside &&
+				metersToRing(ring, position) > 0.1;
 			const bool onRingPoint = glm::length(position - arcPoint) < 1e-3;
 			EXPECT_TRUE(inside || onRingPoint) << name << " spot " << spot << " at (" << position.x << ", " << position.y << ")";
 			if (atVertex) {
