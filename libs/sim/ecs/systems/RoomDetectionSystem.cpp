@@ -15,6 +15,33 @@
 
 namespace ecs {
 
+	namespace {
+
+		// The same closed vertex cycle in the same direction, whatever vertex each
+		// ring starts at. A ring can visit a vertex twice (two rooms touching at a
+		// corner), so every alignment of the first vertex is tried.
+		bool sameCycle(const geometry::Ring& a, const geometry::Ring& b) {
+			const std::size_t n = a.size();
+			if (n == 0 || n != b.size()) {
+				return false;
+			}
+			for (std::size_t offset = 0; offset < n; ++offset) {
+				if (b[offset] != a[0]) {
+					continue;
+				}
+				std::size_t k = 1;
+				while (k < n && a[k] == b[(offset + k) % n]) {
+					++k;
+				}
+				if (k == n) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+	} // namespace
+
 	void RoomDetectionSystem::update(float /*deltaTime*/) {
 		if (constructionWorld == nullptr) {
 			return;
@@ -31,32 +58,38 @@ namespace ecs {
 	void RoomDetectionSystem::reconcile() {
 		const std::vector<construction::RoomFace> faces = construction::detectRooms(*constructionWorld);
 
-		// Identity matching (D6 "names survive edits"). A new face inherits the
-		// existing record whose stored representative point lies in the new face's
-		// ring (exact integer point-in-polygon); a face that contains several old
-		// reps (a merge) inherits the dominant one (largest stored area, tiebreak
-		// lowest roomId), and each existing record is inherited by at most one face.
-		// Two passes: first strict-interior (the common case), then a fallback for a
-		// rep that lands exactly on a new wall -- a divider drawn through the stored
-		// point reports OnBoundary, not Inside, for both halves, so without the
-		// fallback both halves would reset identity. The fallback gives the rep to
-		// the first face (canonical order) that still has no inheritor, so exactly
-		// one side keeps the id/name.
+		// Identity matching (D6 "names survive edits"), each existing record inherited
+		// by at most one face. First, a face whose outer ring is a record's stored
+		// ring (the same vertex cycle) keeps that record, so building or removing a
+		// room inside another never moves the outer room's id or name. Then a face
+		// inherits the record whose stored representative point lies in the face
+		// (inside its ring and outside its holes, exact integer tests); a face that
+		// contains several old reps (a merge) inherits the dominant one (largest
+		// stored area, tiebreak lowest roomId). That runs strict-interior first,
+		// then as a fallback for a rep that lands exactly on a new wall -- a divider
+		// drawn through the stored point reports OnBoundary, not Inside, for both
+		// halves, so without the fallback both halves would reset identity. The
+		// fallback gives the rep to the first face (canonical order) that still has
+		// no inheritor, so exactly one side keeps the id/name.
 		//
-		// Limitations (acceptable for v1; the rooms overlay that would surface them
-		// ships later): if a room's shape changes enough that its old rep falls
-		// outside every new face, identity resets; and a room fully nested inside
-		// another with no connecting wall (a loop inside a loop) is mislabeled,
-		// because extractFaces represents a face-with-a-hole by its outer cycle only
-		// (the hole is a separate component), so the enclosing ring/area/rep don't
-		// account for the inner room. Correct nested-room identity needs hole-aware
-		// face extraction; deferred until the overlay consumes it.
+		// Limitation: if a room's shape changes enough that its old rep falls outside
+		// every new face, identity resets.
 		const std::size_t		 faceCount = faces.size();
 		std::vector<std::size_t> inheritedRecord(faceCount, std::numeric_limits<std::size_t>::max());
 		std::vector<bool>		 recordClaimed(roomRecords.size(), false);
 
+		for (std::size_t fi = 0; fi < faceCount; ++fi) {
+			for (std::size_t ri = 0; ri < roomRecords.size(); ++ri) {
+				if (!recordClaimed[ri] && sameCycle(faces[fi].ring, roomRecords[ri].ring)) {
+					inheritedRecord[fi] = ri;
+					recordClaimed[ri] = true;
+					break;
+				}
+			}
+		}
+
 		// Claim, for face fi, the dominant unclaimed record whose rep relates to the
-		// face ring as `want` (Inside on the first pass, OnBoundary on the fallback).
+		// face as `want` (Inside on the first pass, OnBoundary on the fallback).
 		const auto claimBest = [&](std::size_t fi, geometry::PointInPolygon want) {
 			const construction::RoomFace&		  face = faces[fi];
 			std::size_t							  best = std::numeric_limits<std::size_t>::max();
@@ -66,7 +99,7 @@ namespace ecs {
 				if (recordClaimed[ri]) {
 					continue;
 				}
-				if (geometry::pointInPolygon(roomRecords[ri].rep, face.ring) != want) {
+				if (construction::pointInRoom(roomRecords[ri].rep, face.ring, face.holes) != want) {
 					continue;
 				}
 				const RoomRecord& rec = roomRecords[ri];
@@ -84,7 +117,9 @@ namespace ecs {
 		};
 
 		for (std::size_t fi = 0; fi < faceCount; ++fi) {
-			claimBest(fi, geometry::PointInPolygon::Inside);
+			if (inheritedRecord[fi] == std::numeric_limits<std::size_t>::max()) {
+				claimBest(fi, geometry::PointInPolygon::Inside);
+			}
 		}
 		for (std::size_t fi = 0; fi < faceCount; ++fi) {
 			if (inheritedRecord[fi] == std::numeric_limits<std::size_t>::max()) {
@@ -104,6 +139,7 @@ namespace ecs {
 			if (inheritedRecord[fi] != std::numeric_limits<std::size_t>::max()) {
 				RoomRecord rec = roomRecords[inheritedRecord[fi]]; // keep id/name/entity
 				rec.ring = face.ring;
+				rec.holes = face.holes;
 				rec.rep = face.representativePoint;
 				rec.area = face.area;
 				rec.areaDoubled = face.areaDoubled;
@@ -124,6 +160,7 @@ namespace ecs {
 			rec.roomId = nextRoomId++;
 			rec.name = "Room " + std::to_string(++nameCounter);
 			rec.ring = face.ring;
+			rec.holes = face.holes;
 			rec.rep = face.representativePoint;
 			rec.area = face.area;
 			rec.areaDoubled = face.areaDoubled;
