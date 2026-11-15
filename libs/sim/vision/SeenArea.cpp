@@ -505,29 +505,39 @@ namespace vision {
 		}
 	}
 
-	void SeenArea::appendSeenBoxes(const Vec2i64& low, const Vec2i64& high, std::vector<Box>& out) const {
-		const std::int64_t columns = cellOf(high.x) - cellOf(low.x) + 1;
-		const std::int64_t rows	   = cellOf(high.y) - cellOf(low.y) + 1;
-		auto			   take	   = [&](const Box& box) {
+	template <typename Take> void SeenArea::forEachSeenBox(const Vec2i64& low, const Vec2i64& high, Take take) const {
+		auto takeMeeting = [&](const Box& box) {
 			if (boxesMeet(low, high, box.low, box.high)) {
-				out.push_back(box);
+				take(box);
 			}
 		};
+		const std::int64_t columns = cellOf(high.x) - cellOf(low.x) + 1;
+		const std::int64_t rows	   = cellOf(high.y) - cellOf(low.y) + 1;
 		if (static_cast<double>(columns) * static_cast<double>(rows) > static_cast<double>(committedBoxes.size())) {
 			for (const auto& [cell, box] : committedBoxes) {
-				take(box);
+				takeMeeting(box);
 			}
 		} else {
 			for (std::int64_t cellY = cellOf(low.y); cellY <= cellOf(high.y); ++cellY) {
 				for (std::int64_t cellX = cellOf(low.x); cellX <= cellOf(high.x); ++cellX) {
 					const auto found = committedBoxes.find({cellX, cellY});
 					if (found != committedBoxes.end()) {
-						take(found->second);
+						takeMeeting(found->second);
 					}
 				}
 			}
 		}
-		forEachPending([&](const PendingShape& shape) { take({shape.low, shape.high}); });
+		forEachPending([&](const PendingShape& shape) { takeMeeting({shape.low, shape.high}); });
+	}
+
+	void SeenArea::appendSeenBoxes(const Vec2i64& low, const Vec2i64& high, std::vector<Box>& out) const {
+		forEachSeenBox(low, high, [&out](const Box& box) { out.push_back(box); });
+	}
+
+	bool SeenArea::anySeenBox(const Vec2i64& low, const Vec2i64& high) const {
+		bool any = false;
+		forEachSeenBox(low, high, [&any](const Box&) { any = true; });
+		return any;
 	}
 
 	double SeenArea::committedSquareMeters() const {

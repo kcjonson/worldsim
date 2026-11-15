@@ -38,8 +38,19 @@ namespace ecs {
 
 		static_assert(
 			vision::kSeenBoxCellMm == static_cast<std::int64_t>(world::kChunkWorldSize) * geometry::kMillimetersPerMeter,
-			"a chunk asks one cell of the seen boxes"
+			"a seen-box cell is a chunk"
 		);
+
+		// A query box in millimetres rounded outward, so it holds every millimetre of the box in meters.
+		Vec2i64 millimetresBelow(glm::vec2 meters) {
+			constexpr double kPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+			return {static_cast<std::int64_t>(std::floor(static_cast<double>(meters.x) * kPerMeter)), static_cast<std::int64_t>(std::floor(static_cast<double>(meters.y) * kPerMeter))};
+		}
+
+		Vec2i64 millimetresAbove(glm::vec2 meters) {
+			constexpr double kPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+			return {static_cast<std::int64_t>(std::ceil(static_cast<double>(meters.x) * kPerMeter)), static_cast<std::int64_t>(std::ceil(static_cast<double>(meters.y) * kPerMeter))};
+		}
 
 	} // namespace
 
@@ -318,29 +329,15 @@ namespace ecs {
 	bool PlayerVisibilitySystem::isSeen(glm::vec2 meters) const { return seen.isSeen(nav::toMm(meters)); }
 
 	void PlayerVisibilitySystem::appendSeenBoxes(glm::vec2 low, glm::vec2 high, std::vector<SeenBox>& out) const {
-		static constexpr double kPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
-		const Vec2i64 lowMm{
-			static_cast<std::int64_t>(std::floor(static_cast<double>(low.x) * kPerMeter)), static_cast<std::int64_t>(std::floor(static_cast<double>(low.y) * kPerMeter))
-		};
-		const Vec2i64 highMm{
-			static_cast<std::int64_t>(std::ceil(static_cast<double>(high.x) * kPerMeter)), static_cast<std::int64_t>(std::ceil(static_cast<double>(high.y) * kPerMeter))
-		};
 		std::vector<vision::SeenArea::Box> boxes;
-		seen.appendSeenBoxes(lowMm, highMm, boxes);
-		auto toMeters = [](std::int64_t millimetres) { return static_cast<float>(static_cast<double>(millimetres) / kPerMeter); };
+		seen.appendSeenBoxes(millimetresBelow(low), millimetresAbove(high), boxes);
 		for (const vision::SeenArea::Box& box : boxes) {
-			out.push_back({{toMeters(box.low.x), toMeters(box.low.y)}, {toMeters(box.high.x), toMeters(box.high.y)}});
+			out.push_back({nav::toMeters(box.low), nav::toMeters(box.high)});
 		}
-		if (world == nullptr) {
-			return;
-		}
-		for (auto [entity, position, colonist, memory] : world->view<Position, Colonist, Memory>()) {
-			const glm::vec2 sightLow  = position.value - glm::vec2(memory.sightRadius);
-			const glm::vec2 sightHigh = position.value + glm::vec2(memory.sightRadius);
-			if (sightHigh.x >= low.x && sightLow.x <= high.x && sightHigh.y >= low.y && sightLow.y <= high.y) {
-				out.push_back({sightLow, sightHigh});
-			}
-		}
+	}
+
+	bool PlayerVisibilitySystem::anySeenBox(glm::vec2 low, glm::vec2 high) const {
+		return seen.anySeenBox(millimetresBelow(low), millimetresAbove(high));
 	}
 
 	bool PlayerVisibilitySystem::isVisible(glm::vec2 meters) const {

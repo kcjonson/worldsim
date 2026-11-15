@@ -200,17 +200,10 @@ namespace {
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
 			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
-			// The camera loads only chunks that hold seen ground; the rest would be drawn under the cover's
-			// opaque fill. Every mover's anchor still loads what it needs (player-visibility.md 3.9).
+			// The camera loads only chunks that can show; the rest would be drawn under the cover's opaque fill.
+			// Every mover's anchor still loads what it needs (player-visibility.md 3.9).
 			m_chunkManager->setCameraLoads([this](world::ChunkCoordinate coord) {
-				const ecs::PlayerVisibilitySystem* visibility = ecsWorld ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
-				if (visibility == nullptr) {
-					return true;
-				}
-				const glm::vec2 low{static_cast<float>(coord.x) * world::kChunkWorldSize, static_cast<float>(coord.y) * world::kChunkWorldSize};
-				seenBoxes.clear();
-				visibility->appendSeenBoxes(low, low + glm::vec2(world::kChunkWorldSize), seenBoxes);
-				return !seenBoxes.empty();
+				return ecsWorld == nullptr || worldview::cameraLoadsChunk(*ecsWorld, *m_camera, kPixelsPerMeter, coord);
 			});
 
 			// Create async processor for runtime chunk streaming

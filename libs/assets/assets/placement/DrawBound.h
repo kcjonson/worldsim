@@ -1,6 +1,6 @@
 #pragma once
 
-// The part of the world a frame can show (player-visibility.md 3.4): boxes in world metres that hold
+// The part of the world a frame can show (player-visibility.md 3.4): boxes in world meters that hold
 // everything not under the cover's opaque fill. Drawing culls against it where it culls against the
 // view, so nothing is drawn only to be covered. With the cover off it is one box holding everything.
 
@@ -28,8 +28,8 @@ class DrawBound {
 
 	void add(const VisibleBounds& box) { boxes.push_back(box); }
 
-	/// The box holding all of the bound inside `region`, each box grown by `margin` first: the union
-	/// of those that meet the region, cut to it. None when none meets it.
+	/// The box holding all of the bound inside `region`, each box grown by `margin` first: the
+	/// bounding box of the union of those that meet the region, each cut to it. None when none meets it.
 	[[nodiscard]] std::optional<VisibleBounds> within(const VisibleBounds& region, float margin = 0.0F) const {
 		std::optional<VisibleBounds> held;
 		for (const VisibleBounds& box : boxes) {

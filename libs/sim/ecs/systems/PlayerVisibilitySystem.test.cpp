@@ -99,6 +99,37 @@ namespace {
 		return shape.polygon == nullptr || geometry::withinDistanceOfSegment(point, nav::toMm(shape.center), nav::toMm(shape.center), std::llround(shape.radius * 1000.0F) - 50);
 	}
 
+	// The seen boxes hold everything the cover leaves showing (player-visibility.md 3.4): every point
+	// of each committed triangle (its corners, edge midpoints and centre) and every vertex of each
+	// pending outline lies in some box. Drawing culls to them, so a point outside would be lost.
+	void expectSeenBoxesHoldWhatShows(const PlayerVisibilitySystem& visibility, int frame) {
+		std::vector<PlayerVisibilitySystem::SeenBox> boxes;
+		visibility.appendSeenBoxes({-10000.0F, -10000.0F}, {10000.0F, 10000.0F}, boxes);
+		const auto held = [&boxes](const Vec2i64& point) {
+			const glm::vec2 meters = nav::toMeters(point);
+			return std::any_of(boxes.begin(), boxes.end(), [&meters](const PlayerVisibilitySystem::SeenBox& box) {
+				return meters.x >= box.low.x && meters.x <= box.high.x && meters.y >= box.low.y && meters.y <= box.high.y;
+			});
+		};
+		std::vector<vision::SeenArea::Triangle> triangles;
+		visibility.seenArea().appendTriangles(triangles);
+		std::size_t outside = 0;
+		for (const vision::SeenArea::Triangle& triangle : triangles) {
+			const auto& [first, second, third] = triangle.corners;
+			const auto	between = [](const Vec2i64& sum, std::int64_t count) { return Vec2i64{sum.x / count, sum.y / count}; };
+			const std::array<Vec2i64, 7> points{
+				first, second, third, between(first + second, 2), between(second + third, 2), between(third + first, 2), between(first + second + third, 3)
+			};
+			outside += static_cast<std::size_t>(std::count_if(points.begin(), points.end(), [&held](const Vec2i64& point) { return !held(point); }));
+		}
+		std::vector<const std::vector<Vec2i64>*> pending;
+		visibility.seenArea().appendPendingShapes(pending);
+		for (const std::vector<Vec2i64>* outline : pending) {
+			outside += static_cast<std::size_t>(std::count_if(outline->begin(), outline->end(), [&held](const Vec2i64& point) { return !held(point); }));
+		}
+		EXPECT_EQ(outside, 0U) << "frame " << frame << ": " << triangles.size() << " triangles, " << pending.size() << " pending";
+	}
+
 } // namespace
 
 // A straight walk of any length is one ring, pending while he walks and committed when the leg ends.
@@ -360,6 +391,7 @@ TEST(PlayerVisibilitySystem, JumpWithWallsInSightDoesNotBridge) {
 // the drawn radius round where he stands) lies in seen ground every frame within sight of the
 // polygon's build (beyond it, ahead of him, the cover's unseen fill hides it), every seen point lies
 // within sight of some position he held (plus the skirt), and no point once seen stops being seen.
+// Through the walk's sweeps and pieces, and once all is committed, the seen boxes hold the record.
 TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 	assets::ConstructionRegistry::Get().clear();
 	ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
@@ -388,6 +420,9 @@ TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 		}
 		colony.standAt(colonist, at);
 		held.push_back(at);
+		if (frame % 50 == 0) {
+			expectSeenBoxesHoldWhatShows(colony.visibility, frame);
+		}
 		if (frame % 5 != 0) {
 			continue;
 		}
@@ -432,6 +467,9 @@ TEST(PlayerVisibilitySystem, DrawnVisibleInSeenInSweptPastADoorway) {
 	for (const glm::vec2 point : seenPoints) {
 		EXPECT_TRUE(colony.visibility.isSeen(point)) << "(" << point.x << ", " << point.y << ") lost once committed";
 	}
+	EXPECT_GT(colony.visibility.seenArea().sweepsBuilt(), 0U);
+	EXPECT_GT(colony.visibility.seenArea().ringsRegistered(), 10U);
+	expectSeenBoxesHoldWhatShows(colony.visibility, 901);
 	assets::ConstructionRegistry::Get().clear();
 }
 
