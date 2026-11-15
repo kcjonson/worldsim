@@ -5,6 +5,7 @@
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
 #include "nav/NavMeshRealRings.test.h"
+#include "nav/PatchableMeshHistory.test.h"
 #include "nav/PathQuery.h"
 #include "predicates/Predicates.h"
 #include "triangulation/ConstrainedDelaunay.h"
@@ -3731,6 +3732,102 @@ TEST(PatchableMesh, SliverBesideADissolvedSideMatchesFreshBuild) {
 	addInEveryOrder({bounds({{0, 0}, {2, 0}, {0, 1}}), bounds({{0, 0}, {0, 1}, {-2, 0}}), blocked({{-10, -10}, {20, -10}, {20, 1}, {-10, 0}})});
 }
 
+// Ground slivers some 30 m long whose tips lie millimetres from another outline's corner or
+// across its edge, as visibility pieces fan from an observer (WOR-850). Rounding moves the
+// crossings near a tip by up to a millimetre, so ground there lies in faces too thin for a
+// sample to read the outlines as given, some of them reached only through faces off ground.
+// Found by a seeded search over slivers beside limit and star outlines, then shrunk.
+TEST(PatchableMesh, SliverTipsMillimetresFromAnotherOutlineMatchFreshBuild) {
+	const std::vector<std::vector<NavInputPolygon>> cases = {
+		{bounds({{20506, -34978}, {-14193, -37829}, {-14134, -38468}}), bounds({{20504, -34978}, {-7137, -37523}, {-7128, -37615}})},
+		{bounds({{-28222, 46084}, {8457, 31976}, {8535, 32179}}), bounds({{-28225, 46084}, {140, 35257}, {390, 35917}})},
+		{bounds({{-1335, -17902}, {23762, -32803}, {5287, -19936}}), bounds({{16418, -27294}, {20621, -54299}, {20641, -54296}}),
+		 bounds({{16421, -27295}, {22174, -66017}, {22216, -66011}})},
+		{bounds({{-16794, 11037}, {-10100, 41210}, {-11028, 41399}}), bounds({{-11680, 34061}, {-22034, 635}, {-21967, 614}})},
+		// The second case with an obstacle round both tips: the faces read as rounded take it
+		// by its own ray and ground by the interval count, in one cover.
+		{bounds({{-28222, 46084}, {8457, 31976}, {8535, 32179}}), bounds({{-28225, 46084}, {140, 35257}, {390, 35917}}),
+		 blocked(rect(-28400, 45900, -28000, 46300))},
+	};
+	for (std::size_t c = 0; c < cases.size(); ++c) {
+		SCOPED_TRACE("case " + std::to_string(c));
+		addInEveryOrder(cases[c]);
+		if (HasFatalFailure()) {
+			return;
+		}
+	}
+}
+
+// Generated histories, run to the patch where reading each ground outline as given misread a
+// face too thin to sample (WOR-850): before the fix those states validated clean but missed
+// one or two vertices of the fresh build. Each state there equals a fresh build.
+TEST(PatchableMesh, GeneratedHistoriesMatchFreshBuildAtThinFaces) {
+	for (const auto& [seed, patches] : std::array<std::pair<std::uint32_t, int>, 3>{{{4474, 5}, {7648, 5}, {5463, 8}}}) {
+		int patch = 0;
+		geometry::nav::testdata::runHistory(seed, patches, [&, seed = seed, patches = patches](std::uint64_t, const std::string& valid, const PatchableMesh& mesh,
+																							  const std::vector<RingId>& live) {
+			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
+			if (++patch == patches) {
+				Model model;
+				for (const RingId ring : live) {
+					model[ring] = mesh.ring(ring).polygon;
+				}
+				EXPECT_TRUE(matchesFresh(mesh, model)) << "seed " << seed;
+			}
+		});
+	}
+}
+
+// Removes (and a move) whose hole reaches past the arrangement, shrunk from two generated
+// histories: a removed ring's edge on the mesh boundary is not arranged, so hole triangles
+// can lie past every arranged point, where the rounded ground read once took its reference
+// point (WOR-850). The rings go in as one patch, then the edit.
+TEST(PatchableMesh, RemoveBesideARoundedReadMatchesFreshBuild) {
+	struct Case {
+		std::vector<NavInputPolygon>						 base;
+		std::vector<NavInputPolygon>						 adds;
+		std::vector<std::size_t>							 removes; // into base
+		std::vector<std::pair<std::size_t, std::vector<Vec2i64>>> moves;   // into base
+	};
+	const std::vector<Case> cases = {
+		{{bounds({{14335, 2872}, {13871, 5205}, {12549, 7183}, {10571, 8505}, {8238, 8969}, {5905, 8505}, {3927, 7183}, {2605, 5205}, {2141, 2872},
+				  {2605, 539}, {3927, -1439}, {5905, -2761}, {8238, -3225}, {10571, -2761}, {12549, -1439}, {13871, 539}}),
+		  blocked(rect(4742, 8032, 6742, 10032), kWater, true), blocked(rect(5977, 9710, 6584, 10317)),
+		  blocked({{6714, 9920}, {6661, 10186}, {6510, 10412}, {6284, 10563}, {6018, 10616}, {5752, 10563}, {5526, 10412}, {5375, 10186},
+				   {5322, 9920}, {5375, 9654}, {5526, 9428}, {5752, 9277}, {6018, 9224}, {6284, 9277}, {6510, 9428}, {6661, 9654}}),
+		  bounds({{8575, 6470}, {17004, 2979}, {17698, 6470}, {17004, 9961}, {15026, 12921}, {12066, 14899}})},
+		 {},
+		 {4},
+		 {}},
+		{{bounds({{8252, -4934}, {4657, -7000}, {4527, -8824}, {9113, -10456}}),
+		  blocked({{-5246, -7250}, {-5265, -7153}, {-5320, -7070}, {-5403, -7015}, {-5500, -6996}, {-5597, -7015}, {-5680, -7070}, {-5735, -7153},
+				   {-5754, -7250}, {-5735, -7347}, {-5680, -7430}, {-5597, -7485}, {-5500, -7504}, {-5403, -7485}, {-5320, -7430}, {-5265, -7347}}),
+		  blocked(rect(-5751, -7429, -1751, -3429), kWater, true),
+		  blocked({{-3743, 6332}, {-3761, 6422}, {-3812, 6498}, {-3888, 6549}, {-3978, 6567}, {-4068, 6549}, {-4144, 6498}, {-4195, 6422},
+				   {-4213, 6332}, {-4195, 6242}, {-4144, 6166}, {-4068, 6115}, {-3978, 6097}, {-3888, 6115}, {-3812, 6166}, {-3761, 6242}})},
+		 {bounds({{209, -545}, {-271, 1866}, {-1636, 3910}, {-3680, 5275}, {-6091, 5755}, {-8502, 5275}, {-10546, 3910}, {-11911, 1866},
+				  {-12391, -545}, {-11911, -2956}, {-10546, -5000}, {-8502, -6365}, {-6091, -6845}, {-3680, -6365}, {-1636, -5000}, {-271, -2956}})},
+		 {3},
+		 {{0, {{7252, -4684}, {3657, -6750}, {3527, -8574}, {8113, -10206}}}}},
+	};
+	for (std::size_t c = 0; c < cases.size(); ++c) {
+		Harness	   h;
+		PatchEdits first;
+		first.adds				 = cases[c].base;
+		const PatchReport placed = h.apply(first);
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "case " << c << " before the edit";
+		PatchEdits edit;
+		edit.adds = cases[c].adds;
+		for (const std::size_t ring : cases[c].removes) {
+			edit.removes.push_back(placed.added[ring]);
+		}
+		for (const auto& [ring, outline] : cases[c].moves) {
+			edit.moves.push_back({placed.added[ring], outline});
+		}
+		h.apply(edit);
+		EXPECT_TRUE(matchesFresh(h.mesh, h.model)) << "case " << c << describe(h.model);
+	}
+}
 namespace {
 
 	// How many of the outline's edges are each one constrained mesh edge.
