@@ -213,9 +213,28 @@ class SharedWork {
 		EntityID			   blueprint = kInvalidEntity;
 		glm::vec2			   position{0.0F, 0.0F};
 		std::vector<glm::vec2> builderSpots; // the Build goal's (GoalTask::builderSpots); none on a teardown site
+
+		// Worked out by builderSpotStand, a spot at a time as colonists ask.
+		struct SpotStand {
+			bool					 asked = false;
+			std::optional<glm::vec2> point; // nullopt: the spot cannot be served at this radius
+		};
+		struct StandsAtRadius {
+			float				   agentRadius = 0.0F;
+			std::vector<SpotStand> stands; // one per builder spot
+		};
+		std::vector<float>			spotSlack; // one per builder spot, negative until asked
+		std::vector<StandsAtRadius> standsByRadius;
 	};
 	/// Available Build goals whose blueprint is UnderConstruction, in goal order.
 	[[nodiscard]] const std::vector<Site>& buildSites(World& world);
+	/// Where a builder of `agentRadius` stands to work spot `spot` of build site `site` (an index into
+	/// buildSites): the mesh's stand point for the spot, when it lies less than half the way to the nearest
+	/// other spot (a lone spot has no limit), so two spots never share one; nullopt when the spot cannot be
+	/// served. The mesh is asked once per spot and radius in an update, the first time a colonist needs it.
+	[[nodiscard]] std::optional<glm::vec2> builderSpotStand(
+		std::size_t site, std::size_t spot, float agentRadius, const NavigationSystem& nav
+	);
 	/// Available Deconstruct goals whose blueprint has work to undo, in goal order.
 	[[nodiscard]] const std::vector<Site>& teardownSites(World& world);
 

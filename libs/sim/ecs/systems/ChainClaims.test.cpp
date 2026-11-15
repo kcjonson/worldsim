@@ -4036,4 +4036,50 @@ namespace ecs::test {
 		EXPECT_EQ(spotHolder(site.blueprint, 0), kInvalidEntity);
 	}
 
+	// Builders deciding in one update on the site above share its stand points, each the one the mesh gives
+	// at the builder's own radius. The first two, of one radius, both pass over the spot on the wall, the
+	// second taking the far spot once the first holds the next; the third, narrow enough to stand off the
+	// wall within the limit, works the spot on it.
+	TEST_F(ClaimsOnRealRoutesTest, BuildersDecidingInOneUpdateGetTheStandPointsOfTheirOwnRadius) {
+		const auto wall = construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation);
+		ASSERT_TRUE(wall.ok());
+		for (const auto id : wall.createdSegments) {
+			construction.setSegmentState(id, construction::FoundationState::Built);
+		}
+		const EntityID first = createColonist({0.0F, -3.0F});
+		const EntityID second = createColonist({-0.5F, -3.0F});
+		const EntityID narrow = createColonist({0.5F, -3.0F});
+		constexpr float kNarrowRadius = 0.05F;
+		world->getComponent<AgentRadius>(narrow)->radiusMeters = kNarrowRadius;
+		nav->finishPendingBuilds();
+		world->update(kTick);
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh());
+
+		const std::vector<glm::vec2> spots{{2.0F, 0.0F}, {2.0F, 0.7F}, {-4.0F, 0.0F}};
+		constexpr float				 kSlack = 0.35F;
+		const float					 radius = world->getComponent<AgentRadius>(first)->radiusMeters;
+		const auto					 onTheWall = nav->nearestPathablePoint(spots[0], radius);
+		ASSERT_TRUE(onTheWall.has_value());
+		ASSERT_GE(glm::distance(*onTheWall, spots[0]), kSlack) << "the wall no longer pushes the stand point off the first spot";
+		const auto nextStand = nav->nearestPathablePoint(spots[1], radius);
+		const auto farStand = nav->nearestPathablePoint(spots[2], radius);
+		const auto narrowStand = nav->nearestPathablePoint(spots[0], kNarrowRadius);
+		ASSERT_TRUE(nextStand.has_value() && farStand.has_value() && narrowStand.has_value());
+		ASSERT_LT(glm::distance(*narrowStand, spots[0]), kSlack) << "the narrow builder cannot stand off the wall within the limit";
+
+		const Site site = buildSite({1.0F, 2.0F}, spots);
+		decideAll({first, second, narrow});
+		for (const EntityID colonist : {first, second, narrow}) {
+			ASSERT_EQ(getTask(colonist)->type, TaskType::Build) << "colonist " << colonist;
+		}
+		EXPECT_EQ(getTask(first)->builderSlot, 1U);
+		EXPECT_EQ(getTask(first)->targetPosition, *nextStand);
+		EXPECT_EQ(getTask(second)->builderSlot, 2U);
+		EXPECT_EQ(getTask(second)->targetPosition, *farStand);
+		EXPECT_EQ(getTask(narrow)->builderSlot, 0U);
+		EXPECT_EQ(getTask(narrow)->targetPosition, *narrowStand);
+		EXPECT_EQ(spotHolder(site.blueprint, 0), narrow);
+	}
+
 } // namespace ecs::test

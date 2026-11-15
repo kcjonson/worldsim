@@ -1715,11 +1715,42 @@ namespace ecs {
 			if (blueprint == nullptr || blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
 				return; // not ready to build (cleared/awaiting materials/complete)
 			}
-			buildList.push_back(
-				{.goalId = goal.id, .blueprint = goal.destinationEntity, .position = goal.destinationPosition, .builderSpots = goal.builderSpots}
-			);
+			buildList.push_back({.goalId = goal.id,
+								 .blueprint = goal.destinationEntity,
+								 .position = goal.destinationPosition,
+								 .builderSpots = goal.builderSpots,
+								 .spotSlack = std::vector<float>(goal.builderSpots.size(), -1.0F)});
 		});
 		return buildList;
+	}
+
+	std::optional<glm::vec2> SharedWork::builderSpotStand(
+		std::size_t site, std::size_t spot, float agentRadius, const NavigationSystem& nav
+	) {
+		Site&							   buildSite = buildList[site];
+		std::vector<Site::StandsAtRadius>& byRadius = buildSite.standsByRadius;
+		const auto						   sameRadius = [&](const Site::StandsAtRadius& memo) { return memo.agentRadius == agentRadius; };
+		auto							   atRadius = std::find_if(byRadius.begin(), byRadius.end(), sameRadius);
+		if (atRadius == byRadius.end()) {
+			byRadius.push_back({.agentRadius = agentRadius, .stands = std::vector<Site::SpotStand>(buildSite.builderSpots.size())});
+			atRadius = std::prev(byRadius.end());
+		}
+		Site::SpotStand& stand = atRadius->stands[spot];
+		if (!stand.asked) {
+			stand.asked = true;
+			const glm::vec2				   point = buildSite.builderSpots[spot];
+			const std::optional<glm::vec2> snapped = nav.nearestPathablePoint(point, agentRadius);
+			if (snapped.has_value()) {
+				float& slack = buildSite.spotSlack[spot];
+				if (slack < 0.0F) {
+					slack = builderSpotSlack(buildSite.builderSpots, spot);
+				}
+				if (glm::distance(*snapped, point) < slack) {
+					stand.point = snapped;
+				}
+			}
+		}
+		return stand.point;
 	}
 
 	const std::vector<SharedWork::Site>& SharedWork::teardownSites(World& world) {
@@ -3157,8 +3188,9 @@ namespace ecs {
 		// so a builder never hops, then the nearest free one. A spot serves when the mesh gives a stand point
 		// for it no further off than half the way to the nearest other spot, so two spots never share one,
 		// and he can get to that point; one that doesn't is passed over for the next. Nearest first, stopping
-		// at the first that serves.
-		const auto chooseBuilderSpot = [&](EvaluatedOption& option, std::span<const glm::vec2> spots) {
+		// at the first that serves. The stand point is the site's, shared by every colonist of his radius
+		// deciding in this update (SharedWork::builderSpotStand).
+		const auto chooseBuilderSpot = [&](EvaluatedOption& option, std::size_t siteIndex, std::span<const glm::vec2> spots) {
 			const ClaimTarget blueprint{.kind = TargetKind::Entity, .key = option.buildBlueprintEntityId};
 			const bool		  holdsSpot = currentTask.type == TaskType::Build && currentTask.buildBlueprintEntityId == option.buildBlueprintEntityId &&
 								   currentTask.builderSlot < spots.size();
@@ -3173,14 +3205,13 @@ namespace ecs {
 			}
 			std::sort(m_builderSpotOrder.begin(), m_builderSpotOrder.end());
 			for (const auto& [distance, slot] : m_builderSpotOrder) {
-				const glm::vec2 spot = spots[slot];
-				glm::vec2		stand = spot;
+				glm::vec2 stand = spots[slot];
 				if (haveMesh) {
-					const std::optional<glm::vec2> snapped = m_navSystem->nearestPathablePoint(spot, agentRadius);
-					if (!snapped.has_value() || glm::distance(*snapped, spot) >= builderSpotSlack(spots, slot)) {
+					const std::optional<glm::vec2> served = m_sharedWork.builderSpotStand(siteIndex, slot, agentRadius, *m_navSystem);
+					if (!served.has_value()) {
 						continue;
 					}
-					stand = *snapped;
+					stand = *served;
 					if (stand != position.value && !canTake(option.sourceKey, stand)) {
 						continue;
 					}
@@ -3220,7 +3251,7 @@ namespace ecs {
 						 return static_cast<uint64_t>(candidate.blueprint) == option.buildBlueprintEntityId;
 					 });
 					if (site != sites.end() && !site->builderSpots.empty()) {
-						return chooseBuilderSpot(option, site->builderSpots);
+						return chooseBuilderSpot(option, static_cast<std::size_t>(site - sites.begin()), site->builderSpots);
 					}
 				}
 				// Snap only the task types whose action looks its target up by entity/footprint and so
