@@ -2818,13 +2818,15 @@ namespace {
 } // namespace
 
 TEST(WallProperties, ShortMixedChainsRejectOrTile) {
-	// Chains of walls far shorter than the shortest legal one, where retrying failed bands reaches corners
-	// it was never meant for (WOR-878); 13 of these never returned. Every result is a rejection or tiles,
-	// except that a chain folded back onto itself is only resolved.
+	// Chains of walls far shorter than the shortest legal one, where retrying failed bands reached corners
+	// it was never meant for (WOR-878): 13 of these never returned, and 5 later draws (the first is draw
+	// 9,436) resolved corners about 100 degrees apart past the miter bound. Every chain must return; every
+	// one that does not fold back onto itself must be rejected, or resolve to rings that pass checkTiles
+	// and checkPieces. A folded chain is only required to return.
 	std::mt19937 rng(878);
 	Sweep		 sweep;
 	int			 resolved = 0;
-	for (int i = 0; i < 4000; ++i) {
+	for (int i = 0; i < 40000; ++i) {
 		const std::vector<WallSegment> segments = randomShortChain(rng);
 		const Resolved				   wb		= resolveDrawn(segments, kDefaultMiterLimit);
 		if (foldsOntoItself(segments)) {
