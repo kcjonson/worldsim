@@ -248,7 +248,7 @@ namespace world_sim {
 		}
 
 		if (colonistDetailsDialog->isOpen()) {
-			colonistDetailsDialog->update(ecsWorld);
+			colonistDetailsDialog->update(ecsWorld, deltaTime);
 		}
 		if (craftingDialog->isOpen()) {
 			craftingDialog->update(ecsWorld, recipeRegistry);

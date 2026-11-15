@@ -28,7 +28,7 @@
 //     limit, and his newest once he stands kSightBufferMeters minus kLimitRetakeStepMm short of the
 //     edge of what he sees staying meshed (see MoverDisc). Then the rest, first in, first out: kLimitsPerTick a tick,
 //     and kDetailRingsPerTick placed obstacles; a limit with more obstacles than that brings them in
-//     over several ticks, hanging over unseen ground, and its ground goes in with the last of them.
+//     over several ticks, hanging over unmeshed ground, and its ground goes in with the last of them.
 //     A queued limit the meshed ground now holds, or with a chunk no mover holds, is dropped; one
 //     whose chunks or placement are not ready waits without holding back those behind it.
 // A mover never walks to where he would see past meshed ground (stepWithinSight): one whose urgent
@@ -296,30 +296,38 @@ class NavigationSystem : public ISystem {
 	// checks elsewhere.
 	[[nodiscard]] bool isValidPosition(glm::vec2 meters) const;
 
-	// Whole-FOOTPRINT validity for an area structure (a foundation polygon). True IFF EVERY part
-	// of the closed polygon -- vertices, edges, and interior -- is clear ground as isValidPosition
-	// reads it, exactly: every mesh triangle the polygon meets is checked, one it only touches
-	// included, and a polygon that reaches the mesh's edge is off it. A ring of fewer than 3 points
-	// validates its points and samples between them at <= kFootprintSampleStepMm.
-	[[nodiscard]] bool isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const;
+	// The BuildableNow family (walls and furniture) takes ground as it stands, so a placed obstacle
+	// refuses it; the BuildableOnceCleared family (foundations) reads a placed obstacle as the ground
+	// beneath it, because a foundation's site is cleared before it is built. Both refuse water, a
+	// fordable channel, and ground that isn't meshed.
+	//
+	// Ground something can be built on or set up on as it stands, with nothing cleared first: clear
+	// ground as isValidPosition reads it (water and placed obstacles block, any wall face reads open)
+	// that is outside every fordable channel, since nothing is built in a stream a mover could wade.
+	// False off meshed ground. The point is a wall vertex or the wall tool's cursor.
+	[[nodiscard]] bool isPointBuildableNow(glm::vec2 meters) const;
 
-	// Whole-CENTERLINE validity for a linear structure: both endpoints plus every sample along
-	// a->b at <= kFootprintSampleStepMm pass isValidPosition.
-	[[nodiscard]] bool isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const;
+	// isPointBuildableNow for every point of the open polyline, its vertices and every segment
+	// between them, read exactly: every mesh triangle a segment meets is checked, one it only touches
+	// included, and a line that reaches the mesh's edge is off it. One point validates just it; empty
+	// is trivially true. The gate for a wall chain (the wall tool and the /api/dev/walls verb).
+	[[nodiscard]] bool isLineBuildableNow(const std::vector<glm::vec2>& pointsMeters) const;
 
-	// Every consecutive (pts[i], pts[i+1]) edge passes isSegmentWalkable. One point validates
-	// just it; empty is trivially true. Used for the wall tool's chain and the /api/dev/walls verb.
-	[[nodiscard]] bool isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const;
+	// isPointBuildableNow for every part of the closed polygon, vertices, edges, and interior, read
+	// exactly as isLineBuildableNow reads a line. A ring of fewer than 3 points validates it as a
+	// line. The gate for furniture's footprint, a single point included (the placement tool and the
+	// /api/dev/spawn verb).
+	[[nodiscard]] bool isAreaBuildableNow(const std::vector<glm::vec2>& polygonMeters) const;
 
-	// Whole-FOOTPRINT BUILDABILITY: isAreaWalkable's exact check against the nav mesh with its placed
-	// obstacles read as the ground beneath them (ConstructionSystem turns them into clear tasks) and
-	// every wall face open (wall conflicts are ConstructionValidator's job). Only water, a fordable
-	// channel a mover could wade included, and ground that isn't meshed block. The placement gate
-	// for the build tool.
-	[[nodiscard]] bool isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const;
+	// Whole-footprint buildability once the site is cleared: isAreaBuildableNow's exact check with
+	// the mesh's placed obstacles read as the ground beneath them (ConstructionSystem turns them into
+	// clear tasks). Only water, a fordable channel a mover could wade included, and ground that isn't
+	// meshed block; wall conflicts are ConstructionValidator's job. The placement gate for the
+	// foundation tool.
+	[[nodiscard]] bool isAreaBuildableOnceCleared(const std::vector<glm::vec2>& polygonMeters) const;
 
-	// Single-point buildability, the per-vertex / live-cursor counterpart of isAreaBuildable.
-	[[nodiscard]] bool isPointBuildable(glm::vec2 meters) const;
+	// Single-point buildability, the per-vertex / live-cursor counterpart of isAreaBuildableOnceCleared.
+	[[nodiscard]] bool isPointBuildableOnceCleared(glm::vec2 meters) const;
 
 	// `meters` itself when it is walkable in truth on the nav mesh with its placed obstacles read as
 	// the ground beneath them (water and built walls block, placed obstacles don't), else the nearest
@@ -348,10 +356,6 @@ class NavigationSystem : public ISystem {
 	[[nodiscard]] GroupSpawn groupSpawnPoints(glm::vec2 drop, std::size_t count, float ringRadiusMeters, float minSeparationMeters,
 											  float clearanceMeters, const std::function<void(const GroupSpawn&)>& clearLanding = {});
 
-	// Sampling pitch (mm) for the whole-footprint / whole-centerline walkability checks.
-	// 0.5 m is fine enough to catch a ~1-tile water sliver between two on-land vertices.
-	static constexpr std::int64_t kFootprintSampleStepMm = 500; // 0.5 m
-
 	// Nearest clear ground (isValidPosition) to `meters`, searched outward over the mesh from it,
 	// or nullopt when it is off meshed ground or no face is clear. Moves a work target off a collider
 	// to the ground beside it, and places things.
@@ -378,10 +382,14 @@ class NavigationSystem : public ISystem {
 	// distance OFF the spot that produced it. Deterministic: a single candidate at
 	// origin + minDist*dir, then a ring of fixed angles at that radius, then the nearest walkable
 	// point pushed out to minDist when that stays on mesh. `preferredDir` biases the first
-	// candidate; a zero vector falls back to {1,0}. nullopt only when `origin` is off meshed
-	// ground or no face is walkable.
-	[[nodiscard]] std::optional<glm::vec2>
-	findValidPositionNear(glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}) const;
+	// candidate; a zero vector falls back to {1,0}. `accept`, when given, must also pass every
+	// candidate, the last one included (a crafted crate's install target is one its footprint can be
+	// set up on); the nearest-point fallback then never answers a point closer than minDist, which
+	// would be `origin`'s own spot. nullopt when `origin` is off meshed ground, no face is walkable,
+	// or `accept` takes no candidate.
+	[[nodiscard]] std::optional<glm::vec2> findValidPositionNear(
+		glm::vec2 origin, float minDistMeters = 1.0F, glm::vec2 preferredDir = {0.0F, 0.0F}, const std::function<bool(glm::vec2)>& accept = {}
+	) const;
 
 	// True when `entity`, placed in `chunk`, is a detail ring in the nav mesh queries see. Collision
 	// pushes out of a placed obstacle only then, so the forward snap has had its turn first and the
@@ -491,7 +499,7 @@ class NavigationSystem : public ISystem {
 	// A visibility limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
 	// and range, its outline, and the box its placed obstacles are looked for in (the outline's box
 	// grown by kFootprintReachMeters).
-	struct SeenLimit {
+	struct MeshLimit {
 		EntityID						mover = kInvalidEntity;
 		geometry::Vec2i64				centre{0, 0};
 		std::int64_t					rangeMm		   = 0; // R: the disc its outline holds
@@ -593,24 +601,24 @@ class NavigationSystem : public ISystem {
 	// once), and marks the movers whose newest limit is urgent: two distance compares a mover
 	// otherwise.
 	void trackMovers();
-	[[nodiscard]] SeenLimit makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const;
+	[[nodiscard]] MeshLimit makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const;
 	// The limit is in the mesh: its mover's served limit, unless he has a newer one there.
-	static void noteServed(MoverDisc& disc, const SeenLimit& limit);
-	void		noteServed(const SeenLimit& limit);
+	static void noteServed(MoverDisc& disc, const MeshLimit& limit);
+	void		noteServed(const MeshLimit& limit);
 	[[nodiscard]] bool anchorHolds(world::ChunkCoordinate coord) const;
 	// Every chunk the limit's query box meets is loaded and ready and has its placement, and, for
 	// a mover's limit, an anchor holds it.
-	[[nodiscard]] bool limitServable(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitServable(const MeshLimit& limit) const;
 	// Some chunk the mover's limit needs is held by no anchor: it can never go in.
-	[[nodiscard]] bool limitStranded(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitStranded(const MeshLimit& limit) const;
 	// `pointMm` is inside a limit on its way in: the landing's, one queued and not stranded, or one
 	// whose ground is gathered and not yet handed to the patch worker. Off meshed ground, that is
 	// ground on its way; anywhere else is not, until a mover takes a limit there.
 	[[nodiscard]] bool groundComing(geometry::Vec2i64 pointMm) const;
 	// The limit is its mover's newest, and he is urgent (MoverDisc::urgent).
-	[[nodiscard]] bool limitUrgent(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitUrgent(const MeshLimit& limit) const;
 	// A search's hold keeps the limit waiting: its mover has a limit in the mesh and it is not urgent.
-	[[nodiscard]] bool limitHoldable(const SeenLimit& limit) const;
+	[[nodiscard]] bool limitHoldable(const MeshLimit& limit) const;
 	// As a join moves generation(), the routes current before it that no closing box crosses are
 	// stamped current; a route a closing box crosses goes stale.
 	void restampRoutes(const std::vector<std::pair<glm::vec2, glm::vec2>>& closed) const;
@@ -653,7 +661,7 @@ class NavigationSystem : public ISystem {
 	void gatherLimits(std::size_t addBudget, std::size_t limitBudget, bool holdLimits);
 	// The limit's placed obstacles not yet gathered, in key order, at most `budget` of them, then,
 	// once none is left, its chunks' water not yet gathered and its ground. True when the ground went.
-	bool serveLimit(const SeenLimit& limit, std::size_t& budget);
+	bool serveLimit(const MeshLimit& limit, std::size_t& budget);
 
 	world::ChunkManager*							  chunkManager		= nullptr;
 	assets::PlacementExecutor*						  placement			= nullptr;
@@ -673,8 +681,8 @@ class NavigationSystem : public ISystem {
 	std::map<ObstacleKey, RingId> obstacleInMesh;
 	std::vector<RingId>			  detailRemovals;
 	// Limits waiting to go in, in the order they were taken, and the landing's until it goes in.
-	std::deque<SeenLimit>	 limitQueue;
-	std::optional<SeenLimit> landingLimit;
+	std::deque<MeshLimit>	 limitQueue;
+	std::optional<MeshLimit> landingLimit;
 	// Queued limits that could have gone in at the last gather but for a budget or a hold.
 	std::size_t								limitsPending = 0;
 	// Queued limits dropped as stranded: they never go in (awaitedGroundEpoch).

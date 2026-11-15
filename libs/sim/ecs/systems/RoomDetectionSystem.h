@@ -5,8 +5,8 @@
 //
 // Each tick it cheaply polls ConstructionWorld::version(); when topology changed
 // it re-runs detectRooms() and reconciles the result against its persistent room
-// records: matching new faces to existing rooms by representative-point
-// containment (so names survive edits), spawning entities for genuinely new
+// records: matching new faces to existing rooms by an unchanged outer ring, then
+// by representative-point containment (so names survive edits), spawning entities for genuinely new
 // rooms, updating moved ones, and destroying records whose face is gone. A newly
 // formed room fires the room-formed callback (the toast seam; the engine layer
 // never touches UI directly).
@@ -61,15 +61,17 @@ namespace ecs {
 		void setRoomFormedCallback(RoomFormedCallback callback) { onRoomFormed = std::move(callback); }
 
 		/// A persistent room: its identity (id/name) and the geometry that lets the
-		/// next reconcile recognize it. `entity` is the ECS mirror.
+		/// next reconcile recognize it. `entity` is the ECS mirror. The room is `ring`
+		/// (CCW) minus `holes` (each CW); test points with construction::pointInRoom.
 		struct RoomRecord {
-			uint64_t		  roomId = 0;
-			std::string		  name;
-			geometry::Ring	  ring;
-			geometry::Vec2i64 rep;
-			float			  area = 0.0f; // display only
-			geometry::Int128  areaDoubled; // exact 2x area; deterministic merge tiebreak key
-			EntityID		  entity = kInvalidEntity;
+			uint64_t					roomId = 0;
+			std::string					name;
+			geometry::Ring				ring;
+			std::vector<geometry::Ring> holes;
+			geometry::Vec2i64			rep;
+			float						area = 0.0f; // display only
+			geometry::Int128			areaDoubled; // exact 2x area net of holes; deterministic merge tiebreak key
+			EntityID					entity = kInvalidEntity;
 		};
 
 		/// Current room records, in stable order. The supported read accessor for the

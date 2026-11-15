@@ -280,6 +280,66 @@ namespace ecs::test {
 		EXPECT_FLOAT_EQ(bp->workDone, 0.0F); // no progress on a not-ready blueprint
 	}
 
+	TEST_F(BuildActionSystemTest, BuilderMidActionStopsWhenSiteOrderedDemolished) {
+		auto builder = createBuilder(0.0F);
+		auto blueprint = createBlueprint(1000.0F);
+		assignBuildTask(builder, blueprint);
+		const Inventory inventoryBefore = *world->getComponent<Inventory>(builder);
+
+		world->update(1.0F);
+		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+		const float workAtOrder = bp->workDone;
+		ASSERT_GT(workAtOrder, 0.0F);
+		ASSERT_EQ(world->getComponent<Action>(builder)->type, ActionType::Build);
+
+		bp->demolishing = true;
+		world->update(1.0F);
+
+		EXPECT_FLOAT_EQ(bp->workDone, workAtOrder) << "no build work once the site is ordered demolished";
+		EXPECT_FALSE(world->getComponent<Action>(builder)->isActive());
+
+		world->update(1.0F);
+		EXPECT_FLOAT_EQ(bp->workDone, workAtOrder);
+		EXPECT_FALSE(world->getComponent<Task>(builder)->isActive()) << "the build task ends so the colonist decides again";
+		EXPECT_EQ(world->getComponent<Inventory>(builder)->items.size(), inventoryBefore.items.size());
+	}
+
+	TEST_F(BuildActionSystemTest, DemolishOrderInCompletingTickPreventsCompletion) {
+		int callbackCount = 0;
+		actionSystem->setStructureCompletedCallback([&](EntityID) { ++callbackCount; });
+
+		auto builder = createBuilder(0.0F);
+		auto blueprint = createBlueprint(15.0F);
+		assignBuildTask(builder, blueprint);
+		world->update(1.0F); // 10 of 15
+
+		// The order lands before the tick whose work would reach the bound.
+		auto* bp = world->getComponent<StructureBlueprint>(blueprint);
+		bp->demolishing = true;
+		world->update(1.0F);
+
+		EXPECT_FLOAT_EQ(bp->workDone, 10.0F);
+		EXPECT_EQ(bp->phase, StructureBlueprint::BuildPhase::UnderConstruction);
+		EXPECT_EQ(callbackCount, 0) << "a site ordered demolished never completes";
+	}
+
+	TEST_F(BuildActionSystemTest, WalkingBuilderDoesNotStartOnDemolishedSite) {
+		auto builder = createBuilder(0.0F, {5.0F, 0.0F});
+		auto blueprint = createBlueprint(1000.0F);
+		assignBuildTask(builder, blueprint);
+		world->getComponent<Task>(builder)->state = TaskState::Moving;
+		world->update(0.1F);
+		ASSERT_FALSE(world->getComponent<Action>(builder)->isActive()) << "still walking";
+
+		world->getComponent<StructureBlueprint>(blueprint)->demolishing = true;
+		world->getComponent<Position>(builder)->value = {0.0F, 0.0F};
+		world->update(1.0F);
+
+		EXPECT_FALSE(world->getComponent<Action>(builder)->isActive());
+		EXPECT_FALSE(world->getComponent<Task>(builder)->isActive()) << "arriving ends the build task";
+		EXPECT_FLOAT_EQ(world->getComponent<StructureBlueprint>(blueprint)->workDone, 0.0F);
+	}
+
 	TEST_F(BuildActionSystemTest, DeconstructCountsWorkDownAndCompletes) {
 		int		 callbackCount = 0;
 		EntityID notified = 0;

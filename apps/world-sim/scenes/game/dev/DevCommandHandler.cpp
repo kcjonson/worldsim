@@ -1,5 +1,7 @@
 #include "DevCommandHandler.h"
 
+#include "scenes/game/dev/GroundRefusal.h"
+#include "scenes/game/dev/PointList.h"
 #include "scenes/game/ui/GameUI.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
@@ -13,6 +15,7 @@
 
 #include <ui/components/Toast.h>
 
+#include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
 
@@ -35,6 +38,7 @@
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/TimeSystem.h>
 
 #include <assets/RecipeRegistry.h>
@@ -61,20 +65,38 @@
 #include <cstdlib>
 #include <iomanip>
 #include <limits>
+#include <type_traits>
 #include <unordered_map>
 
 namespace world_sim {
 
+	namespace {
+		constexpr std::size_t kFoundationLeastPoints = 3;
+		constexpr std::size_t kWallsLeastPoints = 2;
+	} // namespace
+
 	std::vector<app::DevServer::Registration> DevCommandHandler::registerWith(app::DevServer& server) {
 		std::vector<app::DevServer::Registration> registrations;
-		const auto								  verb = [&](const char* name, void (DevCommandHandler::*run)(const app::DevRequest&)) {
-			   registrations.push_back(server.route(name, [this, run](const app::DevRequest& cmd) {
-				   (this->*run)(cmd);
-				   return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.name) + "\"}"};
-			   }));
+		// A verb that returns a DevRefusal answers its message as a 400.
+		const auto verb = [&](const char* name, auto run, std::size_t leastPoints = 0) {
+			registrations.push_back(server.route(name, [this, run, leastPoints](const app::DevRequest& cmd) {
+				std::string refusal = pointCountRefusal(cmd.name, leastPoints, parsePointList(param(cmd, "pts")).size());
+				if (!refusal.empty()) {
+					LOG_WARNING(Game, "[DevAPI] %s", refusal.c_str());
+				} else if constexpr (std::is_same_v<std::invoke_result_t<decltype(run), DevCommandHandler*, const app::DevRequest&>, DevRefusal>) {
+					refusal = (this->*run)(cmd).message;
+				} else {
+					(this->*run)(cmd);
+				}
+				if (!refusal.empty()) {
+					return app::DevResponse{.status = 400, .body = "{\"error\":\"" + jsonEscape(refusal) + "\"}"};
+				}
+				return app::DevResponse{.body = "{\"status\":\"ok\",\"verb\":\"" + jsonEscape(cmd.name) + "\"}"};
+			}));
 		};
 		verb("freebuild", &DevCommandHandler::devFreeBuild);
 		verb("construction", &DevCommandHandler::devFreeBuild);
+		verb("reveal", &DevCommandHandler::devReveal);
 		verb("give", &DevCommandHandler::devGive);
 		verb("spawn", &DevCommandHandler::devSpawn);
 		verb("colonist", &DevCommandHandler::devColonist);
@@ -84,8 +106,8 @@ namespace world_sim {
 		verb("select", &DevCommandHandler::devSelect);
 		verb("kill", &DevCommandHandler::devKill);
 		verb("complete", &DevCommandHandler::devComplete);
-		verb("foundation", &DevCommandHandler::devFoundation);
-		verb("walls", &DevCommandHandler::devWalls);
+		verb("foundation", &DevCommandHandler::devFoundation, kFoundationLeastPoints);
+		verb("walls", &DevCommandHandler::devWalls, kWallsLeastPoints);
 		verb("opening", &DevCommandHandler::devOpening);
 		verb("craft", &DevCommandHandler::devCraft);
 		verb("tunable", &DevCommandHandler::devTunable);
@@ -95,6 +117,9 @@ namespace world_sim {
 		registrations.push_back(server.route("flora", [this](const app::DevRequest& cmd) { return devFlora(cmd); }));
 		registrations.push_back(server.route("ground", [this](const app::DevRequest& cmd) { return devGround(cmd); }));
 		registrations.push_back(server.route("storage", [this](const app::DevRequest& cmd) { return devStorage(cmd); }));
+		registrations.push_back(server.route("visibility", [this](const app::DevRequest& cmd) {
+			return app::DevResponse{.body = visibilityJson(cmd)};
+		}));
 
 		const auto view = [&](const char* what, void (DevCommandHandler::*serialize)(std::ostringstream&)) {
 			registrations.push_back(server.stateProvider(what, [this, serialize] {
@@ -110,6 +135,7 @@ namespace world_sim {
 		view("time", &DevCommandHandler::serializeTime);
 		view("landing", &DevCommandHandler::serializeLanding);
 		view("summary", &DevCommandHandler::serializeSummary);
+		registrations.push_back(server.stateProvider("visibility", [this] { return visibilityJson({}); }));
 		registrations.push_back(server.stateProvider("tunables", [] { return Foundation::Tunables::instance().toJson(); }));
 		return registrations;
 	}
@@ -155,6 +181,14 @@ namespace world_sim {
 		m_ctx.world->getSystem<ecs::ConstructionSystem>().setFreeBuild(on);
 		LOG_INFO(Game, "[DevAPI] free-build %s", on ? "ON" : "OFF");
 		m_ctx.ui->pushNotification("Dev", on ? "Free-build ON" : "Free-build OFF", ui::ToastSeverity::Info);
+	}
+
+	void DevCommandHandler::devReveal(const app::DevRequest& cmd) {
+		const std::string value = param(cmd, "on", "1");
+		const bool		  on = (value == "1" || value == "on" || value == "true" || value == "yes");
+		m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>().setRevealed(on);
+		LOG_INFO(Game, "[DevAPI] reveal %s", on ? "ON" : "OFF");
+		m_ctx.ui->pushNotification("Dev", on ? "Reveal ON" : "Reveal OFF", ui::ToastSeverity::Info);
 	}
 
 	void DevCommandHandler::devGive(const app::DevRequest& cmd) {
@@ -245,45 +279,44 @@ namespace world_sim {
 		m_ctx.ui->pushNotification("Dev", "Unknown where: " + where, ui::ToastSeverity::Warning);
 	}
 
-	void DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devSpawn(const app::DevRequest& cmd) {
 		const std::string def = param(cmd, "def");
 		if (def.empty()) {
-			LOG_WARNING(Game, "[DevAPI] spawn: missing def=<assetName>");
-			m_ctx.ui->pushNotification("Dev", "spawn needs def=", ui::ToastSeverity::Warning);
-			return;
+			return refuse("spawn: missing def=<assetName>");
 		}
 		if (assets::AssetRegistry::Get().getDefinition(def) == nullptr) {
-			LOG_WARNING(Game, "[DevAPI] spawn: unknown def '%s'", def.c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown asset: " + def, ui::ToastSeverity::Warning);
-			return;
+			return refuse("spawn: unknown asset '" + def + "'");
 		}
 		const Foundation::Vec2 at = parsePoint(param(cmd, "at"));
-		if (!requireValidPosition(at, "spawn")) {
-			return;
+		if (DevRefusal refusal = refuse(spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, at)); !refusal.message.empty()) {
+			return refusal;
 		}
 		const long			   nRaw = std::strtol(param(cmd, "n", "1").c_str(), nullptr, 10);
 		const long			   n = nRaw < 1 ? 1 : nRaw;
 		const float			   scatter = std::strtof(param(cmd, "scatter", "0").c_str(), nullptr);
 
-		// requireValidPosition gated the CENTER, but each scattered offset is its own point that
-		// can land off-mesh (in a river). Snap every scattered position onto walkable ground with
-		// the same primitive the colonist drops use: minDist 0 keeps a position that is already
-		// valid and otherwise returns the nearest walkable point, so nothing spawns in water. A
-		// position with no mesh anywhere near it (nullopt) is skipped rather than placed off-mesh.
+		// The gate took the CENTER, but each scattered offset is its own point that can land in a
+		// river. Snap every scattered position onto walkable ground with the same primitive the
+		// colonist drops use (minDist 0 keeps a position that is already valid), then skip one the
+		// gate refuses (furniture in a ford, say) or with no mesh anywhere near it.
 		long spawned = 0;
 		for (long i = 0; i < n; ++i) {
 			const Foundation::Vec2 off = spreadOffset(i, n, scatter);
 			const glm::vec2		   raw{at.x + off.x, at.y + off.y};
-			const std::optional<glm::vec2> placed =
-				(m_ctx.navigation != nullptr) ? m_ctx.navigation->findValidPositionNear(raw, 0.0F) : std::optional<glm::vec2>{raw};
-			if (!placed.has_value()) {
+			const std::optional<glm::vec2> placed = m_ctx.navigation->findValidPositionNear(raw, 0.0F);
+			if (!placed.has_value() || !spawnGroundRefusal(*m_ctx.placement, m_ctx.navigation, def, {placed->x, placed->y}).empty()) {
 				continue;
 			}
 			m_ctx.placement->spawnEntity(def, {placed->x, placed->y});
 			++spawned;
 		}
+		if (spawned == 0) {
+			return refuse("spawn: none of the " + std::to_string(n) + " scattered spots near (" + std::to_string(at.x) + ", " +
+						  std::to_string(at.y) + ") takes " + def);
+		}
 		LOG_INFO(Game, "[DevAPI] spawn: %ld/%ld x '%s' near (%.1f, %.1f)", spawned, n, def.c_str(), at.x, at.y);
 		m_ctx.ui->pushNotification("Dev", "Spawned " + std::to_string(spawned) + " " + def, ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devColonist(const app::DevRequest& cmd) {
@@ -312,7 +345,7 @@ namespace world_sim {
 			return true;
 		}
 		const bool		  meshed = m_ctx.navigation != nullptr && m_ctx.navigation->inSimArea({at.x, at.y});
-		const char* const why	 = meshed ? "is water or a placed obstacle" : "is ground no mover has seen (off the nav mesh)";
+		const char* const why	 = meshed ? "is water or a placed obstacle" : "is ground no mover has meshed (off the nav mesh)";
 		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f %s, refused", verb, at.x, at.y, why);
 		m_ctx.ui->pushNotification(
 			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") " + why, ui::ToastSeverity::Warning
@@ -327,32 +360,12 @@ namespace world_sim {
 		return requireValidPosition(at, verb);
 	}
 
-	bool DevCommandHandler::requireBuildableArea(const std::vector<Foundation::Vec2>& pts, const char* verb) {
-		// The WHOLE footprint must be BUILDABLE, matching the foundation build tool (DrawingSystem):
-		// water and off-mesh gaps block, but clearable entities (trees/rocks) do not -- they
-		// become clear tasks. Wall conflicts are the validator's job. Without a nav system wired
-		// (headless/test), validity is owned elsewhere; mirror requireValidPosition's permissive fallback.
-		if (m_ctx.navigation == nullptr) {
-			return true;
+	DevRefusal DevCommandHandler::refuse(const std::string& message) {
+		if (!message.empty()) {
+			LOG_WARNING(Game, "[DevAPI] %s, refused", message.c_str());
+			m_ctx.ui->pushNotification("Dev", "Refused: " + message, ui::ToastSeverity::Warning);
 		}
-		if (m_ctx.navigation->isAreaBuildable(Foundation::toGlmVec2(pts))) {
-			return true;
-		}
-		LOG_WARNING(Game, "[DevAPI] %s: error: footprint not on buildable ground (water, or ground no mover has seen: off the nav mesh), refused", verb);
-		m_ctx.ui->pushNotification("Dev", "Refused: footprint on water or ground no mover has seen", ui::ToastSeverity::Warning);
-		return false;
-	}
-
-	bool DevCommandHandler::requireWalkableChain(const std::vector<Foundation::Vec2>& pts, const char* verb) {
-		if (m_ctx.navigation == nullptr) {
-			return true;
-		}
-		if (m_ctx.navigation->isPolylineWalkable(Foundation::toGlmVec2(pts))) {
-			return true;
-		}
-		LOG_WARNING(Game, "[DevAPI] %s: error: chain not fully on an active walkable nav mesh, refused", verb);
-		m_ctx.ui->pushNotification("Dev", "Refused: wall chain not fully on walkable ground", ui::ToastSeverity::Warning);
-		return false;
+		return {message};
 	}
 
 	ecs::EntityID DevCommandHandler::nearestColonist(Foundation::Vec2 at) {
@@ -552,32 +565,25 @@ namespace world_sim {
 		}
 	}
 
-	void DevCommandHandler::devFoundation(const app::DevRequest& cmd) {
-		std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
-		if (pts.size() < 3) {
-			LOG_WARNING(Game, "[DevAPI] foundation: pts needs >= 3 'x,y' pairs (got %zu)", pts.size());
-			return;
-		}
+	DevRefusal DevCommandHandler::devFoundation(const app::DevRequest& cmd) {
+		const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
 		// The WHOLE footprint must sit on buildable land (vertices, edges, AND interior).
 		// A footprint that spans water between on-land corners, or clips a water hole,
 		// refuses the whole placement (stamp nothing), matching the real build tool's gate.
-		if (!requireBuildableArea(pts, "foundation")) {
-			return;
+		if (DevRefusal refusal = refuse(foundationGroundRefusal(m_ctx.navigation, pts)); !refusal.message.empty()) {
+			return refusal;
 		}
 		const std::string material = param(cmd, "material", "Wood");
 
 		auto&	   constructionWorld = m_ctx.drawing->world();
 		const auto commit = constructionWorld.commitFoundation(pts, material);
 		if (!commit.ok()) {
-			LOG_WARNING(Game, "[DevAPI] foundation: commit rejected (status %d)", static_cast<int>(commit.status));
-			m_ctx.ui->pushNotification("Dev", "Foundation commit rejected", ui::ToastSeverity::Warning);
-			return;
+			return refuse("foundation: commit rejected (status " + std::to_string(static_cast<int>(commit.status)) + ")");
 		}
 
 		const ecs::EntityID entity = m_ctx.drawing->spawnBlueprintEntity(commit.id);
 		if (entity == ecs::kInvalidEntity) {
-			LOG_WARNING(Game, "[DevAPI] foundation: spawn failed for #%llu", static_cast<unsigned long long>(commit.id));
-			return;
+			return refuse("foundation: spawn failed for #" + std::to_string(commit.id));
 		}
 
 		const std::string builtStr = param(cmd, "built", "0");
@@ -596,6 +602,7 @@ namespace world_sim {
 			static_cast<uint32_t>(entity)
 		);
 		m_ctx.ui->pushNotification("Dev", built ? "Built foundation placed" : "Foundation blueprint placed", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	std::string DevCommandHandler::devFoundationEdit(const app::DevRequest& cmd) {
@@ -684,7 +691,8 @@ namespace world_sim {
 			const glm::vec2 meters{point.x, point.y};
 			out << (first ? "" : ",") << "{\"x\":" << point.x << ",\"y\":" << point.y << ",\"onMesh\":" << flag(m_ctx.navigation->isOnMesh(meters))
 				<< ",\"valid\":" << flag(m_ctx.navigation->isValidPosition(meters)) << ",\"buildable\":"
-				<< flag(m_ctx.navigation->isPointBuildable(meters));
+				<< flag(m_ctx.navigation->isPointBuildableOnceCleared(meters)) << ",\"buildableNow\":"
+				<< flag(m_ctx.navigation->isPointBuildableNow(meters));
 			first = false;
 			const world::Chunk* chunk = m_ctx.chunks->getChunk(world::worldToChunk({point.x, point.y}));
 			if (chunk == nullptr || !chunk->isReady()) {
@@ -860,12 +868,8 @@ namespace world_sim {
 		return {.body = json.str()};
 	}
 
-	void DevCommandHandler::devWalls(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devWalls(const app::DevRequest& cmd) {
 		std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pts"));
-		if (pts.size() < 2) {
-			LOG_WARNING(Game, "[DevAPI] walls: pts needs >= 2 'x,y' pairs (got %zu)", pts.size());
-			return;
-		}
 		const std::string material = param(cmd, "material", "Wood");
 		const std::string thickness = param(cmd, "thickness", "Standard");
 		// strtoull, not strtoul: FoundationId is 64-bit, and unsigned long is only 32-bit on Windows.
@@ -879,12 +883,12 @@ namespace world_sim {
 			pts.push_back(pts.front()); // close the loop so the chain encloses
 		}
 
-		// The WHOLE chain must lie on buildable land: every segment's endpoints AND its
-		// centerline samples. A segment that bridges water between two on-land points refuses
-		// the whole placement (stamp nothing). Checked AFTER the close-loop append so the
-		// closing segment (last->first) is validated too.
-		if (!requireWalkableChain(pts, "walls")) {
-			return;
+		// The WHOLE chain must lie on clear buildable land, every point of every segment. A segment
+		// that bridges water or a ford between two on-land points refuses the whole placement (stamp
+		// nothing). Checked AFTER the close-loop append so the closing segment (last->first) is
+		// validated too.
+		if (DevRefusal refusal = refuse(wallChainGroundRefusal(m_ctx.navigation, pts)); !refusal.message.empty()) {
+			return refusal;
 		}
 
 		const int n = m_ctx.drawing->devCommitWalls(pts, material, thickness, host, built);
@@ -897,16 +901,19 @@ namespace world_sim {
 			built ? 1 : 0,
 			static_cast<unsigned long long>(host)
 		);
+		if (n == 0) {
+			return refuse("walls: no wall segment was committed (every span was rejected, for example one that duplicates an existing wall)");
+		}
 		m_ctx.ui->pushNotification("Dev", std::to_string(n) + (built ? " built wall(s)" : " wall blueprint(s)"), ui::ToastSeverity::Info);
+		return {};
 	}
 
-	void DevCommandHandler::devOpening(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devOpening(const app::DevRequest& cmd) {
 		const std::string type = param(cmd, "type", "Door");
-		const auto*		  typeDef = assets::ConstructionRegistry::Get().getOpeningType(type);
+		const auto&		  registry = assets::ConstructionRegistry::Get();
+		const auto*		  typeDef = registry.getOpeningType(type);
 		if (typeDef == nullptr) {
-			LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown opening type", ui::ToastSeverity::Warning);
-			return;
+			return refuse("opening: unknown type '" + type + "'");
 		}
 
 		auto& constructionWorld = m_ctx.drawing->world();
@@ -920,27 +927,33 @@ namespace world_sim {
 		} else if (hasParam(cmd, "pt")) {
 			const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pt"));
 			if (pts.empty()) {
-				LOG_WARNING(Game, "[DevAPI] opening: pt must be 'x,y' world meters");
-				return;
+				return refuse("opening: pt must be 'x,y' world meters");
 			}
-			const auto&							   registry = assets::ConstructionRegistry::Get();
 			const construction::SnapEngine snap(registry.snapping(), constructionWorld);
-			const auto							   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
+			const auto					   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
 			if (!os.valid) {
-				LOG_WARNING(Game, "[DevAPI] opening: no built wall near pt");
-				m_ctx.ui->pushNotification("Dev", "No built wall near point", ui::ToastSeverity::Warning);
-				return;
+				return refuse("opening: no built wall near pt that can hold a " + type);
 			}
 			segment = os.segment;
 			t = os.t;
 		} else {
-			LOG_WARNING(Game, "[DevAPI] opening: needs seg=<id> or pt=x,y");
-			return;
+			return refuse("opening: needs seg=<id> or pt=x,y");
 		}
 
-		// Explicit t= overrides the resolved parameter (addOpening clamps to [0,1]).
+		// Explicit t= overrides the resolved parameter.
 		if (hasParam(cmd, "t")) {
 			t = std::strtof(param(cmd, "t").c_str(), nullptr);
+		}
+
+		// The opening tool's own gate: end margins from the trimmed band ends, segment
+		// length, overlap with the segment's other openings.
+		const construction::ConstructionValidator validator(registry.constraints(), constructionWorld);
+		const construction::ValidationResult	  validation = validator.validateOpening(segment, t, typeDef->name, typeDef->material);
+		if (!validation.ok()) {
+			return refuse(
+				"opening: " + construction::validationReason(validation.code) + " (segment #" + std::to_string(segment) + ", t=" +
+				std::to_string(t) + ")"
+			);
 		}
 
 		const std::string builtStr = param(cmd, "built", "1");
@@ -948,14 +961,7 @@ namespace world_sim {
 
 		const construction::OpeningId id = m_ctx.drawing->devCommitOpening(segment, t, type, built);
 		if (id == construction::kInvalidOpening) {
-			LOG_WARNING(
-				Game,
-				"[DevAPI] opening: commit rejected (segment #%llu, type %s)",
-				static_cast<unsigned long long>(segment),
-				type.c_str()
-			);
-			m_ctx.ui->pushNotification("Dev", "Opening commit rejected", ui::ToastSeverity::Warning);
-			return;
+			return refuse("opening: commit rejected (segment #" + std::to_string(segment) + ", type " + type + ")");
 		}
 
 		LOG_INFO(
@@ -968,6 +974,7 @@ namespace world_sim {
 			built ? 1 : 0
 		);
 		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devCraft(const app::DevRequest& cmd) {
@@ -1102,31 +1109,6 @@ namespace world_sim {
 		const float r = radius * std::sqrt(t);
 		const float angle = static_cast<float>(i) * 2.399963229F; // golden angle (radians)
 		return {r * std::cos(angle), r * std::sin(angle)};
-	}
-
-	std::vector<Foundation::Vec2> DevCommandHandler::parsePointList(const std::string& spec) {
-		std::vector<Foundation::Vec2> pts;
-		std::stringstream			  ss(spec);
-		std::string					  pair;
-		while (std::getline(ss, pair, ';')) {
-			const auto comma = pair.find(',');
-			if (comma == std::string::npos) {
-				continue;
-			}
-			const std::string xs = pair.substr(0, comma);
-			const std::string ys = pair.substr(comma + 1);
-			char*			  endX = nullptr;
-			char*			  endY = nullptr;
-			const float		  x = std::strtof(xs.c_str(), &endX);
-			const float		  y = std::strtof(ys.c_str(), &endY);
-			// Skip the pair unless both parses consumed at least one character; strtof returns 0.0
-			// on a non-numeric string, which would otherwise silently inject a (0,0) vertex.
-			if (endX == xs.c_str() || endY == ys.c_str()) {
-				continue;
-			}
-			pts.emplace_back(x, y);
-		}
-		return pts;
 	}
 
 	// ===================================================================== STATE READBACK
@@ -1405,6 +1387,24 @@ namespace world_sim {
 		}
 
 		out << "}";
+	}
+
+	std::string DevCommandHandler::visibilityJson(const app::DevRequest& cmd) {
+		const ecs::PlayerVisibilitySystem& visibility = m_ctx.world->getSystem<ecs::PlayerVisibilitySystem>();
+		const vision::SeenArea&			   seen		  = visibility.seenArea();
+		std::ostringstream				   out;
+		out << "{\"revealed\":" << (visibility.revealed() ? "true" : "false") << ",\"seenSquareMeters\":" << std::fixed
+			<< std::setprecision(1) << seen.committedSquareMeters() << ",\"ringsRegistered\":" << seen.ringsRegistered()
+			<< ",\"shapesPending\":" << seen.shapesPending() << ",\"shapesDropped\":" << seen.shapesDropped() << ",\"shapesSkipped\":" << seen.shapesSkipped()
+			<< ",\"sweepsBuilt\":" << seen.sweepsBuilt() << ",\"sweepsWaiting\":" << seen.sweepsWaiting()
+			<< ",\"epoch\":" << seen.epoch();
+		if (hasParam(cmd, "x") && hasParam(cmd, "y")) {
+			const glm::vec2 point{std::strtof(param(cmd, "x").c_str(), nullptr), std::strtof(param(cmd, "y").c_str(), nullptr)};
+			out << ",\"x\":" << point.x << ",\"y\":" << point.y << ",\"seen\":" << (visibility.isSeen(point) ? "true" : "false")
+			    << ",\"visible\":" << (visibility.isVisible(point) ? "true" : "false");
+		}
+		out << "}";
+		return out.str();
 	}
 
 	void DevCommandHandler::serializeSummary(std::ostringstream& out) {

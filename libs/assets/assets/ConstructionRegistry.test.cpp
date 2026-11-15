@@ -104,7 +104,7 @@ TEST_F(ConstructionRegistryTest, Rendering_RealFileValues) {
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.9F);
 	EXPECT_FLOAT_EQ(r.foundation.outlineWidthBuilt, 2.0F);
 	EXPECT_FLOAT_EQ(r.foundation.builtEdgeDarken, 0.55F);
-	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.97F);
+	EXPECT_FLOAT_EQ(r.wall.progressAlphaMax, 0.97F);
 	EXPECT_FLOAT_EQ(r.wall.builtEdgeDarken, 0.5F);
 	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.11F);
 	EXPECT_FLOAT_EQ(r.opening.mullionSpacingMeters, 0.7F);
@@ -150,7 +150,7 @@ TEST_F(ConstructionRegistryTest, Rendering_ParsesOverridesKeepsOtherDefaults) {
 	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.20F);
 	// Unspecified fields keep their built-in defaults.
 	EXPECT_FLOAT_EQ(r.foundation.progressAlphaMax, 0.85F);
-	EXPECT_FLOAT_EQ(r.wall.junctionAlphaBuilt, 0.97F);
+	EXPECT_FLOAT_EQ(r.wall.progressAlphaMax, 0.97F);
 	EXPECT_FLOAT_EQ(r.preview.vertexRadiusPx, 4.0F);
 }
 
@@ -219,6 +219,7 @@ TEST_F(ConstructionRegistryTest, Constraints_Parsed) {
 	EXPECT_LE(c.refundPercent, 100.0F);
 	EXPECT_GE(c.builderCapBase, 1);
 	EXPECT_GT(c.builderCapPerSquareMeter, 0.0F);
+	EXPECT_FLOAT_EQ(c.builderSpotMinSpacingMeters, 1.0F);
 }
 
 TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
@@ -375,6 +376,34 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsMaxPointsTooLow) {
   <refundPercent>50</refundPercent>
   <builderCapBase>1</builderCapBase>
   <builderCapPerSquareMeter>0.1</builderCapPerSquareMeter>
+</ConstructionConstraints>)";
+
+	std::string path = writeTempFile(xml, ".xml");
+	ASSERT_TRUE(ConstructionRegistry::Get().loadConstraints(path));
+
+	std::string folder = constructionConfigFolder().string();
+	ConstructionRegistry::Get().loadMaterials((std::filesystem::path(folder) / "materials.xml").string());
+	ConstructionRegistry::Get().loadSnapping((std::filesystem::path(folder) / "snapping.xml").string());
+
+	EXPECT_FALSE(ConfigValidator::validateConstruction());
+	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsNonPositiveBuilderSpotSpacing) {
+	std::string xml = R"(<?xml version="1.0"?>
+<ConstructionConstraints>
+  <pathingClearanceMeters>0.7</pathingClearanceMeters>
+  <minCornerAngleDegrees>30.0</minCornerAngleDegrees>
+  <minVertexSpacingMeters>0.5</minVertexSpacingMeters>
+  <segmentClearanceMeters>1.0</segmentClearanceMeters>
+  <minAreaSquareMeters>4.0</minAreaSquareMeters>
+  <maxAreaSquareMeters>2500.0</maxAreaSquareMeters>
+  <maxPoints>32</maxPoints>
+  <openingMarginMeters>0.3</openingMarginMeters>
+  <refundPercent>50</refundPercent>
+  <builderCapBase>1</builderCapBase>
+  <builderCapPerSquareMeter>0.1</builderCapPerSquareMeter>
+  <builderSpotMinSpacingMeters>0</builderSpotMinSpacingMeters>
 </ConstructionConstraints>)";
 
 	std::string path = writeTempFile(xml, ".xml");

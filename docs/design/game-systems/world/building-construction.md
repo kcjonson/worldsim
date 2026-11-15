@@ -122,7 +122,7 @@ A 6 m by 4 m rectangle whose long side runs at 30° from east, starting at the o
 4. **Point 4.** The guide through point 3 parallel to the first edge and the guide through point 1 perpendicular to it both catch by angle, so anywhere within about half a metre of the corner (at (-1.6, 3.8), say) the cursor snaps to their crossing at (-2.000, 3.464). Both guides draw, with right-angle markers at point 3 and point 1, and a dot sits on the crossing. Click.
 5. **Close.** Move to point 1; the origin halo lights and the cursor snaps onto it. Click to close. The corners are right angles to within the millimetre the committed geometry is rounded to.
 
-Walls square a rotated chain the same way, but a chain cannot yet end on its own first point: the closing segment touches the first segment and the validator refuses it as self-intersecting. A closed loop of walls is drawn today as two chains: the first runs point 1 to point 4 and ends (right-click), then a second chain of one segment starts on point 4 and ends on point 1, both caught by the wall-endpoint snap. Letting a chain close on its first point is a separate bug, not part of this spec.
+Walls square a rotated chain the same way, and a closed loop of walls is one chain: points 1 to 4, then point 1 again. With three or more points placed the cursor snaps onto the first point and the click closes the chain and ends it. Point 4 lands on the crossing of the two guides, as for the foundation.
 
 #### Reading of the request, and calls open to the owner
 
@@ -160,7 +160,7 @@ All values live in the external construction config (see Config Surface), so tun
 | Minimum area | No micro-foundations | 4 m² |
 | Clearance to other foundations | Either snapped exactly edge-to-edge (zero gap) or at least pathing clearance apart. Never a sliver between buildings | 1.0 m |
 | Holes | Donut foundations not supported in v1 | — |
-| Terrain | Buildable ground only (no water, and that includes a stream narrow enough for colonists to wade across). Trees, rocks, and loose items don't block placement; they generate clear tasks | — |
+| Terrain | Buildable ground only (no water, and that includes a stream narrow enough for colonists to wade across: nothing is built in a stream, so walls, stations, and storage refuse it too). Trees, rocks, and loose items don't block placement; they generate clear tasks | — |
 
 Concave shapes are fine. L-shapes, U-shapes, long halls: all valid as long as the constraints hold.
 
@@ -236,21 +236,21 @@ On a shared edge between two snapped foundations there is no co-ownership. The w
 
 ### Drawing
 
-Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
+Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. Once the chain has three points, the cursor snaps onto the first point when near it, as it does when closing a foundation; holding Alt skips that snap, so a point near the start is placed as an ordinary one. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
 
 The same angle increments and guides apply as for foundations (Foundations > Snapping and guides), for every chain, along the foundation edge or standing mid-floor; the wall tool also reads walls' corners and directions, and takes foundation corners at their outer-face-flush inset. Whole priority order, first that applies wins:
 
-1. Wall endpoints (continue or join a wall)
-2. Foundation vertices (inset so the wall sits outer-face-flush)
-3. Points along existing walls (T-junction anywhere along a wall's length); where a guide of the chain crosses that wall near the cursor, the point lands on the crossing
-4. Foundation edges (slide along the edge, inset outer-face-flush); likewise squared by a guide of the chain
-5. Guides, ranked as for foundations
-6. Angle increment off the previous chain point
-7. The raw cursor
+1. The chain's first point (closes the loop; once the chain has three points, and skipped while Alt is held)
+2. Wall endpoints (continue or join a wall)
+3. Foundation vertices (inset so the wall sits outer-face-flush)
+4. Points along existing walls (T-junction anywhere along a wall's length); where a guide of the chain crosses that wall near the cursor, the point lands on the crossing
+5. Foundation edges (slide along the edge, inset outer-face-flush); likewise squared by a guide of the chain
+6. Guides, ranked as for foundations
+7. Angle increment off the previous chain point
+8. The raw cursor
 
-A guided point is not offset afterwards: the wall's centerline lands on the guide, which already runs through the inset corners. There is no close onto the first point; the chain is open (see the worked example for a closed loop).
-
-Snapping is generous but escapable (Alt), which drops guides and angle increments and keeps 1 to 4. Walls may be drawn anywhere on the foundation, not just at edges: a wall in the middle of a foundation touching nothing is valid, subject to clearance constraints.
+A guided point is not offset afterwards: the wall's centerline lands on the guide, which already runs through the inset corners.
+Snapping is generous but escapable (Alt), which drops guides and angle increments and keeps 2 to 5 (the close onto the chain's first point is skipped too). Walls may be drawn anywhere on the foundation, not just at edges: a wall in the middle of a foundation touching nothing is valid, subject to clearance constraints.
 
 ### Edge Fill
 
@@ -285,7 +285,9 @@ When built walls (with the foundation boundary playing no part: enclosure must b
 
 Only **built** walls count. The room appears at the moment the closing wall segment completes, with a small notification ("Room formed") and a brief highlight pulse on the new room.
 
-Rooms are an abstract concept, not clickable world objects. They are inspected through a **rooms overlay**, like RimWorld or Going Medieval. The overlay is designed here but ships with the game's broader overlay system (zones, beauty, etc.), not with this epic; this epic ships detection and the room-formed notification only.
+A room built inside another room, its walls standing free of the outer room's, is a room of its own. The outer room's area no longer counts the floor inside it, and the outer room keeps its name; clicking inside the inner room selects the inner room.
+
+Rooms are an abstract concept, not clickable world objects. They are inspected through a **rooms overlay**, like RimWorld or Going Medieval. The overlay exists and is toggled from the game scene; it tints, outlines, and names each room.
 
 - Toggled from the HUD (and a hotkey). While active, room interiors tint and show name labels ("Room 1", renamable).
 - Clicking a room while the overlay is active opens its **room info panel**: area (m²), bounding wall materials, opening count, average insulation, floor material, name.
@@ -318,7 +320,7 @@ Double doors and other widths can be added later as new types, not as stretchabl
 
 | Constraint | Rule | Proposed default |
 |------------|------|------------------|
-| Distance from wall end / corner / junction | Openings keep clear of structural points | 0.3 m |
+| Distance from wall end / corner / junction | Openings keep clear of structural points, measured from where the wall's band ends: the vertex at a free end or a straight join, the edge of the corner or junction piece otherwise (that piece reaches further along the wall the sharper the corner) | 0.3 m |
 | Distance from other openings | Openings can't touch | 0.3 m |
 | Wall length | The segment must be long enough to honor the margins | derived |
 

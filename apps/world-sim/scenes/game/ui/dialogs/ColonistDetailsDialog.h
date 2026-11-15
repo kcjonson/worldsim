@@ -51,7 +51,7 @@ namespace world_sim {
 		[[nodiscard]] ecs::EntityID getColonistId() const { return colonistId; }
 
 		// Each frame while open. The world is non-const for GoalTaskRegistry's queries.
-		void update(ecs::World& world);
+		void update(ecs::World& world, float deltaTime);
 
 	  private:
 		void build(ui::Dialog& shown);

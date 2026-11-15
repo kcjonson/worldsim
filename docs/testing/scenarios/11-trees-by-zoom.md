@@ -1,7 +1,7 @@
 # Scenario 11: trees by zoom
 
 **Status:** draft  
-**Last verified:** 2026-11-11, steps 1 to 3, 5 to 8 and 10; step 4 by camera calls, step 9 not driven
+**Last verified:** 2026-11-13, step 2 with reveal on; 2026-11-11, steps 1 to 3, 5 to 8 and 10; step 4 by camera calls, step 9 not driven
 
 Trees draw at every zoom step from the detail level that fits it, never vanish while the camera moves, sort against colonists, select, and drop wood. Spec: [tree-variety.md](../../technical/asset-system/tree-variety.md).
 
@@ -9,7 +9,7 @@ Trees draw at every zoom step from the detail level that fits it, never vanish w
 
 ## Steps
 
-Build `world-sim` (RelWithDebInfo), launch it with no flags, click Enter Expedition, then Quick Start. The dev server is on 127.0.0.1:8081. A camera jump is `curl.exe "http://127.0.0.1:8081/api/control?action=camera&x=<x>&y=<y>&zoom=<z>"`, with `x` and `y` optional; the zoom steps are 0.25, 0.5, 0.75, 1, 1.5, 2, 3 (default), 4, 6, 8, 10, 15 and 20. `curl.exe "http://127.0.0.1:8081/api/state?what=uprights"` answers `screenPxPerMeter`, `levels` (one `{pxPerMeter, instances}` per level in use) and `levelRequestsPending`.
+Build `world-sim` (RelWithDebInfo), launch it with no flags, click Enter Expedition, then Quick Start, then `curl.exe "http://127.0.0.1:8081/api/dev/reveal?on=1"` (the zoomed-out steps look well past the colonists' sight, which is black with reveal off). The dev server is on 127.0.0.1:8081. A camera jump is `curl.exe "http://127.0.0.1:8081/api/control?action=camera&x=<x>&y=<y>&zoom=<z>"`, with `x` and `y` optional; the zoom steps are 0.25, 0.5, 0.75, 1, 1.5, 2, 3 (default), 4, 6, 8, 10, 15 and 20. `curl.exe "http://127.0.0.1:8081/api/state?what=uprights"` answers `screenPxPerMeter`, `levels` (one `{pxPerMeter, instances}` per level in use) and `levelRequestsPending`.
 
 1. Read the colonists (`curl.exe "http://127.0.0.1:8081/api/state?what=colonists"`: Bob's `id`, `x` and `y`, noted as BID, BX and BY), then `...camera&x=<BX>&y=<BY>&zoom=3`: trees stand around the colonists, none half-drawn.
 2. `...camera&zoom=0.25`, poll `what=uprights` until `levelRequestsPending` is 0: `screenPxPerMeter` is 2, `levels` holds only the 2 px/m level, and the screen shows trees all the way out to the edges, no empty patches.

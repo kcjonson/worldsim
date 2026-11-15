@@ -239,8 +239,12 @@ namespace ecs {
 			face.faceOpening		  = tags.opening;
 			return face;
 		}
-		bool buildableFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+		bool buildableOnceClearedFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::terrainTraversable(groundBeneath(mesh, tri)) && !nav::faceInFord(mesh, tri);
+		}
+		// Buildable with nothing to clear first: a placed obstacle blocks, as it does a mover.
+		bool buildableNowFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
+			return gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]) && !nav::faceInFord(mesh, tri);
 		}
 		bool landingFace(const gnav::PatchableMesh& mesh, std::int32_t tri) {
 			return gnav::truthTraversable(groundBeneath(mesh, tri));
@@ -460,41 +464,6 @@ namespace ecs {
 			return best;
 		}
 
-		// Whole-segment walkability under a per-point predicate: both endpoints plus every interior
-		// sample at the footprint pitch.
-		template <typename OnMesh> bool segmentWalkableUnder(const OnMesh& onMesh, glm::vec2 a, glm::vec2 b) {
-			if (!onMesh(a) || !onMesh(b)) {
-				return false;
-			}
-			const double dx	   = static_cast<double>(b.x) - a.x;
-			const double dy	   = static_cast<double>(b.y) - a.y;
-			const double lenMm = std::sqrt(dx * dx + dy * dy) * static_cast<double>(geometry::kMillimetersPerMeter);
-			const auto	 steps = static_cast<std::int64_t>(std::ceil(lenMm / static_cast<double>(NavigationSystem::kFootprintSampleStepMm)));
-			for (std::int64_t i = 1; i < steps; ++i) {
-				const double	t = static_cast<double>(i) / static_cast<double>(steps);
-				const glm::vec2 p{static_cast<float>(a.x + dx * t), static_cast<float>(a.y + dy * t)};
-				if (!onMesh(p)) {
-					return false;
-				}
-			}
-			return true;
-		}
-
-		template <typename OnMesh> bool polylineWalkableUnder(const OnMesh& onMesh, const std::vector<glm::vec2>& pts) {
-			if (pts.empty()) {
-				return true;
-			}
-			if (pts.size() == 1) {
-				return onMesh(pts.front());
-			}
-			for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
-				if (!segmentWalkableUnder(onMesh, pts[i], pts[i + 1])) {
-					return false;
-				}
-			}
-			return true;
-		}
-
 		// Whether segment (a, b) and the closed polygon share a point.
 		bool segmentMeetsPolygon(const geometry::Vec2i64& a, const geometry::Vec2i64& b, const std::vector<geometry::Vec2i64>& polygon) {
 			// With `a` outside, `b` inside means the segment crosses an edge, so the edges settle it.
@@ -532,21 +501,31 @@ namespace ecs {
 			return true;
 		}
 
-		// Whole-footprint validity, read exactly from the mesh: whether the closed polygon lies wholly
-		// on the mesh and `face` accepts every triangle it meets, a triangle it only touches included.
-		// The triangles are found by walking out from the one under a corner, so nothing narrower than
-		// a sampling pitch can pass between probes. A footprint that reaches the mesh's edge is off it.
-		// A ring of fewer than 3 points validates its points and the samples between them.
-		template <typename Face> bool areaOnFaces(const gnav::PatchableMesh& mesh, const std::vector<glm::vec2>& polygonMeters, const Face& face) {
-			if (polygonMeters.size() < 3) {
-				return polylineWalkableUnder([&](glm::vec2 p) { return pointOnGround(mesh, p, face); }, polygonMeters);
+		// Whether the closed triangle and segment (p, q) share a point.
+		bool triangleMeetsSegment(const std::array<geometry::Vec2i64, 3>& corners, const geometry::Vec2i64& p, const geometry::Vec2i64& q) {
+			for (std::size_t e = 0; e < 3; ++e) {
+				if (geometry::intersectSegments(corners[e], corners[(e + 1) % 3], p, q).relation != geometry::SegmentRelation::Disjoint) {
+					return true;
+				}
 			}
-			std::vector<geometry::Vec2i64> footprint;
-			footprint.reserve(polygonMeters.size());
-			for (const glm::vec2 p : polygonMeters) {
-				footprint.push_back(nav::toMm(p));
+			// No side of the triangle touches the segment, so it is wholly inside or wholly outside.
+			for (std::size_t e = 0; e < 3; ++e) {
+				if (geometry::orientation(corners[e], corners[(e + 1) % 3], p) == geometry::Orientation::Clockwise) {
+					return false;
+				}
 			}
-			const std::int32_t first = mesh.locate(footprint.front());
+			return true;
+		}
+
+		// Whether a shape lies wholly on the mesh and `face` accepts every triangle it meets, a triangle
+		// it only touches included, read exactly from the mesh. The triangles are found by walking out
+		// from the one under `start`, a point of the shape, so nothing narrower than a sampling pitch can
+		// pass between probes. A shape that reaches the mesh's edge is off it. `meetsSegment` and
+		// `meetsTriangle` say whether the shape shares a point with a mesh edge or triangle.
+		template <typename MeetsSegment, typename MeetsTriangle, typename Face>
+		bool shapeOnFaces(const gnav::PatchableMesh& mesh, const geometry::Vec2i64& start, const MeetsSegment& meetsSegment, const MeetsTriangle& meetsTriangle,
+						  const Face& face) {
+			const std::int32_t first = mesh.locate(start);
 			if (first < 0) {
 				return false;
 			}
@@ -563,15 +542,58 @@ namespace ecs {
 				for (std::size_t e = 0; e < 3; ++e) {
 					const std::int32_t across = triangle.neighbor[e];
 					if (across < 0) {
-						if (segmentMeetsPolygon(corners[e], corners[(e + 1) % 3], footprint)) {
+						if (meetsSegment(corners[e], corners[(e + 1) % 3])) {
 							return false;
 						}
-					} else if (reached.insert(across).second && triangleMeetsPolygon(triangleCorners(mesh, across), footprint)) {
+					} else if (reached.insert(across).second && meetsTriangle(triangleCorners(mesh, across))) {
 						pending.push_back(across);
 					}
 				}
 			}
 			return true;
+		}
+
+		// Whole-line validity: every point of the open polyline, its vertices and every segment between
+		// them, on triangles `face` accepts (shapeOnFaces per segment). One point validates just it;
+		// empty is trivially true.
+		template <typename Face> bool lineOnFaces(const gnav::PatchableMesh& mesh, const std::vector<glm::vec2>& pointsMeters, const Face& face) {
+			if (pointsMeters.size() == 1) {
+				return pointOnGround(mesh, pointsMeters.front(), face);
+			}
+			for (std::size_t i = 0; i + 1 < pointsMeters.size(); ++i) {
+				const geometry::Vec2i64 p = nav::toMm(pointsMeters[i]);
+				const geometry::Vec2i64 q = nav::toMm(pointsMeters[i + 1]);
+				if (p == q) {
+					if (!pointOnGround(mesh, pointsMeters[i], face)) {
+						return false;
+					}
+					continue;
+				}
+				const auto meetsSegment = [&](const geometry::Vec2i64& a, const geometry::Vec2i64& b) {
+					return geometry::intersectSegments(a, b, p, q).relation != geometry::SegmentRelation::Disjoint;
+				};
+				const auto meetsTriangle = [&](const std::array<geometry::Vec2i64, 3>& corners) { return triangleMeetsSegment(corners, p, q); };
+				if (!shapeOnFaces(mesh, p, meetsSegment, meetsTriangle, face)) {
+					return false;
+				}
+			}
+			return true;
+		}
+
+		// Whole-footprint validity: the closed polygon, its interior included, on triangles `face`
+		// accepts (shapeOnFaces). A ring of fewer than 3 points validates it as a line.
+		template <typename Face> bool areaOnFaces(const gnav::PatchableMesh& mesh, const std::vector<glm::vec2>& polygonMeters, const Face& face) {
+			if (polygonMeters.size() < 3) {
+				return lineOnFaces(mesh, polygonMeters, face);
+			}
+			std::vector<geometry::Vec2i64> footprint;
+			footprint.reserve(polygonMeters.size());
+			for (const glm::vec2 p : polygonMeters) {
+				footprint.push_back(nav::toMm(p));
+			}
+			const auto meetsSegment = [&](const geometry::Vec2i64& a, const geometry::Vec2i64& b) { return segmentMeetsPolygon(a, b, footprint); };
+			const auto meetsTriangle = [&](const std::array<geometry::Vec2i64, 3>& corners) { return triangleMeetsPolygon(corners, footprint); };
+			return shapeOnFaces(mesh, footprint.front(), meetsSegment, meetsTriangle, face);
 		}
 
 		using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, std::vector<geometry::Vec2i64>>;
@@ -803,7 +825,7 @@ namespace ecs {
 				disc.xMm		 = xMm;
 				disc.yMm		 = yMm;
 				disc.rangeMeters = range;
-				SeenLimit limit	 = makeLimit(entity, {xMm, yMm}, range);
+				MeshLimit limit	 = makeLimit(entity, {xMm, yMm}, range);
 				limit.taken		 = ++disc.taken;
 				if (detailMesh.groundCovers(limit.outline)) {
 					noteServed(disc, limit);
@@ -822,20 +844,20 @@ namespace ecs {
 		std::erase_if(moverDiscs, [this](const auto& entry) { return entry.second.seen != moverPass; });
 	}
 
-	void NavigationSystem::noteServed(MoverDisc& disc, const SeenLimit& limit) {
+	void NavigationSystem::noteServed(MoverDisc& disc, const MeshLimit& limit) {
 		if (!disc.served.has_value() || limit.taken > disc.served->taken) {
 			disc.served = ServedLimit{.centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
 		}
 	}
 
-	void NavigationSystem::noteServed(const SeenLimit& limit) {
+	void NavigationSystem::noteServed(const MeshLimit& limit) {
 		if (const auto disc = moverDiscs.find(limit.mover); disc != moverDiscs.end()) {
 			noteServed(disc->second, limit);
 		}
 	}
 
-	NavigationSystem::SeenLimit NavigationSystem::makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const {
-		SeenLimit limit{.mover			= mover,
+	NavigationSystem::MeshLimit NavigationSystem::makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const {
+		MeshLimit limit{.mover			= mover,
 						.centre			= centre,
 						.rangeMm		= radiusMm(rangeMeters),
 						.circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
@@ -867,14 +889,14 @@ namespace ecs {
 		}
 	} // namespace
 
-	bool NavigationSystem::limitServable(const SeenLimit& limit) const {
+	bool NavigationSystem::limitServable(const MeshLimit& limit) const {
 		return everyChunkIn(limit.query.lo, limit.query.hi, [this, &limit](world::ChunkCoordinate coord) {
 			const world::Chunk* chunk = chunkManager->getChunk(coord);
 			return chunk != nullptr && chunk->isReady() && placementReady(coord) && (limit.mover == kInvalidEntity || anchorHolds(coord));
 		});
 	}
 
-	bool NavigationSystem::limitStranded(const SeenLimit& limit) const {
+	bool NavigationSystem::limitStranded(const MeshLimit& limit) const {
 		return limit.mover != kInvalidEntity &&
 			   !everyChunkIn(limit.query.lo, limit.query.hi, [this](world::ChunkCoordinate coord) { return anchorHolds(coord); });
 	}
@@ -883,25 +905,25 @@ namespace ecs {
 		const auto holds = [&pointMm](const std::vector<geometry::Vec2i64>& outline) {
 			return geometry::pointInPolygon(pointMm, outline) != geometry::PointInPolygon::Outside;
 		};
-		const auto queuedHolds = [&](const SeenLimit& limit) {
+		const auto queuedHolds = [&](const MeshLimit& limit) {
 			return pointMm.x >= limit.query.lo.x && pointMm.x <= limit.query.hi.x && pointMm.y >= limit.query.lo.y && pointMm.y <= limit.query.hi.y &&
 				   holds(limit.outline);
 		};
 		if (landingLimit.has_value() && queuedHolds(*landingLimit)) {
 			return true;
 		}
-		if (std::any_of(limitQueue.begin(), limitQueue.end(), [&](const SeenLimit& limit) { return !limitStranded(limit) && queuedHolds(limit); })) {
+		if (std::any_of(limitQueue.begin(), limitQueue.end(), [&](const MeshLimit& limit) { return !limitStranded(limit) && queuedHolds(limit); })) {
 			return true;
 		}
 		return std::any_of(gatheredJob.groundOutlines.begin(), gatheredJob.groundOutlines.end(), holds);
 	}
 
-	bool NavigationSystem::limitUrgent(const SeenLimit& limit) const {
+	bool NavigationSystem::limitUrgent(const MeshLimit& limit) const {
 		const auto disc = moverDiscs.find(limit.mover);
 		return disc != moverDiscs.end() && disc->second.urgent && limit.taken == disc->second.taken;
 	}
 
-	bool NavigationSystem::limitHoldable(const SeenLimit& limit) const {
+	bool NavigationSystem::limitHoldable(const MeshLimit& limit) const {
 		const auto disc = moverDiscs.find(limit.mover);
 		return disc != moverDiscs.end() && disc->second.served.has_value() && !limitUrgent(limit);
 	}
@@ -1140,15 +1162,15 @@ namespace ecs {
 			return "chunk (" + std::to_string(coord.x) + ", " + std::to_string(coord.y) + ")";
 		}
 
-		// A patch the mesh could not take as given (PatchReport::unreadCovers, refusedRings) is unsupported
+		// A patch the mesh could not take as given (PatchReport::unreadCovers, coverConflicts, refusedRings) is unsupported
 		// input, so the mesh may be wrong there: an error, logged once as its job is collected, naming the
 		// patch (`what()`) and each refused add (`describe(k)`, k its index among the patch's adds).
 		template <typename What, typename Describe> void logUnsupported(const gnav::PatchReport& report, const What& what, const Describe& describe) {
-			if (report.unreadCovers == 0 && report.refusedRings == 0) {
+			if (report.unreadCovers == 0 && report.coverConflicts == 0 && report.refusedRings == 0) {
 				return;
 			}
-			LOG_ERROR(Engine, "[Nav] patch of %s, changing %s to %s: %d covers read no sample, %d rings refused", what().c_str(),
-					  pointName(nav::toMeters(report.lo)).c_str(), pointName(nav::toMeters(report.hi)).c_str(), report.unreadCovers, report.refusedRings);
+			LOG_ERROR(Engine, "[Nav] patch of %s, changing %s to %s: %d covers read no sample, %d cover conflicts, %d rings refused", what().c_str(),
+					  pointName(nav::toMeters(report.lo)).c_str(), pointName(nav::toMeters(report.hi)).c_str(), report.unreadCovers, report.coverConflicts, report.refusedRings);
 			for (std::size_t k = 0; k < report.added.size(); ++k) {
 				if (report.added[k] == gnav::kNoRing) {
 					LOG_ERROR(Engine, "[Nav] refused: %s", describe(k).c_str());
@@ -1393,7 +1415,7 @@ namespace ecs {
 		}
 	}
 
-	bool NavigationSystem::serveLimit(const SeenLimit& limit, std::size_t& budget) {
+	bool NavigationSystem::serveLimit(const MeshLimit& limit, std::size_t& budget) {
 		struct Found {
 			ObstacleKey			  key;
 			gnav::NavInputPolygon ring;
@@ -1427,7 +1449,7 @@ namespace ecs {
 				}
 				if (reach > reachMm && overreachingDefs.insert(e->defName).second) {
 					LOG_ERROR(Engine, "[Nav] %s's footprint reaches %lld mm from its position, past kFootprintReachMeters: where it pokes into a limit "
-									  "from outside the limit's query box, seen ground goes in without it",
+									  "from outside the limit's query box, meshed ground goes in without it",
 							  e->defName.c_str(), static_cast<long long>(reach));
 				}
 				const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
@@ -1492,9 +1514,9 @@ namespace ecs {
 		const std::size_t rings = edits.adds.size();
 		gatheredJob.patches.push_back(std::move(edits));
 		// Its mover's served limit only once joined: until then what he sees is bounded by the last.
-		std::optional<SeenLimit> ground;
+		std::optional<MeshLimit> ground;
 		if (withGround) {
-			ground = SeenLimit{.mover = limit.mover, .centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
+			ground = MeshLimit{.mover = limit.mover, .centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
 		}
 		gatheredJob.onPatched.emplace_back([this, keys = std::move(keys), waterChunks = std::move(waterChunks), waterRings = std::move(waterRings),
 											ground = std::move(ground), withGround, rings, mover = limit.mover, centre = limit.centre,
@@ -2075,29 +2097,29 @@ namespace ecs {
 		return std::nullopt;
 	}
 
-	bool NavigationSystem::isSegmentWalkable(glm::vec2 aMeters, glm::vec2 bMeters) const {
-		return segmentWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, aMeters, bMeters);
-	}
-
-	bool NavigationSystem::isPolylineWalkable(const std::vector<glm::vec2>& ptsMeters) const {
-		return polylineWalkableUnder([this](glm::vec2 p) { return isValidPosition(p); }, ptsMeters);
-	}
-
-	bool NavigationSystem::isAreaWalkable(const std::vector<glm::vec2>& polygonMeters) const {
+	bool NavigationSystem::isPointBuildableNow(glm::vec2 meters) const {
 		join();
-		return areaOnFaces(detailMesh, polygonMeters, [](const gnav::PatchableMesh& mesh, std::int32_t tri) {
-			return gnav::terrainTraversable(mesh.triangles()[static_cast<std::size_t>(tri)]);
-		});
+		return pointOnGround(detailMesh, meters, buildableNowFace);
 	}
 
-	bool NavigationSystem::isAreaBuildable(const std::vector<glm::vec2>& polygonMeters) const {
+	bool NavigationSystem::isLineBuildableNow(const std::vector<glm::vec2>& pointsMeters) const {
 		join();
-		return areaOnFaces(detailMesh, polygonMeters, buildableFace);
+		return lineOnFaces(detailMesh, pointsMeters, buildableNowFace);
 	}
 
-	bool NavigationSystem::isPointBuildable(glm::vec2 meters) const {
+	bool NavigationSystem::isAreaBuildableNow(const std::vector<glm::vec2>& polygonMeters) const {
 		join();
-		return pointOnGround(detailMesh, meters, buildableFace);
+		return areaOnFaces(detailMesh, polygonMeters, buildableNowFace);
+	}
+
+	bool NavigationSystem::isAreaBuildableOnceCleared(const std::vector<glm::vec2>& polygonMeters) const {
+		join();
+		return areaOnFaces(detailMesh, polygonMeters, buildableOnceClearedFace);
+	}
+
+	bool NavigationSystem::isPointBuildableOnceCleared(glm::vec2 meters) const {
+		join();
+		return pointOnGround(detailMesh, meters, buildableOnceClearedFace);
 	}
 
 	std::optional<glm::vec2> NavigationSystem::nearestTerrainWalkablePoint(glm::vec2 meters) const {
@@ -2142,11 +2164,14 @@ namespace ecs {
 		return nearestStandable(detailMesh, meters, agentRadiusMeters, bands);
 	}
 
-	std::optional<glm::vec2> NavigationSystem::findValidPositionNear(glm::vec2 origin, float minDistMeters, glm::vec2 preferredDir) const {
+	std::optional<glm::vec2> NavigationSystem::findValidPositionNear(
+		glm::vec2 origin, float minDistMeters, glm::vec2 preferredDir, const std::function<bool(glm::vec2)>& accept
+	) const {
 		if (!inSimArea(origin)) {
 			return std::nullopt;
 		}
 		const float minDist = std::max(minDistMeters, 0.0F);
+		const auto	takes = [&](glm::vec2 p) { return isValidPosition(p) && (!accept || accept(p)); };
 
 		// Canonical direction: the preferred bias if non-zero, else +X.
 		glm::vec2	dir{1.0F, 0.0F};
@@ -2157,7 +2182,7 @@ namespace ecs {
 
 		// The preferred candidate, then a fixed ring at the same radius starting at `dir`.
 		const glm::vec2 preferred = origin + dir * minDist;
-		if (isValidPosition(preferred)) {
+		if (takes(preferred)) {
 			return preferred;
 		}
 		constexpr int	kRingSamples = 32;
@@ -2166,7 +2191,7 @@ namespace ecs {
 		for (int i = 1; i < kRingSamples; ++i) {
 			const float		a = baseAngle + kTwoPi * (static_cast<float>(i) / static_cast<float>(kRingSamples));
 			const glm::vec2 cand{origin.x + minDist * std::cos(a), origin.y + minDist * std::sin(a)};
-			if (isValidPosition(cand)) {
+			if (takes(cand)) {
 				return cand;
 			}
 		}
@@ -2179,12 +2204,19 @@ namespace ecs {
 		}
 		const glm::vec2 away	= *nearest - origin;
 		const float		awayLen = std::sqrt(away.x * away.x + away.y * away.y);
-		if (awayLen >= minDist) {
-			return *nearest;
+		if (awayLen < minDist) {
+			const glm::vec2 outDir = (awayLen > 1e-6F) ? away / awayLen : dir;
+			const glm::vec2 pushed = origin + outDir * minDist;
+			if (takes(pushed)) {
+				return pushed;
+			}
 		}
-		const glm::vec2 outDir = (awayLen > 1e-6F) ? away / awayLen : dir;
-		const glm::vec2 pushed = origin + outDir * minDist;
-		return isValidPosition(pushed) ? pushed : *nearest;
+		if (!accept) {
+			return nearest;
+		}
+		// Closer than minDist it is the origin's own spot (a station is no nav obstacle), which the
+		// caller asked to stay off.
+		return (awayLen >= minDist && accept(*nearest)) ? nearest : std::nullopt;
 	}
 
 } // namespace ecs

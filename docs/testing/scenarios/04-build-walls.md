@@ -1,7 +1,7 @@
 # Scenario 04: Build walls on foundation
 
 **Status:** ready  
-**Last verified:** 2026-06-28
+**Last verified:** 2026-11-13
 
 Verifies that a colonist builds all four wall segments on an existing foundation to completion,
 unaided.
@@ -14,7 +14,7 @@ unaided.
   first, or blueprint and instantly-complete one:
 
 ```
-curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY1>&material=Wood&built=1"
+curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=1"
 ```
 
 - Colonist has an `AxePrimitive` (needed to source wall materials):
@@ -34,7 +34,7 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> construction.foundations[0].id  (note as FOUND_ID)
 ```
 
-Use the same corner coordinates as the foundation (`FX0,FY0` and `FX1,FY1`). Blueprint walls as
+Use the same four corners as the foundation. Blueprint walls as
 a closed polygon (built=0, close=1):
 
 ```
@@ -87,6 +87,11 @@ curl.exe "http://127.0.0.1:<PORT>/api/dev/need?colonist=<BOB_ID>&need=Energy&val
 curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> all walls[N].state == "Built" and walls[N].progress == 1.0
 ```
+
+5. At the Quick Start creek, `walls?pts=6.5,8;9.5,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=7.9,8` both answer 400 and create nothing.
+6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point.
+7. On the east bank, `walls?pts=9.9,5;9.9,11&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200.
+8. `ground?pts=7.9,8` reads `valid` true and `buildableNow` false, and Bob still walks through the creek.
 
 ---
 

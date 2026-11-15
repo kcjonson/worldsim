@@ -76,7 +76,8 @@ namespace {
 static void BM_WorldDepthGather_SteadyView(benchmark::State& state) {
 	Scene scene;
 	fill(scene, static_cast<int>(state.range(0)));
-	const assets::RenderContext		   ctx{scene.executor, scene.processed, &scene.actors, scene.camera, 1920, 1080, 16.0F, 1};
+	const assets::DrawBound			   everywhere = assets::DrawBound::everywhere();
+	const assets::RenderContext		   ctx{scene.executor, scene.processed, &scene.actors, scene.camera, 1920, 1080, 16.0F, 1, everywhere};
 	assets::WorldDepthGather		   gather;
 	std::vector<assets::DepthSortItem> items;
 	gather.gather(ctx, items); // builds each chunk's sorted statics once, as the first frame over a view does

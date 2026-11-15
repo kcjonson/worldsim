@@ -17,10 +17,7 @@ namespace world_sim {
 		constexpr float kLine2Size = 10.0F;
 
 		ui::ColorToken statusColor(const adapters::GlobalTaskDisplayData& task) {
-			if (task.isBlocked || task.status == "Far" || task.status == "Waiting for harvest") {
-				return tokens::color::textDim;
-			}
-			return tokens::color::statusOk;
+			return task.isBlocked ? tokens::color::textDim : tokens::color::statusOk;
 		}
 
 	} // namespace

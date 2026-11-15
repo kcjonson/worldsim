@@ -15,6 +15,7 @@ add_library(world-view
     world/rendering/ScreenStateGuard.cpp
     world/rendering/TemplateLevelBuilder.cpp
     world/rendering/TemplateMeshCache.cpp
+    world/rendering/VisibilityCoverRenderer.cpp
     world/rendering/DynamicEntityRenderSystem.cpp
 )
 

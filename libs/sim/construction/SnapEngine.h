@@ -21,13 +21,14 @@
 // Snap radii and the angle increment come from assets::SnappingConfig
 // (D10); the engine does not hardcode them.
 //
-// Walls (Epic D phase 2). Walls draw as an OPEN polyline chain, not a closed
-// polygon, so they get their own entry point snapWall() rather than a mode flag
-// on snap(): the two tools differ in more than snapping (no origin-close for
-// walls, an extra pair of snap targets, a hit-target id the WallTool reads), so
-// keeping them separate keeps the foundation path provably unchanged. The wall
-// snap priority is the design's full stack:
-//   wall endpoint (existing wall vertex) > foundation vertex >
+// Walls (Epic D phase 2). Walls draw as a polyline chain, not a closed polygon,
+// so they get their own entry point snapWall() rather than a mode flag on snap():
+// the two tools differ in more than snapping (inset foundation hits, an extra pair
+// of snap targets, a hit-target id the WallTool reads), so keeping them separate
+// keeps the foundation path provably unchanged. The wall snap priority is the
+// design's full stack, led by the same origin-close as snap() once the chain has
+// kMinClosingWallChainPoints points:
+//   origin-close > wall endpoint (existing wall vertex) > foundation vertex >
 //   point along an existing wall segment (T-junction anywhere) >
 //   foundation edge > angle snap off the previous chain point > raw.
 // A wall endpoint and a foundation vertex are both "vertex" targets but the wall
@@ -42,6 +43,7 @@
 #include <core/Vec2i64.h>
 #include <math/Types.h>
 
+#include <cstddef>
 #include <vector>
 
 namespace assets {
@@ -142,11 +144,12 @@ namespace construction {
 		snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform,
 			 float originCloseRadiusMeters = -1.0F, bool alignToExisting = false) const;
 
-		// Wall-chain snap. `points` is the in-progress open polyline (world meters);
-		// `freeform` suppresses angle + axis-align snap (Alt). Priority: wall endpoint >
-		// foundation vertex > point-on-wall-segment (T-junction) > foundation edge >
-		// axis-align guide > angle snap off the previous chain point > raw. No
-		// origin-close (the chain is open). The
+		// Wall-chain snap. `points` is the in-progress polyline (world meters);
+		// `freeform` suppresses angle + axis-align snap (Alt). Priority: origin-close >
+		// wall endpoint > foundation vertex > point-on-wall-segment (T-junction) >
+		// foundation edge > axis-align guide > angle snap off the previous chain point >
+		// raw. Origin-close needs kMinClosingWallChainPoints points and returns the
+		// chain's first point exactly; `originCloseRadiusMeters` is as in snap(). The
 		// result's hitVertex/hitSegment tell the WallTool what to commit against.
 		// `wallHalfThicknessMm` is the active wall's half-thickness: foundation-vertex
 		// and foundation-edge hits are inset by it for outer-face-flush alignment
@@ -160,20 +163,28 @@ namespace construction {
 			::Foundation::Vec2					   cursor,
 			bool								   freeform,
 			std::int64_t						   wallHalfThicknessMm,
+			float								   originCloseRadiusMeters = -1.0F,
 			bool								   alignToExisting = false
 		) const;
 
 		// Opening snap (Epic F). Find the nearest BUILT wall segment whose centerline
 		// passes within edgeSnapRadius of `cursor`, project the cursor onto it, and
-		// return the placement for an opening of `openingWidthMeters`. t is clamped so
-		// the opening honors the end margins from openingMargin config: t in
-		// [(half+margin)/L, 1-(half+margin)/L]. Returns valid=false if no built wall
-		// is in range, or the nearest one is too short to fit the opening. Only BUILT
+		// return the placement for an opening of `openingWidthMeters`. t is clamped to
+		// openingRange (OpeningGeometry.h), the range the validator accepts: the end
+		// margins from openingMargin config, measured from each end of the wall's
+		// band as its corners trim it. Returns valid=false if no built wall is in
+		// range, or the nearest one is too short to fit the opening. Only BUILT
 		// segments are candidates (a blueprint wall has no surface to cut yet).
 		// Reads segments() in stable order; ties keep the lowest-id segment.
 		[[nodiscard]] OpeningSnap snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const;
 
 	  private:
+		// Whether `cursor` is within the origin-close radius of the first point, once
+		// `points` holds at least `minPoints`. A negative `radiusMeters` uses the config.
+		[[nodiscard]] bool snapToOrigin(
+			const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, std::size_t minPoints, float radiusMeters
+		) const;
+
 		// Nearest existing-foundation vertex within vertexSnapRadius, if any. When
 		// `insetMm > 0` the returned point is the outer-face-flush mitered corner
 		// (offset inward by insetMm), not the raw vertex; proximity is still measured

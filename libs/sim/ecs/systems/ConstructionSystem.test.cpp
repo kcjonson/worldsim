@@ -15,10 +15,12 @@
 
 #include <core/Vec2i64.h>
 #include <polygon/Polygon.h>
+#include <predicates/Predicates.h>
 
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <limits>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -95,6 +97,158 @@ TEST(ConstructionSystemTests, ClearingGateTakesPriorityOverMaterials) {
 	EXPECT_EQ(decision.nextPhase, StructureBlueprint::BuildPhase::Clearing);
 	EXPECT_TRUE(decision.emitClearGoals);
 	EXPECT_FALSE(decision.emitBuildGoal);
+}
+
+// An L's notch lies inside its bounding box but is not footprint; the ring's boundary is.
+TEST(FootprintBoundsTests, AnLsNotchIsOutsideItsFootprint) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	EXPECT_EQ(footprint.min, glm::vec2(0.0F, 0.0F));
+	EXPECT_EQ(footprint.max, glm::vec2(8.0F, 8.0F));
+	EXPECT_TRUE(footprint.contains({2.0F, 6.0F}));
+	EXPECT_TRUE(footprint.contains({6.0F, 2.0F}));
+	EXPECT_TRUE(footprint.contains({6.0F, 4.0F})) << "on the inner edge";
+	EXPECT_FALSE(footprint.contains({6.0F, 6.0F}));
+	EXPECT_TRUE(footprint.contains(footprint.interiorPoint()));
+	EXPECT_EQ(footprint.nearestOutside({6.0F, 6.0F}, 0.5F), glm::vec2(6.0F, 6.0F)) << "already outside";
+}
+
+// Out of a long diagonal strip, a point goes across the strip's near side, not to its bounding box's edge.
+TEST(FootprintBoundsTests, NearestOutsideADiagonalStripCrossesItsNearSide) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {2000, 0}, {22000, 20000}, {20000, 20000}}};
+	const glm::vec2		  inside{11.0F, 10.0F};
+	ASSERT_TRUE(footprint.contains(inside));
+	const glm::vec2 out = footprint.nearestOutside(inside, 0.5F);
+	EXPECT_FALSE(footprint.contains(out)) << "at (" << out.x << ", " << out.y << ")";
+	EXPECT_LT(glm::distance(out, inside), 1.3F) << "the strip is two metres wide across x, about 1.4 across its edges";
+}
+
+// A notch narrower than the margin: past the nearest edge is back on the floor, so the next edge is taken.
+TEST(FootprintBoundsTests, NearestOutsideSkipsAnEdgeWhoseSpotLandsBackInside) {
+	// A U whose slot is 0.4 m wide, between x 4 and 4.4, from y 2 to the top.
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8400, 0}, {8400, 8000}, {4400, 8000}, {4400, 2000}, {4000, 2000}, {4000, 8000}, {0, 8000}}};
+	const glm::vec2		  inside{3.9F, 5.0F};
+	const glm::vec2		  out = footprint.nearestOutside(inside, 1.0F);
+	EXPECT_FALSE(footprint.contains(out)) << "at (" << out.x << ", " << out.y << ")";
+}
+
+// Just inside an L's inner corner two edges tie as nearest; the drop leaves by the corner into the notch, not across the floor.
+TEST(FootprintBoundsTests, NearestOutsideNearAReflexCornerStaysNearTheCorner) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	const glm::vec2		  inside{3.9F, 3.9F};
+	ASSERT_TRUE(footprint.contains(inside));
+	const glm::vec2 out = footprint.nearestOutside(inside, 0.5F);
+	EXPECT_FALSE(footprint.contains(out)) << "at (" << out.x << ", " << out.y << ")";
+	EXPECT_LT(glm::distance(out, glm::vec2(4.0F, 4.0F)), 0.75F) << "at (" << out.x << ", " << out.y << ")";
+}
+
+TEST(FootprintBoundsTests, NearestOutsideFromOtherSpotsOnTheFloor) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	const auto			  expectOutsideNear = [&](glm::vec2 from, float within, const char* what) {
+		ASSERT_TRUE(footprint.contains(from)) << what;
+		const glm::vec2 out = footprint.nearestOutside(from, 0.5F);
+		EXPECT_FALSE(footprint.contains(out)) << what << " at (" << out.x << ", " << out.y << ")";
+		EXPECT_LT(glm::distance(out, from), within) << what << " at (" << out.x << ", " << out.y << ")";
+	};
+	expectOutsideNear({0.2F, 4.0F}, 1.0F, "near the west edge");
+	expectOutsideNear({6.0F, 4.0F}, 1.0F, "on the inner edge");
+	expectOutsideNear({8.0F, 0.0F}, 1.0F, "on a convex vertex");
+	expectOutsideNear({1.0F, 1.0F}, 1.6F, "near the outer corner");
+}
+
+TEST(FootprintBoundsTests, NearestOutsideIsTheSameForAClockwiseRing) {
+	const FootprintBounds counterClockwise{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	const FootprintBounds clockwise{geometry::Ring{{0, 8000}, {4000, 8000}, {4000, 4000}, {8000, 4000}, {8000, 0}, {0, 0}}};
+	for (const glm::vec2 from : {glm::vec2{3.9F, 3.9F}, glm::vec2{1.0F, 1.0F}, glm::vec2{6.0F, 2.0F}}) {
+		EXPECT_EQ(clockwise.nearestOutside(from, 0.5F), counterClockwise.nearestOutside(from, 0.5F)) << from.x << ", " << from.y;
+	}
+}
+
+// Where the nearest spot is a reflex vertex and the position lies on the line of one of its edges, the drop still goes
+// into the notch, not along that edge to the far side of the ring.
+TEST(FootprintBoundsTests, NearestOutsideOnTheLineOfAReflexCornersEdgeGoesIntoTheNotch) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}};
+	for (const glm::vec2 from : {glm::vec2{4.0F, 3.999F}, glm::vec2{3.999F, 4.0F}, glm::vec2{4.0F, 4.0F}}) {
+		ASSERT_TRUE(footprint.contains(from));
+		const glm::vec2 out = footprint.nearestOutside(from, 0.5F);
+		EXPECT_FALSE(footprint.contains(out)) << "from (" << from.x << ", " << from.y << ") at (" << out.x << ", " << out.y << ")";
+		EXPECT_LT(glm::distance(out, glm::vec2(4.0F, 4.0F)), 0.75F) << "from (" << from.x << ", " << from.y << ") at (" << out.x << ", " << out.y << ")";
+	}
+	const glm::vec2 corner = footprint.nearestOutside({4.0F, 4.0F}, 0.5F);
+	EXPECT_NEAR(corner.x, 4.0F + 0.5F * 0.70710678F, 0.002F);
+	EXPECT_NEAR(corner.y, 4.0F + 0.5F * 0.70710678F, 0.002F);
+}
+
+namespace {
+	// Positions in a ring: an eighth-metre grid (which lands on edges and on whole-metre vertices) and the
+	// 5 by 5 millimetre neighbourhood of every vertex.
+	std::vector<glm::vec2> positionsInside(const FootprintBounds& footprint) {
+		std::vector<glm::vec2> positions;
+		const auto			   keep = [&](glm::vec2 candidate) {
+			  if (footprint.contains(candidate)) {
+				  positions.push_back(candidate);
+			  }
+		};
+		for (float y = footprint.min.y; y <= footprint.max.y; y += 0.125F) {
+			for (float x = footprint.min.x; x <= footprint.max.x; x += 0.125F) {
+				keep({x, y});
+			}
+		}
+		for (const geometry::Vec2i64& vertex : footprint.ring) {
+			for (std::int64_t offsetY = -2; offsetY <= 2; ++offsetY) {
+				for (std::int64_t offsetX = -2; offsetX <= 2; ++offsetX) {
+					const auto meters = geometry::dequantize({vertex.x + offsetX, vertex.y + offsetY});
+					keep({meters.x, meters.y});
+				}
+			}
+		}
+		return positions;
+	}
+
+	double metersToBoundary(const FootprintBounds& footprint, glm::vec2 position) {
+		const geometry::Vec2i64 point = geometry::quantize({position.x, position.y});
+		double					nearestMm = std::numeric_limits<double>::max();
+		for (std::size_t index = 0; index < footprint.ring.size(); ++index) {
+			const auto nearest = geometry::closestOnSegment(point, footprint.ring[index], footprint.ring[(index + 1) % footprint.ring.size()]);
+			nearestMm = std::min(nearestMm, nearest.distanceMm);
+		}
+		return nearestMm / static_cast<double>(geometry::kMillimetersPerMeter);
+	}
+} // namespace
+
+// Wherever in a ring a thing lies, it is set down outside the ring, no farther than the boundary plus the margin.
+TEST(FootprintBoundsTests, NearestOutsideIsOutsideAndNearForEveryPositionInEveryShape) {
+	const std::vector<std::pair<const char*, geometry::Ring>> shapes{
+		{"L", {{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}},
+		{"U", {{0, 0}, {9000, 0}, {9000, 8000}, {6000, 8000}, {6000, 3000}, {3000, 3000}, {3000, 8000}, {0, 8000}}},
+		{"T", {{3000, 0}, {6000, 0}, {6000, 5000}, {9000, 5000}, {9000, 8000}, {0, 8000}, {0, 5000}, {3000, 5000}}},
+		{"plus", {{3000, 0}, {6000, 0}, {6000, 3000}, {9000, 3000}, {9000, 6000}, {6000, 6000}, {6000, 9000}, {3000, 9000}, {3000, 6000}, {0, 6000}, {0, 3000}, {3000, 3000}}},
+	};
+	std::size_t checked = 0;
+	for (const auto& [name, ring] : shapes) {
+		const FootprintBounds footprint{ring};
+		const auto			  positions = positionsInside(footprint);
+		ASSERT_GT(positions.size(), 1000U) << name;
+		for (const float margin : {0.1F, 0.5F, 1.0F}) {
+			for (const glm::vec2 from : positions) {
+				const glm::vec2 out = footprint.nearestOutside(from, margin);
+				++checked;
+				ASSERT_FALSE(footprint.contains(out)) << name << " margin " << margin << " from (" << from.x << ", " << from.y << ") at (" << out.x << ", " << out.y << ")";
+				const double limit = metersToBoundary(footprint, from) + static_cast<double>(margin) + 0.01;
+				ASSERT_LE(static_cast<double>(glm::distance(out, from)), limit)
+					<< name << " margin " << margin << " from (" << from.x << ", " << from.y << ") at (" << out.x << ", " << out.y << ")";
+			}
+		}
+	}
+	EXPECT_GT(checked, 10000U);
+}
+
+// A slot narrower than the margin leaves no spot beside the nearest edge; every position still ends up outside.
+TEST(FootprintBoundsTests, NearestOutsideIsOutsideForEveryPositionAroundASlotNarrowerThanTheMargin) {
+	const FootprintBounds footprint{geometry::Ring{{0, 0}, {8400, 0}, {8400, 8000}, {4400, 8000}, {4400, 2000}, {4000, 2000}, {4000, 8000}, {0, 8000}}};
+	for (const glm::vec2 from : positionsInside(footprint)) {
+		const glm::vec2 out = footprint.nearestOutside(from, 1.0F);
+		ASSERT_FALSE(footprint.contains(out)) << "from (" << from.x << ", " << from.y << ") at (" << out.x << ", " << out.y << ")";
+	}
 }
 
 // ============================================================================
@@ -815,4 +969,132 @@ TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileExtensionPending) {
 	const auto* goal2 = registry.getGoalByDestination(targetBp);
 	ASSERT_NE(goal2, nullptr);
 	EXPECT_EQ(goal2->status, GoalStatus::Available) << "extension gone -> target Deconstruct Available";
+}
+
+// ============================================================================
+// Builder spots (WOR-509): a foundation's Build umbrella takes its candidate work spots as it turns
+// Available and keeps them unchanged while it stays Available; walls and openings get none.
+// ============================================================================
+
+namespace {
+	class BuilderSpotEmissionTest : public OpeningHostGateTest {
+	  protected:
+		/// A blueprint of `kind` on topology node `graphId` whose Wood manifest is still due.
+		EntityID createBlueprint(StructureKind kind, uint64_t graphId) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{{2.0F, 2.5F}});
+			world->addComponent<Structure>(entity, Structure{kind, graphId});
+			StructureBlueprint bp;
+			bp.phase = kind == StructureKind::Foundation ? StructureBlueprint::BuildPhase::Clearing
+														 : StructureBlueprint::BuildPhase::AwaitingMaterials;
+			bp.required = {{"Wood", 10}};
+			bp.workTotal = 20.0F;
+			world->addComponent<StructureBlueprint>(entity, bp);
+			return entity;
+		}
+
+		/// A 4 m x 5 m foundation: 20 m2, so base 1 + floor(20 * 0.1) = 3 builders.
+		cw::FoundationId commitTwentySquareMeterFoundation() {
+			cw::CommitResult foundation = topology.commitFoundation(geometry::Ring{{0, 0}, {4000, 0}, {4000, 5000}, {0, 5000}}, "wood");
+			EXPECT_TRUE(foundation.ok());
+			return foundation.id;
+		}
+	};
+} // namespace
+
+TEST_F(BuilderSpotEmissionTest, AFoundationsUmbrellaTakesItsSpotsAsItTurnsAvailable) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	auto				   blueprint = createBlueprint(StructureKind::Foundation, foundationId);
+	auto&				   registry = GoalTaskRegistry::Get();
+
+	refresh();
+	const auto* blocked = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(blocked, nullptr);
+	EXPECT_EQ(blocked->status, GoalStatus::Blocked);
+	EXPECT_TRUE(blocked->builderSpots.empty()) << "no spots while materials are due";
+
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+	refresh();
+
+	const auto* available = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(available, nullptr);
+	ASSERT_EQ(available->status, GoalStatus::Available);
+	ASSERT_EQ(available->builderSpots.size(), 3U);
+	const FootprintBounds footprint{topology.get(foundationId)->ring};
+	for (const glm::vec2 spot : available->builderSpots) {
+		EXPECT_TRUE(footprint.contains(spot)) << "spot (" << spot.x << ", " << spot.y << ") is off the footprint";
+	}
+}
+
+TEST_F(BuilderSpotEmissionTest, AFoundationsSpotsDoNotChangeWhileItsUmbrellaStaysAvailable) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	auto				   blueprint = createBlueprint(StructureKind::Foundation, foundationId);
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+	const auto* goal = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(goal, nullptr);
+	ASSERT_EQ(goal->status, GoalStatus::Available);
+	const uint64_t				 goalId = goal->id;
+	const std::vector<glm::vec2> spots = goal->builderSpots;
+	ASSERT_EQ(spots.size(), 3U);
+
+	refresh();
+	refresh();
+
+	const auto* later = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(later, nullptr);
+	EXPECT_EQ(later->id, goalId);
+	EXPECT_EQ(later->status, GoalStatus::Available);
+	EXPECT_EQ(later->builderSpots, spots);
+}
+
+TEST_F(BuilderSpotEmissionTest, AReshapeBeforeDeliveryGivesTheNewUmbrellaSpotsForTheNewRing) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	auto				   blueprint = createBlueprint(StructureKind::Foundation, foundationId);
+	auto&				   registry = GoalTaskRegistry::Get();
+
+	refresh();
+	const auto* blocked = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(blocked, nullptr);
+	ASSERT_EQ(blocked->status, GoalStatus::Blocked);
+	const uint64_t blockedId = blocked->id;
+
+	// The edit the game makes while nothing is delivered: the ring grows to 4 m x 10 m and the
+	// blueprint's goals are reset, as DrawingSystem's resize does.
+	ASSERT_TRUE(world->getComponent<StructureBlueprint>(blueprint)->shapeEditable());
+	ASSERT_EQ(topology.addToFoundation(foundationId, {{0, 5000}, {4000, 5000}, {4000, 10000}, {0, 10000}}), cw::CommitStatus::Ok);
+	construction->resetBlueprintGoals(blueprint);
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+	refresh();
+
+	const auto* available = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(available, nullptr);
+	EXPECT_NE(available->id, blockedId) << "the reset gives a new umbrella";
+	ASSERT_EQ(available->status, GoalStatus::Available);
+	ASSERT_EQ(available->builderSpots.size(), 5U) << "40 m2: base 1 + floor(40 * 0.1)";
+	const FootprintBounds footprint{topology.get(foundationId)->ring};
+	bool				  anyOnTheAddedHalf = false;
+	for (const glm::vec2 spot : available->builderSpots) {
+		EXPECT_TRUE(footprint.contains(spot)) << "spot (" << spot.x << ", " << spot.y << ") is off the footprint";
+		anyOnTheAddedHalf = anyOnTheAddedHalf || spot.y > 5.0F;
+	}
+	EXPECT_TRUE(anyOnTheAddedHalf) << "the spots are placed round the new ring";
+}
+
+TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	ASSERT_TRUE(topology.setState(foundationId, cw::FoundationState::Built));
+	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId);
+	ASSERT_TRUE(segment.ok());
+	auto blueprint = createBlueprint(StructureKind::Wall, segment.id);
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+
+	refresh();
+
+	const auto* goal = GoalTaskRegistry::Get().getGoalByDestination(blueprint);
+	ASSERT_NE(goal, nullptr);
+	ASSERT_EQ(goal->status, GoalStatus::Available);
+	EXPECT_TRUE(goal->builderSpots.empty());
 }

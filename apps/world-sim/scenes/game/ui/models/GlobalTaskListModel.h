@@ -17,6 +17,7 @@
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 
+#include <ecs/ClaimIndex.h>
 #include <glm/vec2.hpp>
 
 #include <vector>
@@ -26,6 +27,9 @@ namespace world_sim {
 class GlobalTaskListModel {
   public:
 	using TaskData = adapters::GlobalTaskDisplayData;
+
+	/// Refresh interval in seconds (5Hz = 0.2s); the dossier's Known work tab refreshes on it too.
+	static constexpr float kRefreshInterval = 0.2F;
 
 	/// Refresh data from GoalTaskRegistry (throttled to 5Hz)
 	/// @param world ECS world (for per-goal assignment + build progress)
@@ -47,14 +51,14 @@ class GlobalTaskListModel {
 	/// Compare new data with cached data
 	[[nodiscard]] bool hasChanged(const std::vector<TaskData>& newData) const;
 
+	/// Rebuilt on every refresh; held so the rebuild reuses its storage
+	ecs::ClaimIndex claimIndex;
+
 	/// Cached task data from last refresh (sorted)
 	std::vector<TaskData> tasksData;
 
 	/// Throttle timer (accumulates until kRefreshInterval)
 	float timeSinceRefresh = 0.0F;
-
-	/// Refresh interval in seconds (5Hz = 0.2s)
-	static constexpr float kRefreshInterval = 0.2F;
 
 	/// Track first refresh (always return true)
 	bool isFirstRefresh = true;

@@ -15,8 +15,8 @@
 #include <glm/vec2.hpp>
 
 #include <assets/AssetDefinition.h>
+#include <polygon/Polygon.h>
 
-#include <algorithm>
 #include <cstdint>
 #include <functional>
 #include <optional>
@@ -54,40 +54,31 @@ namespace ecs {
 		ConstructionGoalSystem, // Foundation lifecycle: clear Harvest, deliver Harvest/Haul, Build goals
 	};
 
-	/// A blueprint footprint's bounds in world meters. contains() is the same inclusive test
-	/// SpatialIndex::queryRect applies, so "inside the footprint" means one thing everywhere.
+	/// A blueprint's footprint: the foundation's ring (CCW, integer mm, no holes) and its bounding box in
+	/// world meters. contains() is the one definition of "inside the footprint": the box, the same
+	/// inclusive test SpatialIndex::queryRect applies, then the ring, its boundary counted inside. A thing
+	/// is inside when its position is; nothing here has a body radius.
 	struct FootprintBounds {
-		glm::vec2 min{0.0F, 0.0F};
-		glm::vec2 max{0.0F, 0.0F};
+		explicit FootprintBounds(geometry::Ring footprintRing);
 
-		[[nodiscard]] bool contains(glm::vec2 p) const { return p.x >= min.x && p.x <= max.x && p.y >= min.y && p.y <= max.y; }
-		[[nodiscard]] glm::vec2 center() const { return (min + max) * 0.5F; }
-		/// `p` itself when it lies outside; else `p` moved straight out past the nearest edge by `margin`.
-		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 p, float margin) const {
-			if (!contains(p)) {
-				return p;
-			}
-			const float toLeft = p.x - min.x;
-			const float toRight = max.x - p.x;
-			const float toBottom = p.y - min.y;
-			const float toTop = max.y - p.y;
-			const float nearest = std::min({toLeft, toRight, toBottom, toTop});
-			if (nearest == toLeft) {
-				return {min.x - margin, p.y};
-			}
-			if (nearest == toRight) {
-				return {max.x + margin, p.y};
-			}
-			if (nearest == toBottom) {
-				return {p.x, min.y - margin};
-			}
-			return {p.x, max.y + margin};
-		}
+		geometry::Ring ring;
+		glm::vec2	   min{0.0F, 0.0F};
+		glm::vec2	   max{0.0F, 0.0F};
 
-		/// A thing of `defNameId` at `p` blocks the site: a harvestable inside the footprint. The clear
+		[[nodiscard]] bool contains(glm::vec2 position) const;
+		/// A point strictly inside the ring (an L's box centre can lie in its notch).
+		[[nodiscard]] glm::vec2 interiorPoint() const;
+		/// `position` itself when it lies outside; else the point `margin` past the ring's nearest edge, along the
+		/// boundary's outward direction at the spot on it nearest `position`: the edge's normal, or at a vertex
+		/// the bisector of the two edges meeting there. When that point lands back inside (a notch narrower
+		/// than the margin), the next nearest edge is tried; when every one does, the nearest edge's point is
+		/// given and the drop's own search for ground takes it from there.
+		[[nodiscard]] glm::vec2 nearestOutside(glm::vec2 position, float margin) const;
+
+		/// A thing of `defNameId` at `position` blocks the site: a harvestable inside the footprint. The clear
 		/// goal is served by exactly the blockers a colonist knows, and the build gate holds while any
 		/// blocker stands in the world, so a site is clear exactly when no clear work remains.
-		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 p) const;
+		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 position) const;
 	};
 
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")
@@ -124,6 +115,12 @@ namespace ecs {
 		// Construction clear Harvest: any harvestable inside this footprint serves it, whatever it
 		// yields, and the harvest removes it (clearing removes what stands there, regrowing or not).
 		std::optional<FootprintBounds> clearFootprint;
+
+		// A foundation's construction Build umbrella: the candidate points its builders work from, in world
+		// meters, spaced round the footprint (construction/BuilderSpots.h). Set as the goal turns Available
+		// and left unchanged until it stops being Available, so a spot's index names it for that whole time.
+		// Empty on every other goal, a wall's or an opening's Build umbrella included.
+		std::vector<glm::vec2> builderSpots;
 
 		// For Craft goals: identity of the recipe this goal's child hierarchy was built for.
 		// Hash of the recipe defName. When a station's next job switches to a different
@@ -269,18 +266,6 @@ namespace ecs {
 	/// station store holds, 0 when the item is no input of it or nothing is queued. A craft root's
 	/// remaining need, and what a deposit into the station is metered to.
 	[[nodiscard]] uint32_t craftStationNeed(World& world, EntityID station, uint32_t itemDefNameId);
-
-	/// The goals some colonist's last decision offered work toward, sorted: an option for the goal that it
-	/// chose, could take, could not lift for now, or saw held by another colonist. Read from each
-	/// colonist's decision trace, as stale as that.
-	[[nodiscard]] std::vector<uint64_t> goalsWithOfferedWork(World& world);
-
-	/// Whether a goal has anything to do now, for the task panel, given goalsWithOfferedWork. A storage
-	/// umbrella stays while its box has rules, full or not, and a stocking cut until its goal system
-	/// retires it, so either has work only while some colonist is offered work toward it: a box that
-	/// wants wood when no loose wood is known has none. Every other goal exists only while it has work:
-	/// its goal system retires it.
-	[[nodiscard]] bool goalHasWork(const GoalTask& goal, std::span<const uint64_t> offered);
 
 	/// GoalTaskRegistry::remainingNeed answered once per (root, item, basis) for one pass, filled the
 	/// first time each is asked. A pass is one AI update. Deposits and consumed inputs land in

@@ -139,8 +139,21 @@ export function compareBenchRuns(baseRuns, tipRuns) {
 	return { ...settle(found, baseRuns, tipRuns), cells };
 }
 
-const kVerdictRank = ['clean', 'regressed', 'inconclusive', 'major'];
+// A cover capture of a base with no cover against a tip with one (or the reverse) differs in what
+// is drawn, not in how fast it draws it. Answers why it can't be judged, or null when both sides
+// have the same thing. Captures from before `revealVerb` was recorded count as having no cover.
+export function coverUnjudged(baseRuns, tipRuns) {
+	const baseCover = baseRuns.every((run) => run.revealVerb === true);
+	const tipCover = tipRuns.every((run) => run.revealVerb === true);
+	if (baseCover === tipCover) return null;
+	return baseCover ? 'the tip has no player visibility cover and the base does' : 'the base predates the player visibility cover and the tip draws it';
+}
+
+// "unjudged" is a cell nothing could be decided about, by design: it never blocks a night or starts a revert
+const kVerdictRank = ['unjudged', 'clean', 'regressed', 'inconclusive', 'major'];
 export const worstVerdict = (verdicts) => verdicts.reduce((worst, verdict) => (kVerdictRank.indexOf(verdict) > kVerdictRank.indexOf(worst) ? verdict : worst), 'clean');
+
+export const unjudgedToMarkdown = (name, reason) => `### ${name}: unjudged (${reason}; no verdict, no revert)`;
 
 function heading(name, result) {
 	const why = result.incomplete ?? `${result.tipVoid ? 'tip' : 'base'} run was loaded`;

@@ -7,6 +7,7 @@
 #include <construction/ConstructionWorld.h>
 #include <construction/OpeningGeometry.h>
 #include <core/Vec2i64.h>
+#include <ecs/components/AgentRadius.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/FacingDirection.h>
@@ -15,6 +16,7 @@
 #include <ecs/components/ResourceStack.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
@@ -283,6 +285,16 @@ SelectionSystem::SelectionSystem(const Args& args)
 std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	std::vector<Selection> candidates;
 
+	// Player visibility (player-visibility.md 3.7): a mover that is not a colonist can be picked only
+	// while it is in sight, and everything else only where its position is seen. Colonists always.
+	const ecs::PlayerVisibilitySystem* visibility = ecs::PlayerVisibilitySystem::gate(*ecsWorld);
+	const auto						   selectableAt = [this, visibility](ecs::EntityID entity, glm::vec2 position) {
+		  if (visibility == nullptr || ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr) {
+			  return true;
+		  }
+		  return ecsWorld->getComponent<ecs::AgentRadius>(entity) != nullptr ? visibility->isVisible(position) : visibility->isSeen(position);
+	};
+
 	// Priority 1: Check ECS colonists first (dynamic, moving entities). Centroid pre-cull
 	// to kSelectionRadius, then a precise silhouette hit; nearest containing colonist wins
 	// (single-select). The pre-cull bound only shrinks on an accepted hit, so a closer
@@ -320,6 +332,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	ecs::EntityID closestStation = 0;
 
 	for (auto [entity, pos, appearance, workQueue] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::WorkQueue>()) {
+		if (!selectableAt(entity, pos.value)) {
+			continue;
+		}
 		float dx = pos.value.x - worldPos.x;
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
@@ -357,6 +372,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		}
 		// Skip colonists (they have Inventory for carrying items)
 		if (ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr) {
+			continue;
+		}
+		if (!selectableAt(entity, pos.value)) {
 			continue;
 		}
 
@@ -400,6 +418,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	ecs::EntityID closestSlop = 0;
 
 	for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
+		if (!selectableAt(entity, pos.value)) {
+			continue;
+		}
 		const float dx = pos.value.x - worldPos.x;
 		const float dy = pos.value.y - worldPos.y;
 		const float dist = std::sqrt(dx * dx + dy * dy);
@@ -457,6 +478,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 					if (def == nullptr || !def->capabilities.hasAny()) {
 						continue;
 					}
+					if (visibility != nullptr && !visibility->isSeen(placedEntity->position)) {
+						continue;
+					}
 					if (!placedUnderClick(*placedEntity, worldPos, kSelectionRadius)) {
 						continue;
 					}
@@ -485,7 +509,8 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// insertion order; a contained hit wins, tie-break the highest id (deterministic,
 	// matching foundationAt / segmentAt). Openings don't overlap, so "contained"
 	// resolves uniquely except on a shared boundary, which the id tie-break settles.
-	if (constructionWorld != nullptr) {
+	const bool clickSeen = visibility == nullptr || visibility->isSeen(worldPos);
+	if (constructionWorld != nullptr && clickSeen) {
 		const auto						clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
 		construction::OpeningId hitOpening = construction::kInvalidOpening;
 		for (const auto& opening : constructionWorld->openings()) {
@@ -513,7 +538,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// segmentAt applies one radius to every segment (the topology store is
 	// config-agnostic), so query with the widest needed radius, then confirm the hit
 	// lies within its OWN segment's radius.
-	if (constructionWorld != nullptr) {
+	if (constructionWorld != nullptr && clickSeen) {
 		const auto clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
 
 		const std::int64_t queryRadiusMm = std::max(kWallPickSlopMm, maxWallHalfThicknessMm());
@@ -535,7 +560,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// Priority 3: Foundations (lowest). Quantize the click to integer mm and ask
 	// the ConstructionWorld for the topmost foundation containing it. A colonist or
 	// item sitting on the foundation outranks it via its earlier candidate slot.
-	if (constructionWorld != nullptr) {
+	if (constructionWorld != nullptr && clickSeen) {
 		auto foundationId = constructionWorld->foundationAt(geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y}));
 		if (foundationId != construction::kInvalidFoundation) {
 			candidates.emplace_back(FoundationSelection{foundationId});

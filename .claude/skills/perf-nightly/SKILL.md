@@ -64,7 +64,7 @@ node scripts/perf.mjs compare --night <night> --base <base> --tip <tip> --bench 
 
 Run `measure` only when `relevant` is not empty and `bench` only when `benchTargets` is not empty, one after the other, never together. With no `measure`, give `compare` `--views none`; with no `bench`, leave `--bench` off.
 
-`measure` (background) builds both SHAs, then captures river, coast and desert, two runs each, interleaved, redoing a void capture once after the machine is idle again. `bench` (background) does the same with each target's benchmark executable. Each one's JSON names the night folder (`night`), what it took (`taken`), any build that failed, and whether it stopped early.
+`measure` (background) builds both SHAs, then captures river, river-cover (the river with the player visibility cover drawn), coast and desert, two runs each, interleaved, redoing a void capture once after the machine is idle again. `bench` (background) does the same with each target's benchmark executable. Each one's JSON names the night folder (`night`), what it took (`taken`), any build that failed, and whether it stopped early.
 
 `compare` answers an overall `verdict`, one per view (`views`) and one per benchmark target (`benchmarks`), and writes the tables to a markdown file it names. It expects two runs a side of every view and every target it was given, and one short of that is `inconclusive`. After a `measure` or `bench` narrowed with `--views`, `--targets` or `--runs`, give `compare` the matching `--views`, `--bench` and `--runs`.
 
@@ -72,6 +72,7 @@ Run `measure` only when `relevant` is not empty and `bench` only when `benchTarg
 |---|---|---|
 | `clean` | nothing past noise, or only improvements | set tested, report |
 | `regressed` | past noise, under the major threshold | set tested, list the cells in the report, nothing else |
+| `unjudged` | only the `river-cover` cell can be this: base and tip differ in having the player visibility cover (the base predates it) | treat as clean; say in the report that the base has no cover and the cell had no verdict. Never isolate or revert it |
 | `inconclusive` | a capture was loaded twice over, or the night stopped or failed short of its captures (the view's `incomplete` says which are missing) | report it; leave `lastTested` alone so the range is retried |
 | `major` | a major regression | step 4 |
 

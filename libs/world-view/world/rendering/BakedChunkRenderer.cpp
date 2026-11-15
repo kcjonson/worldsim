@@ -1,5 +1,6 @@
 #include "BakedChunkRenderer.h"
 
+#include "assets/AssetRegistry.h"
 #include "world/chunk/ChunkCoordinate.h"
 
 #include <algorithm>
@@ -199,6 +200,7 @@ namespace worldview {
 		float camX = ctx.camera.position().x;
 		float camY = ctx.camera.position().y;
 		assets::VisibleBounds vis = assets::computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter);
+		const float			  reachMargin = assets::entityCullMarginMeters(assets::AssetRegistry::Get().maxReachMeters());
 
 		// The base shader in baked world-space mode, blending on; the VAO draws below are ours
 		Renderer::Primitives::beginBakedPass({.position = {camX, camY}, .zoom = zoom, .pixelsPerMeter = ctx.pixelsPerMeter});
@@ -224,6 +226,10 @@ namespace worldview {
 				// AABB intersection test: is sub-chunk visible?
 				if (subChunk.maxX < vis.minX || subChunk.minX > vis.maxX || subChunk.maxY < vis.minY || subChunk.minY > vis.maxY) {
 					continue; // Sub-chunk is completely off-screen
+				}
+				// Its flora reaches past the sub-region by up to the reach of a template.
+				if (!ctx.drawBound.meets({subChunk.minX, subChunk.maxX, subChunk.minY, subChunk.maxY}, reachMargin)) {
+					continue;
 				}
 
 				const auto& mesh = subChunk.floraMesh;

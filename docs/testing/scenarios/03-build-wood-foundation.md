@@ -1,7 +1,7 @@
 # Scenario 03: Build wood foundation over trees
 
 **Status:** ready  
-**Last verified:** 2026-06-28
+**Last verified:** 2026-11-13
 
 Verifies the full foundation construction lifecycle: a colonist clears on-footprint trees, chops
 for materials, and builds a `Wood` foundation to completion, unaided, without freezing.
@@ -36,7 +36,7 @@ as world-generated ones. Note the corner coordinates as `FX0,FY0` and `FX1,FY1`.
 Blueprint the foundation (built=0 queues the colonist to build it):
 
 ```
-curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY1>&material=Wood&built=0"
+curl.exe "http://127.0.0.1:<PORT>/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=0"
 ```
 
 Note the foundation `id` from `?what=construction` for later assertions:
@@ -113,7 +113,18 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
    Screenshot the built foundation: it sits on bare ground, with no bush, grass tuft or stone
    drawn on it.
 
-8. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
+8. Blueprint an L-shaped foundation beside the first (six points: an 8 m square with its north-east
+   quarter cut away, `pts=X,Y;X+8,Y;X+8,Y+4;X+4,Y+4;X+4,Y+8;X,Y+8`), placed so a tree stands in the
+   notch (`X+6,Y+6`) and grass grows there. Bob does not clear the notch's tree (no "Clearing ...
+   from build site" for it), the site leaves `Clearing` with it standing (he may still cut it later
+   for Wood, as any tree), and once built the notch's grass is still drawn while the floor is bare. A packaged box (one not yet placed) lying on its floor before the blueprint was drawn sits
+   just outside the floor once building starts; one lying in the notch has not moved.
+
+9. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
+
+10. Once the L-shaped foundation from step 8 is built, select it and press Demolish: the Tasks panel shows one "Deconstruct structure" row reading "Deconstructing - Bob (N%)", N rising, and Bob's dossier Tasks tab lists the same row under Known work.
+
+11. When Bob finishes (the L-shaped foundation leaves `?what=construction`), the row leaves the Tasks panel and the Known work list.
 
 ---
 

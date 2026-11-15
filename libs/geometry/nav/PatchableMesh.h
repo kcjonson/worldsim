@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -55,7 +56,12 @@ namespace geometry::nav {
 		Vec2i64					  lo;
 		Vec2i64					  hi;
 		std::vector<std::int32_t> edgeIds; // per outline edge, its id in the edge index
-		bool					  live = false;
+		RingEdgeBoxes			  edgeBoxes; // a bounds ring's; empty for a blocked one
+		// A bounds ring's boundary intervals now, edge after edge: edge e's run starts at
+		// intervalStart[e] and ends where edge e + 1's starts. Empty for a blocked ring.
+		std::vector<GroundInterval> intervals;
+		std::vector<std::uint32_t>	intervalStart;
+		bool						live = false;
 	};
 
 	struct RingMove {
@@ -92,10 +98,15 @@ namespace geometry::nav {
 		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
 		Vec2i64						 hi;			 // (nothing changed: unset)
 		std::int32_t				 passes = 0;	 // re-derivations until the boundary held
-		// Covers seeded from a sample no exact test could read: ground so thin that every
-		// point of it lies within the snap band of a ring this patch did not re-derive.
-		// Unsupported input; the mesh may disagree with a from-scratch build there.
+		// Covers seeded from a sample no exact test could read: no triangle of a group lies
+		// clear of every ring's snap band, and its ground count or a blocked ring's edge could
+		// not be read as rounded either (a centroid on a kept piece, or an edge whose pieces
+		// neither this pass nor the mesh shows end to end). Unsupported input; the mesh may
+		// disagree with a from-scratch build there.
 		std::int32_t unreadCovers = 0;
+		// 1 when the floods of this patch covered some face two ways: a seed read wrong, so the
+		// mesh may disagree with a from-scratch build there. Unsupported input, like the above.
+		std::int32_t coverConflicts = 0;
 		// Adds and moves refused because a bounds outline spans kMaxGroundExtentMm or more on
 		// an axis. Unsupported input; validate fails from then on.
 		std::int32_t refusedRings = 0;
@@ -226,6 +237,9 @@ namespace geometry::nav {
 			// space; an id in several cells the box overlaps is visited once per cell.
 			template <typename Visit> void forEachInBox(const Vec2i64& lo, const Vec2i64& hi, std::int64_t scale, Visit visit) const;
 
+			// forEachInBox at mesh scale, each id visited once, where forEachInBox first visits it.
+			template <typename Visit> void forEachInBoxOnce(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const;
+
 			// Visits the ids whose box holds p (in `scale` times mesh space), finest level
 			// first, until `visit` returns true. Each comes up once.
 			template <typename Visit> void forEachAtPoint(const Vec2i64& p, std::int64_t scale, Visit visit) const;
@@ -325,7 +339,10 @@ namespace geometry::nav {
 		// The half-edges a registered ring edge lies under.
 		const std::vector<std::int32_t>& piecesOf(const EdgeSource& s) const;
 		// The live bounds rings whose boxes meet the box.
-		void groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const;
+		void	   groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const;
+		GroundRing groundOf(RingId ring) const;
+		// A live bounds edge's boundary intervals as the registry holds them.
+		std::span<const GroundInterval> intervalsOf(const EdgeSource& source) const;
 		// Whether the edge's pieces on the mesh run end to end, from one of `ends` to another
 		// and through no other: every one of `ends` meets an odd number of pieces and every
 		// other point an even number. `ends` holds each end once; `pieceList` (the edge's
@@ -349,6 +366,7 @@ namespace geometry::nav {
 		std::vector<std::int32_t>				 freeTriangles;
 		std::int32_t							 liveTriangles = 0;
 		std::int32_t							 unreadCovers  = 0; // PatchReport::unreadCovers, summed
+		std::int32_t							 coverConflicts = 0; // PatchReport::coverConflicts, summed
 		std::int32_t							 refusedRings  = 0; // PatchReport::refusedRings, summed
 
 		InternTable<std::vector<EdgeSource>> sourceLists;

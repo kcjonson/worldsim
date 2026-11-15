@@ -10,6 +10,7 @@
 #include <ecs/components/Transform.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
@@ -137,6 +138,11 @@ namespace world_sim {
 			});
 		}
 
+		// Chains and openings are checked as a strip this wide along each segment, and a segment shorter
+		// than kChainSeenMinLengthMeters is its end points alone.
+		constexpr float kChainSeenHalfWidthMeters = 0.05F;
+		constexpr float kChainSeenMinLengthMeters = 0.001F;
+
 		// Add `from`'s quantities into `into`, per defName.
 		void addManifest(std::vector<std::pair<std::string, uint32_t>>& into, const std::vector<std::pair<std::string, uint32_t>>& from) {
 			for (const auto& [defName, qty] : from) {
@@ -159,12 +165,76 @@ namespace world_sim {
 		  navigation_(args.navigation),
 		  callbacks_(args.callbacks) {}
 
-	bool DrawingSystem::pointOnMesh(Foundation::Vec2 p) const {
+	const ecs::PlayerVisibilitySystem* DrawingSystem::visibilityGate() const {
+		return ecsWorld_ != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld_) : nullptr;
+	}
+
+	bool DrawingSystem::pointSeen(Foundation::Vec2 p) const {
+		const ecs::PlayerVisibilitySystem* visibility = visibilityGate();
+		return visibility == nullptr || visibility->isSeen({p.x, p.y});
+	}
+
+	bool DrawingSystem::areaSeen(const std::vector<Foundation::Vec2>& pts) const {
+		const ecs::PlayerVisibilitySystem* visibility = visibilityGate();
+		return visibility == nullptr || visibility->covers(Foundation::toGlmVec2(pts));
+	}
+
+	bool DrawingSystem::chainSeen(const std::vector<Foundation::Vec2>& pts) const {
+		const ecs::PlayerVisibilitySystem* visibility = visibilityGate();
+		if (visibility == nullptr) {
+			return true;
+		}
+		for (const Foundation::Vec2 point : pts) {
+			if (!visibility->isSeen({point.x, point.y})) {
+				return false;
+			}
+		}
+		for (std::size_t i = 0; i + 1 < pts.size(); ++i) {
+			const glm::vec2 from{pts[i].x, pts[i].y};
+			const glm::vec2 to{pts[i + 1].x, pts[i + 1].y};
+			const float		length = glm::distance(from, to);
+			if (length < kChainSeenMinLengthMeters) {
+				continue;
+			}
+			const glm::vec2 side = glm::vec2{from.y - to.y, to.x - from.x} / length * kChainSeenHalfWidthMeters;
+			if (!visibility->covers({from + side, to + side, to - side, from - side})) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	bool DrawingSystem::openingSeen(float widthMeters) const {
+		const auto* segment = constructionWorld_.getSegment(openingSnap_.segment);
+		const auto* start = segment != nullptr ? constructionWorld_.getVertex(segment->v0) : nullptr;
+		const auto* end = segment != nullptr ? constructionWorld_.getVertex(segment->v1) : nullptr;
+		if (start == nullptr || end == nullptr) {
+			return true;
+		}
+		const Foundation::Vec2 from = geometry::dequantize(start->pos);
+		const Foundation::Vec2 to = geometry::dequantize(end->pos);
+		const float			   length = std::hypot(to.x - from.x, to.y - from.y);
+		if (length < kChainSeenMinLengthMeters) {
+			return pointSeen(cursor_);
+		}
+		const float alongX = (to.x - from.x) / length * widthMeters * 0.5F;
+		const float alongY = (to.y - from.y) / length * widthMeters * 0.5F;
+		return chainSeen({{cursor_.x - alongX, cursor_.y - alongY}, {cursor_.x + alongX, cursor_.y + alongY}});
+	}
+
+	std::string DrawingSystem::cursorGroundReason() const {
+		return pointSeen(cursor_) ? std::string("not on buildable ground") : std::string("the area is unexplored");
+	}
+
+	bool DrawingSystem::pointOnBuildableGround(Foundation::Vec2 p) const {
+		if (!pointSeen(p)) {
+			return false;
+		}
 		// Per-vertex / cursor placeability for the ACTIVE tool. No nav system wired (headless/test) ->
 		// validity is owned elsewhere; mirror the dev verbs' permissive fallback. A FOUNDATION vertex
 		// may sit over a clearable entity (tree/rock) -- those become clear tasks -- so it uses the
-		// terrain-only buildability check, agreeing with the commit gate (isAreaBuildable). A WALL
-		// vertex needs clear on-mesh ground (no wall footprint-clearing yet).
+		// terrain-only buildability check, agreeing with the commit gate (isAreaBuildableOnceCleared). A WALL
+		// vertex needs clear on-mesh ground out of any ford (no wall footprint-clearing yet).
 		if (navigation_ == nullptr) {
 			return true;
 		}
@@ -180,12 +250,12 @@ namespace world_sim {
 				return true;
 			}
 		}
-		return (activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationEdit) ? navigation_->isPointBuildable({p.x, p.y})
-																								: navigation_->isValidPosition({p.x, p.y});
+		return (activeTool_ == ToolKind::Foundation || activeTool_ == ToolKind::FoundationEdit) ? navigation_->isPointBuildableOnceCleared({p.x, p.y})
+																								: navigation_->isPointBuildableNow({p.x, p.y});
 	}
 
 	bool DrawingSystem::footprintBuildable(const std::vector<Foundation::Vec2>& pts) const {
-		return navigation_ == nullptr || navigation_->isAreaBuildable(Foundation::toGlmVec2(pts));
+		return navigation_ == nullptr || navigation_->isAreaBuildableOnceCleared(Foundation::toGlmVec2(pts));
 	}
 
 	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
@@ -193,16 +263,14 @@ namespace world_sim {
 		// BUILDABILITY (terrain + geometry, no flora). Walls have no footprint-clearing yet, so they
 		// still require clear on-mesh ground along the chain centerline. One blocked part refuses the
 		// whole placement (commit nothing).
-		if (navigation_ == nullptr) {
-			return true;
-		}
-		const bool ok =
-			(activeTool_ == ToolKind::Wall) ? navigation_->isPolylineWalkable(Foundation::toGlmVec2(pts)) : footprintBuildable(pts);
+		const bool wall = activeTool_ == ToolKind::Wall;
+		const bool seen = wall ? chainSeen(pts) : areaSeen(pts);
+		const bool ok = seen && (navigation_ == nullptr || (wall ? navigation_->isLineBuildableNow(Foundation::toGlmVec2(pts)) : footprintBuildable(pts)));
 		if (ok) {
 			return true;
 		}
 		if (callbacks_.onToast) {
-			callbacks_.onToast("Can't build here", std::string(what) + ": not on buildable ground");
+			callbacks_.onToast("Can't build here", std::string(what) + ": " + (seen ? "not on buildable ground" : "the area is unexplored"));
 		}
 		return false;
 	}
@@ -214,7 +282,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -229,7 +297,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -245,7 +313,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -269,7 +337,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		if (callbacks_.onToolActive) {
 			callbacks_.onToolActive(true);
@@ -288,7 +356,7 @@ namespace world_sim {
 		lastSnap_ = {};
 		lastValidation_ = {};
 		willClose_ = false;
-		cursorOffMesh_ = false;
+		cursorOffBuildableGround = false;
 		wallHost_ = ec::kInvalidFoundation;
 		openingSnap_ = {};
 		openingValidation_ = {};
@@ -334,9 +402,9 @@ namespace world_sim {
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = editing ? validator.validateEditPoint(points_, cursor_) : validator.validatePoint(points_, cursor_);
 
-		// Live nav feedback: is the snapped cursor itself off the walkable mesh? Drives the
+		// Live nav feedback: is the snapped cursor itself off buildable ground? Drives the
 		// red preview (see render). The commit gate re-checks the whole footprint regardless.
-		cursorOffMesh_ = !pointOnMesh(cursor_);
+		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
 		// "Snap not block": with a closeable shape, a click near the start that would
 		// otherwise be rejected closes instead of erroring -- but only when the closed
@@ -396,12 +464,12 @@ namespace world_sim {
 		}
 
 		// Nav gate: refuse a vertex that lands on genuinely unbuildable ground (water or off-mesh).
-		// A vertex over a clearable entity (tree/rock) is allowed -- pointOnMesh routes foundations
+		// A vertex over a clearable entity (tree/rock) is allowed -- pointOnBuildableGround routes foundations
 		// through the terrain-only buildability check. The whole-footprint re-check on commit
 		// (requirePlaceable) still catches an edge or interior that crosses water between two vertices.
-		if (cursorOffMesh_) {
+		if (cursorOffBuildableGround) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "foundation: not on buildable ground");
+				callbacks_.onToast("Can't build here", "foundation: " + cursorGroundReason());
 			}
 			return true;
 		}
@@ -476,7 +544,7 @@ namespace world_sim {
 		points_.pop_back();
 		lastValidation_ = {};
 		willClose_ = false;		// recomputed on the next move; don't leave a stale closing halo
-		cursorOffMesh_ = false; // recomputed on the next move
+		cursorOffBuildableGround = false; // recomputed on the next move
 		editPreviewActive_ = false;
 		if (points_.empty()) {
 			// The chain's host is determined by its first point; once empty, the next
@@ -777,6 +845,12 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::commitFoundationEdit() {
+		if (!areaSeen(points_)) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't edit foundation", "the area is unexplored");
+			}
+			return;
+		}
 		const FoundationEditOutcome outcome = applyFoundationEdit(editTarget_, points_, editMode_);
 		if (!outcome.ok) {
 			if (callbacks_.onToast) {
@@ -802,7 +876,8 @@ namespace world_sim {
 	// =========================================================================
 	// Wall tool. Mirrors the foundation path: snapWall + validateWallPoint live,
 	// per-segment validateWallSegment + commitSegment on finish, one blueprint
-	// entity per committed segment. The chain is OPEN and hosted by one foundation.
+	// entity per committed segment. The chain is hosted by one foundation, and a
+	// point on its first point closes and commits it.
 	// =========================================================================
 
 	const assets::ThicknessPreset* DrawingSystem::activePreset() const {
@@ -819,13 +894,16 @@ namespace world_sim {
 		// inset and skip validation below.
 		const auto*		   preset = activePreset();
 		const std::int64_t halfThick = preset != nullptr ? preset->halfThicknessMm : 0;
-		lastSnap_ = snap.snapWall(points_, world, freeform, halfThick, UserSettings::Get().alignSnapToExistingFoundations);
+		lastSnap_ = snap.snapWall(
+			points_, world, freeform, halfThick, effectiveOriginCloseRadiusMeters(), UserSettings::Get().alignSnapToExistingFoundations
+		);
 		cursor_ = lastSnap_.point;
 
 		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
 		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
-		cursorOffMesh_ = !pointOnMesh(cursor_);
+		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
+		willClose_ = false;
 		if (preset == nullptr) {
 			lastValidation_ = {};
 			return;
@@ -841,6 +919,7 @@ namespace world_sim {
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = validator.validateWallPoint(points_, cursor_, *preset, host);
+		willClose_ = lastSnap_.closesShape() && lastValidation_.ok() && !cursorOffBuildableGround;
 	}
 
 	bool DrawingSystem::handleWallClick(Foundation::Vec2 world, bool freeform, bool ctrl) {
@@ -860,12 +939,12 @@ namespace world_sim {
 			return true;
 		}
 
-		// Nav gate: refuse a point that lands off the walkable mesh (on water) before it
+		// Nav gate: refuse a point that lands off buildable ground (water or a ford) before it
 		// enters the chain, with clear feedback. The whole-chain re-check on commit still
 		// catches a segment that bridges water between two on-mesh points.
-		if (cursorOffMesh_) {
+		if (cursorOffBuildableGround) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't build here", "wall: not on walkable ground");
+				callbacks_.onToast("Can't build here", "wall: " + cursorGroundReason());
 			}
 			return true;
 		}
@@ -900,7 +979,11 @@ namespace world_sim {
 			return true;
 		}
 
+		const bool closes = ec::closesWallChain(points_, cursor_);
 		points_.push_back(cursor_);
+		if (closes) {
+			commitWallChain();
+		}
 		return true;
 	}
 
@@ -913,7 +996,7 @@ namespace world_sim {
 			return;
 		}
 
-		// The whole chain centerline must sit on walkable ground. One off-mesh segment
+		// The whole chain centerline must sit on buildable ground. One off-mesh segment
 		// (e.g. one that bridges water) refuses the WHOLE chain so nothing is stamped.
 		if (!requirePlaceable(points_, "wall")) {
 			points_.clear();
@@ -1070,7 +1153,7 @@ namespace world_sim {
 		const Foundation::Vec2 bestB = ec::outerFaceFlushCorner(ring, (bestEdge + 1) % n, preset->halfThicknessMm);
 
 		// Edge fill bypasses the chain-commit gate, so apply the same whole-centerline nav
-		// check here: the inset corners must lie on walkable ground (one shared predicate).
+		// check here: the inset corners must lie on buildable ground (one shared predicate).
 		if (!requirePlaceable({bestA, bestB}, "wall")) {
 			return false;
 		}
@@ -1259,6 +1342,7 @@ namespace world_sim {
 		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
 		openingSnap_ = snap.snapOpening(world, type->widthMeters);
 		cursor_ = openingSnap_.point;
+		openingUnexplored_ = openingSnap_.valid && !openingSeen(type->widthMeters);
 
 		if (openingSnap_.valid) {
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
@@ -1284,6 +1368,12 @@ namespace world_sim {
 		if (!openingSnap_.valid) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("No wall", "openings must sit on a built wall");
+			}
+			return true;
+		}
+		if (openingUnexplored_) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast("Can't build here", "opening: the area is unexplored");
 			}
 			return true;
 		}
@@ -1436,16 +1526,16 @@ namespace world_sim {
 				s.valid = false;
 				s.message = "no wall in range";
 			} else {
-				s.valid = openingValidation_.ok();
-				s.message = ec::validationReason(openingValidation_.code);
+				s.valid = openingValidation_.ok() && !openingUnexplored_;
+				s.message = openingUnexplored_ ? "the area is unexplored" : ec::validationReason(openingValidation_.code);
 			}
 			return s;
 		}
 
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
-			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on walkable ground" : ec::validationReason(lastValidation_.code);
+			s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
@@ -1490,8 +1580,8 @@ namespace world_sim {
 				s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(editPreview_.outline)));
 				s.areaDeltaSquareMeters = s.areaSquareMeters - current;
 			}
-			s.valid = judged.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(judged.code);
+			s.valid = judged.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(judged.code);
 			return s;
 		}
 
@@ -1502,13 +1592,13 @@ namespace world_sim {
 			auto&					  registry = ConstructionRegistry::Get();
 			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 			const auto				  ring = validator.validateRing(points_);
-			s.valid = ring.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(ring.code);
+			s.valid = ring.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(ring.code);
 			// Recompute area regardless of validity so the readout tracks the shape.
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(points_))));
 		} else {
-			s.valid = lastValidation_.ok() && !cursorOffMesh_;
-			s.message = cursorOffMesh_ ? "not on buildable ground" : ec::validationReason(lastValidation_.code);
+			s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
+			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
 		}
 		return s;
 	}
@@ -1668,7 +1758,7 @@ namespace world_sim {
 		// own (willClose_) green halo treatment below. An edit also reads red while the
 		// outline it would produce is invalid.
 		const bool				editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
-		const bool				valid = lastValidation_.ok() && !cursorOffMesh_ && !editRejected;
+		const bool				valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 		const Foundation::Color lineColor = valid ? okColor : badColor;
@@ -1747,22 +1837,10 @@ namespace world_sim {
 			});
 		}
 
-		// Origin halo when the shape can close.
+		// Origin halo when the shape can close. Closing reflects whatever the next click
+		// will do: the explicit origin snap or the near-start "snap not block" rescue.
 		if (points_.size() >= 3) {
-			const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
-			// Closing reflects whatever the next click will do: the explicit origin snap
-			// or the near-start "snap not block" rescue.
-			const bool closing = willClose_;
-			Renderer::Primitives::drawCircle({
-				.center = screen.front(),
-				.radius = std::max(ps.originHaloMinRadiusPx, originRadius),
-				.style =
-					{.fill = {0.0F, 0.0F, 0.0F, 0.0F},
-					 .border =
-						 Foundation::BorderStyle{.color = closing ? okColor : toColor(ps.originHaloColor), .width = closing ? 3.0F : 1.5F}},
-				.id = "drawing_origin_halo",
-				.key = 904,
-			});
+			renderOriginHalo(screen.front(), scale, 904);
 		}
 
 		// Red highlight on the offending PLACED vertex/edge when a geometry constraint is
@@ -1784,7 +1862,7 @@ namespace world_sim {
 		// Off-mesh cursor (on water): a red dot AT the cursor so the player sees the exact
 		// point that can't be placed. Distinct from the geometry-violation highlight above,
 		// which marks a placed vertex. Suppressed on a pending close (reads as "closing").
-		if (cursorOffMesh_ && !willClose_) {
+		if (cursorOffBuildableGround && !willClose_) {
 			Renderer::Primitives::drawCircle({
 				.center = toScreen(cursor_),
 				.radius = ps.invalidVertexRadiusPx,
@@ -1795,10 +1873,24 @@ namespace world_sim {
 		}
 	}
 
+	void DrawingSystem::renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const {
+		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
+		const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
+		Renderer::Primitives::drawCircle({
+			.center = firstScreen,
+			.radius = std::max(previewStyle.originHaloMinRadiusPx, originRadius),
+			.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F},
+					  .border = Foundation::BorderStyle{
+						  .color = willClose_ ? validColor_ : toColor(previewStyle.originHaloColor), .width = willClose_ ? 3.0F : 1.5F
+					  }},
+			.id = "drawing_origin_halo",
+			.key = key,
+		});
+	}
+
 	namespace {
 
-		// Filled polygon plus an outline via Primitives. Screen-space points. Shared
-		// by band, junction, and opening draws.
+		// Filled polygon plus an outline via Primitives. Screen-space points.
 		void fillRing(
 			std::span<const Foundation::Vec2> screen,
 			Foundation::Color				  fill,
@@ -1834,78 +1926,56 @@ namespace world_sim {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
 
-		// Reject-don't-repair: resolveWallBands refused the graph at rebuild time;
+		// Reject-don't-repair: resolveWallBands refused these graphs at rebuild time;
 		// bare centerlines still show the walls exist, never garbage bands.
-		if (committedCache_.bandsFailed()) {
-			for (const auto& line : committedCache_.fallbackCenterlines()) {
-				Renderer::Primitives::drawLine({
-					.start = toScreen(line[0]),
-					.end = toScreen(line[1]),
-					.style = {.color = toColor(ws.outlineColor, 0.8F), .width = ws.outlineWidthBuilt},
-					.id = "committed_wall_fallback",
-					.key = 60,
-				});
-			}
-			return;
+		for (const auto& line : committedCache_.fallbackCenterlines()) {
+			Renderer::Primitives::drawLine({
+				.start = toScreen(line[0]),
+				.end = toScreen(line[1]),
+				.style = {.color = toColor(ws.outlineColor, 0.8F), .width = ws.outlineWidthBuilt},
+				.id = "committed_wall_fallback",
+				.key = 60,
+			});
 		}
 
-		// Per-segment bands, styled like the foundation render (z 60-62, above
-		// foundations at 50-52). A segment hosting openings is cached as solid
-		// sub-bands around each opening's gap instead of one trimmed band.
+		// Per-segment pieces and the junctions each owns, styled like the foundation
+		// render (z 60-62, above foundations at 50-52). The rings tile, so only the
+		// cached outline is stroked: no seam where a band meets its corner. A wall's
+		// bounds cover its outline edges as well as its rings.
 		std::vector<Foundation::Vec2> screen;
-		for (const auto& g : committedCache_.walls()) {
-			if (!g.aabb.intersects(visibleWorld)) {
+		for (const auto& wall : committedCache_.walls()) {
+			if (!wall.aabb.intersects(visibleWorld)) {
 				continue;
 			}
-			const float progress = blueprintProgress(g.built, g.entity);
+			const float progress = blueprintProgress(wall.built, wall.entity);
 
 			const float fillAlpha =
-				g.built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
+				wall.built ? ws.progressAlphaMax : (ws.progressAlphaMin + (ws.progressAlphaMax - ws.progressAlphaMin) * progress);
 			// Built walls wear a darker shade of their own material; blueprints keep the
 			// cool outline so blue stays the "planned" signal.
 			const Foundation::Color outline =
-				g.built ? darken(g.matColor, ws.builtEdgeDarken)
-						: toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
+				wall.built ? darken(wall.matColor, ws.builtEdgeDarken)
+						   : toColor(ws.outlineColor, ws.outlineAlphaMin + (ws.outlineAlphaMax - ws.outlineAlphaMin) * progress);
 
-			for (const auto& ring : g.rings) {
+			for (const auto& ring : wall.rings) {
 				screen.clear();
 				screen.reserve(ring.size());
 				for (const auto& v : ring) {
 					screen.push_back(toScreen(v));
 				}
 				// Blueprint base always; progress fill ramps with workDone/workTotal.
-				fillRing(screen, toColor(ws.blueprintFill), toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_base", "", 60, 60);
-				fillRing(
-					screen,
-					{g.matColor.r, g.matColor.g, g.matColor.b, fillAlpha},
-					outline,
-					g.built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint,
-					"committed_wall_progress",
-					"committed_wall_edge",
-					61,
-					62
-				);
+				fillPolygon(screen, toColor(ws.blueprintFill), "committed_wall_base", 60);
+				fillPolygon(screen, {wall.matColor.r, wall.matColor.g, wall.matColor.b, fillAlpha}, "committed_wall_progress", 61);
 			}
-		}
-
-		// Junction polygons fill the corner gaps the trimmed bands leave. A built
-		// junction (every incident segment built, resolved at rebuild) takes the
-		// wall material color so corners read as continuous material; otherwise it
-		// keeps the cool blueprint tint, so a blueprint's corners stay blue even
-		// while a finished structure elsewhere shows wood corners.
-		for (const auto& g : committedCache_.junctions()) {
-			if (!g.aabb.intersects(visibleWorld)) {
-				continue;
+			for (const auto& edge : wall.outline) {
+				Renderer::Primitives::drawLine({
+					.start = toScreen(edge[0]),
+					.end = toScreen(edge[1]),
+					.style = {.color = outline, .width = wall.built ? ws.outlineWidthBuilt : ws.outlineWidthBlueprint},
+					.id = "committed_wall_edge",
+					.key = 62,
+				});
 			}
-			const Foundation::Color junctionFill = g.built
-													   ? Foundation::Color{g.matColor.r, g.matColor.g, g.matColor.b, ws.junctionAlphaBuilt}
-													   : toColor(ws.junctionColor, ws.junctionAlphaBlueprint);
-			screen.clear();
-			screen.reserve(g.ring.size());
-			for (const auto& v : g.ring) {
-				screen.push_back(toScreen(v));
-			}
-			fillRing(screen, junctionFill, toColor(ws.outlineColor, 0.0F), 0.0F, "committed_wall_junction", "", 61, 61);
 		}
 	}
 
@@ -2092,7 +2162,7 @@ namespace world_sim {
 			return;
 		}
 
-		const bool				valid = openingValidation_.ok();
+		const bool				valid = openingValidation_.ok() && !openingUnexplored_;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 		const Foundation::Color tint = valid ? okColor : badColor;
@@ -2159,7 +2229,7 @@ namespace world_sim {
 
 		// Off-mesh cursor (on water) reads as invalid like a geometry violation: the
 		// rubber-band band + centerline turn red before the player commits.
-		const bool				valid = lastValidation_.ok() && !cursorOffMesh_;
+		const bool				valid = lastValidation_.ok() && !cursorOffBuildableGround;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 
@@ -2259,6 +2329,10 @@ namespace world_sim {
 				.id = "wall_vertex",
 				.key = 909,
 			});
+		}
+
+		if (points_.size() >= construction::kMinClosingWallChainPoints) {
+			renderOriginHalo(screen.front(), scale, 910);
 		}
 
 		using construction::SnapKind;

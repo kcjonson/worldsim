@@ -1,8 +1,8 @@
 #pragma once
 
 // TasksTabView - the dossier's Tasks tab: a "Currently" panel with an amber left edge for the running
-// task and its progress, then a Known Work divider over the goal tasks the colonist knows of, each with
-// its detail, its distance and a status badge.
+// task and its progress, then a Known Work divider over the goal tasks the colonist's last decision
+// offered work toward, each with its detail, its distance and a status badge.
 
 #include "scenes/game/ui/adapters/GlobalTaskAdapter.h"
 

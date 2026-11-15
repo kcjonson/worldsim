@@ -3,6 +3,10 @@
 #include <ecs/World.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Transform.h>
+#include <nav/NavCoords.h>
+
+#include <visibility/SightClip.h>
+#include <visibility/SightPolygon.h>
 
 #include <primitives/Primitives.h>
 
@@ -74,17 +78,19 @@ namespace world_sim {
 
 		// --- Per-observer visibility polygons ---
 		for (auto [entity, pos, memory] : ecsWorld->view<ecs::Position, ecs::Memory>()) {
-			(void)pos;    // the shape carries its own centre
 			(void)memory; // view filters by Memory; value not read here
 			const auto shape = vision->sightShape(entity);
 			if (!shape.has_value()) {
 				continue;
 			}
 
-			// Outdoors there is no polygon and sight is the plain circle at the radius vision used.
+			// Outdoors there is no polygon and sight is the plain circle at the radius vision used. Indoors
+			// it is the polygon, built a rebuild step past sight, cut to his sight where he stands.
 			std::vector<Foundation::Vec2> screenRing;
 			if (shape->polygon != nullptr) {
-				for (const auto& vertex : *shape->polygon) {
+				const std::int64_t radiusMm = std::llround(static_cast<double>(shape->radius) * 1000.0);
+				const geometry::Ring inSight = geometry::starClippedToConvex(*shape->polygon, nav::toMm(shape->center), geometry::sightPolygon(nav::toMm(pos.value), radiusMm));
+				for (const auto& vertex : inSight) {
 					const float worldX = static_cast<float>(vertex.x) * kMmToMeters;
 					const float worldY = static_cast<float>(vertex.y) * kMmToMeters;
 					const auto	screen = camera->worldToScreen(worldX, worldY, viewportW, viewportH, kPixelsPerMeter);

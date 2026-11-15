@@ -343,12 +343,16 @@ void selectTaskFromTrace(EntityID entity, Task& task, const DecisionTrace& trace
 ### Claims
 
 With [task claims](../../../technical/task-claims.md), `OptionStatus` has `Reserved`: another
-colonist's task holds this target. A source others' claims take whole is not offered; each goal and
-item shows at most one Reserved row, for the nearest such source, and only when no source offered is
-nearer. The row names the top holder from the claim index: "Cutting Oak Tree for Wood (reserved by
-Alice)", "Hunger at 40% (reserved by Alice)", or for a Craft option "(station in use by Alice)".
-Options are not deduplicated to the best source per goal and item before scoring; that is planned.
-Bumping is not built, so no trace shows a "bumped by" row.
+colonist's task holds this target. A source others' claims take whole is not offered; each goal,
+item, and kind of work shows at most one Reserved row, for the first such source in rank order, and only when it
+ranks ahead of every source offered. The row names the top holder from the claim index: "Cutting Oak
+Tree for Wood (reserved by Alice)", "Hunger at 40% (reserved by Alice)", or for a Craft option
+"(station in use by Alice)". Bumping is not built, so no trace shows a "bumped by" row.
+
+A cut, a clear, a fetch from loose piles, and a pull from boxes are each one option per goal and item,
+showing the best ranked source offered; the others are held off the trace and tried in rank order when
+the shown one fails selection (task-claims.md, Reserved rows, and option dedup). The trace shows the
+source chosen, not each nearer source passed over and why.
 
 ---
 
@@ -358,7 +362,7 @@ Bumping is not built, so no trace shows a "bumped by" row.
 |-----------|------------|-------|
 | Evaluate all needs | O(4) | Fixed 4 need types |
 | Memory query per need | O(n) | n = entities with capability in memory |
-| Sort options | O(1) | Fixed ~5 options (4 needs + wander) |
+| Sort options | O(k log k) | k = needs + one option per work goal, item, and kind + wander; not remembered sources |
 | Total per colonist | O(4n) | Same as current AIDecisionSystem |
 
 **No additional performance cost** - we're capturing information already computed.

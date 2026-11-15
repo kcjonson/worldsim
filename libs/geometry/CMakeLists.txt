@@ -14,6 +14,7 @@ add_library(geometry
     contour/WarpField.cpp
     silhouette/Silhouette.cpp
     triangulation/ConstrainedDelaunay.cpp
+    visibility/SightClip.cpp
     visibility/SightSkirt.cpp
     visibility/Visibility.cpp
     nav/MeshComponents.cpp
@@ -21,6 +22,7 @@ add_library(geometry
     nav/PathQuery.cpp
     nav/PatchableMesh.cpp
     nav/SightCover.cpp
+    nav/SightFrontier.cpp
 )
 
 target_include_directories(geometry

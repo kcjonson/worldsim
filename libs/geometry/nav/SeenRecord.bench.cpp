@@ -2,7 +2,7 @@
 // PatchableMesh holding only sight outlines as ground rings: legs walked in the open, the
 // landing polygon, and visibility polygons near walls. Each shape goes through sightShapeCovered;
 // an uncovered one with walls in sight is grown by skirtedSightShape (step 3c), and what it adds is
-// cut by frontierOf, a prototype below (step 3b), and patched in. The rows measure what that record costs: rings registered and bytes held, patch and covered-test
+// cut by sightShapeFrontier (step 3b), and patched in. The rows measure what that record costs: rings registered and bytes held, patch and covered-test
 // time, point location, the nav upkeep every patch runs, a walk of the union's edge, a base of
 // rooms walked by colonists, and how often a visibility polygon is not a simple ring. Every row runs once and prints its figures on stderr;
 // the counters carry the headline numbers.
@@ -11,9 +11,11 @@
 #include "nav/NavMesh.h"
 #include "nav/PatchableMesh.h"
 #include "nav/SightCover.h"
+#include "nav/SightFrontier.h"
 #include "polygon/Polygon.h"
 #include "predicates/Predicates.h"
 #include "visibility/Buildings.test.h"
+#include "visibility/SightClip.h"
 #include "visibility/SightPolygon.h"
 #include "visibility/SightSkirt.h"
 #include "visibility/Visibility.h"
@@ -27,6 +29,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <optional>
 #include <random>
 #include <string>
 #include <utility>
@@ -41,6 +44,9 @@ namespace {
 	constexpr std::int64_t kSightMm		   = 30000;
 	constexpr std::int64_t kSlackMm		   = 50;
 	constexpr std::int64_t kLegRadiusMm	   = kSightMm - kSlackMm;
+	constexpr std::int64_t kRebuildStepMm	   = 500; // VisionSystem::kSightRebuildStepMeters
+	constexpr std::int64_t kSweepSpacingMm	   = 100; // vision::kSeenSweepSpacingMm
+	constexpr std::int64_t kSweepRimBandMm	   = 600; // vision::kSeenSweepRimBandMm
 	constexpr std::int64_t kLandingMm	   = 150000;
 	constexpr std::int64_t kSeenProvenance = -3;
 	constexpr double	   kPi			   = 3.14159265358979323846;
@@ -165,6 +171,19 @@ namespace {
 		return hullOf(std::move(pts));
 	}
 
+	// SeenArea's test for a sweep: a vertex of what the polygon added lies within kSweepRimBandMm of
+	// its rim.
+	bool addsNearRim(const std::vector<std::vector<Vec2i64>>& pieces, const Vec2i64& centre) {
+		for (const std::vector<Vec2i64>& piece : pieces) {
+			for (const Vec2i64& vertex : piece) {
+				if (!geometry::withinDistanceOfSegment(vertex, centre, centre, kSightMm - kSweepRimBandMm)) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
 	Vec2i64 stepFrom(const Vec2i64& point, double heading, double lengthMm) {
 		return {point.x + std::llround(std::cos(heading) * lengthMm), point.y + std::llround(std::sin(heading) * lengthMm)};
 	}
@@ -173,10 +192,12 @@ namespace {
 	// outline, sample and edge ids, and the edge index (per ring edge its source, flag and
 	// half-edge list). The triangles: each triangle slot with its edge sources, cover and
 	// live flag, and each vertex slot with its use count. Box grids, hash tables and
-	// interned lists are left out of both.
+	// interned lists are left out of both. Of the registry, `intervalsAndBoxes` is what each
+	// bounds ring's edge boxes and held boundary intervals take, headers included.
 	struct Bytes {
-		double registry	 = 0.0;
-		double triangles = 0.0;
+		double registry			 = 0.0;
+		double triangles		 = 0.0;
+		double intervalsAndBoxes = 0.0;
 	};
 
 	Bytes bytesOf(const PatchableMesh& mesh) {
@@ -186,6 +207,12 @@ namespace {
 			const RegisteredRing& registeredRing = rings[i];
 			out.registry += static_cast<double>(sizeof(RegisteredRing) + registeredRing.polygon.ring.capacity() * sizeof(Vec2i64) +
 												registeredRing.sample.ring3.capacity() * sizeof(Vec2i64) + registeredRing.edgeIds.capacity() * sizeof(std::int32_t));
+			const double held = static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>) +
+													registeredRing.edgeBoxes.boxes.capacity() * sizeof(std::array<Vec2i64, 2>) +
+													registeredRing.edgeBoxes.levelStart.capacity() * sizeof(std::int32_t) +
+													registeredRing.intervals.capacity() * sizeof(GroundInterval) + registeredRing.intervalStart.capacity() * sizeof(std::uint32_t));
+			out.registry += held - static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>));
+			out.intervalsAndBoxes += held;
 		}
 		const auto& edgeOf = mesh.*memberOf(EdgeOfKey{});
 		const auto& pieces = mesh.*memberOf(PiecesKey{});
@@ -277,664 +304,9 @@ namespace {
 		return out;
 	}
 
-	// --- A prototype: register only what a shape adds (step 3b) ------------------------
-	//
-	// Kept here, not in the library, because it does not yet meet its acceptance
-	// (player-visibility.md 6.3). A shape it calls covered is one sightShapeCovered would.
-
-	// A piece's inner edge is pulled this far back inside the record, so the piece and the record
-	// overlap rather than abut: nothing depends on two snapped edges coinciding.
-	constexpr std::int64_t kSeenPieceOverlapMm = 100;
-
-	enum class Frontier {
-		Covered, // nothing to register
-		Pieces,	 // register the pieces
-		Whole,	 // register the whole shape (the one piece)
-	};
-
-	// A mesh edge touching side `side`'s triangle, relative to the centre.
-	struct FrontierContact {
-		std::size_t side  = 0;
-		double		fromX = 0.0;
-		double		fromY = 0.0;
-		double		toX	  = 0.0;
-		double		toY	  = 0.0;
-	};
-
-	// A wedge of a side's triangle, between two rays from the centre, that adds ground: distances
-	// along each ray to the nearest mesh edge (inner) and to the side (outer).
-	struct FrontierWedge {
-		std::size_t side	   = 0;
-		double		fromX	   = 0.0;
-		double		fromY	   = 0.0;
-		double		toX		   = 0.0;
-		double		toY		   = 0.0;
-		bool		fromVertex = false; // the ray runs to the shape's vertex
-		bool		toVertex   = false;
-		double		innerFrom  = 0.0;
-		double		innerTo	   = 0.0;
-		double		outerFrom  = 0.0;
-		double		outerTo	   = 0.0;
-	};
-
-	// A ray of a run of wedges: its unit direction, the shape's vertex it runs to (the shape's size
-	// when none), and the distances along it to the shape's side and to the nearest contact.
-	struct FrontierRay {
-		double		unitX  = 0.0;
-		double		unitY  = 0.0;
-		std::size_t vertex = 0;
-		double		outer  = 0.0;
-		double		nearer = 0.0;
-	};
-
-	struct FrontierScratch {
-		std::vector<std::int32_t>				 edgeIds;
-		std::vector<std::pair<Vec2i64, Vec2i64>> meshEdges;
-		std::vector<Vec2i64>					 offsets;
-		std::vector<double>						 sideLengths;
-		std::vector<UnwrappedAngle>				 angles;
-		std::vector<UnwrappedAngle>				 highestSoFar;	 // per side, the highest angle of it and every side before
-		std::vector<UnwrappedAngle>				 lowestFromHere; // per side, the lowest angle of it and every side after
-		std::vector<UnwrappedAngle>				 wedgeStart;	 // per side, where its core's wedge starts and ends
-		std::vector<UnwrappedAngle>				 wedgeEnd;
-		std::vector<std::uint8_t>				 reached;		 // per side, the record's edge meets its core
-		std::vector<FrontierContact>			 contacts;
-		std::vector<FrontierWedge>			 wedges;
-		std::vector<std::array<double, 2>>		 rays;
-		std::vector<FrontierRay>				 runRays;
-	};
-
-	// Fan `shape` from `centre` into one triangle per side. A counter-clockwise triangle's core is
-	// the part of it farther than kSeenCoverToleranceMm from its side's line, strictly inside its
-	// wedge, the wedge narrowed to leave out every angle the shape steps back over (a snapped
-	// shadow edge does, by under a millimetre). A core the record's edge does not meet lies wholly
-	// in the record, being joined to the centre, which is on it.
-	//
-	// Covered: the centre is on the record and no core is met. What the record can lack of the
-	// shape lies within the tolerance of a side's line, or in the wedges the shape steps back over.
-	//
-	// Pieces: each met triangle's wedge is split by rays at every end of a record edge inside it
-	// and wherever a record edge crosses the side's line or the tolerance line. Between two
-	// neighbouring rays no record edge ends and record edges never cross, so the nearest one is the
-	// same all the way across, and everything nearer the centre than it is on the record. A split
-	// wedge adds ground where that nearest edge lies deeper than the tolerance. Each run of adding
-	// wedges that share rays is one ring. Its two end rays turn outward by kSeenPieceOverlapMm at
-	// the run's farthest reach; its outer chain is the shape's own boundary between them; its inner
-	// chain stands kSeenPieceOverlapMm back from every record edge point near it, so the piece
-	// overlaps the record on every side rather than abutting it. Inner points nearer the centre
-	// than the overlap become the centre, and a run under the overlap wide is fanned from the
-	// centre. The record and the pieces together hold the shape, but for the tolerance strips above.
-	//
-	// Whole: the centre is off the record, an edge of the record passes through it, every core is
-	// met, a run's rays do not meet the boundary in order, or a piece would not be a simple ring;
-	// `pieces` holds the shape.
-	//
-	// `shape` must be simple and wind once round `centre` (simpleAround). `pieces` is cleared first.
-
-	double crossOf(double firstX, double firstY, double secondX, double secondY) {
-		return firstX * secondY - firstY * secondX;
-	}
-
-	// Narrows [first, last] to where from + t (to - from) > bound, or >= bound when `closed`.
-	void narrow(double from, double to, double bound, bool closed, double& first, double& last) {
-		const double change = to - from;
-		if (change == 0.0) {
-			if (closed ? from < bound : from <= bound) {
-				first = 1.0;
-				last  = 0.0;
-			}
-			return;
-		}
-		const double at = (bound - from) / change;
-		if (change > 0.0) {
-			first = std::max(first, at);
-		} else {
-			last = std::min(last, at);
-		}
-	}
-
-	// Inner points closer together than this are merged; the overlap absorbs it.
-	constexpr double kInnerPointSpacingMm = 5.0;
-
-	Frontier frontierOf(const PatchableMesh& record, const std::vector<Vec2i64>& shape, const Vec2i64& centre, FrontierScratch& scratch,
-									 std::vector<std::vector<Vec2i64>>& pieces) {
-		pieces.clear();
-		auto whole = [&] {
-			pieces.push_back(shape);
-			return Frontier::Whole;
-		};
-		if (record.locate(centre) < 0) {
-			return whole();
-		}
-		const std::size_t			 count		 = shape.size();
-		std::vector<Vec2i64>&		 offsets	 = scratch.offsets;
-		std::vector<double>&		 sideLengths = scratch.sideLengths;
-		std::vector<UnwrappedAngle>& angles		 = scratch.angles;
-		std::vector<UnwrappedAngle>& highest	 = scratch.highestSoFar;
-		std::vector<UnwrappedAngle>& lowest		 = scratch.lowestFromHere;
-		unwrapAngles(shape, centre, angles);
-		offsets.clear();
-		sideLengths.clear();
-		highest.clear();
-		lowest.assign(count, UnwrappedAngle{});
-		Vec2i64 boxLow			 = shape.front();
-		Vec2i64 boxHigh			 = boxLow;
-		double	reachSquared = 0.0;
-		for (std::size_t i = 0; i < count; ++i) {
-			const Vec2i64& vertex = shape[i];
-			const Vec2i64  offset = vertex - centre;
-			offsets.push_back(offset);
-			boxLow			 = {std::min(boxLow.x, vertex.x), std::min(boxLow.y, vertex.y)};
-			boxHigh			 = {std::max(boxHigh.x, vertex.x), std::max(boxHigh.y, vertex.y)};
-			reachSquared = std::max(reachSquared, static_cast<double>(offset.x) * static_cast<double>(offset.x) + static_cast<double>(offset.y) * static_cast<double>(offset.y));
-			const Vec2i64 side = shape[(i + 1) % count] - vertex;
-			sideLengths.push_back(std::sqrt(static_cast<double>(side.x) * static_cast<double>(side.x) + static_cast<double>(side.y) * static_cast<double>(side.y)));
-			const UnwrappedAngle& high = angleBefore(angles[i], angles[i + 1]) ? angles[i + 1] : angles[i];
-			highest.push_back(i == 0 || angleBefore(highest.back(), high) ? high : highest.back());
-		}
-		for (std::size_t i = count; i-- > 0;) {
-			const UnwrappedAngle& low = angleBefore(angles[i + 1], angles[i]) ? angles[i + 1] : angles[i];
-			lowest[i]				  = i + 1 == count || angleBefore(low, lowest[i + 1]) ? low : lowest[i + 1];
-		}
-		// Side i's wedge runs from the highest vertex angle up to vertex i to the lowest from vertex
-		// i + 1 on, every vertex also counted a turn back and a turn on.
-		std::vector<UnwrappedAngle>& wedgeStart = scratch.wedgeStart;
-		std::vector<UnwrappedAngle>& wedgeEnd	= scratch.wedgeEnd;
-		wedgeStart.assign(count, UnwrappedAngle{});
-		wedgeEnd.assign(count, UnwrappedAngle{});
-		UnwrappedAngle running{angles.front().turns - 1, angles.front().direction};
-		for (std::size_t i = 0; i < count; ++i) {
-			const UnwrappedAngle turnBack{angles[i].turns - 1, angles[i].direction};
-			running = angleBefore(running, turnBack) ? turnBack : running;
-		}
-		for (std::size_t i = 0; i < count; ++i) {
-			running		  = angleBefore(running, angles[i]) ? angles[i] : running;
-			wedgeStart[i] = running;
-		}
-		running = UnwrappedAngle{angles[1].turns + 1, angles[1].direction};
-		for (std::size_t i = 1; i <= count; ++i) {
-			const UnwrappedAngle turnOn{angles[i].turns + 1, angles[i].direction};
-			running = angleBefore(turnOn, running) ? turnOn : running;
-		}
-		for (std::size_t i = count; i-- > 0;) {
-			running		= angleBefore(angles[i + 1], running) ? angles[i + 1] : running;
-			wedgeEnd[i] = running;
-		}
-
-		const double tolerance = static_cast<double>(kSeenCoverToleranceMm);
-		const double reach	   = std::sqrt(reachSquared);
-		std::vector<std::uint8_t>&		 reached  = scratch.reached;
-		std::vector<FrontierContact>& contacts = scratch.contacts;
-		reached.assign(count, 0);
-		contacts.clear();
-		// For the mesh edge from + t (to - from), t in [0, 1], and side i's triangle: whether the edge
-		// touches the closed triangle (a contact, kept for the pieces) and whether it meets the core.
-		auto measure = [&](std::size_t i, double fromX, double fromY, double toX, double toY) {
-			if (cross(offsets[i], offsets[(i + 1) % count]).sign() <= 0) {
-				return;
-			}
-			const double leftX	  = static_cast<double>(offsets[i].x);
-			const double leftY	  = static_cast<double>(offsets[i].y);
-			const double rightX	  = static_cast<double>(offsets[(i + 1) % count].x);
-			const double rightY	  = static_cast<double>(offsets[(i + 1) % count].y);
-			const double sideFrom = crossOf(rightX - leftX, rightY - leftY, fromX - leftX, fromY - leftY);
-			const double sideTo	  = crossOf(rightX - leftX, rightY - leftY, toX - leftX, toY - leftY);
-			double		 first	  = 0.0;
-			double		 last	  = 1.0;
-			narrow(crossOf(leftX, leftY, fromX, fromY), crossOf(leftX, leftY, toX, toY), 0.0, true, first, last);
-			narrow(crossOf(fromX, fromY, rightX, rightY), crossOf(toX, toY, rightX, rightY), 0.0, true, first, last);
-			narrow(sideFrom, sideTo, 0.0, true, first, last);
-			if (first > last) {
-				return;
-			}
-			contacts.push_back({i, fromX, fromY, toX, toY});
-			if (!angleBefore(wedgeStart[i], wedgeEnd[i])) {
-				return;
-			}
-			const double startX = static_cast<double>(wedgeStart[i].direction.x);
-			const double startY = static_cast<double>(wedgeStart[i].direction.y);
-			const double endX	= static_cast<double>(wedgeEnd[i].direction.x);
-			const double endY	= static_cast<double>(wedgeEnd[i].direction.y);
-			first				= 0.0;
-			last				= 1.0;
-			narrow(crossOf(startX, startY, fromX, fromY), crossOf(startX, startY, toX, toY), 0.0, false, first, last);
-			narrow(crossOf(fromX, fromY, endX, endY), crossOf(toX, toY, endX, endY), 0.0, false, first, last);
-			narrow(sideFrom, sideTo, tolerance * sideLengths[i], false, first, last);
-			reached[i] = reached[i] != 0 || first < last ? 1 : 0;
-		};
-
-		record.meshEdgesNear(boxLow, boxHigh, scratch.edgeIds, scratch.meshEdges);
-		for (const auto& [edgeStart, edgeEnd] : scratch.meshEdges) {
-			if (std::max(edgeStart.x, edgeEnd.x) < boxLow.x || boxHigh.x < std::min(edgeStart.x, edgeEnd.x) || std::max(edgeStart.y, edgeEnd.y) < boxLow.y ||
-				boxHigh.y < std::min(edgeStart.y, edgeEnd.y)) {
-				continue;
-			}
-			if (closestOnSegment(centre, edgeStart, edgeEnd).distanceMm > reach) {
-				continue;
-			}
-			Vec2i64 from = edgeStart - centre;
-			Vec2i64 to	 = edgeEnd - centre;
-			if (from == Vec2i64{0, 0} || to == Vec2i64{0, 0}) {
-				return whole();
-			}
-			const int turn = cross(from, to).sign();
-			if (turn == 0 && dot(from, to).sign() < 0) {
-				return whole();
-			}
-			if (turn < 0) {
-				std::swap(from, to);
-			}
-			// The edge's angular span, starting in the shape's first turn.
-			const UnwrappedAngle start{angleLess(from, angles.front().direction) ? 1 : 0, from};
-			const UnwrappedAngle end{start.turns + (angleLess(to, from) ? 1 : 0), to};
-			const double		 fromX = static_cast<double>(from.x);
-			const double		 fromY = static_cast<double>(from.y);
-			const double		 toX   = static_cast<double>(to.x);
-			const double		 toY   = static_cast<double>(to.y);
-			for (const std::int64_t shift : {std::int64_t{-1}, std::int64_t{0}, std::int64_t{1}}) {
-				const UnwrappedAngle low{start.turns + shift, start.direction};
-				const UnwrappedAngle high{end.turns + shift, end.direction};
-				// Every side before `first` ends before the span, and every side from `past` on
-				// starts after it.
-				const auto first = static_cast<std::size_t>(
-					std::partition_point(highest.begin(), highest.end(), [&](const UnwrappedAngle& angle) { return angleBefore(angle, low); }) - highest.begin());
-				const auto past = static_cast<std::size_t>(
-					std::partition_point(lowest.begin(), lowest.end(), [&](const UnwrappedAngle& angle) { return !angleBefore(high, angle); }) - lowest.begin());
-				for (std::size_t i = first; i < past; ++i) {
-					measure(i, fromX, fromY, toX, toY);
-				}
-			}
-		}
-
-		std::size_t met = 0;
-		for (std::size_t i = 0; i < count; ++i) {
-			met += reached[i];
-		}
-		if (met == 0) {
-			return Frontier::Covered;
-		}
-		if (met == count) {
-			return whole();
-		}
-		std::stable_sort(contacts.begin(), contacts.end(), [](const FrontierContact& first, const FrontierContact& second) { return first.side < second.side; });
-
-		// Split each met side's wedge at every contact's end inside it and wherever a contact crosses
-		// the side's line or the tolerance line. Between two neighbouring rays no contact ends, and
-		// contacts never cross, so the nearest contact along the middle ray is the nearest all the
-		// way across: everything nearer the centre than it is on the record, and the wedge adds the
-		// ground between it and the side, when that is deeper than the tolerance.
-		std::vector<FrontierWedge>& wedges = scratch.wedges;
-		std::vector<std::array<double, 2>>& rays = scratch.rays;
-		wedges.clear();
-		std::size_t contactAt = 0;
-		for (std::size_t i = 0; i < count; ++i) {
-			const std::size_t contactsFrom = contactAt;
-			while (contactAt < contacts.size() && contacts[contactAt].side == i) {
-				++contactAt;
-			}
-			if (reached[i] == 0) {
-				continue;
-			}
-			const double leftX	= static_cast<double>(offsets[i].x);
-			const double leftY	= static_cast<double>(offsets[i].y);
-			const double rightX = static_cast<double>(offsets[(i + 1) % count].x);
-			const double rightY = static_cast<double>(offsets[(i + 1) % count].y);
-			const double sideX	= rightX - leftX;
-			const double sideY	= rightY - leftY;
-			const double startX = static_cast<double>(wedgeStart[i].direction.x);
-			const double startY = static_cast<double>(wedgeStart[i].direction.y);
-			const double endX	= static_cast<double>(wedgeEnd[i].direction.x);
-			const double endY	= static_cast<double>(wedgeEnd[i].direction.y);
-			auto		 insideWedge = [&](double pointX, double pointY) {
-				return crossOf(startX, startY, pointX, pointY) > 0.0 && crossOf(pointX, pointY, endX, endY) > 0.0;
-			};
-			rays.clear();
-			for (std::size_t c = contactsFrom; c < contactAt; ++c) {
-				const FrontierContact& contact = contacts[c];
-				for (const auto& [pointX, pointY] : {std::array<double, 2>{contact.fromX, contact.fromY}, std::array<double, 2>{contact.toX, contact.toY}}) {
-					if (insideWedge(pointX, pointY)) {
-						rays.push_back({pointX, pointY});
-					}
-				}
-				const double depthFrom = crossOf(sideX, sideY, contact.fromX - leftX, contact.fromY - leftY);
-				const double depthTo   = crossOf(sideX, sideY, contact.toX - leftX, contact.toY - leftY);
-				for (const double bound : {0.0, tolerance * sideLengths[i]}) {
-					if ((depthFrom - bound) * (depthTo - bound) < 0.0) {
-						const double along	= (bound - depthFrom) / (depthTo - depthFrom);
-						const double pointX = contact.fromX + along * (contact.toX - contact.fromX);
-						const double pointY = contact.fromY + along * (contact.toY - contact.fromY);
-						if (insideWedge(pointX, pointY)) {
-							rays.push_back({pointX, pointY});
-						}
-					}
-				}
-			}
-			std::sort(rays.begin(), rays.end(), [](const std::array<double, 2>& first, const std::array<double, 2>& second) {
-				return crossOf(first[0], first[1], second[0], second[1]) > 0.0;
-			});
-			rays.insert(rays.begin(), {startX, startY});
-			rays.push_back({endX, endY});
-			// Where a ray meets a line through `point` along `along`, as a distance along the ray's unit
-			// direction; 0 when it does not meet it ahead.
-			auto distanceAlong = [](double rayX, double rayY, double pointX, double pointY, double alongX, double alongY) {
-				const double length	 = std::hypot(rayX, rayY);
-				const double turning = crossOf(rayX / length, rayY / length, alongX, alongY);
-				const double reachAlong = turning != 0.0 ? crossOf(pointX, pointY, alongX, alongY) / turning : 0.0;
-				return std::isfinite(reachAlong) && reachAlong > 0.0 ? reachAlong : 0.0;
-			};
-			for (std::size_t r = 0; r + 1 < rays.size(); ++r) {
-				const std::array<double, 2>& from = rays[r];
-				const std::array<double, 2>& to	  = rays[r + 1];
-				if (crossOf(from[0], from[1], to[0], to[1]) <= 0.0) {
-					continue;
-				}
-				const double fromLength = std::hypot(from[0], from[1]);
-				const double toLength	= std::hypot(to[0], to[1]);
-				const double middleX	= from[0] / fromLength + to[0] / toLength;
-				const double middleY	= from[1] / fromLength + to[1] / toLength;
-				double		 nearestAt	   = std::numeric_limits<double>::infinity();
-				std::size_t	 nearestContact = contactAt;
-				for (std::size_t c = contactsFrom; c < contactAt; ++c) {
-					const FrontierContact& contact = contacts[c];
-					const double			 alongX	 = contact.toX - contact.fromX;
-					const double			 alongY	 = contact.toY - contact.fromY;
-					const double			 turning = crossOf(middleX, middleY, alongX, alongY);
-					if (turning == 0.0) {
-						continue;
-					}
-					const double rayParameter  = crossOf(contact.fromX, contact.fromY, alongX, alongY) / turning;
-					const double edgeParameter = crossOf(contact.fromX, contact.fromY, middleX, middleY) / turning;
-					const double length		   = rayParameter * std::hypot(middleX, middleY);
-					if (rayParameter > 0.0 && edgeParameter >= 0.0 && edgeParameter <= 1.0 && length < nearestAt) {
-						nearestAt	   = length;
-						nearestContact = c;
-					}
-				}
-				const double middleLength = std::hypot(middleX, middleY);
-				const bool	 adds		  = nearestContact < contactAt &&
-								  crossOf(sideX, sideY, middleX / middleLength * nearestAt - leftX, middleY / middleLength * nearestAt - leftY) > tolerance * sideLengths[i];
-				if (!adds) {
-					continue;
-				}
-				const FrontierContact& contact = contacts[nearestContact];
-				const double			 alongX	 = contact.toX - contact.fromX;
-				const double			 alongY	 = contact.toY - contact.fromY;
-				FrontierWedge			 wedge;
-				wedge.side		  = i;
-				wedge.fromX		  = from[0];
-				wedge.fromY		  = from[1];
-				wedge.toX		  = to[0];
-				wedge.toY		  = to[1];
-				wedge.fromVertex  = r == 0 && wedgeStart[i].direction == offsets[i];
-				wedge.toVertex	  = r + 2 == rays.size() && wedgeEnd[i].direction == offsets[(i + 1) % count];
-				wedge.innerFrom	  = distanceAlong(from[0], from[1], contact.fromX, contact.fromY, alongX, alongY);
-				wedge.innerTo	  = distanceAlong(to[0], to[1], contact.fromX, contact.fromY, alongX, alongY);
-				wedge.outerFrom	  = distanceAlong(from[0], from[1], leftX, leftY, sideX, sideY);
-				wedge.outerTo	  = distanceAlong(to[0], to[1], leftX, leftY, sideX, sideY);
-				wedges.push_back(wedge);
-			}
-		}
-		if (wedges.empty()) {
-			return Frontier::Covered;
-		}
-
-		// Runs of wedges that share a ray become pieces: the shape's side over the run, then back
-		// along the run's rays at the nearest contact beside each, less the overlap. A ray between
-		// two sides joins them only at the shape's own vertex.
-		auto sharesRay = [&](const FrontierWedge& before, const FrontierWedge& after) {
-			if (after.side == before.side) {
-				return before.toX == after.fromX && before.toY == after.fromY;
-			}
-			return after.side == (before.side + 1) % count && before.toVertex && after.fromVertex;
-		};
-		std::size_t first = 0;
-		if (sharesRay(wedges.back(), wedges.front())) {
-			first = wedges.size();
-			for (std::size_t w = 1; w < wedges.size(); ++w) {
-				if (!sharesRay(wedges[w - 1], wedges[w])) {
-					first = w;
-					break;
-				}
-			}
-			if (first == wedges.size()) {
-				return whole();
-			}
-		}
-		const double overlap = static_cast<double>(kSeenPieceOverlapMm);
-		auto		 pointAt = [&](double rayX, double rayY, double distance) {
-			const double length = std::hypot(rayX, rayY);
-			return Vec2i64{centre.x + std::llround(rayX / length * distance), centre.y + std::llround(rayY / length * distance)};
-		};
-		// Where a ray from the centre first meets the shape's boundary: the side and the distance.
-		auto boundaryHit = [&](double rayX, double rayY, std::size_t& side, double& distance) {
-			const double length = std::hypot(rayX, rayY);
-			distance			= std::numeric_limits<double>::infinity();
-			for (std::size_t j = 0; j < count; ++j) {
-				const double fromX	 = static_cast<double>(offsets[j].x);
-				const double fromY	 = static_cast<double>(offsets[j].y);
-				const double alongX	 = static_cast<double>(offsets[(j + 1) % count].x) - fromX;
-				const double alongY	 = static_cast<double>(offsets[(j + 1) % count].y) - fromY;
-				const double turning = crossOf(rayX / length, rayY / length, alongX, alongY);
-				if (turning == 0.0) {
-					continue;
-				}
-				const double reachAlong = crossOf(fromX, fromY, alongX, alongY) / turning;
-				const double onSide		= crossOf(fromX, fromY, rayX / length, rayY / length) / turning;
-				if (reachAlong > 0.0 && onSide >= 0.0 && onSide <= 1.0 && reachAlong < distance) {
-					distance = reachAlong;
-					side	 = j;
-				}
-			}
-			return std::isfinite(distance);
-		};
-		// The nearest contact along a ray from the centre, any side's; infinite when none.
-		auto nearestContactAlong = [&](double unitX, double unitY) {
-			double nearestAt = std::numeric_limits<double>::infinity();
-			for (const FrontierContact& contact : contacts) {
-				const double alongX	 = contact.toX - contact.fromX;
-				const double alongY	 = contact.toY - contact.fromY;
-				const double turning = crossOf(unitX, unitY, alongX, alongY);
-				if (turning == 0.0) {
-					continue;
-				}
-				const double reachAlong = crossOf(contact.fromX, contact.fromY, alongX, alongY) / turning;
-				const double onEdge		= crossOf(contact.fromX, contact.fromY, unitX, unitY) / turning;
-				if (reachAlong > 0.0 && onEdge >= 0.0 && onEdge <= 1.0) {
-					nearestAt = std::min(nearestAt, reachAlong);
-				}
-			}
-			return nearestAt;
-		};
-		auto apartBy = [](const Vec2i64& first, const Vec2i64& second, double spacing) {
-			const Vec2i64 gap = first - second;
-			return static_cast<double>(gap.x) * static_cast<double>(gap.x) + static_cast<double>(gap.y) * static_cast<double>(gap.y) > spacing * spacing;
-		};
-		std::vector<FrontierRay>& runRays = scratch.runRays;
-		std::vector<Vec2i64>		piece;
-		std::vector<std::uint8_t>	pinned; // per piece vertex: one of the shape's own
-		std::vector<Vec2i64>		inner;
-		for (std::size_t done = 0; done < wedges.size();) {
-			const std::size_t runStart	= (first + done) % wedges.size();
-			std::size_t		  runLength = 1;
-			while (done + runLength < wedges.size() && sharesRay(wedges[(runStart + runLength - 1) % wedges.size()], wedges[(runStart + runLength) % wedges.size()])) {
-				++runLength;
-			}
-			const FrontierWedge& runFirst = wedges[runStart];
-			const FrontierWedge& runLast	= wedges[(runStart + runLength - 1) % wedges.size()];
-			double				   reachOut = 0.0;
-			for (std::size_t k = 0; k < runLength; ++k) {
-				const FrontierWedge& wedge = wedges[(runStart + k) % wedges.size()];
-				reachOut					 = std::max({reachOut, wedge.outerFrom, wedge.outerTo});
-			}
-			// The run's two end rays turn outward by the overlap at its farthest reach (a slope, not an
-			// angle, so no trigonometry runs), so the piece overlaps the record beside the run too
-			// rather than abutting it along a ray. What it takes in there is shape the record holds.
-			// A turned ray must still meet the boundary on a side at or before the run's first (or at
-			// or after its last); where turning breaks that (a run round most of the shape), the run's
-			// own rays serve.
-			const std::size_t runSides	 = (runLast.side + count - runFirst.side) % count;
-			double			  startX	 = runFirst.fromX;
-			double			  startY	 = runFirst.fromY;
-			double			  endX		 = runLast.toX;
-			double			  endY		 = runLast.toY;
-			std::size_t		  startSide	 = 0;
-			std::size_t		  endSide	 = 0;
-			double			  startReach = 0.0;
-			double			  endReach	 = 0.0;
-			bool			  found		 = false;
-			for (const double slope : {overlap / std::max(reachOut, overlap), 0.0}) {
-				startX = runFirst.fromX + slope * runFirst.fromY;
-				startY = runFirst.fromY - slope * runFirst.fromX;
-				endX   = runLast.toX - slope * runLast.toY;
-				endY   = runLast.toY + slope * runLast.toX;
-				found  = boundaryHit(startX, startY, startSide, startReach) && boundaryHit(endX, endY, endSide, endReach) &&
-						(runFirst.side + count - startSide) % count + runSides + (endSide + count - runLast.side) % count == (endSide + count - startSide) % count;
-				if (found) {
-					break;
-				}
-			}
-			if (!found) {
-				pieces.clear();
-				return whole();
-			}
-			// The outer chain is the shape's own boundary between the turned rays, a millimetre short
-			// of it where they cross a side.
-			piece.clear();
-			pinned.clear();
-			piece.push_back(pointAt(startX, startY, startReach - 1.0));
-			pinned.push_back(0);
-			for (std::size_t j = (startSide + 1) % count; j != (endSide + 1) % count; j = (j + 1) % count) {
-				if (piece.back() != shape[j]) {
-					piece.push_back(shape[j]);
-					pinned.push_back(1);
-				}
-			}
-			const Vec2i64 outerEnd = pointAt(endX, endY, endReach - 1.0);
-			if (piece.back() != outerEnd) {
-				piece.push_back(outerEnd);
-				pinned.push_back(0);
-			}
-
-			// The inner chain stands the overlap back from every contact point near it, along the run's
-			// rays and the two turned ones: where the record's edge runs nearly along the rays, a pull
-			// along the ray alone would leave the piece abutting it. So a few millimetres either way
-			// do not matter on it: points closer together than kInnerPointSpacingMm are merged,
-			// keeping the nearer, and points within the overlap of the centre become the centre. A run
-			// under the overlap wide is fanned from the centre.
-			runRays.clear();
-			for (std::size_t k = 0; k <= runLength; ++k) {
-				const FrontierWedge* before = k > 0 ? &wedges[(runStart + k - 1) % wedges.size()] : nullptr;
-				const FrontierWedge* after  = k < runLength ? &wedges[(runStart + k) % wedges.size()] : nullptr;
-				const double		   rayX	  = after != nullptr ? after->fromX : before->toX;
-				const double		   rayY	  = after != nullptr ? after->fromY : before->toY;
-				const double		   length = std::hypot(rayX, rayY);
-				FrontierRay		   ray;
-				ray.unitX  = rayX / length;
-				ray.unitY  = rayY / length;
-				ray.outer  = std::numeric_limits<double>::infinity();
-				ray.nearer = std::numeric_limits<double>::infinity();
-				if (before != nullptr) {
-					ray.outer  = std::min(ray.outer, before->outerTo);
-					ray.nearer = std::min(ray.nearer, before->innerTo);
-				}
-				if (after != nullptr) {
-					ray.outer  = std::min(ray.outer, after->outerFrom);
-					ray.nearer = std::min(ray.nearer, after->innerFrom);
-				}
-				ray.nearer = std::min(ray.nearer, ray.outer);
-				runRays.push_back(ray);
-			}
-			const double			turn   = crossOf(runFirst.fromX, runFirst.fromY, runLast.toX, runLast.toY) /
-									 (std::hypot(runFirst.fromX, runFirst.fromY) * std::hypot(runLast.toX, runLast.toY));
-			const bool				sliver = turn * reachOut < overlap;
-			const FrontierRay		firstRay = runRays.front();
-			const FrontierRay		lastRay	 = runRays.back();
-			const double			startLength = std::hypot(startX, startY);
-			const double			endLength	= std::hypot(endX, endY);
-			runRays.insert(runRays.begin(), FrontierRay{startX / startLength, startY / startLength, count, startReach,
-														  std::min({firstRay.nearer, startReach, nearestContactAlong(startX / startLength, startY / startLength)})});
-			runRays.push_back(FrontierRay{endX / endLength, endY / endLength, count, endReach, std::min({lastRay.nearer, endReach, nearestContactAlong(endX / endLength, endY / endLength)})});
-			inner.clear();
-			for (std::size_t k = 0; k < runRays.size() && !sliver; ++k) {
-				const FrontierRay& ray   = runRays[k];
-				double				 depth = ray.nearer - overlap;
-				for (const FrontierRay& other : runRays) {
-					const double sideways = std::abs(crossOf(ray.unitX, ray.unitY, other.unitX, other.unitY)) * other.nearer;
-					const double along	  = (ray.unitX * other.unitX + ray.unitY * other.unitY) * other.nearer;
-					if (along > 0.0 && sideways < overlap) {
-						depth = std::min(depth, along - std::sqrt(overlap * overlap - sideways * sideways));
-					}
-				}
-				const Vec2i64 innerPoint = depth >= overlap ? pointAt(ray.unitX, ray.unitY, depth) : centre;
-				bool		  keep		 = true;
-				while (keep && innerPoint != centre && !inner.empty() && inner.back() != centre) {
-					const Vec2i64 lastPoint = inner.back() - centre;
-					const Vec2i64 next		= innerPoint - centre;
-					if (cross(lastPoint, next).sign() > 0 && apartBy(inner.back(), innerPoint, kInnerPointSpacingMm)) {
-						break;
-					}
-					if (dot(next, next) < dot(lastPoint, lastPoint)) {
-						inner.pop_back();
-					} else {
-						keep = false;
-					}
-				}
-				if (keep && (inner.empty() || inner.back() != innerPoint)) {
-					inner.push_back(innerPoint);
-				}
-			}
-			if (inner.empty()) {
-				inner.push_back(centre);
-			}
-			// Back to the centre more than once would pinch the piece there; everything between is
-			// nearer the centre than the record's edge, so it goes too.
-			const auto firstCentre = std::find(inner.begin(), inner.end(), centre);
-			const auto lastCentre  = std::find(inner.rbegin(), inner.rend(), centre).base();
-			if (firstCentre != inner.end() && firstCentre + 1 < lastCentre) {
-				inner.erase(firstCentre + 1, lastCentre);
-			}
-			for (std::size_t k = inner.size(); k-- > 0;) {
-				if (piece.back() != inner[k]) {
-					piece.push_back(inner[k]);
-					pinned.push_back(0);
-				}
-			}
-			if (piece.size() >= 2 && piece.front() == piece.back()) {
-				piece.pop_back();
-				pinned.pop_back();
-			}
-			// No side shorter than the patch's snap reach: of two vertices that close, one that is not
-			// the shape's own goes (an end ray's crossing beside a corner, or an inner point).
-			for (bool merged = true; merged && piece.size() > 3;) {
-				merged = false;
-				for (std::size_t i = 0; i < piece.size(); ++i) {
-					const std::size_t next = (i + 1) % piece.size();
-					if (apartBy(piece[i], piece[next], static_cast<double>(kOffGroundReachMm))) {
-						continue;
-					}
-					const std::size_t drop = pinned[next] == 0 ? next : (pinned[i] == 0 ? i : piece.size());
-					if (drop < piece.size()) {
-						piece.erase(piece.begin() + static_cast<std::ptrdiff_t>(drop));
-						pinned.erase(pinned.begin() + static_cast<std::ptrdiff_t>(drop));
-						merged = true;
-						break;
-					}
-				}
-			}
-			if (piece.size() < 3 || !isSimple(piece).pass) {
-				pieces.clear();
-				return whole();
-			}
-			pieces.push_back(piece);
-			done += runLength;
-		}
-		return pieces.empty() ? Frontier::Covered : Frontier::Pieces;
-	}
-
-
 	// The record: each shape tested with sightShapeCovered; an uncovered shape with walls in sight
 	// is grown by the skirt (skirtedSightShape, step 3c) when `skirtMm` is set, then cut into the
-	// pieces frontierOf gives, each registered in a patch of its own. K for a ring is the registered rings
+	// pieces sightShapeFrontier gives, each registered in a patch of its own. K for a ring is the registered rings
 	// whose boxes meet its box: what groundCovers and the patch read there. Where `exact` is set,
 	// groundCovers runs beside it on every shape, timed, to count where the two differ: a shape the
 	// ground holds exactly must always be covered (exactNotCovered stays 0), and coveredNotExact
@@ -943,7 +315,7 @@ namespace {
 		PatchableMesh							 mesh;
 		std::int64_t							 skirtMm = 0;
 		SightCoverScratch						 coverScratch;
-		FrontierScratch						 scratch;
+		SightFrontierScratch						 scratch;
 		std::vector<std::vector<Vec2i64>>		 pieces;
 		bool									 exact	   = true;
 		bool									 keepRings = false;
@@ -954,7 +326,7 @@ namespace {
 		std::vector<double>						 patchMs; // per registered ring
 		std::vector<double>						 coveredUs; // sightShapeCovered
 		std::vector<double>						 skirtUs; // skirtedSightShape, per shape grown
-		std::vector<double>						 frontierUs; // frontierOf, per shape cut
+		std::vector<double>						 frontierUs; // sightShapeFrontier, per shape cut
 		std::vector<double>						 groundCoversUs;
 		std::vector<double>						 coversK;
 		std::vector<double>						 ringK; // K where each ring registered
@@ -971,6 +343,19 @@ namespace {
 		int										 frontierCovered = 0; // uncovered shapes whose frontier was empty
 		int										 wholeShapes	 = 0;
 		int										 wholeOnRecord	 = 0; // whole though the centre was on the record
+		// The slowest patch: its time, K, vertices, area, whether its shape had walls in sight, how
+		// many pieces the shape gave, the live triangles after it, and the patch's passes.
+		struct SlowestPatch {
+			double		ms		  = 0.0;
+			double		k		  = 0.0;
+			double		vertices  = 0.0;
+			double		areaM2	  = 0.0;
+			bool		walls	  = false;
+			std::size_t pieces	  = 0;
+			int			triangles = 0;
+			int			passes	  = 0;
+		};
+		SlowestPatch slowest;
 		PatchReport								 last;
 		int										 dropped = 0;
 		std::int64_t							 unread	 = 0;
@@ -983,8 +368,9 @@ namespace {
 			return count;
 		}
 
-		// `walls`: the shape is a visibility polygon with walls in sight, so it is grown by the skirt.
-		bool commit(const std::vector<Vec2i64>& ring, const Vec2i64& centre, bool walls) {
+		// `rim`: the shape has walls in sight, so it is grown by the skirt everywhere but along this outline.
+		bool commit(const std::vector<Vec2i64>& ring, const Vec2i64& centre, const std::vector<Vec2i64>* rim) {
+			const bool walls = rim != nullptr;
 			Vec2i64 low;
 			Vec2i64 high;
 			boxOf(ring, low, high);
@@ -1006,23 +392,20 @@ namespace {
 			}
 			std::vector<Vec2i64> grown;
 			if (walls && skirtMm > 0) {
-				skirtUs.push_back(secondsOf([&] { grown = geometry::skirtedSightShape(ring, centre, kSightMm, skirtMm); }) * 1e6);
-				if (grown.empty()) {
-					++skirtSkipped;
-					return false;
-				}
+				skirtUs.push_back(secondsOf([&] { grown = geometry::skirtedSightShape(ring, centre, *rim, skirtMm); }) * 1e6);
+				skirtSkipped += grown.empty() ? 1 : 0;
 				trueVertices.push_back(static_cast<double>(ring.size()));
 				skirtedVertices.push_back(static_cast<double>(grown.size()));
 				skirtAddedM2 += (geometry::signedAreaDoubled(grown).toDouble() - geometry::signedAreaDoubled(ring).toDouble()) / 2e6;
 			}
 			const std::vector<Vec2i64>& entering = grown.empty() ? ring : grown;
-			Frontier					frontier = Frontier::Covered;
-			frontierUs.push_back(secondsOf([&] { frontier = frontierOf(mesh, entering, centre, scratch, pieces); }) * 1e6);
-			if (frontier == Frontier::Covered) {
+			SightFrontier				frontier = SightFrontier::Covered;
+			frontierUs.push_back(secondsOf([&] { frontier = sightShapeFrontier(mesh, entering, centre, scratch, pieces); }) * 1e6);
+			if (frontier == SightFrontier::Covered) {
 				++frontierCovered;
 				return false;
 			}
-			if (frontier == Frontier::Whole) {
+			if (frontier == SightFrontier::Whole) {
 				++wholeShapes;
 				wholeOnRecord += mesh.locate(centre) >= 0 ? 1 : 0;
 			} else {
@@ -1040,6 +423,9 @@ namespace {
 				PatchEdits edits;
 				edits.adds.push_back(NavInputPolygon{piece, false, kSeenProvenance});
 				patchMs.push_back(secondsOf([&] { last = mesh.applyPatch(edits); }) * 1e3);
+				if (patchMs.back() > slowest.ms) {
+					slowest = {patchMs.back(), ringK.back(), static_cast<double>(piece.size()), ringArea.back(), walls, pieces.size(), mesh.liveTriangleCount(), last.passes};
+				}
 				passes.push_back(last.passes);
 				unread += last.unreadCovers;
 				boxes.push_back({pieceLow, pieceHigh});
@@ -1137,7 +523,7 @@ namespace {
 						 rec.skirtAddedM2 / static_cast<double>(rec.skirtUs.size()));
 		}
 		if (!rec.frontierUs.empty()) {
-			printTimes("frontierOf", rec.frontierUs, "us");
+			printTimes("sightShapeFrontier", rec.frontierUs, "us");
 		}
 		std::fprintf(stderr, "  whole shapes %d (%d with the centre on the record); pieces per shape that gave pieces mean %.2f max %.0f\n", rec.wholeShapes,
 					 rec.wholeOnRecord, meanOf(rec.piecesPerShape), maxOf(rec.piecesPerShape));
@@ -1249,7 +635,7 @@ namespace {
 			const std::vector<Vec2i64> path = exploreWalk(legMm, totalMm, 7);
 			SeenRecord				   rec;
 			for (std::size_t i = 1; i < path.size(); ++i) {
-				rec.commit(legRing(path[i - 1], path[i]), path[i - 1], false);
+				rec.commit(legRing(path[i - 1], path[i]), path[i - 1], nullptr);
 			}
 			const double	   kilometres = static_cast<double>(totalMm) / 1e6;
 			const Bytes		   bytes	  = bytesOf(rec.mesh);
@@ -1306,7 +692,7 @@ namespace {
 			SeenRecord rec;
 			for (std::uint32_t i = 0; i < count; ++i) {
 				const double heading = 2.0 * kPi * static_cast<double>(bitReversed(i, bits)) / static_cast<double>(1U << bits);
-				rec.commit(legRing({0, 0}, stepFrom({0, 0}, heading, 500000.0)), {0, 0}, false);
+				rec.commit(legRing({0, 0}, stepFrom({0, 0}, heading, 500000.0)), {0, 0}, nullptr);
 			}
 			std::mt19937		rng(5);
 			std::vector<double> groundUs;
@@ -1362,7 +748,7 @@ namespace {
 				east = !east;
 			}
 			for (std::size_t i = 1; i < sweep.size(); ++i) {
-				rec.commit(legRing(sweep[i - 1], sweep[i]), sweep[i - 1], false);
+				rec.commit(legRing(sweep[i - 1], sweep[i]), sweep[i - 1], nullptr);
 			}
 			const std::size_t seedRings = rec.registered();
 			rec.patchMs.clear();
@@ -1382,7 +768,7 @@ namespace {
 				Vec2i64		 next	 = stepFrom(position, heading, length);
 				next.x				 = next.x > kHalf ? 2 * kHalf - next.x : (next.x < -kHalf ? -2 * kHalf - next.x : next.x);
 				next.y				 = next.y > kHalf ? 2 * kHalf - next.y : (next.y < -kHalf ? -2 * kHalf - next.y : next.y);
-				rec.commit(legRing(position, next), position, false);
+				rec.commit(legRing(position, next), position, nullptr);
 				position = next;
 				if ((i + 1) % 1000 == 0) {
 					registeredAt.push_back(rec.registered());
@@ -1422,12 +808,12 @@ namespace {
 			const Vec2i64 end	  = stepFrom(origin, heading, 100000.0);
 			const double  normalX = -std::sin(heading);
 			const double  normalY = std::cos(heading);
-			rec.commit(legRing(origin, end), origin, false);
+			rec.commit(legRing(origin, end), origin, nullptr);
 			for (std::int64_t i = 1; i <= 40; ++i) {
 				const double  off = static_cast<double>((i % 2 == 0 ? 1 : -1) * i * unit);
 				const Vec2i64 first{origin.x + std::llround(normalX * off), origin.y + std::llround(normalY * off)};
 				const Vec2i64 second{end.x + std::llround(normalX * (off + 3.0)), end.y + std::llround(normalY * (off + 3.0))};
-				rec.commit(legRing(first, second), first, false);
+				rec.commit(legRing(first, second), first, nullptr);
 			}
 			const std::string valid = rec.mesh.validate();
 			std::fprintf(stderr, "[seen rewalk] offsets of %lld mm: %zu of 41 registered; %d live triangles; unreadCovers %lld; validate %s\n",
@@ -1490,7 +876,8 @@ namespace {
 					++notSimple;
 					continue;
 				}
-				rec.commit(ring, point, true);
+				const std::vector<Vec2i64> rim = geometry::sightPolygon(point, kSightMm);
+				rec.commit(ring, point, &rim);
 			}
 			const std::string valid = rec.mesh.validate();
 			const bool		  fresh = rec.equalsFreshBuild();
@@ -1530,10 +917,12 @@ namespace {
 	// in some outer ones, turned 20 degrees and 41 km from the origin. Each colonist walks at
 	// 2 m/s from room to room through the doors, and now and then out of an outer door to points
 	// 3 to 60 m out and back.
-	// Sight runs every 0.1 s. With any of the building within 30 m (vision's rule: a wall in
-	// sight) the colonist's visibility polygon is rebuilt after 0.5 m of travel and committed
-	// with him as its centre; farther out he walks legs (spec 3.3), each ended when a position
-	// held since it began strays more than kSlackMm off its line, committed as its capsule.
+	// Sight runs every 0.1 s. With any of the building within 30.5 m (vision's rule: a wall in
+	// sight of the polygon, built a rebuild step past sight) the colonist's visibility polygon is
+	// rebuilt after 0.5 m of travel and committed cut to sight round him, with him as its centre;
+	// one that adds ground near its rim is followed by the sweep back to the build before it. Farther
+	// out he walks legs (spec 3.3), each ended when a position held since it began strays more than
+	// kSlackMm off its line, committed as its capsule.
 
 	struct Walker {
 		Vec2i64				 position;
@@ -1541,6 +930,7 @@ namespace {
 		std::size_t			 room		= 0;
 		bool				 hasPolygon = false;
 		Vec2i64				 builtAt;
+		std::vector<Vec2i64> sight; // the polygon built at builtAt, a rebuild step past sight
 		bool				 legOpen = false;
 		Vec2i64				 legStart;
 		std::vector<Vec2i64> held; // positions since the leg began
@@ -1605,7 +995,7 @@ namespace {
 			rec.skirtMm  = state.range(4);
 			if (landed) {
 				const Vec2i64 drop = building.roomCentres.front() + Vec2i64{-40000, 0};
-				rec.commit(geometry::sightPolygon(drop, kLandingMm), drop, false);
+				rec.commit(geometry::sightPolygon(drop, kLandingMm), drop, nullptr);
 			}
 			const std::size_t landingRings = rec.registered();
 			rec.coveredUs.clear();
@@ -1622,6 +1012,7 @@ namespace {
 			std::vector<double>		 polygonPatchMs;
 			std::vector<double>		 legPatchMs;
 			std::vector<double>		 buildUs;
+			std::vector<double>		 sweepBuildUs; // computeVisibilityPolygon for the sweep's pieces
 			std::vector<double>		 simpleUs;
 			std::vector<double>		 vertexCounts;
 			int						 polygons		  = 0;
@@ -1640,11 +1031,12 @@ namespace {
 			std::vector<double>				  registeredK;
 			std::vector<double>				  sliverPatchMs;
 			std::vector<std::vector<Vec2i64>> sampled;
-			auto commitShape = [&](const std::vector<Vec2i64>& shape, const Vec2i64& centre, bool polygon) {
+			auto commitShape = [&](const std::vector<Vec2i64>& shape, const Vec2i64& centre, const std::vector<Vec2i64>* rim) {
+				const bool		  polygon	   = rim != nullptr;
 				const std::size_t before	   = rec.patchMs.size();
 				const int		  droppedSoFar = rec.dropped;
 				const int		  skippedSoFar = rec.skirtSkipped;
-				rec.commit(shape, centre, polygon);
+				rec.commit(shape, centre, rim);
 				const bool covered = rec.dropped > droppedSoFar;
 				(polygon ? polygonCoveredUs : legCoveredUs).push_back(rec.coveredUs.back());
 				for (std::size_t ring = before; ring < rec.patchMs.size(); ++ring) {
@@ -1667,12 +1059,86 @@ namespace {
 					legsCovered += covered ? 1 : 0;
 				}
 			};
+
+			// Each wall piece a polygon bounds or crosses joins the record, whole, once (spec rule 22):
+			// what VisionSystem's structure pass and PlayerVisibilitySystem do with nav's wall rings.
+			std::vector<std::uint8_t> pieceEntered(building.pieces.size(), 0);
+			std::vector<double>		  footprintCoveredUs;
+			std::vector<double>		  footprintPatchMs;
+			int						  footprints = 0;
+			auto enterTouchedPieces = [&](const std::vector<Vec2i64>& polygon) {
+				for (std::size_t piece = 0; piece < building.pieces.size(); ++piece) {
+					if (pieceEntered[piece] != 0) {
+						continue;
+					}
+					const std::array<Vec2i64, 4>& corners = building.pieces[piece];
+					bool						  touched = false;
+					for (std::size_t corner = 0; corner < 4 && !touched; ++corner) {
+						touched = geometry::pointInPolygon(corners[corner], polygon) != geometry::PointInPolygon::Outside;
+						for (std::size_t edge = 0; edge < polygon.size() && !touched; ++edge) {
+							touched = geometry::intersectSegments(corners[corner], corners[(corner + 1) % 4], polygon[edge], polygon[(edge + 1) % polygon.size()]).relation !=
+									  geometry::SegmentRelation::Disjoint;
+						}
+					}
+					if (!touched) {
+						continue;
+					}
+					pieceEntered[piece] = 1;
+					const std::vector<Vec2i64> ring(corners.begin(), corners.end());
+					const Vec2i64			   centre{(corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4, (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4};
+					const std::size_t		   before = rec.patchMs.size();
+					rec.commit(ring, centre, nullptr);
+					footprintCoveredUs.push_back(rec.coveredUs.back());
+					for (std::size_t patch = before; patch < rec.patchMs.size(); ++patch) {
+						footprintPatchMs.push_back(rec.patchMs[patch]);
+						registeredK.push_back(rec.ringK[patch]);
+					}
+					++footprints;
+				}
+			};
 			auto closeLeg = [&](Walker& walker, const Vec2i64& end) {
 				if (walker.legOpen && end != walker.legStart) {
-					commitShape(legRing(walker.legStart, end), walker.legStart, false);
+					commitShape(legRing(walker.legStart, end), walker.legStart, nullptr);
 				}
 				walker.legOpen = false;
 				walker.held.clear();
+			};
+			// A build, as PlayerVisibilitySystem registers it: vision's polygon cut to sight round the build,
+			// then, when it added ground near its rim, the sweep back to the build before it.
+			auto registerBuild = [&](const Vec2i64& build, const std::vector<Vec2i64>& longPolygon, const std::optional<Vec2i64>& previous) {
+				const std::vector<Vec2i64> rim = geometry::sightPolygon(build, kSightMm);
+				std::vector<Vec2i64>	   inSight;
+				bool					   simple = false;
+				simpleUs.push_back(secondsOf([&] {
+									   inSight = geometry::starClippedToConvex(longPolygon, build, rim);
+									   simple  = geometry::simpleAround(inSight, build);
+								   }) *
+								   1e6);
+				if (!simple) {
+					++notSimple;
+					return;
+				}
+				const std::size_t patchesBefore = rec.patchMs.size();
+				commitShape(inSight, build, &rim);
+				enterTouchedPieces(inSight);
+				if (!previous.has_value() || rec.patchMs.size() == patchesBefore || !addsNearRim(rec.pieces, build)) {
+					return;
+				}
+				const Vec2i64	   along = build - *previous;
+				const std::int64_t steps = static_cast<std::int64_t>(std::ceil(std::sqrt(static_cast<double>(along.x * along.x + along.y * along.y)) / static_cast<double>(kSweepSpacingMm)));
+				const double length = std::sqrt(static_cast<double>(along.x * along.x + along.y * along.y));
+				for (std::int64_t step = 1; step < steps; ++step) {
+					// SeenArea::queueSweep: held in by how far the nearer build's polygon falls short of its own.
+					const double			   apart = length * static_cast<double>(std::min(step, steps - step)) / static_cast<double>(steps);
+					const std::int64_t		   reach = kSightMm - static_cast<std::int64_t>(std::ceil(kPi / static_cast<double>(geometry::kSightSides) * apart + apart * apart / (2.0 * static_cast<double>(kSightMm)))) - 1;
+					const Vec2i64		   point = *previous + Vec2i64{along.x * step / steps, along.y * step / steps};
+					const std::vector<Vec2i64> pointRim = geometry::sightPolygon(point, reach);
+					std::vector<Vec2i64>	   pointPolygon;
+					sweepBuildUs.push_back(secondsOf([&] { pointPolygon = geometry::computeVisibilityPolygon(point, reach, building.walls); }) * 1e6);
+					if (geometry::simpleAround(pointPolygon, point)) {
+						commitShape(pointPolygon, point, &pointRim);
+					}
+				}
 			};
 			auto planNext = [&](Walker& walker) {
 				if (rng() % 4 == 0 && !outerDoors.empty()) {
@@ -1731,7 +1197,7 @@ namespace {
 								remaining		= 0.0;
 							}
 						}
-						const bool indoors = building.distanceTo(walker.position) <= static_cast<double>(kSightMm);
+						const bool indoors = building.distanceTo(walker.position) <= static_cast<double>(kSightMm + kRebuildStepMm);
 						if (indoors) {
 							if (walker.legOpen) {
 								closeLeg(walker, walker.held.empty() ? walker.position : walker.held.back());
@@ -1741,18 +1207,12 @@ namespace {
 							if (walker.hasPolygon && movedX * movedX + movedY * movedY <= 500.0 * 500.0) {
 								continue;
 							}
-							walker.hasPolygon = true;
-							walker.builtAt	  = walker.position;
-							geometry::Ring ring;
-							buildUs.push_back(secondsOf([&] { ring = geometry::computeVisibilityPolygon(walker.position, kSightMm, building.walls); }) * 1e6);
-							vertexCounts.push_back(static_cast<double>(ring.size()));
-							bool simple = false;
-							simpleUs.push_back(secondsOf([&] { simple = geometry::simpleAround(ring, walker.position); }) * 1e6);
-							if (!simple) {
-								++notSimple;
-								continue;
-							}
-							commitShape(ring, walker.position, true);
+							const std::optional<Vec2i64> previous = walker.hasPolygon ? std::optional<Vec2i64>(walker.builtAt) : std::nullopt;
+							walker.hasPolygon						  = true;
+							walker.builtAt								  = walker.position;
+							buildUs.push_back(secondsOf([&] { walker.sight = geometry::computeVisibilityPolygon(walker.position, kSightMm + kRebuildStepMm, building.walls); }) * 1e6);
+							vertexCounts.push_back(static_cast<double>(walker.sight.size()));
+							registerBuild(walker.position, walker.sight, previous);
 							continue;
 						}
 						walker.hasPolygon = false;
@@ -1834,8 +1294,9 @@ namespace {
 			const RecordReach reach		= recordReach(rec, reachRng, 20000);
 			const double	  unionArea = reach.unionM2;
 			const double	  seconds	= static_cast<double>(periodSeconds) * periodsRun;
-			const double	  recordMs	= (sumOf(simpleUs) + sumOf(polygonCoveredUs) + sumOf(legCoveredUs) + sumOf(rec.skirtUs) + sumOf(rec.frontierUs)) / 1e3 +
-									  sumOf(polygonPatchMs) + sumOf(legPatchMs);
+			const double	  recordMs	= (sumOf(simpleUs) + sumOf(polygonCoveredUs) + sumOf(legCoveredUs) + sumOf(rec.skirtUs) + sumOf(rec.frontierUs) +
+									   sumOf(footprintCoveredUs) + sumOf(sweepBuildUs)) / 1e3 +
+									  sumOf(polygonPatchMs) + sumOf(legPatchMs) + sumOf(footprintPatchMs);
 			std::fprintf(stderr,
 						 "[seen base] %zu colonists, %s, skirt %lld mm, %d rooms, %zu outer doors, %.0f min: %d polygons (%d covered, %.1f%%), %d legs (%d covered), "
 						 "%d not simple; %zu rings registered; %d live triangles; unreadCovers %lld; validate %s\n",
@@ -1844,14 +1305,25 @@ namespace {
 						 legsCovered, notSimple, (rec.registered() - landingRings), rec.mesh.liveTriangleCount(), static_cast<long long>(rec.unread),
 						 valid.empty() ? "clean" : valid.c_str());
 			std::fprintf(stderr, "  polygon vertices mean %.0f max %.0f\n", meanOf(vertexCounts), maxOf(vertexCounts));
+			const Bytes endBytes = bytesOf(rec.mesh);
+			std::fprintf(stderr, "  registry at the end %.0f KB, of it edge boxes and held intervals %.0f KB (%.0f B a ring); triangles %.0f KB\n",
+						 endBytes.registry / 1024.0, endBytes.intervalsAndBoxes / 1024.0, endBytes.intervalsAndBoxes / static_cast<double>(std::max<std::size_t>(rec.registered(), 1)),
+						 endBytes.triangles / 1024.0);
 			printCovered(rec);
 			printTimes("computeVisibilityPolygon (vision's cost)", buildUs, "us");
+			printTimes("computeVisibilityPolygon (the sweep's pieces)", sweepBuildUs, "us");
 			printTimes("simpleAround", simpleUs, "us");
 			printTimes("covered test, polygons", polygonCoveredUs, "us");
 			printTimes("covered test, legs", legCoveredUs, "us");
 			printTimes("patch per ring, from polygons", polygonPatchMs, "ms");
 			printTimes("patch per ring, from legs", legPatchMs, "ms");
 			printTimes("patch per sliver ring (under 0.01 m2)", sliverPatchMs, "ms");
+			std::fprintf(stderr, "  wall footprints: %d of %zu pieces entered\n", footprints, building.pieces.size());
+			printTimes("covered test, footprints", footprintCoveredUs, "us");
+			printTimes("patch per ring, from footprints", footprintPatchMs, "ms");
+			std::fprintf(stderr, "  slowest patch %.2f ms: K %.0f, %.0f vertices, %.2f m2, %s, one of %zu pieces, %d live triangles after, %d passes\n", rec.slowest.ms,
+						 rec.slowest.k, rec.slowest.vertices, rec.slowest.areaM2, rec.slowest.walls ? "a skirted sight polygon" : "a leg, the landing or a footprint",
+						 rec.slowest.pieces, rec.slowest.triangles, rec.slowest.passes);
 			std::fprintf(stderr, "  K where registered mean %.0f max %.0f; ring areas: under 0.01 m2 %d, 0.01 to 0.1 %d, 0.1 to 1 %d, 1 to 10 %d, over 10 %d; union %.0f m2\n",
 						 meanOf(registeredK), maxOf(registeredK), gainBuckets[0], gainBuckets[1], gainBuckets[2], gainBuckets[3], gainBuckets[4], unionArea);
 			std::fprintf(stderr, "  oracle: %d points deeper than the tolerance in %zu polygons, %d off the record\n", oracleSamples, sampled.size(), oracleMissing);
@@ -1869,9 +1341,9 @@ namespace {
 				std::fprintf(stderr, " %d", triangles);
 			}
 			std::fprintf(stderr,
-						 "\n  record's main-thread cost %.3f ms per simulated second (simple check, covered test, skirt, frontier, patches); vision's polygons %.3f ms "
-						 "per second\n",
-						 recordMs / seconds, sumOf(buildUs) / 1e3 / seconds);
+						 "\n  record's main-thread cost %.3f ms per simulated second, %.3f ms a tick at 60 (simple check and cut, covered test, sweep polygons, skirt, frontier, patches, "
+						 "footprints); vision's polygons %.3f ms per second\n",
+						 recordMs / seconds, recordMs / seconds / 60.0, sumOf(buildUs) / 1e3 / seconds);
 			state.SetIterationTime(recordMs / 1e3);
 			state.counters["polygons"]		   = polygons;
 			state.counters["coveredShare"]	   = static_cast<double>(polygonsCovered) / std::max(1, polygons);
@@ -1900,7 +1372,7 @@ namespace {
 		const auto walkers = static_cast<std::size_t>(state.range(0));
 		for (auto _ : state) {
 			SeenRecord rec;
-			rec.commit(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0}, false);
+			rec.commit(geometry::sightPolygon({0, 0}, kLandingMm), {0, 0}, nullptr);
 			std::mt19937		 rng(17);
 			std::vector<Vec2i64> positions(walkers);
 			for (Vec2i64& point : positions) {
@@ -1921,7 +1393,7 @@ namespace {
 							heading = std::atan2(-static_cast<double>(point.y), -static_cast<double>(point.x));
 							next	= stepFrom(point, heading, length);
 						}
-						rec.commit(legRing(point, next), point, false);
+						rec.commit(legRing(point, next), point, nullptr);
 						point = next;
 						walked += length;
 					}
@@ -1991,7 +1463,7 @@ namespace {
 					disagree += accepted != simple ? 1 : 0;
 					if (accepted) {
 						geometry::Ring skirted;
-						skirtUs.push_back(secondsOf([&] { skirted = geometry::skirtedSightShape(ring, observer, kSightMm, geometry::kSeenSkirtMm); }) * 1e6);
+						skirtUs.push_back(secondsOf([&] { skirted = geometry::skirtedSightShape(ring, observer, geometry::sightPolygon(observer, kSightMm), geometry::kSeenSkirtMm); }) * 1e6);
 						skirtSkipped += skirted.empty() ? 1 : 0;
 						skirtedVertexCounts.push_back(static_cast<double>(skirted.size()));
 					}
@@ -2031,7 +1503,7 @@ namespace {
 			std::vector<double> doorUs;
 			const auto			doorTags = memberOf(DoorTagsKey{});
 			for (std::size_t i = 1; i < path.size(); ++i) {
-				if (!rec.commit(legRing(path[i - 1], path[i]), path[i - 1], false)) {
+				if (!rec.commit(legRing(path[i - 1], path[i]), path[i - 1], nullptr)) {
 					continue;
 				}
 				labelUs.push_back(secondsOf([&] { labels.update(rec.mesh.view(), rec.last); }) * 1e6);
@@ -2055,7 +1527,7 @@ namespace {
 			eager.exact = false;
 			std::vector<double> refreshMs;
 			for (std::size_t i = 1; i < path.size(); ++i) {
-				if (eager.commit(legRing(path[i - 1], path[i]), path[i - 1], false)) {
+				if (eager.commit(legRing(path[i - 1], path[i]), path[i - 1], nullptr)) {
 					refreshMs.push_back(secondsOf([&] { eager.mesh.refreshWidths(); }) * 1e3);
 				}
 			}

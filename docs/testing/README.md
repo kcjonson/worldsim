@@ -158,8 +158,10 @@ node scripts/perf.mjs capture --port <PORT> --view river --zooms 3,1.5 --no-scro
 node scripts/perf.mjs compare --base <main>.json --tip <branch>.json
 ```
 
-`--view` is `river`, `coast` or `desert` (or `--x` and `--y` in world meters); leave out `--zooms` and
-`--no-scroll` for every zoom and the two scroll scenarios. The capture also watches the machine
+`--view` is `river`, `coast` or `desert` (or `--x` and `--y` in world meters), all with the player
+visibility cover off, or `river-cover`: the river with the cover drawn, at zooms 3, 1.5 and 0.75
+with no scroll. Leave out `--zooms` and `--no-scroll` for every zoom and the two scroll scenarios.
+`compare` answers `unjudged` for a pair of cover captures when only one build has the cover. The capture also watches the machine
 while it runs: CPU and GPU use by everything that isn't the game, and other sessions' build, test
 and game processes. Past a threshold it marks itself void, and `compare` then answers
 `inconclusive` where a loaded capture can't settle it. Take the verdict from `compare`; don't read
@@ -210,7 +212,7 @@ verdict. A change that can't move anything says `Perf: none`. Nothing waits on p
 The backstop, and where an unconfirmed result gets settled. In the early morning, once the machine
 measures as idle, an agent times `main`'s tip against the last SHA it tested, and on a major
 regression finds the PR behind it and opens a draft revert. Agents run it and decide what it
-covers; Kevin never asks for a perf run. [nightly-perf-batch.md](./nightly-perf-batch.md) is the
+covers, the cover's cost at the river included; Kevin never asks for a perf run. [nightly-perf-batch.md](./nightly-perf-batch.md) is the
 spec, and the `/perf-nightly` skill runs it.
 
 ---
@@ -232,6 +234,11 @@ spec, and the `/perf-nightly` skill runs it.
 | 11 | Trees by zoom | [scenarios/11-trees-by-zoom.md](./scenarios/11-trees-by-zoom.md) |
 | 12 | Colonists eat | [scenarios/12-colonists-eat.md](./scenarios/12-colonists-eat.md) |
 | 13 | Colonists walk round obstacles | [scenarios/13-colonists-walk-round-obstacles.md](./scenarios/13-colonists-walk-round-obstacles.md) |
+| 14 | Player visibility | [scenarios/14-player-visibility.md](./scenarios/14-player-visibility.md) |
+| 15 | Builder work spots | [scenarios/15-builder-work-spots.md](./scenarios/15-builder-work-spots.md) |
+| 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
+
+**Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
 **Run each scenario in isolation** from a fresh launch, or use `give` / `need` dev verbs to
 set preconditions from a running instance. The fully-combined four-scenario flow now runs
@@ -304,11 +311,14 @@ shown as `curl.exe` (Windows); drop `.exe` on Linux/macOS.
 Run on the game thread at the start of the next frame, paused or not; the request waits for the
 verb to run and answers with its JSON result (`{"status":"ok","verb":...}` for most verbs). Only the
 game scene registers them: elsewhere, or for a verb it doesn't have, the request is a 404 at once. Place things on
-**valid land** away from water; on-water placements are refused.
+**valid land** away from water; on-water placements are refused. Nothing is built in a stream a
+colonist can wade (a ford): `foundation`, `walls`, and `spawn` of a station or storage container
+refuse it as they refuse water, and those three answer a refusal as 400 `{"error":"..."}`, creating
+nothing. Trees, reeds, and loose items still spawn in a ford: putting one there builds nothing.
 
 | Verb | Key params | Notes |
 |------|-----------|-------|
-| `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). |
+| `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else its centre) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. |
 | `colonist` | `at=x,y&n=1&name=` | Spawns a colonist at the given position. |
 | `give` | `material=<defName>&n=<qty>&where=site\|loose\|colonist\|storage[&at=x,y]` | Gives material to the colonist, a site, or storage; `loose` drops it on the ground at `at` as stack-capped piles, refused over 50 piles or for a def that isn't an item (furniture, stations). |
 | `need` | `colonist=<id>&need=Hunger\|Thirst\|Energy\|...&value=0..100` | Sets a colonist's need to the given value. |
@@ -319,12 +329,14 @@ game scene registers them: elsewhere, or for a verb it doesn't have, the request
 | `complete` | `id=<entity>` | Instantly completes a task/entity. |
 | `craft` | `recipe=<Recipe_*>&n=1&at=x,y` | Queues a recipe at the nearest crafting station. |
 | `storage` | `at=x,y&item=<defName\|*>&category=RawMaterial\|Food\|Tool\|Furniture&priority=Low\|Medium\|High\|Critical&min=0&max=0` | Adds a StorageRule to the nearest container. A named item's category comes from its definition (`category` is only for `item=*`, RawMaterial by default); an unknown item, or a `category` that isn't the item's, answers 400. |
-| `foundation` | `pts=x0,y0;x1,y1;...&material=Wood&built=0\|1` | `built=0` = blueprint the colonist builds. Refuses if any part of the footprint is off the nav mesh or over water. |
+| `foundation` | `pts=x0,y0;x1,y1;...&material=Wood&built=0\|1` | `built=0` = blueprint the colonist builds. Needs at least 3 points; fewer answers 400 `{"error":"foundation: pts needs at least 3 'x,y' pairs (got 2)"}`. Any part of the footprint off the nav mesh, over water or in a ford, or a commit the validator rejects, answers 400 and creates nothing. |
 | `foundation-edit` | `id=<foundationId>&mode=add\|subtract&pts=x0,y0;x1,y1;...` | Foundation Add / Subtract through the tool's own validate + apply path. Answers `{status:"ok"\|"rejected", reason, target, extension, entity, area}`: an editable blueprint is reshaped in place (`extension` 0), an Add onto a built foundation returns the extension blueprint's id (it merges once built, e.g. with `freebuild?on=1`). |
 | `flora` | `rect=x0,y0,x1,y1` (world metres; default the camera's view) | Reads, changes nothing. The trees in the rect (tall occluders whose def is in the `trees` placement group), as `{rect, rectAreaM2, measuredAreaM2, cellSizeM, trees, treesPer1000m2, canopyCover, woodPer1000m2, defs:[{def, count, per1000m2, woodPerTree, woodPer1000m2, ageClasses:[{name, count, per1000m2}]}], otherTallOccluders:[{def, count, per1000m2}]}`. `ageClasses` lists every age class of a def that has `<ageClasses>`, in its order, and is empty otherwise. The other tall occluders (reeds, big rocks) are listed apart and are in neither the totals nor the cover. `measuredAreaM2` is the part of the rect in loaded chunks, and densities and cover are over it. Cover is the union of each tree's own silhouette (its variant's, shadows left out) at 0.1 m cells; wood is each def's yield midpoint. A route, not a state view, because a view takes no parameters. A rect with a side over 500 m, a side of zero or less, or more than 25 million 0.1 m cells is a 400, as is any coordinate beyond 16777216 m (2^24) from the origin. |
 | `flora` | `age=<name>&near=x,y&def=<defName>` (`def` optional) | Reads, changes nothing. The nearest trees of that age class within 200 m of `near` (a 400 m square), nearest first, at most 20: `{age, near, def, searchHalfSizeM, trees:[{def, x, y, ageClass, variant, distance}]}`. `x` and `y` print at full float precision, so a listed position names the same tree when read back. `age` without `near`, or the reverse, is a 400, as is a `near` coordinate beyond 16777216 m (2^24) from the origin. |
-| `walls` | `pts=...&material=Wood&thickness=Standard&host=<foundationId>&built=0\|1&close=1` | `built` **defaults to 1** — pass `built=0` for a blueprint. Same off-mesh/water refusal. |
-| `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. |
+| `walls` | `pts=...&material=Wood&thickness=Standard&host=<foundationId>&built=0\|1&close=1` | `built` **defaults to 1** — pass `built=0` for a blueprint. Needs at least 2 points (400 otherwise). A chain any point of which is off the nav mesh, over water, in a ford, or in a placed obstacle answers 400, hosted or freestanding (`host=0`). |
+| `ground` | `pts=x0,y0;x1,y1;...` | Reads, changes nothing. Per point: `onMesh`; `valid` (clear to stand on); `buildable`, where a foundation may go once a tree or rock on it is cleared (water, a ford, and unmeshed ground are false); `buildableNow`, where a wall or a station or storage container may go as the ground stands (a placed obstacle is false too, so over a tree `buildable` is true and `buildableNow` false); and the chunk terrain there (`chunk`, `inWater`, `toWaterM`, `rings`). No `pts`, or a point that is not finite, is a 400. |
+| `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. `pt` snaps the way the opening tool does. A placement the tool's validator refuses (too near a corner or end, a wall too short, an overlap with another opening), an unknown type or segment, or no wall near `pt` answers 400 `{"error":...}` with the reason and creates nothing. |
+| `reveal` | `on=1\|0` | Player visibility off (`1`) or back on (`0`): with it on the cover is not drawn, and `scripts/perf` captures run with it on. The seen record keeps growing either way; `/api/state?what=visibility` reads the flag as `revealed`. |
 
 ### Readback — `GET /api/state?what=<x>`
 
@@ -351,7 +363,7 @@ Synchronous JSON, read after the frame renders. The game scene registers these v
 | `GET /api/control?action=exit` | Shuts down the instance (blocking). |
 | `GET /api/control?action=camera&x=&y=&zoom=&panx=&pany=` | Moves the camera (the game scene's control; applied at its next update, so not while paused). `x` and `y` together; `panx`/`pany` -1..1 hold until set to 0. A bad or missing parameter is a 400. |
 | `GET /api/control?action=gpuhold&value=0\|1&target=0.8` | The game scene's GPU hold for perf captures: extra GPU work after the scene's timers, into its own offscreen target, sized each frame so scene plus hold GPU time sits near `target` (0.05 to 0.95) of the frame time, which keeps the card at P0. Off by default. Either parameter may be left out; it answers the hold's state, and a bad value is a 400. |
-| `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. |
+| `GET /api/input?ev=click,x,y` | Synthetic input (logical pixels). Event types: `move`/`down`/`up`/`click`/`scroll,x,y,delta`, `keydown,<key>`/`keyup,<key>`, `char,<codepoint>`. It goes the way real input does: keys reach the focused ui component, a scroll the ui doesn't take zooms the camera, and while paused it waits for resume. A malformed event is a 400. The injected pointer position holds (hover persists) until the real cursor moves over the window or a real mouse button or scroll event lands. Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it. |
 
 ---
 

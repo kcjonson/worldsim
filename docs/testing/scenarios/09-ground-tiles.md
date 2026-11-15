@@ -1,7 +1,7 @@
 # Scenario 09: ground tiles
 
 **Status:** ready  
-**Last verified:** 2026-11-02
+**Last verified:** 2026-11-02, step 10 with reveal on 2026-11-13
 
 The baked ground art, its disk cache, the height-contested edges between surfaces and the organic biome edges, in the game and in asset-manager. Spec: [ground-textures.md](../../technical/ground-textures.md).
 
@@ -9,11 +9,11 @@ The baked ground art, its disk cache, the height-contested edges between surface
 
 ## Steps
 
-Build `world-sim` and `asset-manager` (RelWithDebInfo). The dev server is on 127.0.0.1:8081 (game) and 8070 (asset-manager). The bottom-left of the game reads `Position: (x, y)` and `Biome:`, so you can tell where a camera jump landed. A camera jump is `curl.exe "http://127.0.0.1:8081/api/control?action=camera&x=<x>&y=<y>&zoom=<z>"`; zoom 3 is the default (24 px/m), 20 is 160 px/m, 0.5 is 4 px/m. Wait a second or two after a jump into new chunks, and a few seconds for the far ones (steps 10 to 12).
+Build `world-sim` and `asset-manager` (RelWithDebInfo). The dev server is on 127.0.0.1:8081 (game) and 8070 (asset-manager). The bottom-left of the game reads `Position: (x, y)` and `Biome:`, so you can tell where a camera jump landed. A camera jump is `curl.exe "http://127.0.0.1:8081/api/control?action=camera&x=<x>&y=<y>&zoom=<z>"`; zoom 3 is the default (24 px/m), 20 is 160 px/m, 0.5 is 4 px/m. Wait a second or two after a jump into new chunks, and a few seconds for the far ones (steps 10 to 12). Steps 4 to 16 run with reveal on (step 2, and again after step 3's relaunch).
 
 1. Delete `%LOCALAPPDATA%\kcjonson\world-sim\cache\ground\`, the ground bake cache the game and asset-manager share, and launch `world-sim.exe` with no flags: the splash's last boot line counts `Baking ground tiles N/72` for about 21 s and ends on `Ground tiles baked`; the log has a `no bake of <def> under its current key` line for each def, and its `GroundTileBank:` line says `0 from the cache, 9 baked, 0 error(s)`. The cache folder now holds nine `<def>-<hash>-<key>.gtile` files, and nothing appears beside the exe under `build\apps\world-sim\RelWithDebInfo\cache\`.
-2. Click Enter Expedition, then Quick Start: the game loads at the river landing, `Biome: TemperateDeciduousForest`.
-3. `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`, launch again, and wait on the splash: the boot line is done almost at once, and the log says `9 from the cache, 0 baked` with a wall clock under 100 ms. Click through to the game again.
+2. Click Enter Expedition, then Quick Start: the game loads at the river landing, `Biome: TemperateDeciduousForest`. Then `curl.exe "http://127.0.0.1:8081/api/dev/reveal?on=1"`: the cover is off, so ground away from the colonists (steps 4 to 16) shows as drawn, not black or dimmed. A launch starts with it off, so repeat it after each one.
+3. `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`, launch again, and wait on the splash: the boot line is done almost at once, and the log says `9 from the cache, 0 baked` with a wall clock under 100 ms. Click through to the game again and turn reveal on again (step 2).
 4. `curl.exe "http://127.0.0.1:8081/api/control?action=camera&x=0&y=20&zoom=3"`: grass, a mud river bank, brown dirt patches; no faint lines on any 1 m tile edge.
 5. Hold D for a second, then A: the ground scrolls with no line flicker at tile edges and no shimmer in the grass.
 6. `curl.exe "http://127.0.0.1:8081/api/control?action=camera&x=30&y=41&zoom=20"`: grass with clover leaves, blades in several shades and dark soil peeks between the trees; look for a repeating 1 m or 4 m motif and find none. Zoom 8, then 3: still none.

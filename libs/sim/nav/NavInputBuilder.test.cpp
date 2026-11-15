@@ -13,6 +13,7 @@
 #include <nav/NavMesh.h>
 #include <nav/PatchableMesh.h>
 #include <nav/PathQuery.h>
+#include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
 #include <predicates/Predicates.h>
 
@@ -90,8 +91,8 @@ namespace {
 	}
 
 	// Build a built wall segment (all created sub-segments marked Built).
-	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
-		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation);
+	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b, const std::string& thickness = "Standard") {
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", thickness, kInvalidFoundation);
 		EXPECT_TRUE(r.ok());
 		for (SegmentId id : r.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
@@ -573,6 +574,246 @@ TEST_F(NavWallTest, LShape_TwoBandsPlusJunction_AreasSumToUnion) {
 	// equals the two full bands' area (the corner is counted exactly once). Allow a
 	// small tolerance for mm rounding of the offset corners.
 	EXPECT_NEAR(total, 1.4, 0.02);
+}
+
+namespace {
+
+	struct PlanarPoint {
+		double x = 0.0;
+		double y = 0.0;
+	};
+
+	PlanarPoint planar(Vec2i64 p) {
+		return {static_cast<double>(p.x), static_cast<double>(p.y)};
+	}
+
+	double crossOf(PlanarPoint origin, PlanarPoint a, PlanarPoint b) {
+		return (a.x - origin.x) * (b.y - origin.y) - (a.y - origin.y) * (b.x - origin.x);
+	}
+
+	// Convex hull, counter-clockwise (monotone chain).
+	std::vector<PlanarPoint> convexHull(std::vector<PlanarPoint> points) {
+		std::sort(points.begin(), points.end(), [](PlanarPoint l, PlanarPoint r) { return l.x != r.x ? l.x < r.x : l.y < r.y; });
+		std::vector<PlanarPoint> hull(points.size() * 2);
+		std::size_t				 count = 0;
+		for (std::size_t i = 0; i < points.size(); ++i) {
+			while (count >= 2 && crossOf(hull[count - 2], hull[count - 1], points[i]) <= 0.0) {
+				--count;
+			}
+			hull[count++] = points[i];
+		}
+		for (std::size_t i = points.size() - 1, lower = count + 1; i-- > 0;) {
+			while (count >= lower && crossOf(hull[count - 2], hull[count - 1], points[i]) <= 0.0) {
+				--count;
+			}
+			hull[count++] = points[i];
+		}
+		hull.resize(count > 0 ? count - 1 : 0);
+		return hull;
+	}
+
+	double distanceToSegment(PlanarPoint p, PlanarPoint a, PlanarPoint b) {
+		const double dx = b.x - a.x;
+		const double dy = b.y - a.y;
+		const double lengthSquared = dx * dx + dy * dy;
+		const double t = lengthSquared > 0.0 ? std::clamp(((p.x - a.x) * dx + (p.y - a.y) * dy) / lengthSquared, 0.0, 1.0) : 0.0;
+		return std::hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+	}
+
+	// Distance from p to a counter-clockwise convex polygon, zero inside it.
+	double distanceToConvex(PlanarPoint p, const std::vector<PlanarPoint>& polygon) {
+		bool   inside = true;
+		double nearest = 1e300;
+		for (std::size_t i = 0; i < polygon.size(); ++i) {
+			const PlanarPoint& a = polygon[i];
+			const PlanarPoint& b = polygon[(i + 1) % polygon.size()];
+			inside = inside && crossOf(a, b, p) >= 0.0;
+			nearest = std::min(nearest, distanceToSegment(p, a, b));
+		}
+		return inside ? 0.0 : nearest;
+	}
+
+	struct WallSpec {
+		Vec2i64		a;
+		Vec2i64		b;
+		std::string thickness;
+	};
+
+	// Wall polygons nav receives for `walls`, all built, checked against the walls'
+	// own footprints: each plain band (its centreline offset by half its thickness,
+	// flat caps), plus at `joint` the hull of every band's cap there and, where two
+	// walls form a corner, the apex their outer faces meet at. Every point more
+	// than 2 mm inside a band must be covered, densely near the joint where a gap
+	// would open (every millimetre within `millimetreReachMm` of it), and nothing
+	// nav blocks may lie more than `overreachMm` outside those shapes.
+	void expectObstaclesCoverFootprints(const std::vector<WallSpec>& walls, Vec2i64 joint, double overreachMm = 2.0,
+										std::int64_t millimetreReachMm = 0) {
+		static constexpr double kToleranceMm = 2.0;
+
+		ConstructionWorld cw;
+		for (const WallSpec& spec : walls) {
+			buildWall(cw, spec.a, spec.b, spec.thickness);
+		}
+		std::vector<NavInputPolygon> polys;
+		std::vector<DoorPortal>		 doors;
+		extractWalls(cw, ConstructionRegistry::Get(), polys, doors);
+		ASSERT_FALSE(polys.empty());
+
+		const PlanarPoint				jointPoint = planar(joint);
+		std::vector<std::vector<PlanarPoint>> bands;
+		std::vector<PlanarPoint>		jointShape;
+		std::vector<PlanarPoint>		awayFromJoint;
+		std::vector<PlanarPoint>		leftOffsets;
+		double							largestHalf = 0.0;
+		for (const WallSpec& spec : walls) {
+			const double half = static_cast<double>(ConstructionRegistry::Get().getThicknessPreset("Wood", spec.thickness)->halfThicknessMm);
+			largestHalf = std::max(largestHalf, half);
+			const PlanarPoint a = planar(spec.a);
+			const PlanarPoint b = planar(spec.b);
+			const double	  length = std::hypot(b.x - a.x, b.y - a.y);
+			const PlanarPoint left{-(b.y - a.y) / length * half, (b.x - a.x) / length * half};
+			bands.push_back({{a.x - left.x, a.y - left.y}, {b.x - left.x, b.y - left.y}, {b.x + left.x, b.y + left.y}, {a.x + left.x, a.y + left.y}});
+			jointShape.push_back({jointPoint.x - left.x, jointPoint.y - left.y});
+			jointShape.push_back({jointPoint.x + left.x, jointPoint.y + left.y});
+			const PlanarPoint farEnd = spec.a == joint ? b : a;
+			awayFromJoint.push_back({farEnd.x - jointPoint.x, farEnd.y - jointPoint.y});
+			leftOffsets.push_back(left);
+		}
+		if (walls.size() == 2) {
+			// The miter apex, where the two outer faces (each on the side away from
+			// the other wall) cross, when the junction could reach it.
+			std::array<PlanarPoint, 2> outerFace;
+			for (std::size_t wall = 0; wall < 2; ++wall) {
+				const PlanarPoint& left = leftOffsets[wall];
+				const PlanarPoint& other = awayFromJoint[1 - wall];
+				const double	   side = left.x * other.x + left.y * other.y;
+				outerFace[wall] = side < 0.0 ? PlanarPoint{jointPoint.x + left.x, jointPoint.y + left.y}
+											 : PlanarPoint{jointPoint.x - left.x, jointPoint.y - left.y};
+			}
+			const PlanarPoint& first = awayFromJoint[0];
+			const PlanarPoint& second = awayFromJoint[1];
+			const double	   denominator = first.x * second.y - first.y * second.x;
+			if (std::abs(denominator) > 1e-9) {
+				const double along =
+					((outerFace[1].x - outerFace[0].x) * second.y - (outerFace[1].y - outerFace[0].y) * second.x) / denominator;
+				const PlanarPoint apex{outerFace[0].x + first.x * along, outerFace[0].y + first.y * along};
+				if (std::hypot(apex.x - jointPoint.x, apex.y - jointPoint.y) <= geometry::kDefaultMiterLimit * largestHalf) {
+					jointShape.push_back(apex);
+				}
+			}
+		}
+		std::vector<std::vector<PlanarPoint>> allowed = bands;
+		allowed.push_back(convexHull(jointShape));
+
+		auto distanceOutside = [&](PlanarPoint p) {
+			double nearest = 1e300;
+			for (const auto& shape : allowed) {
+				nearest = std::min(nearest, distanceToConvex(p, shape));
+			}
+			return nearest;
+		};
+		auto covered = [&](Vec2i64 p) {
+			for (const auto& poly : polys) {
+				if (geometry::pointInPolygon(p, poly.ring) != geometry::PointInPolygon::Outside) {
+					return true;
+				}
+			}
+			return false;
+		};
+		auto strictlyBlocked = [&](Vec2i64 p) {
+			for (const auto& poly : polys) {
+				if (geometry::pointInPolygon(p, poly.ring) == geometry::PointInPolygon::Inside) {
+					return true;
+				}
+			}
+			return false;
+		};
+
+		for (const auto& poly : polys) {
+			EXPECT_TRUE(poly.blocked);
+			for (const Vec2i64& vertex : poly.ring) {
+				EXPECT_LE(distanceOutside(planar(vertex)), overreachMm) << "obstacle vertex (" << vertex.x << ", " << vertex.y << ") outside the walls";
+			}
+		}
+
+		int uncovered = 0;
+		int overreach = 0;
+		auto sample = [&](Vec2i64 p) {
+			const PlanarPoint point = planar(p);
+			bool			  deepInBand = false;
+			for (const auto& band : bands) {
+				if (distanceToConvex(point, band) == 0.0) {
+					double toEdge = 1e300;
+					for (std::size_t i = 0; i < band.size(); ++i) {
+						toEdge = std::min(toEdge, distanceToSegment(point, band[i], band[(i + 1) % band.size()]));
+					}
+					deepInBand = deepInBand || toEdge > kToleranceMm;
+				}
+			}
+			if (deepInBand && !covered(p)) {
+				++uncovered;
+			}
+			if (strictlyBlocked(p) && distanceOutside(point) > overreachMm) {
+				++overreach;
+			}
+		};
+		// Coarse over every wall, fine around the joint.
+		std::int64_t minX = joint.x;
+		std::int64_t minY = joint.y;
+		std::int64_t maxX = joint.x;
+		std::int64_t maxY = joint.y;
+		for (const auto& band : bands) {
+			for (const PlanarPoint& corner : band) {
+				minX = std::min(minX, static_cast<std::int64_t>(std::floor(corner.x)) - 20);
+				minY = std::min(minY, static_cast<std::int64_t>(std::floor(corner.y)) - 20);
+				maxX = std::max(maxX, static_cast<std::int64_t>(std::ceil(corner.x)) + 20);
+				maxY = std::max(maxY, static_cast<std::int64_t>(std::ceil(corner.y)) + 20);
+			}
+		}
+		for (std::int64_t y = minY; y <= maxY; y += 10) {
+			for (std::int64_t x = minX; x <= maxX; x += 10) {
+				sample({x, y});
+			}
+		}
+		const std::int64_t reach = static_cast<std::int64_t>(geometry::kDefaultMiterLimit * largestHalf) + 50;
+		for (std::int64_t y = joint.y - reach; y <= joint.y + reach; y += 2) {
+			for (std::int64_t x = joint.x - reach; x <= joint.x + reach; x += 2) {
+				sample({x, y});
+			}
+		}
+		for (std::int64_t y = joint.y - millimetreReachMm; y <= joint.y + millimetreReachMm; ++y) {
+			for (std::int64_t x = joint.x - millimetreReachMm; x <= joint.x + millimetreReachMm; ++x) {
+				sample({x, y});
+			}
+		}
+		EXPECT_EQ(uncovered, 0) << "sample points inside a wall that nav leaves open";
+		EXPECT_EQ(overreach, 0) << "sample points nav blocks outside the walls";
+	}
+
+} // namespace
+
+TEST_F(NavWallTest, LShapeOfTwoThicknesses_CoversBothFootprints) {
+	expectObstaclesCoverFootprints({{{0, 0}, {2000, 0}, "Light"}, {{2000, 0}, {2000, 2000}, "Heavy"}}, {2000, 0});
+}
+
+TEST_F(NavWallTest, ObtuseCorner_CoversBothFootprints) {
+	// 135 degrees between the walls.
+	expectObstaclesCoverFootprints({{{0, 0}, {2000, 0}, "Standard"}, {{2000, 0}, {3414, 1414}, "Standard"}}, {2000, 0});
+}
+
+TEST_F(NavWallTest, TJunction_CoversAllThreeFootprints) {
+	expectObstaclesCoverFootprints(
+		{{{0, 0}, {2000, 0}, "Heavy"}, {{2000, 0}, {4000, 0}, "Heavy"}, {{2000, 0}, {2000, 2000}, "Standard"}}, {2000, 0}
+	);
+}
+
+TEST_F(NavWallTest, NearStraightLightIntoHeavy_CoversBothFootprints) {
+	// About 3 degrees off straight. The step cuts the Light band 5 mm short of the
+	// joint; its outer edge runs from the Light face at the joint to the Heavy
+	// cap's corner, leaving a sliver about 1.4 mm deep outside both walls. The
+	// step lies within the Heavy half thickness of the joint, sampled there every
+	// millimetre so a sliver deeper than the tolerance cannot fall between samples.
+	expectObstaclesCoverFootprints({{{0, 0}, {2000, 0}, "Light"}, {{2000, 0}, {3997, 105}, "Heavy"}}, {2000, 0}, 2.0, 200);
 }
 
 TEST_F(NavWallTest, BlueprintSegment_EmitsNothing) {

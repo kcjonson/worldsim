@@ -14,6 +14,7 @@ add_library(sim
     ecs/systems/StorageGoalSystem.cpp
     ecs/systems/WorkSources.cpp
     ecs/systems/ChainClaims.cpp
+    ecs/systems/ColonyGoalWork.cpp
     ecs/systems/CraftingGoalSystem.cpp
     ecs/systems/BuildGoalSystem.cpp
     ecs/systems/ConstructionSystem.cpp
@@ -22,6 +23,7 @@ add_library(sim
     ecs/systems/WallCollisionSystem.cpp
     ecs/systems/StaticRectCollisionSystem.cpp
     ecs/systems/NavigationSystem.cpp
+    ecs/systems/PlayerVisibilitySystem.cpp
     ecs/spatial/AgentSpatialHash.cpp
     ecs/ClaimIndex.cpp
     ecs/GoalTaskRegistry.cpp
@@ -30,6 +32,7 @@ add_library(sim
     ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
+    construction/BuilderSpots.cpp
     construction/ConstructionWorld.cpp
     construction/ConstructionValidator.cpp
     construction/OpeningGeometry.cpp
@@ -39,6 +42,7 @@ add_library(sim
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
     vision/GeometryIndex.cpp
+    vision/SeenArea.cpp
 )
 
 target_include_directories(sim

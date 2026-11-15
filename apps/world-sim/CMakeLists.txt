@@ -31,6 +31,7 @@ add_executable(world-sim
     scenes/game/ui/adapters/GlobalTaskAdapter.cpp
     scenes/game/ui/adapters/ResourcesAdapter.cpp
     scenes/game/ui/adapters/SelectionAdapter.cpp
+    scenes/game/ui/adapters/TaskRowText.cpp
     scenes/game/ui/adapters/TimeAdapter.cpp
     # Game scene UI - models
     scenes/game/ui/models/ColonistListModel.cpp
@@ -57,6 +58,7 @@ add_executable(world-sim
     # Game scene UI - main container
     scenes/game/ui/GameUI.cpp
     # Game scene - world subsystems
+    scenes/game/world/MoveOrderGoal.cpp
     scenes/game/world/placement/GhostRenderer.cpp
     scenes/game/world/placement/PlacementMode.cpp
     scenes/game/world/placement/PlacementSystem.cpp
@@ -87,6 +89,8 @@ add_executable(world-sim
     scenes/game/dev/DevCommandHandler.cpp
     scenes/game/dev/GpuHold.cpp
     scenes/game/dev/GpuHoldCommand.cpp
+    scenes/game/dev/GroundRefusal.cpp
+    scenes/game/dev/PointList.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
 )
@@ -162,11 +166,37 @@ if(BUILD_TESTING)
         scenes/game/dev/CameraCommand.test.cpp
         scenes/game/dev/GpuHoldCommand.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
+        scenes/game/dev/GroundRefusal.cpp
+        scenes/game/dev/GroundRefusal.test.cpp
+        scenes/game/dev/PointList.cpp
+        scenes/game/dev/PointList.test.cpp
+        scenes/game/world/MoveOrderGoal.cpp
+        scenes/game/world/MoveOrderGoal.test.cpp
+        scenes/game/world/construction/CommittedGeometryCache.cpp
+        scenes/game/world/construction/CommittedGeometryCache.test.cpp
+        scenes/game/world/construction/DrawingSystem.cpp
+        scenes/game/world/construction/DrawingSystem.test.cpp
+        scenes/game/world/placement/GhostRenderer.cpp
+        scenes/game/world/placement/PlacementMode.cpp
+        scenes/game/world/placement/PlacementSystem.cpp
+        scenes/game/world/placement/PlacementSystem.test.cpp
+        scenes/game/world/selection/SelectionSystem.cpp
+        scenes/game/world/selection/SelectionSystem.test.cpp
+        scenes/game/ui/adapters/GlobalTaskAdapter.cpp
+        scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
+        scenes/game/ui/adapters/TaskRowText.cpp
+        scenes/game/ui/adapters/TaskRowText.test.cpp
     )
     target_include_directories(world-sim-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
     target_compile_features(world-sim-tests PRIVATE cxx_std_20)
     target_link_libraries(world-sim-tests
         PRIVATE
+            world-view
+            sim
+            world
+            assets
+            salal::renderer
+            salal::foundation
             GTest::gtest
             GTest::gtest_main
     )
@@ -176,4 +206,5 @@ if(BUILD_TESTING)
         target_compile_options(world-sim-tests PRIVATE -O0 -g)
     endif()
     add_test(NAME world-sim-tests COMMAND world-sim-tests)
+    worldsim_test_data(world-sim-tests assets/config)
 endif()
