@@ -370,7 +370,7 @@ namespace construction {
 
 	bool SnapEngine::snapToOrigin(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, std::size_t minPoints,
 								  float radiusMeters) const {
-		if (points.empty() || points.size() < minPoints) {
+		if (points.size() < minPoints) {
 			return false;
 		}
 		const float radius = radiusMeters >= 0.0F ? radiusMeters : snapping_->originCloseRadiusMeters;
@@ -477,7 +477,7 @@ namespace construction {
 		// Priority, most specific first (design Walls > Drawing), led by the close onto
 		// the chain's first point as in snap(). The point comes back exactly, so
 		// closesWallChain sees the close.
-		if (snapToOrigin(points, cursor, kMinClosingWallChainPoints, originCloseRadiusMeters)) {
+		if (!freeform && snapToOrigin(points, cursor, kMinClosingWallChainPoints, originCloseRadiusMeters)) {
 			return {points.front(), SnapKind::Origin};
 		}
 

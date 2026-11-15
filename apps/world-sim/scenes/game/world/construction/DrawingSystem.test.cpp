@@ -144,8 +144,9 @@ namespace {
 		static constexpr glm::vec2 kRoom[] = {{-8.0F, -8.0F}, {8.0F, -8.0F}, {8.0F, 8.0F}, {-8.0F, 8.0F}};
 
 		static construction::FoundationId hostFoundation(world_sim::DrawingSystem& tool) {
-			const auto foundation =
-				tool.world().commitFoundation(std::vector<Foundation::Vec2>{{-20.0F, -15.0F}, {20.0F, -15.0F}, {20.0F, 15.0F}, {-20.0F, 15.0F}}, "Wood");
+			const auto foundation = tool.world().commitFoundation(
+				std::vector<Foundation::Vec2>{{-20.0F, -15.0F}, {20.0F, -15.0F}, {20.0F, 15.0F}, {-20.0F, 15.0F}}, "Wood"
+			);
 			EXPECT_TRUE(foundation.ok());
 			tool.world().setState(foundation.id, construction::FoundationState::Built);
 			return foundation.id;
@@ -153,6 +154,14 @@ namespace {
 		bool clickWith(world_sim::DrawingSystem& tool, glm::vec2 meters) const {
 			const glm::vec2 screen = seen.screenOf(meters);
 			return tool.handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, false);
+		}
+		void clickFreeform(glm::vec2 meters) const {
+			const glm::vec2 screen = seen.screenOf(meters);
+			drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		}
+		void hoverFreeform(glm::vec2 meters) const {
+			const glm::vec2 screen = seen.screenOf(meters);
+			drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
 		}
 		void clickRoomCorners(world_sim::DrawingSystem& tool) const {
 			for (const glm::vec2 corner : kRoom) {
@@ -189,7 +198,9 @@ namespace {
 				built.setSegmentState(id, construction::FoundationState::Built);
 			}
 		}
-		[[nodiscard]] std::string lastToast() const { return toasts.empty() ? "no toast" : toasts.back().first + ": " + toasts.back().second; }
+		[[nodiscard]] std::string lastToast() const {
+			return toasts.empty() ? "no toast" : toasts.back().first + ": " + toasts.back().second;
+		}
 	};
 
 } // namespace
@@ -215,7 +226,9 @@ TEST_F(DrawingWallChainTest, ClosedLoopMatchesTheTwoChainWorkaround) {
 	clickRoomCorners(*drawing);
 	clickWith(*drawing, kRoom[0]);
 
-	world_sim::DrawingSystem workaround(world_sim::DrawingSystem::Args{.world = &seen.world, .camera = &seen.camera, .navigation = nullptr});
+	world_sim::DrawingSystem workaround(
+		world_sim::DrawingSystem::Args{.world = &seen.world, .camera = &seen.camera, .navigation = nullptr}
+	);
 	hostFoundation(workaround);
 	workaround.activateWallTool();
 	clickRoomCorners(workaround);
@@ -330,6 +343,36 @@ TEST_F(DrawingWallEdgeChainTest, ClickJustOutsideTheRadiusAddsAPoint) {
 	EXPECT_NEAR(drawing->status().segmentLengthMeters, -outside.y, 1e-3F);
 	clickWith(*drawing, outside);
 	EXPECT_EQ(drawing->status().pointCount, 5) << lastToast();
+	EXPECT_TRUE(drawing->world().segments().empty());
+}
+
+TEST_F(DrawingWallEdgeChainTest, AltClickNearTheFirstPointAddsAnOrdinaryPoint) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	const float firstY = clickEdgeStartedRoom(*drawing);
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	const glm::vec2 nearFirst{0.0F, firstY + originCloseRadiusMeters() - 0.1F};
+	hoverFreeform(nearFirst);
+	EXPECT_TRUE(drawing->status().valid) << drawing->status().message;
+	EXPECT_NEAR(drawing->status().segmentLengthMeters, -nearFirst.y, 1e-3F);
+	clickFreeform(nearFirst);
+	EXPECT_EQ(drawing->status().pointCount, 5) << lastToast();
+	EXPECT_TRUE(drawing->world().segments().empty());
+}
+
+TEST_F(DrawingWallChainTest, AltClickAfterARefusedCloseStillPlacesAPoint) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	// The closing segment would meet the first segment at under the minimum junction angle.
+	for (const glm::vec2 point : {glm::vec2{-8.0F, -8.0F}, glm::vec2{8.0F, -8.0F}, glm::vec2{2.0F, -3.0F}}) {
+		clickWith(*drawing, point);
+	}
+	ASSERT_EQ(drawing->status().pointCount, 3) << lastToast();
+	clickWith(*drawing, {-8.0F, -8.0F});
+	EXPECT_EQ(drawing->status().pointCount, 3);
+	EXPECT_EQ(toasts.back().second, construction::validationReason(construction::ValidationCode::AngleTooSharp));
+	clickFreeform({-7.5F, -7.4F});
+	EXPECT_EQ(drawing->status().pointCount, 4) << lastToast();
 	EXPECT_TRUE(drawing->world().segments().empty());
 }
 

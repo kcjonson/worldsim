@@ -495,6 +495,30 @@ TEST(SnapEngine, WallNoOriginCloseBeforeMinClosingPoints) {
 	EXPECT_NE(r.point.x, chain.front().x);
 }
 
+TEST(SnapEngine, WallFreeformSkipsOriginClose) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	const std::vector<Vec2> chain = chainFrom({2.0F, 2.0F});
+	const Vec2				cursor{2.35F, 2.1F};
+	ASSERT_LT(dist(cursor, chain.front()), cfg.originCloseRadiusMeters);
+	const SnapResult r = engine.snapWall(chain, cursor, /*freeform=*/true, /*wallHalfThicknessMm=*/100);
+	EXPECT_NE(r.kind, SnapKind::Origin);
+	EXPECT_FALSE(r.closesShape());
+	EXPECT_FALSE(closesWallChain(chain, r.point));
+	EXPECT_EQ(r.point.x, cursor.x);
+	EXPECT_EQ(r.point.y, cursor.y);
+}
+
+TEST(SnapEngine, FoundationOriginCloseIgnoresFreeform) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	const std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}};
+	EXPECT_EQ(engine.snap(points, {0.3F, 0.0F}, /*freeform=*/true).kind, SnapKind::Origin);
+	EXPECT_EQ(engine.snap(points, {0.3F, 0.0F}, /*freeform=*/false).kind, SnapKind::Origin);
+}
+
 TEST(SnapEngine, WallOriginCloseBeatsFoundationVertex) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
