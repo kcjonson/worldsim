@@ -15,9 +15,13 @@ namespace construction {
 	/// The ring's perimeter in meters, closing edge included.
 	[[nodiscard]] double ringPerimeterMeters(const geometry::Ring& ring);
 
+	/// A ceiling on the builder spot count that only an absurd configuration reaches (a tiny spacing
+	/// with a huge rate); it keeps the count inside an int.
+	inline constexpr int kMaxBuilderSpots = 1000;
+
 	/// `capBase + floor(area * capPerSquareMeter)`, capped at `floor(perimeter / minSpacingMeters)` so
-	/// spots spread round the ring are at least that far apart, and never below 1. `areaSquareMeters`
-	/// is taken as its absolute value.
+	/// spots spread round the ring are at least that far apart, and at kMaxBuilderSpots, and never
+	/// below 1. `areaSquareMeters` is taken as its absolute value.
 	[[nodiscard]] int builderSpotCount(
 		double areaSquareMeters, double perimeterMeters, int capBase, float capPerSquareMeter, float minSpacingMeters
 	);

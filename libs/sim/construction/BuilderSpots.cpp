@@ -91,7 +91,7 @@ namespace construction {
 		const double bySize = std::floor(std::abs(areaSquareMeters) * static_cast<double>(capPerSquareMeter) + kWholeSpotTolerance);
 		const double bySpacing = std::floor(std::max(perimeterMeters, 0.0) / static_cast<double>(minSpacingMeters) + kWholeSpotTolerance);
 		// fmin and fmax pass over a NaN (a zero perimeter over a zero spacing) instead of returning it.
-		const double count = std::fmin(static_cast<double>(capBase) + std::max(bySize, 0.0), bySpacing);
+		const double count = std::fmin(std::fmin(static_cast<double>(capBase) + std::max(bySize, 0.0), bySpacing), static_cast<double>(kMaxBuilderSpots));
 		return static_cast<int>(std::fmax(count, 1.0));
 	}
 

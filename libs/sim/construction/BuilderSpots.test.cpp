@@ -129,6 +129,12 @@ TEST(BuilderSpotCountTests, SpacingCapsASmallShape) {
 	EXPECT_EQ(builderSpotCount(4.0, 8.0, 1, 10.0F, 3.0F), 2);
 }
 
+TEST(BuilderSpotCountTests, AnAbsurdConfigurationStopsAtTheMaximum) {
+	// By area 1e18 and by spacing 1e12 spots, both far past an int.
+	EXPECT_EQ(builderSpotCount(1.0e9, 1.0e9, 1, 1.0e9F, 0.001F), construction::kMaxBuilderSpots);
+	EXPECT_EQ(builderSpotCount(4.0, 8.0, 1, 1.0e9F, 1.0F), 8) << "below the maximum the spacing still caps";
+}
+
 TEST(BuilderSpotCountTests, NeverZero) {
 	EXPECT_EQ(builderSpotCount(0.0, 0.0, 0, 0.0F, 1.0F), 1);
 	EXPECT_EQ(builderSpotCount(0.2, 0.5, 1, 0.1F, 1.0F), 1) << "a perimeter shorter than the spacing still holds one";
