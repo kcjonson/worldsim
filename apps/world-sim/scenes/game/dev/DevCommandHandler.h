@@ -89,8 +89,8 @@ namespace world_sim {
 		explicit DevCommandHandler(DevCommandContext context) : m_ctx(std::move(context)) {}
 
 		/// Registers every verb as a route and every view as a state provider, for as long as the
-		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, foundation
-		/// and walls answer a 400 with {"error":...} when they create nothing, ground they refuse
+		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, foundation,
+		/// walls and opening answer a 400 with {"error":...} when they create nothing, ground they refuse
 		/// included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
 		/// with its measurement. The views are colonists, construction, stations, storage, time,
 		/// landing, tunables and summary.
@@ -134,7 +134,8 @@ namespace world_sim {
 		// Read-only. No pts, or a point that is not finite, is a 400.
 		app::DevResponse devGround(const app::DevRequest& cmd);
 		DevRefusal devWalls(const app::DevRequest& cmd);
-		void		devOpening(const app::DevRequest& cmd);
+		// opening?seg=<id>&t= | pt=x,y&type=&built=: refused unless validateOpening accepts the placement.
+		DevRefusal	devOpening(const app::DevRequest& cmd);
 		void		devCraft(const app::DevRequest& cmd);
 		// storage?at=x,y&item=<def>|*&category=&priority=&min=&max=: adds a rule to the nearest box. A
 		// named item's category comes from its definition (category= may only repeat it); an unknown
