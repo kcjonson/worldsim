@@ -374,7 +374,9 @@ namespace geometry {
 		// every occluder whose line passes through the observer. Any other is disjoint
 		// from the ray, so reading only these finds the same hits. Kept as one list per
 		// direction, back to back: direction i's list runs from reachable[listStart[i]]
-		// up to reachable[listStart[i + 1]].
+		// up to reachable[listStart[i + 1]]. 32-bit counts: a list long enough to overflow
+		// them would be 16 GiB of indices; a build in the eight-room base holds at most
+		// 209 directions by 149 occluders, about 31,000.
 		struct DirectionSpans {
 			std::array<std::size_t, 2> first{};
 			std::array<std::size_t, 2> end{};
@@ -443,7 +445,6 @@ namespace geometry {
 		// departing it (or vice versa), so the near/far transition is two adjacent
 		// vertices, not two vertices fighting over one angle.
 		result.reserve(directions.size() * 2);
-		std::size_t rimSide = 0;
 		for (std::size_t directionIndex = 0; directionIndex < directions.size(); ++directionIndex) {
 			const Vec2i64& direction = directions[directionIndex];
 			// Exact far point: an integer multiple of `direction` whose length exceeds the
@@ -463,11 +464,10 @@ namespace geometry {
 
 			// Where the ray leaves the sight polygon: the rim vertex in this exact
 			// direction, or the snapped crossing with the rim side whose angular span
-			// holds it. The directions rise in angle, so the side only moves forward.
-			while (rimSide + 1 < rimDirections.size() && !angleLess(direction, rimDirections[rimSide + 1])) {
-				++rimSide;
-			}
-			Vec2i64 rimPoint = rim[rimSide];
+			// holds it. Searched for each ray, as at a radius of a few millimetres the rim's
+			// truncated vertices repeat angles and its directions do not rise strictly.
+			const std::size_t rimSide  = rimSideOf(direction);
+			Vec2i64			  rimPoint = rim[rimSide];
 			if (!less.sameAngle(rimDirections[rimSide], direction)) {
 				rimPoint = intersectSegments(observer, farExact, rim[rimSide], rim[(rimSide + 1) % rim.size()]).point;
 			}

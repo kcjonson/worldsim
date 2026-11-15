@@ -561,6 +561,58 @@ TEST(Visibility, PinnedScenesKeepTheirRings) {
 	}
 }
 
+// At a radius of a few millimetres the sight polygon's truncated vertices repeat angles (at 7 mm
+// the rim starts at (7, 0), (6, 0)), so its directions do not rise strictly. The rings here are
+// the construction's before it read only the occluders a ray can meet.
+TEST(Visibility, MillimetreRadiiKeepTheirRings) {
+	struct Pin {
+		std::int64_t				 radius;
+		std::vector<OccluderSegment> occluders;
+		Ring						 ring;
+	};
+	const std::vector<OccluderSegment> walls = {
+		{{1, 2}, {6, -4}}, {{-6, -2}, {4, 2}}, {{0, -6}, {-3, -1}}, {{5, 2}, {5, 6}}, {{4, 6}, {4, -1}}, {{-4, 3}, {-6, -6}},
+	};
+	const Pin pins[] = {
+		{1, {}, {{1, 0}, {0, 1}}},
+		{3, {}, {{2, 0}, {2, 2}, {-2, 2}, {-2, -2}, {1, -2}}},
+		{7,
+		 {},
+		 {{6, 3},	{5, 3},	{5, 4},	{4, 4},	{4, 5},	{3, 5},	{3, 6},	{-3, 6}, {-3, 5}, {-4, 5}, {-4, 4}, {-5, 4}, {-5, 3}, {-6, 3},
+		  {-6, -3}, {-5, -3}, {-5, -4}, {-4, -4}, {-4, -5}, {-3, -5}, {-3, -6}, {3, -6},	{3, -5},	{4, -5},	{4, -4},	{5, -4},	{5, -3},	{6, -3}}},
+		{10,
+		 {},
+		 {{9, 3},	{8, 4},	{8, 5},	{7, 6},	{7, 7},	{6, 7},	{5, 8},	{4, 8},	{3, 9},	{-3, 9},  {-4, 8},  {-5, 8},  {-6, 7},	{-7, 7},  {-7, 6},	{-8, 5},  {-8, 4},	{-9, 3},
+		  {-9, -3}, {-8, -4}, {-8, -5}, {-7, -6}, {-7, -7}, {-6, -7}, {-5, -8}, {-4, -8}, {-3, -9}, {3, -9}, {4, -8}, {5, -8}, {6, -7}, {7, -7}, {7, -6}, {8, -5}, {8, -4}, {9, -3}}},
+		{7,
+		 walls,
+		 {{3, 0},	{2, 0},	{2, 1},	{0, 1},	{2, 6},	{-3, 6}, {-3, 5}, {-4, 5}, {-4, 4}, {-5, 4}, {-4, 3}, {-4, 2}, {-1, 0}, {-2, 0},
+		  {-5, -2}, {-3, -1}, {-3, -2}, {-2, -2}, {-2, -3}, {-1, -4}, {-1, -5}, {0, -6},	{3, -6},	{3, -5},	{4, -5},	{4, -4},	{5, -4},	{5, -2}}},
+	};
+	for (const Pin& pin : pins) {
+		EXPECT_EQ(computeVisibilityPolygon({0, 0}, pin.radius, pin.occluders), pin.ring) << "radius " << pin.radius << ", " << pin.occluders.size() << " occluders";
+	}
+}
+
+// The ray along +x, where angleLess starts, through walls above and below the axis and a wall
+// crossing it.
+TEST(Visibility, RayAlongPlusXKeepsItsRing) {
+	const std::vector<OccluderSegment> walls = {
+		{{3000, 1000}, {3000, 4000}},
+		{{4000, -1000}, {4000, -5000}},
+		{{2000, -2000}, {6000, 2000}},
+	};
+	const Ring expected = {
+		{6000, 2000},	{3000, 1000},	{3000, 4000},	{4195, 5593},	{3888, 5820},	{3299, 6173},	{2678, 6467},	{2031, 6698},	{1365, 6865},
+		{686, 6966},	{0, 7000},		{-686, 6966},	{-1365, 6865},	{-2031, 6698},	{-2678, 6467},	{-3299, 6173},	{-3888, 5820},	{-4440, 5411},
+		{-4949, 4949},	{-5411, 4440},	{-5820, 3888},	{-6173, 3299},	{-6467, 2678},	{-6698, 2031},	{-6865, 1365},	{-6966, 686},	{-7000, 0},
+		{-6966, -686},	{-6865, -1365}, {-6698, -2031}, {-6467, -2678}, {-6173, -3299}, {-5820, -3888}, {-5411, -4440}, {-4949, -4949}, {-4440, -5411},
+		{-3888, -5820}, {-3299, -6173}, {-2678, -6467}, {-2031, -6698}, {-1365, -6865}, {-686, -6966},	{0, -7000},		{686, -6966},	{1365, -6865},
+		{2031, -6698},	{2678, -6467},	{3299, -6173},	{3888, -5820},	{4370, -5463},	{4000, -5000},	{4000, -4000},	{2000, -2000},
+	};
+	EXPECT_EQ(computeVisibilityPolygon({0, 0}, 7000, walls), expected);
+}
+
 TEST(OracleSweep, RandomScenesMatchBruteForce) {
 	// The correctness guarantee. For hundreds of random scenes (observer + a small
 	// set of occluder segments at small integer coords), compare the computed
