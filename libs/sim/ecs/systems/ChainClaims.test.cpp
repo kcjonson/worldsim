@@ -2851,7 +2851,8 @@ namespace ecs::test {
 	}
 
 	// A builder's stored spot the goal no longer has (it left Available and came back with fewer spots)
-	// is never read: the next decision is a fresh pick of a spot the goal has now.
+	// is never read: the next decision is a fresh pick of a spot the goal has now. The new spot lies
+	// within the target tolerance of the old one, so only the spot index tells the two tasks apart.
 	TEST_F(ChainClaimsTest, AStoredSpotTheGoalNoLongerHasIsAFreshPick) {
 		const std::vector<glm::vec2> spots{{-2.0F, 6.0F}, {0.0F, 6.0F}, {4.0F, 6.0F}};
 		const Site					 site = buildSite({0.0F, 6.0F}, spots);
@@ -2860,12 +2861,12 @@ namespace ecs::test {
 		ASSERT_EQ(getTask(builder)->builderSlot, 2U);
 		const uint64_t instance = getTask(builder)->instanceId;
 
-		GoalTaskRegistry::Get().getGoalMutable(site.umbrella)->builderSpots = {{-2.0F, 6.0F}};
+		GoalTaskRegistry::Get().getGoalMutable(site.umbrella)->builderSpots = {{4.2F, 6.0F}};
 		decide(builder);
 		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
 		EXPECT_EQ(getTask(builder)->builderSlot, 0U);
 		EXPECT_NE(getTask(builder)->instanceId, instance) << "a fresh pick, not the same task";
-		EXPECT_EQ(getTask(builder)->targetPosition, glm::vec2(-2.0F, 6.0F));
+		EXPECT_EQ(getTask(builder)->targetPosition, glm::vec2(4.2F, 6.0F));
 		EXPECT_EQ(spotHolder(site.blueprint, 0), builder);
 		EXPECT_EQ(spotHolder(site.blueprint, 2), kInvalidEntity);
 	}
