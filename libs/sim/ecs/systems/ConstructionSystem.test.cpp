@@ -1036,18 +1036,51 @@ TEST_F(BuilderSpotEmissionTest, AFoundationsSpotsDoNotChangeWhileItsUmbrellaStay
 	const auto* goal = registry.getGoalByDestination(blueprint);
 	ASSERT_NE(goal, nullptr);
 	ASSERT_EQ(goal->status, GoalStatus::Available);
+	const uint64_t				 goalId = goal->id;
 	const std::vector<glm::vec2> spots = goal->builderSpots;
 	ASSERT_EQ(spots.size(), 3U);
 
-	// Doubling the ring would give 5 spots in new places if they were placed again.
-	ASSERT_EQ(topology.addToFoundation(foundationId, {{0, 5000}, {4000, 5000}, {4000, 10000}, {0, 10000}}), cw::CommitStatus::Ok);
 	refresh();
 	refresh();
 
 	const auto* later = registry.getGoalByDestination(blueprint);
 	ASSERT_NE(later, nullptr);
+	EXPECT_EQ(later->id, goalId);
 	EXPECT_EQ(later->status, GoalStatus::Available);
 	EXPECT_EQ(later->builderSpots, spots);
+}
+
+TEST_F(BuilderSpotEmissionTest, AReshapeBeforeDeliveryGivesTheNewUmbrellaSpotsForTheNewRing) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	auto				   blueprint = createBlueprint(StructureKind::Foundation, foundationId);
+	auto&				   registry = GoalTaskRegistry::Get();
+
+	refresh();
+	const auto* blocked = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(blocked, nullptr);
+	ASSERT_EQ(blocked->status, GoalStatus::Blocked);
+	const uint64_t blockedId = blocked->id;
+
+	// The edit the game makes while nothing is delivered: the ring grows to 4 m x 10 m and the
+	// blueprint's goals are reset, as DrawingSystem's resize does.
+	ASSERT_TRUE(world->getComponent<StructureBlueprint>(blueprint)->shapeEditable());
+	ASSERT_EQ(topology.addToFoundation(foundationId, {{0, 5000}, {4000, 5000}, {4000, 10000}, {0, 10000}}), cw::CommitStatus::Ok);
+	construction->resetBlueprintGoals(blueprint);
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+	refresh();
+
+	const auto* available = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(available, nullptr);
+	EXPECT_NE(available->id, blockedId) << "the reset gives a new umbrella";
+	ASSERT_EQ(available->status, GoalStatus::Available);
+	ASSERT_EQ(available->builderSpots.size(), 5U) << "40 m2: base 1 + floor(40 * 0.1)";
+	const FootprintBounds footprint{topology.get(foundationId)->ring};
+	bool				  anyOnTheAddedHalf = false;
+	for (const glm::vec2 spot : available->builderSpots) {
+		EXPECT_TRUE(footprint.contains(spot)) << "spot (" << spot.x << ", " << spot.y << ") is off the footprint";
+		anyOnTheAddedHalf = anyOnTheAddedHalf || spot.y > 5.0F;
+	}
+	EXPECT_TRUE(anyOnTheAddedHalf) << "the spots are placed round the new ring";
 }
 
 TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
