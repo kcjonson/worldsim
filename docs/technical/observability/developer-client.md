@@ -19,15 +19,23 @@ The developer client is an external TypeScript/Vite web application that connect
 - **Performance** / **Logs** — read-only, fed by the SSE streams below.
 - **Dev Tools** — the only tab that *sends* rather than streams. It drives the running game with
   one-shot `fetch()` calls: the dev verbs (`GET /api/dev/<verb>` — spawn, colonist, give, need,
-  time, teleport, select, kill, complete, freebuild, foundation, foundation-edit, walls, opening, and
-  `craft`; each answers with its JSON result once the game thread ran it) and
+  time, teleport, select, kill, complete, freebuild, foundation, foundation-edit, walls, opening,
+  ground, and `craft`; each answers with its JSON result once the game thread ran it) and
   the synchronous world-state readback (`GET /api/state?what=summary|colonists|construction|stations|time`).
   `craft?recipe=<def>&n=<count>&at=<x,y>` validates the recipe against the RecipeRegistry and queues
   N jobs at the nearest crafting station (entity with a WorkQueue) to `at` — the on-demand way to
   exercise the craft/provisioning chain without setting up a colony by hand. `what=stations` reads
   back each crafting station's id, position, queued jobs (recipe/completed/quantity), and material
-  store, so a stalled craft can be inspected without screenshots. The placement verbs
-  (give/spawn/colonist/teleport) refuse an `at` that is off the active walkable navmesh.
+  store, so a stalled craft can be inspected without screenshots. give, colonist, and teleport
+  refuse an `at` that is off the active walkable navmesh. spawn, foundation, and walls refuse ground
+  the game would not build on and answer a 400 with `{"error":...}` when they create nothing: spawn
+  sets furniture (a crafting station or storage container) only where its footprint is clear ground
+  out of any fordable stream and anything else on clear ground, a ford included, and refuses when no
+  scattered spot takes it; foundation refuses a footprint on water, a ford, or unmeshed ground (a tree
+  or rock on it is cleared first); walls refuses a chain any point of which is on water, a ford, a
+  placed obstacle, or unmeshed ground. `ground?pts=x,y;...` reads each point's verdicts: `valid`
+  (clear to stand on), `buildable` (a foundation may go there once it is cleared), and `buildableNow`
+  (a wall or furniture may go there as the ground stands), beside the chunk's terrain at the point.
   `DevToolsService.ts` wraps these;
   `DevToolsPanel.tsx` is the form. Still no web server of its own — the static `file://` page reaches
   the debug server because it sets CORS `*`. Dev builds only. See the

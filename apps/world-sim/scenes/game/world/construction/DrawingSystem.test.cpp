@@ -1,5 +1,6 @@
 #include "scenes/game/world/construction/DrawingSystem.h"
 
+#include "scenes/game/world/CreekWorldFixture.test.h"
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -128,4 +129,89 @@ TEST_F(DrawingVisibilityTest, RevealTurnsTheRulesOff) {
 	drawing->activateOpeningTool("Door");
 	click({55.0F, 0.0F});
 	EXPECT_EQ(drawing->world().openings().size(), 1U);
+}
+
+namespace {
+
+	using world_sim::testing::kCreekY;
+
+	// The wall tool over a real nav mesh crossed by a fordable creek. A wall starts on a foundation,
+	// and the foundation tool never lays one over a ford, so each test commits its host foundation
+	// straight into the construction world: across the creek to reach the ford, on the bank to
+	// reach dry ground. What these cover is the wall tool's own ground gate, at a vertex and at
+	// commit; how a foundation came to span a ford is not theirs.
+	class DrawingFordTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			assets::ConstructionRegistry::Get().clear();
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load(constructionConfigFolder()));
+			navigation = &world_sim::testing::meshCreekWorld(seen.world, emptyPlacement);
+			drawing = std::make_unique<world_sim::DrawingSystem>(world_sim::DrawingSystem::Args{
+				.world = &seen.world,
+				.camera = &seen.camera,
+				.navigation = navigation,
+				.callbacks = {.onToast = [this](const std::string& title, const std::string& message) { toasts.emplace_back(title, message); }}
+			});
+		}
+		void TearDown() override { assets::ConstructionRegistry::Get().clear(); }
+
+		void hostFoundation(float southY, float northY) {
+			const auto foundation =
+				drawing->world().commitFoundation(std::vector<Foundation::Vec2>{{4.0F, southY}, {16.0F, southY}, {16.0F, northY}, {4.0F, northY}}, "Wood");
+			ASSERT_TRUE(foundation.ok());
+			drawing->world().setState(foundation.id, construction::FoundationState::Built);
+		}
+		bool click(glm::vec2 meters) {
+			const glm::vec2 screen = seen.screenOf(meters);
+			return drawing->handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		}
+		void hover(glm::vec2 meters) {
+			const glm::vec2 screen = seen.screenOf(meters);
+			drawing->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight, true);
+		}
+		[[nodiscard]] bool lastToastSaysNotBuildable() const {
+			return !toasts.empty() && toasts.back().second.find("not on buildable ground") != std::string::npos;
+		}
+
+		world_sim::testing::SeenWorld							   seen;
+		ecs::EmptyPlacement										   emptyPlacement;
+		ecs::NavigationSystem*									   navigation = nullptr;
+		std::vector<std::pair<std::string, std::string>>		   toasts;
+		std::unique_ptr<world_sim::DrawingSystem> drawing;
+	};
+
+} // namespace
+
+TEST_F(DrawingFordTest, WallVertexInTheCreekIsRefused) {
+	hostFoundation(kCreekY - 6.0F, kCreekY + 6.0F);
+	drawing->activateWallTool();
+	click({10.0F, kCreekY - 3.0F});
+	ASSERT_EQ(drawing->status().pointCount, 1) << (toasts.empty() ? "no toast" : toasts.back().second);
+	hover({10.0F, kCreekY});
+	EXPECT_FALSE(drawing->status().valid);
+	EXPECT_EQ(drawing->status().message, "not on buildable ground");
+	click({10.0F, kCreekY});
+	EXPECT_EQ(drawing->status().pointCount, 1);
+	EXPECT_TRUE(lastToastSaysNotBuildable());
+}
+
+TEST_F(DrawingFordTest, WallChainAcrossTheCreekIsRefusedAtCommit) {
+	hostFoundation(kCreekY - 6.0F, kCreekY + 6.0F);
+	drawing->activateWallTool();
+	click({10.0F, kCreekY - 3.0F});
+	click({10.0F, kCreekY + 3.0F});
+	ASSERT_EQ(drawing->status().pointCount, 2) << "both ends are on the bank" << (toasts.empty() ? "" : ": " + toasts.back().second);
+	ASSERT_TRUE(drawing->finishChain());
+	EXPECT_TRUE(drawing->world().segments().empty());
+	EXPECT_TRUE(lastToastSaysNotBuildable()) << (toasts.empty() ? "no toast" : toasts.back().second);
+}
+
+TEST_F(DrawingFordTest, WallChainOnTheBankIsCommitted) {
+	hostFoundation(kCreekY - 14.0F, kCreekY - 2.0F);
+	drawing->activateWallTool();
+	click({10.0F, kCreekY - 11.0F});
+	click({10.0F, kCreekY - 5.0F});
+	ASSERT_EQ(drawing->status().pointCount, 2) << (toasts.empty() ? "no toast" : toasts.back().second);
+	ASSERT_TRUE(drawing->finishChain());
+	EXPECT_FALSE(drawing->world().segments().empty()) << (toasts.empty() ? "no toast" : toasts.back().second);
 }

@@ -200,6 +200,11 @@ namespace {
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
 			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
+			// The camera loads only chunks that can show; the rest would be drawn under the cover's opaque fill.
+			// Every mover's anchor still loads what it needs (player-visibility.md 3.9).
+			m_chunkManager->setCameraLoads([this](world::ChunkCoordinate coord) {
+				return ecsWorld == nullptr || worldview::cameraLoadsChunk(*ecsWorld, *m_camera, kPixelsPerMeter, coord);
+			});
 
 			// Create async processor for runtime chunk streaming
 			m_asyncProcessor = std::make_unique<assets::AsyncChunkProcessor>(*m_placementExecutor, m_processedChunks);
@@ -958,10 +963,13 @@ namespace {
 			// Physical viewport is 2x on Retina displays, which causes coordinate mismatches
 			Renderer::Primitives::getLogicalViewport(w, h);
 
+			// Everything outside it is under the cover's opaque fill, so the world culls to it as to the view.
+			const assets::DrawBound drawBound = worldview::coverDrawBound(*ecsWorld, *m_camera, w, h, kPixelsPerMeter);
+
 			// Time tile rendering
 			auto tileStart = Clock::now();
 			m_tileGpuTimer.begin();
-			m_renderer->render(*m_chunkManager, *m_camera, w, h);
+			m_renderer->render(*m_chunkManager, drawBound, *m_camera, w, h);
 			m_tileGpuTimer.end();
 			float tileMs = elapsedMs(tileStart, Clock::now());
 
@@ -981,7 +989,7 @@ namespace {
 			// Feed the selected entity's outline into the depth-sort pass so nearer
 			// entities occlude it (construction outlines still draw flat below).
 			m_entityRenderer->setSelectionOutline(m_selectionSystem->buildEntityOutline());
-			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
+			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, drawBound, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
 			// Player visibility: unseen ground black, seen ground out of sight tinted. Over everything the
@@ -1280,22 +1288,24 @@ namespace {
 
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
 			// station via the existing PlacePackaged flow (it must not seat in the colonist's
-			// hands or stack on the station). Resolve a walkable spot >= 1 m away; the aim rotates
-			// by the golden angle each spawn so a queued run of boxes FANS OUT instead of stacking
-			// on one target. If no mesh covers the station (findValidPositionNear -> nullopt), fall
-			// back to the manual packaged drop (spawn beside the station, await a [Place] click) so
+			// hands or stack on the station). Resolve a spot >= 1 m away that its footprint can be
+			// set up on (PlacementSystem::installTargetNear, never a ford); the aim rotates by the
+			// golden angle each spawn so a queued run of boxes FANS OUT instead of stacking on one
+			// target. With no such spot, the crate is set down from the station as a colonist sets
+			// one down (packageSetDownSpot, at the drain) and the player is told to place it, so
 			// crafting never hard-fails. ENQUEUE only -- fires from inside the ActionSystem view loop.
-			actionSystem.setSpawnPackagedAtCallback([this, &navSystem](const std::string& defName, glm::vec2 stationPos) {
+			actionSystem.setSpawnPackagedAtCallback([this](const std::string& defName, glm::vec2 stationPos) {
 				constexpr float				   kGoldenAngle = 2.39996323F; // ~137.5 deg, spreads successive aims evenly
 				const float					   angle = static_cast<float>(m_packagedSpawnSeq++) * kGoldenAngle;
 				const glm::vec2				   aim{std::cos(angle), std::sin(angle)};
-				const std::optional<glm::vec2> target = navSystem.findValidPositionNear(stationPos, 1.0F, aim);
+				const std::optional<glm::vec2> target = m_placementSystem->installTargetNear(defName, stationPos, aim);
 				if (target.has_value()) {
 					m_pendingSpawns.push_back({defName, target->x, target->y, 0, /*packaged=*/true, target});
 				} else {
-					// No mesh at the station: fall back to the player-driven packaged drop, nudged
-					// ~2 m off the station (no mesh to snap to) so the box doesn't stack on it.
-					m_pendingSpawns.push_back({defName, stationPos.x + 2.0F, stationPos.y, 0, /*packaged=*/true, std::nullopt});
+					m_pendingSpawns.push_back({defName, stationPos.x, stationPos.y, 0, /*packaged=*/true, std::nullopt});
+					const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+					const std::string label = (def != nullptr && !def->label.empty()) ? def->label : defName;
+					gameUI->pushNotification("Couldn't set up " + label, "Needs placing", ui::ToastSeverity::Warning);
 				}
 			});
 
@@ -1799,8 +1809,10 @@ namespace {
 						// Spawn AT the resolved target (when one is set) so the box never overlaps
 						// the station: the colonist walks over and installs it via PlacePackaged.
 						// targetPosition wired here -> BuildGoalSystem raises the place goal at its
-						// next poll (every 30 frames). nullopt -> spawn in place, await the player's [Place] click.
-						const glm::vec2 spawnAt = spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
+						// next poll (every 30 frames). nullopt -> set it down from the station where a colonist
+						// would, await the player's [Place] click.
+						const glm::vec2 spawnAt =
+							spawn.targetPosition.has_value() ? *spawn.targetPosition : packageSetDownSpot({spawn.x, spawn.y});
 						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
 						ecs::Packaged	packaged;
 						packaged.targetPosition = spawn.targetPosition;
@@ -2142,6 +2154,7 @@ namespace {
 		glm::vec2									 m_spawnPosition{0.0F, 0.0F};
 		// The movers handed to the chunk manager each frame; a member so the frame reuses its storage.
 		std::vector<world::ChunkAnchor> anchors;
+		std::vector<ecs::PlayerVisibilitySystem::SeenBox> seenBoxes;
 
 		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
 		// by the player (0 = none); it is always the selected colonist (control is released when the
@@ -2237,7 +2250,7 @@ namespace {
 			// Auto-place target for a packaged spawn (a crafted furniture box). When set, the
 			// entity spawns AT this point with Packaged.targetPosition wired, so BuildGoalSystem
 			// raises the place goal immediately (no manual [Place]). nullopt -> the player-driven
-			// path (spawn in place, await a [Place] click) when no nav mesh covers the station.
+			// path (set down from x, y, await a [Place] click) when nothing near the station takes it.
 			std::optional<glm::vec2> targetPosition;
 			// A loose drop's fallback: where the goods came from (DropResourceCallback).
 			glm::vec2 fallback{0.0F, 0.0F};

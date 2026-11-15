@@ -5703,7 +5703,7 @@ namespace ecs::test {
 		// the hunger option is never Selected, he never sets off for it, and he never waits for ground
 		// (none is coming).
 		void expectFoodAcrossUnreached(EntityID colonist) {
-			ASSERT_TRUE(nav->inSimArea(kAcross)) << "the far bank is ground he has seen";
+			ASSERT_TRUE(nav->inSimArea(kAcross)) << "the far bank is ground meshed for him";
 			ASSERT_FALSE(nav->connected(kStart, kAcross));
 			for (int i = 0; i < kTicksAfterMesh; ++i) {
 				world->update(kTick);
@@ -5724,7 +5724,7 @@ namespace ecs::test {
 	using AIDecisionNearFordTest  = AIDecisionFordTest<30>;	 // about 70 m round
 	using AIDecisionCloseFordTest = AIDecisionFordTest<8>;	 // about 30 m round
 
-	// The ford is 600 m off, past the ground the colonist has seen: the bush across has no known way and
+	// The ford is 600 m off, past the ground meshed round the colonist: the bush across has no known way and
 	// the bush behind is taken. A lookout at the ford meshes his own limit only, which joins nothing to
 	// the colonist's ground, and the bush behind is still taken. Once the near bank to the ford is walked
 	// the way round (1.2 km) routes, and the bush behind is still taken.

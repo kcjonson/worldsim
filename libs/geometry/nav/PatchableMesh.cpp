@@ -475,10 +475,10 @@ namespace geometry::nav {
 							continue;
 						}
 						bool first = true;
-						for (std::int64_t cy = std::max(floorDiv(entry.lo.y, side), y0); cy <= std::min(floorDiv(entry.hi.y, side), y1) && first; ++cy) {
-							for (std::int64_t cx = std::max(floorDiv(entry.lo.x, side), x0); cx <= std::min(floorDiv(entry.hi.x, side), x1) && first; ++cx) {
-								if (cx != listed.key.x || cy != listed.key.y) {
-									first = cells[static_cast<std::size_t>(find({cx, cy, level}))].levelSlot > listed.levelSlot;
+						for (std::int64_t cellY = std::max(floorDiv(entry.lo.y, side), y0); cellY <= std::min(floorDiv(entry.hi.y, side), y1) && first; ++cellY) {
+							for (std::int64_t cellX = std::max(floorDiv(entry.lo.x, side), x0); cellX <= std::min(floorDiv(entry.hi.x, side), x1) && first; ++cellX) {
+								if (cellX != listed.key.x || cellY != listed.key.y) {
+									first = cells[static_cast<std::size_t>(find({cellX, cellY, level}))].levelSlot > listed.levelSlot;
 								}
 							}
 						}
@@ -489,14 +489,14 @@ namespace geometry::nav {
 				}
 				continue;
 			}
-			for (std::int64_t cy = y0; cy <= y1; ++cy) {
-				for (std::int64_t cx = x0; cx <= x1; ++cx) {
-					const std::int32_t cell = find({cx, cy, level});
+			for (std::int64_t cellY = y0; cellY <= y1; ++cellY) {
+				for (std::int64_t cellX = x0; cellX <= x1; ++cellX) {
+					const std::int32_t cell = find({cellX, cellY, level});
 					if (cell < 0) {
 						continue;
 					}
 					for (const Entry& entry : cells[static_cast<std::size_t>(cell)].entries) {
-						if (overlaps(entry) && (cx == x0 || entry.lo.x >= cx * side) && (cy == y0 || entry.lo.y >= cy * side)) {
+						if (overlaps(entry) && (cellX == x0 || entry.lo.x >= cellX * side) && (cellY == y0 || entry.lo.y >= cellY * side)) {
 							visit(entry.id);
 						}
 					}
@@ -553,10 +553,10 @@ namespace geometry::nav {
 		return {&reg.polygon.ring, &reg.edgeBoxes, reg.lo, reg.hi, reg.sample.counterClockwise, ring};
 	}
 
-	std::span<const GroundInterval> PatchableMesh::intervalsOf(const EdgeSource& z) const {
-		const RegisteredRing& reg	= rings[static_cast<std::size_t>(z.ring)];
-		const std::uint32_t	  begin = reg.intervalStart[static_cast<std::size_t>(z.edge)];
-		const std::uint32_t	  end	= reg.intervalStart[static_cast<std::size_t>(z.edge) + 1];
+	std::span<const GroundInterval> PatchableMesh::intervalsOf(const EdgeSource& source) const {
+		const RegisteredRing& reg	= rings[static_cast<std::size_t>(source.ring)];
+		const std::uint32_t	  begin = reg.intervalStart[static_cast<std::size_t>(source.edge)];
+		const std::uint32_t	  end	= reg.intervalStart[static_cast<std::size_t>(source.edge) + 1];
 		return std::span<const GroundInterval>(reg.intervals).subspan(begin, end - begin);
 	}
 
@@ -566,6 +566,15 @@ namespace geometry::nav {
 	// its area.
 	bool PatchableMesh::groundCovers(const std::vector<Vec2i64>& outline) const {
 		assert(outline.size() >= 3 && "PatchableMesh: an outline needs three vertices");
+		// groundBoundaries orders crossings exactly only on outlines narrower than
+		// kMaxGroundExtentMm on each axis. A wider one is not called covered, and applyPatch
+		// refuses it as ground.
+		Vec2i64 outlineLow;
+		Vec2i64 outlineHigh;
+		outlineBox(outline, outlineLow, outlineHigh);
+		if (outlineHigh.x - outlineLow.x >= kMaxGroundExtentMm || outlineHigh.y - outlineLow.y >= kMaxGroundExtentMm) {
+			return false;
+		}
 		// Past every live ring, so a stretch it shares with a live edge stays that edge's.
 		const RingEdgeBoxes			probeBoxes = ringEdgeBoxes(outline);
 		const GroundRing			probe	   = groundRing(outline, probeBoxes, static_cast<RingId>(rings.size()));
@@ -3009,17 +3018,21 @@ namespace geometry::nav {
 			reg.hi		  = c.hi;
 			reg.live	  = true;
 			m.indexRingEdges(id);
-			reg.intervals.clear();
-			reg.intervalStart.clear();
+			std::vector<GroundInterval>& kept	   = work.keptIntervals;
+			std::vector<std::uint32_t>&	 keptStart = work.keptIntervalStart;
+			kept.clear();
+			keptStart.clear();
 			if (!reg.polygon.blocked) {
 				for (std::size_t e = 0; e < c.intervals.size(); ++e) {
 					m.setBoundary(reg.edgeIds[e], c.intervals[e].first != c.intervals[e].second);
-					reg.intervalStart.push_back(static_cast<std::uint32_t>(reg.intervals.size()));
+					keptStart.push_back(static_cast<std::uint32_t>(kept.size()));
 					const std::span<const GroundInterval> run = intervalRun(c.intervals[e]);
-					reg.intervals.insert(reg.intervals.end(), run.begin(), run.end());
+					kept.insert(kept.end(), run.begin(), run.end());
 				}
-				reg.intervalStart.push_back(static_cast<std::uint32_t>(reg.intervals.size()));
+				keptStart.push_back(static_cast<std::uint32_t>(kept.size()));
 			}
+			reg.intervals.assign(kept.begin(), kept.end());
+			reg.intervalStart.assign(keptStart.begin(), keptStart.end());
 		}
 		// A classified edge holds what the patch found; the rest of its ring holds what it did.
 		std::vector<RingId>& reclassified = work.reclassified;
@@ -3044,8 +3057,8 @@ namespace geometry::nav {
 				kept.insert(kept.end(), run.begin(), run.end());
 			}
 			keptStart.push_back(static_cast<std::uint32_t>(kept.size()));
-			std::swap(reg.intervals, kept);
-			std::swap(reg.intervalStart, keptStart);
+			reg.intervals.assign(kept.begin(), kept.end());
+			reg.intervalStart.assign(keptStart.begin(), keptStart.end());
 		}
 
 		// New triangles take the hole's ids first. A face's triangles share one cover and
@@ -4012,11 +4025,8 @@ namespace geometry::nav {
 					groundRingsInBox(lo, hi, groundNear);
 					groundBoundaries(groundOf(r), e, groundNear, boundaryScratch, intervals);
 					const std::span<const GroundInterval> held = intervalsOf({r, e});
-					auto sameAt = [](const EdgeParam& first, const EdgeParam& second) {
-						return Int128::product(first.num, second.den) == Int128::product(second.num, first.den);
-					};
-					auto sameInterval = [&](const GroundInterval& first, const GroundInterval& second) {
-						return first == second && sameAt(first.fromAt, second.fromAt) && sameAt(first.toAt, second.toAt);
+					auto sameInterval = [](const GroundInterval& first, const GroundInterval& second) {
+						return first == second && paramEqual(first.fromAt, second.fromAt) && paramEqual(first.toAt, second.toAt);
 					};
 					if (!std::equal(held.begin(), held.end(), intervals.begin(), intervals.end(), sameInterval)) {
 						fail() << "ring " << r << " edge " << e << " holds other boundary intervals than its rings give";

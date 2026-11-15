@@ -62,7 +62,7 @@ class PlacementMode {
 	void cancel();
 
 	/// Update ghost position from world coordinates and whether that spot is placeable.
-	/// `valid` comes from the nav-mesh validity gate (NavigationSystem::isValidPosition);
+	/// `valid` comes from PlacementSystem's ground gate (footprintBuildableNow, and the footprint seen);
 	/// PlacementMode itself owns no terrain knowledge. Called each frame while Placing.
 	void updateGhostPosition(Foundation::Vec2 worldPos, bool valid);
 

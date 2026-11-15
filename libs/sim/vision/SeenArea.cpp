@@ -71,6 +71,12 @@ namespace vision {
 			return firstLow.x <= secondHigh.x && secondLow.x <= firstHigh.x && firstLow.y <= secondHigh.y && secondLow.y <= firstHigh.y;
 		}
 
+		// The seen-box cell holding `millimetres` along one axis, rounding toward negative infinity.
+		std::int64_t cellOf(std::int64_t millimetres) {
+			const std::int64_t cell = millimetres / kSeenBoxCellMm;
+			return millimetres % kSeenBoxCellMm < 0 ? cell - 1 : cell;
+		}
+
 		bool insideBox(const Vec2i64& point, const Vec2i64& low, const Vec2i64& high) {
 			return point.x >= low.x && point.x <= high.x && point.y >= low.y && point.y <= high.y;
 		}
@@ -214,6 +220,7 @@ namespace vision {
 	}
 
 	void SeenArea::registerPiece() {
+		holdCommitted(entering.front().low, entering.front().high);
 		geometry::nav::PatchEdits edits;
 		edits.adds.push_back(geometry::nav::NavInputPolygon{.ring = std::move(entering.front().outline)});
 		entering.pop_front();
@@ -481,6 +488,56 @@ namespace vision {
 
 	void SeenArea::appendPendingShapes(std::vector<const std::vector<Vec2i64>*>& out) const {
 		forEachPending([&out](const PendingShape& shape) { out.push_back(&shape.outline); });
+	}
+
+	void SeenArea::holdCommitted(const Vec2i64& low, const Vec2i64& high) {
+		for (std::int64_t cellY = cellOf(low.y); cellY <= cellOf(high.y); ++cellY) {
+			for (std::int64_t cellX = cellOf(low.x); cellX <= cellOf(high.x); ++cellX) {
+				const Vec2i64 cellLow{cellX * kSeenBoxCellMm, cellY * kSeenBoxCellMm};
+				const Vec2i64 cellHigh{cellLow.x + kSeenBoxCellMm, cellLow.y + kSeenBoxCellMm};
+				const Box	  part{{std::max(low.x, cellLow.x), std::max(low.y, cellLow.y)}, {std::min(high.x, cellHigh.x), std::min(high.y, cellHigh.y)}};
+				const auto [held, fresh] = committedBoxes.try_emplace({cellX, cellY}, part);
+				if (!fresh) {
+					held->second.low  = {std::min(held->second.low.x, part.low.x), std::min(held->second.low.y, part.low.y)};
+					held->second.high = {std::max(held->second.high.x, part.high.x), std::max(held->second.high.y, part.high.y)};
+				}
+			}
+		}
+	}
+
+	template <typename Take> void SeenArea::forEachSeenBox(const Vec2i64& low, const Vec2i64& high, Take take) const {
+		auto takeMeeting = [&](const Box& box) {
+			if (boxesMeet(low, high, box.low, box.high)) {
+				take(box);
+			}
+		};
+		const std::int64_t columns = cellOf(high.x) - cellOf(low.x) + 1;
+		const std::int64_t rows	   = cellOf(high.y) - cellOf(low.y) + 1;
+		if (static_cast<double>(columns) * static_cast<double>(rows) > static_cast<double>(committedBoxes.size())) {
+			for (const auto& [cell, box] : committedBoxes) {
+				takeMeeting(box);
+			}
+		} else {
+			for (std::int64_t cellY = cellOf(low.y); cellY <= cellOf(high.y); ++cellY) {
+				for (std::int64_t cellX = cellOf(low.x); cellX <= cellOf(high.x); ++cellX) {
+					const auto found = committedBoxes.find({cellX, cellY});
+					if (found != committedBoxes.end()) {
+						takeMeeting(found->second);
+					}
+				}
+			}
+		}
+		forEachPending([&](const PendingShape& shape) { takeMeeting({shape.low, shape.high}); });
+	}
+
+	void SeenArea::appendSeenBoxes(const Vec2i64& low, const Vec2i64& high, std::vector<Box>& out) const {
+		forEachSeenBox(low, high, [&out](const Box& box) { out.push_back(box); });
+	}
+
+	bool SeenArea::anySeenBox(const Vec2i64& low, const Vec2i64& high) const {
+		bool any = false;
+		forEachSeenBox(low, high, [&any](const Box&) { any = true; });
+		return any;
 	}
 
 	double SeenArea::committedSquareMeters() const {

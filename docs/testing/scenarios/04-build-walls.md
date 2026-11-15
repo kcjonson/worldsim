@@ -88,6 +88,11 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 # -> all walls[N].state == "Built" and walls[N].progress == 1.0
 ```
 
+5. At the Quick Start creek, `walls?pts=6.5,8;9.5,8&host=0&close=0&built=0` and `spawn?def=BasicBox&at=7.9,8` both answer 400 and create nothing.
+6. With the wall tool held over the creek at (7.9, 8), the status reads "not on buildable ground" and a click adds no point.
+7. On the east bank, `walls?pts=9.9,5;9.9,11&host=0&close=0&built=0` and `spawn?def=BasicBox&at=9.9,8` both answer 200.
+8. `ground?pts=7.9,8` reads `valid` true and `buildableNow` false, and Bob still walks through the creek.
+
 ---
 
 ## Expected state

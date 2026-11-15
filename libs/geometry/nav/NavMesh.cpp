@@ -68,10 +68,6 @@ namespace geometry::nav {
 			return Int128::product(p.num, q.den) < Int128::product(q.num, p.den);
 		}
 
-		inline bool paramEqual(const EdgeParam& p, const EdgeParam& q) {
-			return Int128::product(p.num, q.den) == Int128::product(q.num, p.den);
-		}
-
 		// Where the line a + t dir meets the line through p and q (not parallel to it).
 		EdgeParam crossingParam(const Vec2i64& a, const Vec2i64& dir, const Vec2i64& p, const Vec2i64& q) {
 			std::int64_t num = smallCross(p - a, q - p);
@@ -547,8 +543,8 @@ namespace geometry::nav {
 			std::array<Vec2i64, 2> box{outline[first], outline[first]};
 			const std::size_t	   last = std::min(first + kRingEdgeRun, corners);
 			for (std::size_t corner = first + 1; corner <= last; ++corner) {
-				const Vec2i64& p = outline[corner % corners];
-				box				 = {Vec2i64{std::min(box[0].x, p.x), std::min(box[0].y, p.y)}, Vec2i64{std::max(box[1].x, p.x), std::max(box[1].y, p.y)}};
+				const Vec2i64& point = outline[corner % corners];
+				box					 = {Vec2i64{std::min(box[0].x, point.x), std::min(box[0].y, point.y)}, Vec2i64{std::max(box[1].x, point.x), std::max(box[1].y, point.y)}};
 			}
 			out.boxes.push_back(box);
 		}

@@ -294,6 +294,10 @@ namespace geometry::nav {
 		std::int64_t den = 1;
 	};
 
+	inline bool paramEqual(const EdgeParam& first, const EdgeParam& second) {
+		return Int128::product(first.num, second.den) == Int128::product(second.num, first.den);
+	}
+
 	// A boundary interval of a ground edge: exactly the stretch [fromAt, toAt] of it, and
 	// the segment the arrangement takes, from -> to. An end on the edge's own corner or on
 	// another outline's vertex is that point; an end where another ground edge crosses is

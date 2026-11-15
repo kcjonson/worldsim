@@ -5,7 +5,6 @@
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
 #include "nav/NavMeshRealRings.test.h"
-#include "nav/PatchableMeshHistory.test.h"
 #include "nav/PathQuery.h"
 #include "predicates/Predicates.h"
 #include "triangulation/ConstrainedDelaunay.h"
@@ -3561,9 +3560,12 @@ TEST(PatchableMesh, GroundBoundariesHandleEveryContact) {
 // Ground from the parity flood over the arranged boundary intervals is "inside any ground
 // outline" at every triangle's centroid, read exactly as validate reads it, over outlines
 // that touch, nest, share sides either way, and cross only at lattice points (so nothing
-// is rounded): axis-aligned rectangles and diamonds on a coarse grid.
+// is rounded): axis-aligned rectangles, diamonds, and staircases of 17 to 70 edges (so
+// groundBoundaries reads them through several runs of edge boxes, the last one short) on a
+// coarse grid.
 TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
-	for (std::uint32_t seed = 1; seed <= 60; ++seed) {
+	int severalRuns = 0; // rings of more than two runs of edge boxes, the last one short
+	for (std::uint32_t seed = 1; seed <= 120; ++seed) {
 		std::mt19937 rng(seed);
 		Model		 model;
 		const int	 count = static_cast<int>(between(rng, 2, 6));
@@ -3571,7 +3573,40 @@ TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
 			const std::int64_t x = 2 * between(rng, 0, 8);
 			const std::int64_t y = 2 * between(rng, 0, 8);
 			std::vector<Vec2i64> ring;
-			if (pick(rng, 3) == 0) {
+			const std::uint64_t	 kind = pick(rng, 4);
+			if (kind >= 2) {
+				// x-monotone: a floor and a ceiling step by column, apart at every column edge.
+				const std::int64_t	columns = between(rng, 5, 18);
+				std::vector<std::int64_t> floors;
+				std::vector<std::int64_t> ceilings;
+				for (std::int64_t column = 0; column < columns; ++column) {
+					const std::int64_t floor   = 2 * between(rng, -3, 3);
+					const std::int64_t ceiling = floor + 2 * between(rng, 2, 5);
+					floors.push_back(floor);
+					ceilings.push_back(ceiling);
+				}
+				for (std::int64_t column = 0; column + 1 < columns; ++column) {
+					const std::size_t here = static_cast<std::size_t>(column);
+					const std::int64_t clear = std::max(floors[here], floors[here + 1]) + 2;
+					ceilings[here]			 = std::max(ceilings[here], clear);
+					ceilings[here + 1]		 = std::max(ceilings[here + 1], clear);
+				}
+				for (std::int64_t column = 0; column < columns; ++column) {
+					const std::size_t here = static_cast<std::size_t>(column);
+					ring.push_back({x + 2 * column, y + floors[here]});
+					ring.push_back({x + 2 * column + 2, y + floors[here]});
+				}
+				for (std::int64_t column = columns - 1; column >= 0; --column) {
+					const std::size_t here = static_cast<std::size_t>(column);
+					ring.push_back({x + 2 * column + 2, y + ceilings[here]});
+					ring.push_back({x + 2 * column, y + ceilings[here]});
+				}
+				ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+				if (ring.front() == ring.back()) {
+					ring.pop_back();
+				}
+				severalRuns += ring.size() > 2 * kRingEdgeRun && ring.size() % kRingEdgeRun != 0 ? 1 : 0;
+			} else if (kind == 0) {
 				const std::int64_t r = 2 * between(rng, 1, 4);
 				ring				 = {{x, y - r}, {x + r, y}, {x, y + r}, {x - r, y}};
 			} else {
@@ -3614,6 +3649,7 @@ TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
 			ASSERT_EQ(flooded, any) << "seed " << seed << " sample (" << sample3.x << ", " << sample3.y << ") in 3x space" << describe(model);
 		}
 	}
+	EXPECT_GT(severalRuns, 40);
 }
 
 TEST(PatchableMesh, OverlappingSquaresInEveryOrder) {
@@ -3721,26 +3757,56 @@ TEST(PatchableMesh, SliverTipsMillimetresFromAnotherOutlineMatchFreshBuild) {
 	}
 }
 
-// Two generated histories whose removes leave hole triangles past the arrangement, where the
-// rounded ground read once took its reference point (WOR-850): every state validates, and the
-// last equals a fresh build.
-TEST(PatchableMesh, RemovesBesideARoundedReadMatchFreshBuild) {
-	for (const auto& history : std::array<std::pair<std::uint32_t, int>, 2>{{{566, 29}, {7503, 25}}}) {
-		const std::uint32_t seed  = history.first;
-		int					patch = 0;
-		geometry::nav::testdata::runHistory(seed, history.second, [&](std::uint64_t, const std::string& valid, const PatchableMesh& mesh, const std::vector<RingId>& live) {
-			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
-			if (++patch == history.second) {
-				Model model;
-				for (const RingId ring : live) {
-					model[ring] = mesh.ring(ring).polygon;
-				}
-				EXPECT_TRUE(matchesFresh(mesh, model)) << "seed " << seed;
-			}
-		});
+// Removes (and a move) whose hole reaches past the arrangement, shrunk from two generated
+// histories: a removed ring's edge on the mesh boundary is not arranged, so hole triangles
+// can lie past every arranged point, where the rounded ground read once took its reference
+// point (WOR-850). The rings go in as one patch, then the edit.
+TEST(PatchableMesh, RemoveBesideARoundedReadMatchesFreshBuild) {
+	struct Case {
+		std::vector<NavInputPolygon>						 base;
+		std::vector<NavInputPolygon>						 adds;
+		std::vector<std::size_t>							 removes; // into base
+		std::vector<std::pair<std::size_t, std::vector<Vec2i64>>> moves;   // into base
+	};
+	const std::vector<Case> cases = {
+		{{bounds({{14335, 2872}, {13871, 5205}, {12549, 7183}, {10571, 8505}, {8238, 8969}, {5905, 8505}, {3927, 7183}, {2605, 5205}, {2141, 2872},
+				  {2605, 539}, {3927, -1439}, {5905, -2761}, {8238, -3225}, {10571, -2761}, {12549, -1439}, {13871, 539}}),
+		  blocked(rect(4742, 8032, 6742, 10032), kWater, true), blocked(rect(5977, 9710, 6584, 10317)),
+		  blocked({{6714, 9920}, {6661, 10186}, {6510, 10412}, {6284, 10563}, {6018, 10616}, {5752, 10563}, {5526, 10412}, {5375, 10186},
+				   {5322, 9920}, {5375, 9654}, {5526, 9428}, {5752, 9277}, {6018, 9224}, {6284, 9277}, {6510, 9428}, {6661, 9654}}),
+		  bounds({{8575, 6470}, {17004, 2979}, {17698, 6470}, {17004, 9961}, {15026, 12921}, {12066, 14899}})},
+		 {},
+		 {4},
+		 {}},
+		{{bounds({{8252, -4934}, {4657, -7000}, {4527, -8824}, {9113, -10456}}),
+		  blocked({{-5246, -7250}, {-5265, -7153}, {-5320, -7070}, {-5403, -7015}, {-5500, -6996}, {-5597, -7015}, {-5680, -7070}, {-5735, -7153},
+				   {-5754, -7250}, {-5735, -7347}, {-5680, -7430}, {-5597, -7485}, {-5500, -7504}, {-5403, -7485}, {-5320, -7430}, {-5265, -7347}}),
+		  blocked(rect(-5751, -7429, -1751, -3429), kWater, true),
+		  blocked({{-3743, 6332}, {-3761, 6422}, {-3812, 6498}, {-3888, 6549}, {-3978, 6567}, {-4068, 6549}, {-4144, 6498}, {-4195, 6422},
+				   {-4213, 6332}, {-4195, 6242}, {-4144, 6166}, {-4068, 6115}, {-3978, 6097}, {-3888, 6115}, {-3812, 6166}, {-3761, 6242}})},
+		 {bounds({{209, -545}, {-271, 1866}, {-1636, 3910}, {-3680, 5275}, {-6091, 5755}, {-8502, 5275}, {-10546, 3910}, {-11911, 1866},
+				  {-12391, -545}, {-11911, -2956}, {-10546, -5000}, {-8502, -6365}, {-6091, -6845}, {-3680, -6365}, {-1636, -5000}, {-271, -2956}})},
+		 {3},
+		 {{0, {{7252, -4684}, {3657, -6750}, {3527, -8574}, {8113, -10206}}}}},
+	};
+	for (std::size_t c = 0; c < cases.size(); ++c) {
+		Harness	   h;
+		PatchEdits first;
+		first.adds				 = cases[c].base;
+		const PatchReport placed = h.apply(first);
+		ASSERT_TRUE(matchesFresh(h.mesh, h.model)) << "case " << c << " before the edit";
+		PatchEdits edit;
+		edit.adds = cases[c].adds;
+		for (const std::size_t ring : cases[c].removes) {
+			edit.removes.push_back(placed.added[ring]);
+		}
+		for (const auto& [ring, outline] : cases[c].moves) {
+			edit.moves.push_back({placed.added[ring], outline});
+		}
+		h.apply(edit);
+		EXPECT_TRUE(matchesFresh(h.mesh, h.model)) << "case " << c << describe(h.model);
 	}
 }
-
 namespace {
 
 	// How many of the outline's edges are each one constrained mesh edge.
@@ -3890,6 +3956,7 @@ TEST(PatchableMesh, LimitInsideUnionAddsNothing) {
 	Harness h;
 	EXPECT_FALSE(h.mesh.groundCovers(rect(0, 0, 1000, 1000))) << "no ground";
 	h.add(bounds(rect(0, 0, 10000, 10000)));
+	EXPECT_FALSE(h.mesh.groundCovers(rect(0, 0, kMaxGroundExtentMm, 1000))) << "wider than crossings order exactly";
 	h.add(bounds(limitPolygonOfCircumradius({12000, 5000}, 5500)));
 	h.add(blocked(rect(3000, 3000, 6000, 6000), kWater, true));
 	for (const std::vector<Vec2i64>& frame : {rect(20000, 0, 30000, 3000), rect(20000, 7000, 30000, 10000), rect(20000, 0, 23000, 10000), rect(27000, 0, 30000, 10000)}) {
