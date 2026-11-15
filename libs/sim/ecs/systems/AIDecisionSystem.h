@@ -209,9 +209,10 @@ class SharedWork {
 	[[nodiscard]] const std::vector<Station>& stations(World& world, const assets::RecipeRegistry& recipes);
 
 	struct Site {
-		uint64_t  goalId = 0;
-		EntityID  blueprint = kInvalidEntity;
-		glm::vec2 position{0.0F, 0.0F};
+		uint64_t			   goalId = 0;
+		EntityID			   blueprint = kInvalidEntity;
+		glm::vec2			   position{0.0F, 0.0F};
+		std::vector<glm::vec2> builderSpots; // the Build goal's (GoalTask::builderSpots); none on a teardown site
 	};
 	/// Available Build goals whose blueprint is UnderConstruction, in goal order.
 	[[nodiscard]] const std::vector<Site>& buildSites(World& world);
@@ -519,6 +520,10 @@ private:
 	/// Where a route from the deciding colonist to each target asked about in this decision ends (nullopt:
 	/// no known way), so no target is tested twice in one decision. Reused across colonists.
 	std::vector<std::pair<glm::vec2, std::optional<glm::vec2>>> m_routeEnds;
+
+	/// A foundation's free builder spots in the order the deciding colonist tries them (distance, slot).
+	/// Reused across colonists.
+	std::vector<std::pair<float, uint16_t>> m_builderSpotOrder;
 
 	/// The deciding colonist's remembered work sources, reused across colonists
 	WorkSources m_workSources;

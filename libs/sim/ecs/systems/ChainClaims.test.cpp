@@ -215,6 +215,32 @@ namespace ecs::test {
 			return {blueprint, goals.createGoal(std::move(umbrella))};
 		}
 
+		/// A blueprint UnderConstruction at `centre` and its Available Build umbrella with `spots`: a
+		/// foundation's builder spots, or none for a wall or an opening.
+		Site buildSite(glm::vec2 centre, std::vector<glm::vec2> spots) {
+			const EntityID blueprint = world->createEntity();
+			world->addComponent<Position>(blueprint, Position{centre});
+			StructureBlueprint bp;
+			bp.phase = StructureBlueprint::BuildPhase::UnderConstruction;
+			bp.workTotal = 1000.0F;
+			world->addComponent<StructureBlueprint>(blueprint, std::move(bp));
+
+			GoalTask umbrella;
+			umbrella.type = TaskType::Build;
+			umbrella.owner = GoalOwner::ConstructionGoalSystem;
+			umbrella.destinationEntity = blueprint;
+			umbrella.destinationPosition = centre;
+			umbrella.status = GoalStatus::Available;
+			umbrella.builderSpots = std::move(spots);
+			return {blueprint, GoalTaskRegistry::Get().createGoal(std::move(umbrella))};
+		}
+
+		/// Who holds builder spot `slot` on `blueprint` in the claim index, or kInvalidEntity.
+		EntityID spotHolder(EntityID blueprint, uint16_t slot) const {
+			const auto holder = ai->claimIndex().slotHolder({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(blueprint)}, slot, {});
+			return holder.has_value() ? holder->colonist : kInvalidEntity;
+		}
+
 		/// A crafting station's Craft root, its next job needing `count` of `item`.
 		uint64_t craftRoot(EntityID station, glm::vec2 position, const std::string& item, uint32_t count) {
 			assets::RecipeDef recipe;
@@ -2735,6 +2761,115 @@ namespace ecs::test {
 		EXPECT_EQ(reserved->reservedBy, crafter);
 	}
 
+	// Four colonists deciding in one update on a foundation with three builder spots: each of the first
+	// three takes the nearest spot nobody holds, works from it, and holds it as that numbered slot; the
+	// fourth finds every spot held, sees the Build option Reserved by a builder, and takes other work.
+	TEST_F(ChainClaimsTest, EachBuilderOfAFoundationHoldsItsOwnSpot) {
+		const std::vector<glm::vec2> spots{{-2.0F, 6.0F}, {0.0F, 6.0F}, {2.0F, 6.0F}};
+		const Site					 site = buildSite({0.0F, 6.0F}, spots);
+		const std::array<EntityID, 4> colonists{
+			createColonist({0.0F, 0.0F}), createColonist({0.5F, 0.0F}), createColonist({-0.5F, 0.0F}), createColonist({1.0F, 0.0F})
+		};
+
+		decideAll({colonists[0], colonists[1], colonists[2], colonists[3]});
+		std::array<EntityID, 3> holders{kInvalidEntity, kInvalidEntity, kInvalidEntity};
+		for (const EntityID colonist : {colonists[0], colonists[1], colonists[2]}) {
+			const Task& task = *getTask(colonist);
+			ASSERT_EQ(task.type, TaskType::Build) << "colonist " << colonist;
+			ASSERT_LT(task.builderSlot, spots.size());
+			EXPECT_EQ(holders[task.builderSlot], kInvalidEntity) << "two builders on spot " << task.builderSlot;
+			holders[task.builderSlot] = colonist;
+			EXPECT_EQ(task.targetPosition, spots[task.builderSlot]) << "no mesh: he works from the spot itself";
+			EXPECT_EQ(spotHolder(site.blueprint, task.builderSlot), colonist);
+		}
+		EXPECT_EQ(getTask(colonists[0])->builderSlot, 1U) << "the nearest spot to the first to decide";
+
+		EXPECT_NE(getTask(colonists[3])->type, TaskType::Build);
+		const EvaluatedOption* reserved = optionOf(colonists[3], TaskType::Build, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_NE(std::find(holders.begin(), holders.end(), reserved->reservedBy), holders.end());
+	}
+
+	// A builder deciding again keeps the spot it holds, even standing nearer another free one: the same
+	// task, the same claim, no hop.
+	TEST_F(ChainClaimsTest, ABuilderDecidingAgainKeepsItsSpot) {
+		const std::vector<glm::vec2> spots{{-2.0F, 6.0F}, {2.0F, 6.0F}};
+		const Site					 site = buildSite({0.0F, 6.0F}, spots);
+		const EntityID				 builder = createColonist({-1.0F, 0.0F});
+		decide(builder);
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+		ASSERT_EQ(getTask(builder)->builderSlot, 0U);
+		const uint64_t instance = getTask(builder)->instanceId;
+
+		world->getComponent<Position>(builder)->value = {2.0F, 5.0F};
+		decide(builder);
+		EXPECT_EQ(getTask(builder)->builderSlot, 0U);
+		EXPECT_EQ(getTask(builder)->instanceId, instance) << "kept as the same task";
+		EXPECT_EQ(getTask(builder)->targetPosition, spots[0]);
+		EXPECT_EQ(spotHolder(site.blueprint, 0), builder);
+		EXPECT_EQ(spotHolder(site.blueprint, 1), kInvalidEntity);
+	}
+
+	// A foundation with one spot: the builder holds it and a second colonist sees it Reserved. Starving,
+	// the builder goes to eat, and the second colonist, deciding later in the same update, takes the spot.
+	TEST_F(ChainClaimsTest, ANeedReplacingABuildFreesItsSpotForAnother) {
+		const glm::vec2 spot{0.0F, 6.0F};
+		const Site		site = buildSite({0.0F, 7.0F}, {spot});
+		const EntityID	builder = createColonist({0.0F, 0.0F});
+		const EntityID	waiting = createColonist({0.5F, 0.0F});
+		decideAll({builder, waiting});
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+		ASSERT_NE(getTask(waiting)->type, TaskType::Build);
+		const EvaluatedOption* reserved = optionOf(waiting, TaskType::Build, OptionStatus::Reserved);
+		ASSERT_NE(reserved, nullptr);
+		EXPECT_EQ(reserved->reservedBy, builder);
+
+		const glm::vec2 bushPos{-3.0F, 0.0F};
+		remember(builder, bushPos, "BerryBush", assets::CapabilityType::Harvestable);
+		world->getComponent<NeedsComponent>(builder)->get(NeedType::Hunger).value = 5.0F;
+		decideAll({builder, waiting});
+		ASSERT_EQ(getTask(builder)->type, TaskType::FulfillNeed);
+		ASSERT_EQ(getTask(waiting)->type, TaskType::Build);
+		EXPECT_EQ(getTask(waiting)->builderSlot, 0U);
+		EXPECT_EQ(spotHolder(site.blueprint, 0), waiting);
+	}
+
+	// A structure with no builder spots (a wall, an opening) caps no builders: every colonist builds it
+	// from the centre and nobody claims anything.
+	TEST_F(ChainClaimsTest, AWallsBuildTakesNoSpotAndNoClaim) {
+		const glm::vec2 centre{0.0F, 6.0F};
+		buildSite(centre, {});
+		const EntityID first = createColonist({0.0F, 0.0F});
+		const EntityID second = createColonist({0.5F, 0.0F});
+		decideAll({first, second});
+		for (const EntityID colonist : {first, second}) {
+			ASSERT_EQ(getTask(colonist)->type, TaskType::Build);
+			EXPECT_EQ(getTask(colonist)->builderSlot, kAnySlot);
+			EXPECT_EQ(getTask(colonist)->targetPosition, centre);
+			EXPECT_EQ(indexedClaimsOf(colonist), 0U);
+		}
+	}
+
+	// A builder's stored spot the goal no longer has (it left Available and came back with fewer spots)
+	// is never read: the next decision is a fresh pick of a spot the goal has now.
+	TEST_F(ChainClaimsTest, AStoredSpotTheGoalNoLongerHasIsAFreshPick) {
+		const std::vector<glm::vec2> spots{{-2.0F, 6.0F}, {0.0F, 6.0F}, {4.0F, 6.0F}};
+		const Site					 site = buildSite({0.0F, 6.0F}, spots);
+		const EntityID				 builder = createColonist({4.0F, 0.0F});
+		decide(builder);
+		ASSERT_EQ(getTask(builder)->builderSlot, 2U);
+		const uint64_t instance = getTask(builder)->instanceId;
+
+		GoalTaskRegistry::Get().getGoalMutable(site.umbrella)->builderSpots = {{-2.0F, 6.0F}};
+		decide(builder);
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+		EXPECT_EQ(getTask(builder)->builderSlot, 0U);
+		EXPECT_NE(getTask(builder)->instanceId, instance) << "a fresh pick, not the same task";
+		EXPECT_EQ(getTask(builder)->targetPosition, glm::vec2(-2.0F, 6.0F));
+		EXPECT_EQ(spotHolder(site.blueprint, 0), builder);
+		EXPECT_EQ(spotHolder(site.blueprint, 2), kInvalidEntity);
+	}
+
 	// A hungry colonist's food is held only by someone who will eat it. A bush a worker is cutting for a
 	// craft is still its food (no worse off than before claims); a bush another hungry colonist is
 	// walking to is Reserved, and it looks for other food.
@@ -3866,6 +4001,38 @@ namespace ecs::test {
 				world->destroyEntity(colonist);
 			}
 		}
+	}
+
+	// On a real mesh a builder works from the stand point the mesh gives for its spot. The nearest spot
+	// sits on a built wall, whose stand point is pushed off it further than half the way to the next
+	// spot, so it is passed over for that next spot in the same decision.
+	TEST_F(ClaimsOnRealRoutesTest, ABuilderStandsAtItsSpotsStandPointAndPassesOverOneTheMeshCannotServe) {
+		const auto wall = construction.commitSegment({1000, 0}, {3000, 0}, "Wood", "Standard", construction::kInvalidFoundation);
+		ASSERT_TRUE(wall.ok());
+		for (const auto id : wall.createdSegments) {
+			construction.setSegmentState(id, construction::FoundationState::Built);
+		}
+		const EntityID builder = createColonist({0.0F, -3.0F});
+		nav->finishPendingBuilds();
+		world->update(kTick);
+		nav->finishPendingBuilds();
+		ASSERT_TRUE(nav->hasMesh());
+
+		const std::vector<glm::vec2> spots{{2.0F, 0.0F}, {2.0F, 0.7F}, {-4.0F, 0.0F}};
+		const float					 radius = world->getComponent<AgentRadius>(builder)->radiusMeters;
+		const auto					 onTheWall = nav->nearestPathablePoint(spots[0], radius);
+		ASSERT_TRUE(onTheWall.has_value());
+		ASSERT_GE(glm::distance(*onTheWall, spots[0]), 0.35F) << "the wall no longer pushes the stand point off the first spot";
+		const auto standPoint = nav->nearestPathablePoint(spots[1], radius);
+		ASSERT_TRUE(standPoint.has_value());
+
+		const Site site = buildSite({1.0F, 2.0F}, spots);
+		decide(builder);
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+		EXPECT_EQ(getTask(builder)->builderSlot, 1U);
+		EXPECT_EQ(getTask(builder)->targetPosition, *standPoint);
+		EXPECT_EQ(spotHolder(site.blueprint, 1), builder);
+		EXPECT_EQ(spotHolder(site.blueprint, 0), kInvalidEntity);
 	}
 
 } // namespace ecs::test

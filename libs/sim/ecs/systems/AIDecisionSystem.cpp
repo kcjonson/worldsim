@@ -1420,11 +1420,26 @@ namespace ecs {
 			});
 		}
 
+		/// How far a builder spot's stand point may sit from the spot: half the way to the nearest other spot,
+		/// so two spots never snap to one stand point. A lone spot has no other and no limit.
+		[[nodiscard]] float builderSpotSlack(std::span<const glm::vec2> spots, std::size_t spot) {
+			float nearest = std::numeric_limits<float>::max();
+			for (std::size_t other = 0; other < spots.size(); ++other) {
+				if (other != spot) {
+					nearest = std::min(nearest, glm::distance(spots[spot], spots[other]));
+				}
+			}
+			return spots.size() < 2 ? nearest : 0.5F * nearest;
+		}
+
 		/// Evaluate build options by querying Build goals from GoalTaskRegistry.
 		/// Goal-driven: ConstructionSystem emits a Build goal once a blueprint's materials are
 		/// staged. We surface it only while the blueprint is actually UnderConstruction (the
 		/// phase ActionSystem's Build action requires), targeting the goal's work slot.
-		void evaluateBuildOptions(std::span<const SharedWork::Site> sites, const glm::vec2& position, const WorkSkills& skills, DecisionTrace& trace) {
+		void evaluateBuildOptions(
+			std::span<const SharedWork::Site> sites, const glm::vec2& position, const WorkSkills& skills, const ClaimIndex& claims,
+			ClaimExclusion self, DecisionTrace& trace
+		) {
 			for (const SharedWork::Site& site : sites) {
 				EvaluatedOption buildOption;
 				buildOption.taskType = TaskType::Build;
@@ -1441,6 +1456,25 @@ namespace ecs {
 				// (the abandonment bug: provision 18/18 wood, then wander off and never build).
 				buildOption.servesActiveWorkOrder = true;
 				buildOption.status = OptionStatus::Available;
+				// A foundation takes one builder a spot. With every spot held by others it is taken, as a station
+				// is; which free spot this colonist works from is settled at selection, where the mesh is asked.
+				if (!site.builderSpots.empty()) {
+					std::optional<ClaimHolder> firstHolder;
+					bool					   anyFree = false;
+					for (std::size_t spot = 0; spot < site.builderSpots.size() && !anyFree; ++spot) {
+						const auto holder = claims.slotHolder(
+							{.kind = TargetKind::Entity, .key = static_cast<uint64_t>(site.blueprint)}, static_cast<uint16_t>(spot), self
+						);
+						anyFree = !holder.has_value();
+						if (holder.has_value() && !firstHolder.has_value()) {
+							firstHolder = holder;
+						}
+					}
+					if (!anyFree) {
+						buildOption.status = OptionStatus::Reserved;
+						buildOption.reservedBy = firstHolder->colonist;
+					}
+				}
 
 				applySkill(buildOption, skills.construction);
 				buildOption.reason = "Building structure";
@@ -1681,7 +1715,9 @@ namespace ecs {
 			if (blueprint == nullptr || blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
 				return; // not ready to build (cleared/awaiting materials/complete)
 			}
-			buildList.push_back({.goalId = goal.id, .blueprint = goal.destinationEntity, .position = goal.destinationPosition});
+			buildList.push_back(
+				{.goalId = goal.id, .blueprint = goal.destinationEntity, .position = goal.destinationPosition, .builderSpots = goal.builderSpots}
+			);
 		});
 		return buildList;
 	}
@@ -2075,7 +2111,10 @@ namespace ecs {
 						const bool failed = task.navState == NavState::CantFindWayTo;
 						// Needs met in place share the colonist's spot as their target.
 						const bool sameNeed = task.type != TaskType::FulfillNeed || selected->needType == task.needToFulfill;
-						isSameTask = sameType && sameTarget && samePlaceTarget && sameNeed && !failed;
+						// Another builder spot is another claim, however near its stand point; a stored spot the goal
+						// no longer has is never chosen, so it reads as a fresh pick.
+						const bool sameBuilderSpot = selected->taskType != TaskType::Build || selected->builderSlot == task.builderSlot;
+						isSameTask = sameType && sameTarget && samePlaceTarget && sameNeed && sameBuilderSpot && !failed;
 					}
 				}
 
@@ -3003,7 +3042,7 @@ namespace ecs {
 		evaluateHarvestOptions(supply, pickupRoom, workSkills, m_offeredPiles, priority, candidates, trace);
 
 		// Build staged construction blueprints (goal-driven)
-		evaluateBuildOptions(m_sharedWork.buildSites(*world), position.value, workSkills, trace);
+		evaluateBuildOptions(m_sharedWork.buildSites(*world), position.value, workSkills, m_claims, self, trace);
 
 		// Deconstruct demolishing structures (goal-driven, same tier as Build)
 		evaluateDeconstructOptions(m_sharedWork.teardownSites(*world), position.value, workSkills, trace);
@@ -3114,6 +3153,45 @@ namespace ecs {
 		// -> the test passes, so startup / outdoor beelining is unaffected. A cut's or a pile's source answers
 		// each test once a decision, whichever group asks.
 		const auto canTake = [&](std::uint64_t sourceKey, const glm::vec2& target) { return !hasVerdict(sourceKey, target) && canGetTo(target); };
+		// A foundation's Build is for one of its builder spots: the one the colonist already holds there first,
+		// so a builder never hops, then the nearest free one. A spot serves when the mesh gives a stand point
+		// for it no further off than half the way to the nearest other spot, so two spots never share one,
+		// and he can get to that point; one that doesn't is passed over for the next. Nearest first, stopping
+		// at the first that serves.
+		const auto chooseBuilderSpot = [&](EvaluatedOption& option, std::span<const glm::vec2> spots) {
+			const ClaimTarget blueprint{.kind = TargetKind::Entity, .key = option.buildBlueprintEntityId};
+			const bool		  holdsSpot = currentTask.type == TaskType::Build && currentTask.buildBlueprintEntityId == option.buildBlueprintEntityId &&
+								   currentTask.builderSlot < spots.size();
+			m_builderSpotOrder.clear();
+			for (std::size_t spot = 0; spot < spots.size(); ++spot) {
+				const auto slot = static_cast<uint16_t>(spot);
+				if (m_claims.slotHolder(blueprint, slot, self).has_value()) {
+					continue;
+				}
+				const float distance = holdsSpot && slot == currentTask.builderSlot ? -1.0F : glm::distance(position.value, spots[spot]);
+				m_builderSpotOrder.emplace_back(distance, slot);
+			}
+			std::sort(m_builderSpotOrder.begin(), m_builderSpotOrder.end());
+			for (const auto& [distance, slot] : m_builderSpotOrder) {
+				const glm::vec2 spot = spots[slot];
+				glm::vec2		stand = spot;
+				if (haveMesh) {
+					const std::optional<glm::vec2> snapped = m_navSystem->nearestPathablePoint(spot, agentRadius);
+					if (!snapped.has_value() || glm::distance(*snapped, spot) >= builderSpotSlack(spots, slot)) {
+						continue;
+					}
+					stand = *snapped;
+					if (stand != position.value && !canTake(option.sourceKey, stand)) {
+						continue;
+					}
+				}
+				option.targetPosition = stand;
+				option.targetReachable = true;
+				option.builderSlot = slot;
+				return OptionStatus::Selected;
+			}
+			return OptionStatus::NoSource;
+		};
 		std::size_t at = 0;
 		while (at < trace.options.size()) {
 			EvaluatedOption& option = trace.options[at];
@@ -3136,12 +3214,21 @@ namespace ecs {
 					})) {
 					return OptionStatus::Regrowing;
 				}
+				if (option.taskType == TaskType::Build) {
+					const auto& sites = m_sharedWork.buildSites(*world);
+					const auto	site = std::find_if(sites.begin(), sites.end(), [&](const SharedWork::Site& candidate) {
+						 return static_cast<uint64_t>(candidate.blueprint) == option.buildBlueprintEntityId;
+					 });
+					if (site != sites.end() && !site->builderSpots.empty()) {
+						return chooseBuilderSpot(option, site->builderSpots);
+					}
+				}
 				// Snap only the task types whose action looks its target up by entity/footprint and so
 				// is satisfied by arriving ADJACENT: Harvest (incl. footprint clearing), Build, and
 				// Deconstruct. Their stored target is a CENTER that can sit inside a tree's collider or a
 				// wall, which no route ends in. A harvest stands just outside the target's collider on
 				// the colonist's side, read from the placement data so it is the same spot on camera and
-				// off; Build and Deconstruct take the nearest walkable point. Any other target (a pile, a
+				// off; Build (on a structure with no builder spots) and Deconstruct take the nearest walkable point. Any other target (a pile, a
 				// need source, a box, a station) keeps its own position on the option and the task, and is
 				// moved to a stand point beside the placed obstacle it lies in when its route is asked
 				// (requestRoute); with no stand point there, it is no source.
@@ -3278,9 +3365,10 @@ namespace ecs {
 
 		// Copy build-specific fields for Build/Deconstruct tasks. ActionSystem reads the blueprint
 		// entity from the task and advances (Build) or unwinds (Deconstruct) its workDone;
-		// targetPosition is the work slot.
+		// targetPosition is the work slot: a foundation's builder spot's stand point, else the centre's.
 		if (selected->taskType == TaskType::Build || selected->taskType == TaskType::Deconstruct) {
 			task.buildBlueprintEntityId = selected->buildBlueprintEntityId;
+			task.builderSlot = selected->builderSlot;
 		}
 
 		// Copy hauling-specific fields for Haul tasks
