@@ -303,6 +303,11 @@ struct Task {
 	/// advanced. The target position (build work slot) is carried in targetPosition.
 	uint64_t buildBlueprintEntityId = 0;
 
+	/// For a Build task on a foundation: the index of the builder spot it holds (GoalTask::builderSpots),
+	/// claimed as that numbered slot on the blueprint while the task lives. kAnySlot for a structure with
+	/// no spots (a wall, an opening) and for every other task.
+	uint16_t builderSlot = kAnySlot;
+
 	/// For PlacePackaged tasks: packaged entity to carry and placement target
 	uint64_t  placePackagedEntityId = 0;		   // Entity ID of the packaged item to carry
 	glm::vec2 placeSourcePosition{0.0F, 0.0F};	   // Where the packaged item currently is
@@ -401,6 +406,7 @@ struct Task {
 		haulFromInventory = false;
 		deliveryChosen = false;
 		buildBlueprintEntityId = 0;
+		builderSlot = kAnySlot;
 		placePackagedEntityId = 0;
 		placeSourcePosition = glm::vec2{0.0F, 0.0F};
 		placeTargetPosition = glm::vec2{0.0F, 0.0F};

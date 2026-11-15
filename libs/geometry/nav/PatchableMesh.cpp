@@ -1223,6 +1223,10 @@ namespace geometry::nav {
 		std::vector<std::pair<RingId, std::int64_t>> deviation; // ascending by ring, this pass
 		std::vector<std::pair<RingId, std::int64_t>> strays;
 		std::vector<std::pair<EdgeSource, std::int32_t>> arrangedPieces; // ring edge arranged whole, arrangement edge
+		std::vector<std::uint8_t>						 oddBoundsPieces; // per arrangement edge: an odd count of bounds edges on it
+		std::vector<std::int32_t>						 crossEdgeIds;
+		std::vector<EdgeSource>							 crossEdges;
+		std::vector<std::tuple<std::uint32_t, std::uint32_t, std::uint8_t>> crossPieces;
 		std::vector<std::pair<std::uint32_t, std::uint32_t>> meshPieces;
 		std::vector<std::uint32_t>						 chainEnds;
 
@@ -1315,6 +1319,7 @@ namespace geometry::nav {
 		PatchableMesh& m;
 		PatchScratch&  work;
 		PatchReport	   out;
+		bool		   coverConflict = false; // the last assignCovers met a face two floods covered differently
 
 		std::vector<std::pair<RingId, Change>>& changes		= work.changes;
 		std::vector<EdgeSource>&				queue		= work.queue;
@@ -2345,7 +2350,9 @@ namespace geometry::nav {
 	// rings on it. A sink (its sample off the old mesh and outside every new bounds ring)
 	// takes a cover but passes none on, since rings over no ground have no edges here;
 	// one whose cover is ground (a sliver its sample misread beside a bent edge) passes
-	// it on, every ring edge around ground being arranged.
+	// it on, every ring edge around ground being arranged. A sink no flood reaches is
+	// seeded itself when the rounded ground count reads its sample as ground. Two floods
+	// that cover a face differently are counted in PatchReport::coverConflicts.
 	void PatchableMesh::Patch::assignCovers() {
 		const std::int32_t cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
 		bool conflict = false;
@@ -2536,17 +2543,135 @@ namespace geometry::nav {
 			std::sort(cover.begin(), cover.end());
 			return true;
 		};
-		// The cover of triangle t's centroid read from each near ring's outline as the
-		// patch leaves it rounded, even-odd along a ray as the flood toggles. An edge the
-		// centroid lies clear of the band of reads as given. Otherwise a blocked edge, or a
-		// bounds edge's boundary intervals, read from their pieces: this pass's arrangement's
-		// for an edge it arranges (all it crosses is arranged with it), the mesh's for one the
-		// patch leaves alone when they run end to end (one hanging off ground near re-derived
-		// ground is in s already: new ground pulls a hanging edge that meets it, and a
-		// re-derived bounds segment every blocked edge within kOffGroundReachMm). A bounds
-		// edge's dissolved stretches are never rounded and read as given, joined to the
-		// rounded ends of its intervals by the short step each was rounded by. False when
-		// some edge can be read none of these ways.
+		// Ground at a triangle's centroid as the boundary intervals leave it rounded: ground at a
+		// point past the arrangement, every new outline and every hole triangle, toggled at each
+		// piece of an interval the segment between them crosses. That point is in no hole
+		// triangle and no new outline, so it is ground exactly when a triangle the patch keeps
+		// holds it. The intervals are the union's boundary, each kept once, so their parity is
+		// ground; reading each outline as given where its edge dissolved disagrees with them
+		// where rounding moved a crossing. The pieces are this pass's arrangement edges and the
+		// mesh's pieces of every interval it does not arrange (none of whose triangles is in
+		// the hole). Empty only when the centroid lies on a piece of the mesh's.
+		enum class Crossing { Counted, Grazed, OnPiece };
+		std::vector<std::uint8_t>& oddBoundsPieces = work.oddBoundsPieces; // per arrangement edge
+		bool					   piecesWeighed   = false;
+		bool					   crossedOdd	   = false;
+		auto groundCrossings = [&](const Vec2i64& from3, const Vec2i64& to3) -> Crossing {
+			if (!piecesWeighed) {
+				oddBoundsPieces.assign(arrangement.edges.size(), 0);
+				for (std::size_t edge = 0; edge < arrangement.edges.size(); ++edge) {
+					for (const EdgeSource& source : sourcesOf(static_cast<std::int32_t>(edge))) {
+						oddBoundsPieces[edge] ^= isBounds(source.ring) ? 1 : 0;
+					}
+				}
+				piecesWeighed = true;
+			}
+			crossedOdd	 = false;
+			auto crosses = [&](const Vec2i64& start3, const Vec2i64& end3) {
+				const Orientation startSide = orientation(from3, to3, start3);
+				const Orientation endSide	= orientation(from3, to3, end3);
+				const Orientation fromSide	= orientation(start3, end3, from3);
+				const Orientation toSide	= orientation(start3, end3, to3);
+				if (startSide != Orientation::Collinear && endSide != Orientation::Collinear && fromSide != Orientation::Collinear &&
+					toSide != Orientation::Collinear) {
+					crossedOdd = crossedOdd != (startSide != endSide && fromSide != toSide);
+					return Crossing::Counted;
+				}
+				if (onClosedSegment(from3, start3, end3)) {
+					return Crossing::OnPiece;
+				}
+				return onClosedSegment(to3, start3, end3) || onClosedSegment(start3, from3, to3) || onClosedSegment(end3, from3, to3) ? Crossing::Grazed
+																																   : Crossing::Counted;
+			};
+			for (std::size_t edge = 0; edge < arrangement.edges.size(); ++edge) {
+				if (oddBoundsPieces[edge] == 0) {
+					continue;
+				}
+				const Crossing crossing = crosses(arrangement.vertices[arrangement.edges[edge].from] * 3, arrangement.vertices[arrangement.edges[edge].to] * 3);
+				if (crossing != Crossing::Counted) {
+					return crossing;
+				}
+			}
+			// An interval's pieces stray from its edge's line, which the query matches by.
+			const Vec2i64 reach{kOffGroundReachMm, kOffGroundReachMm};
+			const Vec2i64 low{floorDiv(std::min(from3.x, to3.x), 3), floorDiv(std::min(from3.y, to3.y), 3)};
+			const Vec2i64 high{floorDiv(std::max(from3.x, to3.x), 3) + 1, floorDiv(std::max(from3.y, to3.y), 3) + 1};
+			m.boundaryEdgesInBox(low - reach, high + reach, work.crossEdgeIds, work.crossEdges);
+			auto& meshPieces = work.crossPieces; // vertex pair, a triangle on it in the hole
+			for (const EdgeSource& source : work.crossEdges) {
+				if (changed(source.ring) || inS(source)) {
+					continue;
+				}
+				meshPieces.clear();
+				for (const std::int32_t halfEdge : m.piecesOf(source)) {
+					const NavTriangle& tri	  = m.tris[static_cast<std::size_t>(halfEdge / 3)];
+					const auto [first, second] = std::minmax(tri.v[static_cast<std::size_t>(halfEdge % 3)], tri.v[static_cast<std::size_t>(next3(halfEdge % 3))]);
+					meshPieces.push_back({first, second, work.inHole[static_cast<std::size_t>(halfEdge / 3)]});
+				}
+				std::sort(meshPieces.begin(), meshPieces.end());
+				for (std::size_t i = 0; i < meshPieces.size();) {
+					const std::uint32_t first	 = std::get<0>(meshPieces[i]);
+					const std::uint32_t second	 = std::get<1>(meshPieces[i]);
+					bool				arranged = false;
+					for (; i < meshPieces.size() && std::get<0>(meshPieces[i]) == first && std::get<1>(meshPieces[i]) == second; ++i) {
+						arranged = arranged || std::get<2>(meshPieces[i]) != 0;
+					}
+					if (arranged) {
+						continue;
+					}
+					const Crossing crossing = crosses(m.verts[first] * 3, m.verts[second] * 3);
+					if (crossing != Crossing::Counted) {
+						return crossing;
+					}
+				}
+			}
+			return Crossing::Counted;
+		};
+		// In 3x space, past the arrangement, the new outlines and the hole, and a third of a
+		// millimetre off the lattice, so no vertical piece runs through the far line.
+		std::optional<std::int64_t> referenceX;
+		auto						groundAt = [&](std::int32_t triangle) -> std::optional<bool> {
+			  if (!referenceX) {
+				  std::int64_t farthest = arrangement.vertices.front().x;
+				  for (const Vec2i64& vertex : arrangement.vertices) {
+					  farthest = std::max(farthest, vertex.x);
+				  }
+				  for (const auto& [id, change] : changes) {
+					  if (change.hasNew) {
+						  farthest = std::max(farthest, change.hi.x);
+					  }
+				  }
+				  for (const std::int32_t holeTriangle : hole) {
+					  for (const std::uint32_t vertex : m.tris[static_cast<std::size_t>(holeTriangle)].v) {
+						  farthest = std::max(farthest, m.verts[vertex].x);
+					  }
+				  }
+				  referenceX = 3 * (farthest + 1) + 1;
+			  }
+			  const Vec2i64 sample3 = centroid3(triangle);
+			  // A segment that passes through a piece's end, ends on a piece, or runs along one is
+			  // tried again a third of a millimetre further along the far line. Each piece does
+			  // that for at most a few points of the line, so the walk ends.
+			  for (std::int64_t step = 1;; ++step) {
+				  const Vec2i64 reference3{*referenceX, sample3.y + (step % 2 == 0 ? step / 2 : -(step + 1) / 2)};
+				  const Crossing crossing = groundCrossings(sample3, reference3);
+				  if (crossing == Crossing::OnPiece) {
+					  return std::nullopt;
+				  }
+				  if (crossing == Crossing::Counted) {
+					  return (m.locateSample(reference3) >= 0) != crossedOdd;
+				  }
+			  }
+		};
+		// The cover of triangle t's centroid as the patch leaves the rings rounded: ground by
+		// groundAt, and each near blocked ring even-odd along a ray as the flood toggles. An
+		// edge the centroid lies clear of the band of reads as given. Otherwise its pieces:
+		// this pass's arrangement's for an edge it arranges (all it crosses is arranged with
+		// it), the mesh's for one the patch leaves alone when they run end to end (one
+		// hanging off ground near re-derived ground is in s already: new ground pulls a
+		// hanging edge that meets it, and a re-derived bounds segment every blocked edge
+		// within kOffGroundReachMm). False when ground does not read or some edge can be read
+		// none of these ways.
 		std::vector<std::pair<EdgeSource, std::int32_t>>& arrangedPieces = work.arrangedPieces;
 		bool											  piecesListed	 = false;
 		auto roundedCover = [&](std::int32_t t, std::vector<RingId>& cover) {
@@ -2563,6 +2688,10 @@ namespace geometry::nav {
 				std::sort(arrangedPieces.begin(), arrangedPieces.end());
 				piecesListed = true;
 			}
+			const std::optional<bool> ground = groundAt(t);
+			if (!ground) {
+				return false;
+			}
 			const Vec2i64			   sample3 = centroid3(t);
 			const std::vector<RingId>& near	   = ringsNear(sample3);
 			bool					   inside  = false;
@@ -2571,61 +2700,13 @@ namespace geometry::nav {
 				inside							  = inside != crosses.value_or(false);
 				return crosses.has_value();
 			};
-			// The point a + t dir in 3x space, each coordinate times t.den.
-			auto scaled3 = [](const Vec2i64& a, const Vec2i64& dir, const EdgeParam& t, bool y) {
-				const Int128 v = Int128::product(y ? a.y : a.x, t.den) + Int128::product(t.num, y ? dir.y : dir.x);
-				return v + v + v;
-			};
-			// The exact stretch [t0, t1] of the edge a + t dir.
-			auto passStretch = [&](const Vec2i64& a, const Vec2i64& dir, const EdgeParam& t0, const EdgeParam& t1) {
-				if (!(Int128::product(t0.num, t1.den) < Int128::product(t1.num, t0.den))) {
-					return true;
-				}
-				const bool above0 = Int128::product(sample3.y, t0.den) < scaled3(a, dir, t0, true);
-				const bool above1 = Int128::product(sample3.y, t1.den) < scaled3(a, dir, t1, true);
-				const int  side	  = cross(dir, sample3 - a * 3).sign();
-				if (above0 == above1) {
-					if (side == 0 && dir.y == 0) {
-						// The stretch runs along the ray's line: refused if the sample is on it.
-						const Int128 sx0 = Int128::product(sample3.x, t0.den);
-						const Int128 sx1 = Int128::product(sample3.x, t1.den);
-						const Int128 x0	 = scaled3(a, dir, t0, false);
-						const Int128 x1	 = scaled3(a, dir, t1, false);
-						return (sx0 < x0) == (sx1 < x1) && sx0 != x0 && sx1 != x1;
-					}
-					return true;
-				}
-				if (side == 0) {
-					return false;
-				}
-				inside = inside != (dir.y > 0 ? side > 0 : side < 0);
-				return true;
-			};
-			// The step from the exact point at t to where it was rounded, p, read as a box:
-			// refused when the sample lies in the box, or the ray's line passes through it
-			// with the sample beside it.
-			auto passStep = [&](const Vec2i64& a, const Vec2i64& dir, const EdgeParam& t, const Vec2i64& p) {
-				const Int128  sy = Int128::product(sample3.y, t.den);
-				const Int128  ey = scaled3(a, dir, t, true);
-				const Int128  sx = Int128::product(sample3.x, t.den);
-				const Int128  ex = scaled3(a, dir, t, false);
-				const Vec2i64 p3 = p * 3;
-				const bool	  rightOfBoth = sx < ex && sample3.x < p3.x;
-				const bool	  leftOfBoth  = ex < sx && p3.x < sample3.x;
-				const bool	  yIn		  = !(sy < ey && sample3.y < p3.y) && !(ey < sy && p3.y < sample3.y);
-				if (yIn && !rightOfBoth && !leftOfBoth) {
-					return false;
-				}
-				if ((sy < ey) != (sample3.y < p3.y) && rightOfBoth) {
-					inside = !inside;
-				}
-				return true;
-			};
 			std::vector<std::pair<std::uint32_t, std::uint32_t>>& meshPieces = work.meshPieces;
 			std::vector<std::uint32_t>&							   chainEnds  = work.chainEnds;
 			cover.clear();
-			bool ground = false;
 			for (RingId r : near) {
+				if (isBounds(r)) {
+					continue;
+				}
 				const std::vector<Vec2i64>& ring3 = newSample(r).ring3;
 				const std::int64_t			reach = 3 * kSeedClearance * strayOf(r);
 				inside							  = false;
@@ -2641,37 +2722,8 @@ namespace geometry::nav {
 					}
 					const EdgeSource			x{r, e};
 					const std::vector<Vec2i64>& outline = newPolygon(r).ring;
-					const Vec2i64				a		= edgeStart(outline, e);
-					const Vec2i64				dir		= edgeEnd(outline, e) - a;
 					std::vector<Vec2i64>&		ends	= work.runEnds;
-					ends.clear();
-					if (isBounds(r)) {
-						const std::pair<std::uint32_t, std::uint32_t> run = intervalsAfter(x);
-						EdgeParam									  prev{0, 1};
-						for (std::uint32_t i = run.first; i < run.second; ++i) {
-							const GroundInterval& iv = work.intervalPool[i];
-							if (!passStretch(a, dir, prev, iv.fromAt) || !passStep(a, dir, iv.fromAt, iv.from) || !passStep(a, dir, iv.toAt, iv.to)) {
-								return false;
-							}
-							prev = iv.toAt;
-							for (const Vec2i64& end : {iv.from, iv.to}) {
-								auto at = std::find(ends.begin(), ends.end(), end);
-								if (at == ends.end()) {
-									ends.push_back(end);
-								} else {
-									ends.erase(at);
-								}
-							}
-						}
-						if (!passStretch(a, dir, prev, EdgeParam{1, 1})) {
-							return false;
-						}
-						if (run.first == run.second) {
-							continue;
-						}
-					} else {
-						ends.assign({a, a + dir});
-					}
+					ends.assign({edgeStart(outline, e), edgeEnd(outline, e)});
 					auto it = std::lower_bound(arrangedPieces.begin(), arrangedPieces.end(), x, [](const auto& p, const EdgeSource& key) { return p.first < key; });
 					if (it != arrangedPieces.end() && it->first == x) {
 						for (; it != arrangedPieces.end() && it->first == x; ++it) {
@@ -2691,22 +2743,53 @@ namespace geometry::nav {
 						}
 					}
 				}
-				if (isBounds(r)) {
-					ground = ground || inside;
-				} else if (inside) {
+				if (inside) {
 					cover.push_back(r);
 				}
 			}
-			if (ground) {
+			if (*ground) {
 				cover.push_back(kGroundToken);
 			}
 			std::sort(cover.begin(), cover.end());
 			return true;
 		};
 
+		// Floods from the largest triangle of bySize (area, -triangle) whose cover reads.
+		std::vector<std::pair<Int128, std::int32_t>>& bySize = work.bySize;
+		bool measured = false;
+		auto seedLargest = [&]() {
+			std::make_heap(bySize.begin(), bySize.end());
+			std::vector<RingId>& start = work.start;
+			std::int32_t		 from  = -1;
+			for (auto end = bySize.end(); end != bySize.begin() && from < 0; --end) {
+				std::pop_heap(bySize.begin(), end);
+				const std::int32_t triangle = -(end - 1)->second;
+				if (!measured) {
+					measureDeviation();
+					measured = true;
+				}
+				if (exactCover(triangle, start, false)) {
+					from = triangle;
+				}
+			}
+			// Every triangle lies in some ring's band: read the rings as rounded instead,
+			// largest triangle first (popped whole, so ascending).
+			for (auto candidate = bySize.rbegin(); candidate != bySize.rend() && from < 0; ++candidate) {
+				if (roundedCover(-candidate->second, start)) {
+					from = -candidate->second;
+				}
+			}
+			if (from < 0) {
+				assert(false && "PatchableMesh: no sample of a group reads its cover exactly");
+				out.unreadCovers += 1;
+				++m.unreadCovers;
+				from = -bySize.back().second;
+				exactCover(from, start, true);
+			}
+			flood(faceOf[static_cast<std::size_t>(from)], start);
+		};
 		std::vector<std::uint8_t>& inGroup = work.inGroup;
 		inGroup.assign(work.faceCount, 0);
-		bool measured = false;
 		for (std::int32_t seed : order) {
 			if (faces[static_cast<std::size_t>(seed)].assigned || inGroup[static_cast<std::size_t>(seed)] != 0) {
 				continue;
@@ -2715,7 +2798,6 @@ namespace geometry::nav {
 			std::vector<std::int32_t>& group = work.group;
 			group.assign(1, seed);
 			inGroup[static_cast<std::size_t>(seed)] = 1;
-			std::vector<std::pair<Int128, std::int32_t>>& bySize = work.bySize;
 			bySize.clear();
 			for (std::size_t i = 0; i < group.size(); ++i) {
 				for (std::int32_t t : trisOf(faces[static_cast<std::size_t>(group[i])])) {
@@ -2736,36 +2818,28 @@ namespace geometry::nav {
 					}
 				}
 			}
-			std::make_heap(bySize.begin(), bySize.end());
-			std::vector<RingId>& start = work.start;
-			std::int32_t		 from  = -1;
-			for (auto end = bySize.end(); end != bySize.begin() && from < 0; --end) {
-				std::pop_heap(bySize.begin(), end);
-				const std::int32_t t = -(end - 1)->second;
-				if (!measured) {
-					measureDeviation();
-					measured = true;
-				}
-				if (exactCover(t, start, false)) {
-					from = t;
-				}
-			}
-			// Every triangle lies in some ring's band: read the rings as rounded instead,
-			// largest triangle first (popped whole, so ascending).
-			for (auto it = bySize.rbegin(); it != bySize.rend() && from < 0; ++it) {
-				if (roundedCover(-it->second, start)) {
-					from = -it->second;
-				}
-			}
-			if (from < 0) {
-				assert(false && "PatchableMesh: no sample of a group reads its cover exactly");
-				out.unreadCovers += 1;
-				++m.unreadCovers;
-				from = -bySize.back().second;
-				exactCover(from, start, true);
-			}
-			flood(faceOf[static_cast<std::size_t>(from)], start);
+			seedLargest();
 		}
+		// A sink no flood reached lies among sinks that are not ground, which pass nothing on.
+		// Rounding can still bend ground into one whose sample reads off every outline as
+		// given, so a sink whose sample groundAt reads as ground reads its own cover and passes
+		// it on. One it reads as off ground, or cannot read, stays uncovered.
+		for (std::size_t faceId = 0; faceId < work.faceCount; ++faceId) {
+			const LocalFace& face = faces[faceId];
+			if (face.kind != FaceKind::Sink || face.assigned) {
+				continue;
+			}
+			if (groundAt(face.sampleTri) != std::optional<bool>(true)) {
+				continue;
+			}
+			bySize.clear();
+			for (const std::int32_t triangle : trisOf(face)) {
+				const CdtTriangle& corners = cdt.triangles[static_cast<std::size_t>(triangle)];
+				bySize.push_back({cross(cdt.vertices[corners.v[1]] - cdt.vertices[corners.v[0]], cdt.vertices[corners.v[2]] - cdt.vertices[corners.v[0]]), -triangle});
+			}
+			seedLargest();
+		}
+		coverConflict = conflict;
 		assert(!conflict && "PatchableMesh: ring parity disagrees around a face");
 	}
 
@@ -2817,6 +2891,10 @@ namespace geometry::nav {
 		walkNewOutlines();
 		closeS();
 		while (!deriveOnce()) {
+		}
+		if (coverConflict) {
+			++out.coverConflicts;
+			++m.coverConflicts;
 		}
 		splice();
 		return std::move(out);
@@ -3583,6 +3661,10 @@ namespace geometry::nav {
 
 		if (unreadCovers > 0) {
 			fail() << unreadCovers << " cover(s) seeded from a sample no exact test could read";
+			return err.str();
+		}
+		if (coverConflicts > 0) {
+			fail() << coverConflicts << " patch(es) whose floods covered a face two ways";
 			return err.str();
 		}
 		if (refusedRings > 0) {

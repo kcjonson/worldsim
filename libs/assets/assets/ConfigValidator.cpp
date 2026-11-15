@@ -276,6 +276,14 @@ bool ConfigValidator::validateConstruction() {
         valid = false;
     }
 
+    if (c.builderSpotMinSpacingMeters <= 0.0F) {
+        addError("ConstructionConstraints",
+                 "builderSpotMinSpacingMeters must be positive, got " +
+                     std::to_string(c.builderSpotMinSpacingMeters),
+                 "Set <builderSpotMinSpacingMeters> to a positive value (suggested: 1.0)");
+        valid = false;
+    }
+
     // Wall constraint validation
     if (c.minSegmentLengthMeters <= 0.0F) {
         addError("ConstructionConstraints",
