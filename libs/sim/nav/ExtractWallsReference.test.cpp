@@ -5,6 +5,7 @@
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionWorld.h>
 
+#include <core/Int128.h>
 #include <core/Vec2i64.h>
 #include <nav/NavMesh.h>
 #include <offset/WallOffset.h>
@@ -17,6 +18,7 @@
 #include <functional>
 #include <limits>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 #include <tuple>
@@ -257,9 +259,11 @@ namespace {
 	// How a layout's output may differ from the reference's.
 	enum class Expectation {
 		Identical,
-		// Rings of a segment hosting a door may each move by up to a millimetre (the reference cuts
-		// the door gap at float fractions of the segment, nav now at whole millimetres); the rest
-		// is identical.
+		// On the layouts marked so, the rings of a segment hosting a door move by up to a millimetre
+		// per axis (the reference cuts the door gap at float fractions of the segment, nav at whole
+		// millimetres along it). That holds for a door clear of the corners; nav clamps a door span
+		// to the trimmed band and may widen it by up to 6 mm over a sliver, which the Changed layouts
+		// check. The rest is identical.
 		DoorRingsWithinMillimetre,
 		// Drawn differently on purpose; `checkChange` says how.
 		Changed,
@@ -346,23 +350,23 @@ namespace {
 		return split;
 	}
 
-	// Two rings with the same corners, each within a millimetre on both axes, whichever corner each starts from.
-	bool withinMillimetre(const Ring& actual, const Ring& expected) {
+	// The largest per-axis difference between two rings with the same corners, whichever corner each
+	// starts from; none when their corner counts differ.
+	std::optional<std::int64_t> largestDifference(const Ring& actual, const Ring& expected) {
 		if (actual.size() != expected.size()) {
-			return false;
+			return std::nullopt;
 		}
+		std::int64_t best = std::numeric_limits<std::int64_t>::max();
 		for (std::size_t start = 0; start < actual.size(); ++start) {
-			bool matches = true;
-			for (std::size_t i = 0; i < actual.size() && matches; ++i) {
+			std::int64_t worst = 0;
+			for (std::size_t i = 0; i < actual.size(); ++i) {
 				const Vec2i64& a = actual[(start + i) % actual.size()];
 				const Vec2i64& e = expected[i];
-				matches			 = std::llabs(a.x - e.x) <= 1 && std::llabs(a.y - e.y) <= 1;
+				worst			 = std::max(worst, std::max<std::int64_t>(std::llabs(a.x - e.x), std::llabs(a.y - e.y)));
 			}
-			if (matches) {
-				return true;
-			}
+			best = std::min(best, worst);
 		}
-		return false;
+		return best;
 	}
 
 	std::string describe(const Ring& ring) {
@@ -398,7 +402,9 @@ namespace {
 			EXPECT_EQ(std::get<2>(a), std::get<2>(e));
 			EXPECT_EQ(std::get<3>(a), std::get<3>(e));
 			EXPECT_EQ(std::get<4>(a), std::get<4>(e));
-			EXPECT_TRUE(withinMillimetre(ringOf(a), ringOf(e))) << describe(ringOf(a)) << "against " << describe(ringOf(e));
+			const std::optional<std::int64_t> difference = largestDifference(ringOf(a), ringOf(e));
+			ASSERT_TRUE(difference.has_value()) << describe(ringOf(a)) << "against " << describe(ringOf(e));
+			EXPECT_LE(*difference, 1) << describe(ringOf(a)) << "against " << describe(ringOf(e));
 		}
 	}
 
@@ -420,7 +426,8 @@ namespace {
 		}
 		for (std::size_t i = 0; i < clip.size() && !kept.empty(); ++i) {
 			const PlanarPoint		 a{static_cast<double>(clip[i].x), static_cast<double>(clip[i].y)};
-			const PlanarPoint		 b{static_cast<double>(clip[(i + 1) % clip.size()].x), static_cast<double>(clip[(i + 1) % clip.size()].y)};
+			const Vec2i64&			 following = clip[(i + 1) % clip.size()];
+			const PlanarPoint		 b{static_cast<double>(following.x), static_cast<double>(following.y)};
 			std::vector<PlanarPoint> next;
 			for (std::size_t k = 0; k < kept.size(); ++k) {
 				const PlanarPoint p	 = kept[k];
@@ -510,26 +517,57 @@ namespace {
 					doorOpenings.insert(static_cast<std::int64_t>(opening.id));
 				}
 			}
-			double					 area = 0.0;
-			int						 solid = 0;
+			const Vec2i64 start	 = world.getVertex(world.segments()[index].v0)->pos;
+			const Vec2i64 finish = world.getVertex(world.segments()[index].v1)->pos;
+			const double  length = std::hypot(static_cast<double>(finish.x - start.x), static_cast<double>(finish.y - start.y));
+			// Distance along the wall from its v0 end, in mm.
+			auto along = [&](const Vec2i64& point) {
+				return (static_cast<double>(point.x - start.x) * static_cast<double>(finish.x - start.x) +
+						static_cast<double>(point.y - start.y) * static_cast<double>(finish.y - start.y)) /
+					   length;
+			};
+			const double bandFrom = static_cast<double>(bands.trimAtA[index]);
+			const double bandTo	  = length - static_cast<double>(bands.trimAtB[index]);
+
+			// Exact: the spans share their corners in whole millimetres, so their doubled areas sum to the band's.
+			geometry::Int128			areaDoubled(0);
+			int							solid = 0;
 			std::map<std::int64_t, int> spansOfOpening;
 			for (const PolygonKey& ring : actualSplit.doorSegmentRings) {
 				if (provenanceOf(ring) != static_cast<std::int64_t>(segment)) {
 					continue;
 				}
-				area += geometry::signedAreaSquareMeters(ringOf(ring));
+				areaDoubled = areaDoubled + geometry::signedAreaDoubled(ringOf(ring));
 				if (openingOf(ring) == gnav::kNoOpening) {
 					++solid;
-				} else {
-					EXPECT_TRUE(doorOpenings.contains(openingOf(ring))) << "a span tagged with an opening not a door on its wall";
-					++spansOfOpening[openingOf(ring)];
+					continue;
 				}
+				EXPECT_TRUE(doorOpenings.contains(openingOf(ring))) << "a span tagged with an opening not a door on its wall";
+				++spansOfOpening[openingOf(ring)];
+
+				// The door span sits over its door: between the portal's jambs, clamped to the trimmed band.
+				const auto portal = std::find_if(actual.portals.begin(), actual.portals.end(),
+												 [&](const PortalKey& key) { return std::get<0>(key) == openingOf(ring); });
+				ASSERT_NE(portal, actual.portals.end());
+				const double jambs[] = {along(std::get<1>(*portal)), along(std::get<2>(*portal))};
+				const double from	 = std::max(std::min(jambs[0], jambs[1]), bandFrom);
+				const double to		 = std::min(std::max(jambs[0], jambs[1]), bandTo);
+				double		 spanFrom = std::numeric_limits<double>::max();
+				double		 spanTo	  = std::numeric_limits<double>::lowest();
+				for (const Vec2i64& corner : ringOf(ring)) {
+					spanFrom = std::min(spanFrom, along(corner));
+					spanTo	 = std::max(spanTo, along(corner));
+				}
+				EXPECT_NEAR(spanFrom, from, 1.0) << "door " << openingOf(ring) << " starts where its jamb does";
+				EXPECT_NEAR(spanTo, to, 1.0) << "door " << openingOf(ring) << " ends where its jamb does";
 			}
 			EXPECT_GE(solid, 1);
 			for (const std::int64_t opening : doorOpenings) {
 				EXPECT_EQ(spansOfOpening[opening], 1) << "door " << opening;
 			}
-			EXPECT_NEAR(area, geometry::signedAreaSquareMeters(bands.bands[index]), 1e-3) << "the rings tile the trimmed band";
+			EXPECT_TRUE(areaDoubled == geometry::signedAreaDoubled(bands.bands[index]))
+				<< "the rings tile the trimmed band: " << areaDoubled.toDouble() << " against "
+				<< geometry::signedAreaDoubled(bands.bands[index]).toDouble();
 		}
 	}
 
@@ -607,6 +645,14 @@ namespace {
 			 }},
 			{"DoorMidWallFreeEnds",
 			 [](ConstructionWorld& world) { buildOpening(world, buildWall(world, {0, 0}, {4000, 0}), 0.5F, "Door"); },
+			 Expectation::DoorRingsWithinMillimetre},
+			// Listed from its larger endpoint to its smaller, so its gap is cut from the other end.
+			{"DoorOnWallRunningBackwards",
+			 [](ConstructionWorld& world) { buildOpening(world, buildWall(world, {4000, 0}, {0, 0}), 0.25F, "Door"); },
+			 Expectation::DoorRingsWithinMillimetre},
+			// A length and a door position that round at both ends, so the millimetre bound is met off the axes.
+			{"DoorOnDiagonalWall",
+			 [](ConstructionWorld& world) { buildOpening(world, buildWall(world, {0, 0}, {2917, 3851}), 0.43F, "Door"); },
 			 Expectation::DoorRingsWithinMillimetre},
 			{"WindowMidWallFreeEnds",
 			 [](ConstructionWorld& world) { buildOpening(world, buildWall(world, {0, 0}, {4000, 0}), 0.5F, "Window"); }},
