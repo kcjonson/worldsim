@@ -236,6 +236,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 13 | Colonists walk round obstacles | [scenarios/13-colonists-walk-round-obstacles.md](./scenarios/13-colonists-walk-round-obstacles.md) |
 | 14 | Player visibility | [scenarios/14-player-visibility.md](./scenarios/14-player-visibility.md) |
 | 15 | Builder work spots | [scenarios/15-builder-work-spots.md](./scenarios/15-builder-work-spots.md) |
+| 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
@@ -334,7 +335,7 @@ nothing. Trees, reeds, and loose items still spawn in a ford: putting one there 
 | `flora` | `age=<name>&near=x,y&def=<defName>` (`def` optional) | Reads, changes nothing. The nearest trees of that age class within 200 m of `near` (a 400 m square), nearest first, at most 20: `{age, near, def, searchHalfSizeM, trees:[{def, x, y, ageClass, variant, distance}]}`. `x` and `y` print at full float precision, so a listed position names the same tree when read back. `age` without `near`, or the reverse, is a 400, as is a `near` coordinate beyond 16777216 m (2^24) from the origin. |
 | `walls` | `pts=...&material=Wood&thickness=Standard&host=<foundationId>&built=0\|1&close=1` | `built` **defaults to 1** — pass `built=0` for a blueprint. Needs at least 2 points (400 otherwise). A chain any point of which is off the nav mesh, over water, in a ford, or in a placed obstacle answers 400, hosted or freestanding (`host=0`). |
 | `ground` | `pts=x0,y0;x1,y1;...` | Reads, changes nothing. Per point: `onMesh`; `valid` (clear to stand on); `buildable`, where a foundation may go once a tree or rock on it is cleared (water, a ford, and unmeshed ground are false); `buildableNow`, where a wall or a station or storage container may go as the ground stands (a placed obstacle is false too, so over a tree `buildable` is true and `buildableNow` false); and the chunk terrain there (`chunk`, `inWater`, `toWaterM`, `rings`). No `pts`, or a point that is not finite, is a 400. |
-| `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. |
+| `opening` | `seg=<id>\|pt=x,y&type=Door\|Window&t=0.5&built=1` | Adds a door or window to a wall segment. `pt` snaps the way the opening tool does. A placement the tool's validator refuses (too near a corner or end, a wall too short, an overlap with another opening), an unknown type or segment, or no wall near `pt` answers 400 `{"error":...}` with the reason and creates nothing. |
 | `reveal` | `on=1\|0` | Player visibility off (`1`) or back on (`0`): with it on the cover is not drawn, and `scripts/perf` captures run with it on. The seen record keeps growing either way; `/api/state?what=visibility` reads the flag as `revealed`. |
 
 ### Readback — `GET /api/state?what=<x>`

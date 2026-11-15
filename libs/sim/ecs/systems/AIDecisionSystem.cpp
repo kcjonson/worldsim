@@ -1707,14 +1707,15 @@ namespace ecs {
 		}
 		buildSitesBuilt = true;
 		buildList.clear();
-		// Surfaced only while the blueprint is UnderConstruction, the phase the Build action requires.
+		// Surfaced only while the blueprint is UnderConstruction and not ordered demolished, what the Build
+		// action requires. The order leaves the goal Available until ConstructionSystem's next pass removes it.
 		GoalTaskRegistry::Get().forEachGoalOfType(TaskType::Build, [&](const GoalTask& goal) {
 			if (goal.status != GoalStatus::Available) {
 				return;
 			}
 			const auto* blueprint = world.getComponent<StructureBlueprint>(goal.destinationEntity);
-			if (blueprint == nullptr || blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction) {
-				return; // not ready to build (cleared/awaiting materials/complete)
+			if (blueprint == nullptr || blueprint->phase != StructureBlueprint::BuildPhase::UnderConstruction || blueprint->demolishing) {
+				return; // not ready to build (cleared/awaiting materials/complete) or ordered demolished
 			}
 			buildList.push_back({.goalId = goal.id,
 								 .blueprint = goal.destinationEntity,

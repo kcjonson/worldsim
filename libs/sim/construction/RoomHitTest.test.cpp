@@ -3,6 +3,7 @@
 #include <core/Vec2i64.h>
 #include <polygon/Polygon.h>
 
+#include <cstdint>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -28,7 +29,7 @@ namespace {
 
 TEST(RoomHitTest, InteriorPointHits) {
 	const Ring							ring = rectangle();
-	const std::vector<RoomHitCandidate> rooms{{7, &ring}};
+	const std::vector<RoomHitCandidate> rooms{{7, &ring, nullptr}};
 	const auto							hit = roomAtPoint(Vec2i64{2000, 1500}, rooms);
 	ASSERT_TRUE(hit.has_value());
 	EXPECT_EQ(*hit, 7u);
@@ -36,13 +37,13 @@ TEST(RoomHitTest, InteriorPointHits) {
 
 TEST(RoomHitTest, ExteriorPointMisses) {
 	const Ring							ring = rectangle();
-	const std::vector<RoomHitCandidate> rooms{{7, &ring}};
+	const std::vector<RoomHitCandidate> rooms{{7, &ring, nullptr}};
 	EXPECT_FALSE(roomAtPoint(Vec2i64{5000, 1500}, rooms).has_value());
 }
 
 TEST(RoomHitTest, BoundaryPointCountsAsHit) {
 	const Ring							ring = rectangle();
-	const std::vector<RoomHitCandidate> rooms{{7, &ring}};
+	const std::vector<RoomHitCandidate> rooms{{7, &ring, nullptr}};
 	// On the bottom edge (a vertex would also count) -- OnBoundary != Outside.
 	const auto edge = roomAtPoint(Vec2i64{2000, 0}, rooms);
 	ASSERT_TRUE(edge.has_value());
@@ -54,7 +55,7 @@ TEST(RoomHitTest, BoundaryPointCountsAsHit) {
 
 TEST(RoomHitTest, ConcaveRingRespectsNotch) {
 	const Ring							ring = lShape();
-	const std::vector<RoomHitCandidate> rooms{{3, &ring}};
+	const std::vector<RoomHitCandidate> rooms{{3, &ring, nullptr}};
 	// Inside the leg of the L.
 	ASSERT_TRUE(roomAtPoint(Vec2i64{1000, 1000}, rooms).has_value());
 	// In the cut-out notch (top-right): a vertex-0 fan would wrongly report this as
@@ -62,34 +63,85 @@ TEST(RoomHitTest, ConcaveRingRespectsNotch) {
 	EXPECT_FALSE(roomAtPoint(Vec2i64{3000, 3000}, rooms).has_value());
 }
 
-TEST(RoomHitTest, NestedRoomsHighestIdWins) {
-	// A big room fully containing a smaller one; a click in the inner room lands in
-	// both rings. The highest id wins (monotonic-id tie-break), regardless of the
-	// candidate order.
-	const Ring outer{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}};
-	const Ring inner{{2000, 2000}, {6000, 2000}, {6000, 6000}, {2000, 6000}};
+namespace {
 
-	const std::vector<RoomHitCandidate> idAscending{{1, &outer}, {9, &inner}};
-	const auto							a = roomAtPoint(Vec2i64{4000, 4000}, idAscending);
-	ASSERT_TRUE(a.has_value());
-	EXPECT_EQ(*a, 9u);
+	// A room in a room, recorded the way RoomDetectionSystem does: the inner room's
+	// ring is a hole (reversed, CW) of the outer room.
+	struct NestedRooms {
+		Ring			  outer{{0, 0}, {10000, 0}, {10000, 10000}, {0, 10000}};
+		std::vector<Ring> outerHoles{{{2000, 2000}, {2000, 6000}, {6000, 6000}, {6000, 2000}}};
+		Ring			  inner{{2000, 2000}, {6000, 2000}, {6000, 6000}, {2000, 6000}};
+	};
 
-	// Same result with the candidates in the opposite order.
-	const std::vector<RoomHitCandidate> idDescending{{9, &inner}, {1, &outer}};
-	const auto							b = roomAtPoint(Vec2i64{4000, 4000}, idDescending);
-	ASSERT_TRUE(b.has_value());
-	EXPECT_EQ(*b, 9u);
+	std::uint64_t pick(const Vec2i64& click, const std::vector<RoomHitCandidate>& rooms) {
+		const auto hit = roomAtPoint(click, rooms);
+		EXPECT_TRUE(hit.has_value());
+		return hit.value_or(0);
+	}
 
-	// A click in the outer ring only (outside the inner) returns the outer id.
-	const auto outerOnly = roomAtPoint(Vec2i64{8000, 8000}, idAscending);
-	ASSERT_TRUE(outerOnly.has_value());
-	EXPECT_EQ(*outerOnly, 1u);
+} // namespace
+
+TEST(RoomHitTest, ClickInInnerRoomBuiltFirstSelectsInnerRoom) {
+	// The inner room formed first, so it has the lower id; geometry decides, not the id.
+	const NestedRooms					rooms;
+	const std::vector<RoomHitCandidate> candidates{{1, &rooms.inner, nullptr}, {2, &rooms.outer, &rooms.outerHoles}};
+	EXPECT_EQ(pick(Vec2i64{4000, 4000}, candidates), 1u);
+}
+
+TEST(RoomHitTest, ClickInInnerRoomBuiltSecondSelectsInnerRoom) {
+	const NestedRooms					rooms;
+	const std::vector<RoomHitCandidate> candidates{{1, &rooms.outer, &rooms.outerHoles}, {2, &rooms.inner, nullptr}};
+	EXPECT_EQ(pick(Vec2i64{4000, 4000}, candidates), 2u);
+
+	const std::vector<RoomHitCandidate> reversed{{2, &rooms.inner, nullptr}, {1, &rooms.outer, &rooms.outerHoles}};
+	EXPECT_EQ(pick(Vec2i64{4000, 4000}, reversed), 2u);
+}
+
+TEST(RoomHitTest, ClickInOuterRoomsOwnFloorSelectsOuterRoom) {
+	const NestedRooms					rooms;
+	const std::vector<RoomHitCandidate> innerFirst{{1, &rooms.inner, nullptr}, {2, &rooms.outer, &rooms.outerHoles}};
+	const std::vector<RoomHitCandidate> innerSecond{{2, &rooms.inner, nullptr}, {1, &rooms.outer, &rooms.outerHoles}};
+	EXPECT_EQ(pick(Vec2i64{8000, 8000}, innerFirst), 2u);
+	EXPECT_EQ(pick(Vec2i64{8000, 8000}, innerSecond), 1u);
+}
+
+TEST(RoomHitTest, ClickOnSharedBoundaryGoesToHighestId) {
+	// The inner room's ring is also the outer room's hole: a click on it touches both.
+	const NestedRooms					rooms;
+	const std::vector<RoomHitCandidate> innerFirst{{1, &rooms.inner, nullptr}, {2, &rooms.outer, &rooms.outerHoles}};
+	const std::vector<RoomHitCandidate> innerSecond{{2, &rooms.inner, nullptr}, {1, &rooms.outer, &rooms.outerHoles}};
+	EXPECT_EQ(pick(Vec2i64{2000, 4000}, innerFirst), 2u);
+	EXPECT_EQ(pick(Vec2i64{2000, 4000}, innerSecond), 2u);
+
+	// Two rooms side by side sharing a wall.
+	const Ring							left{{0, 0}, {3000, 0}, {3000, 3000}, {0, 3000}};
+	const Ring							right{{3000, 0}, {6000, 0}, {6000, 3000}, {3000, 3000}};
+	const std::vector<RoomHitCandidate> sideBySide{{8, &right, nullptr}, {4, &left, nullptr}};
+	EXPECT_EQ(pick(Vec2i64{3000, 1500}, sideBySide), 8u);
+	EXPECT_EQ(pick(Vec2i64{1500, 1500}, sideBySide), 4u);
+}
+
+TEST(RoomHitTest, ThreeLevelNestSelectsTheRoomUnderTheClick) {
+	const Ring							outer{{0, 0}, {9000, 0}, {9000, 9000}, {0, 9000}};
+	const std::vector<Ring>				outerHoles{{{2000, 2000}, {2000, 7000}, {7000, 7000}, {7000, 2000}}};
+	const Ring							middle{{2000, 2000}, {7000, 2000}, {7000, 7000}, {2000, 7000}};
+	const std::vector<Ring>				middleHoles{{{4000, 4000}, {4000, 5000}, {5000, 5000}, {5000, 4000}}};
+	const Ring							inner{{4000, 4000}, {5000, 4000}, {5000, 5000}, {4000, 5000}};
+	const std::vector<RoomHitCandidate> candidates{
+		{3, &outer, &outerHoles},
+		{1, &inner, nullptr},
+		{2, &middle, &middleHoles},
+	};
+	EXPECT_EQ(pick(Vec2i64{4500, 4500}, candidates), 1u);
+	EXPECT_EQ(pick(Vec2i64{3000, 3000}, candidates), 2u);
+	EXPECT_EQ(pick(Vec2i64{1000, 1000}, candidates), 3u);
+	EXPECT_FALSE(roomAtPoint(Vec2i64{10000, 1000}, candidates).has_value());
 }
 
 TEST(RoomHitTest, EmptyAndDegenerateCandidatesMiss) {
 	EXPECT_FALSE(roomAtPoint(Vec2i64{0, 0}, {}).has_value());
 
 	const Ring							degenerate{{0, 0}, {1000, 0}}; // < 3 vertices
-	const std::vector<RoomHitCandidate> rooms{{5, &degenerate}, {6, nullptr}};
+	const std::vector<RoomHitCandidate> rooms{{5, &degenerate, nullptr}, {6, nullptr, nullptr}};
 	EXPECT_FALSE(roomAtPoint(Vec2i64{500, 0}, rooms).has_value());
 }

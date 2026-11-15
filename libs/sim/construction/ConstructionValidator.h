@@ -14,8 +14,8 @@
 //     the live rubber-band colorizing and per-vertex hard rejects.
 //   - validateRing:  the would-be-closed polygon, used to gate the commit.
 //
-// Wall entry points (Epic D phase 2). Walls are an OPEN chain, hosted by one
-// foundation, with full-thickness footprints that must stay inside the host and
+// Wall entry points (Epic D phase 2). Walls are a chain (open, or closed on its
+// first point), hosted by one foundation, with full-thickness footprints that must stay inside the host and
 // clear of other walls. ConstructionWorld owns only the hard topology invariants
 // (no zero-length, no X-crossing, T-junction pre-split); the SOFT wall
 // constraints (min segment length, min junction angle, host containment, overlap
@@ -79,8 +79,8 @@ namespace construction {
 		OpeningTypeInvalid,		// opening type name is not a known opening type
 		OpeningMaterialInvalid, // opening material name is not a known material
 		OpeningParamOutOfRange, // t outside [0,1]
-		OpeningMarginTooSmall,	// opening edge closer to a segment end than openingMargin
-		OpeningWallTooShort,	// segment too short to host width + 2*openingMargin
+		OpeningMarginTooSmall,	// opening edge closer than openingMargin to an end of the segment's trimmed band
+		OpeningWallTooShort,	// trimmed band too short to host width + 2*openingMargin
 		OpeningOverlap,			// overlaps another opening already on the same segment
 		// Foundation clearance: another foundation is closer than pathing clearance
 		// without touching it (snapped edge-to-edge is the only legal small gap).
@@ -149,6 +149,14 @@ namespace construction {
 	// for Ok. Matches the terse phrasing the design spec shows near the cursor.
 	[[nodiscard]] std::string validationReason(ValidationCode code);
 
+	// Fewer points than this clicked back on the start is a back-track, not a loop.
+	inline constexpr std::size_t kMinClosingWallChainPoints = 3;
+
+	// Whether `candidate` closes the wall chain `points`: it lands on the chain's
+	// first point (equal in integer mm) and the chain has at least
+	// kMinClosingWallChainPoints points. The wall tool ends the chain there.
+	[[nodiscard]] bool closesWallChain(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 candidate);
+
 	class ConstructionValidator {
 	  public:
 		ConstructionValidator(const assets::ConstraintConfig& constraints, const ConstructionWorld& world)
@@ -206,8 +214,10 @@ namespace construction {
 		// (world meters). Live as the cursor moves; checks the things that must
 		// hold for the NEXT wall vertex: the new segment's length (>= min segment
 		// length), the junction angle at the previous vertex (>= min junction
-		// angle), the open chain stays simple (no self-cross), and the new
-		// segment's full-thickness footprint stays inside the host foundation.
+		// angle), the chain stays simple (no self-cross), and the new segment's
+		// full-thickness footprint stays inside the host foundation. A candidate
+		// that closes the chain (closesWallChain) may meet the first segment at the
+		// first vertex, whose corner must also clear the junction angle.
 		// `points` may be empty (first click always allowed) or hold the chain so
 		// far. `thickness` supplies the half-thickness mm for the footprint (the
 		// WallTool resolves it from the active material+preset via
@@ -238,13 +248,13 @@ namespace construction {
 		// `segment` at centerline parameter `t` in [0,1] (measured v0->v1). The
 		// per-opening placement gate for the OpeningTool (Epic F): the segment must
 		// exist and be a wall, the type and material must be known, t must be in
-		// range, the opening's near edge must clear `openingMargin` from each
-		// segment end, the segment must be long enough to host width + 2*margin, and
-		// the opening's [t-half/L, t+half/L] interval must not overlap (within the
-		// inter-opening margin) any opening already on the SAME segment. Width is
-		// resolved from the registry's OpeningTypeDef (passing the type name keeps
-		// the validator reading config the same way validateWallSegment does for
-		// existing-wall thickness). First failure is reported with the measured
+		// range, the segment's trimmed band (openingRange) must be long enough to host
+		// width + 2*margin, the opening's near edges must clear `openingMargin` from
+		// each end of that band, and the opening's [t-half/L, t+half/L] interval must
+		// not overlap (within the inter-opening margin) any opening already on the
+		// SAME segment. Width is resolved from the registry's OpeningTypeDef (passing
+		// the type name keeps the validator reading config the same way
+		// validateWallSegment does for existing-wall thickness). First failure is reported with the measured
 		// value; the result's vertexIndex/otherIndex are unused for openings.
 		[[nodiscard]] ValidationResult
 		validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const;

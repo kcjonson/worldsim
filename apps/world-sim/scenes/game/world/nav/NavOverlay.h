@@ -6,8 +6,9 @@
 // neither draws anything on its own. When toggled on (N), this draws the mesh
 // triangle edges and each valid NavPath's waypoint polyline.
 //
-// Mirrors RoomOverlay: a plain class holding ecs::World*, the WorldCamera*, and
-// the source system, calling Renderer::Primitives directly and projecting
+// Mirrors RoomOverlay: a plain class holding the WorldCamera* and the source
+// system (plus the ecs::World* it reads NavPath from), calling
+// Renderer::Primitives directly and projecting
 // world->screen via camera->worldToScreen at kPixelsPerMeter. Off by default;
 // GameScene flips it with a hotkey.
 //

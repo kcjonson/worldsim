@@ -1,6 +1,8 @@
 #include "SnapEngine.h"
 
+#include "ConstructionValidator.h"
 #include "ConstructionWorld.h"
+#include "OpeningGeometry.h"
 
 #include <assets/ConstructionRegistry.h>
 
@@ -10,6 +12,7 @@
 #include <cmath>
 #include <limits>
 #include <numbers>
+#include <optional>
 
 namespace construction {
 
@@ -367,18 +370,21 @@ namespace construction {
 		return r;
 	}
 
+	bool SnapEngine::snapToOrigin(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, std::size_t minPoints,
+								  float radiusMeters) const {
+		if (points.size() < minPoints) {
+			return false;
+		}
+		const float radius = radiusMeters >= 0.0F ? radiusMeters : snapping_->originCloseRadiusMeters;
+		return distanceMeters(cursor, points.front()) <= radius;
+	}
+
 	SnapResult SnapEngine::snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform,
 								float originCloseRadiusMeters, bool alignToExisting) const {
 		// Origin-close: once a closeable shape exists (>= 3 points), being within
-		// the origin radius snaps onto the first point and signals a close. The
-		// caller may pass a zoom-stable radius; a negative value uses the config.
-		if (points.size() >= 3) {
-			const float originRadius =
-				originCloseRadiusMeters >= 0.0F ? originCloseRadiusMeters : snapping_->originCloseRadiusMeters;
-			const float d = distanceMeters(cursor, points.front());
-			if (d <= originRadius) {
-				return {points.front(), SnapKind::Origin};
-			}
+		// the origin radius snaps onto the first point and signals a close.
+		if (snapToOrigin(points, cursor, 3, originCloseRadiusMeters)) {
+			return {points.front(), SnapKind::Origin};
 		}
 
 		// Existing-geometry snapping (always on): vertices beat edges.
@@ -416,8 +422,7 @@ namespace construction {
 		// registry (the production source of truth) the same way the validator resolves
 		// config it doesn't directly hold. An unloaded registry yields the struct
 		// default (0.3 m), which is deterministic.
-		const float margin = assets::ConstructionRegistry::Get().constraints().openingMarginMeters;
-		const float halfWidth = openingWidthMeters * 0.5F;
+		const double margin = static_cast<double>(assets::ConstructionRegistry::Get().constraints().openingMarginMeters);
 
 		float		best = radius;
 		OpeningSnap result;
@@ -433,31 +438,26 @@ namespace construction {
 			}
 			const ::Foundation::Vec2 a = geometry::dequantize(v0->pos);
 			const ::Foundation::Vec2 b = geometry::dequantize(v1->pos);
-			const float				 length = distanceMeters(a, b);
-			if (length <= 0.0F) {
-				continue;
-			}
-			// Too short to host the opening within the end margins: skip it (a closer
-			// short wall must not shadow a farther wall that could actually hold it).
-			const float halfFrac = (halfWidth + margin) / length;
-			if (halfFrac > 0.5F) {
-				continue;
-			}
-
 			const ::Foundation::Vec2 c = closestOnSegment(cursor, a, b);
 			const float				 d = distanceMeters(cursor, c);
 			// Strict-< keeps the lowest-id segment on a tie; segments() is in
 			// ascending-id insertion order (deterministic).
-			if (d < best) {
-				best = d;
-				// Clamp t so the opening honors the end margins on both ends.
-				float t = projectionParam(cursor, a, b);
-				t = std::clamp(t, halfFrac, 1.0F - halfFrac);
-				result.segment = s.id;
-				result.t = t;
-				result.point = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
-				result.valid = true;
+			if (d >= best) {
+				continue;
 			}
+			// The range only for a segment nearer than the best so far, so a move
+			// resolves the corners of few walls. One too short to host the opening is
+			// skipped: a closer short wall must not shadow a farther one that fits.
+			const std::optional<OpeningRange> range = openingRange(*world_, s.id, static_cast<double>(openingWidthMeters), margin);
+			if (!range || !range->fits()) {
+				continue;
+			}
+			best = d;
+			const float t = std::clamp(projectionParam(cursor, a, b), range->minT, range->maxT);
+			result.segment = s.id;
+			result.t = t;
+			result.point = {a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t};
+			result.valid = true;
 		}
 		return result;
 	}
@@ -467,10 +467,16 @@ namespace construction {
 		::Foundation::Vec2					   cursor,
 		bool								   freeform,
 		std::int64_t						   wallHalfThicknessMm,
+		float								   originCloseRadiusMeters,
 		bool								   alignToExisting
 	) const {
-		// Priority, most specific first (design Walls > Drawing). No origin-close:
-		// the chain is open and never closes onto its first point.
+		// Priority, most specific first (design Walls > Drawing), led by the close onto
+		// the chain's first point as in snap(). The point comes back exactly, so
+		// closesWallChain sees the close.
+		if (!freeform && snapToOrigin(points, cursor, kMinClosingWallChainPoints, originCloseRadiusMeters)) {
+			return {points.front(), SnapKind::Origin};
+		}
+
 		::Foundation::Vec2 wv{};
 		VertexId		   wvId = kInvalidVertex;
 		if (snapToWallVertex(cursor, wv, wvId)) {

@@ -15,6 +15,7 @@
 
 #include <ui/components/Toast.h>
 
+#include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/SnapEngine.h>
 
@@ -907,13 +908,12 @@ namespace world_sim {
 		return {};
 	}
 
-	void DevCommandHandler::devOpening(const app::DevRequest& cmd) {
+	DevRefusal DevCommandHandler::devOpening(const app::DevRequest& cmd) {
 		const std::string type = param(cmd, "type", "Door");
-		const auto*		  typeDef = assets::ConstructionRegistry::Get().getOpeningType(type);
+		const auto&		  registry = assets::ConstructionRegistry::Get();
+		const auto*		  typeDef = registry.getOpeningType(type);
 		if (typeDef == nullptr) {
-			LOG_WARNING(Game, "[DevAPI] opening: unknown type '%s'", type.c_str());
-			m_ctx.ui->pushNotification("Dev", "Unknown opening type", ui::ToastSeverity::Warning);
-			return;
+			return refuse("opening: unknown type '" + type + "'");
 		}
 
 		auto& constructionWorld = m_ctx.drawing->world();
@@ -927,27 +927,33 @@ namespace world_sim {
 		} else if (hasParam(cmd, "pt")) {
 			const std::vector<Foundation::Vec2> pts = parsePointList(param(cmd, "pt"));
 			if (pts.empty()) {
-				LOG_WARNING(Game, "[DevAPI] opening: pt must be 'x,y' world meters");
-				return;
+				return refuse("opening: pt must be 'x,y' world meters");
 			}
-			const auto&							   registry = assets::ConstructionRegistry::Get();
 			const construction::SnapEngine snap(registry.snapping(), constructionWorld);
-			const auto							   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
+			const auto					   os = snap.snapOpening(pts.front(), typeDef->widthMeters);
 			if (!os.valid) {
-				LOG_WARNING(Game, "[DevAPI] opening: no built wall near pt");
-				m_ctx.ui->pushNotification("Dev", "No built wall near point", ui::ToastSeverity::Warning);
-				return;
+				return refuse("opening: no built wall near pt that can hold a " + type);
 			}
 			segment = os.segment;
 			t = os.t;
 		} else {
-			LOG_WARNING(Game, "[DevAPI] opening: needs seg=<id> or pt=x,y");
-			return;
+			return refuse("opening: needs seg=<id> or pt=x,y");
 		}
 
-		// Explicit t= overrides the resolved parameter (addOpening clamps to [0,1]).
+		// Explicit t= overrides the resolved parameter.
 		if (hasParam(cmd, "t")) {
 			t = std::strtof(param(cmd, "t").c_str(), nullptr);
+		}
+
+		// The opening tool's own gate: end margins from the trimmed band ends, segment
+		// length, overlap with the segment's other openings.
+		const construction::ConstructionValidator validator(registry.constraints(), constructionWorld);
+		const construction::ValidationResult	  validation = validator.validateOpening(segment, t, typeDef->name, typeDef->material);
+		if (!validation.ok()) {
+			return refuse(
+				"opening: " + construction::validationReason(validation.code) + " (segment #" + std::to_string(segment) + ", t=" +
+				std::to_string(t) + ")"
+			);
 		}
 
 		const std::string builtStr = param(cmd, "built", "1");
@@ -955,14 +961,7 @@ namespace world_sim {
 
 		const construction::OpeningId id = m_ctx.drawing->devCommitOpening(segment, t, type, built);
 		if (id == construction::kInvalidOpening) {
-			LOG_WARNING(
-				Game,
-				"[DevAPI] opening: commit rejected (segment #%llu, type %s)",
-				static_cast<unsigned long long>(segment),
-				type.c_str()
-			);
-			m_ctx.ui->pushNotification("Dev", "Opening commit rejected", ui::ToastSeverity::Warning);
-			return;
+			return refuse("opening: commit rejected (segment #" + std::to_string(segment) + ", type " + type + ")");
 		}
 
 		LOG_INFO(
@@ -975,6 +974,7 @@ namespace world_sim {
 			built ? 1 : 0
 		);
 		m_ctx.ui->pushNotification("Dev", built ? "Built opening placed" : "Opening blueprint placed", ui::ToastSeverity::Info);
+		return {};
 	}
 
 	void DevCommandHandler::devCraft(const app::DevRequest& cmd) {

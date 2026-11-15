@@ -176,14 +176,15 @@ On a shared edge between two snapped foundations there is no co-ownership. The w
 
 ### Drawing
 
-Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
+Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. Once the chain has three points, the cursor snaps onto the first point when near it, as it does when closing a foundation; holding Alt skips that snap, so a point near the start is placed as an ordinary one. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
 
 The same angle snapping and smart guides apply as for foundations. Additional snap targets, in priority order:
 
-1. Wall endpoints (continue or join a wall)
-2. Foundation vertices
-3. Points along existing walls (T-junction anywhere along a wall's length)
-4. Foundation edges (slide along the edge)
+1. The chain's first point (closes the loop; once the chain has three points, and skipped while Alt is held)
+2. Wall endpoints (continue or join a wall)
+3. Foundation vertices
+4. Points along existing walls (T-junction anywhere along a wall's length)
+5. Foundation edges (slide along the edge)
 
 Snapping is generous but escapable (Alt). Walls may be drawn anywhere on the foundation, not just at edges: a wall in the middle of a foundation touching nothing is valid, subject to clearance constraints.
 
@@ -220,7 +221,9 @@ When built walls (with the foundation boundary playing no part: enclosure must b
 
 Only **built** walls count. The room appears at the moment the closing wall segment completes, with a small notification ("Room formed") and a brief highlight pulse on the new room.
 
-Rooms are an abstract concept, not clickable world objects. They are inspected through a **rooms overlay**, like RimWorld or Going Medieval. The overlay is designed here but ships with the game's broader overlay system (zones, beauty, etc.), not with this epic; this epic ships detection and the room-formed notification only.
+A room built inside another room, its walls standing free of the outer room's, is a room of its own. The outer room's area no longer counts the floor inside it, and the outer room keeps its name; clicking inside the inner room selects the inner room.
+
+Rooms are an abstract concept, not clickable world objects. They are inspected through a **rooms overlay**, like RimWorld or Going Medieval. The overlay exists and is toggled from the game scene; it tints, outlines, and names each room.
 
 - Toggled from the HUD (and a hotkey). While active, room interiors tint and show name labels ("Room 1", renamable).
 - Clicking a room while the overlay is active opens its **room info panel**: area (m²), bounding wall materials, opening count, average insulation, floor material, name.
@@ -253,7 +256,7 @@ Double doors and other widths can be added later as new types, not as stretchabl
 
 | Constraint | Rule | Proposed default |
 |------------|------|------------------|
-| Distance from wall end / corner / junction | Openings keep clear of structural points | 0.3 m |
+| Distance from wall end / corner / junction | Openings keep clear of structural points, measured from where the wall's band ends: the vertex at a free end or a straight join, the edge of the corner or junction piece otherwise (that piece reaches further along the wall the sharper the corner) | 0.3 m |
 | Distance from other openings | Openings can't touch | 0.3 m |
 | Wall length | The segment must be long enough to honor the margins | derived |
 

@@ -307,6 +307,14 @@ namespace ecs::test {
 			return nullptr;
 		}
 
+		/// Whether the colonist's trace holds a Build option of any status on `blueprint`.
+		bool offersBuildOf(EntityID colonist, EntityID blueprint) const {
+			const auto& options = world->getComponent<DecisionTrace>(colonist)->options;
+			return std::any_of(options.begin(), options.end(), [&](const EvaluatedOption& option) {
+				return option.taskType == TaskType::Build && option.buildBlueprintEntityId == blueprint;
+			});
+		}
+
 		size_t indexedClaimsOf(EntityID colonist) const {
 			size_t count = 0;
 			ai->claimIndex().forEachClaim([&](const Claim&, const ClaimHolder& holder) { count += holder.colonist == colonist ? 1 : 0; });
@@ -2870,6 +2878,66 @@ namespace ecs::test {
 		EXPECT_EQ(getTask(builder)->targetPosition, glm::vec2(4.2F, 6.0F));
 		EXPECT_EQ(spotHolder(site.blueprint, 0), builder);
 		EXPECT_EQ(spotHolder(site.blueprint, 2), kInvalidEntity);
+	}
+
+	// A foundation ordered demolished while its builder works it, before ConstructionSystem's pass removes
+	// its Build goal (no ConstructionSystem runs here, so the goal stays Available throughout): no decision
+	// after the order offers the builder that Build, his task ends with its action and lets go of his spot,
+	// and in the 30 updates after he takes neither back, and the site gains no work.
+	TEST_F(ChainClaimsTest, ABuilderIsNotOfferedASiteOrderedDemolished) {
+		const glm::vec2 spot{0.0F, 6.0F};
+		const Site		site = buildSite({0.0F, 7.0F}, {spot});
+		const EntityID	builder = createColonist({0.0F, 0.0F});
+		decide(builder);
+		ASSERT_EQ(getTask(builder)->type, TaskType::Build);
+		ASSERT_EQ(spotHolder(site.blueprint, 0), builder);
+		world->getComponent<Position>(builder)->value = spot;
+		getTask(builder)->state = TaskState::Arrived;
+		actions->update(0.25F);
+		actions->update(0.25F);
+		auto* blueprint = world->getComponent<StructureBlueprint>(site.blueprint);
+		ASSERT_EQ(world->getComponent<Action>(builder)->type, ActionType::Build);
+		ASSERT_GT(blueprint->workDone, 0.0F);
+
+		blueprint->demolishing = true;
+		const float workAtOrder = blueprint->workDone;
+		ASSERT_EQ(GoalTaskRegistry::Get().getGoal(site.umbrella)->status, GoalStatus::Available);
+
+		// The Build he holds runs on only until its action ends; it is never selected again.
+		const uint64_t buildInstance = getTask(builder)->instanceId;
+		int			   buildEndedAt = -1;
+		for (int update = 0; update < 30; ++update) {
+			world->update(0.016F);
+			EXPECT_FALSE(offersBuildOf(builder, site.blueprint)) << "update " << update;
+			const Task& task = *getTask(builder);
+			if (task.type == TaskType::Build) {
+				EXPECT_EQ(buildEndedAt, -1) << "Build selected again at update " << update;
+				EXPECT_EQ(task.instanceId, buildInstance) << "update " << update;
+			} else {
+				buildEndedAt = buildEndedAt < 0 ? update : buildEndedAt;
+				EXPECT_EQ(spotHolder(site.blueprint, 0), kInvalidEntity) << "update " << update;
+			}
+		}
+		EXPECT_GE(buildEndedAt, 0);
+		EXPECT_LE(buildEndedAt, 2) << "the Build ends within the ticks its action takes to stop";
+		EXPECT_FLOAT_EQ(blueprint->workDone, workAtOrder);
+		ASSERT_EQ(GoalTaskRegistry::Get().getGoal(site.umbrella)->status, GoalStatus::Available) << "still in the gap";
+	}
+
+	// An idle colonist deciding in that gap is not offered the site ordered demolished, and is still offered
+	// another that is not.
+	TEST_F(ChainClaimsTest, AnIdleColonistIsOfferedOnlyTheSiteNotOrderedDemolished) {
+		const Site	   demolished = buildSite({0.0F, 4.0F}, {{0.0F, 3.0F}});
+		const Site	   standing = buildSite({0.0F, 12.0F}, {{0.0F, 11.0F}});
+		const EntityID colonist = createColonist({0.0F, 0.0F});
+		world->getComponent<StructureBlueprint>(demolished.blueprint)->demolishing = true;
+
+		decide(colonist);
+		EXPECT_FALSE(offersBuildOf(colonist, demolished.blueprint));
+		EXPECT_TRUE(offersBuildOf(colonist, standing.blueprint));
+		ASSERT_EQ(getTask(colonist)->type, TaskType::Build);
+		EXPECT_EQ(getTask(colonist)->buildBlueprintEntityId, standing.blueprint);
+		EXPECT_EQ(spotHolder(demolished.blueprint, 0), kInvalidEntity);
 	}
 
 	// A hungry colonist's food is held only by someone who will eat it. A bush a worker is cutting for a
