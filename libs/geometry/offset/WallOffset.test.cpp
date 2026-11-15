@@ -1790,6 +1790,39 @@ TEST(WallProperties, ShortNearStraightJoinsResolve) {
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
 }
 
+TEST(WallProperties, ShortWallJoiningOtherThicknessAtBothEndsResolves) {
+	// A wall of 500 or 600 mm between two long walls of other thicknesses, each join 3 to 20 degrees off
+	// straight, as a Z and as a C. The trims from both ends add up, so such a wall fails without the retry
+	// up to about 18.5 degrees, further than one with a single such join.
+	std::mt19937 rng(19);
+	Sweep		 sweep;
+	for (const double middle : {kMinWallLengthMm, 600.0}) {
+		const Vec2i64 end{std::llround(middle), 0};
+		for (const std::int64_t inner : kHalves) {
+			for (const std::int64_t before : kHalves) {
+				for (const std::int64_t after : kHalves) {
+					if (before == inner || after == inner) {
+						continue;
+					}
+					for (const double side : {-1.0, 1.0}) {
+						for (int beforeHalves = 6; beforeHalves <= 40; ++beforeHalves) {
+							for (int afterHalves = 6; afterHalves <= 40; ++afterHalves) {
+								const double beforeBend = static_cast<double>(beforeHalves) / 2.0;
+								const double afterBend	= side * static_cast<double>(afterHalves) / 2.0;
+								const std::vector<WallSegment> segments = {{polar(180.0 + beforeBend, 2000.0), {0, 0}, before},
+																		   {{0, 0}, end, inner},
+																		   {end, end + polar(afterBend, 2000.0), after}};
+								sweep.check(segments, {}, checkJoin(segments, rng));
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
 // --- the near-straight retry against the resolution it replaced --------------
 
 namespace {

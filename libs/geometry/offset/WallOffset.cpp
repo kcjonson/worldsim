@@ -126,12 +126,13 @@ namespace geometry {
 			double halfLength = 0.0;
 		};
 
-		// The retry steps a wedge only where its two walls are within this bend of straight, as a tangent: 4 / 15
-		// is tan(14.9 degrees). The joins it exists for, a short wall meeting another thickness, fail within about
-		// 9 degrees of straight (their sweep runs to 12); a corner stepped at 75 to 80 degrees off straight left
-		// its junction past the miter bound or a gap at the thicker band's cap.
+		// The retry steps a wedge only where its two walls are within this bend of straight, as a tangent: 4 / 11
+		// is tan(19.98 degrees). A short wall joining another thickness at one end fails within about 9 degrees of
+		// straight, and a 500 mm wall (the shortest legal) with such a join at both ends up to about 18.5; past 20
+		// a wall of that length resolves as a miter without the retry. Corners stay far outside, a step is the
+		// wrong shape there.
 		constexpr std::int64_t kRetryBendTangentNumerator	= 4;
-		constexpr std::int64_t kRetryBendTangentDenominator = 15;
+		constexpr std::int64_t kRetryBendTangentDenominator = 11;
 
 		// Exactly: |cross| / -dot <= the tangent, which also requires the two to point more than 90 degrees apart.
 		bool withinRetryBend(const Vec2i64& dirL, const Vec2i64& dirR) {
