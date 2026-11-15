@@ -829,9 +829,9 @@ Rings over one spot (`BM_PatchOverRings` in `PatchableMesh.bench.cpp`, 2026-11-1
 `idle`): a small ground patch where K limits of 46 m round a walk overlap costs 0.17 / 0.34 ms (mean,
 K 256 / 1,024; 0.20 / 0.44 before WOR-867 kept each ground edge's intervals in the registry and read
 rings through edge boxes); where every ring passes the spot, as beams of sight through a gap do,
-1.2 / 7.2 ms against 7.2 / 257. The limit walk, the landing and hanging water measured even with
+1.2 / 7.2 ms against 7.2 / 257. The limit walk at the 4 m step, the landing and hanging water measured even with
 `main` across that change, back to back, both checks `idle`; many movers came out within 1.5% either
-way over two runs, the nav thread's mean a little up and its worst ticks a little down. The edge boxes and held intervals add about 120 B a ring slot in the dense limit walk (270 KB over 2,300 slots for 300 m, about 0.9 MB a kilometre against the registry's 36).
+way over two runs, the nav thread's mean a little up and its worst ticks a little down. The limit walk at a 16 m step in dense ground read 3 to 4% slower in two pairs (one with both checks `idle`, one `mostly-idle`), unconfirmed. The edge boxes and held intervals add about 120 B a ring slot in the dense limit walk (270 KB over 2,300 slots for 300 m, about 0.9 MB a kilometre against the registry's 36).
 
 Open ground with no placed objects (a swept square, machine load 2 to 10%): the limit patch is
 0.22 / 0.30 ms (mean / p99) at 500 m across and 0.26 / 0.36 / 0.48 ms (mean / p99 / max) at
