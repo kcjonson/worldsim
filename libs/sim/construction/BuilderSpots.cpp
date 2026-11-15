@@ -89,12 +89,10 @@ namespace construction {
 
 	int builderSpotCount(double areaSquareMeters, double perimeterMeters, int capBase, float capPerSquareMeter, float minSpacingMeters) {
 		const double bySize = std::floor(std::abs(areaSquareMeters) * static_cast<double>(capPerSquareMeter) + kWholeSpotTolerance);
-		double		 count = static_cast<double>(capBase) + std::max(bySize, 0.0);
-		if (minSpacingMeters > 0.0F) {
-			const double bySpacing = std::floor(std::max(perimeterMeters, 0.0) / static_cast<double>(minSpacingMeters) + kWholeSpotTolerance);
-			count = std::min(count, bySpacing);
-		}
-		return static_cast<int>(std::max(count, 1.0));
+		const double bySpacing = std::floor(std::max(perimeterMeters, 0.0) / static_cast<double>(minSpacingMeters) + kWholeSpotTolerance);
+		// fmin and fmax pass over a NaN (a zero perimeter over a zero spacing) instead of returning it.
+		const double count = std::fmin(static_cast<double>(capBase) + std::max(bySize, 0.0), bySpacing);
+		return static_cast<int>(std::fmax(count, 1.0));
 	}
 
 	std::vector<glm::vec2> builderSpots(const geometry::Ring& ring, int count, float insetMeters) {

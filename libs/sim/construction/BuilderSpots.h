@@ -17,7 +17,7 @@ namespace construction {
 
 	/// `capBase + floor(area * capPerSquareMeter)`, capped at `floor(perimeter / minSpacingMeters)` so
 	/// spots spread round the ring are at least that far apart, and never below 1. `areaSquareMeters`
-	/// is taken as its absolute value; a non-positive `minSpacingMeters` applies no spacing cap.
+	/// is taken as its absolute value.
 	[[nodiscard]] int builderSpotCount(
 		double areaSquareMeters, double perimeterMeters, int capBase, float capPerSquareMeter, float minSpacingMeters
 	);

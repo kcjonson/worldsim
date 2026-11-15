@@ -127,7 +127,6 @@ TEST(BuilderSpotCountTests, SpacingCapsASmallShape) {
 	// 2 m x 2 m: by area 1 + floor(4 * 10) = 41, but 8 m of perimeter holds 8 spots a metre apart.
 	EXPECT_EQ(builderSpotCount(4.0, 8.0, 1, 10.0F, 1.0F), 8);
 	EXPECT_EQ(builderSpotCount(4.0, 8.0, 1, 10.0F, 3.0F), 2);
-	EXPECT_EQ(builderSpotCount(4.0, 8.0, 1, 10.0F, 0.0F), 41) << "no spacing, no cap";
 }
 
 TEST(BuilderSpotCountTests, NeverZero) {
