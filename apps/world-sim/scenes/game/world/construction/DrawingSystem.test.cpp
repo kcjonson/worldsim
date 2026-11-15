@@ -8,6 +8,7 @@
 #include <construction/ConstructionWorld.h>
 #include <construction/RoomDetection.h>
 
+#include <glm/geometric.hpp>
 #include <gtest/gtest.h>
 
 #include <algorithm>
@@ -274,6 +275,77 @@ TEST_F(DrawingWallChainTest, DevClosedLoopBuiltFormsARoom) {
 	EXPECT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, true), 4);
 	EXPECT_EQ(drawing->world().vertices().size(), 4U);
 	EXPECT_EQ(construction::detectRooms(drawing->world()).size(), 1U);
+}
+
+namespace {
+
+	// A chain started on a plain point of the host's bottom edge (y = -15), so its first point is the edge snap
+	// inset by the wall's half-thickness, not a corner or a round number.
+	class DrawingWallEdgeChainTest : public DrawingWallChainTest {
+	  protected:
+		static constexpr glm::vec2 kNearBottomEdge = {0.0F, -15.2F};
+
+		// First point on the edge, then (10, firstY) on the same edge, (10, 0), and (0, 0). Returns firstY.
+		float clickEdgeStartedRoom(world_sim::DrawingSystem& tool) const {
+			for (const glm::vec2 point : {kNearBottomEdge, glm::vec2{10.0F, -15.2F}, glm::vec2{10.0F, 0.0F}, glm::vec2{0.0F, 0.0F}}) {
+				clickWith(tool, point);
+			}
+			return 20.0F - tool.status().totalLengthMeters;
+		}
+
+		// The close radius the tool uses at the fixture's zoom of 1.
+		static float originCloseRadiusMeters() {
+			const auto& registry = assets::ConstructionRegistry::Get();
+			return std::max(registry.snapping().originCloseRadiusMeters,
+							registry.rendering().preview.originHaloMinRadiusPx / world_sim::testing::kPixelsPerMeter);
+		}
+	};
+
+} // namespace
+
+TEST_F(DrawingWallEdgeChainTest, ClickNearTheFirstPointClosesTheLoop) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	const float firstY = clickEdgeStartedRoom(*drawing);
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	const glm::vec2 nearFirst{0.4F, -14.5F};
+	ASSERT_LT(glm::length(nearFirst - glm::vec2{0.0F, firstY}), originCloseRadiusMeters());
+	hover(nearFirst);
+	EXPECT_TRUE(drawing->status().valid) << drawing->status().message;
+	EXPECT_NEAR(drawing->status().segmentLengthMeters, -firstY, 1e-3F);
+	clickWith(*drawing, nearFirst);
+	EXPECT_EQ(drawing->status().pointCount, 0) << lastToast();
+	EXPECT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	buildEverySegment(drawing->world());
+	EXPECT_EQ(construction::detectRooms(drawing->world()).size(), 1U);
+}
+
+TEST_F(DrawingWallEdgeChainTest, ClickJustOutsideTheRadiusAddsAPoint) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	const float firstY = clickEdgeStartedRoom(*drawing);
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	const glm::vec2 outside{0.0F, firstY + originCloseRadiusMeters() + 0.1F};
+	hover(outside);
+	EXPECT_NEAR(drawing->status().segmentLengthMeters, -outside.y, 1e-3F);
+	clickWith(*drawing, outside);
+	EXPECT_EQ(drawing->status().pointCount, 5) << lastToast();
+	EXPECT_TRUE(drawing->world().segments().empty());
+}
+
+TEST_F(DrawingWallEdgeChainTest, TwoPointChainDoesNotSnapToItsFirstPoint) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickWith(*drawing, kNearBottomEdge);
+	clickWith(*drawing, {10.0F, -15.2F});
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	const glm::vec2 nearFirst{0.4F, -14.2F};
+	hover(nearFirst);
+	// Snapped onto the first point, the rubber band would be the first segment's 10 m.
+	EXPECT_LT(drawing->status().segmentLengthMeters, 9.9F);
+	clickWith(*drawing, nearFirst);
+	EXPECT_EQ(drawing->status().pointCount, 2);
+	EXPECT_TRUE(drawing->world().segments().empty());
 }
 
 namespace {

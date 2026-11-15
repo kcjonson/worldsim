@@ -1,5 +1,6 @@
 #include "SnapEngine.h"
 
+#include "ConstructionValidator.h"
 #include "ConstructionWorld.h"
 
 #include <assets/ConstructionRegistry.h>
@@ -432,6 +433,101 @@ TEST(SnapEngine, WallFreeformSuppressesAngleSnap) {
 	auto			  r = engine.snapWall(points, {6.0F, 1.44F}, /*freeform=*/true, /*wallHalfThicknessMm=*/100);
 	EXPECT_EQ(r.kind, SnapKind::None);
 	EXPECT_FLOAT_EQ(r.point.y, 1.44F);
+}
+
+// --- Closing a wall chain on its first point --------------------------------
+
+namespace {
+
+	// A chain of kMinClosingWallChainPoints or more whose first point is `first`; the rest sit far from it.
+	std::vector<Vec2> chainFrom(Vec2 first) {
+		return {first, {first.x + 4.0F, first.y}, {first.x + 4.0F, first.y + 4.0F}, {first.x, first.y + 4.0F}};
+	}
+
+} // namespace
+
+TEST(SnapEngine, WallChainStartedOnAFoundationEdgeSnapsBackToItsFirstPoint) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 10.0F}, {0.0F, 10.0F}};
+	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
+	SnapEngine engine(cfg, world);
+
+	const SnapResult start = engine.snapWall({}, {5.0F, -0.2F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	ASSERT_EQ(start.kind, SnapKind::Edge);
+	const std::vector<Vec2> chain = chainFrom(start.point);
+	// 0.38 m from the first point and 0.25 m from the edge: the edge would take it without the close.
+	const Vec2 cursor{5.35F, 0.25F};
+	ASSERT_LT(dist(cursor, chain.front()), cfg.originCloseRadiusMeters);
+	const SnapResult r = engine.snapWall(chain, cursor, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	EXPECT_EQ(r.kind, SnapKind::Origin);
+	EXPECT_TRUE(r.closesShape());
+	EXPECT_EQ(r.point.x, chain.front().x);
+	EXPECT_EQ(r.point.y, chain.front().y);
+	EXPECT_TRUE(closesWallChain(chain, r.point));
+}
+
+TEST(SnapEngine, WallOriginCloseHonorsTheRadius) {
+	SnappingConfig	  cfg = defaults(); // originCloseRadius 0.5 m
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	const std::vector<Vec2> chain = chainFrom({2.0F, 2.0F});
+	// 0.6 m off in x, 0.4 m off in y: outside the radius and both axis locks.
+	const Vec2 cursor{2.6F, 1.6F};
+	const SnapResult outside = engine.snapWall(chain, cursor, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	EXPECT_NE(outside.kind, SnapKind::Origin);
+	EXPECT_FALSE(closesWallChain(chain, outside.point));
+	// The wall tool passes its zoom-stable radius, as the foundation tool does.
+	const SnapResult enlarged =
+		engine.snapWall(chain, cursor, /*freeform=*/false, /*wallHalfThicknessMm=*/100, /*originCloseRadiusMeters=*/1.0F);
+	EXPECT_EQ(enlarged.kind, SnapKind::Origin);
+}
+
+TEST(SnapEngine, WallNoOriginCloseBeforeMinClosingPoints) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	// 0.35 m from the first point: inside the radius, outside the X axis lock.
+	const std::vector<Vec2> chain = {{2.0F, 2.0F}, {6.0F, 2.0F}};
+	ASSERT_LT(chain.size(), kMinClosingWallChainPoints);
+	const SnapResult r = engine.snapWall(chain, {2.35F, 2.1F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	EXPECT_NE(r.kind, SnapKind::Origin);
+	EXPECT_NE(r.point.x, chain.front().x);
+}
+
+TEST(SnapEngine, WallOriginCloseBeatsFoundationVertex) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {10.0F, 0.0F}, {10.0F, 10.0F}, {0.0F, 10.0F}};
+	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
+	SnapEngine engine(cfg, world);
+	// The cursor is 0.35 m from both the (0,0) corner and the first point.
+	const std::vector<Vec2> chain = chainFrom({0.5F, 0.5F});
+	const SnapResult		r = engine.snapWall(chain, {0.25F, 0.25F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	EXPECT_EQ(r.kind, SnapKind::Origin);
+	EXPECT_EQ(r.point.x, chain.front().x);
+	EXPECT_EQ(r.point.y, chain.front().y);
+}
+
+TEST(SnapEngine, WallOriginCloseBeatsWallEndpointAndSegment) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	FoundationId	  host = kInvalidFoundation;
+	buildHostAndWall(world, host); // wall (2,2)->(8,2)
+	SnapEngine engine(cfg, world);
+
+	// 0.25 m from the (2,2) endpoint and from the first point.
+	const std::vector<Vec2> nearEndpoint = chainFrom({2.4F, 2.3F});
+	const SnapResult		overEndpoint = engine.snapWall(nearEndpoint, {2.2F, 2.15F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	EXPECT_EQ(overEndpoint.kind, SnapKind::Origin);
+	EXPECT_EQ(overEndpoint.hitVertex, kInvalidVertex);
+
+	// 0.2 m from the wall's interior and 0.3 m from the first point.
+	const std::vector<Vec2> nearSegment = chainFrom({5.0F, 2.5F});
+	const SnapResult		overSegment = engine.snapWall(nearSegment, {5.0F, 2.2F}, /*freeform=*/false, /*wallHalfThicknessMm=*/100);
+	EXPECT_EQ(overSegment.kind, SnapKind::Origin);
+	EXPECT_EQ(overSegment.hitSegment, kInvalidSegment);
+	EXPECT_EQ(overSegment.point.y, 2.5F);
 }
 
 // --- Outer-face-flush alignment -------------------------------------------

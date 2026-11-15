@@ -46,6 +46,7 @@
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
@@ -232,6 +233,10 @@ namespace world_sim {
 		/// Render the in-progress wall chain: centerline, thickness band preview,
 		/// snap guides, and validity colorize. INTERIM.
 		void renderWallChainPreview(int viewportW, int viewportH);
+
+		/// The ring around a closeable shape's or chain's first point, bold and valid-colored
+		/// while the next click closes it (willClose_). INTERIM.
+		void renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const;
 
 		/// Foundation Add / Subtract: the outline the edit would produce (merged or
 		/// remainder), colorized for validity, with the reason next to the cursor.
