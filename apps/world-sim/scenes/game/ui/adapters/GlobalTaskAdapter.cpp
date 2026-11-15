@@ -280,7 +280,7 @@ namespace world_sim::adapters {
 		/// Every goal row with something to do, Cut/Haul/Build reading as a chain per site and
 		/// Craft/PlacePackaged/Deconstruct rounding it out. Build is the umbrella (the destination holder), so a site
 		/// shows its build step, not just its material children; a structure being torn down shows its
-		/// Deconstruct goal, from the order until the teardown ends or is cancelled. A box keeps its umbrella while it has rules
+		/// Deconstruct goal while it has work left to tear down. A box keeps its umbrella while it has rules
 		/// and is left out until some colonist is offered work toward it. With `knownTo`, only the goals
 		/// that colonist works or its last decision offered work toward.
 		std::vector<GlobalTaskDisplayData>
@@ -296,6 +296,13 @@ namespace world_sim::adapters {
 				  ecs::TaskType::PlacePackaged,
 				  ecs::TaskType::Deconstruct}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
+					if (type == ecs::TaskType::Deconstruct) {
+						// The goal outlives the last teardown tick until the next construction pass.
+						const auto* blueprint = world.getComponent<ecs::StructureBlueprint>(goal->destinationEntity);
+						if (blueprint == nullptr || blueprint->workDone <= 0.0F) {
+							continue;
+						}
+					}
 					const auto workers = work.workersOf(*goal);
 					const bool works = knownTo.has_value() && std::ranges::find(workers, *knownTo) != workers.end();
 					if (!work.hasWork(*goal)) {
