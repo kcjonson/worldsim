@@ -116,6 +116,12 @@ namespace ecs {
 		// yields, and the harvest removes it (clearing removes what stands there, regrowing or not).
 		std::optional<FootprintBounds> clearFootprint;
 
+		// A foundation's construction Build umbrella: the candidate points its builders work from, in world
+		// meters, spaced round the footprint (construction/BuilderSpots.h). Set as the goal turns Available
+		// and left unchanged until it stops being Available, so a spot's index names it for that whole time.
+		// Empty on every other goal, a wall's or an opening's Build umbrella included.
+		std::vector<glm::vec2> builderSpots;
+
 		// For Craft goals: identity of the recipe this goal's child hierarchy was built for.
 		// Hash of the recipe defName. When a station's next job switches to a different
 		// recipe, this changes and the child Harvest/Haul goals are rebuilt. 0 = not a Craft

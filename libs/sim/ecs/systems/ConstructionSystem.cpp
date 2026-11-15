@@ -12,9 +12,11 @@
 #include "../components/Task.h"
 #include "../components/Transform.h"
 
+#include <construction/BuilderSpots.h>
 #include <construction/ConstructionWorld.h>
 
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <world/chunk/ChunkCoordinate.h>
 
@@ -123,7 +125,7 @@ namespace ecs {
 			// Prerequisites; openings sit on a built wall). This is the front of the pipeline.
 			const bool hostGated = (isWall && !isWallHostBuilt(graphId)) || (isOpening && !isOpeningHostSegmentBuilt(graphId));
 			if (hostGated) {
-				ensureUmbrellaGoal(entity, blueprint, GoalStatus::Blocked);
+				ensureUmbrellaGoal(entity, structure, blueprint, GoalStatus::Blocked);
 				entitiesWithGoals.erase(entity);
 				m_activeBlueprintCount++;
 				continue;
@@ -165,7 +167,7 @@ namespace ecs {
 			// so the child Harvest goals never collide on the single-top-level-per-destination
 			// guard.
 			const GoalStatus umbrellaStatus = decision.emitBuildGoal ? GoalStatus::Available : GoalStatus::Blocked;
-			const uint64_t	 umbrellaId = ensureUmbrellaGoal(entity, blueprint, umbrellaStatus);
+			const uint64_t	 umbrellaId = ensureUmbrellaGoal(entity, structure, blueprint, umbrellaStatus);
 
 			if (decision.emitClearGoals) {
 				emitClearGoals(entity, graphId, umbrellaId);
@@ -528,7 +530,28 @@ namespace ecs {
 		}
 	}
 
-	uint64_t ConstructionSystem::ensureUmbrellaGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status) {
+	std::vector<glm::vec2> ConstructionSystem::foundationBuilderSpots(const Structure& structure) const {
+		if (structure.kind != StructureKind::Foundation || m_constructionWorld == nullptr) {
+			return {};
+		}
+		const auto* foundation = m_constructionWorld->get(structure.graphId);
+		if (foundation == nullptr) {
+			return {};
+		}
+		const auto& constraints = assets::ConstructionRegistry::Get().constraints();
+		const int	count = construction::builderSpotCount(
+			  geometry::signedAreaSquareMeters(foundation->ring),
+			  construction::ringPerimeterMeters(foundation->ring),
+			  constraints.builderCapBase,
+			  constraints.builderCapPerSquareMeter,
+			  constraints.builderSpotMinSpacingMeters
+		  );
+		return construction::builderSpots(foundation->ring, count, kBuilderSpotInsetMeters);
+	}
+
+	uint64_t ConstructionSystem::ensureUmbrellaGoal(
+		EntityID blueprintEntity, const Structure& structure, const StructureBlueprint& blueprint, GoalStatus status
+	) {
 		auto& registry = GoalTaskRegistry::Get();
 
 		const auto*		position = world->getComponent<Position>(blueprintEntity);
@@ -538,10 +561,19 @@ namespace ecs {
 		// always the (only) goal getGoalByDestination returns for this blueprint.
 		const auto* existing = registry.getGoalByDestination(blueprintEntity);
 		if (existing != nullptr && existing->type == TaskType::Build) {
+			// Spots are placed only as the goal turns Available, never while it stays Available: claims hold
+			// them by index.
+			const bool			   becomingAvailable = status == GoalStatus::Available && existing->status != GoalStatus::Available;
+			std::vector<glm::vec2> spots = becomingAvailable ? foundationBuilderSpots(structure) : std::vector<glm::vec2>{};
 			// Materials are accepted only while due; emitMaterialGoals names them again each pass.
-			registry.updateGoal(existing->id, [status](GoalTask& g) {
+			registry.updateGoal(existing->id, [status, becomingAvailable, &spots](GoalTask& g) {
 				g.status = status;
 				g.acceptedDefNameIds.clear();
+				if (status != GoalStatus::Available) {
+					g.builderSpots.clear();
+				} else if (becomingAvailable) {
+					g.builderSpots = std::move(spots);
+				}
 			});
 			return existing->id;
 		}
@@ -555,6 +587,9 @@ namespace ecs {
 		buildGoal.destinationEntity = blueprintEntity;
 		buildGoal.destinationPosition = sitePos;
 		buildGoal.status = status;
+		if (status == GoalStatus::Available) {
+			buildGoal.builderSpots = foundationBuilderSpots(structure);
+		}
 		const uint64_t umbrellaId = registry.createGoal(std::move(buildGoal));
 
 		LOG_DEBUG(

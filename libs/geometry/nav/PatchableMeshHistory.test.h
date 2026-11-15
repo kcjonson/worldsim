@@ -330,8 +330,8 @@ namespace geometry::nav::testdata {
 	// One generated history: patches of new rings, now and then removing or moving up to
 	// three live ones (a move may also add or drop a corner), each followed by a width
 	// refresh. One seed in 200 stacks eight to sixteen rings a patch within 1.5 m of the
-	// origin, a few hundred over one spot by the end. `step` takes the state hash and
-	// validate()'s answer after each patch.
+	// origin, a few hundred over one spot by the end. `step` takes the state hash,
+	// validate()'s answer, the mesh and its live rings after each patch.
 	template <typename Step> void runHistory(std::uint32_t seed, int patches, Step step) {
 		std::mt19937		rng(seed);
 		PatchableMesh		mesh;
@@ -385,7 +385,7 @@ namespace geometry::nav::testdata {
 				ringBound = std::max(ringBound, ring + 1);
 			}
 			const Vec2i64 probe = historyPoint(rng, spread);
-			step(historyStateHash(mesh, ringBound, report, refresh, firstEpoch, firstComponentEpoch, probe), mesh.validate());
+			step(historyStateHash(mesh, ringBound, report, refresh, firstEpoch, firstComponentEpoch, probe), mesh.validate(), mesh, live);
 		}
 	}
 
