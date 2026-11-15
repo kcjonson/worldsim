@@ -10,14 +10,14 @@ namespace world_sim {
 		if (navigation == nullptr || navigation->isAreaBuildableOnceCleared(Foundation::toGlmVec2(pts))) {
 			return {};
 		}
-		return "foundation: footprint not on buildable ground (water, a fordable stream, or ground no mover has seen)";
+		return "foundation: footprint not on buildable ground (water, a fordable stream, or ground no mover has meshed)";
 	}
 
 	std::string wallChainGroundRefusal(const ecs::NavigationSystem* navigation, const std::vector<Foundation::Vec2>& pts) {
 		if (navigation == nullptr || navigation->isLineBuildableNow(Foundation::toGlmVec2(pts))) {
 			return {};
 		}
-		return "walls: chain not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has seen)";
+		return "walls: chain not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has meshed)";
 	}
 
 	std::string spawnGroundRefusal(
@@ -31,12 +31,12 @@ namespace world_sim {
 			if (placement.footprintBuildableNow(def, at)) {
 				return {};
 			}
-			return where() + "is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has seen)";
+			return where() + "is not on clear buildable ground (water, a fordable stream, a placed obstacle, or ground no mover has meshed)";
 		}
 		if (navigation->isValidPosition({at.x, at.y})) {
 			return {};
 		}
-		return where() + (navigation->inSimArea({at.x, at.y}) ? "is water or a placed obstacle" : "is ground no mover has seen (off the nav mesh)");
+		return where() + (navigation->inSimArea({at.x, at.y}) ? "is water or a placed obstacle" : "is ground no mover has meshed (off the nav mesh)");
 	}
 
 } // namespace world_sim

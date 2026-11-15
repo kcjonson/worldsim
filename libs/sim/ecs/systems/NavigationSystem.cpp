@@ -825,7 +825,7 @@ namespace ecs {
 				disc.xMm		 = xMm;
 				disc.yMm		 = yMm;
 				disc.rangeMeters = range;
-				SeenLimit limit	 = makeLimit(entity, {xMm, yMm}, range);
+				MeshLimit limit	 = makeLimit(entity, {xMm, yMm}, range);
 				limit.taken		 = ++disc.taken;
 				if (detailMesh.groundCovers(limit.outline)) {
 					noteServed(disc, limit);
@@ -844,20 +844,20 @@ namespace ecs {
 		std::erase_if(moverDiscs, [this](const auto& entry) { return entry.second.seen != moverPass; });
 	}
 
-	void NavigationSystem::noteServed(MoverDisc& disc, const SeenLimit& limit) {
+	void NavigationSystem::noteServed(MoverDisc& disc, const MeshLimit& limit) {
 		if (!disc.served.has_value() || limit.taken > disc.served->taken) {
 			disc.served = ServedLimit{.centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
 		}
 	}
 
-	void NavigationSystem::noteServed(const SeenLimit& limit) {
+	void NavigationSystem::noteServed(const MeshLimit& limit) {
 		if (const auto disc = moverDiscs.find(limit.mover); disc != moverDiscs.end()) {
 			noteServed(disc->second, limit);
 		}
 	}
 
-	NavigationSystem::SeenLimit NavigationSystem::makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const {
-		SeenLimit limit{.mover			= mover,
+	NavigationSystem::MeshLimit NavigationSystem::makeLimit(EntityID mover, geometry::Vec2i64 centre, float rangeMeters) const {
+		MeshLimit limit{.mover			= mover,
 						.centre			= centre,
 						.rangeMm		= radiusMm(rangeMeters),
 						.circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
@@ -889,14 +889,14 @@ namespace ecs {
 		}
 	} // namespace
 
-	bool NavigationSystem::limitServable(const SeenLimit& limit) const {
+	bool NavigationSystem::limitServable(const MeshLimit& limit) const {
 		return everyChunkIn(limit.query.lo, limit.query.hi, [this, &limit](world::ChunkCoordinate coord) {
 			const world::Chunk* chunk = chunkManager->getChunk(coord);
 			return chunk != nullptr && chunk->isReady() && placementReady(coord) && (limit.mover == kInvalidEntity || anchorHolds(coord));
 		});
 	}
 
-	bool NavigationSystem::limitStranded(const SeenLimit& limit) const {
+	bool NavigationSystem::limitStranded(const MeshLimit& limit) const {
 		return limit.mover != kInvalidEntity &&
 			   !everyChunkIn(limit.query.lo, limit.query.hi, [this](world::ChunkCoordinate coord) { return anchorHolds(coord); });
 	}
@@ -905,25 +905,25 @@ namespace ecs {
 		const auto holds = [&pointMm](const std::vector<geometry::Vec2i64>& outline) {
 			return geometry::pointInPolygon(pointMm, outline) != geometry::PointInPolygon::Outside;
 		};
-		const auto queuedHolds = [&](const SeenLimit& limit) {
+		const auto queuedHolds = [&](const MeshLimit& limit) {
 			return pointMm.x >= limit.query.lo.x && pointMm.x <= limit.query.hi.x && pointMm.y >= limit.query.lo.y && pointMm.y <= limit.query.hi.y &&
 				   holds(limit.outline);
 		};
 		if (landingLimit.has_value() && queuedHolds(*landingLimit)) {
 			return true;
 		}
-		if (std::any_of(limitQueue.begin(), limitQueue.end(), [&](const SeenLimit& limit) { return !limitStranded(limit) && queuedHolds(limit); })) {
+		if (std::any_of(limitQueue.begin(), limitQueue.end(), [&](const MeshLimit& limit) { return !limitStranded(limit) && queuedHolds(limit); })) {
 			return true;
 		}
 		return std::any_of(gatheredJob.groundOutlines.begin(), gatheredJob.groundOutlines.end(), holds);
 	}
 
-	bool NavigationSystem::limitUrgent(const SeenLimit& limit) const {
+	bool NavigationSystem::limitUrgent(const MeshLimit& limit) const {
 		const auto disc = moverDiscs.find(limit.mover);
 		return disc != moverDiscs.end() && disc->second.urgent && limit.taken == disc->second.taken;
 	}
 
-	bool NavigationSystem::limitHoldable(const SeenLimit& limit) const {
+	bool NavigationSystem::limitHoldable(const MeshLimit& limit) const {
 		const auto disc = moverDiscs.find(limit.mover);
 		return disc != moverDiscs.end() && disc->second.served.has_value() && !limitUrgent(limit);
 	}
@@ -1415,7 +1415,7 @@ namespace ecs {
 		}
 	}
 
-	bool NavigationSystem::serveLimit(const SeenLimit& limit, std::size_t& budget) {
+	bool NavigationSystem::serveLimit(const MeshLimit& limit, std::size_t& budget) {
 		struct Found {
 			ObstacleKey			  key;
 			gnav::NavInputPolygon ring;
@@ -1449,7 +1449,7 @@ namespace ecs {
 				}
 				if (reach > reachMm && overreachingDefs.insert(e->defName).second) {
 					LOG_ERROR(Engine, "[Nav] %s's footprint reaches %lld mm from its position, past kFootprintReachMeters: where it pokes into a limit "
-									  "from outside the limit's query box, seen ground goes in without it",
+									  "from outside the limit's query box, meshed ground goes in without it",
 							  e->defName.c_str(), static_cast<long long>(reach));
 				}
 				const std::int64_t gx = std::max<std::int64_t>({0, boxLo.x - limit.centre.x, limit.centre.x - boxHi.x});
@@ -1514,9 +1514,9 @@ namespace ecs {
 		const std::size_t rings = edits.adds.size();
 		gatheredJob.patches.push_back(std::move(edits));
 		// Its mover's served limit only once joined: until then what he sees is bounded by the last.
-		std::optional<SeenLimit> ground;
+		std::optional<MeshLimit> ground;
 		if (withGround) {
-			ground = SeenLimit{.mover = limit.mover, .centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
+			ground = MeshLimit{.mover = limit.mover, .centre = limit.centre, .rangeMm = limit.rangeMm, .taken = limit.taken};
 		}
 		gatheredJob.onPatched.emplace_back([this, keys = std::move(keys), waterChunks = std::move(waterChunks), waterRings = std::move(waterRings),
 											ground = std::move(ground), withGround, rings, mover = limit.mover, centre = limit.centre,
