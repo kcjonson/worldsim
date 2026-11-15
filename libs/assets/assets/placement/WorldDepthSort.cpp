@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <optional>
 
 namespace assets {
 
@@ -96,13 +97,9 @@ namespace assets {
 		++frame;
 		// Padded by the farthest any template draws from its origin: statics and dynamic entities
 		// are culled by origin against this rect.
-		const VisibleBounds vis = computeVisibleBounds(
-			ctx.camera,
-			ctx.viewportWidth,
-			ctx.viewportHeight,
-			ctx.pixelsPerMeter,
-			entityCullMarginMeters(AssetRegistry::Get().maxReachMeters())
-		);
+		const float			reachMargin = entityCullMarginMeters(AssetRegistry::Get().maxReachMeters());
+		const VisibleBounds view =
+			computeVisibleBounds(ctx.camera, ctx.viewportWidth, ctx.viewportHeight, ctx.pixelsPerMeter, reachMargin);
 
 		// Visible statics: each chunk's sorted list, culled by origin, so each chunk's stretch
 		// of out is already in order. Only tall occluders join the sorted stream (short flora is
@@ -120,10 +117,20 @@ namespace assets {
 				continue;
 			}
 			const ChunkStatics& chunk = staticsOf(coord, *index);
-			if (chunk.statics.empty() || chunk.max.x < vis.minX || chunk.min.x > vis.maxX || chunk.max.y < vis.minY ||
-				chunk.min.y > vis.maxY) {
+			if (chunk.statics.empty() || chunk.max.x < view.minX || chunk.min.x > view.maxX || chunk.max.y < view.minY ||
+				chunk.min.y > view.maxY) {
 				continue;
 			}
+			// An upright draws within the reach of its origin, so it can show when its origin is within
+			// the reach of what the bound holds.
+			const std::optional<VisibleBounds> shown = ctx.drawBound.within(
+				{std::max(view.minX, chunk.min.x), std::min(view.maxX, chunk.max.x), std::max(view.minY, chunk.min.y), std::min(view.maxY, chunk.max.y)},
+				reachMargin
+			);
+			if (!shown.has_value()) {
+				continue;
+			}
+			const VisibleBounds& vis = *shown;
 			// A static in view has its anchorY within anchorReach of the view's rows, and the list
 			// is sorted by anchorY, so only that stretch of it is culled. The meter of slack covers
 			// rounding in anchorReach.
@@ -148,7 +155,9 @@ namespace assets {
 		// of equal anchorY.
 		const size_t staticCount = out.size();
 		dynamics.clear();
-		if (ctx.dynamicEntities != nullptr) {
+		const std::optional<VisibleBounds> shown = ctx.drawBound.within(view, reachMargin);
+		if (ctx.dynamicEntities != nullptr && shown.has_value()) {
+			const VisibleBounds& vis = *shown;
 			for (const auto& entity : *ctx.dynamicEntities) {
 				if (entity.position.x < vis.minX || entity.position.x > vis.maxX || entity.position.y < vis.minY ||
 					entity.position.y > vis.maxY) {

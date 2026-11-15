@@ -129,7 +129,7 @@ namespace {
 	}
 
 	// A placed obstacle stands at `meters` in the mesh: on meshed ground, and not clear there. Off the
-	// mesh reads false, so ground nobody has seen never reads as holding one.
+	// mesh reads false, so ground no mover has meshed never reads as holding one.
 	bool obstacleMeshed(const NavigationSystem& sys, glm::vec2 meters) { return sys.inSimArea(meters) && !meshClear(sys, meters); }
 
 	// What a mover at `at` sees, the disc of `sight` round him, lies in meshed ground: where he stands
@@ -611,7 +611,7 @@ namespace {
 } // namespace
 
 // The placed obstacles of a limit that is not urgent (a still mover's sight grows) enter at most
-// kDetailRingsPerTick a tick, hanging over unseen ground, and the limit's ground goes in with the last
+// kDetailRingsPerTick a tick, hanging over unmeshed ground, and the limit's ground goes in with the last
 // of them: never ahead of its obstacles.
 TEST_F(NavigationSystemTest, PlacedObstaclesEnterWithinTheBudget) {
 	registerObstacle("Test_NavBudgetObstacle", 0.3F);
@@ -666,10 +666,10 @@ TEST_F(NavigationSystemTest, PlacedObstaclesEnterWithinTheBudget) {
 	EXPECT_EQ(inMesh(), obstacles.size());
 }
 
-// A mover that appears on unseen ground (a dev spawn) has his limit urgent: its ground and every placed
+// A mover that appears on unmeshed ground (a dev spawn) has his limit urgent: its ground and every placed
 // obstacle in it are in the mesh after the tick he appears in, outside the budgets, and he walks none
 // of his route before it.
-TEST_F(NavigationSystemTest, FreshMoverOnUnseenGroundStandsUntilHisFirstLimitLands) {
+TEST_F(NavigationSystemTest, FreshMoverOnUnmeshedGroundStandsUntilHisFirstLimitLands) {
 	registerObstacle("Test_NavFreshMoverObstacle", 0.3F);
 	const glm::vec2		   at{200.0F, 200.0F};
 	std::vector<glm::vec2> obstacles;
@@ -717,7 +717,7 @@ TEST_F(NavigationSystemTest, FreshMoverOnUnseenGroundStandsUntilHisFirstLimitLan
 	EXPECT_NE(world.getComponent<Position>(mover)->value, at) << "he stands once his ground is in";
 }
 
-// Placement finishing late never leaves seen ground without its obstacles: a limit whose chunks have
+// Placement finishing late never leaves meshed ground without its obstacles: a limit whose chunks have
 // no placement yet does not land, and once placement arrives it lands with every obstacle of its
 // disc in the mesh.
 TEST_F(NavigationSystemTest, LatePlacementBringsItsObstaclesIn) {
@@ -907,7 +907,7 @@ TEST_F(NavigationSystemTest, FelledBacklogDoesntHoldBackAdds) {
 	}
 	world.getComponent<Memory>(other)->sightRadius += kSightGrowthShortOfUrgent;
 	sys.resetNavQueryStats();
-	// The new limit's obstacles go in ahead of its ground, hanging over unseen ground.
+	// The new limit's obstacles go in ahead of its ground, hanging over unmeshed ground.
 	auto gathered = [&](const std::vector<glm::vec2>& obstacles) {
 		return static_cast<std::size_t>(std::count_if(obstacles.begin(), obstacles.end(), [&](glm::vec2 t) {
 			return sys.placedObstacleInNavMesh(world::worldToChunk({t.x, t.y}), PlacedEntity{.defName = "Test_NavLostObstacle", .position = t});
@@ -989,8 +989,8 @@ TEST_F(NavigationSystemTest, QueriesSeePatchesFromEndTickOn) {
 
 // --- One mesh ------------------------------------------------------------------
 
-// WOR-644: two colonists far apart, with unseen ground between them. The mesh ends at what they
-// have seen, so there is no known way; once a mover has walked from one to the other, their
+// WOR-644: two colonists far apart, with unmeshed ground between them. The mesh ends at what they
+// hold, so there is no known way; once a mover has walked from one to the other, their
 // ground is one mesh, a route between them exists, and connected() agrees.
 TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 	ConstructionWorld cw;
@@ -1007,7 +1007,7 @@ TEST_F(NavigationSystemTest, ColonistsFarApartRouteToEachOther) {
 	settle(sys);
 	ASSERT_TRUE(sys.inSimArea(a));
 	ASSERT_TRUE(sys.inSimArea(b));
-	EXPECT_FALSE(sys.inSimArea((a + b) * 0.5F)) << "nobody has seen the ground between them";
+	EXPECT_FALSE(sys.inSimArea((a + b) * 0.5F)) << "no limit holds the ground between them";
 	EXPECT_FALSE(sys.connected(a, b));
 	EXPECT_FALSE(routeBetween(sys, a, b).has_value());
 
@@ -1687,11 +1687,11 @@ TEST_F(NavigationSystemTest, LandingMeshesOnlyTheDropLimit) {
 	const glm::vec2						drop{100.0F, 100.0F};
 	const float							circumradius =
 		static_cast<float>(geometry::nav::limitCircumradius(nav::toMm(glm::vec2{NavigationSystem::kLandingSightMeters, 0.0F}).x)) / 1000.0F;
-	const glm::vec2						seen	= drop + glm::vec2{NavigationSystem::kLandingSightMeters - 10.0F, 0.0F};
-	const glm::vec2						unseen	= drop - glm::vec2{0.0F, circumradius + 10.0F};
+	const glm::vec2						inLanding	= drop + glm::vec2{NavigationSystem::kLandingSightMeters - 10.0F, 0.0F};
+	const glm::vec2						pastLanding	= drop - glm::vec2{0.0F, circumradius + 10.0F};
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
-	placeObstacles(executor, processed, "Test_NavLandingObstacle", {seen, unseen});
+	placeObstacles(executor, processed, "Test_NavLandingObstacle", {inLanding, pastLanding});
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
 	sys.setChunkManager(landChunks());
@@ -1706,8 +1706,8 @@ TEST_F(NavigationSystemTest, LandingMeshesOnlyTheDropLimit) {
 		EXPECT_TRUE(sys.inSimArea(drop + dir * (NavigationSystem::kLandingSightMeters - 1.0F))) << "direction " << k;
 		EXPECT_FALSE(sys.inSimArea(drop + dir * (circumradius + 1.0F))) << "direction " << k;
 	}
-	EXPECT_TRUE(obstacleMeshed(sys, seen)) << "the obstacle in the landing limit came in with it";
-	EXPECT_FALSE(sys.inSimArea(unseen));
+	EXPECT_TRUE(obstacleMeshed(sys, inLanding)) << "the obstacle in the landing limit came in with it";
+	EXPECT_FALSE(sys.inSimArea(pastLanding));
 }
 
 // The placed obstacles the landing clears round the crew's points are out of the mesh when
@@ -2983,13 +2983,13 @@ TEST_F(NavigationSystemTest, FelledWhileItsLimitWaitsNeverEnters) {
 
 // A placed obstacle felled where no limit has reached changes nothing: no patch, nothing left waiting,
 // and a mover arriving later meshes the ground without it.
-TEST_F(NavigationSystemTest, FelledOutsideSeenGroundChangesNothing) {
-	registerObstacle("Test_NavUnseenFellObstacle", 0.4F);
-	const glm::vec2						seenObstacle{10.0F, 10.0F};
-	const glm::vec2						unseenObstacle{800.0F, 100.0F};
+TEST_F(NavigationSystemTest, FelledOutsideMeshedGroundChangesNothing) {
+	registerObstacle("Test_NavUnmeshedFellObstacle", 0.4F);
+	const glm::vec2						meshedObstacle{10.0F, 10.0F};
+	const glm::vec2						unmeshedObstacle{800.0F, 100.0F};
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
-	placeObstacles(executor, processed, "Test_NavUnseenFellObstacle", {seenObstacle, unseenObstacle});
+	placeObstacles(executor, processed, "Test_NavUnmeshedFellObstacle", {meshedObstacle, unmeshedObstacle});
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
@@ -2997,21 +2997,21 @@ TEST_F(NavigationSystemTest, FelledOutsideSeenGroundChangesNothing) {
 	sys.setPlacementData(&executor, &processed);
 	addColonist(world, {0.0F, 0.0F}, "Here");
 	settle(sys);
-	ASSERT_TRUE(obstacleMeshed(sys, seenObstacle));
-	ASSERT_FALSE(sys.inSimArea(unseenObstacle));
+	ASSERT_TRUE(obstacleMeshed(sys, meshedObstacle));
+	ASSERT_FALSE(sys.inSimArea(unmeshedObstacle));
 	const std::uint64_t epoch = sys.navMesh().epoch();
 
-	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({unseenObstacle.x, unseenObstacle.y}), unseenObstacle, "Test_NavUnseenFellObstacle"));
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({unmeshedObstacle.x, unmeshedObstacle.y}), unmeshedObstacle, "Test_NavUnmeshedFellObstacle"));
 	sys.resetNavQueryStats();
 	step(world, sys);
 	EXPECT_EQ(sys.navQueryStats().navPatches, 0U);
 	EXPECT_EQ(sys.navMesh().epoch(), epoch);
 	EXPECT_FALSE(sys.isBuilding()) << "an entry was left behind";
 
-	addColonist(world, unseenObstacle - glm::vec2{10.0F, 0.0F}, "There");
+	addColonist(world, unmeshedObstacle - glm::vec2{10.0F, 0.0F}, "There");
 	settle(sys);
-	EXPECT_TRUE(meshClear(sys, unseenObstacle)) << "the felled obstacle came in with the ground";
-	EXPECT_TRUE(obstacleMeshed(sys, seenObstacle));
+	EXPECT_TRUE(meshClear(sys, unmeshedObstacle)) << "the felled obstacle came in with the ground";
+	EXPECT_TRUE(obstacleMeshed(sys, meshedObstacle));
 }
 
 // Swapping the ConstructionWorld for another at the same version still re-reads the walls: the old
@@ -3292,7 +3292,7 @@ namespace {
 	}
 } // namespace
 
-// A placed obstacle whose footprint crosses the edge of the seen area blocks inside the union and adds
+// A placed obstacle whose footprint crosses the edge of the meshed area blocks inside the union and adds
 // no triangle outside it; once a later limit covers the rest, the whole footprint blocks, under the one
 // ring it went in as.
 TEST_F(NavigationSystemTest, ObstacleStraddlingTheEdgeBlocksInsideOnly) {
@@ -3315,14 +3315,14 @@ TEST_F(NavigationSystemTest, ObstacleStraddlingTheEdgeBlocksInsideOnly) {
 	addColonist(world, lookout, "Lookout");
 	settle(sys);
 	ASSERT_TRUE(sys.inSimArea(inside));
-	EXPECT_TRUE(obstacleMeshed(sys, inside)) << "it blocks inside the seen area";
-	EXPECT_FALSE(sys.inSimArea(outside)) << "it added mesh outside the seen area";
+	EXPECT_TRUE(obstacleMeshed(sys, inside)) << "it blocks inside the meshed area";
+	EXPECT_FALSE(sys.inSimArea(outside)) << "it added mesh outside the meshed area";
 	const std::vector<geometry::nav::RingId> ring = placedRingsAt(sys, inside);
 	ASSERT_EQ(ring.size(), 1U);
 
 	addColonist(world, lookout + kColonistRange * outward, "Beyond");
 	settle(sys);
-	EXPECT_TRUE(obstacleMeshed(sys, outside)) << "the rest of its footprint blocks once seen";
+	EXPECT_TRUE(obstacleMeshed(sys, outside)) << "the rest of its footprint blocks once meshed";
 	EXPECT_EQ(placedRingsAt(sys, inside), ring);
 	EXPECT_EQ(placedRingsAt(sys, outside), ring) << "it went in again";
 }
@@ -3553,16 +3553,16 @@ TEST_F(NavigationSystemTest, ColonistMovedOffItsRouteReplansFromWhereItIs) {
 	}
 }
 
-// A colonist put on ground no mover has seen (what the dev teleport does) has it meshed under him on
+// A colonist put on ground no mover has meshed (what the dev teleport does) has it meshed under him on
 // the next tick: his limit there is urgent, so it goes in outside every budget.
-TEST_F(NavigationSystemTest, TeleportOntoUnseenGroundMeshesOnArrival) {
+TEST_F(NavigationSystemTest, TeleportOntoUnmeshedGroundMeshesOnArrival) {
 	WalkRig rig({0.0F, 0.0F});
 	rig.start();
 	const EntityID colonist = needyColonist(rig, {0.0F, 0.0F}, NeedType::Thirst, 100.0F);
 	rig.world.update(0.1F);
-	const glm::vec2 unseen{300.0F, 300.0F};
-	ASSERT_FALSE(rig.nav.inSimArea(unseen));
-	rig.world.getComponent<Position>(colonist)->value = unseen;
+	const glm::vec2 unmeshed{300.0F, 300.0F};
+	ASSERT_FALSE(rig.nav.inSimArea(unmeshed));
+	rig.world.getComponent<Position>(colonist)->value = unmeshed;
 	rig.world.update(0.1F);
 	const glm::vec2 at = rig.world.getComponent<Position>(colonist)->value;
 	EXPECT_TRUE(rig.nav.isValidPosition(at)) << "not meshed a tick after the teleport";
@@ -4153,7 +4153,7 @@ namespace {
 	const std::vector<glm::vec2> kInRoom{{97.0F, 97.5F}, {99.0F, 97.5F}};
 	// Ground no field mover meshes: chunk (1, 0).
 	const glm::vec2 kFarGround{700.0F, 64.0F};
-	// Placed obstacles no field mover has seen, and a still lookout beside them (lateLookout, sight 0)
+	// Placed obstacles no field mover has meshed, and a still lookout beside them (lateLookout, sight 0)
 	// whose limit holds them only once his sight grows to kLateSight. That is short of urgent: what he
 	// then sees stays inside his first limit, so the wider limit is one a search's hold keeps waiting.
 	const glm::vec2 kLateObstacles{300.0F, 300.0F};
@@ -5022,8 +5022,8 @@ TEST_F(NavigationSystemTest, RouteStressRunsRepeatExactly) {
 // --- The snap and collision, one rule ------------------------------------------------------------
 
 // Nav's snap and the collision system run together on three movers: one on a route, set down on
-// unseen ground inside a placed obstacle that comes in with that ground; one whose route ends inside a
-// placed obstacle (nothing clear ahead); one with no route and a velocity, set down on unseen ground
+// unmeshed ground inside a placed obstacle that comes in with that ground; one whose route ends inside a
+// placed obstacle (nothing clear ahead); one with no route and a velocity, set down on unmeshed ground
 // inside another. None ends a tick further back along its route or heading than it started it; the
 // one with nothing clear ahead stays, is held (collision doesn't push it), and steps out, not behind
 // its leg, once no new route has come.
@@ -5159,7 +5159,7 @@ namespace {
 } // namespace
 
 // A mover that appears has his limit's ground and every placed obstacle in it land on one tick: none
-// is seen before the ground under it, and the ground never lands ahead of one.
+// is meshed before the ground under it, and the ground never lands ahead of one.
 TEST_F(NavigationSystemTest, SpawnedMoversObstaclesLandWithHisGround) {
 	const std::vector<int> at	= spawnedMoverLandings();
 	constexpr std::size_t  kOwn = 24; // the middle of 7 x 7
@@ -5965,7 +5965,7 @@ TEST_F(NavigationSystemTest, ConnectedJoinsOnTheTickTheGapIsMeshed) {
 }
 
 // A limit that is not urgent (a still mover's sight grows) with more placed obstacles than a tick's
-// budget brings them in over several ticks ahead of its ground, hanging over unseen ground: they close
+// budget brings them in over several ticks ahead of its ground, hanging over unmeshed ground: they close
 // nothing anyone can reach, so the epoch stays until the ground comes.
 TEST_F(NavigationSystemTest, ObstaclesAheadOfTheirGroundLeaveTheEpoch) {
 	registerObstacle("Test_NavEpochObstacle", 0.4F);

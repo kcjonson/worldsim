@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdint>
+#include <functional>
 #include <future>
 #include <memory>
 #include <span>
@@ -95,6 +96,11 @@ class ChunkManager {
 	[[nodiscard]] int32_t loadRadius() const { return cameraLoadRadius; }
 	[[nodiscard]] int32_t unloadRadius() const { return cameraUnloadRadius; }
 
+	/// Which chunks within the camera's load radius the camera loads; unset, all of them. The game
+	/// loads only those that can show (player-visibility.md 3.9). Anchors load theirs regardless, and
+	/// a chunk already loaded is kept as before.
+	void setCameraLoads(std::function<bool(ChunkCoordinate)> loads) { cameraLoads = std::move(loads); }
+
   private:
 	std::unique_ptr<IWorldSampler>								sampler;
 	grove::CanopyCover											canopyCover;
@@ -106,6 +112,8 @@ class ChunkManager {
 
 	// Larger than the load radius so a camera pacing a chunk border doesn't thrash
 	int32_t cameraUnloadRadius = 4;
+
+	std::function<bool(ChunkCoordinate)> cameraLoads;
 
 	/// Chunks the anchors load and keep this update, sorted and unique. Members so
 	/// the per-frame reduction reuses its storage.

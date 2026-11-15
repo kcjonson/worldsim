@@ -122,6 +122,10 @@ curl.exe "http://127.0.0.1:<PORT>/api/state?what=construction"
 
 9. With the site built, give Bob an armful of wood (`/api/dev/give?material=Wood&n=10&where=colonist&slot=hands`): if no box in the world still takes Wood, the next time he wanders he puts it down as a heap where he stands (`colonists[0].hands` empties, no deposit anywhere); if a box does take Wood, he carries it there instead.
 
+10. Once the L-shaped foundation from step 8 is built, select it and press Demolish: the Tasks panel shows one "Deconstruct structure" row reading "Deconstructing - Bob (N%)", N rising, and Bob's dossier Tasks tab lists the same row under Known work.
+
+11. When Bob finishes (the L-shaped foundation leaves `?what=construction`), the row leaves the Tasks panel and the Known work list.
+
 ---
 
 ## Expected state

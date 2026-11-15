@@ -15,6 +15,7 @@
 #include <visibility/SightClip.h>
 #include <visibility/SightPolygon.h>
 #include <visibility/Visibility.h>
+#include <world/chunk/ChunkCoordinate.h>
 
 #include <algorithm>
 #include <cmath>
@@ -34,6 +35,22 @@ namespace ecs {
 		double crossOf(const std::array<double, 2>& first, double secondX, double secondY) { return first[0] * secondY - first[1] * secondX; }
 
 		constexpr double kSeenJumpMm =vision::kSeenJumpMeters * static_cast<double>(geometry::kMillimetersPerMeter);
+
+		static_assert(
+			vision::kSeenBoxCellMm == static_cast<std::int64_t>(world::kChunkWorldSize) * geometry::kMillimetersPerMeter,
+			"a seen-box cell is a chunk"
+		);
+
+		// A query box in millimetres rounded outward, so it holds every millimetre of the box in meters.
+		Vec2i64 millimetresBelow(glm::vec2 meters) {
+			constexpr double kPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+			return {static_cast<std::int64_t>(std::floor(static_cast<double>(meters.x) * kPerMeter)), static_cast<std::int64_t>(std::floor(static_cast<double>(meters.y) * kPerMeter))};
+		}
+
+		Vec2i64 millimetresAbove(glm::vec2 meters) {
+			constexpr double kPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+			return {static_cast<std::int64_t>(std::ceil(static_cast<double>(meters.x) * kPerMeter)), static_cast<std::int64_t>(std::ceil(static_cast<double>(meters.y) * kPerMeter))};
+		}
 
 	} // namespace
 
@@ -310,6 +327,18 @@ namespace ecs {
 	}
 
 	bool PlayerVisibilitySystem::isSeen(glm::vec2 meters) const { return seen.isSeen(nav::toMm(meters)); }
+
+	void PlayerVisibilitySystem::appendSeenBoxes(glm::vec2 low, glm::vec2 high, std::vector<SeenBox>& out) const {
+		std::vector<vision::SeenArea::Box> boxes;
+		seen.appendSeenBoxes(millimetresBelow(low), millimetresAbove(high), boxes);
+		for (const vision::SeenArea::Box& box : boxes) {
+			out.push_back({nav::toMeters(box.low), nav::toMeters(box.high)});
+		}
+	}
+
+	bool PlayerVisibilitySystem::anySeenBox(glm::vec2 low, glm::vec2 high) const {
+		return seen.anySeenBox(millimetresBelow(low), millimetresAbove(high));
+	}
 
 	bool PlayerVisibilitySystem::isVisible(glm::vec2 meters) const {
 		const VisionSystem* vision = world->tryGetSystem<VisionSystem>();

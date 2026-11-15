@@ -192,10 +192,12 @@ namespace {
 	// outline, sample and edge ids, and the edge index (per ring edge its source, flag and
 	// half-edge list). The triangles: each triangle slot with its edge sources, cover and
 	// live flag, and each vertex slot with its use count. Box grids, hash tables and
-	// interned lists are left out of both.
+	// interned lists are left out of both. Of the registry, `intervalsAndBoxes` is what each
+	// bounds ring's edge boxes and held boundary intervals take, headers included.
 	struct Bytes {
-		double registry	 = 0.0;
-		double triangles = 0.0;
+		double registry			 = 0.0;
+		double triangles		 = 0.0;
+		double intervalsAndBoxes = 0.0;
 	};
 
 	Bytes bytesOf(const PatchableMesh& mesh) {
@@ -205,6 +207,12 @@ namespace {
 			const RegisteredRing& registeredRing = rings[i];
 			out.registry += static_cast<double>(sizeof(RegisteredRing) + registeredRing.polygon.ring.capacity() * sizeof(Vec2i64) +
 												registeredRing.sample.ring3.capacity() * sizeof(Vec2i64) + registeredRing.edgeIds.capacity() * sizeof(std::int32_t));
+			const double held = static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>) +
+													registeredRing.edgeBoxes.boxes.capacity() * sizeof(std::array<Vec2i64, 2>) +
+													registeredRing.edgeBoxes.levelStart.capacity() * sizeof(std::int32_t) +
+													registeredRing.intervals.capacity() * sizeof(GroundInterval) + registeredRing.intervalStart.capacity() * sizeof(std::uint32_t));
+			out.registry += held - static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>));
+			out.intervalsAndBoxes += held;
 		}
 		const auto& edgeOf = mesh.*memberOf(EdgeOfKey{});
 		const auto& pieces = mesh.*memberOf(PiecesKey{});
@@ -1297,6 +1305,10 @@ namespace {
 						 legsCovered, notSimple, (rec.registered() - landingRings), rec.mesh.liveTriangleCount(), static_cast<long long>(rec.unread),
 						 valid.empty() ? "clean" : valid.c_str());
 			std::fprintf(stderr, "  polygon vertices mean %.0f max %.0f\n", meanOf(vertexCounts), maxOf(vertexCounts));
+			const Bytes endBytes = bytesOf(rec.mesh);
+			std::fprintf(stderr, "  registry at the end %.0f KB, of it edge boxes and held intervals %.0f KB (%.0f B a ring); triangles %.0f KB\n",
+						 endBytes.registry / 1024.0, endBytes.intervalsAndBoxes / 1024.0, endBytes.intervalsAndBoxes / static_cast<double>(std::max<std::size_t>(rec.registered(), 1)),
+						 endBytes.triangles / 1024.0);
 			printCovered(rec);
 			printTimes("computeVisibilityPolygon (vision's cost)", buildUs, "us");
 			printTimes("computeVisibilityPolygon (the sweep's pieces)", sweepBuildUs, "us");

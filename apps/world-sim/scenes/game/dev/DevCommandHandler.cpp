@@ -344,7 +344,7 @@ namespace world_sim {
 			return true;
 		}
 		const bool		  meshed = m_ctx.navigation != nullptr && m_ctx.navigation->inSimArea({at.x, at.y});
-		const char* const why	 = meshed ? "is water or a placed obstacle" : "is ground no mover has seen (off the nav mesh)";
+		const char* const why	 = meshed ? "is water or a placed obstacle" : "is ground no mover has meshed (off the nav mesh)";
 		LOG_WARNING(Game, "[DevAPI] %s: error: %.1f,%.1f %s, refused", verb, at.x, at.y, why);
 		m_ctx.ui->pushNotification(
 			"Dev", "Refused: (" + std::to_string(at.x) + ", " + std::to_string(at.y) + ") " + why, ui::ToastSeverity::Warning

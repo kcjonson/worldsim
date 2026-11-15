@@ -65,6 +65,20 @@ namespace world_sim::adapters {
 		EXPECT_EQ(taskRowText(facts).detail, "40%; known to Rin");
 	}
 
+	TEST(TaskRowText, TeardownSiteStatuses) {
+		TaskRowFacts facts{.teardownSite = true, .teardownPercent = 25, .blocked = true};
+		EXPECT_EQ(taskRowText(facts).status, "Blocked") << "something still stands on it";
+		EXPECT_TRUE(taskRowText(facts).blocked);
+		facts.blocked = false;
+		facts.workers = "Mara";
+		EXPECT_EQ(taskRowText(facts).status, "Deconstructing");
+		EXPECT_EQ(taskRowText(facts).detail, "Mara (25%)");
+		facts.workers.clear();
+		facts.knownTo = "Rin";
+		EXPECT_EQ(taskRowText(facts).status, "Ready to deconstruct");
+		EXPECT_EQ(taskRowText(facts).detail, "25%; known to Rin");
+	}
+
 	TEST(TaskRowText, DetailJoinsItsPartsLeavingOutEmptyOnes) {
 		TaskRowFacts facts{.needed = 8, .onTheWay = 4, .workers = "Idris", .knownTo = "Rin"};
 		EXPECT_EQ(taskRowText(facts).detail, "Idris; needs 8, 4 on the way") << "known to only while nobody works it";

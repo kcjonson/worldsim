@@ -182,6 +182,8 @@ if(BUILD_TESTING)
         scenes/game/world/placement/PlacementSystem.test.cpp
         scenes/game/world/selection/SelectionSystem.cpp
         scenes/game/world/selection/SelectionSystem.test.cpp
+        scenes/game/ui/adapters/GlobalTaskAdapter.cpp
+        scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
         scenes/game/ui/adapters/TaskRowText.cpp
         scenes/game/ui/adapters/TaskRowText.test.cpp
     )

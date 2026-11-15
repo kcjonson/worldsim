@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <optional>
 #include <span>
 #include <string>
 #include <vector>
@@ -567,7 +568,9 @@ namespace worldview {
 		glUniform1f(loc.groundBlendGainK, groundBlendGainK(groundLook.blendGain, screenPixelsPerMeter));
 	}
 
-	void ChunkRenderer::render(const world::ChunkManager& chunkManager, const world::WorldCamera& camera, int viewportWidth, int viewportHeight) {
+	void ChunkRenderer::render(
+		const world::ChunkManager& chunkManager, const assets::DrawBound& drawBound, const world::WorldCamera& camera, int viewportWidth, int viewportHeight
+	) {
 		lastTiles = 0;
 		lastChunks = 0;
 		staleBytesThisFrame = 0;
@@ -631,17 +634,47 @@ namespace worldview {
 
 		quadVAO.bind();
 
+		// Each chunk shades only the pixels of the box the bound holds of it in view, so ground under
+		// the cover's opaque fill costs no fragments. The box is rounded out to whole framebuffer
+		// pixels and a pixel more, so a pixel the bound's edge crosses is always shaded.
+		glEnable(GL_SCISSOR_TEST);
+		const float scale = pixelsPerMeterValue * camera.zoom();
+		const float scaleX = viewportWidth > 0 ? static_cast<float>(framebufferWidth) / static_cast<float>(viewportWidth) : 1.0F;
+		const float scaleY = viewportHeight > 0 ? static_cast<float>(framebufferHeight) / static_cast<float>(viewportHeight) : 1.0F;
+
 		for (const world::Chunk* chunk : visibleChunks) {
 			if (!chunk->isReady()) {
 				continue;
 			}
+
+			world::WorldPosition origin = chunk->worldOrigin();
+			const std::optional<assets::VisibleBounds> shown = drawBound.within(
+				{std::max(origin.x, visibleRect.x),
+				 std::min(origin.x + world::kChunkWorldSize, visibleRect.x + visibleRect.width),
+				 std::max(origin.y, visibleRect.y),
+				 std::min(origin.y + world::kChunkWorldSize, visibleRect.y + visibleRect.height)}
+			);
+			if (!shown.has_value() || shown->minX >= shown->maxX || shown->minY >= shown->maxY) {
+				continue;
+			}
+			const float left = ((shown->minX - camera.position().x) * scale + static_cast<float>(viewportWidth) * 0.5F) * scaleX;
+			const float right = ((shown->maxX - camera.position().x) * scale + static_cast<float>(viewportWidth) * 0.5F) * scaleX;
+			const float top = ((shown->minY - camera.position().y) * scale + static_cast<float>(viewportHeight) * 0.5F) * scaleY;
+			const float bottom = ((shown->maxY - camera.position().y) * scale + static_cast<float>(viewportHeight) * 0.5F) * scaleY;
+			const int	scissorLeft = std::max(0, static_cast<int>(std::floor(left)) - 1);
+			const int	scissorRight = std::min(framebufferWidth, static_cast<int>(std::ceil(right)) + 1);
+			const int	scissorTop = std::max(0, static_cast<int>(std::floor(top)) - 1);
+			const int	scissorBottom = std::min(framebufferHeight, static_cast<int>(std::ceil(bottom)) + 1);
+			if (scissorRight <= scissorLeft || scissorBottom <= scissorTop) {
+				continue;
+			}
+			glScissor(scissorLeft, framebufferHeight - scissorBottom, scissorRight - scissorLeft, scissorBottom - scissorTop);
 
 			const ChunkTextures& entry = ensureTextures(*chunk);
 			bindUnit(kUnitTileData, entry.tileData.handle());
 			bindUnit(kUnitGroundMacro, entry.groundMacro.handle());
 			bindWater(entry);
 
-			world::WorldPosition origin = chunk->worldOrigin();
 			world::ChunkCoordinate coord = chunk->coordinate();
 			glUniform2f(loc.chunkOrigin, origin.x, origin.y);
 			glUniform1f(loc.chunkWorldSize, world::kChunkWorldSize);
@@ -651,15 +684,10 @@ namespace worldview {
 			glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
 			lastChunks++;
 
-			// Visible tile count for metrics: intersection of viewport and chunk, in tiles
-			float visMinX = std::max(origin.x, visibleRect.x);
-			float visMaxX = std::min(origin.x + world::kChunkWorldSize, visibleRect.x + visibleRect.width);
-			float visMinY = std::max(origin.y, visibleRect.y);
-			float visMaxY = std::min(origin.y + world::kChunkWorldSize, visibleRect.y + visibleRect.height);
-			if (visMaxX > visMinX && visMaxY > visMinY) {
-				lastTiles += static_cast<uint32_t>(std::ceil(visMaxX - visMinX) * std::ceil(visMaxY - visMinY));
-			}
+			// Tiles shaded, for metrics: the box the chunk was cut to, in tiles
+			lastTiles += static_cast<uint32_t>(std::ceil(shown->maxX - shown->minX) * std::ceil(shown->maxY - shown->minY));
 		}
+		glDisable(GL_SCISSOR_TEST);
 
 		Renderer::GLVertexArray::unbind();
 		glActiveTexture(GL_TEXTURE0);

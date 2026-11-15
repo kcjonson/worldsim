@@ -6,6 +6,7 @@
 // same camera, viewport, and frame. Mutable inout state (uniforms, stats) stays
 // in separate by-reference params; this struct is read-only.
 
+#include "assets/placement/DrawBound.h"
 #include "assets/placement/PlacementExecutor.h"
 #include "world/camera/WorldCamera.h"
 #include "world/chunk/ChunkCoordinate.h"
@@ -27,11 +28,8 @@ struct RenderContext {
 	int										   viewportHeight = 0;
 	float									   pixelsPerMeter = 16.0F;
 	uint64_t								   frameCounter = 0;
-};
-
-/// Visible world bounds (meters) for sub-chunk / entity culling.
-struct VisibleBounds {
-	float minX = 0, maxX = 0, minY = 0, maxY = 0;
+	// What the frame can show: every path culls against it as it culls against the view.
+	const DrawBound&						   drawBound;
 };
 
 /// The least a visible rect is padded by, so an entity straddling the screen edge isn't culled.

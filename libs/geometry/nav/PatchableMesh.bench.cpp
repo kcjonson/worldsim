@@ -1,7 +1,7 @@
 // Cost of a PatchableMesh patch on real game inputs: one obstacle in and out, a footprint
 // moving over open ground and through obstacles, obstacles on the shoreline, rings across a
-// long bounds edge, placed obstacles entering an area, a first build, point location, and the
-// component labels' upkeep per patch.
+// long bounds edge, placed obstacles entering an area, a first build, point location, the
+// component labels' upkeep per patch, and a small patch where many ground rings overlap.
 //
 // Every patch row times only the applyPatch call (plus refreshWidths in the _refreshed
 // rows), with a steady clock around it and UseManualTime, so the untimed setup between
@@ -1401,6 +1401,13 @@ namespace {
 		std::vector<Vec2i64>		 fieldHi;
 		std::vector<std::uint8_t>	 inMesh;
 		std::vector<RingId>			 fieldIds;
+		RingId						 ringBound = 0; // past every ring id the mesh handed out
+
+		void noteAdded(const PatchReport& report) {
+			for (const RingId ring : report.added) {
+				ringBound = std::max(ringBound, ring + 1);
+			}
+		}
 
 		void setField(std::vector<NavInputPolygon> obstacles) {
 			field = std::move(obstacles);
@@ -1434,6 +1441,7 @@ namespace {
 					r = mesh.applyPatch(obstacles);
 					mesh.refreshWidths();
 				});
+				noteAdded(r);
 				for (std::size_t k = 0; k < which.size(); ++k) {
 					fieldIds[which[k]] = r.added[k];
 				}
@@ -1455,6 +1463,7 @@ namespace {
 			PatchReport	 r;
 			const double patchS	  = secondsOf([&] { r = mesh.applyPatch(adding({NavInputPolygon{outline, false, kProvenanceBorder}})); });
 			const double refreshS = secondsOf([&] { mesh.refreshWidths(); });
+			noteAdded(r);
 			if (stats != nullptr) {
 				stats->patch(r, msOf(patchS), msOf(refreshS));
 			}
@@ -1497,6 +1506,16 @@ namespace {
 			stats.print(label);
 			std::fprintf(stderr, "  first limit: %.0f obstacles in %.3f ms, ground %.3f ms + refresh %.3f ms; mesh %d live triangles at the end\n",
 						 first.obstacles.front(), first.obstacleMs.front(), first.limitMs.front(), first.refreshMs.front(), w.mesh.liveTriangleCount());
+			double heldBytes = 0.0;
+			double ringSlots = 0.0;
+			for (RingId ring = 0; ring < w.ringBound; ++ring) {
+				const RegisteredRing& reg = w.mesh.ring(ring);
+				heldBytes += static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>) + reg.edgeBoxes.boxes.capacity() * sizeof(std::array<Vec2i64, 2>) +
+												 reg.edgeBoxes.levelStart.capacity() * sizeof(std::int32_t) + reg.intervals.capacity() * sizeof(GroundInterval) +
+												 reg.intervalStart.capacity() * sizeof(std::uint32_t));
+				ringSlots += 1.0;
+			}
+			std::fprintf(stderr, "  edge boxes and held intervals %.0f KB over %.0f ring slots (%.0f B a slot)\n", heldBytes / 1024.0, ringSlots, heldBytes / std::max(ringSlots, 1.0));
 			stats.count(state);
 			state.counters["tris"] = w.mesh.liveTriangleCount();
 		}
@@ -1996,6 +2015,116 @@ namespace {
 		}
 	}
 
+	// --- A small patch where many registered rings overlap -----------------------------
+	//
+	// K ground rings over one spot, then a small ring patched where their union ends, at
+	// several places round it, each on a copy of the mesh. Beams: thin wedges from observers
+	// 3 to 15 m behind a 1 m gap, through it and 30 m out, each ending in a 16-point arc, as
+	// sight fans out through a doorway. Limits: 16-sided limits of 46 m round centres within
+	// 20 m of the spot, a mover walking back and forth. Only the probes' patches are timed.
+
+	enum class Overlap { Beams, Limits };
+
+	std::vector<Vec2i64> beamThroughGap(const Vec2i64& observer) {
+		constexpr std::int64_t kReachMm	  = 30000;
+		constexpr int		   kArcPoints = 16;
+		const Vec2i64		   gapLow{0, -500};
+		const Vec2i64		   gapHigh{0, 500};
+		auto				   angleOf = [&](const Vec2i64& point) { return std::atan2(static_cast<double>(point.y - observer.y), static_cast<double>(point.x - observer.x)); };
+		const double		   from	   = angleOf(gapLow);
+		const double		   to	   = angleOf(gapHigh);
+		std::vector<Vec2i64>   ring{observer};
+		for (int i = 0; i <= kArcPoints; ++i) {
+			const double angle = from + (to - from) * static_cast<double>(i) / kArcPoints;
+			ring.push_back({observer.x + std::llround(kReachMm * std::cos(angle)), observer.y + std::llround(kReachMm * std::sin(angle))});
+		}
+		return ring;
+	}
+
+	// The first point off the mesh walking from `inside` along (towardX, towardY), to the millimetre.
+	Vec2i64 unionEdgeToward(const PatchableMesh& mesh, const Vec2i64& inside, double towardX, double towardY) {
+		auto pointAt = [&](std::int64_t distance) {
+			return Vec2i64{inside.x + std::llround(towardX * static_cast<double>(distance)), inside.y + std::llround(towardY * static_cast<double>(distance))};
+		};
+		std::int64_t on	 = 0;
+		std::int64_t off = 1000;
+		while (mesh.locate(pointAt(off)) >= 0) {
+			on = off;
+			off *= 2;
+		}
+		while (off - on > 1) {
+			const std::int64_t middle = (on + off) / 2;
+			(mesh.locate(pointAt(middle)) >= 0 ? on : off) = middle;
+		}
+		return pointAt(off);
+	}
+
+	void BM_PatchOverRings(benchmark::State& state, Overlap overlap) {
+		constexpr int kProbes = 16;
+		const auto	  count	  = static_cast<std::size_t>(state.range(0));
+		for (auto _ : state) {
+			std::mt19937  rng(static_cast<std::uint32_t>(17 + count));
+			PatchableMesh mesh;
+			const double  buildS = secondsOf([&] {
+				 for (std::size_t i = 0; i < count; ++i) {
+					 std::vector<Vec2i64> ring;
+					 if (overlap == Overlap::Beams) {
+						 const std::int64_t x = -3000 - static_cast<std::int64_t>(rng() % 12001);
+						 const std::int64_t y = static_cast<std::int64_t>(rng() % 12001) - 6000;
+						 ring				  = beamThroughGap({x, y});
+					 } else {
+						 const std::int64_t x = static_cast<std::int64_t>(rng() % 40001) - 20000;
+						 const std::int64_t y = static_cast<std::int64_t>(rng() % 40001) - 20000;
+						 ring				  = limitPolygon({x, y}, kLimitRangeMm);
+					 }
+					 mesh.applyPatch(adding({NavInputPolygon{ring, false, kProvenanceBorder}}));
+				 }
+			});
+			const Vec2i64		inside = overlap == Overlap::Beams ? Vec2i64{1000, 0} : Vec2i64{0, 0};
+			std::vector<double> patchMs;
+			std::vector<double> overSpot;
+			int					clean = 0;
+			for (int probe = 0; probe < kProbes; ++probe) {
+				const double			   angle   = 2.0 * 3.14159265358979323846 * static_cast<double>(probe) / kProbes;
+				const Vec2i64			   edge	   = unionEdgeToward(mesh, inside, std::cos(angle), std::sin(angle));
+				const std::vector<Vec2i64> outline = footprint(edge);
+				Vec2i64					   lo;
+				Vec2i64					   hi;
+				boxOf(outline, lo, hi);
+				double over = 0.0;
+				for (std::size_t r = 0; r < count; ++r) {
+					const RegisteredRing& reg = mesh.ring(static_cast<RingId>(r));
+					over += reg.live && reg.lo.x <= hi.x && lo.x <= reg.hi.x && reg.lo.y <= hi.y && lo.y <= reg.hi.y ? 1.0 : 0.0;
+				}
+				PatchableMesh copy = mesh;
+				patchMs.push_back(1e3 * secondsOf([&] { copy.applyPatch(adding({NavInputPolygon{outline, false, kProvenanceBorder}})); }));
+				overSpot.push_back(over);
+				clean += copy.validate().empty() ? 1 : 0;
+			}
+			// What each ring's edge boxes and held boundary intervals take, headers included,
+			// beside its outline and sample.
+			double heldBytes	= 0.0;
+			double outlineBytes = 0.0;
+			for (std::size_t r = 0; r < count; ++r) {
+				const RegisteredRing& reg = mesh.ring(static_cast<RingId>(r));
+				heldBytes += static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>) + reg.edgeBoxes.boxes.capacity() * sizeof(std::array<Vec2i64, 2>) +
+												 reg.edgeBoxes.levelStart.capacity() * sizeof(std::int32_t) + reg.intervals.capacity() * sizeof(GroundInterval) +
+												 reg.intervalStart.capacity() * sizeof(std::uint32_t));
+				outlineBytes += static_cast<double>((reg.polygon.ring.capacity() + reg.sample.ring3.capacity()) * sizeof(Vec2i64));
+			}
+			std::fprintf(stderr,
+						 "[patch over rings] %s K %zu: built in %.0f ms, %d live triangles; rings over the probe mean %.0f; patch ms mean %.3f max %.3f; "
+						 "validate clean %d of %d; edge boxes and intervals %.0f KB against outlines and samples %.0f KB\n",
+						 overlap == Overlap::Beams ? "beams" : "limits", count, buildS * 1e3, mesh.liveTriangleCount(), meanOf(overSpot), meanOf(patchMs),
+						 maxOf(patchMs), clean, kProbes, heldBytes / 1024.0, outlineBytes / 1024.0);
+			state.SetIterationTime(meanOf(patchMs) / 1e3);
+			state.counters["patchMeanMs"] = meanOf(patchMs);
+			state.counters["patchMaxMs"]  = maxOf(patchMs);
+			state.counters["overSpot"]	  = meanOf(overSpot);
+			state.counters["buildMs"]	  = buildS * 1e3;
+		}
+	}
+
 } // namespace
 
 #define PATCH_ROWS(name, fn, ...)                                                                                              \
@@ -2105,3 +2234,5 @@ LIMIT_WALK_ROW(ell_dense, Walk::Ell, Ground::Dense);
 BENCHMARK(BM_OpenGroundGrowth)->Arg(500)->Arg(1000)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
 BENCHMARK(BM_MeshEdge)->Iterations(1)->UseManualTime()->Unit(benchmark::kMicrosecond);
 BENCHMARK(BM_EdgeIndexQuery)->Iterations(1)->UseManualTime()->Unit(benchmark::kMicrosecond);
+BENCHMARK_CAPTURE(BM_PatchOverRings, beams, Overlap::Beams)->RangeMultiplier(4)->Range(16, 1024)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);
+BENCHMARK_CAPTURE(BM_PatchOverRings, limits, Overlap::Limits)->RangeMultiplier(4)->Range(16, 1024)->Iterations(1)->UseManualTime()->Unit(benchmark::kMillisecond);

@@ -153,7 +153,7 @@ namespace ecs {
 
 		/// Fraction to SHOW on a work meter, in [0, 1]. Build fills up (raw progress);
 		/// Deconstruct counts workDone back down from workTotal, so its meter must be the
-		/// complement -- 1 at the start of demolition draining to 0 -- not the raw progress.
+		/// complement -- 0 at the start of demolition climbing to 1 -- not the raw progress.
 		[[nodiscard]] float displayProgress(bool deconstruct) const {
 			return deconstruct ? 1.0F - progress() : progress();
 		}

@@ -67,5 +67,5 @@ TEST_F(GroundRefusalTest, SpawnRefusesFurnitureInTheCreekAndTakesItOnTheBank) {
 TEST_F(GroundRefusalTest, SpawnPutsANonFurnitureDefInTheCreek) {
 	ASSERT_FALSE(world_sim::PlacementSystem::isFurniture(kLooseStone));
 	EXPECT_TRUE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {10.0F, kCreekY}).empty());
-	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {500.0F, 500.0F}).empty()) << "ground no mover has seen";
+	EXPECT_FALSE(world_sim::spawnGroundRefusal(placement, &navigation, kLooseStone, {500.0F, 500.0F}).empty()) << "ground no mover has meshed";
 }
