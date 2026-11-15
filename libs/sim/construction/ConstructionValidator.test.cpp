@@ -339,6 +339,62 @@ TEST(ConstructionValidator, WallChainSelfIntersectionFails) {
 	EXPECT_EQ(r.code, ValidationCode::SelfIntersects);
 }
 
+TEST(ConstructionValidator, WallChainClosesOnItsFirstPoint) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	const std::vector<Vec2> room = {{2.0F, 2.0F}, {8.0F, 2.0F}, {8.0F, 8.0F}, {2.0F, 8.0F}};
+	EXPECT_TRUE(closesWallChain(room, {2.0F, 2.0F}));
+	EXPECT_TRUE(validator.validateWallPoint(room, {2.0F, 2.0F}, standardWood(), host).ok());
+	const std::vector<Vec2> triangle = {{2.0F, 2.0F}, {10.0F, 2.0F}, {6.0F, 9.0F}};
+	EXPECT_TRUE(validator.validateWallPoint(triangle, {2.0F, 2.0F}, standardWood(), host).ok());
+}
+
+TEST(ConstructionValidator, WallChainClosingAcrossTheChainFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	// The closing segment runs along y = 4 and crosses the third segment at (6, 4).
+	const std::vector<Vec2> chain = {{2.0F, 4.0F}, {2.0F, 10.0F}, {6.0F, 10.0F}, {6.0F, 2.0F}, {10.0F, 2.0F}, {10.0F, 4.0F}};
+	const auto				r = validator.validateWallPoint(chain, {2.0F, 4.0F}, standardWood(), host);
+	EXPECT_EQ(r.code, ValidationCode::SelfIntersects);
+	EXPECT_EQ(r.otherIndex, 2U);
+}
+
+TEST(ConstructionValidator, WallChainClosingCornerTooSharpFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	// The closing corner at (2, 2) is about 14 degrees.
+	const std::vector<Vec2> sliver = {{2.0F, 2.0F}, {10.0F, 2.0F}, {10.0F, 4.0F}};
+	const auto				r = validator.validateWallPoint(sliver, {2.0F, 2.0F}, standardWood(), host);
+	EXPECT_EQ(r.code, ValidationCode::AngleTooSharp);
+	EXPECT_EQ(r.vertexIndex, 0U);
+}
+
+TEST(ConstructionValidator, WallTwoPointChainBackOnItsStartFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	const std::vector<Vec2> chain = {{2.0F, 2.0F}, {8.0F, 2.0F}};
+	EXPECT_FALSE(closesWallChain(chain, {2.0F, 2.0F}));
+	EXPECT_EQ(validator.validateWallPoint(chain, {2.0F, 2.0F}, standardWood(), host).code, ValidationCode::AngleTooSharp);
+}
+
+TEST(ConstructionValidator, WallChainOnAMiddleVertexFails) {
+	ConstraintConfig	  cfg = defaults();
+	ConstructionWorld	  world;
+	FoundationId		  host = hostFoundation(world);
+	ConstructionValidator validator(cfg, world);
+	const std::vector<Vec2> room = {{2.0F, 2.0F}, {8.0F, 2.0F}, {8.0F, 8.0F}, {2.0F, 8.0F}};
+	EXPECT_FALSE(closesWallChain(room, {8.0F, 2.0F}));
+	EXPECT_EQ(validator.validateWallPoint(room, {8.0F, 2.0F}, standardWood(), host).code, ValidationCode::SelfIntersects);
+}
+
 TEST(ConstructionValidator, WallBandInsideHostPasses) {
 	ConstraintConfig	  cfg = defaults();
 	ConstructionWorld	  world;

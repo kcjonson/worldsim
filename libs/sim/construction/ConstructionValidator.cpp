@@ -636,6 +636,10 @@ namespace construction {
 		return f != nullptr && bandContainedInRing(a, b, halfThickMm, f->ring);
 	}
 
+	bool closesWallChain(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 candidate) {
+		return points.size() >= kMinClosingWallChainPoints && geometry::quantize(candidate) == geometry::quantize(points.front());
+	}
+
 	ValidationResult ConstructionValidator::validateWallPoint(
 		const std::vector<::Foundation::Vec2>& points,
 		::Foundation::Vec2					   candidate,
@@ -671,9 +675,20 @@ namespace construction {
 			}
 		}
 
-		// Open chain stays simple: the new segment prev->candidate must not cross any
+		// A closing segment also makes a corner at the first vertex, between it and
+		// the chain's first segment.
+		const bool closing = closesWallChain(points, candidate);
+		if (closing) {
+			const double angle = cornerAngleDegrees(prev, cand, geometry::quantize(points[1]));
+			if (angle < c.minWallJunctionAngleDegrees) {
+				return {ValidationCode::AngleTooSharp, 0, 0, angle};
+			}
+		}
+
+		// The chain stays simple: the new segment prev->candidate must not meet any
 		// earlier segment of the chain. The last existing segment shares the prev
-		// vertex (adjacent) and is exempt; the chain is open, so no closing edge.
+		// vertex (adjacent) and is exempt. A closing segment may touch the first
+		// segment at the first vertex, and nowhere else.
 		for (std::size_t i = 0; i + 1 < points.size(); ++i) {
 			const bool adjacent = (i + 1 == points.size() - 1); // shares the prev vertex
 			if (adjacent) {
@@ -682,6 +697,9 @@ namespace construction {
 			const geometry::Vec2i64 e0 = geometry::quantize(points[i]);
 			const geometry::Vec2i64 e1 = geometry::quantize(points[i + 1]);
 			const auto				rel = geometry::intersectSegments(prev, cand, e0, e1).relation;
+			if (closing && i == 0 && rel == geometry::SegmentRelation::EndpointTouch) {
+				continue;
+			}
 			if (rel != geometry::SegmentRelation::Disjoint) {
 				return {ValidationCode::SelfIntersects, candIndex, i, 0.0};
 			}
