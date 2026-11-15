@@ -76,32 +76,6 @@ namespace world_sim {
 			return out;
 		}
 
-		// The centerline spans a segment's openings leave open, in mm from its v0
-		// end: an opening at param t with clear width w on a segment of length L
-		// spans t*L -/+ w/2. The offsetter clamps and merges them.
-		std::vector<geometry::WallGap> openingGaps(const ec::ConstructionWorld& world, const ec::WallSegment& seg) {
-			std::vector<geometry::WallGap> gaps;
-			const ec::Vertex*			   v0 = world.getVertex(seg.v0);
-			const ec::Vertex*			   v1 = world.getVertex(seg.v1);
-			if (v0 == nullptr || v1 == nullptr) {
-				return gaps;
-			}
-			const double lengthMm = std::hypot(static_cast<double>(v1->pos.x - v0->pos.x), static_cast<double>(v1->pos.y - v0->pos.y));
-			for (const auto& op : world.openings()) {
-				if (op.segment != seg.id) {
-					continue;
-				}
-				const auto* type = ConstructionRegistry::Get().getOpeningType(op.type);
-				if (type == nullptr || type->widthMm <= 0) {
-					continue;
-				}
-				const double center = static_cast<double>(op.t) * lengthMm;
-				const double half = static_cast<double>(type->widthMm) * 0.5;
-				gaps.push_back({std::llround(center - half), std::llround(center + half)});
-			}
-			return gaps;
-		}
-
 	} // namespace
 
 	float footprintWidthMeters(const geometry::Ring& footprint) {
@@ -217,7 +191,7 @@ namespace world_sim {
 			for (const std::size_t usableIndex : graph) {
 				members.push_back(usable[usableIndex]);
 				offsetSegs.push_back(usableSegs[usableIndex]);
-				offsetGaps.push_back(openingGaps(world, segs[usable[usableIndex]]));
+				offsetGaps.push_back(ec::openingGaps(world, segs[usable[usableIndex]], {}).gaps);
 			}
 
 			const geometry::WallBands bands = geometry::resolveWallBands(offsetSegs, geometry::kDefaultMiterLimit);
