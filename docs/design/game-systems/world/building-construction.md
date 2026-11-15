@@ -222,7 +222,7 @@ Only **built** walls count. The room appears at the moment the closing wall segm
 
 A room built inside another room, its walls standing free of the outer room's, is a room of its own. The outer room's area no longer counts the floor inside it, and the outer room keeps its name; clicking inside the inner room selects the inner room.
 
-Rooms are an abstract concept, not clickable world objects. They are inspected through a **rooms overlay**, like RimWorld or Going Medieval. The overlay is designed here but ships with the game's broader overlay system (zones, beauty, etc.), not with this epic; this epic ships detection and the room-formed notification only.
+Rooms are an abstract concept, not clickable world objects. They are inspected through a **rooms overlay**, like RimWorld or Going Medieval. The overlay exists and is toggled from the game scene; it tints, outlines, and names each room.
 
 - Toggled from the HUD (and a hotkey). While active, room interiors tint and show name labels ("Room 1", renamable).
 - Clicking a room while the overlay is active opens its **room info panel**: area (m²), bounding wall materials, opening count, average insulation, floor material, name.

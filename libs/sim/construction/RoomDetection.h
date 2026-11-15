@@ -27,7 +27,7 @@ namespace construction {
 		float			 area = 0.0f;				// m^2 net of holes (for display)
 		geometry::Int128 areaDoubled;				// exact 2x net area in mm^2 (>= 0 for bounded faces);
 													// the deterministic key for identity tiebreaks
-		geometry::Vec2i64	   representativePoint; // a point strictly inside the ring and outside every hole (mm)
+		geometry::Vec2i64	   representativePoint; // strictly inside the ring, outside every hole (mm); unverified if the scan found none
 		geometry::Ring		   ring;				// outer boundary vertices (mm), CCW loop order
 		std::vector<geometry::Ring> holes;			// hole boundaries (mm), each CW, in canonical face order
 		std::vector<SegmentId> boundingSegmentIds;	// from the outer ring's face provenance (the wall ids)
