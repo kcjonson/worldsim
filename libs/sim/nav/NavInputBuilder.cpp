@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <iterator>
 #include <optional>
 #include <unordered_map>
 #include <utility>
@@ -114,10 +115,8 @@ namespace nav {
 	void extractWalls(const construction::ConstructionWorld& world, const assets::ConstructionRegistry& registry,
 					  std::vector<gnav::NavInputPolygon>& outPolys, std::vector<gnav::DoorPortal>& outDoors,
 					  std::vector<WallJunction>* outJunctions) {
-		// Gather the BUILT segments and their geometry::WallSegment in a stable order.
-		// resolveWallBands returns one band per input segment in this same order, so
-		// we keep a parallel index back to each SegmentId for door-gap replacement
-		// and provenance tagging.
+		// The BUILT segments as the offsetter takes them, with a parallel list of their ids for
+		// door spans and provenance.
 		std::vector<geometry::WallSegment>		   geoSegments;
 		std::vector<construction::SegmentId>	   segmentIds;
 		for (const construction::WallSegment& seg : world.segments()) {
@@ -142,31 +141,11 @@ namespace nav {
 			return;
 		}
 
-		const geometry::WallBands bands = geometry::resolveWallBands(geoSegments, geometry::kDefaultMiterLimit);
-		// On a rejected offset (degenerate/self-intersecting band) fall back to the
-		// raw per-segment bands rather than dropping the walls entirely: a blocked
-		// obstacle ring is better for safety than a hole in the navmesh.
-		const bool bandsOk = bands.status == geometry::OffsetStatus::Ok && bands.bands.size() == geoSegments.size();
-
-		// Map each BUILT pathable opening to the index of its hosting segment in our
-		// parallel arrays, so we can swap that segment's solid band for two flanking
-		// gap rings. A segment may host several openings; we cut them in turn.
 		std::unordered_map<construction::SegmentId, std::size_t> segIndexById;
 		for (std::size_t i = 0; i < segmentIds.size(); ++i) {
 			segIndexById[segmentIds[i]] = i;
 		}
-
-		// Per-segment-index list of door cut spans (each cut splits the band along
-		// the centerline). We collect, then build the flanking rings once per segment.
-		struct DoorCut {
-			construction::OpeningId openingId;
-			std::int64_t			clearWidthMm;
-			geometry::Vec2i64		jambA; // the two jamb points spanning the passage
-			geometry::Vec2i64		jambB;
-			float					t0; // centerline parameter range of the gap
-			float					t1;
-		};
-		std::unordered_map<std::size_t, std::vector<DoorCut>> cutsBySeg;
+		std::vector<std::uint8_t> hostsDoor(geoSegments.size(), 0);
 
 		for (const construction::Opening& op : world.openings()) {
 			if (op.state != construction::FoundationState::Built) {
@@ -203,115 +182,109 @@ namespace nav {
 			if (idxIt == segIndexById.end()) {
 				continue; // door on a non-built / missing segment: nothing to cut
 			}
-
-			// Centerline parameter range of the gap, recomputed the same way the
-			// footprint did (clear-width half-extent over segment length), so the
-			// flanking bands meet the footprint exactly.
-			const construction::WallSegment* seg = world.getSegment(op.segment);
-			const construction::Vertex*		 v0	 = (seg != nullptr) ? world.getVertex(seg->v0) : nullptr;
-			const construction::Vertex*		 v1	 = (seg != nullptr) ? world.getVertex(seg->v1) : nullptr;
-			if (v0 == nullptr || v1 == nullptr) {
+			const geometry::WallSegment& host = geoSegments[idxIt->second];
+			if (host.a == host.b) {
 				continue;
 			}
-			const double dx = static_cast<double>(v1->pos.x - v0->pos.x);
-			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
-			const double lengthMm = std::sqrt(dx * dx + dy * dy);
-			if (lengthMm <= 0.0) {
-				continue;
-			}
-			const float halfExtent = static_cast<float>((static_cast<double>(type->widthMm) * 0.5) / lengthMm);
-			const float t0 = std::clamp(op.t - halfExtent, 0.0F, 1.0F);
-			const float t1 = std::clamp(op.t + halfExtent, 0.0F, 1.0F);
-
-			cutsBySeg[idxIt->second].push_back({op.id, type->widthMm, jambA, jambB, t0, t1});
+			hostsDoor[idxIt->second] = 1;
 			outDoors.push_back({static_cast<std::int64_t>(op.id), jambA, jambB, type->widthMm});
 		}
 
-		// Emit bands (with door gaps applied) and junction rings.
-		for (std::size_t i = 0; i < geoSegments.size(); ++i) {
-			const geometry::WallSegment& gs = geoSegments[i];
-			const std::int64_t			 prov = static_cast<std::int64_t>(segmentIds[i]);
-
-			auto cutIt = cutsBySeg.find(i);
-			if (!bandsOk || cutIt == cutsBySeg.end()) {
-				// No door cut on this segment: emit the trimmed band (or, on offset
-				// failure, the raw band).
-				geometry::Ring ring = bandsOk ? bands.bands[i] : geometry::band(gs.a, gs.b, gs.halfThicknessMm);
-				if (ring.size() >= 3) {
-					outPolys.push_back({std::move(ring), true, prov});
+		// Each connected wall graph is resolved on its own, so a graph the offsetter rejects
+		// (degenerate or self-intersecting band) changes no other. It falls back to its raw
+		// per-segment bands, door segments whole, with no junctions: a blocked obstacle ring is
+		// safer than a hole in the navmesh. Bands come out in segment order, then the junctions.
+		struct Junction {
+			geometry::Ring						 ring;
+			std::int64_t						 provenance = kProvenanceJunction;
+			std::vector<construction::SegmentId> walls;
+		};
+		std::vector<std::vector<gnav::NavInputPolygon>> polygonsOfSegment(geoSegments.size());
+		std::vector<Junction>							junctions;
+		for (const std::vector<std::size_t>& graph : geometry::connectedWallGraphs(geoSegments)) {
+			std::vector<geometry::WallSegment> members;
+			members.reserve(graph.size());
+			for (const std::size_t i : graph) {
+				members.push_back(geoSegments[i]);
+			}
+			const geometry::WallBands bands = geometry::resolveWallBands(members, geometry::kDefaultMiterLimit);
+			if (bands.status != geometry::OffsetStatus::Ok || bands.bands.size() != members.size()) {
+				for (const std::size_t i : graph) {
+					geometry::Ring ring = geometry::band(geoSegments[i].a, geoSegments[i].b, geoSegments[i].halfThicknessMm);
+					if (ring.size() >= 3) {
+						polygonsOfSegment[i].push_back({std::move(ring), true, static_cast<std::int64_t>(segmentIds[i])});
+					}
 				}
 				continue;
 			}
 
-			// Door(s) on this segment: emit the FULL band footprint, split into solid
-			// sub-spans and door-span sub-spans, all tagged with this segment's id.
-			// Belief gating happens at query time, not here: the door span is a blocked
-			// face carrying its openingId (truth -> walkable, belief -> gated), the
-			// solid spans carry no opening (always block when the wall is known). The
-			// gap is no longer physically cut, so an agent who has not seen this wall
-			// can path straight through its whole footprint. Sub-bands share the exact
-			// rounded jamb cross-edges (same centerline direction + half-thickness), so
-			// they tile the segment band with no gap and no overlap.
-			std::vector<DoorCut> cuts = cutIt->second;
-			std::sort(cuts.begin(), cuts.end(), [](const DoorCut& l, const DoorCut& r) { return l.t0 < r.t0; });
-
-			auto lerp = [&](float t) -> geometry::Vec2i64 {
-				const double ax = static_cast<double>(gs.a.x);
-				const double ay = static_cast<double>(gs.a.y);
-				const double bx = static_cast<double>(gs.b.x);
-				const double by = static_cast<double>(gs.b.y);
-				return {static_cast<std::int64_t>(std::llround(ax + (bx - ax) * t)),
-						static_cast<std::int64_t>(std::llround(ay + (by - ay) * t))};
-			};
-
-			auto emitSpan = [&](float ta, float tb, std::int64_t openingId) {
-				if (tb <= ta + 1e-6F) {
-					return;
-				}
-				geometry::Ring ring = geometry::band(lerp(ta), lerp(tb), gs.halfThicknessMm);
-				if (ring.size() >= 3 && geometry::windingOrder(ring) != geometry::Winding::Degenerate) {
-					outPolys.push_back({std::move(ring), true, prov, openingId});
-				}
-			};
-
-			float cursor = 0.0F;
-			for (const DoorCut& cut : cuts) {
-				emitSpan(cursor, cut.t0, gnav::kNoOpening);						// solid flank/between-door span
-				emitSpan(cut.t0, cut.t1, static_cast<std::int64_t>(cut.openingId)); // pathable door span
-				cursor = std::max(cursor, cut.t1);
-			}
-			emitSpan(cursor, 1.0F, gnav::kNoOpening); // trailing solid span
-		}
-
-		if (bandsOk) {
-			// Tag each junction with a representative INCIDENT wall segment id (the
-			// smallest, chosen deterministically) so belief gates the junction by
-			// knowing one of its walls -- a junction the agent has not seen is then
-			// absent like its walls, consistent with the wall rule. junctionSegments[i]
-			// is aligned with junctions[i] and holds caller indices into segmentIds.
-			for (std::size_t ji = 0; ji < bands.junctions.size(); ++ji) {
-				const geometry::Ring& j = bands.junctions[ji];
-				if (j.size() < 3) {
+			// A segment hosting doors is its trimmed band in spans: the door spans are blocked faces
+			// carrying their opening (truth -> walkable, belief -> gated at query time), the solid
+			// spans carry none. Windows leave the band solid.
+			std::vector<std::vector<geometry::WallGap>>			gaps(members.size());
+			std::vector<std::vector<construction::OpeningId>> gapOpenings(members.size());
+			bool												anyDoor = false;
+			for (std::size_t k = 0; k < graph.size(); ++k) {
+				if (hostsDoor[graph[k]] == 0) {
 					continue;
 				}
-				std::int64_t						 prov = kProvenanceJunction; // fallback: always-block sentinel
-				std::vector<construction::SegmentId> incident;
+				construction::OpeningGaps doors =
+					construction::openingGaps(world, *world.getSegment(segmentIds[graph[k]]), {.doorsOnly = true, .builtOnly = true});
+				gaps[k]		   = std::move(doors.gaps);
+				gapOpenings[k] = std::move(doors.openings);
+				anyDoor		   = anyDoor || !gaps[k].empty();
+			}
+			const std::vector<std::vector<geometry::WallSpan>> spans =
+				anyDoor ? geometry::wallSpans(members, gaps, bands) : std::vector<std::vector<geometry::WallSpan>>{};
+
+			for (std::size_t k = 0; k < graph.size(); ++k) {
+				const std::int64_t						 prov	  = static_cast<std::int64_t>(segmentIds[graph[k]]);
+				std::vector<gnav::NavInputPolygon>& polygons = polygonsOfSegment[graph[k]];
+				if (gaps[k].empty()) {
+					if (bands.bands[k].size() >= 3) {
+						polygons.push_back({bands.bands[k], true, prov});
+					}
+					continue;
+				}
+				for (const geometry::WallSpan& span : spans[k]) {
+					const std::int64_t opening =
+						span.gap == geometry::kSolidSpan ? gnav::kNoOpening : static_cast<std::int64_t>(gapOpenings[k][span.gap]);
+					polygons.push_back({span.ring, true, prov, opening});
+				}
+			}
+
+			// Each junction is tagged with its smallest incident wall id, so belief gates it by
+			// knowing one of its walls, and lists every wall meeting there.
+			for (std::size_t ji = 0; ji < bands.junctions.size(); ++ji) {
+				if (bands.junctions[ji].size() < 3) {
+					continue;
+				}
+				Junction junction{.ring = bands.junctions[ji]};
 				if (ji < bands.junctionSegments.size()) {
-					for (std::size_t segIdx : bands.junctionSegments[ji]) {
-						if (segIdx < segmentIds.size()) {
-							incident.push_back(segmentIds[segIdx]);
-							const std::int64_t id = static_cast<std::int64_t>(segmentIds[segIdx]);
-							if (prov == kProvenanceJunction || id < prov) {
-								prov = id;
-							}
+					for (const std::size_t k : bands.junctionSegments[ji]) {
+						if (k >= graph.size()) {
+							continue;
+						}
+						const construction::SegmentId wall = segmentIds[graph[k]];
+						junction.walls.push_back(wall);
+						const auto id = static_cast<std::int64_t>(wall);
+						if (junction.provenance == kProvenanceJunction || id < junction.provenance) {
+							junction.provenance = id;
 						}
 					}
 				}
-				if (outJunctions != nullptr) {
-					outJunctions->push_back({outPolys.size(), std::move(incident)});
-				}
-				outPolys.push_back({j, true, prov, gnav::kNoOpening});
+				junctions.push_back(std::move(junction));
 			}
+		}
+
+		for (std::vector<gnav::NavInputPolygon>& polygons : polygonsOfSegment) {
+			std::move(polygons.begin(), polygons.end(), std::back_inserter(outPolys));
+		}
+		for (Junction& junction : junctions) {
+			if (outJunctions != nullptr) {
+				outJunctions->push_back({outPolys.size(), std::move(junction.walls)});
+			}
+			outPolys.push_back({std::move(junction.ring), true, junction.provenance, gnav::kNoOpening});
 		}
 	}
 

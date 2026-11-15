@@ -15,6 +15,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <limits>
+#include <map>
+#include <set>
 #include <string>
 #include <tuple>
 #include <unordered_map>
@@ -24,8 +27,8 @@
 #include <gtest/gtest.h>
 
 // nav::extractWalls pinned against a copy of itself as it stood before WOR-876, over the wall
-// layouts that change touches. A layout whose `mustMatch` is false is one the change is allowed
-// to draw differently; every other layout must come out exactly as the reference draws it.
+// layouts that change touches. Each layout says how it may differ (Expectation): not at all, by a
+// millimetre in the rings of a door's wall, or on purpose, which its own check then states.
 
 namespace {
 
@@ -236,12 +239,6 @@ namespace {
 		}
 	}
 
-	struct Layout {
-		std::string							  name;
-		std::function<void(ConstructionWorld&)> build;
-		bool								  mustMatch = true;
-	};
-
 	using PolygonKey = std::tuple<std::int64_t, std::int64_t, bool, bool, bool, Ring>;
 	using JunctionKey = std::pair<Ring, std::vector<SegmentId>>;
 	using PortalKey	 = std::tuple<std::int64_t, Vec2i64, Vec2i64, std::int64_t>;
@@ -256,6 +253,24 @@ namespace {
 
 	using Extractor = std::function<void(const ConstructionWorld&, const ConstructionRegistry&, std::vector<gnav::NavInputPolygon>&,
 										 std::vector<gnav::DoorPortal>&, std::vector<nav::WallJunction>*)>;
+
+	// How a layout's output may differ from the reference's.
+	enum class Expectation {
+		Identical,
+		// Rings of a segment hosting a door may each move by up to a millimetre (the reference cuts
+		// the door gap at float fractions of the segment, nav now at whole millimetres); the rest
+		// is identical.
+		DoorRingsWithinMillimetre,
+		// Drawn differently on purpose; `checkChange` says how.
+		Changed,
+	};
+
+	struct Layout {
+		std::string								name;
+		std::function<void(ConstructionWorld&)> build;
+		Expectation								expectation = Expectation::Identical;
+		std::function<void(const Layout&)>		checkChange;
+	};
 
 	WallOutput outputOf(const ConstructionWorld& world, const Extractor& extract) {
 		std::vector<gnav::NavInputPolygon> polygons;
@@ -283,13 +298,287 @@ namespace {
 		return output;
 	}
 
-	std::vector<geometry::WallSegment> builtWallSegments(const ConstructionWorld& world) {
+	// Every segment, built or not, as the offsetter takes it, in the world's order.
+	std::vector<geometry::WallSegment> wallSegments(const ConstructionWorld& world) {
 		std::vector<geometry::WallSegment> segments;
 		for (const construction::WallSegment& seg : world.segments()) {
 			const auto* preset = ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
 			segments.push_back({world.getVertex(seg.v0)->pos, world.getVertex(seg.v1)->pos, preset->halfThicknessMm});
 		}
 		return segments;
+	}
+
+	std::set<SegmentId> doorSegments(const ConstructionWorld& world) {
+		std::set<SegmentId> segments;
+		for (const construction::Opening& opening : world.openings()) {
+			const auto* type = ConstructionRegistry::Get().getOpeningType(opening.type);
+			if (opening.state == FoundationState::Built && type != nullptr && type->pathable) {
+				segments.insert(opening.segment);
+			}
+		}
+		return segments;
+	}
+
+	std::int64_t provenanceOf(const PolygonKey& polygon) {
+		return std::get<0>(polygon);
+	}
+	std::int64_t openingOf(const PolygonKey& polygon) {
+		return std::get<1>(polygon);
+	}
+	const Ring& ringOf(const PolygonKey& polygon) {
+		return std::get<5>(polygon);
+	}
+
+	// The rings of segments hosting a door, junctions aside, and every other polygon.
+	struct SplitOutput {
+		std::vector<PolygonKey> doorSegmentRings;
+		std::vector<PolygonKey> rest;
+	};
+
+	SplitOutput splitDoorSegmentRings(const WallOutput& output, const std::set<SegmentId>& doors) {
+		SplitOutput split;
+		for (const PolygonKey& polygon : output.polygons) {
+			const bool junction = std::any_of(output.junctions.begin(), output.junctions.end(),
+											  [&](const JunctionKey& j) { return j.first == ringOf(polygon); });
+			const bool onDoorSegment = provenanceOf(polygon) > 0 && doors.contains(static_cast<SegmentId>(provenanceOf(polygon)));
+			(onDoorSegment && !junction ? split.doorSegmentRings : split.rest).push_back(polygon);
+		}
+		return split;
+	}
+
+	// Two rings with the same corners, each within a millimetre on both axes, whichever corner each starts from.
+	bool withinMillimetre(const Ring& actual, const Ring& expected) {
+		if (actual.size() != expected.size()) {
+			return false;
+		}
+		for (std::size_t start = 0; start < actual.size(); ++start) {
+			bool matches = true;
+			for (std::size_t i = 0; i < actual.size() && matches; ++i) {
+				const Vec2i64& a = actual[(start + i) % actual.size()];
+				const Vec2i64& e = expected[i];
+				matches			 = std::llabs(a.x - e.x) <= 1 && std::llabs(a.y - e.y) <= 1;
+			}
+			if (matches) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	std::string describe(const Ring& ring) {
+		std::string text;
+		for (const Vec2i64& corner : ring) {
+			text += "(" + std::to_string(corner.x) + ", " + std::to_string(corner.y) + ") ";
+		}
+		return text;
+	}
+
+	void expectDoorRingsWithinMillimetre(const WallOutput& actual, const WallOutput& expected, const std::set<SegmentId>& doors) {
+		SplitOutput actualSplit	  = splitDoorSegmentRings(actual, doors);
+		SplitOutput expectedSplit = splitDoorSegmentRings(expected, doors);
+		EXPECT_EQ(actualSplit.rest, expectedSplit.rest);
+		EXPECT_EQ(actual.junctions, expected.junctions);
+		EXPECT_EQ(actual.portals, expected.portals);
+
+		// Paired by wall, opening, and lowest corner, which a millimetre cannot reorder on these layouts.
+		auto byPlace = [](const PolygonKey& l, const PolygonKey& r) {
+			const Vec2i64 lowestL = *std::min_element(ringOf(l).begin(), ringOf(l).end());
+			const Vec2i64 lowestR = *std::min_element(ringOf(r).begin(), ringOf(r).end());
+			return std::tuple(provenanceOf(l), openingOf(l), lowestL) < std::tuple(provenanceOf(r), openingOf(r), lowestR);
+		};
+		std::sort(actualSplit.doorSegmentRings.begin(), actualSplit.doorSegmentRings.end(), byPlace);
+		std::sort(expectedSplit.doorSegmentRings.begin(), expectedSplit.doorSegmentRings.end(), byPlace);
+		ASSERT_EQ(actualSplit.doorSegmentRings.size(), expectedSplit.doorSegmentRings.size());
+		ASSERT_FALSE(actualSplit.doorSegmentRings.empty());
+		for (std::size_t i = 0; i < actualSplit.doorSegmentRings.size(); ++i) {
+			const PolygonKey& a = actualSplit.doorSegmentRings[i];
+			const PolygonKey& e = expectedSplit.doorSegmentRings[i];
+			EXPECT_EQ(std::get<0>(a), std::get<0>(e));
+			EXPECT_EQ(std::get<1>(a), std::get<1>(e));
+			EXPECT_EQ(std::get<2>(a), std::get<2>(e));
+			EXPECT_EQ(std::get<3>(a), std::get<3>(e));
+			EXPECT_EQ(std::get<4>(a), std::get<4>(e));
+			EXPECT_TRUE(withinMillimetre(ringOf(a), ringOf(e))) << describe(ringOf(a)) << "against " << describe(ringOf(e));
+		}
+	}
+
+	struct PlanarPoint {
+		double x = 0.0;
+		double y = 0.0;
+	};
+
+	// Left of the line a->b is positive.
+	double side(PlanarPoint a, PlanarPoint b, PlanarPoint p) {
+		return (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+	}
+
+	// The part of `subject` inside the convex counter-clockwise `clip` (Sutherland-Hodgman).
+	std::vector<PlanarPoint> clipToConvex(const Ring& subject, const Ring& clip) {
+		std::vector<PlanarPoint> kept;
+		for (const Vec2i64& p : subject) {
+			kept.push_back({static_cast<double>(p.x), static_cast<double>(p.y)});
+		}
+		for (std::size_t i = 0; i < clip.size() && !kept.empty(); ++i) {
+			const PlanarPoint		 a{static_cast<double>(clip[i].x), static_cast<double>(clip[i].y)};
+			const PlanarPoint		 b{static_cast<double>(clip[(i + 1) % clip.size()].x), static_cast<double>(clip[(i + 1) % clip.size()].y)};
+			std::vector<PlanarPoint> next;
+			for (std::size_t k = 0; k < kept.size(); ++k) {
+				const PlanarPoint p	 = kept[k];
+				const PlanarPoint q	 = kept[(k + 1) % kept.size()];
+				const double	  sp = side(a, b, p);
+				const double	  sq = side(a, b, q);
+				if (sp >= 0.0) {
+					next.push_back(p);
+				}
+				if ((sp >= 0.0) != (sq >= 0.0)) {
+					const double along = sp / (sp - sq);
+					next.push_back({p.x + (q.x - p.x) * along, p.y + (q.y - p.y) * along});
+				}
+			}
+			kept = std::move(next);
+		}
+		return kept;
+	}
+
+	// How deep a convex ring overlaps the convex counter-clockwise `convexRing`: the least width of
+	// their intersection, zero where they only touch.
+	double overlapDepth(const Ring& ring, const Ring& convexRing) {
+		const std::vector<PlanarPoint> overlap = clipToConvex(ring, convexRing);
+		if (overlap.size() < 3) {
+			return 0.0;
+		}
+		double least = std::numeric_limits<double>::max();
+		for (std::size_t i = 0; i < overlap.size(); ++i) {
+			const PlanarPoint a		 = overlap[i];
+			const PlanarPoint b		 = overlap[(i + 1) % overlap.size()];
+			const double	  length = std::hypot(b.x - a.x, b.y - a.y);
+			if (length < 1e-9) {
+				continue;
+			}
+			double widest = 0.0;
+			for (const PlanarPoint p : overlap) {
+				widest = std::max(widest, std::abs(side(a, b, p)) / length);
+			}
+			least = std::min(least, widest);
+		}
+		return least == std::numeric_limits<double>::max() ? 0.0 : least;
+	}
+
+	double deepestIntoJunction(const std::vector<PolygonKey>& rings, const WallOutput& output) {
+		double deepest = 0.0;
+		for (const PolygonKey& ring : rings) {
+			for (const JunctionKey& junction : output.junctions) {
+				deepest = std::max(deepest, overlapDepth(junction.first, ringOf(ring)));
+			}
+		}
+		return deepest;
+	}
+
+	// The offsetter's seam tolerance (kSeamToleranceMm in WallOffset.cpp): how far two of its rings may
+	// meet off one another.
+	constexpr double kSeamToleranceMm = 3.0;
+
+	// A door segment beside a corner is drawn from its trimmed band: its rings tile the trimmed band
+	// and reach no deeper into a junction than the seam tolerance, the door span carries the door and
+	// the solid spans no opening, and every other polygon, junction, and portal is the reference's.
+	void expectDoorSegmentsFromTrimmedBands(const Layout& layout) {
+		ConstructionWorld world;
+		layout.build(world);
+		const WallOutput		  expected = outputOf(world, reference::extractWalls);
+		const WallOutput		  actual   = outputOf(world, nav::extractWalls);
+		const std::set<SegmentId> doors	   = doorSegments(world);
+		ASSERT_FALSE(doors.empty());
+		const SplitOutput actualSplit	= splitDoorSegmentRings(actual, doors);
+		const SplitOutput expectedSplit = splitDoorSegmentRings(expected, doors);
+		EXPECT_EQ(actualSplit.rest, expectedSplit.rest);
+		EXPECT_EQ(actual.junctions, expected.junctions);
+		EXPECT_EQ(actual.portals, expected.portals);
+
+		EXPECT_GT(deepestIntoJunction(expectedSplit.doorSegmentRings, expected), kSeamToleranceMm) << "the reference overlaps a junction";
+		EXPECT_LE(deepestIntoJunction(actualSplit.doorSegmentRings, actual), kSeamToleranceMm);
+
+		const geometry::WallBands bands = geometry::resolveWallBands(wallSegments(world), geometry::kDefaultMiterLimit);
+		ASSERT_EQ(bands.status, geometry::OffsetStatus::Ok);
+		for (std::size_t index = 0; index < world.segments().size(); ++index) {
+			const SegmentId segment = world.segments()[index].id;
+			if (!doors.contains(segment)) {
+				continue;
+			}
+			std::set<std::int64_t> doorOpenings;
+			for (const construction::Opening& opening : world.openings()) {
+				if (opening.segment == segment && ConstructionRegistry::Get().getOpeningType(opening.type)->pathable) {
+					doorOpenings.insert(static_cast<std::int64_t>(opening.id));
+				}
+			}
+			double					 area = 0.0;
+			int						 solid = 0;
+			std::map<std::int64_t, int> spansOfOpening;
+			for (const PolygonKey& ring : actualSplit.doorSegmentRings) {
+				if (provenanceOf(ring) != static_cast<std::int64_t>(segment)) {
+					continue;
+				}
+				area += geometry::signedAreaSquareMeters(ringOf(ring));
+				if (openingOf(ring) == gnav::kNoOpening) {
+					++solid;
+				} else {
+					EXPECT_TRUE(doorOpenings.contains(openingOf(ring))) << "a span tagged with an opening not a door on its wall";
+					++spansOfOpening[openingOf(ring)];
+				}
+			}
+			EXPECT_GE(solid, 1);
+			for (const std::int64_t opening : doorOpenings) {
+				EXPECT_EQ(spansOfOpening[opening], 1) << "door " << opening;
+			}
+			EXPECT_NEAR(area, geometry::signedAreaSquareMeters(bands.bands[index]), 1e-3) << "the rings tile the trimmed band";
+		}
+	}
+
+	// Each wall graph comes out as the reference draws that graph with no other wall built, so the
+	// graph the offsetter rejects takes nothing from the healthy one.
+	void expectEachGraphAsDrawnAlone(const Layout& layout) {
+		ConstructionWorld world;
+		layout.build(world);
+		const WallOutput actual = outputOf(world, nav::extractWalls);
+
+		const std::vector<geometry::WallSegment>	segments = wallSegments(world);
+		const std::vector<std::vector<std::size_t>> graphs	 = geometry::connectedWallGraphs(segments);
+		ASSERT_GE(graphs.size(), 2u);
+		WallOutput expected;
+		int		   rejected = 0;
+		for (const std::vector<std::size_t>& graph : graphs) {
+			ConstructionWorld alone;
+			layout.build(alone);
+			std::vector<geometry::WallSegment> members;
+			for (std::size_t index = 0; index < segments.size(); ++index) {
+				if (std::find(graph.begin(), graph.end(), index) == graph.end()) {
+					alone.setSegmentState(alone.segments()[index].id, FoundationState::Blueprint);
+				} else {
+					members.push_back(segments[index]);
+				}
+			}
+			if (geometry::resolveWallBands(members, geometry::kDefaultMiterLimit).status != geometry::OffsetStatus::Ok) {
+				++rejected;
+			}
+			const WallOutput part = outputOf(alone, reference::extractWalls);
+			expected.polygons.insert(expected.polygons.end(), part.polygons.begin(), part.polygons.end());
+			expected.junctions.insert(expected.junctions.end(), part.junctions.begin(), part.junctions.end());
+		}
+		std::sort(expected.polygons.begin(), expected.polygons.end());
+		std::sort(expected.junctions.begin(), expected.junctions.end());
+		EXPECT_EQ(rejected, 1);
+		EXPECT_FALSE(expected.junctions.empty());
+		EXPECT_EQ(actual.polygons, expected.polygons);
+		EXPECT_EQ(actual.junctions, expected.junctions);
+		EXPECT_EQ(actual.portals, outputOf(world, reference::extractWalls).portals);
+	}
+
+	// Junction.ShortMiddleSegmentBetweenSharpCornersRejectsOverrun at half its size, so Heavy's
+	// 150 mm half thickness stands in for the fixture's 300. Returns the first wall.
+	SegmentId buildRejectedGraph(ConstructionWorld& world) {
+		const SegmentId first = buildWall(world, {19000, 500}, {20000, 0}, "Heavy");
+		buildWall(world, {20000, 0}, {20050, 0}, "Heavy");
+		buildWall(world, {20050, 0}, {21050, 500}, "Heavy");
+		return first;
 	}
 
 	std::vector<Layout> layouts() {
@@ -316,27 +605,51 @@ namespace {
 				 buildWall(world, {4000, 0}, {4000, 3000});
 				 buildWall(world, {10000, 0}, {14000, 0}, "Heavy");
 			 }},
-			{"DoorMidWallFreeEnds", [](ConstructionWorld& world) {
-				 buildOpening(world, buildWall(world, {0, 0}, {4000, 0}), 0.5F, "Door");
-			 }},
-			{"WindowMidWallFreeEnds", [](ConstructionWorld& world) {
-				 buildOpening(world, buildWall(world, {0, 0}, {4000, 0}), 0.5F, "Window");
-			 }},
-			{"RoomDoorBesideCorner", [](ConstructionWorld& world) {
+			{"DoorMidWallFreeEnds",
+			 [](ConstructionWorld& world) { buildOpening(world, buildWall(world, {0, 0}, {4000, 0}), 0.5F, "Door"); },
+			 Expectation::DoorRingsWithinMillimetre},
+			{"WindowMidWallFreeEnds",
+			 [](ConstructionWorld& world) { buildOpening(world, buildWall(world, {0, 0}, {4000, 0}), 0.5F, "Window"); }},
+			{"TwoDoorsOneWallFreeEnds",
+			 [](ConstructionWorld& world) {
+				 const SegmentId wall = buildWall(world, {0, 0}, {6000, 0});
+				 buildOpening(world, wall, 0.25F, "Door");
+				 buildOpening(world, wall, 0.75F, "Door");
+			 },
+			 Expectation::DoorRingsWithinMillimetre},
+			{"DoorAndWindowOneWallFreeEnds",
+			 [](ConstructionWorld& world) {
+				 const SegmentId wall = buildWall(world, {0, 0}, {6000, 0});
+				 buildOpening(world, wall, 0.25F, "Door");
+				 buildOpening(world, wall, 0.75F, "Window");
+			 },
+			 Expectation::DoorRingsWithinMillimetre},
+			{"RoomDoorBesideCorner",
+			 [](ConstructionWorld& world) {
 				 std::vector<SegmentId> walls;
 				 buildRoom(world, {0, 0}, walls);
 				 // The door's near edge 0.35 m from the corner, just past the opening margin.
 				 buildOpening(world, walls[0], 0.2F, "Door");
-			 }},
-			{"RejectedGraphBesideHealthyGraph", [](ConstructionWorld& world) {
+			 },
+			 Expectation::Changed, expectDoorSegmentsFromTrimmedBands},
+			{"RoomDoorIntoCornerTrim",
+			 [](ConstructionWorld& world) {
+				 std::vector<SegmentId> walls;
+				 buildRoom(world, {0, 0}, walls);
+				 // The door's near edge 30 mm from the corner, inside the 100 mm corner trim, where the
+				 // world takes it though the opening tool would not.
+				 buildOpening(world, walls[0], 0.12F, "Door");
+			 },
+			 Expectation::Changed, expectDoorSegmentsFromTrimmedBands},
+			{"RejectedGraphBesideHealthyGraph",
+			 [](ConstructionWorld& world) {
 				 buildWall(world, {0, 0}, {4000, 0});
 				 buildWall(world, {4000, 0}, {4000, 3000});
-				 // Junction.ShortMiddleSegmentBetweenSharpCornersRejectsOverrun at half its size, so
-				 // Heavy's 150 mm half thickness stands in for the fixture's 300.
-				 buildWall(world, {19000, 500}, {20000, 0}, "Heavy");
-				 buildWall(world, {20000, 0}, {20050, 0}, "Heavy");
-				 buildWall(world, {20050, 0}, {21050, 500}, "Heavy");
-			 }},
+				 buildRejectedGraph(world);
+			 },
+			 Expectation::Changed, expectEachGraphAsDrawnAlone},
+			// A rejected graph keeps its raw bands, a door's wall too, whole.
+			{"DoorOnRejectedGraph", [](ConstructionWorld& world) { buildOpening(world, buildRejectedGraph(world), 0.5F, "Door"); }},
 		};
 	}
 
@@ -349,40 +662,49 @@ namespace {
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 	};
 
-	TEST_F(ExtractWallsReferenceTest, LayoutsMatchTheReferenceUnlessMarkedOtherwise) {
-		const Extractor production = [](const ConstructionWorld& world, const ConstructionRegistry& registry,
-										std::vector<gnav::NavInputPolygon>& polygons, std::vector<gnav::DoorPortal>& portals,
-										std::vector<nav::WallJunction>* junctions) {
-			nav::extractWalls(world, registry, polygons, portals, junctions);
-		};
+	TEST_F(ExtractWallsReferenceTest, LayoutsMatchTheReferenceAsMarked) {
 		for (const Layout& layout : layouts()) {
 			SCOPED_TRACE(layout.name);
 			ConstructionWorld world;
 			layout.build(world);
 			const WallOutput expected = outputOf(world, reference::extractWalls);
-			const WallOutput actual	  = outputOf(world, production);
+			const WallOutput actual	  = outputOf(world, nav::extractWalls);
 			EXPECT_FALSE(actual.polygons.empty());
-			if (!layout.mustMatch) {
-				continue;
+			switch (layout.expectation) {
+				case Expectation::Identical:
+					EXPECT_EQ(actual.polygons, expected.polygons);
+					EXPECT_EQ(actual.junctions, expected.junctions);
+					EXPECT_EQ(actual.portals, expected.portals);
+					break;
+				case Expectation::DoorRingsWithinMillimetre:
+					expectDoorRingsWithinMillimetre(actual, expected, doorSegments(world));
+					break;
+				case Expectation::Changed:
+					ASSERT_TRUE(layout.checkChange);
+					layout.checkChange(layout);
+					break;
 			}
-			EXPECT_EQ(actual.polygons, expected.polygons);
-			EXPECT_EQ(actual.junctions, expected.junctions);
-			EXPECT_EQ(actual.portals, expected.portals);
 		}
 	}
 
-	// The layouts are what their names say: the openings land, and only the one layout built to
-	// hold a graph the offsetter rejects does.
+	// The layouts are what their names say: the openings land, and only the layouts built to hold a
+	// graph the offsetter rejects do.
 	TEST_F(ExtractWallsReferenceTest, LayoutsHoldWhatTheirNamesSay) {
 		for (const Layout& layout : layouts()) {
 			SCOPED_TRACE(layout.name);
 			ConstructionWorld world;
 			layout.build(world);
-			const geometry::WallBands bands = geometry::resolveWallBands(builtWallSegments(world), geometry::kDefaultMiterLimit);
-			EXPECT_EQ(bands.status == geometry::OffsetStatus::Ok, layout.name != "RejectedGraphBesideHealthyGraph");
-			const WallOutput output = outputOf(world, reference::extractWalls);
+			const geometry::WallBands bands = geometry::resolveWallBands(wallSegments(world), geometry::kDefaultMiterLimit);
+			EXPECT_EQ(bands.status == geometry::OffsetStatus::Ok, layout.name.find("Rejected") == std::string::npos);
+			const WallOutput output	 = outputOf(world, reference::extractWalls);
 			const bool		 opening = layout.name.find("Door") != std::string::npos || layout.name.find("Window") != std::string::npos;
-			EXPECT_EQ(output.portals.size(), opening ? 1u : 0u);
+			EXPECT_EQ(opening, !world.openings().empty());
+			EXPECT_EQ(output.portals.size(), world.openings().size());
+			if (layout.name == "RoomDoorIntoCornerTrim") {
+				const construction::OpeningGaps gaps = construction::openingGaps(world, world.segments().front(), {});
+				ASSERT_EQ(gaps.gaps.size(), 1u);
+				EXPECT_LT(gaps.gaps.front().fromMm, bands.trimAtA.front()) << "the door reaches into the corner trim";
+			}
 		}
 	}
 
