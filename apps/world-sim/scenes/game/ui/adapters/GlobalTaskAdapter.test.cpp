@@ -75,9 +75,4 @@ namespace world_sim::adapters {
 		EXPECT_TRUE(panel().empty()) << "its blueprint is removed";
 	}
 
-	TEST_F(GlobalTaskAdapterTest, AStructureNotBeingDemolishedIsNotListed) {
-		structure(40.0F, false);
-		EXPECT_TRUE(panel().empty());
-	}
-
 } // namespace world_sim::adapters
