@@ -14,7 +14,9 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <random>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -603,4 +605,156 @@ TEST(RoomDetectionSystem, MergingTwoRoomsThatEachHoldAnInnerRoomKeepsTheLargerNa
 		}
 	}
 	EXPECT_EQ(fired, 4);
+}
+
+TEST(RoomDetectionSystem, IdentityWithoutNestingIsWhatTheStoredPointsAlonePick) {
+	// Random wall additions and removals on two separate 5 x 5 grids of 1 m edges, removals
+	// rarer so the grids fill up, and every tenth step one wall toggled twice (a rebuild
+	// that changes no room). Edits that would leave a room with a hole are undone
+	// before the reconcile, so nothing is ever nested. After every reconcile each room
+	// must hold the identity the point passes alone pick: the dominant record whose
+	// stored point is strictly inside it, then, for rooms still without one, the dominant
+	// record whose point is on its boundary, first room first; anything else is new. The
+	// same-ring pass is absent from that model, so a match shows it changes nothing
+	// without nesting. At most three edges change per step, too few to close a 1 m loop
+	// of new walls inside a room, so no room can lie strictly inside a stored ring either.
+	constexpr std::int64_t kGrid = 5;
+	constexpr std::int64_t kCell = 1000;
+	constexpr std::int64_t kStride = kGrid * kCell + 1500;
+
+	std::vector<std::pair<Vec2i64, Vec2i64>> edges;
+	for (std::int64_t grid = 0; grid < 2; ++grid) {
+		for (std::int64_t i = 0; i < kGrid; ++i) {
+			for (std::int64_t j = 0; j < kGrid; ++j) {
+				const Vec2i64 point{grid * kStride + i * kCell, j * kCell};
+				if (i + 1 < kGrid) {
+					edges.push_back({point, {point.x + kCell, point.y}});
+				}
+				if (j + 1 < kGrid) {
+					edges.push_back({point, {point.x, point.y + kCell}});
+				}
+			}
+		}
+	}
+
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+	std::size_t formedCount = 0;
+	sys.setRoomFormedCallback([&formedCount](EntityID) { ++formedCount; });
+
+	std::vector<SegmentId> built(edges.size(), construction::kInvalidSegment);
+
+	const auto toggle = [&](std::size_t e) {
+		if (built[e] == construction::kInvalidSegment) {
+			built[e] = buildWall(cw, edges[e].first, edges[e].second);
+		} else {
+			cw.removeSegment(built[e]);
+			built[e] = construction::kInvalidSegment;
+		}
+	};
+
+	std::mt19937 rng(4096);
+	std::size_t	 noOpSteps = 0;
+	std::size_t	 merges = 0;
+	std::size_t	 inheritedWithNewRing = 0;
+	std::size_t	 retiredRooms = 0;
+	for (int step = 0; step < 400; ++step) {
+		const std::vector<RoomDetectionSystem::RoomRecord> before = sys.rooms();
+		uint64_t										   highestId = 0;
+		for (const RoomDetectionSystem::RoomRecord& rec : before) {
+			highestId = std::max(highestId, rec.roomId);
+		}
+
+		const bool noOp = step % 10 == 9;
+		if (noOp) {
+			const std::size_t e = rng() % edges.size();
+			toggle(e);
+			toggle(e);
+			++noOpSteps;
+		} else {
+			std::vector<std::size_t> changed;
+			const std::size_t		 changeCount = 1 + rng() % 3;
+			for (std::size_t c = 0; c < changeCount; ++c) {
+				const std::size_t e = rng() % edges.size();
+				if (std::find(changed.begin(), changed.end(), e) != changed.end() ||
+					(built[e] != construction::kInvalidSegment && rng() % 3 != 0)) {
+					continue;
+				}
+				changed.push_back(e);
+				toggle(e);
+			}
+			const std::vector<construction::RoomFace> probe = construction::detectRooms(cw);
+			if (std::any_of(probe.begin(), probe.end(), [](const construction::RoomFace& face) { return !face.holes.empty(); })) {
+				for (auto it = changed.rbegin(); it != changed.rend(); ++it) {
+					toggle(*it);
+				}
+			}
+		}
+
+		const std::size_t formedBefore = formedCount;
+		sys.update(0.0f);
+		const std::vector<construction::RoomFace> faces = construction::detectRooms(cw);
+		ASSERT_EQ(sys.rooms().size(), faces.size());
+
+		constexpr std::size_t	 kNone = static_cast<std::size_t>(-1);
+		std::vector<std::size_t> expected(faces.size(), kNone);
+		std::vector<bool>		 claimed(before.size(), false);
+		for (const geometry::PointInPolygon want : {geometry::PointInPolygon::Inside, geometry::PointInPolygon::OnBoundary}) {
+			for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+				if (expected[fi] != kNone) {
+					continue;
+				}
+				std::size_t candidates = 0;
+				for (std::size_t ri = 0; ri < before.size(); ++ri) {
+					if (claimed[ri] || construction::pointInRoom(before[ri].rep, faces[fi].ring, faces[fi].holes) != want) {
+						continue;
+					}
+					++candidates;
+					const std::size_t best = expected[fi];
+					if (best == kNone || before[ri].areaDoubled > before[best].areaDoubled ||
+						(before[ri].areaDoubled == before[best].areaDoubled && before[ri].roomId < before[best].roomId)) {
+						expected[fi] = ri;
+					}
+				}
+				if (expected[fi] != kNone) {
+					claimed[expected[fi]] = true;
+				}
+				if (want == geometry::PointInPolygon::Inside && candidates > 1) {
+					++merges;
+				}
+			}
+		}
+
+		std::size_t freshCount = 0;
+		for (std::size_t fi = 0; fi < faces.size(); ++fi) {
+			const RoomDetectionSystem::RoomRecord& rec = sys.rooms()[fi];
+			EXPECT_EQ(rec.ring, faces[fi].ring);
+			if (expected[fi] == kNone) {
+				++freshCount;
+				EXPECT_GT(rec.roomId, highestId) << "step " << step << " room " << fi;
+				continue;
+			}
+			EXPECT_EQ(rec.roomId, before[expected[fi]].roomId) << "step " << step << " room " << fi;
+			EXPECT_EQ(rec.name, before[expected[fi]].name);
+			if (rec.ring != before[expected[fi]].ring) {
+				++inheritedWithNewRing;
+			}
+		}
+		EXPECT_EQ(formedCount - formedBefore, freshCount) << "step " << step;
+		if (noOp) {
+			ASSERT_EQ(sys.rooms().size(), before.size());
+			for (std::size_t fi = 0; fi < before.size(); ++fi) {
+				EXPECT_EQ(sys.rooms()[fi].roomId, before[fi].roomId) << "step " << step;
+			}
+		}
+		retiredRooms += static_cast<std::size_t>(std::count(claimed.begin(), claimed.end(), false));
+		EXPECT_EQ(countRoomEntities(world), faces.size());
+	}
+	EXPECT_EQ(noOpSteps, 40u);
+	EXPECT_GT(merges, 15u);
+	EXPECT_GT(inheritedWithNewRing, 35u);
+	EXPECT_GT(retiredRooms, 50u);
+	EXPECT_GT(formedCount, 60u);
 }

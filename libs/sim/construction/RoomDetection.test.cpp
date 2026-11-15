@@ -87,6 +87,62 @@ namespace {
 		EXPECT_EQ(roomIndex, rooms.size());
 	}
 
+	using GridEdge = std::pair<Vec2i64, Vec2i64>;
+
+	constexpr std::int64_t kGrid = 5;
+	constexpr std::int64_t kCell = 1000;
+
+	// The 1 m wall edges of a kGrid x kGrid lattice of points.
+	std::vector<GridEdge> gridEdges() {
+		std::vector<GridEdge> edges;
+		for (std::int64_t i = 0; i < kGrid; ++i) {
+			for (std::int64_t j = 0; j < kGrid; ++j) {
+				if (i + 1 < kGrid) {
+					edges.push_back({{i * kCell, j * kCell}, {(i + 1) * kCell, j * kCell}});
+				}
+				if (j + 1 < kGrid) {
+					edges.push_back({{i * kCell, j * kCell}, {i * kCell, (j + 1) * kCell}});
+				}
+			}
+		}
+		return edges;
+	}
+
+	// Build a random connected subset of the grid edges, shifted by `offset`: one wall group.
+	void buildConnectedLayout(ConstructionWorld& world, std::mt19937& rng, const std::vector<GridEdge>& edges, Vec2i64 offset) {
+		const auto build = [&](const GridEdge& edge) {
+			buildWall(world, {edge.first.x + offset.x, edge.first.y + offset.y}, {edge.second.x + offset.x, edge.second.y + offset.y});
+		};
+		const std::size_t	 target = 4 + rng() % 30;
+		std::vector<bool>	 used(edges.size(), false);
+		std::vector<Vec2i64> touched;
+
+		const std::size_t first = rng() % edges.size();
+		used[first] = true;
+		build(edges[first]);
+		touched.push_back(edges[first].first);
+		touched.push_back(edges[first].second);
+
+		for (std::size_t added = 1; added < target; ++added) {
+			std::vector<std::size_t> frontier;
+			for (std::size_t e = 0; e < edges.size(); ++e) {
+				const bool attached = std::find(touched.begin(), touched.end(), edges[e].first) != touched.end() ||
+									  std::find(touched.begin(), touched.end(), edges[e].second) != touched.end();
+				if (!used[e] && attached) {
+					frontier.push_back(e);
+				}
+			}
+			if (frontier.empty()) {
+				break;
+			}
+			const std::size_t pick = frontier[rng() % frontier.size()];
+			used[pick] = true;
+			build(edges[pick]);
+			touched.push_back(edges[pick].first);
+			touched.push_back(edges[pick].second);
+		}
+	}
+
 	// Commit a wall left in Blueprint state.
 	SegmentId blueprintWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b) {
 		SegmentCommitResult r = world.commitSegment(a, b, "wood", "standard", kInvalidFoundation);
@@ -337,55 +393,14 @@ TEST(RoomDetection, PointInRoomTreatsHolesAsOutsideAndTheirEdgesAsBoundary) {
 }
 
 TEST(RoomDetection, ConnectedLayoutsMatchPlainFaceExtraction) {
-	// Random connected subsets of a 5 x 5 grid of 1m wall edges: every layout is one
-	// wall group (rectangles sharing walls, T and L shapes, spurs), so no room can
-	// have a hole and detection must be exactly the plain face extraction.
-	constexpr std::int64_t kGrid = 5;
-	constexpr std::int64_t kCell = 1000;
-	std::vector<std::pair<Vec2i64, Vec2i64>> gridEdges;
-	for (std::int64_t i = 0; i < kGrid; ++i) {
-		for (std::int64_t j = 0; j < kGrid; ++j) {
-			if (i + 1 < kGrid) {
-				gridEdges.push_back({{i * kCell, j * kCell}, {(i + 1) * kCell, j * kCell}});
-			}
-			if (j + 1 < kGrid) {
-				gridEdges.push_back({{i * kCell, j * kCell}, {i * kCell, (j + 1) * kCell}});
-			}
-		}
-	}
-
-	std::mt19937 rng(512);
-	std::size_t	 layoutsWithRooms = 0;
+	// Every layout is one wall group (rectangles sharing walls, T and L shapes, spurs), so
+	// no room can have a hole and detection must be exactly the plain face extraction.
+	const std::vector<GridEdge> edges = gridEdges();
+	std::mt19937				rng(512);
+	std::size_t					layoutsWithRooms = 0;
 	for (int layout = 0; layout < 200; ++layout) {
-		const std::size_t	  target = 4 + rng() % 30;
-		std::vector<bool>	  used(gridEdges.size(), false);
-		std::vector<Vec2i64> touched;
-		ConstructionWorld	  world;
-
-		const std::size_t first = rng() % gridEdges.size();
-		used[first] = true;
-		buildWall(world, gridEdges[first].first, gridEdges[first].second);
-		touched.push_back(gridEdges[first].first);
-		touched.push_back(gridEdges[first].second);
-
-		for (std::size_t added = 1; added < target; ++added) {
-			std::vector<std::size_t> frontier;
-			for (std::size_t e = 0; e < gridEdges.size(); ++e) {
-				const bool attached = std::find(touched.begin(), touched.end(), gridEdges[e].first) != touched.end() ||
-									  std::find(touched.begin(), touched.end(), gridEdges[e].second) != touched.end();
-				if (!used[e] && attached) {
-					frontier.push_back(e);
-				}
-			}
-			if (frontier.empty()) {
-				break;
-			}
-			const std::size_t pick = frontier[rng() % frontier.size()];
-			used[pick] = true;
-			buildWall(world, gridEdges[pick].first, gridEdges[pick].second);
-			touched.push_back(gridEdges[pick].first);
-			touched.push_back(gridEdges[pick].second);
-		}
+		ConstructionWorld world;
+		buildConnectedLayout(world, rng, edges, {0, 0});
 
 		const std::vector<RoomFace> rooms = detectRooms(world);
 		if (!rooms.empty()) {
@@ -398,4 +413,40 @@ TEST(RoomDetection, ConnectedLayoutsMatchPlainFaceExtraction) {
 		expectMatchesPlainFaces(world, rooms);
 	}
 	EXPECT_GT(layoutsWithRooms, 50u);
+}
+
+TEST(RoomDetection, SeparateLayoutsSideBySideMatchPlainFaceExtraction) {
+	// Two or three connected layouts in their own grids a gap apart: separate wall groups,
+	// none inside another, often a group with rooms beside an open chain. Still no room
+	// has a hole and detection is exactly the plain face extraction.
+	const std::vector<GridEdge> edges = gridEdges();
+	constexpr std::int64_t		kStride = kGrid * kCell + 1500;
+	std::mt19937				rng(1024);
+	std::size_t					layoutsWithRoomsInSeveralGroups = 0;
+	std::size_t					layoutsWithRoomsBesideAnOpenGroup = 0;
+	for (int layout = 0; layout < 150; ++layout) {
+		const std::size_t groupCount = 2 + rng() % 2;
+		ConstructionWorld world;
+		for (std::size_t group = 0; group < groupCount; ++group) {
+			buildConnectedLayout(world, rng, edges, {static_cast<std::int64_t>(group) * kStride, 0});
+		}
+
+		const std::vector<RoomFace> rooms = detectRooms(world);
+		std::vector<bool>			groupHasRoom(groupCount, false);
+		for (const RoomFace& room : rooms) {
+			EXPECT_TRUE(room.holes.empty());
+			EXPECT_EQ(room.areaDoubled, geometry::signedAreaDoubled(room.ring));
+			groupHasRoom[static_cast<std::size_t>(room.representativePoint.x / kStride)] = true;
+		}
+		const auto groupsWithRooms = static_cast<std::size_t>(std::count(groupHasRoom.begin(), groupHasRoom.end(), true));
+		if (groupsWithRooms > 1) {
+			++layoutsWithRoomsInSeveralGroups;
+		}
+		if (groupsWithRooms > 0 && groupsWithRooms < groupCount) {
+			++layoutsWithRoomsBesideAnOpenGroup;
+		}
+		expectMatchesPlainFaces(world, rooms);
+	}
+	EXPECT_GT(layoutsWithRoomsInSeveralGroups, 60u);
+	EXPECT_GT(layoutsWithRoomsBesideAnOpenGroup, 25u);
 }
