@@ -236,6 +236,7 @@ spec, and the `/perf-nightly` skill runs it.
 | 13 | Colonists walk round obstacles | [scenarios/13-colonists-walk-round-obstacles.md](./scenarios/13-colonists-walk-round-obstacles.md) |
 | 14 | Player visibility | [scenarios/14-player-visibility.md](./scenarios/14-player-visibility.md) |
 | 15 | Builder work spots | [scenarios/15-builder-work-spots.md](./scenarios/15-builder-work-spots.md) |
+| 16 | Rooms inside rooms | [scenarios/16-rooms-inside-rooms.md](./scenarios/16-rooms-inside-rooms.md) |
 
 **Scenarios that look away from the colonists turn reveal on** (`/api/dev/reveal?on=1`), since ground no colonist has seen is black (player visibility); a launch starts with it off. Scenario 14 is the one that tests the cover itself.
 
