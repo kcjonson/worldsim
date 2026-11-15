@@ -157,7 +157,7 @@ remembered things use the key every colonist computes for the same object. A pil
 |---|---|---|---|
 | Use | exclusive use, quantity 1 | WorldKey or Entity | until the work on it ends (harvest done, item picked up) |
 | Source quantity | units to be taken from a source | pile (WorldKey), box (Entity) | until pickup or withdraw |
-| Slot | one slot, optionally a numbered one | station today; planned for bed, toilet, interaction spot, builder slot | while the task that took it lives |
+| Slot | one slot, optionally a numbered one | station, a foundation's builder spot (numbered); planned for bed, toilet, interaction spot | while the task that took it lives |
 | Inbound | units to be deposited at a destination | box, station store, blueprint manifest | until deposit, or until the goods are dropped |
 | In-flight | units on their way toward a root goal | Goal (with item) | until deposit, or until the goods are dropped |
 
@@ -216,14 +216,14 @@ Built, each by a chain that runs today:
 - Inbound at storage boxes, crafting station stores, and blueprint manifests.
 - In-flight toward storage, craft, and construction root goals.
 - The craft station slot, from Craft selection, held while the Craft task lives.
+- A foundation's builder spots, one numbered slot on the blueprint each, from Build selection, held
+  while the Build task lives (Build and Deconstruct, below).
 - Need tasks claiming the food they walk to (Use on a bush, source quantity of one meal on a pile or
   box), so two hungry colonists do not converge on the last berries.
 
 Planned, none of which needs a new kind: bed, toilet, and medical slots (with ownership),
 Chain_Rescue's patient and medical bed, mobile targets (hunting and taming, an Entity key with a
-last-known position from Memory's dynamic entities), builder slot counts and positions per blueprint
-(the count from `constraints.xml` `builderCapBase` and `builderCapPerSquareMeter`, the position as
-`slotIndex` into the construction work slots), slots on deconstruction, and colonist death and
+last-known position from Memory's dynamic entities), slots on deconstruction, and colonist death and
 incapacitation, which do not exist in `libs/` yet.
 
 ---
@@ -461,8 +461,32 @@ for an L can be the inner edge that opens onto the notch.
 
 ### Build and Deconstruct
 
-No claims; any number of colonists may work an UnderConstruction blueprint. Planned: builder slots
-(count, then `slotIndex` positions) come with the builder-cap work.
+A foundation takes one builder a spot. Its Build umbrella carries `builderSpots`, the points its
+builders work from, 0.5 m inside the ring and spaced round it (`construction/BuilderSpots.h`; the count
+from `constraints.xml` `builderCapBase`, `builderCapPerSquareMeter`, and
+`builderSpotMinSpacingMeters`), set as the goal turns Available and kept until it stops being
+Available, so an index names one spot for that whole time.
+
+A Build option on such a goal is for one spot, chosen at selection: the spot the colonist already holds
+on that blueprint first, so a builder mid-walk or mid-work never hops, then the free spots (no other
+task holds their slot) nearest first. A spot serves when `nearestPathablePoint(spot, agentRadius)`
+gives a stand point less than half the distance to the nearest other spot away from it, so two spots
+never share one, and the colonist can get to that point; one that doesn't serve is passed over for the
+next, in the same decision, and the first that serves is taken. The task carries the spot's index
+(`Task::builderSlot`), its target is the stand point, and its claims hold `Claim::slot(blueprint,
+builderSlot)`. With no mesh yet, the spot itself is the target and no test is asked. A builder deciding
+again keeps the task only for the same spot (`isSameTask` compares the index), so a stored index the
+goal no longer has (it left Available and came back with fewer spots) is never read and reads as a
+fresh pick.
+
+With every spot held by others the option reads Reserved and names a holder, as a taken station does,
+and the colonist takes other work. With spots free but none serving him it is NoSource. The slot is
+released only by the task going away (finished, replaced by a need or other work, or its route failing,
+which leaves only carried goods indexed); no construction code releases it.
+
+A Build goal with no spots (a wall's, an opening's, or a foundation's when no construction world is
+wired, as in headless tests) caps no builders: any number work it, from the nearest walkable point to its
+centre, and it takes no claim. Deconstruct takes no claim either.
 
 ### Need tasks
 
