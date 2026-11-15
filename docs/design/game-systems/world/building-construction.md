@@ -243,9 +243,9 @@ The four choices below are proposed defaults, not settled. Each lists the altern
 
 #### What the Player Sees
 
-The moment the closing wall segment finishes, the floor inside the room darkens by one fixed step, at the same moment the "Room formed" notification appears. The shade is flat and hard-edged: the same darkness from wall to wall, no gradient toward the walls, no soft edge. Its edge runs under the walls, so on screen it stops at the walls' inner faces.
+The moment the closing wall segment finishes, the floor inside the room darkens by one fixed step, at the same moment the "Room formed" notification appears. The shade is flat and hard-edged: the same darkness from wall to wall, no gradient toward the walls, no soft edge. Its edge runs under the walls, so on screen it stops at the walls' inner faces, give or take that faint show-through.
 
-What changes is the floor and nothing else. The walls, doors, and windows look as they did. Colonists, creatures, furniture, crafting stations, storage, and loose items on the floor draw at their normal brightness on top of the darker floor, so a colonist indoors reads as clearly as one outside. Trees and other tall things that overhang a room from outside also draw over it unshaded.
+What changes is the floor and nothing else. The walls, doors, and windows look as they did, with one faint exception: walls and openings are not quite opaque, so the shade shows through them slightly (the half of a wall that lies over the room darkens by about 1%), and a wall the renderer cannot give a thickness to is drawn as a bare line, which does not cover the shade's edge. Colonists, creatures, furniture, crafting stations, storage, and loose items on the floor draw at their normal brightness on top of the darker floor, so a colonist indoors reads as clearly as one outside. Trees and other tall things that overhang a room from outside also draw over it unshaded.
 
 The darkness is one value for every room, whatever its size, material, or number of doors and windows. It is a named value in the construction config, so tuning it is a data change. The default is a black fill at 15% opacity over the floor, a placeholder pending playtesting.
 
@@ -255,7 +255,15 @@ Cases:
 - **A wall removed.** When a wall in the loop is demolished (the segment leaves the building when its demolition work completes), the room is gone and its shade goes with it in the same update. A wall that splits a room gives two shaded rooms; removing a wall between two rooms gives one, still shaded.
 - **A room inside a room.** A room standing free inside another room is a room of its own (see above). Each floor is shaded once: the outer room's shade has the inner room cut out of it, and the inner room carries its own shade, so the inner room is not darker than the outer one. This needs nested rooms (WOR-512) in place first.
 - **The rooms overlay.** With the overlay on, the shade stays and the overlay's tint, outline, and name draw over it. Turning the overlay off leaves the shade.
-- **Unexplored ground and player visibility.** The shade sits under the player visibility cover, like everything else on the ground. Ground no colonist has seen stays fully hidden, shade or not. A room that is seen but out of every colonist's sight gets the usual out-of-sight darkening on top of its shade, so it reads darker than the open ground beside it, which is also out of sight.
+- **Unexplored ground and player visibility.** The shade sits under the player visibility cover, like everything else on the ground. Ground no colonist has seen stays fully hidden, shade or not. A room that is seen but out of every colonist's sight gets the usual out-of-sight darkening on top of its shade, so it reads darker than the open ground beside it, which is also out of sight. Whether that is the right look is open question 1 below.
+
+#### Open Questions
+
+These are not covered by the four defaults above and need the owner's answer.
+
+1. Walls block sight, so a room with nobody inside is usually out of every colonist's sight and already gets the out-of-sight darkening (black at 50%) on top of the shade. Should the shade only need to read on its own while someone is inside, or should it differ from the out-of-sight darkening in colour, not just by being more black?
+2. With no roofs, every closed wall loop is a room, so a walled courtyard or an animal pen is shaded as indoors, and grass and trees inside it draw over the shade at full brightness. Should open-air enclosures be left out, and if so how does the player say which they are, or is every room shaded until roofs exist?
+3. A courtyard in the middle of a building is a room of its own, so it is shaded like the rooms around it. Is that wanted?
 
 #### Later, With Lighting
 
