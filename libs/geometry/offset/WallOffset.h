@@ -23,7 +23,7 @@
 namespace geometry {
 
 	// A span of a wall's centerline left open (a door or window), in mm from the
-	// segment's `a` end. Only wallPiecesAndOutline reads gaps. The same span on the segment listed b to a, length L, is
+	// segment's `a` end. Only wallSpans and wallPiecesAndOutline read gaps. The same span on the segment listed b to a, length L, is
 	// {round(L - toMm), round(L - fromMm)}, and resolves identically.
 	struct WallGap {
 		std::int64_t fromMm = 0;
@@ -158,6 +158,44 @@ namespace geometry {
 	// list starts, nothing in the result depends on segment order or on which end
 	// of a segment is `a`.
 	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
+
+	// The connected wall graphs among `segments`: indices into it, grouped where
+	// segments share an endpoint position exactly (resolveWallBands' rule for the
+	// walls meeting at a vertex), chained through every shared endpoint. Each
+	// group lists its members in ascending order and the groups are ordered by
+	// their smallest member, so the result does not depend on which end of a
+	// segment is `a`. Every index appears in exactly one group; no segments, no
+	// groups.
+	std::vector<std::vector<std::size_t>> connectedWallGraphs(const std::vector<WallSegment>& segments);
+
+	// The `gap` of a WallSpan that covers no gap.
+	constexpr std::size_t kSolidSpan = static_cast<std::size_t>(-1);
+
+	// One stretch of a segment's trimmed band: solid wall, or open over the gap
+	// at index `gap` in that segment's list of gaps (in the order given).
+	struct WallSpan {
+		Ring		ring; // CCW
+		std::size_t gap = kSolidSpan;
+	};
+
+	// Per segment of `segments` as `bands` (their resolveWallBands result, status
+	// Ok) resolved them, the spans that tile its trimmed band given `gaps` (one
+	// list per segment, or none at all), in order from the segment's
+	// lexicographically smaller endpoint, so the same whichever end is `a`. The
+	// solid spans are wallPiecesAndOutline's pieces, ring for ring and in the
+	// same order. A gap span takes its corners from the caps of the solid spans
+	// beside it (or of the trimmed band at an end), so neighbouring spans share
+	// their two corners exactly. Gaps are clamped to the trimmed band and merged
+	// where they overlap, an opening of less than 6 mm of the band is ignored,
+	// and a run of wall under 6 mm beside a gap (or one that makes no valid ring)
+	// belongs to the gap span beside it, so the spans still cover the band. Where
+	// gaps overlap or a run between them folds away, one span covers more than
+	// one gap; it is split where each later gap starts, so an overlap goes to the
+	// later gap, and a gap starting less than a millimetre past the last split,
+	// or within a millimetre of the span's end, gets no span of its own. A segment without
+	// gaps is one solid span, its band. Reads only the trims of `bands`.
+	std::vector<std::vector<WallSpan>> wallSpans(const std::vector<WallSegment>& segments,
+												 const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands);
 
 	// The drawn shape of a resolved wall graph, cut at its openings.
 	struct WallPiecesAndOutline {

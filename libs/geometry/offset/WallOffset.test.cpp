@@ -1247,9 +1247,124 @@ namespace {
 		return "";
 	}
 
+	// A segment's spans tile its trimmed band: the solid ones are its pieces,
+	// exactly and in order; every span is a valid ring inside the band; in order
+	// along the segment they meet with no overlap or gap beyond rounding,
+	// neighbours sharing two corners exactly, from one trimmed end to the other;
+	// and each gap span covers the gap it is tagged with, every opened gap lying
+	// in some gap span.
+	std::string checkSpans(const WallSegment& seg, const std::vector<WallGap>& gaps, const Ring& band, const std::vector<Ring>& pieces,
+						   const std::vector<WallSpan>& spans) {
+		std::vector<Ring> solid;
+		for (const WallSpan& span : spans) {
+			if (span.gap == kSolidSpan) {
+				solid.push_back(span.ring);
+			}
+		}
+		if (solid != pieces) {
+			return "solid spans are not its pieces";
+		}
+
+		const double length = distanceBetween(seg.a, seg.b);
+		const double ux		= static_cast<double>(seg.b.x - seg.a.x) / length;
+		const double uy		= static_cast<double>(seg.b.y - seg.a.y) / length;
+		auto		 along	= [&](const Vec2i64& p) {
+			   return static_cast<double>(p.x - seg.a.x) * ux + static_cast<double>(p.y - seg.a.y) * uy;
+		};
+		auto across = [&](const Vec2i64& p) {
+			return static_cast<double>(p.y - seg.a.y) * ux - static_cast<double>(p.x - seg.a.x) * uy;
+		};
+		auto extent = [&](const Ring& ring) {
+			std::pair<double, double> range{1e18, -1e18};
+			for (const Vec2i64& p : ring) {
+				range.first	 = std::min(range.first, along(p));
+				range.second = std::max(range.second, along(p));
+			}
+			return range;
+		};
+
+		struct Placed {
+			std::pair<double, double> range;
+			const WallSpan*			  span;
+		};
+		std::vector<Placed> placed;
+		double				area = 0.0;
+		for (const WallSpan& span : spans) {
+			const Ring& ring = span.ring;
+			if (ring.size() < 3 || windingOrder(ring) != Winding::CounterClockwise || !isSimple(ring).pass) {
+				return "has an invalid span";
+			}
+			for (const Vec2i64& p : ring) {
+				if (std::abs(across(p)) > static_cast<double>(seg.halfThicknessMm) + 1.5) {
+					return "span leaves its band";
+				}
+			}
+			placed.push_back({extent(ring), &span});
+			area += std::abs(signedAreaDoubled(ring).toDouble()) * 0.5;
+		}
+		if (placed.empty()) {
+			return "has no spans";
+		}
+		std::sort(placed.begin(), placed.end(), [](const Placed& l, const Placed& r) { return l.range < r.range; });
+		const std::pair<double, double> bandRange = extent(band);
+		if (std::abs(placed.front().range.first - bandRange.first) > 1.5 || std::abs(placed.back().range.second - bandRange.second) > 1.5) {
+			return "spans do not reach both trimmed ends";
+		}
+		for (std::size_t k = 1; k < placed.size(); ++k) {
+			if (std::abs(placed[k].range.first - placed[k - 1].range.second) > 2.0) {
+				return "spans overlap or leave a gap";
+			}
+			const Ring& previous = placed[k - 1].span->ring;
+			const auto	shared	 = std::count_if(placed[k].span->ring.begin(), placed[k].span->ring.end(), [&](const Vec2i64& p) {
+				   return std::find(previous.begin(), previous.end(), p) != previous.end();
+			});
+			if (shared < 2) {
+				return "neighbouring spans do not share their corners";
+			}
+		}
+		const double bandArea = std::abs(signedAreaDoubled(band).toDouble()) * 0.5;
+		if (std::abs(area - bandArea) > 2.0 * static_cast<double>(spans.size()) * static_cast<double>(seg.halfThicknessMm)) {
+			return "spans cover " + std::to_string(area) + " mm2 of a " + std::to_string(bandArea) + " mm2 band";
+		}
+
+		for (const Placed& entry : placed) {
+			if (entry.span->gap == kSolidSpan) {
+				continue;
+			}
+			if (entry.span->gap >= gaps.size()) {
+				return "gap span tagged with no gap";
+			}
+			const WallGap& gap	   = gaps[entry.span->gap];
+			const double   overlap = std::min(entry.range.second, static_cast<double>(gap.toMm)) -
+									 std::max(entry.range.first, static_cast<double>(gap.fromMm));
+			if (overlap <= 0.0) {
+				return "gap span does not cover its gap";
+			}
+		}
+		for (const WallGap& gap : gaps) {
+			const double from = std::max(bandRange.first, static_cast<double>(gap.fromMm));
+			const double to	  = std::min(bandRange.second, static_cast<double>(gap.toMm));
+			// A gap opening under 6 mm of the band is ignored; the band's rounded
+			// corners put its ends up to a millimetre or so off the trims.
+			if (to - from < 7.5) {
+				continue;
+			}
+			const double middle	 = (from + to) * 0.5;
+			const bool	 covered = std::any_of(placed.begin(), placed.end(), [&](const Placed& entry) {
+				  return entry.span->gap != kSolidSpan && entry.range.first <= middle && middle <= entry.range.second;
+			});
+			if (!covered) {
+				return "an opened gap lies in no gap span";
+			}
+		}
+		return "";
+	}
+
 	// (d): each segment's pieces are its trimmed band less its gaps: inside the
-	// band, clear of every gap, apart from each other, and covering the rest.
+	// band, clear of every gap, apart from each other, and covering the rest;
+	// and its spans tile the band (checkSpans).
 	std::string checkPieces(const std::vector<WallSegment>& segments, const Gaps& gaps, const Resolved& wb) {
+		const std::vector<std::vector<WallSpan>> spansOfSegments = wallSpans(segments, gaps, wb);
 		for (std::size_t i = 0; i < segments.size(); ++i) {
 			const WallSegment& seg	  = segments[i];
 			const double	   length = distanceBetween(seg.a, seg.b);
@@ -1324,6 +1439,11 @@ namespace {
 			if (std::abs(actual - expected) > slack * width) {
 				return "segment " + std::to_string(i) + " pieces cover " + std::to_string(actual) + " mm2, expected " +
 					   std::to_string(expected);
+			}
+
+			const std::string spanProblem = checkSpans(seg, gapsOf(gaps, i), wb.bands[i], wb.pieces[i], spansOfSegments[i]);
+			if (!spanProblem.empty()) {
+				return "segment " + std::to_string(i) + " " + spanProblem;
 			}
 		}
 		return "";
@@ -2763,4 +2883,148 @@ TEST(WallProperties, NearStraightRetryKeepsEveryAcceptedJoin) {
 	EXPECT_LE(worstOverlap, kMaxRescuedOverlapMm) << worstInput;
 	EXPECT_LE(static_cast<double>(excused), kMaxExcusedShare * static_cast<double>(rescued))
 		<< excused << " of " << rescued << " rescued inputs are excused";
+}
+
+namespace {
+
+	// Gaps on a segment, measured from its `a` end, of one kind picked at random: inside the
+	// trimmed band, touching or reaching into a trimmed end, past a free end, overlapping, at the
+	// smallest opening kept, two with a run under the smallest piece between them, or none.
+	std::vector<WallGap> randomGaps(const WallSegment& segment, std::int64_t trimAtA, std::int64_t trimAtB, std::mt19937& rng) {
+		const std::int64_t whole = std::llround(distanceBetween(segment.a, segment.b));
+		const std::int64_t start = trimAtA;
+		const std::int64_t end	 = whole - trimAtB;
+		const std::int64_t span	 = end - start;
+		auto			   at	 = [&](std::int64_t from, std::int64_t to) -> std::int64_t {
+			  return from + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(std::max<std::int64_t>(1, to - from)));
+		};
+		switch (rng() % 9) {
+			case 0:
+				return {};
+			case 1: {
+				const std::int64_t from = at(start, end);
+				return {{from, from + at(1, span)}};
+			}
+			case 2:
+				return {{start, start + at(1, span)}};
+			case 3:
+				return {{end - at(1, span), end}};
+			case 4:
+				return {{start - at(1, 300), start + at(1, span)}, {end - at(1, span), whole + at(0, 300)}};
+			case 5: {
+				const std::int64_t from = at(start, end);
+				return {{from, from + at(1, span)}, {from + at(0, span), from + at(1, 2 * span)}};
+			}
+			case 6: {
+				const std::int64_t from = at(start - 10, end);
+				return {{from, from + at(3, 9)}};
+			}
+			case 7: {
+				const std::int64_t from = at(start, end);
+				const std::int64_t to	= from + at(1, span / 2 + 1);
+				return {{from, to}, {to + at(1, 9), to + at(10, span)}};
+			}
+			default:
+				return {{-at(0, 50), whole + at(0, 50)}};
+		}
+	}
+
+} // namespace
+
+TEST(WallProperties, PiecesFromSpansMatchTheReferenceWithGaps) {
+	// wallPiecesAndOutline takes its pieces from wallSpans. On every fifth accepted input of the
+	// retry sweep, with gaps of every kind on every segment, it draws exactly what the reference
+	// draws, and the spans tile each trimmed band.
+	std::mt19937 rng(37);
+	Sweep		 sweep;
+	int			 index = 0;
+	for (const std::vector<WallSegment>& segments : retryInputs()) {
+		if (index++ % 5 != 0) {
+			continue;
+		}
+		const WallBands bands = resolveWallBands(segments, kDefaultMiterLimit);
+		if (bands.status != OffsetStatus::Ok) {
+			continue;
+		}
+		Gaps gaps(segments.size());
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			gaps[i] = randomGaps(segments[i], bands.trimAtA[i], bands.trimAtB[i], rng);
+		}
+		const WallPiecesAndOutline expected = reference::wallPiecesAndOutline(segments, gaps, bands);
+		const WallPiecesAndOutline actual	= wallPiecesAndOutline(segments, gaps, bands);
+		std::string				   problem;
+		if (actual.pieces != expected.pieces || !sameOutline(actual.outline, expected.outline)) {
+			problem = "draws differently from the reference";
+		}
+		const std::vector<std::vector<WallSpan>> spans = wallSpans(segments, gaps, bands);
+		for (std::size_t i = 0; i < segments.size() && problem.empty(); ++i) {
+			problem = checkSpans(segments[i], gaps[i], bands.bands[i], actual.pieces[i], spans[i]);
+		}
+		sweep.check(segments, gaps, problem);
+	}
+	EXPECT_GT(sweep.inputs, 1000);
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallGraphs, ChainsTeesAndSeparateGraphs) {
+	using Graphs = std::vector<std::vector<std::size_t>>;
+	EXPECT_EQ(connectedWallGraphs({}), Graphs{});
+	EXPECT_EQ(connectedWallGraphs({{{0, 0}, {1000, 0}, 100}}), (Graphs{{0}}));
+
+	// A chain listed out of order joins through its middle wall.
+	const std::vector<WallSegment> chain = {
+		{{0, 0}, {1000, 0}, 100},
+		{{2000, 0}, {3000, 0}, 100},
+		{{1000, 0}, {2000, 0}, 100},
+	};
+	EXPECT_EQ(connectedWallGraphs(chain), (Graphs{{0, 1, 2}}));
+
+	const std::vector<WallSegment> tee = {
+		{{0, 0}, {1000, 0}, 100},
+		{{1000, 0}, {2000, 0}, 150},
+		{{1000, 0}, {1000, 1000}, 75},
+	};
+	EXPECT_EQ(connectedWallGraphs(tee), (Graphs{{0, 1, 2}}));
+
+	// Two graphs interleaved, the second joined up late through a wall that meets both of its
+	// others: groups come in order of their smallest member, members ascending.
+	const std::vector<WallSegment> twoGraphs = {
+		{{0, 0}, {1000, 0}, 100},
+		{{5000, 0}, {6000, 0}, 100},
+		{{9000, 0}, {9000, 1000}, 100},
+		{{1000, 0}, {1000, 1000}, 100},
+		{{8000, 0}, {9000, 0}, 100},
+		{{6000, 0}, {8000, 0}, 100},
+	};
+	EXPECT_EQ(connectedWallGraphs(twoGraphs), (Graphs{{0, 3}, {1, 2, 4, 5}}));
+
+	// Crossing walls share no endpoint, so they are separate graphs.
+	const std::vector<WallSegment> crossing = {
+		{{0, 0}, {2000, 0}, 100},
+		{{1000, -1000}, {1000, 1000}, 100},
+	};
+	EXPECT_EQ(connectedWallGraphs(crossing), (Graphs{{0}, {1}}));
+}
+
+TEST(WallGraphs, DirectionDoesNotMatter) {
+	using Graphs = std::vector<std::vector<std::size_t>>;
+	const std::vector<WallSegment> segments = {
+		{{0, 0}, {1000, 0}, 100},
+		{{5000, 0}, {6000, 0}, 100},
+		{{1000, 0}, {1000, 1000}, 100},
+		{{6000, 0}, {6000, 1000}, 100},
+		{{1000, 1000}, {0, 0}, 100},
+		{{20000, 0}, {21000, 0}, 100},
+	};
+	const Graphs expected = connectedWallGraphs(segments);
+	EXPECT_EQ(expected, (Graphs{{0, 2, 4}, {1, 3}, {5}}));
+	for (unsigned flips = 0; flips < (1U << segments.size()); ++flips) {
+		std::vector<WallSegment> flipped = segments;
+		for (std::size_t i = 0; i < flipped.size(); ++i) {
+			if (((flips >> i) & 1U) != 0) {
+				std::swap(flipped[i].a, flipped[i].b);
+			}
+		}
+		EXPECT_EQ(connectedWallGraphs(flipped), expected) << "flips " << flips;
+	}
 }

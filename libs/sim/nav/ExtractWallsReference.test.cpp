@@ -43,8 +43,9 @@ namespace {
 
 	namespace reference {
 
-		void extractWalls(const ConstructionWorld& world, const ConstructionRegistry& registry, std::vector<gnav::NavInputPolygon>& outPolys,
-						  std::vector<gnav::DoorPortal>& outDoors, std::vector<nav::WallJunction>* outJunctions) {
+		void extractWalls(const ConstructionWorld& world, const ConstructionRegistry& registry,
+						  std::vector<gnav::NavInputPolygon>& outPolys, std::vector<gnav::DoorPortal>& outDoors,
+						  std::vector<nav::WallJunction>* outJunctions) {
 			std::vector<geometry::WallSegment>	 geoSegments;
 			std::vector<construction::SegmentId> segmentIds;
 			for (const construction::WallSegment& seg : world.segments()) {

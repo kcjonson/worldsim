@@ -659,6 +659,44 @@ namespace geometry {
 		// either is not a wall feature anyway.
 		constexpr std::int64_t kMinPieceFeatureMm = 2 * kSeamToleranceMm;
 
+		// A distance from one end of a segment `segmentLength` long, measured from
+		// its other end, to the nearest mm.
+		std::int64_t fromOtherEnd(double segmentLength, std::int64_t distance) {
+			return static_cast<std::int64_t>(std::llround(segmentLength - static_cast<double>(distance)));
+		}
+
+		// A segment's gap measured from its lexicographically smaller endpoint, and
+		// its index in the segment's list of gaps.
+		struct CanonicalGap {
+			WallGap		span;
+			std::size_t index = 0;
+		};
+
+		std::vector<CanonicalGap> canonicalGaps(const WallSegment& segment, const std::vector<WallGap>& segmentGaps) {
+			const double segmentLength = length(segment.b - segment.a);
+			const bool	 fromA		   = !(segment.b < segment.a);
+			std::vector<CanonicalGap> gaps;
+			gaps.reserve(segmentGaps.size());
+			for (std::size_t index = 0; index < segmentGaps.size(); ++index) {
+				const WallGap& gap = segmentGaps[index];
+				const WallGap  span = fromA ? gap : WallGap{fromOtherEnd(segmentLength, gap.toMm), fromOtherEnd(segmentLength, gap.fromMm)};
+				gaps.push_back({span, index});
+			}
+			std::sort(gaps.begin(), gaps.end(), [](const CanonicalGap& l, const CanonicalGap& r) {
+				if (l.span.fromMm != r.span.fromMm) {
+					return l.span.fromMm < r.span.fromMm;
+				}
+				return l.span.toMm != r.span.toMm ? l.span.toMm < r.span.toMm : l.index < r.index;
+			});
+			return gaps;
+		}
+
+		// How much of the trimmed band, from trimNear to bandEnd along the segment
+		// from its lexicographically smaller endpoint, a canonical gap opens.
+		double gapOpening(const WallGap& gap, std::int64_t trimNear, double bandEnd) {
+			return std::min(static_cast<double>(gap.toMm), bandEnd) - static_cast<double>(std::max(gap.fromMm, trimNear));
+		}
+
 		// The cutbacks {at a, at b} of each solid run of a segment's trimmed band
 		// between its gaps, in order along the segment. A gap opening less than
 		// kMinPieceFeatureMm of the trimmed band is ignored, and a run shorter than
@@ -670,18 +708,6 @@ namespace geometry {
 																	  std::int64_t trimAtA, std::int64_t trimAtB) {
 			const double segmentLength = length(segment.b - segment.a);
 			const bool	 fromA		   = !(segment.b < segment.a);
-			auto		 fromOtherEnd  = [&](std::int64_t distance) -> std::int64_t {
-				  return static_cast<std::int64_t>(std::llround(segmentLength - static_cast<double>(distance)));
-			};
-
-			std::vector<WallGap> gaps;
-			gaps.reserve(segmentGaps.size());
-			for (const WallGap& gap : segmentGaps) {
-				gaps.push_back(fromA ? gap : WallGap{fromOtherEnd(gap.toMm), fromOtherEnd(gap.fromMm)});
-			}
-			std::sort(gaps.begin(), gaps.end(), [](const WallGap& l, const WallGap& r) {
-				return l.fromMm != r.fromMm ? l.fromMm < r.fromMm : l.toMm < r.toMm;
-			});
 
 			const std::int64_t trimNear = fromA ? trimAtA : trimAtB;
 			const std::int64_t trimFar	= fromA ? trimAtB : trimAtA;
@@ -693,14 +719,13 @@ namespace geometry {
 
 			std::vector<std::pair<std::int64_t, std::int64_t>> runs;
 			std::int64_t										solidFrom = trimNear;
-			for (const WallGap& gap : gaps) {
-				const double opening = std::min(static_cast<double>(gap.toMm), bandEnd) -
-									   static_cast<double>(std::max(gap.fromMm, trimNear));
-				if (opening < minimum) {
+			for (const CanonicalGap& canonical : canonicalGaps(segment, segmentGaps)) {
+				const WallGap& gap = canonical.span;
+				if (gapOpening(gap, trimNear, bandEnd) < minimum) {
 					continue;
 				}
 				if (gap.fromMm > solidFrom) {
-					const std::int64_t cutFar = std::max(trimFar, fromOtherEnd(gap.fromMm));
+					const std::int64_t cutFar = std::max(trimFar, fromOtherEnd(segmentLength, gap.fromMm));
 					if (longEnough(solidFrom, cutFar)) {
 						runs.emplace_back(solidFrom, cutFar);
 					}
@@ -716,6 +741,131 @@ namespace geometry {
 				}
 			}
 			return runs;
+		}
+
+		// A point on a segment's centerline `mm` from its `a` end, or from its `b`
+		// end, rounded as trimmedBand rounds its cutbacks.
+		struct SpanCut {
+			std::int64_t mm	   = 0;
+			bool		 fromA = true;
+		};
+
+		Vec2i64 cutPoint(const WallSegment& segment, const SpanCut& cut) {
+			const Vec2i64 dir = segment.b - segment.a;
+			return cut.fromA ? advance(segment.a, dir, static_cast<double>(cut.mm)) : advance(segment.b, -dir, static_cast<double>(cut.mm));
+		}
+
+		// The band between two cuts, with the corners trimmedBand gives a band cut
+		// back to either of them.
+		Ring bandBetween(const WallSegment& segment, const SpanCut& from, const SpanCut& to) {
+			const Vec2i64 dir	= segment.b - segment.a;
+			const Vec2i64 start = cutPoint(segment, from);
+			const Vec2i64 end	= cutPoint(segment, to);
+			const double  h		= static_cast<double>(segment.halfThicknessMm);
+			return {offsetPoint(start, dir, h), offsetPoint(end, dir, h), offsetPoint(end, dir, -h), offsetPoint(start, dir, -h)};
+		}
+
+		// A span of one segment, and whether it is solid wall reaching the trimmed
+		// band's `a` or `b` end.
+		struct SegmentSpan {
+			WallSpan span;
+			bool	 reachesA = false;
+			bool	 reachesB = false;
+		};
+
+		// wallSpans for one segment: the pieces solidRuns cuts, then the gap spans
+		// between them.
+		std::vector<SegmentSpan> segmentSpans(const WallSegment& segment, const std::vector<WallGap>& segmentGaps, std::int64_t trimAtA,
+											  std::int64_t trimAtB) {
+			const double	   segmentLength = length(segment.b - segment.a);
+			const bool		   fromA		 = !(segment.b < segment.a);
+			const std::int64_t trimNear		 = fromA ? trimAtA : trimAtB;
+			const std::int64_t trimFar		 = fromA ? trimAtB : trimAtA;
+			const double	   bandEnd		 = segmentLength - static_cast<double>(trimFar);
+
+			struct Piece {
+				std::int64_t cutNear = 0;
+				std::int64_t cutFar	 = 0;
+				Ring		 ring;
+			};
+			std::vector<Piece> pieces;
+			for (const auto& [atA, atB] : solidRuns(segment, segmentGaps, trimAtA, trimAtB)) {
+				Ring ring;
+				if (!trimmedBand(segment.a, segment.b, segment.halfThicknessMm, atA, atB, ring)) {
+					continue;
+				}
+				simplifyRing(ring, kDefaultSimplifyEpsMm);
+				if (validateAndOrient(ring) != OffsetStatus::Ok) {
+					continue;
+				}
+				pieces.push_back({fromA ? atA : atB, fromA ? atB : atA, std::move(ring)});
+			}
+
+			// Cuts measured from the near end (the lexicographically smaller one) or
+			// the far end, and their distance from the near end.
+			auto nearCut  = [&](std::int64_t mm) { return SpanCut{mm, fromA}; };
+			auto farCut	  = [&](std::int64_t mm) { return SpanCut{mm, !fromA}; };
+			auto position = [&](const SpanCut& cut) {
+				return cut.fromA == fromA ? static_cast<double>(cut.mm) : segmentLength - static_cast<double>(cut.mm);
+			};
+
+			std::vector<CanonicalGap> open;
+			for (const CanonicalGap& gap : canonicalGaps(segment, segmentGaps)) {
+				if (gapOpening(gap.span, trimNear, bandEnd) >= static_cast<double>(kMinPieceFeatureMm)) {
+					open.push_back(gap);
+				}
+			}
+
+			std::vector<SegmentSpan> spans;
+			auto addGapSpans = [&](const SpanCut& from, const SpanCut& to) {
+				const double start = position(from);
+				const double end   = position(to);
+				SpanCut		 cursor	   = from;
+				double		 cursorAt  = start;
+				std::size_t	 coveredBy = kSolidSpan;
+				auto		 closeSpan = [&](const SpanCut& until) {
+					  Ring ring = bandBetween(segment, cursor, until);
+					  if (validateAndOrient(ring) == OffsetStatus::Ok) {
+						  spans.push_back({{std::move(ring), coveredBy}});
+					  }
+				};
+				for (const CanonicalGap& gap : open) {
+					const double gapFrom = std::max(static_cast<double>(gap.span.fromMm), static_cast<double>(trimNear));
+					const double gapTo	 = std::min(static_cast<double>(gap.span.toMm), bandEnd);
+					if (std::min(gapTo, end) <= std::max(gapFrom, start)) {
+						continue;
+					}
+					if (coveredBy == kSolidSpan) {
+						coveredBy = gap.index;
+						continue;
+					}
+					const double splitAt = static_cast<double>(gap.span.fromMm);
+					if (splitAt >= cursorAt + 1.0 && splitAt <= end - 1.0) {
+						const SpanCut split = nearCut(gap.span.fromMm);
+						closeSpan(split);
+						cursor	  = split;
+						cursorAt  = splitAt;
+						coveredBy = gap.index;
+					}
+				}
+				assert(coveredBy != kSolidSpan);
+				closeSpan(to);
+			};
+
+			SpanCut reached = nearCut(trimNear);
+			for (Piece& piece : pieces) {
+				if (!(piece.cutNear == reached.mm && reached.fromA == fromA)) {
+					addGapSpans(reached, nearCut(piece.cutNear));
+				}
+				const bool atNear = piece.cutNear == trimNear;
+				const bool atFar  = piece.cutFar == trimFar;
+				spans.push_back({{std::move(piece.ring), kSolidSpan}, fromA ? atNear : atFar, fromA ? atFar : atNear});
+				reached = farCut(piece.cutFar);
+			}
+			if (!(reached.fromA != fromA && reached.mm == trimFar)) {
+				addGapSpans(reached, farCut(trimFar));
+			}
+			return spans;
 		}
 
 		// A returned ring taking part in the outline: its vertices (snapped where
@@ -1121,6 +1271,57 @@ namespace geometry {
 		return assembleWallBands(segments, byVertex, resolutions, failedBands);
 	}
 
+	std::vector<std::vector<std::size_t>> connectedWallGraphs(const std::vector<WallSegment>& segments) {
+		std::vector<std::size_t> root(segments.size());
+		for (std::size_t i = 0; i < root.size(); ++i) {
+			root[i] = i;
+		}
+		auto rootOf = [&](std::size_t i) {
+			while (root[i] != i) {
+				root[i] = root[root[i]];
+				i		= root[i];
+			}
+			return i;
+		};
+		std::map<Vec2i64, std::size_t> segmentAt;
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			for (const Vec2i64& end : {segments[i].a, segments[i].b}) {
+				const auto [entry, added] = segmentAt.emplace(end, i);
+				if (!added) {
+					const std::size_t mine	 = rootOf(i);
+					const std::size_t theirs = rootOf(entry->second);
+					root[std::max(mine, theirs)] = std::min(mine, theirs);
+				}
+			}
+		}
+		constexpr std::size_t				  kNoGraph = static_cast<std::size_t>(-1);
+		std::vector<std::vector<std::size_t>> graphs;
+		std::vector<std::size_t>			  graphOfRoot(segments.size(), kNoGraph);
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			std::size_t& graph = graphOfRoot[rootOf(i)];
+			if (graph == kNoGraph) {
+				graph = graphs.size();
+				graphs.emplace_back();
+			}
+			graphs[graph].push_back(i);
+		}
+		return graphs;
+	}
+
+	std::vector<std::vector<WallSpan>> wallSpans(const std::vector<WallSegment>& segments,
+												 const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands) {
+		assert(bands.status == OffsetStatus::Ok && bands.trimAtA.size() == segments.size() && bands.trimAtB.size() == segments.size());
+		assert(gaps.empty() || gaps.size() == segments.size());
+		const std::vector<WallGap>		   noGaps;
+		std::vector<std::vector<WallSpan>> result(segments.size());
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			for (SegmentSpan& span : segmentSpans(segments[i], gaps.empty() ? noGaps : gaps[i], bands.trimAtA[i], bands.trimAtB[i])) {
+				result[i].push_back(std::move(span.span));
+			}
+		}
+		return result;
+	}
+
 	WallPiecesAndOutline wallPiecesAndOutline(const std::vector<WallSegment>& segments,
 											  const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands) {
 		WallPiecesAndOutline result;
@@ -1129,32 +1330,23 @@ namespace geometry {
 		assert(gaps.empty() || gaps.size() == segCount);
 		const std::vector<WallGap> noGaps;
 
-		// Pieces: each trimmed band less its gaps. A run that still makes no valid
-		// ring after rounding is dropped too.
+		// Pieces: the solid spans.
 		constexpr std::size_t kNoTile = static_cast<std::size_t>(-1);
 		std::vector<std::size_t> endTileA(segCount, kNoTile);
 		std::vector<std::size_t> endTileB(segCount, kNoTile);
 		result.pieces.resize(segCount);
 		for (std::size_t i = 0; i < segCount; ++i) {
-			const WallSegment& seg		 = segments[i];
-			const std::int64_t trimAtA = bands.trimAtA[i];
-			const std::int64_t trimAtB = bands.trimAtB[i];
-			for (const auto& [atA, atB] : solidRuns(seg, gaps.empty() ? noGaps : gaps[i], trimAtA, trimAtB)) {
-				Ring ring;
-				if (!trimmedBand(seg.a, seg.b, seg.halfThicknessMm, atA, atB, ring)) {
+			for (SegmentSpan& span : segmentSpans(segments[i], gaps.empty() ? noGaps : gaps[i], bands.trimAtA[i], bands.trimAtB[i])) {
+				if (span.span.gap != kSolidSpan) {
 					continue;
 				}
-				simplifyRing(ring, kDefaultSimplifyEpsMm);
-				if (validateAndOrient(ring) != OffsetStatus::Ok) {
-					continue;
-				}
-				if (atA == trimAtA) {
+				if (span.reachesA) {
 					endTileA[i] = result.pieces[i].size();
 				}
-				if (atB == trimAtB) {
+				if (span.reachesB) {
 					endTileB[i] = result.pieces[i].size();
 				}
-				result.pieces[i].push_back(std::move(ring));
+				result.pieces[i].push_back(std::move(span.span.ring));
 			}
 		}
 
