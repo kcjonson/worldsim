@@ -58,7 +58,7 @@ replaces is marked, and the rest still stand.
 
 ### The meshed area (rules 39 to 42, 2026-11-12)
 
-39. The mesh is the union of the limits of every mover, terrain included, and it ends at that union's edge. That union is the meshed area. It reaches 16 m past sight and ignores walls, so it is not what anyone has seen; "seen" belongs to player visibility ([player-visibility.md](./player-visibility.md)). Outside it is impassable: no triangles, no links to chunk edges or far points. (Replaces the chunk-at-a-time half of rule 32.)
+39. The mesh is the union of the limits of every mover and of the landing (rule 42), terrain included, and it ends at that union's edge. That union is the meshed area. A mover's limit reaches 16 m past his sight and ignores walls, so the meshed area is not what anyone has seen; "seen" belongs to player visibility ([player-visibility.md](./player-visibility.md)). Outside it is impassable: no triangles, no links to chunk edges or far points. (Replaces the chunk-at-a-time half of rule 32.)
 40. No arbitrary points. Every vertex comes from something in the game, of three kinds: a corner of a placed or built object (a placed obstacle, a wall, a door), a point of terrain (a water outline), or a corner of a visibility limit, plus the points where two such outlines cross. Chunk corners, chunk-side cut points, and kept loose points are gone.
 41. A mover's visibility limit is a node type of its own: a polygon round where he stands, holding the disc of his sight distance plus a buffer. The objects in it are found by entity, with no concept of a cell. The step between limits is one tunable constant. Known-world nodes (the geography mesh) come later (4.12).
 42. The landing meshes a large area round the drop before any colonist stands there, its radius one tunable constant: it is meshed in advance, since the crew saw it as they came down. It is the one exception to rule 22.
@@ -1021,7 +1021,7 @@ departures they add, and the memory measurements behind rule 37. Entry 97 record
 on the geography mesh, ground extent, and the step limit. Entry 98 records the search time
 budget and the timing of the geography mesh. Entries 99 to 113 record the correction of
 2026-11-12 that brought the code to the design: what was built, each place it departed from its
-plan and why, and what four review rounds found. Entry 116 records the seen-area mesh of
+plan and why, and what four review rounds found. Entry 116 records the meshed-area work of
 2026-11-13 (rules 39 to 42).
 
 **2026-11-10**

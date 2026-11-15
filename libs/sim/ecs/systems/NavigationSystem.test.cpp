@@ -2979,12 +2979,12 @@ TEST_F(NavigationSystemTest, FelledWhileItsLimitWaitsNeverEnters) {
 // A placed obstacle felled where no limit has reached changes nothing: no patch, nothing left waiting,
 // and a mover arriving later meshes the ground without it.
 TEST_F(NavigationSystemTest, FelledOutsideMeshedGroundChangesNothing) {
-	registerObstacle("Test_NavUnseenFellObstacle", 0.4F);
+	registerObstacle("Test_NavUnmeshedFellObstacle", 0.4F);
 	const glm::vec2						meshedObstacle{10.0F, 10.0F};
 	const glm::vec2						unmeshedObstacle{800.0F, 100.0F};
 	PlacementExecutor					executor(AssetRegistry::Get());
 	std::unordered_set<ChunkCoordinate> processed;
-	placeObstacles(executor, processed, "Test_NavUnseenFellObstacle", {meshedObstacle, unmeshedObstacle});
+	placeObstacles(executor, processed, "Test_NavUnmeshedFellObstacle", {meshedObstacle, unmeshedObstacle});
 
 	World			  world;
 	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
@@ -2996,7 +2996,7 @@ TEST_F(NavigationSystemTest, FelledOutsideMeshedGroundChangesNothing) {
 	ASSERT_FALSE(sys.inSimArea(unmeshedObstacle));
 	const std::uint64_t epoch = sys.navMesh().epoch();
 
-	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({unmeshedObstacle.x, unmeshedObstacle.y}), unmeshedObstacle, "Test_NavUnseenFellObstacle"));
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({unmeshedObstacle.x, unmeshedObstacle.y}), unmeshedObstacle, "Test_NavUnmeshedFellObstacle"));
 	sys.resetNavQueryStats();
 	step(world, sys);
 	EXPECT_EQ(sys.navQueryStats().navPatches, 0U);
