@@ -220,6 +220,8 @@ When built walls (with the foundation boundary playing no part: enclosure must b
 
 Only **built** walls count. The room appears at the moment the closing wall segment completes, with a small notification ("Room formed") and a brief highlight pulse on the new room.
 
+A room built inside another room, its walls standing free of the outer room's, is a room of its own. The outer room's area no longer counts the floor inside it, and the outer room keeps its name; clicking inside the inner room selects the inner room.
+
 Rooms are an abstract concept, not clickable world objects. They are inspected through a **rooms overlay**, like RimWorld or Going Medieval. The overlay is designed here but ships with the game's broader overlay system (zones, beauty, etc.), not with this epic; this epic ships detection and the room-formed notification only.
 
 - Toggled from the HUD (and a hotkey). While active, room interiors tint and show name labels ("Room 1", renamable).
