@@ -228,6 +228,39 @@ Rooms are an abstract concept, not clickable world objects. They are inspected t
 
 V1 rooms don't do anything beyond this. Future: room types from contents, ownership, adjacency bonuses, material effects. See [Rooms](./rooms.md).
 
+### Enclosed Look
+
+A finished room should read as indoors at a glance, with no overlay on: its floor is drawn a shade darker than the open ground and unenclosed floor around it. Mechanism, draw order, and tests: [architecture D6, Enclosed shade](../../../technical/building-construction-architecture.md#enclosed-shade-wor-743).
+
+#### Proposed Defaults (Awaiting the Owner's Confirmation)
+
+The four choices below are proposed defaults, not settled. Each lists the alternative in one line, so a redirect is a matter of pointing at it.
+
+1. **The look:** a flat, slightly darker shade over the room's floor. Alternatives: a dark band along the inside of the walls (needs a general polygon inset the geometry library does not have); a shadow outside the walls (reads as wall height more than enclosure).
+2. **What counts as enclosed:** every closed room, doors and windows included, which is exactly what room detection calls a room today. Alternative: only rooms with no windows.
+3. **Colonists and furniture inside:** they stay bright; only the floor is shaded. Alternative: they darken too.
+4. **When it appears:** at once, when the room forms. Alternative: with the highlight pulse promised above on room formation, which is not built yet.
+
+#### What the Player Sees
+
+The moment the closing wall segment finishes, the floor inside the room darkens by one fixed step, at the same moment the "Room formed" notification appears. The shade is flat and hard-edged: the same darkness from wall to wall, no gradient toward the walls, no soft edge. Its edge runs under the walls, so on screen it stops at the walls' inner faces.
+
+What changes is the floor and nothing else. The walls, doors, and windows look as they did. Colonists, creatures, furniture, crafting stations, storage, and loose items on the floor draw at their normal brightness on top of the darker floor, so a colonist indoors reads as clearly as one outside. Trees and other tall things that overhang a room from outside also draw over it unshaded.
+
+The darkness is one value for every room, whatever its size, material, or number of doors and windows. It is a named value in the construction config, so tuning it is a data change. The default is a black fill at 15% opacity over the floor, a placeholder pending playtesting.
+
+Cases:
+
+- **Under construction.** A room needs every wall in its loop built. While any wall of the loop is a blueprint or under construction there is no room and no shade; the floor looks like any other foundation.
+- **A wall removed.** When a wall in the loop is demolished (the segment leaves the building when its demolition work completes), the room is gone and its shade goes with it in the same update. A wall that splits a room gives two shaded rooms; removing a wall between two rooms gives one, still shaded.
+- **A room inside a room.** A room standing free inside another room is a room of its own (see above). Each floor is shaded once: the outer room's shade has the inner room cut out of it, and the inner room carries its own shade, so the inner room is not darker than the outer one. This needs nested rooms (WOR-512) in place first.
+- **The rooms overlay.** With the overlay on, the shade stays and the overlay's tint, outline, and name draw over it. Turning the overlay off leaves the shade.
+- **Unexplored ground and player visibility.** The shade sits under the player visibility cover, like everything else on the ground. Ground no colonist has seen stays fully hidden, shade or not. A room that is seen but out of every colonist's sight gets the usual out-of-sight darkening on top of its shade, so it reads darker than the open ground beside it, which is also out of sight.
+
+#### Later, With Lighting
+
+The shade is the place lighting will act. Once lighting exists, an enclosed room with no lights and no windows should be quite dark, and windows and lights will lighten it; the shade becomes a per-room darkness that lighting sets instead of one fixed value. Lighting itself is not designed here.
+
 ---
 
 ## Doors & Windows
@@ -413,6 +446,7 @@ In the spirit of everything else in the game, no magic numbers in code. Constrai
 - Freestanding walls / fences / defensive perimeters (separate tool)
 - Flooring overlays distinct from foundation material
 - Roofs, and with them temperature/insulation actually mattering per room
+- Lighting, and with it dark rooms: an enclosed room with no lights or windows becomes quite dark. The enclosed shade is where it will act (Rooms > Enclosed Look)
 - Wall south-face rendering (2.5D hint)
 - Door open/close simulation, locks, ownership
 - Build quality tiers from skill
