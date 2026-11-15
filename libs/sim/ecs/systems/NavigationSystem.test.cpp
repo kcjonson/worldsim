@@ -767,9 +767,9 @@ TEST_F(NavigationSystemTest, FootprintOverObstacleIsBuildableButNotOnMesh) {
 		{obstacleAt.x + 0.3F, obstacleAt.y + 0.3F},
 		{obstacleAt.x - 0.3F, obstacleAt.y + 0.3F},
 	};
-	EXPECT_FALSE(sys.isAreaWalkable(footprint)) << "the nav mesh carves the obstacle";
-	EXPECT_TRUE(sys.isAreaBuildable(footprint)) << "the obstacle is clearable, not a blocker";
-	EXPECT_TRUE(sys.isPointBuildable(obstacleAt));
+	EXPECT_FALSE(sys.isAreaBuildableNow(footprint)) << "the nav mesh carves the obstacle";
+	EXPECT_TRUE(sys.isAreaBuildableOnceCleared(footprint)) << "the obstacle is clearable, not a blocker";
+	EXPECT_TRUE(sys.isPointBuildableOnceCleared(obstacleAt));
 }
 
 // An obstacle in a room's doorway seals it for a route; felling it opens the doorway again and patches only
@@ -1555,8 +1555,13 @@ TEST_F(NavigationSystemTest, FarGoalIsRoutedRoundTheFord) {
 	EXPECT_LT(glm::distance(route.back(), kPondAcross), 0.01F);
 	EXPECT_GT(std::max_element(route.begin(), route.end(), [](glm::vec2 a, glm::vec2 b) { return a.x < b.x; })->x, 150.0F)
 		<< "the route doesn't go round the ford";
+	// A route crosses only faces isOnMesh accepts; probe each leg every 0.1 m, finer than any water here.
 	for (std::size_t i = 1; i < route.size(); ++i) {
-		EXPECT_TRUE(sys.isSegmentWalkable(route[i - 1], route[i])) << "leg " << i << " crosses water";
+		const int probes = std::max(1, static_cast<int>(std::ceil(glm::distance(route[i - 1], route[i]) / 0.1F)));
+		for (int probe = 0; probe <= probes; ++probe) {
+			const glm::vec2 at = glm::mix(route[i - 1], route[i], static_cast<float>(probe) / static_cast<float>(probes));
+			EXPECT_TRUE(sys.isOnMesh(at)) << "leg " << i << " crosses water at (" << at.x << ", " << at.y << ")";
+		}
 	}
 }
 
@@ -2018,13 +2023,13 @@ TEST_F(NavigationSystemTest, GroupSpawnPointsNeverLandsInsideBuiltWallBand) {
 	}
 }
 
-// --- Whole-footprint walkability: isAreaWalkable / isSegmentWalkable -------------
+// --- Whole-footprint buildability: isAreaBuildableNow and isAreaBuildableOnceCleared ---------
 //
 // Vertex-only validity is insufficient: a footprint can have every corner on land yet span water,
 // or fully enclose a pond. All use waterPatchSampler()'s pond at (40,40), at most 10.5 m from its
-// center to any shore.
+// center to any shore. A line across water is LineBuildableNowRefusesACreekWaterObstaclesAndUnmeshedGround.
 
-TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
+TEST_F(NavigationSystemTest, IsAreaBuildableNowTrueWhenWhollyOnLand) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
@@ -2035,10 +2040,10 @@ TEST_F(NavigationSystemTest, IsAreaWalkableTrueWhenWhollyOnLand) {
 	for (const auto& v : onLand) {
 		ASSERT_TRUE(meshClear(sys, v));
 	}
-	EXPECT_TRUE(sys.isAreaWalkable(onLand)) << "a footprint wholly on land must be walkable";
+	EXPECT_TRUE(sys.isAreaBuildableNow(onLand)) << "a footprint wholly on land must be accepted";
 }
 
-TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
+TEST_F(NavigationSystemTest, IsAreaBuildableNowFalseWhenFootprintSpansWater) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
@@ -2049,10 +2054,10 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintSpansWater) {
 	ASSERT_TRUE(meshClear(sys, spanning[0]));
 	ASSERT_TRUE(meshClear(sys, spanning[1]));
 	ASSERT_FALSE(meshClear(sys, {40.0F, 40.0F}));
-	EXPECT_FALSE(sys.isAreaWalkable(spanning)) << "a footprint spanning water must be rejected";
+	EXPECT_FALSE(sys.isAreaBuildableNow(spanning)) << "a footprint spanning water must be rejected";
 }
 
-TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) {
+TEST_F(NavigationSystemTest, IsAreaBuildableNowFalseWhenFootprintEnclosesWaterPond) {
 	ConstructionWorld cw;
 	World			  world;
 	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
@@ -2064,7 +2069,7 @@ TEST_F(NavigationSystemTest, IsAreaWalkableFalseWhenFootprintEnclosesWaterPond) 
 		ASSERT_TRUE(meshClear(sys, v));
 	}
 	ASSERT_FALSE(meshClear(sys, {40.0F, 40.0F}));
-	EXPECT_FALSE(sys.isAreaWalkable(enclosing)) << "a footprint enclosing a water pond must be rejected";
+	EXPECT_FALSE(sys.isAreaBuildableNow(enclosing)) << "a footprint enclosing a water pond must be rejected";
 }
 
 // Water is geography, not a clearable entity, so it blocks buildability too.
@@ -2079,27 +2084,12 @@ TEST_F(NavigationSystemTest, WaterBlocksBuildabilityUnlikeObstacles) {
 	const std::vector<glm::vec2> enclosing{{28.0F, 28.0F}, {52.0F, 28.0F}, {52.0F, 52.0F}, {28.0F, 52.0F}};
 	const std::vector<glm::vec2> onLand{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}, {4.0F, 8.0F}};
 
-	EXPECT_FALSE(sys.isAreaBuildable(spanning));
-	EXPECT_FALSE(sys.isAreaBuildable(enclosing));
-	EXPECT_FALSE(sys.isPointBuildable({40.0F, 40.0F}));
-	EXPECT_TRUE(sys.isAreaBuildable(onLand));
-	EXPECT_TRUE(sys.isPointBuildable({6.0F, 6.0F}));
-	EXPECT_FALSE(sys.isPointBuildable(kUnmeshed)) << "ground that isn't meshed is not buildable";
-}
-
-TEST_F(NavigationSystemTest, IsSegmentAndPolylineWalkableCatchWaterCrossing) {
-	ConstructionWorld cw;
-	World			  world;
-	NavigationSystem& sys	 = world.registerSystem<NavigationSystem>();
-	wireWaterPatch(world, sys, cw);
-	settle(sys);
-
-	EXPECT_TRUE(sys.isSegmentWalkable({4.0F, 4.0F}, {8.0F, 4.0F}));
-	EXPECT_FALSE(sys.isSegmentWalkable({28.0F, 40.0F}, {52.0F, 40.0F})) << "a segment crossing water must be rejected";
-	const std::vector<glm::vec2> chain{{4.0F, 4.0F}, {8.0F, 4.0F}, {28.0F, 40.0F}, {52.0F, 40.0F}};
-	EXPECT_FALSE(sys.isPolylineWalkable(chain));
-	const std::vector<glm::vec2> landChain{{4.0F, 4.0F}, {8.0F, 4.0F}, {8.0F, 8.0F}};
-	EXPECT_TRUE(sys.isPolylineWalkable(landChain));
+	EXPECT_FALSE(sys.isAreaBuildableOnceCleared(spanning));
+	EXPECT_FALSE(sys.isAreaBuildableOnceCleared(enclosing));
+	EXPECT_FALSE(sys.isPointBuildableOnceCleared({40.0F, 40.0F}));
+	EXPECT_TRUE(sys.isAreaBuildableOnceCleared(onLand));
+	EXPECT_TRUE(sys.isPointBuildableOnceCleared({6.0F, 6.0F}));
+	EXPECT_FALSE(sys.isPointBuildableOnceCleared(kUnmeshed)) << "ground that isn't meshed is not buildable";
 }
 
 TEST_F(NavigationSystemTest, IsValidPositionFalseBeforeAnyMesh) {
@@ -2420,6 +2410,21 @@ TEST_F(NavigationSystemTest, FindValidPositionNearHonorsPreferredDirOnOpenGround
 	ASSERT_TRUE(result.has_value());
 	EXPECT_NEAR(result->x, origin.x + minDist, 0.001F);
 	EXPECT_NEAR(result->y, origin.y, 0.001F);
+}
+
+// Every ring candidate refused and only the origin's own spot acceptable: no target, not the origin.
+TEST_F(NavigationSystemTest, FindValidPositionNearWithAcceptNeverAnswersTheOriginItself) {
+	ConstructionWorld cw;
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	const glm::vec2 origin{2.0F, 2.0F};
+	ASSERT_TRUE(meshClear(sys, origin));
+	const auto onlyTheOrigin = [&](glm::vec2 candidate) { return glm::distance(candidate, origin) < 0.5F; };
+	EXPECT_FALSE(sys.findValidPositionNear(origin, 1.0F, {1.0F, 0.0F}, onlyTheOrigin).has_value());
 }
 
 TEST_F(NavigationSystemTest, FindValidPositionNearOffMeshedGroundReturnsNullopt) {
@@ -5619,8 +5624,8 @@ namespace {
 		return chunks.get();
 	}
 
-	// A creek 0.2 m wide along y = 256.25 m: narrower than kFootprintSampleStepMm, and between the
-	// half-metre lines a footprint with whole-metre corners would be probed along.
+	// A creek 0.2 m wide along y = 256.25 m: narrower than the 0.5 m pitch the footprint checks once
+	// sampled at, and between the half-metre lines a footprint with whole-metre corners was probed along.
 	constexpr float kThinCreekY = 256.25F;
 	world::ChunkManager* thinCreekChunks() {
 		static const std::unique_ptr<world::ChunkManager> chunks =
@@ -5643,6 +5648,80 @@ namespace {
 			}
 		}
 		return obstacles;
+	}
+
+	// Whether `meters` lies on a face the mesh holds as a fordable channel's bed (its cover), which
+	// tells a creek from open water and from plain ground.
+	bool onFordFace(const NavigationSystem& sys, glm::vec2 meters) {
+		const geometry::nav::PatchableMesh& mesh = sys.navMesh();
+		const std::int32_t					tri	 = mesh.locate(nav::toMm(meters));
+		return tri >= 0 && nav::faceInFord(mesh, tri);
+	}
+
+	// What surrounds a mesh vertex: whether every live triangle round it is ground a wall may stand on
+	// as it stands (clear, out of any ford), whether some are a ford and some not, and whether a side
+	// through it is the mesh's edge.
+	struct VertexSurround {
+		bool any		  = false;
+		bool allBuildable = true;
+		bool anyFord	  = false;
+		bool anyOutOfFord = false;
+		bool onMeshEdge	  = false;
+
+		[[nodiscard]] bool insideAmidBuildableGround() const { return any && allBuildable && !onMeshEdge; }
+		[[nodiscard]] bool insideOnAFordsEdge() const { return anyFord && anyOutOfFord && !onMeshEdge; }
+	};
+
+	// Every vertex's VertexSurround, by vertex index, in one pass over the triangles.
+	std::vector<VertexSurround> vertexSurrounds(const geometry::nav::PatchableMesh& mesh) {
+		std::vector<VertexSurround> out(mesh.vertices().size());
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const geometry::nav::NavTriangle& tri		= mesh.triangles()[static_cast<std::size_t>(t)];
+			const bool						  ford		= nav::faceInFord(mesh, t);
+			const bool						  buildable = !ford && geometry::nav::terrainTraversable(tri);
+			for (std::size_t corner = 0; corner < 3; ++corner) {
+				VertexSurround& round = out[tri.v[corner]];
+				round.any			  = true;
+				round.allBuildable	  = round.allBuildable && buildable;
+				round.anyFord		  = round.anyFord || ford;
+				round.anyOutOfFord	  = round.anyOutOfFord || !ford;
+				round.onMeshEdge	  = round.onMeshEdge || tri.neighbor[corner] < 0 || tri.neighbor[(corner + 2) % 3] < 0;
+			}
+		}
+		return out;
+	}
+
+	// A side between two triangles whose ends are both inside the mesh amid ground a wall may stand on.
+	std::optional<std::array<glm::vec2, 2>> interiorBuildableEdge(const geometry::nav::PatchableMesh& mesh) {
+		const std::vector<VertexSurround> surrounds = vertexSurrounds(mesh);
+		for (std::int32_t t = 0; t < static_cast<std::int32_t>(mesh.triangles().size()); ++t) {
+			if (!mesh.triangleLive(t)) {
+				continue;
+			}
+			const geometry::nav::NavTriangle& tri = mesh.triangles()[static_cast<std::size_t>(t)];
+			for (std::size_t e = 0; e < 3; ++e) {
+				const std::uint32_t from = tri.v[e];
+				const std::uint32_t to	 = tri.v[(e + 1) % 3];
+				if (tri.neighbor[e] >= 0 && surrounds[from].insideAmidBuildableGround() && surrounds[to].insideAmidBuildableGround()) {
+					return std::array<glm::vec2, 2>{nav::toMeters(mesh.vertices()[from]), nav::toMeters(mesh.vertices()[to])};
+				}
+			}
+		}
+		return std::nullopt;
+	}
+
+	// The first vertex whose surround passes `wanted`.
+	template <typename Wanted> std::optional<glm::vec2> firstVertex(const geometry::nav::PatchableMesh& mesh, const Wanted& wanted) {
+		const std::vector<VertexSurround> surrounds = vertexSurrounds(mesh);
+		for (std::size_t vertex = 0; vertex < surrounds.size(); ++vertex) {
+			if (wanted(surrounds[vertex])) {
+				return nav::toMeters(mesh.vertices()[vertex]);
+			}
+		}
+		return std::nullopt;
 	}
 } // namespace
 
@@ -5699,6 +5778,7 @@ TEST_F(NavigationSystemTest, FordableCreekIsWalkableAndNotBuildable) {
 	const glm::vec2 north{100.0F, 262.0F};
 
 	EXPECT_TRUE(rig.nav.isValidPosition(inCreek)) << "a mover stands in the creek";
+	ASSERT_TRUE(onFordFace(rig.nav, inCreek)) << "the creek is a ford in the mesh";
 	EXPECT_TRUE(rig.nav.connected(south, north));
 	const std::optional<std::vector<glm::vec2>> route = routeBetween(rig.nav, south, north);
 	ASSERT_TRUE(route.has_value());
@@ -5710,14 +5790,14 @@ TEST_F(NavigationSystemTest, FordableCreekIsWalkableAndNotBuildable) {
 
 	const std::vector<glm::vec2> across{{98.0F, 254.0F}, {102.0F, 254.0F}, {102.0F, 258.0F}, {98.0F, 258.0F}};
 	const std::vector<glm::vec2> beside{{98.0F, 244.0F}, {102.0F, 244.0F}, {102.0F, 248.0F}, {98.0F, 248.0F}};
-	EXPECT_TRUE(rig.nav.isAreaWalkable(across)) << "walkable all the way over";
-	EXPECT_FALSE(rig.nav.isAreaBuildable(across)) << "a footprint across the creek is refused";
-	EXPECT_FALSE(rig.nav.isPointBuildable(inCreek));
-	EXPECT_TRUE(rig.nav.isAreaBuildable(beside));
-	EXPECT_TRUE(rig.nav.isPointBuildable(south));
+	EXPECT_FALSE(rig.nav.isAreaBuildableOnceCleared(across)) << "a footprint across the creek is refused";
+	EXPECT_FALSE(rig.nav.isAreaBuildableNow(across));
+	EXPECT_FALSE(rig.nav.isPointBuildableOnceCleared(inCreek));
+	EXPECT_TRUE(rig.nav.isAreaBuildableOnceCleared(beside));
+	EXPECT_TRUE(rig.nav.isPointBuildableOnceCleared(south));
 
 	ASSERT_FALSE(rig.nav.isValidPosition(underObstacle)) << "the obstacle is in";
-	EXPECT_FALSE(rig.nav.isPointBuildable(underObstacle)) << "a creek under a placed obstacle is still a creek";
+	EXPECT_FALSE(rig.nav.isPointBuildableOnceCleared(underObstacle)) << "a creek under a placed obstacle is still a creek";
 }
 
 // The footprint check reads the mesh exactly, so a creek too narrow for any sampling pitch to be sure
@@ -5727,18 +5807,100 @@ TEST_F(NavigationSystemTest, FootprintAcrossACreekNarrowerThanTheSampleStepIsRef
 	WalkRig			rig(inCreek, thinCreekChunks());
 	settle(rig.nav);
 	ASSERT_TRUE(rig.nav.isValidPosition(inCreek));
-	ASSERT_FALSE(rig.nav.isPointBuildable(inCreek)) << "the creek is in the mesh";
+	ASSERT_TRUE(onFordFace(rig.nav, inCreek)) << "the creek is a ford in the mesh";
+	ASSERT_FALSE(rig.nav.isPointBuildableOnceCleared(inCreek)) << "the creek is in the mesh";
 	for (const float half : {0.0F, 0.25F, 0.5F, 0.75F}) {
 		for (const glm::vec2 corner : {glm::vec2{98.0F, 254.0F + half}, glm::vec2{98.0F + half, 254.0F}}) {
 			const std::vector<glm::vec2> across{corner, corner + glm::vec2{4.0F, 0.0F}, corner + glm::vec2{4.0F, 4.0F}, corner + glm::vec2{0.0F, 4.0F}};
-			EXPECT_FALSE(rig.nav.isAreaBuildable(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
-			EXPECT_TRUE(rig.nav.isAreaWalkable(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
+			EXPECT_FALSE(rig.nav.isAreaBuildableOnceCleared(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
+			EXPECT_FALSE(rig.nav.isAreaBuildableNow(across)) << "footprint from (" << corner.x << ", " << corner.y << ")";
 		}
 	}
 	const std::vector<glm::vec2> beside{{98.0F, 250.0F}, {102.0F, 250.0F}, {102.0F, 254.0F}, {98.0F, 254.0F}};
-	EXPECT_TRUE(rig.nav.isAreaBuildable(beside));
+	EXPECT_TRUE(rig.nav.isAreaBuildableOnceCleared(beside));
+	EXPECT_TRUE(rig.nav.isAreaBuildableNow(beside));
 	const std::vector<glm::vec2> diagonal{{100.0F, 253.0F}, {103.0F, 256.0F}, {100.0F, 259.0F}, {97.0F, 256.0F}};
-	EXPECT_FALSE(rig.nav.isAreaBuildable(diagonal)) << "a footprint turned 45 degrees";
+	EXPECT_FALSE(rig.nav.isAreaBuildableOnceCleared(diagonal)) << "a footprint turned 45 degrees";
+}
+
+// A wall chain's gate reads every mesh triangle each segment meets, so a creek narrower than any
+// sampling pitch still refuses a line across it or ending in it, while the bank beside it is clear.
+// A placed obstacle, open water, and ground that isn't meshed refuse a line too.
+TEST_F(NavigationSystemTest, LineBuildableNowRefusesACreekWaterObstaclesAndUnmeshedGround) {
+	registerObstacle("Test_NavLineObstacle", 0.6F);
+	const glm::vec2 inCreek{100.0F, kThinCreekY};
+	const glm::vec2 obstacleAt{110.0F, 250.0F};
+	WalkRig			rig(inCreek, thinCreekChunks());
+	placeObstacles(rig.executor, rig.processed, "Test_NavLineObstacle", {obstacleAt});
+	settle(rig.nav);
+	ASSERT_TRUE(rig.nav.isValidPosition(inCreek)) << "a mover stands in the creek";
+	ASSERT_TRUE(onFordFace(rig.nav, inCreek)) << "the creek is a ford in the mesh";
+	ASSERT_FALSE(rig.nav.isValidPosition(obstacleAt)) << "the obstacle is in";
+
+	EXPECT_FALSE(rig.nav.isPointBuildableNow(inCreek));
+	EXPECT_TRUE(rig.nav.isPointBuildableNow({100.0F, 250.0F}));
+	EXPECT_FALSE(rig.nav.isLineBuildableNow({{100.0F, 254.0F}, {100.0F, 258.0F}})) << "across the creek";
+	EXPECT_FALSE(rig.nav.isLineBuildableNow({{97.0F, 252.0F}, {100.0F, 252.0F}, inCreek})) << "ending in it";
+	EXPECT_TRUE(rig.nav.isLineBuildableNow({{96.0F, 255.9F}, {104.0F, 255.9F}, {104.0F, 252.0F}})) << "along its bank";
+	EXPECT_FALSE(rig.nav.isLineBuildableNow({{106.0F, 250.0F}, {114.0F, 250.0F}})) << "through the obstacle";
+	EXPECT_FALSE(rig.nav.isLineBuildableNow({{100.0F, 250.0F}, kUnmeshed})) << "off the mesh";
+	EXPECT_FALSE(rig.nav.isLineBuildableNow({kUnmeshed}));
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	sys.setChunkManager(riverAcrossChunks());
+	wireEmptyPlacement(sys);
+	meshAround(world, {100.0F, 256.0F}, 30.0F);
+	settle(sys);
+	const glm::vec2 south{100.0F, 250.0F};
+	const glm::vec2 north{100.0F, 262.0F};
+	ASSERT_TRUE(sys.isValidPosition(south));
+	ASSERT_TRUE(sys.isValidPosition(north));
+	EXPECT_FALSE(sys.isLineBuildableNow({south, north})) << "across open water";
+	EXPECT_TRUE(sys.isLineBuildableNow({south, south + glm::vec2{5.0F, 0.0F}}));
+}
+
+// The line gate where a line meets the mesh's own sides and vertices exactly, read from the mesh. It
+// checks every triangle a line meets, one it only touches included: so a line along a side or through
+// a vertex amid dry ground is accepted, and one that only touches a ford's edge, or has no length in
+// the ford, is refused. Per NavigationSystem.h it takes ground as isValidPosition reads it with any
+// wall face open, and a foundation puts nothing in the mesh, so a line over a built foundation or
+// across a built wall's face is accepted: a wall meeting a wall is ConstructionValidator's call.
+TEST_F(NavigationSystemTest, LineBuildableNowOnTheMeshesOwnSidesAndVertices) {
+	const glm::vec2 inCreek{100.0F, 256.0F};
+	const glm::vec2 dry{100.0F, 246.0F};
+	WalkRig			rig(inCreek, creekAcrossChunks());
+	buildWall(rig.cw, nav::toMm({96.0F, 250.0F}), nav::toMm({104.0F, 250.0F}));
+	const construction::CommitResult foundation =
+		rig.cw.commitFoundation(geometry::Ring{{106000, 244000}, {110000, 244000}, {110000, 248000}, {106000, 248000}}, "Wood");
+	ASSERT_TRUE(foundation.ok());
+	ASSERT_TRUE(rig.cw.setState(foundation.id, FoundationState::Built));
+	settle(rig.nav);
+	ASSERT_TRUE(rig.nav.isValidPosition(inCreek));
+	ASSERT_TRUE(onFordFace(rig.nav, inCreek));
+	ASSERT_TRUE(wallAt(rig.nav, {100.0F, 250.0F})) << "the wall is in";
+	const geometry::nav::PatchableMesh& mesh = rig.nav.navMesh();
+
+	const std::optional<std::array<glm::vec2, 2>> side = interiorBuildableEdge(mesh);
+	ASSERT_TRUE(side.has_value()) << "no side inside the mesh amid dry ground";
+	EXPECT_TRUE(rig.nav.isLineBuildableNow({(*side)[0], (*side)[1]})) << "along a side two triangles share";
+
+	const std::optional<glm::vec2> vertex = firstVertex(mesh, [](const VertexSurround& round) { return round.insideAmidBuildableGround(); });
+	ASSERT_TRUE(vertex.has_value());
+	const glm::vec2 halfStep{0.05F, 0.03F};
+	EXPECT_TRUE(rig.nav.isLineBuildableNow({*vertex - halfStep, *vertex + halfStep})) << "through a vertex";
+
+	const std::optional<glm::vec2> fordEdge = firstVertex(mesh, [](const VertexSurround& round) { return round.insideOnAFordsEdge(); });
+	ASSERT_TRUE(fordEdge.has_value()) << "no vertex inside the mesh on the ford's edge";
+	const glm::vec2 onTheBank = *fordEdge + glm::vec2{0.0F, fordEdge->y < inCreek.y ? -0.05F : 0.05F};
+	ASSERT_TRUE(rig.nav.isPointBuildableNow(onTheBank));
+	EXPECT_FALSE(rig.nav.isLineBuildableNow({onTheBank, *fordEdge})) << "ending on the ford's edge";
+
+	EXPECT_FALSE(rig.nav.isLineBuildableNow({inCreek, inCreek})) << "no length, in the ford";
+	EXPECT_TRUE(rig.nav.isLineBuildableNow({dry, dry})) << "no length, on dry ground";
+
+	EXPECT_TRUE(rig.nav.isLineBuildableNow({{107.0F, 245.0F}, {109.0F, 247.0F}})) << "over a built foundation";
+	EXPECT_TRUE(rig.nav.isLineBuildableNow({{100.0F, 248.0F}, {100.0F, 252.0F}})) << "across a built wall's face";
 }
 
 // The pair that defines the contract: through a gap narrower than a colonist, connected is true (zero
@@ -5885,7 +6047,7 @@ TEST_F(NavigationSystemTest, PositionChecksHoldAfterTheChunkUnloads) {
 	const std::optional<glm::vec2> placed = sys.findValidPositionNear(obstacleAt, 0.0F);
 	ASSERT_TRUE(placed.has_value());
 	EXPECT_TRUE(sys.isValidPosition(*placed));
-	EXPECT_TRUE(sys.isPointBuildable(obstacleAt)) << "a placed obstacle is cleared to build, not built round";
+	EXPECT_TRUE(sys.isPointBuildableOnceCleared(obstacleAt)) << "a placed obstacle is cleared to build, not built round";
 }
 
 // Building and the landing read the ground beneath a placed obstacle: buildable on land, and water
@@ -5901,9 +6063,9 @@ TEST_F(NavigationSystemTest, BuildingReadsTheGroundBeneathAPlacedObstacle) {
 	const geometry::nav::PatchableMesh& mesh = rig.nav.navMesh();
 	ASSERT_EQ(mesh.triangles()[static_cast<std::size_t>(mesh.locate(nav::toMm(inWater)))].faceBlocker, nav::kProvenancePlaced)
 		<< "the obstacle's face, not the water's, is on top";
-	EXPECT_TRUE(rig.nav.isPointBuildable(onLand));
+	EXPECT_TRUE(rig.nav.isPointBuildableOnceCleared(onLand));
 	EXPECT_EQ(rig.nav.nearestTerrainWalkablePoint(onLand), std::optional<glm::vec2>(onLand));
-	EXPECT_FALSE(rig.nav.isPointBuildable(inWater)) << "water under a placed obstacle is still water";
+	EXPECT_FALSE(rig.nav.isPointBuildableOnceCleared(inWater)) << "water under a placed obstacle is still water";
 	EXPECT_NE(rig.nav.nearestTerrainWalkablePoint(inWater), std::optional<glm::vec2>(inWater));
 }
 
@@ -5931,8 +6093,8 @@ TEST_F(NavigationSystemTest, NoMeshedGroundIsNeverValid) {
 	const std::vector<glm::vec2> square{kUnmeshed, kUnmeshed + glm::vec2{1.0F, 0.0F}, kUnmeshed + glm::vec2{1.0F, 1.0F}, kUnmeshed + glm::vec2{0.0F, 1.0F}};
 	const auto					 nothingValid = [&](const NavigationSystem& nav) {
 		  EXPECT_FALSE(nav.isValidPosition(kUnmeshed));
-		  EXPECT_FALSE(nav.isPointBuildable(kUnmeshed));
-		  EXPECT_FALSE(nav.isAreaBuildable(square));
+		  EXPECT_FALSE(nav.isPointBuildableOnceCleared(kUnmeshed));
+		  EXPECT_FALSE(nav.isAreaBuildableOnceCleared(square));
 		  EXPECT_FALSE(nav.standPointBeside(kUnmeshed, kUnmeshed, kAgentRadius).has_value());
 		  EXPECT_FALSE(nav.nearestPathablePoint(kUnmeshed).has_value());
 		  EXPECT_FALSE(nav.nearestPathablePoint(kUnmeshed, kAgentRadius).has_value());
