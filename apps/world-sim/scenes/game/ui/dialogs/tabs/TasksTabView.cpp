@@ -152,6 +152,7 @@ namespace world_sim {
 		}
 
 		noWork.get()->setVisible(data.tasks.empty());
+		taskList.get()->setVisible(!data.tasks.empty());
 		const std::size_t								   shown = std::min(data.tasks.size(), kMaxRows);
 		const std::vector<adapters::GlobalTaskDisplayData> rows(
 			data.tasks.begin(), data.tasks.begin() + static_cast<std::ptrdiff_t>(shown)
