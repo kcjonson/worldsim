@@ -69,9 +69,9 @@ namespace ecs {
 			geometry::Ring				ring;
 			std::vector<geometry::Ring> holes;
 			geometry::Vec2i64			rep;
-			float			  area = 0.0f; // display only
-			geometry::Int128  areaDoubled; // exact 2x area; deterministic merge tiebreak key
-			EntityID		  entity = kInvalidEntity;
+			float						area = 0.0f; // display only
+			geometry::Int128			areaDoubled; // exact 2x area net of holes; deterministic merge tiebreak key
+			EntityID					entity = kInvalidEntity;
 		};
 
 		/// Current room records, in stable order. The supported read accessor for the

@@ -198,6 +198,7 @@ namespace construction {
 				pointInRoom(room.representativePoint, room.ring, room.holes) == geometry::PointInPolygon::Inside) {
 				continue;
 			}
+			// When the scan finds nothing the face's own point stays, unverified: it may lie in a hole.
 			if (const std::optional<geometry::Vec2i64> point = pointInsideRoom(room.ring, room.holes)) {
 				room.representativePoint = *point;
 			}
