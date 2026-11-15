@@ -98,10 +98,15 @@ namespace geometry::nav {
 		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
 		Vec2i64						 hi;			 // (nothing changed: unset)
 		std::int32_t				 passes = 0;	 // re-derivations until the boundary held
-		// Covers seeded from a sample no exact test could read: ground so thin that every
-		// point of it lies within the snap band of a ring this patch did not re-derive.
-		// Unsupported input; the mesh may disagree with a from-scratch build there.
+		// Covers seeded from a sample no exact test could read: no triangle of a group lies
+		// clear of every ring's snap band, and its ground count or a blocked ring's edge could
+		// not be read as rounded either (a centroid on a kept piece, or an edge whose pieces
+		// neither this pass nor the mesh shows end to end). Unsupported input; the mesh may
+		// disagree with a from-scratch build there.
 		std::int32_t unreadCovers = 0;
+		// 1 when the floods of this patch covered some face two ways: a seed read wrong, so the
+		// mesh may disagree with a from-scratch build there. Unsupported input, like the above.
+		std::int32_t coverConflicts = 0;
 		// Adds and moves refused because a bounds outline spans kMaxGroundExtentMm or more on
 		// an axis. Unsupported input; validate fails from then on.
 		std::int32_t refusedRings = 0;
@@ -361,6 +366,7 @@ namespace geometry::nav {
 		std::vector<std::int32_t>				 freeTriangles;
 		std::int32_t							 liveTriangles = 0;
 		std::int32_t							 unreadCovers  = 0; // PatchReport::unreadCovers, summed
+		std::int32_t							 coverConflicts = 0; // PatchReport::coverConflicts, summed
 		std::int32_t							 refusedRings  = 0; // PatchReport::refusedRings, summed
 
 		InternTable<std::vector<EdgeSource>> sourceLists;

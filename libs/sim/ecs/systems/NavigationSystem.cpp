@@ -1140,15 +1140,15 @@ namespace ecs {
 			return "chunk (" + std::to_string(coord.x) + ", " + std::to_string(coord.y) + ")";
 		}
 
-		// A patch the mesh could not take as given (PatchReport::unreadCovers, refusedRings) is unsupported
+		// A patch the mesh could not take as given (PatchReport::unreadCovers, coverConflicts, refusedRings) is unsupported
 		// input, so the mesh may be wrong there: an error, logged once as its job is collected, naming the
 		// patch (`what()`) and each refused add (`describe(k)`, k its index among the patch's adds).
 		template <typename What, typename Describe> void logUnsupported(const gnav::PatchReport& report, const What& what, const Describe& describe) {
-			if (report.unreadCovers == 0 && report.refusedRings == 0) {
+			if (report.unreadCovers == 0 && report.coverConflicts == 0 && report.refusedRings == 0) {
 				return;
 			}
-			LOG_ERROR(Engine, "[Nav] patch of %s, changing %s to %s: %d covers read no sample, %d rings refused", what().c_str(),
-					  pointName(nav::toMeters(report.lo)).c_str(), pointName(nav::toMeters(report.hi)).c_str(), report.unreadCovers, report.refusedRings);
+			LOG_ERROR(Engine, "[Nav] patch of %s, changing %s to %s: %d covers read no sample, %d cover conflicts, %d rings refused", what().c_str(),
+					  pointName(nav::toMeters(report.lo)).c_str(), pointName(nav::toMeters(report.hi)).c_str(), report.unreadCovers, report.coverConflicts, report.refusedRings);
 			for (std::size_t k = 0; k < report.added.size(); ++k) {
 				if (report.added[k] == gnav::kNoRing) {
 					LOG_ERROR(Engine, "[Nav] refused: %s", describe(k).c_str());

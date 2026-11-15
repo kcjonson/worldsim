@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 using geometry::nav::testdata::runHistory;
 using geometry::nav::testdata::StateHash;
@@ -24,24 +25,11 @@ TEST(PatchableMeshHistory, PinnedStatesOverGeneratedHistories) {
 	for (std::uint32_t seed = 1; seed <= kPinned.size(); ++seed) {
 		StateHash history;
 		int		  patch = 0;
-		runHistory(seed, kPatches, [&](std::uint64_t state, const std::string& valid) {
+		runHistory(seed, kPatches, [&](std::uint64_t state, const std::string& valid, const geometry::nav::PatchableMesh&, const std::vector<geometry::nav::RingId>&) {
 			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
 			history.add(static_cast<std::int64_t>(state));
 			++patch;
 		});
 		EXPECT_EQ(history.value, kPinned[seed - 1]) << "seed " << seed;
-	}
-}
-
-// Two histories whose removes leave hole triangles past the arrangement, where the rounded
-// ground read once took its reference point (WOR-850): every state validates.
-TEST(PatchableMeshHistory, RemovesBesideARoundedReadValidate) {
-	for (const auto& history : std::array<std::pair<std::uint32_t, int>, 2>{{{566, 29}, {7503, 25}}}) {
-		const std::uint32_t seed  = history.first;
-		int					patch = 0;
-		runHistory(seed, history.second, [&](std::uint64_t, const std::string& valid) {
-			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
-			++patch;
-		});
 	}
 }

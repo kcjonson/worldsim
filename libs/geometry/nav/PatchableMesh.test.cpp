@@ -5,6 +5,7 @@
 #include "nav/NavMesh.h"
 #include "nav/NavMeshDumpRings.test.h"
 #include "nav/NavMeshRealRings.test.h"
+#include "nav/PatchableMeshHistory.test.h"
 #include "nav/PathQuery.h"
 #include "predicates/Predicates.h"
 #include "triangulation/ConstrainedDelaunay.h"
@@ -3706,6 +3707,10 @@ TEST(PatchableMesh, SliverTipsMillimetresFromAnotherOutlineMatchFreshBuild) {
 		{bounds({{-1335, -17902}, {23762, -32803}, {5287, -19936}}), bounds({{16418, -27294}, {20621, -54299}, {20641, -54296}}),
 		 bounds({{16421, -27295}, {22174, -66017}, {22216, -66011}})},
 		{bounds({{-16794, 11037}, {-10100, 41210}, {-11028, 41399}}), bounds({{-11680, 34061}, {-22034, 635}, {-21967, 614}})},
+		// The second case with an obstacle round both tips: the faces read as rounded take it
+		// by its own ray and ground by the interval count, in one cover.
+		{bounds({{-28222, 46084}, {8457, 31976}, {8535, 32179}}), bounds({{-28225, 46084}, {140, 35257}, {390, 35917}}),
+		 blocked(rect(-28400, 45900, -28000, 46300))},
 	};
 	for (std::size_t c = 0; c < cases.size(); ++c) {
 		SCOPED_TRACE("case " + std::to_string(c));
@@ -3713,6 +3718,26 @@ TEST(PatchableMesh, SliverTipsMillimetresFromAnotherOutlineMatchFreshBuild) {
 		if (HasFatalFailure()) {
 			return;
 		}
+	}
+}
+
+// Two generated histories whose removes leave hole triangles past the arrangement, where the
+// rounded ground read once took its reference point (WOR-850): every state validates, and the
+// last equals a fresh build.
+TEST(PatchableMesh, RemovesBesideARoundedReadMatchFreshBuild) {
+	for (const auto& history : std::array<std::pair<std::uint32_t, int>, 2>{{{566, 29}, {7503, 25}}}) {
+		const std::uint32_t seed  = history.first;
+		int					patch = 0;
+		geometry::nav::testdata::runHistory(seed, history.second, [&](std::uint64_t, const std::string& valid, const PatchableMesh& mesh, const std::vector<RingId>& live) {
+			EXPECT_EQ(valid, "") << "seed " << seed << " patch " << patch;
+			if (++patch == history.second) {
+				Model model;
+				for (const RingId ring : live) {
+					model[ring] = mesh.ring(ring).polygon;
+				}
+				EXPECT_TRUE(matchesFresh(mesh, model)) << "seed " << seed;
+			}
+		});
 	}
 }
 
