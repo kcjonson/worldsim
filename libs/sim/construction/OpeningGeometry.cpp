@@ -5,6 +5,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <vector>
 
 namespace construction {
 
@@ -20,7 +22,70 @@ namespace construction {
 			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
 			return std::sqrt(dx * dx + dy * dy);
 		}
+
+		std::int64_t halfThicknessMm(const WallSegment& seg) {
+			const auto* preset = assets::ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
+			return preset != nullptr ? preset->halfThicknessMm : 0;
+		}
+
+		// How far `seg`'s band is cut back at `vertexId` for the corner or junction
+		// there. Walls the renderer leaves out (no vertex, no thickness) are left out.
+		std::int64_t trimAtVertex(const ConstructionWorld& world, const WallSegment& seg, VertexId vertexId) {
+			const Vertex* vertex = world.getVertex(vertexId);
+			if (vertex == nullptr || vertex->segments.size() < 2 || halfThicknessMm(seg) <= 0) {
+				return 0;
+			}
+			std::vector<geometry::IncidentSegment> incidents;
+			incidents.reserve(vertex->segments.size());
+			std::size_t ownIndex = 0;
+			for (const SegmentId id : vertex->segments) {
+				const WallSegment* other = world.getSegment(id);
+				if (other == nullptr) {
+					continue;
+				}
+				const Vertex*	   farVertex = world.getVertex(other->v0 == vertexId ? other->v1 : other->v0);
+				const std::int64_t half = halfThicknessMm(*other);
+				if (farVertex == nullptr || half <= 0) {
+					continue;
+				}
+				if (id == seg.id) {
+					ownIndex = incidents.size();
+				}
+				incidents.push_back({farVertex->pos, half, incidents.size()});
+			}
+			const geometry::JunctionResolution junction = geometry::resolveJunction(vertex->pos, incidents, geometry::kDefaultMiterLimit);
+			if (junction.status != geometry::OffsetStatus::Ok) {
+				return 0;
+			}
+			for (const geometry::JunctionTrim& trim : junction.trims) {
+				if (trim.index == ownIndex) {
+					return trim.trimMm;
+				}
+			}
+			return 0;
+		}
 	} // namespace
+
+	std::optional<OpeningRange>
+	openingRange(const ConstructionWorld& world, SegmentId segment, double widthMeters, double marginMeters) {
+		const WallSegment* seg = world.getSegment(segment);
+		if (seg == nullptr) {
+			return std::nullopt;
+		}
+		const double lengthMm = segmentLengthMm(world, *seg);
+		if (lengthMm <= 0.0) {
+			return std::nullopt;
+		}
+		const auto	 mmPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+		OpeningRange range;
+		range.lengthMeters = lengthMm / mmPerMeter;
+		range.trimAtV0Meters = static_cast<double>(trimAtVertex(world, *seg, seg->v0)) / mmPerMeter;
+		range.trimAtV1Meters = static_cast<double>(trimAtVertex(world, *seg, seg->v1)) / mmPerMeter;
+		const double halfWidth = widthMeters / 2.0;
+		range.minT = static_cast<float>((range.trimAtV0Meters + marginMeters + halfWidth) / range.lengthMeters);
+		range.maxT = static_cast<float>((range.lengthMeters - range.trimAtV1Meters - marginMeters - halfWidth) / range.lengthMeters);
+		return range;
+	}
 
 	geometry::Ring openingFootprint(const ConstructionWorld& world, const Opening& opening) {
 		const WallSegment* seg = world.getSegment(opening.segment);
@@ -36,8 +101,7 @@ namespace construction {
 		if (type == nullptr || type->widthMm <= 0) {
 			return {};
 		}
-		const auto*		   preset = assets::ConstructionRegistry::Get().getThicknessPreset(seg->material, seg->thicknessPreset);
-		const std::int64_t halfThick = (preset != nullptr) ? preset->halfThicknessMm : 0;
+		const std::int64_t halfThick = halfThicknessMm(*seg);
 		if (halfThick <= 0) {
 			return {};
 		}
