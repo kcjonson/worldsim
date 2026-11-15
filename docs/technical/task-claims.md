@@ -494,6 +494,14 @@ A Build goal with no spots (a wall's, an opening's, or a foundation's when no co
 wired, as in headless tests) caps no builders: any number work it, from the nearest walkable point to its
 centre, and it takes no claim. Deconstruct takes no claim either.
 
+A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
+would add work, before it could complete, and a builder still walking there starts nothing on arrival.
+Either way the Build task ends and the colonist decides again (`ActionSystem::advanceConstructionWork`
+and `startBuildAction`, the same path a blueprint removed mid-build takes). From the next decision it is
+no longer offered as build work, though its Build goal stays Available until `ConstructionSystem`'s next
+pass removes it (`SharedWork::buildSites`), so no colonist selects it again and no builder spot on it is
+taken. A builder carries nothing for a Build, so nothing is stowed or dropped.
+
 ### Need tasks
 
 Eat records Use on a bush or SourceQuantity of one meal on a pile or box; food already in the pack is
