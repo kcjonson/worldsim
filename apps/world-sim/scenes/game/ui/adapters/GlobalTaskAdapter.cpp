@@ -38,6 +38,8 @@ namespace world_sim::adapters {
 					return 4; // reads Cut -> Haul -> Build for a site
 				case ecs::TaskType::PlacePackaged:
 					return 5;
+				case ecs::TaskType::Deconstruct:
+					return 6;
 				case ecs::TaskType::Wander:
 					return 7;
 				case ecs::TaskType::None:
@@ -59,6 +61,8 @@ namespace world_sim::adapters {
 					return "Craft";
 				case ecs::TaskType::PlacePackaged:
 					return "Place";
+				case ecs::TaskType::Deconstruct:
+					return "Deconstruct";
 				case ecs::TaskType::FulfillNeed:
 					return "Use";
 				case ecs::TaskType::Wander:
@@ -153,6 +157,10 @@ namespace world_sim::adapters {
 				return "Build structure";
 			}
 
+			if (goal.type == ecs::TaskType::Deconstruct) {
+				return "Deconstruct structure";
+			}
+
 			// For Craft goals, show crafting
 			if (goal.type == ecs::TaskType::Craft) {
 				return "Craft";
@@ -231,6 +239,7 @@ namespace world_sim::adapters {
 
 			TaskRowFacts facts{
 				.buildSite = goal.type == ecs::TaskType::Build,
+				.teardownSite = goal.type == ecs::TaskType::Deconstruct,
 				.blocked = goal.status == ecs::GoalStatus::Blocked,
 				.noSource = goal.status == ecs::GoalStatus::NoSource,
 				.allSourcesClaimed = work.allSourcesClaimed(goal.id),
@@ -240,10 +249,15 @@ namespace world_sim::adapters {
 			if (facts.workers.empty()) {
 				facts.knownTo = colonistNames(world, work.offeredTo(goal.id));
 			}
-			// Build umbrella: its progress lives on the blueprint's workDone.
-			if (const auto* bp = world.getComponent<ecs::StructureBlueprint>(goal.destinationEntity); facts.buildSite && bp != nullptr) {
-				facts.buildPercent = static_cast<int>(bp->progress() * 100.0F);
-				facts.underConstruction = bp->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction;
+			// A build or teardown's progress lives on the blueprint's workDone.
+			if (const auto* bp = world.getComponent<ecs::StructureBlueprint>(goal.destinationEntity); bp != nullptr) {
+				if (facts.buildSite) {
+					facts.buildPercent = static_cast<int>(bp->progress() * 100.0F);
+					facts.underConstruction = bp->phase == ecs::StructureBlueprint::BuildPhase::UnderConstruction;
+				}
+				if (facts.teardownSite) {
+					facts.teardownPercent = static_cast<int>(bp->displayProgress(true) * 100.0F);
+				}
 			}
 			if (facts.blocked && goal.type == ecs::TaskType::Craft) {
 				facts.materials = craftMaterials(world, goal);
@@ -264,8 +278,9 @@ namespace world_sim::adapters {
 		}
 
 		/// Every goal row with something to do, Cut/Haul/Build reading as a chain per site and
-		/// Craft/PlacePackaged rounding it out. Build is the umbrella (the destination holder), so a site
-		/// shows its build step, not just its material children. A box keeps its umbrella while it has rules
+		/// Craft/PlacePackaged/Deconstruct rounding it out. Build is the umbrella (the destination holder), so a site
+		/// shows its build step, not just its material children; a structure being torn down shows its
+		/// Deconstruct goal, from the order until the teardown ends or is cancelled. A box keeps its umbrella while it has rules
 		/// and is left out until some colonist is offered work toward it. With `knownTo`, only the goals
 		/// that colonist works or its last decision offered work toward.
 		std::vector<GlobalTaskDisplayData>
@@ -274,7 +289,12 @@ namespace world_sim::adapters {
 			std::vector<GlobalTaskDisplayData> result;
 			const ecs::ColonyGoalWork		   work(world, claims);
 			for (ecs::TaskType type :
-				 {ecs::TaskType::Harvest, ecs::TaskType::Haul, ecs::TaskType::Build, ecs::TaskType::Craft, ecs::TaskType::PlacePackaged}) {
+				 {ecs::TaskType::Harvest,
+				  ecs::TaskType::Haul,
+				  ecs::TaskType::Build,
+				  ecs::TaskType::Craft,
+				  ecs::TaskType::PlacePackaged,
+				  ecs::TaskType::Deconstruct}) {
 				for (const auto* goal : registry.getGoalsOfType(type)) {
 					const auto workers = work.workersOf(*goal);
 					const bool works = knownTo.has_value() && std::ranges::find(workers, *knownTo) != workers.end();

@@ -27,6 +27,8 @@ namespace world_sim::adapters {
 		bool  buildSite = false;		 // a construction umbrella: its status comes from the site
 		bool  underConstruction = false; // build site: materials are in
 		int	  buildPercent = 0;			 // build site
+		bool  teardownSite = false;		 // a Deconstruct goal: its structure is being torn down
+		int	  teardownPercent = 0;		 // teardown site: how much is torn down
 		bool  blocked = false;			 // goal status Blocked
 		bool  noSource = false;			 // goal status NoSource
 		bool  allSourcesClaimed = false;
@@ -47,7 +49,8 @@ namespace world_sim::adapters {
 
 	/// The row's status, by precedence Blocked, Waiting (no source found), Working, Waiting (all known
 	/// sources claimed), then Available (further than 50m) or Unassigned; a build site reads Needs
-	/// materials, Building, or Ready to build. The detail joins with "; " the status's own part, the
+	/// materials, Building, or Ready to build, and a teardown site Blocked (something still stands on
+	/// it), Deconstructing, or Ready to deconstruct. The detail joins with "; " the status's own part, the
 	/// quantities, and, while nobody works it, "known to" whoever was offered work toward it.
 	[[nodiscard]] TaskRowText taskRowText(const TaskRowFacts& facts);
 

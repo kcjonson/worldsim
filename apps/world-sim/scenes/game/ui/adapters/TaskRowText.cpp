@@ -21,6 +21,12 @@ namespace world_sim::adapters {
 				}
 				return {.status = "Ready to build", .detail = std::format("{}%", facts.buildPercent)};
 			}
+			if (facts.teardownSite && !facts.blocked) {
+				if (working) {
+					return {.status = "Deconstructing", .detail = std::format("{} ({}%)", facts.workers, facts.teardownPercent)};
+				}
+				return {.status = "Ready to deconstruct", .detail = std::format("{}%", facts.teardownPercent)};
+			}
 			if (facts.blocked) {
 				const std::string materials =
 					facts.materials ? std::format("{}/{} materials", facts.materials->landed, facts.materials->required) : std::string{};
