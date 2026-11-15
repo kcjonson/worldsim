@@ -10,6 +10,7 @@
 
 #include <polygon/Polygon.h>
 
+#include <algorithm>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -386,4 +387,220 @@ TEST(RoomDetectionSystem, ThreeLevelNestBuiltInsideOutKeepsEveryIdentity) {
 	EXPECT_EQ(identityOf(sys, 25.0).roomId, middle.roomId);
 	EXPECT_EQ(identityOf(sys, 25.0).name, "Room 2");
 	EXPECT_EQ(identityOf(sys, 81.0).name, "Room 3");
+}
+
+TEST(RoomDetectionSystem, InnerRoomAroundTheOuterPointWhileTheOuterRingChangesKeepsTheOuterIdentity) {
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	std::vector<EntityID> formed;
+	sys.setRoomFormedCallback([&formed](EntityID room) { formed.push_back(room); });
+
+	buildSquare(cw, {0, 0}, 5000);
+	sys.update(0.0f);
+	ASSERT_EQ(sys.rooms().size(), 1u);
+	const RoomIdentity outer = identityOf(sys, 25.0);
+	const Vec2i64	   storedPoint = sys.rooms()[0].rep;
+
+	// In one reconcile: a free-standing 1 m room round the stored point, and a spur whose
+	// T-junction splits a side wall, so the outer ring is no longer the stored one. The
+	// spur comes off whichever side wall is farther from the inner room.
+	buildSquare(cw, {storedPoint.x - 500, storedPoint.y - 500}, 1000);
+	if (storedPoint.x > 2500) {
+		buildWall(cw, {0, 2500}, {1000, 2500});
+	} else {
+		buildWall(cw, {5000, 2500}, {4000, 2500});
+	}
+	sys.update(0.0f);
+
+	ASSERT_EQ(sys.rooms().size(), 2u);
+	const RoomDetectionSystem::RoomRecord* outerRecord = recordWithRingArea(sys, 25.0);
+	const RoomDetectionSystem::RoomRecord* innerRecord = recordWithRingArea(sys, 1.0);
+	ASSERT_NE(outerRecord, nullptr);
+	ASSERT_NE(innerRecord, nullptr);
+	ASSERT_EQ(outerRecord->holes.size(), 1u);
+	EXPECT_EQ(geometry::pointInPolygon(storedPoint, innerRecord->ring), geometry::PointInPolygon::Inside);
+	EXPECT_EQ(outerRecord->roomId, outer.roomId);
+	EXPECT_EQ(outerRecord->name, outer.name);
+	EXPECT_EQ(innerRecord->name, "Room 2");
+	ASSERT_EQ(formed.size(), 2u);
+	EXPECT_EQ(formed[1], innerRecord->entity);
+}
+
+TEST(RoomDetectionSystem, InnerRoomJoinedByASpurAroundTheOuterPointKeepsTheOuterIdentity) {
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	int fired = 0;
+	sys.setRoomFormedCallback([&fired](EntityID) { ++fired; });
+
+	buildSquare(cw, {0, 0}, 5000);
+	sys.update(0.0f);
+	const RoomIdentity outer = identityOf(sys, 25.0);
+	const Vec2i64	   storedPoint = sys.rooms()[0].rep;
+
+	// The inner room is part of the outer room's wall group, so it is no hole: the outer
+	// ring walks the spur and round the inner room, and no longer holds the stored point.
+	buildSquare(cw, {storedPoint.x - 500, storedPoint.y - 500}, 1000);
+	buildWall(cw, {0, storedPoint.y}, {storedPoint.x - 500, storedPoint.y});
+	sys.update(0.0f);
+
+	ASSERT_EQ(sys.rooms().size(), 2u);
+	const RoomDetectionSystem::RoomRecord* outerRecord = recordWithRingArea(sys, 24.0);
+	const RoomDetectionSystem::RoomRecord* innerRecord = recordWithRingArea(sys, 1.0);
+	ASSERT_NE(outerRecord, nullptr);
+	ASSERT_NE(innerRecord, nullptr);
+	EXPECT_TRUE(outerRecord->holes.empty());
+	EXPECT_EQ(outerRecord->roomId, outer.roomId);
+	EXPECT_EQ(outerRecord->name, outer.name);
+	EXPECT_EQ(innerRecord->name, "Room 2");
+	EXPECT_EQ(fired, 2);
+}
+
+TEST(RoomDetectionSystem, RebuildingOneWallFurtherInKeepsTheShrunkRoom) {
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	int fired = 0;
+	sys.setRoomFormedCallback([&fired](EntityID) { ++fired; });
+
+	buildWall(cw, {0, 0}, {5000, 0});
+	const SegmentId right = buildWall(cw, {5000, 0}, {5000, 5000});
+	buildWall(cw, {5000, 5000}, {0, 5000});
+	const SegmentId left = buildWall(cw, {0, 5000}, {0, 0});
+	sys.update(0.0f);
+	const RoomIdentity room = identityOf(sys, 25.0);
+	const Vec2i64	   storedPoint = sys.rooms()[0].rep;
+
+	// Move the side wall farther from the stored point 1 m in, in one reconcile.
+	if (storedPoint.x < 2500) {
+		buildWall(cw, {4000, 0}, {4000, 5000});
+		cw.removeSegment(right);
+	} else {
+		buildWall(cw, {1000, 0}, {1000, 5000});
+		cw.removeSegment(left);
+	}
+	sys.update(0.0f);
+
+	ASSERT_EQ(sys.rooms().size(), 1u);
+	EXPECT_EQ(identityOf(sys, 20.0).roomId, room.roomId);
+	EXPECT_EQ(identityOf(sys, 20.0).name, room.name);
+	EXPECT_EQ(fired, 1);
+}
+
+TEST(RoomDetectionSystem, InnerRoomOutlivesTheOuterRoomWhenAnOuterWallGoes) {
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	int fired = 0;
+	sys.setRoomFormedCallback([&fired](EntityID) { ++fired; });
+
+	const SegmentId outerWall = buildSquare(cw, {0, 0}, 5000);
+	buildSquare(cw, {2000, 2000}, 1000);
+	sys.update(0.0f);
+	const RoomIdentity inner = identityOf(sys, 1.0);
+	const EntityID	   outerEntity = recordWithRingArea(sys, 25.0)->entity;
+
+	cw.removeSegment(outerWall);
+	sys.update(0.0f);
+
+	ASSERT_EQ(sys.rooms().size(), 1u);
+	EXPECT_EQ(sys.rooms()[0].roomId, inner.roomId);
+	EXPECT_EQ(sys.rooms()[0].name, inner.name);
+	EXPECT_FALSE(world.isAlive(outerEntity));
+	EXPECT_EQ(countRoomEntities(world), 1u);
+	EXPECT_EQ(fired, 2);
+}
+
+TEST(RoomDetectionSystem, SplittingARoomBesideItsInnerRoomKeepsEveryIdentityAndAnnouncesTheNewHalf) {
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	std::vector<EntityID> formed;
+	sys.setRoomFormedCallback([&formed](EntityID room) { formed.push_back(room); });
+
+	buildSquare(cw, {0, 0}, 5000);
+	buildSquare(cw, {2000, 2000}, 1000);
+	sys.update(0.0f);
+	const RoomIdentity outer = identityOf(sys, 25.0);
+	const RoomIdentity inner = identityOf(sys, 1.0);
+	const Vec2i64	   outerPoint = recordWithRingArea(sys, 25.0)->rep;
+	ASSERT_EQ(formed.size(), 2u);
+	ASSERT_NE(outerPoint.x, 1000);
+
+	buildWall(cw, {1000, 0}, {1000, 5000});
+	sys.update(0.0f);
+
+	ASSERT_EQ(sys.rooms().size(), 3u);
+	const RoomDetectionSystem::RoomRecord* strip = recordWithRingArea(sys, 5.0);
+	const RoomDetectionSystem::RoomRecord* rest = recordWithRingArea(sys, 20.0);
+	ASSERT_NE(strip, nullptr);
+	ASSERT_NE(rest, nullptr);
+	EXPECT_EQ(rest->holes.size(), 1u);
+	EXPECT_EQ(identityOf(sys, 1.0).roomId, inner.roomId);
+	const RoomDetectionSystem::RoomRecord* keeper = outerPoint.x < 1000 ? strip : rest;
+	const RoomDetectionSystem::RoomRecord* fresh = outerPoint.x < 1000 ? rest : strip;
+	EXPECT_EQ(keeper->roomId, outer.roomId);
+	EXPECT_EQ(keeper->name, outer.name);
+	EXPECT_EQ(fresh->name, "Room 3");
+	ASSERT_EQ(formed.size(), 3u);
+	EXPECT_EQ(formed[2], fresh->entity);
+}
+
+TEST(RoomDetectionSystem, MergingTwoRoomsThatEachHoldAnInnerRoomKeepsTheLargerNameAndBothInnerRooms) {
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	int fired = 0;
+	sys.setRoomFormedCallback([&fired](EntityID) { ++fired; });
+
+	// A 5 x 5 m room and a 6 x 5 m room sharing the wall at x = 5000, a 1 m room in each.
+	buildWall(cw, {0, 0}, {11000, 0});
+	buildWall(cw, {11000, 0}, {11000, 5000});
+	buildWall(cw, {11000, 5000}, {0, 5000});
+	buildWall(cw, {0, 5000}, {0, 0});
+	buildWall(cw, {5000, 0}, {5000, 5000});
+	buildSquare(cw, {2000, 2000}, 1000);
+	buildSquare(cw, {7500, 2000}, 1000);
+	sys.update(0.0f);
+	ASSERT_EQ(sys.rooms().size(), 4u);
+	const RoomIdentity larger = identityOf(sys, 30.0);
+	const EntityID	   smallerEntity = recordWithRingArea(sys, 25.0)->entity;
+
+	std::vector<uint64_t> innerIds;
+	for (const RoomDetectionSystem::RoomRecord& rec : sys.rooms()) {
+		if (rec.holes.empty()) {
+			innerIds.push_back(rec.roomId);
+		}
+	}
+	ASSERT_EQ(innerIds.size(), 2u);
+
+	cw.removeSegment(cw.segmentAt({5000, 2500}, 1));
+	sys.update(0.0f);
+
+	ASSERT_EQ(sys.rooms().size(), 3u);
+	const RoomDetectionSystem::RoomRecord* merged = recordWithRingArea(sys, 55.0);
+	ASSERT_NE(merged, nullptr);
+	EXPECT_EQ(merged->holes.size(), 2u);
+	EXPECT_EQ(merged->roomId, larger.roomId);
+	EXPECT_EQ(merged->name, larger.name);
+	EXPECT_FALSE(world.isAlive(smallerEntity));
+	for (const RoomDetectionSystem::RoomRecord& rec : sys.rooms()) {
+		if (&rec != merged) {
+			EXPECT_NE(std::find(innerIds.begin(), innerIds.end(), rec.roomId), innerIds.end());
+		}
+	}
+	EXPECT_EQ(fired, 4);
 }
