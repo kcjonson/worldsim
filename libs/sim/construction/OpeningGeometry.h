@@ -13,9 +13,13 @@
 
 #include <polygon/Polygon.h>
 
+#include <cstdint>
 #include <optional>
 
 namespace construction {
+
+	/// Half the segment's thickness preset in mm, or 0 when the preset is unknown.
+	[[nodiscard]] std::int64_t halfThicknessMm(const WallSegment& wall);
 
 	/// Where along a wall segment an opening of one width may have its centre: every
 	/// part of it at least the margin clear of each end of the segment's drawn band,

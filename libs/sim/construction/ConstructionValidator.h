@@ -242,10 +242,9 @@ namespace construction {
 		// width + 2*margin, the opening's near edges must clear `openingMargin` from
 		// each end of that band, and the opening's [t-half/L, t+half/L] interval must
 		// not overlap (within the inter-opening margin) any opening already on the
-		// SAME segment. Width is
-		// resolved from the registry's OpeningTypeDef (passing the type name keeps
-		// the validator reading config the same way validateWallSegment does for
-		// existing-wall thickness). First failure is reported with the measured
+		// SAME segment. Width is resolved from the registry's OpeningTypeDef (passing
+		// the type name keeps the validator reading config the same way
+		// validateWallSegment does for existing-wall thickness). First failure is reported with the measured
 		// value; the result's vertexIndex/otherIndex are unused for openings.
 		[[nodiscard]] ValidationResult
 		validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const;

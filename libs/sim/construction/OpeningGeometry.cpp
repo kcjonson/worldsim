@@ -12,9 +12,9 @@ namespace construction {
 
 	namespace {
 		// Segment length in mm from its two vertex positions, 0 if a vertex is missing.
-		double segmentLengthMm(const ConstructionWorld& world, const WallSegment& seg) {
-			const Vertex* v0 = world.getVertex(seg.v0);
-			const Vertex* v1 = world.getVertex(seg.v1);
+		double segmentLengthMm(const ConstructionWorld& world, const WallSegment& wall) {
+			const Vertex* v0 = world.getVertex(wall.v0);
+			const Vertex* v1 = world.getVertex(wall.v1);
 			if (v0 == nullptr || v1 == nullptr) {
 				return 0.0;
 			}
@@ -23,16 +23,11 @@ namespace construction {
 			return std::sqrt(dx * dx + dy * dy);
 		}
 
-		std::int64_t halfThicknessMm(const WallSegment& seg) {
-			const auto* preset = assets::ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
-			return preset != nullptr ? preset->halfThicknessMm : 0;
-		}
-
-		// How far `seg`'s band is cut back at `vertexId` for the corner or junction
+		// How far `wall`'s band is cut back at `vertexId` for the corner or junction
 		// there. Walls the renderer leaves out (no vertex, no thickness) are left out.
-		std::int64_t trimAtVertex(const ConstructionWorld& world, const WallSegment& seg, VertexId vertexId) {
+		std::int64_t trimAtVertex(const ConstructionWorld& world, const WallSegment& wall, VertexId vertexId) {
 			const Vertex* vertex = world.getVertex(vertexId);
-			if (vertex == nullptr || vertex->segments.size() < 2 || halfThicknessMm(seg) <= 0) {
+			if (vertex == nullptr || vertex->segments.size() < 2 || halfThicknessMm(wall) <= 0) {
 				return 0;
 			}
 			std::vector<geometry::IncidentSegment> incidents;
@@ -48,7 +43,7 @@ namespace construction {
 				if (farVertex == nullptr || half <= 0) {
 					continue;
 				}
-				if (id == seg.id) {
+				if (id == wall.id) {
 					ownIndex = incidents.size();
 				}
 				incidents.push_back({farVertex->pos, half, incidents.size()});
@@ -66,21 +61,26 @@ namespace construction {
 		}
 	} // namespace
 
+	std::int64_t halfThicknessMm(const WallSegment& wall) {
+		const auto* preset = assets::ConstructionRegistry::Get().getThicknessPreset(wall.material, wall.thicknessPreset);
+		return preset != nullptr ? preset->halfThicknessMm : 0;
+	}
+
 	std::optional<OpeningRange>
 	openingRange(const ConstructionWorld& world, SegmentId segment, double widthMeters, double marginMeters) {
-		const WallSegment* seg = world.getSegment(segment);
-		if (seg == nullptr) {
+		const WallSegment* wall = world.getSegment(segment);
+		if (wall == nullptr) {
 			return std::nullopt;
 		}
-		const double lengthMm = segmentLengthMm(world, *seg);
+		const double lengthMm = segmentLengthMm(world, *wall);
 		if (lengthMm <= 0.0) {
 			return std::nullopt;
 		}
 		const auto	 mmPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
 		OpeningRange range;
 		range.lengthMeters = lengthMm / mmPerMeter;
-		range.trimAtV0Meters = static_cast<double>(trimAtVertex(world, *seg, seg->v0)) / mmPerMeter;
-		range.trimAtV1Meters = static_cast<double>(trimAtVertex(world, *seg, seg->v1)) / mmPerMeter;
+		range.trimAtV0Meters = static_cast<double>(trimAtVertex(world, *wall, wall->v0)) / mmPerMeter;
+		range.trimAtV1Meters = static_cast<double>(trimAtVertex(world, *wall, wall->v1)) / mmPerMeter;
 		const double halfWidth = widthMeters / 2.0;
 		range.minT = static_cast<float>((range.trimAtV0Meters + marginMeters + halfWidth) / range.lengthMeters);
 		range.maxT = static_cast<float>((range.lengthMeters - range.trimAtV1Meters - marginMeters - halfWidth) / range.lengthMeters);
@@ -88,12 +88,12 @@ namespace construction {
 	}
 
 	geometry::Ring openingFootprint(const ConstructionWorld& world, const Opening& opening) {
-		const WallSegment* seg = world.getSegment(opening.segment);
-		if (seg == nullptr) {
+		const WallSegment* wall = world.getSegment(opening.segment);
+		if (wall == nullptr) {
 			return {};
 		}
-		const Vertex* v0 = world.getVertex(seg->v0);
-		const Vertex* v1 = world.getVertex(seg->v1);
+		const Vertex* v0 = world.getVertex(wall->v0);
+		const Vertex* v1 = world.getVertex(wall->v1);
 		if (v0 == nullptr || v1 == nullptr) {
 			return {};
 		}
@@ -101,11 +101,11 @@ namespace construction {
 		if (type == nullptr || type->widthMm <= 0) {
 			return {};
 		}
-		const std::int64_t halfThick = halfThicknessMm(*seg);
+		const std::int64_t halfThick = halfThicknessMm(*wall);
 		if (halfThick <= 0) {
 			return {};
 		}
-		const double lengthMm = segmentLengthMm(world, *seg);
+		const double lengthMm = segmentLengthMm(world, *wall);
 		if (lengthMm <= 0.0) {
 			return {};
 		}
