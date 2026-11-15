@@ -970,3 +970,98 @@ TEST_F(OpeningHostGateTest, DemolishingFoundationGatedWhileExtensionPending) {
 	ASSERT_NE(goal2, nullptr);
 	EXPECT_EQ(goal2->status, GoalStatus::Available) << "extension gone -> target Deconstruct Available";
 }
+
+// ============================================================================
+// Builder spots (WOR-509): a foundation's Build umbrella takes its candidate work spots as it turns
+// Available and keeps them unchanged while it stays Available; walls and openings get none.
+// ============================================================================
+
+namespace {
+	class BuilderSpotEmissionTest : public OpeningHostGateTest {
+	  protected:
+		/// A blueprint of `kind` on topology node `graphId` whose Wood manifest is still due.
+		EntityID createBlueprint(StructureKind kind, uint64_t graphId) {
+			auto entity = world->createEntity();
+			world->addComponent<Position>(entity, Position{{2.0F, 2.5F}});
+			world->addComponent<Structure>(entity, Structure{kind, graphId});
+			StructureBlueprint bp;
+			bp.phase = kind == StructureKind::Foundation ? StructureBlueprint::BuildPhase::Clearing
+														 : StructureBlueprint::BuildPhase::AwaitingMaterials;
+			bp.required = {{"Wood", 10}};
+			bp.workTotal = 20.0F;
+			world->addComponent<StructureBlueprint>(entity, bp);
+			return entity;
+		}
+
+		/// A 4 m x 5 m foundation: 20 m2, so base 1 + floor(20 * 0.1) = 3 builders.
+		cw::FoundationId commitTwentySquareMeterFoundation() {
+			cw::CommitResult foundation = topology.commitFoundation(geometry::Ring{{0, 0}, {4000, 0}, {4000, 5000}, {0, 5000}}, "wood");
+			EXPECT_TRUE(foundation.ok());
+			return foundation.id;
+		}
+	};
+} // namespace
+
+TEST_F(BuilderSpotEmissionTest, AFoundationsUmbrellaTakesItsSpotsAsItTurnsAvailable) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	auto				   blueprint = createBlueprint(StructureKind::Foundation, foundationId);
+	auto&				   registry = GoalTaskRegistry::Get();
+
+	refresh();
+	const auto* blocked = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(blocked, nullptr);
+	EXPECT_EQ(blocked->status, GoalStatus::Blocked);
+	EXPECT_TRUE(blocked->builderSpots.empty()) << "no spots while materials are due";
+
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+	refresh();
+
+	const auto* available = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(available, nullptr);
+	ASSERT_EQ(available->status, GoalStatus::Available);
+	ASSERT_EQ(available->builderSpots.size(), 3U);
+	const FootprintBounds footprint{topology.get(foundationId)->ring};
+	for (const glm::vec2 spot : available->builderSpots) {
+		EXPECT_TRUE(footprint.contains(spot)) << "spot (" << spot.x << ", " << spot.y << ") is off the footprint";
+	}
+}
+
+TEST_F(BuilderSpotEmissionTest, AFoundationsSpotsDoNotChangeWhileItsUmbrellaStaysAvailable) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	auto				   blueprint = createBlueprint(StructureKind::Foundation, foundationId);
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+	auto& registry = GoalTaskRegistry::Get();
+
+	refresh();
+	const auto* goal = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(goal, nullptr);
+	ASSERT_EQ(goal->status, GoalStatus::Available);
+	const std::vector<glm::vec2> spots = goal->builderSpots;
+	ASSERT_EQ(spots.size(), 3U);
+
+	// Doubling the ring would give 5 spots in new places if they were placed again.
+	ASSERT_EQ(topology.addToFoundation(foundationId, {{0, 5000}, {4000, 5000}, {4000, 10000}, {0, 10000}}), cw::CommitStatus::Ok);
+	refresh();
+	refresh();
+
+	const auto* later = registry.getGoalByDestination(blueprint);
+	ASSERT_NE(later, nullptr);
+	EXPECT_EQ(later->status, GoalStatus::Available);
+	EXPECT_EQ(later->builderSpots, spots);
+}
+
+TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
+	const cw::FoundationId foundationId = commitTwentySquareMeterFoundation();
+	ASSERT_TRUE(topology.setState(foundationId, cw::FoundationState::Built));
+	cw::SegmentCommitResult segment = topology.commitSegment({0, 0}, {4000, 0}, "wood", "thin", foundationId);
+	ASSERT_TRUE(segment.ok());
+	auto blueprint = createBlueprint(StructureKind::Wall, segment.id);
+	world->getComponent<StructureBlueprint>(blueprint)->recordDelivery("Wood", 10);
+
+	refresh();
+
+	const auto* goal = GoalTaskRegistry::Get().getGoalByDestination(blueprint);
+	ASSERT_NE(goal, nullptr);
+	ASSERT_EQ(goal->status, GoalStatus::Available);
+	EXPECT_TRUE(goal->builderSpots.empty());
+}

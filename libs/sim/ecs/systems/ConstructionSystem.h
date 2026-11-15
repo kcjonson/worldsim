@@ -227,7 +227,19 @@ namespace ecs {
 		/// keyed by destinationEntity that every phase goal hangs under as a child. It is
 		/// Blocked until materials are staged, then Available at UnderConstruction (like a
 		/// Craft goal). Returns the stable umbrella goal id so phase goals can parent to it.
-		uint64_t ensureUmbrellaGoal(EntityID blueprintEntity, const StructureBlueprint& blueprint, GoalStatus status);
+		/// A foundation's umbrella takes its builder spots as it turns Available and drops them
+		/// when it stops being Available.
+		uint64_t ensureUmbrellaGoal(EntityID blueprintEntity, const Structure& structure, const StructureBlueprint& blueprint, GoalStatus status);
+
+		/// The builder spots of a foundation's footprint (construction/BuilderSpots.h) under the
+		/// constraints.xml caps; empty for a wall or an opening, or with no topology wired.
+		[[nodiscard]] std::vector<glm::vec2> foundationBuilderSpots(const Structure& structure) const;
+
+		/// How far into the footprint a builder spot sits from the ring: a colonist's half-width
+		/// (pathingClearanceMeters 0.7 / 2) plus margin, so one standing there is wholly on the
+		/// cleared floor, and no more than half of segmentClearanceMeters (1.0), so on any foundation
+		/// the validator accepts an inset from one edge never crosses a non-adjacent one.
+		static constexpr float kBuilderSpotInsetMeters = 0.5F;
 
 		/// Drive a demolishing blueprint's Deconstruct goal. Mirrors ensureUmbrellaGoal but the
 		/// goal is a top-level Deconstruct keyed by destinationEntity (no children). It is
