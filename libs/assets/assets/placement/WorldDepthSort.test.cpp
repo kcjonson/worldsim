@@ -200,7 +200,8 @@ namespace assets {
 
 		world::WorldCamera camera;
 		camera.setPosition({0.0F, 0.0F});
-		const RenderContext ctx{executor, processed, &actors, camera, 800, 600, 16.0F, 1};
+		const DrawBound			everywhere = DrawBound::everywhere();
+		const RenderContext ctx{executor, processed, &actors, camera, 800, 600, 16.0F, 1, everywhere};
 
 		const auto expected = [&]() {
 			const VisibleBounds vis = computeVisibleBounds(camera, 800, 600, 16.0F, entityCullMarginMeters(AssetRegistry::Get().maxReachMeters()));
@@ -273,6 +274,68 @@ namespace assets {
 		camera.setPosition({0.0F, 0.0F});
 		gather.gather(ctx, out);
 		EXPECT_EQ(entitiesOf(out), expected());
+	}
+
+	// Under the cover only uprights within reach of what the bound holds are gathered, statics and
+	// actors alike, in the order the whole view gives them; an empty bound gathers nothing.
+	TEST(WorldDepthSort, GatherCullsToTheDrawBound) {
+		PlacementExecutor executor(AssetRegistry::Get());
+		SpatialIndex	  index;
+		for (const auto& [position, anchorY] : std::vector<std::pair<glm::vec2, float>>{{{2.0F, 2.0F}, 2.0F}, {{1.0F, 4.0F}, 4.0F}, {{20.0F, 2.0F}, 1.0F}}) {
+			PlacedEntity entity;
+			entity.defName = "Tree";
+			entity.position = position;
+			entity.anchorY = anchorY;
+			entity.isTallOccluder = true;
+			index.insert(entity);
+		}
+		AsyncChunkPlacementResult result;
+		result.coord = {0, 0};
+		result.spatialIndex = std::move(index);
+		executor.storeChunkResult(std::move(result));
+		const std::unordered_set<world::ChunkCoordinate> processed{{0, 0}};
+
+		std::vector<PlacedEntity> actors(2);
+		actors[0].position = {3.0F, 3.0F};
+		actors[0].anchorY = 3.0F;
+		actors[1].position = {-20.0F, 3.0F};
+		actors[1].anchorY = 3.0F;
+
+		world::WorldCamera camera;
+		camera.setPosition({0.0F, 0.0F});
+		const float reach = entityCullMarginMeters(AssetRegistry::Get().maxReachMeters());
+		DrawBound	seen;
+		seen.add({0.0F, 5.0F, 0.0F, 5.0F});
+		const RenderContext ctx{executor, processed, &actors, camera, 8000, 6000, 16.0F, 1, seen};
+		WorldDepthGather	gather;
+		std::vector<DepthSortItem> out;
+		gather.gather(ctx, out);
+		std::vector<glm::vec2> positions;
+		for (const DepthSortItem& item : out) {
+			positions.push_back(item.upright->position);
+		}
+		// The tree at x 20 and the actor at x -20 lie past the box's reach.
+		ASSERT_LT(reach, 10.0F);
+		EXPECT_EQ(positions, (std::vector<glm::vec2>{{2.0F, 2.0F}, {3.0F, 3.0F}, {1.0F, 4.0F}}));
+
+		// Just inside the reach still gathers.
+		DrawBound near;
+		near.add({20.0F - reach + 0.01F, 30.0F, 0.0F, 5.0F});
+		const RenderContext nearCtx{executor, processed, &actors, camera, 8000, 6000, 16.0F, 1, near};
+		gather.gather(nearCtx, out);
+		ASSERT_EQ(out.size(), 1U);
+		EXPECT_EQ(out.front().upright->position, glm::vec2(20.0F, 2.0F));
+
+		// The view alone holds all five, so the culls above are the bound's.
+		const DrawBound		everywhere = DrawBound::everywhere();
+		const RenderContext wholeCtx{executor, processed, &actors, camera, 8000, 6000, 16.0F, 1, everywhere};
+		gather.gather(wholeCtx, out);
+		EXPECT_EQ(out.size(), 5U);
+
+		const DrawBound		nothing;
+		const RenderContext emptyCtx{executor, processed, &actors, camera, 8000, 6000, 16.0F, 1, nothing};
+		gather.gather(emptyCtx, out);
+		EXPECT_TRUE(out.empty());
 	}
 
 } // namespace assets

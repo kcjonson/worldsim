@@ -132,7 +132,7 @@ The tolerance is for walls. A new polygon's side along a wall and the record's e
 
 **The interface.** `SeenArea` names no mesh type: it takes shapes (`commitNow` for the landing, `queue`, `queueSightPolygon` with the walk before it, `queueSightAt`, `setOpenLeg`, and `closeLeg`), runs the budget (`update`), answers the queries below in millimetres, and hands the renderer the committed triangles, the pending shapes, and `epoch()`, which moves with the committed record only (pending shapes change every frame and are drawn on their own). `PlayerVisibilitySystem` holds the legs and walks, gives the queries in metres, and adds `isVisible`, which reads vision, and `drawnVisible`, each colonist's bright shape for the cover (3.4).
 
-**Budget.** Two counts, never times, so the result does not depend on the machine. While no pieces wait, a tick tests at most `kSeenRingsPerTick` (16) queued shapes, first in, first out, on the main thread, and stops at the first that adds anything; then it registers `kSeenPiecesRegisteredPerTick` (1) waiting piece. A covered test costs about 10 to 15 us, so 16 are about 0.25 ms; vision makes about 10 polygons a tick with 50 colonists indoors at 10x, and at 4 a tick the queue grew without end there (204,749 pending after 10 minutes, 6.6). A shape that adds ground pays the skirt (0.1 to 0.6 ms) and its frontier (0.04 ms mean) on the tick that tests it, and each piece one patch. A patch's cost grows with the rings registered where it lands, not with the piece: 0.3 to 0.7 ms mean in the bench base, up to about 6 ms in its densest spot (6.7) and under 3 ms since its setup reads ring edges near it (6.9), so one piece a tick, rather than one shape, keeps a shape of four pieces from paying four patches in one tick. Registrations come in the first minute a building is seen and a few a minute after, so the cap holds the queue back only briefly. If a worker is ever wanted, the pending rule above already makes it invisible.
+**Budget.** Two counts, never times, so the result does not depend on the machine. While no pieces wait, a tick tests at most `kSeenRingsPerTick` (16) queued shapes, first in, first out, on the main thread, and stops at the first that adds anything; then it registers `kSeenPiecesRegisteredPerTick` (1) waiting piece. A covered test costs about 10 to 15 us, so 16 are about 0.25 ms; vision makes about 10 polygons a tick with 50 colonists indoors at 10x, and at 4 a tick the queue grew without end there (204,749 pending after 10 minutes, 6.6). A shape that adds ground pays the skirt (0.1 to 0.6 ms) and its frontier (0.04 ms mean) on the tick that tests it, and each piece one patch. A patch's cost grows with the rings registered where it lands, not with the piece: 0.3 to 0.7 ms mean in the bench base, up to about 6 ms in its densest spot (6.7) and under 3 ms since its setup reads ring edges near it (6.10), so one piece a tick, rather than one shape, keeps a shape of four pieces from paying four patches in one tick. Registrations come in the first minute a building is seen and a few a minute after, so the cap holds the queue back only briefly. If a worker is ever wanted, the pending rule above already makes it invisible.
 
 **The landing.** One inscribed polygon of `kLandingSightMeters` round the drop is committed before the crew exists, from the same constant nav's landing limit uses. Inscribed in the circle that nav's limit circumscribes, it lies inside the meshed area.
 
@@ -184,7 +184,17 @@ The disc is drawn at the colonist's position that frame, outdoors and with walls
 
 **As built (step 4).** `worldview::VisibilityCoverRenderer` (`libs/world-view/world/rendering/`), with `kSeenDimAlpha` and `kUnseenColor` beside it. salal's instanced meshes have 16-bit indices, so the record is uploaded as as many meshes as it needs, each at most 65,535 vertices (21,845 triangles, three unshared vertices each), one mesh layer apiece; the old meshes are released at the upload, which salal holds back until any draw naming them is flushed. A colonist's bright shape is `PlayerVisibilitySystem::drawnVisible`: the 64-gon of `drawnVisibleRadiusMm` round his `Position` that frame, and with walls in sight vision's polygon cut to that disc (`starClippedToConvex`, round the polygon's build). The cover asks for it only for colonists whose sight's box meets the view, so the cut runs where it is drawn and nowhere else. A colonist whose sight is too small to hold a leg (`kSeenLeastRadiusMm`) draws none, since nothing records it, and so does one with walls in sight whose polygon a jump dropped, for the few frames before vision builds his next. Sight and pending shapes whose screen bounds miss the view are left out of the masks. The cover flushes what is pending, then draws its fills at keys 30 and 31: the lowest key drawn after it in the same flush is the terrain polygon overlay's 40, then the rooms (56), vision (62), and nav (66) overlays, the selection indicator and move marker (100), the drawing preview (898 and up), and the placement ghost (1000). Both fills run 4 pixels past the view.
 
-**Consequences taken on purpose.** A tall thing that stands on seen ground and reaches over unseen ground is cut at the edge. A thing on unseen ground is still drawn underneath and then covered; skipping that work is a later step (section 8).
+**Consequences taken on purpose.** A tall thing that stands on seen ground and reaches over unseen ground is cut at the edge.
+
+**Nothing is drawn only to be covered.** Everything outside the record and its pending shapes is under the opaque fill, so the world culls to them where it culls to the view. `worldview::coverDrawBound` builds the frame's bound, an `assets::DrawBound`: boxes in metres from `PlayerVisibilitySystem::appendSeenBoxes`, which are the record's seen boxes in view and the box of each pending shape. A colonist's bright shape needs no box of its own: the unseen fill leaves only the record and the pending shapes showing, so any of it past them is under the fill already. Each box is grown by `kDrawBoundMarginPixels` (2 pixels), past a pixel the record's edge crosses and any anti-aliased fringe. With reveal on, or no player visibility, the bound is one box holding everything, and every cull below comes out as it did before.
+
+- **Terrain.** Each chunk's quad is drawn under a scissor round the box the bound holds of it in view, rounded out to whole framebuffer pixels and one more; a chunk the bound misses is not drawn and its textures are not uploaded. The tile shader's fragments are the expensive part, and pixels outside the scissor never run it. The scissor is the game's own GL around its own draw, enabled and disabled there; salal's draws never see it.
+- **Baked short flora** per 64 m sub-chunk, **groundcover** per chunk, and the **depth-sorted uprights** (statics per chunk, then the ECS things) are culled against the bound grown by the reach of a template (`AssetRegistry::maxReachMeters`), as they are culled against the view.
+- **Construction** is not culled: a foundation, wall, or opening can only be placed on seen ground, so there is nothing under the black to skip.
+
+The seen boxes are a cache over the record, never the truth (rule 10): `SeenArea` keeps one box per cell of `kSeenBoxCellMm` (512 m, a chunk), the box of every piece registered there cut to the cell. It grows as pieces register and never shrinks, so it is conservative: it can hold ground that is not seen, never the other way. A query reads the cells it meets, or every cell when that is fewer, and the pending shapes' boxes, so it costs a handful of comparisons a frame.
+
+The upright stream draws a small thing (8 pixels or less on screen) in no fixed order against other small things (`RunPlanner`), so which of two overlapping small things is on top can change with what else is in the stream. Culling the hidden ones can therefore swap a few of those pixels on seen ground at far zooms: 12 pixels at zoom 0.5 and 571 at 0.25, of 5.3 million, in the check of 6.9. The same happens today whenever the view moves.
 
 ### 3.5 What salal gained
 
@@ -205,7 +215,7 @@ One existing bug touches this: a placed thing felled or harvested out comes back
 | Action | Rule | Where |
 |---|---|---|
 | Place a thing | Valid only where the nav check passes and the footprint is seen (`covers`, the def's collision shape, or the point when it has none) | `PlacementSystem::placeable`, run on mouse move and again on click |
-| Draw a foundation, wall, or opening | Every point and the whole shape seen; the refusal toast says the area is unexplored | `DrawingSystem`: `pointOnMesh`, `requirePlaceable`, `commitFoundationEdit`, the opening move and click. `footprintBuildable` stays nav-only because the dev verbs share it |
+| Draw a foundation, wall, or opening | Every point and the whole shape seen; the refusal toast says the area is unexplored | `DrawingSystem`: `pointOnBuildableGround` (seen ground a wall or foundation may be built on, a ford excluded), `requirePlaceable`, `commitFoundationEdit`, the opening move and click. `footprintBuildable` stays nav-only because the dev verbs share it |
 | Move order, seen goal | As today | `GameScene` right-click, `AIDecisionSystem::issuePlayerMoveOrder` |
 | Move order, unseen goal | The goal becomes `lastSeenToward(colonist, click)` and is then ordered as any seen goal; the move marker shows at the goal ordered | `GameScene` right-click, through `moveOrderGoal` |
 | Select | Colonists always. Another mover only while visible. Anything else only where its position is seen | `SelectionSystem::gatherCandidates` |
@@ -222,7 +232,7 @@ The same rules apply as for sight: a thing with no capability is not remembered,
 
 ### 3.9 Camera and minimap
 
-The camera is not clamped (rule 14). It still loads the chunks round it; over unseen ground they are drawn and covered. The region minimap is unchanged (rule 20). The record can give the Minimap epic its outlines when that epic wants them; no outline walk is built here.
+The camera is not clamped (rule 14). It loads a chunk round it only while the draw bound could hold any of it (`worldview::cameraLoadsChunk`, given to `ChunkManager::setCameraLoads`): while seen ground lies in the chunk's square grown by the reach the uprights cull with (`entityCullMarginMeters` of `AssetRegistry::maxReachMeters`) and the draw margin. A chunk with no seen ground of its own still loads when its crowns can overhang seen ground next door; without the reach, such a chunk, once unloaded with the camera far away, never came back and its trees over the seen edge were gone. The test asks `SeenArea::anySeenBox`, which builds no boxes. Panning over unseen ground, past that reach of the seen edge, loads and processes nothing; with reveal on it loads all of them, as before. A chunk already loaded stays while the camera holds it. Every mover's anchor still loads the chunks it needs, whatever the camera does (nav-mesh-variable-resolution.md 4.4), and an anchor loads at least 128 m round a colonist, past his 30 m sight, so ground can only become seen in a chunk that is already loaded: when sight reaches it under the camera it draws that frame, with no pop-in of its own. The terrain polygon debug overlay (G) draws only loaded chunks, so over unseen ground the camera alone looks at it shows nothing; the biome readout still reads the planet. The region minimap is unchanged (rule 20). The record can give the Minimap epic its outlines when that epic wants them; no outline walk is built here.
 
 ### 3.10 Dev tools and tests
 
@@ -634,7 +644,70 @@ Every run ended `validate()` clean, with no point deep in a registered polygon o
 
 **Verdict: the mean budget is met; the worst tick is a few milliseconds, not the 2.4 to 4.7 of 6.6.** At 50 colonists in the base the record costs 0.12 ms a tick at 1x and 0.33 ms at 10x, under load, against well under 1 ms, and at 10 colonists 0.06 and 0.09 ms. Rings are 20 to 40% above 6.6 instead of 70 to 115%. What remains of the worst tick is one piece's patch where many rings overlap, 5 to 7 ms at worst in the sim bench: a patch's setup reads every ring whose box meets each edge the piece touches, so a piece's cost follows how many registered rings cover its spot, which the sweep's beams through a gap raise. Bounding that further needs the patch to read fewer rings (an index finer than ring boxes, or long thin rings cut shorter), work in `PatchableMesh` outside this change.
 
-### 6.9 Measured: a patch where many rings overlap
+### 6.8 Measured: vision's polygon builds
+
+"Vision's polygon builds near buildings cost 49 to 174 ms per simulated second at 20 to 50 colonists" on Specboard (WOR-862). `computeVisibilityPolygon` cast every direction's ray, on each side, at every occluder in range. In the base's eight rooms (152 wall faces, about 149 in range, 209 directions a build) that was 62,000 segment tests and 90% of a build:
+
+| Part of a build, before | us |
+|---|---|
+| Gathering occluders (vision's index query, emulated) | 1.1 |
+| The rim, endpoints and rim crossings | 3.2 |
+| Occluder pairs' crossings | 30 |
+| Sorting the directions | 46 |
+| The casts | 883 |
+| Ring output (dedup, `simplifyRing`) | 22 |
+
+What changed, every part exact: each ray reads only the occluders whose angular cone from the observer holds it (any other is disjoint from the ray), each side's hit read from one segment test; each ray's list is nearest occluder first and stops once the rest lie 2 mm past both sides' hits so far, ties going to the occluder first in the input, as the full read gives; rim crossings are tested only on rim sides inside an occluder's cone, pairs only where their boxes meet in a sweep along x; and the directions are presorted by a rounded angle, the exact order asked only where the rounding could misplace two. Every segment test that still runs gets the same arguments as before, so every snapped point is the same. After: the casts 28 us, sorting 24, the lists 22, output 22, pairs 14, the rest 5.
+
+The rings are the same, vertex for vertex: a fuzz of the old construction against the new over 120,000 cases (random buildings out to 40 km, segment soups through and touching the observer, tiny grids where hits tie) found no difference, and the 3,000-viewpoint bench gives the same hash. `Visibility.PinnedScenesKeepTheirRings` pins 64 integer scenes as the old construction built them. Review found the one exception, now fixed: each ray found its rim side by walking forward from the last ray's, right only while the rim's directions rise strictly, and at sight radii of 10 mm and under the rim's truncated vertices repeat angles (at 7 mm it starts (7, 0), (6, 0)), so the walk stopped early or late (3,000 of 3,000 cases differed at 1 mm). Each ray now binary-searches the rim, as the old construction did, and the fuzz finds no difference at any radius. `Visibility.MillimetreRadiiKeepTheirRings` pins rings at 1, 3, 7, and 10 mm, and `Visibility.RayAlongPlusXKeepsItsRing` one with a ray along +x, where the angle order starts.
+
+Machine load: the bench pairs ran back to back, old then new. The viewpoint bench `busy` before (GPU 100%, another session's game) and `idle` after; the base at 20 colonists `idle` before, `busy` between and after; the base at 50 `busy` before, `idle` between and after; the sim bench `idle` before, between and after. Only the 50-colonist base's new run and the sim bench's runs had `idle` on both sides.
+
+| | Before | After |
+|---|---|---|
+| A build, 3,000 viewpoints in the base, us (mean / p99 / max) | 1,028 to 1,081 / 1,081 to 1,233 / 1,968 to 3,127 | 112 to 116 / 129 to 141 / 178 to 188 |
+| A build in the geometry base, 20 colonists (31,658 builds), us | 1,005 / 1,877 / 3,185 | 119 / 189 / 515 |
+| Vision's builds per simulated second, 20 colonists | 53.0 ms | 6.3 ms |
+| A build in the geometry base, 50 colonists (78,320 builds), us | 933 / 1,155 / 2,144 | 106 / 132 / 388 |
+| Vision's builds per simulated second, 50 colonists | 121.7 ms | 13.9 ms |
+| The record's cost per simulated second (its sweep polygons), 20 / 50 | 10.9 / 14.1 ms | 6.1 / 8.6 ms |
+
+The sim bench now times `VisionSystem::update` too (`BM_PlayerVisibilityBase`, 36,000 ticks; vision's whole pass, entities and structures included, not only its builds):
+
+| | Vision tick ms, before | After | Polygons built | Player visibility tick ms (mean), before / after |
+|---|---|---|---|---|
+| Base, 10, 1x | 0.086 | 0.032 | 19,291 | 0.060 / 0.053 |
+| Base, 50, 1x | 0.435 | 0.165 | 95,637 | 0.121 / 0.108 |
+| Base, 10, 10x | 0.293 | 0.107 | 68,903 | 0.083 / 0.069 |
+| Base, 50, 10x | 1.470 | 0.541 | 345,125 | 0.308 / 0.283 |
+
+Counts (rings, polygons, sweeps) are the same before and after in every row.
+
+**Verdict: about nine times cheaper per build, the same rings.** A build in the base is about 0.11 ms against 1.0, and vision's builds cost 6 and 14 ms per simulated second at 20 and 50 colonists against 53 and 122. What bounds going further: the 209 directions a build, each a ray with its own rim crossing, sort and output; `simplifyRing`, shared code, is a fifth of what is left; and the occluder pairs' crossings, which depend only on the walls, could be kept with the wall set (the index's generation) instead of found per build, saving about 14 us.
+
+### 6.9 Measured: not drawing or loading what is under the black
+
+"Don't load or draw what is under the black: chunks with no seen ground" on Specboard. The river view (0, 20) at the landing, cover on (`perf.mjs capture --no-reveal --no-scroll`), Bob alone and wandering, RelWithDebInfo, one capture each side. The share under black is the black pixels of a screenshot at that zoom.
+
+| Zoom | Under black | Draws | Triangles | Tiles shaded | GPU ms | Tile GPU ms | Scene render ms |
+|---|---|---|---|---|---|---|---|
+| 3 | 0% | 329 / 342 | 2.88M / 2.88M | 9,216 / 9,216 | 4.01 / 3.67 | 0.46 / 0.46 | 1.15 / 1.28 |
+| 1.5 | 0.2% | 407 / 409 | 0.89M / 0.89M | 36,864 / 36,864 | 3.02 / 3.03 | 0.40 / 0.39 | 1.45 / 1.60 |
+| 0.75 | 49% | 547 / 500 | 1.08M / 0.68M | 147,456 / 84,258 | 3.64 / 3.21 | 0.36 / 0.23 | 2.05 / 1.96 |
+| 0.5 | 74% | 729 / 571 | 2.29M / 0.75M | 331,776 / 91,204 | 4.69 / 3.31 | 0.35 / 0.12 | 2.77 / 1.99 |
+| 0.25 | 90% | 193 / 134 | 1.51M / 0.17M | 1,105,920 / 91,204 | 3.10 / 1.07 | 0.32 / 0.04 | 4.43 / 0.89 |
+
+Before / after. Draws and triangles move with Bob's wandering at zooms 3 and 1.5, where the whole view is seen and nothing is culled. Where the frame went before: the uprights were most of the GPU time (1.5M triangles at 0.25, of which 1.3M were under the black), the terrain a tenth of it, and at 0.25 the entity pass 3.9 of the 4.4 ms the scene took on the CPU. Machine load: `idle` before the base capture and `busy` after it (another session's GPU work); `idle` before and after the tip capture. So the tip's numbers are clean and the base's are not a baseline; the counts do not depend on load.
+
+With reveal on the counts are the same both sides (triangles 2.88M, 0.89M, 1.08M, 2.29M, 1.51M at the five zooms), as they should be. Both base captures with reveal on were void under other sessions' load, so the timings there are unconfirmed either way.
+
+Panning from the landing 2 km east at zoom 1 and back, cover on: before, the camera loaded 7 chunks it then drew under black, with frames up to 12 to 17 ms as each row came in; after, it loads none, frames stay at 8.3 ms (idle), and the two camera-only chunks it held round the landing unload once it is far and are not loaded again, since no seen ground lies within reach of them.
+
+Screenshots at fixed views with the sim at speed 0, water frozen, Bob and a room placed by dev verbs, compared pixel by pixel against the same views on `main`: the landing at zooms 3, 1.5, 0.75, a view half over the seen edge, one wholly over unseen ground, Bob standing at the edge with his bright disc reaching past the record, the room, and reveal on at the landing and over unseen ground. Every pixel is the same apart from Bob's own idle animation, the `Chunks:` readout, and the small uprights of 3.4 at zooms 0.5 and 0.25 (12 and 571 pixels). A build that culled everything but the uprights matched `main` at 0.5 and 0.25 exactly, so those pixels come from the upright stream's ordering alone.
+
+The load filter first asked for seen ground in the chunk's own square, with no reach. With Bob's seen edge 2 m short of the border of chunk (1, 0), Bob teleported back to the landing, and the camera taken 4 km east and back, that chunk stayed unloaded: no trees past x = 512 m, and 93,661 pixels of the seen edge differed from before the trip. With the reach (3.9) it loads again on return and the view matches pixel for pixel, apart from a toast. Counts at the river view with reveal off, before / after the reach: 9 / 9 chunks loaded at zooms 0.5 and 0.25, triangles 753,490 / 753,516 and 166,117 / 166,143, so the reach costs nothing measurable there. Dropping the colonists' sight boxes (3.4) changes nothing in these views, since Bob's sight lies inside the landing.
+
+### 6.10 Measured: a patch where many rings overlap
 
 "PatchableMesh patch setup reads every ring over the spot" on Specboard (WOR-867). Split with temporary timers, the slowest patch of the 20-colonist base row (K 318, a 136-vertex piece) was 7.6 ms: 7.1 of it setup, of which 4.7 ms in `groundBoundaries` (342 calls reading 36,628 rings and 857,000 ring edges), 1.8 ms in `groundRingsInBox`'s duplicate scan (5.1 million comparisons) and 0.4 ms finding the rings; the patch proper (closure, arrangement, triangulation, splice) was 0.5 ms. Classifying an edge computed its boundary intervals twice, before and after, each against every edge of every ring whose box met it.
 
@@ -693,7 +766,6 @@ Each step was its own PR with its own done line. All are built: step 7 is PR 378
 - **Vegetation thinning sight.** "Prototype: sight ray casting across the nav mesh with tree attenuation" stays a later exploration; the first build's sight is vision's, walls only.
 - **The seen area on a map** (Minimap epic).
 - **Saving** the record (3.11).
-- **Not loading or drawing chunks with no seen ground.** The camera loads and draws them and the cover hides them.
 - **Smooth shadow edges.** With walls in sight the rim of the lit area moves with the colonist over seen ground and the seen edge past a shadow steps by at most about 0.1 m (3.3, 3.4), but the shadow edges of the lit area, and its far edge ahead of him in ground nobody has seen, still step with vision's 0.5 m rebuilds.
 - **More than one player faction.**
 

@@ -61,7 +61,7 @@ namespace world {
 		for (int32_t dy = -cameraLoadRadius; dy <= cameraLoadRadius; ++dy) {
 			for (int32_t dx = -cameraLoadRadius; dx <= cameraLoadRadius; ++dx) {
 				ChunkCoordinate coord{cameraChunk.x + dx, cameraChunk.y + dy};
-				if (chunks.find(coord) == chunks.end()) {
+				if (chunks.find(coord) == chunks.end() && (!cameraLoads || cameraLoads(coord))) {
 					loadChunk(coord);
 				}
 			}
