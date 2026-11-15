@@ -265,6 +265,7 @@ namespace assets {
 
 		cfg.builderCapBase = root.child("builderCapBase").text().as_int(1);
 		cfg.builderCapPerSquareMeter = root.child("builderCapPerSquareMeter").text().as_float(0.1F);
+		cfg.builderSpotMinSpacingMeters = root.child("builderSpotMinSpacingMeters").text().as_float(1.0F);
 
 		// Wall constraints
 		cfg.minSegmentLengthMeters = root.child("minSegmentLengthMeters").text().as_float(0.5F);
