@@ -11,10 +11,10 @@
 // Each room's fill is tessellated once in world space when its geometry changes
 // and only projected to the screen each frame.
 //
-// Mirrors SelectionSystem/DrawingSystem: a plain class holding ecs::World*, the
-// WorldCamera*, and the source system, calling Renderer::Primitives directly and
-// projecting world->screen via camera->worldToScreen at kPixelsPerMeter. Off by
-// default; GameScene flips it with a hotkey.
+// Mirrors SelectionSystem/DrawingSystem: a plain class holding the WorldCamera*
+// and the source system, calling Renderer::Primitives directly and projecting
+// world->screen via camera->worldToScreen at kPixelsPerMeter. Off by default;
+// GameScene flips it with a hotkey.
 //
 // Z sits above foundation fills (~50-52) and below wall bands (~60-64): tint 56,
 // outline 57, label 58.
@@ -30,16 +30,11 @@
 #include <optional>
 #include <vector>
 
-namespace ecs {
-	class World;
-}
-
 namespace world_sim {
 
 	class RoomOverlay {
 	  public:
 		struct Args {
-			ecs::World*					world;
 			world::WorldCamera*			camera;
 			ecs::RoomDetectionSystem*	roomDetection;
 		};
@@ -79,7 +74,6 @@ namespace world_sim {
 		// whose geometry changed.
 		void syncFills();
 
-		ecs::World*					ecsWorld = nullptr;
 		world::WorldCamera*			camera = nullptr;
 		ecs::RoomDetectionSystem*	roomDetection = nullptr;
 

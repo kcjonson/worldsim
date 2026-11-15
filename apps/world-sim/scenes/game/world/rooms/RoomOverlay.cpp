@@ -3,6 +3,7 @@
 #include <construction/RoomHitTest.h>
 #include <core/Vec2i64.h>
 #include <primitives/Primitives.h>
+#include <utils/Log.h>
 #include <vector/Tessellator.h>
 
 #include <cstdint>
@@ -26,7 +27,7 @@ namespace world_sim {
 		// Overlays draw in the post-entity world pass, a separate flush domain
 		// from committed construction (which flushes before the entity pass), so
 		// these z values only order overlay primitives against OTHER post-entity
-		// world draws — a toggled overlay always paints over construction.
+		// world draws, so a toggled overlay always paints over construction.
 		constexpr int kZFill = 56;
 		constexpr int kZOutline = 57;
 		constexpr int kZLabel = 58;
@@ -34,8 +35,7 @@ namespace world_sim {
 	} // namespace
 
 	RoomOverlay::RoomOverlay(const Args& args)
-		: ecsWorld(args.world),
-		  camera(args.camera),
+		: camera(args.camera),
 		  roomDetection(args.roomDetection) {}
 
 	std::optional<std::uint64_t> RoomOverlay::handleClick(float screenX, float screenY, int viewportW, int viewportH) const {
@@ -74,10 +74,11 @@ namespace world_sim {
 				continue;
 			}
 
-			// Relative to the ring's first vertex so float precision holds far from the
-			// world origin. The ring is CCW and every hole CW, so the nonzero rule cuts
-			// the holes out; the camera projection is affine, so the triangles stay valid
-			// on screen.
+			// Relative to the ring's first vertex, which only keeps the tessellator's input
+			// small; each frame the origin is added back in float before projecting, so
+			// on-screen precision is no better than the outline's. The ring is CCW and
+			// every hole CW, so the nonzero rule cuts the holes out; the camera projection
+			// is affine, so the triangles stay valid on screen.
 			fill.origin = room.ring.front();
 			const auto toPath = [&fill](const geometry::Ring& loop) {
 				renderer::VectorPath path;
@@ -95,6 +96,7 @@ namespace world_sim {
 			}
 			if (!tessellator.Tessellate(contours, fill.mesh)) {
 				fill.mesh.clear();
+				LOG_DEBUG(Game, "Room #%llu failed to tessellate, not tinted", static_cast<unsigned long long>(room.roomId));
 			}
 		}
 	}

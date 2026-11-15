@@ -662,7 +662,6 @@ namespace {
 			// detected rooms when toggled on (R). Reads the same RoomDetectionSystem
 			// records live; off by default.
 			m_roomOverlay = std::make_unique<world_sim::RoomOverlay>(world_sim::RoomOverlay::Args{
-				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
 				.roomDetection = &ecsWorld->getSystem<ecs::RoomDetectionSystem>(),
 			});
