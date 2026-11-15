@@ -462,10 +462,10 @@ for an L can be the inner edge that opens onto the notch.
 ### Build and Deconstruct
 
 A foundation takes one builder a spot. Its Build umbrella carries `builderSpots`, the points its
-builders work from, 0.5 m inside the ring and spaced round it (`construction/BuilderSpots.h`; the count
-from `constraints.xml` `builderCapBase`, `builderCapPerSquareMeter`, and
-`builderSpotMinSpacingMeters`), set as the goal turns Available and kept until it stops being
-Available, so an index names one spot for that whole time.
+builders work from, spaced round the ring and 0.5 m in from their own edge (along the bisector at a corner,
+on the ring where that would not be inside; `construction/BuilderSpots.h`; the count from `constraints.xml`
+`builderCapBase`, `builderCapPerSquareMeter`, and `builderSpotMinSpacingMeters`), set as the goal turns
+Available and kept until it stops being Available, so an index names one spot for that whole time.
 
 A Build option on such a goal is for one spot, chosen at selection: the spot the colonist already holds
 on that blueprint first, so a builder mid-walk or mid-work never hops, then the free spots (no other
