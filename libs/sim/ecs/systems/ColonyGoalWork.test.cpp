@@ -274,4 +274,24 @@ namespace ecs::test {
 		EXPECT_EQ(listed(ColonyGoalWork(world, claims).workersOf(*registry.getGoal(teardown))), (std::vector<EntityID>{worker}));
 	}
 
+	// A site ordered demolished swaps its Build goal for a Deconstruct one while a builder's task runs on:
+	// that builder is not a worker of the teardown, and a colonist tearing it down is.
+	TEST_F(ColonyGoalWorkTest, AWorkerServesOnlyTheGoalOfItsOwnTaskType) {
+		auto&		   registry = GoalTaskRegistry::Get();
+		const EntityID structure = world.createEntity();
+		const uint64_t teardown = make(TaskType::Deconstruct, GoalOwner::ConstructionGoalSystem, structure);
+
+		Task building;
+		building.type = TaskType::Build;
+		building.buildBlueprintEntityId = static_cast<uint64_t>(structure);
+		colonist(building, {});
+		EXPECT_TRUE(ColonyGoalWork(world, claims).workersOf(*registry.getGoal(teardown)).empty()) << "a builder is not tearing it down";
+
+		Task tearingDown;
+		tearingDown.type = TaskType::Deconstruct;
+		tearingDown.buildBlueprintEntityId = static_cast<uint64_t>(structure);
+		const EntityID demolisher = colonist(tearingDown, {});
+		EXPECT_EQ(listed(ColonyGoalWork(world, claims).workersOf(*registry.getGoal(teardown))), (std::vector<EntityID>{demolisher}));
+	}
+
 } // namespace ecs::test

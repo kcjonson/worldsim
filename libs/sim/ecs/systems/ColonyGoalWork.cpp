@@ -17,8 +17,8 @@ namespace ecs {
 		const auto addWorker = [](std::unordered_map<uint64_t, std::vector<EntityID>>& byKey, uint64_t key, EntityID colonist) {
 			byKey[key].push_back(colonist);
 		};
-		// An option that works an entity (a station, a site, a package) is an offer toward the goal whose
-		// destination it is, the goal workersOf names its workers for.
+		// A task or an option that works an entity (a station, a site, a package, a structure being torn
+		// down) serves the goal of its own type whose destination that is: its worker, or an offer toward it.
 		const auto goalWorking = [](uint64_t entity, TaskType type) -> uint64_t {
 			const GoalTask* goal = GoalTaskRegistry::Get().getGoalByDestination(static_cast<EntityID>(entity));
 			return goal != nullptr && goal->type == type ? goal->id : 0U;
@@ -33,13 +33,13 @@ namespace ecs {
 					break;
 				case TaskType::Build:
 				case TaskType::Deconstruct:
-					addWorker(workersByEntity, task.buildBlueprintEntityId, colonist);
+					addWorker(workersByGoal, goalWorking(task.buildBlueprintEntityId, task.type), colonist);
 					break;
 				case TaskType::Craft:
-					addWorker(workersByEntity, task.targetStationId, colonist);
+					addWorker(workersByGoal, goalWorking(task.targetStationId, TaskType::Craft), colonist);
 					break;
 				case TaskType::PlacePackaged:
-					addWorker(workersByEntity, task.placePackagedEntityId, colonist);
+					addWorker(workersByGoal, goalWorking(task.placePackagedEntityId, TaskType::PlacePackaged), colonist);
 					break;
 				case TaskType::FulfillNeed:
 				case TaskType::Wander:
@@ -96,11 +96,6 @@ namespace ecs {
 	}
 
 	std::span<const EntityID> ColonyGoalWork::workersOf(const GoalTask& goal) const {
-		const bool worksEntity = goal.type == TaskType::Build || goal.type == TaskType::Deconstruct || goal.type == TaskType::Craft ||
-								 goal.type == TaskType::PlacePackaged;
-		if (const auto it = workersByEntity.find(static_cast<uint64_t>(goal.destinationEntity)); worksEntity && it != workersByEntity.end()) {
-			return it->second;
-		}
 		if (const auto it = workersByGoal.find(goal.id); it != workersByGoal.end()) {
 			return it->second;
 		}

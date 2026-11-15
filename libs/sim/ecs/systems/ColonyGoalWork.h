@@ -73,7 +73,6 @@ namespace ecs {
 
 		const ClaimIndex&									claims;
 		std::unordered_map<uint64_t, std::vector<EntityID>> workersByGoal;
-		std::unordered_map<uint64_t, std::vector<EntityID>> workersByEntity;
 		std::unordered_map<uint64_t, Offers>				offers;
 	};
 
