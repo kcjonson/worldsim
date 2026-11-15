@@ -932,8 +932,9 @@ claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter`
   destination it works, the goal the Working status names it under. A teardown is counted the same way
   toward the Deconstruct goal on its structure.
 - Teardown: a structure ordered torn down shows one "Deconstruct structure" row, its Deconstruct goal,
-  from the order until the teardown ends or is cancelled (ConstructionSystem creates and retires the
-  goal). It reads "Blocked" while something still stands on it (the cascade gate), "Deconstructing"
+  from the next ConstructionSystem pass after the order (it creates and retires the goal) until the
+  work is done; a Deconstruct goal whose blueprint is gone or has no work left is not listed, even
+  while the goal still stands. It reads "Blocked" while something still stands on it (the cascade gate), "Deconstructing"
   with its workers and how much is torn down ("Alice (25%)"), or "Ready to deconstruct" with the
   percent. A site demolished before any build work was done is removed at once and never shows one.
 - The panel lists only goals with something to do (`ColonyGoalWork::hasWork`): a storage umbrella or
