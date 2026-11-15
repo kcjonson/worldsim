@@ -151,6 +151,7 @@ namespace assets {
 		// Concurrent builder caps
 		int	  builderCapBase = 1;
 		float builderCapPerSquareMeter = 0.1F;
+		float builderSpotMinSpacingMeters = 1.0F;
 
 		// Wall constraints
 		// minWallJunctionAngleDegrees is identical in value to minCornerAngleDegrees (both

@@ -188,6 +188,11 @@ namespace ecs {
 				}
 				break;
 			case TaskType::Build:
+				// A foundation's builder spot; a structure with no spots caps no builders.
+				if (task.builderSlot != kAnySlot) {
+					push(task, Claim::slot(task.buildBlueprintEntityId, task.builderSlot));
+				}
+				break;
 			case TaskType::Deconstruct:
 			case TaskType::Wander:
 			case TaskType::None:

@@ -32,6 +32,7 @@ add_library(sim
     ecs/components/DecisionTrace.cpp
     ecs/components/MemoryQueries.cpp
     ecs/components/ToiletLocationFinder.cpp
+    construction/BuilderSpots.cpp
     construction/ConstructionWorld.cpp
     construction/ConstructionValidator.cpp
     construction/OpeningGeometry.cpp
