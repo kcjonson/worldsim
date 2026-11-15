@@ -17,20 +17,18 @@ namespace world_sim::adapters {
 		void SetUp() override { ecs::GoalTaskRegistry::Get().clear(); }
 		void TearDown() override { ecs::GoalTaskRegistry::Get().clear(); }
 
-		/// A structure with `workDone` of `workTotal` left to tear down, and its Deconstruct goal if `ordered`.
-		ecs::EntityID structure(float workDone, bool ordered) {
+		/// A structure with `workDone` of `workTotal` left to tear down, and its Deconstruct goal.
+		ecs::EntityID structure(float workDone) {
 			const ecs::EntityID entity = world.createEntity();
 			ecs::StructureBlueprint blueprint;
 			blueprint.workTotal = 100.0F;
 			blueprint.workDone = workDone;
 			world.addComponent<ecs::StructureBlueprint>(entity, blueprint);
-			if (ordered) {
-				ecs::GoalTask goal;
-				goal.type = ecs::TaskType::Deconstruct;
-				goal.owner = ecs::GoalOwner::ConstructionGoalSystem;
-				goal.destinationEntity = entity;
-				ecs::GoalTaskRegistry::Get().createGoal(std::move(goal));
-			}
+			ecs::GoalTask goal;
+			goal.type = ecs::TaskType::Deconstruct;
+			goal.owner = ecs::GoalOwner::ConstructionGoalSystem;
+			goal.destinationEntity = entity;
+			ecs::GoalTaskRegistry::Get().createGoal(std::move(goal));
 			return entity;
 		}
 
@@ -51,7 +49,7 @@ namespace world_sim::adapters {
 	};
 
 	TEST_F(GlobalTaskAdapterTest, ATeardownWithAWorkerIsOneRowReadingDeconstructing) {
-		const ecs::EntityID target = structure(25.0F, true);
+		const ecs::EntityID target = structure(25.0F);
 		const ecs::EntityID worker = tearingDown(target, "Mara");
 
 		const auto rows = panel();
@@ -66,11 +64,11 @@ namespace world_sim::adapters {
 	}
 
 	TEST_F(GlobalTaskAdapterTest, ATeardownWithNoWorkLeftOrNoBlueprintIsNotListed) {
-		const ecs::EntityID done = structure(0.0F, true);
+		const ecs::EntityID done = structure(0.0F);
 		tearingDown(done, "Mara");
 		EXPECT_TRUE(panel().empty()) << "the goal outlives the last tick until the next construction pass";
 
-		const ecs::EntityID gone = structure(40.0F, true);
+		const ecs::EntityID gone = structure(40.0F);
 		world.removeComponent<ecs::StructureBlueprint>(gone);
 		EXPECT_TRUE(panel().empty()) << "its blueprint is removed";
 	}
