@@ -96,7 +96,8 @@ namespace ecs {
 	}
 
 	std::span<const EntityID> ColonyGoalWork::workersOf(const GoalTask& goal) const {
-		const bool worksEntity = goal.type == TaskType::Build || goal.type == TaskType::Craft || goal.type == TaskType::PlacePackaged;
+		const bool worksEntity = goal.type == TaskType::Build || goal.type == TaskType::Deconstruct || goal.type == TaskType::Craft ||
+								 goal.type == TaskType::PlacePackaged;
 		if (const auto it = workersByEntity.find(static_cast<uint64_t>(goal.destinationEntity)); worksEntity && it != workersByEntity.end()) {
 			return it->second;
 		}

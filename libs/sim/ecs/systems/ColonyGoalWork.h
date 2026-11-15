@@ -32,17 +32,17 @@ namespace ecs {
 		ColonyGoalWork(World& world, ClaimIndex& claims);
 
 		/// Colonists whose current task serves the goal, in view order. A cut or a haul serves the goal it
-		/// was picked through (a carry-in and a cut's deposit leg name their root); a build, a craft, or a
-		/// placement serves the goal whose destination it works, and a Build, Craft, or PlacePackaged goal
-		/// is served by those first, else by whoever delivers toward it. A suspended record is not current
-		/// work, so a colonist seeing to a need serves nothing.
+		/// was picked through (a carry-in and a cut's deposit leg name their root); a build, a teardown, a
+		/// craft, or a placement serves the goal whose destination it works, and a Build, Deconstruct,
+		/// Craft, or PlacePackaged goal is served by those first, else by whoever delivers toward it. A
+		/// suspended record is not current work, so a colonist seeing to a need serves nothing.
 		[[nodiscard]] std::span<const EntityID> workersOf(const GoalTask& goal) const;
 
 		/// Colonists whose last decision offered work toward the goal, in view order: an option for it
 		/// chosen, available, blocked only by the colonist's own carry (NoRoom), or held by another
 		/// colonist (Reserved). A cut or a haul is for the goal it was picked through; a build, a craft, or a
-		/// placement is for the goal of that type whose destination it works. A teardown is counted toward
-		/// a Deconstruct goal, which the panel and the tab never list.
+		/// placement is for the goal of that type whose destination it works, and a teardown for the
+		/// Deconstruct goal on the structure it tears down.
 		[[nodiscard]] std::span<const EntityID> offeredTo(uint64_t goalId) const;
 
 		/// Some colonist's last decision found the goal's source held by another (Reserved), and none had
