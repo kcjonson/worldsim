@@ -788,8 +788,8 @@ namespace construction {
 	ValidationResult
 	ConstructionValidator::validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const {
 		// 1. Segment exists and is a wall in this world.
-		// (A missing vertex or zero length is caught where the range is resolved.)
-		if (world_->getSegment(segment) == nullptr) {
+		const WallSegment* wall = world_->getSegment(segment);
+		if (wall == nullptr || world_->getVertex(wall->v0) == nullptr || world_->getVertex(wall->v1) == nullptr) {
 			return {ValidationCode::OpeningSegmentInvalid, 0, 0, 0.0};
 		}
 
@@ -804,7 +804,7 @@ namespace construction {
 		}
 
 		// 3. t in [0,1].
-		if (t < 0.0F || t > 1.0F) {
+		if (!(t >= 0.0F && t <= 1.0F)) {
 			return {ValidationCode::OpeningParamOutOfRange, 0, 0, static_cast<double>(t)};
 		}
 

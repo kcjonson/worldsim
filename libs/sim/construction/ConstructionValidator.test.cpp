@@ -12,6 +12,7 @@
 #include <cmath>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <limits>
 #include <numbers>
 #include <string>
 #include <utility>
@@ -652,6 +653,40 @@ TEST_F(OpeningValidation, ParamOutOfRangeRejected) {
 	ConstructionValidator validator(cfg, world);
 	EXPECT_EQ(validator.validateOpening(seg, 1.5F, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange);
 	EXPECT_EQ(validator.validateOpening(seg, -0.1F, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange);
+}
+
+TEST_F(OpeningValidation, NonFiniteParamRejected) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 6.0F);
+
+	ConstructionValidator validator(cfg, world);
+	for (const float t : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+						  -std::numeric_limits<float>::infinity()}) {
+		EXPECT_EQ(validator.validateOpening(seg, t, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange) << t;
+	}
+}
+
+TEST_F(OpeningValidation, FreeEndAndStraightJoinMeasureFromTheVertex) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+	// Two collinear Standard walls, (2,6)->(6,6) and (6,6)->(10,6): the first has a free end at v0 and a
+	// straight join at v1. The nearest door centre is margin + half the door, 0.75 m, from the vertex.
+	auto first = world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", f.id);
+	auto second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f.id);
+	ASSERT_TRUE(first.ok());
+	ASSERT_TRUE(second.ok());
+
+	ConstructionValidator validator(cfg, world);
+	for (const SegmentId segment : {first.id, second.id}) {
+		EXPECT_EQ(validator.validateOpening(segment, 0.745F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+		EXPECT_TRUE(validator.validateOpening(segment, 0.755F / 4.0F, "Door", "Wood").ok());
+		EXPECT_EQ(validator.validateOpening(segment, 1.0F - 0.745F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+		EXPECT_TRUE(validator.validateOpening(segment, 1.0F - 0.755F / 4.0F, "Door", "Wood").ok());
+	}
 }
 
 TEST_F(OpeningValidation, TooCloseToEndRejected) {

@@ -694,6 +694,30 @@ TEST_F(OpeningSnapAtCorners, SnapStopsWhereTheValidatorStops) {
 	}
 }
 
+TEST_F(OpeningSnapAtCorners, FreeEndAndStraightJoinSnapMarginPlusHalfWidthFromTheVertex) {
+	ConstructionWorld  world;
+	const FoundationId f = host(world);
+	auto			   first = world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", f);
+	auto			   second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f);
+	ASSERT_TRUE(first.ok());
+	ASSERT_TRUE(second.ok());
+	ASSERT_TRUE(world.setSegmentState(first.id, FoundationState::Built));
+	ASSERT_TRUE(world.setSegmentState(second.id, FoundationState::Built));
+
+	const SnapEngine engine(ConstructionRegistry::Get().snapping(), world);
+	// Cursor at each wall's ends: the free end at x=2, the join at x=6 (either wall), the free end at x=10.
+	const auto nearestCentre = [&](Vec2 cursor, SegmentId segment) {
+		const OpeningSnap snap = engine.snapOpening(cursor, 0.9F);
+		EXPECT_TRUE(snap.valid);
+		EXPECT_EQ(snap.segment, segment);
+		return static_cast<double>(snap.t) * 4.0;
+	};
+	EXPECT_NEAR(nearestCentre({2.0F, 6.1F}, first.id), 0.75, 1e-3);
+	EXPECT_NEAR(nearestCentre({5.9F, 6.1F}, first.id), 4.0 - 0.75, 1e-3);
+	EXPECT_NEAR(nearestCentre({6.1F, 6.1F}, second.id), 0.75, 1e-3);
+	EXPECT_NEAR(nearestCentre({10.0F, 6.1F}, second.id), 4.0 - 0.75, 1e-3);
+}
+
 TEST_F(OpeningSnapAtCorners, SnapStopsWhereTheValidatorStopsAtATJunction) {
 	ConstructionWorld  world;
 	const FoundationId f = host(world);
