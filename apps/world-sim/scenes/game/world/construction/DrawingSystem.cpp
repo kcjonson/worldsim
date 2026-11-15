@@ -1874,14 +1874,14 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const {
-		const auto& ps = ConstructionRegistry::Get().rendering().preview;
+		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
 		const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
 		Renderer::Primitives::drawCircle({
 			.center = firstScreen,
-			.radius = std::max(ps.originHaloMinRadiusPx, originRadius),
+			.radius = std::max(previewStyle.originHaloMinRadiusPx, originRadius),
 			.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F},
 					  .border = Foundation::BorderStyle{
-						  .color = willClose_ ? validColor_ : toColor(ps.originHaloColor), .width = willClose_ ? 3.0F : 1.5F
+						  .color = willClose_ ? validColor_ : toColor(previewStyle.originHaloColor), .width = willClose_ ? 3.0F : 1.5F
 					  }},
 			.id = "drawing_origin_halo",
 			.key = key,
