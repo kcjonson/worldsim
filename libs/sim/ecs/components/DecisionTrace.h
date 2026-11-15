@@ -89,6 +89,7 @@ namespace ecs {
 
 		// Build-specific fields (for Build tasks)
 		uint64_t buildBlueprintEntityId = 0; // Blueprint entity whose workDone is advanced
+		uint16_t builderSlot = kAnySlot;	 // The foundation's builder spot chosen at selection, kAnySlot for none
 
 		// True when this Haul/Harvest/Build provisions or performs an active work order
 		// (a child of a Craft goal with a queued job, a construction material delivery, or the
