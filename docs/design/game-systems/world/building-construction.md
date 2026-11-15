@@ -238,7 +238,7 @@ On a shared edge between two snapped foundations there is no co-ownership. The w
 
 Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. Once the chain has three points, the cursor snaps onto the first point when near it, as it does when closing a foundation; holding Alt skips that snap, so a point near the start is placed as an ordinary one. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
 
-The same angle increments and guides apply as for foundations (Foundations > Snapping and guides), for every chain, along the foundation edge or standing mid-floor; the wall tool also reads walls' corners and directions, and takes foundation corners at their outer-face-flush inset. Whole priority order, first that applies wins:
+The same angle increments and guides apply as for foundations (Foundations > Snapping and Guides), for every chain, along the foundation edge or standing mid-floor; the wall tool also reads walls' corners and directions, and takes foundation corners at their outer-face-flush inset. Whole priority order, first that applies wins:
 
 1. The chain's first point (closes the loop; once the chain has three points, and skipped while Alt is held)
 2. Wall endpoints (continue or join a wall)
@@ -382,7 +382,7 @@ Foundations and walls are procedurally drawn from material definitions, not hand
 - Rubber-band segment, validity colorization, reason text on invalid.
 - Faint polygon fill after the third point.
 - Origin-point halo + snap when the shape can close.
-- Guides (parallel/perpendicular to the shape's own edges, nearby buildings, and the world axes) as thin hint lines, a right-angle marker on a perpendicular guide, and a dot where two guides cross (Foundations > Snapping and guides).
+- Guides (parallel/perpendicular to the shape's own edges, nearby buildings, and the world axes) as thin hint lines, a right-angle marker on a perpendicular guide, and a dot where two guides cross (Foundations > Snapping and Guides).
 - Length readout (meters) at cursor; area/cost/work in the config strip.
 
 ---
