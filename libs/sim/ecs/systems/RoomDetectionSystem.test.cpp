@@ -391,7 +391,8 @@ TEST(RoomDetectionSystem, ThreeLevelNestBuiltInsideOutKeepsEveryIdentity) {
 	EXPECT_EQ(identityOf(sys, 81.0).name, "Room 3");
 }
 
-TEST(RoomDetectionSystem, InnerRoomAroundTheOuterPointWhileTheOuterRingChangesKeepsTheOuterIdentity) {
+TEST(RoomDetectionSystem, InnerRoomBuiltRoundTheOuterPointWhileTheOuterRingChangesTakesItsName) {
+	// A known limit of point matching when several walls change in one reconcile (WOR-875).
 	World			  world;
 	ConstructionWorld cw;
 	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
@@ -424,14 +425,15 @@ TEST(RoomDetectionSystem, InnerRoomAroundTheOuterPointWhileTheOuterRingChangesKe
 	ASSERT_NE(innerRecord, nullptr);
 	ASSERT_EQ(outerRecord->holes.size(), 1u);
 	EXPECT_EQ(geometry::pointInPolygon(storedPoint, innerRecord->ring), geometry::PointInPolygon::Inside);
-	EXPECT_EQ(outerRecord->roomId, outer.roomId);
-	EXPECT_EQ(outerRecord->name, outer.name);
-	EXPECT_EQ(innerRecord->name, "Room 2");
+	EXPECT_EQ(innerRecord->roomId, outer.roomId);
+	EXPECT_EQ(innerRecord->name, outer.name);
+	EXPECT_NE(outerRecord->roomId, outer.roomId);
+	EXPECT_EQ(outerRecord->name, "Room 2");
 	ASSERT_EQ(formed.size(), 2u);
-	EXPECT_EQ(formed[1], innerRecord->entity);
+	EXPECT_EQ(formed[1], outerRecord->entity);
 }
 
-TEST(RoomDetectionSystem, InnerRoomJoinedByASpurAroundTheOuterPointKeepsTheOuterIdentity) {
+TEST(RoomDetectionSystem, RebuildingARoomSmallerOnEverySideInOneReconcileKeepsItsIdentity) {
 	World			  world;
 	ConstructionWorld cw;
 	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
@@ -440,27 +442,28 @@ TEST(RoomDetectionSystem, InnerRoomJoinedByASpurAroundTheOuterPointKeepsTheOuter
 	int fired = 0;
 	sys.setRoomFormedCallback([&fired](EntityID) { ++fired; });
 
-	buildSquare(cw, {0, 0}, 5000);
+	const SegmentId outerWalls[] = {
+		buildWall(cw, {0, 0}, {5000, 0}),
+		buildWall(cw, {5000, 0}, {5000, 5000}),
+		buildWall(cw, {5000, 5000}, {0, 5000}),
+		buildWall(cw, {0, 5000}, {0, 0}),
+	};
 	sys.update(0.0f);
-	const RoomIdentity outer = identityOf(sys, 25.0);
-	const Vec2i64	   storedPoint = sys.rooms()[0].rep;
+	ASSERT_EQ(sys.rooms().size(), 1u);
+	const RoomIdentity room = identityOf(sys, 25.0);
+	const EntityID	   roomEntity = sys.rooms()[0].entity;
 
-	// The inner room is part of the outer room's wall group, so it is no hole: the outer
-	// ring walks the spur and round the inner room, and no longer holds the stored point.
-	buildSquare(cw, {storedPoint.x - 500, storedPoint.y - 500}, 1000);
-	buildWall(cw, {0, storedPoint.y}, {storedPoint.x - 500, storedPoint.y});
+	buildSquare(cw, {500, 500}, 4000);
+	for (const SegmentId wall : outerWalls) {
+		cw.removeSegment(wall);
+	}
 	sys.update(0.0f);
 
-	ASSERT_EQ(sys.rooms().size(), 2u);
-	const RoomDetectionSystem::RoomRecord* outerRecord = recordWithRingArea(sys, 24.0);
-	const RoomDetectionSystem::RoomRecord* innerRecord = recordWithRingArea(sys, 1.0);
-	ASSERT_NE(outerRecord, nullptr);
-	ASSERT_NE(innerRecord, nullptr);
-	EXPECT_TRUE(outerRecord->holes.empty());
-	EXPECT_EQ(outerRecord->roomId, outer.roomId);
-	EXPECT_EQ(outerRecord->name, outer.name);
-	EXPECT_EQ(innerRecord->name, "Room 2");
-	EXPECT_EQ(fired, 2);
+	ASSERT_EQ(sys.rooms().size(), 1u);
+	EXPECT_EQ(identityOf(sys, 16.0).roomId, room.roomId);
+	EXPECT_EQ(identityOf(sys, 16.0).name, room.name);
+	EXPECT_EQ(sys.rooms()[0].entity, roomEntity);
+	EXPECT_EQ(fired, 1);
 }
 
 TEST(RoomDetectionSystem, RebuildingOneWallFurtherInKeepsTheShrunkRoom) {
@@ -509,6 +512,7 @@ TEST(RoomDetectionSystem, InnerRoomOutlivesTheOuterRoomWhenAnOuterWallGoes) {
 	buildSquare(cw, {2000, 2000}, 1000);
 	sys.update(0.0f);
 	const RoomIdentity inner = identityOf(sys, 1.0);
+	const EntityID	   innerEntity = recordWithRingArea(sys, 1.0)->entity;
 	const EntityID	   outerEntity = recordWithRingArea(sys, 25.0)->entity;
 
 	cw.removeSegment(outerWall);
@@ -517,6 +521,7 @@ TEST(RoomDetectionSystem, InnerRoomOutlivesTheOuterRoomWhenAnOuterWallGoes) {
 	ASSERT_EQ(sys.rooms().size(), 1u);
 	EXPECT_EQ(sys.rooms()[0].roomId, inner.roomId);
 	EXPECT_EQ(sys.rooms()[0].name, inner.name);
+	EXPECT_EQ(sys.rooms()[0].entity, innerEntity);
 	EXPECT_FALSE(world.isAlive(outerEntity));
 	EXPECT_EQ(countRoomEntities(world), 1u);
 	EXPECT_EQ(fired, 2);
@@ -610,14 +615,15 @@ TEST(RoomDetectionSystem, MergingTwoRoomsThatEachHoldAnInnerRoomKeepsTheLargerNa
 TEST(RoomDetectionSystem, IdentityWithoutNestingIsWhatTheStoredPointsAlonePick) {
 	// Random wall additions and removals on two separate 5 x 5 grids of 1 m edges, removals
 	// rarer so the grids fill up, and every tenth step one wall toggled twice (a rebuild
-	// that changes no room). Edits that would leave a room with a hole are undone
-	// before the reconcile, so nothing is ever nested. After every reconcile each room
-	// must hold the identity the point passes alone pick: the dominant record whose
-	// stored point is strictly inside it, then, for rooms still without one, the dominant
-	// record whose point is on its boundary, first room first; anything else is new. The
-	// same-ring pass is absent from that model, so a match shows it changes nothing
-	// without nesting. At most three edges change per step, too few to close a 1 m loop
-	// of new walls inside a room, so no room can lie strictly inside a stored ring either.
+	// that changes no room). After every reconcile each room must hold the identity the
+	// point passes alone pick: the dominant record whose stored point is strictly inside
+	// it, then, for rooms still without one, the dominant record whose point is on its
+	// boundary, first room first; anything else is new. The same-ring pass is absent from
+	// that model, so a match shows that without nesting it never changes what the point
+	// passes pick. Edits that would leave a room with a hole are undone before the
+	// reconcile, because nesting is where the two part: an inner room built round the
+	// outer room's stored point takes it in the model, while the same-ring pass keeps it
+	// with the unchanged outer room.
 	constexpr std::int64_t kGrid = 5;
 	constexpr std::int64_t kCell = 1000;
 	constexpr std::int64_t kStride = kGrid * kCell + 1500;
@@ -757,4 +763,49 @@ TEST(RoomDetectionSystem, IdentityWithoutNestingIsWhatTheStoredPointsAlonePick) 
 	EXPECT_GT(inheritedWithNewRing, 35u);
 	EXPECT_GT(retiredRooms, 50u);
 	EXPECT_GT(formedCount, 60u);
+}
+
+TEST(RoomDetectionSystem, FreeUClosedWithASpurToTheOuterWallFollowsTheStoredPoint) {
+	// Two edges in one step and no hole at any step, so the random history's filter keeps
+	// this one: the closed U joins the outer room's wall group, and the room it makes round
+	// the stored point takes the outer record, as the point passes alone pick.
+	World			  world;
+	ConstructionWorld cw;
+	auto&			  sys = world.registerSystem<RoomDetectionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	std::vector<EntityID> formed;
+	sys.setRoomFormedCallback([&formed](EntityID room) { formed.push_back(room); });
+
+	buildSquare(cw, {0, 0}, 5000);
+	sys.update(0.0f);
+	ASSERT_EQ(sys.rooms().size(), 1u);
+	const Vec2i64 storedPoint = sys.rooms()[0].rep;
+	const Vec2i64 low{storedPoint.x - 500, storedPoint.y - 500};
+	const Vec2i64 high{storedPoint.x + 500, storedPoint.y + 500};
+
+	buildWall(cw, low, {high.x, low.y});
+	buildWall(cw, {high.x, low.y}, high);
+	buildWall(cw, high, {low.x, high.y});
+	sys.update(0.0f);
+	ASSERT_EQ(sys.rooms().size(), 1u);
+	ASSERT_EQ(sys.rooms()[0].rep, storedPoint);
+	ASSERT_TRUE(sys.rooms()[0].holes.empty());
+
+	buildWall(cw, {low.x, high.y}, low);
+	buildWall(cw, {0, storedPoint.y}, {low.x, storedPoint.y});
+	sys.update(0.0f);
+
+	ASSERT_EQ(sys.rooms().size(), 2u);
+	const RoomDetectionSystem::RoomRecord* outerRecord = recordWithRingArea(sys, 24.0);
+	const RoomDetectionSystem::RoomRecord* innerRecord = recordWithRingArea(sys, 1.0);
+	ASSERT_NE(outerRecord, nullptr);
+	ASSERT_NE(innerRecord, nullptr);
+	EXPECT_TRUE(outerRecord->holes.empty());
+	EXPECT_EQ(innerRecord->roomId, 1u);
+	EXPECT_EQ(innerRecord->name, "Room 1");
+	EXPECT_EQ(outerRecord->roomId, 2u);
+	EXPECT_EQ(outerRecord->name, "Room 2");
+	ASSERT_EQ(formed.size(), 2u);
+	EXPECT_EQ(formed[1], outerRecord->entity);
 }

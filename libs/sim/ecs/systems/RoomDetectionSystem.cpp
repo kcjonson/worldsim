@@ -40,28 +40,6 @@ namespace ecs {
 			return false;
 		}
 
-		// Every point of `inner`, edges included, lies strictly inside `outer`: all its
-		// vertices are Inside, and no edge of one meets an edge of the other.
-		bool ringStrictlyInside(const geometry::Ring& inner, const geometry::Ring& outer) {
-			for (const geometry::Vec2i64& v : inner) {
-				if (geometry::pointInPolygon(v, outer) != geometry::PointInPolygon::Inside) {
-					return false;
-				}
-			}
-			const std::size_t innerCount = inner.size();
-			const std::size_t outerCount = outer.size();
-			for (std::size_t i = 0; i < innerCount; ++i) {
-				for (std::size_t k = 0; k < outerCount; ++k) {
-					const geometry::SegmentIntersection meet =
-						geometry::intersectSegments(inner[i], inner[(i + 1) % innerCount], outer[k], outer[(k + 1) % outerCount]);
-					if (meet.relation != geometry::SegmentRelation::Disjoint) {
-						return false;
-					}
-				}
-			}
-			return true;
-		}
-
 	} // namespace
 
 	void RoomDetectionSystem::update(float /*deltaTime*/) {
@@ -94,14 +72,6 @@ namespace ecs {
 		// fallback gives the rep to the first face (canonical order) that still has
 		// no inheritor, so exactly one side keeps the id/name.
 		//
-		// Neither point pass gives a record to a face whose ring lies strictly inside
-		// the record's stored ring: that face is a room built inside the record's
-		// room, never its successor, even when it was built round the stored point.
-		// A record whose point such a face took from it goes, last, to the largest
-		// unmatched face around it (one not strictly inside its ring whose own point
-		// lies in the record's stored room), so the outer room keeps its id/name when
-		// its ring changes in the same edit that builds the inner room.
-		//
 		// Limitation: if a room's shape changes enough that its old rep falls outside
 		// every new face, identity resets.
 		const std::size_t		 faceCount = faces.size();
@@ -129,10 +99,10 @@ namespace ecs {
 				if (recordClaimed[ri]) {
 					continue;
 				}
-				const RoomRecord& rec = roomRecords[ri];
-				if (construction::pointInRoom(rec.rep, face.ring, face.holes) != want || ringStrictlyInside(face.ring, rec.ring)) {
+				if (construction::pointInRoom(roomRecords[ri].rep, face.ring, face.holes) != want) {
 					continue;
 				}
+				const RoomRecord& rec = roomRecords[ri];
 				if (best == std::numeric_limits<std::size_t>::max() || rec.areaDoubled > bestArea ||
 					(rec.areaDoubled == bestArea && rec.roomId < bestId)) {
 					best = ri;
@@ -154,36 +124,6 @@ namespace ecs {
 		for (std::size_t fi = 0; fi < faceCount; ++fi) {
 			if (inheritedRecord[fi] == std::numeric_limits<std::size_t>::max()) {
 				claimBest(fi, geometry::PointInPolygon::OnBoundary);
-			}
-		}
-
-		for (std::size_t ri = 0; ri < roomRecords.size(); ++ri) {
-			const RoomRecord& rec = roomRecords[ri];
-			if (recordClaimed[ri]) {
-				continue;
-			}
-			bool pointTakenByInnerRoom = false;
-			for (std::size_t fi = 0; fi < faceCount && !pointTakenByInnerRoom; ++fi) {
-				pointTakenByInnerRoom = geometry::pointInPolygon(rec.rep, faces[fi].ring) != geometry::PointInPolygon::Outside &&
-										ringStrictlyInside(faces[fi].ring, rec.ring);
-			}
-			if (!pointTakenByInnerRoom) {
-				continue;
-			}
-			std::size_t best = std::numeric_limits<std::size_t>::max();
-			for (std::size_t fi = 0; fi < faceCount; ++fi) {
-				if (inheritedRecord[fi] != std::numeric_limits<std::size_t>::max() ||
-					(best != std::numeric_limits<std::size_t>::max() && faces[fi].areaDoubled <= faces[best].areaDoubled)) {
-					continue;
-				}
-				if (construction::pointInRoom(faces[fi].representativePoint, rec.ring, rec.holes) == geometry::PointInPolygon::Inside &&
-					!ringStrictlyInside(faces[fi].ring, rec.ring)) {
-					best = fi;
-				}
-			}
-			if (best != std::numeric_limits<std::size_t>::max()) {
-				inheritedRecord[best] = ri;
-				recordClaimed[ri] = true;
 			}
 		}
 
