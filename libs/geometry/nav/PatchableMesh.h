@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <map>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -55,7 +56,12 @@ namespace geometry::nav {
 		Vec2i64					  lo;
 		Vec2i64					  hi;
 		std::vector<std::int32_t> edgeIds; // per outline edge, its id in the edge index
-		bool					  live = false;
+		RingEdgeBoxes			  edgeBoxes; // a bounds ring's; empty for a blocked one
+		// A bounds ring's boundary intervals now, edge after edge: edge e's run starts at
+		// intervalStart[e] and ends where edge e + 1's starts. Empty for a blocked ring.
+		std::vector<GroundInterval> intervals;
+		std::vector<std::uint32_t>	intervalStart;
+		bool						live = false;
 	};
 
 	struct RingMove {
@@ -226,6 +232,9 @@ namespace geometry::nav {
 			// space; an id in several cells the box overlaps is visited once per cell.
 			template <typename Visit> void forEachInBox(const Vec2i64& lo, const Vec2i64& hi, std::int64_t scale, Visit visit) const;
 
+			// forEachInBox at mesh scale, each id visited once, where forEachInBox first visits it.
+			template <typename Visit> void forEachInBoxOnce(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const;
+
 			// Visits the ids whose box holds p (in `scale` times mesh space), finest level
 			// first, until `visit` returns true. Each comes up once.
 			template <typename Visit> void forEachAtPoint(const Vec2i64& p, std::int64_t scale, Visit visit) const;
@@ -325,7 +334,10 @@ namespace geometry::nav {
 		// The half-edges a registered ring edge lies under.
 		const std::vector<std::int32_t>& piecesOf(const EdgeSource& s) const;
 		// The live bounds rings whose boxes meet the box.
-		void groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const;
+		void	   groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const;
+		GroundRing groundOf(RingId ring) const;
+		// A live bounds edge's boundary intervals as the registry holds them.
+		std::span<const GroundInterval> intervalsOf(const EdgeSource& source) const;
 		// Whether the edge's pieces on the mesh run end to end, from one of `ends` to another
 		// and through no other: every one of `ends` meets an odd number of pieces and every
 		// other point an even number. `ends` holds each end once; `pieceList` (the edge's

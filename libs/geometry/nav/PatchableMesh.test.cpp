@@ -3362,7 +3362,9 @@ namespace {
 	// interval, or within 2 mm of two ring edges (a crossing, or two boundary intervals'
 	// pieces rounding laid on one segment): no dissolved stretch leaves a vertex.
 	::testing::AssertionResult noVertexInsideTheUnionBelongsToNothing(const PatchableMesh& mesh, const Model& model) {
-		std::vector<GroundRing> ground;
+		std::vector<GroundRing>	   ground;
+		std::vector<RingEdgeBoxes> edgeBoxes;
+		edgeBoxes.reserve(model.size());
 		std::set<Vec2i64>		corners;
 		std::set<Vec2i64>		blockedCorners;
 		for (const auto& [id, poly] : model) {
@@ -3370,7 +3372,8 @@ namespace {
 			if (poly.blocked) {
 				blockedCorners.insert(poly.ring.begin(), poly.ring.end());
 			} else {
-				ground.push_back(groundRing(poly.ring, id));
+				edgeBoxes.push_back(ringEdgeBoxes(poly.ring));
+				ground.push_back(groundRing(poly.ring, edgeBoxes.back(), id));
 			}
 		}
 		std::set<Vec2i64>			intervalEnds;
@@ -3496,9 +3499,12 @@ namespace {
 	}
 
 	std::vector<GroundInterval> boundariesOf(const std::vector<std::vector<Vec2i64>>& outlines, std::size_t ring, std::int32_t edge) {
-		std::vector<GroundRing> ground;
+		std::vector<GroundRing>	   ground;
+		std::vector<RingEdgeBoxes> edgeBoxes;
+		edgeBoxes.reserve(outlines.size());
 		for (std::size_t i = 0; i < outlines.size(); ++i) {
-			ground.push_back(groundRing(outlines[i], static_cast<RingId>(i)));
+			edgeBoxes.push_back(ringEdgeBoxes(outlines[i]));
+			ground.push_back(groundRing(outlines[i], edgeBoxes.back(), static_cast<RingId>(i)));
 		}
 		GroundBoundaryScratch		scratch;
 		std::vector<GroundInterval> out;
@@ -3554,9 +3560,12 @@ TEST(PatchableMesh, GroundBoundariesHandleEveryContact) {
 // Ground from the parity flood over the arranged boundary intervals is "inside any ground
 // outline" at every triangle's centroid, read exactly as validate reads it, over outlines
 // that touch, nest, share sides either way, and cross only at lattice points (so nothing
-// is rounded): axis-aligned rectangles and diamonds on a coarse grid.
+// is rounded): axis-aligned rectangles, diamonds, and staircases of 17 to 70 edges (so
+// groundBoundaries reads them through several runs of edge boxes, the last one short) on a
+// coarse grid.
 TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
-	for (std::uint32_t seed = 1; seed <= 60; ++seed) {
+	int severalRuns = 0; // rings of more than two runs of edge boxes, the last one short
+	for (std::uint32_t seed = 1; seed <= 120; ++seed) {
 		std::mt19937 rng(seed);
 		Model		 model;
 		const int	 count = static_cast<int>(between(rng, 2, 6));
@@ -3564,7 +3573,40 @@ TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
 			const std::int64_t x = 2 * between(rng, 0, 8);
 			const std::int64_t y = 2 * between(rng, 0, 8);
 			std::vector<Vec2i64> ring;
-			if (pick(rng, 3) == 0) {
+			const std::uint64_t	 kind = pick(rng, 4);
+			if (kind >= 2) {
+				// x-monotone: a floor and a ceiling step by column, apart at every column edge.
+				const std::int64_t	columns = between(rng, 5, 18);
+				std::vector<std::int64_t> floors;
+				std::vector<std::int64_t> ceilings;
+				for (std::int64_t column = 0; column < columns; ++column) {
+					const std::int64_t floor   = 2 * between(rng, -3, 3);
+					const std::int64_t ceiling = floor + 2 * between(rng, 2, 5);
+					floors.push_back(floor);
+					ceilings.push_back(ceiling);
+				}
+				for (std::int64_t column = 0; column + 1 < columns; ++column) {
+					const std::size_t here = static_cast<std::size_t>(column);
+					const std::int64_t clear = std::max(floors[here], floors[here + 1]) + 2;
+					ceilings[here]			 = std::max(ceilings[here], clear);
+					ceilings[here + 1]		 = std::max(ceilings[here + 1], clear);
+				}
+				for (std::int64_t column = 0; column < columns; ++column) {
+					const std::size_t here = static_cast<std::size_t>(column);
+					ring.push_back({x + 2 * column, y + floors[here]});
+					ring.push_back({x + 2 * column + 2, y + floors[here]});
+				}
+				for (std::int64_t column = columns - 1; column >= 0; --column) {
+					const std::size_t here = static_cast<std::size_t>(column);
+					ring.push_back({x + 2 * column + 2, y + ceilings[here]});
+					ring.push_back({x + 2 * column, y + ceilings[here]});
+				}
+				ring.erase(std::unique(ring.begin(), ring.end()), ring.end());
+				if (ring.front() == ring.back()) {
+					ring.pop_back();
+				}
+				severalRuns += ring.size() > 2 * kRingEdgeRun && ring.size() % kRingEdgeRun != 0 ? 1 : 0;
+			} else if (kind == 0) {
 				const std::int64_t r = 2 * between(rng, 1, 4);
 				ring				 = {{x, y - r}, {x + r, y}, {x, y + r}, {x - r, y}};
 			} else {
@@ -3607,6 +3649,7 @@ TEST(PatchableMesh, GroundBoundariesAgreeWithContainmentAtEverySample) {
 			ASSERT_EQ(flooded, any) << "seed " << seed << " sample (" << sample3.x << ", " << sample3.y << ") in 3x space" << describe(model);
 		}
 	}
+	EXPECT_GT(severalRuns, 40);
 }
 
 TEST(PatchableMesh, OverlappingSquaresInEveryOrder) {
@@ -3837,6 +3880,7 @@ TEST(PatchableMesh, LimitInsideUnionAddsNothing) {
 	Harness h;
 	EXPECT_FALSE(h.mesh.groundCovers(rect(0, 0, 1000, 1000))) << "no ground";
 	h.add(bounds(rect(0, 0, 10000, 10000)));
+	EXPECT_FALSE(h.mesh.groundCovers(rect(0, 0, kMaxGroundExtentMm, 1000))) << "wider than crossings order exactly";
 	h.add(bounds(limitPolygonOfCircumradius({12000, 5000}, 5500)));
 	h.add(blocked(rect(3000, 3000, 6000, 6000), kWater, true));
 	for (const std::vector<Vec2i64>& frame : {rect(20000, 0, 30000, 3000), rect(20000, 7000, 30000, 10000), rect(20000, 0, 23000, 10000), rect(27000, 0, 30000, 10000)}) {

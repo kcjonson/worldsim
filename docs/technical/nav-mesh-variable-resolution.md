@@ -346,7 +346,7 @@ The mesh keeps three things to make it possible:
 - **A ring registry.** Every ring in the mesh, under a stable id, with its original outline, its class, and its tags.
 - **Sources on each constrained edge.** The list of (ring, which edge of that ring) that put the edge there. A piece of edge two rings share lists both.
 - **A cover set on each triangle.** The set of rings the triangle lies inside, stored once and shared by every triangle with the same set. Floor, water, wall, tree, and door tags are computed from the set by the rule the builder uses today (the smallest solid ring wins; water goes by nesting parity), so that rule exists in one place. Ground outlines (visibility limits) do not appear by name: the cover holds one ground entry (`kGroundToken`), flipped by parity at each kept ground piece. That is exact because the kept ground pieces are the union's boundary, each kept once. Blocked rings such as water keep their ids, so an island in a lake is ground, lake and island, and floor by parity.
-- **Boundary intervals on each ground edge.** A ground outline's edge is input only where ground differs across it: its boundary intervals, from `groundBoundaries` in `NavMesh.h`, which orders the edge's crossings with every nearby ground edge exactly (Int128) and reads each other outline's inside flag just off the edge's outer side. The rest of the edge is dissolved: no constraint, no mesh edge, no vertex. Where two ground edges run collinear the same way, the shared stretch is input once, owned by the lower `EdgeSource`, and passes to the other edge when its owner is removed; a shared side run the opposite way has ground on both sides and dissolves on both. An interval end is the crossing of two input segments rounded by the arrangement's own rounding, so the patch and a build from scratch make the same vertex. Blocked rings never dissolve. `buildNavMesh` and the patch path share this rule, so a patched mesh equals a build from scratch.
+- **Boundary intervals on each ground edge.** A ground outline's edge is input only where ground differs across it: its boundary intervals, from `groundBoundaries` in `NavMesh.h`, which orders the edge's crossings with every nearby ground edge exactly (Int128) and reads each other outline's inside flag just off the edge's outer side. The rest of the edge is dissolved: no constraint, no mesh edge, no vertex. Where two ground edges run collinear the same way, the shared stretch is input once, owned by the lower `EdgeSource`, and passes to the other edge when its owner is removed; a shared side run the opposite way has ground on both sides and dissolves on both. An interval end is the crossing of two input segments rounded by the arrangement's own rounding, so the patch and a build from scratch make the same vertex. Blocked rings never dissolve. `buildNavMesh` and the patch path share this rule, so a patched mesh equals a build from scratch. The registry holds each ground edge's intervals as the patch that added the ring computed them, or the last patch to classify the edge since, so a patch computes only the intervals after it, and `groundBoundaries` reads another outline through a tree of boxes over runs of 16 of its edges, skipping runs clear of the edge's line and counting the crossings of runs wholly behind its start by their two ends.
 
 The patch:
 
@@ -828,6 +828,14 @@ The landing (`BM_Landing`): 122.7 ms at load, of which the patch job is 118 (pat
 Hanging water (`BM_HangingWater`, per retake, mean / p99 ms, with water against without): beside a
 lake 0.33 / 0.53 against 0.11 / 0.16; inside it 0.52 / 0.77 against 0.14 / 0.15.
 
+Rings over one spot (`BM_PatchOverRings` in `PatchableMesh.bench.cpp`, 2026-11-14, both load checks
+`idle`): a small ground patch where K limits of 46 m round a walk overlap costs 0.17 / 0.34 ms (mean,
+K 256 / 1,024; 0.20 / 0.44 before WOR-867 kept each ground edge's intervals in the registry and read
+rings through edge boxes); where every ring passes the spot, as beams of sight through a gap do,
+1.2 / 7.2 ms against 7.2 / 257. The limit walk at the 4 m step, the landing and hanging water measured even with
+`main` across that change, back to back, both checks `idle`; many movers came out within 1.5% either
+way over two runs, the nav thread's mean a little up and its worst ticks a little down. The limit walk at a 16 m step in dense ground read 3 to 4% slower in two pairs (one with both checks `idle`, one `mostly-idle`), unconfirmed. The edge boxes and held intervals add about 120 B a ring slot in the dense limit walk (270 KB over 2,300 slots for 300 m, about 0.9 MB a kilometre against the registry's 36).
+
 Open ground with no placed objects (a swept square, machine load 2 to 10%): the limit patch is
 0.22 / 0.30 ms (mean / p99) at 500 m across and 0.26 / 0.36 / 0.48 ms (mean / p99 / max) at
 1 km, but what grows with the region is unbounded: the longest triangle edge is 552 m, then
@@ -852,6 +860,7 @@ ground, about 36 MB in dense ground, nearly all of it the placed obstacles.
 - A landing limit whose chunks unload before it lands is never dropped, so a goal inside it waits.
 - A player move order onto unseen ground goes to the edge of seen ground only, one order to one point; the ground beyond opens as the colonist arrives and the player orders again. Planning on toward the click is route search past meshed ground, not built.
 - The path query does not gate the edge between adjacent start and goal triangles (1.1).
+- A ground patch's setup reads every ground ring whose box meets each ground edge it classifies, about 50 to 100 ns a ring through its edge boxes, so it still grows with the rings over the spot where they all pass it; every ring that ever extended the union stays registered. Compaction (dropping or merging rings the union no longer needs) would bound that, at the cost of edge sources and so provenance changing; not built.
 
 ### 4.12 Geography mesh (not built)
 
