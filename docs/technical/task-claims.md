@@ -913,9 +913,10 @@ claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter`
 - Workers: the task panel's "Working" status names every colonist whose current task serves the row,
   in view order, one or two names joined with ", " and more as the first two then "+N" ("Alice, Bob
   +2"). A cut or a haul serves the goal it was picked through (a carry-in and a cut's deposit leg name
-  their root); a build, craft, or placement serves the entity it works, so the Build umbrella names its
-  builders, a Craft row its crafter, and a clear row its clearers. A suspended record is not current
-  work.
+  their root); a build, teardown, craft, or placement serves the goal of its own type whose
+  destination it works, so the Build umbrella names its builders, a Deconstruct row those tearing
+  its structure down, a Craft row its crafter, and a clear row its clearers. A suspended record is
+  not current work.
 - Quantities: a cut or haul row toward one item adds what is on its way toward its root and what the
   root still needs beyond that. On the way is the claim index's in-flight for the root and item
   (`ClaimIndex::inFlight`, excluding no one), so it is what the AI counts as coming: a sleeping
@@ -930,8 +931,13 @@ claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter`
   available, held by another colonist, or blocked only by the colonist's own carry. A cut or a haul is
   for the goal it was picked through; a build, craft, or placement is for the goal of its type whose
   destination it works, the goal the Working status names it under. A teardown is counted the same way
-  toward a Deconstruct goal, but the panel and the tab list only Harvest, Haul, Build, Craft, and
-  PlacePackaged goals, so a teardown shows on neither.
+  toward the Deconstruct goal on its structure.
+- Teardown: a structure ordered torn down shows one "Deconstruct structure" row, its Deconstruct goal,
+  from the next ConstructionSystem pass after the order (it creates and retires the goal) until the
+  work is done; a Deconstruct goal whose blueprint is gone or has no work left is not listed, even
+  while the goal still stands. It reads "Blocked" while something still stands on it (the cascade gate), "Deconstructing"
+  with its workers and how much is torn down ("Alice (25%)"), or "Ready to deconstruct" with the
+  percent. A site demolished before any build work was done is removed at once and never shows one.
 - The panel lists only goals with something to do (`ColonyGoalWork::hasWork`): a storage umbrella or
   stocking cut shows only while some colonist was offered work toward it or is working it. A full box, a box that wants
   an item nobody knows a loose source of, a box with room for a category nobody has any of, and a
@@ -941,7 +947,7 @@ claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter`
   way), or Regrowing (the wait is regrowth) one. It comes after "Blocked", "Waiting (no source found)",
   and "Working", and before "Available" and "Unassigned". The other statuses are "Blocked" (with
   landed/required materials for a craft), "Waiting (no source found)", "Needs materials", "Building",
-  and "Ready to build" for a site, "Working", "Available" (detail "far"), and "Unassigned".
+  and "Ready to build" for a site, "Deconstructing" and "Ready to deconstruct" for a teardown, "Working", "Available" (detail "far"), and "Unassigned".
 - Per-colonist task list: the dossier's Known work tab shows the panel's rows for the goals that
   colonist works or its last decision offered work toward, measured from the colonist, refreshed on the
   panel's interval (5 Hz) and redrawn when a row's status or detail changes.
