@@ -236,9 +236,9 @@ namespace ecs {
 		[[nodiscard]] std::vector<glm::vec2> foundationBuilderSpots(const Structure& structure) const;
 
 		/// How far into the footprint a builder spot sits from the ring: a colonist's half-width
-		/// (pathingClearanceMeters 0.7 / 2) plus margin, so one standing there is wholly on the
-		/// cleared floor, and no more than half of segmentClearanceMeters (1.0), so on any foundation
-		/// the validator accepts an inset from one edge never crosses a non-adjacent one.
+		/// (pathingClearanceMeters 0.7 / 2) plus a margin, so a builder at a spot in the middle of an
+		/// edge stands clear of it. Near a sharp corner a spot can still sit close to the other edge,
+		/// and on a footprint too narrow for it the inset is dropped and the spot stays on the ring.
 		static constexpr float kBuilderSpotInsetMeters = 0.5F;
 
 		/// Drive a demolishing blueprint's Deconstruct goal. Mirrors ensureUmbrellaGoal but the
