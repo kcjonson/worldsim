@@ -3192,19 +3192,20 @@ namespace ecs {
 		// deciding in this update (SharedWork::builderSpotStand).
 		const auto chooseBuilderSpot = [&](EvaluatedOption& option, std::size_t siteIndex, std::span<const glm::vec2> spots) {
 			const ClaimTarget blueprint{.kind = TargetKind::Entity, .key = option.buildBlueprintEntityId};
-			const bool		  holdsSpot = currentTask.type == TaskType::Build && currentTask.buildBlueprintEntityId == option.buildBlueprintEntityId &&
+			const bool		  holdsSpot = currentTask.type == TaskType::Build &&
+								   currentTask.buildBlueprintEntityId == option.buildBlueprintEntityId &&
 								   currentTask.builderSlot < spots.size();
-			m_builderSpotOrder.clear();
+			builderSpotOrder.clear();
 			for (std::size_t spot = 0; spot < spots.size(); ++spot) {
 				const auto slot = static_cast<uint16_t>(spot);
 				if (m_claims.slotHolder(blueprint, slot, self).has_value()) {
 					continue;
 				}
 				const float distance = holdsSpot && slot == currentTask.builderSlot ? -1.0F : glm::distance(position.value, spots[spot]);
-				m_builderSpotOrder.emplace_back(distance, slot);
+				builderSpotOrder.emplace_back(distance, slot);
 			}
-			std::sort(m_builderSpotOrder.begin(), m_builderSpotOrder.end());
-			for (const auto& [distance, slot] : m_builderSpotOrder) {
+			std::sort(builderSpotOrder.begin(), builderSpotOrder.end());
+			for (const auto& [distance, slot] : builderSpotOrder) {
 				glm::vec2 stand = spots[slot];
 				if (haveMesh) {
 					const std::optional<glm::vec2> served = m_sharedWork.builderSpotStand(siteIndex, slot, agentRadius, *m_navSystem);
@@ -3259,10 +3260,10 @@ namespace ecs {
 				// Deconstruct. Their stored target is a CENTER that can sit inside a tree's collider or a
 				// wall, which no route ends in. A harvest stands just outside the target's collider on
 				// the colonist's side, read from the placement data so it is the same spot on camera and
-				// off; Build (on a structure with no builder spots) and Deconstruct take the nearest walkable point. Any other target (a pile, a
-				// need source, a box, a station) keeps its own position on the option and the task, and is
-				// moved to a stand point beside the placed obstacle it lies in when its route is asked
-				// (requestRoute); with no stand point there, it is no source.
+				// off; Build (on a structure with no builder spots) and Deconstruct take the nearest walkable
+				// point. Any other target (a pile, a need source, a box, a station) keeps its own position on the
+				// option and the task, and is moved to a stand point beside the placed obstacle it lies in when
+				// its route is asked (requestRoute); with no stand point there, it is no source.
 				const bool snapEligible = option.taskType == TaskType::Harvest ||
 										  option.taskType == TaskType::Build || option.taskType == TaskType::Deconstruct;
 				if (haveMesh && needsTarget && snapEligible) {
@@ -3399,7 +3400,9 @@ namespace ecs {
 		// targetPosition is the work slot: a foundation's builder spot's stand point, else the centre's.
 		if (selected->taskType == TaskType::Build || selected->taskType == TaskType::Deconstruct) {
 			task.buildBlueprintEntityId = selected->buildBlueprintEntityId;
-			task.builderSlot = selected->builderSlot;
+			if (selected->taskType == TaskType::Build) {
+				task.builderSlot = selected->builderSlot;
+			}
 		}
 
 		// Copy hauling-specific fields for Haul tasks

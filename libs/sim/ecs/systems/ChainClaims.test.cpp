@@ -220,10 +220,10 @@ namespace ecs::test {
 		Site buildSite(glm::vec2 centre, std::vector<glm::vec2> spots) {
 			const EntityID blueprint = world->createEntity();
 			world->addComponent<Position>(blueprint, Position{centre});
-			StructureBlueprint bp;
-			bp.phase = StructureBlueprint::BuildPhase::UnderConstruction;
-			bp.workTotal = 1000.0F;
-			world->addComponent<StructureBlueprint>(blueprint, std::move(bp));
+			StructureBlueprint structure;
+			structure.phase = StructureBlueprint::BuildPhase::UnderConstruction;
+			structure.workTotal = 1000.0F;
+			world->addComponent<StructureBlueprint>(blueprint, std::move(structure));
 
 			GoalTask umbrella;
 			umbrella.type = TaskType::Build;
@@ -237,7 +237,8 @@ namespace ecs::test {
 
 		/// Who holds builder spot `slot` on `blueprint` in the claim index, or kInvalidEntity.
 		EntityID spotHolder(EntityID blueprint, uint16_t slot) const {
-			const auto holder = ai->claimIndex().slotHolder({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(blueprint)}, slot, {});
+			const auto holder =
+				ai->claimIndex().slotHolder({.kind = TargetKind::Entity, .key = static_cast<uint64_t>(blueprint)}, slot, {});
 			return holder.has_value() ? holder->colonist : kInvalidEntity;
 		}
 

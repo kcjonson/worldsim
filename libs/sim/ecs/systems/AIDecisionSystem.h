@@ -542,7 +542,7 @@ private:
 
 	/// A foundation's free builder spots in the order the deciding colonist tries them (distance, slot).
 	/// Reused across colonists.
-	std::vector<std::pair<float, uint16_t>> m_builderSpotOrder;
+	std::vector<std::pair<float, uint16_t>> builderSpotOrder;
 
 	/// The deciding colonist's remembered work sources, reused across colonists
 	WorkSources m_workSources;
