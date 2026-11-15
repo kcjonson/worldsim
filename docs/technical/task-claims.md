@@ -472,12 +472,18 @@ on that blueprint first, so a builder mid-walk or mid-work never hops, then the 
 task holds their slot) nearest first. A spot serves when `nearestPathablePoint(spot, agentRadius)`
 gives a stand point less than half the distance to the nearest other spot away from it, so two spots
 never share one, and the colonist can get to that point; one that doesn't serve is passed over for the
-next, in the same decision, and the first that serves is taken. The task carries the spot's index
-(`Task::builderSlot`), its target is the stand point, and its claims hold `Claim::slot(blueprint,
-builderSlot)`. With no mesh yet, the spot itself is the target and no test is asked. A builder deciding
-again keeps the task only for the same spot (`isSameTask` compares the index), so a stored index the
-goal no longer has (it left Available and came back with fewer spots) is never read and reads as a
-fresh pick.
+next, in the same decision, and the first that serves is taken. A lone spot has no other spot, so its
+stand point may lie any distance off; at the shipped values (one spot, plus one per whole 10 m2)
+every foundation under 10 m2 has exactly one spot, so that is a common case. The stand point depends
+on the spot and the colonist's radius, not on who asks, so it is worked out the first time a colonist
+of that radius needs it in an update and shared with every colonist of that radius deciding later in
+the same update (`SharedWork::builderSpotStand`); whether he can get to it stays his own test. The
+task carries the spot's index (`Task::builderSlot`), its target is the stand point, and its claims
+hold `Claim::slot(blueprint, builderSlot)`. With no mesh yet, the spot itself is the target and no
+test is asked. A builder deciding again keeps the task only for the same spot (`isSameTask` compares the
+index), and his own spot comes first only while its index is one the goal has now, so a stored index
+the goal no longer has (it left Available and came back with fewer spots) is never read and the
+decision is a fresh pick.
 
 With every spot held by others the option reads Reserved and names a holder, as a taken station does,
 and the colonist takes other work. With spots free but none serving him it is NoSource. The slot is
