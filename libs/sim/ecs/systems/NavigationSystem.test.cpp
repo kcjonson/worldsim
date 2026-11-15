@@ -511,7 +511,8 @@ TEST_F(NavigationSystemTest, DoorBesideCornerRoutesThroughDoorNotFlanks) {
 		EXPECT_GE(crossings.front(), 0.35F + kAgentRadius - 0.01F);
 		EXPECT_LE(crossings.front(), 1.25F - kAgentRadius + 0.01F);
 	}
-	for (const glm::vec2 wall : {glm::vec2{-0.05F, -0.05F}, glm::vec2{0.05F, 0.0F}, glm::vec2{0.2F, 0.0F}, glm::vec2{0.3F, 0.05F}, glm::vec2{2.5F, 0.0F}}) {
+	for (const glm::vec2 wall :
+		 {glm::vec2{-0.05F, -0.05F}, glm::vec2{0.05F, 0.0F}, glm::vec2{0.2F, 0.0F}, glm::vec2{0.3F, 0.05F}, glm::vec2{2.5F, 0.0F}}) {
 		EXPECT_TRUE(wallAt(sys, wall)) << "(" << wall.x << ", " << wall.y << ")";
 	}
 }
