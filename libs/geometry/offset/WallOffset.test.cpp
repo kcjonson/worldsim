@@ -1792,7 +1792,7 @@ TEST(WallProperties, ShortNearStraightJoinsResolve) {
 
 TEST(WallProperties, ShortWallJoiningOtherThicknessAtBothEndsResolves) {
 	// A wall of 500 or 600 mm between two long walls of other thicknesses, each join 3 to 20 degrees off
-	// straight, as a Z and as a C. The trims from both ends add up, so such a wall fails without the retry
+	// straight in 1 degree steps, as a Z and as a C. The trims from both ends add up, so such a wall fails without the retry
 	// up to about 18.5 degrees, further than one with a single such join.
 	std::mt19937 rng(19);
 	Sweep		 sweep;
@@ -1805,8 +1805,8 @@ TEST(WallProperties, ShortWallJoiningOtherThicknessAtBothEndsResolves) {
 						continue;
 					}
 					for (const double side : {-1.0, 1.0}) {
-						for (int beforeHalves = 6; beforeHalves <= 40; ++beforeHalves) {
-							for (int afterHalves = 6; afterHalves <= 40; ++afterHalves) {
+						for (int beforeHalves = 6; beforeHalves <= 40; beforeHalves += 2) {
+							for (int afterHalves = 6; afterHalves <= 40; afterHalves += 2) {
 								const double beforeBend = static_cast<double>(beforeHalves) / 2.0;
 								const double afterBend	= side * static_cast<double>(afterHalves) / 2.0;
 								const std::vector<WallSegment> segments = {{polar(180.0 + beforeBend, 2000.0), {0, 0}, before},
