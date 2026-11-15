@@ -464,6 +464,12 @@ for an L can be the inner edge that opens onto the notch.
 No claims; any number of colonists may work an UnderConstruction blueprint. Planned: builder slots
 (count, then `slotIndex` positions) come with the builder-cap work.
 
+A site ordered demolished takes no more build work: a Build action on it ends on the next tick it
+would add work, before it could complete, and a builder still walking there starts nothing on arrival.
+Either way the Build task ends and the colonist decides again (`ActionSystem::advanceConstructionWork`
+and `startBuildAction`, the same path a blueprint removed mid-build takes). A builder carries nothing
+for a Build, so nothing is stowed or dropped.
+
 ### Need tasks
 
 Eat records Use on a bush or SourceQuantity of one meal on a pile or box; food already in the pack is
