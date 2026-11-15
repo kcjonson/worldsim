@@ -978,20 +978,37 @@ namespace {
 	// meeting at one miter apex each round about a millimetre from it, and where
 	// they cross over, the polygon's edge between them can reach a little over 2
 	// mm into a band.
-	bool overlapsDeeply(const Ring& a, const Ring& b) {
-		auto deepInside = [](const Vec2i64& p, const Ring& ring) {
-			return pointInPolygon(p, ring) == PointInPolygon::Inside && distanceToRing(p, ring) > 2.5;
+	// How far, in mm, a vertex or an edge midpoint of one ring sits inside the other.
+	double overlapDepth(const Ring& a, const Ring& b) {
+		auto depthInside = [](const Vec2i64& p, const Ring& ring) {
+			return pointInPolygon(p, ring) == PointInPolygon::Inside ? distanceToRing(p, ring) : 0.0;
 		};
+		double deepest = 0.0;
 		for (const auto& [from, into] : {std::pair{&a, &b}, std::pair{&b, &a}}) {
 			for (std::size_t e = 0; e < from->size(); ++e) {
 				const Vec2i64& p = (*from)[e];
 				const Vec2i64& q = (*from)[(e + 1) % from->size()];
-				if (deepInside(p, *into) || deepInside({(p.x + q.x) / 2, (p.y + q.y) / 2}, *into)) {
-					return true;
-				}
+				deepest = std::max({deepest, depthInside(p, *into), depthInside({(p.x + q.x) / 2, (p.y + q.y) / 2}, *into)});
 			}
 		}
-		return false;
+		return deepest;
+	}
+
+	bool overlapsDeeply(const Ring& a, const Ring& b) {
+		return overlapDepth(a, b) > 2.5;
+	}
+
+	// The deepest overlap between any two of a resolution's bands and junction polygons.
+	double deepestOverlap(const WallBands& wb) {
+		std::vector<Ring> tiles = wb.bands;
+		tiles.insert(tiles.end(), wb.junctions.begin(), wb.junctions.end());
+		double deepest = 0.0;
+		for (std::size_t i = 0; i < tiles.size(); ++i) {
+			for (std::size_t k = i + 1; k < tiles.size(); ++k) {
+				deepest = std::max(deepest, overlapDepth(tiles[i], tiles[k]));
+			}
+		}
+		return deepest;
 	}
 
 	// The shared endpoint of a junction's segments.
@@ -2700,6 +2717,11 @@ TEST(WallProperties, NearStraightRetryKeepsEveryAcceptedJoin) {
 	Sweep		 sweep;
 	int			 accepted = 0;
 	int			 rescued  = 0;
+	int			 excused  = 0;
+	double		 worstOverlap = 0.0;
+	std::string	 worstInput;
+	constexpr double kMaxRescuedOverlapMm = 5.0;
+	constexpr double kMaxExcusedShare	  = 0.01;
 	for (const std::vector<WallSegment>& segments : retryInputs()) {
 		const WallBands before = reference::resolveWallBands(segments, kDefaultMiterLimit);
 		const WallBands after  = resolveWallBands(segments, kDefaultMiterLimit);
@@ -2718,8 +2740,19 @@ TEST(WallProperties, NearStraightRetryKeepsEveryAcceptedJoin) {
 		} else if (after.status == OffsetStatus::Ok) {
 			++rescued;
 			problem = checkJoin(segments, rng);
-			if (!problem.empty() && sameWallBands(after, reference::resolveWallBands(segments, 3.0))) {
+			// A rescued join that fails the property checks is accepted only when it is identical to what main itself
+			// draws when it steps that wedge; the flaw (a seam a few millimetres off where a stem meets a stepped
+			// through-run) is main's and is tracked as WOR-877.
+			const bool matchesMainsOwnStepGeometry = sameWallBands(after, reference::resolveWallBands(segments, 3.0));
+			if (!problem.empty() && matchesMainsOwnStepGeometry) {
 				problem.clear();
+				++excused;
+			}
+			// Rescued joins inherit main's few-millimetre overlap at a stepped through-run with a stem.
+			const double overlap = deepestOverlap(after);
+			if (overlap > worstOverlap) {
+				worstOverlap = overlap;
+				worstInput	 = describe(segments, {});
 			}
 		}
 		sweep.check(segments, {}, problem);
@@ -2727,4 +2760,7 @@ TEST(WallProperties, NearStraightRetryKeepsEveryAcceptedJoin) {
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
 	EXPECT_GT(accepted, 0);
 	EXPECT_GT(rescued, 0);
+	EXPECT_LE(worstOverlap, kMaxRescuedOverlapMm) << worstInput;
+	EXPECT_LE(static_cast<double>(excused), kMaxExcusedShare * static_cast<double>(rescued))
+		<< excused << " of " << rescued << " rescued inputs are excused";
 }
