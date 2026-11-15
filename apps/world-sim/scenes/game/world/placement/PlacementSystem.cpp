@@ -123,33 +123,54 @@ namespace world_sim {
 		placementMode.updateGhostPosition({worldPos.x, worldPos.y}, placeable({worldPos.x, worldPos.y}));
 	}
 
+	namespace {
+		// `defName`'s collision outline at `worldPos`, or just `worldPos` when it has no rect or polygon outline.
+		std::vector<glm::vec2> footprintAt(const std::string& defName, Foundation::Vec2 worldPos) {
+			std::vector<glm::vec2> outline;
+			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
+				const assets::CollisionShape& footprint = def->collisionFor(0);
+				if (footprint.type == assets::CollisionShapeType::Rect) {
+					for (const glm::vec2 corner : footprint.rectCornersLocal()) {
+						outline.push_back(corner + glm::vec2{worldPos.x, worldPos.y});
+					}
+				} else if (footprint.type == assets::CollisionShapeType::Polygon) {
+					for (const glm::vec2 point : footprint.pointsMeters) {
+						outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
+					}
+				}
+			}
+			if (outline.empty()) {
+				outline.push_back({worldPos.x, worldPos.y});
+			}
+			return outline;
+		}
+	} // namespace
+
+	bool PlacementSystem::footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const {
+		return navigation != nullptr && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
+	}
+
+	std::optional<glm::vec2> PlacementSystem::installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const {
+		if (navigation == nullptr) {
+			return std::nullopt;
+		}
+		return navigation->findValidPositionNear(stationPos, 1.0F, aim, [&](glm::vec2 candidate) {
+			return footprintBuildableNow(defName, {candidate.x, candidate.y});
+		});
+	}
+
+	bool PlacementSystem::isFurniture(const std::string& defName) {
+		const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+		return def != nullptr && (def->capabilities.craftable.has_value() || def->capabilities.storage.has_value());
+	}
+
 	bool PlacementSystem::placeable(Foundation::Vec2 worldPos) const {
-		// Valid IFF the spot is on an active walkable nav face. The nav mesh owns runtime
-		// walkability; no terrain/world-source read here. No nav system => nothing placeable.
-		if (navigation == nullptr || !navigation->isValidPosition({worldPos.x, worldPos.y})) {
+		const std::vector<glm::vec2> outline = footprintAt(placementMode.selectedDefName(), worldPos);
+		if (navigation == nullptr || !navigation->isAreaBuildableNow(outline)) {
 			return false;
 		}
 		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
-		if (visibility == nullptr) {
-			return true;
-		}
-		std::vector<glm::vec2> outline;
-		if (const auto* def = assets::AssetRegistry::Get().getDefinition(placementMode.selectedDefName()); def != nullptr) {
-			const assets::CollisionShape& footprint = def->collisionFor(0);
-			if (footprint.type == assets::CollisionShapeType::Rect) {
-				for (const glm::vec2 corner : footprint.rectCornersLocal()) {
-					outline.push_back(corner + glm::vec2{worldPos.x, worldPos.y});
-				}
-			} else if (footprint.type == assets::CollisionShapeType::Polygon) {
-				for (const glm::vec2 point : footprint.pointsMeters) {
-					outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
-				}
-			}
-		}
-		if (outline.empty()) {
-			outline.push_back({worldPos.x, worldPos.y});
-		}
-		return visibility->covers(outline);
+		return visibility == nullptr || visibility->covers(outline);
 	}
 
 	bool PlacementSystem::handleClick() {

@@ -89,6 +89,7 @@ add_executable(world-sim
     scenes/game/dev/DevCommandHandler.cpp
     scenes/game/dev/GpuHold.cpp
     scenes/game/dev/GpuHoldCommand.cpp
+    scenes/game/dev/GroundRefusal.cpp
     scenes/game/dev/PointList.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
@@ -165,6 +166,8 @@ if(BUILD_TESTING)
         scenes/game/dev/CameraCommand.test.cpp
         scenes/game/dev/GpuHoldCommand.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
+        scenes/game/dev/GroundRefusal.cpp
+        scenes/game/dev/GroundRefusal.test.cpp
         scenes/game/dev/PointList.cpp
         scenes/game/dev/PointList.test.cpp
         scenes/game/world/MoveOrderGoal.cpp
