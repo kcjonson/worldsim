@@ -1401,6 +1401,13 @@ namespace {
 		std::vector<Vec2i64>		 fieldHi;
 		std::vector<std::uint8_t>	 inMesh;
 		std::vector<RingId>			 fieldIds;
+		RingId						 ringBound = 0; // past every ring id the mesh handed out
+
+		void noteAdded(const PatchReport& report) {
+			for (const RingId ring : report.added) {
+				ringBound = std::max(ringBound, ring + 1);
+			}
+		}
 
 		void setField(std::vector<NavInputPolygon> obstacles) {
 			field = std::move(obstacles);
@@ -1434,6 +1441,7 @@ namespace {
 					r = mesh.applyPatch(obstacles);
 					mesh.refreshWidths();
 				});
+				noteAdded(r);
 				for (std::size_t k = 0; k < which.size(); ++k) {
 					fieldIds[which[k]] = r.added[k];
 				}
@@ -1455,6 +1463,7 @@ namespace {
 			PatchReport	 r;
 			const double patchS	  = secondsOf([&] { r = mesh.applyPatch(adding({NavInputPolygon{outline, false, kProvenanceBorder}})); });
 			const double refreshS = secondsOf([&] { mesh.refreshWidths(); });
+			noteAdded(r);
 			if (stats != nullptr) {
 				stats->patch(r, msOf(patchS), msOf(refreshS));
 			}
@@ -1497,6 +1506,16 @@ namespace {
 			stats.print(label);
 			std::fprintf(stderr, "  first limit: %.0f obstacles in %.3f ms, ground %.3f ms + refresh %.3f ms; mesh %d live triangles at the end\n",
 						 first.obstacles.front(), first.obstacleMs.front(), first.limitMs.front(), first.refreshMs.front(), w.mesh.liveTriangleCount());
+			double heldBytes = 0.0;
+			double ringSlots = 0.0;
+			for (RingId ring = 0; ring < w.ringBound; ++ring) {
+				const RegisteredRing& reg = w.mesh.ring(ring);
+				heldBytes += static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>) + reg.edgeBoxes.boxes.capacity() * sizeof(std::array<Vec2i64, 2>) +
+												 reg.edgeBoxes.levelStart.capacity() * sizeof(std::int32_t) + reg.intervals.capacity() * sizeof(GroundInterval) +
+												 reg.intervalStart.capacity() * sizeof(std::uint32_t));
+				ringSlots += 1.0;
+			}
+			std::fprintf(stderr, "  edge boxes and held intervals %.0f KB over %.0f ring slots (%.0f B a slot)\n", heldBytes / 1024.0, ringSlots, heldBytes / std::max(ringSlots, 1.0));
 			stats.count(state);
 			state.counters["tris"] = w.mesh.liveTriangleCount();
 		}
@@ -2082,11 +2101,22 @@ namespace {
 				overSpot.push_back(over);
 				clean += copy.validate().empty() ? 1 : 0;
 			}
+			// What each ring's edge boxes and held boundary intervals take, headers included,
+			// beside its outline and sample.
+			double heldBytes	= 0.0;
+			double outlineBytes = 0.0;
+			for (std::size_t r = 0; r < count; ++r) {
+				const RegisteredRing& reg = mesh.ring(static_cast<RingId>(r));
+				heldBytes += static_cast<double>(sizeof(RingEdgeBoxes) + 2 * sizeof(std::vector<std::uint32_t>) + reg.edgeBoxes.boxes.capacity() * sizeof(std::array<Vec2i64, 2>) +
+												 reg.edgeBoxes.levelStart.capacity() * sizeof(std::int32_t) + reg.intervals.capacity() * sizeof(GroundInterval) +
+												 reg.intervalStart.capacity() * sizeof(std::uint32_t));
+				outlineBytes += static_cast<double>((reg.polygon.ring.capacity() + reg.sample.ring3.capacity()) * sizeof(Vec2i64));
+			}
 			std::fprintf(stderr,
 						 "[patch over rings] %s K %zu: built in %.0f ms, %d live triangles; rings over the probe mean %.0f; patch ms mean %.3f max %.3f; "
-						 "validate clean %d of %d\n",
+						 "validate clean %d of %d; edge boxes and intervals %.0f KB against outlines and samples %.0f KB\n",
 						 overlap == Overlap::Beams ? "beams" : "limits", count, buildS * 1e3, mesh.liveTriangleCount(), meanOf(overSpot), meanOf(patchMs),
-						 maxOf(patchMs), clean, kProbes);
+						 maxOf(patchMs), clean, kProbes, heldBytes / 1024.0, outlineBytes / 1024.0);
 			state.SetIterationTime(meanOf(patchMs) / 1e3);
 			state.counters["patchMeanMs"] = meanOf(patchMs);
 			state.counters["patchMaxMs"]  = maxOf(patchMs);

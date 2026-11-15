@@ -5,6 +5,7 @@
 // integer from std::mt19937 taken modulo, so a seed gives the same history on every
 // toolchain.
 
+#include "../predicates/Predicates.h"
 #include "LimitPolygon.h"
 #include "PatchableMesh.h"
 
@@ -148,8 +149,8 @@ namespace geometry::nav::testdata {
 	}
 
 	// A beam of sight: an apex and two to five of the limit directions at a reach.
-	inline std::vector<Vec2i64> historyBeam(std::mt19937& rng) {
-		const Vec2i64		 apex  = historyPoint(rng, 9000);
+	inline std::vector<Vec2i64> historyBeam(std::mt19937& rng, std::int64_t spread) {
+		const Vec2i64		 apex  = historyPoint(rng, spread);
 		const std::size_t	 first = historyPick(rng, kLimitSides);
 		const std::size_t	 span  = 1 + historyPick(rng, 4);
 		const std::int64_t	 reach = historyBetween(rng, 3000, 14000);
@@ -161,25 +162,115 @@ namespace geometry::nav::testdata {
 		return ring;
 	}
 
-	// Limits, beams, lattice rectangles and quadrilaterals as ground; small squares and
+	inline std::int64_t historySquareRoot(std::int64_t value) {
+		std::int64_t root = 0;
+		for (std::int64_t step = std::int64_t{1} << 31; step > 0; step >>= 1) {
+			if ((root + step) * (root + step) <= value) {
+				root += step;
+			}
+		}
+		return root;
+	}
+
+	// Whether no two edges of the ring meet but neighbours at their shared corner.
+	inline bool historySimple(const std::vector<Vec2i64>& ring) {
+		const std::size_t corners = ring.size();
+		if (corners < 3) {
+			return false;
+		}
+		for (std::size_t i = 0; i < corners; ++i) {
+			if (ring[i] == ring[(i + 1) % corners]) {
+				return false;
+			}
+			for (std::size_t j = i + 1; j < corners; ++j) {
+				const bool neighbours = j == i + 1 || (i == 0 && j == corners - 1);
+				const SegmentRelation relation = intersectSegments(ring[i], ring[(i + 1) % corners], ring[j], ring[(j + 1) % corners]).relation;
+				if (relation == SegmentRelation::Disjoint || (neighbours && relation == SegmentRelation::EndpointTouch)) {
+					continue;
+				}
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// About `count` corners in angular order round `centre`, at radii between `nearest` and
+	// `farthest`: most on the rim at `farthest`, runs pulled in as a shadow pulls a sight
+	// polygon in. Corners in one direction from the centre are dropped, so the ring is
+	// star-shaped round it; one with a gap of half a turn or more is drawn again.
+	inline std::vector<Vec2i64> historyStar(std::mt19937& rng, const Vec2i64& centre, std::size_t count, std::int64_t nearest, std::int64_t farthest) {
+		for (;;) {
+			std::vector<Vec2i64> directions;
+			for (std::size_t i = 0; i < count; ++i) {
+				const std::int64_t towardX = historyBetween(rng, -1000, 1000);
+				const std::int64_t towardY = historyBetween(rng, -1000, 1000);
+				if (towardX != 0 || towardY != 0) {
+					directions.push_back({towardX, towardY});
+				}
+			}
+			std::vector<Vec2i64> ring;
+			std::int64_t		 radius = farthest;
+			for (const Vec2i64& toward : directions) {
+				if (historyPick(rng, 6) == 0) {
+					radius = radius == farthest ? historyBetween(rng, nearest, farthest - 1) : farthest;
+				}
+				const std::int64_t length = historySquareRoot(toward.x * toward.x + toward.y * toward.y);
+				ring.push_back({centre.x + toward.x * radius / length, centre.y + toward.y * radius / length});
+			}
+			std::sort(ring.begin(), ring.end(), [&](const Vec2i64& first, const Vec2i64& second) { return angleLess(first - centre, second - centre); });
+			ring.erase(std::unique(ring.begin(), ring.end(),
+								   [&](const Vec2i64& first, const Vec2i64& second) { return !angleLess(first - centre, second - centre) && !angleLess(second - centre, first - centre); }),
+					   ring.end());
+			bool everyGapUnderHalf = ring.size() >= 3;
+			for (std::size_t i = 0; i < ring.size() && everyGapUnderHalf; ++i) {
+				everyGapUnderHalf = orientation(centre, ring[i], ring[(i + 1) % ring.size()]) == Orientation::CounterClockwise;
+			}
+			if (everyGapUnderHalf) {
+				return ring;
+			}
+		}
+	}
+
+	// A beam of sight with many corners: an apex and a star's corners round it that span
+	// under half a turn, in order.
+	inline std::vector<Vec2i64> historyWideBeam(std::mt19937& rng, std::int64_t spread) {
+		const Vec2i64			   apex	 = historyPoint(rng, spread);
+		const std::size_t		   count = 34 + historyPick(rng, 60);
+		const std::int64_t		   reach = historyBetween(rng, 4000, 14000);
+		const std::vector<Vec2i64> star	 = historyStar(rng, apex, count, reach / 3, reach);
+		const std::size_t		   first = historyPick(rng, star.size());
+		std::vector<Vec2i64>	   ring{apex, star[first]};
+		for (std::size_t i = 1; i < star.size(); ++i) {
+			const Vec2i64& next = star[(first + i) % star.size()];
+			if (orientation(apex, star[first], next) != Orientation::CounterClockwise) {
+				break;
+			}
+			ring.push_back(next);
+		}
+		return ring;
+	}
+
+	// Rings whose corners and centres lie within `spread` of the origin: limits, beams,
+	// lattice rectangles and quadrilaterals as ground, and rings of 17 to 70
+	// corners, beams of many corners and sight-sized pieces of about 136; small squares and
 	// limit-shaped polygons as obstacles; and square water.
-	inline NavInputPolygon historyRing(std::mt19937& rng) {
-		switch (historyPick(rng, 7)) {
+	inline NavInputPolygon historyRing(std::mt19937& rng, std::int64_t spread) {
+		switch (historyPick(rng, 10)) {
 			case 0: {
-				const Vec2i64	   centre = historyPoint(rng, 9000);
+				const Vec2i64	   centre = historyPoint(rng, spread);
 				const std::int64_t range  = historyBetween(rng, 1500, 9000);
 				return NavInputPolygon{limitPolygon(centre, range), false, kHistoryBorder};
 			}
 			case 1:
-				return NavInputPolygon{historyBeam(rng), false, kHistoryBorder};
+				return NavInputPolygon{historyBeam(rng, spread), false, kHistoryBorder};
 			case 2: {
-				const Vec2i64	   corner = historyPoint(rng, 9000);
+				const Vec2i64	   corner = historyPoint(rng, spread);
 				const std::int64_t width  = 250 * historyBetween(rng, 1, 16);
 				const std::int64_t height = 250 * historyBetween(rng, 1, 16);
 				return NavInputPolygon{historyRect(corner.x, corner.y, corner.x + width, corner.y + height), false, kHistoryBorder};
 			}
 			case 3: {
-				const Vec2i64		 centre = historyPoint(rng, 9000);
+				const Vec2i64		 centre = historyPoint(rng, spread);
 				std::vector<Vec2i64> ring;
 				for (const auto& [signX, signY] : std::array<std::pair<int, int>, 4>{{{1, 1}, {-1, 1}, {-1, -1}, {1, -1}}}) {
 					const std::int64_t along  = historyBetween(rng, 200, 3000);
@@ -189,56 +280,103 @@ namespace geometry::nav::testdata {
 				return NavInputPolygon{ring, false, kHistoryBorder};
 			}
 			case 4: {
-				const Vec2i64	   corner = historyPoint(rng, 10000);
+				const Vec2i64	   corner = historyPoint(rng, spread + 1000);
 				const std::int64_t side	  = historyBetween(rng, 150, 1200);
 				return NavInputPolygon{historyRect(corner.x, corner.y, corner.x + side, corner.y + side), true, kHistoryObstacle};
 			}
 			case 5: {
-				const Vec2i64	   centre = historyPoint(rng, 10000);
+				const Vec2i64	   centre = historyPoint(rng, spread + 1000);
 				const std::int64_t range  = historyBetween(rng, 150, 900);
 				return NavInputPolygon{limitPolygon(centre, range), true, kHistoryObstacle};
 			}
-			default: {
-				const Vec2i64	   corner = historyPoint(rng, 9000);
+			case 6: {
+				const Vec2i64	   corner = historyPoint(rng, spread);
 				const std::int64_t side	  = 250 * historyBetween(rng, 4, 16);
 				return NavInputPolygon{historyRect(corner.x, corner.y, corner.x + side, corner.y + side), true, kHistoryWater, kNoOpening, true};
+			}
+			case 7: {
+				const Vec2i64	  centre = historyPoint(rng, spread);
+				const std::size_t count	 = 17 + historyPick(rng, 54);
+				const std::int64_t reach  = historyBetween(rng, 1500, 9000);
+				return NavInputPolygon{historyStar(rng, centre, count, 800, reach), false, kHistoryBorder};
+			}
+			case 8:
+				return NavInputPolygon{historyWideBeam(rng, spread), false, kHistoryBorder};
+			default: {
+				const Vec2i64	  centre = historyPoint(rng, spread);
+				const std::size_t count	 = 130 + historyPick(rng, 12);
+				const std::int64_t reach  = historyBetween(rng, 6000, 14000);
+				return NavInputPolygon{historyStar(rng, centre, count, 2000, reach), false, kHistoryBorder};
 			}
 		}
 	}
 
-	// One generated history: patches of one to three new rings, now and then removing or
-	// moving a live one, each followed by a width refresh. `step` takes the state hash and
+	// Grows or shrinks the ring by one corner, when it stays simple.
+	inline std::vector<Vec2i64> historyReshaped(std::mt19937& rng, std::vector<Vec2i64> ring) {
+		const std::size_t at = historyPick(rng, ring.size());
+		if (historyPick(rng, 2) == 0 && ring.size() > 3) {
+			ring.erase(ring.begin() + static_cast<std::ptrdiff_t>(at));
+		} else {
+			const Vec2i64&	   start  = ring[at];
+			const Vec2i64&	   end	  = ring[(at + 1) % ring.size()];
+			const std::int64_t nudgeX = historyBetween(rng, -2, 2);
+			const std::int64_t nudgeY = historyBetween(rng, -2, 2);
+			const Vec2i64	   middle{(start.x + end.x) / 2 + nudgeX, (start.y + end.y) / 2 + nudgeY};
+			ring.insert(ring.begin() + static_cast<std::ptrdiff_t>(at + 1), middle);
+		}
+		return ring;
+	}
+
+	// One generated history: patches of new rings, now and then removing or moving up to
+	// three live ones (a move may also add or drop a corner), each followed by a width
+	// refresh. One seed in 200 stacks eight to sixteen rings a patch within 1.5 m of the
+	// origin, a few hundred over one spot by the end. `step` takes the state hash and
 	// validate()'s answer after each patch.
 	template <typename Step> void runHistory(std::uint32_t seed, int patches, Step step) {
 		std::mt19937		rng(seed);
 		PatchableMesh		mesh;
 		std::vector<RingId> live;
 		RingId				ringBound			= 0;
+		const bool			stacked				= seed % 200 == 0;
+		const std::int64_t	spread				= stacked ? 1500 : 9000;
 		const std::uint64_t firstEpoch			= mesh.epoch();
 		const std::uint64_t firstComponentEpoch = mesh.components().epoch();
 		for (int patch = 0; patch < patches; ++patch) {
 			PatchEdits		  edits;
-			const std::size_t adds = 1 + historyPick(rng, 3);
+			const std::size_t adds = stacked ? 8 + historyPick(rng, 9) : 1 + historyPick(rng, 3);
 			for (std::size_t i = 0; i < adds; ++i) {
-				edits.adds.push_back(historyRing(rng));
+				edits.adds.push_back(historyRing(rng, spread));
 			}
-			RingId removed = kNoRing;
-			if (live.size() > 4 && historyPick(rng, 4) == 0) {
-				const std::size_t at = historyPick(rng, live.size());
-				removed				 = live[at];
-				edits.removes.push_back(removed);
-				live.erase(live.begin() + static_cast<std::ptrdiff_t>(at));
-			}
-			if (live.size() > 4 && historyPick(rng, 4) == 0) {
-				const RingId	   ring	   = live[historyPick(rng, live.size())];
-				const bool		   lattice = historyPick(rng, 2) == 0;
-				const std::int64_t shiftX  = lattice ? 250 * historyBetween(rng, -4, 4) : historyBetween(rng, -1500, 1500);
-				const std::int64_t shiftY  = lattice ? 250 * historyBetween(rng, -4, 4) : historyBetween(rng, -1500, 1500);
-				std::vector<Vec2i64> moved = mesh.ring(ring).polygon.ring;
-				for (Vec2i64& point : moved) {
-					point = point + Vec2i64{shiftX, shiftY};
+			if (live.size() > 6 && historyPick(rng, 3) == 0) {
+				const std::size_t removes = 1 + historyPick(rng, 3);
+				for (std::size_t i = 0; i < removes; ++i) {
+					const std::size_t at = historyPick(rng, live.size());
+					edits.removes.push_back(live[at]);
+					live.erase(live.begin() + static_cast<std::ptrdiff_t>(at));
 				}
-				edits.moves.push_back({ring, std::move(moved)});
+			}
+			if (live.size() > 6 && historyPick(rng, 3) == 0) {
+				const std::size_t moves = 1 + historyPick(rng, 3);
+				for (std::size_t i = 0; i < moves; ++i) {
+					const RingId ring = live[historyPick(rng, live.size())];
+					if (std::any_of(edits.moves.begin(), edits.moves.end(), [&](const RingMove& move) { return move.ring == ring; })) {
+						continue;
+					}
+					const bool		   lattice = historyPick(rng, 2) == 0;
+					const std::int64_t shiftX  = lattice ? 250 * historyBetween(rng, -4, 4) : historyBetween(rng, -1500, 1500);
+					const std::int64_t shiftY  = lattice ? 250 * historyBetween(rng, -4, 4) : historyBetween(rng, -1500, 1500);
+					std::vector<Vec2i64> moved = mesh.ring(ring).polygon.ring;
+					for (Vec2i64& point : moved) {
+						point = point + Vec2i64{shiftX, shiftY};
+					}
+					if (historyPick(rng, 3) == 0) {
+						std::vector<Vec2i64> reshaped = historyReshaped(rng, moved);
+						if (historySimple(reshaped)) {
+							moved = std::move(reshaped);
+						}
+					}
+					edits.moves.push_back({ring, std::move(moved)});
+				}
 			}
 			const PatchReport report  = mesh.applyPatch(edits);
 			const PatchReport refresh = mesh.refreshWidths();
@@ -246,7 +384,7 @@ namespace geometry::nav::testdata {
 				live.push_back(ring);
 				ringBound = std::max(ringBound, ring + 1);
 			}
-			const Vec2i64 probe = historyPoint(rng, 9000);
+			const Vec2i64 probe = historyPoint(rng, spread);
 			step(historyStateHash(mesh, ringBound, report, refresh, firstEpoch, firstComponentEpoch, probe), mesh.validate());
 		}
 	}

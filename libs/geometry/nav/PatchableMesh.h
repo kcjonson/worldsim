@@ -337,7 +337,7 @@ namespace geometry::nav {
 		void	   groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const;
 		GroundRing groundOf(RingId ring) const;
 		// A live bounds edge's boundary intervals as the registry holds them.
-		std::span<const GroundInterval> intervalsOf(const EdgeSource& z) const;
+		std::span<const GroundInterval> intervalsOf(const EdgeSource& source) const;
 		// Whether the edge's pieces on the mesh run end to end, from one of `ends` to another
 		// and through no other: every one of `ends` meets an odd number of pieces and every
 		// other point an even number. `ends` holds each end once; `pieceList` (the edge's
