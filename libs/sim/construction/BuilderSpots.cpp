@@ -25,20 +25,36 @@ namespace construction {
 			return first.x * second.y - first.y * second.x;
 		}
 
-		/// True when the inset from `onRing` to `inset` stays in the footprint: it ends inside or on the
-		/// ring and passes through no edge but the one it leaves from.
-		bool insetStaysInside(const geometry::Ring& ring, std::size_t fromEdge, const geometry::Vec2d& onRing, const geometry::Vec2d& inset) {
+		// The ring's coordinates are whole millimetres, so a spot nearer a vertex than one of them is at
+		// that vertex: it insets along the corner's bisector rather than along one edge's normal, which
+		// would run along the other edge.
+		constexpr double kVertexToleranceMm = 1.0;
+
+		/// The unit normal of `edge` pointing into the footprint, zero for an edge of no length.
+		geometry::Vec2d inwardNormal(const geometry::Ring& ring, const std::vector<double>& edgeLengths, std::size_t edge, double interiorSide) {
+			if (edgeLengths[edge] == 0.0) {
+				return {0.0, 0.0};
+			}
+			const geometry::Vec2d edgeVector = toDouble(ring[(edge + 1) % ring.size()]) - toDouble(ring[edge]);
+			return geometry::Vec2d{-edgeVector.y, edgeVector.x} * (interiorSide / edgeLengths[edge]);
+		}
+
+		/// True when the inset from `onRing` to `inset` stays in the footprint: it ends strictly inside
+		/// the ring and passes through no edge but the one or two it leaves from.
+		bool insetStaysInside(
+			const geometry::Ring& ring, std::size_t fromEdge, std::size_t otherFromEdge, const geometry::Vec2d& onRing, const geometry::Vec2d& inset
+		) {
 			const geometry::Vec2i64 insetMm{static_cast<std::int64_t>(std::llround(inset.x)), static_cast<std::int64_t>(std::llround(inset.y))};
-			if (geometry::pointInPolygon(insetMm, ring) == geometry::PointInPolygon::Outside) {
+			if (geometry::pointInPolygon(insetMm, ring) != geometry::PointInPolygon::Inside) {
 				return false;
 			}
-			// Parameters along the probe within this of its start are the edge it leaves from (or the
+			// Parameters along the probe within this of its start are an edge it leaves from (or the
 			// neighbour sharing a vertex it sits on); within this of its end, the probe only touches.
-			constexpr double  kProbeTolerance = 1e-9;
+			constexpr double	  kProbeTolerance = 1e-9;
 			const geometry::Vec2d probe = inset - onRing;
 			const std::size_t	  vertexCount = ring.size();
 			for (std::size_t edge = 0; edge < vertexCount; ++edge) {
-				if (edge == fromEdge) {
+				if (edge == fromEdge || edge == otherFromEdge) {
 					continue;
 				}
 				const geometry::Vec2d edgeStart = toDouble(ring[edge]);
@@ -120,12 +136,24 @@ namespace construction {
 			const double		  along = std::clamp((arc - edgeStartArc) / edgeLengths[edge], 0.0, 1.0);
 			const geometry::Vec2d onRing = edgeStart + edgeVector * along;
 
+			// A spot at a vertex leaves along the sum of its two edges' inward normals, which bisects the
+			// interior angle whether the corner is convex or reflex, and is the shared normal at a vertex
+			// the ring runs straight through.
+			std::size_t fromEdge = edge;
+			std::size_t otherFromEdge = edge;
+			if (along * edgeLengths[edge] <= kVertexToleranceMm) {
+				fromEdge = (edge + vertexCount - 1) % vertexCount;
+			} else if ((1.0 - along) * edgeLengths[edge] <= kVertexToleranceMm) {
+				otherFromEdge = (edge + 1) % vertexCount;
+			}
+			const geometry::Vec2d direction = inwardNormal(ring, edgeLengths, fromEdge, interiorSide) +
+											  inwardNormal(ring, edgeLengths, otherFromEdge, interiorSide);
+			const double		  directionLength = geometry::length(direction);
+
 			geometry::Vec2d standing = onRing;
-			if (insetMm > 0.0) {
-				const geometry::Vec2d inwardNormal =
-					geometry::Vec2d{-edgeVector.y, edgeVector.x} * (interiorSide / edgeLengths[edge]);
-				const geometry::Vec2d inset = onRing + inwardNormal * insetMm;
-				if (insetStaysInside(ring, edge, onRing, inset)) {
+			if (insetMm > 0.0 && directionLength > 0.0) {
+				const geometry::Vec2d inset = onRing + direction * (insetMm / directionLength);
+				if (insetStaysInside(ring, fromEdge, otherFromEdge, onRing, inset)) {
 					standing = inset;
 				}
 			}

@@ -14,6 +14,7 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -33,6 +34,8 @@ namespace {
 
 	// Integer mm, counter-clockwise unless a test reverses them.
 	Ring rectangle() { return Ring{{0, 0}, {8000, 0}, {8000, 4000}, {0, 4000}}; }
+	Ring square() { return Ring{{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}}; }
+	Ring fourByFive() { return Ring{{0, 0}, {4000, 0}, {4000, 5000}, {0, 5000}}; }
 	Ring lShape() { return Ring{{0, 0}, {8000, 0}, {8000, 4000}, {4000, 4000}, {4000, 8000}, {0, 8000}}; }
 	Ring thinStrip() { return Ring{{0, 0}, {10000, 0}, {10000, 400}, {0, 400}}; }
 	Ring sharpTriangle() { return Ring{{0, 0}, {10000, 0}, {0, 1500}}; }
@@ -181,6 +184,46 @@ TEST(BuilderSpotsTests, ARectangleInsetsEverySpotWhicheverWayItWinds) {
 			EXPECT_EQ(geometry::pointInPolygon(geometry::quantize({spot.x, spot.y}), ring), geometry::PointInPolygon::Inside);
 			EXPECT_NEAR(metersToRing(ring, {spot.x, spot.y}), kInsetMeters, 1e-3);
 		}
+	}
+}
+
+TEST(BuilderSpotsTests, ASpotOnACornerInsetsIntoTheFootprintOrStaysOnItsRingPoint) {
+	// Each case puts at least one spot's arc point on a vertex: the square's corners at arc 4 and 12,
+	// the 4 x 5 rectangle's at arc 9, the L's convex corners at 12 and 20 (counter-clockwise; its
+	// clockwise twin's at 4 and 12), and the L's reflex corner at 16 with count 1 counter-clockwise
+	// and at 8 with count 2 clockwise.
+	const std::vector<std::tuple<std::string, Ring, int>> cases = {
+		{"square", square(), 2},
+		{"clockwise square", reversed(square()), 2},
+		{"4 x 5 rectangle", fourByFive(), 3},
+		{"clockwise 4 x 5 rectangle", reversed(fourByFive()), 3},
+		{"L shape", lShape(), 4},
+		{"clockwise L shape", reversed(lShape()), 4},
+		{"L shape reflex corner", lShape(), 1},
+		{"clockwise L shape reflex corner", reversed(lShape()), 2},
+	};
+	for (const auto& [name, ring, count] : cases) {
+		const double perimeter = ringPerimeterMeters(ring);
+		const auto	 spots = builderSpots(ring, count, kInsetMeters);
+		ASSERT_EQ(spots.size(), static_cast<std::size_t>(count)) << name;
+		bool anyAtVertex = false;
+		for (int spot = 0; spot < count; ++spot) {
+			const glm::dvec2 arcPoint = pointAtArc(ring, (spot + 0.5) * perimeter / count);
+			const glm::dvec2 position{spots[spot].x, spots[spot].y};
+			const bool		 atVertex = std::any_of(ring.begin(), ring.end(), [&](const geometry::Vec2i64& vertex) {
+				  return glm::length(meters(vertex) - arcPoint) < 1e-6;
+			  });
+			anyAtVertex = anyAtVertex || atVertex;
+			const bool inside = geometry::pointInPolygon(geometry::quantize({spots[spot].x, spots[spot].y}), ring) == geometry::PointInPolygon::Inside &&
+								metersToRing(ring, position) > 0.1;
+			const bool onRingPoint = glm::length(position - arcPoint) < 1e-3;
+			EXPECT_TRUE(inside || onRingPoint) << name << " spot " << spot << " at (" << position.x << ", " << position.y << ")";
+			if (atVertex) {
+				EXPECT_TRUE(inside) << name << " spot " << spot << ": a right-angled corner has room for the inset";
+				EXPECT_NEAR(glm::length(position - arcPoint), kInsetMeters, 1e-3) << name << " spot " << spot;
+			}
+		}
+		EXPECT_TRUE(anyAtVertex) << name << " should put a spot on a corner";
 	}
 }
 
