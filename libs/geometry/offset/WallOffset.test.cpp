@@ -6,7 +6,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <iostream>
 #include <map>
 #include <random>
 #include <string>
@@ -2049,7 +2048,8 @@ namespace {
 				const auto		  thinAt	 = std::find(poly.begin(), poly.end(), thinPoint);
 				const std::size_t n			 = poly.size();
 				if (thickAt == poly.end() || thinAt == poly.end() || thickAt == thinAt ||
-					cross(thickPoint - vertex, thinPoint - vertex).sign() != 0 || dot(thickPoint - vertex, thinPoint - vertex).sign() <= 0) {
+					cross(thickPoint - vertex, thinPoint - vertex).sign() != 0 ||
+					dot(thickPoint - vertex, thinPoint - vertex).sign() <= 0) {
 					continue;
 				}
 				const std::size_t first	 = static_cast<std::size_t>((step.thickIsLeft ? thinAt : thickAt) - poly.begin());
@@ -2698,10 +2698,8 @@ TEST(WallProperties, NearStraightRetryKeepsEveryAcceptedJoin) {
 	// the retry shows at its own cut too (about 4.5 degrees off straight).
 	std::mt19937 rng(31);
 	Sweep		 sweep;
-	int			 accepted  = 0;
-	int			 rescued   = 0;
-	int			 inherited = 0;
-	int			 rejected  = 0;
+	int			 accepted = 0;
+	int			 rescued  = 0;
 	for (const std::vector<WallSegment>& segments : retryInputs()) {
 		const WallBands before = reference::resolveWallBands(segments, kDefaultMiterLimit);
 		const WallBands after  = resolveWallBands(segments, kDefaultMiterLimit);
@@ -2721,16 +2719,12 @@ TEST(WallProperties, NearStraightRetryKeepsEveryAcceptedJoin) {
 			++rescued;
 			problem = checkJoin(segments, rng);
 			if (!problem.empty() && sameWallBands(after, reference::resolveWallBands(segments, 3.0))) {
-				++inherited;
 				problem.clear();
 			}
-		} else {
-			++rejected;
 		}
 		sweep.check(segments, {}, problem);
 	}
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+	EXPECT_GT(accepted, 0);
 	EXPECT_GT(rescued, 0);
-	std::cout << accepted << " accepted inputs unchanged, " << rescued << " rescued (" << inherited << " as drawn before at a lower cut), "
-			  << rejected << " still rejected\n";
 }

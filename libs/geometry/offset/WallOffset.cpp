@@ -126,15 +126,13 @@ namespace geometry {
 			double halfLength = 0.0;
 		};
 
-	} // namespace
-
 	// resolveJunction, where `retry` (one entry per incident, or empty for
 	// resolveJunction itself) joins as a step every wedge beside a failed band
 	// whose miter would take half of either of its bands or more, and both wedges
 	// of a degree-2 join beside one, wherever it could be one (bands pointing
 	// more than 90 degrees apart).
-	static JunctionResolution resolveJunctionStepping(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
-													  double miterLimit, const std::vector<RetryIncident>& retry) {
+	JunctionResolution resolveJunctionStepping(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
+											   double miterLimit, const std::vector<RetryIncident>& retry) {
 		JunctionResolution result;
 
 		const std::size_t degree = incidents.size();
@@ -463,6 +461,8 @@ namespace geometry {
 		}
 		return result;
 	}
+
+	} // namespace
 
 	JunctionResolution resolveJunction(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
 									   double miterLimit) {
