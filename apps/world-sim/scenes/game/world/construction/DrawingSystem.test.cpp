@@ -4,10 +4,13 @@
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
 
 #include <assets/ConstructionRegistry.h>
+#include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
+#include <construction/RoomDetection.h>
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <utility>
@@ -129,6 +132,148 @@ TEST_F(DrawingVisibilityTest, RevealTurnsTheRulesOff) {
 	drawing->activateOpeningTool("Door");
 	click({55.0F, 0.0F});
 	EXPECT_EQ(drawing->world().openings().size(), 1U);
+}
+
+namespace {
+
+	// The wall tool drawing a room inside a built foundation on seen ground, through mouse input
+	// with the ordinary snaps on.
+	class DrawingWallChainTest : public DrawingVisibilityTest {
+	  protected:
+		static constexpr glm::vec2 kRoom[] = {{-8.0F, -8.0F}, {8.0F, -8.0F}, {8.0F, 8.0F}, {-8.0F, 8.0F}};
+
+		static construction::FoundationId hostFoundation(world_sim::DrawingSystem& tool) {
+			const auto foundation =
+				tool.world().commitFoundation(std::vector<Foundation::Vec2>{{-20.0F, -15.0F}, {20.0F, -15.0F}, {20.0F, 15.0F}, {-20.0F, 15.0F}}, "Wood");
+			EXPECT_TRUE(foundation.ok());
+			tool.world().setState(foundation.id, construction::FoundationState::Built);
+			return foundation.id;
+		}
+		bool clickWith(world_sim::DrawingSystem& tool, glm::vec2 meters) const {
+			const glm::vec2 screen = seen.screenOf(meters);
+			return tool.handleClick(screen.x, screen.y, kViewportWidth, kViewportHeight, false);
+		}
+		void clickRoomCorners(world_sim::DrawingSystem& tool) const {
+			for (const glm::vec2 corner : kRoom) {
+				clickWith(tool, corner);
+			}
+		}
+
+		// Vertex positions and segment end positions, each sorted, so two worlds compare by shape alone.
+		struct Topology {
+			std::vector<geometry::Vec2i64>									   vertices;
+			std::vector<std::pair<geometry::Vec2i64, geometry::Vec2i64>> segments;
+			bool operator==(const Topology&) const = default;
+		};
+		static Topology topologyOf(const construction::ConstructionWorld& built) {
+			Topology topology;
+			for (const construction::Vertex& vertex : built.vertices()) {
+				topology.vertices.push_back(vertex.pos);
+			}
+			for (const construction::WallSegment& segment : built.segments()) {
+				const geometry::Vec2i64 a = built.getVertex(segment.v0)->pos;
+				const geometry::Vec2i64 b = built.getVertex(segment.v1)->pos;
+				topology.segments.emplace_back(std::min(a, b), std::max(a, b));
+			}
+			std::sort(topology.vertices.begin(), topology.vertices.end());
+			std::sort(topology.segments.begin(), topology.segments.end());
+			return topology;
+		}
+		static void buildEverySegment(construction::ConstructionWorld& built) {
+			std::vector<construction::SegmentId> ids;
+			for (const construction::WallSegment& segment : built.segments()) {
+				ids.push_back(segment.id);
+			}
+			for (const construction::SegmentId id : ids) {
+				built.setSegmentState(id, construction::FoundationState::Built);
+			}
+		}
+		[[nodiscard]] std::string lastToast() const { return toasts.empty() ? "no toast" : toasts.back().first + ": " + toasts.back().second; }
+	};
+
+} // namespace
+
+TEST_F(DrawingWallChainTest, ClickingTheFirstPointClosesAndCommitsTheLoop) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
+	hover(kRoom[0]);
+	EXPECT_TRUE(drawing->status().valid) << drawing->status().message;
+	clickWith(*drawing, kRoom[0]);
+	EXPECT_EQ(drawing->status().pointCount, 0) << lastToast();
+	EXPECT_EQ(drawing->world().segments().size(), 4U) << lastToast();
+	EXPECT_EQ(drawing->world().vertices().size(), 4U);
+	buildEverySegment(drawing->world());
+	EXPECT_EQ(construction::detectRooms(drawing->world()).size(), 1U);
+}
+
+TEST_F(DrawingWallChainTest, ClosedLoopMatchesTheTwoChainWorkaround) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[0]);
+
+	world_sim::DrawingSystem workaround(world_sim::DrawingSystem::Args{.world = &seen.world, .camera = &seen.camera, .navigation = nullptr});
+	hostFoundation(workaround);
+	workaround.activateWallTool();
+	clickRoomCorners(workaround);
+	ASSERT_TRUE(workaround.finishChain());
+	clickWith(workaround, kRoom[3]);
+	clickWith(workaround, kRoom[0]);
+	ASSERT_TRUE(workaround.finishChain());
+
+	ASSERT_EQ(workaround.world().segments().size(), 4U);
+	EXPECT_TRUE(topologyOf(drawing->world()) == topologyOf(workaround.world()));
+}
+
+TEST_F(DrawingWallChainTest, ClosingAcrossTheChainIsRefused) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	// The closing segment runs along y = 0 and crosses the third segment at x = 0.
+	for (const glm::vec2 point : {glm::vec2{-10.0F, 0.0F}, glm::vec2{-10.0F, 8.0F}, glm::vec2{0.0F, 8.0F}, glm::vec2{0.0F, -8.0F},
+								  glm::vec2{10.0F, -8.0F}, glm::vec2{10.0F, 0.0F}}) {
+		clickWith(*drawing, point);
+	}
+	ASSERT_EQ(drawing->status().pointCount, 6) << lastToast();
+	clickWith(*drawing, {-10.0F, 0.0F});
+	EXPECT_EQ(drawing->status().pointCount, 6);
+	EXPECT_TRUE(drawing->world().segments().empty());
+	EXPECT_EQ(toasts.back().second, construction::validationReason(construction::ValidationCode::SelfIntersects));
+}
+
+TEST_F(DrawingWallChainTest, TwoPointChainClickedOnItsStartIsRefused) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickWith(*drawing, kRoom[0]);
+	clickWith(*drawing, kRoom[1]);
+	ASSERT_EQ(drawing->status().pointCount, 2) << lastToast();
+	clickWith(*drawing, kRoom[0]);
+	EXPECT_EQ(drawing->status().pointCount, 2);
+	EXPECT_TRUE(drawing->world().segments().empty());
+	EXPECT_EQ(toasts.back().second, construction::validationReason(construction::ValidationCode::AngleTooSharp));
+}
+
+TEST_F(DrawingWallChainTest, ClickingAMiddleVertexIsRefused) {
+	hostFoundation(*drawing);
+	drawing->activateWallTool();
+	clickRoomCorners(*drawing);
+	clickWith(*drawing, kRoom[1]);
+	EXPECT_EQ(drawing->status().pointCount, 4);
+	EXPECT_TRUE(drawing->world().segments().empty());
+	EXPECT_EQ(toasts.back().second, construction::validationReason(construction::ValidationCode::SelfIntersects));
+}
+
+TEST_F(DrawingWallChainTest, DevClosedLoopBuiltFormsARoom) {
+	const construction::FoundationId host = hostFoundation(*drawing);
+	std::vector<Foundation::Vec2> loop;
+	for (const glm::vec2 corner : kRoom) {
+		loop.push_back({corner.x, corner.y});
+	}
+	loop.push_back(loop.front());
+	EXPECT_EQ(drawing->devCommitWalls(loop, "Wood", "Standard", host, true), 4);
+	EXPECT_EQ(drawing->world().vertices().size(), 4U);
+	EXPECT_EQ(construction::detectRooms(drawing->world()).size(), 1U);
 }
 
 namespace {

@@ -14,10 +14,11 @@
 //   FoundationEdit: Add / Subtract on one existing foundation (Epic G3). The
 //     same closed-polygon flow; validateEditPoint per point, and the close runs
 //     applyFoundationEdit (validateFoundationEdit on the resulting outline).
-//   Wall:       an OPEN polyline chain on a single host foundation
+//   Wall:       a polyline chain on a single host foundation
 //     (building-construction Walls). snapWall() / validateWallPoint /
-//     validateWallSegment / commitSegment per consecutive pair. No origin-close;
-//     the chain ends on right-click / Esc / Enter. The host foundation is the
+//     validateWallSegment / commitSegment per consecutive pair. The chain ends
+//     on right-click / Esc / Enter, or on a point that lands on its first point
+//     (closesWallChain), which closes the loop. The host foundation is the
 //     one the FIRST point lands on; later points that leave it are rejected.
 //
 // Input order in GameScene is GameUI -> DrawingSystem -> PlacementSystem ->
@@ -180,7 +181,7 @@ namespace world_sim {
 		void handleMouseMove(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
 
 		/// Left click: add a snapped point, or commit if it closes the shape
-		/// (foundation) / extends the chain (wall). Ctrl held on the wall tool over a
+		/// (foundation) / extends or closes the chain (wall). Ctrl held on the wall tool over a
 		/// foundation edge triggers edge fill. @return true if the click was consumed.
 		bool handleClick(float screenX, float screenY, int viewportW, int viewportH, bool freeform, bool ctrl = false);
 

@@ -876,7 +876,8 @@ namespace world_sim {
 	// =========================================================================
 	// Wall tool. Mirrors the foundation path: snapWall + validateWallPoint live,
 	// per-segment validateWallSegment + commitSegment on finish, one blueprint
-	// entity per committed segment. The chain is OPEN and hosted by one foundation.
+	// entity per committed segment. The chain is hosted by one foundation, and a
+	// point on its first point closes and commits it.
 	// =========================================================================
 
 	const assets::ThicknessPreset* DrawingSystem::activePreset() const {
@@ -974,7 +975,11 @@ namespace world_sim {
 			return true;
 		}
 
+		const bool closes = ec::closesWallChain(points_, cursor_);
 		points_.push_back(cursor_);
+		if (closes) {
+			commitWallChain();
+		}
 		return true;
 	}
 

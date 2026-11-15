@@ -176,7 +176,7 @@ On a shared edge between two snapped foundations there is no co-ownership. The w
 
 ### Drawing
 
-Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
+Walls draw as a polyline chain: click to commit each point, the chain continues from the last point. The chain does not need to close, but it may: clicking the chain's first point closes the loop and ends the chain. **Right-click or Esc** ends the chain; double-click commits a final point and ends.
 
 The same angle snapping and smart guides apply as for foundations. Additional snap targets, in priority order:
 
