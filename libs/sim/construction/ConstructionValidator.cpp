@@ -1,6 +1,7 @@
 #include "ConstructionValidator.h"
 
 #include "ConstructionWorld.h"
+#include "OpeningGeometry.h"
 
 #include "../ecs/components/StructureBlueprint.h"
 
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cmath>
 #include <numbers>
+#include <optional>
 
 namespace construction {
 
@@ -786,13 +788,8 @@ namespace construction {
 	ValidationResult
 	ConstructionValidator::validateOpening(SegmentId segment, float t, const std::string& type, const std::string& material) const {
 		// 1. Segment exists and is a wall in this world.
-		const WallSegment* seg = world_->getSegment(segment);
-		if (seg == nullptr) {
-			return {ValidationCode::OpeningSegmentInvalid, 0, 0, 0.0};
-		}
-		const Vertex* v0 = world_->getVertex(seg->v0);
-		const Vertex* v1 = world_->getVertex(seg->v1);
-		if (v0 == nullptr || v1 == nullptr) {
+		const WallSegment* wall = world_->getSegment(segment);
+		if (wall == nullptr || world_->getVertex(wall->v0) == nullptr || world_->getVertex(wall->v1) == nullptr) {
 			return {ValidationCode::OpeningSegmentInvalid, 0, 0, 0.0};
 		}
 
@@ -807,34 +804,32 @@ namespace construction {
 		}
 
 		// 3. t in [0,1].
-		if (t < 0.0F || t > 1.0F) {
+		if (!(t >= 0.0F && t <= 1.0F)) {
 			return {ValidationCode::OpeningParamOutOfRange, 0, 0, static_cast<double>(t)};
 		}
 
-		// Segment length in meters (exact from integer mm, no float drift).
-		const auto	 d = v1->pos - v0->pos;
-		const double lengthMm = std::sqrt(geometry::dot(d, d).toDouble());
-		const double lengthM = lengthMm / static_cast<double>(geometry::kMillimetersPerMeter);
-
-		const auto&	 c = *constraints_;
 		const double halfWidthM = static_cast<double>(typeDef->widthMeters) / 2.0;
-		const double marginM = static_cast<double>(c.openingMarginMeters);
+		const double marginM = static_cast<double>(constraints_->openingMarginMeters);
+		const std::optional<OpeningRange> range = openingRange(*world_, segment, typeDef->widthMeters, marginM);
+		if (!range) {
+			return {ValidationCode::OpeningSegmentInvalid, 0, 0, 0.0};
+		}
+		const double lengthM = range->lengthMeters;
 
-		// 5. Wall must be long enough to host width + 2*margin. Check before the
-		// margin clearance so a wall that simply cannot fit the opening reports the
-		// clearer reason (and avoids a meaningless negative clearance below).
-		if (lengthM < static_cast<double>(typeDef->widthMeters) + 2.0 * marginM) {
-			return {ValidationCode::OpeningWallTooShort, 0, 0, lengthM};
+		// 4. The trimmed band must be long enough to host width + 2*margin. Checked
+		// before the end margins so a wall that cannot fit the opening anywhere
+		// reports that, not a meaningless negative clearance. Measured: the trimmed
+		// band's length in meters.
+		if (!range->fits()) {
+			return {ValidationCode::OpeningWallTooShort, 0, 0, lengthM - range->trimAtV0Meters - range->trimAtV1Meters};
 		}
 
-		// 4. End margin: the opening occupies [t - half/L, t + half/L] along the
-		// centerline; its near edges must clear `openingMargin` from each end.
-		// Clearance from the v0 end to the near edge, in meters: (t*L - half).
-		const double clearV0 = t * lengthM - halfWidthM;
-		const double clearV1 = (1.0 - t) * lengthM - halfWidthM;
-		const double minClear = std::min(clearV0, clearV1);
-		if (minClear < marginM) {
-			return {ValidationCode::OpeningMarginTooSmall, 0, 0, minClear};
+		// 5. End margins, from each trimmed band end. Measured: the clearance in
+		// meters between the opening and the nearer trimmed end.
+		if (t < range->minT || t > range->maxT) {
+			const double clearV0 = t * lengthM - halfWidthM - range->trimAtV0Meters;
+			const double clearV1 = (1.0 - t) * lengthM - halfWidthM - range->trimAtV1Meters;
+			return {ValidationCode::OpeningMarginTooSmall, 0, 0, std::min(clearV0, clearV1)};
 		}
 
 		// 6. No overlap with another opening already on the SAME segment. Two

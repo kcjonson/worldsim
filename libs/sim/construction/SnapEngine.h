@@ -165,10 +165,11 @@ namespace construction {
 
 		// Opening snap (Epic F). Find the nearest BUILT wall segment whose centerline
 		// passes within edgeSnapRadius of `cursor`, project the cursor onto it, and
-		// return the placement for an opening of `openingWidthMeters`. t is clamped so
-		// the opening honors the end margins from openingMargin config: t in
-		// [(half+margin)/L, 1-(half+margin)/L]. Returns valid=false if no built wall
-		// is in range, or the nearest one is too short to fit the opening. Only BUILT
+		// return the placement for an opening of `openingWidthMeters`. t is clamped to
+		// openingRange (OpeningGeometry.h), the range the validator accepts: the end
+		// margins from openingMargin config, measured from each end of the wall's
+		// band as its corners trim it. Returns valid=false if no built wall is in
+		// range, or the nearest one is too short to fit the opening. Only BUILT
 		// segments are candidates (a blueprint wall has no surface to cut yet).
 		// Reads segments() in stable order; ties keep the lowest-id segment.
 		[[nodiscard]] OpeningSnap snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const;

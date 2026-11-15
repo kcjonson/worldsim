@@ -7,10 +7,15 @@
 
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
+#include <offset/WallOffset.h>
 
 #include <cmath>
 #include <filesystem>
 #include <gtest/gtest.h>
+#include <limits>
+#include <numbers>
+#include <string>
+#include <utility>
 #include <vector>
 
 using namespace construction;
@@ -650,6 +655,40 @@ TEST_F(OpeningValidation, ParamOutOfRangeRejected) {
 	EXPECT_EQ(validator.validateOpening(seg, -0.1F, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange);
 }
 
+TEST_F(OpeningValidation, NonFiniteParamRejected) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	SegmentId		  seg = buildWall(world, 6.0F);
+
+	ConstructionValidator validator(cfg, world);
+	for (const float t : {std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(),
+						  -std::numeric_limits<float>::infinity()}) {
+		EXPECT_EQ(validator.validateOpening(seg, t, "Door", "Wood").code, ValidationCode::OpeningParamOutOfRange) << t;
+	}
+}
+
+TEST_F(OpeningValidation, FreeEndAndStraightJoinMeasureFromTheVertex) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+	// Two collinear Standard walls, (2,6)->(6,6) and (6,6)->(10,6): the first has a free end at v0 and a
+	// straight join at v1. The nearest door centre is margin + half the door, 0.75 m, from the vertex.
+	auto first = world.commitSegment(mm(2.0F, 6.0F), mm(6.0F, 6.0F), "Wood", "Standard", f.id);
+	auto second = world.commitSegment(mm(6.0F, 6.0F), mm(10.0F, 6.0F), "Wood", "Standard", f.id);
+	ASSERT_TRUE(first.ok());
+	ASSERT_TRUE(second.ok());
+
+	ConstructionValidator validator(cfg, world);
+	for (const SegmentId segment : {first.id, second.id}) {
+		EXPECT_EQ(validator.validateOpening(segment, 0.745F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+		EXPECT_TRUE(validator.validateOpening(segment, 0.755F / 4.0F, "Door", "Wood").ok());
+		EXPECT_EQ(validator.validateOpening(segment, 1.0F - 0.745F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+		EXPECT_TRUE(validator.validateOpening(segment, 1.0F - 0.755F / 4.0F, "Door", "Wood").ok());
+	}
+}
+
 TEST_F(OpeningValidation, TooCloseToEndRejected) {
 	ConstraintConfig  cfg = defaults(); // openingMargin 0.3 m
 	ConstructionWorld world;
@@ -696,6 +735,100 @@ TEST_F(OpeningValidation, SecondOpeningClearOfFirstValid) {
 
 	ConstructionValidator validator(cfg, world);
 	EXPECT_TRUE(validator.validateOpening(seg, 0.8F, "Door", "Wood").ok());
+}
+
+// --- Openings at corners (WOR-864) ------------------------------------------
+//
+// The end margin is measured from where the wall's band ends, which a corner
+// trims back from the vertex: about 0.48 m for Heavy walls at 35 degrees. The
+// expected trims come from resolveWallBands, the same offsetter the renderer
+// draws with, not from the code under test.
+
+namespace {
+
+	// Every wall in `world` as the renderer resolves it; the trims (meters) of
+	// `segment`'s band at its v0 and v1 ends.
+	std::pair<double, double> drawnTrimsMeters(const ConstructionWorld& world, SegmentId segment) {
+		std::vector<geometry::WallSegment> walls;
+		std::size_t						   target = 0;
+		for (const WallSegment& s : world.segments()) {
+			const auto* preset = ConstructionRegistry::Get().getThicknessPreset(s.material, s.thicknessPreset);
+			if (s.id == segment) {
+				target = walls.size();
+			}
+			walls.push_back({world.getVertex(s.v0)->pos, world.getVertex(s.v1)->pos, preset->halfThicknessMm});
+		}
+		const geometry::WallBands bands = geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit);
+		EXPECT_EQ(bands.status, geometry::OffsetStatus::Ok);
+		return {static_cast<double>(bands.trimAtA[target]) / 1000.0, static_cast<double>(bands.trimAtB[target]) / 1000.0};
+	}
+
+	// Two walls from (4,4): one 4 m along +x (returned), one 4 m at `degrees` from it.
+	SegmentId buildCorner(ConstructionWorld& world, float degrees, const std::string& thickness, const std::string& otherThickness) {
+		std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+		auto			  f = world.commitFoundation(sq, "Wood");
+		EXPECT_TRUE(f.ok());
+		const float radians = degrees * std::numbers::pi_v<float> / 180.0F;
+		auto		seg = world.commitSegment(mm(4.0F, 4.0F), mm(8.0F, 4.0F), "Wood", thickness, f.id);
+		auto		other = world.commitSegment(
+			   mm(4.0F, 4.0F), mm(4.0F + 4.0F * std::cos(radians), 4.0F + 4.0F * std::sin(radians)), "Wood", otherThickness, f.id
+		   );
+		EXPECT_TRUE(seg.ok());
+		EXPECT_TRUE(other.ok());
+		return seg.id;
+	}
+
+} // namespace
+
+TEST_F(OpeningValidation, DoorAtTheOldNearestSpotInAnAcuteHeavyCornerRefused) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildCorner(world, 35.0F, "Heavy", "Heavy");
+	const double	  trim = drawnTrimsMeters(world, seg).first;
+	ASSERT_NEAR(trim, 0.476, 0.01);
+
+	ConstructionValidator validator(cfg, world);
+	// 0.75 m from the vertex was the nearest the margin allowed from the vertex; the
+	// door's end would sit 0.18 m inside the corner piece.
+	EXPECT_EQ(validator.validateOpening(seg, 0.75F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+	// The nearest now: trim + margin + half the door, about 1.226 m.
+	EXPECT_EQ(validator.validateOpening(seg, 1.22F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+	EXPECT_TRUE(validator.validateOpening(seg, 1.23F / 4.0F, "Door", "Wood").ok());
+}
+
+TEST_F(OpeningValidation, RightAngleCornerMeasuresFromTheCornerPiece) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	const SegmentId	  seg = buildCorner(world, 90.0F, "Heavy", "Heavy");
+	ASSERT_NEAR(drawnTrimsMeters(world, seg).first, 0.15, 0.002);
+
+	ConstructionValidator validator(cfg, world);
+	// The piece reaches the Heavy half-thickness along the wall: nearest centre
+	// 0.15 + 0.3 + 0.45 = 0.9 m, where from the vertex it was 0.75 m.
+	EXPECT_EQ(validator.validateOpening(seg, 0.895F / 4.0F, "Door", "Wood").code, ValidationCode::OpeningMarginTooSmall);
+	EXPECT_TRUE(validator.validateOpening(seg, 0.905F / 4.0F, "Door", "Wood").ok());
+}
+
+TEST_F(OpeningValidation, SegmentBetweenTwoAcuteCornersTooShortForAnOpening) {
+	ConstraintConfig  cfg = defaults();
+	ConstructionWorld world;
+	std::vector<Vec2> sq = {{0.0F, 0.0F}, {20.0F, 0.0F}, {20.0F, 20.0F}, {0.0F, 20.0F}};
+	auto			  f = world.commitFoundation(sq, "Wood");
+	ASSERT_TRUE(f.ok());
+	// A 2 m Heavy wall with a 30 degree corner at each end. From the vertices it
+	// held a door (2 >= 0.9 + 2 * 0.3); its band is trimmed about 0.56 m at each end.
+	auto seg = world.commitSegment(mm(6.0F, 4.0F), mm(8.0F, 4.0F), "Wood", "Heavy", f.id);
+	ASSERT_TRUE(seg.ok());
+	const float cos30 = std::cos(std::numbers::pi_v<float> / 6.0F);
+	ASSERT_TRUE(world.commitSegment(mm(6.0F, 4.0F), mm(6.0F + 3.0F * cos30, 5.5F), "Wood", "Heavy", f.id).ok());
+	ASSERT_TRUE(world.commitSegment(mm(8.0F, 4.0F), mm(8.0F - 3.0F * cos30, 2.5F), "Wood", "Heavy", f.id).ok());
+	const auto [trimV0, trimV1] = drawnTrimsMeters(world, seg.id);
+	ASSERT_GT(trimV0, 0.55);
+	ASSERT_GT(trimV1, 0.55);
+
+	ConstructionValidator validator(cfg, world);
+	EXPECT_EQ(validator.validateOpening(seg.id, 0.5F, "Door", "Wood").code, ValidationCode::OpeningWallTooShort);
+	EXPECT_EQ(validator.validateOpening(seg.id, 0.5F, "Window", "Wood").code, ValidationCode::OpeningWallTooShort);
 }
 
 TEST(ConstructionValidator, FoundationValidationUnchangedWithWalls) {

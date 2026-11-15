@@ -253,7 +253,7 @@ Double doors and other widths can be added later as new types, not as stretchabl
 
 | Constraint | Rule | Proposed default |
 |------------|------|------------------|
-| Distance from wall end / corner / junction | Openings keep clear of structural points | 0.3 m |
+| Distance from wall end / corner / junction | Openings keep clear of structural points, measured from where the wall's band ends: the vertex at a free end or a straight join, the edge of the corner or junction piece otherwise (that piece reaches further along the wall the sharper the corner) | 0.3 m |
 | Distance from other openings | Openings can't touch | 0.3 m |
 | Wall length | The segment must be long enough to honor the margins | derived |
 

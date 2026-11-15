@@ -76,12 +76,6 @@ namespace world_sim {
 			return out;
 		}
 
-		// Half the segment's thickness preset in mm, or 0 when the preset is unknown.
-		std::int64_t halfThicknessMm(const ec::WallSegment& seg) {
-			const auto* preset = ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
-			return preset != nullptr ? preset->halfThicknessMm : 0;
-		}
-
 		// The centerline spans a segment's openings leave open, in mm from its v0
 		// end: an opening at param t with clear width w on a segment of length L
 		// spans t*L -/+ w/2. The offsetter clamps and merges them.
@@ -204,7 +198,7 @@ namespace world_sim {
 		for (std::size_t i = 0; i < segs.size(); ++i) {
 			const ec::WallSegment& wseg = segs[i];
 			if (world.getVertex(wseg.v0) != nullptr && world.getVertex(wseg.v1) != nullptr &&
-				halfThicknessMm(wseg) > 0) {
+				ec::halfThicknessMm(wseg) > 0) {
 				graphOf[i] = i;
 				usable.push_back(i);
 			}
@@ -238,7 +232,7 @@ namespace world_sim {
 			offsetGaps.reserve(members.size());
 			for (const std::size_t i : members) {
 				const ec::WallSegment& wseg = segs[i];
-				offsetSegs.push_back({world.getVertex(wseg.v0)->pos, world.getVertex(wseg.v1)->pos, halfThicknessMm(wseg)});
+				offsetSegs.push_back({world.getVertex(wseg.v0)->pos, world.getVertex(wseg.v1)->pos, ec::halfThicknessMm(wseg)});
 				offsetGaps.push_back(openingGaps(world, wseg));
 			}
 
