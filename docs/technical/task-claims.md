@@ -913,7 +913,7 @@ claim index the panel keeps; each row is then a few lookups. `GlobalTaskAdapter`
 - Workers: the task panel's "Working" status names every colonist whose current task serves the row,
   in view order, one or two names joined with ", " and more as the first two then "+N" ("Alice, Bob
   +2"). A cut or a haul serves the goal it was picked through (a carry-in and a cut's deposit leg name
-  their root); a build, teardown, craft, or placement serves the entity it works, so the Build umbrella
+  their root); a build, teardown, craft, or placement serves the goal of its own type whose destination it works, so the Build umbrella
   names its builders, a Deconstruct row those tearing its structure down, a Craft row its crafter, and
   a clear row its clearers. A suspended record is not current work.
 - Quantities: a cut or haul row toward one item adds what is on its way toward its root and what the

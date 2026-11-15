@@ -33,9 +33,10 @@ namespace ecs {
 
 		/// Colonists whose current task serves the goal, in view order. A cut or a haul serves the goal it
 		/// was picked through (a carry-in and a cut's deposit leg name their root); a build, a teardown, a
-		/// craft, or a placement serves the goal whose destination it works, and a Build, Deconstruct,
-		/// Craft, or PlacePackaged goal is served by those first, else by whoever delivers toward it. A
-		/// suspended record is not current work, so a colonist seeing to a need serves nothing.
+		/// craft, or a placement serves the goal whose destination it works. One lookup by goal id, so a
+		/// Build, Deconstruct, Craft, or PlacePackaged goal lists those working its entity with a task of
+		/// its type together with those delivering toward it. A suspended record is not current work, so a
+		/// colonist seeing to a need serves nothing.
 		[[nodiscard]] std::span<const EntityID> workersOf(const GoalTask& goal) const;
 
 		/// Colonists whose last decision offered work toward the goal, in view order: an option for it
