@@ -200,6 +200,11 @@ namespace {
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
 			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
+			// The camera loads only chunks that can show; the rest would be drawn under the cover's opaque fill.
+			// Every mover's anchor still loads what it needs (player-visibility.md 3.9).
+			m_chunkManager->setCameraLoads([this](world::ChunkCoordinate coord) {
+				return ecsWorld == nullptr || worldview::cameraLoadsChunk(*ecsWorld, *m_camera, kPixelsPerMeter, coord);
+			});
 
 			// Create async processor for runtime chunk streaming
 			m_asyncProcessor = std::make_unique<assets::AsyncChunkProcessor>(*m_placementExecutor, m_processedChunks);
@@ -958,10 +963,13 @@ namespace {
 			// Physical viewport is 2x on Retina displays, which causes coordinate mismatches
 			Renderer::Primitives::getLogicalViewport(w, h);
 
+			// Everything outside it is under the cover's opaque fill, so the world culls to it as to the view.
+			const assets::DrawBound drawBound = worldview::coverDrawBound(*ecsWorld, *m_camera, w, h, kPixelsPerMeter);
+
 			// Time tile rendering
 			auto tileStart = Clock::now();
 			m_tileGpuTimer.begin();
-			m_renderer->render(*m_chunkManager, *m_camera, w, h);
+			m_renderer->render(*m_chunkManager, drawBound, *m_camera, w, h);
 			m_tileGpuTimer.end();
 			float tileMs = elapsedMs(tileStart, Clock::now());
 
@@ -981,7 +989,7 @@ namespace {
 			// Feed the selected entity's outline into the depth-sort pass so nearer
 			// entities occlude it (construction outlines still draw flat below).
 			m_entityRenderer->setSelectionOutline(m_selectionSystem->buildEntityOutline());
-			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
+			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, drawBound, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
 
 			// Player visibility: unseen ground black, seen ground out of sight tinted. Over everything the
@@ -2146,6 +2154,7 @@ namespace {
 		glm::vec2									 m_spawnPosition{0.0F, 0.0F};
 		// The movers handed to the chunk manager each frame; a member so the frame reuses its storage.
 		std::vector<world::ChunkAnchor> anchors;
+		std::vector<ecs::PlayerVisibilitySystem::SeenBox> seenBoxes;
 
 		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
 		// by the player (0 = none); it is always the selected colonist (control is released when the

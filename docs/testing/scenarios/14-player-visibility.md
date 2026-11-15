@@ -1,7 +1,7 @@
 # Scenario 14: player visibility
 
 **Status:** draft  
-**Last verified:** 2026-11-13, all steps (placement through injected input since salal v0.41.1)  
+**Last verified:** 2026-11-14, steps 1, 10, 11 (the drawing, not the walk), 12 and 13; 2026-11-13, all steps (placement through injected input since salal v0.41.1)  
 
 The player sees only what colonists have seen: bright ground round the crew, tinted ground out to the 150 m landing, black beyond. Things on seen ground select and place; on black ground they do not; a move order into the black walks the colonist to the edge of seen ground. Spec: [player-visibility.md](../../technical/player-visibility.md).
 
@@ -22,4 +22,6 @@ Build `world-sim` (RelWithDebInfo), launch it with no flags, click Enter Expedit
 9. As he arrives, a new bright disc opens round him past the old edge, and `...api/state?what=visibility` shows `seenSquareMeters` larger than before. Right-click into the black again: he walks on to the new edge.
 10. `curl.exe "http://127.0.0.1:8081/api/dev/reveal?on=1"`, zoom 0.5 on the landing: every tile is drawn bright, no black, no tint; a right-click up to about 40 m past Bob's seen ground now walks to where you click (farther than the nav mesh reaches it does nothing, as it did before player visibility).
 11. `...reveal?on=0`: the black and the tint come back, with the ground Bob opened in step 9 still seen.
-12. Click Release in Bob's panel, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
+12. Zoom 1 at the landing, then jump the camera east 300 m at a time to 2.4 km out, reading `...api/state?what=scene` (`chunks`, the `Chunks:` readout) at each: it never rises, and falls as the chunks the camera alone held unload.
+13. `...teleport?colonist=<BID>&to=479,10` (`/api/dev/teleport`), wait a second: `...visibility?x=509&y=10` is `seen`, `x=511` is not, a seen edge a few metres short of the chunk border at 512 m. Teleport him back to the landing, screenshot at `x=508&y=10&zoom=6`, jump to `x=4000` (chunks fall), and back: the same picture, the trees from past the border still drawn over the seen edge, and `...flora?age=mature&near=520,10` still lists trees east of 512 m.
+14. Click Release in Bob's panel, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.

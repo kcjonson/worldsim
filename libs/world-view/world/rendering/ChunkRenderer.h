@@ -9,6 +9,7 @@
 // water and shore from the chunk's terrain distance field (D10). Tile geometry
 // never touches the CPU per frame.
 
+#include "assets/placement/DrawBound.h"
 #include "world/chunk/Chunk.h"
 #include "world/chunk/ChunkManager.h"
 #include "world/chunk/SurfaceField.h"
@@ -45,16 +46,17 @@ class ChunkRenderer {
 
 	/// Render visible chunks
 	/// @param chunkManager Chunk manager with loaded chunks
+	/// @param drawBound What the frame can show: each chunk shades only the box of it the bound holds
 	/// @param camera Camera for visibility culling
 	/// @param viewportWidth Viewport width in pixels
 	/// @param viewportHeight Viewport height in pixels
-	void render(const world::ChunkManager& chunkManager, const world::WorldCamera& camera, int viewportWidth, int viewportHeight);
+	void render(const world::ChunkManager& chunkManager, const assets::DrawBound& drawBound, const world::WorldCamera& camera, int viewportWidth, int viewportHeight);
 
 	/// Set pixels per meter (zoom level)
 	void setPixelsPerMeter(float newPixelsPerMeter) { pixelsPerMeterValue = newPixelsPerMeter; }
 	[[nodiscard]] float pixelsPerMeter() const { return pixelsPerMeterValue; }
 
-	/// Get number of tiles visible in last frame (for profiling)
+	/// Get number of tiles shaded in last frame (for profiling)
 	[[nodiscard]] uint32_t lastTileCount() const { return lastTiles; }
 
 	/// Get number of chunks rendered in last frame (for profiling)

@@ -426,3 +426,27 @@ TEST_F(ChunkManagerTest, RapidCameraMovement) {
 	EXPECT_GT(manager->loadedChunkCount(), 0);
 	EXPECT_LE(manager->loadedChunkCount(), 25);  // Shouldn't accumulate too many
 }
+
+// The camera loads only the chunks its filter allows; an anchor loads its own regardless, a chunk
+// already loaded stays while the camera holds it, and one the filter turns to allowing loads then.
+TEST_F(ChunkManagerTest, CameraLoadsOnlyWhatItsFilterAllows) {
+	manager->setLoadRadius(1);
+	bool eastAllowed = false;
+	manager->setCameraLoads([&eastAllowed](ChunkCoordinate coord) { return coord == ChunkCoordinate(0, 0) || (eastAllowed && coord == ChunkCoordinate(1, 0)); });
+
+	const std::vector<ChunkAnchor> mover{{WorldPosition(-256.0F, 256.0F), 46.0F}};
+	manager->update(WorldPosition(256.0F, 256.0F), mover);
+	EXPECT_NE(manager->getChunk(ChunkCoordinate(0, 0)), nullptr);
+	EXPECT_NE(manager->getChunk(ChunkCoordinate(-1, 0)), nullptr) << "the mover's own";
+	EXPECT_EQ(manager->getChunk(ChunkCoordinate(1, 0)), nullptr);
+	EXPECT_EQ(manager->loadedChunkCount(), 2U);
+
+	eastAllowed = true;
+	manager->update(WorldPosition(256.0F, 256.0F), mover);
+	EXPECT_NE(manager->getChunk(ChunkCoordinate(1, 0)), nullptr);
+	EXPECT_EQ(manager->loadedChunkCount(), 3U);
+
+	eastAllowed = false;
+	manager->update(WorldPosition(256.0F, 256.0F), mover);
+	EXPECT_NE(manager->getChunk(ChunkCoordinate(1, 0)), nullptr) << "loaded, so kept while the camera holds it";
+}

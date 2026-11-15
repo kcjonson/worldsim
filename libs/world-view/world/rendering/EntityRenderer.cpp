@@ -10,28 +10,8 @@ namespace worldview {
 	void EntityRenderer::render(
 		const assets::PlacementExecutor&				  executor,
 		const std::unordered_set<world::ChunkCoordinate>& processedChunks,
-		const world::WorldCamera&						  camera,
-		int												  viewportWidth,
-		int												  viewportHeight
-	) {
-		renderFrame(executor, processedChunks, nullptr, camera, viewportWidth, viewportHeight);
-	}
-
-	void EntityRenderer::render(
-		const assets::PlacementExecutor&				  executor,
-		const std::unordered_set<world::ChunkCoordinate>& processedChunks,
 		const std::vector<assets::PlacedEntity>&		  dynamicEntities,
-		const world::WorldCamera&						  camera,
-		int												  viewportWidth,
-		int												  viewportHeight
-	) {
-		renderFrame(executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight);
-	}
-
-	void EntityRenderer::renderFrame(
-		const assets::PlacementExecutor&				  executor,
-		const std::unordered_set<world::ChunkCoordinate>& processedChunks,
-		const std::vector<assets::PlacedEntity>*		  dynamicEntities,
+		const assets::DrawBound&						  drawBound,
 		const world::WorldCamera&						  camera,
 		int												  viewportWidth,
 		int												  viewportHeight
@@ -40,7 +20,7 @@ namespace worldview {
 		// inputs into one context shared by every render path.
 		frameCounter++;
 		assets::RenderContext ctx{
-			executor, processedChunks, dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter
+			executor, processedChunks, &dynamicEntities, camera, viewportWidth, viewportHeight, m_pixelsPerMeter, frameCounter, drawBound
 		};
 
 		// Canonical per-frame metrics: reset once, then each sub-renderer adds to it.

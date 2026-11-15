@@ -80,7 +80,8 @@ TEST(PackagedLayout, LayersStayOrderedThroughDepthSort) {
 	const assets::PlacementExecutor					executor(assets::AssetRegistry::Get());
 	const std::unordered_set<world::ChunkCoordinate> noChunks;
 	const world::WorldCamera						camera;
-	const assets::RenderContext						ctx{executor, noChunks, &dynamics, camera, 800, 600, 16.0F, 1};
+	const assets::DrawBound							everywhere = assets::DrawBound::everywhere();
+	const assets::RenderContext						ctx{executor, noChunks, &dynamics, camera, 800, 600, 16.0F, 1, everywhere};
 	assets::WorldDepthGather						gather;
 	std::vector<assets::DepthSortItem>				items;
 	gather.gather(ctx, items);

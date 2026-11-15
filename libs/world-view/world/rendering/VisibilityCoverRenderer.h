@@ -6,6 +6,9 @@
 // edges, drawn through salal's CSS mask (docs/masks.md); nothing is rendered to a texture.
 
 #include "world/camera/WorldCamera.h"
+#include "world/chunk/ChunkCoordinate.h"
+
+#include "assets/placement/DrawBound.h"
 
 #include <vision/SeenArea.h>
 
@@ -43,8 +46,27 @@ namespace worldview {
 	constexpr std::int32_t kCoverTintKey = 30;
 	constexpr std::int32_t kCoverUnseenKey = 31;
 
+	// How far each box of the draw bound is grown, in screen pixels: past a pixel the record's edge
+	// crosses, and a thing's anti-aliased fringe.
+	constexpr float kDrawBoundMarginPixels = 2.0F;
+
 	// The committed record's triangles as meshes in world meters, each within kSeenMeshVertexLimit.
 	std::vector<renderer::TessellatedMesh> seenMeshes(const std::vector<vision::SeenArea::Triangle>& triangles);
+
+	// What this frame can show, for drawing to cull against: with the cover drawn, the seen boxes in
+	// view (PlayerVisibilitySystem::appendSeenBoxes), each grown by kDrawBoundMarginPixels, since
+	// everything else is under the opaque fill; with reveal on, or no player visibility, everywhere.
+	assets::DrawBound coverDrawBound(ecs::World& world, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float pixelsPerMeter);
+
+	// kDrawBoundMarginPixels in world meters at the camera's zoom.
+	[[nodiscard]] float drawBoundMarginMeters(const world::WorldCamera& camera, float pixelsPerMeter);
+
+	// Whether the camera loads the chunk at `coord` (player-visibility.md 3.9): whether the draw bound
+	// could ever hold anything of it, so whether seen ground lies within the chunk's square grown by the
+	// reach the draw side culls with (entityCullMarginMeters of the registry's reach) and the draw
+	// margin. A chunk with no seen ground of its own loads when its crowns can overhang seen ground
+	// next door. Every chunk with reveal on, or no player visibility.
+	[[nodiscard]] bool cameraLoadsChunk(ecs::World& world, const world::WorldCamera& camera, float pixelsPerMeter, world::ChunkCoordinate coord);
 
 	class VisibilityCoverRenderer {
 	  public:

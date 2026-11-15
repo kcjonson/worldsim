@@ -1,5 +1,8 @@
 #include "VisibilityCoverRenderer.h"
 
+#include "assets/AssetRegistry.h"
+#include "assets/placement/RenderContext.h"
+
 #include <ecs/World.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/Memory.h>
@@ -77,6 +80,39 @@ namespace worldview {
 			meshes.push_back(std::move(mesh));
 		}
 		return meshes;
+	}
+
+	assets::DrawBound coverDrawBound(ecs::World& world, const world::WorldCamera& camera, int viewportWidth, int viewportHeight, float pixelsPerMeter) {
+		const ecs::PlayerVisibilitySystem* visibility = ecs::PlayerVisibilitySystem::gate(world);
+		if (visibility == nullptr) {
+			return assets::DrawBound::everywhere();
+		}
+		const assets::VisibleBounds view = assets::computeVisibleBounds(
+			camera, viewportWidth, viewportHeight, pixelsPerMeter, assets::entityCullMarginMeters(assets::AssetRegistry::Get().maxReachMeters())
+		);
+		std::vector<ecs::PlayerVisibilitySystem::SeenBox> boxes;
+		visibility->appendSeenBoxes({view.minX, view.minY}, {view.maxX, view.maxY}, boxes);
+		const float		  margin = drawBoundMarginMeters(camera, pixelsPerMeter);
+		assets::DrawBound bound;
+		for (const ecs::PlayerVisibilitySystem::SeenBox& box : boxes) {
+			bound.add({box.low.x - margin, box.high.x + margin, box.low.y - margin, box.high.y + margin});
+		}
+		return bound;
+	}
+
+	float drawBoundMarginMeters(const world::WorldCamera& camera, float pixelsPerMeter) {
+		return kDrawBoundMarginPixels / (pixelsPerMeter * camera.zoom());
+	}
+
+	bool cameraLoadsChunk(ecs::World& world, const world::WorldCamera& camera, float pixelsPerMeter, world::ChunkCoordinate coord) {
+		const ecs::PlayerVisibilitySystem* visibility = ecs::PlayerVisibilitySystem::gate(world);
+		if (visibility == nullptr) {
+			return true;
+		}
+		const float reach =
+			assets::entityCullMarginMeters(assets::AssetRegistry::Get().maxReachMeters()) + drawBoundMarginMeters(camera, pixelsPerMeter);
+		const glm::vec2 low{static_cast<float>(coord.x) * world::kChunkWorldSize, static_cast<float>(coord.y) * world::kChunkWorldSize};
+		return visibility->anySeenBox(low - glm::vec2(reach), low + glm::vec2(world::kChunkWorldSize + reach));
 	}
 
 	void VisibilityCoverRenderer::upload(const vision::SeenArea& seen) {

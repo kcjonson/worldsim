@@ -16,6 +16,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace geometry::nav {
@@ -50,6 +51,9 @@ namespace vision {
 	// How near its rim a sight polygon must add ground to be swept: the steps are where one build's
 	// rim and the next's, a rebuild step apart, leave a notch. A rebuild step, the skirt, and margin.
 	constexpr std::int64_t kSeenSweepRimBandMm = 600;
+	// The side of a cell of the seen boxes, the cache that says where the record holds ground
+	// (appendSeenBoxes): a chunk's, so a chunk asks its own cell and the neighbours its reach crosses into.
+	constexpr std::int64_t kSeenBoxCellMm = 512000;
 
 	// The radius of the disc drawn as visible round a colonist of sight `sightMm`. Every held
 	// position lies within kSeenSlackMm of his open leg's line and no more than kSeenSlackMm past its
@@ -69,6 +73,11 @@ namespace vision {
 
 		struct Triangle {
 			std::array<geometry::Vec2i64, 3> corners; // counter-clockwise
+		};
+
+		struct Box {
+			geometry::Vec2i64 low;
+			geometry::Vec2i64 high;
 		};
 
 		SeenArea();
@@ -126,6 +135,13 @@ namespace vision {
 		void appendTriangles(std::vector<Triangle>& out) const;
 		// Every pending shape: the open legs by id, then the queue in order, then the pieces waiting.
 		void appendPendingShapes(std::vector<const std::vector<geometry::Vec2i64>*>& out) const;
+		// Boxes that together hold every seen point in the box from `low` to `high`: for each cell of
+		// kSeenBoxCellMm the query meets, the box of what the record holds in it, and the box of each
+		// pending shape that meets the query. A cache over the record, kept as pieces register: it
+		// never shrinks, and a box can hold ground that is not seen, never the other way.
+		void appendSeenBoxes(const geometry::Vec2i64& low, const geometry::Vec2i64& high, std::vector<Box>& out) const;
+		// Whether appendSeenBoxes would give any box for the same query: false means nothing there is seen.
+		[[nodiscard]] bool anySeenBox(const geometry::Vec2i64& low, const geometry::Vec2i64& high) const;
 
 		[[nodiscard]] double		   committedSquareMeters() const;
 		[[nodiscard]] std::size_t	   ringsRegistered() const { return registered.size(); }
@@ -162,12 +178,16 @@ namespace vision {
 		// registered, and queues its sweep.
 		void				enter(const PendingShape& shape);
 		void				registerPiece();
+		// Grows the committed boxes of the cells the box from `low` to `high` meets by its part in each.
+		void				holdCommitted(const geometry::Vec2i64& low, const geometry::Vec2i64& high);
 		// Builds a sweep point's polygon and enters it when it adds anything.
 		void				commitSweep(const PendingShape& point);
 		// Queues the sweep's points along `walk` and on to `to`, short of its two ends, whose own
 		// polygons went in.
 		void				queueSweep(const std::vector<geometry::Vec2i64>& walk, const geometry::Vec2i64& to, std::int64_t sightRadiusMm);
 		template <typename Visit> void forEachPending(Visit visit) const;
+		// Calls `take` with each box appendSeenBoxes gives for the query.
+		template <typename Take> void forEachSeenBox(const geometry::Vec2i64& low, const geometry::Vec2i64& high, Take take) const;
 
 		std::unique_ptr<geometry::nav::PatchableMesh>		 mesh;
 		std::unique_ptr<geometry::nav::SightCoverScratch>	 scratch;
@@ -182,6 +202,7 @@ namespace vision {
 		std::deque<PendingShape>						  sweeps; // points (centre) with their sight radius, polygons not yet built
 		std::vector<std::int32_t>						  registered; // ring ids, in the order they went in
 		std::size_t										  dropped = 0;
+		std::map<std::pair<std::int64_t, std::int64_t>, Box> committedBoxes; // by cell of kSeenBoxCellMm, each cut to its cell
 	};
 
 } // namespace vision

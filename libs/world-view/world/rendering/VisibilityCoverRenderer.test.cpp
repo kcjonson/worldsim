@@ -4,6 +4,9 @@
 
 #include "world/rendering/VisibilityCoverRenderer.h"
 
+#include "assets/AssetRegistry.h"
+#include "assets/placement/RenderContext.h"
+
 #include "BaseShader.h"
 #include "backend/NullBackend.h"
 #include "primitives/Primitives.h"
@@ -24,6 +27,7 @@
 #include <cmath>
 #include <cstddef>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace {
@@ -189,4 +193,72 @@ TEST_F(VisibilityCoverTest, NothingWhileRevealed) {
 	EXPECT_TRUE(cover->layers().drawn);
 	EXPECT_EQ(cover->uploads(), 1U);
 	EXPECT_EQ(cover->layers().visibleOutlines.size(), 1U);
+}
+
+// The draw bound holds the seen ground in view and nothing well past it: a view over the landing's
+// edge meets it on the seen side only, a view over unseen ground meets nothing, a colonist walking
+// past the record holds his open leg, and with reveal on it holds everything.
+TEST_F(VisibilityCoverTest, DrawBoundHoldsWhatTheCoverLeavesShowing) {
+	const auto boundAt = [this](glm::vec2 centre) {
+		camera.setPosition({centre.x, centre.y});
+		return worldview::coverDrawBound(world, camera, kViewportWidth, kViewportHeight, kPixelsPerMeter);
+	};
+	const auto region = [](float minX, float maxX) { return assets::VisibleBounds{minX, maxX, -5.0F, 5.0F}; };
+
+	const assets::DrawBound overLanding = boundAt({0.0F, 0.0F});
+	EXPECT_TRUE(overLanding.meets(region(-10.0F, 10.0F)));
+
+	const assets::DrawBound overEdge = boundAt({150.0F, 0.0F});
+	EXPECT_TRUE(overEdge.meets(region(140.0F, 145.0F)));
+	EXPECT_FALSE(overEdge.meets(region(152.0F, 190.0F))) << "the landing is 150 m round the drop";
+	const std::optional<assets::VisibleBounds> cut = overEdge.within(region(100.0F, 190.0F));
+	ASSERT_TRUE(cut.has_value());
+	EXPECT_LT(cut->maxX, 151.0F);
+
+	const assets::DrawBound overUnseen = boundAt({1000.0F, 0.0F});
+	EXPECT_FALSE(overUnseen.meets(region(900.0F, 1100.0F)));
+
+	// A colonist past the record: his open leg is held, round where he walked and no farther.
+	const ecs::EntityID colonist = addColonist({1000.0F, 0.0F});
+	walk(colonist, {1005.0F, 0.0F}, 0.1F);
+	const assets::DrawBound overColonist = boundAt({1000.0F, 0.0F});
+	EXPECT_TRUE(overColonist.meets(region(1028.0F, 1029.0F)));
+	EXPECT_FALSE(overColonist.meets(region(1036.0F, 1100.0F)));
+
+	visibility.setRevealed(true);
+	const assets::DrawBound revealed = boundAt({5000.0F, 0.0F});
+	const std::optional<assets::VisibleBounds> whole = revealed.within(region(4900.0F, 5100.0F));
+	ASSERT_TRUE(whole.has_value());
+	EXPECT_EQ(whole->minX, 4900.0F);
+	EXPECT_EQ(whole->maxX, 5100.0F);
+	EXPECT_EQ(whole->minY, -5.0F);
+	EXPECT_EQ(whole->maxY, 5.0F);
+}
+
+// The camera loads a chunk whose things can show: one with seen ground, and one with none whose crowns
+// reach seen ground in its neighbour (within the draw side's reach of its edge); one beyond that reach,
+// or far off, it does not. With reveal on it loads every chunk.
+TEST_F(VisibilityCoverTest, CameraLoadsChunksWithinReachOfSeenGround) {
+	const float reach = assets::entityCullMarginMeters(assets::AssetRegistry::Get().maxReachMeters()) +
+						worldview::drawBoundMarginMeters(camera, kPixelsPerMeter);
+	constexpr float kRadius = 20.0F;
+	const float		border	= 3.0F * world::kChunkWorldSize;
+	const float		rowNear = 0.5F * world::kChunkWorldSize;
+	const float		rowFar	= 2.5F * world::kChunkWorldSize;
+	visibility.revealLanding({border - kRadius - (0.5F * reach), rowNear}, kRadius);
+	visibility.revealLanding({border - kRadius - (2.0F * reach), rowFar}, kRadius);
+	const auto loads = [this](int x, int y) {
+		return worldview::cameraLoadsChunk(world, camera, kPixelsPerMeter, world::ChunkCoordinate(x, y));
+	};
+
+	EXPECT_TRUE(loads(0, 0)) << "the landing";
+	EXPECT_TRUE(loads(2, 0)) << "its own seen ground";
+	EXPECT_TRUE(loads(3, 0)) << "no seen ground, but the seen edge next door is within reach";
+	EXPECT_TRUE(loads(2, 2));
+	EXPECT_FALSE(loads(3, 2)) << "the seen edge next door is beyond reach";
+	EXPECT_FALSE(loads(5, 0));
+
+	visibility.setRevealed(true);
+	EXPECT_TRUE(loads(3, 2));
+	EXPECT_TRUE(loads(5, 0));
 }
