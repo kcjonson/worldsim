@@ -107,9 +107,10 @@ namespace ecs {
 
 			// Gather this segment's BUILT transparent-to-sight openings as gap spans.
 			// The half-extent formula matches construction::openingFootprint exactly, so a
-			// given opening's sight gap ends at its jambs. Nav's door span, cut at
-			// construction::openingGaps' whole millimetres, ends within a millimetre of
-			// them on each axis.
+			// given opening's sight gap ends at its jambs. Nav cuts its door span at whole
+			// millimetres along the wall and clamps it to the wall's trimmed band, so it can
+			// differ from the jambs by that rounding, start at the corner trim, and run up to
+			// 6 mm past a jamb where a sliver of solid wall would be left.
 			std::vector<Gap> gaps;
 			auto			 openIt = openingsBySegment.find(seg.id);
 			if (openIt != openingsBySegment.end()) {

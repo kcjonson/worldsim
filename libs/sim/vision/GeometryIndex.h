@@ -12,8 +12,9 @@
 // the occluder line, and only the solid wall portions between/around openings emit
 // occluders. The centerline gap span uses the SAME half-extent formula as
 // construction::openingFootprint, so the sight gap ends at the opening's jambs (the
-// nav door portal's); nav cuts its door span at construction::openingGaps' whole
-// millimetres, within a millimetre of those on each axis.
+// nav door portal's). Nav cuts its door span at whole millimetres along the wall and
+// clamps it to the trimmed band, so its span can differ from the jambs by that rounding,
+// start at the corner trim, and run up to 6 mm past a jamb over a sliver of solid wall.
 //
 // Extraction is synchronous and CPU-light (centerline segments, no triangulation,
 // no offsetting), so the rebuild runs inline, version-gated against
