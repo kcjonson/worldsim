@@ -876,7 +876,8 @@ namespace world_sim {
 	// =========================================================================
 	// Wall tool. Mirrors the foundation path: snapWall + validateWallPoint live,
 	// per-segment validateWallSegment + commitSegment on finish, one blueprint
-	// entity per committed segment. The chain is OPEN and hosted by one foundation.
+	// entity per committed segment. The chain is hosted by one foundation, and a
+	// point on its first point closes and commits it.
 	// =========================================================================
 
 	const assets::ThicknessPreset* DrawingSystem::activePreset() const {
@@ -893,13 +894,16 @@ namespace world_sim {
 		// inset and skip validation below.
 		const auto*		   preset = activePreset();
 		const std::int64_t halfThick = preset != nullptr ? preset->halfThicknessMm : 0;
-		lastSnap_ = snap.snapWall(points_, world, freeform, halfThick, UserSettings::Get().alignSnapToExistingFoundations);
+		lastSnap_ = snap.snapWall(
+			points_, world, freeform, halfThick, effectiveOriginCloseRadiusMeters(), UserSettings::Get().alignSnapToExistingFoundations
+		);
 		cursor_ = lastSnap_.point;
 
 		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
 		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
 		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
+		willClose_ = false;
 		if (preset == nullptr) {
 			lastValidation_ = {};
 			return;
@@ -915,6 +919,7 @@ namespace world_sim {
 
 		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = validator.validateWallPoint(points_, cursor_, *preset, host);
+		willClose_ = lastSnap_.closesShape() && lastValidation_.ok() && !cursorOffBuildableGround;
 	}
 
 	bool DrawingSystem::handleWallClick(Foundation::Vec2 world, bool freeform, bool ctrl) {
@@ -974,7 +979,11 @@ namespace world_sim {
 			return true;
 		}
 
+		const bool closes = ec::closesWallChain(points_, cursor_);
 		points_.push_back(cursor_);
+		if (closes) {
+			commitWallChain();
+		}
 		return true;
 	}
 
@@ -1828,22 +1837,10 @@ namespace world_sim {
 			});
 		}
 
-		// Origin halo when the shape can close.
+		// Origin halo when the shape can close. Closing reflects whatever the next click
+		// will do: the explicit origin snap or the near-start "snap not block" rescue.
 		if (points_.size() >= 3) {
-			const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
-			// Closing reflects whatever the next click will do: the explicit origin snap
-			// or the near-start "snap not block" rescue.
-			const bool closing = willClose_;
-			Renderer::Primitives::drawCircle({
-				.center = screen.front(),
-				.radius = std::max(ps.originHaloMinRadiusPx, originRadius),
-				.style =
-					{.fill = {0.0F, 0.0F, 0.0F, 0.0F},
-					 .border =
-						 Foundation::BorderStyle{.color = closing ? okColor : toColor(ps.originHaloColor), .width = closing ? 3.0F : 1.5F}},
-				.id = "drawing_origin_halo",
-				.key = 904,
-			});
+			renderOriginHalo(screen.front(), scale, 904);
 		}
 
 		// Red highlight on the offending PLACED vertex/edge when a geometry constraint is
@@ -1874,6 +1871,21 @@ namespace world_sim {
 				.key = 905,
 			});
 		}
+	}
+
+	void DrawingSystem::renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const {
+		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
+		const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
+		Renderer::Primitives::drawCircle({
+			.center = firstScreen,
+			.radius = std::max(previewStyle.originHaloMinRadiusPx, originRadius),
+			.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F},
+					  .border = Foundation::BorderStyle{
+						  .color = willClose_ ? validColor_ : toColor(previewStyle.originHaloColor), .width = willClose_ ? 3.0F : 1.5F
+					  }},
+			.id = "drawing_origin_halo",
+			.key = key,
+		});
 	}
 
 	namespace {
@@ -2317,6 +2329,10 @@ namespace world_sim {
 				.id = "wall_vertex",
 				.key = 909,
 			});
+		}
+
+		if (points_.size() >= construction::kMinClosingWallChainPoints) {
+			renderOriginHalo(screen.front(), scale, 910);
 		}
 
 		using construction::SnapKind;

@@ -1,5 +1,6 @@
 #include "SnapEngine.h"
 
+#include "ConstructionValidator.h"
 #include "ConstructionWorld.h"
 #include "OpeningGeometry.h"
 
@@ -369,18 +370,21 @@ namespace construction {
 		return r;
 	}
 
+	bool SnapEngine::snapToOrigin(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, std::size_t minPoints,
+								  float radiusMeters) const {
+		if (points.size() < minPoints) {
+			return false;
+		}
+		const float radius = radiusMeters >= 0.0F ? radiusMeters : snapping_->originCloseRadiusMeters;
+		return distanceMeters(cursor, points.front()) <= radius;
+	}
+
 	SnapResult SnapEngine::snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool freeform,
 								float originCloseRadiusMeters, bool alignToExisting) const {
 		// Origin-close: once a closeable shape exists (>= 3 points), being within
-		// the origin radius snaps onto the first point and signals a close. The
-		// caller may pass a zoom-stable radius; a negative value uses the config.
-		if (points.size() >= 3) {
-			const float originRadius =
-				originCloseRadiusMeters >= 0.0F ? originCloseRadiusMeters : snapping_->originCloseRadiusMeters;
-			const float d = distanceMeters(cursor, points.front());
-			if (d <= originRadius) {
-				return {points.front(), SnapKind::Origin};
-			}
+		// the origin radius snaps onto the first point and signals a close.
+		if (snapToOrigin(points, cursor, 3, originCloseRadiusMeters)) {
+			return {points.front(), SnapKind::Origin};
 		}
 
 		// Existing-geometry snapping (always on): vertices beat edges.
@@ -463,10 +467,16 @@ namespace construction {
 		::Foundation::Vec2					   cursor,
 		bool								   freeform,
 		std::int64_t						   wallHalfThicknessMm,
+		float								   originCloseRadiusMeters,
 		bool								   alignToExisting
 	) const {
-		// Priority, most specific first (design Walls > Drawing). No origin-close:
-		// the chain is open and never closes onto its first point.
+		// Priority, most specific first (design Walls > Drawing), led by the close onto
+		// the chain's first point as in snap(). The point comes back exactly, so
+		// closesWallChain sees the close.
+		if (!freeform && snapToOrigin(points, cursor, kMinClosingWallChainPoints, originCloseRadiusMeters)) {
+			return {points.front(), SnapKind::Origin};
+		}
+
 		::Foundation::Vec2 wv{};
 		VertexId		   wvId = kInvalidVertex;
 		if (snapToWallVertex(cursor, wv, wvId)) {
