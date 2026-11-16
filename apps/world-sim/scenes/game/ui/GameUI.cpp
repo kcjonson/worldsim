@@ -13,6 +13,8 @@ namespace world_sim {
 		constexpr float kEdge = 12.0F;			  // the HUD's distance from the viewport's edges
 		constexpr float kRightStackTop = 60.0F;	  // just below the top bar
 		constexpr float kDockBottom = 12.0F;	  // the gameplay bar's distance from the bottom
+		// The dock is the viewport's middle 60%, the construction strip's width, clear of the corner columns.
+		constexpr float kDockSidePercent = 20.0F;
 		constexpr float kBuildMenuBottom = 70.0F; // above the gameplay bar
 		constexpr float kTaskListRoom = 100.0F;	  // the viewport height the task list leaves free
 		// Toasts stack up from the bottom right, above the zoom column, which owns the corner.
@@ -62,11 +64,15 @@ namespace world_sim {
 		// The bottom middle: the construction strip, while a structure tool is active, over the gameplay bar.
 		ui::Ref<ui::Component> dock = root.addChild<ui::Component>({
 			.id = "bottom_dock",
-			.layout =
-				stack({.right = 0.0F, .bottom = kDockBottom, .left = 0.0F}, ui::AlignItems::Center, theme.get(tokens::spacing::space1)),
+			.layout = stack(
+				{.right = ui::percent(kDockSidePercent), .bottom = kDockBottom, .left = ui::percent(kDockSidePercent)},
+				ui::AlignItems::Center,
+				theme.get(tokens::spacing::space1)
+			),
 		});
 		configStrip = dock.addChild<ConstructionConfigStrip>({
 			.id = "construction_config_strip",
+			.size = {ui::percent(100.0F), ui::kAuto},
 			.onMaterialSelected = args.onConstructionMaterialSelected,
 			.onThicknessSelected = args.onConstructionThicknessSelected,
 		});
@@ -91,9 +97,10 @@ namespace world_sim {
 			.onColonistFollowed = args.onColonistFollowed,
 		});
 
-		// The bottom left: the task list, while it's open, on the selected entity's panel.
-		ui::Ref<ui::Component> bottomLeft = root.addChild<ui::Component>(
-			{.id = "bottom_left", .layout = stack({.bottom = 0.0F, .left = kEdge}, ui::AlignItems::Start, 0.0F)}
+		// The bottom left: the task list, while it's open, on the selected entity's panel. Hidden while both
+		// are, so an empty box isn't laid out.
+		bottomLeft = root.addChild<ui::Component>(
+			{.id = "bottom_left", .visible = false, .layout = stack({.bottom = 0.0F, .left = kEdge}, ui::AlignItems::Start, 0.0F)}
 		);
 		taskListPanel = bottomLeft.addChild<TaskListView>({.id = "task_list", .visible = false, .onClose = [this] { toggleTaskList(); }});
 		infoPanel = bottomLeft.addChild<EntityInfoView>({
@@ -246,6 +253,7 @@ namespace world_sim {
 		if (taskListExpanded && selectedColonistId != 0) {
 			taskListPanel.get()->update(ecsWorld, selectedColonistId);
 		}
+		bottomLeft.get()->setVisible(taskListPanel.get()->isVisible() || infoPanel.get()->isVisible());
 
 		if (colonistDetailsDialog->isOpen()) {
 			colonistDetailsDialog->update(ecsWorld, deltaTime);
