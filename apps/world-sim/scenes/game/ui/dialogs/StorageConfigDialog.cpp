@@ -439,6 +439,7 @@ namespace world_sim {
 		const std::vector<DisplayRule>& rules = item != nullptr ? model.rulesForSelectedItem() : none;
 		rulesHeader.get()->setText(item != nullptr ? item->label + " RULES" : std::string("RULES"));
 		rulesStatus.get()->setVisible(rules.empty());
+		list->setVisible(!rules.empty());
 		rulesStatus.get()->setText(item != nullptr ? "No rules configured" : "Select an item");
 		list->reconcileChildren(
 			rules,
