@@ -61,6 +61,8 @@ Applications:
 | [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
 | [Main Loop Timing](./main-loop-timing.md) | One frame top to bottom, ECS order and priorities, periodic work and its clocks, decision triggers, cross-frame hand-offs, threads, hazards |
+| [C++ to Rust Migration Scope](./rust-migration-scope.md) | Deferred indefinitely. Research: port difficulty by library, geometry spike results, tools, Rust code style |
+| [Rust Rewrite Plan](./rust-rewrite-plan.md) | Deferred indefinitely; no work scheduled without an explicit go-ahead. Plan: layered FFI-free rewrite, oracles, phases, agent loop |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
 | [Include Graph](./include-graph.md) | Per-library #include matrix, layering violations, and the `tools/resolve-includes.mjs` resolver |
 
