@@ -146,8 +146,11 @@ Allowed when the change calls for it, with three conditions.
 1. **Scoped.** Time what the change could move: the view and the zooms it touches, against `main`.
    The full three-view suite is the nightly batch's job.
 2. **Checked.** `node scripts/machine-load.mjs` before the capture and again after, with the game
-   closed. It reads CPU, GPU utilization, and other sessions' build, test, and game processes, and
-   answers `idle`, `mostly-idle`, or `busy`. On `busy` don't time anything.
+   closed. It reads CPU, GPU load, and other sessions' build, test, and game processes, and
+   answers `idle`, `mostly-idle`, or `busy`. GPU load is utilization scaled by the graphics clock
+   over its maximum, since a card idling at its lowest clock reports 25 to 45% utilization of almost
+   no capacity; under load the clock is near its maximum and the two figures agree. On `busy` don't
+   time anything.
 3. **Budgeted.** Every capture launches the game on Kevin's desktop and holds the machine while it
    runs. Decide the launches before the first one and stop when the question is answered.
 
