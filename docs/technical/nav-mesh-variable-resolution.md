@@ -279,13 +279,12 @@ refuses any ground outline that spans `kMaxGroundExtentMm` (2^30 mm) or more on 
 **A chunk unloading does nothing to the mesh.** Its water, walls, doors, placed obstacles, and the
 meshed ground over it stay with their ids, and so do the nav system's records of them (each chunk's
 water, the placed obstacles in the mesh by key). A chunk that reloads patches nothing by itself. A
-later limit over it adds any placed obstacle its placement data holds that the mesh lacks, which is
-how one that came back with its chunk (below) re-enters. Ground no limit has reached has no
-triangles.
+later limit over it adds any placed obstacle its placement data holds that the mesh lacks. Ground
+no limit has reached has no triangles.
 
-One gap sits outside nav: placement data does not keep removals across an unload, so a felled
-obstacle comes back in the placement data while the mesh rightly lacks it, WOR-717 (Felled trees
-and harvested nodes come back when their chunk unloads and reloads).
+Placement data keeps removals across an unload (`PlacementExecutor` holds what was removed from
+each chunk for the session and leaves it out when the chunk is placed again), so a felled obstacle
+is in neither the reloaded chunk's placement data nor the mesh.
 
 ### 4.2 Obstacles block
 
@@ -525,8 +524,7 @@ past `kFootprintReachMeters` from its entity's position is logged as an error on
 where it pokes into a limit from outside the query box it is missed. A limit's placed obstacles go
 in ahead of its ground or in the same patch, so meshed ground is never without what stands on it. A
 placed obstacle that lands over ground already meshed (one back in the world after it left the
-mesh, such as one felled that came back with its chunk) marks the routes it crosses, as a wall
-does (4.6).
+mesh) marks the routes it crosses, as a wall does (4.6).
 
 **When a limit can go in.** Every chunk its query box meets is loaded and ready, has its
 placement, and is held by a mover's anchor (4.5; `limitServable`). One whose chunks are not ready
