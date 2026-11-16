@@ -90,7 +90,7 @@
     <guideDashPx>1.0</guideDashPx>
     <guideGapPx>4.5</guideGapPx>
     <guideOpacity>0.6</guideOpacity>              <!-- alignment lines -->
-    <markerOpacity>0.9</markerOpacity>            <!-- right angle, crossing dot, ticks, close halo -->
+    <markerOpacity>0.9</markerOpacity>            <!-- right-angle marker, crossing dot, close halo -->
     <guideColorMode>one</guideColorMode>
     <guideColorShape>#8CC4FFFF</guideColorShape>
     <guideColorNearby>#FFAD5CFF</guideColorNearby>
