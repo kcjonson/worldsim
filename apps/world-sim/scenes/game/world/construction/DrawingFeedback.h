@@ -2,7 +2,8 @@
 
 // DrawingFeedback - the snap feedback the drawing tools draw over their preview: the
 // guides behind the snapped point, their markers and distance labels, the segment's
-// length label, the first point's close ring and halo, and the snapped-point marker.
+// length label, the first point's close ring and halo, the snapped-point marker, and
+// the wall tool's snap-target ring.
 // One rule: solid is geometry, dotted and part transparent is alignment, small solid
 // markers state a fact. Every size is screen pixels and never scales with zoom.
 //
@@ -37,28 +38,32 @@ namespace world_sim {
 	enum class ToolKind;
 
 	struct DrawingFeedbackInput {
-		ToolKind								 tool;
-		const construction::SnapResult&			 snap;
-		const std::vector<Foundation::Vec2>&	 points; // placed points, world meters
-		Foundation::Vec2						 cursor; // the snapped cursor, world meters
-		const DrawingSettings&					 display;
-		const assets::PreviewStyle&				 style;
-		const world::WorldCamera&				 camera;
-		int										 viewportWidth;
-		int										 viewportHeight;
-		float									 pixelsPerMeter; // before the camera's zoom, as worldToScreen takes it
-		float									 closeRadiusMeters; // the first point's close radius, zoom-floored
-		bool									 canClose;			// enough points placed for a click on the first point to close
-		bool									 willClose;			// the next click closes the shape
+		ToolKind							 tool;
+		const construction::SnapResult&		 snap;
+		const std::vector<Foundation::Vec2>& points; // placed points, world meters
+		Foundation::Vec2					 cursor; // the snapped cursor, world meters
+		const DrawingSettings&				 display;
+		const assets::PreviewStyle&			 style;
+		const world::WorldCamera&			 camera;
+		int									 viewportWidth;
+		int									 viewportHeight;
+		float								 pixelsPerMeter;	// before the camera's zoom, as worldToScreen takes it
+		float								 closeRadiusMeters; // the first point's close radius, zoom-floored
+		bool								 canClose;			// enough points placed for a click on the first point to close
+		bool								 willClose;			// the next click closes the shape
+		bool								 snappedPointInvalid = false; // off buildable ground: the marker's dot takes invalidColor
+		Foundation::Color					 invalidColor{};
 	};
 
 	/// The order things draw in, each above the one before.
 	enum class FeedbackLayer {
 		Alignment,	   // guides and the close ring
-		Marker,		   // right-angle markers, the crossing dot, the close halo
+		Marker,		   // right-angle markers and the close halo
+		LabelPlate,	   // the dark plate behind each label
 		Label,		   // the segment label and guide distance labels
 		CursorOutline, // the dark strokes under the snapped-point marker's ticks
 		Cursor,		   // the snapped-point marker
+		Target,		   // over the marker: the crossing dot and the wall tool's snap-target ring
 	};
 
 	/// An open stroke in screen pixels: a guide (two points) or a right-angle marker (three).
@@ -91,12 +96,24 @@ namespace world_sim {
 		FeedbackLayer	  layer = FeedbackLayer::Marker;
 	};
 
-	/// Text with a dark halo; `position` is its top-left corner in screen pixels.
+	/// A box in screen pixels.
+	struct FeedbackBox {
+		float left = 0.0F;
+		float top = 0.0F;
+		float right = 0.0F;
+		float bottom = 0.0F;
+	};
+
+	/// Text on a dark plate. `position` is the text's top-left corner in screen pixels and
+	/// `height` its line height; `plate` is the plate behind it, which is also the box other
+	/// labels keep clear of.
 	struct FeedbackLabel {
 		std::string		  text;
 		Foundation::Vec2  position;
 		float			  sizePx = 0.0F;
 		float			  width = 0.0F;
+		float			  height = 0.0F;
+		FeedbackBox		  plate;
 		Foundation::Color color;
 	};
 
@@ -107,12 +124,12 @@ namespace world_sim {
 		std::vector<FeedbackLabel>	labels;
 	};
 
-	/// Width in pixels of `text` drawn `sizePx` tall.
-	using MeasureTextWidth = std::function<float(const std::string& text, float sizePx)>;
+	/// Width and line height in pixels of `text` at a font size of `sizePx`.
+	using MeasureTextSize = std::function<Foundation::Vec2(const std::string& text, float sizePx)>;
 
 	/// Decide the feedback for one frame. No renderer calls: text is measured through
 	/// `measure`.
-	[[nodiscard]] DrawingFeedbackPlan planSnapFeedback(const DrawingFeedbackInput& input, const MeasureTextWidth& measure);
+	[[nodiscard]] DrawingFeedbackPlan planSnapFeedback(const DrawingFeedbackInput& input, const MeasureTextSize& measure);
 
 	/// Plan the feedback and draw it with the renderer's primitives.
 	void drawSnapFeedback(const DrawingFeedbackInput& input);

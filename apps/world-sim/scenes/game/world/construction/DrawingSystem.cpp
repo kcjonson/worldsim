@@ -569,8 +569,9 @@ namespace world_sim {
 	float DrawingSystem::effectiveOriginCloseRadiusMeters() const {
 		auto&		registry = ConstructionRegistry::Get();
 		const float configMeters = registry.snapping().originCloseRadiusMeters;
-		// Floor to the same screen-px minimum the origin halo is drawn at, so the
-		// catch radius and the visible halo agree at every zoom.
+		// Floor to a screen-px minimum so the catch radius stays reachable at every zoom.
+		// The dotted close ring is drawn at this radius, so it shows the catch exactly;
+		// the closing halo has its own floor (DrawingFeedback).
 		const float floorPx = registry.rendering().preview.originHaloMinRadiusPx;
 		const float scale = pixelsPerWorldMeter();
 		const float floorMeters = (scale > 0.0F) ? floorPx / scale : 0.0F;
@@ -618,6 +619,8 @@ namespace world_sim {
 			.closeRadiusMeters = effectiveOriginCloseRadiusMeters(),
 			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : 3),
 			.willClose = willClose_,
+			.snappedPointInvalid = cursorOffBuildableGround && !willClose_,
+			.invalidColor = invalidColor_,
 		};
 	}
 
@@ -1871,7 +1874,8 @@ namespace world_sim {
 		// violated -- but not when the click will close (willClose_: the explicit origin
 		// snap, or the near-start rescue). A pending close reads as "closing", not "error".
 		// Gated on the geometry result (not `valid`) because lastValidation_.vertexIndex
-		// only indexes a placed vertex; the off-mesh case is signalled at the cursor below.
+		// only indexes a placed vertex; off buildable ground, the snapped-point marker
+		// turns red instead (drawSnapFeedback).
 		if (!lastValidation_.ok() && !willClose_ && !screen.empty()) {
 			const std::size_t vi = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
@@ -1879,19 +1883,6 @@ namespace world_sim {
 				.radius = ps.invalidVertexRadiusPx,
 				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
 				.id = "drawing_invalid_vertex",
-				.key = 905,
-			});
-		}
-
-		// Off-mesh cursor (on water): a red dot AT the cursor so the player sees the exact
-		// point that can't be placed. Distinct from the geometry-violation highlight above,
-		// which marks a placed vertex. Suppressed on a pending close (reads as "closing").
-		if (cursorOffBuildableGround && !willClose_) {
-			Renderer::Primitives::drawCircle({
-				.center = toScreen(cursor_),
-				.radius = ps.invalidVertexRadiusPx,
-				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
-				.id = "drawing_offmesh_cursor",
 				.key = 905,
 			});
 		}
@@ -2230,8 +2221,6 @@ namespace world_sim {
 	void DrawingSystem::renderWallChainPreview(int viewportW, int viewportH) {
 		const auto& ps = ConstructionRegistry::Get().rendering().preview;
 
-		const float scale = kPixelsPerMeter * camera_->zoom();
-
 		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
@@ -2302,8 +2291,8 @@ namespace world_sim {
 
 		drawSnapFeedback(feedbackInput(ps, viewportW, viewportH));
 
-		// Vertex dots, plus a snap-target ring colored by the snap kind so the player
-		// sees endpoint / T-junction / foundation-vertex snaps.
+		// Vertex dots. The snap-target ring (endpoint / T-junction / foundation-vertex snaps)
+		// is drawSnapFeedback's, over the snapped-point marker.
 		for (const auto& sp : screen) {
 			Renderer::Primitives::drawCircle({
 				.center = sp,
@@ -2311,21 +2300,6 @@ namespace world_sim {
 				.style = {.fill = okColor},
 				.id = "wall_vertex",
 				.key = 909,
-			});
-		}
-
-		using construction::SnapKind;
-		if (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::WallSegment || lastSnap_.kind == SnapKind::Vertex ||
-			lastSnap_.kind == SnapKind::Edge) {
-			const Foundation::Color snapColor = (lastSnap_.kind == SnapKind::WallEndpoint || lastSnap_.kind == SnapKind::Vertex)
-													? toColor(ps.snapVertexColor) // vertex snap: amber
-													: toColor(ps.snapEdgeColor);  // edge / T-junction: cyan
-			Renderer::Primitives::drawCircle({
-				.center = toScreen(cursor_),
-				.radius = std::max(6.0F, ConstructionRegistry::Get().snapping().vertexSnapRadiusMeters * scale * 0.5F),
-				.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F}, .border = Foundation::BorderStyle{.color = snapColor, .width = 2.0F}},
-				.id = "wall_snap_target",
-				.key = 910,
 			});
 		}
 	}
