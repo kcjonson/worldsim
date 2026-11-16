@@ -66,6 +66,9 @@ namespace construction {
 		FoundationState state = FoundationState::Blueprint;
 		ecs::EntityID	entity = ecs::kInvalidEntity;
 		FoundationId	mergeTarget = kInvalidFoundation;
+		// version() when it was committed, so newer placements rank first for common
+		// lengths (D12). Edits in place and a merge keep it; an extension gets its own.
+		std::uint64_t placementOrder = 0;
 	};
 
 	// Outcome of a commit or edit. Mirrors geometry's reject-don't-repair model:
@@ -143,6 +146,10 @@ namespace construction {
 		FoundationId	hostFoundation = kInvalidFoundation;
 		FoundationState state = FoundationState::Blueprint;
 		ecs::EntityID	entity = ecs::kInvalidEntity;
+		// version() when the commitSegment call that made it began; segments sharing a
+		// value are one chain for common lengths (D12). The halves of a T-junction split
+		// keep the split segment's value.
+		std::uint64_t placementOrder = 0;
 	};
 
 	// A finished wall, the only kind nav cuts doors in and an opening goes on.

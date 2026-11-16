@@ -948,6 +948,43 @@ TEST(ConstructionWorldExtensionTests, CommitExtensionTakesTargetMaterialAndLinks
 	EXPECT_EQ(world.pendingExtensionOf(ext.id), kInvalidFoundation);
 }
 
+TEST(ConstructionWorldExtensionTests, PlacementOrderIsTheVersionACommitBegan) {
+	ConstructionWorld	   world;
+	const cw::FoundationId target = builtBox(world, 0, 0, 4000, 4000);
+	EXPECT_EQ(world.get(target)->placementOrder, 0U);
+
+	// An extension is a placement of its own; an edit in place and a merge are not.
+	std::uint64_t	   before = world.version();
+	const CommitResult ext = world.commitExtension(target, box(4000, 0, 7000, 4000));
+	ASSERT_TRUE(ext.ok());
+	EXPECT_EQ(world.get(ext.id)->placementOrder, before);
+	before = world.version();
+	const CommitResult shed = world.commitFoundation(box(0, 10000, 3000, 13000), "Wood");
+	EXPECT_EQ(world.get(shed.id)->placementOrder, before);
+	ASSERT_EQ(world.addToFoundation(shed.id, box(3000, 10000, 5000, 13000)), CommitStatus::Ok);
+	EXPECT_EQ(world.get(shed.id)->placementOrder, before);
+	world.setState(ext.id, FoundationState::Built);
+	ASSERT_EQ(world.mergeExtension(ext.id), CommitStatus::Ok);
+	EXPECT_EQ(world.get(target)->placementOrder, 0U);
+
+	// One commit drawn through an existing vertex is one chain; a T-junction's halves keep theirs.
+	ASSERT_TRUE(world.commitSegment({10000, 0}, {10000, 3000}, "Wood", "Standard", kInvalidFoundation).ok());
+	before = world.version();
+	const SegmentCommitResult through = world.commitSegment({8000, 0}, {14000, 0}, "Wood", "Standard", kInvalidFoundation);
+	ASSERT_EQ(through.createdSegments.size(), 2U);
+	for (const cw::SegmentId id : through.createdSegments) {
+		EXPECT_EQ(world.getSegment(id)->placementOrder, before);
+	}
+	const std::uint64_t		  chain = before;
+	before = world.version();
+	const SegmentCommitResult tee = world.commitSegment({12000, -2000}, {12000, 0}, "Wood", "Standard", kInvalidFoundation);
+	ASSERT_EQ(tee.createdSegments.size(), 3U);
+	for (const cw::SegmentId id : tee.createdSegments) {
+		const bool split = world.getSegment(id)->v0 != world.vertexAt({12000, -2000}) && world.getSegment(id)->v1 != world.vertexAt({12000, -2000});
+		EXPECT_EQ(world.getSegment(id)->placementOrder, split ? chain : before) << id;
+	}
+}
+
 TEST(ConstructionWorldExtensionTests, CommitExtensionRejectsBlueprintUnknownAndSecondPending) {
 	ConstructionWorld  world;
 	const CommitResult blueprint = world.commitFoundation(box(0, 0, 4000, 4000), "Wood");
