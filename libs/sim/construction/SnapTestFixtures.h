@@ -44,6 +44,22 @@ namespace construction::snap_test {
 		return DrawingAids{};
 	}
 
+	/// What a player starts with: the engine-facing part of the shipped Drawing Settings'
+	/// in-code defaults, so a test built on it follows the defaults when they change.
+	inline DrawingAids shippedAids() {
+		const assets::DrawingSettingsDefaults defaults;
+		return DrawingAids{
+			.angleSteps = defaults.angleSteps,
+			.guidesFromShape = defaults.guidesFromShape,
+			.alignToExistingBuildings = defaults.alignToExistingBuildings,
+			.guidesFromWorldAxes = defaults.guidesFromWorldAxes,
+			.guideCrossings = defaults.guideCrossings,
+			.commonLengths = defaults.commonLengths,
+			.roundLengths = defaults.roundLengths,
+			.rectangleGridSpacingMeters = defaults.rectangleGridSpacingMeters,
+		};
+	}
+
 	inline SnapInput foundationInput(const DrawingAids& aids = allAidsOn(), bool freeform = false) {
 		return SnapInput{.aids = aids, .freeform = freeform};
 	}

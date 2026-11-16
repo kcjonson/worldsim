@@ -184,13 +184,14 @@ namespace assets {
 	enum class GuidePriorityRule { SourceFirst, Closest };
 
 	/// Starting value of each player-facing Drawing Setting, one field per setting.
-	/// The initializers reproduce the drawing tools from before the settings existed.
+	/// The initializers reproduce the drawing tools from before the settings existed;
+	/// crossings are on because the old two-axis lock is a crossing of two world guides.
 	struct DrawingSettingsDefaults {
 		bool  angleSteps = true;
 		bool  guidesFromShape = false;
 		bool  alignToExistingBuildings = true;
 		bool  guidesFromWorldAxes = true;
-		bool  guideCrossings = false;
+		bool  guideCrossings = true;
 		bool  commonLengths = false;
 		bool  guideDistances = false;
 		bool  angleReadout = false;

@@ -328,13 +328,14 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::GuideDistance);
 	EXPECT_TRUE(s.rectangleAdjacencySnaps);
 
-	// Today's behaviour: angle steps, world-axis guides, and align on; the rest off.
+	// Today's behaviour: angle steps, world-axis guides, align, and crossings (the old
+	// two-axis lock) on; the rest off.
 	const DrawingSettingsDefaults& d = s.drawingSettingsDefaults;
 	EXPECT_TRUE(d.angleSteps);
 	EXPECT_FALSE(d.guidesFromShape);
 	EXPECT_TRUE(d.alignToExistingBuildings);
 	EXPECT_TRUE(d.guidesFromWorldAxes);
-	EXPECT_FALSE(d.guideCrossings);
+	EXPECT_TRUE(d.guideCrossings);
 	EXPECT_FALSE(d.commonLengths);
 	EXPECT_FALSE(d.guideDistances);
 	EXPECT_FALSE(d.angleReadout);
@@ -381,7 +382,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
     <guidesFromShape>true</guidesFromShape>
     <alignToExistingBuildings>false</alignToExistingBuildings>
     <guidesFromWorldAxes>false</guidesFromWorldAxes>
-    <guideCrossings>true</guideCrossings>
+    <guideCrossings>false</guideCrossings>
     <commonLengths>true</commonLengths>
     <guideDistances>true</guideDistances>
     <angleReadout>true</angleReadout>
@@ -434,7 +435,7 @@ TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
 	EXPECT_TRUE(d.guidesFromShape);
 	EXPECT_FALSE(d.alignToExistingBuildings);
 	EXPECT_FALSE(d.guidesFromWorldAxes);
-	EXPECT_TRUE(d.guideCrossings);
+	EXPECT_FALSE(d.guideCrossings);
 	EXPECT_TRUE(d.commonLengths);
 	EXPECT_TRUE(d.guideDistances);
 	EXPECT_TRUE(d.angleReadout);
