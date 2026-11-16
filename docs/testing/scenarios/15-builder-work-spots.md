@@ -32,11 +32,11 @@ one).
 
 ## Steps
 
-1. Blueprint the foundation (`/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=0`), give the site its wood (`/api/dev/give?material=Wood&n=40&where=site`), and resume (`/api/control?action=resume`): `what=construction` shows `phase` `Clearing` while a colonist fells any tree on the footprint, then `UnderConstruction`.
+1. Blueprint the foundation (`/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=0`), give the site its wood (`/api/dev/give?material=Wood&n=40&where=site`), and resume (`/api/control?action=resume`): `what=construction` shows `phase` `Clearing` at first (for longer if a tree stands on the footprint), then `UnderConstruction`.
 
-2. Poll `what=colonists` about twice a second: three colonists reach `action` Build, each at a different point just inside the foundation's edge (x, y); the other two are not building.
+2. Poll `what=colonists` about twice a second: three colonists reach `action` Build, each at a different point just inside the foundation's edge (x, y); the other two are not building. A builder is any colonist whose `action` is Build; note their ids.
 
-3. As soon as three are building, pause, then remove one builder (`/api/dev/kill?colonist=<id>`) and resume: within a few seconds one of the waiting colonists shows Build at the freed spot, so there are three builders again at three different points, never four, until the foundation is `Complete`. If it completes before you can pause, start over.
+3. Within a few seconds of three building (the whole build takes about ten), pause, then remove one builder (`/api/dev/kill?colonist=<id>`) and resume: within a few seconds one of the waiting colonists shows Build at a point just inside the edge, near the freed one and distinct from the other two, so there are three builders again, never four, until the foundation is `Complete`. If it completes before you can pause, start over.
 
 ---
 
