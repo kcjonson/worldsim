@@ -184,8 +184,10 @@ namespace assets {
 	enum class GuidePriorityRule { SourceFirst, Closest };
 
 	/// Starting value of each player-facing Drawing Setting, one field per setting.
-	/// The initializers reproduce the drawing tools from before the settings existed;
+	/// The initializers follow the drawing tools from before the settings existed;
 	/// crossings are on because the old two-axis lock is a crossing of two world guides.
+	/// Not exactly the old tools: with align on, a nearby building also gives lines
+	/// parallel and perpendicular to its edges, and crossings form between any two guides.
 	struct DrawingSettingsDefaults {
 		bool  angleSteps = true;
 		bool  guidesFromShape = false;
@@ -212,8 +214,10 @@ namespace assets {
 		float	edgeSnapRadiusMeters = 0.3F;
 		int64_t edgeSnapRadiusMm = 300;
 
-		// Search radius for committed-building reference nodes that guides can
-		// lock onto (the in-progress shape's own nodes are always considered).
+		// The reach of every guide from committed structures: a corner (a foundation
+		// corner, or in the wall tool a wall vertex) within this distance of the cursor
+		// gives guides, and an edge within it gives a nearby direction. The shape's own
+		// points always give guides, whatever their distance.
 		float guideRangeMeters = 8.0F;
 
 		// Perpendicular tolerance for a guide lock: the cursor snaps onto a guide
