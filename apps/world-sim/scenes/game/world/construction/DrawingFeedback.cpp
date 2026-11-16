@@ -72,11 +72,16 @@ namespace world_sim {
 		// direction the snap made exact (45 degrees, an axis) can't flip a label's side.
 		constexpr float kSideTieTolerance = 0.2F;
 
-		// The shape's centre has to sit this far off the segment's line to pick a side.
+		// The shape's center has to sit this far off the segment's line to pick a side.
 		constexpr float kShapeSideMinimumPx = 0.5F;
 
-		// Two guides whose ends both lie within this of each other's draw once.
+		// Two guides whose ends both lie within this of each other's draw one stroke and one
+		// label; their right-angle markers draw once for each edge direction among them.
 		constexpr float kDuplicateGuidePx = 1.0F;
+		constexpr float kSameEdgeDirection = 1e-3F; // between unit vectors
+
+		// A guide whose line passes within this of the previous point lies on the segment.
+		constexpr float kOnSegmentLinePx = 1.0F;
 
 		// A right-angle marker needs its edge and guide at least this far from parallel
 		// (the sine of the angle between them).
@@ -126,7 +131,7 @@ namespace world_sim {
 		}
 
 		// Top-left of a label beside `anchor` on `side`: its near edge at the anchor along an
-		// axis `side` leans on, centred on the anchor along one it hardly leans on.
+		// axis `side` leans on, centered on the anchor along one it hardly leans on.
 		Foundation::Vec2 labelBeside(Foundation::Vec2 anchor, Foundation::Vec2 side, Foundation::Vec2 size) {
 			const auto place = [](float at, float lean, float extent) {
 				if (lean > kSideTieTolerance) {
@@ -191,7 +196,7 @@ namespace world_sim {
 			return std::nullopt;
 		}
 
-		std::string metres(float meters, int decimals) {
+		std::string lengthText(float meters, int decimals) {
 			const int places = std::clamp(decimals, 0, 6);
 			double	  value = static_cast<double>(meters);
 			// What rounds to zero prints as zero, never "-0.00".
@@ -233,7 +238,10 @@ namespace world_sim {
 				planCloseRing();
 				for (std::size_t i = 0; i < input.snap.guideCount; ++i) {
 					if (guideDrawn[i]) {
-						planGuide(input.snap.guides[i], guideFrom[i], guideTo[i]);
+						planGuideStroke(input.snap.guides[i], guideFrom[i], guideTo[i]);
+					}
+					if (guideFinite[i] && ownsRightAngleMarker(i)) {
+						planRightAngleMarker(input.snap.guides[i], guideFrom[i], guideTo[i]);
 					}
 				}
 				planCloseHalo();
@@ -262,7 +270,8 @@ namespace world_sim {
 			Foundation::Vec2						 snappedPoint; // screen pixels
 			std::array<Foundation::Vec2, kMaxSnapGuides> guideFrom{};
 			std::array<Foundation::Vec2, kMaxSnapGuides> guideTo{};
-			std::array<bool, kMaxSnapGuides>		 guideDrawn{};
+			std::array<bool, kMaxSnapGuides>		 guideFinite{};
+			std::array<bool, kMaxSnapGuides>		 guideDrawn{}; // finite and not a duplicate: its stroke and label draw
 			DrawingFeedbackPlan						 result;
 			std::vector<Box>						 placedLabels;
 
@@ -270,19 +279,40 @@ namespace world_sim {
 				return input.camera.worldToScreen(world.x, world.y, input.viewportWidth, input.viewportHeight, input.pixelsPerMeter);
 			}
 
-			// A guide draws when both its ends are finite and it is not the same as one before it.
+			bool sameEnds(std::size_t first, std::size_t second) const {
+				return closeTo(guideFrom[first], guideFrom[second], kDuplicateGuidePx) && closeTo(guideTo[first], guideTo[second], kDuplicateGuidePx);
+			}
+
+			// A guide's stroke and label draw when both its ends are finite and it is not the
+			// same as one before it.
 			void chooseGuides() {
 				for (std::size_t i = 0; i < input.snap.guideCount; ++i) {
 					guideFrom[i] = toScreen(input.snap.guides[i].from);
 					guideTo[i] = toScreen(input.snap.guides[i].to);
-					guideDrawn[i] = isFinite(guideFrom[i]) && isFinite(guideTo[i]);
+					guideFinite[i] = isFinite(guideFrom[i]) && isFinite(guideTo[i]);
+					guideDrawn[i] = guideFinite[i];
 					for (std::size_t earlier = 0; earlier < i && guideDrawn[i]; ++earlier) {
-						if (guideDrawn[earlier] && closeTo(guideFrom[i], guideFrom[earlier], kDuplicateGuidePx) &&
-							closeTo(guideTo[i], guideTo[earlier], kDuplicateGuidePx)) {
+						if (guideFinite[earlier] && sameEnds(i, earlier)) {
 							guideDrawn[i] = false;
 						}
 					}
 				}
+			}
+
+			// A duplicate keeps its own right-angle marker unless one before it marks the same edge.
+			bool ownsRightAngleMarker(std::size_t i) const {
+				const SnapGuide& guide = input.snap.guides[i];
+				if (!guide.rightAngle) {
+					return false;
+				}
+				for (std::size_t earlier = 0; earlier < i; ++earlier) {
+					const SnapGuide& other = input.snap.guides[earlier];
+					if (guideFinite[earlier] && other.rightAngle && sameEnds(i, earlier) &&
+						closeTo(guide.rightAngleEdgeDirection, other.rightAngleEdgeDirection, kSameEdgeDirection)) {
+						return false;
+					}
+				}
+				return true;
 			}
 
 			float closeHaloRadius() const {
@@ -307,27 +337,53 @@ namespace world_sim {
 				});
 			}
 
-			// A guide through the previous point lies on the segment being drawn, whose solid
-			// line already shows it: it draws no stroke of its own, only its right-angle marker.
-			void planGuide(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 to) {
+			// A guide whose line passes through the previous point runs along the segment being
+			// drawn from there to `to`, and the segment's solid line already shows that part: it
+			// draws only from its node up to the previous point, which is nothing when the node
+			// is the previous point. Dots over the solid line would bead it (teal beads on red
+			// when it is invalid).
+			void planGuideStroke(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 to) {
+				const Foundation::Vec2 along{to.x - from.x, to.y - from.y};
+				const float			   alongLength = length(along);
+				if (alongLength < kMinimumStrokePx) {
+					return;
+				}
+				const Foundation::Vec2 unit{along.x / alongLength, along.y / alongLength};
+				float				   visibleLength = alongLength;
+				if (!input.points.empty()) {
+					const Foundation::Vec2 previous = toScreen(input.points.back());
+					const Foundation::Vec2 offset{previous.x - from.x, previous.y - from.y};
+					const float			   offLine = std::abs(unit.x * offset.y - unit.y * offset.x);
+					const float			   at = dot(unit, offset);
+					// The segment runs from the previous point to `to`: it covers the guide from
+					// there on, all of it when the previous point is behind the node, none of it
+					// when the previous point is past `to`.
+					if (isFinite(previous) && offLine <= kOnSegmentLinePx) {
+						visibleLength = std::clamp(at, 0.0F, alongLength);
+					}
+				}
+				if (visibleLength < kMinimumStrokePx) {
+					return;
+				}
+				FeedbackStroke stroke = segmentStroke(
+					from,
+					{from.x + unit.x * visibleLength, from.y + unit.y * visibleLength},
+					withOpacity(guideColor(style, guide.source), style.guideOpacity),
+					style.guideWidth,
+					FeedbackLayer::Alignment
+				);
+				stroke.dash = alignmentDash(style);
+				result.strokes.push_back(stroke);
+			}
+
+			void planRightAngleMarker(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 to) {
 				const Foundation::Vec2 along{to.x - from.x, to.y - from.y};
 				const float			   alongLength = length(along);
 				if (alongLength < kMinimumStrokePx) {
 					return;
 				}
 				const assets::StyleColor& color = guideColor(style, guide.source);
-
-				if (!guide.throughPreviousPoint) {
-					FeedbackStroke stroke =
-						segmentStroke(from, to, withOpacity(color, style.guideOpacity), style.guideWidth, FeedbackLayer::Alignment);
-					stroke.dash = alignmentDash(style);
-					result.strokes.push_back(stroke);
-				}
-
-				if (!guide.rightAngle) {
-					return;
-				}
-				const Foundation::Vec2 edgeTip =
+				const Foundation::Vec2	  edgeTip =
 					toScreen({guide.from.x + guide.rightAngleEdgeDirection.x, guide.from.y + guide.rightAngleEdgeDirection.y});
 				const Foundation::Vec2 edge{edgeTip.x - from.x, edgeTip.y - from.y};
 				const float			   edgeLength = length(edge);
@@ -376,17 +432,58 @@ namespace world_sim {
 				if (isFinite(snappedPoint)) {
 					placedLabels.push_back(boxAround(snappedPoint, tickOuterRadius + kCursorTickOutlineWidthPx * 0.5F));
 				}
-				if (input.willClose && !input.points.empty()) {
-					const Foundation::Vec2 center = toScreen(input.points.front());
-					if (isFinite(center)) {
-						placedLabels.push_back(boxAround(center, closeHaloRadius() + kCloseHaloWidthPx * 0.5F));
-					}
+				if (const std::optional<Box> halo = closeHaloBox()) {
+					placedLabels.push_back(*halo);
 				}
+			}
+
+			// The close halo's box, while it is drawn.
+			std::optional<Box> closeHaloBox() const {
+				if (!input.willClose || input.points.empty()) {
+					return std::nullopt;
+				}
+				const Foundation::Vec2 center = toScreen(input.points.front());
+				if (!isFinite(center)) {
+					return std::nullopt;
+				}
+				return boxAround(center, closeHaloRadius() + kCloseHaloWidthPx * 0.5F);
+			}
+
+			// What the segment label keeps off: the snapped-point marker's dot and ticks, each
+			// with its outline, and the close halo while it is drawn. The ticks are a cross, not
+			// a square, so the label can sit in a quarter between them.
+			std::vector<Box> segmentLabelObstacles() const {
+				const float		 reach = tickOuterRadius + kCursorTickOutlineWidthPx * 0.5F;
+				const float		 halfWidth = kCursorTickOutlineWidthPx * 0.5F;
+				const Foundation::Vec2 at = snappedPoint;
+				std::vector<Box> obstacles{
+					{at.x - reach, at.y - halfWidth, at.x + reach, at.y + halfWidth},
+					{at.x - halfWidth, at.y - reach, at.x + halfWidth, at.y + reach},
+					boxAround(at, markerRadius + kCursorOutlineWidthPx * 0.5F),
+				};
+				if (const std::optional<Box> halo = closeHaloBox()) {
+					obstacles.push_back(*halo);
+				}
+				return obstacles;
 			}
 
 			bool insideViewport(const Box& box) const {
 				return box.left >= 0.0F && box.top >= 0.0F && box.right <= static_cast<float>(input.viewportWidth) &&
 					   box.bottom <= static_cast<float>(input.viewportHeight);
+			}
+
+			Foundation::Vec2 moveInside(Foundation::Vec2 topLeft, Foundation::Vec2 size) const {
+				const Box  box = plateBox(topLeft, size);
+				const auto shift = [](float low, float high, float limit) {
+					if (high > limit) {
+						return std::max(limit - high, -low);
+					}
+					return low < 0.0F ? -low : 0.0F;
+				};
+				return {
+					topLeft.x + shift(box.left, box.right, static_cast<float>(input.viewportWidth)),
+					topLeft.y + shift(box.top, box.bottom, static_cast<float>(input.viewportHeight)),
+				};
 			}
 
 			// The first candidate whose plate is inside the viewport; failing all, the first one
@@ -397,22 +494,36 @@ namespace world_sim {
 						return candidate;
 					}
 				}
-				const Box box = plateBox(candidates.front(), size);
-				const auto shift = [](float low, float high, float limit) {
-					if (high > limit) {
-						return std::max(limit - high, -low);
+				return moveInside(candidates.front(), size);
+			}
+
+			// The first candidate, in order, whose plate is inside the viewport and accepted;
+			// failing all, the first one that is accepted once moved just inside. The check
+			// comes after the move, so a move can't push a plate back onto what it keeps off.
+			template <typename Accept>
+			std::optional<Foundation::Vec2>
+			firstClear(std::span<const Foundation::Vec2> candidates, Foundation::Vec2 size, const Accept& accept) const {
+				for (const Foundation::Vec2& candidate : candidates) {
+					const Box plate = plateBox(candidate, size);
+					if (insideViewport(plate) && accept(plate)) {
+						return candidate;
 					}
-					return low < 0.0F ? -low : 0.0F;
-				};
-				return {
-					candidates.front().x + shift(box.left, box.right, static_cast<float>(input.viewportWidth)),
-					candidates.front().y + shift(box.top, box.bottom, static_cast<float>(input.viewportHeight)),
-				};
+				}
+				for (const Foundation::Vec2& candidate : candidates) {
+					const Foundation::Vec2 moved = moveInside(candidate, size);
+					if (accept(plateBox(moved, size))) {
+						return moved;
+					}
+				}
+				return std::nullopt;
 			}
 
 			// Beside the segment's middle, off the side away from the shape, when that keeps it
 			// clear of the pointer; otherwise at the snapped end, in the quarter round it that
 			// points most along the segment, never the lower right one, where the pointer hangs.
+			// Either way it keeps off the snapped-point marker and the close halo, taking the
+			// next placement in order when one would cover them; with no clear placement it
+			// takes the first one at the end.
 			void planSegmentLabel() {
 				if (input.points.empty() || !isFinite(snappedPoint)) {
 					return;
@@ -423,25 +534,34 @@ namespace world_sim {
 				if (!isFinite(last) || !std::isfinite(meters)) {
 					return;
 				}
-				const std::string	   text = metres(meters, style.guideDistanceDecimals);
+				const std::string	   text = lengthText(meters, style.guideDistanceDecimals);
 				const Foundation::Vec2 size = measure(text, kSegmentLabelPx);
 				const Foundation::Vec2 segment{tip.x - last.x, tip.y - last.y};
 				const float			   segmentLength = length(segment);
+				const std::vector<Box> obstacles = segmentLabelObstacles();
+				const auto			   clearOfObstacles = [&](const Box& plate) {
+					  return std::none_of(obstacles.begin(), obstacles.end(), [&](const Box& obstacle) { return overlaps(plate, obstacle); });
+				};
 
 				if (segmentLength > 0.0F) {
 					const Foundation::Vec2 middle{(last.x + tip.x) * 0.5F, (last.y + tip.y) * 0.5F};
 					const Foundation::Vec2 side = awayFromShape(middle, {-segment.y / segmentLength, segment.x / segmentLength});
 					const Foundation::Vec2 anchor{middle.x + side.x * kLabelGapPx, middle.y + side.y * kLabelGapPx};
 					const Foundation::Vec2 reserve{
-						std::max(size.x, measure(metres(kSegmentLabelReserveMeters, style.guideDistanceDecimals), kSegmentLabelPx).x), size.y
+						std::max(size.x, measure(lengthText(kSegmentLabelReserveMeters, style.guideDistanceDecimals), kSegmentLabelPx).x), size.y
 					};
 					if (distanceToBox(tip, plateBox(labelBeside(anchor, side, reserve), reserve)) >= kSegmentLabelCursorClearancePx) {
 						const std::array<Foundation::Vec2, 2> candidates{
 							labelBeside(anchor, side, size),
 							labelBeside({middle.x - side.x * kLabelGapPx, middle.y - side.y * kLabelGapPx}, {-side.x, -side.y}, size),
 						};
-						addLabel(text, fitInViewport(candidates, size), kSegmentLabelPx, size, kSegmentLabelColor);
-						return;
+						const std::optional<Foundation::Vec2> atMiddle = firstClear(candidates, size, [&](const Box& plate) {
+							return distanceToBox(tip, plate) >= kSegmentLabelCursorClearancePx && clearOfObstacles(plate);
+						});
+						if (atMiddle) {
+							addLabel(text, *atMiddle, kSegmentLabelPx, size, kSegmentLabelColor);
+							return;
+						}
 					}
 				}
 
@@ -463,10 +583,17 @@ namespace world_sim {
 					}
 				}
 
+				// Diagonally off the snapped point, or off the close halo's box when the halo is
+				// drawn round the snapped point (the click closes on the first point).
+				Box end{tip.x, tip.y, tip.x, tip.y};
+				if (const std::optional<Box> halo = closeHaloBox();
+					halo && tip.x >= halo->left && tip.x <= halo->right && tip.y >= halo->top && tip.y <= halo->bottom) {
+					end = *halo;
+				}
 				const auto inQuarter = [&](Foundation::Vec2 q) -> Foundation::Vec2 {
 					return {
-						q.x > 0.0F ? tip.x + kSegmentLabelOffsetPx : tip.x - kSegmentLabelOffsetPx - size.x,
-						q.y < 0.0F ? tip.y - kSegmentLabelOffsetPx - size.y : tip.y + kSegmentLabelOffsetPx,
+						q.x > 0.0F ? end.right + kSegmentLabelOffsetPx : end.left - kSegmentLabelOffsetPx - size.x,
+						q.y < 0.0F ? end.top - kSegmentLabelOffsetPx - size.y : end.bottom + kSegmentLabelOffsetPx,
 					};
 				};
 				// Off the screen, the same quarter mirrored across the snapped point, never into
@@ -480,22 +607,25 @@ namespace world_sim {
 					}
 					candidates[count++] = inQuarter(q);
 				}
-				addLabel(text, fitInViewport({candidates.data(), count}, size), kSegmentLabelPx, size, kSegmentLabelColor);
+				const std::span<const Foundation::Vec2> atEnd{candidates.data(), count};
+				addLabel(
+					text, firstClear(atEnd, size, clearOfObstacles).value_or(fitInViewport(atEnd, size)), kSegmentLabelPx, size, kSegmentLabelColor
+				);
 			}
 
-			// `normal` or its reverse, whichever points away from the placed points' centre;
-			// with no centre off the line, the one facing up the screen, or left when the
+			// `normal` or its reverse, whichever points away from the placed points' center;
+			// with no center off the line, the one facing up the screen, or left when the
 			// segment is near vertical.
 			Foundation::Vec2 awayFromShape(Foundation::Vec2 middle, Foundation::Vec2 normal) const {
 				if (input.points.size() >= 2) {
-					Foundation::Vec2 centre{0.0F, 0.0F};
+					Foundation::Vec2 center{0.0F, 0.0F};
 					for (const Foundation::Vec2& point : input.points) {
 						const Foundation::Vec2 screen = toScreen(point);
-						centre.x += screen.x;
-						centre.y += screen.y;
+						center.x += screen.x;
+						center.y += screen.y;
 					}
 					const float count = static_cast<float>(input.points.size());
-					const float side = dot({centre.x / count - middle.x, centre.y / count - middle.y}, normal);
+					const float side = dot({center.x / count - middle.x, center.y / count - middle.y}, normal);
 					if (std::abs(side) > kShapeSideMinimumPx) {
 						return side > 0.0F ? Foundation::Vec2{-normal.x, -normal.y} : normal;
 					}
@@ -533,7 +663,7 @@ namespace world_sim {
 					side = {-side.x, -side.y};
 				}
 
-				const std::string	   text = metres(guide.distanceFromNodeMeters, style.guideDistanceDecimals);
+				const std::string	   text = lengthText(guide.distanceFromNodeMeters, style.guideDistanceDecimals);
 				const float			   sizePx = style.guideLabelPx;
 				const Foundation::Vec2 size = measure(text, sizePx);
 				for (int attempt = 0; attempt <= kGuideLabelShiftAttempts; ++attempt) {

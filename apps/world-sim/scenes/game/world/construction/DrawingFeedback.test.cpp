@@ -8,12 +8,14 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iterator>
 #include <limits>
 #include <numbers>
 #include <tuple>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -30,12 +32,15 @@ namespace {
 	using world_sim::FeedbackStroke;
 
 	constexpr float kPixelsPerMeter = 8.0F;
-	constexpr float kZoom = 5.0F; // 40 px to the metre, the prototype's scale
+	constexpr float kZoom = 5.0F; // 40 px to the meter, the prototype's scale
 	constexpr float kScreenPixelsPerMeter = kPixelsPerMeter * kZoom;
 	constexpr int	kViewportWidth = 1000;
 	constexpr int	kViewportHeight = 800;
 	constexpr float kTickOuterPx = 16.0F; // the marker's ticks reach this far at the default radius
 	constexpr float kLineHeightOfSize = 1.25F;
+	// Plates are float sums of the camera's transform: one against a screen edge can land a
+	// hair past it (1000.00006).
+	constexpr float kViewportTolerancePx = 1e-3F;
 
 	Foundation::Vec2 fakeSize(const std::string& text, float sizePx) {
 		return {0.6F * sizePx * static_cast<float>(text.size()), kLineHeightOfSize * sizePx};
@@ -55,8 +60,20 @@ namespace {
 		return {center.x - halfSize, center.y - halfSize, center.x + halfSize, center.y + halfSize};
 	}
 
-	Foundation::Vec2 centreOf(const FeedbackBox& box) {
+	Foundation::Vec2 centerOf(const FeedbackBox& box) {
 		return {(box.left + box.right) * 0.5F, (box.top + box.bottom) * 0.5F};
+	}
+
+	// The snapped-point marker at the default radius: its two tick bars and its dot, each
+	// with its outline.
+	std::array<FeedbackBox, 3> markerBoxes(Foundation::Vec2 at) {
+		constexpr float kReach = kTickOuterPx + 3.0F;
+		constexpr float kHalfWidth = 3.0F;
+		return {{
+			{at.x - kReach, at.y - kHalfWidth, at.x + kReach, at.y + kHalfWidth},
+			{at.x - kHalfWidth, at.y - kReach, at.x + kHalfWidth, at.y + kReach},
+			boxAround(at, 6.0F + 1.25F),
+		}};
 	}
 
 	int signOf(float value) {
@@ -133,29 +150,54 @@ namespace {
 		std::tuple<int, int, int> segmentLabelSide(const DrawingFeedbackPlan& result) const {
 			const Foundation::Vec2 tip = screen(cursor);
 			const Foundation::Vec2 last = screen(points.back());
-			const Foundation::Vec2 centre = centreOf(result.labels[0].plate);
-			const float			   cross = (tip.x - last.x) * (centre.y - last.y) - (tip.y - last.y) * (centre.x - last.x);
-			return {signOf(centre.x - tip.x), signOf(centre.y - tip.y), signOf(cross)};
+			const Foundation::Vec2 center = centerOf(result.labels[0].plate);
+			const float			   cross = (tip.x - last.x) * (center.y - last.y) - (tip.y - last.y) * (center.x - last.x);
+			return {signOf(center.x - tip.x), signOf(center.y - tip.y), signOf(cross)};
 		}
 
-		// Sweeps the cursor out along `direction` from the one placed point in 1 cm steps
-		// and counts how often the segment label changes side.
-		int segmentLabelSideChanges(Foundation::Vec2 direction, int steps) {
-			points = {{0.0F, 0.0F}};
-			std::tuple<int, int, int> previous{};
-			int						  changes = 0;
+		struct SideSweep {
+			int changes = 0;
+			int returns = 0; // changes back to a side the label left earlier: flicker
+		};
+
+		// Sweeps the cursor out along `direction` from `origin`, the one placed point, in
+		// steps of `stepMeters`, and counts how often the segment label changes side while the
+		// snapped point is on screen. Every plate stays inside the screen and off the marker.
+		SideSweep sweepSegmentLabel(Foundation::Vec2 origin, Foundation::Vec2 direction, int steps, float stepMeters = 0.01F) {
+			points = {origin};
+			std::vector<std::tuple<int, int, int>> sides;
+			SideSweep							   sweep;
 			for (int step = 1; step <= steps; ++step) {
-				const float distance = 0.01F * static_cast<float>(step);
-				cursor = {direction.x * distance, direction.y * distance};
+				const float distance = stepMeters * static_cast<float>(step);
+				cursor = {origin.x + direction.x * distance, origin.y + direction.y * distance};
+				const Foundation::Vec2 tip = screen(cursor);
+				if (tip.x < 0.0F || tip.y < 0.0F || tip.x > static_cast<float>(kViewportWidth) || tip.y > static_cast<float>(kViewportHeight)) {
+					continue;
+				}
 				const DrawingFeedbackPlan result = plan();
 				EXPECT_EQ(result.labels.size(), 1U);
-				const auto side = segmentLabelSide(result);
-				if (step > 1 && side != previous) {
-					++changes;
+				const FeedbackBox& plate = result.labels[0].plate;
+				expectInside(plate);
+				for (const FeedbackBox& marker : markerBoxes(tip)) {
+					EXPECT_FALSE(overlaps(plate, marker)) << "on the marker with the snapped point at " << tip.x << ", " << tip.y;
 				}
-				previous = side;
+				const auto side = segmentLabelSide(result);
+				if (!sides.empty() && side != sides.back()) {
+					++sweep.changes;
+					if (std::find(sides.begin(), sides.end(), side) != sides.end()) {
+						++sweep.returns;
+					}
+				}
+				sides.push_back(side);
 			}
-			return changes;
+			return sweep;
+		}
+
+		static void expectInside(const FeedbackBox& box) {
+			EXPECT_GE(box.left, -kViewportTolerancePx);
+			EXPECT_GE(box.top, -kViewportTolerancePx);
+			EXPECT_LE(box.right, static_cast<float>(kViewportWidth) + kViewportTolerancePx);
+			EXPECT_LE(box.bottom, static_cast<float>(kViewportHeight) + kViewportTolerancePx);
 		}
 	};
 
@@ -169,13 +211,6 @@ namespace {
 	void expectNear(Foundation::Vec2 actual, Foundation::Vec2 expected) {
 		EXPECT_NEAR(actual.x, expected.x, 1e-3F);
 		EXPECT_NEAR(actual.y, expected.y, 1e-3F);
-	}
-
-	void expectInside(const FeedbackBox& box) {
-		EXPECT_GE(box.left, 0.0F);
-		EXPECT_GE(box.top, 0.0F);
-		EXPECT_LE(box.right, static_cast<float>(kViewportWidth));
-		EXPECT_LE(box.bottom, static_cast<float>(kViewportHeight));
 	}
 
 } // namespace
@@ -311,7 +346,7 @@ TEST_F(DrawingFeedbackTest, OverlappingGuideLabelMovesAlongItsGuide) {
 	const FeedbackLabel& first = result.labels[1];
 	const FeedbackLabel& second = result.labels[2];
 	EXPECT_FALSE(overlaps(first.plate, second.plate));
-	// The first guide's label keeps its place centred below its guide's middle.
+	// The first guide's label keeps its place centered below its guide's middle.
 	const Foundation::Vec2 middle = screen({-2.0F, 0.0F});
 	EXPECT_NEAR(first.position.x + first.width * 0.5F, middle.x, 1e-3F);
 	EXPECT_NEAR(first.position.y, middle.y + 10.0F, 1e-3F);
@@ -367,6 +402,29 @@ TEST_F(DrawingFeedbackTest, DuplicateGuidesDrawOneStrokeAndOneLabel) {
 	EXPECT_EQ(result.labels.size(), 1U);
 }
 
+TEST_F(DrawingFeedbackTest, DuplicateGuidesKeepEachRightAngleMarker) {
+	cursor = {0.0F, 3.0F};
+	const SnapGuide plain{.from = {0.0F, 0.0F}, .to = cursor, .source = GuideSource::WorldAxes};
+	const SnapGuide square{.from = {0.0F, 0.0F}, .to = cursor, .source = GuideSource::DrawnShape, .rightAngle = true, .rightAngleEdgeDirection = {1.0F, 0.0F}};
+	SnapGuide		otherEdge = square;
+	otherEdge.rightAngleEdgeDirection = {-1.0F, 0.0F};
+
+	for (const auto& [name, first, second, markers] : {
+			 std::tuple{"marker on the second", plain, square, 1U},
+			 std::tuple{"marker on the first", square, plain, 1U},
+			 std::tuple{"the same edge twice", square, square, 1U},
+			 std::tuple{"two edges", square, otherEdge, 2U},
+		 }) {
+		SCOPED_TRACE(name);
+		snap.guideCount = 0;
+		addGuide(first);
+		addGuide(second);
+		const DrawingFeedbackPlan result = plan();
+		EXPECT_EQ(strokesIn(result, FeedbackLayer::Alignment).size(), 1U);
+		EXPECT_EQ(strokesIn(result, FeedbackLayer::Marker).size(), markers);
+	}
+}
+
 TEST_F(DrawingFeedbackTest, SegmentLabelReadsTheLengthClearOfThePointer) {
 	points = {{0.0F, 0.0F}};
 	cursor = {1.234F, 0.0F}; // about 49 px: too short for a label at its middle
@@ -389,7 +447,7 @@ TEST_F(DrawingFeedbackTest, SegmentLabelReadsTheLengthClearOfThePointer) {
 	EXPECT_GE(distanceToBox(screen(cursor), longLabel.plate), 40.0F);
 	const Foundation::Vec2 middle = screen({3.0F, 0.0F});
 	EXPECT_NEAR(longLabel.position.y + longLabel.height, middle.y - 10.0F, 1e-3F) << "above the segment";
-	EXPECT_NEAR(longLabel.position.x + longLabel.width * 0.5F, middle.x, 1e-3F) << "centred on the middle";
+	EXPECT_NEAR(longLabel.position.x + longLabel.width * 0.5F, middle.x, 1e-3F) << "centered on the middle";
 }
 
 TEST_F(DrawingFeedbackTest, SegmentLabelChangesSideAtMostOnceAlongARay) {
@@ -400,12 +458,53 @@ TEST_F(DrawingFeedbackTest, SegmentLabelChangesSideAtMostOnceAlongARay) {
 			 std::pair{"upward", Foundation::Vec2{0.0F, -1.0F}},
 		 }) {
 		SCOPED_TRACE(name);
-		EXPECT_LE(segmentLabelSideChanges(direction, 800), 1);
+		EXPECT_LE(sweepSegmentLabel({0.0F, 0.0F}, direction, 800).changes, 1);
 		// By 8 m the label has moved to the segment's middle, behind the snapped point.
 		const Foundation::Vec2 tip = screen(cursor);
-		const Foundation::Vec2 centre = centreOf(plan().labels[0].plate);
-		EXPECT_LT((centre.x - tip.x) * direction.x + (centre.y - tip.y) * direction.y, 0.0F);
+		const Foundation::Vec2 center = centerOf(plan().labels[0].plate);
+		EXPECT_LT((center.x - tip.x) * direction.x + (center.y - tip.y) * direction.y, 0.0F);
 	}
+}
+
+// The label grows a digit at 10 m and at 100 m. At these zooms each growth lands just past
+// where the label at its own width would first fit at the middle: judged at its own width
+// it would go to the middle, back to the end, and to the middle again.
+TEST_F(DrawingFeedbackTest, SegmentLabelReserveHoldsPastTenAndAHundredMeters) {
+	for (const auto& [name, zoom, stepMeters, steps] : {
+			 std::tuple{"past 10 m", 1.65F, 0.01F, 1200},
+			 std::tuple{"past 100 m", 0.175F, 0.05F, 2200},
+		 }) {
+		SCOPED_TRACE(name);
+		camera.setZoom(zoom);
+		const SideSweep sweep = sweepSegmentLabel({0.0F, 0.0F}, {-1.0F, 0.0F}, steps, stepMeters);
+		EXPECT_EQ(sweep.changes, 1);
+		EXPECT_EQ(sweep.returns, 0);
+		EXPECT_GT(centerOf(plan().labels[0].plate).x, screen(cursor).x) << "at the middle by the end";
+	}
+}
+
+// A segment from off the screen: its middle label is moved inside, which near the snapped
+// point would put it on the marker's ticks. It takes the end until the moved plate clears
+// the pointer, one change of side and no flicker.
+TEST_F(DrawingFeedbackTest, SegmentLabelMovedInsideTheScreenKeepsOffTheMarker) {
+	for (const auto& [name, origin, direction] : {
+			 std::tuple{"from past the right edge", Foundation::Vec2{17.5F, 0.0F}, Foundation::Vec2{-1.0F, 0.0F}},
+			 std::tuple{"from past the bottom edge", Foundation::Vec2{0.0F, 17.5F}, Foundation::Vec2{0.0F, -1.0F}},
+		 }) {
+		SCOPED_TRACE(name);
+		const SideSweep sweep = sweepSegmentLabel(origin, direction, 1500);
+		EXPECT_LE(sweep.changes, 2);
+		EXPECT_EQ(sweep.returns, 0);
+	}
+
+	points = {{17.5F, 0.0F}};
+	cursor = {11.55F, 0.0F}; // 962 px across a 1000 px screen
+	const DrawingFeedbackPlan result = plan();
+	ASSERT_EQ(result.labels.size(), 1U);
+	for (const FeedbackBox& marker : markerBoxes(screen(cursor))) {
+		EXPECT_FALSE(overlaps(result.labels[0].plate, marker));
+	}
+	expectInside(result.labels[0].plate);
 }
 
 TEST_F(DrawingFeedbackTest, SegmentLabelNeverSitsLowerRightOfThePointerFromAnyDiagonal) {
@@ -417,8 +516,8 @@ TEST_F(DrawingFeedbackTest, SegmentLabelNeverSitsLowerRightOfThePointerFromAnyDi
 		const DrawingFeedbackPlan result = plan();
 		ASSERT_EQ(result.labels.size(), 1U);
 		const Foundation::Vec2 tip = screen(cursor);
-		const Foundation::Vec2 centre = centreOf(result.labels[0].plate);
-		EXPECT_FALSE(centre.x > tip.x && centre.y > tip.y) << "arriving along " << direction.x << ", " << direction.y;
+		const Foundation::Vec2 center = centerOf(result.labels[0].plate);
+		EXPECT_FALSE(center.x > tip.x && center.y > tip.y) << "arriving along " << direction.x << ", " << direction.y;
 	}
 }
 
@@ -477,6 +576,68 @@ TEST_F(DrawingFeedbackTest, GuideThroughThePreviousPointDrawsNoStrokeButKeepsIts
 	snappedPointInvalid = true; // an invalid segment draws no teal beads over its red line either
 	result = plan();
 	EXPECT_TRUE(strokesIn(result, FeedbackLayer::Alignment).empty());
+}
+
+// The world-axis guide from an older corner wins the tie and runs on through the previous
+// point to the snapped point: past the previous point it is the segment.
+TEST_F(DrawingFeedbackTest, GuideFromAnOlderNodeAlongTheSegmentDrawsOnlyUpToThePreviousPoint) {
+	display.guideDistances = true;
+	points = {{0.0F, -4.0F}, {0.0F, 1.0F}};
+	cursor = {0.0F, 6.0F};
+	snap.kind = SnapKind::GuideLine;
+	addGuide({.from = points[0], .to = cursor, .source = GuideSource::WorldAxes, .relation = GuideRelation::Perpendicular});
+
+	const DrawingFeedbackPlan result = plan();
+	const auto				  guides = strokesIn(result, FeedbackLayer::Alignment);
+	ASSERT_EQ(guides.size(), 1U);
+	expectNear(guides[0].points[0], screen(points[0]));
+	expectNear(guides[0].points[1], screen(points[1]));
+	ASSERT_EQ(result.labels.size(), 2U);
+	EXPECT_EQ(result.labels[0].text, "5.00 m");
+	EXPECT_EQ(result.labels[1].text, "10.00 m");
+	EXPECT_FALSE(overlaps(result.labels[0].plate, result.labels[1].plate));
+
+	points = {{0.0F, -4.0F}, {0.0F, -6.0F}}; // the segment doubles back over the node: all of the guide is under it
+	EXPECT_TRUE(strokesIn(plan(), FeedbackLayer::Alignment).empty());
+}
+
+TEST_F(DrawingFeedbackTest, GuideOffTheSegmentKeepsItsWholeStroke) {
+	cursor = {0.0F, 6.0F};
+	for (const auto& [name, previous, from] : {
+			 std::tuple{"at a right angle", Foundation::Vec2{-3.0F, 6.0F}, Foundation::Vec2{0.0F, -4.0F}},
+			 std::tuple{"two pixels off the previous point", Foundation::Vec2{0.05F, 1.0F}, Foundation::Vec2{0.0F, -4.0F}},
+			 std::tuple{"collinear, the previous point past the snapped point", Foundation::Vec2{0.0F, 8.0F}, Foundation::Vec2{0.0F, -4.0F}},
+		 }) {
+		SCOPED_TRACE(name);
+		points = {{5.0F, -5.0F}, previous};
+		snap.guideCount = 0;
+		addGuide({.from = from, .to = cursor, .source = GuideSource::WorldAxes});
+		const auto guides = strokesIn(plan(), FeedbackLayer::Alignment);
+		ASSERT_EQ(guides.size(), 1U);
+		expectNear(guides[0].points[0], screen(from));
+		expectNear(guides[0].points[1], screen(cursor));
+	}
+}
+
+// A short closing segment's label sits at the snapped end, which is the first point: it
+// keeps off the halo round it.
+TEST_F(DrawingFeedbackTest, SegmentLabelKeepsOffTheCloseHalo) {
+	points = {{0.0F, 0.0F}, {1.2F, 0.0F}, {1.2F, 0.6F}};
+	canClose = true;
+	willClose = true;
+	cursor = points[0];
+	snap.kind = SnapKind::Origin;
+
+	const DrawingFeedbackPlan result = plan();
+	const auto				  halo = ringsIn(result, FeedbackLayer::Marker);
+	ASSERT_EQ(halo.size(), 1U);
+	ASSERT_EQ(result.labels.size(), 1U);
+	const FeedbackBox& plate = result.labels[0].plate;
+	EXPECT_FALSE(overlaps(plate, boxAround(halo[0].center, halo[0].radius + halo[0].width * 0.5F)));
+	EXPECT_LT(distanceToBox(screen(cursor), plate), halo[0].radius + 30.0F) << "still beside the point it reads";
+	const Foundation::Vec2 tip = screen(cursor);
+	const Foundation::Vec2 center = centerOf(plate);
+	EXPECT_FALSE(center.x > tip.x && center.y > tip.y) << "never lower right";
 }
 
 TEST_F(DrawingFeedbackTest, AngleStepRayDrawsNothingBeyondTheSegment) {
