@@ -2,6 +2,7 @@
 
 **Date:** 2026-09-25
 **Spec:** /docs/technical/rendering/vulkan-migration.md
+**Status:** Deferred indefinitely as of 2026-11-16. No migration work is scheduled without Kevin's explicit go-ahead, and it may never happen. The Rust rewrite this plan assumed was delayed on 2026-11-09, and the golden-image oracle it proposed conflicts with the current testing rule.
 
 ## Summary
 

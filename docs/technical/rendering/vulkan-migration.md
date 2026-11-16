@@ -1,9 +1,15 @@
 # OpenGL to Vulkan: scope and spike
 
 Created: 2026-09-25
-Status: Research / scoping (no implementation, no decision yet)
-Assumes: the whole codebase gets rewritten in Rust by an automated Claude Code (Fable) run, timing unknown. Vulkan lands as part of that rewrite. See [Vulkan in the Rust rewrite](#vulkan-in-the-rust-rewrite).
+Status: **Deferred indefinitely (2026-11-16).** No migration work gets scheduled, ticketed, or started without Kevin's explicit go-ahead. It may never happen. This doc is kept as research only.
 Related: [vector-graphics/INDEX.md](../vector-graphics/INDEX.md), [planet-view-rendering.md](../planet-view-rendering.md), [ground-textures.md](../ground-textures.md), [organic-terrain/terrain-polygons-architecture.md](../organic-terrain/terrain-polygons-architecture.md), [library-decisions.md](../library-decisions.md)
+
+> **Read this first.** Two things this doc was written against have since changed:
+>
+> - The automated Rust rewrite it assumes was itself indefinitely delayed on 2026-11-09. C++ is the long-term codebase. If Vulkan comes back without Rust, start from the C++-first shape in this file's git history (commit "Plan the Vulkan backend as the first Rust module" and earlier: a backend seam refactored on GL first, then the backend swap), not the "Vulkan in the Rust rewrite" section.
+> - The golden-image oracle in [A rendering oracle before the rewrite](#a-rendering-oracle-before-the-rewrite) conflicts with the current testing rule: don't build golden images or screenshot diffs to protect how things look. Treat that section as superseded.
+>
+> The GL audit (file:line references, call counts, line counts) is a snapshot from 2026-09-25. The renderer has changed since, and has moved into the salal engine, which designed its own GL-first backend boundary with Vulkan as a possible later backend (salal `docs/renderer-boundary.md`). Re-audit before acting on any of it.
 
 ## The question
 
