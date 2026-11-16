@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <string>
 #include <thread>
 
 namespace worldgen {
@@ -27,8 +28,13 @@ uint64_t plateIdHash(const GeneratedWorld& world) {
 // One n=16 run watched from start to finish, shared by every test that only reads
 // its progress, an intermediate snapshot, or its result: a pipeline run costs
 // seconds in a Debug build, and the fast bucket's ctest budget covers them all.
+// The run is cached for the process, so --gtest_repeat replays it; flake hunts on
+// ProgressMonotone or SnapshotImmutability need `ctest --repeat until-fail:N`.
 struct ObservedRun {
 	std::shared_ptr<const GeneratedWorld> world;
+
+	GenerationProgress::State finalState = GenerationProgress::State::Idle;
+	std::string				  failureReason;
 
 	bool	 progressWentBackwards = false;
 	float	 maxTotalFraction = 0.0f;
@@ -37,6 +43,10 @@ struct ObservedRun {
 	uint64_t snapshotPlateIdHash = 0;
 	uint64_t snapshotPlateIdHashAtEnd = 0;
 };
+
+std::string describeFailure(const ObservedRun& run) {
+	return std::string("shared run ended ") + generationStateName(run.finalState) + ": " + run.failureReason;
+}
 
 const ObservedRun& observedRun() {
 	static const ObservedRun run = [] {
@@ -67,10 +77,13 @@ const ObservedRun& observedRun() {
 				}
 			}
 
-			if (prog.state != GenerationProgress::State::Running)
+			if (prog.state != GenerationProgress::State::Running) {
+				r.finalState = prog.state;
 				break;
+			}
 			std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		}
+		r.failureReason = gen.failureReason();
 
 		if (snap) {
 			r.snapshotCaptured = true;
@@ -91,7 +104,7 @@ const ObservedRun& observedRun() {
 TEST(PlanetGenerator, ProgressMonotone) {
 	const ObservedRun& run = observedRun();
 	EXPECT_FALSE(run.progressWentBackwards) << "Progress went backwards";
-	EXPECT_NEAR(run.maxTotalFraction, 1.0f, 0.01f) << "Progress didn't reach 1.0";
+	EXPECT_NEAR(run.maxTotalFraction, 1.0f, 0.01f) << "Progress didn't reach 1.0; " << describeFailure(run);
 }
 
 // ============================================================================
@@ -108,7 +121,7 @@ TEST(PlanetGenerator, AllStagesReported) {
 
 TEST(PlanetGenerator, AllFieldsValid) {
 	const auto& world = observedRun().world;
-	ASSERT_NE(world, nullptr);
+	ASSERT_NE(world, nullptr) << describeFailure(observedRun());
 	EXPECT_EQ(world->validFields & kAllWorldFields, kAllWorldFields)
 		<< "Not all WorldField bits set after completion. Missing: " << std::hex << (~world->validFields & kAllWorldFields);
 }
@@ -120,7 +133,7 @@ TEST(PlanetGenerator, AllFieldsValid) {
 
 TEST(PlanetGenerator, WorldHashDeterministic) {
 	const auto& world1 = observedRun().world;
-	ASSERT_NE(world1, nullptr);
+	ASSERT_NE(world1, nullptr) << describeFailure(observedRun());
 	auto world2 = runToCompletion(world1->params);
 	ASSERT_NE(world2, nullptr);
 
@@ -248,7 +261,7 @@ TEST(PlanetGenerator, RerunPublishesFreshWorld) {
 
 TEST(DebugImageExporter, WritesValidBmp) {
 	const auto& world = observedRun().world;
-	ASSERT_NE(world, nullptr);
+	ASSERT_NE(world, nullptr) << describeFailure(observedRun());
 
 	const char* elevPath = "test_debug_elevation.bmp";
 	const char* biomePath = "test_debug_biome.bmp";
@@ -352,7 +365,7 @@ float oceanFraction(const GeneratedWorld& w) {
 // Must not crash or assert and must hit ocean fraction.
 TEST(PlanetGenerator, SmallGridN16Completes) {
 	const auto& world = observedRun().world;
-	ASSERT_NE(world, nullptr) << "n=16 pipeline failed";
+	ASSERT_NE(world, nullptr) << "n=16 pipeline failed: " << describeFailure(observedRun());
 	EXPECT_EQ(world->worldHash != 0u, true) << "worldHash zero on n=16";
 
 	float of = oceanFraction(*world);

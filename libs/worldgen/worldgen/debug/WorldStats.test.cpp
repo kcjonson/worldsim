@@ -1,7 +1,8 @@
-// WorldStats tests — basic sanity checks at tiny n.
+// WorldStats tests: range and consistency checks on small worlds.
 
 #include "worldgen/debug/WorldStats.h"
 
+#include "worldgen/data/GeneratedWorld.h"
 #include "worldgen/data/PlanetParams.h"
 #include "worldgen/grid/SphereGrid.h"
 #include "worldgen/pipeline/PlanetGenerator.test.h"
@@ -10,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <numeric>
 #include <optional>
 
@@ -47,6 +49,22 @@ TEST(WorldStats, HistogramSumsToN) {
 	EXPECT_EQ(total, static_cast<uint64_t>(stats.tileCount));
 }
 
+// A hand-built n=4 world (no pipeline run) with no belts: the median helpers take
+// their empty-input guards. All land and flat, so nothing clears the belt cutoff.
+TEST(WorldStats, NoBeltsGivesZeroMedians) {
+	GeneratedWorld world;
+	world.params = PlanetParams::preset(Preset::EarthLike);
+	world.derived = derive(world.params);
+	world.grid = std::make_shared<const SphereGrid>(4u);
+	world.data.allocate(world.grid->tileCount());
+
+	const WorldStats stats = computeWorldStats(world);
+	EXPECT_TRUE(stats.belts.empty());
+	EXPECT_EQ(stats.medianBeltElongation, 0.0f);
+	EXPECT_EQ(stats.medianAspectRatio, 0.0f);
+	EXPECT_EQ(stats.tileWeightedMedianAspectRatio, 0.0f);
+}
+
 TEST(WorldStats, ComponentsFound) {
 	ASSERT_NE(sharedStats(), nullptr);
 	const WorldStats& stats = *sharedStats();
@@ -65,6 +83,7 @@ TEST(WorldStats, GeodesicAspectRatioFieldsValid) {
 	ASSERT_NE(sharedStats(), nullptr);
 	const WorldStats& stats = *sharedStats();
 
+	ASSERT_FALSE(stats.belts.empty()) << "n=32 world has no mountain belts, the loops below would be vacuous";
 	EXPECT_GE(stats.medianAspectRatio, 0.0f);
 	EXPECT_GE(stats.tileWeightedMedianAspectRatio, 0.0f);
 
@@ -80,10 +99,8 @@ TEST(WorldStats, GeodesicAspectRatioFieldsValid) {
 
 	// Tile-weighted median should be >= plain median when large belts are more elongated,
 	// or at worst equal — either way both must be >= 1.
-	if (!stats.belts.empty()) {
-		EXPECT_GE(stats.tileWeightedMedianAspectRatio, 1.0f);
-		EXPECT_GE(stats.medianAspectRatio, 1.0f);
-	}
+	EXPECT_GE(stats.tileWeightedMedianAspectRatio, 1.0f);
+	EXPECT_GE(stats.medianAspectRatio, 1.0f);
 }
 
 // Water stats: sanity-check all new drainage fields are in range.
