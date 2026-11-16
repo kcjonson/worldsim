@@ -37,6 +37,14 @@ namespace world_sim {
 
 	enum class ToolKind;
 
+	/// A box in screen pixels.
+	struct FeedbackBox {
+		float left = 0.0F;
+		float top = 0.0F;
+		float right = 0.0F;
+		float bottom = 0.0F;
+	};
+
 	struct DrawingFeedbackInput {
 		ToolKind							 tool;
 		const construction::SnapResult&		 snap;
@@ -50,9 +58,10 @@ namespace world_sim {
 		float								 pixelsPerMeter;	// before the camera's zoom, as worldToScreen takes it
 		float								 closeRadiusMeters; // the first point's close radius, zoom-floored
 		bool								 canClose;			// enough points placed for a click on the first point to close
-		bool								 willClose;			// the next click closes the shape
+		bool								 willClose;			// the next click closes the shape and commits it: the close halo draws
 		bool								 snappedPointInvalid = false; // off buildable ground: the marker's dot takes invalidColor
 		Foundation::Color					 invalidColor{};
+		std::optional<FeedbackBox>			 keepClear; // something else the preview draws there (a rejection reason): labels keep off it
 	};
 
 	/// The order things draw in, each above the one before.
@@ -96,23 +105,13 @@ namespace world_sim {
 		FeedbackLayer	  layer = FeedbackLayer::Marker;
 	};
 
-	/// A box in screen pixels.
-	struct FeedbackBox {
-		float left = 0.0F;
-		float top = 0.0F;
-		float right = 0.0F;
-		float bottom = 0.0F;
-	};
-
-	/// Text on a dark plate. `position` is the text's top-left corner in screen pixels and
-	/// `height` its line height; `plate` is the plate behind it, which is also the box other
-	/// labels keep clear of.
+	/// Text on a dark plate. `position` is the text's top-left corner in screen pixels;
+	/// `plate` is the plate behind it, the text's measured size plus a margin all round,
+	/// which is also the box other labels keep clear of.
 	struct FeedbackLabel {
 		std::string		  text;
 		Foundation::Vec2  position;
 		float			  sizePx = 0.0F;
-		float			  width = 0.0F;
-		float			  height = 0.0F;
 		FeedbackBox		  plate;
 		Foundation::Color color;
 	};
@@ -124,12 +123,19 @@ namespace world_sim {
 		std::vector<FeedbackLabel>	labels;
 	};
 
+	/// The renderer's text scale of 1 is this font size.
+	inline constexpr float kRendererFontBaseSizePx = 16.0F;
+
 	/// Width and line height in pixels of `text` at a font size of `sizePx`.
 	using MeasureTextSize = std::function<Foundation::Vec2(const std::string& text, float sizePx)>;
 
 	/// Decide the feedback for one frame. No renderer calls: text is measured through
 	/// `measure`.
 	[[nodiscard]] DrawingFeedbackPlan planSnapFeedback(const DrawingFeedbackInput& input, const MeasureTextSize& measure);
+
+	/// The renderer's text measure, the one drawSnapFeedback plans with: width and line
+	/// height of `text` at `sizePx`.
+	[[nodiscard]] Foundation::Vec2 measureFeedbackText(const std::string& text, float sizePx);
 
 	/// Plan the feedback and draw it with the renderer's primitives.
 	void drawSnapFeedback(const DrawingFeedbackInput& input);

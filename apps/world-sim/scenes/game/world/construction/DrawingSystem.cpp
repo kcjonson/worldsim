@@ -621,6 +621,17 @@ namespace world_sim {
 	}
 
 	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight) const {
+		// Labels keep off the rejected edit's reason, measured as the feedback measures its own text.
+		std::optional<FeedbackBox> keepClear;
+		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight)) {
+			const Foundation::Vec2 size = measureFeedbackText(reason->text, kEditReasonScale * kRendererFontBaseSizePx);
+			keepClear = FeedbackBox{
+				reason->position.x,
+				reason->position.y,
+				reason->position.x + size.x + kEditReasonShadowPx,
+				reason->position.y + size.y + kEditReasonShadowPx,
+			};
+		}
 		return DrawingFeedbackInput{
 			.tool = activeTool_,
 			.snap = lastSnap_,
@@ -637,6 +648,7 @@ namespace world_sim {
 			.willClose = previewVerdict().closeHalo,
 			.snappedPointInvalid = cursorOffBuildableGround && !willClose_,
 			.invalidColor = invalidColor_,
+			.keepClear = keepClear,
 		};
 	}
 

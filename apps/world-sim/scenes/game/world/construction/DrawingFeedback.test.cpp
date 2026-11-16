@@ -37,6 +37,7 @@ namespace {
 	constexpr int	kViewportWidth = 1000;
 	constexpr int	kViewportHeight = 800;
 	constexpr float kTickOuterPx = 16.0F; // the marker's ticks reach this far at the default radius
+	constexpr float kPlatePaddingPx = 3.0F;
 	constexpr float kLineHeightOfSize = 1.25F;
 	// Plates are float sums of the camera's transform: one against a screen edge can land a
 	// hair past it (1000.00006).
@@ -46,14 +47,22 @@ namespace {
 		return {0.6F * sizePx * static_cast<float>(text.size()), kLineHeightOfSize * sizePx};
 	}
 
-	bool overlaps(const FeedbackBox& a, const FeedbackBox& b) {
-		return a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+	bool overlaps(const FeedbackBox& first, const FeedbackBox& second) {
+		return first.left < second.right && second.left < first.right && first.top < second.bottom && second.top < first.bottom;
 	}
 
 	float distanceToBox(Foundation::Vec2 point, const FeedbackBox& box) {
-		const float dx = std::max({box.left - point.x, 0.0F, point.x - box.right});
-		const float dy = std::max({box.top - point.y, 0.0F, point.y - box.bottom});
-		return std::hypot(dx, dy);
+		const float horizontal = std::max({box.left - point.x, 0.0F, point.x - box.right});
+		const float vertical = std::max({box.top - point.y, 0.0F, point.y - box.bottom});
+		return std::hypot(horizontal, vertical);
+	}
+
+	float distanceToSegment(Foundation::Vec2 point, Foundation::Vec2 start, Foundation::Vec2 end) {
+		const Foundation::Vec2 along{end.x - start.x, end.y - start.y};
+		const float			   lengthSquared = along.x * along.x + along.y * along.y;
+		const float			   fraction =
+			lengthSquared > 0.0F ? std::clamp(((point.x - start.x) * along.x + (point.y - start.y) * along.y) / lengthSquared, 0.0F, 1.0F) : 0.0F;
+		return std::hypot(point.x - (start.x + along.x * fraction), point.y - (start.y + along.y * fraction));
 	}
 
 	FeedbackBox boxAround(Foundation::Vec2 center, float halfSize) {
@@ -94,6 +103,7 @@ namespace {
 		bool						  willClose = false;
 		bool						  snappedPointInvalid = false;
 		Foundation::Color			  invalidColor{0.9F, 0.2F, 0.2F, 1.0F};
+		std::optional<FeedbackBox>	  keepClear;
 
 		void SetUp() override { camera.setZoom(kZoom); }
 
@@ -132,25 +142,30 @@ namespace {
 				.willClose = willClose,
 				.snappedPointInvalid = snappedPointInvalid,
 				.invalidColor = invalidColor,
+				.keepClear = keepClear,
 			};
 			return world_sim::planSnapFeedback(input, fakeSize);
 		}
 
 		static std::vector<FeedbackStroke> strokesIn(const DrawingFeedbackPlan& plan, FeedbackLayer layer) {
 			std::vector<FeedbackStroke> found;
-			std::copy_if(plan.strokes.begin(), plan.strokes.end(), std::back_inserter(found), [&](const FeedbackStroke& s) { return s.layer == layer; });
+			std::copy_if(plan.strokes.begin(), plan.strokes.end(), std::back_inserter(found), [&](const FeedbackStroke& stroke) {
+				return stroke.layer == layer;
+			});
 			return found;
 		}
 
 		static std::vector<FeedbackDot> dotsIn(const DrawingFeedbackPlan& plan, FeedbackLayer layer) {
 			std::vector<FeedbackDot> found;
-			std::copy_if(plan.dots.begin(), plan.dots.end(), std::back_inserter(found), [&](const FeedbackDot& d) { return d.layer == layer; });
+			std::copy_if(plan.dots.begin(), plan.dots.end(), std::back_inserter(found), [&](const FeedbackDot& dot) { return dot.layer == layer; });
 			return found;
 		}
 
 		static std::vector<FeedbackRing> ringsIn(const DrawingFeedbackPlan& plan, FeedbackLayer layer) {
 			std::vector<FeedbackRing> found;
-			std::copy_if(plan.rings.begin(), plan.rings.end(), std::back_inserter(found), [&](const FeedbackRing& r) { return r.layer == layer; });
+			std::copy_if(plan.rings.begin(), plan.rings.end(), std::back_inserter(found), [&](const FeedbackRing& ring) {
+				return ring.layer == layer;
+			});
 			return found;
 		}
 
@@ -185,7 +200,9 @@ namespace {
 					continue;
 				}
 				const DrawingFeedbackPlan result = plan();
-				EXPECT_EQ(result.labels.size(), 1U);
+				if (result.labels.empty()) {
+					continue; // the length rounds to zero
+				}
 				const FeedbackBox& plate = result.labels[0].plate;
 				expectInside(plate);
 				for (const FeedbackBox& marker : markerBoxes(tip)) {
@@ -218,10 +235,14 @@ namespace {
 		EXPECT_FLOAT_EQ(actual.a, alpha);
 	}
 
-	void expectNear(Foundation::Vec2 actual, Foundation::Vec2 expected) {
-		EXPECT_NEAR(actual.x, expected.x, 1e-3F);
-		EXPECT_NEAR(actual.y, expected.y, 1e-3F);
+	void expectNear(Foundation::Vec2 actual, Foundation::Vec2 expected, float tolerance = 1e-3F) {
+		EXPECT_NEAR(actual.x, expected.x, tolerance);
+		EXPECT_NEAR(actual.y, expected.y, tolerance);
 	}
+
+	// A guide's stroke ends within this of the snapped point: it stops a pixel short of the
+	// solid segment ending there.
+	constexpr float kStrokeEndTolerancePx = 1.0F + 1e-3F;
 
 } // namespace
 
@@ -258,7 +279,7 @@ TEST_F(DrawingFeedbackTest, LineStyleSetsTheDash) {
 	EXPECT_FALSE(strokesIn(plan(), FeedbackLayer::Alignment)[0].dash.has_value());
 }
 
-TEST_F(DrawingFeedbackTest, CrossingOfTwoSourcesColoursEachGuideAndDotsThePointOverTheMarker) {
+TEST_F(DrawingFeedbackTest, CrossingOfTwoSourcesColorsEachGuideAndDotsThePointOverTheMarker) {
 	cursor = {3.0F, 4.0F};
 	snap.kind = SnapKind::GuideCrossing;
 	style.guideColorMode = assets::GuideColorMode::BySource;
@@ -278,7 +299,6 @@ TEST_F(DrawingFeedbackTest, CrossingOfTwoSourcesColoursEachGuideAndDotsThePointO
 	EXPECT_FLOAT_EQ(crossing[0].radius, style.guideCrossingDotPx);
 	EXPECT_LT(crossing[0].radius, style.cursorRadiusPx) << "inside the marker's dot";
 	expectColor(crossing[0].fill, style.guideColorNearby, style.markerOpacity);
-	EXPECT_GT(FeedbackLayer::Target, FeedbackLayer::Cursor);
 
 	ASSERT_EQ(result.labels.size(), 2U);
 	EXPECT_EQ(result.labels[0].text, "4.00 m");
@@ -344,12 +364,13 @@ TEST_F(DrawingFeedbackTest, GuideShorterThanFortyPixelsHasNoLabel) {
 	EXPECT_EQ(plan().labels.size(), 1U);
 }
 
-TEST_F(DrawingFeedbackTest, OverlappingGuideLabelMovesAlongItsGuide) {
+// The second label gives way back toward its node first.
+TEST_F(DrawingFeedbackTest, OverlappingGuideLabelMovesBackAlongItsGuide) {
 	display.guideDistances = true;
 	points = {{0.0F, -3.0F}}; // the segment comes down from above, so both labels go below their guides
 	cursor = {0.0F, 0.0F};
-	addGuide({.from = {-4.0F, 0.0F}, .to = cursor, .source = GuideSource::WorldAxes});
-	addGuide({.from = {-4.0F, 0.2F}, .to = cursor, .source = GuideSource::NearbyStructure});
+	addGuide({.from = {-8.0F, 0.0F}, .to = cursor, .source = GuideSource::WorldAxes});
+	addGuide({.from = {-8.0F, 0.2F}, .to = cursor, .source = GuideSource::NearbyStructure});
 
 	const DrawingFeedbackPlan result = plan();
 	ASSERT_EQ(result.labels.size(), 3U); // the segment's, then each guide's
@@ -357,12 +378,14 @@ TEST_F(DrawingFeedbackTest, OverlappingGuideLabelMovesAlongItsGuide) {
 	const FeedbackLabel& second = result.labels[2];
 	EXPECT_FALSE(overlaps(first.plate, second.plate));
 	// The first guide's label keeps its place centered below its guide's middle.
-	const Foundation::Vec2 middle = screen({-2.0F, 0.0F});
-	EXPECT_NEAR(first.position.x + first.width * 0.5F, middle.x, 1e-3F);
+	const Foundation::Vec2 middle = screen({-4.0F, 0.0F});
+	EXPECT_NEAR(centerOf(first.plate).x, middle.x, 0.5F + 1e-3F) << "the stroke stops a pixel short of the segment";
 	EXPECT_NEAR(first.position.y, middle.y + 10.0F, 1e-3F);
-	// The second has moved along its guide by at least its own width.
-	const float secondMiddleX = screen({-2.0F, 0.1F}).x;
-	EXPECT_GT(std::abs(second.position.x + second.width * 0.5F - secondMiddleX), second.width);
+	// The second has moved back toward its node by its own width and more, though the spot
+	// forward was clear too.
+	const float secondMiddleX = screen({-4.0F, 0.1F}).x;
+	const float secondWidth = second.plate.right - second.plate.left - 2.0F * kPlatePaddingPx;
+	EXPECT_LT(centerOf(second.plate).x, secondMiddleX - secondWidth);
 }
 
 TEST_F(DrawingFeedbackTest, GuideLabelCoveredAfterEveryShiftIsDropped) {
@@ -377,6 +400,57 @@ TEST_F(DrawingFeedbackTest, GuideLabelCoveredAfterEveryShiftIsDropped) {
 	const DrawingFeedbackPlan result = plan();
 	ASSERT_EQ(result.labels.size(), 1U);
 	EXPECT_NE(result.labels[0].text, "2.00 m");
+}
+
+// A guide label's shifts stop at its stroke's ends: on a short stroke it sits at an end, and
+// when the spots along the stroke are all covered it is dropped rather than drifting off it.
+TEST_F(DrawingFeedbackTest, GuideLabelShiftsStayOnItsStroke) {
+	display.guideDistances = true;
+	const Foundation::Vec2 node = worldAt({300.0F, 400.0F});
+	cursor = worldAt({360.0F, 400.0F}); // 60 px: the middle is on the marker's box
+	addGuide({.from = node, .to = cursor, .source = GuideSource::WorldAxes});
+
+	const DrawingFeedbackPlan shifted = plan();
+	ASSERT_EQ(shifted.labels.size(), 1U);
+	const float center = centerOf(shifted.labels[0].plate).x;
+	EXPECT_GE(center, 300.0F - 1e-3F) << "not past the node";
+	EXPECT_LE(center, 360.0F + 1e-3F);
+
+	keepClear = FeedbackBox{240.0F, 300.0F, 340.0F, 500.0F}; // over every spot short of the marker
+	EXPECT_TRUE(plan().labels.empty());
+}
+
+// A stroke whose middle is off the screen: its label sits beside the middle of the part on
+// screen, not moved in from off it to a corner far from the stroke.
+TEST_F(DrawingFeedbackTest, GuideLabelSitsBesideThePartOfItsStrokeOnScreen) {
+	display.guideDistances = true;
+	const Foundation::Vec2 node{-1300.0F, -1600.0F};
+	const Foundation::Vec2 tip{700.0F, 400.0F};
+	cursor = worldAt(tip);
+	addGuide({.from = worldAt(node), .to = cursor, .source = GuideSource::WorldAxes});
+
+	const DrawingFeedbackPlan result = plan();
+	ASSERT_EQ(result.labels.size(), 1U);
+	const FeedbackBox& plate = result.labels[0].plate;
+	expectInside(plate);
+	// The stroke enters the screen at (300, 0): the label sits by that part's middle, (500, 200).
+	EXPECT_LT(distanceToBox({500.0F, 200.0F}, plate), 20.0F);
+}
+
+// The middle of a guide along the segment lies on the segment's line, where neither side
+// is away from it: the label takes the fixed side (left of a vertical guide) however the
+// previous point jitters across the line.
+TEST_F(DrawingFeedbackTest, GuideLabelAlongTheSegmentTakesTheFixedSide) {
+	display.guideDistances = true;
+	cursor = {0.0F, 6.0F};
+	addGuide({.from = {0.0F, -4.0F}, .to = cursor, .source = GuideSource::WorldAxes});
+	for (const float jitter : {0.0F, 1e-4F, -1e-4F}) {
+		SCOPED_TRACE(::testing::Message() << "the previous point " << jitter << " m off the line");
+		points = {{5.0F, -5.0F}, {jitter, 1.0F}};
+		const DrawingFeedbackPlan result = plan();
+		ASSERT_EQ(result.labels.size(), 2U);
+		EXPECT_LT(result.labels[1].plate.right, screen({0.0F, 0.0F}).x) << "left of the guide";
+	}
 }
 
 TEST_F(DrawingFeedbackTest, GuideLabelsKeepClearOfTheMarkerAndTheHalo) {
@@ -401,25 +475,19 @@ TEST_F(DrawingFeedbackTest, GuideLabelsKeepClearOfTheMarkerAndTheHalo) {
 	EXPECT_FALSE(overlaps(closing.labels[1].plate, boxAround(halo[0].center, halo[0].radius)));
 }
 
-TEST_F(DrawingFeedbackTest, DuplicateGuidesDrawOneStrokeAndOneLabel) {
+TEST_F(DrawingFeedbackTest, DuplicateGuidesDrawOneStrokeAndLabelAndEachEdgesMarker) {
 	display.guideDistances = true;
-	cursor = {0.0F, 3.0F};
-	addGuide({.from = {0.0F, 0.0F}, .to = cursor, .source = GuideSource::WorldAxes});
-	addGuide({.from = {0.01F, 0.0F}, .to = cursor, .source = GuideSource::NearbyStructure}); // under half a pixel away
-
-	const DrawingFeedbackPlan result = plan();
-	EXPECT_EQ(strokesIn(result, FeedbackLayer::Alignment).size(), 1U);
-	EXPECT_EQ(result.labels.size(), 1U);
-}
-
-TEST_F(DrawingFeedbackTest, DuplicateGuidesKeepEachRightAngleMarker) {
 	cursor = {0.0F, 3.0F};
 	const SnapGuide plain{.from = {0.0F, 0.0F}, .to = cursor, .source = GuideSource::WorldAxes};
 	const SnapGuide square{.from = {0.0F, 0.0F}, .to = cursor, .source = GuideSource::DrawnShape, .rightAngle = true, .rightAngleEdgeDirection = {1.0F, 0.0F}};
 	SnapGuide		otherEdge = square;
 	otherEdge.rightAngleEdgeDirection = {-1.0F, 0.0F};
+	SnapGuide nearlyPlain = plain;
+	nearlyPlain.from = {0.01F, 0.0F}; // under half a pixel away
+	nearlyPlain.source = GuideSource::NearbyStructure;
 
 	for (const auto& [name, first, second, markers] : {
+			 std::tuple{"under half a pixel apart", plain, nearlyPlain, 0U},
 			 std::tuple{"marker on the second", plain, square, 1U},
 			 std::tuple{"marker on the first", square, plain, 1U},
 			 std::tuple{"the same edge twice", square, square, 1U},
@@ -432,6 +500,7 @@ TEST_F(DrawingFeedbackTest, DuplicateGuidesKeepEachRightAngleMarker) {
 		const DrawingFeedbackPlan result = plan();
 		EXPECT_EQ(strokesIn(result, FeedbackLayer::Alignment).size(), 1U);
 		EXPECT_EQ(strokesIn(result, FeedbackLayer::Marker).size(), markers);
+		EXPECT_EQ(result.labels.size(), 1U);
 	}
 }
 
@@ -444,7 +513,6 @@ TEST_F(DrawingFeedbackTest, SegmentLabelReadsTheLengthClearOfThePointer) {
 	const Foundation::Vec2 tip = screen(cursor);
 	const FeedbackBox	   shortBox = shortSegment.labels[0].plate;
 	EXPECT_GE(distanceToBox(tip, shortBox), 12.0F);
-	EXPECT_FALSE(shortBox.right > tip.x && shortBox.bottom > tip.y) << "the label sits under the pointer";
 	EXPECT_GT(shortBox.left, tip.x) << "the segment arrives from the left, so the label goes right";
 
 	style.guideDistanceDecimals = 1;
@@ -456,8 +524,8 @@ TEST_F(DrawingFeedbackTest, SegmentLabelReadsTheLengthClearOfThePointer) {
 	EXPECT_EQ(longLabel.text, "6.00 m");
 	EXPECT_GE(distanceToBox(screen(cursor), longLabel.plate), 40.0F);
 	const Foundation::Vec2 middle = screen({3.0F, 0.0F});
-	EXPECT_NEAR(longLabel.position.y + longLabel.height, middle.y - 10.0F, 1e-3F) << "above the segment";
-	EXPECT_NEAR(longLabel.position.x + longLabel.width * 0.5F, middle.x, 1e-3F) << "centered on the middle";
+	EXPECT_NEAR(longLabel.plate.bottom - kPlatePaddingPx, middle.y - 10.0F, 1e-3F) << "above the segment";
+	EXPECT_NEAR(centerOf(longLabel.plate).x, middle.x, 1e-3F) << "centered on the middle";
 }
 
 TEST_F(DrawingFeedbackTest, SegmentLabelChangesSideAtMostOnceAlongARay) {
@@ -493,9 +561,9 @@ TEST_F(DrawingFeedbackTest, SegmentLabelReserveHoldsPastTenAndAHundredMeters) {
 	}
 }
 
-// Near a screen edge the middle placement's fit is judged at the reserved width too, so the
-// label growing a digit can't send it to the other side and back. The first ray is the
-// reader's case: at 10.00 m the plate's right edge passed 1000 and it flipped until 10.10 m.
+// Near a screen edge every placement's fit is judged at the reserved width too, so the label
+// growing a digit can't send it to the other side and back. The first ray is the reader's
+// case: at 10.00 m the plate's right edge passed 1000 and it flipped until 10.10 m.
 TEST_F(DrawingFeedbackTest, SegmentLabelKeepsItsSideAsItGainsADigitNearAScreenEdge) {
 	for (const auto& [name, zoom, startMeters] : {
 			 std::tuple{"past 10 m", 1.65F, 9.9F},
@@ -509,7 +577,7 @@ TEST_F(DrawingFeedbackTest, SegmentLabelKeepsItsSideAsItGainsADigitNearAScreenEd
 			 }) {
 			for (int degrees = 250; degrees < 250 + 360; degrees += 5) {
 				SCOPED_TRACE(::testing::Message() << name << ", from the " << edge << " edge at " << degrees % 360 << " degrees");
-				const float radians = static_cast<float>(degrees) * std::numbers::pi_v<float> / 180.0F;
+				const float		radians = static_cast<float>(degrees) * std::numbers::pi_v<float> / 180.0F;
 				const SideSweep sweep = sweepSegmentLabel(worldAt(firstPoint), {std::cos(radians), std::sin(radians)}, 30, 0.01F, startMeters);
 				EXPECT_EQ(sweep.returns, 0);
 			}
@@ -517,10 +585,40 @@ TEST_F(DrawingFeedbackTest, SegmentLabelKeepsItsSideAsItGainsADigitNearAScreenEd
 	}
 }
 
+// The reviewer's ray from 20 px off the left edge: judged at its own width, the label's end
+// placement went up right, down left, back up right when it gained the 10.00 m digit, down
+// left again, then to the middle.
+TEST_F(DrawingFeedbackTest, SegmentLabelEndPlacementNearAnEdgeKeepsItsSideAsItGainsADigit) {
+	camera.setZoom(1.0F);
+	const float		radians = 57.37F * std::numbers::pi_v<float> / 180.0F;
+	const SideSweep sweep = sweepSegmentLabel(worldAt({20.0F, 400.0F}), {std::cos(radians), std::sin(radians)}, 1500);
+	EXPECT_EQ(sweep.returns, 0);
+	EXPECT_LE(sweep.changes, 2);
+}
+
+// With nothing clear (here a keep-clear box over the whole screen), the label takes the first
+// end placement that fits the screen unmoved at the reserved width: arriving from the right,
+// up left comes first, and 70 px from the left edge it fits at its own width but not at the
+// reserved one, so up right it is, before and after the digit at 10 m.
+TEST_F(DrawingFeedbackTest, SegmentLabelWithNoClearPlacementTakesTheFirstThatFitsAtTheReservedWidth) {
+	camera.setZoom(1.0F);
+	keepClear = FeedbackBox{0.0F, 0.0F, static_cast<float>(kViewportWidth), static_cast<float>(kViewportHeight)};
+	const Foundation::Vec2 tip{70.0F, 400.0F};
+	cursor = worldAt(tip);
+	for (const float pixels : {72.0F, 88.0F}) { // 9.00 m and 11.00 m at 8 px to the meter
+		SCOPED_TRACE(::testing::Message() << pixels << " px");
+		points = {worldAt({tip.x + pixels, tip.y})};
+		const DrawingFeedbackPlan result = plan();
+		ASSERT_EQ(result.labels.size(), 1U);
+		EXPECT_GT(result.labels[0].plate.left, tip.x) << "up right";
+		EXPECT_LT(result.labels[0].plate.bottom, tip.y);
+	}
+}
+
 // A segment from off the screen: its middle label is moved inside, which near the snapped
-// point would put it on the marker's ticks. It takes the end until the moved plate clears
-// the pointer, one change of side and no flicker.
-TEST_F(DrawingFeedbackTest, SegmentLabelMovedInsideTheScreenKeepsOffTheMarker) {
+// point would put it on the marker's ticks or within 40 px of the pointer. It takes the end
+// until the moved plate clears the pointer, one change of side and no flicker.
+TEST_F(DrawingFeedbackTest, SegmentLabelMovedInsideTheScreenKeepsOffTheMarkerAndThePointer) {
 	for (const auto& [name, origin, direction] : {
 			 std::tuple{"from past the right edge", Foundation::Vec2{17.5F, 0.0F}, Foundation::Vec2{-1.0F, 0.0F}},
 			 std::tuple{"from past the bottom edge", Foundation::Vec2{0.0F, 17.5F}, Foundation::Vec2{0.0F, -1.0F}},
@@ -535,10 +633,14 @@ TEST_F(DrawingFeedbackTest, SegmentLabelMovedInsideTheScreenKeepsOffTheMarker) {
 	cursor = {11.55F, 0.0F}; // 962 px across a 1000 px screen
 	const DrawingFeedbackPlan result = plan();
 	ASSERT_EQ(result.labels.size(), 1U);
-	for (const FeedbackBox& marker : markerBoxes(screen(cursor))) {
-		EXPECT_FALSE(overlaps(result.labels[0].plate, marker));
+	const FeedbackBox&	   plate = result.labels[0].plate;
+	const Foundation::Vec2 tip = screen(cursor);
+	for (const FeedbackBox& marker : markerBoxes(tip)) {
+		EXPECT_FALSE(overlaps(plate, marker));
 	}
-	expectInside(result.labels[0].plate);
+	expectInside(plate);
+	EXPECT_LT(plate.right, tip.x) << "at the end, up left: moved inside, the middle would sit within 40 px of the pointer";
+	EXPECT_LT(plate.bottom, tip.y);
 }
 
 TEST_F(DrawingFeedbackTest, SegmentLabelNeverSitsLowerRightOfThePointerFromAnyDiagonal) {
@@ -579,13 +681,13 @@ TEST_F(DrawingFeedbackTest, LabelsStayInsideTheViewport) {
 TEST_F(DrawingFeedbackTest, LabelsSitOnPlatesAsTallAsTheFontsLineHeight) {
 	points = {{0.0F, 0.0F}};
 	cursor = {1.0F, 0.0F};
-	const FeedbackLabel label = plan().labels[0];
-	EXPECT_FLOAT_EQ(label.height, kLineHeightOfSize * label.sizePx);
-	EXPECT_FLOAT_EQ(label.width, fakeSize(label.text, label.sizePx).x);
-	EXPECT_FLOAT_EQ(label.plate.left, label.position.x - 3.0F);
-	EXPECT_FLOAT_EQ(label.plate.top, label.position.y - 3.0F);
-	EXPECT_FLOAT_EQ(label.plate.right, label.position.x + label.width + 3.0F);
-	EXPECT_FLOAT_EQ(label.plate.bottom, label.position.y + label.height + 3.0F);
+	const FeedbackLabel	   label = plan().labels[0];
+	const Foundation::Vec2 size = fakeSize(label.text, label.sizePx);
+	EXPECT_FLOAT_EQ(size.y, kLineHeightOfSize * label.sizePx);
+	EXPECT_FLOAT_EQ(label.plate.left, label.position.x - kPlatePaddingPx);
+	EXPECT_FLOAT_EQ(label.plate.top, label.position.y - kPlatePaddingPx);
+	EXPECT_FLOAT_EQ(label.plate.right, label.position.x + size.x + kPlatePaddingPx);
+	EXPECT_FLOAT_EQ(label.plate.bottom, label.position.y + size.y + kPlatePaddingPx);
 }
 
 TEST_F(DrawingFeedbackTest, GuideThroughThePreviousPointDrawsNoStrokeButKeepsItsMarker) {
@@ -625,7 +727,7 @@ TEST_F(DrawingFeedbackTest, GuideFromAnOlderNodeAlongTheSegmentDrawsOnlyUpToTheP
 	const auto				  guides = strokesIn(result, FeedbackLayer::Alignment);
 	ASSERT_EQ(guides.size(), 1U);
 	expectNear(guides[0].points[0], screen(points[0]));
-	expectNear(guides[0].points[1], screen(points[1]));
+	expectNear(guides[0].points[1], screen(points[1]), kStrokeEndTolerancePx);
 	ASSERT_EQ(result.labels.size(), 2U);
 	EXPECT_EQ(result.labels[0].text, "5.00 m");
 	EXPECT_EQ(result.labels[1].text, "10.00 m");
@@ -642,17 +744,17 @@ TEST_F(DrawingFeedbackTest, GuideDistanceLabelFollowsTheVisibleStroke) {
 	cursor = {0.0F, 6.0F};
 	addGuide({.from = {0.0F, -4.0F}, .to = cursor, .source = GuideSource::WorldAxes});
 
-	points = {{5.0F, -5.0F}, {-3.0F, 6.0F}}; // off the guide: the whole stroke
+	points = {{5.0F, -5.0F}, {-3.0F, 6.0F}}; // off the guide: the whole stroke but its last pixel
 	const DrawingFeedbackPlan whole = plan();
 	ASSERT_EQ(whole.labels.size(), 2U);
 	EXPECT_EQ(whole.labels[1].text, "10.00 m");
-	EXPECT_NEAR(centerOf(whole.labels[1].plate).y, screen({0.0F, 1.0F}).y, 1e-3F);
+	EXPECT_NEAR(centerOf(whole.labels[1].plate).y, screen({0.0F, 1.0F}).y, 0.5F + 1e-3F);
 
-	points = {{0.0F, -4.0F}, {0.0F, -2.0F}}; // along the guide: dotted from -4 m to -2 m
+	points = {{0.0F, -4.0F}, {0.0F, -2.0F}}; // along the guide: dotted from -4 m to a pixel short of -2 m
 	const DrawingFeedbackPlan shortened = plan();
 	ASSERT_EQ(shortened.labels.size(), 2U);
 	EXPECT_EQ(shortened.labels[1].text, "10.00 m");
-	EXPECT_NEAR(centerOf(shortened.labels[1].plate).y, screen({0.0F, -3.0F}).y, 1e-3F);
+	EXPECT_NEAR(centerOf(shortened.labels[1].plate).y, screen({0.0F, -3.0F}).y, 0.5F + 1e-3F);
 
 	points = {{0.0F, -4.0F}, {0.0F, -6.0F}}; // the previous point behind the node: no stroke
 	const DrawingFeedbackPlan hidden = plan();
@@ -661,11 +763,10 @@ TEST_F(DrawingFeedbackTest, GuideDistanceLabelFollowsTheVisibleStroke) {
 	EXPECT_EQ(hidden.labels[0].text, "12.00 m");
 }
 
-TEST_F(DrawingFeedbackTest, GuideOffTheSegmentKeepsItsWholeStroke) {
+TEST_F(DrawingFeedbackTest, GuideOffTheSegmentKeepsItsStrokeToAPixelShortOfThePoint) {
 	cursor = {0.0F, 6.0F};
 	for (const auto& [name, previous, from] : {
 			 std::tuple{"at a right angle", Foundation::Vec2{-3.0F, 6.0F}, Foundation::Vec2{0.0F, -4.0F}},
-			 std::tuple{"two pixels off the previous point", Foundation::Vec2{0.05F, 1.0F}, Foundation::Vec2{0.0F, -4.0F}},
 			 std::tuple{"collinear, the previous point past the snapped point", Foundation::Vec2{0.0F, 8.0F}, Foundation::Vec2{0.0F, -4.0F}},
 		 }) {
 		SCOPED_TRACE(name);
@@ -675,8 +776,39 @@ TEST_F(DrawingFeedbackTest, GuideOffTheSegmentKeepsItsWholeStroke) {
 		const auto guides = strokesIn(plan(), FeedbackLayer::Alignment);
 		ASSERT_EQ(guides.size(), 1U);
 		expectNear(guides[0].points[0], screen(from));
-		expectNear(guides[0].points[1], screen(cursor));
+		expectNear(guides[0].points[1], screen(cursor), kStrokeEndTolerancePx);
 	}
+}
+
+// One rule: a stroke draws only where it lies more than a pixel from the solid segment. A
+// guide a fraction of a degree off the segment runs within a pixel of it along its last
+// stretch, and stops where it comes that close.
+TEST_F(DrawingFeedbackTest, GuideStrokeStopsWhereItComesWithinAPixelOfTheSolidSegment) {
+	cursor = {0.0F, 6.0F};
+	points = {{5.0F, -5.0F}, {0.05F, 1.0F}}; // the segment starts 2 px off the guide's line and meets it at the snapped point
+	addGuide({.from = {0.0F, -4.0F}, .to = cursor, .source = GuideSource::WorldAxes});
+	const auto guides = strokesIn(plan(), FeedbackLayer::Alignment);
+	ASSERT_EQ(guides.size(), 1U);
+	const Foundation::Vec2 start = screen(points.back());
+	const Foundation::Vec2 tip = screen(cursor);
+	const Foundation::Vec2 from = guides[0].points[0];
+	const Foundation::Vec2 end = guides[0].points[1];
+	EXPECT_NEAR(distanceToSegment(end, start, tip), 1.0F, 1e-2F);
+	EXPECT_NEAR(end.y, screen({0.0F, 3.5F}).y, 0.5F) << "halfway down the segment, where it is a pixel off";
+	for (int step = 0; step <= 100; ++step) {
+		const float fraction = static_cast<float>(step) / 100.0F;
+		const Foundation::Vec2 along{from.x + (end.x - from.x) * fraction, from.y + (end.y - from.y) * fraction};
+		EXPECT_GE(distanceToSegment(along, start, tip), 1.0F - 1e-2F) << "at " << fraction;
+	}
+
+	// The reviewer's frame (800 by 600 at zoom 0.5, here moved into the 1000 by 800 screen):
+	// a guide within a pixel of the segment its whole length, which drew 55 px of dots over it.
+	camera.setZoom(0.5F);
+	cursor = worldAt({242.726F, 102.416F});
+	points = {worldAt({236.251F, -441.807F})};
+	snap.guideCount = 0;
+	addGuide({.from = worldAt({242.726F, 47.751F}), .to = cursor, .source = GuideSource::NearbyStructure});
+	EXPECT_TRUE(strokesIn(plan(), FeedbackLayer::Alignment).empty());
 }
 
 // A short closing segment's label sits at the snapped end, which is the first point: it
@@ -695,9 +827,6 @@ TEST_F(DrawingFeedbackTest, SegmentLabelKeepsOffTheCloseHalo) {
 	const FeedbackBox& plate = result.labels[0].plate;
 	EXPECT_FALSE(overlaps(plate, boxAround(halo[0].center, halo[0].radius + halo[0].width * 0.5F)));
 	EXPECT_LT(distanceToBox(screen(cursor), plate), halo[0].radius + 30.0F) << "still beside the point it reads";
-	const Foundation::Vec2 tip = screen(cursor);
-	const Foundation::Vec2 center = centerOf(plate);
-	EXPECT_FALSE(center.x > tip.x && center.y > tip.y) << "never lower right";
 }
 
 // Against the top edge neither upper quarter fits: the label takes down left, the next in
@@ -714,23 +843,10 @@ TEST_F(DrawingFeedbackTest, SegmentLabelAgainstTheTopEdgeTakesDownLeftNeverDownR
 	EXPECT_GT(plate.top, tip.y);
 }
 
-// From past the right edge the middle label is moved inside, where it clears the marker but
-// sits within 40 px of the snapped point: the label goes to the end instead.
-TEST_F(DrawingFeedbackTest, SegmentLabelMovedInsideStillKeepsFortyPixelsFromThePointer) {
-	points = {worldAt({1300.0F, 400.0F})};
-	cursor = worldAt({920.0F, 400.0F});
-	const DrawingFeedbackPlan result = plan();
-	ASSERT_EQ(result.labels.size(), 1U);
-	const FeedbackBox&	   plate = result.labels[0].plate;
-	const Foundation::Vec2 tip = screen(cursor);
-	EXPECT_LT(plate.right, tip.x) << "at the end, up left";
-	EXPECT_LT(plate.bottom, tip.y);
-}
-
 // The near-start rescue: the click closes from within the close radius, so the halo is
 // round the first point, off the snapped one. The end placement up right would sit on the
 // halo and gives way to up left.
-TEST_F(DrawingFeedbackTest, SegmentLabelEndPlacementOnAnOffCentreHaloTakesTheNext) {
+TEST_F(DrawingFeedbackTest, SegmentLabelEndPlacementOnAnOffCenterHaloTakesTheNext) {
 	closeRadiusMeters = 1.5F; // 60 px: the halo is 30 px round the first point
 	canClose = true;
 	willClose = true;
@@ -752,7 +868,7 @@ TEST_F(DrawingFeedbackTest, SegmentLabelEndPlacementOnAnOffCentreHaloTakesTheNex
 
 // The same rescue with a wide close radius: the label beside the segment's middle would sit
 // on the halo, so it takes the other side of the segment.
-TEST_F(DrawingFeedbackTest, SegmentLabelAtTheMiddleKeepsOffAnOffCentreHalo) {
+TEST_F(DrawingFeedbackTest, SegmentLabelAtTheMiddleKeepsOffAnOffCenterHalo) {
 	closeRadiusMeters = 4.0F; // 160 px: the halo is 80 px round the first point
 	canClose = true;
 	willClose = true;
@@ -770,6 +886,57 @@ TEST_F(DrawingFeedbackTest, SegmentLabelAtTheMiddleKeepsOffAnOffCentreHalo) {
 
 	willClose = false;
 	EXPECT_LT(plan().labels[0].plate.bottom, tip.y) << "above the segment, away from the shape, without the halo";
+}
+
+// A rejected edit's reason draws up right of the pointer; the label's end placement there
+// would cover it, so the label takes the next.
+TEST_F(DrawingFeedbackTest, SegmentLabelKeepsOffTheKeepClearBox) {
+	points = {worldAt({460.0F, 400.0F})};
+	cursor = worldAt({500.0F, 400.0F}); // 40 px, arriving from the left: up right comes first
+	const FeedbackBox reason{514.0F, 378.0F, 514.0F + 140.0F, 378.0F + 16.0F};
+	const FeedbackBox upRight = plan().labels[0].plate;
+	ASSERT_TRUE(overlaps(upRight, reason)) << "without the box the label sits on the reason";
+
+	keepClear = reason;
+	const DrawingFeedbackPlan result = plan();
+	ASSERT_EQ(result.labels.size(), 1U);
+	EXPECT_FALSE(overlaps(result.labels[0].plate, reason));
+	EXPECT_LT(result.labels[0].plate.right, 500.0F) << "the next placement, up left";
+}
+
+// The wall tool's snap-target ring round a short segment's end: the label's end placement
+// moves off it as off the close halo.
+TEST_F(DrawingFeedbackTest, SegmentLabelKeepsOffTheWallSnapTargetRing) {
+	tool = world_sim::ToolKind::Wall;
+	snap.kind = SnapKind::WallEndpoint;
+	points = {worldAt({460.0F, 400.0F})};
+	cursor = worldAt({500.0F, 400.0F}); // 40 px: the label sits at the end
+
+	const DrawingFeedbackPlan result = plan();
+	const auto				  rings = ringsIn(result, FeedbackLayer::Target);
+	ASSERT_EQ(rings.size(), 1U);
+	ASSERT_EQ(result.labels.size(), 1U);
+	const FeedbackBox& plate = result.labels[0].plate;
+	EXPECT_FALSE(overlaps(plate, boxAround(rings[0].center, rings[0].radius + rings[0].width * 0.5F)));
+	EXPECT_GT(plate.left, 500.0F) << "still up right";
+	EXPECT_LT(plate.bottom, 400.0F);
+	EXPECT_LT(distanceToBox(screen(cursor), plate), rings[0].radius + 30.0F) << "still beside the point it reads";
+}
+
+// A guide label whose middle spot covers only the ring's outer two pixels (outside the
+// marker's ticks) moves along its guide off the whole ring.
+TEST_F(DrawingFeedbackTest, GuideLabelKeepsOffTheWholeWallSnapTargetRing) {
+	tool = world_sim::ToolKind::Wall;
+	snap.kind = SnapKind::WallEndpoint;
+	display.guideDistances = true;
+	cursor = worldAt({500.0F, 400.0F});
+	addGuide({.from = worldAt({500.0F, 340.0F}), .to = cursor, .source = GuideSource::WorldAxes}); // its middle label's plate ends at 379.9
+
+	const DrawingFeedbackPlan result = plan();
+	const auto				  rings = ringsIn(result, FeedbackLayer::Target);
+	ASSERT_EQ(rings.size(), 1U);
+	ASSERT_EQ(result.labels.size(), 1U);
+	EXPECT_FALSE(overlaps(result.labels[0].plate, boxAround(rings[0].center, rings[0].radius + rings[0].width * 0.5F)));
 }
 
 TEST_F(DrawingFeedbackTest, AngleStepRayDrawsNothingBeyondTheSegment) {
@@ -849,7 +1016,7 @@ TEST_F(DrawingFeedbackTest, NoPointsPlacedDrawsOnlyTheSnappedPointMarker) {
 	EXPECT_FLOAT_EQ(plan().dots[0].radius, 4.0F);
 }
 
-TEST_F(DrawingFeedbackTest, OffBuildableGroundTheMarkerDotIsTheInvalidColour) {
+TEST_F(DrawingFeedbackTest, OffBuildableGroundTheMarkerDotIsTheInvalidColor) {
 	points = {{0.0F, 0.0F}};
 	cursor = {2.0F, 1.0F};
 	snappedPointInvalid = true;
@@ -908,6 +1075,20 @@ TEST_F(DrawingFeedbackTest, NonFiniteInputDrawsNothingForThatElement) {
 	ASSERT_EQ(badGuide.labels.size(), 1U);
 	EXPECT_EQ(badGuide.labels[0].text, "2.00 m");
 
+	points = {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 3.0F}};
+	canClose = true;
+	willClose = true;
+	for (const float radius : {nan, std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), 0.0F, -1.0F}) {
+		SCOPED_TRACE(::testing::Message() << "close radius " << radius);
+		closeRadiusMeters = radius;
+		const DrawingFeedbackPlan result = plan();
+		EXPECT_TRUE(ringsIn(result, FeedbackLayer::Alignment).empty()) << "no close ring";
+		for (const FeedbackRing& ring : result.rings) {
+			EXPECT_TRUE(std::isfinite(ring.radius) && ring.radius > 0.0F);
+		}
+	}
+	closeRadiusMeters = 0.5F;
+
 	cursor = {nan, nan};
 	const DrawingFeedbackPlan badPoint = plan();
 	EXPECT_TRUE(badPoint.labels.empty());
@@ -915,7 +1096,19 @@ TEST_F(DrawingFeedbackTest, NonFiniteInputDrawsNothingForThatElement) {
 	EXPECT_TRUE(strokesIn(badPoint, FeedbackLayer::Cursor).empty());
 }
 
-TEST_F(DrawingFeedbackTest, DistanceThatRoundsToZeroPrintsUnsigned) {
+// Nothing to measure while the snapped point is on the previous point; a guide distance that
+// rounds to zero still draws, unsigned.
+TEST_F(DrawingFeedbackTest, ALengthThatRoundsToZeroHasNoSegmentLabel) {
+	points = {{0.0F, 0.0F}};
+	for (const float meters : {0.0F, 0.004F}) {
+		cursor = {meters, 0.0F};
+		EXPECT_TRUE(plan().labels.empty()) << meters;
+	}
+	cursor = {0.006F, 0.0F};
+	ASSERT_EQ(plan().labels.size(), 1U);
+	EXPECT_EQ(plan().labels[0].text, "0.01 m");
+
+	points.clear();
 	display.guideDistances = true;
 	cursor = {0.0F, 3.0F};
 	addGuide({.from = {0.0F, 0.0F}, .to = cursor, .source = GuideSource::WorldAxes});
