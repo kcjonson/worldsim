@@ -121,6 +121,7 @@ target_link_libraries(world-sim-game
 
 add_executable(world-sim Main.cpp)
 target_link_libraries(world-sim PRIVATE world-sim-game)
+salal_windows_manifest(world-sim)
 
 # The game's own passes' shaders (salal's base shader is compiled in) are staged into
 # ${CMAKE_BINARY_DIR}/shaders by world-view-shaders and planet-view-shaders. findResource

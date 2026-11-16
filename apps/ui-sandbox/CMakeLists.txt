@@ -19,6 +19,7 @@ target_include_directories(ui-sandbox
 )
 
 target_compile_features(ui-sandbox PRIVATE cxx_std_20)
+salal_windows_manifest(ui-sandbox)
 
 # Link required libraries
 target_link_libraries(ui-sandbox
