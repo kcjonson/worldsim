@@ -392,14 +392,17 @@ namespace world_sim {
 			return;
 		}
 
-		auto&		   registry = ConstructionRegistry::Get();
-		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
+		auto&							registry = ConstructionRegistry::Get();
+		const ec::DrawingAids			aids = UserSettings::Get().drawingAids();
+		const ec::SnapEngine			snap(registry.snapping(), constructionWorld_);
 		lastSnap_ = snap.snap(
-			points_, {world.x, world.y}, freeform, effectiveOriginCloseRadiusMeters(), UserSettings::Get().alignSnapToExistingFoundations
+			points_,
+			{world.x, world.y},
+			ec::SnapInput{.aids = aids, .freeform = freeform, .originCloseRadiusMeters = effectiveOriginCloseRadiusMeters()}
 		);
 		cursor_ = lastSnap_.point;
 
-		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+		const ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
 		lastValidation_ = editing ? validator.validateEditPoint(points_, cursor_) : validator.validatePoint(points_, cursor_);
 
 		// Live nav feedback: is the snapped cursor itself off buildable ground? Drives the
@@ -568,6 +571,21 @@ namespace world_sim {
 		const float scale = pixelsPerWorldMeter();
 		const float floorMeters = (scale > 0.0F) ? floorPx / scale : 0.0F;
 		return std::max(configMeters, floorMeters);
+	}
+
+	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportW, int viewportH) const {
+		return DrawingFeedbackInput{
+			.tool = activeTool_,
+			.snap = lastSnap_,
+			.points = points_,
+			.cursor = cursor_,
+			.display = UserSettings::Get().drawing,
+			.style = style,
+			.camera = *camera_,
+			.viewportWidth = viewportW,
+			.viewportHeight = viewportH,
+			.pixelsPerMeter = kPixelsPerMeter,
+		};
 	}
 
 	float DrawingSystem::closeRescueRadiusMeters() const {
@@ -885,41 +903,44 @@ namespace world_sim {
 	}
 
 	void DrawingSystem::handleWallMove(Foundation::Vec2 world, bool freeform) {
-		auto&		   registry = ConstructionRegistry::Get();
-		ec::SnapEngine snap(registry.snapping(), constructionWorld_);
+		auto& registry = ConstructionRegistry::Get();
 
 		// The snap insets foundation-edge/corner hits by the wall's half-thickness for
 		// outer-face-flush alignment, so resolve the preset first. Without a preset (a
 		// material with no wall config) there is no thickness to measure: snap with no
 		// inset and skip validation below.
-		const auto*		   preset = activePreset();
-		const std::int64_t halfThick = preset != nullptr ? preset->halfThicknessMm : 0;
+		const auto*			  preset = activePreset();
+		const ec::DrawingAids aids = UserSettings::Get().drawingAids();
+		const ec::SnapEngine  snap(registry.snapping(), constructionWorld_);
 		lastSnap_ = snap.snapWall(
-			points_, world, freeform, halfThick, effectiveOriginCloseRadiusMeters(), UserSettings::Get().alignSnapToExistingFoundations
+			points_,
+			world,
+			ec::SnapInput{
+				.aids = aids,
+				.freeform = freeform,
+				.originCloseRadiusMeters = effectiveOriginCloseRadiusMeters(),
+				.wallHalfThicknessMm = preset != nullptr ? preset->halfThicknessMm : 0,
+			}
 		);
 		cursor_ = lastSnap_.point;
+		lastValidation_ = {};
+		if (preset != nullptr) {
+			// The host is the foundation the FIRST point landed on. For the live preview
+			// before the first click, probe the cursor's foundation so the colorize and
+			// readouts reflect where the chain would start.
+			ec::FoundationId host = wallHost_;
+			if (host == ec::kInvalidFoundation && points_.empty()) {
+				host = constructionWorld_.foundationAt(geometry::quantize(cursor_));
+			}
+			const ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+			lastValidation_ = validator.validateWallPoint(points_, cursor_, *preset, host);
+		}
 
 		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
 		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
 		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
-		willClose_ = false;
-		if (preset == nullptr) {
-			lastValidation_ = {};
-			return;
-		}
-
-		// The host is the foundation the FIRST point landed on. For the live preview
-		// before the first click, probe the cursor's foundation so the colorize and
-		// readouts reflect where the chain would start.
-		ec::FoundationId host = wallHost_;
-		if (host == ec::kInvalidFoundation && points_.empty()) {
-			host = constructionWorld_.foundationAt(geometry::quantize(cursor_));
-		}
-
-		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-		lastValidation_ = validator.validateWallPoint(points_, cursor_, *preset, host);
-		willClose_ = lastSnap_.closesShape() && lastValidation_.ok() && !cursorOffBuildableGround;
+		willClose_ = preset != nullptr && lastSnap_.closesShape() && lastValidation_.ok() && !cursorOffBuildableGround;
 	}
 
 	bool DrawingSystem::handleWallClick(Foundation::Vec2 world, bool freeform, bool ctrl) {
@@ -1798,33 +1819,7 @@ namespace world_sim {
 			});
 		}
 
-		// Guide line(s) (faint): the angle-snap ray, or the axis-alignment line(s)
-		// through the reference node(s). An AxisGuide can show two lines at once (an X
-		// lock and a Y lock to two different nodes); the alt pair is zero when only one
-		// axis aligned.
-		if (lastSnap_.kind == construction::SnapKind::Angle || lastSnap_.kind == construction::SnapKind::AxisGuide) {
-			// Each pair is skipped when degenerate (from == to): an AxisGuide whose
-			// cursor sits exactly on a node collapses the primary line to zero length.
-			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
-				Renderer::Primitives::drawLine({
-					.start = toScreen(lastSnap_.guideFrom),
-					.end = toScreen(lastSnap_.guideTo),
-					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
-					.id = "drawing_guide",
-					.key = 899,
-				});
-			}
-			if (lastSnap_.kind == construction::SnapKind::AxisGuide &&
-				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x || lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
-				Renderer::Primitives::drawLine({
-					.start = toScreen(lastSnap_.guideFromAlt),
-					.end = toScreen(lastSnap_.guideToAlt),
-					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
-					.id = "drawing_guide_alt",
-					.key = 899,
-				});
-			}
-		}
+		drawSnapFeedback(feedbackInput(ps, viewportW, viewportH));
 
 		// Vertex dots.
 		for (const auto& sp : screen) {
@@ -2291,33 +2286,7 @@ namespace world_sim {
 			});
 		}
 
-		// Guide line(s) (faint): the angle-snap ray, or the axis-alignment line(s)
-		// through the reference node(s). An AxisGuide can show two lines at once (an X
-		// lock and a Y lock to two different nodes); the alt pair is zero when only one
-		// axis aligned.
-		if (lastSnap_.kind == construction::SnapKind::Angle || lastSnap_.kind == construction::SnapKind::AxisGuide) {
-			// Skip a degenerate pair (from == to): an AxisGuide whose cursor sits exactly
-			// on a node collapses the primary line to zero length.
-			if (lastSnap_.guideFrom.x != lastSnap_.guideTo.x || lastSnap_.guideFrom.y != lastSnap_.guideTo.y) {
-				Renderer::Primitives::drawLine({
-					.start = toScreen(lastSnap_.guideFrom),
-					.end = toScreen(lastSnap_.guideTo),
-					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
-					.id = "wall_guide",
-					.key = 905,
-				});
-			}
-			if (lastSnap_.kind == construction::SnapKind::AxisGuide &&
-				(lastSnap_.guideFromAlt.x != lastSnap_.guideToAlt.x || lastSnap_.guideFromAlt.y != lastSnap_.guideToAlt.y)) {
-				Renderer::Primitives::drawLine({
-					.start = toScreen(lastSnap_.guideFromAlt),
-					.end = toScreen(lastSnap_.guideToAlt),
-					.style = {.color = toColor(ps.guideColor), .width = ps.guideWidth},
-					.id = "wall_guide_alt",
-					.key = 905,
-				});
-			}
-		}
+		drawSnapFeedback(feedbackInput(ps, viewportW, viewportH));
 
 		// Vertex dots, plus a snap-target ring colored by the snap kind so the player
 		// sees endpoint / T-junction / foundation-vertex snaps.

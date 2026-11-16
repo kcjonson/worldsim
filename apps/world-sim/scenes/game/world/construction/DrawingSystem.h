@@ -35,6 +35,7 @@
 // the other cursor ghosts.
 
 #include "CommittedGeometryCache.h"
+#include "DrawingFeedback.h"
 
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
@@ -54,6 +55,7 @@
 namespace assets {
 	struct ThicknessPreset;
 	struct OpeningTypeDef;
+	struct PreviewStyle;
 } // namespace assets
 
 namespace ecs {
@@ -351,6 +353,10 @@ namespace world_sim {
 		/// Screen pixels per world meter at the current zoom (mirrors the render path:
 		/// kPixelsPerMeter * camera zoom). 1.0 fallback if no camera.
 		[[nodiscard]] float pixelsPerWorldMeter() const;
+
+		/// The snap feedback's input for the current frame.
+		[[nodiscard]] DrawingFeedbackInput
+		feedbackInput(const assets::PreviewStyle& style, int viewportW, int viewportH) const;
 
 		/// Origin-close catch radius in world meters, floored so it never shrinks below
 		/// the on-screen origin halo: what you can click to close matches what you see,

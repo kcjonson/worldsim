@@ -64,6 +64,7 @@ add_executable(world-sim
     scenes/game/world/placement/PlacementSystem.cpp
     scenes/game/world/selection/SelectionSystem.cpp
     scenes/game/world/construction/CommittedGeometryCache.cpp
+    scenes/game/world/construction/DrawingFeedback.cpp
     scenes/game/world/construction/DrawingSystem.cpp
     scenes/game/world/rooms/RoomOverlay.cpp
     scenes/game/world/nav/NavOverlay.cpp
@@ -174,6 +175,7 @@ if(BUILD_TESTING)
         scenes/game/world/MoveOrderGoal.test.cpp
         scenes/game/world/construction/CommittedGeometryCache.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp
+        scenes/game/world/construction/DrawingFeedback.cpp
         scenes/game/world/construction/DrawingSystem.cpp
         scenes/game/world/construction/DrawingSystem.test.cpp
         scenes/game/world/placement/GhostRenderer.cpp
