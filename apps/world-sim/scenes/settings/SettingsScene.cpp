@@ -31,7 +31,7 @@ namespace {
 	namespace tokens = world_sim::tokens;
 	namespace family = ui::tokens::font::family;
 
-	std::string number(float value) {
+	std::string formatNumber(float value) {
 		char text[32];
 		std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
 		return text;
@@ -143,7 +143,8 @@ namespace {
 			addSwitch(
 				"drawing_angle_steps",
 				"Angle steps",
-				"Turn segments in " + number(snapping.angleIncrementDegrees) + " degree steps.",
+				"Turn segments in " + formatNumber(snapping.angleIncrementDegrees) +
+					(snapping.angleIncrementDegrees == 1.0F ? " degree step." : " degree steps."),
 				drawing.angleSteps
 			);
 			addSwitch(
@@ -185,7 +186,7 @@ namespace {
 			);
 			addSwitch(
 				"drawing_round_lengths",
-				"Round lengths to " + number(snapping.lengthIncrementMeters) + " m",
+				"Round lengths to " + formatNumber(snapping.lengthIncrementMeters) + " m",
 				"Segment lengths come out round.",
 				drawing.roundLengths
 			);
@@ -203,11 +204,11 @@ namespace {
 			grid.addChild<ui::Text>({
 				.id = "drawing_grid_label",
 				.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::text}),
-				.text = "Grid spacing for the rectangle tool",
+				.text = "Grid spacing (rectangle tool)",
 			});
 			grid.addChild<ui::SegmentedControl>({
 				.id = "drawing_grid_spacing",
-				.options = {"1 m", "0.5 m"},
+				.options = {"1 meter", "0.5 meters"},
 				.selected = drawing.rectangleGridSpacingMeters < 1.0F ? 1 : 0,
 				.onChange =
 					[&drawing](int index) {
