@@ -8,6 +8,8 @@ function(stage_fonts app)
         message(FATAL_ERROR "stage_fonts(${app}) needs the font-atlas target and SDF_ATLAS_OUTPUTS; call it after they are defined")
     endif()
     file(GLOB font_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/fonts/*")
+    # Ninja makes an output's directory; Make does not, and the touch below fails without it.
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/font-stamps")
     set(stamp "${CMAKE_BINARY_DIR}/font-stamps/${app}-$<CONFIG>.stamp")
     add_custom_command(
         OUTPUT ${stamp}
