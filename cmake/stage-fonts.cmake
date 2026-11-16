@@ -2,7 +2,11 @@
 # Mirror fonts/ beside <app>'s exe, per config. Needs the font-atlas target and SDF_ATLAS_OUTPUTS
 # from the root CMakeLists.txt. The copy is keyed on a stamp, so it reruns when any file in fonts/
 # changes (a regenerated atlas, a TTF, a licence) and does nothing otherwise, with no exe relink.
+# It copies and never prunes: a file deleted from fonts/ stays beside the exe until a clean build.
 function(stage_fonts app)
+    if(NOT TARGET font-atlas OR NOT DEFINED SDF_ATLAS_OUTPUTS)
+        message(FATAL_ERROR "stage_fonts(${app}) needs the font-atlas target and SDF_ATLAS_OUTPUTS; call it after they are defined")
+    endif()
     file(GLOB font_sources CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/fonts/*")
     set(stamp "${CMAKE_BINARY_DIR}/font-stamps/${app}-$<CONFIG>.stamp")
     add_custom_command(
