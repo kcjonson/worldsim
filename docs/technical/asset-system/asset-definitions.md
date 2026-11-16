@@ -326,7 +326,7 @@ The reference level is the one the default view (24 px/m) picks. The load prewar
 
 | Element | Description |
 |---------|-------------|
-| `complexity` | `simple` (static tessellated geometry, baked) or `complex` (CPU Bezier deformation, deferred); default `simple` |
+| `complexity` | `simple` (default) or `complex`. Parsed, but nothing reads it yet; `complex` is reserved for CPU Bezier deformation (deferred) |
 
 ### Placement Elements
 

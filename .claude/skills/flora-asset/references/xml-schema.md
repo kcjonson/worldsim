@@ -98,7 +98,6 @@ Biome names must match the worldgen biome ids (e.g. `TemperateDeciduousForest`, 
 
     <rendering>
       <complexity>simple</complexity>
-      <variantCount>1</variantCount>
     </rendering>
 
     <placement>
