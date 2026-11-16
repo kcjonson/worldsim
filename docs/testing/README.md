@@ -33,9 +33,11 @@ protected pixel for pixel: no golden images, no screenshot diffs, in CI or local
 - **GL tests run on the Linux CI job.** It installs Xvfb and Mesa llvmpipe and sets `WORLDSIM_REQUIRE_GL=1`, so `SurfaceFieldGolden`, `GroundTileBaker` and `AssetRenderer` fail there if no context comes up instead of skipping. Unset, they skip without one, as on the Windows job (GDI's GL 1.1) or a box with no GL.
 - **Unit tests are bounded.** Before adding one, look for a test covering the same path, and
   merge duplicates when touching a suite.
-- **Lint and tree are helpers, not tests.** While building or checking UI, call `/api/ui/lint`
-  (expect `"count":0` before screenshotting) and read element bounds from `/api/ui/tree` rather
-  than judging coordinates by eye. On demand only; never in CI.
+- **The dev server's lint and tree are helpers, not tests.** While building or checking UI, call
+  `/api/ui/lint` (expect `"count":0` before screenshotting) and read element bounds from
+  `/api/ui/tree` rather than judging coordinates by eye. On demand only. The headless scene lint at a
+  list of window and interface sizes (`SceneLayout.test.cpp`, through salal's `app::lintAt`) is a unit
+  test and runs under ctest in CI, where it gates.
 
 ---
 
@@ -290,14 +292,19 @@ Missing file causes an immediate `ConfigError` on launch.
 ### Launch
 
 ```
-build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT> --background
+build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT> --background --no-settings
 ```
 
 **Every launch an agent makes passes `--background`**, whichever app the scenario names
-(`world-sim`, `ui-sandbox`, `asset-manager`) and whatever other flags its launch line gives. The
+(`world-sim`, `ui-sandbox`, `asset-manager`) and whatever other flags its launch line gives. Every
+world-sim launch passes `--no-settings` too: the settings file (`%APPDATA%kcjonsonworld-simsettings.json`)
+is shared by every worktree's build and Kevin's own play, and a run that stops midway, a resize, or the
+dev server's `vsync` control would otherwise leave its interface size, window size or vsync saved for
+every later launch. ui-sandbox and asset-manager have no settings file. Scenario 17 tests that the
+settings are saved, so it runs on the real file and restores it. The
 window opens behind every other window and unfocused, so a pass never lands on top of Kevin's work
 or takes his keyboard. Nothing else changes: the window is on the taskbar and drawn every frame,
-and screenshots, injected input and state read the same. The flag comes off only for a launch made
+and screenshots, injected input and state read the same. Both flags come off only for a launch made
 for Kevin to test something by hand, or one he asked for. Perf captures are the scripted exception;
 `scripts/perf.mjs` launches in the foreground, since a covered window isn't presented the same way.
 

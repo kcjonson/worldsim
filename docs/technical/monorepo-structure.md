@@ -40,13 +40,15 @@ salal (external, build/_deps/salal-src/ after a configure)
 Each layer can only depend on layers below it:
 
 ```
+theme
+  ↓
 world-view
   ↓
 sim
   ↓
 assets
   ↓
-world, planet-view, theme, app (salal)
+world, planet-view, app (salal)
   ↓
 worldgen, ui (salal)
   ↓
@@ -55,7 +57,7 @@ renderer (salal), geometry
 foundation (salal)
 ```
 
-The game's own libraries keep the simulation away from the screen: `world` and `sim` link neither `renderer` nor `ui`, and `world-view` is the side that draws. `assets` links `renderer` for SVG tessellation and its thumbnails, so `sim` still reaches `renderer` through it; that edge is the one left to cut.
+The game's own libraries keep the simulation away from the screen: `world` and `sim` link neither `renderer` nor `ui`, and `world-view` is the side that draws. `assets` links `renderer` for SVG tessellation and its thumbnails, so `sim` still reaches `renderer` through it; that edge is the one left to cut. `theme` links salal's `app` (its interface scale config) and `ui`, and only the three apps link `theme`, so the game libraries stay clear of it.
 
 **No circular dependencies allowed.** For example:
 - ✅ `theme` can depend on `ui` (layer below)
@@ -88,7 +90,8 @@ The game's own libraries keep the simulation away from the screen: `world` and `
 **theme/**
 - Worldsim's design system on salal's ui: its theme as a Design Tokens file and the icon set as filled SVGs, both compiled in by salal's `salal_tokens()` and `salal_icons()` (`<theme/Tokens.h>`, `<theme/Icons.h>`), and its own components on salal's, Panel with its kicker and corner ticks and Avatar (`<theme/Panel.h>`, `<theme/Avatar.h>`)
 - Both are written by the scripts in `docs/ui-prototype/scripts/`, from the prototype's tokens and icons
-- Depends on: `ui` (salal)
+- The interface scale config every app and the layout tests share: `theme::uiScaleConfig()`, an `app::UiScaleConfig` (`<theme/InterfaceScale.h>`)
+- Depends on: `ui` and `app` (salal), both PUBLIC
 
 **worldgen/**
 - The planet pipeline: plates, crust, terrain, erosion, climate, biomes (namespace `worldgen`)

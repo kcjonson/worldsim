@@ -41,7 +41,7 @@ The floor is about type. The smallest type token is 10 px and body is 13 px, so 
 
 The largest step, 120%, is the least room the HUD and dialogs are laid out for: a 1481 x 833 canvas on 16:9 and 1333 x 833 on 16:10. The design doc's old "75%-150%" line predates the reference. 150% would be a 1185 x 667 canvas, 44% of the mock's area, so it isn't offered.
 
-The smallest step is there so a 4K player can get back near the density the game had before scaling. In a 3072 x 1728 window the old look is about 58%, and 60% on 4K is a 2963 x 1667 canvas. On a 1080p screen the floor takes over under about 75% (0.8 / 1.08 is 0.74), so the lowest steps change nothing there. That's accepted.
+The smallest step is there so a 4K player can get back near the density the game had before scaling. In a 3072 x 1728 window the old look is about 58%, and 60% on 4K is a 2963 x 1667 canvas. On a 1080p screen the floor takes over under about 75% (0.8 / 1.08 is 0.74), so the lowest steps change nothing there. That's accepted. It's worse in a window smaller than the screen: at the default window on a 1080p monitor (about 1536 x 826), 60 to 90% all give 0.8 and 100% gives 0.826, and at 1280 x 720 only 120% differs. The Interface size row's description in Settings says so.
 
 ## The model
 
@@ -60,8 +60,9 @@ Considered and rejected:
 - Input stays correct: salal hit-tests in ui px. World picking, the camera, drawing and placement previews and overlays stay in window pixels, and the places that mixed the two were fixed to convert: the hover gate that skips the world while the pointer is over the ui (`GameScene.cpp`), the minimap's view rectangle (`GameUI.cpp`), and the world creator's globe and marker (`WorldCreatorScene.cpp`, `GlobeView.h`).
 - Live: Settings calls `App::setUiScale`, which re-lays-out the open scene at once. From the salal tag this PR pins, scenes' `onResize` runs on a scale change too.
 - Persisted: `settings.json` (`apps/world-sim/Main.cpp` passes it as the App's settings file) holds `ui.scale` and the window's size. `--no-settings` neither reads nor saves it, which perf captures use.
+- World text: text drawn in the world that a player reads as interface (the drawing tool's validation message, room names) is sized by the layout scale, so it follows Interface size while the world around it keeps its own.
 - Crisp: the scale reaches the renderer, so text and tessellated shapes are drawn at the device size they end up at, not stretched from a smaller one.
-- Bounds and reset: `kInterfaceSizes` holds the factor to 0.6 through 1.2, and the Interface size row in `apps/world-sim/scenes/settings/SettingsScene.cpp` is a segmented control over the seven stops with a Reset button back to 100%. A saved value between stops shows as the nearest stop (`nearestInterfaceSize`). Settings is reached from the main menu only.
+- Bounds and reset: `kInterfaceSizes` holds the factor to 0.6 through 1.2, and the Interface size row in `apps/world-sim/scenes/settings/SettingsScene.cpp` is a segmented control over the seven stops with a Reset button back to 100%. A saved value that isn't a stop is snapped to the nearest one (`nearestInterfaceSize`) at startup, and Settings shows that stop. Settings is reached from the main menu only.
 
 The colonist dossier is 760 x 900 ui px held to 92% x 86% of the canvas, its tab area scrolling in what's left (`ColonistDetailsDialog.cpp`), so it fits the smallest canvas.
 
@@ -77,7 +78,7 @@ The test executable builds to `apps/world-sim/tests/<config>/world-sim-tests.exe
 
 1. Run the app and read `/api/state?what=uiscale` for `{factor, layoutScale, pixelScale}`.
 2. `/api/ui/tree` and `/api/ui/lint` are in ui px. `/api/input` is in the window's logical px, so a position from the tree times `layoutScale` is where to point it.
-3. Launch with `--no-settings` for the default window at 100%, whatever a player saved.
+3. Launch with `--no-settings` for the default window at 100%, whatever a player saved. Agent and scripted launches always pass it, so a test run never reads or leaves behind the player's settings; scenario 17 is the one run on the real file.
 4. In a test, `app->setUiScale(size)` then `app::lintAt(*app, *platform, width, height)`.
 
 ## Historical Addendum

@@ -9,7 +9,7 @@ Every label in the game's HUD sits inside its box: buttons size to their labels,
 
 ## Steps
 
-Launch `world-sim --scene=game` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. Bob's position is in `/api/state?what=colonists`.
+Launch `world-sim --scene=game --background --no-settings` (RelWithDebInfo); the dev server is on 127.0.0.1:8081. Bob's position is in `/api/state?what=colonists`.
 
 1. Look at the bottom bar: ACTIONS, BUILD, PRODUCTION, FURNITURE, ZONES and ROOMS each sit inside their own button, none touching the next.
 2. Spawn a crafting spot beside Bob (`/api/dev/spawn?def=CraftingSpot&at=<x+5>,<y>&n=1&scatter=0`), select it, open its crafting menu and queue Basic Box and Basic Shelf.
