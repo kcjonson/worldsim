@@ -41,9 +41,9 @@ Linear, the same proportions on every screen, as Unity's Canvas Scaler (Scale Wi
 - The Gear tab pinned a filled hand slot shorter than its text, and two empty caption values had zero size (`8923f7d1`). A filled slot now grows to fit its name and an empty value takes no room.
 - The settings list's scrollbar drew over its rows' right edge, and at 100% the list ran 4.4 ui px past a 1000 ui px canvas, so it scrolled for nothing. The list reserves 16 ui px for the bar and the page's top padding is 24 rather than 32, so it fits with 3.6 to spare.
 
-### Engine fixes this PR pins
+### Engine fixes from salal v0.42.1
 
-The salal tag this PR pins carries three fixes it needed: the Windows DPI manifest helper for a fetched game, a stale text measure when a window returns to an earlier size, and `setUiScale` reaching scenes' `onResize`.
+The pin moved to salal v0.42.1 for three fixes this work needed: the Windows DPI manifest helper for a fetched game, a stale text measure when a window returns to an earlier size, and `setUiScale` reaching debug layers' and scenes' `onResize`. world-sim, ui-sandbox and asset-manager each call `salal_windows_manifest` on their executable, so each process is per-monitor DPI aware from its manifest.
 
 ## Related Documentation
 

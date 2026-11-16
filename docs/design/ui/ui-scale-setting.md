@@ -68,7 +68,7 @@ The colonist dossier is 760 x 900 ui px held to 92% x 86% of the canvas, its tab
 
 ## What the tests cover
 
-`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, has 12 tests. Each lints its screen at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`, and checks that nothing shows a scrollbar except what's meant to scroll. Each first asserts that a known id is present and that its dialogs report visible, so a test can't pass over an empty screen.
+`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, has 12 tests. Each lints its screen at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`, and checks that nothing shows a scrollbar except what's meant to scroll. Each first asserts that a known id is present or that its dialog reports visible, so a test can't pass over an empty screen.
 
 - The main menu, settings, scenario select, party select and the world creator (configuring, before a world exists).
 - The HUD, plain.
