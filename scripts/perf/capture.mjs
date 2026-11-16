@@ -68,11 +68,16 @@ export function parseLoadLine(line, columns, { gamePid, cpuCount }) {
 	}
 	if (!columns) return null;
 	if (cells.length !== columns.length) return { misaligned: true };
+	// A counter whose process has exited reads -1 from then on: it's no reading, not a negative one
 	const sum = { cpuTotal: 0, cpuGame: 0, gpuForeign: 0 };
+	let totalRead = false;
 	cells.forEach((cell, i) => {
 		const value = Number(cell);
-		if (columns[i] in sum && Number.isFinite(value)) sum[columns[i]] += value;
+		if (!(columns[i] in sum) || !Number.isFinite(value) || value < 0) return;
+		sum[columns[i]] += value;
+		if (columns[i] === 'cpuTotal') totalRead = true;
 	});
+	if (!totalRead) return null;
 	return {
 		row: {
 			foreignCpuPct: Math.max(0, sum.cpuTotal - sum.cpuGame / cpuCount),

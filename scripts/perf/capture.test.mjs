@@ -21,6 +21,13 @@ test('real load on another process still counts', () => {
 	assert.deepEqual(row, { foreignCpuPct: 31, foreignGpuPct: 70 });
 });
 
+test('the -1 of a counter whose process exited is no reading, so it hides no load', () => {
+	const { header } = parseLoadLine(line(['"(PDH-CSV 4.0)"', total, game, gpu(100), gpu(101), gpu(102), gpu(200)]), null, context);
+	const { row } = parseLoadLine(line(['11/16/2026 02:29:00.000', '12', '90', '15', '-1', '-1', '80']), header, context);
+	assert.deepEqual(row, { foreignCpuPct: 3, foreignGpuPct: 15 });
+	assert.equal(parseLoadLine(line(['11/16/2026 02:29:00.000', '-1', '90', '15', '0', '0', '80']), header, context), null);
+});
+
 // typeperf left Processor(_Total) out of its header but not its rows, so the game's GPU use read
 // as another process's and the total CPU as nothing (the 2026-11-16 river voids)
 test('a header that names fewer columns than its rows carry is never read against', () => {
