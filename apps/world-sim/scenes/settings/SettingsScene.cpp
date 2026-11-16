@@ -1,9 +1,9 @@
 // Settings Scene - game options.
 //
-// Options screen: a title, a kicker and the drawing settings, one switch (or choice) each, read
-// from and written to world_sim::UserSettings; changes apply at once for the
-// session (no cross-launch persistence yet). ESC, or Back, returns to the main
-// menu.
+// Options screen: a title, then the interface size and the drawing settings, each under its kicker, one
+// switch (or choice) each. Every change applies at once. The interface size is the App's ui.scale, saved to
+// the settings file as it changes; the drawing settings are world_sim::UserSettings, for the session (no
+// cross-launch persistence yet). ESC, or Back, returns to the main menu.
 
 #include "SceneTypes.h"
 #include "UserSettings.h"
@@ -12,6 +12,7 @@
 
 #include <application/App.h>
 #include <primitives/Primitives.h>
+#include <theme/InterfaceScale.h>
 #include <theme/Keys.h>
 #include <ui/components/Button.h>
 #include <ui/components/SegmentedControl.h>
@@ -19,8 +20,11 @@
 #include <ui/shapes/Text.h>
 #include <utils/Log.h>
 
+#include <cmath>
+#include <cstddef>
 #include <cstdio>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -35,6 +39,14 @@ namespace {
 		char text[32];
 		std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
 		return text;
+	}
+
+	std::vector<std::string> interfaceSizeLabels() {
+		std::vector<std::string> labels;
+		for (const float size : theme::kInterfaceSizes) {
+			labels.push_back(std::to_string(std::lround(size * 100.0F)) + "%");
+		}
+		return labels;
 	}
 
 	class SettingsScene : public app::Scene {
@@ -101,10 +113,9 @@ namespace {
 				),
 				.text = "Settings",
 			});
-			column.addChild<ui::Text>({.id = "settings_kicker", .layout = {.flexShrink = 0.0F}, .style = kicker, .text = "// DRAWING SETTINGS"});
 
 			ui::Ref<ui::Component> list = column.addChild<ui::Component>({
-				.id = "settings_drawing",
+				.id = "settings_list",
 				.size = {kRowWidth, ui::kAuto},
 				.layout =
 					{.display = ui::Display::Flex,
@@ -113,6 +124,48 @@ namespace {
 					 .flexGrow = 1.0F},
 				.overflow = ui::Overflow::Scroll,
 			});
+
+			list.addChild<ui::Text>({.id = "settings_interface_kicker", .style = kicker, .text = "// INTERFACE"});
+			ui::Ref<ui::Component> size = list.addChild<ui::Component>({
+				.id = "interface_size",
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space2},
+			});
+			size.addChild<ui::Text>({
+				.id = "interface_size_label",
+				.style = world_sim::text(theme, {.size = tokens::fontSize::fsBase, .color = tokens::color::text}),
+				.text = "Interface size",
+			});
+			ui::Ref<ui::Component> sizeControls = size.addChild<ui::Component>({
+				.layout = {.display = ui::Display::Flex, .gap = space4, .alignItems = ui::AlignItems::Center},
+			});
+			sizeChoice = sizeControls.addChild<ui::SegmentedControl>({
+				.id = "interface_size_choice",
+				.options = interfaceSizeLabels(),
+				.selected = static_cast<int>(theme::nearestInterfaceSize(owner->uiScale())),
+				.onChange = [this](int index) { setInterfaceSize(theme::kInterfaceSizes.at(static_cast<std::size_t>(index))); },
+			});
+			sizeReset = sizeControls.addChild<ui::Button>({
+				.id = "interface_size_reset",
+				.enabled = owner->uiScale() != theme::kDefaultInterfaceSize,
+				.label = "Reset",
+				.variant = ui::ButtonVariant::Ghost,
+				.controlSize = ui::ControlSize::Sm,
+				.onPress =
+					[this] {
+						if (ui::SegmentedControl* choice = sizeChoice.get()) {
+							choice->setSelected(static_cast<int>(theme::nearestInterfaceSize(theme::kDefaultInterfaceSize)));
+						}
+						setInterfaceSize(theme::kDefaultInterfaceSize);
+					},
+			});
+			size.addChild<ui::Text>({
+				.id = "interface_size_line",
+				.style = description,
+				.text = "Scales menus, panels, and text. At 100% the interface fits the window.",
+				.wrap = true,
+			});
+
+			list.addChild<ui::Text>({.id = "settings_drawing_kicker", .style = kicker, .text = "// DRAWING SETTINGS"});
 
 			const assets::SnappingConfig& snapping = assets::ConstructionRegistry::Get().snapping();
 			world_sim::DrawingSettings&	  drawing = world_sim::UserSettings::Get().drawing;
@@ -240,7 +293,20 @@ namespace {
 			});
 		}
 
-		app::App* owner = nullptr;
+		void setInterfaceSize(float size) {
+			owner->setUiScale(size);
+			LOG_INFO(Game, "Setting: interface size -> %g", static_cast<double>(owner->uiScale()));
+			if (ui::Button* reset = sizeReset.get()) {
+				reset->setEnabled(owner->uiScale() != theme::kDefaultInterfaceSize);
+			}
+			if (!owner->settings().save()) {
+				LOG_ERROR(Game, "SettingsScene: the settings file couldn't be saved");
+			}
+		}
+
+		app::App*					  owner = nullptr;
+		ui::Ref<ui::SegmentedControl> sizeChoice;
+		ui::Ref<ui::Button>			  sizeReset;
 	};
 
 } // namespace
