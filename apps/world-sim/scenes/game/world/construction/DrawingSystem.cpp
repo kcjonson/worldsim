@@ -615,6 +615,9 @@ namespace world_sim {
 			.viewportWidth = viewportW,
 			.viewportHeight = viewportH,
 			.pixelsPerMeter = kPixelsPerMeter,
+			.closeRadiusMeters = effectiveOriginCloseRadiusMeters(),
+			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : 3),
+			.willClose = willClose_,
 		};
 	}
 
@@ -1785,8 +1788,6 @@ namespace world_sim {
 
 		const auto& ps = ConstructionRegistry::Get().rendering().preview;
 
-		const float scale = kPixelsPerMeter * camera_->zoom();
-
 		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
 			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
 		};
@@ -1809,8 +1810,8 @@ namespace world_sim {
 		}
 
 		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
-		// rubber-band + fill turn red before the player commits. The closing case keeps its
-		// own (willClose_) green halo treatment below. An edit also reads red while the
+		// rubber-band + fill turn red before the player commits. The closing case shows the
+		// close halo instead (drawSnapFeedback, from willClose_). An edit also reads red while the
 		// outline it would produce is invalid.
 		const bool				editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
 		const bool				valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected;
@@ -1866,12 +1867,6 @@ namespace world_sim {
 			});
 		}
 
-		// Origin halo when the shape can close. Closing reflects whatever the next click
-		// will do: the explicit origin snap or the near-start "snap not block" rescue.
-		if (points_.size() >= 3) {
-			renderOriginHalo(screen.front(), scale, 904);
-		}
-
 		// Red highlight on the offending PLACED vertex/edge when a geometry constraint is
 		// violated -- but not when the click will close (willClose_: the explicit origin
 		// snap, or the near-start rescue). A pending close reads as "closing", not "error".
@@ -1900,21 +1895,6 @@ namespace world_sim {
 				.key = 905,
 			});
 		}
-	}
-
-	void DrawingSystem::renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const {
-		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
-		const float originRadius = ConstructionRegistry::Get().snapping().originCloseRadiusMeters * scale;
-		Renderer::Primitives::drawCircle({
-			.center = firstScreen,
-			.radius = std::max(previewStyle.originHaloMinRadiusPx, originRadius),
-			.style = {.fill = {0.0F, 0.0F, 0.0F, 0.0F},
-					  .border = Foundation::BorderStyle{
-						  .color = willClose_ ? validColor_ : toColor(previewStyle.originHaloColor), .width = willClose_ ? 3.0F : 1.5F
-					  }},
-			.id = "drawing_origin_halo",
-			.key = key,
-		});
 	}
 
 	namespace {
@@ -2332,10 +2312,6 @@ namespace world_sim {
 				.id = "wall_vertex",
 				.key = 909,
 			});
-		}
-
-		if (points_.size() >= construction::kMinClosingWallChainPoints) {
-			renderOriginHalo(screen.front(), scale, 910);
 		}
 
 		using construction::SnapKind;

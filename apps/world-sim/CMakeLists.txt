@@ -176,6 +176,7 @@ if(BUILD_TESTING)
         scenes/game/world/construction/CommittedGeometryCache.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp
         scenes/game/world/construction/DrawingFeedback.cpp
+        scenes/game/world/construction/DrawingFeedback.test.cpp
         scenes/game/world/construction/DrawingSystem.cpp
         scenes/game/world/construction/DrawingSystem.test.cpp
         scenes/game/world/placement/GhostRenderer.cpp

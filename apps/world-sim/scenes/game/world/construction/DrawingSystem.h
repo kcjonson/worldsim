@@ -240,10 +240,6 @@ namespace world_sim {
 		/// snap guides, and validity colorize. INTERIM.
 		void renderWallChainPreview(int viewportW, int viewportH);
 
-		/// The ring around a closeable shape's or chain's first point, bold and valid-colored
-		/// while the next click closes it (willClose_). INTERIM.
-		void renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const;
-
 		/// Foundation Add / Subtract: the outline the edit would produce (merged or
 		/// remainder), colorized for validity, with the reason next to the cursor.
 		/// Drawn under the regular polygon preview. INTERIM.
