@@ -265,7 +265,8 @@ TEST_F(OpeningRangeTest, BlueprintBesideAStepDoesNotWidenABuiltWallsRange) {
 	EXPECT_EQ(farBlueprint->minT, withoutFar->minT);
 	EXPECT_EQ(farBlueprint->maxT, withoutFar->maxT);
 
-	const std::optional<OpeningRange> farBuilt = rangeOnNearHeavy(FoundationState::Built, FoundationState::Built);	ASSERT_TRUE(farBuilt.has_value());
+	const std::optional<OpeningRange> farBuilt = rangeOnNearHeavy(FoundationState::Built, FoundationState::Built);
+	ASSERT_TRUE(farBuilt.has_value());
 	ASSERT_TRUE(farBuilt->fits());
 	EXPECT_DOUBLE_EQ(farBuilt->trimAtV1Meters, 0.0);
 	EXPECT_NEAR(farBuilt->minT * farBuilt->lengthMeters, 0.75, 1e-3);
