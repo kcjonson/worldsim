@@ -19,9 +19,12 @@ namespace world_sim {
 		constexpr const char* kTabTasks = "dossier_tasks";
 		constexpr const char* kTabLog = "dossier_log";
 
-		// The prototype dossier's proportions, 760x900 design px.
+		// The prototype dossier's proportions, 760x900 design px, held like its modal to 92% x 86% of the window, the
+		// tab scrolling in what's left.
 		constexpr float kDialogWidth = 760.0F;
 		constexpr float kDialogHeight = 900.0F;
+		constexpr float kDialogMaxWidthPercent = 92.0F;
+		constexpr float kDialogMaxHeightPercent = 86.0F;
 		constexpr float kAvatarSize = 72.0F;
 		constexpr float kBandGap = 20.0F;
 		constexpr float kStatRowGap = 8.0F;
@@ -56,6 +59,7 @@ namespace world_sim {
 				player
 			);
 			if (ui::Dialog* shown = dialog.get()) {
+				shown->panel().get()->setMaxSize({ui::percent(kDialogMaxWidthPercent), ui::percent(kDialogMaxHeightPercent)});
 				build(*shown);
 			}
 		}
