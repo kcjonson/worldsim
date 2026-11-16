@@ -43,7 +43,7 @@ namespace world_sim {
 		constexpr float kSegmentLabelPx = 12.0F;
 		constexpr float kSegmentLabelOffsetPx = 12.0F; // the label's near corner, diagonally off the snapped point
 		constexpr float kLabelGapPx = 10.0F;		   // a guide label off its guide, a long segment's label off the segment
-		constexpr float kGuideLabelMinimumGuidePx = 40.0F;
+		constexpr float kGuideLabelMinimumStrokePx = 40.0F;
 		constexpr float kGuideLabelShiftPaddingPx = 8.0F;
 		constexpr int	kGuideLabelShiftAttempts = 6;
 		constexpr float kLabelPlatePaddingPx = 3.0F;
@@ -62,9 +62,10 @@ namespace world_sim {
 		// at least this far from the snapped point, which the pointer sits on or near.
 		constexpr float kSegmentLabelCursorClearancePx = 40.0F;
 
-		// Whether the segment label fits at the middle is judged with the width of this length's
-		// label (or the real one, when wider), so the label growing a digit at 10 m can't send
-		// it back to the end: along a ray the choice changes once.
+		// Whether the segment label fits at the middle (clear of the pointer, inside the screen,
+		// off the marker and the halo) is judged with the width of this length's label (or the
+		// real one, when wider), so the label growing a digit at 10 m or 100 m can't change
+		// whether or where it sits at the middle. The label draws at its own width inside that box.
 		constexpr float kSegmentLabelReserveMeters = 999.0F;
 
 		// Placement choices compare unit dot products, whose range is [-1, 1]; a difference
@@ -106,6 +107,13 @@ namespace world_sim {
 		static_assert(kMaxSnapGuides == 2, "guide labels rank guides[0] above guides[1]");
 
 		using Box = FeedbackBox;
+
+		// Where a label draws, and where the box its fit is judged by sits: the same, or a
+		// wider box holding the label, anchored the same way.
+		struct Placement {
+			Foundation::Vec2 topLeft;
+			Foundation::Vec2 judgedTopLeft;
+		};
 
 		bool overlaps(const Box& first, const Box& second) {
 			return first.left < second.right && second.left < first.right && first.top < second.bottom && second.top < first.bottom;
@@ -237,8 +245,8 @@ namespace world_sim {
 				chooseGuides();
 				planCloseRing();
 				for (std::size_t i = 0; i < input.snap.guideCount; ++i) {
-					if (guideDrawn[i]) {
-						planGuideStroke(input.snap.guides[i], guideFrom[i], guideTo[i]);
+					if (guideStrokeEnd[i]) {
+						planGuideStroke(input.snap.guides[i], guideFrom[i], *guideStrokeEnd[i]);
 					}
 					if (guideFinite[i] && ownsRightAngleMarker(i)) {
 						planRightAngleMarker(input.snap.guides[i], guideFrom[i], guideTo[i]);
@@ -249,8 +257,8 @@ namespace world_sim {
 				planSegmentLabel();
 				if (input.display.guideDistances) {
 					for (std::size_t i = 0; i < input.snap.guideCount; ++i) {
-						if (guideDrawn[i]) {
-							planGuideLabel(input.snap.guides[i], guideFrom[i], guideTo[i]);
+						if (guideStrokeEnd[i]) {
+							planGuideLabel(input.snap.guides[i], guideFrom[i], *guideStrokeEnd[i], guideTo[i]);
 						}
 					}
 				}
@@ -271,7 +279,8 @@ namespace world_sim {
 			std::array<Foundation::Vec2, kMaxSnapGuides> guideFrom{};
 			std::array<Foundation::Vec2, kMaxSnapGuides> guideTo{};
 			std::array<bool, kMaxSnapGuides>		 guideFinite{};
-			std::array<bool, kMaxSnapGuides>		 guideDrawn{}; // finite and not a duplicate: its stroke and label draw
+			// Where a guide's stroke ends, when it draws one; its label draws only with it.
+			std::array<std::optional<Foundation::Vec2>, kMaxSnapGuides> guideStrokeEnd{};
 			DrawingFeedbackPlan						 result;
 			std::vector<Box>						 placedLabels;
 
@@ -283,18 +292,21 @@ namespace world_sim {
 				return closeTo(guideFrom[first], guideFrom[second], kDuplicateGuidePx) && closeTo(guideTo[first], guideTo[second], kDuplicateGuidePx);
 			}
 
-			// A guide's stroke and label draw when both its ends are finite and it is not the
-			// same as one before it.
+			// A guide's stroke and label draw when both its ends are finite, it is not the same
+			// as one before it, and the segment leaves some of it uncovered.
 			void chooseGuides() {
 				for (std::size_t i = 0; i < input.snap.guideCount; ++i) {
 					guideFrom[i] = toScreen(input.snap.guides[i].from);
 					guideTo[i] = toScreen(input.snap.guides[i].to);
 					guideFinite[i] = isFinite(guideFrom[i]) && isFinite(guideTo[i]);
-					guideDrawn[i] = guideFinite[i];
-					for (std::size_t earlier = 0; earlier < i && guideDrawn[i]; ++earlier) {
+					bool drawn = guideFinite[i];
+					for (std::size_t earlier = 0; earlier < i && drawn; ++earlier) {
 						if (guideFinite[earlier] && sameEnds(i, earlier)) {
-							guideDrawn[i] = false;
+							drawn = false;
 						}
+					}
+					if (drawn) {
+						guideStrokeEnd[i] = visibleStrokeEnd(guideFrom[i], guideTo[i]);
 					}
 				}
 			}
@@ -337,16 +349,17 @@ namespace world_sim {
 				});
 			}
 
-			// A guide whose line passes through the previous point runs along the segment being
-			// drawn from there to `to`, and the segment's solid line already shows that part: it
-			// draws only from its node up to the previous point, which is nothing when the node
-			// is the previous point. Dots over the solid line would bead it (teal beads on red
-			// when it is invalid).
-			void planGuideStroke(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 to) {
+			// Where the stroke of a guide from `from` to `to` ends, if it draws one. A guide
+			// whose line passes through the previous point runs along the segment being drawn
+			// from there to `to`, and the segment's solid line already shows that part: it draws
+			// only from its node up to the previous point, which is nothing when the node is the
+			// previous point. Dots over the solid line would bead it (teal beads on red when it
+			// is invalid).
+			std::optional<Foundation::Vec2> visibleStrokeEnd(Foundation::Vec2 from, Foundation::Vec2 to) const {
 				const Foundation::Vec2 along{to.x - from.x, to.y - from.y};
 				const float			   alongLength = length(along);
 				if (alongLength < kMinimumStrokePx) {
-					return;
+					return std::nullopt;
 				}
 				const Foundation::Vec2 unit{along.x / alongLength, along.y / alongLength};
 				float				   visibleLength = alongLength;
@@ -354,23 +367,23 @@ namespace world_sim {
 					const Foundation::Vec2 previous = toScreen(input.points.back());
 					const Foundation::Vec2 offset{previous.x - from.x, previous.y - from.y};
 					const float			   offLine = std::abs(unit.x * offset.y - unit.y * offset.x);
-					const float			   at = dot(unit, offset);
+					const float			   previousAlong = dot(unit, offset);
 					// The segment runs from the previous point to `to`: it covers the guide from
 					// there on, all of it when the previous point is behind the node, none of it
 					// when the previous point is past `to`.
 					if (isFinite(previous) && offLine <= kOnSegmentLinePx) {
-						visibleLength = std::clamp(at, 0.0F, alongLength);
+						visibleLength = std::clamp(previousAlong, 0.0F, alongLength);
 					}
 				}
 				if (visibleLength < kMinimumStrokePx) {
-					return;
+					return std::nullopt;
 				}
+				return Foundation::Vec2{from.x + unit.x * visibleLength, from.y + unit.y * visibleLength};
+			}
+
+			void planGuideStroke(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 strokeEnd) {
 				FeedbackStroke stroke = segmentStroke(
-					from,
-					{from.x + unit.x * visibleLength, from.y + unit.y * visibleLength},
-					withOpacity(guideColor(style, guide.source), style.guideOpacity),
-					style.guideWidth,
-					FeedbackLayer::Alignment
+					from, strokeEnd, withOpacity(guideColor(style, guide.source), style.guideOpacity), style.guideWidth, FeedbackLayer::Alignment
 				);
 				stroke.dash = alignmentDash(style);
 				result.strokes.push_back(stroke);
@@ -455,11 +468,11 @@ namespace world_sim {
 			std::vector<Box> segmentLabelObstacles() const {
 				const float		 reach = tickOuterRadius + kCursorTickOutlineWidthPx * 0.5F;
 				const float		 halfWidth = kCursorTickOutlineWidthPx * 0.5F;
-				const Foundation::Vec2 at = snappedPoint;
+				const Foundation::Vec2 center = snappedPoint;
 				std::vector<Box> obstacles{
-					{at.x - reach, at.y - halfWidth, at.x + reach, at.y + halfWidth},
-					{at.x - halfWidth, at.y - reach, at.x + halfWidth, at.y + reach},
-					boxAround(at, markerRadius + kCursorOutlineWidthPx * 0.5F),
+					{center.x - reach, center.y - halfWidth, center.x + reach, center.y + halfWidth},
+					{center.x - halfWidth, center.y - reach, center.x + halfWidth, center.y + reach},
+					boxAround(center, markerRadius + kCursorOutlineWidthPx * 0.5F),
 				};
 				if (const std::optional<Box> halo = closeHaloBox()) {
 					obstacles.push_back(*halo);
@@ -497,22 +510,25 @@ namespace world_sim {
 				return moveInside(candidates.front(), size);
 			}
 
-			// The first candidate, in order, whose plate is inside the viewport and accepted;
-			// failing all, the first one that is accepted once moved just inside. The check
-			// comes after the move, so a move can't push a plate back onto what it keeps off.
+			// The first placement, in order, whose judged plate is inside the viewport and
+			// accepted; failing all, the first one that is accepted once its judged plate is moved
+			// just inside, the label moving with it. The check comes after the move, so a move
+			// can't push a plate back onto what it keeps off. Returns the label's top-left.
 			template <typename Accept>
 			std::optional<Foundation::Vec2>
-			firstClear(std::span<const Foundation::Vec2> candidates, Foundation::Vec2 size, const Accept& accept) const {
-				for (const Foundation::Vec2& candidate : candidates) {
-					const Box plate = plateBox(candidate, size);
-					if (insideViewport(plate) && accept(plate)) {
-						return candidate;
+			firstClear(std::span<const Placement> placements, Foundation::Vec2 judgedSize, const Accept& accept) const {
+				for (const Placement& placement : placements) {
+					const Box judged = plateBox(placement.judgedTopLeft, judgedSize);
+					if (insideViewport(judged) && accept(judged)) {
+						return placement.topLeft;
 					}
 				}
-				for (const Foundation::Vec2& candidate : candidates) {
-					const Foundation::Vec2 moved = moveInside(candidate, size);
-					if (accept(plateBox(moved, size))) {
-						return moved;
+				for (const Placement& placement : placements) {
+					const Foundation::Vec2 moved = moveInside(placement.judgedTopLeft, judgedSize);
+					if (accept(plateBox(moved, judgedSize))) {
+						return Foundation::Vec2{
+							placement.topLeft.x + moved.x - placement.judgedTopLeft.x, placement.topLeft.y + moved.y - placement.judgedTopLeft.y
+						};
 					}
 				}
 				return std::nullopt;
@@ -551,11 +567,13 @@ namespace world_sim {
 						std::max(size.x, measure(lengthText(kSegmentLabelReserveMeters, style.guideDistanceDecimals), kSegmentLabelPx).x), size.y
 					};
 					if (distanceToBox(tip, plateBox(labelBeside(anchor, side, reserve), reserve)) >= kSegmentLabelCursorClearancePx) {
-						const std::array<Foundation::Vec2, 2> candidates{
-							labelBeside(anchor, side, size),
-							labelBeside({middle.x - side.x * kLabelGapPx, middle.y - side.y * kLabelGapPx}, {-side.x, -side.y}, size),
-						};
-						const std::optional<Foundation::Vec2> atMiddle = firstClear(candidates, size, [&](const Box& plate) {
+						const Foundation::Vec2 otherSide{-side.x, -side.y};
+						const Foundation::Vec2 otherAnchor{middle.x + otherSide.x * kLabelGapPx, middle.y + otherSide.y * kLabelGapPx};
+						const std::array<Placement, 2> placements{{
+							{labelBeside(anchor, side, size), labelBeside(anchor, side, reserve)},
+							{labelBeside(otherAnchor, otherSide, size), labelBeside(otherAnchor, otherSide, reserve)},
+						}};
+						const std::optional<Foundation::Vec2> atMiddle = firstClear(placements, reserve, [&](const Box& plate) {
 							return distanceToBox(tip, plate) >= kSegmentLabelCursorClearancePx && clearOfObstacles(plate);
 						});
 						if (atMiddle) {
@@ -599,17 +617,24 @@ namespace world_sim {
 				// Off the screen, the same quarter mirrored across the snapped point, never into
 				// the lower right.
 				std::array<Foundation::Vec2, 4> candidates{};
+				std::array<Placement, 4>		placements{};
 				std::size_t						count = 0;
 				for (const Foundation::Vec2 mirror : {Foundation::Vec2{1.0F, 1.0F}, Foundation::Vec2{-1.0F, 1.0F}, Foundation::Vec2{1.0F, -1.0F}, Foundation::Vec2{-1.0F, -1.0F}}) {
 					const Foundation::Vec2 q{quarter.x * mirror.x, quarter.y * mirror.y};
 					if (q.x > 0.0F && q.y > 0.0F) {
 						continue;
 					}
-					candidates[count++] = inQuarter(q);
+					candidates[count] = inQuarter(q);
+					placements[count] = {candidates[count], candidates[count]};
+					++count;
 				}
 				const std::span<const Foundation::Vec2> atEnd{candidates.data(), count};
 				addLabel(
-					text, firstClear(atEnd, size, clearOfObstacles).value_or(fitInViewport(atEnd, size)), kSegmentLabelPx, size, kSegmentLabelColor
+					text,
+					firstClear(std::span<const Placement>{placements.data(), count}, size, clearOfObstacles).value_or(fitInViewport(atEnd, size)),
+					kSegmentLabelPx,
+					size,
+					kSegmentLabelColor
 				);
 			}
 
@@ -637,20 +662,21 @@ namespace world_sim {
 				return normal.x <= 0.0F ? normal : reversed;
 			}
 
-			// D12's guide distance label: a guide's distance from its own node, beside its
-			// middle, off the side away from the segment, moved along the guide when it would
-			// cover a label placed before it, the marker, or the close halo. A guide through
-			// the previous point is the segment itself, whose length the segment label shows.
-			void planGuideLabel(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 to) {
-				if (guide.relation == GuideRelation::AngleStep || guide.throughPreviousPoint || !std::isfinite(guide.distanceFromNodeMeters)) {
+			// D12's guide distance label: a guide's distance from its own node, beside the middle
+			// of its stroke, off the side away from the segment, moved along the guide when it
+			// would cover a label placed before it, the marker, or the close halo. It draws only
+			// with the stroke, so a guide the segment covers (one through the previous point is
+			// all covered) has none: the segment label shows that length.
+			void planGuideLabel(const SnapGuide& guide, Foundation::Vec2 from, Foundation::Vec2 strokeEnd, Foundation::Vec2 to) {
+				if (guide.relation == GuideRelation::AngleStep || !std::isfinite(guide.distanceFromNodeMeters)) {
 					return;
 				}
-				const float guideLength = length({to.x - from.x, to.y - from.y});
-				if (guideLength < kGuideLabelMinimumGuidePx) {
+				const float strokeLength = length({strokeEnd.x - from.x, strokeEnd.y - from.y});
+				if (strokeLength < kGuideLabelMinimumStrokePx) {
 					return;
 				}
-				const Foundation::Vec2 along{(to.x - from.x) / guideLength, (to.y - from.y) / guideLength};
-				const Foundation::Vec2 middle{(from.x + to.x) * 0.5F, (from.y + to.y) * 0.5F};
+				const Foundation::Vec2 along{(strokeEnd.x - from.x) / strokeLength, (strokeEnd.y - from.y) / strokeLength};
+				const Foundation::Vec2 middle{(from.x + strokeEnd.x) * 0.5F, (from.y + strokeEnd.y) * 0.5F};
 				Foundation::Vec2	   segmentMiddle = to;
 				if (!input.points.empty()) {
 					const Foundation::Vec2 last = toScreen(input.points.back());
