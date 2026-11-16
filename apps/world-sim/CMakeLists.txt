@@ -176,6 +176,7 @@ if(BUILD_TESTING)
         scenes/game/world/selection/SelectionSystem.test.cpp
         scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
         scenes/game/ui/adapters/TaskRowText.test.cpp
+        scenes/SceneLayout.test.cpp
     )
     # Not beside world-sim: the tests must not find the files staged for the game (the quickstart
     # planet the menu's backdrop loads, the assets, the fonts), only what they ask for by path.

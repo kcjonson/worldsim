@@ -128,6 +128,7 @@ namespace world_sim {
 		});
 		// Takes what the band and the bar leave, and scrolls a taller tab.
 		tabArea = content.addChild<ui::Component>({
+			.id = "dossier_tab_area",
 			.size = {ui::kAuto, 0.0F},
 			.layout =
 				{.display = ui::Display::Flex,
