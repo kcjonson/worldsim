@@ -1,5 +1,5 @@
-add_executable(world-sim
-    Main.cpp
+# Everything but main, so world-sim-tests runs the scenes and the HUD the game runs
+add_library(world-sim-game STATIC
     SceneTypes.cpp
     GameWorldState.cpp
     GameStartConfig.cpp
@@ -96,16 +96,15 @@ add_executable(world-sim
     scenes/settings/SettingsScene.cpp
 )
 
-target_include_directories(world-sim
-    PRIVATE
+target_include_directories(world-sim-game
+    PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-target_compile_features(world-sim PRIVATE cxx_std_20)
+target_compile_features(world-sim-game PUBLIC cxx_std_20)
 
-# Link all required libraries
-target_link_libraries(world-sim
-    PRIVATE
+target_link_libraries(world-sim-game
+    PUBLIC
         world-view
         sim
         world
@@ -119,6 +118,9 @@ target_link_libraries(world-sim
         OpenGL::GL
         GLEW::GLEW
 )
+
+add_executable(world-sim Main.cpp)
+target_link_libraries(world-sim PRIVATE world-sim-game)
 
 # The game's own passes' shaders (salal's base shader is compiled in) are staged into
 # ${CMAKE_BINARY_DIR}/shaders by world-view-shaders and planet-view-shaders. findResource
@@ -159,54 +161,37 @@ add_custom_target(world-sim-assets ALL
 # Make world-sim depend on the shader and asset mirrors so they are in place before running
 add_dependencies(world-sim world-sim-assets world-sim-shaders)
 
-# world-sim's own pure code, which no library's test target reaches
+# world-sim's own code, which no library's test target reaches, and its scenes laid out headless
 if(BUILD_TESTING)
     find_package(GTest CONFIG REQUIRED)
     add_executable(world-sim-tests
-        scenes/game/dev/CameraCommand.cpp
         scenes/game/dev/CameraCommand.test.cpp
-        scenes/game/dev/GpuHoldCommand.cpp
         scenes/game/dev/GpuHoldCommand.test.cpp
-        scenes/game/dev/GroundRefusal.cpp
         scenes/game/dev/GroundRefusal.test.cpp
-        scenes/game/dev/PointList.cpp
         scenes/game/dev/PointList.test.cpp
-        scenes/game/world/MoveOrderGoal.cpp
         scenes/game/world/MoveOrderGoal.test.cpp
-        scenes/game/world/construction/CommittedGeometryCache.cpp
         scenes/game/world/construction/CommittedGeometryCache.test.cpp
-        scenes/game/world/construction/DrawingFeedback.cpp
-        scenes/game/world/construction/DrawingSystem.cpp
         scenes/game/world/construction/DrawingSystem.test.cpp
-        scenes/game/world/placement/GhostRenderer.cpp
-        scenes/game/world/placement/PlacementMode.cpp
-        scenes/game/world/placement/PlacementSystem.cpp
         scenes/game/world/placement/PlacementSystem.test.cpp
-        scenes/game/world/selection/SelectionSystem.cpp
         scenes/game/world/selection/SelectionSystem.test.cpp
-        scenes/game/ui/adapters/GlobalTaskAdapter.cpp
         scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
-        scenes/game/ui/adapters/TaskRowText.cpp
         scenes/game/ui/adapters/TaskRowText.test.cpp
     )
-    target_include_directories(world-sim-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_compile_features(world-sim-tests PRIVATE cxx_std_20)
+    # Not beside world-sim: the tests must not find the files staged for the game (the quickstart
+    # planet the menu's backdrop loads, the assets, the fonts), only what they ask for by path.
+    set_target_properties(world-sim-tests PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}/tests)
     target_link_libraries(world-sim-tests
         PRIVATE
-            world-view
-            sim
-            world
-            assets
-            salal::renderer
-            salal::foundation
+            world-sim-game
             GTest::gtest
             GTest::gtest_main
     )
+    add_dependencies(world-sim-tests font-atlas)
     if(MSVC)
         target_compile_options(world-sim-tests PRIVATE /Od)
     else()
         target_compile_options(world-sim-tests PRIVATE -O0 -g)
     endif()
     add_test(NAME world-sim-tests COMMAND world-sim-tests)
-    worldsim_test_data(world-sim-tests assets/config)
+    worldsim_test_data(world-sim-tests assets/config fonts)
 endif()
