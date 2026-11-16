@@ -1673,9 +1673,9 @@ namespace ecs::test {
 
 	// Hysteresis: the in-progress option is NOT dropped for a same-tier challenger with a tiny score
 	// advantage, but a clearly-closer same-tier target DOES overcome the hysteresis margin. The
-	// in-progress option carries +hysteresisBonus (= taskSwitchThreshold, 50).
+	// in-progress option carries +hysteresisBonus (the InProgress bonus, 50).
 	TEST_F(AIDecisionSystemTest, HysteresisResistsThrashButYieldsToClearlyCloser) {
-		constexpr int16_t kHysteresis = 50; // = priority-tuning InProgress bonus / taskSwitchThreshold
+		constexpr int16_t kHysteresis = 50; // = priority-tuning InProgress bonus
 
 		// In-progress harvest at 30 m, with the stickiness margin applied. The distance curve is
 		// 5 score/m (300 over 60 m), so the 50 margin equals ~10 m of distance: a challenger must be
