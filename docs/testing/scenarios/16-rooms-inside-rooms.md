@@ -17,9 +17,12 @@ Fresh launch (Quick Start). Full launch and environment setup in [../README.md](
 ## Setup
 
 Turn reveal on (`/api/dev/reveal?on=1`) and frame the spot with
-`/api/control?action=camera&x=<X0+2.5>&y=<Y0+2.5>&zoom=3`. Pick open ground clear of trees and
-water, with room for 5 x 5 m twice (the second spot 10 m or more from the first). Call the first
-spot's corner `X0,Y0` and the second's `X1,Y1`. No state view lists rooms; everything is read off
+`/api/control?action=camera&x=<X0+2.5>&y=<Y0+2.5>&zoom=3`. The ground near the landing is dotted with
+trees, and a wall loop is refused over one, so stand the loops on a built foundation, 20 x 7 m
+(`/api/dev/foundation?pts=12,-7;32,-7;32,0;12,0&material=Wood&built=1`, no colonist needed), then
+wait two seconds, since a loop stamped the instant it is built is refused. Its
+inside has room for 5 x 5 m twice, 10 m or more apart: the first spot's corner is `X0,Y0` = 14,-6 and
+the second's `X1,Y1` = 26,-6. No state view lists rooms; everything is read off
 the toasts, the overlay, and the room panel.
 
 ---

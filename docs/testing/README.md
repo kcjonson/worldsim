@@ -316,6 +316,9 @@ colonist can wade (a ford): `foundation`, `walls`, and `spawn` of a station or s
 refuse it as they refuse water, and those three answer a refusal as 400 `{"error":"..."}`, creating
 nothing. Trees, reeds, and loose items still spawn in a ford: putting one there builds nothing.
 
+A refused verb answers HTTP 400 with an `error` body, and a plain `curl` prints it without failing, so read
+every reply instead of assuming it ran.
+
 | Verb | Key params | Notes |
 |------|-----------|-------|
 | `spawn` | `def=<asset>&at=x,y&n=1&scatter=0` | Spawns a world entity (tree, station, container, loose item). A station or storage container goes where the placement tool would take it: its footprint (its collision outline, else its centre) on clear ground (no water, ford, placed obstacle, or unmeshed ground). Anything else goes on clear ground, a ford included. Refused ground is a 400. A scattered spot is snapped off water and skipped if refused; when every spot is skipped the answer is a 400. A missing or unknown `def` is a 400 too. |

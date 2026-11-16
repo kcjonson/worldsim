@@ -1,11 +1,11 @@
 # Scenario 15: Builder work spots
 
 **Status:** draft  
-**Last verified:** not yet run
+**Last verified:** 2026-11-16
 
 A foundation has 1 builder spot plus 1 per 10 m2 of area; each builder stands at its own spot just
-inside the edge, and the colonists past the last spot do other work. A builder who leaves is
-replaced.
+inside the edge, and the colonists past the last spot do other work. When a builder is removed, a
+waiting colonist takes the spot.
 
 ---
 
@@ -17,25 +17,26 @@ Fresh launch (Quick Start). Full launch and environment setup in [../README.md](
 
 ## Setup
 
-Pick open ground a few meters from the river bank, clear of trees, with room for 4 x 5 m. Note the
-corners as `FX0,FY0` and `FX1,FY1` (`FX1 = FX0+4`, `FY1 = FY0+5`). Keep time at normal speed
-(`/api/dev/time?speed=1`); faster, a foundation finishes before you can look.
+Pause (`/api/control?action=pause`; dev verbs still run) so nobody wanders off while you set up, and
+read every dev reply: a refusal is HTTP 400 with an `error` body. Use the open ground near the
+landing, which the colonists have meshed (the foundation verb refuses ground they have not): corners
+`FX0,FY0` = 12,0 and `FX1,FY1` = 16,5, 4 x 5 m.
 
-Spawn four more colonists beside Bob (`/api/dev/colonist?at=<FX0-3>,<FY0>&n=4`), give each of the
-five an axe, one call per colonist with its own position
-(`/api/dev/give?material=AxePrimitive&n=1&where=colonist&slot=hands&at=<x>,<y>`, positions from
-`what=colonists`; clearing a site needs one), and keep their needs up (`/api/dev/need`, as in
-scenario 03).
+Spawn four more colonists (`/api/dev/colonist?at=10,2&n=4`), then teleport the five onto the west
+side of the site, one each at `10,0` to `10,4` (`/api/dev/teleport?colonist=<id>&to=10,<y>`, ids from
+`what=colonists`), and give each an axe at its own spot
+(`/api/dev/give?material=AxePrimitive&n=1&where=colonist&slot=hands&at=10,<y>`; clearing a site needs
+one).
 
 ---
 
 ## Steps
 
-1. Blueprint the foundation (`/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=0`) and give the site its wood (`/api/dev/give?material=Wood&n=40&where=site`): `what=construction` shows `phase` `UnderConstruction`.
+1. Blueprint the foundation (`/api/dev/foundation?pts=<FX0>,<FY0>;<FX1>,<FY0>;<FX1>,<FY1>;<FX0>,<FY1>&material=Wood&built=0`), give the site its wood (`/api/dev/give?material=Wood&n=40&where=site`), and resume (`/api/control?action=resume`): `what=construction` shows `phase` `Clearing` while a colonist fells any tree on the footprint, then `UnderConstruction`.
 
-2. Look at `what=colonists`: three colonists have `action` Build, each at a different point just inside the foundation's edge (x, y); the other two are doing other work.
+2. Poll `what=colonists` about twice a second: three colonists reach `action` Build, each at a different point just inside the foundation's edge (x, y); the other two are not building.
 
-3. Set one builder's Hunger to 5 (`/api/dev/need?colonist=<id>&need=Hunger&value=5`): that colonist leaves to eat, and within a few seconds an idle colonist shows Build, standing just inside the edge; there are still three builders, at three different points.
+3. As soon as three are building, pause, then remove one builder (`/api/dev/kill?colonist=<id>`) and resume: within a few seconds one of the waiting colonists shows Build at the freed spot, so there are three builders again at three different points, never four, until the foundation is `Complete`. If it completes before you can pause, start over.
 
 ---
 
@@ -51,8 +52,8 @@ GET /api/state?what=colonists
 
 ## Pass / fail
 
-**Pass:** never more than three builders, each at its own point just inside the edge; a builder who
-leaves is replaced within a few seconds.
+**Pass:** never more than three builders, each at its own point just inside the edge; when a
+builder is removed, a waiting colonist takes the spot within a few seconds.
 
 **Fail:** a fourth colonist joins, two builders share a point or stand more than about 1 m inside the edge,
-or the spot stays empty after its builder leaves while someone is idle.
+or the spot stays empty after its builder is removed while someone is idle.
