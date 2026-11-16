@@ -34,8 +34,10 @@ add_library(sim
     ecs/components/ToiletLocationFinder.cpp
     construction/BuilderSpots.cpp
     construction/ConstructionWorld.cpp
+    construction/CornerAngles.cpp
     construction/ConstructionValidator.cpp
     construction/OpeningGeometry.cpp
+    construction/RectangleSnap.cpp
     construction/RoomDetection.cpp
     construction/RoomHitTest.cpp
     construction/SnapEngine.cpp
