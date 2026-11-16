@@ -269,9 +269,7 @@ namespace {
 				.navigation = navigation,
 				.worldSeed = 7,
 				.callbacks = {},
-				.onUnbuiltSite = [this](glm::vec2 p) {
-					return std::any_of(unbuiltSites.begin(), unbuiltSites.end(), [p](const ecs::FootprintBounds& site) { return site.contains(p); });
-				}
+				.insideUnbuiltSite = [this](glm::vec2 point) { return ecs::anyFootprintContains(unbuiltSites, point); }
 			});
 			placement->selectBuildItem(kBox);
 		}
@@ -316,15 +314,8 @@ TEST_F(PlacementUnbuiltSiteTest, TargetInTheNotchOfTheLIsPlaced) {
 	EXPECT_TRUE(placement->ghostValid());
 }
 
-// A built foundation is not an unbuilt site (the scene lists only unbuilt ones): its floor takes furniture.
-TEST_F(PlacementUnbuiltSiteTest, TargetWhereNoUnbuiltSiteLiesIsPlaced) {
-	unbuiltSites.clear();
-	hover({4.0F, 8.0F});
-	EXPECT_TRUE(placement->ghostValid());
-}
-
-// A crafted crate's install target keeps off the site, and the dev spawn verb refuses inside it.
-TEST_F(PlacementUnbuiltSiteTest, InstallTargetAndSpawnVerbKeepOffTheSite) {
+// A crafted crate's install target keeps off the site, and the footprint gate refuses inside it.
+TEST_F(PlacementUnbuiltSiteTest, InstallTargetSearchKeepsOffTheSite) {
 	const glm::vec2				   station{1.0F, 8.0F};
 	const std::optional<glm::vec2> target = placement->installTargetNear(kBox, station, {1.0F, 0.0F});
 	ASSERT_TRUE(target.has_value());

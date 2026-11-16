@@ -81,6 +81,9 @@ namespace ecs {
 		[[nodiscard]] bool blockedBy(const assets::AssetRegistry& registry, uint32_t defNameId, glm::vec2 position) const;
 	};
 
+	/// Whether `position` lies inside any of `sites` (FootprintBounds::contains).
+	[[nodiscard]] bool anyFootprintContains(std::span<const FootprintBounds> sites, glm::vec2 position);
+
 	/// A goal-level task (e.g., "Storage wants rocks", "Crafting needs wood")
 	///
 	/// Key difference from old item-level tasks:

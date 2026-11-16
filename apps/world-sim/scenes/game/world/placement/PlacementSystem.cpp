@@ -27,7 +27,7 @@ namespace world_sim {
 		  navigation(args.navigation),
 		  worldSeed(args.worldSeed),
 		  callbacks(args.callbacks),
-		  unbuiltSite(args.onUnbuiltSite) {
+		  unbuiltSite(args.insideUnbuiltSite) {
 		// Initialize placement mode with callback to handle placement
 		placementMode = PlacementMode{PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
 			if (relocatingEntityId != ecs::EntityID{0}) {
@@ -147,12 +147,12 @@ namespace world_sim {
 		}
 	} // namespace
 
-	bool PlacementSystem::onUnbuiltSite(Foundation::Vec2 worldPos) const {
+	bool PlacementSystem::insideUnbuiltSite(Foundation::Vec2 worldPos) const {
 		return unbuiltSite && unbuiltSite({worldPos.x, worldPos.y});
 	}
 
 	bool PlacementSystem::footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const {
-		return navigation != nullptr && !onUnbuiltSite(worldPos) && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
+		return navigation != nullptr && !insideUnbuiltSite(worldPos) && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
 	}
 
 	std::optional<glm::vec2> PlacementSystem::installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const {

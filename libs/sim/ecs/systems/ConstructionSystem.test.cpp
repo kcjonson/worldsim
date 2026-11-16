@@ -1098,3 +1098,21 @@ TEST_F(BuilderSpotEmissionTest, AWallsUmbrellaHasNoSpots) {
 	ASSERT_EQ(goal->status, GoalStatus::Available);
 	EXPECT_TRUE(goal->builderSpots.empty());
 }
+
+// ============================================================================
+// unbuiltFootprints: a blueprint's footprint is a site to keep off, a built foundation's is not.
+// ============================================================================
+
+TEST(ConstructionSystemTests, UnbuiltFootprintsListsOnlyTheFoundationsNotBuilt) {
+	construction::ConstructionWorld topology;
+	const auto						blueprint = topology.commitFoundation(geometry::Ring{{0, 0}, {4000, 0}, {4000, 4000}, {0, 4000}}, "wood");
+	const auto						built = topology.commitFoundation(geometry::Ring{{10000, 0}, {14000, 0}, {14000, 4000}, {10000, 4000}}, "wood");
+	ASSERT_TRUE(blueprint.ok());
+	ASSERT_TRUE(built.ok());
+	ASSERT_TRUE(topology.setState(built.id, construction::FoundationState::Built));
+
+	const std::vector<FootprintBounds> sites = unbuiltFootprints(topology);
+	ASSERT_EQ(sites.size(), 1U);
+	EXPECT_TRUE(anyFootprintContains(sites, {2.0F, 2.0F})) << "inside the blueprint";
+	EXPECT_FALSE(anyFootprintContains(sites, {12.0F, 2.0F})) << "inside the built foundation";
+}

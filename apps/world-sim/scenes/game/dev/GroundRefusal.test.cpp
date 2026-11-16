@@ -8,7 +8,6 @@
 
 #include <gtest/gtest.h>
 
-#include <algorithm>
 #include <vector>
 
 namespace {
@@ -75,9 +74,7 @@ TEST_F(GroundRefusalTest, SpawnRefusesFurnitureInsideAnUnbuiltFoundation) {
 		   .navigation = &navigation,
 		   .worldSeed = 7,
 		   .callbacks = {},
-		   .onUnbuiltSite = [&sites](glm::vec2 p) {
-			   return std::any_of(sites.begin(), sites.end(), [p](const ecs::FootprintBounds& site) { return site.contains(p); });
-		   }
+		   .insideUnbuiltSite = [&sites](glm::vec2 point) { return ecs::anyFootprintContains(sites, point); }
 	}};
 	const std::string refusal = world_sim::spawnGroundRefusal(gated, &navigation, kStorageBox, {5.0F, 8.0F});
 	EXPECT_NE(refusal.find("not built yet"), std::string::npos) << refusal;

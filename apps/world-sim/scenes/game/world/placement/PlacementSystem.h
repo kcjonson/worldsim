@@ -61,7 +61,7 @@ class PlacementSystem {
 		uint64_t						 worldSeed;		  // for the traits of a spawned entity (computeTreeTraits)
 		Callbacks						 callbacks;
 		/// Whether a point lies inside the footprint of a foundation that is not built yet. Empty = none does.
-		std::function<bool(glm::vec2)> onUnbuiltSite;
+		std::function<bool(glm::vec2)> insideUnbuiltSite{};
 	};
 
 	PlacementSystem() = default;
@@ -117,9 +117,9 @@ class PlacementSystem {
 	/// Whether `worldPos` lies inside the footprint of a foundation that is not built yet (a blueprint
 	/// being cleared, awaiting materials, or under construction). Furniture is never set up there: the
 	/// structure would be built around it. A built foundation's floor is fine.
-	[[nodiscard]] bool onUnbuiltSite(Foundation::Vec2 worldPos) const;
+	[[nodiscard]] bool insideUnbuiltSite(Foundation::Vec2 worldPos) const;
 
-	/// Whether `defName` may be set up at `worldPos`: not on an unbuilt foundation (onUnbuiltSite), and
+	/// Whether `defName` may be set up at `worldPos`: not on an unbuilt foundation (insideUnbuiltSite), and
 	/// its footprint is clear ground out of any ford (NavigationSystem::isAreaBuildableNow). The
 	/// footprint is its collision outline there, or just `worldPos` when it declares no rect or polygon
 	/// outline. False with no nav system. The placement tool's ground gate, the /api/dev/spawn verb's
@@ -143,7 +143,7 @@ class PlacementSystem {
 	ecs::NavigationSystem*			   navigation = nullptr;
 	uint64_t						   worldSeed = 0;
 	Callbacks						   callbacks;
-	std::function<bool(glm::vec2)>	   unbuiltSite;
+	std::function<bool(glm::vec2)>	   unbuiltSite{};
 
 	PlacementMode placementMode;
 	GhostRenderer ghostRenderer;
