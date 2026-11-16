@@ -15,7 +15,7 @@ namespace ecs {
 
 	// Every fixture chunk with no placement yet is stored placed with nothing, and marked processed
 	// when `processed` is given, as the game's placement does for a chunk it generates empty: a
-	// visibility limit over it then need not wait for placement. `lo` and `hi` bound the chunks, for
+	// mesh limit over it then need not wait for placement. `lo` and `hi` bound the chunks, for
 	// a fixture whose region lies beyond the usual one.
 	inline void placeNothingElsewhere(assets::PlacementExecutor& executor, std::unordered_set<world::ChunkCoordinate>* processed,
 									  world::ChunkCoordinate lo = {-kFixtureChunkReach, -kFixtureChunkReach},

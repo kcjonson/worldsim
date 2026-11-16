@@ -861,7 +861,7 @@ namespace ecs {
 						.centre			= centre,
 						.rangeMm		= radiusMm(rangeMeters),
 						.circumradiusMm = gnav::limitCircumradius(radiusMm(rangeMeters))};
-		limit.outline			= nav::visibilityLimit(centre, radiusMm(rangeMeters)).ring;
+		limit.outline			= nav::meshLimit(centre, radiusMm(rangeMeters)).ring;
 		const std::int64_t reach = limit.circumradiusMm + radiusMm(kFootprintReachMeters);
 		limit.query				= {{centre.x - reach, centre.y - reach}, {centre.x + reach, centre.y + reach}};
 		return limit;
@@ -1540,7 +1540,7 @@ namespace ecs {
 				}
 			}
 			const auto what = [&] {
-				return std::string(withGround ? "the visibility limit" : "placed obstacles of the visibility limit") + " of mover " +
+				return std::string(withGround ? "the mesh limit" : "placed obstacles of the mesh limit") + " of mover " +
 					   std::to_string(static_cast<unsigned long long>(mover)) + " round " + pointName(nav::toMeters(centre)) + " R " + std::to_string(rangeMm) +
 					   " mm";
 			};

@@ -16,7 +16,7 @@
 // Per scenario: the main thread's time in World::update per tick without the wait for the workers
 // (main), that wait (wait), each patch job's duration, the ticks from the change until isBuilding()
 // is false, and the work the [NavBuild] debug lines report: the jobs' time, of it the width
-// refreshes, the slowest visibility limit's patch, and the mesh's triangle slots.
+// refreshes, the slowest mesh limit's patch, and the mesh's triangle slots.
 //
 // BM_RealChunksGround loads the Quick Start planet (planets/quickstart.wsplanet, read only) and
 // meshes the 25 real chunks around its landing spawn, ground only (WORLDSIM_PLANET names another
@@ -107,7 +107,7 @@ namespace {
 
 	constexpr float	 kTickSeconds  = 1.0F / 60.0F;
 
-	// The range R of a mover with the default sight: the radius his visibility limit holds.
+	// The range R of a mover with the default sight: the radius his mesh limit holds.
 	std::int64_t defaultRangeMm() {
 		return static_cast<std::int64_t>(
 			std::llround(static_cast<double>(ecs::kDefaultSightRadius + ecs::NavigationSystem::kSightBufferMeters) * static_cast<double>(geometry::kMillimetersPerMeter)));
@@ -192,7 +192,7 @@ namespace {
 	struct BuildLog {
 		std::mutex			mutex;
 		std::vector<double> jobMs;	 // per job
-		std::vector<double> limitMs; // per visibility limit whose ground went in
+		std::vector<double> limitMs; // per mesh limit whose ground went in
 		double				widthsMs	   = 0.0;
 		double				waitMs		   = 0.0; // since the last takeWait
 		long long			maxSlots	   = 0;
@@ -498,7 +498,7 @@ namespace {
 
 	void end() { foundation::Logger::setSink(nullptr, nullptr); }
 
-	// The colony's visibility limits, ground and placed obstacles, from nothing.
+	// The colony's mesh limits, ground and placed obstacles, from nothing.
 	void BM_ColdSettle(benchmark::State& state) {
 		for (auto _ : state) {
 			Rig rig(state.range(0));
@@ -703,13 +703,13 @@ namespace {
 			if (wet) {
 				first.adds = water;
 			}
-			first.adds.push_back(nav::visibilityLimit({0, 0}, rangeMm));
+			first.adds.push_back(nav::meshLimit({0, 0}, rangeMm));
 			mesh.applyPatch(first);
 			mesh.refreshWidths();
 			Walk out;
 			for (std::int64_t x = step; x <= walkMm; x += step) {
 				const Clock::time_point start = Clock::now();
-				mesh.applyPatch({.adds = {nav::visibilityLimit({x, 0}, rangeMm)}});
+				mesh.applyPatch({.adds = {nav::meshLimit({x, 0}, rangeMm)}});
 				mesh.refreshWidths();
 				const double ms = std::chrono::duration<double, std::milli>(Clock::now() - start).count();
 				(geometry::pointInPolygon({x, 0}, lake) == geometry::PointInPolygon::Inside ? out.inside : out.beside).push_back(ms);
@@ -1465,7 +1465,7 @@ namespace {
 		return obstacles;
 	}
 
-	// What the mesh holds per km one mover walks: a visibility limit (kWalkRangeMm from him, his
+	// What the mesh holds per km one mover walks: a mesh limit (kWalkRangeMm from him, his
 	// default sight plus the buffer) every state.range(0) mm along a 1 km straight walk, over open
 	// ground (Arg 1 0) or with placed obstacles at 0.064 per m2, the density the Quick Start chunks
 	// hold (BM_PlacedObstacleDensity) (Arg 1 1), those meeting each new
