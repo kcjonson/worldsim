@@ -39,6 +39,7 @@ add_library(sim
     construction/RoomDetection.cpp
     construction/RoomHitTest.cpp
     construction/SnapEngine.cpp
+    construction/SnapGuidesDetail.cpp
     nav/NavInputBuilder.cpp
     nav/RouteQueue.cpp
     vision/GeometryIndex.cpp

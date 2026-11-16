@@ -2,6 +2,7 @@
 
 #include "ConstructionValidator.h"
 #include "ConstructionWorld.h"
+#include "SnapTestFixtures.h"
 
 #include <assets/ConstructionRegistry.h>
 #include <core/Vec2i64.h>
@@ -32,19 +33,11 @@ namespace {
 		return std::sqrt((a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y));
 	}
 
-	// The helpers the tools had before the Drawing Settings existed: angle steps, the
-	// world-axis guides, and alignment to existing buildings. Set here so no test
-	// depends on a default.
-	DrawingAids todayAids() {
-		DrawingAids aids;
-		aids.angleSteps = true;
-		aids.guidesFromWorldAxes = true;
-		aids.alignToExistingBuildings = true;
-		return aids;
-	}
-	const DrawingAids kTodayAids = todayAids();
+	// Every helper on unless a case says otherwise (D12, Tests), set here so no test depends
+	// on the player's defaults.
+	const DrawingAids kAllAids = snap_test::allAidsOn();
 
-	SnapInput input(bool freeform = false, float originCloseRadiusMeters = -1.0F, const DrawingAids& aids = kTodayAids) {
+	SnapInput input(bool freeform = false, float originCloseRadiusMeters = -1.0F, const DrawingAids& aids = kAllAids) {
 		return SnapInput{.aids = aids, .freeform = freeform, .originCloseRadiusMeters = originCloseRadiusMeters};
 	}
 
@@ -54,7 +47,7 @@ namespace {
 
 	SnapInput wallInput(bool freeform, std::int64_t wallHalfThicknessMm, float originCloseRadiusMeters = -1.0F) {
 		return SnapInput{
-			.aids = kTodayAids,
+			.aids = kAllAids,
 			.freeform = freeform,
 			.originCloseRadiusMeters = originCloseRadiusMeters,
 			.wallHalfThicknessMm = wallHalfThicknessMm,
@@ -101,20 +94,20 @@ TEST(SnapEngine, AngleSnapsToAxis) {
 	EXPECT_NEAR(r.point.x, len, 1e-3F);	 // distance preserved
 }
 
-TEST(SnapEngine, AngleSnapRelativeToPreviousSegment) {
+TEST(SnapEngine, GuideRightAngleOffPreviousSegment) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	// Previous segment goes straight up (+y). A cursor heading +x but a few
-	// degrees off snaps to a 90 deg turn: pure +x from the corner. The 0.8 m
-	// perpendicular offset stays inside the 15 deg increment (atan2(0.8,8)=5.7 deg)
-	// yet exceeds the 0.3 m axis-guide tolerance, so this exercises angle snap, not
-	// axis alignment to the previous node.
-	std::vector<Vec2> points = {{0.0F, 0.0F}, {0.0F, 5.0F}};
-	Vec2			  cursor{points.back().x + 8.0F, points.back().y + 0.8F};
-	auto			  r = engine.snap(points, cursor, input(/*freeform=*/false));
-	EXPECT_EQ(r.kind, SnapKind::Angle);
-	EXPECT_NEAR(r.point.y, points.back().y, 1e-3F); // snapped flat off the corner
+	// The 90-degree turn off the previous edge is the shape's perpendicular through the
+	// previous point, caught by angle (2.9 degrees off it as seen from (6, 0)).
+	std::vector<Vec2> points = {{0.0F, 0.0F}, {6.0F, 0.0F}};
+	auto			  r = engine.snap(points, {6.2F, 4.0F}, input(/*freeform=*/false));
+	EXPECT_EQ(r.kind, SnapKind::GuideLine);
+	EXPECT_NEAR(r.point.x, 6.0F, 1e-3F);
+	EXPECT_NEAR(r.point.y, 4.0F, 1e-3F);
+	ASSERT_EQ(r.guideCount, 1U);
+	EXPECT_EQ(r.guides[0].source, GuideSource::DrawnShape);
+	EXPECT_TRUE(r.guides[0].rightAngle);
 }
 
 TEST(SnapEngine, FreeformSuppressesAngleSnap) {
@@ -145,9 +138,13 @@ TEST(SnapEngine, NoOriginCloseBeforeThreePoints) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}};
-	auto			  r = engine.snap(points, {0.1F, 0.0F}, input(/*freeform=*/false));
+	// The shape's first edge line catches it instead.
+	std::vector<Vec2> points = {{0.0F, 0.0F}, {6.0F, 0.0F}};
+	auto			  r = engine.snap(points, {0.3F, 0.2F}, input(/*freeform=*/false));
 	EXPECT_NE(r.kind, SnapKind::Origin);
+	EXPECT_EQ(r.kind, SnapKind::GuideLine);
+	EXPECT_NEAR(r.point.x, 0.3F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 0.0F, 1e-4F);
 }
 
 TEST(SnapEngine, OriginCloseRadiusOverrideEnlargesCatchRange) {
@@ -206,113 +203,105 @@ TEST(SnapEngine, SnapsToExistingEdge) {
 	EXPECT_LT(dist(r.point, {2.5F, 0.0F}), 1e-3F);
 }
 
-// --- Axis-alignment guides ------------------------------------------------
-// Default guideTolerance is 0.3 m, guideRange 8.0 m (struct defaults).
+// --- Guides ------------------------------------------------------------------
+// The world-axis lock is the world guide pair through each node; the cases are the
+// tuned prototype's (D12, Tests). The rest of the guide cases are in SnapGuides.test.cpp.
 
-TEST(SnapEngine, AxisAlignsXToInProgressNode) {
+TEST(SnapEngine, GuideWorldAxisLocksX) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	// One placed node at the origin; cursor 0.15 m off its X (inside 0.3 m tol) and
-	// 3 m up. The X locks to the node, Y stays free.
-	std::vector<Vec2> points = {{0.0F, 0.0F}};
-	auto			  r = engine.snap(points, {0.15F, 3.0F}, input(/*freeform=*/false));
+	auto			  r = engine.snap({{0.0F, 0.0F}}, {0.2F, 5.0F}, input());
 	EXPECT_EQ(r.kind, SnapKind::GuideLine);
 	EXPECT_NEAR(r.point.x, 0.0F, 1e-4F);
-	EXPECT_NEAR(r.point.y, 3.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 5.0F, 1e-4F);
+	ASSERT_EQ(r.guideCount, 1U);
+	EXPECT_EQ(r.guides[0].source, GuideSource::WorldAxes);
+	EXPECT_EQ(r.guides[0].relation, GuideRelation::Perpendicular);
 }
 
-TEST(SnapEngine, AxisAlignsYToInProgressNode) {
+TEST(SnapEngine, GuideWorldAxisLocksY) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	std::vector<Vec2> points = {{0.0F, 0.0F}};
-	auto			  r = engine.snap(points, {4.0F, 0.2F}, input(/*freeform=*/false));
+	auto			  r = engine.snap({{0.0F, 0.0F}}, {5.0F, 0.2F}, input());
 	EXPECT_EQ(r.kind, SnapKind::GuideLine);
-	EXPECT_NEAR(r.point.x, 4.0F, 1e-4F);
+	EXPECT_NEAR(r.point.x, 5.0F, 1e-4F);
 	EXPECT_NEAR(r.point.y, 0.0F, 1e-4F);
+	ASSERT_EQ(r.guideCount, 1U);
+	EXPECT_EQ(r.guides[0].relation, GuideRelation::Parallel);
 }
 
-TEST(SnapEngine, AxisAlignsBothAxesToTwoNodes) {
+TEST(SnapEngine, GuideShapeLinesCrossAtSquareCorner) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	// Three corners of a square placed; drawing the 4th near (0,6). X lines up with
-	// the (0,0) corner, Y with the (6,6) corner -> snaps exactly to (0,6) with two
-	// guide lines (different reference nodes per axis).
 	std::vector<Vec2> points = {{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
-	auto			  r = engine.snap(points, {0.2F, 5.85F}, input(/*freeform=*/false));
+	auto			  r = engine.snap(points, {0.15F, 5.9F}, input());
 	EXPECT_EQ(r.kind, SnapKind::GuideCrossing);
 	EXPECT_NEAR(r.point.x, 0.0F, 1e-4F);
 	EXPECT_NEAR(r.point.y, 6.0F, 1e-4F);
-	// Both guides present (a non-degenerate from->to) when both axes lock.
 	ASSERT_EQ(r.guideCount, 2U);
-	EXPECT_TRUE(r.guides[0].from.x != r.guides[0].to.x || r.guides[0].from.y != r.guides[0].to.y);
-	EXPECT_TRUE(r.guides[1].from.x != r.guides[1].to.x || r.guides[1].from.y != r.guides[1].to.y);
+	EXPECT_EQ(r.guides[0].source, GuideSource::DrawnShape);
+	EXPECT_EQ(r.guides[1].source, GuideSource::DrawnShape);
 }
 
-TEST(SnapEngine, AxisAlignToleranceBoundary) {
-	SnappingConfig	  cfg = defaults(); // tol 0.3 m
+TEST(SnapEngine, GuideToleranceBoundary) {
+	SnappingConfig	  cfg = defaults(); // tolerance 0.3 m
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	std::vector<Vec2> points = {{0.0F, 0.0F}};
-	// 0.25 m off the node's X (inside tol) locks; 0.35 m (outside tol) does not.
-	EXPECT_EQ(engine.snap(points, {0.25F, 3.0F}, input(/*freeform=*/false)).kind, SnapKind::GuideLine);
-	EXPECT_FALSE(isGuide(engine.snap(points, {0.35F, 3.0F}, input(/*freeform=*/false)).kind));
+	// 0.35 m off the north-south line through the point: past the tolerance, so the angle step.
+	auto r = engine.snap({{0.0F, 0.0F}}, {0.35F, 5.0F}, input());
+	EXPECT_EQ(r.kind, SnapKind::Angle);
+	EXPECT_NEAR(r.point.x, 0.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 5.012235F, 1e-4F);
 }
 
-TEST(SnapEngine, AxisAlignFreeformSuppresses) {
+TEST(SnapEngine, GuideFreeformSuppresses) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	std::vector<Vec2> points = {{0.0F, 0.0F}};
-	// Same aligned cursor as AxisAlignsXToInProgressNode, but freeform (Alt) off-switches
-	// all inference snapping including axis guides.
-	auto r = engine.snap(points, {0.15F, 3.0F}, input(/*freeform=*/true));
-	EXPECT_FALSE(isGuide(r.kind));
+	auto			  r = engine.snap({{0.0F, 0.0F}}, {0.2F, 5.0F}, input(/*freeform=*/true));
+	EXPECT_EQ(r.kind, SnapKind::None);
+	EXPECT_FLOAT_EQ(r.point.x, 0.2F);
+	EXPECT_FLOAT_EQ(r.point.y, 5.0F);
 }
 
-TEST(SnapEngine, AxisAlignTogglesCommittedFoundationTargets) {
+TEST(SnapEngine, GuideCommittedCornersFollowAlignToExisting) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
-	// A committed square near the cursor; one far-away in-progress node so the cursor
-	// can't align to the shape itself.
-	std::vector<Vec2> sq = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
-	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
-	SnapEngine		  engine(cfg, world);
-	std::vector<Vec2> points = {{10.0F, 10.0F}};
-	// Cursor 0.15 m off the committed corner's X (5) and 6 m up (within range, clear of
-	// vertex/edge snap radii). Disabled: no committed targets -> not an axis guide.
-	DrawingAids alignOff = kTodayAids;
-	alignOff.alignToExistingBuildings = false;
-	EXPECT_FALSE(isGuide(engine.snap(points, {5.15F, 6.0F}, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, alignOff)).kind));
-	// Enabled: the committed corner's X is a target -> axis guide locks to x=5.
-	auto r = engine.snap(points, {5.15F, 6.0F}, input(/*freeform=*/false));
-	EXPECT_EQ(r.kind, SnapKind::GuideLine);
-	EXPECT_NEAR(r.point.x, 5.0F, 1e-4F);
-}
-
-TEST(SnapEngine, AxisAlignCommittedRespectsRange) {
-	SnappingConfig	  cfg = defaults(); // guideRange 8.0 m
-	ConstructionWorld world;
-	std::vector<Vec2> sq = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
-	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());
+	ASSERT_TRUE(world.commitFoundation(std::vector<Vec2>{{3.0F, 10.0F}, {6.0F, 10.0F}, {6.0F, 12.0F}, {3.0F, 12.0F}}, "Wood").ok());
 	SnapEngine engine(cfg, world);
-	// alignToExisting on, no in-progress nodes. Far cursor (nearest x=5 corner > 8 m
-	// away) ignores the committed node; near cursor (within range) locks to it.
-	EXPECT_FALSE(isGuide(engine.snap({}, {5.2F, 20.0F}, input(/*freeform=*/false)).kind));
-	EXPECT_EQ(engine.snap({}, {5.2F, 6.0F}, input(/*freeform=*/false)).kind, SnapKind::GuideLine);
+	auto	   r = engine.snap({}, {-2.0F, 10.2F}, input());
+	EXPECT_EQ(r.kind, SnapKind::GuideLine);
+	EXPECT_NEAR(r.point.x, -2.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, 10.0F, 1e-4F);
+	DrawingAids alignOff = kAllAids;
+	alignOff.alignToExistingBuildings = false;
+	EXPECT_EQ(engine.snap({}, {-2.0F, 10.2F}, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, alignOff)).kind, SnapKind::None);
 }
 
-TEST(SnapEngine, TwoAxisLockReportsACrossingOfTwoWorldGuides) {
+TEST(SnapEngine, GuideRangeExcludesFarCorners) {
+	SnappingConfig	  cfg = defaults(); // guide range 8 m
+	ConstructionWorld world;
+	ASSERT_TRUE(world.commitFoundation(std::vector<Vec2>{{3.0F, 10.0F}, {6.0F, 10.0F}, {6.0F, 12.0F}, {3.0F, 12.0F}}, "Wood").ok());
+	SnapEngine engine(cfg, world);
+	// The nearest corner, (3, 10), is 9 m away.
+	EXPECT_EQ(engine.snap({}, {-6.0F, 10.2F}, input()).kind, SnapKind::None);
+}
+
+TEST(SnapEngine, GuideTwoWorldLinesCrossAtTheirNodes) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	// As AxisAlignsBothAxesToTwoNodes: X locks to (0,0), Y to (6,6), the point is (0,6).
-	// The guides are what the preview drew before: the X lock's node to the point, then
-	// the Y lock's.
+	// The world guides alone, with crossings: the north-south line through (0,0) and the
+	// east-west line through (6,6) cross at (0,6). Each is square to the shape's edge at
+	// its node, so each carries a marker.
+	DrawingAids aids;
+	aids.guidesFromWorldAxes = true;
+	aids.guideCrossings = true;
 	std::vector<Vec2> points = {{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
-	auto			  r = engine.snap(points, {0.2F, 5.85F}, input());
+	auto			  r = engine.snap(points, {0.2F, 5.85F}, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, aids));
 	ASSERT_EQ(r.kind, SnapKind::GuideCrossing);
 	ASSERT_EQ(r.guideCount, 2U);
 	const SnapGuide& vertical = r.guides[0];
@@ -324,7 +313,9 @@ TEST(SnapEngine, TwoAxisLockReportsACrossingOfTwoWorldGuides) {
 	EXPECT_FLOAT_EQ(vertical.to.y, r.point.y);
 	EXPECT_NEAR(vertical.distanceFromNodeMeters, 6.0F, 1e-4F);
 	EXPECT_FALSE(vertical.throughPreviousPoint);
-	EXPECT_FALSE(vertical.rightAngle);
+	EXPECT_TRUE(vertical.rightAngle);
+	EXPECT_NEAR(vertical.rightAngleEdgeDirection.x, 1.0F, 1e-6F);
+	EXPECT_NEAR(vertical.rightAngleEdgeDirection.y, 0.0F, 1e-6F);
 	const SnapGuide& horizontal = r.guides[1];
 	EXPECT_EQ(horizontal.source, GuideSource::WorldAxes);
 	EXPECT_EQ(horizontal.relation, GuideRelation::Parallel);
@@ -334,7 +325,9 @@ TEST(SnapEngine, TwoAxisLockReportsACrossingOfTwoWorldGuides) {
 	EXPECT_FLOAT_EQ(horizontal.to.y, r.point.y);
 	EXPECT_NEAR(horizontal.distanceFromNodeMeters, 6.0F, 1e-4F);
 	EXPECT_TRUE(horizontal.throughPreviousPoint);
-	EXPECT_FALSE(horizontal.rightAngle);
+	EXPECT_TRUE(horizontal.rightAngle);
+	EXPECT_NEAR(horizontal.rightAngleEdgeDirection.x, 0.0F, 1e-6F);
+	EXPECT_NEAR(horizontal.rightAngleEdgeDirection.y, -1.0F, 1e-6F);
 }
 
 TEST(SnapEngine, AngleStepsOffFallsToRaw) {
@@ -344,7 +337,7 @@ TEST(SnapEngine, AngleStepsOffFallsToRaw) {
 	// The AngleSnapsToAxis cursor, 5 degrees off +x: with angle steps off it stays raw.
 	std::vector<Vec2> points = {{0.0F, 0.0F}};
 	const Vec2		  cursor{5.0F * std::cos(0.0873F), 5.0F * std::sin(0.0873F)};
-	DrawingAids		  aids = kTodayAids;
+	DrawingAids		  aids = kAllAids;
 	aids.angleSteps = false;
 	auto r = engine.snap(points, cursor, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, aids));
 	EXPECT_EQ(r.kind, SnapKind::None);
@@ -353,15 +346,16 @@ TEST(SnapEngine, AngleStepsOffFallsToRaw) {
 	EXPECT_FLOAT_EQ(r.point.y, cursor.y);
 }
 
-TEST(SnapEngine, WorldGuidesOffSkipsAxisLock) {
+TEST(SnapEngine, WorldGuidesOffLeaveTheAngleStep) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;
 	SnapEngine		  engine(cfg, world);
-	// The AxisAlignsXToInProgressNode cursor: with the world guides off the X lock is
-	// skipped and the angle step takes it (90 degrees off +x, distance kept).
+	// 0.15 m off the north-south line through the only point: with the world guides off
+	// nothing else draws a line there, and the angle step takes it (90 degrees off +x,
+	// distance kept).
 	std::vector<Vec2> points = {{0.0F, 0.0F}};
 	const Vec2		  cursor{0.15F, 3.0F};
-	DrawingAids		  aids = kTodayAids;
+	DrawingAids		  aids = kAllAids;
 	aids.guidesFromWorldAxes = false;
 	auto r = engine.snap(points, cursor, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, aids));
 	EXPECT_EQ(r.kind, SnapKind::Angle);
@@ -551,18 +545,20 @@ TEST(SnapEngine, WallVertexBeatsPointOnSegment) {
 	EXPECT_FLOAT_EQ(r.point.y, 2.0F);
 }
 
-TEST(SnapEngine, WallAngleSnapOffPreviousChainPoint) {
+TEST(SnapEngine, WallGuideRightAngleOffPreviousChainPoint) {
 	SnappingConfig	  cfg = defaults();
-	ConstructionWorld world; // empty: no geometry to snap to, only angle snap
+	ConstructionWorld world; // empty: only the chain's own lines
 	SnapEngine		  engine(cfg, world);
-	// Chain heading +y; cursor heading +x but a few degrees off snaps to a 90 deg
-	// turn flat off the corner. The 0.8 m perpendicular offset stays inside the 15 deg
-	// increment yet exceeds the 0.3 m axis-guide tolerance, so this exercises angle
-	// snap, not axis alignment to the previous node.
+	// Chain heading +y; a cursor heading +x 0.8 m off the corner's east-west line, 5.7
+	// degrees off it as seen from the corner, is caught by angle on the chain's
+	// perpendicular: a 90-degree turn flat off the corner.
 	std::vector<Vec2> points = {{1.0F, 1.0F}, {1.0F, 6.0F}};
 	auto			  r = engine.snapWall(points, {9.0F, 6.8F}, wallInput(/*freeform=*/false, /*wallHalfThicknessMm=*/100));
-	EXPECT_EQ(r.kind, SnapKind::Angle);
+	EXPECT_EQ(r.kind, SnapKind::GuideLine);
+	EXPECT_NEAR(r.point.x, 9.0F, 1e-3F);
 	EXPECT_NEAR(r.point.y, points.back().y, 1e-3F);
+	ASSERT_EQ(r.guideCount, 1U);
+	EXPECT_TRUE(r.guides[0].rightAngle);
 }
 
 TEST(SnapEngine, WallFreeformSuppressesAngleSnap) {
@@ -608,12 +604,12 @@ TEST(SnapEngine, WallChainStartedOnAFoundationEdgeSnapsBackToItsFirstPoint) {
 }
 
 TEST(SnapEngine, WallOriginCloseHonorsTheRadius) {
-	SnappingConfig	  cfg = defaults(); // originCloseRadius 0.5 m
-	ConstructionWorld world;
-	SnapEngine		  engine(cfg, world);
+	SnappingConfig			cfg = defaults(); // originCloseRadius 0.5 m
+	ConstructionWorld		world;
+	SnapEngine				engine(cfg, world);
 	const std::vector<Vec2> chain = chainFrom({2.0F, 2.0F});
 	// 0.6 m off in x, 0.4 m off in y: outside the radius and both axis locks.
-	const Vec2 cursor{2.6F, 1.6F};
+	const Vec2		 cursor{2.6F, 1.6F};
 	const SnapResult outside = engine.snapWall(chain, cursor, wallInput(/*freeform=*/false, /*wallHalfThicknessMm=*/100));
 	EXPECT_NE(outside.kind, SnapKind::Origin);
 	EXPECT_FALSE(closesWallChain(chain, outside.point));
@@ -636,9 +632,9 @@ TEST(SnapEngine, WallNoOriginCloseBeforeMinClosingPoints) {
 }
 
 TEST(SnapEngine, WallFreeformSkipsOriginClose) {
-	SnappingConfig	  cfg = defaults();
-	ConstructionWorld world;
-	SnapEngine		  engine(cfg, world);
+	SnappingConfig			cfg = defaults();
+	ConstructionWorld		world;
+	SnapEngine				engine(cfg, world);
 	const std::vector<Vec2> chain = chainFrom({2.0F, 2.0F});
 	const Vec2				cursor{2.35F, 2.1F};
 	ASSERT_LT(dist(cursor, chain.front()), cfg.originCloseRadiusMeters);
@@ -651,9 +647,9 @@ TEST(SnapEngine, WallFreeformSkipsOriginClose) {
 }
 
 TEST(SnapEngine, FoundationOriginCloseIgnoresFreeform) {
-	SnappingConfig	  cfg = defaults();
-	ConstructionWorld world;
-	SnapEngine		  engine(cfg, world);
+	SnappingConfig			cfg = defaults();
+	ConstructionWorld		world;
+	SnapEngine				engine(cfg, world);
 	const std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}};
 	EXPECT_EQ(engine.snap(points, {0.3F, 0.0F}, input(/*freeform=*/true)).kind, SnapKind::Origin);
 	EXPECT_EQ(engine.snap(points, {0.3F, 0.0F}, input(/*freeform=*/false)).kind, SnapKind::Origin);
@@ -682,13 +678,14 @@ TEST(SnapEngine, WallOriginCloseBeatsWallEndpointAndSegment) {
 
 	// 0.25 m from the (2,2) endpoint and from the first point.
 	const std::vector<Vec2> nearEndpoint = chainFrom({2.4F, 2.3F});
-	const SnapResult		overEndpoint = engine.snapWall(nearEndpoint, {2.2F, 2.15F}, wallInput(/*freeform=*/false, /*wallHalfThicknessMm=*/100));
+	const SnapResult		overEndpoint =
+		engine.snapWall(nearEndpoint, {2.2F, 2.15F}, wallInput(/*freeform=*/false, /*wallHalfThicknessMm=*/100));
 	EXPECT_EQ(overEndpoint.kind, SnapKind::Origin);
 	EXPECT_EQ(overEndpoint.hitVertex, kInvalidVertex);
 
 	// 0.2 m from the wall's interior and 0.3 m from the first point.
 	const std::vector<Vec2> nearSegment = chainFrom({5.0F, 2.5F});
-	const SnapResult		overSegment = engine.snapWall(nearSegment, {5.0F, 2.2F}, wallInput(/*freeform=*/false, /*wallHalfThicknessMm=*/100));
+	const SnapResult overSegment = engine.snapWall(nearSegment, {5.0F, 2.2F}, wallInput(/*freeform=*/false, /*wallHalfThicknessMm=*/100));
 	EXPECT_EQ(overSegment.kind, SnapKind::Origin);
 	EXPECT_EQ(overSegment.hitSegment, kInvalidSegment);
 	EXPECT_EQ(overSegment.point.y, 2.5F);
@@ -891,14 +888,20 @@ class OpeningSnapAtCorners : public ::testing::Test {
 
 	// Slide a door along `segment`, a built wall from (x0,y) to (x0+length,y), its v0
 	// at x0, with the cursor 0.1 m below it.
-	static void expectSnapMatchesValidator(const ConstructionWorld& world, SegmentId segment, float x0, float y, float length,
-										   const std::string& label) {
-		const auto&				cfg = ConstructionRegistry::Get();
-		const double			margin = static_cast<double>(cfg.constraints().openingMarginMeters);
-		const double			half = 0.45;
+	static void expectSnapMatchesValidator(
+		const ConstructionWorld& world,
+		SegmentId				 segment,
+		float					 x0,
+		float					 y,
+		float					 length,
+		const std::string&		 label
+	) {
+		const auto&	 cfg = ConstructionRegistry::Get();
+		const double margin = static_cast<double>(cfg.constraints().openingMarginMeters);
+		const double half = 0.45;
 		const auto [trimV0, trimV1] = drawnTrims(world, segment);
-		SnapEngine				engine(cfg.snapping(), world);
-		ConstructionValidator	validator(cfg.constraints(), world);
+		SnapEngine			  engine(cfg.snapping(), world);
+		ConstructionValidator validator(cfg.constraints(), world);
 
 		for (float along = 0.05F; along < length - 0.04F; along += 0.05F) {
 			const OpeningSnap snap = engine.snapOpening({x0 + along, y - 0.1F}, 0.9F);
@@ -942,8 +945,9 @@ TEST_F(OpeningSnapAtCorners, SnapStopsWhereTheValidatorStops) {
 			ASSERT_TRUE(other.ok());
 			ASSERT_TRUE(world.setSegmentState(seg.id, FoundationState::Built));
 			ASSERT_TRUE(world.setSegmentState(other.id, FoundationState::Built));
-			expectSnapMatchesValidator(world, seg.id, 4.0F, 4.0F, 4.0F,
-									   std::to_string(static_cast<int>(degrees)) + " deg " + thickness + "/" + otherThickness);
+			expectSnapMatchesValidator(
+				world, seg.id, 4.0F, 4.0F, 4.0F, std::to_string(static_cast<int>(degrees)) + " deg " + thickness + "/" + otherThickness
+			);
 		}
 	}
 }

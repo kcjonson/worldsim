@@ -10,12 +10,15 @@
 //
 // Snap priority (most specific first, matching the design's "endpoints >
 // vertices > points-on-segments > edges" stack, narrowed to the targets the
-// foundation tool needs): origin-close > existing vertex > existing edge >
-// world-axis guide > angle snap relative to the previous segment > raw.
+// foundation tool needs): origin-close > existing vertex > existing edge (squared
+// by a shape guide) > guides > angle snap relative to the previous segment > raw.
 //
-// The guide and angle helpers follow the player's DrawingAids and are suppressed
-// when `freeform` is set (the tool maps this to holding Alt, per the design). Vertex
-// and edge snapping to existing geometry are always on; they are the zero-gap
+// Guides (D12) are lines from three sources, the shape being drawn, nearby buildings,
+// and the world axes, captured near the cursor, merged, crossed, and ranked; the steps
+// are in SnapGuidesDetail.h. A guide result within the close radius of the first point
+// closes onto it. Guides and the angle step follow the player's DrawingAids and are
+// suppressed when `freeform` is set (the tool maps this to holding Alt, per the design).
+// Vertex and edge snapping to existing geometry are always on; they are the zero-gap
 // adjacency the clearance rule depends on, not a stylistic nicety.
 //
 // Snap radii and the angle increment come from assets::SnappingConfig
@@ -30,7 +33,8 @@
 // kMinClosingWallChainPoints points:
 //   origin-close > wall endpoint (existing wall vertex) > foundation vertex >
 //   point along an existing wall segment (T-junction anywhere) >
-//   foundation edge > world-axis guide > angle snap off the previous chain point > raw.
+//   foundation edge > guides > angle snap off the previous chain point > raw.
+// The segment and edge hits are squared by a chain guide, as the foundation edge is.
 // A wall endpoint and a foundation vertex are both "vertex" targets but the wall
 // endpoint wins so a chain continues/joins an existing wall in preference to
 // merely landing on a foundation corner. The snapped point of an endpoint or
@@ -54,6 +58,11 @@ namespace assets {
 }
 
 namespace construction {
+
+	namespace snap_guides {
+		struct GuideContext;
+		struct GuideStudy;
+	} // namespace snap_guides
 
 	enum class SnapKind {
 		None,		   // raw cursor, no snap applied
@@ -206,13 +215,13 @@ namespace construction {
 
 		// Snap `cursor` given the points already placed (`points`, world meters).
 		// Priority: origin-close (3+ points, regardless of freeform) > foundation
-		// vertex > foundation edge > world-axis guide > angle step > raw.
+		// vertex > foundation edge (squared) > guides > angle step > raw.
 		[[nodiscard]] SnapResult
 		snap(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input) const;
 
 		// Wall-chain snap. `points` is the in-progress polyline (world meters).
 		// Priority: origin-close > wall endpoint > foundation vertex >
-		// point-on-wall-segment (T-junction) > foundation edge > world-axis guide >
+		// point-on-wall-segment (T-junction, squared) > foundation edge (squared) > guides >
 		// angle step off the previous chain point > raw. Origin-close needs
 		// kMinClosingWallChainPoints points, is skipped under freeform, and returns the
 		// chain's first point exactly. The result's hitVertex/hitSegment tell the
@@ -239,7 +248,10 @@ namespace construction {
 		// Whether `cursor` is within the origin-close radius of the first point, once
 		// `points` holds at least `minPoints`. A negative `radiusMeters` uses the config.
 		[[nodiscard]] bool snapToOrigin(
-			const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, std::size_t minPoints, float radiusMeters
+			const std::vector<::Foundation::Vec2>& points,
+			::Foundation::Vec2					   cursor,
+			std::size_t							   minPoints,
+			float								   radiusMeters
 		) const;
 
 		// Nearest existing WALL vertex within vertexSnapRadius. On a hit, `out` is the
@@ -258,23 +270,33 @@ namespace construction {
 		// preserved.
 		[[nodiscard]] SnapResult snapAngle(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor) const;
 
-		// World-axis guides: if the cursor lines up (within guideTolerance) on X and/or
-		// Y with a reference node, snap that axis onto the node and report a guide
-		// through it (a GuideLine for one axis, a GuideCrossing for both). Reference
-		// nodes are the in-progress `points` plus, when `alignToExistingBuildings`,
-		// committed-foundation vertices within guideRange of the cursor. Kind None when
-		// neither axis aligns.
-		[[nodiscard]] SnapResult
-		alignToWorldAxes(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, bool alignToExistingBuildings) const;
+		// The guide step's winner, if any: a GuideLine or GuideCrossing, or Origin when it
+		// lands within the close radius of the first point once `points` holds
+		// `minClosePoints`.
+		[[nodiscard]] std::optional<SnapResult> alignToGuides(
+			const snap_guides::GuideContext& context,
+			const snap_guides::GuideStudy&	 study,
+			std::size_t						 minClosePoints,
+			float							 originCloseRadiusMeters
+		) const;
 
-		// The rules shared by snap() and snapWall() after the geometry hits: the
-		// world-axis guides, then the angle step, then the raw cursor, each as the aids
-		// and freeform allow.
-		[[nodiscard]] SnapResult
-		snapToHelpers(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input) const;
+		// The rules shared by snap() and snapWall() after the geometry hits: the guides,
+		// then the angle step, then the raw cursor, each as the aids and freeform allow.
+		[[nodiscard]] SnapResult snapToHelpers(
+			const std::vector<::Foundation::Vec2>& points,
+			::Foundation::Vec2					   cursor,
+			const SnapInput&					   input,
+			const snap_guides::GuideContext&	   context,
+			const snap_guides::GuideStudy&		   study,
+			std::size_t							   minClosePoints
+		) const;
+
+		// What a guide study reads for this call.
+		[[nodiscard]] snap_guides::GuideContext
+		guideContext(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input, bool wallTool) const;
 
 		const assets::SnappingConfig* snapping_;
-		const ConstructionWorld*			  world_;
+		const ConstructionWorld*	  world_;
 	};
 
 } // namespace construction
