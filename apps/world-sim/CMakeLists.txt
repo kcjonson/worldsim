@@ -193,6 +193,9 @@ if(BUILD_TESTING)
     else()
         target_compile_options(world-sim-tests PRIVATE -O0 -g)
     endif()
-    add_test(NAME world-sim-tests COMMAND world-sim-tests)
-    worldsim_test_data(world-sim-tests assets/config fonts)
+    # Run from the build root, which __FILE__-relative paths resolve from when ccache makes them relative, and
+    # where nothing is staged (a single-config generator would otherwise run it beside the game, planet and all).
+    # The asset library the layout tests load reads all of assets, not just its config.
+    add_test(NAME world-sim-tests COMMAND world-sim-tests WORKING_DIRECTORY ${CMAKE_BINARY_DIR})
+    worldsim_test_data(world-sim-tests assets fonts)
 endif()
