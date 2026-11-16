@@ -82,12 +82,11 @@
   <!-- Rectangle tool: land on existing corners and edges before the grid. -->
   <rectangleAdjacencySnaps>true</rectangleAdjacencySnaps>
 
-  <!-- The player's Drawing Settings at first launch. These are the drawing tools as they
-       behaved before the settings existed (angle steps, world-axis guides, align, and
-       crossings on; the rest off). Crossings are on because the old two-axis lock, which
-       landed the fourth corner of an axis-aligned rectangle, is a crossing of two world
-       guides. A later
-       change switches them to the designed defaults. -->
+  <!-- The player's Drawing Settings at first launch. These are the drawing tools as
+       they behaved before the settings existed (angle steps, world-axis guides, align,
+       and crossings on; the rest off). Crossings are on because the old two-axis lock,
+       which landed the fourth corner of an axis-aligned rectangle, is a crossing of two
+       world guides. A later change switches them to the designed defaults. -->
   <DrawingSettingsDefaults>
     <angleSteps>true</angleSteps>
     <guidesFromShape>false</guidesFromShape>

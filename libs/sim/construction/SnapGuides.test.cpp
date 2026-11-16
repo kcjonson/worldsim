@@ -667,6 +667,41 @@ TEST_F(SnapGuides, GuideSquaringMinimumAngle) {
 	EXPECT_EQ(steep.guides[0].source, GuideSource::DrawnShape);
 }
 
+TEST_F(SnapGuides, WallVerticesOfNearbyStructuresMakeGuides) {
+	// The wall tool reads a built wall's vertices as corners: the guide runs square to the
+	// wall through its far end. Without them the cursor is left to the angle step.
+	built.addWall({millimeters(0.0, 0.0), millimeters(4.0, 3.0)});
+	const SnapResult result = snapWall({{30.0F, -20.0F}}, {1.1F, 7.0F});
+	EXPECT_EQ(result.kind, SnapKind::GuideLine);
+	expectPoint(result.point, 1.036, 6.952, kNearTolerance);
+	ASSERT_EQ(result.guideCount, 1U);
+	EXPECT_EQ(result.guides[0].source, GuideSource::NearbyStructure);
+	EXPECT_EQ(result.guides[0].relation, GuideRelation::Perpendicular);
+	EXPECT_TRUE(result.guides[0].rightAngle);
+	expectPoint(result.guides[0].from, 4.0, 3.0);
+}
+
+TEST_F(SnapGuides, GuideSquaringReachesOnlyTheEdgeSnapRadius) {
+	// The shape's guide through (5.15, 1.71) at 20 degrees crosses the committed foundation's
+	// south edge (y = 0) at x = 0.468. Squaring onto it moves the point only when that is
+	// within the edge snap radius (0.3 m) of the cursor.
+	built.addFoundation({{-10.0, -5.0}, {10.0, -5.0}, {10.0, 0.0}, {-10.0, 0.0}});
+	const std::vector<Vec2> points{{5.15F, 1.71F}, {7.97F, 2.74F}};
+	ASSERT_FLOAT_EQ(snapping.edgeSnapRadiusMeters, 0.3F);
+
+	const SnapResult beyond = snap(points, {0.0F, 0.1F});
+	EXPECT_EQ(beyond.kind, SnapKind::Edge);
+	expectPoint(beyond.point, 0.0, 0.0);
+	EXPECT_EQ(beyond.guideCount, 0U);
+
+	const SnapResult within = snap(points, {0.3F, 0.1F});
+	EXPECT_EQ(within.kind, SnapKind::Edge);
+	expectPoint(within.point, 0.468253, 0.0);
+	ASSERT_EQ(within.guideCount, 1U);
+	EXPECT_EQ(within.guides[0].source, GuideSource::DrawnShape);
+	expectPoint(within.guides[0].from, 5.15, 1.71);
+}
+
 TEST_F(SnapGuides, GuideResultClosesWithinInputRadius) {
 	// The guide x = 0 lands 0.97 m from the first point, the cursor 1.01 m from it: inside a
 	// 1 m close radius only the guide result is, and outside the configured 0.5 m neither is.
@@ -692,8 +727,10 @@ TEST_F(SnapGuides, GuideResultClosesWithinInputRadius) {
 }
 
 TEST_F(SnapGuides, WallChainPointWindow) {
-	// 34 points against a window of 32: the first point and the last 31 make guides, so
-	// point 2 (at x = -5, alone on its north-south line) does not.
+	// 34 points against a window of 32: the first point and the last 31 (indices 3 to 33)
+	// make guides, so indices 1 and 2 do not; each is alone on its north-south line
+	// (x = -5 and x = 2). The window's far edge is pinned by index 2 (out) and 3 (in), its
+	// near edge by the first point, which stays in though it is long out of the last 31.
 	ASSERT_EQ(assets::ConstructionRegistry::Get().constraints().maxPoints, 32);
 	std::vector<Vec2> chain;
 	for (int index = 0; index < 34; ++index) {
@@ -706,6 +743,16 @@ TEST_F(SnapGuides, WallChainPointWindow) {
 	const SnapResult outside = snapWall(chain, {-4.9F, 6.0F}, input);
 	EXPECT_EQ(outside.kind, SnapKind::None);
 	expectPoint(outside.point, -4.9, 6.0);
+
+	const SnapResult justOutside = snapWall(chain, {2.1F, 6.0F}, input);
+	EXPECT_EQ(justOutside.kind, SnapKind::None);
+	expectPoint(justOutside.point, 2.1, 6.0);
+
+	const SnapResult first = snapWall(chain, {0.1F, 6.0F}, input);
+	EXPECT_EQ(first.kind, SnapKind::GuideLine);
+	expectPoint(first.point, 0.0, 6.0);
+	ASSERT_EQ(first.guideCount, 1U);
+	expectPoint(first.guides[0].from, 0.0, 0.0);
 
 	const SnapResult inside = snapWall(chain, {3.1F, 6.0F}, input);
 	EXPECT_EQ(inside.kind, SnapKind::GuideLine);
