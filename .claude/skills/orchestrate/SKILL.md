@@ -24,7 +24,7 @@ Every brief states:
 - The files or area the agent owns. Name them.
 - What done looks like, so the task has an end.
 - The rule for everything else: a follow-up, a tangent, or a problem in someone else's area comes back as a note (what is wrong, where, what the agent would do), never as a change.
-- The standing rules that apply (commit by explicit path, no history rewrites, no attribution lines, build and test commands, what must not be built or launched).
+- The standing rules that apply (commit by explicit path, no history rewrites, no attribution lines, build and test commands, what must not be built or launched, and that any game launch passes `--background`).
 - The report wanted: what changed, what was verified and how, what was not verified.
 
 A brief is the agent's whole context. If you can't write a clear one, you don't understand the piece well enough to hand it off.
