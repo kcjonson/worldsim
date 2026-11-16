@@ -1340,10 +1340,12 @@ namespace geometry {
 
 	std::vector<std::vector<WallSpan>> wallSpans(const std::vector<WallSegment>& segments,
 												 const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands) {
-		assert(bands.status == OffsetStatus::Ok && bands.trimAtA.size() == segments.size() && bands.trimAtB.size() == segments.size());
 		assert(gaps.empty() || gaps.size() == segments.size());
-		const std::vector<WallGap>		   noGaps;
 		std::vector<std::vector<WallSpan>> result(segments.size());
+		if (bands.status != OffsetStatus::Ok || bands.trimAtA.size() != segments.size() || bands.trimAtB.size() != segments.size()) {
+			return result;
+		}
+		const std::vector<WallGap> noGaps;
 		for (std::size_t i = 0; i < segments.size(); ++i) {
 			for (SegmentSpan& span : segmentSpans(segments[i], gaps.empty() ? noGaps : gaps[i], bands.trimAtA[i], bands.trimAtB[i])) {
 				result[i].push_back(std::move(span.span));

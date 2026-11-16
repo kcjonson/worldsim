@@ -885,6 +885,20 @@ TEST(Gaps, OverlappingAndOverhangingGapsMerge) {
 	EXPECT_NEAR(totalAreaDoubled(wb.bands), 2.0 * 2000.0 * 200.0, 1.0);
 }
 
+TEST(Gaps, UnresolvedBandsGiveNoSpans) {
+	// The graph of ShortMixedChainReturns, rejected: every segment gets an empty list, never a read of
+	// trims that are not there.
+	const std::vector<WallSegment> segments = {
+		{{0, 0}, {110, 207}, 75}, {{110, 207}, {474, 182}, 100}, {{474, 182}, {487, 371}, 75}, {{487, 371}, {400, 406}, 150}};
+	const WallBands bands = resolveWallBands(segments, kDefaultMiterLimit);
+	ASSERT_NE(bands.status, OffsetStatus::Ok);
+	const std::vector<std::vector<WallSpan>> spans = wallSpans(segments, {{}, {{100, 250}}, {}, {}}, bands);
+	ASSERT_EQ(spans.size(), segments.size());
+	for (const std::vector<WallSpan>& segmentSpans : spans) {
+		EXPECT_TRUE(segmentSpans.empty());
+	}
+}
+
 TEST(Junction, NearParallelLargeCoordinateDenominatorExact) {
 	// A real corner whose two outgoing directions are nearly collinear at large
 	// magnitude with messy low bits. The line-line denominator is the cross

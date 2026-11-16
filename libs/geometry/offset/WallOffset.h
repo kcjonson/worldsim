@@ -186,15 +186,22 @@ namespace geometry {
 	// solid spans are wallPiecesAndOutline's pieces, ring for ring and in the
 	// same order. A gap span takes its corners from the caps of the solid spans
 	// beside it (or of the trimmed band at an end), so neighbouring spans share
-	// their two corners exactly. Gaps are clamped to the trimmed band and merged
-	// where they overlap, an opening of less than 6 mm of the band is ignored,
-	// and a run of wall under 6 mm beside a gap (or one that makes no valid ring)
-	// belongs to the gap span beside it, so the spans still cover the band. Where
-	// gaps overlap or a run between them folds away, one span covers more than
-	// one gap; it is split where each later gap starts, so an overlap goes to the
-	// later gap, and a gap starting less than a millimetre past the last split,
-	// or within a millimetre of the span's end, gets no span of its own. A segment without
-	// gaps is one solid span, its band. Reads only the trims of `bands`.
+	// their two corners exactly. Gaps are clamped to the trimmed band, an opening
+	// of less than 6 mm of the band is ignored, and a run of wall under 6 mm
+	// beside a gap (or one that makes no valid ring) belongs to the gap span
+	// beside it, so the spans still cover the band. Where a run between two gaps
+	// folds away, one open stretch covers both; it is split where the later gap
+	// starts. A segment without gaps is one solid span, its band. Reads only the
+	// trims of `bands`; a `bands` that is not Ok, or whose trims do not match
+	// `segments`, gives every segment no spans.
+	//
+	// The gaps of one segment must not overlap one another. If they do, the spans
+	// still tile the band, but the tags follow start positions, not extents: an
+	// open stretch is split where each later-starting gap begins (when that is at
+	// least 1 mm past the last split and 1 mm short of the stretch's end, else it
+	// gets no span), and from there it is tagged with that gap up to the next split
+	// or the stretch's end, past the gap's own end. So the overlap goes to the
+	// later gap, and a gap nested inside another takes the outer gap's tail.
 	std::vector<std::vector<WallSpan>> wallSpans(const std::vector<WallSegment>& segments,
 												 const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands);
 
