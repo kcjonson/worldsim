@@ -15,7 +15,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>instanced</tier>
     </rendering>
 
     <!-- No animation - stones don't sway -->

@@ -60,7 +60,6 @@ assets/world/flora/Daisy/
 
   <rendering>
     <complexity>simple</complexity>
-    <tier>instanced</tier>
     <maxInstances>50000</maxInstances>
   </rendering>
 
@@ -124,7 +123,6 @@ assets/world/flora/OakTree/
 
   <rendering>
     <complexity>complex</complexity>
-    <tier>batched</tier>
     <lodLevels>
       <li distance="100" tier="instanced" variantIndex="0" />
       <li distance="50" tier="batched" />
@@ -179,7 +177,6 @@ assets/world/flora/Flowers/
     <assetType>simple</assetType>
     <rendering>
       <complexity>simple</complexity>
-      <tier>instanced</tier>
       <maxInstances>50000</maxInstances>
     </rendering>
     <variation>
