@@ -213,7 +213,7 @@ namespace world_sim::testing {
 		app::HeadlessPlatform*	  platform = nullptr;
 		std::unique_ptr<app::App> app;
 
-	  private:
+		// `check` at every window size and interface size, each line it returns led by where it was found.
 		template <typename Check>
 		std::string everywhere(const Check& check) {
 			std::string found;

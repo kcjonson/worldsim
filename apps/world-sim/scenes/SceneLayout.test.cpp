@@ -25,6 +25,7 @@
 #include <ecs/components/Transform.h>
 #include <ecs/systems/TimeSystem.h>
 #include <theme/Theme.h>
+#include <ui/components/Dialog.h>
 #include <ui/components/TabBar.h>
 #include <ui/components/Toast.h>
 #include <utils/ResourcePath.h>
@@ -33,13 +34,16 @@
 #include <world/chunk/SyntheticWorldSampler.h>
 
 #include <array>
+#include <cstddef>
 #include <cstdint>
+#include <format>
 #include <functional>
 #include <map>
 #include <memory>
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace world_sim::testing {
 
@@ -68,6 +72,7 @@ namespace world_sim::testing {
 
 			[[nodiscard]] GameUI&		  hud() { return *gameUI; }
 			[[nodiscard]] const Entities& entities() const { return spawned; }
+			[[nodiscard]] ecs::World&	  ecsWorld() { return world; }
 			[[nodiscard]] DrawingSystem&  drawing() { return *drawingSystem; }
 
 			void onEnter(app::App& /*app*/) override {
@@ -201,7 +206,17 @@ namespace world_sim::testing {
 				EXPECT_NE(scene->entities().box, ecs::EntityID{0});
 				return *scene;
 			}
+
+			// The open dossier's panel.
+			[[nodiscard]] ui::Ref<ui::Rectangle> dossierPanel() const {
+				const auto* dossier = static_cast<const ui::Dialog*>(shown("colonist_dossier"));
+				return dossier != nullptr ? dossier->panel() : ui::Ref<ui::Rectangle>{};
+			}
 		};
+
+		// The prototype modal's cap, which the dossier's panel keeps to.
+		constexpr float kDossierMaxWidthShare = 0.92F;
+		constexpr float kDossierMaxHeightShare = 0.86F;
 
 		// The settings list fits a canvas the reference's height at the default size, and scrolls only on shorter ones.
 		constexpr auto kSettingsListFitsFrom = static_cast<float>(theme::uiScaleConfig().referenceHeight);
@@ -300,10 +315,29 @@ namespace world_sim::testing {
 		EXPECT_EQ(unexpectedScrollbars({}), "");
 	}
 
-	// Every tab, through the dialog's own tab bar.
-	TEST_F(SceneLayout, TheColonistDossierHoldsTogetherWithOnlyItsTabScrolling) {
+	// Every tab, through the dialog's own tab bar. The panel is its tallest tab's height, held on every tab, and inside
+	// the cap; the tab scrolls only where the cap holds the panel shorter than that.
+	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeOnEveryTabWithOnlyItsTabScrolling) {
 		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
 		ASSERT_TRUE(scene.hud().isColonistDetailsVisible());
+		const ui::Ref<ui::Rectangle> panel = dossierPanel();
+		ASSERT_NE(panel.get(), nullptr);
+		const float held = panel.get()->getSize().y;
+		EXPECT_LT(held, kDossierMaxHeightShare * app->scenes().top()->ui().getCanvas().y) << "pinned to the cap on the reference";
+		const ExpectedScrollbar tabScrolls{.id = "dossier_tab_area", .belowCanvasHeight = held / kDossierMaxHeightShare};
+		const auto				panelSizes = [this, &panel] {
+			 return everywhere([this, &panel](const WindowSize& window) {
+				 (void)app::lintAt(*app, *platform, window.width, window.height);
+				 const Foundation::Vec2	  canvas = app->scenes().top()->ui().getCanvas();
+				 const Foundation::Vec2	  size = panel.get()->getSize();
+				 std::vector<std::string> lines{std::format("{:g}x{:g}", size.x, size.y)};
+				 if (size.x > (kDossierMaxWidthShare * canvas.x) + 0.5F || size.y > (kDossierMaxHeightShare * canvas.y) + 0.5F) {
+					 lines.push_back(std::format("past the cap on a {:g}x{:g} canvas", canvas.x, canvas.y));
+				 }
+				 return lines;
+			 });
+		};
+		std::string									firstSizes;
 		static constexpr std::array<const char*, 8> kTabs{
 			"dossier_bio",
 			"dossier_needs",
@@ -327,10 +361,34 @@ namespace world_sim::testing {
 			if (const auto rows = kRowIds.find(tab); rows != kRowIds.end()) {
 				ASSERT_GT(shownCount(rows->second), 0U) << "no rows on the " << tab << " tab";
 			}
+			const std::string sizes = panelSizes();
+			EXPECT_EQ(sizes.find("past the cap"), std::string::npos) << sizes;
+			if (firstSizes.empty()) {
+				firstSizes = sizes;
+			} else {
+				EXPECT_EQ(sizes, firstSizes) << "the panel moved on the " << tab << " tab";
+			}
 			EXPECT_EQ(lintEverywhere(), "") << "on the " << tab << " tab";
-			EXPECT_EQ(unexpectedScrollbars({{.id = "dossier_tab_area"}}), "") << "on the " << tab << " tab";
+			EXPECT_EQ(unexpectedScrollbars({tabScrolls}), "") << "on the " << tab << " tab";
 			EXPECT_TRUE(scene.hud().isColonistDetailsVisible()) << "after the sizes on the " << tab << " tab";
 		}
+	}
+
+	// New gear under the open dossier adds rows to its Gear tab and leaves the panel as it opened.
+	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeAsItsColonistChanges) {
+		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
+		press("tab_dossier_gear");
+		const ui::Ref<ui::Rectangle> panel = dossierPanel();
+		ASSERT_NE(panel.get(), nullptr);
+		const Foundation::Vec2 opened = panel.get()->getSize();
+		const std::size_t	   rows = shownCount("gear_pack_row");
+		ASSERT_EQ(scene.ecsWorld().getComponent<ecs::Inventory>(scene.entities().colonist)->addItem("AxePrimitive", 1), 1U);
+		for (int tick = 0; tick < kModelFillFrames; ++tick) {
+			frame();
+		}
+		EXPECT_GT(shownCount("gear_pack_row"), rows);
+		EXPECT_EQ(panel.get()->getSize().x, opened.x);
+		EXPECT_EQ(panel.get()->getSize().y, opened.y);
 	}
 
 	TEST_F(SceneLayout, TheCraftingDialogHoldsTogether) {

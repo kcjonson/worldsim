@@ -2,8 +2,9 @@
 
 // ColonistDetailsDialog - a colonist's dossier, a non-modal ui::Dialog: a header band (the Avatar and a
 // 2x2 Stat grid) over eight tabs, Bio, Needs, Skills, Social, Gear, Memory, Tasks and Log, and a footer
-// of Close, Work Priorities and Draft. Only the selected tab's view is mounted. The game runs on while
-// it is open, and update() feeds it from the world every frame.
+// of Close, Work Priorities and Draft. Only the selected tab's view is mounted. It is 760 wide and as tall
+// as its tallest tab needs, measured each time it opens and held while open. The game runs on while it is
+// open, and update() feeds it from the world every frame.
 
 #include "ColonistDetailsModel.h"
 #include "tabs/BioTabView.h"
@@ -56,6 +57,8 @@ namespace world_sim {
 	  private:
 		void build(ui::Dialog& shown);
 		void showTab(const std::string& tabId);
+		void mountTab(const std::string& tabId);
+		void sizeToContent();
 		void showHeader();
 		void feedTab();
 		void closed();
