@@ -74,6 +74,47 @@ class ConstructionRegistryTest : public ::testing::Test {
 		return path.string();
 	}
 
+	// Loads the real materials and constraints with `snappingXml` as snapping.xml.
+	bool validateWithSnapping(const std::string& snappingXml) {
+		ConstructionRegistry::Get().clear(); // a second materials load is all duplicates
+		EXPECT_TRUE(ConstructionRegistry::Get().loadSnapping(writeTempFile(snappingXml, ".xml")));
+
+		const std::filesystem::path folder = constructionConfigFolder();
+		ConstructionRegistry::Get().loadMaterials((folder / "materials.xml").string());
+		ConstructionRegistry::Get().loadConstraints((folder / "constraints.xml").string());
+		return ConfigValidator::validateConstruction();
+	}
+
+	// True when some validation error's message mentions `text` (a config key, a bad token).
+	static bool errorMentions(const std::string& text) {
+		for (const ValidationError& error : ConfigValidator::getErrors()) {
+			if (error.message.find(text) != std::string::npos) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// Validation must fail with an error naming `key`; leaves the error list clean.
+	void expectSnappingRejected(const std::string& element, const std::string& key) {
+		const std::string xml = "<?xml version=\"1.0\"?>\n<ConstructionSnapping>" + element + "</ConstructionSnapping>";
+		EXPECT_FALSE(validateWithSnapping(xml)) << key;
+		EXPECT_TRUE(errorMentions(key)) << "no validation error names " << key;
+		ConfigValidator::clearErrors();
+	}
+
+	// Loads the real files, then `element` as the Preview block of rendering.xml.
+	void expectLookRejected(const std::string& element, const std::string& key) {
+		ConstructionRegistry::Get().clear();
+		ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+		const std::string xml =
+			"<?xml version=\"1.0\"?>\n<ConstructionRendering><Preview>" + element + "</Preview></ConstructionRendering>";
+		ASSERT_TRUE(ConstructionRegistry::Get().loadRendering(writeTempFile(xml, ".xml")));
+		EXPECT_FALSE(ConfigValidator::validateConstruction()) << key;
+		EXPECT_TRUE(errorMentions(key)) << "no validation error names " << key;
+		ConfigValidator::clearErrors();
+	}
+
 	std::vector<std::string> tempFiles;
 };
 
@@ -109,6 +150,27 @@ TEST_F(ConstructionRegistryTest, Rendering_RealFileValues) {
 	EXPECT_FLOAT_EQ(r.opening.jambWidth, 0.11F);
 	EXPECT_FLOAT_EQ(r.opening.mullionSpacingMeters, 0.7F);
 	EXPECT_FLOAT_EQ(r.preview.vertexRadiusPx, 4.0F);
+
+	EXPECT_EQ(r.preview.guideLineStyle, GuideLineStyle::Dotted);
+	EXPECT_FLOAT_EQ(r.preview.guideWidth, 1.0F);
+	EXPECT_FLOAT_EQ(r.preview.guideDashPx, 1.0F);
+	EXPECT_FLOAT_EQ(r.preview.guideGapPx, 4.5F);
+	EXPECT_FLOAT_EQ(r.preview.guideOpacity, 0.6F);
+	EXPECT_FLOAT_EQ(r.preview.markerOpacity, 0.9F);
+	EXPECT_EQ(r.preview.guideColorMode, GuideColorMode::One);
+	EXPECT_NEAR(r.preview.guideColor.r, 0xB3 / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColor.g, 0xD9 / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColor.b, 0xFF / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColorShape.r, 0x8C / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColorNearby.g, 0xAD / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColorWorld.b, 0xA6 / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColorLength.g, 0x9A / 255.0F, 0.001F);
+	EXPECT_EQ(r.preview.guideDistanceDecimals, 2);
+	EXPECT_FLOAT_EQ(r.preview.guideLabelPx, 11.0F);
+	EXPECT_EQ(r.preview.angleReadoutDecimals, 1);
+	EXPECT_FLOAT_EQ(r.preview.rightAngleMarkerPx, 8.0F);
+	EXPECT_FLOAT_EQ(r.preview.guideCrossingDotPx, 3.0F);
+	EXPECT_FLOAT_EQ(r.preview.cursorRadiusPx, 6.0F);
 
 	// Glass color parsed from "#8FCCF2B8" (0x8F/255 ~= 0.56, 0xB8/255 ~= 0.72).
 	EXPECT_NEAR(r.opening.glassColor.r, 0.56F, 0.01F);
@@ -226,11 +288,232 @@ TEST_F(ConstructionRegistryTest, Snapping_Parsed) {
 	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
 
 	const auto& s = ConstructionRegistry::Get().snapping();
-	EXPECT_GT(s.angleIncrementDegrees, 0.0F);
 	EXPECT_GT(s.vertexSnapRadiusMeters, 0.0F);
 	EXPECT_GT(s.edgeSnapRadiusMeters, 0.0F);
-	EXPECT_GT(s.smartGuideRangeMeters, 0.0F);
-	EXPECT_GT(s.originCloseRadiusMeters, 0.0F);
+	EXPECT_FLOAT_EQ(s.angleIncrementDegrees, 15.0F);
+	EXPECT_FLOAT_EQ(s.originCloseRadiusMeters, 0.5F);
+
+	EXPECT_FLOAT_EQ(s.guideRangeMeters, 8.0F);
+	EXPECT_FLOAT_EQ(s.guideToleranceMeters, 0.3F);
+	EXPECT_FLOAT_EQ(s.guideCrossingRadiusMeters, 1.0F);
+	EXPECT_FLOAT_EQ(s.guideDirectionToleranceDegrees, 1.0F);
+	EXPECT_EQ(s.nearbyGuideDirectionLimit, 4);
+	EXPECT_EQ(s.guideCornerLimit, 16);
+
+	EXPECT_TRUE(s.tieAngleWindowToStep);
+	EXPECT_FLOAT_EQ(s.guideAngleWindowDegrees, 7.5F);
+	EXPECT_TRUE(s.tieCrossingAngleToStep);
+	EXPECT_FLOAT_EQ(s.guideCrossingMinAngleDegrees, 15.0F);
+	EXPECT_TRUE(s.tieMergeDistanceToTolerance);
+	EXPECT_FLOAT_EQ(s.guideMergeDistanceMeters, 0.3F);
+	EXPECT_FLOAT_EQ(s.effectiveGuideAngleWindowDegrees(), 7.5F);
+	EXPECT_FLOAT_EQ(s.effectiveGuideCrossingMinAngleDegrees(), 15.0F);
+	EXPECT_FLOAT_EQ(s.effectiveGuideMergeDistanceMeters(), 0.3F);
+
+	EXPECT_EQ(s.priorityRule, GuidePriorityRule::SourceFirst);
+
+	EXPECT_TRUE(s.commonLengthSourceBuildings);
+	EXPECT_TRUE(s.commonLengthSourceShape);
+	EXPECT_FLOAT_EQ(s.commonLengthRangeMeters, 30.0F);
+	EXPECT_FALSE(s.commonLengthAllBuildings);
+	EXPECT_FLOAT_EQ(s.commonLengthCatchMeters, 0.3F);
+	EXPECT_FLOAT_EQ(s.commonLengthMergeMeters, 0.05F);
+	EXPECT_EQ(s.commonLengthMaxCount, 6);
+	EXPECT_FLOAT_EQ(s.commonLengthMinimumMeters, 0.5F);
+	EXPECT_TRUE(s.commonLengthAfterRawCursor);
+	EXPECT_FALSE(s.commonLengthBeatsCrossing);
+	EXPECT_TRUE(s.commonLengthWallsReadInsetFoundation);
+
+	EXPECT_FLOAT_EQ(s.lengthIncrementMeters, 0.1F);
+	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::GuideDistance);
+	EXPECT_TRUE(s.rectangleAdjacencySnaps);
+
+	// Today's behaviour: angle steps, world-axis guides, and align on; the rest off.
+	const DrawingSettingsDefaults& d = s.drawingSettingsDefaults;
+	EXPECT_TRUE(d.angleSteps);
+	EXPECT_FALSE(d.guidesFromShape);
+	EXPECT_TRUE(d.alignToExistingBuildings);
+	EXPECT_TRUE(d.guidesFromWorldAxes);
+	EXPECT_FALSE(d.guideCrossings);
+	EXPECT_FALSE(d.commonLengths);
+	EXPECT_FALSE(d.guideDistances);
+	EXPECT_FALSE(d.angleReadout);
+	EXPECT_FALSE(d.roundLengths);
+	EXPECT_FALSE(d.showKeyGuide);
+	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, 1.0F);
+}
+
+// Every key the drawing-tools change added or renamed, set away from its default, so a
+// misspelled tag in the loader or the shipped XML can't pass by keeping the default.
+TEST_F(ConstructionRegistryTest, Snapping_EveryNewKeyParses) {
+	const std::string xml = R"(<?xml version="1.0"?>
+<ConstructionSnapping>
+  <angleIncrementDegrees>10.0</angleIncrementDegrees>
+  <guideRangeMeters>6.0</guideRangeMeters>
+  <guideToleranceMeters>0.4</guideToleranceMeters>
+  <guideCrossingRadiusMeters>1.5</guideCrossingRadiusMeters>
+  <guideDirectionToleranceDegrees>2.0</guideDirectionToleranceDegrees>
+  <nearbyGuideDirectionLimit>3</nearbyGuideDirectionLimit>
+  <guideCornerLimit>12</guideCornerLimit>
+  <tieAngleWindowToStep>false</tieAngleWindowToStep>
+  <guideAngleWindowDegrees>30.0</guideAngleWindowDegrees>
+  <tieCrossingAngleToStep>false</tieCrossingAngleToStep>
+  <guideCrossingMinAngleDegrees>25.0</guideCrossingMinAngleDegrees>
+  <tieMergeDistanceToTolerance>false</tieMergeDistanceToTolerance>
+  <guideMergeDistanceMeters>0.2</guideMergeDistanceMeters>
+  <priorityRule>closest</priorityRule>
+  <commonLengthSourceBuildings>false</commonLengthSourceBuildings>
+  <commonLengthSourceShape>false</commonLengthSourceShape>
+  <commonLengthRangeMeters>20.0</commonLengthRangeMeters>
+  <commonLengthAllBuildings>true</commonLengthAllBuildings>
+  <commonLengthCatchMeters>0.2</commonLengthCatchMeters>
+  <commonLengthMergeMeters>0.1</commonLengthMergeMeters>
+  <commonLengthMaxCount>4</commonLengthMaxCount>
+  <commonLengthMinimumMeters>0.4</commonLengthMinimumMeters>
+  <commonLengthAfterRawCursor>false</commonLengthAfterRawCursor>
+  <commonLengthBeatsCrossing>true</commonLengthBeatsCrossing>
+  <commonLengthWallsReadInsetFoundation>false</commonLengthWallsReadInsetFoundation>
+  <lengthIncrementMeters>0.25</lengthIncrementMeters>
+  <lengthRoundingOnGuides>segmentLength</lengthRoundingOnGuides>
+  <rectangleAdjacencySnaps>false</rectangleAdjacencySnaps>
+  <DrawingSettingsDefaults>
+    <angleSteps>false</angleSteps>
+    <guidesFromShape>true</guidesFromShape>
+    <alignToExistingBuildings>false</alignToExistingBuildings>
+    <guidesFromWorldAxes>false</guidesFromWorldAxes>
+    <guideCrossings>true</guideCrossings>
+    <commonLengths>true</commonLengths>
+    <guideDistances>true</guideDistances>
+    <angleReadout>true</angleReadout>
+    <roundLengths>true</roundLengths>
+    <showKeyGuide>true</showKeyGuide>
+    <rectangleGridSpacingMeters>0.5</rectangleGridSpacingMeters>
+  </DrawingSettingsDefaults>
+</ConstructionSnapping>)";
+	ASSERT_TRUE(validateWithSnapping(xml)) << "a non-default set that fails validation proves nothing";
+
+	const auto& s = ConstructionRegistry::Get().snapping();
+	EXPECT_FLOAT_EQ(s.angleIncrementDegrees, 10.0F);
+	EXPECT_FLOAT_EQ(s.guideRangeMeters, 6.0F);
+	EXPECT_FLOAT_EQ(s.guideToleranceMeters, 0.4F);
+	EXPECT_FLOAT_EQ(s.guideCrossingRadiusMeters, 1.5F);
+	EXPECT_FLOAT_EQ(s.guideDirectionToleranceDegrees, 2.0F);
+	EXPECT_EQ(s.nearbyGuideDirectionLimit, 3);
+	EXPECT_EQ(s.guideCornerLimit, 12);
+
+	EXPECT_FALSE(s.tieAngleWindowToStep);
+	EXPECT_FLOAT_EQ(s.guideAngleWindowDegrees, 30.0F);
+	EXPECT_FLOAT_EQ(s.effectiveGuideAngleWindowDegrees(), 30.0F);
+	EXPECT_FALSE(s.tieCrossingAngleToStep);
+	EXPECT_FLOAT_EQ(s.guideCrossingMinAngleDegrees, 25.0F);
+	EXPECT_FLOAT_EQ(s.effectiveGuideCrossingMinAngleDegrees(), 25.0F);
+	EXPECT_FALSE(s.tieMergeDistanceToTolerance);
+	EXPECT_FLOAT_EQ(s.guideMergeDistanceMeters, 0.2F);
+	EXPECT_FLOAT_EQ(s.effectiveGuideMergeDistanceMeters(), 0.2F);
+
+	EXPECT_EQ(s.priorityRule, GuidePriorityRule::Closest);
+
+	EXPECT_FALSE(s.commonLengthSourceBuildings);
+	EXPECT_FALSE(s.commonLengthSourceShape);
+	EXPECT_FLOAT_EQ(s.commonLengthRangeMeters, 20.0F);
+	EXPECT_TRUE(s.commonLengthAllBuildings);
+	EXPECT_FLOAT_EQ(s.commonLengthCatchMeters, 0.2F);
+	EXPECT_FLOAT_EQ(s.commonLengthMergeMeters, 0.1F);
+	EXPECT_EQ(s.commonLengthMaxCount, 4);
+	EXPECT_FLOAT_EQ(s.commonLengthMinimumMeters, 0.4F);
+	EXPECT_FALSE(s.commonLengthAfterRawCursor);
+	EXPECT_TRUE(s.commonLengthBeatsCrossing);
+	EXPECT_FALSE(s.commonLengthWallsReadInsetFoundation);
+
+	EXPECT_FLOAT_EQ(s.lengthIncrementMeters, 0.25F);
+	EXPECT_EQ(s.lengthRoundingOnGuides, GuideRounding::SegmentLength);
+	EXPECT_FALSE(s.rectangleAdjacencySnaps);
+
+	const DrawingSettingsDefaults& d = s.drawingSettingsDefaults;
+	EXPECT_FALSE(d.angleSteps);
+	EXPECT_TRUE(d.guidesFromShape);
+	EXPECT_FALSE(d.alignToExistingBuildings);
+	EXPECT_FALSE(d.guidesFromWorldAxes);
+	EXPECT_TRUE(d.guideCrossings);
+	EXPECT_TRUE(d.commonLengths);
+	EXPECT_TRUE(d.guideDistances);
+	EXPECT_TRUE(d.angleReadout);
+	EXPECT_TRUE(d.roundLengths);
+	EXPECT_TRUE(d.showKeyGuide);
+	EXPECT_FLOAT_EQ(d.rectangleGridSpacingMeters, 0.5F);
+}
+
+TEST_F(ConstructionRegistryTest, Rendering_EveryNewPreviewKeyParses) {
+	const std::string xml = R"(<?xml version="1.0"?>
+<ConstructionRendering>
+  <Preview>
+    <guideWidth>2.5</guideWidth>
+    <guideLineStyle>solid</guideLineStyle>
+    <guideDashPx>3.0</guideDashPx>
+    <guideGapPx>6.0</guideGapPx>
+    <guideOpacity>0.35</guideOpacity>
+    <markerOpacity>0.75</markerOpacity>
+    <guideColorMode>bySource</guideColorMode>
+    <guideColorShape>#10203080</guideColorShape>
+    <guideColorNearby>#40506090</guideColorNearby>
+    <guideColorWorld>#708090A0</guideColorWorld>
+    <guideColorLength>#B0C0D0C0</guideColorLength>
+    <guideDistanceDecimals>3</guideDistanceDecimals>
+    <guideLabelPx>13.0</guideLabelPx>
+    <angleReadoutDecimals>2</angleReadoutDecimals>
+    <rightAngleMarkerPx>10.0</rightAngleMarkerPx>
+    <guideCrossingDotPx>5.0</guideCrossingDotPx>
+    <cursorRadiusPx>9.0</cursorRadiusPx>
+  </Preview>
+</ConstructionRendering>)";
+	ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder().string()));
+	ASSERT_TRUE(ConstructionRegistry::Get().loadRendering(writeTempFile(xml, ".xml")));
+	EXPECT_TRUE(ConfigValidator::validateConstruction()) << "a non-default set that fails validation proves nothing";
+
+	const auto& p = ConstructionRegistry::Get().rendering().preview;
+	const auto	expectColor = [](const StyleColor& c, int r, int g, int b, int a) {
+		EXPECT_NEAR(c.r, r / 255.0F, 0.001F);
+		EXPECT_NEAR(c.g, g / 255.0F, 0.001F);
+		EXPECT_NEAR(c.b, b / 255.0F, 0.001F);
+		EXPECT_NEAR(c.a, a / 255.0F, 0.001F);
+	};
+
+	EXPECT_FLOAT_EQ(p.guideWidth, 2.5F);
+	EXPECT_EQ(p.guideLineStyle, GuideLineStyle::Solid);
+	EXPECT_FLOAT_EQ(p.guideDashPx, 3.0F);
+	EXPECT_FLOAT_EQ(p.guideGapPx, 6.0F);
+	EXPECT_FLOAT_EQ(p.guideOpacity, 0.35F);
+	EXPECT_FLOAT_EQ(p.markerOpacity, 0.75F);
+	EXPECT_EQ(p.guideColorMode, GuideColorMode::BySource);
+	expectColor(p.guideColorShape, 0x10, 0x20, 0x30, 0x80);
+	expectColor(p.guideColorNearby, 0x40, 0x50, 0x60, 0x90);
+	expectColor(p.guideColorWorld, 0x70, 0x80, 0x90, 0xA0);
+	expectColor(p.guideColorLength, 0xB0, 0xC0, 0xD0, 0xC0);
+	EXPECT_EQ(p.guideDistanceDecimals, 3);
+	EXPECT_FLOAT_EQ(p.guideLabelPx, 13.0F);
+	EXPECT_EQ(p.angleReadoutDecimals, 2);
+	EXPECT_FLOAT_EQ(p.rightAngleMarkerPx, 10.0F);
+	EXPECT_FLOAT_EQ(p.guideCrossingDotPx, 5.0F);
+	EXPECT_FLOAT_EQ(p.cursorRadiusPx, 9.0F);
+}
+
+// An enum token naming no listed value keeps the default and fails validation, naming the
+// key and the token; an absent element just takes the default.
+TEST_F(ConstructionRegistryTest, Validation_RejectsUnknownEnumTokens) {
+	expectSnappingRejected("<priorityRule>nearest</priorityRule>", "priorityRule has unknown value 'nearest'");
+	EXPECT_EQ(ConstructionRegistry::Get().snapping().priorityRule, GuidePriorityRule::SourceFirst);
+	expectSnappingRejected(
+		"<lengthRoundingOnGuides>rounded</lengthRoundingOnGuides>", "lengthRoundingOnGuides has unknown value 'rounded'"
+	);
+	EXPECT_EQ(ConstructionRegistry::Get().snapping().lengthRoundingOnGuides, GuideRounding::GuideDistance);
+
+	expectLookRejected("<guideLineStyle>wavy</guideLineStyle>", "guideLineStyle has unknown value 'wavy'");
+	EXPECT_EQ(ConstructionRegistry::Get().rendering().preview.guideLineStyle, GuideLineStyle::Dotted);
+	expectLookRejected("<guideColorMode>rainbow</guideColorMode>", "guideColorMode has unknown value 'rainbow'");
+	EXPECT_EQ(ConstructionRegistry::Get().rendering().preview.guideColorMode, GuideColorMode::One);
+
+	EXPECT_TRUE(validateWithSnapping("<?xml version=\"1.0\"?>\n<ConstructionSnapping></ConstructionSnapping>"));
+	EXPECT_EQ(ConstructionRegistry::Get().snapping().priorityRule, GuidePriorityRule::SourceFirst);
 }
 
 TEST_F(ConstructionRegistryTest, MmConversions_Correct) {
@@ -423,19 +706,37 @@ TEST_F(ConstructionRegistryTest, Validation_RejectsNegativeSnapRadius) {
   <angleIncrementDegrees>15.0</angleIncrementDegrees>
   <vertexSnapRadiusMeters>-0.1</vertexSnapRadiusMeters>
   <edgeSnapRadiusMeters>0.3</edgeSnapRadiusMeters>
-  <smartGuideRangeMeters>8.0</smartGuideRangeMeters>
+  <guideRangeMeters>8.0</guideRangeMeters>
   <originCloseRadiusMeters>0.5</originCloseRadiusMeters>
 </ConstructionSnapping>)";
 
-	std::string path = writeTempFile(xml, ".xml");
-	ASSERT_TRUE(ConstructionRegistry::Get().loadSnapping(path));
-
-	std::string folder = constructionConfigFolder().string();
-	ConstructionRegistry::Get().loadMaterials((std::filesystem::path(folder) / "materials.xml").string());
-	ConstructionRegistry::Get().loadConstraints((std::filesystem::path(folder) / "constraints.xml").string());
-
-	EXPECT_FALSE(ConfigValidator::validateConstruction());
+	EXPECT_FALSE(validateWithSnapping(xml));
 	EXPECT_GT(ConfigValidator::getErrorCount(), 0);
+}
+
+// One rejection per kind of bound on the guide, length, and look keys.
+TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeGuideAndLengthKeys) {
+	expectSnappingRejected("<guideToleranceMeters>0</guideToleranceMeters>", "guideToleranceMeters");
+	expectSnappingRejected("<commonLengthCatchMeters>-0.1</commonLengthCatchMeters>", "commonLengthCatchMeters");
+	expectSnappingRejected(
+		"<tieAngleWindowToStep>false</tieAngleWindowToStep><guideAngleWindowDegrees>90</guideAngleWindowDegrees>",
+		"the angle catch window"
+	);
+	expectSnappingRejected("<guideCornerLimit>-1</guideCornerLimit>", "guideCornerLimit");
+	expectSnappingRejected("<commonLengthMergeMeters>0.6</commonLengthMergeMeters>", "commonLengthMergeMeters");
+	expectSnappingRejected(
+		"<DrawingSettingsDefaults><rectangleGridSpacingMeters>0.75</rectangleGridSpacingMeters></DrawingSettingsDefaults>",
+		"rectangleGridSpacingMeters"
+	);
+	// With the angle window tied to the 15 degree step it is 7.5, so 8 is not below it.
+	expectSnappingRejected("<guideDirectionToleranceDegrees>8</guideDirectionToleranceDegrees>", "guideDirectionToleranceDegrees");
+	expectSnappingRejected("<angleIncrementDegrees>100</angleIncrementDegrees>", "angleIncrementDegrees");
+}
+
+TEST_F(ConstructionRegistryTest, Validation_RejectsOutOfRangeLookKeys) {
+	expectLookRejected("<guideOpacity>1.5</guideOpacity>", "guideOpacity");
+	expectLookRejected("<guideLabelPx>0</guideLabelPx>", "guideLabelPx");
+	expectLookRejected("<guideDistanceDecimals>9</guideDistanceDecimals>", "guideDistanceDecimals");
 }
 
 TEST_F(ConstructionRegistryTest, LoadFromMissingFolder_ReturnsFalse) {

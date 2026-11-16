@@ -295,7 +295,7 @@ namespace construction {
 
 	SnapResult SnapEngine::axisAlign(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor,
 									 bool alignToExisting) const {
-		const float tol = snapping_->axisGuideToleranceMeters;
+		const float tol = snapping_->guideToleranceMeters;
 		if (tol <= 0.0F) {
 			return {cursor, SnapKind::None};
 		}
@@ -328,9 +328,9 @@ namespace construction {
 		for (const ::Foundation::Vec2& p : points) {
 			consider(p);
 		}
-		// Committed-foundation vertices within smartGuideRange of the cursor, opt-in.
+		// Committed-foundation vertices within guideRange of the cursor, opt-in.
 		if (alignToExisting) {
-			const float range = snapping_->smartGuideRangeMeters;
+			const float range = snapping_->guideRangeMeters;
 			const float rangeSq = range * range; // squared compare avoids a per-vertex sqrt
 			for (const Foundation& f : world_->foundations()) {
 				for (const geometry::Vec2i64& vq : f.ring) {

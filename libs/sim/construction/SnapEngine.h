@@ -214,10 +214,10 @@ namespace construction {
 		// preserved.
 		[[nodiscard]] SnapResult snapAngle(const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor) const;
 
-		// Axis alignment: if the cursor lines up (within axisGuideTolerance) on X and/or
+		// Axis alignment: if the cursor lines up (within guideTolerance) on X and/or
 		// Y with a reference node, snap that axis onto the node and report a guide line
 		// through it. Reference nodes are the in-progress `points` plus, when
-		// `alignToExisting`, committed-foundation vertices within smartGuideRange of the
+		// `alignToExisting`, committed-foundation vertices within guideRange of the
 		// cursor. Returns a SnapResult of kind AxisGuide when at least one axis aligns
 		// (the un-aligned axis keeps the raw cursor), else kind None.
 		[[nodiscard]] SnapResult

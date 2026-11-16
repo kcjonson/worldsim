@@ -166,7 +166,7 @@ TEST(SnapEngine, SnapsToExistingEdge) {
 }
 
 // --- Axis-alignment guides ------------------------------------------------
-// Default axisGuideTolerance is 0.3 m, smartGuideRange 8.0 m (struct defaults).
+// Default guideTolerance is 0.3 m, guideRange 8.0 m (struct defaults).
 
 TEST(SnapEngine, AxisAlignsXToInProgressNode) {
 	SnappingConfig	  cfg = defaults();
@@ -250,7 +250,7 @@ TEST(SnapEngine, AxisAlignTogglesCommittedFoundationTargets) {
 }
 
 TEST(SnapEngine, AxisAlignCommittedRespectsRange) {
-	SnappingConfig	  cfg = defaults(); // smartGuideRange 8.0 m
+	SnappingConfig	  cfg = defaults(); // guideRange 8.0 m
 	ConstructionWorld world;
 	std::vector<Vec2> sq = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}};
 	ASSERT_TRUE(world.commitFoundation(sq, "Wood").ok());

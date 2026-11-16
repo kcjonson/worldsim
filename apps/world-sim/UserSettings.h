@@ -21,14 +21,14 @@ namespace world_sim {
 
 		// Whether construction alignment guides also snap to the corners of existing
 		// (committed) foundations. The in-progress shape's own nodes are always guide
-		// targets regardless. Default comes from snapping.xml (alignToExistingDefault),
+		// targets regardless. Default comes from snapping.xml (DrawingSettingsDefaults),
 		// read once when this singleton is first touched.
 		bool alignSnapToExistingFoundations;
 
 	  private:
 		UserSettings()
 			: alignSnapToExistingFoundations(
-				  assets::ConstructionRegistry::Get().snapping().alignToExistingDefault) {}
+				  assets::ConstructionRegistry::Get().snapping().drawingSettingsDefaults.alignToExistingBuildings) {}
 	};
 
 } // namespace world_sim
