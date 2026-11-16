@@ -12,7 +12,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>batched</tier>
     </rendering>
 
     <variantCount>1</variantCount>
@@ -27,7 +26,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>batched</tier>
     </rendering>
 
     <variantCount>1</variantCount>

@@ -44,8 +44,6 @@
     <rendering>
       <!-- Trees are complex assets (individual tessellation) -->
       <complexity>complex</complexity>
-      <!-- Batched rendering for multiple variants -->
-      <tier>batched</tier>
     </rendering>
 
     <!-- No animation for now (trees sway is future work) -->

@@ -197,7 +197,6 @@ flora/Daisy/
 
   <rendering>
     <complexity>simple</complexity>
-    <tier>instanced</tier>
   </rendering>
 
   <!-- ... placement, animation ... -->
@@ -473,7 +472,6 @@ flora/Tree/
     <assetType>procedural</assetType>
     <rendering>
       <complexity>complex</complexity>
-      <tier>batched</tier>
     </rendering>
   </AssetDef>
 

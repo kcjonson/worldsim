@@ -13,7 +13,6 @@
 
     <rendering>
       <complexity>simple</complexity>
-      <tier>batched</tier>
     </rendering>
 
     <!-- Item category: this is furniture -->
