@@ -562,7 +562,7 @@ Foundations, wall segments, and openings are first-class selectable entities, in
 
 Clicking again in the same spot cycles down the stack (click a door, click again to get the wall, again for the foundation). Standard colony-game behavior, and it resolves the "everything is stacked on a foundation" problem without modifier gymnastics.
 
-**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
+**Multi-select:** Shift-click adds to the selection. Mixed selections reduce the action set to what's shared (e.g., Demolish). Double-clicking a wall segment (not built yet; the world input has no double-click) selects the whole connected run of the same material and thickness, the common case for "demolish this wall, all of it."
 
 ### Selection Visuals
 
