@@ -37,9 +37,9 @@ namespace {
 
 int main(int argc, char* argv[]) {
 	const app::CommandLine commandLine = app::parseCommandLine(argc, argv);
-	const bool noSettings = std::ranges::any_of(std::span(argv, static_cast<std::size_t>(argc)).subspan(1), [](const char* argument) {
-		return argument == kNoSettingsFlag;
-	});
+	const std::span<char*> arguments(argv, static_cast<std::size_t>(std::max(argc, 0)));
+	const bool			   noSettings =
+		!arguments.empty() && std::ranges::any_of(arguments.subspan(1), [](const char* argument) { return argument == kNoSettingsFlag; });
 	if (commandLine.help) {
 		std::printf("Usage: %s [options]\n", kTitle);
 		std::printf("Options:\n");
@@ -83,6 +83,11 @@ int main(int argc, char* argv[]) {
 	);
 	if (app == nullptr) {
 		return 1;
+	}
+	// A hand-edited ui.scale between stops snaps to one, so Settings shows the scale the interface is at.
+	const float interfaceSize = theme::kInterfaceSizes.at(theme::nearestInterfaceSize(app->uiScale()));
+	if (interfaceSize != app->uiScale()) {
+		app->setUiScale(interfaceSize);
 	}
 
 	world_sim::initializeResources(*app, commandLine.scene.has_value());

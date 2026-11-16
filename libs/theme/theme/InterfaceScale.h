@@ -2,8 +2,8 @@
 
 // Interface scaling's numbers, which every app's main and any test App run through: a ui px is a pixel on a
 // 1600 x 1000 screen (the prototype's stage), the scale never under 0.8, the player's interface size 60 to 120% in
-// steps of 10, and a window of at least 1280 x 720 device pixels, which is what keeps the floor at 0.8. No frame:
-// the play area takes whatever room the window has.
+// steps of 10, and a window of at least 1280 x 720 device pixels, so the canvas is at least 1600 x 900 ui px at the
+// floor (1481 x 833 at the largest size). No frame: the play area takes whatever room the window has.
 
 #include <DevServer/DevServer.h>
 #include <application/AppConfig.h>
@@ -35,11 +35,13 @@ namespace theme {
 		};
 	}
 
-	// The stop in kInterfaceSizes nearest a factor, so a saved value between stops shows as the closest one.
+	// The stop in kInterfaceSizes nearest a factor, a value halfway between two going to the larger. The tolerance
+	// absorbs the stops' float rounding, which makes 0.65 a tie as much as 0.75 is.
 	[[nodiscard]] inline std::size_t nearestInterfaceSize(float factor) {
-		std::size_t nearest = 0;
+		constexpr float kTieTolerance = 1e-4F;
+		std::size_t		nearest = 0;
 		for (std::size_t i = 1; i < kInterfaceSizes.size(); ++i) {
-			if (std::abs(kInterfaceSizes[i] - factor) < std::abs(kInterfaceSizes[nearest] - factor)) {
+			if (std::abs(kInterfaceSizes[i] - factor) <= std::abs(kInterfaceSizes[nearest] - factor) + kTieTolerance) {
 				nearest = i;
 			}
 		}

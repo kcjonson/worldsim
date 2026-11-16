@@ -17,6 +17,9 @@ namespace theme {
 		}
 		EXPECT_FLOAT_EQ(kInterfaceSizes.at(nearestInterfaceSize(1.04F)), 1.0F);
 		EXPECT_FLOAT_EQ(kInterfaceSizes.at(nearestInterfaceSize(1.07F)), 1.1F);
+		EXPECT_FLOAT_EQ(kInterfaceSizes.at(nearestInterfaceSize(0.75F)), 0.8F);
+		EXPECT_FLOAT_EQ(kInterfaceSizes.at(nearestInterfaceSize(0.65F)), 0.7F);
+		EXPECT_FLOAT_EQ(kInterfaceSizes.at(nearestInterfaceSize(1.15F)), 1.2F);
 		EXPECT_EQ(nearestInterfaceSize(0.1F), 0U);
 		EXPECT_EQ(nearestInterfaceSize(3.0F), kInterfaceSizes.size() - 1);
 	}
