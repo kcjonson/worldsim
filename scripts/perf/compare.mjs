@@ -9,6 +9,11 @@ export const kBenchMinShare = 0.05;   // a benchmark regressed: past the noise a
                                       // unchanged code differ by 2 to 3% from layout alone)
 export const kBenchMajorShare = 0.25; // major: slower by more than this share
 
+// A night's capture or benchmark file: <sha12>-<item>-<run>.json. An item's name can prefix another's
+// (river, river-cover), so a night's files are picked by the whole name, never a prefix.
+export const nightFileName = (sha, item, run) => `${sha.slice(0, 12)}-${item}-${run}.json`;
+export const isNightFile = (name, sha, item) => name.startsWith(`${sha.slice(0, 12)}-${item}-`) && /^\d+\.json$/.test(name.slice(sha.slice(0, 12).length + item.length + 2));
+
 const kTimings = ['frameTimeMs', 'p99Ms', 'gpuMs', 'tileGpuMs', 'tileMs', 'entityMs', 'updateMs', 'sceneUpdateMs', 'sceneRenderMs'];
 const kMajorTimings = ['frameTimeMs', 'gpuMs', 'tileGpuMs'];
 const kCounts = ['drawCalls', 'triangles', 'uprightDrawCalls', 'uprightTriangles', 'entityCount', 'chunks'];
