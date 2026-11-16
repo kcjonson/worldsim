@@ -392,18 +392,22 @@ namespace world_sim {
 			return;
 		}
 
-		auto&							registry = ConstructionRegistry::Get();
-		const ec::DrawingAids			aids = UserSettings::Get().drawingAids();
-		const ec::SnapEngine			snap(registry.snapping(), constructionWorld_);
-		lastSnap_ = snap.snap(
-			points_,
-			{world.x, world.y},
-			ec::SnapInput{.aids = aids, .freeform = freeform, .originCloseRadiusMeters = effectiveOriginCloseRadiusMeters()}
-		);
+		auto&			  registry = ConstructionRegistry::Get();
+		const SnapMemoKey key = snapMemoKey({world.x, world.y}, freeform, nullptr);
+		if (!reuseSnapMemo(key)) {
+			const ec::SnapEngine snap(registry.snapping(), constructionWorld_);
+			snapMemoResult_ = snap.snap(
+				points_,
+				key.cursorWorld,
+				ec::SnapInput{.aids = key.aids, .freeform = freeform, .originCloseRadiusMeters = effectiveOriginCloseRadiusMeters()}
+			);
+			const ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+			snapMemoValidation_ = editing ? validator.validateEditPoint(points_, snapMemoResult_.point)
+										  : validator.validatePoint(points_, snapMemoResult_.point);
+		}
+		lastSnap_ = snapMemoResult_;
 		cursor_ = lastSnap_.point;
-
-		const ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-		lastValidation_ = editing ? validator.validateEditPoint(points_, cursor_) : validator.validatePoint(points_, cursor_);
+		lastValidation_ = snapMemoValidation_;
 
 		// Live nav feedback: is the snapped cursor itself off buildable ground? Drives the
 		// red preview (see render). The commit gate re-checks the whole footprint regardless.
@@ -571,6 +575,32 @@ namespace world_sim {
 		const float scale = pixelsPerWorldMeter();
 		const float floorMeters = (scale > 0.0F) ? floorPx / scale : 0.0F;
 		return std::max(configMeters, floorMeters);
+	}
+
+	DrawingSystem::SnapMemoKey
+	DrawingSystem::snapMemoKey(Foundation::Vec2 cursorWorld, bool freeform, const assets::ThicknessPreset* preset) const {
+		return SnapMemoKey{
+			.tool = activeTool_,
+			.cursorWorld = cursorWorld,
+			.aids = UserSettings::Get().drawingAids(),
+			.worldVersion = constructionWorld_.version(),
+			.freeform = freeform,
+			.zoom = camera_ != nullptr ? camera_->zoom() : 0.0F,
+			.preset = preset,
+			.wallHost = wallHost_,
+			.editTarget = editTarget_,
+		};
+	}
+
+	bool DrawingSystem::reuseSnapMemo(const SnapMemoKey& key) {
+		if (snapMemoValid_ && key == snapMemoKey_ && points_ == snapMemoPoints_) {
+			return true;
+		}
+		snapMemoValid_ = true;
+		snapMemoKey_ = key;
+		snapMemoPoints_ = points_;
+		++snapEvaluationCount_;
+		return false;
 	}
 
 	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportW, int viewportH) const {
@@ -909,32 +939,36 @@ namespace world_sim {
 		// outer-face-flush alignment, so resolve the preset first. Without a preset (a
 		// material with no wall config) there is no thickness to measure: snap with no
 		// inset and skip validation below.
-		const auto*			  preset = activePreset();
-		const ec::DrawingAids aids = UserSettings::Get().drawingAids();
-		const ec::SnapEngine  snap(registry.snapping(), constructionWorld_);
-		lastSnap_ = snap.snapWall(
-			points_,
-			world,
-			ec::SnapInput{
-				.aids = aids,
-				.freeform = freeform,
-				.originCloseRadiusMeters = effectiveOriginCloseRadiusMeters(),
-				.wallHalfThicknessMm = preset != nullptr ? preset->halfThicknessMm : 0,
+		const auto*		  preset = activePreset();
+		const SnapMemoKey key = snapMemoKey(world, freeform, preset);
+		if (!reuseSnapMemo(key)) {
+			const ec::SnapEngine snap(registry.snapping(), constructionWorld_);
+			snapMemoResult_ = snap.snapWall(
+				points_,
+				world,
+				ec::SnapInput{
+					.aids = key.aids,
+					.freeform = freeform,
+					.originCloseRadiusMeters = effectiveOriginCloseRadiusMeters(),
+					.wallHalfThicknessMm = preset != nullptr ? preset->halfThicknessMm : 0,
+				}
+			);
+			snapMemoValidation_ = {};
+			if (preset != nullptr) {
+				// The host is the foundation the FIRST point landed on. For the live preview
+				// before the first click, probe the cursor's foundation so the colorize and
+				// readouts reflect where the chain would start.
+				ec::FoundationId host = wallHost_;
+				if (host == ec::kInvalidFoundation && points_.empty()) {
+					host = constructionWorld_.foundationAt(geometry::quantize(snapMemoResult_.point));
+				}
+				const ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+				snapMemoValidation_ = validator.validateWallPoint(points_, snapMemoResult_.point, *preset, host);
 			}
-		);
-		cursor_ = lastSnap_.point;
-		lastValidation_ = {};
-		if (preset != nullptr) {
-			// The host is the foundation the FIRST point landed on. For the live preview
-			// before the first click, probe the cursor's foundation so the colorize and
-			// readouts reflect where the chain would start.
-			ec::FoundationId host = wallHost_;
-			if (host == ec::kInvalidFoundation && points_.empty()) {
-				host = constructionWorld_.foundationAt(geometry::quantize(cursor_));
-			}
-			const ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-			lastValidation_ = validator.validateWallPoint(points_, cursor_, *preset, host);
 		}
+		lastSnap_ = snapMemoResult_;
+		cursor_ = lastSnap_.point;
+		lastValidation_ = snapMemoValidation_;
 
 		// Live nav feedback for the wall rubber-band: off-mesh cursor reads red (see
 		// renderWallChainPreview). The commit gate re-checks the whole chain regardless.
