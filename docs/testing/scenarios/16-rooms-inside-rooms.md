@@ -1,7 +1,7 @@
 # Scenario 16: Rooms inside rooms
 
 **Status:** draft  
-**Last verified:** not yet run
+**Last verified:** 2026-11-16 (steps 1 to 6 on a built foundation at other coordinates)
 
 A closed wall loop standing free inside another is its own room. Each keeps its own name, floor
 tint, outline, label, and click target, whichever loop was built first.
@@ -16,14 +16,13 @@ Fresh launch (Quick Start). Full launch and environment setup in [../README.md](
 
 ## Setup
 
-Turn reveal on (`/api/dev/reveal?on=1`) and frame the spot with
-`/api/control?action=camera&x=<X0+2.5>&y=<Y0+2.5>&zoom=3`. The ground near the landing is dotted with
-trees, and a wall loop is refused over one, so stand the loops on a built foundation, 20 x 7 m
-(`/api/dev/foundation?pts=12,-7;32,-7;32,0;12,0&material=Wood&built=1`, no colonist needed), then
-wait two seconds, since a loop stamped the instant it is built is refused. Its
-inside has room for 5 x 5 m twice, 10 m or more apart: the first spot's corner is `X0,Y0` = 14,-6 and
-the second's `X1,Y1` = 26,-6. No state view lists rooms; everything is read off
-the toasts, the overlay, and the room panel.
+Turn reveal on (`/api/dev/reveal?on=1`). The ground near the landing is dotted with trees, and a wall
+loop is refused over one, so stand the loops on a built foundation, 20 x 7 m
+(`/api/dev/foundation?pts=12,-7;32,-7;32,0;12,0&material=Wood&built=1`, no colonist needed), then wait
+two seconds, since a loop stamped the instant it is built is refused. Its inside has room for 5 x 5 m
+twice, 10 m or more apart: the first spot's corner is `X0,Y0` = 14,-6 and the second's `X1,Y1` = 26,-6.
+Frame the spot with `/api/control?action=camera&x=<X0+2.5>&y=<Y0+2.5>&zoom=3`. No state view lists
+rooms; everything is read off the toasts, the overlay, and the room panel.
 
 ---
 

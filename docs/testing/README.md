@@ -316,8 +316,8 @@ colonist can wade (a ford): `foundation`, `walls`, and `spawn` of a station or s
 refuse it as they refuse water, and those three answer a refusal as 400 `{"error":"..."}`, creating
 nothing. Trees, reeds, and loose items still spawn in a ford: putting one there builds nothing.
 
-A refused verb answers HTTP 400 with an `error` body, and a plain `curl` prints it without failing, so read
-every reply instead of assuming it ran.
+A plain `curl` prints a 400's body without failing, so read every reply. Other verbs (`teleport`, `give`,
+`colonist`, `kill`) answer `ok` even when they did nothing, so check the state view after each.
 
 | Verb | Key params | Notes |
 |------|-----------|-------|

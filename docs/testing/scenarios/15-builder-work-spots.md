@@ -18,9 +18,9 @@ Fresh launch (Quick Start). Full launch and environment setup in [../README.md](
 ## Setup
 
 Pause (`/api/control?action=pause`; dev verbs still run) so nobody wanders off while you set up, and
-read every dev reply: a refusal is HTTP 400 with an `error` body. Use the open ground near the
-landing, which the colonists have meshed (the foundation verb refuses ground they have not): corners
-`FX0,FY0` = 12,0 and `FX1,FY1` = 16,5, 4 x 5 m.
+read every dev reply, checking `what=colonists` after the teleports and gives (those answer `ok` even
+when they did nothing). Use the open ground near the landing, which the colonists have meshed (the
+foundation verb refuses ground they have not): corners `FX0,FY0` = 12,0 and `FX1,FY1` = 16,5, 4 x 5 m.
 
 Spawn four more colonists (`/api/dev/colonist?at=10,2&n=4`), then teleport the five onto the west
 side of the site, one each at `10,0` to `10,4` (`/api/dev/teleport?colonist=<id>&to=10,<y>`, ids from
