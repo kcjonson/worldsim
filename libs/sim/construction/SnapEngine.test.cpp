@@ -292,6 +292,100 @@ TEST(SnapEngine, AxisAlignCommittedRespectsRange) {
 	EXPECT_EQ(engine.snap({}, {5.2F, 6.0F}, input(/*freeform=*/false)).kind, SnapKind::GuideLine);
 }
 
+TEST(SnapEngine, TwoAxisLockReportsACrossingOfTwoWorldGuides) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	// As AxisAlignsBothAxesToTwoNodes: X locks to (0,0), Y to (6,6), the point is (0,6).
+	// The guides are what the preview drew before: the X lock's node to the point, then
+	// the Y lock's.
+	std::vector<Vec2> points = {{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
+	auto			  r = engine.snap(points, {0.2F, 5.85F}, input());
+	ASSERT_EQ(r.kind, SnapKind::GuideCrossing);
+	ASSERT_EQ(r.guideCount, 2U);
+	const SnapGuide& vertical = r.guides[0];
+	EXPECT_EQ(vertical.source, GuideSource::WorldAxes);
+	EXPECT_EQ(vertical.relation, GuideRelation::Perpendicular);
+	EXPECT_FLOAT_EQ(vertical.from.x, 0.0F);
+	EXPECT_FLOAT_EQ(vertical.from.y, 0.0F);
+	EXPECT_FLOAT_EQ(vertical.to.x, r.point.x);
+	EXPECT_FLOAT_EQ(vertical.to.y, r.point.y);
+	EXPECT_NEAR(vertical.distanceFromNodeMeters, 6.0F, 1e-4F);
+	EXPECT_FALSE(vertical.throughPreviousPoint);
+	EXPECT_FALSE(vertical.rightAngle);
+	const SnapGuide& horizontal = r.guides[1];
+	EXPECT_EQ(horizontal.source, GuideSource::WorldAxes);
+	EXPECT_EQ(horizontal.relation, GuideRelation::Parallel);
+	EXPECT_FLOAT_EQ(horizontal.from.x, 6.0F);
+	EXPECT_FLOAT_EQ(horizontal.from.y, 6.0F);
+	EXPECT_FLOAT_EQ(horizontal.to.x, r.point.x);
+	EXPECT_FLOAT_EQ(horizontal.to.y, r.point.y);
+	EXPECT_NEAR(horizontal.distanceFromNodeMeters, 6.0F, 1e-4F);
+	EXPECT_TRUE(horizontal.throughPreviousPoint);
+	EXPECT_FALSE(horizontal.rightAngle);
+}
+
+TEST(SnapEngine, AngleStepsOffFallsToRaw) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	// The AngleSnapsToAxis cursor, 5 degrees off +x: with angle steps off it stays raw.
+	std::vector<Vec2> points = {{0.0F, 0.0F}};
+	const Vec2		  cursor{5.0F * std::cos(0.0873F), 5.0F * std::sin(0.0873F)};
+	DrawingAids		  aids = kTodayAids;
+	aids.angleSteps = false;
+	auto r = engine.snap(points, cursor, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, aids));
+	EXPECT_EQ(r.kind, SnapKind::None);
+	EXPECT_EQ(r.guideCount, 0U);
+	EXPECT_FLOAT_EQ(r.point.x, cursor.x);
+	EXPECT_FLOAT_EQ(r.point.y, cursor.y);
+}
+
+TEST(SnapEngine, WorldGuidesOffSkipsAxisLock) {
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	// The AxisAlignsXToInProgressNode cursor: with the world guides off the X lock is
+	// skipped and the angle step takes it (90 degrees off +x, distance kept).
+	std::vector<Vec2> points = {{0.0F, 0.0F}};
+	const Vec2		  cursor{0.15F, 3.0F};
+	DrawingAids		  aids = kTodayAids;
+	aids.guidesFromWorldAxes = false;
+	auto r = engine.snap(points, cursor, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, aids));
+	EXPECT_EQ(r.kind, SnapKind::Angle);
+	EXPECT_NEAR(r.point.x, 0.0F, 1e-4F);
+	EXPECT_NEAR(r.point.y, dist(cursor, points.front()), 1e-4F);
+	ASSERT_EQ(r.guideCount, 1U);
+	EXPECT_EQ(r.guides[0].relation, GuideRelation::AngleStep);
+	EXPECT_EQ(r.guides[0].source, GuideSource::WorldAxes);
+	EXPECT_TRUE(r.guides[0].throughPreviousPoint);
+
+	// Both off: nothing but the raw cursor.
+	aids.angleSteps = false;
+	EXPECT_EQ(engine.snap(points, cursor, input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, aids)).kind, SnapKind::None);
+}
+
+TEST(SnapEngine, NearestFoundationCornerAndEdgeNameTheirFoundation) {
+	ConstructionWorld world;
+	ASSERT_TRUE(world.commitFoundation(std::vector<Vec2>{{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 5.0F}, {0.0F, 5.0F}}, "Wood").ok());
+	const auto second = world.commitFoundation(std::vector<Vec2>{{10.0F, 0.0F}, {15.0F, 0.0F}, {15.0F, 5.0F}, {10.0F, 5.0F}}, "Wood");
+	ASSERT_TRUE(second.ok());
+
+	const auto corner = nearestFoundationCorner(world, {15.1F, 5.2F}, 0.4F);
+	ASSERT_TRUE(corner.has_value());
+	EXPECT_EQ(corner->foundation, second.id);
+	EXPECT_EQ(geometry::quantize(corner->point), world.get(second.id)->ring[corner->vertexIndex]);
+	EXPECT_FALSE(nearestFoundationCorner(world, {7.5F, 2.5F}, 0.4F).has_value());
+
+	const auto edge = nearestFoundationEdge(world, {12.5F, -0.2F}, 0.3F);
+	ASSERT_TRUE(edge.has_value());
+	EXPECT_EQ(edge->foundation, second.id);
+	EXPECT_NEAR(edge->point.x, 12.5F, 1e-4F);
+	EXPECT_NEAR(edge->point.y, 0.0F, 1e-4F);
+	EXPECT_NEAR(edge->distanceMeters, 0.2F, 1e-4F);
+	EXPECT_FALSE(nearestFoundationEdge(world, {7.5F, 2.5F}, 0.3F).has_value());
+}
+
 // --- Wall snapping --------------------------------------------------------
 
 namespace {
