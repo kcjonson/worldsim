@@ -143,6 +143,12 @@ namespace world_sim {
 		constexpr float kChainSeenHalfWidthMeters = 0.05F;
 		constexpr float kChainSeenMinLengthMeters = 0.001F;
 
+		// A rejected edit's reason: its text scale, its top-left off the snapped point, and
+		// its shadow's offset, which the box labels keep off includes.
+		constexpr float			   kEditReasonScale = 0.8F;
+		constexpr Foundation::Vec2 kEditReasonOffset{14.0F, -22.0F};
+		constexpr float			   kEditReasonShadowPx = 1.0F;
+
 		// Add `from`'s quantities into `into`, per defName.
 		void addManifest(std::vector<std::pair<std::string, uint32_t>>& into, const std::vector<std::pair<std::string, uint32_t>>& from) {
 			for (const auto& [defName, qty] : from) {
@@ -258,19 +264,28 @@ namespace world_sim {
 		return navigation_ == nullptr || navigation_->isAreaBuildableOnceCleared(Foundation::toGlmVec2(pts));
 	}
 
-	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
+	std::string DrawingSystem::placementRefusal(const std::vector<Foundation::Vec2>& pts) const {
 		// Placement gate (the SAME check the /api/dev verbs use). A FOUNDATION validates against
 		// BUILDABILITY (terrain + geometry, no flora). Walls have no footprint-clearing yet, so they
 		// still require clear on-mesh ground along the chain centerline. One blocked part refuses the
 		// whole placement (commit nothing).
 		const bool wall = activeTool_ == ToolKind::Wall;
-		const bool seen = wall ? chainSeen(pts) : areaSeen(pts);
-		const bool ok = seen && (navigation_ == nullptr || (wall ? navigation_->isLineBuildableNow(Foundation::toGlmVec2(pts)) : footprintBuildable(pts)));
-		if (ok) {
+		if (!(wall ? chainSeen(pts) : areaSeen(pts))) {
+			return "the area is unexplored";
+		}
+		if (navigation_ != nullptr && !(wall ? navigation_->isLineBuildableNow(Foundation::toGlmVec2(pts)) : footprintBuildable(pts))) {
+			return "not on buildable ground";
+		}
+		return {};
+	}
+
+	bool DrawingSystem::requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what) {
+		const std::string refusal = placementRefusal(pts);
+		if (refusal.empty()) {
 			return true;
 		}
 		if (callbacks_.onToast) {
-			callbacks_.onToast("Can't build here", std::string(what) + ": " + (seen ? "not on buildable ground" : "the area is unexplored"));
+			callbacks_.onToast("Can't build here", std::string(what) + ": " + refusal);
 		}
 		return false;
 	}
@@ -425,6 +440,7 @@ namespace world_sim {
 				willClose_ = true;
 			}
 		}
+		closeAccepted_ = willClose_ && closeVerdict().accepted;
 
 		if (editing) {
 			refreshEditPreview();
@@ -604,7 +620,7 @@ namespace world_sim {
 		return false;
 	}
 
-	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportW, int viewportH) const {
+	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight) const {
 		return DrawingFeedbackInput{
 			.tool = activeTool_,
 			.snap = lastSnap_,
@@ -613,12 +629,12 @@ namespace world_sim {
 			.display = UserSettings::Get().drawing,
 			.style = style,
 			.camera = *camera_,
-			.viewportWidth = viewportW,
-			.viewportHeight = viewportH,
+			.viewportWidth = viewportWidth,
+			.viewportHeight = viewportHeight,
 			.pixelsPerMeter = kPixelsPerMeter,
 			.closeRadiusMeters = effectiveOriginCloseRadiusMeters(),
 			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : 3),
-			.willClose = willClose_,
+			.willClose = previewVerdict().closeHalo,
 			.snappedPointInvalid = cursorOffBuildableGround && !willClose_,
 			.invalidColor = invalidColor_,
 		};
@@ -642,20 +658,59 @@ namespace world_sim {
 		return (dx * dx + dy * dy) <= radiusMeters * radiusMeters;
 	}
 
-	void DrawingSystem::commitShape() {
-		auto&					  registry = ConstructionRegistry::Get();
-		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-		const auto				  result = validator.validateRing(points_);
-		if (!result.ok()) {
-			if (callbacks_.onToast) {
-				callbacks_.onToast("Cannot close", ec::validationReason(result.code));
+	DrawingSystem::CloseVerdict DrawingSystem::closeVerdict() const {
+		const auto refused = [](std::string title, std::string reason) {
+			return CloseVerdict{.accepted = false, .title = std::move(title), .reason = std::move(reason)};
+		};
+		if (activeTool_ == ToolKind::Wall) {
+			// The click adds the closing point, then commits the chain (commitWallChain's
+			// requirePlaceable).
+			std::vector<Foundation::Vec2> chain = points_;
+			chain.push_back(cursor_);
+			if (const std::string refusal = placementRefusal(chain); !refusal.empty()) {
+				return refused("Can't build here", "wall: " + refusal);
 			}
-			return;
+			return {};
 		}
-
+		if (activeTool_ == ToolKind::FoundationEdit) {
+			if (!areaSeen(points_)) {
+				return refused("Can't edit foundation", "the area is unexplored");
+			}
+			const ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+			const ec::FoundationEditResult	result = validator.validateFoundationEdit(editTarget_, points_, editMode_, foundationBlueprint(editTarget_));
+			if (const std::string refusal = editRefusal(result, editMode_); !refusal.empty()) {
+				return refused("Can't edit foundation", refusal);
+			}
+			return {};
+		}
+		const ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+		if (const auto ring = validator.validateRing(points_); !ring.ok()) {
+			return refused("Cannot close", ec::validationReason(ring.code));
+		}
 		// The whole footprint must sit on walkable ground (interior + edges, not just the
 		// vertices). Refuse a foundation that spans water or clips an off-mesh hole.
-		if (!requirePlaceable(points_, "foundation")) {
+		if (const std::string refusal = placementRefusal(points_); !refusal.empty()) {
+			return refused("Can't build here", "foundation: " + refusal);
+		}
+		return {};
+	}
+
+	DrawingSystem::PreviewVerdict DrawingSystem::previewVerdict() const {
+		if (willClose_) {
+			return {.valid = closeAccepted_, .closeHalo = closeAccepted_};
+		}
+		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
+		// band and fill turn red before the player commits. An edit also reads red while the
+		// outline it would produce is invalid.
+		const bool editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
+		return {.valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected, .closeHalo = false};
+	}
+
+	void DrawingSystem::commitShape() {
+		if (const CloseVerdict verdict = closeVerdict(); !verdict.accepted) {
+			if (callbacks_.onToast) {
+				callbacks_.onToast(verdict.title, verdict.reason);
+			}
 			return;
 		}
 
@@ -775,12 +830,8 @@ namespace world_sim {
 		auto&						   registry = ConstructionRegistry::Get();
 		ec::ConstructionValidator	   validator(registry.constraints(), constructionWorld_);
 		const ec::FoundationEditResult result = validator.validateFoundationEdit(target, drawn, mode, foundationBlueprint(target));
-		if (!result.ok()) {
-			outcome.reason = ec::validationReason(result.validation.code);
-			return outcome;
-		}
-		if (mode == ec::FoundationEditMode::Add && !footprintBuildable(dequantizeRing(result.buildsOn))) {
-			outcome.reason = "not on buildable ground";
+		if (std::string refusal = editRefusal(result, mode); !refusal.empty()) {
+			outcome.reason = std::move(refusal);
 			return outcome;
 		}
 
@@ -898,10 +949,20 @@ namespace world_sim {
 		editPreview_ = validator.validateFoundationEdit(editTarget_, drawn, editMode_, foundationBlueprint(editTarget_));
 	}
 
+	std::string DrawingSystem::editRefusal(const ec::FoundationEditResult& result, ec::FoundationEditMode mode) const {
+		if (!result.ok()) {
+			return ec::validationReason(result.validation.code);
+		}
+		if (mode == ec::FoundationEditMode::Add && !footprintBuildable(dequantizeRing(result.buildsOn))) {
+			return "not on buildable ground";
+		}
+		return {};
+	}
+
 	void DrawingSystem::commitFoundationEdit() {
-		if (!areaSeen(points_)) {
+		if (const CloseVerdict verdict = closeVerdict(); !verdict.accepted) {
 			if (callbacks_.onToast) {
-				callbacks_.onToast("Can't edit foundation", "the area is unexplored");
+				callbacks_.onToast(verdict.title, verdict.reason);
 			}
 			return;
 		}
@@ -981,6 +1042,7 @@ namespace world_sim {
 		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
 		willClose_ = preset != nullptr && lastSnap_.closesShape() && lastValidation_.ok() && !cursorOffBuildableGround;
+		closeAccepted_ = willClose_ && closeVerdict().accepted;
 	}
 
 	bool DrawingSystem::handleWallClick(Foundation::Vec2 world, bool freeform, bool ctrl) {
@@ -1784,54 +1846,51 @@ namespace world_sim {
 		renderCommittedOpenings(visibleWorld, viewportW, viewportH);
 	}
 
-	void DrawingSystem::renderPreview(int viewportW, int viewportH) {
+	void DrawingSystem::renderPreview(int viewportWidth, int viewportHeight) {
 		if (camera_ == nullptr || state_ != DrawingState::Drawing) {
 			return;
 		}
 
-		const auto& ps = ConstructionRegistry::Get().rendering().preview;
+		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
 
-		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
-			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
+		auto toScreen = [&](Foundation::Vec2 world) -> Foundation::Vec2 {
+			return camera_->worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 		};
 
 		// Wall chain preview is a centerline + thickness band, not a closed polygon.
 		if (activeTool_ == ToolKind::Wall) {
-			renderWallChainPreview(viewportW, viewportH);
+			renderWallChainPreview(viewportWidth, viewportHeight);
 			return;
 		}
 
 		// Opening tool: a validity-colorized ghost at the snapped position.
 		if (activeTool_ == ToolKind::Opening) {
-			renderOpeningGhost(viewportW, viewportH);
+			renderOpeningGhost(viewportWidth, viewportHeight);
 			return;
 		}
 
 		// Add / Subtract: the resulting outline under the drawn polygon's preview.
 		if (activeTool_ == ToolKind::FoundationEdit) {
-			renderEditOutlinePreview(viewportW, viewportH);
+			renderEditOutlinePreview(viewportWidth, viewportHeight);
 		}
 
-		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
-		// rubber-band + fill turn red before the player commits. The closing case shows the
-		// close halo instead (drawSnapFeedback, from willClose_). An edit also reads red while the
-		// outline it would produce is invalid.
-		const bool				editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
-		const bool				valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected;
+		// The band and fill read what the click would do: while it closes, whether the close
+		// commits (the halo draws only then); otherwise whether the point may be placed.
+		const bool				valid = previewVerdict().valid;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 		const Foundation::Color lineColor = valid ? okColor : badColor;
 
 		std::vector<Foundation::Vec2> screen;
 		screen.reserve(points_.size());
-		for (const auto& p : points_) {
-			screen.push_back(toScreen(p));
+		for (const auto& point : points_) {
+			screen.push_back(toScreen(point));
 		}
 
 		// Faint fill once >= 3 points (the implied closed polygon).
 		if (points_.size() >= 3) {
-			const Foundation::Color fillColor = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, ps.fillPreviewAlpha}
-													  : Foundation::Color{badColor.r, badColor.g, badColor.b, ps.fillPreviewAlpha};
+			const Foundation::Color fillColor = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, previewStyle.fillPreviewAlpha}
+													  : Foundation::Color{badColor.r, badColor.g, badColor.b, previewStyle.fillPreviewAlpha};
 			fillPolygon(screen, fillColor, "drawing_fill_preview", 900);
 		}
 
@@ -1840,7 +1899,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen[i],
 				.end = screen[i + 1],
-				.style = {.color = okColor, .width = ps.lineWidth},
+				.style = {.color = okColor, .width = previewStyle.lineWidth},
 				.id = "drawing_edge",
 				.key = 901,
 			});
@@ -1851,19 +1910,20 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen.back(),
 				.end = toScreen(cursor_),
-				.style = {.color = lineColor, .width = ps.lineWidth},
+				.style = {.color = lineColor, .width = previewStyle.lineWidth},
 				.id = "drawing_rubberband",
 				.key = 902,
 			});
 		}
 
-		drawSnapFeedback(feedbackInput(ps, viewportW, viewportH));
+		// Above the edges, the rubber band, and the vertex dots (its keys start at 904).
+		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight));
 
 		// Vertex dots.
-		for (const auto& sp : screen) {
+		for (const auto& vertex : screen) {
 			Renderer::Primitives::drawCircle({
-				.center = sp,
-				.radius = ps.vertexRadiusPx,
+				.center = vertex,
+				.radius = previewStyle.vertexRadiusPx,
 				.style = {.fill = okColor},
 				.id = "drawing_vertex",
 				.key = 903,
@@ -1872,15 +1932,15 @@ namespace world_sim {
 
 		// Red highlight on the offending PLACED vertex/edge when a geometry constraint is
 		// violated -- but not when the click will close (willClose_: the explicit origin
-		// snap, or the near-start rescue). A pending close reads as "closing", not "error".
+		// snap, or the near-start rescue): the point's verdict doesn't apply to a close.
 		// Gated on the geometry result (not `valid`) because lastValidation_.vertexIndex
 		// only indexes a placed vertex; off buildable ground, the snapped-point marker
 		// turns red instead (drawSnapFeedback).
 		if (!lastValidation_.ok() && !willClose_ && !screen.empty()) {
-			const std::size_t vi = std::min(lastValidation_.vertexIndex, screen.size() - 1);
+			const std::size_t offending = std::min(lastValidation_.vertexIndex, screen.size() - 1);
 			Renderer::Primitives::drawCircle({
-				.center = screen[vi],
-				.radius = ps.invalidVertexRadiusPx,
+				.center = screen[offending],
+				.radius = previewStyle.invalidVertexRadiusPx,
 				.style = {.fill = {badColor.r, badColor.g, badColor.b, 0.5F}},
 				.id = "drawing_invalid_vertex",
 				.key = 905,
@@ -2181,14 +2241,24 @@ namespace world_sim {
 		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), os.ghostAlpha, os.outlineWidthBuilt);
 	}
 
-	void DrawingSystem::renderEditOutlinePreview(int viewportW, int viewportH) {
+	std::optional<DrawingSystem::EditReason> DrawingSystem::editReason(int viewportWidth, int viewportHeight) const {
+		if (activeTool_ != ToolKind::FoundationEdit || !editPreviewActive_ || editPreview_.ok() || camera_ == nullptr) {
+			return std::nullopt;
+		}
+		return EditReason{
+			.text = ec::validationReason(editPreview_.validation.code),
+			.position = camera_->worldToScreen(cursor_.x, cursor_.y, viewportWidth, viewportHeight, kPixelsPerMeter) + kEditReasonOffset,
+		};
+	}
+
+	void DrawingSystem::renderEditOutlinePreview(int viewportWidth, int viewportHeight) {
 		if (!editPreviewActive_) {
 			return;
 		}
-		const auto& ps = ConstructionRegistry::Get().rendering().preview;
+		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
 
-		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
-			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
+		auto toScreen = [&](Foundation::Vec2 world) -> Foundation::Vec2 {
+			return camera_->worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 		};
 
 		// Outline only: the committed foundation already shows under it, and the drawn
@@ -2199,7 +2269,7 @@ namespace world_sim {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(geometry::dequantize(outline[i])),
 					.end = toScreen(geometry::dequantize(outline[(i + 1) % outline.size()])),
-					.style = {.color = validColor_, .width = ps.lineWidth * 1.5F},
+					.style = {.color = validColor_, .width = previewStyle.lineWidth * 1.5F},
 					.id = "drawing_edit_outline",
 					.key = 898,
 				});
@@ -2207,34 +2277,39 @@ namespace world_sim {
 			return;
 		}
 
-		Renderer::Primitives::drawText({
-			.text = ec::validationReason(editPreview_.validation.code),
-			.position = toScreen(cursor_) + Foundation::Vec2{14.0F, -22.0F},
-			.scale = 0.8F,
-			.color = invalidColor_,
-			.shadow = Foundation::BoxShadow{.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {1.0F, 1.0F}},
-			.id = "drawing_edit_reason",
-			.key = 906,
-		});
+		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight)) {
+			Renderer::Primitives::drawText({
+				.text = reason->text,
+				.position = reason->position,
+				.scale = kEditReasonScale,
+				.color = invalidColor_,
+				.shadow = Foundation::BoxShadow{
+					.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {kEditReasonShadowPx, kEditReasonShadowPx}
+				},
+				.id = "drawing_edit_reason",
+				.key = 906,
+			});
+		}
 	}
 
-	void DrawingSystem::renderWallChainPreview(int viewportW, int viewportH) {
-		const auto& ps = ConstructionRegistry::Get().rendering().preview;
+	void DrawingSystem::renderWallChainPreview(int viewportWidth, int viewportHeight) {
+		const auto& previewStyle = ConstructionRegistry::Get().rendering().preview;
 
-		auto toScreen = [&](Foundation::Vec2 w) -> Foundation::Vec2 {
-			return camera_->worldToScreen(w.x, w.y, viewportW, viewportH, kPixelsPerMeter);
+		auto toScreen = [&](Foundation::Vec2 world) -> Foundation::Vec2 {
+			return camera_->worldToScreen(world.x, world.y, viewportWidth, viewportHeight, kPixelsPerMeter);
 		};
 
-		// Off-mesh cursor (on water) reads as invalid like a geometry violation: the
-		// rubber-band band + centerline turn red before the player commits.
-		const bool				valid = lastValidation_.ok() && !cursorOffBuildableGround;
+		// The band and centerline read what the click would do: while it closes the chain,
+		// whether the close commits (the halo draws only then); otherwise whether the point
+		// may be placed (off buildable ground reads red like a geometry violation).
+		const bool				valid = previewVerdict().valid;
 		const Foundation::Color okColor = validColor_;	  // green
 		const Foundation::Color badColor = invalidColor_; // red
 
 		std::vector<Foundation::Vec2> screen;
 		screen.reserve(points_.size());
-		for (const auto& p : points_) {
-			screen.push_back(toScreen(p));
+		for (const auto& point : points_) {
+			screen.push_back(toScreen(point));
 		}
 
 		// Thickness band preview for the committed chain + the rubber-band segment,
@@ -2243,27 +2318,27 @@ namespace world_sim {
 		if (preset != nullptr) {
 			const std::int64_t halfThick = preset->halfThicknessMm;
 
-			auto drawBand = [&](Foundation::Vec2 a, Foundation::Vec2 b, Foundation::Color color) {
-				const geometry::Ring band = geometry::band(geometry::quantize(a), geometry::quantize(b), halfThick);
+			auto drawBand = [&](Foundation::Vec2 start, Foundation::Vec2 end, Foundation::Color color) {
+				const geometry::Ring band = geometry::band(geometry::quantize(start), geometry::quantize(end), halfThick);
 				if (band.size() < 3) {
 					return;
 				}
 				std::vector<Foundation::Vec2> bandScreen;
 				bandScreen.reserve(band.size());
-				for (const auto& v : band) {
-					bandScreen.push_back(toScreen(geometry::dequantize(v)));
+				for (const auto& corner : band) {
+					bandScreen.push_back(toScreen(geometry::dequantize(corner)));
 				}
 				fillRing(bandScreen, color, {color.r, color.g, color.b, 0.0F}, 0.0F, "wall_preview_band", "", 906, 906);
 			};
 
-			const Foundation::Color bandColor{okColor.r, okColor.g, okColor.b, ps.bandPreviewAlpha};
+			const Foundation::Color bandColor{okColor.r, okColor.g, okColor.b, previewStyle.bandPreviewAlpha};
 			for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
 				drawBand(points_[i], points_[i + 1], bandColor);
 			}
 			if (!points_.empty()) {
-				const Foundation::Color rb = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, ps.bandPreviewAlpha}
-												   : Foundation::Color{badColor.r, badColor.g, badColor.b, ps.bandPreviewAlpha};
-				drawBand(points_.back(), cursor_, rb);
+				const Foundation::Color rubberBand = valid ? Foundation::Color{okColor.r, okColor.g, okColor.b, previewStyle.bandPreviewAlpha}
+												   : Foundation::Color{badColor.r, badColor.g, badColor.b, previewStyle.bandPreviewAlpha};
+				drawBand(points_.back(), cursor_, rubberBand);
 			}
 		}
 
@@ -2272,7 +2347,7 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen[i],
 				.end = screen[i + 1],
-				.style = {.color = okColor, .width = ps.lineWidth},
+				.style = {.color = okColor, .width = previewStyle.lineWidth},
 				.id = "wall_centerline",
 				.key = 907,
 			});
@@ -2283,20 +2358,21 @@ namespace world_sim {
 			Renderer::Primitives::drawLine({
 				.start = screen.back(),
 				.end = toScreen(cursor_),
-				.style = {.color = valid ? okColor : badColor, .width = ps.lineWidth},
+				.style = {.color = valid ? okColor : badColor, .width = previewStyle.lineWidth},
 				.id = "wall_rubberband",
 				.key = 908,
 			});
 		}
 
-		drawSnapFeedback(feedbackInput(ps, viewportW, viewportH));
+		// Above the band, the centerlines, and the vertex dots (its keys start at 911).
+		drawSnapFeedback(feedbackInput(previewStyle, viewportWidth, viewportHeight));
 
 		// Vertex dots. The snap-target ring (endpoint / T-junction / foundation-vertex snaps)
 		// is drawSnapFeedback's, over the snapped-point marker.
-		for (const auto& sp : screen) {
+		for (const auto& vertex : screen) {
 			Renderer::Primitives::drawCircle({
-				.center = sp,
-				.radius = ps.vertexRadiusPx,
+				.center = vertex,
+				.radius = previewStyle.vertexRadiusPx,
 				.style = {.fill = okColor},
 				.id = "wall_vertex",
 				.key = 909,

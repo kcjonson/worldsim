@@ -101,6 +101,47 @@ TEST_F(DrawingVisibilityTest, FoundationOnSeenGroundCommits) {
 	EXPECT_EQ(drawing->world().foundations().size(), 1U) << (toasts.empty() ? "no toast" : toasts.back().second);
 }
 
+// The pointer on and near the first point: the click closes and commits a valid shape, so the
+// preview reads valid and draws the halo, though the point the pointer is on would be refused.
+TEST_F(DrawingVisibilityTest, AClosePreviewReadsTheShapeTheClickCommits) {
+	drawing->activateFoundationTool();
+	for (const glm::vec2 corner : {glm::vec2{0.0F, 0.0F}, glm::vec2{4.0F, 0.0F}, glm::vec2{4.0F, -4.0F}}) {
+		click(corner);
+	}
+	ASSERT_EQ(drawing->status().pointCount, 3);
+	for (const glm::vec2 pointer : {glm::vec2{0.0F, 0.0F}, glm::vec2{0.2F, -0.1F}}) {
+		SCOPED_TRACE(::testing::Message() << "pointer at " << pointer.x << ", " << pointer.y);
+		hover(pointer);
+		const world_sim::DrawingSystem::PreviewVerdict verdict = drawing->previewVerdict();
+		EXPECT_TRUE(verdict.closeHalo);
+		EXPECT_TRUE(verdict.valid);
+	}
+	click({0.0F, 0.0F});
+	EXPECT_EQ(drawing->world().foundations().size(), 1U) << (toasts.empty() ? "no toast" : toasts.back().second);
+}
+
+// The closing edge crosses a built floor: the click refuses the close, so no halo draws and
+// the preview reads invalid.
+TEST_F(DrawingVisibilityTest, AClosePreviewTheClickRefusesDrawsNoHaloAndReadsInvalid) {
+	construction::ConstructionWorld& built = drawing->world();
+	const auto floor = built.commitFoundation(std::vector<Foundation::Vec2>{{8.0F, -2.0F}, {12.0F, -2.0F}, {12.0F, 2.0F}, {8.0F, 2.0F}}, "Wood");
+	ASSERT_TRUE(floor.ok());
+	built.setState(floor.id, construction::FoundationState::Built);
+	drawing->activateFoundationTool();
+	for (const glm::vec2 corner : {glm::vec2{0.0F, -6.0F}, glm::vec2{20.0F, -6.0F}, glm::vec2{20.0F, 6.0F}}) {
+		click(corner);
+	}
+	ASSERT_EQ(drawing->status().pointCount, 3) << (toasts.empty() ? "no toast" : toasts.back().second);
+	hover({0.0F, -6.0F});
+	const world_sim::DrawingSystem::PreviewVerdict verdict = drawing->previewVerdict();
+	EXPECT_FALSE(verdict.closeHalo);
+	EXPECT_FALSE(verdict.valid);
+	click({0.0F, -6.0F});
+	EXPECT_EQ(built.foundations().size(), 1U);
+	ASSERT_FALSE(toasts.empty());
+	EXPECT_EQ(toasts.back().first, "Cannot close");
+}
+
 TEST_F(DrawingVisibilityTest, WallPointOnUnseenGroundIsRefusedAsUnexplored) {
 	buildAcrossTheEdge();
 	drawing->activateWallTool();
@@ -338,6 +379,8 @@ TEST_F(DrawingWallChainTest, ClickingTheFirstPointClosesAndCommitsTheLoop) {
 	ASSERT_EQ(drawing->status().pointCount, 4) << lastToast();
 	hover(kRoom[0]);
 	EXPECT_TRUE(drawing->status().valid) << drawing->status().message;
+	EXPECT_TRUE(drawing->previewVerdict().valid);
+	EXPECT_TRUE(drawing->previewVerdict().closeHalo);
 	clickWith(*drawing, kRoom[0]);
 	EXPECT_EQ(drawing->status().pointCount, 0) << lastToast();
 	EXPECT_EQ(drawing->world().segments().size(), 4U) << lastToast();

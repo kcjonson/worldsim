@@ -49,6 +49,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -217,7 +218,7 @@ namespace world_sim {
 		/// In-progress drawing feedback (preview polygon/chain, snap guides,
 		/// opening ghost). Called after the entity pass, alongside the placement
 		/// ghost, below UI.
-		void renderPreview(int viewportW, int viewportH);
+		void renderPreview(int viewportWidth, int viewportHeight);
 
 	  private:
 		/// Draw the cached wall bands + junction polygons that intersect
@@ -238,17 +239,37 @@ namespace world_sim {
 
 		/// Render the in-progress wall chain: centerline, thickness band preview,
 		/// snap guides, and validity colorize. INTERIM.
-		void renderWallChainPreview(int viewportW, int viewportH);
+		void renderWallChainPreview(int viewportWidth, int viewportHeight);
 
 		/// Foundation Add / Subtract: the outline the edit would produce (merged or
 		/// remainder), colorized for validity, with the reason next to the cursor.
 		/// Drawn under the regular polygon preview. INTERIM.
-		void renderEditOutlinePreview(int viewportW, int viewportH);
+		void renderEditOutlinePreview(int viewportWidth, int viewportHeight);
+
+		/// A rejected edit's reason, drawn beside the cursor, and where.
+		struct EditReason {
+			std::string		 text;
+			Foundation::Vec2 position; // the text's top-left, screen pixels
+		};
+
+		/// The reason text renderEditOutlinePreview draws, while the outline the edit
+		/// would produce is invalid.
+		[[nodiscard]] std::optional<EditReason> editReason(int viewportWidth, int viewportHeight) const;
 
 	  public:
 		// --- Status for the config strip ---
 
 		[[nodiscard]] DrawingStatus status() const;
+
+		/// What the preview shows this frame: whether the band and fill read valid, and
+		/// whether the close halo draws. While the next click closes, both come from
+		/// closeVerdict(), the check the closing click itself runs, so a halo always means
+		/// the click commits; otherwise from the point the click would place.
+		struct PreviewVerdict {
+			bool valid = true;
+			bool closeHalo = false;
+		};
+		[[nodiscard]] PreviewVerdict previewVerdict() const;
 
 		// --- Topology access for consumers (selection, ConstructionSystem) ---
 
@@ -320,12 +341,16 @@ namespace world_sim {
 		/// verbs' permissive fallback and treat the point as placeable.
 		[[nodiscard]] bool pointOnBuildableGround(Foundation::Vec2 p) const;
 
-		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
-		/// area against footprintBuildable. A WALL validates its chain centerline against
-		/// isLineBuildableNow (no wall footprint-clearing yet, so it still needs clear ground). The SAME
-		/// shared predicates the /api/dev verbs use. On failure toasts "Can't build here" and returns
-		/// false so the caller commits NOTHING -- no partial structure.
+		/// True when the WHOLE footprint of `pts` may be placed (placementRefusal is empty). On
+		/// failure toasts "Can't build here" and returns false so the caller commits NOTHING --
+		/// no partial structure.
 		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
+
+		/// Why the WHOLE footprint of `pts` may not be placed, or empty when it may. A FOUNDATION
+		/// validates its polygon area against footprintBuildable. A WALL validates its chain
+		/// centerline against isLineBuildableNow (no wall footprint-clearing yet, so it still needs
+		/// clear ground). The SAME shared predicates the /api/dev verbs use.
+		[[nodiscard]] std::string placementRefusal(const std::vector<Foundation::Vec2>& pts) const;
 
 		/// Player visibility (player-visibility.md 3.7): the tools build only on ground the colonists have
 		/// seen, and each of these is true when player visibility is off. A point; a closed shape's whole
@@ -382,12 +407,24 @@ namespace world_sim {
 
 		/// The snap feedback's input for the current frame.
 		[[nodiscard]] DrawingFeedbackInput
-		feedbackInput(const assets::PreviewStyle& style, int viewportW, int viewportH) const;
+		feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight) const;
 
-		/// Origin-close catch radius in world meters, floored so it never shrinks below
-		/// the on-screen origin halo: what you can click to close matches what you see,
-		/// at any zoom. Drives both the snap() override and (x scale) the halo radius.
+		/// Origin-close catch radius in world meters, floored to `originHaloMinRadiusPx` on
+		/// screen so it stays reachable at every zoom. Drives the snap() override and the
+		/// dotted close ring, drawn at this radius so it shows the catch exactly; the close
+		/// halo (DrawingFeedback) has its own floor.
 		[[nodiscard]] float effectiveOriginCloseRadiusMeters() const;
+
+		/// What a closing click does with the placed points: commits them, or refuses with
+		/// the toast's title and reason. The closing click runs it, and the preview reads it
+		/// while the next click closes (previewVerdict), so the two can't disagree. The wall
+		/// tool judges the chain with the closing point added, as its click commits it.
+		struct CloseVerdict {
+			bool		accepted = true;
+			std::string title;
+			std::string reason;
+		};
+		[[nodiscard]] CloseVerdict closeVerdict() const;
 
 		/// Radius (world meters) around the start vertex within which a click that would
 		/// otherwise be rejected closes the shape instead (the "snap not block" rescue).
@@ -407,6 +444,10 @@ namespace world_sim {
 		/// Refresh editPreview_ from the drawn polygon the next click would produce
 		/// (placed points, plus the cursor unless the click closes).
 		void refreshEditPreview();
+
+		/// Why the edit `result` (validateFoundationEdit's) would be refused before it
+		/// commits, or empty: its validation, then for an Add the ground it builds on.
+		[[nodiscard]] std::string editRefusal(const construction::FoundationEditResult& result, construction::FoundationEditMode mode) const;
 
 		/// Apply the edit for the closed polygon points_, toast the outcome, and clear
 		/// the points (the tool stays on).
@@ -511,9 +552,12 @@ namespace world_sim {
 		// Foundation tool: true when the next click will CLOSE the shape rather than
 		// place a vertex -- either the explicit origin-close (lastSnap_ Origin) or the
 		// near-start "snap not block" rescue (a would-be-rejected vertex near the start
-		// whose closed ring is valid). Recomputed every move; drives the closing-halo
-		// feedback and suppresses the invalid highlight.
+		// whose closed ring is valid). Recomputed every move; suppresses the invalid highlight.
 		bool willClose_ = false;
+
+		// While willClose_: whether closeVerdict() accepts the close, recomputed on the same
+		// move. Drives previewVerdict (the color and the close halo).
+		bool closeAccepted_ = false;
 
 		// True when the snapped cursor is at a NON-PLACEABLE point for the active tool (foundation:
 		// water, a ford, or off-mesh; wall: those or a placed obstacle; or no active mesh). Recomputed
