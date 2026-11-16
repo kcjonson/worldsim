@@ -7,7 +7,7 @@
 // priority rules. Each asserts the point and every guide. Expected values are the
 // prototype's outputs. Inputs that sat within a hair of a boundary were moved 1e-3 degrees
 // or 1e-4 m off it, so they test the rule and not the last bits of the arithmetic. The
-// corner limit never decided a random input, so its case is built by hand. In the
+// corner limit never decided a random input; SnapGuides.GuideCornerLimit pins it. In the
 // shared-corner tie two edges meeting at the corner nearest the cursor are exactly as near;
 // the prototype breaks the tie by rounding (1e-16 m) and the port by ring order, as D12
 // states, so that expectation is the port's.
@@ -22,7 +22,6 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
-#include <string>
 #include <vector>
 
 using namespace construction;
@@ -41,9 +40,8 @@ namespace {
 	struct HardCase {
 		const char*								 name;
 		bool									 wallTool;
-		bool									 freeform;
 		bool									 closest;
-		const char*								 aids;		  // angle steps, shape, align, world, crossings
+		DrawingAids								 aids;
 		std::vector<std::vector<std::int64_t>>	 foundations; // rings, millimeters, x then y
 		std::vector<std::array<std::int64_t, 4>> walls;		  // segments, millimeters, committed in order
 		std::vector<Vec2>						 points;
@@ -58,8 +56,7 @@ namespace {
 		{"line just inside the catch distance (461)",
 		 true,
 		 false,
-		 false,
-		 "11111",
+		 allAidsOn(),
 		 {{6407, 5963, 8187, 5929, 8240, 8694, 6460, 8728}, {-971, 6014, 1279, 6617, 818, 8336, -1432, 7734}},
 		 {},
 		 {{-7.5289998054504395F, -4.066999912261963F}, {-7.5289998054504395F, -8.272000312805176F}},
@@ -71,8 +68,7 @@ namespace {
 		{"line just outside the catch distance (569)",
 		 false,
 		 false,
-		 false,
-		 "10110",
+		 DrawingAids{.angleSteps = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true},
 		 {{2424, 1098, -380, 2707, -2536, -1050, 268, -2659}},
 		 {{-458, -5011, 3506, -4989}, {3506, -4989, 8017, -4964}, {8017, -4964, 9776, -1460}},
 		 {{7.784999847412109F, 7.8520002365112305F}, {6.8480000495910645F, 6.218999862670898F}},
@@ -84,8 +80,7 @@ namespace {
 		{"angle just inside the catch window (4624)",
 		 true,
 		 false,
-		 false,
-		 "11111",
+		 allAidsOn(),
 		 {{-1546, 5665, 1867, 5893, 1945, 8800, -1550, 8272}, {-9418, -611, -5297, -706, -5259, 958, -9380, 1054}},
 		 {{-149, 4844, -1871, 6566}, {5648, -2103, 6640, -168}},
 		 {{-7.265999794006348F, 2.319999933242798F}, {-5.085000038146973F, 2.319999933242798F}},
@@ -98,8 +93,7 @@ namespace {
 		{"angle just outside the catch window (10790)",
 		 false,
 		 false,
-		 false,
-		 "11110",
+		 DrawingAids{.angleSteps = true, .guidesFromShape = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true},
 		 {{5308, -1841, 9372, -1907, 9431, 1684, 5367, 1750}, {-1512, 6216, 1903, 6270, 1871, 8289, -1543, 8235}},
 		 {},
 		 {{-6.3979997634887695F, -6.214000225067139F},
@@ -114,9 +108,8 @@ namespace {
 		 {{GuideSource::DrawnShape, GuideRelation::AngleStep, false, -9.02999973, -6.2420001}}},
 		{"merge at the merge distance (19603)",
 		 true,
-		 false,
 		 true,
-		 "11111",
+		 allAidsOn(),
 		 {{-598, 5678, 1589, 7326, 466, 8817, -1721, 7169}, {-922, -1906, 1149, -1868, 1084, 1707, -987, 1669}},
 		 {{3153, 4928, 2004, 8020}, {2004, 8020, 690, 9331}},
 		 {{-3.25600004196167F, 7.6020002365112305F}, {-0.3499999940395355F, 10.229000091552734F}},
@@ -128,8 +121,7 @@ namespace {
 		{"crossing just under the minimum angle (696)",
 		 false,
 		 false,
-		 false,
-		 "11111",
+		 allAidsOn(),
 		 {{-7599, 5237, -5564, 5782, -6474, 9176, -8508, 8631}},
 		 {{2711, -1387, 1659, 1504}},
 		 {{-6.093999862670898F, 11.708999633789062F},
@@ -143,8 +135,7 @@ namespace {
 		{"crossing just over the minimum angle (2839)",
 		 false,
 		 false,
-		 false,
-		 "10111",
+		 DrawingAids{.angleSteps = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true, .guideCrossings = true},
 		 {{6290, -8483, 8435, -7908, 7899, -5908, 5754, -6483}},
 		 {{136, -2178, 4615, -548}},
 		 {{0.21899999678134918F, -4.572000026702881F},
@@ -159,8 +150,7 @@ namespace {
 		{"crossing at the radius (13228)",
 		 true,
 		 false,
-		 false,
-		 "11111",
+		 allAidsOn(),
 		 {{823, 4944, 2507, 6628, -452, 9587, -2135, 7903}, {-7272, 5507, -5654, 7248, -7532, 8742, -9014, 6956}},
 		 {{-5110, 6195, -4539, 8673}},
 		 {{-4.01800012588501F, 3.6649999618530273F},
@@ -176,8 +166,7 @@ namespace {
 		{"crossing on a shared generating node (13156)",
 		 false,
 		 false,
-		 false,
-		 "00111",
+		 DrawingAids{.alignToExistingBuildings = true, .guidesFromWorldAxes = true, .guideCrossings = true},
 		 {{-1459, 5375, 1652, 5396, 1626, 9247, -1485, 9226}, {-1352, -9575, 2169, -8631, 1241, -5170, -2279, -6113}},
 		 {{-453, 8932, 4358, 8932}, {4358, 8932, 4358, 7312}},
 		 {{0.5659999847412109F, 0.1120000034570694F}},
@@ -189,8 +178,7 @@ namespace {
 		{"ranking tie at equal distance (885)",
 		 false,
 		 false,
-		 false,
-		 "00111",
+		 DrawingAids{.alignToExistingBuildings = true, .guidesFromWorldAxes = true, .guideCrossings = true},
 		 {{1175, 940, -239, 1484, -1099, -750, 315, -1294},
 		  {-5040, -8765, -5406, -5665, -9096, -5915, -9402, -8421},
 		  {-7741, -2106, -5434, -775, -7049, 2021, -9355, 690}},
@@ -204,8 +192,7 @@ namespace {
 		{"previous edge's guide closes on the first point (7304)",
 		 false,
 		 false,
-		 false,
-		 "11101",
+		 DrawingAids{.angleSteps = true, .guidesFromShape = true, .alignToExistingBuildings = true, .guideCrossings = true},
 		 {{-7140, -8993, -5346, -6623, -7040, -5227, -8711, -7822},
 		  {-1847, -8995, 2299, -7944, 1759, -5481, -2296, -6438},
 		  {-113, -2136, 1344, -1746, 390, 1812, -1066, 1422}},
@@ -222,9 +209,8 @@ namespace {
 		 {{GuideSource::DrawnShape, GuideRelation::Perpendicular, true, -0.981999993, 8.39599991}}},
 		{"nearby direction limit (12768)",
 		 true,
-		 false,
 		 true,
-		 "01111",
+		 DrawingAids{.guidesFromShape = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true, .guideCrossings = true},
 		 {{-7482, 5279, -5406, 6843, -7190, 9211, -9266, 7647},
 		  {6836, -1563, 8810, -423, 7558, 1745, 5584, 606},
 		  {-1236, 5133, 2292, 7303, 971, 9886, -2609, 7850}},
@@ -239,8 +225,7 @@ namespace {
 		{"squared on an edge (14706)",
 		 false,
 		 false,
-		 false,
-		 "11110",
+		 DrawingAids{.angleSteps = true, .guidesFromShape = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true},
 		 {{-9081, 5658, -5479, 5593, -5423, 8702, -9025, 8768}, {-939, -8163, 989, -8162, 988, -6345, -940, -6346}},
 		 {},
 		 {{7.6620001792907715F, 2.0899999141693115F},
@@ -256,8 +241,7 @@ namespace {
 		{"shared-corner tie, ring order (13741)",
 		 false,
 		 false,
-		 false,
-		 "01111",
+		 DrawingAids{.guidesFromShape = true, .alignToExistingBuildings = true, .guidesFromWorldAxes = true, .guideCrossings = true},
 		 {{587, -2706, 2218, 690, -606, 2433, -2632, -914}},
 		 {},
 		 {},
@@ -267,23 +251,6 @@ namespace {
 		 2.63225735,
 		 {{GuideSource::NearbyStructure, GuideRelation::Parallel, true, -0.606, 2.433},
 		  {GuideSource::NearbyStructure, GuideRelation::Parallel, false, -2.632, -0.914}}},
-		{"corner limit, built by hand: the guide is through a corner past the 16 nearest",
-		 false,
-		 false,
-		 false,
-		 "11111",
-		 {{1000, 1000, 2000, 1000, 2000, 2000, 1000, 2000},
-		  {-2000, 1000, -1000, 1000, -1000, 2000, -2000, 2000},
-		  {-2000, -2000, -1000, -2000, -1000, -1000, -2000, -1000},
-		  {1000, -2000, 2000, -2000, 2000, -1000, 1000, -1000},
-		  {6000, 100, 7000, 100, 7000, 1100, 6000, 1100}},
-		 {},
-		 {},
-		 {0.05F, -0.02F},
-		 SnapKind::None,
-		 0.05,
-		 -0.02,
-		 {}},
 	};
 
 } // namespace
@@ -292,13 +259,6 @@ TEST(SnapGuidesHardCases, MatchThePrototype) {
 	for (const HardCase& hard : kHardCases) {
 		assets::SnappingConfig snapping;
 		snapping.priorityRule = hard.closest ? assets::GuidePriorityRule::Closest : assets::GuidePriorityRule::SourceFirst;
-		const std::string flags = hard.aids;
-		DrawingAids		  aids;
-		aids.angleSteps = flags[0] == '1';
-		aids.guidesFromShape = flags[1] == '1';
-		aids.alignToExistingBuildings = flags[2] == '1';
-		aids.guidesFromWorldAxes = flags[3] == '1';
-		aids.guideCrossings = flags[4] == '1';
 
 		SnapWorld built;
 		for (const auto& coordinates : hard.foundations) {
@@ -313,8 +273,8 @@ TEST(SnapGuidesHardCases, MatchThePrototype) {
 		}
 
 		const SnapEngine engine(snapping, built.world);
-		const SnapResult result = hard.wallTool ? engine.snapWall(hard.points, hard.cursor, wallInput(aids, hard.freeform))
-												: engine.snap(hard.points, hard.cursor, foundationInput(aids, hard.freeform));
+		const SnapResult result = hard.wallTool ? engine.snapWall(hard.points, hard.cursor, wallInput(hard.aids))
+												: engine.snap(hard.points, hard.cursor, foundationInput(hard.aids));
 		EXPECT_EQ(result.kind, hard.kind) << hard.name;
 		EXPECT_NEAR(result.point.x, hard.x, 1e-4) << hard.name;
 		EXPECT_NEAR(result.point.y, hard.y, 1e-4) << hard.name;

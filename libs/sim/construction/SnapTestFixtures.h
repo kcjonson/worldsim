@@ -60,12 +60,12 @@ namespace construction::snap_test {
 		};
 	}
 
-	inline SnapInput foundationInput(const DrawingAids& aids = allAidsOn(), bool freeform = false) {
-		return SnapInput{.aids = aids, .freeform = freeform};
+	inline SnapInput foundationInput(const DrawingAids& aids = allAidsOn()) {
+		return SnapInput{.aids = aids};
 	}
 
-	inline SnapInput wallInput(const DrawingAids& aids = allAidsOn(), bool freeform = false) {
-		return SnapInput{.aids = aids, .freeform = freeform, .wallHalfThicknessMm = kWallHalfThicknessMm};
+	inline SnapInput wallInput(const DrawingAids& aids = allAidsOn()) {
+		return SnapInput{.aids = aids, .wallHalfThicknessMm = kWallHalfThicknessMm};
 	}
 
 	/// The point `distance` from `origin` at `angleDegrees` from +x.

@@ -214,7 +214,7 @@ TEST_F(SnapGuides, GuideNearParallelLinesNeverCross) {
 		  return line.source == GuideSource::NearbyStructure && line.captured();
 	  });
 	EXPECT_TRUE(nearbyCaught);
-	EXPECT_GE(countCrossings(guides, CrossingStatus::TooShallow), 1U);
+	EXPECT_EQ(countCrossings(guides, CrossingStatus::TooShallow), 1U);
 }
 
 TEST_F(SnapGuides, GuideParallelMergeKeepsShapePoint) {
@@ -360,16 +360,18 @@ TEST_F(SnapGuides, GuideOnFirstPointReportsOrigin) {
 	const std::vector<Vec2> points{kWorkedPoint0, kWorkedPoint1, kWorkedPoint2, kWorkedPoint3};
 	const Vec2				cursor{0.214F, 0.47F};
 	ASSERT_GT(distanceBetween(cursor, kWorkedPoint0), snapping.originCloseRadiusMeters);
-	const SnapResult result = snap(points, cursor);
-	EXPECT_EQ(result.kind, SnapKind::Origin);
-	EXPECT_TRUE(result.closesShape());
-	EXPECT_EQ(result.point.x, kWorkedPoint0.x);
-	EXPECT_EQ(result.point.y, kWorkedPoint0.y);
-	ASSERT_EQ(result.guideCount, 1U);
-	EXPECT_EQ(result.guides[0].relation, GuideRelation::Perpendicular);
-	EXPECT_TRUE(result.guides[0].rightAngle);
-	EXPECT_EQ(result.guides[0].to.x, kWorkedPoint0.x);
-	EXPECT_EQ(result.guides[0].to.y, kWorkedPoint0.y);
+	for (const bool wallTool : {false, true}) {
+		const SnapResult result = wallTool ? snapWall(points, cursor) : snap(points, cursor);
+		EXPECT_EQ(result.kind, SnapKind::Origin) << wallTool;
+		EXPECT_EQ(result.point.x, kWorkedPoint0.x) << wallTool;
+		EXPECT_EQ(result.point.y, kWorkedPoint0.y) << wallTool;
+		ASSERT_EQ(result.guideCount, 1U) << wallTool;
+		EXPECT_EQ(result.guides[0].relation, GuideRelation::Perpendicular) << wallTool;
+		EXPECT_TRUE(result.guides[0].rightAngle) << wallTool;
+		EXPECT_EQ(result.guides[0].to.x, kWorkedPoint0.x) << wallTool;
+		EXPECT_EQ(result.guides[0].to.y, kWorkedPoint0.y) << wallTool;
+	}
+	EXPECT_TRUE(snap(points, cursor).closesShape());
 }
 
 TEST_F(SnapGuides, GuideNoMarkerOnParallel) {
@@ -475,24 +477,6 @@ TEST_F(SnapGuides, WallEndpointBeatsGuideCrossing) {
 	expectPoint(result.point, -1.7, 3.564);
 }
 
-TEST_F(SnapGuides, WallGuideFreeformSuppresses) {
-	const SnapInput	 freeform = wallInput(allAidsOn(), /*freeform=*/true);
-	const SnapResult result = snapWall({kWorkedPoint0, kWorkedPoint1, kWorkedPoint2}, {-1.6F, 3.8F}, freeform);
-	EXPECT_EQ(result.kind, SnapKind::None);
-	expectPoint(result.point, -1.6, 3.8);
-	const std::vector<Vec2> closed{kWorkedPoint0, kWorkedPoint1, kWorkedPoint2, kWorkedPoint3};
-	EXPECT_EQ(snapWall(closed, {0.1F, 0.1F}, freeform).kind, SnapKind::None);
-	EXPECT_EQ(snap(closed, {0.1F, 0.1F}, foundationInput(allAidsOn(), /*freeform=*/true)).kind, SnapKind::Origin);
-}
-
-TEST_F(SnapGuides, WallGuideOnFirstPointReportsOrigin) {
-	const SnapResult result = snapWall({kWorkedPoint0, kWorkedPoint1, kWorkedPoint2, kWorkedPoint3}, {0.214F, 0.47F});
-	EXPECT_EQ(result.kind, SnapKind::Origin);
-	EXPECT_EQ(result.point.x, kWorkedPoint0.x);
-	EXPECT_EQ(result.point.y, kWorkedPoint0.y);
-	EXPECT_EQ(result.guideCount, 1U);
-}
-
 TEST_F(SnapGuides, WallFoundationCornerSnapsToInset) {
 	const geometry::Ring ring = rectangle(0.0, 0.0, 20.0, 12.0, 8.0);
 	built.addFoundation(ring);
@@ -583,6 +567,31 @@ TEST_F(SnapGuides, GuideThroughShapePointRanksBeforeCloserCorner) {
 	const SnapResult closest = snap({{0.0F, 0.0F}}, {1.5F, 0.2F});
 	expectPoint(closest.point, 1.5, 0.35);
 	expectPoint(closest.guides[0].from, 3.0, 0.35);
+}
+
+TEST_F(SnapGuides, GuideCrossingLedByItsShapePointLine) {
+	// Two nearby directions: 20 and 110 degrees from the nearer building, 50 and 140 from the
+	// farther. The 20-degree line through the nearer building's corner (1.038, 3.57) and the
+	// 50-degree line through the placed point cross near the cursor. The corner line is
+	// generated first and is the closer of the two, but the shape point line leads the
+	// crossing: it is reported first.
+	built.addFoundation({{1.038, 3.57}, {-1.781, 2.544}, {-1.097, 0.665}, {1.722, 1.691}});
+	built.addFoundation({{-2.0, 3.0}, {-0.714, 4.532}, {-1.863, 5.496}, {-3.149, 3.964}});
+	DrawingAids aids = allAidsOff();
+	aids.alignToExistingBuildings = true;
+	aids.guideCrossings = true;
+	const SnapResult result = snap({{0.0F, 0.0F}}, {3.96F, 4.55F}, foundationInput(aids));
+	EXPECT_EQ(result.kind, SnapKind::GuideCrossing);
+	expectPoint(result.point, 3.858660, 4.596786);
+	ASSERT_EQ(result.guideCount, 2U);
+	EXPECT_EQ(result.guides[0].source, GuideSource::NearbyStructure);
+	EXPECT_EQ(result.guides[0].relation, GuideRelation::Parallel);
+	EXPECT_FALSE(result.guides[0].rightAngle);
+	expectPoint(result.guides[0].from, 0.0, 0.0);
+	EXPECT_EQ(result.guides[1].source, GuideSource::NearbyStructure);
+	EXPECT_EQ(result.guides[1].relation, GuideRelation::Perpendicular);
+	EXPECT_TRUE(result.guides[1].rightAngle);
+	expectPoint(result.guides[1].from, 1.038, 3.57);
 }
 
 TEST_F(SnapGuides, GuideMergeDistance) {
@@ -771,7 +780,9 @@ TEST_F(SnapGuides, WallChainPointWindow) {
 
 TEST_F(SnapGuides, ShippedAidsLandFourthCornerOnBothAxes) {
 	// Before the guides, the fourth corner of an axis-aligned rectangle locked to both axes;
-	// that lock is now a crossing of two world guides.
+	// that lock is now a crossing of two world guides: the north-south line through (0, 0)
+	// and the east-west line through (6, 6). Each is square to the shape's edge at its node,
+	// so each carries a marker.
 	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
 	const Vec2				cursor{0.2F, 5.85F};
 	for (const bool wallTool : {false, true}) {
@@ -779,25 +790,49 @@ TEST_F(SnapGuides, ShippedAidsLandFourthCornerOnBothAxes) {
 		EXPECT_EQ(result.kind, SnapKind::GuideCrossing) << wallTool;
 		expectPoint(result.point, 0.0, 6.0);
 		ASSERT_EQ(result.guideCount, 2U) << wallTool;
-		EXPECT_EQ(result.guides[0].source, GuideSource::WorldAxes);
-		EXPECT_EQ(result.guides[0].relation, GuideRelation::Perpendicular);
-		expectPoint(result.guides[0].from, 0.0, 0.0);
-		EXPECT_EQ(result.guides[1].source, GuideSource::WorldAxes);
-		EXPECT_EQ(result.guides[1].relation, GuideRelation::Parallel);
-		expectPoint(result.guides[1].from, 6.0, 6.0);
+		const SnapGuide& vertical = result.guides[0];
+		EXPECT_EQ(vertical.source, GuideSource::WorldAxes);
+		EXPECT_EQ(vertical.relation, GuideRelation::Perpendicular);
+		expectPoint(vertical.from, 0.0, 0.0);
+		EXPECT_EQ(vertical.to.x, result.point.x);
+		EXPECT_EQ(vertical.to.y, result.point.y);
+		EXPECT_NEAR(vertical.distanceFromNodeMeters, 6.0F, kOracleTolerance);
+		EXPECT_FALSE(vertical.throughPreviousPoint);
+		EXPECT_TRUE(vertical.rightAngle);
+		expectPoint(vertical.rightAngleEdgeDirection, 1.0, 0.0, 1e-6F);
+		const SnapGuide& horizontal = result.guides[1];
+		EXPECT_EQ(horizontal.source, GuideSource::WorldAxes);
+		EXPECT_EQ(horizontal.relation, GuideRelation::Parallel);
+		expectPoint(horizontal.from, 6.0, 6.0);
+		EXPECT_EQ(horizontal.to.x, result.point.x);
+		EXPECT_EQ(horizontal.to.y, result.point.y);
+		EXPECT_NEAR(horizontal.distanceFromNodeMeters, 6.0F, kOracleTolerance);
+		EXPECT_TRUE(horizontal.throughPreviousPoint);
+		EXPECT_TRUE(horizontal.rightAngle);
+		expectPoint(horizontal.rightAngleEdgeDirection, 0.0, -1.0, 1e-6F);
 	}
 }
 
-TEST_F(SnapGuides, ShippedAidsLockOneAxis) {
+TEST_F(SnapGuides, ShippedAidsLockEitherAxis) {
+	// Near one world guide and far from the other: the east-west line through (6, 6), then
+	// the north-south line through (0, 0).
 	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 6.0F}};
-	const Vec2				cursor{3.0F, 5.85F};
 	for (const bool wallTool : {false, true}) {
-		const SnapResult result = snapShipped(wallTool, points, cursor);
-		EXPECT_EQ(result.kind, SnapKind::GuideLine) << wallTool;
-		expectPoint(result.point, 3.0, 6.0);
-		ASSERT_EQ(result.guideCount, 1U) << wallTool;
-		EXPECT_EQ(result.guides[0].source, GuideSource::WorldAxes);
-		expectPoint(result.guides[0].from, 6.0, 6.0);
+		const SnapResult eastWest = snapShipped(wallTool, points, {3.0F, 5.85F});
+		EXPECT_EQ(eastWest.kind, SnapKind::GuideLine) << wallTool;
+		expectPoint(eastWest.point, 3.0, 6.0);
+		ASSERT_EQ(eastWest.guideCount, 1U) << wallTool;
+		EXPECT_EQ(eastWest.guides[0].source, GuideSource::WorldAxes);
+		EXPECT_EQ(eastWest.guides[0].relation, GuideRelation::Parallel);
+		expectPoint(eastWest.guides[0].from, 6.0, 6.0);
+
+		const SnapResult northSouth = snapShipped(wallTool, points, {0.2F, 3.0F});
+		EXPECT_EQ(northSouth.kind, SnapKind::GuideLine) << wallTool;
+		expectPoint(northSouth.point, 0.0, 3.0);
+		ASSERT_EQ(northSouth.guideCount, 1U) << wallTool;
+		EXPECT_EQ(northSouth.guides[0].source, GuideSource::WorldAxes);
+		EXPECT_EQ(northSouth.guides[0].relation, GuideRelation::Perpendicular);
+		expectPoint(northSouth.guides[0].from, 0.0, 0.0);
 	}
 }
 
