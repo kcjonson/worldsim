@@ -436,7 +436,7 @@ namespace world_sim {
 		pack.addChild<GearTextRow>({.left = "Weight-based - cargo in hands & pack - tools ride free", .leftStyle = captionStyle});
 		ui::Ref<ui::Component> stacks = column(*pack.get(), theme.get(tokens::spacing::space05));
 		for (ui::Ref<GearStackRow>& row : packRows) {
-			row = stacks.addChild<GearStackRow>({.visible = false});
+			row = stacks.addChild<GearStackRow>({.id = "gear_pack_row", .visible = false});
 		}
 		packMoreRow = stacks.addChild<GearTextRow>({.visible = false, .leftStyle = captionStyle});
 		packEmptyRow = stacks.addChild<GearTextRow>(

@@ -26,6 +26,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <filesystem>
 #include <format>
 #include <initializer_list>
@@ -137,6 +138,27 @@ namespace world_sim::testing {
 				pending.insert(pending.end(), component->getChildren().begin(), component->getChildren().end());
 			}
 			return nullptr;
+		}
+
+		// How many components with this id the top scene shows, for a list whose rows share one.
+		[[nodiscard]] std::size_t shownCount(std::string_view id) const {
+			app::Scene* top = app->scenes().top();
+			if (top == nullptr || !top->hasUi()) {
+				return 0;
+			}
+			const ui::Context&			 context = top->ui();
+			std::vector<ui::ComponentId> pending = context.getRoots();
+			std::size_t					 count = 0;
+			while (!pending.empty()) {
+				const ui::Component* component = context.find(pending.back());
+				pending.pop_back();
+				if (component == nullptr || !component->isShown()) {
+					continue;
+				}
+				count += component->getId() == id ? 1 : 0;
+				pending.insert(pending.end(), component->getChildren().begin(), component->getChildren().end());
+			}
+			return count;
 		}
 
 		// A player's click on the shown component with this id, then a frame for it to land. A frame first, so the

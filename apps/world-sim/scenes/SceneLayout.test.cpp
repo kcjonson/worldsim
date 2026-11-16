@@ -35,8 +35,10 @@
 #include <array>
 #include <cstdint>
 #include <functional>
+#include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace world_sim::testing {
@@ -273,10 +275,21 @@ namespace world_sim::testing {
 		ASSERT_NE(globalTasks, nullptr);
 		ASSERT_FALSE(globalTasks->getChildren().empty());
 		ASSERT_NE(shown("task_list"), nullptr);
-		ASSERT_NE(shown("toast_stack"), nullptr);
+		const ui::Component* toasts = shown("toast_stack");
+		ASSERT_NE(toasts, nullptr);
+		ASSERT_EQ(toasts->getChildren().size(), 5U);
+		const ui::Component* queue = shown("task_list_content");
+		ASSERT_NE(queue, nullptr);
+		ASSERT_FALSE(queue->getChildren().empty());
 		EXPECT_EQ(lintEverywhere(), "");
 		// The colony's task list is a fixed-height box whose rows scroll.
 		EXPECT_EQ(unexpectedScrollbars({{.id = "tasks_scroll"}}), "");
+		// Still open after every window size and interface size, so none drops out of the later ones unnoticed.
+		EXPECT_TRUE(scene.hud().isBuildMenuVisible());
+		EXPECT_TRUE(scene.hud().isGlobalTaskListExpanded());
+		EXPECT_NE(shown("task_list"), nullptr);
+		EXPECT_NE(shown("tasks_scroll"), nullptr);
+		EXPECT_NE(shown("toast_stack"), nullptr);
 	}
 
 	TEST_F(SceneLayout, TheHudHoldsTogetherWithTheWallToolOn) {
@@ -301,14 +314,22 @@ namespace world_sim::testing {
 			"dossier_tasks",
 			"dossier_log"
 		};
+		// The tabs fed from the colonist's gear, memory and known work, each by the id its rows share.
+		static const std::map<std::string_view, std::string_view> kRowIds{
+			{"dossier_gear", "gear_pack_row"}, {"dossier_memory", "memory_row"}, {"dossier_tasks", "dossier_task_row"}
+		};
 		for (const char* tab : kTabs) {
 			press(std::string("tab_") + tab);
 			const auto* bar = static_cast<const ui::TabBar*>(shown("dossier_tabs"));
 			ASSERT_NE(bar, nullptr);
 			ASSERT_EQ(bar->getSelectedId(), tab);
 			ASSERT_NE(shown("dossier_tab_area"), nullptr);
+			if (const auto rows = kRowIds.find(tab); rows != kRowIds.end()) {
+				ASSERT_GT(shownCount(rows->second), 0U) << "no rows on the " << tab << " tab";
+			}
 			EXPECT_EQ(lintEverywhere(), "") << "on the " << tab << " tab";
 			EXPECT_EQ(unexpectedScrollbars({{.id = "dossier_tab_area"}}), "") << "on the " << tab << " tab";
+			EXPECT_TRUE(scene.hud().isColonistDetailsVisible()) << "after the sizes on the " << tab << " tab";
 		}
 	}
 
@@ -317,6 +338,7 @@ namespace world_sim::testing {
 		ASSERT_TRUE(scene.hud().isCraftingDialogVisible());
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({}), "");
+		EXPECT_TRUE(scene.hud().isCraftingDialogVisible());
 	}
 
 	TEST_F(SceneLayout, TheStorageDialogHoldsTogether) {
@@ -324,6 +346,7 @@ namespace world_sim::testing {
 		ASSERT_TRUE(scene.hud().isStorageConfigVisible());
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({}), "");
+		EXPECT_TRUE(scene.hud().isStorageConfigVisible());
 	}
 
 	TEST_F(SceneLayout, ThePauseMenuHoldsTogether) {
@@ -332,6 +355,7 @@ namespace world_sim::testing {
 		ASSERT_NE(shown("pause_menu"), nullptr);
 		EXPECT_EQ(lintEverywhere(), "");
 		EXPECT_EQ(unexpectedScrollbars({}), "");
+		EXPECT_TRUE(scene.hud().isPauseMenuVisible());
 	}
 
 } // namespace world_sim::testing
