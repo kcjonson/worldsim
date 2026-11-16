@@ -27,7 +27,7 @@ namespace nav {
 
 	} // namespace
 
-	gnav::NavInputPolygon visibilityLimit(const geometry::Vec2i64& centreMm, std::int64_t rangeMm) {
+	gnav::NavInputPolygon meshLimit(const geometry::Vec2i64& centreMm, std::int64_t rangeMm) {
 		return {gnav::limitPolygon(centreMm, rangeMm), false, kProvenanceBorder};
 	}
 

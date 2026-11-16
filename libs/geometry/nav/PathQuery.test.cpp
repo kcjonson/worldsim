@@ -624,7 +624,7 @@ TEST(PathQuery, TerrainSentinelBlocksEvenWithEmptyBelief) {
 
 namespace {
 
-	// A visibility limit of 10 m round the origin, and a placed obstacle rising from below it
+	// A mesh limit of 10 m round the origin, and a placed obstacle rising from below it
 	// to a point about 1 m under its top corner: the only way from west to east passes
 	// between that point and the mesh edge.
 	struct EdgeGap {
