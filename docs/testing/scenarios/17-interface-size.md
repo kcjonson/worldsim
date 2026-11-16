@@ -11,7 +11,7 @@ Settings' Interface size scales menus, panels, and text from 60 to 120%, applies
 
 This one runs on the real settings file, since it tests that the size is saved: launch `world-sim` (RelWithDebInfo) with `--background` only, no `--no-settings`. The dev server is on 127.0.0.1:8081. `/api/state?what=uiscale` reads `factor` and `layoutScale`. Read `factor` first and note it as START (it should be 1; if it isn't, step 10 puts it back). A position from `/api/ui/tree` is in ui px; times `layoutScale` it's the logical px `/api/input` takes. Read Bob's `x`, `y` from `/api/state?what=colonists` before a world click.
 
-1. Splash: click Enter Expedition. Main menu: click Settings. Interface size shows 60% to 120% with START selected and Reset disabled when START is 1, and the row's description says the smaller sizes stop in a small window.
+1. Splash: click Enter Expedition. Main menu: click Settings. Interface size shows 60% to 120% with START selected and Reset disabled when START is 1, and the row's description says the smaller sizes stop where text would get too small to read on this screen.
 2. Click 120%: the screen grows at once, nothing restarts; `factor` is 1.2, `layoutScale` rises, Reset is enabled.
 3. Click 100%, read `layoutScale`, then click 60%: if it was above 0.8, the screen shrinks at once and `layoutScale` falls; `factor` is 0.6. On a window where it was 0.8, nothing moves, since the floor holds.
 4. Click Reset: back to 100%, Reset disabled; `factor` is 1.
