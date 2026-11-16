@@ -264,7 +264,7 @@ Opened by double-clicking a colonist card (roster or info panel eye button). A `
 > - **Skills, Social, Log — placeholders.** Rendered as honest "not yet simulated" empty states; no backing systems exist yet (no skills, relationships, or activity-log systems).
 > - **Bio traits** render as plain text, not `Badge` chips. **Tasks** current-task panel is simpler than the prototype (no progress bar / type / distance breakdown). **Memory** entity rows show map coordinates, not distance-from-colonist, and "Threats" is a placeholder category.
 > - **Footer:** Close works; **Work Priorities** and **Draft** are visual-only (no backing systems).
-> - The whole dialog renders small relative to the prototype — see the **UI Scale setting** epic, not a dossier bug.
+> - Size: the dialog is the prototype's 760 x 900 ui px, and the interface now scales to the window ([Interface scaling](../ui-scale-setting.md)), so it matches the mock at 100%. Its height is capped at 86% of the canvas (width 92%) and the tab area scrolls in what's left, so it fits the smallest canvas.
 > - Not yet stress-tested for text overflow with a **data-rich colonist** (long backstory, full gear, many known entities/tasks); only placeholder data has been exercised.
 
 ### Header area

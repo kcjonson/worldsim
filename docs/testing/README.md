@@ -279,6 +279,8 @@ build\libs\sim\Debug\sim-tests.exe
 # every library's tests: ctest --test-dir build -C Debug -LE heavy -E benchmarks
 ```
 
+world-sim's own test executable (the scene layout lint) builds to `apps/world-sim/tests/<config>/world-sim-tests.exe`.
+
 ### Pre-generated world
 
 A worktree needs `planets/quickstart.wsplanet` (~1.3 GiB, gitignored). Junction it from the main
