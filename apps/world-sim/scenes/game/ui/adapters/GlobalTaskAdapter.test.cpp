@@ -11,6 +11,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -103,18 +104,23 @@ namespace world_sim::adapters {
 	}
 
 	TEST(SortTasksForDisplayTest, RowsReadingTheSameWholeMetresTieOnId) {
-		// 10.0 m and 10.9 m both read "10m"; 11.0 m reads "11m".
-		const auto ids = idsAfterSorting({row(3, 1, 11.0F), row(2, 1, 10.9F), row(1, 1, 10.0F)});
-		EXPECT_EQ(ids, (std::vector<uint64_t>{1, 2, 3}));
+		// Both read "10m" though 0.8 m apart: the lower id goes first even at the larger distance.
+		EXPECT_EQ(idsAfterSorting({row(2, 1, 10.1F), row(1, 1, 10.9F)}), (std::vector<uint64_t>{1, 2}));
 	}
 
-	TEST(SortTasksForDisplayTest, AChainSpacedUnderAMetreSortsTheSameFromEveryInputOrder) {
-		const std::array<GlobalTaskDisplayData, 4> chain = {row(4, 1, 10.9F), row(3, 1, 10.5F), row(2, 1, 10.1F), row(1, 1, 9.7F)};
-		std::array<size_t, 4>					   order{0, 1, 2, 3};
-		const std::vector<uint64_t>				   expected{1, 2, 3, 4};
+	TEST(SortTasksForDisplayTest, RowsReadingDifferentWholeMetresOrderByDistanceEvenWhenCloseTogether) {
+		// 10.9 m reads "10m" and 11.1 m reads "11m", 0.2 m apart: distance beats id.
+		EXPECT_EQ(idsAfterSorting({row(1, 1, 11.1F), row(2, 1, 10.9F)}), (std::vector<uint64_t>{2, 1}));
+	}
+
+	TEST(SortTasksForDisplayTest, AChainOfCloseDistancesSortsTheSameFromEveryInputOrder) {
+		// Ids run against distance. 10.9 m and 10.2 m tie on id (both "10m"), then 11.0 m ("11m").
+		const std::array<GlobalTaskDisplayData, 3> chain = {row(1, 1, 11.0F), row(2, 1, 10.9F), row(3, 1, 10.2F)};
+		std::array<std::size_t, 3>				   order{0, 1, 2};
+		const std::vector<uint64_t>				   expected{2, 3, 1};
 		do {
 			std::vector<GlobalTaskDisplayData> rows;
-			for (const size_t index : order) {
+			for (const std::size_t index : order) {
 				rows.push_back(chain[index]);
 			}
 			EXPECT_EQ(idsAfterSorting(rows), expected);
