@@ -1,6 +1,6 @@
 #pragma once
 
-// NavInputBuilder: turn live game data (a mover's visibility limit, a chunk's terrain water rings, a placed
+// NavInputBuilder: turn live game data (a mover's mesh limit, a chunk's terrain water rings, a placed
 // entity's collider, built walls and doors) into the tagged rings and door portals the
 // geometry layer's nav meshes take (geometry::nav::NavInputPolygon, DoorPortal). These are
 // PURE functions: they read game state and emit rings in integer millimeters, no ECS, no
@@ -43,15 +43,15 @@ namespace nav {
 
 	// --- Ground ------------------------------------------------------------------
 	//
-	// Ground is the union of visibility limits; water hangs over it per chunk. Water is the
+	// Ground is the union of mesh limits; water hangs over it per chunk. Water is the
 	// chunk's terrain polygon navRings, never tiles (terrain-polygons D1, D9), already clipped
 	// to the chunk's 512 m extent, so two neighbours' water meets along bit-identical border
 	// edges and never overlaps.
 
-	// A mover's visibility limit: geometry::nav::limitPolygon round `centreMm` holding the disc of
+	// A mover's mesh limit: geometry::nav::limitPolygon round `centreMm` holding the disc of
 	// `rangeMm`, blocked=false, provenance=kProvenanceBorder. The same centre and range give the
 	// same ring on every machine.
-	[[nodiscard]] geometry::nav::NavInputPolygon visibilityLimit(const geometry::Vec2i64& centreMm, std::int64_t rangeMm);
+	[[nodiscard]] geometry::nav::NavInputPolygon meshLimit(const geometry::Vec2i64& centreMm, std::int64_t rangeMm);
 
 	// Appends every navRing in stored order, orientation kept (a Waterline island stays a CW
 	// hole): one with blocksMovement as a blocked ring with kProvenanceWater and the ring's

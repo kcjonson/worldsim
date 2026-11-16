@@ -54,8 +54,8 @@
     </DistanceFactor>
 
     <!-- In-progress: within-tier hysteresis margin. Added to the current task's score so a
-         same-tier challenger must beat it by more than this to win (prevents thrashing). Equals
-         taskSwitchThreshold below. Only matters within a tier; never lifts across a tier. -->
+         same-tier challenger must beat it by more than this to win (prevents thrashing).
+         Only matters within a tier; never lifts across a tier. -->
     <InProgress>
       <bonus>50</bonus>
     </InProgress>
@@ -75,31 +75,4 @@
       <weight>300</weight>
     </StoragePriority>
   </Bonuses>
-
-  <!-- Thresholds and timings -->
-  <Thresholds>
-    <!-- Minimum priority gap to switch tasks while action in progress -->
-    <taskSwitchThreshold>50</taskSwitchThreshold>
-
-    <!-- How often colonists re-evaluate tasks (seconds) -->
-    <reEvalInterval>0.5</reEvalInterval>
-  </Thresholds>
-
-  <!-- Hauling-specific tuning to avoid the "hauling problem" -->
-  <HaulingTuning>
-    <!-- Boost haul priority when storage is critically low -->
-    <storageCriticalThreshold>0.2</storageCriticalThreshold>
-    <storageCriticalBonus>500</storageCriticalBonus>
-
-    <!-- Boost if loose item is blocking construction -->
-    <blockingConstructionBonus>1000</blockingConstructionBonus>
-
-    <!-- Boost if item is perishable and will spoil soon -->
-    <perishableSpoilThreshold>60.0</perishableSpoilThreshold>
-    <perishableBonus>800</perishableBonus>
-
-    <!-- Batch nearby items to reduce task spam -->
-    <batchRadius>8.0</batchRadius>
-    <maxBatchSize>5</maxBatchSize>
-  </HaulingTuning>
 </PriorityTuning>

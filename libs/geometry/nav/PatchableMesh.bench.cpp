@@ -1234,10 +1234,10 @@ namespace {
 		state.counters["tris"]	  = static_cast<double>(mesh.liveTriangleCount());
 	}
 
-	// --- Visibility limits: the seen area as a union of ground outlines ---------------------
+	// --- Mesh limits: the meshed area as a union of ground outlines ---------------------
 	//
-	// A mover's visibility limit is a 16-gon whose sides lie kLimitRangeMm from where he stands,
-	// retaken every `step` he walks; the seen area is the union of every limit taken. Placed
+	// A mover's mesh limit is a 16-gon whose sides lie kLimitRangeMm from where he stands,
+	// retaken every `step` he walks; the meshed area is the union of every limit taken. Placed
 	// obstacles whose boxes meet a new limit's circumscribed disc and are not yet in the mesh go
 	// in first, as one patch over whatever ground is there; then the limit's ground, skipped
 	// where groundCovers says the union already holds it. Every row runs once and reports per
@@ -1521,7 +1521,7 @@ namespace {
 		}
 	}
 
-	// --- Open ground: a seen area with no interior vertices ----------------------------
+	// --- Open ground: a meshed area with no interior vertices ----------------------------
 
 	struct MeshShape {
 		double tris		  = 0.0;
@@ -1687,7 +1687,7 @@ namespace {
 	}
 
 	// A mover sweeps a square of side state.range(0) m at the retake step with no placed
-	// obstacles, so the seen area ends as one open region with vertices only on its outer edge.
+	// obstacles, so the meshed area ends as one open region with vertices only on its outer edge.
 	// Then 200 placed obstacles land one at a time at random interior points, and one more
 	// limit reaches past the edge.
 	void BM_OpenGroundGrowth(benchmark::State& state) {

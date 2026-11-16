@@ -336,9 +336,11 @@ namespace world_sim::adapters {
 				return a.taskTypePriority < b.taskTypePriority;
 			}
 
-			// 2. By distance (closer first)
-			if (std::abs(a.distanceValue - b.distanceValue) > 0.5F) {
-				return a.distanceValue < b.distanceValue;
+			// 2. By whole metres as the row shows them (closer first); rows reading the same distance tie
+			const int distanceA = static_cast<int>(a.distanceValue);
+			const int distanceB = static_cast<int>(b.distanceValue);
+			if (distanceA != distanceB) {
+				return distanceA < distanceB;
 			}
 
 			// 3. Stable sort by ID

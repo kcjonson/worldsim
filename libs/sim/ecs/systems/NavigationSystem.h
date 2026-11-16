@@ -7,7 +7,7 @@
 // on it): ground and water, built walls and doors, and placed obstacles. Routes,
 // connectivity (connected), and every position check (validity, buildability, stand points, the
 // landing) read it.
-// Ground is the union of visibility limits, and the mesh ends at its edge. A mover (Position +
+// Ground is the union of mesh limits, and the mesh ends at its edge. A mover (Position +
 // AgentRadius) takes a limit, a polygon round where it stands holding the disc of its range R (its
 // sight distance plus kSightBufferMeters), when it first appears, when it has moved
 // kLimitRetakeStepMm from where it last took one, or when its R changes; a limit the meshed ground
@@ -496,7 +496,7 @@ class NavigationSystem : public ISystem {
 		std::string			   defName;
 		bool				   operator<(const ObstacleKey& o) const;
 	};
-	// A visibility limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
+	// A mesh limit waiting to go in: who took it (kInvalidEntity for the landing), its centre
 	// and range, its outline, and the box its placed obstacles are looked for in (the outline's box
 	// grown by kFootprintReachMeters).
 	struct MeshLimit {
