@@ -193,11 +193,14 @@ namespace {
 
 			// 3D pass first: Primitives batches flush after the scene, so the ui
 			// composites on top of the blitted globe. The explicit flush paints
-			// the starfield beneath the blit.
-			const Foundation::Rect rect = stageRect();
+			// the starfield beneath the blit. The stage is laid out in ui px and
+			// the scene draws in the window's logical px.
+			const float			   scale = ui().getScale();
+			const Foundation::Rect stage = stageRect();
+			const Foundation::Rect rect{stage.x * scale, stage.y * scale, stage.width * scale, stage.height * scale};
 			Renderer::Primitives::flush();
 			globe.render(rect, owner->viewport());
-			renderMarker(rect, theme);
+			renderMarker(rect, scale, theme);
 		}
 
 	  private:
@@ -903,8 +906,8 @@ namespace {
 			owner->scenes().switchTo(world_sim::scenes::PartySelect.name);
 		}
 
-		// Landing marker: pulsing crosshair ring on the selected site.
-		void renderMarker(const Foundation::Rect& rect, const ui::Theme& theme) const {
+		// Landing marker: pulsing crosshair ring on the selected site, in logical px, sized in ui px by `scale`.
+		void renderMarker(const Foundation::Rect& rect, float scale, const ui::Theme& theme) const {
 			float sx = 0.0F;
 			float sy = 0.0F;
 			if (!siteValid || !globe.projectLatLon(selectedSite, rect, sx, sy)) {
@@ -914,23 +917,23 @@ namespace {
 			Foundation::Color		ring = accent;
 			const float				pulse = 0.5F + 0.5F * std::sin(markerPulse * 4.0F);
 			ring.a = 0.9F - pulse * 0.5F;
-			const float ringR = 9.0F + pulse * 4.0F;
+			const float ringR = (9.0F + pulse * 4.0F) * scale;
 			Renderer::Primitives::drawCircle({
 				.center = {sx, sy},
 				.radius = ringR,
 				.style = {
-					.fill = Foundation::Color{0.0F, 0.0F, 0.0F, 0.0F}, .border = Foundation::BorderStyle{.color = ring, .width = 1.5F}
+					.fill = Foundation::Color{0.0F, 0.0F, 0.0F, 0.0F}, .border = Foundation::BorderStyle{.color = ring, .width = 1.5F * scale}
 				},
 			});
-			Renderer::Primitives::drawCircle({.center = {sx, sy}, .radius = 2.5F, .style = {.fill = accent}});
-			constexpr float						  kTickIn = 13.0F;
-			constexpr float						  kTickLen = 6.0F;
+			Renderer::Primitives::drawCircle({.center = {sx, sy}, .radius = 2.5F * scale, .style = {.fill = accent}});
+			const float							  tickIn = 13.0F * scale;
+			const float							  tickLength = 6.0F * scale;
 			const std::array<Foundation::Vec2, 4> dirs{{{1.0F, 0.0F}, {-1.0F, 0.0F}, {0.0F, 1.0F}, {0.0F, -1.0F}}};
 			for (const auto& d : dirs) {
 				Renderer::Primitives::drawLine(
-					{.start = {sx + d.x * kTickIn, sy + d.y * kTickIn},
-					 .end = {sx + d.x * (kTickIn + kTickLen), sy + d.y * (kTickIn + kTickLen)},
-					 .style = {.color = accent, .width = 1.5F}}
+					{.start = {sx + d.x * tickIn, sy + d.y * tickIn},
+					 .end = {sx + d.x * (tickIn + tickLength), sy + d.y * (tickIn + tickLength)},
+					 .style = {.color = accent, .width = 1.5F * scale}}
 				);
 			}
 		}

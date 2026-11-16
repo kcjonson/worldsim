@@ -2,6 +2,7 @@
 
 #include "scenes/shared/SalalUi.h"
 
+#include <primitives/Primitives.h>
 #include <ui/Context.h>
 
 #include <algorithm>
@@ -206,8 +207,7 @@ namespace world_sim {
 		const construction::ConstructionWorld* constructionWorld,
 		const ecs::RoomDetectionSystem*		   roomDetection
 	) {
-		const Foundation::Vec2 viewport = root.get()->getContext()->getViewport();
-		fitViewport(viewport);
+		fitViewport(root.get()->getContext()->getViewport());
 
 		timeModel.refresh(ecsWorld);
 		topBar.get()->updateData(timeModel, static_cast<int>(colonistListModel.colonists().size()));
@@ -223,8 +223,12 @@ namespace world_sim {
 		colonistList.get()->update(colonistListModel, ecsWorld);
 
 		if (worldPixelsPerMeter > 0.0F) {
+			// The world is drawn over the window's logical px, not the ui's.
+			int windowWidth = 0;
+			int windowHeight = 0;
+			Renderer::Primitives::getLogicalViewport(windowWidth, windowHeight);
 			minimapPanel.get()->updateData(
-				camera.getVisibleRect(static_cast<int>(viewport.x), static_cast<int>(viewport.y), worldPixelsPerMeter),
+				camera.getVisibleRect(windowWidth, windowHeight, worldPixelsPerMeter),
 				colonistListModel.colonists()
 			);
 		}

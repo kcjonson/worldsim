@@ -807,8 +807,9 @@ namespace {
 			};
 
 			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
-			// moving under a still cursor, but not while the pointer is over the ui.
-			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer).valid()) {
+			// moving under a still cursor, but not while the pointer is over the ui. The pointer is in the window's
+			// logical px, which the world takes, and the ui's hit test in its own.
+			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer / ui().getScale()).valid()) {
 				int logicalW = 0;
 				int logicalH = 0;
 				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
