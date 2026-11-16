@@ -149,17 +149,479 @@ Follows the `assets/config/work/` pattern: XML, loaded at game start, validated 
 
 - `materials.xml`: per material per structure kind — cost rate, work rate, HP, insulation, flammability, beauty, speed modifier (foundations), thickness presets (walls), pattern parameters (element emitter type, palette, seeds).
 - `constraints.xml`: pathing clearance, min corner angle, min vertex spacing, segment clearance, min/max area, max points, opening margins, refund percentage, builder caps.
-- `snapping.xml`: angle increments, snap radii, smart-guide range.
+- `snapping.xml`: angle increment, snap radii, origin-close radius, the guide keys (range, tolerance, angle window, merge distance, crossing angle and radius, direction tolerance, nearby-direction and corner limits, priority rule), common lengths, length rounding, and the rectangle tool's adjacency switch (D12, D13), plus the Drawing Settings defaults (D14).
 
 Cross-validation: every material referenced by a thickness preset exists; opening types reference valid materials; constraint values are internally consistent (e.g., clearance ≤ segment clearance).
 
 ### D11: UI — DrawingSystem beside PlacementSystem, selection extension
 
-- **`DrawingSystem`** (new GameScene subsystem, sibling of PlacementSystem): owns tool state machines (`FoundationTool`, `WallTool`, `OpeningTool`, `EditTool` for vertex/add/subtract editing), a shared **`SnapEngine`** (angle snap relative to previous segment, smart guides, candidate snap targets queried from `ConstructionWorld`: endpoints > vertices > points-on-segments > edges), and a shared **`ConstructionValidator`** (constraint checks returning a violation enum that drives both the red colorizing and the reason text). Input order becomes: GameUI → DrawingSystem → PlacementSystem → SelectionSystem; the drawing tool consumes clicks while active. `InputEvent.modifiers` already carries Alt/Ctrl/Shift.
+- **`DrawingSystem`** (new GameScene subsystem, sibling of PlacementSystem): owns tool state machines (`FoundationTool` with its rectangle and freeform modes (D13), `WallTool`, `OpeningTool`, `EditTool` for vertex/add/subtract editing), a shared **`SnapEngine`** (candidate snap targets queried from `ConstructionWorld`: endpoints > vertices > points-on-segments > edges, then guides, then the angle step, then the length step, each helper gated by the player's Drawing Settings; D12), and a shared **`ConstructionValidator`** (constraint checks returning a violation enum that drives both the red colorizing and the reason text). Input order becomes: GameUI -> DrawingSystem -> PlacementSystem -> SelectionSystem; the drawing tool consumes clicks while active. `InputEvent.modifiers` already carries Alt/Ctrl/Shift.
 - **Selection:** new `Selection` variants (`FoundationSelection`, `WallSegmentSelection`, `OpeningSelection`) with priority constants slotted per the design spec's click-priority stack, plus two new hit tests backed by `ConstructionWorld` queries: point-in-polygon (foundations) and point-to-band distance (segments, openings). Repeated-click cycling is new SelectionSystem behavior (currently first-hit-by-priority only).
 - **Info panels:** new adapters (`adaptFoundation`, `adaptWallSegment`, `adaptOpening`) emitting existing slot types plus a `ConstructionProgressSlot`; action buttons reuse `ActionButtonSlot` (Edit shape, Cancel, Add, Demolish, Demolish building).
-- **Config strip:** new docked `UI::Component` above the GameplayBar (LayoutContainer horizontal: material cards, thickness presets, readouts, validity message), shown while a structure tool is active.
+- **Config strip:** new docked `UI::Component` above the GameplayBar (LayoutContainer horizontal: the foundation tool picker, material cards, thickness presets, readouts, validity message), shown while a structure tool is active.
 - **Notifications:** room formed via existing `ToastStack`.
+
+### D12: Snap engine (helpers, guides, lengths)
+
+Player-facing behaviour: design spec, Foundations > Drawing and Foundations > Snapping and guides, and UI & Selection > Drawing Settings and Key guide. This decision replaces the world-axis-only alignment with one formulation in which the world axes are one guide source of three, puts every helper behind a player setting, and adds common lengths and length rounding. The rectangle tool's corner snap is D13, the settings' storage D14, the key guide D15, and the look D16. The values were tuned in an interactive prototype outside the repository; every case in the test list below passes in it.
+
+**Today (main at a64e7a0f).** `libs/sim/construction/SnapEngine.cpp`: `snap()` (lines 382 to 417) tries origin-close (3+ points; it ignores `freeform`), foundation vertex, foundation edge, `axisAlign`, `snapAngle`, raw. `snapWall()` (465 to 529) tries, in order, the chain's first point (kind `Origin`, once the chain has `kMinClosingWallChainPoints` points and the cursor is within the origin close radius; skipped under `freeform`), wall endpoint, foundation vertex (inset), wall segment interior, foundation edge (inset), `axisAlign` and `snapAngle` (both skipped under `freeform`), then the raw cursor. `axisAlign` (296 to 371) locks the cursor's X and/or Y to the nearest node within `axisGuideToleranceMeters`; nodes are the in-progress points plus, when `alignToExisting`, committed foundation ring vertices within `smartGuideRangeMeters` (raw corners in both tools; wall vertices are not nodes). `snapAngle` (260 to 294) reads `points.back()` unguarded (its callers check `!points.empty()`) and returns the raw cursor as `None` early in two cases, a cursor at zero distance from that point (about line 265) and an increment of zero or less (about line 277); otherwise it snaps the direction from it to the nearest `angleIncrementDegrees` step off the previous segment (off +x for the first), keeping distance; it has no capture window, so past those two cases it is the unconditional fallback. Nothing reads an existing edge's direction or the shape's first edge, nothing intersects two lines, and nothing touches a length. `axisAlign` runs before `snapAngle`, so a world-axis hit within 0.3 m pre-empts the 90-degree turn on a rotated shape (the reported bug).
+
+#### The engine
+
+One pure function per tool: `snap()` (Freeform foundation tool), `snapWall()` (wall tool), and `snapRectangleCorner()` (D13). Inputs: the pointer (world metres), the placed points, the existing geometry (`ConstructionWorld`'s foundations, blueprints included, with their placement order; in the wall tool also its wall vertices and segments), the snapping config (`SnappingConfig`), the player's drawing aids (`DrawingAids`, the engine's part of the Drawing Settings; D12 and D14), `freeform` (Alt held), the wall half-thickness (integer millimetres, as today), and the origin-close radius (widened with zoom by `DrawingSystem`, as today). Output: the snapped point, what it landed on, up to two guides to draw, what the length step did, the kept common lengths (so labels can show `=`), and whether a click closes. The engine is stateless and const: `DrawingSystem` builds a `SnapEngine` on every move (`handleMouseMove`, `handleWallMove`), as today. A second pure helper, `cornerAngles()`, computes the angle readout from the placed points and the snapped point; it snaps nothing.
+
+#### Snap order per tool
+
+First rule that applies wins. A rule marked with a setting is skipped when that Drawing Setting is off; every rule marked `!freeform` is skipped while Alt is held.
+
+| Freeform tool (`snap()`) | Wall tool (`snapWall()`) | Needs |
+|---|---|---|
+| 1. Close: 3+ points and the cursor within `originCloseRadiusMeters` of `points[0]`; kind `Origin` | 1. Close, the same, once the chain has `kMinClosingWallChainPoints` (3) points | wall tool: `!freeform` |
+| | 2. Wall endpoint: nearest wall vertex closer than `vertexSnapRadiusMeters`; `WallEndpoint` | |
+| 2. Foundation corner: nearest ring vertex within `vertexSnapRadiusMeters`; `Vertex` | 3. The same, returned at `outerFaceFlushCorner(ring, index, wallHalfThicknessMm)`, which adds the 2 mm `kFlushInsetSafetyMm` itself | |
+| | 4. Wall segment: nearest foot strictly inside a segment, closer than `edgeSnapRadiusMeters`; `WallSegment`; then squaring | squaring: `guidesFromShape`, `!freeform` |
+| 3. Foundation edge: nearest foot on a ring edge within `edgeSnapRadiusMeters`; `Edge`; then squaring | 5. The same on the edge's inset line (edge and foot moved by the inset along the inward normal); then squaring | squaring: `guidesFromShape`, `!freeform` |
+| 4. Guides (below); then the first-point landing; then the length step on a single guide | 6. The same | a guide source on; `!freeform` |
+| 5. Angle step: with a point placed, the direction from `points.back()` to the cursor snapped to the nearest `angleIncrementDegrees` step off the previous segment (off +x for the first), distance kept; kind `Angle`; then the length step | 7. The same off the previous chain point | `angleSteps`, `!freeform` |
+| 6. Raw cursor; kind `None`; then the length step along the raw direction | 8. The same | length step: `!freeform` |
+
+With every helper off the Freeform tool is rules 1 to 3 and 6 with length rounding, and the wall tool rules 1 to 5 and 8 with length rounding; neither has a grid. The rectangle tool's order is D13's.
+
+#### Guides
+
+A **line** is a node (a point) and a direction, compared modulo 180 degrees; directions come in **pairs**, a direction and its perpendicular. The engine builds nodes, directions, and the lines below; captures lines near the cursor; merges near-duplicates; forms crossings; ranks every candidate with one key.
+
+**Nodes.**
+
+- Shape points: `points`. A foundation has at most `maxPoints` (32, constraints config; the validator refuses more). A wall chain has no such cap, so its lines use `points[0]` and its most recent `maxPoints - 1` points.
+- Committed corners, only when `alignToExistingBuildings`. Freeform tool: foundation ring vertices. Wall tool: each foundation ring vertex at `outerFaceFlushCorner(ring, index, wallHalfThicknessMm)` (the function adds the 2 mm safety, `kFlushInsetSafetyMm`, itself), where a perimeter wall's centerline turns, plus wall vertices. Those within `guideRangeMeters` of the cursor are taken nearest first, at most `guideCornerLimit`; ties fall to `foundations()` order and ring index, then `vertices()` ascending id. Each corner remembers its structure (its foundation, or the wall segments at that vertex) and its edge directions (a foundation corner: toward the previous ring vertex, then toward the next; a wall vertex: along its segments in ascending id). Using the inset corner in the wall tool keeps a foundation corner's guides on the perimeter wall's centerline instead of half a wall thickness outside it, where they would run parallel to the wall vertex's own guides and fight them.
+
+**Directions.**
+
+- Shape first: `points[0]` to `points[1]`, once there are two points.
+- Shape previous: `points[n-2]` to `points[n-1]`, once there are three points and it differs from the first by more than `guideDirectionToleranceDegrees` (mod 90 degrees).
+- Nearby, only when `alignToExistingBuildings`: committed edges whose closest point is within `guideRangeMeters` of the cursor (Freeform tool: foundation ring edges; wall tool: those plus wall segment centerlines), zero-length edges skipped, walked by that distance, ties by foundation id and ring index, then segment id. An edge within `guideDirectionToleranceDegrees` (mod 90 degrees) of the world axes or of a direction already kept is skipped; the first `nearbyGuideDirectionLimit` are kept, each with the structure that supplied it. A skipped duplicate still counts for corners: a kept direction also takes every structure in range that has an edge within `guideDirectionToleranceDegrees` (mod 90 degrees) of it, so two parallel sheds both get the lines. Blueprints count; they are what the player is lining up with.
+- World: +x.
+
+**Lines, the closed list.** Nothing else generates a line. Generation order is this list, then node order, then a pair's direction before its perpendicular.
+
+1. The shape first pair through every shape point. `DrawnShape`. Needs `guidesFromShape`.
+2. The shape previous pair through `points.back()`. `DrawnShape`. Needs `guidesFromShape`.
+3. Each nearby pair through `points.back()` (when there is one) and through the committed corners of every structure in range that has an edge within `guideDirectionToleranceDegrees` (mod 90 degrees) of it, the one that supplied it included. `NearbyStructure`. Needs `alignToExistingBuildings`. The line bound is unchanged, since the corners are capped at `guideCornerLimit` however many structures share a direction. Case: two parallel sheds at 37 degrees; shed B's edge is nearer and supplies the direction, shed A's edge is skipped as a duplicate, and A's corners still get 37-degree lines, so the player can line up with A's face.
+4. The world pair through every shape point and every committed corner (there are corners only with `alignToExistingBuildings`). `WorldAxes`. Needs `guidesFromWorldAxes`.
+
+Left out on purpose: the shape's directions through committed corners (a building parallel to the shape brings its own direction through its own corners, and no worked case needs more), nearby directions through shape points other than the previous one, and directions from shape edges other than the first and previous.
+
+**Capture.** A line is captured when the cursor is within `guideToleranceMeters` of it. A `DrawnShape` line that passes within 1 mm of `points.back()` or (with two or more points) of `points[0]` is also captured when the direction from that point to the cursor is within the angle window of the line (mod 180 degrees, so a cursor behind the point catches too); the window is `angleIncrementDegrees / 2` while `tieAngleWindowToStep` holds, else `guideAngleWindowDegrees`. The test is geometric, not by node: the first edge's own line is generated through `points[0]` (and through `points[1]`, then dropped as a duplicate by the merge), and it still catches by angle from `points[1]` while that is the previous point. A single line's snapped point is the foot of the perpendicular from the cursor.
+
+The window through the previous point is the angle step's own, so the 0, 90, 180, and 270-degree turns off the previous edge are caught exactly where `snapAngle` caught them, and come back as `GuideLine` with a marker. The window through `points[0]` catches the closing corner: on the 30-degree rectangle below, the cursor (-1.6, 3.8) is 0.51 m off the guide through `points[0]` (outside the 0.3 m tolerance) but 7.2 degrees off it as seen from `points[0]`, so the guide is captured and the crossing forms. Nearby and world lines are distance-only, so they never crowd out the other 15 degree steps. The angle step governs only when no line is captured; its result keeps kind `Angle`.
+
+**Merge.** Captured lines are walked in rank order (source, then shape point before committed corner, then generation order). A line within `guideDirectionToleranceDegrees` (mod 180 degrees) of a kept line, and closer to it than the merge distance at the kept line's foot of the cursor, is dropped into that kept line, which records the dropped line's node. The merge distance is `guideToleranceMeters` while `tieMergeDistanceToTolerance` holds, else `guideMergeDistanceMeters`. A committed corner's line 0.25 m from the shape's own parallel line no longer takes over when the cursor drifts nearer to it.
+
+**Crossings.** Only with `guideCrossings`. Each pair of kept lines that meet at the crossing minimum angle or more (mod 180 degrees; `angleIncrementDegrees` while `tieCrossingAngleToStep` holds, else `guideCrossingMinAngleDegrees`) gives its intersection, kept when it lies within `guideCrossingRadiusMeters` of the cursor, unless both lines pass within 1 mm of a node that one of them was generated through: its own node, or the node of a line merged into it. Two lines through a shared node always cross on it, which would otherwise make each node a magnet out to the crossing radius: with the shape at 30 degrees, a cursor 0.5 m from `points[1]` at 112 degrees is 0.070 m from the 120-degree line and 0.187 m from the 90-degree world line through `points[1]`, and their crossing is `points[1]` itself. With the rule it lands on the 120-degree line. The rule is by generating node, not by any node on both lines: read the second way it would also drop a rectangle's closing corner that falls on an existing building's corner, which the lines through `points[2]` and `points[0]` reach without being generated there; kept, it still snaps there when the cursor is 0.4 to 0.52 m off, past the 0.4 m vertex snap. The angle minimum drops near-parallel crossings, which hold the point through a dead zone (a 30-degree guide and a 31.5 degree nearby line are both captured over about 23 m of their length).
+
+**Ranking.** One lexicographic key, smaller wins. With `priorityRule` `sourceFirst` (the default):
+
+1. The best source among the candidate's lines (`DrawnShape` < `NearbyStructure` < `WorldAxes`)
+2. Crossing before single line
+3. The best line's node: shape point before committed corner
+4. Distance from the cursor to the snapped point (differences within 1e-9 m are ties)
+5. Generation order: a single line by its own; a crossing by its earlier line, then its later
+
+A crossing's best line is the higher-ranked of its two by source, then node, then generation. So a `DrawnShape` single line beats a `NearbyStructure` crossing, and the crossing of the shape's own two lines (the rectangle's closing corner) beats everything else in the guide step. There is no key for a crossing's second line: an earlier draft of this decision had one (the other line's source, third), dropped so the two docs and the tuned prototype rank alike. With `priorityRule` `closest` the key is crossing before single line, then distance, then generation; it exists for comparison in tuning (the same cursor in `GuideDrawnShapeBeatsCloserWorldAxis` goes to the world line under it).
+
+**Squaring on existing edges.** In `snap()`'s edge rule and in `snapWall()`'s wall-segment and foundation-edge rules, the hit is found as above, then, unless `freeform` or `guidesFromShape` is off: each captured `DrawnShape` line, in generation order, that meets the hit's line (the foundation edge; in the wall tool the inset edge line; the wall segment's centerline) at the crossing minimum angle or more, at a point on the edge (end points included; strictly interior for a wall segment, so it stays a T-junction) within `edgeSnapRadiusMeters` of the cursor, is a candidate, and the nearest to the cursor is returned instead of the foot (generation order on ties). Kind and hit ids are unchanged (`Edge`; `WallSegment` with `hitSegment`), and `guides[0]` carries the line with its marker. Case: `points` (0, 0), (5.196, 3.000), a foundation edge along y = 6, cursor (3.580, 5.8) on the 120-degree guide 0.2 m short of the edge. The foot is (3.580, 6.000), whose edge direction is 88.3 degrees off the first edge's, leaving a 91.69-degree interior corner at `points[1]`; the squared point is (3.464, 6.000), 0.23 m from the cursor, on the edge, 90 degrees. The vertex rules stay ahead and unchanged; a corner beating a guide is intended.
+
+**Landing on the first point.** With three or more points, a guide result (a single line's foot, or a crossing) within `originCloseRadiusMeters` of `points[0]` snaps to `points[0]` and is returned as `Origin`, so the click closes; its guides still draw. In `snapWall()` the same rule applies once the chain has `kMinClosingWallChainPoints` points; because the first-point close runs first there, a guide result lands on the first point only when the cursor is outside the close radius. No length step follows. Case: closing the 30-degree rectangle with the cursor at (0.214, 0.47), 0.516 m from `points[0]`, just outside the origin-close radius. The shape's perpendicular through `points[0]` (which also runs through `points[3]`) is captured by angle, 6.5 degrees off as seen from `points[3]`, and its foot lands 0.30 m from `points[0]`, so without this the preview shows a too-short closing edge and only `DrawingSystem::handleMouseMove`'s rescue-close (about line 416) would save the click.
+
+**Right-angle marker.** For each returned guide, the edges at its node are tested in order: for a shape point, the shape's edge into it (toward the point before), then out of it (toward the point after, when there is one); for a committed corner, its edge directions in the order above. The first within `guideDirectionToleranceDegrees` of perpendicular to the guide sets `rightAngle` and `rightAngleEdgeDirection` (unit, from the node along that edge). The marker sits at the guide's `from`. A guide parallel to the first edge gets a marker too when the edge into its point is perpendicular to it, as at `points[2]` of a rectangle; through `points[0]` or `points[1]` it gets none, since the only edges there are the first edge itself.
+
+**Where it sits.** The guide step takes the world-axis lock's slot (`axisAlign`, renamed `alignToWorldAxes` by the engine reshape) in both entry points, after the geometry rules and before the angle step. Real geometry stays ahead (zero-gap adjacency is a hard rule). `alignToWorldAxes` is deleted in the same change (one path); its behaviour is line list item 4 with the same 0.3 m tolerance, except that the wall tool's foundation corners move to their inset points.
+
+#### Common lengths
+
+Only with `commonLengths` and not `freeform`. Computed once per move, before the rules; used by the length step.
+
+1. **Entries.** With `commonLengthSourceShape`, each edge between consecutive placed points (owner: the shape; it ranks newest of all; owner distance 0). With `commonLengthSourceBuildings`, every foundation, each with its owner distance (the cursor's distance to its nearest ring edge) and its placement order: each ring edge, or in the wall tool, while `commonLengthWallsReadInsetFoundation` holds, each edge between consecutive inset corners (`outerFaceFlushCorner(ring, index, wallHalfThicknessMm)`). In the wall tool, also each wall segment, owned by the chain it was drawn in, which its placement order identifies (below). A chain's owner distance is its nearest segment's.
+
+**Placement order.** There is no separate counter: the order is `ConstructionWorld::version()` read at the start of the commit. `version_` is a monotonic `uint64_t`, never reset, and every successful `commitFoundation`, `commitExtension`, and `commitSegment` bumps it, so no two commits read the same value; values are sparse (state and entity changes bump it too), which is harmless, since only their order is used.
+
+- *New stored fields.* `Foundation::placementOrder` and `WallSegment::placementOrder`, both `std::uint64_t`. A future save format carries both and restores `version()` above every stored value, or a building placed after a load ranks older than the ones loaded.
+- *Foundations.* `commitFoundation` records `version_` before its bump. So does `commitExtension`: an extension is a placement, and ranks as its own building while it is pending. `mergeExtension` removes the extension record and the target keeps its own order (a merge reshapes the target; the player placed nothing new then). Add and Subtract in place on a blueprint (`addToFoundation`, `subtractFromFoundation`) keep the foundation's order.
+- *Walls.* A chain is many `commitSegment` calls, each bumping the version, so the order is passed in: `commitSegment` gains a `std::uint64_t placementOrder` parameter, and `DrawingSystem::commitWallChain` reads `version()` once before its first segment and passes that value for every segment of the chain. One committed chain shares one value, which is how a segment knows its chain. Segments the new pair is split into (drawn through an existing vertex) take the chain's value; the two halves of an existing segment that a T-junction splits keep that segment's value. Walls re-hosted by a merge keep theirs.
+- *Ctrl+click edge fill* is a chain of its own: it reads `version()` before its commit.
+- *Tests, benches, and dev verbs.* Every `commitSegment` caller passes a value: `DrawingSystem::devCommitWalls` (the `/api/dev` wall path) reads `version()` once per call, so a dev-stamped loop is one chain; tests and the two benches (`NavigationSystem.bench.cpp`, `PlayerVisibilitySystem.bench.cpp`) pass `version()` the same way, or an explicit value when a case is about order. The dev foundation path goes through `commitFoundation` and gets its order there.
+2. **Filter.** An entry shorter than `commonLengthMinimumMeters` is dropped. A building or chain entry whose owner distance is over `commonLengthRangeMeters` is dropped, unless `commonLengthAllBuildings`.
+3. **Grouping.** Entries are walked newest owner first (the shape, then the highest placement order), then nearest owner, then generation order. An entry within `commonLengthMergeMeters` (plus 1e-9 m) of an existing group's length joins the first group created that is within that distance; otherwise it starts a group with its own length. A group's length is its first entry's.
+4. **Ranking.** Groups sort by newest member (descending), then member count (descending), then nearest owner (ascending), then length (ascending). The first `commonLengthMaxCount` are kept.
+5. **Catch along a line.** Given the segment's start `start` (`points.back()`), a line (origin `origin`, unit direction `direction`), and the current point `current` on it: for each kept group of length `length`, let `foot` be the foot of `start` on the line and `offset = |start - foot|`. If `offset > length` the length is out of reach. Otherwise the target is whichever of `foot + direction * sqrt(length^2 - offset^2)` and `foot - direction * sqrt(length^2 - offset^2)` is nearer `current`, and the slide is `|target - current|`. A group catches when its slide is at most `commonLengthCatchMeters`; of those, the smallest slide wins, then the better group rank.
+
+#### The length step
+
+`refine(origin, direction, current, allowRounding)`, applied where the point can still slide along a line:
+
+1. With no point placed, or `freeform`, nothing.
+2. A common length that catches (above) moves the point to its target. Kind unchanged; the result records `CommonLength`, the length, and the group (its edges, for the ticks).
+3. Else, when `allowRounding`, `roundLengths` is on, and `lengthIncrementMeters` > 0: `length = round(|start - current| / increment) * increment`; if `length` > 0 and reachable on the line (as in the catch), the point moves to that target and the result records `Rounded`.
+4. Else the point stays.
+
+Where it runs:
+
+- **A single guide through the previous point** (its node within 1 mm of `points.back()`): `refine(node, direction, foot, true)`.
+- **A single guide through any other point**, with `lengthRoundingOnGuides` `guideDistance` (the default): `refine(node, direction, foot, false)`; if no common length caught and rounding is on, the distance along the guide from its own node rounds instead: `along = (foot - node) . direction`, `rounded = round(|along| / increment) * increment`, and if `rounded` > 0 the point is `node + sign(along) * rounded * direction`, recorded as `RoundedAlongGuide`. This runs with no point placed too. With `segmentLength`, `refine(node, direction, foot, true)` instead.
+- **A crossing**: fixed. With `commonLengthBeatsCrossing` on, `refine` runs from the cursor's foot on each of the crossing's two lines with `allowRounding` false; if either catches, the smaller slide wins (the best line on a tie), and the result becomes a `GuideLine` on that line alone at the common length.
+- **The angle step**: `refine(points.back(), stepDirection, point, true)`.
+- **The raw cursor**, while `commonLengthAfterRawCursor` holds and the cursor is off the previous point: `refine(points.back(), unit(cursor - points.back()), cursor, true)`.
+- **Never** after the close, a corner, an edge (squared or not), a wall endpoint or segment, or a guide result that landed on the first point.
+
+#### What is drawn
+
+The result carries what the preview needs; D16 has the look.
+
+- **Guides.** `guideCount` guides (2 for a crossing, 1 for a single line, the angle step, a squared `Edge` or `WallSegment`, and an `Origin` from a single guide; 2 for an `Origin` from a crossing), each from its node to the snapped point, with its source, marker, and `distanceFromNodeMeters` (`|to - from|`). The angle step's guide is the ray from `points.back()`, source `DrawnShape` (`WorldAxes` for the first segment), no marker, no distance label.
+- **A crossing dot** at the point for `GuideCrossing`.
+- **The segment label** at the cursor: `|point - points.back()|` to `guideDistanceDecimals` places and " m", with " =" and the accent colour when the length step recorded `CommonLength` or the length is within `commonLengthMergeMeters` of a kept group.
+- **Common-length marks**, when the length step recorded `CommonLength`: a tick across the segment at the snapped end, and on every edge of the matched group a faint highlight and a double tick at its middle.
+- **Guide distance labels** (`guideDistances` on): for each guide whose `relation` is not `AngleStep` and whose node is not the previous point and that is at least 40 px long on screen, `distanceFromNodeMeters` the same way, with " =" on a kept-group match. Placed beside the guide's middle, 10 px off it on the side away from the segment's middle; if it overlaps the segment label or an earlier guide label it shifts along the guide by its own width plus 8 px, alternately forward and back, up to six times, and is dropped if it still overlaps.
+- **The angle readout** (`angleReadout` on, not `freeform`, not the rectangle tool), from `cornerAngles(points, point, closesShape, tool, 2 * originCloseRadiusMeters, 0.5 * 10^-angleReadoutDecimals)`, where `originCloseRadiusMeters` is the radius passed in `SnapInput`: the game widens the close radius at low zoom, so the closing reach widens with it (the prototype has no such widening). The path is `points` plus the snapped point, or `points` alone when the click closes. It reads as a polygon when it has three or more vertices and the tool is the Freeform tool or the chain is closing. The corner at `points.back()` is always read; the corner at `points[0]` too when there are three or more points, the path reads as a polygon, and the click closes or the snapped point is within the closing reach of `points[0]`. A polygon corner is the interior angle: the sweep from the edge toward the previous vertex to the edge toward the next, taken the other way round when a probe along its bisector (1% of the shorter edge out) falls outside the path. An open-chain corner is the unsigned angle between its two segments. A corner with an edge under 1 mm is skipped; a corner within the square tolerance of 90 degrees draws the right-angle marker; any other draws an arc and its degrees. Nothing shows with fewer than two points.
+
+#### API
+
+Public `snap()` and `snapWall()` take one input struct in place of today's trailing parameters (`freeform`, `originCloseRadiusMeters`, `alignToExisting`, and in `snapWall()` `wallHalfThicknessMm`). Both signatures in full:
+
+```cpp
+[[nodiscard]] SnapResult snap(
+    const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input) const;
+[[nodiscard]] SnapResult snapWall(
+    const std::vector<::Foundation::Vec2>& points, ::Foundation::Vec2 cursor, const SnapInput& input) const;
+```
+
+The types:
+
+```cpp
+enum class SnapKind {
+    None, Angle, Vertex, Edge, Origin, WallEndpoint, WallSegment,
+    GuideLine,      // locked onto one guide line
+    GuideCrossing,  // snapped to the crossing of two guide lines; point is the crossing
+    Grid,           // rectangle tool: a grid point (D13)
+};                  // AxisGuide is removed
+
+enum class GuideSource { DrawnShape, NearbyStructure, WorldAxes };
+
+enum class GuideRelation { Parallel, Perpendicular, AngleStep };  // AngleStep: the angle snap's ray from the previous point, not a line through a node
+
+struct SnapGuide {
+    Vec2          from;                     // the guide's node; the marker sits here
+    Vec2          to;                       // the snapped point
+    GuideSource   source = GuideSource::DrawnShape;
+    GuideRelation relation = GuideRelation::Parallel;
+    bool          rightAngle = false;       // draw the right-angle marker
+    Vec2          rightAngleEdgeDirection;  // unit, from `from` along the perpendicular edge
+    float         distanceFromNodeMeters = 0.0F;  // |to - from|, for the guide distance label
+    bool          throughPreviousPoint = false;   // the node is the last placed point
+};
+
+inline constexpr std::size_t kMaxSnapGuides = 2;
+
+enum class LengthSnapKind { None, Rounded, RoundedAlongGuide, CommonLength };
+
+struct CommonLength {
+    float                            lengthMeters = 0.0F;
+    std::vector<std::array<Vec2, 2>> edges;  // every edge in the group, for the ticks
+};
+
+// libs/sim/construction/DrawingAids.h: plain data holding only what the engine obeys,
+// every switch false in the struct. The app builds it from the player's Drawing
+// Settings (D14); tests fill their own.
+struct DrawingAids {
+    bool  angleSteps = false;
+    bool  guidesFromShape = false;
+    bool  alignToExistingBuildings = false;
+    bool  guidesFromWorldAxes = false;
+    bool  guideCrossings = false;
+    bool  commonLengths = false;
+    bool  roundLengths = false;
+    float rectangleGridSpacingMeters = 1.0F;
+};
+
+struct SnapInput {
+    const DrawingAids& aids;                   // D14; a reference, never null
+    bool         freeform = false;             // Alt
+    float        originCloseRadiusMeters = -1.0F;  // zoom-widened by DrawingSystem; negative uses the config, as today
+    std::int64_t wallHalfThicknessMm = 0;      // wall tool only; the inset helpers take millimetres, as today
+};
+
+struct SnapResult {
+    // point, kind, hitSegment, hitVertex, closesShape() as today
+    std::array<SnapGuide, kMaxSnapGuides>  guides{};
+    std::size_t               guideCount = 0;
+    LengthSnapKind            lengthSnap = LengthSnapKind::None;
+    std::optional<CommonLength> matched;      // set with LengthSnapKind::CommonLength
+    std::vector<float>        commonLengths;  // the kept groups' lengths, for "=" on labels
+};
+
+struct RectangleShape {
+    geometry::Ring ring;   // (left, bottom) first, counter-clockwise, millimetres
+    std::string    label;  // "4 m x 3 m"
+};
+
+// D13: the rectangle spanned by two corners; nullopt when either side is under 1 mm.
+[[nodiscard]] std::optional<RectangleShape> rectangleFromCorners(
+    ::Foundation::Vec2 firstCorner, ::Foundation::Vec2 secondCorner);
+```
+
+`guides` replaces `guideFrom`, `guideTo`, `guideFromAlt`, and `guideToAlt`. Private: the engine reshape renames `axisAlign` to `alignToWorldAxes` (still world-only there), and the guides step (step 4) replaces it with `alignToGuides(...)` carrying the full guide rules, with `studyCommonLengths(...)` and `refineLength(...)` beside it; the line, capture, crossing, length, and marker helpers stay in the .cpp's anonymous namespace. `cornerAngles()` and `rectangleFromCorners()` are free functions in the same header.
+
+#### Config
+
+`assets/config/construction/snapping.xml`, `assets::SnappingConfig`, loaded in `ConstructionRegistry.cpp`. `ConfigValidator.cpp` (about lines 392 to 414) checks only `vertexSnapRadiusMeters`, `edgeSnapRadiusMeters`, and `originCloseRadiusMeters` > 0 today; every other check in the table is new. These are designer tuning, never shown to the player; the player's switches are D14's.
+
+| Key | Default | Meaning | Change | Validator check |
+|-----|---------|---------|--------|-----------------|
+| `angleIncrementDegrees` | 15 | The angle step | none | > 0 and <= 90 |
+| `vertexSnapRadiusMeters` | 0.4 | Snap to an existing corner or wall endpoint (all three tools) | none | > 0 |
+| `edgeSnapRadiusMeters` | 0.3 | Snap to an existing edge or wall; also the squaring reach | none | > 0 |
+| `originCloseRadiusMeters` | 0.5 | Close onto the first point; also the reach of a guide result that closes | none | > 0 |
+| `guideRangeMeters` | 8.0 | Committed corners and nearby edges are read within this of the cursor | renamed from `smartGuideRangeMeters` | > 0 |
+| `guideToleranceMeters` | 0.3 | A guide catches the cursor within this | renamed from `axisGuideToleranceMeters` | > 0 |
+| `tieAngleWindowToStep` | true | The angle catch window is half the angle step | new | none |
+| `guideAngleWindowDegrees` | 7.5 | The angle catch window when the tie is off | new | >= 0 and < 90 |
+| `tieCrossingAngleToStep` | true | The crossing minimum angle is the angle step | new | none |
+| `guideCrossingMinAngleDegrees` | 15 | The crossing minimum angle when the tie is off; also the squaring minimum | new | > the direction tolerance and <= 90 |
+| `tieMergeDistanceToTolerance` | true | The merge distance is the catch distance | new | none |
+| `guideMergeDistanceMeters` | 0.3 | The merge distance when the tie is off | new | >= 0 |
+| `guideCrossingRadiusMeters` | 1.0 | A crossing farther than this from the cursor is ignored | new | >= `guideToleranceMeters` |
+| `guideDirectionToleranceDegrees` | 1.0 | Same direction: nearby de-duplication, merge, marker | new | > 0 and < the angle window in force |
+| `nearbyGuideDirectionLimit` | 4 | Nearby directions kept, integer | new | >= 0 (0 turns nearby directions off) |
+| `guideCornerLimit` | 16 | Committed corners used, integer | new | >= 0 (0 turns committed corners off) |
+| `priorityRule` | `sourceFirst` | Ranking among guides; `closest` is the tuning alternative | new | one of the two |
+| `commonLengthSourceBuildings` | true | Buildings (and walls, in the wall tool) lend lengths | new | none |
+| `commonLengthSourceShape` | true | The shape being drawn lends its earlier edges | new | none |
+| `commonLengthRangeMeters` | 30 | A building lends lengths when any edge is within this of the cursor | new | >= 0 |
+| `commonLengthAllBuildings` | false | Ignore the range | new | none |
+| `commonLengthCatchMeters` | 0.3 | A length catches when the point slides this far or less along its direction | new | >= 0 |
+| `commonLengthMergeMeters` | 0.05 | Lengths this close are one | new | >= 0 and < `commonLengthMinimumMeters` |
+| `commonLengthMaxCount` | 6 | Lengths kept after ranking, integer | new | >= 0 |
+| `commonLengthMinimumMeters` | 0.5 | Shorter edges lend nothing | new | >= 0 |
+| `commonLengthAfterRawCursor` | true | The length step also runs on the raw direction (how plain freeform rounds) | new | none |
+| `commonLengthBeatsCrossing` | false | A caught common length beats a crossing | new | none |
+| `commonLengthWallsReadInsetFoundation` | true | The wall tool reads foundation edges at their inset lengths | new | none |
+| `lengthIncrementMeters` | 0.1 | The rounding increment; 0 turns rounding off | new | >= 0 |
+| `lengthRoundingOnGuides` | `guideDistance` | On a single guide through another point, round the distance along the guide; `segmentLength` rounds the segment | new | one of the two |
+| `rectangleAdjacencySnaps` | true | The rectangle tool lands on existing corners and edges (D13) | new | none |
+| `doubleClickSeconds` | 0.4 | Two left releases on the world this close in time are a double-click (D13; the colonist roster's `kDoubleClickSeconds`) | new | > 0 |
+| `doubleClickDistancePx` | 4 | The second release must also be this close to the first, in logical pixels (D13; the rectangle tool's click-versus-drag threshold) | new | >= 0 |
+| `alignToExistingDefault` | true | Default of the old setting | deleted; the Drawing Settings defaults are D14's block | none |
+
+The renames make every guide key read `guide...`; the old names described the world-axis-only feature. `smartGuideRangeMm` and `axisGuideToleranceMm` are computed and never read; they are deleted, not renamed. The three ties keep D12's single-value behaviour as the default while letting the values be tuned apart. Not config, on purpose: catching by angle, squaring on edges, and a guide result closing on the first point are the design (the prototype had switches for them only to compare); the 2 mm inset safety stays the code constant `kFlushInsetSafetyMm`; the wall thickness comes from the material's presets; `maxPoints` stays in `constraints.xml`. The look keys are D16's, in `rendering.xml`.
+
+#### Units, determinism, cost
+
+Positions are float world metres, like every other snap. Float spacing is under 0.5 mm below 4096 m from the world origin and doubles with each power of two beyond it; within that range a guided corner is exact to float rounding (about 0.25 mm), and the millimetre quantization on commit (D1) adds up to 0.5 mm per axis, so a guided right angle over a 3 m edge is square to a few hundredths of a degree. Farther out the error grows with the spacing. Tests compare positions to 1e-3 m unless they say otherwise. Snapping runs on the local cursor only and the command carries the quantized point, so float differences between machines never reach sim state. On one machine the result is a pure function of the inputs: every walk is over `foundations()`, `segments()`, `vertices()` (ascending id) or `points`, never an unordered container, and every tie has a fixed winner. Among guides a tie falls to the generation order (Ranking, key 5). The foundation vertex and edge snaps keep the last of equal-distance hits, as today (`<=` in `snapToVertex` and `snapToEdge`, and in the prototype). The wall endpoint and wall segment snaps keep the first (strict `<`, so the lowest id), as today, and so does the rectangle tool's adjacency (D13).
+
+Per cursor move the line list holds at most 298 lines: 66 from the shape (32 points by one pair, plus the previous pair), 136 nearby (4 directions by the previous point and up to 16 corners, by a pair: 4 x (1 + 16) x 2), and 96 world (48 nodes by a pair). Each is one point-to-line distance. After the merge at most 48 lines stay captured (14 directions, at most three parallel lines per direction inside the band twice the tolerance wide, plus the 6 shape lines through `points[0]` and `points.back()` that catch by angle), and crossings are formed among those; in practice two or three. Common lengths add one entry per edge of the shape and of each building in range (walls too, in the wall tool), grouped against at most a few dozen groups; in practice a few buildings, well under a hundred entries. Finding the corners, nearby edges, and length entries is a walk over the committed foundations and walls, as `axisAlign` and `snapToEdge` do today. `Perf: none` is the expectation; nothing on the sim or render hot path changes.
+
+#### Tests
+
+`libs/sim/construction/SnapEngine.test.cpp`. Unless a case says otherwise: every helper on (`angleSteps`, `guidesFromShape`, `alignToExistingBuildings`, `guidesFromWorldAxes`, `guideCrossings`, `commonLengths`) and `roundLengths` on, every config key at its default, wall thickness 0.2 m (inset 0.102 m), foundations placed in the order listed (ids ascending), positions compared to 1e-3 m. A `DrawingAids` is passed explicitly, never read from the player's defaults, which have the helpers off. `rect(x, y, angle, length, depth)` is the ring (x, y), then `length` along `angle`, then `depth` along `angle` + 90, then back, each corner rounded to the millimetre; `polar(origin, angle, distance)` is the point `distance` from `origin` at `angle`; angles in degrees from +x. The worked rectangle is p0 (0, 0), p1 (5.196, 3.000), p2 (3.196, 6.464), p3 (-2.000, 3.464).
+
+Existing tests whose expectations change:
+
+- `AngleSnapRelativeToPreviousSegment` (line 63) and `WallAngleSnapOffPreviousChainPoint` (line 419): a 90-degree turn is now a shape line caught by angle, so `Angle` becomes `GuideLine`; the point is unchanged. Rename them `GuideRightAngleOffPreviousSegment` and `WallGuideRightAngleOffPreviousChainPoint`. Prototype case: points (0, 0), (6, 0); cursor (6.2, 4); `GuideLine` at (6, 4).
+- The seven axis tests (lines 171 to 264), ported to the inputs below (they differ from the existing tests' inputs): `AxisAlignsXToInProgressNode` and `AxisAlignsYToInProgressNode` become `GuideWorldAxisLocksX` and `GuideWorldAxisLocksY` (`GuideLine`; prototype: points (0, 0), cursor (0.2, 5) gives (0, 5), and (5, 0.2) gives (5, 0)); `AxisAlignsBothAxesToTwoNodes` becomes `GuideShapeLinesCrossAtSquareCorner` (`GuideCrossing` of two `DrawnShape` lines at (0, 6), `guideCount == 2` in place of the alt-pair checks; prototype: points (0, 0), (6, 0), (6, 6), cursor (0.15, 5.9)); `AxisAlignToleranceBoundary` becomes `GuideToleranceBoundary` (points (0, 0), cursor (0.35, 5): 0.35 m falls through to `Angle` at (0, 5)); `AxisAlignFreeformSuppresses` becomes `GuideFreeformSuppresses` (cursor (0.2, 5) under `freeform`: `None` at the cursor); `AxisAlignTogglesCommittedFoundationTargets` becomes `GuideCommittedCornersFollowAlignToExisting` (foundation (3, 10), (6, 10), (6, 12), (3, 12), no points, cursor (-2, 10.2): `GuideLine` at (-2, 10); with `alignToExistingBuildings` off, `None`); `AxisAlignCommittedRespectsRange` becomes `GuideRangeExcludesFarCorners` (the same foundation, cursor (-6, 10.2), 9 m away: `None`).
+- Every existing case that checks a free length (a point from the angle step, a single guide, or the raw cursor): `roundLengths` now rounds it to 0.1 m. Each is checked; one whose expected length is not a multiple of 0.1 m sets `roundLengths` off or takes the rounded point.
+- `libs/assets/assets/ConstructionRegistry.test.cpp`: `Snapping_Parsed` reads `guideRangeMeters`; the XML in `Validation_RejectsNegativeSnapRadius` uses the new key name.
+
+Checked and unchanged: `WallOriginCloseBeatsFoundationVertex`, `WallOriginCloseBeatsWallEndpointAndSegment`, and `WallFreeformSkipsOriginClose` (the first-point close stays first and stays off under `freeform`); `NoOriginCloseBeforeThreePoints` (prototype: points (0, 0), (6, 0), cursor (0.3, 0.2)) and `OriginCloseRadiusDefaultIgnoresOverride` now land on a `GuideLine` instead of `Angle`, still not `Origin`; `FoundationSnapUnaffectedByWalls` (the Freeform tool still reads no walls) and the other wall tests (no points placed, or freeform) keep their kinds.
+
+New, worked example (driven click by click, each placed point rounded to the millimetre):
+
+- `WorkedExampleRectangleAt30Degrees`: cursor (0.02, -0.01), no points: `None`; place p0. Cursor `polar(p0, 28.5, 6)`: `Angle` at p1. Cursor p2 + `polar(0, 30, 0.5)` with p0, p1 placed: `GuideLine` at p2, marked; and for each of the 12 directions every 30 degrees, a cursor 0.5 m from p2 lands on the 120-degree line through p1. Cursor (-1.6, 3.8) with p0, p1, p2 placed: `GuideCrossing` at p3, two guides through p2 (as point 3) and p0 (as point 1), both marked. Cursor (0.2, -0.15) with p0 to p3 placed: `Origin`. The closed ring's corners read 90.00 degrees (two decimals) and its edges 6.000, 4.000, 6.000, 4.000 m.
+
+New, Freeform tool:
+
+- `GuidePerpendicularOffFirstEdgeAt30Degrees`: p0, p1; cursor `polar(p1, 118, 4)`; `GuideLine` on the 120-degree line through p1 (at (3.196, 6.464), the length rounded to 4.0 m), marker at p1 pointing at -150 degrees, toward p0.
+- `GuidePerpendicularCapturedByAngleFarOut`: p0, p1; cursor `polar(p1, 115, 10)`, 0.872 m off the line; still `GuideLine` on the 120-degree line, marked.
+- `GuideTwoLinesThroughOneNodeDoNotCross`: p0, p1; cursor `polar(p1, 112, 0.5)`, 0.070 m off the 120-degree line and 0.187 m off the world line through p1; `GuideLine` on the 120-degree line at (4.946, 3.433), not p1.
+- `GuideClosingCornerLandsOnExistingCorner`: a committed foundation (-2, 3.464), (-2, 0.464), (-5, 0.464), (-5, 3.464), its first corner at p3; p0, p1, p2 placed; cursor 0.45 m from p3 toward (-1.6, 3.8); `GuideCrossing` at p3 of two `DrawnShape` lines (the lines through p2 and p0 meet there; neither was generated through the building's corner).
+- `GuideCrossingOutsideRadiusIgnored`: a committed foundation (1.1, 15), (3, 15), (3, 17), (1.1, 17); p0, p1; cursor `polar(p1, 115, 10)`; `GuideLine`; the crossing it would make is 1.97 m from the cursor.
+- `GuideNearParallelLinesNeverCross`: a committed `rect(8, 9, 31.5, 4, 3)`; p0, p1; cursor `polar(p1, 30.75, 10)`; a `NearbyStructure` line is captured, and the result is a `GuideLine` on the shape's line (`DrawnShape`).
+- `GuideParallelMergeKeepsShapePoint`: a committed foundation (0.25, 10), (3.25, 10), (3.25, 13), (0.25, 13); p0; cursor (0.2, 5); `GuideLine` at (0, 5) through p0; the north-south line through the corner (0.25, 10) is merged into it.
+- `GuideParallelToNearbyRotatedFoundation`: a committed `rect(6, -2, 37, 4, 3)`; p0; cursor `polar(p0, 39, 5)`; `GuideLine` on the 37-degree line through p0, `NearbyStructure`, at (3.993, 3.009) (5.0 m, rounded; the bare angle step would give 45 degrees).
+- `GuideDrawnShapeBeatsCloserWorldAxis`: the reported bug. p0, p1; cursor `polar(p1, 120, 0.533)` moved 0.25 m along 30 degrees, so 0.050 m from the world line through p1 and 0.250 m from the shape's perpendicular; the point lies on the perpendicular, at (4.946, 3.433), and `guides[0].source == DrawnShape`. With `priorityRule` `closest`, the same cursor lands on the world line at (5.196, 3.600).
+- `GuideNearbyStructureBeatsWorldAxes`: a committed `rect(5, -4, 37, 4, 3)`; p0; cursor `polar(p0, 37, 5)` moved 0.1 m along 127 degrees; a second foundation (9, y + 0.12), (11, y + 0.12), (11, y + 2), (9, y + 2) with y the cursor's y; the result's first guide is `NearbyStructure`, the 37-degree line through p0 (here a `GuideCrossing` with the world line through the second foundation's corner, at (4.258, 3.209)).
+- `GuideParallelNeighboursBothGetLines`: A = `rect(-10, 3, 37, 4, 3)`, B = `rect(-1.5, -0.5, 37, 4, 3)`; no points; cursor at x = -2.6, 0.1 m (in y) above A's 37-degree line through its second corner; B supplies the direction, four `NearbyStructure` lines run through A's corners, and the result is a `GuideLine` through A's second corner.
+- `GuideNearbyDirectionLimit`: six foundations `rect(4 cos(60 index), 4 sin(60 index), angle, 2, 1.5)` for index = 0 to 5, with angles 10, 22, 35, 50, 65, and 78; no points; cursor (0, 0); four directions kept, 78, 65, 50, and 10 degrees (mod 90), and some edges are over the limit.
+- `GuideCornerLimit`: five foundations (2 index - 4, 2), (2 index - 3, 2), (2 index - 3, 3 + 0.1 index), (2 index - 4, 3 + 0.1 index) for index = 0 to 4; no points; cursor (0, 0); twenty corners in range, sixteen used.
+- `GuideAlignToExistingOffDropsBuildingGuides`: as `GuideParallelToNearbyRotatedFoundation` with `alignToExistingBuildings` off; no `NearbyStructure` line and no line through a committed corner; `Angle`.
+- `GuideSquaresPointOnExistingEdge`: a committed foundation (-2, 6), (10, 6), (10, 10), (-2, 10); p0, p1; cursor (3.580, 5.8); `Edge` at (3.464, 6.000), `guides[0]` the 120-degree line with its marker; the corner at p1 is 90.00 degrees (the foot would give 91.69). Replaces the draft's `GuideLosesToExistingEdge`.
+- `GuideOnFirstPointReportsOrigin`: p0 to p3 placed; cursor (0.214, 0.47), 0.516 m from p0 (outside the 0.5 m origin-close radius); the shape's perpendicular through p0 is captured by angle from p3 and its foot is 0.30 m from p0; the result is `Origin` at p0, from the guide rule.
+- `GuideNoMarkerOnParallel`: p0, p1; cursor (7.796, 4.6); `GuideLine` on the line through p0 parallel to the first edge, `rightAngle == false` (the only edge at p0 is the first edge). The worked example's step 4 is the counter-case: the guide through p2 parallel to the first edge is marked, since the edge into p2 is perpendicular to it.
+- `GuideDeterministicTieBreak`: no points; committed foundations (0, 0), (2, 0), (2, -2), (0, -2) and (5, 0.4), (7, 0.4), (7, 2.4), (5, 2.4); cursor (3.5, 0.2), midway between their east-west lines; `GuideLine` at (3.5, 0) through the first foundation's corner (2, 0).
+
+New, wall tool:
+
+- `WallGuideClosesRotatedRectangleNotInset`: p0, p1, p2; cursor (-1.6, 3.8); `GuideCrossing` at p3, not offset by half the thickness. With p0 to p3, cursor (0.2, 0.1): `Origin`.
+- `WallGuideParallelToHostFoundationEdge`: a host `rect(0, 0, 25, 10, 6)`; chain start (3, 3.5); cursor `polar(start, 27, 4)`; the first guide is `NearbyStructure`, the 25-degree line through the start.
+- `WallGuidePerpendicularToNearbyWallSegment`: a wall from (0, 0) to `polar((0, 0), 20, 6)`; chain start (1, 2.5); cursor `polar(start, 112, 4)`; `GuideLine`, `NearbyStructure`, the 110-degree line through the start.
+- `WallGuideUsesInsetCorners`: a foundation `rect(0, 0, 20, 12, 8)`; a wall from its second corner's inset point `corner` to `corner` - (3, 5); no points; cursor `corner` + (3, 0.05); two east-west lines are captured (the inset corner's and the wall vertex's) and one is kept, the other merged.
+- `WallGuideSquaresTJunction`: a wall (-2, 6) to (10, 6); p0, p1; cursor (3.580, 5.8); `WallSegment` at (3.464, 6.000) with `hitSegment` set.
+- `WallGuideSquaresInsetEdge`: a foundation (-2, 6), (10, 6), (10, 10), (-2, 10); p0, p1; cursor (3.580, 5.95); `Edge` at (3.405, 6.102), where the 120-degree guide through p1 meets the inset line (within 2e-3).
+- `WallEndpointBeatsGuideCrossing`: a wall from (-1.7, 3.564) to (-6, 8); p0, p1, p2; cursor (-1.75, 3.584); `WallEndpoint` at (-1.7, 3.564).
+- `WallGuideFreeformSuppresses`: p0, p1, p2, cursor (-1.6, 3.8), `freeform`: `None`; p0 to p3, cursor (0.1, 0.1), `freeform`: `None` (the close is skipped). The Freeform tool with the same input closes (`Origin`).
+- `WallGuideOnFirstPointReportsOrigin`: p0 to p3; cursor (0.214, 0.47); `Origin` at p0 from the guide rule.
+- `WallFoundationCornerSnapsToInset`: a foundation `rect(0, 0, 20, 12, 8)`; no points; cursor 0.1 m left of and 0.15 m above its second corner (11.276, 4.104); `Vertex` at the inset corner (11.145, 4.165), within 1e-6.
+
+New, common lengths (`CommonLengths.*` in the same file):
+
+- `FirstShackGivesTwoLengths`: a committed shack `rect(0, 0, 20, 4, 3)`; start (7.177, -2.177); cursor `polar(start, 20, 3.85)`; the kept lengths are exactly 4.000 and 3.000, two edges each.
+- `CatchFromShortAndLong`: the same; cursors at 3.85 m and 4.2 m along 20 degrees both give a 4.000 m segment (`CommonLength`) on the `NearbyStructure` 20-degree line through the start; at 4.5 m, no catch, and the length is 4.500 (`Rounded`).
+- `SecondEdgeCatchesOnPerpendicular`: the start and the 4 m point placed; cursor `polar(second, 110, 2.85)`; `GuideLine` on the shape's perpendicular through the second point, 3.000 m, `CommonLength`.
+- `SecondShackClosesSquare`: then a cursor `polar(third, 200, 3.9)` (a `GuideCrossing`), then start + (0.12, 0.05) (`Origin`); the closed ring's edges are 4.000, 3.000, 4.000, 3.000 m, its corners 90.00 degrees, and every edge matches a length of the first shack.
+- `NearerOfTwoLengthsWins`: a committed `rect(0, 0, 0, 4.0, 4.25)`; start (0, -10); cursor (4.15, -10); both lengths are within the catch, and 4.25 wins at (4.25, -10).
+- `MergeKeepsHigherPriorityLength`: a committed `rect(0, 0, 0, 4.0, 4.03)`; start (0, -10); cursor (4.1, -10); one group of four edges, length 4.000; the point is (4, -10).
+- `CrossingKeepsItsPoint`: a committed `rect(-3, 7, 0, 5.8, 2)`; points (0, 0), (6, 0), (6, 4); cursor (0.18, 4.05); `GuideCrossing` at (0, 4). With `commonLengthBeatsCrossing` on: `GuideLine` at (0.2, 4), 5.80 m along the guide through (6, 4).
+- `ExistingCornerKeepsItsPoint`: a committed `rect(0, 0, 0, 4, 3)`; start (0, -5); cursor (4.2, 0.1); `Vertex` at (4, 0), no length snap.
+- `FreeformDropsLengths`: a committed `rect(0, 0, 0, 4, 3)`; start (0, -10); cursor (3.9, -10), `freeform`; `None` at the cursor, no common lengths computed.
+- `RankingNewestBuildingFirst`: a shack `rect(0, 0, 0, 4, 3)`, then a longhouse `rect(10, 0, 0, 10, 5)`; start (0, -8); cursor (3.9, -8); kept in rank order 5, 10, 3, 4, and the cursor catches 4.0. With `commonLengthMaxCount` 2: 5 and 10 kept, 3 and 4 dropped, and the point stays (3.9, -8). With the two placed in the other order: 3, 4, 5, 10, and 4.0 catches.
+- `MinimumAndRange`: committed `rect(0, 0, 0, 4, 0.4)` and `rect(60, 0, 0, 7, 7)`; start (0, -8); cursor (3.9, -8); the two 0.4 m edges are dropped under the minimum and the far building's four edges out of range. With `commonLengthAllBuildings`, cursor (6.9, -8) catches 7.00 m.
+- `SwitchOffLeavesLength`: the same with `commonLengths` off; cursor (3.9, -8); the point is (3.9, -8), no common lengths computed.
+- `ShapeLendsItsOwnEdge`: points (0, 0), (5.5, 0), (5.5, 2), nothing committed; cursor (0.2, 2.15); `GuideCrossing` at (0, 2) (the 5.50 m length would also catch, and the crossing wins). With `guideCrossings` off: `GuideLine` at (0, 2), `CommonLength` 5.50 m matching the shape's first edge.
+- `WallToolReadsInsetAndWalls`: a committed `rect(0, 0, 0, 4, 3)` and a wall (0, 10) to (2.5, 10); wall tool; start (-0.5, -6); cursor (3.2, -6); the kept lengths include 3.796, 2.796, and 2.500, and the point is (3.296, -6), 3.796 m from the start.
+
+New, levels (`DrawingLevels.*`):
+
+- `IncrementRoundsAngleStep`: start (0, 0); cursors `polar(start, 31, 4.97)` and `polar(start, 31, 5.04)` both give `Angle` with a 5.0 m segment (`Rounded`); `polar(start, 31, 5.06)` gives 5.1 m; with `lengthIncrementMeters` 0, 5.06 m stays.
+- `CommonLengthBeatsIncrement`: a committed (10, 10), (13.37, 10), (13.37, 12), (10, 12); start (0, 4); cursor (3.42, 4); `CommonLength` 3.37 m at (3.37, 4).
+- `IncrementLeavesCrossing`: `commonLengths` off; points (0, 0), (6.03, 0), (6.03, 4.07); cursor (0.15, 4.0); `GuideCrossing` at (0, 4.07), 6.03 m unrounded.
+- `IncrementLeavesExistingCorner`: `commonLengths` off; a committed (3.03, 0.07), (7, 0.07), (7, 3), (3.03, 3); start (0, -4); cursor (3.2, 0.2); `Vertex` at (3.03, 0.07).
+- `IncrementOffUnderAlt`: start (0, 0); cursor `polar(start, 31, 5.06)`, `freeform`; 5.06 m.
+- `HelpersOffRawDirectionRounded`: every helper off, `roundLengths` on; points (0, 0), (6, 0); cursor (6.2, 4.04); `None` on the raw direction from (6, 0), length 4.0 m, at (6.198, 3.995). With every helper on: `GuideLine` at (6, 4).
+- `HelpersOffKeepAdjacency`: every helper off; points (0, 0), (6, 0); a committed (9, 4), (12, 4), (12, 7), (9, 7); cursor (9.2, 4.15); `Vertex` at (9, 4).
+- `EachHelperAloneTurnsItsCandidatesOn`: a committed `rect(9, 6, 37, 3, 2)`; points (0, 0), (6, 0); cursor (3.3, 2.9). With every helper off: no shape, nearby, or world lines, no committed corners, kind not `Angle`, no common lengths. With only `guidesFromShape`: shape lines exist. Only `alignToExistingBuildings`: nearby lines and committed corners exist. Only `guidesFromWorldAxes`: world lines exist. Only `angleSteps`: `Angle`. Only `commonLengths`: common lengths are computed.
+- `CrossingsSwitch`: points (0, 0), (6, 0), (6, 4); cursor (0.15, 3.95); only `guidesFromShape`: `GuideLine`; `guidesFromShape` and `guideCrossings`: `GuideCrossing` at (0, 4).
+- `RectangleOnGrid`, `RectangleHalfMetreGrid`, `RectangleAdjacency`: D13's cases.
+- `AngleReadout`: points (0, 0), (5, 0); snapped point `polar((5, 0), 105, 3)`: one corner, 75.0 degrees, not square; `polar((5, 0), 90, 3)`: one corner, square; points (0, 0) alone with `polar(start, 30, 3)`: no corner. Points (0, 0), (5, 0), (5, 3), (0.5, 3) closing at (0, 0): the closing corner is read (80.54 degrees at the first point; 99.46 at the previous).
+
+New, rounding on guides (`GuideRounding.*`): a committed (0, 10), (3, 10), (3, 13), (0, 13), whose corner (0, 10) is the guide's node.
+
+- `NoPointPlacedRoundsGuideDistance`: no points; cursor (-3.67, 10.05); `GuideLine` at (-3.7, 10), `RoundedAlongGuide`, 3.7 m from (0, 10).
+- `GuideThroughPreviousRoundsSegment`: nothing committed; points (0, 0), (6, 0); cursor (6.1, 3.67); `GuideLine` at (6, 3.7), `Rounded`.
+- `GuideThroughOtherPointRoundsGuideDistance`: point (-6, 6); cursor (-3.67, 10.05); (-3.7, 10), 3.7 m from the corner (the segment is 4.614 m). With `lengthRoundingOnGuides` `segmentLength`: (-3.728, 10), a 4.6 m segment.
+- `RoundingLeavesCrossing`: nothing committed; points (0, 0), (6.03, 0), (6.03, 4.07); cursor (0.15, 4.0); `GuideCrossing` at (0, 4.07).
+- `RoundingOffLeavesRaw`: no points; cursor (-3.67, 10.05); with `lengthIncrementMeters` 0, or `roundLengths` off: (-3.67, 10); with `freeform`: (-3.67, 10.05).
+- `CommonLengthStillWins`: a committed (20, 20), (23.37, 20), (23.37, 22), (20, 22) in place of the other; point (0, 4); cursor (3.42, 4.05); `CommonLength` at (3.37, 4).
+
+`ConstructionRegistry.test.cpp` also: renamed keys load; new keys load with defaults; the Drawing Settings defaults block (D14) loads; the validator rejects each bound in the table. Check for an existing case on the same path before adding one.
+
+Manual regression: `docs/testing/scenarios/03-build-wood-foundation.md` gains the rectangle tool (two clicks on the grid, the size label, a corner on an existing corner) and, with the helpers on in Drawing Settings, the 30-degree rectangle (the marker at corner 3, the dot at corner 4, close) and a second shack catching the first's lengths (`=` and the ticks); `04-build-walls.md` gains a rotated chain squaring its corners on guides, Alt dropping them, and a wall with every helper off keeping its adjacency snaps.
+
+#### Build steps
+
+Each step is a commit that builds and passes the tests on its own.
+
+1. **Snapping config.** `assets/config/construction/snapping.xml` (rename two keys, add the new ones, move `alignToExistingDefault` into the D14 block), `libs/assets/assets/ConstructionRegistry.h` (`SnappingConfig` fields, `DrawingSettingsDefaults`; delete the two unused Mm copies), `ConstructionRegistry.cpp` (load), `ConfigValidator.cpp` (the new checks), `ConstructionRegistry.test.cpp`. `SnapEngine.cpp`'s `axisAlign` and the comments in `SnapEngine.h` and `SnapEngine.test.cpp` move to the renamed fields in the same commit. The D14 block ships with today's values, not the spec's defaults: angle steps, align to existing buildings, and world-axis guides on (today's `snapAngle`, `alignToExistingDefault` true, and `axisAlign`), so play is unchanged. Step 5, which adds the rectangle tool, flips the block to the spec's defaults (helpers off).
+2. **Drawing Settings.** D14: `libs/sim/construction/DrawingAids.h` (`DrawingAids`), `apps/world-sim/UserSettings.h` (`DrawingSettings`, defaults from the block, and `drawingAids()`, which builds the engine's struct from it), `apps/world-sim/scenes/settings/SettingsScene.cpp` (the Drawing Settings pane), and the two `DrawingSystem.cpp` call sites (about lines 398 and 898), which pass `UserSettings::Get().drawingAids()`. Behaviour unchanged until the engine reads them, except the align toggle's new label.
+3. **Look keys.** D16: `rendering.xml` `<Preview>` keys with their `ConstructionRegistry.h` fields and loader, and `Rendering_RealFileValues` extended. Data only.
+4. **Engine and its drawing.** One commit, since `SnapResult` changes under `DrawingSystem`. `libs/sim/construction/SnapEngine.h` and `.cpp` (the helper gating, lines, capture, merge, crossings, ranking, edge squaring, the first-point rule, the marker, common lengths, the length step, `cornerAngles`; `alignToWorldAxes`, the reshape's name for `axisAlign`, deleted); `ConstructionWorld` (`placementOrder` on foundations and wall segments, `commitSegment`'s new parameter, and every caller of it, per Common lengths > Placement order); `SnapEngine.test.cpp` (the changed and new cases above); `apps/world-sim/scenes/game/world/construction/DrawingSystem.cpp` and `.h` (`drawSnapGuides` and the labels, D16; both old guide blocks deleted).
+5. **Rectangle tool and its input.** D13: the tool, `snapRectangleCorner()` and `rectangleFromCorners()`, `GameScene` forwarding a left `PointerDown` to the drawing tool while the rectangle tool is active, and the wall tool's double-click (`GameScene` detects it on the world while a wall chain is active), with the Drawing Settings block flipped to the spec's defaults.
+6. **Key guide.** D15.
+7. **Scenarios.** The two scenario files above; run 03 and 04 as the regression pass.
+
+No perf capture is needed; the PR's line is `Perf: none`.
+
+#### Open points
+
+- The crossing radius (1.0 m) and corner limit (16) are tuned in the prototype, not in the game; the radius has to stay above the 0.52 m the closing corner needs in the worked example.
+- Whether the catch distance and the length increment should be zoom-stable (pixels, like the origin-close radius the tool already widens with zoom) is left as metres; the design spec's open questions carry the increment.
+- The design spec's open questions (Foundations > Snapping and guides) are answered here as the prototype answers them; a ruling against any of them changes a default, not the mechanism.
+
+### D13: Rectangle tool
+
+Player-facing behaviour: design spec, Foundations > Drawing > Rectangle tool. The default foundation tool, for the player who wants a square building and nothing else.
+
+- **A mode of the foundation tool.** `ToolKind::FoundationRectangle` beside the polygon foundation tool (`ToolKind::Foundation`) in `DrawingSystem`. It shares material, validation, commit, and the config strip with the polygon tool; only point placement differs.
+- **Choosing it.** The Build menu's Foundation entry opens the foundation tool last picked this session, Rectangle the first time; the construction strip's tool picker switches between Rectangle and Freeform. In code: `activateFoundationTool()` keeps meaning the freeform polygon tool, since `DrawingSystem.test.cpp` calls it and then clicks polygon points; a new `activateRectangleTool()` opens the rectangle tool; `DrawingSystem` holds the session's last pick (set by either call), and `GameScene`'s `onStructureSelected("foundation")`, today a direct `activateFoundationTool()` call and its only caller outside the tests, calls whichever that pick is. No dev verb activates a foundation tool: `/api/dev/foundation` commits through `ConstructionWorld::commitFoundation` directly.
+- **Corner snap.** `SnapEngine::snapRectangleCorner(cursor, freeform, gridSpacingMeters)`, pure like the others; first that applies wins. Under `freeform`: the raw cursor, `None`. Else, while `rectangleAdjacencySnaps` holds: the nearest foundation ring vertex within `vertexSnapRadiusMeters` (`Vertex`); else the nearest foot on a ring edge within `edgeSnapRadiusMeters` (`Edge`), and when that edge is axis-aligned (its ends equal in y, or in x, within 1e-9 m) the foot's free coordinate also rounds to the grid, kept only if the rounded point is still on the edge. Equal-distance vertices or edges keep the first found (strict `<`, as in the prototype). Else the grid point, each coordinate `round(value / spacing) * spacing` (`Grid`). The grid is anchored at the world origin; `gridSpacingMeters` is the Drawing Setting (1.0 or 0.5).
+- **Input.** A press places the first corner (when none is placed). A release more than 4 px from that press places the second (a drag); a release within 4 px leaves the first corner waiting, and with a corner waiting the next click places the second on its release. The 4 px are logical pixels, the space `InputEvent::position` is in. Esc, right-click, or Backspace drops the first corner; a second Esc exits the tool, as for the other tools.
+- **Delivering the press.** `GameScene::handleEvent` passes the drawing tool only `PointerUp` today (about lines 736 to 760; every other pointer type returns false before it). It gains one case: while the rectangle tool is active, a left `PointerDown` goes to a new `DrawingSystem::handlePress(...)` and is taken; every other tool still sees only the release.
+- **Double-click ends a wall chain** (new; built in this step because it shares the input routing). The world input has no double-click today, and salal's `InputEvent` reports none (no click count), so `GameScene` detects it: while the wall tool is active, it records the time and logical position of each left release it hands the tool. A left release within `doubleClickSeconds` (0.4 s, the colonist roster's `kDoubleClickSeconds`) and `doubleClickDistancePx` (4 logical px) of the previous one is the second click of a double-click: it places no point, and if a chain is in progress it calls `DrawingSystem::finishChain()`, as Enter does. The rule is the prototype's: the browser's first click places the final point, the second click (`event.detail >= 2`) places nothing, and the `dblclick` handler commits the chain. A third release starts over (the pair is consumed, as in the roster). Both values are config (D12's table).
+- **The rectangle.** `rectangleFromCorners(firstCorner, secondCorner)` (D12's API) builds the ring and the label from the first corner and the snapped point: left = min x, right = max x, bottom = min y, top = max y, the ring (left, bottom), (right, bottom), (right, top), (left, top), counter-clockwise as in the prototype (and `commitFoundation` normalises every ring to counter-clockwise anyway). When either side is under 1 mm it returns nothing, there is no rectangle, and the click places nothing. Each corner is quantized to the millimetre (D1) and the ring goes through `ConstructionValidator` and the same commit as a closed polygon, so constraints, buildability, and the red preview with its reason are one path.
+- **Preview.** The pending rectangle's fill and outline in the blueprint preview style (D8's immediate-mode preview), a size label at the cursor (`4 m x 3 m`: each side rounded to the millimetre, printed without trailing zeros), and, when the grid placed the point, a small cross on the grid point (5 px arms, the world guide colour at 0.55 opacity). No guides, no angle steps, no length step, no helper drawings, no key guide legend lines.
+- **Tests** (`SnapEngine.test.cpp`, `DrawingLevels.*`): `RectangleOnGrid`: a committed (0, 0), (4, 0), (4, 3), (0, 3); first corner cursor (6.3, 0.8) gives `Grid` (6, 1); second cursor (9.6, 3.7) gives (10, 4), and `rectangleFromCorners((6, 1), (10, 4))` gives the ring (6, 1), (10, 1), (10, 4), (6, 4) and the label `4 m x 3 m`. `RectangleHalfMetreGrid`: spacing 0.5, cursor (6.3, 0.8) gives (6.5, 1). `RectangleAdjacency`: cursor (4.2, 0.25) gives `Vertex` (4, 0); with `rectangleAdjacencySnaps` off, `Grid` (4, 0).
+
+### D14: Drawing Settings storage versus construction config
+
+Two homes, split by who sets the value.
+
+- **Drawing Settings** (the player): the eight helper switches, Round lengths, Show key guide, and the rectangle grid spacing. They live in `UserSettings` as one member, `drawing`, of type `DrawingSettings`, replacing `alignSnapToExistingFoundations`:
+
+  ```cpp
+  struct DrawingSettings {
+      bool  angleSteps = false;
+      bool  guidesFromShape = false;
+      bool  alignToExistingBuildings = false;
+      bool  guidesFromWorldAxes = false;
+      bool  guideCrossings = false;
+      bool  commonLengths = false;
+      bool  guideDistances = false;
+      bool  angleReadout = false;
+      bool  roundLengths = true;
+      bool  showKeyGuide = true;
+      float rectangleGridSpacingMeters = 1.0F;  // 1.0 or 0.5
+  };
+  ```
+
+  `DrawingSettings` is the superset the player sees. The engine never includes it (`libs/sim` cannot reach an app header); it takes `construction::DrawingAids`, which holds the same switches minus the display-only ones (`guideDistances`, `angleReadout`, `showKeyGuide`), and `UserSettings::drawingAids()` builds that struct from `drawing`. The display-only switches never enter sim; the drawing code reads them.
+
+  The initializers above are only the struct's; the values come from a `<DrawingSettingsDefaults>` block in `snapping.xml`, one element per field with the defaults above, read once when `UserSettings` is first touched, as `alignToExistingDefault` is today (that key moves into the block as `alignToExistingBuildings`). `UserSettings` stays session-scoped until a user-settings file lands; then this struct is what it saves. The validator checks that `rectangleGridSpacingMeters` is 1.0 or 0.5.
+- **The Drawing Settings pane.** `SettingsScene` replaces its one construction toggle with a "Drawing Settings" group: the helper toggles in the design spec's order, then Round lengths (its label built from `lengthIncrementMeters`, "Round lengths to 0.1 m"), Show key guide while drawing, and the grid spacing as a two-choice control. Each row has the one-line description from the design spec's table; the "15 degree" in Angle steps' line comes from `angleIncrementDegrees`.
+- **Construction config** (the designer): everything in D12's table and D16's look keys. Never shown to the player.
+- **Reading them.** `DrawingSystem` builds a `DrawingAids` from `UserSettings::Get().drawingAids()` and passes it by const reference in `SnapInput` on every move, and reads the display-only switches from `drawing` itself; the engine never reads `UserSettings`, so tests pass their own `DrawingAids`.
+
+### D15: Key guide panel
+
+Player-facing behaviour: design spec, UI & Selection > Key guide.
+
+- **Where.** A HUD component, `DrawingKeyGuide`, shown while any `DrawingSystem` tool is active (`FoundationRectangle`, `Foundation`, `Wall`, `Opening`, or `FoundationEdit`) and `showKeyGuide` is on. It is the first child of `GameUI`'s `bottom_dock`, the stack that holds the construction config strip and then the gameplay bar (`GameUI.cpp` about lines 62 to 78), so the dock lays it out directly above the strip, centred like it, one `space1` gap apart; being in the same stack, it can never overlap the strip, and it rises when the strip appears. The bottom left is the selected entity's panel and the task list, and the bottom right the zoom panel, so neither corner is free. It takes no keyboard focus (the HUD focus policy) and takes pointer events only inside its own bounds, so clicks elsewhere reach the tool.
+- **Content.** Built from the active `ToolKind` and `DrawingSettings` each time either changes: the tool's key rows from the design spec's table (key chips, then the action text), then the legend rows for the helpers that are on, each with a small glyph (32 by 14 px) drawn with the same helpers as the preview (D16), so it follows the look keys, then the foot line. Legend rows appear for the tools that run `snap()` or `snapWall()` (Freeform, Wall, and FoundationEdit); the rectangle and opening tools have none. There is no row group for blueprint vertex editing, which the game does not have yet.
+- **Collapse.** `?` or `H` toggles it between the panel and a small "Keys ?" chip; clicking the chip opens it. `?` is the `?` character event (`InputEvent::Type::Char`, codepoint 63), whatever key and Shift state produce it on the player's layout, never a key code; `H` is the `Key::H` key-down. `GameScene::handleEvent` takes both while a drawing tool is active and nothing else handled them (world hotkeys stay in `handleEvent`; today it ignores `Char` events, so it gains that case). The collapsed state is session state in `DrawingSystem`, open at start, shared across tools, not saved.
+- **Tests.** A unit case for the content builder: each tool's rows, and the legend rows switched by each helper, against the design spec's tables. The scenario passes check that it is there and collapses.
+
+### D16: Guide rendering look
+
+Player-facing behaviour: design spec, Foundations > Snapping and guides, under Look. One rule: solid is geometry, dotted and part transparent is alignment, small solid markers state a fact.
+
+- **One helper.** `drawSnapGuides(const SnapResult&, ...)` in `DrawingSystem`, used by the foundation preview and the wall preview, replaces the two near-identical guide blocks (`DrawingSystem.cpp` about 1806 to 1828 and 2299 to 2321) and their alt-pair branch. It draws `guideCount` guides whatever the kind (a squared `Edge` or `WallSegment` carries one), each from `from` to `to`, skipping a zero-length one.
+- **Alignment strokes.** Each guide is a `Primitives::drawPolyline` of its two points with `width = guideWidth`, the guide colour at `guideOpacity`, and `dash = DashPattern{guideDashPx, guideGapPx, 0, DashCap::Round}` for `dotted` (round caps make each 1 px dash a dot), the same with `DashCap::Butt` for `dashed`, no dash for `solid`. The pattern starts at the guide's node (phase 0 at `from`), so the dots don't crawl as the cursor moves. The origin's close-radius ring (three or more points placed) uses the same stroke, in `originHaloColor`, at 0.7 of `guideOpacity`, 1 px wide; it replaces today's solid 1.5 px ring in `renderOriginHalo`.
+- **Markers, solid at `markerOpacity`.** The right-angle marker in screen space: `from`, `from` + the edge direction, and `from` + the unit direction toward `to` go through `toScreen`, the two screen directions are normalised (`edge` and `guide`), and with `size` = `rightAngleMarkerPx` the mark is two 1.5 px lines from `corner + size*edge` to `corner + size*edge + size*guide` to `corner + size*guide`. A `GuideCrossing` adds a filled dot of radius `guideCrossingDotPx` at the point. Common lengths: a tick across the segment at the snapped end, 8 px each side, 2 px wide; on each matched edge a 6 px band at 0.22 opacity and, at its middle, two 1.75 px ticks 4 px apart, 6 px each side. The angle readout's arc is 18 px in radius, 1.5 px wide; its square corner is the right-angle marker.
+- **Labels.** The segment label at the cursor (12 px from it in x, 20 px in y, 12 px text, bold and in the accent colour when matched); guide distance labels at `guideLabelPx`, in the guide's colour (accent when matched); the angle readout at `guideLabelPx`, `angleReadoutDecimals` places. Every label has a dark halo for legibility over the terrain. Lengths show `guideDistanceDecimals` places.
+- **The cursor.** The game shows the operating system's cursor at the raw position, so, departing from the prototype on purpose, it draws no raw-pointer ring and no pull line from the raw pointer to the snapped point. It draws the snapped-point marker where the point will go, at full opacity as the prototype does: a white dot of radius `max(4, cursorRadiusPx)` (6 px by default) with a 2.5 px black outline, and four ticks, left, right, up, and down, each from `radius + 5` px (11 px) to 16 px from the point, a 2 px white stroke over a 6 px black one. When the result is `Origin` (the click closes), the first-point halo: a ring of radius `max(8, originCloseRadiusMeters * pixelsPerMeter / 2)` screen pixels (half the close radius on screen, with the zoom-widened radius from `SnapInput`; the 8 px floor is `originHaloMinRadiusPx`), 3 px wide, in the shape guide colour (`guideColor` under `one`, `guideColorShape` under `bySource`) at `markerOpacity`. It replaces today's 3 px ring in the valid colour at the full close radius.
+- **Keys.** `assets/config/construction/rendering.xml` `<Preview>`; all sizes are screen pixels and never scale with zoom.
+
+| Key | Default | Meaning |
+|-----|---------|---------|
+| `guideLineStyle` | `dotted` | `dotted` (round caps), `dashed`, or `solid` |
+| `guideDashPx` | 1.0 | Dash length; with `dotted` and round caps, each dot is about the line width across |
+| `guideGapPx` | 4.5 | Gap between dashes |
+| `guideWidth` | 1.5 | Guide line width (was 1.0) |
+| `guideOpacity` | 0.6 | Opacity of every alignment line |
+| `markerOpacity` | 0.9 | Opacity of markers, the crossing dot, ticks, the close halo, and labels |
+| `guideColorMode` | `one` | `one` colour for every guide, or `bySource` |
+| `guideColor` | `#5FB3C8FF` | The one guide colour, a muted teal (was `#B3D9FF66`; opacity is now `guideOpacity`) |
+| `guideColorShape` | `#8CC4FFFF` | By source: shape guides |
+| `guideColorNearby` | `#FFAD5CFF` | By source: nearby-building guides |
+| `guideColorWorld` | `#7FE0A6FF` | By source: world-axis guides |
+| `guideColorLength` | `#F29AD8FF` | By source: common-length marks (with `one`, they take `guideColor`) |
+| `guideDistanceDecimals` | 2 | Decimals of the segment and guide distance labels |
+| `guideLabelPx` | 11 | Guide distance and angle readout text size |
+| `angleReadoutDecimals` | 1 | Decimals of the angle readout; also sets its square tolerance, half a unit in the last place (0.05 degrees) |
+| `rightAngleMarkerPx` | 8.0 | The right-angle marker's leg length |
+| `guideCrossingDotPx` | 3.0 | The crossing dot's radius |
+| `cursorRadiusPx` | 6.0 | The snapped-point dot's radius |
+
+Colours are eight hex digits, `#RRGGBBAA`, the only form `ConstructionRegistry::parseColor` accepts (anything else logs a warning and loads opaque black). The alpha is FF; opacity comes from `guideOpacity` and `markerOpacity`. The accent colour for a matched label comes from the UI theme, as the validity colours do. The existing `originHaloColor`, `snapVertexColor`, `snapEdgeColor`, `fillPreviewAlpha`, `bandPreviewAlpha`, `lineWidth`, `vertexRadiusPx`, `invalidVertexRadiusPx`, and `originHaloMinRadiusPx` stay as they are. The `guideColor` comment changes from "angle-snap guide line" to "guide lines, right-angle markers, crossing dots, common-length marks".
 
 ---
 
@@ -176,7 +638,10 @@ What other teams did, and what we took from each. Full recommendations absorbed 
 | **Clipper2 docs** | Concepts borrowed, library not adopted (D2): integer coordinates as the robustness model, miter limits, simplification pass after booleans, don't offset self-intersecting paths. ([docs](https://www.angusj.com/clipper2/Docs/Overview.htm)) |
 | **The Sims** wall system | Cautionary: special-casing diagonals on a grid created a permanently second-class wall type with a decades-long bug tail. Validates true planar-graph representation. |
 | **Townscaper** | The "considered and rejected" alternative: irregular grids keep adjacency trivial but we need continuous coordinates. ([writeup](https://www.gamedeveloper.com/game-platforms/how-townscaper-works-a-story-four-games-in-the-making)) |
-| **Cities: Skylines II** road tools | The interaction grammar checklist for freeform drawing: angle snap, geometry snap, projected guidelines, length/angle readouts, validity coloring. Matches the design spec's drawing UX. ([dev diary](https://forum.paradoxplaza.com/forum/developer-diary/development-diary-1-road-tools.1590300/)) |
+| **Cities: Skylines II** road tools | The interaction grammar checklist for freeform drawing: angle snap, geometry snap, projected guidelines, length/angle readouts, validity coloring. Matches the design spec's drawing UX. Its several separately toggled snap options ([road tools](https://paradoxinteractive.com/games/cities-skylines-ii/features/road-tools)) are close to D12's helper switches; D12 still ranks the sources among themselves, so any set of them switched on resolves by one key. ([dev diary](https://forum.paradoxplaza.com/forum/developer-diary/development-diary-1-road-tools.1590300/)) |
+| **SketchUp** inference engine | Point inferences (endpoint, midpoint, intersection) and linear inferences (axis, "from point" along an axis, parallel/perpendicular to an edge, shown in magenta); Alt cycles all on, all off, and parallel/perpendicular only; Shift or an arrow key locks one. Our D12 guides are its linear inferences, the crossing is its intersection point, and Alt maps to "all off". The lock key is left out. ([drawing basics](https://help.sketchup.com/en/sketchup/introducing-drawing-basics-and-concepts)) |
+| **AutoCAD** polar and object snap tracking | Polar tracking shows temporary alignment paths at set angle increments; object snap tracking acquires up to seven points and shows paths through them; the pick goes where two paths cross. The bounded acquired-point set and path-crossing pick are the shape of D12's nodes and crossings. ([polar tracking](https://help.autodesk.com/cloudhelp/2026/ENU/AutoCAD-LT/files/GUID-7EC3C63D-EA4E-4E65-A676-C3A3627E3F19.htm), [object snap tracking](https://help.autodesk.com/cloudhelp/2026/ENU/AutoCAD-LT/files/GUID-665DC37F-8C3E-414A-9369-72A13C0BE07A.htm)) |
+| **Figma** snapping | A red line shows alignment to other objects' centres and edges while moving; holding a modifier turns snapping off for the drag. Hold-to-disable matches D12's Alt; D12's guide is a dotted, part-transparent line in one muted colour rather than a solid red one. ([alignment and position](https://help.figma.com/hc/en-us/articles/360039956914-Adjust-alignment-rotation-position-and-dimensions)) |
 | **Prison Architect** room enclosure | Silent room-detection failure confuses players for years; surface near-misses. Our D6 feedback note. |
 | **Factorio FFF-317 / AoE4 flow fields** | Scale techniques (hierarchical chunk pathfinding, flow fields) we don't need at colony-sim agent counts; regions suffice. ([FFF-317](https://factorio.com/blog/post/fff-317)) |
 
