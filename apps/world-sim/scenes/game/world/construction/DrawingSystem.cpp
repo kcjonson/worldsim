@@ -1778,7 +1778,7 @@ namespace world_sim {
 		renderCommittedOpenings(visibleWorld, viewportW, viewportH);
 	}
 
-	void DrawingSystem::renderPreview(int viewportW, int viewportH) {
+	void DrawingSystem::renderPreview(int viewportW, int viewportH, float uiScale) {
 		if (camera_ == nullptr || state_ != DrawingState::Drawing) {
 			return;
 		}
@@ -1805,7 +1805,7 @@ namespace world_sim {
 
 		// Add / Subtract: the resulting outline under the drawn polygon's preview.
 		if (activeTool_ == ToolKind::FoundationEdit) {
-			renderEditOutlinePreview(viewportW, viewportH);
+			renderEditOutlinePreview(viewportW, viewportH, uiScale);
 		}
 
 		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
@@ -2210,7 +2210,7 @@ namespace world_sim {
 		drawOpeningFill(screen, tint, window, footprintWidthMeters(footprint), os.ghostAlpha, os.outlineWidthBuilt);
 	}
 
-	void DrawingSystem::renderEditOutlinePreview(int viewportW, int viewportH) {
+	void DrawingSystem::renderEditOutlinePreview(int viewportW, int viewportH, float uiScale) {
 		if (!editPreviewActive_) {
 			return;
 		}
@@ -2238,8 +2238,8 @@ namespace world_sim {
 
 		Renderer::Primitives::drawText({
 			.text = ec::validationReason(editPreview_.validation.code),
-			.position = toScreen(cursor_) + Foundation::Vec2{14.0F, -22.0F},
-			.scale = 0.8F,
+			.position = toScreen(cursor_) + Foundation::Vec2{14.0F * uiScale, -22.0F * uiScale},
+			.scale = 0.8F * uiScale,
 			.color = invalidColor_,
 			.shadow = Foundation::BoxShadow{.color = {0.0F, 0.0F, 0.0F, 0.8F}, .blur = 0.0F, .offset = {1.0F, 1.0F}},
 			.id = "drawing_edit_reason",

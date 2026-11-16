@@ -1001,7 +1001,7 @@ namespace {
 			// rides above the entities like the placement ghost; committed
 			// construction already went out in the ground sub-layer before the
 			// entity pass.
-			m_drawingSystem->renderPreview(w, h);
+			m_drawingSystem->renderPreview(w, h, ui().getScale());
 
 			// Terrain polygon debug overlay (waterline rings + clipped navRings,
 			// per chunk), sitting just above the tile ground. No-op unless on (G).
@@ -1009,7 +1009,7 @@ namespace {
 
 			// Rooms overlay (tint/outline/label) above committed construction and
 			// entities. No-op unless toggled on (R).
-			m_roomOverlay->render(w, h);
+			m_roomOverlay->render(w, h, ui().getScale());
 
 			// Nav debug overlay (navmesh wireframe + agent routes) above wall bands.
 			// No-op unless toggled on (N).
