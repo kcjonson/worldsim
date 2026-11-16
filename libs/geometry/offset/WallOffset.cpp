@@ -1343,6 +1343,7 @@ namespace geometry {
 	std::vector<std::vector<WallSpan>> wallSpans(const std::vector<WallSegment>& segments,
 												 const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands) {
 		assert(gaps.empty() || gaps.size() == segments.size());
+		assert(bands.status != OffsetStatus::Ok || (bands.trimAtA.size() == segments.size() && bands.trimAtB.size() == segments.size()));
 		std::vector<std::vector<WallSpan>> result(segments.size());
 		if (bands.status != OffsetStatus::Ok || bands.trimAtA.size() != segments.size() || bands.trimAtB.size() != segments.size()) {
 			return result;

@@ -238,30 +238,30 @@ namespace nav {
 				anyDoor ? geometry::wallSpans(members, gaps, bands) : std::vector<std::vector<geometry::WallSpan>>{};
 
 			for (std::size_t k = 0; k < graph.size(); ++k) {
-				const std::int64_t						 prov	  = static_cast<std::int64_t>(segmentIds[graph[k]]);
+				const std::int64_t						 provenance = static_cast<std::int64_t>(segmentIds[graph[k]]);
 				std::vector<gnav::NavInputPolygon>& polygons = polygonsOfSegment[graph[k]];
 				if (gaps[k].empty()) {
 					if (bands.bands[k].size() >= 3) {
-						polygons.push_back({bands.bands[k], true, prov});
+						polygons.push_back({bands.bands[k], true, provenance});
 					}
 					continue;
 				}
 				for (const geometry::WallSpan& span : spans[k]) {
 					const std::int64_t opening =
 						span.gap == geometry::kSolidSpan ? gnav::kNoOpening : static_cast<std::int64_t>(gapOpenings[k][span.gap]);
-					polygons.push_back({span.ring, true, prov, opening});
+					polygons.push_back({span.ring, true, provenance, opening});
 				}
 			}
 
 			// Each junction is tagged with its smallest incident wall id, so belief gates it by
 			// knowing one of its walls, and lists every wall meeting there.
-			for (std::size_t ji = 0; ji < bands.junctions.size(); ++ji) {
-				if (bands.junctions[ji].size() < 3) {
+			for (std::size_t junctionIndex = 0; junctionIndex < bands.junctions.size(); ++junctionIndex) {
+				if (bands.junctions[junctionIndex].size() < 3) {
 					continue;
 				}
-				Junction junction{.ring = bands.junctions[ji]};
-				if (ji < bands.junctionSegments.size()) {
-					for (const std::size_t k : bands.junctionSegments[ji]) {
+				Junction junction{.ring = bands.junctions[junctionIndex]};
+				if (junctionIndex < bands.junctionSegments.size()) {
+					for (const std::size_t k : bands.junctionSegments[junctionIndex]) {
 						if (k >= graph.size()) {
 							continue;
 						}
