@@ -17,7 +17,7 @@ Build `world-sim` (RelWithDebInfo), launch it with no flags, click Enter Expedit
 4. Scroll the wheel out and in across the whole range, 20 to 0.25 and back, as fast as you can (or fire the `camera&zoom=` calls back to back): no tree vanishes or blinks at any step (a tree may be coarser for a moment, never absent).
 5. Back on Bob at zoom 3 (`...camera&x=<BX>&y=<BY>&zoom=3`), with the game running, not paused, plant a known tree beside Bob (`curl.exe "http://127.0.0.1:8081/api/dev/spawn?def=Flora_TreeOak&at=<BX+4>,<BY>&n=1"`, call its spot TX,TY), then put Bob 1 m north of the trunk (`curl.exe "http://127.0.0.1:8081/api/dev/teleport?colonist=<BID>&to=<TX>,<TY-1>"`) and look at once, before he walks on: the crown hides the part of him it covers.
 6. Teleport Bob 1 m south of the trunk (`...teleport?colonist=<BID>&to=<TX>,<TY+1>`): he draws over the trunk and crown.
-7. Click a crown (not the trunk; `/api/input` takes screenshot pixels): that tree alone is selected, with one outline around it and none on its neighbours.
+7. Click a crown (not the trunk; `/api/input` takes the window's logical pixels, which on Windows are screenshot pixels): that tree alone is selected, with one outline around it and none on its neighbours.
 8. Look at the landing at zoom 1.5: the ground around the colonists is a clearing, no trunk within a few meters of them.
 9. Give Bob an axe (`curl.exe "http://127.0.0.1:8081/api/dev/give?material=AxePrimitive&n=1&where=colonist&slot=hands"`) and let him work, or pick Harvest in the Actions menu and click a tree: when a tree falls it is gone, a wood heap lies where it stood, and `what=colonists` shows Wood in his `hands`.
 10. `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`.
