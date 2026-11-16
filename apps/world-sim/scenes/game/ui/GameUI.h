@@ -30,6 +30,7 @@
 #include "scenes/game/world/selection/SelectionTypes.h"
 
 #include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
 #include <ecs/World.h>
 #include <ecs/systems/RoomDetectionSystem.h>
@@ -120,9 +121,15 @@ namespace world_sim {
 		void			   showBuildMenu(const std::vector<BuildMenuItem>& items);
 		void			   hideBuildMenu();
 		[[nodiscard]] bool isBuildMenuVisible() const;
-		void			   setProductionItems(const std::vector<std::pair<std::string, std::string>>& items);
-		void			   setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials);
-		void			   setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets);
+		// What the bottom dock offers: the stations the player places directly, the construction materials, and
+		// the wall thicknesses of `wallMaterial`.
+		void showCatalogue(
+			const assets::RecipeRegistry&		recipes,
+			const assets::ConstructionRegistry& construction,
+			const std::string&					wallMaterial
+		);
+		// The wall thickness cards for `material`, when the player picks another.
+		void			   showWallThicknesses(const assets::ConstructionRegistry& construction, const std::string& material);
 		void			   setConstructionStatus(const DrawingStatus& status);
 		void			   setRoomsOverlayActive(bool active);
 

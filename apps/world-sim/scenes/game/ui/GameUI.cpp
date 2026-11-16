@@ -312,15 +312,36 @@ namespace world_sim {
 		return buildMenu.get()->isVisible();
 	}
 
-	void GameUI::setProductionItems(const std::vector<std::pair<std::string, std::string>>& items) {
-		gameplayBar.get()->setProductionItems(items);
-	}
+	void GameUI::showCatalogue(
+		const assets::RecipeRegistry&		recipes,
+		const assets::ConstructionRegistry& construction,
+		const std::string&					wallMaterial
+	) {
+		std::vector<std::pair<std::string, std::string>> productionItems;
+		for (const assets::RecipeDef* recipe : recipes.getInnateRecipes()) {
+			if (recipe->isStationless() && !recipe->outputs.empty()) {
+				productionItems.emplace_back(recipe->outputs[0].defName, recipe->label);
+			}
+		}
+		gameplayBar.get()->setProductionItems(productionItems);
 
-	void GameUI::setConstructionMaterials(const std::vector<std::pair<std::string, float>>& materials) {
+		std::vector<std::pair<std::string, float>> materials;
+		for (const auto& [name, material] : construction.getAllMaterials()) {
+			materials.emplace_back(name, material.costRatePerSquareMeter);
+		}
 		configStrip.get()->setMaterials(materials);
+
+		showWallThicknesses(construction, wallMaterial);
 	}
 
-	void GameUI::setConstructionThicknessPresets(const std::vector<ConstructionConfigStrip::ThicknessPresetInfo>& presets) {
+	// A material with no wall presets clears the cards, and the wall tool refuses a commit with a toast.
+	void GameUI::showWallThicknesses(const assets::ConstructionRegistry& construction, const std::string& material) {
+		std::vector<ConstructionConfigStrip::ThicknessPresetInfo> presets;
+		if (const auto* wall = construction.getWallMaterial(material)) {
+			for (const auto& preset : wall->wallThicknesses) {
+				presets.push_back({preset.name, preset.thicknessMeters});
+			}
+		}
 		configStrip.get()->setThicknessPresets(presets);
 	}
 

@@ -316,7 +316,7 @@ namespace {
 					[this](const std::string& material) {
 						if (m_drawingSystem) {
 							m_drawingSystem->setActiveMaterial(material);
-							refreshThicknessPresets(material);
+							gameUI->showWallThicknesses(assets::ConstructionRegistry::Get(), material);
 						}
 					},
 				.onConstructionThicknessSelected =
@@ -333,21 +333,6 @@ namespace {
 						}
 					}
 			});
-
-			// Populate Production dropdown with placeable stations (recipes where station="none")
-			{
-				auto& recipeRegistry = assets::RecipeRegistry::Get();
-				auto  innateRecipes = recipeRegistry.getInnateRecipes();
-
-				std::vector<std::pair<std::string, std::string>> productionItems;
-				for (const auto* recipe : innateRecipes) {
-					// Only include recipes that don't require a station (directly placeable)
-					if (recipe->isStationless() && !recipe->outputs.empty()) {
-						productionItems.emplace_back(recipe->outputs[0].defName, recipe->label);
-					}
-				}
-				gameUI->setProductionItems(productionItems);
-			}
 
 			// Initialize ECS World
 			initializeECS();
@@ -691,18 +676,7 @@ namespace {
 				.chunks = m_chunkManager.get(),
 			});
 
-			// Populate the config strip's material cards from construction config.
-			{
-				std::vector<std::pair<std::string, float>> materials;
-				for (const auto& [name, def] : assets::ConstructionRegistry::Get().getAllMaterials()) {
-					materials.emplace_back(name, def.costRatePerSquareMeter);
-				}
-				gameUI->setConstructionMaterials(materials);
-			}
-
-			// Populate the config strip's wall thickness-preset cards for the active
-			// material (Wood). Refreshed in onConstructionMaterialSelected too.
-			refreshThicknessPresets(m_drawingSystem->activeMaterial());
+			gameUI->showCatalogue(assets::RecipeRegistry::Get(), assets::ConstructionRegistry::Get(), m_drawingSystem->activeMaterial());
 		}
 
 		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
@@ -1610,19 +1584,6 @@ namespace {
 
 		/// Handle furniture placement request from info panel.
 		/// Enters placement mode to relocate the selected packaged furniture.
-		/// Refresh the config strip's wall thickness-preset cards for `material`.
-		/// A material with no wall presets clears the cards (the wall tool then
-		/// rejects commits with a "no wall preset" toast).
-		void refreshThicknessPresets(const std::string& material) {
-			std::vector<world_sim::ConstructionConfigStrip::ThicknessPresetInfo> presets;
-			if (const auto* mat = assets::ConstructionRegistry::Get().getWallMaterial(material)) {
-				for (const auto& p : mat->wallThicknesses) {
-					presets.push_back({p.name, p.thicknessMeters});
-				}
-			}
-			gameUI->setConstructionThicknessPresets(presets);
-		}
-
 		void handlePlaceFurniture() {
 			// Get currently selected furniture from selection system
 			const auto& sel = m_selectionSystem->current();
