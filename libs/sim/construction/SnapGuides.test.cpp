@@ -383,9 +383,8 @@ TEST_F(SnapGuides, GuideNoMarkerOnParallel) {
 }
 
 TEST_F(SnapGuides, GuideDeterministicTieBreak) {
-	// The cursor is exactly midway between the two east-west lines, and exactly as far from
-	// (2, 0) as from (5, 0.5): y 0.25 and 0.5 are exact in float, where D12's 0.2 and 0.4
-	// are not (0.2F sits 6e-9 m nearer the upper line, past the 1e-9 m tie).
+	// The cursor is midway between y = 0 and y = 0.5 and as far from (2, 0) as from (5, 0.5).
+	// Those numbers are exact in float; D12's 0.2 and 0.4 are not, so they would not tie.
 	const FoundationId first = built.addFoundation({{0.0, 0.0}, {2.0, 0.0}, {2.0, -2.0}, {0.0, -2.0}});
 	built.addFoundation({{5.0, 0.5}, {7.0, 0.5}, {7.0, 2.5}, {5.0, 2.5}});
 	const SnapResult result = snap({}, {3.5F, 0.25F});
@@ -567,6 +566,156 @@ TEST_F(SnapGuides, CrossingsSwitch) {
 	const SnapResult crossing = snap(points, {0.15F, 3.95F}, foundationInput(aids));
 	EXPECT_EQ(crossing.kind, SnapKind::GuideCrossing);
 	expectPoint(crossing.point, 0.0, 4.0);
+}
+
+// --- One rule each ------------------------------------------------------------------
+
+TEST_F(SnapGuides, GuideThroughShapePointRanksBeforeCloserCorner) {
+	// Parallel world guides 0.35 m apart (past the merge distance): y = 0 through the
+	// placed point, y = 0.35 through a committed corner, nearer the cursor.
+	built.addFoundation({{3.0, 0.35}, {5.0, 0.35}, {5.0, 2.0}, {3.0, 2.0}});
+	const SnapResult result = snap({{0.0F, 0.0F}}, {1.5F, 0.2F});
+	EXPECT_EQ(result.kind, SnapKind::GuideLine);
+	expectPoint(result.point, 1.5, 0.0);
+	expectPoint(result.guides[0].from, 0.0, 0.0);
+
+	snapping.priorityRule = assets::GuidePriorityRule::Closest;
+	const SnapResult closest = snap({{0.0F, 0.0F}}, {1.5F, 0.2F});
+	expectPoint(closest.point, 1.5, 0.35);
+	expectPoint(closest.guides[0].from, 3.0, 0.35);
+}
+
+TEST_F(SnapGuides, GuideMergeDistance) {
+	const auto keptEastWest = [](const GuideStudy& guides) {
+		return std::count_if(guides.lines.begin(), guides.lines.end(), [](const snap_guides::GuideLine& line) {
+			return line.source == GuideSource::WorldAxes && line.relation == GuideRelation::Parallel &&
+				   line.status == GuideLineStatus::Kept;
+		});
+	};
+	const std::vector<Vec2> points{{0.0F, 0.0F}};
+	const Vec2				cursor{1.5F, 0.15F};
+	ASSERT_FLOAT_EQ(snapping.effectiveGuideMergeDistanceMeters(), 0.3F);
+
+	SnapWorld apart;
+	apart.addFoundation({{3.0, 0.31}, {5.0, 0.31}, {5.0, 2.0}, {3.0, 2.0}});
+	EXPECT_EQ(keptEastWest(studyGuides(snapping, apart.world, points, cursor, allAidsOn())), 2);
+
+	SnapWorld close;
+	close.addFoundation({{3.0, 0.29}, {5.0, 0.29}, {5.0, 2.0}, {3.0, 2.0}});
+	const GuideStudy merged = studyGuides(snapping, close.world, points, cursor, allAidsOn());
+	EXPECT_EQ(keptEastWest(merged), 1);
+	const auto throughCorner = std::find_if(merged.lines.begin(), merged.lines.end(), [](const snap_guides::GuideLine& line) {
+		return line.source == GuideSource::WorldAxes && line.relation == GuideRelation::Parallel &&
+			   line.node.kind == GuideNodeKind::CommittedCorner && line.captured();
+	});
+	ASSERT_NE(throughCorner, merged.lines.end());
+	EXPECT_EQ(throughCorner->status, GuideLineStatus::Merged);
+}
+
+TEST_F(SnapGuides, GuideCrossingOnNodeOfMergedLineIgnored) {
+	// The kept lines are x = 3 through (3, 5) and y = 0 through (0, 0). They cross at the
+	// corner (3, 0), whose own two world guides merged into them; neither kept line was
+	// generated through it.
+	built.addFoundation({{3.0, 0.0}, {5.0, 0.0}, {5.0, 2.0}, {3.0, 2.0}});
+	DrawingAids aids = allAidsOff();
+	aids.alignToExistingBuildings = true;
+	aids.guidesFromWorldAxes = true;
+	aids.guideCrossings = true;
+	const std::vector<Vec2> points{{3.0F, 5.0F}, {0.0F, 0.0F}};
+	const Vec2				cursor{2.72F, -0.29F};
+	const SnapResult		result = snap(points, cursor, foundationInput(aids));
+	EXPECT_EQ(result.kind, SnapKind::GuideLine);
+	expectPoint(result.point, 3.0, -0.29);
+	ASSERT_EQ(result.guideCount, 1U);
+	expectPoint(result.guides[0].from, 3.0, 5.0);
+	EXPECT_EQ(countCrossings(study(points, cursor, aids), CrossingStatus::SharedGeneratingNode), 1U);
+}
+
+TEST_F(SnapGuides, WallGuideSquaringOnTJunctionIsStrictlyInside) {
+	// The chain's guide y = 2 meets the wall exactly at its end (2, 6): a T-junction there
+	// would be an end join, so the point stays the foot. The vertex radius is cut so the
+	// end is not caught first.
+	snapping.vertexSnapRadiusMeters = 0.1F;
+	built.addWall({millimeters(6.0, 2.0), millimeters(6.0, 10.0)});
+	const SnapResult result = snapWall({{0.0F, 2.0F}, {3.0F, 2.0F}}, {5.85F, 2.2F});
+	EXPECT_EQ(result.kind, SnapKind::WallSegment);
+	expectPoint(result.point, 6.0, 2.2);
+	EXPECT_EQ(result.guideCount, 0U);
+}
+
+TEST_F(SnapGuides, GuideSquaringMinimumAngle) {
+	// The shape's guide y = 0 crosses an edge through the origin at 14 degrees (under the
+	// 15 degree minimum: the foot) and at 16 degrees (squared onto the crossing).
+	const std::vector<Vec2> points{{-8.0F, 0.0F}, {-6.0F, 0.0F}};
+	const Vec2				cursor{0.1F, -0.1F};
+	const auto				onEdgeAt = [&](double angleDegrees) {
+		 const double radians = angleDegrees * kRadiansPerDegree;
+		 SnapWorld	  edge;
+		 edge.addFoundation(rectangle(-3.0 * std::cos(radians), -3.0 * std::sin(radians), angleDegrees, 6.0, 3.0));
+		 return SnapEngine(snapping, edge.world).snap(points, cursor, foundationInput());
+	};
+
+	const SnapResult shallow = onEdgeAt(14.0);
+	EXPECT_EQ(shallow.kind, SnapKind::Edge);
+	expectPoint(shallow.point, 0.070665, 0.017624);
+	EXPECT_EQ(shallow.guideCount, 0U);
+
+	const SnapResult steep = onEdgeAt(16.0);
+	EXPECT_EQ(steep.kind, SnapKind::Edge);
+	expectPoint(steep.point, 0.0, 0.0);
+	ASSERT_EQ(steep.guideCount, 1U);
+	EXPECT_EQ(steep.guides[0].source, GuideSource::DrawnShape);
+}
+
+TEST_F(SnapGuides, GuideResultClosesWithinInputRadius) {
+	// The guide x = 0 lands 0.97 m from the first point, the cursor 1.01 m from it: inside a
+	// 1 m close radius only the guide result is, and outside the configured 0.5 m neither is.
+	const std::vector<Vec2> points{{0.0F, 0.0F}, {6.0F, 0.0F}, {6.0F, 4.0F}};
+	const Vec2				cursor{0.28F, 0.97F};
+	ASSERT_FLOAT_EQ(snapping.originCloseRadiusMeters, 0.5F);
+
+	const SnapResult configured = snap(points, cursor);
+	EXPECT_EQ(configured.kind, SnapKind::GuideLine);
+	expectPoint(configured.point, 0.0, 0.97);
+
+	SnapInput widened = foundationInput();
+	widened.originCloseRadiusMeters = 1.0F;
+	const SnapResult closed = snap(points, cursor, widened);
+	EXPECT_EQ(closed.kind, SnapKind::Origin);
+	EXPECT_TRUE(closed.closesShape());
+	ASSERT_EQ(closed.guideCount, 1U);
+	EXPECT_EQ(closed.guides[0].relation, GuideRelation::Perpendicular);
+
+	SnapInput widenedWall = wallInput();
+	widenedWall.originCloseRadiusMeters = 1.0F;
+	EXPECT_EQ(snapWall(points, cursor, widenedWall).kind, SnapKind::Origin);
+}
+
+TEST_F(SnapGuides, WallChainPointWindow) {
+	// 34 points against a window of 32: the first point and the last 31 make guides, so
+	// point 2 (at x = -5, alone on its north-south line) does not.
+	ASSERT_EQ(assets::ConstructionRegistry::Get().constraints().maxPoints, 32);
+	std::vector<Vec2> chain;
+	for (int index = 0; index < 34; ++index) {
+		chain.push_back(index == 1 ? Vec2{-5.0F, 10.0F} : Vec2{static_cast<float>(index), static_cast<float>((index % 2) * 3)});
+	}
+	DrawingAids aids = allAidsOff();
+	aids.guidesFromWorldAxes = true;
+	const SnapInput input = wallInput(aids);
+
+	const SnapResult outside = snapWall(chain, {-4.9F, 6.0F}, input);
+	EXPECT_EQ(outside.kind, SnapKind::None);
+	expectPoint(outside.point, -4.9, 6.0);
+
+	const SnapResult inside = snapWall(chain, {3.1F, 6.0F}, input);
+	EXPECT_EQ(inside.kind, SnapKind::GuideLine);
+	expectPoint(inside.point, 3.0, 6.0);
+	expectPoint(inside.guides[0].from, 3.0, 3.0);
+
+	const std::vector<Vec2> shortChain(chain.begin(), chain.begin() + 32);
+	const SnapResult		whole = snapWall(shortChain, {-4.9F, 6.0F}, input);
+	EXPECT_EQ(whole.kind, SnapKind::GuideLine);
+	expectPoint(whole.guides[0].from, -5.0, 10.0);
 }
 
 // --- What ships ------------------------------------------------------------------------
