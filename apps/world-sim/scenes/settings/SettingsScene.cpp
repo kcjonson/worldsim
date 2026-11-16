@@ -93,9 +93,9 @@ namespace {
 				.id = "settings_align_existing",
 				.size = {kRowWidth, ui::kAuto},
 				.label = "Align to existing foundations",
-				.on = world_sim::UserSettings::Get().alignSnapToExistingFoundations,
+				.on = world_sim::UserSettings::Get().drawing.alignToExistingBuildings,
 				.onChange = [](bool on) {
-					world_sim::UserSettings::Get().alignSnapToExistingFoundations = on;
+					world_sim::UserSettings::Get().drawing.alignToExistingBuildings = on;
 					LOG_INFO(Game, "Setting: align snap to existing foundations -> %s", on ? "on" : "off");
 				},
 			});

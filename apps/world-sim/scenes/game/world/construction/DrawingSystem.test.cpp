@@ -2,6 +2,7 @@
 
 #include "scenes/game/world/CreekWorldFixture.test.h"
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
+#include "UserSettings.h"
 
 #include <assets/ConstructionRegistry.h>
 #include <construction/ConstructionValidator.h>
@@ -133,6 +134,131 @@ TEST_F(DrawingVisibilityTest, RevealTurnsTheRulesOff) {
 	drawing->activateOpeningTool("Door");
 	click({55.0F, 0.0F});
 	EXPECT_EQ(drawing->world().openings().size(), 1U);
+}
+
+namespace {
+
+	// The snap runs every frame while a tool is active; it is evaluated again only when
+	// one of its inputs moved. Each case changes one input and counts evaluations.
+	class DrawingSnapMemoTest : public DrawingVisibilityTest {
+	  protected:
+		void SetUp() override {
+			DrawingVisibilityTest::SetUp();
+			savedSettings = world_sim::UserSettings::Get().drawing;
+		}
+		void TearDown() override {
+			world_sim::UserSettings::Get().drawing = savedSettings;
+			DrawingVisibilityTest::TearDown();
+		}
+
+		// The viewport's centre, which maps to the camera's position (the world origin)
+		// at every zoom, so a zoom change moves nothing else.
+		void hoverCentre(bool freeform = false) {
+			drawing->handleMouseMove(kViewportWidth / 2.0F, kViewportHeight / 2.0F, kViewportWidth, kViewportHeight, freeform);
+		}
+		// Hover twice, so the count after it is one evaluation past `before` exactly when
+		// the change forced one and the frame after it reused it.
+		std::uint64_t evaluationsAfterHoveringTwice(glm::vec2 meters) {
+			hover(meters);
+			hover(meters);
+			return drawing->snapEvaluationCount();
+		}
+
+		world_sim::DrawingSettings savedSettings;
+	};
+
+} // namespace
+
+TEST_F(DrawingSnapMemoTest, AnUnchangedFrameReusesTheSnap) {
+	drawing->activateFoundationTool();
+	hover(kSeenPoint);
+	const std::uint64_t first = drawing->snapEvaluationCount();
+	EXPECT_EQ(first, 1U);
+	hover(kSeenPoint);
+	hover(kSeenPoint);
+	EXPECT_EQ(drawing->snapEvaluationCount(), first);
+}
+
+TEST_F(DrawingSnapMemoTest, ACursorMoveRecomputes) {
+	drawing->activateFoundationTool();
+	hover(kSeenPoint);
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint + glm::vec2{1.0F, 0.0F}), before + 1);
+}
+
+TEST_F(DrawingSnapMemoTest, PlacingOrRemovingAPointRecomputes) {
+	drawing->activateFoundationTool();
+	hover(kSeenPoint);
+	click(kSeenPoint);
+	ASSERT_EQ(drawing->status().pointCount, 1);
+	const std::uint64_t placed = drawing->snapEvaluationCount();
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), placed + 1);
+	ASSERT_TRUE(drawing->removeLastPoint());
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), placed + 2);
+}
+
+TEST_F(DrawingSnapMemoTest, ChangingAnAidRecomputes) {
+	drawing->activateFoundationTool();
+	hover(kSeenPoint);
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	world_sim::UserSettings::Get().drawing.angleSteps = !world_sim::UserSettings::Get().drawing.angleSteps;
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before + 1);
+}
+
+TEST_F(DrawingSnapMemoTest, ADisplayOnlySettingDoesNotRecompute) {
+	drawing->activateFoundationTool();
+	hover(kSeenPoint);
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	world_sim::UserSettings::Get().drawing.guideDistances = !world_sim::UserSettings::Get().drawing.guideDistances;
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before);
+}
+
+TEST_F(DrawingSnapMemoTest, AConstructionWorldChangeRecomputes) {
+	drawing->activateFoundationTool();
+	hover(kSeenPoint);
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	ASSERT_TRUE(drawing->world()
+					.commitFoundation(std::vector<Foundation::Vec2>{{-30.0F, -30.0F}, {-25.0F, -30.0F}, {-25.0F, -25.0F}, {-30.0F, -25.0F}}, "Wood")
+					.ok());
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before + 1);
+}
+
+TEST_F(DrawingSnapMemoTest, AZoomChangeRecomputes) {
+	drawing->activateFoundationTool();
+	hoverCentre();
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	seen.camera.setZoom(2.0F);
+	hoverCentre();
+	hoverCentre();
+	EXPECT_EQ(drawing->snapEvaluationCount(), before + 1);
+}
+
+TEST_F(DrawingSnapMemoTest, HoldingAltRecomputes) {
+	drawing->activateFoundationTool();
+	hoverCentre();
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	hoverCentre(/*freeform=*/true);
+	hoverCentre(/*freeform=*/true);
+	EXPECT_EQ(drawing->snapEvaluationCount(), before + 1);
+}
+
+TEST_F(DrawingSnapMemoTest, SwitchingToolsRecomputes) {
+	drawing->activateFoundationTool();
+	hover(kSeenPoint);
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	drawing->activateWallTool();
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before + 1);
+	drawing->setActiveThicknessPreset("Heavy");
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before + 2);
+}
+
+TEST_F(DrawingSnapMemoTest, SwitchingToolsRecomputesWhenNothingElseInTheKeyChanged) {
+	drawing->activateFoundationTool();
+	drawing->setActiveThicknessPreset("NoSuchPreset");
+	hover(kSeenPoint);
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	drawing->activateWallTool();
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before + 1);
 }
 
 namespace {

@@ -35,6 +35,7 @@
 // the other cursor ghosts.
 
 #include "CommittedGeometryCache.h"
+#include "DrawingFeedback.h"
 
 #include <construction/ConstructionValidator.h>
 #include <construction/ConstructionWorld.h>
@@ -54,6 +55,7 @@
 namespace assets {
 	struct ThicknessPreset;
 	struct OpeningTypeDef;
+	struct PreviewStyle;
 } // namespace assets
 
 namespace ecs {
@@ -161,6 +163,10 @@ namespace world_sim {
 
 		/// Deactivate and discard any in-progress shape.
 		void deactivate();
+
+		/// How many times a mouse move has run the snap and the point validation rather
+		/// than reusing the last frame's results. Tests read it to check the memo.
+		[[nodiscard]] std::uint64_t snapEvaluationCount() const { return snapEvaluationCount_; }
 
 		[[nodiscard]] bool isActive() const { return state_ == DrawingState::Drawing; }
 		[[nodiscard]] bool isWallTool() const { return activeTool_ == ToolKind::Wall; }
@@ -352,6 +358,36 @@ namespace world_sim {
 		/// kPixelsPerMeter * camera zoom). 1.0 fallback if no camera.
 		[[nodiscard]] float pixelsPerWorldMeter() const;
 
+		// --- Snap memo ---
+
+		/// Every input the snap and the point validation read, except the placed points
+		/// (compared against snapMemoPoints_ so a frame builds no vector). The config
+		/// they also read is loaded once per game and never changes under the tool.
+		struct SnapMemoKey {
+			ToolKind							 tool = ToolKind::Foundation;
+			Foundation::Vec2					 cursorWorld{0.0F, 0.0F};
+			construction::DrawingAids			 aids;
+			std::uint64_t						 worldVersion = 0;
+			bool								 freeform = false;
+			float								 zoom = 0.0F; // feeds the origin-close radius
+			const assets::ThicknessPreset*		 preset = nullptr; // the wall's thickness, from the material and preset name
+			construction::FoundationId			 wallHost = construction::kInvalidFoundation;
+			construction::FoundationId			 editTarget = construction::kInvalidFoundation;
+
+			bool operator==(const SnapMemoKey&) const = default;
+		};
+
+		[[nodiscard]] SnapMemoKey snapMemoKey(Foundation::Vec2 cursorWorld, bool freeform, const assets::ThicknessPreset* preset) const;
+
+		/// True when the last evaluation was for `key` and the current points, so its
+		/// results still hold. Otherwise records `key` and the points as the inputs about
+		/// to be evaluated and returns false.
+		bool reuseSnapMemo(const SnapMemoKey& key);
+
+		/// The snap feedback's input for the current frame.
+		[[nodiscard]] DrawingFeedbackInput
+		feedbackInput(const assets::PreviewStyle& style, int viewportW, int viewportH) const;
+
 		/// Origin-close catch radius in world meters, floored so it never shrinks below
 		/// the on-screen origin halo: what you can click to close matches what you see,
 		/// at any zoom. Drives both the snap() override and (x scale) the halo radius.
@@ -466,6 +502,15 @@ namespace world_sim {
 		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor
 		construction::SnapResult			   lastSnap_;
 		construction::ValidationResult		   lastValidation_;
+
+		// The last evaluated snap and point validation, and what they were evaluated
+		// for. Kept apart from lastSnap_ and lastValidation_, which other paths clear.
+		bool							snapMemoValid_ = false;
+		SnapMemoKey						snapMemoKey_;
+		std::vector<Foundation::Vec2>	snapMemoPoints_;
+		construction::SnapResult		snapMemoResult_;
+		construction::ValidationResult	snapMemoValidation_;
+		std::uint64_t					snapEvaluationCount_ = 0;
 
 		// Foundation tool: true when the next click will CLOSE the shape rather than
 		// place a vertex -- either the explicit origin-close (lastSnap_ Origin) or the
