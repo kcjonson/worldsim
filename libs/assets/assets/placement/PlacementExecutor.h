@@ -20,7 +20,10 @@
 //    chunks via IAdjacentChunkProvider for relationship checks.
 //
 // 4. ENTITY REMOVAL: Supports removing entities when harvested/destroyed.
-//    Called by ActionSystem when collection actions complete.
+//    Called by ActionSystem when collection actions complete. A removal is
+//    kept for the session: a chunk that unloads and is placed again comes
+//    back without what was removed from it, and with its resource pools as
+//    harvesting left them.
 //
 // 5. REGROWTH: A non-destructive harvest (a berry bush) stamps the time the
 //    entity is ready again. Times are the caller's simulation clock; assets
@@ -59,6 +62,7 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <random>
 #include <string>
@@ -143,6 +147,8 @@ namespace assets {
 
 		/// Compute entity placements without storing to internal state (thread-safe).
 		/// Use this for async/background processing, then call storeChunkResult() on main thread.
+		/// The chunk is rolled whole, the same every time, and the entities removeEntity has taken
+		/// out of it this session are then left out of the result.
 		/// @param context Chunk data (coord, seed, biome/ground lookups)
 		/// @param adjacentProvider Optional provider for cross-chunk queries (can be null)
 		/// @return Result including computed SpatialIndex for later storage
@@ -151,7 +157,8 @@ namespace assets {
 		computeChunkEntities(const ChunkPlacementContext& context, const IAdjacentChunkProvider* adjacentProvider = nullptr) const;
 
 		/// Store a pre-computed chunk result (main thread only).
-		/// Call this after computeChunkEntities() completes on a background thread.
+		/// Call this after computeChunkEntities() completes on a background thread. The chunk's
+		/// resource pools are rolled the first time it is stored in a session and left alone after.
 		/// @param result The async result from computeChunkEntities()
 		/// @note NOT thread-safe - call only from main thread
 		void storeChunkResult(AsyncChunkPlacementResult&& result);
@@ -160,10 +167,12 @@ namespace assets {
 		/// Returns nullptr if chunk hasn't been processed.
 		[[nodiscard]] const SpatialIndex* getChunkIndex(world::ChunkCoordinate coord) const;
 
-		/// Remove chunk data (call when chunk is unloaded)
+		/// Drop the chunk's index (call when chunk is unloaded). What was removed from the chunk,
+		/// and its entities' cooldowns and resource pools, are kept for when it is placed again.
 		void unloadChunk(world::ChunkCoordinate coord);
 
-		/// Remove an entity at the specified position, with its cooldown and resource pool
+		/// Remove an entity at the specified position, with its cooldown and resource pool, for
+		/// the rest of the session: placing its chunk again leaves it out.
 		/// @param coord Chunk coordinate containing the entity
 		/// @param position World position of the entity
 		/// @param defName DefName of the entity to remove
@@ -257,9 +266,9 @@ namespace assets {
 
 		std::unordered_map<world::ChunkCoordinate, StaticRemovals> m_staticRemovals;
 
-		/// One entity's identity for its cooldown and resource pool: its placed position on the 0.1 m
-		/// grid colonist Memory keys it by, and its interned def id. Two bushes of one def in the same tile
-		/// are two entities and never share a regrowth timer or a pool.
+		/// One entity's identity for its cooldown, its resource pool and its removal: its placed position
+		/// on the 0.1 m grid colonist Memory keys it by, and its interned def id. Two bushes of one def in
+		/// the same tile are two entities and never share a regrowth timer or a pool.
 		struct EntityStateKey {
 			DecimeterCell cell;
 			uint32_t	  defNameId = 0;
@@ -288,8 +297,23 @@ namespace assets {
 		/// Remaining resource pool (units left to harvest), per entity
 		std::unordered_map<EntityStateKey, uint32_t, EntityStateKeyHash> m_resourceCounts;
 
+		/// The chunks whose pools have been rolled this session. A chunk placed again finds its
+		/// pools as harvesting left them: part drawn, or gone where one was emptied.
+		std::unordered_set<world::ChunkCoordinate> m_chunksWithPools;
+
+		using EntityStateKeys = std::unordered_set<EntityStateKey, EntityStateKeyHash>;
+
+		/// The entities removeEntity has taken out of each chunk this session. Kept when the chunk
+		/// unloads, and never dropped: one key for each entity removed. Placement workers read it
+		/// while the main thread adds to it, so every access holds the mutex.
+		std::unordered_map<world::ChunkCoordinate, EntityStateKeys> m_removedEntities;
+		mutable std::mutex											m_removedEntitiesMutex;
+
 		[[nodiscard]] EntityStateKey makeEntityStateKey(glm::vec2 position, const std::string& defName) const;
 		[[nodiscard]] static EntityStateKey makeEntityStateKey(glm::vec2 position, uint32_t defNameId);
+
+		/// Take the chunk's removed entities out of a freshly rolled result, entity list and index both
+		void dropRemovedEntities(AsyncChunkPlacementResult& result) const;
 
 		/// Build dependency graph from asset definitions
 		void buildDependencyGraph();

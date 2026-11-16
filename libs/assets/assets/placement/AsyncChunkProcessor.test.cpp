@@ -14,6 +14,7 @@
 #include <cstdint>
 #include <iterator>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <unordered_set>
@@ -41,11 +42,17 @@ namespace {
 	// Spaced like a tree stand, so both uses of the seed in placement show up: the
 	// per-chunk RNG and the grove field that thins the stand into glades. Marked
 	// groundcover so the worker's bake skips it; nothing generates a template for this
-	// def, and the bake would log an error for every instance it looked up.
+	// def, and the bake would log an error for every instance it looked up. Each one
+	// holds a resource pool of several harvests, so one can be left partly harvested.
 	AssetDefinition makeStandDef() {
 		AssetDefinition def;
 		def.defName = "Groundcover_TestStand";
 		def.role = AssetRole::Groundcover;
+
+		HarvestableCapability harvestable;
+		harvestable.totalResourceMin = 3;
+		harvestable.totalResourceMax = 9;
+		def.capabilities.harvestable = harvestable;
 
 		BiomePlacement placement;
 		placement.biomeName = world::biomeToString(world::Biome::TemperateGrassland);
@@ -209,4 +216,66 @@ TEST_F(AsyncChunkProcessorTests, ReloadedChunkKeepsItsLayout) {
 	AsyncChunkProcessor streaming(*executor, processedChunks);
 	ASSERT_TRUE(placeAndWait(streaming, *chunk));
 	EXPECT_TRUE(sameLayout(storedLayout(*chunk), atLoad));
+}
+
+// A felled tree stays felled: what removeEntity took out of a chunk is not placed again when the
+// chunk scrolls out and is loaded again, and the rest of the chunk comes back as it was.
+TEST_F(AsyncChunkProcessorTests, RemovedEntityStaysRemovedWhenItsChunkReloads) {
+	const world::Chunk* chunk = quickstartChunk();
+	ASSERT_NE(chunk, nullptr);
+
+	AsyncChunkProcessor loading(*executor, processedChunks);
+	ASSERT_TRUE(placeAndWait(loading, *chunk));
+	std::vector<Placement> expected = storedLayout(*chunk);
+	ASSERT_GT(expected.size(), 1U);
+
+	const auto		  removed = expected.begin() + static_cast<std::ptrdiff_t>(expected.size() / 2);
+	const glm::vec2	  removedAt{std::get<0>(*removed), std::get<1>(*removed)};
+	const std::string removedDef = std::get<2>(*removed);
+	ASSERT_TRUE(executor->removeEntity(chunk->coordinate(), removedAt, removedDef));
+	expected.erase(removed);
+	evict(*chunk);
+
+	AsyncChunkProcessor streaming(*executor, processedChunks);
+	ASSERT_TRUE(placeAndWait(streaming, *chunk));
+	EXPECT_TRUE(sameLayout(storedLayout(*chunk), expected));
+	EXPECT_FALSE(executor->getResourceCount(removedAt, removedDef).has_value()) << "nothing is left to harvest where it stood";
+	// The worker bakes the chunk's mesh from the entity list, so the removed one is left out of
+	// that too, and the reloaded chunk owes the renderers nothing.
+	EXPECT_TRUE(sameLayout(placeDirectly(*executor, *chunk, kQuickstartSeed), expected));
+	EXPECT_EQ(executor->staticRemovals(chunk->coordinate()), nullptr);
+}
+
+// A partly harvested node comes back with what was left in it, not refilled, and its untouched
+// neighbours keep the pools they were first given.
+TEST_F(AsyncChunkProcessorTests, PartlyHarvestedPoolKeepsItsCountWhenItsChunkReloads) {
+	const world::Chunk* chunk = quickstartChunk();
+	ASSERT_NE(chunk, nullptr);
+
+	AsyncChunkProcessor loading(*executor, processedChunks);
+	ASSERT_TRUE(placeAndWait(loading, *chunk));
+	const std::vector<Placement> atLoad = storedLayout(*chunk);
+	ASSERT_GT(atLoad.size(), 1U);
+
+	const auto poolOf = [&](const Placement& placed) {
+		return executor->getResourceCount({std::get<0>(placed), std::get<1>(placed)}, std::get<2>(placed));
+	};
+	std::vector<std::optional<uint32_t>> pools;
+	pools.reserve(atLoad.size());
+	for (const Placement& placed : atLoad) {
+		pools.push_back(poolOf(placed));
+		ASSERT_TRUE(pools.back().has_value());
+	}
+
+	const size_t	harvested = atLoad.size() / 2;
+	const glm::vec2 harvestedAt{std::get<0>(atLoad[harvested]), std::get<1>(atLoad[harvested])};
+	ASSERT_EQ(executor->decrementResourceCount(harvestedAt, std::get<2>(atLoad[harvested]), 1), 1U);
+	pools[harvested] = *pools[harvested] - 1;
+	evict(*chunk);
+
+	AsyncChunkProcessor streaming(*executor, processedChunks);
+	ASSERT_TRUE(placeAndWait(streaming, *chunk));
+	for (size_t i = 0; i < atLoad.size(); ++i) {
+		EXPECT_EQ(poolOf(atLoad[i]), pools[i]) << (i == harvested ? "the harvested node" : "an untouched node");
+	}
 }
