@@ -66,7 +66,7 @@ Per `references/xml-schema.md`. Folder + naming is load-bearing: `assets/world/f
 
 Verify in the asset-manager, not by spawning in-game:
 1. Build: `cmake --build build --config Debug --target asset-manager`
-2. Run: `build/apps/asset-manager/Debug/asset-manager.exe` (debug server on port 8070)
+2. Run: `build/apps/asset-manager/Debug/asset-manager.exe --background` (debug server on port 8070; `--background` keeps the window behind Kevin's; leave it off only if he asked for the launch or is testing by hand)
 3. Screenshot the new asset's thumbnail/detail; check the header's error/warning counts and the per-asset validation pane.
 4. Hit Reload after edits (no restart). Close it when done: `curl "http://127.0.0.1:8070/api/control?action=exit"`.
 

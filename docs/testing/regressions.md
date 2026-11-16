@@ -135,6 +135,28 @@ is built on bare ground. Systems: `ConstructionSystem::bareSites`,
 
 ---
 
+### Removed entities come back when their chunk reloads
+
+- [ ] At the Quick Start landing, read `flora?rect=-5,-5,15,15`: `trees` is 10 (the landing cleared
+  three more). Send every colonist and the camera away (`teleport?colonist=<id>&to=3000,4` for each,
+  `control?action=camera&x=3000&y=4`) until the same flora read gives `measuredAreaM2` 0: the chunk
+  has unloaded. Bring the camera back (`camera&x=5&y=4`), then the colonists:
+  - `trees` reads 10 again, not 13, with the same count per def.
+  - `ground?pts=5.6,8.4;4.0,8.3;8.2,2.6` (the three cleared trunks) reads `valid` true at each.
+- [ ] The same trip after the bared foundation above is built: back at
+  `control?action=camera&x=22&y=2&zoom=8` the foundation is still bare, no bush and no grass tuft
+  drawn on it.
+
+**Why this matters:** a chunk's placed entities are rolled from the world seed each time it loads,
+and nothing recorded what had been removed, so felled trees, harvested-out nodes, picked-up stones,
+the landing clearing and a cleared build site all came back once the colony walked away and
+returned, and partly harvested nodes refilled. A tree back inside ground already meshed read as
+clear ground (`ground` gave `valid` true at its trunk, and a colonist could be spawned inside it).
+Systems: `PlacementExecutor` (its removal record and
+`computeChunkEntities`), `AsyncChunkProcessor`, `GameScene::cleanupUnloadedChunks`.
+
+---
+
 ## Adding a new regression
 
 When a bug is fixed, add a minimal repro here before closing the ticket:

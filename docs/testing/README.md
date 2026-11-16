@@ -288,8 +288,16 @@ Missing file causes an immediate `ConfigError` on launch.
 ### Launch
 
 ```
-build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT>
+build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT> --background
 ```
+
+**Every launch an agent makes passes `--background`**, whichever app the scenario names
+(`world-sim`, `ui-sandbox`, `asset-manager`) and whatever other flags its launch line gives. The
+window opens behind every other window and unfocused, so a pass never lands on top of Kevin's work
+or takes his keyboard. Nothing else changes: the window is on the taskbar and drawn every frame,
+and screenshots, injected input and state read the same. The flag comes off only for a launch made
+for Kevin to test something by hand, or one he asked for. Perf captures are the scripted exception;
+`scripts/perf.mjs` launches in the foreground, since a covered window isn't presented the same way.
 
 Use a **unique non-default port** (default 8081) to avoid collision with other worktrees or a
 running game instance. Reaches the game scene in ~5 s; colonist "Bob" spawns in
