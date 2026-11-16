@@ -31,6 +31,7 @@ namespace {
 	constexpr const char* kSceneName = "settings";
 	constexpr float		  kColX = 80.0F;
 	constexpr float		  kRowWidth = 480.0F;
+	constexpr float		  kScrollbarReserve = 16.0F; // so a row never sits under the list's scrollbar
 
 	namespace tokens = world_sim::tokens;
 	namespace family = ui::tokens::font::family;
@@ -87,9 +88,11 @@ namespace {
 
 			const float space2 = theme.get(tokens::spacing::space2);
 			const float space4 = theme.get(tokens::spacing::space4);
+			const float space6 = theme.get(tokens::spacing::space6);
 			const float space8 = theme.get(tokens::spacing::space8);
 
-			// The title and Back stay put; the settings between them scroll when the window is short.
+			// The title and Back stay put; the settings between them scroll on a canvas shorter than the
+			// reference. The bottom padding keeps Back clear of the ESC hint.
 			ui::Ref<ui::Component> column = root().addChild<ui::Component>({
 				.id = "settings",
 				.size = {ui::percent(100.0F), ui::percent(100.0F)},
@@ -97,7 +100,7 @@ namespace {
 					.display = ui::Display::Flex,
 					.flexDirection = ui::FlexDirection::Column,
 					.gap = space4,
-					.padding = {space8, 0.0F, space8, kColX},
+					.padding = {space6, 0.0F, space8, kColX},
 					.alignItems = ui::AlignItems::Start,
 				},
 			});
@@ -116,8 +119,13 @@ namespace {
 
 			ui::Ref<ui::Component> list = column.addChild<ui::Component>({
 				.id = "settings_list",
-				.size = {kRowWidth, ui::kAuto},
-				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space4, .flexGrow = 1.0F},
+				.size = {kRowWidth + kScrollbarReserve, ui::kAuto},
+				.layout =
+					{.display = ui::Display::Flex,
+					 .flexDirection = ui::FlexDirection::Column,
+					 .gap = space4,
+					 .padding = {0.0F, kScrollbarReserve, 0.0F, 0.0F},
+					 .flexGrow = 1.0F},
 				.overflow = ui::Overflow::Scroll,
 			});
 

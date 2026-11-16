@@ -203,8 +203,8 @@ namespace world_sim::testing {
 			}
 		};
 
-		// The settings list needs a canvas taller than the reference's 1000 ui px, and fits on the next one checked.
-		constexpr float kSettingsListFitsFrom = 1200.0F;
+		// The settings list fits a canvas the reference's height at the default size, and scrolls only on shorter ones.
+		constexpr auto kSettingsListFitsFrom = static_cast<float>(theme::uiScaleConfig().referenceHeight);
 
 	} // namespace
 
