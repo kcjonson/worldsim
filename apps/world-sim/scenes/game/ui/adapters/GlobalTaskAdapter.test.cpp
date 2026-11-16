@@ -9,6 +9,11 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <vector>
+
 namespace world_sim::adapters {
 
 	// The panel's and the Known work tab's rows for a structure being torn down.
@@ -71,6 +76,49 @@ namespace world_sim::adapters {
 		const ecs::EntityID gone = structure(40.0F);
 		world.removeComponent<ecs::StructureBlueprint>(gone);
 		EXPECT_TRUE(panel().empty()) << "its blueprint is removed";
+	}
+
+	namespace {
+		GlobalTaskDisplayData row(uint64_t id, uint8_t priority, float distance) {
+			GlobalTaskDisplayData data;
+			data.id = id;
+			data.taskTypePriority = priority;
+			data.distanceValue = distance;
+			return data;
+		}
+
+		std::vector<uint64_t> idsAfterSorting(std::vector<GlobalTaskDisplayData> rows) {
+			sortTasksForDisplay(rows);
+			std::vector<uint64_t> ids;
+			for (const auto& data : rows) {
+				ids.push_back(data.id);
+			}
+			return ids;
+		}
+	} // namespace
+
+	TEST(SortTasksForDisplayTest, TypePriorityComesBeforeDistance) {
+		const auto ids = idsAfterSorting({row(1, 2, 1.0F), row(2, 1, 50.0F)});
+		EXPECT_EQ(ids, (std::vector<uint64_t>{2, 1}));
+	}
+
+	TEST(SortTasksForDisplayTest, RowsReadingTheSameWholeMetresTieOnId) {
+		// 10.0 m and 10.9 m both read "10m"; 11.0 m reads "11m".
+		const auto ids = idsAfterSorting({row(3, 1, 11.0F), row(2, 1, 10.9F), row(1, 1, 10.0F)});
+		EXPECT_EQ(ids, (std::vector<uint64_t>{1, 2, 3}));
+	}
+
+	TEST(SortTasksForDisplayTest, AChainSpacedUnderAMetreSortsTheSameFromEveryInputOrder) {
+		const std::array<GlobalTaskDisplayData, 4> chain = {row(4, 1, 10.9F), row(3, 1, 10.5F), row(2, 1, 10.1F), row(1, 1, 9.7F)};
+		std::array<size_t, 4>					   order{0, 1, 2, 3};
+		const std::vector<uint64_t>				   expected{1, 2, 3, 4};
+		do {
+			std::vector<GlobalTaskDisplayData> rows;
+			for (const size_t index : order) {
+				rows.push_back(chain[index]);
+			}
+			EXPECT_EQ(idsAfterSorting(rows), expected);
+		} while (std::next_permutation(order.begin(), order.end()));
 	}
 
 } // namespace world_sim::adapters
