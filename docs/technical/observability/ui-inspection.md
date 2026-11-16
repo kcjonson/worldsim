@@ -31,7 +31,7 @@ curl -s http://127.0.0.1:8090/api/ui/screenshot > screenshot.png
 curl "http://127.0.0.1:8090/api/input?ev=click,100,100&ev=char,104"
 ```
 
-Ports: ui-sandbox 8090, world-sim 8081, asset-manager 8070. The project CLAUDE.md ("Testing Visual Changes") has the rebuild, launch, and check loop.
+Ports: ui-sandbox 8090, world-sim 8081, asset-manager 8070. The project CLAUDE.md ("Testing Visual Changes") has the rebuild, launch, and check loop. Launch with `--background`: the window opens behind the others and unfocused, and every endpoint here works the same.
 
 ## Related Documentation
 
