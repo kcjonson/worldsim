@@ -79,6 +79,28 @@
     <vertexRadiusPx>4.0</vertexRadiusPx>
     <invalidVertexRadiusPx>7.0</invalidVertexRadiusPx>
     <originHaloMinRadiusPx>8.0</originHaloMinRadiusPx>
+
+    <!-- Redesigned guide look (not drawn yet). Solid is geometry; dotted and part transparent
+         is alignment. guideLineStyle: solid, dashed, or dotted. guideColorMode: one (guideColor)
+         or bySource. The colors below carry no alpha of their own; guideOpacity and markerOpacity
+         apply. guideColor and guideWidth above are still the old solid guide's values; the
+         redesigned look wants #5FB3C8 and 1.5 for them. -->
+    <guideLineStyle>dotted</guideLineStyle>
+    <guideDashPx>1.0</guideDashPx>
+    <guideGapPx>4.5</guideGapPx>
+    <guideOpacity>0.6</guideOpacity>              <!-- alignment lines -->
+    <markerOpacity>0.9</markerOpacity>            <!-- right angle, crossing dot, ticks, labels -->
+    <guideColorMode>one</guideColorMode>
+    <guideColorShape>#8CC4FFFF</guideColorShape>
+    <guideColorNearby>#FFAD5CFF</guideColorNearby>
+    <guideColorWorld>#7FE0A6FF</guideColorWorld>
+    <guideColorLength>#F29AD8FF</guideColorLength>
+    <guideDistanceDecimals>2</guideDistanceDecimals>
+    <guideLabelPx>11.0</guideLabelPx>
+    <angleReadoutDecimals>1</angleReadoutDecimals>
+    <rightAngleMarkerPx>8.0</rightAngleMarkerPx>
+    <guideCrossingDotPx>3.0</guideCrossingDotPx>  <!-- radius -->
+    <cursorRadiusPx>6.0</cursorRadiusPx>          <!-- the snapped-point dot's radius -->
   </Preview>
 
 </ConstructionRendering>

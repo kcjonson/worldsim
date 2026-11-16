@@ -10,6 +10,10 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <initializer_list>
+#include <string>
+#include <type_traits>
+#include <utility>
 
 namespace assets {
 
@@ -54,6 +58,33 @@ namespace assets {
 		const PatternColor c = parseColor(hex);
 		return StyleColor{c.r / 255.0F, c.g / 255.0F, c.b / 255.0F, c.a / 255.0F};
 	}
+
+	namespace {
+
+		// An absent element keeps the fallback; a present element naming no listed
+		// value also keeps it, with a warning, so a typo can't silently pick a mode.
+		template <typename Enum>
+		Enum parseEnum(
+			pugi::xml_node parent,
+			const char*	   tag,
+			Enum		   fallback,
+			std::type_identity_t<std::initializer_list<std::pair<const char*, Enum>>> table
+		) {
+			const pugi::xml_node node = parent.child(tag);
+			if (!node) {
+				return fallback;
+			}
+			const std::string text = node.text().as_string();
+			for (const auto& [name, value] : table) {
+				if (text == name) {
+					return value;
+				}
+			}
+			LOG_WARNING(Engine, "Construction config: unknown value '%s' for <%s>, keeping default", text.c_str(), tag);
+			return fallback;
+		}
+
+	} // namespace
 
 	// ---------------------------------------------------------------------------
 	// Load entry points
@@ -308,13 +339,63 @@ namespace assets {
 		cfg.edgeSnapRadiusMeters = root.child("edgeSnapRadiusMeters").text().as_float(0.3F);
 		cfg.edgeSnapRadiusMm = toMm(cfg.edgeSnapRadiusMeters);
 
-		cfg.smartGuideRangeMeters = root.child("smartGuideRangeMeters").text().as_float(8.0F);
-		cfg.smartGuideRangeMm = toMm(cfg.smartGuideRangeMeters);
+		const auto number = [&root](const char* tag, float fallback) { return root.child(tag).text().as_float(fallback); };
+		const auto count = [&root](const char* tag, int fallback) { return root.child(tag).text().as_int(fallback); };
+		const auto flag = [&root](const char* tag, bool fallback) { return root.child(tag).text().as_bool(fallback); };
 
-		cfg.axisGuideToleranceMeters = root.child("axisGuideToleranceMeters").text().as_float(0.3F);
-		cfg.axisGuideToleranceMm = toMm(cfg.axisGuideToleranceMeters);
+		cfg.guideRangeMeters = number("guideRangeMeters", cfg.guideRangeMeters);
+		cfg.guideToleranceMeters = number("guideToleranceMeters", cfg.guideToleranceMeters);
+		cfg.guideCrossingRadiusMeters = number("guideCrossingRadiusMeters", cfg.guideCrossingRadiusMeters);
+		cfg.guideDirectionToleranceDegrees = number("guideDirectionToleranceDegrees", cfg.guideDirectionToleranceDegrees);
+		cfg.nearbyGuideDirectionLimit = count("nearbyGuideDirectionLimit", cfg.nearbyGuideDirectionLimit);
+		cfg.guideCornerLimit = count("guideCornerLimit", cfg.guideCornerLimit);
 
-		cfg.alignToExistingDefault = root.child("alignToExistingDefault").text().as_bool(true);
+		cfg.tieAngleWindowToStep = flag("tieAngleWindowToStep", cfg.tieAngleWindowToStep);
+		cfg.guideAngleWindowDegrees = number("guideAngleWindowDegrees", cfg.guideAngleWindowDegrees);
+		cfg.tieCrossingAngleToStep = flag("tieCrossingAngleToStep", cfg.tieCrossingAngleToStep);
+		cfg.guideCrossingMinAngleDegrees = number("guideCrossingMinAngleDegrees", cfg.guideCrossingMinAngleDegrees);
+		cfg.tieMergeDistanceToTolerance = flag("tieMergeDistanceToTolerance", cfg.tieMergeDistanceToTolerance);
+		cfg.guideMergeDistanceMeters = number("guideMergeDistanceMeters", cfg.guideMergeDistanceMeters);
+
+		cfg.priorityRule = parseEnum(root, "priorityRule", cfg.priorityRule,
+									 {{"sourceFirst", GuidePriorityRule::SourceFirst}, {"closest", GuidePriorityRule::Closest}});
+
+		cfg.commonLengthSourceBuildings = flag("commonLengthSourceBuildings", cfg.commonLengthSourceBuildings);
+		cfg.commonLengthSourceShape = flag("commonLengthSourceShape", cfg.commonLengthSourceShape);
+		cfg.commonLengthRangeMeters = number("commonLengthRangeMeters", cfg.commonLengthRangeMeters);
+		cfg.commonLengthAllBuildings = flag("commonLengthAllBuildings", cfg.commonLengthAllBuildings);
+		cfg.commonLengthCatchMeters = number("commonLengthCatchMeters", cfg.commonLengthCatchMeters);
+		cfg.commonLengthMergeMeters = number("commonLengthMergeMeters", cfg.commonLengthMergeMeters);
+		cfg.commonLengthMaxCount = count("commonLengthMaxCount", cfg.commonLengthMaxCount);
+		cfg.commonLengthMinimumMeters = number("commonLengthMinimumMeters", cfg.commonLengthMinimumMeters);
+		cfg.commonLengthAfterRawCursor = flag("commonLengthAfterRawCursor", cfg.commonLengthAfterRawCursor);
+		cfg.commonLengthBeatsCrossing = flag("commonLengthBeatsCrossing", cfg.commonLengthBeatsCrossing);
+		cfg.commonLengthWallsReadInsetFoundation =
+			flag("commonLengthWallsReadInsetFoundation", cfg.commonLengthWallsReadInsetFoundation);
+
+		cfg.lengthIncrementMeters = number("lengthIncrementMeters", cfg.lengthIncrementMeters);
+		cfg.lengthRoundingOnGuides =
+			parseEnum(root, "lengthRoundingOnGuides", cfg.lengthRoundingOnGuides,
+					  {{"guideDistance", GuideRounding::GuideDistance}, {"segmentLength", GuideRounding::SegmentLength}});
+
+		cfg.rectangleAdjacencySnaps = flag("rectangleAdjacencySnaps", cfg.rectangleAdjacencySnaps);
+
+		if (pugi::xml_node d = root.child("DrawingSettingsDefaults")) {
+			DrawingSettingsDefaults& defaults = cfg.drawingSettingsDefaults;
+			const auto				 settingFlag = [&d](const char* tag, bool fallback) { return d.child(tag).text().as_bool(fallback); };
+			defaults.angleSteps = settingFlag("angleSteps", defaults.angleSteps);
+			defaults.guidesFromShape = settingFlag("guidesFromShape", defaults.guidesFromShape);
+			defaults.alignToExistingBuildings = settingFlag("alignToExistingBuildings", defaults.alignToExistingBuildings);
+			defaults.guidesFromWorldAxes = settingFlag("guidesFromWorldAxes", defaults.guidesFromWorldAxes);
+			defaults.guideCrossings = settingFlag("guideCrossings", defaults.guideCrossings);
+			defaults.commonLengths = settingFlag("commonLengths", defaults.commonLengths);
+			defaults.guideDistances = settingFlag("guideDistances", defaults.guideDistances);
+			defaults.angleReadout = settingFlag("angleReadout", defaults.angleReadout);
+			defaults.roundLengths = settingFlag("roundLengths", defaults.roundLengths);
+			defaults.showKeyGuide = settingFlag("showKeyGuide", defaults.showKeyGuide);
+			defaults.rectangleGridSpacingMeters =
+				d.child("rectangleGridSpacingMeters").text().as_float(defaults.rectangleGridSpacingMeters);
+		}
 
 		cfg.originCloseRadiusMeters = root.child("originCloseRadiusMeters").text().as_float(0.5F);
 		cfg.originCloseRadiusMm = toMm(cfg.originCloseRadiusMeters);
@@ -372,6 +453,9 @@ namespace assets {
 			pugi::xml_node node = parent.child(tag);
 			return node ? node.text().as_float(def) : def;
 		};
+		auto wholeNumber = [](pugi::xml_node parent, const char* tag, int def) -> int {
+			return parent.child(tag).text().as_int(def);
+		};
 
 		if (pugi::xml_node f = root.child("Foundation")) {
 			cfg.foundation.blueprintFill = color(f, "blueprintFill", cfg.foundation.blueprintFill);
@@ -427,6 +511,29 @@ namespace assets {
 			cfg.preview.vertexRadiusPx = number(p, "vertexRadiusPx", cfg.preview.vertexRadiusPx);
 			cfg.preview.invalidVertexRadiusPx = number(p, "invalidVertexRadiusPx", cfg.preview.invalidVertexRadiusPx);
 			cfg.preview.originHaloMinRadiusPx = number(p, "originHaloMinRadiusPx", cfg.preview.originHaloMinRadiusPx);
+
+			cfg.preview.guideLineStyle = parseEnum(
+				p, "guideLineStyle", cfg.preview.guideLineStyle,
+				{{"solid", GuideLineStyle::Solid}, {"dashed", GuideLineStyle::Dashed}, {"dotted", GuideLineStyle::Dotted}}
+			);
+			cfg.preview.guideDashPx = number(p, "guideDashPx", cfg.preview.guideDashPx);
+			cfg.preview.guideGapPx = number(p, "guideGapPx", cfg.preview.guideGapPx);
+			cfg.preview.guideOpacity = number(p, "guideOpacity", cfg.preview.guideOpacity);
+			cfg.preview.markerOpacity = number(p, "markerOpacity", cfg.preview.markerOpacity);
+			cfg.preview.guideColorMode = parseEnum(
+				p, "guideColorMode", cfg.preview.guideColorMode,
+				{{"one", GuideColorMode::One}, {"bySource", GuideColorMode::BySource}}
+			);
+			cfg.preview.guideColorShape = color(p, "guideColorShape", cfg.preview.guideColorShape);
+			cfg.preview.guideColorNearby = color(p, "guideColorNearby", cfg.preview.guideColorNearby);
+			cfg.preview.guideColorWorld = color(p, "guideColorWorld", cfg.preview.guideColorWorld);
+			cfg.preview.guideColorLength = color(p, "guideColorLength", cfg.preview.guideColorLength);
+			cfg.preview.guideDistanceDecimals = wholeNumber(p, "guideDistanceDecimals", cfg.preview.guideDistanceDecimals);
+			cfg.preview.guideLabelPx = number(p, "guideLabelPx", cfg.preview.guideLabelPx);
+			cfg.preview.angleReadoutDecimals = wholeNumber(p, "angleReadoutDecimals", cfg.preview.angleReadoutDecimals);
+			cfg.preview.rightAngleMarkerPx = number(p, "rightAngleMarkerPx", cfg.preview.rightAngleMarkerPx);
+			cfg.preview.guideCrossingDotPx = number(p, "guideCrossingDotPx", cfg.preview.guideCrossingDotPx);
+			cfg.preview.cursorRadiusPx = number(p, "cursorRadiusPx", cfg.preview.cursorRadiusPx);
 		}
 
 		renderingConfig = cfg;

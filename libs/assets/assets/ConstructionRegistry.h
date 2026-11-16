@@ -168,6 +168,29 @@ namespace assets {
 		int64_t minParallelClearanceMm = 800;
 	};
 
+	/// What a guide through some other point than the previous one rounds when a
+	/// length increment applies: its distance along the guide, or the segment length.
+	enum class GuideRounding { GuideDistance, SegmentLength };
+
+	/// How competing guides are ranked: by source first, or purely by distance.
+	enum class GuidePriorityRule { SourceFirst, Closest };
+
+	/// Starting value of each player-facing Drawing Setting, one field per setting.
+	/// The initializers reproduce the drawing tools from before the settings existed.
+	struct DrawingSettingsDefaults {
+		bool  angleSteps = true;
+		bool  guidesFromShape = false;
+		bool  alignToExistingBuildings = true;
+		bool  guidesFromWorldAxes = true;
+		bool  guideCrossings = false;
+		bool  commonLengths = false;
+		bool  guideDistances = false;
+		bool  angleReadout = false;
+		bool  roundLengths = false;
+		bool  showKeyGuide = false;
+		float rectangleGridSpacingMeters = 1.0F;
+	};
+
 	/// Snapping parameters for the drawing tools.
 	/// Float members are in meters/degrees.
 	/// Int64 members are pre-quantized to millimeters.
@@ -180,22 +203,63 @@ namespace assets {
 		float	edgeSnapRadiusMeters = 0.3F;
 		int64_t edgeSnapRadiusMm = 300;
 
-		// Search radius for committed-foundation reference nodes that axis-alignment
-		// guides can lock onto (the in-progress shape's own nodes are always considered).
-		float	smartGuideRangeMeters = 8.0F;
-		int64_t smartGuideRangeMm = 8000;
+		// Search radius for committed-building reference nodes that guides can
+		// lock onto (the in-progress shape's own nodes are always considered).
+		float guideRangeMeters = 8.0F;
 
-		// Perpendicular tolerance for an axis-alignment lock: the cursor snaps to a
-		// reference node's X (or Y) when it is within this distance of it.
-		float	axisGuideToleranceMeters = 0.3F;
-		int64_t axisGuideToleranceMm = 300;
+		// Perpendicular tolerance for a guide lock: the cursor snaps onto a guide
+		// line when it is within this distance of it.
+		float guideToleranceMeters = 0.3F;
 
-		// Default for the user-facing "align to existing foundations" setting (the
-		// in-progress-shape alignment is always on regardless). Seeds UserSettings.
-		bool	alignToExistingDefault = true;
+		float guideCrossingRadiusMeters = 1.0F;
+		float guideDirectionToleranceDegrees = 1.0F;
+		int	  nearbyGuideDirectionLimit = 4;
+		int	  guideCornerLimit = 16;
+
+		// Each tied value follows another key while its tie flag is set (window =
+		// angle step / 2, crossing minimum = angle step, merge distance = guide
+		// tolerance) and is the explicit value otherwise. Read the effective*()
+		// accessors, not the explicit fields.
+		bool  tieAngleWindowToStep = true;
+		float guideAngleWindowDegrees = 7.5F;
+		bool  tieCrossingAngleToStep = true;
+		float guideCrossingMinAngleDegrees = 15.0F;
+		bool  tieMergeDistanceToTolerance = true;
+		float guideMergeDistanceMeters = 0.3F;
+
+		GuidePriorityRule priorityRule = GuidePriorityRule::SourceFirst;
+
+		bool  commonLengthSourceBuildings = true;
+		bool  commonLengthSourceShape = true;
+		float commonLengthRangeMeters = 30.0F;
+		bool  commonLengthAllBuildings = false;
+		float commonLengthCatchMeters = 0.3F;
+		float commonLengthMergeMeters = 0.05F;
+		int	  commonLengthMaxCount = 6;
+		float commonLengthMinimumMeters = 0.5F;
+		bool  commonLengthAfterRawCursor = true;
+		bool  commonLengthBeatsCrossing = false;
+		bool  commonLengthWallsReadInsetFoundation = true;
+
+		float		  lengthIncrementMeters = 0.1F;
+		GuideRounding lengthRoundingOnGuides = GuideRounding::GuideDistance;
+
+		bool rectangleAdjacencySnaps = true;
+
+		DrawingSettingsDefaults drawingSettingsDefaults;
 
 		float	originCloseRadiusMeters = 0.5F;
 		int64_t originCloseRadiusMm = 500;
+
+		[[nodiscard]] float effectiveGuideAngleWindowDegrees() const {
+			return tieAngleWindowToStep ? angleIncrementDegrees / 2.0F : guideAngleWindowDegrees;
+		}
+		[[nodiscard]] float effectiveGuideCrossingMinAngleDegrees() const {
+			return tieCrossingAngleToStep ? angleIncrementDegrees : guideCrossingMinAngleDegrees;
+		}
+		[[nodiscard]] float effectiveGuideMergeDistanceMeters() const {
+			return tieMergeDistanceToTolerance ? guideToleranceMeters : guideMergeDistanceMeters;
+		}
 	};
 
 	// ---------------------------------------------------------------------------
@@ -281,12 +345,20 @@ namespace assets {
 		float	   ghostAlpha = 0.5F;
 	};
 
+	enum class GuideLineStyle { Solid, Dashed, Dotted };
+
+	enum class GuideColorMode { One, BySource };
+
 	/// Drawing-tool preview chrome that is construction-specific (the validity green/red
 	/// still comes from the shared UI theme). guideColor is the angle-snap guide; the
 	/// origin-close halo uses originHaloColor when it can't yet close; snap-target rings
 	/// use snapVertexColor (vertex/endpoint) and snapEdgeColor (edge/T-junction). The
 	/// alphas tint the in-progress polygon fill and the wall-band preview; the *Px radii
 	/// and widths are screen-space line weights.
+	/// guideColor and guideWidth are what the renderer draws guides with today; the
+	/// keys after originHaloMinRadiusPx are the redesigned guide look, not read yet.
+	/// Until the look is switched over, guideColor keeps its old value (with its own
+	/// alpha) and guideWidth its old width.
 	struct PreviewStyle {
 		StyleColor guideColor{0.7F, 0.85F, 1.0F, 0.4F};
 		StyleColor originHaloColor{0.7F, 0.85F, 1.0F, 0.6F};
@@ -299,6 +371,23 @@ namespace assets {
 		float	   vertexRadiusPx = 4.0F;
 		float	   invalidVertexRadiusPx = 7.0F;
 		float	   originHaloMinRadiusPx = 8.0F;
+
+		GuideLineStyle guideLineStyle = GuideLineStyle::Dotted;
+		float		   guideDashPx = 1.0F;
+		float		   guideGapPx = 4.5F;
+		float		   guideOpacity = 0.6F;
+		float		   markerOpacity = 0.9F;
+		GuideColorMode guideColorMode = GuideColorMode::One;
+		StyleColor	   guideColorShape{0.549F, 0.769F, 1.0F, 1.0F};
+		StyleColor	   guideColorNearby{1.0F, 0.678F, 0.361F, 1.0F};
+		StyleColor	   guideColorWorld{0.498F, 0.878F, 0.651F, 1.0F};
+		StyleColor	   guideColorLength{0.949F, 0.604F, 0.847F, 1.0F};
+		int			   guideDistanceDecimals = 2;
+		float		   guideLabelPx = 11.0F;
+		int			   angleReadoutDecimals = 1;
+		float		   rightAngleMarkerPx = 8.0F;
+		float		   guideCrossingDotPx = 3.0F;
+		float		   cursorRadiusPx = 6.0F;
 	};
 
 	/// All construction rendering style, loaded from rendering.xml.
