@@ -114,6 +114,7 @@ namespace world_sim {
 		);
 
 		tabBar = content.addChild<ui::TabBar>({
+			.id = "dossier_tabs",
 			.tabs =
 				{{.id = kTabBio, .label = "Bio"},
 				 {.id = kTabNeeds, .label = "Needs"},

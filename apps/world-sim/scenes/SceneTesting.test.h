@@ -13,10 +13,13 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <input/InputTypes.h>
 #include <platform/HeadlessPlatform.h>
 #include <testing/HeadlessLayout.h>
 #include <theme/Fonts.h>
 #include <theme/InterfaceScale.h>
+#include <ui/Component.h>
+#include <ui/Context.h>
 #include <utils/ResourcePath.h>
 
 #include <gtest/gtest.h>
@@ -26,6 +29,7 @@
 #include <filesystem>
 #include <format>
 #include <initializer_list>
+#include <limits>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -61,12 +65,20 @@ namespace world_sim::testing {
 		return {theme::kInterfaceSizes.back(), theme::kDefaultInterfaceSize, theme::kInterfaceSizes.front()};
 	}
 
+	// A scroller whose bar is expected, by its id, on canvases shorter than `belowCanvasHeight` ui px.
+	struct ExpectedScrollbar {
+		std::string_view id;
+		float			 belowCanvasHeight = std::numeric_limits<float>::infinity();
+	};
+
 	class SceneTest : public ::testing::Test {
 	  protected:
 		static void SetUpTestSuite() {
 			Foundation::setResourceRoots({projectRoot()});
 			assets::initializeAssetSystem(false);
-			assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string());
+			ASSERT_NE(assets::AssetRegistry::Get().getDefinition("CraftingSpot"), nullptr);
+			ASSERT_GT(assets::RecipeRegistry::Get().size(), 0U);
+			ASSERT_TRUE(assets::ConstructionRegistry::Get().load((projectRoot() / "assets" / "config" / "construction").string()));
 		}
 
 		static void TearDownTestSuite() {
@@ -105,6 +117,44 @@ namespace world_sim::testing {
 			frame();
 		}
 
+		// The top scene's component with this id, if it and everything above it is shown.
+		[[nodiscard]] ui::Component* shown(std::string_view id) const {
+			app::Scene* top = app->scenes().top();
+			if (top == nullptr || !top->hasUi()) {
+				return nullptr;
+			}
+			const ui::Context&			 context = top->ui();
+			std::vector<ui::ComponentId> pending = context.getRoots();
+			while (!pending.empty()) {
+				ui::Component* component = context.find(pending.back());
+				pending.pop_back();
+				if (component == nullptr || !component->isShown()) {
+					continue;
+				}
+				if (component->getId() == id) {
+					return component;
+				}
+				pending.insert(pending.end(), component->getChildren().begin(), component->getChildren().end());
+			}
+			return nullptr;
+		}
+
+		// A player's click on the shown component with this id, then a frame for it to land. A frame first, so the
+		// layout is the one the current window and interface size give, whatever a lint left.
+		void press(std::string_view id) {
+			frame();
+			const ui::Component* target = shown(id);
+			ASSERT_NE(target, nullptr) << id << " isn't shown";
+			const Foundation::Rect bounds = target->screenBounds();
+			const float			   scale = app->uiLayoutScale();
+			const glm::vec2		   point{(bounds.x + (bounds.width * 0.5F)) * scale, (bounds.y + (bounds.height * 0.5F)) * scale};
+			using Type = foundation::InputEvent::Type;
+			for (const Type type : {Type::PointerMove, Type::PointerDown, Type::PointerUp}) {
+				platform->push({.type = type, .position = point});
+			}
+			frame();
+		}
+
 		// The top scene at every window size and interface size, a line per violation led by where it was found; empty
 		// when it holds together on all of them.
 		[[nodiscard]] std::string lintEverywhere() {
@@ -119,15 +169,19 @@ namespace world_sim::testing {
 			});
 		}
 
-		// The top scene's scrollers that show a bar at any window size and interface size, other than those in
-		// `expected`, the ones whose content is meant to scroll.
-		[[nodiscard]] std::string unexpectedScrollbars(std::initializer_list<std::string_view> expected) {
+		// The top scene's scrollers that show a bar at any window size and interface size other than those in
+		// `expected` on the canvases they're expected on.
+		[[nodiscard]] std::string unexpectedScrollbars(std::initializer_list<ExpectedScrollbar> expected) {
 			return everywhere([this, expected](const WindowSize& window) {
 				(void)app::lintAt(*app, *platform, window.width, window.height);
+				const float				 canvasHeight = app->scenes().top()->ui().getCanvas().y;
 				std::vector<std::string> found;
 				for (const std::string& path : app::scrollbarsShown(*app)) {
-					if (std::ranges::none_of(expected, [&path](std::string_view allowed) { return path.ends_with(allowed); })) {
-						found.push_back(path + " shows a scrollbar");
+					const std::string_view id = std::string_view(path).substr(path.rfind('/') + 1);
+					if (std::ranges::none_of(expected, [id, canvasHeight](const ExpectedScrollbar& bar) {
+							return bar.id == id && canvasHeight < bar.belowCanvasHeight;
+						})) {
+						found.push_back(std::format("{} shows a scrollbar on a canvas {:g} tall", path, canvasHeight));
 					}
 				}
 				return found;
