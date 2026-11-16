@@ -486,6 +486,9 @@ namespace {
 	// meet off one another.
 	constexpr double kSeamToleranceMm = 3.0;
 
+	// The shortest run of wall the offsetter keeps beside a gap (kMinPieceFeatureMm in WallOffset.cpp).
+	constexpr double kMinPieceFeatureMm = 2.0 * kSeamToleranceMm;
+
 	// A door segment beside a corner is drawn from its trimmed band: its rings tile the trimmed band
 	// and reach no deeper into a junction than the seam tolerance, the door span carries the door and
 	// the solid spans no opening, and every other polygon, junction, and portal is the reference's.
@@ -551,8 +554,11 @@ namespace {
 												 [&](const PortalKey& key) { return std::get<0>(key) == openingOf(ring); });
 				ASSERT_NE(portal, actual.portals.end());
 				const double jambs[] = {along(std::get<1>(*portal)), along(std::get<2>(*portal))};
-				const double from	 = std::max(std::min(jambs[0], jambs[1]), bandFrom);
-				const double to		 = std::min(std::max(jambs[0], jambs[1]), bandTo);
+				const double jambFrom = std::max(std::min(jambs[0], jambs[1]), bandFrom);
+				const double jambTo	  = std::min(std::max(jambs[0], jambs[1]), bandTo);
+				// A run of wall under the shortest kept between a jamb and the band's end is the door span's.
+				const double from = jambFrom - bandFrom < kMinPieceFeatureMm ? bandFrom : jambFrom;
+				const double to	  = bandTo - jambTo < kMinPieceFeatureMm ? bandTo : jambTo;
 				double		 spanFrom = std::numeric_limits<double>::max();
 				double		 spanTo	  = std::numeric_limits<double>::lowest();
 				for (const Vec2i64& corner : ringOf(ring)) {
@@ -688,6 +694,22 @@ namespace {
 				 buildOpening(world, walls[0], 0.12F, "Door");
 			 },
 			 Expectation::Changed, expectDoorSegmentsFromTrimmedBands},
+			{"RoomTwoDoorsOneWall",
+			 [](ConstructionWorld& world) {
+				 std::vector<SegmentId> walls;
+				 buildRoom(world, {0, 0}, walls);
+				 buildOpening(world, walls[0], 0.2F, "Door");
+				 buildOpening(world, walls[0], 0.7F, "Door");
+			 },
+			 Expectation::Changed, expectDoorSegmentsFromTrimmedBands},
+			{"RoomDoorJambBesideTrimEnd",
+			 [](ConstructionWorld& world) {
+				 std::vector<SegmentId> walls;
+				 buildRoom(world, {0, 0}, walls);
+				 // The door's near jamb 3 mm past the 100 mm corner trim: the door span takes that sliver.
+				 buildOpening(world, walls[0], 0.13825F, "Door");
+			 },
+			 Expectation::Changed, expectDoorSegmentsFromTrimmedBands},
 			{"RejectedGraphBesideHealthyGraph",
 			 [](ConstructionWorld& world) {
 				 buildWall(world, {0, 0}, {4000, 0});
@@ -751,6 +773,27 @@ namespace {
 				const construction::OpeningGaps gaps = construction::openingGaps(world, world.segments().front(), {});
 				ASSERT_EQ(gaps.gaps.size(), 1u);
 				EXPECT_LT(gaps.gaps.front().fromMm, bands.trimAtA.front()) << "the door reaches into the corner trim";
+			}
+			if (layout.name == "RoomDoorJambBesideTrimEnd") {
+				const construction::OpeningGaps gaps = construction::openingGaps(world, world.segments().front(), {});
+				ASSERT_EQ(gaps.gaps.size(), 1u);
+				const std::int64_t sliver = gaps.gaps.front().fromMm - bands.trimAtA.front();
+				EXPECT_GT(sliver, 0) << "the door's jamb lies past the corner trim";
+				EXPECT_LT(static_cast<double>(sliver), kMinPieceFeatureMm) << "by less than the shortest run of wall kept";
+			}
+			// A door on an accepted graph comes out as a polygon carrying its opening. A rejected graph
+			// keeps its walls' raw bands whole, so its door has none.
+			if (layout.name.find("Door") != std::string::npos && layout.name.find("Rejected") == std::string::npos) {
+				const WallOutput extracted = outputOf(world, nav::extractWalls);
+				for (const construction::Opening& opening : world.openings()) {
+					if (!ConstructionRegistry::Get().getOpeningType(opening.type)->pathable) {
+						continue;
+					}
+					const bool carried = std::any_of(extracted.polygons.begin(), extracted.polygons.end(), [&](const PolygonKey& polygon) {
+						return openingOf(polygon) == static_cast<std::int64_t>(opening.id);
+					});
+					EXPECT_TRUE(carried) << "no polygon carries door " << opening.id;
+				}
 			}
 		}
 	}
