@@ -75,10 +75,4 @@
       <weight>300</weight>
     </StoragePriority>
   </Bonuses>
-
-  <!-- Thresholds and timings -->
-  <Thresholds>
-    <!-- How often colonists re-evaluate tasks (seconds) -->
-    <reEvalInterval>0.5</reEvalInterval>
-  </Thresholds>
 </PriorityTuning>

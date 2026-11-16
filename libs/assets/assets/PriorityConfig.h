@@ -52,11 +52,6 @@ namespace assets {
 		int16_t weight = 300; // Per-priority-rank score weight (rank 0..3 * weight)
 	};
 
-	/// Timing thresholds
-	struct TimingConfig {
-		float	reEvalInterval = 0.5F;		// Seconds between task re-evaluation
-	};
-
 	/// Priority tuning configuration
 	/// Loaded from assets/config/work/priority-tuning.xml
 	class PriorityConfig {
@@ -123,11 +118,6 @@ namespace assets {
 		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
 		[[nodiscard]] const StoragePriorityConfig& getStoragePriorityConfig() const { return storagePriorityConfig; }
 		[[nodiscard]] const TaskAgeBonusConfig&	   getTaskAgeConfig() const { return taskAgeConfig; }
-		[[nodiscard]] const TimingConfig&		   getTimingConfig() const { return timingConfig; }
-
-		// --- Thresholds ---
-
-		[[nodiscard]] float	  getReEvalInterval() const { return timingConfig.reEvalInterval; }
 
 		// --- Work Category Order ---
 
@@ -143,9 +133,6 @@ namespace assets {
 		/// Parse bonuses from XML node
 		void parseBonuses(const void* node);
 
-		/// Parse timing thresholds from XML node
-		void parseThresholds(const void* node);
-
 		/// Parse work category order from XML node
 		void parseCategoryOrder(const void* node);
 
@@ -159,7 +146,6 @@ namespace assets {
 		InProgressBonusConfig inProgressConfig;
 		StoragePriorityConfig storagePriorityConfig;
 		TaskAgeBonusConfig	  taskAgeConfig;
-		TimingConfig		  timingConfig;
 
 		uint64_t m_generation = 1;
 

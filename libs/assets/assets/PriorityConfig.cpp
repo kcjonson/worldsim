@@ -72,10 +72,6 @@ namespace assets {
 			parseBonuses(&bonusesNode);
 		}
 
-		if (auto thresholdsNode = root.child("Thresholds")) {
-			parseThresholds(&thresholdsNode);
-		}
-
 		if (auto orderNode = root.child("WorkCategoryOrder")) {
 			parseCategoryOrder(&orderNode);
 		}
@@ -93,7 +89,6 @@ namespace assets {
 		inProgressConfig = InProgressBonusConfig{};
 		storagePriorityConfig = StoragePriorityConfig{};
 		taskAgeConfig = TaskAgeBonusConfig{};
-		timingConfig = TimingConfig{};
 		categoryOrder.clear();
 	}
 
@@ -197,14 +192,6 @@ namespace assets {
 			if (auto n = ageNode.child("maxBonus")) {
 				taskAgeConfig.maxBonus = static_cast<int16_t>(n.text().as_int(100));
 			}
-		}
-	}
-
-	void PriorityConfig::parseThresholds(const void* nodePtr) {
-		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
-
-		if (auto n = node.child("reEvalInterval")) {
-			timingConfig.reEvalInterval = n.text().as_float(0.5F);
 		}
 	}
 

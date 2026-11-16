@@ -92,7 +92,6 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
 | `<Bonuses><InProgress><bonus>` (50) | `getInProgressBonus` | the hysteresis term |
 | `<Bonuses><TaskAge>` (1 per minute, at most 100) | `calculateTaskAgeBonus` | the task-age term |
 | `<Bonuses><StoragePriority><weight>` (300) | `getStoragePriorityWeight` | the storage-priority term |
-| `<Thresholds><reEvalInterval>` | nothing | parsed, read by nothing; the interval is `AIDecisionSystem::kReEvalInterval` (0.5 s) |
 
 ---
 
@@ -189,15 +188,11 @@ public:
     int16_t calculateTaskAgeBonus(float taskAge) const;
     int16_t getInProgressBonus() const;                    // within-tier hysteresis margin (50)
 
-    // Thresholds
-    float   getReEvalInterval() const;
-
 private:
     std::unordered_map<std::string, int> taskTiers;  // per-task-type base tier (arbitration)
     DistanceFactorConfig  distanceFactorConfig;
     InProgressBonusConfig inProgressConfig;
     TaskAgeBonusConfig    taskAgeConfig;
-    TimingConfig          timingConfig;
 };
 ```
 
