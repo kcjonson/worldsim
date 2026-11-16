@@ -1,7 +1,7 @@
 # Scenario 17: Interface size
 
 **Status:** draft  
-**Last verified:** never
+**Last verified:** 2026-11-16 (steps 1 to 6, 9 and 10 as written; 7 and 8 with Bob selected through `/api/dev/select`, before the pause was added to step 7)
 
 Settings' Interface size scales menus, panels, and text from 60 to 120%, applies at once, and is saved with the window's size. The world under the HUD keeps its size, and a click on it still lands where the pointer is.
 
@@ -17,7 +17,7 @@ This one runs on the real settings file, since it tests that the size is saved: 
 4. Click Reset: back to 100%, Reset disabled; `factor` is 1.
 5. Click 80%, then `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`. Relaunch, again with `--background` only, and click through to Settings: 80% is selected; `factor` is 0.8.
 6. Click 60%, Back (the main menu), Quick Start: the HUD is small but every panel is inside the window, nothing overlaps; `/api/ui/lint` answers `"count":0`.
-7. `...camera&x=<BX>&y=<BY>&zoom=6`, click the window's centre: Bob is selected and his panel opens. Click Details: the dossier is inside the window, its tab scrolling if the tab is taller.
+7. Space to pause (Bob wanders), read his `x`, `y`, `...camera&x=<BX>&y=<BY>&zoom=6`, click the window's centre: Bob is selected and his panel opens. Click Details: the dossier is inside the window, its tab scrolling if the tab is taller.
 8. Escape, Main Menu, Settings, 120%, Back, Quick Start: the HUD is large, still inside the window; `"count":0`. Step 7 again: the click selects Bob, and the dossier is held to 92% x 86% of the window.
 9. Escape, Main Menu, Settings, click the START stop (Reset if START is 1): `factor` is START.
 10. `curl.exe "http://127.0.0.1:8081/api/control?action=exit"`: the exit saves START. The window's size is saved on that exit too, so it needs no step.
