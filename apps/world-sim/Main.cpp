@@ -9,6 +9,7 @@
 #include <application/CommandLine.h>
 #include <platform/Platform.h>
 #include <theme/Fonts.h>
+#include <theme/InterfaceScale.h>
 #include <utils/Log.h>
 #include <world/AppIdentity.h>
 #include <world/rendering/GlVersion.h>
@@ -39,7 +40,12 @@ int main(int argc, char* argv[]) {
 	}
 
 	std::unique_ptr<app::Platform> platform =
-		app::createGlfwPlatform({.title = kTitle, .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor}});
+		app::createGlfwPlatform(
+			{.title = kTitle,
+			 .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor},
+			 .minWidth = theme::kMinWindowWidth,
+			 .minHeight = theme::kMinWindowHeight}
+		);
 	if (platform == nullptr) {
 		return 1;
 	}
@@ -47,10 +53,12 @@ int main(int argc, char* argv[]) {
 		{.organization = worldview::kOrganization,
 		 .applicationName = worldview::kGameName,
 		 .frame = {.frameCapHz = 120},
+		 .uiScale = theme::uiScaleConfig(),
 		 .baseShader = base_shader::source(),
 		 .fontAtlases = theme::kFontAtlases,
 		 .defaultFont = theme::fontDefault,
 		 .clearColor = {0.1F, 0.1F, 0.15F, 1.0F},
+		 .settingsFile = "settings.json",
 		 // On wherever the server is compiled in, so a Release build, which has none, logs nothing
 		 .devServer =
 			 {.enabled = app::kDevServerCompiledIn || commandLine.httpPort.has_value(),
@@ -65,6 +73,7 @@ int main(int argc, char* argv[]) {
 	world_sim::initializeResources(*app, commandLine.scene.has_value());
 
 	world_sim::addScenes(app->scenes());
+	const app::DevServer::Registration uiScaleView = theme::registerUiScaleView(*app);
 
 	// "game" starts at "gameloading", so loading always runs first
 	std::string firstScene = commandLine.scene.value_or(world_sim::scenes::Splash.name);
@@ -78,6 +87,9 @@ int main(int argc, char* argv[]) {
 
 	app->run();
 	app->shutdown();
+	if (!app->settings().save()) {
+		LOG_ERROR(Game, "The settings file couldn't be saved at exit");
+	}
 	world_sim::shutdownResources();
 	return 0;
 }
