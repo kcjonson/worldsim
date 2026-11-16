@@ -299,9 +299,7 @@ namespace geometry {
 		// front of that cap's line (exact side test on the rounded points, so the
 		// two never overlap, and the corner never sits on the polygon's edge along
 		// the cap). The polygon closes the step with a straight edge from that corner
-		// out to the thicker band's corner. The corner moves away from the thicker
-		// band as the trim grows, the two pointing more than 90 degrees apart, so
-		// the loop ends.
+		// out to the thicker band's corner.
 		//
 		// That edge alone can miss either way. Where another wedge has cut the
 		// thicker band back, its cap corner sits well along its face, and the edge
@@ -343,11 +341,17 @@ namespace geometry {
 			if (clearOfCap(trim)) {
 				continue;
 			}
-			double tParam = 0.0;
+			// The cap's line runs between two rounded points, so it can lean off square by more than the
+			// two bands lean off 90 degrees apart; the corner then runs along it or toward it and never
+			// clears. The walk stops at the thin segment's length, where its band is gone and the graph is
+			// rejected.
+			const std::int64_t wholeSegment = static_cast<std::int64_t>(std::ceil(length(thinDir)));
+			double			   tParam		= 0.0;
 			if (lineIntersectParam(offsetPoint(vertex, thinDir, thinFace), thinDir, capRight, capEdge, tParam)) {
-				trim = std::max(trim, static_cast<std::int64_t>(std::ceil(tParam * length(thinDir))));
+				const double crossing = std::clamp(std::ceil(tParam * length(thinDir)), 0.0, static_cast<double>(wholeSegment));
+				trim				  = std::max(trim, static_cast<std::int64_t>(crossing));
 			}
-			while (!clearOfCap(trim)) {
+			while (trim < wholeSegment && !clearOfCap(trim)) {
 				++trim;
 			}
 			trimByLocal[thin] = trim;
