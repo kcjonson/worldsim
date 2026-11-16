@@ -156,7 +156,7 @@ namespace {
 			size.addChild<ui::Text>({
 				.id = "interface_size_line",
 				.style = description,
-				.text = "Scales menus, panels, and text. In a small window the smaller sizes stop where text would get too small to read.",
+				.text = "Scales menus, panels, and text. The smaller sizes stop where text would get too small to read on this screen.",
 				.wrap = true,
 			});
 
