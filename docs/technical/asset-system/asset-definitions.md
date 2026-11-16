@@ -333,7 +333,6 @@ The reference level is the one the default view (24 px/m) picks. The load prewar
 | Element | Description |
 |---------|-------------|
 | `complexity` | `simple` (instanced) or `complex` (tessellated) |
-| `tier` | `instanced` or `batched` |
 | `maxInstances` | Max GPU instances (instanced tier) |
 | `lodLevels/li` | LOD settings by distance |
 

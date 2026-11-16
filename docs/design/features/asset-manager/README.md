@@ -116,7 +116,7 @@ Built or firmed up by this effort:
 
 **Out, v1:** tile surface patterns and UI icons (they live on different render and registration paths, so they come later, and when they do the orphan check must also scan code references); creating assets; editing SVG art; editing definitions from inside the tool (read-only plus refresh instead); non-visual data defs (recipes, config, work types); data-driven `<variation>`; pixel-diff regression against golden images.
 
-**Candidates for later:** tile patterns and UI icons as first-class catalogued assets; in-tool editing of the genuinely data-driven fields (placement, groups, generator params, rendering tiers) with write-back and re-validate; golden-image regression; deeper validation (perf budgets on `variantCount`/`maxInstances`, group sanity).
+**Candidates for later:** tile patterns and UI icons as first-class catalogued assets; in-tool editing of the genuinely data-driven fields (placement, groups, generator params) with write-back and re-validate; golden-image regression; deeper validation (perf budgets on `variantCount`/`maxInstances`, group sanity).
 
 ## Risks and open questions
 
