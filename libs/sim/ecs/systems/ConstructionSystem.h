@@ -344,4 +344,8 @@ namespace ecs {
 		static constexpr int kUpdateFrameInterval = 30; // ~0.5s at 60fps
 	};
 
+	/// The footprint of every foundation that is not built yet (a blueprint being cleared, awaiting
+	/// materials, or under construction), in the world's foundation order.
+	[[nodiscard]] std::vector<FootprintBounds> unbuiltFootprints(const construction::ConstructionWorld& world);
+
 } // namespace ecs

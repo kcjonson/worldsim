@@ -337,6 +337,16 @@ namespace ecs {
 		}
 	}
 
+	std::vector<FootprintBounds> unbuiltFootprints(const construction::ConstructionWorld& world) {
+		std::vector<FootprintBounds> sites;
+		for (const auto& foundation : world.foundations()) {
+			if (foundation.state != construction::FoundationState::Built) {
+				sites.emplace_back(foundation.ring);
+			}
+		}
+		return sites;
+	}
+
 	FootprintBounds ConstructionSystem::footprintBounds(uint64_t foundationId) const {
 		const auto* foundation = m_constructionWorld->get(foundationId);
 		return FootprintBounds{foundation != nullptr ? foundation->ring : geometry::Ring{}};

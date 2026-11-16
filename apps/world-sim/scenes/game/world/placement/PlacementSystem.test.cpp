@@ -4,6 +4,7 @@
 #include "scenes/game/world/PlayerVisibilityFixture.test.h"
 
 #include <assets/AssetRegistry.h>
+#include <ecs/GoalTaskRegistry.h>
 #include <ecs/components/AgentRadius.h>
 #include <ecs/components/Memory.h>
 #include <ecs/components/Packaged.h>
@@ -15,6 +16,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <memory>
 #include <optional>
@@ -245,4 +247,79 @@ TEST_F(PlacementFordTest, InstallTargetIsUnsetWhenNoSpotTakesTheFootprint) {
 	wide.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {3.0F, 3.0F}});
 	assets::AssetRegistry::Get().registerTestDefinition(wide);
 	EXPECT_FALSE(placement->installTargetNear(kWideBox, {10.0F, kCreekY - 1.0F}, {0.0F, 1.0F}).has_value());
+}
+
+namespace {
+
+	// Furniture is never set up where a foundation is still to be built: an L-shaped unbuilt site on the
+	// south bank of the creek, its notch cut from the north-east corner.
+	class PlacementUnbuiltSiteTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			assets::AssetDefinition box;
+			box.defName = kBox;
+			box.setCollision(0, {.type = assets::CollisionShapeType::Rect, .halfExtentsMeters = {kBoxHalfExtent, kBoxHalfExtent}});
+			assets::AssetRegistry::Get().registerTestDefinition(box);
+
+			navigation = &world_sim::testing::meshCreekWorld(seen.world, emptyPlacement);
+			placement = std::make_unique<world_sim::PlacementSystem>(world_sim::PlacementSystem::Args{
+				.world = &seen.world,
+				.camera = &seen.camera,
+				.placementExecutor = nullptr,
+				.navigation = navigation,
+				.worldSeed = 7,
+				.callbacks = {},
+				.insideUnbuiltSite = [this](glm::vec2 point) { return ecs::anyFootprintContains(unbuiltSites, point); }
+			});
+			placement->selectBuildItem(kBox);
+		}
+		void TearDown() override { assets::AssetRegistry::Get().clearDefinitions(); }
+
+		void hover(glm::vec2 meters) {
+			const glm::vec2 screen = seen.screenOf(meters);
+			placement->handleMouseMove(screen.x, screen.y, kViewportWidth, kViewportHeight);
+		}
+
+		world_sim::testing::SeenWorld				seen;
+		ecs::EmptyPlacement							emptyPlacement;
+		ecs::NavigationSystem*						navigation = nullptr;
+		std::unique_ptr<world_sim::PlacementSystem> placement;
+		std::vector<ecs::FootprintBounds>			unbuiltSites{
+			   ecs::FootprintBounds{geometry::Ring{{2000, 6000}, {10000, 6000}, {10000, 10000}, {6000, 10000}, {6000, 14000}, {2000, 14000}}}
+		};
+	};
+
+} // namespace
+
+TEST_F(PlacementUnbuiltSiteTest, TargetInsideTheSiteIsRefusedAndOutsideItIsPlaced) {
+	const glm::vec2 inside{4.0F, 8.0F};
+	ASSERT_TRUE(navigation->isPointBuildableNow(inside)) << "bare ground: only the site rules it out";
+	hover(inside);
+	EXPECT_FALSE(placement->ghostValid());
+	EXPECT_FALSE(placement->handleClick());
+	EXPECT_EQ(placement->state(), world_sim::PlacementState::Placing);
+
+	hover({4.0F, 17.0F});
+	EXPECT_TRUE(placement->ghostValid());
+	EXPECT_TRUE(placement->handleClick());
+}
+
+// The site is its polygon: the notch of the L is inside its bounding box and takes furniture.
+TEST_F(PlacementUnbuiltSiteTest, TargetInTheNotchOfTheLIsPlaced) {
+	const glm::vec2 inNotch{8.0F, 12.0F};
+	const auto&		site = unbuiltSites.front();
+	ASSERT_TRUE(inNotch.x > site.min.x && inNotch.x < site.max.x && inNotch.y > site.min.y && inNotch.y < site.max.y);
+	ASSERT_FALSE(site.contains(inNotch));
+	hover(inNotch);
+	EXPECT_TRUE(placement->ghostValid());
+}
+
+// A crafted crate's install target keeps off the site, and the footprint gate refuses inside it.
+TEST_F(PlacementUnbuiltSiteTest, InstallTargetSearchKeepsOffTheSite) {
+	const glm::vec2				   station{1.0F, 8.0F};
+	const std::optional<glm::vec2> target = placement->installTargetNear(kBox, station, {1.0F, 0.0F});
+	ASSERT_TRUE(target.has_value());
+	EXPECT_FALSE(unbuiltSites.front().contains(*target));
+	EXPECT_GE(glm::distance(*target, station), 0.99F);
+	EXPECT_FALSE(placement->footprintBuildableNow(kBox, {4.0F, 8.0F}));
 }
