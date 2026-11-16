@@ -152,15 +152,16 @@ TEST_F(ConstructionRegistryTest, Rendering_RealFileValues) {
 	EXPECT_FLOAT_EQ(r.preview.vertexRadiusPx, 4.0F);
 
 	EXPECT_EQ(r.preview.guideLineStyle, GuideLineStyle::Dotted);
-	EXPECT_FLOAT_EQ(r.preview.guideWidth, 1.0F);
+	EXPECT_FLOAT_EQ(r.preview.guideWidth, 1.5F);
 	EXPECT_FLOAT_EQ(r.preview.guideDashPx, 1.0F);
 	EXPECT_FLOAT_EQ(r.preview.guideGapPx, 4.5F);
 	EXPECT_FLOAT_EQ(r.preview.guideOpacity, 0.6F);
 	EXPECT_FLOAT_EQ(r.preview.markerOpacity, 0.9F);
 	EXPECT_EQ(r.preview.guideColorMode, GuideColorMode::One);
-	EXPECT_NEAR(r.preview.guideColor.r, 0xB3 / 255.0F, 0.001F);
-	EXPECT_NEAR(r.preview.guideColor.g, 0xD9 / 255.0F, 0.001F);
-	EXPECT_NEAR(r.preview.guideColor.b, 0xFF / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColor.r, 0x5F / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColor.g, 0xB3 / 255.0F, 0.001F);
+	EXPECT_NEAR(r.preview.guideColor.b, 0xC8 / 255.0F, 0.001F);
+	EXPECT_FLOAT_EQ(r.preview.guideColor.a, 1.0F);
 	EXPECT_NEAR(r.preview.guideColorShape.r, 0x8C / 255.0F, 0.001F);
 	EXPECT_NEAR(r.preview.guideColorNearby.g, 0xAD / 255.0F, 0.001F);
 	EXPECT_NEAR(r.preview.guideColorWorld.b, 0xA6 / 255.0F, 0.001F);
