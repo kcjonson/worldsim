@@ -36,7 +36,7 @@ The batch starts at 02:00 local and waits for the machine to be idle. Idle is me
 
 - No build, test, or game process: `cl`, `link`, `ninja`, `cmake`, `ctest`, `clang*`, `ccache`, `world-sim`, `ui-sandbox`, `asset-manager`, `worldgen-cli`, any `*-tests`.
 - CPU under 10%.
-- GPU load under 10%: utilization scaled by the graphics clock over its maximum (`nvidia-smi --query-gpu=utilization.gpu,clocks.current.graphics,clocks.max.graphics`, read-only), so a card idling at its lowest clock doesn't read busy. Without the clock fields it is raw utilization.
+- GPU load under 10% (`nvidia-smi --query-gpu=utilization.gpu,clocks.current.graphics,clocks.max.graphics`, read-only): raw utilization, except while the graphics clock is at most a quarter of its maximum, where it is scaled by clock over maximum so a card idling at its lowest clock doesn't read busy. Without both clock fields it is raw.
 
 The process list catches a session that is between commands; the CPU and GPU readings catch everything the list doesn't name. Thresholds are constants in the script, tuned from the first week's logs.
 

@@ -2,7 +2,8 @@
 // Usage: node scripts/machine-load.mjs [--seconds 5]
 // Prints one JSON line: { verdict: "idle" | "mostly-idle" | "busy", cpuPct, gpuPct, gpuUtilizationPct,
 // gpuClockMhz, gpuMaxClockMhz, processes }. gpuPct, the figure the verdict is judged on, is
-// utilization scaled by graphics clock over its maximum; the other gpu fields are the busiest sample's raw readings.
+// utilization, scaled by graphics clock over its maximum only while the card sits at its idle clock
+// (gpuLoadPct); the other gpu fields are the busiest sample's raw readings.
 // Run it before a timed perf run and again after; the game being timed must not be running.
 
 import { execFile, execFileSync } from 'node:child_process';
@@ -24,13 +25,28 @@ function cpuTimes() {
 	return { idle, total };
 }
 
-// An idle card at its lowest clock reports 25 to 45% utilization, a share of almost no capacity.
-// Scaling by the graphics clock against its maximum makes the figure mean real load; under load the
-// clock sits at or near the maximum, so the scaled figure is about the raw one. Without clock
-// fields it stays raw.
-export function scaledGpuPct({ utilizationPct, clockMhz, maxClockMhz }) {
-	if (!Number.isFinite(clockMhz) || !Number.isFinite(maxClockMhz) || clockMhz <= 0 || maxClockMhz <= 0) return utilizationPct;
-	return utilizationPct * Math.min(1, clockMhz / maxClockMhz);
+export const kIdleClockMaxRatio = 0.25;
+
+// A card at its lowest clock reports 25 to 45% utilization, which is a few percent of its real
+// capacity, so in that band utilization is scaled by clock over maximum clock. Anywhere else, or
+// without both clocks, the raw utilization stands.
+export function gpuLoadPct({ utilizationPct, clockMhz, maxClockMhz }) {
+	const clockRatio = clockMhz / maxClockMhz;
+	const atIdleClock = clockMhz > 0 && maxClockMhz > 0 && clockRatio <= kIdleClockMaxRatio;
+	return Math.round(atIdleClock ? utilizationPct * clockRatio : utilizationPct);
+}
+
+function cellNumber(cell) {
+	const text = (cell ?? '').trim();
+	return text === '' ? Number.NaN : Number(text);
+}
+
+// One line of `--query-gpu=utilization.gpu,clocks.current.graphics,clocks.max.graphics` output.
+// Only the first GPU is read. No utilization means no reading, never 0%.
+export function parseGpuQuery(out) {
+	const [utilizationPct, clockMhz, maxClockMhz] = out.split('\n')[0].split(',').map(cellNumber);
+	if (!Number.isFinite(utilizationPct)) return null;
+	return { utilizationPct, clockMhz, maxClockMhz, pct: gpuLoadPct({ utilizationPct, clockMhz, maxClockMhz }) };
 }
 
 export function loadVerdict({ cpuPct, gpuPct, games, builders }) {
@@ -43,10 +59,7 @@ export function loadVerdict({ cpuPct, gpuPct, games, builders }) {
 function gpuSample() {
 	try {
 		const query = '--query-gpu=utilization.gpu,clocks.current.graphics,clocks.max.graphics';
-		const out = execFileSync('nvidia-smi', [query, '--format=csv,noheader,nounits'], { encoding: 'utf8' });
-		const [utilizationPct, clockMhz, maxClockMhz] = out.split('\n')[0].split(',').map((cell) => Number(cell.trim()));
-		if (!Number.isFinite(utilizationPct)) return null;
-		return { utilizationPct, clockMhz, maxClockMhz, pct: Math.round(scaledGpuPct({ utilizationPct, clockMhz, maxClockMhz })) };
+		return parseGpuQuery(execFileSync('nvidia-smi', [query, '--format=csv,noheader,nounits'], { encoding: 'utf8' }));
 	} catch {
 		return null;
 	}
