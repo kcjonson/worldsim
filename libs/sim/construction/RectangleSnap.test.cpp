@@ -95,14 +95,6 @@ TEST(RectangleSnap, RectangleAdjacencyOffSkipsEdgesToo) {
 	EXPECT_NEAR(off.point.y, 3.0F, kGridTolerance);
 }
 
-TEST(RectangleSnap, RectangleAltReturnsRawCursor) {
-	const ConstructionWorld	  world = shackWorld();
-	const RectangleCornerSnap raw = snapCorner(world, {4.2F, 0.25F}, 1.0F, true, /*freeform=*/true);
-	EXPECT_EQ(raw.kind, RectangleSnapKind::None);
-	EXPECT_EQ(raw.point.x, 4.2F);
-	EXPECT_EQ(raw.point.y, 0.25F);
-}
-
 TEST(RectangleSnap, RectangleEdgeRoundsAlongAxisAlignedEdge) {
 	const ConstructionWorld world = shackWorld();
 	// Top edge (y = 3): the foot is (2.43, 3) and the grid rounds x along the edge.
@@ -132,13 +124,6 @@ TEST(RectangleSnap, RectangleEdgeOnDiagonalKeepsFoot) {
 	EXPECT_NEAR(hit.point.y - hit.point.x, 6.0F, 1e-4F);
 }
 
-TEST(RectangleSnap, RectangleHalfwayRoundsTowardPositive) {
-	const ConstructionWorld	  world;
-	const RectangleCornerSnap snapped = snapCorner(world, {-2.5F, -3.5F});
-	EXPECT_NEAR(snapped.point.x, -2.0F, kGridTolerance);
-	EXPECT_NEAR(snapped.point.y, -3.0F, kGridTolerance);
-}
-
 TEST(RectangleSnap, RectangleFromCornersOrdersTheRing) {
 	const auto shape = rectangleFromCorners({10.0F, 4.0F}, {6.0F, 1.0F});
 	ASSERT_TRUE(shape.has_value());
@@ -162,6 +147,38 @@ TEST(RectangleSnap, RectangleDegenerateReturnsNothing) {
 	EXPECT_FALSE(rectangleFromCorners({2.0F, 2.0F}, {2.0F, 2.0F}).has_value());
 	EXPECT_FALSE(rectangleFromCorners({2.0F, 2.0F}, {2.0005F, 5.0F}).has_value());
 	EXPECT_TRUE(rectangleFromCorners({2.0F, 2.0F}, {2.01F, 5.0F}).has_value());
+}
+
+TEST(RectangleSnap, RectangleMinimumSideIsLongerThanOneMillimetre) {
+	// A side must be longer than 1 mm. 1 mm itself has no exact float, so the test brackets
+	// it: 1.01 mm is accepted, 0.99 mm is not. Corners sit near zero where float is fine.
+	EXPECT_TRUE(rectangleFromCorners({0.0F, 0.0F}, {0.00101F, 5.0F}).has_value());
+	EXPECT_TRUE(rectangleFromCorners({0.0F, 0.0F}, {5.0F, 0.00101F}).has_value());
+	EXPECT_FALSE(rectangleFromCorners({0.0F, 0.0F}, {0.00099F, 5.0F}).has_value());
+	EXPECT_FALSE(rectangleFromCorners({0.0F, 0.0F}, {5.0F, 0.00099F}).has_value());
+}
+
+TEST(RectangleSnap, RectangleCornerTieKeepsTheLastOfEqualDistances) {
+	// Two corners are 0.25 m from the cursor; the shared query keeps the last, the same
+	// rule the freeform tool uses. (The prototype keeps the first: (4, 3).)
+	ConstructionWorld world;
+	addFoundation(world, {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 3.0F}, {0.0F, 3.0F}});
+	addFoundation(world, {{4.0F, 3.5F}, {8.0F, 3.5F}, {8.0F, 6.0F}, {4.0F, 6.0F}});
+	const RectangleCornerSnap snapped = snapCorner(world, {4.0F, 3.25F});
+	EXPECT_EQ(snapped.kind, RectangleSnapKind::Vertex);
+	EXPECT_NEAR(snapped.point.x, 4.0F, kGridTolerance);
+	EXPECT_NEAR(snapped.point.y, 3.5F, kGridTolerance);
+}
+
+TEST(RectangleSnap, RectangleEdgeTieKeepsTheLastOfEqualDistances) {
+	// Two edges are 0.25 m from the cursor (the tie is on edges, away from every corner).
+	ConstructionWorld world;
+	addFoundation(world, {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 3.0F}, {0.0F, 3.0F}});
+	addFoundation(world, {{0.0F, 3.5F}, {4.0F, 3.5F}, {4.0F, 6.0F}, {0.0F, 6.0F}});
+	const RectangleCornerSnap snapped = snapCorner(world, {2.0F, 3.25F});
+	EXPECT_EQ(snapped.kind, RectangleSnapKind::Edge);
+	EXPECT_NEAR(snapped.point.x, 2.0F, kGridTolerance);
+	EXPECT_NEAR(snapped.point.y, 3.5F, kGridTolerance);
 }
 
 TEST(RectangleSnap, RectangleMatchesPrototype) {

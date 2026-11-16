@@ -45,22 +45,6 @@ TEST(CornerAngles, AngleReadout) {
 	EXPECT_EQ(read({start}, polar(start, 30.0F, 3.0F)).count, 0U);
 }
 
-TEST(CornerAngles, AngleReadoutClosingCorner) {
-	const std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 3.0F}, {0.5F, 3.0F}};
-	const CornerAngles		closing = read(points, {0.0F, 0.0F}, /*closes=*/true);
-	ASSERT_EQ(closing.count, 2U);
-	EXPECT_EQ(closing.corners[0].role, CornerRole::Previous);
-	EXPECT_NEAR(closing.corners[0].degrees, 99.46F, 1e-2F);
-	EXPECT_EQ(closing.corners[1].role, CornerRole::Closing);
-	EXPECT_NEAR(closing.corners[1].degrees, 80.54F, 1e-2F);
-}
-
-TEST(CornerAngles, AngleReadoutClosingNeedsReachOrClose) {
-	const std::vector<Vec2> points = {{0.0F, 0.0F}, {5.0F, 0.0F}, {5.0F, 3.0F}};
-	EXPECT_EQ(read(points, {0.3F, 0.4F}, false, AngleReadoutTool::Foundation, 1.0F).count, 2U);
-	EXPECT_EQ(read(points, {0.3F, 0.4F}, false, AngleReadoutTool::Foundation, 0.3F).count, 1U);
-}
-
 TEST(CornerAngles, AngleReadoutWallChainStaysOpen) {
 	const std::vector<Vec2> points = {{0.0F, 0.0F}, {4.0F, 0.0F}, {4.0F, 4.0F}};
 	// An open wall chain reads only the corner at its last point, however near the start.

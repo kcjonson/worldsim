@@ -57,6 +57,10 @@ namespace construction {
 		}
 		const double spacing = static_cast<double>(aids.rectangleGridSpacingMeters);
 
+		// The shared queries define "nearest existing corner or edge" for both drawing
+		// tools, so an exact tie resolves the same way here as in the freeform tool (the
+		// last of the equal hits). A tie is the only input where the prototype's
+		// first-wins loop gives a different point.
 		if (snapping.rectangleAdjacencySnaps) {
 			if (const auto corner = nearestFoundationCorner(world, cursor, snapping.vertexSnapRadiusMeters)) {
 				return {corner->point, RectangleSnapKind::Vertex};

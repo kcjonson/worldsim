@@ -11,7 +11,7 @@
 
 #include <array>
 #include <cstddef>
-#include <vector>
+#include <span>
 
 namespace construction {
 
@@ -38,7 +38,7 @@ namespace construction {
 	};
 
 	struct CornerAngleInput {
-		const std::vector<::Foundation::Vec2>& points; // placed so far
+		std::span<const ::Foundation::Vec2>	   points;		   // placed so far
 		::Foundation::Vec2					   cursor{0.0F, 0.0F};
 		bool								   closes = false; // the click closes the shape, so the cursor is not in the path
 		AngleReadoutTool					   tool = AngleReadoutTool::Foundation;

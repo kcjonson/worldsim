@@ -91,7 +91,7 @@ namespace construction {
 
 	CornerAngles cornerAngles(const CornerAngleInput& input) {
 		CornerAngles result;
-		const std::vector<::Foundation::Vec2>& points = input.points;
+		const std::span<const ::Foundation::Vec2> points = input.points;
 		if (points.size() < 2) {
 			return result;
 		}
