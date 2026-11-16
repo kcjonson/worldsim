@@ -297,7 +297,7 @@ captures taken under load, then on re-runs chasing regressions that were never t
 - Screenshot: `curl http://127.0.0.1:8090/api/ui/screenshot > screenshot.png`
 - **IMPORTANT: Each app has its own DEFAULT port: ui-sandbox 8090, world-sim 8081, asset-manager 8070 - do NOT specify --http-port unless using a non-standard port**
 - **IMPORTANT: Only ONE instance can run at a time** - a second one opens its window, finds its port busy, and closes and exits at once (logged). Do not assume multiple instances exist.
-- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8090/api/control?action=exit"` (8081 for world-sim). Only leave it running if the user asked to test it themselves (that launch is also the one made without `--background`).
+- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8090/api/control?action=exit"` (8081 for world-sim). Only leave it running if the user asked to test it themselves.
 
 **Asset Manager (use this to test/preview world assets):**
 - A designer GUI (`apps/asset-manager`) that renders every asset through the game's real pipeline. Use it to verify new/edited flora, rocks, and other assets instead of dev-spawning them in world-sim.
