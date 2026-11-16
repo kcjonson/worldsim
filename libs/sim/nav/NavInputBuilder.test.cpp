@@ -199,8 +199,8 @@ namespace {
 
 } // namespace
 
-TEST(NavInputBuilder, VisibilityLimit_IsTheLimitPolygonUnblocked) {
-	const NavInputPolygon limit = visibilityLimit(meters(512, -1024), 46000);
+TEST(NavInputBuilder, MeshLimit_IsTheLimitPolygonUnblocked) {
+	const NavInputPolygon limit = meshLimit(meters(512, -1024), 46000);
 	EXPECT_FALSE(limit.blocked);
 	EXPECT_EQ(limit.provenanceId, kProvenanceBorder);
 	EXPECT_TRUE(isCcw(limit.ring));

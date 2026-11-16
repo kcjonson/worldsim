@@ -4046,7 +4046,7 @@ namespace {
 		return {kNoRing, near.centre + Vec2i64{between(rng, -near.range, near.range), between(rng, -near.range, near.range)}, between(rng, 3000, 12000)};
 	}
 
-	// Visibility limits arriving in batches, leaving, and moving, among placed obstacles that
+	// Mesh limits arriving in batches, leaving, and moving, among placed obstacles that
 	// cross their sides at shallow angles and blocked rectangles; every state equal to a
 	// from-scratch build, with no vertex inside the union that no blocked ring explains.
 	void runOverlappingLimits(std::uint32_t seed, int steps) {

@@ -154,6 +154,7 @@ namespace world_sim {
 		ui::Ref<ConstructionConfigStrip>	   configStrip;
 		ui::Ref<BuildMenu>					   buildMenu;
 		ui::Ref<ColonistListView>			   colonistList;
+		ui::Ref<ui::Component>				   bottomLeft;
 		ui::Ref<EntityInfoView>				   infoPanel;
 		ui::Ref<TaskListView>				   taskListPanel;
 		ui::Ref<RegionMinimapPanel>			   minimapPanel;

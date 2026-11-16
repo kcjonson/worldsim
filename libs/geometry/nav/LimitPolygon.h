@@ -1,6 +1,6 @@
 #pragma once
 
-// A mover's visibility limit as a ground outline: a regular polygon round where he stands,
+// A mover's mesh limit as a ground outline: a regular polygon round where he stands,
 // circumscribed so the disc of his range lies inside. Built in integers from a table made at
 // compile time (core/DirectionTable.h), so every toolchain draws the same polygon from the same
 // centre and range (LimitPolygon.test.cpp pins the table).
@@ -51,7 +51,7 @@ namespace geometry::nav {
 		return (range * kLimitDirectionScale + kLimitCosHalfSide - 1) / kLimitCosHalfSide + 1;
 	}
 
-	// The visibility limit of `range` round `centre`: the disc of that radius lies inside it.
+	// The mesh limit of `range` round `centre`: the disc of that radius lies inside it.
 	inline std::vector<Vec2i64> limitPolygon(const Vec2i64& centre, std::int64_t range) {
 		return limitPolygonOfCircumradius(centre, limitCircumradius(range));
 	}
