@@ -667,15 +667,22 @@ namespace assets {
 		// Copied out so the main thread never waits on a worker going through a chunk's entities
 		RemovedEntityKeys removed;
 		{
-			const std::lock_guard lock(m_removedEntitiesMutex);
-			const auto			  found = m_removedEntities.find(result.coord);
-			if (found == m_removedEntities.end()) {
+			const std::lock_guard lock(removedEntitiesMutex);
+			const auto			  found = removedEntities.find(result.coord);
+			if (found == removedEntities.end()) {
 				return;
 			}
 			removed = found->second;
 		}
+		// Entities arrive def by def, so the id is looked up once a def, not once an entity
+		std::string defName;
+		uint32_t	defNameId = 0;
 		std::erase_if(result.entities, [&](const PlacedEntity& entity) {
-			if (!removed.contains({entity.position, m_registry.getDefNameId(entity.defName)})) {
+			if (entity.defName != defName) {
+				defName = entity.defName;
+				defNameId = m_registry.getDefNameId(defName);
+			}
+			if (!removed.contains({entity.position, defNameId})) {
 				return false;
 			}
 			result.spatialIndex.remove(entity.position, entity.defName);
@@ -684,7 +691,7 @@ namespace assets {
 	}
 
 	void PlacementExecutor::storeChunkResult(AsyncChunkPlacementResult&& result) {
-		// Create RNG from world seed and chunk coordinates for deterministic results
+		// Pools are rolled from the world seed and chunk coordinates, so a chunk's first load gives each the same count
 		uint64_t chunkSeed = result.worldSeed;
 		chunkSeed ^= static_cast<uint64_t>(result.coord.x) * 0x9E3779B97F4A7C15ULL;
 		chunkSeed ^= static_cast<uint64_t>(result.coord.y) * 0x6C62272E07BB0143ULL;
@@ -695,12 +702,11 @@ namespace assets {
 			if (def != nullptr && def->capabilities.harvestable.has_value()) {
 				const auto& harv = def->capabilities.harvestable.value();
 				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
-					// A pool is rolled once: an entity whose chunk is placed again keeps what harvesting left it
-					const auto [pool, isNew] = m_resourceCounts.try_emplace(makeEntityStateKey(entity.position, entity.defName));
-					if (isNew) {
-						std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
-						pool->second = resourceDist(rng);
-					}
+					// Drawn for every entity, as a first load always has, and kept only by one with no pool
+					// yet: an entity whose chunk is placed again keeps what harvesting left it
+					std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
+					const uint32_t							rolled = resourceDist(rng);
+					m_resourceCounts.try_emplace(makeEntityStateKey(entity.position, entity.defName), rolled);
 				}
 			}
 		}
@@ -719,8 +725,8 @@ namespace assets {
 		m_regrowthSweepSize = kMinRegrowthSweepSize;
 		m_resourceCounts.clear();
 		{
-			const std::lock_guard lock(m_removedEntitiesMutex);
-			m_removedEntities.clear();
+			const std::lock_guard lock(removedEntitiesMutex);
+			removedEntities.clear();
 		}
 		m_initialized = false;
 	}
@@ -756,8 +762,8 @@ namespace assets {
 		it->second.remove(stored, defName);
 		forgetEntityState(stored, defName);
 		{
-			const std::lock_guard lock(m_removedEntitiesMutex);
-			m_removedEntities[coord].insert({stored, m_registry.getDefNameId(defName)});
+			const std::lock_guard lock(removedEntitiesMutex);
+			removedEntities[coord].insert({stored, m_registry.getDefNameId(defName)});
 		}
 		m_removals.push_back({coord, stored, defName});
 		LOG_DEBUG(

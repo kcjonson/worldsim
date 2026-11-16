@@ -415,7 +415,6 @@ Stub. A soft cast shadow under trees, drawn with the trees, stacking on the fore
 - Making `<avoids>` and `<affinity>` strengths take effect, and spacing across chunk seams. Both are placement bugs that predate this and change every biome.
 - Named parts on procedural meshes, and with them wind sway that knows trunk from crown. The Living Environment plan bends by mesh height, which needs neither.
 - Wind sway and engine blob shadows (Living Environment epic).
-- Felled trees returning after a chunk unloads and reloads. Placement keeps no removal record today; filed separately. Aging does not change this: a felled tree comes back at its current age.
 - A unique mesh per tree (R3).
 
 ## Performance plan

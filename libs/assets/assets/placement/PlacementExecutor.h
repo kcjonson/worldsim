@@ -300,7 +300,9 @@ namespace assets {
 
 		/// A removed entity by what the chunk's roll gave it: its position, exactly, and its def. A
 		/// chunk rolls the same every time, so the entity comes back at the same position to the bit,
-		/// and a neighbour of the same def a few centimetres away is never taken for it.
+		/// and a neighbour of the same def a few centimetres away is never taken for it. That holds
+		/// while no roll is decided by what a neighbouring chunk holds: a relationship that can veto a
+		/// placement across a chunk seam (a `requires`, a zero strength) would shift the rolls after it.
 		struct RemovedEntityKey {
 			glm::vec2 position{};
 			uint32_t  defNameId = 0;
@@ -319,11 +321,11 @@ namespace assets {
 
 		using RemovedEntityKeys = std::unordered_set<RemovedEntityKey, RemovedEntityKeyHash>;
 
-		/// The entities removeEntity has taken out of each chunk this session. Kept when the chunk
-		/// unloads, and never dropped: one key for each entity removed. Placement workers read it
+		/// The entities removeEntity has taken out of each chunk this session, one key for each.
+		/// Unloading the chunk keeps them; only clear() drops them. Placement workers read it
 		/// while the main thread adds to it, so every access holds the mutex.
-		std::unordered_map<world::ChunkCoordinate, RemovedEntityKeys> m_removedEntities;
-		mutable std::mutex											  m_removedEntitiesMutex;
+		std::unordered_map<world::ChunkCoordinate, RemovedEntityKeys> removedEntities;
+		mutable std::mutex											  removedEntitiesMutex;
 
 		[[nodiscard]] EntityStateKey makeEntityStateKey(glm::vec2 position, const std::string& defName) const;
 		[[nodiscard]] static EntityStateKey makeEntityStateKey(glm::vec2 position, uint32_t defNameId);

@@ -150,8 +150,9 @@ is built on bare ground. Systems: `ConstructionSystem::bareSites`,
 **Why this matters:** a chunk's placed entities are rolled from the world seed each time it loads,
 and nothing recorded what had been removed, so felled trees, harvested-out nodes, picked-up stones,
 the landing clearing and a cleared build site all came back once the colony walked away and
-returned, and partly harvested nodes refilled. A tree back on ground already meshed got no nav
-obstacle, so colonists walked through it. Systems: `PlacementExecutor` (its removal record and
+returned, and partly harvested nodes refilled. A tree back inside ground already meshed read as
+clear ground (`ground` gave `valid` true at its trunk, and a colonist could be spawned inside it).
+Systems: `PlacementExecutor` (its removal record and
 `computeChunkEntities`), `AsyncChunkProcessor`, `GameScene::cleanupUnloadedChunks`.
 
 ---

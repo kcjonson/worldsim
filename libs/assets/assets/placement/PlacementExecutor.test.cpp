@@ -542,6 +542,37 @@ TEST(PlacementExecutorTests, CrownSpacedTreesKeepTheirCrownsApart) {
 	}
 }
 
+// A removal is of one entity and lasts the session. Tight clumps put three of one def within a few
+// centimetres of each other: removing one and placing the chunk again brings back every other,
+// its clump-mates included, and clear() forgets the removal.
+TEST(PlacementExecutorTests, RemovalTakesOneEntityUntilClear) {
+	auto& registry = AssetRegistry::Get();
+	registry.clear();
+	AssetDefinition clump = makeFloraDef("Flora_TestClump", world::Biome::TemperateGrassland, Distribution::Clumped, 0.05F, 0.0F);
+	clump.placement.biomes.front().clumping = {.clumpSizeMin = 3, .clumpSizeMax = 3, .clumpRadiusMin = 0.02F, .clumpRadiusMax = 0.02F};
+	registry.registerTestDefinition(std::move(clump));
+
+	PlacementExecutor executor(registry);
+	executor.initialize();
+	const world::ChunkCoordinate coord{0, 0};
+	const ChunkPlacementContext	 ctx = createTestContext(coord, 777);
+	const size_t				 placed = executor.processChunk(ctx).entities.size();
+	ASSERT_GT(placed, 3U);
+
+	const PlacedEntity removed = executor.getChunkIndex(coord)->allEntities().front();
+	ASSERT_EQ(executor.getChunkIndex(coord)->queryRadius(removed.position, 0.1F).size(), 3U) << "its clump stands within 0.1 m of it";
+	ASSERT_TRUE(executor.removeEntity(coord, removed.position, removed.defName));
+	executor.unloadChunk(coord);
+
+	EXPECT_EQ(executor.processChunk(ctx).entities.size(), placed - 1);
+	EXPECT_FALSE(executor.getChunkIndex(coord)->contains(removed.position, removed.defName));
+	EXPECT_EQ(executor.getChunkIndex(coord)->queryRadius(removed.position, 0.1F).size(), 2U) << "its clump-mates are back";
+
+	executor.clear();
+	executor.initialize();
+	EXPECT_EQ(executor.processChunk(ctx).entities.size(), placed);
+}
+
 // Riparian flora (near="Water") must actually cluster at a waterline. Diagnoses the
 // "waterside plants don't appear" report: a water stripe with land around it should
 // grow near-water flora, all within near.distance (+ clump spread) of the stripe, and

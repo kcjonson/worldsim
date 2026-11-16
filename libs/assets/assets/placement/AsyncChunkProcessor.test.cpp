@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <memory>
@@ -252,7 +253,7 @@ TEST_F(AsyncChunkProcessorTests, RemovedEntityStaysRemovedWhenItsChunkReloads) {
 	EXPECT_TRUE(sameLayout(storedLayout(*chunk), expected));
 	EXPECT_FALSE(executor->getResourceCount(removedAt, removedDef).has_value()) << "nothing is left to harvest where it stood";
 	EXPECT_EQ(poolsOf(expected), pools) << "the ones still standing keep their pools";
-	// The worker bakes the chunk's mesh from the entity list, so the removed one is left out of that too.
+	// The entity list, which the worker bakes the chunk's mesh from, leaves it out as the index does.
 	EXPECT_TRUE(sameLayout(placeDirectly(*executor, *chunk, kQuickstartSeed), expected));
 }
 

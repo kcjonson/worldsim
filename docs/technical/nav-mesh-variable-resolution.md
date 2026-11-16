@@ -524,8 +524,7 @@ past `kFootprintReachMeters` from its entity's position is logged as an error on
 where it pokes into a limit from outside the query box it is missed. A limit's placed obstacles go
 in ahead of its ground or in the same patch, so meshed ground is never without what stands on it. A
 placed obstacle that lands over ground already meshed (one back in the world after it left the
-mesh, such as one felled that came back with its chunk) marks the routes it crosses, as a wall
-does (4.6).
+mesh) marks the routes it crosses, as a wall does (4.6).
 
 **When a limit can go in.** Every chunk its query box meets is loaded and ready, has its
 placement, and is held by a mover's anchor (4.5; `limitServable`). One whose chunks are not ready
