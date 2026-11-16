@@ -82,13 +82,15 @@
 
     <!-- Guide look. Solid is geometry; dotted and part transparent is alignment; small solid
          markers state a fact. guideLineStyle: solid, dashed, or dotted. guideColorMode: one
-         (guideColor) or bySource. Guide colours carry an alpha of FF; guideOpacity and
-         markerOpacity apply. Sizes are screen pixels and never scale with zoom. -->
+         (guideColor) or bySource. Guide colours carry an alpha of FF: guideOpacity sets the
+         alignment lines' opacity and markerOpacity the markers'. Labels draw at full opacity on
+         a dark plate, and the dotted close-radius ring takes its alpha from originHaloColor.
+         Sizes are screen pixels and never scale with zoom. -->
     <guideLineStyle>dotted</guideLineStyle>
     <guideDashPx>1.0</guideDashPx>
     <guideGapPx>4.5</guideGapPx>
     <guideOpacity>0.6</guideOpacity>              <!-- alignment lines -->
-    <markerOpacity>0.9</markerOpacity>            <!-- right angle, crossing dot, ticks, labels -->
+    <markerOpacity>0.9</markerOpacity>            <!-- right angle, crossing dot, ticks, close halo -->
     <guideColorMode>one</guideColorMode>
     <guideColorShape>#8CC4FFFF</guideColorShape>
     <guideColorNearby>#FFAD5CFF</guideColorNearby>
