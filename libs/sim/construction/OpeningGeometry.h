@@ -7,14 +7,17 @@
 // [t - halfW/L, t + halfW/L], offset by the wall's half-thickness. Integer
 // millimeters throughout (the topology's space). The placement range, where an
 // opening may sit on its wall, is here too, so the opening tool's snap, the
-// validator, and the dev verb share one rule.
+// validator, and the dev verb share one rule, and so is the span each opening leaves
+// open along its wall (openingGaps), which the wall render, nav, and sight all cut at.
 
 #include "construction/ConstructionWorld.h"
 
+#include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace construction {
 
@@ -48,5 +51,21 @@ namespace construction {
 	/// width along the wall. Empty when geometry is missing or degenerate (unknown
 	/// segment/type, zero-length segment, zero half-thickness).
 	[[nodiscard]] geometry::Ring openingFootprint(const ConstructionWorld& world, const Opening& opening);
+
+	/// Which of a segment's openings openingGaps reads.
+	struct OpeningGapFilter {
+		bool doorsOnly = false; // pathable openings only, else windows too
+		bool builtOnly = false; // Built openings only, else blueprints too
+	};
+
+	/// The centerline spans a segment's openings leave open, in whole mm from its v0 end,
+	/// and in step with them the opening each belongs to, in the world's opening order. An
+	/// opening at t with clear width w on a segment of length L spans t*L -/+ w/2, rounded;
+	/// geometry::wallSpans and wallPiecesAndOutline clamp and merge them.
+	struct OpeningGaps {
+		std::vector<geometry::WallGap> gaps;
+		std::vector<OpeningId>		   openings;
+	};
+	[[nodiscard]] OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter);
 
 } // namespace construction

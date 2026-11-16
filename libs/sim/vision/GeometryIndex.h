@@ -10,9 +10,11 @@
 // band, whereas for SIGHT both a door and a window are gaps -- the glass and the
 // open doorway are equally transparent. So a transparentToSight opening is a GAP in
 // the occluder line, and only the solid wall portions between/around openings emit
-// occluders. The centerline gap span uses the SAME half-extent formula as the
-// navmesh (NavInputBuilder::extractWalls), so the sight gap lines up with the nav
-// gap for the same opening.
+// occluders. The centerline gap span uses the SAME half-extent formula as
+// construction::openingFootprint, so the sight gap ends at the opening's jambs (the
+// nav door portal's). Nav cuts its door span at whole millimetres along the wall and
+// clamps it to the trimmed band, so its span can differ from the jambs by that rounding,
+// start at the corner trim, and run up to 6 mm past a jamb over a sliver of solid wall.
 //
 // Extraction is synchronous and CPU-light (centerline segments, no triangulation,
 // no offsetting), so the rebuild runs inline, version-gated against

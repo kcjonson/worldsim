@@ -128,4 +128,28 @@ namespace construction {
 		return geometry::band(lerpMm(t0), lerpMm(t1), halfThick);
 	}
 
+	OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter) {
+		OpeningGaps	  result;
+		const Vertex* v0 = world.getVertex(segment.v0);
+		const Vertex* v1 = world.getVertex(segment.v1);
+		if (v0 == nullptr || v1 == nullptr) {
+			return result;
+		}
+		const double lengthMm = std::hypot(static_cast<double>(v1->pos.x - v0->pos.x), static_cast<double>(v1->pos.y - v0->pos.y));
+		for (const Opening& opening : world.openings()) {
+			if (opening.segment != segment.id || (filter.builtOnly && opening.state != FoundationState::Built)) {
+				continue;
+			}
+			const auto* type = assets::ConstructionRegistry::Get().getOpeningType(opening.type);
+			if (type == nullptr || type->widthMm <= 0 || (filter.doorsOnly && !type->pathable)) {
+				continue;
+			}
+			const double centre = static_cast<double>(opening.t) * lengthMm;
+			const double half	= static_cast<double>(type->widthMm) * 0.5;
+			result.gaps.push_back({std::llround(centre - half), std::llround(centre + half)});
+			result.openings.push_back(opening.id);
+		}
+		return result;
+	}
+
 } // namespace construction
