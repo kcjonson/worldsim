@@ -40,9 +40,13 @@ namespace construction {
 	};
 
 	/// The range for an opening `widthMeters` wide on `segment`, the band trims coming
-	/// from geometry::resolveJunction at each of the segment's two vertices over every
-	/// wall meeting there (blueprint or built, as the walls are drawn). Empty when the
-	/// segment or one of its vertices is missing, or the segment has zero length.
+	/// from geometry::resolveWallBands over the segment's connected wall graph, blueprint
+	/// and built walls alike, the trims the wall is drawn with (a near-straight join the
+	/// offsetter redraws as a step trims far less than its miter would); a segment with
+	/// no thickness preset has no band and no trims. Empty when the segment or one of its
+	/// vertices is missing, it has zero length, or the offsetter rejects its graph: the
+	/// renderer draws such a graph as bare centerlines and nav keeps every band in it
+	/// whole, so a door there would not open. Resolves the whole graph on every call.
 	[[nodiscard]] std::optional<OpeningRange>
 	openingRange(const ConstructionWorld& world, SegmentId segment, double widthMeters, double marginMeters);
 
