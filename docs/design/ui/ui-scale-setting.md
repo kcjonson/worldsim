@@ -77,7 +77,7 @@ The colonist dossier is 760 x 900 ui px held to 92% x 86% of the canvas, its tab
 - The colonist dossier, on each of its eight tabs.
 - The crafting, storage and pause dialogs over the HUD.
 
-Scrollbars: `tasks_scroll` and the dossier's tab area may scroll at every size. The settings list's bar is allowed only on canvases under 1200 ui px tall. It does scroll at the default size on a 16:9, 16:10 or 21:9 screen, where the canvas is 1000 ui px tall, because the list is long (a row each for the interface size, the grid and ten switches, every one with a description); it fits from 1200.
+Scrollbars: `tasks_scroll` and the dossier's tab area may scroll at every size. The settings list fits the reference canvas height (1000 ui px, any 16:9, 16:10 or 21:9 screen) at the default size, and its bar is allowed only on shorter canvases, where its rows keep clear of the bar.
 
 Scenario `docs/testing/scenarios/17-interface-size.md` is the by-hand pass: the setting applies at once, is saved, and the HUD holds at 60 and 120%.
 
