@@ -63,6 +63,18 @@ namespace {
 
 } // namespace
 
+TEST(SnapEngine, InputBuiltFromATemporaryAidsSurvivesACopy) {
+	SnapInput built = input(/*freeform=*/false, /*originCloseRadiusMeters=*/-1.0F, DrawingAids{.angleSteps = true});
+	SnapInput copy;
+	copy = built;
+	built.aids = DrawingAids{};
+	SnappingConfig	  cfg = defaults();
+	ConstructionWorld world;
+	SnapEngine		  engine(cfg, world);
+	const auto		  r = engine.snap({{0.0F, 0.0F}}, {5.0F, 0.4F}, copy);
+	EXPECT_EQ(r.kind, SnapKind::Angle);
+}
+
 TEST(SnapEngine, FirstPointFreeWhenNoGeometry) {
 	SnappingConfig	  cfg = defaults();
 	ConstructionWorld world;

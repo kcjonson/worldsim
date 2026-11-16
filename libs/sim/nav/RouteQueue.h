@@ -68,7 +68,7 @@ namespace nav {
 	enum class RouteOutcome {
 		Routed,		  // a goal is reached
 		NoKnownWay,	  // explored everything this mover can reach on meshed ground, or no goal can be stood on
-		// The start, or a goal, is off the mesh inside a visibility limit still on its way in: ask
+		// The start, or a goal, is off the mesh inside a mesh limit still on its way in: ask
 		// again once it lands. Only NavigationSystem, which holds the limits, answers it.
 		AwaitingMesh,
 	};

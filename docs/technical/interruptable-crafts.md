@@ -472,9 +472,6 @@ Deleted, each in the change that replaces it:
   `CraftingDialogModel`). `kWorkUnitsPerSecond` in `CraftingDialogModel.cpp`.
 - `kCriticalNeedThreshold` in `AIDecisionSystem`, in favour of each need's own thresholds.
 - The threshold and decay literals in `NeedsComponent::createDefault`.
-- `taskSwitchThreshold`: the element in `priority-tuning.xml`, its parse, its field and getter in
-  `PriorityConfig`, and the comments that say the hysteresis margin equals it. Nothing calls the
-  getter; the margin is `InProgress/bonus`.
 - Direct calls to `WorkQueue::removeJob` from the game, in favour of `cancelCraftingJob`.
 - The inline sleep quality choice in `NeedActions.cpp`, in favour of `sleepQuality`.
 - Bare tier numbers in C++ defaults (listed under Data), in favour of the named tiers.

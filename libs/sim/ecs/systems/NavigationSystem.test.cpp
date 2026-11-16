@@ -3376,7 +3376,7 @@ TEST_F(NavigationSystemTest, ObstacleStraddlingTheEdgeBlocksInsideOnly) {
 	registerObstacle("Test_NavStraddlingObstacle", 1.5F);
 	const glm::vec2				 lookout{0.0F, 0.0F};
 	const std::vector<Vec2i64> outline =
-		nav::visibilityLimit(nav::toMm(lookout), static_cast<std::int64_t>(kColonistRange * static_cast<float>(geometry::kMillimetersPerMeter))).ring;
+		nav::meshLimit(nav::toMm(lookout), static_cast<std::int64_t>(kColonistRange * static_cast<float>(geometry::kMillimetersPerMeter))).ring;
 	const glm::vec2 edgeAt	= 0.5F * (nav::toMeters(outline[0]) + nav::toMeters(outline[1]));
 	const glm::vec2 outward = glm::normalize(edgeAt - lookout);
 	const glm::vec2 inside	= edgeAt - 0.75F * outward;
