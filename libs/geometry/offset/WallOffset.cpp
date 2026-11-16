@@ -711,11 +711,11 @@ namespace geometry {
 				const WallGap  span = fromA ? gap : WallGap{fromOtherEnd(segmentLength, gap.toMm), fromOtherEnd(segmentLength, gap.fromMm)};
 				gaps.push_back({span, index});
 			}
-			std::sort(gaps.begin(), gaps.end(), [](const CanonicalGap& l, const CanonicalGap& r) {
-				if (l.span.fromMm != r.span.fromMm) {
-					return l.span.fromMm < r.span.fromMm;
+			std::sort(gaps.begin(), gaps.end(), [](const CanonicalGap& first, const CanonicalGap& second) {
+				if (first.span.fromMm != second.span.fromMm) {
+					return first.span.fromMm < second.span.fromMm;
 				}
-				return l.span.toMm != r.span.toMm ? l.span.toMm < r.span.toMm : l.index < r.index;
+				return first.span.toMm != second.span.toMm ? first.span.toMm < second.span.toMm : first.index < second.index;
 			});
 			return gaps;
 		}
@@ -780,18 +780,20 @@ namespace geometry {
 		};
 
 		Vec2i64 cutPoint(const WallSegment& segment, const SpanCut& cut) {
-			const Vec2i64 dir = segment.b - segment.a;
-			return cut.fromA ? advance(segment.a, dir, static_cast<double>(cut.mm)) : advance(segment.b, -dir, static_cast<double>(cut.mm));
+			const Vec2i64 direction = segment.b - segment.a;
+			return cut.fromA ? advance(segment.a, direction, static_cast<double>(cut.mm))
+							 : advance(segment.b, -direction, static_cast<double>(cut.mm));
 		}
 
 		// The band between two cuts, with the corners trimmedBand gives a band cut
 		// back to either of them.
 		Ring bandBetween(const WallSegment& segment, const SpanCut& from, const SpanCut& to) {
-			const Vec2i64 dir	= segment.b - segment.a;
-			const Vec2i64 start = cutPoint(segment, from);
-			const Vec2i64 end	= cutPoint(segment, to);
-			const double  h		= static_cast<double>(segment.halfThicknessMm);
-			return {offsetPoint(start, dir, h), offsetPoint(end, dir, h), offsetPoint(end, dir, -h), offsetPoint(start, dir, -h)};
+			const Vec2i64 direction = segment.b - segment.a;
+			const Vec2i64 start		= cutPoint(segment, from);
+			const Vec2i64 end		= cutPoint(segment, to);
+			const double  half		= static_cast<double>(segment.halfThicknessMm);
+			return {offsetPoint(start, direction, half), offsetPoint(end, direction, half), offsetPoint(end, direction, -half),
+					offsetPoint(start, direction, -half)};
 		}
 
 		// A span of one segment, and whether it is solid wall reaching the trimmed

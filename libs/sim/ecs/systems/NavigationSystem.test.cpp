@@ -526,9 +526,9 @@ TEST_F(NavigationSystemTest, RejectedGraphElsewhereKeepsRoomCornersAndDoor) {
 	const std::array<std::pair<Vec2i64, Vec2i64>, 3> rejected = {
 		std::pair<Vec2i64, Vec2i64>{{19000, 500}, {20000, 0}}, {{20000, 0}, {20050, 0}}, {{20050, 0}, {21050, 500}}};
 	for (const auto& [a, b] : rejected) {
-		const SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Heavy", kInvalidFoundation);
-		ASSERT_TRUE(r.ok());
-		for (const SegmentId id : r.createdSegments) {
+		const SegmentCommitResult result = cw.commitSegment(a, b, "Wood", "Heavy", kInvalidFoundation);
+		ASSERT_TRUE(result.ok());
+		for (const SegmentId id : result.createdSegments) {
 			cw.setSegmentState(id, FoundationState::Built);
 		}
 	}

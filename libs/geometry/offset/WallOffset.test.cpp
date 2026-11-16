@@ -1319,7 +1319,7 @@ namespace {
 		if (placed.empty()) {
 			return "has no spans";
 		}
-		std::sort(placed.begin(), placed.end(), [](const Placed& l, const Placed& r) { return l.range < r.range; });
+		std::sort(placed.begin(), placed.end(), [](const Placed& first, const Placed& second) { return first.range < second.range; });
 		const std::pair<double, double> bandRange = extent(band);
 		if (std::abs(placed.front().range.first - bandRange.first) > 1.5 || std::abs(placed.back().range.second - bandRange.second) > 1.5) {
 			return "spans do not reach both trimmed ends";

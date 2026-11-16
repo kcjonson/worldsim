@@ -385,10 +385,11 @@ namespace {
 		EXPECT_EQ(actual.portals, expected.portals);
 
 		// Paired by wall, opening, and lowest corner, which a millimetre cannot reorder on these layouts.
-		auto byPlace = [](const PolygonKey& l, const PolygonKey& r) {
-			const Vec2i64 lowestL = *std::min_element(ringOf(l).begin(), ringOf(l).end());
-			const Vec2i64 lowestR = *std::min_element(ringOf(r).begin(), ringOf(r).end());
-			return std::tuple(provenanceOf(l), openingOf(l), lowestL) < std::tuple(provenanceOf(r), openingOf(r), lowestR);
+		auto byPlace = [](const PolygonKey& first, const PolygonKey& second) {
+			const Vec2i64 lowestOfFirst	 = *std::min_element(ringOf(first).begin(), ringOf(first).end());
+			const Vec2i64 lowestOfSecond = *std::min_element(ringOf(second).begin(), ringOf(second).end());
+			return std::tuple(provenanceOf(first), openingOf(first), lowestOfFirst) <
+				   std::tuple(provenanceOf(second), openingOf(second), lowestOfSecond);
 		};
 		std::sort(actualSplit.doorSegmentRings.begin(), actualSplit.doorSegmentRings.end(), byPlace);
 		std::sort(expectedSplit.doorSegmentRings.begin(), expectedSplit.doorSegmentRings.end(), byPlace);
