@@ -115,6 +115,8 @@ The primitives:
 
 **Sizes** — `sm`, `md` (default), `lg`, setting the dialog width. The wrap also caps at 92% width and 86% height of the viewport so it never overflows.
 
+**Sizing rule.** Every dialog in the game is as big as its content needs, and never resizes once open: switching tabs or new data arriving doesn't move it, and content that later outgrows it scrolls. Each dialog's implementation sets its own width and height; a tabbed dialog takes the size its largest tab needs when it opens. The 92% x 86% cap still holds, with the content scrolling past it.
+
 **Accents** — `accent` (default) or `data`, passed straight through to the underlying Panel.
 
 **Props**

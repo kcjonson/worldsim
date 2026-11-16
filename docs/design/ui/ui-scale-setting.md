@@ -64,20 +64,20 @@ Considered and rejected:
 - Crisp: the scale reaches the renderer, so text and tessellated shapes are drawn at the device size they end up at, not stretched from a smaller one.
 - Bounds and reset: `kInterfaceSizes` holds the factor to 0.6 through 1.2, and the Interface size row in `apps/world-sim/scenes/settings/SettingsScene.cpp` is a segmented control over the seven stops with a Reset button back to 100%. A saved value that isn't a stop is snapped to the nearest one (`nearestInterfaceSize`) at startup, and Settings shows that stop. Settings is reached from the main menu only.
 
-The colonist dossier is 760 x 900 ui px held to 92% x 86% of the canvas, its tab area scrolling in what's left (`ColonistDetailsDialog.cpp`), so it fits the smallest canvas.
+The colonist dossier is 760 ui px wide and as tall as its tallest tab needs, measured when it opens and held while it's open, capped at 92% x 86% of the canvas with its tab area scrolling in what's left (`ColonistDetailsDialog.cpp`), so it fits the smallest canvas. The hold is in ui px, so a change of interface size or window while it's open moves only the cap.
 
 ## What the tests cover
 
-`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, has 12 tests. Each lints its screen at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`, and checks that nothing shows a scrollbar except what's meant to scroll. Each first asserts that a known id is present or that its dialog reports visible, so a test can't pass over an empty screen.
+`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, has 13 tests. Each lints its screen at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`, and checks that nothing shows a scrollbar except what's meant to scroll. Each first asserts that a known id is present or that its dialog reports visible, so a test can't pass over an empty screen.
 
 - The main menu, settings, scenario select, party select and the world creator (configuring, before a world exists).
 - The HUD, plain.
 - The HUD with the build menu, the colony task list, the decision inspector and five toasts open.
 - The HUD with the wall tool on.
-- The colonist dossier, on each of its eight tabs.
+- The colonist dossier, on each of its eight tabs: its panel is the same size on all eight at each window and interface size, inside the cap, and shorter than the cap on the reference canvas. A second test adds an item to the open colonist's pack and checks the panel keeps its size.
 - The crafting, storage and pause dialogs over the HUD.
 
-Scrollbars: `tasks_scroll` and the dossier's tab area may scroll at every size. The settings list fits the reference canvas height (1000 ui px, any 16:9, 16:10 or 21:9 screen) at the default size, and its bar is allowed only on shorter canvases, where its rows keep clear of the bar.
+Scrollbars: `tasks_scroll` may scroll at every size, and the dossier's tab area only on canvases too short for its held height under the 86% cap. The settings list fits the reference canvas height (1000 ui px, any 16:9, 16:10 or 21:9 screen) at the default size, and its bar is allowed only on shorter canvases, where its rows keep clear of the bar.
 
 Scenario `docs/testing/scenarios/17-interface-size.md` is the by-hand pass: the setting applies at once, is saved, and the HUD holds at 60 and 120%.
 
