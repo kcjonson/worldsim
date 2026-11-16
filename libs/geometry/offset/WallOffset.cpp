@@ -126,11 +126,31 @@ namespace geometry {
 			double halfLength = 0.0;
 		};
 
+		// The retry steps a wedge only where its two walls are within this bend of straight, as a tangent: 4 / 11
+		// is tan(19.98 degrees). A short wall joining another thickness at one end fails within about 9 degrees of
+		// straight, and a 500 mm wall (the shortest legal) with such a join at both ends up to about 18.5; past 20
+		// a wall of that length resolves as a miter without the retry. Corners stay far outside, a step is the
+		// wrong shape there.
+		constexpr std::int64_t kRetryBendTangentNumerator	= 4;
+		constexpr std::int64_t kRetryBendTangentDenominator = 11;
+
+		// Exactly: |cross| / -dot <= the tangent, which also requires the two to point more than 90 degrees apart.
+		bool withinRetryBend(const Vec2i64& dirL, const Vec2i64& dirR) {
+			Int128 bend = cross(dirL * kRetryBendTangentDenominator, dirR);
+			if (bend.sign() < 0) {
+				bend = -bend;
+			}
+			return bend <= -dot(dirL * kRetryBendTangentNumerator, dirR);
+		}
+
+		// Where a step's thin face meets the cap's line behind the thin corner, or never, walking the corner on
+		// moves it no nearer clearing; it is walked only this far, for rounding, before the band is given up.
+		constexpr std::int64_t kStepRoundingWalkMm = 4;
+
 	// resolveJunction, where `retry` (one entry per incident, or empty for
-	// resolveJunction itself) joins as a step every wedge beside a failed band
-	// whose miter would take half of either of its bands or more, and both wedges
-	// of a degree-2 join beside one, wherever it could be one (bands pointing
-	// more than 90 degrees apart).
+	// resolveJunction itself) joins as a step every wedge within the retry bend
+	// of straight beside a failed band whose miter would take half of either of
+	// its bands or more, and both wedges of such a degree-2 join.
 	JunctionResolution resolveJunctionStepping(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
 											   double miterLimit, const std::vector<RetryIncident>& retry) {
 		JunctionResolution result;
@@ -277,8 +297,8 @@ namespace geometry {
 			const std::int64_t trimR = projOnto(dirR);
 
 			// Just inside the cut, the miter's trims can outrun a short wall;
-			// resolveWallBands then asks for the step in its place.
-			const bool stepAsked = !retry.empty() && (retry[li].bandFailed || retry[ri].bandFailed) &&
+			// resolveWallBands then asks for the step in its place, near straight only.
+			const bool stepAsked = !retry.empty() && (retry[li].bandFailed || retry[ri].bandFailed) && withinRetryBend(dirL, dirR) &&
 								   (degree == 2 || static_cast<double>(trimL) >= retry[li].halfLength ||
 									static_cast<double>(trimR) >= retry[ri].halfLength);
 			if ((beveled || stepAsked) && dot(dirL, dirR).sign() < 0) {
@@ -299,9 +319,7 @@ namespace geometry {
 		// front of that cap's line (exact side test on the rounded points, so the
 		// two never overlap, and the corner never sits on the polygon's edge along
 		// the cap). The polygon closes the step with a straight edge from that corner
-		// out to the thicker band's corner. The corner moves away from the thicker
-		// band as the trim grows, the two pointing more than 90 degrees apart, so
-		// the loop ends.
+		// out to the thicker band's corner.
 		//
 		// That edge alone can miss either way. Where another wedge has cut the
 		// thicker band back, its cap corner sits well along its face, and the edge
@@ -343,14 +361,25 @@ namespace geometry {
 			if (clearOfCap(trim)) {
 				continue;
 			}
-			double tParam = 0.0;
+			// The cap's line runs between two rounded points, so it can lean off square by more than the
+			// two bands lean off 90 degrees apart; the corner then runs along it or toward it and never
+			// clears. Past the lines' crossing it clears within rounding; with no crossing ahead it never does,
+			// and the trim goes straight to the thin segment's length, where its band is gone and the graph is
+			// rejected.
+			const std::int64_t segmentLength = static_cast<std::int64_t>(std::ceil(length(thinDir)));
+			std::int64_t	   walkEnd		 = std::min(segmentLength, trim + kStepRoundingWalkMm);
+			double			   tParam		 = 0.0;
 			if (lineIntersectParam(offsetPoint(vertex, thinDir, thinFace), thinDir, capRight, capEdge, tParam)) {
-				trim = std::max(trim, static_cast<std::int64_t>(std::ceil(tParam * length(thinDir))));
+				const double crossing = std::ceil(tParam * length(thinDir));
+				if (crossing > static_cast<double>(trim)) {
+					trim	= static_cast<std::int64_t>(std::min(crossing, static_cast<double>(segmentLength)));
+					walkEnd = segmentLength;
+				}
 			}
-			while (!clearOfCap(trim)) {
+			while (trim < walkEnd && !clearOfCap(trim)) {
 				++trim;
 			}
-			trimByLocal[thin] = trim;
+			trimByLocal[thin] = clearOfCap(trim) ? trim : segmentLength;
 		}
 
 		// Degree-2 straight continuation: both trims zero and the single real wedge
@@ -1240,11 +1269,12 @@ namespace geometry {
 		// A near-straight join just inside the step cut is a miter whose trims run
 		// about as far as the miter bound, longer than a short wall (or leaving a
 		// sliver of it). Each junction at an end of a failed band is resolved again,
-		// once, with a step in place of each miter beside that band that alone
-		// would take half of one of its two bands or more (a band its trims overrun
-		// has an end asking that much); a degree-2 join steps both its wedges. A
-		// corner to a third wall beside the failed band keeps its miter. Whatever
-		// still fails (a short wall between two sharp corners) is rejected.
+		// once, with a step in place of each miter beside that band, within the
+		// retry bend of straight, that alone would take half of one of its two bands
+		// or more (a band its trims overrun has an end asking that much); such a
+		// degree-2 join steps both its wedges. A corner further off straight, or to
+		// a third wall beside the failed band, keeps its miter. Whatever still fails
+		// (a short wall between two sharp corners) is rejected.
 		bool		changed	 = false;
 		std::size_t junction = 0;
 		for (const auto& [vertex, incidences] : byVertex) {

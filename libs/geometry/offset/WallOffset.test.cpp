@@ -1910,6 +1910,39 @@ TEST(WallProperties, ShortNearStraightJoinsResolve) {
 	EXPECT_EQ(sweep.failed, 0) << sweep.report();
 }
 
+TEST(WallProperties, ShortWallJoiningOtherThicknessAtBothEndsResolves) {
+	// A wall of 500 or 600 mm between two long walls of other thicknesses, each join 3 to 20 degrees off
+	// straight in 1 degree steps, as a Z and as a C. The trims from both ends add up, so such a wall fails without the retry
+	// up to about 18.5 degrees, further than one with a single such join.
+	std::mt19937 rng(19);
+	Sweep		 sweep;
+	for (const double middle : {kMinWallLengthMm, 600.0}) {
+		const Vec2i64 end{std::llround(middle), 0};
+		for (const std::int64_t inner : kHalves) {
+			for (const std::int64_t before : kHalves) {
+				for (const std::int64_t after : kHalves) {
+					if (before == inner || after == inner) {
+						continue;
+					}
+					for (const double side : {-1.0, 1.0}) {
+						for (int beforeHalves = 6; beforeHalves <= 40; beforeHalves += 2) {
+							for (int afterHalves = 6; afterHalves <= 40; afterHalves += 2) {
+								const double beforeBend = static_cast<double>(beforeHalves) / 2.0;
+								const double afterBend	= side * static_cast<double>(afterHalves) / 2.0;
+								const std::vector<WallSegment> segments = {{polar(180.0 + beforeBend, 2000.0), {0, 0}, before},
+																		   {{0, 0}, end, inner},
+																		   {end, end + polar(afterBend, 2000.0), after}};
+								sweep.check(segments, {}, checkJoin(segments, rng));
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
 // --- the near-straight retry against the resolution it replaced --------------
 
 namespace {
@@ -2931,6 +2964,58 @@ namespace {
 
 } // namespace
 
+TEST(WallProperties, ShortMixedChainReturns) {
+	// WOR-878: retrying the third wall's failed band steps the nearly square corner at (474,182), whose
+	// thinner band then runs along the thicker one's rounded cap and never clears it; it walked forever.
+	// Stepped or mitered, that band outruns its wall, so the graph is rejected as it was before the retry.
+	const std::vector<WallSegment> segments = {
+		{{0, 0}, {110, 207}, 75}, {{110, 207}, {474, 182}, 100}, {{474, 182}, {487, 371}, 75}, {{487, 371}, {400, 406}, 150}};
+	EXPECT_EQ(resolveWallBands(segments, kDefaultMiterLimit).status, OffsetStatus::TrimOverrunsSegment);
+}
+
+namespace {
+
+	// A chain of 3 to 5 walls, legs of 20 to 420 mm, each bending up to 90 degrees from the last, with mixed
+	// thicknesses, each segment listed either way round.
+	std::vector<WallSegment> randomShortChain(std::mt19937& rng) {
+		const int				 walls	 = 3 + static_cast<int>(rng() % 3);
+		double					 heading = static_cast<double>(rng() % 360);
+		Vec2i64					 from{0, 0};
+		std::vector<WallSegment> segments;
+		for (int i = 0; i < walls; ++i) {
+			if (i > 0) {
+				heading += static_cast<double>(rng() % 181) - 90.0;
+			}
+			const double	   leg	   = 20.0 + static_cast<double>(rng() % 401);
+			const std::int64_t half	   = kHalves[rng() % 3];
+			const bool		   forward = rng() % 2 == 0;
+			const Vec2i64	   to	   = from + polar(heading, leg);
+			segments.push_back({forward ? from : to, forward ? to : from, half});
+			from = to;
+		}
+		return segments;
+	}
+
+	// Whether two walls of the chain that share no endpoint come within their half thicknesses of each
+	// other: their bands overlap, which no junction resolves and checkTiles reports.
+	bool foldsOntoItself(const std::vector<WallSegment>& segments) {
+		for (std::size_t first = 0; first < segments.size(); ++first) {
+			for (std::size_t second = first + 2; second < segments.size(); ++second) {
+				const WallSegment& s	 = segments[first];
+				const WallSegment& t	 = segments[second];
+				const double	   reach = static_cast<double>(s.halfThicknessMm + t.halfThicknessMm);
+				const double	   apart = std::min({distanceToSegment(s.a, t.a, t.b), distanceToSegment(s.b, t.a, t.b),
+												 distanceToSegment(t.a, s.a, s.b), distanceToSegment(t.b, s.a, s.b)});
+				if (apart < reach || intersectSegments(s.a, s.b, t.a, t.b).relation != SegmentRelation::Disjoint) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+} // namespace
+
 TEST(WallProperties, PiecesFromSpansMatchTheReferenceWithGaps) {
 	// wallPiecesAndOutline takes its pieces from wallSpans. On every fifth accepted input of the
 	// retry sweep, with gaps of every kind on every segment, it draws exactly what the reference
@@ -3027,4 +3112,33 @@ TEST(WallGraphs, DirectionDoesNotMatter) {
 		}
 		EXPECT_EQ(connectedWallGraphs(flipped), expected) << "flips " << flips;
 	}
+}
+
+TEST(WallProperties, ShortMixedChainsRejectOrTile) {
+	// Chains of walls far shorter than the shortest legal one, where retrying failed bands reached corners
+	// it was never meant for (WOR-878): 13 of these never returned, and 5 later draws (the first is draw
+	// 9,436) resolved corners about 100 degrees apart past the miter bound. Every chain must return; every
+	// one that does not fold back onto itself must be rejected, or resolve to rings that pass checkTiles
+	// and checkPieces. A folded chain is only required to return.
+	std::mt19937 rng(878);
+	Sweep		 sweep;
+	int			 resolved = 0;
+	for (int i = 0; i < 40000; ++i) {
+		const std::vector<WallSegment> segments = randomShortChain(rng);
+		const Resolved				   wb		= resolveDrawn(segments, kDefaultMiterLimit);
+		if (foldsOntoItself(segments)) {
+			continue;
+		}
+		std::string problem;
+		if (wb.status == OffsetStatus::Ok) {
+			++resolved;
+			problem = checkTiles(segments, wb, kDefaultMiterLimit);
+			if (problem.empty()) {
+				problem = checkPieces(segments, {}, wb);
+			}
+		}
+		sweep.check(segments, {}, problem);
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+	EXPECT_GT(resolved, sweep.inputs / 4) << resolved << " of " << sweep.inputs << " inputs resolved";
 }

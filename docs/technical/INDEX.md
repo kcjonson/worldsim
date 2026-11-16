@@ -146,8 +146,8 @@ Applications:
 | [Interruptable Crafts](./interruptable-crafts.md) | Spec, not built: craft progress saved on the station's job, craft and build work interruptable, needs in three levels (ordinary, urgent, critical) on a nine-tier ladder, the crafter's hold on a part-done unit, cancel returns materials, sleep restoring along a curve, paused-craft status and the bench's work-in-progress look |
 | [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md) | In progress: one persistent nav mesh patched in place (add, remove, move), structural layer for reachability, detail as a query filter, mover footprints, forward snap, chunk anchors; measured builder baseline and per-step perf gates |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
-| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing, player visibility (planned) |
-| [Player Visibility](./player-visibility.md) | Spec, not built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; hard-edged stencil cover; input rules; build steps |
+| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing (planned), player visibility (built, in its own doc) |
+| [Player Visibility](./player-visibility.md) | Built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; a hard-edged cover of two masked fills; nothing under the black drawn or loaded; input rules; measured costs |
 
 ### Graphics & Rendering
 
