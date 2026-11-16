@@ -217,6 +217,7 @@ namespace {
 		ui::Ref<ui::Button>			  generateButton; // bottom of the sidebar
 		ui::Ref<ui::Button>			  cancelButton;	  // bottom of the sidebar
 		ui::Ref<ui::Text>			  statusText;
+		ui::Ref<ui::Component>		  reviewActions; // Regenerate and Confirm, shown while reviewing
 		ui::Ref<ui::Button>			  regenerateButton;
 		ui::Ref<ui::Button>			  acceptButton;
 		ui::Ref<ui::Text>			  escHint;
@@ -481,22 +482,21 @@ namespace {
 				.style = status,
 				.text = "Awaiting generation",
 			});
-			ui::Ref<ui::Component> actions = bar.addChild<ui::Component>({
+			reviewActions = bar.addChild<ui::Component>({
 				.id = "wc_footer_actions",
+				.visible = false,
 				.layout = {.display = ui::Display::Flex, .gap = space3, .alignItems = ui::AlignItems::Center},
 			});
-			regenerateButton = actions.addChild<ui::Button>({
+			regenerateButton = reviewActions.addChild<ui::Button>({
 				.id = "btn_wc_regenerate",
-				.visible = false,
 				.size = {150.0F, 40.0F},
 				.label = "Regenerate",
 				.icon = "refresh",
 				.variant = ui::ButtonVariant::Ghost,
 				.onPress = [this] { startGeneration(); },
 			});
-			acceptButton = actions.addChild<ui::Button>({
+			acceptButton = reviewActions.addChild<ui::Button>({
 				.id = "btn_wc_accept",
-				.visible = false,
 				.size = {230.0F, 40.0F},
 				.label = "Confirm Landing Site",
 				.icon = "rocket",
@@ -651,8 +651,7 @@ namespace {
 			const bool review = state == world_sim::WorldCreatorState::Reviewing;
 			show(generateButton.get(), configuring);
 			show(cancelButton.get(), generating);
-			show(regenerateButton.get(), review);
-			show(acceptButton.get(), review);
+			show(reviewActions.get(), review);
 			show(progressStrip.get(), generating);
 			show(landingHost.get(), review && siteValid);
 			if (ui::Text* error = errorText.get()) {
