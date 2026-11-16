@@ -269,7 +269,7 @@ Full protocol: `/docs/technical/debugging-strategy.md`
 |------|------------------|
 | Build | `cmake --build build` |
 | Run tests | `ctest --test-dir build` |
-| Run ui-sandbox | `./build/apps/ui-sandbox/ui-sandbox` |
+| Run ui-sandbox | `./build/apps/ui-sandbox/ui-sandbox` (`--background` from an agent: behind the other windows, unfocused) |
 | View dev log | `docs/development-log/README.md` |
 | Check MVP scope | `docs/design/mvp-scope.md` |
 | Library decisions | `docs/technical/library-decisions.md` |

@@ -35,20 +35,23 @@ int main(int argc, char* argv[]) {
 		std::printf("Options:\n");
 		std::printf("  --scene=<name>       Load specific scene\n");
 		std::printf("  --http-port <port>   Enable HTTP debug server on port\n");
+		std::printf("  --background         Open the window behind the others, unfocused\n");
 		std::printf("  --help               Show this help message\n");
 	}
 	if (commandLine.help || !commandLine.valid) {
 		return 1;
 	}
 
-	std::unique_ptr<app::Platform> platform =
-		app::createGlfwPlatform({.title = kTitle, .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor}});
+	std::unique_ptr<app::Platform> platform = app::createGlfwPlatform(
+		{.title = kTitle, .background = commandLine.background, .glVersion = {.major = worldview::kGlMajor, .minor = worldview::kGlMinor}}
+	);
 	if (platform == nullptr) {
 		return 1;
 	}
 	std::unique_ptr<app::App> app = app::App::create(
 		{.applicationName = "ui-sandbox",
-		 .frame = {.frameCapHz = 120},
+		 // A background window never has the keyboard, so its ticks can't wait for it
+		 .frame = {.frameCapHz = 120, .freezeTicksOnFocusLoss = !commandLine.background},
 		 .baseShader = base_shader::source(),
 		 .fontAtlases = theme::kFontAtlases,
 		 .defaultFont = theme::fontDefault,
@@ -79,7 +82,11 @@ int main(int argc, char* argv[]) {
 #undef SCENE_NAME
 	};
 	std::ranges::sort(sceneNames);
-	app->addDebugLayer(std::make_unique<ui_sandbox::NavigationMenu>(*app, ui_sandbox::NavigationMenu::Args{.scenes = std::move(sceneNames), .open = !commandLine.scene}));
+	app->addDebugLayer(
+		std::make_unique<ui_sandbox::NavigationMenu>(
+			*app, ui_sandbox::NavigationMenu::Args{.scenes = std::move(sceneNames), .open = !commandLine.scene}
+		)
+	);
 
 	app->run();
 	app->shutdown();
