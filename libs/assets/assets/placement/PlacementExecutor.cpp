@@ -665,7 +665,7 @@ namespace assets {
 
 	void PlacementExecutor::dropRemovedEntities(AsyncChunkPlacementResult& result) const {
 		// Copied out so the main thread never waits on a worker going through a chunk's entities
-		EntityStateKeys removed;
+		RemovedEntityKeys removed;
 		{
 			const std::lock_guard lock(m_removedEntitiesMutex);
 			const auto			  found = m_removedEntities.find(result.coord);
@@ -675,7 +675,7 @@ namespace assets {
 			removed = found->second;
 		}
 		std::erase_if(result.entities, [&](const PlacedEntity& entity) {
-			if (!removed.contains(makeEntityStateKey(entity.position, entity.defName))) {
+			if (!removed.contains({entity.position, m_registry.getDefNameId(entity.defName)})) {
 				return false;
 			}
 			result.spatialIndex.remove(entity.position, entity.defName);
@@ -684,21 +684,22 @@ namespace assets {
 	}
 
 	void PlacementExecutor::storeChunkResult(AsyncChunkPlacementResult&& result) {
-		// Pools are rolled once: the chunk's later loads find them as harvesting left them
-		if (m_chunksWithPools.insert(result.coord).second) {
-			uint64_t chunkSeed = result.worldSeed;
-			chunkSeed ^= static_cast<uint64_t>(result.coord.x) * 0x9E3779B97F4A7C15ULL;
-			chunkSeed ^= static_cast<uint64_t>(result.coord.y) * 0x6C62272E07BB0143ULL;
-			std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
+		// Create RNG from world seed and chunk coordinates for deterministic results
+		uint64_t chunkSeed = result.worldSeed;
+		chunkSeed ^= static_cast<uint64_t>(result.coord.x) * 0x9E3779B97F4A7C15ULL;
+		chunkSeed ^= static_cast<uint64_t>(result.coord.y) * 0x6C62272E07BB0143ULL;
+		std::mt19937 rng(static_cast<uint32_t>(chunkSeed));
 
-			for (const auto& entity : result.entities) {
-				const auto* def = m_registry.getDefinition(entity.defName);
-				if (def != nullptr && def->capabilities.harvestable.has_value()) {
-					const auto& harv = def->capabilities.harvestable.value();
-					if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
+		for (const auto& entity : result.entities) {
+			const auto* def = m_registry.getDefinition(entity.defName);
+			if (def != nullptr && def->capabilities.harvestable.has_value()) {
+				const auto& harv = def->capabilities.harvestable.value();
+				if (harv.totalResourceMin > 0 && harv.totalResourceMax > 0) {
+					// A pool is rolled once: an entity whose chunk is placed again keeps what harvesting left it
+					const auto [pool, isNew] = m_resourceCounts.try_emplace(makeEntityStateKey(entity.position, entity.defName));
+					if (isNew) {
 						std::uniform_int_distribution<uint32_t> resourceDist(harv.totalResourceMin, harv.totalResourceMax);
-						uint32_t								initialCount = resourceDist(rng);
-						initResourceCount(entity.position, entity.defName, initialCount);
+						pool->second = resourceDist(rng);
 					}
 				}
 			}
@@ -717,7 +718,6 @@ namespace assets {
 		m_regrowthReadyAt.clear();
 		m_regrowthSweepSize = kMinRegrowthSweepSize;
 		m_resourceCounts.clear();
-		m_chunksWithPools.clear();
 		{
 			const std::lock_guard lock(m_removedEntitiesMutex);
 			m_removedEntities.clear();
@@ -757,7 +757,7 @@ namespace assets {
 		forgetEntityState(stored, defName);
 		{
 			const std::lock_guard lock(m_removedEntitiesMutex);
-			m_removedEntities[coord].insert(makeEntityStateKey(stored, defName));
+			m_removedEntities[coord].insert({stored, m_registry.getDefNameId(defName)});
 		}
 		m_removals.push_back({coord, stored, defName});
 		LOG_DEBUG(
@@ -820,7 +820,7 @@ namespace assets {
 
 	std::optional<uint32_t> PlacementExecutor::getResourceCount(glm::vec2 position, const std::string& defName) const {
 		auto it = m_resourceCounts.find(makeEntityStateKey(position, defName));
-		if (it != m_resourceCounts.end()) {
+		if (it != m_resourceCounts.end() && it->second > 0) {
 			return it->second;
 		}
 		return std::nullopt;
@@ -837,7 +837,6 @@ namespace assets {
 		it->second -= removed;
 
 		if (it->second == 0) {
-			m_resourceCounts.erase(it);
 			LOG_DEBUG(
 				Engine, "PlacementExecutor: Resource depleted for %s at (%.1f, %.1f)", defName.c_str(), position.x, position.y
 			);

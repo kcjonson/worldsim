@@ -157,8 +157,8 @@ namespace assets {
 		computeChunkEntities(const ChunkPlacementContext& context, const IAdjacentChunkProvider* adjacentProvider = nullptr) const;
 
 		/// Store a pre-computed chunk result (main thread only).
-		/// Call this after computeChunkEntities() completes on a background thread. The chunk's
-		/// resource pools are rolled the first time it is stored in a session and left alone after.
+		/// Call this after computeChunkEntities() completes on a background thread. An entity's
+		/// resource pool is rolled once in a session: one that has a pool already keeps it.
 		/// @param result The async result from computeChunkEntities()
 		/// @note NOT thread-safe - call only from main thread
 		void storeChunkResult(AsyncChunkPlacementResult&& result);
@@ -205,13 +205,13 @@ namespace assets {
 		void initResourceCount(glm::vec2 position, const std::string& defName, uint32_t count);
 
 		/// Get the current resource count for an entity
-		/// @return Resource count, or nullopt if entity has no resource tracking
+		/// @return Resource count, or nullopt if entity has no resource tracking or its pool is empty
 		[[nodiscard]] std::optional<uint32_t> getResourceCount(glm::vec2 position, const std::string& defName) const;
 
 		/// Withdraw up to `requested` units from an entity's resource pool after a harvest.
 		/// @return The number of units actually removed (clamped to what the pool held; 0 if
-		///         the entity has no resource tracking). When this empties the pool the entry
-		///         is erased, so a following getResourceCount() returns nullopt (= depleted).
+		///         the entity has no resource tracking). Once this empties the pool, a following
+		///         getResourceCount() returns nullopt (= depleted), on later loads of its chunk too.
 		uint32_t decrementResourceCount(glm::vec2 position, const std::string& defName, uint32_t requested);
 
 		/// One entity removeEntity took out of a chunk index, by the identity removeEntity takes.
@@ -266,9 +266,9 @@ namespace assets {
 
 		std::unordered_map<world::ChunkCoordinate, StaticRemovals> m_staticRemovals;
 
-		/// One entity's identity for its cooldown, its resource pool and its removal: its placed position
-		/// on the 0.1 m grid colonist Memory keys it by, and its interned def id. Two bushes of one def in
-		/// the same tile are two entities and never share a regrowth timer or a pool.
+		/// One entity's identity for its cooldown and resource pool: its placed position on the 0.1 m
+		/// grid colonist Memory keys it by, and its interned def id. Two bushes of one def in the same tile
+		/// are two entities and never share a regrowth timer or a pool.
 		struct EntityStateKey {
 			DecimeterCell cell;
 			uint32_t	  defNameId = 0;
@@ -294,20 +294,36 @@ namespace assets {
 		static constexpr size_t kMinRegrowthSweepSize = 1024;
 		size_t					m_regrowthSweepSize = kMinRegrowthSweepSize;
 
-		/// Remaining resource pool (units left to harvest), per entity
+		/// Remaining resource pool (units left to harvest), per entity. An emptied pool stays here at
+		/// zero, which tells it from one never rolled, so placing its chunk again does not refill it.
 		std::unordered_map<EntityStateKey, uint32_t, EntityStateKeyHash> m_resourceCounts;
 
-		/// The chunks whose pools have been rolled this session. A chunk placed again finds its
-		/// pools as harvesting left them: part drawn, or gone where one was emptied.
-		std::unordered_set<world::ChunkCoordinate> m_chunksWithPools;
+		/// A removed entity by what the chunk's roll gave it: its position, exactly, and its def. A
+		/// chunk rolls the same every time, so the entity comes back at the same position to the bit,
+		/// and a neighbour of the same def a few centimetres away is never taken for it.
+		struct RemovedEntityKey {
+			glm::vec2 position{};
+			uint32_t  defNameId = 0;
 
-		using EntityStateKeys = std::unordered_set<EntityStateKey, EntityStateKeyHash>;
+			bool operator==(const RemovedEntityKey& other) const { return position == other.position && defNameId == other.defNameId; }
+		};
+
+		struct RemovedEntityKeyHash {
+			std::size_t operator()(const RemovedEntityKey& key) const {
+				std::size_t seed = std::hash<float>{}(key.position.x);
+				seed = seed * 31 + std::hash<float>{}(key.position.y);
+				seed = seed * 31 + std::hash<uint32_t>{}(key.defNameId);
+				return seed;
+			}
+		};
+
+		using RemovedEntityKeys = std::unordered_set<RemovedEntityKey, RemovedEntityKeyHash>;
 
 		/// The entities removeEntity has taken out of each chunk this session. Kept when the chunk
 		/// unloads, and never dropped: one key for each entity removed. Placement workers read it
 		/// while the main thread adds to it, so every access holds the mutex.
-		std::unordered_map<world::ChunkCoordinate, EntityStateKeys> m_removedEntities;
-		mutable std::mutex											m_removedEntitiesMutex;
+		std::unordered_map<world::ChunkCoordinate, RemovedEntityKeys> m_removedEntities;
+		mutable std::mutex											  m_removedEntitiesMutex;
 
 		[[nodiscard]] EntityStateKey makeEntityStateKey(glm::vec2 position, const std::string& defName) const;
 		[[nodiscard]] static EntityStateKey makeEntityStateKey(glm::vec2 position, uint32_t defNameId);
