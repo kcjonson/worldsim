@@ -13,8 +13,8 @@ Related: [build-performance.md](./build-performance.md), [../testing/README.md](
 
 ## Decision
 
-We rewrite worldsim in Rust with Claude agents doing the translation, and we do it now, while
-the codebase is 130k lines rather than 300k. The rewrite is a faithful translation everywhere
+The plan as of 2026-09-25 was to rewrite worldsim in Rust with Claude agents doing the
+translation, starting while the codebase was 130k lines rather than 300k. The rewrite is a faithful translation everywhere
 except three redesign zones, each governed by a written contract:
 
 - Renderer: OpenGL becomes Vulkan 1.4 through `ash` (or wgpu, settled by the #271 spike), per
