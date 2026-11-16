@@ -115,6 +115,14 @@ namespace assets {
 		float workUnits = 0.0F;
 	};
 
+	/// A config value the loader could not use (an enum token naming no listed value).
+	/// The loader keeps the default and records it here; ConfigValidator turns each
+	/// into a validation error.
+	struct ConfigParseError {
+		std::string message;
+		std::string context;
+	};
+
 	/// Shape and gameplay constraints for all foundations and walls.
 	/// Float members are in meters/degrees/percent (UI-layer friendly).
 	/// Int64 members are pre-quantized to millimeters (geometry/validator layer).
@@ -468,6 +476,10 @@ namespace assets {
 		[[nodiscard]] const SnappingConfig&	  snapping() const;
 		[[nodiscard]] const RenderingConfig&  rendering() const;
 
+		/// Enum tokens the last loadSnapping / loadRendering could not match.
+		[[nodiscard]] const std::vector<ConfigParseError>& snappingParseErrors() const;
+		[[nodiscard]] const std::vector<ConfigParseError>& renderingParseErrors() const;
+
 		// --- Load state ---
 
 		[[nodiscard]] bool materialsLoaded() const;
@@ -492,6 +504,8 @@ namespace assets {
 		ConstraintConfig							 constraintConfig;
 		SnappingConfig								 snappingConfig;
 		RenderingConfig								 renderingConfig;
+		std::vector<ConfigParseError>				 snappingErrors;
+		std::vector<ConfigParseError>				 renderingErrors;
 
 		bool hasMaterials = false;
 		bool hasConstraints = false;

@@ -413,71 +413,72 @@ bool ConfigValidator::validateConstruction() {
         valid = false;
     }
 
-    const auto require = [&](bool ok, const char* name, float value, const char* bound) {
+    const char* const snappingSource = "ConstructionSnapping";
+    const char* const renderingSource = "ConstructionRendering";
+
+    const auto require = [&](const char* source, bool ok, const char* name, float value, const char* bound) {
         if (!ok) {
-            addError("ConstructionSnapping",
-                     std::string(name) + " must be " + bound + ", got " + std::to_string(value),
-                     "");
+            addError(source, std::string(name) + " must be " + bound + ", got " + std::to_string(value), "");
             valid = false;
         }
     };
+    const auto rejectParseErrors = [&](const char* source, const std::vector<ConfigParseError>& parseErrors) {
+        for (const auto& parseError : parseErrors) {
+            addError(source, parseError.message, parseError.context);
+            valid = false;
+        }
+    };
+    rejectParseErrors(snappingSource, reg.snappingParseErrors());
+    rejectParseErrors(renderingSource, reg.renderingParseErrors());
 
     const float angleWindow = s.effectiveGuideAngleWindowDegrees();
     const float crossingMinimum = s.effectiveGuideCrossingMinAngleDegrees();
 
-    require(s.angleIncrementDegrees > 0.0F && s.angleIncrementDegrees <= 90.0F, "angleIncrementDegrees",
+    require(snappingSource, s.angleIncrementDegrees > 0.0F && s.angleIncrementDegrees <= 90.0F, "angleIncrementDegrees",
             s.angleIncrementDegrees, "in (0, 90]");
-    require(s.guideRangeMeters > 0.0F, "guideRangeMeters", s.guideRangeMeters, "positive");
-    require(s.guideToleranceMeters > 0.0F, "guideToleranceMeters", s.guideToleranceMeters, "positive");
-    require(angleWindow >= 0.0F && angleWindow < 90.0F, "the angle catch window", angleWindow, "in [0, 90)");
-    require(crossingMinimum > s.guideDirectionToleranceDegrees && crossingMinimum <= 90.0F,
+    require(snappingSource, s.guideRangeMeters > 0.0F, "guideRangeMeters", s.guideRangeMeters, "positive");
+    require(snappingSource, s.guideToleranceMeters > 0.0F, "guideToleranceMeters", s.guideToleranceMeters, "positive");
+    require(snappingSource, angleWindow >= 0.0F && angleWindow < 90.0F, "the angle catch window", angleWindow, "in [0, 90)");
+    require(snappingSource, crossingMinimum > s.guideDirectionToleranceDegrees && crossingMinimum <= 90.0F,
             "the crossing minimum angle", crossingMinimum, "above the direction tolerance and at most 90");
-    require(s.effectiveGuideMergeDistanceMeters() >= 0.0F, "the guide merge distance",
+    require(snappingSource, s.effectiveGuideMergeDistanceMeters() >= 0.0F, "the guide merge distance",
             s.effectiveGuideMergeDistanceMeters(), "non-negative");
-    require(s.guideCrossingRadiusMeters >= s.guideToleranceMeters, "guideCrossingRadiusMeters",
+    require(snappingSource, s.guideCrossingRadiusMeters >= s.guideToleranceMeters, "guideCrossingRadiusMeters",
             s.guideCrossingRadiusMeters, "at least guideToleranceMeters");
-    require(s.guideDirectionToleranceDegrees > 0.0F && s.guideDirectionToleranceDegrees < angleWindow,
+    require(snappingSource, s.guideDirectionToleranceDegrees > 0.0F && s.guideDirectionToleranceDegrees < angleWindow,
             "guideDirectionToleranceDegrees", s.guideDirectionToleranceDegrees,
             "positive and below the angle catch window");
-    require(s.nearbyGuideDirectionLimit >= 0, "nearbyGuideDirectionLimit",
+    require(snappingSource, s.nearbyGuideDirectionLimit >= 0, "nearbyGuideDirectionLimit",
             static_cast<float>(s.nearbyGuideDirectionLimit), "non-negative");
-    require(s.guideCornerLimit >= 0, "guideCornerLimit", static_cast<float>(s.guideCornerLimit), "non-negative");
+    require(snappingSource, s.guideCornerLimit >= 0, "guideCornerLimit", static_cast<float>(s.guideCornerLimit), "non-negative");
 
-    require(s.commonLengthRangeMeters >= 0.0F, "commonLengthRangeMeters", s.commonLengthRangeMeters, "non-negative");
-    require(s.commonLengthCatchMeters >= 0.0F, "commonLengthCatchMeters", s.commonLengthCatchMeters, "non-negative");
-    require(s.commonLengthMergeMeters >= 0.0F && s.commonLengthMergeMeters < s.commonLengthMinimumMeters,
+    require(snappingSource, s.commonLengthRangeMeters >= 0.0F, "commonLengthRangeMeters", s.commonLengthRangeMeters, "non-negative");
+    require(snappingSource, s.commonLengthCatchMeters >= 0.0F, "commonLengthCatchMeters", s.commonLengthCatchMeters, "non-negative");
+    require(snappingSource, s.commonLengthMergeMeters >= 0.0F && s.commonLengthMergeMeters < s.commonLengthMinimumMeters,
             "commonLengthMergeMeters", s.commonLengthMergeMeters, "non-negative and below commonLengthMinimumMeters");
-    require(s.commonLengthMaxCount >= 0, "commonLengthMaxCount", static_cast<float>(s.commonLengthMaxCount),
+    require(snappingSource, s.commonLengthMaxCount >= 0, "commonLengthMaxCount", static_cast<float>(s.commonLengthMaxCount),
             "non-negative");
-    require(s.commonLengthMinimumMeters >= 0.0F, "commonLengthMinimumMeters", s.commonLengthMinimumMeters,
+    require(snappingSource, s.commonLengthMinimumMeters >= 0.0F, "commonLengthMinimumMeters", s.commonLengthMinimumMeters,
             "non-negative");
-    require(s.lengthIncrementMeters >= 0.0F, "lengthIncrementMeters", s.lengthIncrementMeters, "non-negative");
+    require(snappingSource, s.lengthIncrementMeters >= 0.0F, "lengthIncrementMeters", s.lengthIncrementMeters, "non-negative");
 
     const float grid = s.drawingSettingsDefaults.rectangleGridSpacingMeters;
-    require(grid == 1.0F || grid == 0.5F, "rectangleGridSpacingMeters", grid, "1.0 or 0.5");
+    require(snappingSource, grid == 1.0F || grid == 0.5F, "rectangleGridSpacingMeters", grid, "1.0 or 0.5");
 
     const auto& p = reg.rendering().preview;
 
-    const auto requireLook = [&](bool ok, const char* name, float value, const char* bound) {
-        if (!ok) {
-            addError("ConstructionRendering",
-                     std::string(name) + " must be " + bound + ", got " + std::to_string(value),
-                     "");
-            valid = false;
-        }
-    };
     const auto requirePositivePixels = [&](const char* name, float value) {
-        requireLook(value > 0.0F, name, value, "positive");
+        require(renderingSource, value > 0.0F, name, value, "positive");
     };
     const auto requireOpacity = [&](const char* name, float value) {
-        requireLook(value >= 0.0F && value <= 1.0F, name, value, "in [0, 1]");
+        require(renderingSource, value >= 0.0F && value <= 1.0F, name, value, "in [0, 1]");
     };
     const auto requireDecimals = [&](const char* name, int value) {
-        requireLook(value >= 0 && value <= 6, name, static_cast<float>(value), "in [0, 6]");
+        require(renderingSource, value >= 0 && value <= 6, name, static_cast<float>(value), "in [0, 6]");
     };
 
     requirePositivePixels("guideWidth", p.guideWidth);
-    requireLook(p.guideDashPx >= 0.0F, "guideDashPx", p.guideDashPx, "non-negative");
+    require(renderingSource, p.guideDashPx >= 0.0F, "guideDashPx", p.guideDashPx, "non-negative");
     requirePositivePixels("guideGapPx", p.guideGapPx);
     requireOpacity("guideOpacity", p.guideOpacity);
     requireOpacity("markerOpacity", p.markerOpacity);

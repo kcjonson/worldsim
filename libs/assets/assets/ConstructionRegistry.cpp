@@ -14,6 +14,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 
 namespace assets {
 
@@ -61,13 +62,15 @@ namespace assets {
 
 	namespace {
 
-		// An absent element keeps the fallback; a present element naming no listed
-		// value also keeps it, with a warning, so a typo can't silently pick a mode.
+		// An absent element keeps the fallback. A present element naming no listed
+		// value keeps it too, but records an error for ConfigValidator to reject, so a
+		// typo can't silently pick a mode.
 		template <typename Enum>
 		Enum parseEnum(
-			pugi::xml_node parent,
-			const char*	   tag,
-			Enum		   fallback,
+			pugi::xml_node				   parent,
+			const char*					   tag,
+			Enum						   fallback,
+			std::vector<ConfigParseError>& errors,
 			std::type_identity_t<std::initializer_list<std::pair<const char*, Enum>>> table
 		) {
 			const pugi::xml_node node = parent.child(tag);
@@ -80,7 +83,11 @@ namespace assets {
 					return value;
 				}
 			}
-			LOG_WARNING(Engine, "Construction config: unknown value '%s' for <%s>, keeping default", text.c_str(), tag);
+			std::string accepted;
+			for (const auto& entry : table) {
+				accepted += (accepted.empty() ? "" : ", ") + std::string(entry.first);
+			}
+			errors.push_back({std::string(tag) + " has unknown value '" + text + "'", "Set <" + std::string(tag) + "> to one of: " + accepted});
 			return fallback;
 		}
 
@@ -330,6 +337,7 @@ namespace assets {
 		}
 
 		SnappingConfig cfg;
+		snappingErrors.clear();
 
 		cfg.angleIncrementDegrees = root.child("angleIncrementDegrees").text().as_float(15.0F);
 
@@ -357,7 +365,7 @@ namespace assets {
 		cfg.tieMergeDistanceToTolerance = flag("tieMergeDistanceToTolerance", cfg.tieMergeDistanceToTolerance);
 		cfg.guideMergeDistanceMeters = number("guideMergeDistanceMeters", cfg.guideMergeDistanceMeters);
 
-		cfg.priorityRule = parseEnum(root, "priorityRule", cfg.priorityRule,
+		cfg.priorityRule = parseEnum(root, "priorityRule", cfg.priorityRule, snappingErrors,
 									 {{"sourceFirst", GuidePriorityRule::SourceFirst}, {"closest", GuidePriorityRule::Closest}});
 
 		cfg.commonLengthSourceBuildings = flag("commonLengthSourceBuildings", cfg.commonLengthSourceBuildings);
@@ -375,7 +383,7 @@ namespace assets {
 
 		cfg.lengthIncrementMeters = number("lengthIncrementMeters", cfg.lengthIncrementMeters);
 		cfg.lengthRoundingOnGuides =
-			parseEnum(root, "lengthRoundingOnGuides", cfg.lengthRoundingOnGuides,
+			parseEnum(root, "lengthRoundingOnGuides", cfg.lengthRoundingOnGuides, snappingErrors,
 					  {{"guideDistance", GuideRounding::GuideDistance}, {"segmentLength", GuideRounding::SegmentLength}});
 
 		cfg.rectangleAdjacencySnaps = flag("rectangleAdjacencySnaps", cfg.rectangleAdjacencySnaps);
@@ -409,6 +417,7 @@ namespace assets {
 
 	bool ConstructionRegistry::loadRendering(const std::string& xmlPath) {
 		RenderingConfig cfg; // built-in defaults; the file overlays whatever it provides
+		renderingErrors.clear();
 
 		pugi::xml_document	   doc;
 		pugi::xml_parse_result result = doc.load_file(xmlPath.c_str());
@@ -513,7 +522,7 @@ namespace assets {
 			cfg.preview.originHaloMinRadiusPx = number(p, "originHaloMinRadiusPx", cfg.preview.originHaloMinRadiusPx);
 
 			cfg.preview.guideLineStyle = parseEnum(
-				p, "guideLineStyle", cfg.preview.guideLineStyle,
+				p, "guideLineStyle", cfg.preview.guideLineStyle, renderingErrors,
 				{{"solid", GuideLineStyle::Solid}, {"dashed", GuideLineStyle::Dashed}, {"dotted", GuideLineStyle::Dotted}}
 			);
 			cfg.preview.guideDashPx = number(p, "guideDashPx", cfg.preview.guideDashPx);
@@ -521,7 +530,7 @@ namespace assets {
 			cfg.preview.guideOpacity = number(p, "guideOpacity", cfg.preview.guideOpacity);
 			cfg.preview.markerOpacity = number(p, "markerOpacity", cfg.preview.markerOpacity);
 			cfg.preview.guideColorMode = parseEnum(
-				p, "guideColorMode", cfg.preview.guideColorMode,
+				p, "guideColorMode", cfg.preview.guideColorMode, renderingErrors,
 				{{"one", GuideColorMode::One}, {"bySource", GuideColorMode::BySource}}
 			);
 			cfg.preview.guideColorShape = color(p, "guideColorShape", cfg.preview.guideColorShape);
@@ -552,6 +561,8 @@ namespace assets {
 		constraintConfig = ConstraintConfig{};
 		snappingConfig = SnappingConfig{};
 		renderingConfig = RenderingConfig{};
+		snappingErrors.clear();
+		renderingErrors.clear();
 		hasMaterials = false;
 		hasConstraints = false;
 		hasSnapping = false;
@@ -614,6 +625,14 @@ namespace assets {
 
 	const RenderingConfig& ConstructionRegistry::rendering() const {
 		return renderingConfig;
+	}
+
+	const std::vector<ConfigParseError>& ConstructionRegistry::snappingParseErrors() const {
+		return snappingErrors;
+	}
+
+	const std::vector<ConfigParseError>& ConstructionRegistry::renderingParseErrors() const {
+		return renderingErrors;
 	}
 
 	bool ConstructionRegistry::materialsLoaded() const {
