@@ -179,7 +179,7 @@ matter: the ~0.5 s re-eval cadence (from [Priority Configuration System](../desi
 are described in [AI Behavior](../design/game-systems/colonists/ai-behavior.md#when-a-colonist-decides).
 A need crossing into critical is one of those events; a need that stays critical, or a route that keeps
 failing, re-decides on the interval, not every frame. This section changes only the preemption rule. The
-`taskSwitchThreshold` from priority-config.md becomes the within-tier hysteresis margin.
+`InProgress` bonus from priority-config.md is the within-tier hysteresis margin.
 
 ### 7. Tiers as task-type data
 
@@ -286,8 +286,7 @@ bands were the categorical-first guarantee; the code's collapse to single-digit 
 **Supersede:** the band bases become a tier integer; `chainBonus` becomes a tier
 classification; `inProgressBonus` becomes the within-tier hysteresis margin.
 **Honor:** `distanceBonus`, `skillBonus`, and `taskAgeBonus` carry over as within-tier score
-factors; `reEvalInterval` 0.5 s is unchanged; `taskSwitchThreshold` becomes the within-tier
-hysteresis threshold; `reservationTimeout` is deleted ([Task Claims](./task-claims.md) uses no timeouts). The `PriorityConfig` class and
+factors; `reEvalInterval` 0.5 s is unchanged; `reservationTimeout` is deleted ([Task Claims](./task-claims.md) uses no timeouts). The `PriorityConfig` class and
 `priority-tuning.xml` need a targeted update post-acceptance to reflect the new factor roles.
 
 ### [Task Chains](../design/game-systems/colonists/task-chains.md)
@@ -539,8 +538,8 @@ is visible.
   tier 4 (Active Work Orders) as an explicit slot.
 - [Priority Configuration System](../design/game-systems/colonists/priority-config.md) —
   the predecessor numeric-band system. Needs a targeted update post-acceptance: band bases
-  replaced by tier integer, bonus roles updated. The `reEvalInterval` and `taskSwitchThreshold`
-  fields carry over unchanged; `reservationTimeout` is deleted (see [Task Claims](./task-claims.md)).
+  replaced by tier integer, bonus roles updated. The `reEvalInterval`
+  field carries over unchanged; `reservationTimeout` is deleted (see [Task Claims](./task-claims.md)).
 - [Decision Trace System](../design/game-systems/colonists/decision-trace.md) — the design
   contract for the per-colonist trace component and the task list display.
 - [Work Priorities](../design/game-systems/colonists/work-priorities.md) — the existing

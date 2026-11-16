@@ -20,7 +20,7 @@ namespace assets {
 	/// Repurposed for the (tier, score) arbitration as the within-tier hysteresis margin: the
 	/// stickiness added to the currently in-progress option's score so a same-tier challenger must
 	/// beat it by more than this margin to win. It can never lift an option across a tier boundary
-	/// (score only compares within a tier). Defaults to taskSwitchThreshold (50) below.
+	/// (score only compares within a tier). Defaults to 50.
 	struct InProgressBonusConfig {
 		int16_t bonus = 50; // Within-tier hysteresis margin for the in-progress option
 	};
@@ -52,20 +52,8 @@ namespace assets {
 		int16_t weight = 300; // Per-priority-rank score weight (rank 0..3 * weight)
 	};
 
-	/// Hauling-specific tuning
-	struct HaulingTuningConfig {
-		float	storageCriticalThreshold = 0.2F;  // Below this, storage is critical
-		int16_t storageCriticalBonus = 500;		  // Bonus when storage critical
-		int16_t blockingConstructionBonus = 1000; // Bonus for items blocking builds
-		float	perishableSpoilThreshold = 60.0F; // Seconds until spoil = perishable
-		int16_t perishableBonus = 800;			  // Bonus for perishable items
-		float	batchRadius = 8.0F;				  // Group items within this radius
-		int16_t maxBatchSize = 5;				  // Max items per batch
-	};
-
 	/// Timing thresholds
 	struct TimingConfig {
-		int16_t taskSwitchThreshold = 50;	// Min priority gap to switch tasks
 		float	reEvalInterval = 0.5F;		// Seconds between task re-evaluation
 	};
 
@@ -135,12 +123,10 @@ namespace assets {
 		[[nodiscard]] const InProgressBonusConfig& getInProgressConfig() const { return inProgressConfig; }
 		[[nodiscard]] const StoragePriorityConfig& getStoragePriorityConfig() const { return storagePriorityConfig; }
 		[[nodiscard]] const TaskAgeBonusConfig&	   getTaskAgeConfig() const { return taskAgeConfig; }
-		[[nodiscard]] const HaulingTuningConfig&   getHaulingConfig() const { return haulingConfig; }
 		[[nodiscard]] const TimingConfig&		   getTimingConfig() const { return timingConfig; }
 
 		// --- Thresholds ---
 
-		[[nodiscard]] int16_t getTaskSwitchThreshold() const { return timingConfig.taskSwitchThreshold; }
 		[[nodiscard]] float	  getReEvalInterval() const { return timingConfig.reEvalInterval; }
 
 		// --- Work Category Order ---
@@ -160,9 +146,6 @@ namespace assets {
 		/// Parse timing thresholds from XML node
 		void parseThresholds(const void* node);
 
-		/// Parse hauling tuning from XML node
-		void parseHaulingTuning(const void* node);
-
 		/// Parse work category order from XML node
 		void parseCategoryOrder(const void* node);
 
@@ -176,7 +159,6 @@ namespace assets {
 		InProgressBonusConfig inProgressConfig;
 		StoragePriorityConfig storagePriorityConfig;
 		TaskAgeBonusConfig	  taskAgeConfig;
-		HaulingTuningConfig	  haulingConfig;
 		TimingConfig		  timingConfig;
 
 		uint64_t m_generation = 1;

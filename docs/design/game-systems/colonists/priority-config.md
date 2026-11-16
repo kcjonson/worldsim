@@ -92,9 +92,7 @@ score = distanceFactor      // dominant: 300 * max(0, 1 - d/60), nearest source 
 | `<Bonuses><InProgress><bonus>` (50) | `getInProgressBonus` | the hysteresis term |
 | `<Bonuses><TaskAge>` (1 per minute, at most 100) | `calculateTaskAgeBonus` | the task-age term |
 | `<Bonuses><StoragePriority><weight>` (300) | `getStoragePriorityWeight` | the storage-priority term |
-| `<Thresholds><taskSwitchThreshold>` | nothing | parsed, read by nothing; the switch margin is `<InProgress><bonus>` |
 | `<Thresholds><reEvalInterval>` | nothing | parsed, read by nothing; the interval is `AIDecisionSystem::kReEvalInterval` (0.5 s) |
-| `<HaulingTuning>` | nothing | parsed, read by nothing; none of its boosts or batching exist |
 
 ---
 
@@ -167,8 +165,6 @@ The "hauling problem" (from RimWorld) is colonists hauling everything before oth
    - storage priority, for a stocking option only: the destination box's priority for the item (Low 0 to Critical 3) times `<StoragePriority><weight>` (300), so a higher-priority box beats a nearer lower one.
 4. **Ties** break on `tiebreakId`, a stable id, never container order.
 
-The boosts this section used to list (+500 when storage runs low, +1000 for items blocking construction, +800 for food about to spoil, batching items within 8 m) are `<HaulingTuning>` values that nothing reads.
-
 ---
 
 ## Config Loading
@@ -194,7 +190,6 @@ public:
     int16_t getInProgressBonus() const;                    // within-tier hysteresis margin (50)
 
     // Thresholds
-    int16_t getTaskSwitchThreshold() const;
     float   getReEvalInterval() const;
 
 private:
@@ -202,7 +197,6 @@ private:
     DistanceFactorConfig  distanceFactorConfig;
     InProgressBonusConfig inProgressConfig;
     TaskAgeBonusConfig    taskAgeConfig;
-    HaulingTuningConfig   haulingConfig;
     TimingConfig          timingConfig;
 };
 ```
@@ -256,10 +250,6 @@ There is no chain score to tune. A provisioning step (`servesActiveWorkOrder == 
 classified at tier 4, and tier beats score, so the colonist stays on the chain by construction.
 If chains break, the bug is in tier classification (the option not being marked as serving the
 work order), not in a bonus value.
-
-### Hauling config (not read)
-
-`<HaulingTuning>` is parsed but nothing in the decision reads it, so changing it changes no behaviour.
 
 ---
 

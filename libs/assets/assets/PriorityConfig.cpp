@@ -76,10 +76,6 @@ namespace assets {
 			parseThresholds(&thresholdsNode);
 		}
 
-		if (auto haulingNode = root.child("HaulingTuning")) {
-			parseHaulingTuning(&haulingNode);
-		}
-
 		if (auto orderNode = root.child("WorkCategoryOrder")) {
 			parseCategoryOrder(&orderNode);
 		}
@@ -97,7 +93,6 @@ namespace assets {
 		inProgressConfig = InProgressBonusConfig{};
 		storagePriorityConfig = StoragePriorityConfig{};
 		taskAgeConfig = TaskAgeBonusConfig{};
-		haulingConfig = HaulingTuningConfig{};
 		timingConfig = TimingConfig{};
 		categoryOrder.clear();
 	}
@@ -181,7 +176,7 @@ namespace assets {
 		// In-progress
 		if (auto ipNode = node.child("InProgress")) {
 			if (auto n = ipNode.child("bonus")) {
-				// Fallback matches the struct default, the XML value, and taskSwitchThreshold (50):
+				// Fallback matches the struct default and the XML value (50):
 				// the within-tier hysteresis margin. An empty node must not yield the old 200.
 				inProgressConfig.bonus = static_cast<int16_t>(n.text().as_int(50));
 			}
@@ -208,37 +203,8 @@ namespace assets {
 	void PriorityConfig::parseThresholds(const void* nodePtr) {
 		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
 
-		if (auto n = node.child("taskSwitchThreshold")) {
-			timingConfig.taskSwitchThreshold = static_cast<int16_t>(n.text().as_int(50));
-		}
 		if (auto n = node.child("reEvalInterval")) {
 			timingConfig.reEvalInterval = n.text().as_float(0.5F);
-		}
-	}
-
-	void PriorityConfig::parseHaulingTuning(const void* nodePtr) {
-		const pugi::xml_node& node = *static_cast<const pugi::xml_node*>(nodePtr);
-
-		if (auto n = node.child("storageCriticalThreshold")) {
-			haulingConfig.storageCriticalThreshold = n.text().as_float(0.2F);
-		}
-		if (auto n = node.child("storageCriticalBonus")) {
-			haulingConfig.storageCriticalBonus = static_cast<int16_t>(n.text().as_int(500));
-		}
-		if (auto n = node.child("blockingConstructionBonus")) {
-			haulingConfig.blockingConstructionBonus = static_cast<int16_t>(n.text().as_int(1000));
-		}
-		if (auto n = node.child("perishableSpoilThreshold")) {
-			haulingConfig.perishableSpoilThreshold = n.text().as_float(60.0F);
-		}
-		if (auto n = node.child("perishableBonus")) {
-			haulingConfig.perishableBonus = static_cast<int16_t>(n.text().as_int(800));
-		}
-		if (auto n = node.child("batchRadius")) {
-			haulingConfig.batchRadius = n.text().as_float(8.0F);
-		}
-		if (auto n = node.child("maxBatchSize")) {
-			haulingConfig.maxBatchSize = static_cast<int16_t>(n.text().as_int(5));
 		}
 	}
 
