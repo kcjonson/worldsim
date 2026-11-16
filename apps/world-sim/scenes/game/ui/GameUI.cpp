@@ -13,8 +13,8 @@ namespace world_sim {
 		constexpr float kEdge = 12.0F;			  // the HUD's distance from the viewport's edges
 		constexpr float kRightStackTop = 60.0F;	  // just below the top bar
 		constexpr float kDockBottom = 12.0F;	  // the gameplay bar's distance from the bottom
-		// The dock is the viewport's middle 60%, the construction strip's width, clear of the corner columns.
-		constexpr float kDockSidePercent = 20.0F;
+		// The dock's box spans the bottom edge under the corner panels on purpose; only its children take the pointer.
+		constexpr int kDockLayer = -1;
 		constexpr float kBuildMenuBottom = 70.0F; // above the gameplay bar
 		constexpr float kTaskListRoom = 100.0F;	  // the viewport height the task list leaves free
 		// Toasts stack up from the bottom right, above the zoom column, which owns the corner.
@@ -64,15 +64,12 @@ namespace world_sim {
 		// The bottom middle: the construction strip, while a structure tool is active, over the gameplay bar.
 		ui::Ref<ui::Component> dock = root.addChild<ui::Component>({
 			.id = "bottom_dock",
-			.layout = stack(
-				{.right = ui::percent(kDockSidePercent), .bottom = kDockBottom, .left = ui::percent(kDockSidePercent)},
-				ui::AlignItems::Center,
-				theme.get(tokens::spacing::space1)
-			),
+			.layout =
+				stack({.right = 0.0F, .bottom = kDockBottom, .left = 0.0F}, ui::AlignItems::Center, theme.get(tokens::spacing::space1)),
+			.zIndex = kDockLayer,
 		});
 		configStrip = dock.addChild<ConstructionConfigStrip>({
 			.id = "construction_config_strip",
-			.size = {ui::percent(100.0F), ui::kAuto},
 			.onMaterialSelected = args.onConstructionMaterialSelected,
 			.onThicknessSelected = args.onConstructionThicknessSelected,
 		});
