@@ -358,7 +358,7 @@ namespace assets {
 	enum class GuideColorMode { One, BySource };
 
 	/// Drawing-tool preview chrome that is construction-specific (the validity green/red
-	/// still comes from the shared UI theme). guideColor is the one guide colour (guide
+	/// still comes from the shared UI theme). guideColor is the one guide color (guide
 	/// lines, right-angle markers, crossing dots, common-length marks), opaque: its
 	/// opacity comes from guideOpacity and markerOpacity. originHaloColor is the dotted
 	/// close-radius ring round the first point; snap-target rings use snapVertexColor
