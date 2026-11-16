@@ -320,6 +320,9 @@ namespace construction {
 		// Vertex at exactly `point` (exact integer match), or kInvalidVertex.
 		VertexId vertexAt(const geometry::Vec2i64& point) const;
 
+		// Binary searches: segments_ and vertices_ are in ascending id order. Ids only grow,
+		// every insert appends (findOrCreateVertex, splitSegmentAt and commitSegment, each
+		// asserting the order), and removal erases in place.
 		const WallSegment* getSegment(SegmentId id) const;
 		const Vertex*	   getVertex(VertexId id) const;
 		const Opening*	   getOpening(OpeningId id) const;
@@ -422,8 +425,8 @@ namespace construction {
 		FoundationId			nextFoundationId_ = 1;
 		std::uint64_t			version_ = 0;
 
-		std::vector<Vertex>		 vertices_; // stable insertion order
-		std::vector<WallSegment> segments_;
+		std::vector<Vertex>		 vertices_; // ascending id order (see getVertex)
+		std::vector<WallSegment> segments_; // ascending id order (see getSegment)
 		std::vector<Opening>	 openings_;
 		VertexId				 nextVertexId_ = 1; // 0 reserved as invalid
 		SegmentId				 nextSegmentId_ = 1;

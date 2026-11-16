@@ -14,6 +14,7 @@
 #include "SnapEngine.h"
 
 #include <core/Vec2d.h>
+#include <core/Vec2i64.h>
 #include <math/Types.h>
 
 #include <cstddef>
@@ -44,6 +45,10 @@ namespace construction::snap_guides {
 
 	/// The inward offset (meters) of an outer-face-flush wall of the given half-thickness.
 	[[nodiscard]] double flushInsetMeters(std::int64_t halfThicknessMm);
+
+	/// Integer millimeters as double meters, exactly.
+	[[nodiscard]] Vec2d meters(const geometry::Vec2i64& millimeters);
+	[[nodiscard]] Vec2d toVec2d(::Foundation::Vec2 point);
 
 	enum class SnapTool { Foundation, Wall };
 
@@ -185,7 +190,7 @@ namespace construction::snap_guides {
 		std::size_t				  cornersUsed = 0;
 		std::vector<StructureKey> cornerStructures;
 		std::vector<Vec2d>		  cornerEdgeDirections;
-		std::vector<SegmentId>	  vertexSegments;
+		std::vector<SegmentId>	  vertexSegments; // scratch: one wall vertex's segments, sorted, while collecting corners
 
 		std::vector<NearbyEdge>		 edges; // every non-degenerate edge of a structure not rejected by range
 		std::vector<NearbyWalkEntry> walk;	// the edges in range, nearest first

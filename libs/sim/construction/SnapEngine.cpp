@@ -54,25 +54,14 @@ namespace construction {
 		using geometry::Vec2d;
 		using snap_guides::GuideContext;
 		using snap_guides::GuideStudy;
+		using snap_guides::meters;
+		using snap_guides::toVec2d;
 
 		// A foundation outline closes once it has this many points.
 		constexpr std::size_t kMinClosingShapePoints = 3;
 
-		float flushInsetMeters(std::int64_t halfThicknessMm) {
-			return static_cast<float>(snap_guides::flushInsetMeters(halfThicknessMm));
-		}
-
-		Vec2d toVec2d(::Foundation::Vec2 point) {
-			return {static_cast<double>(point.x), static_cast<double>(point.y)};
-		}
-
 		::Foundation::Vec2 toVec2(Vec2d point) {
 			return {static_cast<float>(point.x), static_cast<float>(point.y)};
-		}
-
-		Vec2d meters(const geometry::Vec2i64& millimeters) {
-			const auto perMeter = static_cast<double>(geometry::kMillimetersPerMeter);
-			return {static_cast<double>(millimeters.x) / perMeter, static_cast<double>(millimeters.y) / perMeter};
 		}
 
 		// The guide study's working storage, reused by every snap on this thread so a moving
@@ -138,7 +127,7 @@ namespace construction {
 			return v; // zero-thickness or degenerate ring: the corner is returned unchanged
 		}
 
-		const float				 d = flushInsetMeters(halfThicknessMm);
+		const auto				 d = static_cast<float>(snap_guides::flushInsetMeters(halfThicknessMm));
 		const std::size_t		 prevEdge = (vertexIndex + n - 1) % n; // edge prev -> v
 		const std::size_t		 nextEdge = vertexIndex;			   // edge v -> next
 		const ::Foundation::Vec2 prev = geometry::dequantize(ring[prevEdge]);
@@ -308,6 +297,7 @@ namespace construction {
 			.aids = input.aids,
 			.tool = wallTool ? snap_guides::SnapTool::Wall : snap_guides::SnapTool::Foundation,
 			.wallHalfThicknessMm = input.wallHalfThicknessMm,
+			// From the registry, not the injected config: the caller doesn't pass the point limit yet.
 			.maxPoints = assets::ConstructionRegistry::Get().constraints().maxPoints,
 		};
 	}

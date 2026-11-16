@@ -1,9 +1,6 @@
 #include "SnapGuidesDetail.h"
 
-#include "ConstructionWorld.h"
-
 #include <assets/ConstructionRegistry.h>
-#include <core/Vec2i64.h>
 
 #include <algorithm>
 #include <array>
@@ -21,15 +18,13 @@ namespace construction::snap_guides {
 		constexpr double kHalfTurn = std::numbers::pi;
 		// Two directions closer than this to parallel have no crossing.
 		constexpr double kParallelCross = 1e-12;
-
-		Vec2d meters(const geometry::Vec2i64& millimeters) {
-			const auto perMeter = static_cast<double>(geometry::kMillimetersPerMeter);
-			return {static_cast<double>(millimeters.x) / perMeter, static_cast<double>(millimeters.y) / perMeter};
-		}
-
-		Vec2d toVec2d(::Foundation::Vec2 point) {
-			return {static_cast<double>(point.x), static_cast<double>(point.y)};
-		}
+		// Slack on an angle compared against a boundary (half a turn, the crossing minimum), so an
+		// input on the boundary stays on the side the prototype puts it despite rounding.
+		constexpr double kAngleSlackRadians = 1e-12;
+		// A corner whose edges meet at a half-angle sine under this is a spike: its inset has no reach.
+		constexpr double kSpikeHalfAngleSine = 1e-9;
+		// A cursor this close to an anchor has no direction from it, so no angle to catch.
+		constexpr double kNoDirectionMeters = 1e-6;
 
 		double dot(Vec2d first, Vec2d second) {
 			return first.x * second.x + first.y * second.y;
@@ -94,24 +89,7 @@ namespace construction::snap_guides {
 			const Vec2d	 towardPrevious = unit(previous - corner);
 			const Vec2d	 towardNext = unit(next - corner);
 			const double halfAngleSine = std::sqrt(std::max(0.0, (1.0 - dot(towardPrevious, towardNext)) / 2.0));
-			return halfAngleSine > 1e-9 ? insetMeters / halfAngleSine : std::numeric_limits<double>::infinity();
-		}
-
-		// vertices() and segments() are in ascending id order, so a lookup is a binary search.
-		const Vertex* vertexById(const ConstructionWorld& world, VertexId id) {
-			const std::vector<Vertex>& vertices = world.vertices();
-			const auto found = std::lower_bound(vertices.begin(), vertices.end(), id, [](const Vertex& vertex, VertexId wanted) {
-				return vertex.id < wanted;
-			});
-			return found != vertices.end() && found->id == id ? &*found : nullptr;
-		}
-
-		const WallSegment* segmentById(const ConstructionWorld& world, SegmentId id) {
-			const std::vector<WallSegment>& segments = world.segments();
-			const auto found = std::lower_bound(segments.begin(), segments.end(), id, [](const WallSegment& segment, SegmentId wanted) {
-				return segment.id < wanted;
-			});
-			return found != segments.end() && found->id == id ? &*found : nullptr;
+			return halfAngleSine > kSpikeHalfAngleSine ? insetMeters / halfAngleSine : std::numeric_limits<double>::infinity();
 		}
 
 		double directionToleranceRadians(const GuideContext& context) {
@@ -214,6 +192,15 @@ namespace construction::snap_guides {
 
 	} // namespace
 
+	Vec2d meters(const geometry::Vec2i64& millimeters) {
+		const auto perMeter = static_cast<double>(geometry::kMillimetersPerMeter);
+		return {static_cast<double>(millimeters.x) / perMeter, static_cast<double>(millimeters.y) / perMeter};
+	}
+
+	Vec2d toVec2d(::Foundation::Vec2 point) {
+		return {static_cast<double>(point.x), static_cast<double>(point.y)};
+	}
+
 	double flushInsetMeters(std::int64_t halfThicknessMm) {
 		return static_cast<double>(halfThicknessMm + kFlushInsetSafetyMm) / static_cast<double>(geometry::kMillimetersPerMeter);
 	}
@@ -223,7 +210,7 @@ namespace construction::snap_guides {
 		if (result < 0.0) {
 			result += kHalfTurn;
 		}
-		if (result >= kHalfTurn - 1e-12) {
+		if (result >= kHalfTurn - kAngleSlackRadians) {
 			result = 0.0;
 		}
 		return result;
@@ -331,11 +318,11 @@ namespace construction::snap_guides {
 					study.vertexSegments.assign(vertex.segments.begin(), vertex.segments.end());
 					std::sort(study.vertexSegments.begin(), study.vertexSegments.end());
 					for (const SegmentId segmentId : study.vertexSegments) {
-						const WallSegment* segment = segmentById(*context.world, segmentId);
+						const WallSegment* segment = context.world->getSegment(segmentId);
 						if (segment == nullptr) {
 							continue;
 						}
-						const Vertex* other = vertexById(*context.world, segment->v0 == vertex.id ? segment->v1 : segment->v0);
+						const Vertex* other = context.world->getVertex(segment->v0 == vertex.id ? segment->v1 : segment->v0);
 						if (other == nullptr) {
 							continue;
 						}
@@ -398,8 +385,8 @@ namespace construction::snap_guides {
 		}
 		if (context.tool == SnapTool::Wall) {
 			for (const WallSegment& segment : context.world->segments()) {
-				const Vertex* start = vertexById(*context.world, segment.v0);
-				const Vertex* end = vertexById(*context.world, segment.v1);
+				const Vertex* start = context.world->getVertex(segment.v0);
+				const Vertex* end = context.world->getVertex(segment.v1);
 				if (start != nullptr && end != nullptr) {
 					addEdge({StructureKind::WallSegment, segment.id}, meters(start->pos), meters(end->pos));
 				}
@@ -562,7 +549,7 @@ namespace construction::snap_guides {
 					continue;
 				}
 				const Vec2d offset = context.cursor - anchors[anchor];
-				if (geometry::length(offset) < 1e-6) {
+				if (geometry::length(offset) < kNoDirectionMeters) {
 					continue;
 				}
 				line.capturedByAngle = angularDifference(angleOf(offset), line.angle, kHalfTurn) <= window;
@@ -622,7 +609,7 @@ namespace construction::snap_guides {
 				);
 				if (!context.aids.guideCrossings) {
 					record.status = CrossingStatus::CrossingsOff;
-				} else if (angle < minimumAngle - 1e-12 || !point) {
+				} else if (angle < minimumAngle - kAngleSlackRadians || !point) {
 					record.status = CrossingStatus::TooShallow;
 				} else if (record.distanceMeters > radius) {
 					record.status = CrossingStatus::TooFar;
@@ -699,7 +686,7 @@ namespace construction::snap_guides {
 			if (!line.captured() || line.source != GuideSource::DrawnShape) {
 				continue;
 			}
-			if (angularDifference(line.angle, edgeAngle, kHalfTurn) < minimumAngle - 1e-12) {
+			if (angularDifference(line.angle, edgeAngle, kHalfTurn) < minimumAngle - kAngleSlackRadians) {
 				continue;
 			}
 			const double denominator = cross(edge, line.direction);
