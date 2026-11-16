@@ -60,6 +60,8 @@ class PlacementSystem {
 		ecs::NavigationSystem*			 navigation;		  // where furniture may go (isAreaBuildableNow)
 		uint64_t						 worldSeed;		  // for the traits of a spawned entity (computeTreeTraits)
 		Callbacks						 callbacks;
+		/// Whether a point lies inside the footprint of a foundation that is not built yet. Empty = none does.
+		std::function<bool(glm::vec2)> onUnbuiltSite;
 	};
 
 	PlacementSystem() = default;
@@ -112,11 +114,16 @@ class PlacementSystem {
 	/// Used by placement workflow and by dropItemCallback for crafted items
 	ecs::EntityID spawnEntity(const std::string& defName, Foundation::Vec2 worldPos);
 
-	/// Whether `defName` may be set up at `worldPos`: its footprint is clear ground out of any ford
-	/// (NavigationSystem::isAreaBuildableNow). The footprint is its collision outline there, or just
-	/// `worldPos` when it declares no rect or polygon outline. False with no nav system. The
-	/// placement tool's ground gate, the /api/dev/spawn verb's for furniture, and a crafted crate's
-	/// install target's.
+	/// Whether `worldPos` lies inside the footprint of a foundation that is not built yet (a blueprint
+	/// being cleared, awaiting materials, or under construction). Furniture is never set up there: the
+	/// structure would be built around it. A built foundation's floor is fine.
+	[[nodiscard]] bool onUnbuiltSite(Foundation::Vec2 worldPos) const;
+
+	/// Whether `defName` may be set up at `worldPos`: not on an unbuilt foundation (onUnbuiltSite), and
+	/// its footprint is clear ground out of any ford (NavigationSystem::isAreaBuildableNow). The
+	/// footprint is its collision outline there, or just `worldPos` when it declares no rect or polygon
+	/// outline. False with no nav system. The placement tool's ground gate, the /api/dev/spawn verb's
+	/// for furniture, and a crafted crate's install target's.
 	[[nodiscard]] bool footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const;
 
 	/// Where a freshly crafted `defName` crate is installed beside the station at `stationPos`: a
@@ -136,6 +143,7 @@ class PlacementSystem {
 	ecs::NavigationSystem*			   navigation = nullptr;
 	uint64_t						   worldSeed = 0;
 	Callbacks						   callbacks;
+	std::function<bool(glm::vec2)>	   unbuiltSite;
 
 	PlacementMode placementMode;
 	GhostRenderer ghostRenderer;

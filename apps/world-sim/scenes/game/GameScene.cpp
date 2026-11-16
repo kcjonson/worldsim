@@ -363,6 +363,10 @@ namespace {
 					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
 					.onHideBuildMenu = [this]() { gameUI->hideBuildMenu(); },
 					.onSelectionCleared = [this]() { m_selectionSystem->clearSelection(); }
+				},
+				.onUnbuiltSite = [this](glm::vec2 p) {
+					const auto sites = unbuiltSites();
+					return std::any_of(sites.begin(), sites.end(), [p](const ecs::FootprintBounds& site) { return site.contains(p); });
 				}
 			});
 
@@ -1731,6 +1735,20 @@ namespace {
 			}
 		};
 
+		/// The footprint of every foundation that is not built yet: what a ground drop keeps off and
+		/// what furniture is never set up on.
+		std::vector<ecs::FootprintBounds> unbuiltSites() const {
+			std::vector<ecs::FootprintBounds> sites;
+			if (m_drawingSystem) {
+				for (const auto& foundation : m_drawingSystem->world().foundations()) {
+					if (foundation.state != construction::FoundationState::Built) {
+						sites.emplace_back(foundation.ring);
+					}
+				}
+			}
+			return sites;
+		}
+
 		GroundSurvey surveyGround(const std::string& dropDef) {
 			auto& registry = assets::AssetRegistry::Get();
 
@@ -1753,14 +1771,7 @@ namespace {
 			};
 
 			GroundSurvey survey;
-			if (m_drawingSystem) {
-				const auto& topology = m_drawingSystem->world();
-				for (const auto& foundation : topology.foundations()) {
-					if (foundation.state != construction::FoundationState::Built) {
-						survey.sites.emplace_back(foundation.ring);
-					}
-				}
-			}
+			survey.sites = unbuiltSites();
 
 			// Every pile and crate, not a radius around the drop: the spiral has no fixed reach, so
 			// any cutoff could leave out something a crowded drop ends up next to.
