@@ -40,13 +40,17 @@ namespace construction {
 	};
 
 	/// The range for an opening `widthMeters` wide on `segment`, the band trims coming
-	/// from geometry::resolveWallBands over the segment's connected wall graph, blueprint
-	/// and built walls alike, the trims the wall is drawn with (a near-straight join the
-	/// offsetter redraws as a step trims far less than its miter would); a segment with
-	/// no thickness preset has no band and no trims. Empty when the segment or one of its
-	/// vertices is missing, it has zero length, or the offsetter rejects its graph: the
-	/// renderer draws such a graph as bare centerlines and nav keeps every band in it
-	/// whole, so a door there would not open. Resolves the whole graph on every call.
+	/// from geometry::resolveWallBands over the segment's connected wall graph twice: as it
+	/// is drawn, blueprint and built walls alike (a near-straight join the offsetter redraws
+	/// as a step trims far less than its miter would), and as nav sees it, the built walls
+	/// alone, each end taking the larger trim. Whether a step is taken depends on the whole
+	/// graph, so a blueprint can shrink a built wall's drawn trim below nav's. An unbuilt
+	/// segment counts as built in nav's graph, the graph nav will cut its doors from once
+	/// it is. When every other wall in the graph is built the two are one graph, resolved
+	/// once. A segment with no thickness preset has no band and no trims. Empty when the
+	/// segment or one of its vertices is missing, it has zero length, or the offsetter
+	/// rejects either graph: the renderer draws a rejected graph as bare centerlines and
+	/// nav keeps every band in it whole, so a door there would not open.
 	[[nodiscard]] std::optional<OpeningRange>
 	openingRange(const ConstructionWorld& world, SegmentId segment, double widthMeters, double marginMeters);
 

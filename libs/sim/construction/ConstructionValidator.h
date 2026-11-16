@@ -75,7 +75,7 @@ namespace construction {
 		XCrossing,					  // centerline would properly cross an existing wall centerline
 		// Opening codes (Epic F). An opening is placed on a BUILT wall segment at a
 		// centerline parameter t; these are the opening-only reasons.
-		OpeningSegmentInvalid,	// target segment is missing or not a wall segment in the world
+		OpeningSegmentInvalid,	// target segment is missing, or its wall graph cannot be resolved (openingRange)
 		OpeningTypeInvalid,		// opening type name is not a known opening type
 		OpeningMaterialInvalid, // opening material name is not a known material
 		OpeningParamOutOfRange, // t outside [0,1]

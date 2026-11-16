@@ -120,7 +120,7 @@ namespace nav {
 		std::vector<geometry::WallSegment>		   geoSegments;
 		std::vector<construction::SegmentId>	   segmentIds;
 		for (const construction::WallSegment& seg : world.segments()) {
-			if (seg.state != construction::FoundationState::Built) {
+			if (!construction::isBuilt(seg)) {
 				continue;
 			}
 			const construction::Vertex* v0 = world.getVertex(seg.v0);

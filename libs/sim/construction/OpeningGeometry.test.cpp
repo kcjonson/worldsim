@@ -42,12 +42,14 @@ namespace {
 		void TearDown() override { ConstructionRegistry::Get().clear(); }
 	};
 
-	// A freestanding Wood wall from `a` to `b` (mm), built so an opening can snap to it.
-	SegmentId addWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b, const std::string& thickness) {
+	// A freestanding Wood wall from `a` to `b` (mm), built so an opening can snap to it
+	// unless asked for a blueprint.
+	SegmentId addWall(ConstructionWorld& world, Vec2i64 a, Vec2i64 b, const std::string& thickness,
+					  FoundationState state = FoundationState::Built) {
 		const SegmentCommitResult result = world.commitSegment(a, b, "Wood", thickness, kInvalidFoundation);
 		EXPECT_TRUE(result.ok());
 		for (const SegmentId id : result.createdSegments) {
-			EXPECT_TRUE(world.setSegmentState(id, FoundationState::Built));
+			EXPECT_TRUE(world.setSegmentState(id, state));
 		}
 		return result.id;
 	}
@@ -139,18 +141,9 @@ namespace {
 
 } // namespace
 
+// Free ends, straight joins, and T-junctions are pinned by the OpeningValidation and
+// OpeningSnapAtCorners tests.
 TEST_F(OpeningRangeTest, LayoutsWithoutTheSteppedRetryKeepTheirRange) {
-	{
-		ConstructionWorld world;
-		addWall(world, {0, 0}, {4000, 0}, "Standard");
-		expectRangesUnchanged(world, "free-ended wall");
-	}
-	{
-		ConstructionWorld world;
-		addWall(world, {0, 0}, {4000, 0}, "Standard");
-		addWall(world, {4000, 0}, {8000, 0}, "Heavy");
-		expectRangesUnchanged(world, "straight join");
-	}
 	for (const double degrees : {30.0, 35.0, 45.0, 90.0, 135.0, 155.0}) {
 		for (const auto& [thickness, otherThickness] :
 			 std::vector<std::pair<std::string, std::string>>{{"Heavy", "Heavy"}, {"Light", "Heavy"}, {"Standard", "Light"}}) {
@@ -159,12 +152,6 @@ TEST_F(OpeningRangeTest, LayoutsWithoutTheSteppedRetryKeepTheirRange) {
 			addWall(world, {4000, 0}, towards({4000, 0}, degrees, 4000.0), otherThickness);
 			expectRangesUnchanged(world, std::to_string(static_cast<int>(degrees)) + " deg " + thickness + "/" + otherThickness);
 		}
-	}
-	{
-		ConstructionWorld world;
-		addWall(world, {0, 0}, {8000, 0}, "Light");
-		addWall(world, {4000, 0}, {4000, 4000}, "Heavy"); // splits the Light wall
-		expectRangesUnchanged(world, "T-junction");
 	}
 	{
 		ConstructionWorld world;
@@ -248,6 +235,54 @@ TEST_F(OpeningRangeTest, ShortWallBetweenTwoThickerNearStraightWalls) {
 	EXPECT_DOUBLE_EQ(range->trimAtV1Meters, static_cast<double>(drawnV1) / 1000.0);
 }
 
+// The same three walls with the far Heavy wall a blueprint. Drawn, both joins are steps;
+// nav resolves only the built walls, where the Light wall is long enough for the miter at
+// the near join and the Heavy wall keeps its 532 mm trim. A door at the drawn range's end
+// would sit inside nav's junction, and in the corner if the blueprint were cancelled, so
+// the range is nav's: no door on the near Heavy wall until the far one is built.
+TEST_F(OpeningRangeTest, BlueprintBesideAStepDoesNotWidenABuiltWallsRange) {
+	const Vec2i64 left{0, 0};
+	const Vec2i64 right{1000, 0};
+	const auto	  rangeOnNearHeavy = [&](std::optional<FoundationState> farState, FoundationState nearState) {
+		   ConstructionWorld world;
+		   const SegmentId	 nearHeavy = addWall(world, towards(left, 172.0, 2000.0), left, "Heavy", nearState);
+		   addWall(world, left, right, "Light");
+		   if (farState) {
+			   addWall(world, right, towards(right, 8.0, 2000.0), "Heavy", *farState);
+		   }
+		   return openingRange(world, nearHeavy, kDoorWidthMeters, marginMeters());
+	};
+
+	const std::optional<OpeningRange> withoutFar = rangeOnNearHeavy(std::nullopt, FoundationState::Built);
+	ASSERT_TRUE(withoutFar.has_value());
+	EXPECT_NEAR(withoutFar->trimAtV1Meters, 0.532, 1e-6);
+	EXPECT_FALSE(withoutFar->fits());
+
+	const std::optional<OpeningRange> farBlueprint = rangeOnNearHeavy(FoundationState::Blueprint, FoundationState::Built);
+	ASSERT_TRUE(farBlueprint.has_value());
+	EXPECT_EQ(farBlueprint->trimAtV0Meters, withoutFar->trimAtV0Meters);
+	EXPECT_EQ(farBlueprint->trimAtV1Meters, withoutFar->trimAtV1Meters);
+	EXPECT_EQ(farBlueprint->minT, withoutFar->minT);
+	EXPECT_EQ(farBlueprint->maxT, withoutFar->maxT);
+
+	const std::optional<OpeningRange> farBuilt = rangeOnNearHeavy(FoundationState::Built, FoundationState::Built);	ASSERT_TRUE(farBuilt.has_value());
+	ASSERT_TRUE(farBuilt->fits());
+	EXPECT_DOUBLE_EQ(farBuilt->trimAtV1Meters, 0.0);
+	EXPECT_NEAR(farBuilt->minT * farBuilt->lengthMeters, 0.75, 1e-3);
+	EXPECT_NEAR(farBuilt->maxT * farBuilt->lengthMeters, 1.25, 1e-3);
+
+	// An unbuilt wall is measured against the graph nav will see once it is built: the
+	// near Heavy wall and the built Light wall only, until the far wall is built too.
+	const std::optional<OpeningRange> bothBlueprints = rangeOnNearHeavy(FoundationState::Blueprint, FoundationState::Blueprint);
+	ASSERT_TRUE(bothBlueprints.has_value());
+	EXPECT_EQ(bothBlueprints->minT, withoutFar->minT);
+	EXPECT_EQ(bothBlueprints->maxT, withoutFar->maxT);
+	const std::optional<OpeningRange> nearBlueprint = rangeOnNearHeavy(FoundationState::Built, FoundationState::Blueprint);
+	ASSERT_TRUE(nearBlueprint.has_value());
+	EXPECT_EQ(nearBlueprint->minT, farBuilt->minT);
+	EXPECT_EQ(nearBlueprint->maxT, farBuilt->maxT);
+}
+
 // An opening on the rescued wall itself. A wall the miters overrun is shorter than
 // two miter-bound trims (a little under 1.2 m), too short for a door or a window with
 // their margins, so the door is refused for its length, measured along the stepped
@@ -294,4 +329,37 @@ TEST_F(OpeningRangeTest, NoRangeOnAWallInARejectedGraph) {
 	EXPECT_FALSE(openingRange(world, shortWall, kDoorWidthMeters, marginMeters()).has_value());
 	const ConstructionValidator validator(ConstructionRegistry::Get().constraints(), world);
 	EXPECT_EQ(validator.validateOpening(longWall, 0.5F, "Door", "Wood").code, ValidationCode::OpeningSegmentInvalid);
+}
+
+// A 0.15 m Light stub off a Standard wall at 60 degrees: the acute corner's trims overrun
+// the stub, so the offsetter rejects the two. A third wall at 55 degrees splits that
+// corner and the three resolve. With the third wall a blueprint the drawn graph is
+// accepted but nav's built graph is rejected, and nav keeps those walls whole, so no
+// door goes on the Standard wall until the third wall is built.
+TEST_F(OpeningRangeTest, NoRangeWhileNavsBuiltGraphIsRejected) {
+	const Vec2i64 corner{0, 0};
+	const auto	  rangeOnLongWall = [&](std::optional<FoundationState> thirdState) {
+		   ConstructionWorld world;
+		   addWall(world, corner, {150, 0}, "Light");
+		   const SegmentId longWall = addWall(world, corner, towards(corner, 60.0, 4000.0), "Standard");
+		   if (thirdState) {
+			   addWall(world, corner, towards(corner, 55.0, 4000.0), "Light", *thirdState);
+		   }
+		   return openingRange(world, longWall, kDoorWidthMeters, marginMeters());
+	};
+	const auto resolves = [&](bool withThird) {
+		std::vector<geometry::WallSegment> walls{{corner, {150, 0}, 75}, {corner, towards(corner, 60.0, 4000.0), 100}};
+		if (withThird) {
+			walls.push_back({corner, towards(corner, 55.0, 4000.0), 75});
+		}
+		return geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit).status == geometry::OffsetStatus::Ok;
+	};
+	ASSERT_FALSE(resolves(false));
+	ASSERT_TRUE(resolves(true));
+
+	EXPECT_FALSE(rangeOnLongWall(std::nullopt).has_value());
+	EXPECT_FALSE(rangeOnLongWall(FoundationState::Blueprint).has_value());
+	const std::optional<OpeningRange> thirdBuilt = rangeOnLongWall(FoundationState::Built);
+	ASSERT_TRUE(thirdBuilt.has_value());
+	EXPECT_TRUE(thirdBuilt->fits());
 }
