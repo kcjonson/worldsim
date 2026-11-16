@@ -7,6 +7,8 @@
 #include <world/camera/WorldCamera.h>
 
 #include <array>
+#include <cstddef>
+#include <cstdint>
 
 namespace world_sim {
 
@@ -14,6 +16,8 @@ namespace world_sim {
 
 		// Each tool's guides keep their own draw ids and layer key: the wall preview
 		// draws its band and centerlines on keys above the foundation preview's.
+		static_assert(construction::kMaxSnapGuides == 2, "the guide draw ids below need extending to match kMaxSnapGuides");
+
 		struct GuideLayer {
 			std::array<const char*, construction::kMaxSnapGuides> ids;
 			std::int32_t										  key;

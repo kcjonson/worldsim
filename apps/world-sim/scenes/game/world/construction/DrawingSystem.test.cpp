@@ -252,6 +252,15 @@ TEST_F(DrawingSnapMemoTest, SwitchingToolsRecomputes) {
 	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before + 2);
 }
 
+TEST_F(DrawingSnapMemoTest, SwitchingToolsRecomputesWhenNothingElseInTheKeyChanged) {
+	drawing->activateFoundationTool();
+	drawing->setActiveThicknessPreset("NoSuchPreset");
+	hover(kSeenPoint);
+	const std::uint64_t before = drawing->snapEvaluationCount();
+	drawing->activateWallTool();
+	EXPECT_EQ(evaluationsAfterHoveringTwice(kSeenPoint), before + 1);
+}
+
 namespace {
 
 	// The wall tool drawing a room inside a built foundation on seen ground, through mouse input

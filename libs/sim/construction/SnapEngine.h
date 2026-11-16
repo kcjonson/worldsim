@@ -30,7 +30,7 @@
 // kMinClosingWallChainPoints points:
 //   origin-close > wall endpoint (existing wall vertex) > foundation vertex >
 //   point along an existing wall segment (T-junction anywhere) >
-//   foundation edge > angle snap off the previous chain point > raw.
+//   foundation edge > world-axis guide > angle snap off the previous chain point > raw.
 // A wall endpoint and a foundation vertex are both "vertex" targets but the wall
 // endpoint wins so a chain continues/joins an existing wall in preference to
 // merely landing on a foundation corner. The snapped point of an endpoint or
@@ -91,8 +91,11 @@ namespace construction {
 		GuideRelation	   relation = GuideRelation::Parallel;
 		bool			   rightAngle = false;
 		::Foundation::Vec2 rightAngleEdgeDirection{0.0F, 0.0F}; // unit, from `from` along the perpendicular edge
-		float			   distanceFromNodeMeters = 0.0F;		  // |to - from|
-		bool			   throughPreviousPoint = false;		  // the node is the last placed point
+		// Measured from the guide's own node; it is the segment's length only when throughPreviousPoint.
+		float distanceFromNodeMeters = 0.0F; // |to - from|
+		// True when the node is within 1 mm of the last placed point: with one point placed a guide
+		// through it is true, with three or more a guide through the FIRST point is false.
+		bool throughPreviousPoint = false;
 	};
 
 	inline constexpr std::size_t kMaxSnapGuides = 2;
@@ -185,8 +188,8 @@ namespace construction {
 
 	/// Everything a snap reads besides the placed points and the cursor.
 	struct SnapInput {
-		const DrawingAids& aids;
-		bool			   freeform = false; // Alt: drop the guides and the angle step
+		DrawingAids aids;
+		bool		freeform = false; // Alt: drop the guides and the angle step
 		// Overrides the configured origin-close radius when non-negative; the tools pass
 		// a zoom-stable radius so the close stays reachable when zoomed out.
 		float originCloseRadiusMeters = -1.0F;
