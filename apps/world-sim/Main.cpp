@@ -14,25 +14,38 @@
 #include <world/AppIdentity.h>
 #include <world/rendering/GlVersion.h>
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdio>
+#include <filesystem>
 #include <memory>
+#include <span>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace {
 
 	constexpr const char* kTitle = "World-Sim";
 	constexpr int		  kDevServerPort = 8081;
+	constexpr const char* kSettingsFile = "settings.json";
+	// A run that neither reads nor saves the player's settings, so the window opens at its default size and the
+	// interface at 100%: what the perf captures run in.
+	constexpr std::string_view kNoSettingsFlag = "--no-settings";
 
 } // namespace
 
 int main(int argc, char* argv[]) {
 	const app::CommandLine commandLine = app::parseCommandLine(argc, argv);
+	const bool noSettings = std::ranges::any_of(std::span(argv, static_cast<std::size_t>(argc)).subspan(1), [](const char* argument) {
+		return argument == kNoSettingsFlag;
+	});
 	if (commandLine.help) {
 		std::printf("Usage: %s [options]\n", kTitle);
 		std::printf("Options:\n");
 		std::printf("  --scene=<name>       Load specific scene\n");
 		std::printf("  --http-port <port>   Enable HTTP debug server on port\n");
+		std::printf("  --no-settings        Neither read nor save the settings file: default window, 100%% interface\n");
 		std::printf("  --help               Show this help message\n");
 	}
 	if (commandLine.help || !commandLine.valid) {
@@ -58,7 +71,7 @@ int main(int argc, char* argv[]) {
 		 .fontAtlases = theme::kFontAtlases,
 		 .defaultFont = theme::fontDefault,
 		 .clearColor = {0.1F, 0.1F, 0.15F, 1.0F},
-		 .settingsFile = "settings.json",
+		 .settingsFile = noSettings ? std::filesystem::path() : std::filesystem::path(kSettingsFile),
 		 // On wherever the server is compiled in, so a Release build, which has none, logs nothing
 		 .devServer =
 			 {.enabled = app::kDevServerCompiledIn || commandLine.httpPort.has_value(),

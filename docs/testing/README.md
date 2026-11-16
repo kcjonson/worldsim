@@ -139,6 +139,14 @@ sessions as much as the change. Decided 2026-11-10, after sessions lost days to 
 under load and to re-runs chasing regressions that were never there. The GPU hold keeps the card
 at P0; it does nothing about another process taking the card or the cores.
 
+### Capture conditions
+
+Every capture, a session's and the nightly batch's, runs world-sim with `--no-settings`: the player's
+`settings.json` is neither read nor saved, so the window opens at its default size, 80% of the primary
+monitor's work area (3072x1728 on this machine), with the interface at 100% and vsync on until the capture
+turns it off. Nothing the capture changes, the vsync it sets included, reaches the player's settings.
+`scripts/perf.mjs` passes the flag where it launches the game; a session launching its own passes it too.
+
 ### Timing your own work in a session
 
 Allowed when the change calls for it, with three conditions.
@@ -154,7 +162,7 @@ Allowed when the change calls for it, with three conditions.
 3. **Budgeted.** Every capture launches the game on Kevin's desktop and holds the machine while it
    runs. Decide the launches before the first one and stop when the question is answered.
 
-With world-sim in the game scene on your port, once on `main` and once on the branch:
+With world-sim in the game scene on your port, started with `--no-settings`, once on `main` and once on the branch:
 
 ```
 node scripts/perf.mjs capture --port <PORT> --view river --zooms 3,1.5 --no-scroll --out <file>.json
