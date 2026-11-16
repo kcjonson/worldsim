@@ -117,11 +117,7 @@ namespace {
 			ui::Ref<ui::Component> list = column.addChild<ui::Component>({
 				.id = "settings_list",
 				.size = {kRowWidth, ui::kAuto},
-				.layout =
-					{.display = ui::Display::Flex,
-					 .flexDirection = ui::FlexDirection::Column,
-					 .gap = space4,
-					 .flexGrow = 1.0F},
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = space4, .flexGrow = 1.0F},
 				.overflow = ui::Overflow::Scroll,
 			});
 
@@ -150,18 +146,17 @@ namespace {
 				.label = "Reset",
 				.variant = ui::ButtonVariant::Ghost,
 				.controlSize = ui::ControlSize::Sm,
-				.onPress =
-					[this] {
-						if (ui::SegmentedControl* choice = sizeChoice.get()) {
-							choice->setSelected(static_cast<int>(theme::nearestInterfaceSize(theme::kDefaultInterfaceSize)));
-						}
-						setInterfaceSize(theme::kDefaultInterfaceSize);
-					},
+				.onPress = [this] {
+					if (ui::SegmentedControl* choice = sizeChoice.get()) {
+						choice->setSelected(static_cast<int>(theme::nearestInterfaceSize(theme::kDefaultInterfaceSize)));
+					}
+					setInterfaceSize(theme::kDefaultInterfaceSize);
+				},
 			});
 			size.addChild<ui::Text>({
 				.id = "interface_size_line",
 				.style = description,
-				.text = "Scales menus, panels, and text. At 100% the interface fits the window.",
+				.text = "Scales menus, panels, and text. In a small window the smaller sizes stop where text would get too small to read.",
 				.wrap = true,
 			});
 
@@ -219,24 +214,9 @@ namespace {
 				drawing.guidesFromWorldAxes
 			);
 			addSwitch("drawing_crossings", "Crossings", "Snap to where two guides meet.", drawing.guideCrossings);
-			addSwitch(
-				"drawing_common_lengths",
-				"Common lengths",
-				"Match the lengths of edges already built.",
-				drawing.commonLengths
-			);
-			addSwitch(
-				"drawing_guide_distances",
-				"Guide distances",
-				"Show how far the cursor is along each guide.",
-				drawing.guideDistances
-			);
-			addSwitch(
-				"drawing_angle_readout",
-				"Angle readout",
-				"Show the angle of a corner that is not square.",
-				drawing.angleReadout
-			);
+			addSwitch("drawing_common_lengths", "Common lengths", "Match the lengths of edges already built.", drawing.commonLengths);
+			addSwitch("drawing_guide_distances", "Guide distances", "Show how far the cursor is along each guide.", drawing.guideDistances);
+			addSwitch("drawing_angle_readout", "Angle readout", "Show the angle of a corner that is not square.", drawing.angleReadout);
 			addSwitch(
 				"drawing_round_lengths",
 				"Round lengths to " + formatNumber(snapping.lengthIncrementMeters) + " m",
@@ -263,11 +243,10 @@ namespace {
 				.id = "drawing_grid_spacing",
 				.options = {"1 meter", "0.5 meters"},
 				.selected = drawing.rectangleGridSpacingMeters < 1.0F ? 1 : 0,
-				.onChange =
-					[&drawing](int index) {
-						drawing.rectangleGridSpacingMeters = index == 1 ? 0.5F : 1.0F;
-						LOG_INFO(Game, "Setting: rectangle grid spacing -> %g m", drawing.rectangleGridSpacingMeters);
-					},
+				.onChange = [&drawing](int index) {
+					drawing.rectangleGridSpacingMeters = index == 1 ? 0.5F : 1.0F;
+					LOG_INFO(Game, "Setting: rectangle grid spacing -> %g m", drawing.rectangleGridSpacingMeters);
+				},
 			});
 			grid.addChild<ui::Text>({
 				.id = "drawing_grid_line",
