@@ -1,48 +1,53 @@
 #pragma once
 
-#include <component/Container.h>
-#include <graphics/Rect.h>
+// MemoryTabView - the dossier's Memory tab: a summary row (locations known, sight range) over a
+// two-column grid of what the colonist remembers by category, each a name and a count badge over a few
+// of its entities and their positions.
+
+#include <ui/Component.h>
+#include <ui/shapes/Text.h>
 
 #include <string>
 #include <vector>
 
 namespace world_sim {
 
-/// A single known entity for Memory tab display
-struct MemoryEntity {
-	std::string name;     // e.g., "Berry Bush"
-	float x = 0.0F;       // Position
-	float y = 0.0F;
-};
+	struct MemoryEntity {
+		std::string name; // "Berry Bush"
+		float		x = 0.0F;
+		float		y = 0.0F;
+	};
 
-/// A category of known entities
-struct MemoryCategory {
-	std::string name;                    // e.g., "Food Sources"
-	std::vector<MemoryEntity> entities;
-	size_t count = 0;                    // Total count (may differ if truncated)
-};
+	struct MemoryCategory {
+		std::string				  name; // "Food Sources"
+		std::vector<MemoryEntity> entities;
+		size_t					  count = 0; // all of them, where entities may be truncated
+	};
 
-/// Data for Memory tab
-struct MemoryData {
-	std::vector<MemoryCategory> categories;
-	size_t totalKnown = 0;
-	float sightRadius = 30.0F;
-};
+	struct MemoryData {
+		std::vector<MemoryCategory> categories;
+		size_t						totalKnown = 0;
+		float						sightRadius = 30.0F;
+	};
 
-/// Memory tab content for ColonistDetailsDialog.
-///
-/// Mirrors the Salvage prototype's Memory panel: a summary row (locations known +
-/// sight range) over a 2-column grid of capability categories, each a name + count
-/// badge with a few sample entity rows. Manual-render, like the other dossier tabs.
-class MemoryTabView : public UI::Container {
-  public:
-	void create(const Foundation::Rect& contentBounds);
-	void update(const MemoryData& data);
-	void render() override;
+	class MemoryTabView : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
 
-  private:
-	Foundation::Rect contentBounds{};
-	MemoryData		 data_{};
-};
+		void update(const MemoryData& data);
+
+		[[nodiscard]] const char* typeName() const override { return "MemoryTabView"; }
+
+	  protected:
+		void onMount() override;
+
+	  private:
+		ui::Ref<ui::Text>	   knownValue;
+		ui::Ref<ui::Text>	   sightValue;
+		ui::Ref<ui::Component> leftColumn;
+		ui::Ref<ui::Component> rightColumn;
+	};
 
 } // namespace world_sim

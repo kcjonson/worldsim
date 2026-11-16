@@ -38,9 +38,8 @@ When you complete significant work (features, refactors, major fixes):
    - Edit `docs/development-log/README.md`
    - Add link under appropriate date section (newest first)
 
-4. **Update status.md:**
-   - Mark completed tasks
-   - Update "Current Focus" if applicable
+4. **Update Specboard:**
+   - Note the outcome on the item and set its status
 
 **Key principle:** Development log entries are immutable history. Don't edit old entries — create new ones if things change.
 
@@ -148,11 +147,11 @@ cmake --build build --config Debug
 
 # Run the fast suite in parallel (-j collapses wall time to the largest exe).
 # On Windows (multi-config) -C Debug is required; omit it on macOS/Linux.
-# Don't use "-L fast" — only world-tests carries labels, it would run one exe.
+# Don't use "-L fast" — only worldgen-tests carries labels, it would run one exe.
 ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13 --output-on-failure
 
 # One library's tests
-ctest --test-dir build -C Debug -R engine-tests --output-on-failure
+ctest --test-dir build -C Debug -R sim-tests --output-on-failure
 
 # Heavy worldgen bucket (slow; CI runs it only when worldgen paths change)
 ctest --test-dir build -C Debug -L heavy -j 4 --output-on-failure
@@ -164,23 +163,39 @@ it and silently disables caching for that target.
 
 ### Creating Scenes (in ui-sandbox)
 
-1. **Create scene class:**
+Scenes run on salal's scene stack and derive from its `app::Scene` (`<scene/Scene.h>`).
+
+1. **Create the scene** in `apps/ui-sandbox/scenes/NewScene.cpp`, and add it to the
+   executable in `apps/ui-sandbox/CMakeLists.txt`:
    ```cpp
-   class NewScene : public IScene {
-   public:
-       void OnEnter() override;
-       void OnExit() override;
-       void Update(float dt) override;
-       void Render() override;
-   };
+   #include "SceneTypes.h"
+   #include <scene/Scene.h>
+
+   namespace {
+   	constexpr const char* kSceneName = "new_scene";
+
+   	class NewScene : public app::Scene {
+   	  public:
+   		const char* name() const override { return kSceneName; }
+   		void		onEnter(app::App& app) override;		  // keep the App to switch scenes
+   		void		update(const app::FrameContext& frame) override; // frame.dt, frame.input
+   		void		render(float alpha) override;
+   		bool		handleEvent(const foundation::InputEvent& event) override; // input events, in order
+   	};
+   } // namespace
+
+   namespace ui_sandbox::scenes {
+   	extern const ui_sandbox::SceneInfo New = {kSceneName, []() { return std::make_unique<NewScene>(); }};
+   }
    ```
 
-2. **Register in SceneManager:**
-   ```cpp
-   sceneManager.RegisterScene("NewScene", std::make_unique<NewScene>());
-   ```
+2. **Add it to the scene list**: `X(New)` in `UI_SANDBOX_SCENES` (`apps/ui-sandbox/SceneTypes.h`).
+   It's added to the stack under its name, shows in the navigation menu, and
+   `--scene=new_scene` or `/api/control?action=scene&scene=new_scene` starts in it.
 
-3. **Add keyboard shortcut** (if desired) in main loop
+3. **Switch scenes** with `app.scenes().switchTo(name)`, a `SceneInfo`'s `name` (world-sim's
+   are `world_sim::scenes::MainMenu.name` and so on); keys are `theme::key(frame.input, foundation::Key::Escape)`
+   (`libs/theme/theme/Keys.h`), `.pressed()` for this frame's press and `.down` for held.
 
 ---
 
@@ -212,8 +227,8 @@ Full protocol: `/docs/technical/debugging-strategy.md`
 
 ### Using the Developer Client
 
-1. **Start application** (ui-sandbox or world-sim)
-2. **Open browser** to `http://localhost:8080` (or 8081/8082)
+1. **Start application** (world-sim, ui-sandbox or asset-manager; a Debug or RelWithDebInfo build, which has the dev server)
+2. **Open** the client's static page, `build/developer-client/index.html` (see `apps/developer-client/README.md`); it connects to world-sim on 8081 by default (ui-sandbox is 8090, asset-manager 8070)
 3. **View real-time metrics:**
    - Frame time graph
    - Memory usage
@@ -258,4 +273,4 @@ Full protocol: `/docs/technical/debugging-strategy.md`
 | View dev log | `docs/development-log/README.md` |
 | Check MVP scope | `docs/design/mvp-scope.md` |
 | Library decisions | `docs/technical/library-decisions.md` |
-| Project status | `docs/status.md` |
+| Project status | Specboard (board: Worldsim) |

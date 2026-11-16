@@ -230,7 +230,7 @@ The tracking document records which files have instrumentation. This code stays 
 |--------|----------------------|
 | Mark hypothesis "confirmed" | YES |
 | Remove debug instrumentation | YES |
-| Mark bug "fixed" in status.md | YES |
+| Mark bug done in Specboard | YES |
 | Merge debug branch to main | YES |
 
 ### How to Request Confirmation

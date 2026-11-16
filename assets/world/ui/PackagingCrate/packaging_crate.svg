@@ -1,28 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Packaging Crate - Open-top crate for packaged items -->
-<!-- ViewBox: 100x20 for 5:1 aspect ratio (1m width, 0.2m height) -->
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 20">
-  <!-- Back panel (visible above sides) -->
-  <rect x="2" y="0" width="96" height="4" fill="#8b7355"/>
-
-  <!-- Bottom of crate -->
-  <rect x="5" y="12" width="90" height="6" fill="#6b5344"/>
-
-  <!-- Left side panel -->
-  <polygon points="0,2 5,4 5,18 0,20" fill="#9b8365"/>
-
-  <!-- Right side panel -->
-  <polygon points="100,2 95,4 95,18 100,20" fill="#7b6355"/>
-
-  <!-- Front panel (lower) -->
-  <rect x="5" y="14" width="90" height="6" fill="#8b7355"/>
-
-  <!-- Wood plank lines (front) -->
-  <line x1="25" y1="14" x2="25" y2="20" stroke="#5b4334" stroke-width="0.5"/>
-  <line x1="50" y1="14" x2="50" y2="20" stroke="#5b4334" stroke-width="0.5"/>
-  <line x1="75" y1="14" x2="75" y2="20" stroke="#5b4334" stroke-width="0.5"/>
-
-  <!-- Corner posts -->
-  <rect x="3" y="2" width="4" height="18" fill="#5b4334"/>
-  <rect x="93" y="2" width="4" height="18" fill="#5b4334"/>
+<!-- Packaging crate, back layer: the side-view crate's back wall and interior, drawn behind the
+     packaged item. The front layer (packaging_crate_front.svg) draws over the item.
+     Both layers span exactly 0..100 x 0..75 (1.0 m x 0.75 m at worldHeight 0.75) so they
+     register; PackagedLayout.h's crate constants are these coordinates / 100. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 75" width="100" height="75">
+  <g id="outline">
+    <rect x="0" y="0" width="100" height="75" fill="#3a2a20"/>
+  </g>
+  <g id="back-wall">
+    <rect x="1.5" y="1.5" width="97" height="3.5" fill="#9b8365"/>
+    <rect x="3" y="5" width="94" height="68.5" fill="#4a3628"/>
+    <rect x="5" y="9" width="90" height="13" fill="#6b5344"/>
+    <rect x="5" y="25" width="90" height="13" fill="#634b3c"/>
+    <rect x="5" y="41" width="90" height="13" fill="#6b5344"/>
+    <rect x="5" y="57" width="90" height="10" fill="#634b3c"/>
+  </g>
+  <g id="floor">
+    <rect x="3" y="67" width="94" height="6.5" fill="#8b7355"/>
+  </g>
 </svg>

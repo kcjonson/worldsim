@@ -1,17 +1,19 @@
 // SDF Atlas Generator Tool
 // Generates multi-channel signed distance field atlases for fonts
 
-#include <msdfgen.h>
-#include <msdfgen-ext.h>
-#include <iostream>
-#include <fstream>
-#include <vector>
-#include <string>
-#include <cmath>
 #include <algorithm>
+#include <bit>
+#include <charconv>
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <iostream>
+#include <msdfgen-ext.h>
+#include <msdfgen.h>
+#include <string>
+#include <vector>
 
 struct GlyphData {
-	char character;
 	msdfgen::unicode_t unicode;
 	double advance;
 	msdfgen::Shape shape;
@@ -43,16 +45,311 @@ struct AtlasConfig {
 	const char* outputPath = "fonts/Roboto-SDF.png";
 	const char* metadataPath = "fonts/Roboto-SDF.json";
 
+	static constexpr int kMinAtlasSize = 64;
+	static constexpr int kMaxAtlasSize = 4096;
 	int atlasWidth = 512;
 	int atlasHeight = 512;
 	double pixelRange = 4.0;  // Distance field range in pixels
 	int glyphSize = 32;        // Size of each glyph in atlas (pixels)
 
-	// Character set to include (ASCII printable)
+	// Character set to include: ASCII printable, then the Latin-1 Supplement (U+00A0 to U+00FF).
+	// The Latin-1 range goes after the ASCII so the ASCII glyphs keep their cells.
 	const char* charset =
 		"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 		"0123456789 !@#$%^&*()_+-=[]{}|;':\",./<>?`~\\";
+	static constexpr msdfgen::unicode_t kLatin1First = 0xA0;
+	static constexpr msdfgen::unicode_t kLatin1Last = 0xFF;
 };
+
+namespace {
+
+	constexpr msdfgen::unicode_t kNoBreakSpace = 0xA0;
+
+	std::string codePointLabel(msdfgen::unicode_t unicode) {
+		char buffer[16];
+		std::snprintf(buffer, sizeof(buffer), "U+%04X", static_cast<unsigned>(unicode));
+		return buffer;
+	}
+
+	constexpr double kSide = 1e-9; // em either side of an edge, to tell which side the fill is on
+
+	// Nine decimals, far finer than the float the renderer reads, printed shortest, so a
+	// regenerated atlas diffs only where a glyph moved.
+	std::string number(double value) {
+		const double rounded = std::round(value * 1e9) / 1e9;
+		char		 buffer[32];
+		const auto	 result = std::to_chars(buffer, buffer + sizeof(buffer), rounded == 0.0 ? 0.0 : rounded);
+		return {buffer, result.ptr};
+	}
+
+	std::string bounds(double left, double bottom, double right, double top) {
+		return "{\"left\":" + number(left) + ",\"bottom\":" + number(bottom) + ",\"right\":" + number(right) + ",\"top\":" + number(top) +
+			   "}";
+	}
+
+	// Under the nonzero rule, which is how TrueType outlines fill.
+	bool isFilled(const msdfgen::Shape& shape, msdfgen::Point2 point) {
+		int winding = 0;
+		for (const msdfgen::Contour& contour : shape.contours) {
+			for (const msdfgen::EdgeHolder& edge : contour.edges) {
+				double	  x[3];
+				int		  dy[3];
+				const int crossings = edge->scanlineIntersections(x, dy, point.y);
+				for (int i = 0; i < crossings; ++i) {
+					winding += x[i] < point.x ? dy[i] : 0;
+				}
+			}
+		}
+		return winding != 0;
+	}
+
+	// Which side of the edge at t the fill lies on: 1 left, -1 right, 0 both or neither.
+	int fillSide(const msdfgen::Shape& shape, const msdfgen::EdgeSegment& edge, double t) {
+		const msdfgen::Point2  point = edge.point(t);
+		const msdfgen::Vector2 normal = edge.direction(t).getOrthonormal();
+		return static_cast<int>(isFilled(shape, point + kSide * normal)) - static_cast<int>(isFilled(shape, point - kSide * normal));
+	}
+
+	// Where a horizontal line at y enters and leaves the fill, left to right. Two contours that
+	// abut leave a gap of no width between them, which is no edge at all.
+	std::vector<double> fillEdges(const msdfgen::Shape& shape, double y) {
+		struct Crossing {
+			double x;
+			int	   dy;
+		};
+		std::vector<Crossing> crossings;
+		for (const msdfgen::Contour& contour : shape.contours) {
+			for (const msdfgen::EdgeHolder& edge : contour.edges) {
+				double	  x[3];
+				int		  dy[3];
+				const int count = edge->scanlineIntersections(x, dy, y);
+				for (int i = 0; i < count; ++i) {
+					crossings.push_back({x[i], dy[i]});
+				}
+			}
+		}
+		std::sort(crossings.begin(), crossings.end(), [](const Crossing& a, const Crossing& b) { return a.x < b.x; });
+		std::vector<double> edges;
+		int					winding = 0;
+		for (const Crossing& crossing : crossings) {
+			const bool wasFilled = winding != 0;
+			winding += crossing.dy;
+			if (wasFilled == (winding != 0)) {
+				continue;
+			}
+			if (!edges.empty() && crossing.x - edges.back() < kSide) {
+				edges.pop_back();
+			} else {
+				edges.push_back(crossing.x);
+			}
+		}
+		return edges;
+	}
+
+	struct BoundedEdge {
+		const msdfgen::EdgeSegment* segment;
+		double						left;
+		double						bottom;
+		double						right;
+		double						top;
+	};
+
+	// Whether edges[index] at t is outline: fill on one side of it only, and, where edges run along
+	// one another (two strokes of Roboto's 'A' share the apex's top), the first of them.
+	bool isOnOutline(const msdfgen::Shape& shape, const std::vector<BoundedEdge>& edges, size_t index, double t) {
+		const msdfgen::EdgeSegment& edge = *edges[index].segment;
+		if (fillSide(shape, edge, t) == 0) {
+			return false;
+		}
+		const msdfgen::Point2 point = edge.point(t);
+		for (size_t other = 0; other < index; ++other) {
+			const BoundedEdge& e = edges[other];
+			if (point.x < e.left - kSide || point.x > e.right + kSide || point.y < e.bottom - kSide || point.y > e.top + kSide) {
+				continue;
+			}
+			// Along it, not at the vertex it shares with this edge.
+			double param = 0.0;
+			if (std::abs(e.segment->signedDistance(point, param).distance) < kSide && param > 0.0 && param < 1.0) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// The part of the edge from t0 to t1, by de Casteljau.
+	msdfgen::EdgeSegment* subEdge(const msdfgen::EdgeSegment& edge, double t0, double t1) {
+		const int		degree = edge.type();
+		msdfgen::Point2 p[4];
+		std::copy_n(edge.controlPoints(), degree + 1, p);
+		for (int level = 1; level <= degree; ++level) {
+			for (int i = degree; i >= level; --i) {
+				p[i] = msdfgen::mix(p[i - 1], p[i], t1);
+			}
+		}
+		const double s = t0 / t1;
+		for (int level = 1; level <= degree; ++level) {
+			for (int i = 0; i <= degree - level; ++i) {
+				p[i] = msdfgen::mix(p[i], p[i + 1], s);
+			}
+		}
+		switch (degree) {
+			case 1:
+				return msdfgen::EdgeSegment::create(p[0], p[1], edge.color);
+			case 2:
+				return msdfgen::EdgeSegment::create(p[0], p[1], p[2], edge.color);
+			default:
+				return msdfgen::EdgeSegment::create(p[0], p[1], p[2], p[3], edge.color);
+		}
+	}
+
+	// msdfgen takes every edge for outline, so where contours overlap, or one crosses itself (as
+	// most of Roboto's do, the 'e' among them), the edges running inside the fill put a false
+	// outline in the field: holes in the stroke at the join and a smudge beside it. This cuts each
+	// edge where it enters or leaves the fill, drops the parts inside, and chains the rest into
+	// closed contours: the outline the fill has. Each part keeps its direction, so the fill stays
+	// on the side msdfgen expects. Returns false, the shape untouched, when no edge runs inside
+	// the fill for more than a cusp's width, and false with an error, the shape untouched too, when
+	// the outline it built does not fill what the contours did or runs the wrong way round.
+	bool resolveOverlaps(msdfgen::Shape& shape, std::string& error) {
+		constexpr double		 kStep = 0.001;	  // em between samples along an edge
+		constexpr double		 kEnd = 1e-6;	  // em short of a vertex, for the samples at an edge's ends
+		constexpr double		 kSliver = 1e-6;  // em: a part this short has no direction to speak of
+		constexpr double		 kOverlap = 1e-4; // em a dropped part has to run to be an overlap; a cusp drops less
+		constexpr double		 kJoin = 1e-4;	  // em: the widest gap the chain bridges, as a tangent contact leaves
+		std::vector<BoundedEdge> edges;
+		for (const msdfgen::Contour& contour : shape.contours) {
+			for (const msdfgen::EdgeHolder& edge : contour.edges) {
+				BoundedEdge& bounded = edges.emplace_back();
+				bounded.segment = edge;
+				const msdfgen::Point2 start = edge->point(0);
+				bounded.left = bounded.right = start.x;
+				bounded.bottom = bounded.top = start.y;
+				edge->bound(bounded.left, bounded.bottom, bounded.right, bounded.top);
+			}
+		}
+
+		std::vector<msdfgen::EdgeHolder> parts;
+		bool							 overlaps = false;
+		for (size_t index = 0; index < edges.size(); ++index) {
+			const BoundedEdge&			edge = edges[index];
+			const msdfgen::EdgeSegment& segment = *edge.segment;
+			const double				extent = std::hypot(edge.right - edge.left, edge.top - edge.bottom);
+			const int					steps = std::max(8, static_cast<int>(std::ceil(extent / kStep)));
+			// Step centres, and each end short of its vertex by kEnd along the edge times its degree
+			// (msdfgen's direction is the derivative over the degree), where a contour often starts
+			// inside another.
+			const double		startT = std::min(kEnd / segment.direction(0).length(), 0.25 / steps);
+			const double		endT = std::min(kEnd / segment.direction(1).length(), 0.25 / steps);
+			std::vector<double> ts{startT};
+			for (int i = 0; i < steps; ++i) {
+				ts.push_back((i + 0.5) / steps);
+			}
+			ts.push_back(1.0 - endT);
+			std::vector<char> outline(ts.size());
+			for (size_t i = 0; i < ts.size(); ++i) {
+				outline[i] = isOnOutline(shape, edges, index, ts[i]);
+			}
+			std::vector<double> cuts{0.0};
+			for (size_t i = 0; i + 1 < ts.size(); ++i) {
+				if (outline[i] == outline[i + 1]) {
+					continue;
+				}
+				double lo = ts[i];
+				double hi = ts[i + 1];
+				while (hi - lo > 1e-12) {
+					const double mid = 0.5 * (lo + hi);
+					(isOnOutline(shape, edges, index, mid) == static_cast<bool>(outline[i]) ? lo : hi) = mid;
+				}
+				cuts.push_back(0.5 * (lo + hi));
+			}
+			cuts.push_back(1.0);
+			bool keep = outline[0] != 0;
+			for (size_t j = 0; j + 1 < cuts.size(); ++j, keep = !keep) {
+				if (!keep) {
+					overlaps = overlaps || (segment.point(cuts[j + 1]) - segment.point(cuts[j])).length() >= kOverlap;
+				} else if (cuts.size() == 2) {
+					parts.emplace_back(segment.clone());
+				} else {
+					msdfgen::EdgeHolder part(subEdge(segment, cuts[j], cuts[j + 1]));
+					// A sliver left by a crossing at a vertex would have no direction; the chain
+					// below steps over the gap it leaves.
+					if ((part->point(1) - part->point(0)).length() >= kSliver) {
+						parts.push_back(std::move(part));
+					}
+				}
+			}
+		}
+		if (!overlaps) {
+			return false;
+		}
+
+		msdfgen::Shape outlined;
+		outlined.inverseYAxis = shape.inverseYAxis;
+		std::vector<char> used(parts.size());
+		for (size_t first = 0; first < parts.size(); ++first) {
+			if (used[first]) {
+				continue;
+			}
+			msdfgen::Contour& contour = outlined.addContour();
+			size_t			  current = first;
+			for (;;) {
+				used[current] = 1;
+				contour.addEdge(std::move(parts[current]));
+				// On to the nearest free start, or round to this contour's own if that is nearer.
+				const msdfgen::Point2 tip = contour.edges.back()->point(1);
+				size_t				  next = parts.size();
+				double				  gap = contour.edges.size() > 1 ? (tip - contour.edges.front()->point(0)).length() : kJoin;
+				for (size_t k = 0; k < parts.size(); ++k) {
+					if (!used[k] && (parts[k]->point(0) - tip).length() < gap) {
+						next = k;
+						gap = (parts[k]->point(0) - tip).length();
+					}
+				}
+				if (gap >= kJoin) {
+					error = "an outline part ends where no other starts";
+					return false;
+				}
+				if (next == parts.size()) {
+					contour.edges.front()->moveStartPoint(tip);
+					break;
+				}
+				parts[next]->moveStartPoint(tip);
+				current = next;
+			}
+		}
+
+		// The outline has to fill what the contours did, row by row across the glyph, and keep the
+		// fill on the side of each contour that the font's edges have it.
+		const msdfgen::Shape::Bounds bounds = shape.getBounds();
+		constexpr int				 kRows = 256;
+		for (int row = 0; row < kRows; ++row) {
+			const double			  y = bounds.b + (bounds.t - bounds.b) * (row + 0.37) / kRows;
+			const std::vector<double> before = fillEdges(shape, y);
+			const std::vector<double> after = fillEdges(outlined, y);
+			bool					  same = before.size() == after.size();
+			for (size_t k = 0; same && k < before.size(); ++k) {
+				same = std::abs(before[k] - after[k]) <= kJoin;
+			}
+			if (!same) {
+				error = "the outline does not fill what the contours did";
+				return false;
+			}
+		}
+		int side = 0;
+		for (const BoundedEdge& edge : edges) {
+			side += fillSide(shape, *edge.segment, 0.5);
+		}
+		for (const msdfgen::Contour& contour : outlined.contours) {
+			if (fillSide(outlined, *contour.edges.front(), 0.5) * side <= 0) {
+				error = "an outline contour runs the wrong way round";
+				return false;
+			}
+		}
+		shape = std::move(outlined);
+		return true;
+	}
+
+} // namespace
 
 int main(int argc, char** argv) {
 	AtlasConfig config;
@@ -69,8 +366,9 @@ int main(int argc, char** argv) {
 		} else if (arg == "--size" && i + 1 < argc) {
 			try {
 				int size = std::stoi(argv[++i]);
-				if (size < 64 || size > 4096) {
-					std::cerr << "Error: Atlas size must be between 64 and 4096 pixels\n";
+				if (size < AtlasConfig::kMinAtlasSize || size > AtlasConfig::kMaxAtlasSize) {
+					std::cerr << "Error: Atlas size must be between " << AtlasConfig::kMinAtlasSize << " and " << AtlasConfig::kMaxAtlasSize
+							  << " pixels\n";
 					return 1;
 				}
 				config.atlasWidth = config.atlasHeight = size;
@@ -84,7 +382,7 @@ int main(int argc, char** argv) {
 			std::cout << "  --font <path>      Input font file (default: fonts/Roboto-Regular.ttf)\n";
 			std::cout << "  --output <path>    Output PNG file (default: fonts/Roboto-SDF.png)\n";
 			std::cout << "  --metadata <path>  Output JSON file (default: fonts/Roboto-SDF.json)\n";
-			std::cout << "  --size <pixels>    Atlas size (default: 512)\n";
+			std::cout << "  --size <pixels>    Atlas width and starting height (default: 512); the height grows to fit the glyphs\n";
 			std::cout << "  --help             Show this help\n";
 			return 0;
 		}
@@ -129,12 +427,20 @@ int main(int argc, char** argv) {
 	std::vector<GlyphData> glyphs;
 	int glyphCount = 0;
 
-	for (const char* p = config.charset; *p; ++p) {
-		char c = *p;
-		msdfgen::unicode_t unicode = static_cast<msdfgen::unicode_t>(c);
+	// The characters whose overlapping contours were resolved, and those the font lacks, for the summary
+	std::vector<msdfgen::unicode_t> resolvedGlyphs;
+	std::vector<msdfgen::unicode_t> missingGlyphs;
 
+	std::vector<msdfgen::unicode_t> codePoints;
+	for (const char* p = config.charset; *p; ++p) {
+		codePoints.push_back(static_cast<msdfgen::unicode_t>(*p));
+	}
+	for (msdfgen::unicode_t unicode = AtlasConfig::kLatin1First; unicode <= AtlasConfig::kLatin1Last; ++unicode) {
+		codePoints.push_back(unicode);
+	}
+
+	for (const msdfgen::unicode_t unicode : codePoints) {
 		GlyphData glyph;
-		glyph.character = c;
 		glyph.unicode = unicode;
 
 		// Load glyph shape
@@ -151,10 +457,19 @@ int main(int argc, char** argv) {
 			// Skip whitespace glyphs (they have no shape)
 			if (glyph.shape.contours.empty()) {
 				// Still add whitespace characters for metadata (like space)
-				if (c == ' ' || c == '\t') {
+				if (unicode == ' ' || unicode == kNoBreakSpace) {
 					glyphs.push_back(glyph);
 				}
 				continue;
+			}
+
+			// A glyph that does not resolve keeps the font's contours, and its specks with them.
+			std::string error;
+			if (resolveOverlaps(glyph.shape, error)) {
+				resolvedGlyphs.push_back(unicode);
+			} else if (!error.empty()) {
+				std::cerr << "WARNING: " << config.fontPath << ": could not resolve the overlapping contours of " << codePointLabel(unicode) << " (" << error
+						  << "), so it keeps the font's\n";
 			}
 
 			// Apply edge coloring for MSDF
@@ -162,10 +477,26 @@ int main(int argc, char** argv) {
 
 			glyphs.push_back(glyph);
 			glyphCount++;
+		} else {
+			missingGlyphs.push_back(unicode);
 		}
 	}
 
 	std::cout << "Loaded " << glyphCount << " glyphs\n";
+	if (!resolvedGlyphs.empty()) {
+		std::cout << "Overlapping contours resolved in " << resolvedGlyphs.size() << ":";
+		for (const msdfgen::unicode_t unicode : resolvedGlyphs) {
+			std::cout << " " << codePointLabel(unicode);
+		}
+		std::cout << "\n";
+	}
+	if (!missingGlyphs.empty()) {
+		std::cout << "Not in the font (" << missingGlyphs.size() << "):";
+		for (const msdfgen::unicode_t unicode : missingGlyphs) {
+			std::cout << " " << codePointLabel(unicode);
+		}
+		std::cout << "\n";
+	}
 
 	if (glyphs.empty()) {
 		std::cerr << "ERROR: No glyphs loaded\n";
@@ -174,35 +505,81 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	// Pack glyphs into atlas using simple grid layout
-	int glyphsPerRow = config.atlasWidth / config.glyphSize;
+	// Atlas texels per em, the same for every glyph (see the distance field loop below)
+	const double uniformScale = static_cast<double>(config.glyphSize) / metrics.emSize;
+
+	// Glyphs sit centred in glyphSize cells, in charset order. The renderer reads a glyph's field
+	// out to half the distance range past its bounds, plus half a texel of bilinear footprint
+	// (salal's FontRenderer::generateGlyphQuads pads each quad by the half range), and that has to
+	// lie in the glyph's own cell: one without the room (parentheses, brackets, '|', '$', 'j')
+	// picked up the cells either side of it, or was cut off at its own edge. Such a glyph gets a
+	// cell grown by whole texels on each side, which keeps it where it was on the texel grid, on
+	// shelves after the grid's rows (above them in the PNG, the bitmap being y-up); its grid cell
+	// stays empty, so no other glyph moves. salal's FontRenderer::crampedGlyphs checks the same
+	// reach when it loads the atlas: a glyph left short of it is a warning naming the glyphs, and
+	// fails theme-tests' FontAtlases.test.cpp.
+	const double reach = config.pixelRange / 2.0 + 0.5;
+
+	const auto cellFor = [&](const GlyphData& glyph) {
+		const double extent = std::max(glyph.planeRight - glyph.planeLeft, glyph.planeTop - glyph.planeBottom) * uniformScale;
+		const double shortfall = std::max(0.0, extent + 2.0 * reach - config.glyphSize);
+		return config.glyphSize + 2 * static_cast<int>(std::ceil(shortfall / 2.0));
+	};
+
 	int currentX = 0;
 	int currentY = 0;
-
+	std::vector<GlyphData*> tallGlyphs;
 	for (auto& glyph : glyphs) {
 		if (glyph.shape.contours.empty()) {
 			// Whitespace - no atlas space needed
 			continue;
 		}
-
+		if (currentX + config.glyphSize > config.atlasWidth) {
+			currentX = 0;
+			currentY += config.glyphSize;
+		}
 		glyph.atlasX = currentX;
 		glyph.atlasY = currentY;
 		glyph.atlasWidth = config.glyphSize;
 		glyph.atlasHeight = config.glyphSize;
-
 		currentX += config.glyphSize;
-		if (currentX + config.glyphSize > config.atlasWidth) {
-			currentX = 0;
-			currentY += config.glyphSize;
-
-			if (currentY + config.glyphSize > config.atlasHeight) {
-				std::cerr << "WARNING: Atlas too small for all glyphs\n";
-				break;
-			}
+		if (cellFor(glyph) > config.glyphSize) {
+			tallGlyphs.push_back(&glyph);
 		}
 	}
 
-	std::cout << "Glyphs packed into atlas\n";
+	currentX = 0;
+	currentY += config.glyphSize;
+	int shelfHeight = 0;
+	for (GlyphData* glyph : tallGlyphs) {
+		const int cell = cellFor(*glyph);
+		if (currentX + cell > config.atlasWidth) {
+			currentX = 0;
+			currentY += shelfHeight;
+			shelfHeight = 0;
+		}
+		glyph->atlasX = currentX;
+		glyph->atlasY = currentY;
+		glyph->atlasWidth = cell;
+		glyph->atlasHeight = cell;
+		currentX += cell;
+		shelfHeight = std::max(shelfHeight, cell);
+	}
+
+	// Height grows past the requested one, to the smallest power of two that fits, when the glyphs need it: the
+	// width, and so every cell's place on the grid, stays as it was.
+	const int requiredHeight = currentY + shelfHeight;
+	if (requiredHeight > config.atlasHeight) {
+		config.atlasHeight = static_cast<int>(std::bit_ceil(static_cast<unsigned>(requiredHeight)));
+	}
+	if (config.atlasHeight > AtlasConfig::kMaxAtlasSize) {
+		std::cerr << "ERROR: Atlas too small for all glyphs\n";
+		msdfgen::destroyFont(font);
+		msdfgen::deinitializeFreetype(ft);
+		return 1;
+	}
+
+	std::cout << "Glyphs packed into atlas (" << tallGlyphs.size() << " in larger cells)\n";
 
 	// Create atlas bitmap
 	msdfgen::Bitmap<float, 3> atlas(config.atlasWidth, config.atlasHeight);
@@ -230,7 +607,6 @@ int main(int argc, char** argv) {
 	// For glyphSize=32 and emSize=1.0: scale = 32.0
 	// This means: 1 EM = 32 pixels in atlas
 	// Example: A glyph 0.6 EM wide occupies 0.6 * 32 = 19.2 pixels in atlas
-	double uniformScale = static_cast<double>(config.glyphSize) / metrics.emSize;
 
 	int processedCount = 0;
 	for (auto& glyph : glyphs) {
@@ -311,83 +687,46 @@ int main(int argc, char** argv) {
 		return 1;
 	}
 
-	jsonFile << "{\n";
-	jsonFile << "  \"atlas\": {\n";
-	jsonFile << "    \"type\": \"msdf\",\n";
-	jsonFile << "    \"distanceRange\": " << config.pixelRange << ",\n";
-	jsonFile << "    \"size\": " << config.glyphSize << ",\n";
-	jsonFile << "    \"width\": " << config.atlasWidth << ",\n";
-	jsonFile << "    \"height\": " << config.atlasHeight << "\n";
-	jsonFile << "  },\n";
-	jsonFile << "  \"metrics\": {\n";
-	jsonFile << "    \"emSize\": " << metrics.emSize << ",\n";
-	jsonFile << "    \"ascender\": " << metrics.ascenderY << ",\n";
-	jsonFile << "    \"descender\": " << metrics.descenderY << ",\n";
-	jsonFile << "    \"lineHeight\": " << metrics.lineHeight << "\n";
-	jsonFile << "  },\n";
-	jsonFile << "  \"glyphs\": {\n";
+	// msdf-atlas-gen's layout, which salal's FontRenderer reads: glyphs by code point, atlas bounds
+	// in pixels from the image's bottom row. Both bounds hold the half of the distance range the
+	// edge fades over, the atlas bounds clamped to the image. One glyph a line, so a regenerated
+	// atlas diffs by glyph.
+	const double halfRange = config.pixelRange * 0.5;
+	const double padEm = halfRange / config.glyphSize;
+	const double width = config.atlasWidth;
+	const double height = config.atlasHeight;
 
-	bool first = true;
+	std::vector<const GlyphData*> ordered;
 	for (const auto& glyph : glyphs) {
-		if (!first) jsonFile << ",\n";
-		first = false;
-
-		// Escape special JSON characters
-		std::string charStr;
-		char c = glyph.character;
-		if (c == '\"') charStr = "\\\"";
-		else if (c == '\\') charStr = "\\\\";
-		else if (c == '\n') charStr = "\\n";
-		else if (c == '\r') charStr = "\\r";
-		else if (c == '\t') charStr = "\\t";
-		else charStr = std::string(1, c);
-
-		jsonFile << "    \"" << charStr << "\": {\n";
-
-		// Atlas cell coordinates (normalized 0-1) - the full allocated cell
-		if (!glyph.shape.contours.empty()) {
-			double normX = static_cast<double>(glyph.atlasX) / config.atlasWidth;
-			double normY = static_cast<double>(glyph.atlasY) / config.atlasHeight;
-			double normW = static_cast<double>(glyph.atlasWidth) / config.atlasWidth;
-			double normH = static_cast<double>(glyph.atlasHeight) / config.atlasHeight;
-
-			jsonFile << "      \"atlas\": {";
-			jsonFile << "\"x\": " << normX << ", ";
-			jsonFile << "\"y\": " << normY << ", ";
-			jsonFile << "\"width\": " << normW << ", ";
-			jsonFile << "\"height\": " << normH << "},\n";
-
-			// Atlas bounds (normalized 0-1) - actual glyph content within the cell
-			// Reference: https://github.com/Chlumsky/msdf-atlas-gen/issues/2
-			// These are the pixel coordinates where the actual glyph is rendered
-			double atlasBoundsLeft = (glyph.atlasX + glyph.atlasBoundsLeft) / config.atlasWidth;
-			double atlasBoundsBottom = (glyph.atlasY + glyph.atlasBoundsBottom) / config.atlasHeight;
-			double atlasBoundsRight = (glyph.atlasX + glyph.atlasBoundsRight) / config.atlasWidth;
-			double atlasBoundsTop = (glyph.atlasY + glyph.atlasBoundsTop) / config.atlasHeight;
-
-			jsonFile << "      \"atlasBounds\": {";
-			jsonFile << "\"left\": " << atlasBoundsLeft << ", ";
-			jsonFile << "\"bottom\": " << atlasBoundsBottom << ", ";
-			jsonFile << "\"right\": " << atlasBoundsRight << ", ";
-			jsonFile << "\"top\": " << atlasBoundsTop << "},\n";
-
-			jsonFile << "      \"plane\": {";
-			jsonFile << "\"left\": " << glyph.planeLeft << ", ";
-			jsonFile << "\"bottom\": " << glyph.planeBottom << ", ";
-			jsonFile << "\"right\": " << glyph.planeRight << ", ";
-			jsonFile << "\"top\": " << glyph.planeTop << "},\n";
-		} else {
-			// Whitespace - no atlas coordinates
-			jsonFile << "      \"atlas\": null,\n";
-			jsonFile << "      \"atlasBounds\": null,\n";
-			jsonFile << "      \"plane\": null,\n";
-		}
-
-		jsonFile << "      \"advance\": " << glyph.advance << "\n";
-		jsonFile << "    }";
+		ordered.push_back(&glyph);
 	}
+	std::sort(ordered.begin(), ordered.end(), [](const GlyphData* a, const GlyphData* b) { return a->unicode < b->unicode; });
 
-	jsonFile << "\n  }\n";
+	jsonFile << "{\n";
+	jsonFile << "\t\"atlas\": {\"type\":\"msdf\",\"distanceRange\":" << number(config.pixelRange)
+			 << ",\"distanceRangeMiddle\":0,\"size\":" << config.glyphSize << ",\"width\":" << config.atlasWidth
+			 << ",\"height\":" << config.atlasHeight << ",\"yOrigin\":\"bottom\"},\n";
+	jsonFile << "\t\"metrics\": {\"emSize\":" << number(metrics.emSize) << ",\"lineHeight\":" << number(metrics.lineHeight)
+			 << ",\"ascender\":" << number(metrics.ascenderY) << ",\"descender\":" << number(metrics.descenderY) << "},\n";
+	jsonFile << "\t\"glyphs\": [\n";
+	for (std::size_t i = 0; i < ordered.size(); ++i) {
+		const GlyphData& glyph = *ordered[i];
+		jsonFile << "\t\t{\"unicode\":" << glyph.unicode << ",\"advance\":" << number(glyph.advance);
+		if (!glyph.shape.contours.empty()) {
+			jsonFile << ",\"planeBounds\":"
+					 << bounds(glyph.planeLeft - padEm, glyph.planeBottom - padEm, glyph.planeRight + padEm, glyph.planeTop + padEm);
+			jsonFile << ",\"atlasBounds\":"
+					 << bounds(
+							std::clamp(glyph.atlasX + glyph.atlasBoundsLeft - halfRange, 0.0, width),
+							std::clamp(glyph.atlasY + glyph.atlasBoundsBottom - halfRange, 0.0, height),
+							std::clamp(glyph.atlasX + glyph.atlasBoundsRight + halfRange, 0.0, width),
+							std::clamp(glyph.atlasY + glyph.atlasBoundsTop + halfRange, 0.0, height)
+						);
+		}
+		jsonFile << (i + 1 < ordered.size() ? "},\n" : "}\n");
+	}
+	jsonFile << "\t],\n";
+	jsonFile << "\t\"kerning\": []\n";
 	jsonFile << "}\n";
 	jsonFile.close();
 

@@ -4,6 +4,8 @@ add_executable(asset-manager
     AssetThumbnail.cpp
     AssetRow.cpp
     AssetDetailView.cpp
+    GroundBakeView.cpp
+    TileImageStrip.cpp
     scenes/BrowserScene.cpp
 )
 
@@ -14,23 +16,19 @@ target_include_directories(asset-manager
 
 target_compile_features(asset-manager PRIVATE cxx_std_20)
 
+# world-view holds the assembled base shader the App starts the renderer with.
 target_link_libraries(asset-manager
     PRIVATE
-        engine
-        ui
-        renderer
-        foundation
+        world-view
+        theme
+        salal::app
+        salal::renderer
+        salal::foundation
         assets
 )
 
-# Stage shaders, fonts, and assets next to the executable.
-add_custom_command(TARGET asset-manager POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_BINARY_DIR}/shaders
-    $<TARGET_FILE_DIR:asset-manager>/shaders
-    COMMENT "Copying shaders to asset-manager directory"
-)
-
+# Stage fonts and assets next to the executable (the base shader is compiled in);
+# fonts stay POST_BUILD.
 add_custom_command(TARGET asset-manager POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
     ${CMAKE_SOURCE_DIR}/fonts

@@ -3,22 +3,28 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/placement/PlacementExecutor.h>
+#include <boolean/RingBoolean.h>
 #include <construction/ConstructionWorld.h>
 #include <construction/OpeningGeometry.h>
 #include <core/Vec2i64.h>
+#include <ecs/components/AgentRadius.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Colonist.h>
 #include <ecs/components/FacingDirection.h>
 #include <ecs/components/Inventory.h>
 #include <ecs/components/Packaged.h>
+#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <offset/WallOffset.h>
 #include <predicates/Predicates.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <world/chunk/ChunkCoordinate.h>
 #include <world/rendering/PackagedLayout.h> // shared crate+item placement (no drift)
+#include <world/rendering/PileLayout.h>	   // shared loose-pile placement (no drift)
+#include <world/rendering/TemplateBounds.h>
 
 #include <algorithm>
 #include <cmath>
@@ -37,8 +43,8 @@ namespace {
 	// the material has no wall config. The topology store is config-agnostic (it
 	// holds the preset NAME), so the renderer and this hit-test both resolve the
 	// number through ConstructionRegistry; same lookup as DrawingSystem's band render.
-	std::int64_t segmentHalfThicknessMm(const engine::construction::WallSegment& seg) {
-		const auto* preset = engine::assets::ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
+	std::int64_t segmentHalfThicknessMm(const construction::WallSegment& seg) {
+		const auto* preset = assets::ConstructionRegistry::Get().getThicknessPreset(seg.material, seg.thicknessPreset);
 		return (preset != nullptr) ? preset->halfThicknessMm : 0;
 	}
 
@@ -48,7 +54,7 @@ namespace {
 	// the picked segment's own radius.
 	std::int64_t maxWallHalfThicknessMm() {
 		std::int64_t maxHalf = 0;
-		for (const auto& [name, material] : engine::assets::ConstructionRegistry::Get().getAllMaterials()) {
+		for (const auto& [name, material] : assets::ConstructionRegistry::Get().getAllMaterials()) {
 			for (const auto& preset : material.wallThicknesses) {
 				maxHalf = std::max(maxHalf, preset.halfThicknessMm);
 			}
@@ -70,7 +76,7 @@ namespace {
 	// click is mapped into the template-local frame and quantized to mm to match the
 	// silhouette rings (which are template-local integer millimeters).
 	bool silhouetteRingsContain(
-		const engine::assets::AssetSilhouette& sil, const engine::world::AssetInstanceTransform& t, glm::vec2 worldPos
+		const assets::AssetSilhouette& sil, const worldview::AssetInstanceTransform& t, glm::vec2 worldPos
 	) {
 		const glm::vec2			local = t.toLocal(worldPos);
 		const geometry::Vec2i64 localMm = geometry::quantize(Foundation::Vec2{local.x, local.y});
@@ -85,18 +91,18 @@ namespace {
 	}
 
 	// True if the click is under a placed (static/baked) entity's rendered silhouette,
-	// using the SAME position-as-origin transform BatchedEntityRenderer draws it with.
+	// using the SAME position-as-origin transform the instanced and baked paths draw it with.
 	// Falls back to a centroid radius test when the def has no cached silhouette so a
 	// silhouette-less asset stays selectable. Reused for world entities and for each
 	// packaged crate/item sub-entity (both are drawn as position-as-origin instances).
-	bool placedUnderClick(const engine::assets::PlacedEntity& pe, glm::vec2 worldPos, float fallbackRadius) {
-		const auto* sil = engine::assets::AssetRegistry::Get().getSilhouette(pe.defName);
+	bool placedUnderClick(const assets::PlacedEntity& pe, glm::vec2 worldPos, float fallbackRadius) {
+		const auto* sil = assets::AssetRegistry::Get().getSilhouette(pe.templateId);
 		if (sil == nullptr || !sil->valid) {
 			const float dx = pe.position.x - worldPos.x;
 			const float dy = pe.position.y - worldPos.y;
 			return (dx * dx + dy * dy) < (fallbackRadius * fallbackRadius);
 		}
-		return silhouetteRingsContain(*sil, engine::world::staticInstanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
+		return silhouetteRingsContain(*sil, worldview::staticInstanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
 	}
 
 	// True if the click is under a dynamic ECS entity's rendered silhouette. Resolves the
@@ -105,28 +111,53 @@ namespace {
 	// centroid pre-cull) when the def has no cached silhouette so silhouette-less types
 	// stay selectable.
 	bool dynamicUnderClick(
-		ecs::World* world, ecs::EntityID entity, const std::string& baseDefName, float scale, glm::vec2 entityPos, glm::vec2 worldPos
+		ecs::World* world, ecs::EntityID entity, const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos
 	) {
-		const std::string defName = dynamicRenderDefName(world, entity, baseDefName);
-		const auto*		  sil = engine::assets::AssetRegistry::Get().getSilhouette(defName);
+		const std::string defName = dynamicRenderDefName(world, entity, appearance.defName);
+		const auto*		  sil = assets::AssetRegistry::Get().getSilhouette(defName, appearance.traits);
 		if (sil == nullptr || !sil->valid) {
 			return true;
 		}
-		return silhouetteRingsContain(*sil, engine::world::dynamicInstanceTransform(entityPos, scale, sil->boundsCenterMeters), worldPos);
+		return silhouetteRingsContain(
+			*sil, worldview::dynamicInstanceTransform(entityPos, appearance.scale, sil->boundsCenterMeters), worldPos
+		);
 	}
 
-	// True if the click is under a packaged item's drawn sprite: the crate behind or the
-	// shrunk item in front, laid out and transformed exactly as the render path via
-	// packagedLayout + the per-sub-entity position-as-origin transform.
-	bool packagedUnderClick(const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos, float fallbackRadius) {
-		float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
-		if (const auto* itemDef = engine::assets::AssetRegistry::Get().getDefinition(appearance.defName)) {
-			itemWorldHeight = itemDef->worldHeight;
-		}
-		const engine::world::PackagedLayout pl = engine::world::packagedLayout(
-			entityPos, appearance.defName, appearance.scale, appearance.colorTint, itemWorldHeight
+	// The sprites packaged furniture draws (back crate, item, front crate), laid out exactly as
+	// DynamicEntityRenderSystem lays them (shared packagedLayout).
+	worldview::PackagedLayout packagedLayoutFor(const ecs::Appearance& appearance, glm::vec2 entityPos) {
+		auto& registry = assets::AssetRegistry::Get();
+		return worldview::packagedLayout(
+			entityPos,
+			appearance.defName,
+			appearance.scale,
+			appearance.colorTint,
+			worldview::templateBounds(registry.getTemplate(appearance.defName, {}))
 		);
-		return placedUnderClick(pl.crate, worldPos, fallbackRadius) || placedUnderClick(pl.item, worldPos, fallbackRadius);
+	}
+
+	// True if the click is under any sprite of a packaged item: the crate layers or the item.
+	bool packagedUnderClick(const ecs::Appearance& appearance, glm::vec2 entityPos, glm::vec2 worldPos, float fallbackRadius) {
+		const worldview::PackagedLayout pl = packagedLayoutFor(appearance, entityPos);
+		return placedUnderClick(pl.crateBack, worldPos, fallbackRadius) || placedUnderClick(pl.item, worldPos, fallbackRadius)
+			   || placedUnderClick(pl.crateFront, worldPos, fallbackRadius);
+	}
+
+	// The sprites a loose pile draws, laid out exactly as DynamicEntityRenderSystem lays them
+	// (shared pileLayout).
+	worldview::PileLayout pileLayoutFor(const ecs::Appearance& appearance, std::uint32_t quantity, glm::vec2 entityPos) {
+		auto&		   registry = assets::AssetRegistry::Get();
+		const uint32_t templateId = registry.templateId(appearance.defName, appearance.traits);
+		return worldview::pileLayout(
+			entityPos,
+			appearance.defName,
+			templateId,
+			appearance.scale,
+			appearance.colorTint,
+			worldview::templateBounds(registry.getTemplate(templateId)),
+			worldview::pileItem(registry.getDefinition(appearance.defName)),
+			quantity
+		);
 	}
 
 	// Stable identity for a candidate: (variant type index, structure/entity id). Lets
@@ -145,6 +176,8 @@ namespace {
 				} else if constexpr (std::is_same_v<T, CraftingStationSelection>) {
 					return {type, static_cast<std::uint64_t>(s.entityId)};
 				} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
+					return {type, static_cast<std::uint64_t>(s.entityId)};
+				} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
 					return {type, static_cast<std::uint64_t>(s.entityId)};
 				} else if constexpr (std::is_same_v<T, OpeningSelection>) {
 					return {type, static_cast<std::uint64_t>(s.id)};
@@ -177,7 +210,7 @@ namespace {
 	// (<2 verts) are skipped so worldRings stays free of undrawable entries.
 	void appendWorldRings(
 		const std::vector<geometry::Ring>&			 rings,
-		const engine::world::AssetInstanceTransform& t,
+		const worldview::AssetInstanceTransform& t,
 		std::vector<std::vector<Foundation::Vec2>>&	 out,
 		float&										 maxY
 	) {
@@ -196,7 +229,51 @@ namespace {
 			out.push_back(std::move(worldRing));
 		}
 	}
+
+	// The same mapping into world millimeters, for a composite outline's union.
+	void appendWorldRingsMm(
+		const std::vector<geometry::Ring>& rings, const worldview::AssetInstanceTransform& t, std::vector<geometry::Ring>& out
+	) {
+		for (const auto& ring : rings) {
+			if (ring.size() < 3) {
+				continue;
+			}
+			geometry::Ring worldRing;
+			worldRing.reserve(ring.size());
+			for (const geometry::Vec2i64& mm : ring) {
+				const Foundation::Vec2 dq = geometry::dequantize(mm);
+				const glm::vec2		   w = t.toWorld({dq.x, dq.y});
+				worldRing.push_back(geometry::quantize(Foundation::Vec2{w.x, w.y}));
+			}
+			out.push_back(std::move(worldRing));
+		}
+	}
 } // namespace
+
+const std::vector<geometry::Ring>& SelectionSystem::unionCompositeRings(std::vector<geometry::Ring> worldRingsMm) const {
+	if (worldRingsMm == compositeOutlineInput) {
+		return compositeOutlineRings;
+	}
+	compositeOutlineInput = worldRingsMm;
+
+	bool merged = true;
+	while (merged) {
+		merged = false;
+		for (std::size_t i = 0; i < worldRingsMm.size() && !merged; ++i) {
+			for (std::size_t j = i + 1; j < worldRingsMm.size(); ++j) {
+				geometry::BooleanResult u = geometry::unionRings(worldRingsMm[i], worldRingsMm[j]);
+				if (u.ok()) {
+					worldRingsMm[i] = std::move(u.ring);
+					worldRingsMm.erase(worldRingsMm.begin() + static_cast<std::ptrdiff_t>(j));
+					merged = true;
+					break;
+				}
+			}
+		}
+	}
+	compositeOutlineRings = std::move(worldRingsMm);
+	return compositeOutlineRings;
+}
 
 SelectionSystem::SelectionSystem(const Args& args)
 	: ecsWorld(args.world)
@@ -207,6 +284,16 @@ SelectionSystem::SelectionSystem(const Args& args)
 
 std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	std::vector<Selection> candidates;
+
+	// Player visibility (player-visibility.md 3.7): a mover that is not a colonist can be picked only
+	// while it is in sight, and everything else only where its position is seen. Colonists always.
+	const ecs::PlayerVisibilitySystem* visibility = ecs::PlayerVisibilitySystem::gate(*ecsWorld);
+	const auto						   selectableAt = [this, visibility](ecs::EntityID entity, glm::vec2 position) {
+		  if (visibility == nullptr || ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr) {
+			  return true;
+		  }
+		  return ecsWorld->getComponent<ecs::AgentRadius>(entity) != nullptr ? visibility->isVisible(position) : visibility->isSeen(position);
+	};
 
 	// Priority 1: Check ECS colonists first (dynamic, moving entities). Centroid pre-cull
 	// to kSelectionRadius, then a precise silhouette hit; nearest containing colonist wins
@@ -227,7 +314,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		const auto* appearance = ecsWorld->getComponent<ecs::Appearance>(entity);
 		const bool	under = (appearance == nullptr)
 							 ? true
-							 : dynamicUnderClick(ecsWorld, entity, appearance->defName, appearance->scale, pos.value, worldPos);
+							 : dynamicUnderClick(ecsWorld, entity, *appearance, pos.value, worldPos);
 		if (!under) {
 			continue;
 		}
@@ -245,6 +332,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	ecs::EntityID closestStation = 0;
 
 	for (auto [entity, pos, appearance, workQueue] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::WorkQueue>()) {
+		if (!selectableAt(entity, pos.value)) {
+			continue;
+		}
 		float dx = pos.value.x - worldPos.x;
 		float dy = pos.value.y - worldPos.y;
 		float dist = std::sqrt(dx * dx + dy * dy);
@@ -252,7 +342,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		if (dist >= closestStationDist) {
 			continue;
 		}
-		if (!dynamicUnderClick(ecsWorld, entity, appearance.defName, appearance.scale, pos.value, worldPos)) {
+		if (!dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos)) {
 			continue;
 		}
 		closestStationDist = dist;
@@ -270,7 +360,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	}
 
 	// Priority 1.6: Check ECS storage containers (entities with Inventory but no
-	// WorkQueue). Packaged ones test the crate + item sprite; placed ones test their own
+	// WorkQueue). Packaged ones test the crate layers + item; placed ones test their own
 	// silhouette. Centroid pre-cull first, same as the other dynamic types.
 	float		  closestStorageDist = kSelectionRadius;
 	ecs::EntityID closestStorage = 0;
@@ -284,6 +374,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		if (ecsWorld->getComponent<ecs::Colonist>(entity) != nullptr) {
 			continue;
 		}
+		if (!selectableAt(entity, pos.value)) {
+			continue;
+		}
 
 		float dx = pos.value.x - worldPos.x;
 		float dy = pos.value.y - worldPos.y;
@@ -295,7 +388,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		const bool packaged = ecsWorld->getComponent<ecs::Packaged>(entity) != nullptr;
 		const bool under = packaged
 							 ? packagedUnderClick(appearance, pos.value, worldPos, kSelectionRadius)
-							 : dynamicUnderClick(ecsWorld, entity, appearance.defName, appearance.scale, pos.value, worldPos);
+							 : dynamicUnderClick(ecsWorld, entity, appearance, pos.value, worldPos);
 		if (!under) {
 			continue;
 		}
@@ -314,28 +407,78 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		}
 	}
 
+	// Priority 1.8: Loose ground piles (ResourceStack). Same centroid pre-cull, then the
+	// silhouette of every sprite the pile draws. A single log or tool is a small target, so a
+	// click within kPilePickSlop of the pile center also hits (like kWallPickSlopMm for thin
+	// walls), but only when no pile's sprites contain the click, so slop around a small pile
+	// never steals a click on a big neighbour's sprite. Nearest pile wins within each kind.
+	float		  closestHitDist = kSelectionRadius;
+	ecs::EntityID closestHit = 0;
+	float		  closestSlopDist = kPilePickSlop;
+	ecs::EntityID closestSlop = 0;
+
+	for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
+		if (!selectableAt(entity, pos.value)) {
+			continue;
+		}
+		const float dx = pos.value.x - worldPos.x;
+		const float dy = pos.value.y - worldPos.y;
+		const float dist = std::sqrt(dx * dx + dy * dy);
+		if (dist < closestSlopDist) {
+			closestSlopDist = dist;
+			closestSlop = entity;
+		}
+		if (dist >= closestHitDist) {
+			continue;
+		}
+		const worldview::PileLayout pile = pileLayoutFor(appearance, stack.quantity, pos.value);
+		bool						under = false;
+		for (std::size_t i = 0; i < pile.count && !under; ++i) {
+			under = placedUnderClick(pile.sprites[i], worldPos, kPilePickSlop);
+		}
+		if (under) {
+			closestHitDist = dist;
+			closestHit = entity;
+		}
+	}
+
+	if (const ecs::EntityID closestPile = closestHit != 0 ? closestHit : closestSlop; closestPile != 0) {
+		auto* pos = ecsWorld->getComponent<ecs::Position>(closestPile);
+		auto* appearance = ecsWorld->getComponent<ecs::Appearance>(closestPile);
+		if (pos != nullptr && appearance != nullptr) {
+			candidates.emplace_back(
+				ResourcePileSelection{closestPile, appearance->defName, Foundation::Vec2{pos->value.x, pos->value.y}}
+			);
+		}
+	}
+
 	// Priority 2: Check world entities (static placed assets). Broad-phase the click
 	// chunk plus its 8 neighbors (a large canopy can sit far from its trunk anchor, or
-	// straddle a chunk edge), each queried at the widened kWorldEntitySelectRadius; the
-	// precise silhouette test then filters the false positives. Every containing entity
+	// straddle a chunk edge), each queried out to the farthest any template reaches from
+	// its origin (never under the centroid fallback radius); the precise silhouette test
+	// then filters the false positives. Every containing entity
 	// is pushed as its own candidate, ordered topmost-first (largest anchorY draws
 	// frontmost) so a same-spot click cycles front to back through the stack.
 	if (placementExecutor != nullptr) {
-		auto&						   assetRegistry = engine::assets::AssetRegistry::Get();
-		const engine::world::ChunkCoordinate cc =
-			engine::world::worldToChunk(engine::world::WorldPosition{worldPos.x, worldPos.y});
+		auto&						   assetRegistry = assets::AssetRegistry::Get();
+		const world::ChunkCoordinate cc =
+			world::worldToChunk(world::WorldPosition{worldPos.x, worldPos.y});
+		const float queryRadius = std::max(assetRegistry.maxReachMeters(), kSelectionRadius);
 
-		std::vector<const engine::assets::PlacedEntity*> hits;
+		std::vector<const assets::PlacedEntity*> hits;
 		for (int dyC = -1; dyC <= 1; ++dyC) {
 			for (int dxC = -1; dxC <= 1; ++dxC) {
-				const auto* spatialIndex = placementExecutor->getChunkIndex(engine::world::ChunkCoordinate{cc.x + dxC, cc.y + dyC});
+				const auto* spatialIndex = placementExecutor->getChunkIndex(world::ChunkCoordinate{cc.x + dxC, cc.y + dyC});
 				if (spatialIndex == nullptr) {
 					continue;
 				}
-				for (const auto* placedEntity : spatialIndex->queryRadius({worldPos.x, worldPos.y}, kWorldEntitySelectRadius)) {
+				for (const auto* placedEntity : spatialIndex->queryRadius({worldPos.x, worldPos.y}, queryRadius)) {
 					// Only select entities with capabilities (not grass/decorative)
 					const auto* def = assetRegistry.getDefinition(placedEntity->defName);
 					if (def == nullptr || !def->capabilities.hasAny()) {
+						continue;
+					}
+					if (visibility != nullptr && !visibility->isSeen(placedEntity->position)) {
 						continue;
 					}
 					if (!placedUnderClick(*placedEntity, worldPos, kSelectionRadius)) {
@@ -349,7 +492,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 		// stable_sort so entities with equal anchorY keep a deterministic order (matches
 		// WorldDepthSort's stability): the candidate-key vector stays identical across
 		// same-spot clicks, so click-cycling advances instead of resetting.
-		std::stable_sort(hits.begin(), hits.end(), [](const engine::assets::PlacedEntity* a, const engine::assets::PlacedEntity* b) {
+		std::stable_sort(hits.begin(), hits.end(), [](const assets::PlacedEntity* a, const assets::PlacedEntity* b) {
 			return a->anchorY > b->anchorY; // largest anchorY = frontmost = topmost candidate
 		});
 		for (const auto* placedEntity : hits) {
@@ -366,11 +509,12 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// insertion order; a contained hit wins, tie-break the highest id (deterministic,
 	// matching foundationAt / segmentAt). Openings don't overlap, so "contained"
 	// resolves uniquely except on a shared boundary, which the id tie-break settles.
-	if (constructionWorld != nullptr) {
+	const bool clickSeen = visibility == nullptr || visibility->isSeen(worldPos);
+	if (constructionWorld != nullptr && clickSeen) {
 		const auto						clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
-		engine::construction::OpeningId hitOpening = engine::construction::kInvalidOpening;
+		construction::OpeningId hitOpening = construction::kInvalidOpening;
 		for (const auto& opening : constructionWorld->openings()) {
-			const geometry::Ring footprint = engine::construction::openingFootprint(*constructionWorld, opening);
+			const geometry::Ring footprint = construction::openingFootprint(*constructionWorld, opening);
 			if (footprint.size() < 3) {
 				continue;
 			}
@@ -381,7 +525,7 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 				hitOpening = opening.id;
 			}
 		}
-		if (hitOpening != engine::construction::kInvalidOpening) {
+		if (hitOpening != construction::kInvalidOpening) {
 			candidates.emplace_back(OpeningSelection{hitOpening});
 		}
 	}
@@ -394,13 +538,13 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// segmentAt applies one radius to every segment (the topology store is
 	// config-agnostic), so query with the widest needed radius, then confirm the hit
 	// lies within its OWN segment's radius.
-	if (constructionWorld != nullptr) {
+	if (constructionWorld != nullptr && clickSeen) {
 		const auto clickMm = geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y});
 
 		const std::int64_t queryRadiusMm = std::max(kWallPickSlopMm, maxWallHalfThicknessMm());
 
 		const auto segmentId = constructionWorld->segmentAt(clickMm, queryRadiusMm);
-		if (segmentId != engine::construction::kInvalidSegment) {
+		if (segmentId != construction::kInvalidSegment) {
 			const auto* seg = constructionWorld->getSegment(segmentId);
 			const auto* v0 = (seg != nullptr) ? constructionWorld->getVertex(seg->v0) : nullptr;
 			const auto* v1 = (seg != nullptr) ? constructionWorld->getVertex(seg->v1) : nullptr;
@@ -416,9 +560,9 @@ std::vector<Selection> SelectionSystem::gatherCandidates(glm::vec2 worldPos) {
 	// Priority 3: Foundations (lowest). Quantize the click to integer mm and ask
 	// the ConstructionWorld for the topmost foundation containing it. A colonist or
 	// item sitting on the foundation outranks it via its earlier candidate slot.
-	if (constructionWorld != nullptr) {
+	if (constructionWorld != nullptr && clickSeen) {
 		auto foundationId = constructionWorld->foundationAt(geometry::quantize(Foundation::Vec2{worldPos.x, worldPos.y}));
-		if (foundationId != engine::construction::kInvalidFoundation) {
+		if (foundationId != construction::kInvalidFoundation) {
 			candidates.emplace_back(FoundationSelection{foundationId});
 		}
 	}
@@ -521,7 +665,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 	// Foundations: outline the selected ring (no single point), reusing the ring
 	// stored in the ConstructionWorld. Drawn above the interim foundation render.
 	if (auto* foundationSel = std::get_if<FoundationSelection>(&selection)) {
-		const engine::construction::Foundation* foundation =
+		const construction::Foundation* foundation =
 			(constructionWorld != nullptr) ? constructionWorld->get(foundationSel->id) : nullptr;
 		if (foundation != nullptr && foundation->ring.size() >= 3) {
 			const std::size_t n = foundation->ring.size();
@@ -540,7 +684,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "foundation-selection-indicator",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}
@@ -552,10 +696,10 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 	// the render and hit-test use), mirroring the foundation/wall gold-ring. Drawn
 	// above the committed opening fill (z 63-64) at z 100.
 	if (auto* openingSel = std::get_if<OpeningSelection>(&selection)) {
-		const engine::construction::Opening* opening =
+		const construction::Opening* opening =
 			(constructionWorld != nullptr) ? constructionWorld->getOpening(openingSel->id) : nullptr;
 		if (opening != nullptr) {
-			const geometry::Ring footprint = engine::construction::openingFootprint(*constructionWorld, *opening);
+			const geometry::Ring footprint = construction::openingFootprint(*constructionWorld, *opening);
 			const std::size_t	 n = footprint.size();
 			for (std::size_t i = 0; i < n; ++i) {
 				auto a = geometry::dequantize(footprint[i]);
@@ -572,7 +716,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "opening-selection-indicator",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}
@@ -586,10 +730,10 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 	// trim the interim wall render runs; the outline reads cleanly even where two
 	// bands meet. Drawn above the wall band render (z 60-62) at z 100.
 	if (auto* wallSel = std::get_if<WallSegmentSelection>(&selection)) {
-		const engine::construction::WallSegment* seg =
+		const construction::WallSegment* seg =
 			(constructionWorld != nullptr) ? constructionWorld->getSegment(wallSel->id) : nullptr;
-		const engine::construction::Vertex* v0 = (seg != nullptr) ? constructionWorld->getVertex(seg->v0) : nullptr;
-		const engine::construction::Vertex* v1 = (seg != nullptr) ? constructionWorld->getVertex(seg->v1) : nullptr;
+		const construction::Vertex* v0 = (seg != nullptr) ? constructionWorld->getVertex(seg->v0) : nullptr;
+		const construction::Vertex* v1 = (seg != nullptr) ? constructionWorld->getVertex(seg->v1) : nullptr;
 		if (seg != nullptr && v0 != nullptr && v1 != nullptr) {
 			const std::int64_t halfThicknessMm = std::max<std::int64_t>(1, segmentHalfThicknessMm(*seg));
 			const geometry::Ring band = geometry::band(v0->pos, v1->pos, halfThicknessMm);
@@ -609,7 +753,7 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 								.width = 3.0F,
 							},
 						.id = "wall-segment-selection-indicator",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}
@@ -618,41 +762,66 @@ void SelectionSystem::renderIndicator(int viewportW, int viewportH) {
 	}
 
 	// Entity-backed selections (world entities, colonists, stations, furniture,
-	// packaged items) no longer draw here: their outlines are built by
+	// packaged items, loose piles) no longer draw here: their outlines are built by
 	// buildEntityOutline and injected into the entity depth-sort render pass so a
 	// nearer entity correctly occludes a farther selection's outline.
 }
 
-engine::world::SelectionOutline SelectionSystem::buildEntityOutline() const {
-	engine::world::SelectionOutline outline;
+worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
+	worldview::SelectionOutline outline;
 	if (ecsWorld == nullptr) {
 		return outline;
 	}
 
-	auto&		assetRegistry = engine::assets::AssetRegistry::Get();
+	auto&		assetRegistry = assets::AssetRegistry::Get();
 	const float kNoY = -std::numeric_limits<float>::max();
 	float		maxY = kNoY;
 	// Prefer the entity's canonical depth key (PlacedEntity::anchorY) when available so the
 	// outline injects at the exact depth the entity draws; the silhouette-vertex maxY is only
 	// a fallback (raster maxY can differ slightly from the template's).
 	float canonicalAnchorY = kNoY;
+	// Composite selections (packaged furniture, piles) collect world-mm rings here to union.
+	std::vector<geometry::Ring> compositeMm;
 
 	// World entities: re-resolve the live PlacedEntity by defName + position and
 	// build its silhouette at the static/baked transform. A felled or unloaded
 	// entity resolves to nullptr -> invalid outline (draws nothing).
 	if (const auto* worldSel = std::get_if<WorldEntitySelection>(&selection)) {
-		const engine::assets::PlacedEntity* pe = resolveWorldEntity(*worldSel);
+		const assets::PlacedEntity* pe = resolveWorldEntity(*worldSel);
 		if (pe == nullptr) {
 			return outline;
 		}
 		canonicalAnchorY = pe->anchorY; // exact placement depth key, not the raster maxY
-		const auto* sil = assetRegistry.getSilhouette(pe->defName);
+		const auto* sil = assetRegistry.getSilhouette(pe->templateId);
 		if (sil == nullptr || !sil->valid) {
 			return outline;
 		}
 		appendWorldRings(
-			sil->rings, engine::world::staticInstanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
+			sil->rings, worldview::staticInstanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
 		);
+	} else if (const auto* pileSel = std::get_if<ResourcePileSelection>(&selection)) {
+		// Loose pile: every sprite of the shared pile layout at its position-as-origin
+		// transform, unioned into one outline around the heap as drawn. A drained (destroyed)
+		// pile -> invalid outline.
+		if (!ecsWorld->isAlive(pileSel->entityId)) {
+			return outline;
+		}
+		const auto* pos = ecsWorld->getComponent<ecs::Position>(pileSel->entityId);
+		const auto* appearance = ecsWorld->getComponent<ecs::Appearance>(pileSel->entityId);
+		const auto* stack = ecsWorld->getComponent<ecs::ResourceStack>(pileSel->entityId);
+		if (pos == nullptr || appearance == nullptr || stack == nullptr) {
+			return outline;
+		}
+		const worldview::PileLayout pile = pileLayoutFor(*appearance, stack->quantity, pos->value);
+		const auto*					sil = assetRegistry.getSilhouette(pile.sprites[0].templateId);
+		if (sil == nullptr || !sil->valid) {
+			return outline;
+		}
+		for (std::size_t i = 0; i < pile.count; ++i) {
+			const assets::PlacedEntity& sprite = pile.sprites[i];
+			appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sprite.position, sprite.rotation, sprite.scale), compositeMm);
+		}
+		canonicalAnchorY = pile.sprites[pile.count - 1].anchorY; // the front-most sprite's key
 	} else {
 		// Colonists, crafting stations, and placed furniture all resolve from the ECS.
 		ecs::EntityID entityId = 0;
@@ -675,43 +844,51 @@ engine::world::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			return outline;
 		}
 
-		// Packaged furniture: crate + item at their layout transforms (both drawn as
+		// Packaged furniture: crate layers + item at their layout transforms (drawn as
 		// position-as-origin instances, matching the render path; sub-entities are NOT
-		// re-centered).
+		// re-centered), unioned into one outline. With the item inside the crate that is the
+		// crate's silhouette.
 		if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
-			float itemWorldHeight = 0.6F; // matches DynamicEntityRenderSystem's fallback
-			if (const auto* itemDef = assetRegistry.getDefinition(appearance->defName)) {
-				itemWorldHeight = itemDef->worldHeight;
-			}
-			const engine::world::PackagedLayout pl = engine::world::packagedLayout(
-				pos->value, appearance->defName, appearance->scale, appearance->colorTint, itemWorldHeight
-			);
-			for (const engine::assets::PlacedEntity* sub : {&pl.crate, &pl.item}) {
-				const auto* sil = assetRegistry.getSilhouette(sub->defName);
+			const worldview::PackagedLayout pl = packagedLayoutFor(*appearance, pos->value);
+			for (const assets::PlacedEntity* sub : {&pl.crateBack, &pl.item, &pl.crateFront}) {
+				const auto* sil = assetRegistry.getSilhouette(sub->templateId);
 				if (sil != nullptr && sil->valid) {
-					appendWorldRings(
-						sil->rings, engine::world::staticInstanceTransform(sub->position, sub->rotation, sub->scale), outline.worldRings, maxY
-					);
+					appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sub->position, sub->rotation, sub->scale), compositeMm);
 				}
 			}
+			canonicalAnchorY = pl.crateFront.anchorY;
 		} else {
 			// Non-packaged dynamic entity: the facing sprite's silhouette at the dynamic
 			// (bbox-centered) transform.
 			const std::string defName = dynamicRenderDefName(ecsWorld, entityId, appearance->defName);
-			const auto*		  sil = assetRegistry.getSilhouette(defName);
+			const auto*		  sil = assetRegistry.getSilhouette(defName, appearance->traits);
 			if (sil == nullptr || !sil->valid) {
 				return outline;
 			}
 			appendWorldRings(
-				sil->rings, engine::world::dynamicInstanceTransform(pos->value, appearance->scale, sil->boundsCenterMeters), outline.worldRings, maxY
+				sil->rings, worldview::dynamicInstanceTransform(pos->value, appearance->scale, sil->boundsCenterMeters), outline.worldRings, maxY
 			);
+		}
+	}
+
+	if (!compositeMm.empty()) {
+		for (const geometry::Ring& ring : unionCompositeRings(std::move(compositeMm))) {
+			std::vector<Foundation::Vec2> worldRing;
+			worldRing.reserve(ring.size());
+			for (const geometry::Vec2i64& mm : ring) {
+				const Foundation::Vec2 w = geometry::dequantize(mm);
+				worldRing.push_back(w);
+				maxY = std::max(maxY, w.y);
+			}
+			outline.worldRings.push_back(std::move(worldRing));
 		}
 	}
 
 	outline.valid = !outline.worldRings.empty();
 	if (outline.valid) {
-		// Canonical placement anchorY when we have it (world entities), else the silhouette
-		// ground-contact (dynamic entities, whose sprite bottom == the silhouette bottom).
+		// Canonical sprite anchorY when we have it (world entities, piles, packaged crates; a
+		// unioned ring's maxY can land under the sprite's key), else the silhouette ground-contact
+		// (dynamic entities, whose sprite bottom == the silhouette bottom).
 		outline.anchorY = (canonicalAnchorY != kNoY) ? canonicalAnchorY : maxY;
 		outline.rgba	= {1.0F, 0.85F, 0.0F, 0.9F};
 		outline.widthPx = kOutlineWidthPx;
@@ -719,23 +896,23 @@ engine::world::SelectionOutline SelectionSystem::buildEntityOutline() const {
 	return outline;
 }
 
-const engine::assets::PlacedEntity* SelectionSystem::resolveWorldEntity(const WorldEntitySelection& sel) const {
+const assets::PlacedEntity* SelectionSystem::resolveWorldEntity(const WorldEntitySelection& sel) const {
 	if (placementExecutor == nullptr) {
 		return nullptr;
 	}
-	const engine::world::ChunkCoordinate cc =
-		engine::world::worldToChunk(engine::world::WorldPosition{sel.position.x, sel.position.y});
+	const world::ChunkCoordinate cc =
+		world::worldToChunk(world::WorldPosition{sel.position.x, sel.position.y});
 	// The stored position is an exact copy of the placed entity's; a millimeter of slop
 	// absorbs any float round-trip. Match on defName too so a same-spot stack of
 	// different assets never cross-resolves.
 	constexpr float kMatchTolMeters = 0.001F;
 	for (int dyC = -1; dyC <= 1; ++dyC) {
 		for (int dxC = -1; dxC <= 1; ++dxC) {
-			const auto* spatialIndex = placementExecutor->getChunkIndex(engine::world::ChunkCoordinate{cc.x + dxC, cc.y + dyC});
+			const auto* spatialIndex = placementExecutor->getChunkIndex(world::ChunkCoordinate{cc.x + dxC, cc.y + dyC});
 			if (spatialIndex == nullptr) {
 				continue;
 			}
-			for (const auto* pe : spatialIndex->queryRadius({sel.position.x, sel.position.y}, kWorldEntitySelectRadius)) {
+			for (const auto* pe : spatialIndex->queryRadius({sel.position.x, sel.position.y}, kMatchTolMeters)) {
 				if (pe->defName != sel.defName) {
 					continue;
 				}

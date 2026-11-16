@@ -282,6 +282,44 @@ To inherit from an asset in a different folder, use `@defName`:
 | `generator/script` | Yes | Path to script (relative to asset folder) |
 | `generator/params` | No | Key-value parameters passed to script |
 | `variantCount` | No | Number of variants to pre-generate |
+| `ageClasses` | No | A tree's age classes, in place of `variantCount` (below) |
+| `detailLevels` | No | The screen densities a mesh is cut for, one mesh a level (below) |
+
+### Age classes
+
+A tree def can split into age classes. Each placed tree gets one age class and one mesh variant from its def, world position, and the world seed (`assets::computeTreeTraits`, [tree-variety.md](./tree-variety.md) R1), so old stands and young regrowth form patches about 30 m across and thickets lean young.
+
+```xml
+<ageClasses>
+  <ageClass name="sapling" weight="0.25" variants="4" yieldScale="0.25" workScale="0.35"/>
+  <ageClass name="mature"  weight="0.55" variants="8" yieldScale="1.0"  workScale="1.0"/>
+  <ageClass name="veteran" weight="0.20" variants="4" yieldScale="1.8"  workScale="1.6"/>
+</ageClasses>
+```
+
+| Attribute | Required | Description |
+|-----------|----------|-------------|
+| `name` | Yes | Unique within the def, not empty |
+| `weight` | Yes | Share of the def's trees in this class, above 0; a def's weights sum to 1 (within 0.001) |
+| `variants` | Yes | Mesh variants in this class, 1 to 65535 |
+| `yieldScale` | No | Multiplier on the `<harvestable>` yield, above 0; default 1 |
+| `workScale` | No | Multiplier on the `<harvestable>` durability, above 0; default 1 |
+
+A def with both `<ageClasses>` and `<variantCount>` is a validation error, as is any broken attribute above; the loader then ignores the whole block. A def without `<ageClasses>` has one age class of `variantCount` variants. Nothing reads the yield and work scales or draws per variant yet.
+
+Collision is per age class. A generator's `asset:setCollisionRect` is captured from each class's variant 0 while the variants are prewarmed at load, and `AssetDefinition::collisionFor(ageClass)` answers with it (a def without `<ageClasses>` answers for class 0). An XML `<collision>` or SVG metadata collider applies to every class and wins over the generator. The rect may not depend on the variant: `asset-cli validate --render-smoke` generates variants 0 and 1 of each class with two or more and fails the def, naming the class, if they differ.
+
+### Detail levels
+
+A procedural plant can be cut for several screen densities, in pixels a meter (the camera's 8 px/m times its zoom, 2 to 160):
+
+```xml
+<detailLevels>2, 4, 8, 24, 40, 80</detailLevels>
+```
+
+Up to 8 positive densities, strictly ascending; anything else is a validation error and the def keeps one mesh. Each template (def, age class, variant) has a mesh at every level, and the generator sees the level's density as the Lua global `detailPxPerMeter`. The game draws a template at the highest level at or below the camera's density, else the lowest (`assets::detailLevelFor`, `DetailLevels.h`). The template id has no level in it, so what entities store doesn't change with the zoom.
+
+The reference level is the one the default view (24 px/m) picks. The load prewarms it, and everything that isn't drawing reads it: the silhouette (picking, selection, see-through), `maxReachMeters` and so the cull margin, tall routing, and the collision rect. The renderer builds the other levels on request, off the main thread, when the camera first needs them, and draws the nearest ready level meanwhile (`InstancedEntityRenderer`). A level may reach at most `kLevelReachMargin` (1.1) times the reference level's reach, since the cull margin reads the reference level widened by that factor. A level's collision rect must equal the reference level's: `asset-cli validate --render-smoke` builds every level of every aged def and fails one that differs, reaches past the margin, or whose generator fails. `asset-cli inspect` counts each level, and `render --grid` or `--age` takes `--level <px/m>`.
 
 ### Variation Elements
 
@@ -309,6 +347,7 @@ To inherit from an asset in a different folder, use `@defName`:
 | `biome/@name` | Biome this rule applies to |
 | `spawnChance` | Spawn probability (0-1) |
 | `distribution` | `uniform`, `clumped`, or `spaced` |
+| `scale/@min`, `scale/@max` | This def's placement scale range, with 0 < min <= max; default 0.8 to 1.2 for every def. A def that sets it moves only its own scales. |
 | `groups/group` | Groups this asset belongs to |
 | `relationships/*` | Entity relationship rules |
 

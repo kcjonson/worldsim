@@ -25,17 +25,15 @@ Four architectural questions were settled before writing this; they shape everyt
 One shared core, two frontends, plus a startup change in the engine.
 
 ```
-libs/engine/assets            (shared core, extended)
+libs/assets/assets            (shared core, extended)
   - loader + registry            existing: getDefinition(s), getTemplate, generateAsset, groups
   - AssetValidator + report      new: load-time validation, single source of truth
   - AssetRenderer                new: defName(+seed) -> RGBA pixels via offscreen FBO
 libs/renderer                 (extended)
   - mesh bounds + fit-to-rect    new: geometry math on TessellatedMesh
-libs/ui                       (extended)
-  - GridContainer                new: wrapping, virtualized grid
-apps/asset-manager            (new, GUI)   links: engine ui renderer foundation assets planet-view world
+apps/asset-manager            (new, GUI)   links: engine theme renderer foundation assets
 apps/asset-cli                (new, CLI)   links: assets renderer foundation glfw glew opengl nlohmann_json
-libs/engine/application       (refactor)
+apps/*/Main.cpp              (refactor; was libs/engine/application, now on salal's app)
   - async asset load + splash progress + load report
 ```
 
@@ -54,7 +52,7 @@ Today there is no "render this asset" function. Scenes assemble the pieces by ha
 A function in `assets` that takes a def name, an optional seed, and a target rectangle, and returns draw-ready geometry fit to that rectangle:
 
 ```cpp
-// libs/engine/assets/AssetRenderer.h
+// libs/assets/assets/AssetRenderer.h
 struct PreparedAsset {
     renderer::TessellatedMesh mesh;   // vertices in target-rect pixel space
     bool hasOutput = true;            // false if the generator produced no paths
@@ -67,7 +65,7 @@ std::vector<PreparedAsset> prepareSamples(const std::string& defName, const Rect
 
 Internally:
 
-- **Simple asset:** reuse the existing cached `getTemplate(defName)`. It already loads the SVG and normalizes to `worldHeight`. The seed is irrelevant; a simple asset is one drawing.
+- **Simple asset:** reuse the existing cached template (`getTemplate(defName, {})`; a simple asset has one whatever its traits). It already loads the SVG and normalizes to `worldHeight`. The seed is irrelevant; a simple asset is one drawing.
 - **Procedural asset:** do not use `getTemplate`. It is hard-coded to seed 42 and memoized, so it yields exactly one form. Call `generateAsset(defName, seed, out)` directly (this is what `TreeScene` does to make 40 distinct trees), then tessellate with `tessellateAsset`. Vary the seed to sample the generator's range; fix the seed for a reproducible render. Determinism is real: `generateAsset` reseeds Lua's RNG with the seed on every call, so the same seed gives byte-identical paths.
 - **Fit to frame:** procedural output is in unnormalized generator space and even the normalized templates are centered meters, with no fit helper anywhere today. Add `computeBounds(const TessellatedMesh&) -> Rect` and `fitToRect(TessellatedMesh&, srcBounds, dstRect)` to `renderer` (geometry math on a renderer type, no asset dependency). Geometry prep computes bounds, fits to the target rect in pixel space, and returns the transformed mesh.
 
@@ -92,25 +90,25 @@ The pieces all exist and this is assembly:
 - **Offscreen target:** `renderer::RenderToTexture` (an RGBA8 texture + framebuffer with `begin()`/`end()`). It exists and is tested but is wired into nothing in production; the Asset Manager is its first real consumer. It has no readback or PNG helper, so we add those.
 - **Submission:** the same `BatchRenderer` path the game and the GUI use, pointed at the bound FBO.
 - **Projection caveat (must handle):** `BatchRenderer::flush()` builds its projection from either a `CoordinateSystem` (window and DPI based) or fallback `viewportWidth/viewportHeight` members (BatchRenderer.cpp:384-389). Window-based projection is wrong for an off-size FBO. The headless path must drive the projection to the FBO dimensions: either set the batcher's viewport members to `w,h` with no coordinate system, or configure a coordinate system describing the FBO. Geometry prep already places vertices in target-rect pixel space, so the projection is a plain `ortho(0, w, h, 0)`.
-- **Readback + encode:** `glReadPixels`/`glGetTexImage`, vertical flip (GL origin is bottom-left, PNG is top-left), then `stb_image_write`. The flip-and-encode logic already exists in `DebugServer::captureScreenshotIfRequested` and should be factored into a small shared helper rather than copied.
+- **Readback + encode:** `glReadPixels`/`glGetTexImage`, vertical flip (GL origin is bottom-left, PNG is top-left), then `stb_image_write`. The flip-and-encode logic is salal's `Renderer::flipRowsRGBA` and `writePngToFile` (`<PngEncoder.h>`), shared with the dev server's screenshot.
 
 ### Headless context and minimal init
 
-The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) plus GLEW, exactly as the `RenderToTexture` test does, then initializes only what the render path needs: the renderer's shader/primitive setup and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
+The CLI creates a hidden window (`glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE)`) and hands `Primitives::init` a `GLBackend::create()` on its context (the backend initializes GLEW), then initializes only what the render path needs: the renderer's primitive setup, with the base shader `engine` compiles in (`base_shader::source()`), and the asset registry (including `setSharedScriptsPath`, or every `@shared/` Lua def fails to resolve). It does not create scenes, a debug server, or fonts.
 
-`AppLauncher::initializeRenderingSystems` and `initializeAssetSystem` currently bundle this init with a full app. Factor the rendering-primitive init and the asset-system init into reusable functions the CLI can call without `AppLauncher`. This is a refactor of existing code, not new behavior.
+The GUI apps get their rendering-primitive init from salal's `App::create`; the asset half is `assets::initializeAssetSystem`, which the CLI calls without an App. The CLI does the primitive init itself, on its hidden window. This is a refactor of existing code, not new behavior.
 
 Because the CLI is a short-lived, server-less process with its own context, N invocations run in parallel up to GPU and CPU limits. The one cross-process constraint to respect: do not bind the fixed debug port from the CLI.
 
 ## Asset enumeration and inspection
 
-The registry already exposes the browse and inspect surface. The tool walks `getDefinitionNames()` (sort it; the backing store is unordered) and calls `getDefinition(name)` for the full parsed `AssetDefinition`. Resource paths come off the def: `svgPath`, `scriptPath`, `generatorName`, resolved with `def->resolvePath`, plus the manual `@shared/` handling that `generateAsset` does (the tool must replicate that prefix logic to show the real Lua path). Groups come from `getGroups()` / `getGroupMembers()`.
+The registry already exposes the browse and inspect surface. The tool walks `getDefinitionNames()` (sort it; the backing store is unordered) and calls `getDefinition(name)` for the full parsed `AssetDefinition`. Resource paths come off the def: `svgPaths`, `scriptPath`, `generatorName`, resolved with `def->resolvePath`, plus the manual `@shared/` handling that `generateAsset` does (the tool must replicate that prefix logic to show the real Lua path). Groups come from `getGroups()` / `getGroupMembers()`.
 
 The inspector model is the parsed def, the resolved resource paths, the asset's groups and placement rules, the raw file text shown beside the parsed view, and the warnings for that def from the validation report (see below). Documented-but-ignored fields are shown as warnings, not silently dropped.
 
 Type discrimination at the data level: `assetType == Simple` is an SVG drawing; anything else is procedural, and within procedural `isLuaGenerator()` (`!scriptPath.empty()`) separates a Lua script from a registered C++ generator.
 
-Coverage in v1 is the folder-per-def XML assets the registry loads. Tiles (`tiles/surfaces/*/pattern.svg`, no XML) and UI icons (`ui/icons/*.svg`) live outside the registry on different paths; the product spec excludes them from v1, and the orphan check below is scoped accordingly.
+Coverage in v1 is the folder-per-def XML assets the registry loads, the ground tiles (`world/ground/`) included. UI icons (`ui/icons/*.svg`) live outside the registry on a different path; the product spec excludes them from v1, and the orphan check below is scoped accordingly.
 
 ## Validation
 
@@ -125,7 +123,7 @@ Most of the interesting checks concern what the loader hides. Today it silently 
 Mirror the existing `ConfigValidator` conventions (`ValidationError{source, message, context}` plus a static accumulator), but this is new code; `ConfigValidator` validates work and construction configs, not visual asset defs, so there is nothing to extend directly.
 
 ```cpp
-// libs/engine/assets/AssetValidator.h
+// libs/assets/assets/AssetValidator.h
 enum class Severity { Warning, Error };
 struct ValidationIssue {
     Severity severity;
@@ -162,7 +160,7 @@ CLI `validate` exits non-zero on any error so CI can gate on it; warnings do not
 
 ## Async loading and the splash refactor
 
-The product spec wants validation surfaced at launch. Today that is impossible without a startup change: the splash is a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading runs fully synchronously before the first frame is ever drawn (`AppLauncher::initialize` calls `initializeAssetSystem` before the main loop). By the time the splash appears, loading is already done, and nothing surfaces load results to the player; the loader logs and continues.
+The product spec wants validation surfaced at launch. Before the async splash landed, that was impossible without a startup change: the splash was a fixed 1.5-second timer (`SplashScene.cpp:94`), and asset loading ran fully synchronously before the first frame was ever drawn (the launcher loaded the registry before the main loop; today that is the `initializeResources` hook calling `assets::initializeAssetSystem`). By the time the splash appeared, loading was already done, and nothing surfaced load results to the player; the loader logged and continued.
 
 The chosen approach is to make loading asynchronous so the splash can show real progress and a summary.
 
@@ -193,7 +191,7 @@ This refactor is its own workstream layered under the tool work, and it touches 
 
 ## GUI (`apps/asset-manager`)
 
-A standalone app, sibling to `ui-sandbox`, reusing the scene system, the `SceneManager`, and the X-macro scene-registration pattern verbatim. Bootstrap is an `AppConfig` with the two scene callbacks, the same as the other apps.
+A standalone app, sibling to `ui-sandbox`, reusing the scene system and the X-macro scene-registration pattern verbatim. It runs on salal's `App` like the other apps: its `main` makes the platform and the App and adds its one scene by name.
 
 ### Layout
 
@@ -233,8 +231,8 @@ The `render` and `validate --render-smoke` commands need the hidden GL context a
 
 ## Build integration
 
-- `apps/asset-manager/CMakeLists.txt` modeled on `ui-sandbox`: `add_executable`, link `engine ui renderer foundation assets planet-view world`, the POST_BUILD copies for `shaders/`, `fonts/`, and `assets/`, and `add_dependencies(asset-manager font-atlas)`.
-- `apps/asset-cli/CMakeLists.txt` minimal: link `assets renderer foundation` plus GLFW/GLEW/OpenGL and `nlohmann_json::nlohmann_json`, copy `shaders/` and `assets/` (it needs the uber shader and the asset tree; it does not need fonts).
+- `apps/asset-manager/CMakeLists.txt` modeled on `ui-sandbox`: `add_executable`, link `engine ui renderer foundation assets planet-view world`, the POST_BUILD copies for `fonts/` and `assets/` (the base shader is compiled into `engine`), and `add_dependencies(asset-manager font-atlas)`.
+- `apps/asset-cli/CMakeLists.txt` minimal: link `assets renderer foundation` plus GLFW/GLEW/OpenGL and `nlohmann_json::nlohmann_json`, copy `assets/` (it needs the asset tree, the base shader is compiled in, and it needs no fonts).
 - Register both with `add_subdirectory` in the top-level `CMakeLists.txt` after the libs.
 
 ## Testing and CI
@@ -266,11 +264,11 @@ Named explicitly because each is an easy wrong turn.
 
 Phased so each piece lands behind its own tests. The first three phases are independent of the GUI and unblock agents and CI early.
 
-1. **Shared render path.** `computeBounds`/`fitToRect` in `renderer`; geometry prep (`prepareAsset`/`prepareSamples`) in `assets`; `AssetRenderer` (`renderToPixels`/`renderToPng`) over `RenderToTexture` with the FBO projection override and the factored flip-and-encode helper; the minimal headless init factored out of `AppLauncher`.
+1. **Shared render path.** `computeBounds`/`fitToRect` in `renderer`; geometry prep (`prepareAsset`/`prepareSamples`) in `assets`; `AssetRenderer` (`renderToPixels`/`renderToPng`) over `RenderToTexture` with the FBO projection override and the factored flip-and-encode helper; the minimal headless init the CLI does without an App.
 2. **Validation in the loader.** `AssetValidator` and `ValidationReport`; harden the loader to record coercions, ignored fields, duplicate defNames, name/folder mismatches, unresolved references, and orphans during the load; the render smoke test as a separate pass.
 3. **CLI.** `apps/asset-cli` with list, search, inspect, validate, render; JSON output; exit codes; build integration.
 4. **Async loading and splash.** The startup refactor: async load on a worker thread, `LoadProgress`, splash progress UI, load-complete and error-gate transitions, and the load-report scene.
-5. **GUI.** `GridContainer` (wrapping and virtualized) in `libs/ui`; `apps/asset-manager` with the browser scene, faithful preview with procedural sampling and refresh, inspector, validation view, and reload; build integration.
+5. **GUI.** `apps/asset-manager` on salal's ui, with the browser scene, faithful preview with procedural sampling and refresh, inspector, validation view, and reload; build integration.
 
 ## Related documentation
 

@@ -1,0 +1,505 @@
+#pragma once
+
+// Asset Definition Types
+// Data structures for asset definitions parsed from XML.
+// Designed for C++ generators now with Lua drop-in compatibility later.
+
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <filesystem>
+#include <optional>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <variant>
+#include <vector>
+
+#include "GroundTint.h"
+#include "GroundTransition.h"
+#include "placement/PlacementTypes.h"
+
+#include <glm/vec2.hpp>
+#include <glm/vec3.hpp>
+
+namespace world {
+	enum class Surface : uint8_t;
+}
+
+namespace assets {
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Entity Capability System
+	// Capabilities define what actions can be performed on/with an entity.
+	// Used by AI to find entities that fulfill needs.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/// Capability type - what kind of interaction an entity supports
+	enum class CapabilityType {
+		Edible,		// Entity can be eaten to restore hunger
+		Drinkable,	// Entity can be drunk from to restore thirst
+		Sleepable,	// Entity can be slept on to restore energy
+		Toilet,		// Entity can be used to relieve bladder
+		Waste,		// Entity is waste (bio pile) - used for clustering toilet locations
+		Carryable,	// Entity can be picked up directly (ground items like stones)
+		Harvestable, // Entity can be harvested for items (bushes, plants)
+		Craftable,	// Entity is a crafting station where items can be made
+		Storage		// Entity is a storage container that holds items
+	};
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Item Category System
+	// Categories define what TYPE of thing an entity is (for storage matching
+	// and UI grouping). Different from capabilities which define ACTIONS.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/// Item category - what type of thing this is
+	enum class ItemCategory : uint8_t {
+		None = 0,
+		RawMaterial, // Sticks, stones, plant fiber
+		Food,		 // Berries, meals
+		Tool,		 // Axes, hammers, weapons
+		Furniture,	 // Shelves, boxes, crafting stations
+		Count
+	};
+
+	/// Quality level for capabilities (affects mood, health effects)
+	enum class CapabilityQuality {
+		Terrible, // Ground sleeping, dirty water
+		Poor,	  // Basic/raw
+		Normal,	  // Standard
+		Good,	  // Comfortable
+		Excellent // Luxury
+	};
+
+	/// Edible capability - entity can be eaten
+	struct EdibleCapability {
+		float			  nutrition = 0.3F; // How much hunger is restored (0-1 scale per eat action)
+		CapabilityQuality quality = CapabilityQuality::Normal;
+		bool			  spoilable = false; // Does it decay over time?
+	};
+
+	/// Drinkable capability - entity can be drunk from
+	struct DrinkableCapability {
+		CapabilityQuality quality = CapabilityQuality::Normal; // Affects health (dirty water = illness risk)
+	};
+
+	/// Sleepable capability - entity can be slept on
+	struct SleepableCapability {
+		CapabilityQuality quality = CapabilityQuality::Normal;
+		float			  recoveryMultiplier = 1.0F; // Energy recovery rate (0.5 = slow, 1.0 = normal, 1.2 = good)
+	};
+
+	/// Toilet capability - entity can be used to relieve bladder
+	struct ToiletCapability {
+		bool hygieneBonus = false; // Does using this improve hygiene?
+	};
+
+	/// Waste capability - entity is waste (bio pile) for clustering toilet locations
+	struct WasteCapability {
+		// No properties yet - just a marker capability
+	};
+
+	/// Carryable capability - entity can be picked up directly into inventory
+	/// The entity itself goes into inventory (unified entity/item model)
+	struct CarryableCapability {
+		uint32_t quantity = 1; // How many to add when picked up
+	};
+
+	/// Harvestable capability - entity yields items when harvested
+	/// Used for plants, bushes, trees that produce resources
+	struct HarvestableCapability {
+		std::string yieldDefName;		 // Item definition name to yield (e.g., "Stick", "Berry")
+		uint32_t	amountMin = 1;		 // Minimum items yielded per harvest
+		uint32_t	amountMax = 3;		 // Maximum items yielded per harvest
+		float		durability = 40.0F;	 // Work units to harvest through; chop time = durability / skill-scaled work rate (~10 units/s untrained, so 40 ~= 4s)
+		bool		destructive = true;	 // If true, entity is removed after harvest
+		float		regrowthTime = 0.0F; // Seconds until harvestable again (0 = never, only if not destructive)
+		uint32_t	totalResourceMin = 0; // Min initial resource pool, in yield units (0 = single harvest)
+		uint32_t	totalResourceMax = 0; // Max initial resource pool, in yield units (0 = single harvest)
+		std::string requiredToolType;	 // Tool type a colonist must hold to harvest (empty = none, e.g. "Axe")
+	};
+
+	/// Craftable capability - entity is a crafting station
+	/// Used for workbenches, crafting spots, and other production stations
+	struct CraftableCapability {
+		// For now, this is just a marker capability
+		// Future: could include speed modifiers, quality bonuses, etc.
+	};
+
+	/// Storage capability - entity is a storage container
+	/// Used for shelves, boxes, stockpiles that hold items
+	struct StorageCapability {
+		std::vector<ItemCategory> acceptedCategories; // Empty = accepts all categories
+		uint32_t				  maxCapacity = 50;	  // Number of stack slots (each holds one stack)
+	};
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Item Properties (for entities that can exist in inventory)
+	// Unified model: entities can be "in world" or "in inventory"
+	// ─────────────────────────────────────────────────────────────────────────
+
+	/// Item properties for entities that can be carried/stored in inventory
+	/// If an entity has ItemProperties, it can exist in inventory.
+	struct ItemProperties {
+		uint32_t stackSize = 1;	   // Max stack size in inventory
+		float	 massKg = 1.0F;	   // Mass of one unit, kilograms (drives carry-weight limits)
+
+		/// Edible properties (if item can be eaten from inventory)
+		std::optional<EdibleCapability> edible;
+
+		/// Check if this item is edible
+		[[nodiscard]] bool isEdible() const { return edible.has_value(); }
+
+		/// Get nutrition value (0 if not edible)
+		[[nodiscard]] float getNutrition() const {
+			return edible.has_value() ? edible->nutrition : 0.0F;
+		}
+
+		/// Get quality (Normal if not edible)
+		[[nodiscard]] CapabilityQuality getQuality() const {
+			return edible.has_value() ? edible->quality : CapabilityQuality::Normal;
+		}
+	};
+
+	/// Container for all capabilities an entity may have
+	struct EntityCapabilities {
+		std::optional<EdibleCapability>		 edible;
+		std::optional<DrinkableCapability>	 drinkable;
+		std::optional<SleepableCapability>	 sleepable;
+		std::optional<ToiletCapability>		 toilet;
+		std::optional<WasteCapability>		 waste;
+		std::optional<CarryableCapability>	 carryable;
+		std::optional<HarvestableCapability> harvestable;
+		std::optional<CraftableCapability>	 craftable;
+		std::optional<StorageCapability>	 storage;
+
+		/// Check if entity has any capabilities
+		[[nodiscard]] bool hasAny() const {
+			return edible.has_value() || drinkable.has_value() || sleepable.has_value() || toilet.has_value() || waste.has_value() ||
+				   carryable.has_value() || harvestable.has_value() || craftable.has_value() || storage.has_value();
+		}
+
+		/// Check if entity has a specific capability type
+		[[nodiscard]] bool has(CapabilityType type) const {
+			switch (type) {
+				case CapabilityType::Edible:
+					return edible.has_value();
+				case CapabilityType::Drinkable:
+					return drinkable.has_value();
+				case CapabilityType::Sleepable:
+					return sleepable.has_value();
+				case CapabilityType::Toilet:
+					return toilet.has_value();
+				case CapabilityType::Waste:
+					return waste.has_value();
+				case CapabilityType::Carryable:
+					return carryable.has_value();
+				case CapabilityType::Harvestable:
+					return harvestable.has_value();
+				case CapabilityType::Craftable:
+					return craftable.has_value();
+				case CapabilityType::Storage:
+					return storage.has_value();
+			}
+			return false;
+		}
+	};
+
+	/// Asset type - how the shape is defined
+	enum class AssetType {
+		Simple,	   // Pre-made SVG file
+		Procedural // Generated by C++ or Lua code
+	};
+
+	/// An <assetType>'s text as the loader reads it: "simple" (or "Simple") is Simple; anything
+	/// else, a missing element included, is Procedural.
+	[[nodiscard]] inline AssetType parseAssetType(const std::string& text) {
+		return text == "simple" || text == "Simple" ? AssetType::Simple : AssetType::Procedural;
+	}
+
+	/// Distribution pattern for asset placement
+	enum class Distribution {
+		Uniform, // Random placement, no clustering
+		Clumped, // Groups together in patches
+		Spaced	 // Maintains minimum distance between instances
+	};
+
+	/// Asset complexity - within a WorldObject, picks the tessellation/anim strategy.
+	/// Groundcover always uses the dense instanced path regardless of this.
+	enum class AssetComplexity {
+		Simple, // Static tessellated geometry, baked
+		Complex // Tier 2/3 CPU Bezier deformation (large close-up trees; deferred)
+	};
+
+	/// Animation type - how animation is applied
+	enum class AnimationType {
+		None,		 // No animation
+		Parametric,	 // Simple sin-based wind sway (vertex shader)
+		BezierDeform // Full Bezier curve deformation (CPU, expensive)
+	};
+
+	/// Asset role - the render/placement role that drives the pipeline.
+	/// Groundcover: dense, homogeneous, static GPU-instanced, hands off to the grass
+	/// tile texture at distance, uniform vertex-shader wind, non-interactive (grass).
+	/// WorldObject: everything else scattered in the world (trees, bushes, rocks,
+	/// sticks, stones) - sparse, heterogeneous, individually placed and baked.
+	/// Ground: the repeating tile art of one land surface, baked once at load into the ground
+	/// texture array. Never placed in the world (it has no <biome> rules).
+	enum class AssetRole {
+		WorldObject, // General placed world asset (default)
+		Groundcover, // Dense instanced ground cover (grass)
+		Ground		 // Seamless ground tile variants for one land surface
+	};
+
+	/// How a ground tile may be rotated when the shader picks it. None for art with baked lighting.
+	enum class GroundRotate {
+		Free,	 // Any angle
+		Quarter, // 0, 90, 180 or 270 degrees
+		None,	 // Never rotated
+		Mirror	 // Never rotated, flipped left to right or not; for art with an up (grass blades)
+	};
+
+	/// Ground-role settings, read from the AssetDef's top-level ground elements.
+	struct GroundParams {
+		std::optional<world::Surface> surface;	  // The land surface this tile set paints; unset until <surface> parses
+		float						  periodMeters = 4.0F;	// Meters one variant covers; must divide 512 so tiles line up across chunks
+		uint32_t					  pixelsPerMeter = 64;	// Bake density; a 4 m variant at 64 is a 256 x 256 layer
+		GroundRotate				  rotate = GroundRotate::Free;
+		GroundMacro					  macro;
+		// Salts the bake's generator seeds: defs sharing a group get the same seed for each variant index,
+		// so a family drawn by one generator lays its variants out alike. The def's name when unset.
+		std::string					  seedGroup;
+		// How this surface meets each lower one, by the lower surface's id (<transition>). Not part of the
+		// bake's cache key: the bake never reads it.
+		GroundTransitions			  transitions{};
+	};
+
+	/// Key-value parameter store for generator configuration.
+	/// Supports string, float, and range values parsed from XML.
+	class GeneratorParams {
+	  public:
+		GeneratorParams() = default;
+
+		/// Get a string parameter
+		std::string getString(const char* key, const std::string& defaultVal = "") const;
+
+		/// Get a float parameter
+		float getFloat(const char* key, float defaultVal = 0.0F) const;
+
+		/// Get a float range parameter (min,max format in XML)
+		void getFloatRange(const char* key, float& outMin, float& outMax, float defaultMin = 0.0F, float defaultMax = 1.0F) const;
+
+		/// Get an integer parameter
+		int32_t getInt(const char* key, int32_t defaultVal = 0) const;
+
+		/// Set a string parameter
+		void setString(const char* key, const std::string& value);
+
+		/// Set a float parameter (stored as string for consistency)
+		void setFloat(const char* key, float value);
+
+		/// Check if a parameter exists
+		bool has(const char* key) const;
+
+		/// Every parameter as written, sorted by name: what a generator run reads, in a stable order.
+		[[nodiscard]] std::vector<std::pair<std::string, std::string>> sorted() const;
+
+	  private:
+		std::unordered_map<std::string, std::string> params;
+	};
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// Collision Shape
+	// Optional per-asset physical footprint for navmesh and static collision.
+	// Most flora (grass, bushes) leave this at None and don't block movement.
+	// ─────────────────────────────────────────────────────────────────────────
+
+	enum class CollisionShapeType { None, Rect, Polygon };
+
+	struct CollisionShape {
+		CollisionShapeType     type = CollisionShapeType::None;
+		glm::vec2              offsetMeters{0.0F, 0.0F};     // Rect center (local meters)
+		glm::vec2              halfExtentsMeters{0.0F, 0.0F};// Rect half width/height (local meters)
+		std::vector<glm::vec2> pointsMeters;                 // Polygon vertices (local space, CCW)
+
+		[[nodiscard]] bool blocks() const { return type != CollisionShapeType::None; }
+
+		bool operator==(const CollisionShape&) const = default;
+
+		// The 4 local corners (CCW), available to consumers that want the corner form.
+		[[nodiscard]] std::array<glm::vec2, 4> rectCornersLocal() const {
+			const glm::vec2 c  = offsetMeters;
+			const float     hx = halfExtentsMeters.x;
+			const float     hy = halfExtentsMeters.y;
+			return {glm::vec2{c.x - hx, c.y - hy}, glm::vec2{c.x + hx, c.y - hy},
+					glm::vec2{c.x + hx, c.y + hy}, glm::vec2{c.x - hx, c.y + hy}};
+		}
+	};
+
+	/// Animation parameters parsed from asset definition
+	struct AnimationParams {
+		bool		  enabled = false;
+		AnimationType type = AnimationType::None;
+		float		  windResponse = 0.3F;	   // How much wind affects this asset (0-1)
+		float		  swayFrequencyMin = 0.5F; // Animation speed range
+		float		  swayFrequencyMax = 1.0F;
+	};
+
+	/// Clumping parameters for Distribution::Clumped
+	struct ClumpingParams {
+		int32_t clumpSizeMin = 3;		// Number of instances per clump (min)
+		int32_t clumpSizeMax = 12;		// Number of instances per clump (max)
+		float	clumpRadiusMin = 0.5F;	// Radius in tile-widths within which clump instances are distributed (min)
+		float	clumpRadiusMax = 2.0F;	// Radius in tile-widths within which clump instances are distributed (max)
+		float	clumpSpacingMin = 3.0F; // Minimum distance in tiles between centers of different clumps
+		float	clumpSpacingMax = 8.0F; // Maximum distance in tiles between centers of different clumps
+	};
+
+	/// Spacing parameters for Distribution::Spaced
+	struct SpacingParams {
+		float minDistance = 2.0F; // Minimum tiles between instances
+	};
+
+	/// Per-biome placement configuration.
+	/// Each biome can have different spawn behavior for the same asset.
+	/// E.g., grass in grassland: dense/uniform; grass in forest: sparse/clumped.
+	struct BiomePlacement {
+		std::string	   biomeName;		   // "Grassland", "Forest", etc.
+		float		   spawnChance = 0.3F; // Probability at each spawn point (0-1)
+		Distribution   distribution = Distribution::Uniform;
+		ClumpingParams clumping; // Only used if distribution == Clumped
+		SpacingParams  spacing;	 // Only used if distribution == Spaced
+
+		// Tile-type proximity - for rules like "near Water"
+		std::string nearTileType;		 // e.g., "Water" (empty = no restriction)
+		float		nearDistance = 0.0F; // Max tiles from nearTileType to spawn
+	};
+
+	/// The range a placed instance's scale is drawn from (<placement><scale min max/>).
+	struct PlacementScale {
+		float min = 0.8F;
+		float max = 1.2F;
+	};
+
+	/// Placement parameters - where assets spawn in the world.
+	/// Contains per-biome configuration for flexible spawn behavior.
+	struct PlacementParams {
+		std::vector<BiomePlacement> biomes; // Per-biome spawn configuration
+		PlacementScale				scale;
+		// Meters between the spots placement tries (<samplePitch>, 1, 2 or 4): one jittered try per
+		// pitch-sized block, so a def tops out at 1000 / pitch^2 per 1,000 m2 before spawn chance.
+		uint16_t					samplePitch = 4;
+		// Spaced placement also keeps crowns apart (<crownSpacing>, 0 = off): two crown-spaced
+		// instances of any defs stand at least crownSpacing * (r1 + r2) * (0.5 + 0.5 * rSmall / rLarge)
+		// apart, r each one's crown radius, so equals keep to crownSpacing of touching and a small
+		// one may stand under a big one's edge.
+		float						crownSpacing = 0.0F;
+
+		// Entity placement system fields (self-declared groups and relationships)
+		std::vector<std::string>		   groups;		  // Groups this asset belongs to (e.g., "trees", "flowers")
+		std::vector<PlacementRelationship> relationships; // Entity-to-entity spawn rules
+
+		/// Find placement config for a specific biome name (returns nullptr if not found)
+		[[nodiscard]] const BiomePlacement* findBiome(const std::string& biomeName) const {
+			for (const auto& bp : biomes) {
+				if (bp.biomeName == biomeName) {
+					return &bp;
+				}
+			}
+			return nullptr;
+		}
+	};
+
+	/// One <ageClass> of a def's <ageClasses>: how often it occurs, how many mesh variants it
+	/// has, and how its yield and felling work scale against the def's <harvestable>.
+	struct AgeClass {
+		std::string name;
+		float		weight = 1.0F;
+		uint16_t	variants = 1;
+		float		yieldScale = 1.0F;
+		float		workScale = 1.0F;
+	};
+
+	/// Complete asset definition parsed from XML
+	struct AssetDefinition {
+		std::string			  defName; // Unique identifier (e.g., "Groundcover_Grass")
+		std::string			  label;   // Human-readable name
+		AssetType			  assetType = AssetType::Procedural;
+		std::string			  generatorName;	  // Generator to use (e.g., "GrassBlade") - C++ generators
+		std::string			  scriptPath;		  // For Lua generators: path to Lua script (relative to assets/)
+		std::vector<std::string> svgPaths;			 // For Simple assets: the SVG files, one for most; a ground def's are its variants
+		std::string			  motionPath;		  // Optional motion (animation clips) file; @shared/ or relative to baseFolder
+		std::filesystem::path baseFolder;		  // Folder containing this asset's definition (for relative path resolution)
+		float				  worldHeight = 1.0F; // World height in meters (for SVG normalization)
+		// Half-range of random placement rotation, in radians. 0 = upright (default): placed
+		// assets are upright billboards (trees, grass, bushes) and look wrong tilted. Opt-in (>0)
+		// only for ground scatter with no canonical orientation (loose rocks, debris).
+		float				  maxRandomRotation = 0.0F;
+		GeneratorParams		  params;			  // Parameters for generator
+		AnimationParams		  animation;
+		PlacementParams					  placement;	   // Where this asset spawns
+		EntityCapabilities				  capabilities;	   // What actions can be performed on/with this entity
+		std::optional<ItemProperties>	  itemProperties;  // Properties when in inventory (if carryable)
+		AssetRole						  role = AssetRole::WorldObject;
+		AssetComplexity					  complexity = AssetComplexity::Simple;
+		uint32_t						  variantCount = 1; // Number of variants to pre-generate (8 for ground defs that omit it)
+		// Empty: one age class of variantCount variants. A def never has both (AssetValidator).
+		std::vector<AgeClass>			  ageClasses;
+		// <detailLevels>: the screen densities (px/m, ascending) its generator cuts a template's mesh
+		// for, one mesh a level (DetailLevels.h). Empty: one mesh, cut for no density.
+		std::vector<float>				  detailLevels;
+		GroundParams					  ground;			// Only meaningful when role == Ground
+
+		// Physical footprint for navmesh/collision, one per age class (one entry when the def has no
+		// <ageClasses>); empty = doesn't block. Read it through collisionFor, write it through setCollision.
+		std::vector<CollisionShape> collisions;
+
+		// Item category and carrying
+		ItemCategory category = ItemCategory::None; // What type of item (for storage matching, UI grouping)
+		uint8_t		 handsRequired = 1;				// Hands needed to carry (1 or 2). 2-hand items can't fit in backpack.
+		std::string	 toolType;						// If a tool, the work it enables (e.g. "Axe"); empty = not a tool
+
+		/// Check if this entity can exist in inventory
+		[[nodiscard]] bool isCarryable() const { return itemProperties.has_value(); }
+
+		/// Check if this entity is edible when in inventory
+		[[nodiscard]] bool isEdible() const {
+			return itemProperties.has_value() && itemProperties->isEdible();
+		}
+
+		/// The footprint of an instance of the given age class; None when the def has no footprint
+		/// or the class is out of range. A def without age classes answers for class 0.
+		[[nodiscard]] const CollisionShape& collisionFor(uint8_t ageClass) const {
+			static const CollisionShape kNone;
+			return ageClass < collisions.size() ? collisions[ageClass] : kNone;
+		}
+
+		/// Sets the footprint of one age class (class 0 for a def without age classes).
+		void setCollision(uint8_t ageClass, CollisionShape shape) {
+			collisions.resize(std::max<size_t>(ageClasses.size(), 1U));
+			collisions.at(ageClass) = std::move(shape);
+		}
+
+		/// Sets every age class to the same footprint: what a def authors in XML or SVG metadata.
+		void setCollisionAllClasses(const CollisionShape& shape) {
+			collisions.assign(std::max<size_t>(ageClasses.size(), 1U), shape);
+		}
+
+		/// Check if this definition uses a Lua script generator
+		[[nodiscard]] bool isLuaGenerator() const { return !scriptPath.empty(); }
+
+		/// Resolve a relative path to absolute using this asset's base folder
+		[[nodiscard]] std::filesystem::path resolvePath(const std::string& relativePath) const {
+			if (relativePath.empty()) {
+				return {};
+			}
+			std::filesystem::path rel(relativePath);
+			if (rel.is_absolute()) {
+				return rel;
+			}
+			return baseFolder / rel;
+		}
+	};
+
+} // namespace assets

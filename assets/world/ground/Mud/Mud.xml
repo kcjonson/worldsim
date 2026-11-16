@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Mud ground tile: dark wet ground (ground_bare.lua). Densely churned lumps lit from the top, a share
+     of them with a wet gloss dab, faint wetter and drier patches, small puddles holding the sky (a
+     light lip along the far edge, wet dark mud around them), a few stones, twigs, fallen
+     leaves and soggy straw. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Ground_Mud</defName>
+    <label>Mud</label>
+    <role>ground</role>
+    <surface>Mud</surface>
+    <assetType>procedural</assetType>
+    <generator>
+      <scriptPath>@shared/ground_bare.lua</scriptPath>
+      <params>
+        <!-- The knobs are documented in Dirt.xml; puddles, gloss and leaves are here. -->
+        <baseColor>#4F3E2F</baseColor>
+
+        <patchDensity>1.2</patchDensity>
+        <patchSize>0.3,0.7</patchSize>
+        <patchLight>#54432F</patchLight>
+        <patchDark>#4A3B2C</patchDark>
+        <patchSteps>2</patchSteps>
+        <patchWobble>0.45</patchWobble>
+        <tintDensity>2</tintDensity>
+        <tintSize>0.1,0.25</tintSize>
+        <tintLight>#524233</tintLight>
+        <tintDark>#4C3C2E</tintDark>
+        <tintSteps>1</tintSteps>
+
+        <!-- Puddles: small water in hollows, puddleSize in radius and puddleAspect times as wide,
+             sized so every variant holds the same water, each at the lowest of puddleGather spots on
+             a broad field, so they gather in groups. A lip in puddleLipColor along the far edge,
+             the far bank's reflection under it in puddleColors' first, the sky in the rest, each a
+             smaller step set a little down the screen, streaks of puddleSheenColor and a glint, inside
+             wet, darker rings in puddleWetColors (carried onto the local tone) reaching puddleWetReach
+             of its size beyond it, with dabs of the sheen on the far bank. No lump grows in one. -->
+        <puddleDensity>0.4</puddleDensity>
+        <puddleSize>0.04,0.12</puddleSize>
+        <puddleAspect>1.4,2.4</puddleAspect>
+        <puddleWetReach>1</puddleWetReach>
+        <puddleGather>8</puddleGather>
+        <puddleWetColors>#3F3328,#35291F</puddleWetColors>
+        <puddleLipColor>#8EA3B1</puddleLipColor>
+        <puddleColors>#577080</puddleColors>
+        <puddleSheenColor>#7E96A5</puddleSheenColor>
+        <puddleGlintColor>#E6EDF0</puddleGlintColor>
+
+        <grainDensity>300</grainDensity>
+        <grainSize>0.014,0.022</grainSize>
+        <grainContrast>0.2</grainContrast>
+
+        <!-- Churned lumps; lumpGlossShare of them carry a gloss dab on their cap. lumpFar is the
+             coarsest density a lump is drawn at: 8 lets the biggest into mip 3. -->
+        <lumpDensity>280</lumpDensity>
+        <lumpSize>0.03,0.1</lumpSize>
+        <lumpColors>#534231,#4B3B2D,#4F3F30,#574634</lumpColors>
+        <lumpJitter>0.12</lumpJitter>
+        <lumpShadow>0.45</lumpShadow>
+        <lumpLit>1.5</lumpLit>
+        <lumpGlossColor>#646B70</lumpGlossColor>
+        <lumpGlossShare>0.15</lumpGlossShare>
+        <lumpFar>8</lumpFar>
+
+        <strawDensity>1.5</strawDensity>
+        <strawLength>0.03,0.08</strawLength>
+        <strawWidth>0.01,0.013</strawWidth>
+        <strawColors>#6E6040,#857450</strawColors>
+
+        <!-- Leaves: pointed ovals leafLength long in leafColors over a shadow leafShadow times the
+             ground's light, with a midrib. -->
+        <leafDensity>1.5</leafDensity>
+        <leafLength>0.03,0.055</leafLength>
+        <leafColors>#6A4E30,#7C5E36,#5A4A2C,#4E4A2A</leafColors>
+        <leafShadow>0.65</leafShadow>
+
+        <twigDensity>1.2</twigDensity>
+        <twigLength>0.05,0.14</twigLength>
+        <twigWidth>0.01,0.015</twigWidth>
+        <twigColors>#3E3024,#5A4632,#4A3A2A</twigColors>
+        <twigShadow>0.7</twigShadow>
+
+        <stoneDensity>4</stoneDensity>
+        <stoneSize>0.015,0.045</stoneSize>
+        <stoneColors>#6E675E,#7C756A,#5E5850</stoneColors>
+        <stoneShadow>0.55</stoneShadow>
+        <stoneLit>1.3</stoneLit>
+
+        <farContrast>1.25</farContrast>
+        <farCoarseContrast>0.82</farCoarseContrast>
+        <farGain>0.9965,1.0277,1.0282</farGain>
+      </params>
+    </generator>
+    <variantCount>8</variantCount>
+    <period>4</period>
+    <pixelsPerMeter>64</pixelsPerMeter>
+    <!-- Lit from the top (lump caps, the puddles' lit lower banks), so cells only flip left to right,
+         which keeps the light. -->
+    <rotate>mirror</rotate>
+    <macro>
+      <dry>1.08,1.06,1.02</dry>
+      <lush>0.92,0.94,0.98</lush>
+      <amplitude>0.4</amplitude>
+    </macro>
+  </AssetDef>
+</AssetDefinitions>

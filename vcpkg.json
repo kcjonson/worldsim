@@ -19,7 +19,12 @@
     "benchmark",
     "pugixml",
     "lua",
-    "sol2"
+    "sol2",
+    {
+      "name": "glslang",
+      "host": true,
+      "features": ["tools"]
+    }
   ],
   "builtin-baseline": "bfc6984dcbe4a165741aa95411cb5e77d9c88068",
   "overrides": [
@@ -32,5 +37,8 @@
     { "name": "nlohmann-json", "version": "3.12.0" },
     { "name": "pugixml", "version": "1.15" },
     { "name": "lua", "version": "5.4.7" }
-  ]
+  ],
+  "vcpkg-configuration": {
+    "overlay-ports": ["./cmake/vcpkg-overlay-ports"]
+  }
 }

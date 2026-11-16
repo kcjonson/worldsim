@@ -1,17 +1,21 @@
 #include "NavMesh.h"
 
 #include "../arrangement/Arrangement.h"
-#include "../arrangement/HalfEdge.h"
 #include "../core/Int128.h"
 #include "../predicates/Predicates.h"
-#include "../triangulation/Triangulation.h"
+#include "../triangulation/ConstrainedDelaunay.h"
+#include "PathQuery.h"
 
 #include <algorithm>
 #include <array>
+#include <atomic>
+#include <cassert>
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <span>
 #include <unordered_map>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -29,116 +33,138 @@ namespace geometry::nav {
 			return (static_cast<std::uint64_t>(a) << 32) | static_cast<std::uint64_t>(b);
 		}
 
-		// A bounded face awaiting triangulation: its CCW outer ring (vertex indices
-		// into mesh.vertices) plus the CW hole rings nested inside it. `blocker` and
-		// `opening` carry the per-face belief tags onto every triangle the face emits:
-		// floor faces get kNoBlocker/kNoOpening, faces inside a blocked ring get that
-		// ring's provenanceId/openingId. Wall interiors are kept (not discarded) so a
-		// belief query can optimistically path through an unseen wall.
-		struct WalkableFace {
-			std::vector<std::uint32_t>				outer;
-			std::vector<std::vector<std::uint32_t>> holes;
-			Int128									areaDoubled; // positive (CCW); innermost-container key
-			Vec2i64									repPoint;	 // interior point used to classify the face
-			std::int64_t							blocker = kNoBlocker;
-			std::int64_t							opening = kNoOpening;
-		};
-
-		std::vector<std::uint32_t> faceRingIndices(const HalfEdgeMesh& mesh, const Face& f) {
-			std::vector<std::uint32_t> ring;
-			ring.reserve(f.halfEdges.size());
-			for (std::size_t he : f.halfEdges) {
-				ring.push_back(static_cast<std::uint32_t>(mesh.halfEdges[he].origin));
-			}
-			return ring;
-		}
-
-		std::vector<Vec2i64> ringPoints(const HalfEdgeMesh& mesh, const std::vector<std::uint32_t>& ring) {
-			std::vector<Vec2i64> pts;
-			pts.reserve(ring.size());
-			for (std::uint32_t idx : ring) {
-				pts.push_back(mesh.vertices[idx]);
-			}
-			return pts;
-		}
-
-		// True when `p` lies inside the outer ring and strictly outside every hole, i.e.
-		// in the face's actual (annular) interior.
-		bool inFaceInterior(const Vec2i64& p, const std::vector<Vec2i64>& outerPts,
-							const std::vector<std::vector<Vec2i64>>& holePts) {
-			if (pointInPolygon(p, outerPts) != PointInPolygon::Inside) {
-				return false;
-			}
-			for (const std::vector<Vec2i64>& h : holePts) {
-				if (pointInPolygon(p, h) != PointInPolygon::Outside) {
-					return false; // inside or on the boundary of a hole
-				}
-			}
-			return true;
-		}
-
-		// A representative point in the face's TRUE interior (inside `outer`, strictly
-		// outside every hole). The face-extraction rep point only considers the outer
-		// cycle, so for a face with holes it can land in a hole; classifying from there
-		// reads the hole region's depth, not the face's. We keep that point when it is
-		// already hole-free, else search for one that clears all holes.
-		//
-		// The search samples points near the OUTER boundary, where the annular interior
-		// is always present (the holes are strict sub-regions, so the band just inside
-		// the outer cycle is hole-free). For each outer vertex we step a short way toward
-		// the outer centroid at a few fractions; a point hugging the boundary lands in
-		// the annulus even when the outer-cycle ear centroids all cluster inside a
-		// central hole (e.g. a square area whose dry land is a centered island). Falls
-		// back to the original rep point if no integer sample lands clear, leaving prior
-		// behavior unchanged.
-		Vec2i64 representativeOutsideHoles(const HalfEdgeMesh& mesh, const std::vector<std::uint32_t>& outer,
-										   const std::vector<std::vector<std::uint32_t>>& holes, const Vec2i64& fallback) {
-			const std::vector<Vec2i64> outerPts = ringPoints(mesh, outer);
-			std::vector<std::vector<Vec2i64>> holePts;
-			holePts.reserve(holes.size());
-			for (const std::vector<std::uint32_t>& h : holes) {
-				holePts.push_back(ringPoints(mesh, h));
-			}
-			if (holePts.empty() || inFaceInterior(fallback, outerPts, holePts)) {
-				return fallback;
-			}
-
-			const std::size_t n = outerPts.size();
-			if (n == 0) {
-				return fallback;
-			}
-			Vec2i64 c{0, 0};
-			for (const Vec2i64& p : outerPts) {
-				c.x += p.x;
-				c.y += p.y;
-			}
-			c.x /= static_cast<std::int64_t>(n);
-			c.y /= static_cast<std::int64_t>(n);
-
-			// Step each outer vertex toward the centroid by num/den; small fractions hug
-			// the boundary (hole-free band), larger ones reach a centered interior if the
-			// boundary band is itself blocked. Numerators chosen low-to-high.
-			constexpr std::int64_t den = 16;
-			for (std::int64_t num : {1, 2, 3, 4, 6, 8}) {
-				for (const Vec2i64& v : outerPts) {
-					const Vec2i64 sample{v.x + (c.x - v.x) * num / den, v.y + (c.y - v.y) * num / den};
-					if (inFaceInterior(sample, outerPts, holePts)) {
-						return sample;
-					}
-				}
-			}
-			return fallback;
-		}
-
-		// |2*area| of a polygon ring (shoelace), exact in 128-bit. Used only to rank
-		// containing blocked rings by size (smallest-containing wins); sign irrelevant.
-		Int128 signedAreaDoubledAbs(const std::vector<Vec2i64>& ring) {
+		// 2*area of a polygon ring (shoelace), exact in 128-bit: positive when it runs
+		// counterclockwise.
+		Int128 signedAreaDoubled(const std::vector<Vec2i64>& ring) {
 			Int128 acc(0);
 			const std::size_t n = ring.size();
 			for (std::size_t i = 0; i < n; ++i) {
 				acc = acc + cross(ring[i], ring[(i + 1) % n]);
 			}
-			return acc.sign() < 0 ? Int128(0) - acc : acc;
+			return acc;
+		}
+
+		// Every operand groundBoundaries multiplies is a difference of two points of rings
+		// whose boxes meet, each narrower than kMaxGroundExtentMm.
+		constexpr std::int64_t kMaxOperandMm = 2 * kMaxGroundExtentMm;
+
+		// The helpers groundBoundaries runs per vertex are inline: MSVC's RelWithDebInfo (/Ob1)
+		// inlines nothing else.
+		inline bool smallOperand(const Vec2i64& v) {
+			return v.x > -kMaxOperandMm && v.x < kMaxOperandMm && v.y > -kMaxOperandMm && v.y < kMaxOperandMm;
+		}
+
+		inline std::int64_t smallCross(const Vec2i64& u, const Vec2i64& v) {
+			assert(smallOperand(u) && smallOperand(v) && "groundBoundaries: points too far apart for exact ordering");
+			return u.x * v.y - u.y * v.x;
+		}
+
+		inline std::int64_t smallDot(const Vec2i64& u, const Vec2i64& v) {
+			assert(smallOperand(u) && smallOperand(v) && "groundBoundaries: points too far apart for exact ordering");
+			return u.x * v.x + u.y * v.y;
+		}
+
+		inline bool paramLess(const EdgeParam& p, const EdgeParam& q) {
+			return Int128::product(p.num, q.den) < Int128::product(q.num, p.den);
+		}
+
+		// Where the line a + t dir meets the line through p and q (not parallel to it).
+		EdgeParam crossingParam(const Vec2i64& a, const Vec2i64& dir, const Vec2i64& p, const Vec2i64& q) {
+			std::int64_t num = smallCross(p - a, q - p);
+			std::int64_t den = smallCross(dir, q - p);
+			if (den < 0) {
+				num = -num;
+				den = -den;
+			}
+			return {num, den};
+		}
+
+		inline bool boxesMeet(const Vec2i64& aLo, const Vec2i64& aHi, const Vec2i64& bLo, const Vec2i64& bHi) {
+			return aLo.x <= bHi.x && bLo.x <= aHi.x && aLo.y <= bHi.y && bLo.y <= aHi.y;
+		}
+
+		// The crossing of two segments as the arrangement rounds it, whichever is given
+		// first, kept inside both segments' boxes so both can end there.
+		Vec2i64 roundedCrossing(const std::array<Vec2i64, 2>& s, const std::array<Vec2i64, 2>& t) {
+			std::array<Vec2i64, 2> p{std::min(s[0], s[1]), std::max(s[0], s[1])};
+			std::array<Vec2i64, 2> q{std::min(t[0], t[1]), std::max(t[0], t[1])};
+			if (q < p) {
+				std::swap(p, q);
+			}
+			const Vec2i64 x = intersectSegments(p[0], p[1], q[0], q[1]).point;
+			const Vec2i64 lo{std::max(std::min(p[0].x, p[1].x), std::min(q[0].x, q[1].x)), std::max(std::min(p[0].y, p[1].y), std::min(q[0].y, q[1].y))};
+			const Vec2i64 hi{std::min(std::max(p[0].x, p[1].x), std::max(q[0].x, q[1].x)), std::min(std::max(p[0].y, p[1].y), std::max(q[0].y, q[1].y))};
+			return {std::clamp(x.x, lo.x, hi.x), std::clamp(x.y, lo.y, hi.y)};
+		}
+
+		constexpr int kFlip			= 0;
+		constexpr int kExcludeStart = 1;
+		constexpr int kExcludeEnd	= 2;
+
+		// A face of the arrangement: the triangles one flood fill reaches without
+		// crossing a constraint. `blockedRings` are the indices of the blocked rings
+		// whose parity holds it, ascending.
+		struct MeshFace {
+			bool					  touchesFrame = false; // unbounded: outside every ring
+			bool					  reached	   = false;
+			bool					  inBounds	   = false;
+			std::vector<std::int32_t> blockedRings;
+			std::int64_t			  blocker = kNoBlocker;
+			std::int64_t			  opening = kNoOpening;
+		};
+
+		// An arrangement segment's tag: its ring and edge, so coincident edges of two
+		// rings with one provenance stay two sources.
+		std::int64_t ringEdgeTag(std::int32_t ring, std::int32_t edge) {
+			return (static_cast<std::int64_t>(ring) << 32) | static_cast<std::int64_t>(edge);
+		}
+
+		std::int32_t tagRing(std::int64_t tag) {
+			return static_cast<std::int32_t>(tag >> 32);
+		}
+
+		// The cover across an arrangement edge: every blocked ring with an odd count of
+		// edges on it toggles, and ground toggles on an odd count of ground edges (each
+		// ground piece is a boundary interval of one edge, so crossing it changes ground).
+		// `sources` is ascending, so one ring's edges are adjacent.
+		void crossEdge(const MeshFace& from, const std::vector<std::int64_t>& sources, const std::vector<const NavInputPolygon*>& rings, MeshFace& into) {
+			into.inBounds	  = from.inBounds;
+			into.blockedRings = from.blockedRings;
+			int boundsCount	  = 0;
+			for (std::size_t i = 0; i < sources.size();) {
+				const std::int32_t ring = tagRing(sources[i]);
+				std::size_t		   end	= i + 1;
+				while (end < sources.size() && tagRing(sources[end]) == ring) {
+					++end;
+				}
+				const bool odd = (end - i) % 2 == 1;
+				i			   = end;
+				if (!rings[static_cast<std::size_t>(ring)]->blocked) {
+					boundsCount += odd ? 1 : 0;
+					continue;
+				}
+				if (!odd) {
+					continue;
+				}
+				auto at = std::lower_bound(into.blockedRings.begin(), into.blockedRings.end(), ring);
+				if (at != into.blockedRings.end() && *at == ring) {
+					into.blockedRings.erase(at);
+				} else {
+					into.blockedRings.insert(at, ring);
+				}
+			}
+			if (boundsCount % 2 == 1) {
+				into.inBounds = !into.inBounds;
+			}
+		}
+
+		// Whether crossing from `from` over an edge with these sources gives what `into`
+		// already holds.
+		[[maybe_unused]] bool agreesAcross(const MeshFace& from, const std::vector<std::int64_t>& sources, const std::vector<const NavInputPolygon*>& rings,
+										   const MeshFace& into) {
+			MeshFace across;
+			crossEdge(from, sources, rings, across);
+			return across.inBounds == into.inBounds && across.blockedRings == into.blockedRings;
 		}
 
 		// --- Demyen-Buro corridor width (exact integer) ------------------------------
@@ -150,15 +176,16 @@ namespace geometry::nav {
 		// Two deliberate departures from the paper, both forced by our merged-mesh model
 		// (floor + obstacle interiors triangulated as one graph, not "every vertex is an
 		// obstacle"):
-		//   1. A triangle vertex is an obstacle ONLY if it is an endpoint of a common-
-		//      knowledge obstacle edge; a bare floor/border vertex is not. So the width
-		//      is seeded UNCONSTRAINED, and the base vertices contribute a bound only
-		//      when they are obstacle vertices. This is what keeps an open-floor sliver
-		//      (no incident obstacle edges) unconstrained instead of falsely narrow.
-		//   2. "Constrained edge" in the paper == "common-knowledge obstacle edge" here:
-		//      a triangle edge whose two incident faces differ in common-knowledge-
-		//      blockedness (the boundary of a water/flora region). Belief-dependent walls
-		//      (faceBlocker > 0) are NOT obstacles for this pass (see NavMesh.h).
+		//   1. A triangle vertex is an obstacle ONLY if it ends an obstacle edge, any edge
+		//      of its fan, not only the triangle's own; a vertex inside floor is not. So
+		//      the width is seeded UNCONSTRAINED, and a vertex bounds it only when it is an
+		//      obstacle vertex: a sliver whose vertices touch no obstacle edge is
+		//      unconstrained, not falsely narrow.
+		//   2. "Constrained edge" in the paper == "obstacle edge" here: a triangle edge
+		//      with common-knowledge-blocked ground (water, a placed obstacle) on exactly
+		//      one side, the mesh edge included, since outside the mesh reads as blocked.
+		//      Belief-dependent walls (faceBlocker > 0) are NOT obstacles for this pass
+		//      (see NavMesh.h).
 		// All obstacles in our model are filled polygons, so every obstacle vertex has
 		// incident obstacle edges (no bare point obstacles); the paper's edge-based
 		// search therefore captures every obstacle the disc must round.
@@ -168,14 +195,43 @@ namespace geometry::nav {
 		}
 
 		// Edge e of triangle ti is an obstacle edge iff exactly one of the two faces it
-		// separates is common-knowledge-blocked (the boundary of a water/flora region).
-		// A mesh-boundary edge (neighbor == -1) has no obstacle face outside it, so a
-		// floor border is not an obstacle edge (scope: terrain/flora only).
-		bool isObstacleEdge(const NavMesh& mesh, std::int32_t ti, int e) {
-			const bool self	 = isCommonKnowledgeBlocked(mesh.triangles[ti].faceBlocker);
-			const std::int32_t nb = mesh.triangles[ti].neighbor[e];
-			const bool other = nb < 0 ? false : isCommonKnowledgeBlocked(mesh.triangles[nb].faceBlocker);
+		// separates is common-knowledge-blocked (the boundary of a water/obstacle region).
+		// Outside the mesh (neighbor == -1) is impassable, so it reads as blocked: the mesh
+		// edge narrows corridors beside it like any obstacle.
+		bool isObstacleEdge(const NavView& view, std::int32_t ti, int e) {
+			const bool		   self	 = isCommonKnowledgeBlocked(view.triangle(ti).faceBlocker);
+			const std::int32_t nb	 = view.triangle(ti).neighbor[static_cast<std::size_t>(e)];
+			const bool		   other = nb < 0 || isCommonKnowledgeBlocked(view.triangle(nb).faceBlocker);
 			return self != other;
+		}
+
+		// Whether vertex `vertex` of triangle ti ends an obstacle edge: a walk round its fan,
+		// one way and then, when that meets the mesh edge, the other.
+		bool endsObstacleEdge(const NavView& view, std::int32_t ti, std::uint32_t vertex) {
+			auto corner = [&](std::int32_t t) {
+				const NavTriangle& tri = view.triangle(t);
+				return tri.v[0] == vertex ? 0 : (tri.v[1] == vertex ? 1 : 2);
+			};
+			std::int32_t t = ti;
+			do {
+				const int e = corner(t);
+				if (isObstacleEdge(view, t, e)) {
+					return true;
+				}
+				t = view.triangle(t).neighbor[static_cast<std::size_t>(e)];
+			} while (t >= 0 && t != ti);
+			if (t == ti) {
+				return false;
+			}
+			t = ti;
+			do {
+				const int e = (corner(t) + 2) % 3;
+				if (isObstacleEdge(view, t, e)) {
+					return true;
+				}
+				t = view.triangle(t).neighbor[static_cast<std::size_t>(e)];
+			} while (t >= 0 && t != ti);
+			return false;
 		}
 
 		// Is the angle of triangle (C, U, V) at vertex U strictly obtuse? True iff the
@@ -194,7 +250,7 @@ namespace geometry::nav {
 			std::int64_t lo = 0;
 			// hi = floor(sqrt(INT64_MAX)); k*k stays in int64 range as Int128. Safe because
 			// the only inputs are squared distances between mesh vertices, i.e. coordinate
-			// DELTAS bounded by the loaded-region span (a few chunks, a few million mm),
+			// DELTAS bounded by the meshed span (a few million mm),
 			// squared ~1e13, far under INT64_MAX -- not because coordinates are small (they
 			// are world-absolute mm). A navmesh spanning >~2,000 km would break this.
 			std::int64_t hi = 3037000499;
@@ -254,54 +310,68 @@ namespace geometry::nav {
 			return floorSqrtRational(cross(uv, uc), den); // perpendicular, foot interior
 		}
 
-		std::int64_t minWidth(std::int64_t a, std::int64_t b) {
-			return a < b ? a : b;
+		// floor(|d|) < bound, decided on squares: no root is taken.
+		// A fresh mark for one search's triangles.
+		void beginWidthSearch(const NavView& view, WidthSearch& search) {
+			search.visited.growTo(static_cast<std::size_t>(view.triangleSlots()));
+			// A wrapped stamp would match marks left by searches long ago.
+			if (++search.stamp == 0) {
+				search.visited.zero();
+				search.stamp = 1;
+			}
 		}
 
-		// Per-query scratch for the width search: a generation stamp per triangle so the
-		// recursion never re-enters a triangle within one CalculateWidth call. Demyen
-		// proves (Thm 4.3.4/4.3.6) a CDT width search never revisits a triangle, so this
-		// only fires as a defensive guard against a non-Delaunay sliver, where it
-		// terminates safely without dropping any reachable obstacle (an already-visited
-		// triangle was fully explored from this apex). One buffer is reused across the
-		// whole build via an incrementing stamp, so there is no per-call clearing.
-		struct WidthScratch {
-			std::vector<std::int32_t> visited; // visited[ti] == stamp -> seen this query
-			std::int32_t			  stamp = 0;
-		};
+		bool lengthBelow(const Vec2i64& d, std::int64_t bound) {
+			return dot(d, d) < Int128::product(bound, bound);
+		}
+
+		// floor(distance from c to the line through u and v) < bound, on squares:
+		// cross^2 < bound^2 * |uv|^2.
+		bool lineDistanceBelow(const Vec2i64& c, const Vec2i64& u, const Vec2i64& v, std::int64_t bound) {
+			const Vec2i64 uv = v - u;
+			return Int128::compareSquareToProduct(cross(uv, c - u), Int128::product(bound, bound), dot(uv, uv)) < 0;
+		}
 
 		// Demyen Algorithm 2: SearchWidth. Walk across non-obstacle edges from apex C,
 		// bounded above by the closest obstacle found so far (`bound`, a floored mm
 		// distance), returning the tightened bound. `ti`/`e` is the edge being entered.
-		std::int64_t searchWidth(
-			const NavMesh& mesh, WidthScratch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound) {
-			const NavTriangle& tri = mesh.triangles[ti];
-			const Vec2i64&	   u   = mesh.vertices[tri.v[e]];
-			const Vec2i64&	   v   = mesh.vertices[tri.v[(e + 1) % 3]];
+		// The visited stamp only guards against a non-Delaunay sliver: Demyen proves (Thm
+		// 4.3.4/4.3.6) a CDT width search never revisits a triangle, and an already-visited
+		// triangle was fully explored from this apex, so no obstacle is dropped.
+		std::int64_t searchWidth(const NavView& view, WidthSearch& scratch, const Vec2i64& c, std::int32_t ti, int e, std::int64_t bound) {
+			const NavTriangle& tri = view.triangle(ti);
+			const Vec2i64&	   u   = view.vertex(tri.v[static_cast<std::size_t>(e)]);
+			const Vec2i64&	   v   = view.vertex(tri.v[static_cast<std::size_t>((e + 1) % 3)]);
 
 			// Prune: if the foot of the perpendicular from C to line UV is outside the
-			// segment, no obstacle reachable across this edge is in the wedge (Demyen
-			// Fig. 4.13-4.14); the bound already reflects the nearer base vertex.
-			if (obtuseAt(c, u, v) || obtuseAt(c, v, u)) {
+			// segment, nothing across this edge is in the wedge (Demyen Fig. 4.13-4.14) but
+			// the nearer end, which bounds the width when it ends an obstacle edge.
+			const bool atU = obtuseAt(c, u, v);
+			if (atU || obtuseAt(c, v, u)) {
+				const std::uint32_t nearEnd = tri.v[static_cast<std::size_t>(atU ? e : (e + 1) % 3)];
+				const Vec2i64&		p		= view.vertex(nearEnd);
+				if (lengthBelow(p - c, bound) && endsObstacleEdge(view, ti, nearEnd)) {
+					return floorSqrtSquared(dot(p - c, p - c));
+				}
 				return bound;
 			}
-			const std::int64_t d = floorDistancePointToSegment(c, u, v);
-			if (d >= bound) {
+			// The foot is on the segment here, so its distance is the line distance.
+			if (!lineDistanceBelow(c, u, v, bound)) {
 				return bound; // nothing closer this way
 			}
-			if (isObstacleEdge(mesh, ti, e)) {
-				return d; // closest obstacle is this constrained edge
+			if (isObstacleEdge(view, ti, e)) {
+				return floorDistancePointToSegment(c, u, v); // closest obstacle is this constrained edge
 			}
 			// Unconstrained: recurse into the opposite triangle's two other edges.
 			const std::int32_t nb = tri.neighbor[e];
 			if (nb < 0) {
-				return bound; // no opposite triangle (mesh boundary), nothing to cross
+				return bound; // a blocked face's mesh-boundary edge: impassable on both sides
 			}
 			if (scratch.visited[nb] == scratch.stamp) {
 				return bound; // already explored from this apex (loop guard)
 			}
 			scratch.visited[nb] = scratch.stamp;
-			const NavTriangle& opp = mesh.triangles[nb];
+			const NavTriangle& opp = view.triangle(nb);
 			int back = -1;
 			for (int k = 0; k < 3; ++k) {
 				if (opp.neighbor[k] == ti) {
@@ -313,573 +383,653 @@ namespace geometry::nav {
 				return bound; // adjacency inconsistency; bail safely
 			}
 			std::int64_t out = bound;
-			out = searchWidth(mesh, scratch, c, nb, (back + 1) % 3, out);
-			out = searchWidth(mesh, scratch, c, nb, (back + 2) % 3, out);
+			out = searchWidth(view, scratch, c, nb, (back + 1) % 3, out);
+			out = searchWidth(view, scratch, c, nb, (back + 2) % 3, out);
 			return out;
 		}
-
-		// Demyen Algorithm 3: CalculateWidth, for the edge pair meeting at apex v[apex]
-		// of triangle ti. Edges incident to the apex are `apex` and `(apex+2)%3`; the
-		// opposite edge c is `(apex+1)%3`, between base vertices A=v[(apex+1)%3] and
-		// B=v[(apex+2)%3]. Returns the floored max disc diameter (mm), or
-		// kUnconstrainedWidth when no common-knowledge obstacle pinches the passage.
-		std::int64_t calculateEdgePairWidth(const NavMesh& mesh, WidthScratch& scratch, std::int32_t ti, int apex) {
-			const NavTriangle& tri = mesh.triangles[ti];
-			const int		   cEdge = (apex + 1) % 3; // edge opposite the apex
-			const Vec2i64&	   c	 = mesh.vertices[tri.v[apex]];
-			const Vec2i64&	   a	 = mesh.vertices[tri.v[cEdge]];			// base vertex A
-			const Vec2i64&	   b	 = mesh.vertices[tri.v[(apex + 2) % 3]]; // base vertex B
-
-			// A base vertex bounds the width only if it is an obstacle vertex, i.e. an
-			// endpoint of an incident obstacle edge. Edge cEdge = (A,B); edge `apex` =
-			// (C,A)? No: edge `apex` is (v[apex], v[apex+1]) = (C, A); edge (apex+2)%3 is
-			// (v[apex+2], v[apex]) = (B, C). So A is shared by edges cEdge and apex; B is
-			// shared by edges cEdge and (apex+2)%3.
-			const bool aObstacle = isObstacleEdge(mesh, ti, cEdge) || isObstacleEdge(mesh, ti, apex);
-			const bool bObstacle = isObstacleEdge(mesh, ti, cEdge) || isObstacleEdge(mesh, ti, (apex + 2) % 3);
-
-			std::int64_t d = kUnconstrainedWidth;
-			if (aObstacle) {
-				const Vec2i64 ca = a - c;
-				d = minWidth(d, floorSqrtSquared(dot(ca, ca)));
-			}
-			if (bObstacle) {
-				const Vec2i64 cb = b - c;
-				d = minWidth(d, floorSqrtSquared(dot(cb, cb)));
-			}
-
-			// Case 1: an obtuse base angle means the nearer base vertex is the closest
-			// obstacle in the wedge and the search must not cross edge c (it would leave
-			// the wedge). The bound above already captured that vertex.
-			if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
-				return d;
-			}
-			// Case 2: opposite edge constrained -> perpendicular distance to it (which is
-			// <= either base-vertex distance, the foot being interior here).
-			if (isObstacleEdge(mesh, ti, cEdge)) {
-				return minWidth(d, floorDistancePointToSegment(c, a, b));
-			}
-			// Case 3: opposite edge unconstrained -> search across it (the start triangle
-			// is marked visited so the search never re-enters it).
-			++scratch.stamp;
-			scratch.visited[ti] = scratch.stamp;
-			return searchWidth(mesh, scratch, c, ti, cEdge, d);
-		}
-
-		// --- Width-aware reachability forest (P3.3) ----------------------------------
-		// Two max-spanning-forests over the triangle dual graph, sharing one set of
-		// geometric edge capacities; they differ only in which triangles are nodes (the
-		// traversability predicate). See NavMesh.h ReachabilityForest for the contract.
-
-		// A portal between two triangles, with its sound disc-diameter capacity. Built
-		// once over all interior edges, then filtered per forest by the node predicate.
-		struct PortalEdge {
-			std::int32_t triA = -1; // lower triangle index (canonical owner of the edge)
-			std::int32_t triB = -1; // higher triangle index
-			std::int64_t cap  = kUnconstrainedWidth;
-		};
-
-		// T-side capacity of portal edge `e` in triangle `ti`: the widest disc that can
-		// cross the portal THROUGH ti. The disc enters via one of ti's OTHER two edges
-		// and pivots about one of the portal's two endpoints (local vertices e and
-		// (e+1)%3), so it may use the wider of the two apex widths; the max is the sound
-		// upper bound (Demyen edge-pair width is keyed by apex).
-		std::int64_t portalSideCap(const NavMesh& mesh, std::int32_t ti, int e) {
-			const NavTriangle& t  = mesh.triangles[ti];
-			const std::int64_t w0 = t.edgePairWidthMm[e];
-			const std::int64_t w1 = t.edgePairWidthMm[(e + 1) % 3];
-			return w0 > w1 ? w0 : w1;
-		}
-
-		// Capacity of the portal shared by T1 (edge eInT1) and T2: the min of each
-		// side's capacity and the door clear width when the edge is a door portal. A
-		// door span has unconstrained Demyen widths (walls are not common-knowledge
-		// obstacles), so the door clear width is what binds there -- hence in the min.
-		std::int64_t portalCapacity(const NavMesh& mesh, std::int32_t t1, int eInT1, std::int32_t t2) {
-			const NavTriangle& tri1	   = mesh.triangles[t1];
-			const std::int32_t backEdge = [&]() {
-				for (int k = 0; k < 3; ++k) {
-					if (mesh.triangles[t2].neighbor[k] == t1) {
-						return k;
-					}
-				}
-				return -1;
-			}();
-			std::int64_t cap = portalSideCap(mesh, t1, eInT1);
-			if (backEdge >= 0) {
-				cap = std::min(cap, portalSideCap(mesh, t2, backEdge));
-			}
-			if (tri1.edgeOpening[eInT1] != kNoOpening) {
-				cap = std::min(cap, tri1.edgeClearWidthMm[eInT1]);
-			}
-			return cap;
-		}
-
-		// Union-find over triangle leaves, with the merge-tree node id carried on each
-		// set so a union can wire the new internal node's children. find() uses path
-		// compression; union is by the caller's deterministic edge order (no rank), so
-		// the tree shape is reproducible.
-		struct ForestBuilder {
-			std::vector<std::int32_t> parent;	 // DSU parent over leaves [0,n)
-			std::vector<std::int32_t> setNode;	 // current merge-tree root node for each DSU set
-			std::vector<std::int64_t> nodeCap;	 // capacity stored at each merge-tree node
-			std::vector<std::int32_t> nodeLeft;	 // left child of each internal node (-1 for leaves)
-			std::vector<std::int32_t> nodeRight; // right child of each internal node (-1 for leaves)
-
-			std::int32_t find(std::int32_t x) {
-				while (parent[x] != x) {
-					parent[x] = parent[parent[x]];
-					x		  = parent[x];
-				}
-				return x;
-			}
-		};
-
-		// Build one forest from the node predicate and the shared portal list. Edges are
-		// processed in DESCENDING capacity (Kruskal max-spanning-forest); ties break by
-		// (cap desc, lower triA, lower triB) for a reproducible tree. Only edges whose
-		// BOTH endpoints are nodes participate. Returns the populated ReachabilityForest.
-		template <typename NodePredicate>
-		ReachabilityForest buildForest(
-			const NavMesh& mesh, const std::vector<PortalEdge>& portals, NodePredicate isNode) {
-			const std::int32_t n = static_cast<std::int32_t>(mesh.triangles.size());
-
-			ForestBuilder fb;
-			fb.parent.resize(n);
-			fb.setNode.resize(n);
-			// Leaves first; internal nodes appended on each union. At most n-1 unions, so
-			// reserve 2n-1 to avoid reallocation invalidating nothing (we store indices).
-			fb.nodeCap.assign(n, kUnconstrainedWidth);
-			fb.nodeLeft.assign(n, -1);
-			fb.nodeRight.assign(n, -1);
-			fb.nodeCap.reserve(static_cast<std::size_t>(2) * n);
-			fb.nodeLeft.reserve(static_cast<std::size_t>(2) * n);
-			fb.nodeRight.reserve(static_cast<std::size_t>(2) * n);
-			for (std::int32_t i = 0; i < n; ++i) {
-				fb.parent[i]  = i;
-				fb.setNode[i] = i; // each traversable leaf starts as its own merge-tree root
-			}
-
-			// Filter to participating edges (both endpoints are nodes), then sort by the
-			// deterministic Kruskal order. Non-node triangles never appear, so they stay
-			// singleton sets and get component -1 below.
-			std::vector<PortalEdge> edges;
-			edges.reserve(portals.size());
-			for (const PortalEdge& pe : portals) {
-				if (isNode(mesh.triangles[pe.triA]) && isNode(mesh.triangles[pe.triB])) {
-					edges.push_back(pe);
-				}
-			}
-			std::sort(edges.begin(), edges.end(), [](const PortalEdge& a, const PortalEdge& b) {
-				if (a.cap != b.cap) {
-					return a.cap > b.cap; // descending capacity
-				}
-				if (a.triA != b.triA) {
-					return a.triA < b.triA; // then lower triangle index
-				}
-				return a.triB < b.triB; // then lower neighbor index
-			});
-
-			for (const PortalEdge& pe : edges) {
-				const std::int32_t ra = fb.find(pe.triA);
-				const std::int32_t rb = fb.find(pe.triB);
-				if (ra == rb) {
-					continue; // already connected; this edge closes a cycle
-				}
-				// New internal node merging the two subtree roots at this edge's capacity.
-				const std::int32_t node = static_cast<std::int32_t>(fb.nodeCap.size());
-				fb.nodeCap.push_back(pe.cap);
-				fb.nodeLeft.push_back(fb.setNode[ra]);
-				fb.nodeRight.push_back(fb.setNode[rb]);
-				// Union (attach rb's set under ra) and route the set's merge-tree root to
-				// the new internal node.
-				fb.parent[rb]  = ra;
-				fb.setNode[ra] = node;
-			}
-
-			// Assemble the ReachabilityForest: node capacities, then component ids and
-			// binary-lifting LCA tables over the reconstruction-tree forest.
-			ReachabilityForest forest;
-			forest.nodeCap = std::move(fb.nodeCap);
-			const std::int32_t nodeCount = static_cast<std::int32_t>(forest.nodeCap.size());
-
-			// Parent of each merge-tree node (roots point to themselves), from the
-			// child links recorded during the unions. depth via a root-down pass.
-			std::vector<std::int32_t> nodeParent(nodeCount);
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				nodeParent[i] = i; // default: root
-			}
-			for (std::int32_t i = n; i < nodeCount; ++i) {
-				nodeParent[fb.nodeLeft[i]]  = i;
-				nodeParent[fb.nodeRight[i]] = i;
-			}
-
-			// depth[]: roots have depth 0; a child is parent depth + 1. Processing nodes
-			// in DESCENDING id is a valid topological order because every internal node
-			// has a HIGHER id than both its children (created after them), so a parent's
-			// depth is finalized before any child reads it.
-			forest.depth.assign(nodeCount, 0);
-			for (std::int32_t i = nodeCount - 1; i >= 0; --i) {
-				if (nodeParent[i] != i) {
-					forest.depth[i] = forest.depth[nodeParent[i]] + 1;
-				}
-			}
-
-			// Binary-lifting table. levels = ceil(log2(maxDepth+1)); at least 1 so up[0]
-			// always exists. up[0] is the direct parent (root -> itself).
-			std::int32_t maxDepth = 0;
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				maxDepth = std::max(maxDepth, forest.depth[i]);
-			}
-			std::int32_t levels = 1;
-			while ((1 << levels) <= maxDepth) {
-				++levels;
-			}
-			forest.levels = levels;
-			forest.up.assign(static_cast<std::size_t>(levels), std::vector<std::int32_t>(nodeCount));
-			for (std::int32_t i = 0; i < nodeCount; ++i) {
-				forest.up[0][i] = nodeParent[i];
-			}
-			for (std::int32_t k = 1; k < levels; ++k) {
-				for (std::int32_t i = 0; i < nodeCount; ++i) {
-					forest.up[k][i] = forest.up[k - 1][forest.up[k - 1][i]];
-				}
-			}
-
-			// component[]: a traversable leaf's component is its reconstruction-tree
-			// root; a non-traversable leaf (never a node) is -1 (isolated/unreachable).
-			forest.component.assign(n, -1);
-			for (std::int32_t i = 0; i < n; ++i) {
-				if (!isNode(mesh.triangles[i])) {
-					continue;
-				}
-				std::int32_t r = i;
-				for (std::int32_t k = levels - 1; k >= 0; --k) {
-					r = forest.up[k][r]; // climb to the root (overshoot stops at root via self-loop)
-				}
-				forest.component[i] = r;
-			}
-
-			return forest;
-		}
-
 	} // namespace
 
-	// LCA of two reconstruction-tree nodes a, b. Caller guarantees both are in the
-	// SAME tree (same root); otherwise the climb meets at a shared root only if one
-	// exists, so callers must check components first. Lift the deeper node up to the
-	// shallower's depth, then climb both together.
-	static std::int32_t forestLca(const ReachabilityForest& f, std::int32_t a, std::int32_t b) {
-		if (f.depth[a] < f.depth[b]) {
-			std::swap(a, b);
+	// Demyen Algorithm 3, CalculateWidth, for the edge pair meeting at apex v[apex]: edges
+	// apex (C, A) and (apex+2)%3 (B, C), opposite edge (apex+1)%3 (A, B). A base vertex
+	// bounds the width only when it ends an obstacle edge, and an edge's or vertex's
+	// obstacle status is read only when it is nearer than the bound, which keeps every
+	// read to triangles that come within maxClearanceMm of the apex.
+	std::int64_t corridorWidthMm(const NavView& viewIn, WidthSearch& search, std::int32_t ti, int apex, std::int64_t maxClearanceMm) {
+		const NavView	   view	  = viewIn.resolved();
+		const NavTriangle& tri	  = view.triangle(ti);
+		const int		   cEdge  = (apex + 1) % 3;
+		const int		   bEdge  = (apex + 2) % 3;
+		const Vec2i64&	   c	  = view.vertex(tri.v[static_cast<std::size_t>(apex)]);
+		const Vec2i64&	   a	  = view.vertex(tri.v[static_cast<std::size_t>(cEdge)]);
+		const Vec2i64&	   b	  = view.vertex(tri.v[static_cast<std::size_t>(bEdge)]);
+		auto			   capped = [&](std::int64_t d) { return d >= maxClearanceMm ? kUnconstrainedWidth : d; };
+
+		std::int64_t d = maxClearanceMm;
+		if (lengthBelow(a - c, d) && endsObstacleEdge(view, ti, tri.v[static_cast<std::size_t>(cEdge)])) {
+			d = floorSqrtSquared(dot(a - c, a - c));
 		}
-		std::int32_t diff = f.depth[a] - f.depth[b];
-		for (std::int32_t k = 0; k < f.levels; ++k) {
-			if ((diff >> k) & 1) {
-				a = f.up[k][a];
-			}
+		if (lengthBelow(b - c, d) && endsObstacleEdge(view, ti, tri.v[static_cast<std::size_t>(bEdge)])) {
+			d = floorSqrtSquared(dot(b - c, b - c));
 		}
-		if (a == b) {
-			return a;
+		// An obtuse base angle: the nearer base vertex is the closest obstacle in the
+		// wedge, and crossing the opposite edge would leave it.
+		if (obtuseAt(c, a, b) || obtuseAt(c, b, a)) {
+			return capped(d);
 		}
-		for (std::int32_t k = f.levels - 1; k >= 0; --k) {
-			if (f.up[k][a] != f.up[k][b]) {
-				a = f.up[k][a];
-				b = f.up[k][b];
-			}
+		if (lineDistanceBelow(c, a, b, d) && isObstacleEdge(view, ti, cEdge)) {
+			return capped(floorDistancePointToSegment(c, a, b));
 		}
-		return f.up[0][a]; // common parent
+		beginWidthSearch(view, search);
+		search.visited[static_cast<std::size_t>(ti)] = search.stamp;
+		return capped(searchWidth(view, search, c, ti, cEdge, d));
 	}
 
-	bool reachableInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
-		if (triA < 0 || triB < 0 || triA >= static_cast<std::int32_t>(f.component.size()) ||
-			triB >= static_cast<std::int32_t>(f.component.size())) {
+	std::uint64_t nextMeshGeneration() {
+		static std::atomic<std::uint64_t> next{1};
+		return next.fetch_add(1, std::memory_order_relaxed);
+	}
+
+	NavView navView(const NavMesh& mesh) {
+		NavView view;
+		view.vertices.of(mesh.vertices);
+		view.triangles.of(mesh.triangles);
+		view.owner			 = &mesh;
+		view.locateIn		 = [](const void* owner, const Vec2i64& p) { return locateTriangle(*static_cast<const NavMesh*>(owner), p); };
+		view.componentsIn	 = [](const void*) -> const MeshComponents* { return nullptr; };
+		view.widthsCurrentIn = [](const void*) { return true; };
+		view.epochIn		 = [](const void* owner) { return static_cast<const NavMesh*>(owner)->generation; };
+		view.resolveIn		 = [](const void* owner, NavView& v) {
+			const NavMesh& m = *static_cast<const NavMesh*>(owner);
+			v.vertices.of(m.vertices);
+			v.triangles.of(m.triangles);
+		};
+		return view;
+	}
+
+	SampleRing sampleRing(const NavInputPolygon& poly) {
+		SampleRing r;
+		r.ring3.reserve(poly.ring.size());
+		for (const Vec2i64& p : poly.ring) {
+			r.ring3.push_back(p * 3);
+		}
+		r.lo3 = r.ring3.front();
+		r.hi3 = r.ring3.front();
+		for (const Vec2i64& p : r.ring3) {
+			r.lo3 = {std::min(r.lo3.x, p.x), std::min(r.lo3.y, p.y)};
+			r.hi3 = {std::max(r.hi3.x, p.x), std::max(r.hi3.y, p.y)};
+		}
+		r.blocked		 = poly.blocked;
+		r.provenance	 = poly.provenanceId;
+		r.opening		 = poly.openingId;
+		r.holeCapable	   = poly.holeCapable;
+		r.coverOnly		   = poly.coverOnly;
+		const Int128 area2 = signedAreaDoubled(poly.ring);
+		r.areaDoubledAbs   = area2.sign() < 0 ? -area2 : area2;
+		r.counterClockwise = area2.sign() > 0;
+		return r;
+	}
+
+	bool ringContainsSample(const SampleRing& r, const Vec2i64& p3) {
+		return p3.x >= r.lo3.x && p3.x <= r.hi3.x && p3.y >= r.lo3.y && p3.y <= r.hi3.y &&
+			   pointInPolygon(p3, r.ring3) == PointInPolygon::Inside;
+	}
+
+	bool boundsContainSample(const SampleRing& r, const Vec2i64& p3) {
+		if (p3.x < r.lo3.x || p3.x >= r.hi3.x || p3.y < r.lo3.y || p3.y >= r.hi3.y) {
 			return false;
 		}
-		if (f.component[triA] < 0 || f.component[triB] < 0) {
-			return false; // a non-node endpoint is unreachable for this predicate
+		// Crossing number of the ray from p + (e, e^2) along +x. An edge crosses the line
+		// y = p.y + e^2 when one end is above p.y and the other is not, and the crossing
+		// is right of p.x + e when it is strictly right of p.x.
+		bool			  inside = false;
+		const std::size_t n		 = r.ring3.size();
+		for (std::size_t i = 0; i < n; ++i) {
+			const Vec2i64& a = r.ring3[i];
+			const Vec2i64& b = r.ring3[(i + 1) % n];
+			if ((a.y > p3.y) == (b.y > p3.y)) {
+				continue;
+			}
+			const int side = cross(b - a, p3 - a).sign();
+			if ((b.y > a.y ? side > 0 : side < 0)) {
+				inside = !inside;
+			}
 		}
-		return f.component[triA] == f.component[triB];
+		return inside;
 	}
 
-	std::int64_t bottleneckInForest(const ReachabilityForest& f, std::int32_t triA, std::int32_t triB) {
-		if (!reachableInForest(f, triA, triB)) {
-			return 0; // disconnected (or a non-node endpoint): admits no disc
+	FaceTags classifyCover(const std::vector<const SampleRing*>& containing) {
+		// Smallest area first; equal areas by content.
+		auto ranksBefore = [](const SampleRing& a, const SampleRing& b) {
+			if (a.areaDoubledAbs != b.areaDoubledAbs) {
+				return a.areaDoubledAbs < b.areaDoubledAbs;
+			}
+			return std::tie(a.provenance, a.opening, a.ring3) < std::tie(b.provenance, b.opening, b.ring3);
+		};
+		const SampleRing* solid		 = nullptr;
+		const SampleRing* water		 = nullptr;
+		int				  waterDepth = 0;
+		for (const SampleRing* br : containing) {
+			if (br->coverOnly) {
+				continue;
+			}
+			if (br->holeCapable) {
+				++waterDepth;
+				if (water == nullptr || ranksBefore(*br, *water)) {
+					water = br;
+				}
+			} else if (solid == nullptr || ranksBefore(*br, *solid)) {
+				solid = br;
+			}
 		}
-		if (triA == triB) {
-			return kUnconstrainedWidth; // a triangle reaches itself with no squeeze
+		const bool		   solidTagged	= solid != nullptr;
+		const std::int64_t solidBlocker = solidTagged ? solid->provenance : kNoBlocker;
+		const std::int64_t solidOpening = solidTagged ? solid->opening : kNoOpening;
+		const std::int64_t waterBlocker = water != nullptr ? water->provenance : kNoBlocker;
+		const std::int64_t waterOpening = water != nullptr ? water->opening : kNoOpening;
+
+		if (solidTagged) {
+			return {solidBlocker, solidOpening};
 		}
-		return f.nodeCap[forestLca(f, triA, triB)];
+		if (waterDepth % 2 == 1) {
+			return {waterBlocker, waterOpening};
+		}
+		return {};
+	}
+
+	RingEdgeBoxes ringEdgeBoxes(const std::vector<Vec2i64>& outline) {
+		RingEdgeBoxes	  out;
+		const std::size_t corners = outline.size();
+		for (std::size_t first = 0; first < corners; first += kRingEdgeRun) {
+			std::array<Vec2i64, 2> box{outline[first], outline[first]};
+			const std::size_t	   last = std::min(first + kRingEdgeRun, corners);
+			for (std::size_t corner = first + 1; corner <= last; ++corner) {
+				const Vec2i64& point = outline[corner % corners];
+				box					 = {Vec2i64{std::min(box[0].x, point.x), std::min(box[0].y, point.y)}, Vec2i64{std::max(box[1].x, point.x), std::max(box[1].y, point.y)}};
+			}
+			out.boxes.push_back(box);
+		}
+		out.levelStart.push_back(0);
+		std::size_t below = out.boxes.size();
+		while (below > 1) {
+			const std::size_t from = static_cast<std::size_t>(out.levelStart.back());
+			out.levelStart.push_back(static_cast<std::int32_t>(out.boxes.size()));
+			for (std::size_t i = 0; i < below; i += 2) {
+				std::array<Vec2i64, 2> box = out.boxes[from + i];
+				if (i + 1 < below) {
+					const std::array<Vec2i64, 2> other = out.boxes[from + i + 1];
+					box = {Vec2i64{std::min(box[0].x, other[0].x), std::min(box[0].y, other[0].y)}, Vec2i64{std::max(box[1].x, other[1].x), std::max(box[1].y, other[1].y)}};
+				}
+				out.boxes.push_back(box);
+			}
+			below = (below + 1) / 2;
+		}
+		return out;
+	}
+
+	GroundRing groundRing(const std::vector<Vec2i64>& outline, const RingEdgeBoxes& edgeBoxes, RingId id) {
+		GroundRing g;
+		g.outline	= &outline;
+		g.edgeBoxes = &edgeBoxes;
+		g.lo		= outline.front();
+		g.hi		= outline.front();
+		for (const Vec2i64& p : outline) {
+			g.lo = {std::min(g.lo.x, p.x), std::min(g.lo.y, p.y)};
+			g.hi = {std::max(g.hi.x, p.x), std::max(g.hi.y, p.y)};
+		}
+		g.counterClockwise = signedAreaDoubled(outline).sign() > 0;
+		g.id			   = id;
+		return g;
+	}
+
+	// Each other ring's inside flag is read at the point just off the edge's outer side:
+	// the edge's line moved outward by an infinitesimal d, walked from far behind its start.
+	// A ring edge crosses that line where one end lies strictly outward of the edge's line
+	// and the other does not (on the line counts as inward), at the place its own line meets
+	// the edge's; an end on the line is that place exactly. So a vertex of another outline
+	// on the edge with both its edges outward is two crossings at one place and changes
+	// nothing (a tangent touch), with one outward it is one crossing, and with neither none;
+	// an edge lying along the line crosses nothing. The flag at a stretch is the parity of
+	// the crossings before it, and every stretch between crossings is an open set, so no
+	// point an exact test could read differently (boundsContainSample decides only points
+	// on an outline) lies in one.
+	void groundBoundaries(const GroundRing& ring, std::int32_t edge, const std::vector<GroundRing>& near, GroundBoundaryScratch& scratch,
+						  std::vector<GroundInterval>& out) {
+		out.clear();
+		const std::vector<Vec2i64>& outline = *ring.outline;
+		const Vec2i64				a		= outline[static_cast<std::size_t>(edge)];
+		const Vec2i64				b		= outline[(static_cast<std::size_t>(edge) + 1) % outline.size()];
+		if (a == b) {
+			return;
+		}
+		const Vec2i64	   dir	 = b - a;
+		const int		   outer = ring.counterClockwise ? -1 : 1; // sign of cross(dir, p - a) outside the ring
+		const std::int64_t len2	 = smallDot(dir, dir);
+		const Vec2i64	   lo{std::min(a.x, b.x), std::min(a.y, b.y)};
+		const Vec2i64	   hi{std::max(a.x, b.x), std::max(a.y, b.y)};
+		const EdgeSource   self{ring.id, edge};
+		const EdgeParam	   zero{0, 1};
+		const EdgeParam	   one{1, 1};
+		auto			   onLine = [&](const Vec2i64& p) { return EdgeParam{smallDot(p - a, dir), len2}; };
+
+		std::vector<GroundBoundaryScratch::Event>&	   events	 = scratch.events;
+		std::vector<GroundBoundaryScratch::Collinear>& collinear = scratch.collinear;
+		std::vector<std::uint8_t>&					   inside	 = scratch.inside;
+		events.clear();
+		collinear.clear();
+		inside.assign(near.size(), 0);
+		int excluded = 0;
+		// A ring edge's end lies outward of the line (1), on it (0), or inward (-1).
+		auto side = [&](const Vec2i64& point) {
+			const std::int64_t across = outer * smallCross(dir, point - a);
+			return across > 0 ? 1 : (across < 0 ? -1 : 0);
+		};
+		// Outward lies toward lower x where outwardLeft holds and toward higher y where outwardUp
+		// does, which picks the corners of a box lying farthest outward and farthest inward.
+		const bool outwardLeft = outer * dir.y > 0;
+		const bool outwardUp   = outer * dir.x > 0;
+
+		auto readEdge = [&](std::size_t nearIndex, const GroundRing& other, std::int32_t ringEdge, const Vec2i64& start, const Vec2i64& end, int startSide, int endSide) {
+			if (startSide == 0 && endSide == 0) {
+				const EdgeParam	 startAlong = onLine(start);
+				const EdgeParam	 endAlong	= onLine(end);
+				const bool		 startFirst = paramLess(startAlong, endAlong);
+				const EdgeParam	 from		= startFirst ? startAlong : endAlong;
+				const EdgeParam	 to			= startFirst ? endAlong : startAlong;
+				const EdgeSource source{other.id, ringEdge};
+				collinear.push_back({from, to, source, start, end});
+				// Inside on the same side: the stretch both run along is input once.
+				const int otherOuter = (other.counterClockwise ? -1 : 1) * (smallDot(end - start, dir) > 0 ? 1 : -1);
+				if (otherOuter == outer && source < self && paramLess(from, one) && paramLess(zero, to)) {
+					if (from.num <= 0) {
+						++excluded;
+					} else {
+						events.push_back({from, kExcludeStart, static_cast<std::int32_t>(nearIndex), ringEdge, true, startFirst ? start : end});
+					}
+					if (paramLess(to, one)) {
+						events.push_back({to, kExcludeEnd, static_cast<std::int32_t>(nearIndex), ringEdge, true, startFirst ? end : start});
+					}
+				}
+				return;
+			}
+			if ((startSide > 0) == (endSide > 0)) {
+				return;
+			}
+			GroundBoundaryScratch::Event event;
+			event.kind = kFlip;
+			event.ring = static_cast<std::int32_t>(nearIndex);
+			event.edge = ringEdge;
+			if (startSide == 0 || endSide == 0) {
+				event.exact = true;
+				event.point = startSide == 0 ? start : end;
+				event.at	= onLine(event.point);
+			} else {
+				event.at = crossingParam(a, dir, start, end);
+			}
+			if (event.at.num <= 0) {
+				inside[nearIndex] ^= 1;
+			} else if (event.at.num < event.at.den) {
+				events.push_back(event);
+			}
+		};
+		std::vector<std::pair<std::int32_t, std::int32_t>>& nodes = scratch.nodes;
+		for (std::size_t k = 0; k < near.size(); ++k) {
+			const GroundRing& other = near[k];
+			if (other.id == ring.id || !boxesMeet(lo, hi, other.lo, other.hi) || other.outline->size() < 3) {
+				continue;
+			}
+			const std::vector<Vec2i64>& ring2	= *other.outline;
+			const std::size_t			corners = ring2.size();
+			const RingEdgeBoxes&		tree	= *other.edgeBoxes;
+			// A run of edges whose box lies wholly on one side of the line, or wholly at or past
+			// b along it, crosses nothing before b; one wholly at or behind a crosses the line
+			// only before a, as many times, mod 2, as its two ends differ in lying outward.
+			nodes.clear();
+			nodes.push_back({static_cast<std::int32_t>(tree.levelStart.size()) - 1, 0});
+			while (!nodes.empty()) {
+				const auto [level, index] = nodes.back();
+				nodes.pop_back();
+				const std::array<Vec2i64, 2>& box = tree.boxes[static_cast<std::size_t>(tree.levelStart[static_cast<std::size_t>(level)] + index)];
+				const Vec2i64				  farOut{outwardLeft ? box[0].x : box[1].x, outwardUp ? box[1].y : box[0].y};
+				const Vec2i64				  farIn{outwardLeft ? box[1].x : box[0].x, outwardUp ? box[0].y : box[1].y};
+				const Vec2i64				  farBack{dir.x > 0 ? box[0].x : box[1].x, dir.y > 0 ? box[0].y : box[1].y};
+				const Vec2i64				  farOn{dir.x > 0 ? box[1].x : box[0].x, dir.y > 0 ? box[1].y : box[0].y};
+				if (side(farIn) > 0 || side(farOut) < 0 || smallDot(farBack - a, dir) >= len2) {
+					continue;
+				}
+				const std::size_t firstEdge = (static_cast<std::size_t>(index) << level) * kRingEdgeRun;
+				const std::size_t lastEdge	= std::min((static_cast<std::size_t>(index + 1) << level) * kRingEdgeRun, corners);
+				if (smallDot(farOn - a, dir) <= 0) {
+					inside[k] ^= (side(ring2[firstEdge]) > 0) != (side(ring2[lastEdge % corners]) > 0) ? 1 : 0;
+					continue;
+				}
+				if (level > 0) {
+					const std::int32_t below = tree.levelStart[static_cast<std::size_t>(level)] - tree.levelStart[static_cast<std::size_t>(level - 1)];
+					if (2 * index + 1 < below) {
+						nodes.push_back({level - 1, 2 * index + 1});
+					}
+					nodes.push_back({level - 1, 2 * index});
+					continue;
+				}
+				int sideOfStart = side(ring2[firstEdge]);
+				for (std::size_t i = firstEdge; i < lastEdge; ++i) {
+					const Vec2i64& start	 = ring2[i];
+					const Vec2i64& end		 = ring2[(i + 1) % corners];
+					const int	   sideOfEnd = side(end);
+					if (start != end) {
+						readEdge(k, other, static_cast<std::int32_t>(i), start, end, sideOfStart, sideOfEnd);
+					}
+					sideOfStart = sideOfEnd;
+				}
+			}
+		}
+		int insideCount = 0;
+		for (std::uint8_t flag : inside) {
+			insideCount += flag;
+		}
+		std::sort(events.begin(), events.end(), [](const auto& x, const auto& y) { return paramLess(x.at, y.at); });
+
+		// The interval end at the events [begin, end), all at one place: the exact point if
+		// one is known, else the crossing of the two lowest lines through it (each line by
+		// the lowest ground edge on it), which every edge ending there picks alike.
+		auto endAt = [&](std::size_t begin, std::size_t end) {
+			for (std::size_t i = begin; i < end; ++i) {
+				if (events[i].exact) {
+					return events[i].point;
+				}
+			}
+			std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>>& lines = scratch.lines;
+			lines.clear();
+			lines.push_back({self, {a, b}});
+			for (const GroundBoundaryScratch::Collinear& c : collinear) {
+				if (!paramLess(events[begin].at, c.lo) && !paramLess(c.hi, events[begin].at) && c.source < lines.front().first) {
+					lines.front() = {c.source, {c.a, c.b}};
+				}
+			}
+			for (std::size_t i = begin; i < end; ++i) {
+				const std::vector<Vec2i64>& ring2 = *near[static_cast<std::size_t>(events[i].ring)].outline;
+				const Vec2i64				p	  = ring2[static_cast<std::size_t>(events[i].edge)];
+				const Vec2i64				q	  = ring2[(static_cast<std::size_t>(events[i].edge) + 1) % ring2.size()];
+				const EdgeSource			source{near[static_cast<std::size_t>(events[i].ring)].id, events[i].edge};
+				bool						joined = false;
+				for (std::size_t l = 1; l < lines.size() && !joined; ++l) {
+					const std::array<Vec2i64, 2>& s = lines[l].second;
+					if (orientation(s[0], s[1], p) == Orientation::Collinear && orientation(s[0], s[1], q) == Orientation::Collinear) {
+						joined = true;
+						if (source < lines[l].first) {
+							lines[l] = {source, {p, q}};
+						}
+					}
+				}
+				if (!joined) {
+					lines.push_back({source, {p, q}});
+				}
+			}
+			std::sort(lines.begin(), lines.end(), [](const auto& x, const auto& y) { return x.first < y.first; });
+			assert(lines.size() >= 2 && "groundBoundaries: an interval ends where no other line crosses");
+			return roundedCrossing(lines[0].second, lines[1].second);
+		};
+
+		bool		   open = insideCount == 0 && excluded == 0;
+		GroundInterval current;
+		current.from   = a;
+		current.fromAt = zero;
+		for (std::size_t i = 0; i < events.size();) {
+			std::size_t j = i;
+			for (; j < events.size() && paramEqual(events[j].at, events[i].at); ++j) {
+				const GroundBoundaryScratch::Event& ev = events[j];
+				if (ev.kind == kFlip) {
+					std::uint8_t& flag = inside[static_cast<std::size_t>(ev.ring)];
+					insideCount += flag != 0 ? -1 : 1;
+					flag ^= 1;
+				} else {
+					excluded += ev.kind == kExcludeStart ? 1 : -1;
+				}
+			}
+			const bool now = insideCount == 0 && excluded == 0;
+			if (now != open) {
+				const Vec2i64 x = endAt(i, j);
+				if (open) {
+					current.to	 = x;
+					current.toAt = events[i].at;
+					if (current.from != current.to) {
+						out.push_back(current);
+					}
+				} else {
+					current.from   = x;
+					current.fromAt = events[i].at;
+				}
+				open = now;
+			}
+			i = j;
+		}
+		if (open) {
+			current.to	 = b;
+			current.toAt = one;
+			if (current.from != current.to) {
+				out.push_back(current);
+			}
+		}
+	}
+
+	void ringSegments(const std::vector<const NavInputPolygon*>& rings, std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>>& out) {
+		out.clear();
+		std::vector<GroundRing>	   ground;
+		std::vector<RingEdgeBoxes> edgeBoxes;
+		edgeBoxes.reserve(rings.size());
+		for (std::size_t r = 0; r < rings.size(); ++r) {
+			if (!rings[r]->blocked && rings[r]->ring.size() >= 3) {
+				edgeBoxes.push_back(ringEdgeBoxes(rings[r]->ring));
+				ground.push_back(groundRing(rings[r]->ring, edgeBoxes.back(), static_cast<RingId>(r)));
+			}
+		}
+		GroundBoundaryScratch		scratch;
+		std::vector<GroundInterval> intervals;
+		std::size_t					nextGround = 0;
+		for (std::size_t r = 0; r < rings.size(); ++r) {
+			const std::vector<Vec2i64>& ring = rings[r]->ring;
+			if (ring.size() < 3) {
+				continue;
+			}
+			const RingId id = static_cast<RingId>(r);
+			if (rings[r]->blocked) {
+				for (std::size_t i = 0; i < ring.size(); ++i) {
+					if (ring[i] != ring[(i + 1) % ring.size()]) {
+						out.push_back({{id, static_cast<std::int32_t>(i)}, {ring[i], ring[(i + 1) % ring.size()]}});
+					}
+				}
+				continue;
+			}
+			const GroundRing& self = ground[nextGround++];
+			for (std::int32_t i = 0; i < static_cast<std::int32_t>(ring.size()); ++i) {
+				groundBoundaries(self, i, ground, scratch, intervals);
+				for (const GroundInterval& iv : intervals) {
+					out.push_back({{id, i}, {iv.from, iv.to}});
+				}
+			}
+		}
 	}
 
 	NavMesh buildNavMesh(const NavMeshInput& input) {
 		NavMesh result;
 
-		// Gather the walkable-bounds (unblocked) rings and the blocked rings. One
-		// border is the common case, but multiple disjoint walkable regions are
-		// supported: a face is in-bounds iff it lies inside ANY unblocked bound. Each
-		// blocked ring carries its belief tags (provenanceId/openingId) so a face
-		// landing inside it inherits them.
-		struct BlockedRing {
-			const std::vector<Vec2i64>* ring		  = nullptr;
-			std::int64_t				provenance	  = kNoProvenance;
-			std::int64_t				opening		  = kNoOpening;
-			bool						holeCapable	  = false;	  // water: even-odd containment parity
-			Int128						areaDoubledAbs = Int128(0); // |2*area|, cached for smallest-containing ranking
-		};
-		std::vector<const std::vector<Vec2i64>*> borderRings;
-		std::vector<BlockedRing>				 blockedRings;
+		// Blocked rings as classification reads them, by input index; each carries its
+		// belief tags (provenanceId/openingId) so a face inside it inherits them.
+		std::vector<const NavInputPolygon*> rings;
+		std::vector<SampleRing>				blockedRings(input.polygons.size());
+		bool								anyBounds = false;
 		for (const NavInputPolygon& poly : input.polygons) {
-			if (poly.ring.size() < 3) {
-				continue;
+			if (poly.ring.size() >= 3) {
+				if (poly.blocked) {
+					blockedRings[rings.size()] = sampleRing(poly);
+				} else {
+					anyBounds = true;
+				}
 			}
-			if (poly.blocked) {
-				// Cache the ring's |2*area| now (static input) so the per-face
-				// smallest-containing-ring search below is a compare, not a reshoelace.
-				blockedRings.push_back(
-					{&poly.ring, poly.provenanceId, poly.openingId, poly.holeCapable, signedAreaDoubledAbs(poly.ring)});
-			} else {
-				borderRings.push_back(&poly.ring);
-			}
+			rings.push_back(&poly);
 		}
-		if (borderRings.empty()) {
+		if (!anyBounds) {
 			return result; // no walkable bounds -> empty mesh
 		}
 
-		// 1. Arrange every ring edge, tagging each segment with its source polygon's
-		// provenanceId so extracted edges carry it back.
+		// 1. Arrange every blocked ring edge and every ground ring edge's boundary intervals,
+		// tagging each segment with its ring and edge. The arrangement splits edges at every
+		// crossing and touch and merges overlaps, so its edges form a planar straight-line
+		// graph, and every ground piece in it is the union of the ground rings' boundary.
 		std::vector<InputSegment> segments;
-		for (const NavInputPolygon& poly : input.polygons) {
-			const std::size_t n = poly.ring.size();
-			if (n < 3) {
-				continue;
-			}
-			for (std::size_t i = 0; i < n; ++i) {
-				segments.push_back({poly.ring[i], poly.ring[(i + 1) % n], poly.provenanceId});
-			}
-		}
+		ringsArrangementInput(rings, ringEdgeTag, segments);
+		const Arrangement arrangement = buildArrangement(segments);
+		result.vertices				  = arrangement.vertices;
 
-		const Arrangement	arrangement = buildArrangement(segments);
-		const HalfEdgeMesh	mesh		= extractFaces(arrangement);
-		result.vertices					= mesh.vertices;
-
-		// 2. Collect bounded CCW faces that are IN-BOUNDS (rep point inside ANY
-		// unblocked border ring); faces outside every border (exterior) are discarded.
-		// In-bounds faces are KEPT whether or not they sit inside a blocked ring -- the
-		// whole region is triangulated, wall interiors included, so a belief query can
-		// optimistically path through an unseen wall. Classification (which blocked ring
-		// tags the face) is DEFERRED to step 4b, after holes are attached: a face that
-		// has holes spans more than one even-odd water-depth region, and its outer-cycle
-		// representative point can fall inside a hole, so we must classify from a point
-		// that lies in the face's actual interior (outer minus holes).
-		std::vector<WalkableFace>	walkable;
-		for (std::size_t fi = 0; fi < mesh.faces.size(); ++fi) {
-			const Face& f = mesh.faces[fi];
-			if (f.signedAreaDoubled.sign() <= 0 || !f.representativePoint.has_value()) {
-				continue; // CW cycle or degenerate bounded face
-			}
-			const Vec2i64& rep = *f.representativePoint;
-			bool insideBorder = false;
-			for (const std::vector<Vec2i64>* ring : borderRings) {
-				if (pointInPolygon(rep, *ring) == PointInPolygon::Inside) {
-					insideBorder = true;
-					break;
-				}
-			}
-			if (!insideBorder) {
-				continue; // outside every walkable bound
-			}
-
-			WalkableFace wf;
-			wf.outer	   = faceRingIndices(mesh, f);
-			wf.areaDoubled = f.signedAreaDoubled;
-			wf.repPoint	   = rep; // outer-cycle rep; replaced by a hole-aware point in 4b
-			walkable.push_back(std::move(wf));
-		}
-
-		// 4. Nesting. Every CW cycle (signedAreaDoubled < 0) is either a hole
-		// boundary as seen from the walkable region around it, or the unbounded
-		// outer cycle of a connected component. Attach each CW cycle as a hole of
-		// the smallest-area walkable face that strictly contains ALL of its
-		// vertices. A hole is strictly interior to its container, so the all-
-		// vertices-Inside test is exact and unambiguous; the unbounded outer cycle
-		// shares its ring with a walkable face (same vertices, on the boundary,
-		// never strictly Inside), so it matches no container and is ignored.
-		for (std::size_t fi = 0; fi < mesh.faces.size(); ++fi) {
-			const Face& f = mesh.faces[fi];
-			if (f.signedAreaDoubled.sign() >= 0) {
-				continue; // bounded CCW face or zero-area; handled above
-			}
-			const std::vector<std::uint32_t> cwRing	   = faceRingIndices(mesh, f);
-			const std::vector<Vec2i64>		 cwPoints  = ringPoints(mesh, cwRing);
-
-			std::size_t	best	  = walkable.size();
-			Int128		bestArea(0);
-			for (std::size_t w = 0; w < walkable.size(); ++w) {
-				const std::vector<Vec2i64> outerPts = ringPoints(mesh, walkable[w].outer);
-				bool allInside = true;
-				for (const Vec2i64& p : cwPoints) {
-					if (pointInPolygon(p, outerPts) != PointInPolygon::Inside) {
-						allInside = false;
-						break;
-					}
-				}
-				if (!allInside) {
-					continue;
-				}
-				if (best == walkable.size() || walkable[w].areaDoubled < bestArea) {
-					best	 = w;
-					bestArea = walkable[w].areaDoubled;
-				}
-			}
-			if (best != walkable.size()) {
-				// The CW cycle is already CW (negative area), matching the hole
-				// contract of triangulateWithHoles directly.
-				walkable[best].holes.push_back(cwRing);
-			}
-		}
-
-		// 4b. Classify each in-bounds face against the blocked rings, using a
-		// representative point in the face's TRUE interior (inside its outer cycle and
-		// OUTSIDE all of its holes). The outer-cycle rep point from face extraction can
-		// land inside a hole -- e.g. a water body whose outer boundary surrounds the
-		// whole area (a river exiting on every side) leaves the dry land as a CW hole
-		// ring, and the surrounding water face's outer-cycle centroid falls in that
-		// land hole. Classifying from the hole-unaware point then reads the hole's
-		// even-odd depth (land) for the whole water face, mistagging the water as floor.
-		// A hole-aware point gets the annular region's own depth.
-		//
-		// Splits SOLID rings (flora, walls: solid containment) from HOLE-CAPABLE rings
-		// (water: even-odd containment parity):
-		//   SOLID: the smallest-area containing ring wins (a door-span footprint is
-		//   strictly smaller than its flank bands, so it wins over the enclosing wall).
-		//   HOLE-CAPABLE: count how many contain the point (depth). A water body emits a
-		//   CCW outer boundary plus CW land-island holes as SEPARATE blocked rings; a
-		//   point inside an even number of them is land (outer+island = 2), inside an odd
-		//   number is genuine water (open water = 1, a pond on the island = 3). Disjoint
-		//   water bodies never nest, so only one body's rings ever contain a given point.
-		//   A solid obstacle always blocks, even sitting over water.
-		for (WalkableFace& wf : walkable) {
-			const Vec2i64 rep = representativeOutsideHoles(mesh, wf.outer, wf.holes, wf.repPoint);
-
-			Int128 bestSolidArea(0);
-			bool   solidTagged = false;
-			std::int64_t solidBlocker = kNoBlocker;
-			std::int64_t solidOpening = kNoOpening;
-
-			Int128 bestWaterArea(0);
-			bool   waterTagged = false;
-			int	   waterDepth  = 0;
-			std::int64_t waterBlocker = kNoBlocker;
-			std::int64_t waterOpening = kNoOpening;
-
-			for (const BlockedRing& br : blockedRings) {
-				if (pointInPolygon(rep, *br.ring) != PointInPolygon::Inside) {
-					continue;
-				}
-				const Int128& area = br.areaDoubledAbs;
-				if (br.holeCapable) {
-					++waterDepth;
-					if (!waterTagged || area < bestWaterArea) {
-						bestWaterArea = area;
-						waterBlocker  = br.provenance;
-						waterOpening  = br.opening;
-						waterTagged	  = true;
-					}
-				} else {
-					if (!solidTagged || area < bestSolidArea) {
-						bestSolidArea = area;
-						solidBlocker  = br.provenance;
-						solidOpening  = br.opening;
-						solidTagged	  = true;
-					}
-				}
-			}
-
-			if (solidTagged) {
-				wf.blocker = solidBlocker; // a real obstacle always blocks, even over water
-				wf.opening = solidOpening;
-			} else if (waterDepth % 2 == 1) {
-				wf.blocker = waterBlocker; // odd depth: genuine water
-				wf.opening = waterOpening;
-			}
-			// else even depth (incl. 0): floor -- leave kNoBlocker/kNoOpening.
-		}
-
-		// 5. Triangulate each face (floor AND wall interiors) with its holes, copying
-		// the face's belief tags onto every triangle. A degenerate result for one face
-		// is skipped (its triangles omitted) rather than aborting the whole mesh -- a
-		// single bad region yields a partial mesh.
-		for (const WalkableFace& wf : walkable) {
-			std::vector<std::array<std::uint32_t, 3>> tris =
-				triangulateWithHoles(mesh.vertices, wf.outer, wf.holes);
-			for (const std::array<std::uint32_t, 3>& t : tris) {
-				NavTriangle nt;
-				nt.v			 = t;
-				nt.neighbor		 = {-1, -1, -1};
-				nt.edgeProvenance = {kNoProvenance, kNoProvenance, kNoProvenance};
-				nt.edgeOpening	 = {kNoOpening, kNoOpening, kNoOpening};
-				nt.faceBlocker	 = wf.blocker;
-				nt.faceOpening	 = wf.opening;
-				// triangulateWithHoles guarantees CCW; assert the invariant cheaply
-				// by reorienting any stray triangle so downstream queries can rely on
-				// it unconditionally.
-				if (orientation(mesh.vertices[t[0]], mesh.vertices[t[1]], mesh.vertices[t[2]]) ==
-					Orientation::Clockwise) {
-					std::swap(nt.v[1], nt.v[2]);
-				}
-				result.triangles.push_back(nt);
-			}
-		}
-
-		// 6. Adjacency. Hash every triangle's three edges; an undirected edge shared
-		// by two triangles links them as neighbors. Because wall interiors are now
-		// triangulated too, floor and wall faces share their band edges and so get
-		// linked here -- that link is what lets a belief query traverse INTO an unseen
-		// wall. Truth/belief gating then happens in the path query, not the topology:
-		// the mesh is one connected graph, the filter decides which edges to cross.
-		std::unordered_map<EdgeKey, std::pair<std::int32_t, int>> firstOwner;
-		firstOwner.reserve(result.triangles.size() * 3);
-		for (std::size_t ti = 0; ti < result.triangles.size(); ++ti) {
-			NavTriangle& tri = result.triangles[ti];
-			for (int e = 0; e < 3; ++e) {
-				const EdgeKey key = makeEdgeKey(tri.v[e], tri.v[(e + 1) % 3]);
-				auto		  it  = firstOwner.find(key);
-				if (it == firstOwner.end()) {
-					firstOwner.emplace(key, std::make_pair(static_cast<std::int32_t>(ti), e));
-				} else {
-					const std::int32_t otherTri  = it->second.first;
-					const int		   otherEdge = it->second.second;
-					tri.neighbor[e]						   = otherTri;
-					result.triangles[otherTri].neighbor[otherEdge] = static_cast<std::int32_t>(ti);
-				}
-			}
-		}
-
-		// 7a. Edge provenance. Map each arrangement edge's canonical vertex pair to
-		// its provenance (a single id per nav input ring; we take the first, since
-		// nav rings do not overlap coincidentally the way wall centerlines can).
-		std::unordered_map<EdgeKey, std::int64_t> edgeProvenance;
-		edgeProvenance.reserve(arrangement.edges.size());
+		// 2. Triangulate the whole arrangement at once: a constrained Delaunay
+		// triangulation of its vertices with every arrangement edge as a constraint.
+		// Faces are never triangulated one at a time, so a weakly simple face (a pinch
+		// vertex, holes touching each other or the border at one point) or a face with
+		// hundreds of holes needs nothing special, and no face can fail and drop out.
+		std::vector<std::array<std::uint32_t, 2>> constraints;
+		constraints.reserve(arrangement.edges.size());
 		for (const ArrangementEdge& ae : arrangement.edges) {
-			if (ae.provenance.empty()) {
+			constraints.push_back({static_cast<std::uint32_t>(ae.from), static_cast<std::uint32_t>(ae.to)});
+		}
+		const ConstrainedDelaunay cdt = buildConstrainedDelaunay(arrangement.vertices, constraints);
+
+		// 3. Faces. Flood fill across unconstrained edges: each fill is one face of the
+		// arrangement. The fill that reaches the frame is the unbounded face, outside
+		// every ring.
+		const std::int32_t		  cdtCount = static_cast<std::int32_t>(cdt.triangles.size());
+		std::vector<std::int32_t> faceOf(static_cast<std::size_t>(cdtCount), -1);
+		std::vector<MeshFace>	  faces;
+		std::vector<std::int32_t> fill;
+		for (std::int32_t seed = 0; seed < cdtCount; ++seed) {
+			if (faceOf[static_cast<std::size_t>(seed)] >= 0) {
 				continue;
 			}
-			const EdgeKey key =
-				makeEdgeKey(static_cast<std::uint32_t>(ae.from), static_cast<std::uint32_t>(ae.to));
-			edgeProvenance.emplace(key, ae.provenance.front());
+			const std::int32_t f = static_cast<std::int32_t>(faces.size());
+			MeshFace		   face;
+			faceOf[static_cast<std::size_t>(seed)] = f;
+			fill.push_back(seed);
+			while (!fill.empty()) {
+				const std::int32_t t = fill.back();
+				fill.pop_back();
+				const CdtTriangle& tri = cdt.triangles[static_cast<std::size_t>(t)];
+				for (int e = 0; e < 3; ++e) {
+					face.touchesFrame = face.touchesFrame || tri.v[e] >= cdt.frameStart;
+					const std::int32_t nb = tri.neighbor[e];
+					if (nb >= 0 && tri.constraint[e] < 0 && faceOf[static_cast<std::size_t>(nb)] < 0) {
+						faceOf[static_cast<std::size_t>(nb)] = f;
+						fill.push_back(nb);
+					}
+				}
+			}
+			faces.push_back(face);
 		}
-		for (NavTriangle& tri : result.triangles) {
+
+		// 4. Classify each face by ring parity, flooded from the unbounded face: crossing
+		// an arrangement edge toggles each ring with an odd count of edges on it. This is
+		// the arrangement's own topology, so a face beside an edge that snap rounding bent
+		// off its input line is classified as the patched mesh classifies it, where an
+		// exact sample of the input rings would read the other side. Faces outside every
+		// walkable bound are discarded.
+		// In-bounds faces are KEPT whether or not they sit inside a blocked ring: the
+		// whole region is triangulated, wall interiors included, so a belief query can
+		// optimistically path through an unseen wall. classifyCover holds the rule.
+		std::vector<std::uint8_t> crossed(static_cast<std::size_t>(cdtCount), 0);
+		for (std::int32_t t = 0; t < cdtCount; ++t) {
+			MeshFace& face = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
+			if (face.touchesFrame) {
+				face.reached						   = true;
+				crossed[static_cast<std::size_t>(t)] = 1;
+				fill.push_back(t);
+			}
+		}
+		while (!fill.empty()) {
+			const std::int32_t t = fill.back();
+			fill.pop_back();
+			const CdtTriangle& tri	= cdt.triangles[static_cast<std::size_t>(t)];
+			const MeshFace&	   from = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
 			for (int e = 0; e < 3; ++e) {
-				const EdgeKey key = makeEdgeKey(tri.v[e], tri.v[(e + 1) % 3]);
-				auto		  it  = edgeProvenance.find(key);
-				if (it != edgeProvenance.end()) {
-					tri.edgeProvenance[e] = it->second;
+				const std::int32_t nb = tri.neighbor[e];
+				if (nb < 0) {
+					continue;
+				}
+				MeshFace&		   into = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(nb)])];
+				const std::int32_t c	= tri.constraint[e];
+				if (!into.reached) {
+					into.reached = true;
+					crossEdge(from, arrangement.edges[static_cast<std::size_t>(c)].provenance, rings, into);
+				} else {
+					assert((c < 0 ? &into == &from : agreesAcross(from, arrangement.edges[static_cast<std::size_t>(c)].provenance, rings, into)) &&
+						   "buildNavMesh: ring parity disagrees around a face");
+				}
+				if (crossed[static_cast<std::size_t>(nb)] == 0) {
+					crossed[static_cast<std::size_t>(nb)] = 1;
+					fill.push_back(nb);
+				}
+			}
+		}
+		std::vector<const SampleRing*> containing;
+		for (MeshFace& face : faces) {
+			if (!face.inBounds) {
+				continue;
+			}
+			containing.clear();
+			for (std::int32_t r : face.blockedRings) {
+				containing.push_back(&blockedRings[static_cast<std::size_t>(r)]);
+			}
+			const FaceTags tags = classifyCover(containing);
+			face.blocker		= tags.blocker;
+			face.opening		= tags.opening;
+		}
+
+		// 5. Keep the in-bounds faces' triangles (floor AND wall interiors), copying each
+		// face's belief tags onto its triangles. The CDT emits CCW triangles, and none
+		// kept touches a frame corner, so every vertex index is an arrangement vertex.
+		std::vector<std::int32_t> keptIndex(static_cast<std::size_t>(cdtCount), -1);
+		for (std::int32_t t = 0; t < cdtCount; ++t) {
+			const MeshFace& face = faces[static_cast<std::size_t>(faceOf[static_cast<std::size_t>(t)])];
+			if (!face.inBounds) {
+				continue;
+			}
+			keptIndex[static_cast<std::size_t>(t)] = static_cast<std::int32_t>(result.triangles.size());
+			NavTriangle nt;
+			nt.v			  = cdt.triangles[static_cast<std::size_t>(t)].v;
+			nt.neighbor		  = {-1, -1, -1};
+			nt.edgeProvenance = {kNoProvenance, kNoProvenance, kNoProvenance};
+			nt.edgeOpening	  = {kNoOpening, kNoOpening, kNoOpening};
+			nt.faceBlocker	  = face.blocker;
+			nt.faceOpening	  = face.opening;
+			result.triangles.push_back(nt);
+		}
+
+		// 6. Adjacency and edge provenance, straight from the CDT. A neighbor in a
+		// discarded face becomes a mesh boundary. Floor and wall faces share their band
+		// edges and so stay linked -- that link is what lets a belief query traverse INTO
+		// an unseen wall. Truth/belief gating then happens in the path query, not the
+		// topology: the mesh is one connected graph, the filter decides which edges to
+		// cross. A constrained edge carries the lowest provenanceId of the rings on it (a
+		// single id per nav input ring; nav rings rarely overlap coincidentally the way
+		// wall centerlines can).
+		for (std::int32_t t = 0; t < cdtCount; ++t) {
+			const std::int32_t kept = keptIndex[static_cast<std::size_t>(t)];
+			if (kept < 0) {
+				continue;
+			}
+			const CdtTriangle& tri = cdt.triangles[static_cast<std::size_t>(t)];
+			NavTriangle&	   nt  = result.triangles[static_cast<std::size_t>(kept)];
+			for (int e = 0; e < 3; ++e) {
+				if (tri.neighbor[e] >= 0) {
+					nt.neighbor[e] = keptIndex[static_cast<std::size_t>(tri.neighbor[e])];
+				}
+				if (tri.constraint[e] >= 0) {
+					const std::vector<std::int64_t>& tags = arrangement.edges[static_cast<std::size_t>(tri.constraint[e])].provenance;
+					for (std::size_t i = 0; i < tags.size(); ++i) {
+						const std::int64_t id = rings[static_cast<std::size_t>(tagRing(tags[i]))]->provenanceId;
+						nt.edgeProvenance[e]  = i == 0 ? id : std::min(nt.edgeProvenance[e], id);
+					}
 				}
 			}
 		}
 
-		// 7b. Door tagging. Each portal's (a, b) endpoints are exact mesh vertices;
+		// 7. Door tagging. Each portal's (a, b) endpoints are exact mesh vertices;
 		// map a position to its vertex index, then tag the triangle edge(s) whose
 		// canonical vertex pair matches. Both triangles sharing an interior portal
 		// edge get the tag (openingId and clearWidthMm: the width filter gates a door
@@ -887,8 +1037,8 @@ namespace geometry::nav {
 		// knowledge obstacle, so the Demyen widths below never see the door gap).
 		if (!input.doors.empty()) {
 			std::map<Vec2i64, std::uint32_t> vertexIndex;
-			for (std::size_t i = 0; i < mesh.vertices.size(); ++i) {
-				vertexIndex.emplace(mesh.vertices[i], static_cast<std::uint32_t>(i));
+			for (std::size_t i = 0; i < result.vertices.size(); ++i) {
+				vertexIndex.emplace(result.vertices[i], static_cast<std::uint32_t>(i));
 			}
 			struct PortalTag {
 				std::int64_t openingId	  = kNoOpening;
@@ -916,17 +1066,16 @@ namespace geometry::nav {
 			}
 		}
 
-		// 8. Corridor widths. For every triangle and every apex vertex, compute the
-		// Demyen-Buro width of the passage between the two edges meeting at that apex
-		// (max disc diameter vs common-knowledge obstacles). This needs the finished
-		// adjacency and face tags, so it runs last. Belief-dependent walls are excluded
-		// (see calculateEdgePairWidth / NavMesh.h).
-		WidthScratch widthScratch;
-		widthScratch.visited.assign(result.triangles.size(), 0);
-		widthScratch.stamp = 0; // first ++stamp makes 1; initial visited[] of 0 never matches
-		for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
-			for (int apex = 0; apex < 3; ++apex) {
-				result.triangles[ti].edgePairWidthMm[apex] = calculateEdgePairWidth(result, widthScratch, ti, apex);
+		// 8. Corridor widths for every triangle and apex, uncapped. They need the
+		// finished adjacency and face tags.
+		{
+			const NavView view = navView(result);
+			WidthSearch	  search;
+			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
+				NavTriangle& tri = result.triangles[static_cast<std::size_t>(ti)];
+				for (int apex = 0; apex < 3; ++apex) {
+					tri.edgePairWidthMm[static_cast<std::size_t>(apex)] = corridorWidthMm(view, search, ti, apex, kUnconstrainedWidth);
+				}
 			}
 		}
 
@@ -1006,32 +1155,6 @@ namespace geometry::nav {
 					g.cellStart[static_cast<std::size_t>(ci)] + static_cast<std::int32_t>(cell.size());
 				g.candidates.insert(g.candidates.end(), cell.begin(), cell.end());
 			}
-		}
-
-		// 10. Width-aware reachability forests. Collect every interior portal edge once
-		// (canonical owner = the lower triangle index, so each shared edge is listed a
-		// single time) with its sound disc-diameter capacity, then build the truth and
-		// terrain forests over that one capacity set. This needs finished adjacency,
-		// widths, and door tags, so it runs last.
-		{
-			std::vector<PortalEdge> portals;
-			portals.reserve(result.triangles.size() * 3 / 2);
-			for (std::int32_t ti = 0; ti < static_cast<std::int32_t>(result.triangles.size()); ++ti) {
-				const NavTriangle& tri = result.triangles[ti];
-				for (int e = 0; e < 3; ++e) {
-					const std::int32_t nb = tri.neighbor[e];
-					if (nb < 0 || nb <= ti) {
-						continue; // boundary, or already listed from the lower-index side
-					}
-					PortalEdge pe;
-					pe.triA = ti;
-					pe.triB = nb;
-					pe.cap	= portalCapacity(result, ti, e, nb);
-					portals.push_back(pe);
-				}
-			}
-			result.truthForest	 = buildForest(result, portals, truthTraversable);
-			result.terrainForest = buildForest(result, portals, terrainTraversable);
 		}
 
 		return result;

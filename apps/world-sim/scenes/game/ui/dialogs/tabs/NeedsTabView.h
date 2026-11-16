@@ -1,48 +1,44 @@
 #pragma once
 
-#include <component/Container.h>
-#include <graphics/Rect.h>
+// NeedsTabView - the dossier's Needs tab: a full-width Mood meter and its caption, then two columns,
+// the vital and (dimmed) comfort needs as meters on the left and a Body & Ailments empty state on the
+// right.
+
+#include <ui/Component.h>
+#include <ui/components/ProgressBar.h>
 
 #include <array>
 #include <string>
 
 namespace world_sim {
 
-/// Data for Needs tab
-struct NeedsData {
-	/// Need values (0-100) for all 8 needs, indexed by NeedType
-	std::array<float, 8> needValues{};
+	struct NeedsData {
+		// 0-100 for all 8 needs, by NeedType.
+		std::array<float, 8> needValues{};
+		// Below its seek threshold.
+		std::array<bool, 8> needsAttention{};
+		std::array<bool, 8> isCritical{};
 
-	/// Whether each need is below seek threshold
-	std::array<bool, 8> needsAttention{};
+		float		mood = 100.0F;
+		std::string moodLabel;
+	};
 
-	/// Whether each need is critical
-	std::array<bool, 8> isCritical{};
+	class NeedsTabView : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
 
-	float mood = 100.0F;
-	std::string moodLabel;
-};
+		void update(const NeedsData& data);
 
-/// Needs tab content for ColonistDetailsDialog.
-///
-/// Mirrors the Salvage prototype's Needs panel: a full-width Mood meter, then a
-/// two-column body. Left column lists Vital Needs and (dimmed) Comfort needs as
-/// meter rows; right column holds a Body & Ailments empty-state. Rendered with
-/// explicit manual positioning relative to the view's content origin.
-class NeedsTabView : public UI::Container {
-  public:
-	/// Create the tab view with content bounds from parent dialog
-	void create(const Foundation::Rect& contentBounds);
+		[[nodiscard]] const char* typeName() const override { return "NeedsTabView"; }
 
-	/// Update content from model data
-	void update(const NeedsData& data);
+	  protected:
+		void onMount() override;
 
-	/// Draw the Needs panel at the view's content origin.
-	void render() override;
-
-  private:
-	Foundation::Rect contentBounds{};
-	NeedsData		 data_{};
-};
+	  private:
+		ui::Ref<ui::ProgressBar>				moodMeter;
+		std::array<ui::Ref<ui::ProgressBar>, 8> needMeters;
+	};
 
 } // namespace world_sim

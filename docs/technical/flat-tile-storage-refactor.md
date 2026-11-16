@@ -147,6 +147,8 @@ enum class Surface : uint8_t {
 > 4. **Memory savings**: ~32 KB per chunk (1,024 BiomeWeights × 32 bytes each)
 >
 > If we ever need full BiomeWeights (all 8 biome percentages) for a tile, we can re-sample the 3D world. This is rare and acceptable.
+>
+> The sector grid itself is gone since WOR-558: each tile's biome is picked from the chunk's corner weights and world-space edge noise (`libs/world/world/chunk/TileBiomes.h`), so the sample a chunk discards is its corners.
 
 The generation flow:
 
@@ -160,8 +162,8 @@ void loadChunk(ChunkCoordinate coord) {
     auto chunk = std::make_unique<Chunk>(coord);
     chunk->generate(m_worldSeed, sampleResult);
 
-    // 3. sampleResult goes out of scope — sector grid discarded
-    //    Only tiles[] array persists
+    // 3. sampleResult goes out of scope with its corner weights;
+    //    only the tiles[] array persists
 
     m_chunks[coord] = std::move(chunk);
 }
@@ -282,7 +284,7 @@ void ChunkRenderer::render(const Chunk& chunk) {
 ```
 Per Chunk:
 - TileData: 8 bytes/tile × 262,144 tiles = 2.1 MB
-- No sector grid stored (temporary during generation)
+- No biome sample stored (the corner weights live only during generation)
 - Total: ~2.1 MB per chunk
 
 Typical Load (25 chunks): ~52 MB
@@ -397,24 +399,24 @@ This enables:
 ## Files to Modify
 
 ### Rename (Phase 0)
-- `libs/engine/world/GroundCover.h` → `libs/engine/world/Surface.h`
+- `libs/world/world/GroundCover.h` → `libs/world/world/Surface.h`
 - All files referencing `GroundCover`
 
 ### Core Changes (Phase 1)
-- `libs/engine/world/chunk/Chunk.h` — Add `tiles` array, `generate()`, `isReady()`, remove stored biomeData
-- `libs/engine/world/chunk/Chunk.cpp` — Implement generation
-- `libs/engine/world/chunk/TileData.h` — New/updated struct
-- `libs/engine/world/BiomeWeights.h` — Add `secondary()` method
+- `libs/world/world/chunk/Chunk.h` — Add `tiles` array, `generate()`, `isReady()`, remove stored biomeData
+- `libs/world/world/chunk/Chunk.cpp` — Implement generation
+- `libs/world/world/chunk/TileData.h` — New/updated struct
+- `libs/world/world/BiomeWeights.h` — Add `secondary()` method
 
 ### System Updates (Phase 2)
-- `libs/engine/world/chunk/ChunkManager.cpp` — Pass sampleResult to generate()
-- `libs/engine/world/rendering/ChunkRenderer.cpp` — Thread safety, read from array
-- `libs/engine/assets/placement/PlacementExecutor.cpp` — Query tiles, fix flora-on-water
-- `libs/engine/ecs/systems/VisionSystem.cpp` — Query tiles
-- `libs/engine/ecs/systems/AIDecisionSystem.cpp` — Query tiles
+- `libs/world/world/chunk/ChunkManager.cpp` — Pass sampleResult to generate()
+- `libs/world-view/world/rendering/ChunkRenderer.cpp` — Thread safety, read from array
+- `libs/assets/assets/placement/PlacementExecutor.cpp` — Query tiles, fix flora-on-water
+- `libs/sim/ecs/systems/VisionSystem.cpp` — Query tiles
+- `libs/sim/ecs/systems/AIDecisionSystem.cpp` — Query tiles
 
 ### Simplified (not removed)
-- `libs/engine/world/chunk/ChunkSampleResult.h` — Remove `isPure`, keep as temporary data structure
+- `libs/world/world/chunk/ChunkSampleResult.h` — Remove `isPure`, keep as temporary data structure
 
 ## Risks and Mitigations
 

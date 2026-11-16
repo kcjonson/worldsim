@@ -1,0 +1,427 @@
+#pragma once
+
+#include "../core/IncrementalHashMap.h"
+#include "../core/PagedVector.h"
+#include "../core/Vec2i64.h"
+#include "MeshComponents.h"
+#include "NavMesh.h"
+
+#include <array>
+#include <compare>
+#include <cstdint>
+#include <map>
+#include <memory>
+#include <span>
+#include <string>
+#include <utility>
+#include <vector>
+
+// A persistent nav mesh that takes ring edits as patches (nav-mesh-variable-resolution
+// section 4.3). Every add, remove, and move cuts a hole along the ring edges whose
+// geometry is in question, rebuilds it from the rings' original outlines with the same
+// arrangement and constrained Delaunay a first build uses, splices it back, and
+// legalizes the boundary. The vertices and constrained edges after any sequence of
+// patches are meant to equal a from-scratch build of the same rings (section 4.3.2).
+//
+// Triangle and vertex ids are stable: a patch frees some slots and reuses them, and
+// every id it did not touch still means what it meant. Ground exists only where a
+// triangle's cover set holds kGroundToken (inside any bounds ring); elsewhere there are no
+// triangles. Bounds rings may overlap, nest, touch, and share sides: a bounds edge is a
+// constraint only along its boundary intervals (groundBoundaries), and ground runs across
+// the rest of it with no mesh edge there. Every vertex ends a constrained edge.
+//
+// The mesh carries what path queries and reachability read: face tags from the rings,
+// door tags on door edges, corridor widths capped at a maximum clearance (brought up to
+// date by refreshWidths; the mesh edge narrows them like an obstacle), and connected-
+// component labels (kept by every patch).
+// view() hands all of it to PathQuery, which serves NavMesh too.
+
+namespace geometry::nav {
+
+	// Stands in a cover for every bounds ring (blocked == false): the cover holds it when
+	// any bounds ring contains the triangle, so the two sides of a dissolved stretch have
+	// the same cover. Sorts before every ring id.
+	constexpr RingId kGroundToken = -2;
+
+	// How close two original edges must come for a patch to treat them as interacting.
+	// buildArrangement's rounding has no proven drift bound: each cascade level can move a
+	// piece another 0.71 mm, and the six segments in the arrangement test
+	// RepeatedRoundingDriftsPastTwoMillimetres drift 2.98 mm. Pulling too much into a patch
+	// is only slower; pulling too little loses exactness.
+	constexpr std::int64_t kOffGroundReachMm = 8;
+
+	struct RegisteredRing {
+		NavInputPolygon			  polygon; // original outline and tags
+		SampleRing				  sample;
+		Vec2i64					  lo;
+		Vec2i64					  hi;
+		std::vector<std::int32_t> edgeIds; // per outline edge, its id in the edge index
+		RingEdgeBoxes			  edgeBoxes; // a bounds ring's; empty for a blocked one
+		// A bounds ring's boundary intervals now, edge after edge: edge e's run starts at
+		// intervalStart[e] and ends where edge e + 1's starts. Empty for a blocked ring.
+		std::vector<GroundInterval> intervals;
+		std::vector<std::uint32_t>	intervalStart;
+		bool						live = false;
+	};
+
+	struct RingMove {
+		RingId				 ring = kNoRing;
+		std::vector<Vec2i64> outline;
+	};
+
+	// One patch: every edit re-derives in one hole, so overlapping edits merge.
+	struct PatchEdits {
+		std::vector<NavInputPolygon> adds;
+		std::vector<RingId>			 removes;
+		std::vector<RingMove>		 moves;
+	};
+
+	// Why a triangle id is in PatchReport::changes; one id can carry several.
+	constexpr std::uint8_t kTriangleFreed	= 1 << 0; // its old triangle is gone
+	constexpr std::uint8_t kTriangleCreated = 1 << 1; // it holds a triangle the patch made
+	constexpr std::uint8_t kTriangleFlipped = 1 << 2; // a flip at the hole's boundary remade it (freed and created too)
+	constexpr std::uint8_t kTriangleBorder	= 1 << 3; // kept, but what lies across one of its edges changed or went
+	constexpr std::uint8_t kTriangleWidths	= 1 << 4; // refreshWidths changed one of its corridor widths
+
+	struct ChangedTriangle {
+		std::int32_t id	 = -1;
+		std::uint8_t why = 0;
+
+		bool operator==(const ChangedTriangle&) const = default;
+	};
+
+	// What a patch (applyPatch) or a width refresh (refreshWidths) changed. Anything that
+	// holds triangle ids checks them against `changes`.
+	struct PatchReport {
+		std::vector<RingId>			 added;			 // ids of PatchEdits::adds, in order; kNoRing where refused
+		std::vector<ChangedTriangle> changes;		 // every id touched, ascending, each once
+		Vec2i64						 lo;			 // patch: box of every freed and new triangle; refresh: of every changed one
+		Vec2i64						 hi;			 // (nothing changed: unset)
+		std::int32_t				 passes = 0;	 // re-derivations until the boundary held
+		// Covers seeded from a sample no exact test could read: no triangle of a group lies
+		// clear of every ring's snap band, and its ground count or a blocked ring's edge could
+		// not be read as rounded either (a centroid on a kept piece, or an edge whose pieces
+		// neither this pass nor the mesh shows end to end). Unsupported input; the mesh may
+		// disagree with a from-scratch build there.
+		std::int32_t unreadCovers = 0;
+		// 1 when the floods of this patch covered some face two ways: a seed read wrong, so the
+		// mesh may disagree with a from-scratch build there. Unsupported input, like the above.
+		std::int32_t coverConflicts = 0;
+		// Adds and moves refused because a bounds outline spans kMaxGroundExtentMm or more on
+		// an axis. Unsupported input; validate fails from then on.
+		std::int32_t refusedRings = 0;
+		// The patch may have opened a way for some mover and belief: it removed or moved a
+		// ring, or added ground, a door, a hole-capable ring, or a wall. Only solid water and
+		// obstacle rings arriving leave it false.
+		bool opens = false;
+	};
+
+	using DoorId		   = std::int32_t;
+
+	// Covers any agent the game could have: a 2 m radius, over six times the colonist's.
+	constexpr std::int64_t kDefaultMaxClearanceMm = 4000;
+
+	struct PatchableMeshArgs {
+		// Corridor widths are exact below this and read kUnconstrainedWidth at or above
+		// it, so a patch refreshes only the widths within this distance of what it changed.
+		std::int64_t maxClearanceMm = kDefaultMaxClearanceMm;
+		// The face tags component labels read as open ground (MeshComponents).
+		std::vector<std::int64_t> componentOpenTags;
+	};
+
+	class PatchableMesh {
+	  public:
+		explicit PatchableMesh(const PatchableMeshArgs& args = {});
+
+		PatchReport applyPatch(const PatchEdits& edits);
+
+		const PagedVector<Vec2i64>&		vertices() const { return verts; }
+		const PagedVector<NavTriangle>& triangles() const { return tris; }
+		bool							triangleLive(std::int32_t t) const { return live[static_cast<std::size_t>(t)] != 0; }
+		std::int32_t					liveTriangleCount() const { return liveTriangles; }
+
+		// The ring edges a triangle edge lies on; empty when the edge is unconstrained.
+		const std::vector<EdgeSource>& edgeSources(std::int32_t tri, int edge) const;
+		// The blocked rings the triangle lies inside, and kGroundToken when it is ground;
+		// ascending.
+		const std::vector<RingId>& cover(std::int32_t tri) const;
+
+		const RegisteredRing& ring(RingId id) const { return rings[static_cast<std::size_t>(id)]; }
+
+		// The live triangle containing p (edges and vertices included), the lowest id on
+		// a tie; -1 off the mesh.
+		std::int32_t locate(const Vec2i64& p) const;
+
+		// Whether the closed area of a simple outline lies wholly in the union of the live
+		// ground outlines (blocked rings inside it do not matter), so adding it as ground
+		// would change nothing: it would arrange no boundary interval of its own, taking
+		// none of a stretch it shares with another edge, and change no live ground edge's.
+		bool groundCovers(const std::vector<Vec2i64>& outline) const;
+
+		// The mesh's edge near a box: every live triangle edge with no triangle across it that
+		// meets the box, and some near it, each once, as (start, end) with the triangle on the
+		// left. Read from the index of bounds edges with boundary intervals, which the mesh edge
+		// runs along. edgeIds is scratch.
+		void meshEdgesNear(const Vec2i64& boxLow, const Vec2i64& boxHigh, std::vector<std::int32_t>& edgeIds, std::vector<std::pair<Vec2i64, Vec2i64>>& out) const;
+
+		// A door tags the triangle edge (a, b) with its opening and clear width wherever
+		// that edge exists, through every later patch; where two doors name one edge, the
+		// lower id tags it. Tags only: no geometry changes.
+		DoorId addDoor(const DoorPortal& door);
+		void   removeDoor(DoorId door);
+
+		// Corridor widths (NavTriangle::edgePairWidthMm, capped at maxClearanceMm, against
+		// obstacles and the mesh edge alike) lag behind patches, so adding or removing ground
+		// moves them: a patch only records where it changed the mesh, and this brings
+		// every width up to date, once for all the patches since the last call. The report
+		// lists the triangles whose widths changed, each kTriangleWidths.
+		PatchReport refreshWidths();
+		bool widthsCurrent() const { return freshWidthTriangles.empty() && pendingWidthSeeds.empty(); }
+
+		// What path queries read (see NavView).
+		NavView view() const;
+
+		// Moves on every patch and door edit, to a value no mesh state has had before
+		// (nextMeshGeneration): anything keyed by triangle id is stale once it moves.
+		std::uint64_t epoch() const { return patchEpoch; }
+
+		// Connected components, brought up to date by every patch.
+		const MeshComponents& components() const { return labels; }
+
+		// Full consistency check; the first violation found, or empty.
+		std::string validate() const;
+
+	  private:
+		template <typename Value> class InternTable {
+		  public:
+			std::int32_t acquire(const Value& value);
+			void		 release(std::int32_t id);
+			void		 retain(std::int32_t id) { ++refs[static_cast<std::size_t>(id)]; }
+
+			const Value& get(std::int32_t id) const { return values[static_cast<std::size_t>(id)]; }
+			std::int32_t slots() const { return static_cast<std::int32_t>(values.size()); }
+			std::int32_t refCount(std::int32_t id) const { return refs[static_cast<std::size_t>(id)]; }
+
+		  private:
+			// Ids by each value's hash, the ids sharing a hash chained through sameHash:
+			// a lookup, or a fresh slot once a freed value's storage has grown, allocates
+			// nothing, and nothing grows by moving what is there.
+			struct HashOf {
+				std::uint64_t operator()(std::uint64_t hash) const {
+					hash ^= hash >> 31;
+					hash *= 0xBF58476D1CE4E5B9ULL;
+					return hash ^ (hash >> 29);
+				}
+			};
+			PagedVector<Value>										values; // a freed id keeps its value's capacity
+			PagedVector<std::uint64_t>								hashes; // per id
+			PagedVector<std::int32_t>								refs;
+			PagedVector<std::int32_t>								sameHash; // the next id with this id's hash, -1 none
+			std::vector<std::int32_t>								freeIds;
+			IncrementalHashMap<std::uint64_t, std::int32_t, HashOf> byHash; // the first id with a hash
+		};
+
+		// Boxes by id, for point location and box queries: a grid per level, cell side
+		// kBaseCell << level, every level's cells in one open-addressed hash table. An id
+		// sits in the level whose cell is at least its box's larger side, in the up to
+		// four cells its box overlaps.
+		class BoxGrid {
+		  public:
+			static constexpr int		  kLevels	= 40;
+			static constexpr std::int64_t kBaseCell = 256;
+
+			void insert(std::int32_t id, const Vec2i64& lo, const Vec2i64& hi);
+			void erase(std::int32_t id, const Vec2i64& lo, const Vec2i64& hi);
+
+			// Visits every id whose box overlaps the box, the box given in `scale` times mesh
+			// space; an id in several cells the box overlaps is visited once per cell.
+			template <typename Visit> void forEachInBox(const Vec2i64& lo, const Vec2i64& hi, std::int64_t scale, Visit visit) const;
+
+			// forEachInBox at mesh scale, each id visited once, where forEachInBox first visits it.
+			template <typename Visit> void forEachInBoxOnce(const Vec2i64& lo, const Vec2i64& hi, Visit visit) const;
+
+			// Visits the ids whose box holds p (in `scale` times mesh space), finest level
+			// first, until `visit` returns true. Each comes up once.
+			template <typename Visit> void forEachAtPoint(const Vec2i64& p, std::int64_t scale, Visit visit) const;
+
+			template <typename Visit> void forEachEntry(Visit visit) const;
+
+		  private:
+			// A cell by level and full cell coordinates: no packing, so no coordinate the
+			// mesh can hold aliases another cell.
+			struct CellKey {
+				std::int64_t x	   = 0;
+				std::int64_t y	   = 0;
+				std::int32_t level = -1;
+				bool		 operator==(const CellKey&) const = default;
+			};
+			// The box rides along so a query rejects an entry without touching its owner.
+			struct Entry {
+				std::int32_t id = -1;
+				Vec2i64		 lo;
+				Vec2i64		 hi;
+			};
+			struct Cell {
+				CellKey			   key;
+				std::vector<Entry> entries;
+				std::int32_t	   levelSlot = -1; // position in levelCells
+			};
+
+			static int			 levelFor(const Vec2i64& lo, const Vec2i64& hi);
+			std::int32_t find(const CellKey& key) const;
+			std::int32_t findOrAdd(const CellKey& key);
+			void				 dropCell(std::int32_t cell, int level);
+
+			struct CellHash {
+				std::uint64_t operator()(const CellKey& key) const;
+			};
+			IncrementalHashMap<CellKey, std::int32_t, CellHash> table; // cell by key
+			PagedVector<Cell>								   cells;
+			std::vector<std::int32_t>					   freeCells;
+			std::array<PagedVector<std::int32_t>, kLevels> levelCells;
+			std::uint64_t								   levelMask = 0; // levels holding any id
+		};
+
+		struct VertexHash {
+			std::size_t operator()(const Vec2i64& p) const;
+		};
+
+		class Patch;
+		friend class Patch;
+		struct PatchScratch;
+
+		// A patch's working storage, kept between patches so one allocates little. A copied
+		// mesh starts with its own, empty.
+		struct PatchScratchSlot {
+			PatchScratchSlot();
+			PatchScratchSlot(const PatchScratchSlot& other);
+			PatchScratchSlot(PatchScratchSlot&& other) noexcept;
+			PatchScratchSlot& operator=(const PatchScratchSlot& other);
+			PatchScratchSlot& operator=(PatchScratchSlot&& other) noexcept;
+			~PatchScratchSlot();
+
+			std::unique_ptr<PatchScratch> scratch;
+		};
+
+		std::int32_t locateScaled(const Vec2i64& p, std::int64_t scale) const;
+		// The live triangle holding the 3x-space point moved by (e, e^2), for an
+		// infinitesimal e (boundsContainSample's rule); -1 off the mesh.
+		std::int32_t locateSample(const Vec2i64& p3) const;
+		template <typename Visit> void forEachLiveInBox(const Vec2i64& lo, const Vec2i64& hi, Visit visit);
+		template <typename Visit> void forEachAroundVertex(std::uint32_t v, std::int32_t seed, Visit visit) const;
+		void triangleBox(std::int32_t t, Vec2i64& lo, Vec2i64& hi) const;
+		std::vector<RingId> ringsInBox(const Vec2i64& lo, const Vec2i64& hi) const;
+		// found = every blocked ring edge (edgeGrid), or every bounds edge with boundary
+		// intervals (groundEdgeGrid), whose segment box overlaps the box, each once, ascending.
+		// ids is scratch.
+		void blockedEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const;
+		void boundaryEdgesInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<std::int32_t>& ids, std::vector<EdgeSource>& found) const;
+		void indexRingEdges(RingId ring);
+		void unindexRingEdges(RingId ring);
+		// A bounds edge enters groundEdgeGrid when it gains boundary intervals and leaves when
+		// it loses them.
+		void setBoundary(std::int32_t edgeId, bool boundary);
+		void edgeBox(std::int32_t edgeId, Vec2i64& lo, Vec2i64& hi) const;
+		bool nearBoundsEdge(const Vec2i64& lo, const Vec2i64& hi) const;
+
+		std::int32_t acquireCover(const std::vector<RingId>& ringSet);
+		void		 setEdgeSources(std::int32_t t, int e, std::int32_t sourceId);
+		void		 clearEdgeSources(std::int32_t t, int e);
+		void		 unregisterEdgeSources(std::int32_t t, int e);
+		void		 legalize(std::vector<std::pair<std::int32_t, int>>& stack, std::vector<std::int32_t>& flipped);
+		void		 flip(std::int32_t t, int e);
+
+		std::int64_t pieceDeviationMm(RingId ring) const;
+		void		 applyDoorTags(std::int32_t t);
+		void		 retagEdge(const Vec2i64& a, const Vec2i64& b);
+		static std::pair<Vec2i64, Vec2i64> edgeKey(Vec2i64 a, Vec2i64 b);
+
+		// The half-edges a registered ring edge lies under.
+		const std::vector<std::int32_t>& piecesOf(const EdgeSource& s) const;
+		// The live bounds rings whose boxes meet the box.
+		void	   groundRingsInBox(const Vec2i64& lo, const Vec2i64& hi, std::vector<GroundRing>& out) const;
+		GroundRing groundOf(RingId ring) const;
+		// A live bounds edge's boundary intervals as the registry holds them.
+		std::span<const GroundInterval> intervalsOf(const EdgeSource& source) const;
+		// Whether the edge's pieces on the mesh run end to end, from one of `ends` to another
+		// and through no other: every one of `ends` meets an odd number of pieces and every
+		// other point an even number. `ends` holds each end once; `pieceList` (the edge's
+		// pieces by vertex pair, ascending, after the call) and `endList` are scratch.
+		bool piecesRunBetween(const EdgeSource& s, const std::vector<Vec2i64>& ends, std::vector<std::pair<std::uint32_t, std::uint32_t>>& pieceList,
+							  std::vector<std::uint32_t>& endList) const;
+
+		std::int64_t				maxClearanceMm	= kDefaultMaxClearanceMm;
+		PagedVector<RegisteredRing> rings;
+		std::vector<RingId>			freeRings;
+
+		PagedVector<Vec2i64>							verts;
+		PagedVector<std::int32_t>						vertexUses; // live triangle corners on the vertex
+		std::vector<std::uint32_t>						freeVertices;
+		IncrementalHashMap<Vec2i64, std::uint32_t, VertexHash> vertexAt;
+
+		PagedVector<NavTriangle>				 tris;
+		PagedVector<std::uint8_t>				 live;
+		PagedVector<std::array<std::int32_t, 3>> edgeSourceIds; // interned source list, -1 unconstrained
+		PagedVector<std::int32_t>				 coverIds;
+		std::vector<std::int32_t>				 freeTriangles;
+		std::int32_t							 liveTriangles = 0;
+		std::int32_t							 unreadCovers  = 0; // PatchReport::unreadCovers, summed
+		std::int32_t							 coverConflicts = 0; // PatchReport::coverConflicts, summed
+		std::int32_t							 refusedRings  = 0; // PatchReport::refusedRings, summed
+
+		InternTable<std::vector<EdgeSource>> sourceLists;
+		InternTable<std::vector<RingId>>	 covers;
+		std::vector<FaceTags>				 coverTags; // per cover id
+
+
+		// A patch's box queries. No read of the mesh writes anything, so readers on
+		// several threads may share it while no patch runs.
+		ScratchArray<std::uint32_t> visitStamp; // per triangle
+		std::uint32_t			   stamp		= 0;
+		bool					   boxQueryOpen = false;
+
+		BoxGrid					grid;		 // live triangles
+		BoxGrid					ringGrid;		// live blocked rings, by outline box
+		BoxGrid					groundRingGrid; // live bounds rings, by outline box
+		BoxGrid&				ringGridOf(const NavInputPolygon& p) { return p.blocked ? ringGrid : groundRingGrid; }
+		BoxGrid					edgeGrid;	 // live blocked rings' edges, by segment box
+		// Live bounds edges with boundary intervals, by segment box: most of a bounds edge
+		// inside the union is dissolved, and an edge with none can touch nothing.
+		BoxGrid					groundEdgeGrid;
+		PagedVector<EdgeSource> edgeOf;		 // edge index id -> ring edge
+		PagedVector<std::uint8_t> boundary;	 // per edge index id: a bounds edge in groundEdgeGrid
+		PagedVector<std::vector<std::int32_t>> pieces; // per edge index id: half-edges t * 3 + e
+		std::vector<std::int32_t> freeEdgeIds;
+		PatchScratchSlot		patchScratch;
+
+		std::vector<DoorPortal>									   doors;
+		std::vector<std::uint8_t>								   doorLive;
+		std::vector<DoorId>										   freeDoors;
+		std::map<std::pair<Vec2i64, Vec2i64>, std::vector<DoorId>> doorsAt; // ascending ids per edge
+
+		// An edge where unchanged ground (tri) meets what a patch changed (see refreshWidths).
+		struct WidthSeed {
+			std::int32_t tri = -1;
+			Vec2i64		 a;
+			Vec2i64		 b;
+		};
+		WidthSearch			   widthSearch;
+		std::vector<std::int32_t> freshWidthTriangles; // new or flipped since refreshWidths
+		std::vector<WidthSeed>	   pendingWidthSeeds;	// edges whose far side went since then
+		// refreshWidths scratch
+		std::vector<std::int32_t>							staleApexes; // 3 * t + apex
+		std::vector<WidthSeed>								widthSeeds;
+		std::vector<std::pair<std::uint64_t, std::int32_t>> seedBuckets;
+		std::vector<std::int32_t>							seedCellRuns;
+		std::vector<std::int32_t>							seedCellTable;
+		std::vector<std::int32_t>							widthWalk;
+		ScratchArray<std::uint32_t>							freshMark;
+		ScratchArray<std::uint32_t>							walkMark;
+		std::uint32_t										freshStamp = 0;
+		std::uint32_t										walkStamp  = 0;
+
+		std::uint64_t  patchEpoch = nextMeshGeneration();
+		MeshComponents labels;
+	};
+
+} // namespace geometry::nav

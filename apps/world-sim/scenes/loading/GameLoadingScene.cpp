@@ -6,32 +6,24 @@
 // loads the prebuilt quickstart planet shipped with the game (built by the
 // `quickstart-planet` CMake target). It is never generated at runtime.
 
+#include "GameBootstrap.h"
 #include "GameStartConfig.h"
 #include "GameWorldState.h"
 #include "SceneTypes.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
+#include <theme/Theme.h>
 
-#include <GL/glew.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
-
-#include <assets/ActionTypeRegistry.h>
+#include <application/App.h>
 #include <assets/AssetRegistry.h>
-#include <assets/ConfigValidator.h>
-#include <assets/ConstructionRegistry.h>
-#include <assets/PriorityConfig.h>
-#include <assets/TaskChainRegistry.h>
-#include <assets/WorkTypeRegistry.h>
+#include <assets/WorkConfig.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <graphics/Color.h>
-#include <input/InputManager.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include <shapes/Shapes.h>
+#include <theme/Keys.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 #include <world/camera/WorldCamera.h>
@@ -41,11 +33,15 @@
 #include <world/chunk/GeneratedWorldSampler.h>
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
+#include <world/rendering/GroundTileBank.h>
 
 #include <worldgen/data/Biome.h>
 #include <worldgen/io/PlanetIO.h>
 #include <worldgen/sampling/LandingSite.h>
 #include <worldgen/sampling/SpawnSite.h>
+
+#include <ui/components/ProgressBar.h>
+#include <ui/shapes/Text.h>
 
 #include <algorithm>
 #include <memory>
@@ -58,15 +54,21 @@ namespace {
 	constexpr float		  kPixelsPerMeter = 8.0F;
 	constexpr int		  kTargetChunks = 9; // 3×3 grid (center + 8 adjacent)
 
+	namespace tokens = world_sim::tokens;
+	namespace family = ui::tokens::font::family;
+
 	/// Loading phases
-	enum class LoadingPhase { PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
+	enum class LoadingPhase { BakingGround, PreparingPlanet, Initializing, ConfigError, LoadingChunks, PlacingEntities, Complete, Cancelling };
 
-	class GameLoadingScene : public engine::IScene {
+	class GameLoadingScene : public app::Scene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "GameLoadingScene - Entering");
+			theme::apply(ui());
+			build();
 
-			phase = LoadingPhase::PreparingPlanet;
+			phase = LoadingPhase::BakingGround;
 			progress = 0.0F;
 			chunksLoaded = 0;
 			chunksProcessed = 0;
@@ -86,14 +88,13 @@ namespace {
 			statusMessage = "Initializing...";
 		}
 
-		void update(float /*dt*/) override {
+		void update(const app::FrameContext& frame) override {
 			// Check for ESC to cancel loading or return from error
-			auto& input = engine::InputManager::Get();
-			if (input.isKeyPressed(engine::Key::Escape)) {
+			if (theme::key(frame.input, foundation::Key::Escape).pressed()) {
 				if (phase == LoadingPhase::ConfigError) {
 					// Config error - return to menu immediately
 					LOG_INFO(Game, "GameLoadingScene - Returning to menu from config error");
-					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+					owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 					return;
 				}
 				if (phase != LoadingPhase::Cancelling && phase != LoadingPhase::Complete) {
@@ -104,6 +105,10 @@ namespace {
 			}
 
 			switch (phase) {
+				case LoadingPhase::BakingGround:
+					bakeGround();
+					break;
+
 				case LoadingPhase::PreparingPlanet:
 					preparePlanet();
 					break;
@@ -132,81 +137,15 @@ namespace {
 					cancelLoading();
 					break;
 			}
+			showProgress();
 		}
 
-		void render() override {
-			using namespace UI;
-			using Renderer::Primitives::drawRect;
-			using Renderer::Primitives::drawText;
-
-			glClearColor(bg_void.r, bg_void.g, bg_void.b, 1.0F);
-			glClear(GL_COLOR_BUFFER_BIT);
-
+		void render(float /*alpha*/) override {
+			const ui::Theme& theme = ui().getTheme();
+			Renderer::Primitives::clear(theme.get(tokens::color::bgVoid));
 			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
-			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 5U, true);
-			const float cx = screenW * 0.5F;
-			const float cy = screenH * 0.5F;
-
-			// Identity block in the splash idiom: mono kicker over a display title.
-			drawText({.text = "// EXPEDITION    DESCENT",
-					  .position = {0.0F, cy - 96.0F},
-					  .scale = fs_2xs / 16.0F,
-					  .color = accent,
-					  .font = fontMono,
-					  .hAlign = Foundation::HorizontalAlign::Center,
-					  .vAlign = Foundation::VerticalAlign::Middle,
-					  .boxWidth = screenW,
-					  .letterSpacing = fs_2xs * ls_wider});
-			drawText({.text = "Making Planetfall",
-					  .position = {0.0F, cy - 56.0F},
-					  .scale = fs_3xl / 16.0F,
-					  .color = text_bright,
-					  .font = fontDisplay,
-					  .hAlign = Foundation::HorizontalAlign::Center,
-					  .vAlign = Foundation::VerticalAlign::Middle,
-					  .boxWidth = screenW,
-					  .letterSpacing = fs_3xl * ls_wide});
-
-			// Tokenized 3px loader, consistent with Splash/WorldCreator.
-			const bool	err = phase == LoadingPhase::ConfigError;
-			const float barW = std::min(420.0F, screenW * 0.8F);
-			const float barX = cx - barW * 0.5F;
-			const float barY = cy + 24.0F;
-			drawText({.text = statusMessage,
-					  .position = {barX, barY - 20.0F},
-					  .scale = fs_xs / 16.0F,
-					  .color = err ? status_crit : text,
-					  .font = fontMono,
-					  .vAlign = Foundation::VerticalAlign::Top,
-					  .letterSpacing = fs_xs * ls_wide,
-					  .transform = Foundation::TextTransform::Uppercase});
-			if (!err) {
-				drawText({.text = std::to_string(static_cast<int>(progress * 100.0F)) + "%",
-						  .position = {barX, barY - 20.0F},
-						  .scale = fs_xs / 16.0F,
-						  .color = accent_bright,
-						  .font = fontMono,
-						  .hAlign = Foundation::HorizontalAlign::Right,
-						  .vAlign = Foundation::VerticalAlign::Top,
-						  .boxWidth = barW});
-				const float radius = std::min(r_pill, 1.5F);
-				drawRect({.bounds = {barX, barY, barW, 3.0F},
-						  .style = {.fill = bg_inset,
-									.border = Foundation::BorderStyle{
-										.color = bg_inset, .width = 0.0F, .cornerRadius = radius,
-										.position = Foundation::BorderPosition::Inside}}});
-				const float fillW = barW * std::clamp(progress, 0.0F, 1.0F);
-				if (fillW > 3.0F) {
-					drawRect({.bounds = {barX, barY, fillW, 3.0F},
-							  .style = {.fill = accent,
-										.border = Foundation::BorderStyle{
-											.color = accent, .width = 0.0F, .cornerRadius = radius,
-											.position = Foundation::BorderPosition::Inside}}});
-				}
-			}
-
-			world_sim::serveUiStateRequests(*this);
+			world_sim::renderStarfield(theme, static_cast<int>(screenW), static_cast<int>(screenH), 5U, true);
 		}
 
 		void onExit() override {
@@ -215,15 +154,120 @@ namespace {
 			// Note: worldState is moved to GameWorldState::SetPending() before exit
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			std::ostringstream oss;
 			oss << R"({"scene":"gameloading","progress":)" << progress << "}";
 			return oss.str();
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
+		app::App* owner = nullptr;
+
+		// In the splash's idiom, centred: a mono kicker over a display title, then the status line and
+		// its percentage over the bar.
+		void build() {
+			const ui::Theme& theme = ui().getTheme();
+			const ui::Style	 mono = world_sim::text(
+				 theme,
+				 {.family = family::mono,
+				  .size = tokens::fontSize::fsXs,
+				  .color = tokens::color::text,
+				  .tracking = tokens::letterSpacing::lsWide,
+				  .transform = Foundation::TextTransform::Uppercase}
+			 );
+			ui::Ref<ui::Component> column = root().addChild<ui::Component>({
+				.id = "loading",
+				.size = {ui::percent(100.0F), ui::percent(100.0F)},
+				.layout = {
+					.display = ui::Display::Flex,
+					.flexDirection = ui::FlexDirection::Column,
+					.gap = theme.get(tokens::spacing::space3),
+					.alignItems = ui::AlignItems::Center,
+					.justifyContent = ui::JustifyContent::Center
+				},
+			});
+			column.addChild<ui::Text>({
+				.id = "loading_kicker",
+				.style = world_sim::text(
+					theme,
+					{.family = family::mono,
+					 .size = tokens::fontSize::fs2xs,
+					 .color = tokens::color::accent,
+					 .tracking = tokens::letterSpacing::lsWider}
+				),
+				.text = "// EXPEDITION    DESCENT",
+			});
+			column.addChild<ui::Text>({
+				.id = "loading_title",
+				.margin = {0.0F, 0.0F, theme.get(tokens::spacing::space6), 0.0F},
+				.style = world_sim::text(
+					theme,
+					{.family = family::display,
+					 .size = tokens::fontSize::fs3xl,
+					 .color = tokens::color::textBright,
+					 .tracking = tokens::letterSpacing::lsWide}
+				),
+				.text = "Making Planetfall",
+			});
+			ui::Ref<ui::Component> status = column.addChild<ui::Component>({
+				.id = "loading_status",
+				.size = {420.0F, ui::kAuto},
+				.layout = {.display = ui::Display::Flex, .justifyContent = ui::JustifyContent::SpaceBetween},
+			});
+			statusText = status.addChild<ui::Text>({.id = "loading_message", .style = mono, .text = statusMessage});
+			ui::Style percent = mono;
+			percent.color = theme.get(tokens::color::accentBright);
+			percentText = status.addChild<ui::Text>({.id = "loading_percent", .style = percent, .text = "0%"});
+			bar = column.addChild<ui::ProgressBar>(
+				{.id = "loading_bar", .size = {420.0F, ui::kAuto}, .value = 0.0F, .tone = ui::Tone::Accent}
+			);
+		}
+
+		// The status line, its percentage and the bar from the phase's progress; a config error turns the
+		// line red and hides the rest.
+		void showProgress() {
+			const bool		 failed = phase == LoadingPhase::ConfigError;
+			const ui::Theme& theme = ui().getTheme();
+			if (ui::Text* line = statusText.get()) {
+				if (line->getText() != statusMessage) {
+					line->setText(statusMessage);
+				}
+				ui::Style style = line->getStyle();
+				style.color = theme.get(failed ? tokens::color::statusCrit : tokens::color::text);
+				line->setStyle(style);
+			}
+			if (ui::Text* shown = percentText.get()) {
+				shown->setVisible(!failed);
+				shown->setText(std::to_string(static_cast<int>(progress * 100.0F)) + "%");
+			}
+			if (ui::ProgressBar* meter = bar.get()) {
+				meter->setVisible(!failed);
+				meter->setValue(std::clamp(progress, 0.0F, 1.0F));
+			}
+		}
+
+		/// Before phase 0: the ground tiles, which the splash bakes; a --scene jump skips it, so they're baked here,
+		/// behind the same validation gate, a variant a frame so the bar moves.
+		void bakeGround() {
+			const world_sim::GroundBakeStep step = world_sim::stepGroundBake();
+			if (!step.done) {
+				const worldview::GroundTileBank& bank = world_sim::groundTiles();
+				progress = 0.25F * static_cast<float>(bank.bakedVariants()) / static_cast<float>(std::max(1, bank.totalVariants()));
+				updateStatusText("Baking ground tiles...");
+				return;
+			}
+			if (!step.errors.empty()) {
+				for (const std::string& error : step.errors) {
+					LOG_ERROR(Game, "GameLoadingScene - %s", error.c_str());
+				}
+				phase = LoadingPhase::ConfigError;
+				return;
+			}
+			phase = LoadingPhase::PreparingPlanet;
+		}
+
 		/// Phase 0: ensure we have a planet to land on.
 		/// Creator flow already provides one; Quick Start loads the prebuilt
 		/// planet shipped with the game. It is never generated at runtime — the
@@ -242,24 +286,24 @@ namespace {
 				// Best-effort: show the primary expected path (exe-relative) so the user
 				// knows exactly what's missing, even though findResource searched several roots.
 				auto expectedPath = (Foundation::getExecutableDir() / world_sim::kQuickstartPlanetResource).string();
-				LOG_ERROR(Game,
-				          "No pre-generated planet found at '%s'. Cannot start game. "
-				          "Bake it (target quickstart-planet) or junction planets/ from the main checkout.",
-				          expectedPath.c_str());
+				LOG_ERROR(
+					Game,
+					"No pre-generated planet found at '%s'. Cannot start game. "
+					"Bake it (target quickstart-planet) or junction planets/ from the main checkout.",
+					expectedPath.c_str()
+				);
 				phase = LoadingPhase::ConfigError;
 				return;
 			}
 
 			auto planet = worldgen::loadPlanet(*resolved);
 			if (!planet) {
-				LOG_ERROR(Game, "GameLoadingScene - Failed to load quickstart planet from %s",
-				          resolved->string().c_str());
+				LOG_ERROR(Game, "GameLoadingScene - Failed to load quickstart planet from %s", resolved->string().c_str());
 				phase = LoadingPhase::ConfigError;
 				return;
 			}
 
-			LOG_INFO(Game, "GameLoadingScene - Loaded quickstart planet (n=%u)",
-			         planet->params.gridSubdivision);
+			LOG_INFO(Game, "GameLoadingScene - Loaded quickstart planet (n=%u)", planet->params.gridSubdivision);
 			progress = 0.3F;
 			adoptQuickstartPlanet(std::move(planet));
 		}
@@ -269,8 +313,7 @@ namespace {
 			startConfig->world = std::move(planet);
 			startConfig->landingLatDeg = site.latDeg;
 			startConfig->landingLonDeg = site.lonDeg;
-			LOG_DEBUG(Game, "GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f",
-			          site.latDeg, site.lonDeg);
+			LOG_DEBUG(Game, "GameLoadingScene - Quickstart landing site lat=%.2f lon=%.2f", site.latDeg, site.lonDeg);
 			phase = LoadingPhase::Initializing;
 			progress = 0.3F;
 		}
@@ -279,23 +322,30 @@ namespace {
 		void initializeWorldSystems() {
 			LOG_INFO(Game, "GameLoadingScene - Initializing world systems");
 
-			// Load work configuration first
+			// Load work configuration first. Goals are process-wide too; a new game starts with none.
 			updateStatusText("Loading configuration...");
-			if (!loadWorkConfigs()) {
+			ecs::GoalTaskRegistry::Get().clear();
+			const auto configErrors = assets::loadWorkConfig("assets/config");
+			if (!configErrors.empty()) {
+				for (const auto& error : configErrors) {
+					LOG_ERROR(Game, "%s", error.c_str());
+				}
 				phase = LoadingPhase::ConfigError;
 				return;
 			}
+			LOG_INFO(Game, "Configuration loaded successfully");
 
 			// Create world sampler and chunk manager from the generated planet;
 			// the landing site maps to the 2D world origin
-			auto sampler = std::make_unique<engine::world::GeneratedWorldSampler>(
-				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
-			worldState->worldSeed = sampler->getWorldSeed();
+			auto sampler =
+				std::make_unique<world::GeneratedWorldSampler>(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
 			worldState->planet = startConfig->world;
 			worldState->landingLatDeg = startConfig->landingLatDeg;
 			worldState->landingLonDeg = startConfig->landingLonDeg;
 			worldState->party = std::move(startConfig->party);
-			worldState->chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
+			worldState->chunkManager = std::make_unique<world::ChunkManager>(
+				std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get())
+			);
 
 			// Only load 3×3 grid (center + 8 adjacent) - chunks are large!
 			worldState->chunkManager->setLoadRadius(1);
@@ -303,25 +353,30 @@ namespace {
 
 			// Drop the colony beside clean water (riverbank > lake shore > coast);
 			// a colony dies without it. Falls back to the origin when none is near.
-			worldgen::SpawnSite spawn = worldgen::findRiverbankSpawn(
-				startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
+			worldgen::SpawnSite spawn =
+				worldgen::findRiverbankSpawn(startConfig->world, startConfig->landingLatDeg, startConfig->landingLonDeg);
 			worldState->spawnPosition = {static_cast<float>(spawn.xMeters), static_cast<float>(spawn.yMeters)};
-			LOG_DEBUG(Game, "GameLoadingScene - Spawn (%.1f, %.1f) nearWater=%d fresh=%d",
-			          worldState->spawnPosition.x, worldState->spawnPosition.y,
-			          spawn.nearWater ? 1 : 0, spawn.freshWater ? 1 : 0);
+			LOG_DEBUG(
+				Game,
+				"GameLoadingScene - Spawn (%.1f, %.1f) nearWater=%d fresh=%d",
+				worldState->spawnPosition.x,
+				worldState->spawnPosition.y,
+				spawn.nearWater ? 1 : 0,
+				spawn.freshWater ? 1 : 0
+			);
 
 			// Create camera centered on the spawn point
-			worldState->camera = std::make_unique<engine::world::WorldCamera>();
+			worldState->camera = std::make_unique<world::WorldCamera>();
 			worldState->camera->setPanSpeed(200.0F);
 			worldState->camera->setPosition({worldState->spawnPosition.x, worldState->spawnPosition.y});
 
 			// Create renderers
-			worldState->renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
-			worldState->entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
+			worldState->renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
+			worldState->entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
 
 			// Initialize placement executor
-			auto& assetRegistry = engine::assets::AssetRegistry::Get();
-			worldState->placementExecutor = std::make_unique<engine::assets::PlacementExecutor>(assetRegistry);
+			auto& assetRegistry = assets::AssetRegistry::Get();
+			worldState->placementExecutor = std::make_unique<assets::PlacementExecutor>(assetRegistry);
 			worldState->placementExecutor->initialize();
 
 			LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", worldState->placementExecutor->getSpawnOrder().size());
@@ -334,8 +389,9 @@ namespace {
 		/// Phase 2: Load chunks (generation runs on workers; keep polling until ready)
 		void loadChunks() {
 			// ChunkManager::update() starts loads for the grid around the camera
-			// and integrates finished generation workers each call
-			worldState->chunkManager->update(worldState->camera->position());
+			// and integrates finished generation workers each call. No movers exist
+			// yet; the camera sits on the spawn, so the colony's chunk loads here.
+			worldState->chunkManager->update(worldState->camera->position(), {});
 
 			// Count chunks whose tile generation has completed
 			chunksLoaded = 0;
@@ -352,9 +408,7 @@ namespace {
 				LOG_INFO(Game, "GameLoadingScene - %d chunks loaded", chunksLoaded);
 
 				// Create async processor for entity placement
-				asyncProcessor = std::make_unique<engine::assets::AsyncChunkProcessor>(
-					*worldState->placementExecutor, worldState->worldSeed, worldState->processedChunks
-				);
+				asyncProcessor = std::make_unique<assets::AsyncChunkProcessor>(*worldState->placementExecutor, worldState->processedChunks);
 
 				// Launch all async tasks at once
 				for (auto* chunk : worldState->chunkManager->getLoadedChunks()) {
@@ -371,7 +425,7 @@ namespace {
 		/// Phase 3: Place entities asynchronously for responsive UI
 		void placeEntities() {
 			// Chunks that finished generating after phase 2 still need placement
-			worldState->chunkManager->update(worldState->camera->position());
+			worldState->chunkManager->update(worldState->camera->position(), {});
 			for (auto* chunk : worldState->chunkManager->getLoadedChunks()) {
 				asyncProcessor->launchTask(chunk);
 			}
@@ -393,8 +447,7 @@ namespace {
 
 			// Check if all tasks are complete (every loaded chunk processed and
 			// nothing in flight; chunks still generating haven't launched yet)
-			if (!asyncProcessor->hasPending() &&
-				worldState->processedChunks.size() >= worldState->chunkManager->loadedChunkCount()) {
+			if (!asyncProcessor->hasPending() && worldState->processedChunks.size() >= worldState->chunkManager->loadedChunkCount()) {
 				LOG_INFO(Game, "placeEntities: All %d chunks completed!", chunksProcessed);
 				phase = LoadingPhase::Complete;
 				progress = 1.0F;
@@ -410,7 +463,7 @@ namespace {
 			world_sim::GameWorldState::SetPending(std::move(worldState));
 
 			// Switch to game scene
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::Game));
+			owner->scenes().switchTo(world_sim::scenes::Game.name);
 		}
 
 		/// Cancel loading - waits for async tasks to complete with UI feedback
@@ -427,83 +480,14 @@ namespace {
 
 			// All tasks done, safe to transition
 			LOG_INFO(Game, "GameLoadingScene - Cancelled, returning to main menu");
-			sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
+			owner->scenes().switchTo(world_sim::scenes::MainMenu.name);
 		}
 
 		void updateStatusText(const std::string& text) { statusMessage = text; }
 
-		/// Load work configuration files (actions, chains, work types, priority tuning)
-		/// Returns false if any config fails to load or validate
-		bool loadWorkConfigs() {
-			using namespace engine::assets;
-
-			// Clear any previous state (supports menu → new game cycle)
-			ActionTypeRegistry::Get().clear();
-			TaskChainRegistry::Get().clear();
-			WorkTypeRegistry::Get().clear();
-			PriorityConfig::Get().clear();
-			ConstructionRegistry::Get().clear();
-			ConfigValidator::clearErrors();
-			ecs::GoalTaskRegistry::Get().clear();
-
-			// Load in dependency order
-			std::string basePath = "assets/config/";
-
-			if (!ActionTypeRegistry::Get().loadFromFile(basePath + "actions/action-types.xml")) {
-				LOG_ERROR(Game, "Failed to load action-types.xml");
-				return false;
-			}
-
-			if (!TaskChainRegistry::Get().loadFromFile(basePath + "work/task-chains.xml")) {
-				LOG_ERROR(Game, "Failed to load task-chains.xml");
-				return false;
-			}
-
-			if (!WorkTypeRegistry::Get().loadFromFile(basePath + "work/work-types.xml")) {
-				LOG_ERROR(Game, "Failed to load work-types.xml");
-				return false;
-			}
-
-			if (!PriorityConfig::Get().loadFromFile(basePath + "work/priority-tuning.xml")) {
-				LOG_ERROR(Game, "Failed to load priority-tuning.xml");
-				return false;
-			}
-
-			// Every task type the AI can evaluate must have an explicit arbitration tier in
-			// priority-tuning.xml's <TaskTiers> block, or the (tier, score) ordering would default a
-			// new type to an unintended tier. Fail loud at load rather than mis-rank silently.
-			{
-				static const std::vector<std::string> kRequiredTaskTiers = {
-					"FulfillNeed", "Harvest", "Craft", "Haul", "PlacePackaged", "Build", "Deconstruct", "Wander"};
-				std::vector<std::string> missingTiers;
-				if (!PriorityConfig::Get().validateTaskTiers(kRequiredTaskTiers, missingTiers)) {
-					std::string joined;
-					for (const auto& name : missingTiers) {
-						joined += (joined.empty() ? "" : ", ") + name;
-					}
-					LOG_ERROR(Game, "priority-tuning.xml is missing an arbitration tier for task type(s): %s", joined.c_str());
-					return false;
-				}
-			}
-
-			if (!ConstructionRegistry::Get().load(basePath + "construction")) {
-				LOG_ERROR(Game, "Failed to load construction config");
-				return false;
-			}
-
-			// Validate cross-references between configs
-			if (!ConfigValidator::validateAll()) {
-				LOG_ERROR(Game, "Config validation failed");
-				return false;
-			}
-
-			LOG_INFO(Game, "Configuration loaded successfully");
-			return true;
-		}
-
 		/// Handle config error state - show error and wait for ESC
 		void handleConfigError() {
-			// Only update UI once (errors are already logged by ConfigValidator::validateAll)
+			// Only update UI once (errors are already logged by initializeWorldSystems)
 			if (!configErrorLogged) {
 				configErrorLogged = true;
 				updateStatusText("Loading failed - Press ESC to return to menu");
@@ -519,7 +503,7 @@ namespace {
 		bool		 configErrorLogged = false;
 
 		// Async chunk processor (shared implementation)
-		std::unique_ptr<engine::assets::AsyncChunkProcessor> asyncProcessor;
+		std::unique_ptr<assets::AsyncChunkProcessor> asyncProcessor;
 
 		// World state being built (transferred to GameScene when complete)
 		std::unique_ptr<world_sim::GameWorldState> worldState;
@@ -527,8 +511,11 @@ namespace {
 		// How this game starts (planet + landing site)
 		std::unique_ptr<world_sim::GameStartConfig> startConfig;
 
-		// Loader status line (drawn each frame)
-		std::string statusMessage;
+		// Loader status line, shown by the status text
+		std::string				 statusMessage;
+		ui::Ref<ui::Text>		 statusText;
+		ui::Ref<ui::Text>		 percentText;
+		ui::Ref<ui::ProgressBar> bar;
 	};
 
 } // namespace

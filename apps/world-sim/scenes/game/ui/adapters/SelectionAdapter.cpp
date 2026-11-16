@@ -10,6 +10,7 @@
 #include <ecs/components/Mood.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/PlayerControlled.h>
+#include <ecs/components/ResourceStack.h>
 #include <ecs/components/Room.h>
 #include <ecs/components/StorageConfiguration.h>
 #include <ecs/components/StructureBlueprint.h>
@@ -75,9 +76,9 @@ namespace world_sim {
 	std::optional<PanelContent> adaptSelection(
 		const Selection&							   selection,
 		const ecs::World&							   world,
-		const engine::assets::AssetRegistry&		   registry,
+		const assets::AssetRegistry&		   registry,
 		const ResourceQueryCallback&				   queryResources,
-		const engine::construction::ConstructionWorld* constructionWorld,
+		const construction::ConstructionWorld* constructionWorld,
 		const std::function<void()>&				   onDemolish,
 		const std::function<void()>&				   onDemolishWallSegment,
 		const std::function<void()>&				   onDemolishOpening
@@ -99,7 +100,7 @@ namespace world_sim {
 					if (constructionWorld == nullptr || constructionWorld->get(sel.id) == nullptr) {
 						return std::nullopt;
 					}
-					return adaptFoundation(world, *constructionWorld, sel, onDemolish);
+					return adaptFoundation(world, *constructionWorld, sel, {.onDemolish = onDemolish});
 				} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
 					if (constructionWorld == nullptr || constructionWorld->getSegment(sel.id) == nullptr) {
 						return std::nullopt;
@@ -127,6 +128,11 @@ namespace world_sim {
 						return std::nullopt;
 					}
 					return adaptFurniture(registry, sel);
+				} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
+					if (!world.isAlive(sel.entityId) || world.getComponent<ecs::ResourceStack>(sel.entityId) == nullptr) {
+						return std::nullopt;
+					}
+					return adaptResourcePile(world, registry, sel);
 				} else if constexpr (std::is_same_v<T, RoomSelection>) {
 					// Rooms need the RoomDetectionSystem records (not available on this
 					// path); EntityInfoModel::refresh resolves the record and calls
@@ -217,7 +223,7 @@ namespace world_sim {
 				data.backpack.push_back(std::move(line));
 			}
 
-			data.carriedKg = ecs::carriedCargoMassKg(*inventory, engine::assets::AssetRegistry::Get());
+			data.carriedKg = ecs::carriedCargoMassKg(*inventory, assets::AssetRegistry::Get());
 			data.capacityKg = inventory->carryCapacityKg;
 		} else {
 			data.hands = "(empty)";
@@ -228,7 +234,7 @@ namespace world_sim {
 	}
 
 	PanelContent adaptWorldEntity(
-		const engine::assets::AssetRegistry& registry,
+		const assets::AssetRegistry& registry,
 		const WorldEntitySelection&			 selection,
 		const ResourceQueryCallback&		 queryResources
 	) {
@@ -274,7 +280,7 @@ namespace world_sim {
 	}
 
 	PanelContent adaptFurniture(
-		const engine::assets::AssetRegistry& registry,
+		const assets::AssetRegistry& registry,
 		const FurnitureSelection&			 selection,
 		const std::function<void()>&		 onPlace,
 		const std::function<void()>&		 onMoveFurniture,
@@ -335,6 +341,27 @@ namespace world_sim {
 		return content;
 	}
 
+	PanelContent adaptResourcePile(
+		const ecs::World&			 world,
+		const assets::AssetRegistry& registry,
+		const ResourcePileSelection& selection
+	) {
+		PanelContent content;
+		const auto*	 def = registry.getDefinition(selection.defName);
+		content.title = (def != nullptr && !def->label.empty()) ? def->label : selection.defName;
+
+		const auto*	   stack = world.getComponent<ecs::ResourceStack>(selection.entityId);
+		const uint32_t quantity = (stack != nullptr) ? stack->quantity : 0U;
+		content.slots.push_back(TextSlot{"Quantity", std::to_string(quantity)});
+
+		if (def != nullptr && def->itemProperties.has_value()) {
+			std::ostringstream oss;
+			oss << std::fixed << std::setprecision(1) << def->itemProperties->massKg * static_cast<float>(quantity) << " kg";
+			content.slots.push_back(TextSlot{"Mass", oss.str()});
+		}
+		return content;
+	}
+
 	namespace {
 		// "AwaitingMaterials" -> "Awaiting Materials" is overkill; the design panel
 		// wants a state word, so map the build phase to a plain label.
@@ -376,18 +403,25 @@ namespace world_sim {
 
 	PanelContent adaptFoundation(
 		const ecs::World&							   world,
-		const engine::construction::ConstructionWorld& constructionWorld,
+		const construction::ConstructionWorld& constructionWorld,
 		const FoundationSelection&					   selection,
-		const std::function<void()>&				   onDemolish,
-		const std::function<void()>&				   onDemolishBuilding
+		const FoundationActions&					   actions
 	) {
 		PanelContent content;
 
 		const auto* foundation = constructionWorld.get(selection.id);
 		const std::string material = (foundation != nullptr) ? foundation->material : std::string{"Foundation"};
-		content.title = material + " Foundation";
+		const bool		  isExtension = foundation != nullptr && foundation->mergeTarget != construction::kInvalidFoundation;
+		content.title = material + (isExtension ? " Foundation Extension" : " Foundation");
 
 		content.slots.push_back(TextSlot{"Material", material});
+		if (isExtension) {
+			content.slots.push_back(TextSlot{"Extends", "Foundation #" + std::to_string(foundation->mergeTarget) + " (merges when built)"});
+		}
+		const construction::FoundationId pendingExtension = constructionWorld.pendingExtensionOf(selection.id);
+		if (pendingExtension != construction::kInvalidFoundation) {
+			content.slots.push_back(TextSlot{"Extension", "#" + std::to_string(pendingExtension) + " under construction"});
+		}
 
 		std::ostringstream areaText;
 		// "m\xC2\xB2" is UTF-8 for "m²" (matches ConstructionConfigStrip's readout).
@@ -395,7 +429,7 @@ namespace world_sim {
 		content.slots.push_back(TextSlot{"Area", areaText.str()});
 
 		const bool built =
-			(foundation != nullptr && foundation->state == engine::construction::FoundationState::Built);
+			(foundation != nullptr && foundation->state == construction::FoundationState::Built);
 
 		// Build state + progress (phase, delivered/required materials, work bar) come
 		// from the ECS mirror's blueprint and are only meaningful WHILE BUILDING. A
@@ -410,27 +444,42 @@ namespace world_sim {
 			content.slots.push_back(ProgressBarSlot{.label = "Work", .value = blueprint->displayProgress(blueprint->demolishing) * 100.0F});
 		}
 
-		// Demolish action. A foundation that still hosts walls can't be removed on
-		// its own (the walls would be orphaned), so offer the cascade instead;
-		// ActionButtonSlot has no disabled flag, so swap the button rather than
-		// graying it out. A clear or blueprint foundation gets the plain Demolish.
-		// Offer "Demolish building" (cascade) only when there are walls AND a cascade
-		// callback is wired; otherwise the plain Demolish. The adaptSelection fallback
-		// path passes no onDemolishBuilding, so guard against a dead (null-callback)
-		// button there by falling back to plain Demolish.
-		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id);
-		if (hasWalls && onDemolishBuilding) {
+		// Add / Subtract. Like Demolish below, a button that doesn't apply is left out
+		// (ActionButtonSlot has no disabled flag). An editable blueprint takes both; a
+		// built foundation only grows, one pending extension at a time; a pending
+		// extension itself is cancel-and-redraw; nothing marked for demolition is edited.
+		const bool demolishing = blueprint != nullptr && blueprint->demolishing;
+		const bool editableBlueprint = !built && !isExtension && blueprint != nullptr && blueprint->shapeEditable();
+		const bool canAdd =
+			editableBlueprint || (built && !demolishing && pendingExtension == construction::kInvalidFoundation);
+		if (canAdd && actions.onAdd) {
+			content.slots.push_back(ActionButtonSlot{.label = "Add", .onClick = actions.onAdd});
+		}
+		if (editableBlueprint && actions.onSubtract) {
+			content.slots.push_back(ActionButtonSlot{.label = "Subtract", .onClick = actions.onSubtract});
+		}
+
+		// Demolish action. A foundation that still hosts walls (its own or its pending
+		// extension's) can't be removed on its own (the walls would be orphaned), so
+		// offer the cascade instead; swap the button rather than graying it out. A
+		// clear or blueprint foundation gets the plain Demolish. Offer "Demolish
+		// building" (cascade) only when there are walls AND a cascade callback is
+		// wired; otherwise the plain Demolish. The adaptSelection fallback path passes
+		// no onDemolishBuilding, so guard against a dead (null-callback) button there
+		// by falling back to plain Demolish.
+		const bool hasWalls = constructionWorld.foundationHasWalls(selection.id) || constructionWorld.foundationHasWalls(pendingExtension);
+		if (hasWalls && actions.onDemolishBuilding) {
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Demolish building",
-					.onClick = onDemolishBuilding,
+					.onClick = actions.onDemolishBuilding,
 				}
 			);
 		} else {
 			content.slots.push_back(
 				ActionButtonSlot{
 					.label = "Demolish",
-					.onClick = onDemolish,
+					.onClick = actions.onDemolish,
 				}
 			);
 		}
@@ -440,7 +489,7 @@ namespace world_sim {
 
 	PanelContent adaptWallSegment(
 		const ecs::World&								world,
-		const engine::construction::ConstructionWorld& constructionWorld,
+		const construction::ConstructionWorld& constructionWorld,
 		const WallSegmentSelection&						selection,
 		const std::function<void()>&					onDemolish
 	) {
@@ -456,7 +505,7 @@ namespace world_sim {
 		// through the registry (same lookup the band render and hit-test use).
 		if (segment != nullptr) {
 			const auto* preset =
-				engine::assets::ConstructionRegistry::Get().getThicknessPreset(segment->material, segment->thicknessPreset);
+				assets::ConstructionRegistry::Get().getThicknessPreset(segment->material, segment->thicknessPreset);
 			std::ostringstream thicknessText;
 			thicknessText << segment->thicknessPreset;
 			if (preset != nullptr) {
@@ -466,8 +515,8 @@ namespace world_sim {
 		}
 
 		// Length from the segment's two vertices (integer mm -> meters).
-		const engine::construction::Vertex* v0 = (segment != nullptr) ? constructionWorld.getVertex(segment->v0) : nullptr;
-		const engine::construction::Vertex* v1 = (segment != nullptr) ? constructionWorld.getVertex(segment->v1) : nullptr;
+		const construction::Vertex* v0 = (segment != nullptr) ? constructionWorld.getVertex(segment->v0) : nullptr;
+		const construction::Vertex* v1 = (segment != nullptr) ? constructionWorld.getVertex(segment->v1) : nullptr;
 		if (v0 != nullptr && v1 != nullptr) {
 			const double dx = static_cast<double>(v1->pos.x - v0->pos.x);
 			const double dy = static_cast<double>(v1->pos.y - v0->pos.y);
@@ -478,7 +527,7 @@ namespace world_sim {
 		}
 
 		const bool built =
-			(segment != nullptr && segment->state == engine::construction::FoundationState::Built);
+			(segment != nullptr && segment->state == construction::FoundationState::Built);
 
 		// Build state + progress (phase, materials, work bar) are only meaningful WHILE
 		// BUILDING; a finished wall shows none of them (its material, thickness, and
@@ -507,7 +556,7 @@ namespace world_sim {
 
 	PanelContent adaptOpening(
 		const ecs::World&							   world,
-		const engine::construction::ConstructionWorld& constructionWorld,
+		const construction::ConstructionWorld& constructionWorld,
 		const OpeningSelection&						   selection,
 		const std::function<void()>&				   onDemolish
 	) {
@@ -521,14 +570,14 @@ namespace world_sim {
 
 		// Material and pathability come from the type def (the topology stores the
 		// type NAME; resolve the rest through the registry, same as the renderer).
-		const auto*		  type = (opening != nullptr) ? engine::assets::ConstructionRegistry::Get().getOpeningType(opening->type) : nullptr;
+		const auto*		  type = (opening != nullptr) ? assets::ConstructionRegistry::Get().getOpeningType(opening->type) : nullptr;
 		const std::string material = (type != nullptr) ? type->material : (opening != nullptr ? opening->material : std::string{"--"});
 		content.slots.push_back(TextSlot{"Material", material});
 		if (type != nullptr) {
 			content.slots.push_back(TextSlot{"Pathable", type->pathable ? "Yes" : "No"});
 		}
 
-		const bool built = (opening != nullptr && opening->state == engine::construction::FoundationState::Built);
+		const bool built = (opening != nullptr && opening->state == construction::FoundationState::Built);
 
 		// Build state + progress come from the ECS mirror's blueprint, exactly like a
 		// wall: a built opening has no blueprint progress; a blueprint shows phase, a

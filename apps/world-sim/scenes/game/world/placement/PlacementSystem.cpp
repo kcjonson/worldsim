@@ -2,6 +2,7 @@
 
 #include <assets/AssetRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/TreeTraits.h>
 #include <assets/placement/PlacementExecutor.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Inventory.h>
@@ -10,9 +11,9 @@
 #include <ecs/components/Transform.h>
 #include <ecs/components/WorkQueue.h>
 #include <ecs/systems/NavigationSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <primitives/Primitives.h>
 #include <utils/Log.h>
-#include <world/chunk/ChunkCoordinate.h>
 
 #include <bit>
 #include <random>
@@ -24,7 +25,9 @@ namespace world_sim {
 		  camera(args.camera),
 		  placementExecutor(args.placementExecutor),
 		  navigation(args.navigation),
-		  callbacks(args.callbacks) {
+		  worldSeed(args.worldSeed),
+		  callbacks(args.callbacks),
+		  unbuiltSite(args.insideUnbuiltSite) {
 		// Initialize placement mode with callback to handle placement
 		placementMode = PlacementMode{PlacementMode::Args{.onPlace = [this](const std::string& defName, Foundation::Vec2 worldPos) {
 			if (relocatingEntityId != ecs::EntityID{0}) {
@@ -71,7 +74,7 @@ namespace world_sim {
 				}
 
 				// Get innate recipes for the build menu
-				auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+				auto& recipeRegistry = assets::RecipeRegistry::Get();
 				auto  innateRecipes = recipeRegistry.getInnateRecipes();
 
 				std::vector<BuildMenuItem> items;
@@ -118,10 +121,61 @@ namespace world_sim {
 		}
 
 		auto worldPos = camera->screenToWorld(screenX, screenY, viewportW, viewportH, kPixelsPerMeter);
-		// Valid IFF the spot is on an active walkable nav face. The nav mesh owns runtime
-		// walkability; no terrain/world-source read here. No nav system => nothing placeable.
-		const bool valid = navigation != nullptr && navigation->isValidPosition({worldPos.x, worldPos.y});
-		placementMode.updateGhostPosition({worldPos.x, worldPos.y}, valid);
+		placementMode.updateGhostPosition({worldPos.x, worldPos.y}, placeable({worldPos.x, worldPos.y}));
+	}
+
+	namespace {
+		// `defName`'s collision outline at `worldPos`, or just `worldPos` when it has no rect or polygon outline.
+		std::vector<glm::vec2> footprintAt(const std::string& defName, Foundation::Vec2 worldPos) {
+			std::vector<glm::vec2> outline;
+			if (const auto* def = assets::AssetRegistry::Get().getDefinition(defName); def != nullptr) {
+				const assets::CollisionShape& footprint = def->collisionFor(0);
+				if (footprint.type == assets::CollisionShapeType::Rect) {
+					for (const glm::vec2 corner : footprint.rectCornersLocal()) {
+						outline.push_back(corner + glm::vec2{worldPos.x, worldPos.y});
+					}
+				} else if (footprint.type == assets::CollisionShapeType::Polygon) {
+					for (const glm::vec2 point : footprint.pointsMeters) {
+						outline.push_back(point + glm::vec2{worldPos.x, worldPos.y});
+					}
+				}
+			}
+			if (outline.empty()) {
+				outline.push_back({worldPos.x, worldPos.y});
+			}
+			return outline;
+		}
+	} // namespace
+
+	bool PlacementSystem::insideUnbuiltSite(Foundation::Vec2 worldPos) const {
+		return unbuiltSite && unbuiltSite({worldPos.x, worldPos.y});
+	}
+
+	bool PlacementSystem::footprintBuildableNow(const std::string& defName, Foundation::Vec2 worldPos) const {
+		return navigation != nullptr && !insideUnbuiltSite(worldPos) && navigation->isAreaBuildableNow(footprintAt(defName, worldPos));
+	}
+
+	std::optional<glm::vec2> PlacementSystem::installTargetNear(const std::string& defName, glm::vec2 stationPos, glm::vec2 aim) const {
+		if (navigation == nullptr) {
+			return std::nullopt;
+		}
+		return navigation->findValidPositionNear(stationPos, 1.0F, aim, [&](glm::vec2 candidate) {
+			return footprintBuildableNow(defName, {candidate.x, candidate.y});
+		});
+	}
+
+	bool PlacementSystem::isFurniture(const std::string& defName) {
+		const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+		return def != nullptr && (def->capabilities.craftable.has_value() || def->capabilities.storage.has_value());
+	}
+
+	bool PlacementSystem::placeable(Foundation::Vec2 worldPos) const {
+		const std::string& defName = placementMode.selectedDefName();
+		if (!footprintBuildableNow(defName, worldPos)) {
+			return false;
+		}
+		const ecs::PlayerVisibilitySystem* visibility = ecsWorld != nullptr ? ecs::PlayerVisibilitySystem::gate(*ecsWorld) : nullptr;
+		return visibility == nullptr || visibility->covers(footprintAt(defName, worldPos));
 	}
 
 	bool PlacementSystem::handleClick() {
@@ -129,6 +183,8 @@ namespace world_sim {
 			return false;
 		}
 
+		// The record can have moved since the last mouse move; refuse on what is seen now.
+		placementMode.updateGhostPosition(placementMode.ghostPosition(), placeable(placementMode.ghostPosition()));
 		if (placementMode.tryPlace()) {
 			// Successfully placed - update UI state
 			if (callbacks.onBuildMenuVisibility) {
@@ -200,11 +256,15 @@ namespace world_sim {
 
 		ecsWorld->addComponent<ecs::Position>(entity, ecs::Position{{worldPos.x, worldPos.y}});
 		ecsWorld->addComponent<ecs::Rotation>(entity, ecs::Rotation{0.0F});
-		ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
+		auto&		assetRegistry = assets::AssetRegistry::Get();
+		const auto* assetDef = assetRegistry.getDefinition(defName);
+		ecs::Appearance appearance{defName, 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}};
+		if (assetDef != nullptr) {
+			appearance.traits = assets::computeTreeTraits(*assetDef, {worldPos.x, worldPos.y}, worldSeed);
+		}
+		ecsWorld->addComponent<ecs::Appearance>(entity, std::move(appearance));
 
 		// Check if this is a crafting station or storage container
-		auto&		assetRegistry = engine::assets::AssetRegistry::Get();
-		const auto* assetDef = assetRegistry.getDefinition(defName);
 
 		if (assetDef != nullptr && assetDef->capabilities.craftable.has_value()) {
 			// Crafting station - add WorkQueue plus a material store Inventory. Colonists haul
@@ -259,8 +319,7 @@ namespace world_sim {
 				std::mt19937   rng(seed);
 				std::uniform_int_distribution<uint32_t> dist(harv.totalResourceMin, harv.totalResourceMax);
 				const uint32_t initialCount = dist(rng);
-				const auto	   coord = engine::world::worldToChunk({worldPos.x, worldPos.y});
-				placementExecutor->initResourceCount(coord, {worldPos.x, worldPos.y}, defName, initialCount);
+				placementExecutor->initResourceCount({worldPos.x, worldPos.y}, defName, initialCount);
 			}
 		}
 

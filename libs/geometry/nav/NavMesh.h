@@ -1,20 +1,26 @@
 #pragma once
 
+#include "../arrangement/Arrangement.h"
+#include "../core/PagedVector.h"
+#include "../core/ScratchArray.h"
 #include "../core/Vec2i64.h"
 
 #include <array>
+#include <compare>
 #include <cstdint>
+#include <utility>
 #include <vector>
 
 // Navmesh assembler: turn a set of tagged polygons (one or more walkable borders
 // plus blocked obstacles, with door portals) into a triangle navmesh with
 // adjacency, ready for path queries.
 //
-// The pipeline is arrangement -> half-edge face extraction -> per-walkable-face
-// constrained triangulation -> global edge-hash adjacency. Walkable faces are
-// separated by blocked bands (no shared triangle edges between distinct faces),
-// so the adjacency graph links only intra-face neighbors and across door gaps
-// (a door gap is interior to a single walkable face).
+// The pipeline is arrangement -> one constrained Delaunay triangulation of the
+// whole arrangement, every arrangement edge a constraint -> faces by flood fill
+// across unconstrained edges -> one exact sample per face, classified against the
+// input rings. Every in-bounds face is kept, wall and water interiors included,
+// and adjacency comes straight from the triangulation, so a floor face and the
+// blocked face beside it share edges.
 //
 // This library is pure: no ECS, no engine dependencies. Coordinates are the
 // region-local integer millimeter frame shared by the rest of geometry/.
@@ -24,17 +30,18 @@
 // can reject a corridor too narrow for a given agent diameter. edgePairWidthMm[i]
 // is the widest disc DIAMETER that fits passing the two edges meeting at vertex
 // v[i] (the apex), measured as the exact distance from that apex to the nearest
-// COMMON-KNOWLEDGE obstacle feature in the wedge; edgeClearWidthMm[i] is a door
-// gap's clear width on a portal edge. See NavMesh.cpp for the exact-integer
-// adaptation (no bare point obstacles; clearance is distance-to-feature, never
-// edge length, so an open-floor sliver stays unconstrained).
+// COMMON-KNOWLEDGE obstacle feature in the wedge, the mesh edge included (outside
+// the mesh is impassable); edgeClearWidthMm[i] is a door gap's clear width on a
+// portal edge. See NavMesh.cpp for the exact-integer adaptation (no bare point
+// obstacles; clearance is distance-to-feature, never edge length, so a sliver
+// away from obstacles and the mesh edge stays unconstrained).
 //
 // DEFERRED (still not implemented): clearance against BELIEF-DEPENDENT walls
 // (faceBlocker > 0). Those widths vary per agent belief and only bite oversized
 // agents in built corridors; construction guarantees walkable wall gaps >= 0.7 m,
 // so for the one shipped agent size (0.3 m radius, 0.6 m diameter) every wall
-// portal fits. Width filtering here covers common-knowledge terrain/flora and
-// door gaps only.
+// portal fits. Width filtering here covers common-knowledge terrain/obstacles, the
+// mesh edge, and door gaps only.
 
 namespace geometry::nav {
 
@@ -51,7 +58,7 @@ namespace geometry::nav {
 	constexpr std::int64_t kUnconstrainedWidth = INT64_MAX;
 
 	// One tagged input ring. One or more polygons in NavMeshInput have blocked=false:
-	// the walkable bounds (the chunk/region border, or several disjoint regions).
+	// the walkable bounds (a border, or several disjoint ones).
 	// All others are blocked obstacles. `ring` is a simple closed ring (no repeated
 	// closing vertex); winding is normalized internally, callers need not pre-orient
 	// it.
@@ -65,12 +72,19 @@ namespace geometry::nav {
 		bool				 blocked	  = false;
 		std::int64_t		 provenanceId = kNoProvenance;
 		std::int64_t		 openingId	  = kNoOpening;
-		// A water body is emitted as separate marching-squares loops (a CCW outer
-		// boundary plus CW land-island holes), all blocked. holeCapable marks those
-		// rings so face classification uses even-odd containment parity (a point
-		// inside an even number of nested water rings is land = floor; odd = water).
-		// Flora, walls, and the border leave this false and use solid containment.
+		// A waterline body arrives as separate rings (a CCW outer boundary plus CW
+		// land-island holes), all blocked. holeCapable marks those rings so face
+		// classification uses even-odd containment parity among them (a point inside
+		// an even number of nested hole-capable rings is land = floor; odd = water).
+		// Everything else (river channels, ponds, obstacles, walls, the border) leaves this
+		// false: solid containment, and any solid ring blocks whatever the parity.
 		bool				 holeCapable  = false;
+		// Set on a blocked ring (blocked stays true: it is not a ground outline) to make it
+		// tag no face. Its outline is in the mesh and it is in the cover of the ground
+		// inside it, but classifyCover passes over it, so that ground keeps the tags of
+		// whatever else covers it and every query crosses it. Readers of
+		// PatchableMesh::cover use it to tell that ground from the ground around it.
+		bool				 coverOnly	  = false;
 	};
 
 	// A door portal: an open gap in a blocked band that agents may cross. (a, b)
@@ -109,7 +123,7 @@ namespace geometry::nav {
 		//   kNoBlocker (== INT64_MIN) -> real floor, always walkable.
 		//   > 0  -> a wall segment id; belief-gated (truth: walkable iff faceOpening
 		//           is set, i.e. a door passes and solid wall blocks).
-		//   < 0  -> a terrain/common-knowledge sentinel (water/tree); always blocks.
+		//   < 0  -> a terrain/common-knowledge sentinel (water/placed obstacle); always blocks.
 		std::int64_t faceBlocker = kNoBlocker;
 		// Pathable door's openingId when this triangle is inside that door's footprint
 		// (faceBlocker is then the hosting segment id); else kNoOpening.
@@ -126,7 +140,7 @@ namespace geometry::nav {
 	inline bool isFloorFace(const NavTriangle& t) {
 		return t.faceBlocker == kNoBlocker;
 	}
-	// Common-knowledge terrain sentinel (water/tree, or a junction with no incident
+	// Common-knowledge terrain sentinel (water/placed obstacle, or a junction with no incident
 	// wall id): always blocks, belief or not. (faceBlocker < 0 and != kNoBlocker.)
 	inline bool isCommonKnowledgeTerrainFace(const NavTriangle& t) {
 		return t.faceBlocker < 0 && t.faceBlocker != kNoBlocker;
@@ -152,6 +166,53 @@ namespace geometry::nav {
 		return !isCommonKnowledgeTerrainFace(t); // floor or any wall is open
 	}
 
+	// --- Face classification ------------------------------------------------------
+	// What ground a point is, read exactly from the input rings at one sample: a
+	// triangle's centroid, held as the integer point a+b+c in 3x space. classifyCover
+	// turns a cover into the tags buildNavMesh and PatchableMesh both give a face.
+
+	// An input ring as classification reads it: scaled by 3, with its box.
+	struct SampleRing {
+		std::vector<Vec2i64> ring3;
+		Vec2i64				 lo3;
+		Vec2i64				 hi3;
+		bool				 blocked		= false;
+		std::int64_t		 provenance		= kNoProvenance;
+		std::int64_t		 opening		= kNoOpening;
+		bool				 holeCapable	= false;
+		bool				 coverOnly		= false;
+		Int128				 areaDoubledAbs = Int128(0); // smallest-containing ranking (unscaled)
+		bool				 counterClockwise = true;
+	};
+
+	SampleRing sampleRing(const NavInputPolygon& poly);
+
+	// Strictly inside: a sample on the ring's boundary is outside it.
+	bool ringContainsSample(const SampleRing& ring, const Vec2i64& sample3);
+
+	// Ground test for a bounds ring: whether the sample moved by (e, e^2), for an
+	// infinitesimal e, is inside. Off the outline it is ringContainsSample; on it, of
+	// rings sharing that stretch of outline without overlapping, exactly one holds the
+	// sample. A face's sample lies on a bounds edge where the edge is dissolved, and an
+	// old triangle's patch sample can lie on a removed ring's outline.
+	bool boundsContainSample(const SampleRing& ring, const Vec2i64& sample3);
+
+	struct FaceTags {
+		std::int64_t blocker = kNoBlocker;
+		std::int64_t opening = kNoOpening;
+	};
+
+	// Tags of in-bounds ground inside exactly the blocked rings `containing`, in any
+	// order: equal areas tie-break on content (provenance, then opening, then outline),
+	// so the answer never depends on input order or edit history. SOLID rings (placed obstacles,
+	// walls) go by solid containment: the smallest-area one wins, so a door-span
+	// footprint beats the wall band around it. HOLE-CAPABLE rings (water) go by
+	// nesting parity: a water body arrives as a CCW outer boundary plus CW land-island
+	// holes, separate rings, so odd depth is water (open water 1, a pond on an island
+	// 3) and even depth is land; disjoint bodies never nest. A solid ring blocks even
+	// over water. COVER-ONLY rings tag nothing and are passed over.
+	FaceTags classifyCover(const std::vector<const SampleRing*>& containing);
+
 	// Uniform-grid spatial index over the triangle set, built by buildNavMesh.
 	// Each cell stores the indices of candidate triangles whose AABBs overlap it,
 	// in ascending order so locateTriangle reproduces the linear scan's lowest-index
@@ -168,79 +229,223 @@ namespace geometry::nav {
 		std::vector<std::int32_t> candidates;	// triangle indices, ascending within each cell
 	};
 
-	// Width-aware reachability over the triangle dual graph (P3.3). A Kruskal
-	// max-spanning-forest + reconstruction tree (a.k.a. min-max / merge tree) that
-	// answers two queries online: which component a triangle is in, and the
-	// bottleneck (the widest disc that any path between two triangles admits = the
-	// max over paths of the min edge capacity). Edge capacity is the floored mm
-	// disc DIAMETER a portal admits (see NavMesh.cpp step 10).
-	//
-	// The reconstruction tree has the mesh's triangles as leaves [0, triangleCount):
-	// each Kruskal union (processing portal edges in DESCENDING capacity) creates an
-	// internal node storing that edge's capacity, with the two merged subtree roots
-	// as children. Then bottleneck(a, b) = the capacity stored at LCA(a, b), because
-	// the union that first joined a and b used the smallest capacity on the widest
-	// path between them. "Different tree" (different root) => disconnected for every
-	// diameter. Triangles not traversable for this forest's predicate are not nodes;
-	// they get component == -1 and any bottleneck query touching them is unreachable.
-	//
-	// SOUNDNESS (the only direction we rely on): a disc of diameter D crossing a path
-	// uses, at each portal, an apex passage <= that portal's capacity, so D <=
-	// min-cap of the path <= bottleneck(a, b). Hence D > bottleneck(a, b) => no path
-	// admits the disc => unreachable. This is an UPPER bound; it can over-approximate
-	// (bottleneck high but the funnel still fails), never the reverse.
-	struct ReachabilityForest {
-		// Per leaf-triangle component id (root of its reconstruction tree), or -1 if
-		// the triangle is not traversable for this forest's predicate. Length ==
-		// triangleCount. Two traversable triangles are connected (ignoring width) iff
-		// they share a component id.
-		std::vector<std::int32_t> component;
+	class MeshComponents;
 
-		// Reconstruction-tree node capacities. Leaf nodes [0, triangleCount) store
-		// kUnconstrainedWidth (a triangle is unconstrained with itself); internal
-		// nodes [triangleCount, nodeCount) store the merge capacity. Disconnected
-		// (non-node) leaves still occupy their slot but are never reached by a query.
-		std::vector<std::int64_t> nodeCap;
-
-		// Binary-lifting LCA tables over the reconstruction-tree forest. up[k][i] is
-		// the 2^k-th ancestor of node i (i when it runs past a root). depth[i] is the
-		// node's depth from its root. parent (up[0]) of a root is itself.
-		std::vector<std::int32_t>			   depth;
-		std::vector<std::vector<std::int32_t>> up; // up[level][node]
-		std::int32_t						   levels = 0; // number of lifting levels
-	};
+	// A process-wide counter, never repeating: what a mesh state is known by (see
+	// NavView::epoch).
+	std::uint64_t nextMeshGeneration();
 
 	struct NavMesh {
 		std::vector<Vec2i64>	 vertices;
 		std::vector<NavTriangle> triangles;
 		NavGrid					 grid;
-		// Two forests over the SAME geometric edge capacities, differing only in which
-		// triangles are nodes (the traversability predicate):
-		//   truthForest:   nodes = truth-traversable triangles (floor or a door span).
-		//                  Answers AI goal validity (truth reachability).
-		//   terrainForest: nodes = terrain-traversable triangles (floor or ANY wall
-		//                  face treated as OPEN; only common-knowledge terrain blocks).
-		//                  Answers the BELIEF reject -- sound for every possible belief,
-		//                  since the most optimistic belief routes through unseen walls.
-		ReachabilityForest truthForest;
-		ReachabilityForest terrainForest;
+		// Taken when the mesh is made; a copy carries its source's along with its content.
+		// A caller that edits a built mesh in place takes a fresh one.
+		std::uint64_t generation = nextMeshGeneration();
 	};
 
-	// Build the navmesh from tagged input. A walkable face whose triangulation
-	// degenerates is skipped (its triangles are omitted) rather than aborting the
-	// whole mesh, so a single bad region yields a partial mesh, not an empty one.
+	// --- Ground: the union of the ground rings -------------------------------------
+	// Ground rings (blocked == false) may overlap, nest, touch, or share sides; ground is
+	// wherever a point is inside any of them. A ground ring edge is arranged only along its
+	// boundary intervals, the stretches where ground differs across it; the rest of it is
+	// dissolved, with no constraint, mesh edge, or vertex. buildNavMesh and PatchableMesh
+	// apply this one rule.
+
+	using RingId			 = std::int32_t;
+	constexpr RingId kNoRing = -1;
+
+	// Original edge `edge` of a ring: outline[edge] -> outline[(edge + 1) % n]. The ring
+	// is a PatchableMesh ring id, or for buildNavMesh an index into its input.
+	struct EdgeSource {
+		RingId		 ring = kNoRing;
+		std::int32_t edge = 0;
+
+		auto operator<=>(const EdgeSource&) const = default;
+	};
+
+	// Boxes over a ring's edges, so groundBoundaries reads only the edges near the line it
+	// walks: a leaf box over each run of kRingEdgeRun consecutive edges, then levels of boxes
+	// each over two of the level below, up to one over the whole ring. Level 0, the leaves,
+	// starts at boxes[0]; level k at boxes[levelStart[k]].
+	struct RingEdgeBoxes {
+		std::vector<std::array<Vec2i64, 2>> boxes; // low, high
+		std::vector<std::int32_t>			levelStart;
+	};
+
+	constexpr std::int32_t kRingEdgeRun = 16;
+
+	RingEdgeBoxes ringEdgeBoxes(const std::vector<Vec2i64>& outline);
+
+	// A ground ring as groundBoundaries reads it.
+	struct GroundRing {
+		const std::vector<Vec2i64>* outline	  = nullptr;
+		const RingEdgeBoxes*		edgeBoxes = nullptr; // of outline
+		Vec2i64						lo;
+		Vec2i64						hi;
+		bool						counterClockwise = true;
+		RingId						id				 = kNoRing;
+	};
+
+	GroundRing groundRing(const std::vector<Vec2i64>& outline, const RingEdgeBoxes& edgeBoxes, RingId id);
+
+	// The point a + (num / den)(b - a) of an edge a -> b, den > 0.
+	struct EdgeParam {
+		std::int64_t num = 0;
+		std::int64_t den = 1;
+	};
+
+	inline bool paramEqual(const EdgeParam& first, const EdgeParam& second) {
+		return Int128::product(first.num, second.den) == Int128::product(second.num, first.den);
+	}
+
+	// A boundary interval of a ground edge: exactly the stretch [fromAt, toAt] of it, and
+	// the segment the arrangement takes, from -> to. An end on the edge's own corner or on
+	// another outline's vertex is that point; an end where another ground edge crosses is
+	// that crossing rounded as the arrangement rounds two crossing segments.
+	struct GroundInterval {
+		Vec2i64	  from;
+		Vec2i64	  to;
+		EdgeParam fromAt;
+		EdgeParam toAt;
+
+		bool operator==(const GroundInterval& other) const { return from == other.from && to == other.to; }
+	};
+
+	// Working storage for groundBoundaries, reused across calls.
+	struct GroundBoundaryScratch {
+		struct Event {
+			EdgeParam	 at;
+			int			 kind = 0;
+			std::int32_t ring = 0;	 // index into `near`
+			std::int32_t edge = 0;
+			bool		 exact = false; // `point` is the exact crossing
+			Vec2i64		 point;
+		};
+		struct Collinear {
+			EdgeParam  lo;
+			EdgeParam  hi;
+			EdgeSource source;
+			Vec2i64	   a;
+			Vec2i64	   b;
+		};
+		std::vector<Event>		   events;
+		std::vector<Collinear>	   collinear;
+		std::vector<std::uint8_t>  inside; // per near ring
+		std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>> lines;
+		std::vector<std::pair<std::int32_t, std::int32_t>>		   nodes; // RingEdgeBoxes level, index
+	};
+
+	// groundBoundaries orders crossings exactly while every ground ring it reads spans less
+	// than this on each axis: two rings whose boxes meet are then closer than twice it at
+	// every pair of points, so each product of two differences fits in an int64 and each
+	// comparison of two quotients in an Int128.
+	constexpr std::int64_t kMaxGroundExtentMm = std::int64_t{1} << 30;
+
+	// The boundary intervals of edge `edge` of `ring`, in order along it, given every other
+	// ground ring whose box meets the edge's box (`near` may hold `ring` itself and rings
+	// that do not meet it). Where another ring's edge runs along this one with its inside
+	// on the same side, the shared stretch is input once, by the lower EdgeSource.
+	void groundBoundaries(const GroundRing& ring, std::int32_t edge, const std::vector<GroundRing>& near, GroundBoundaryScratch& scratch,
+						  std::vector<GroundInterval>& out);
+
+	// The arrangement input of the rings, each segment with the ring index and edge it
+	// comes from: a blocked ring's every edge, and a ground ring's boundary intervals. Rings
+	// under three vertices add nothing.
+	void ringSegments(const std::vector<const NavInputPolygon*>& rings, std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>>& out);
+
+	// ringSegments as arrangement input, each segment's index tag(ring, edge).
+	template <typename Tag>
+	void ringsArrangementInput(const std::vector<const NavInputPolygon*>& rings, Tag tag, std::vector<InputSegment>& segments) {
+		std::vector<std::pair<EdgeSource, std::array<Vec2i64, 2>>> pieces;
+		ringSegments(rings, pieces);
+		for (const auto& [source, ends] : pieces) {
+			segments.push_back({ends[0], ends[1], tag(source.ring, source.edge)});
+		}
+	}
+
+	// Build the navmesh from tagged input. The triangles tile the walkable bounds:
+	// no face is dropped, however its rings touch, pinch, or nest.
 	NavMesh buildNavMesh(const NavMeshInput& input);
 
-	// Are triangles triA and triB in the same component of `forest` (connected
-	// ignoring width)? False if either index is out of range or is a non-node for
-	// the forest's predicate. O(1).
-	bool reachableInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
+	// The triangles a path query or a corridor width reads, and the means to locate a
+	// point among them. NavMesh and PatchableMesh each produce one, so each of those
+	// algorithms has one implementation. A slot `live` marks dead is never located and
+	// never a live triangle's neighbour.
+	//
+	// A view reads its owner as it is when used, never as it was when taken: component
+	// labels, width currency, and the patch epoch come through the owner, and every
+	// function taking a view reads the slot tables through resolved(), so a view kept
+	// across a patch sees the patched mesh.
+	// One of a mesh's slot tables as a view reads it: a NavMesh's contiguous vector or a
+	// PatchableMesh's pages (PagedVector), as the owner held it when the view was taken
+	// or last resolved (NavView::resolved).
+	template <typename T> struct ViewArray {
+		const T*		flat  = nullptr;
+		const T* const* pages = nullptr;
+		std::size_t		count = 0;
 
-	// The bottleneck between triA and triB in `forest`: the max over paths of the min
-	// edge capacity (the widest disc DIAMETER any path between them admits). Returns 0
-	// when disconnected (or an endpoint is a non-node), kUnconstrainedWidth when
-	// triA == triB. The sound reject is `diameter > bottleneck => unreachable`.
-	// O(log n) via binary-lifting LCA over the reconstruction tree.
-	std::int64_t bottleneckInForest(const ReachabilityForest& forest, std::int32_t triA, std::int32_t triB);
+		bool		set() const { return flat != nullptr || pages != nullptr; }
+		std::size_t size() const { return count; }
+		const T&	operator[](std::size_t i) const {
+			   return pages != nullptr ? pages[i >> PagedVector<T>::kPageShift][i & PagedVector<T>::kPageMask] : flat[i];
+		}
+		void of(const std::vector<T>& table) {
+			flat  = table.data();
+			pages = nullptr;
+			count = table.size();
+		}
+		void of(const PagedVector<T>& table) {
+			flat  = nullptr;
+			pages = table.pageTable();
+			count = table.size();
+		}
+	};
+
+	struct NavView {
+		ViewArray<Vec2i64>		vertices;
+		ViewArray<NavTriangle>	triangles;
+		ViewArray<std::uint8_t> live; // unset: every slot is live
+		const void*				owner = nullptr;
+		std::int32_t (*locateIn)(const void* owner, const Vec2i64& p)						= nullptr;
+		const MeshComponents* (*componentsIn)(const void* owner)							= nullptr;
+		bool (*widthsCurrentIn)(const void* owner)											= nullptr;
+		std::uint64_t (*epochIn)(const void* owner)											= nullptr;
+		void (*resolveIn)(const void* owner, NavView& view)									= nullptr;
+
+		std::int32_t	   triangleSlots() const { return static_cast<std::int32_t>(triangles.size()); }
+		bool			   isLive(std::int32_t t) const { return !live.set() || live[static_cast<std::size_t>(t)] != 0; }
+		const NavTriangle& triangle(std::int32_t t) const { return triangles[static_cast<std::size_t>(t)]; }
+		const Vec2i64&	   vertex(std::uint32_t v) const { return vertices[v]; }
+		// This view with the owner's slot tables as they are now.
+		NavView resolved() const {
+			NavView view = *this;
+			resolveIn(owner, view);
+			return view;
+		}
+		std::int32_t	   locate(const Vec2i64& p) const { return locateIn(owner, p); }
+		// The owner's connected-component labels, current with its triangles; null when it
+		// keeps none, and then a path query skips its component pre-check.
+		const MeshComponents* components() const { return componentsIn(owner); }
+		// False while corridor widths lag behind a patch; queries read widths.
+		bool widthsCurrent() const { return widthsCurrentIn(owner); }
+		// Changes whenever the triangles or their tags do, to a value no mesh state in the
+		// process has had before (nextMeshGeneration).
+		std::uint64_t epoch() const { return epochIn(owner); }
+	};
+
+	NavView navView(const NavMesh& mesh);
+
+	// Scratch for corridor-width searches, reused across calls.
+	struct WidthSearch {
+		ScratchArray<std::uint32_t> visited; // visited[t] == stamp: seen by the current search
+		std::uint32_t				stamp = 0;
+	};
+
+	// Demyen-Buro width at apex `apex` of triangle `tri`: the widest disc diameter (mm)
+	// that passes between the two edges meeting there, against common-knowledge
+	// obstacles. A width at or above maxClearanceMm reads kUnconstrainedWidth, and the
+	// search never looks farther than maxClearanceMm from the apex, so the width depends
+	// only on `tri` and the triangles that come within maxClearanceMm of the apex.
+	std::int64_t corridorWidthMm(const NavView& view, WidthSearch& search, std::int32_t tri, int apex, std::int64_t maxClearanceMm);
 
 } // namespace geometry::nav

@@ -6,19 +6,20 @@
 // clumpSize, clumpRadius): each 1m tile may seed a clump of tufts within a radius, so dense
 // patches form with bare gaps between. Tuning Grass.xml here is exactly what ships.
 //
-// A gated cursor deform (reveal + bend) lives in instancing.glsl; it's wired but parked
-// (cursor off-screen) while we dial in the resting look.
+// A gated cursor deform (reveal + bend) is the engine's groundcover hook
+// (world/rendering/hooks/groundcover.vert.glsl); it's wired but parked (cursor
+// off-screen) while we dial in the resting look.
 
 #include "SceneTypes.h"
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
-#include <input/InputEvent.h>
-#include <primitives/BatchRenderer.h>
+#include <input/InputTypes.h>
 #include <primitives/InstanceData.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
 #include <utils/Log.h>
 #include <vector/Types.h>
+#include <world/rendering/GroundcoverUniforms.h>
 
 #include <GL/glew.h>
 #include <algorithm>
@@ -45,8 +46,8 @@ namespace {
 	constexpr float kFieldHeightM = 120.0F;
 	constexpr float kPixelsPerMeter = 16.0F;
 	constexpr float kCameraZoom = 8.0F;       // zoomed in so patches read (game is more top-down)
-	constexpr float kGrassReach = 0.55F;      // max local vertex distance from a tuft base (m)
-	constexpr float kGrassOpenness = 1.0F;    // resting tuft scale; 1.0 = full (reveal parked)
+	constexpr float kGroundcoverOpenness = 1.0F; // resting tuft scale; 1.0 = full (reveal parked)
+	constexpr float kGroundcoverReach = 0.55F; // max local vertex distance from a tuft base (m)
 	constexpr float kCursorRadiusM = 4.0F;    // interaction radius (world m)
 	constexpr float kCursorStrengthM = 0.6F;  // tip push at the cursor (world m)
 	constexpr const char* kTuneBiome = "TemperateGrassland"; // which placement config to drive the field
@@ -115,15 +116,10 @@ namespace {
 		return m;
 	}
 
-	class GrassScene : public engine::IScene {
+	class GrassScene : public app::Scene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Grass Scene - placement-driven hair clumps");
-			auto* br = Renderer::Primitives::getBatchRenderer();
-			if (br == nullptr) {
-				LOG_ERROR(UI, "No batch renderer available");
-				return;
-			}
 
 			std::mt19937						   meshRng(1234);
 			std::vector<renderer::TessellatedMesh> meshes;
@@ -136,8 +132,8 @@ namespace {
 			}
 
 			// Distribution from the asset's own placement controls (same as the game).
-			const auto* def = engine::assets::AssetRegistry::Get().getDefinition("Groundcover_Grass");
-			const engine::assets::BiomePlacement* bp = def != nullptr ? def->placement.findBiome(kTuneBiome) : nullptr;
+			const auto* def = assets::AssetRegistry::Get().getDefinition("Groundcover_Grass");
+			const assets::BiomePlacement* bp = def != nullptr ? def->placement.findBiome(kTuneBiome) : nullptr;
 			if (bp == nullptr) {
 				LOG_ERROR(UI, "Groundcover_Grass %s placement config not found", kTuneBiome);
 				return;
@@ -148,7 +144,7 @@ namespace {
 			for (int v = 0; v < kVariantCount; ++v) {
 				m_totalTufts += static_cast<uint32_t>(m_instancesByVariant[v].size());
 				auto maxInst = static_cast<uint32_t>(std::max<size_t>(1, m_instancesByVariant[v].size()));
-				m_handles[v] = br->uploadInstancedMesh(meshes[v], maxInst);
+				m_handles[v] = Renderer::Primitives::uploadInstancedMesh(meshes[v], maxInst);
 				if (!m_instancesByVariant[v].empty()) {
 					m_drawCalls++;
 					m_totalTris += m_variantTris[v] * m_instancesByVariant[v].size();
@@ -158,24 +154,15 @@ namespace {
 					 m_totalTufts, bp->spawnChance, kVariantCount, m_totalTris, m_drawCalls);
 		}
 
-		void update(float dt) override {
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
 			float ms = dt * 1000.0F;
 			m_frameMs = (m_frameMs <= 0.0F) ? ms : (m_frameMs * 0.9F + ms * 0.1F);
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			glClearColor(kGround.r, kGround.g, kGround.b, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
-
-			auto* br = Renderer::Primitives::getBatchRenderer();
-			if (br == nullptr) {
-				return;
-			}
-
-			int viewW = 0;
-			int viewH = 0;
-			Renderer::Primitives::getViewport(viewW, viewH);
-			br->setViewport(viewW, viewH);
 
 			int logW = 0;
 			int logH = 0;
@@ -191,26 +178,26 @@ namespace {
 				(cursorScreen.y - static_cast<float>(logH) * 0.5F) / viewScale + cameraPos.y
 			);
 
-			GLuint prog = br->getShaderProgram();
-			glUseProgram(prog);
-			glUniform1f(glGetUniformLocation(prog, "u_bakedAlpha"), 1.0F);
-			glUniform1i(glGetUniformLocation(prog, "u_grassMode"), 1);
-			glUniform1f(glGetUniformLocation(prog, "u_grassOpenness"), kGrassOpenness);
-			glUniform1f(glGetUniformLocation(prog, "u_grassReach"), kGrassReach);
-			glUniform2f(glGetUniformLocation(prog, "u_cursorWorld"), cursorWorld.x, cursorWorld.y);
-			glUniform1f(glGetUniformLocation(prog, "u_cursorRadius"), kCursorRadiusM);
-			glUniform1f(glGetUniformLocation(prog, "u_cursorStrength"), kCursorStrengthM);
+			Renderer::Primitives::setBakedAlpha(1.0F);
+			worldview::setGroundcoverUniforms(
+				{.cursorWorld = cursorWorld,
+				 .enabled = 1,
+				 .openness = kGroundcoverOpenness,
+				 .reach = kGroundcoverReach,
+				 .cursorRadius = kCursorRadiusM,
+				 .cursorStrength = kCursorStrengthM}
+			);
 
+			const Renderer::Primitives::WorldCamera camera{.position = cameraPos, .zoom = kCameraZoom, .pixelsPerMeter = kPixelsPerMeter};
 			for (int v = 0; v < kVariantCount; ++v) {
 				auto& inst = m_instancesByVariant[v];
 				if (inst.empty() || !m_handles[v].isValid()) {
 					continue;
 				}
-				br->drawInstanced(m_handles[v], inst.data(), static_cast<uint32_t>(inst.size()), cameraPos, kCameraZoom, kPixelsPerMeter);
+				Renderer::Primitives::drawInstanced(m_handles[v], inst.data(), static_cast<uint32_t>(inst.size()), camera);
 			}
 
-			glUseProgram(prog);
-			glUniform1i(glGetUniformLocation(prog, "u_grassMode"), 0);
+			worldview::setGroundcoverUniforms({});
 
 			if (m_haveMouse) {
 				Renderer::Primitives::drawCircle(
@@ -233,19 +220,17 @@ namespace {
 			);
 		}
 
-		void onExit() override {}
-
-		std::string exportState() override {
+		std::string exportState() const override {
 			char buf[256];
 			std::snprintf(buf, sizeof(buf), R"({"tufts": %u, "variants": %d, "drawCalls": %u, "triangles": %zu, "frameMs": %.3f})",
 						  m_totalTufts, kVariantCount, m_drawCalls, m_totalTris, m_frameMs);
 			return {buf};
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
-		bool handleInput(UI::InputEvent& event) override {
-			if (event.type == UI::InputEvent::Type::MouseMove) {
+		bool handleEvent(const foundation::InputEvent& event) override {
+			if (event.type == foundation::InputEvent::Type::PointerMove) {
 				m_mouse = event.position;
 				m_haveMouse = true;
 			}
@@ -256,7 +241,7 @@ namespace {
 		// Replicates PlacementExecutor's Clumped distribution: per 1m tile, roll spawnChance;
 		// on success seed a clump of clumpSize tufts scattered within clumpRadius. Dense patches,
 		// bare gaps — all from the asset's controls.
-		void generateInstances(const engine::assets::BiomePlacement& bp) {
+		void generateInstances(const assets::BiomePlacement& bp) {
 			m_instancesByVariant.assign(kVariantCount, {});
 			std::mt19937						  rng(99);
 			std::uniform_real_distribution<float> chanceDist(0.0F, 1.0F);

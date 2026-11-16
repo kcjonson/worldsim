@@ -43,9 +43,11 @@ Applications:
 | Port | Service | Protocol | Purpose |
 |------|---------|----------|---------|
 | 9000 | Game Server ↔ Client | WebSocket | Gameplay sync (60 Hz) |
-| 8080 | Game Server Developer Server | HTTP/SSE | Observability |
-| 8081 | UI-Sandbox Developer Server | HTTP/SSE | Observability |
-| 8082 | Game Client Developer Server | HTTP/SSE | Observability |
+| 8080 | Game Server Developer Server (planned) | HTTP/SSE | Observability |
+| 8081 | world-sim Dev Server | HTTP/SSE | Observability |
+| 8082 | Game Client Developer Server (planned) | HTTP/SSE | Observability |
+| 8090 | ui-sandbox Dev Server | HTTP/SSE | Observability |
+| 8070 | asset-manager Dev Server | HTTP/SSE | Observability |
 
 ---
 
@@ -58,7 +60,9 @@ Applications:
 | [Monorepo Structure](./monorepo-structure.md) | Library organization and dependencies |
 | [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
+| [Main Loop Timing](./main-loop-timing.md) | One frame top to bottom, ECS order and priorities, periodic work and its clocks, decision triggers, cross-frame hand-offs, threads, hazards |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
+| [Include Graph](./include-graph.md) | Per-library #include matrix, layering violations, and the `tools/resolve-includes.mjs` resolver |
 
 ### Engine Patterns
 
@@ -76,9 +80,7 @@ Applications:
 
 | Document | Description |
 |----------|-------------|
-| [Event System](./ui-framework/event-system.md) | Input event propagation and consumption |
-| [SDF Rendering](./ui-framework/sdf-rendering.md) | GPU-based primitive rendering (planned) |
-| [UI Rendering Spec Alignment](./ui-framework/ui-rendering-spec-alignment.md) | Migration order against the shared layered UI rendering specification (planned) |
+| [salal's ui-design.md](https://github.com/kcjonson/salal/blob/main/docs/ui-design.md) and [ui-plan.md](https://github.com/kcjonson/salal/blob/main/docs/ui-plan.md) | The ui every app is built on: its design, decided rule by rule, and how it was built and moved into |
 
 ### Networking & Multiplayer
 
@@ -91,10 +93,11 @@ Applications:
 
 | Document | Description |
 |----------|-------------|
-| [Observability Overview](./observability/INDEX.md) | Complete system overview |
-| [Developer Server](./observability/developer-server.md) | HTTP/SSE streaming from applications |
+| [Observability Overview](./observability/INDEX.md) | The dev server (salal's), its endpoints and streams, and when in the frame each is served |
+| [Developer Server](./observability/developer-server.md) | What world-sim registers on salal's dev server: routes, controls, state views |
 | [Developer Client](./observability/developer-client.md) | External TypeScript/Vite web app |
-| [UI Inspection](./observability/ui-inspection.md) | UI hierarchy and hover inspection |
+| [UI Inspection](./observability/ui-inspection.md) | UI tree, layout lint, screenshots, synthetic input |
+| [sim-cli](./sim-cli.md) | Spec: headless colonist sim over a shared SimSession; command scripts, decision history, determinism, scenario ctests |
 
 ### Vector Graphics System
 
@@ -119,6 +122,7 @@ Applications:
 | [Asset Definitions](./asset-system/asset-definitions.md) | XML format, inheritance |
 | [Entity Placement](./entity-placement-system.md) | Biome rules, distribution |
 | [Lua Scripting API](./asset-system/lua-scripting-api.md) | Procedural generation |
+| [Tree Variety and World Fit](./asset-system/tree-variety.md) | Spec, partly built: continuous plant age (trees first) as a fraction of a species lifespan, from world position plus game years, with plants growing on a slow tick; a skeleton-first deciduous generator driven by age; growth steps and individuals as shared meshes; collision and yield per growth step; oak/maple/birch by growth habit, open-woodland scale and density, see-through trees, a flora measurement view, ground contact; includes a survey of the existing code it builds on |
 | [Asset Manager](./asset-manager/README.md) | Browse/inspect/validate/render tool: shared render path, load-time validation, GUI + headless CLI |
 
 ### World & Game
@@ -129,16 +133,21 @@ Applications:
 | [World Generation Implementation](./world-generation-implementation.md) | SphereGrid (Goldberg hex), pipeline, frozen contracts |
 | [Planet-view Rendering](./planet-view-rendering.md) | Two-tier globe renderer: base mips + detail page cache |
 | [Cryosphere: Sea Ice, Snow & Glaciers](./cryosphere-ice-and-glaciers.md) | Physical ice model: PDD mass balance, perfect-plastic ice sheets, ice→climate two-pass feedback, land/ocean contrast, rendering |
+| [Continental Margins](./continental-margins.md) | Spec: shelves and inland seas from rift thinning, isostasy, flexure, sediment fill, and glacial lowstands (replaces the painted shelf ramp) |
 | [Chunk Management System](./chunk-management-system.md) | Infinite 2D world from 3D sphere |
 | [3D to 2D Sampling](./3d-to-2d-sampling.md) | Converting spherical world to tiles (locateHex) |
 | [Flat Tile Storage Refactor](./flat-tile-storage-refactor.md) | Proposed: Replace layered tiles with flat array |
-| [Ground Textures](./ground-textures.md) | SVG tile patterns with GPU rasterization cache |
+| [Ground Textures](./ground-textures.md) | Built: Lua ground tile assets baked to texture arrays and hex-mixed in the shader, the height contest at surface edges, per-chunk render tiles, a summary of the D16 land field that paints them, and the perf ledger |
 | [Organic Terrain Geometry](./organic-terrain-geometry.md) | Research: tile centers as lattice samples, organic shorelines, river ribbons |
 | [Terrain Polygons Architecture](./organic-terrain/terrain-polygons-architecture.md) | Design spec: per-chunk waterline/river/pond rings as the truth for nav, render, vision, mud; realism rules; mocks |
 | [Building & Construction Architecture](./building-construction-architecture.md) | Freeform structures: geometry lib, room detection, structure rendering |
 | [Crafting & Material Provisioning](./crafting-provisioning-architecture.md) | Craft-as-construction: station store, metered/no-leftover deposit, pickup-by-source, giveItemToColonist cascade |
+| [Task Claims](./task-claims.md) | Partly built: claims as data on colonist tasks with a derived index, chain claims, availability, need tasks; bumping planned; the craft binding moved to Interruptable Crafts |
+| [Interruptable Crafts](./interruptable-crafts.md) | Spec, not built: craft progress saved on the station's job, craft and build work interruptable, needs in three levels (ordinary, urgent, critical) on a nine-tier ladder, the crafter's hold on a part-done unit, cancel returns materials, sleep restoring along a curve, paused-craft status and the bench's work-in-progress look |
+| [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md) | In progress: one persistent nav mesh patched in place (add, remove, move), structural layer for reachability, detail as a query filter, mover footprints, forward snap, chunk anchors; measured builder baseline and per-step perf gates |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
-| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery/witnessing, fog of war |
+| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing (planned), player visibility (built, in its own doc) |
+| [Player Visibility](./player-visibility.md) | Built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; a hard-edged cover of two masked fills; nothing under the black drawn or loaded; input rules; measured costs |
 
 ### Graphics & Rendering
 
@@ -154,5 +163,5 @@ Applications:
 
 - [Game Design Documents](/docs/design/INDEX.md) — What we're building
 - [Development Log](/docs/development-log/README.md) — Implementation history
-- [Project Status](/docs/status.md) — Current work
+- Project status: Specboard (board: Worldsim)
 - [Workflows](/docs/workflows.md) — Common development tasks

@@ -1,13 +1,25 @@
 #include "AssetThumbnail.h"
 
+#include <CoordinateSystem/CoordinateSystem.h>
 #include <assets/AssetRegistry.h>
 #include <assets/AssetRenderer.h>
 #include <assets/MotionEval.h>
 #include <graphics/Color.h>
+#include <math/Types.h>
 #include <primitives/Primitives.h>
+#include <theme/Tokens.h>
+#include <ui/Context.h>
+#include <utils/Log.h>
+#include <world/rendering/ScreenStateGuard.h>
+
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
+#include <cmath>
+#include <cstddef>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -15,28 +27,64 @@
 
 namespace asset_manager {
 
+	// Meshes plus the raw (pre-fit) bounds they were built from, so the same fit
+	// transform can be replayed for overlays (e.g. collision outlines).
+	struct ThumbnailMesh {
+		std::vector<renderer::TessellatedMesh> meshes;
+		Foundation::Rect					   sourceBounds{0.0F, 0.0F, 0.0F, 0.0F};
+		std::optional<Foundation::Rect>		   clip;
+	};
+
 	namespace {
-		// Mesh plus the raw (pre-fit) bounds it was built from, so the same fit
-		// transform can be replayed for overlays (e.g. collision outlines).
-		struct CachedMesh {
-			renderer::TessellatedMesh mesh;
-			Foundation::Rect		  sourceBounds{0.0F, 0.0F, 0.0F, 0.0F};
+
+		// What the cache may hold before it drops the least recently fetched meshes. A thumbnail drawing one
+		// keeps it alive through its own reference.
+		constexpr size_t kMeshCacheBudget = size_t{128} * 1024 * 1024;
+
+		struct CacheEntry {
+			std::shared_ptr<const ThumbnailMesh> mesh;
+			size_t								 bytes = 0;
+			uint64_t							 lastFetch = 0;
 		};
 
 		// Shared across all thumbnails so rebuilt rows reuse meshes (no re-tessellation). The
 		// asset-manager is single-threaded -- reload runs synchronously on the UI loop, never
-		// concurrent with render -- so this map and cacheGeneration() need no locking.
-		std::unordered_map<std::string, CachedMesh>& meshCache() {
-			static std::unordered_map<std::string, CachedMesh> cache;
+		// concurrent with render -- so this cache needs no locking.
+		struct MeshCache {
+			std::unordered_map<std::string, CacheEntry> entries;
+			size_t										bytes = 0;
+			uint64_t									fetches = 0;
+			// Bumped on every clear, so a thumbnail that fetched before a reload fetches the new art.
+			uint64_t generation = 0;
+		};
+
+		MeshCache& meshCache() {
+			static MeshCache cache;
 			return cache;
 		}
 
-		// Bumped whenever meshCache is cleared. A thumbnail that fetched m_mesh at an older
-		// generation must refetch before use -- the CachedMesh it points into is destroyed by
-		// clearCache(), so drawing through the stale pointer is a use-after-free.
-		uint64_t& cacheGeneration() {
-			static uint64_t gen = 0;
-			return gen;
+		size_t meshBytes(const ThumbnailMesh& mesh) {
+			size_t bytes = 0;
+			for (const renderer::TessellatedMesh& m : mesh.meshes) {
+				bytes += (m.vertices.size() * sizeof(Foundation::Vec2)) + (m.colors.size() * sizeof(Foundation::Color)) +
+						 (m.indices.size() * sizeof(uint16_t));
+			}
+			return bytes;
+		}
+
+		// Drops the least recently fetched entries, but never `keep`, until the cache fits its budget.
+		void trimMeshCache(const std::string& keep) {
+			MeshCache& cache = meshCache();
+			while (cache.bytes > kMeshCacheBudget && cache.entries.size() > 1) {
+				auto oldest = cache.entries.end();
+				for (auto it = cache.entries.begin(); it != cache.entries.end(); ++it) {
+					if (it->first != keep && (oldest == cache.entries.end() || it->second.lastFetch < oldest->second.lastFetch)) {
+						oldest = it;
+					}
+				}
+				cache.bytes -= oldest->second.bytes;
+				cache.entries.erase(oldest);
+			}
 		}
 
 		// Wall-clock-driven walk phase [0,1) for the preview sweep, so an asset with a motion
@@ -47,169 +95,360 @@ namespace asset_manager {
 			const float		  p = secs * 0.8F;
 			return p - std::floor(p);
 		}
+
+		// Draw one mesh, its parts posed by `xforms` (meter space) in the preview space that `src`
+		// was fit into `dst`, and faded by `fade`.
+		void drawMesh(
+			const renderer::TessellatedMesh&							  mesh,
+			const std::unordered_map<std::string, assets::PartTransform>& xforms,
+			const Foundation::Rect&										  src,
+			const Foundation::Rect&										  dst,
+			float														  fade,
+			int32_t														  key
+		) {
+			if (mesh.indices.empty()) {
+				return;
+			}
+			// Reused across frames/instances so posing the verts doesn't allocate each frame.
+			thread_local std::vector<Foundation::Vec2> posed;
+			const Foundation::Vec2*					   verts = mesh.vertices.data();
+			if (!xforms.empty() && !mesh.parts.empty()) {
+				posed.assign(mesh.vertices.begin(), mesh.vertices.end());
+				const float		s = std::min(dst.width / src.width, dst.height / src.height);
+				const glm::vec2 srcC{src.x + (src.width * 0.5F), src.y + (src.height * 0.5F)};
+				const glm::vec2 dstC{dst.x + (dst.width * 0.5F), dst.y + (dst.height * 0.5F)};
+				for (const auto& part : mesh.parts) {
+					if (part.name.empty()) {
+						continue;
+					}
+					auto it = xforms.find(part.name);
+					if (it == xforms.end()) {
+						continue;
+					}
+					// Convert pivot + translate from meter space into the fitted preview space
+					// (rotation and scale are scale-invariant).
+					assets::PartTransform pt = it->second;
+					pt.pivot = {dstC.x + ((pt.pivot.x - srcC.x) * s), dstC.y + ((pt.pivot.y - srcC.y) * s)};
+					pt.translate = {pt.translate.x * s, pt.translate.y * s};
+					const uint32_t end = std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(posed.size()));
+					for (uint32_t i = part.vertexStart; i < end; ++i) {
+						const glm::vec2 r = pt.apply({posed[i].x, posed[i].y});
+						posed[i] = {r.x, r.y};
+					}
+				}
+				verts = posed.data();
+			}
+
+			const Foundation::Color*					colors = mesh.hasColors() ? mesh.colors.data() : nullptr;
+			thread_local std::vector<Foundation::Color> faded;
+			if (colors != nullptr && fade < 1.0F) {
+				faded.assign(mesh.colors.begin(), mesh.colors.end());
+				for (Foundation::Color& color : faded) {
+					color.a *= fade;
+				}
+				colors = faded.data();
+			}
+			Renderer::Primitives::drawTriangles({
+				.vertices = verts,
+				.indices = mesh.indices.data(),
+				.vertexCount = mesh.vertices.size(),
+				.indexCount = mesh.indices.size(),
+				.color = Foundation::Color(0.7F, 0.7F, 0.7F, fade),
+				.colors = colors,
+				.key = key,
+			});
+		}
+
 	} // namespace
 
+	AssetThumbnail::AssetThumbnail(const Args& args)
+		: defName(args.defName),
+		  seed(args.seed),
+		  animated(args.animated),
+		  collider(args.collider),
+		  tiles(std::max(1, args.tiles)),
+		  coordinateSystem(args.coordinateSystem) {
+		// A layout pass runs between the frame's update and its render, so a thumbnail the tree or the
+		// detail pane just built draws its picture before its first frame instead of a frame late.
+		setOnLayout([this](ui::Component&) { refreshPicture(); });
+	}
+
 	void AssetThumbnail::clearCache() {
-		meshCache().clear();
-		++cacheGeneration();
+		MeshCache& cache = meshCache();
+		cache.entries.clear();
+		cache.bytes = 0;
+		++cache.generation;
 	}
 
-	void AssetThumbnail::setAsset(std::string defName, uint32_t seed) {
-		if (defName != m_defName || seed != m_seed) {
-			m_defName = std::move(defName);
-			m_seed = seed;
-			m_dirty = true;
+	float AssetThumbnail::pixelScale() const {
+		const float ratio = coordinateSystem != nullptr ? coordinateSystem->getPixelRatio() : 1.0F;
+		return ratio * (getContext() != nullptr ? getContext()->getScale() : 1.0F);
+	}
+
+	void AssetThumbnail::setAsset(std::string name, uint32_t assetSeed) {
+		if (name != defName || assetSeed != seed) {
+			defName = std::move(name);
+			seed = assetSeed;
+			dirty = true;
 		}
 	}
 
-	void AssetThumbnail::setSize(float width, float height) {
-		if (width != m_size.x || height != m_size.y) {
-			m_size = {width, height};
-			m_dirty = true;
+	bool AssetThumbnail::ensureMesh() {
+		// Refetch when dirty, resized, moved to a screen of another pixel ratio, or after a reload cleared
+		// the cache, which means the art may have changed.
+		const Foundation::Vec2 size = getSize();
+		const float			   scale = pixelScale();
+		MeshCache&			   cache = meshCache();
+		if (!dirty && cacheGen == cache.generation && fetchedSize.x == size.x && fetchedSize.y == size.y && fetchedScale == scale) {
+			return false;
 		}
+		dirty = false;
+		cacheGen = cache.generation;
+		fetchedSize = size;
+		fetchedScale = scale;
+		mesh.reset();
+		repeat = 1;
+		sourceBounds = {0.0F, 0.0F, 0.0F, 0.0F};
+		targetRect = {0.0F, 0.0F, size.x, size.y};
+		clip.reset();
+		if (defName.empty() || size.x <= 0.0F || size.y <= 0.0F) {
+			return true;
+		}
+		// A tiled ground tile fits its centre tile; render() repeats it around that one.
+		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
+		repeat = def != nullptr && def->role == assets::AssetRole::Ground ? tiles : 1;
+		if (repeat > 1) {
+			const float cell = std::min(size.x, size.y) / static_cast<float>(repeat);
+			const float mid = static_cast<float>(repeat / 2);
+			targetRect = {
+				((size.x - (cell * static_cast<float>(repeat))) * 0.5F) + (mid * cell),
+				((size.y - (cell * static_cast<float>(repeat))) * 0.5F) + (mid * cell),
+				cell,
+				cell
+			};
+		}
+		const std::string key = defName + "@" + std::to_string(static_cast<int>(size.x)) + "x" + std::to_string(static_cast<int>(size.y)) +
+								"#" + std::to_string(seed) + "*" + std::to_string(repeat) + "/" + std::to_string(scale);
+		auto it = cache.entries.find(key);
+		if (it == cache.entries.end()) {
+			assets::PreparedAsset prepared = assets::prepareAsset(defName, targetRect, seed, scale);
+			auto				  built = std::make_shared<ThumbnailMesh>();
+			built->meshes = std::move(prepared.meshes);
+			built->sourceBounds = prepared.sourceBounds;
+			built->clip = prepared.clip;
+			const size_t bytes = meshBytes(*built);
+			it = cache.entries.emplace(key, CacheEntry{.mesh = std::move(built), .bytes = bytes}).first;
+			cache.bytes += bytes;
+		}
+		it->second.lastFetch = ++cache.fetches;
+		mesh = it->second.mesh;
+		sourceBounds = mesh->sourceBounds;
+		clip = mesh->clip;
+		trimMeshCache(key);
+		return true;
 	}
 
-	void AssetThumbnail::ensureMesh() {
-		// Refetch when dirty OR when the cache was cleared since our last fetch: clearCache()
-		// frees the CachedMesh m_mesh points into, so a stale pointer is a use-after-free.
-		const uint64_t gen = cacheGeneration();
-		if (!m_dirty && m_cacheGen == gen) {
-			return;
+	const assets::MotionClip* AssetThumbnail::motionClip() const {
+		if (!animated || sourceBounds.width <= 0.0F || sourceBounds.height <= 0.0F) {
+			return nullptr;
 		}
-		m_dirty = false;
-		m_cacheGen = gen;
-		m_mesh = nullptr;
-		m_sourceBounds = {0.0F, 0.0F, 0.0F, 0.0F};
-		m_targetRect = {0.0F, 0.0F, m_size.x, m_size.y};
-		if (m_defName.empty()) {
-			return;
+		const assets::MotionDef* motion = assets::AssetRegistry::Get().getMotion(defName);
+		if (motion == nullptr || motion->clips.empty()) {
+			return nullptr;
 		}
-
-		const std::string key = m_defName + "@" + std::to_string(static_cast<int>(m_size.x)) + "x" +
-								std::to_string(static_cast<int>(m_size.y)) + "#" + std::to_string(m_seed);
-		auto& cache = meshCache();
-		auto  it = cache.find(key);
-		if (it == cache.end()) {
-			engine::assets::PreparedAsset prepared = engine::assets::prepareAsset(m_defName, m_targetRect, m_seed);
-			CachedMesh					  entry;
-			entry.mesh = std::move(prepared.mesh);
-			entry.sourceBounds = prepared.sourceBounds;
-			it = cache.emplace(key, std::move(entry)).first;
-		}
-		m_mesh = &it->second.mesh;
-		m_sourceBounds = it->second.sourceBounds;
+		const assets::MotionClip* walk = motion->findClip("walk");
+		const assets::MotionClip* chosen = walk != nullptr ? walk : &motion->clips.front();
+		return chosen->drivers.empty() ? nullptr : chosen;
 	}
 
-	bool AssetThumbnail::hasMesh() {
-		ensureMesh();
-		return m_mesh != nullptr && !m_mesh->vertices.empty();
-	}
-
-	Foundation::Vec2 AssetThumbnail::localToScreen(const glm::vec2& local) {
-		ensureMesh();
-		// Replay fitToRect (see renderer::fitToRect): scale to fit source bounds into
-		// the target rect preserving aspect, center, then translate by the draw offset.
-		const Foundation::Rect& src = m_sourceBounds;
-		const Foundation::Rect& dst = m_targetRect;
-		// Degenerate source: fitToRect leaves verts untransformed, so the overlay
-		// must too -- raw local plus the draw offset, matching render().
+	// Replays fitToRect (see renderer::fitToRect): scale to fit the source bounds into this box
+	// preserving aspect, and centre.
+	Foundation::Vec2 AssetThumbnail::meshToLocal(const glm::vec2& point) const {
+		const Foundation::Rect& src = sourceBounds;
+		const Foundation::Rect& dst = targetRect;
+		// Degenerate source: fitToRect leaves verts untransformed, so the overlay must too.
 		if (src.width <= 0.0F || src.height <= 0.0F) {
-			return {local.x + m_pos.x, local.y + m_pos.y};
+			return {point.x, point.y};
 		}
 		const float scale = std::min(dst.width / src.width, dst.height / src.height);
 		const float srcCenterX = src.x + (src.width * 0.5F);
 		const float srcCenterY = src.y + (src.height * 0.5F);
-		const float dstCenterX = dst.x + (dst.width * 0.5F);
-		const float dstCenterY = dst.y + (dst.height * 0.5F);
-		const float fitX = dstCenterX + ((local.x - srcCenterX) * scale);
-		const float fitY = dstCenterY + ((local.y - srcCenterY) * scale);
-		// Mesh verts are translated by m_pos at draw; the overlay must match.
-		return {fitX + m_pos.x, fitY + m_pos.y};
+		return {
+			dst.x + (dst.width * 0.5F) + ((point.x - srcCenterX) * scale), dst.y + (dst.height * 0.5F) + ((point.y - srcCenterY) * scale)
+		};
 	}
 
-	Foundation::Vec2 AssetThumbnail::centeredToScreen(const glm::vec2& local) {
-		ensureMesh();
-		const Foundation::Rect& src = m_sourceBounds;
-		const Foundation::Rect& dst = m_targetRect;
-		// Degenerate source: match localToScreen (raw local + draw offset, no centering).
+	// A point relative to the asset's bbox centre (the entity origin): fitToRect maps that centre to the
+	// box's centre, so this just scales from there.
+	Foundation::Vec2 AssetThumbnail::centeredToLocal(const glm::vec2& point) const {
+		const Foundation::Rect& src = sourceBounds;
+		const Foundation::Rect& dst = targetRect;
 		if (src.width <= 0.0F || src.height <= 0.0F) {
-			return {local.x + m_pos.x, local.y + m_pos.y};
+			return {point.x, point.y};
 		}
-		const float scale	   = std::min(dst.width / src.width, dst.height / src.height);
-		const float dstCenterX = dst.x + (dst.width * 0.5F);
-		const float dstCenterY = dst.y + (dst.height * 0.5F);
-		// `local` is already relative to the mesh bbox center, which fitToRect maps to the
-		// target-rect center -- so scale straight from there (no srcCenter subtraction,
-		// which localToScreen does for raw mesh coords).
-		return {dstCenterX + (local.x * scale) + m_pos.x, dstCenterY + (local.y * scale) + m_pos.y};
+		const float scale = std::min(dst.width / src.width, dst.height / src.height);
+		return {dst.x + (dst.width * 0.5F) + (point.x * scale), dst.y + (dst.height * 0.5F) + (point.y * scale)};
 	}
 
 	void AssetThumbnail::render() {
-		if (!visible) {
-			return;
+		if (ensureMesh()) {
+			pictureStale = true;
 		}
-		ensureMesh();
-		if (m_mesh == nullptr || m_mesh->vertices.empty()) {
-			return;
-		}
-
-		// Reused across frames/instances so translating verts to m_pos doesn't allocate each frame.
-		thread_local std::vector<Foundation::Vec2> verts;
-		verts.assign(m_mesh->vertices.begin(), m_mesh->vertices.end());
-
-		// Animate: if this asset declares a motion, sweep its first clip's phase over time and
-		// deform the part vertex ranges in the fitted preview space, so the preview shows the
-		// walk cycle in motion. Assets without a motion (the vast majority) skip this entirely.
-		if (m_animated && !m_mesh->parts.empty()) {
-			const auto* motion = engine::assets::AssetRegistry::Get().getMotion(m_defName);
-			if (motion != nullptr) {
-				const engine::assets::MotionClip* walk = motion->findClip("walk");
-				const engine::assets::MotionClip* clip = (walk != nullptr) ? walk : &motion->clips.front();
-				const Foundation::Rect&			  src = m_sourceBounds;
-				const Foundation::Rect&			  dst = m_targetRect;
-				if (!clip->drivers.empty() && src.width > 0.0F && src.height > 0.0F) {
-					std::unordered_map<std::string, engine::assets::PartTransform> xforms;
-					engine::assets::evaluateClip(*clip, sweepPhase(), xforms);
-
-					const float		s = std::min(dst.width / src.width, dst.height / src.height);
-					const glm::vec2 srcC{src.x + src.width * 0.5F, src.y + src.height * 0.5F};
-					const glm::vec2 dstC{dst.x + dst.width * 0.5F, dst.y + dst.height * 0.5F};
-					for (const auto& part : m_mesh->parts) {
-						if (part.name.empty()) {
-							continue;
-						}
-						auto it = xforms.find(part.name);
-						if (it == xforms.end()) {
-							continue;
-						}
-						// Convert pivot + translate from meter space into the fitted preview space
-						// (rotation and scale are scale-invariant).
-						engine::assets::PartTransform pt = it->second;
-						pt.pivot	 = {dstC.x + (pt.pivot.x - srcC.x) * s, dstC.y + (pt.pivot.y - srcC.y) * s};
-						pt.translate = {pt.translate.x * s, pt.translate.y * s};
-						const uint32_t end =
-							std::min<uint32_t>(part.vertexStart + part.vertexCount, static_cast<uint32_t>(verts.size()));
-						for (uint32_t i = part.vertexStart; i < end; ++i) {
-							const glm::vec2 r = pt.apply({verts[i].x, verts[i].y});
-							verts[i] = {r.x, r.y};
-						}
-					}
+		if (mesh != nullptr && !mesh->meshes.empty()) {
+			if (const assets::MotionClip* motion = motionClip()) {
+				// Sweep the clip's phase over time, posing the part vertex ranges in the fitted preview space.
+				std::unordered_map<std::string, assets::PartTransform> xforms;
+				assets::evaluateClip(*motion, sweepPhase(), xforms);
+				drawMeshes(xforms, opacity(), drawKey());
+			} else {
+				if (pictureStale) {
+					requestUpdate(); // the old picture, if any, stands in until update() draws the new one
 				}
+				drawPicture();
+			}
+		}
+		if (collider) {
+			drawCollider();
+		}
+	}
+
+	void AssetThumbnail::update(float /*dt*/) {
+		refreshPicture();
+	}
+
+	void AssetThumbnail::refreshPicture() {
+		if (ensureMesh()) {
+			pictureStale = true;
+		}
+		if (!pictureStale || mesh == nullptr || mesh->meshes.empty() || motionClip() != nullptr) {
+			return;
+		}
+		pictureStale = false;
+		if (coordinateSystem == nullptr) {
+			// The pass couldn't put the screen's projection back without it.
+			LOG_ERROR(Engine, "AssetThumbnail: %s has no coordinate system to draw its picture with", defName.c_str());
+			return;
+		}
+		// A ground tile's copies are one clipped square, so the picture is that square; anything else is the box.
+		const Foundation::Rect region = clip.value_or(Foundation::Rect{0.0F, 0.0F, fetchedSize.x, fetchedSize.y});
+		const int			   width = std::max(1, static_cast<int>(std::lround(region.width * fetchedScale)));
+		const int			   height = std::max(1, static_cast<int>(std::lround(region.height * fetchedScale)));
+		if (!picture.isValid() || picture.width() != width || picture.height() != height) {
+			picture = Renderer::RenderTarget::create(width, height);
+			if (!picture.isValid()) {
+				LOG_ERROR(Engine, "AssetThumbnail: could not create a %dx%d render target for %s", width, height, defName.c_str());
+				return;
 			}
 		}
 
-		for (auto& v : verts) {
-			v.x += m_pos.x;
-			v.y += m_pos.y;
+		const worldview::ScreenStateGuard guard(coordinateSystem);
+		picture.begin();
+		// The screen-space fallback projection (no coordinate system) matches the target exactly. After
+		// begin(), so the size is the target's, not remembered as the backbuffer's.
+		Renderer::Primitives::setCoordinateSystem(nullptr);
+		Renderer::Primitives::setViewport(width, height);
+		Renderer::Primitives::clear(Foundation::Color(0.0F, 0.0F, 0.0F, 0.0F));
+		Renderer::Primitives::beginFrame();
+		Foundation::Mat4 toPixels = glm::scale(
+			Foundation::Mat4(1.0F), glm::vec3(static_cast<float>(width) / region.width, static_cast<float>(height) / region.height, 1.0F)
+		);
+		toPixels = glm::translate(toPixels, glm::vec3(-region.x, -region.y, 0.0F));
+		Renderer::Primitives::PushTransform(toPixels);
+		if (clip.has_value()) {
+			Renderer::Primitives::pushClip(*clip); // the art crossing the square's edges shows only where the wrap put it
 		}
-		Renderer::Primitives::drawTriangles({
-			.vertices = verts.data(),
-			.indices = m_mesh->indices.data(),
-			.vertexCount = verts.size(),
-			.indexCount = m_mesh->indices.size(),
-			.color = Foundation::Color(0.7F, 0.7F, 0.7F, 1.0F),
-			.colors = m_mesh->hasColors() ? m_mesh->colors.data() : nullptr,
-		});
+		drawMeshes({}, 1.0F, 0);
+		if (clip.has_value()) {
+			Renderer::Primitives::popClip();
+		}
+		Renderer::Primitives::PopTransform();
+		Renderer::Primitives::endFrame();
+		picture.end();
+	}
+
+	void AssetThumbnail::drawMeshes(const std::unordered_map<std::string, assets::PartTransform>& xforms, float fade, int32_t key) {
+		for (const renderer::TessellatedMesh& part : mesh->meshes) {
+			drawMesh(part, xforms, sourceBounds, targetRect, fade, key);
+		}
+	}
+
+	// The picture over its region, or a ground tile's tiles x tiles copies edge to edge around the centre one.
+	void AssetThumbnail::drawPicture() {
+		if (!picture.isValid()) {
+			return;
+		}
+		const Foundation::Rect region = clip.value_or(Foundation::Rect{0.0F, 0.0F, fetchedSize.x, fetchedSize.y});
+		const int			   copies = clip.has_value() ? repeat : 1;
+		const int			   mid = copies / 2;
+		for (int row = 0; row < copies; ++row) {
+			for (int col = 0; col < copies; ++col) {
+				Renderer::Primitives::drawImage({
+					.texture = picture.texture(),
+					.bounds =
+						{region.x + (static_cast<float>(col - mid) * region.width),
+						 region.y + (static_cast<float>(row - mid) * region.height),
+						 region.width,
+						 region.height},
+					.uvMin = {0.0F, 1.0F}, // a target holds its bottom row at row 0
+					.uvMax = {1.0F, 0.0F},
+					.tint = Foundation::Color(1.0F, 1.0F, 1.0F, opacity()),
+					.id = "am_thumbnail",
+					.key = drawKey(),
+				});
+			}
+		}
+	}
+
+	// The asset's collision shape over the art, re-resolved from the name each frame, since a reload
+	// clears the registry and a stored definition would dangle.
+	void AssetThumbnail::drawCollider() {
+		const assets::AssetDefinition* def = assets::AssetRegistry::Get().getDefinition(defName);
+		if (def == nullptr) {
+			return;
+		}
+		const assets::CollisionShape& collision = def->collisionFor(0);
+		if (!collision.blocks()) {
+			Foundation::Color faint = getContext()->getTheme().get(theme::tokens::theme::color::textFaint);
+			faint.a *= opacity();
+			Renderer::Primitives::drawText({
+				.text = "no collider",
+				.position = {8.0F, 8.0F},
+				.scale = 12.0F / 16.0F,
+				.color = faint,
+				.id = "am_no_collider",
+				.key = drawKey(),
+			});
+			return;
+		}
+		if (mesh == nullptr || mesh->meshes.empty()) {
+			return;
+		}
+		// Collision points are in the asset's local meter space. Simple (SVG) assets author the collider
+		// in SVG <metadata>, converted to the bbox-centred frame (relative to the entity origin);
+		// procedural colliders are in the generator's mesh-coord frame.
+		std::vector<glm::vec2> points;
+		if (collision.type == assets::CollisionShapeType::Rect) {
+			const std::array<glm::vec2, 4> corners = collision.rectCornersLocal();
+			points.assign(corners.begin(), corners.end());
+		} else {
+			points = collision.pointsMeters;
+		}
+		if (points.size() < 2) {
+			return;
+		}
+		const bool				centered = def->assetType == assets::AssetType::Simple;
+		const Foundation::Color outline{0.0F, 1.0F, 1.0F, opacity()}; // bright cyan, high contrast on art
+		for (std::size_t i = 0; i < points.size(); ++i) {
+			const glm::vec2& a = points[i];
+			const glm::vec2& b = points[(i + 1) % points.size()];
+			Renderer::Primitives::drawLine({
+				.start = centered ? centeredToLocal(a) : meshToLocal(a),
+				.end = centered ? centeredToLocal(b) : meshToLocal(b),
+				.style = {.color = outline, .width = 2.0F},
+				.id = "am_collision_edge",
+				.key = drawKey(),
+			});
+		}
 	}
 
 } // namespace asset_manager

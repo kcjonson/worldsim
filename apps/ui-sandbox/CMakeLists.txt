@@ -7,28 +7,10 @@ add_executable(ui-sandbox
     scenes/VectorPerfScene.cpp
     scenes/GrassScene.cpp
     scenes/TreeScene.cpp
-    scenes/TextShapesScene.cpp
-    scenes/LayerScene.cpp
-    scenes/ButtonScene.cpp
-    scenes/TabBarScene.cpp
-    scenes/InputTestScene.cpp
-    scenes/SdfMinimalScene.cpp
-    scenes/TextInputScene.cpp
-    scenes/ClipScene.cpp
     scenes/SvgScene.cpp
-    scenes/LayoutScene.cpp
-    scenes/ScrollScene.cpp
-    scenes/IconScene.cpp
-    scenes/TreeViewScene.cpp
-    scenes/DropdownScene.cpp
-    scenes/ToastScene.cpp
-    scenes/DialogScene.cpp
-    scenes/TooltipScene.cpp
-    scenes/ContextMenuScene.cpp
-    scenes/TextWrapScene.cpp
     scenes/PlanetScene.cpp
-    scenes/SalvageScene.cpp
-    scenes/SalvageDialogScene.cpp
+    scenes/GalleryScene.cpp
+    scenes/GalleryDialogScene.cpp
 )
 
 target_include_directories(ui-sandbox
@@ -41,22 +23,28 @@ target_compile_features(ui-sandbox PRIVATE cxx_std_20)
 # Link required libraries
 target_link_libraries(ui-sandbox
     PRIVATE
-        engine
-        ui
-        renderer
-        foundation
+        world-view
+        theme
+        salal::app
+        salal::renderer
+        salal::foundation
         assets
         planet-view
-        world
+        worldgen
+        OpenGL::GL
+        GLEW::GLEW
 )
 
-# Copy shaders to executable directory
-add_custom_command(TARGET ui-sandbox POST_BUILD
+# Mirror the staged shaders beside the exe on every build (see apps/world-sim/CMakeLists.txt).
+add_custom_target(ui-sandbox-shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_BINARY_DIR}/shaders
-    $<TARGET_FILE_DIR:ui-sandbox>/shaders
-    COMMENT "Copying shaders to ui-sandbox directory"
+        ${CMAKE_BINARY_DIR}/shaders
+        $<TARGET_FILE_DIR:ui-sandbox>/shaders
+    COMMENT "Mirroring shaders beside ui-sandbox"
+    VERBATIM
 )
+add_dependencies(ui-sandbox-shaders world-view-shaders planet-view-shaders)
+add_dependencies(ui-sandbox ui-sandbox-shaders)
 
 # Copy fonts to executable directory
 add_custom_command(TARGET ui-sandbox POST_BUILD

@@ -1,26 +1,25 @@
 #pragma once
 
-#include <component/Container.h>
-#include <graphics/Rect.h>
+// LogTabView - the dossier's Log tab. The game keeps no activity log yet, so it is an empty state.
+
+#include <ui/Component.h>
 
 namespace world_sim {
 
-/// Data for Log tab (no activity-log system yet).
-struct LogData {};
+	struct LogData {};
 
-/// Log tab content for ColonistDetailsDialog.
-///
-/// There is no chronological activity log in the game yet, so this renders an
-/// honest empty-state matching the dossier's style. Manual-render, like the
-/// other dossier tabs.
-class LogTabView : public UI::Container {
-  public:
-	void create(const Foundation::Rect& contentBounds);
-	void update(const LogData& data);
-	void render() override;
+	class LogTabView : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+		};
 
-  private:
-	Foundation::Rect contentBounds{};
-};
+		void update(const LogData& data);
+
+		[[nodiscard]] const char* typeName() const override { return "LogTabView"; }
+
+	  protected:
+		void onMount() override;
+	};
 
 } // namespace world_sim

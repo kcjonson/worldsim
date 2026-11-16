@@ -8,7 +8,7 @@ World-sim is a C++20 game with 3D procedural world generation, 2D tile-based gam
 
 **Critical Architectural Decisions:**
 - Vector assets (SVG) with procedural variation → `/docs/technical/vector-graphics/INDEX.md`
-- Custom ECS in engine → `/docs/technical/cpp-coding-standards.md#ecs`
+- Custom ECS in sim (`libs/sim/ecs/`) → `/docs/technical/cpp-coding-standards.md#ecs`
 - Roll our own core systems where appropriate
 
 ## Project Management: Specboard
@@ -17,9 +17,7 @@ Project management lives in **Specboard** (board: Worldsim), over the Specboard 
 
 The outcome of a planning session is an **epic with an attached requirements doc** (linked via the epic's spec doc path), not code. Plan, write the spec, create and link the epic, then implement in a later pass.
 
-File bugs and chores directly as you hit them. Full workflow: `~/.claude/commands/whats-next.md`.
-
-**Transition:** `/docs/status.md` is still the live checklist and is maintained in parallel until the Specboard ingest is verified. Don't drop it yet — Specboard is becoming the source of truth, but both run for now.
+File bugs and chores directly as you hit them. Full workflow: the `specboard:whats-next` plugin skill; personal preferences in the claude-config repo's `specboard.md`.
 
 ## Development Standards
 
@@ -33,9 +31,9 @@ File bugs and chores directly as you hit them. Full workflow: `~/.claude/command
    - Are you on the correct branch? You most likely need to be on main
 
 1. **Read documentation first**
-   - `/docs/status.md` - Current project state
-   - Keep explicit todos and work items in this list, with checkboxes
-   - Update this document before and after doing any work
+   - The Specboard item you are working on (`/whats-next`), and its linked spec
+   - Keep explicit todos and work items in Specboard: child items for tracked work, the item's checklist for scratch todos
+   - Update the item before and after doing any work
    - Relevant technical design documents
    - Product specifications if implementing features
 
@@ -99,7 +97,7 @@ This activates the protocol from `/docs/technical/debugging-strategy.md` which u
 - **NEVER assume existing code patterns are correct** - Legacy code may contain violations that haven't been cleaned up
 - **Documented standards override observed patterns** - If code in the codebase contradicts the docs, the docs are correct
 
-Example: If you see `m_` prefixes on member variables in `libs/ui/`, but the coding standards say "camelCase with no prefix" - the standards are correct, the existing code is legacy that needs cleanup.
+Example: If you see `m_` prefixes on member variables in older code, but the coding standards say "camelCase with no prefix" - the standards are correct, the existing code is legacy that needs cleanup.
 
 ### ⚠️ Clean Code: No Legacy, No Fallbacks
 
@@ -200,7 +198,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 ## Documentation System
 
 ### When Asked "What are we working on?" or "Where are we?"
-→ Check `/docs/status.md` FIRST
+→ Run `/whats-next` (Specboard, board: Worldsim)
 
 ### For Technical Implementation Details
 → Check `/docs/technical/INDEX.md` for list of design documents
@@ -220,10 +218,19 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Headers (.h) and implementation (.cpp) side-by-side in same directory
 - Use `#pragma once` for header guards
 
+**Scripts and tooling:**
+- New scripts and tooling are Node (ESM, `.mjs`, no dependencies unless there is a `package.json` for them). No Python.
+
+**Engine libraries (salal):** `foundation` and `renderer` come from github.com/kcjonson/salal via FetchContent, pinned by `GIT_TAG` in the root CMakeLists.txt. To build against the sibling checkout instead of the tag: `cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal`. It is cached in `build/` until `-UFETCHCONTENT_SOURCE_DIR_SALAL`. Whatever branch that checkout has is what builds, so a worldsim PR must work against a tagged salal before it is marked ready. On GCC and Clang, `-ffp-contract=off` is inherited from `salal::foundation` (PUBLIC, the deterministic math needs it); don't add it again here. salal's base shader is assembled into `world-view` at build time with the game's hooks (`libs/world-view/world/rendering/hooks/`, one so far: the groundcover deform), checked by `glslangValidator` from the vcpkg `glslang[tools]` host dependency, and compiled in; salal's `docs/shader-hooks.md` is the contract. `base_shader::source()` is what `Primitives::init` takes.
+
+**Game libraries:** `worldgen` (the planet pipeline), `world` (chunks, tiles, terrain and the world camera), `assets` (definitions, registries, Lua and placement), `sim` (the ECS and its systems, nav, vision and construction) and `world-view` (the world's rendering, which draws what the rest hold). Each folder is one CMake target, with its include root at the folder (`libs/sim/ecs/...` is `<ecs/...>`). `world` and `sim` link neither salal's renderer nor its ui; `assets` links renderer for SVG tessellation and asset thumbnails, so sim still reaches it through assets.
+
 **Naming:**
-- Classes/Functions: PascalCase (`Shader`, `LoadTexture`)
-- Variables: camelCase (`frameCount`, `deltaTime`)
+- Classes/Structs/Enums: PascalCase (`Shader`, `TextureManager`)
+- Functions/Methods: camelCase (`loadTexture()`, `isValid()`)
+- Variables/Members: camelCase, no prefix (`frameCount`, `deltaTime`)
 - Constants: `k` prefix (`kMaxTextures`)
+- Every name is whole readable words. No one- or two-letter names or namespace aliases (`P::`, `td::`); loop indices and x/y/z are the exceptions
 
 **Terminology:**
 - Use "scene" not "screen" (`SplashScene`, not `SplashScreen`)
@@ -240,32 +247,68 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Debug logs compile out in release builds
 - **CRITICAL: LOG_DEBUG WORKS FINE. NEVER switch LOG_DEBUG to LOG_INFO "to see logs". Debug logs are visible in dev tools via the HTTP log server. Do not change log levels.**
 
+**Testing:** `/docs/testing/README.md` is the strategy. Look for actual regressions, never pixel
+changes: no golden images or screenshot diffs. Before committing, run the relevant happy-path
+scenarios (`/docs/testing/scenarios/`) as a manual regression pass with the cheapest subagent
+fleet that can, and add steps when a feature lands. Keep unit tests bounded: check for duplicates
+before adding.
+
+**⚠️ Timed perf: check the machine first, and distrust a worse result.** This machine runs several
+sessions at once and its CPU and GPU are often maxed by other work. Sessions have burned days on
+captures taken under load, then on re-runs chasing regressions that were never there.
+- A session may time its own work when the change calls for it, scoped to what it touched (the view
+  and zooms that could move, not the whole suite by reflex), and only when
+  `node scripts/machine-load.mjs` answers `idle` or `mostly-idle`. Run the check before the capture
+  and again after. On `busy`, don't time anything; the nightly batch will.
+- Capture with `node scripts/perf.mjs capture` (scope it with `--zooms` and `--no-scroll`) and take
+  the verdict from `node scripts/perf.mjs compare`, not from reading timings by eye.
+- Know what the run costs before starting it: every capture launches the game on Kevin's desktop
+  and holds the machine. Decide the launches up front and stop when the question is answered.
+- Even with `main`, or faster, is a good result, loaded machine or not. Record it and move on. No
+  repeat to confirm.
+- Worse is ambiguous: it could be the change, or the machine. Unless both checks read `idle`, a
+  worse number is not a finding. Don't loop on re-runs, bisect, or start investigating. One more run
+  is fine once the check reads `idle`; otherwise write "worse under load, unconfirmed" in the PR's
+  `Perf:` line and the nightly batch settles it. Worse with both checks `idle` is real: act on it.
+- No new baselines from a run with any activity on the machine. A number goes into a doc or ledger
+  for later comparison only when both checks read `idle`. Faster under load means "no regression",
+  not a speedup to quote.
+- Put a `Perf:` line in the PR body: what could move, which views or zooms would show it, and what
+  was measured under which verdict, or `Perf: none`. Then merge on green CI as usual.
+- The nightly batch times `main` in the early morning once the machine is idle, and opens a draft
+  revert for a PR behind a major regression. Agents run it and decide what it covers; Kevin never
+  asks for a perf run. `/docs/testing/README.md` has the rule in full and
+  `/docs/testing/nightly-perf-batch.md` the batch, which the `/perf-nightly` skill runs.
+
 **Visual Verification:**
 - When user reports visual issues ("X doesn't appear", "layout is wrong")
 - Capture screenshot via HTTP endpoint to see actual output
-- IMPORTANT: Only capture a screenshot when requested by the user, avoid them where possible
-- See `/docs/workflows.md` → "Verifying Visual Output"
+- Outside a regression pass, capture screenshots only when they answer a question; don't take them by reflex
+- See `/docs/technical/observability/ui-inspection.md` for the endpoints
 
 **Sandbox Control:**
+- The dev server is salal's (`app::DevServer`), in Debug and RelWithDebInfo builds only; a Release build has none unless configured with `-DSALAL_DEV_SERVER_IN_RELEASE=ON` (for profiling). The ui tree and lint come from the top scene's salal ui context; world-sim's game scene adds the `/api/dev/<verb>` routes, the `/api/state` views and the `camera` control.
 - Start: `cd build/apps/ui-sandbox && ./ui-sandbox`
-- Control: `curl "http://127.0.0.1:8081/api/control?action={action}"`
-- Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`
-- Input injection: `curl "http://127.0.0.1:8081/api/input?ev=click,x,y"` — synthetic UI input in logical pixels (same space as screenshots); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`; repeat `ev=` to batch a sequence in one request
-- Screenshot: `curl http://127.0.0.1:8081/api/ui/screenshot > screenshot.png`
-- **IMPORTANT: Port 8081 is the DEFAULT - do NOT specify --http-port unless using a non-standard port**
-- **IMPORTANT: Only ONE instance can run at a time** - the app has built-in port conflict detection. Do not assume multiple instances exist.
-- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8081/api/control?action=exit"`. Only leave it running if the user asked to test it themselves.
+- Control: `curl "http://127.0.0.1:8090/api/control?action={action}"`
+- Actions: `exit`, `scene&scene=name`, `pause`, `resume`, `reload`, `vsync&value=0|1`, `step&ticks=n` (while paused; it advances nothing in worldsim, where no scene has a fixed tick, so a step is one more rendered frame); world-sim's game scene adds `camera`. A control answers once it has run, at the next frame; `scene` and `reload` answer before their switch applies later that frame. An unknown action, or a scene nothing was added as, is a 404
+- Input injection: `curl "http://127.0.0.1:8090/api/input?ev=click,x,y"`: synthetic input in logical pixels (a screenshot is in framebuffer pixels, twice the logical size on a HiDPI display, so halve its coordinates there); event types `move`/`down`/`up`/`click`/`scroll,x,y,delta` with optional button `left|right|middle`, `keydown,<key>`/`keyup,<key>`, and `char,<codepoint>`; repeat `ev=` to batch a sequence in one request, a whole gesture included: the events reach the ui in order, each press and release at its own position (`ev=down,100,100&ev=move,300,300&ev=up,300,300` is a drag, `ev=click,x,y&ev=char,104` clicks then types). Injected events go the way real input does: keys and characters reach the focused ui component (`keydown,tab` moves focus), a scroll is resent until something takes it (in the game, one the ui doesn't take zooms the camera), and while the app is paused it all waits for resume. A malformed event is a 400 and queues nothing. A pointer event moves the app's pointer to `x,y` until the real cursor moves over the window or a real mouse button or scroll event lands, so hover state holds for a later request (`ev=move,x,y` then a separate screenshot works). Since salal v0.41.1 an injected move also sets the window's pointer-in-window flag, so hover-driven things (the placement ghost, the drawing tools' preview) follow it.
+- Scene state: `curl "http://127.0.0.1:8090/api/state?what=scene"` is `{"scenes":[{"name":...,"state":...}]}`, top first; read `scenes[0].state`. Any other `what` is a view the running scene registered (404 otherwise)
+- Screenshot: `curl http://127.0.0.1:8090/api/ui/screenshot > screenshot.png`
+- **IMPORTANT: Each app has its own DEFAULT port: ui-sandbox 8090, world-sim 8081, asset-manager 8070 - do NOT specify --http-port unless using a non-standard port**
+- **IMPORTANT: Only ONE instance can run at a time** - a second one opens its window, finds its port busy, and closes and exits at once (logged). Do not assume multiple instances exist.
+- **IMPORTANT: Close the game as soon as your task is done** - this is a native game rendering every frame, not a web app; an idle instance burns GPU/CPU continuously. When you finish verifying, immediately shut it down: `curl "http://127.0.0.1:8090/api/control?action=exit"` (8081 for world-sim). Only leave it running if the user asked to test it themselves.
 
 **Asset Manager (use this to test/preview world assets):**
 - A designer GUI (`apps/asset-manager`) that renders every asset through the game's real pipeline. Use it to verify new/edited flora, rocks, and other assets instead of dev-spawning them in world-sim.
-- Build: `cmake --build build --config Debug --target asset-manager`. Run: `build/apps/asset-manager/Debug/asset-manager.exe` (debug server on port **8070**, same `/api/ui/screenshot`, `/api/input`, `/api/control` as the game).
+- Build: `cmake --build build --config Debug --target asset-manager`. Run: `build/apps/asset-manager/Debug/asset-manager.exe` (dev server on port **8070**, same `/api/ui/screenshot`, `/api/ui/tree`, `/api/ui/lint`, `/api/input`, `/api/control` as the game).
 - Shows a searchable category tree of asset thumbnails, a header with total count + validation error/warning counts, a per-asset detail pane (large preview + full XML + that asset's validation issues), and a **Reload** button to hot-reload after editing assets (no restart).
+- Its `/api/ui/lint` isn't `"count":0`: the browser tree's rows (`AssetRow`, `GroupHeaderRow`) don't report their laid-out positions, so they read as stacked at (0,0), and the tree's content is taller than its scroll viewport. Read the tree's top-bar entries; don't gate on the count.
 - Surfaces SVG tessellation/validation problems and lets you eyeball art far faster than spawning + cropping screenshots. Close it when done (`curl "http://127.0.0.1:8070/api/control?action=exit"`).
 
 **CRITICAL: Testing Visual Changes**
 When you make code changes and need to verify visually:
-1. **Kill old instance** (if running): `curl "http://127.0.0.1:8081/api/control?action=exit"`
-   - This is a **blocking call** - it returns only after shutdown is complete and the port is free
+1. **Kill old instance** (if running): `curl "http://127.0.0.1:8090/api/control?action=exit"`
+   - This is a **blocking call** - it returns only after the scenes have exited, GL is torn down and the port is free
    - Response: `{"status":"ok","action":"exit","shutdown":"complete"}`
    - When you receive the OK response, proceed immediately (NO sleep needed)
    - If no instance is running, curl will fail with connection refused - that's fine, proceed
@@ -273,8 +316,8 @@ When you make code changes and need to verify visually:
 3. **Launch new instance**: Use Bash tool with `run_in_background: true`:
    - Command: `cd /Volumes/Code/worldsim/build/apps/ui-sandbox && ./ui-sandbox --scene=<scene>`
    - Do NOT use shell `&` - it blocks waiting for output
-4. **Verify layout (after UI changes)**: `curl http://127.0.0.1:8081/api/ui/tree` for element bounds, `curl http://127.0.0.1:8081/api/ui/lint` for invariant violations - expect `"count":0` before screenshotting. Don't verify coordinates by eye.
-5. **Take screenshot**: `curl -s http://127.0.0.1:8081/api/ui/screenshot > /tmp/screenshot.png`
+4. **Verify layout (after UI changes)**: `curl http://127.0.0.1:8090/api/ui/tree` for element bounds, `curl http://127.0.0.1:8090/api/ui/lint` for invariant violations - expect `"count":0` before screenshotting. Don't verify coordinates by eye. Both walk the scene's `getUiRoots()`: a scene that draws without components (world-sim's settings, most ui-sandbox demos) answers an empty tree, and its `"count":0` checks nothing.
+5. **Take screenshot**: `curl -s http://127.0.0.1:8090/api/ui/screenshot > /tmp/screenshot.png`
    - The screenshot endpoint implicitly waits for the app to be ready
    - No sleep needed - curl will block until screenshot is captured
 
@@ -287,7 +330,7 @@ When you make code changes and need to verify visually:
 
 | When You Need... | Check... |
 |------------------|----------|
-| Current project status | `/docs/status.md` |
+| Current project status | Specboard (`/whats-next`) |
 | Detailed implementation notes | `/docs/development-log/` (individual entry files) |
 | Game design & requirements | `/docs/design/INDEX.md` |
 | How to add a new library | `/docs/workflows.md` |
@@ -296,87 +339,14 @@ When you make code changes and need to verify visually:
 | Coding standards | `/docs/technical/cpp-coding-standards.md` |
 | Engine patterns to use | `/docs/technical/INDEX.md` (Engine Patterns section) |
 
-## Status.md Format and Workflow
-
-### Structure: Epic/Story/Task Hierarchy
-
-`/docs/status.md` is a **CHECKLIST-ONLY** document. NO long-form content, architectural decisions, or detailed rationale.
-
-**Format:**
-- **Epic** → **Story** → **Task** → **Sub-task** (max 3 levels of nesting)
-- Template provided at top of status.md
-- Use terminology: Epic (top level), Story (major feature), Task (implementation step), Sub-task (detail)
-
-**Required Fields for Each Epic:**
-```markdown
-## Epic Title
-**Spec/Documentation:** /path/to/doc.md or /path/to/folder/
-**Dependencies:** Other Epic Name (if applicable)
-**Status:** ready | in progress | blocked | needs spec
-
-**Tasks:**
-- [ ] Story Title
-  - [ ] Task Title
-    - [ ] Sub-task Title
-```
-
-**Sections in status.md:**
-1. **Recently Completed Epics** - Last 4 completed (with ALL tasks marked [x])
-2. **In Progress Epics** - Currently active work (at least one task incomplete)
-3. **Planned Epics** - Future work
-4. **Blockers & Issues** - Current problems
-
-### When to Update status.md
-
-**Before starting work:**
-1. Find or create the relevant Epic
-2. Mark the Story/Task you're working on as in-progress (mental note or comment)
-3. Check Dependencies field for prerequisite work
-
-**After completing a task:**
-1. Mark task as [x]
-2. If all tasks in an Epic are complete, mark Epic as complete
-3. Update Last Updated timestamp
-
-**When Epic is complete:**
-1. Move Epic to "Recently Completed Epics" section
-2. If more than 4 completed epics, remove oldest from status.md (archived in development log)
-3. Create a new entry file in `/docs/development-log/entries/`:
-   - Filename: `YYYY-MM-DD-epic-name-slug.md`
-   - Include: summary, what was accomplished, files modified, technical decisions, next steps
-   - See `/docs/development-log/README.md` for template
-
-### Content Placement Rules
-
-**status.md contains:**
-- ✅ Checklists (Epic/Story/Task/Sub-task)
-- ✅ Status indicators (ready/in progress/blocked/needs spec)
-- ✅ Dependencies between epics
-- ✅ Performance targets (as success criteria)
-- ✅ Blockers & issues
-
-**status.md does NOT contain:**
-- ❌ Architectural decisions (→ development log entry if short, technical docs if long)
-- ❌ Implementation rationale (→ development log entry or technical docs)
-- ❌ Detailed technical discussion (→ technical docs)
-- ❌ Long-form content or paragraphs (→ development log entry or technical docs)
-- ❌ Historical "Recent Decisions" lists (→ development log entries)
-- ❌ Notes section (→ notes go in the spec/documentation for each epic)
-
-**Where architectural content goes:**
-- **Short decisions** (<1 paragraph): Development log entry
-- **Long decisions** (>1 paragraph): Relevant technical doc (e.g., `/docs/technical/architecture.md`)
-- **Rationale and context**: Development log entry or technical docs
-- **Performance targets**: Can stay in status.md as success criteria for epics
-
 ## After Significant Work
 
-### Update `/docs/status.md`:
-- Mark completed tasks with `[x]`
-- Update "Blockers & Issues" if any
-- Update "Last Updated" timestamp
-- When Epic complete, move to "Recently Completed" and create a development log entry
-- Notes belong in the spec/documentation for each epic, NOT in status.md
+### Update Specboard:
+- Note the outcome on the item, link the branch and PR, and set its status
+- File follow-ups and bugs found along the way as their own items
+- Blockers go on the item as blockers, with a reason
+- When an epic is complete, create a development log entry
+- Notes that outlive the work belong in the epic's spec, not in the item's activity log
 
 ### Create development log entry (for significant work):
 Create a new file in `/docs/development-log/entries/` with format `YYYY-MM-DD-topic-slug.md`:
@@ -387,7 +357,7 @@ Create a new file in `/docs/development-log/entries/` with format `YYYY-MM-DD-to
 
 See `/docs/development-log/README.md` for the full template.
 
-**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development log entries, NOT status.md. The development log is the detailed historical record; status.md is only the current snapshot of project state.
+**IMPORTANT**: Detailed implementation decisions, technical rationale, and design choices go in development log entries, not Specboard items. The development log is the detailed historical record; Specboard is the current state of the work.
 
 
 ### Workflow: After Writing Code
@@ -400,6 +370,7 @@ See `/docs/development-log/README.md` for the full template.
 
 Worktrees are disposable scratch space, not permanent fixtures. Remove a worktree when the session that created it ends; its branch and commits stay in the repo after removal, so nothing is lost. This goes double for sub-agent worktrees (`isolation: "worktree"`): they are per-agent and should be removed as soon as the agent finishes, never left to accumulate under `.claude/worktrees/`.
 
+- The one permanent worktree is `.claude/worktrees/perf-nightly`, where the nightly perf batch builds and runs. Never remove it, and don't work in it.
 - Clean up with `git worktree remove <path>`, then `git worktree prune`. It refuses a worktree with uncommitted changes unless you pass `--force`; leave those in place and surface them rather than discarding unsaved work.
 - Removing a worktree keeps its branch. If there's uncommitted work worth saving, commit it to the branch before removing.
 
@@ -427,7 +398,7 @@ When a plan file is confirmed complete (has `# COMPLETE` on first line), archive
 
 1. **Move the file** from `.claude/plans/` (or `~/.claude/plans/` for global plans) to `/docs/development-log/plans/`
 2. **Rename with date prefix**: `YYYY-MM-DD-{original-name}.md`
-   - Example: `uber-shader.md` → `2025-12-18-uber-shader.md`
+   - Example: `clipping-system.md` → `2025-12-18-clipping-system.md`
 3. **Create the plans directory** if it doesn't exist: `/docs/development-log/plans/`
 
 This keeps completed plans discoverable alongside the development log while cleaning up the active plans folder.

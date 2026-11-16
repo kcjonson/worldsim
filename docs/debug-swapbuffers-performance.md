@@ -156,7 +156,7 @@ Temporary fix (applied): Increase kTileStride from 4 to 8
 - `apps/developer-client/src/App.tsx:365` - Pass swapBuffersMs to FrameBudgetBar
 
 ### Temporary Changes (need reverting after baked mesh implementation)
-- `libs/engine/assets/placement/PlacementExecutor.cpp:143` - kTileStride 4→8 (temporary)
+- `libs/assets/assets/placement/PlacementExecutor.cpp:143` - kTileStride 4→8 (temporary)
 - `libs/engine/application/AppLauncher.cpp:96` - VSync disabled: `glfwSwapInterval(0)`
 
 ---
@@ -242,11 +242,11 @@ The following are OFF THE TABLE - visual quality must be preserved:
 ## Code Changes Made This Session
 
 ### New/Modified Files
-- `libs/engine/world/rendering/EntityRenderer.h` - Added BakedChunkData struct and methods
-- `libs/engine/world/rendering/EntityRenderer.cpp` - Implemented baked mesh rendering
+- `libs/world-view/world/rendering/EntityRenderer.h` - Added BakedChunkData struct and methods
+- `libs/world-view/world/rendering/EntityRenderer.cpp` - Implemented baked mesh rendering
 - `libs/renderer/shaders/uber.vert` - Added u_instanced==2 (baked world-space) path
 - `libs/renderer/shaders/includes/instancing.glsl` - Added worldToScreen() function
-- `libs/engine/assets/placement/PlacementExecutor.cpp` - Restored kTileStride=4
+- `libs/assets/assets/placement/PlacementExecutor.cpp` - Restored kTileStride=4
 
 ### Changes from Previous Session Still Present
 - `libs/renderer/shaders/includes/tile.glsl` - FBM → simple noise

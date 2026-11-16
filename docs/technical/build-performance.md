@@ -35,7 +35,8 @@ Local before/after timings: see Results below.
    "build only what changed" true at the object level, including in fresh worktrees.
 3. **Path-gated heavy tests.** Worldgen changes at a different cadence than game code, so the
    heavy worldgen bucket runs only when worldgen inputs changed (`libs/world/**`,
-   `libs/foundation/**`, `vcpkg.json`, root `CMakeLists.txt`), plus a nightly backstop run.
+   `vcpkg.json`, root `CMakeLists.txt`, which also pins the salal tag that supplies
+   foundation), plus a nightly backstop run.
 4. **Parallel and sharded ctest.** `ctest -j` across the per-lib test exes; the heavy bucket
    split into 4 gtest shards (`GTEST_TOTAL_SHARDS`/`GTEST_SHARD_INDEX`) so one slow exe stops
    serializing the run.
@@ -55,24 +56,29 @@ Local before/after timings: see Results below.
 - **Heavy bucket sharded, not suite-split:** 4 ctest entries per platform running gtest shards.
   Shards balance automatically by test index; a per-suite list would be dominated by
   PlateSimHeavy + TerrainStageHeavy and need maintenance. Shard count is one number in
-  `libs/world/CMakeLists.txt`. Note the speedup is sublinear: pipeline-based heavy tests
+  `libs/worldgen/CMakeLists.txt`. Note the speedup is sublinear: pipeline-based heavy tests
   already use an internal thread pool.
 - **Heavy tests moved to `.github/workflows/tests-heavy.yml`**, triggered by worldgen paths,
-  nightly schedule, and manual dispatch. The job builds only the `world-tests` target. The
+  nightly schedule, and manual dispatch. The job builds only the `worldgen-tests` target. The
   nightly run on main is the safety net for regressions that slip past the path filter
   (toolchain drift, indirect breakage of the golden-hash tests).
 - **build.yml artifact upload deleted.** It uploaded the entire multi-GB build tree with 1-day
   retention and had zero consumers.
-- **vcpkg setup left exactly as is.** `lukka/run-vcpkg@v11` with the pinned vcpkg commit is
-  what makes configure extraction-shaped instead of a 20+ minute source build. The pinned
-  commit predates vcpkg's removal of the `x-gha` binary-cache backend; refreshing the pin
-  will silently break binary caching. When a `vcpkg.json` baseline bump forces a newer vcpkg,
-  switch binary caching to `VCPKG_DEFAULT_BINARY_CACHE` + `actions/cache` in the same PR.
+- **vcpkg binary cache in the Actions cache (WOR-601).** `lukka/run-vcpkg@v11` points vcpkg
+  at the `x-gha` backend, which vcpkg has removed (both tool pins log it). So every job built
+  all 25 ports from source and fetched their sources on every run, which took 2.1 min on Linux
+  and 4.5 min on Windows. A timeout at lua.org or any other source host failed Configure.
+  `.github/actions/setup-vcpkg` puts a `files` binary cache and `VCPKG_DOWNLOADS` under
+  `$RUNNER_TEMP/vcpkg-cache`, then restores the newest entry for the job, or failing that,
+  for any job on the OS. Its key never matches, so `save-vcpkg-cache` (right after configure)
+  writes a new entry only when vcpkg built or downloaded something, pruned to the ABIs the job
+  installed. A fixed key would stop saving once a runner compiler bump changed every ABI.
+  Downloads aren't pruned, so a full rebuild after a compiler bump needs no network.
 - **tests.yml and build.yml also run on push to main.** Actions caches are branch-scoped: a
   PR run can only restore caches created on the same PR or on main. Without a main run, every
   new PR would start cold; the post-merge run is what seeds the warm start. (Public repo,
   minutes are free.)
-- **Pool-spawning test exes declare `PROCESSORS`.** world-tests and planet-view-tests run
+- **Pool-spawning test exes declare `PROCESSORS`.** worldgen-tests and planet-view-tests run
   PlanetGenerator pipelines whose internal pool is `hardware_concurrency - 1`; under
   `ctest -j4` on a 4-core runner they starved each other (planet-view's generate() blew its
   deadline and baked the gray sheet its own tests guard against). `PROCESSORS 3` keeps ctest
@@ -90,8 +96,10 @@ Local before/after timings: see Results below.
 
 ### Local (Windows and macOS)
 
-- **Presets:** `windows` = Ninja Multi-Config, MSVC (`cl` pinned), ccache launcher, embedded
-  debug info for Debug/RelWithDebInfo. `default` (macOS/Linux) = Ninja, ccache launcher.
+- **Presets:** `windows` = Ninja Multi-Config, MSVC (`CC`/`CXX=cl` in the preset's environment,
+  which CMake reads only on a fresh build dir, so reconfiguring keeps the cache), ccache
+  launcher, embedded debug info for Debug/RelWithDebInfo. `default` (macOS/Linux) = Ninja,
+  ccache launcher.
   Previously the default preset had no generator at all, so macOS used serial Makefiles.
   `binaryDir` stays `build/`; all documented commands and per-config output paths are
   unchanged.
@@ -138,12 +146,14 @@ Local before/after timings: see Results below.
 - **Removed hardcoded `/Zi`** from the 8 `<lib>-tests` targets (`/Od /Zi` → `/Od`). An
   explicit `/Zi` overrides the embedded format and silently disables ccache for every test TU.
   Don't reintroduce it.
-- **foundation links httplib and OpenGL PRIVATE** (were PUBLIC, propagating their include dirs
-  to every TU in the repo; `DebugServer.h` forward-declares, only the .cpp includes httplib).
-  glm stays PUBLIC deliberately: public headers expose glm types.
+- **Nothing in worldsim links httplib; foundation links nothing but glm.** httplib was PUBLIC on
+  foundation once, propagating its include dir to every TU in the repo; it went PRIVATE
+  (`DebugServer.h` forward-declares, only the .cpp includes httplib), then moved to engine
+  with the dev server, and left with it for salal's `app`, which links it privately and only
+  where the server is compiled in. glm stays PUBLIC deliberately: public headers expose glm types.
 - **Local test invocation:** `ctest --test-dir build -C Debug -LE heavy -E benchmarks -j 13
   --output-on-failure` (omit `-C Debug` on single-config macOS/Linux). Don't use `-L fast`:
-  only world-tests carries labels, so it would silently run one exe.
+  only worldgen-tests carries labels, so it would silently run one exe.
 
 ## Considered and rejected
 
@@ -163,7 +173,7 @@ Local before/after timings: see Results below.
 | Precompiled headers (`cmake/pch.cmake`, per-target PRIVATE std+glm+GL sets) | After measuring MSVC PCH x ccache and PCH x sccache interactions on a branch; CI escape hatch is `-DCMAKE_DISABLE_PRECOMPILE_HEADERS=ON` |
 | lld-link / mold | Debug link of world-sim exceeds ~15 s post-Ninja (`CMAKE_LINKER_TYPE LLD`, CMake ≥3.29) |
 | Changed-paths test selection script | Full fast suite exceeds ~5 min wall locally |
-| vcpkg pin refresh + files-based binary cache | A vcpkg.json baseline bump forces it (do both together) |
+| vcpkg pin refresh (Linux jobs) | A vcpkg.json baseline bump forces it |
 | npm stamp for developer-client on macOS Debug | macOS iteration is annoyed by npm install on every build |
 
 ## Results
@@ -188,8 +198,9 @@ made them uncacheable in the measurement); it improves further once the /Zi remo
 presets PR are both in.
 
 Warm-gate breakdown: the fast-test phase (~5 min) is now the biggest CI chunk — engine-tests
-plus the PROCESSORS-serialized world-tests/planet-view-tests dominate it. If it grows,
-sharding engine-tests the same way the heavy bucket is sharded is the next lever
+(since split into sim-tests, world-tests, assets-tests and world-view-tests, which ctest runs
+side by side) plus the PROCESSORS-serialized worldgen-tests/planet-view-tests dominate it. If it
+grows, sharding the largest test exe the same way the heavy bucket is sharded is the next lever
 (measurement-week item).
 
 ## Related

@@ -1,13 +1,14 @@
 #pragma once
 
 // NavOverlay - scene-owned world-space overlay that makes the navmesh and live
-// agent routes visible for debugging. The NavigationSystem owns the cached mesh
+// agent routes visible for debugging. The NavigationSystem owns the nav mesh
 // and the per-entity NavPath components hold each colonist's current route;
 // neither draws anything on its own. When toggled on (N), this draws the mesh
 // triangle edges and each valid NavPath's waypoint polyline.
 //
-// Mirrors RoomOverlay: a plain class holding ecs::World*, the WorldCamera*, and
-// the source system, calling Renderer::Primitives directly and projecting
+// Mirrors RoomOverlay: a plain class holding the WorldCamera* and the source
+// system (plus the ecs::World* it reads NavPath from), calling
+// Renderer::Primitives directly and projecting
 // world->screen via camera->worldToScreen at kPixelsPerMeter. Off by default;
 // GameScene flips it with a hotkey.
 //
@@ -27,7 +28,7 @@ namespace world_sim {
 	  public:
 		struct Args {
 			ecs::World*					world;
-			engine::world::WorldCamera* camera;
+			world::WorldCamera*			camera;
 			ecs::NavigationSystem*		navigation;
 		};
 
@@ -43,7 +44,7 @@ namespace world_sim {
 
 	  private:
 		ecs::World*					ecsWorld = nullptr;
-		engine::world::WorldCamera* camera = nullptr;
+		world::WorldCamera*			camera = nullptr;
 		ecs::NavigationSystem*		navigation = nullptr;
 
 		bool active = false;

@@ -31,9 +31,9 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 [[nodiscard]] std::optional<PanelContent> adaptSelection(
 	const Selection&							   selection,
 	const ecs::World&							   world,
-	const engine::assets::AssetRegistry&		   registry,
+	const assets::AssetRegistry&		   registry,
 	const ResourceQueryCallback&				   queryResources = {},
-	const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+	const construction::ConstructionWorld* constructionWorld = nullptr,
 	const std::function<void()>&				   onDemolish = {},
 	const std::function<void()>&				   onDemolishWallSegment = {},
 	const std::function<void()>&				   onDemolishOpening = {}
@@ -48,7 +48,7 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// Convert world entity data into panel content
 /// @param queryResources Optional callback to query remaining resource count
 [[nodiscard]] PanelContent adaptWorldEntity(
-	const engine::assets::AssetRegistry& registry,
+	const assets::AssetRegistry& registry,
 	const WorldEntitySelection& selection,
 	const ResourceQueryCallback& queryResources = {}
 );
@@ -60,32 +60,48 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// @param onMoveFurniture Callback for moving (re-packaging + relocating) placed furniture
 /// @param onConfigure Callback for opening storage configuration dialog
 [[nodiscard]] PanelContent adaptFurniture(
-	const engine::assets::AssetRegistry& registry,
+	const assets::AssetRegistry& registry,
 	const FurnitureSelection& selection,
 	const std::function<void()>& onPlace = {},
 	const std::function<void()>& onMoveFurniture = {},
 	const std::function<void()>& onConfigure = {}
 );
 
+/// Convert a loose ground pile into panel content: the item's label, its live quantity,
+/// and total mass when the item has itemProperties. Read live from the entity's
+/// ResourceStack so the panel tracks a colonist hauling from it.
+[[nodiscard]] PanelContent adaptResourcePile(
+	const ecs::World& world,
+	const assets::AssetRegistry& registry,
+	const ResourcePileSelection& selection
+);
+
+/// Foundation panel action callbacks, each nullable.
+struct FoundationActions {
+	std::function<void()> onDemolish;		  ///< Plain Demolish
+	std::function<void()> onDemolishBuilding; ///< Cascade Demolish building
+	std::function<void()> onAdd;			  ///< Activate the Add tool
+	std::function<void()> onSubtract;		  ///< Activate the Subtract tool
+};
+
 /// Convert a selected construction foundation into panel content.
 /// Pulls material/area/state from the ConstructionWorld and build progress from
-/// the ECS StructureBlueprint on the foundation's mirror entity. The demolish
-/// button is conditional: a built foundation that still hosts walls offers
-/// "Demolish building" (the cascade) since the plain foundation removal would
-/// orphan those walls; a clear (or blueprint) foundation offers "Demolish".
-/// (ActionButtonSlot has no disabled flag, so this swaps the button rather than
-/// disabling it.)
+/// the ECS StructureBlueprint on the foundation's mirror entity. Buttons are
+/// conditional (ActionButtonSlot has no disabled flag, so a button that doesn't
+/// apply is left out or swapped): Add while the foundation is an editable
+/// blueprint or Built with no pending extension and no demolish order, Subtract only on an editable
+/// blueprint, and "Demolish building" (the cascade) in place of "Demolish" while
+/// walls stand on it or its pending extension. An extension blueprint names the
+/// foundation it merges into.
 /// @param world ECS world (for the blueprint component).
 /// @param constructionWorld Topology store (geometry, material, state, hosted walls).
 /// @param selection The selected foundation.
-/// @param onDemolish Callback for the plain Demolish button (nullable).
-/// @param onDemolishBuilding Callback for the cascade Demolish-building button (nullable).
+/// @param actions Button callbacks (null callbacks drop their button).
 [[nodiscard]] PanelContent adaptFoundation(
 	const ecs::World&							   world,
-	const engine::construction::ConstructionWorld& constructionWorld,
+	const construction::ConstructionWorld& constructionWorld,
 	const FoundationSelection&					   selection,
-	const std::function<void()>&				   onDemolish = {},
-	const std::function<void()>&				   onDemolishBuilding = {}
+	const FoundationActions&					   actions
 );
 
 /// Convert a selected wall segment into panel content.
@@ -100,7 +116,7 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// @param onDemolish Callback for the Demolish button (nullable).
 [[nodiscard]] PanelContent adaptWallSegment(
 	const ecs::World& world,
-	const engine::construction::ConstructionWorld& constructionWorld,
+	const construction::ConstructionWorld& constructionWorld,
 	const WallSegmentSelection& selection,
 	const std::function<void()>& onDemolish = {}
 );
@@ -116,7 +132,7 @@ using ResourceQueryCallback = std::function<std::optional<uint32_t>(const std::s
 /// @param onDemolish Callback for the Demolish button (nullable).
 [[nodiscard]] PanelContent adaptOpening(
 	const ecs::World&							   world,
-	const engine::construction::ConstructionWorld& constructionWorld,
+	const construction::ConstructionWorld& constructionWorld,
 	const OpeningSelection&						   selection,
 	const std::function<void()>&				   onDemolish = {}
 );

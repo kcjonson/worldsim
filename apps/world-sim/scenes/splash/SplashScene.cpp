@@ -1,27 +1,23 @@
 // Splash Scene - Salvage boot screen. Shows the identity block over a boot
-// log and loading strip while assets load asynchronously, then swaps the
-// loader for an "Enter Expedition" button when the library loads cleanly, or
-// blocks with an error summary on validation errors.
+// log while assets load asynchronously and the ground tiles bake, then enables
+// the "Enter Expedition" button when the library loads cleanly, or blocks with
+// an error summary on validation or bake errors.
 
+#include "GameBootstrap.h"
 #include "SceneTypes.h"
+#include "scenes/shared/SalalUi.h"
 #include "scenes/shared/Starfield.h"
-#include "scenes/shared/UiStateDrain.h"
-#include "scenes/shared/Widgets.h"
+#include <application/App.h>
 #include <assets/AssetRegistry.h>
-#include <components/button/Button.h>
-#include <graphics/PrimitiveStyles.h>
-#include <layout/LayoutContainer.h>
 #include <primitives/Primitives.h>
-#include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include <theme/Tokens.h>
-#include <theme/Variants.h>
+#include <theme/Theme.h>
+#include <ui/components/Button.h>
+#include <ui/shapes/Text.h>
 #include <utils/Log.h>
+#include <world/rendering/GroundTileBank.h>
 
-#include <GL/glew.h>
 #include <algorithm>
 #include <array>
-#include <memory>
 #include <string>
 #include <vector>
 
@@ -38,90 +34,29 @@ namespace {
 		"Crew vitals nominal",
 	};
 
-	float textScale(float px) { return px / 16.0F; }
+	namespace tokens = world_sim::tokens;
+	namespace family = ui::tokens::font::family;
 
-	// One "[ OK ] <text>" boot log line: green stamp, faint body, mono.
-	class BootLine : public world_sim::Widget {
+	class SplashScene : public app::Scene {
 	  public:
-		explicit BootLine(const char* text) : text(text) {
-			widthMode = UI::SizeMode::Hug;
-			size.y = 17.0F;
-		}
-
-		[[nodiscard]] float getWidth() const override {
-			if (size.x > 0.0F) {
-				return size.x;
-			}
-			auto* fontRenderer = Renderer::Primitives::getFontRenderer();
-			const float bodyW =
-				fontRenderer != nullptr ? fontRenderer->MeasureText(text, textScale(UI::fs_xs), UI::fontMono).x : 200.0F;
-			return kBodyX + bodyW;
-		}
-
-		void render() override {
-			using Renderer::Primitives::drawText;
-			drawText({.text = "[ OK ]",
-					  .position = position,
-					  .scale = textScale(UI::fs_xs),
-					  .color = UI::status_ok,
-					  .font = UI::fontMono,
-					  .vAlign = Foundation::VerticalAlign::Top});
-			drawText({.text = text,
-					  .position = {position.x + kBodyX, position.y},
-					  .scale = textScale(UI::fs_xs),
-					  .color = UI::text_faint,
-					  .font = UI::fontMono,
-					  .vAlign = Foundation::VerticalAlign::Top});
-		}
-
-		const char* debugTypeName() const override { return "BootLine"; }
-
-	  private:
-		static constexpr float kBodyX = 52.0F;
-		std::string			   text;
-	};
-
-	class SplashScene : public engine::IScene {
-	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "SplashScene - Entering");
+			theme::apply(ui());
 			m_timer = 0.0F;
 			m_lastShownCount = -1;
 			m_failed = false;
 			m_done = false;
 			m_shownBootLines = 0;
-			m_errorLines.clear();
 			m_progress = 0.0F;
-
-			m_bootLog = std::make_unique<UI::LayoutContainer>(UI::LayoutContainer::Args{
-				.direction = UI::Direction::Vertical,
-				.gap = 3.0F,
-				.id = "splash_bootlog"});
-
-			buildIdentity();
-
-			// Always shown; disabled until the asset library loads cleanly. The
-			// boot-log lines are the only progress indicator (no pill bar).
-			m_enterButton = std::make_unique<UI::Button>(UI::Button::Args{
-				.label = "Enter Expedition",
-				.size = {230.0F, 46.0F},
-				.type = UI::Button::Type::Primary,
-				.disabled = true,
-				.onClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
-				.id = "btn_enter_expedition",
-				.iconGlyph = "play"});
+			build();
 		}
 
-		bool handleInput(UI::InputEvent& event) override {
-			// Button::handleEvent no-ops while disabled, so no guard needed.
-			return m_enterButton && m_enterButton->handleEvent(event);
-		}
-
-		void update(float dt) override {
-			auto&		registry = engine::assets::AssetRegistry::Get();
+		void update(const app::FrameContext& frame) override {
+			const auto	dt = static_cast<float>(frame.dt);
+			auto&		registry = assets::AssetRegistry::Get();
 			const auto& progress = registry.loadProgress();
 			m_timer += dt;
-			if (m_enterButton) m_enterButton->update(dt);
 
 			if (m_done || m_failed) {
 				return;
@@ -132,7 +67,7 @@ namespace {
 				// log on a short timer, then enable the button.
 				m_progress = std::min(1.0F, m_timer / kMinSplashSeconds);
 				revealBootLines();
-				if (m_timer > kMinSplashSeconds) {
+				if (m_timer > kMinSplashSeconds && bakeGround()) {
 					finishLoad();
 				}
 				return;
@@ -147,195 +82,238 @@ namespace {
 				return;
 			}
 
-			const engine::assets::ValidationReport& report = registry.getValidationReport();
-			if (report.hasErrors()) {
-				m_failed = true;
-				buildErrorText(report);
-				LOG_ERROR(Game, "Asset validation failed: %d error(s); blocking at splash", report.errorCount());
+			if (!bakeGround()) {
 				return;
 			}
-
-			LOG_INFO(Game, "SplashScene - assets ready (%d defs, %d warnings)", m_lastShownCount, report.warningCount());
+			LOG_INFO(
+				Game, "SplashScene - assets ready (%d defs, %d warnings)", m_lastShownCount, registry.getValidationReport().warningCount()
+			);
 			finishLoad();
 		}
 
-		void render() override {
-			using namespace UI;
-			using Renderer::Primitives::drawText;
-
-			glClearColor(bg_void.r, bg_void.g, bg_void.b, 1.0F);
-			glClear(GL_COLOR_BUFFER_BIT);
-
+		void render(float /*alpha*/) override {
+			const ui::Theme& theme = ui().getTheme();
+			Renderer::Primitives::clear(theme.get(tokens::color::bgVoid));
 			const float screenW = Renderer::Primitives::PercentWidth(100.0F);
 			const float screenH = Renderer::Primitives::PercentHeight(100.0F);
-			world_sim::renderStarfield(static_cast<int>(screenW), static_cast<int>(screenH), 3U);
-			const float cx = screenW * 0.5F;
-			const float cy = screenH * 0.5F;
-
-			// Identity block: vertical layout column (diamond + title + tagline +
-			// flavor), centered on screen. Owned so the layout lint covers it.
-			if (m_identity) {
-				m_identity->setPosition(cx - m_identity->getWidth() * 0.5F, cy - m_identity->getHeight() * 0.5F);
-				m_identity->render();
-			}
-
-			// Bottom cluster: boot-log text (the only progress indicator) above an
-			// always-present Enter button that stays disabled until the load lands.
-			const float buttonTop = screenH - space_12 - m_enterButton->size.y;
-
-			// Boot log builds above the button as progress crosses each 1/6. The
-			// block is centered on screen while its lines stay left-justified.
-			if (m_bootLog) {
-				m_bootLog->setPosition(cx - m_bootLog->getWidth() * 0.5F, buttonTop - space_5 - m_bootLog->getHeight());
-				m_bootLog->render();
-			}
-
-			// Validation failure: error lines above the boot log; button stays disabled.
-			// Center the block by its widest line (lines stay left-justified), the
-			// same way the boot-log block is centered.
-			if (m_failed) {
-				float	 blockW = 0.0F;
-				if (auto* fontRenderer = Renderer::Primitives::getFontRenderer()) {
-					for (const std::string& line : m_errorLines) {
-						blockW = std::max(blockW, fontRenderer->MeasureText(line, textScale(fs_xs), fontMono).x);
-					}
-				}
-				const float errX = cx - blockW * 0.5F;
-				float		ey = buttonTop - space_5 - m_bootLog->getHeight() - space_4 -
-						   18.0F * static_cast<float>(m_errorLines.size());
-				for (const std::string& line : m_errorLines) {
-					drawText(Renderer::Primitives::TextArgs{
-						.text = line,
-						.position = {errX, ey},
-						.scale = textScale(fs_xs),
-						.color = status_crit,
-						.font = fontMono,
-						.vAlign = Foundation::VerticalAlign::Top});
-					ey += 18.0F;
-				}
-			}
-
-			m_enterButton->setPosition(cx - m_enterButton->size.x * 0.5F, buttonTop);
-			m_enterButton->render();
-
-			// Version, bottom-right.
-			drawText(Renderer::Primitives::TextArgs{
-				.text = "v0.1.0-proto",
-				.position = {0.0F, screenH - 28.0F},
-				.scale = textScale(fs_2xs),
-				.color = text_faint,
-				.font = fontMono,
-				.hAlign = Foundation::HorizontalAlign::Right,
-				.vAlign = Foundation::VerticalAlign::Top,
-				.boxWidth = screenW - 24.0F});
-
-			world_sim::serveUiStateRequests(*this);
+			world_sim::renderStarfield(theme, static_cast<int>(screenW), static_cast<int>(screenH), 3U);
 		}
 
-		void onExit() override {
-			LOG_INFO(Game, "SplashScene - Exiting");
-			m_errorLines.clear();
-			m_bootLog.reset();
-			m_enterButton.reset();
-			m_identity.reset();
+		void onExit() override { LOG_INFO(Game, "SplashScene - Exiting"); }
+
+		std::string exportState() const override {
+			return R"({"scene": "splash", "loaded": )" + std::to_string(m_lastShownCount) + R"(, "failed": )" +
+				   (m_failed ? "true" : "false") + R"(, "done": )" + (m_done ? "true" : "false") + "}";
 		}
 
-		std::string exportState() override {
-			return R"({"scene": "splash", "loaded": )" + std::to_string(m_lastShownCount) +
-				   R"(, "failed": )" + (m_failed ? "true" : "false") +
-				   R"(, "done": )" + (m_done ? "true" : "false") + "}";
-		}
-
-		const char* getName() const override { return kSceneName; }
-
-		std::vector<const UI::IComponent*> getUiRoots() const override {
-			std::vector<const UI::IComponent*> roots;
-			if (m_identity) roots.push_back(m_identity.get());
-			if (m_bootLog && m_shownBootLines > 0) roots.push_back(m_bootLog.get());
-			if (m_enterButton) roots.push_back(m_enterButton.get());
-			return roots;
-		}
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		static constexpr float kMinSplashSeconds = 1.0F;
 
-		void buildIdentity() {
-			using namespace UI;
-			m_identity = std::make_unique<LayoutContainer>(LayoutContainer::Args{
-				.direction = Direction::Vertical,
-				.gap = space_2,
-				.crossAlign = CrossAlign::Center,
-				.id = "splash_identity"});
+		ui::Style mono(ui::DimensionToken size, ui::ColorToken color) {
+			return world_sim::text(ui().getTheme(), {.family = family::mono, .size = size, .color = color});
+		}
 
-			m_identity->addChild(world_sim::Diamond(18.0F, 36.0F + space_5, "splash_diamond"));
-			m_identity->addChild(world_sim::Label({.text = "WORLD-SIM",
-												   .fontSize = fs_5xl,
-												   .color = text_bright,
-												   .font = fontDisplay,
-												   .letterSpacingEm = ls_widest,
-												   .hAlign = Foundation::HorizontalAlign::Center,
-												   .id = "splash_title"}));
-			m_identity->addChild(world_sim::Label({.text = "PROSPECTING EXPEDITION 28-B",
-												   .fontSize = fs_sm,
-												   .color = accent,
-												   .font = fontMono,
-												   .letterSpacingEm = ls_wider,
-												   .hAlign = Foundation::HorizontalAlign::Center,
-												   .id = "splash_tagline"}));
-			m_identity->addChild(world_sim::Label({.text = "Everything you'll need is already here. It's just not yours yet.",
-												   .fontSize = fs_md,
-												   .color = text_dim,
-												   .font = fontUi,
-												   .hAlign = Foundation::HorizontalAlign::Center,
-												   .id = "splash_flavor",
-												   .margin = space_2}));
+		// The identity block centred in the viewport; the error lines, the boot log and the button in a
+		// column centred at the foot; the version at the bottom right. The centre and the version take no
+		// pointer, so the foot's button sits over the full-screen centre on purpose.
+		void build() {
+			const ui::Theme&	   theme = ui().getTheme();
+			ui::Ref<ui::Component> top = root();
+			const float			   space2 = theme.get(tokens::spacing::space2);
+
+			ui::Ref<ui::Component> centre = top.addChild<ui::Component>({
+				.id = "splash_centre",
+				.size = {ui::percent(100.0F), ui::percent(100.0F)},
+				.layout =
+					{.display = ui::Display::Flex, .alignItems = ui::AlignItems::Center, .justifyContent = ui::JustifyContent::Center},
+				.pointerEvents = ui::PointerEvents::None,
+			});
+			ui::Ref<ui::Component> identity = centre.addChild<ui::Component>({
+				.id = "splash_identity",
+				.layout = {
+					.display = ui::Display::Flex,
+					.flexDirection = ui::FlexDirection::Column,
+					.gap = space2,
+					.alignItems = ui::AlignItems::Center
+				},
+			});
+			identity.addChild<world_sim::Diamond>(
+				{.id = "splash_diamond", .margin = {0.0F, 0.0F, theme.get(tokens::spacing::space5), 0.0F}, .radius = 18.0F}
+			);
+			identity.addChild<ui::Text>({
+				.id = "splash_title",
+				.style = world_sim::text(
+					theme,
+					{.family = family::display,
+					 .size = tokens::fontSize::fs5xl,
+					 .color = tokens::color::textBright,
+					 .tracking = tokens::letterSpacing::lsWidest}
+				),
+				.text = "WORLD-SIM",
+			});
+			identity.addChild<ui::Text>({
+				.id = "splash_tagline",
+				.style = world_sim::text(
+					theme,
+					{.family = family::mono,
+					 .size = tokens::fontSize::fsSm,
+					 .color = tokens::color::accent,
+					 .tracking = tokens::letterSpacing::lsWider}
+				),
+				.text = "PROSPECTING EXPEDITION 28-B",
+			});
+			identity.addChild<ui::Text>({
+				.id = "splash_flavor",
+				.margin = space2,
+				.style = world_sim::text(theme, {.size = tokens::fontSize::fsMd, .color = tokens::color::textDim}),
+				.text = "Everything you'll need is already here. It's just not yours yet.",
+			});
+
+			ui::Ref<ui::Component> foot = top.addChild<ui::Component>({
+				.id = "splash_foot",
+				.size = {ui::percent(100.0F), ui::kAuto},
+				.layout = {
+					.display = ui::Display::Flex,
+					.flexDirection = ui::FlexDirection::Column,
+					.gap = theme.get(tokens::spacing::space5),
+					.alignItems = ui::AlignItems::Center,
+					.position = ui::Position::Absolute,
+					.inset = {.bottom = theme.get(tokens::spacing::space12)}
+				},
+			});
+			m_errors = foot.addChild<ui::Component>({
+				.id = "splash_errors",
+				.visible = false,
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 4.0F},
+			});
+			m_bootLog = foot.addChild<ui::Component>({
+				.id = "splash_bootlog",
+				.layout = {.display = ui::Display::Flex, .flexDirection = ui::FlexDirection::Column, .gap = 3.0F},
+			});
+			// Always shown; disabled until the asset library loads cleanly. The boot log is the only
+			// progress indicator.
+			m_enterButton = foot.addChild<ui::Button>({
+				.id = "btn_enter_expedition",
+				.enabled = false,
+				.size = {230.0F, 46.0F},
+				.label = "Enter Expedition",
+				.icon = "play",
+				.variant = ui::ButtonVariant::Primary,
+				.controlSize = ui::ControlSize::Lg,
+				.onPress = [this] { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
+			});
+
+			top.addChild<ui::Text>({
+				.id = "splash_version",
+				.layout = {.position = ui::Position::Absolute, .inset = {.right = 24.0F, .bottom = 16.0F}},
+				.style = mono(tokens::fontSize::fs2xs, tokens::color::textFaint),
+				.pointerEvents = ui::PointerEvents::None,
+				.text = "v0.1.0-proto",
+			});
+		}
+
+		// One "[ OK ] <text>" line: a green stamp, then the faint body, in mono.
+		void addBootLine(const char* line) {
+			ui::Ref<ui::Component> row = m_bootLog.addChild<ui::Component>({.layout = {.display = ui::Display::Flex}});
+			row.addChild<ui::Text>(
+				{.size = {52.0F, ui::kAuto}, .style = mono(tokens::fontSize::fsXs, tokens::color::statusOk), .text = "[ OK ]"}
+			);
+			row.addChild<ui::Text>({.style = mono(tokens::fontSize::fsXs, tokens::color::textFaint), .text = line});
 		}
 
 		void revealBootLines() {
-			const int target = std::min(static_cast<int>(kBootLines.size()),
-										static_cast<int>(m_progress * static_cast<float>(kBootLines.size())) + 1);
+			const int target =
+				std::min(static_cast<int>(kBootLines.size()), static_cast<int>(m_progress * static_cast<float>(kBootLines.size())) + 1);
 			while (m_shownBootLines < target) {
-				m_bootLog->addChild(BootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]));
+				addBootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]);
 				++m_shownBootLines;
 			}
+		}
+
+		// The ground tiles, a variant a frame so the splash keeps drawing between them; true once every one
+		// is in. A validation error or a failed bake blocks here.
+		bool bakeGround() {
+			if (groundStamp.get() == nullptr) {
+				while (m_shownBootLines < static_cast<int>(kBootLines.size())) {
+					addBootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]);
+					++m_shownBootLines;
+				}
+				addGroundLine();
+			}
+			const world_sim::GroundBakeStep step = world_sim::stepGroundBake();
+			if (!step.done) {
+				const worldview::GroundTileBank& bank = world_sim::groundTiles();
+				if (ui::Text* text = groundText.get()) {
+					text->setText(
+						"Baking ground tiles " + std::to_string(bank.bakedVariants()) + "/" + std::to_string(bank.totalVariants())
+					);
+				}
+				return false;
+			}
+			if (!step.errors.empty()) {
+				m_failed = true;
+				showErrorLines(step.errors);
+				LOG_ERROR(Game, "Asset validation or the ground bake failed: %zu error(s); blocking at splash", step.errors.size());
+				return false;
+			}
+			if (ui::Text* stamp = groundStamp.get()) {
+				stamp->setText("[ OK ]");
+			}
+			if (ui::Text* text = groundText.get()) {
+				text->setText("Ground tiles baked");
+			}
+			return true;
+		}
+
+		// The boot log's last line, which the ground bake updates.
+		void addGroundLine() {
+			ui::Ref<ui::Component> row = m_bootLog.addChild<ui::Component>({.layout = {.display = ui::Display::Flex}});
+			groundStamp = row.addChild<ui::Text>(
+				{.size = {52.0F, ui::kAuto}, .style = mono(tokens::fontSize::fsXs, tokens::color::statusOk), .text = "[ .. ]"}
+			);
+			groundText =
+				row.addChild<ui::Text>({.style = mono(tokens::fontSize::fsXs, tokens::color::textFaint), .text = "Baking ground tiles"});
 		}
 
 		void finishLoad() {
 			m_progress = 1.0F;
 			while (m_shownBootLines < static_cast<int>(kBootLines.size())) {
-				m_bootLog->addChild(BootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]));
+				addBootLine(kBootLines[static_cast<size_t>(m_shownBootLines)]);
 				++m_shownBootLines;
 			}
 			m_done = true;
-			m_enterButton->setDisabled(false);
-		}
-
-		void buildErrorText(const engine::assets::ValidationReport& report) {
-			m_errorLines.clear();
-			constexpr int kMaxLines = 8;
-			int			  shown = 0;
-			for (const auto& issue : report.issues) {
-				if (issue.severity != engine::assets::Severity::Error) {
-					continue;
-				}
-				if (shown >= kMaxLines) {
-					break;
-				}
-				m_errorLines.push_back((issue.defName.empty() ? std::string("-") : issue.defName) + ": " + issue.message);
-				++shown;
+			if (ui::Button* button = m_enterButton.get()) {
+				button->setEnabled(true);
 			}
 		}
 
-		float								 m_timer = 0.0F;
-		int									 m_lastShownCount = -1;
-		bool								 m_failed = false;
-		bool								 m_done = false;
-		int									 m_shownBootLines = 0;
-		float								 m_progress = 0.0F;
-		std::vector<std::string>			 m_errorLines;
-		std::unique_ptr<UI::LayoutContainer> m_bootLog;
-		std::unique_ptr<UI::LayoutContainer> m_identity;
-		std::unique_ptr<UI::Button>			 m_enterButton;
+		// Up to eight error lines over the boot log; the button stays disabled.
+		void showErrorLines(const std::vector<std::string>& lines) {
+			ui::Component* errors = m_errors.get();
+			if (errors == nullptr) {
+				return;
+			}
+			constexpr size_t kMaxLines = 8;
+			for (size_t i = 0; i < std::min(lines.size(), kMaxLines); ++i) {
+				m_errors.addChild<ui::Text>({.style = mono(tokens::fontSize::fsXs, tokens::color::statusCrit), .text = lines[i]});
+			}
+			errors->setVisible(true);
+		}
+
+		app::App*			   owner = nullptr;
+		float				   m_timer = 0.0F;
+		int					   m_lastShownCount = -1;
+		bool				   m_failed = false;
+		bool				   m_done = false;
+		int					   m_shownBootLines = 0;
+		float				   m_progress = 0.0F;
+		ui::Ref<ui::Component> m_bootLog;
+		ui::Ref<ui::Component> m_errors;
+		ui::Ref<ui::Text>	   groundStamp;
+		ui::Ref<ui::Text>	   groundText;
+		ui::Ref<ui::Button>	   m_enterButton;
 	};
 
 } // namespace
@@ -343,4 +321,4 @@ namespace {
 // Export scene info for registry
 namespace world_sim::scenes {
 	extern const world_sim::SceneInfo Splash = {kSceneName, []() { return std::make_unique<SplashScene>(); }};
-}
+} // namespace world_sim::scenes
