@@ -172,8 +172,9 @@ namespace construction {
 		// return the placement for an opening of `openingWidthMeters`. t is clamped to
 		// openingRange (OpeningGeometry.h), the range the validator accepts: the end
 		// margins from openingMargin config, measured from each end of the wall's
-		// band as its corners trim it. Returns valid=false if no built wall is in
-		// range, or the nearest one is too short to fit the opening. Only BUILT
+		// band as its corners trim it. A wall with no range (its wall graph cannot be
+		// resolved) or too short to fit the opening is skipped, and a farther wall may
+		// win. Returns valid=false if no built wall in range is left. Only BUILT
 		// segments are candidates (a blueprint wall has no surface to cut yet).
 		// Reads segments() in stable order; ties keep the lowest-id segment.
 		[[nodiscard]] OpeningSnap snapOpening(::Foundation::Vec2 cursor, float openingWidthMeters) const;

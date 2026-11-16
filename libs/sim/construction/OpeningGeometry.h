@@ -7,14 +7,17 @@
 // [t - halfW/L, t + halfW/L], offset by the wall's half-thickness. Integer
 // millimeters throughout (the topology's space). The placement range, where an
 // opening may sit on its wall, is here too, so the opening tool's snap, the
-// validator, and the dev verb share one rule.
+// validator, and the dev verb share one rule, and so is the span each opening leaves
+// open along its wall (openingGaps), which the wall render, nav, and sight all cut at.
 
 #include "construction/ConstructionWorld.h"
 
+#include <offset/WallOffset.h>
 #include <polygon/Polygon.h>
 
 #include <cstdint>
 #include <optional>
+#include <vector>
 
 namespace construction {
 
@@ -37,9 +40,17 @@ namespace construction {
 	};
 
 	/// The range for an opening `widthMeters` wide on `segment`, the band trims coming
-	/// from geometry::resolveJunction at each of the segment's two vertices over every
-	/// wall meeting there (blueprint or built, as the walls are drawn). Empty when the
-	/// segment or one of its vertices is missing, or the segment has zero length.
+	/// from geometry::resolveWallBands over the segment's connected wall graph twice: as it
+	/// is drawn, blueprint and built walls alike (a near-straight join the offsetter redraws
+	/// as a step trims far less than its miter would), and as nav sees it, the built walls
+	/// alone, each end taking the larger trim. Whether a step is taken depends on the whole
+	/// graph, so a blueprint can shrink a built wall's drawn trim below nav's. An unbuilt
+	/// segment counts as built in nav's graph, the graph nav will cut its doors from once
+	/// it is. When every other wall in the graph is built the two are one graph, resolved
+	/// once. A segment with no thickness preset has no band and no trims. Empty when the
+	/// segment or one of its vertices is missing, it has zero length, or the offsetter
+	/// rejects either graph: the renderer draws a rejected graph as bare centerlines and
+	/// nav keeps every band in it whole, so a door there would not open.
 	[[nodiscard]] std::optional<OpeningRange>
 	openingRange(const ConstructionWorld& world, SegmentId segment, double widthMeters, double marginMeters);
 
@@ -48,5 +59,21 @@ namespace construction {
 	/// width along the wall. Empty when geometry is missing or degenerate (unknown
 	/// segment/type, zero-length segment, zero half-thickness).
 	[[nodiscard]] geometry::Ring openingFootprint(const ConstructionWorld& world, const Opening& opening);
+
+	/// Which of a segment's openings openingGaps reads.
+	struct OpeningGapFilter {
+		bool doorsOnly = false; // pathable openings only, else windows too
+		bool builtOnly = false; // Built openings only, else blueprints too
+	};
+
+	/// The centerline spans a segment's openings leave open, in whole mm from its v0 end,
+	/// and in step with them the opening each belongs to, in the world's opening order. An
+	/// opening at t with clear width w on a segment of length L spans t*L -/+ w/2, rounded;
+	/// geometry::wallSpans and wallPiecesAndOutline clamp and merge them.
+	struct OpeningGaps {
+		std::vector<geometry::WallGap> gaps;
+		std::vector<OpeningId>		   openings;
+	};
+	[[nodiscard]] OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter);
 
 } // namespace construction

@@ -428,7 +428,7 @@ namespace construction {
 		OpeningSnap result;
 		for (const WallSegment& s : world_->segments()) {
 			// Only finished walls can host an opening; a blueprint has no surface yet.
-			if (s.state != FoundationState::Built) {
+			if (!isBuilt(s)) {
 				continue;
 			}
 			const Vertex* v0 = world_->getVertex(s.v0);

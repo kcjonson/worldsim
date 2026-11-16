@@ -28,6 +28,9 @@ namespace world_sim {
 			return where() + "has no nav mesh to stand on";
 		}
 		if (PlacementSystem::isFurniture(def)) {
+			if (placement.insideUnbuiltSite(at)) {
+				return where() + "is inside a foundation that is not built yet";
+			}
 			if (placement.footprintBuildableNow(def, at)) {
 				return {};
 			}

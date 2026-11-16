@@ -43,51 +43,95 @@ function gpuClocks() {
 	}
 }
 
-// CPU and GPU use by everything that isn't the game, from one typeperf process for the whole
-// capture. Elsewhere than Windows, and if typeperf won't start, read() answers nulls and the
-// capture is void: nobody watched the machine.
+// typeperf's CSV header sometimes leaves out a counter its rows still carry (a counter it can't
+// open when it starts, or now and then Processor(_Total) for no reason it gives), which shifts
+// every value onto its neighbour's name: the game's GPU lands on another PID and the total CPU goes
+// missing. So a header has to name the total and the game, and every row has to be as wide as it;
+// otherwise typeperf is restarted, and after kMaxSamplerStarts the machine goes unread.
+const kMaxSamplerStarts = 5;
+
+// One typeperf line: { header: columns } or { row: sample } when it parses against `columns`,
+// { misaligned: true } when it can't be trusted, and null for anything that isn't CSV
+export function parseLoadLine(line, columns, { gamePid, cpuCount }) {
+	if (!line.startsWith('"')) return null;
+	const cells = line.slice(1, -1).split('","');
+	if (cells[0].startsWith('(PDH-CSV')) {
+		const header = cells.map((name) => {
+			if (name.includes('\\Processor(_Total)')) return 'cpuTotal';
+			if (name.includes('\\Process V2(')) return 'cpuGame';
+			const pid = /GPU Engine\(pid_(\d+)_/.exec(name);
+			if (pid) return Number(pid[1]) === gamePid ? 'gpuGame' : 'gpuForeign';
+			return null;
+		});
+		const named = (key) => header.includes(key);
+		return named('cpuTotal') && named('cpuGame') ? { header } : { misaligned: true };
+	}
+	if (!columns) return null;
+	if (cells.length !== columns.length) return { misaligned: true };
+	// A counter whose process has exited reads -1 from then on: it's no reading, not a negative one
+	const sum = { cpuTotal: 0, cpuGame: 0, gpuForeign: 0 };
+	let totalRead = false;
+	cells.forEach((cell, i) => {
+		const value = Number(cell);
+		if (!(columns[i] in sum) || !Number.isFinite(value) || value < 0) return;
+		sum[columns[i]] += value;
+		if (columns[i] === 'cpuTotal') totalRead = true;
+	});
+	if (!totalRead) return null;
+	return {
+		row: {
+			foreignCpuPct: Math.max(0, sum.cpuTotal - sum.cpuGame / cpuCount),
+			foreignGpuPct: sum.gpuForeign,
+		},
+	};
+}
+
+// CPU and GPU use by everything that isn't the game, from typeperf for the whole capture. The
+// game is matched by PID (Process V2 names its instances image:pid), so another copy of the game
+// counts as other load. Elsewhere than Windows, and if typeperf won't start or won't line up,
+// read() answers nulls and the capture is void: nobody watched the machine.
 export function startLoadSampler(gamePid, gameImage) {
 	const pending = [];
 	let columns = null;
 	let child = null;
-	if (process.platform === 'win32') {
-		child = spawn('typeperf', [
+	let starts = 0;
+	let stopped = false;
+	const context = { gamePid, cpuCount: os.cpus().length };
+
+	function start() {
+		columns = null;
+		child = null;
+		if (stopped || starts >= kMaxSamplerStarts) return;
+		starts++;
+		const own = spawn('typeperf', [
 			'\\Processor(_Total)\\% Processor Time',
-			`\\Process(${gameImage}*)\\% Processor Time`,
+			`\\Process V2(${gameImage}:${gamePid ?? '*'})\\% Processor Time`,
 			'\\GPU Engine(*engtype_3D)\\Utilization Percentage',
 			'-si', '1',
 		], { stdio: ['ignore', 'pipe', 'ignore'] });
-		child.on('error', () => { child = null; });
+		child = own;
+		own.on('error', () => { if (child === own) child = null; });
 		let buffer = '';
-		child.stdout.on('data', (chunk) => {
+		own.stdout.on('data', (chunk) => {
+			if (child !== own) return;
 			buffer += chunk.toString();
 			const lines = buffer.split(/\r?\n/);
 			buffer = lines.pop();
 			for (const line of lines) {
-				if (!line.startsWith('"')) continue;
-				const cells = line.slice(1, -1).split('","');
-				if (cells[0].startsWith('(PDH-CSV')) {
-					columns = cells.map((name) => {
-						if (name.includes('\\Processor(_Total)')) return 'cpuTotal';
-						if (name.includes('\\Process(')) return 'cpuGame';
-						const pid = /GPU Engine\(pid_(\d+)_/.exec(name);
-						if (pid) return Number(pid[1]) === gamePid ? 'gpuGame' : 'gpuForeign';
-						return null;
-					});
-				} else if (columns) {
-					const sum = { cpuTotal: 0, cpuGame: 0, gpuForeign: 0 };
-					cells.forEach((cell, i) => {
-						const value = Number(cell);
-						if (columns[i] in sum && Number.isFinite(value)) sum[columns[i]] += value;
-					});
-					pending.push({
-						foreignCpuPct: Math.max(0, sum.cpuTotal - sum.cpuGame / os.cpus().length),
-						foreignGpuPct: sum.gpuForeign,
-					});
+				const parsed = parseLoadLine(line, columns, context);
+				if (!parsed) continue;
+				if (parsed.misaligned) {
+					own.kill();
+					start();
+					return;
 				}
+				if (parsed.header) columns = parsed.header;
+				else pending.push(parsed.row);
 			}
 		});
 	}
+
+	if (process.platform === 'win32') start();
 	return {
 		// The mean since the last read
 		read() {
@@ -97,6 +141,7 @@ export function startLoadSampler(gamePid, gameImage) {
 			return { foreignCpuPct: mean('foreignCpuPct'), foreignGpuPct: mean('foreignGpuPct') };
 		},
 		stop() {
+			stopped = true;
 			if (child) child.kill();
 		},
 	};

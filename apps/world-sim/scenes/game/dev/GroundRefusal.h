@@ -27,9 +27,9 @@ namespace world_sim {
 	std::string wallChainGroundRefusal(const ecs::NavigationSystem* navigation, const std::vector<Foundation::Vec2>& pts);
 
 	/// The spawn verb's, for `def` at `at`. Furniture (PlacementSystem::isFurniture) goes where the
-	/// placement tool would set it up (footprintBuildableNow, never a ford); anything else, a tree, a
-	/// reed, or a loose item, goes on clear ground (isValidPosition), a ford included, since putting
-	/// it there builds nothing. With no nav system nothing is taken.
+	/// placement tool would set it up (footprintBuildableNow, never a ford or an unbuilt foundation);
+	/// anything else, a tree, a reed, or a loose item, goes on clear ground (isValidPosition), a ford
+	/// included, since putting it there builds nothing. With no nav system nothing is taken.
 	std::string spawnGroundRefusal(
 		const PlacementSystem& placement, const ecs::NavigationSystem* navigation, const std::string& def, Foundation::Vec2 at
 	);

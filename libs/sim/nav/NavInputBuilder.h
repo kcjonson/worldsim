@@ -80,15 +80,18 @@ namespace nav {
 
 	// --- Walls / doors -----------------------------------------------------------
 
-	// Over the BUILT wall segments: resolve band offsetting + junction trimming once
-	// (so corners tile), then append each band and junction ring to outPolys
-	// (band provenance = +segmentId, junction provenance = its smallest incident +segmentId).
-	// For each BUILT pathable opening (a door) the hosting segment's solid band is
-	// replaced by the two flanking rings around the door gap, and a DoorPortal is
-	// emitted with the gap's two jamb points and the opening's clear width. A
-	// non-pathable opening (a window) leaves its band solid and emits a DoorPortal
-	// with clearWidthMm == 0 so a later vision pass can still find it. Blueprints
-	// (state != Built) contribute nothing.
+	// Over the BUILT wall segments: resolve band offsetting + junction trimming per
+	// connected wall graph (so corners tile), then append each band in segment order and
+	// then each junction ring to outPolys (band provenance = +segmentId, junction
+	// provenance = its smallest incident +segmentId). A graph the offsetter rejects gives
+	// its segments' raw bands and no junctions, and leaves every other graph alone.
+	// For each BUILT pathable opening (a door) on an accepted graph, the hosting segment's
+	// trimmed band comes as geometry::wallSpans cuts it at its doors' gaps
+	// (construction::openingGaps): door spans tagged with their opening, solid spans with
+	// none. Each door also emits a DoorPortal with its two jamb points and the opening's
+	// clear width. A non-pathable opening (a window) leaves its band solid and emits a
+	// DoorPortal with clearWidthMm == 0 so a later vision pass can still find it.
+	// Blueprints (state != Built) contribute nothing.
 	//
 	// A junction ring carries one of the walls meeting at it as its provenance; `outJunctions`, when
 	// given, gets each junction as its ring's index in outPolys and every wall that meets there.

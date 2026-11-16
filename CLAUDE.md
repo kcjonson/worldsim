@@ -230,6 +230,7 @@ If tests fail, fix the new code—don't revert to keeping both versions.
 - Functions/Methods: camelCase (`loadTexture()`, `isValid()`)
 - Variables/Members: camelCase, no prefix (`frameCount`, `deltaTime`)
 - Constants: `k` prefix (`kMaxTextures`)
+- Every name is whole readable words. No one- or two-letter names or namespace aliases (`P::`, `td::`); loop indices and x/y/z are the exceptions
 
 **Terminology:**
 - Use "scene" not "screen" (`SplashScene`, not `SplashScreen`)

@@ -61,6 +61,8 @@ Applications:
 | [Build & Test Performance](./build-performance.md) | Ninja + ccache/sccache, path-gated heavy tests, CI caching |
 | [C++ Coding Standards](./cpp-coding-standards.md) | Style guide and best practices |
 | [Main Loop Timing](./main-loop-timing.md) | One frame top to bottom, ECS order and priorities, periodic work and its clocks, decision triggers, cross-frame hand-offs, threads, hazards |
+| [C++ to Rust Migration Scope](./rust-migration-scope.md) | Deferred indefinitely. Research: port difficulty by library, geometry spike results, tools, Rust code style |
+| [Rust Rewrite Plan](./rust-rewrite-plan.md) | Deferred indefinitely; no work scheduled without an explicit go-ahead. Plan: layered FFI-free rewrite, oracles, phases, agent loop |
 | [Technical Notes](./technical-notes.md) | Research notes, open questions |
 | [Include Graph](./include-graph.md) | Per-library #include matrix, layering violations, and the `tools/resolve-includes.mjs` resolver |
 
@@ -146,15 +148,14 @@ Applications:
 | [Interruptable Crafts](./interruptable-crafts.md) | Spec, not built: craft progress saved on the station's job, craft and build work interruptable, needs in three levels (ordinary, urgent, critical) on a nine-tier ladder, the crafter's hold on a part-done unit, cancel returns materials, sleep restoring along a curve, paused-craft status and the bench's work-in-progress look |
 | [Nav Mesh: One Mesh, Variable Resolution](./nav-mesh-variable-resolution.md) | In progress: one persistent nav mesh patched in place (add, remove, move), structural layer for reachability, detail as a query filter, mover footprints, forward snap, chunk anchors; measured builder baseline and per-step perf gates |
 | [Pathfinding Architecture](./pathfinding-architecture.md) | Four-tier navigation: planet hex graph, chunk components, CDT navmesh, physical agents; multi-region sim area, runtime-validity predicate, findValidPositionNear |
-| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing, player visibility (planned) |
-| [Player Visibility](./player-visibility.md) | Spec, not built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; hard-edged stencil cover; input rules; build steps |
+| [Vision Architecture](./vision-architecture.md) | Wall-occluded sight: visibility polygons, discovery and reconciliation (built), witnessing (planned), player visibility (built, in its own doc) |
+| [Player Visibility](./player-visibility.md) | Built: the player sees only what colonists have seen; unseen, seen, and visible areas; the seen record as an exact polygon union apart from the nav mesh; a hard-edged cover of two masked fills; nothing under the black drawn or loaded; input rules; measured costs |
 
 ### Graphics & Rendering
 
 | Document | Description |
 |----------|-------------|
-| [Renderer Architecture](./renderer-architecture.md) | OpenGL abstraction |
-| [Resource Management](./resource-management.md) | Textures, shaders, fonts |
+| [OpenGL to Vulkan](./rendering/vulkan-migration.md) | Deferred indefinitely, research only: GL usage audit (2026-09 snapshot), options, renderer contract (Vulkan 1.4 via ash), spike plan |
 | [World Depth Sorting](./rendering/world-depth-sorting.md) | 2.5D layering: world-Y painter sort of upright occluders + actors |
 | [Entity Selection Silhouette](./rendering/entity-selection-silhouette.md) | Per-asset silhouette driving thick selection outline + precise hole-free hit-testing |
 

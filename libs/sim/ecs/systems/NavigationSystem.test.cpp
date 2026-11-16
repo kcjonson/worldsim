@@ -469,6 +469,83 @@ TEST_F(NavigationSystemTest, RebuildSealsRoomWhenDoorRemoved) {
 	EXPECT_FALSE(routeBetween(sys, kOutside, kInside).has_value()) << "blueprinting the door never re-sealed the room";
 }
 
+namespace {
+	// Where a route crosses the line y = 0, by x.
+	std::vector<float> crossingsOfSouthWall(const std::vector<glm::vec2>& route) {
+		std::vector<float> crossings;
+		for (std::size_t i = 1; i < route.size(); ++i) {
+			const glm::vec2 from = route[i - 1];
+			const glm::vec2 to	 = route[i];
+			if ((from.y < 0.0F) != (to.y < 0.0F)) {
+				crossings.push_back(from.x + (to.x - from.x) * (0.0F - from.y) / (to.y - from.y));
+			}
+		}
+		return crossings;
+	}
+} // namespace
+
+// A door beside a corner: routes in pass through the door, even from beside the solid flank
+// between it and the corner, which stays wall in the mesh as the corner does.
+TEST_F(NavigationSystemTest, DoorBesideCornerRoutesThroughDoorNotFlanks) {
+	ConstructionWorld cw;
+	const SegmentId south = buildRoom(cw, /*withOpening=*/false, /*pathableOpening=*/false);
+	// The gap spans 0.35 to 1.25 m along the south wall, 0.25 m past the corner's 0.1 m trim.
+	const OpeningId op = cw.addOpening(south, 0.2F, "Door", "Wood");
+	ASSERT_NE(op, kInvalidOpening);
+	ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	for (const glm::vec2 from : {glm::vec2{0.8F, -1.0F}, glm::vec2{0.15F, -1.0F}, glm::vec2{3.0F, -1.0F}}) {
+		SCOPED_TRACE(testing::Message() << "from (" << from.x << ", " << from.y << ")");
+		const std::optional<std::vector<glm::vec2>> route = routeBetween(sys, from, {0.6F, 1.5F});
+		ASSERT_TRUE(route.has_value());
+		std::vector<glm::vec2> walked{from};
+		walked.insert(walked.end(), route->begin(), route->end());
+		const std::vector<float> crossings = crossingsOfSouthWall(walked);
+		ASSERT_EQ(crossings.size(), 1u);
+		EXPECT_GE(crossings.front(), 0.35F + kAgentRadius - 0.01F);
+		EXPECT_LE(crossings.front(), 1.25F - kAgentRadius + 0.01F);
+	}
+	for (const glm::vec2 wall :
+		 {glm::vec2{-0.05F, -0.05F}, glm::vec2{0.05F, 0.0F}, glm::vec2{0.2F, 0.0F}, glm::vec2{0.3F, 0.05F}, glm::vec2{2.5F, 0.0F}}) {
+		EXPECT_TRUE(wallAt(sys, wall)) << "(" << wall.x << ", " << wall.y << ")";
+	}
+}
+
+// A wall graph the offsetter rejects, elsewhere in the world, leaves a room's corners whole and
+// its door open.
+TEST_F(NavigationSystemTest, RejectedGraphElsewhereKeepsRoomCornersAndDoor) {
+	ConstructionWorld cw;
+	buildRoom(cw, /*withOpening=*/true, /*pathableOpening=*/true);
+	// Two sharp corners round a 50 mm wall, which the offsetter rejects.
+	const std::array<std::pair<Vec2i64, Vec2i64>, 3> rejected = {
+		std::pair<Vec2i64, Vec2i64>{{19000, 500}, {20000, 0}}, {{20000, 0}, {20050, 0}}, {{20050, 0}, {21050, 500}}};
+	for (const auto& [a, b] : rejected) {
+		const SegmentCommitResult result = cw.commitSegment(a, b, "Wood", "Heavy", kInvalidFoundation);
+		ASSERT_TRUE(result.ok());
+		for (const SegmentId id : result.createdSegments) {
+			cw.setSegmentState(id, FoundationState::Built);
+		}
+	}
+
+	World			  world;
+	NavigationSystem& sys = world.registerSystem<NavigationSystem>();
+	wireArea(world, sys);
+	sys.setConstructionWorld(&cw);
+	settle(sys);
+
+	EXPECT_TRUE(routeBetween(sys, kOutside, kInside).has_value()) << "the door opens the room";
+	// Just outside each corner's centrelines, where only the corner's junction covers the wall.
+	for (const glm::vec2 corner : {glm::vec2{-0.05F, -0.05F}, glm::vec2{4.05F, -0.05F}, glm::vec2{4.05F, 3.05F}, glm::vec2{-0.05F, 3.05F}}) {
+		EXPECT_TRUE(wallAt(sys, corner)) << "(" << corner.x << ", " << corner.y << ")";
+	}
+}
+
 // Pumping update() before anything is wired latches nothing; once wired the meshes build.
 TEST_F(NavigationSystemTest, ConstructionWorldWiredAfterUpdatesStillBuilds) {
 	ConstructionWorld cw;

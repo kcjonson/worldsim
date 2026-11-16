@@ -17,7 +17,7 @@ namespace ecs {
 		namespace cw = construction;
 
 		// Centerline lerp between integer-mm endpoints at parameter t, rounded to mm
-		// (same rounding policy as NavInputBuilder's flank lerp).
+		// (same rounding policy as construction::openingFootprint's).
 		geometry::Vec2i64 lerp(const geometry::Vec2i64& a, const geometry::Vec2i64& b, float t) {
 			const double ax = static_cast<double>(a.x);
 			const double ay = static_cast<double>(a.y);
@@ -76,8 +76,7 @@ namespace ecs {
 		};
 
 		// Pre-group built openings by host segment so the per-segment loop is
-		// O(segments + openings), not O(segments * openings). (Mirrors how
-		// NavInputBuilder groups its door cuts by segment.)
+		// O(segments + openings), not O(segments * openings).
 		std::unordered_map<cw::SegmentId, std::vector<const cw::Opening*>> openingsBySegment;
 		for (const cw::Opening& op : world.openings()) {
 			if (op.state == cw::FoundationState::Built) {
@@ -107,8 +106,11 @@ namespace ecs {
 			}
 
 			// Gather this segment's BUILT transparent-to-sight openings as gap spans.
-			// The half-extent formula matches NavInputBuilder::extractWalls exactly, so
-			// a given opening's sight gap and nav gap span the same centerline range.
+			// The half-extent formula matches construction::openingFootprint exactly, so a
+			// given opening's sight gap ends at its jambs. Nav cuts its door span at whole
+			// millimetres along the wall and clamps it to the wall's trimmed band, so it can
+			// differ from the jambs by that rounding, start at the corner trim, and run up to
+			// 6 mm past a jamb where a sliver of solid wall would be left.
 			std::vector<Gap> gaps;
 			auto			 openIt = openingsBySegment.find(seg.id);
 			if (openIt != openingsBySegment.end()) {

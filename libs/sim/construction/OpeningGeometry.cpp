@@ -6,15 +6,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
 namespace construction {
 
 	namespace {
-		// Segment length in mm from its two vertex positions, 0 if a vertex is missing.
-		double segmentLengthMm(const ConstructionWorld& world, const WallSegment& wall) {
-			const Vertex* v0 = world.getVertex(wall.v0);
-			const Vertex* v1 = world.getVertex(wall.v1);
+		using Trims = std::pair<std::int64_t, std::int64_t>;
+
+		// Segment length in mm between its two vertices, 0 if a vertex is missing.
+		double segmentLengthMm(const Vertex* v0, const Vertex* v1) {
 			if (v0 == nullptr || v1 == nullptr) {
 				return 0.0;
 			}
@@ -23,41 +26,106 @@ namespace construction {
 			return std::sqrt(dx * dx + dy * dy);
 		}
 
-		// How far `wall`'s band is cut back at `vertexId` for the corner or junction
-		// there. Walls the renderer leaves out (no vertex, no thickness) are left out.
-		std::int64_t trimAtVertex(const ConstructionWorld& world, const WallSegment& wall, VertexId vertexId) {
-			const Vertex* vertex = world.getVertex(vertexId);
-			if (vertex == nullptr || vertex->segments.size() < 2 || halfThicknessMm(wall) <= 0) {
-				return 0;
-			}
-			std::vector<geometry::IncidentSegment> incidents;
-			incidents.reserve(vertex->segments.size());
-			std::size_t ownIndex = 0;
-			for (const SegmentId id : vertex->segments) {
-				const WallSegment* other = world.getSegment(id);
-				if (other == nullptr) {
-					continue;
+		// The world's walls and vertices by id, one pass over each, so walking a wall graph
+		// does not scan the world again for every wall and vertex it reaches.
+		struct WallIndex {
+			std::unordered_map<SegmentId, const WallSegment*> segments;
+			std::unordered_map<VertexId, const Vertex*>		  vertices;
+
+			explicit WallIndex(const ConstructionWorld& world) {
+				segments.reserve(world.segments().size());
+				for (const WallSegment& wall : world.segments()) {
+					segments.emplace(wall.id, &wall);
 				}
-				const Vertex*	   farVertex = world.getVertex(other->v0 == vertexId ? other->v1 : other->v0);
-				const std::int64_t half = halfThicknessMm(*other);
-				if (farVertex == nullptr || half <= 0) {
-					continue;
-				}
-				if (id == wall.id) {
-					ownIndex = incidents.size();
-				}
-				incidents.push_back({farVertex->pos, half, incidents.size()});
-			}
-			const geometry::JunctionResolution junction = geometry::resolveJunction(vertex->pos, incidents, geometry::kDefaultMiterLimit);
-			if (junction.status != geometry::OffsetStatus::Ok) {
-				return 0;
-			}
-			for (const geometry::JunctionTrim& trim : junction.trims) {
-				if (trim.index == ownIndex) {
-					return trim.trimMm;
+				vertices.reserve(world.vertices().size());
+				for (const Vertex& vertex : world.vertices()) {
+					vertices.emplace(vertex.id, &vertex);
 				}
 			}
-			return 0;
+
+			[[nodiscard]] const WallSegment* segment(SegmentId id) const {
+				const auto found = segments.find(id);
+				return found == segments.end() ? nullptr : found->second;
+			}
+			[[nodiscard]] const Vertex* vertex(VertexId id) const {
+				const auto found = vertices.find(id);
+				return found == vertices.end() ? nullptr : found->second;
+			}
+		};
+
+		// A wall as the renderer feeds it to the offsetter, or nothing for a wall it
+		// leaves out (a missing vertex, no thickness).
+		std::optional<geometry::WallSegment> drawnWall(const WallIndex& index, const WallSegment& wall) {
+			const Vertex*	   v0 = index.vertex(wall.v0);
+			const Vertex*	   v1 = index.vertex(wall.v1);
+			const std::int64_t half = halfThicknessMm(wall);
+			if (v0 == nullptr || v1 == nullptr || half <= 0) {
+				return std::nullopt;
+			}
+			return geometry::WallSegment{v0->pos, v1->pos, half};
+		}
+
+		struct WallGraph {
+			std::vector<geometry::WallSegment> walls; // `wall` first
+			bool							   othersBuilt = true;
+		};
+
+		// The connected wall graph holding `wall` (which has a band), its walls chained
+		// through shared vertices: every drawn wall, or with `builtOnly` the built ones and
+		// `wall` itself. Vertices are merged by exact position, so this is the group
+		// geometry::connectedWallGraphs gives the renderer and nav.
+		WallGraph wallGraph(const WallIndex& index, const WallSegment& wall, geometry::WallSegment own, bool builtOnly) {
+			WallGraph						graph{{own}};
+			std::vector<const WallSegment*> members{&wall};
+			std::unordered_set<SegmentId>	reached{wall.id};
+			for (std::size_t next = 0; next < members.size(); ++next) {
+				for (const VertexId end : {members[next]->v0, members[next]->v1}) {
+					for (const SegmentId id : index.vertex(end)->segments) {
+						if (reached.contains(id)) {
+							continue;
+						}
+						reached.insert(id);
+						const WallSegment* other = index.segment(id);
+						if (other == nullptr || (builtOnly && !isBuilt(*other))) {
+							continue;
+						}
+						if (const std::optional<geometry::WallSegment> drawn = drawnWall(index, *other)) {
+							graph.walls.push_back(*drawn);
+							graph.othersBuilt = graph.othersBuilt && isBuilt(*other);
+							members.push_back(other);
+						}
+					}
+				}
+			}
+			return graph;
+		}
+
+		// The first wall's trims at its a and b ends, nothing for a graph the offsetter rejects.
+		std::optional<Trims> firstWallTrims(const std::vector<geometry::WallSegment>& walls) {
+			const geometry::WallBands bands = geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit);
+			if (bands.status != geometry::OffsetStatus::Ok || bands.trimAtA.empty() || bands.trimAtB.empty()) {
+				return std::nullopt;
+			}
+			return Trims{bands.trimAtA.front(), bands.trimAtB.front()};
+		}
+
+		// The trims of `wall`'s band at its v0 and v1 ends that openingRange measures from
+		// (OpeningGeometry.h): the larger of the drawn graph's and nav's built graph's.
+		std::optional<Trims> openingTrims(const WallIndex& index, const WallSegment& wall) {
+			const std::optional<geometry::WallSegment> own = drawnWall(index, wall);
+			if (!own) {
+				return Trims{0, 0};
+			}
+			const WallGraph				drawn = wallGraph(index, wall, *own, false);
+			const std::optional<Trims> drawnTrims = firstWallTrims(drawn.walls);
+			if (!drawnTrims || drawn.othersBuilt) {
+				return drawnTrims;
+			}
+			const std::optional<Trims> builtTrims = firstWallTrims(wallGraph(index, wall, *own, true).walls);
+			if (!builtTrims) {
+				return std::nullopt;
+			}
+			return Trims{std::max(drawnTrims->first, builtTrims->first), std::max(drawnTrims->second, builtTrims->second)};
 		}
 	} // namespace
 
@@ -68,19 +136,24 @@ namespace construction {
 
 	std::optional<OpeningRange>
 	openingRange(const ConstructionWorld& world, SegmentId segment, double widthMeters, double marginMeters) {
-		const WallSegment* wall = world.getSegment(segment);
+		const WallIndex	   index(world);
+		const WallSegment* wall = index.segment(segment);
 		if (wall == nullptr) {
 			return std::nullopt;
 		}
-		const double lengthMm = segmentLengthMm(world, *wall);
+		const double lengthMm = segmentLengthMm(index.vertex(wall->v0), index.vertex(wall->v1));
 		if (lengthMm <= 0.0) {
+			return std::nullopt;
+		}
+		const std::optional<Trims> trims = openingTrims(index, *wall);
+		if (!trims) {
 			return std::nullopt;
 		}
 		const auto	 mmPerMeter = static_cast<double>(geometry::kMillimetersPerMeter);
 		OpeningRange range;
 		range.lengthMeters = lengthMm / mmPerMeter;
-		range.trimAtV0Meters = static_cast<double>(trimAtVertex(world, *wall, wall->v0)) / mmPerMeter;
-		range.trimAtV1Meters = static_cast<double>(trimAtVertex(world, *wall, wall->v1)) / mmPerMeter;
+		range.trimAtV0Meters = static_cast<double>(trims->first) / mmPerMeter;
+		range.trimAtV1Meters = static_cast<double>(trims->second) / mmPerMeter;
 		const double halfWidth = widthMeters / 2.0;
 		range.minT = static_cast<float>((range.trimAtV0Meters + marginMeters + halfWidth) / range.lengthMeters);
 		range.maxT = static_cast<float>((range.lengthMeters - range.trimAtV1Meters - marginMeters - halfWidth) / range.lengthMeters);
@@ -105,7 +178,7 @@ namespace construction {
 		if (halfThick <= 0) {
 			return {};
 		}
-		const double lengthMm = segmentLengthMm(world, *wall);
+		const double lengthMm = segmentLengthMm(v0, v1);
 		if (lengthMm <= 0.0) {
 			return {};
 		}
@@ -126,6 +199,30 @@ namespace construction {
 			   };
 		};
 		return geometry::band(lerpMm(t0), lerpMm(t1), halfThick);
+	}
+
+	OpeningGaps openingGaps(const ConstructionWorld& world, const WallSegment& segment, OpeningGapFilter filter) {
+		OpeningGaps	  result;
+		const Vertex* v0 = world.getVertex(segment.v0);
+		const Vertex* v1 = world.getVertex(segment.v1);
+		if (v0 == nullptr || v1 == nullptr) {
+			return result;
+		}
+		const double lengthMm = std::hypot(static_cast<double>(v1->pos.x - v0->pos.x), static_cast<double>(v1->pos.y - v0->pos.y));
+		for (const Opening& opening : world.openings()) {
+			if (opening.segment != segment.id || (filter.builtOnly && opening.state != FoundationState::Built)) {
+				continue;
+			}
+			const auto* type = assets::ConstructionRegistry::Get().getOpeningType(opening.type);
+			if (type == nullptr || type->widthMm <= 0 || (filter.doorsOnly && !type->pathable)) {
+				continue;
+			}
+			const double centre = static_cast<double>(opening.t) * lengthMm;
+			const double half	= static_cast<double>(type->widthMm) * 0.5;
+			result.gaps.push_back({std::llround(centre - half), std::llround(centre + half)});
+			result.openings.push_back(opening.id);
+		}
+		return result;
 	}
 
 } // namespace construction

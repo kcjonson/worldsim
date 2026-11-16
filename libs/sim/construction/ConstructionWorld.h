@@ -145,6 +145,11 @@ namespace construction {
 		ecs::EntityID	entity = ecs::kInvalidEntity;
 	};
 
+	// A finished wall, the only kind nav cuts doors in and an opening goes on.
+	[[nodiscard]] inline bool isBuilt(const WallSegment& wall) {
+		return wall.state == FoundationState::Built;
+	}
+
 	// A door or window attached to a segment at parameter `t` in [0,1] measured
 	// from the segment's v0 toward v1. Attachment is by id + parameter, not
 	// position, so it survives a T-junction split (the split re-maps t into the

@@ -32,7 +32,9 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <string>
+#include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -894,6 +896,53 @@ TEST_F(NavWallTest, Window_LeavesBandSolidEmitsZeroWidthPortal) {
 	EXPECT_EQ(solid, 1); // band stays whole
 	ASSERT_EQ(doors.size(), 1u);
 	EXPECT_EQ(doors[0].clearWidthMm, 0); // window tagged not-pathable
+}
+
+// A wall graph the offsetter rejects, far from a room with a door, leaves the room's polygons,
+// junctions included, as they are without it.
+TEST_F(NavWallTest, RejectedGraphElsewhere_LeavesRoomPolygonsUnchanged) {
+	auto buildDoorRoom = [](ConstructionWorld& cw) {
+		const SegmentId south = buildWall(cw, {0, 0}, {4000, 0});
+		buildWall(cw, {4000, 0}, {4000, 3000});
+		buildWall(cw, {4000, 3000}, {0, 3000});
+		buildWall(cw, {0, 3000}, {0, 0});
+		const OpeningId op = cw.addOpening(south, 0.5F, "Door", "Wood");
+		ASSERT_NE(op, construction::kInvalidOpening);
+		ASSERT_TRUE(cw.setOpeningState(op, FoundationState::Built));
+	};
+	auto polygonsOf = [](const ConstructionWorld& cw) {
+		std::vector<NavInputPolygon> polys;
+		std::vector<DoorPortal>		 doors;
+		extractWalls(cw, ConstructionRegistry::Get(), polys, doors);
+		std::vector<std::tuple<std::int64_t, std::int64_t, Ring>> keys;
+		for (const NavInputPolygon& polygon : polys) {
+			keys.emplace_back(polygon.provenanceId, polygon.openingId, polygon.ring);
+		}
+		std::sort(keys.begin(), keys.end());
+		return keys;
+	};
+
+	ConstructionWorld alone;
+	buildDoorRoom(alone);
+	ConstructionWorld beside;
+	buildDoorRoom(beside);
+	// Two sharp corners round a 50 mm wall, which the offsetter rejects.
+	std::vector<geometry::WallSegment> rejected = {
+		{{19000, 500}, {20000, 0}, 150}, {{20000, 0}, {20050, 0}, 150}, {{20050, 0}, {21050, 500}, 150}};
+	ASSERT_NE(geometry::resolveWallBands(rejected, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+	std::set<SegmentId> roomWalls;
+	for (const construction::WallSegment& wall : beside.segments()) {
+		roomWalls.insert(wall.id);
+	}
+	for (const geometry::WallSegment& wall : rejected) {
+		buildWall(beside, wall.a, wall.b, "Heavy");
+	}
+
+	auto roomPart = polygonsOf(beside);
+	std::erase_if(roomPart, [&](const auto& key) { return !roomWalls.contains(static_cast<SegmentId>(std::get<0>(key))); });
+	const auto roomAlone = polygonsOf(alone);
+	EXPECT_EQ(roomPart, roomAlone);
+	EXPECT_EQ(roomAlone.size(), 10u) << "four bands, the door wall in three spans, and four junctions";
 }
 
 // ---------------------------------------------------------------------------

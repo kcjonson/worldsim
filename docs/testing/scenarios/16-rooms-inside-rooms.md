@@ -1,7 +1,7 @@
 # Scenario 16: Rooms inside rooms
 
 **Status:** draft  
-**Last verified:** not yet run
+**Last verified:** 2026-11-16
 
 A closed wall loop standing free inside another is its own room. Each keeps its own name, floor
 tint, outline, label, and click target, whichever loop was built first.
@@ -16,11 +16,13 @@ Fresh launch (Quick Start). Full launch and environment setup in [../README.md](
 
 ## Setup
 
-Turn reveal on (`/api/dev/reveal?on=1`) and frame the spot with
-`/api/control?action=camera&x=<X0+2.5>&y=<Y0+2.5>&zoom=3`. Pick open ground clear of trees and
-water, with room for 5 x 5 m twice (the second spot 10 m or more from the first). Call the first
-spot's corner `X0,Y0` and the second's `X1,Y1`. No state view lists rooms; everything is read off
-the toasts, the overlay, and the room panel.
+Turn reveal on (`/api/dev/reveal?on=1`). The ground near the landing is dotted with trees, and a wall
+loop is refused over one, so stand the loops on a built foundation, 20 x 7 m
+(`/api/dev/foundation?pts=12,-7;32,-7;32,0;12,0&material=Wood&built=1`, no colonist needed), then wait
+two seconds, since a loop stamped the instant it is built is refused. Its inside has room for 5 x 5 m
+twice, 10 m or more apart: the first spot's corner is `X0,Y0` = 14,-6 and the second's `X1,Y1` = 26,-6.
+Frame the spot with `/api/control?action=camera&x=<X0+2.5>&y=<Y0+2.5>&zoom=3`. No state view lists
+rooms; everything is read off the toasts, the overlay, and the room panel.
 
 ---
 
@@ -30,9 +32,9 @@ the toasts, the overlay, and the room panel.
 
 2. Stamp the inner loop (`pts=<X0+2>,<Y0+2>;<X0+3>,<Y0+2>;<X0+3>,<Y0+3>;<X0+2>,<Y0+3>`, same other parameters): the toast names only the new room, and the outer room keeps its name.
 
-3. Turn the rooms overlay on (the ROOMS button or R): both floors are tinted the same strength and both rooms are outlined, each label inside its own room.
+3. Turn the rooms overlay on (the ROOMS button or R): both floors are tinted the same strength, both rooms are outlined, and each room's name is drawn once (the two names overlap near the centre, since the inner room is 1 m wide).
 
-4. Click inside the inner room: its panel shows 1.0 m2.
+4. Click inside the inner room (`/api/input?ev=click,x,y`, logical pixels; see the README's input row for reading them off a screenshot): its panel, bottom left, shows 1.0 m2.
 
 5. Click the outer room's floor, away from the inner loop: its panel shows 24.0 m2.
 
@@ -42,8 +44,9 @@ the toasts, the overlay, and the room panel.
 
 ## Pass / fail
 
-**Pass:** two rooms, never one merged or renamed; both tinted equally, outlined, and labeled inside
-their own walls; the clicks read 1.0 m2 and 24.0 m2, in either build order.
+**Pass:** two rooms, never one merged or renamed; both tinted equally, outlined, and named once each;
+the clicks read 1.0 m2 and 24.0 m2, in either build order.
 
 **Fail:** the second loop renames or replaces the first room, the outer tint covers or dims the
-inner floor, a label sits in the wrong room, or a click inside the inner room opens the outer one.
+inner floor, a name is missing or names the wrong room, or a click inside the inner room opens the outer
+one.
