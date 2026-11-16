@@ -30,13 +30,22 @@ namespace construction::snap_test {
 
 	/// Every guide helper and the angle step on, common lengths and length rounding off:
 	/// the prototype's legacy mode, in which the guide cases are checked.
-	inline DrawingAids allAidsOn() {
+	inline DrawingAids guideAidsOn() {
 		DrawingAids aids;
 		aids.angleSteps = true;
 		aids.guidesFromShape = true;
 		aids.alignToExistingBuildings = true;
 		aids.guidesFromWorldAxes = true;
 		aids.guideCrossings = true;
+		return aids;
+	}
+
+	/// Every aid on, common lengths and length rounding included: the prototype's page
+	/// defaults, in which D12's length cases are checked.
+	inline DrawingAids everyAidOn() {
+		DrawingAids aids = guideAidsOn();
+		aids.commonLengths = true;
+		aids.roundLengths = true;
 		return aids;
 	}
 
@@ -60,11 +69,11 @@ namespace construction::snap_test {
 		};
 	}
 
-	inline SnapInput foundationInput(const DrawingAids& aids = allAidsOn()) {
+	inline SnapInput foundationInput(const DrawingAids& aids = guideAidsOn()) {
 		return SnapInput{.aids = aids};
 	}
 
-	inline SnapInput wallInput(const DrawingAids& aids = allAidsOn()) {
+	inline SnapInput wallInput(const DrawingAids& aids = guideAidsOn()) {
 		return SnapInput{.aids = aids, .wallHalfThicknessMm = kWallHalfThicknessMm};
 	}
 

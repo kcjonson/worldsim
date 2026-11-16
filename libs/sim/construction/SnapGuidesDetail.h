@@ -49,6 +49,8 @@ namespace construction::snap_guides {
 	/// Integer millimeters as double meters, exactly.
 	[[nodiscard]] Vec2d meters(const geometry::Vec2i64& millimeters);
 	[[nodiscard]] Vec2d toVec2d(::Foundation::Vec2 point);
+	[[nodiscard]] double dot(Vec2d first, Vec2d second);
+	[[nodiscard]] double distanceBetween(Vec2d first, Vec2d second);
 
 	enum class SnapTool { Foundation, Wall };
 
@@ -214,6 +216,10 @@ namespace construction::snap_guides {
 	[[nodiscard]] double angularDifference(double first, double second, double period);
 	[[nodiscard]] double lineDistance(Vec2d point, const GuideLine& line);
 	[[nodiscard]] Vec2d	 footOnLine(Vec2d point, const GuideLine& line);
+	/// From `point` to the nearest point of the segment from `start` to `end`.
+	[[nodiscard]] double distanceToSegment(Vec2d point, Vec2d start, Vec2d end);
+	/// The nearest whole number, halves up, as the tuned prototype rounds steps.
+	[[nodiscard]] double roundHalfUp(double value);
 
 	// --- The stages, in order ---------------------------------------------------
 

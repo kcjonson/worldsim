@@ -35,7 +35,7 @@ namespace {
 
 	// Every helper on unless a case says otherwise (D12, Tests), set here so no test depends
 	// on the player's defaults.
-	const DrawingAids kAllAids = snap_test::allAidsOn();
+	const DrawingAids kAllAids = snap_test::guideAidsOn();
 
 	SnapInput input(bool freeform = false, float originCloseRadiusMeters = -1.0F, const DrawingAids& aids = kAllAids) {
 		return SnapInput{.aids = aids, .freeform = freeform, .originCloseRadiusMeters = originCloseRadiusMeters};
