@@ -39,9 +39,9 @@ By hand, three rows. 1920 x 1080 gives min(1.2, 1.08) = 1.08, and 1920 / 1.08 = 
 
 The floor is about type. The smallest type token is 10 px and body is 13 px, so at 0.8 they're 8 and 10.4 device px. dual-deck-builder's floor of 2/3 would put captions at 6.7, which doesn't read. The floor only holds if the window can't get smaller than the size it was worked out for, so the 1280 x 720 minimum window is part of the same decision.
 
-The largest step, 120%, is the least room the HUD and dialogs are laid out for: a 1481 x 833 canvas on 16:9 and 1333 x 833 on 16:10. The design doc's old "75%-150%" line predates the reference. 150% would be a 1185 x 667 canvas, 44% of the mock's area, so it isn't offered.
+The largest step, 120%, is the least room the HUD and dialogs are laid out for: a 1481 x 833 canvas on 16:9 and 1333 x 833 on 16:10. The design doc's old "75%-150%" line predates the reference. 150% would be a 1185 x 667 canvas on 16:9, 49% of the mock's area, and 1067 x 667 on 16:10, 44%, so it isn't offered.
 
-The smallest step is there so a 4K player can get back near the density the game had before scaling. In a 3072 x 1728 window the old look is about 58%, and 60% on 4K is a 2963 x 1667 canvas. On a 1080p screen the floor takes over under about 75% (0.8 / 1.08 is 0.74), so the lowest steps change nothing there. That's accepted. It's worse in a window smaller than the screen: at the default window on a 1080p monitor (about 1536 x 826), 60 to 90% all give 0.8 and 100% gives 0.826, and at 1280 x 720 only 120% differs. The Interface size row's description in Settings says so.
+The smallest step is there so a 4K player can get back near the density the game had before scaling. In a 3072 x 1728 window the old look is about 58%, and 60% on 4K is a 2963 x 1667 canvas. On a 1080p screen the floor takes over under about 75% (0.8 / 1.08 is 0.74), so the lowest steps change nothing there. That's accepted. It's worse in a window smaller than the screen: at the default window on a 1080p monitor (about 1536 x 826), 60 to 90% all give 0.8 and 100% gives 0.826, and at 1280 x 720 only 120% differs. Even on a full 1080p screen 60 and 70% are the same (both 0.8). The Interface size row's description in Settings says so.
 
 ## The model
 
@@ -58,7 +58,7 @@ Considered and rejected:
 - Single global factor: `App::setUiScale` in salal, one factor for every scene, configured by `uiScaleConfig()` in `libs/theme/theme/InterfaceScale.h`. No per-screen constants.
 - Layout, not zoom: the canvas is `W/s x H/s`, so screens reflow to the room they have. Scenes lay out in ui px.
 - Input stays correct: salal hit-tests in ui px. World picking, the camera, drawing and placement previews and overlays stay in window pixels, and the places that mixed the two were fixed to convert: the hover gate that skips the world while the pointer is over the ui (`GameScene.cpp`), the minimap's view rectangle (`GameUI.cpp`), and the world creator's globe and marker (`WorldCreatorScene.cpp`, `GlobeView.h`).
-- Live: Settings calls `App::setUiScale`, which re-lays-out the open scene at once. From the salal tag this PR pins, scenes' `onResize` runs on a scale change too.
+- Live: Settings calls `App::setUiScale`, which re-lays-out the open scene at once. With the salal tag worldsim pins, scenes' `onResize` runs on a scale change too.
 - Persisted: `settings.json` (`apps/world-sim/Main.cpp` passes it as the App's settings file) holds `ui.scale` and the window's size. `--no-settings` neither reads nor saves it, which perf captures use.
 - World text: text drawn in the world that a player reads as interface (the drawing tool's validation message, room names) is sized by the layout scale, so it follows Interface size while the world around it keeps its own.
 - Crisp: the scale reaches the renderer, so text and tessellated shapes are drawn at the device size they end up at, not stretched from a smaller one.
@@ -68,7 +68,18 @@ The colonist dossier is 760 x 900 ui px held to 92% x 86% of the canvas, its tab
 
 ## What the tests cover
 
-`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, lints ten screens at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`. The screens are the main menu, settings, scenario select, party select, the world creator, the HUD, and the colonist dossier, crafting, storage and pause dialogs over the HUD. Each also checks that nothing shows a scrollbar except what's meant to scroll (settings' list, the dossier's tab). Scenario `docs/testing/scenarios/17-interface-size.md` is the by-hand pass: the setting applies at once, is saved, and the HUD holds at 60 and 120%.
+`apps/world-sim/scenes/SceneLayout.test.cpp`, over `SceneTesting.test.h`, has 12 tests. Each lints its screen at five window sizes (1280 x 720, 1600 x 1000, 1920 x 1080, 3440 x 1440, 1600 x 1200) and three interface sizes (120%, 100%, 60%), through salal's `app::lintAt`, and checks that nothing shows a scrollbar except what's meant to scroll. Each first asserts that a known id is present and that its dialogs report visible, so a test can't pass over an empty screen.
+
+- The main menu, settings, scenario select, party select and the world creator (configuring, before a world exists).
+- The HUD, plain.
+- The HUD with the build menu, the colony task list, the decision inspector and five toasts open.
+- The HUD with the wall tool on.
+- The colonist dossier, on each of its eight tabs.
+- The crafting, storage and pause dialogs over the HUD.
+
+Scrollbars: `tasks_scroll` and the dossier's tab area may scroll at every size. The settings list's bar is allowed only on canvases under 1200 ui px tall. It does scroll at the default size on a 16:9, 16:10 or 21:9 screen, where the canvas is 1000 ui px tall, because the list is long (a row each for the interface size, the grid and ten switches, every one with a description); it fits from 1200.
+
+Scenario `docs/testing/scenarios/17-interface-size.md` is the by-hand pass: the setting applies at once, is saved, and the HUD holds at 60 and 120%.
 
 Not linted: the splash, loading, the game scene itself (the world under the HUD), and the world creator's later states, which need a world to exist.
 
@@ -81,7 +92,7 @@ The test executable builds to `apps/world-sim/tests/<config>/world-sim-tests.exe
 3. Launch with `--no-settings` for the default window at 100%, whatever a player saved. Agent and scripted launches always pass it, so a test run never reads or leaves behind the player's settings; scenario 17 is the one run on the real file.
 4. In a test, `app->setUiScale(size)` then `app::lintAt(*app, *platform, width, height)`.
 
-## Historical Addendum
+## Historical addendum
 
 The original requirements and approach notes, written before the reference and the numbers were chosen.
 

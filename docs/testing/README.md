@@ -297,7 +297,7 @@ build\apps\world-sim\RelWithDebInfo\world-sim.exe --scene=game --http-port <PORT
 
 **Every launch an agent makes passes `--background`**, whichever app the scenario names
 (`world-sim`, `ui-sandbox`, `asset-manager`) and whatever other flags its launch line gives. Every
-world-sim launch passes `--no-settings` too: the settings file (`%APPDATA%kcjonsonworld-simsettings.json`)
+world-sim launch passes `--no-settings` too: the settings file (`%APPDATA%\kcjonson\world-sim\settings.json`)
 is shared by every worktree's build and Kevin's own play, and a run that stops midway, a resize, or the
 dev server's `vsync` control would otherwise leave its interface size, window size or vsync saved for
 every later launch. ui-sandbox and asset-manager have no settings file. Scenario 17 tests that the

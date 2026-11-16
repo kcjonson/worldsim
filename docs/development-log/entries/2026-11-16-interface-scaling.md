@@ -12,7 +12,7 @@ salal's ui scale: `s = max(floor, f x min(W / referenceWidth, H / referenceHeigh
 
 - At 100% a 16:10 screen is the mock exactly and 16:9 is the mock with 178 px more width: a 1778 x 1000 canvas at 1080p, 1440p and 4K alike, 2389 x 1000 on 3440 x 1440, 1600 x 1000 on 2560 x 1600 and a Steam Deck, 1600 x 900 at the smallest window.
 - The floor is 0.8 because the smallest type token is 10 px and body is 13, which stay at 8 and 10.4 device px. dual-deck-builder's 2/3 floor would have put captions at 6.7.
-- 120% is the largest step: the canvas is 1481 x 833 on 16:9 and 1333 x 833 on 16:10. The design doc's old 75% to 150% predated the reference, and 150% is a 1185 x 667 canvas, 44% of the mock's area.
+- 120% is the largest step: the canvas is 1481 x 833 on 16:9 and 1333 x 833 on 16:10. The design doc's old 75% to 150% predated the reference, and 150% is a 1185 x 667 canvas on 16:9, 49% of the mock's area (1067 x 667 and 44% on 16:10).
 - 60% is there so a 4K player can get back near the previous density (about 58% in a 3072 x 1728 window). On a 1080p screen the floor takes over under about 75%, so the lowest steps do nothing there; accepted.
 
 ### The model decision (2026-11-16)
@@ -25,7 +25,12 @@ Linear, the same proportions on every screen, as Unity's Canvas Scaler (Scale Wi
 - Coordinates: world picking, the camera, drawing and placement previews and overlays stay in window pixels. The hover gate in `GameScene.cpp`, the minimap's view rectangle in `GameUI.cpp` and the world creator's globe and marker (`WorldCreatorScene.cpp`, `GlobeView.h`) mixed the two spaces and were fixed.
 - The colonist dossier is 760 x 900 held to 92% x 86% of the canvas, its tab area scrolling (`ColonistDetailsDialog.cpp`).
 - Tooling: `/api/ui/tree` and `/api/ui/lint` are in ui px, `/api/input` in window logical px, and `/api/state?what=uiscale` gives `{factor, layoutScale, pixelScale}`.
-- Tests: `apps/world-sim/scenes/SceneLayout.test.cpp` with `SceneTesting.test.h` lints ten screens at five window sizes and three interface sizes through salal's `app::lintAt`. The scenes now build into a library the tests link, and the test executable is at `apps/world-sim/tests/<config>/world-sim-tests.exe`. Scenario 17 covers the setting by hand.
+- Tests: `apps/world-sim/scenes/SceneLayout.test.cpp` with `SceneTesting.test.h` has 12 layout tests, each linting its screen at five window sizes and three interface sizes through salal's `app::lintAt`: the five menu and creator screens, the HUD, the HUD with the build menu, colony task list, decision inspector and five toasts open, the HUD with the wall tool on, all eight dossier tabs, and the crafting, storage and pause dialogs. Each asserts a known id is present and its dialogs report visible. Scrollbars are allowed on `tasks_scroll` and the dossier's tab area, and on the settings list only on canvases under 1200 ui px tall. World-sim's scenes build into a static library the tests link, and the test executable is at `apps/world-sim/tests/<config>/world-sim-tests.exe`, run from the build root. Scenario 17 covers the setting by hand.
+- World-drawn text a player reads as interface (the edit tool's reason text and the room names) follows the layout scale.
+- A saved interface size between stops snaps to the nearest at startup, a tie going up.
+- Agent and scripted launches pass `--no-settings`.
+- Asset manager: a rescale redraws a thumbnail's picture from the cached mesh, rebuilding only a ground tile's.
+- `GameUI` fills the dock's catalogue from the registries itself, through one function the game and its tests call.
 - `apps/world-sim/UserSettings.h`: its comment said nothing persists across launches; that is now true only of the drawing settings.
 
 ### Layout fixes the lint found
@@ -33,6 +38,7 @@ Linear, the same proportions on every screen, as Unity's Canvas Scaler (Scale Wi
 - The world creator's Regenerate and Confirm row stayed laid out, empty, until a world existed; the row is hidden now, not just its buttons.
 - The crafting queue's list took room while empty; it's hidden until it has entries.
 - The storage rules list did the same.
+- The Gear tab pinned a filled hand slot shorter than its text, and two empty caption values had zero size (`8923f7d1`). A filled slot now grows to fit its name and an empty value takes no room.
 
 ### Engine fixes this PR pins
 
