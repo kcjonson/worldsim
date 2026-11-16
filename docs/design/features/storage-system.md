@@ -82,6 +82,9 @@ The storage system generates hauling tasks:
 - System finds alternate storage
 - Creates "move excess" tasks
 
+**Getting Rid of Something:**
+A colonist who has to put down what it's holding (to free its hands, or because its pack is full) puts it in a container within arm's reach that allows the item and has room, without walking anywhere. If nothing nearby takes it, it goes onto a stack of the same item close by, and otherwise onto the ground as a new stack, set a little apart from other items so different things never lie on top of each other.
+
 ## No Forbidden State
 
 Unlike some games, items are never "forbidden." All items on the ground are fair game for hauling.

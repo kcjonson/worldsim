@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Dirt ground tile: packed brown soil (ground_bare.lua). A dense crumble of clods lit from the top of
+     the screen, their shadows falling below, with faint damp and dry mottling, speckled grain, small
+     stones, fine cracks with a lit lip, and a few dead grass bits, roots and twigs. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Ground_Dirt</defName>
+    <label>Dirt</label>
+    <role>ground</role>
+    <surface>Dirt</surface>
+    <assetType>procedural</assetType>
+    <generator>
+      <scriptPath>@shared/ground_bare.lua</scriptPath>
+      <params>
+        <!-- Densities are a square meter, sizes meters (diameters, lengths and widths), colors sRGB
+             hex; a multiplier scales a color's linear light. Every layer is off at density 0, and the
+             script's header gives the paint order. The other bare surfaces document only the knobs
+             Dirt doesn't use. -->
+        <!-- The ground's mean tone: the patches and the far mips are scaled so each variant averages
+             to it. -->
+        <baseColor>#6C5440</baseColor>
+
+        <!-- Tone patches: blue-noise blobs of patchSize radius, half light and half dark, in patchSteps
+             nested cel steps, stretched patchStretch along x. tint is a second, finer set. -->
+        <patchDensity>1.2</patchDensity>
+        <patchSize>0.3,0.7</patchSize>
+        <patchLight>#715944</patchLight>
+        <patchDark>#674F3C</patchDark>
+        <patchSteps>2</patchSteps>
+        <patchWobble>0.4</patchWobble>
+        <tintDensity>3</tintDensity>
+        <tintSize>0.1,0.25</tintSize>
+        <tintLight>#70583F</tintLight>
+        <tintDark>#68503D</tintDark>
+        <tintSteps>1</tintSteps>
+
+        <!-- Cracks: crackDensity walks a square meter of crackLength, branching now and then, a dark
+             crack with a lit lip above it. -->
+        <crackDensity>1</crackDensity>
+        <crackLength>0.12,0.3</crackLength>
+        <crackWidth>0.012,0.018</crackWidth>
+        <crackColor>#43332A</crackColor>
+        <crackLipColor>#84705C</crackLipColor>
+
+        <!-- Grain: light and dark specks in pairs, grainContrast either way in linear light, plus a
+             grainTintShare of them in the grainTints colors. -->
+        <grainDensity>500</grainDensity>
+        <grainSize>0.014,0.024</grainSize>
+        <grainContrast>0.25</grainContrast>
+        <grainTints>#8E8270,#4A3A2E,#3E3026,#9C8462</grainTints>
+        <grainTintShare>0.15</grainTintShare>
+
+        <!-- Clods, back to front: one of lumpColors (carried onto the local tone) with lumpJitter of
+             its light either way, over a shadow lumpShadow times the ground's light, under a cap
+             lumpLit times its own. -->
+        <lumpDensity>260</lumpDensity>
+        <lumpSize>0.025,0.08</lumpSize>
+        <lumpColors>#6C5440,#765C45,#634C3A,#705843</lumpColors>
+        <lumpJitter>0.14</lumpJitter>
+        <lumpShadow>0.45</lumpShadow>
+        <lumpLit>1.45</lumpLit>
+
+        <rootDensity>0.6</rootDensity>
+        <rootLength>0.06,0.16</rootLength>
+        <rootWidth>0.009,0.013</rootWidth>
+        <rootColor>#4A3626</rootColor>
+
+        <strawDensity>3</strawDensity>
+        <strawLength>0.05,0.12</strawLength>
+        <strawWidth>0.01,0.013</strawWidth>
+        <strawColors>#A3915E,#8E7C4E,#B5A472</strawColors>
+
+        <twigDensity>0.5</twigDensity>
+        <twigLength>0.05,0.11</twigLength>
+        <twigWidth>0.01,0.014</twigWidth>
+        <twigColors>#5E4A36,#6E583F</twigColors>
+        <twigShadow>0.6</twigShadow>
+
+        <!-- Stones: angular, over a shadow stoneShadow times the ground's light, with a facet stoneLit
+             times their own toward the top. -->
+        <stoneDensity>12</stoneDensity>
+        <stoneSize>0.015,0.05</stoneSize>
+        <stoneColors>#958D80,#A39A8A,#827B70,#ADA08A</stoneColors>
+        <stoneShadow>0.45</stoneShadow>
+        <stoneLit>1.4</stoneLit>
+
+        <!-- The far mips (4 to 6), set from the bake's report: contrast against its reference, a cell
+             against its neighbors (farContrast) and the broader drift (farCoarseContrast), and the
+             gain on their linear mean (farGain, per channel) that brings it to mip 0's. -->
+        <farContrast>0.9</farContrast>
+        <farCoarseContrast>0.85</farCoarseContrast>
+        <farGain>0.9873,0.9995,1.0019</farGain>
+
+        <!-- Heights, for the transition contest (docs/technical/ground-textures.md, "Heights in alpha"):
+             the ground at heightBase, its small relief (patches, regions, ripple crests, cracks, joints,
+             grain, pits) heightRelief times a fixed bump, and what lies on it (clods, pieces, stones, grass
+             tips) a fixed step above heightBase. heightPuddleRim is a puddle's wet rim, the water being 0.
+             The bake ranks them per surface, so only their order counts. Dirt keeps the defaults: 0.3, 1
+             and half heightBase. -->
+      </params>
+    </generator>
+    <variantCount>8</variantCount>
+    <period>4</period>
+    <pixelsPerMeter>64</pixelsPerMeter>
+    <!-- Lit from the top of the screen, so cells only flip left to right, which keeps the light. -->
+    <rotate>mirror</rotate>
+    <macro>
+      <dry>1.08,1.05,1.0</dry>
+      <lush>0.92,0.95,1.0</lush>
+      <amplitude>0.5</amplitude>
+    </macro>
+    <!-- How Dirt meets the ones below it (docs/technical/ground-textures.md, "Pair parameters"): a soft
+         band onto sand with no shadow, a stain onto mud. -->
+    <transition over="Sand">
+      <width>0.3</width>
+      <softness>0.1</softness>
+    </transition>
+    <transition over="Mud">
+      <width>0.25</width>
+      <softness>0.2</softness>
+      <stain>0.25</stain>
+    </transition>
+  </AssetDef>
+</AssetDefinitions>

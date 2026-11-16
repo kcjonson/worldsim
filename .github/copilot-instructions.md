@@ -6,7 +6,9 @@
 
 **Monorepo Structure** - Strict dependency layers (each depends only on layers below):
 ```
-foundation → renderer → (ui | world | game-systems) → engine
+foundation → worldgen → world → assets → sim → world-view
+foundation → renderer → (ui → theme | assets | planet-view | world-view)
+world and sim link neither renderer nor ui
 ```
 **Critical**: No circular dependencies. No upward dependencies.
 
@@ -65,8 +67,8 @@ void setText(const std::string& newText) { text = newText; }  // CORRECT
 - Prefer in-class member initializers: `GLFWwindow* window{nullptr};`
 - Forward declarations in headers, full includes in .cpp
 
-**Shaders** (UberShader pattern):
-- Use single UberShader uploaded once to GPU (not multiple shader programs)
+**Shaders** (one-program pattern):
+- Draw through salal's base shader, one program uploaded once (not multiple shader programs)
 - Organizationally OK to split shader code across multiple files for structure
 - Shader code should be well-structured and maintainable
 - Combine files before uploading to GPU as one shader program

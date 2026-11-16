@@ -3,6 +3,8 @@
 #include "scenes/game/ui/adapters/CraftingAdapter.h"
 #include "scenes/game/ui/adapters/SelectionAdapter.h"
 
+#include <ecs/components/ResourceStack.h>
+
 namespace world_sim {
 
 // ============================================================================
@@ -24,6 +26,8 @@ bool CachedSelection::matches(const Selection& selection) const {
 				return type == Type::CraftingStation && stationId == sel.entityId;
 			} else if constexpr (std::is_same_v<T, FurnitureSelection>) {
 				return type == Type::Furniture && furnitureId == sel.entityId && furniturePackaged == sel.isPackaged;
+			} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
+				return type == Type::ResourcePile && pileId == sel.entityId;
 			} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
 				return type == Type::WallSegment && wallSegmentId == sel.id;
 			} else if constexpr (std::is_same_v<T, OpeningSelection>) {
@@ -47,14 +51,15 @@ void CachedSelection::update(const Selection& selection) {
 			colonistId = ecs::EntityID{0};
 			stationId = ecs::EntityID{0};
 			furnitureId = ecs::EntityID{0};
+			pileId = ecs::EntityID{0};
 			worldEntityDef.clear();
 			stationDefName.clear();
 			furnitureDefName.clear();
 			worldEntityPos = {};
 			furniturePackaged = false;
-			foundationId = engine::construction::kInvalidFoundation;
-			wallSegmentId = engine::construction::kInvalidSegment;
-			openingId = engine::construction::kInvalidOpening;
+			foundationId = construction::kInvalidFoundation;
+			wallSegmentId = construction::kInvalidSegment;
+			openingId = construction::kInvalidOpening;
 			roomId = 0;
 
 			if constexpr (std::is_same_v<T, NoSelection>) {
@@ -75,6 +80,9 @@ void CachedSelection::update(const Selection& selection) {
 				furnitureId = sel.entityId;
 				furnitureDefName = sel.defName;
 				furniturePackaged = sel.isPackaged;
+			} else if constexpr (std::is_same_v<T, ResourcePileSelection>) {
+				type = Type::ResourcePile;
+				pileId = sel.entityId;
 			} else if constexpr (std::is_same_v<T, WallSegmentSelection>) {
 				type = Type::WallSegment;
 				wallSegmentId = sel.id;
@@ -100,16 +108,17 @@ void CachedSelection::update(const Selection& selection) {
 EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	const Selection&							   selection,
 	ecs::World&									   world,
-	const engine::assets::AssetRegistry&		   assetRegistry,
-	const engine::assets::RecipeRegistry&		   recipeRegistry,
+	const assets::AssetRegistry&		   assetRegistry,
+	const assets::RecipeRegistry&		   recipeRegistry,
 	const Callbacks&							   callbacks,
-	const engine::construction::ConstructionWorld* constructionWorld,
+	const construction::ConstructionWorld* constructionWorld,
 	const ecs::RoomDetectionSystem*				   roomDetection
 ) {
 	// Detect selection types
 	bool		  isColonist = std::holds_alternative<ColonistSelection>(selection);
 	bool		  isStation = std::holds_alternative<CraftingStationSelection>(selection);
 	bool		  isFurniture = std::holds_alternative<FurnitureSelection>(selection);
+	bool		  isPile = std::holds_alternative<ResourcePileSelection>(selection);
 	bool		  isWallSegment = std::holds_alternative<WallSegmentSelection>(selection);
 	bool		  isOpening = std::holds_alternative<OpeningSelection>(selection);
 	bool		  isFoundation = std::holds_alternative<FoundationSelection>(selection);
@@ -142,6 +151,12 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		const auto& furnitureSel = std::get<FurnitureSelection>(selection);
 		if (!world.isAlive(furnitureSel.entityId)) {
 			isFurniture = false;
+		}
+	}
+	if (isPile) {
+		const auto& pileSel = std::get<ResourcePileSelection>(selection);
+		if (!world.isAlive(pileSel.entityId) || !world.hasComponent<ecs::ResourceStack>(pileSel.entityId)) {
+			isPile = false;
 		}
 	}
 	if (isWallSegment) {
@@ -180,9 +195,10 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 	// Handle NoSelection -> hide panel. A RoomSelection whose room vanished resolves
 	// to no room above (isRoom cleared, no record) and matches none of the content
 	// arms below; treat it like NoSelection so the panel clears rather than showing
-	// a stale room.
+	// a stale room. Same for a pile hauled down to nothing.
 	const bool roomVanished = std::holds_alternative<RoomSelection>(selection) && !isRoom;
-	if (std::holds_alternative<NoSelection>(selection) || roomVanished) {
+	const bool pileVanished = std::holds_alternative<ResourcePileSelection>(selection) && !isPile;
+	if (std::holds_alternative<NoSelection>(selection) || roomVanished || pileVanished) {
 		if (visible) {
 			visible = false;
 			cachedSelection.update(selection);
@@ -232,6 +248,8 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 			};
 		}
 		contentData = adaptFurniture(assetRegistry, furnitureSel, callbacks.onPlace, callbacks.onMoveFurniture, onConfigure);
+	} else if (isPile) {
+		contentData = adaptResourcePile(world, assetRegistry, std::get<ResourcePileSelection>(selection));
 	} else if (isWallSegment && constructionWorld != nullptr) {
 		const auto& wallSel = std::get<WallSegmentSelection>(selection);
 		contentData = adaptWallSegment(world, *constructionWorld, wallSel, callbacks.onDemolishWallSegment);
@@ -240,8 +258,15 @@ EntityInfoModel::UpdateType EntityInfoModel::refresh(
 		contentData = adaptOpening(world, *constructionWorld, openingSel, callbacks.onDemolishOpening);
 	} else if (isFoundation && constructionWorld != nullptr) {
 		const auto& foundationSel = std::get<FoundationSelection>(selection);
-		contentData =
-			adaptFoundation(world, *constructionWorld, foundationSel, callbacks.onDemolishFoundation, callbacks.onDemolishBuilding);
+		contentData = adaptFoundation(
+			world,
+			*constructionWorld,
+			foundationSel,
+			{.onDemolish = callbacks.onDemolishFoundation,
+			 .onDemolishBuilding = callbacks.onDemolishBuilding,
+			 .onAdd = callbacks.onAddToFoundation,
+			 .onSubtract = callbacks.onSubtractFromFoundation}
+		);
 	} else if (isRoom && roomRecord != nullptr) {
 		contentData = adaptRoom(world, *roomRecord);
 	} else {

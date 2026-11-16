@@ -11,7 +11,7 @@ Implemented by M2. For the higher-level pluggable architecture see
 
 ## What M2 delivers
 
-Seven concrete deliverables, all under `libs/world/worldgen/`, namespace `worldgen`:
+Seven concrete deliverables, all under `libs/worldgen/worldgen/`, namespace `worldgen`:
 
 1. `SphereGrid` — icosahedral rhombus grid
 2. `Biome` enum (21 values) + helpers
@@ -349,11 +349,11 @@ Color maps live in `worldgen/debug/ColorMaps.h`.
 ## Build
 
 ```
-cmake --build build --config Debug   --target world-tests
-cmake --build build --config Release --target world-benchmarks
+cmake --build build --config Debug   --target worldgen-tests
+cmake --build build --config Release --target worldgen-benchmarks
 ```
 
-CMakeLists: `libs/world/CMakeLists.txt`. The `world` library links only
+CMakeLists: `libs/worldgen/CMakeLists.txt`. The `worldgen` library links only
 `foundation` (no renderer, no nlohmann_json).
 
 Test files: `*.test.cpp` (28 tests, all passing).
@@ -363,7 +363,7 @@ Benchmark files: `*.bench.cpp` (5 benchmarks).
 
 ## PlanetIO format
 
-`libs/world/worldgen/io/PlanetIO.h` — binary format "WSPL", little-endian.
+`libs/worldgen/worldgen/io/PlanetIO.h` — binary format "WSPL", little-endian.
 
 **Format version 2** (current). Version 1 is rejected at load time; the
 `GameLoadingScene` auto-regenerates on any load failure, so old quickstart caches
@@ -418,7 +418,7 @@ PR #136 (`feature/worldgen-tectonic-history`) replaced the first three stages an
 
 `TectonicHistoryStage` runs `PlateSim` on a `SphereGrid(128)` (~163,842 tiles, ~56 km/tile) for ~160 steps of 5 Myr each. Output is a `TectonicHistory` held on `GeneratedWorld` as a non-serialized `shared_ptr<const TectonicHistory>`. `CrustStage` upsamples the coarse history to the full-res grid and writes `WorldData` fields. `TerrainStage` synthesizes elevation from crust physics rather than Gaussian kernels.
 
-All constants for the tectonic simulation live in `libs/world/worldgen/tectonics/TectonicParams.h`.
+All constants for the tectonic simulation live in `libs/worldgen/worldgen/tectonics/TectonicParams.h`.
 
 ### WorldData: 26 → 30 bytes/tile
 
@@ -439,7 +439,7 @@ Two u16 fields added:
 
 The on-disk layout is the same SoA format as v2, extended by the two new field arrays at the end of the tile data block.
 
-### New module: `libs/world/worldgen/tectonics/`
+### New module: `libs/worldgen/worldgen/tectonics/`
 
 Contains:
 - `TectonicParams.h` — all simulation constants, Earth-anchored with citations
@@ -452,7 +452,7 @@ Contains:
 
 Headless pipeline runner. Accepts `--n`, `--seed`, `--water`, `--plates`, `--age`, `--preset`, `--sim-only` (coarse sim only, optional per-step frame dumps), `--verify-threads N,M` (runs pipeline at two thread counts and asserts `worldHash` is identical). Dumps all `DebugImageExporter` modes as BMPs plus a `stats.json` containing `WorldStats` output.
 
-### New: `libs/world/worldgen/debug/WorldStats`
+### New: `libs/worldgen/worldgen/debug/WorldStats`
 
 Computes and reports: hypsometry (land/ocean elevation modes, trough depth, peak heights), plate-size distribution (exponential fit R², largest/smallest ratio), orogeny belt geodesic aspect ratio (tile-weighted median length/width), continent isoperimetric ratio (P²/4πA), interior-mountain fraction, and ocean-fraction vs. water-amount error.
 

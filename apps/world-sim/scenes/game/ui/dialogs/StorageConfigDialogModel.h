@@ -15,6 +15,7 @@
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
 #include <ecs/components/StorageConfiguration.h>
+#include <ecs/systems/GoalSystemHelpers.h>
 
 #include <string>
 #include <unordered_map>
@@ -25,7 +26,7 @@ namespace world_sim {
 
 /// An item category in the left column tree
 struct ItemCategoryGroup {
-	engine::assets::ItemCategory category;
+	assets::ItemCategory category;
 	std::string					 label;		 // Display name (e.g., "Raw Materials")
 	bool						 expanded{true};
 	std::vector<size_t>			 itemIndices; // Indices into availableItems
@@ -35,7 +36,7 @@ struct ItemCategoryGroup {
 struct AvailableItem {
 	std::string					 defName;	// Asset defName
 	std::string					 label;		// Display name
-	engine::assets::ItemCategory category;
+	assets::ItemCategory category;
 	uint32_t					 currentCount;	  // Items in this container
 	uint32_t					 requestedCount;  // Sum of max amounts from rules (0 = unlimited)
 	bool						 hasRules;		  // True if any rules exist for this item
@@ -50,7 +51,7 @@ struct DisplayRule {
 	uint32_t					   minAmount;
 	uint32_t					   maxAmount;  // 0 = unlimited
 	bool						   isWildcard; // defName == "*"
-	engine::assets::ItemCategory category;
+	assets::ItemCategory category;
 	// Whether the colony knows a source to fill this box with this item (engine pull's source set).
 	// Only meaningful for specific-item rules; wildcards name no single item to source, so left true.
 	bool						   knownSource{true};
@@ -81,7 +82,7 @@ class StorageConfigDialogModel {
 	/// World is non-const: the known-source check resolves storage sources via World::view, which
 	/// has no const overload.
 	[[nodiscard]] UpdateType refresh(ecs::World& world,
-									 const engine::assets::AssetRegistry& registry);
+									 const assets::AssetRegistry& registry);
 
 	/// Select an item by defName (for rule editing)
 	void selectItem(const std::string& defName);
@@ -153,13 +154,13 @@ class StorageConfigDialogModel {
 	[[nodiscard]] bool pendingRuleUnlimited() const { return pendingUnlimited; }
 
 	// Get accepted categories for this container (from asset definition)
-	[[nodiscard]] const std::vector<engine::assets::ItemCategory>& acceptedCategories() const {
+	[[nodiscard]] const std::vector<assets::ItemCategory>& acceptedCategories() const {
 		return containerCategories;
 	}
 
   private:
 	/// Build available items list from registry
-	void extractAvailableItems(const engine::assets::AssetRegistry& registry);
+	void extractAvailableItems(const assets::AssetRegistry& registry);
 
 	/// Update inventory counts from container
 	void updateInventoryCounts(const ecs::World& world);
@@ -172,7 +173,7 @@ class StorageConfigDialogModel {
 	void updateSelectedItemRules(const ecs::World& world);
 
 	/// Get category display label
-	static std::string getCategoryLabel(engine::assets::ItemCategory category);
+	static std::string getCategoryLabel(assets::ItemCategory category);
 
 	// State
 	ecs::EntityID currentContainerId{0};
@@ -181,7 +182,7 @@ class StorageConfigDialogModel {
 	bool		  valid = false;
 
 	// Container capabilities
-	std::vector<engine::assets::ItemCategory> containerCategories;
+	std::vector<assets::ItemCategory> containerCategories;
 
 	// Available items (left column)
 	std::vector<ItemCategoryGroup> groups;
@@ -200,6 +201,9 @@ class StorageConfigDialogModel {
 	// Per-refresh cache of defName -> hasKnownSource for every configured specific-item rule, so the
 	// right-column DisplayRule build reuses the world scan refresh() already paid for.
 	std::unordered_map<std::string, bool> knownSourceByDefName;
+
+	// Which boxes the colony knows, shared by every item updateKnownSources asks about in one refresh.
+	ecs::ColonyStorageKnowledge storageKnowledge;
 
 	// Pending rule settings (center column form state)
 	ecs::StoragePriority pendingPriority = ecs::StoragePriority::Medium;

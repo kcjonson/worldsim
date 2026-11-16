@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Rock ground tile: weathered bedrock (ground_bare.lua). One surface of grey stone mottled in
+     broad, irregular tones, with a few low ledges, a handful of long wandering joints and finer
+     fractures (each a dark crack with a lit lower lip in a band of weathering stain), solution pits,
+     mineral speckle, sparse ragged colonies of crustose lichen that favor the joints, and grit. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Ground_Rock</defName>
+    <label>Rock</label>
+    <role>ground</role>
+    <surface>Rock</surface>
+    <assetType>procedural</assetType>
+    <generator>
+      <scriptPath>@shared/ground_bare.lua</scriptPath>
+      <params>
+        <!-- The knobs are documented in Dirt.xml; regions, joints, pits and lichen are here. -->
+        <baseColor>#79746C</baseColor>
+
+        <!-- Regions: the ground cut along a spectral field's contours into nested tone steps.
+             toneLevels are area shares in paint order (positive: the highest that much of the tile,
+             negative: the lowest), each with a color from toneColors and a height bump from
+             toneRelief. The field is toneWaves waves of toneCycles a period (none under 3, so no
+             feature over 1.33 m), stretched toneStretch along x, weighted cycles^-toneSlope.
+             With a Bevel a rise is lit along its upper edge and shaded along its lower one (a hollow
+             the other way), bands Bevel meters wide, the lit one Lit times its color and the shaded
+             one as much darker, so they cancel; Shade, when given, is the shaded band's color, the
+             lit one what cancels it. ledge is a second set: a few low steps in the stone. -->
+        <toneWaves>64</toneWaves>
+        <toneCycles>3,10</toneCycles>
+        <toneSlope>3</toneSlope>
+        <toneLevels>0.4,0.14,-0.36,-0.12</toneLevels>
+        <toneColors>#827D74,#8A857B,#716D66,#6A665F</toneColors>
+        <toneRelief>0.05,0.1,-0.05,-0.12</toneRelief>
+        <toneBevel>0.008</toneBevel>
+        <toneLit>1.09</toneLit>
+        <ledgeWaves>48</ledgeWaves>
+        <ledgeCycles>3,14</ledgeCycles>
+        <ledgeSlope>2.4</ledgeSlope>
+        <ledgeLevels>0.3</ledgeLevels>
+        <ledgeColors>#7B766E</ledgeColors>
+        <ledgeRelief>0.08</ledgeRelief>
+        <ledgeBevel>0.012</ledgeBevel>
+        <ledgeLit>1.14</ledgeLit>
+
+        <!-- Joints: jointDensity walks a square meter, jointLength long and jointWidth wide at their
+             middle, turning jointTurn radians a 3 cm step (and by a kink jointKink of the steps),
+             sprouting side fractures jointBranch of the steps. A dark crack in jointColor with a lit
+             lip in jointLipColor below it, in a stain band jointStain wide either side at jointStainDark
+             of the ground's light. fracture is a finer set. -->
+        <jointDensity>0.25</jointDensity>
+        <jointLength>0.9,2.4</jointLength>
+        <jointWidth>0.022,0.036</jointWidth>
+        <jointTurn>0.08</jointTurn>
+        <jointKink>0.04</jointKink>
+        <jointBranch>0.04</jointBranch>
+        <jointStain>0.06</jointStain>
+        <jointStainDark>0.78</jointStainDark>
+        <jointColor>#423F3A</jointColor>
+        <jointLipColor>#A29C91</jointLipColor>
+        <fractureDensity>2.4</fractureDensity>
+        <fractureLength>0.12,0.4</fractureLength>
+        <fractureWidth>0.006,0.011</fractureWidth>
+        <fractureTurn>0.18</fractureTurn>
+        <fractureKink>0.05</fractureKink>
+        <fractureBranch>0.08</fractureBranch>
+        <fractureColor>#55524B</fractureColor>
+        <fractureLipColor>#9C968B</fractureLipColor>
+
+        <grainDensity>900</grainDensity>
+        <grainSize>0.012,0.024</grainSize>
+        <grainContrast>0.28</grainContrast>
+        <grainTints>#9C968A,#5E5A54,#B0A999</grainTints>
+        <grainTintShare>0.2</grainTintShare>
+
+        <!-- Pits: hollows pitSize across, their upper wall pitDark and lower wall pitLit times the
+             ground's light. -->
+        <pitDensity>20</pitDensity>
+        <pitSize>0.01,0.03</pitSize>
+        <pitDark>0.6</pitDark>
+        <pitLit>1.3</pitLit>
+
+        <!-- Lichen: lichenDensity colonies a square meter, lichenSize in radius, lichenNearJoint of
+             them on a joint; each scatters lichenRosettes times its radius squared rosettes,
+             lichenDot across, in one of lichenColors (taken in turn), with lichenFruitColor dots. -->
+        <lichenDensity>0.25</lichenDensity>
+        <lichenSize>0.1,0.24</lichenSize>
+        <lichenDot>0.012,0.04</lichenDot>
+        <lichenRosettes>6000</lichenRosettes>
+        <lichenNearJoint>0.6</lichenNearJoint>
+        <lichenColors>#949A84,#A2A47C,#8B9282,#A99772,#5A5852</lichenColors>
+        <lichenFruitColor>#3A3631</lichenFruitColor>
+
+        <!-- Stones: grit and pebbles, stoneNearJoint of them lying in a joint. -->
+        <stoneDensity>7</stoneDensity>
+        <stoneSize>0.01,0.035</stoneSize>
+        <stoneColors>#8E897F,#9C968A,#77736B</stoneColors>
+        <stoneShadow>0.5</stoneShadow>
+        <stoneLit>1.3</stoneLit>
+        <stoneNearJoint>0.6</stoneNearJoint>
+
+        <farContrast>1.02</farContrast>
+        <farCoarseContrast>0.72</farCoarseContrast>
+        <farGain>1.0217,1.026,1.0218</farGain>
+
+        <!-- Heights (documented in Dirt.xml): the stone is the ground, high, its rises higher and its
+             hollows lower, and the joints and fractures cut to the bottom, so a neighbor fills them
+             first and the tops stay as islands. -->
+        <heightBase>0.75</heightBase>
+      </params>
+    </generator>
+    <variantCount>8</variantCount>
+    <period>4</period>
+    <pixelsPerMeter>64</pixelsPerMeter>
+    <!-- Lit from the top of the screen (slab edges, pits, stones), so cells only flip left to right,
+         which keeps the light. -->
+    <rotate>mirror</rotate>
+    <macro>
+      <dry>1.04,1.02,0.98</dry>
+      <lush>0.96,0.98,1.02</lush>
+      <amplitude>0.4</amplitude>
+    </macro>
+    <!-- How Rock meets the ones below it (docs/technical/ground-textures.md, "Pair parameters"): the
+         default is grass, held in the joints with a contact shadow under the stone's edge; sand and dirt
+         fill the joints and hollows first and leave the tops as islands, sand with a drift line; mud
+         stains. -->
+    <transition>
+      <width>0.5</width>
+      <softness>0.05</softness>
+      <shadow>0.25</shadow>
+    </transition>
+    <transition over="Sand">
+      <width>0.5</width>
+      <offset>-0.15</offset>
+      <softness>0.04</softness>
+      <shadow>0</shadow>
+      <ridge>0.06</ridge>
+    </transition>
+    <transition over="Dirt">
+      <width>0.3</width>
+      <softness>0.04</softness>
+      <shadow>0</shadow>
+    </transition>
+    <transition over="Mud">
+      <width>0.25</width>
+      <softness>0.2</softness>
+      <stain>0.25</stain>
+      <shadow>0</shadow>
+    </transition>
+  </AssetDef>
+</AssetDefinitions>

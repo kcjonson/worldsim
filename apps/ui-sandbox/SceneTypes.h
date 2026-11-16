@@ -1,14 +1,13 @@
 #pragma once
 
-#include <cstddef>
-#include <scene/SceneManager.h>
+#include <scene/SceneStack.h>
 
 namespace ui_sandbox {
 
 	/// @brief Scene registration info - each scene exports one of these
 	struct SceneInfo {
-		const char*			 name;
-		engine::SceneFactory factory;
+		const char*				 name;
+		app::SceneStack::Factory factory;
 	};
 
 // ============================================================================
@@ -16,49 +15,24 @@ namespace ui_sandbox {
 // ============================================================================
 // clang-format off
 #define UI_SANDBOX_SCENES(X) \
-	X(Arena)       \
-	X(Handle)      \
-	X(Button)      \
-	X(TabBar)      \
-	X(TextInput)   \
-	X(Grass)       \
-	X(VectorPerf)  \
-	X(Svg)         \
-	X(Clip)        \
-	X(Layer)       \
-	X(TextShapes)  \
-	X(SdfMinimal)  \
-	X(InputTest)   \
-	X(Tree)        \
-	X(Layout)      \
-	X(Scroll)      \
-	X(Icon)        \
-	X(TreeView_)   \
-	X(Dropdown)    \
-	X(Toast_)      \
-	X(Dialog_)     \
-	X(Tooltip_)    \
-	X(ContextMenu_) \
-	X(TextWrap) \
-	X(Planet)  \
-	X(Salvage) \
-	X(SalvageDialog)
+	X(Arena)         \
+	X(Handle)        \
+	X(Grass)         \
+	X(VectorPerf)    \
+	X(Svg)           \
+	X(Tree)          \
+	X(Planet)        \
+	X(Gallery)       \
+	X(GalleryDialog)
 	// clang-format on
 
-	/// @brief Scene types for ui-sandbox application (auto-generated from SCENE_LIST)
-	enum class SceneType : std::size_t {
-#define SCENE_ENUM(name) name,
-		UI_SANDBOX_SCENES(SCENE_ENUM)
-#undef SCENE_ENUM
-			Count // Must be last
-	};
+	namespace scenes {
+#define SCENE_EXTERN(scene) extern const SceneInfo scene;
+		UI_SANDBOX_SCENES(SCENE_EXTERN)
+#undef SCENE_EXTERN
+	} // namespace scenes
 
-	/// @brief Convert app-specific SceneType to engine::SceneKey
-	inline engine::SceneKey toKey(SceneType type) {
-		return static_cast<engine::SceneKey>(type);
-	}
-
-	/// @brief Initialize SceneManager with all ui-sandbox scenes
-	void initializeSceneManager();
+	/// @brief Add every scene above to the stack under its name
+	void addScenes(app::SceneStack& stack);
 
 } // namespace ui_sandbox

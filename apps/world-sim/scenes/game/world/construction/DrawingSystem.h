@@ -8,13 +8,17 @@
 // click polygon drawing in world meters; on close it quantizes the ring,
 // commits to ConstructionWorld, and spawns the ECS blueprint entity.
 //
-// Two tools share the one state machine, selected by activeTool_:
+// The tools share the one state machine, selected by activeTool_:
 //   Foundation: a CLOSED polygon. snap() / validatePoint / validateRing /
 //     commitFoundation. Origin-close commits.
-//   Wall:       an OPEN polyline chain on a single host foundation
+//   FoundationEdit: Add / Subtract on one existing foundation (Epic G3). The
+//     same closed-polygon flow; validateEditPoint per point, and the close runs
+//     applyFoundationEdit (validateFoundationEdit on the resulting outline).
+//   Wall:       a polyline chain on a single host foundation
 //     (building-construction Walls). snapWall() / validateWallPoint /
-//     validateWallSegment / commitSegment per consecutive pair. No origin-close;
-//     the chain ends on right-click / Esc / Enter. The host foundation is the
+//     validateWallSegment / commitSegment per consecutive pair. The chain ends
+//     on right-click / Esc / Enter, or on a point that lands on its first point
+//     (closesWallChain), which closes the loop. The host foundation is the
 //     one the FIRST point lands on; later points that leave it are rejected.
 //
 // Input order in GameScene is GameUI -> DrawingSystem -> PlacementSystem ->
@@ -38,21 +42,25 @@
 
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
+#include <graphics/Color.h>
 #include <math/Types.h>
 #include <world/camera/WorldCamera.h>
 
+#include <cstdint>
 #include <functional>
 #include <string>
 #include <vector>
 
-namespace engine::assets {
+namespace assets {
 	struct ThicknessPreset;
 	struct OpeningTypeDef;
-}
+} // namespace assets
 
 namespace ecs {
 	class NavigationSystem;
-}
+	class PlayerVisibilitySystem;
+	struct StructureBlueprint;
+} // namespace ecs
 
 namespace world_sim {
 
@@ -67,20 +75,24 @@ namespace world_sim {
 	/// Which structure tool is active while Drawing.
 	enum class ToolKind {
 		Foundation,
+		FoundationEdit, // Add / Subtract on an existing foundation (Epic G3)
 		Wall,
 		Opening,
 	};
 
 	/// Live status of the in-progress shape, surfaced to the config strip.
 	struct DrawingStatus {
-		bool		active = false;	 // tool is on (config strip visible)
-		bool		wall = false;	 // true while the wall tool is active (config strip shows presets)
-		bool		opening = false; // true while the opening tool is active (config strip shows the opening type)
+		bool		active = false;			// tool is on (config strip visible)
+		bool		wall = false;			// true while the wall tool is active (config strip shows presets)
+		bool		opening = false;		// true while the opening tool is active (config strip shows the opening type)
+		bool		foundationEdit = false; // true while Add / Subtract is active (material locked to the target's)
+		std::string editLabel;				// "Add to foundation" / "Subtract from foundation"
 		int			pointCount = 0;
-		float		areaSquareMeters = 0.0F; // closed-polygon area preview (0 until >= 3 pts)
-		bool		valid = true;			 // current cursor placement / shape validity
-		std::string message;				 // validity reason (empty when valid)
-		std::string material;				 // active material name
+		float		areaSquareMeters = 0.0F;	  // closed-polygon area preview (0 until >= 3 pts); edit: resulting outline
+		float		areaDeltaSquareMeters = 0.0F; // edit: resulting area minus the target's current area
+		bool		valid = true;				  // current cursor placement / shape validity
+		std::string message;					  // validity reason (empty when valid)
+		std::string material;					  // active material name
 
 		// Wall readouts (meaningful only when wall == true).
 		std::string thicknessPreset;			// active preset name (Light/Standard/Heavy)
@@ -103,11 +115,27 @@ namespace world_sim {
 			std::function<void(const std::string&, const std::string&)> onToast;
 		};
 
+		/// Result of a foundation Add / Subtract, from the tool or the dev verb.
+		/// `extension` is the new extension blueprint's id for an Add onto a Built
+		/// foundation (0 otherwise); `entity` is the blueprint entity that now carries
+		/// the work (the resized target, or the extension).
+		struct FoundationEditOutcome {
+			bool							   ok = false;
+			std::string						   reason; // empty when ok
+			construction::FoundationId		   target = construction::kInvalidFoundation;
+			construction::FoundationId		   extension = construction::kInvalidFoundation;
+			ecs::EntityID					   entity = ecs::kInvalidEntity;
+			float							   areaSquareMeters = 0.0F; // the target's outline once the edit lands
+		};
+
 		struct Args {
 			ecs::World*					world;
-			engine::world::WorldCamera* camera;
-			ecs::NavigationSystem*		navigation; // world-position validity (isValidPosition); same predicate as the dev verbs
-			Callbacks					callbacks;
+			world::WorldCamera*			camera;
+			ecs::NavigationSystem*		navigation; // the ground gates (BuildableOnceCleared for foundations, BuildableNow for walls); the dev verbs' too
+			// The preview's colours where a shape can and can't go, from the scene's theme.
+			Foundation::Color validColor{};
+			Foundation::Color invalidColor{};
+			Callbacks		  callbacks;
 		};
 
 		DrawingSystem() = default;
@@ -125,6 +153,11 @@ namespace world_sim {
 		/// name ("Door"/"Window"); enters Drawing in opening mode. The material is the
 		/// type's own material (v1: no separate material selector for openings).
 		void activateOpeningTool(const std::string& openingType);
+
+		/// Activate foundation Add / Subtract on `target` (from its info panel). The
+		/// same click-by-click polygon flow as the foundation tool; closing the drawn
+		/// polygon applies the edit and the tool stays on for the next one.
+		void activateFoundationEditTool(construction::FoundationId target, construction::FoundationEditMode mode);
 
 		/// Deactivate and discard any in-progress shape.
 		void deactivate();
@@ -149,7 +182,7 @@ namespace world_sim {
 		void handleMouseMove(float screenX, float screenY, int viewportW, int viewportH, bool freeform);
 
 		/// Left click: add a snapped point, or commit if it closes the shape
-		/// (foundation) / extends the chain (wall). Ctrl held on the wall tool over a
+		/// (foundation) / extends or closes the chain (wall). Ctrl held on the wall tool over a
 		/// foundation edge triggers edge fill. @return true if the click was consumed.
 		bool handleClick(float screenX, float screenY, int viewportW, int viewportH, bool freeform, bool ctrl = false);
 
@@ -201,6 +234,15 @@ namespace world_sim {
 		/// snap guides, and validity colorize. INTERIM.
 		void renderWallChainPreview(int viewportW, int viewportH);
 
+		/// The ring around a closeable shape's or chain's first point, bold and valid-colored
+		/// while the next click closes it (willClose_). INTERIM.
+		void renderOriginHalo(Foundation::Vec2 firstScreen, float scale, std::int32_t key) const;
+
+		/// Foundation Add / Subtract: the outline the edit would produce (merged or
+		/// remainder), colorized for validity, with the reason next to the cursor.
+		/// Drawn under the regular polygon preview. INTERIM.
+		void renderEditOutlinePreview(int viewportW, int viewportH);
+
 	  public:
 		// --- Status for the config strip ---
 
@@ -208,8 +250,8 @@ namespace world_sim {
 
 		// --- Topology access for consumers (selection, ConstructionSystem) ---
 
-		[[nodiscard]] engine::construction::ConstructionWorld&		 world() { return constructionWorld_; }
-		[[nodiscard]] const engine::construction::ConstructionWorld& world() const { return constructionWorld_; }
+		[[nodiscard]] construction::ConstructionWorld&		 world() { return constructionWorld_; }
+		[[nodiscard]] const construction::ConstructionWorld& world() const { return constructionWorld_; }
 
 		// --- Dev/test hook ---
 
@@ -220,12 +262,12 @@ namespace world_sim {
 		/// enclose rooms immediately. Reconciles segment entities once. Returns the
 		/// number of segments created.
 		/// Precondition: callers must nav-validate the chain first (the dev verb does
-		/// via requireWalkableChain); this bypasses the on-mesh check.
+		/// via wallChainGroundRefusal); this bypasses the on-mesh check.
 		int devCommitWalls(
 			const std::vector<Foundation::Vec2>& pts,
 			const std::string&					 material,
 			const std::string&					 thicknessPreset,
-			engine::construction::FoundationId	 host,
+			construction::FoundationId			 host,
 			bool								 built
 		);
 
@@ -236,28 +278,69 @@ namespace world_sim {
 		/// opening (full work, manifest delivered) and the topology flips to Built.
 		/// Returns the created opening id, or kInvalidOpening on failure (unknown
 		/// segment / type).
-		engine::construction::OpeningId
-		devCommitOpening(engine::construction::SegmentId segment, float t, const std::string& openingType, bool built);
+		construction::OpeningId devCommitOpening(construction::SegmentId segment, float t, const std::string& openingType, bool built);
+
+		// --- Foundation lifecycle (shared with GameScene and the dev verbs) ---
+
+		/// Spawn the ECS blueprint entity for committed foundation `id`, sized from its
+		/// own ring and material (manifest, work, HP). kInvalidEntity for an unknown id.
+		ecs::EntityID spawnBlueprintEntity(construction::FoundationId id);
+
+		/// Validate and apply an Add / Subtract of the closed polygon `drawn` (world
+		/// meters) to `target`. The one edit path: the tool's close and
+		/// /api/dev/foundation-edit both land here. An editable blueprint is edited in
+		/// place (manifest + work resized, back to Clearing); an Add onto a Built
+		/// foundation commits an extension blueprint that merges once built.
+		FoundationEditOutcome applyFoundationEdit(
+			construction::FoundationId			 target,
+			const std::vector<Foundation::Vec2>& drawn,
+			construction::FoundationEditMode	 mode
+		);
+
+		/// Merge a just-Built extension into its target: the topology union, and the
+		/// target entity takes over the extension's manifest, work, and HP and
+		/// re-centers on the merged outline. Returns the extension's entity for the
+		/// caller to despawn (deferred), or kInvalidEntity when the merge is refused.
+		ecs::EntityID mergeExtension(construction::FoundationId extension);
+
+		/// Foundation `id`'s ECS mirror blueprint (deliveries, work, demolish order),
+		/// or nullptr when it has no live entity. The edit validator's ECS input.
+		[[nodiscard]] const ecs::StructureBlueprint* foundationBlueprint(construction::FoundationId id) const;
 
 	  private:
 		// --- Nav-mesh placement validity (shared by foundation + wall + opening) ---
 
 		/// Whether `p` (world meters) is a placeable point for the ACTIVE tool: a FOUNDATION vertex is
-		/// placeable over clearable entities too (NavigationSystem::isPointBuildable, terrain-only), a
-		/// WALL vertex needs clear on-mesh ground (isValidPosition). Same split the /api/dev foundation
+		/// placeable over clearable entities too (NavigationSystem::isPointBuildableOnceCleared, terrain-only), a
+		/// WALL vertex needs clear on-mesh ground out of any ford (isPointBuildableNow). Same split the /api/dev foundation
 		/// vs walls verbs now use; validity stays owned by a nav mesh (no world/terrain/water reads).
 		/// When no nav system is wired (headless/test) validity is owned elsewhere; mirror the dev
 		/// verbs' permissive fallback and treat the point as placeable.
-		[[nodiscard]] bool pointOnMesh(Foundation::Vec2 p) const;
+		[[nodiscard]] bool pointOnBuildableGround(Foundation::Vec2 p) const;
 
 		/// True when the WHOLE footprint of `pts` may be placed. A FOUNDATION validates its polygon
-		/// area against NavigationSystem::isAreaBuildable -- a terrain-only mesh, so geography (water)
-		/// and built walls block but clearable entities (trees/rocks) do NOT: placing over them spawns
-		/// clear tasks and the build waits for the footprint to clear. A WALL validates its chain
-		/// centerline against isPolylineWalkable (no wall footprint-clearing yet, so it still needs
-		/// clear ground). The SAME shared predicates the /api/dev verbs use. On failure toasts
-		/// "Can't build here" and returns false so the caller commits NOTHING -- no partial structure.
+		/// area against footprintBuildable. A WALL validates its chain centerline against
+		/// isLineBuildableNow (no wall footprint-clearing yet, so it still needs clear ground). The SAME
+		/// shared predicates the /api/dev verbs use. On failure toasts "Can't build here" and returns
+		/// false so the caller commits NOTHING -- no partial structure.
 		[[nodiscard]] bool requirePlaceable(const std::vector<Foundation::Vec2>& pts, const char* what);
+
+		/// Player visibility (player-visibility.md 3.7): the tools build only on ground the colonists have
+		/// seen, and each of these is true when player visibility is off. A point; a closed shape's whole
+		/// area; an open chain's points and the strip along each segment; the snapped opening's span.
+		[[nodiscard]] bool pointSeen(Foundation::Vec2 p) const;
+		[[nodiscard]] bool areaSeen(const std::vector<Foundation::Vec2>& pts) const;
+		[[nodiscard]] bool chainSeen(const std::vector<Foundation::Vec2>& pts) const;
+		[[nodiscard]] bool openingSeen(float widthMeters) const;
+		[[nodiscard]] const ecs::PlayerVisibilitySystem* visibilityGate() const;
+		/// "not on buildable ground", or "the area is unexplored" when the cursor is over ground nobody has seen.
+		[[nodiscard]] std::string cursorGroundReason() const;
+
+		/// NavigationSystem::isAreaBuildableOnceCleared over the polygon `pts`: a terrain-only mesh, so water and
+		/// off-mesh gaps block but clearable entities (trees/rocks) do NOT (placing over them spawns
+		/// clear tasks and the build waits for the footprint to clear). Wall conflicts are the
+		/// validator's job. True when no nav system is wired (headless/test).
+		[[nodiscard]] bool footprintBuildable(const std::vector<Foundation::Vec2>& pts) const;
 
 		// --- Foundation tool ---
 
@@ -283,8 +366,25 @@ namespace world_sim {
 		/// False when no points are placed.
 		[[nodiscard]] bool nearStartVertex(Foundation::Vec2 p, float radiusMeters) const;
 
-		/// Build the ECS blueprint entity for a committed foundation.
-		ecs::EntityID spawnBlueprintEntity(engine::construction::FoundationId id);
+		// --- Foundation Add / Subtract tool ---
+
+		/// Validity of the closed shape the tool would commit: validateRing for a new
+		/// foundation, validateFoundationEdit (the resulting outline) for an edit.
+		[[nodiscard]] construction::ValidationResult validateClosed(const std::vector<Foundation::Vec2>& ring) const;
+
+		/// Refresh editPreview_ from the drawn polygon the next click would produce
+		/// (placed points, plus the cursor unless the click closes).
+		void refreshEditPreview();
+
+		/// Apply the edit for the closed polygon points_, toast the outcome, and clear
+		/// the points (the tool stays on).
+		void commitFoundationEdit();
+
+		/// Re-size an in-place-edited blueprint's mirror entity to its new ring:
+		/// manifest, work, HP, and position, back to Clearing (the new footprint may
+		/// cover blockers the old one didn't), with its goal tree dropped for the next
+		/// construction tick to rebuild from the new footprint.
+		void resizeBlueprintEntity(construction::FoundationId id);
 
 		// --- Wall tool ---
 
@@ -295,7 +395,7 @@ namespace world_sim {
 
 		/// Resolve the active thickness preset for the active material, or nullptr if
 		/// the material has no wall presets (the wall tool can't commit then).
-		[[nodiscard]] const engine::assets::ThicknessPreset* activePreset() const;
+		[[nodiscard]] const assets::ThicknessPreset* activePreset() const;
 
 		/// Commit every consecutive pair of the in-progress chain as a wall segment
 		/// (validateWallSegment then commitSegment) and spawn a blueprint entity per
@@ -314,7 +414,7 @@ namespace world_sim {
 		/// delivered == required); a Blueprint spawns AwaitingMaterials. Sets the
 		/// segment's entity handle. No-op if the id is unknown or already has an
 		/// entity.
-		ecs::EntityID spawnWallSegmentEntity(engine::construction::SegmentId segmentId);
+		ecs::EntityID spawnWallSegmentEntity(construction::SegmentId segmentId);
 
 		/// Idempotently make the ECS mirror match the wall topology: spawn an entity
 		/// for every segment that lacks one (sized to itself), and destroy any wall
@@ -337,7 +437,7 @@ namespace world_sim {
 
 		/// Resolve the active opening type's config def, or nullptr if the type name is
 		/// not a known opening type (the opening tool can't snap/commit then).
-		[[nodiscard]] const engine::assets::OpeningTypeDef* activeOpeningType() const;
+		[[nodiscard]] const assets::OpeningTypeDef* activeOpeningType() const;
 
 		/// Spawn the ECS mirror entity for a single opening (Position at the centerline
 		/// point at t, Structure{Opening, openingId}, StructureBlueprint with the type's
@@ -345,14 +445,16 @@ namespace world_sim {
 		/// Complete (full work, delivered == required); otherwise AwaitingMaterials
 		/// (openings have no clearing phase, like walls). Sets the opening's entity
 		/// handle. No-op if the id is unknown or already has an entity.
-		ecs::EntityID spawnOpeningBlueprintEntity(engine::construction::OpeningId openingId, bool built);
+		ecs::EntityID spawnOpeningBlueprintEntity(construction::OpeningId openingId, bool built);
 
 		ecs::World*					ecsWorld_ = nullptr;
-		engine::world::WorldCamera* camera_ = nullptr;
+		Foundation::Color			validColor_{};
+		Foundation::Color			invalidColor_{};
+		world::WorldCamera*			camera_ = nullptr;
 		ecs::NavigationSystem*		navigation_ = nullptr;
 		Callbacks					callbacks_;
 
-		engine::construction::ConstructionWorld constructionWorld_;
+		construction::ConstructionWorld constructionWorld_;
 
 		// Committed-construction geometry, rebuilt only when constructionWorld_'s
 		// version moves (see CommittedGeometryCache.h).
@@ -362,8 +464,8 @@ namespace world_sim {
 		ToolKind							   activeTool_ = ToolKind::Foundation;
 		std::vector<Foundation::Vec2>		   points_;				// placed vertices, world meters
 		Foundation::Vec2					   cursor_{0.0F, 0.0F}; // snapped cursor
-		engine::construction::SnapResult	   lastSnap_;
-		engine::construction::ValidationResult lastValidation_;
+		construction::SnapResult			   lastSnap_;
+		construction::ValidationResult		   lastValidation_;
 
 		// Foundation tool: true when the next click will CLOSE the shape rather than
 		// place a vertex -- either the explicit origin-close (lastSnap_ Origin) or the
@@ -373,21 +475,32 @@ namespace world_sim {
 		bool willClose_ = false;
 
 		// True when the snapped cursor is at a NON-PLACEABLE point for the active tool (foundation:
-		// unbuildable -- water/wall; wall: off the walkable mesh; or no active mesh). Recomputed every
-		// move for the foundation + wall tools; drives the red invalid preview so the player sees they
-		// can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
+		// water, a ford, or off-mesh; wall: those or a placed obstacle; or no active mesh). Recomputed
+		// every move for the foundation + wall tools; drives the red invalid preview so the player sees
+		// they can't place there BEFORE committing. The commit gate re-checks every vertex regardless, so
 		// this is feedback only.
-		bool cursorOffMesh_ = false;
+		bool cursorOffBuildableGround = false;
+
+		// True when the opening tool's snapped opening is not all on seen ground.
+		bool openingUnexplored_ = false;
 
 		// Wall chain host: the foundation the first chain point landed on. Every
 		// segment of the chain hosts here; a later point leaving it is rejected.
-		engine::construction::FoundationId wallHost_ = engine::construction::kInvalidFoundation;
+		construction::FoundationId wallHost_ = construction::kInvalidFoundation;
 
 		// Opening tool: the active opening type (config name) plus the latest snap +
 		// validity, refreshed on every move and read on click / by status().
 		std::string							   activeOpeningType_ = "Door";
-		engine::construction::OpeningSnap	   openingSnap_;
-		engine::construction::ValidationResult openingValidation_;
+		construction::OpeningSnap			   openingSnap_;
+		construction::ValidationResult		   openingValidation_;
+
+		// Foundation Add / Subtract: the foundation being edited, the mode, and the
+		// live result for the drawn polygon (outline preview + validity), refreshed
+		// on every move once the drawing closes into a polygon.
+		construction::FoundationId				   editTarget_ = construction::kInvalidFoundation;
+		construction::FoundationEditMode		   editMode_ = construction::FoundationEditMode::Add;
+		construction::FoundationEditResult		   editPreview_;
+		bool									   editPreviewActive_ = false; // >= 3 drawn points to judge
 
 		std::string activeMaterial_ = "Wood";
 		std::string activeThicknessPreset_ = "Standard";

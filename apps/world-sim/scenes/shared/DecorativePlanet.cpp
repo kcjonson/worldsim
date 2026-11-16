@@ -5,7 +5,6 @@
 #include <worldgen/io/PlanetIO.h>
 
 #include <primitives/Primitives.h>
-#include <theme/Tokens.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
@@ -83,25 +82,27 @@ void DecorativePlanet::update(float dt) {
 	}
 }
 
-void DecorativePlanet::render(const Foundation::Rect& rect, float logicalW, float logicalH) {
+void DecorativePlanet::render(const Foundation::Rect& rect, const Renderer::Viewport& window, Foundation::Color backdrop) {
 	if (!worldSet || !globe.isReady()) return;
 
 	// Paint the backdrop primitives (starfield) beneath the blitted globe; the
 	// scrim and all foreground UI batch after it and composite on top. Render
 	// even at fade 0 so the colorizer's async uploads keep pumping.
 	Renderer::Primitives::flush();
-	globe.render(rect, logicalW, logicalH, fade * kDiscOpacity);
+	globe.render(rect, window, fade * kDiscOpacity);
 
 	if (fade <= 0.0F) return;
 
 	// Screen-level bg_void -> transparent scrim: solid over the left quarter
 	// (the identity/menu column), easing out by ~2/3 across, so the disc
 	// emerges from shadow and foreground text stays legible.
+	const auto				logicalW = static_cast<float>(window.logicalWidth);
+	const auto				logicalH = static_cast<float>(window.logicalHeight);
 	const float				solidX = logicalW * kScrimSolidFrac;
 	const float				clearX = logicalW * kScrimFadeFrac;
 	const float				alpha = kScrimAlpha * fade;
-	const Foundation::Color scrimEdge{UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, alpha};
-	const Foundation::Color scrimClear{UI::bg_void.r, UI::bg_void.g, UI::bg_void.b, 0.0F};
+	const Foundation::Color scrimEdge{backdrop.r, backdrop.g, backdrop.b, alpha};
+	const Foundation::Color scrimClear{backdrop.r, backdrop.g, backdrop.b, 0.0F};
 	Renderer::Primitives::drawRect(Renderer::Primitives::RectArgs{
 		.bounds = {0.0F, 0.0F, solidX, logicalH},
 		.style = {.fill = scrimEdge}});

@@ -10,6 +10,7 @@ cmake_install.cmake
 *.cmake
 !CMakeLists.txt
 !cmake/*.cmake
+!cmake/vcpkg-overlay-ports/**/*.cmake
 
 # Compile commands
 compile_commands.json
@@ -32,7 +33,11 @@ vcpkg_installed/
 .DS_Store
 *.dSYM/
 
+# Nightly perf batch: state, build copies, raw captures (docs/testing/nightly-perf-batch.md)
+perf-results/nightly/
+
 # Test outputs
+/Testing/
 *.png
 *.jpg
 tests/golden/*.actual.png
@@ -52,7 +57,7 @@ tests/diffs/
 docs/development-log/plans/
 build-asan/
 
-# Test artifacts (DebugImageExporter output from world-tests)
+# Test artifacts (DebugImageExporter output from worldgen-tests)
 test_debug_*.bmp
 
 # worldgen-cli baseline outputs (untracked build artifacts)

@@ -1,40 +1,42 @@
 // Game Scene - Main gameplay with chunk-based world rendering
 
+#include "GameBootstrap.h"
 #include "GameWorldState.h"
 #include "NewGameSetup.h"
 #include "SceneTypes.h"
+#include "scenes/game/dev/CameraCommand.h"
 #include "scenes/game/dev/DevCommandHandler.h"
+#include "scenes/game/dev/GpuHold.h"
 #include "scenes/game/ui/GameUI.h"
+#include "scenes/game/world/DeferredEditsSystem.h"
 #include "scenes/game/world/construction/DrawingSystem.h"
 #include "scenes/game/world/nav/NavOverlay.h"
-#include "scenes/game/world/vision/VisionOverlay.h"
+#include "scenes/game/world/MoveOrderGoal.h"
 #include "scenes/game/world/placement/PlacementSystem.h"
 #include "scenes/game/world/rooms/RoomOverlay.h"
 #include "scenes/game/world/selection/SelectionSystem.h"
+#include "scenes/game/world/terrain/TerrainPolygonOverlay.h"
+#include "scenes/game/world/vision/VisionOverlay.h"
+#include "scenes/shared/SalalUi.h"
+#include <theme/Theme.h>
 
 #include <assets/ConstructionRegistry.h>
 
-#include <components/toast/Toast.h> // For ToastSeverity
-
 #include <GL/glew.h>
 
-#include <application/AppLauncher.h>
-#include <debug/DebugServer.h>
 #include <algorithm>
-#include <debug/LayoutLint.h>
-#include <debug/UiTreeSerializer.h>
+#include <application/App.h>
 #include <chrono>
 #include <cmath>
-#include <limits>
+#include <cstdio>
 #include <graphics/Rect.h>
-#include <input/InputEvent.h>
-#include <input/InputManager.h>
+#include <limits>
 #include <metrics/GPUTimer.h>
 #include <metrics/MetricsCollector.h>
 #include <metrics/PerformanceMetrics.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
-#include <scene/SceneManager.h>
+#include <theme/Keys.h>
 #include <utils/Log.h>
 #include <world/camera/WorldCamera.h>
 #include <world/chunk/Chunk.h>
@@ -43,15 +45,28 @@
 #include <world/chunk/MockWorldSampler.h>
 #include <world/rendering/ChunkRenderer.h>
 #include <world/rendering/EntityRenderer.h>
+#include <world/rendering/GroundTileBank.h>
+#include <world/rendering/PackagedLayout.h> // crate footprint (drop spacing)
+#include <world/rendering/PileLayout.h>	   // pile footprint (drop spacing)
+#include <world/rendering/TemplateBounds.h>
+#include <world/rendering/VisibilityCoverRenderer.h>
 
 #include <assets/AssetRegistry.h>
+#include <assets/DetailLevels.h>
 #include <assets/RecipeRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
+#include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
 
 // ECS
+#include <construction/ConstructionWorld.h>
+#include <core/Vec2i64.h>
+#include <ecs/GoalTaskRegistry.h>
+#include <ecs/SystemSeeds.h>
 #include <ecs/World.h>
+#include <ecs/WorldSource.h>
 #include <ecs/components/Action.h>
+#include <ecs/components/AgentRadius.h>
 #include <ecs/components/AnimationState.h>
 #include <ecs/components/Appearance.h>
 #include <ecs/components/Attributes.h>
@@ -65,10 +80,10 @@
 #include <ecs/components/Movement.h>
 #include <ecs/components/Needs.h>
 #include <ecs/components/Packaged.h>
-#include <ecs/components/AgentRadius.h>
-#include <ecs/components/Room.h>
 #include <ecs/components/ResourceStack.h>
+#include <ecs/components/Room.h>
 #include <ecs/components/Skills.h>
+#include <ecs/components/SourceReachMemo.h>
 #include <ecs/components/Structure.h>
 #include <ecs/components/StructureBlueprint.h>
 #include <ecs/components/StructureHealth.h>
@@ -81,23 +96,27 @@
 #include <ecs/systems/CollisionSystem.h>
 #include <ecs/systems/ConstructionSystem.h>
 #include <ecs/systems/CraftingGoalSystem.h>
-#include <ecs/systems/DynamicEntityRenderSystem.h>
 #include <ecs/systems/MovementSystem.h>
 #include <ecs/systems/NavigationSystem.h>
 #include <ecs/systems/NeedsDecaySystem.h>
 #include <ecs/systems/PhysicsSystem.h>
+#include <ecs/systems/PlayerVisibilitySystem.h>
 #include <ecs/systems/RoomDetectionSystem.h>
+#include <ecs/systems/StaticRectCollisionSystem.h>
 #include <ecs/systems/StorageGoalSystem.h>
 #include <ecs/systems/TimeSystem.h>
-#include <ecs/systems/StaticRectCollisionSystem.h>
 #include <ecs/systems/VisionSystem.h>
 #include <ecs/systems/WallCollisionSystem.h>
+#include <world/rendering/DynamicEntityRenderSystem.h>
 
 #include <cstdlib>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <random>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <vector>
 
@@ -113,11 +132,15 @@ namespace {
 	constexpr const char* kSceneName = "game";
 	constexpr uint64_t	  kDefaultWorldSeed = 12345;
 	constexpr float		  kPixelsPerMeter = 8.0F;
+	// The registry prewarms, and reads non-drawing template data at, the default view's density.
+	static_assert(kPixelsPerMeter * world::kZoomLevels[world::kDefaultZoomIndex] == assets::kReferencePixelsPerMeter);
 
-	class GameScene : public engine::IScene {
+	class GameScene : public app::Scene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& app) override {
+			owner = &app;
 			LOG_INFO(Game, "GameScene - Entering");
+			theme::apply(ui());
 
 			// Check for pre-loaded state from GameLoadingScene
 			auto preloadedState = world_sim::GameWorldState::Take();
@@ -143,38 +166,56 @@ namespace {
 				LOG_INFO(Game, "GameScene - No pre-loaded state, initializing fresh");
 
 				// Create world systems
-				auto sampler = std::make_unique<engine::world::MockWorldSampler>(kDefaultWorldSeed);
-				m_chunkManager = std::make_unique<engine::world::ChunkManager>(std::move(sampler));
+				auto sampler = std::make_unique<world::MockWorldSampler>(kDefaultWorldSeed);
+				m_chunkManager = std::make_unique<world::ChunkManager>(std::move(sampler), assets::canopyCoverFromDefinitions(assets::AssetRegistry::Get()));
 
-				m_camera = std::make_unique<engine::world::WorldCamera>();
+				m_camera = std::make_unique<world::WorldCamera>();
 				m_camera->setPanSpeed(200.0F);
 
-				m_renderer = std::make_unique<engine::world::ChunkRenderer>(kPixelsPerMeter);
+				// A direct switch here (the dev server's scene or reload) skips the scenes that bake the ground tiles,
+				// so the bake runs to the end here, behind the same gate; a failure goes to the splash, which shows it.
+				world_sim::GroundBakeStep bake;
+				while (!(bake = world_sim::stepGroundBake()).done) {}
+				if (!bake.errors.empty()) {
+					LOG_ERROR(
+						Game,
+						"GameScene - asset validation or the ground bake failed (%zu error(s)); back to the splash",
+						bake.errors.size()
+					);
+					owner->scenes().switchTo(world_sim::scenes::Splash.name);
+				}
+				m_renderer = std::make_unique<worldview::ChunkRenderer>(kPixelsPerMeter, world_sim::groundTiles());
 
-				m_entityRenderer = std::make_unique<engine::world::EntityRenderer>(kPixelsPerMeter);
+				m_entityRenderer = std::make_unique<worldview::EntityRenderer>(kPixelsPerMeter);
 
 				// Initialize entity placement system
-				auto& assetRegistry = engine::assets::AssetRegistry::Get();
-				m_placementExecutor = std::make_unique<engine::assets::PlacementExecutor>(assetRegistry);
+				auto& assetRegistry = assets::AssetRegistry::Get();
+				m_placementExecutor = std::make_unique<assets::PlacementExecutor>(assetRegistry);
 				m_placementExecutor->initialize();
 				LOG_INFO(Game, "PlacementExecutor initialized with %zu entity types", m_placementExecutor->getSpawnOrder().size());
 
-				// Initial chunk load (entity placement happens async in update())
-				m_chunkManager->update(m_camera->position());
+				// Initial chunk load (entity placement happens async in update()); no movers exist yet
+				m_chunkManager->update(m_camera->position(), {});
 
 				LOG_INFO(Game, "World initialized with seed %llu", kDefaultWorldSeed);
 			}
+			m_visibilityCover = std::make_unique<worldview::VisibilityCoverRenderer>();
+			// The camera loads only chunks that can show; the rest would be drawn under the cover's opaque fill.
+			// Every mover's anchor still loads what it needs (player-visibility.md 3.9).
+			m_chunkManager->setCameraLoads([this](world::ChunkCoordinate coord) {
+				return ecsWorld == nullptr || worldview::cameraLoadsChunk(*ecsWorld, *m_camera, kPixelsPerMeter, coord);
+			});
 
 			// Create async processor for runtime chunk streaming
-			m_asyncProcessor =
-				std::make_unique<engine::assets::AsyncChunkProcessor>(*m_placementExecutor, kDefaultWorldSeed, m_processedChunks);
+			m_asyncProcessor = std::make_unique<assets::AsyncChunkProcessor>(*m_placementExecutor, m_processedChunks);
 
 			// Create unified game UI (contains overlay and info panel)
 			// Note: Callbacks for placement/selection are set up after systems are created below
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
+				.root = root(),
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
-				.onZoomReset = [this]() { m_camera->setZoomIndex(engine::world::kDefaultZoomIndex); },
+				.onZoomReset = [this]() { m_camera->setZoomIndex(world::kDefaultZoomIndex); },
 				.onSelectionCleared = [this]() { m_selectionSystem->clearSelection(); },
 				.onColonistSelected = [this](ecs::EntityID entityId) { m_selectionSystem->selectColonist(entityId); },
 				.onColonistFollowed =
@@ -199,14 +240,6 @@ namespace {
 							ai.enterControl(entityId);
 							m_controlledColonist = entityId;
 						}
-					},
-				.onBuildToggle =
-					[this]() {
-						// One tool owns world input: drop the foundation tool first.
-						if (m_drawingSystem) {
-							m_drawingSystem->deactivate();
-						}
-						m_placementSystem->toggleBuildMenu();
 					},
 				.onBuildItemSelected =
 					[this](const std::string& defName) {
@@ -240,16 +273,25 @@ namespace {
 						auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
 						timeSystem.setSpeed(speed);
 					},
-				.onMenuClick = [this]() { sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu)); },
+				.onMenuClick = [this]() { openPauseMenu(); },
+				.onPauseMenuClosed =
+					[this]() {
+						if (std::exchange(m_resumeAfterPauseMenu, false)) {
+							ecsWorld->getSystem<ecs::TimeSystem>().resume();
+						}
+					},
+				.onMainMenu = [this]() { owner->scenes().switchTo(world_sim::scenes::MainMenu.name); },
+				.onQuitGame = [this]() { owner->requestExit(); },
 				.onPlaceFurniture = [this]() { handlePlaceFurniture(); },
 				.onMoveFurniture = [this]() { handleMoveFurniture(); },
 				.onDemolishFoundation = [this]() { handleDemolishFoundation(); },
 				.onDemolishBuilding = [this]() { handleDemolishBuilding(); },
+				.onAddToFoundation = [this]() { handleEditFoundation(construction::FoundationEditMode::Add); },
+				.onSubtractFromFoundation = [this]() { handleEditFoundation(construction::FoundationEditMode::Subtract); },
 				.onDemolishWallSegment = [this]() { handleDemolishWallSegment(); },
 				.onDemolishOpening = [this]() { handleDemolishOpening(); },
 				.queryResources = [this](const std::string& defName, Foundation::Vec2 position) -> std::optional<uint32_t> {
-					auto coord = engine::world::worldToChunk({position.x, position.y});
-					return m_placementExecutor->getResourceCount(coord, {position.x, position.y}, defName);
+					return m_placementExecutor->getResourceCount({position.x, position.y}, defName);
 				},
 				.onStructureSelected =
 					[this](const std::string& structure) {
@@ -294,7 +336,7 @@ namespace {
 
 			// Populate Production dropdown with placeable stations (recipes where station="none")
 			{
-				auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+				auto& recipeRegistry = assets::RecipeRegistry::Get();
 				auto  innateRecipes = recipeRegistry.getInnateRecipes();
 
 				std::vector<std::pair<std::string, std::string>> productionItems;
@@ -307,12 +349,6 @@ namespace {
 				gameUI->setProductionItems(productionItems);
 			}
 
-			// Initial layout pass with consistent DPI scaling
-			int viewportW = 0;
-			int viewportH = 0;
-			Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-			gameUI->layout(Foundation::Rect{0, 0, static_cast<float>(viewportW), static_cast<float>(viewportH)});
-
 			// Initialize ECS World
 			initializeECS();
 
@@ -322,12 +358,13 @@ namespace {
 				.camera = m_camera.get(),
 				.placementExecutor = m_placementExecutor.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+				.worldSeed = m_chunkManager->worldSeed(),
 				.callbacks = {
-					.onBuildMenuVisibility = [this](bool active) { gameUI->setBuildModeActive(active); },
 					.onShowBuildMenu = [this](const std::vector<world_sim::BuildMenuItem>& items) { gameUI->showBuildMenu(items); },
 					.onHideBuildMenu = [this]() { gameUI->hideBuildMenu(); },
 					.onSelectionCleared = [this]() { m_selectionSystem->clearSelection(); }
-				}
+				},
+				.insideUnbuiltSite = [this](glm::vec2 position) { return ecs::anyFootprintContains(unbuiltSites(), position); }
 			});
 
 			// Initialize DrawingSystem (foundation tool). Sibling of PlacementSystem;
@@ -338,19 +375,22 @@ namespace {
 				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+				.validColor = ui().getTheme().get(world_sim::tokens::color::statusOk),
+				.invalidColor = ui().getTheme().get(world_sim::tokens::color::statusCrit),
 				.callbacks = {
-					.onToolActive = [this](bool /*active*/) {
-						// Visibility is driven by the per-frame status push in update().
-					},
-					.onToast = [this](const std::string& title, const std::string& message) {
-						gameUI->pushNotification(title, message, UI::ToastSeverity::Warning);
-					}
+					.onToolActive =
+						[this](bool /*active*/) {
+							// Visibility is driven by the per-frame status push in update().
+						},
+					.onToast = [this](
+								   const std::string& title, const std::string& message
+							   ) { gameUI->pushNotification(title, message, ui::ToastSeverity::Warning); }
 				}
 			});
 
 			// Now that DrawingSystem owns the ConstructionWorld, give ConstructionSystem a handle
 			// to it and wire the structure-lifecycle callbacks. ConstructionSystem lives in
-			// libs/engine and doesn't know ConstructionWorld topology state; these callbacks are
+			// libs/sim and doesn't know ConstructionWorld topology state; these callbacks are
 			// the cross-layer signal (same pattern as ActionSystem's other callbacks).
 			{
 				auto& constructionSystem = ecsWorld->getSystem<ecs::ConstructionSystem>();
@@ -364,6 +404,10 @@ namespace {
 				// its GeometryIndex turns built walls into opaque occluders and gates
 				// discovery by a per-observer visibility polygon.
 				ecsWorld->getSystem<ecs::VisionSystem>().setConstructionWorld(&m_drawingSystem->world());
+
+				// PlayerVisibilitySystem reads it for the footprints of the walls colonists have
+				// seen, which join the seen record.
+				ecsWorld->getSystem<ecs::PlayerVisibilitySystem>().setConstructionWorld(&m_drawingSystem->world());
 
 				// WallCollisionSystem reads the same store for its built-wall safety net.
 				ecsWorld->getSystem<ecs::WallCollisionSystem>().setConstructionWorld(&m_drawingSystem->world());
@@ -383,14 +427,19 @@ namespace {
 						return;
 					}
 					if (structure->kind == ecs::StructureKind::Wall) {
-						m_drawingSystem->world().setSegmentState(structure->graphId, engine::construction::FoundationState::Built);
-						gameUI->pushNotification("Construction complete", "Wall built", UI::ToastSeverity::Info);
-						LOG_INFO(Game, "Wall segment #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+						m_drawingSystem->world().setSegmentState(structure->graphId, construction::FoundationState::Built);
+						gameUI->pushNotification("Construction complete", "Wall built", ui::ToastSeverity::Info);
+						LOG_INFO(
+							Game,
+							"Wall segment #%llu built (entity %u)",
+							static_cast<unsigned long long>(structure->graphId),
+							static_cast<uint32_t>(blueprintEntity)
+						);
 						return;
 					}
 					if (structure->kind == ecs::StructureKind::Opening) {
-						m_drawingSystem->world().setOpeningState(structure->graphId, engine::construction::FoundationState::Built);
-						gameUI->pushNotification("Construction complete", "Opening built", UI::ToastSeverity::Info);
+						m_drawingSystem->world().setOpeningState(structure->graphId, construction::FoundationState::Built);
+						gameUI->pushNotification("Construction complete", "Opening built", ui::ToastSeverity::Info);
 						LOG_INFO(
 							Game,
 							"Opening #%llu built (entity %u)",
@@ -399,9 +448,26 @@ namespace {
 						);
 						return;
 					}
-					m_drawingSystem->world().setState(structure->graphId, engine::construction::FoundationState::Built);
-					gameUI->pushNotification("Construction complete", "Foundation built", UI::ToastSeverity::Info);
-					LOG_INFO(Game, "Foundation #%llu built (entity %u)", static_cast<unsigned long long>(structure->graphId), static_cast<uint32_t>(blueprintEntity));
+					m_drawingSystem->world().setState(structure->graphId, construction::FoundationState::Built);
+					LOG_INFO(
+						Game,
+						"Foundation #%llu built (entity %u)",
+						static_cast<unsigned long long>(structure->graphId),
+						static_cast<uint32_t>(blueprintEntity)
+					);
+
+					// A finished extension merges into its target; its own entity goes on the
+					// deferred-destroy queue (this fires inside a live system iteration).
+					const auto* built = m_drawingSystem->world().get(structure->graphId);
+					if (built != nullptr && built->mergeTarget != construction::kInvalidFoundation) {
+						const ecs::EntityID extensionEntity = m_drawingSystem->mergeExtension(structure->graphId);
+						if (extensionEntity != ecs::kInvalidEntity) {
+							m_pendingEntityRemoval.push_back(extensionEntity);
+							gameUI->pushNotification("Construction complete", "Foundation extended", ui::ToastSeverity::Info);
+							return;
+						}
+					}
+					gameUI->pushNotification("Construction complete", "Foundation built", ui::ToastSeverity::Info);
 				};
 				actionSys.setStructureCompletedCallback(structureCompleted);
 				constructionSystem.setStructureCompletedCallback(structureCompleted);
@@ -410,8 +476,8 @@ namespace {
 				// which mutator; a wall surfaces its openings' entities too) and DEFER the entity
 				// destruction. This callback fires from inside ActionSystem::update's live view
 				// iteration; destroying here would swap-and-pop the shared component pools and corrupt
-				// that iteration, so entities go on the queue drained after ecsWorld->update() (see
-				// update()). This is the SINGLE removal path: the demolish buttons only mark
+				// that iteration, so entities go on the queue drainDeferredEdits empties (see
+				// DeferredEditsSystem). This is the SINGLE removal path: the demolish buttons only mark
 				// structures; the work-driven deconstruct lands here. The SAME lambda is wired to
 				// ConstructionSystem for the no-work edge case (a marked blueprint with workDone <= 0
 				// is removed immediately through here). Material return splits by path: a built teardown
@@ -419,22 +485,21 @@ namespace {
 				// dumps 100% at order-time inside ConstructionSystem and clears delivered[] (so the salvage
 				// below reads empty for it).
 				auto structureDeconstructed = [this](ecs::EntityID blueprintEntity) {
-					// Salvage refundPercent% of a BUILT structure's delivered[] manifest as loose piles HERE,
-					// at tear-down completion (the structure is gone), not at the demolish-order tick when it
+					// Salvage refundPercent% of a BUILT structure's delivered[] manifest as loose piles queued
+					// HERE, at tear-down completion (the structure is gone), not at the demolish-order tick when it
 					// was still standing. The entity is still alive (destruction is deferred to the queue), so
 					// delivered[] and Position read fine. A no-work cancel already dumped 100% and cleared
 					// delivered[] at order-time in ConstructionSystem, so this reads empty for it and drops
 					// nothing -- no double-dump.
 					if (const auto* blueprint = ecsWorld->getComponent<ecs::StructureBlueprint>(blueprintEntity);
 						blueprint != nullptr && !blueprint->delivered.empty()) {
-						const float		refundPercent = engine::assets::ConstructionRegistry::Get().constraints().refundPercent;
+						const float		refundPercent = assets::ConstructionRegistry::Get().constraints().refundPercent;
 						const auto*		position = ecsWorld->getComponent<ecs::Position>(blueprintEntity);
 						const glm::vec2 dropPos = position != nullptr ? position->value : glm::vec2{0.0F, 0.0F};
 						for (const auto& [defName, qty] : blueprint->delivered) {
-							const auto salvageQty =
-								static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
+							const auto salvageQty = static_cast<uint32_t>(std::floor(static_cast<float>(qty) * refundPercent / 100.0F));
 							if (salvageQty > 0) {
-								dropResourcePiles(defName, dropPos.x, dropPos.y, salvageQty);
+								m_pendingSpawns.push_back({defName, dropPos.x, dropPos.y, salvageQty, /*packaged=*/false, std::nullopt, dropPos});
 							}
 						}
 					}
@@ -489,12 +554,12 @@ namespace {
 				// Room detection watches the same ConstructionWorld: when a closed loop of
 				// built walls forms, it spawns a room entity and toasts the player. Identity
 				// (id/name) persists across edits inside the system; here we only feed it the
-				// topology handle and the room-formed seam (engine lib can't touch UI).
+				// topology handle and the room-formed seam (sim can't touch UI).
 				auto& roomSystem = ecsWorld->getSystem<ecs::RoomDetectionSystem>();
 				roomSystem.setConstructionWorld(&m_drawingSystem->world());
 				roomSystem.setRoomFormedCallback([this](ecs::EntityID room) {
 					const auto* roomComp = ecsWorld->getComponent<ecs::Room>(room);
-					gameUI->pushNotification("Room formed", roomComp != nullptr ? roomComp->name : "New room", UI::ToastSeverity::Info);
+					gameUI->pushNotification("Room formed", roomComp != nullptr ? roomComp->name : "New room", ui::ToastSeverity::Info);
 					LOG_INFO(
 						Game, "Room formed: %s (entity %u)", roomComp != nullptr ? roomComp->name.c_str() : "?", static_cast<uint32_t>(room)
 					);
@@ -525,7 +590,8 @@ namespace {
 			});
 
 			// Dev/test command + readback handler. All the systems it pokes now exist; it
-			// borrows the colonist-spawn helper (also used at world init) via a callback.
+			// borrows the colonist-spawn helper (also used at world init) and the loose-drop path
+			// via callbacks.
 			m_devHandler = std::make_unique<world_sim::DevCommandHandler>(world_sim::DevCommandContext{
 				.world = ecsWorld.get(),
 				.drawing = m_drawingSystem.get(),
@@ -534,17 +600,69 @@ namespace {
 				.ui = gameUI.get(),
 				.chunks = m_chunkManager.get(),
 				.navigation = &ecsWorld->getSystem<ecs::NavigationSystem>(),
+				.placementIndex = m_placementExecutor.get(),
+				.camera = m_camera.get(),
+				.pixelsPerMeter = kPixelsPerMeter,
 				.planet = m_planet,
 				.landingLatDeg = m_landingLatDeg,
 				.landingLonDeg = m_landingLonDeg,
 				.spawnColonist = [this](glm::vec2 pos, const std::string& name) { return spawnColonist(pos, name); },
+				.dropLoose = [this](const std::string& defName, float x, float y, uint32_t quantity) {
+					dropResourcePiles(defName, {x, y}, {x, y}, quantity);
+				},
 			});
+			m_devRegistrations = m_devHandler->registerWith(owner->devServer());
+
+			// Remote camera control (/api/control?action=camera), applied in update like held keys
+			m_devRegistrations.push_back(owner->devServer().control("camera", [this](const app::DevRequest& request) {
+				const char*									  error = nullptr;
+				const std::optional<world_sim::CameraCommand> command = world_sim::parseCameraCommand(request.params, error);
+				if (!command) {
+					return app::DevResponse{.status = 400, .body = std::string(R"({"error":")") + error + "\"}"};
+				}
+				m_pendingCamera = *command;
+				return app::DevResponse{.body = R"({"status":"ok","action":"camera"})"};
+			}));
+
+			// GPU hold for perf captures (/api/control?action=gpuhold, /api/state?what=gpuhold), off until asked
+			gpuHold = std::make_unique<world_sim::GpuHold>();
+			m_devRegistrations.push_back(owner->devServer().control("gpuhold", [this](const app::DevRequest& request) {
+				std::string error;
+				if (!gpuHold->configure(request.params, error)) {
+					return app::DevResponse{.status = 400, .body = R"({"error":")" + error + "\"}"};
+				}
+				return app::DevResponse{.body = gpuHold->statusJson()};
+			}));
+			m_devRegistrations.push_back(owner->devServer().stateProvider("gpuhold", [this]() { return gpuHold->statusJson(); }));
+
+			// The depth-sorted upright stream's draws (trees and actors), which /api/metrics folds into
+			// its totals, split out for perf captures (/api/state?what=uprights)
+			// and the detail levels the trees drew at (/api/state?what=uprights)
+			m_devRegistrations.push_back(owner->devServer().stateProvider("uprights", [this]() {
+				const worldview::InstancedEntityRenderer::LevelStats& levels = m_entityRenderer->lastUprightLevels();
+				auto number = [](float value) {
+					char text[32];
+					std::snprintf(text, sizeof(text), "%g", static_cast<double>(value));
+					return std::string(text);
+				};
+				std::string uses;
+				for (const auto& use : levels.uses) {
+					uses += std::string(uses.empty() ? "" : ",") + "{\"pxPerMeter\":" + number(use.pixelsPerMeter) +
+							",\"instances\":" + std::to_string(use.instances) + "}";
+				}
+				return "{\"uprightDrawCalls\":" + std::to_string(m_entityRenderer->lastUprightDrawCallCount()) +
+					   ",\"uprightTriangles\":" + std::to_string(m_entityRenderer->lastUprightTriangleCount()) +
+					   ",\"uprightOverlapSplits\":" + std::to_string(m_entityRenderer->lastUprightOverlapSplits()) +
+					   ",\"screenPxPerMeter\":" + number(levels.screenPixelsPerMeter) + ",\"levels\":[" + uses +
+					   "],\"levelRequestsPending\":" + std::to_string(levels.pendingRequests) +
+					   ",\"residentLevels\":" + std::to_string(levels.residentLevels) +
+					   ",\"residentLevelBytes\":" + std::to_string(levels.residentBytes) + "}";
+			}));
 
 			// Rooms overlay: scene-owned world-space layer that tints/outlines/labels
 			// detected rooms when toggled on (R). Reads the same RoomDetectionSystem
 			// records live; off by default.
 			m_roomOverlay = std::make_unique<world_sim::RoomOverlay>(world_sim::RoomOverlay::Args{
-				.world = ecsWorld.get(),
 				.camera = m_camera.get(),
 				.roomDetection = &ecsWorld->getSystem<ecs::RoomDetectionSystem>(),
 			});
@@ -566,10 +684,17 @@ namespace {
 				.vision = &ecsWorld->getSystem<ecs::VisionSystem>(),
 			});
 
+			// Terrain polygon debug overlay: draws each loaded chunk's waterline
+			// rings and clipped navRings when toggled on (G). Off by default.
+			m_terrainPolygonOverlay = std::make_unique<world_sim::TerrainPolygonOverlay>(world_sim::TerrainPolygonOverlay::Args{
+				.camera = m_camera.get(),
+				.chunks = m_chunkManager.get(),
+			});
+
 			// Populate the config strip's material cards from construction config.
 			{
 				std::vector<std::pair<std::string, float>> materials;
-				for (const auto& [name, def] : engine::assets::ConstructionRegistry::Get().getAllMaterials()) {
+				for (const auto& [name, def] : assets::ConstructionRegistry::Get().getAllMaterials()) {
 					materials.emplace_back(name, def.costRatePerSquareMeter);
 				}
 				gameUI->setConstructionMaterials(materials);
@@ -578,239 +703,162 @@ namespace {
 			// Populate the config strip's wall thickness-preset cards for the active
 			// material (Wood). Refreshed in onConstructionMaterialSelected too.
 			refreshThicknessPresets(m_drawingSystem->activeMaterial());
-
-			// Enable GPU timing for performance monitoring
-			m_gpuTimer.setEnabled(true);
 		}
 
-		/// Handle UI input events dispatched from Application.
-		/// Forwards to gameUI and handles game-specific interactions (placement, selection).
-		bool handleInput(UI::InputEvent& event) override {
-			// Forward event to UI first
-			bool consumed = gameUI->dispatchEvent(event);
+		// What salal's ui didn't take: Escape, the world's hotkeys, a release for the drawing tool, placement or
+		// selection, and the scroll that zooms. The HUD takes no focus, so a key the ui took is a dialog's. The
+		// tools' previews follow the pointer in update().
+		bool handleEvent(const foundation::InputEvent& event) override {
+			using Type = foundation::InputEvent::Type;
+			if (event.type == Type::KeyDown && !event.repeat) {
+				if (event.key == foundation::Key::Escape) {
+					// The ui closes a dialog its focus is in; the dossier, opened from the world, has none. So
+					// the top menu, dialog or panel closes first, then the drawing tool or placement cancels,
+					// and with nothing left to close the pause menu opens.
+					if (dismissTopOverlay()) {
+						return true;
+					}
+					if (m_drawingSystem->isActive()) {
+						m_drawingSystem->cancel();
+					} else if (m_placementSystem->isActive()) {
+						m_placementSystem->cancel();
+					} else {
+						openPauseMenu();
+					}
+					return true;
+				}
+				// Typing in a dialog's field sends its keys here too, so a modal dialog holds them off the world.
+				return !modalDialogOpen() && handleHotkey(event.key);
+			}
+			if (event.type == Type::Scroll) {
+				if (!modalDialogOpen()) {
+					m_pendingScroll += event.scroll.y;
+				}
+				return true;
+			}
+			if (event.type != Type::PointerUp) {
+				return false;
+			}
 
-			// Get viewport dimensions for coordinate transforms
 			int logicalW = 0;
 			int logicalH = 0;
 			Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
 
-			// Drawing tool gets input before placement/selection (GameUI already had
-			// first dibs above). It consumes clicks while active.
+			// The drawing tool takes clicks before placement and selection while it's active.
 			if (m_drawingSystem->isActive()) {
-				constexpr int kModAlt = 0x0004; // GLFW_MOD_ALT
-				constexpr int kModCtrl = 0x0002; // GLFW_MOD_CONTROL
-				const bool	  freeform = (event.modifiers & kModAlt) != 0;
-				const bool	  ctrl = (event.modifiers & kModCtrl) != 0;
-
-				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
-					// Skip when a UI panel consumed the move, otherwise the preview
-					// tracks the snapped cursor under the panel to a spot you can't click.
-					m_drawingSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH, freeform);
-				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-					if (event.button == engine::MouseButton::Right) {
-						// Foundation: cancel the shape. Wall: end (commit) the chain.
-						m_drawingSystem->cancel();
-						return true;
-					}
-					if (event.button == engine::MouseButton::Left) {
-						m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
-						return true;
-					}
-				}
-				return consumed;
-			}
-
-			// Handle placement mode interaction
-			if (m_placementSystem->isActive()) {
-				if (!consumed && event.type == UI::InputEvent::Type::MouseMove) {
-					m_placementSystem->handleMouseMove(event.position.x, event.position.y, logicalW, logicalH);
-				} else if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-					if (m_placementSystem->handleClick()) {
-						return true; // Consume click after successful placement
-					}
-				}
-				return consumed;
-			}
-
-			// Handle entity selection on left click release (only if UI didn't consume it)
-			if (!consumed && event.type == UI::InputEvent::Type::MouseUp) {
-				// Right-click while a controlled colonist is selected: walk it to the clicked point
-				// (snapped to the nearest walkable spot inside issuePlayerMoveOrder). Return before the
-				// selection dispatch so right-click never changes the selection or falls through.
-				if (event.button == engine::MouseButton::Right && m_controlledColonist != 0) {
-					const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
-					auto& ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
-					if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, glm::vec2{worldPt.x, worldPt.y})) {
-						m_moveMarkerWorld = *goal;
-						m_moveMarkerTtl = 1.0F;
-					}
+				if (event.mouseButton == foundation::MouseButton::Right) {
+					// Foundation: cancel the shape. Wall: end (commit) the chain.
+					m_drawingSystem->cancel();
 					return true;
 				}
-
-				// While the room overlay is active it owns the LEFT click: hit a room ->
-				// RoomSelection, miss -> deselect. It never falls through to structure
-				// selection (rooms aren't in the SelectionSystem ladder). Routed through
-				// setSelection so the result flows through the same sink (current()).
-				if (m_roomOverlay->isActive() && event.button == engine::MouseButton::Left) {
-					if (auto roomId = m_roomOverlay->handleClick(event.position.x, event.position.y, logicalW, logicalH)) {
-						m_selectionSystem->setSelection(world_sim::RoomSelection{*roomId});
-					} else {
-						m_selectionSystem->clearSelection();
-					}
-				} else {
-					m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+				if (event.mouseButton == foundation::MouseButton::Left) {
+					const bool freeform = (event.mods & foundation::ModAlt) != 0;
+					const bool ctrl = (event.mods & foundation::ModControl) != 0;
+					m_drawingSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH, freeform, ctrl);
+					return true;
 				}
+				return false;
 			}
 
-			return consumed;
+			if (m_placementSystem->isActive()) {
+				return m_placementSystem->handleClick(); // a successful placement takes the click
+			}
+
+			// Entity selection on a release.
+			// Right-click while a controlled colonist is selected: walk it to the clicked point
+			// (snapped to the nearest walkable spot inside issuePlayerMoveOrder). Return before the
+			// selection dispatch so right-click never changes the selection or falls through.
+			if (event.mouseButton == foundation::MouseButton::Right && m_controlledColonist != 0) {
+				const auto worldPt = m_camera->screenToWorld(event.position.x, event.position.y, logicalW, logicalH, kPixelsPerMeter);
+				auto&	   ai = ecsWorld->getSystem<ecs::AIDecisionSystem>();
+				const auto ordered = world_sim::moveOrderGoal(*ecsWorld, m_controlledColonist, glm::vec2{worldPt.x, worldPt.y});
+				if (!ordered.has_value()) {
+					return true;
+				}
+				if (const auto goal = ai.issuePlayerMoveOrder(m_controlledColonist, *ordered)) {
+					m_moveMarkerWorld = *goal;
+					m_moveMarkerTtl = 1.0F;
+				}
+				return true;
+			}
+
+			// While the room overlay is active it owns the LEFT click: hit a room ->
+			// RoomSelection, miss -> deselect. It never falls through to structure
+			// selection (rooms aren't in the SelectionSystem ladder). Routed through
+			// setSelection so the result flows through the same sink (current()).
+			if (m_roomOverlay->isActive() && event.mouseButton == foundation::MouseButton::Left) {
+				if (auto roomId = m_roomOverlay->handleClick(event.position.x, event.position.y, logicalW, logicalH)) {
+					m_selectionSystem->setSelection(world_sim::RoomSelection{*roomId});
+				} else {
+					m_selectionSystem->clearSelection();
+				}
+			} else {
+				m_selectionSystem->handleClick(event.position.x, event.position.y, logicalW, logicalH);
+			}
+			return false;
 		}
 
-		void update(float dt) override {
-			auto& input = engine::InputManager::Get();
+		void update(const app::FrameContext& frame) override {
+			const auto dt = static_cast<float>(frame.dt);
+			// The camera's held keys are polled whatever the ui took, so a modal dialog holds them off the world.
+			const bool worldKeys = !modalDialogOpen();
+			const auto down = [&frame, worldKeys](foundation::Key key) {
+				return worldKeys && theme::key(frame.input, key).down;
+			};
+
+			// The drawing tool's and placement's previews follow the pointer every frame, so they track the world
+			// moving under a still cursor, but not while the pointer is over the ui.
+			if (frame.input.pointerInWindow && !ui().hitTest(frame.input.pointer).valid()) {
+				int logicalW = 0;
+				int logicalH = 0;
+				Renderer::Primitives::getLogicalViewport(logicalW, logicalH);
+				const glm::vec2 at = frame.input.pointer;
+				if (m_drawingSystem->isActive()) {
+					m_drawingSystem->handleMouseMove(at.x, at.y, logicalW, logicalH, (frame.input.mods & foundation::ModAlt) != 0);
+				} else if (m_placementSystem->isActive()) {
+					m_placementSystem->handleMouseMove(at.x, at.y, logicalW, logicalH);
+				}
+			}
 
 			// Fade out the player move-order marker.
 			if (m_moveMarkerTtl > 0.0F) {
 				m_moveMarkerTtl -= dt;
 			}
 
-			// Handle Escape - cancel the drawing tool / placement first, then exit
-			if (input.isKeyPressed(engine::Key::Escape)) {
-				if (m_drawingSystem->isActive()) {
-					m_drawingSystem->cancel();
-				} else if (m_placementSystem->isActive()) {
-					m_placementSystem->cancel();
-				} else {
-					sceneManager->switchTo(world_sim::toKey(world_sim::SceneType::MainMenu));
-					return; // Don't process rest of update when switching scenes
-				}
-			}
-
-			// Backspace removes the last placed point while drawing.
-			if (input.isKeyPressed(engine::Key::Backspace) && m_drawingSystem->isActive()) {
-				m_drawingSystem->removeLastPoint();
-			}
-
-			// Enter finishes (commits) a wall chain; the foundation tool ignores it
-			// (it closes on origin-click instead).
-			if (input.isKeyPressed(engine::Key::Enter) && m_drawingSystem->isActive()) {
-				m_drawingSystem->finishChain();
-			}
-
-			// Handle B key - toggle build mode. Gated while the foundation tool owns
-			// world input so the two tools can't be live at once (see tool-exclusivity
-			// wiring in the placement/drawing activation callbacks).
-			if (input.isKeyPressed(engine::Key::B) && !m_drawingSystem->isActive()) {
-				m_placementSystem->toggleBuildMenu();
-			}
-
-			// R toggles the rooms overlay (tint/outline/label of detected rooms). Same
-			// state the GameplayBar Rooms button flips, through the same method, so the
-			// two never drift.
-			if (input.isKeyPressed(engine::Key::R)) {
-				setRoomOverlayActive(!m_roomOverlay->isActive());
-			}
-
-			// N toggles the nav debug overlay (navmesh wireframe + agent routes).
-			if (input.isKeyPressed(engine::Key::N)) {
-				setNavOverlayActive(!m_navOverlay->isActive());
-			}
-
-			// V toggles the vision debug overlay (visibility polygons + occluders).
-			if (input.isKeyPressed(engine::Key::V)) {
-				setVisionOverlayActive(!m_visionOverlay->isActive());
-			}
-
-			// T toggles the per-colonist decision inspector panel.
-			if (input.isKeyPressed(engine::Key::T)) {
-				gameUI->toggleDecisionInspector();
-			}
-
-			// Handle time controls
-			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
-			if (input.isKeyPressed(engine::Key::Space)) {
-				timeSystem.togglePause();
-			}
-			if (input.isKeyPressed(engine::Key::Num1)) {
-				timeSystem.setSpeed(ecs::GameSpeed::Normal);
-			}
-			if (input.isKeyPressed(engine::Key::Num2)) {
-				timeSystem.setSpeed(ecs::GameSpeed::Fast);
-			}
-			if (input.isKeyPressed(engine::Key::Num3)) {
-				timeSystem.setSpeed(ecs::GameSpeed::VeryFast);
-			}
-
-			// Zoom reset
-			if (input.isKeyPressed(engine::Key::Home)) {
-				m_camera->setZoomIndex(engine::world::kDefaultZoomIndex);
-			}
-
 			// Camera movement
 			float dx = 0.0F;
 			float dy = 0.0F;
 
-			if (input.isKeyDown(engine::Key::W) || input.isKeyDown(engine::Key::Up)) {
+			if (down(foundation::Key::W) || down(foundation::Key::Up)) {
 				dy -= 1.0F;
 			}
-			if (input.isKeyDown(engine::Key::S) || input.isKeyDown(engine::Key::Down)) {
+			if (down(foundation::Key::S) || down(foundation::Key::Down)) {
 				dy += 1.0F;
 			}
-			if (input.isKeyDown(engine::Key::A) || input.isKeyDown(engine::Key::Left)) {
+			if (down(foundation::Key::A) || down(foundation::Key::Left)) {
 				dx -= 1.0F;
 			}
-			if (input.isKeyDown(engine::Key::D) || input.isKeyDown(engine::Key::Right)) {
+			if (down(foundation::Key::D) || down(foundation::Key::Right)) {
 				dx += 1.0F;
 			}
 
-			// Remote camera control from the debug server (position/zoom set once,
+			// Remote camera control from the dev server (position/zoom set once,
 			// pan persists like held movement keys until cleared)
-			if (auto* debugServer = engine::AppLauncher::getDebugServer()) {
-				Foundation::CameraCommand cmd;
-				if (debugServer->consumeCameraCommand(cmd)) {
-					if (cmd.hasPosition) {
-						m_camera->setPosition({cmd.x, cmd.y});
-					}
-					if (cmd.hasZoom) {
-						m_camera->setZoom(cmd.zoom);
-					}
-					if (cmd.hasPan) {
-						m_debugPanX = cmd.panX;
-						m_debugPanY = cmd.panY;
-					}
+			if (m_pendingCamera) {
+				const world_sim::CameraCommand& cmd = *m_pendingCamera;
+				if (cmd.hasPosition) {
+					m_camera->setPosition({cmd.x, cmd.y});
 				}
-
-				// Drain DEV/TEST commands (/api/dev/...) and serve a pending /api/state
-				// readback. DebugServer is domain-agnostic and only queues generic
-				// DevCommands / state requests; DevCommandHandler owns the game context and
-				// interprets them. Both run on the game thread (the HTTP thread must never
-				// touch the ECS) and BEFORE ecsWorld->update() so a command takes effect the
-				// same frame. Dev builds only (the debug server is dev-only).
-				std::vector<Foundation::DevCommand> devCommands;
-				if (debugServer->consumeDevCommands(devCommands)) {
-					for (const auto& devCmd : devCommands) {
-						m_devHandler->handle(devCmd);
-					}
+				if (cmd.hasZoom) {
+					m_camera->setZoom(cmd.zoom);
 				}
-
-				std::string stateQuery;
-				if (debugServer->consumeStateRequest(stateQuery)) {
-					// "ui.tree"/"ui.lint" (/api/ui/tree, /api/ui/lint) read the live UI
-					// hierarchy; everything else is DevCommandHandler world state.
-					if (stateQuery == "ui.tree" || stateQuery == "ui.lint") {
-						int viewportW = 0;
-						int viewportH = 0;
-						Renderer::Primitives::getLogicalViewport(viewportW, viewportH);
-						const Foundation::Vec2 viewport{static_cast<float>(viewportW), static_cast<float>(viewportH)};
-						const auto			   roots = gameUI->getUiRoots();
-						debugServer->deliverState(
-							stateQuery == "ui.tree" ? UI::serializeUiTreeJson(roots, viewport)
-													: UI::lintUiTreeJson(roots, viewport)
-						);
-					} else {
-						debugServer->deliverState(m_devHandler->serializeState(stateQuery));
-					}
+				if (cmd.hasPan) {
+					m_debugPanX = cmd.panX;
+					m_debugPanY = cmd.panY;
 				}
+				m_pendingCamera.reset();
 			}
+
 			dx += m_debugPanX;
 			dy += m_debugPanY;
 
@@ -824,13 +872,13 @@ namespace {
 			m_camera->move(dx, dy, dt);
 
 			// Zoom with scroll wheel (snaps to discrete levels)
-			// Skip scroll handling when a modal dialog is open or task list expanded (they scroll instead)
-			if (!gameUI->isCraftingDialogVisible() && !gameUI->isColonistDetailsVisible() && !gameUI->isGlobalTaskListExpanded()) {
+			// Skip scroll handling when the dossier is open or task list expanded (they scroll instead); a modal
+			// dialog keeps the wheel off the world in handleEvent
+			if (!gameUI->isColonistDetailsVisible() && !gameUI->isGlobalTaskListExpanded()) {
 				// Accumulate scroll deltas to handle high-precision input devices (Magic Mouse, trackpad)
 				// These devices generate many small fractional scroll events per gesture
 				constexpr float kScrollThreshold = 1.0F; // Trigger zoom after ~1 "notch" of scrolling
-				float			scrollDelta = input.consumeScrollDelta();
-				m_scrollAccumulator += scrollDelta;
+				m_scrollAccumulator += std::exchange(m_pendingScroll, 0.0F);
 
 				// Trigger zoom steps when accumulated scroll crosses threshold
 				while (m_scrollAccumulator >= kScrollThreshold) {
@@ -846,25 +894,11 @@ namespace {
 			auto updateStart = Clock::now();
 
 			m_camera->update(dt);
-			m_chunkManager->update(m_camera->position());
 
-			// Feed the viewport rect to NavigationSystem as PLAIN DATA -- the scene no
-			// longer drives the navmesh. NavigationSystem owns the sim area: it tracks the
-			// colonists plus this viewport, clusters them into regions, and self-gates the
-			// rebuilds off the render clock. The visible rect (expanded by kViewportMargin
-			// for scroll/zoom headroom) is the camera's contribution; the system clamps the
-			// half-extents and decides internally when a region needs (re)building.
-			{
-				int vpW = 0;
-				int vpH = 0;
-				Renderer::Primitives::getLogicalViewport(vpW, vpH);
-				Foundation::Rect vis = m_camera->getVisibleRect(vpW, vpH, kPixelsPerMeter);
-				const glm::vec2 halfExtentMeters{
-					0.5F * vis.width * ecs::NavigationSystem::kViewportMargin,
-					0.5F * vis.height * ecs::NavigationSystem::kViewportMargin};
-				const engine::world::WorldPosition pos = m_camera->position();
-				ecsWorld->getSystem<ecs::NavigationSystem>().setViewportRect(glm::vec2{pos.x, pos.y}, halfExtentMeters);
-			}
+			// Every mover holds the chunks within its own range, so panning away never unloads them.
+			anchors.clear();
+			ecsWorld->getSystem<ecs::NavigationSystem>().appendAnchors(anchors);
+			m_chunkManager->update(m_camera->position(), anchors);
 
 			// Process newly loaded chunks for entity placement
 			processNewChunks();
@@ -875,52 +909,13 @@ namespace {
 			// Update ECS world (movement, physics, render system)
 			ecsWorld->update(dt);
 
-			// Drain deferred entity removals AFTER the ECS update. Systems (e.g.
-			// ActionSystem on a completed Deconstruct) and input handlers queue
-			// destroys here instead of calling destroyEntity mid-iteration, which
-			// would swap-and-pop the component pools out from under a live view.
-			if (!m_pendingEntityRemoval.empty()) {
-				for (ecs::EntityID entity : m_pendingEntityRemoval) {
-					// Drop control if the controlled colonist is being destroyed, so a recycled
-					// entity index can't later resolve m_controlledColonist to a different live entity.
-					if (entity == m_controlledColonist) {
-						m_controlledColonist = 0;
-						m_moveMarkerTtl = 0.0F;
-					}
-					ecsWorld->destroyEntity(entity);
-				}
-				m_pendingEntityRemoval.clear();
-			}
-
-			// Drain deferred drops AFTER the ECS update, for the same reason as the removals above:
-			// spawnEntity grows the component pools and a synchronous spawn from inside a system's
-			// view loop (a colonist freeing its hands, a fell's uncarried remainder) would reallocate
-			// and dangle that view's bound refs. A packaged item spawns one entity with a Packaged
-			// tag; a resource pile routes through dropResourcePiles (stack-capped split).
-			if (!m_pendingSpawns.empty()) {
-				for (const PendingSpawn& spawn : m_pendingSpawns) {
-					if (spawn.packaged) {
-						// Spawn AT the resolved target (when one is set) so the box never overlaps
-						// the station: the colonist walks over and installs it via PlacePackaged.
-						// targetPosition wired here -> BuildGoalSystem raises the place goal next
-						// frame. nullopt -> spawn in place, await the player's [Place] click.
-						const glm::vec2 spawnAt =
-							spawn.targetPosition.has_value() ? *spawn.targetPosition : glm::vec2{spawn.x, spawn.y};
-						auto entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
-						ecs::Packaged packaged;
-						packaged.targetPosition = spawn.targetPosition;
-						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
-						if (spawn.targetPosition.has_value()) {
-							LOG_INFO(Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(),
-									 spawnAt.x, spawnAt.y);
-						} else {
-							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
-						}
-					} else {
-						dropResourcePiles(spawn.defName, spawn.x, spawn.y, spawn.quantity);
-					}
-				}
-				m_pendingSpawns.clear();
+			// A selected pile drains away as colonists haul from it; when it's gone, the
+			// selection goes with it (isAlive first: a recycled index could carry another
+			// entity's ResourceStack).
+			if (const auto* pileSel = std::get_if<world_sim::ResourcePileSelection>(&m_selectionSystem->current());
+				pileSel != nullptr
+				&& (!ecsWorld->isAlive(pileSel->entityId) || !ecsWorld->hasComponent<ecs::ResourceStack>(pileSel->entityId))) {
+				m_selectionSystem->clearSelection();
 			}
 
 			// Feed the current selection's room id to the overlay so it can draw the
@@ -935,8 +930,8 @@ namespace {
 			}
 
 			// Update unified game UI (overlay + info panel)
-			auto& assetRegistry = engine::assets::AssetRegistry::Get();
-			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+			auto& assetRegistry = assets::AssetRegistry::Get();
+			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			gameUI->update(
 				dt,
 				*m_camera,
@@ -956,11 +951,10 @@ namespace {
 			m_lastUpdateMs = elapsedMs(updateStart, Clock::now());
 		}
 
-		void render() override {
+		void render(float /*alpha*/) override {
 			glClearColor(0.05F, 0.08F, 0.12F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
 
-			// Begin GPU timing (measures from here to end(), result from previous frame)
 			m_gpuTimer.begin();
 
 			int w = 0;
@@ -969,9 +963,14 @@ namespace {
 			// Physical viewport is 2x on Retina displays, which causes coordinate mismatches
 			Renderer::Primitives::getLogicalViewport(w, h);
 
+			// Everything outside it is under the cover's opaque fill, so the world culls to it as to the view.
+			const assets::DrawBound drawBound = worldview::coverDrawBound(*ecsWorld, *m_camera, w, h, kPixelsPerMeter);
+
 			// Time tile rendering
 			auto tileStart = Clock::now();
-			m_renderer->render(*m_chunkManager, *m_camera, w, h);
+			m_tileGpuTimer.begin();
+			m_renderer->render(*m_chunkManager, drawBound, *m_camera, w, h);
+			m_tileGpuTimer.end();
 			float tileMs = elapsedMs(tileStart, Clock::now());
 
 			// Committed construction (foundations, walls, openings) is the flat
@@ -985,19 +984,27 @@ namespace {
 
 			// Time entity rendering (includes dynamic ECS entities)
 			auto		entityStart = Clock::now();
-			auto&		renderSystem = ecsWorld->getSystem<ecs::DynamicEntityRenderSystem>();
+			auto&		renderSystem = ecsWorld->getSystem<worldview::DynamicEntityRenderSystem>();
 			const auto& dynamicEntities = renderSystem.getRenderData();
 			// Feed the selected entity's outline into the depth-sort pass so nearer
 			// entities occlude it (construction outlines still draw flat below).
 			m_entityRenderer->setSelectionOutline(m_selectionSystem->buildEntityOutline());
-			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, *m_camera, w, h);
+			m_entityRenderer->render(*m_placementExecutor, m_processedChunks, dynamicEntities, drawBound, *m_camera, w, h);
 			float entityMs = elapsedMs(entityStart, Clock::now());
+
+			// Player visibility: unseen ground black, seen ground out of sight tinted. Over everything the
+			// world draws, under every overlay, preview, marker and ghost drawn after it.
+			m_visibilityCover->render(*ecsWorld, *m_camera, w, h, kPixelsPerMeter);
 
 			// In-progress drawing preview (rubber-band, snap guides, opening ghost)
 			// rides above the entities like the placement ghost; committed
 			// construction already went out in the ground sub-layer before the
 			// entity pass.
 			m_drawingSystem->renderPreview(w, h);
+
+			// Terrain polygon debug overlay (waterline rings + clipped navRings,
+			// per chunk), sitting just above the tile ground. No-op unless on (G).
+			m_terrainPolygonOverlay->render(w, h);
 
 			// Rooms overlay (tint/outline/label) above committed construction and
 			// entities. No-op unless toggled on (R).
@@ -1024,7 +1031,7 @@ namespace {
 						.radius = 7.0F,
 						.style = Foundation::CircleStyle{.fill = Foundation::Color(1.0F, 0.85F, 0.0F, 0.85F)}, // Gold, matches selection
 						.id = "colonist-move-marker",
-						.zIndex = 100,
+						.key = 100,
 					}
 				);
 			}
@@ -1032,21 +1039,17 @@ namespace {
 			// Render placement ghost preview (if in placing mode)
 			m_placementSystem->render(w, h);
 
-			// World/UI draw-order barrier: flush all world-space drawing before the
-			// UI submits. Batched groups only z-sort within one flush, so this keeps
-			// the world zIndex space (previews ~900, overlays) and the UI zIndex
-			// space (panels 0, dialogs 500, menus 1000) independent — no world
-			// primitive can ever sort above the UI.
+			// Submit the world's batched draws now so the scene's GPU timer span ends after them;
+			// the ui's draw order comes from SceneStack's sort barrier, not from this flush.
 			Renderer::Primitives::flush();
 
-			// Render unified game UI (overlay + info panel)
-			gameUI->render();
-
-			// End GPU timing (query result will be available next frame)
 			m_gpuTimer.end();
 
+			// Perf captures' GPU work, outside every scene timer and into its own target. No-op unless on.
+			gpuHold->render(m_gpuTimer.getTimeMs());
+
 			// Report timing breakdown to metrics system
-			auto* metrics = engine::AppLauncher::getMetrics();
+			auto* metrics = owner->metrics();
 			if (metrics != nullptr) {
 				metrics->setTimingBreakdown(
 					tileMs,
@@ -1066,13 +1069,17 @@ namespace {
 				}
 				metrics->setEcsSystemTimings(m_ecsTimingsCache);
 
-				// GPU timing (from previous frame due to async query)
-				metrics->setGpuRenderTime(m_gpuTimer.getTimeMs());
+				metrics->setGpuTimes(m_gpuTimer.getTimeMs(), m_tileGpuTimer.getTimeMs());
 			}
 		}
 
 		void onExit() override {
 			LOG_INFO(Game, "GameScene - Exiting");
+
+			// The dev routes and the camera control point into the systems below
+			m_devRegistrations.clear();
+			m_pendingCamera.reset();
+			gpuHold.reset();
 
 			// Wait for all pending async tasks to complete before destroying executor
 			if (m_asyncProcessor) {
@@ -1090,30 +1097,131 @@ namespace {
 			m_placementExecutor.reset();
 			m_chunkManager.reset();
 			m_camera.reset();
+			m_visibilityCover.reset();
 			m_entityRenderer.reset();
 			m_renderer.reset();
 		}
 
-		std::string exportState() override {
+		std::string exportState() const override {
 			std::ostringstream oss;
 			oss << R"({"scene":"game","chunks":)" << m_chunkManager->loadedChunkCount() << "}";
 			return oss.str();
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
+		// The world's one-press keys; false for a key that isn't one, or does nothing now.
+		bool handleHotkey(foundation::Key key) {
+			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+			switch (key) {
+				case foundation::Key::Backspace: // the last placed point, while drawing
+					if (!m_drawingSystem->isActive()) {
+						return false;
+					}
+					m_drawingSystem->removeLastPoint();
+					return true;
+				case foundation::Key::Enter: // finishes a wall chain; the foundation tool closes on its origin instead
+					if (!m_drawingSystem->isActive()) {
+						return false;
+					}
+					m_drawingSystem->finishChain();
+					return true;
+				case foundation::Key::B: // build mode, never while the drawing tool owns world input
+					if (m_drawingSystem->isActive()) {
+						return false;
+					}
+					m_placementSystem->toggleBuildMenu();
+					return true;
+				case foundation::Key::R: // the rooms overlay, through the method the GameplayBar's Rooms button uses
+					setRoomOverlayActive(!m_roomOverlay->isActive());
+					return true;
+				case foundation::Key::N: // the nav debug overlay: navmesh wireframe and agent routes
+					setNavOverlayActive(!m_navOverlay->isActive());
+					return true;
+				case foundation::Key::V: // the vision debug overlay: visibility polygons and occluders
+					setVisionOverlayActive(!m_visionOverlay->isActive());
+					return true;
+				case foundation::Key::G: // the terrain polygon debug overlay: waterline rings and clipped navRings
+					setTerrainPolygonOverlayActive(!m_terrainPolygonOverlay->isActive());
+					return true;
+				case foundation::Key::T: // the per-colonist decision inspector
+					gameUI->toggleDecisionInspector();
+					return true;
+				case foundation::Key::Space:
+					timeSystem.togglePause();
+					return true;
+				case foundation::Key::Num1:
+					timeSystem.setSpeed(ecs::GameSpeed::Normal);
+					return true;
+				case foundation::Key::Num2:
+					timeSystem.setSpeed(ecs::GameSpeed::Fast);
+					return true;
+				case foundation::Key::Num3:
+					timeSystem.setSpeed(ecs::GameSpeed::VeryFast);
+					return true;
+				case foundation::Key::Home:
+					m_camera->setZoomIndex(world::kDefaultZoomIndex);
+					return true;
+				default:
+					return false;
+			}
+		}
+
+		// A modal dialog covers the world: the keys and the wheel the ui leaves aren't the world's.
+		bool modalDialogOpen() {
+			for (const ui::ComponentId id : ui().overlays()) {
+				const ui::Component* entry = ui().find(id);
+				if (entry != nullptr && entry->getOverlayKind() == ui::OverlayKind::Dialog) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// Opens the pause menu, pausing the sim until it closes; a game already paused stays paused.
+		void openPauseMenu() {
+			if (gameUI->isPauseMenuVisible()) {
+				return;
+			}
+			auto& timeSystem = ecsWorld->getSystem<ecs::TimeSystem>();
+			m_resumeAfterPauseMenu = !timeSystem.isPaused();
+			timeSystem.pause();
+			gameUI->showPauseMenu();
+		}
+
+		// The topmost menu, dialog or panel, closed as the stack closes it: false when there is none.
+		bool dismissTopOverlay() {
+			const std::vector<ui::ComponentId> open = ui().overlays();
+			for (auto it = open.rbegin(); it != open.rend(); ++it) {
+				ui::Component* entry = ui().find(*it);
+				if (entry == nullptr || entry->getOverlayKind() == ui::OverlayKind::Toast ||
+					entry->getOverlayKind() == ui::OverlayKind::Tooltip) {
+					continue;
+				}
+				ui().dismissOverlay(entry->self());
+				return true;
+			}
+			return false;
+		}
+
 		/// Initialize ECS world with systems and spawn initial entities.
 		void initializeECS() {
 			LOG_INFO(Game, "Initializing ECS World");
 
 			ecsWorld = std::make_unique<ecs::World>();
 
+			std::random_device entropy;
+			const uint64_t	   sessionSeed = (uint64_t{entropy()} << 32) | entropy();
+			const auto		   systemSeeds = ecs::deriveSystemSeeds(sessionSeed);
+			LOG_INFO(Game, "Session seed: %llu", static_cast<unsigned long long>(sessionSeed));
+
 			// Register systems in priority order (lower = runs first)
-			auto& assetRegistry = engine::assets::AssetRegistry::Get();
-			auto& recipeRegistry = engine::assets::RecipeRegistry::Get();
+			auto& assetRegistry = assets::AssetRegistry::Get();
+			auto& recipeRegistry = assets::RecipeRegistry::Get();
 			ecsWorld->registerSystem<ecs::TimeSystem>();									// Priority 10 - runs first
 			ecsWorld->registerSystem<ecs::VisionSystem>();									// Priority 45
+			ecsWorld->registerSystem<ecs::PlayerVisibilitySystem>();							// Priority 46
 			ecsWorld->registerSystem<ecs::NeedsDecaySystem>();								// Priority 50
 			ecsWorld->registerSystem<ecs::StorageGoalSystem>();								// Priority 55 - goals before AI
 			ecsWorld->registerSystem<ecs::CraftingGoalSystem>();							// Priority 56 - goals before AI
@@ -1121,14 +1229,16 @@ namespace {
 			ecsWorld->registerSystem<ecs::ConstructionSystem>();							// Priority 58 - foundation lifecycle goals
 			ecsWorld->registerSystem<ecs::RoomDetectionSystem>();							// Priority 59 - derive rooms from built walls
 			ecsWorld->registerSystem<ecs::NavigationSystem>();								// Priority 51 - cached navmesh + path queries
-			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry); // Priority 60
+			// Priority 60
+			ecsWorld->registerSystem<ecs::AIDecisionSystem>(assetRegistry, recipeRegistry, systemSeeds.aiDecision);
 			ecsWorld->registerSystem<ecs::MovementSystem>();								// Priority 100
 			ecsWorld->registerSystem<ecs::PhysicsSystem>();									// Priority 200
-			ecsWorld->registerSystem<ecs::CollisionSystem>();								// Priority 250 - positional separation after physics
-			ecsWorld->registerSystem<ecs::WallCollisionSystem>();							// Priority 260 - wall safety-net after agent separation
-			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>();						// Priority 270 - flora-rect safety-net after wall collision
-			ecsWorld->registerSystem<ecs::ActionSystem>();									// Priority 350
-			ecsWorld->registerSystem<ecs::DynamicEntityRenderSystem>();						// Priority 900
+			ecsWorld->registerSystem<ecs::CollisionSystem>();			// Priority 250 - positional separation after physics
+			ecsWorld->registerSystem<ecs::WallCollisionSystem>();		// Priority 260 - wall safety-net after agent separation
+			ecsWorld->registerSystem<ecs::StaticRectCollisionSystem>(); // Priority 270 - flora-rect safety-net after wall collision
+			ecsWorld->registerSystem<ecs::ActionSystem>(systemSeeds.action); // Priority 350
+			ecsWorld->registerSystem<world_sim::DeferredEditsSystem>([this] { drainDeferredEdits(); }); // Priority 800
+			ecsWorld->registerSystem<worldview::DynamicEntityRenderSystem>(); // Priority 900
 
 			// Wire up VisionSystem with placement data for entity queries
 			auto& visionSystem = ecsWorld->getSystem<ecs::VisionSystem>();
@@ -1137,15 +1247,14 @@ namespace {
 
 			// Wire up "Aha!" notification callback for recipe discoveries
 			visionSystem.setRecipeDiscoveryCallback([this](const std::string& recipeLabel) {
-				gameUI->pushNotification("Aha!", "Discovered: " + recipeLabel, UI::ToastSeverity::Info);
+				gameUI->pushNotification("Aha!", "Discovered: " + recipeLabel, ui::ToastSeverity::Info);
 				LOG_INFO(Game, "Recipe discovered: %s", recipeLabel.c_str());
 			});
 
 			// Wire NavigationSystem resources (same data VisionSystem consumes). The
 			// ConstructionWorld pointer is wired after DrawingSystem is created, back in
-			// initialize(), exactly like ConstructionSystem. The simulation area itself
-			// is pushed per-frame in update() via setSimulationArea (GameScene owns the
-			// camera and viewport dimensions needed to compute it).
+			// initialize(), exactly like ConstructionSystem. The mesh follows the movers;
+			// the camera has no say in it.
 			auto& navSystem = ecsWorld->getSystem<ecs::NavigationSystem>();
 			navSystem.setChunkManager(m_chunkManager.get());
 			navSystem.setPlacementData(m_placementExecutor.get(), &m_processedChunks);
@@ -1153,6 +1262,7 @@ namespace {
 			// Tier-3 flora-rect safety net gathers placed rects locally each frame.
 			auto& staticRectCollisionSystem = ecsWorld->getSystem<ecs::StaticRectCollisionSystem>();
 			staticRectCollisionSystem.setPlacementData(m_placementExecutor.get());
+			staticRectCollisionSystem.setDetailSource(&navSystem);
 
 			// Wire up AIDecisionSystem with chunk manager for toilet location queries
 			auto& aiDecisionSystem = ecsWorld->getSystem<ecs::AIDecisionSystem>();
@@ -1172,130 +1282,87 @@ namespace {
 			// Wire up ActionSystem for "item crafted" notifications
 			auto& actionSystem = ecsWorld->getSystem<ecs::ActionSystem>();
 			actionSystem.setItemCraftedCallback([this](const std::string& itemLabel) {
-				gameUI->pushNotification("Crafted", itemLabel, UI::ToastSeverity::Info);
+				gameUI->pushNotification("Crafted", itemLabel, ui::ToastSeverity::Info);
 				LOG_INFO(Game, "Item crafted notification: %s", itemLabel.c_str());
-			});
-
-			// Every ground drop -- a felled tree's uncarried remainder, craft overflow, a stowed
-			// tool, a cancelled build site's salvage -- snaps to a walkable nav point before it
-			// lands, so a drop whose raw origin sits in a river / off-mesh (a tree felled on a
-			// bank) ends up on solid ground instead of in the water. findValidPositionNear is the
-			// one primitive for this; the snap lives here, at the two drop funnels (loose pile,
-			// packaged item), so no upstream drop site needs its own nav check (One-Path). It is
-			// deterministic (no RNG, canonical +X bias) and returns nullopt only when no mesh
-			// covers the origin -- then we keep the raw origin so a drop never hard-fails.
-			auto snapDropToGround = [&navSystem](float x, float y) -> glm::vec2 {
-				const std::optional<glm::vec2> onGround = navSystem.findValidPositionNear({x, y}, 1.0F);
-				return onGround.value_or(glm::vec2{x, y});
-			};
-
-			// Wire up ActionSystem to drop non-backpackable items on the ground as packaged.
-			// These callbacks fire from inside the ActionSystem view loop, so they only ENQUEUE;
-			// the real spawnEntity runs at the pending-spawn drain after ecsWorld->update() (see
-			// m_pendingSpawns) to avoid reallocating component pools out from under the live view.
-			actionSystem.setDropItemCallback([this, snapDropToGround](const std::string& defName, float x, float y) {
-				const glm::vec2 at = snapDropToGround(x, y);
-				m_pendingSpawns.push_back({defName, at.x, at.y, 0, /*packaged=*/true, std::nullopt});
 			});
 
 			// Crafted FURNITURE comes out PACKAGED and auto-installs a short distance off the
 			// station via the existing PlacePackaged flow (it must not seat in the colonist's
-			// hands or stack on the station). Resolve a walkable spot >= 1 m away; the aim rotates
-			// by the golden angle each spawn so a queued run of boxes FANS OUT instead of stacking
-			// on one target. If no mesh covers the station (findValidPositionNear -> nullopt), fall
-			// back to the manual packaged drop (spawn beside the station, await a [Place] click) so
+			// hands or stack on the station). Resolve a spot >= 1 m away that its footprint can be
+			// set up on (PlacementSystem::installTargetNear, never a ford); the aim rotates by the
+			// golden angle each spawn so a queued run of boxes FANS OUT instead of stacking on one
+			// target. With no such spot, the crate is set down from the station as a colonist sets
+			// one down (packageSetDownSpot, at the drain) and the player is told to place it, so
 			// crafting never hard-fails. ENQUEUE only -- fires from inside the ActionSystem view loop.
-			actionSystem.setSpawnPackagedAtCallback([this, &navSystem](const std::string& defName, glm::vec2 stationPos) {
-				constexpr float kGoldenAngle = 2.39996323F; // ~137.5 deg, spreads successive aims evenly
-				const float		angle		 = static_cast<float>(m_packagedSpawnSeq++) * kGoldenAngle;
-				const glm::vec2 aim{std::cos(angle), std::sin(angle)};
-				const std::optional<glm::vec2> target = navSystem.findValidPositionNear(stationPos, 1.0F, aim);
+			actionSystem.setSpawnPackagedAtCallback([this](const std::string& defName, glm::vec2 stationPos) {
+				constexpr float				   kGoldenAngle = 2.39996323F; // ~137.5 deg, spreads successive aims evenly
+				const float					   angle = static_cast<float>(m_packagedSpawnSeq++) * kGoldenAngle;
+				const glm::vec2				   aim{std::cos(angle), std::sin(angle)};
+				const std::optional<glm::vec2> target = m_placementSystem->installTargetNear(defName, stationPos, aim);
 				if (target.has_value()) {
 					m_pendingSpawns.push_back({defName, target->x, target->y, 0, /*packaged=*/true, target});
 				} else {
-					// No mesh at the station: fall back to the player-driven packaged drop, nudged
-					// ~2 m off the station (no mesh to snap to) so the box doesn't stack on it.
-					m_pendingSpawns.push_back({defName, stationPos.x + 2.0F, stationPos.y, 0, /*packaged=*/true, std::nullopt});
+					m_pendingSpawns.push_back({defName, stationPos.x, stationPos.y, 0, /*packaged=*/true, std::nullopt});
+					const auto* def = assets::AssetRegistry::Get().getDefinition(defName);
+					const std::string label = (def != nullptr && !def->label.empty()) ? def->label : defName;
+					gameUI->pushNotification("Couldn't set up " + label, "Needs placing", ui::ToastSeverity::Warning);
 				}
 			});
 
-			// Drop a loose, haulable resource pile (felling remainder, or a cancelled build site's
-			// staged materials). Unlike the crafting drop above, this pile is NOT packaged: a
-			// per-entity ResourceStack holds the count and it is immediately haulable. Both the
-			// ActionSystem fell-remainder drop and the ConstructionSystem cancelled-site drop fire
-			// from inside their system's view loop, so both ENQUEUE; the drain runs dropResourcePiles
-			// (the single pile-split spawn path) after ecsWorld->update().
-			auto enqueueResourceDrop = [this, snapDropToGround](const std::string& defName, float x, float y, uint32_t quantity) {
-				const glm::vec2 at = snapDropToGround(x, y);
-				m_pendingSpawns.push_back({defName, at.x, at.y, quantity, /*packaged=*/false});
+			// Every loose drop (felling remainder, hand overflow, a stowed tool, a chain-interrupted
+			// carry, a cancelled build site's staged materials) lands as a ResourceStack pile, not
+			// Packaged. The callbacks fire from inside their system's view loop, so they ENQUEUE; the
+			// drain runs dropResourcePiles (the single loose-drop path) in drainDeferredEdits.
+			auto enqueueResourceDrop = [this](const std::string& defName, float x, float y, uint32_t quantity, glm::vec2 fallback) {
+				m_pendingSpawns.push_back({defName, x, y, quantity, /*packaged=*/false, std::nullopt, fallback});
 			};
 			actionSystem.setDropResourceCallback(enqueueResourceDrop);
 			constructionSystem.setDropResourceCallback(enqueueResourceDrop);
-
-			// Wire up ActionSystem to remove harvested entities (destructive harvest)
-			actionSystem.setRemoveEntityCallback([this](const std::string& defName, float x, float y) {
-				auto coord = engine::world::worldToChunk({x, y});
-				bool removedFromIndex = m_placementExecutor->removeEntity(coord, {x, y}, defName);
-
-				// World-gen flora live only in the placement index (above). Runtime-spawned
-				// harvestables (dev spawns, future saplings) are ECS entities that VisionSystem
-				// Pass 2 sees by Appearance; the index removal misses them, so a depleted one
-				// would linger and get re-discovered forever. Find the matching ECS entity and
-				// queue it for the deferred drain (never destroy mid-view-iteration).
-				bool			queuedEcs = false;
-				constexpr float kMatchEps = 0.25F;
-				for (auto [ent, entPos, appearance] : ecsWorld->view<ecs::Position, ecs::Appearance>()) {
-					if (appearance.defName != defName) {
-						continue;
-					}
-					const float ddx = entPos.value.x - x;
-					const float ddy = entPos.value.y - y;
-					if (ddx * ddx + ddy * ddy <= kMatchEps * kMatchEps) {
-						m_pendingEntityRemoval.push_back(ent);
-						queuedEcs = true;
-						break;
-					}
-				}
-
-				if (!removedFromIndex && !queuedEcs) {
-					LOG_WARNING(Game, "Failed to remove harvested entity %s at (%.1f, %.1f)", defName.c_str(), x, y);
-				}
+			aiDecisionSystem.setDropResourceCallback(enqueueResourceDrop);
+			aiDecisionSystem.setSetDownSpotCallback([this](glm::vec2 at) { return packageSetDownSpot(at); });
+			constructionSystem.setPackagedSetDownCallback([this](glm::vec2 at) { return packageSetDownSpot(at); });
+			aiDecisionSystem.setSourceRegrowthCallback([this](uint32_t defNameId, glm::vec2 at, double now) {
+				return ecs::worldSourceRegrowingUntil(*m_placementExecutor, defNameId, at, now);
 			});
+
+			// Wire up ActionSystem to take a harvested or picked-up source from the world as the action
+			// completes, reporting what it was just before: gone, standing, or regrowing.
+			actionSystem.setTakeSourceCallback(
+				[this](const std::string& defName, float x, float y, ecs::ActionSystem::SourceTake take, float regrowthSeconds) {
+					return ecs::takeWorldSource(*m_placementExecutor, *ecsWorld, m_pendingEntityRemoval, defName, {x, y}, take, regrowthSeconds);
+				}
+			);
 
 			// Wire up ActionSystem to remove a specific entity by id (a loose pile drained to
 			// zero). The system already holds the exact entity, so there is no position scan to
 			// alias between two same-material piles. Queue for the deferred drain like the others.
-			actionSystem.setRemoveEntityByIdCallback([this](ecs::EntityID entity) {
-				m_pendingEntityRemoval.push_back(entity);
-			});
+			actionSystem.setRemoveEntityByIdCallback([this](ecs::EntityID entity) { m_pendingEntityRemoval.push_back(entity); });
 
-			// Wire up ActionSystem to set cooldown on harvested entities (regrowth)
-			actionSystem.setEntityCooldownCallback([this](const std::string& defName, float x, float y, float cooldownSeconds) {
-				auto coord = engine::world::worldToChunk({x, y});
-				m_placementExecutor->setEntityCooldown(coord, {x, y}, defName, cooldownSeconds);
-			});
 
 			// Wire up ActionSystem to withdraw from harvestable resource pools. Returns how much
 			// was actually taken plus whether the pool is now empty (so the tree gets removed).
 			actionSystem.setDecrementResourceCallback(
 				[this](const std::string& defName, float x, float y, uint32_t requested) -> ecs::ActionSystem::ResourceDraw {
-					auto		   coord = engine::world::worldToChunk({x, y});
-					const uint32_t removed = m_placementExecutor->decrementResourceCount(coord, {x, y}, defName, requested);
-					const bool	   depleted = !m_placementExecutor->getResourceCount(coord, {x, y}, defName).has_value();
+					const uint32_t removed = m_placementExecutor->decrementResourceCount({x, y}, defName, requested);
+					const bool	   depleted = !m_placementExecutor->getResourceCount({x, y}, defName).has_value();
 					return {removed, depleted};
 				}
 			);
 
 			// The drop point picked in GameLoadingScene comes from the 2D river-channel
-			// model, which can disagree with the runtime tile classification the navmesh
-			// reads -- and, untouched, it can sit on a navmesh triangle BOUNDARY EDGE (off
-			// the mesh by a few cm, which locateTriangle rejects) with trees/rocks placed
-			// right on top of it. Either strands the colonist and makes the off-mesh
-			// recovery snap fire at spawn. prepareLandingClearing() fixes it at the source:
-			// snap to a walkable tile CENTER (solidly inside a walkable face, not on an
-			// edge), remove the placed entities in a radius so there is an open clearing,
-			// and return that as the guaranteed-clear, on-mesh spawn point.
-			m_spawnPosition = prepareLandingClearing(m_spawnPosition);
+			// model, which can disagree with the terrain rings the navmesh reads, and it
+			// can have trees/rocks placed right on top of it. Either strands the colonist
+			// and makes the off-mesh recovery snap fire at spawn. prepareLandingClearing()
+			// fixes it at the source: pick where each member stands on walkable terrain,
+			// remove the placed entities around them so there is an open clearing, and
+			// return those points with the clearing center.
+			const size_t							crewSize = std::max<size_t>(m_party.size(), 1);
+			const glm::vec2							drop = m_spawnPosition;
+			const ecs::NavigationSystem::GroupSpawn landing = prepareLandingClearing(drop, crewSize, navSystem);
+			// The landing area is seen before the crew exists (player-visibility rule 8), round the same drop and
+			// from the same radius as nav's landing limit.
+			ecsWorld->getSystem<ecs::PlayerVisibilitySystem>().revealLanding(drop, ecs::NavigationSystem::kLandingSightMeters);
+			m_spawnPosition = landing.center;
 
 			// The clearing center is the colony's home anchor. Store it once here, in the one
 			// place that owns colony state for the session; every other consumer reads it from
@@ -1308,9 +1375,7 @@ namespace {
 
 			// The clearing center is also the region minimap's fixed window center;
 			// hand it over with the landing coordinates once, here, where it is final.
-			gameUI->setMinimapContext(
-				{m_spawnPosition.x, m_spawnPosition.y}, m_landingLatDeg, m_landingLonDeg, kPixelsPerMeter
-			);
+			gameUI->setMinimapContext({m_spawnPosition.x, m_spawnPosition.y}, m_landingLatDeg, m_landingLonDeg, kPixelsPerMeter);
 
 			// Hand the colony origin to the AI: if a stranded colonist ever finds no walkable
 			// navmesh face in range, the off-mesh recovery snaps it back to home. The engine
@@ -1318,21 +1383,16 @@ namespace {
 			// the AI holds it as a read of this single store, not an independently computed copy.
 			ecsWorld->getSystem<ecs::AIDecisionSystem>().setColonyOrigin(m_colony.originPosition);
 
-			// Spawn the crew in the cleared, on-mesh clearing: a small ring around
-			// the center so members don't stack. An empty party (Quick Start,
-			// direct scene jumps) spawns the single default colonist.
+			// Spawn the crew on the points the landing picked: each on clear ground of its
+			// own, spread apart so members don't stack. An empty party (Quick Start, direct
+			// scene jumps) spawns the single default colonist.
+			std::vector<ecs::EntityID> crew;
 			if (m_party.empty()) {
-				spawnColonist(m_spawnPosition, "Bob");
+				crew.push_back(spawnColonist(landing.points.front(), "Bob"));
 			} else {
-				constexpr float kPartyRingRadius = 1.5F;
-				constexpr float kTwoPi = 6.2831853F;
 				for (size_t i = 0; i < m_party.size(); ++i) {
-					glm::vec2 pos = m_spawnPosition;
-					if (m_party.size() > 1) {
-						const float angle = kTwoPi * static_cast<float>(i) / static_cast<float>(m_party.size());
-						pos += glm::vec2{std::cos(angle), std::sin(angle)} * kPartyRingRadius;
-					}
-					const auto entity = spawnColonist(pos, m_party[i].name);
+					const auto entity = spawnColonist(landing.points[i], m_party[i].name);
+					crew.push_back(entity);
 					// Replace the default starting skills with the member's rolled set.
 					if (auto* skills = ecsWorld->getComponent<ecs::Skills>(entity)) {
 						skills->clear();
@@ -1343,116 +1403,89 @@ namespace {
 				}
 			}
 
-			LOG_INFO(Game, "ECS initialized with %zu colonist(s)", std::max<size_t>(m_party.size(), 1));
-		}
-
-		/// Test whether a world-meter position sits on a water tile, using the SAME
-		/// classification the navmesh reads (NavInputBuilder::extractWaterObstacles):
-		/// a tile is water iff its surface is Water or its primary biome is water.
-		/// An unloaded containing chunk is treated as water so callers keep searching
-		/// for known-good land rather than dropping onto unknown ground.
-		[[nodiscard]] bool isWaterAt(glm::vec2 worldMeters) const {
-			const engine::world::WorldPosition pos{worldMeters.x, worldMeters.y};
-			const engine::world::ChunkCoordinate coord = engine::world::worldToChunk(pos);
-			const engine::world::Chunk*			chunk = m_chunkManager->getChunk(coord);
-			if (chunk == nullptr || !chunk->isReady()) {
-				return true;
-			}
-			const auto [localX, localY] = engine::world::worldToLocalTile(pos);
-			const engine::world::TileData& tile = chunk->getTile(localX, localY);
-			return tile.surface == engine::world::Surface::Water || engine::world::isWater(tile.primaryBiome);
-		}
-
-		/// Return the input position if it is already non-water; otherwise ring-search
-		/// outward in tile-sized steps (up to ~64 m) and return the nearest non-water
-		/// tile center. Falls back to the input unchanged when nothing walkable is
-		/// found in range, so the caller can decide how to degrade.
-		[[nodiscard]] glm::vec2 nearestWalkable(glm::vec2 worldMeters) const {
-			if (!isWaterAt(worldMeters)) {
-				return worldMeters;
+			// The crew saw the landing area as they came down (player-visibility rule 17): each knows
+			// what is within the nav landing limit's radius of the drop. groupSpawnPoints has already
+			// waited for that area's chunks and cleared round the crew, so nothing cleared is remembered.
+			for (const ecs::EntityID member : crew) {
+				visionSystem.rememberArea(member, drop, ecs::NavigationSystem::kLandingSightMeters);
+				if (const auto* memory = ecsWorld->getComponent<ecs::Memory>(member)) {
+					LOG_DEBUG(
+						Game,
+						"Landing memory: entity %llu knows %zu thing(s) of cap %zu",
+						static_cast<unsigned long long>(member),
+						memory->worldEntityCount(),
+						ecs::Memory::kMaxWorldEntities
+					);
+				}
 			}
 
-			constexpr float kStep	   = engine::world::kTileSize; // meters per tile
-			constexpr int	kMaxRings  = 64;					  // ~64 m search radius
-			for (int ring = 1; ring <= kMaxRings; ++ring) {
-				glm::vec2 best{0.0F, 0.0F};
-				float	  bestDistSq = std::numeric_limits<float>::max();
-				bool	  found		 = false;
-				for (int dy = -ring; dy <= ring; ++dy) {
-					for (int dx = -ring; dx <= ring; ++dx) {
-						// Only the perimeter of this ring; interior was covered earlier.
-						if (std::abs(dx) != ring && std::abs(dy) != ring) {
-							continue;
-						}
-						const glm::vec2 candidate{worldMeters.x + static_cast<float>(dx) * kStep,
-												  worldMeters.y + static_cast<float>(dy) * kStep};
-						if (isWaterAt(candidate)) {
-							continue;
-						}
-						const float ddx	   = candidate.x - worldMeters.x;
-						const float ddy	   = candidate.y - worldMeters.y;
-						const float distSq = ddx * ddx + ddy * ddy;
-						if (distSq < bestDistSq) {
-							bestDistSq = distSq;
-							best	   = candidate;
-							found	   = true;
+			LOG_INFO(Game, "ECS initialized with %zu colonist(s)", crewSize);
+		}
+
+		/// Radius (world meters) of the open clearing carved around each colonist's landing spot.
+		/// The party ring plus the widest crown's reach (a veteran oak, 4.9 m across at scale 1.2),
+		/// so no tree left standing hides a colonist under its crown at landing.
+		static constexpr float kLandingClearRadius = 4.5F;
+		/// A party stands on a ring this far from the clearing center.
+		static constexpr float kPartyRingRadius = 1.5F;
+		/// Members never land closer than this, center to center (agent radius 0.3 m).
+		static constexpr float kPartyMinSeparation = 0.8F;
+		/// Every spawn point is walkable with this much clear ground around it: an agent's disc.
+		static constexpr float kSpawnClearance = 0.3F;
+
+		/// Turn the raw drop point into guaranteed-clear, on-mesh spawns for a crew of `crewSize`:
+		///  1. pick the points on the ground nav mesh (the chunks' water rings, no entities):
+		///     the clearing center is the nearest spot to the drop whose whole party ring stands on
+		///     clear ground, so the ring never straddles a shore, and each member's point is clear
+		///     ground of its own, kPartyMinSeparation from the others;
+		///  2. clear the placed entities within kLandingClearRadius of every point, which the nav mesh
+		///     takes out before groupSpawnPoints returns, so the crew drops onto open ground.
+		[[nodiscard]] ecs::NavigationSystem::GroupSpawn
+		prepareLandingClearing(glm::vec2 rawSpawn, size_t crewSize, ecs::NavigationSystem& navSystem) {
+			ecs::NavigationSystem::GroupSpawn landing = navSystem.groupSpawnPoints(
+				rawSpawn,
+				crewSize,
+				kPartyRingRadius,
+				kPartyMinSeparation,
+				kSpawnClearance,
+				[this](const ecs::NavigationSystem::GroupSpawn& spawn) {
+					clearLandingArea(spawn.center, kLandingClearRadius);
+					for (const glm::vec2& p : spawn.points) {
+						if (glm::length(p - spawn.center) > kLandingClearRadius - kSpawnClearance) {
+							clearLandingArea(p, kLandingClearRadius);
 						}
 					}
 				}
-				if (found) {
-					return best;
-				}
+			);
+			if (landing.center != rawSpawn) {
+				LOG_INFO(
+					Game,
+					"Landing: drop (%.1f, %.1f) -> clearing center (%.2f, %.2f)",
+					rawSpawn.x,
+					rawSpawn.y,
+					landing.center.x,
+					landing.center.y
+				);
 			}
-			return worldMeters;
-		}
-
-		/// Radius (world meters) of the open clearing carved at the colonist's landing spot.
-		/// Generous next to the 0.3 m agent radius so the spawn tile and its immediate
-		/// neighbourhood are obstacle-free and the navmesh triangulates open walkable ground there.
-		static constexpr float kLandingClearRadius = 2.5F;
-
-		/// Turn the raw drop point into a guaranteed-clear, on-mesh spawn:
-		///  1. snap to the nearest WALKABLE (non-water) tile, then to that tile's CENTER -- a tile
-		///     center sits solidly inside a walkable navmesh face, never on the boundary edge that
-		///     locateTriangle rejects (which is what made the off-mesh snap fire at spawn);
-		///  2. clear the placed entities (trees/rocks) within kLandingClearRadius so nothing is
-		///     triangulated as an obstacle on top of the spawn -- an open clearing.
-		/// Returns the clearing center. Runs at ECS init, BEFORE the first navmesh build, so the
-		/// removed obstacles never enter the mesh input and the colonist drops onto open ground.
-		[[nodiscard]] glm::vec2 prepareLandingClearing(glm::vec2 rawSpawn) {
-			// Step 1: nearest walkable land, then its tile center. kTileSize is 1 m, so flooring to
-			// the tile and adding half a tile lands dead-center -- away from every tile/triangle edge.
-			const glm::vec2 walkable = nearestWalkable(rawSpawn);
-			const glm::vec2 center{std::floor(walkable.x) + 0.5F * engine::world::kTileSize,
-								   std::floor(walkable.y) + 0.5F * engine::world::kTileSize};
-			if (center != rawSpawn) {
-				LOG_INFO(Game, "Landing: drop (%.1f, %.1f) -> walkable tile center (%.2f, %.2f)",
-						 rawSpawn.x, rawSpawn.y, center.x, center.y);
-			}
-
-			// Step 2: carve the clearing.
-			clearLandingArea(center, kLandingClearRadius);
-			return center;
+			return landing;
 		}
 
 		/// Remove every placed entity (trees, rocks, ...) within `radius` of `center` so the spawn
 		/// drops into an open clearing. Entities near the radius can straddle a chunk boundary, so we
-		/// gather from every chunk the clearing circle overlaps, not just the spawn chunk. After
-		/// removing from the placement index (the same source the navmesh and renderer read), release
-		/// each touched chunk's baked render mesh so it re-bakes WITHOUT the removed entities.
+		/// gather from every chunk the clearing circle overlaps, not just the spawn chunk. They leave
+		/// the placement index, the one source the navmesh and the renderer read: the renderer bakes
+		/// the sub-regions that lost a static again by itself.
 		void clearLandingArea(glm::vec2 center, float radius) {
 			// Tile/meter are 1:1 (kTileSize == 1), so the spatial-index radius is the meter radius.
-			std::unordered_set<engine::world::ChunkCoordinate> touchedChunks;
-			const engine::world::ChunkCoordinate cMin =
-				engine::world::worldToChunk({center.x - radius, center.y - radius});
-			const engine::world::ChunkCoordinate cMax =
-				engine::world::worldToChunk({center.x + radius, center.y + radius});
+			size_t						 touchedChunks = 0;
+			const world::ChunkCoordinate cMin = world::worldToChunk({center.x - radius, center.y - radius});
+			const world::ChunkCoordinate cMax = world::worldToChunk({center.x + radius, center.y + radius});
 
 			size_t removed = 0;
 			for (int32_t cy = cMin.y; cy <= cMax.y; ++cy) {
 				for (int32_t cx = cMin.x; cx <= cMax.x; ++cx) {
-					const engine::world::ChunkCoordinate coord{cx, cy};
-					const auto* index = m_placementExecutor->getChunkIndex(coord);
+					const world::ChunkCoordinate		 coord{cx, cy};
+					const auto*							 index = m_placementExecutor->getChunkIndex(coord);
 					if (index == nullptr) {
 						continue;
 					}
@@ -1468,19 +1501,20 @@ namespace {
 						}
 					}
 					if (!victims.empty()) {
-						touchedChunks.insert(coord);
+						++touchedChunks;
 					}
 				}
 			}
 
-			// Re-bake the touched chunks so the cleared entities also disappear visually. The
-			// renderer re-bakes any processed chunk missing from its cache on the next render.
-			for (const engine::world::ChunkCoordinate& coord : touchedChunks) {
-				m_entityRenderer->releaseBakedChunkCache(coord);
-			}
-
-			LOG_INFO(Game, "Landing: cleared %zu ent(s) within %.1f m of (%.2f, %.2f) across %zu chunk(s)",
-					 removed, radius, center.x, center.y, touchedChunks.size());
+			LOG_INFO(
+				Game,
+				"Landing: cleared %zu ent(s) within %.1f m of (%.2f, %.2f) across %zu chunk(s)",
+				removed,
+				radius,
+				center.x,
+				center.y,
+				touchedChunks
+			);
 		}
 
 		/// Spawn a new colonist entity at the given position.
@@ -1492,7 +1526,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Velocity>(entity, ecs::Velocity{{0.0F, 0.0F}});
 			ecsWorld->addComponent<ecs::MovementTarget>(entity, ecs::MovementTarget{{0.0F, 0.0F}, 2.0F, false});
 			ecsWorld->addComponent<ecs::FacingDirection>(entity, ecs::FacingDirection{}); // Default: Down
-			ecsWorld->addComponent<ecs::AnimationState>(entity, ecs::AnimationState{});	 // Walk-cycle phase
+			ecsWorld->addComponent<ecs::AnimationState>(entity, ecs::AnimationState{});	  // Walk-cycle phase
 			ecsWorld->addComponent<ecs::Appearance>(entity, ecs::Appearance{"Colonist", 1.0F, {1.0F, 1.0F, 1.0F, 1.0F}});
 			ecsWorld->addComponent<ecs::Colonist>(entity, ecs::Colonist{newName});
 			ecsWorld->addComponent<ecs::NeedsComponent>(entity, ecs::NeedsComponent::createDefault());
@@ -1501,7 +1535,7 @@ namespace {
 			// deterministically. Only Strength is consumed today: it sets hand-carry
 			// capacity. The other attributes are placeholders for upcoming systems.
 			ecs::Attributes attributes;
-			std::mt19937   attrRng(static_cast<uint32_t>(entity));
+			std::mt19937	attrRng(static_cast<uint32_t>(entity));
 			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
 			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
 
@@ -1513,6 +1547,7 @@ namespace {
 			ecsWorld->addComponent<ecs::Memory>(entity, ecs::Memory{.owner = entity});
 			ecsWorld->addComponent<ecs::Task>(entity, ecs::Task{});
 			ecsWorld->addComponent<ecs::DecisionTrace>(entity, ecs::DecisionTrace{});
+			ecsWorld->addComponent<ecs::SourceReachMemo>(entity, ecs::SourceReachMemo{});
 			ecsWorld->addComponent<ecs::Action>(entity, ecs::Action{});
 			ecsWorld->addComponent<ecs::AgentRadius>(entity, ecs::AgentRadius{});
 
@@ -1551,13 +1586,13 @@ namespace {
 		/// Tracks which chunks exist in PlacementExecutor but not in ChunkManager.
 		void cleanupUnloadedChunks() {
 			// Get set of loaded chunk coordinates
-			std::unordered_set<engine::world::ChunkCoordinate> loadedChunks;
+			std::unordered_set<world::ChunkCoordinate> loadedChunks;
 			for (const auto* chunk : m_chunkManager->getLoadedChunks()) {
 				loadedChunks.insert(chunk->coordinate());
 			}
 
 			// Find chunks in PlacementExecutor that are no longer loaded
-			std::vector<engine::world::ChunkCoordinate> toUnload;
+			std::vector<world::ChunkCoordinate> toUnload;
 			for (const auto& coord : m_processedChunks) {
 				if (loadedChunks.find(coord) == loadedChunks.end()) {
 					toUnload.push_back(coord);
@@ -1579,7 +1614,7 @@ namespace {
 		/// rejects commits with a "no wall preset" toast).
 		void refreshThicknessPresets(const std::string& material) {
 			std::vector<world_sim::ConstructionConfigStrip::ThicknessPresetInfo> presets;
-			if (const auto* mat = engine::assets::ConstructionRegistry::Get().getWallMaterial(material)) {
+			if (const auto* mat = assets::ConstructionRegistry::Get().getWallMaterial(material)) {
 				for (const auto& p : mat->wallThicknesses) {
 					presets.push_back({p.name, p.thicknessMeters});
 				}
@@ -1614,8 +1649,7 @@ namespace {
 			}
 			// Only installed boxes are movable here; an already-packaged one uses the Place flow.
 			if (furnitureSel->isPackaged || ecsWorld->hasComponent<ecs::Packaged>(furnitureSel->entityId)) {
-				LOG_WARNING(Game, "Cannot move furniture: entity %u is already packaged",
-							static_cast<uint32_t>(furnitureSel->entityId));
+				LOG_WARNING(Game, "Cannot move furniture: entity %u is already packaged", static_cast<uint32_t>(furnitureSel->entityId));
 				return;
 			}
 
@@ -1624,8 +1658,12 @@ namespace {
 
 			// Reuse the exact relocation pipeline a packaged box's [Place] button uses.
 			m_placementSystem->beginRelocation(furnitureSel->entityId, furnitureSel->defName);
-			LOG_INFO(Game, "Re-packaged installed box '%s' (entity %u) for move - awaiting placement",
-					 furnitureSel->defName.c_str(), static_cast<uint32_t>(furnitureSel->entityId));
+			LOG_INFO(
+				Game,
+				"Re-packaged installed box '%s' (entity %u) for move - awaiting placement",
+				furnitureSel->defName.c_str(),
+				static_cast<uint32_t>(furnitureSel->entityId)
+			);
 		}
 
 		/// Handle recipe queue request from crafting station UI.
@@ -1680,22 +1718,163 @@ namespace {
 			LOG_INFO(Game, "Canceled job '%s' at station '%s'", recipeDefName.c_str(), stationSel->defName.c_str());
 		}
 
-		/// Spawn a loose, haulable resource pile of `quantity` x `defName` at (x, y). A pile is capped
-		/// at the item's own stackSize, so an over-cap drop splits into several piles scattered to
-		/// distinct spots (within the 0.25 m pickup epsilon two piles would alias). No def / no
-		/// itemProperties means unbounded -> a single pile. Each pile is a ResourceStack entity (not
-		/// Packaged): immediately haulable. The SINGLE ground-pile drop path; ActionSystem (felling
-		/// remainder) and ConstructionSystem (cancelled-site materials) both route through it.
-		void dropResourcePiles(const std::string& defName, float x, float y, uint32_t quantity) {
-			const auto*	   def = engine::assets::AssetRegistry::Get().getDefinition(defName);
-			const uint32_t cap =
-				(def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
-			const auto piles = ecs::resourcePileDrops(cap, quantity, {x, y});
-			for (const auto& [pos, qty] : piles) {
-				auto entity = m_placementSystem->spawnEntity(defName, {pos.x, pos.y});
-				ecsWorld->addComponent<ecs::ResourceStack>(entity, ecs::ResourceStack{qty});
+		/// What a ground drop keeps off and spaces around: every unbuilt footprint, and every pile and
+		/// set-down crate (footprints from the shared layouts, so spacing matches what's drawn). Only
+		/// a pile of `dropDef` off the sites can take a top-up; an empty `dropDef` tops up nothing.
+		struct GroundSurvey {
+			std::vector<ecs::FootprintBounds> sites;
+			std::vector<ecs::GroundOccupant>  occupants;
+			std::vector<ecs::ResourceStack*>  stacks; // the piles' stacks, in occupants' order
+			float							  dropRadius = 0.0F; // `dropDef`'s full-pile footprint at scale 1
+
+			[[nodiscard]] bool onSite(glm::vec2 p) const { return ecs::anyFootprintContains(sites, p); }
+		};
+
+		/// The footprint of every foundation that is not built yet: what a ground drop keeps off and
+		/// what furniture is never set up on.
+		std::vector<ecs::FootprintBounds> unbuiltSites() const {
+			return m_drawingSystem ? ecs::unbuiltFootprints(m_drawingSystem->world()) : std::vector<ecs::FootprintBounds>{};
+		}
+
+		GroundSurvey surveyGround(const std::string& dropDef) {
+			auto& registry = assets::AssetRegistry::Get();
+
+			// Computed at each pile's own scale: the dynamic transform re-centers by the unscaled bbox
+			// center, so the footprint isn't linear in scale and a scale-1 radius can't be multiplied.
+			std::unordered_map<std::string, std::pair<Foundation::Rect, worldview::PileItem>> layoutInputsByDef;
+			auto pileRadius = [&](const std::string& pileDef, float scale) {
+				auto it = layoutInputsByDef.find(pileDef);
+				if (it == layoutInputsByDef.end()) {
+					it = layoutInputsByDef
+							 .emplace(
+								 pileDef,
+								 std::make_pair(
+									 worldview::templateBounds(registry.getTemplate(pileDef, {})), worldview::pileItem(registry.getDefinition(pileDef))
+								 )
+							 )
+							 .first;
+				}
+				return worldview::pileFootprintRadius(it->second.first, scale, it->second.second);
+			};
+
+			GroundSurvey survey;
+			survey.sites = unbuiltSites();
+
+			// Every pile and crate, not a radius around the drop: the spiral has no fixed reach, so
+			// any cutoff could leave out something a crowded drop ends up next to.
+			for (auto [entity, pos, appearance, stack] : ecsWorld->view<ecs::Position, ecs::Appearance, ecs::ResourceStack>()) {
+				const bool topUpTarget = !dropDef.empty() && appearance.defName == dropDef && !survey.onSite(pos.value);
+				survey.occupants.push_back({pos.value, pileRadius(appearance.defName, appearance.scale), stack.quantity, topUpTarget});
+				survey.stacks.push_back(&stack);
 			}
-			LOG_INFO(Game, "Dropped %u x '%s' as %zu stacks at (%.1f, %.1f)", quantity, defName.c_str(), piles.size(), x, y);
+			for (auto [entity, pos, packaged] : ecsWorld->view<ecs::Position, ecs::Packaged>()) {
+				if (packaged.beingCarried) {
+					continue;
+				}
+				survey.occupants.push_back({worldview::packagedFootprintCenter(pos.value), worldview::kPackagedFootprintRadius, 0, false});
+			}
+			if (!dropDef.empty()) {
+				survey.dropRadius = pileRadius(dropDef, 1.0F);
+			}
+			return survey;
+		}
+
+		/// Destroy the queued entities, then land the queued drops. Systems and input handlers queue both
+		/// rather than destroy or spawn mid-iteration, which would swap-and-pop or reallocate the component
+		/// pools under a live view. DeferredEditsSystem calls this inside the tick, after NavigationSystem has
+		/// joined its patch job and before endTick starts the next, so a drop's nav probes never wait for one.
+		/// Removals go first: a pile drained this tick must be gone before a drop could top it up.
+		void drainDeferredEdits() {
+			if (!m_pendingEntityRemoval.empty()) {
+				for (ecs::EntityID entity : m_pendingEntityRemoval) {
+					// Drop control if the controlled colonist is being destroyed, so a recycled
+					// entity index can't later resolve m_controlledColonist to a different live entity.
+					if (entity == m_controlledColonist) {
+						m_controlledColonist = 0;
+						m_moveMarkerTtl = 0.0F;
+					}
+					ecs::destroyWorldEntity(*ecsWorld, entity);
+				}
+				m_pendingEntityRemoval.clear();
+			}
+
+			// Crafted furniture spawns one entity with a Packaged tag; a loose drop routes through
+			// dropResourcePiles (merge, then stack-capped split).
+			if (!m_pendingSpawns.empty()) {
+				for (const PendingSpawn& spawn : m_pendingSpawns) {
+					if (spawn.packaged) {
+						// Spawn AT the resolved target (when one is set) so the box never overlaps
+						// the station: the colonist walks over and installs it via PlacePackaged.
+						// targetPosition wired here -> BuildGoalSystem raises the place goal at its
+						// next poll (every 30 frames). nullopt -> set it down from the station where a colonist
+						// would, await the player's [Place] click.
+						const glm::vec2 spawnAt =
+							spawn.targetPosition.has_value() ? *spawn.targetPosition : packageSetDownSpot({spawn.x, spawn.y});
+						auto			entity = m_placementSystem->spawnEntity(spawn.defName, spawnAt);
+						ecs::Packaged	packaged;
+						packaged.targetPosition = spawn.targetPosition;
+						ecsWorld->addComponent<ecs::Packaged>(entity, packaged);
+						if (spawn.targetPosition.has_value()) {
+							LOG_INFO(
+								Game, "Spawned packaged '%s' at (%.1f, %.1f) - auto-placing", spawn.defName.c_str(), spawnAt.x, spawnAt.y
+							);
+						} else {
+							LOG_INFO(Game, "Spawned packaged '%s' - awaiting placement", spawn.defName.c_str());
+						}
+					} else {
+						dropResourcePiles(spawn.defName, {spawn.x, spawn.y}, spawn.fallback, spawn.quantity);
+					}
+				}
+				m_pendingSpawns.clear();
+			}
+		}
+
+		/// Lay `quantity` x `defName` on the ground at `at` as loose, haulable ResourceStack piles
+		/// (not Packaged). Same-def piles near the spot are topped up to the item's stackSize first,
+		/// then the rest spawns as new stack-capped piles on walkable spots (isValidPosition) off every
+		/// unbuilt footprint and clear of every pile and packaged crate around, searched outward from
+		/// `at`, then from `fallback` (resourcePileDrops). No def / no itemProperties means unbounded
+		/// -> one pile. The SINGLE loose-drop path: every sim drop callback, the cancelled site's
+		/// salvage, and the dev `give where=loose` route through it.
+		void dropResourcePiles(const std::string& defName, glm::vec2 at, glm::vec2 fallback, uint32_t quantity) {
+			auto&		   registry = assets::AssetRegistry::Get();
+			const auto*	   def = registry.getDefinition(defName);
+			const uint32_t cap = (def != nullptr && def->itemProperties.has_value()) ? def->itemProperties->stackSize : UINT32_MAX;
+
+			const GroundSurvey survey = surveyGround(defName);
+			const auto		   onSite = [&survey](glm::vec2 p) { return survey.onSite(p); };
+			const auto&		   nav = ecsWorld->getSystem<ecs::NavigationSystem>();
+			const auto		   isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
+			const auto plan = ecs::resourcePileDrops(cap, quantity, at, survey.dropRadius, survey.occupants, isGround, onSite, fallback);
+			for (const auto& [index, added] : plan.topUps) {
+				survey.stacks[index]->quantity += added;
+			}
+			const uint32_t defNameId = registry.getDefNameId(defName);
+			for (const auto& [pos, qty] : plan.spawns) {
+				ecs::makeLoosePile(*ecsWorld, m_placementSystem->spawnEntity(defName, {pos.x, pos.y}), defNameId, pos, qty);
+			}
+			LOG_INFO(
+				Game,
+				"Dropped %u x '%s' at (%.1f, %.1f): topped up %zu piles, spawned %zu",
+				quantity,
+				defName.c_str(),
+				at.x,
+				at.y,
+				plan.topUps.size(),
+				plan.spawns.size()
+			);
+		}
+
+		/// Where a packaged item a colonist sets down at his feet (`at`) goes: by the loose-drop rule,
+		/// its crate's footprint on walkable ground off every unbuilt footprint, clear of what lies around.
+		glm::vec2 packageSetDownSpot(glm::vec2 at) {
+			const GroundSurvey survey = surveyGround({});
+			const auto		   onSite = [&survey](glm::vec2 p) { return survey.onSite(p); };
+			const auto&		   nav = ecsWorld->getSystem<ecs::NavigationSystem>();
+			const auto		   isGround = [&nav](glm::vec2 p) { return nav.isValidPosition(p); };
+			const glm::vec2	   center = worldview::packagedFootprintCenter(at);
+			const auto		   plan = ecs::resourcePileDrops(1, 1, center, worldview::kPackagedFootprintRadius, survey.occupants, isGround, onSite);
+			return at + (plan.spawns.front().first - center);
 		}
 
 		/// Mark a structure's ECS blueprint for deconstruction. ConstructionSystem then emits a
@@ -1712,6 +1891,29 @@ namespace {
 			}
 			blueprint->demolishing = true;
 			return true;
+		}
+
+		/// `id` plus its pending extension, if any: what demolishing that foundation takes down.
+		std::vector<construction::FoundationId> foundationWithExtension(construction::FoundationId id) const {
+			std::vector<construction::FoundationId>			group{id};
+			const auto										extension = m_drawingSystem->world().pendingExtensionOf(id);
+			if (extension != construction::kInvalidFoundation) {
+				group.push_back(extension);
+			}
+			return group;
+		}
+
+		/// Handle Add / Subtract from a foundation's info panel: switch world input to the
+		/// edit tool on the selected foundation. The selection stays, so the panel keeps
+		/// showing the foundation while its outline changes.
+		void handleEditFoundation(construction::FoundationEditMode mode) {
+			const auto* foundationSel = std::get_if<world_sim::FoundationSelection>(&m_selectionSystem->current());
+			if (foundationSel == nullptr) {
+				LOG_WARNING(Game, "Cannot edit: no foundation selected");
+				return;
+			}
+			m_placementSystem->cancel();
+			m_drawingSystem->activateFoundationEditTool(foundationSel->id, mode);
 		}
 
 		/// Set the rooms-overlay active state and reflect it on the GameplayBar toggle
@@ -1738,6 +1940,12 @@ namespace {
 			LOG_INFO(Game, "Vision overlay %s", active ? "ON" : "OFF");
 		}
 
+		/// Set the terrain polygon debug overlay active state. Plain hotkey toggle (G).
+		void setTerrainPolygonOverlayActive(bool active) {
+			m_terrainPolygonOverlay->setActive(active);
+			LOG_INFO(Game, "Terrain polygon overlay %s", active ? "ON" : "OFF");
+		}
+
 		/// Handle Demolish request from a foundation's info panel. Marks the foundation for
 		/// deconstruction; a colonist tears it down over time (work-driven), and the
 		/// deconstructed-completion callback removes the topology.
@@ -1749,7 +1957,7 @@ namespace {
 				return;
 			}
 
-			auto& constructionWorld = m_drawingSystem->world();
+			auto&		constructionWorld = m_drawingSystem->world();
 			const auto* foundation = constructionWorld.get(foundationSel->id);
 			if (foundation == nullptr) {
 				LOG_WARNING(Game, "Cannot demolish: foundation #%llu not found", static_cast<unsigned long long>(foundationSel->id));
@@ -1760,21 +1968,31 @@ namespace {
 			// Walls block plain foundation demolition: removing the foundation alone would
 			// orphan a hosted wall. The panel hides this button while walls stand and offers
 			// Demolish building instead; this is the defensive guard for any other caller.
-			if (constructionWorld.foundationHasWalls(foundationSel->id)) {
-				LOG_WARNING(
-					Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
-				);
-				gameUI->pushNotification("Walls still stand", "Use Demolish building", UI::ToastSeverity::Warning);
-				return;
+			// A pending extension is part of the foundation here: its walls count, and it is
+			// cancelled with it (the cascade gate holds the target until it is gone).
+			const auto group = foundationWithExtension(foundationSel->id);
+			for (const construction::FoundationId id : group) {
+				if (constructionWorld.foundationHasWalls(id)) {
+					LOG_WARNING(
+						Game, "Cannot demolish foundation #%llu: walls still stand", static_cast<unsigned long long>(foundationSel->id)
+					);
+					gameUI->pushNotification("Walls still stand", "Use Demolish building", ui::ToastSeverity::Warning);
+					return;
+				}
 			}
 
 			if (!markForDemolition(foundation->entity)) {
 				LOG_WARNING(Game, "Cannot demolish foundation #%llu: no blueprint", static_cast<unsigned long long>(foundationSel->id));
 				return;
 			}
+			for (const construction::FoundationId id : group) {
+				if (id != foundationSel->id && !markForDemolition(constructionWorld.get(id)->entity)) {
+					LOG_WARNING(Game, "Demolish foundation: extension #%llu has no blueprint", static_cast<unsigned long long>(id));
+				}
+			}
 
 			LOG_INFO(Game, "Marked foundation #%llu for demolition", static_cast<unsigned long long>(foundationSel->id));
-			gameUI->pushNotification("Marked for demolition", "Foundation", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Marked for demolition", "Foundation", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
@@ -1802,14 +2020,20 @@ namespace {
 				return;
 			}
 
-			// Mark every opening on every wall, then every wall, then the foundation. Marking
-			// order is immaterial (the cascade gate orders the teardown). Build the set of hosted
-			// wall ids first, then walk the global openings list ONCE marking any opening whose
-			// host segment is in that set: O(walls + openings), not O(walls * openings).
-			const std::vector<engine::construction::SegmentId> segIds = constructionWorld.segmentsOnFoundation(foundationSel->id);
-			std::unordered_set<engine::construction::SegmentId> wallIds(segIds.begin(), segIds.end());
+			// Mark every opening on every wall, then every wall, then the foundation (and its
+			// pending extension, part of the same building). Marking order is immaterial (the
+			// cascade gate orders the teardown). Build the set of hosted wall ids first, then walk
+			// the global openings list ONCE marking any opening whose host segment is in that set:
+			// O(walls + openings), not O(walls * openings).
+			const auto									 group = foundationWithExtension(foundationSel->id);
+			std::vector<construction::SegmentId>		 segIds;
+			for (const construction::FoundationId id : group) {
+				const auto hosted = constructionWorld.segmentsOnFoundation(id);
+				segIds.insert(segIds.end(), hosted.begin(), hosted.end());
+			}
+			std::unordered_set<construction::SegmentId> wallIds(segIds.begin(), segIds.end());
 
-			for (const engine::construction::SegmentId segId : segIds) {
+			for (const construction::SegmentId segId : segIds) {
 				const auto* segment = constructionWorld.getSegment(segId);
 				if (segment != nullptr && !markForDemolition(segment->entity)) {
 					// A failed mark leaves the cascade gate blocked with no feedback; warn and keep
@@ -1832,10 +2056,10 @@ namespace {
 				}
 			}
 
-			if (!markForDemolition(foundation->entity)) {
-				LOG_WARNING(
-					Game, "Demolish building: foundation #%llu has no blueprint", static_cast<unsigned long long>(foundationSel->id)
-				);
+			for (const construction::FoundationId id : group) {
+				if (!markForDemolition(constructionWorld.get(id)->entity)) {
+					LOG_WARNING(Game, "Demolish building: foundation #%llu has no blueprint", static_cast<unsigned long long>(id));
+				}
 			}
 
 			LOG_INFO(
@@ -1845,7 +2069,7 @@ namespace {
 				segIds.size(),
 				markedOpenings
 			);
-			gameUI->pushNotification("Building marked for demolition", "Foundation, walls, and openings", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Building marked for demolition", "Foundation, walls, and openings", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
@@ -1889,7 +2113,7 @@ namespace {
 			}
 
 			LOG_INFO(Game, "Marked wall segment #%llu for demolition", static_cast<unsigned long long>(wallSel->id));
-			gameUI->pushNotification("Marked for demolition", "Wall segment", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Marked for demolition", "Wall segment", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
@@ -1918,82 +2142,102 @@ namespace {
 			}
 
 			LOG_INFO(Game, "Marked opening #%llu for demolition", static_cast<unsigned long long>(openingSel->id));
-			gameUI->pushNotification("Marked for demolition", "Opening", UI::ToastSeverity::Info);
+			gameUI->pushNotification("Marked for demolition", "Opening", ui::ToastSeverity::Info);
 			m_selectionSystem->clearSelection();
 		}
 
-		std::unique_ptr<engine::world::ChunkManager>	   m_chunkManager;
-		std::unique_ptr<engine::world::WorldCamera>		   m_camera;
-		glm::vec2										   m_spawnPosition{0.0F, 0.0F};
+		std::unique_ptr<world::ChunkManager>		 m_chunkManager;
+		std::unique_ptr<world::WorldCamera>			 m_camera;
+		glm::vec2									 m_spawnPosition{0.0F, 0.0F};
+		// The movers handed to the chunk manager each frame; a member so the frame reuses its storage.
+		std::vector<world::ChunkAnchor> anchors;
+		std::vector<ecs::PlayerVisibilitySystem::SeenBox> seenBoxes;
 
 		// Direct player control of a colonist. m_controlledColonist is the entity currently driven
 		// by the player (0 = none); it is always the selected colonist (control is released when the
 		// selection changes away from it). The move marker is a short-lived gold ring at the last
 		// right-click walk target, fading via its TTL (seconds).
-		ecs::EntityID									   m_controlledColonist = 0;
-		glm::vec2										   m_moveMarkerWorld{0.0F, 0.0F};
-		float											   m_moveMarkerTtl = 0.0F;
+		ecs::EntityID m_controlledColonist = 0;
+		glm::vec2	  m_moveMarkerWorld{0.0F, 0.0F};
+		float		  m_moveMarkerTtl = 0.0F;
 		// Planet forwarded from GameWorldState for the /api/state?what=landing readback.
 		// Null when running in mock-world mode (no preloaded planet).
-		std::shared_ptr<const worldgen::GeneratedWorld>    m_planet;
-		double                                             m_landingLatDeg = 0.0;
-		double                                             m_landingLonDeg = 0.0;
+		std::shared_ptr<const worldgen::GeneratedWorld> m_planet;
+		double											m_landingLatDeg = 0.0;
+		double											m_landingLonDeg = 0.0;
 		// The colony: home anchor for the session. Single source of truth for the colony
 		// origin (the cleared, on-mesh clearing center), set once at landing. Read by the
 		// camera-home sync and pushed to AIDecisionSystem for the off-mesh recovery snap.
-		ecs::Colony										   m_colony;
+		ecs::Colony m_colony;
 		// Crew assembled in PartySelect, forwarded through GameWorldState.
 		// Empty -> single default colonist.
 		std::vector<world_sim::PartyMember>				   m_party;
-		std::unique_ptr<engine::world::ChunkRenderer>	   m_renderer;
-		std::unique_ptr<engine::world::EntityRenderer>	   m_entityRenderer;
-		std::unique_ptr<engine::assets::PlacementExecutor> m_placementExecutor;
+		std::unique_ptr<worldview::ChunkRenderer>		   m_renderer;
+		std::unique_ptr<worldview::EntityRenderer>		   m_entityRenderer;
+		std::unique_ptr<worldview::VisibilityCoverRenderer> m_visibilityCover;
+		std::unique_ptr<assets::PlacementExecutor>		   m_placementExecutor;
 		std::unique_ptr<world_sim::GameUI>				   gameUI;
 
 		// ECS World containing all dynamic entities
 		std::unique_ptr<ecs::World> ecsWorld;
 
 		// Async chunk processor (shared implementation with GameLoadingScene)
-		std::unique_ptr<engine::assets::AsyncChunkProcessor> m_asyncProcessor;
+		std::unique_ptr<assets::AsyncChunkProcessor> m_asyncProcessor;
 
 		// Track processed chunk coordinates for cleanup detection
-		std::unordered_set<engine::world::ChunkCoordinate> m_processedChunks;
+		std::unordered_set<world::ChunkCoordinate> m_processedChunks;
 
 		// Timing for metrics (persistent vectors to avoid per-frame heap allocation)
 		float									 m_lastUpdateMs = 0.0F;
-		Renderer::GPUTimer						 m_gpuTimer;		// GPU timing via OpenGL queries
+		Renderer::GPUTimer						 m_gpuTimer;		// the whole scene render
+		Renderer::GPUTimer						 m_tileGpuTimer;	// the chunk ground and water pass
 		std::vector<Foundation::EcsSystemTiming> m_ecsTimingsCache; // Reused each frame
 
 		// Scroll accumulator for smooth zoom on high-precision input devices (Magic Mouse, trackpad)
 		// Accumulates fractional scroll deltas and triggers zoom only when threshold is crossed
 		float m_scrollAccumulator = 0.0F;
+		float m_pendingScroll = 0.0F; // wheel the ui didn't take, since the last update
 
-		// Persistent pan direction from debug server camera commands (held-key style)
-		float m_debugPanX = 0.0F;
-		float m_debugPanY = 0.0F;
+		// The pause menu paused a running game, so closing it resumes
+		bool m_resumeAfterPauseMenu = false;
+
+		// The App this scene is on, from onEnter
+		app::App* owner = nullptr;
+
+		// The camera control's last request, until update applies it, and the persistent pan
+		// direction it set (held-key style)
+		std::optional<world_sim::CameraCommand> m_pendingCamera;
+		float									m_debugPanX = 0.0F;
+		float									m_debugPanY = 0.0F;
+
+		// Holds the GPU at its top clocks for a perf capture, while the gpuhold control has it on
+		std::unique_ptr<world_sim::GpuHold> gpuHold;
 
 		// World interaction subsystems (extracted from GameScene)
-		std::unique_ptr<world_sim::PlacementSystem> m_placementSystem;
-		std::unique_ptr<world_sim::SelectionSystem> m_selectionSystem;
-		std::unique_ptr<world_sim::DrawingSystem>	m_drawingSystem;
-		std::unique_ptr<world_sim::RoomOverlay>		m_roomOverlay;
-		std::unique_ptr<world_sim::NavOverlay>		m_navOverlay;
-		std::unique_ptr<world_sim::VisionOverlay>	m_visionOverlay;
+		std::unique_ptr<world_sim::PlacementSystem>		  m_placementSystem;
+		std::unique_ptr<world_sim::SelectionSystem>		  m_selectionSystem;
+		std::unique_ptr<world_sim::DrawingSystem>		  m_drawingSystem;
+		std::unique_ptr<world_sim::RoomOverlay>			  m_roomOverlay;
+		std::unique_ptr<world_sim::TerrainPolygonOverlay> m_terrainPolygonOverlay;
+		std::unique_ptr<world_sim::NavOverlay>			  m_navOverlay;
+		std::unique_ptr<world_sim::VisionOverlay>		  m_visionOverlay;
 
-		// Dev/test command + state-readback surface (/api/dev, /api/state). Dev-only;
-		// constructed after the systems above exist.
+		// Dev/test command + state-readback surface (/api/dev, /api/state) and the camera
+		// control. Dev-only; constructed after the systems above exist, registered while
+		// the scene is on the stack.
 		std::unique_ptr<world_sim::DevCommandHandler> m_devHandler;
+		std::vector<app::DevServer::Registration>	  m_devRegistrations;
 
-		// Entities queued for destruction, drained after ecsWorld->update() so we
+		// Entities queued for destruction, drained by drainDeferredEdits so we
 		// never destroyEntity mid-view-iteration (deconstruct callback, demolish).
 		std::vector<ecs::EntityID> m_pendingEntityRemoval;
 
-		// Drops requested from inside the ActionSystem view loop (a colonist stows a held tool to
-		// free its hands, or a fell drops its uncarried remainder). spawnEntity grows the component
-		// pools, which would reallocate and dangle the live view's bound refs -- so the drop
-		// callbacks ENQUEUE here and the real spawn happens at the drain below, after
-		// ecsWorld->update(), next to the removal drain. `packaged` items spawn one entity with a
-		// Packaged tag; resource piles route through dropResourcePiles (stack-capped split).
+		// Drops requested from inside a system's view loop (a colonist stows a held tool to free
+		// its hands, a fell drops its uncarried remainder, crafted furniture comes off a station).
+		// spawnEntity grows the component pools, which would reallocate and dangle the live view's
+		// bound refs -- so the callbacks ENQUEUE here and the real spawn happens at the drain,
+		// in drainDeferredEdits, after the removal drain. `packaged` is crafted furniture
+		// only (one entity with a Packaged tag); loose drops route through dropResourcePiles.
 		struct PendingSpawn {
 			std::string defName;
 			float		x = 0.0F;
@@ -2003,8 +2247,10 @@ namespace {
 			// Auto-place target for a packaged spawn (a crafted furniture box). When set, the
 			// entity spawns AT this point with Packaged.targetPosition wired, so BuildGoalSystem
 			// raises the place goal immediately (no manual [Place]). nullopt -> the player-driven
-			// path (spawn in place, await a [Place] click) for a manually dropped packaged item.
+			// path (set down from x, y, await a [Place] click) when nothing near the station takes it.
 			std::optional<glm::vec2> targetPosition;
+			// A loose drop's fallback: where the goods came from (DropResourceCallback).
+			glm::vec2 fallback{0.0F, 0.0F};
 		};
 		std::vector<PendingSpawn> m_pendingSpawns;
 

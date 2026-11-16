@@ -54,7 +54,7 @@ Player has taken direct control. See [Player Control](../features/player-control
 
 ### Tier 4: Active Work Orders (STICKY)
 
-A queued craft or build order and its entire provisioning chain (haul, harvest). The colonist commits to this work and will not switch to a same- or lower-tier task without a large score advantage. A tier-5 need (eat, sleep) briefly interrupts tier 4, then the colonist returns to finish.
+A queued craft or build order and its entire provisioning chain (haul, harvest). The colonist commits to this work and will not switch to a same- or lower-tier task without a large score advantage. A non-critical need (tier 5) never interrupts it; only a need that drops below the critical threshold (~10%, tier 2) does, and the colonist returns to finish afterwards.
 
 This tier is the mechanism that implements the "finishing is very high priority" invariant from [Multi-colonist Crafting](../multi-colonist-crafting.md). Chain steps (provisioning hauls and harvests that serve an active work order) are classified at tier 4, not tier 6, so they stay bound to the parent order.
 
@@ -66,6 +66,8 @@ Physical needs have dropped below comfortable thresholds. Colonist seeks entitie
 
 **Key Constraint:** Colonist must KNOW where to find fulfillment. No omniscient pathfinding to unseen resources. See [Memory System](./memory.md).
 
+**Hunger sources.** A hungry colonist eats from the nearest food it can reach, whatever kind: its own pack first (no walking), then a ripe berry bush, a loose pile of food it remembers, or a storage box the colony knows that holds food. From a pile or box it takes one meal, enough to stop being hungry, and leaves the rest for everyone else; from a bush it keeps what the cut gives. A full pack never stops it eating: at the food it puts away just enough of what it carries to make room for the meal, never a tool, and cargo it is carrying for someone's work last. The one limit: a colonist whose every pack slot, belt slot, and hand holds a tool can't make room, and its take lifts nothing. Stored food is the buffer between harvests, so a colonist whose bushes are all regrowing eats from the larder instead of waiting. Colonists can starve, but only if they never find food: another colonist's work (hauling the berries to a box, cutting the bush for a goal) never keeps food from a hungry one, though a hungry colonist prefers food nobody is heading for. Between two hungry colonists of different urgency, the critically hungry one takes food the routinely hungry one was walking to; at equal urgency the first to claim it keeps it, and the other looks elsewhere. See [Task Claims](../../../technical/task-claims.md#need-tasks).
+
 **MVP Status:** Included in Phase 1
 
 ### Tier 6: Opportunistic work
@@ -76,7 +78,7 @@ Needs comfortable; no active work order. Colonist does available work: haul loos
 
 ### Tier 7: Idle
 
-Nothing else to do. Colonist gathers food for the larder or wanders known areas, which:
+Nothing else to do. Colonist gathers food into its own pack (only while the pack holds none) or wanders known areas, which:
 - Looks natural (no frozen standing)
 - Discovers new entities
 - Creates social interaction opportunities
@@ -100,9 +102,9 @@ Each colonist has a visible queue showing current and pending tasks. The queue i
 
 ---
 
-## Reservation System
+## Claims
 
-When a colonist decides to use a resource, they "reserve" it. Others skip reserved resources. This prevents two colonists walking to the same berry bush.
+When a colonist accepts work, its task claims what it will use: the berry bush, the units it will take from a pile, the room it will fill in a box. Other colonists see those claims and pick something else, so two colonists never cut the same plant or haul the same units. Food is the exception: a hungry colonist still takes a bush or berries that another colonist's work or idle gathering holds, and one a less urgent eater holds, though it picks food nobody holds first when it knows some. Nothing else takes over a claim: there is no bumping, and player orders take nothing from anyone. See [Task Claims](../../../technical/task-claims.md).
 
 ---
 
@@ -142,6 +144,65 @@ def select_task(colonist, task_registry, priority_config):
 ```
 
 See [Task Registry](./task-registry.md) for GlobalTaskRegistry architecture and [Work Priorities](./work-priorities.md) for detailed work selection algorithm.
+
+### What a colonist can get to
+
+A decision never searches for a path. For each place it considers, it asks nav whether the place is
+joined to him by ground colonists have explored, which is a quick compare
+([Nav mesh](../../../technical/nav-mesh-variable-resolution.md), 4.6). "Not joined" rules the place out
+for this decision only. "Joined" is not a promise: a gap too narrow for him, or a wall he knows of,
+can still stop him, and only a route answers that.
+
+For a need, he takes the nearest few sources he remembers, by straight line, that are joined to him,
+and asks for one route to whichever of them is nearest on foot. The route that comes back decides
+which one he goes to. If none can be reached, he remembers "no way" for each of them and the next
+decision tries the next few, so a source that is close but sealed off never keeps him from one a
+little farther away. A need that finds no way in a round of 8 asks about 16 sources the next time,
+then 32; a route that comes back resets it to 8. If the source he is sent to is claimed by another
+colonist before the answer arrives, he drops his claims and decides again at once. A thing inside an obstacle, such as a tree to cut or a pile dropped at a bush's
+centre, is walked to the spot beside it where he can stand; with no such spot it isn't offered.
+
+"No way" is remembered per colonist, because it depends on his size and on the walls he knows. It is
+recorded against the nav mesh's connectivity as it stands and against what he knows. When what he
+knows changes (he learns of a wall or a door), every "no way" is forgotten at once. When the mesh's
+connectivity changes (the ground changes, an obstacle is felled, a wall or door changes), only the
+ones at least 300 AI updates old are forgotten, so a busy colony cannot keep wiping them; a way that
+opens can go unnoticed for up to 300 updates, 5 s at 60 updates a second. A place he simply hasn't explored his way to is never
+remembered as "no way"; it is out of reach only until ground between gets explored.
+
+The route comes a moment after he asks, usually two frames. While it is out he stands, and the panel
+says "Finding a way" once the wait is noticeable; if he is already walking toward the same place
+(a replan after he spots a wall, or after obstacles appear ahead of him), he keeps walking and
+switches to the new route where he stands (at his projection onto the nearest leg of it), and the
+panel says "Re-routing" if it is slow.
+
+While the forward snap holds him inside an obstacle, his decisions wait, one interval each, up to 4;
+if the wait runs out the route fails without a "no way" on the target.
+
+A decision's cost: he is located once, and each place costs one component-label lookup and a
+compare. Finding the spot beside a thing inside an obstacle is done only for the places that have
+no label of their own and are on the mesh. A wander point must share his component label and fit
+his disc; a wander already under way keeps its point and probes nothing.
+
+---
+
+## When a colonist decides
+
+A colonist runs the selection above on an event, and otherwise every 0.5 s (`AIDecisionSystem::kReEvalInterval`), whatever he is doing. `AIDecisionSystem::shouldReEvaluate` holds the triggers.
+
+He decides at once when:
+
+- he has no task (he just spawned, or finished or dropped one);
+- he has arrived where his task leads. While an action runs there he decides every frame, which keeps the panel's trace current; the action is only interrupted by a higher tier;
+- the action system asks for a decision now: after a landed cut, or a pickup by a colonist already carrying goods from earlier legs of the same gathering;
+- a need crosses into critical, unless he already serves a critical need. The crossing is measured against the needs that were critical at his last decision (`Task::criticalNeedsAtDecision`, one bit per need), so a need set critical directly by a dev verb or a test counts as a crossing, and one already critical when he spawns or finishes another task is caught by the no-task event;
+- his route fails (`NavState::CantFindWayTo`, a route answer of "no known way"), once, at the failure. If the decision that follows picks a target whose route fails too, later decisions wait for the interval until a route is found (`Task::routeFailureDecided`).
+
+Waiting for a route is not an event: he stands with his movement off, decides on the interval like any other walk, and a route that comes back adds no decision.
+
+A walking idle wander also decides every frame, so anything better is taken the moment it appears.
+
+Everything that persists runs on the interval: a critical need with nothing reachable to serve it, a route that keeps failing, a wait on regrowing food, food another eater holds. A critical need or a failed route no longer re-decides every frame for as long as it lasts. He never freezes either; each interval he looks again and takes whatever has become available.
 
 ---
 

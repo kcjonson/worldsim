@@ -61,6 +61,10 @@
        e.g. at 0.1: a 20 m² foundation allows 3 builders (base 1 + floor(20*0.1) = 2). -->
   <builderCapPerSquareMeter>0.1</builderCapPerSquareMeter>
 
+  <!-- Builders work from spots spaced evenly round the foundation's perimeter, no closer than this.
+       Caps the builder count on a small foundation: a 2 m x 2 m one (8 m perimeter) allows at most 8. -->
+  <builderSpotMinSpacingMeters>1.0</builderSpotMinSpacingMeters>
+
   <!-- Wall constraints
        Same pathfinding rationale as foundation constraints: every gap a wall tool
        can produce is either zero (joined) or wide enough for a colonist to pass.

@@ -1,14 +1,14 @@
 #pragma once
 
-// DevCommandHandler - interprets dev/test commands (/api/dev/<verb>) and serializes world
-// state (/api/state) against the live game. Dev-only. Split out of GameScene so the scene
+// DevCommandHandler - the dev/test verbs (/api/dev/<verb>) and world-state views
+// (/api/state?what=) against the live game. Dev-only. Split out of GameScene so the scene
 // class stays focused on the frame loop, not the (large) cheat + inspection surface.
 //
-// The debug server (libs/foundation) stays domain-agnostic and hands the app generic
-// DevCommands; this is where the game context (ECS world, construction, placement, selection,
-// UI) interprets them. GameScene constructs one of these after its systems exist and delegates
-// the per-frame DevCommand drain and the /api/state readback to it.
+// The dev server (salal's app) stays domain-agnostic: GameScene constructs one of these after
+// its systems exist and registers its routes and providers (registerWith), which the server
+// answers on the game thread, before the frame's update and after its render respectively.
 
+#include <DevServer/DevServer.h>
 #include <ecs/EntityID.h>
 #include <math/Types.h> // Foundation::Vec2
 
@@ -22,19 +22,20 @@
 #include <utility>
 #include <vector>
 
-namespace Foundation {
-	struct DevCommand;
-}
 namespace ecs {
 	class World;
 	class NavigationSystem;
 	struct Inventory;
 	enum class NeedType : std::uint8_t;
 }
-namespace engine::world {
+namespace world {
 	class ChunkManager;
+	class WorldCamera;
 }
-namespace engine::construction {
+namespace assets {
+	class PlacementExecutor;
+}
+namespace construction {
 	using FoundationId = std::uint64_t;
 }
 namespace worldgen {
@@ -57,8 +58,11 @@ namespace world_sim {
 		world_sim::PlacementSystem*	 placement = nullptr;
 		world_sim::SelectionSystem*	 selection = nullptr;
 		world_sim::GameUI*			 ui = nullptr;
-		engine::world::ChunkManager* chunks = nullptr;
-		ecs::NavigationSystem*		 navigation = nullptr; // world-position validity (isValidPosition)
+		world::ChunkManager* chunks = nullptr;
+		ecs::NavigationSystem*		 navigation = nullptr; // the ground gates (isValidPosition and the build predicates)
+		const assets::PlacementExecutor* placementIndex = nullptr; // placed statics, for the flora view
+		const world::WorldCamera*		 camera = nullptr;		   // the flora view's default rect
+		float							 pixelsPerMeter = 0.0F;	   // world-to-screen at zoom 1
 
 		// Planet used for the current session; populated from GameStartConfig. Used by
 		// serializeLanding (/api/state?what=landing) for biome + water readback. May be
@@ -68,65 +72,95 @@ namespace world_sim {
 		double landingLonDeg = 0.0;
 
 		std::function<ecs::EntityID(glm::vec2, const std::string&)> spawnColonist;
+		// GameScene::dropResourcePiles: the one loose-ground drop path (merge, then stack-capped piles).
+		std::function<void(const std::string& defName, float x, float y, uint32_t quantity)> dropLoose;
 	};
 
-	/// Interprets queued DevCommands and serializes world-state views. Read+write surface for
-	/// /api/dev/<verb> and /api/state. Dev builds only.
+	/// What a verb that can refuse returns: a message answers a 400 {"error":message}, and none
+	/// answers {"status":"ok","verb":...}.
+	struct DevRefusal {
+		std::string message;
+	};
+
+	/// The dev verbs and world-state views. Read+write surface for /api/dev/<verb> and
+	/// /api/state. Dev builds only.
 	class DevCommandHandler {
 	  public:
 		explicit DevCommandHandler(DevCommandContext context) : m_ctx(std::move(context)) {}
 
-		/// Interpret one queued DevCommand. Unknown verbs are logged and ignored.
-		void handle(const Foundation::DevCommand& cmd);
-
-		/// Produce the JSON for /api/state?what=. Unknown views fall back to the summary.
-		std::string serializeState(const std::string& what);
+		/// Registers every verb as a route and every view as a state provider, for as long as the
+		/// returned registrations live. Most verbs answer {"status":"ok","verb":...}; spawn, foundation,
+		/// walls and opening answer a 400 with {"error":...} when they create nothing, ground they refuse
+		/// included; verbs with an outcome to report (foundation-edit) answer with it, and flora answers
+		/// with its measurement. The views are colonists, construction, stations, storage, time,
+		/// landing, tunables and summary.
+		std::vector<app::DevServer::Registration> registerWith(app::DevServer& server);
 
 	  private:
 		// --- write verbs ---
-		void devFreeBuild(const Foundation::DevCommand& cmd);
-		void devGive(const Foundation::DevCommand& cmd);
-		void devSpawn(const Foundation::DevCommand& cmd);
-		void devColonist(const Foundation::DevCommand& cmd);
-		void devNeed(const Foundation::DevCommand& cmd);
-		void devTime(const Foundation::DevCommand& cmd);
-		void devTeleport(const Foundation::DevCommand& cmd);
-		void devSelect(const Foundation::DevCommand& cmd);
-		void devKill(const Foundation::DevCommand& cmd);
-		void devComplete(const Foundation::DevCommand& cmd);
-		void devFoundation(const Foundation::DevCommand& cmd);
-		void devWalls(const Foundation::DevCommand& cmd);
-		void devOpening(const Foundation::DevCommand& cmd);
-		void devCraft(const Foundation::DevCommand& cmd);
-		void devStorage(const Foundation::DevCommand& cmd);
+		void devFreeBuild(const app::DevRequest& cmd);
+		// reveal?on=1|0: player visibility off or on (player-visibility.md 3.10)
+		void devReveal(const app::DevRequest& cmd);
+		void devGive(const app::DevRequest& cmd);
+		// spawn?def=&at=x,y&n=&scatter=: spawnGroundRefusal at the centre and at each scattered spot, which is
+		// snapped off water and skipped when refused; a refusal when nothing is spawned.
+		DevRefusal devSpawn(const app::DevRequest& cmd);
+		void devColonist(const app::DevRequest& cmd);
+		void devNeed(const app::DevRequest& cmd);
+		void devTime(const app::DevRequest& cmd);
+		void devTeleport(const app::DevRequest& cmd);
+		void devSelect(const app::DevRequest& cmd);
+		void devKill(const app::DevRequest& cmd);
+		void devComplete(const app::DevRequest& cmd);
+		DevRefusal devFoundation(const app::DevRequest& cmd);
+		// foundation-edit?id=<foundationId>&mode=add|subtract&pts=x0,y0;x1,y1;... runs the
+		// Add / Subtract tool's own validate + apply path; answers status ok|rejected,
+		// reason, target, extension (0 unless an Add onto a built foundation), entity, area.
+		std::string devFoundationEdit(const app::DevRequest& cmd);
+		// flora?rect=x0,y0,x1,y1 (world metres, default the camera's view): the trees in the rect
+		// per def and age class, canopy cover, and expected wood (assets::measureFlora). With
+		// age=<name>&near=x,y (and optionally def=) it lists the nearest trees of that age class
+		// instead (assets::nearestTreesOfAge). A route, not a state view, because a state
+		// provider is given no query parameters.
+		app::DevResponse devFlora(const app::DevRequest& cmd);
+		// ground?pts=x0,y0;x1,y1;... (world metres): what each point is to the nav mesh (onMesh; valid:
+		// clear to stand on; buildable: a foundation may go there once a tree or rock on it is cleared,
+		// isPointBuildableOnceCleared; buildableNow: a wall or furniture may go there as the ground
+		// stands, isPointBuildableNow) beside what its chunk's terrain polygons hold there, and the
+		// mesh's live triangle count. The terrain side reads the chunk's unclipped rings: inWater,
+		// toWaterM (null when no shore is within 32 m), and every ring the point is in or on, with its
+		// kind, hole (a clockwise ring, an island in its water body), blocksMovement and mean half
+		// width. chunk is false, with no terrain fields, when the point's chunk is not ready.
+		// Read-only. No pts, or a point that is not finite, is a 400.
+		app::DevResponse devGround(const app::DevRequest& cmd);
+		DevRefusal devWalls(const app::DevRequest& cmd);
+		// opening?seg=<id>&t= | pt=x,y&type=&built=: refused unless validateOpening accepts the placement.
+		DevRefusal	devOpening(const app::DevRequest& cmd);
+		void		devCraft(const app::DevRequest& cmd);
+		// storage?at=x,y&item=<def>|*&category=&priority=&min=&max=: adds a rule to the nearest box. A
+		// named item's category comes from its definition (category= may only repeat it); an unknown
+		// item is a 400. category= picks the wildcard's category, RawMaterial by default.
+		app::DevResponse devStorage(const app::DevRequest& cmd);
+		void		devTunable(const app::DevRequest& cmd);
 
-		// --- world-position validity (single gate for every placing/moving verb) ---
+		// --- world-position validity (the gates for every placing/moving verb) ---
 		// True when `at` is on an active walkable nav face. On false, logs+toasts the
-		// refusal in the standard rejection style and the caller creates/moves NOTHING.
+		// refusal, saying whether `at` is off the meshed ground or on water or a placed
+		// obstacle, and the caller creates/moves NOTHING.
 		bool requireValidPosition(Foundation::Vec2 at, const char* verb);
 
-		// True when the WHOLE foundation footprint (the closed polygon `pts`: vertices, edges, AND
-		// interior) is BUILDABLE -- NavigationSystem::isAreaBuildable, the same terrain-only predicate the
-		// UI foundation tool uses: geography (water) and built walls block, clearable entities (trees/
-		// rocks) do not. A footprint that spans a river or clips a water hole is refused so no
-		// partial-on-water structure is stamped. On rejection logs+toasts and returns false; the caller
-		// creates NOTHING.
-		bool requireBuildableArea(const std::vector<Foundation::Vec2>& pts, const char* verb);
+		// Where a mover may be put: ground no mover has meshed yet (his own limit lands
+		// there at once, outside every budget), else requireValidPosition.
+		bool requireMoverPosition(Foundation::Vec2 at, const char* verb);
 
-		// True when the WHOLE wall chain `pts` lies on walkable nav mesh -- every consecutive
-		// segment's endpoints AND its centerline samples (NavigationSystem::isPolylineWalkable,
-		// the shared linear predicate). A segment that bridges water between two on-land points
-		// is refused. On rejection logs+toasts and returns false; the caller creates NOTHING.
-		bool requireWalkableChain(const std::vector<Foundation::Vec2>& pts, const char* verb);
+		// Logs and toasts a verb's refusal message, when it is not empty, and returns it as the refusal.
+		DevRefusal refuse(const std::string& message);
 
-		// --- entity lookup / spawn helpers ---
+		// --- entity lookup helpers ---
 		ecs::EntityID	nearestColonist(Foundation::Vec2 at);
 		ecs::Inventory* nearestColonistInventory(Foundation::Vec2 at);
 		ecs::Inventory* nearestStorageInventory(Foundation::Vec2 at);
 		ecs::EntityID	nearestStorageEntity(Foundation::Vec2 at);
-		ecs::EntityID	spawnFoundationBlueprintEntity(
-			  engine::construction::FoundationId id, const std::vector<Foundation::Vec2>& pts, const std::string& material
-		  );
 
 		// --- state serialization ---
 		void serializeColonists(std::ostringstream& out);
@@ -136,8 +170,13 @@ namespace world_sim {
 		void serializeTime(std::ostringstream& out);
 		void serializeLanding(std::ostringstream& out);
 		void serializeSummary(std::ostringstream& out);
+		// The seen record's totals, and with x and y given, whether that point is seen and visible
+		// (/api/state?what=visibility takes no parameters; /api/dev/visibility?x=&y= answers the point).
+		std::string visibilityJson(const app::DevRequest& cmd);
 
 		// --- pure parsing helpers ---
+		static std::string					 param(const app::DevRequest& cmd, const std::string& key, const std::string& fallback = "");
+		static bool							 hasParam(const app::DevRequest& cmd, const std::string& key);
 		static ecs::EntityID				 parseEntity(const std::string& spec);
 		static bool							 parseNeedType(const std::string& name, ecs::NeedType& out);
 		static bool							 equalsIgnoreCase(const std::string& a, const char* b);
@@ -145,7 +184,6 @@ namespace world_sim {
 		static float						 parseDuration(const std::string& spec);
 		static Foundation::Vec2				 parsePoint(const std::string& spec);
 		static Foundation::Vec2				 spreadOffset(long i, long n, float radius);
-		static std::vector<Foundation::Vec2> parsePointList(const std::string& spec);
 		static std::string					 jsonEscape(const std::string& s);
 
 		DevCommandContext m_ctx;

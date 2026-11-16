@@ -1,0 +1,396 @@
+// SurfaceField: the land field's guard, paint rule, warp, bed rule, and render
+// tiles (terrain-polygons-architecture.md D16). The warp is switched off where a
+// test measures a shape, so the numbers are the D5 blur and guard alone.
+
+#include "SurfaceField.h"
+
+#include <random/HashNoise.h>
+
+#include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cmath>
+#include <cstdint>
+#include <functional>
+#include <utility>
+#include <vector>
+
+using namespace world;
+
+namespace {
+
+	constexpr uint64_t kSeed = 0xC0FFEEULL;
+
+	using SurfaceAt = std::function<Surface(int64_t tx, int64_t ty)>;
+
+	// Render tiles for a window, built from the surfaces of the window grown by the
+	// interior reach, exactly as a chunk builds its own.
+	struct HandField {
+		int64_t						originX;
+		int64_t						originY;
+		int32_t						width;
+		int32_t						height;
+		std::vector<TileRenderData> tiles;
+
+		[[nodiscard]] RenderTileView view() const { return {tiles, width, height, originX, originY}; }
+	};
+
+	HandField handField(int64_t originX, int64_t originY, int32_t width, int32_t height, const SurfaceAt& surfaceAt) {
+		constexpr int32_t	 kGrow		 = kInteriorReachTiles;
+		const int32_t		 grownWidth	 = width + 2 * kGrow;
+		const int32_t		 grownHeight = height + 2 * kGrow;
+		std::vector<uint8_t> paint(static_cast<size_t>(grownWidth) * static_cast<size_t>(grownHeight));
+		for (int32_t gy = 0; gy < grownHeight; ++gy) {
+			for (int32_t gx = 0; gx < grownWidth; ++gx) {
+				paint[static_cast<size_t>(gy) * static_cast<size_t>(grownWidth) + static_cast<size_t>(gx)] =
+					static_cast<uint8_t>(surfaceAt(originX - kGrow + gx, originY - kGrow + gy));
+			}
+		}
+		return {originX, originY, width, height, buildRenderTiles(paint, width, height)};
+	}
+
+	SurfaceFieldParams unwarped() {
+		SurfaceFieldParams params = defaultSurfaceFieldParams(kSeed);
+		params.warpFineM.fill(0.0F);
+		params.warpLowM.fill(0.0F);
+		return params;
+	}
+
+	Surface paintedAt(const HandField& field, double x, double y, const SurfaceFieldParams& params) {
+		return evaluateSurfaceField(field.view(), tilePointOf(x, y), params).surface;
+	}
+
+	// A lone tile of `patch` at (10, 10) in `sea`.
+	HandField loneTile(Surface patch, Surface sea) {
+		return handField(0, 0, 21, 21, [patch, sea](int64_t tx, int64_t ty) { return tx == 10 && ty == 10 ? patch : sea; });
+	}
+
+} // namespace
+
+// The lone tile's field is floored at 0.85 and falls to its neighbors' 0.125 along
+// an axis, crossing 0.5 at 0.483 m from its center; on the diagonal toward the
+// 0.0625 corner it crosses at 0.276 tile per axis. A rounded blob about 1 m across.
+TEST(SurfaceFieldTest, LoneTileSurvivesAsRoundedBlob) {
+	const SurfaceFieldParams params = unwarped();
+	for (const auto& [patch, sea] : {std::pair{Surface::Grass, Surface::Dirt}, std::pair{Surface::Dirt, Surface::Grass}}) {
+		const HandField field = loneTile(patch, sea);
+		EXPECT_EQ(paintedAt(field, 10.5, 10.5, params), patch);
+		for (const double sign : {-1.0, 1.0}) {
+			EXPECT_EQ(paintedAt(field, 10.5 + sign * 0.46, 10.5, params), patch);
+			EXPECT_EQ(paintedAt(field, 10.5 + sign * 0.51, 10.5, params), sea);
+			EXPECT_EQ(paintedAt(field, 10.5, 10.5 + sign * 0.46, params), patch);
+			EXPECT_EQ(paintedAt(field, 10.5, 10.5 + sign * 0.51, params), sea);
+			EXPECT_EQ(paintedAt(field, 10.5 + sign * 0.26, 10.5 + sign * 0.26, params), patch);
+			EXPECT_EQ(paintedAt(field, 10.5 + sign * 0.30, 10.5 + sign * 0.30, params), sea);
+		}
+		EXPECT_EQ(paintedAt(field, 10.0, 10.0, params), sea) << "a lone tile rounds off its corners";
+	}
+}
+
+// A lone hole is the same shape from the other side: the sea's field is capped at
+// 0.15 on it, so a lower surface shows through a higher one and the reverse.
+TEST(SurfaceFieldTest, LoneHoleStaysOpen) {
+	const SurfaceFieldParams params = unwarped();
+	const HandField			 field	= loneTile(Surface::Mud, Surface::Rock);
+	EXPECT_EQ(paintedAt(field, 10.5, 10.5, params), Surface::Mud);
+	EXPECT_EQ(paintedAt(field, 10.95, 10.5, params), Surface::Mud);
+	EXPECT_EQ(paintedAt(field, 11.02, 10.5, params), Surface::Rock);
+	EXPECT_NEAR(surfaceFieldValue(field.view(), tilePointOf(10.5, 10.5), static_cast<uint8_t>(Surface::Rock), params.thinFloor, params.thinCeil), 0.15F, 1e-6F);
+}
+
+// A straight 1-wide path has two same-side cardinal neighbors, so "fewer than two"
+// (D5 as written) never guards it: its blur is exactly 0.5 all along its centerline
+// and the path would vanish or flicker with the warp. With the axis rule it is a
+// band 1.17 m wide (0.15 or 0.85 on the path, 0.75 or 0.25 on the rows beside it).
+TEST(SurfaceFieldTest, StraightOneWidePathIsContinuous) {
+	for (const auto& [path, sea] : {std::pair{Surface::Dirt, Surface::GrassTall}, std::pair{Surface::GrassTall, Surface::Dirt}}) {
+		const HandField field = handField(0, 0, 21, 21, [path, sea](int64_t, int64_t ty) { return ty == 10 ? path : sea; });
+
+		SurfaceFieldParams unguarded = unwarped();
+		unguarded.thinFloor			 = 0.5F;
+		unguarded.thinCeil			 = 0.5F;
+		EXPECT_EQ(surfaceFieldValue(field.view(), tilePointOf(8.3, 10.5), static_cast<uint8_t>(path), 0.5F, 0.5F), 0.5F)
+			<< "D5's rule leaves the path exactly on the isoline";
+		const bool pathIsUpper = surfaceStackLevel(static_cast<uint8_t>(path)) > surfaceStackLevel(static_cast<uint8_t>(sea));
+		EXPECT_EQ(paintedAt(field, 8.3, 10.5, unguarded), pathIsUpper ? path : sea) << "a tie at 0.5 goes to the higher surface";
+
+		const SurfaceFieldParams params = unwarped();
+		for (int k = 0; k <= 100; ++k) {
+			const double x = 5.0 + 0.1 * k;
+			EXPECT_EQ(paintedAt(field, x, 10.5, params), path) << "x=" << x;
+			EXPECT_EQ(paintedAt(field, x, 10.5 - 0.56, params), path) << "x=" << x;
+			EXPECT_EQ(paintedAt(field, x, 10.5 + 0.56, params), path) << "x=" << x;
+			EXPECT_EQ(paintedAt(field, x, 10.5 - 0.61, params), sea) << "x=" << x;
+			EXPECT_EQ(paintedAt(field, x, 10.5 + 0.61, params), sea) << "x=" << x;
+		}
+	}
+}
+
+// A diagonal 1-wide path joins its tiles through bilinear saddles whose value is the
+// mean of the two path tiles and the two beside it. At the spec's 0.70 floor that is
+// (2 * 0.70 + 2 * 0.25) / 4 = 0.475 and the path breaks into beads; at 0.85 it is
+// 0.55 and the path stays whole, about 0.58 m wide at its narrowest.
+TEST(SurfaceFieldTest, DiagonalOneWidePathStaysConnected) {
+	for (const auto& [path, sea] : {std::pair{Surface::Grass, Surface::Sand}, std::pair{Surface::Sand, Surface::Grass}}) {
+		const HandField field = handField(0, 0, 21, 21, [path, sea](int64_t tx, int64_t ty) { return tx == ty ? path : sea; });
+
+		const SurfaceFieldParams params = unwarped();
+		for (int k = 0; k <= 200; ++k) {
+			const double d = 5.5 + 0.05 * k;
+			EXPECT_EQ(paintedAt(field, d, d, params), path) << "along the diagonal at " << d;
+		}
+		EXPECT_EQ(paintedAt(field, 10.0 + 0.2, 10.0 - 0.2, params), path) << "the saddle is about 0.58 m wide";
+		EXPECT_EQ(paintedAt(field, 10.0 + 0.26, 10.0 - 0.26, params), sea);
+
+		SurfaceFieldParams specValues = unwarped();
+		specValues.thinFloor		  = 0.70F;
+		specValues.thinCeil			  = 0.30F;
+		EXPECT_EQ(paintedAt(field, 10.0, 10.0, specValues), sea) << "0.70 / 0.30 bead the path at every saddle";
+	}
+}
+
+// Priority paint: where two surfaces' fields both pass 0.5 the higher one paints;
+// where none passes (four surfaces meeting at a point) the largest field does, ties
+// to the higher surface.
+TEST(SurfaceFieldTest, HigherSurfacePaintsOverLowerAndLargestFieldFillsJunctions) {
+	const SurfaceFieldParams params = unwarped();
+	// A 1-wide Grass path along row 10 beside a lone Rock tile at (10, 9): both are
+	// guarded up, and Rock (higher) takes the overlap between them.
+	const HandField overlap = handField(0, 0, 21, 21, [](int64_t tx, int64_t ty) {
+		if (tx == 10 && ty == 9) {
+			return Surface::Rock;
+		}
+		return ty == 10 ? Surface::Grass : Surface::Mud;
+	});
+	const RenderTileView view  = overlap.view();
+	const TilePoint		 point = tilePointOf(10.5, 9.95);
+	EXPECT_GT(surfaceFieldValue(view, point, static_cast<uint8_t>(Surface::Rock), params.thinFloor, params.thinCeil), 0.5F);
+	EXPECT_GT(surfaceFieldValue(view, point, static_cast<uint8_t>(Surface::Grass), params.thinFloor, params.thinCeil), 0.5F);
+	EXPECT_EQ(evaluateSurfaceField(view, point, params).surface, Surface::Rock);
+
+	const HandField quadrants = handField(0, 0, 21, 21, [](int64_t tx, int64_t ty) {
+		if (tx < 10) {
+			return ty < 10 ? Surface::Mud : Surface::Sand;
+		}
+		return ty < 10 ? Surface::Dirt : Surface::Snow;
+	});
+	const SurfaceFieldSample corner = evaluateSurfaceField(quadrants.view(), tilePointOf(10.0, 10.0), params);
+	EXPECT_EQ(corner.surface, Surface::Snow) << "a four-way tie goes to the highest";
+	EXPECT_FLOAT_EQ(corner.field, 0.25F);
+}
+
+// The warp is clamped per component whatever the amplitudes, which keeps every read
+// within the render apron (the view here is exactly the apron around one tile).
+TEST(SurfaceFieldTest, WarpStaysWithinClamp) {
+	SurfaceFieldParams params = defaultSurfaceFieldParams(kSeed);
+	params.warpFineM.fill(50.0F);
+	params.warpLowM.fill(100.0F);
+	const HandField field = handField(96, -40, 1 + 2 * kRenderApronTiles, 1 + 2 * kRenderApronTiles, [](int64_t tx, int64_t ty) {
+		return ((tx * 7 + ty * 3) % 5) < 2 ? Surface::Grass : Surface::Dirt;
+	});
+	const int64_t tile = 96 + kRenderApronTiles;
+	float		  most = 0.0F;
+	for (int j = 0; j < 16; ++j) {
+		for (int i = 0; i < 16; ++i) {
+			const TilePoint			 p{tile, -40 + kRenderApronTiles, (static_cast<float>(i) + 0.5F) / 16.0F, (static_cast<float>(j) + 0.5F) / 16.0F};
+			const SurfaceFieldSample s = evaluateSurfaceField(field.view(), p, params);
+			EXPECT_LE(std::abs(s.warpXM), kMaxLandWarpM);
+			EXPECT_LE(std::abs(s.warpYM), kMaxLandWarpM);
+			most = std::max({most, std::abs(s.warpXM), std::abs(s.warpYM)});
+		}
+	}
+	EXPECT_EQ(most, kMaxLandWarpM) << "amplitudes this large must hit the clamp";
+}
+
+// The same world point evaluates to the same bits from any window that holds its
+// reach: nothing depends on where a window starts.
+TEST(SurfaceFieldTest, FieldIsAFunctionOfWorldPositionOnly) {
+	const SurfaceAt world = [](int64_t tx, int64_t ty) {
+		const int64_t h = (tx * 73856093LL) ^ (ty * 19349663LL);
+		return (h & 7) < 3 ? Surface::GrassShort : ((h & 7) < 5 ? Surface::Dirt : Surface::Grass);
+	};
+	const HandField			 a		= handField(69990, -30, 40, 40, world);
+	const HandField			 b		= handField(70001, -21, 25, 25, world);
+	const SurfaceFieldParams params = defaultSurfaceFieldParams(kSeed);
+	int						 compared = 0;
+	for (int j = 0; j < 40; ++j) {
+		for (int i = 0; i < 40; ++i) {
+			const double			 x	= 70006.0 + 0.37 * i;
+			const double			 y	= -16.0 + 0.29 * j;
+			const TilePoint			 p	= tilePointOf(x, y);
+			const SurfaceFieldSample sa = evaluateSurfaceField(a.view(), p, params);
+			const SurfaceFieldSample sb = evaluateSurfaceField(b.view(), p, params);
+			EXPECT_EQ(sa.surface, sb.surface);
+			EXPECT_EQ(sa.field, sb.field);
+			EXPECT_EQ(sa.warpXM, sb.warpXM);
+			EXPECT_EQ(sa.warpYM, sb.warpYM);
+			++compared;
+		}
+	}
+	EXPECT_EQ(compared, 1600);
+}
+
+// 70 km out the warp still moves smoothly at millimeter steps, and the edges it
+// shapes wobble off the tile lines: a straight tile edge is crossed away from x = 70010.
+TEST(SurfaceFieldTest, WarpHoldsPrecisionFarFromOrigin) {
+	const HandField			 field	= handField(70000, 0, 20, 20, [](int64_t tx, int64_t) { return tx < 70010 ? Surface::Grass : Surface::Sand; });
+	const SurfaceFieldParams params = defaultSurfaceFieldParams(kSeed);
+	float					 previousX = 0.0F;
+	int						 changed   = 0;
+	for (int k = 0; k < 1000; ++k) {
+		const TilePoint			 p{70008, 9, static_cast<float>(k) / 1000.0F, 0.5F};
+		const SurfaceFieldSample s = evaluateSurfaceField(field.view(), p, params);
+		if (k > 0) {
+			EXPECT_LT(std::abs(s.warpXM - previousX), 0.01F);
+			changed += s.warpXM != previousX ? 1 : 0;
+		}
+		previousX = s.warpXM;
+	}
+	EXPECT_GT(changed, 900);
+
+	int crossingsOffLine = 0;
+	for (int row = 0; row < 12; ++row) {
+		double last = 0.0;
+		for (int k = 0; k < 800; ++k) {
+			const double x = 70006.0 + 0.01 * k;
+			if (paintedAt(field, x, 4.5 + row, params) == Surface::Grass) {
+				last = x;
+			}
+		}
+		crossingsOffLine += std::abs(last - 70010.0) > 0.05 ? 1 : 0;
+	}
+	EXPECT_GE(crossingsOffLine, 8) << "the boundary should wander off the tile line";
+}
+
+// A Water tile paints as the nearest land within three tiles, ties broken by world
+// y then x; with none in reach it paints Sand.
+TEST(SurfaceFieldTest, WaterPaintsAsNearestLandBed) {
+	constexpr uint8_t kW = static_cast<uint8_t>(Surface::Water);
+	constexpr uint8_t kD = static_cast<uint8_t>(Surface::Dirt);
+	constexpr uint8_t kS = static_cast<uint8_t>(Surface::Snow);
+	constexpr uint8_t kR = static_cast<uint8_t>(Surface::Rock);
+	constexpr int32_t kSide	 = 9;
+	constexpr int32_t kGrown = kSide + 2 * kBedReachTiles;
+	auto			  grid	 = [](const std::function<uint8_t(int32_t, int32_t)>& at) {
+		std::vector<uint8_t> out(static_cast<size_t>(kGrown) * kGrown);
+		for (int32_t y = 0; y < kGrown; ++y) {
+			for (int32_t x = 0; x < kGrown; ++x) {
+				out[static_cast<size_t>(y) * kGrown + static_cast<size_t>(x)] = at(x - kBedReachTiles, y - kBedReachTiles);
+			}
+		}
+		return out;
+	};
+	auto paintAt = [](const std::vector<uint8_t>& paint, int32_t x, int32_t y) { return paint[static_cast<size_t>(y) * kSide + static_cast<size_t>(x)]; };
+
+	// Water everywhere but Dirt at (5, 4) and Snow at (3, 4), both one tile from
+	// (4, 4): the lesser x wins. Rock at (4, 3) is as near and has the lesser y.
+	const std::vector<uint8_t> tieX = paintSurfaces(grid([](int32_t x, int32_t y) {
+		return (x == 5 && y == 4) ? kD : ((x == 3 && y == 4) ? kS : kW);
+	}), kSide, kSide);
+	EXPECT_EQ(paintAt(tieX, 4, 4), kS);
+	const std::vector<uint8_t> tieY = paintSurfaces(grid([](int32_t x, int32_t y) {
+		return (x == 5 && y == 4) ? kD : ((x == 3 && y == 4) ? kS : ((x == 4 && y == 3) ? kR : kW));
+	}), kSide, kSide);
+	EXPECT_EQ(paintAt(tieY, 4, 4), kR);
+	EXPECT_EQ(paintAt(tieY, 5, 4), kD) << "land paints as itself";
+
+	// Nearest by distance, not by ring: (4, 7) is 3 tiles off, (6, 6) is 2.8.
+	const std::vector<uint8_t> nearest = paintSurfaces(grid([](int32_t x, int32_t y) {
+		return (x == 4 && y == 7) ? kD : ((x == 6 && y == 6) ? kS : kW);
+	}), kSide, kSide);
+	EXPECT_EQ(paintAt(nearest, 4, 4), kS);
+
+	const std::vector<uint8_t> open = paintSurfaces(grid([](int32_t x, int32_t) { return x == 8 ? kD : kW; }), kSide, kSide);
+	EXPECT_EQ(paintAt(open, 4, 4), static_cast<uint8_t>(Surface::Sand)) << "no land within three tiles";
+	EXPECT_EQ(paintAt(open, 5, 4), kD);
+}
+
+// Render tiles: the edge surface is the highest within two tiles, and a tile is
+// interior only when everything within three is its own surface, near-interior
+// when everything within two is.
+TEST(SurfaceFieldTest, RenderTilesCarryEdgeSurfaceAndInteriorBit) {
+	const HandField field = handField(0, 0, 21, 21, [](int64_t tx, int64_t ty) { return tx == 10 && ty == 10 ? Surface::Rock : Surface::Grass; });
+	const RenderTileView view = field.view();
+	for (int64_t y = 0; y < 21; ++y) {
+		for (int64_t x = 0; x < 21; ++x) {
+			const int64_t		  reach = std::max(std::abs(x - 10), std::abs(y - 10));
+			const TileRenderData& tile	= view.at(x, y);
+			EXPECT_EQ(tile.surfaceId, static_cast<uint8_t>(reach == 0 ? Surface::Rock : Surface::Grass));
+			const Surface edge = reach <= kEdgeReachTiles ? Surface::Rock : Surface::Grass;
+			EXPECT_EQ(tile.edge & kRenderEdgeSurfaceMask, static_cast<uint8_t>(edge)) << "(" << x << ", " << y << ")";
+			EXPECT_EQ((tile.edge & kRenderInteriorBit) != 0, reach > kInteriorReachTiles) << "(" << x << ", " << y << ")";
+			EXPECT_EQ((tile.edge & kRenderNearInteriorBit) != 0, reach > kNearInteriorReachTiles) << "(" << x << ", " << y << ")";
+		}
+	}
+}
+
+// The near-interior shortcut changes nothing but the warp it skips: with the bit
+// cleared, every point paints the same surface with the same field and margin. At a
+// fine amplitude of 1 m the low-warped test can never pass (its window is empty), so
+// every shortcut there is the test after the first fine octave.
+TEST(SurfaceFieldTest, NearInteriorShortcutMatchesTheFullField) {
+	const HandField field = handField(40, -60, 48, 48, [](int64_t tx, int64_t ty) {
+		const int64_t bx = tx / 9;
+		const int64_t by = ty / 7;
+		const int64_t h	 = (bx * 73856093LL) ^ (by * 19349663LL);
+		return (h & 3) == 0 ? Surface::Rock : ((h & 3) == 1 ? Surface::Sand : Surface::Grass);
+	});
+	HandField full = field;
+	for (TileRenderData& tile : full.tiles) {
+		tile.edge &= static_cast<uint8_t>(~kRenderNearInteriorBit);
+	}
+	SurfaceFieldParams wideFine = defaultSurfaceFieldParams(kSeed);
+	wideFine.warpFineM.fill(1.0F);
+	for (const SurfaceFieldParams& params : {defaultSurfaceFieldParams(kSeed), wideFine}) {
+		int shortcuts = 0;
+		for (int j = 0; j < 160; ++j) {
+			for (int i = 0; i < 160; ++i) {
+				const TilePoint			 p	   = tilePointOf(46.0 + 0.23 * i, -54.0 + 0.23 * j);
+				const SurfaceFieldSample quick = evaluateSurfaceField(field.view(), p, params);
+				const SurfaceFieldSample slow  = evaluateSurfaceField(full.view(), p, params);
+				EXPECT_EQ(quick.surface, slow.surface) << i << ", " << j;
+				EXPECT_EQ(quick.field, slow.field) << i << ", " << j;
+				EXPECT_EQ(quick.margin, slow.margin) << i << ", " << j;
+				shortcuts += quick.warpXM != slow.warpXM ? 1 : 0;
+			}
+		}
+		EXPECT_GT(shortcuts, 1000) << "the shortcut should take a fair share of these points";
+	}
+}
+
+// The test after the first fine octave bounds what the others add by their weight,
+// which holds only while each octave's noise stays within [-1, 1].
+TEST(SurfaceFieldTest, WarpNoiseOctaveStaysWithinOne) {
+	float most = 0.0F;
+	for (uint32_t seed = 0; seed < 8; ++seed) {
+		for (int32_t cell = -40; cell < 40; ++cell) {
+			for (int j = 0; j < 32; ++j) {
+				for (int i = 0; i < 32; ++i) {
+					const foundation::NoisePair n =
+						foundation::gradientNoise2PairCell(cell * 7, cell * 13 + j, (static_cast<float>(i) + 0.5F) / 32.0F, static_cast<float>(j) / 32.0F, seed);
+					most = std::max({most, std::abs(n.first), std::abs(n.second)});
+				}
+			}
+		}
+	}
+	EXPECT_LE(most, 1.0F);
+	EXPECT_GT(most, 0.9F) << "the bound should be near what the noise reaches";
+}
+
+// Far-zoom LOD (D16 step 7): at the game's 8 px/m, the shader draws all four fine
+// octaves (4, 2, 1, 0.5 m) from zoom 1 in, drops the 0.5 m one at zoom 0.75 and
+// 0.5, and the 1 m one too at zoom 0.25, each under 4 px there.
+TEST(SurfaceFieldTest, FarZoomDropsFineOctavesUnderFourPixels) {
+	auto octavesAtZoom = [](float zoom, int32_t wavelengthM) { return landWarpFineOctaves(1.0F / (8.0F * zoom), wavelengthM); };
+	const int32_t wavelength = defaultSurfaceFieldParams(kSeed).warpFineWavelengthM;
+	for (const float zoom : {20.0F, 3.0F, 1.5F, 1.0F}) {
+		EXPECT_EQ(octavesAtZoom(zoom, wavelength), kWarpFineOctaves) << "zoom " << zoom;
+	}
+	EXPECT_EQ(octavesAtZoom(0.75F, wavelength), 3);
+	EXPECT_EQ(octavesAtZoom(0.5F, wavelength), 3);
+	EXPECT_EQ(octavesAtZoom(0.25F, wavelength), 2);
+
+	// A longer base wavelength keeps its octaves further out.
+	EXPECT_EQ(octavesAtZoom(0.5F, 2 * wavelength), 4);
+	EXPECT_EQ(octavesAtZoom(0.25F, 2 * wavelength), 3);
+}

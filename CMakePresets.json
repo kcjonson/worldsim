@@ -26,8 +26,8 @@
       "inherits": "base",
       "generator": "Ninja Multi-Config",
       "condition": { "type": "equals", "lhs": "${hostSystemName}", "rhs": "Windows" },
+      "environment": { "CC": "cl", "CXX": "cl" },
       "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "cl",
         "CMAKE_MSVC_DEBUG_INFORMATION_FORMAT": "$<$<CONFIG:Debug,RelWithDebInfo>:Embedded>"
       }
     }

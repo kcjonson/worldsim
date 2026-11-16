@@ -1,8 +1,13 @@
 # C++ to Rust Migration: Scope and Spike
 
 Created: 2026-09-25
-Status: Research (decision made 2026-09-25: full rewrite; see [rust-rewrite-plan.md](./rust-rewrite-plan.md))
+Status: Research. The rewrite it led to is deferred indefinitely (2026-11-16); see [rust-rewrite-plan.md](./rust-rewrite-plan.md)
 Related: [monorepo-structure.md](./monorepo-structure.md), [library-decisions.md](./library-decisions.md), [cpp-coding-standards.md](./cpp-coding-standards.md), [ecs-patterns.md](./ecs-patterns.md), [build-performance.md](./build-performance.md)
+
+> **Deferred indefinitely (2026-11-16).** The Rust rewrite is not scheduled and may never happen.
+> Don't start, schedule, or recommend any migration work, Rust-framed or otherwise, without an
+> explicit go-ahead. C++ is the long-term codebase; scope C++ work on its own merits. This doc is
+> kept as a record of the research and the scope as it stood on 2026-09-25.
 
 ## The question
 
@@ -547,8 +552,8 @@ judgment is needed and nowhere else. What that looks like in practice:
 
 Written before the decision; kept for the record. The research recommendation was not to commit
 to a full migration on this evidence, since the easy third ports cleanly and the hard two thirds
-is a redesign of the ECS and UI. On 2026-09-25 we decided to do the full rewrite anyway, now,
-while the codebase is small. [rust-rewrite-plan.md](./rust-rewrite-plan.md) is the plan; the
+is a redesign of the ECS and UI. On 2026-09-25 we decided to do the full rewrite anyway; on 2026-11-16 it was deferred
+indefinitely. [rust-rewrite-plan.md](./rust-rewrite-plan.md) is the plan; the
 option 4 fixes above became its Phase 0.
 
 The spike crate and harness were scratch work and are not checked in, per the no-scripts-in-docs

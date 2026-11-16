@@ -1,10 +1,15 @@
 # Rust Rewrite Plan
 
 Created: 2026-09-25
-Status: Plan (decision made 2026-09-25: rewrite the whole codebase in Rust, agent-driven; no implementation yet)
+Status: Deferred indefinitely (2026-11-16). Planned 2026-09-25; never started
 Scope and spike: [rust-migration-scope.md](./rust-migration-scope.md)
 Renderer: rendering/vulkan-migration.md (in PR #271, not yet merged)
 Related: [build-performance.md](./build-performance.md), [../testing/README.md](../testing/README.md)
+
+> **Deferred indefinitely (2026-11-16).** The Rust rewrite is not scheduled and may never happen.
+> Don't start, schedule, or recommend any migration work, Rust-framed or otherwise, without an
+> explicit go-ahead. C++ is the long-term codebase; scope C++ work on its own merits. This doc is
+> kept as a record of the research and the plan as it stood on 2026-09-25.
 
 ## Decision
 

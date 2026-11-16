@@ -30,6 +30,11 @@ export VCPKG_ROOT=/path/to/vcpkg   # PowerShell: $env:VCPKG_ROOT = "C:\vcpkg"
 Set `VCPKG_ROOT` persistently (shell profile, or Windows user environment variables). The
 `.vscode` and CI configs both rely on it.
 
+> **Visual Studio developer shells.** `vcvars64.bat` and `VsDevCmd` repoint `VCPKG_ROOT` at the
+> vcpkg bundled with Visual Studio (no binary cache, every port built from source). Configure now
+> refuses that toolchain before installing anything. Set `VCPKG_ROOT` back to your own checkout,
+> then configure with `--fresh` or delete `build/`; the first configure binds the toolchain.
+
 > **The baseline trap.** vcpkg resolves the pinned versions from the version database in your
 > local vcpkg checkout. If that checkout is older than `builtin-baseline`, configure fails with
 > `no version database entry for <pkg> at <version>`. The fix is to advance vcpkg to at least the
@@ -79,11 +84,24 @@ Build dirs configured with the old Visual Studio generator error on reconfigure 
 change: delete `build/` once and re-run `cmake --preset windows`. With a warm ccache the rebuild
 is fast (~30 s on the reference machine). Check hit rates anytime with `ccache -s`.
 
+### A build dir that can't find vcpkg packages
+
+The `windows` preset used to set `CMAKE_CXX_COMPILER=cl`, which could make a reconfigure delete
+the cache; the rerun lost the vcpkg toolchain, and `find_package` has failed in that dir since
+(httplib, GTest). The current preset picks `cl` through `CC`/`CXX` and doesn't wipe the cache,
+but CMake loads the toolchain and reads `CC`/`CXX` only on a fresh configure, so it can't repair
+such a dir, or one first configured with the wrong compiler or vcpkg. Run
+`cmake --fresh --preset windows` once, or delete `build/`.
+
 ### Font atlas
 
 The build generates the SDF font atlas (`fonts/Roboto-SDF.png`) from `Roboto-Regular.ttf` via the
-`generate_sdf_atlas` tool whenever it is missing or the font changes. The PNG is a gitignored build
-artifact, so a fresh checkout produces it automatically with no manual step.
+`generate_sdf_atlas` tool whenever it is missing, the font changes, or the generator itself changes.
+The PNG is a gitignored build artifact, so a fresh checkout produces it automatically with no manual
+step. The same step makes
+the other three atlases (Chakra Petch, Barlow, JetBrains Mono) and their committed JSON. Every
+atlas holds ASCII printable plus the Latin-1 Supplement (U+00A0 to U+00FF), one character set in
+`tools/generate_sdf_atlas/main.cpp`; the atlas grows in height, never width, when the glyphs need it.
 
 ## Tests
 
@@ -113,3 +131,6 @@ stricter:
 
 VS Code with CMake Tools, the C/C++ extension, and clangd. CMake Tools reads `VCPKG_ROOT` from the
 environment via `.vscode/settings.json`. Format manually (`Shift+Alt+F`); format-on-save is off.
+On Windows it needs `cl` on PATH from the setup script: by default CMake Tools adds the VS
+developer environment only for presets that name the compiler in a cache variable, and the
+`windows` preset names it in its environment.

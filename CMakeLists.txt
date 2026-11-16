@@ -1,6 +1,27 @@
 # 3.25 for CMAKE_MSVC_DEBUG_INFORMATION_FORMAT (CMP0141): the Windows preset
 # selects /Z7 embedded debug info, which ccache requires to cache MSVC objects.
 cmake_minimum_required(VERSION 3.25)
+
+# Refuse Visual Studio's bundled vcpkg. A developer shell (vcvars64, VsDevCmd) sets
+# VCPKG_ROOT to it, over your own checkout, and the preset's toolchain follows: no
+# binary cache, every port built from source. vcpkg installs the manifest's ports
+# inside project(), so the check sits before it (PROJECT_IS_TOP_LEVEL isn't set yet,
+# hence the source dir comparison). The same check is in salal's CMakeLists.txt,
+# which skips it when pulled in below this one.
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR AND CMAKE_TOOLCHAIN_FILE)
+    block(SCOPE_FOR VARIABLES)
+        string(REPLACE "\\" "/" toolchain "${CMAKE_TOOLCHAIN_FILE}")
+        string(TOLOWER "${toolchain}" toolchain_lower)
+        if(toolchain_lower MATCHES "^(.*/microsoft visual studio/.+/vc/vcpkg)(/|$)")
+            string(LENGTH "${CMAKE_MATCH_1}" bundled_length)
+            string(SUBSTRING "${toolchain}" 0 ${bundled_length} bundled)
+            message(FATAL_ERROR
+                "CMAKE_TOOLCHAIN_FILE is in Visual Studio's bundled vcpkg (${bundled}); a developer shell sets VCPKG_ROOT to it.\n"
+                "Set VCPKG_ROOT to your own vcpkg checkout, then configure with --fresh or delete the build directory.")
+        endif()
+    endblock()
+endif()
+
 project(world-sim VERSION 0.1.0 LANGUAGES CXX)
 
 # Set C++20 standard
@@ -39,33 +60,42 @@ find_package(glfw3 CONFIG REQUIRED)
 find_package(GLEW REQUIRED)
 find_package(glm CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
-find_package(httplib CONFIG REQUIRED)
 
 # Enable testing (must be before subdirectories)
 include(CTest)
 enable_testing()
+include(cmake/test-data.cmake)
+
+# Engine libraries from salal, pinned to a tag. Its vcpkg.json is ignored here
+# (manifest mode reads only the top-level manifest); this one provides every port
+# its libraries need. To build against a local checkout instead of the tag:
+#   cmake -S . -B build -DFETCHCONTENT_SOURCE_DIR_SALAL=C:/Users/kevin/Code/salal
+include(FetchContent)
+FetchContent_Declare(salal
+    GIT_REPOSITORY https://github.com/kcjonson/salal.git
+    GIT_TAG        v0.41.2
+    GIT_SHALLOW    TRUE
+)
+set(SALAL_BUILD_APP ON)
+set(SALAL_BUILD_SANDBOX OFF)
+set(SALAL_BUILD_TESTS OFF)
+FetchContent_MakeAvailable(salal)
 
 # Add subdirectories in dependency order
-# Foundation layer
-add_subdirectory(libs/foundation)
-
 # Geometry layer (pure math, depends only on foundation)
 add_subdirectory(libs/geometry)
 
-# Graphics layer
-add_subdirectory(libs/renderer)
-
 # Feature layers
-add_subdirectory(libs/ui)
-add_subdirectory(libs/world)
+add_subdirectory(libs/theme)
+add_subdirectory(libs/worldgen)
 add_subdirectory(libs/planet-view)
-add_subdirectory(libs/game-systems)
 
-# Engine layer
-add_subdirectory(libs/engine)
-
-# Asset system (depends on foundation, renderer)
-add_subdirectory(libs/engine/assets)
+# The game: the world, its assets, the simulation over them, and the world's rendering.
+# sim and world link neither renderer nor ui; world-view is the side that draws.
+add_subdirectory(libs/world)
+add_subdirectory(libs/assets)
+add_subdirectory(libs/sim)
+add_subdirectory(libs/world-view)
 
 # Applications
 add_subdirectory(apps/world-sim)
@@ -82,7 +112,9 @@ add_subdirectory(tools/generate_sdf_atlas)
 # source font changes; the JSON metadata regenerates deterministically.
 #
 # Each entry is "AtlasBaseName:SourceTTF". The atlas base names must match
-# FontFamily / kAtlasBaseNames in libs/renderer + libs/ui.
+# kFontAtlases in libs/theme/theme/Fonts.h, which each app hands to salal's FontRenderer
+# through AppConfig; salal ships no fonts, so this repo makes them here and each app's
+# CMakeLists.txt copies fonts/ beside its exe.
 set(SDF_FONT_ATLASES
     "Roboto-SDF:Roboto-Regular.ttf"
     "ChakraPetch-SDF:ChakraPetch-SemiBold.ttf"
@@ -117,6 +149,10 @@ add_custom_target(font-atlas DEPENDS ${SDF_ATLAS_OUTPUTS})
 add_dependencies(world-sim font-atlas)
 add_dependencies(ui-sandbox font-atlas)
 add_dependencies(asset-manager font-atlas)
+# FontAtlases.test.cpp loads the atlases from fonts/: the PNGs aren't tracked, and the JSON is the current tool's
+if(TARGET theme-tests)
+    add_dependencies(theme-tests font-atlas)
+endif()
 
 # Quickstart planet — the prebuilt planet that ships with the game. Players never
 # generate it; the main menu disables Quick Start when it is absent. This is an
@@ -211,11 +247,4 @@ if(BUILD_DEVELOPER_CLIENT STREQUAL "ON"
     else()
         message(WARNING "npm not found - skipping developer-client build. Install Node.js to enable developer tools.")
     endif()
-endif()
-
-# world-sim's POST_BUILD step copies the shared build/shaders directory but
-# does not link planet-view, so parallel MSBuild can schedule planet-view's
-# shader staging concurrently with that copy (Windows file locks fail it).
-if(TARGET world-sim AND TARGET planet-view-shaders)
-    add_dependencies(world-sim planet-view-shaders)
 endif()

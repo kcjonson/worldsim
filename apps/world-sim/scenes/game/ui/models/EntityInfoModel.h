@@ -29,20 +29,21 @@ namespace world_sim {
 
 /// Cached selection identity for detecting structural vs value-only updates
 struct CachedSelection {
-	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, WallSegment, Opening, Foundation, Room };
+	enum class Type { None, Colonist, WorldEntity, CraftingStation, Furniture, ResourcePile, WallSegment, Opening, Foundation, Room };
 
 	Type			  type = Type::None;
 	ecs::EntityID	  colonistId{0};	 // For Colonist selection
 	ecs::EntityID	  stationId{0};		 // For CraftingStation selection
 	ecs::EntityID	  furnitureId{0};	 // For Furniture selection
+	ecs::EntityID	  pileId{0};		 // For ResourcePile selection
 	std::string		  worldEntityDef;	 // For WorldEntity selection
 	std::string		  stationDefName;	 // For CraftingStation selection
 	std::string		  furnitureDefName;	 // For Furniture selection
 	Foundation::Vec2 worldEntityPos;	 // For WorldEntity selection
 	bool			  furniturePackaged{false}; // For Furniture selection
-	engine::construction::FoundationId foundationId{0};	 // For Foundation selection
-	engine::construction::SegmentId	   wallSegmentId{0}; // For WallSegment selection
-	engine::construction::OpeningId	   openingId{0};	 // For Opening selection
+	construction::FoundationId foundationId{0};	 // For Foundation selection
+	construction::SegmentId	   wallSegmentId{0}; // For WallSegment selection
+	construction::OpeningId	   openingId{0};	 // For Opening selection
 	std::uint64_t					   roomId{0};		 // For Room selection
 
 	/// Check if this cache matches the given selection
@@ -84,6 +85,8 @@ class EntityInfoModel {
 		ResourceQueryCallback queryResources;	// Query remaining resource count for harvestable entities
 		std::function<void()>	   onDemolishFoundation;  // Demolish just the (clear) foundation
 		std::function<void()>	   onDemolishBuilding;	  // Demolish the whole building (walls + openings + foundation)
+		std::function<void()>	   onAddToFoundation;	  // Activate the Add tool on the selected foundation
+		std::function<void()>	   onSubtractFromFoundation; // Activate the Subtract tool on the selected foundation
 		std::function<void()> onDemolishWallSegment; // Demolish the selected wall segment
 		std::function<void()>	   onDemolishOpening;	  // Demolish the selected opening
 	};
@@ -95,10 +98,10 @@ class EntityInfoModel {
 	[[nodiscard]] UpdateType refresh(
 		const Selection&							   selection,
 		ecs::World&									   world,
-		const engine::assets::AssetRegistry&		   assetRegistry,
-		const engine::assets::RecipeRegistry&		   recipeRegistry,
+		const assets::AssetRegistry&		   assetRegistry,
+		const assets::RecipeRegistry&		   recipeRegistry,
 		const Callbacks&							   callbacks,
-		const engine::construction::ConstructionWorld* constructionWorld = nullptr,
+		const construction::ConstructionWorld* constructionWorld = nullptr,
 		const ecs::RoomDetectionSystem*				   roomDetection = nullptr
 	);
 

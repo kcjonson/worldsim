@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- GrassTall ground tile: Grass's generator (ground_grass.lua) as long, dense, dark grass. Bigger
+     clumps of taller tufts in deeper greens, long flopping blades, a share of them tipped with tan seed
+     heads, and almost no bare ground. -->
+<AssetDefinitions>
+  <AssetDef>
+    <defName>Ground_GrassTall</defName>
+    <label>GrassTall</label>
+    <role>ground</role>
+    <surface>GrassTall</surface>
+    <seedGroup>grass</seedGroup>
+    <assetType>procedural</assetType>
+    <generator>
+      <scriptPath>@shared/ground_grass.lua</scriptPath>
+      <params>
+        <!-- The knobs are documented in Grass.xml; farMean is mip 0's mean as the bake measures it, set
+             again whenever the look changes. -->
+
+        <modelUndergrowth>0.3</modelUndergrowth>
+        <modelClumpFill>0.6</modelClumpFill>
+        <farMean>64.95,91.98,40.52</farMean>
+        <farContrast>1.42</farContrast>
+        <farCoarseContrast>0.31</farCoarseContrast>
+        <farCellsPerMeter>8</farCellsPerMeter>
+        <groundColor>#33301E</groundColor>
+
+        <litterDensity>200</litterDensity>
+        <litterSize>0.012,0.03</litterSize>
+        <litterDark>#262417</litterDark>
+        <litterMid>#3B3723</litterMid>
+        <litterDry>#47432A</litterDry>
+        <litterShares>0.55,0.33</litterShares>
+
+        <soilDensity>2</soilDensity>
+        <soilSize>0.03,0.12</soilSize>
+        <soilColor>#5E4C34</soilColor>
+        <soilSpeckColor>#4C3D2C</soilSpeckColor>
+        <soilDryColor>#82704F</soilDryColor>
+
+        <pebbleDensity>3</pebbleDensity>
+        <pebbleSize>0.006,0.02</pebbleSize>
+        <pebbleColorA>#8A8274</pebbleColorA>
+        <pebbleColorB>#A39A88</pebbleColorB>
+        <pebbleColorC>#6F695E</pebbleColorC>
+        <pebbleHaloColor>#2A2A22</pebbleHaloColor>
+        <pebbleHaloAlpha>0.5</pebbleHaloAlpha>
+
+        <undergrowthDensity>380</undergrowthDensity>
+        <undergrowthLength>0.08,0.13</undergrowthLength>
+        <undergrowthHubWidth>0.008,0.012</undergrowthHubWidth>
+        <undergrowthSpikes>5,8</undergrowthSpikes>
+        <undergrowthFan>0.45,0.7</undergrowthFan>
+        <undergrowthFill>0.45</undergrowthFill>
+        <groundShow>0.03</groundShow>
+        <undergrowthDark>#314B1D</undergrowthDark>
+        <undergrowthLight>#3A5824</undergrowthLight>
+
+        <rosetteDensity>0.5</rosetteDensity>
+        <rosetteLeafLength>0.06,0.14</rosetteLeafLength>
+        <rosetteColor>#46703A</rosetteColor>
+        <rosetteInnerColor>#5C8A48</rosetteInnerColor>
+        <rosetteMidribColor>#8AAE6E</rosetteMidribColor>
+
+        <cloverPatches>0.6</cloverPatches>
+        <cloverPerPatch>6,16</cloverPerPatch>
+        <cloverSpread>0.05,0.09</cloverSpread>
+        <cloverLeaflet>0.022,0.032</cloverLeaflet>
+        <cloverColor>#5E9C4A</cloverColor>
+        <cloverChevronColor>#A8CC90</cloverChevronColor>
+
+        <clumpSpacing>0.24</clumpSpacing>
+        <clumpRadius>0.11,0.27</clumpRadius>
+        <clumpSway>0.18</clumpSway>
+        <tuftsPerClump>11,17</tuftsPerClump>
+        <tuftSpread>0.5</tuftSpread>
+        <tuftLength>0.09,0.17</tuftLength>
+        <tuftFan>0.45,0.75</tuftFan>
+        <tuftFanOut>0.35</tuftFanOut>
+        <tuftBend>0.15</tuftBend>
+        <tuftFill>0.55</tuftFill>
+        <tuftSpikes>5,8</tuftSpikes>
+        <tuftHubWidth>0.018,0.03</tuftHubWidth>
+        <tuftDark>#3C5E26</tuftDark>
+        <tuftLight>#466B2D</tuftLight>
+        <tuftHighlightDark>#527A36</tuftHighlightDark>
+        <tuftHighlightLight>#5C863D</tuftHighlightLight>
+
+        <bladeDensity>120</bladeDensity>
+        <bladeLength>0.1,0.2</bladeLength>
+        <bladeWidth>0.014,0.024</bladeWidth>
+        <broadBladeShare>0.25</broadBladeShare>
+        <broadBladeWidth>0.028,0.038</broadBladeWidth>
+        <bladeBow>0.2</bladeBow>
+        <bladeTuftShare>0.5</bladeTuftShare>
+        <bladeLean>0.38</bladeLean>
+        <bladeGain>1.1</bladeGain>
+        <bladeTipGain>1.12</bladeTipGain>
+        <bladeHue>0</bladeHue>
+        <bladeTipHue>3</bladeTipHue>
+        <underlayColor>#161E0E</underlayColor>
+        <underlayAlpha>0.5</underlayAlpha>
+        <underlayWidth>2.2</underlayWidth>
+        <strawShare>0.06</strawShare>
+        <strawDark>#9A8E5C</strawDark>
+        <strawLight>#AEA06A</strawLight>
+        <dryTipShare>0.3</dryTipShare>
+        <tipHighlightShare>0.1</tipHighlightShare>
+
+        <densityContrast>1.6</densityContrast>
+        <clumpValue>0.24</clumpValue>
+        <clumpDome>0.15</clumpDome>
+        <clumpHue>14</clumpHue>
+        <clumpSaturation>0.1</clumpSaturation>
+        <patchHue>6</patchHue>
+        <patchValue>0.035</patchValue>
+        <elementValue>0.05</elementValue>
+        <elementHue>4</elementHue>
+        <lushDarken>0.03</lushDarken>
+        <lushSaturate>0.05</lushSaturate>
+      </params>
+    </generator>
+    <variantCount>8</variantCount>
+    <period>4</period>
+    <pixelsPerMeter>128</pixelsPerMeter>
+    <!-- Grass stands up the screen, so cells never turn; they only flip left to right. -->
+    <rotate>mirror</rotate>
+    <macro>
+      <dry>1.05,1.02,0.88</dry>
+      <lush>0.95,0.98,1.1</lush>
+      <amplitude>0.3</amplitude>
+      <wavelengths>96,24</wavelengths>
+    </macro>
+    <!-- How this surface meets the ones below it (docs/technical/ground-textures.md, "Pair parameters"):
+         tufts spill over dirt with a contact shadow, a narrow soft band onto bright sand with a fainter
+         one, a stain onto mud, and a narrow band within the grass family, whose co-baked layouts meet
+         blade for blade. -->
+    <transition over="Dirt">
+      <width>0.5</width>
+      <offset>0.15</offset>
+      <softness>0.06</softness>
+      <shadow>0.25</shadow>
+    </transition>
+    <transition over="Sand">
+      <width>0.3</width>
+      <offset>0.1</offset>
+      <softness>0.05</softness>
+      <shadow>0.12</shadow>
+    </transition>
+    <transition over="Mud">
+      <width>0.25</width>
+      <softness>0.2</softness>
+      <stain>0.25</stain>
+    </transition>
+    <transition over="GrassShort">
+      <width>0.2</width>
+      <softness>0.15</softness>
+    </transition>
+    <transition over="Grass">
+      <width>0.2</width>
+      <softness>0.15</softness>
+    </transition>
+    <transition over="GrassMeadow">
+      <width>0.2</width>
+      <softness>0.15</softness>
+    </transition>
+  </AssetDef>
+</AssetDefinitions>

@@ -1,6 +1,6 @@
 # AssetDef XML reference
 
-Verified against `libs/engine/assets/AssetRegistry.cpp` and real assets. Re-read those if fields seem off.
+Verified against `libs/assets/assets/AssetRegistry.cpp` and real assets. Re-read those if fields seem off.
 
 ## Folder + naming (load-bearing)
 

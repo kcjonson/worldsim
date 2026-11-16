@@ -17,17 +17,17 @@ target_compile_features(planet-view PUBLIC cxx_std_20)
 
 target_link_libraries(planet-view
     PUBLIC
-        foundation
-        renderer
-        world
+        salal::foundation
+        salal::renderer
+        worldgen
         OpenGL::GL
         GLEW::GLEW
         glm::glm
 )
 
 # ── Shader deployment ──
-# Mirror the renderer's pattern: copy planet-view shaders to the shared build
-# shaders/ directory so both ui-sandbox and world-sim find them at runtime.
+# Copy planet-view shaders to the shared build shaders/ directory, as world-view
+# does its ground pass, so both ui-sandbox and world-sim find them at runtime.
 file(GLOB_RECURSE PLANET_VIEW_SHADER_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*"
 )
@@ -62,14 +62,9 @@ if(BUILD_TESTING)
     if(PLANET_VIEW_TEST_SOURCES)
         find_package(GTest CONFIG REQUIRED)
         add_executable(planet-view-tests ${PLANET_VIEW_TEST_SOURCES})
-        # renderer's Primitives TU references ui::FontRenderer but links it only as
-        # include-only (to avoid a renderer<->ui cycle), so the final executable must
-        # supply the font impl. world-sim/ui-sandbox link ui already; this test exe
-        # pulls Primitives via planet-view, so it links ui too.
         target_link_libraries(planet-view-tests
             PRIVATE
                 planet-view
-                ui
                 GTest::gtest
                 GTest::gtest_main
         )
@@ -82,10 +77,14 @@ if(BUILD_TESTING)
         # The PlanetColorizerBake tests run full PlanetGenerator pipelines whose
         # internal pool is hardware_concurrency - 1. Declare that footprint so
         # parallel ctest doesn't co-schedule other pool-spawning exes and starve
-        # the generation past its deadline (bit us on the 4-core CI runners).
-        # TIMEOUT: 4 generate()-calling tests x 300 s worst-case deadline = 1200 s
-        # hang budget; 1500 keeps margin over it. Re-size if tests add generations.
-        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3 TIMEOUT 1500)
+        # the generation (bit us on the 4-core CI runners).
+        #
+        # TIMEOUT is the only hang guard: the generations wait for their run to end
+        # with no deadline of their own (worldgen's PlanetGenerator.test.h).
+        # Calibration (2026-11, CI Debug, ctest -j4): 28-75 s across Linux and
+        # Windows runners. 300 s is 4x the slowest; keep it at least 2x the
+        # slow-runner worst case if tests add generations.
+        set_tests_properties(planet-view-tests PROPERTIES PROCESSORS 3 TIMEOUT 300)
     endif()
 
     if(PLANET_VIEW_BENCHMARK_SOURCES)

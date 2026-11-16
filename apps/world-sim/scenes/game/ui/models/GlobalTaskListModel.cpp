@@ -30,7 +30,7 @@ bool GlobalTaskListModel::refresh(ecs::World& world, const glm::vec2& cameraCent
 	forceRefresh = false;
 
 	// Query fresh data
-	auto newData = adapters::getGlobalTasks(world, cameraCenter);
+	auto newData = adapters::getGlobalTasks(world, claimIndex, cameraCenter);
 	adapters::sortTasksForDisplay(newData);
 
 	// First refresh always triggers rebuild
@@ -75,18 +75,8 @@ bool GlobalTaskListModel::hasChanged(const std::vector<TaskData>& newData) const
 			return true;
 		}
 
-		// Reserved state changed
-		if (oldTask.isReserved != newTask.isReserved) {
-			return true;
-		}
-
 		// Distance changed significantly
 		if (distanceChanged(oldTask.distanceValue, newTask.distanceValue)) {
-			return true;
-		}
-
-		// Known by changed (colonist discovered/forgot)
-		if (oldTask.knownBy != newTask.knownBy) {
 			return true;
 		}
 	}

@@ -2,14 +2,13 @@
 // Demonstrates Lua-based procedural tree generation.
 // Shows 40 trees generated from the deciduous.lua script, each with unique seeds.
 
+#include "SceneTypes.h"
 #include <assets/AssetBatcher.h>
 #include <assets/AssetRegistry.h>
 #include <assets/IAssetGenerator.h>
 #include <graphics/Color.h>
 #include <primitives/Primitives.h>
 #include <scene/Scene.h>
-#include <scene/SceneManager.h>
-#include "SceneTypes.h"
 #include <utils/Log.h>
 #include <vector/Tessellator.h>
 
@@ -25,17 +24,17 @@ namespace {
 	constexpr int kGridCols = 8;
 	constexpr int kGridRows = 5;
 
-	class TreeScene : public engine::IScene {
+	class TreeScene : public app::Scene {
 	  public:
-		void onEnter() override {
+		void onEnter(app::App& /*app*/) override {
 			LOG_INFO(UI, "Tree Scene - Lua Asset Generator Demo (40 trees)");
 
 			// Load the tree definition from XML
-			size_t loaded = engine::assets::AssetRegistry::Get().loadDefinitionsFromFolder("assets/definitions");
+			size_t loaded = assets::AssetRegistry::Get().loadDefinitionsFromFolder("assets/definitions");
 			LOG_INFO(UI, "Loaded %zu asset definitions", loaded);
 
 			// Verify the tree definition exists
-			const auto* treeDef = engine::assets::AssetRegistry::Get().getDefinition(kTreeAssetName);
+			const auto* treeDef = assets::AssetRegistry::Get().getDefinition(kTreeAssetName);
 			if (treeDef == nullptr) {
 				LOG_ERROR(UI, "Asset definition not found: %s", kTreeAssetName);
 				return;
@@ -48,8 +47,8 @@ namespace {
 			for (int i = 0; i < kTreeCount; ++i) {
 				uint32_t seed = 1000 + i * 777; // Unique seed for each tree
 
-				engine::assets::GeneratedAsset asset;
-				if (!engine::assets::AssetRegistry::Get().generateAsset(kTreeAssetName, seed, asset)) {
+				assets::GeneratedAsset asset;
+				if (!assets::AssetRegistry::Get().generateAsset(kTreeAssetName, seed, asset)) {
 					LOG_WARNING(UI, "Failed to generate tree %d", i);
 					continue;
 				}
@@ -84,9 +83,7 @@ namespace {
 			LOG_INFO(UI, "Generated %zu trees for rendering", m_trees.size());
 		}
 
-		void update(float /*dt*/) override {}
-
-		void render() override {
+		void render(float /*alpha*/) override {
 			// Clear background - grass/ground color
 			glClearColor(0.35F, 0.5F, 0.25F, 1.0F);
 			glClear(GL_COLOR_BUFFER_BIT);
@@ -131,15 +128,13 @@ namespace {
 			}
 		}
 
-		void onExit() override {}
-
-		std::string exportState() override {
+		std::string exportState() const override {
 			char buf[256];
 			snprintf(buf, sizeof(buf), R"({"asset": "%s", "treeCount": %zu})", kTreeAssetName, m_trees.size());
 			return {buf};
 		}
 
-		const char* getName() const override { return kSceneName; }
+		const char* name() const override { return kSceneName; }
 
 	  private:
 		struct PathRenderData {

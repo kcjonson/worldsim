@@ -1,10 +1,10 @@
-# Vision & Line of Sight — Technical Architecture
+# Vision and line of sight: technical architecture
 
-**Status:** Design
+**Status:** Partly built. Wall occlusion, visibility polygons with the outdoor fast path and per-observer caching, one `sightShape` accessor for an observer's sight in both cases, structure-as-observable discovery, stale-memory reconciliation, and door and window transparency ship in `VisionSystem` and `libs/geometry/visibility`. Witnessing and a `canSee` query for the AI are not built, and player visibility is a separate epic (D5). The GeometryIndex shipped as vision's own (`libs/sim/vision/GeometryIndex`), built from the same construction graph nav reads, not as one index both consume (D1). The two differ at windows: a door is a gap for sight and movement, a window a gap for sight only, where nav keeps the wall band solid.
 **Created:** 2026-06-12
 **Companion to:** [Pathfinding Architecture](./pathfinding-architecture.md) (shared geometry substrate; vision is belief's write path)
 
-How agents see: wall occlusion, windows, discovery, witnessing, and the fog of war — on the same vector-geometry substrate pathfinding uses. Vision and navigation are two consumers of one world-geometry index, which is why they're specified as companions.
+How agents see: wall occlusion, windows, discovery, witnessing, and player visibility, on the same vector-geometry substrate pathfinding uses. Vision and navigation read one construction graph, which is why they're specified as companions.
 
 ---
 
@@ -12,15 +12,15 @@ How agents see: wall occlusion, windows, discovery, witnessing, and the fog of w
 
 1. **Belief's write path.** Memory is only ever written by observation ([Memory System](../design/game-systems/colonists/memory.md)); vision is where discovery, witnessing, and stale-memory reconciliation actually happen. Belief-filtered navigation is only as honest as this system.
 2. **Occlusion.** Walls block sight. Windows pass sight while blocking movement (the designed security tradeoff). Door openings pass sight in v1 (no open/close simulation yet, consistent with always-pathable doors).
-3. **Fog of war is a design goal.** "Areas not visible to the character are hidden" ([Game Overview](../design/game-overview.md)). The same data that feeds simulation must be renderable as the player-facing fog mask and the per-colonist memory debug overlay.
+3. **Player visibility is a design goal.** "Areas not visible to the character are hidden" ([Game Overview](../design/game-overview.md)). The same data that feeds simulation must be drawable as the player's visible, seen, and unseen areas ([Player Visibility](./player-visibility.md)) and the per-colonist memory debug overlay.
 4. **Scale.** Dozens of observers, hundreds of candidate entities in radius, already throttled to every 5 frames. The outdoor case (no occluders anywhere near) is the overwhelmingly common one and must stay as cheap as today's radius query.
 5. **Vector-native.** Occluders are exact segments from the construction graph; no raster visibility grid.
-6. **Many consumers.** Memory/belief discovery, fog rendering, technology discovery (proximity-triggered, already designed against VisionSystem), and one-off AI queries ("can this raider see that colonist?").
+6. **Many consumers.** Memory/belief discovery, player visibility rendering, technology discovery (proximity-triggered, already designed against VisionSystem), and one-off AI queries ("can this raider see that colonist?").
 7. **Determinism** (multiplayer future) and TimeSystem speed tolerance, same as everything else.
 
 ## 2. Current State
 
-`VisionSystem` (priority 45, every 5 frames) does an AABB query of `memory.sightRadius` (default 30 m, `libs/engine/ecs/components/Memory.h`) against PlacementExecutor's spatial index, plus a shore-tile scan, and writes results into Memory. No occlusion of any kind: colonists see through walls, terrain, and each other. No line-of-sight code exists anywhere in the engine. msdfgen is fonts only.
+`VisionSystem` (priority 45) runs every 5 frames (12 passes a second at 60 fps, 24 at 120; [Main Loop Timing](./main-loop-timing.md)). Per observer it queries the wall occluders within `memory.sightRadius` (default 30 m, `libs/sim/ecs/components/Memory.h`) plus `VisionSystem::kSightRebuildStepMeters` (0.5 m) from its GeometryIndex. With none near (the outdoor fast path) it does the AABB query of the sight radius against PlacementExecutor's spatial index, plus the shore-point scan, as it did before occlusion. With walls near it builds a visibility polygon (`geometry::computeVisibilityPolygon`) out to sight plus that step, cached per observer and rebuilt when the observer moves more than the step or the wall set changes, and admits only candidates inside it and within sight of where he stands (player-visibility.md 3.2). Walls and openings the polygon touches enter memory as seen structures, and a remembered entity in view (inside the polygon, or the sight circle outdoors) that is no longer there is forgotten. Doors and windows are gaps in the occluders. `geometry::hasLineOfSight` exists and is used for drop placement (`StoreOrDrop.cpp`), not yet for an AI `canSee` query. `VisionSystem::sightShape(observer)` returns the centre, radius, and wall-clipped polygon (null outdoors, where the shape is the plain circle) from the observer's last pass, with a revision that changes each time the polygon is rebuilt or dropped. Before this epic there was no occlusion: colonists saw through walls.
 
 ## 3. Architecture Decisions
 
@@ -34,7 +34,7 @@ This is the shared architecture: **navigation** reads it as obstacles, **vision*
 
 Per observer, per vision tick: gather occluder segments within sight radius; if none (**the outdoor fast path, most observers most of the time**), visibility is the sight circle and the system behaves exactly as today. Otherwise, build the **visibility polygon**: the classic rotational sweep over occluder endpoints, clipped to the sight circle — O(n log n) in occluder endpoints, and n near a base interior is dozens, not thousands. Candidate entities then test point-in-visibility-polygon, which is cheap enough to keep the existing candidate volumes.
 
-Why polygons instead of casting a ray per candidate: the polygon is built once per observer and amortizes across all candidates, and it is *also* the fog-of-war mask (D5) and the debug overlay — three consumers for one computation. Per-entity LOS rays remain available as one-off queries for the AI (targeted checks between two specific agents), using the same index.
+Why polygons instead of casting a ray per candidate: the polygon is built once per observer and amortizes across all candidates, and it is *also* the player visibility mask (D5) and the debug overlay, three consumers for one computation. Per-entity LOS rays remain available as one-off queries for the AI (targeted checks between two specific agents), using the same index.
 
 This is settled technique in 2D games: Red Blob's visibility article is the canonical construction ([2d visibility](https://www.redblobgames.com/articles/visibility/)); Monaco built an entire game on visibility polygons as both mechanic and signature look; Among Us ships the same idea. Roguelike shadowcasting is the grid ancestor; we sweep exact segments instead because the world is vector.
 
@@ -49,11 +49,11 @@ The visibility polygon is cached per observer and recomputed only when: the obse
 - **Witnessing** (memory design: Bob sees Alice harvest the bush): state-change events apply to every observer whose cached polygon contains the event location — event-driven, no rescans.
 - **Reconciliation:** an entity whose remembered position falls inside the current polygon but which isn't there anymore is the stale-memory moment — the entry invalidates, tasks fail gracefully, belief replans trigger. Vision is where "memory can be wrong" gets corrected, so this check lives here, not in the task system.
 
-### D5: Fog of war and overlays are the same polygons, rendered
+### D5: Player visibility and overlays are the same polygons, rendered
 
-Player-facing fog (three states: unknown/hidden, explored-but-not-visible (dimmed), currently visible) renders from the union of the player faction's visibility polygons: triangulate each (they're star-shaped from the observer — a fan), rasterize additively into a mask texture (`RenderToTexture` exists), sample the mask in the terrain/entity passes. Explored-ever state accumulates into a persistent coarse mask. The per-colonist **memory debug overlay** (memory design doc) is the same render path scoped to one observer.
+Player visibility (three areas: unseen, seen, and visible now) is specified in [Player Visibility](./player-visibility.md). It reads each player colonist's sight shape from this system, a disc outdoors and the wall-clipped polygon indoors, and computes no sight of its own. The area seen so far is an exact polygon union of those shapes, kept apart from the nav mesh, and the cover is drawn as hard-edged vector fills through the stencil buffer. No mask texture and no raster: the paragraph this one replaces proposed both (Historical Addendum). The per-colonist **memory debug overlay** (memory design doc) can draw from the same shapes scoped to one observer. The vision debug overlay (V in game, `VisionOverlay`) draws each observer's `sightShape` (the polygon indoors, the circle outdoors) and the occluders.
 
-Simulation stays CPU-side and analytic; rendering consumes the polygon set. Fog UX (what dimming looks like, whether structures stay visible once seen, minimap interaction) needs its own design pass when player-facing fog is scheduled — this doc only establishes that the data comes for free.
+Simulation stays CPU-side and analytic; rendering consumes the shapes.
 
 ### D6: Sight model
 
@@ -78,13 +78,13 @@ Transparency is a flag on the opening's construction definition, carried into th
 |----------|---------------|----------|
 | Memory/belief | discovery + witnessing + reconciliation events | structure IDs match belief filtering's IDs (same construction publication) |
 | Belief replanning | discovery events | a discovered structure intersecting an agent's path corridor triggers replan (pathfinding section 5) |
-| Fog of war / overlays | polygon set per faction/observer | render-side, read-only |
+| Player visibility / overlays | polygon set per faction/observer | render-side, read-only |
 | Technology discovery | proximity + visibility of trigger entities | already designed against VisionSystem; gains occlusion for free |
 | AI one-off queries | `canSee(observer, target)` ray | same index, no polygon needed |
 
 ## 5. Performance Model
 
-The work scales with occluder density around observers, not world size. Outdoors: zero occluders, fast path, today's cost. Indoors: polygon build over dozens of endpoints (microseconds), cached while stationary, shared across all candidates and the fog mask. Witnessing is event-driven. The 5-frame throttle stays; structure-change invalidation piggybacks the existing version counter. Validate with the perf tooling during implementation; the budget hypothesis is that vision stays unmeasurable next to rendering.
+The work scales with occluder density around observers, not world size. Outdoors: zero occluders, fast path, the pre-occlusion cost. Indoors: a polygon build, cached while stationary, shared across all candidates and the visibility mask. A build sorts its candidate directions (rim vertices, occluder endpoints, rim and occluder crossings, about 200 in an eight-room base) and casts one ray per direction; each ray reads only the occluders whose angular cone holds it, nearest first, and stops once the rest lie past its hits, so it costs about 0.11 ms with some 150 wall faces in range, against 1.0 ms when every ray read every occluder ([Player Visibility](./player-visibility.md) 6.8). Witnessing is event-driven. The 5-frame throttle stays; structure-change invalidation piggybacks the existing version counter. Validate with the perf tooling during implementation; the budget hypothesis is that vision stays unmeasurable next to rendering.
 
 ## 6. Phasing
 
@@ -97,7 +97,7 @@ Two separately planned pieces, deliberately:
 3. Discovery/witnessing/reconciliation rewired through the polygon
 4. Window transparency, structure-as-observable discovery
 
-**Fog of war (later, separate epic).** Player-facing fog rendering and the memory debug overlay ship with the broader overlay system, on their own schedule. D5 establishes that the polygon data they need falls out of the vision epic for free; nothing in the near-term work should anticipate them beyond keeping the polygon set accessible per faction/observer.
+**Player visibility (later, separate epic).** Drawing the player's visible, seen, and unseen areas, and the memory debug overlay, ship on their own schedule under the Specboard epic "Player visibility: unexplored areas (visible, seen, unseen)", specified in [Player Visibility](./player-visibility.md). The sight shapes they need fall out of the vision epic; that spec adds one accessor here that gives an observer's shape outdoors and indoors alike.
 
 ## 7. Risks
 
@@ -113,4 +113,13 @@ Two separately planned pieces, deliberately:
 - [Memory System](../design/game-systems/colonists/memory.md) — what observation writes, snapshot semantics, navigation states UI
 - [Building & Construction Architecture](./building-construction-architecture.md) — the structure publication (IDs, transparency) the GeometryIndex ingests
 - [Technology Discovery](../design/game-systems/colonists/technology-discovery.md) — proximity-triggered discovery riding this system
-- [Game Overview](../design/game-overview.md) — fog of war as a design goal
+- [Game Overview](../design/game-overview.md): player visibility as a design goal
+- [Player Visibility](./player-visibility.md): the seen record, the cover, and what the player can click
+
+## Historical Addendum
+
+D5 as written on 2026-06-12, replaced on 2026-11-13 by [Player Visibility](./player-visibility.md). Its mask texture and coarse explored mask were dropped: all data in this game is vector.
+
+> Player visibility (three states: unexplored, seen but not visible now (dimmed), visible now) renders from the union of the player faction's visibility polygons: triangulate each (they're star-shaped from the observer, so a fan), rasterize additively into a mask texture (`RenderTarget` exists), sample the mask in the terrain/entity passes. Seen-ever state accumulates into a persistent coarse mask.
+>
+> The player-facing design (what dimming looks like, whether structures stay visible once seen, minimap interaction) belongs to the Specboard epic "Player visibility: unexplored areas (visible, seen, unseen)"; this doc only establishes that the data comes for free.

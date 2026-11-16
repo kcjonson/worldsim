@@ -40,7 +40,7 @@ A container holds N slots; each slot is one stack; multiple slots may hold the s
 A two-hand armful is one stack of `min(weight-fit, stackSize)`. For wood, weight binds (~14 at 35 kg / 2.5 kg). A one-hand material in the backpack is one stack per slot (≤ stackSize); total carried is the sum across its slots, weight-bounded.
 
 ### Ground piles
-A loose pile (`ResourceStack` entity) is one stack ≤ stackSize. A drop whose quantity exceeds stackSize spawns `ceil(qty / stackSize)` pile entities, each ≤ stackSize, on nearby free tiles. (Does not trigger for wood today — fell remainders are ≤ 16 — but the model requires it.)
+A loose pile (`ResourceStack` entity) is one stack ≤ stackSize. A colonist getting rid of something puts it in storage within reach first; what's left drops. A drop tops up same-material piles within 1 m to stackSize, then spawns the rest as pile entities, each ≤ stackSize, on spots clear of every nearby pile and packaged crate by both footprints plus a gap (see `bulk-materials-carry-and-felling.md` §6). (Does not trigger for wood today — fell remainders are ≤ 16 — but the model requires it.)
 
 ## Data model changes
 
@@ -74,7 +74,7 @@ Stay as totals. **Superseded:** a later refactor made `delivered[]` the authorit
 - `GameScene` drop-resource callback — pile split.
 - Tests: `Inventory.test.cpp`, `ActionSystem.test.cpp` (armful/storage-overflow), `ConstructionSystem.test.cpp`, `AIDecisionSystem.test.cpp`, `InventoryMass.test.cpp` (raw `.items["Stone"]` write).
 
-**Safe** (route through `getQuantity` / `availableQuantity` / `addItem` / `removeItem` / `addableCount`, so they hold once those aggregate across stacks): HarvestActions, HaulActions, CraftActions, NeedActions, AIDecisionSystem, ConstructionSystem `carriedAmount`, UI display via `getAllItems`. The two-hand hand-mirror machinery in `InventoryMass.h` is independent of `items` and stays untouched.
+**Safe** (route through `getQuantity` / `availableQuantity` / `addItem` / `removeItem` / `addableCount`, so they hold once those aggregate across stacks): HarvestActions, HaulActions, CraftActions, NeedActions, AIDecisionSystem, UI display via `getAllItems`. The two-hand hand-mirror machinery in `InventoryMass.h` is independent of `items` and stays untouched.
 
 ## Implementation phases
 

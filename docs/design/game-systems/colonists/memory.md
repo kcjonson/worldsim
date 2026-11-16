@@ -89,6 +89,8 @@ Colonists share knowledge during casual conversation.
 
 Colonists know whatever is within their sight range at spawn. No pre-loaded knowledge, no "briefing" system.
 
+**The landing crew is the one exception (decided and built 2026-11-13).** They saw the ground as they came down, so each of them starts knowing what is within the landing area, 150 m round the drop, the same as if they had seen it. It is the area the player starts with as seen ([Player Visibility](/docs/technical/player-visibility.md)).
+
 ### New Arrivals
 
 Newcomers to an established colony see their surroundings immediately. They don't know about the farm on the other side of camp until they walk there or someone tells them.
@@ -139,6 +141,7 @@ The info panel's current-task line surfaces *how* the colonist is moving, not ju
 |------------------|---------|-------|
 | Traveling | "Going to [target]" | active (green) |
 | Re-routing (momentary) | "Re-routing" | neutral, brief |
+| Route deferred (no built mesh covers it yet) | "Waiting for the area to settle" | neutral |
 | LKP search | "Searching for [target]" | mild warning (yellow) |
 | Door discovery | "Looking for a way into [building]" | mild warning (yellow) |
 | No believed route | "Can't find a way to [target]" | blocked (red) |

@@ -1,95 +1,55 @@
 #pragma once
 
-// ResourcesPanel - Collapsible panel showing colony storage resources.
-//
-// Design (from main-game-ui-design.md Section 4):
-// - Collapsed: [Storage ▼] link
-// - Expanded: one row per resource (display name left, count right in mono),
-//   summed across all storage containers, scrollable past the height cap
-// - Empty state: "No stockpiles built" message (no storage containers exist)
-//
-// Position: Top-right, below where minimap will be.
+// ResourcesPanel - colony storage, collapsible (main-game-ui-design.md, section 4). Collapsed, a
+// "Storage" header with a down chevron; expanded, under it, one row per resource summed across every
+// storage container (name left, count right), scrolling past a height cap, or "No stockpiles built"
+// while there are no containers. kWidth wide unless its size says otherwise; its height follows.
 
 #include "scenes/game/ui/adapters/ResourcesAdapter.h"
 
-#include <component/Component.h>
-#include <components/button/Button.h>
-#include <components/icon/Icon.h>
-#include <components/scroll/ScrollContainer.h>
-#include <graphics/Rect.h>
-#include <input/InputEvent.h>
-#include <layer/Layer.h>
-#include <shapes/Shapes.h>
+#include <ui/Component.h>
+#include <ui/shapes/Icon.h>
+#include <ui/shapes/Rectangle.h>
+#include <ui/shapes/Text.h>
 
+#include <cstddef>
 #include <functional>
 #include <vector>
 
 namespace world_sim {
 
-/// Resources panel with collapsed/expanded states.
-class ResourcesPanel : public UI::Component {
-  public:
-	struct Args {
-		float width = 180.0F;
-		const char* id = "resources_panel";
-		std::function<void()> onToggle; ///< Fired after expand/collapse (panel height changed)
+	class ResourcesPanel : public ui::Component {
+	  public:
+		static constexpr float kWidth = 232.0F;
+
+		struct Args {
+			UI_COMMON_ARGS
+			std::function<void()> onToggle; // after it expands or collapses
+		};
+
+		explicit ResourcesPanel(const Args& args);
+
+		void setResources(const std::vector<adapters::ResourceRowData>& rows, std::size_t containers);
+
+		[[nodiscard]] bool isExpanded() const { return expanded; }
+
+		[[nodiscard]] const char* typeName() const override { return "ResourcesPanel"; }
+
+	  protected:
+		void onMount() override;
+
+	  private:
+		void toggle();
+		void show();
+
+		std::function<void()>				   onToggle;
+		bool								   expanded = false;
+		std::vector<adapters::ResourceRowData> rows;
+		std::size_t							   containerCount = 0;
+		ui::Ref<ui::Icon>					   chevron;
+		ui::Ref<ui::Rectangle>				   content;
+		ui::Ref<ui::Text>					   emptyMessage;
+		ui::Ref<ui::Component>				   list;
 	};
 
-	explicit ResourcesPanel(const Args& args);
-
-	/// Set position (anchor point is top-right of collapsed button)
-	void setAnchorPosition(float x, float y);
-
-	/// Replace the displayed resource rows (called when model data changes)
-	void setResources(const std::vector<adapters::ResourceRowData>& rows, size_t containers);
-
-	/// Handle input events
-	bool handleEvent(UI::InputEvent& event) override;
-
-	/// Update scroll container animation
-	void update(float deltaTime) override;
-
-	/// Check if panel is expanded
-	[[nodiscard]] bool isExpanded() const { return expanded; }
-
-	/// Get current bounds (for layout calculations)
-	[[nodiscard]] Foundation::Rect getBounds() const;
-
-	// render() inherited from Component - auto-renders children
-
-  private:
-	// Layout constants
-	static constexpr float kCollapsedHeight = 28.0F;
-	static constexpr float kHeaderHeight = 28.0F;
-	static constexpr float kEmptyExpandedHeight = 120.0F;
-	static constexpr float kMaxExpandedHeight = 240.0F;
-	static constexpr float kRowHeight = 24.0F;
-
-	float panelWidth;
-	bool expanded = false;
-	size_t rowCount = 0;
-	size_t containerCount = 0;
-	std::function<void()> onToggle;
-
-	// Child handles
-	UI::LayerHandle headerButtonHandle;
-	UI::LayerHandle chevronHandle;
-	UI::LayerHandle contentBackgroundHandle;
-	UI::LayerHandle emptyMessageHandle;
-	UI::LayerHandle scrollContainerHandle;
-	UI::LayerHandle layoutHandle;
-
-	/// Toggle expanded state
-	void toggle();
-
-	/// Panel height when expanded (grows with rows, capped at kMaxExpandedHeight)
-	[[nodiscard]] float expandedHeight() const;
-
-	/// Update chevron icon direction
-	void updateChevron();
-
-	/// Update child positions and visibility after state or data change
-	void updateLayout();
-};
-
-}  // namespace world_sim
+} // namespace world_sim

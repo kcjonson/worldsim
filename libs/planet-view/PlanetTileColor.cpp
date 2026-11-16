@@ -1,8 +1,8 @@
 #include "PlanetTileColor.h"
 
-#include <world/worldgen/data/GeneratedWorld.h>
-#include <world/worldgen/data/WorldData.h>
-#include <world/worldgen/debug/ColorMaps.h>
+#include <worldgen/data/GeneratedWorld.h>
+#include <worldgen/data/WorldData.h>
+#include <worldgen/debug/ColorMaps.h>
 
 #include <algorithm>
 #include <cmath>

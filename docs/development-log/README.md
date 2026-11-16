@@ -43,7 +43,7 @@ When completing significant work:
 
 3. **Add entry to this index** (below, newest first)
 
-4. **Update status.md** with current project state
+4. **Update the Specboard item** with the outcome
 
 ### What Goes Here vs. Other Docs
 
@@ -52,7 +52,7 @@ When completing significant work:
 | **What was built** (historical record) | Development log entries |
 | **How something works** (current design) | Technical docs |
 | **What to build** (requirements) | Design docs |
-| **Current project state** | status.md |
+| **Current project state** | Specboard (board: Worldsim) |
 
 Development log entries are **immutable history**. Don't update old entries — create new ones if things change.
 
@@ -62,8 +62,42 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ### 2026
 
+#### November 2026
+
+- [2026-11-13 - Player visibility: unseen ground black, seen ground tinted](./entries/2026-11-13-player-visibility.md)
+- [2026-11-13 - Task claims close-out (WOR-820, WOR-811, WOR-634)](./entries/2026-11-13-task-claims-close-out.md)
+- [2026-11-13 - UI spec alignment: closed against salal, with the last GL state reads removed](./entries/2026-11-13-ui-spec-alignment-closeout.md)
+- [2026-11-13 - Nav mesh ends at the seen area](./entries/2026-11-13-nav-mesh-ends-at-seen-area.md)
+- [2026-11-12 - Chunk borders dissolve: no more slivers along the shared side](./entries/2026-11-12-chunk-border-dissolve.md)
+- [2026-11-12 - Nav correction: movers mesh, obstacles block, routes by ticket](./entries/2026-11-12-nav-correction.md)
+- [2026-11-11 - Nav mesh: one mesh, variable resolution (steps 1 to 5 of WOR-702)](./entries/2026-11-11-nav-mesh-one-mesh.md)
+- [2026-11-11 - Task claims and colonist survival](./entries/2026-11-11-task-claims-and-colonist-survival.md)
+- [2026-11-02 - Coast rims, hexagonal shelves, and active margins](./entries/2026-11-02-coast-rims-and-hex-shelves.md)
+- [2026-11-02 - Ground surface blending: height-contested edges and organic biome edges (WOR-556)](./entries/2026-11-02-ground-surface-blending.md)
+- [2026-11-02 - Ground tile variants: baked, hex-mixed ground arrays (WOR-545)](./entries/2026-11-02-ground-tile-variants.md)
+
+#### October 2026
+
+- [2026-10-25 - Dev server out of foundation; the logger takes a sink (SAL-30)](./entries/2026-10-25-dev-server-out-of-foundation.md)
+
+#### September 2026
+
+- [2026-09-28 - Foundation Add / Subtract (construction G3)](./entries/2026-09-28-foundation-add-subtract.md)
+- [2026-09-27 - Frozen colonist and unplaceable stations after the organic terrain merges](./entries/2026-09-27-frozen-colonist-unplaceable-stations.md)
+- [2026-09-26 - Organic terrain geometry: water as terrain rings, every land boundary a warped field isoline](./entries/2026-09-26-organic-terrain-geometry.md)
+
+#### July 2026
+
+- [2026-07-03 - Game UI to Prototype Polish](./entries/2026-07-03-game-ui-prototype-polish.md)
+- [2026-07-03 - Second-colonist spawn crash: Memory LRU dangled across ECS pool relocation](./entries/2026-07-03-second-colonist-spawn-crash.md)
+- [2026-07-03 - Construction layering (Story B): ground sub-layer + world/UI flush split](./entries/2026-07-03-construction-layering-story-b.md)
+- [2026-07-03 - Committed construction render: version-keyed geometry cache + viewport culling](./entries/2026-07-03-committed-construction-render-cache.md)
+- [2026-07-03 - Build & Test Speed Improvements (PRs #252, #253)](./entries/2026-07-03-build-test-speed.md)
+
 #### June 2026
 
+- [2026-06-30 - Colonist follow-ups: furniture placement, drops, and storage priority](./entries/2026-06-30-colonist-placement-and-storage-priority-followups.md)
+- [2026-06-29 - Belt stow-to-free-hands (combined craft→chop→carry blocker)](./entries/2026-06-29-belt-stow-to-free-hands.md)
 - [2026-06-29 - Colonist task arbitration: (tier,score) key, 7-tier ladder, job lifecycle](./entries/2026-06-29-colonist-task-arbitration.md)
 - [2026-06-29 - Colonist gameplay stabilization: craft, harvest, construction loop](./entries/2026-06-29-colonist-gameplay-stabilization.md)
 - [2026-06-28 - Navmesh zero-walkable fix, multi-region nav, and reliable craft provisioning](./entries/2026-06-28-navmesh-crafting-reliability.md)
@@ -116,8 +150,8 @@ Development log entries are **immutable history**. Don't update old entries — 
 
 ## Quick Stats
 
-- **Total Entries:** 78 (entry files; the Major Milestones list below highlights notable ones)
-- **Latest Entry:** 2026-06-29
+- **Total Entries:** 113 (entry files; the Major Milestones list below highlights notable ones)
+- **Latest Entry:** 2026-11-12
 - **Major Milestones:**
   - Cryosphere: physical sea ice, snow, and glaciers (PDD + perfect-plastic) with a two-pass ice-climate feedback (2026-06-20)
   - Navigation P4: belief-filtered navigation, colonists path against what they've personally seen, not the live truth (2026-06-19)

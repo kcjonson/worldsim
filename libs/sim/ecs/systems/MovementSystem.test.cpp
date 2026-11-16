@@ -1,0 +1,245 @@
+// Movement integrates on game time: PhysicsSystem scales the integration step by
+// TimeSystem::effectiveTimeScale (so fast-forward moves colonists faster and pause freezes them),
+// and MovementSystem caps each step to the current target so the larger fast-forward step can't
+// overshoot the arrival threshold. These tests pin all three behaviors, with the still-arrives-at-10x
+// case guarding the overshoot/ping-pong regression that the step cap exists to prevent.
+
+#include "MovementSystem.h"
+#include "PhysicsSystem.h"
+#include "TimeSystem.h"
+
+#include "../World.h"
+#include "../components/FacingDirection.h"
+#include "../components/Movement.h"
+#include "../components/NavPath.h"
+#include "../components/Transform.h"
+
+#include <glm/geometric.hpp>
+#include <gtest/gtest.h>
+
+#include <memory>
+
+namespace ecs {
+namespace {
+
+class MovementTimeScaleTest : public ::testing::Test {
+  protected:
+	void SetUp() override {
+		world = std::make_unique<World>();
+		timeSystem = &world->registerSystem<TimeSystem>();
+		world->registerSystem<MovementSystem>();
+		world->registerSystem<PhysicsSystem>();
+	}
+
+	EntityID createMover(glm::vec2 start, glm::vec2 target, float speed = 2.0F) {
+		auto entity = world->createEntity();
+		world->addComponent<Position>(entity, Position{start});
+		world->addComponent<Velocity>(entity, Velocity{{0.0F, 0.0F}});
+		world->addComponent<MovementTarget>(entity, MovementTarget{target, speed, true});
+		return entity;
+	}
+
+	// Tick `dt` up to maxUpdates times; return the tick on which the mover arrived (MovementTarget
+	// cleared its active flag), or -1 if it never did.
+	int runToArrival(EntityID entity, float dt, int maxUpdates) {
+		for (int i = 1; i <= maxUpdates; ++i) {
+			world->update(dt);
+			if (!world->getComponent<MovementTarget>(entity)->active) {
+				return i;
+			}
+		}
+		return -1;
+	}
+
+	std::unique_ptr<World> world;
+	TimeSystem*			   timeSystem = nullptr;
+};
+
+// At 1x the step is 0.1 m/tick and the target is a multiple of it, so the mover lands cleanly.
+constexpr float kDt = 0.05F;
+constexpr glm::vec2 kTarget{9.5F, 0.0F};
+
+// Pause freezes movement: an active mover holds position and never arrives.
+TEST_F(MovementTimeScaleTest, PauseFreezesMovement) {
+	timeSystem->setSpeed(GameSpeed::Paused);
+	auto entity = createMover({0.0F, 0.0F}, kTarget);
+
+	for (int i = 0; i < 20; ++i) {
+		world->update(kDt);
+	}
+
+	const auto* pos = world->getComponent<Position>(entity);
+	EXPECT_FLOAT_EQ(pos->value.x, 0.0F) << "Paused colonist must not move";
+	EXPECT_FLOAT_EQ(pos->value.y, 0.0F);
+	EXPECT_TRUE(world->getComponent<MovementTarget>(entity)->active) << "Still en route, just frozen";
+}
+
+// Fast-forward speeds movement: 10x reaches the same target in strictly fewer ticks than 1x.
+TEST_F(MovementTimeScaleTest, FastForwardArrivesInFewerTicks) {
+	timeSystem->setSpeed(GameSpeed::Normal);
+	const int normalTicks = runToArrival(createMover({0.0F, 0.0F}, kTarget), kDt, 1000);
+	ASSERT_GT(normalTicks, 0) << "Colonist arrives at 1x";
+
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	const int fastTicks = runToArrival(createMover({0.0F, 0.0F}, kTarget), kDt, 1000);
+	ASSERT_GT(fastTicks, 0) << "Colonist still arrives at 10x";
+
+	EXPECT_LT(fastTicks, normalTicks) << "10x covers the distance in fewer real ticks";
+}
+
+// Regression guard: at 10x the per-tick step (~1.0 m) dwarfs the 0.1 m arrival threshold, so without
+// the step cap the mover would overshoot and circle its target forever, never registering Arrived
+// (which would freeze chopping/crafting at fast speeds). Assert it both arrives and stops on target.
+TEST_F(MovementTimeScaleTest, FastForwardStillArrivesWithoutOvershoot) {
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	auto entity = createMover({0.0F, 0.0F}, kTarget);
+
+	const int ticks = runToArrival(entity, kDt, 200);
+	ASSERT_GT(ticks, 0) << "10x movement must still arrive, not ping-pong around the goal";
+
+	const auto* pos = world->getComponent<Position>(entity);
+	EXPECT_LT(glm::distance(pos->value, kTarget), 0.1F) << "Stops on the target, not short or past it";
+}
+
+// The in-game path: MovementSystem follows a NavPath's waypoints (the direct-movement branch above is
+// only the headless no-NavigationSystem fallback). At 10x the step cap must still land on each corner,
+// so the mover advances through the intermediates and registers Arrived rather than cutting a corner or
+// circling the goal.
+TEST_F(MovementTimeScaleTest, FastForwardFollowsNavPathAndArrives) {
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	const glm::vec2 goal{6.0F, 3.0F};
+	auto			entity = createMover({0.0F, 0.0F}, goal);
+
+	NavPath path;
+	path.waypoints = {{3.0F, 0.0F}, {3.0F, 3.0F}, goal}; // right, down, right -- two corners to round
+	path.valid	   = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const int ticks = runToArrival(entity, kDt, 400);
+	ASSERT_GT(ticks, 0) << "10x NavPath movement must advance through the waypoints and arrive";
+
+	const auto* pos = world->getComponent<Position>(entity);
+	EXPECT_LT(glm::distance(pos->value, goal), 0.1F) << "stops on the final waypoint";
+	EXPECT_TRUE(world->getComponent<NavPath>(entity)->done()) << "the path is fully consumed";
+}
+
+// A route through trees has corners a few centimetres apart, closer than one tick's stride. The
+// stride is spent along the route through every corner it reaches, so the mover never overshoots a
+// corner and steps back to it, and covers speed times dt each tick. A 0.1 s tick makes the 0.2 m
+// stride longer than the corner advance radius, as in the game at low frame rates.
+TEST_F(MovementTimeScaleTest, DenseCornersAreWalkedWithoutSteppingBack) {
+	timeSystem->setSpeed(GameSpeed::Normal);
+	constexpr float kLongDt = 0.1F;
+	const glm::vec2 goal{3.0F, 0.0F};
+	auto			entity = createMover({0.0F, 0.0F}, goal);
+	NavPath			path;
+	for (int i = 1; i <= 10; ++i) {
+		path.waypoints.push_back({0.5F + 0.05F * static_cast<float>(i), i % 2 == 0 ? 0.0F : 0.01F});
+	}
+	path.waypoints.push_back(goal);
+	path.valid = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const auto* pos	  = world->getComponent<Position>(entity);
+	glm::vec2	last  = pos->value;
+	const float stride = 2.0F * kLongDt;
+	for (int i = 0; i < 12; ++i) {
+		world->update(kLongDt);
+		ASSERT_GE(pos->value.x, last.x) << "tick " << i << ": stepped back";
+		EXPECT_NEAR(glm::distance(pos->value, last), stride, 0.05F * stride) << "tick " << i;
+		last = pos->value;
+	}
+	EXPECT_GT(pos->value.x, 1.1F) << "through the corners at full speed";
+}
+
+// At 10x the stride is a metre a tick: it runs through dense corners and stops on the goal, never
+// past it.
+TEST_F(MovementTimeScaleTest, FastForwardThroughDenseCornersStopsOnTheGoal) {
+	timeSystem->setSpeed(GameSpeed::VeryFast);
+	const glm::vec2 goal{3.0F, 0.0F};
+	auto			entity = createMover({0.0F, 0.0F}, goal);
+	NavPath			path;
+	for (int i = 1; i <= 10; ++i) {
+		path.waypoints.push_back({0.5F + 0.05F * static_cast<float>(i), i % 2 == 0 ? 0.0F : 0.01F});
+	}
+	path.waypoints.push_back(goal);
+	path.valid = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const auto* pos	 = world->getComponent<Position>(entity);
+	float		last = pos->value.x;
+	const int	ticks = [&] {
+		  for (int i = 1; i <= 100; ++i) {
+			  world->update(kDt);
+			  EXPECT_GE(pos->value.x, last) << "tick " << i;
+			  EXPECT_LE(pos->value.x, goal.x + 1e-4F) << "tick " << i << ": past the goal";
+			  last = pos->value.x;
+			  if (!world->getComponent<MovementTarget>(entity)->active) {
+				  return i;
+			  }
+		  }
+		  return -1;
+	}();
+	EXPECT_GT(ticks, 0) << "arrives";
+	EXPECT_LT(glm::distance(pos->value, goal), 0.1F);
+}
+
+// Paused, a mover on a route doesn't move, and still faces where it is going.
+TEST_F(MovementTimeScaleTest, PausedRouteHoldsStill) {
+	timeSystem->setSpeed(GameSpeed::Paused);
+	auto	entity = createMover({0.0F, 0.0F}, {0.0F, 5.0F});
+	NavPath path;
+	path.waypoints = {{0.0F, 5.0F}};
+	path.valid	   = true;
+	world->addComponent<NavPath>(entity, path);
+	world->addComponent<FacingDirection>(entity, FacingDirection{});
+	for (int i = 0; i < 10; ++i) {
+		world->update(kDt);
+	}
+	EXPECT_EQ(world->getComponent<Position>(entity)->value, glm::vec2(0.0F, 0.0F));
+	EXPECT_EQ(world->getComponent<FacingDirection>(entity)->direction, CardinalDirection::Down);
+	EXPECT_TRUE(world->getComponent<MovementTarget>(entity)->active);
+}
+
+// A single far waypoint is walked as before: speed times dt a tick straight at it, arriving on it.
+TEST_F(MovementTimeScaleTest, SingleWaypointIsWalkedStraight) {
+	timeSystem->setSpeed(GameSpeed::Normal);
+	auto	entity = createMover({0.0F, 0.0F}, kTarget);
+	NavPath path;
+	path.waypoints = {kTarget};
+	path.valid	   = true;
+	world->addComponent<NavPath>(entity, path);
+
+	const auto* pos = world->getComponent<Position>(entity);
+	world->update(kDt);
+	EXPECT_NEAR(pos->value.x, 2.0F * kDt, 1e-5F);
+	EXPECT_FLOAT_EQ(pos->value.y, 0.0F);
+	EXPECT_GT(runToArrival(entity, kDt, 1000), 0);
+	EXPECT_LT(glm::distance(pos->value, kTarget), 0.1F);
+}
+
+// World +Y draws lower on screen, so a mover heading +Y faces the camera (the _down sprite) and one
+// heading -Y shows its back (_up). Guards the inverted quantization that rendered the back of the
+// head while walking toward the viewer.
+TEST_F(MovementTimeScaleTest, FacingFollowsScreenDirection) {
+	timeSystem->setSpeed(GameSpeed::Normal);
+	const struct {
+		glm::vec2		  target;
+		CardinalDirection expected;
+	} cases[] = {
+		{{0.0F, 5.0F}, CardinalDirection::Down},
+		{{0.0F, -5.0F}, CardinalDirection::Up},
+		{{5.0F, 0.0F}, CardinalDirection::Right},
+		{{-5.0F, 0.0F}, CardinalDirection::Left},
+	};
+	for (const auto& c : cases) {
+		auto entity = createMover({0.0F, 0.0F}, c.target);
+		world->addComponent<FacingDirection>(entity, FacingDirection{});
+		world->update(kDt);
+		EXPECT_EQ(world->getComponent<FacingDirection>(entity)->direction, c.expected)
+			<< "moving toward (" << c.target.x << ", " << c.target.y << ")";
+	}
+}
+
+}  // namespace
+}  // namespace ecs

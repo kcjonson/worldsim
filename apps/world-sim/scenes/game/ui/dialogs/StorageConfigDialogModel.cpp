@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <unordered_map>
 
 namespace world_sim {
@@ -69,7 +70,7 @@ void StorageConfigDialogModel::clear() {
 }
 
 StorageConfigDialogModel::UpdateType StorageConfigDialogModel::refresh(
-	ecs::World& world, const engine::assets::AssetRegistry& registry) {
+	ecs::World& world, const assets::AssetRegistry& registry) {
 	if (currentContainerId == ecs::EntityID{0}) {
 		valid = false;
 		return UpdateType::None;
@@ -85,10 +86,10 @@ StorageConfigDialogModel::UpdateType StorageConfigDialogModel::refresh(
 		if (storageCap.acceptedCategories.empty()) {
 			// Accepts all categories
 			containerCategories = {
-				engine::assets::ItemCategory::RawMaterial,
-				engine::assets::ItemCategory::Food,
-				engine::assets::ItemCategory::Tool,
-				engine::assets::ItemCategory::Furniture,
+				assets::ItemCategory::RawMaterial,
+				assets::ItemCategory::Food,
+				assets::ItemCategory::Tool,
+				assets::ItemCategory::Furniture,
 			};
 		} else {
 			containerCategories = storageCap.acceptedCategories;
@@ -264,7 +265,7 @@ void StorageConfigDialogModel::removeAllRules(ecs::World& world) {
 }
 
 void StorageConfigDialogModel::extractAvailableItems(
-	const engine::assets::AssetRegistry& registry) {
+	const assets::AssetRegistry& registry) {
 	items.clear();
 	groups.clear();
 
@@ -286,7 +287,7 @@ void StorageConfigDialogModel::extractAvailableItems(
 		}
 		const auto& def = *defPtr;
 		// Skip items with no category
-		if (def.category == engine::assets::ItemCategory::None) {
+		if (def.category == assets::ItemCategory::None) {
 			continue;
 		}
 
@@ -393,6 +394,10 @@ void StorageConfigDialogModel::updateKnownSources(ecs::World& world) {
 	// out of the toast set (and re-toasts once if added back later while still unsourced).
 	std::unordered_set<std::string> configuredSpecificItems;
 
+	// One memory walk and one box memo serve every item this refresh asks about.
+	std::optional<std::unordered_set<uint32_t>> memorySources;
+	storageKnowledge.invalidate();
+
 	for (const auto& rule : config->rules) {
 		if (rule.isWildcard()) {
 			continue; // a wildcard names no single item to source
@@ -402,7 +407,10 @@ void StorageConfigDialogModel::updateKnownSources(ecs::World& world) {
 			continue; // already evaluated this item this frame
 		}
 
-		const bool known = isStorageSourceKnown(world, currentContainerId, rule.defName);
+		if (!memorySources.has_value()) {
+			memorySources = collectMemorySources(world);
+		}
+		const bool known = isStorageSourceKnown(world, *memorySources, storageKnowledge, currentContainerId, rule.defName);
 		knownSourceByDefName[rule.defName] = known;
 
 		if (known) {
@@ -438,7 +446,7 @@ void StorageConfigDialogModel::updateSelectedItemRules(const ecs::World& world) 
 	}
 
 	// Find the selected item's category
-	engine::assets::ItemCategory selectedCategory = engine::assets::ItemCategory::None;
+	assets::ItemCategory selectedCategory = assets::ItemCategory::None;
 	for (const auto& item : items) {
 		if (item.defName == selectedItem) {
 			selectedCategory = item.category;
@@ -491,15 +499,15 @@ void StorageConfigDialogModel::updateSelectedItemRules(const ecs::World& world) 
 	}
 }
 
-std::string StorageConfigDialogModel::getCategoryLabel(engine::assets::ItemCategory category) {
+std::string StorageConfigDialogModel::getCategoryLabel(assets::ItemCategory category) {
 	switch (category) {
-	case engine::assets::ItemCategory::RawMaterial:
+	case assets::ItemCategory::RawMaterial:
 		return "Raw Materials";
-	case engine::assets::ItemCategory::Food:
+	case assets::ItemCategory::Food:
 		return "Food";
-	case engine::assets::ItemCategory::Tool:
+	case assets::ItemCategory::Tool:
 		return "Tools";
-	case engine::assets::ItemCategory::Furniture:
+	case assets::ItemCategory::Furniture:
 		return "Furniture";
 	default:
 		return "Unknown";

@@ -67,10 +67,10 @@ The colonist can see a pond visually rendered on screen, but the VisionSystem is
 
 ## Code Locations
 
-- **VisionSystem:** `/libs/engine/ecs/systems/VisionSystem.cpp` - water tile scanning
-- **Chunk:** `/libs/engine/world/chunk/Chunk.cpp` - `selectGroundCover()` generates water
-- **ChunkRenderer:** `/libs/engine/world/rendering/ChunkRenderer.cpp` - renders water tiles
-- **Memory Component:** `/libs/engine/ecs/components/Memory.h` - sightRadius=20.0F
+- **VisionSystem:** `/libs/sim/ecs/systems/VisionSystem.cpp` - water tile scanning
+- **Chunk:** `/libs/world/world/chunk/Chunk.cpp` - `selectGroundCover()` generates water
+- **ChunkRenderer:** `/libs/world-view/world/rendering/ChunkRenderer.cpp` - renders water tiles
+- **Memory Component:** `/libs/sim/ecs/components/Memory.h` - sightRadius=20.0F
 
 ---
 
@@ -123,8 +123,8 @@ The colonist can see a pond visually rendered on screen, but the VisionSystem is
    - Displays world tile coordinates (e.g., "0,0", "-5,12") directly on each tile
 
 2. Files modified:
-   - `libs/engine/world/rendering/ChunkRenderer.h` - Added `DebugTileCoord` struct and `m_debugTileCoords` vector
-   - `libs/engine/world/rendering/ChunkRenderer.cpp` - Added coordinate collection and text rendering
+   - `libs/world-view/world/rendering/ChunkRenderer.h` - Added `DebugTileCoord` struct and `m_debugTileCoords` vector
+   - `libs/world-view/world/rendering/ChunkRenderer.cpp` - Added coordinate collection and text rendering
 
 **Key Discovery: Y-Axis Flip**
 
@@ -183,7 +183,7 @@ This means:
 
 **ChunkRenderer's World→Screen Transformation:**
 
-`libs/engine/world/rendering/ChunkRenderer.cpp` line 178:
+`libs/world-view/world/rendering/ChunkRenderer.cpp` line 178:
 ```cpp
 // CURRENT (WRONG):
 float screenY = (worldY - camY) * scale + halfViewH;
@@ -434,8 +434,8 @@ This is a 90° rotation, NOT a Y-flip. Possible causes:
 5. If logged says "SOUTH" but colonist visually moves "WEST", there's a 90° rotation bug
 
 **Files modified:**
-- `libs/engine/ecs/components/MemoryQueries.cpp` - Added drinkable search logging
-- `libs/engine/ecs/systems/MovementSystem.cpp` - Added movement direction logging
+- `libs/sim/ecs/components/MemoryQueries.cpp` - Added drinkable search logging
+- `libs/sim/ecs/systems/MovementSystem.cpp` - Added movement direction logging
 
 **Next steps after analyzing output:**
 1. Run game and capture diagnostic output
@@ -602,8 +602,8 @@ Both use `chunk.worldOrigin()`. Need to verify this returns consistent values.
 **Files modified:**
 - `libs/renderer/primitives/Primitives.cpp` - Implemented `drawText()` function
 - `libs/renderer/CMakeLists.txt` - Added PRIVATE include for ui headers
-- `libs/engine/world/rendering/ChunkRenderer.h` - Added `DebugLabel` struct and `m_debugLabels` vector
-- `libs/engine/world/rendering/ChunkRenderer.cpp` - Collect labels during tile rendering, render after flush
+- `libs/world-view/world/rendering/ChunkRenderer.h` - Added `DebugLabel` struct and `m_debugLabels` vector
+- `libs/world-view/world/rendering/ChunkRenderer.cpp` - Collect labels during tile rendering, render after flush
 
 **MAJOR DISCOVERY - Coordinates Don't Match!**
 

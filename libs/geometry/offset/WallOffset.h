@@ -22,6 +22,14 @@
 
 namespace geometry {
 
+	// A span of a wall's centerline left open (a door or window), in mm from the
+	// segment's `a` end. Only wallSpans and wallPiecesAndOutline read gaps. The same span on the segment listed b to a, length L, is
+	// {round(L - toMm), round(L - fromMm)}, and resolves identically.
+	struct WallGap {
+		std::int64_t fromMm = 0;
+		std::int64_t toMm	= 0;
+	};
+
 	// A wall centerline segment with its per-segment half-thickness. Thickness is
 	// per segment (presets like 0.2 m / 0.4 m -> 100/200 mm half), so two segments
 	// at one junction may differ. `a` and `b` are the centerline endpoints.
@@ -29,6 +37,15 @@ namespace geometry {
 		Vec2i64		 a;
 		Vec2i64		 b;
 		std::int64_t halfThicknessMm = 0;
+	};
+
+	// One edge of the joined wall shape's boundary, with the wall on its left.
+	// `index` is the segment the edge belongs to, so a renderer can stroke it in
+	// that segment's style.
+	struct OutlineEdge {
+		Vec2i64		from;
+		Vec2i64		to;
+		std::size_t index = 0;
 	};
 
 	// Outcome of a band/junction build. `ok == false` means an input violated the
@@ -93,7 +110,20 @@ namespace geometry {
 	// `miterLimit` is the max miter length as a multiple of the larger half
 	// thickness; beyond it the join squares off. The 30 deg minimum corner angle
 	// (design spec) bounds the natural miter at ~3.9x, so the limit only bites for
-	// pathological-but-permitted inputs.
+	// pathological-but-permitted inputs, with one exception: two bands of
+	// different thickness a few degrees off straight, whose faces meet farther
+	// off the closer to straight they get (and an equal pair a hair off straight,
+	// whose rounded faces can meet anywhere). Such a wedge is a step instead: no
+	// apex, the thinner band cut back just clear of the thicker one's cap, and a
+	// short edge across from one to the other (from the thin face's point at the
+	// vertex where that is clear of the cap, and through the thick face's point
+	// at the vertex where another wedge has cut the thicker band back). Where
+	// every two neighbouring bands are at least 30 degrees apart, every polygon
+	// vertex stays within `miterLimit` x the larger half thickness of the vertex
+	// (plus rounding). A sharper corner, legal where a wall joins an existing
+	// vertex, still trims each band as far as the inner faces overlap, about
+	// h / sin(corner / 2) for equal halves h (576 mm for 100 at 20 degrees), so
+	// its corners can lie past that bound.
 	JunctionResolution resolveJunction(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents,
 									   double miterLimit);
 
@@ -106,21 +136,120 @@ namespace geometry {
 		// with `junctions`. Lets a renderer style a junction from its own segments
 		// (e.g. built vs blueprint, material) instead of a graph-wide flag.
 		std::vector<std::vector<std::size_t>> junctionSegments;
+		// Per segment, how far its band is cut back from `a` and from `b`.
+		std::vector<std::int64_t> trimAtA;
+		std::vector<std::int64_t> trimAtB;
 	};
 
 	// Orchestrate band + junction resolution over a list of segments that share
 	// endpoint vertices. Junctions are derived by grouping segments with an equal
 	// endpoint (exact Vec2i64 ==, the whole point of integer quantization).
-	// Every output ring is validated: simple, CCW, non-zero area; any degenerate
-	// result sets a failing status and returns (reject-don't-repair, D4). After
+	// Every band and junction ring is validated: simple, CCW, non-zero area; any
+	// degenerate result sets a failing status and returns (reject-don't-repair,
+	// D4), with one exception: where a band fails, the miters beside it that are
+	// within 20 degrees of straight (near resolveJunction's step cut, whose
+	// trims can outrun a short wall) are joined as steps once more, and
+	// only what still fails is rejected; corners further off keep their miters.
+	// A graph whose bands all succeed never takes that path, so
+	// resolveJunction alone agrees with it there and only there. After
 	// validation each ring is simplified (collinear-vertex collapse, sub-mm
-	// sliver drop) per the Clipper2 post-op concept (D2).
+	// sliver drop) per the Clipper2 post-op concept (D2). This is all nav
+	// needs; the drawn shape, cut at openings and outlined, is
+	// wallPiecesAndOutline's. Apart from segment indices and where a ring's vertex
+	// list starts, nothing in the result depends on segment order or on which end
+	// of a segment is `a`.
 	WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit);
 
-	// Simplification pass (Clipper2 concept, D2): drop a vertex that is collinear
-	// with its neighbors, and drop a vertex within `epsilonMm` of the segment
-	// between its neighbors (sub-mm slivers from rounding). In place.
+	// The connected wall graphs among `segments`: indices into it, grouped where
+	// segments share an endpoint position exactly (resolveWallBands' rule for the
+	// walls meeting at a vertex), chained through every shared endpoint. Each
+	// group lists its members in ascending order and the groups are ordered by
+	// their smallest member, so the result does not depend on which end of a
+	// segment is `a`. Every index appears in exactly one group; no segments, no
+	// groups.
+	std::vector<std::vector<std::size_t>> connectedWallGraphs(const std::vector<WallSegment>& segments);
+
+	// The `gap` of a WallSpan that covers no gap.
+	constexpr std::size_t kSolidSpan = static_cast<std::size_t>(-1);
+
+	// One stretch of a segment's trimmed band: solid wall, or open over the gap
+	// at index `gap` in that segment's list of gaps (in the order given).
+	struct WallSpan {
+		Ring		ring; // CCW
+		std::size_t gap = kSolidSpan;
+	};
+
+	// Per segment of `segments` as `bands` (their resolveWallBands result, status
+	// Ok) resolved them, the spans that tile its trimmed band given `gaps` (one
+	// list per segment, or none at all), in order from the segment's
+	// lexicographically smaller endpoint, so the same whichever end is `a`. The
+	// solid spans are wallPiecesAndOutline's pieces, ring for ring and in the
+	// same order. A gap span takes its corners from the caps of the solid spans
+	// beside it (or of the trimmed band at an end), so neighbouring spans share
+	// their two corners exactly. Gaps are clamped to the trimmed band, an opening
+	// of less than 6 mm of the band is ignored, and a run of wall under 6 mm
+	// beside a gap (or one that makes no valid ring) belongs to the gap span
+	// beside it, so the spans still cover the band. Where a run between two gaps
+	// folds away, one open stretch covers both; it is split where the later gap
+	// starts. A segment without gaps is one solid span, its band. Reads only the
+	// trims of `bands`; a `bands` that is not Ok, or whose trims do not match
+	// `segments`, gives every segment no spans.
+	//
+	// The gaps of one segment must not overlap one another. If they do, the spans
+	// still tile the band, but the tags follow start positions, not extents: an
+	// open stretch is split where each later-starting gap begins (when that is at
+	// least 1 mm past the last split and 1 mm short of the stretch's end, else it
+	// gets no span), and from there it is tagged with that gap up to the next split
+	// or the stretch's end, past the gap's own end. So the overlap goes to the
+	// later gap, and a gap nested inside another takes the outer gap's tail.
+	std::vector<std::vector<WallSpan>> wallSpans(const std::vector<WallSegment>& segments,
+												 const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands);
+
+	// The drawn shape of a resolved wall graph, cut at its openings.
+	struct WallPiecesAndOutline {
+		// Per segment, its trimmed band less the segment's gaps, in order along it.
+		// A gap is clamped to the trimmed band: the junction at a corner stays
+		// whole even when a gap reaches into its trim. Just the band when there are
+		// no gaps, nothing when the gaps cover it all. A gap opening less than 6 mm
+		// of the trimmed band is ignored, and a run under 6 mm beside a gap is
+		// dropped, not rejected.
+		std::vector<std::vector<Ring>> pieces;
+		// The boundary of the union of `pieces` and the junctions, built from those
+		// same rings (where two rings meeting at a vertex round one corner up to
+		// 3 mm apart, it uses the lower of the two points), as closed loops listed
+		// one after another, each in walking order
+		// (an edge's `to` is the next edge's `from`, and the last edge of a loop
+		// ends where its first starts). The wall is on each edge's left, so an
+		// outer boundary runs counter-clockwise and the inside of a closed room
+		// clockwise. No seam where a piece meets a junction or another piece; where
+		// a gap reaches a trimmed end, or a segment is all gap, the junction's edge
+		// facing it is outline. Edges are cancelled only between rings meeting at
+		// one vertex, so walls that cross without sharing an endpoint are outlined
+		// as separate shapes.
+		std::vector<OutlineEdge> outline;
+	};
+
+	// Pieces and outline for `segments` as `bands` (their resolveWallBands result,
+	// status Ok) resolved them, cut at `gaps`: one list per segment in the same
+	// order, or no lists at all for no openings. Render only; nav does not call it.
+	// Like resolveWallBands it does not depend on segment order or direction.
+	WallPiecesAndOutline wallPiecesAndOutline(const std::vector<WallSegment>& segments,
+											  const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands);
+
+	// Simplification pass (Clipper2 concept, D2): drop collinear vertices and
+	// vertices within `epsilonMm` of the kept outline (sub-mm slivers from
+	// rounding at small epsilon, bank-detail thinning at terrain scale). Every
+	// removed vertex lies within epsilonMm of the kept ring, so the error does not
+	// accumulate along a gentle curve (Douglas-Peucker, never below a triangle).
+	// In place.
 	void simplifyRing(Ring& ring, std::int64_t epsilonMm);
+
+	// The same pass with pinned vertices (terrain-polygons D6, border pins): a
+	// vertex whose mask entry is nonzero is never removed, and the mask shrinks in
+	// step with the ring. Each run between consecutive pins is simplified on its
+	// own, so its result depends only on the run, not on the ring's start vertex.
+	// With no pins it is exactly the unpinned pass.
+	void simplifyRing(Ring& ring, std::int64_t epsilonMm, std::vector<std::uint8_t>& pinned);
 
 	constexpr double	   kDefaultMiterLimit	 = 4.0;
 	constexpr std::int64_t kDefaultSimplifyEpsMm = 1;

@@ -75,11 +75,10 @@ Some clang-tidy checks are disabled in `.clang-tidy` due to false positives or c
 Headers (.h) and implementation (.cpp) files live together in the same directory:
 
 ```
-libs/renderer/gl/
-├── shader.h
-├── shader.cpp
-├── texture.h
-└── texture.cpp
+libs/theme/theme/
+├── Panel.h
+├── Panel.cpp
+└── Components.test.cpp
 ```
 
 **NOT** separated into `include/` and `src/` directories.
@@ -129,6 +128,23 @@ Organize includes in this order (with blank lines between groups):
 ```
 
 ## Naming Conventions
+
+### Readable names
+
+Every name is whole words a reader can say: variables, parameters, members, functions, types, and namespace aliases alike. No one- or two-letter names and no cryptic abbreviations.
+
+```cpp
+// ❌ NEVER
+namespace P = Renderer::Primitives;
+P::drawRect(args);
+float d = distance(a, b);
+
+// ✅ CORRECT
+Renderer::Primitives::drawRect(args);
+float gap = distance(start, goal);
+```
+
+The exceptions are loop indices (`i`, `j`) and coordinates (`x`, `y`, `z`). Older code that breaks this rule is legacy to clean up when touched, not a pattern to copy.
 
 ### Classes and Structs
 
@@ -290,23 +306,17 @@ Folder naming depends on the folder's purpose:
 
 **PascalCase** - when folder contains a single primary class of the same name:
 ```
-libs/renderer/CoordinateSystem/
-├── CoordinateSystem.h
-├── CoordinateSystem.cpp
-└── CoordinateSystem.test.cpp
+components/TextInput/
+├── TextInput.h
+├── TextInput.cpp
+└── TextInput.test.cpp
 ```
 
 **camelCase** - when folder is a category containing multiple related items:
 ```
-libs/renderer/shader/
-├── Shader.h
-├── Shader.cpp
-├── ShaderLoader.h
-└── ShaderLoader.cpp
-
-libs/ui/components/
-├── Button.h
-├── TextInput.h
+apps/world-sim/scenes/game/ui/components/
+├── NeedBar.h
+├── SpeedButton.h
 └── ...
 ```
 
@@ -508,7 +518,7 @@ tilePool.Release(tile);
 
 ### Custom Implementation
 
-We implement our own ECS system in `libs/engine/ecs/`. Key concepts:
+We implement our own ECS system in `libs/sim/ecs/`. Key concepts:
 
 **Entities** are lightweight IDs:
 ```cpp
@@ -561,12 +571,7 @@ public:
 
 ### System Update Order
 
-Systems update in fixed order each frame:
-1. Input systems
-2. AI/logic systems
-3. Physics systems
-4. Animation systems (if/when we have them)
-5. Rendering systems (query data, don't modify)
+`World::update` runs systems in ascending `priority()` order, whatever order they were registered in. Input is not an ECS system: the scene handles it before the ECS update. The game's order is time, vision, needs, nav, the goal systems, construction, rooms, AI, movement, physics, three collision passes, actions, and render-data collection last; actions run after physics and collision. [Main Loop Timing](./main-loop-timing.md) lists every system with its priority and what reads what it writes. Pick a new system's priority from that table, after the systems whose output it reads and before the ones that read it.
 
 ## Modern C++20 Features
 

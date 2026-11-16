@@ -31,7 +31,7 @@ class GhostRenderer {
 	/// @param isValid Whether the placement position is valid (affects tint color)
 	void render(const std::string& defName,
 				Foundation::Vec2 worldPos,
-				const engine::world::WorldCamera& camera,
+				const world::WorldCamera& camera,
 				int viewportWidth,
 				int viewportHeight,
 				bool isValid = true);

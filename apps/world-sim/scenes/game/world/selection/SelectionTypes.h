@@ -6,6 +6,8 @@
 // - NoSelection: Nothing selected (panel hidden)
 // - ColonistSelection: An ECS colonist entity
 // - WorldEntitySelection: A placed world entity (bush, tree, etc.)
+// - CraftingStationSelection / FurnitureSelection: ECS stations and storage furniture
+// - ResourcePileSelection: A loose ground pile (ECS entity with a ResourceStack)
 // - WallSegmentSelection: A construction wall segment (ConstructionWorld topology)
 // - FoundationSelection: A construction foundation (ConstructionWorld topology)
 
@@ -49,12 +51,20 @@ struct FurnitureSelection {
 	bool			 isPackaged;  // True if has Packaged component
 };
 
+/// A loose ground pile (ECS entity with a ResourceStack) is selected. Quantity is read
+/// live from the entity, so the panel tracks a colonist hauling from it.
+struct ResourcePileSelection {
+	ecs::EntityID	 entityId; // ECS entity ID
+	std::string		 defName;  // Item definition name (e.g., "Wood")
+	Foundation::Vec2 position; // World position
+};
+
 /// A construction foundation is selected. Geometry, material, and state are
 /// queried from the ConstructionWorld by id (topology is the source of truth,
 /// not a snapshot here); the ECS mirror entity is reached via the foundation's
 /// `entity` handle for blueprint/progress info.
 struct FoundationSelection {
-	engine::construction::FoundationId id = engine::construction::kInvalidFoundation;
+	construction::FoundationId id = construction::kInvalidFoundation;
 };
 
 /// A construction wall segment is selected. Like FoundationSelection, geometry,
@@ -63,7 +73,7 @@ struct FoundationSelection {
 /// segment's `entity` handle for blueprint/progress info. The segment is the
 /// design's unit of selection and demolition (D4/D6), not the chain.
 struct WallSegmentSelection {
-	engine::construction::SegmentId id = engine::construction::kInvalidSegment;
+	construction::SegmentId id = construction::kInvalidSegment;
 };
 
 /// A construction opening (door/window) is selected. Like WallSegmentSelection,
@@ -72,7 +82,7 @@ struct WallSegmentSelection {
 /// info. The opening is the unit of selection and demolition, independent of the
 /// wall it sits on.
 struct OpeningSelection {
-	engine::construction::OpeningId id = engine::construction::kInvalidOpening;
+	construction::OpeningId id = construction::kInvalidOpening;
 };
 
 /// A detected room is selected. Overlay-gated: only reachable while the room
@@ -91,6 +101,7 @@ using Selection = std::variant<
 	WorldEntitySelection,
 	CraftingStationSelection,
 	FurnitureSelection,
+	ResourcePileSelection,
 	WallSegmentSelection,
 	OpeningSelection,
 	FoundationSelection,

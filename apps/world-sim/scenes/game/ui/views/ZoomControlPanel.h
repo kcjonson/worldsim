@@ -1,51 +1,39 @@
 #pragma once
 
-// ZoomControlPanel - Floating zoom control positioned in viewport.
-//
-// Wraps ZoomControl and handles viewport-relative positioning.
-// Docked bottom-right as a vertical column.
-// Extends UI::Component to use the Layer system for child management.
+// ZoomControlPanel - the floating zoom column (ZoomControl) GameUI docks in the bottom-right corner. It
+// hugs the column, so the place it gets is the corner's insets.
 
 #include "scenes/game/ui/components/ZoomControl.h"
 
-#include <component/Component.h>
-#include <graphics/Rect.h>
-#include <input/InputEvent.h>
-#include <layer/Layer.h>
+#include <ui/Component.h>
 
 #include <functional>
 
 namespace world_sim {
 
-/// Floating zoom control panel for the game viewport.
-class ZoomControlPanel : public UI::Component {
-  public:
-	struct Args {
-		std::function<void()> onZoomIn = nullptr;
-		std::function<void()> onZoomOut = nullptr;
-		std::function<void()> onZoomReset = nullptr;
-		std::string id = "zoom_panel";
+	class ZoomControlPanel : public ui::Component {
+	  public:
+		struct Args {
+			UI_COMMON_ARGS
+			std::function<void()> onZoomIn;
+			std::function<void()> onZoomOut;
+			std::function<void()> onZoomReset;
+		};
+
+		explicit ZoomControlPanel(const Args& args);
+
+		void setZoomPercent(int percent);
+
+		[[nodiscard]] const char* typeName() const override { return "ZoomControlPanel"; }
+
+	  protected:
+		void onMount() override;
+
+	  private:
+		std::function<void()> onZoomIn;
+		std::function<void()> onZoomOut;
+		std::function<void()> onZoomReset;
+		ui::Ref<ZoomControl>  control;
 	};
 
-	explicit ZoomControlPanel(const Args& args);
-
-	/// Position the panel within the viewport (call on resize)
-	void layout(const Foundation::Rect& bounds) override;
-
-	/// Update the displayed zoom percentage
-	void setZoomPercent(int percent);
-
-	/// Handle input events - delegates to children via dispatchEvent
-	bool handleEvent(UI::InputEvent& event) override;
-
-	// render() inherited from Component - auto-renders children
-
-  private:
-	UI::LayerHandle zoomControlHandle;
-
-	// Layout constants
-	static constexpr float kRightMargin = 12.0F;
-	static constexpr float kBottomMargin = 12.0F;  // Bottom-right per prototype
-};
-
-}  // namespace world_sim
+} // namespace world_sim

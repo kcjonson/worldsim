@@ -285,9 +285,9 @@ endif()
 include(CTest)
 enable_testing()
 
-# Add subdirectories in dependency order
-add_subdirectory(libs/foundation)
-add_subdirectory(libs/renderer)
+# salal (foundation, renderer) via FetchContent, then subdirectories in dependency order
+FetchContent_MakeAvailable(salal)
+add_subdirectory(libs/geometry)
 # ... other libraries
 ```
 
@@ -453,68 +453,23 @@ BM_ArenaVsMalloc/1/128     12.5 ns         12.5 ns     56000000   Arena
 #### 2.3 Engine Library - Functional Tests
 
 **Priority tests:**
-- Application lifecycle (with mocked GLFW)
-- Scene management (creation, switching, destruction)
+- The ui bridge onto salal's app (the frame, the scene stack and the window are salal's, tested there)
 - ECS basics (entity creation, component storage)
 
 **Mocking Strategy:**
-- GLFW: Create `MockWindow` interface
-- OpenGL: Use function pointers for testing
+- Window and GL: salal's `app::HeadlessPlatform` (no window, `NullBackend`, a `ManualClock`)
 - File I/O: Inject file system interface
 
-**Example:** `libs/engine/scene/scene_manager.test.cpp`
+**Example:** `libs/engine/app/UiBridge.test.cpp` runs a real `app::App` on the headless platform,
+pushes input events, ticks one frame and checks what reached a recording scene:
 
 ```cpp
-#include <gtest/gtest.h>
-#include "engine/scene/scene.h"
-
-class TestScene : public IScene {
-public:
-    bool initCalled = false;
-    bool updateCalled = false;
-    bool renderCalled = false;
-    float lastDeltaTime = 0.0f;
-
-    void Init() override {
-        initCalled = true;
-    }
-
-    void HandleInput(GLFWwindow* window) override {
-        // No-op for test
-    }
-
-    void Update(float deltaTime) override {
-        updateCalled = true;
-        lastDeltaTime = deltaTime;
-    }
-
-    void Render() override {
-        renderCalled = true;
-    }
-};
-
-TEST(SceneTests, Lifecycle) {
-    TestScene scene;
-
-    scene.Init();
-    EXPECT_TRUE(scene.initCalled);
-
-    scene.Update(0.016f);
-    EXPECT_TRUE(scene.updateCalled);
-    EXPECT_FLOAT_EQ(scene.lastDeltaTime, 0.016f);
-
-    scene.Render();
-    EXPECT_TRUE(scene.renderCalled);
-}
-
-TEST(SceneTests, MultipleUpdates) {
-    TestScene scene;
-    scene.Init();
-
-    scene.Update(0.016f);
-    scene.Update(0.033f);
-
-    EXPECT_FLOAT_EQ(scene.lastDeltaTime, 0.033f);
+TEST_F(UiBridgeTest, ADragInOneFrameKeepsItsPath) {
+    push(pointer(Type::PointerDown, 100, 100));
+    push(pointer(Type::PointerMove, 300, 300));
+    push(pointer(Type::PointerUp, 300, 300));
+    frame();
+    EXPECT_EQ(log, (Log{"move 100,100", "down L 100,100", "move 300,300", "up L 300,300", "move 300,300"}));
 }
 ```
 
@@ -540,7 +495,7 @@ cmake -B build -S . \
   -DBUILD_TESTING=ON
 
 # Build all test targets
-cmake --build build --target foundation-tests foundation-benchmarks
+cmake --build build --target geometry-tests worldgen-benchmarks
 
 # Build all tests at once
 cmake --build build -j8
@@ -553,7 +508,7 @@ cmake --build build -j8
 ctest --test-dir build --output-on-failure
 
 # Run specific library tests
-ctest --test-dir build -R foundation-tests --output-on-failure
+ctest --test-dir build -R geometry-tests --output-on-failure
 
 # Run only unit tests (exclude benchmarks)
 ctest --test-dir build -R ".*-tests$" --output-on-failure
@@ -577,18 +532,18 @@ ctest --test-dir build --output-junit test-results.xml
 
 ```bash
 # Run specific benchmark executable
-./build/libs/foundation/tests/foundation-benchmarks
+./build/libs/worldgen/worldgen-benchmarks
 
 # With JSON output
-./build/libs/foundation/tests/foundation-benchmarks \
+./build/libs/worldgen/worldgen-benchmarks \
   --benchmark_format=json \
   --benchmark_out=results.json
 
 # Filter benchmarks
-./build/libs/foundation/tests/foundation-benchmarks --benchmark_filter=Arena.*
+./build/libs/worldgen/worldgen-benchmarks --benchmark_filter=BM_TileCenter.*
 
 # Run for specific time
-./build/libs/foundation/tests/foundation-benchmarks --benchmark_min_time=2.0
+./build/libs/worldgen/worldgen-benchmarks --benchmark_min_time=2.0
 ```
 
 ---
@@ -713,8 +668,10 @@ ctest --test-dir build --output-on-failure
 
 ### Run Specific Tests
 ```bash
-ctest --test-dir build -R foundation-tests --output-on-failure
+ctest --test-dir build -R geometry-tests --output-on-failure
 ```
+
+Foundation and renderer tests run in the salal repo (`github.com/kcjonson/salal`), not here.
 
 ### Run Benchmarks
 ```bash

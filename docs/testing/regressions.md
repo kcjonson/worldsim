@@ -11,12 +11,27 @@ See [README.md](./README.md) for the environment setup and dev API reference.
 
 ### On-water placement refused
 
-- [ ] `foundation?pts=<coords that land over the river>&material=Wood&built=0` returns an error
-  (message like "not on an active walkable nav mesh") and `?what=construction` stays empty
-  (no foundations created).
+- [ ] `foundation?pts=<coords that land over the river>&material=Wood&built=0` answers 400
+  (`{"error":"foundation: footprint not on buildable ground ..."}`) and `?what=construction`
+  stays empty (no foundations created).
 - [ ] Whole-footprint check: a footprint whose corners are on land but which spans water is also
   refused. Place corners on land, center over the river; same result expected.
-- [ ] Same refusal applies to `walls?...&built=0` on an off-mesh/over-water placement.
+- [ ] Same refusal (a 400) applies to `walls?...&built=0` on an off-mesh/over-water placement.
+- [ ] A footprint across a narrow stream is refused too. At the Quick Start landing,
+  `foundation?pts=6,6.5;9,6.5;9,9.5;6,9.5&built=0` lies across the creek east of the river and
+  creates nothing, while colonists still walk through that creek
+  (`/api/dev/ground?pts=7.9,8` reads `valid` true, `buildable` and `buildableNow` false).
+- [ ] Nothing else is built in that creek either: `walls?pts=7.9,5;7.9,11&host=0&close=0` and
+  `spawn?def=<a storage box>&at=7.9,8` answer 400, and with the build menu a storage box or a
+  crafting station held over the creek shows the invalid (red) ghost and a click places nothing.
+  Two metres onto the bank each is accepted. `spawn?def=Flora_Reed&at=7.9,8` and
+  `spawn?def=SmallStone&at=7.9,8` still succeed: putting those down builds nothing.
+- [ ] A crafting station on the bank within a metre of that creek installs every Basic Box crafted
+  at it off the creek: a crate spawns at its target, so each `BasicBox` in `?what=storage` reads
+  `buildableNow` true at its `x,y` on `/api/dev/ground`, or the crate has no target, is set down
+  by the station as a colonist would set one down, a "Couldn't set up" toast says it needs placing,
+  and it waits for a [Place] click; none is installed in the creek. (`spawn?def=CraftingSpot&at=7.2,8.6` is a station 0.8 m
+  from the ford.)
 
 **Why this matters:** a silently accepted placement over water produces a construction site that
 can never be completed and may leave the colonist stuck.
@@ -26,9 +41,9 @@ can never be completed and may leave the colonist stuck.
 ### Belt stow-on-fell
 
 - [ ] Colonist has a crafted `AxePrimitive` seated in hand (from [scenarios/01](./scenarios/01-craft-axe-and-box.md)
-  or via `give`). After a tree fell:
+  or via `give ... &where=colonist&slot=hands`). After a tree fell:
   - `?what=colonists` -> `colonists[0].hands.Wood >= 1` (carried armful, not 0)
-  - `?what=colonists` -> `colonists[0].belt.AxePrimitive >= 1` (stowed to belt)
+  - `?what=colonists` -> `colonists[0].belt` contains `"AxePrimitive"` (stowed to belt)
   - No log entry matching "Collected 0 ... carry-limited" (the zero-collect bug is fixed)
   - Wood is hauled to storage in subsequent trips.
 
@@ -82,6 +97,41 @@ subsequent placement and colonist pathing to the stump.
 **Why this matters:** the quick-start world is generated for a specific seed (424242) and should
 always land at the same biome and water class. A mismatch indicates a world-gen or seed-loading
 regression.
+
+---
+
+### Walking down shows the back of the head
+
+- [ ] Watch Bob while he walks toward the bottom of the screen (poll `?what=colonists` until `y`
+  is rising faster than `x` changes, center the camera on him with
+  `control?action=camera&x=<x>&y=<y>&zoom=14`, then screenshot):
+  - Bob's face shows (eyes, skin), not the all-hair back of the head.
+  - Walking toward the top of the screen shows the back of the head.
+  - Walking left or right, the eye and nose lead and the hair trails.
+
+**Why this matters:** world +Y draws lower on screen, and the movement-to-facing quantization
+(MovementSystem, FacingDirection) once mapped +Y to `Up`, so colonists walked toward the viewer
+showing their backs. The side-view SVGs also had their hair on the facing side.
+
+---
+
+### Cleared bush stays drawn
+
+- [ ] On a fresh Quick Start, give Bob an `AxePrimitive` and blueprint
+  `foundation?pts=20.5,0.5;23.5,0.5;23.5,3.5;20.5,3.5&material=Wood&built=0` (two generated berry
+  bushes stand in it, near (21.5, 1.8) and (22.0, 1.5)). Once `?what=construction` shows the phase
+  past `Clearing`, screenshot at `control?action=camera&x=22&y=2&zoom=8`:
+  - Neither bush is drawn.
+  - After `give?material=Wood&n=18&where=site` and the build, the foundation is bare: no bush and
+    no grass tuft is drawn on it (three tufts grow near (22.3, 0.9) before it is built), and the
+    tuft just past its top edge is still there.
+
+**Why this matters:** bushes and other flora under 1 m are drawn from a per-chunk baked mesh, and
+grass tufts from per-chunk instance buckets, not from the placement index each frame. The clear
+removed the bush from the index (so nav, vision and the site all saw it gone) and the mesh kept
+drawing it, on top of the finished foundation; the grass was never removed at all. A foundation
+is built on bare ground. Systems: `ConstructionSystem::bareSites`,
+`PlacementExecutor::staticRemovals`, `BakedChunkRenderer`, `GroundcoverRenderer`.
 
 ---
 

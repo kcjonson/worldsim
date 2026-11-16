@@ -35,7 +35,7 @@ here is the permanent baseline.
 
 ---
 
-## Data model (`libs/world/worldgen/data/WorldData.h`)
+## Data model (`libs/worldgen/worldgen/data/WorldData.h`)
 
 Per-tile SoA fields added for the cryosphere (IO format v4, `PlanetIO.cpp`):
 
@@ -219,10 +219,10 @@ sea-ice / snow / ice-sheet-thickness rows.
 
 ## Code
 
-- `libs/world/worldgen/stages/SnowStage.cpp` — permanent snow + sea ice
-- `libs/world/worldgen/stages/GlacierStage.cpp` — PDD mass balance + perfect-plastic
-- `libs/world/worldgen/stages/AtmosphereStage.cpp` — lapse/albedo feedback + land/ocean contrast
-- `libs/world/worldgen/pipeline/PlanetGenerator.cpp` — two-pass runner
+- `libs/worldgen/worldgen/stages/SnowStage.cpp` — permanent snow + sea ice
+- `libs/worldgen/worldgen/stages/GlacierStage.cpp` — PDD mass balance + perfect-plastic
+- `libs/worldgen/worldgen/stages/AtmosphereStage.cpp` — lapse/albedo feedback + land/ocean contrast
+- `libs/worldgen/worldgen/pipeline/PlanetGenerator.cpp` — two-pass runner
 - `libs/planet-view/PlanetTileColor.cpp` — ice/snow rendering + Ice mode
 - See also `docs/technical/planet-view-rendering.md` (globe renderer).
 
@@ -235,4 +235,4 @@ slider will let the player view and select the time of year, driven by orbit
 mechanics (axial tilt + orbital position). Seasonal snow cover ("how much snow is
 on the ground" right now, distinct from glaciers) should be **dynamic and computed
 at view/sim time, not baked into worldgen** — changing the season must not require a
-full planet regeneration. See the planned epic in `docs/status.md`.
+full planet regeneration. See the Specboard epic WOR-50, Season System.

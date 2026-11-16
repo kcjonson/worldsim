@@ -77,7 +77,7 @@ See [architecture.md](./architecture.md) for complete system design.
 - **Vertex Shader Animation**: Wind displacement in shader (currently CPU-driven)
 - **Tiered System Integration**: Full Phase 3 optimization pass
 
-See `/docs/status.md` → "Deferred Epics" for details.
+Tracked in Specboard as WOR-49, Complex Flora CPU Optimization (deferred).
 
 ## Game Requirements Context
 
@@ -104,10 +104,10 @@ See `/docs/status.md` → "Deferred Epics" for details.
 
 ### Common Use Cases
 
-**Adding a new static tile background:**
-1. Create SVG pattern in `assets/patterns/`
-2. Reference in TileAtlasBuilder (auto-rasterized to atlas)
-3. Map surface type to pattern in ChunkRenderer
+**Changing a land surface's ground art:**
+1. Edit or replace the surface's ground def, `assets/world/ground/<Surface>/<Surface>.xml` (a Lua generator or SVGs, see [ground-textures.md](../ground-textures.md))
+2. Preview it in the asset-manager's `ground/` category
+3. The game bakes it into the ground tile arrays at load
 
 **Adding an animated entity (grass, tree):**
 1. Create SVG asset in `assets/` folder

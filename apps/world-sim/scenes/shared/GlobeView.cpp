@@ -1,8 +1,5 @@
 #include "GlobeView.h"
 
-#include <GL/glew.h>
-
-#include <primitives/Primitives.h>
 #include <utils/Log.h>
 #include <utils/ResourcePath.h>
 
@@ -70,48 +67,44 @@ bool GlobeView::isReady() const {
 	return builtGrid != nullptr && mesh.isBuilt() && renderer.isReady() && colorizer.isReady();
 }
 
-void GlobeView::render(const Foundation::Rect& rect, float logicalW, float logicalH, float alpha) {
+void GlobeView::render(const Foundation::Rect& rect, const Renderer::Viewport& window, float alpha) {
 	if (!isReady()) {
 		return;
 	}
 
-	GLint vp[4] = {};
-	glGetIntegerv(GL_VIEWPORT, vp);
-
-	float sx = logicalW > 0.0F ? static_cast<float>(vp[2]) / logicalW : 1.0F;
-	float sy = logicalH > 0.0F ? static_cast<float>(vp[3]) / logicalH : 1.0F;
-	int px = static_cast<int>(rect.x * sx);
-	int py = static_cast<int>(rect.y * sy);
-	int pw = static_cast<int>(rect.width * sx);
-	int ph = static_cast<int>(rect.height * sy);
+	const float scale = window.pixelRatio();
+	int px = static_cast<int>(rect.x * scale);
+	int py = static_cast<int>(rect.y * scale);
+	int pw = static_cast<int>(rect.width * scale);
+	int ph = static_cast<int>(rect.height * scale);
 	if (pw <= 0 || ph <= 0) return;
 
 	// Pump async base-tier color uploads for the current view.
 	colorizer.uploadPending();
 
+	// GL viewport origin is bottom-left; UI rect origin is top-left
 	renderer.render(mesh, colorizer,
 	                currentWorld ? currentWorld->grid->subdivision() : 0,
-	                camera, pw, ph);
-
-	// GL viewport origin is bottom-left; UI rect origin is top-left
-	glViewport(px, vp[3] - py - ph, pw, ph);
-	renderer.blitToScreen(pw, ph, alpha);
-	glViewport(vp[0], vp[1], vp[2], vp[3]);
+	                camera,
+	                {.x = px, .y = window.framebufferHeight - py - ph, .width = pw, .height = ph,
+	                 .windowWidth = window.framebufferWidth, .windowHeight = window.framebufferHeight},
+	                alpha);
 }
 
-bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick) {
+bool GlobeView::handleInput(ui::PointerEvent& event, const Foundation::Rect& rect, bool cycleOnRightClick) {
 	if (!isReady()) return false;
 
 	switch (event.type) {
-		case UI::InputEvent::Type::MouseDown:
-			if (!contains(rect, event.position)) break;
-			if (event.button == engine::MouseButton::Left) {
-				camera.beginDrag(event.position.x, event.position.y);
+		case ui::PointerEvent::Type::Down:
+			if (!contains(rect, event.screen))
+				break;
+			if (event.button == foundation::MouseButton::Left) {
+				camera.beginDrag(event.screen.x, event.screen.y);
 				dragging = true;
 				event.consume();
 				return true;
 			}
-			if (event.button == engine::MouseButton::Right && cycleOnRightClick) {
+			if (event.button == foundation::MouseButton::Right && cycleOnRightClick) {
 				camera.markInteracted(); // a globe interaction: stop the reveal spin
 				cycleColorMode();
 				event.consume();
@@ -119,15 +112,16 @@ bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect,
 			}
 			break;
 
-		case UI::InputEvent::Type::MouseMove:
+		case ui::PointerEvent::Type::Move:
 			if (dragging) {
-				camera.drag(event.position.x, event.position.y);
+				camera.drag(event.screen.x, event.screen.y);
 				return true;
 			}
 			break;
 
-		case UI::InputEvent::Type::MouseUp:
-			if (dragging && event.button == engine::MouseButton::Left) {
+		case ui::PointerEvent::Type::Up:
+		case ui::PointerEvent::Type::Cancel:
+			if (dragging && (event.button == foundation::MouseButton::Left || event.type == ui::PointerEvent::Type::Cancel)) {
 				camera.endDrag();
 				dragging = false;
 				event.consume();
@@ -135,9 +129,10 @@ bool GlobeView::handleInput(UI::InputEvent& event, const Foundation::Rect& rect,
 			}
 			break;
 
-		case UI::InputEvent::Type::Scroll:
-			if (contains(rect, event.position)) {
-				camera.scroll(event.scrollDelta);
+		case ui::PointerEvent::Type::Wheel:
+			// ui's wheel is px of content, positive down; the camera's is notches, positive in.
+			if (contains(rect, event.screen)) {
+				camera.scroll(-event.wheel.y / 48.0F);
 				event.consume();
 				return true;
 			}

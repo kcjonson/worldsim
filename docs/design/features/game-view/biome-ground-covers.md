@@ -517,7 +517,7 @@ Spring: Snow melts, grass visible again
 - [seasonal-systems.md](./seasonal-systems.md) - Snow and seasonal overlays (planned)
 
 **Technical Implementation**:
-- [Ground Textures](/docs/technical/ground-textures.md) - SVG tile patterns, GPU rasterization, texture atlas system
+- [Ground Textures](/docs/technical/ground-textures.md) - baked ground tile variants, hex-mixed texture arrays, surface transitions
 - [Vector Graphics Architecture](/docs/technical/vector-graphics/architecture.md) - Four-tier rendering system (Tier 1 = tile textures)
 
 ## Revision History

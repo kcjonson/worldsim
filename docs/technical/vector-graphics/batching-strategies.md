@@ -49,7 +49,7 @@ for (auto& [material, batch] : batches) {
 - Multiple atlas sizes: 2048×2048, 4096×4096
 - Generate UV coordinates on-the-fly or pre-compute
 
-### 3. Uber Shader Approach
+### 3. Single Shader Approach
 
 **Concept**: Single shader with material properties passed as uniforms/vertex attributes.
 
@@ -220,7 +220,7 @@ struct VertexData {
 |----------|------------|--------------|------------|----------|
 | Material Batching | 10-50 | Good | Low | General use |
 | + Texture Atlas | 5-20 | Good | Medium | Reduce texture switches |
-| + Uber Shader | 1-10 | Good | High | Ultimate batching |
+| + Single shader | 1-10 | Good | High | Ultimate batching |
 | Persistent Buffers | Same | Excellent | Medium | OpenGL 4.4+ |
 | Triple Buffering | Same | Good | Medium | Avoid stalls |
 | Instancing | 1 per type | Excellent | Low | Identical geometry |

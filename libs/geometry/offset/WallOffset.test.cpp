@@ -7,6 +7,10 @@
 #include <cmath>
 #include <cstdint>
 #include <map>
+#include <random>
+#include <string>
+#include <tuple>
+#include <utility>
 #include <vector>
 #include <gtest/gtest.h>
 
@@ -176,6 +180,55 @@ TEST(Simplify, KeepsRealCorners) {
 	Ring r = {{0, 0}, {1000, 0}, {1000, 1000}, {0, 1000}};
 	simplifyRing(r, kDefaultSimplifyEpsMm);
 	EXPECT_EQ(r.size(), 4u);
+}
+
+TEST(Simplify, PinnedVerticesSurvive) {
+	// (500,0) is collinear and (1500,1) a sliver; pinned, both stay.
+	Ring					  r		 = {{0, 0}, {500, 0}, {1000, 0}, {1500, 1}, {2000, 0}, {2000, 1000}, {0, 1000}};
+	std::vector<std::uint8_t> pinned = {0, 1, 0, 1, 0, 0, 0};
+	simplifyRing(r, 10, pinned);
+	const Ring expected = {{0, 0}, {500, 0}, {1500, 1}, {2000, 0}, {2000, 1000}, {0, 1000}};
+	EXPECT_EQ(r, expected);
+	const std::vector<std::uint8_t> expectedPinned = {0, 1, 1, 0, 0, 0};
+	EXPECT_EQ(pinned, expectedPinned);
+}
+
+TEST(Simplify, AllUnpinnedMatchesUnpinnedPass) {
+	Ring a = {{0, 0}, {300, 40}, {700, -30}, {1000, 0}, {1400, 700}, {1000, 1000}, {500, 1020}, {0, 1000}, {-20, 500}};
+	Ring b = a;
+	std::vector<std::uint8_t> pinned(b.size(), 0);
+	simplifyRing(a, 50);
+	simplifyRing(b, 50, pinned);
+	EXPECT_EQ(a, b);
+	EXPECT_EQ(pinned.size(), b.size());
+}
+
+// A 350 m radius shore resampled at 250 mm: removing vertices one at a time
+// against their current neighbors lets the error ratchet up to meters along a
+// gentle curve. Every original vertex must stay within epsilon of the result.
+TEST(Simplify, ErrorStaysWithinEpsilonOnGentleCurves) {
+	constexpr double	   kRadius = 350000.0;
+	constexpr std::int64_t kEps	   = 100;
+	Ring				   circle;
+	const int			   count = static_cast<int>(6.283185307179586 * kRadius / 250.0);
+	for (int i = 0; i < count; ++i) {
+		const double a = 6.283185307179586 * i / count;
+		circle.push_back({std::llround(kRadius * std::cos(a)), std::llround(kRadius * std::sin(a))});
+	}
+	Ring simplified = circle;
+	simplifyRing(simplified, kEps);
+
+	// A chord with a 100 mm sagitta on this radius is ~16.7 m, so the fewest
+	// vertices is ~130; Douglas-Peucker's splits land within about twice that.
+	EXPECT_GT(simplified.size(), 100U);
+	EXPECT_LT(simplified.size(), 300U);
+	for (const Vec2i64& v : circle) {
+		bool near = false;
+		for (std::size_t i = 0; i < simplified.size() && !near; ++i) {
+			near = withinDistanceOfSegment(v, simplified[i], simplified[(i + 1) % simplified.size()], kEps);
+		}
+		EXPECT_TRUE(near) << v.x << ", " << v.y;
+	}
 }
 
 // --- straight continuation (degree-2, 180 deg) -------------------------------
@@ -565,6 +618,287 @@ TEST(Junction, IncidentOrderPermutationInvariant) {
 	} while (std::next_permutation(perm.begin(), perm.end()));
 }
 
+// --- mixed thickness through a straight or near-straight join ---------------
+
+namespace {
+
+	bool insideAnyRing(const std::vector<Ring>& rings, const Vec2i64& p) {
+		for (const Ring& r : rings) {
+			if (pointInPolygon(p, r) == PointInPolygon::Inside) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// resolveWallBands and then wallPiecesAndOutline, the way the renderer calls
+	// them.
+	struct Resolved : WallBands {
+		std::vector<std::vector<Ring>> pieces;
+		std::vector<OutlineEdge>	   outline;
+	};
+
+	Resolved resolveDrawn(const std::vector<WallSegment>& segments, double miterLimit,
+						  const std::vector<std::vector<WallGap>>& gaps = {}) {
+		Resolved resolved;
+		static_cast<WallBands&>(resolved) = resolveWallBands(segments, miterLimit);
+		if (resolved.status == OffsetStatus::Ok) {
+			WallPiecesAndOutline shape = wallPiecesAndOutline(segments, gaps, resolved);
+			resolved.pieces			   = std::move(shape.pieces);
+			resolved.outline		   = std::move(shape.outline);
+		}
+		return resolved;
+	}
+
+	std::vector<Ring> wallShape(const Resolved& wb) {
+		std::vector<Ring> all;
+		for (const std::vector<Ring>& pieces : wb.pieces) {
+			all.insert(all.end(), pieces.begin(), pieces.end());
+		}
+		all.insert(all.end(), wb.junctions.begin(), wb.junctions.end());
+		return all;
+	}
+
+	double outlineLength(const Resolved& wb) {
+		double total = 0.0;
+		for (const OutlineEdge& e : wb.outline) {
+			total += std::hypot(static_cast<double>(e.to.x - e.from.x), static_cast<double>(e.to.y - e.from.y));
+		}
+		return total;
+	}
+
+	// Every outline edge is on the boundary of the joined shape with the wall on
+	// its left: a few mm to the left of its middle is wall, to the right is not. A
+	// seam between two pieces has wall on both sides and fails. Edges of a few mm
+	// (where rounding left two rings' corners a mm apart) are too short to probe.
+	void expectOutlineOnBoundary(const Resolved& wb) {
+		const std::vector<Ring> shape = wallShape(wb);
+		for (const OutlineEdge& e : wb.outline) {
+			const double dx	 = static_cast<double>(e.to.x - e.from.x);
+			const double dy	 = static_cast<double>(e.to.y - e.from.y);
+			const double len = std::hypot(dx, dy);
+			ASSERT_GT(len, 0.0);
+			if (len < 10.0) {
+				continue;
+			}
+			const double  midX = (static_cast<double>(e.from.x) + static_cast<double>(e.to.x)) * 0.5;
+			const double  midY = (static_cast<double>(e.from.y) + static_cast<double>(e.to.y)) * 0.5;
+			const Vec2i64 left{std::llround(midX - dy / len * 4.0), std::llround(midY + dx / len * 4.0)};
+			const Vec2i64 right{std::llround(midX + dy / len * 4.0), std::llround(midY - dx / len * 4.0)};
+			EXPECT_TRUE(insideAnyRing(shape, left) && !insideAnyRing(shape, right))
+				<< "edge (" << e.from.x << "," << e.from.y << ")->(" << e.to.x << "," << e.to.y
+				<< ") is a seam or has the wall on its right";
+		}
+	}
+
+} // namespace
+
+TEST(Junction, StraightMixedThicknessStepsWithoutSeam) {
+	// Light (half 75) meets Heavy (half 150) head on. The bands abut with no
+	// polygon and no trim; the outline steps out along the Heavy cap on both
+	// sides and never crosses the joint.
+	std::vector<WallSegment> segs = {
+		{{0, 0}, {1000, 0}, 75},
+		{{1000, 0}, {2000, 0}, 150},
+	};
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	EXPECT_TRUE(wb.junctions.empty());
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+	EXPECT_NEAR(totalAreaDoubled(wb.bands), 2.0 * (1000.0 * 150.0 + 1000.0 * 300.0), 1.0);
+	expectOutlineOnBoundary(wb);
+	// Perimeter of the stepped shape: faces 4 * 1000, free caps 150 + 300, two
+	// steps of 75.
+	EXPECT_NEAR(outlineLength(wb), 4000.0 + 450.0 + 150.0, 1.0);
+}
+
+TEST(Junction, NearStraightMixedThicknessStaysLocal) {
+	// A few degrees off straight, Light into Heavy. The facing faces would only
+	// meet metres away behind the Heavy cap; the join must step at the cap
+	// instead of trimming both bands back past their length (which rejected the
+	// whole wall graph).
+	std::vector<WallSegment> segs = {
+		{{0, 0}, {1000, 0}, 75},
+		{{1000, 0}, {2000, 50}, 150},
+	};
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok) << "status=" << static_cast<int>(wb.status);
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+	expectOutlineOnBoundary(wb);
+	// Both bands keep nearly all their length: any cutback is a few mm.
+	const double naive = 2.0 * (1000.0 * 150.0 + std::hypot(1000.0, 50.0) * 300.0);
+	const double total = totalAreaDoubled(wb.bands) + totalAreaDoubled(wb.junctions);
+	EXPECT_NEAR(total, naive, 0.01 * naive);
+	EXPECT_NEAR(totalAreaDoubled(wb.bands), naive, 0.01 * naive);
+
+	// The other way round (bending the other side) resolves the same.
+	std::vector<WallSegment> mirrored = {
+		{{0, 0}, {1000, 0}, 75},
+		{{1000, 0}, {2000, -50}, 150},
+	};
+	Resolved other = resolveDrawn(mirrored, kDefaultMiterLimit);
+	ASSERT_EQ(other.status, OffsetStatus::Ok);
+	expectAllRingsValid(other);
+	expectExactPairwiseDisjoint(other);
+	expectOutlineOnBoundary(other);
+}
+
+TEST(Junction, ObtuseMixedThicknessTiles) {
+	// 135 degree bend from Light into Heavy: an ordinary mitered corner, far
+	// enough off straight that the faces meet near the vertex.
+	std::vector<WallSegment> segs = {
+		{{-1000, 0}, {0, 0}, 75},
+		{{0, 0}, {707, 707}, 150},
+	};
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.junctions.size(), 1u);
+	expectAllRingsValid(wb);
+	expectExactPairwiseDisjoint(wb);
+	expectOutlineOnBoundary(wb);
+}
+
+// --- outline of the joined shape ---------------------------------------------
+
+TEST(Outline, RightAngleCornerHasNoSeams) {
+	// The L of RightAngleCornerGolden: the outline is the L's own perimeter, with
+	// the outer corner stroked and no line across either band's end.
+	std::vector<WallSegment> segs = {
+		{{1000, 0}, {0, 0}, 100},
+		{{0, 0}, {0, 1000}, 100},
+	};
+	Resolved wb = resolveDrawn(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(wb);
+	// 1100 + 1100 outer, 900 + 900 inner, two 200 free caps.
+	EXPECT_NEAR(outlineLength(wb), 4400.0, 1.0);
+}
+
+TEST(Outline, TeeCrossAndRoomHaveNoSeams) {
+	std::vector<WallSegment> tee = {
+		{{0, 0}, {1000, 0}, 100},
+		{{0, 0}, {-1000, 0}, 100},
+		{{0, 0}, {0, 1000}, 100},
+	};
+	Resolved teeBands = resolveDrawn(tee, kDefaultMiterLimit);
+	ASSERT_EQ(teeBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(teeBands);
+	// Flat side 2000, two inner runs of 900 each side of the stem, stem faces
+	// 2 * 900, three free caps of 200.
+	EXPECT_NEAR(outlineLength(teeBands), 2000.0 + 1800.0 + 1800.0 + 600.0, 1.0);
+
+	std::vector<WallSegment> cross = {
+		{{0, 0}, {1000, 0}, 120},
+		{{0, 0}, {-1000, 0}, 80},
+		{{0, 0}, {0, 1000}, 120},
+		{{0, 0}, {0, -1000}, 80},
+	};
+	Resolved crossBands = resolveDrawn(cross, kDefaultMiterLimit);
+	ASSERT_EQ(crossBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(crossBands);
+
+	std::vector<WallSegment> room = {
+		{{0, 0}, {1000, 0}, 100},
+		{{1000, 0}, {1000, 1000}, 100},
+		{{1000, 1000}, {0, 1000}, 100},
+		{{0, 1000}, {0, 0}, 100},
+	};
+	Resolved roomBands = resolveDrawn(room, kDefaultMiterLimit);
+	ASSERT_EQ(roomBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(roomBands);
+	// Outer square 4 * 1200 plus inner square 4 * 800.
+	EXPECT_NEAR(outlineLength(roomBands), 4800.0 + 3200.0, 1.0);
+}
+
+TEST(Outline, SharpAndMixedCornersHaveNoSeams) {
+	std::vector<WallSegment> sharp = {
+		{{1000, 0}, {0, 0}, 100},
+		{{0, 0}, {819, 574}, 100},
+	};
+	Resolved sharpBands = resolveDrawn(sharp, kDefaultMiterLimit);
+	ASSERT_EQ(sharpBands.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(sharpBands);
+
+	Resolved beveled = resolveDrawn(sharp, 2.0);
+	ASSERT_EQ(beveled.status, OffsetStatus::Ok);
+	expectOutlineOnBoundary(beveled);
+
+	std::vector<WallSegment> mixedCorner = {
+		{{1000, 0}, {0, 0}, 75},
+		{{0, 0}, {0, 1000}, 150},
+	};
+	Resolved mixedBands = resolveDrawn(mixedCorner, kDefaultMiterLimit);
+	ASSERT_EQ(mixedBands.status, OffsetStatus::Ok);
+	expectAllRingsValid(mixedBands);
+	expectExactPairwiseDisjoint(mixedBands);
+	expectOutlineOnBoundary(mixedBands);
+}
+
+TEST(Outline, FreeSegmentIsItsRectangle) {
+	std::vector<WallSegment> segs = {{{0, 0}, {1000, 0}, 100}};
+	Resolved				 wb	  = resolveDrawn(segs, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.pieces.size(), 1u);
+	ASSERT_EQ(wb.pieces[0].size(), 1u);
+	EXPECT_EQ(wb.pieces[0][0], wb.bands[0]);
+	EXPECT_EQ(wb.outline.size(), 4u);
+	EXPECT_NEAR(outlineLength(wb), 2400.0, 1.0);
+}
+
+// --- gaps (doors and windows) ------------------------------------------------
+
+TEST(Gaps, OpeningBesideCornerKeepsTheCornerTrim) {
+	// A door gap 300..1200 mm along the first leg of an L, right beside the
+	// corner at (1500,0). The piece between the gap and the corner keeps the
+	// junction's cutback, so it meets the junction polygon instead of
+	// overlapping it, and the gap's edges are outline.
+	std::vector<WallSegment> segs = {{{0, 0}, {1500, 0}, 100}, {{1500, 0}, {1500, 1500}, 100}};
+	Resolved				 wb	  = resolveDrawn(segs, kDefaultMiterLimit, {{{300, 1200}}, {}});
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.pieces[0].size(), 2u);
+	ASSERT_EQ(wb.pieces[1].size(), 1u);
+	ASSERT_EQ(wb.junctions.size(), 1u);
+
+	std::vector<Ring> shape = wallShape(wb);
+	for (std::size_t i = 0; i < shape.size(); ++i) {
+		for (std::size_t k = i + 1; k < shape.size(); ++k) {
+			EXPECT_TRUE(exactlyDisjointInteriors(shape[i], shape[k])) << "pieces " << i << " and " << k << " overlap";
+		}
+	}
+	expectOutlineOnBoundary(wb);
+	// Solid: 0..300 and 1200..1400 (trimmed 100 at the corner) on the first leg.
+	EXPECT_NEAR(totalAreaDoubled(wb.pieces[0]), 2.0 * (300.0 + 200.0) * 200.0, 1.0);
+	// Both gap edges are stroked: the L's perimeter less the gap's two faces,
+	// plus its two 200 caps.
+	EXPECT_NEAR(outlineLength(wb), (1600.0 + 1600.0 + 1400.0 + 1400.0 + 400.0) - 1800.0 + 400.0, 1.0);
+}
+
+TEST(Gaps, OverlappingAndOverhangingGapsMerge) {
+	std::vector<WallSegment> segs = {{{0, 0}, {2000, 0}, 100}};
+	Resolved				 wb	  = resolveDrawn(segs, kDefaultMiterLimit, {{{1500, 2500}, {-100, 200}, {150, 400}}});
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.pieces[0].size(), 1u);
+	EXPECT_NEAR(totalAreaDoubled(wb.pieces[0]), 2.0 * 1100.0 * 200.0, 1.0);
+	// The band itself stays whole for callers that ignore gaps.
+	EXPECT_NEAR(totalAreaDoubled(wb.bands), 2.0 * 2000.0 * 200.0, 1.0);
+}
+
+TEST(Gaps, UnresolvedBandsGiveNoSpans) {
+	// The graph of ShortMixedChainReturns, rejected: every segment gets an empty list, never a read of
+	// trims that are not there.
+	const std::vector<WallSegment> segments = {
+		{{0, 0}, {110, 207}, 75}, {{110, 207}, {474, 182}, 100}, {{474, 182}, {487, 371}, 75}, {{487, 371}, {400, 406}, 150}};
+	const WallBands bands = resolveWallBands(segments, kDefaultMiterLimit);
+	ASSERT_NE(bands.status, OffsetStatus::Ok);
+	const std::vector<std::vector<WallSpan>> spans = wallSpans(segments, {{}, {{100, 250}}, {}, {}}, bands);
+	ASSERT_EQ(spans.size(), segments.size());
+	for (const std::vector<WallSpan>& segmentSpans : spans) {
+		EXPECT_TRUE(segmentSpans.empty());
+	}
+}
+
 TEST(Junction, NearParallelLargeCoordinateDenominatorExact) {
 	// A real corner whose two outgoing directions are nearly collinear at large
 	// magnitude with messy low bits. The line-line denominator is the cross
@@ -582,4 +916,2243 @@ TEST(Junction, NearParallelLargeCoordinateDenominatorExact) {
 	const JunctionResolution jr = resolveJunction({0, 0}, incidents, kDefaultMiterLimit);
 	EXPECT_EQ(jr.status, OffsetStatus::Ok);
 	ASSERT_EQ(jr.trims.size(), 2u);
+}
+
+// --- properties over the legal input space -----------------------------------
+//
+// Seeded samples of the families a review swept: degree 2 from 30 to 330
+// degrees, near-straight joins of mixed thickness, and degrees 3 to 6 with
+// every corner at least 30 degrees, over half thicknesses 75, 100 and 150 and
+// 2 m legs. Each check returns a description of the first thing wrong, so a
+// sweep reports a count and a few examples instead of thousands of failures.
+
+namespace {
+
+	constexpr std::int64_t kHalves[] = {75, 100, 150};
+
+	Vec2i64 polar(double degrees, double radius) {
+		const double radians = degrees * 3.14159265358979323846 / 180.0;
+		return {std::llround(radius * std::cos(radians)), std::llround(radius * std::sin(radians))};
+	}
+
+	struct Arm {
+		double		 degrees = 0.0;
+		std::int64_t half	 = 0;
+		bool		 outward = true; // listed from the origin, else towards it
+	};
+
+	std::vector<WallSegment> star(const std::vector<Arm>& arms, double armLength = 2000.0) {
+		std::vector<WallSegment> segments;
+		for (const Arm& arm : arms) {
+			const Vec2i64 end = polar(arm.degrees, armLength);
+			segments.push_back({arm.outward ? Vec2i64{0, 0} : end, arm.outward ? end : Vec2i64{0, 0}, arm.half});
+		}
+		return segments;
+	}
+
+	// One list of gaps per segment, or none at all.
+	using Gaps = std::vector<std::vector<WallGap>>;
+
+	const std::vector<WallGap>& gapsOf(const Gaps& gaps, std::size_t segment) {
+		static const std::vector<WallGap> kNone;
+		return gaps.empty() ? kNone : gaps[segment];
+	}
+
+	std::string describe(const std::vector<WallSegment>& segments, const Gaps& gaps) {
+		std::string text;
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			const WallSegment& s = segments[i];
+			text += "(" + std::to_string(s.a.x) + "," + std::to_string(s.a.y) + ")->(" + std::to_string(s.b.x) + "," +
+					std::to_string(s.b.y) + ") h" + std::to_string(s.halfThicknessMm);
+			for (const WallGap& gap : gapsOf(gaps, i)) {
+				text += " gap " + std::to_string(gap.fromMm) + ".." + std::to_string(gap.toMm);
+			}
+			text += "; ";
+		}
+		return text;
+	}
+
+	std::string pointText(const Vec2i64& p) {
+		return "(" + std::to_string(p.x) + "," + std::to_string(p.y) + ")";
+	}
+
+	double distanceBetween(const Vec2i64& a, const Vec2i64& b) {
+		return std::hypot(static_cast<double>(b.x - a.x), static_cast<double>(b.y - a.y));
+	}
+
+	double distanceToRing(const Vec2i64& p, const Ring& ring) {
+		double best = 1e18;
+		for (std::size_t e = 0; e < ring.size(); ++e) {
+			best = std::min(best, distanceToSegment(p, ring[e], ring[(e + 1) % ring.size()]));
+		}
+		return best;
+	}
+
+	// A point of one ring inside another by more than rounding. Two band corners
+	// meeting at one miter apex each round about a millimetre from it, and where
+	// they cross over, the polygon's edge between them can reach a little over 2
+	// mm into a band.
+	// How far, in mm, a vertex or an edge midpoint of one ring sits inside the other.
+	double overlapDepth(const Ring& a, const Ring& b) {
+		auto depthInside = [](const Vec2i64& p, const Ring& ring) {
+			return pointInPolygon(p, ring) == PointInPolygon::Inside ? distanceToRing(p, ring) : 0.0;
+		};
+		double deepest = 0.0;
+		for (const auto& [from, into] : {std::pair{&a, &b}, std::pair{&b, &a}}) {
+			for (std::size_t e = 0; e < from->size(); ++e) {
+				const Vec2i64& p = (*from)[e];
+				const Vec2i64& q = (*from)[(e + 1) % from->size()];
+				deepest = std::max({deepest, depthInside(p, *into), depthInside({(p.x + q.x) / 2, (p.y + q.y) / 2}, *into)});
+			}
+		}
+		return deepest;
+	}
+
+	bool overlapsDeeply(const Ring& a, const Ring& b) {
+		return overlapDepth(a, b) > 2.5;
+	}
+
+	// The deepest overlap between any two of a resolution's bands and junction polygons.
+	double deepestOverlap(const WallBands& wb) {
+		std::vector<Ring> tiles = wb.bands;
+		tiles.insert(tiles.end(), wb.junctions.begin(), wb.junctions.end());
+		double deepest = 0.0;
+		for (std::size_t i = 0; i < tiles.size(); ++i) {
+			for (std::size_t k = i + 1; k < tiles.size(); ++k) {
+				deepest = std::max(deepest, overlapDepth(tiles[i], tiles[k]));
+			}
+		}
+		return deepest;
+	}
+
+	// The shared endpoint of a junction's segments.
+	Vec2i64 junctionVertex(const std::vector<WallSegment>& segments, const std::vector<std::size_t>& incident) {
+		const WallSegment& first  = segments[incident[0]];
+		const WallSegment& second = segments[incident[1]];
+		return (first.a == second.a || first.a == second.b) ? first.a : first.b;
+	}
+
+	// (b): rings valid; bands and junctions tile with no overlap and no gap at a
+	// seam beyond a millimetre; every junction vertex within the miter bound,
+	// which holds only with neighbouring arms 30 degrees or more apart, as every
+	// input here keeps them.
+	std::string checkTiles(const std::vector<WallSegment>& segments, const WallBands& wb, double miterLimit) {
+		if (wb.status != OffsetStatus::Ok) {
+			return "rejected, status " + std::to_string(static_cast<int>(wb.status));
+		}
+		std::vector<Ring> tiles = wb.bands;
+		tiles.insert(tiles.end(), wb.junctions.begin(), wb.junctions.end());
+		for (const Ring& ring : tiles) {
+			if (ring.size() < 3 || windingOrder(ring) != Winding::CounterClockwise || !isSimple(ring).pass) {
+				return "invalid ring";
+			}
+		}
+		for (std::size_t i = 0; i < tiles.size(); ++i) {
+			for (std::size_t k = i + 1; k < tiles.size(); ++k) {
+				if (overlapsDeeply(tiles[i], tiles[k])) {
+					return "rings " + std::to_string(i) + " and " + std::to_string(k) + " overlap";
+				}
+			}
+		}
+
+		std::map<Vec2i64, std::vector<std::size_t>> atVertex;
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			atVertex[segments[i].a].push_back(i);
+			atVertex[segments[i].b].push_back(i);
+		}
+		std::map<Vec2i64, std::size_t> junctionAt;
+		for (std::size_t j = 0; j < wb.junctions.size(); ++j) {
+			const Vec2i64 vertex = junctionVertex(segments, wb.junctionSegments[j]);
+			junctionAt[vertex]	 = j;
+			std::int64_t maxHalf = 0;
+			for (const std::size_t i : atVertex[vertex]) {
+				maxHalf = std::max(maxHalf, segments[i].halfThicknessMm);
+			}
+			for (const Vec2i64& p : wb.junctions[j]) {
+				if (distanceBetween(p, vertex) > miterLimit * static_cast<double>(maxHalf) + 2.0) {
+					return "junction vertex " + pointText(p) + " beyond the miter bound";
+				}
+			}
+		}
+
+		// Each band end at a junction: both cap corners and the cap's middle lie on
+		// the junction polygon's boundary, or with no polygon on the other band's.
+		// Rounding each ring's corners on its own leaves up to 2 mm. Rarely, at a
+		// sharp wedge of a junction of four or more, a band corner and its apex sit
+		// on nearly one ray from the vertex and the polygon's angular sort takes
+		// them out of order, leaving a crack of about 3 mm; this bound allows it.
+		for (const auto& [vertex, incident] : atVertex) {
+			if (incident.size() < 2) {
+				continue;
+			}
+			const auto polygon = junctionAt.find(vertex);
+			for (const std::size_t i : incident) {
+				Ring cap = wb.bands[i];
+				std::sort(cap.begin(), cap.end(), [&](const Vec2i64& l, const Vec2i64& r) {
+					return distanceBetween(l, vertex) < distanceBetween(r, vertex);
+				});
+				const Vec2i64 middle{(cap[0].x + cap[1].x) / 2, (cap[0].y + cap[1].y) / 2};
+				for (const Vec2i64& p : {cap[0], cap[1], middle}) {
+					double gap = 0.0;
+					if (polygon != junctionAt.end()) {
+						gap = distanceToRing(p, wb.junctions[polygon->second]);
+					} else {
+						const std::size_t other = incident[0] == i ? incident[1] : incident[0];
+						if (segments[other].halfThicknessMm < segments[i].halfThicknessMm) {
+							continue; // the thinner cap lies along this one, not the other way
+						}
+						gap = distanceToRing(p, wb.bands[other]);
+					}
+					if (gap > 3.5) {
+						return "band " + std::to_string(i) + " cap point " + pointText(p) + " is " + std::to_string(gap) +
+							   " mm off its junction";
+					}
+				}
+			}
+		}
+		return "";
+	}
+
+	double ringLength(const Ring& ring, std::size_t e) {
+		return distanceBetween(ring[e], ring[(e + 1) % ring.size()]);
+	}
+
+	// Perimeter of the union of tiles that meet edge to edge: every edge's length
+	// less the stretches another tile's edge runs back along within a millimetre
+	// or so.
+	double unionPerimeter(const std::vector<Ring>& tiles) {
+		double perimeter = 0.0;
+		for (std::size_t t = 0; t < tiles.size(); ++t) {
+			const Ring& ring = tiles[t];
+			for (std::size_t e = 0; e < ring.size(); ++e) {
+				const Vec2i64& p	  = ring[e];
+				const Vec2i64& q	  = ring[(e + 1) % ring.size()];
+				const double   length = ringLength(ring, e);
+				const double   ux	  = static_cast<double>(q.x - p.x) / length;
+				const double   uy	  = static_cast<double>(q.y - p.y) / length;
+				double		   shared = 0.0;
+				for (std::size_t o = 0; o < tiles.size(); ++o) {
+					if (o == t) {
+						continue;
+					}
+					const Ring& other = tiles[o];
+					for (std::size_t f = 0; f < other.size(); ++f) {
+						const Vec2i64& r = other[f];
+						const Vec2i64& s = other[(f + 1) % other.size()];
+						const double   fx = static_cast<double>(s.x - r.x) / ringLength(other, f);
+						const double   fy = static_cast<double>(s.y - r.y) / ringLength(other, f);
+						if (ux * fx + uy * fy > -0.999) {
+							continue;
+						}
+						// The stretch of p->q that r->s runs back along, if r->s stays
+						// within rounding of p->q's line over it.
+						const double alongR = static_cast<double>(r.x - p.x) * ux + static_cast<double>(r.y - p.y) * uy;
+						const double alongS = static_cast<double>(s.x - p.x) * ux + static_cast<double>(s.y - p.y) * uy;
+						const double offR	= static_cast<double>(r.y - p.y) * ux - static_cast<double>(r.x - p.x) * uy;
+						const double offS	= static_cast<double>(s.y - p.y) * ux - static_cast<double>(s.x - p.x) * uy;
+						const double low	= std::max(0.0, std::min(alongR, alongS));
+						const double high	= std::min(length, std::max(alongR, alongS));
+						if (high <= low) {
+							continue;
+						}
+						auto offsetAt = [&](double along) { return offR + (offS - offR) * (along - alongR) / (alongS - alongR); };
+						if (std::abs(offsetAt(low)) <= 3.0 && std::abs(offsetAt(high)) <= 3.0) {
+							shared += high - low;
+						}
+					}
+				}
+				perimeter += std::max(0.0, length - shared);
+			}
+		}
+		return perimeter;
+	}
+
+	// Whether a point between the millimetre grid points lies inside any ring
+	// (crossing count, so a point off every edge is never on a boundary).
+	bool insideAnyRingAt(const std::vector<Ring>& rings, double x, double y) {
+		for (const Ring& ring : rings) {
+			bool inside = false;
+			for (std::size_t e = 0, prev = ring.size() - 1; e < ring.size(); prev = e++) {
+				const double ax = static_cast<double>(ring[prev].x);
+				const double ay = static_cast<double>(ring[prev].y);
+				const double bx = static_cast<double>(ring[e].x);
+				const double by = static_cast<double>(ring[e].y);
+				if ((ay > y) != (by > y) && x < ax + (bx - ax) * (y - ay) / (by - ay)) {
+					inside = !inside;
+				}
+			}
+			if (inside) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	// The outline's loops, each running until an edge returns to the loop's first
+	// point; `problem` names the first edge that does not follow on.
+	std::vector<std::vector<OutlineEdge>> splitLoops(const std::vector<OutlineEdge>& outline, std::string& problem) {
+		std::vector<std::vector<OutlineEdge>> loops;
+		for (std::size_t i = 0; i < outline.size(); ++i) {
+			if (loops.empty() || loops.back().back().to == loops.back().front().from) {
+				loops.emplace_back();
+			} else if (outline[i].from != loops.back().back().to) {
+				problem = "outline loop breaks at " + pointText(loops.back().back().to);
+				return loops;
+			}
+			loops.back().push_back(outline[i]);
+		}
+		if (!loops.empty() && loops.back().back().to != loops.back().front().from) {
+			problem = "outline ends with an open loop";
+		}
+		return loops;
+	}
+
+	// (c): the outline is closed loops, one after another, each with the wall on
+	// its left; the loops' signed areas add up to the union's area and their
+	// length to its perimeter.
+	std::string checkOutline(const Resolved& wb) {
+		const std::vector<Ring> shape = wallShape(wb);
+		std::string				problem;
+		double					length = 0.0;
+		double					area   = 0.0;
+		for (const std::vector<OutlineEdge>& loop : splitLoops(wb.outline, problem)) {
+			for (const OutlineEdge& e : loop) {
+				length += distanceBetween(e.from, e.to);
+				area += cross(e.from, e.to).toDouble() * 0.5;
+			}
+		}
+		if (!problem.empty()) {
+			return problem;
+		}
+		for (const OutlineEdge& e : wb.outline) {
+			const double dx	  = static_cast<double>(e.to.x - e.from.x);
+			const double dy	  = static_cast<double>(e.to.y - e.from.y);
+			const double span = std::hypot(dx, dy);
+			// Short edges sit where corners rounded apart or in the throat of a sharp
+			// inner corner, too narrow to probe; the area and length checks below
+			// still count them.
+			if (span < 20.0) {
+				continue;
+			}
+			// Probed from half a millimetre to 3 mm out each side: an edge snapped a
+			// millimetre off its ring can miss the wall right beside it, and a slot
+			// a few mm wide has wall again beyond it. Wall at some distance to the
+			// left, and not wall at every distance to the right.
+			const double midX	  = (static_cast<double>(e.from.x) + static_cast<double>(e.to.x)) * 0.5;
+			const double midY	  = (static_cast<double>(e.from.y) + static_cast<double>(e.to.y)) * 0.5;
+			bool		 wallLeft  = false;
+			bool		 wallRight = true;
+			for (const double reach : {0.5, 1.0, 2.0, 3.0}) {
+				wallLeft  = wallLeft || insideAnyRingAt(shape, midX - dy / span * reach, midY + dx / span * reach);
+				wallRight = wallRight && insideAnyRingAt(shape, midX + dy / span * reach, midY - dx / span * reach);
+			}
+			if (!wallLeft || wallRight) {
+				return "outline edge " + pointText(e.from) + "->" + pointText(e.to) + " is not boundary with the wall on its left";
+			}
+		}
+		const double tileArea  = totalAreaDoubled(shape) * 0.5;
+		const double perimeter = unionPerimeter(shape);
+		if (std::abs(area - tileArea) > perimeter * 1.0 + 10.0) {
+			return "outline encloses " + std::to_string(area) + " mm2, the rings cover " + std::to_string(tileArea);
+		}
+		if (std::abs(length - perimeter) > 0.002 * perimeter + 8.0) {
+			return "outline is " + std::to_string(length) + " mm long, the union's perimeter " + std::to_string(perimeter);
+		}
+		return "";
+	}
+
+	// A segment's spans tile its trimmed band: the solid ones are its pieces,
+	// exactly and in order; every span is a valid ring inside the band; in order
+	// along the segment they meet with no overlap or gap beyond rounding,
+	// neighbours sharing two corners exactly, from one trimmed end to the other;
+	// and each gap span covers the gap it is tagged with, every opened gap lying
+	// in some gap span.
+	std::string checkSpans(const WallSegment& seg, const std::vector<WallGap>& gaps, const Ring& band, const std::vector<Ring>& pieces,
+						   const std::vector<WallSpan>& spans) {
+		std::vector<Ring> solid;
+		for (const WallSpan& span : spans) {
+			if (span.gap == kSolidSpan) {
+				solid.push_back(span.ring);
+			}
+		}
+		if (solid != pieces) {
+			return "solid spans are not its pieces";
+		}
+
+		const double length = distanceBetween(seg.a, seg.b);
+		const double ux		= static_cast<double>(seg.b.x - seg.a.x) / length;
+		const double uy		= static_cast<double>(seg.b.y - seg.a.y) / length;
+		auto		 along	= [&](const Vec2i64& p) {
+			   return static_cast<double>(p.x - seg.a.x) * ux + static_cast<double>(p.y - seg.a.y) * uy;
+		};
+		auto across = [&](const Vec2i64& p) {
+			return static_cast<double>(p.y - seg.a.y) * ux - static_cast<double>(p.x - seg.a.x) * uy;
+		};
+		auto extent = [&](const Ring& ring) {
+			std::pair<double, double> range{1e18, -1e18};
+			for (const Vec2i64& p : ring) {
+				range.first	 = std::min(range.first, along(p));
+				range.second = std::max(range.second, along(p));
+			}
+			return range;
+		};
+
+		struct Placed {
+			std::pair<double, double> range;
+			const WallSpan*			  span;
+		};
+		std::vector<Placed> placed;
+		double				area = 0.0;
+		for (const WallSpan& span : spans) {
+			const Ring& ring = span.ring;
+			if (ring.size() < 3 || windingOrder(ring) != Winding::CounterClockwise || !isSimple(ring).pass) {
+				return "has an invalid span";
+			}
+			for (const Vec2i64& p : ring) {
+				if (std::abs(across(p)) > static_cast<double>(seg.halfThicknessMm) + 1.5) {
+					return "span leaves its band";
+				}
+			}
+			placed.push_back({extent(ring), &span});
+			area += std::abs(signedAreaDoubled(ring).toDouble()) * 0.5;
+		}
+		if (placed.empty()) {
+			return "has no spans";
+		}
+		std::sort(placed.begin(), placed.end(), [](const Placed& first, const Placed& second) { return first.range < second.range; });
+		const std::pair<double, double> bandRange = extent(band);
+		if (std::abs(placed.front().range.first - bandRange.first) > 1.5 || std::abs(placed.back().range.second - bandRange.second) > 1.5) {
+			return "spans do not reach both trimmed ends";
+		}
+		for (std::size_t k = 1; k < placed.size(); ++k) {
+			if (std::abs(placed[k].range.first - placed[k - 1].range.second) > 2.0) {
+				return "spans overlap or leave a gap";
+			}
+			const Ring& previous = placed[k - 1].span->ring;
+			const auto	shared	 = std::count_if(placed[k].span->ring.begin(), placed[k].span->ring.end(), [&](const Vec2i64& p) {
+				   return std::find(previous.begin(), previous.end(), p) != previous.end();
+			});
+			if (shared < 2) {
+				return "neighbouring spans do not share their corners";
+			}
+		}
+		const double bandArea = std::abs(signedAreaDoubled(band).toDouble()) * 0.5;
+		if (std::abs(area - bandArea) > 2.0 * static_cast<double>(spans.size()) * static_cast<double>(seg.halfThicknessMm)) {
+			return "spans cover " + std::to_string(area) + " mm2 of a " + std::to_string(bandArea) + " mm2 band";
+		}
+
+		for (const Placed& entry : placed) {
+			if (entry.span->gap == kSolidSpan) {
+				continue;
+			}
+			if (entry.span->gap >= gaps.size()) {
+				return "gap span tagged with no gap";
+			}
+			const WallGap& gap	   = gaps[entry.span->gap];
+			const double   overlap = std::min(entry.range.second, static_cast<double>(gap.toMm)) -
+									 std::max(entry.range.first, static_cast<double>(gap.fromMm));
+			if (overlap <= 0.0) {
+				return "gap span does not cover its gap";
+			}
+		}
+		for (const WallGap& gap : gaps) {
+			const double from = std::max(bandRange.first, static_cast<double>(gap.fromMm));
+			const double to	  = std::min(bandRange.second, static_cast<double>(gap.toMm));
+			// A gap opening under 6 mm of the band is ignored; the band's rounded
+			// corners put its ends up to a millimetre or so off the trims.
+			if (to - from < 7.5) {
+				continue;
+			}
+			const double middle	 = (from + to) * 0.5;
+			const bool	 covered = std::any_of(placed.begin(), placed.end(), [&](const Placed& entry) {
+				  return entry.span->gap != kSolidSpan && entry.range.first <= middle && middle <= entry.range.second;
+			});
+			if (!covered) {
+				return "an opened gap lies in no gap span";
+			}
+		}
+		return "";
+	}
+
+	// (d): each segment's pieces are its trimmed band less its gaps: inside the
+	// band, clear of every gap, apart from each other, and covering the rest;
+	// and its spans tile the band (checkSpans).
+	std::string checkPieces(const std::vector<WallSegment>& segments, const Gaps& gaps, const Resolved& wb) {
+		const std::vector<std::vector<WallSpan>> spansOfSegments = wallSpans(segments, gaps, wb);
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			const WallSegment& seg	  = segments[i];
+			const double	   length = distanceBetween(seg.a, seg.b);
+			const double	   ux	  = static_cast<double>(seg.b.x - seg.a.x) / length;
+			const double	   uy	  = static_cast<double>(seg.b.y - seg.a.y) / length;
+			auto			   along  = [&](const Vec2i64& p) {
+				  return static_cast<double>(p.x - seg.a.x) * ux + static_cast<double>(p.y - seg.a.y) * uy;
+			};
+			auto across = [&](const Vec2i64& p) {
+				return static_cast<double>(p.y - seg.a.y) * ux - static_cast<double>(p.x - seg.a.x) * uy;
+			};
+			double bandFrom = 1e18;
+			double bandTo	= -1e18;
+			for (const Vec2i64& p : wb.bands[i]) {
+				bandFrom = std::min(bandFrom, along(p));
+				bandTo	 = std::max(bandTo, along(p));
+			}
+
+			std::vector<std::pair<double, double>> open;
+			for (const WallGap& gap : gapsOf(gaps, i)) {
+				const double from = std::max(bandFrom, static_cast<double>(gap.fromMm));
+				const double to	  = std::min(bandTo, static_cast<double>(gap.toMm));
+				if (to - from >= 6.5) { // a smaller opening is ignored, give or take rounding
+					open.emplace_back(from, to);
+				}
+			}
+			std::sort(open.begin(), open.end());
+			double openLength = 0.0;
+			double reached	  = bandFrom;
+			for (const auto& [from, to] : open) {
+				openLength += std::max(0.0, to - std::max(from, reached));
+				reached = std::max(reached, to);
+			}
+
+			const double width = 2.0 * static_cast<double>(seg.halfThicknessMm);
+			std::vector<std::pair<double, double>> spans;
+			for (const Ring& piece : wb.pieces[i]) {
+				if (piece.size() < 3 || windingOrder(piece) != Winding::CounterClockwise || !isSimple(piece).pass) {
+					return "segment " + std::to_string(i) + " has an invalid piece";
+				}
+				double from = 1e18;
+				double to	= -1e18;
+				for (const Vec2i64& p : piece) {
+					from = std::min(from, along(p));
+					to	 = std::max(to, along(p));
+					if (std::abs(across(p)) > static_cast<double>(seg.halfThicknessMm) + 1.5) {
+						return "segment " + std::to_string(i) + " piece leaves its band";
+					}
+				}
+				if (from < bandFrom - 1.5 || to > bandTo + 1.5) {
+					return "segment " + std::to_string(i) + " piece runs past its trimmed band";
+				}
+				for (const auto& [gapFrom, gapTo] : open) {
+					if (std::min(to, gapTo) - std::max(from, gapFrom) > 2.0) {
+						return "segment " + std::to_string(i) + " piece covers a gap";
+					}
+				}
+				spans.emplace_back(from, to);
+			}
+			std::sort(spans.begin(), spans.end());
+			for (std::size_t k = 1; k < spans.size(); ++k) {
+				if (spans[k].first < spans[k - 1].second - 2.0) {
+					return "segment " + std::to_string(i) + " pieces overlap";
+				}
+			}
+			const double bandArea = std::abs(signedAreaDoubled(wb.bands[i]).toDouble()) * 0.5;
+			const double expected = bandArea * (bandTo - bandFrom - openLength) / (bandTo - bandFrom);
+			const double actual	  = totalAreaDoubled(wb.pieces[i]) * 0.5;
+			// Each end within rounding, and each gap may have swallowed a run under
+			// 6 mm on either side or been ignored at the threshold.
+			const double slack = 2.0 * static_cast<double>(wb.pieces[i].size() + 1) + 14.0 * static_cast<double>(gapsOf(gaps, i).size());
+			if (std::abs(actual - expected) > slack * width) {
+				return "segment " + std::to_string(i) + " pieces cover " + std::to_string(actual) + " mm2, expected " +
+					   std::to_string(expected);
+			}
+
+			const std::string spanProblem = checkSpans(seg, gapsOf(gaps, i), wb.bands[i], wb.pieces[i], spansOfSegments[i]);
+			if (!spanProblem.empty()) {
+				return "segment " + std::to_string(i) + " " + spanProblem;
+			}
+		}
+		return "";
+	}
+
+	// Everything resolveWallBands returns, in a form that does not depend on the
+	// segments' order (indices mapped back through `original`) or on where a
+	// ring's vertex list starts.
+	Ring fromLowest(Ring ring) {
+		std::rotate(ring.begin(), std::min_element(ring.begin(), ring.end()), ring.end());
+		return ring;
+	}
+
+	struct Canonical {
+		std::vector<Ring>										   bands;
+		std::vector<std::vector<Ring>>							   pieces;
+		std::vector<std::pair<std::vector<std::size_t>, Ring>>	   junctions;
+		std::vector<std::tuple<Vec2i64, Vec2i64, std::size_t>> outline;
+
+		bool operator==(const Canonical&) const = default;
+	};
+
+	Canonical canonical(const Resolved& wb, const std::vector<std::size_t>& original) {
+		Canonical result;
+		result.bands.resize(wb.bands.size());
+		result.pieces.resize(wb.bands.size());
+		for (std::size_t i = 0; i < wb.bands.size(); ++i) {
+			result.bands[original[i]] = fromLowest(wb.bands[i]);
+			for (const Ring& piece : wb.pieces[i]) {
+				result.pieces[original[i]].push_back(fromLowest(piece));
+			}
+			std::sort(result.pieces[original[i]].begin(), result.pieces[original[i]].end());
+		}
+		for (std::size_t j = 0; j < wb.junctions.size(); ++j) {
+			std::vector<std::size_t> incident;
+			for (const std::size_t i : wb.junctionSegments[j]) {
+				incident.push_back(original[i]);
+			}
+			std::sort(incident.begin(), incident.end());
+			result.junctions.emplace_back(incident, fromLowest(wb.junctions[j]));
+		}
+		std::sort(result.junctions.begin(), result.junctions.end());
+		for (const OutlineEdge& e : wb.outline) {
+			result.outline.emplace_back(e.from, e.to, original[e.index]);
+		}
+		std::sort(result.outline.begin(), result.outline.end());
+		return result;
+	}
+
+	// A segment's gaps measured from its other end.
+	std::vector<WallGap> reversedGaps(const WallSegment& seg, const std::vector<WallGap>& gaps) {
+		const double		 length = distanceBetween(seg.a, seg.b);
+		std::vector<WallGap> flipped;
+		for (const WallGap& gap : gaps) {
+			const std::int64_t from = std::llround(length - static_cast<double>(gap.toMm));
+			const std::int64_t to	= std::llround(length - static_cast<double>(gap.fromMm));
+			flipped.push_back({from, to});
+		}
+		return flipped;
+	}
+
+	// (e): reversing every segment and listing them in another order gives the
+	// same geometry, exactly.
+	std::string checkInvariance(const std::vector<WallSegment>& segments, const Gaps& gaps, const Resolved& wb,
+								std::mt19937& rng) {
+		std::vector<std::size_t> original(segments.size());
+		for (std::size_t i = 0; i < original.size(); ++i) {
+			original[i] = i;
+		}
+		std::shuffle(original.begin(), original.end(), rng);
+		std::vector<WallSegment> shuffled;
+		Gaps					 shuffledGaps;
+		for (std::size_t i = 0; i < original.size(); ++i) {
+			const WallSegment&			seg		  = segments[original[i]];
+			const std::vector<WallGap>& segGaps = gapsOf(gaps, original[i]);
+			shuffled.push_back(i % 2 == 0 ? WallSegment{seg.b, seg.a, seg.halfThicknessMm} : seg);
+			shuffledGaps.push_back(i % 2 == 0 ? reversedGaps(seg, segGaps) : segGaps);
+		}
+		std::vector<std::size_t> identity(segments.size());
+		for (std::size_t i = 0; i < identity.size(); ++i) {
+			identity[i] = i;
+		}
+		const Resolved other = resolveDrawn(shuffled, kDefaultMiterLimit, shuffledGaps);
+		if (other.status != wb.status) {
+			return "reordered input resolves with another status";
+		}
+		if (!(canonical(other, original) == canonical(wb, identity))) {
+			return "reordered input resolves differently";
+		}
+		return "";
+	}
+
+	struct Sweep {
+		int						 inputs = 0;
+		int						 failed = 0;
+		std::vector<std::string> examples;
+
+		void check(const std::vector<WallSegment>& segments, const Gaps& gaps, const std::string& problem) {
+			++inputs;
+			if (!problem.empty()) {
+				++failed;
+				if (examples.size() < 5) {
+					examples.push_back(problem + " | " + describe(segments, gaps));
+				}
+			}
+		}
+
+		std::string report() const {
+			std::string text = std::to_string(failed) + " of " + std::to_string(inputs) + " inputs failed";
+			for (const std::string& example : examples) {
+				text += "\n  " + example;
+			}
+			return text;
+		}
+	};
+
+	std::string checkAll(const std::vector<WallSegment>& segments, const Gaps& gaps, std::mt19937& rng) {
+		const Resolved wb = resolveDrawn(segments, kDefaultMiterLimit, gaps);
+		std::string		problem = checkTiles(segments, wb, kDefaultMiterLimit);
+		if (problem.empty()) {
+			problem = checkPieces(segments, gaps, wb);
+		}
+		if (problem.empty()) {
+			problem = checkOutline(wb);
+		}
+		if (problem.empty()) {
+			problem = checkInvariance(segments, gaps, wb, rng);
+		}
+		return problem;
+	}
+
+	// Random arms at least 30 degrees apart, a quarter of them snapped to 15
+	// degree steps the way the editor's angle snap places them.
+	std::vector<Arm> randomArms(int degree, bool snapped, std::mt19937& rng) {
+		std::uniform_real_distribution<double> angle(0.0, 360.0);
+		std::vector<Arm>					   arms;
+		for (int guard = 0; static_cast<int>(arms.size()) < degree && guard < 2000; ++guard) {
+			double candidate = angle(rng);
+			if (snapped) {
+				candidate = std::round(candidate / 15.0) * 15.0;
+			}
+			bool clear = true;
+			for (const Arm& arm : arms) {
+				const double apart = std::fmod(std::abs(arm.degrees - candidate), 360.0);
+				clear			   = clear && std::min(apart, 360.0 - apart) >= 30.0;
+			}
+			if (clear) {
+				const std::int64_t half	   = kHalves[rng() % 3];
+				const bool		   outward = rng() % 2 == 0;
+				arms.push_back({candidate, half, outward});
+			}
+		}
+		return arms;
+	}
+
+} // namespace
+
+TEST(WallProperties, DegreeTwoAcrossTheLegalRange) {
+	// Every 2.5 degrees from 30 to 330 for each pairing of halves, turned off the
+	// axes by a varying amount so the rounding differs from corner to corner.
+	std::mt19937 rng(7);
+	Sweep		 sweep;
+	int			 index = 0;
+	for (double corner = 30.0; corner <= 330.0; corner += 0.5) {
+		for (const std::int64_t first : kHalves) {
+			for (const std::int64_t second : kHalves) {
+				const double base = static_cast<double>(index % 12) * 7.5 + static_cast<double>(index % 5) * 0.3;
+				const bool	 flip = index % 2 == 1;
+				++index;
+				const std::vector<WallSegment> segments = star({{base, first, true}, {base + corner, second, !flip}});
+				sweep.check(segments, {}, checkAll(segments, {}, rng));
+			}
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallProperties, NearStraightJoinsResolveLocally) {
+	// The join that used to reject a whole wall graph: a few degrees either side
+	// of straight, most of all with two thicknesses. Accepted, tiled, and inside
+	// the miter bound at every offset down to a tenth of a degree.
+	std::mt19937 rng(11);
+	Sweep		 sweep;
+	for (const double offset : {0.1, 1.0, 3.0, 5.0, 10.0}) {
+		for (const double side : {-1.0, 1.0}) {
+			for (const double base : {0.0, 17.0, 45.0, 103.0}) {
+				for (const std::int64_t first : kHalves) {
+					for (const std::int64_t second : kHalves) {
+						for (const bool flip : {false, true}) {
+							const std::vector<WallSegment> segments =
+								star({{base, first, true}, {base + 180.0 + side * offset, second, !flip}});
+							sweep.check(segments, {}, checkAll(segments, {}, rng));
+						}
+					}
+				}
+			}
+		}
+	}
+	// A T whose through-run bends a few degrees between two thicknesses.
+	for (const double offset : {-5.0, -1.0, -0.1, 0.1, 1.0, 5.0}) {
+		for (const double stem : {60.0, 90.0, 135.0, 270.0}) {
+			const std::vector<WallSegment> segments = star({{0.0, 75, true}, {180.0 + offset, 150, false}, {stem, 100, true}});
+			sweep.check(segments, {}, checkAll(segments, {}, rng));
+		}
+	}
+	// Two arms of one thickness 0.03 degrees off straight in a junction of five:
+	// their faces nearly coincide, so the rounded apex lands metres off.
+	const std::vector<WallSegment> equalPair = {
+		{{826, -1821}, {0, 0}, 75},	  {{1954, 425}, {0, 0}, 150},	 {{0, 0}, {-1252, -1560}, 75},
+		{{1775, -921}, {0, 0}, 150}, {{1251, 1560}, {0, 0}, 75},
+	};
+	sweep.check(equalPair, {}, checkAll(equalPair, {}, rng));
+	// A straight run of two thicknesses whose thicker arm is cut back by a third:
+	// the thick face's point at the vertex and the thin band's corner round onto
+	// one ray from it.
+	const std::vector<WallSegment> oneRay = {
+		{polar(296.25, 2000.0), {0, 0}, 100},
+		{{0, 0}, polar(116.25, 500.0), 150},
+		{{0, 0}, polar(86.25, 2000.0), 75},
+	};
+	sweep.check(oneRay, {}, checkAll(oneRay, {}, rng));
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallProperties, HigherDegreeJunctions) {
+	std::mt19937 rng(42);
+	Sweep		 sweep;
+	for (int degree = 3; degree <= 6; ++degree) {
+		for (int trial = 0; trial < 1000; ++trial) {
+			const std::vector<Arm> arms = randomArms(degree, trial % 4 == 0, rng);
+			if (static_cast<int>(arms.size()) < degree) {
+				continue;
+			}
+			const std::vector<WallSegment> segments = star(arms);
+			sweep.check(segments, {}, checkAll(segments, {}, rng));
+			// The same junction with an opening somewhere along each arm, at times
+			// reaching into the junction's trim.
+			Gaps gaps;
+			for (std::size_t i = 0; i < segments.size(); ++i) {
+				const std::int64_t from	 = static_cast<std::int64_t>(rng() % 1600);
+				const std::int64_t width = 300 + static_cast<std::int64_t>(rng() % 600);
+				gaps.push_back({{from, from + width}});
+			}
+			sweep.check(segments, gaps, checkAll(segments, gaps, rng));
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallProperties, GapsCutPiecesAndKeepTheOutlineClosed) {
+	// Gaps on the first arm of corners, tees and crosses: inside the band,
+	// touching its trimmed end, reaching into the trim (a sharp corner trims
+	// further than an opening's margin), past the free end, overlapping each
+	// other, and covering the whole segment. The other arms carry a gap too, so
+	// a junction can lose more than one band.
+	std::mt19937 rng(5);
+	Sweep		 sweep;
+	const std::vector<std::vector<Arm>> shapes = {
+		{{0.0, 150, true}, {30.0, 150, false}},
+		{{0.0, 75, false}, {37.5, 150, true}},
+		{{0.0, 100, true}, {90.0, 100, true}},
+		{{0.0, 75, true}, {135.0, 150, false}},
+		{{0.0, 75, true}, {177.0, 150, true}},
+		{{0.0, 150, true}, {180.0, 75, true}},
+		{{0.0, 100, true}, {90.0, 150, false}, {180.0, 100, true}},
+		{{0.0, 75, false}, {120.0, 100, true}, {240.0, 150, true}},
+		{{0.0, 100, true}, {90.0, 75, true}, {180.0, 150, false}, {270.0, 100, true}},
+	};
+	for (const std::vector<Arm>& arms : shapes) {
+		const std::vector<WallSegment> plain = star(arms);
+		const WallBands				   bands = resolveWallBands(plain, kDefaultMiterLimit);
+		ASSERT_EQ(bands.status, OffsetStatus::Ok) << describe(plain, {});
+		// Where the first arm's band starts and ends, measured from its `a`.
+		const WallSegment& first  = plain[0];
+		const double	   length = distanceBetween(first.a, first.b);
+		double			   from	  = 1e18;
+		double			   to	  = -1e18;
+		for (const Vec2i64& p : bands.bands[0]) {
+			const double along = (static_cast<double>(p.x - first.a.x) * static_cast<double>(first.b.x - first.a.x) +
+								  static_cast<double>(p.y - first.a.y) * static_cast<double>(first.b.y - first.a.y)) /
+								 length;
+			from = std::min(from, along);
+			to	 = std::max(to, along);
+		}
+		const std::int64_t start = std::llround(from);
+		const std::int64_t end	 = std::llround(to);
+		const std::int64_t whole = std::llround(length);
+		const std::vector<std::vector<WallGap>> families = {
+			{{start + 400, start + 1300}},
+			{{start, start + 600}},
+			{{end - 700, end}},
+			{{std::max<std::int64_t>(0, start / 3), start + 500}},
+			{{end - 500, whole}},
+			{{end - 500, whole + 300}, {-300, start + 100}},
+			{{start + 300, start + 900}, {start + 800, start + 1200}, {start + 1100, start + 1150}},
+			{{start + 10, end - 10}},
+			{{start + 4, end - 4}},
+			{{-10, whole + 10}},
+		};
+		for (const std::vector<WallGap>& family : families) {
+			Gaps gaps(plain.size());
+			gaps[0] = family;
+			sweep.check(plain, gaps, checkAll(plain, gaps, rng));
+			for (std::size_t i = 1; i < plain.size(); ++i) {
+				gaps[i] = {{900, 1500}};
+			}
+			sweep.check(plain, gaps, checkAll(plain, gaps, rng));
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallProperties, ClosedRoomOutlinesOutsideAndInside) {
+	// A closed room is an annulus: one loop counter-clockwise round the outside,
+	// one clockwise round the inside, and a door makes it one loop again.
+	const std::vector<WallSegment> room = {
+		{{0, 0}, {4000, 0}, 100},
+		{{4000, 0}, {4000, 3000}, 150},
+		{{4000, 3000}, {0, 3000}, 100},
+		{{0, 3000}, {0, 0}, 75},
+	};
+	std::mt19937 rng(3);
+	EXPECT_EQ(checkAll(room, {}, rng), "");
+	const Resolved closed = resolveDrawn(room, kDefaultMiterLimit);
+	ASSERT_EQ(closed.status, OffsetStatus::Ok);
+	std::string			problem;
+	std::vector<double> loopAreas;
+	for (const std::vector<OutlineEdge>& loop : splitLoops(closed.outline, problem)) {
+		double area = 0.0;
+		for (const OutlineEdge& e : loop) {
+			area += cross(e.from, e.to).toDouble() * 0.5;
+		}
+		loopAreas.push_back(area);
+	}
+	EXPECT_EQ(problem, "");
+	ASSERT_EQ(loopAreas.size(), 2u);
+	EXPECT_EQ(std::count_if(loopAreas.begin(), loopAreas.end(), [](double a) { return a > 0.0; }), 1);
+	EXPECT_EQ(std::count_if(loopAreas.begin(), loopAreas.end(), [](double a) { return a < 0.0; }), 1);
+
+	EXPECT_EQ(checkAll(room, {{{1500, 2400}}, {}, {}, {}}, rng), "");
+}
+
+TEST(WallProperties, ShortBandBetweenTwoCornersHasNoSeam) {
+	// Two corners that leave a band of a few millimetres between them: its far
+	// corners lie within the snap tolerance of the near ones, and the outline
+	// must still go round the wall, not across it.
+	const std::vector<WallSegment> segments = {
+		{{1554, 1259}, {0, 0}, 150},
+		{{0, 0}, {656, 0}, 75},
+		{{656, 0}, {-876, -1286}, 150},
+	};
+	std::mt19937 rng(13);
+	EXPECT_EQ(checkAll(segments, {}, rng), "");
+
+	// Z-shaped chains, the middle band leaving 1 to 12 mm between its trims. The
+	// trims depend only on the corners, not on the middle segment's length. A
+	// 1 mm band simplifies to a triangle whose vertices depend on which end of
+	// the segment is `a`, so at 1 mm the order and direction check is skipped.
+	auto checkShortBand = [&](const std::vector<WallSegment>& segments, std::int64_t left) {
+		if (left > 1) {
+			return checkAll(segments, {}, rng);
+		}
+		const Resolved wb	   = resolveDrawn(segments, kDefaultMiterLimit);
+		std::string	   problem = checkTiles(segments, wb, kDefaultMiterLimit);
+		return problem.empty() ? checkOutline(wb) : problem;
+	};
+	Sweep sweep;
+	for (int first = 30; first <= 75; first += 5) {
+		for (const int bend : {1, 2, 3, 5, 9}) {
+			for (const std::int64_t middleHalf : kHalves) {
+				for (const std::int64_t outerHalf : {std::int64_t{75}, std::int64_t{150}}) {
+					auto chain = [&](std::int64_t length) {
+						const Vec2i64 end{length, 0};
+						return std::vector<WallSegment>{{polar(first, 2000.0), {0, 0}, outerHalf},
+														{{0, 0}, end, middleHalf},
+														{end, end + polar(180.0 + first + bend, 2000.0), outerHalf}};
+					};
+					const WallBands probe = resolveWallBands(chain(2000), kDefaultMiterLimit);
+					ASSERT_EQ(probe.status, OffsetStatus::Ok);
+					const std::int64_t trims = probe.trimAtA[1] + probe.trimAtB[1];
+					for (std::int64_t left = 1; left <= 12; ++left) {
+						const std::vector<WallSegment> segments = chain(trims + left);
+						sweep.check(segments, {}, checkShortBand(segments, left));
+					}
+				}
+			}
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallProperties, NearStraightMixedJoinIsAShortStep) {
+	// Three degrees off straight from half 75 into half 150: the thin band is cut
+	// back just clear of the thick band's cap (a few mm), the thick band keeps its
+	// full length, and the polygon between them is the step.
+	const std::vector<WallSegment> segments = star({{0.0, 75, true}, {183.0, 150, true}});
+	const WallBands				   wb		= resolveWallBands(segments, kDefaultMiterLimit);
+	ASSERT_EQ(wb.status, OffsetStatus::Ok);
+	ASSERT_EQ(wb.junctions.size(), 1u);
+	for (const Vec2i64& p : wb.junctions[0]) {
+		EXPECT_LE(distanceBetween(p, {0, 0}), 152.0);
+	}
+	double thinStart = 1e18;
+	for (const Vec2i64& p : wb.bands[0]) {
+		thinStart = std::min(thinStart, static_cast<double>(p.x));
+	}
+	EXPECT_GT(thinStart, 0.0);
+	EXPECT_LT(thinStart, 10.0);
+	for (const Vec2i64& p : wb.bands[1]) {
+		EXPECT_GE(distanceBetween(p, {0, 0}), 149.0); // the thick band is not cut back
+	}
+}
+
+namespace {
+
+	// The construction validator's shortest wall (constraints.xml, minSegmentLengthMeters).
+	constexpr double kMinWallLengthMm = 500.0;
+
+	// checkAll, except that where a band is left a millimetre or so long the
+	// order and direction check is skipped: such a band simplifies to a triangle
+	// whose vertices depend on which end of the segment is `a`.
+	std::string checkJoin(const std::vector<WallSegment>& segments, std::mt19937& rng) {
+		const Resolved wb = resolveDrawn(segments, kDefaultMiterLimit);
+		if (wb.status == OffsetStatus::Ok) {
+			for (std::size_t i = 0; i < segments.size(); ++i) {
+				const double left = distanceBetween(segments[i].a, segments[i].b) - static_cast<double>(wb.trimAtA[i] + wb.trimAtB[i]);
+				if (left < 2.0) {
+					std::string problem = checkTiles(segments, wb, kDefaultMiterLimit);
+					if (problem.empty()) {
+						problem = checkPieces(segments, {}, wb);
+					}
+					return problem.empty() ? checkOutline(wb) : problem;
+				}
+			}
+		}
+		return checkAll(segments, {}, rng);
+	}
+
+} // namespace
+
+TEST(WallProperties, ShortNearStraightJoinsResolve) {
+	// Two walls of the shortest legal length a few degrees off straight, every
+	// ordered pair of thicknesses. Just inside the step cut a miter trims about as
+	// far as the miter bound, longer than such a wall, which rejected the whole
+	// wall graph.
+	std::mt19937 rng(17);
+	Sweep		 sweep;
+	int			 index = 0;
+	for (int tenths = 30; tenths <= 120; ++tenths) {
+		const double offset = static_cast<double>(tenths) / 10.0;
+		for (const double side : {-1.0, 1.0}) {
+			for (const std::int64_t first : kHalves) {
+				for (const std::int64_t second : kHalves) {
+					const double base = static_cast<double>(index % 12) * 7.5 + static_cast<double>(index % 5) * 0.3;
+					const bool	 flip = index % 2 == 1;
+					++index;
+					const std::vector<WallSegment> segments =
+						star({{base, first, true}, {base + 180.0 + side * offset, second, !flip}}, kMinWallLengthMm);
+					sweep.check(segments, {}, checkJoin(segments, rng));
+				}
+			}
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallProperties, ShortWallJoiningOtherThicknessAtBothEndsResolves) {
+	// A wall of 500 or 600 mm between two long walls of other thicknesses, each join 3 to 20 degrees off
+	// straight in 1 degree steps, as a Z and as a C. The trims from both ends add up, so such a wall fails without the retry
+	// up to about 18.5 degrees, further than one with a single such join.
+	std::mt19937 rng(19);
+	Sweep		 sweep;
+	for (const double middle : {kMinWallLengthMm, 600.0}) {
+		const Vec2i64 end{std::llround(middle), 0};
+		for (const std::int64_t inner : kHalves) {
+			for (const std::int64_t before : kHalves) {
+				for (const std::int64_t after : kHalves) {
+					if (before == inner || after == inner) {
+						continue;
+					}
+					for (const double side : {-1.0, 1.0}) {
+						for (int beforeHalves = 6; beforeHalves <= 40; beforeHalves += 2) {
+							for (int afterHalves = 6; afterHalves <= 40; afterHalves += 2) {
+								const double beforeBend = static_cast<double>(beforeHalves) / 2.0;
+								const double afterBend	= side * static_cast<double>(afterHalves) / 2.0;
+								const std::vector<WallSegment> segments = {{polar(180.0 + beforeBend, 2000.0), {0, 0}, before},
+																		   {{0, 0}, end, inner},
+																		   {end, end + polar(afterBend, 2000.0), after}};
+								sweep.check(segments, {}, checkJoin(segments, rng));
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+// --- the near-straight retry against the resolution it replaced --------------
+
+namespace {
+	namespace reference {
+
+		// resolveJunction and resolveWallBands, with the helpers they used, as they
+		// were before resolveWallBands retried failed near-straight joins as steps:
+		// the same code less its comments, the one call to resolveJunction
+		// qualified. Every input they accept has to resolve exactly as before.
+
+		Vec2i64 leftNormalUnscaled(const Vec2i64& dir) {
+			return {-dir.y, dir.x};
+		}
+
+		double length(const Vec2i64& v) {
+			return std::sqrt(static_cast<double>(v.x) * static_cast<double>(v.x) + static_cast<double>(v.y) * static_cast<double>(v.y));
+		}
+
+		Vec2i64 roundVec(double x, double y) {
+			return {std::llround(x), std::llround(y)};
+		}
+
+		Vec2i64 offsetPoint(const Vec2i64& vertex, const Vec2i64& dir, double signedHalf) {
+			const double len = length(dir);
+			if (len == 0.0) {
+				return vertex;
+			}
+			const Vec2i64 n = leftNormalUnscaled(dir);
+			const double  s = signedHalf / len;
+			return roundVec(static_cast<double>(vertex.x) + static_cast<double>(n.x) * s,
+							static_cast<double>(vertex.y) + static_cast<double>(n.y) * s);
+		}
+
+		Vec2i64 advance(const Vec2i64& from, const Vec2i64& dir, double dist) {
+			const double len = length(dir);
+			if (len == 0.0) {
+				return from;
+			}
+			const double s = dist / len;
+			return roundVec(static_cast<double>(from.x) + static_cast<double>(dir.x) * s,
+							static_cast<double>(from.y) + static_cast<double>(dir.y) * s);
+		}
+
+		bool lineIntersectParam(const Vec2i64& p0, const Vec2i64& d0, const Vec2i64& p1, const Vec2i64& d1, double& t) {
+			const Int128 denom = cross(d0, d1);
+			if (denom.sign() == 0) {
+				return false;
+			}
+			const Vec2i64 w		= p1 - p0;
+			const Int128  numer = cross(w, d1);
+			t					= numer.toDouble() / denom.toDouble();
+			return true;
+		}
+
+		JunctionResolution resolveJunction(const Vec2i64& vertex, const std::vector<IncidentSegment>& incidents, double miterLimit) {
+			JunctionResolution result;
+
+			const std::size_t degree = incidents.size();
+			for (const IncidentSegment& s : incidents) {
+				if (s.direction == vertex) {
+					result.status = OffsetStatus::ZeroLengthSegment;
+					return result;
+				}
+			}
+
+			if (degree <= 1) {
+				for (const IncidentSegment& s : incidents) {
+					result.trims.push_back({s.index, 0});
+				}
+				return result;
+			}
+
+			std::vector<std::size_t> order(degree);
+			for (std::size_t i = 0; i < degree; ++i) {
+				order[i] = i;
+			}
+			std::sort(order.begin(), order.end(), [&](std::size_t l, std::size_t r) {
+				const Vec2i64 dl = incidents[l].direction - vertex;
+				const Vec2i64 dr = incidents[r].direction - vertex;
+				if (angleLess(dl, dr)) {
+					return true;
+				}
+				if (angleLess(dr, dl)) {
+					return false;
+				}
+				return l < r;
+			});
+
+			std::vector<std::int64_t> trimByLocal(degree, 0);
+
+			struct WedgeApex {
+				Vec2i64 point;
+				bool	beveled = false;
+			};
+			std::vector<WedgeApex>	 apex(degree);
+			std::vector<std::size_t> steps;
+			struct StepPoint {
+				Vec2i64		point;
+				std::size_t thin;
+				std::size_t thick;
+				double		thinFace;
+				double		thickFace;
+				bool		onThick;
+				bool		thickIsLeft;
+			};
+			std::vector<StepPoint> stepPoints;
+
+			for (std::size_t k = 0; k < degree; ++k) {
+				const std::size_t li = order[k];
+				const std::size_t ri = order[(k + 1) % degree];
+
+				const IncidentSegment& segL = incidents[li];
+				const IncidentSegment& segR = incidents[ri];
+				const Vec2i64		   dirL = segL.direction - vertex;
+				const Vec2i64		   dirR = segR.direction - vertex;
+				const double		   hL	= static_cast<double>(segL.halfThicknessMm);
+				const double		   hR	= static_cast<double>(segR.halfThicknessMm);
+
+				const Vec2i64 pL = offsetPoint(vertex, dirL, hL);
+				const Vec2i64 pR = offsetPoint(vertex, dirR, -hR);
+
+				double	tParam = 0.0;
+				Vec2i64 apexPoint;
+				bool	beveled = false;
+
+				if (lineIntersectParam(pL, dirL, pR, dirR, tParam)) {
+					apexPoint = roundVec(static_cast<double>(pL.x) + tParam * static_cast<double>(dirL.x),
+										 static_cast<double>(pL.y) + tParam * static_cast<double>(dirL.y));
+					const double miterLen	= length(apexPoint - vertex);
+					const double maxHalf	= std::max(hL, hR);
+					const double miterBound = miterLimit * maxHalf;
+					if (maxHalf > 0.0 && miterLen > miterBound) {
+						beveled = true;
+					}
+				} else {
+					beveled	  = false;
+					apexPoint = vertex;
+					apex[k]	  = {apexPoint, false};
+					continue;
+				}
+
+				if (beveled && dot(dirL, dirR).sign() < 0) {
+					apex[k] = {vertex, false};
+					steps.push_back(k);
+					continue;
+				}
+
+				apex[k] = {apexPoint, beveled};
+
+				auto projOnto = [&](const Vec2i64& dir) -> std::int64_t {
+					const double len = length(dir);
+					if (len == 0.0) {
+						return 0;
+					}
+					const double proj = (static_cast<double>(apexPoint.x - vertex.x) * static_cast<double>(dir.x) +
+										 static_cast<double>(apexPoint.y - vertex.y) * static_cast<double>(dir.y)) /
+										len;
+					return proj > 0.0 ? std::llround(proj) : 0;
+				};
+				trimByLocal[li] = std::max(trimByLocal[li], projOnto(dirL));
+				trimByLocal[ri] = std::max(trimByLocal[ri], projOnto(dirR));
+			}
+
+			for (const std::size_t k : steps) {
+				const std::size_t left		 = order[k];
+				const std::size_t right		 = order[(k + 1) % degree];
+				const bool		  leftIsThin = incidents[left].halfThicknessMm < incidents[right].halfThicknessMm;
+				const std::size_t thin		 = leftIsThin ? left : right;
+				const std::size_t thick		 = leftIsThin ? right : left;
+				const double	  thinFace	 = static_cast<double>(incidents[thin].halfThicknessMm) * (leftIsThin ? 1.0 : -1.0);
+				const double	  thickHalf	 = static_cast<double>(incidents[thick].halfThicknessMm);
+				const Vec2i64	  thinDir	 = incidents[thin].direction - vertex;
+				const Vec2i64	  thickDir	 = incidents[thick].direction - vertex;
+
+				const Vec2i64 thickBase	 = advance(vertex, thickDir, static_cast<double>(trimByLocal[thick]));
+				const Vec2i64 capRight	 = offsetPoint(thickBase, thickDir, -thickHalf);
+				const Vec2i64 capEdge	 = offsetPoint(thickBase, thickDir, thickHalf) - capRight;
+				const int	  thickSide	 = cross(capEdge, thickDir).sign();
+				auto		  clearOfCap = [&](std::int64_t trim) {
+					 const Vec2i64 corner = offsetPoint(advance(vertex, thinDir, static_cast<double>(trim)), thinDir, thinFace);
+					 return cross(capEdge, corner - capRight).sign() == -thickSide;
+				};
+
+				const double thickFace = leftIsThin ? -thickHalf : thickHalf;
+				if (trimByLocal[thick] > 0) {
+					stepPoints.push_back({offsetPoint(vertex, thickDir, thickFace), thin, thick, thinFace, thickFace, true, !leftIsThin});
+				} else if (clearOfCap(0)) {
+					stepPoints.push_back({offsetPoint(vertex, thinDir, thinFace), thin, thick, thinFace, thickFace, false, !leftIsThin});
+				}
+
+				std::int64_t trim = trimByLocal[thin];
+				if (clearOfCap(trim)) {
+					continue;
+				}
+				double tParam = 0.0;
+				if (lineIntersectParam(offsetPoint(vertex, thinDir, thinFace), thinDir, capRight, capEdge, tParam)) {
+					trim = std::max(trim, static_cast<std::int64_t>(std::ceil(tParam * length(thinDir))));
+				}
+				while (!clearOfCap(trim)) {
+					++trim;
+				}
+				trimByLocal[thin] = trim;
+			}
+
+			bool anyTrim = false;
+			for (std::int64_t t : trimByLocal) {
+				anyTrim = anyTrim || (t > 0);
+			}
+			if (degree == 2 && !anyTrim) {
+				for (std::size_t i = 0; i < degree; ++i) {
+					result.trims.push_back({incidents[i].index, 0});
+				}
+				return result;
+			}
+
+			std::vector<Vec2i64> pts;
+			pts.reserve(degree * 3);
+			for (std::size_t k = 0; k < degree; ++k) {
+				const std::size_t	   localIdx = order[k];
+				const IncidentSegment& seg		= incidents[localIdx];
+				const Vec2i64		   dir		= seg.direction - vertex;
+				const double		   h		= static_cast<double>(seg.halfThicknessMm);
+				const std::int64_t	   trim		= trimByLocal[localIdx];
+
+				const Vec2i64 base = advance(vertex, dir, static_cast<double>(trim));
+				pts.push_back(offsetPoint(base, dir, -h));
+				pts.push_back(offsetPoint(base, dir, h));
+
+				const WedgeApex& w = apex[k];
+				if (!w.beveled && !(w.point == vertex)) {
+					pts.push_back(w.point);
+				}
+			}
+			for (const StepPoint& step : stepPoints) {
+				pts.push_back(step.point);
+			}
+
+			std::sort(pts.begin(), pts.end(), [&](const Vec2i64& l, const Vec2i64& r) {
+				const Vec2i64 dl = l - vertex;
+				const Vec2i64 dr = r - vertex;
+				if (angleLess(dl, dr)) {
+					return true;
+				}
+				if (angleLess(dr, dl)) {
+					return false;
+				}
+				const Int128 distL = dot(dl, dl);
+				const Int128 distR = dot(dr, dr);
+				if (distL != distR) {
+					return distL < distR;
+				}
+				return l < r;
+			});
+			Ring poly;
+			poly.reserve(pts.size());
+			for (const Vec2i64& p : pts) {
+				if (poly.empty() || !(poly.back() == p)) {
+					poly.push_back(p);
+				}
+			}
+			if (poly.size() >= 2 && poly.front() == poly.back()) {
+				poly.pop_back();
+			}
+
+			for (const StepPoint& step : stepPoints) {
+				auto cornerOf = [&](std::size_t local, double face) {
+					const Vec2i64 dir = incidents[local].direction - vertex;
+					return offsetPoint(advance(vertex, dir, static_cast<double>(trimByLocal[local])), dir, face);
+				};
+				const Vec2i64	  thickPoint = step.onThick ? step.point : cornerOf(step.thick, step.thickFace);
+				const Vec2i64	  thinPoint	 = step.onThick ? cornerOf(step.thin, step.thinFace) : step.point;
+				const auto		  thickAt	 = std::find(poly.begin(), poly.end(), thickPoint);
+				const auto		  thinAt	 = std::find(poly.begin(), poly.end(), thinPoint);
+				const std::size_t n			 = poly.size();
+				if (thickAt == poly.end() || thinAt == poly.end() || thickAt == thinAt ||
+					cross(thickPoint - vertex, thinPoint - vertex).sign() != 0 ||
+					dot(thickPoint - vertex, thinPoint - vertex).sign() <= 0) {
+					continue;
+				}
+				const std::size_t first	 = static_cast<std::size_t>((step.thickIsLeft ? thinAt : thickAt) - poly.begin());
+				const std::size_t second = static_cast<std::size_t>((step.thickIsLeft ? thickAt : thinAt) - poly.begin());
+				if ((first + 1) % n == second) {
+					std::swap(poly[first], poly[second]);
+				}
+			}
+
+			result.polygon = poly;
+			for (std::size_t i = 0; i < degree; ++i) {
+				result.trims.push_back({incidents[i].index, trimByLocal[i]});
+			}
+			return result;
+		}
+
+		OffsetStatus validateAndOrient(Ring& ring) {
+			if (ring.size() < 3) {
+				return OffsetStatus::DegenerateRing;
+			}
+			if (signedAreaDoubled(ring).sign() == 0) {
+				return OffsetStatus::DegenerateRing;
+			}
+			ensureCounterClockwise(ring);
+			if (!isSimple(ring).pass) {
+				return OffsetStatus::NonSimpleRing;
+			}
+			return OffsetStatus::Ok;
+		}
+
+		WallBands resolveWallBands(const std::vector<WallSegment>& segments, double miterLimit) {
+			WallBands		  result;
+			const std::size_t segCount = segments.size();
+			result.bands.resize(segCount);
+
+			for (const WallSegment& s : segments) {
+				if (s.a == s.b) {
+					result.status = OffsetStatus::ZeroLengthSegment;
+					return result;
+				}
+			}
+
+			struct Incidence {
+				std::size_t segIndex;
+				bool		atA;
+			};
+			std::map<Vec2i64, std::vector<Incidence>> byVertex;
+			for (std::size_t i = 0; i < segCount; ++i) {
+				byVertex[segments[i].a].push_back({i, true});
+				byVertex[segments[i].b].push_back({i, false});
+			}
+
+			std::vector<std::int64_t> trimA(segCount, 0);
+			std::vector<std::int64_t> trimB(segCount, 0);
+
+			for (const auto& [vertex, incidences] : byVertex) {
+				std::vector<IncidentSegment> incidents;
+				incidents.reserve(incidences.size());
+				for (std::size_t k = 0; k < incidences.size(); ++k) {
+					const Incidence&   inc	 = incidences[k];
+					const WallSegment& seg	 = segments[inc.segIndex];
+					const Vec2i64	   other = inc.atA ? seg.b : seg.a;
+					incidents.push_back({other, seg.halfThicknessMm, k});
+				}
+
+				const JunctionResolution resolution = reference::resolveJunction(vertex, incidents, miterLimit);
+				if (resolution.status != OffsetStatus::Ok) {
+					result.status = resolution.status;
+					return result;
+				}
+
+				for (const JunctionTrim& t : resolution.trims) {
+					const Incidence& inc = incidences[t.index];
+					if (inc.atA) {
+						trimA[inc.segIndex] = std::max(trimA[inc.segIndex], t.trimMm);
+					} else {
+						trimB[inc.segIndex] = std::max(trimB[inc.segIndex], t.trimMm);
+					}
+				}
+
+				if (!resolution.polygon.empty()) {
+					Ring poly = resolution.polygon;
+					simplifyRing(poly, kDefaultSimplifyEpsMm);
+					const OffsetStatus st = validateAndOrient(poly);
+					if (st != OffsetStatus::Ok) {
+						result.status = st;
+						return result;
+					}
+					std::vector<std::size_t> incidentSegs;
+					incidentSegs.reserve(incidences.size());
+					for (const Incidence& inc : incidences) {
+						incidentSegs.push_back(inc.segIndex);
+					}
+					result.junctions.push_back(std::move(poly));
+					result.junctionSegments.push_back(std::move(incidentSegs));
+				}
+			}
+
+			for (std::size_t i = 0; i < segCount; ++i) {
+				const WallSegment& seg = segments[i];
+				Ring			   ring;
+				if (!trimmedBand(seg.a, seg.b, seg.halfThicknessMm, trimA[i], trimB[i], ring)) {
+					result.status = OffsetStatus::TrimOverrunsSegment;
+					return result;
+				}
+				simplifyRing(ring, kDefaultSimplifyEpsMm);
+				const OffsetStatus st = validateAndOrient(ring);
+				if (st != OffsetStatus::Ok) {
+					result.status = st;
+					return result;
+				}
+				result.bands[i] = std::move(ring);
+			}
+
+			result.trimAtA = std::move(trimA);
+			result.trimAtB = std::move(trimB);
+
+			return result;
+		}
+
+		constexpr std::int64_t kSeamToleranceMm = 3;
+
+		constexpr std::int64_t kMinPieceFeatureMm = 2 * kSeamToleranceMm;
+
+		std::vector<std::pair<std::int64_t, std::int64_t>> solidRuns(const WallSegment& segment, const std::vector<WallGap>& segmentGaps,
+																	  std::int64_t trimAtA, std::int64_t trimAtB) {
+			const double segmentLength = length(segment.b - segment.a);
+			const bool	 fromA		   = !(segment.b < segment.a);
+			auto		 fromOtherEnd  = [&](std::int64_t distance) -> std::int64_t {
+				  return static_cast<std::int64_t>(std::llround(segmentLength - static_cast<double>(distance)));
+			};
+
+			std::vector<WallGap> gaps;
+			gaps.reserve(segmentGaps.size());
+			for (const WallGap& gap : segmentGaps) {
+				gaps.push_back(fromA ? gap : WallGap{fromOtherEnd(gap.toMm), fromOtherEnd(gap.fromMm)});
+			}
+			std::sort(gaps.begin(), gaps.end(), [](const WallGap& l, const WallGap& r) {
+				return l.fromMm != r.fromMm ? l.fromMm < r.fromMm : l.toMm < r.toMm;
+			});
+
+			const std::int64_t trimNear = fromA ? trimAtA : trimAtB;
+			const std::int64_t trimFar	= fromA ? trimAtB : trimAtA;
+			const double	   bandEnd	= segmentLength - static_cast<double>(trimFar);
+			const double	   minimum	= static_cast<double>(kMinPieceFeatureMm);
+			auto			   longEnough = [&](std::int64_t cutNear, std::int64_t cutFar) {
+				  return segmentLength - static_cast<double>(cutNear + cutFar) >= minimum;
+			};
+
+			std::vector<std::pair<std::int64_t, std::int64_t>> runs;
+			std::int64_t										solidFrom = trimNear;
+			for (const WallGap& gap : gaps) {
+				const double opening = std::min(static_cast<double>(gap.toMm), bandEnd) -
+									   static_cast<double>(std::max(gap.fromMm, trimNear));
+				if (opening < minimum) {
+					continue;
+				}
+				if (gap.fromMm > solidFrom) {
+					const std::int64_t cutFar = std::max(trimFar, fromOtherEnd(gap.fromMm));
+					if (longEnough(solidFrom, cutFar)) {
+						runs.emplace_back(solidFrom, cutFar);
+					}
+				}
+				solidFrom = std::max(solidFrom, gap.toMm);
+			}
+			if (solidFrom == trimNear || longEnough(solidFrom, trimFar)) {
+				runs.emplace_back(solidFrom, trimFar);
+			}
+			if (!fromA) {
+				for (auto& [cutNear, cutFar] : runs) {
+					std::swap(cutNear, cutFar);
+				}
+			}
+			return runs;
+		}
+
+		struct OutlineTile {
+			Ring							  points;
+			std::vector<std::size_t>		  edgeSegment;
+			std::vector<std::vector<Vec2i64>> splits;
+		};
+
+		void addCornersAt(std::vector<std::pair<std::size_t, std::size_t>>& corners, const Ring& piece, std::size_t tile,
+						  const Vec2i64& vertex, const Vec2i64& direction) {
+			std::vector<Int128> reach;
+			reach.reserve(piece.size());
+			for (const Vec2i64& point : piece) {
+				reach.push_back(dot(point - vertex, direction));
+			}
+			const Int128 middleTwice = *std::min_element(reach.begin(), reach.end()) + *std::max_element(reach.begin(), reach.end());
+			for (std::size_t v = 0; v < piece.size(); ++v) {
+				if (reach[v] + reach[v] < middleTwice) {
+					corners.emplace_back(tile, v);
+				}
+			}
+		}
+
+		void snapTogether(std::vector<OutlineTile>& tiles, const std::vector<std::pair<std::size_t, std::size_t>>& corners) {
+			std::vector<Vec2i64> points;
+			points.reserve(corners.size());
+			for (const auto& [tile, v] : corners) {
+				points.push_back(tiles[tile].points[v]);
+			}
+			std::vector<std::size_t> root(points.size());
+			for (std::size_t i = 0; i < root.size(); ++i) {
+				root[i] = i;
+			}
+			auto find = [&](std::size_t i) {
+				while (root[i] != i) {
+					root[i] = root[root[i]];
+					i		= root[i];
+				}
+				return i;
+			};
+			for (std::size_t i = 0; i < points.size(); ++i) {
+				for (std::size_t k = i + 1; k < points.size(); ++k) {
+					const Vec2i64 apart = points[k] - points[i];
+					if (!(Int128(kSeamToleranceMm * kSeamToleranceMm) < dot(apart, apart))) {
+						root[find(k)] = find(i);
+					}
+				}
+			}
+			std::map<std::size_t, Vec2i64> lowest;
+			for (std::size_t i = 0; i < points.size(); ++i) {
+				const auto [entry, added] = lowest.emplace(find(i), points[i]);
+				if (!added && points[i] < entry->second) {
+					entry->second = points[i];
+				}
+			}
+			for (std::size_t i = 0; i < points.size(); ++i) {
+				tiles[corners[i].first].points[corners[i].second] = lowest[find(i)];
+			}
+		}
+
+		void collectSplits(OutlineTile& tile, const Ring& other) {
+			const Ring&		  ring = tile.points;
+			const std::size_t n	   = ring.size();
+			for (std::size_t e = 0; e < n; ++e) {
+				const Vec2i64& from	 = ring[e];
+				const Vec2i64& to	 = ring[(e + 1) % n];
+				const Vec2i64  along = to - from;
+				for (const Vec2i64& point : other) {
+					if (from == to || point == from || point == to) {
+						continue;
+					}
+					const Int128 reach = dot(point - from, along);
+					if (reach.sign() <= 0 || !(reach < dot(along, along))) {
+						continue;
+					}
+					if (withinDistanceOfSegment(point, from, to, kSeamToleranceMm)) {
+						tile.splits[e].push_back(point);
+					}
+				}
+			}
+		}
+
+		std::size_t nearestIncident(const Vec2i64& vertex, const Vec2i64& from, const Vec2i64& to,
+									const std::vector<std::pair<Vec2i64, std::size_t>>& directions) {
+			const Vec2i64 midpointTwice = from + to - vertex - vertex;
+			std::size_t	  best			= 0;
+			double		  bestScore		= 0.0;
+			for (std::size_t i = 0; i < directions.size(); ++i) {
+				const Vec2i64& direction = directions[i].first;
+				const double   score	 = dot(midpointTwice, direction).toDouble() / length(direction);
+				const bool	   better	 = i == 0 || score > bestScore ||
+									   (score == bestScore && angleLess(direction, directions[best].first));
+				if (better) {
+					best	  = i;
+					bestScore = score;
+				}
+			}
+			return directions[best].second;
+		}
+
+		double clockwiseTurn(const Vec2i64& back, const Vec2i64& out) {
+			constexpr double kFullTurn		  = 6.283185307179586;
+			const double	 counterClockwise = std::atan2(cross(back, out).toDouble(), dot(back, out).toDouble());
+			const double	 turn			  = counterClockwise > 0.0 ? kFullTurn - counterClockwise : -counterClockwise;
+			return turn > 0.0 ? turn : kFullTurn;
+		}
+
+		std::vector<OutlineEdge> outlineLoops(const std::vector<OutlineTile>& tiles, const std::vector<WallSegment>& segments) {
+			std::vector<OutlineEdge> edges;
+			for (const OutlineTile& tile : tiles) {
+				const Ring&		  ring = tile.points;
+				const std::size_t n	   = ring.size();
+				for (std::size_t e = 0; e < n; ++e) {
+					const Vec2i64& from	   = ring[e];
+					const Vec2i64  along   = ring[(e + 1) % n] - from;
+					if (along == Vec2i64{0, 0}) {
+						continue;
+					}
+					const std::size_t segment = tile.edgeSegment[e];
+					std::vector<Vec2i64> points = tile.splits[e];
+					std::sort(points.begin(), points.end(), [&](const Vec2i64& l, const Vec2i64& r) {
+						const Int128 reachL = dot(l - from, along);
+						const Int128 reachR = dot(r - from, along);
+						return reachL != reachR ? reachL < reachR : l < r;
+					});
+					points.erase(std::unique(points.begin(), points.end()), points.end());
+					points.push_back(ring[(e + 1) % n]);
+					Vec2i64 start = from;
+					for (const Vec2i64& point : points) {
+						edges.push_back({start, point, segment});
+						start = point;
+					}
+				}
+			}
+
+			auto byEnds = [](const OutlineEdge& l, const OutlineEdge& r) {
+				return l.from != r.from ? l.from < r.from : l.to < r.to;
+			};
+			auto segmentEnds = [&](std::size_t index) {
+				const WallSegment& seg = segments[index];
+				return seg.a < seg.b ? std::pair{seg.a, seg.b} : std::pair{seg.b, seg.a};
+			};
+			std::sort(edges.begin(), edges.end(), [&](const OutlineEdge& l, const OutlineEdge& r) {
+				return byEnds(l, r) || (!byEnds(r, l) && segmentEnds(l.index) < segmentEnds(r.index));
+			});
+			std::vector<std::uint8_t> cancelled(edges.size(), 0);
+			for (std::size_t i = 0; i < edges.size(); ++i) {
+				if (cancelled[i] != 0) {
+					continue;
+				}
+				const OutlineEdge reverse{edges[i].to, edges[i].from};
+				for (auto match = std::lower_bound(edges.begin(), edges.end(), reverse, byEnds);
+					 match != edges.end() && match->from == reverse.from && match->to == reverse.to; ++match) {
+					const std::size_t j = static_cast<std::size_t>(match - edges.begin());
+					if (cancelled[j] == 0) {
+						cancelled[i] = 1;
+						cancelled[j] = 1;
+						break;
+					}
+				}
+			}
+			std::vector<OutlineEdge> remaining;
+			for (std::size_t i = 0; i < edges.size(); ++i) {
+				if (cancelled[i] == 0) {
+					remaining.push_back(edges[i]);
+				}
+			}
+
+			std::vector<OutlineEdge>  loops;
+			std::vector<std::uint8_t> used(remaining.size(), 0);
+			loops.reserve(remaining.size());
+			for (std::size_t start = 0; start < remaining.size(); ++start) {
+				std::size_t current = start;
+				while (used[current] == 0) {
+					used[current] = 1;
+					loops.push_back(remaining[current]);
+					const OutlineEdge& edge = remaining[current];
+					if (edge.to == remaining[start].from) {
+						break;
+					}
+					double bestTurn = 0.0;
+					const auto firstOut = std::lower_bound(remaining.begin(), remaining.end(), edge.to,
+														   [](const OutlineEdge& e, const Vec2i64& p) { return e.from < p; });
+					for (std::size_t next = static_cast<std::size_t>(firstOut - remaining.begin());
+						 next < remaining.size() && remaining[next].from == edge.to; ++next) {
+						if (used[next] != 0) {
+							continue;
+						}
+						const double turn = clockwiseTurn(edge.from - edge.to, remaining[next].to - edge.to);
+						if (bestTurn == 0.0 || turn < bestTurn) {
+							bestTurn = turn;
+							current	 = next;
+						}
+					}
+				}
+			}
+			return loops;
+		}
+
+		WallPiecesAndOutline wallPiecesAndOutline(const std::vector<WallSegment>& segments,
+												  const std::vector<std::vector<WallGap>>& gaps, const WallBands& bands) {
+			WallPiecesAndOutline result;
+			const std::size_t	 segCount = segments.size();
+			assert(bands.status == OffsetStatus::Ok && bands.bands.size() == segCount);
+			assert(gaps.empty() || gaps.size() == segCount);
+			const std::vector<WallGap> noGaps;
+
+			constexpr std::size_t kNoTile = static_cast<std::size_t>(-1);
+			std::vector<std::size_t> endTileA(segCount, kNoTile);
+			std::vector<std::size_t> endTileB(segCount, kNoTile);
+			result.pieces.resize(segCount);
+			for (std::size_t i = 0; i < segCount; ++i) {
+				const WallSegment& seg		 = segments[i];
+				const std::int64_t trimAtA = bands.trimAtA[i];
+				const std::int64_t trimAtB = bands.trimAtB[i];
+				for (const auto& [atA, atB] : solidRuns(seg, gaps.empty() ? noGaps : gaps[i], trimAtA, trimAtB)) {
+					Ring ring;
+					if (!trimmedBand(seg.a, seg.b, seg.halfThicknessMm, atA, atB, ring)) {
+						continue;
+					}
+					simplifyRing(ring, kDefaultSimplifyEpsMm);
+					if (validateAndOrient(ring) != OffsetStatus::Ok) {
+						continue;
+					}
+					if (atA == trimAtA) {
+						endTileA[i] = result.pieces[i].size();
+					}
+					if (atB == trimAtB) {
+						endTileB[i] = result.pieces[i].size();
+					}
+					result.pieces[i].push_back(std::move(ring));
+				}
+			}
+
+			struct Incidence {
+				std::size_t segIndex;
+				bool		atA;
+			};
+			std::map<Vec2i64, std::vector<Incidence>> byVertex;
+			for (std::size_t i = 0; i < segCount; ++i) {
+				byVertex[segments[i].a].push_back({i, true});
+				byVertex[segments[i].b].push_back({i, false});
+			}
+			std::map<Vec2i64, std::size_t> polygonAt;
+			for (std::size_t j = 0; j < bands.junctions.size(); ++j) {
+				const WallSegment& first  = segments[bands.junctionSegments[j][0]];
+				const WallSegment& second = segments[bands.junctionSegments[j][1]];
+				polygonAt[(first.a == second.a || first.a == second.b) ? first.a : first.b] = j;
+			}
+
+			std::vector<OutlineTile>			  tiles;
+			std::vector<std::vector<std::size_t>> pieceTile(segCount);
+			for (std::size_t i = 0; i < segCount; ++i) {
+				for (const Ring& piece : result.pieces[i]) {
+					pieceTile[i].push_back(tiles.size());
+					tiles.push_back({piece, std::vector<std::size_t>(piece.size(), i), std::vector<std::vector<Vec2i64>>(piece.size())});
+				}
+			}
+			std::vector<std::vector<std::size_t>>							  meetings;
+			std::vector<std::vector<std::pair<std::size_t, std::size_t>>> meetingCorners;
+			std::map<Vec2i64, std::size_t>									  meetingAt;
+			for (const auto& [vertex, incidences] : byVertex) {
+				if (incidences.size() < 2) {
+					continue;
+				}
+				std::vector<std::size_t>						 meeting;
+				std::vector<std::pair<std::size_t, std::size_t>> corners;
+				const auto										 polygon = polygonAt.find(vertex);
+				if (polygon != polygonAt.end()) {
+					const Ring& ring = bands.junctions[polygon->second];
+					std::vector<std::pair<Vec2i64, std::size_t>> directions;
+					for (const Incidence& inc : incidences) {
+						const WallSegment& seg = segments[inc.segIndex];
+						directions.emplace_back((inc.atA ? seg.b : seg.a) - vertex, inc.segIndex);
+					}
+					OutlineTile tile{ring, {}, std::vector<std::vector<Vec2i64>>(ring.size())};
+					for (std::size_t e = 0; e < ring.size(); ++e) {
+						tile.edgeSegment.push_back(nearestIncident(vertex, ring[e], ring[(e + 1) % ring.size()], directions));
+					}
+					for (std::size_t v = 0; v < ring.size(); ++v) {
+						corners.emplace_back(tiles.size(), v);
+					}
+					meeting.push_back(tiles.size());
+					tiles.push_back(std::move(tile));
+				}
+				for (const Incidence& inc : incidences) {
+					const std::size_t end = inc.atA ? endTileA[inc.segIndex] : endTileB[inc.segIndex];
+					if (end != kNoTile) {
+						const WallSegment& seg = segments[inc.segIndex];
+						addCornersAt(corners, result.pieces[inc.segIndex][end], pieceTile[inc.segIndex][end], vertex,
+									 (inc.atA ? seg.b : seg.a) - vertex);
+						meeting.push_back(pieceTile[inc.segIndex][end]);
+					}
+				}
+				meetingAt[vertex] = meetings.size();
+				meetings.push_back(std::move(meeting));
+				meetingCorners.push_back(std::move(corners));
+			}
+			std::vector<std::size_t> group(meetings.size());
+			for (std::size_t m = 0; m < group.size(); ++m) {
+				group[m] = m;
+			}
+			auto groupOf = [&](std::size_t m) {
+				while (group[m] != m) {
+					m = group[m] = group[group[m]];
+				}
+				return m;
+			};
+			for (std::size_t i = 0; i < segCount; ++i) {
+				const WallSegment& seg = segments[i];
+				const double	   left = length(seg.b - seg.a) - static_cast<double>(bands.trimAtA[i] + bands.trimAtB[i]);
+				const auto		   atA	= meetingAt.find(seg.a);
+				const auto		   atB	= meetingAt.find(seg.b);
+				if (endTileA[i] != kNoTile && endTileA[i] == endTileB[i] && left < static_cast<double>(2 * kSeamToleranceMm) &&
+					atA != meetingAt.end() && atB != meetingAt.end()) {
+					group[groupOf(atA->second)] = groupOf(atB->second);
+				}
+			}
+			std::map<std::size_t, std::vector<std::pair<std::size_t, std::size_t>>> groupCorners;
+			std::map<std::size_t, std::vector<std::size_t>>							groupTiles;
+			for (std::size_t m = 0; m < meetings.size(); ++m) {
+				std::vector<std::pair<std::size_t, std::size_t>>& corners = groupCorners[groupOf(m)];
+				corners.insert(corners.end(), meetingCorners[m].begin(), meetingCorners[m].end());
+				std::vector<std::size_t>& grouped = groupTiles[groupOf(m)];
+				for (const std::size_t tile : meetings[m]) {
+					if (std::find(grouped.begin(), grouped.end(), tile) == grouped.end()) {
+						grouped.push_back(tile);
+					}
+				}
+			}
+			for (const auto& entry : groupCorners) {
+				snapTogether(tiles, entry.second);
+			}
+			for (const auto& entry : groupTiles) {
+				for (const std::size_t tile : entry.second) {
+					for (const std::size_t other : entry.second) {
+						collectSplits(tiles[tile], tiles[other].points);
+					}
+				}
+			}
+			result.outline = outlineLoops(tiles, segments);
+
+			return result;
+		}
+
+	} // namespace reference
+} // namespace
+
+namespace {
+
+	// Every compared value is integer geometry or an index, so equality is exact.
+	bool sameWallBands(const WallBands& left, const WallBands& right) {
+		return left.status == right.status && left.bands == right.bands && left.junctions == right.junctions &&
+			   left.junctionSegments == right.junctionSegments && left.trimAtA == right.trimAtA && left.trimAtB == right.trimAtB;
+	}
+
+	bool sameOutline(const std::vector<OutlineEdge>& left, const std::vector<OutlineEdge>& right) {
+		if (left.size() != right.size()) {
+			return false;
+		}
+		for (std::size_t i = 0; i < left.size(); ++i) {
+			if (left[i].from != right[i].from || left[i].to != right[i].to || left[i].index != right[i].index) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	// Corners, tees, crosses and chains over the legal angles, at the shortest
+	// legal wall and at 2 m, all thickness pairings.
+	std::vector<std::vector<WallSegment>> retryInputs() {
+		std::vector<std::vector<WallSegment>> inputs;
+		std::mt19937						  rng(29);
+		int									  index = 0;
+		for (const double armLength : {2000.0, kMinWallLengthMm}) {
+			for (int tenths = 300; tenths <= 3300; ++tenths) {
+				const double corner = static_cast<double>(tenths) / 10.0;
+				for (const std::int64_t first : kHalves) {
+					for (const std::int64_t second : kHalves) {
+						const double base = static_cast<double>(index % 12) * 7.5 + static_cast<double>(index % 5) * 0.3;
+						const bool	 flip = index % 2 == 1;
+						++index;
+						inputs.push_back(star({{base, first, true}, {base + corner, second, !flip}}, armLength));
+					}
+				}
+			}
+			// A T whose through-run bends up to 12 degrees either way.
+			for (int tenths = -120; tenths <= 120; ++tenths) {
+				const double offset = static_cast<double>(tenths) / 10.0;
+				for (const double stem : {60.0, 90.0, 135.0, 225.0, 270.0, 300.0}) {
+					for (const std::int64_t first : kHalves) {
+						for (const std::int64_t second : kHalves) {
+							for (const std::int64_t stemHalf : kHalves) {
+								const bool flip = index % 2 == 1;
+								++index;
+								const std::vector<Arm> arms = {{0.0, first, flip}, {180.0 + offset, second, !flip}, {stem, stemHalf, true}};
+								inputs.push_back(star(arms, armLength));
+							}
+						}
+					}
+				}
+			}
+			for (int degree = 3; degree <= 6; ++degree) {
+				for (int trial = 0; trial < 500; ++trial) {
+					const std::vector<Arm> arms = randomArms(degree, trial % 4 == 0, rng);
+					if (static_cast<int>(arms.size()) == degree) {
+						inputs.push_back(star(arms, armLength));
+					}
+				}
+			}
+		}
+		// A short wall straight on from a long one, either way round.
+		for (const bool shortFirst : {false, true}) {
+			for (int tenths = 1500; tenths <= 2100; ++tenths) {
+				const double corner = static_cast<double>(tenths) / 10.0;
+				for (const std::int64_t first : kHalves) {
+					for (const std::int64_t second : kHalves) {
+						const double base = static_cast<double>(index % 12) * 7.5 + static_cast<double>(index % 5) * 0.3;
+						++index;
+						inputs.push_back({{{0, 0}, polar(base, shortFirst ? kMinWallLengthMm : 2000.0), first},
+										  {polar(base + corner, shortFirst ? 2000.0 : kMinWallLengthMm), {0, 0}, second}});
+					}
+				}
+			}
+		}
+		// A short wall between two near-straight joins, so the trims from its two
+		// ends add up.
+		for (const double middle : {kMinWallLengthMm, 800.0}) {
+			for (int before = -12; before <= 12; ++before) {
+				for (int after = -12; after <= 12; ++after) {
+					for (const std::int64_t outer : kHalves) {
+						for (const std::int64_t inner : kHalves) {
+							const Vec2i64 end{std::llround(middle), 0};
+							inputs.push_back({{polar(180.0 + before, 2000.0), {0, 0}, outer},
+											  {{0, 0}, end, inner},
+											  {end, end + polar(static_cast<double>(after), 2000.0), outer}});
+						}
+					}
+				}
+			}
+		}
+		// Z chains whose middle wall is short between two sharp corners.
+		for (int first = 30; first <= 75; first += 5) {
+			for (const int bend : {1, 2, 3, 5, 9}) {
+				for (const std::int64_t middleHalf : kHalves) {
+					for (const std::int64_t outerHalf : kHalves) {
+						for (const double middle : {kMinWallLengthMm, 700.0, 1000.0}) {
+							const Vec2i64 end{std::llround(middle), 0};
+							inputs.push_back({{polar(first, 2000.0), {0, 0}, outerHalf},
+											  {{0, 0}, end, middleHalf},
+											  {end, end + polar(180.0 + first + bend, 2000.0), outerHalf}});
+						}
+					}
+				}
+			}
+		}
+		return inputs;
+	}
+
+} // namespace
+
+TEST(WallProperties, NearStraightRetryKeepsEveryAcceptedJoin) {
+	// Wherever the resolution before the retry accepted an input, the result is
+	// the same, bit for bit; the drawn pieces and outline, a function of the
+	// segments and the bands alone, are compared with the reference's on every
+	// tenth. Wherever it
+	// rejected one, the retry either rejects it too or resolves it to valid
+	// geometry, the same whatever the segments' order and direction, or else to
+	// exactly what the resolution before it drew itself with its step cut lower:
+	// a T whose stepped through-run has its thicker band cut back by the stem's
+	// corner can overlap the thinner band, a step defect the resolution before
+	// the retry shows at its own cut too (about 4.5 degrees off straight).
+	std::mt19937 rng(31);
+	Sweep		 sweep;
+	int			 accepted = 0;
+	int			 rescued  = 0;
+	int			 excused  = 0;
+	double		 worstOverlap = 0.0;
+	std::string	 worstInput;
+	constexpr double kMaxRescuedOverlapMm = 5.0;
+	constexpr double kMaxExcusedShare	  = 0.01;
+	for (const std::vector<WallSegment>& segments : retryInputs()) {
+		const WallBands before = reference::resolveWallBands(segments, kDefaultMiterLimit);
+		const WallBands after  = resolveWallBands(segments, kDefaultMiterLimit);
+		std::string		problem;
+		if (before.status == OffsetStatus::Ok) {
+			++accepted;
+			if (!sameWallBands(before, after)) {
+				problem = "an accepted input resolves differently";
+			} else if (accepted % 10 == 0) {
+				const WallPiecesAndOutline drawnBefore = reference::wallPiecesAndOutline(segments, {}, before);
+				const WallPiecesAndOutline drawnAfter  = wallPiecesAndOutline(segments, {}, after);
+				if (drawnBefore.pieces != drawnAfter.pieces || !sameOutline(drawnBefore.outline, drawnAfter.outline)) {
+					problem = "an accepted input draws differently";
+				}
+			}
+		} else if (after.status == OffsetStatus::Ok) {
+			++rescued;
+			problem = checkJoin(segments, rng);
+			// A rescued join that fails the property checks is accepted only when it is identical to what main itself
+			// draws when it steps that wedge; the flaw (a seam a few millimetres off where a stem meets a stepped
+			// through-run) is main's and is tracked as WOR-877.
+			const bool matchesMainsOwnStepGeometry = sameWallBands(after, reference::resolveWallBands(segments, 3.0));
+			if (!problem.empty() && matchesMainsOwnStepGeometry) {
+				problem.clear();
+				++excused;
+			}
+			// Rescued joins inherit main's few-millimetre overlap at a stepped through-run with a stem.
+			const double overlap = deepestOverlap(after);
+			if (overlap > worstOverlap) {
+				worstOverlap = overlap;
+				worstInput	 = describe(segments, {});
+			}
+		}
+		sweep.check(segments, {}, problem);
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+	EXPECT_GT(accepted, 0);
+	EXPECT_GT(rescued, 0);
+	EXPECT_LE(worstOverlap, kMaxRescuedOverlapMm) << worstInput;
+	EXPECT_LE(static_cast<double>(excused), kMaxExcusedShare * static_cast<double>(rescued))
+		<< excused << " of " << rescued << " rescued inputs are excused";
+}
+
+namespace {
+
+	// Gaps on a segment, measured from its `a` end, of one kind picked at random: inside the
+	// trimmed band, touching or reaching into a trimmed end, past a free end, overlapping, at the
+	// smallest opening kept, two with a run under the smallest piece between them, or none.
+	std::vector<WallGap> randomGaps(const WallSegment& segment, std::int64_t trimAtA, std::int64_t trimAtB, std::mt19937& rng) {
+		const std::int64_t whole = std::llround(distanceBetween(segment.a, segment.b));
+		const std::int64_t start = trimAtA;
+		const std::int64_t end	 = whole - trimAtB;
+		const std::int64_t span	 = end - start;
+		auto			   at	 = [&](std::int64_t from, std::int64_t to) -> std::int64_t {
+			  return from + static_cast<std::int64_t>(rng() % static_cast<std::uint32_t>(std::max<std::int64_t>(1, to - from)));
+		};
+		switch (rng() % 9) {
+			case 0:
+				return {};
+			case 1: {
+				const std::int64_t from = at(start, end);
+				return {{from, from + at(1, span)}};
+			}
+			case 2:
+				return {{start, start + at(1, span)}};
+			case 3:
+				return {{end - at(1, span), end}};
+			case 4:
+				return {{start - at(1, 300), start + at(1, span)}, {end - at(1, span), whole + at(0, 300)}};
+			case 5: {
+				const std::int64_t from = at(start, end);
+				return {{from, from + at(1, span)}, {from + at(0, span), from + at(1, 2 * span)}};
+			}
+			case 6: {
+				const std::int64_t from = at(start - 10, end);
+				return {{from, from + at(3, 9)}};
+			}
+			case 7: {
+				const std::int64_t from = at(start, end);
+				const std::int64_t to	= from + at(1, span / 2 + 1);
+				return {{from, to}, {to + at(1, 9), to + at(10, span)}};
+			}
+			default:
+				return {{-at(0, 50), whole + at(0, 50)}};
+		}
+	}
+
+} // namespace
+
+TEST(WallProperties, ShortMixedChainReturns) {
+	// WOR-878: retrying the third wall's failed band steps the nearly square corner at (474,182), whose
+	// thinner band then runs along the thicker one's rounded cap and never clears it; it walked forever.
+	// Stepped or mitered, that band outruns its wall, so the graph is rejected as it was before the retry.
+	const std::vector<WallSegment> segments = {
+		{{0, 0}, {110, 207}, 75}, {{110, 207}, {474, 182}, 100}, {{474, 182}, {487, 371}, 75}, {{487, 371}, {400, 406}, 150}};
+	EXPECT_EQ(resolveWallBands(segments, kDefaultMiterLimit).status, OffsetStatus::TrimOverrunsSegment);
+}
+
+namespace {
+
+	// A chain of 3 to 5 walls, legs of 20 to 420 mm, each bending up to 90 degrees from the last, with mixed
+	// thicknesses, each segment listed either way round.
+	std::vector<WallSegment> randomShortChain(std::mt19937& rng) {
+		const int				 walls	 = 3 + static_cast<int>(rng() % 3);
+		double					 heading = static_cast<double>(rng() % 360);
+		Vec2i64					 from{0, 0};
+		std::vector<WallSegment> segments;
+		for (int i = 0; i < walls; ++i) {
+			if (i > 0) {
+				heading += static_cast<double>(rng() % 181) - 90.0;
+			}
+			const double	   leg	   = 20.0 + static_cast<double>(rng() % 401);
+			const std::int64_t half	   = kHalves[rng() % 3];
+			const bool		   forward = rng() % 2 == 0;
+			const Vec2i64	   to	   = from + polar(heading, leg);
+			segments.push_back({forward ? from : to, forward ? to : from, half});
+			from = to;
+		}
+		return segments;
+	}
+
+	// Whether two walls of the chain that share no endpoint come within their half thicknesses of each
+	// other: their bands overlap, which no junction resolves and checkTiles reports.
+	bool foldsOntoItself(const std::vector<WallSegment>& segments) {
+		for (std::size_t first = 0; first < segments.size(); ++first) {
+			for (std::size_t second = first + 2; second < segments.size(); ++second) {
+				const WallSegment& s	 = segments[first];
+				const WallSegment& t	 = segments[second];
+				const double	   reach = static_cast<double>(s.halfThicknessMm + t.halfThicknessMm);
+				const double	   apart = std::min({distanceToSegment(s.a, t.a, t.b), distanceToSegment(s.b, t.a, t.b),
+												 distanceToSegment(t.a, s.a, s.b), distanceToSegment(t.b, s.a, s.b)});
+				if (apart < reach || intersectSegments(s.a, s.b, t.a, t.b).relation != SegmentRelation::Disjoint) {
+					return true;
+				}
+			}
+		}
+		return false;
+	}
+
+} // namespace
+
+TEST(WallProperties, PiecesFromSpansMatchTheReferenceWithGaps) {
+	// wallPiecesAndOutline takes its pieces from wallSpans. On every fifth accepted input of the
+	// retry sweep, with gaps of every kind on every segment, it draws exactly what the reference
+	// draws, and the spans tile each trimmed band.
+	std::mt19937 rng(37);
+	Sweep		 sweep;
+	int			 index = 0;
+	for (const std::vector<WallSegment>& segments : retryInputs()) {
+		if (index++ % 5 != 0) {
+			continue;
+		}
+		const WallBands bands = resolveWallBands(segments, kDefaultMiterLimit);
+		if (bands.status != OffsetStatus::Ok) {
+			continue;
+		}
+		Gaps gaps(segments.size());
+		for (std::size_t i = 0; i < segments.size(); ++i) {
+			gaps[i] = randomGaps(segments[i], bands.trimAtA[i], bands.trimAtB[i], rng);
+		}
+		const WallPiecesAndOutline expected = reference::wallPiecesAndOutline(segments, gaps, bands);
+		const WallPiecesAndOutline actual	= wallPiecesAndOutline(segments, gaps, bands);
+		std::string				   problem;
+		if (actual.pieces != expected.pieces || !sameOutline(actual.outline, expected.outline)) {
+			problem = "draws differently from the reference";
+		}
+		const std::vector<std::vector<WallSpan>> spans = wallSpans(segments, gaps, bands);
+		for (std::size_t i = 0; i < segments.size() && problem.empty(); ++i) {
+			problem = checkSpans(segments[i], gaps[i], bands.bands[i], actual.pieces[i], spans[i]);
+		}
+		sweep.check(segments, gaps, problem);
+	}
+	EXPECT_GT(sweep.inputs, 1000);
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+}
+
+TEST(WallGraphs, ChainsTeesAndSeparateGraphs) {
+	using Graphs = std::vector<std::vector<std::size_t>>;
+	EXPECT_EQ(connectedWallGraphs({}), Graphs{});
+	EXPECT_EQ(connectedWallGraphs({{{0, 0}, {1000, 0}, 100}}), (Graphs{{0}}));
+
+	// A chain listed out of order joins through its middle wall.
+	const std::vector<WallSegment> chain = {
+		{{0, 0}, {1000, 0}, 100},
+		{{2000, 0}, {3000, 0}, 100},
+		{{1000, 0}, {2000, 0}, 100},
+	};
+	EXPECT_EQ(connectedWallGraphs(chain), (Graphs{{0, 1, 2}}));
+
+	const std::vector<WallSegment> tee = {
+		{{0, 0}, {1000, 0}, 100},
+		{{1000, 0}, {2000, 0}, 150},
+		{{1000, 0}, {1000, 1000}, 75},
+	};
+	EXPECT_EQ(connectedWallGraphs(tee), (Graphs{{0, 1, 2}}));
+
+	// Two graphs interleaved, the second joined up late through a wall that meets both of its
+	// others: groups come in order of their smallest member, members ascending.
+	const std::vector<WallSegment> twoGraphs = {
+		{{0, 0}, {1000, 0}, 100},
+		{{5000, 0}, {6000, 0}, 100},
+		{{9000, 0}, {9000, 1000}, 100},
+		{{1000, 0}, {1000, 1000}, 100},
+		{{8000, 0}, {9000, 0}, 100},
+		{{6000, 0}, {8000, 0}, 100},
+	};
+	EXPECT_EQ(connectedWallGraphs(twoGraphs), (Graphs{{0, 3}, {1, 2, 4, 5}}));
+
+	// Crossing walls share no endpoint, so they are separate graphs.
+	const std::vector<WallSegment> crossing = {
+		{{0, 0}, {2000, 0}, 100},
+		{{1000, -1000}, {1000, 1000}, 100},
+	};
+	EXPECT_EQ(connectedWallGraphs(crossing), (Graphs{{0}, {1}}));
+}
+
+TEST(WallGraphs, DirectionDoesNotMatter) {
+	using Graphs = std::vector<std::vector<std::size_t>>;
+	const std::vector<WallSegment> segments = {
+		{{0, 0}, {1000, 0}, 100},
+		{{5000, 0}, {6000, 0}, 100},
+		{{1000, 0}, {1000, 1000}, 100},
+		{{6000, 0}, {6000, 1000}, 100},
+		{{1000, 1000}, {0, 0}, 100},
+		{{20000, 0}, {21000, 0}, 100},
+	};
+	const Graphs expected = connectedWallGraphs(segments);
+	EXPECT_EQ(expected, (Graphs{{0, 2, 4}, {1, 3}, {5}}));
+	for (unsigned flips = 0; flips < (1U << segments.size()); ++flips) {
+		std::vector<WallSegment> flipped = segments;
+		for (std::size_t i = 0; i < flipped.size(); ++i) {
+			if (((flips >> i) & 1U) != 0) {
+				std::swap(flipped[i].a, flipped[i].b);
+			}
+		}
+		EXPECT_EQ(connectedWallGraphs(flipped), expected) << "flips " << flips;
+	}
+}
+
+TEST(WallProperties, ShortMixedChainsRejectOrTile) {
+	// Chains of walls far shorter than the shortest legal one, where retrying failed bands reached corners
+	// it was never meant for (WOR-878): 13 of these never returned, and 5 later draws (the first is draw
+	// 9,436) resolved corners about 100 degrees apart past the miter bound. Every chain must return; every
+	// one that does not fold back onto itself must be rejected, or resolve to rings that pass checkTiles
+	// and checkPieces. A folded chain is only required to return.
+	std::mt19937 rng(878);
+	Sweep		 sweep;
+	int			 resolved = 0;
+	for (int i = 0; i < 40000; ++i) {
+		const std::vector<WallSegment> segments = randomShortChain(rng);
+		const Resolved				   wb		= resolveDrawn(segments, kDefaultMiterLimit);
+		if (foldsOntoItself(segments)) {
+			continue;
+		}
+		std::string problem;
+		if (wb.status == OffsetStatus::Ok) {
+			++resolved;
+			problem = checkTiles(segments, wb, kDefaultMiterLimit);
+			if (problem.empty()) {
+				problem = checkPieces(segments, {}, wb);
+			}
+		}
+		sweep.check(segments, {}, problem);
+	}
+	EXPECT_EQ(sweep.failed, 0) << sweep.report();
+	EXPECT_GT(resolved, sweep.inputs / 4) << resolved << " of " << sweep.inputs << " inputs resolved";
 }

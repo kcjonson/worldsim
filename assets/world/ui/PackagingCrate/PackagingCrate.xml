@@ -1,12 +1,29 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Packaging Crate - Visual overlay for packaged items awaiting placement -->
+<!-- Packaging Crate - side-view open crate around packaged furniture awaiting placement.
+     Drawn in two layers so the item sits inside: the back layer behind it, the front layer
+     (posts + low slats) over it. Both are 1.0 m x 0.75 m; see PackagedLayout.h. -->
 <AssetDefinitions>
   <AssetDef>
     <defName>PackagingCrate</defName>
     <label>Packaging Crate</label>
     <assetType>simple</assetType>
     <svgPath>packaging_crate.svg</svgPath>
-    <worldHeight>0.2</worldHeight>
+    <worldHeight>0.75</worldHeight>
+
+    <rendering>
+      <complexity>simple</complexity>
+      <tier>batched</tier>
+    </rendering>
+
+    <variantCount>1</variantCount>
+  </AssetDef>
+
+  <AssetDef>
+    <defName>PackagingCrateFront</defName>
+    <label>Packaging Crate (front)</label>
+    <assetType>simple</assetType>
+    <svgPath>packaging_crate_front.svg</svgPath>
+    <worldHeight>0.75</worldHeight>
 
     <rendering>
       <complexity>simple</complexity>

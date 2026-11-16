@@ -1,0 +1,872 @@
+#include "VisionSystem.h"
+
+#include "NavigationSystem.h"
+
+#include "../World.h"
+#include "../components/Appearance.h"
+#include "../components/Memory.h"
+#include "../components/Transform.h"
+
+#include "nav/NavCoords.h"
+
+#include <assets/AssetRegistry.h>
+#include <assets/ConstructionRegistry.h>
+#include <assets/RecipeRegistry.h>
+#include <assets/placement/PlacementExecutor.h>
+#include <assets/placement/SpatialIndex.h>
+#include <construction/ConstructionWorld.h>
+#include <predicates/Predicates.h>
+#include <world/chunk/ChunkCoordinate.h>
+#include <world/chunk/ChunkManager.h>
+#include <world/chunk/SyntheticWorldSampler.h>
+#include <world/chunk/TerrainPolygonQuery.h>
+
+#include <glm/geometric.hpp>
+
+#include <memory>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include <glm/vec2.hpp>
+
+#include <cmath>
+#include <filesystem>
+#include <string>
+
+#include <gtest/gtest.h>
+
+using namespace ecs;
+using assets::AssetRegistry;
+using assets::CapabilityType;
+using assets::ConstructionRegistry;
+using assets::PlacedEntity;
+using assets::PlacementExecutor;
+using assets::SpatialIndex;
+using world::ChunkCoordinate;
+using construction::ConstructionWorld;
+using construction::FoundationState;
+using construction::kInvalidFoundation;
+using construction::kInvalidOpening;
+using construction::OpeningId;
+using construction::SegmentCommitResult;
+using construction::SegmentId;
+using geometry::Vec2i64;
+
+namespace {
+
+	// Project root from __FILE__: this file lives at <root>/libs/sim/ecs/systems/.
+	std::filesystem::path projectRoot() {
+		std::filesystem::path p = __FILE__;
+		return p.parent_path().parent_path().parent_path().parent_path().parent_path();
+	}
+
+	std::string constructionConfigFolder() {
+		return (projectRoot() / "assets" / "config" / "construction").string();
+	}
+
+	// Build a built wall segment (every created sub-segment marked Built).
+	SegmentId buildWall(ConstructionWorld& cw, Vec2i64 a, Vec2i64 b) {
+		SegmentCommitResult r = cw.commitSegment(a, b, "Wood", "Standard", kInvalidFoundation);
+		EXPECT_TRUE(r.ok());
+		for (SegmentId id : r.createdSegments) {
+			cw.setSegmentState(id, FoundationState::Built);
+		}
+		return r.id;
+	}
+
+	// Add a BUILT opening at parameter t.
+	OpeningId addBuiltOpening(ConstructionWorld& cw, SegmentId seg, float t, const std::string& type) {
+		OpeningId op = cw.addOpening(seg, t, type, "Wood");
+		EXPECT_NE(op, kInvalidOpening);
+		EXPECT_TRUE(cw.setOpeningState(op, FoundationState::Built));
+		return op;
+	}
+
+	// A discoverable target def: synthetic, with a non-zero capability so
+	// rememberWorldEntity actually stores it (mask 0 is dropped as decorative).
+	constexpr const char* kTargetDefName = "Test_VisionTarget";
+
+	// An observer colonist at `where` and a target entity at `target`, both ECS
+	// entities so pass 2 (pure ECS Appearance scan) exercises them with no
+	// PlacementExecutor or ChunkManager wired. Returns the observer's id.
+	EntityID spawnObserver(World& world, glm::vec2 where) {
+		EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{where});
+		world.addComponent<Memory>(e, Memory{});
+		world.getComponent<Memory>(e)->owner = e;
+		return e;
+	}
+
+	EntityID spawnTarget(World& world, glm::vec2 at) {
+		EntityID e = world.createEntity();
+		world.addComponent<Position>(e, Position{at});
+		Appearance ap;
+		ap.defName = kTargetDefName;
+		world.addComponent<Appearance>(e, ap);
+		return e;
+	}
+
+	// Did the observer's Memory record the target's def at `at`?
+	bool remembers(World& world, EntityID observer, glm::vec2 at) {
+		const Memory* mem = world.getComponent<Memory>(observer);
+		const uint32_t id = assets::AssetRegistry::Get().getDefNameId(kTargetDefName);
+		return mem != nullptr && id != 0 && mem->knowsWorldEntity(at, id);
+	}
+
+	// A minimal pass-1 placement setup: a PlacementExecutor holding one index per chunk with a placed
+	// `kTargetDefName` entity at each of `positions`, plus the processed-chunks set VisionSystem gates on.
+	// Built without world-gen by stuffing a SpatialIndex into the executor via storeChunkResult
+	// (synthetic def => no resource init).
+	void placeTargets(
+		PlacementExecutor&					 executor,
+		std::unordered_set<ChunkCoordinate>& outProcessed,
+		const std::vector<glm::vec2>&		 positions) {
+		std::unordered_map<ChunkCoordinate, assets::AsyncChunkPlacementResult> byChunk;
+		for (const glm::vec2 at : positions) {
+			const ChunkCoordinate coord = world::worldToChunk({at.x, at.y});
+			assets::AsyncChunkPlacementResult& result = byChunk[coord];
+			result.coord = coord;
+			PlacedEntity placed;
+			placed.defName = kTargetDefName;
+			placed.position = at;
+			result.spatialIndex.insert(placed);
+		}
+		for (auto& [coord, result] : byChunk) {
+			executor.storeChunkResult(std::move(result));
+			outProcessed.insert(coord);
+		}
+	}
+
+	class VisionSystemTest : public ::testing::Test {
+	  protected:
+		void SetUp() override {
+			ConstructionRegistry::Get().clear();
+			ASSERT_TRUE(ConstructionRegistry::Get().load(constructionConfigFolder()));
+			// ID 0 is the AssetRegistry's "invalid" sentinel. A fresh registry (these
+			// tests don't load assets) has an empty index, so prime a throwaway def to
+			// claim ID 0 before the target def, guaranteeing the target gets non-zero.
+			auto& reg = AssetRegistry::Get();
+			if (reg.getDefNameId("Test_Vision_IdZeroReservation") == 0) {
+				reg.registerSyntheticDefinition("Test_Vision_IdZeroReservation", 0);
+			}
+			// A synthetic discoverable def with one capability so memory keeps it.
+			reg.registerSyntheticDefinition(
+				kTargetDefName, static_cast<uint16_t>(1u << static_cast<size_t>(CapabilityType::Edible)));
+			ASSERT_NE(reg.getDefNameId(kTargetDefName), 0u) << "target def must get a non-zero id";
+		}
+		void TearDown() override { ConstructionRegistry::Get().clear(); }
+	};
+
+	// Drive a single immediate vision tick (interval 1 so update() never throttles).
+	void tick(VisionSystem& sys) {
+		sys.setUpdateInterval(1);
+		sys.update(0.0F);
+	}
+
+	// Grassland with a pond in chunk (0, 0), centred at (48, 52) with radius 20 m (its rim
+	// sinusoids put the south shore at y = 32 and the rest 13.7..26.3 m out).
+	std::unique_ptr<world::IWorldSampler> lakeSampler() {
+		return std::make_unique<world::SyntheticWorldSampler>(
+			11u,
+			world::SyntheticMap{.pond = worldgen::PondNetwork2D::Pond{.cx = 48.0, .cy = 52.0, .radius = 20.0F, .phaseA = 1.5708F, .phaseB = 1.5708F, .depth = 120}}
+		);
+	}
+
+} // namespace
+
+// --- Outdoor fast path -------------------------------------------------------
+
+// No construction world wired: a target inside the sight radius is remembered,
+// exactly as before walls existed. The occlusion gate must add no regression on
+// the common outdoor path.
+TEST_F(VisionSystemTest, OutdoorTargetRememberedNoWorld) {
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	const glm::vec2 targetPos{3.0F, 0.0F};
+	spawnTarget(world, targetPos);
+
+	tick(sys);
+
+	EXPECT_TRUE(remembers(world, observer, targetPos));
+	// No occluders anywhere => no polygon ever built (pure fast path).
+	EXPECT_EQ(sys.polygonBuildCount(), 0u);
+}
+
+// A construction world with no walls is still the fast path: empty occluder set.
+TEST_F(VisionSystemTest, OutdoorTargetRememberedEmptyWorld) {
+	ConstructionWorld cw; // no segments
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	const glm::vec2 targetPos{3.0F, 0.0F};
+	spawnTarget(world, targetPos);
+
+	tick(sys);
+
+	EXPECT_TRUE(remembers(world, observer, targetPos));
+	EXPECT_EQ(sys.polygonBuildCount(), 0u);
+}
+
+// --- Occlusion (headline behavior) -------------------------------------------
+
+// Observer and target on opposite sides of a solid built wall: the target is
+// hidden and NOT remembered.
+TEST_F(VisionSystemTest, SolidWallHidesTarget) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000}); // vertical wall at x=1.5m, y in [0,3]
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F}); // west of wall
+	const glm::vec2 targetPos{2.5F, 1.5F};					// east of wall, directly behind
+	spawnTarget(world, targetPos);
+
+	tick(sys);
+
+	EXPECT_FALSE(remembers(world, observer, targetPos)) << "wall must block sight to the target";
+	EXPECT_GT(sys.polygonBuildCount(), 0u) << "an occluder in range should force a polygon build";
+}
+
+// Same wall, but the target is on the SAME side as the observer (not behind it):
+// it is visible and remembered.
+TEST_F(VisionSystemTest, TargetOnSameSideIsVisible) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+	const glm::vec2 targetPos{0.8F, 1.5F}; // west of wall, same side as observer
+	spawnTarget(world, targetPos);
+
+	tick(sys);
+
+	EXPECT_TRUE(remembers(world, observer, targetPos));
+}
+
+// Indoors the polygon is built a rebuild step past sight, and what vision decides with it is held to
+// the sight circle round where the observer stands, as outdoors: a target just inside 30 m in a
+// direction between two of the polygon's rim vertices is seen, one 0.3 m past it is not though the
+// polygon covers it, and after a move short of the rebuild step the circle moves with him.
+TEST_F(VisionSystemTest, IndoorSightEndsAtTheSightCircle) {
+	// West, half a side past rim vertex 32 (which lies along -x).
+	const float		angle = 3.14159265F * (1.0F + 1.0F / 64.0F);
+	const glm::vec2 heading{std::cos(angle), std::sin(angle)};
+	const glm::vec2 observerPos{0.5F, 1.5F};
+	auto seenAt = [&](float distance, glm::vec2 standAfter) {
+		ConstructionWorld construction;
+		buildWall(construction, {1500, 0}, {1500, 3000});
+		World		  world;
+		VisionSystem& vision = world.registerSystem<VisionSystem>();
+		vision.setConstructionWorld(&construction);
+		const EntityID  observer = spawnObserver(world, observerPos);
+		tick(vision);
+		EXPECT_EQ(vision.polygonBuildCount(), 1u);
+		const glm::vec2 targetPos = observerPos + heading * distance;
+		EXPECT_NE(geometry::pointInPolygon(nav::toMm(targetPos), *vision.sightShape(observer)->polygon), geometry::PointInPolygon::Outside)
+			<< "the polygon reaches past sight";
+		world.getComponent<Position>(observer)->value = standAfter;
+		spawnTarget(world, targetPos);
+		tick(vision);
+		EXPECT_EQ(vision.polygonBuildCount(), 1u) << "no rebuild";
+		return remembers(world, observer, targetPos);
+	};
+	EXPECT_TRUE(seenAt(29.985F, observerPos)) << "inside the circle, past the 64-gon's flat";
+	EXPECT_FALSE(seenAt(30.3F, observerPos)) << "sight plus 0.3 m: in the polygon, out of sight";
+	EXPECT_TRUE(seenAt(30.3F, observerPos + heading * 0.4F)) << "0.4 m on, within sight of where he stands";
+	EXPECT_FALSE(seenAt(29.9F, observerPos - heading * 0.4F)) << "0.4 m back, out of sight of where he stands";
+}
+
+// A wall whose near end is in sight is seen; one reached only by the polygon's extra step is not.
+TEST_F(VisionSystemTest, WallPastSightIsNotSeenThoughThePolygonReachesIt) {
+	ConstructionWorld cw;
+	const SegmentId nearWall = buildWall(cw, {1500, 0}, {1500, 3000});
+	const SegmentId farWall  = buildWall(cw, {-30300, -2000}, {-30300, 2000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+	const EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(nearWall));
+	EXPECT_FALSE(mem->knowsSegment(farWall)) << "0.3 m past sight";
+	const auto shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	EXPECT_EQ(*shape->segmentsSeen, std::vector<SegmentId>{nearWall});
+}
+
+// Demolishing the wall (demote to Blueprint) bumps the version: the next tick
+// rebuilds against an empty occluder set, the observer drops to the fast path,
+// and the previously hidden target becomes remembered.
+TEST_F(VisionSystemTest, RemovingWallRevealsTarget) {
+	ConstructionWorld cw;
+	SegmentId wall = buildWall(cw, {1500, 0}, {1500, 3000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+	const glm::vec2 targetPos{2.5F, 1.5F};
+	spawnTarget(world, targetPos);
+
+	tick(sys);
+	ASSERT_FALSE(remembers(world, observer, targetPos)) << "precondition: wall hides target";
+
+	// Demote the wall to Blueprint: a non-Built segment contributes no occluder.
+	const std::uint64_t before = cw.version();
+	ASSERT_TRUE(cw.setSegmentState(wall, FoundationState::Blueprint));
+	ASSERT_NE(cw.version(), before);
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "removing the wall must reveal the target";
+}
+
+// --- Doorway -----------------------------------------------------------------
+
+// A built wall with a Door gap between observer and target, the target aligned
+// with the gap: the target is visible through the doorway and remembered.
+TEST_F(VisionSystemTest, TargetVisibleThroughDoorGap) {
+	ConstructionWorld cw;
+	SegmentId wall = buildWall(cw, {1500, 0}, {1500, 3000}); // vertical wall, y in [0,3]
+	addBuiltOpening(cw, wall, 0.5F, "Door");				 // gap centered at y=1.5m
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F}); // aligned with the door center
+	const glm::vec2 targetPos{2.5F, 1.5F};					// straight through the gap
+	spawnTarget(world, targetPos);
+
+	tick(sys);
+
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "target should be visible through the door gap";
+}
+
+// Same doorway wall, but the target sits behind the SOLID flank (not aligned with
+// the gap): it stays hidden.
+TEST_F(VisionSystemTest, TargetBehindSolidFlankHidden) {
+	ConstructionWorld cw;
+	SegmentId wall = buildWall(cw, {1500, 0}, {1500, 3000});
+	addBuiltOpening(cw, wall, 0.5F, "Door"); // gap centered at y=1.5m
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+	const glm::vec2 targetPos{2.5F, 0.3F}; // behind the lower solid flank, off the gap
+	spawnTarget(world, targetPos);
+
+	tick(sys);
+
+	EXPECT_FALSE(remembers(world, observer, targetPos)) << "solid flank must still block sight";
+}
+
+// --- Caching -----------------------------------------------------------------
+
+// A stationary indoor observer builds its polygon once, then reuses it across
+// several ticks (build count stays at 1). Building a new wall nearby bumps the
+// GeometryIndex generation, which invalidates the cache and rebuilds.
+TEST_F(VisionSystemTest, StationaryObserverReusesPolygon) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	spawnObserver(world, {0.5F, 1.5F});
+
+	tick(sys);
+	const uint64_t afterFirst = sys.polygonBuildCount();
+	EXPECT_EQ(afterFirst, 1u) << "first tick with an occluder in range builds once";
+
+	tick(sys);
+	tick(sys);
+	EXPECT_EQ(sys.polygonBuildCount(), afterFirst) << "stationary observer must reuse the cached polygon";
+
+	// Build another wall: version bumps -> generation moves -> cache invalidates.
+	const std::uint64_t before = cw.version();
+	buildWall(cw, {500, 2000}, {1000, 2000});
+	ASSERT_NE(cw.version(), before);
+
+	tick(sys);
+	EXPECT_GT(sys.polygonBuildCount(), afterFirst) << "a new wall must invalidate the cached polygon";
+}
+
+// An outdoor observer's sight shape is the plain circle at the position and radius vision
+// used, with no polygon. Moving it moves the centre without touching the revision.
+TEST_F(VisionSystemTest, OutdoorSightShapeIsCircle) {
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+
+	EntityID observer = spawnObserver(world, {4.0F, 7.0F});
+	world.getComponent<Memory>(observer)->sightRadius = 12.5F;
+	EXPECT_FALSE(sys.sightShape(observer).has_value()) << "not observed yet";
+
+	tick(sys);
+	auto shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	EXPECT_EQ(shape->center, (glm::vec2{4.0F, 7.0F}));
+	EXPECT_FLOAT_EQ(shape->radius, 12.5F);
+	EXPECT_EQ(shape->polygon, nullptr);
+	const std::uint64_t revision = shape->polygonRevision;
+
+	world.getComponent<Position>(observer)->value = {20.0F, 7.0F};
+	tick(sys);
+	shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	EXPECT_EQ(shape->center, (glm::vec2{20.0F, 7.0F}));
+	EXPECT_EQ(shape->polygonRevision, revision);
+}
+
+// An observer with a wall in sight gets the polygon. The revision changes when the polygon
+// is rebuilt (the observer moves past the threshold, or the walls change) and not otherwise.
+TEST_F(VisionSystemTest, SightShapePolygonRevisionTracksRebuilds) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+
+	tick(sys);
+	auto shape = sys.sightShape(observer);
+	ASSERT_TRUE(shape.has_value());
+	ASSERT_NE(shape->polygon, nullptr);
+	EXPECT_GE(shape->polygon->size(), 3u);
+	EXPECT_EQ(shape->center, (glm::vec2{0.5F, 1.5F}));
+	EXPECT_FLOAT_EQ(shape->radius, world.getComponent<Memory>(observer)->sightRadius);
+	std::uint64_t revision = shape->polygonRevision;
+
+	tick(sys);
+	EXPECT_EQ(sys.sightShape(observer)->polygonRevision, revision) << "no rebuild, same revision";
+
+	world.getComponent<Position>(observer)->value = {0.7F, 1.5F};
+	tick(sys);
+	EXPECT_EQ(sys.sightShape(observer)->polygonRevision, revision) << "under the move threshold";
+
+	world.getComponent<Position>(observer)->value = {0.5F, 2.2F};
+	tick(sys);
+	EXPECT_NE(sys.sightShape(observer)->polygonRevision, revision) << "past the move threshold";
+	revision = sys.sightShape(observer)->polygonRevision;
+
+	buildWall(cw, {500, 2500}, {1000, 2500});
+	tick(sys);
+	EXPECT_NE(sys.sightShape(observer)->polygonRevision, revision) << "walls changed";
+}
+
+// --- Structure-as-observable (Pass 0) ----------------------------------------
+
+// A wall in front of the observer (bounding its visibility polygon) is recorded
+// in memory; a second wall hidden behind the first is NOT.
+TEST_F(VisionSystemTest, SeenWallRememberedHiddenWallNot) {
+	ConstructionWorld cw;
+	SegmentId front = buildWall(cw, {1500, 0}, {1500, 3000});  // x=1.5m, faces observer
+	SegmentId behind = buildWall(cw, {2500, 0}, {2500, 3000}); // x=2.5m, occluded by front
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F}); // west of both walls
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(front)) << "the facing wall bounds the polygon and must be seen";
+	EXPECT_FALSE(mem->knowsSegment(behind)) << "a wall behind the first is occluded and must not be seen";
+}
+
+// An opening on a seen wall is recorded too.
+TEST_F(VisionSystemTest, OpeningOnSeenWallRemembered) {
+	ConstructionWorld cw;
+	SegmentId wall = buildWall(cw, {1500, 0}, {1500, 3000});
+	OpeningId door = addBuiltOpening(cw, wall, 0.5F, "Door");
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F});
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall));
+	EXPECT_TRUE(mem->knowsOpening(door)) << "an opening on a seen wall must be recorded";
+}
+
+// A long wall whose endpoints are beyond the sight radius but whose span the
+// observer faces is still seen, via the ring-edge crossing fallback. Endpoint-only
+// tests would miss it.
+TEST_F(VisionSystemTest, LongWallSeenViaEdgeCrossing) {
+	ConstructionWorld cw;
+	// A 40m-long vertical wall at x=2m, y in [-20m, 20m]. With a 5m sight radius from
+	// (0,0) both endpoints (~20m away) are far out of range, but the wall passes 2m in
+	// front of the observer -- its midspan is the polygon boundary the observer sees.
+	SegmentId wall = buildWall(cw, {2000, -20000}, {2000, 20000});
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	world.getComponent<Memory>(observer)->sightRadius = 5.0F; // endpoints fall outside this
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_TRUE(mem->knowsSegment(wall)) << "long wall span must be seen via the edge-crossing fallback";
+}
+
+// An outdoor observer (no walls in range) records no structures.
+TEST_F(VisionSystemTest, OutdoorObserverRecordsNoStructures) {
+	ConstructionWorld cw;
+	buildWall(cw, {50000, 0}, {50000, 3000}); // 50m away, far outside default sight radius
+
+	World world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	tick(sys);
+
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	EXPECT_EQ(mem->knownSegmentCount(), 0u) << "no walls in range => no structures recorded";
+	EXPECT_EQ(sys.polygonBuildCount(), 0u) << "no occluder in range => outdoor fast path, no polygon";
+}
+
+// rememberSegment returns true on first discovery, false on repeat.
+TEST_F(VisionSystemTest, RememberSegmentReturnsTrueOnce) {
+	Memory mem;
+	EXPECT_TRUE(mem.rememberSegment(42));
+	EXPECT_FALSE(mem.rememberSegment(42));
+	EXPECT_TRUE(mem.knowsSegment(42));
+	EXPECT_EQ(mem.knownSegmentCount(), 1u);
+}
+
+// --- Stale-memory reconciliation (Pass: continuous away-from-target corrector) -
+
+// Observer discovers a placed entity via a normal tick, the entity is then removed
+// from the placement index (destructive harvest / pickup), and on the next tick --
+// with the spot still in view -- the observer forgets it.
+TEST_F(VisionSystemTest, RemovedEntityInViewIsForgotten) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	const glm::vec2 targetPos{3.0F, 0.0F};
+	placeTargets(executor, processed, {targetPos});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	tick(sys);
+	ASSERT_TRUE(remembers(world, observer, targetPos)) << "precondition: observer discovers the placed entity";
+
+	// Destructive removal: gone from the index.
+	const ChunkCoordinate coord = world::worldToChunk({targetPos.x, targetPos.y});
+	ASSERT_TRUE(executor.removeEntity(coord, targetPos, kTargetDefName));
+
+	tick(sys);
+	EXPECT_FALSE(remembers(world, observer, targetPos)) << "seeing the empty spot must forget the stale entry";
+}
+
+// An entity still present in the index (e.g. on a regrowth cooldown -- cooldown
+// lives in a separate map, the entity stays indexed) is NOT forgotten.
+TEST_F(VisionSystemTest, PresentEntityInViewIsKept) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	const glm::vec2 targetPos{3.0F, 0.0F};
+	placeTargets(executor, processed, {targetPos});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	tick(sys);
+	ASSERT_TRUE(remembers(world, observer, targetPos));
+
+	// Put it on cooldown: still in the index, just not harvestable -> must be kept.
+	executor.startRegrowth(targetPos, reg.getDefNameId(kTargetDefName), 0.0, 30.0);
+	ASSERT_TRUE(executor.regrowthReadyAt(targetPos, reg.getDefNameId(kTargetDefName), 0.0).has_value());
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "a cooldowned (still-indexed) entity must not be forgotten";
+}
+
+// An entity the observer cannot currently see is NOT forgotten even after removal:
+// here a solid wall stands between observer and the (removed) spot. You only forget
+// what you can see is gone.
+TEST_F(VisionSystemTest, RemovedButOccludedEntityIsKept) {
+	ConstructionWorld cw;
+	buildWall(cw, {1500, 0}, {1500, 3000}); // vertical wall at x=1.5m, y in [0,3]
+
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	// Target east of the wall, directly behind it from the observer's view.
+	const glm::vec2 targetPos{2.5F, 1.5F};
+	placeTargets(executor, processed, {targetPos});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+	sys.setConstructionWorld(&cw);
+
+	EntityID observer = spawnObserver(world, {0.5F, 1.5F}); // west of wall
+
+	tick(sys);
+	// The wall hides it from discovery in the first place, so seed memory directly:
+	// the colonist remembers it from before the wall (or from a different vantage).
+	Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	mem->rememberWorldEntity(
+		targetPos, reg.getDefNameId(kTargetDefName),
+		reg.getCapabilityMask(reg.getDefNameId(kTargetDefName)));
+	ASSERT_TRUE(remembers(world, observer, targetPos));
+
+	// Remove it from the world. The observer still can't SEE the spot (wall).
+	const ChunkCoordinate coord = world::worldToChunk({targetPos.x, targetPos.y});
+	ASSERT_TRUE(executor.removeEntity(coord, targetPos, kTargetDefName));
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "can't see behind the wall -> must not forget";
+}
+
+// An entity outside the sight radius is NOT forgotten even after removal.
+TEST_F(VisionSystemTest, RemovedButOutOfRadiusEntityIsKept) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+
+	// Well beyond the default 30m sight radius.
+	const glm::vec2 targetPos{100.0F, 0.0F};
+	placeTargets(executor, processed, {targetPos});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+	Memory*	 mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	mem->rememberWorldEntity(
+		targetPos, reg.getDefNameId(kTargetDefName),
+		reg.getCapabilityMask(reg.getDefNameId(kTargetDefName)));
+	ASSERT_TRUE(remembers(world, observer, targetPos));
+
+	const ChunkCoordinate coord = world::worldToChunk({targetPos.x, targetPos.y});
+	ASSERT_TRUE(executor.removeEntity(coord, targetPos, kTargetDefName));
+
+	tick(sys);
+	EXPECT_TRUE(remembers(world, observer, targetPos)) << "out of sight radius -> must not forget";
+}
+
+// Shore memory entries are synthetic terrain, never reconciled away: even with
+// placement data wired and the spot in view, the shore entry survives.
+TEST_F(VisionSystemTest, ShoreNeverReconciled) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	// Store an EMPTY placement index for chunk (0,0) so reconciliation's index path is
+	// genuinely live (getChunkIndex returns non-null). A placement entity here would
+	// be forgotten; the shore entry must survive via the shore exemption, not
+	// merely because no index exists.
+	{
+		assets::AsyncChunkPlacementResult emptyChunk;
+		emptyChunk.coord = ChunkCoordinate{0, 0};
+		executor.storeChunkResult(std::move(emptyChunk));
+		processed.insert(ChunkCoordinate{0, 0});
+	}
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	EntityID observer = spawnObserver(world, {0.0F, 0.0F});
+
+	// Run a tick so the system registers its synthetic shore def and we can look up id.
+	tick(sys);
+
+	const uint32_t shoreId = reg.getDefNameId("Terrain_Shore");
+	ASSERT_NE(shoreId, 0u);
+	const glm::vec2 shorePos{2.0F, 0.0F}; // in view, in the (empty) processed chunk
+	Memory*			mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	mem->rememberWorldEntity(shorePos, shoreId, reg.getCapabilityMask(shoreId));
+	ASSERT_TRUE(mem->knowsWorldEntity(shorePos, shoreId));
+
+	tick(sys);
+	EXPECT_TRUE(mem->knowsWorldEntity(shorePos, shoreId)) << "the shore is terrain, never reconciled away";
+}
+
+// Piles and boxes live only in the ECS, never in the placement index. Seen by pass 2 each tick, they
+// stay remembered without a memory write: the set of remembered entities doesn't change, so
+// worldEntityVersion holds. One destroyed while in view is forgotten on the next tick.
+TEST_F(VisionSystemTest, EcsEntitiesInViewAreKeptWithoutChurn) {
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	const glm::vec2						placedPos{6.0F, 6.0F};
+	placeTargets(executor, processed, {placedPos}); // a live index for the chunk the pile and box stand in
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+
+	const glm::vec2 pilePos{3.0F, 1.0F};
+	const glm::vec2 boxPos{1.0F, 3.0F};
+	const EntityID	pile = spawnTarget(world, pilePos);
+	spawnTarget(world, boxPos);
+	const EntityID observer = spawnObserver(world, {0.5F, 0.5F});
+	const Memory*  mem = world.getComponent<Memory>(observer);
+
+	tick(sys);
+	ASSERT_TRUE(remembers(world, observer, pilePos));
+	ASSERT_TRUE(remembers(world, observer, boxPos));
+	ASSERT_TRUE(remembers(world, observer, placedPos));
+	const std::uint64_t version = mem->worldEntityVersion;
+
+	for (int i = 0; i < 4; ++i) {
+		tick(sys);
+	}
+	EXPECT_EQ(mem->worldEntityVersion, version) << "an unchanged pile and box in view write nothing to memory";
+	EXPECT_TRUE(remembers(world, observer, pilePos));
+	EXPECT_TRUE(remembers(world, observer, boxPos));
+
+	world.destroyEntity(pile);
+	tick(sys);
+	EXPECT_FALSE(remembers(world, observer, pilePos)) << "a pile gone from in view is forgotten";
+	EXPECT_TRUE(remembers(world, observer, boxPos));
+	EXPECT_TRUE(remembers(world, observer, placedPos));
+}
+
+// Pass 3 (terrain polygons D11): every shore point of a loaded chunk within sight
+// is remembered as the drinkable Terrain_Shore, and none beyond it; each stands
+// on land at the water's edge.
+TEST_F(VisionSystemTest, ShorePointsInSightAreRemembered) {
+	world::ChunkManager chunks(lakeSampler());
+	chunks.setLoadRadius(0);
+	chunks.update({48.0F, 48.0F});
+	chunks.finishPendingGeneration();
+	const world::Chunk* chunk = chunks.getChunk({0, 0});
+	ASSERT_TRUE(chunk != nullptr && chunk->isReady());
+	const std::vector<Vec2i64>& shore = chunk->terrainPolygons().shorePoints;
+	ASSERT_GT(shore.size(), 100U) << "the lake's shore, a point a meter";
+
+	World			world;
+	VisionSystem&	sys = world.registerSystem<VisionSystem>();
+	sys.setChunkManager(&chunks);
+	const glm::vec2 eye{48.0F, 20.0F}; // 12 m south of the lake
+	const EntityID	observer = spawnObserver(world, eye);
+	tick(sys);
+
+	const uint32_t shoreId = AssetRegistry::Get().getDefNameId("Terrain_Shore");
+	ASSERT_NE(shoreId, 0u);
+	const Memory* mem = world.getComponent<Memory>(observer);
+	ASSERT_NE(mem, nullptr);
+	const world::TerrainPolygonQuery water(chunk->terrainPolygons());
+	int										 inSight = 0;
+	for (const Vec2i64& p : shore) {
+		const Foundation::Vec2 meters = geometry::dequantize(p);
+		const glm::vec2		   at{meters.x, meters.y};
+		const float			   dx	= at.x - eye.x;
+		const float			   dy	= at.y - eye.y;
+		const bool			   seen = dx * dx + dy * dy <= mem->sightRadius * mem->sightRadius;
+		inSight += seen ? 1 : 0;
+		EXPECT_EQ(mem->knowsWorldEntity(at, shoreId), seen) << at.x << ", " << at.y;
+		EXPECT_FALSE(water.isInsideWater(p)) << at.x << ", " << at.y;
+		EXPECT_LE(water.distanceToWaterMm(p), 301.0) << at.x << ", " << at.y;
+	}
+	EXPECT_GT(inSight, 20);
+}
+
+// --- Landing memory (player-visibility.md 3.8) --------------------------------
+
+// The landing crew knows the landing area at tick 0: placed and ECS things 100 m from the drop,
+// far past his own sight, and nothing past kLandingSightMeters. A thing the landing cleared from
+// round the crew before the call is not remembered.
+TEST_F(VisionSystemTest, LandingCrewKnowsTheLandingArea) {
+	const glm::vec2						drop{200.0F, 200.0F};
+	const glm::vec2						nearPlaced = drop + glm::vec2{100.0F, 0.0F};
+	const glm::vec2						farPlaced = drop + glm::vec2{160.0F, 0.0F};
+	const glm::vec2						cleared = drop + glm::vec2{2.0F, 0.0F};
+	AssetRegistry&						reg = AssetRegistry::Get();
+	PlacementExecutor					executor(reg);
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTargets(executor, processed, {nearPlaced, farPlaced, cleared});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+	const glm::vec2 nearEcs = drop + glm::vec2{0.0F, 100.0F};
+	const glm::vec2 farEcs = drop + glm::vec2{0.0F, -160.0F};
+	spawnTarget(world, nearEcs);
+	spawnTarget(world, farEcs);
+
+	ASSERT_TRUE(executor.removeEntity(world::worldToChunk({cleared.x, cleared.y}), cleared, kTargetDefName));
+	const EntityID member = spawnObserver(world, drop + glm::vec2{0.5F, 0.0F});
+	sys.rememberArea(member, drop, NavigationSystem::kLandingSightMeters);
+
+	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "a placed thing 100 m from the drop";
+	EXPECT_TRUE(remembers(world, member, nearEcs)) << "an ECS thing 100 m from the drop";
+	EXPECT_FALSE(remembers(world, member, farPlaced)) << "160 m is past the landing area";
+	EXPECT_FALSE(remembers(world, member, farEcs)) << "160 m is past the landing area";
+	EXPECT_FALSE(remembers(world, member, cleared)) << "cleared before the crew remembered the area";
+	EXPECT_FALSE(sys.sightShape(member).has_value()) << "the landing is not his sight";
+}
+
+// A colonist who joins after the landing starts with his own sight only.
+TEST_F(VisionSystemTest, LaterColonistDoesNotKnowTheLandingArea) {
+	const glm::vec2						drop{200.0F, 200.0F};
+	const glm::vec2						nearPlaced = drop + glm::vec2{100.0F, 0.0F};
+	const glm::vec2						inSight = drop + glm::vec2{10.0F, 0.0F};
+	PlacementExecutor					executor(AssetRegistry::Get());
+	std::unordered_set<ChunkCoordinate> processed;
+	placeTargets(executor, processed, {nearPlaced, inSight});
+
+	World		  world;
+	VisionSystem& sys = world.registerSystem<VisionSystem>();
+	sys.setPlacementData(&executor, &processed);
+	const EntityID member = spawnObserver(world, drop);
+	sys.rememberArea(member, drop, NavigationSystem::kLandingSightMeters);
+	tick(sys);
+
+	const EntityID arrival = spawnObserver(world, drop);
+	tick(sys);
+	EXPECT_TRUE(remembers(world, arrival, inSight));
+	EXPECT_FALSE(remembers(world, arrival, nearPlaced)) << "a later arrival was not in the crash";
+	EXPECT_TRUE(remembers(world, member, nearPlaced)) << "the crew keeps the landing area past its first look";
+}

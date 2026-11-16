@@ -1,6 +1,6 @@
 #include "PlanetMesh.h"
 
-#include <world/worldgen/grid/SphereGrid.h>
+#include <worldgen/grid/SphereGrid.h>
 
 #include <algorithm>
 #include <cmath>

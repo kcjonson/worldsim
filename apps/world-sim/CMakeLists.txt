@@ -4,6 +4,7 @@ add_executable(world-sim
     GameWorldState.cpp
     GameStartConfig.cpp
     NewGameSetup.cpp
+    GameBootstrap.cpp
     # Game scene UI - views
     scenes/game/ui/views/ColonistListView.cpp
     scenes/game/ui/views/EntityInfoView.cpp
@@ -16,6 +17,8 @@ add_executable(world-sim
     scenes/game/ui/views/RegionMinimapPanel.cpp
     scenes/game/ui/views/ResourcesPanel.cpp
     scenes/game/ui/views/GlobalTaskListView.cpp
+    scenes/game/ui/views/SectionHeader.cpp
+    scenes/game/ui/views/StatusTextLine.cpp
     # Game scene UI - components
     scenes/game/ui/components/ColonistListItem.cpp
     scenes/game/ui/components/GlobalTaskRow.cpp
@@ -28,6 +31,7 @@ add_executable(world-sim
     scenes/game/ui/adapters/GlobalTaskAdapter.cpp
     scenes/game/ui/adapters/ResourcesAdapter.cpp
     scenes/game/ui/adapters/SelectionAdapter.cpp
+    scenes/game/ui/adapters/TaskRowText.cpp
     scenes/game/ui/adapters/TimeAdapter.cpp
     # Game scene UI - models
     scenes/game/ui/models/ColonistListModel.cpp
@@ -40,6 +44,7 @@ add_executable(world-sim
     scenes/game/ui/dialogs/ColonistDetailsModel.cpp
     scenes/game/ui/dialogs/CraftingDialog.cpp
     scenes/game/ui/dialogs/CraftingDialogModel.cpp
+    scenes/game/ui/dialogs/PauseMenuDialog.cpp
     scenes/game/ui/dialogs/StorageConfigDialog.cpp
     scenes/game/ui/dialogs/StorageConfigDialogModel.cpp
     scenes/game/ui/dialogs/tabs/BioTabView.cpp
@@ -53,6 +58,7 @@ add_executable(world-sim
     # Game scene UI - main container
     scenes/game/ui/GameUI.cpp
     # Game scene - world subsystems
+    scenes/game/world/MoveOrderGoal.cpp
     scenes/game/world/placement/GhostRenderer.cpp
     scenes/game/world/placement/PlacementMode.cpp
     scenes/game/world/placement/PlacementSystem.cpp
@@ -62,11 +68,12 @@ add_executable(world-sim
     scenes/game/world/rooms/RoomOverlay.cpp
     scenes/game/world/nav/NavOverlay.cpp
     scenes/game/world/vision/VisionOverlay.cpp
+    scenes/game/world/terrain/TerrainPolygonOverlay.cpp
     scenes/game/ui/views/ConstructionConfigStrip.cpp
     # Scenes
     scenes/shared/GlobeView.cpp
     scenes/shared/DecorativePlanet.cpp
-    scenes/shared/UiStateDrain.cpp
+    scenes/shared/SalalUi.cpp
     scenes/splash/SplashScene.cpp
     scenes/menu/MainMenuScene.cpp
     scenes/scenario-select/ScenarioSelectScene.cpp
@@ -78,7 +85,12 @@ add_executable(world-sim
     scenes/landing/LandingSiteDetailsModel.cpp
     scenes/landing/LandingSiteDetailsPanel.cpp
     scenes/loading/GameLoadingScene.cpp
+    scenes/game/dev/CameraCommand.cpp
     scenes/game/dev/DevCommandHandler.cpp
+    scenes/game/dev/GpuHold.cpp
+    scenes/game/dev/GpuHoldCommand.cpp
+    scenes/game/dev/GroundRefusal.cpp
+    scenes/game/dev/PointList.cpp
     scenes/game/GameScene.cpp
     scenes/settings/SettingsScene.cpp
 )
@@ -93,23 +105,34 @@ target_compile_features(world-sim PRIVATE cxx_std_20)
 # Link all required libraries
 target_link_libraries(world-sim
     PRIVATE
-        engine
-        game-systems
+        world-view
+        sim
         world
-        ui
-        renderer
-        foundation
+        worldgen
         assets
+        theme
         planet-view
+        salal::app
+        salal::renderer
+        salal::foundation
+        OpenGL::GL
+        GLEW::GLEW
 )
 
-# Copy shaders after build as well (kept for redundancy during full rebuilds)
-add_custom_command(TARGET world-sim POST_BUILD
+# The game's own passes' shaders (salal's base shader is compiled in) are staged into
+# ${CMAKE_BINARY_DIR}/shaders by world-view-shaders and planet-view-shaders. findResource
+# reads the exe directory first, so mirror them beside the exe on every build; a
+# POST_BUILD step only runs on relink and goes stale on shader edits.
+# The mirror snapshots the whole staging directory, so it has to wait for every target that
+# writes into it: a staging copy running concurrently fails on Windows file locks.
+add_custom_target(world-sim-shaders ALL
     COMMAND ${CMAKE_COMMAND} -E copy_directory
-    ${CMAKE_BINARY_DIR}/shaders
-    $<TARGET_FILE_DIR:world-sim>/shaders
-    COMMENT "Copying shaders to world-sim directory"
+        ${CMAKE_BINARY_DIR}/shaders
+        $<TARGET_FILE_DIR:world-sim>/shaders
+    COMMENT "Mirroring shaders beside world-sim"
+    VERBATIM
 )
+add_dependencies(world-sim-shaders world-view-shaders planet-view-shaders)
 
 # Copy fonts to executable directory
 add_custom_command(TARGET world-sim POST_BUILD
@@ -132,5 +155,56 @@ add_custom_target(world-sim-assets ALL
     COMMENT "Mirroring assets to world-sim directory"
 )
 
-# Make world-sim depend on shader and asset sync so they are copied before running
-add_dependencies(world-sim world-sim-assets renderer-shaders)
+# Make world-sim depend on the shader and asset mirrors so they are in place before running
+add_dependencies(world-sim world-sim-assets world-sim-shaders)
+
+# world-sim's own pure code, which no library's test target reaches
+if(BUILD_TESTING)
+    find_package(GTest CONFIG REQUIRED)
+    add_executable(world-sim-tests
+        scenes/game/dev/CameraCommand.cpp
+        scenes/game/dev/CameraCommand.test.cpp
+        scenes/game/dev/GpuHoldCommand.cpp
+        scenes/game/dev/GpuHoldCommand.test.cpp
+        scenes/game/dev/GroundRefusal.cpp
+        scenes/game/dev/GroundRefusal.test.cpp
+        scenes/game/dev/PointList.cpp
+        scenes/game/dev/PointList.test.cpp
+        scenes/game/world/MoveOrderGoal.cpp
+        scenes/game/world/MoveOrderGoal.test.cpp
+        scenes/game/world/construction/CommittedGeometryCache.cpp
+        scenes/game/world/construction/CommittedGeometryCache.test.cpp
+        scenes/game/world/construction/DrawingSystem.cpp
+        scenes/game/world/construction/DrawingSystem.test.cpp
+        scenes/game/world/placement/GhostRenderer.cpp
+        scenes/game/world/placement/PlacementMode.cpp
+        scenes/game/world/placement/PlacementSystem.cpp
+        scenes/game/world/placement/PlacementSystem.test.cpp
+        scenes/game/world/selection/SelectionSystem.cpp
+        scenes/game/world/selection/SelectionSystem.test.cpp
+        scenes/game/ui/adapters/GlobalTaskAdapter.cpp
+        scenes/game/ui/adapters/GlobalTaskAdapter.test.cpp
+        scenes/game/ui/adapters/TaskRowText.cpp
+        scenes/game/ui/adapters/TaskRowText.test.cpp
+    )
+    target_include_directories(world-sim-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_compile_features(world-sim-tests PRIVATE cxx_std_20)
+    target_link_libraries(world-sim-tests
+        PRIVATE
+            world-view
+            sim
+            world
+            assets
+            salal::renderer
+            salal::foundation
+            GTest::gtest
+            GTest::gtest_main
+    )
+    if(MSVC)
+        target_compile_options(world-sim-tests PRIVATE /Od)
+    else()
+        target_compile_options(world-sim-tests PRIVATE -O0 -g)
+    endif()
+    add_test(NAME world-sim-tests COMMAND world-sim-tests)
+    worldsim_test_data(world-sim-tests assets/config)
+endif()
