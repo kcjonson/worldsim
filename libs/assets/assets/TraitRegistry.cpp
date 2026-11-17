@@ -1,16 +1,17 @@
 #include "assets/TraitRegistry.h"
 
+#include "assets/ConditionConfig.h"
+#include "assets/ConfigFiles.h"
 #include "assets/ConfigNumber.h"
+#include "assets/ConfigXml.h"
 
 #include <utils/Log.h>
 
 #include <pugixml.hpp>
 
 #include <algorithm>
-#include <initializer_list>
 #include <map>
 #include <optional>
-#include <sstream>
 #include <utility>
 
 namespace assets {
@@ -26,41 +27,12 @@ namespace assets {
 			});
 		}
 
-		std::vector<std::string> splitNames(const char* text) {
-			std::vector<std::string> names;
-			std::istringstream		 stream(text);
-			std::string				 name;
-			while (stream >> name) {
-				names.push_back(std::move(name));
+		std::string reservedWordList() {
+			std::string list;
+			for (const std::string_view word : kConditionReservedWords) {
+				list += (list.empty() ? "" : ", ") + std::string(word);
 			}
-			return names;
-		}
-
-		bool excludes(const std::vector<std::vector<std::string>>& groups, const std::string& first, const std::string& second) {
-			return std::ranges::any_of(groups, [&](const std::vector<std::string>& group) {
-				return std::ranges::find(group, first) != group.end() && std::ranges::find(group, second) != group.end();
-			});
-		}
-
-		/// Whether `wanted` of `ids`, from `from` on, can be chosen on top of `chosen` with no pair excluded.
-		bool canChoose(
-			const std::vector<std::string>& ids, const std::vector<std::vector<std::string>>& groups, std::vector<std::string>& chosen, std::size_t from,
-			std::size_t wanted
-		) {
-			if (chosen.size() >= wanted) {
-				return true;
-			}
-			for (std::size_t next = from; next < ids.size() && chosen.size() + (ids.size() - next) >= wanted; ++next) {
-				if (std::ranges::any_of(chosen, [&](const std::string& held) { return excludes(groups, held, ids[next]); })) {
-					continue;
-				}
-				chosen.push_back(ids[next]);
-				if (canChoose(ids, groups, chosen, next + 1, wanted)) {
-					return true;
-				}
-				chosen.pop_back();
-			}
-			return false;
+			return list;
 		}
 
 		struct ExclusiveGroup {
@@ -70,12 +42,11 @@ namespace assets {
 
 		class Loader {
 		  public:
-			Loader(std::vector<TraitDef>& newTraits, TraitCount& newCount, std::vector<std::vector<std::string>>& newGroups)
-				: traits(newTraits)
-				, count(newCount)
-				, groups(newGroups) {}
-
-			std::vector<std::string> errors;
+			std::vector<TraitDef>		traits;
+			TraitCount					count;
+			std::optional<std::string>	countSource;
+			std::vector<ExclusiveGroup> groups;
+			std::vector<std::string>	errors;
 
 			void loadFile(const std::filesystem::path& path, const std::string& source) {
 				pugi::xml_document			 document;
@@ -108,51 +79,23 @@ namespace assets {
 			}
 
 			void check() {
-				for (const ExclusiveGroup& group : pending) {
+				for (const ExclusiveGroup& group : groups) {
 					for (const std::string& id : group.ids) {
-						if (!isDeclared(id)) {
+						if (std::ranges::find(traits, id, &TraitDef::id) == traits.end()) {
 							fail(group.source, "<Exclusive> names '" + id + "', which no file declares as a trait");
 						}
 					}
-					groups.push_back(group.ids);
-				}
-				for (const TraitDef& trait : traits) {
-					allIds.push_back(trait.id);
 				}
 				if (traits.empty()) {
 					fail("traits", "no file declares a <Trait>");
 				}
-				if (!countSource.has_value()) {
+				if (!countGiven) {
 					fail("traits", "no file gives <Count> min and max");
-				} else if (static_cast<std::size_t>(count.min) > traits.size()) {
-					fail(*countSource, "<Count> min is " + std::to_string(count.min) + ", more than the " + std::to_string(traits.size()) + " declared traits");
-				} else if (std::vector<std::string> chosen; !canChoose(allIds, groups, chosen, 0, static_cast<std::size_t>(count.min))) {
-					fail(
-						*countSource,
-						"<Count> min is " + std::to_string(count.min) + ", but the <Exclusive> groups leave no way to hold that many of the " +
-							std::to_string(traits.size()) + " declared traits at once"
-					);
 				}
 			}
 
 		  private:
 			void fail(const std::string& source, const std::string& message) { errors.push_back(source + ": " + message); }
-
-			/// False, with each one reported, when the element has an attribute it does not take.
-			bool onlyAttributes(pugi::xml_node node, std::initializer_list<std::string_view> allowed, const std::string& what, const std::string& source) {
-				bool clean = true;
-				for (const pugi::xml_attribute attribute : node.attributes()) {
-					if (std::ranges::find(allowed, std::string_view(attribute.name())) == allowed.end()) {
-						fail(source, what + ": unknown attribute '" + attribute.name() + "'");
-						clean = false;
-					}
-				}
-				return clean;
-			}
-
-			bool isDeclared(const std::string& id) const {
-				return std::ranges::any_of(traits, [&](const TraitDef& trait) { return trait.id == id; });
-			}
 
 			void loadTrait(pugi::xml_node node, const std::string& source, std::vector<std::string>& declaredHere) {
 				TraitDef trait{
@@ -165,7 +108,11 @@ namespace assets {
 					return;
 				}
 				const std::string what = "trait '" + trait.id + "'";
-				if (!onlyAttributes(node, {"id", "name", "description"}, what, source)) {
+				if (std::ranges::find(kConditionReservedWords, trait.id) != kConditionReservedWords.end()) {
+					fail(source, what + ": the id is a word of the condition language (" + reservedWordList() + ")");
+					return;
+				}
+				if (!onlyAttributes(node, {"id", "name", "description"}, what, source, errors)) {
 					return;
 				}
 				if (trait.name.empty()) {
@@ -193,7 +140,8 @@ namespace assets {
 			}
 
 			void loadCount(pugi::xml_node node, const std::string& source) {
-				if (!onlyAttributes(node, {"min", "max"}, "<Count>", source)) {
+				countGiven = true;
+				if (!onlyAttributes(node, {"min", "max"}, "<Count>", source, errors)) {
 					return;
 				}
 				ConfigReader reader(source);
@@ -217,7 +165,7 @@ namespace assets {
 			void loadExclusive(pugi::xml_node node, const std::string& source) {
 				std::vector<std::string> ids = splitNames(node.text().as_string());
 				const std::string		 what = "<Exclusive>" + std::string(node.text().as_string()) + "</Exclusive>";
-				if (!onlyAttributes(node, {}, what, source)) {
+				if (!onlyAttributes(node, {}, what, source, errors)) {
 					return;
 				}
 				if (ids.size() < 2) {
@@ -230,58 +178,66 @@ namespace assets {
 					fail(source, what + ": lists a trait id twice");
 					return;
 				}
-				pending.push_back({.ids = std::move(ids), .source = source});
+				groups.push_back({.ids = std::move(ids), .source = source});
 			}
 
-			std::vector<TraitDef>&				   traits;
-			TraitCount&							   count;
-			std::vector<std::vector<std::string>>& groups;
-			std::vector<ExclusiveGroup>			   pending;
-			std::vector<std::string>			   allIds;
-			std::map<std::string, std::string>	   traitSources;
-			std::optional<std::string>			   countSource;
+			std::map<std::string, std::string> traitSources;
+			bool							   countGiven = false;
 		};
 
 	} // namespace
 
-	TraitRegistry& TraitRegistry::Get() {
-		static TraitRegistry instance;
-		return instance;
-	}
-
 	std::vector<std::string> TraitRegistry::loadFromFolder(const std::filesystem::path& folder) {
 		clear();
-		std::error_code error;
-		if (!std::filesystem::is_directory(folder, error)) {
-			return {folder.generic_string() + ": not a folder"};
+		const ConfigFiles found = configFilesIn(folder);
+		if (found.error.has_value()) {
+			return {*found.error};
 		}
 
-		std::vector<std::filesystem::path> files;
-		for (const auto& entry : std::filesystem::recursive_directory_iterator(folder, error)) {
-			if (entry.is_regular_file() && entry.path().extension() == ".xml") {
-				files.push_back(entry.path());
-			}
-		}
-		if (error) {
-			return {folder.generic_string() + ": " + error.message()};
-		}
-		std::ranges::sort(files, {}, [&folder](const std::filesystem::path& file) { return std::pair(file.parent_path() != folder, file); });
-
-		Loader loader(traitList, traitCount, exclusiveGroups);
-		for (const std::filesystem::path& file : files) {
+		Loader loader;
+		for (const std::filesystem::path& file : found.files) {
 			loader.loadFile(file, std::filesystem::relative(file, folder).generic_string());
 		}
 		loader.check();
 		if (!loader.errors.empty()) {
-			clear();
+			return std::move(loader.errors);
 		}
-		return std::move(loader.errors);
+
+		traitList = std::move(loader.traits);
+		traitCount = loader.count;
+		excludes.assign(traitList.size(), std::vector<bool>(traitList.size(), false));
+		for (const ExclusiveGroup& group : loader.groups) {
+			std::vector<std::size_t>& members = exclusiveGroups.emplace_back();
+			for (const std::string& id : group.ids) {
+				members.push_back(static_cast<std::size_t>(std::ranges::find(traitList, id, &TraitDef::id) - traitList.begin()));
+			}
+			for (const std::size_t first : members) {
+				for (const std::size_t second : members) {
+					excludes[first][second] = first != second;
+				}
+			}
+		}
+
+		const auto	min = static_cast<std::size_t>(traitCount.min);
+		std::string problem;
+		if (min > traitList.size()) {
+			problem = "<Count> min is " + std::to_string(min) + ", more than the " + std::to_string(traitList.size()) + " declared traits";
+		} else if (!reachable({}, min)) {
+			problem = "<Count> min is " + std::to_string(min) + ", but the <Exclusive> groups leave no way to hold that many of the " +
+					  std::to_string(traitList.size()) + " declared traits at once";
+		}
+		if (!problem.empty()) {
+			clear();
+			return {*loader.countSource + ": " + problem};
+		}
+		return {};
 	}
 
 	void TraitRegistry::clear() {
 		traitList.clear();
 		traitCount = {};
 		exclusiveGroups.clear();
+		excludes.clear();
 	}
 
 	const TraitDef* TraitRegistry::find(std::string_view id) const {
@@ -290,9 +246,72 @@ namespace assets {
 	}
 
 	bool TraitRegistry::exclusive(std::string_view first, std::string_view second) const {
-		return std::ranges::any_of(exclusiveGroups, [&](const std::vector<std::string>& group) {
-			return std::ranges::find(group, first) != group.end() && std::ranges::find(group, second) != group.end();
-		});
+		const TraitDef* firstTrait = find(first);
+		const TraitDef* secondTrait = find(second);
+		return firstTrait != nullptr && secondTrait != nullptr &&
+			   excludes[static_cast<std::size_t>(firstTrait - traitList.data())][static_cast<std::size_t>(secondTrait - traitList.data())];
+	}
+
+	bool TraitRegistry::reachable(std::span<const std::size_t> held, std::size_t wanted) const {
+		for (std::size_t at = 0; at < held.size(); ++at) {
+			for (std::size_t next = at + 1; next < held.size(); ++next) {
+				if (excludes[held[at]][held[next]]) {
+					return false;
+				}
+			}
+		}
+		if (held.size() >= wanted) {
+			return true;
+		}
+		std::vector<std::size_t> candidates;
+		for (std::size_t trait = 0; trait < traitList.size(); ++trait) {
+			if (std::ranges::none_of(held, [&](std::size_t holding) { return holding == trait || excludes[holding][trait]; })) {
+				candidates.push_back(trait);
+			}
+		}
+		return fits(candidates, wanted - held.size());
+	}
+
+	/// Each step takes the first candidate or leaves it, and gives up on a branch whose candidates cannot
+	/// hold `wanted` even by the group bound.
+	bool TraitRegistry::fits(const std::vector<std::size_t>& candidates, std::size_t wanted) const {
+		if (wanted == 0) {
+			return true;
+		}
+		if (mostHeldOf(candidates) < wanted) {
+			return false;
+		}
+		const std::vector<std::size_t> rest(candidates.begin() + 1, candidates.end());
+		std::vector<std::size_t>	   compatible;
+		for (const std::size_t trait : rest) {
+			if (!excludes[candidates.front()][trait]) {
+				compatible.push_back(trait);
+			}
+		}
+		return fits(compatible, wanted - 1) || fits(rest, wanted);
+	}
+
+	/// An upper bound on how many of `candidates` one colonist can hold: at most one of each exclusive
+	/// group's candidates that no earlier group already counted.
+	std::size_t TraitRegistry::mostHeldOf(const std::vector<std::size_t>& candidates) const {
+		std::vector<bool> isCandidate(traitList.size(), false);
+		for (const std::size_t trait : candidates) {
+			isCandidate[trait] = true;
+		}
+		std::size_t most = candidates.size();
+		for (const std::vector<std::size_t>& group : exclusiveGroups) {
+			std::size_t members = 0;
+			for (const std::size_t trait : group) {
+				if (isCandidate[trait]) {
+					isCandidate[trait] = false;
+					++members;
+				}
+			}
+			if (members > 1) {
+				most -= members - 1;
+			}
+		}
+		return most;
 	}
 
 } // namespace assets

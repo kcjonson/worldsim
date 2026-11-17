@@ -57,7 +57,6 @@
 #include <assets/DetailLevels.h>
 #include <assets/MoodConfig.h>
 #include <assets/RecipeRegistry.h>
-#include <assets/TraitRegistry.h>
 #include <assets/placement/AsyncChunkProcessor.h>
 #include <assets/placement/CanopyCover.h>
 #include <assets/placement/PlacementExecutor.h>
@@ -233,6 +232,7 @@ namespace {
 			// Note: Callbacks for placement/selection are set up after systems are created below
 			gameUI = std::make_unique<world_sim::GameUI>(world_sim::GameUI::Args{
 				.root = root(),
+				.traits = *colonistRules.traits,
 				.onZoomIn = [this]() { m_camera->zoomIn(); },
 				.onZoomOut = [this]() { m_camera->zoomOut(); },
 				.onZoomReset = [this]() { m_camera->setZoomIndex(world::kDefaultZoomIndex); },
@@ -1620,7 +1620,7 @@ namespace {
 			std::mt19937	attrRng(static_cast<uint32_t>(entity));
 			attributes.strength = std::uniform_real_distribution<float>(6.0F, 14.0F)(attrRng);
 			ecsWorld->addComponent<ecs::Attributes>(entity, attributes);
-			ecsWorld->addComponent<ecs::Traits>(entity, ecs::rollTraits(assets::TraitRegistry::Get(), attrRng));
+			ecsWorld->addComponent<ecs::Traits>(entity, ecs::rollTraits(*colonistRules.traits, attrRng));
 
 			// Carry weight scales with Strength (an average colonist lands at the prior 35kg).
 			auto inventory = ecs::Inventory::createForColonist();

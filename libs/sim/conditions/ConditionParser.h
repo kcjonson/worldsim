@@ -15,7 +15,7 @@ namespace conditions {
 	class ConditionVocabulary;
 
 	/// A name a condition can use for a term or a symbol: letters, digits, and `_`, not starting with a
-	/// digit, and not a word of the grammar (and, or, not, is, self, target).
+	/// digit, and not a word of the grammar (assets::kConditionReservedWords).
 	[[nodiscard]] bool isConditionName(std::string_view name);
 
 	/// Turns one expression into a Condition against a frozen vocabulary. Grammar, loosest binding first:

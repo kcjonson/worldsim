@@ -6,7 +6,9 @@
 // assets/config/colonists/traits adds to the set, so a mod adds or replaces traits with a file of its own.
 // See /docs/design/game-systems/colonists/attributes.md (Traits).
 
+#include <cstddef>
 #include <filesystem>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -19,7 +21,8 @@ namespace assets {
 		std::string description;
 	};
 
-	/// How many traits a colonist gets, from `min` to `max` inclusive.
+	/// How many traits a colonist gets, from `min` to `max` inclusive. `max` is an upper bound: it may be
+	/// more than the exclusive groups let one colonist hold.
 	struct TraitCount {
 		int min = 0;
 		int max = 0;
@@ -27,9 +30,6 @@ namespace assets {
 
 	class TraitRegistry {
 	  public:
-		/// The game's traits, filled by ecs::loadColonistRules.
-		static TraitRegistry& Get();
-
 		/// Replace everything with the .xml files under `folder`: its own files first, then its subfolders'
 		/// files, each in path order. A later file replaces a trait of the same id (logged at info level,
 		/// naming both files) and may replace <Count>; exclusions accumulate, so a trait in several groups is
@@ -37,11 +37,7 @@ namespace assets {
 		/// leaves the registry empty, and an empty list means the set loaded clean.
 		[[nodiscard]] std::vector<std::string> loadFromFolder(const std::filesystem::path& folder);
 
-		void clear();
-
-		[[nodiscard]] bool loaded() const { return !traitList.empty(); }
-
-		/// In the order first declared.
+		/// In the order first declared; an index into this is what reachable() takes.
 		[[nodiscard]] const std::vector<TraitDef>& traits() const { return traitList; }
 		[[nodiscard]] const TraitDef*			   find(std::string_view id) const;
 		[[nodiscard]] TraitCount				   count() const { return traitCount; }
@@ -49,10 +45,20 @@ namespace assets {
 		/// True when a declared group lists both traits.
 		[[nodiscard]] bool exclusive(std::string_view first, std::string_view second) const;
 
+		/// Whether one colonist can hold `wanted` traits at once, `held` (indices into traits()) among them,
+		/// with no two exclusive. The load checks <Count> min with it, and the roll each draw.
+		[[nodiscard]] bool reachable(std::span<const std::size_t> held, std::size_t wanted) const;
+
 	  private:
-		std::vector<TraitDef>				  traitList;
-		TraitCount							  traitCount;
-		std::vector<std::vector<std::string>> exclusiveGroups;
+		void clear();
+		[[nodiscard]] bool		  fits(const std::vector<std::size_t>& candidates, std::size_t wanted) const;
+		[[nodiscard]] std::size_t mostHeldOf(const std::vector<std::size_t>& candidates) const;
+
+		std::vector<TraitDef> traitList;
+		TraitCount			  traitCount;
+		/// By index into traitList: each group's members, and for each trait the traits it excludes.
+		std::vector<std::vector<std::size_t>> exclusiveGroups;
+		std::vector<std::vector<bool>>		  excludes;
 	};
 
 } // namespace assets

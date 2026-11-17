@@ -16,9 +16,10 @@
 
 namespace ecs {
 
-	/// Held by pointer so the types keep their vocabulary and the systems their types wherever the
-	/// rules are moved.
+	/// Held by pointer so what holds a part (the types their vocabulary, the systems their types, the Bio tab
+	/// the traits) keeps it wherever the rules are moved.
 	struct ColonistRules {
+		std::unique_ptr<assets::TraitRegistry>			 traits;
 		std::unique_ptr<conditions::ConditionVocabulary> vocabulary;
 		std::unique_ptr<ThoughtTypes>					 thoughtTypes;
 	};
@@ -38,9 +39,10 @@ namespace ecs {
 	/// logged with the feeling and thought type counts.
 	[[nodiscard]] std::vector<std::string> loadThoughtTypes(ThoughtTypes& types, const std::filesystem::path& folder);
 
-	/// Load the game's assets::TraitRegistry from `configRoot`/colonists/traits, build the vocabulary from
-	/// `configRoot`/conditions, then the thought types from `configRoot`/thoughts, stopping at the first
-	/// stage with errors. Errors name their folder; an empty list means all are ready.
+	/// Load the traits from `configRoot`/colonists/traits, build the vocabulary from `configRoot`/conditions,
+	/// then the thought types from `configRoot`/thoughts, stopping at the first stage with errors. Errors name
+	/// their folder; an empty list means all are ready. Every part of the rules exists either way; failed
+	/// traits are empty.
 	[[nodiscard]] ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot);
 
 } // namespace ecs

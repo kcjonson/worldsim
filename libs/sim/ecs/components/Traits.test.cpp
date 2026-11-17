@@ -1,10 +1,13 @@
 #include "Traits.h"
 
+#include "../ShippedConfig.test.h"
+
 #include <gtest/gtest.h>
 
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <set>
 #include <string>
 
@@ -12,20 +15,20 @@ using namespace ecs;
 
 namespace {
 
-	std::filesystem::path shippedTraits() {
-		return std::filesystem::path(SIM_TEST_REPO_DIR) / "assets" / "config" / "colonists" / "traits";
-	}
-
-	/// A registry loaded from `body`, the inside of a <Traits> file.
+	/// A registry loaded from `body`, the inside of a <Traits> file, through a folder of this test's own:
+	/// other worktrees run sim-tests at the same time.
 	assets::TraitRegistry registryOf(const std::string& body) {
-		const std::filesystem::path folder = std::filesystem::temp_directory_path() / "worldsim-roll-traits";
+		static const std::string	processToken = std::to_string(std::random_device{}());
+		const std::filesystem::path folder =
+			std::filesystem::temp_directory_path() /
+			("worldsim-roll-traits-" + processToken + "-" + ::testing::UnitTest::GetInstance()->current_test_info()->name());
 		std::filesystem::remove_all(folder);
 		std::filesystem::create_directories(folder);
 		{
 			std::ofstream file(folder / "traits.xml");
 			file << "<Traits>" << body << "</Traits>";
 		}
-		assets::TraitRegistry registry;
+		assets::TraitRegistry		   registry;
 		const std::vector<std::string> errors = registry.loadFromFolder(folder);
 		std::filesystem::remove_all(folder);
 		EXPECT_TRUE(errors.empty()) << (errors.empty() ? "" : errors.front());
@@ -44,15 +47,12 @@ namespace {
 } // namespace
 
 TEST(RollTraits, TheCountStaysWithinTheRangeAndNoTraitRepeats) {
-	assets::TraitRegistry registry;
-	ASSERT_TRUE(registry.loadFromFolder(shippedTraits()).empty());
-	std::set<std::size_t> counts;
+	const assets::TraitRegistry registry = ecs::testing::shippedTraits();
+	std::set<std::size_t>		counts;
 	for (uint32_t seed = 0; seed < 300; ++seed) {
 		std::mt19937 rng(seed);
 		const Traits traits = rollTraits(registry, rng);
 		counts.insert(traits.ids.size());
-		EXPECT_GE(traits.ids.size(), 1U);
-		EXPECT_LE(traits.ids.size(), 3U);
 		EXPECT_EQ(std::set(traits.ids.begin(), traits.ids.end()).size(), traits.ids.size());
 		for (const std::string& id : traits.ids) {
 			EXPECT_NE(registry.find(id), nullptr) << id;
@@ -62,10 +62,9 @@ TEST(RollTraits, TheCountStaysWithinTheRangeAndNoTraitRepeats) {
 }
 
 TEST(RollTraits, ExclusivePairsNeverLandOnOneColonist) {
-	assets::TraitRegistry registry;
-	ASSERT_TRUE(registry.loadFromFolder(shippedTraits()).empty());
-	bool sawGourmand = false;
-	bool sawAscetic = false;
+	const assets::TraitRegistry registry = ecs::testing::shippedTraits();
+	bool						sawGourmand = false;
+	bool						sawAscetic = false;
 	for (uint32_t seed = 0; seed < 500; ++seed) {
 		std::mt19937 rng(seed);
 		const Traits traits = rollTraits(registry, rng);
@@ -80,8 +79,7 @@ TEST(RollTraits, ExclusivePairsNeverLandOnOneColonist) {
 }
 
 TEST(RollTraits, TheSameSeedGivesTheSameTraits) {
-	assets::TraitRegistry registry;
-	ASSERT_TRUE(registry.loadFromFolder(shippedTraits()).empty());
+	const assets::TraitRegistry registry = ecs::testing::shippedTraits();
 	for (uint32_t seed = 0; seed < 50; ++seed) {
 		std::mt19937 first(seed);
 		std::mt19937 second(seed);
@@ -89,17 +87,29 @@ TEST(RollTraits, TheSameSeedGivesTheSameTraits) {
 	}
 }
 
-TEST(RollTraits, FewerComeBackWhenADrawLeavesTooFewCompatibleToFinish) {
+TEST(RollTraits, TheMinimumIsAlwaysRolledEvenWhenADrawCouldStrandIt) {
 	const assets::TraitRegistry registry = registryOf(
-		R"(<Count min="3" max="3"/>)" + traitXml("one") + traitXml("two") + traitXml("three") + traitXml("four") +
-		"<Exclusive>one two</Exclusive><Exclusive>one three</Exclusive>"
+		R"(<Count min="2" max="2"/>)" + traitXml("a") + traitXml("b") + traitXml("c") + "<Exclusive>a b</Exclusive><Exclusive>a c</Exclusive>"
 	);
-	std::set<std::size_t> counts;
 	for (uint32_t seed = 0; seed < 50; ++seed) {
 		std::mt19937 rng(seed);
-		counts.insert(rollTraits(registry, rng).ids.size());
+		EXPECT_EQ(sorted(rollTraits(registry, rng).ids), (std::vector<std::string>{"b", "c"})) << "seed " << seed;
 	}
-	EXPECT_EQ(counts, (std::set<std::size_t>{2, 3})) << "drawing one first leaves only four to add";
+}
+
+TEST(RollTraits, AMaxAboveWhatFitsGivesAsManyAsFit) {
+	const assets::TraitRegistry registry = registryOf(
+		R"(<Count min="1" max="3"/>)" + traitXml("a") + traitXml("b") + traitXml("c") + "<Exclusive>a b</Exclusive><Exclusive>a c</Exclusive>"
+	);
+	std::set<std::size_t> counts;
+	for (uint32_t seed = 0; seed < 100; ++seed) {
+		std::mt19937		   rng(seed);
+		const Traits		   traits = rollTraits(registry, rng);
+		const std::set<std::string> held(traits.ids.begin(), traits.ids.end());
+		counts.insert(traits.ids.size());
+		EXPECT_FALSE(held.contains("a") && held.size() > 1) << "seed " << seed;
+	}
+	EXPECT_EQ(counts, (std::set<std::size_t>{1, 2})) << "a roll of 2 or 3 gives b and c";
 }
 
 TEST(RollTraits, ACountOfZeroGivesNone) {

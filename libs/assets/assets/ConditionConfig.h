@@ -7,14 +7,19 @@
 
 #include "assets/AssetDefinition.h"
 
+#include <array>
 #include <cstdint>
 #include <filesystem>
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace assets {
+
+	/// The words of the condition grammar, which no term, symbol, or trait id may be.
+	inline constexpr std::array<std::string_view, 6> kConditionReservedWords = {"and", "or", "not", "is", "self", "target"};
 
 	/// What a term or an argument is. A Symbol is a name from a declared set (a kind, a need); a Target
 	/// is an entity.
@@ -62,7 +67,8 @@ namespace assets {
 	};
 
 	/// The symbol sets "kind" and "task" are completed by the loader: every <Kind> is a name in "kind", and
-	/// every <TaskGroup> a name in "task".
+	/// every <TaskGroup> a name in "task". "trait" belongs to the trait definitions: the loader declares it
+	/// empty and closed, no file may declare it, and the sim fills it from the traits.
 	struct ConditionConfig {
 		std::vector<ConditionTermDef>				  terms;
 		std::map<std::string, ConditionSymbolSetDef> symbolSets;

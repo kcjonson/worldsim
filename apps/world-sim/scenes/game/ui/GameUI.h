@@ -32,6 +32,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/TraitRegistry.h>
 #include <ecs/World.h>
 #include <ecs/systems/RoomDetectionSystem.h>
 #include <ecs/systems/TimeSystem.h>
@@ -53,6 +54,7 @@ namespace world_sim {
 	  public:
 		struct Args {
 			ui::Ref<ui::Component>					root; // the scene's root, which the views mount under
+			const assets::TraitRegistry&			traits; // the world's, for the colonist dossier's Bio tab
 			std::function<void()>					onZoomIn;
 			std::function<void()>					onZoomOut;
 			std::function<void()>					onZoomReset;

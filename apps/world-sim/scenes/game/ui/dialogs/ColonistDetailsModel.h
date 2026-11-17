@@ -13,6 +13,7 @@
 #include "tabs/SocialTabView.h"
 #include "tabs/TasksTabView.h"
 
+#include <assets/TraitRegistry.h>
 #include <ecs/ClaimIndex.h>
 #include <ecs/EntityID.h>
 #include <ecs/World.h>
@@ -26,6 +27,10 @@ namespace world_sim {
 	/// Refreshes data for all tabs from ECS world
 	class ColonistDetailsModel {
 	  public:
+		/// `newTraits` are the ones the world's colonists were rolled from.
+		explicit ColonistDetailsModel(const assets::TraitRegistry& newTraits)
+			: traits(newTraits) {}
+
 		/// Type of update needed after refresh()
 		enum class UpdateType {
 			None,	   // No change
@@ -74,6 +79,8 @@ namespace world_sim {
 		/// panel's refresh interval (a full pass over the colony's goals) or when `force`d. True when
 		/// the rows changed.
 		[[nodiscard]] bool extractTasksData(ecs::World& world, ecs::EntityID colonistId, float deltaTime, bool force);
+
+		const assets::TraitRegistry& traits;
 
 		// State
 		ecs::EntityID currentColonistId{0};

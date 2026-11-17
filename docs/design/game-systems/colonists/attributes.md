@@ -68,16 +68,18 @@ Traits are special modifiers beyond the core attributes. Each colonist has 1-3 t
 
 Traits are data, not code. Each has an id written in snake_case (`volatile`), a display name, and a one-line description, in the XML files under `assets/config/colonists/traits`; the same files give the 1-3 range and the exclusive groups. A mod adds a trait, or replaces one by reusing its id, with a file of its own.
 
-A range may start at 0, so a game can leave some colonists with no trait. The smallest count has to be reachable: a range asking for more traits than the exclusive groups allow one colonist to hold is a config error, reported when the traits load. A trait listed in several groups is excluded from every member of each of them. When a roll still ends up short of its count, because an early draw excluded too many of the rest, the colonist keeps what was drawn and the shortfall is logged as a warning.
+A range may start at 0, so a game can leave some colonists with no trait. The smallest count has to be reachable: a range whose min asks for more traits than the exclusive groups allow one colonist to hold is a config error, reported when the traits load. The max is only an upper bound, so a max above what the groups allow is legal and logs nothing; a roll for more than fits gives as many as fit. A trait listed in several groups is excluded from every member of each of them. A roll never ends short of the min: each draw is kept only when the rest of the count can still be filled around it.
+
+A trait id is never a word of the condition language (`and`, `or`, `not`, `is`, `self`, `target`), since conditions write it bare; such an id is a load error naming the file and the trait.
 
 A trait has no effect of its own. Thoughts and behaviors read it through conditions, `trait(volatile)`, so what a trait does is written in the same XML as everything else it touches (see [Mood](./mood.md), Conditions).
 
 **Base traits:**
-- "Hard Worker" — All work slightly faster
-- "Night Owl" — Works better at night, sleep need shifts
-- "Gourmand" — Higher mood from good food, lower from bad
-- "Ascetic" — Doesn't care about room quality
-- "Volatile" — Mood swings more dramatically
+- "Hard Worker": all work slightly faster
+- "Night Owl": works better at night, sleep need shifts
+- "Gourmand": higher mood from good food, lower from bad
+- "Ascetic": doesn't care about room quality
+- "Volatile": mood swings more dramatically
 
 Traits create differentiation and emergent storytelling.
 

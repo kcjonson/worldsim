@@ -5,6 +5,7 @@
 #include "ConditionVocabulary.h"
 
 #include <ecs/GoalTaskRegistry.h>
+#include <ecs/ShippedConfig.test.h>
 #include <ecs/World.h>
 #include <ecs/components/Attributes.h>
 #include <ecs/components/Colonist.h>
@@ -18,7 +19,6 @@
 #include <assets/AssetDefinition.h>
 #include <assets/AssetRegistry.h>
 #include <assets/ConditionConfig.h>
-#include <assets/TraitRegistry.h>
 #include <assets/MemoryConfig.h>
 
 #include <utils/Log.h>
@@ -40,16 +40,6 @@ namespace {
 	std::filesystem::path shippedConditions() {
 		// <root>/libs/sim/conditions/SimTerms.test.cpp -> <root>/assets/config/conditions
 		return std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "conditions";
-	}
-
-	assets::TraitRegistry shippedTraitRegistry() {
-		// <root>/libs/sim/conditions/SimTerms.test.cpp -> <root>/assets/config/colonists/traits
-		assets::TraitRegistry registry;
-		const std::vector<std::string> errors = registry.loadFromFolder(
-			std::filesystem::path(__FILE__).parent_path().parent_path().parent_path().parent_path() / "assets" / "config" / "colonists" / "traits"
-		);
-		EXPECT_TRUE(errors.empty()) << (errors.empty() ? "" : errors.front());
-		return registry;
 	}
 
 	std::filesystem::path shippedMemoryConfig() {
@@ -116,7 +106,7 @@ namespace {
 			world.addComponent<ecs::Attributes>(colonist, attributes);
 			world.addComponent<ecs::Task>(colonist, ecs::Task{});
 			world.addComponent<ecs::Memory>(colonist, ecs::Memory{});
-		world.addComponent<ecs::Traits>(colonist, ecs::Traits{.ids = {"volatile", "night_owl"}});
+			world.addComponent<ecs::Traits>(colonist, ecs::Traits{.ids = {"volatile", "night_owl"}});
 		}
 
 		void TearDown() override {
@@ -130,7 +120,7 @@ namespace {
 			for (const std::string& error : load.errors) {
 				ADD_FAILURE() << error;
 			}
-			for (const std::string& error : buildSimVocabulary(vocabulary, load.config, shippedTraitRegistry())) {
+			for (const std::string& error : buildSimVocabulary(vocabulary, load.config, ecs::testing::shippedTraits())) {
 				ADD_FAILURE() << error;
 			}
 		}
@@ -395,7 +385,7 @@ TEST(SimTermsData, AKindAddedThroughDataWorksWithNear) {
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 
 	ConditionVocabulary vocabulary;
-	ASSERT_TRUE(buildSimVocabulary(vocabulary, load.config, shippedTraitRegistry()).empty());
+	ASSERT_TRUE(buildSimVocabulary(vocabulary, load.config, ecs::testing::shippedTraits()).empty());
 
 	ecs::World			world;
 	const ecs::EntityID colonist = world.createEntity();
@@ -412,7 +402,7 @@ TEST_F(SimTermsTest, AMoverKindAddedThroughDataWorksWithNear) {
 	const assets::ConditionConfigLoad load = loadWithMod(R"(<Kind name="deer" mover="Deer"/><Kind name="unicorn" mover="Unicorn"/>)");
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	ConditionVocabulary modded;
-	ASSERT_TRUE(buildSimVocabulary(modded, load.config, shippedTraitRegistry()).empty());
+	ASSERT_TRUE(buildSimVocabulary(modded, load.config, ecs::testing::shippedTraits()).empty());
 
 	const ecs::TimeSystem& time = world.registerSystem<ecs::TimeSystem>();
 	memory().rememberDynamicEntity(world.createEntity(), defId("Deer"), {3.0F, 0.0F}, time.simulationSeconds());
@@ -430,7 +420,7 @@ TEST(SimTermsData, ANeedNameTheSimLacksIsUnknownAndLoggedOncePerCondition) {
 	const assets::ConditionConfigLoad load = loadWithMod(R"(<Symbols name="need">morale</Symbols>)");
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	ConditionVocabulary vocabulary;
-	ASSERT_TRUE(buildSimVocabulary(vocabulary, load.config, shippedTraitRegistry()).empty());
+	ASSERT_TRUE(buildSimVocabulary(vocabulary, load.config, ecs::testing::shippedTraits()).empty());
 
 	ecs::World			world;
 	const ecs::EntityID colonist = world.createEntity();
@@ -456,7 +446,7 @@ TEST(SimTermsData, TaskGroupMistakesAreReportedWhenTheSimBinds) {
 		loadWithMod(R"(<TaskGroup name="busy">haul dance</TaskGroup><TaskGroup name="craft">build</TaskGroup>)");
 	ASSERT_TRUE(load.errors.empty()) << load.errors.front();
 	ConditionVocabulary			   vocabulary;
-	const std::vector<std::string> errors = buildSimVocabulary(vocabulary, load.config, shippedTraitRegistry());
+	const std::vector<std::string> errors = buildSimVocabulary(vocabulary, load.config, ecs::testing::shippedTraits());
 	const auto mentions = [&](const std::string& text) {
 		return std::ranges::any_of(errors, [&](const std::string& error) { return error.find(text) != std::string::npos; });
 	};

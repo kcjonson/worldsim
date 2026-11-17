@@ -7,6 +7,7 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -92,7 +93,6 @@ TEST_F(TraitRegistryTest, ValidDefinitionsLoadWithTheirTextCountAndExclusions) {
 	EXPECT_EQ(registry.find("missing"), nullptr);
 	EXPECT_TRUE(registry.exclusive("timid", "brave"));
 	EXPECT_FALSE(registry.exclusive("brave", "calm"));
-	EXPECT_TRUE(registry.loaded());
 }
 
 TEST_F(TraitRegistryTest, ALaterFileReplacesATraitAndTheCountAndLogsIt) {
@@ -173,7 +173,7 @@ TEST_F(TraitRegistryTest, ATraitDeclaredTwiceInOneFileIsAnError) {
 
 TEST_F(TraitRegistryTest, CountMustBeWholeNumbersInOrder) {
 	write("a.xml", trait("brave") + R"(<Count min="1"/>)");
-	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "a.xml: <Count> max is missing"));
+	EXPECT_EQ(registry.loadFromFolder(folder), (std::vector<std::string>{"a.xml: <Count> max is missing"})) << "a rejected <Count> is the only error";
 
 	write("a.xml", trait("brave") + R"(<Count min="1" max="2.5"/>)");
 	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> max must be a whole number from 0 to 2147483647, got \"2.5\""));
@@ -219,11 +219,43 @@ TEST_F(TraitRegistryTest, CountMinMustBeReachableUnderTheExclusiveGroups) {
 	EXPECT_TRUE(mentions(registry.loadFromFolder(folder), "<Count> min is 3"));
 }
 
+TEST_F(TraitRegistryTest, AMaxAboveWhatTheGroupsAllowIsLegal) {
+	write("a.xml", R"(<Count min="1" max="3"/>)" + trait("one") + trait("two") + trait("three") + "<Exclusive>one two three</Exclusive>");
+	ASSERT_TRUE(registry.loadFromFolder(folder).empty());
+	EXPECT_EQ(registry.count().max, 3);
+}
+
+TEST_F(TraitRegistryTest, AnUnreachableMinFailsFastWithManyExclusivePairs) {
+	std::string pairs;
+	for (int pair = 0; pair < 20; ++pair) {
+		const std::string left = "left_" + std::to_string(pair);
+		const std::string right = "right_" + std::to_string(pair);
+		pairs += trait(left) + trait(right) + "<Exclusive>" + left + " " + right + "</Exclusive>";
+	}
+	write("a.xml", R"(<Count min="21" max="21"/>)" + pairs);
+	const auto					   start = std::chrono::steady_clock::now();
+	const std::vector<std::string> errors = registry.loadFromFolder(folder);
+	const auto					   elapsed = std::chrono::steady_clock::now() - start;
+	EXPECT_TRUE(mentions(errors, "<Count> min is 21, but the <Exclusive> groups leave no way")) << ::testing::PrintToString(errors);
+	EXPECT_LT(elapsed, std::chrono::seconds(1));
+
+	write("a.xml", R"(<Count min="20" max="20"/>)" + pairs);
+	EXPECT_TRUE(registry.loadFromFolder(folder).empty()) << "one of each pair is 20";
+}
+
+TEST_F(TraitRegistryTest, ATraitIdCannotBeAWordOfTheConditionLanguage) {
+	write("a.xml", std::string(kCount) + trait("not") + trait("self") + trait("fine"));
+	const std::vector<std::string> errors = registry.loadFromFolder(folder);
+	EXPECT_TRUE(mentions(errors, "a.xml: trait 'not': the id is a word of the condition language (and, or, not, is, self, target)"))
+		<< ::testing::PrintToString(errors);
+	EXPECT_TRUE(mentions(errors, "a.xml: trait 'self'"));
+	EXPECT_EQ(errors.size(), 2U) << ::testing::PrintToString(errors);
+}
+
 TEST_F(TraitRegistryTest, AnyProblemLoadsNothing) {
 	write("a.xml", std::string(kCount) + trait("brave") + trait("calm"));
 	write("mods/b.xml", trait("Loud"));
 	ASSERT_FALSE(registry.loadFromFolder(folder).empty());
-	EXPECT_FALSE(registry.loaded());
 	EXPECT_TRUE(registry.traits().empty());
 	EXPECT_EQ(registry.find("brave"), nullptr);
 	EXPECT_EQ(registry.count().max, 0);

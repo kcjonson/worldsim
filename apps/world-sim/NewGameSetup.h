@@ -21,7 +21,7 @@ struct PartyMember {
 	float		mood = 1.0F; // 0..1
 	// Skill defName -> level (0-20). Applied via ecs::Skills at spawn.
 	std::unordered_map<std::string, float> skills;
-	// Display-only for now (no backing ECS component).
+	// No ECS component holds it.
 	std::string backstory;
 };
 

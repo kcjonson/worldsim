@@ -50,14 +50,15 @@ namespace ecs {
 
 	ColonistRulesLoad loadColonistRules(const std::filesystem::path& configRoot) {
 		ColonistRulesLoad load;
+		load.rules.traits = std::make_unique<assets::TraitRegistry>();
 		load.rules.vocabulary = std::make_unique<conditions::ConditionVocabulary>();
 		load.rules.thoughtTypes = std::make_unique<ThoughtTypes>(*load.rules.vocabulary);
 
-		assets::TraitRegistry& traits = assets::TraitRegistry::Get();
-		addErrors(load.errors, "traits", traits.loadFromFolder(configRoot / "colonists" / "traits"));
+		addErrors(load.errors, "traits", load.rules.traits->loadFromFolder(configRoot / "colonists" / "traits"));
 		if (!load.errors.empty()) {
 			return load;
 		}
+		const assets::TraitRegistry& traits = *load.rules.traits;
 		LOG_INFO(Engine, "Loaded %zu traits from %s", traits.traits().size(), (configRoot / "colonists" / "traits").generic_string().c_str());
 		addErrors(load.errors, "conditions", loadConditionVocabulary(*load.rules.vocabulary, configRoot / "conditions", traits));
 		if (!load.errors.empty()) {

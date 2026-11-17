@@ -4,11 +4,10 @@
 // the body of a <thoughts> file, both loaded through the entry points the game's loadColonistRules uses.
 
 #include "ColonistRules.h"
+#include "ShippedConfig.test.h"
 #include "ThoughtTypes.h"
 
 #include <conditions/ConditionVocabulary.h>
-
-#include <assets/TraitRegistry.h>
 
 #include <gtest/gtest.h>
 
@@ -20,22 +19,6 @@
 #include <vector>
 
 namespace ecs::testing {
-
-	inline std::filesystem::path repoConfig() {
-		return std::filesystem::path(SIM_TEST_REPO_DIR) / "assets" / "config";
-	}
-
-	/// The shipped traits, which the shipped conditions name through trait().
-	inline const assets::TraitRegistry& shippedTraits() {
-		static const assets::TraitRegistry traits = [] {
-			assets::TraitRegistry loaded;
-			for (const std::string& error : loaded.loadFromFolder(repoConfig() / "colonists" / "traits")) {
-				ADD_FAILURE() << error;
-			}
-			return loaded;
-		}();
-		return traits;
-	}
 
 	/// The tuning and feelings every test's types are written against.
 	inline constexpr std::string_view kTestPreamble = R"(

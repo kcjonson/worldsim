@@ -14,6 +14,7 @@
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
 #include <assets/RecipeRegistry.h>
+#include <assets/TraitRegistry.h>
 #include <ecs/GoalTaskRegistry.h>
 #include <ecs/World.h>
 #include <ecs/components/Colonist.h>
@@ -84,6 +85,7 @@ namespace world_sim::testing {
 				theme::apply(ui());
 				gameUI = std::make_unique<GameUI>(GameUI::Args{
 					.root = root(),
+					.traits = traits,
 					.onFoundationToolSelected =
 						[this](FoundationTool tool) {
 							pickedFoundationTools.push_back(tool);
@@ -192,6 +194,7 @@ namespace world_sim::testing {
 			}
 
 			Open							 open;
+			assets::TraitRegistry			 traits; // none: these colonists have no Traits
 			ecs::World						 world;
 			world::WorldCamera				 camera;
 			world::ChunkManager				 chunks{std::make_unique<world::SyntheticWorldSampler>(7U, world::SyntheticMap{})};
