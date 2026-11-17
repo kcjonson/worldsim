@@ -143,8 +143,11 @@ namespace world_sim {
 		constexpr float kChainSeenHalfWidthMeters = 0.05F;
 		constexpr float kChainSeenMinLengthMeters = 0.001F;
 
+		// A closed foundation, or an Add / Subtract region, needs this many points.
+		constexpr std::size_t kMinClosingShapePoints = 3;
+
 		// A rejected edit's reason: its text scale, its top-left off the snapped point, and
-		// its shadow's offset, which the box labels keep off includes.
+		// its shadow's offset. The box the labels keep off covers the shadow too.
 		constexpr float			   kEditReasonScale = 0.8F;
 		constexpr Foundation::Vec2 kEditReasonOffset{14.0F, -22.0F};
 		constexpr float			   kEditReasonShadowPx = 1.0F;
@@ -264,16 +267,17 @@ namespace world_sim {
 		return navigation_ == nullptr || navigation_->isAreaBuildableOnceCleared(Foundation::toGlmVec2(pts));
 	}
 
-	std::string DrawingSystem::placementRefusal(const std::vector<Foundation::Vec2>& pts) const {
+	std::string DrawingSystem::placementRefusal(const std::vector<Foundation::Vec2>& footprint) const {
 		// Placement gate (the SAME check the /api/dev verbs use). A FOUNDATION validates against
 		// BUILDABILITY (terrain + geometry, no flora). Walls have no footprint-clearing yet, so they
 		// still require clear on-mesh ground along the chain centerline. One blocked part refuses the
 		// whole placement (commit nothing).
 		const bool wall = activeTool_ == ToolKind::Wall;
-		if (!(wall ? chainSeen(pts) : areaSeen(pts))) {
+		if (!(wall ? chainSeen(footprint) : areaSeen(footprint))) {
 			return "the area is unexplored";
 		}
-		if (navigation_ != nullptr && !(wall ? navigation_->isLineBuildableNow(Foundation::toGlmVec2(pts)) : footprintBuildable(pts))) {
+		if (navigation_ != nullptr &&
+			!(wall ? navigation_->isLineBuildableNow(Foundation::toGlmVec2(footprint)) : footprintBuildable(footprint))) {
 			return "not on buildable ground";
 		}
 		return {};
@@ -430,21 +434,29 @@ namespace world_sim {
 
 		// "Snap not block": with a closeable shape, a click near the start that would
 		// otherwise be rejected closes instead of erroring -- but only when the closed
-		// ring is itself valid (never rescue-close into a bad foundation). The explicit
-		// origin-close is the SnapKind::Origin case and needs no validity check.
+		// shape is itself valid (never rescue-close into a bad foundation). The explicit
+		// origin-close is the SnapKind::Origin case and needs no validity check. A
+		// foundation's closed ring is the check kept with the snap; an edit's outline reads
+		// the target's blueprint, so it is validated on each move, once: the edit preview
+		// takes this result rather than validating the same polygon again.
 		willClose_ = false;
-		if (points_.size() >= 3) {
+		std::optional<construction::FoundationEditResult> closedEdit;
+		if (points_.size() >= kMinClosingShapePoints) {
 			if (lastSnap_.closesShape()) {
 				willClose_ = true;
-			} else if (!lastValidation_.ok() && nearStartVertex(cursor_, closeRescueRadiusMeters()) && validateClosed(points_).ok()) {
-				willClose_ = true;
+			} else if (!lastValidation_.ok() && nearStartVertex(cursor_, closeRescueRadiusMeters())) {
+				if (editing) {
+					closedEdit = validateDrawnEdit(points_);
+					willClose_ = closedEdit->ok();
+				} else {
+					willClose_ = closedShapeCheck().accepted;
+				}
 			}
 		}
-		closeAccepted_ = willClose_ && closeVerdict().accepted;
-
 		if (editing) {
-			refreshEditPreview();
+			refreshEditPreview(std::move(closedEdit));
 		}
+		pendingClose_ = willClose_ ? closeVerdict() : CloseVerdict{};
 	}
 
 	bool DrawingSystem::handleClick(float screenX, float screenY, int viewportW, int viewportH, bool freeform, bool ctrl) {
@@ -469,7 +481,7 @@ namespace world_sim {
 		// origin-close, or the near-start "snap not block" rescue. willClose_ was set by
 		// handleMouseMove (called above) and already requires a valid closed ring for the
 		// rescue case, so this never closes into an invalid foundation.
-		if (points_.size() >= 3 && willClose_) {
+		if (points_.size() >= kMinClosingShapePoints && willClose_) {
 			if (activeTool_ == ToolKind::FoundationEdit) {
 				commitFoundationEdit();
 			} else {
@@ -616,11 +628,13 @@ namespace world_sim {
 		snapMemoValid_ = true;
 		snapMemoKey_ = key;
 		snapMemoPoints_ = points_;
+		snapMemoClosedShape_.reset();
 		++snapEvaluationCount_;
 		return false;
 	}
 
 	DrawingFeedbackInput DrawingSystem::feedbackInput(const assets::PreviewStyle& style, int viewportWidth, int viewportHeight) const {
+		const PreviewVerdict verdict = previewVerdict();
 		// Labels keep off the rejected edit's reason, measured as the feedback measures its own text.
 		std::optional<FeedbackBox> keepClear;
 		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight)) {
@@ -644,9 +658,9 @@ namespace world_sim {
 			.viewportHeight = viewportHeight,
 			.pixelsPerMeter = kPixelsPerMeter,
 			.closeRadiusMeters = effectiveOriginCloseRadiusMeters(),
-			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : 3),
-			.willClose = previewVerdict().closeHalo,
-			.snappedPointInvalid = cursorOffBuildableGround && !willClose_,
+			.canClose = points_.size() >= (activeTool_ == ToolKind::Wall ? construction::kMinClosingWallChainPoints : kMinClosingShapePoints),
+			.willClose = verdict.closeHalo,
+			.snappedPointInvalid = verdict.markerInvalid,
 			.invalidColor = invalidColor_,
 			.keepClear = keepClear,
 		};
@@ -670,52 +684,96 @@ namespace world_sim {
 		return (dx * dx + dy * dy) <= radiusMeters * radiusMeters;
 	}
 
-	DrawingSystem::CloseVerdict DrawingSystem::closeVerdict() const {
-		const auto refused = [](std::string title, std::string reason) {
-			return CloseVerdict{.accepted = false, .title = std::move(title), .reason = std::move(reason)};
-		};
+	DrawingSystem::CloseVerdict DrawingSystem::refusedClose(std::string title, std::string reason) {
+		return {.accepted = false, .title = std::move(title), .reason = std::move(reason)};
+	}
+
+	DrawingSystem::CloseVerdict DrawingSystem::closeVerdict() {
+		// The ground checks (seen, buildable) run on every call, since they read player
+		// visibility and the navigation mesh, which the snap memo's key does not cover. It is
+		// the cost the placement cursor's own ground check already pays each frame.
 		if (activeTool_ == ToolKind::Wall) {
-			// The click adds the closing point, then commits the chain (commitWallChain's
-			// requirePlaceable).
+			// The click adds the closing point, then commits the chain: its ground first
+			// (commitWallChain's requirePlaceable), then each segment.
 			std::vector<Foundation::Vec2> chain = points_;
 			chain.push_back(cursor_);
 			if (const std::string refusal = placementRefusal(chain); !refusal.empty()) {
-				return refused("Can't build here", "wall: " + refusal);
+				return refusedClose("Can't build here", "wall: " + refusal);
 			}
-			return {};
+			return closedShapeCheck();
 		}
 		if (activeTool_ == ToolKind::FoundationEdit) {
 			if (!areaSeen(points_)) {
-				return refused("Can't edit foundation", "the area is unexplored");
+				return refusedClose("Can't edit foundation", "the area is unexplored");
 			}
-			const ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
-			const ec::FoundationEditResult	result = validator.validateFoundationEdit(editTarget_, points_, editMode_, foundationBlueprint(editTarget_));
-			if (const std::string refusal = editRefusal(result, editMode_); !refusal.empty()) {
-				return refused("Can't edit foundation", refusal);
+			// While the click closes, the move validated the placed points alone into
+			// editPreview_; it reads the target's blueprint, so it is not kept with the snap.
+			if (const std::string refusal = editRefusal(editPreview_, editMode_); !refusal.empty()) {
+				return refusedClose("Can't edit foundation", refusal);
 			}
 			return {};
 		}
-		const ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
-		if (const auto ring = validator.validateRing(points_); !ring.ok()) {
-			return refused("Cannot close", ec::validationReason(ring.code));
+		if (const CloseVerdict& ring = closedShapeCheck(); !ring.accepted) {
+			return ring;
 		}
 		// The whole footprint must sit on walkable ground (interior + edges, not just the
 		// vertices). Refuse a foundation that spans water or clips an off-mesh hole.
 		if (const std::string refusal = placementRefusal(points_); !refusal.empty()) {
-			return refused("Can't build here", "foundation: " + refusal);
+			return refusedClose("Can't build here", "foundation: " + refusal);
 		}
 		return {};
 	}
 
+	const DrawingSystem::CloseVerdict& DrawingSystem::closedShapeCheck() {
+		if (snapMemoClosedShape_) {
+			return *snapMemoClosedShape_;
+		}
+		if (activeTool_ == ToolKind::Wall) {
+			// Commit the chain into a copy of the world, as commitWallChain commits it into
+			// the real one, so later segments are checked against the earlier ones too.
+			snapMemoClosedShape_ = CloseVerdict{};
+			if (const assets::ThicknessPreset* preset = activePreset()) {
+				std::vector<Foundation::Vec2> chain = points_;
+				chain.push_back(cursor_);
+				construction::ConstructionWorld trial = constructionWorld_;
+				const WallChainCommit			attempt = commitWallSegments(trial, chain, *preset);
+				if (attempt.rejected > 0) {
+					snapMemoClosedShape_ = refusedClose("Wall rejected", "wall: " + attempt.firstRefusal);
+				}
+			}
+			return *snapMemoClosedShape_;
+		}
+		const construction::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+		const construction::ValidationResult	  ring = validator.validateRing(points_);
+		snapMemoClosedShape_ = ring.ok() ? CloseVerdict{} : refusedClose("Cannot close", construction::validationReason(ring.code));
+		return *snapMemoClosedShape_;
+	}
+
 	DrawingSystem::PreviewVerdict DrawingSystem::previewVerdict() const {
+		const bool	   editing = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_;
+		PreviewVerdict verdict;
 		if (willClose_) {
-			return {.valid = closeAccepted_, .closeHalo = closeAccepted_};
+			// An edit's outline can be valid and its close still refused, for the ground it
+			// would build on: the outline and the reason take the close's verdict.
+			verdict.valid = pendingClose_.accepted;
+			verdict.closeHalo = pendingClose_.accepted;
+			verdict.markerInvalid = !pendingClose_.accepted;
+			verdict.editOutlineValid = pendingClose_.accepted;
+			if (editing && !pendingClose_.accepted) {
+				verdict.editReason = pendingClose_.reason;
+			}
+			return verdict;
 		}
 		// Off-mesh cursor (on water) reads as invalid just like a geometry violation, so the
 		// band and fill turn red before the player commits. An edit also reads red while the
 		// outline it would produce is invalid.
-		const bool editRejected = activeTool_ == ToolKind::FoundationEdit && editPreviewActive_ && !editPreview_.ok();
-		return {.valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected, .closeHalo = false};
+		const bool editRejected = editing && !editPreview_.ok();
+		verdict.valid = lastValidation_.ok() && !cursorOffBuildableGround && !editRejected;
+		verdict.markerInvalid = cursorOffBuildableGround;
+		if (editRejected) {
+			verdict.editReason = construction::validationReason(editPreview_.validation.code);
+		}
+		return verdict;
 	}
 
 	void DrawingSystem::commitShape() {
@@ -836,12 +894,18 @@ namespace world_sim {
 
 	DrawingSystem::FoundationEditOutcome
 	DrawingSystem::applyFoundationEdit(ec::FoundationId target, const std::vector<Foundation::Vec2>& drawn, ec::FoundationEditMode mode) {
+		const construction::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+		return applyValidatedFoundationEdit(target, drawn, mode, validator.validateFoundationEdit(target, drawn, mode, foundationBlueprint(target)));
+	}
+
+	DrawingSystem::FoundationEditOutcome DrawingSystem::applyValidatedFoundationEdit(
+		construction::FoundationId				  target,
+		const std::vector<Foundation::Vec2>&	  drawn,
+		construction::FoundationEditMode		  mode,
+		const construction::FoundationEditResult& result
+	) {
 		FoundationEditOutcome outcome;
 		outcome.target = target;
-
-		auto&						   registry = ConstructionRegistry::Get();
-		ec::ConstructionValidator	   validator(registry.constraints(), constructionWorld_);
-		const ec::FoundationEditResult result = validator.validateFoundationEdit(target, drawn, mode, foundationBlueprint(target));
 		if (std::string refusal = editRefusal(result, mode); !refusal.empty()) {
 			outcome.reason = std::move(refusal);
 			return outcome;
@@ -939,33 +1003,29 @@ namespace world_sim {
 		return extensionEntity;
 	}
 
-	ec::ValidationResult DrawingSystem::validateClosed(const std::vector<Foundation::Vec2>& ring) const {
-		ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
-		if (activeTool_ == ToolKind::FoundationEdit) {
-			return validator.validateFoundationEdit(editTarget_, ring, editMode_, foundationBlueprint(editTarget_)).validation;
-		}
-		return validator.validateRing(ring);
+	construction::FoundationEditResult DrawingSystem::validateDrawnEdit(const std::vector<Foundation::Vec2>& drawn) const {
+		const construction::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
+		return validator.validateFoundationEdit(editTarget_, drawn, editMode_, foundationBlueprint(editTarget_));
 	}
 
-	void DrawingSystem::refreshEditPreview() {
+	void DrawingSystem::refreshEditPreview(std::optional<construction::FoundationEditResult> closedEdit) {
 		std::vector<Foundation::Vec2> drawn = points_;
 		if (!willClose_) {
 			drawn.push_back(cursor_);
 		}
-		editPreviewActive_ = drawn.size() >= 3;
+		editPreviewActive_ = drawn.size() >= kMinClosingShapePoints;
 		if (!editPreviewActive_) {
 			editPreview_ = {};
 			return;
 		}
-		ec::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), constructionWorld_);
-		editPreview_ = validator.validateFoundationEdit(editTarget_, drawn, editMode_, foundationBlueprint(editTarget_));
+		editPreview_ = willClose_ && closedEdit ? std::move(*closedEdit) : validateDrawnEdit(drawn);
 	}
 
-	std::string DrawingSystem::editRefusal(const ec::FoundationEditResult& result, ec::FoundationEditMode mode) const {
+	std::string DrawingSystem::editRefusal(const construction::FoundationEditResult& result, construction::FoundationEditMode mode) const {
 		if (!result.ok()) {
-			return ec::validationReason(result.validation.code);
+			return construction::validationReason(result.validation.code);
 		}
-		if (mode == ec::FoundationEditMode::Add && !footprintBuildable(dequantizeRing(result.buildsOn))) {
+		if (mode == construction::FoundationEditMode::Add && !footprintBuildable(dequantizeRing(result.buildsOn))) {
 			return "not on buildable ground";
 		}
 		return {};
@@ -978,7 +1038,8 @@ namespace world_sim {
 			}
 			return;
 		}
-		const FoundationEditOutcome outcome = applyFoundationEdit(editTarget_, points_, editMode_);
+		// The verdict passed editPreview_, the placed points' validation from this click's move.
+		const FoundationEditOutcome outcome = applyValidatedFoundationEdit(editTarget_, points_, editMode_, editPreview_);
 		if (!outcome.ok) {
 			if (callbacks_.onToast) {
 				callbacks_.onToast("Can't edit foundation", outcome.reason);
@@ -1054,7 +1115,7 @@ namespace world_sim {
 		cursorOffBuildableGround = !pointOnBuildableGround(cursor_);
 
 		willClose_ = preset != nullptr && lastSnap_.closesShape() && lastValidation_.ok() && !cursorOffBuildableGround;
-		closeAccepted_ = willClose_ && closeVerdict().accepted;
+		pendingClose_ = willClose_ ? closeVerdict() : CloseVerdict{};
 	}
 
 	bool DrawingSystem::handleWallClick(Foundation::Vec2 world, bool freeform, bool ctrl) {
@@ -1140,44 +1201,18 @@ namespace world_sim {
 			return;
 		}
 
-		auto&					  registry = ConstructionRegistry::Get();
-		ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-
-		int committed = 0;
-		int rejected = 0;
-		for (std::size_t i = 0; i + 1 < points_.size(); ++i) {
-			const Foundation::Vec2 a = points_[i];
-			const Foundation::Vec2 b = points_[i + 1];
-
-			const auto v = validator.validateWallSegment(a, b, *preset, wallHost_);
-			if (!v.ok()) {
-				rejected++;
-				continue; // reject-don't-repair: skip the bad segment, keep the rest
-			}
-
-			const auto result = constructionWorld_.commitSegment(
-				geometry::quantize(a), geometry::quantize(b), activeMaterial_, activeThicknessPreset_, wallHost_
-			);
-			if (!result.ok()) {
-				rejected++;
-				continue;
-			}
-
-			// A single pair can create several segments (drawn through a junction,
-			// or a T-split of an existing wall); count them all as committed.
-			committed += static_cast<int>(result.createdSegments.size());
-		}
+		const WallChainCommit commit = commitWallSegments(constructionWorld_, points_, *preset);
 
 		// One reconcile after the whole chain: spawns a correctly-sized entity for
 		// every segment created/split above, and destroys any orphaned by a split.
 		reconcileSegmentEntities();
 
 		if (callbacks_.onToast) {
-			if (committed > 0) {
+			if (commit.committed > 0) {
 				char buf[48];
-				std::snprintf(buf, sizeof(buf), "%d segment%s", committed, committed == 1 ? "" : "s");
+				std::snprintf(buf, sizeof(buf), "%d segment%s", commit.committed, commit.committed == 1 ? "" : "s");
 				callbacks_.onToast("Wall placed", std::string(buf) + " (" + activeMaterial_ + ")");
-			} else if (rejected > 0) {
+			} else if (commit.rejected > 0) {
 				callbacks_.onToast("Wall rejected", "no valid segments");
 			}
 		}
@@ -1186,6 +1221,42 @@ namespace world_sim {
 		points_.clear();
 		wallHost_ = ec::kInvalidFoundation;
 		lastValidation_ = {};
+	}
+
+	DrawingSystem::WallChainCommit DrawingSystem::commitWallSegments(
+		construction::ConstructionWorld&	 into,
+		const std::vector<Foundation::Vec2>& chain,
+		const assets::ThicknessPreset&		 preset
+	) const {
+		// The validator reads `into`, so each pair is checked against the ones committed before it.
+		const construction::ConstructionValidator validator(ConstructionRegistry::Get().constraints(), into);
+		WallChainCommit							  commit;
+		const auto								  skip = [&commit](std::string reason) {
+			 ++commit.rejected;
+			 if (commit.firstRefusal.empty()) {
+				 commit.firstRefusal = std::move(reason);
+			 }
+		};
+		for (std::size_t i = 0; i + 1 < chain.size(); ++i) {
+			const Foundation::Vec2 a = chain[i];
+			const Foundation::Vec2 b = chain[i + 1];
+
+			// Reject-don't-repair: skip the bad segment, keep the rest.
+			if (const construction::ValidationResult check = validator.validateWallSegment(a, b, preset, wallHost_); !check.ok()) {
+				skip(construction::validationReason(check.code));
+				continue;
+			}
+			const construction::SegmentCommitResult result =
+				into.commitSegment(geometry::quantize(a), geometry::quantize(b), activeMaterial_, activeThicknessPreset_, wallHost_);
+			if (!result.ok()) {
+				skip("segment rejected");
+				continue;
+			}
+			// A single pair can create several segments (drawn through a junction,
+			// or a T-split of an existing wall); count them all as committed.
+			commit.committed += static_cast<int>(result.createdSegments.size());
+		}
+		return commit;
 	}
 
 	int DrawingSystem::devCommitWalls(
@@ -1667,10 +1738,20 @@ namespace world_sim {
 			return s;
 		}
 
+		// While the next click closes, the strip reads the close's verdict, as the preview does.
+		const auto readPendingClose = [this](DrawingStatus& readout) {
+			readout.valid = pendingClose_.accepted;
+			readout.message = pendingClose_.reason;
+		};
+
 		if (activeTool_ == ToolKind::Wall) {
 			s.thicknessPreset = activeThicknessPreset_;
-			s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
-			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(lastValidation_.code);
+			if (willClose_) {
+				readPendingClose(s);
+			} else {
+				s.valid = lastValidation_.ok() && !cursorOffBuildableGround;
+				s.message = cursorOffBuildableGround ? cursorGroundReason() : construction::validationReason(lastValidation_.code);
+			}
 
 			// Length of the committed chain so far, plus the live rubber-band segment.
 			auto dist = [](Foundation::Vec2 a, Foundation::Vec2 b) -> float {
@@ -1715,20 +1796,28 @@ namespace world_sim {
 				s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(editPreview_.outline)));
 				s.areaDeltaSquareMeters = s.areaSquareMeters - current;
 			}
-			s.valid = judged.ok() && !cursorOffBuildableGround;
-			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(judged.code);
+			if (willClose_) {
+				readPendingClose(s);
+			} else {
+				s.valid = judged.ok() && !cursorOffBuildableGround;
+				s.message = cursorOffBuildableGround ? cursorGroundReason() : construction::validationReason(judged.code);
+			}
 			return s;
 		}
 
 		// Foundation: area preview only meaningful once a closeable shape exists. The live
 		// off-mesh cursor flag folds into validity (same cheap signal the red preview uses);
 		// the authoritative whole-footprint walkability check runs at commit.
-		if (points_.size() >= 3) {
-			auto&					  registry = ConstructionRegistry::Get();
-			ec::ConstructionValidator validator(registry.constraints(), constructionWorld_);
-			const auto				  ring = validator.validateRing(points_);
-			s.valid = ring.ok() && !cursorOffBuildableGround;
-			s.message = cursorOffBuildableGround ? cursorGroundReason() : ec::validationReason(ring.code);
+		if (points_.size() >= kMinClosingShapePoints) {
+			if (willClose_) {
+				readPendingClose(s);
+			} else {
+				auto&					  registry = ConstructionRegistry::Get();
+				construction::ConstructionValidator validator(registry.constraints(), constructionWorld_);
+				const auto				  ring = validator.validateRing(points_);
+				s.valid = ring.ok() && !cursorOffBuildableGround;
+				s.message = cursorOffBuildableGround ? cursorGroundReason() : construction::validationReason(ring.code);
+			}
 			// Recompute area regardless of validity so the readout tracks the shape.
 			s.areaSquareMeters = static_cast<float>(std::abs(geometry::signedAreaSquareMeters(toRingMm(points_))));
 		} else {
@@ -2254,11 +2343,15 @@ namespace world_sim {
 	}
 
 	std::optional<DrawingSystem::EditReason> DrawingSystem::editReason(int viewportWidth, int viewportHeight) const {
-		if (activeTool_ != ToolKind::FoundationEdit || !editPreviewActive_ || editPreview_.ok() || camera_ == nullptr) {
+		if (camera_ == nullptr) {
+			return std::nullopt;
+		}
+		std::string text = previewVerdict().editReason;
+		if (text.empty()) {
 			return std::nullopt;
 		}
 		return EditReason{
-			.text = ec::validationReason(editPreview_.validation.code),
+			.text = std::move(text),
 			.position = camera_->worldToScreen(cursor_.x, cursor_.y, viewportWidth, viewportHeight, kPixelsPerMeter) + kEditReasonOffset,
 		};
 	}
@@ -2274,19 +2367,19 @@ namespace world_sim {
 		};
 
 		// Outline only: the committed foundation already shows under it, and the drawn
-		// region's own fill sits on top.
+		// region's own fill sits on top. While the click closes it takes the close's colour.
 		if (editPreview_.ok()) {
-			const geometry::Ring& outline = editPreview_.outline;
+			const Foundation::Color color = previewVerdict().editOutlineValid ? validColor_ : invalidColor_;
+			const geometry::Ring&	outline = editPreview_.outline;
 			for (std::size_t i = 0; i < outline.size(); ++i) {
 				Renderer::Primitives::drawLine({
 					.start = toScreen(geometry::dequantize(outline[i])),
 					.end = toScreen(geometry::dequantize(outline[(i + 1) % outline.size()])),
-					.style = {.color = validColor_, .width = previewStyle.lineWidth * 1.5F},
+					.style = {.color = color, .width = previewStyle.lineWidth * 1.5F},
 					.id = "drawing_edit_outline",
 					.key = 898,
 				});
 			}
-			return;
 		}
 
 		if (const std::optional<EditReason> reason = editReason(viewportWidth, viewportHeight)) {
