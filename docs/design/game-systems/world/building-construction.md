@@ -526,7 +526,7 @@ The first eight are the helpers (Foundations > Drawing > Helpers); each turns on
 
 While a drawing tool is active, a compact panel directly above the construction config strip, centred like it and stacked with it so the two never overlap, lists, in a player's words, the keys for that tool, then one legend line for each helper that is on. It is for new players: "Show key guide while drawing" in Drawing Settings, on by default, turns it off. **?** or **H** collapses it to a small "Keys ?" chip and reopens it, and clicking the chip reopens it too; a foot line says so ("? or H hides this"). `?` is the typed `?` character, whatever keys make it on the player's keyboard, and H toggles it as well. It takes clicks only inside its own box, never keyboard focus.
 
-Keys per tool (the tools the game has; blueprint shape editing by handles is not built yet and has no row):
+Keys per tool:
 
 | Tool | Keys |
 |------|------|

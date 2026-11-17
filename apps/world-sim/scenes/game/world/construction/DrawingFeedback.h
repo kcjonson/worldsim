@@ -177,4 +177,27 @@ namespace world_sim {
 	/// Plan the feedback and draw it with the renderer's primitives.
 	void drawSnapFeedback(const DrawingFeedbackInput& input);
 
+	/// The key guide's legend glyphs (architecture D15): each helper's mark as the preview draws it.
+	enum class LegendGlyph {
+		Guide,		  // a dotted guide
+		RightAngle,	  // two edges and the right-angle marker
+		Crossing,	  // two dotted guides and the crossing dot
+		CommonLength, // an edge with its matched band and the double tick
+		AngleArc,	  // two edges and the angle readout's arc
+	};
+
+	/// A legend glyph's box, in the ui px of the panel it sits in.
+	inline constexpr float kLegendGlyphWidth = 32.0F;
+	inline constexpr float kLegendGlyphHeight = 14.0F;
+
+	/// `glyph` in a kLegendGlyphWidth by kLegendGlyphHeight box at the origin, planned with the
+	/// preview's own strokes, markers, and look keys. `geometryColor` is the solid edges', the
+	/// preview's valid color.
+	[[nodiscard]] DrawingFeedbackPlan
+	planLegendGlyph(LegendGlyph glyph, const assets::PreviewStyle& style, Foundation::Color geometryColor);
+
+	/// Draw `plan` in a ui component's space: every layer at its draw key `key`, in the plan's
+	/// order, each color's alpha times `opacity`.
+	void drawFeedbackPlan(const DrawingFeedbackPlan& plan, std::int32_t key, float opacity);
+
 } // namespace world_sim
