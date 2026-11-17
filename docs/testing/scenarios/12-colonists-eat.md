@@ -16,9 +16,10 @@ eats that first and searches for nothing. If `what=colonists` shows `Berry` in a
 `inventory` before its step starts (it gathered while idle), spawn another.
 
 A colonist with an empty pack starts gathering within about a second and finishes gather and eat
-quickly, so each step that spawns one runs with the game paused: pause (`/api/control?action=pause`),
-spawn, set Hunger, then resume (`/api/control?action=resume`). Dev verbs run while paused, and
-nothing moves until the resume.
+quickly, so each step sets up with the game paused: pause (`/api/control?action=pause`), set up, then resume
+(`/api/control?action=resume`). Dev verbs run while paused, and nothing moves until the resume.
+Steps 3 and 4 are the exception on purpose: Eve is left to start her gathering walk before her
+Hunger is set, because turning hungry on the way to a bush is the case they check.
 
 The Quick Start map has a berry bush within about 13 m of any spot, and no dev verb clears bushes, so
 a colonist can always go to another bush: a second colonist waiting on a reserved or regrowing bush
@@ -29,7 +30,7 @@ a colonist can always go to another bush: a second colonist waiting on a reserve
 ## Setup
 
 Pick a spot on open ground, a few meters from the river bank. Note it as `FX, FY`. Keep time at
-normal speed, and don't skip time (`ate_good_meal` is held for 6 game hours, which steps 3 to 6
+normal speed, and don't skip time (`ate_good_meal` is held for 6 game hours, which steps 4 to 7
 rely on).
 
 ---
@@ -40,13 +41,15 @@ rely on).
 
 2. Read `what=colonists` a little later: both Hungry colonists have eaten, each with `needs.Hunger` above 50.
 
-3. Pause, spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), set her Hunger to 40, then resume: she walks to the box, `what=storage` shows its `Berry` drop to 9, and her Hunger rises past 50.
+3. Pause, spawn a `BasicBox` 20 m from the bush (`/api/dev/spawn?def=BasicBox&at=<FX+20>,<FY>&n=1&scatter=0`), put 10 berries in it (`/api/dev/give?material=Berry&n=10&where=storage&at=<FX+20>,<FY>`), spawn Eve 1 m from it (`/api/dev/colonist?at=<FX+21>,<FY>&name=Eve`), then resume: within a second or two she walks away from the box toward a bush to gather (her `position` in `what=colonists` moves off).
 
-4. Pause, drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`), note the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5, then resume: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
+4. While she is still walking to the bush, set her Hunger to 40: she turns back and eats from the box, the nearer food; `what=storage` shows its `Berry` drop to 9, and her Hunger rises past 50.
 
-5. Read Eve in `what=colonists`, looking only at the `thoughts.recent` entries with an `id` above the one noted in step 4: among them is exactly one `starving`, and no `getting_peckish`, `very_hungry` or `ate_good_meal` (it is non-stacking and already held from step 3, so this meal folds into the held one and records nothing new); `thoughts.held` still holds `ate_good_meal`. Thoughts about other needs may be there too (eating fills the gut, so a Digestion one can land) and don't count.
+5. Pause, drop 10 berries 1 m from Eve on the side away from the box (`/api/dev/give?material=Berry&n=10&where=loose&at=<her x+1>,<her y>`), note the highest `id` in her `thoughts.recent` (`what=colonists`), set her Hunger to 5, then resume: she takes 2 berries from the heap or the box, whichever is nearer, never more, and her Hunger rises past 50.
 
-6. Read Eve again a few seconds later, with the same id cut-off: no new `starving`, `getting_peckish`, `very_hungry` or `ate_good_meal` has arrived, and `ate_good_meal` is still held. Her Hunger drifts down on its own and may be anywhere above 5 and below its post-meal value; only those thought kinds count.
+6. Read Eve in `what=colonists`, looking only at the `thoughts.recent` entries with an `id` above the one noted in step 5: among them is exactly one `starving`, and no `getting_peckish`, `very_hungry` or `ate_good_meal` (it is non-stacking and already held from step 4, so this meal folds into the held one and records nothing new); `thoughts.held` still holds `ate_good_meal`. Thoughts about other needs may be there too (eating fills the gut, so a Digestion one can land) and don't count.
+
+7. Read Eve again a few seconds later, with the same id cut-off: no new `starving`, `getting_peckish`, `very_hungry` or `ate_good_meal` has arrived, and `ate_good_meal` is still held. Her Hunger drifts down on its own and may be anywhere above 5 and below its post-meal value; only those thought kinds count.
 
 ---
 
@@ -58,7 +61,7 @@ GET /api/state?what=storage
 
 GET /api/state?what=colonists
   -> each colonist that ate has needs.Hunger > 50 afterwards
-  -> Eve's thoughts.recent entries newer than step 4's noted id: exactly one starving; no
+  -> Eve's thoughts.recent entries newer than step 5's noted id: exactly one starving; no
      getting_peckish, very_hungry or ate_good_meal; thoughts.held still holds ate_good_meal; other
      needs' thoughts may sit among them
 ```
