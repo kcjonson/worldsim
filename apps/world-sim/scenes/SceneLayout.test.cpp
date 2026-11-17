@@ -409,8 +409,9 @@ namespace world_sim::testing {
 		EXPECT_EQ(panel.get()->getSize().y, opened.y);
 	}
 
-	// The entity panel's Details again while the dossier is open, for the same colonist with a fuller pack and then for
-	// another: the content follows, the panel keeps the size it opened with. Closed and opened again, it measures afresh.
+	// The entity panel's Details again while the dossier is open, for the same colonist with a pack full enough to grow its
+	// tallest tab and then for another: the content follows to the Bio tab at the top, the panel keeps the size it opened
+	// with. Closed through its own button and opened again, it measures afresh.
 	TEST_F(SceneLayout, TheColonistDossierHoldsItsSizeWhenOpenedAgainWhileOpen) {
 		HudScene& scene = openHud([](HudScene& opened) { opened.hud().showColonistDetails(opened.entities().colonist); });
 		const ui::Ref<ui::Rectangle> panel = dossierPanel();
@@ -426,15 +427,29 @@ namespace world_sim::testing {
 			return dossier != nullptr ? dossier->getTitle() : std::string{};
 		};
 
-		ecs::Inventory& pack = *scene.ecsWorld().getComponent<ecs::Inventory>(scene.entities().colonist);
+		press("tab_dossier_gear");
+		const std::size_t rows = shownCount("gear_pack_row");
+		ecs::Inventory&	  pack = *scene.ecsWorld().getComponent<ecs::Inventory>(scene.entities().colonist);
 		for (const char* item : {"AxePrimitive", "Granite", "Basalt", "Sandstone", "RiverCobble"}) {
 			ASSERT_EQ(pack.addItem(item, 1), 1U) << item;
 		}
 		settle();
+		ASSERT_GT(shownCount("gear_pack_row"), rows) << "a fuller pack grows the Gear tab, so a re-measure would change the height";
+		ui::Component* area = shown("dossier_tab_area");
+		ASSERT_NE(area, nullptr);
+		area->scrollTo({0.0F, 1.0e6F});
+		ASSERT_GT(area->getScroll().y, 0.0F) << "the grown Gear tab scrolls in the held size";
+
 		scene.hud().showColonistDetails(scene.entities().colonist);
 		settle();
 		EXPECT_EQ(panel.get()->getSize().x, opened.x);
 		EXPECT_EQ(panel.get()->getSize().y, opened.y) << "for the same colonist";
+		const auto* bar = static_cast<const ui::TabBar*>(shown("dossier_tabs"));
+		ASSERT_NE(bar, nullptr);
+		EXPECT_EQ(bar->getSelectedId(), "dossier_bio");
+		area = shown("dossier_tab_area");
+		ASSERT_NE(area, nullptr);
+		EXPECT_EQ(area->getScroll().y, 0.0F);
 
 		scene.hud().showColonistDetails(scene.entities().newcomer);
 		settle();
@@ -443,8 +458,8 @@ namespace world_sim::testing {
 		EXPECT_EQ(panel.get()->getSize().y, opened.y) << "for another colonist";
 		EXPECT_EQ(lintEverywhere(), "");
 
-		scene.hud().hideColonistDetails();
-		frame();
+		press("dossier_close");
+		EXPECT_FALSE(scene.hud().isColonistDetailsVisible());
 		scene.hud().showColonistDetails(scene.entities().newcomer);
 		settle();
 		const ui::Ref<ui::Rectangle> reopened = dossierPanel();

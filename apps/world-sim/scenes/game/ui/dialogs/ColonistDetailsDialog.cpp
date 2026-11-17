@@ -2,6 +2,7 @@
 
 #include <ui/Context.h>
 #include <ui/components/Button.h>
+#include <utils/Log.h>
 
 #include <algorithm>
 #include <array>
@@ -59,6 +60,7 @@ namespace world_sim {
 		fresh = true;
 		model.invalidateTasks();
 		if (dialog.get() == nullptr) {
+			sized = false;
 			dialog = ui::Dialog::open(
 				opener,
 				{
@@ -105,7 +107,6 @@ namespace world_sim {
 	void ColonistDetailsDialog::closed() {
 		dialog = {};
 		currentTab.clear();
-		sized = false;
 	}
 
 	void ColonistDetailsDialog::build(ui::Dialog& shown) {
@@ -162,6 +163,7 @@ namespace world_sim {
 
 		const ui::Ref<ui::Component> footer = shown.footer();
 		footer.addChild<ui::Button>({
+			.id = "dossier_close",
 			.label = "Close",
 			.variant = ui::ButtonVariant::Ghost,
 			.controlSize = ui::ControlSize::Sm,
@@ -214,6 +216,8 @@ namespace world_sim {
 			tabView = tasksTab = area->addChild<TasksTabView>({});
 		} else if (tabId == kTabLog) {
 			tabView = logTab = area->addChild<LogTabView>({});
+		} else {
+			LOG_ERROR(Game, "ColonistDetailsDialog: no view for the tab \"%s\"", tabId.c_str());
 		}
 	}
 
@@ -231,7 +235,9 @@ namespace world_sim {
 			   feedTab();
 			   context.layout();
 			   around = panel.getSize().y - tabArea.get()->getSize().y;
-			   tallest = std::max(tallest, tabView.get()->getBounds().height);
+			   if (const ui::Component* view = tabView.get()) {
+				   tallest = std::max(tallest, view->getBounds().height);
+			   }
 		};
 		panel.setSize({kDialogWidth, ui::kAuto});
 		for (const DossierTab& tab : kTabs) {
