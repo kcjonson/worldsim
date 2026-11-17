@@ -194,12 +194,44 @@ namespace {
 			   std::ranges::all_of(second, [&](const Vec2i64& point) { return onBoundary(point, first); });
 	}
 
+	// A polygon's vertices are hits snapped to the millimetre, each up to 0.71 mm off the
+	// boundary it stands for, so a vertex of one ring can lie up to twice that off the edges of
+	// another built from other occluders.
+	constexpr std::int64_t kSnappedRingsMm = 2;
+
+	// Whether the visibility polygon from `eye` built from the facing occluders is the one built
+	// from every occluder in range: ring for ring when `toleranceMm` is 0, else every vertex of
+	// each within it of the other's boundary. The facing one goes to `culled` when given.
+	bool culledSightIsTheSame(const GeometryIndex& index, Vec2i64 eye, std::int64_t sightMm, std::int64_t toleranceMm,
+							  geometry::Ring* culled = nullptr) {
+		std::vector<OccluderSegment> all;
+		std::vector<OccluderSegment> facing;
+		index.queryOccluders(eye, sightMm, all);
+		index.queryFacingOccluders(eye, sightMm, facing);
+		const geometry::Ring fromAll	= geometry::computeVisibilityPolygon(eye, sightMm, all);
+		geometry::Ring		 fromFacing = geometry::computeVisibilityPolygon(eye, sightMm, facing);
+		const bool			 same		= toleranceMm == 0 ? fromAll == fromFacing : ringsAgree(fromAll, fromFacing, toleranceMm);
+		if (culled != nullptr) {
+			*culled = std::move(fromFacing);
+		}
+		return same;
+	}
+
+	// The built walls as the offsetter takes them.
+	std::vector<geometry::WallSegment> wallsOf(const ConstructionWorld& cw) {
+		std::vector<geometry::WallSegment> walls;
+		for (const construction::WallSegment& wall : cw.segments()) {
+			walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
+		}
+		return walls;
+	}
+
 	// The visibility polygon from every eye of a 250 mm grid over the box, and from points
 	// on the line of each occluder past both its ends (an eye looking exactly along a face or
-	// an end cap), is the same built from the facing occluders as from all of them: ring for
-	// ring, or with `toleranceMm`, every vertex of each within it of the other's boundary. The
-	// query says it culled when backFacesHiddenFrom the eye holds with an occluder in range, and
-	// anyFacingOccluder agrees with it, from those eyes and one out of range of every wall.
+	// an end cap), is the same built from the facing occluders as from all of them
+	// (culledSightIsTheSame with `toleranceMm`). The query says it culled when
+	// backFacesHiddenFrom the eye holds with an occluder in range, and anyFacingOccluder agrees
+	// with it, from those eyes and one out of range of every wall.
 	void expectFacingSightIsTheSame(const ConstructionWorld& cw, Vec2i64 low, Vec2i64 high, std::int64_t toleranceMm = 0) {
 		constexpr std::int64_t kGridMm	= 250;
 		constexpr std::int64_t kSightMm = 20000;
@@ -232,10 +264,7 @@ namespace {
 				++misreported <= 5) {
 				ADD_FAILURE() << "the query from (" << eye.x << ", " << eye.y << ") misreports";
 			}
-			const geometry::Ring fromAll	= geometry::computeVisibilityPolygon(eye, kSightMm, all);
-			const geometry::Ring fromFacing = geometry::computeVisibilityPolygon(eye, kSightMm, facing);
-			const bool			 same		= toleranceMm == 0 ? fromAll == fromFacing : ringsAgree(fromAll, fromFacing, toleranceMm);
-			if (!same && ++differ <= 5) {
+			if (!culledSightIsTheSame(index, eye, kSightMm, toleranceMm) && ++differ <= 5) {
 				ADD_FAILURE() << "sight from (" << eye.x << ", " << eye.y << ") differs";
 			}
 		}
@@ -552,17 +581,14 @@ TEST_F(GeometryIndexTest, FacingOccludersGiveTheSameSight) {
 	}
 	{
 		// The room turned 30 degrees: a ray at a back face's hidden end rounds its hit on a
-		// slanted face to the millimetre, a vertex the facing polygon has no need of. Hits
-		// lie up to 0.71 mm off the face, so a vertex of one ring and a chord of the other
-		// up to twice that apart.
-		constexpr std::int64_t kHitRoundingMm = 2;
-		ConstructionWorld	   cw;
-		const SegmentId		   south = buildWall(cw, {0, 0}, {3464, 2000});
+		// slanted face to the millimetre, a vertex the facing polygon has no need of.
+		ConstructionWorld cw;
+		const SegmentId	  south = buildWall(cw, {0, 0}, {3464, 2000});
 		buildWall(cw, {3464, 2000}, {1464, 5464});
 		buildWall(cw, {1464, 5464}, {-2000, 3464});
 		buildWall(cw, {-2000, 3464}, {0, 0});
 		addBuiltOpening(cw, south, 0.5F, "Door");
-		expectFacingSightIsTheSame(cw, {-3500, -1500}, {5000, 7000}, kHitRoundingMm);
+		expectFacingSightIsTheSame(cw, {-3500, -1500}, {5000, 7000}, kSnappedRingsMm);
 	}
 }
 
@@ -578,31 +604,22 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesForAnEyeAlongAFaceLine) {
 	GeometryIndex index;
 	index.setConstructionWorld(&cw);
 	index.rebuildIfStale();
-	constexpr std::int64_t		 kSightMm = 6000;
-	const Vec2i64				 eye{8156, 6995};
-	std::vector<OccluderSegment> all;
-	std::vector<OccluderSegment> facing;
-	index.queryOccluders(eye, kSightMm, all);
-	index.queryFacingOccluders(eye, kSightMm, facing);
-	EXPECT_TRUE(ringsAgree(geometry::computeVisibilityPolygon(eye, kSightMm, all), geometry::computeVisibilityPolygon(eye, kSightMm, facing), 2));
+	EXPECT_TRUE(culledSightIsTheSame(index, {8156, 6995}, 6000, kSnappedRingsMm));
 }
 
-// Loops that cross keep their back faces: a graph the offsetter rejects (three walls at a
-// corner, one of them 0.48 m long to a fourth), whose raw bands overlap at each joint, and two
-// walls of separate graphs whose bands overlap. Culled, the first polygon loses floor beside the stem that a line of sight
-// over every occluder reaches; the second cuts a sliver off along the overlap.
+// Occluders that cross keep their back faces: a graph the offsetter rejects (three walls at a
+// corner, one of them 0.48 m long to a fourth), whose raw bands overlap at each joint, two
+// walls of separate graphs whose bands overlap, and the same two walls joined into one graph.
+// Culled, the first polygon loses floor beside the stem that a line of sight over every
+// occluder reaches; the others cut a sliver off along the overlap.
 TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesWhereLoopsCross) {
 	const auto expectSameSight = [](const ConstructionWorld& cw, Vec2i64 eye, std::int64_t sightMm) {
 		GeometryIndex index;
 		index.setConstructionWorld(&cw);
 		index.rebuildIfStale();
-		std::vector<OccluderSegment> all;
-		std::vector<OccluderSegment> facing;
-		index.queryOccluders(eye, sightMm, all);
-		index.queryFacingOccluders(eye, sightMm, facing);
-		const geometry::Ring fromFacing = geometry::computeVisibilityPolygon(eye, sightMm, facing);
-		EXPECT_TRUE(ringsAgree(geometry::computeVisibilityPolygon(eye, sightMm, all), fromFacing, 2));
-		return fromFacing;
+		geometry::Ring culled;
+		EXPECT_TRUE(culledSightIsTheSame(index, eye, sightMm, kSnappedRingsMm, &culled));
+		return culled;
 	};
 	{
 		ConstructionWorld cw;
@@ -610,11 +627,7 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesWhereLoopsCross) {
 		buildWall(cw, {7122, 8049}, {6771, 7724}, "Heavy");
 		buildWall(cw, {6771, 7724}, {4962, 6049}, "Heavy");
 		buildWall(cw, {7122, 8049}, {7813, 5130});
-		std::vector<geometry::WallSegment> walls;
-		for (const construction::WallSegment& wall : cw.segments()) {
-			walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
-		}
-		ASSERT_NE(geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+		ASSERT_NE(geometry::resolveWallBands(wallsOf(cw), geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
 		const Vec2i64 eye{2824, 3859};
 		const Vec2i64 floor{7083, 7672};
 		ASSERT_TRUE(sees(occludersOf(cw), eye, floor));
@@ -624,7 +637,7 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesWhereLoopsCross) {
 		ConstructionWorld cw;
 		buildWall(cw, {0, 0}, {3970, 487});
 		buildWall(cw, {988, 159}, {4958, 646}, "Heavy");
-		ASSERT_EQ(geometry::connectedWallGraphs({{{0, 0}, {3970, 487}, 100}, {{988, 159}, {4958, 646}, 150}}).size(), 2u);
+		ASSERT_EQ(geometry::connectedWallGraphs(wallsOf(cw)).size(), 2u);
 		expectSameSight(cw, {-2708, 30284}, 30500);
 	}
 	{
@@ -636,12 +649,8 @@ TEST_F(GeometryIndexTest, FacingOccludersKeepBackFacesWhereLoopsCross) {
 		buildWall(cw, {0, 0}, {0, -3000});
 		buildWall(cw, {0, -3000}, {4958, -3000});
 		buildWall(cw, {4958, -3000}, {4958, 646});
-		std::vector<geometry::WallSegment> walls;
-		for (const construction::WallSegment& wall : cw.segments()) {
-			walls.push_back({cw.getVertex(wall.v0)->pos, cw.getVertex(wall.v1)->pos, construction::halfThicknessMm(wall)});
-		}
-		ASSERT_EQ(geometry::connectedWallGraphs(walls).size(), 1u);
-		ASSERT_EQ(geometry::resolveWallBands(walls, geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
+		ASSERT_EQ(geometry::connectedWallGraphs(wallsOf(cw)).size(), 1u);
+		ASSERT_EQ(geometry::resolveWallBands(wallsOf(cw), geometry::kDefaultMiterLimit).status, geometry::OffsetStatus::Ok);
 		expectSameSight(cw, {-2708, 30284}, 30500);
 	}
 }

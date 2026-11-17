@@ -77,7 +77,7 @@ namespace ecs {
 
 		// Append every cached opaque occluder that lies within radiusMm of center
 		// to `out` (clearing it first). Exact integer range test
-		// (geometry::withinDistanceOfSegment on the occluder endpoints). Linear scan
+		// (geometry::withinDistanceOfSegment on the whole occluder). Linear scan
 		// over the cache: at the modest wall counts a colony reaches this is fine; a
 		// flat spatial grid is the obvious future optimization if it ever isn't.
 		void queryOccluders(geometry::Vec2i64 center, std::int64_t radiusMm,
@@ -86,8 +86,10 @@ namespace ecs {
 		// queryOccluders less the back faces for an eye at `eye` when backFacesHiddenFrom it,
 		// for a visibility polygon from that eye alone: the polygon is the same, but for where
 		// a ray aimed at a back face's hidden end hits a slanted face, a vertex that rounds off
-		// the face by under a millimetre. Returns whether it culled them: backFacesHiddenFrom(eye,
-		// radiusMm) when an occluder is in range, false when none is.
+		// the face by under a millimetre. Each ring's vertices are snapped that way, so a vertex
+		// of one lies within two snaps, about 1.5 mm, of the other's edges. Returns whether it
+		// culled them: backFacesHiddenFrom(eye, radiusMm) when an occluder is in range, false
+		// when none is.
 		bool queryFacingOccluders(geometry::Vec2i64 eye, std::int64_t radiusMm,
 								  std::vector<geometry::OccluderSegment>& out) const;
 
