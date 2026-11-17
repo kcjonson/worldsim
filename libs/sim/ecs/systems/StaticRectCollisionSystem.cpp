@@ -27,14 +27,11 @@ namespace ecs {
 
 namespace {
 
-	// Generous fixed half-size margin added to the query box (meters). It MUST
-	// exceed how far any padded collider rect reaches from its entity's position, so
-	// queryRect (which filters by entity POSITION) never misses a rect whose body
-	// overlaps the agent while its entity sits outside the unpadded box. A simple
-	// (SVG) def's rect stands at its drawing's centre, half the drawing off the
-	// position: the farthest shipped is a 1.5 m boulder's, 3.1 m at the largest
-	// placement scale.
-	constexpr float kStaticRectQueryMarginMeters = 3.5F;
+	// Added to the registry's collision reach for the query box: the placed-obstacle pad's
+	// reach (0.05 m on each axis, about 0.07 m at a corner) at any placement scale up to 3.5,
+	// so queryRect (which filters by entity position) never misses a rect whose padded body
+	// overlaps the agent.
+	constexpr float kPadReachSlackMeters = 0.25F;
 
 } // namespace
 
@@ -74,9 +71,9 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 	}
 
 	const assets::AssetRegistry& registry = assets::AssetRegistry::Get();
-	// The box from nav::placedObstacleBox is pre-inflated by the placed-obstacle pad (already
-	// baked into halfExtents), so the query box needs only the spatial margin.
-	const float boxHalf = kStaticRectQueryMarginMeters;
+	// Any placed entity whose collider can reach the agent: its position is within the farthest
+	// any def's collider stands from its pivot, plus the pad.
+	const float boxHalf = registry.maxCollisionReachMeters() + kPadReachSlackMeters;
 
 	std::vector<nav::OrientedRect> rects; // reused per agent
 
@@ -108,8 +105,8 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 					if (index == nullptr) {
 						continue;
 					}
-					// queryRect filters by entity CENTER, which is why the box is
-					// padded by kStaticRectQueryMarginMeters.
+					// queryRect filters by entity position, which is why the box is
+					// padded by the collision reach.
 					std::vector<const assets::PlacedEntity*> hits =
 						index->queryRect(boxMinX, boxMinY, boxMaxX, boxMaxY);
 					for (const assets::PlacedEntity* e : hits) {
@@ -118,9 +115,7 @@ void StaticRectCollisionSystem::update(float /*deltaTime*/) {
 							continue;
 						}
 						// Rect colliders only: a polygon one is in the nav mesh but not pushed against here.
-						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(
-								*e, def->collisionFor(e->traits.ageClass), registry.collisionFrameOrigin(e->templateId)
-							)) {
+						if (const std::optional<nav::OrientedRect> box = nav::placedObstacleBox(*e, def->collisionFor(e->traits.ageClass))) {
 							rects.push_back(*box);
 						}
 					}

@@ -36,7 +36,7 @@ From the product owner, not the literature:
 ```
 AssetRegistry::getSilhouette(defName) ──► AssetSilhouette { outerRings (local mm),
    (lazy, on bake worker)                    hitRegion (closed, for whole-clump),
-        │                                     boundsCenterMeters, valid }
+        │                                     valid }
         │  built from contour rings (NOT triangle boundary)
         ▼
 geometry::silhouetteOfRings(rings) ──► outer CCW loops, holes filled, disjoint preserved
@@ -72,12 +72,11 @@ Blockiness is bounded by `targetResolution` and invisible under a thick stroke. 
 struct AssetSilhouette {
     std::vector<geometry::Ring> rings;        // local mm — crisp; used for the outline + shadows
     std::vector<geometry::Ring> hitRegion;    // local mm — closed (whole-clump); used for hit-testing
-    glm::vec2 boundsCenterMeters;             // == the render centerOffset, stored to stay drift-free
     bool valid;
 };
 ```
 
-Stored in `AssetRegistry` in a `unordered_map<string, AssetSilhouette>` guarded by its own mutex, mirroring the `getMotion` cache (own mutex, heavy raster off-lock, short lock to check/insert). `getSilhouette(defName)` ensures `getTemplate` (so the mesh is materialized), rasterizes its triangles for `rings` (close 0) and `hitRegion` (small close), caches. Key = resolved `defName`, so directional colonist variants (`_down/_up/_left/_right`) each get their own rest-pose silhouette. Safe to call from the chunk-bake worker (like `getTemplate`). Invalidated with `templateCache` on `clear()` / `clearDefinitions()`. `boundsCenterMeters` = `computeBounds(template)` centre == the dynamic render `-centerOffset` (drift-free). One template per `defName`, so one silhouette serves every instance regardless of position/rotation/scale/tint.
+Stored in `AssetRegistry` in a `unordered_map<string, AssetSilhouette>` guarded by its own mutex, mirroring the `getMotion` cache (own mutex, heavy raster off-lock, short lock to check/insert). `getSilhouette(defName)` ensures `getTemplate` (so the mesh is materialized), rasterizes its triangles for `rings` (close 0) and `hitRegion` (small close), caches. Key = resolved `defName`, so directional colonist variants (`_down/_up/_left/_right`) each get their own rest-pose silhouette. Safe to call from the chunk-bake worker (like `getTemplate`). Invalidated with `templateCache` on `clear()` / `clearDefinitions()`. One template per `defName`, so one silhouette serves every instance regardless of position/rotation/scale/tint.
 
 For a single connected asset, `hitRegion ≈ rings`. They diverge for multi-blob assets, where the close bridges the gaps (§7).
 
@@ -86,7 +85,7 @@ For a single connected asset, `hitRegion ≈ rings`. They diverge for multi-blob
 The #1 shared risk is the hit-test inverse or the outline forward-map drifting from what the renderer draws — the same collider-drift failure class the `SvgMeterFrame` comments already warn about. There are two conventions, and they must live in exactly one place:
 
 - **Static / baked** (`BakedEntityMesh`): `world = R(rot)·(local·scale) + position`, **no centering**.
-- **Dynamic / ECS** (`DynamicEntityRenderSystem`): `world = local·scale + position + centerOffset`, **rotation forced 0**, where `centerOffset = -(min+max)/2`. Note `getTemplate` returns `nullptr` for a 0-shape asset and `centerOffset` silently stays 0 — the inverse must reproduce that exact behavior.
+- **Dynamic / ECS** (`DynamicEntityRenderSystem`): the same form with **rotation forced 0**. Since 2026-11 every template mesh is built about its def's pivot (collision-shapes.md, "One pivot per def"), so there is no per-path centre offset any more; `instanceTransform(position, rotation, scale)` is the one transform.
 
 `assetInstanceTransform` provides forward (local→world) and inverse (world→local mm) for both conventions, consumed by `BakedEntityMesh`, `DynamicEntityRenderSystem`, the outline, and the hit-test. The duplicated `centerOffset` math in `DynamicEntityRenderSystem` is deleted (one source of truth). A `packagedLayout` helper is extracted the same way (crate back, item fitted inside from its template bounds, crate front) so the packaged composite matches the sprite. Round-trip tests (`world→local→world`) per convention, including the nullptr-template path and the `FacingDirection` suffix.
 
@@ -163,7 +162,7 @@ Deferred (Tier-2, documented not built): a per-frame posed outline for the singl
 
 Each tree draws its own (def, age class, variant) mesh, so the silhouette is cached per template id (`getSilhouette(templateId)`, or `getSilhouette(defName, traits)`). A placed entity uses its stored `templateId`; a dynamic entity resolves its `Appearance` defName (with the facing suffix) and traits. A simple (SVG) asset is one drawing, so all its traits share one template.
 
-Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the raster, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover. `boundsCenterMeters` still comes from the whole drawn mesh, since it must match the render transform.
+Triangles whose three vertices are all below `AssetRegistry::kSilhouetteMinAlpha` (0.5) are left out of the raster, so a drop shadow is not part of the outline, the hit area, or the flora view's canopy cover.
 
 The world-entity broad phase queries out to `AssetRegistry::maxReachMeters` (the farthest any non-groundcover template reaches from its origin, times its def's largest placement scale, never under `kSelectionRadius`) instead of a fixed 8 m.
 

@@ -40,18 +40,14 @@ namespace assets {
 	/// Cached per-defName selection silhouette: the filled outer outline of the
 	/// asset's RENDERED footprint (rasterized from the tessellated mesh triangles, so
 	/// it captures fills AND stroke bands — e.g. a reed's stroke stem — exactly what is
-	/// drawn), in the template-local (scaled, uncentered) frame in integer millimeters.
+	/// drawn), in the template's pivot frame in integer millimeters.
 	/// `rings` is the crisp outline (holes filled, disjoint blobs kept separate) used for
 	/// the selection outline and later shadows; `hitRegion` is the same closed with a
 	/// small morphological radius so gaps between disjoint blobs are clickable
 	/// (whole-clump) and narrow concavities forgive slightly — used for hit-testing.
-	/// `boundsCenterMeters` is the template mesh bbox centre in the same frame — it
-	/// equals the dynamic render path's -centerOffset, stored so outline and hit-test
-	/// share the render transform and can't drift.
 	struct AssetSilhouette {
 		std::vector<geometry::Ring> rings;
 		std::vector<geometry::Ring> hitRegion;
-		glm::vec2					boundsCenterMeters{0.0F, 0.0F};
 		bool						valid = false;
 	};
 
@@ -98,14 +94,6 @@ namespace assets {
 		/// the cull margin) reads this mesh, so it doesn't change with the camera's zoom.
 		const renderer::TessellatedMesh* getTemplate(uint32_t templateId) const;
 
-		/// Where the origin of the def's collision shapes sits in a template's mesh frame, in meters:
-		/// the mesh's bbox centre for a simple (SVG) def, whose shapes are authored about it
-		/// (loadCollisionFromSvgMetadata), and {0,0} for a procedural def, whose shapes are in the
-		/// mesh's own frame. A static draws its mesh from its position, uncentred, so its collider
-		/// stands at this plus the shape. Its Y is the frame anchorLocalY adds. {0,0} for id 0 or a
-		/// template with no mesh.
-		[[nodiscard]] glm::vec2 collisionFrameOrigin(uint32_t templateId) const;
-
 		/// The highest template id handed out since the last clear; ids run from 1 to this.
 		[[nodiscard]] uint32_t templateCount() const;
 
@@ -148,9 +136,14 @@ namespace assets {
 		/// <detailLevels> is measured at its reference level and widened by kLevelReachMargin.
 		[[nodiscard]] float maxReachMeters() const { return m_maxReach.load(std::memory_order_relaxed); }
 
+		/// The farthest any loaded def's collision shape reaches from its pivot, times the def's
+		/// largest placement scale, over every def and age class: how far from its position a
+		/// placed entity's collider can stand. Kept as definitions load and their shapes are set.
+		[[nodiscard]] float maxCollisionReachMeters() const { return m_maxCollisionReach.load(std::memory_order_relaxed); }
+
 		/// Get the resolved motion (animation clips) for a def, or nullptr if it declares none.
 		/// Driver pivots are resolved against the def's SVG nodes (find_node, by authored node
-		/// index) into the mesh's scaled meter frame, so a part rotates about the right joint.
+		/// index) into the mesh's pivot frame, so a part rotates about the right joint.
 		/// Rotation amps are returned in radians, posX/posY amps in meters. Lazily loaded + cached.
 		const MotionDef* getMotion(const std::string& defName);
 
@@ -261,10 +254,10 @@ namespace assets {
 
 		/// Parse a collision shape from an SVG file's <metadata><collision> block.
 		/// Simple (SVG-backed) assets can author a collider directly in the SVG; the
-		/// authored points are in SVG user units and are converted to the local-meter
-		/// frame using the SAME scaleFactor (worldHeight / svgHeight) and centering
-		/// (svg center -> origin) the render mesh uses in getTemplate +
-		/// DynamicEntityRenderSystem, so the collider lands on the rendered art.
+		/// authored points are in SVG user units and are converted to the def's pivot
+		/// frame by the same SvgMeterFrame (pivot at the drawing's bbox centre, scaled by
+		/// worldHeight / svgHeight) that buildTemplate moves the mesh by, so the collider
+		/// lands on the rendered art.
 		///
 		/// Returns nullopt (without loading the SVG) when the file carries no
 		/// collision metadata, and nullopt + a warning when the authored shape is
@@ -422,7 +415,6 @@ namespace assets {
 			const AssetDefinition*					 def = nullptr;
 			TreeTraits								 traits;
 			std::optional<renderer::TessellatedMesh> mesh;
-			glm::vec2								 collisionFrameOrigin{0.0F, 0.0F};
 			bool									 defTall = false;
 		};
 
@@ -448,6 +440,9 @@ namespace assets {
 		/// Both load entry points end here, so a def is complete however it was loaded.
 		void prewarmTreeVariants(const std::vector<std::string>& defNames);
 
+		/// Raises maxCollisionReachMeters to cover the named defs' collision shapes as they stand.
+		void recordCollisionReach(const std::vector<std::string>& defNames);
+
 		/// Drops every template, silhouette, and resolved motion.
 		void clearCaches();
 
@@ -460,6 +455,7 @@ namespace assets {
 		std::vector<std::unique_ptr<TemplateEntry>>				m_templates;
 		mutable std::mutex										templateCacheMutex;
 		std::atomic<float>										m_maxReach{0.0F};
+		std::atomic<float>										m_maxCollisionReach{0.0F};
 
 		// Resolved motion per def (empty MotionDef = "resolved, has none"). Guarded separately.
 		std::unordered_map<std::string, MotionDef> m_motionCache;

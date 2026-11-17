@@ -4,22 +4,19 @@
 
 #include <cmath>
 
-// The single local<->world affine for an asset instance, shared by the dynamic
-// ECS render path (placed.position), the selection outline (forward, local->world),
-// and the selection hit-test (inverse, world->local) so they can never drift.
+// The single local<->world affine for an asset instance, shared by every render path,
+// the selection outline (forward, local->world), the selection hit-test (inverse,
+// world->local), and a placed entity's collider, so they can never drift:
 //
-//     world = R(rotation) * (local * scale) + origin
+//     world = R(rotation) * (local * scale) + position
 //
-// Two conventions map onto the one form via (origin, rotation):
-//   Static / baked:  origin = entity.position,       rotation = entity.rotation   (uncentered)
-//   Dynamic / ECS:   origin = pos.value - boundsCenter, rotation = 0
-//     where boundsCenter = (min+max)/2 of the template mesh bbox (so the stored render
-//     centerOffset = -boundsCenter). A null/empty template gives boundsCenter = {0,0},
-//     collapsing origin to pos.value exactly as DynamicEntityRenderSystem does.
+// `local` is in the def's pivot frame (AssetRegistry builds every template mesh and
+// collision shape about the def's pivot), and an entity's position is its pivot in the
+// world, static or dynamic alike; a dynamic entity has rotation 0.
 //
-// The baked static loop (BakedEntityMesh) and the GPU instancing shader apply this
-// same formula; this struct is the reference definition and is guarded against drift
-// by AssetInstanceTransform.test.cpp.
+// The baked static loop (BakedEntityMesh), the GPU instancing shader, and
+// nav::placedObstacleBox apply this same formula; this struct is the reference
+// definition and is guarded against drift by AssetInstanceTransform.test.cpp.
 
 namespace worldview {
 
@@ -52,12 +49,8 @@ namespace worldview {
 		}
 	};
 
-	inline AssetInstanceTransform staticInstanceTransform(glm::vec2 position, float rotation, float scale) {
+	inline AssetInstanceTransform instanceTransform(glm::vec2 position, float rotation, float scale) {
 		return {position, rotation, scale};
-	}
-
-	inline AssetInstanceTransform dynamicInstanceTransform(glm::vec2 posValue, float scale, glm::vec2 boundsCenter) {
-		return {{posValue.x - boundsCenter.x, posValue.y - boundsCenter.y}, 0.0F, scale};
 	}
 
 } // namespace worldview

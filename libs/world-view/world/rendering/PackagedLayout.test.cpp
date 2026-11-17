@@ -38,8 +38,8 @@ TEST(PackagedLayout, BackItemFrontShareBaseline) {
 	EXPECT_FLOAT_EQ(pl.crateBack.anchorY, 7.0F);
 	EXPECT_FLOAT_EQ(pl.item.anchorY, 7.0F);
 	EXPECT_FLOAT_EQ(pl.crateFront.anchorY, 7.0F);
-	EXPECT_FLOAT_EQ(pl.crateBack.position.x, 3.0F - kCrateWidth * 0.5F);
-	EXPECT_FLOAT_EQ(pl.crateBack.position.y, 7.0F - kCrateHeight);
+	EXPECT_FLOAT_EQ(pl.crateBack.position.x, 3.0F);
+	EXPECT_FLOAT_EQ(pl.crateBack.position.y, 7.0F - kCrateHeight * 0.5F);
 }
 
 // A wide item is shrunk uniformly to fit inside the posts, centered, bottom on the crate floor.

@@ -1,6 +1,7 @@
 #pragma once
 
-// A simple (SVG) obstacle def for tests of where a placed entity's collider stands.
+// A simple (SVG) obstacle def whose collider stands well off its pivot, for tests of where a
+// placed entity's collider stands.
 
 #include <assets/AssetRegistry.h>
 
@@ -15,11 +16,10 @@
 namespace nav::testing {
 
 	inline constexpr const char* kSimpleObstacleDefName = "Test_SimpleObstacle";
-	// The drawing is 3 m by 1 m from its origin, so its bbox centre, which the collider is authored
-	// about, is this far from where a static's position puts the mesh's origin.
-	inline constexpr glm::vec2 kSimpleObstacleFrameOrigin{1.5F, 0.5F};
-	// The collider: a square at the drawing's centre.
-	inline constexpr float kSimpleObstacleHalfExtent = 0.1F;
+	// The drawing is 6 m by 1 m; its pivot is its centre. The collider is a 0.2 m square at its
+	// east end, this far from the pivot: past the 2 m the static collision query used to reach.
+	inline constexpr glm::vec2 kSimpleObstacleColliderOffset{2.7F, 0.0F};
+	inline constexpr float	   kSimpleObstacleHalfExtent = 0.1F;
 
 	// Loads the def into `registry` from a temporary folder and returns its template id.
 	inline std::uint32_t loadSimpleObstacleDef(assets::AssetRegistry& registry) {
@@ -31,9 +31,9 @@ namespace nav::testing {
 		std::filesystem::create_directories(folder);
 		std::ofstream(folder / "shape.svg")
 			<< "<?xml version=\"1.0\"?>"
-			   "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 300 100\" width=\"300\" height=\"100\">"
-			   "<metadata><collision><shape type=\"aabb\" min=\"140,40\" max=\"160,60\"/></collision></metadata>"
-			   "<path d=\"M0,0 L300,0 L300,100 L0,100 Z\" fill=\"#777777\"/>"
+			   "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 600 100\" width=\"600\" height=\"100\">"
+			   "<metadata><collision><shape type=\"aabb\" min=\"560,40\" max=\"580,60\"/></collision></metadata>"
+			   "<path d=\"M0,0 L600,0 L600,100 L0,100 Z\" fill=\"#777777\"/>"
 			   "</svg>";
 		std::ofstream(folder / (std::string(kSimpleObstacleDefName) + ".xml"))
 			<< "<?xml version=\"1.0\"?><AssetDefinitions><AssetDef>"

@@ -141,12 +141,10 @@ TEST(DetailLevelsTest, OakNonDrawingDataIsTheReferenceLevels) {
 	EXPECT_EQ(kept->vertices, atReference.mesh->vertices);
 
 	const float				 reach = reg.maxReachMeters();
-	const AssetSilhouette*	 silhouette = reg.getSilhouette(id);
-	const glm::vec2			 center = silhouette->boundsCenterMeters;
+	ASSERT_NE(reg.getSilhouette(id), nullptr);
 	for (uint8_t level = 0; level < def->detailLevels.size(); ++level) {
 		EXPECT_EQ(reg.buildTemplateLevel(id, level).collision, atReference.collision) << "level " << int(level);
 	}
 	EXPECT_EQ(reg.maxReachMeters(), reach);
-	EXPECT_EQ(reg.getSilhouette(id)->boundsCenterMeters, center);
 	EXPECT_EQ(reg.getTemplate(id), kept);
 }

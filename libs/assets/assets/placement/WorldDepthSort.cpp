@@ -27,22 +27,24 @@ namespace assets {
 		return ext;
 	}
 
-	float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh) {
+	float anchorLocalY(const AssetDefinition* def, uint8_t ageClass, MeshYExtent mesh, float rotation) {
 		if (def == nullptr) {
 			return mesh.maxY;
 		}
 		const CollisionShape& footprint = def->collisionFor(ageClass);
-		const float			  frameY = def->assetType == AssetType::Simple ? (mesh.minY + mesh.maxY) * 0.5F : 0.0F;
+		const float			  c = std::cos(rotation);
+		const float			  s = std::sin(rotation);
+		const auto			  turnedY = [&](glm::vec2 p) { return p.x * s + p.y * c; };
 		switch (footprint.type) {
 			case CollisionShapeType::Rect:
-				return frameY + footprint.offsetMeters.y + footprint.halfExtentsMeters.y;
+				return turnedY(footprint.offsetMeters) + std::abs(footprint.halfExtentsMeters.x * s) + std::abs(footprint.halfExtentsMeters.y * c);
 			case CollisionShapeType::Polygon:
 				if (!footprint.pointsMeters.empty()) {
-					float lowest = footprint.pointsMeters.front().y;
+					float lowest = turnedY(footprint.pointsMeters.front());
 					for (const glm::vec2& p : footprint.pointsMeters) {
-						lowest = std::max(lowest, p.y);
+						lowest = std::max(lowest, turnedY(p));
 					}
-					return frameY + lowest;
+					return lowest;
 				}
 				return mesh.maxY;
 			case CollisionShapeType::None:

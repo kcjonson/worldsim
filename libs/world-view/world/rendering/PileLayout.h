@@ -4,7 +4,6 @@
 #include "assets/placement/SpatialIndex.h"	 // PlacedEntity
 #include "assets/placement/WorldDepthSort.h" // computeAnchorY
 #include "graphics/Rect.h"
-#include "world/rendering/AssetInstanceTransform.h"
 
 #include <glm/vec2.hpp>
 #include <glm/vec4.hpp>
@@ -21,9 +20,8 @@
 // single log. Shared by the dynamic render path, the selection hit-test, the selection
 // outline, and the drop footprint so all four agree on the sprites and can't drift.
 //
-// Each sprite is a position-as-origin instance (rotation 0): its bbox center lands at
-// entity position + offset through the same dynamic (bbox-centered) transform a lone
-// dynamic entity uses, so a pile of one draws exactly where the entity used to.
+// Each sprite is an instance (rotation 0) with its pivot at entity position + offset, as a
+// lone dynamic entity's pivot is at its position, so a pile of one draws where the entity would.
 
 namespace worldview {
 
@@ -89,7 +87,6 @@ namespace worldview {
 		constexpr float								  kRowStep = 0.3F;
 		constexpr std::array<float, kMaxPileSprites> kStagger{0.0F, 0.12F, -0.10F, 0.08F, -0.12F};
 
-		const glm::vec2 boundsCenter{itemBounds.x + itemBounds.width * 0.5F, itemBounds.y + itemBounds.height * 0.5F};
 		const float		meshMaxY = itemBounds.y + itemBounds.height;
 
 		PileLayout out;
@@ -104,7 +101,7 @@ namespace worldview {
 			assets::PlacedEntity& sprite = out.sprites[i];
 			sprite.defName = defName;
 			sprite.templateId = templateId;
-			sprite.position = dynamicInstanceTransform(center, scale, boundsCenter).origin;
+			sprite.position = center;
 			sprite.rotation = 0.0F;
 			sprite.scale = scale;
 			sprite.colorTint = colorTint;

@@ -565,10 +565,9 @@ TEST_F(StaticRectCollisionSystemTest, MirroredTreeIsCollidedWith) {
 		<< "the mirrored tree was not collided with";
 }
 
-// A simple (SVG) def's rect stands on its drawing, which a static draws from its position, uncentred:
-// an agent on the drawing's centre is pushed out, and one at the entity's position, off the rect, is
-// left alone.
-TEST_F(StaticRectCollisionSystemTest, SimpleDefRectStandsOnTheDrawing) {
+// A collider 2.7 m from its entity's position, past where the query box used to reach, is still
+// found: an agent on it is pushed out, and one at the entity's position, off the rect, is left alone.
+TEST_F(StaticRectCollisionSystemTest, ColliderFarFromItsPositionIsFound) {
 	AssetRegistry& reg = AssetRegistry::Get();
 
 	const glm::vec2				 rockAt{20.0F, 20.0F};
@@ -588,7 +587,7 @@ TEST_F(StaticRectCollisionSystemTest, SimpleDefRectStandsOnTheDrawing) {
 		executor.storeChunkResult(std::move(result));
 	}
 
-	const glm::vec2 boxCentre = rockAt + nav::testing::kSimpleObstacleFrameOrigin;
+	const glm::vec2 boxCentre = rockAt + nav::testing::kSimpleObstacleColliderOffset;
 	const glm::vec2 atOrigin  = rockAt + glm::vec2{0.02F, 0.01F};
 	World			world;
 	const EntityID	onDrawing  = spawnAgent(world, boxCentre + glm::vec2{0.05F, 0.0F});
@@ -597,7 +596,7 @@ TEST_F(StaticRectCollisionSystemTest, SimpleDefRectStandsOnTheDrawing) {
 
 	EXPECT_NEAR(
 		world.getComponent<Position>(onDrawing)->value.x, boxCentre.x + nav::testing::kSimpleObstacleHalfExtent + kStaticRectClearanceMeters, 1e-4F
-	) << "the rect is not on the drawing";
+	) << "the far collider was not found";
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.x, atOrigin.x);
 	EXPECT_FLOAT_EQ(world.getComponent<Position>(onPosition)->value.y, atOrigin.y);
 }

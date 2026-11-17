@@ -27,12 +27,10 @@ namespace nav {
 		glm::vec2 halfExtents{0.0F, 0.0F};
 	};
 
-	// The box of a placed entity's Rect collider: the local rect, padded, moved from the collider's
-	// frame into the mesh's by `frameOrigin` (AssetRegistry::collisionFrameOrigin of the entity's
-	// template), then scaled, rotated and moved to the entity, the way its mesh is drawn. A negative
-	// scale mirrors the offset through the entity's position and leaves the box's size alone. nullopt
-	// for any other shape.
-	[[nodiscard]] std::optional<OrientedRect>
-	placedObstacleBox(const assets::PlacedEntity& entity, const assets::CollisionShape& collision, glm::vec2 frameOrigin);
+	// The box of a placed entity's Rect collider: the rect, which is in its def's pivot frame, padded,
+	// then scaled, rotated and moved to the entity's position, as its mesh is drawn. A negative scale
+	// mirrors the offset through the entity's position and leaves the box's size alone. nullopt for
+	// any other shape.
+	[[nodiscard]] std::optional<OrientedRect> placedObstacleBox(const assets::PlacedEntity& entity, const assets::CollisionShape& collision);
 
 } // namespace nav

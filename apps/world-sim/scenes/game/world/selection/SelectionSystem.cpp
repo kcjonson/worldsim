@@ -102,12 +102,12 @@ namespace {
 			const float dy = pe.position.y - worldPos.y;
 			return (dx * dx + dy * dy) < (fallbackRadius * fallbackRadius);
 		}
-		return silhouetteRingsContain(*sil, worldview::staticInstanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
+		return silhouetteRingsContain(*sil, worldview::instanceTransform(pe.position, pe.rotation, pe.scale), worldPos);
 	}
 
 	// True if the click is under a dynamic ECS entity's rendered silhouette. Resolves the
-	// render defName (Appearance defName + facing suffix) and the dynamic (bbox-centered)
-	// transform exactly as DynamicEntityRenderSystem. Returns true (defer to the caller's
+	// render defName (Appearance defName + facing suffix) and the instance transform
+	// exactly as DynamicEntityRenderSystem. Returns true (defer to the caller's
 	// centroid pre-cull) when the def has no cached silhouette so silhouette-less types
 	// stay selectable.
 	bool dynamicUnderClick(
@@ -119,7 +119,7 @@ namespace {
 			return true;
 		}
 		return silhouetteRingsContain(
-			*sil, worldview::dynamicInstanceTransform(entityPos, appearance.scale, sil->boundsCenterMeters), worldPos
+			*sil, worldview::instanceTransform(entityPos, 0.0F, appearance.scale), worldPos
 		);
 	}
 
@@ -797,7 +797,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 			return outline;
 		}
 		appendWorldRings(
-			sil->rings, worldview::staticInstanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
+			sil->rings, worldview::instanceTransform(pe->position, pe->rotation, pe->scale), outline.worldRings, maxY
 		);
 	} else if (const auto* pileSel = std::get_if<ResourcePileSelection>(&selection)) {
 		// Loose pile: every sprite of the shared pile layout at its position-as-origin
@@ -819,7 +819,7 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		}
 		for (std::size_t i = 0; i < pile.count; ++i) {
 			const assets::PlacedEntity& sprite = pile.sprites[i];
-			appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sprite.position, sprite.rotation, sprite.scale), compositeMm);
+			appendWorldRingsMm(sil->rings, worldview::instanceTransform(sprite.position, sprite.rotation, sprite.scale), compositeMm);
 		}
 		canonicalAnchorY = pile.sprites[pile.count - 1].anchorY; // the front-most sprite's key
 	} else {
@@ -845,28 +845,26 @@ worldview::SelectionOutline SelectionSystem::buildEntityOutline() const {
 		}
 
 		// Packaged furniture: crate layers + item at their layout transforms (drawn as
-		// position-as-origin instances, matching the render path; sub-entities are NOT
-		// re-centered), unioned into one outline. With the item inside the crate that is the
+		// instances, matching the render path), unioned into one outline. With the item inside the crate that is the
 		// crate's silhouette.
 		if (isFurniture && ecsWorld->getComponent<ecs::Packaged>(entityId) != nullptr) {
 			const worldview::PackagedLayout pl = packagedLayoutFor(*appearance, pos->value);
 			for (const assets::PlacedEntity* sub : {&pl.crateBack, &pl.item, &pl.crateFront}) {
 				const auto* sil = assetRegistry.getSilhouette(sub->templateId);
 				if (sil != nullptr && sil->valid) {
-					appendWorldRingsMm(sil->rings, worldview::staticInstanceTransform(sub->position, sub->rotation, sub->scale), compositeMm);
+					appendWorldRingsMm(sil->rings, worldview::instanceTransform(sub->position, sub->rotation, sub->scale), compositeMm);
 				}
 			}
 			canonicalAnchorY = pl.crateFront.anchorY;
 		} else {
-			// Non-packaged dynamic entity: the facing sprite's silhouette at the dynamic
-			// (bbox-centered) transform.
+			// Non-packaged dynamic entity: the facing sprite's silhouette at its position.
 			const std::string defName = dynamicRenderDefName(ecsWorld, entityId, appearance->defName);
 			const auto*		  sil = assetRegistry.getSilhouette(defName, appearance->traits);
 			if (sil == nullptr || !sil->valid) {
 				return outline;
 			}
 			appendWorldRings(
-				sil->rings, worldview::dynamicInstanceTransform(pos->value, appearance->scale, sil->boundsCenterMeters), outline.worldRings, maxY
+				sil->rings, worldview::instanceTransform(pos->value, 0.0F, appearance->scale), outline.worldRings, maxY
 			);
 		}
 	}

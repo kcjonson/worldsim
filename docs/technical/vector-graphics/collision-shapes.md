@@ -69,26 +69,34 @@ world-AABB fast path.
 3. **SVG `<metadata>` for simple (SVG-backed) assets** — `<metadata><collision>
    <shape type="aabb" min="x,y" max="x,y"/></collision></metadata>` (or a
    `type="polygon" vertices="x1,y1 ..."`), read via a pugixml second pass over the
-   .svg (NanoSVG ignores `<metadata>`) at load. The coords convert to the *same*
-   local-meter frame the render mesh uses — `(svgPoint - svgBboxCenter) *
-   scaleFactor`, where `scaleFactor = worldHeight / svgHeight` over the loaded
-   path-vertex bbox — via the shared `computeSvgMeterFrame` helper that
-   `getTemplate` also uses, so the collider can't drift off the sprite. SVG
-   metadata wins over XML for simple assets. First consumer:
+   .svg (NanoSVG ignores `<metadata>`) at load. The coords convert into the
+   def's pivot frame by `SvgMeterFrame::toPivotMeters`, `(svgPoint - pivot) *
+   scaleFactor` with `scaleFactor = worldHeight / svgHeight` over the loaded
+   path-vertex bbox, the same conversion the template mesh and the motion pivots
+   go through. SVG metadata wins over XML for simple assets. First consumer:
    `assets/world/misc/BigRock` (a tree-sized boulder you can't walk through).
 
-## The two frames, and where a placed entity's collider stands
+## One pivot per def
 
-A collider is stored in one of two frames, by asset type. A procedural def's is in its
-generator's mesh frame, the frame its template mesh is in. A simple (SVG) def's is about its
-drawing's bbox centre, whether it came from SVG `<metadata>` or XML. A placed (static) entity
-draws its template mesh from its position, scaled and rotated about the mesh's origin and not
-centred, so its collider is moved into the mesh's frame first:
-`AssetRegistry::collisionFrameOrigin(templateId)` is the mesh's bbox centre for a simple def and
-`{0,0}` for a procedural one, and `nav::placedObstacleBox` / `placedObstacleOutline` add it to
-the shape before the entity's scale, rotation, and position. Both consumers below read those
-two, so the nav hole and the collision rect land on the art for either asset type. The depth
-anchor makes the same move in Y (`anchorLocalY`).
+Every def has one pivot: the point an entity's position stands for, as a Unity or Godot
+sprite's pivot is. The registry builds every template mesh about it and stores every
+collision shape about it, so nothing downstream converts anything:
+
+- A simple (SVG) def's pivot is the centre of its drawing's path-vertex bbox.
+  `buildTemplate` moves the mesh there; its metadata collider, an XML collider, and its
+  motion pivots are in the same frame.
+- A procedural (Lua) def's pivot is its generator's `(0,0)`. The trees put their trunk
+  foot there, which is where their collider, depth anchor, crown spacing, and harvest
+  stand points want the position to be.
+
+Every draw path (baked and instanced statics, dynamic entities, piles, the packaged
+crate, the placement ghost, the asset manager), the selection outline and hit-test, and
+the collider place the pivot-frame shape at the entity's position by
+`world = R(rotation) * (local * scale) + position`
+(`libs/world-view/world/rendering/AssetInstanceTransform.h`). The depth anchor reads the
+footprint in the same frame, turned by the entity's rotation (`anchorLocalY`).
+`AssetInstanceTransform.ColliderCornerLandsOnTheDrawnCorner` pins the collider to the
+drawing for both asset types.
 
 ## Consumers (the collider feeds two systems at the same clearance)
 
@@ -102,7 +110,10 @@ anchor makes the same move in Y (`anchorLocalY`).
   an agent **center** out of the rect inflated by the **same** 0.05 m pad (a
   point-vs-oriented-OBB push-out), so an agent shoved into a trunk by other
   forces can't walk through it. It does not use the agent's disc radius as the
-  clearance.
+  clearance. It finds rects by entity position within
+  `AssetRegistry::maxCollisionReachMeters()` (the farthest any def's collider
+  stands from its pivot, at the def's largest placement scale, kept as defs load)
+  plus the pad, so a collider far from its pivot is never missed.
 
 The two boundaries coincide on purpose: the pad is applied in local space
 *before* the entity scale in both (`scale * (halfExtent + pad)`), so nav and

@@ -17,7 +17,8 @@
 //
 // The crate is PackagingCrate (back) + PackagingCrateFront: both SVGs span 0..100 x 0..75 at
 // worldHeight 0.75, so one SVG unit is 1 cm and the constants below are those coordinates in
-// meters, measured from the crate's top-left. The crate, not the item, sets the footprint.
+// meters, measured from the crate's top-left; each drawing's pivot is that box's centre. The
+// crate, not the item, sets the footprint.
 
 namespace worldview {
 
@@ -56,10 +57,12 @@ namespace worldview {
 			fit = std::min(fit, openingHeight / itemBounds.height);
 		}
 
+		// Each crate layer's drawing spans the crate's whole box, so its pivot (its bbox centre)
+		// is the box's centre.
 		auto crateSprite = [&](const char* defName) {
 			assets::PlacedEntity sprite;
 			sprite.defName = defName;
-			sprite.position = crateTopLeft;
+			sprite.position = crateTopLeft + glm::vec2{kCrateWidth, kCrateHeight} * 0.5F;
 			sprite.rotation = 0.0F;
 			sprite.scale = 1.0F;
 			sprite.colorTint = {1.0F, 1.0F, 1.0F, 1.0F};

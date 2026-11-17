@@ -77,11 +77,10 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
         placed.traits = appearance.traits;
         placed.templateId = assetRegistry.templateId(defName, appearance.traits);
 
-        // Re-center the mesh on its bbox (entity position is the center) and derive the
-        // world transform through the shared helper so render, outline, and hit-test agree.
+        // The mesh is about the def's pivot, which the entity's position is: drawn at it, as
+        // the outline and hit-test place it.
         const auto*            mesh   = assetRegistry.getTemplate(placed.templateId);
         const Foundation::Rect bounds = worldview::templateBounds(mesh);
-        const glm::vec2        boundsCenter{bounds.x + bounds.width * 0.5F, bounds.y + bounds.height * 0.5F};
         const assets::MeshYExtent meshY{.minY = bounds.y, .maxY = bounds.y + bounds.height}; // maxY: the feet
 
         // Loose ground pile: a heap of sprites sized by its count, laid out by the shared pile
@@ -97,13 +96,13 @@ void DynamicEntityRenderSystem::update(float deltaTime) {
             continue;
         }
 
-        placed.position = worldview::dynamicInstanceTransform(pos.value, appearance.scale, boundsCenter).origin;
+        placed.position = pos.value;
         placed.rotation = 0.0F;  // Dynamic entities don't rotate - use FacingDirection for sprites
         placed.scale = appearance.scale;
         placed.colorTint = appearance.colorTint;
         // Feet, or a footprint's lower edge (a tree's trunk foot), are the 2.5D depth anchor.
         placed.anchorY = assets::computeAnchorY(
-            placed.position.y, assets::anchorLocalY(assetRegistry.getDefinition(defName), placed.traits.ageClass, meshY), placed.scale
+            placed.position.y, assets::anchorLocalY(assetRegistry.getDefinition(defName), placed.traits.ageClass, meshY, 0.0F), placed.scale
         );
 
         // Walk animation: advance this entity's phase from its movement speed and evaluate its

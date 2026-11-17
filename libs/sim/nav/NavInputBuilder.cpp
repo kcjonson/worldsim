@@ -59,14 +59,14 @@ namespace nav {
 		return gnav::NavInputPolygon{std::move(ring), true, kProvenancePlaced};
 	}
 
-	std::optional<OrientedRect> placedObstacleBox(const assets::PlacedEntity& e, const assets::CollisionShape& collision, glm::vec2 frameOrigin) {
+	std::optional<OrientedRect> placedObstacleBox(const assets::PlacedEntity& e, const assets::CollisionShape& collision) {
 		if (collision.type != assets::CollisionShapeType::Rect) {
 			return std::nullopt;
 		}
 		const float		c	= std::cos(e.rotation);
 		const float		s	= std::sin(e.rotation);
 		const float		pad = static_cast<float>(kPlacedObstaclePadMm) / static_cast<float>(kTileMm);
-		const glm::vec2 off = (frameOrigin + collision.offsetMeters) * e.scale;
+		const glm::vec2 off = collision.offsetMeters * e.scale;
 		OrientedRect	box;
 		box.center		= e.position + glm::vec2{off.x * c - off.y * s, off.x * s + off.y * c};
 		box.axisX		= {c, s};
@@ -85,10 +85,9 @@ namespace nav {
 		if (!collision.blocks()) {
 			return false;
 		}
-		const glm::vec2 frameOrigin = registry.collisionFrameOrigin(e.templateId);
 
 		if (collision.type == assets::CollisionShapeType::Rect) {
-			const OrientedRect box = *placedObstacleBox(e, collision, frameOrigin);
+			const OrientedRect box = *placedObstacleBox(e, collision);
 			ring.reserve(4);
 			for (const glm::vec2 corner : {glm::vec2{-1.0F, -1.0F}, glm::vec2{1.0F, -1.0F}, glm::vec2{1.0F, 1.0F}, glm::vec2{-1.0F, 1.0F}}) {
 				ring.push_back(toMm(box.center + box.axisX * (corner.x * box.halfExtents.x) + box.axisY * (corner.y * box.halfExtents.y)));
@@ -99,7 +98,7 @@ namespace nav {
 			const float sc = e.scale;
 			ring.reserve(collision.pointsMeters.size());
 			for (const glm::vec2& p : collision.pointsMeters) {
-				const glm::vec2 l = (frameOrigin + p) * sc;
+				const glm::vec2 l = p * sc;
 				ring.push_back(toMm({e.position.x + (l.x * c - l.y * s), e.position.y + (l.x * s + l.y * c)}));
 			}
 		}

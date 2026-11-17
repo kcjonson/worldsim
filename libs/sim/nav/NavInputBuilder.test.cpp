@@ -1,7 +1,6 @@
 #include "NavInputBuilder.h"
 
 #include "NavCoords.h"
-#include "SimpleObstacleDef.test.h"
 
 #include <assets/AssetRegistry.h>
 #include <assets/ConstructionRegistry.h>
@@ -508,32 +507,6 @@ TEST_F(NavPlacedObstacleTest, NoCollision_EmitsNothing) {
 	index.insert(e);
 
 	EXPECT_TRUE(placedObstaclesOf(index, reg).empty());
-}
-
-// A simple (SVG) def's collider is authored about its drawing's bbox centre, and a static draws the
-// drawing from its position, uncentred: the ring stands on the drawing, scaled and rotated with it,
-// not on the entity's position.
-TEST_F(NavPlacedObstacleTest, SimpleDefRing_StandsOnTheDrawing) {
-	AssetRegistry& reg = AssetRegistry::Get();
-	PlacedEntity   e;
-	e.defName	 = nav::testing::kSimpleObstacleDefName;
-	e.templateId = nav::testing::loadSimpleObstacleDef(reg);
-	ASSERT_NE(e.templateId, 0u);
-	e.position = {10.0F, 20.0F};
-	e.scale	   = 2.0F;
-	e.rotation = 3.14159265358979323846F / 2.0F;
-
-	const std::optional<NavInputPolygon> ring = placedObstacleRing(e, reg);
-	ASSERT_TRUE(ring.has_value());
-	ASSERT_EQ(ring->ring.size(), 4u);
-
-	// The drawing's centre is (1.5, 0.5) m from its origin: doubled and turned a quarter, (-1, 3).
-	const Vec2i64 centre{9000, 23000};
-	// Half-extent 0.1 m + the 50 mm pad, doubled.
-	for (const Vec2i64& v : ring->ring) {
-		EXPECT_NEAR(static_cast<double>(std::llabs(v.x - centre.x)), 300.0, 2.0);
-		EXPECT_NEAR(static_cast<double>(std::llabs(v.y - centre.y)), 300.0, 2.0);
-	}
 }
 
 // ---------------------------------------------------------------------------
