@@ -132,7 +132,7 @@ The drawing steps below read `/api/state?what=drawing`. Their points are world p
 15. Pick Settings and, under Drawing Settings, switch Angle readout on if it is off: it reads on.
 16. Pick Back, then Quick Start: a new game shows, and `settings.angleReadout` is true.
 17. Make the built foundation again with the precondition's `built=1` command and centre the camera on it again: `?what=construction` lists it `Built`.
-18. Pick Wall in the Build menu, click two points inside the built foundation (say (16, 3) and (19, 3)), then move the pointer off the last point, still inside it (say (19, 5)): the wall tool shows the two points and the band between them (`status.pointCount` 2, `status.hint` "Right-click / Enter to finish").
+18. Pick Wall in the Build menu and click (16, 3) and (19, 3) inside the built foundation, leaving the pointer on the second: the two points and the band between them show, nothing red, and no "wall too short" (`status.hint` "Right-click / Enter to finish", `verdict.proposed` false).
 19. Move the pointer off at an angle that is not square: an arc and the angle between the two walls show at the middle point.
 
 ---

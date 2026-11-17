@@ -138,7 +138,7 @@ namespace world_sim {
 			bool								 closesShape = false; // the next click closes the shape (the Rectangle tool: commits it)
 		};
 
-		/// What the next click would do, as clickVerdict() reads it (the opening tool's: the strip's).
+		/// What the next click would do, as clickVerdict() reads it.
 		struct Verdict {
 			bool		valid = true;
 			bool		proposed = true;
@@ -534,12 +534,12 @@ namespace world_sim {
 		/// Forget the pending rectangle and any press (the first corner is points_, cleared by the caller).
 		void clearRectangle();
 
-		/// What the next click would do, as the preview, the status strip, and the click read
-		/// it: while it closes (or in the Rectangle tool commits), the close's verdict;
-		/// otherwise whether the point may be placed, and why not. The Freeform tool's pointer
-		/// resting where it placed the last point, with its snapped point refused as too close
-		/// to it, proposes nothing: valid, and the click places nothing. A paused tool proposes
-		/// nothing either.
+		/// What the next click would do, as the preview, the status strip, the click, and the
+		/// dev view read it: while it closes (or in the Rectangle tool commits), the close's
+		/// verdict; otherwise whether the point (the opening tool: the snapped opening) may be
+		/// placed, and why not. A pointer resting on the last placement (restsOnLastPlacement),
+		/// refused only for being on what that click placed, proposes nothing: valid, nothing
+		/// red, and a click places nothing. A paused tool proposes nothing either.
 		struct ClickVerdict {
 			bool		valid = true;
 			bool		proposed = true;
@@ -547,10 +547,14 @@ namespace world_sim {
 		};
 		[[nodiscard]] ClickVerdict clickVerdict() const;
 
-		/// The Freeform tool's pointer has not moved in the world since the click that placed the
-		/// last point. Its snapped point need not be that point: a length that rounds to zero
-		/// leaves the raw pointer, a few centimeters off.
-		[[nodiscard]] bool restsOnLastPoint() const;
+		/// The pointer has not moved in the world since the click with which the active tool
+		/// last placed something, and the tool still holds what that click left. The snapped
+		/// point need not be the placed one: a length that rounds to zero leaves the raw
+		/// pointer a few centimeters off it.
+		[[nodiscard]] bool restsOnLastPlacement() const;
+
+		/// Record the click that just placed something with the active tool (restsOnLastPlacement).
+		void recordPlacement(construction::OpeningId opening = construction::kInvalidOpening);
 
 		/// Screen pixels per world meter at the current zoom (mirrors the render path:
 		/// kPixelsPerMeter * camera zoom). 1.0 fallback if no camera.
@@ -795,13 +799,16 @@ namespace world_sim {
 		std::vector<Foundation::Vec2>	snapMemoRectangleCorners_;
 		std::string						snapMemoRectangleLabel_;
 
-		// Freeform tool: the pointer, world meters, of the click that placed a point, and how many
-		// points that made (restsOnLastPoint).
-		struct PointPlacement {
-			Foundation::Vec2 pointer{0.0F, 0.0F};
-			std::size_t		 pointCount = 0;
+		// The last click with which a tool placed something (a point, or an opening): the tool, the
+		// raw pointer's world position, and what the tool held after it. Cleared when a tool starts
+		// or is put away, by Backspace, and by the first move that leaves it (restsOnLastPlacement).
+		struct Placement {
+			ToolKind				tool = ToolKind::Foundation;
+			Foundation::Vec2		pointer{0.0F, 0.0F};
+			std::size_t				pointCount = 0;
+			construction::OpeningId opening = construction::kInvalidOpening;
 		};
-		std::optional<PointPlacement> lastPlacement_;
+		std::optional<Placement> lastPlacement_;
 
 		// The foundation tool the Build menu's Foundation entry opens: the last one activated.
 		FoundationTool lastFoundationTool_ = FoundationTool::Rectangle;
