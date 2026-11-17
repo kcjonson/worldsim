@@ -33,6 +33,16 @@ namespace geometry {
 		std::int64_t forestArrivalMs = 2000;
 	};
 
+	// `tunables` with each field clamped to its range in sight-softening.md 9, the ranges the geometry
+	// functions assert; forestNearMm's upper bound is max(sightMm, 1000). Callers clamp where a
+	// tunable is set, not in the geometry.
+	ForestTunables clampedToRanges(const ForestTunables& tunables, std::int64_t sightMm);
+
+	// Whether `offset`'s direction lies in the half turn [0, pi) counter-clockwise from +x.
+	inline bool inUpperHalfTurn(const Vec2i64& offset) {
+		return offset.y > 0 || (offset.y == 0 && offset.x > 0);
+	}
+
 	// A placed ring as forest depth reads it. `widthFactor` and `arrival` are fractions of
 	// kFractionOne (forestWidthFactor, forestArrivalFraction).
 	struct ForestBody {
@@ -64,8 +74,10 @@ namespace geometry {
 	// neighbour's by more than forestSlopeMm.
 	SightSideValues forestLimitedDepth(const SightSideValues& rawDepth, std::int64_t sightMm, const ForestTunables& tunables);
 
-	// Each side's range: `radiusMm` (the sight radius, or a polygon path's reach) less its limited
-	// depth.
+	// Each side's range: `radiusMm` (the sight radius, a polygon path's reach, or the seen record's
+	// sight radius less its slack) less its limited depth. A limited depth is at most sightMm less the
+	// floor, so `radiusMm` exceeds that and every range is positive; the forest shape asks more of
+	// its ranges (kForestShapeLeastRangeMm).
 	SightSideValues forestRanges(
 		const Vec2i64&				eye,
 		std::int64_t				sightMm,

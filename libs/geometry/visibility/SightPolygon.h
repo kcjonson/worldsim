@@ -28,8 +28,8 @@ namespace geometry {
 	constexpr std::int64_t kSightCosHalfSide = cosineOfHalfSide<kSightSides>(kSightDirectionScale);
 
 	// The outward normal of each side of the sight polygon, side k running from vertex k to vertex
-	// k + 1. At 2^22 two neighbouring sides cross within a tenth of a millimetre of where exact
-	// normals put them at 64 m (2^15 left 8 mm at 30 m), and a crossing's Cramer numerators, an
+	// k + 1. At 2^22 two neighbouring sides cross within 0.15 mm of where exact normals
+	// put them at 65.5 m (2^15 left 7.7 mm at 30 m), and a crossing's Cramer numerators, an
 	// offset at this scale times a normal, stay under 2^61.
 	constexpr std::int64_t kSightSideNormalScale = std::int64_t{1} << 22;
 

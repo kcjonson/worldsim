@@ -24,8 +24,7 @@ namespace geometry {
 		// step to the next direction, `index` the direction at or before the offset's. Increases
 		// counter-clockwise from +x through [0, kSightSides x kFractionOne).
 		std::int64_t tablePosition(const Vec2i64& offset) {
-			const bool	upperHalf = offset.y > 0 || (offset.y == 0 && offset.x > 0);
-			std::size_t low = upperHalf ? 0 : kSightSides / 2;
+			std::size_t low = inUpperHalfTurn(offset) ? 0 : kSightSides / 2;
 			std::size_t high = low + kSightSides / 2 - 1;
 			while (low < high) {
 				const std::size_t middle = (low + high + 1) / 2;
@@ -53,18 +52,41 @@ namespace geometry {
 			return rise * fall / kFractionOne;
 		}
 
-		void assertWithinRanges([[maybe_unused]] std::int64_t sightMm, [[maybe_unused]] const ForestTunables& tunables) {
+		struct TunableRange {
+			std::int64_t ForestTunables::* field;
+			std::int64_t				   least;
+			std::int64_t				   most;
+		};
+
+		// Each tunable's range, sight-softening.md 9.
+		std::array<TunableRange, 7> tunableRanges(std::int64_t sightMm) {
+			return {{
+				{&ForestTunables::forestCapMm, 0, 5000},
+				{&ForestTunables::forestWindowSteps, 1, 32},
+				{&ForestTunables::forestNearMm, 1000, std::max<std::int64_t>(sightMm, 1000)},
+				{&ForestTunables::forestFloorPercent, 1, 100},
+				{&ForestTunables::forestSlopeMm, 0, 10000},
+				{&ForestTunables::forestFullPerimeterMm, 100, 10000},
+				{&ForestTunables::forestArrivalMs, 100, 10000},
+			}};
+		}
+
+		void assertWithinRanges(std::int64_t sightMm, [[maybe_unused]] const ForestTunables& tunables) {
 			assert(sightMm > 0 && sightMm < kForestRadiusLimitMm);
-			assert(tunables.forestCapMm >= 0 && tunables.forestCapMm <= 5000);
-			assert(tunables.forestWindowSteps >= 1 && tunables.forestWindowSteps <= 32);
-			assert(tunables.forestNearMm >= 1000 && tunables.forestNearMm <= std::max<std::int64_t>(sightMm, 1000));
-			assert(tunables.forestFloorPercent >= 1 && tunables.forestFloorPercent <= 100);
-			assert(tunables.forestSlopeMm >= 0 && tunables.forestSlopeMm <= 10000);
-			assert(tunables.forestFullPerimeterMm >= 100 && tunables.forestFullPerimeterMm <= 10000);
-			assert(tunables.forestArrivalMs >= 100 && tunables.forestArrivalMs <= 10000);
+			for ([[maybe_unused]] const TunableRange& range : tunableRanges(sightMm)) {
+				assert(tunables.*range.field >= range.least && tunables.*range.field <= range.most);
+			}
 		}
 
 	} // namespace
+
+	ForestTunables clampedToRanges(const ForestTunables& tunables, std::int64_t sightMm) {
+		ForestTunables clamped = tunables;
+		for (const TunableRange& range : tunableRanges(sightMm)) {
+			clamped.*range.field = std::clamp(clamped.*range.field, range.least, range.most);
+		}
+		return clamped;
+	}
 
 	std::int64_t forestWidthFactor(std::int64_t perimeterMm, const ForestTunables& tunables) {
 		assert(perimeterMm >= 0);
@@ -148,7 +170,7 @@ namespace geometry {
 		std::span<const ForestBody> bodies,
 		const ForestTunables&		tunables
 	) {
-		assert(radiusMm >= sightMm && radiusMm < kForestRadiusLimitMm);
+		assert(radiusMm > sightMm - forestFloorMm(sightMm, tunables) && radiusMm < kForestRadiusLimitMm);
 		const SightSideValues depthMm = forestLimitedDepth(forestRawDepth(eye, sightMm, bodies, tunables), sightMm, tunables);
 		SightSideValues		  rangeMm{};
 		for (std::size_t side = 0; side < kSightSides; ++side) {

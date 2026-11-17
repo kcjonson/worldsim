@@ -9,7 +9,6 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>
 #include <limits>
 #include <random>
 #include <string>
@@ -86,6 +85,73 @@ namespace {
 		return (static_cast<double>(side) + 0.5) * 2.0 * kPi / static_cast<double>(kSightSides);
 	}
 
+	// Side `side`'s half-plane offset in doubles, from unit normals of the test's own making.
+	double halfPlaneOffset(const SightSideValues& ranges, std::size_t side) {
+		return static_cast<double>(ranges[side]) * std::cos(kPi / static_cast<double>(kSightSides));
+	}
+
+	// How far along the unit direction at `angle` from the point the exact intersection of the
+	// half-planes reaches.
+	double exactReach(const SightSideValues& ranges, double angle) {
+		double least = std::numeric_limits<double>::max();
+		for (std::size_t side = 0; side < kSightSides; ++side) {
+			const double facing = std::cos(sideAngle(side) - angle);
+			if (facing > 0.0) {
+				least = std::min(least, halfPlaneOffset(ranges, side) / facing);
+			}
+		}
+		return least;
+	}
+
+	struct PointDouble {
+		double x;
+		double y;
+	};
+
+	// The exact intersection of the half-planes, relative to the point, clipped from a square in
+	// doubles.
+	std::vector<PointDouble> exactShape(const SightSideValues& ranges) {
+		std::vector<PointDouble> polygon{{-200000.0, -200000.0}, {200000.0, -200000.0}, {200000.0, 200000.0}, {-200000.0, 200000.0}};
+		for (std::size_t side = 0; side < kSightSides; ++side) {
+			const double			 normalX = std::cos(sideAngle(side));
+			const double			 normalY = std::sin(sideAngle(side));
+			const double			 offset = halfPlaneOffset(ranges, side);
+			std::vector<PointDouble> clipped;
+			for (std::size_t index = 0; index < polygon.size(); ++index) {
+				const PointDouble from = polygon[index];
+				const PointDouble to = polygon[(index + 1) % polygon.size()];
+				const double	  fromOver = from.x * normalX + from.y * normalY - offset;
+				const double	  toOver = to.x * normalX + to.y * normalY - offset;
+				if (fromOver <= 0.0) {
+					clipped.push_back(from);
+				}
+				if ((fromOver < 0.0 && toOver > 0.0) || (fromOver > 0.0 && toOver < 0.0)) {
+					const double along = fromOver / (fromOver - toOver);
+					clipped.push_back({from.x + (to.x - from.x) * along, from.y + (to.y - from.y) * along});
+				}
+			}
+			polygon = clipped;
+		}
+		return polygon;
+	}
+
+	// The farthest any vertex of the forest shape of `ranges` round `eye` sits from the nearest
+	// vertex of the exact intersection.
+	double worstVertexDisplacement(const Vec2i64& eye, const SightSideValues& ranges) {
+		const std::vector<PointDouble> exact = exactShape(ranges);
+		double						   worst = 0.0;
+		for (const Vec2i64& vertex : geometry::forestShape(eye, ranges)) {
+			double nearest = std::numeric_limits<double>::max();
+			for (const PointDouble& corner : exact) {
+				nearest = std::min(
+					nearest, std::hypot(static_cast<double>(vertex.x - eye.x) - corner.x, static_cast<double>(vertex.y - eye.y) - corner.y)
+				);
+			}
+			worst = std::max(worst, nearest);
+		}
+		return worst;
+	}
+
 	std::int64_t squareWidthFactor(std::int64_t sideMm) {
 		return geometry::forestWidthFactor(4 * sideMm, ForestTunables{});
 	}
@@ -109,21 +175,42 @@ namespace {
 		return bodies;
 	}
 
-	// 40 veteran trunks on a 0.5 m grid, the nearest to a point 10 m from the eye.
-	std::vector<ForestBody> clumpOf40(const Vec2i64& eye, double angle) {
-		const Vec2i64		 middle = eye + Vec2i64{std::llround(10000.0 * std::cos(angle)), std::llround(10000.0 * std::sin(angle))};
+	// Points 10 m from the eye at 16 even steps round it, from 0.05 radians, fixed so the bodies
+	// built from them do not depend on the math library.
+	constexpr std::array<Vec2i64, 16> kClumpMiddles{
+		{{9988, 500},
+		 {9036, 4284},
+		 {6709, 7416},
+		 {3360, 9419},
+		 {-500, 9988},
+		 {-4284, 9036},
+		 {-7416, 6709},
+		 {-9419, 3360},
+		 {-9988, -500},
+		 {-9036, -4284},
+		 {-6709, -7416},
+		 {-3360, -9419},
+		 {500, -9988},
+		 {4284, -9036},
+		 {7416, -6709},
+		 {9419, -3360}}
+	};
+
+	// 40 veteran trunks on a 0.5 m grid, the nearest to `middleOffset` from the eye.
+	std::vector<ForestBody> clumpOf40(const Vec2i64& eye, const Vec2i64& middleOffset) {
+		const Vec2i64		 middle = eye + middleOffset;
 		std::vector<Vec2i64> grid;
-		for (std::int64_t i = -8; i <= 8; ++i) {
-			for (std::int64_t j = -8; j <= 8; ++j) {
-				grid.push_back(middle + Vec2i64{i * 500, j * 500});
+		for (std::int64_t column = -8; column <= 8; ++column) {
+			for (std::int64_t row = -8; row <= 8; ++row) {
+				grid.push_back(middle + Vec2i64{column * 500, row * 500});
 			}
 		}
-		std::sort(grid.begin(), grid.end(), [&](const Vec2i64& a, const Vec2i64& b) {
-			const Vec2i64	   fromA = a - middle;
-			const Vec2i64	   fromB = b - middle;
-			const std::int64_t lengthA = fromA.x * fromA.x + fromA.y * fromA.y;
-			const std::int64_t lengthB = fromB.x * fromB.x + fromB.y * fromB.y;
-			return lengthA != lengthB ? lengthA < lengthB : a < b;
+		std::sort(grid.begin(), grid.end(), [&](const Vec2i64& first, const Vec2i64& second) {
+			const Vec2i64	   fromFirst = first - middle;
+			const Vec2i64	   fromSecond = second - middle;
+			const std::int64_t lengthFirst = fromFirst.x * fromFirst.x + fromFirst.y * fromFirst.y;
+			const std::int64_t lengthSecond = fromSecond.x * fromSecond.x + fromSecond.y * fromSecond.y;
+			return lengthFirst != lengthSecond ? lengthFirst < lengthSecond : first < second;
 		});
 		std::vector<ForestBody> bodies;
 		for (std::size_t index = 0; index < 40; ++index) {
@@ -145,11 +232,29 @@ namespace {
 		double	   worst = 0.0;
 		for (std::size_t side = 0; side < kSightSides; ++side) {
 			if (raw[side] == 0) {
-				const double star = static_cast<double>(ranges[side]) * std::cos(kPi / static_cast<double>(kSightSides));
-				worst = std::max(worst, star - reachAlong(shape, eye, sideAngle(side)));
+				worst = std::max(worst, halfPlaneOffset(ranges, side) - reachAlong(shape, eye, sideAngle(side)));
 			}
 		}
 		return worst;
+	}
+
+	// The shape of `ranges` round `eye` is strictly convex, every vertex lies within 2 mm of every
+	// half-plane by the test's own unit normals, and along 720 directions it reaches the exact
+	// intersection's boundary to within `toleranceMm`.
+	void expectShapeMatchesHalfPlanes(const Vec2i64& eye, const SightSideValues& ranges, double toleranceMm, const std::string& label) {
+		const Ring shape = geometry::forestShape(eye, ranges);
+		expectStrictlyConvex(shape);
+		for (const Vec2i64& vertex : shape) {
+			for (std::size_t side = 0; side < kSightSides; ++side) {
+				const double along = static_cast<double>(vertex.x - eye.x) * std::cos(sideAngle(side)) +
+									 static_cast<double>(vertex.y - eye.y) * std::sin(sideAngle(side));
+				ASSERT_LE(along, halfPlaneOffset(ranges, side) + 2.0) << label << " side " << side;
+			}
+		}
+		for (int step = 0; step < 720; ++step) {
+			const double angle = 2.0 * kPi * step / 720.0;
+			ASSERT_GE(reachAlong(shape, eye, angle), exactReach(ranges, angle) - toleranceMm) << label << " step " << step;
+		}
 	}
 
 } // namespace
@@ -178,7 +283,7 @@ TEST(ForestShape, SideNormalsArePinned) {
 TEST(ForestShape, EqualRangesGiveTheSightPolygon) {
 	std::mt19937			  rng(64);
 	std::vector<std::int64_t> radii{1000, 1999, 20100, 29950, 30000, 32200, 38000, 65535};
-	for (int i = 0; i < 60; ++i) {
+	for (int index = 0; index < 60; ++index) {
 		radii.push_back(1000 + static_cast<std::int64_t>(rng() % 64000));
 	}
 	for (const std::int64_t radius : radii) {
@@ -192,6 +297,69 @@ TEST(ForestShape, EqualRangesGiveTheSightPolygon) {
 			}
 		}
 	}
+}
+
+// With no bodies every range is the radius and the shape is the sight polygon to 2 mm.
+TEST(ForestShape, NoBodiesGiveTheSightPolygon) {
+	const Vec2i64 eye{-5432, 2109};
+	for (const std::int64_t radiusMm : {kSightMm, std::int64_t{32200}}) {
+		const SightSideValues ranges = geometry::forestRanges(eye, kSightMm, radiusMm, {}, ForestTunables{});
+		EXPECT_EQ(ranges, equalRanges(radiusMm));
+		const Ring shape = geometry::forestShape(eye, ranges);
+		const Ring polygon = geometry::sightPolygon(eye, radiusMm);
+		ASSERT_EQ(shape.size(), polygon.size());
+		for (std::size_t index = 0; index < shape.size(); ++index) {
+			const Vec2i64 apart = shape[index] - polygon[index];
+			EXPECT_LE(apart.x * apart.x + apart.y * apart.y, 4) << "vertex " << index;
+		}
+	}
+}
+
+// At the least range, alone or beside the greatest, the shape is a strictly convex polygon.
+TEST(ForestShape, LeastRangeGivesAPolygon) {
+	const Vec2i64 eye{777, -333};
+	expectStrictlyConvex(geometry::forestShape(eye, equalRanges(geometry::kForestShapeLeastRangeMm)));
+	SightSideValues mixed = equalRanges(geometry::kForestRadiusLimitMm - 1);
+	for (std::size_t side = 0; side < kSightSides; side += 5) {
+		mixed[side] = geometry::kForestShapeLeastRangeMm;
+	}
+	expectStrictlyConvex(geometry::forestShape(eye, mixed));
+}
+
+// Every vertex sits within a few millimetres of its exact crossing, worked out here by clipping in
+// doubles: where two far-apart sides cross well outside the others (sides 11 and 33, near
+// (-22088, 12766)), and through forestRanges with no slope limit and a low floor.
+TEST(ForestShape, VerticesSitAtTheirCrossings) {
+	SightSideValues ranges = equalRanges(30000);
+	ranges[11] = 2099;
+	ranges[33] = 20000;
+	const Vec2i64 eye{40000, -70000};
+	EXPECT_LE(worstVertexDisplacement(eye, ranges), 2.0);
+	const Ring shape = geometry::forestShape(eye, ranges);
+	double	   nearest = std::numeric_limits<double>::max();
+	for (const Vec2i64& vertex : shape) {
+		nearest =
+			std::min(nearest, std::hypot(static_cast<double>(vertex.x - eye.x) + 22088.0, static_cast<double>(vertex.y - eye.y) - 12766.0));
+	}
+	EXPECT_LE(nearest, 2.0);
+
+	std::mt19937   rng(11);
+	ForestTunables steep;
+	steep.forestSlopeMm = 10000;
+	steep.forestFloorPercent = 10;
+	steep.forestCapMm = 5000;
+	double worst = 0.0;
+	for (int stand = 0; stand < 30; ++stand) {
+		const Vec2i64 standEye{static_cast<std::int64_t>(rng() % 200000) - 100000, static_cast<std::int64_t>(rng() % 200000) - 100000};
+		std::vector<ForestBody>		  bodies = randomStand(rng, standEye);
+		const std::vector<ForestBody> clump = clumpOf40(standEye, kClumpMiddles[static_cast<std::size_t>(stand) % kClumpMiddles.size()]);
+		bodies.insert(bodies.end(), clump.begin(), clump.end());
+		for (const std::int64_t radiusMm : {kSightMm, std::int64_t{32200}}) {
+			worst = std::max(worst, worstVertexDisplacement(standEye, geometry::forestRanges(standEye, kSightMm, radiusMm, bodies, steep)));
+		}
+	}
+	EXPECT_LE(worst, 4.0);
+	RecordProperty("worstVertexDisplacementSteepMicrons", std::to_string(std::llround(worst * 1000.0)));
 }
 
 // A lone ring's tent is convex already: every side keeps its edge, and the shape reaches each side's
@@ -211,8 +379,8 @@ TEST(ForestShape, LoneBodyLosesNothingToConvexity) {
 				const Ring			  shape = geometry::forestShape(eye, ranges);
 				EXPECT_EQ(shape.size(), kSightSides) << sideMm << " at " << distanceMm;
 				for (std::size_t side = 0; side < kSightSides; ++side) {
-					const double star = static_cast<double>(ranges[side]) * std::cos(kPi / static_cast<double>(kSightSides));
-					EXPECT_NEAR(reachAlong(shape, eye, sideAngle(side)), star, 2.0) << sideMm << " at " << distanceMm << " side " << side;
+					EXPECT_NEAR(reachAlong(shape, eye, sideAngle(side)), halfPlaneOffset(ranges, side), 2.0)
+						<< sideMm << " at " << distanceMm << " side " << side;
 				}
 			}
 		}
@@ -220,8 +388,9 @@ TEST(ForestShape, LoneBodyLosesNothingToConvexity) {
 }
 
 // Over seeded random stands, at the sight radius and at a polygon path's reach, the forest shape is
-// strictly convex, every vertex lies in every half-plane, and it holds the floor's sight polygon to
-// the 2 mm the two roundings can take.
+// strictly convex, every vertex lies in every half-plane, it matches the exact intersection of the
+// half-planes worked out here, and it holds the floor's sight polygon to the 2 mm the two roundings
+// can take.
 TEST(ForestShape, ConvexAndHoldsTheFloor) {
 	std::mt19937		 rng(20261116);
 	const ForestTunables tunables;
@@ -230,18 +399,64 @@ TEST(ForestShape, ConvexAndHoldsTheFloor) {
 		const Vec2i64 eye{static_cast<std::int64_t>(rng() % 2000000) - 1000000, static_cast<std::int64_t>(rng() % 2000000) - 1000000};
 		const std::vector<ForestBody> bodies = randomStand(rng, eye);
 		for (const std::int64_t radiusMm : {kSightMm, std::int64_t{32200}}) {
-			const SightSideValues ranges = geometry::forestRanges(eye, kSightMm, radiusMm, bodies, tunables);
-			const Ring			  shape = geometry::forestShape(eye, ranges);
-			expectStrictlyConvex(shape);
+			const SightSideValues			 ranges = geometry::forestRanges(eye, kSightMm, radiusMm, bodies, tunables);
+			const geometry::ForestHalfPlanes halfPlanes = geometry::forestHalfPlanes(ranges);
+			const Ring						 shape = geometry::forestShape(eye, ranges);
+			expectShapeMatchesHalfPlanes(eye, ranges, 3.0, "stand " + std::to_string(stand));
 			for (const Vec2i64& vertex : shape) {
-				EXPECT_TRUE(geometry::insideForestHalfPlanes(eye, ranges, vertex)) << "stand " << stand;
+				EXPECT_TRUE(geometry::insideForestHalfPlanes(eye, halfPlanes, vertex)) << "stand " << stand;
 			}
 			for (const Vec2i64& vertex : geometry::sightPolygon(eye, floorMm)) {
 				EXPECT_GE(leastInsideBy(shape, vertex), -2.0) << "stand " << stand;
 			}
 			for (const Vec2i64& vertex : geometry::sightPolygon(eye, floorMm - 2)) {
-				EXPECT_TRUE(geometry::insideForestHalfPlanes(eye, ranges, vertex)) << "stand " << stand;
+				EXPECT_TRUE(geometry::insideForestHalfPlanes(eye, halfPlanes, vertex)) << "stand " << stand;
 			}
+		}
+	}
+}
+
+// At the edges of each tunable's range forest depth gives positive ranges at or above the floor and
+// a shape that matches the exact intersection; a slope of 0 gives every side the least capped depth,
+// round the wrap.
+TEST(ForestShape, TunablesAtTheirRangeEdges) {
+	std::vector<std::pair<std::string, ForestTunables>> cases;
+	const auto											add = [&](const std::string& label, auto change) {
+		 ForestTunables tunables;
+		 change(tunables);
+		 cases.emplace_back(label, tunables);
+	};
+	add("floor 1", [](ForestTunables& tunables) { tunables.forestFloorPercent = 1; });
+	add("floor 100", [](ForestTunables& tunables) { tunables.forestFloorPercent = 100; });
+	add("slope 0", [](ForestTunables& tunables) { tunables.forestSlopeMm = 0; });
+	add("window 1", [](ForestTunables& tunables) { tunables.forestWindowSteps = 1; });
+	add("window 32", [](ForestTunables& tunables) { tunables.forestWindowSteps = 32; });
+	add("cap 0", [](ForestTunables& tunables) { tunables.forestCapMm = 0; });
+	add("cap 5000", [](ForestTunables& tunables) { tunables.forestCapMm = 5000; });
+
+	std::mt19937 rng(4242);
+	for (int stand = 0; stand < 6; ++stand) {
+		const Vec2i64			eye{static_cast<std::int64_t>(rng() % 200000) - 100000, static_cast<std::int64_t>(rng() % 200000) - 100000};
+		std::vector<ForestBody> bodies = randomStand(rng, eye);
+		const std::vector<ForestBody> clump = clumpOf40(eye, kClumpMiddles[static_cast<std::size_t>(stand) * 3 % kClumpMiddles.size()]);
+		bodies.insert(bodies.end(), clump.begin(), clump.end());
+		for (const auto& [label, tunables] : cases) {
+			const std::int64_t	  floorMm = geometry::forestFloorMm(kSightMm, tunables);
+			const SightSideValues raw = geometry::forestRawDepth(eye, kSightMm, bodies, tunables);
+			const SightSideValues limited = geometry::forestLimitedDepth(raw, kSightMm, tunables);
+			const SightSideValues ranges = geometry::forestRanges(eye, kSightMm, kSightMm, bodies, tunables);
+			for (std::size_t side = 0; side < kSightSides; ++side) {
+				ASSERT_GE(ranges[side], floorMm) << label << " side " << side;
+				ASSERT_LE(ranges[side], kSightMm) << label << " side " << side;
+			}
+			if (tunables.forestSlopeMm == 0) {
+				const std::int64_t least = std::min(*std::min_element(raw.begin(), raw.end()), kSightMm - floorMm);
+				EXPECT_EQ(limited, equalRanges(least)) << label;
+			}
+			if (tunables.forestCapMm == 0 || tunables.forestFloorPercent == 100) {
+				EXPECT_EQ(ranges, equalRanges(kSightMm)) << label;
+			}
+			expectShapeMatchesHalfPlanes(eye, ranges, 3.0, label + " stand " + std::to_string(stand));
 		}
 	}
 }
@@ -254,8 +469,8 @@ TEST(ForestShape, SlopeLimitBoundsAClumpsLossInClearDirections) {
 	unlimited.forestSlopeMm = 10000;
 	double worstLimited = 0.0;
 	double worstUnlimited = 0.0;
-	for (int angleStep = 0; angleStep < 16; ++angleStep) {
-		const std::vector<ForestBody> bodies = clumpOf40(eye, 2.0 * kPi * angleStep / 16.0 + 0.05);
+	for (const Vec2i64& middle : kClumpMiddles) {
+		const std::vector<ForestBody> bodies = clumpOf40(eye, middle);
 		worstLimited = std::max(worstLimited, worstClearLoss(eye, bodies, ForestTunables{}));
 		worstUnlimited = std::max(worstUnlimited, worstClearLoss(eye, bodies, unlimited));
 	}
@@ -263,14 +478,13 @@ TEST(ForestShape, SlopeLimitBoundsAClumpsLossInClearDirections) {
 	EXPECT_GE(worstUnlimited, 4000.0);
 	RecordProperty("worstClearLossLimitedMm", std::to_string(std::llround(worstLimited)));
 	RecordProperty("worstClearLossUnlimitedMm", std::to_string(std::llround(worstUnlimited)));
-	std::printf("clump of 40: worst clear loss %.0f mm with the slope limit, %.0f mm without\n", worstLimited, worstUnlimited);
 }
 
 // Fixed input, fixed output, as ForestDepth.RangesArePinned, for the shape's vertices.
 TEST(ForestShape, ShapeIsPinned) {
 	std::mt19937			rng(424242);
 	const Vec2i64			eye{100000, -50000};
-	std::vector<ForestBody> bodies = clumpOf40(eye, 1.0);
+	std::vector<ForestBody> bodies = clumpOf40(eye, {5403, 8415});
 	for (int index = 0; index < 120; ++index) {
 		const Vec2i64 centre{static_cast<std::int64_t>(rng() % 64000) - 32000, static_cast<std::int64_t>(rng() % 64000) - 32000};
 		bodies.push_back({eye + centre, squareWidthFactor(280 + static_cast<std::int64_t>(rng() % 900)), kFractionOne});
@@ -281,15 +495,15 @@ TEST(ForestShape, ShapeIsPinned) {
 		flat.push_back(vertex.x);
 		flat.push_back(vertex.y);
 	}
-	const std::vector<std::int64_t> pinned{127912, -49455, 126843, -47193, 125607, -45131, 124233, -43279, 117255, -35580, 114147, -32762,
-										   112389, -31459, 110512, -30334, 100906, -25791, 97120,  -24436, 94823,  -23860, 92384,  -23498,
-										   89823,  -23373, 87164,  -23503, 84779,  -23857, 83594,  -24567, 81071,  -26438, 79049,  -28271,
-										   77335,  -30162, 75809,  -32220, 75116,  -33376, 73215,  -37396, 71903,  -41062, 71111,  -44223,
-										   70697,  -47012, 70552,  -49980, 70641,  -51797, 70945,  -53849, 72131,  -58581, 72899,  -60729,
-										   74217,  -63516, 75308,  -65336, 76846,  -67409, 79050,  -69841, 82655,  -73109, 85909,  -75522,
-										   87709,  -76601, 89685,  -77536, 91340,  -78128, 95031,  -79052, 97109,  -79360, 99135,  -79460,
-										   100237, -79406, 101837, -79168, 104498, -78502, 107687, -77361, 110931, -75827, 112371, -74963,
-										   115550, -72606, 118088, -70305, 120694, -67431, 123422, -63752, 124856, -61359, 125874, -59208,
-										   126821, -56562, 127938, -52101, 128208, -50280};
+	const std::vector<std::int64_t> pinned{127913, -49455, 126843, -47193, 125607, -45131, 124233, -43278, 117256, -35580, 114147, -32762,
+										   112389, -31459, 110512, -30334, 100906, -25790, 97119,  -24435, 94823,  -23860, 92383,  -23498,
+										   89822,  -23373, 87163,  -23503, 84779,  -23857, 83594,  -24567, 81071,  -26438, 79049,  -28271,
+										   77335,  -30162, 75808,  -32220, 75116,  -33375, 73214,  -37396, 71903,  -41062, 71111,  -44222,
+										   70697,  -47012, 70552,  -49980, 70641,  -51797, 70945,  -53849, 72131,  -58582, 72899,  -60730,
+										   74217,  -63516, 75308,  -65336, 76845,  -67409, 79050,  -69842, 82655,  -73109, 85909,  -75522,
+										   87709,  -76601, 89685,  -77536, 91340,  -78128, 95030,  -79052, 97108,  -79360, 99135,  -79460,
+										   100237, -79406, 101838, -79168, 104498, -78502, 107687, -77361, 110931, -75827, 112371, -74964,
+										   115550, -72606, 118089, -70305, 120694, -67431, 123422, -63753, 124856, -61359, 125874, -59208,
+										   126821, -56562, 127938, -52102, 128208, -50280};
 	EXPECT_EQ(flat, pinned);
 }
